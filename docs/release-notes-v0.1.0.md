@@ -54,6 +54,20 @@ for anything beyond experimentation.
 - Folder-modules (a module is a single file or a folder of peer files
   sharing one namespace, Go-style), cross-file imports with cycle
   detection, file-level `#forbid Net, Fs` capability attributes.
+- **Typed effect operations, no ambient special-casing.** A handler's
+  operations must now declare their full signature (`now() -> Timestamp
+  =>`, ...; D434) instead of leaving it inferred. The built-in `Time`
+  effect is fully typed end to end (`sleep(d Duration)`, `now() ->
+  Timestamp`, `now_monotonic() -> Monotonic`), and — like `Fs`/`Net` — it
+  must appear explicitly in a function's effect row; the previous
+  "ambient" carve-out for `Time` is gone (D62 retraction). An effect
+  with one obvious default implementation can declare it once with
+  `#default_handler(...)` (D431) instead of every call site wiring a
+  handler by hand.
+- **Better diagnostics for uncaught `throw`/panics (D437)**: the error
+  now reports the throw site plus a propagation trace through the
+  `?`-sites it passed through (a bounded ring, not an unbounded call
+  stack).
 
 ### Standard library
 
@@ -65,6 +79,37 @@ seed), and the concurrency/runtime layer that backs the fiber scheduler.
 Networking, TLS, HTTP, and compression are separately versioned packages
 (`nova-net`/`nova-tls`/`nova-http`/`nova-compress`), pulled in via
 `nova.lock` the same way any external Nova package is.
+
+- **`serde`-style field attributes** for the JSON derive: `rename`,
+  `rename_all` (container-level, typo-checked at compile time rather
+  than a silently-ignored magic string), `skip`, `skip_serializing_if`,
+  `default` (including `default = "fn"`), and `alias` (D435) — plus
+  strict-by-default rejection of unknown JSON fields, with an explicit
+  opt-out (`#serde(allow_unknown)`, D436). `flatten` is designed but
+  gated behind a clear compile error, not yet implemented.
+- **Runtime hardening**: an intermittent, load-dependent crash in
+  orphaned `detach` fibers (a use-after-return on the parent's stack)
+  and a use-after-free in listener refcounting on a cancelled-then-
+  retried `accept()` are both fixed. `Semaphore` gained a non-blocking
+  `try_acquire_permit() -> Option[Permit]` so admission-control code can
+  use a `@cleanup`-guarded `Permit` instead of a bare boolean plus a
+  manual `release()` in `defer`.
+- **Affine `@cleanup` (D432) rolled out to networking types**:
+  `TcpListener`, `TcpReadHalf`, `TcpWriteHalf`, and `UdpSocket` now
+  auto-release on any exit path if forgotten. `File`, `BufWriter`, and
+  `OnceGuard` are deliberately excluded — a fallible close and a
+  non-interchangeable commit/abort are part of their design, not an
+  oversight.
+- **`nova-http`'s router was rebuilt from scratch**, Axum-class: a
+  segment-trie with static-segment > `{param}` > `{*catch-all}`
+  precedence, a composable `MethodRouter` (automatic `405` with an
+  `Allow` header), `nest()` for sub-routers, and a route conflict
+  reported as a typed registration error instead of a runtime panic;
+  the old linear-scan `ServeMux` is retired. Typed extractors
+  (`Path[T]`, `Query[T]`, `Json[T]`, `Bytes`, `Text`, `Headers`) and an
+  `IntoResponse` protocol (`str`/`StatusCode`/`ServerResponse`/
+  `Json[T]`/a `Result` blanket) build on the same `serde` machinery —
+  early and still hardening, see Known limitations.
 
 ### Tooling
 
@@ -135,6 +180,21 @@ This is an early release; treat it accordingly.
 - Some standard-library corners and example programs carry documented,
   narrow-scope simplifications (see `docs/simplifications.md` in the
   repository) — these are tracked, not silent.
+- **`serde`'s `flatten` attribute isn't implemented yet** — using it is
+  a compile error, not silently-ignored behaviour; every other field
+  attribute (`rename`, `rename_all`, `skip`, `skip_serializing_if`,
+  `default`, `alias`) works.
+- **`nova-http`'s new typed extractors are early.** `Path[T]`, `Query[T]`,
+  and `Json[T]` compile and the server test suite is green, but an open
+  codegen bug (a value/pointer argument mismatch on a generic static
+  method) blocks per-handler arity registration and end-to-end
+  round-trip coverage for them — treat extractors as not yet fully
+  validated.
+- **A handful of `nova-http` server-policy hardening tests are held
+  back**: cancelling a `supervised(timeout:)`-wrapped `accept()` retry
+  loop doesn't reliably stop the loop after the first cancellation (a
+  related use-after-free was already fixed; this is a narrower,
+  residual liveness gap) — 5 tests are pending a fix.
 
 ## Links
 
