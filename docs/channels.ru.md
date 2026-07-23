@@ -123,7 +123,7 @@ ro v = rx.recv()   // Option[int]
 
 Явная аннотация — turbofish: `Channel[int].new(8)`.
 
-**`T` обязан быть word-safe ([M-channel-generic-elem-type]).** Рантайм
+**`T` обязан быть word-safe ([M-channel-generic-elem-type]).** Vela (M:N-рантайм)
 хранит каждый элемент в одном слоте размером со слово, поэтому `T` должен
 без потерь укладываться в него: `int`, `bool`, `char`, целые фиксированной
 ширины и любой pointer-sized тип (`[]T`, records, `HashMap`, суммы, …) —

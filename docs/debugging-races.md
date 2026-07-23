@@ -1,13 +1,13 @@
-# Debugging Races in Nova M:N Runtime — Playbook
+# Debugging Races in Nova's Vela (M:N Runtime) — Playbook
 
 > **Internal methodology document.** Consolidates 20 lessons learned across
 > Plan 83.11 (Centralized I/O driver) Ф.3 STALE-slot race investigation,
 > §11.6 GC structural aliasing fix, and §12.31 use-after-free fix —
 > ~25 hours of race investigation distilled into a reusable playbook.
 >
-> Audience: anyone working on Nova runtime concurrency
+> Audience: anyone working on Vela concurrency
 > (`compiler-codegen/nova_rt/`), spawn/cancel/scope/driver code paths,
-> or debugging stochastic SEGV/hang/deadlock on M:N runtime.
+> or debugging stochastic SEGV/hang/deadlock in the M:N runtime.
 >
 > Source material:
 > - [`docs/plans/83.11-centralized-io-driver.md`](plans/83.11-centralized-io-driver.md) §§10.4, 12.16, 12.24, 12.27-29, 12.31
@@ -32,7 +32,7 @@
 ```
                 ┌─────────────────────────────────────────────────┐
                 │  STOCHASTIC SEGV / HANG / DEADLOCK              │
-                │  in M:N concurrency code                        │
+                │  in Vela (M:N runtime) concurrency code         │
                 └───────────────────┬─────────────────────────────┘
                                     │
                                     ▼
