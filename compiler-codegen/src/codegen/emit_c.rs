@@ -10878,6 +10878,49 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
     }
 
+    /// [fix M-fn-newtype-return-position-broken, №53] Shared NovaClosBase
+    /// dispatch for a fn-typed callee reached WITHOUT going through the
+    /// `ExprKind::Ident` + `fn_param_sigs` fast path in `emit_call` (which
+    /// already had this exact macro-select / cast-call logic inlined for the
+    /// "plain fn-typed variable" case). Two NEW callers use it: calling the
+    /// receiver itself inside a method on a fn-newtype (`@(v)`, форма г) and
+    /// calling the RESULT of a call whose return resolves to a fn-type
+    /// (`make()(3)` / `mw(h)(v)`, формы а/в) — `callee_str` is the already-
+    /// emitted C expression producing the `NovaClosBase`-shaped (or plain fn-
+    /// pointer, when a `NOVA_CLOS_CALL_*` macro fits) callable value.
+    fn emit_clos_call_dispatch(
+        &mut self,
+        callee_str: &str,
+        param_tys: &[String],
+        ret_ty: &str,
+        args: &[CallArg],
+    ) -> Result<String, String> {
+        let mut arg_strs = Vec::new();
+        for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
+        let macro_name = Self::clos_call_macro(param_tys, ret_ty);
+        match macro_name {
+            Some(m) => {
+                if arg_strs.is_empty() {
+                    Ok(format!("{}({})", m, callee_str))
+                } else {
+                    Ok(format!("{}({}, {})", m, callee_str, arg_strs.join(", ")))
+                }
+            }
+            None => {
+                let mut cast_params = vec!["void*".to_string()];
+                cast_params.extend(param_tys.iter().cloned());
+                let cast_params_str = cast_params.join(", ");
+                let mut all_args = vec![format!("((NovaClosBase*)({}))->env", callee_str)];
+                all_args.extend(arg_strs.iter().cloned());
+                Ok(format!("(({ret}(*)({params}))(((NovaClosBase*)({n}))->fn))({args})",
+                    ret = ret_ty,
+                    params = cast_params_str,
+                    n = callee_str,
+                    args = all_args.join(", ")))
+            }
+        }
+    }
+
     fn return_type_c(&self, f: &FnDecl) -> Result<String, String> {
         match &f.return_type {
             Some(ty) => self.type_ref_to_c(ty),
@@ -16000,7 +16043,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
         }
         // Register fn-typed return signature for closure binding propagation
-        if let Some(TypeRef::Func { params: fp, return_type, .. }) = &f.return_type {
+        // [fix M-fn-newtype-return-position-broken, №53]: `resolve_fn_typeref`
+        // ALSO recognizes a newtype-over-fn/alias-of-fn RETURN type here (e.g.
+        // `fn make() -> Handler`), not just a literal `fn(...) -> ...` return —
+        // the pre-existing guard below only matched the literal `Func` shape,
+        // so `fn_returns_fn_sig` (consulted by the let-binding propagation at
+        // ~line 30058 AND by the chain-call dispatch in `emit_call`/
+        // `infer_call_ret_c` added by this fix) never got an entry for a
+        // fn-newtype-returning fn — root cause of forms (а)/(б)/(в).
+        if let Some(TypeRef::Func { params: fp, return_type, .. }) = f.return_type.as_ref()
+            .and_then(|rt| self.resolve_fn_typeref(rt))
+        {
             // Plan 70 PhaseA1.2: strict mode — return-fn signature lowering.
             // fn-returning-fn (HOF that returns closure): translate params + return
             // through type_ref_to_c. Fail = invalid generic/missing type = compiler bug.
@@ -36506,6 +36559,68 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
         }
 
+        // [fix M-fn-newtype-return-position-broken, №53, форма (г)]: `@(v)` —
+        // calling the RECEIVER ITSELF inside a method on a fn-newtype type
+        // (`fn Fmt1 @twice(v int) -> str => "${@(v)}"`). Parser lowers bare
+        // `@` to `ExprKind::SelfAccess` (NOT `Ident("self")` — that form is
+        // the explicit `self` keyword, a distinct AST shape, see the
+        // `ExprKind::Ident` "self" arm in `emit_expr`). `current_receiver_type`
+        // resolving through `fn_newtype_sigs` means the receiver value IS the
+        // callable — dispatch it exactly like a `fn_param_sigs`-registered
+        // Ident below. `receiver_c_type`'s generic fallback (~line 18793)
+        // ALWAYS wraps a "other"-bucket receiver in an extra `Nova_X*` pointer
+        // — for a fn-newtype whose OWN value representation is already the
+        // bare `void*` (`type_aliases[X] == "void*"`, D52-амендмент), that
+        // makes `nova_self`'s C type `Nova_X*` = `void**` (pointer TO the
+        // callable, not the callable itself) — `(*nova_self)` dereferences
+        // one level to reach the actual `NovaClosBase*`-shaped value.
+        if matches!(func.kind, ExprKind::SelfAccess) {
+            if let Some(recv_ty) = self.current_receiver_type.clone() {
+                if let Some(TypeRef::Func { params: fp, return_type, .. }) =
+                    self.fn_newtype_sigs.get(recv_ty.as_str()).cloned()
+                {
+                    let param_tys: Vec<String> = fp.iter()
+                        .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
+                        .collect();
+                    let ret_ty = match &return_type {
+                        Some(rt) => self.type_ref_to_c(rt).unwrap_or_else(|_| "nova_int".into()),
+                        None => "nova_unit".to_string(),
+                    };
+                    return self.emit_clos_call_dispatch("(*nova_self)", &param_tys, &ret_ty, args);
+                }
+            }
+        }
+        // [fix M-fn-newtype-return-position-broken, №53, форма (а)/(в)]:
+        // `f(...)(...)` — calling the RESULT of a call whose callee names a
+        // top-level fn carrying a REGISTERED HOF-return signature
+        // (`fn_returns_fn_sig`, pre-scanned in `emit_fn_forward_decl` via
+        // `resolve_fn_typeref` — covers both a literal `-> fn(...)->...`
+        // return AND a `-> Handler`-shaped fn-newtype/alias return). Anything
+        // else (`fn_returns_fn_sig` miss) falls through unchanged to the
+        // pre-existing dispatch below (byte-identical elsewhere).
+        if let ExprKind::Call { func: inner_func, .. } = &func.kind {
+            let inner_func_uw = inner_func.unwrap_turbofish();
+            let inner_name: Option<String> = match &inner_func_uw.kind {
+                ExprKind::Ident(n) => Some(n.clone()),
+                ExprKind::Path(parts) if parts.len() == 1 => parts.first().cloned(),
+                _ => None,
+            };
+            if let Some((param_tys, ret_ty)) = inner_name
+                .and_then(|n| self.fn_returns_fn_sig.get(n.as_str()).cloned())
+            {
+                // Hoist to a temp — `emit_clos_call_dispatch`'s expansion reads
+                // the callee text TWICE (once for `->fn`, once for `->env`);
+                // for a plain Ident that is harmless (re-reading a variable),
+                // but `func` here is itself a CALL expression — inlining it
+                // verbatim would invoke the inner call (`make()`/`mw(h)`)
+                // twice per outer call.
+                let callee_val = self.emit_expr(func)?;
+                let tmp = self.fresh_tmp();
+                self.line(&format!("void* {} = (void*)({});", tmp, callee_val));
+                return self.emit_clos_call_dispatch(&tmp, &param_tys, &ret_ty, args);
+            }
+        }
+
         // Mangle user-defined function calls: `foo(...)` → `nova_fn_foo(...)`
         // But variant constructors: `Circle(r)` → `nova_make_Shape_Circle(r)`
         // And effect operations: `Counter.next()` → `Nova_Counter_next()`
@@ -39617,7 +39732,26 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     if is_self_ref {
                         let recv_ty = recv_ty_opt.unwrap();
                         let obj_c = self.emit_expr(obj)?;
-                        let mut arg_strs = vec![format!("((Nova_{}*)({}))", recv_ty, obj_c)];
+                        // [fix M-fn-newtype-return-position-broken, №53]: this cast
+                        // assumes the "value" and "receiver" C representations of
+                        // `recv_ty` are IDENTICAL (true for a heap record — both
+                        // `Nova_X*`), so reinterpreting `obj_c` (already `Nova_X*`-
+                        // shaped, since it's ANOTHER void*-erased value of the SAME
+                        // type) as the receiver pointer is a no-op cast. For a
+                        // fn-newtype, they are NOT identical — the value IS a bare
+                        // `void*` (the callable itself) but `receiver_c_type`'s
+                        // generic fallback wraps it in an EXTRA pointer
+                        // (`Nova_X*` == `void**`) for the receiver ABI — so `obj_c`
+                        // must be hoisted to an addressable temp and its ADDRESS
+                        // passed, not reinterpreted in place.
+                        let recv_arg = if self.fn_newtype_sigs.contains_key(recv_ty.as_str()) {
+                            let tmp = self.fresh_tmp();
+                            self.line(&format!("void* {} = (void*)({});", tmp, obj_c));
+                            format!("(&{})", tmp)
+                        } else {
+                            format!("((Nova_{}*)({}))", recv_ty, obj_c)
+                        };
+                        let mut arg_strs = vec![recv_arg];
                         for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
                         return Ok(format!("Nova_{}_method_{}({})", recv_ty, method_str, arg_strs.join(", ")));
                     }
@@ -53879,6 +54013,43 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// (2485 строк × 2) в channel-6q и в финальном legacy-match Call-арме;
     /// оба сайта теперь зовут этот хелпер.
     fn infer_call_ret_c(&self, expr: &Expr, func: &Expr, args: &[CallArg]) -> String {
+                    // [fix M-fn-newtype-return-position-broken, №53, форма (а)/(в)]:
+                    // `f(...)(...)` — THIS call's callee is itself a call to a
+                    // named top-level fn whose return type resolves (possibly
+                    // through a fn-newtype/alias — `fn_returns_fn_sig`, pre-scanned
+                    // in `emit_fn_forward_decl` via `resolve_fn_typeref`) to a
+                    // fn-type. Structural guard first — `func.kind` is `Call`
+                    // here, which none of the Member/Path arms below ever match,
+                    // so this cannot mask any existing branch (byte-identical
+                    // when `func` isn't itself a call, or the inner callee isn't
+                    // a registered HOF-returning fn).
+                    if let ExprKind::Call { func: inner_func, .. } = &func.kind {
+                        let inner_func = inner_func.unwrap_turbofish();
+                        let inner_name: Option<&String> = match &inner_func.kind {
+                            ExprKind::Ident(n) => Some(n),
+                            ExprKind::Path(parts) if parts.len() == 1 => parts.first(),
+                            _ => None,
+                        };
+                        if let Some((_, ret_c)) = inner_name.and_then(|n| self.fn_returns_fn_sig.get(n.as_str())) {
+                            return ret_c.clone();
+                        }
+                    }
+                    // [fix M-fn-newtype-return-position-broken, №53, форма (г)]:
+                    // `@(v)` — the callee is the receiver ITSELF, inside a method
+                    // on a fn-newtype type (`fn Fmt1 @twice(v int) -> str =>
+                    // "${@(v)}"`) — the receiver value IS the callable; its return
+                    // C-type is the fn-newtype's underlying `Func` return type
+                    // (`fn_newtype_sigs`, same D52-амендмент pre-scan).
+                    if matches!(func.kind, ExprKind::SelfAccess) {
+                        if let Some(recv_ty) = &self.current_receiver_type {
+                            if let Some(TypeRef::Func { return_type, .. }) = self.fn_newtype_sigs.get(recv_ty.as_str()) {
+                                return match return_type.as_ref() {
+                                    Some(rt) => self.type_ref_to_c(rt).unwrap_or_else(|_| "nova_int".into()),
+                                    None => "nova_unit".to_string(),
+                                };
+                            }
+                        }
+                    }
                     // [M-176-xmod-payload-variant-ctor]: a nullary-variant method
                     // chain collapsed into a flat 3-part Path — rewrite to the
                     // Member form and re-enter so the (collision/generic-aware)
