@@ -7141,6 +7141,19 @@ impl<'a> TypeCheckCtx<'a> {
                     self.f1_check_assign_let(
                         &d.value, ann, &name, d.mutable, gs, scope, errors,
                     );
+                } else if pattern_simple_name(&d.pattern).is_some() {
+                    // D246-амендмент ([M-ro-launder-via-mut-binding], Ф.1,
+                    // 2026-07-23): UNANNOTATED `let` — `mut b = a` / `ro b = a`
+                    // — has no `ann` so `f1_check_assign_let` above never runs
+                    // (its call is gated on `d.ty.is_some()`). This was the
+                    // exact gap the hole exploited (probes A/D/F/G: `mut w = v`
+                    // with no type annotation). Content-view of a bare, no-
+                    // annotation target follows the binding directly (P7).
+                    let target_content_is_mut =
+                        Self::let_target_content_is_mut(None, d.mutable);
+                    self.check_readonly_source_coerce(
+                        &d.value, target_content_is_mut, scope, errors,
+                    );
                 }
                 // Регистрируем переменную в scope: тип = аннотация, иначе
                 // inferred из RHS. 172.1.2 (let-мост): третий источник — КАНАЛ
@@ -9648,6 +9661,89 @@ impl<'a> TypeCheckCtx<'a> {
         }
     }
 
+    /// D246-амендмент ([M-ro-launder-via-mut-binding], Ф.1, 2026-07-23):
+    /// determine the L2 content-view of a `let`-binding's TARGET, combining
+    /// the explicit type modifier (if any) with the binding's own L1
+    /// mutability (P7 «bare `ro x` = freeze» / bare `mut x` under a
+    /// no-modifier type = mut content-view). Shared between the annotated
+    /// path (`f1_check_assign_let`) and the unannotated path (`f1_stmt`
+    /// `Stmt::Let` — `mut b = a` with no `ann`).
+    fn let_target_content_is_mut(ann: Option<&TypeRef>, binding_mut: bool) -> bool {
+        match ann {
+            Some(a) if a.is_readonly() => false,
+            Some(a) if a.is_mut() => true,
+            _ => binding_mut,
+        }
+    }
+
+    /// D246-амендмент ([M-ro-launder-via-mut-binding], Ф.1, 2026-07-23):
+    /// a `ro`-source (either L2 — `value`'s inferred type carries an
+    /// explicit `ro T` modifier, OR L1 — `value` is a bare `Ident` bound
+    /// through `ro_binding_names`: explicit `ro x = ...` local OR a
+    /// non-`mut`/non-`consume` parameter, D176 default, P7 freeze) coerced
+    /// into a mutable content-view TARGET is unsound: a write through the
+    /// new mut-binding is visible to the original ro-bound name/param
+    /// (P7 declares the freeze, but it did not survive re-binding before
+    /// this fix — the exact hole `[M-ro-launder-via-mut-binding]` closes).
+    /// Norm is STRICT (owner decision 2026-07-23, reaffirmed 2026-07-23 —
+    /// "всё ❌ кроме `.clone()`"): applies to EVERY storage class and EVERY
+    /// type, no exemption AT ALL — including bare scalar primitives (`int`
+    /// loop-counter copies etc). An earlier revision of this fn carried a
+    /// PROVISIONAL scalar-primitive exemption (spike finding: ~700 hits in
+    /// `std/src` alone are harmless `mut i = n` scalar copies) — REMOVED
+    /// per explicit owner reaffirmation; see the Ф.0/report note in
+    /// `docs/plans/224-ro-launder-l1-coercion.md` for the measured volume
+    /// this uncovers and the open migration-scale question it raises.
+    fn check_readonly_source_coerce(
+        &self,
+        value: &Expr,
+        target_content_is_mut: bool,
+        scope: &HashMap<String, TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        if !target_content_is_mut {
+            return;
+        }
+        // L2 axis (existing, Plan 147 Ф.3): value's inferred TYPE carries an
+        // explicit `ro T` modifier.
+        if let Some(value_ty) = self.infer_expr_type(value, scope) {
+            if value_ty.is_readonly() {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_READONLY_COERCE] cannot coerce `readonly {}` to `{}`: \
+                         removing readonly is not allowed. Use `.clone()` (D230) to \
+                         get a mutable copy.",
+                        typeref_display(value_ty.strip_readonly()),
+                        if target_content_is_mut { "mut" } else { "ro" },
+                    ),
+                    value.span,
+                ));
+                return;
+            }
+        }
+        // L1 axis (D246-амендмент, [M-ro-launder-via-mut-binding]): value is
+        // a bare identifier bound through a `ro` BINDING (local or param),
+        // independent of its type's own L2 modifier.
+        if let ExprKind::Ident(name) = &value.kind {
+            if self.ro_binding_names.borrow().contains(name) {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_READONLY_COERCE] источник `{name}` связан как `ro` (L1-binding \
+                         — явный `ro {name} = ...` либо параметр без `mut`, D176-дефолт, \
+                         P7 freeze), но присваивается в mutable content-view: запись через \
+                         новый mut-binding была бы видна оригиналу/вызывающему (D246-\
+                         амендмент, [M-ro-launder-via-mut-binding], Ф.1). Решения: \
+                         (a) объяви `{name}` как `mut` с самого начала, если он должен быть \
+                         мутируемым; (b) скопируй явно — `.clone()` (D230) — если нужна \
+                         независимая mutable-копия; (c) оставь цель тоже `ro`, если запись \
+                         не нужна."
+                    ),
+                    value.span,
+                ));
+            }
+        }
+    }
+
     /// Ф.1: проверить `let <name> <ann> = <value>` на совместимость.
     fn f1_check_assign_let(
         &self,
@@ -9728,30 +9824,12 @@ impl<'a> TypeCheckCtx<'a> {
         // into a ro content-view it is OK. This makes the oracle row-D split
         // work: `-> ro Value` then `ro a Value = f()` ✅ (target frozen by the
         // `ro` binding) vs `mut a Value = f()` ❌ (mut content-view).
-        let target_content_is_mut = if ann.is_readonly() {
-            false
-        } else if ann.is_mut() {
-            true
-        } else {
-            // bare value/record type — content-view follows the binding (P7).
-            binding_mut
-        };
-        if target_content_is_mut {
-            if let Some(value_ty) = self.infer_expr_type(value, scope) {
-                if value_ty.is_readonly() {
-                    errors.push(Diagnostic::new(
-                        format!(
-                            "[E_READONLY_COERCE] cannot coerce `readonly {}` to `{}`: \
-                             removing readonly is not allowed. Use `.to_owned()` to \
-                             get a mutable copy.",
-                            typeref_display(value_ty.strip_readonly()),
-                            typeref_display(ann),
-                        ),
-                        value.span,
-                    ));
-                }
-            }
-        }
+        let target_content_is_mut = Self::let_target_content_is_mut(Some(ann), binding_mut);
+        // D246-амендмент ([M-ro-launder-via-mut-binding], Ф.1): checks BOTH
+        // the L2 axis (value_ty.is_readonly()) and the L1 axis (value is a
+        // bare Ident bound through `ro_binding_names`) — see the shared
+        // helper's doc comment above for the full rationale.
+        self.check_readonly_source_coerce(value, target_content_is_mut, scope, errors);
     }
 
     // ── Plan 124.2 (D221): pattern destructure priv-field check ───────────
@@ -27729,6 +27807,26 @@ struct ConsumeRegistry {
     /// Plan 108.1 followup: `(receiver_type, method_name)` → indices of
     /// `mut`-params.  Parallel free-fn `fn_mut_params`.
     method_mut_params: HashMap<(String, String), Vec<usize>>,
+    /// D246-амендмент ([M-ro-launder-via-mut-binding], Ф.1, 2026-07-23):
+    /// free-fn names with ≥2 declarations (D326 param-mode overload —
+    /// `fn f(x T)` / `fn f(mut x T)` / `fn f(consume x T)`, same name).
+    /// `fn_mut_params`/`method_mut_params` are keyed by NAME ONLY (last-decl-
+    /// wins per-name, a pre-existing imprecision — see their field docs'
+    /// "overload-imprecise" note) — for an overloaded name they conflate ALL
+    /// modes into one mut_idx set. Since D326 mode-overload DISPATCHES an
+    /// `ro`-bound arg to the RO overload (not the mut one — see
+    /// `d326_mode_overload_axis.nv`), firing the (new, Ф.1-widened) L1-ro
+    /// coerce-check against the CONFLATED mut_idx set is a false positive on
+    /// every overloaded name. Call-sites `check_readonly_coerce_args` are
+    /// skipped entirely for names in this set (both L1 AND the pre-existing
+    /// L2 check — a narrow, sound-preserving pull-back: false-negative on a
+    /// genuinely-overloaded name's own mut arm is preferable to breaking the
+    /// mode-overload language feature itself).
+    fn_overload_names: HashSet<String>,
+    /// Method sibling of `fn_overload_names` — `(receiver_type, method_name)`
+    /// with ≥2 declarations (covers the receiver-mode-overload combo too,
+    /// e.g. `fn T @combo(x T)` / `fn T mut @combo(mut x T)`).
+    method_overload_names: HashSet<(String, String)>,
     /// **Plan 118.5 V2 [M-118.5-arg-coerce-unsafe] (2026-06-04):** free-fn
     /// name → indices of params that are NOT `unsafe T` typed (their type
     /// has no outer Unsafe wrapper before any Pointer). Used at call sites:
@@ -27928,6 +28026,12 @@ impl ConsumeRegistry {
         // Plan 108.1 followup: mut-params indices for E_READONLY_COERCE.
         let mut fn_mut_params: HashMap<String, Vec<usize>> = HashMap::new();
         let mut method_mut_params: HashMap<(String, String), Vec<usize>> = HashMap::new();
+        // D246-амендмент ([M-ro-launder-via-mut-binding], Ф.1): count EVERY
+        // declaration per name (all param-modes) so overloaded names (≥2)
+        // can be excluded from the name-keyed mut-coerce check below — see
+        // `fn_overload_names` field doc for the false-positive it prevents.
+        let mut fn_decl_counts: HashMap<String, usize> = HashMap::new();
+        let mut method_decl_counts: HashMap<(String, String), usize> = HashMap::new();
         // Plan 118.5 V2 [M-118.5-arg-coerce-unsafe]: non-unsafe-T params
         // indices (positions where param's outer wrapper is NOT Unsafe).
         let mut fn_non_unsafe_params: HashMap<String, Vec<usize>> = HashMap::new();
@@ -28099,6 +28203,11 @@ impl ConsumeRegistry {
                     .collect();
                 match &fd.receiver {
                     Some(r) => {
+                        // D246-амендмент ([M-ro-launder-via-mut-binding], Ф.1):
+                        // count this (type,method) declaration — ANY mode.
+                        *method_decl_counts
+                            .entry((r.type_name.clone(), fd.name.clone()))
+                            .or_insert(0) += 1;
                         if r.consume {
                             methods.insert((r.type_name.clone(), fd.name.clone()));
                         }
@@ -28173,6 +28282,9 @@ impl ConsumeRegistry {
                         }
                     }
                     None => {
+                        // D246-амендмент ([M-ro-launder-via-mut-binding], Ф.1):
+                        // count this free-fn declaration — ANY mode.
+                        *fn_decl_counts.entry(fd.name.clone()).or_insert(0) += 1;
                         if !consume_idx.is_empty() {
                             fn_params.insert(fd.name.clone(), consume_idx);
                         }
@@ -28263,11 +28375,24 @@ impl ConsumeRegistry {
             })
             .collect();
 
+        // D246-амендмент ([M-ro-launder-via-mut-binding], Ф.1): names with
+        // ≥2 declarations — see `fn_overload_names`/`method_overload_names`
+        // field docs.
+        let fn_overload_names: HashSet<String> = fn_decl_counts.into_iter()
+            .filter(|&(_, n)| n > 1)
+            .map(|(name, _)| name)
+            .collect();
+        let method_overload_names: HashSet<(String, String)> = method_decl_counts.into_iter()
+            .filter(|&(_, n)| n > 1)
+            .map(|(key, _)| key)
+            .collect();
+
         ConsumeRegistry {
             methods, fn_params, method_params, fn_return_types, recv_returning,
             fn_view_params, method_return_types, mut_methods, ro_methods,
             mut_methods_arity, ro_methods_arity, recv_returning_arity,
             fn_mut_params, method_mut_params,
+            fn_overload_names, method_overload_names,
             fn_non_unsafe_params, method_non_unsafe_params,
             record_consume_fields, record_field_names, record_field_types,
             unwrapped_method_return_types, unwrapped_fn_return_types,
@@ -30280,8 +30405,17 @@ fn check_consume(module: &Module, errors: &mut Vec<Diagnostic>) {
                     if p.ty.outer_unsafe_before_pointer() {
                         ctx.unsafe_t_locals.insert(p.name.clone());
                     }
-                    // Plan 108.1 followup: track readonly-annotated params.
-                    if matches!(&p.ty, TypeRef::Readonly(..)) {
+                    // Plan 108.1 followup: track readonly-annotated params (L2 —
+                    // explicit `ro T` type-modifier).
+                    // D246-амендмент ([M-ro-launder-via-mut-binding], Ф.1,
+                    // 2026-07-23): ТАКЖЕ track L1-ro params — non-mut, non-consume
+                    // (D176 default: bare `v T` ≡ `ro v T`, P7 freeze). Норма
+                    // СТРОГАЯ (владелец, без послаблений по классу хранения):
+                    // передача L1-ro источника в `mut`-параметр другой функции —
+                    // тот же класс sound-subtyping нарушения (E_READONLY_COERCE),
+                    // просто ось L1 вместо L2. Закрывает H/I формы отмывания
+                    // (аргумент без промежуточного mut-биндинга).
+                    if matches!(&p.ty, TypeRef::Readonly(..)) || !effective_mut {
                         ctx.readonly_locals.insert(p.name.clone());
                     }
                     // Consume-волна А (D157-амендмент): `Option[T]`/`Result[T,E]`
@@ -30678,17 +30812,20 @@ fn check_readonly_coerce_args(
                 if ctx.readonly_locals.contains(name) {
                     errors.push(Diagnostic::new(
                         format!(
-                            "[E_READONLY_COERCE] аргумент `{}` имеет тип `readonly T`, но \
-                             передаётся в `mut`-параметр — нарушение sound subtyping (D176, \
-                             Plan 108.1 followup).  readonly binding гарантирует immutability \
-                             у caller'а; передача в mut позволила бы callee'у мутировать.",
+                            "[E_READONLY_COERCE] аргумент `{}` связан как readonly — либо \
+                             явный тип `ro T` (L2), либо `ro`-binding/параметр без `mut` \
+                             (L1, D176-дефолт, P7 freeze) — но передаётся в `mut`-параметр: \
+                             нарушение sound subtyping (D176/D246-амендмент \
+                             [M-ro-launder-via-mut-binding], Plan 108.1 followup). readonly \
+                             источник гарантирует immutability у caller'а; передача в mut \
+                             позволила бы callee'у мутировать значение, видимое caller'у.",
                             name),
                         arg.span,
                     ).with_note(
-                        "решения: (a) убрать `readonly` annotation у source binding'а \
-                         (если значение действительно мутируемое); (b) сделать callee-param \
-                         non-mut (default readonly) или `readonly`; (c) скопировать значение \
-                         в новый mutable binding перед передачей."
+                        "решения: (a) сделать source-binding `mut` с самого начала, если он \
+                         должен быть мутируемым; (b) скопировать явно — `.clone()` (D230) — \
+                         если нужна независимая mutable-копия; (c) сделать callee-param \
+                         non-mut (default readonly) или явный `ro T`."
                             .to_string(),
                     ));
                 }
@@ -31028,12 +31165,20 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
                     ctx.local_mut.insert(n.clone(), outer_effective_mut || *pat_mut);
                 }
             }
-            // Plan 108.1 followup: track readonly-annotated locals.
-            // `let view readonly T = ...` → readonly_locals.contains("view").
+            // Plan 108.1 followup: track readonly-annotated locals (L2 —
+            // explicit `ro T` type-modifier). `let view readonly T = ...` →
+            // readonly_locals.contains("view").
+            // D246-амендмент ([M-ro-launder-via-mut-binding], Ф.1, 2026-07-23):
+            // ТАКЖЕ track L1-ro locals — bare `ro name = ...` binding (P7
+            // freeze), per-name via `ctx.local_mut` (already populated above,
+            // handles tuple-destructure `let (mut a, b) = ...` correctly).
+            // Норма СТРОГАЯ: передача такого local'а в `mut`-параметр другой
+            // функции (H/I формы) — тот же класс нарушения, что L2.
             let is_readonly_annotated = matches!(&decl.ty, Some(TypeRef::Readonly(..)));
-            if is_readonly_annotated {
-                for n in &names {
-                    if n != "_" {
+            for n in &names {
+                if n != "_" {
+                    let is_mut_binding = ctx.local_mut.get(n).copied().unwrap_or(true);
+                    if is_readonly_annotated || !is_mut_binding {
                         ctx.readonly_locals.insert(n.clone());
                     }
                 }
@@ -32898,7 +33043,13 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                             if let Some(mut_idxs) = ctx.reg
                                 .method_mut_params.get(&(ty.clone(), method.clone())).cloned()
                             {
-                                check_readonly_coerce_args(ctx, args, &mut_idxs, errors);
+                                // D246-амендмент ([M-ro-launder-via-mut-binding],
+                                // Ф.1): skip name-conflated overloaded methods —
+                                // see `method_overload_names` field doc (D326
+                                // mode-overload false-positive).
+                                if !ctx.reg.method_overload_names.contains(&(ty.clone(), method.clone())) {
+                                    check_readonly_coerce_args(ctx, args, &mut_idxs, errors);
+                                }
                             }
                             // Plan 118.5 V2 [M-118.5-arg-coerce-unsafe]:
                             // E_UNSAFE_ARG_REQUIRES_WRAP — передача unsafe-T-
@@ -33011,7 +33162,13 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                     // Plan 108.1 followup ([M-108.1-readonly-to-explicit-mut-coerce]):
                     // E_READONLY_COERCE — передача readonly-binding в mut-param.
                     if let Some(mut_idxs) = ctx.reg.fn_mut_params.get(fname.as_str()).cloned() {
-                        check_readonly_coerce_args(ctx, args, &mut_idxs, errors);
+                        // D246-амендмент ([M-ro-launder-via-mut-binding], Ф.1):
+                        // skip name-conflated overloaded free-fns — see
+                        // `fn_overload_names` field doc (D326 mode-overload
+                        // false-positive).
+                        if !ctx.reg.fn_overload_names.contains(fname.as_str()) {
+                            check_readonly_coerce_args(ctx, args, &mut_idxs, errors);
+                        }
                     }
                     // Plan 118.5 V2 [M-118.5-arg-coerce-unsafe]:
                     // E_UNSAFE_ARG_REQUIRES_WRAP — передача unsafe-T-binding

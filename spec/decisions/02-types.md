@@ -10250,6 +10250,11 @@ pointer-mut в типе vs pointee-mut), особенно в return-позици
 > **Status:** ✅ FULLY IMPLEMENTED. Ф.1-Ф.6 LANDED 2026-06-12 (Plan 147).
 > **AMENDED Ф.7** 2026-06-17 (Plan 147 Ф.7): checker enforcement gaps closed —
 > ro-binding + param index-freeze (`E_READONLY_CONTENT`), redundant modifier oracle.
+> **AMENDED 2026-07-23** ([M-ro-launder-via-mut-binding], [Plan 224](../../docs/plans/224-ro-launder-l1-coercion.md)):
+> closes the L1×L2-cross-binding coercion gap — §«P8 AMEND (2026-07-23)» below
+> **RETRACTS** the old P8 prose («coercion по оси content (L2), независимо от
+> L1»); see the new §«Таблица конверсий между binding'ами (L1,L2)источник →
+> (L1,L2)цель»** and ORACLE rows **G/H**.
 > Реализация — [Plan 147](../../docs/plans/147-pointer-mut-flip-scan-model.md)
 > (Ф.2 parser / Ф.3 checker / Ф.4 migration / Ф.5 tests / Ф.7 enforcement).
 > **Supersedes** flip-scan-draft (отклонён). **Восстанавливает** D216 §V2.6
@@ -10369,9 +10374,24 @@ mutable-у-mut-binding (D175).
    `mut r ro Point` (reassign✅/content❌). Разрешает `[M-138-binding-type-mut-conflict]`.
 7. **P7 — голый `ro r` = freeze** (binding dominates, D175 §V2): и reassign, и весь
    owned-граф (до стены на `*`).
-8. **P8 — coercion по оси content (L2), независимо от L1.** ro-источник →
-   mut-content-цель = `E_READONLY_COERCE`; → ro-цель OK. `*mut T → *T` авто-сужение;
-   `*T → *mut T` ❌.
+8. **P8 — coercion по оси content (L2) — ~~независимо от L1~~ RETRACTED
+   2026-07-23 ([M-ro-launder-via-mut-binding]).** ro-источник → mut-content-цель =
+   `E_READONLY_COERCE`; → ro-цель OK. `*mut T → *T` авто-сужение; `*T → *mut T` ❌.
+   **AMEND:** это верно для L2 (тип-модификатор `ro T`), но старая формулировка
+   «независимо от L1» была ДЫРОЙ, не намерением — она разрешала L1-ro источнику
+   (голый `ro a = …` биндинг ЛИБО параметр по D176-дефолту, P7 freeze) свободно
+   затекать в mut-цель при смене биндинга, потому что coercion проверялся
+   ТОЛЬКО по типу источника (L2), никогда по биндингу источника (L1). P7
+   декларирует заморозку («голый `ro r` = freeze: и reassign, и весь owned-граф»),
+   но заморозка не переживала ре-биндинг/передачу аргументом — сама P7 не
+   спорна, спорной была P8, читавшая её как «L1 источника не участвует в
+   coercion». **Исправленная норма:** coercion учитывает L1 ОБЕИХ сторон —
+   источника И цели, не только цели. Полная таблица — §«Таблица конверсий
+   между binding'ами» ниже; норма СТРОГАЯ (владелец, 2026-07-23): применяется
+   ко ВСЕМ типам без исключения по классу хранения (см. эту секцию — проба G
+   опровергла «value-тип ⇒ безопасно») И БЕЗ исключения для скалярных
+   примитивов (`int`/`bool`/…) — санкционированная дверь для независимой
+   копии ЛЮБОГО типа — явный `.clone()` (D230).
 9. **P9 — deep-immutable НЕ навязывается снаружи сквозь `*mut`** (trade-off): `-> ro VR`
    морозит свои слоты, но `unsafe{*v.p=w}` проходит (L2 не лезет за `*`). Deep-ro →
    **производитель** объявляет поле `*T` (как `str { ptr *u8 }`).
@@ -10413,6 +10433,67 @@ co-handle'ам; `ro` = это имя не пишет).
 > `Nova_Vec_static_new()` → NULL → SEGFAULT. Граница `[M-138-vec-pointer-element-mono]` (Plan 138), P2.
 > `Option[*mut T]: Some(p)→*p=v` работает (проверено e7_option_mut_ptr_deref_write).
 
+**G. CROSS-BINDING re-init (AMEND 2026-07-23, [M-ro-launder-via-mut-binding];
+letter `G` continues past the headed `#### ORACLE F` below to avoid a
+letter-collision):**
+`ro a = [1,2,3]; mut b = a; b[0]=99` → `E_READONLY_COERCE` на `mut b = a` (source
+`a` — L1-ro bare binding, P7 freeze; target `b` — mut content-view; write через
+`b` была бы видна `a`). Применяется независимо от storage-класса `T` — включая
+value-record с кучевым полем (`ServerResponse { headers HeaderMap, body []u8 }`
+→ `mut resp = r; resp.header(..)` пишет в `HeaderMap` вызывающего) и скаляры
+(`fn f(n int) { mut m = n }` — ТОЖЕ `E_READONLY_COERCE`, норма без исключений
+по классу типа, включая примитивы). Дверь: `mut b = a.clone()` (D230) для
+независимой копии, либо сделай источник `mut` с самого начала, если copy
+не нужна.
+
+**H. CROSS-BINDING call-argument (AMEND 2026-07-23):** тот же класс без
+промежуточного re-init — аргумент напрямую: `fn outer(v []int) { fill(v) }`
+при `fn fill(mut v []int)` → `E_READONLY_COERCE` на `fill(v)` (`v` — L1-ro
+параметр `outer`-а по D176-дефолту, П7 freeze, передаётся в `mut`-параметр
+`fill`). Тот же результат для `ro a = [..]; fill(a)` (ro-локал). Применяется
+для методов симметрично (`recv.method(arg)` где `arg` L1-ro → `mut`-параметр
+метода). **Исключение (checker precision, не норма):** имена, перегруженные
+по оси режима {ro,mut,consume} (D326-ревизия, Р13/Р14 — `fn f(x T)` /
+`fn f(mut x T)` / `fn f(consume x T)` под одним именем) НЕ проверяются этим
+правилом — dispatch резолвит КОНКРЕТНЫЙ overload по режиму аргумента (ro-арг
+→ ro-overload), так что L1-ro аргумент, дошедший до overloaded-имени с
+mut-веткой где-то среди перегрузок, не обязательно течёт в НЕЁ; текущая
+registry-инфраструктура (`fn_mut_params`/`method_mut_params`) хранит mut-idx
+по ИМЕНИ (все перегрузки конфлированы), поэтому прецизионная проверка
+per-overload — Ф.1-followup, не в этом амендменте.
+
+### Таблица конверсий между binding'ами (L1,L2)источник → (L1,L2)цель
+
+**НОВОЕ 2026-07-23** ([M-ro-launder-via-mut-binding]) — до этого амендмента
+D246 описывал ТОЛЬКО права доступа ВНУТРИ одного биндинга (таблицы
+binding×content/параметры/указатели выше); перенос значения МЕЖДУ
+биндингами (инициализация нового binding'а · аргумент вызова · возврат) был
+свёрнут в одну строку P8, покрывавшую только L2 (тип-модификатор) — L1
+(биндинг источника) не проверялся ВООБЩЕ. Ниже — полная таблица; применяется
+одинаково к ВСЕМ ТРЁМ позициям (инициализация · аргумент · возврат) и ко ВСЕМ
+типам (без исключения по классу хранения/скалярности — владелец 2026-07-23:
+классовое послабление снято, проба G этой секции доказала «value-тип ≠
+безопасно», а скаляр — тот же принцип единообразия без предиката класса).
+
+| Источник (L1 биндинга) | → цель с mut content-view (L2) | → цель с ro content-view (L2) |
+|---|---|---|
+| `mut` (reassignable, любой L2 у источника) | ✅ | ✅ (сужение прав, D176) |
+| **голый `ro`** (P7 freeze — явный `ro a = …` ЛИБО параметр по D176-дефолту, БЕЗ явного `mut T` split) | ❌ `E_READONLY_COERCE` | ✅ |
+| split `ro a mut T` (L1 ro, L2 mut явно) | ❌ `E_READONLY_COERCE`¹ | ✅ |
+
+> ¹ Split-источник (`ro a mut T`) уже разрешает запись НАПРЯМУЮ через `a`
+> (`a.x=v` ✅, P6/R2-split) — поэтому перенос в mut-цель НЕ добавляет новых
+> прав записи по сравнению с прямой записью через `a`, но норма всё равно
+> отклоняет перенос МЕЖДУ биндингами единообразно (владелец: «параметр не
+> может быть присвоен в mut-переменную», без оговорок на split-форму);
+> прямая запись через исходный split-биндинг остаётся легальной и
+> достаточной для тех, кому нужна mutation без re-binding.
+
+L2-ro источник (`ro T` тип-модификатор) в mut-цель уже был `E_READONLY_COERCE`
+до этого амендмента (проба J/P8 старая) — без изменений, таблица выше просто
+делает явным, что L1-ось источника учитывается СИММЕТРИЧНО L2-оси источника
+(раньше проверялась только L2).
+
 ### Error codes
 
 - **`E_REDUNDANT_POINTER_RO`** (NEW, Plan 147 Ф.2) — postfix `*ro T` (избыточно:
@@ -10428,7 +10509,12 @@ co-handle'ам; `ro` = это имя не пишет).
   на `ro T`-типе ИЛИ (NEW Ф.7) через `ro`-binding (L1 dominates P7): `ro a = [...]`
   → `a[i] = x` → `E_READONLY_CONTENT`; `func(v []int)` → `v[i] = x` →
   `E_READONLY_CONTENT` (param ro-by-default D176, P7 freeze).
-- **`E_READONLY_COERCE`** (существует) — ro-content-источник → mut-content-цель (P8).
+- **`E_READONLY_COERCE`** (существует) — ro-content-источник → mut-content-цель (P8);
+  **AMENDED 2026-07-23** ([M-ro-launder-via-mut-binding]) — теперь ТАКЖЕ учитывает
+  L1-ось источника (не только L2): голый `ro`-биндинг/параметр-по-D176-дефолту →
+  mut-цель = ошибка во ВСЕХ трёх позициях (инициализация · аргумент · возврат),
+  для ВСЕХ типов без исключения (ORACLE G/H, таблица конверсий выше). Дверь для
+  независимой копии — явный `.clone()` (D230).
 
 #### ORACLE F — Index-write through ro binding/param (Ф.7, 2026-06-17)
 
@@ -10479,6 +10565,13 @@ a[1] = 99                  // ❌ E_READONLY_CONTENT (ro binding P7)
 - **D26 / Plan 139** — str lang-item `type str value priv { ptr *u8, len int }`:
   `ptr *u8` (ro-pointee, ≡ `*ro u8`); `*ro u8` избыточен → `E_REDUNDANT_POINTER_RO`.
   Снимает гейт `[M-139-f0-lang-item-decl]`.
+- **P7/P8 (AMEND 2026-07-23)** — P8's old «независимо от L1» retracted; coercion
+  now checks the SOURCE's L1 binding too, closing the gap where P7's freeze
+  ("голый `ro r` = freeze") did not survive a re-binding/argument-pass. See
+  §«Таблица конверсий между binding'ами» + ORACLE G/H above.
+- **D230** (`Clone` protocol) — the sanctioned door for an independent mutable
+  copy of an L1-ro source (`.clone()`), now load-bearing for this amendment's
+  migration (types without `Clone` need it added, or the site restructured).
 
 ### Связь
 
@@ -10487,6 +10580,9 @@ a[1] = 99                  // ❌ E_READONLY_CONTENT (ro binding P7)
   `*mut → *T`).
 - `[M-138-double-pointer-codegen-test]` — multi-level pointer (oracle C: `ro p *mut *T`).
 - Гейтит Plan 139 `[M-139-f0-lang-item-decl]`.
+- `[M-ro-launder-via-mut-binding]` (norm+checker landed 2026-07-23; migration
+  IN PROGRESS, NOT closed — see [Plan 224](../../docs/plans/224-ro-launder-l1-coercion.md)) —
+  L1-ro launder via re-binding/argument-pass.
 
 ### Acceptance
 
