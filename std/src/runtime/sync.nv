@@ -2561,6 +2561,27 @@ export extern "nova" fn Semaphore mut @release()
 #stable(since = "0.1")
 export extern "nova" fn Semaphore mut @try_acquire() -> bool
 
+/// Semaphore address bridge for `try_acquire_permit` (same value C-side
+/// `acquire()` writes into `Permit.ptr`). Module-private: opaque-newtype
+/// pointer is unreadable from .nv otherwise.
+#realtime
+extern "nova" fn Semaphore mut @ptr_as_int() -> int
+
+/// Try to acquire 1 permit without parking, returning a guard.
+///
+/// `Some(Permit)` on success — the permit auto-releases via `@cleanup` on
+/// scope exit (panic-safe: cleanup runs on unwind too, D432), same guard
+/// semantics as `acquire()`. `None` if permits are exhausted or waiters are
+/// queued (FIFO fairness, same rule as `try_acquire()`).
+///
+/// Designed for admission control (bounded accept: take slot or reject
+/// immediately) — see Semaphore doc «Connection pool capacity».
+#realtime
+#stable(since = "0.1")
+export fn Semaphore mut @try_acquire_permit() -> Option[Permit] {
+    if @try_acquire() { Some(Permit { ptr: @ptr_as_int() }) } else { None }
+}
+
 /// Try to acquire 1 permit within `timeout`. Returns `true` if acquired.
 ///
 /// Returns `false` if the timeout expires before a permit becomes available.

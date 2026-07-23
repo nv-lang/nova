@@ -228,6 +228,14 @@ static inline nova_bool Nova_Semaphore_method_try_acquire(Nova_Semaphore* s) {
     return false;
 }
 
+/* ── ptr_as_int() ──────────────────────────────────────────────────────
+ * Module-private helper for sync.nv's try_acquire_permit(): the Permit
+ * record stores the semaphore address (same value acquire() writes), and
+ * .nv code cannot read an opaque pointer newtype — this is the only bridge. */
+static inline nova_int Nova_Semaphore_method_ptr_as_int(Nova_Semaphore* s) {
+    return (nova_int)(uintptr_t)s;
+}
+
 /* ── acquire_for(Duration) ─────────────────────────────────────────────
  *
  * Attempt to acquire within timeout. Returns true if acquired, false if

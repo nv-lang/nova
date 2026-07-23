@@ -13,7 +13,7 @@
 
 module runtime.sync_test
 
-import std.runtime.sync.{MemOrdering, fence, AtomicInt, AtomicBool, AtomicI64, AtomicI32, AtomicUint, Mutex, WaitGroup, Once}
+import std.runtime.sync.{MemOrdering, fence, AtomicInt, AtomicBool, AtomicI64, AtomicI32, AtomicUint, Mutex, WaitGroup, Once, Semaphore}
 
 test "MemOrdering + fence: SeqCst fence is a no-op smoke" {
     fence(MemOrdering.SeqCst)
@@ -138,4 +138,25 @@ test "Once: call_once runs exactly once" {
     once.call_once(|| { count.fetch_add(1) })
     assert(once.is_completed())
     assert(count.load() == 1)
+}
+
+test "Semaphore: try_acquire_permit guard — Some/None + auto-release on scope exit" {
+    mut sem = Semaphore.new(1)
+    {
+        consume p = match sem.try_acquire_permit() {
+            Some(consume p) => p,
+            None => { assert(false); return },
+        }
+        assert(sem.available_permits() == 0)
+        match sem.try_acquire_permit() {
+            Some(consume p2) => { assert(false); p2.release() },
+            None => {},
+        }
+    }
+    assert(sem.available_permits() == 1)
+    match sem.try_acquire_permit() {
+        Some(consume p3) => p3.release(),
+        None => assert(false),
+    }
+    assert(sem.available_permits() == 1)
 }
