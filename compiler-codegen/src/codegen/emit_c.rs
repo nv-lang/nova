@@ -47173,6 +47173,22 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             "uint32_t"  => "uint32_t",
             "uint16_t"  => "uint16_t",
             "uint64_t"  => "uint64_t",
+            // [P67-nova-int-collapse-fix] (221.1 №18, ОКНО-3 2026-07-23):
+            // plain `int` elements (`[1, 2, 3]`) infer `first_item_ty ==
+            // "nova_int"` — the OVERWHELMINGLY common case — but "nova_int"
+            // was missing from this explicit primitive list entirely,
+            // falling through to the hint-REQUIRING branch below (which
+            // panics `[P67] nova_int collapse` when no hint is set at all,
+            // rather than gracefully defaulting). In real `.nv`-driven
+            // compiles a channel hint is apparently always populated by the
+            // time this runs (527/0 conformance never hit this), masking
+            // the gap — but two Rust unit tests constructing a bare
+            // `IntLit` array literal directly (no compile pipeline, no
+            // hint) crashed on it
+            // (`array_lit_named_tuple_box_tests::emit_array_lit_int_
+            // primitive_unchanged`/`_named_tuple_heap_box`). `nova_int`
+            // needs no hint to resolve — it IS the element type already.
+            "nova_int"  => "nova_int",
             _ => match self.current_array_elem_hint.as_deref().unwrap_or_else(|| panic!("[P67] nova_int collapse")) {
                 "nova_str"  => "nova_str",
                 "nova_bool" => "nova_bool",

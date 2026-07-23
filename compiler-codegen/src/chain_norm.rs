@@ -1193,7 +1193,7 @@ fn process(mut v []int, a int) -> () {
     fn v3_local_root_non_fluent_method_not_wrapped() {
         let src = r#"
 module testmod.v3_local_nonfluent
-fn process(ro v []int, a int, b int) -> int {
+fn process(v []int, a int, b int) -> int {
     v.compare(a).compare(b)
 }
 "#;
