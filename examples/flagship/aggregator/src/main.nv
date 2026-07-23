@@ -32,7 +32,7 @@
 //   - a manual accept LOOP (legitimately hand-rolled — `http.servernet` has no
 //     reusable accept-loop function yet, only single-shot `handle_connection`,
 //     see that module's own header) that spawns
-//     `http.servernet.handle_connection(stream, routes())` per connection;
+//     `http.servernet.handle_connection_router(stream, routes())` per connection;
 //   - EVERY endpoint is a `Router` route (`http.server`, Plan 222 — replaces
 //     the retired `ServeMux`) — routing, request
 //     parsing, response serialization, and (for `/api/events`) the SSE wire
@@ -82,7 +82,7 @@ import ./api.{build_snapshot, HandlersDto, snapshot_to_json}
 import std.net.{SocketAddr, TcpListener, real_net, mock_net}
 import std.os.{env, real_os}
 import http.server.{Router, ServerRequest, ServerResponse, StreamBody, sse_event}
-import http.servernet.{handle_connection}
+import http.serve.{handle_connection_router}
 import std.time.duration
 import std.runtime.sync.{AtomicInt}
 
@@ -297,7 +297,7 @@ fn main() Time Detach {
                                         // connection, same shape as
                                         // nova-http's own
                                         // servernet/rt/handle_connection_smoke.nv.
-                                        ro _ = handle_connection(stream, routes())
+                                        ro _ = handle_connection_router(stream, routes())
                                         ro _ = inflight.fetch_sub(1)
                                     }
                                 }
