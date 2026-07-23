@@ -18582,7 +18582,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
             ExprKind::Member { obj, .. } | ExprKind::Spawn(obj)
             | ExprKind::Try(obj) | ExprKind::Bang(obj) | ExprKind::Throw(obj)
-            | ExprKind::Interrupt(Some(obj)) => {
+            | ExprKind::Interrupt(Some(obj))
+            // [E_COALESCE_RETURN_FALLBACK]: checker always rejects `X ?? return R`
+            // before codegen; walked defensively like `Interrupt`.
+            | ExprKind::CoalesceReturnFallback(Some(obj)) => {
                 Self::collect_array_elem_typerefs_in_expr(obj, out);
             }
             ExprKind::Index { obj, index } => {
@@ -18713,6 +18716,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             | ExprKind::NullPtrLit | ExprKind::Ident(_) | ExprKind::Path(_)
             | ExprKind::SelfAccess | ExprKind::InterpolatedStr { .. }
             | ExprKind::Interrupt(None)
+            | ExprKind::CoalesceReturnFallback(None)
             | ExprKind::Lambda { .. } | ExprKind::ClosureLight { .. }
             | ExprKind::ClosureFull(_)
             | ExprKind::HandlerLit { .. } | ExprKind::ProtocolLit { .. } => {}
@@ -34502,6 +34506,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // After interrupt the code is unreachable, but emit a dummy value
                 Ok("NOVA_UNIT".into())
             }
+            // [E_COALESCE_RETURN_FALLBACK] (D86 AMEND 2026-07-23): `X ?? return R`
+            // is ALWAYS rejected by the checker (`check_coalesce_return_fallback`,
+            // types/mod.rs) before codegen runs — this arm is structurally
+            // unreachable in a successfully-checked program.
+            ExprKind::CoalesceReturnFallback(_) => Err(
+                "internal: ExprKind::CoalesceReturnFallback reached codegen — \
+                 checker must reject `?? return` before this point \
+                 (E_COALESCE_RETURN_FALLBACK)".to_string(),
+            ),
             ExprKind::Throw(value) => {
                 // D25/D65/D85: throw в expression-position. Тип never —
                 // control никогда не вернётся. Эмитируем effect-call через

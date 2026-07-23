@@ -11,7 +11,7 @@
 
 use crate::ast::{
     ArrayElem, Block, CallArg, ClosureBody, ConstDecl, ElseBranch, Expr, ExprKind, FnBody, FnDecl,
-    HandlerMethodBody, Import, Item, MatchArmBody, Module, Pattern, ReceiverKind,
+    HandlerMethodBody, Import, Item, MatchArm, MatchArmBody, Module, Pattern, ReceiverKind,
     Stmt, TypeDeclKind, TypeRef, VariantPatternKind,
 };
 use crate::diag::{byte_to_line_col, Diagnostic, Span};
@@ -1155,6 +1155,11 @@ fn collect_expr(e: &Expr, out: &mut HashSet<String>) {
         ExprKind::Coalesce(a, b) => {
             collect_expr(a, out);
             collect_expr(b, out);
+        }
+        // [E_COALESCE_RETURN_FALLBACK]: checker-rejected before this pass;
+        // walked defensively (same shape as `Interrupt`).
+        ExprKind::CoalesceReturnFallback(opt) => {
+            if let Some(i) = opt { collect_expr(i, out); }
         }
         ExprKind::Member { obj, name } => {
             collect_expr(obj, out);
@@ -2504,6 +2509,10 @@ fn walk_expr_lints(e: &Expr, out: &mut Vec<LintWarning>) {
         ExprKind::Interrupt(opt) => {
             if let Some(x) = opt { walk_expr_lints(x, out); }
         }
+        // [E_COALESCE_RETURN_FALLBACK]: checker-rejected before this pass.
+        ExprKind::CoalesceReturnFallback(opt) => {
+            if let Some(x) = opt { walk_expr_lints(x, out); }
+        }
         ExprKind::Range { start, end, .. } => {
             if let Some(s) = start { walk_expr_lints(s, out); }
             if let Some(e) = end { walk_expr_lints(e, out); }
@@ -3233,6 +3242,14 @@ pub const CONV_RULES: &[ConvRule] = &[
                   инициализатора (str/int/bool/char) — тип и так выводится (владелец \
                   2026-07-21)",
         ast: Some(conv_redundant_const_type_annotation),
+        text: None,
+    },
+    ConvRule {
+        id: "W_MANUAL_COALESCE",
+        summary: "ручной `match X { Ok(v) => v, Err(_) => D }` / `{ Some(v) => v, \
+                  None => D }` (identity-рука) — дрейф от канона `X ?? D` (D86 AMEND \
+                  2026-07-23, [M-manual-coalesce-lint-missing])",
+        ast: Some(conv_manual_coalesce),
         text: None,
     },
 ];
@@ -5547,6 +5564,226 @@ fn conv_result_discarded(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWar
                 rule: "W_RESULT_DISCARDED",
                 diag: Diagnostic::new(msg, sp),
             });
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// W_MANUAL_COALESCE (Ф.3, [M-manual-coalesce-lint-missing], D86 AMEND
+// 2026-07-23) — ручной `match X { Ok(v) => v, Err(_) => D }` / `{ Some(v) =>
+// v, None => D }` (identity-рука: рука успеха возвращает РОВНО тот
+// идентификатор, что связан в паттерне) — дрейф от канона `X ?? D`.
+//
+// НЕ ловит: `Ok(_) => false` (разный идентификатор/wildcard в руке —
+// `.is_ok()`/`.is_err()`), `Ok(v) => f(v)` (рука не идентична паттерну —
+// `.map(f) ?? d`), разные имена в паттерне и руке, guard'ы на любом арме.
+// Критично (владелец): в корпусе 189 НЕ-identity сайтов против 69 целевых —
+// эти исключения обязательны, иначе линт бесполезен (шум).
+// ---------------------------------------------------------------------------
+
+/// Успех-арм `Ok(v) => v` / `Some(v) => v` — рука в точности идентификатор,
+/// связанный в паттерне (identity). Возвращает `(is_result, bound_name)`.
+fn conv_coalesce_identity_arm(arm: &MatchArm) -> Option<(bool, &str)> {
+    let Pattern::Variant { path, kind, .. } = &arm.pattern else { return None };
+    let is_result = match path.last().map(String::as_str) {
+        Some("Ok") => true,
+        Some("Some") => false,
+        _ => return None,
+    };
+    let VariantPatternKind::Tuple { patterns, rest: false } = kind else { return None };
+    let [Pattern::Ident { name, is_mut: false, is_consume: false, .. }] = &patterns[..] else {
+        return None;
+    };
+    let body_expr: &Expr = match &arm.body {
+        MatchArmBody::Expr(be) => be,
+        MatchArmBody::Block(b) if b.stmts.is_empty() => b.trailing.as_ref()?,
+        MatchArmBody::Block(_) => return None,
+    };
+    match &body_expr.kind {
+        ExprKind::Ident(n) if n == name.as_str() => Some((is_result, name.as_str())),
+        _ => None,
+    }
+}
+
+/// Fallback-арм классифицируется по ФОРМЕ тела (та же таксономия, что D86 §
+/// «fallback может быть»): значение-подобный (включая `panic`/`throw` —
+/// обычные ВЫРАЖЕНИЯ, `??` их поддерживает без ретракции) vs `return ...`
+/// (парсер эмитит его как `Block{stmts:[Stmt::Return],trailing:None}` —
+/// `parse_match`, D19 exception для control-flow arm bodies).
+enum CoalesceFbShape<'a> {
+    /// Значение / `panic(...)` / `throw ...` — канон `X ?? D`, не задет
+    /// ретракцией (D86 form остаётся легальной).
+    Value,
+    /// `return <expr>` (или голый `return`) — Ф.2-таблица применяется.
+    Return(Option<&'a Expr>),
+}
+
+fn conv_coalesce_fb_shape(arm: &MatchArm) -> CoalesceFbShape<'_> {
+    if let MatchArmBody::Block(b) = &arm.body {
+        if b.trailing.is_none() {
+            if let [Stmt::Return { value, .. }] = b.stmts.as_slice() {
+                return CoalesceFbShape::Return(value.as_ref());
+            }
+        }
+    }
+    CoalesceFbShape::Value
+}
+
+/// `return Err(e)` где `e` — РОВНО тот идентификатор, что связан в
+/// fallback-паттерне `Err(e)` — доказывает (синтаксически, без инференса),
+/// что тип ошибки не меняется: verbatim passthrough.
+fn conv_coalesce_is_err_passthrough(ret_expr: &Expr, bound_name: &str) -> bool {
+    if let ExprKind::Call { func, args, trailing: None } = &ret_expr.kind {
+        if matches!(&func.kind, ExprKind::Ident(n) if n == "Err") {
+            if let [CallArg::Item(inner)] = &args[..] {
+                return matches!(&inner.kind, ExprKind::Ident(n) if n == bound_name);
+            }
+        }
+    }
+    false
+}
+
+/// Ф.3-адаптер decision-функции Ф.2 (`crate::types::coalesce_return_fallback_
+/// advice`) — у линта НЕТ type-checker'а (`ConvRule.ast`-хуки чисто
+/// синтаксические), поэтому carrier/E-тип не ИНФЕРИРУЮТСЯ, а СИНТЕЗИРУЮТСЯ
+/// из того, что видно в самом AST без инференса:
+/// - carrier (`Option`/`Result`) — читается напрямую из success-арма
+///   паттерна (`Ok`⟹Result, `Some`⟹Option) — 100% надёжно, это не эвристика.
+/// - return-тип функции — DECLARED `FnDecl.return_type` (синтаксис, не
+///   инференс — обычный parsed `TypeRef`).
+/// - E-тип операнда (нужен ТОЛЬКО чтобы отличить Ф.2 row2 "тот же E" от
+///   row4 "E меняется") — эвристика: `return Err(e)` verbatim passthrough
+///   ⟹ E совпадает с F return-типа (клонируем F-generic оттуда, гарантируя
+///   `typeref_equal` true); иначе — синтетический sentinel-тип, который НЕ
+///   МОЖЕТ структурно совпасть ни с одним реальным именем (гарантирует ветку
+///   `MapErr`). Это НЕ подмена типов — это МИНИМАЛЬНЫЙ носитель, достаточный
+///   для существующей decision-функции, честно документированный.
+fn conv_coalesce_advice_for_return(
+    is_result: bool,
+    fb_bound_err_name: Option<&str>,
+    ret_expr: Option<&Expr>,
+    f: &FnDecl,
+) -> crate::types::CoalesceReturnAdvice {
+    let dummy_span = crate::diag::Span::new(0, 0);
+    let ret_ty = f.return_type.clone();
+    let op_ty = if is_result {
+        let is_passthrough = match (fb_bound_err_name, ret_expr) {
+            (Some(name), Some(re)) => conv_coalesce_is_err_passthrough(re, name),
+            _ => false,
+        };
+        let err_ty = if is_passthrough {
+            ret_ty.as_ref().and_then(|rt| match rt {
+                TypeRef::Named { generics, .. } => generics.get(1).cloned(),
+                _ => None,
+            })
+        } else {
+            None
+        }
+        .unwrap_or_else(|| TypeRef::Named {
+            path: vec!["__coalesce_lint_distinct_err_sentinel__".to_string()],
+            generics: vec![],
+            span: dummy_span,
+        });
+        TypeRef::Named {
+            path: vec!["Result".to_string()],
+            generics: vec![TypeRef::Unit(dummy_span), err_ty],
+            span: dummy_span,
+        }
+    } else {
+        TypeRef::Named { path: vec!["Option".to_string()], generics: vec![], span: dummy_span }
+    };
+    crate::types::coalesce_return_fallback_advice(Some(&op_ty), ret_ty.as_ref(), &HashSet::new())
+}
+
+fn conv_manual_coalesce(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
+    for f in conv_all_fns(m) {
+        let mut hits: Vec<(Span, String, Option<crate::diag::Suggestion>)> = Vec::new();
+        conv_walk_fn(f, &mut |_, _| {}, &mut |e, _| {
+            let ExprKind::Match { arms, .. } = &e.kind else { return };
+            if arms.len() != 2 {
+                return;
+            }
+            let Some(ident_idx) = arms.iter().position(|a| conv_coalesce_identity_arm(a).is_some())
+            else {
+                return;
+            };
+            let fb_idx = 1 - ident_idx;
+            let (is_result, _bound) = conv_coalesce_identity_arm(&arms[ident_idx]).unwrap();
+            let fb_arm = &arms[fb_idx];
+            if fb_arm.guard.is_some() || arms[ident_idx].guard.is_some() {
+                return; // guard меняет семантику — не чистый coalesce
+            }
+            // Fallback-арм обязан быть ИМЕННО другой половиной суммы —
+            // иначе это не coalesce-форма вовсе (обе руки Ok, например).
+            let fb_bound_err_name: Option<&str> = match &fb_arm.pattern {
+                Pattern::Variant { path, kind, .. } => {
+                    let variant = path.last().map(String::as_str);
+                    let expected = if is_result { "Err" } else { "None" };
+                    if variant != Some(expected) {
+                        return;
+                    }
+                    if is_result {
+                        match kind {
+                            VariantPatternKind::Tuple { patterns, rest: false } => {
+                                match &patterns[..] {
+                                    [Pattern::Ident { name, .. }] => Some(name.as_str()),
+                                    [Pattern::Wildcard(_)] => None,
+                                    _ => return,
+                                }
+                            }
+                            _ => return,
+                        }
+                    } else {
+                        None
+                    }
+                }
+                _ => return,
+            };
+            let (note, suggestion) = match conv_coalesce_fb_shape(fb_arm) {
+                CoalesceFbShape::Value => (
+                    "значение-fallback (в т.ч. `panic`/`throw` — обычные выражения, \
+                     эту форму D86-ретракция не затрагивает) — канон `X ?? D`."
+                        .to_string(),
+                    None, // embed произвольного текста X/D — вне AST-only lint'а без source-map
+                ),
+                CoalesceFbShape::Return(ret_expr) => {
+                    let advice =
+                        conv_coalesce_advice_for_return(is_result, fb_bound_err_name, ret_expr, f);
+                    // МОЛЧАНИЕ (владелец, Ф.3): `glob.nv`-класс (обёртки для
+                    // проброса нет — `NoBridgeKnown`) и генерик/невыведенный
+                    // случай (`Unknown`) НЕ дрейф от канона `??` — `??` сам
+                    // не смог бы это выразить (Ф.2 отверг бы тем же путём),
+                    // значит `match` здесь — единственная законная форма, а
+                    // не «ручной эквивалент». Не толкаем к неверной переписке.
+                    if matches!(
+                        advice,
+                        crate::types::CoalesceReturnAdvice::NoBridgeKnown
+                            | crate::types::CoalesceReturnAdvice::Unknown
+                    ) {
+                        return;
+                    }
+                    crate::types::coalesce_advice_render(&advice, e.span)
+                }
+            };
+            hits.push((
+                e.span,
+                format!(
+                    "ручной `match X {{ {ok}(v) => v, {err} => D }}` — дрейф от канона \
+                     `X ?? D` (D86; амендмент 2026-07-07 ретрактировал `unwrap_or`-\
+                     близнецов именно в пользу `?? v`). {note}",
+                    ok = if is_result { "Ok" } else { "Some" },
+                    err = if is_result { "Err(_)" } else { "None" },
+                    note = note,
+                ),
+                suggestion,
+            ));
+        });
+        for (span, msg, suggestion) in hits {
+            let mut diag = Diagnostic::new(msg, span);
+            if let Some(s) = suggestion {
+                diag = diag.with_suggestion(s);
+            }
+            out.push(LintWarning { rule: "W_MANUAL_COALESCE", diag });
         }
     }
 }
@@ -8778,6 +9015,154 @@ mod tests {
         assert!(
             min_max_rule_hits(&ws, "W_REDUNDANT_CONST_TYPE_ANNOTATION").is_empty(),
             "must stay silent on a const later used as a call-receiver (P67-family risk), got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    // Ф.3 (owner order 2026-07-23, [M-manual-coalesce-lint-missing]):
+    // W_MANUAL_COALESCE — identity-match drift from `X ?? D` canon (D86).
+
+    fn coalesce_rule_hits<'a>(ws: &'a [LintWarning], rule: &str) -> Vec<&'a LintWarning> {
+        ws.iter().filter(|w| w.rule == rule).collect()
+    }
+
+    #[test]
+    fn manual_coalesce_pos_value_fallback_option() {
+        let src = "module foo\n\
+             fn find(n int) -> Option[int] => if n > 0 { Some(n) } else { None }\n\
+             fn run(n int) -> int {\n\
+                 match find(n) {\n\
+                     Some(v) => v,\n\
+                     None => 0,\n\
+                 }\n\
+             }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        let hit = coalesce_rule_hits(&ws, "W_MANUAL_COALESCE");
+        assert_eq!(hit.len(), 1, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+        assert!(hit[0].diag.message.contains("X ?? D"), "got: {}", hit[0].diag.message);
+    }
+
+    #[test]
+    fn manual_coalesce_pos_value_fallback_result() {
+        let src = "module foo\n\
+             type E enum Bad\n\
+             fn find(n int) -> Result[int, E] => if n > 0 { Ok(n) } else { Err(E.Bad) }\n\
+             fn run(n int) -> int {\n\
+                 match find(n) {\n\
+                     Ok(v) => v,\n\
+                     Err(_) => -1,\n\
+                 }\n\
+             }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        let hit = coalesce_rule_hits(&ws, "W_MANUAL_COALESCE");
+        assert_eq!(hit.len(), 1, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn manual_coalesce_pos_return_same_carrier() {
+        let src = "module foo\n\
+             fn find(n int) -> Option[int] => if n > 0 { Some(n) } else { None }\n\
+             fn run(n int) -> Option[int] {\n\
+                 ro x = match find(n) {\n\
+                     Some(v) => v,\n\
+                     None => return None,\n\
+                 }\n\
+                 Some(x + 1)\n\
+             }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        let hit = coalesce_rule_hits(&ws, "W_MANUAL_COALESCE");
+        assert_eq!(hit.len(), 1, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+        let suggestion = hit[0].diag.suggestion.as_ref().expect("expected a `?`-Suggestion");
+        assert_eq!(suggestion.replacement, "?", "got: {:?}", suggestion);
+    }
+
+    #[test]
+    fn manual_coalesce_neg_is_ok_wildcard_not_identity() {
+        // `Ok(_) => false` — wildcard pattern, not identity — this is
+        // `.is_ok()`/`.is_err()`, NOT a coalesce drift. Must NOT fire.
+        let src = "module foo\n\
+             type E enum Bad\n\
+             fn find(n int) -> Result[int, E] => if n > 0 { Ok(n) } else { Err(E.Bad) }\n\
+             fn run(n int) -> bool {\n\
+                 match find(n) {\n\
+                     Ok(_) => true,\n\
+                     Err(_) => false,\n\
+                 }\n\
+             }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            coalesce_rule_hits(&ws, "W_MANUAL_COALESCE").is_empty(),
+            "must NOT fire on Ok(_) => bool (is_ok/is_err shape), got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn manual_coalesce_neg_map_shape_not_identity() {
+        // `Some(v) => v + 1` — arm is not the bare bound identifier — this
+        // is `.map(f) ?? d`, NOT identity. Must NOT fire.
+        let src = "module foo\n\
+             fn find(n int) -> Option[int] => if n > 0 { Some(n) } else { None }\n\
+             fn run(n int) -> int {\n\
+                 match find(n) {\n\
+                     Some(v) => v + 1,\n\
+                     None => 0,\n\
+                 }\n\
+             }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            coalesce_rule_hits(&ws, "W_MANUAL_COALESCE").is_empty(),
+            "must NOT fire on Some(v) => v + 1 (map shape), got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn manual_coalesce_neg_different_names_not_identity() {
+        // Success arm's body uses a DIFFERENT identifier than the pattern
+        // binds — not identity. Must NOT fire.
+        let src = "module foo\n\
+             fn find(n int) -> Option[int] => if n > 0 { Some(n) } else { None }\n\
+             fn run(n int) -> int {\n\
+                 match find(n) {\n\
+                     Some(v) => n,\n\
+                     None => 0,\n\
+                 }\n\
+             }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            coalesce_rule_hits(&ws, "W_MANUAL_COALESCE").is_empty(),
+            "must NOT fire when arm body uses a different name than the pattern binds, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn manual_coalesce_neg_glob_class_no_bridge_silent() {
+        // `glob.nv`-class: fn returns `bool` (no Option/Result bridge) —
+        // identity shape present, but `??` couldn't express this either
+        // (Ф.2 would reject the same way) — explicit `match` is the ONLY
+        // legal form here, so the lint must stay SILENT (owner: "молчание"),
+        // not fire-with-a-note.
+        let src = "module foo\n\
+             fn find(n int) -> Option[int] => if n > 0 { Some(n) } else { None }\n\
+             fn run(n int) -> bool {\n\
+                 (match find(n) {\n\
+                     Some(v) => v,\n\
+                     None => return false,\n\
+                 }) > 0\n\
+             }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            coalesce_rule_hits(&ws, "W_MANUAL_COALESCE").is_empty(),
+            "must be SILENT on glob.nv-class (no Option/Result bridge), got: {:?}",
             ws.iter().map(|w| w.rule).collect::<Vec<_>>()
         );
     }

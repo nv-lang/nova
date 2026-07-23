@@ -664,6 +664,14 @@ impl<'t> Renamer<'t> {
             }
             ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => self.block(body),
             ExprKind::Throw(x) => self.expr(x),
+            // [E_COALESCE_RETURN_FALLBACK]: `X ?? return R` — checker always
+            // rejects it before this pass runs; walk the optional payload
+            // defensively (same shape as `Interrupt`).
+            ExprKind::CoalesceReturnFallback(opt) => {
+                if let Some(x) = opt {
+                    self.expr(x);
+                }
+            }
             ExprKind::Interrupt(opt) => {
                 if let Some(x) = opt {
                     self.expr(x);
@@ -1096,6 +1104,11 @@ pub(crate) fn collect_names_expr(e: &Expr, out: &mut HashSet<String>) {
             collect_names_block(body, out)
         }
         ExprKind::Throw(x) => collect_names_expr(x, out),
+        ExprKind::CoalesceReturnFallback(opt) => {
+            if let Some(x) = opt {
+                collect_names_expr(x, out);
+            }
+        }
         ExprKind::Interrupt(opt) => {
             if let Some(x) = opt {
                 collect_names_expr(x, out);

@@ -1196,6 +1196,13 @@ impl EmbedCtx {
                     self.walk_expr(x);
                 }
             }
+            // [E_COALESCE_RETURN_FALLBACK]: `X ?? return R` — checker-rejected
+            // before this pass; walked defensively.
+            ExprKind::CoalesceReturnFallback(opt) => {
+                if let Some(x) = opt {
+                    self.walk_expr(x);
+                }
+            }
             ExprKind::Range { start, end, .. } => {
                 if let Some(s) = start {
                     self.walk_expr(s);

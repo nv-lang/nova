@@ -393,6 +393,12 @@ impl Numberer {
                     self.expr(x);
                 }
             }
+            // [E_COALESCE_RETURN_FALLBACK]: checker-rejected before this pass.
+            ExprKind::CoalesceReturnFallback(opt) => {
+                if let Some(x) = opt {
+                    self.expr(x);
+                }
+            }
             ExprKind::Range { start, end, .. } => {
                 if let Some(s) = start {
                     self.expr(s);

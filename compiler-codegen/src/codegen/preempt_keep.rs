@@ -388,6 +388,11 @@ impl<'a> Analyzer<'a> {
             ExprKind::Interrupt(opt) => {
                 if let Some(x) = opt { self.walk_expr(cur, recv, x); }
             }
+            // [E_COALESCE_RETURN_FALLBACK]: `X ?? return R` — checker-rejected
+            // before this pass; walked defensively.
+            ExprKind::CoalesceReturnFallback(opt) => {
+                if let Some(x) = opt { self.walk_expr(cur, recv, x); }
+            }
             ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
                 self.walk_block(cur, recv, body);
             }

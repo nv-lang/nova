@@ -575,6 +575,13 @@ pub fn encode_expr_with_ctx(e: &Expr, ctx: &EncodeCtx) -> Result<SmtTerm, Encodi
         ExprKind::Throw(_) => Err(EncodingError::Unsupported(
             "`throw expr` (error-throw) в контракте не поддерживается; \
              используйте `requires` для предусловий вместо throw в expression".into())),
+        // [E_COALESCE_RETURN_FALLBACK] (D86 AMEND 2026-07-23): `X ?? return R`
+        // всегда отвергается чекером до verify-pass — структурно недостижимо в
+        // валидном контракте, но arm нужен для exhaustiveness.
+        ExprKind::CoalesceReturnFallback(_) => Err(EncodingError::Unsupported(
+            "`?? return ...` (D86-ретрактнутая форма, E_COALESCE_RETURN_FALLBACK) \
+             никогда не должна пройти type-check — если вы видите эту ошибку, это баг \
+             компилятора (checker должен был отвергнуть раньше)".into())),
         ExprKind::MapLit { .. } => Err(EncodingError::Unsupported(
             "map-литерал `[k:v]` в контракте не поддерживается SMT-encoder'ом; \
              используйте `forall` quantifier или вынесите проверку в #pure fn".into())),

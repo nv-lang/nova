@@ -991,6 +991,14 @@ impl Interpreter {
                 let v = self.eval_expr_value(value, env)?;
                 Ok(Flow::Throw(v))
             }
+            // [E_COALESCE_RETURN_FALLBACK] (D86 AMEND 2026-07-23): `X ?? return R`
+            // всегда отвергается чекером до этой точки — структурно недостижимо.
+            ExprKind::CoalesceReturnFallback(_) => Err(Diagnostic::new(
+                "internal: ExprKind::CoalesceReturnFallback reached interp — \
+                 checker must reject `?? return` before this point \
+                 (E_COALESCE_RETURN_FALLBACK)".to_string(),
+                expr.span,
+            )),
             ExprKind::ParallelFor { pattern, iter, body, .. } => {
                 // В bootstrap'е parallel for ≡ обычный for (sequential).
                 // Codegen раскрывает в supervised + spawn для реального параллелизма.

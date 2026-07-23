@@ -1,0 +1,19 @@
+// EXPECT_COMPILE_ERROR замени на `X.map_err(fn(_) -> OtherErr => <ошибка>)?`
+//
+// D86 AMEND 2026-07-23 / E_COALESCE_RETURN_FALLBACK, таблица строка 4:
+// Result[T,E] -> fn возвращает Result[T,F] (F != E), fallback
+// `return Err(<expr>)` -> мост `.map_err(..)?` (D85 отклонил авто-`From`).
+
+module neg.row4_result_to_result_diff_err_neg
+
+type RowErr enum Bad
+type OtherErr enum Nope
+
+fn find_res(n int) -> Result[int, RowErr] {
+    if n > 0 { Ok(n) } else { Err(RowErr.Bad) }
+}
+
+fn caller(n int) -> Result[int, OtherErr] {
+    ro x = find_res(n) ?? return Err(OtherErr.Nope)
+    Ok(x + 1)
+}

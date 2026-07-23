@@ -1,0 +1,39 @@
+// D86 AMEND 2026-07-23: только форма `?? return R` ретрактирована. Значение /
+// `panic` / `throw` fallback'ы — БЕЗ ИЗМЕНЕНИЙ (регресс-пины, должны остаться
+// зелёными).
+
+module nova_tests.coalesce_return_fallback
+
+type PinErr enum Missing
+
+fn find_opt(n int) -> Option[int] {
+    if n > 0 { Some(n) } else { None }
+}
+
+fn find_res(n int) -> Result[int, PinErr] {
+    if n > 0 { Ok(n) } else { Err(PinErr.Missing) }
+}
+
+test "value fallback on Option" {
+    assert(find_opt(5) ?? 0 == 5)
+    assert(find_opt(-1) ?? 0 == 0)
+}
+
+test "value fallback on Result" {
+    assert(find_res(5) ?? -1 == 5)
+    assert(find_res(-1) ?? -1 == -1)
+}
+
+test "panic fallback (D13) still legal" {
+    assert(find_opt(5) ?? panic("unreachable") == 5)
+}
+
+fn throw_fallback(n int) Fail[PinErr] -> int =>
+    find_opt(n) ?? throw PinErr.Missing
+
+test "throw fallback (custom error) still legal" {
+    ro r = with Fail[PinErr] = |e| interrupt Err(e) {
+        Ok(throw_fallback(3))
+    }
+    assert(r ?? -99 == 3)
+}
