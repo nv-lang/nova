@@ -49,7 +49,7 @@
 // any other fully-discharged effectful call (`aggregate_test.nv`'s `test { }`
 // blocks do exactly this). Verified directly by this rewrite compiling/
 // running (`nova test` gate) — the real handlers (`snapshot_body`/
-// `events_body` below, wired through `handler_fn(|req| ...)`) ARE the proof.
+// `events_body` below, wired as plain closures auto-lifted to Handler (D55)) ARE the proof.
 // This is what lets `/api/run`/`/api/events` do PER-REQUEST fresh
 // `aggregate()` calls (fresh `mode`/`seed`/live-vs-mock) from inside an
 // otherwise-pure `Router` route, with no second dispatch mechanism needed
@@ -81,7 +81,7 @@ import ./app.{aggregate_live_health, aggregate_live_weather, health_live_sources
 import ./api.{build_snapshot, HandlersDto, snapshot_to_json}
 import std.net.{SocketAddr, TcpListener, real_net, mock_net}
 import std.os.{env, real_os}
-import http.server.{Router, ServerRequest, ServerResponse, StreamBody, handler_fn, sse_event}
+import http.server.{Router, ServerRequest, ServerResponse, StreamBody, sse_event}
 import http.servernet.{handle_connection}
 import std.time.duration
 import std.runtime.sync.{AtomicInt}
@@ -374,10 +374,10 @@ fn main() Time Detach {
 
 fn routes() Time -> Router {
     mut r = Router.new()
-    r.get("/", handler_fn(|_req| ServerResponse.bytes(200, "text/html; charset=utf-8", frontend_html())))!!
-    r.get("/api/snapshot", handler_fn(|_req| snapshot_body("weather", "demo", 42)))!!
-    r.get("/api/run", handler_fn(|req| snapshot_body(legend_of(req), mode_of(req), seed_of(req))))!!
-    r.get("/api/events", handler_fn(|req| events_body(legend_of(req), mode_of(req), seed_of(req))))!!
+    r.get("/", fn(_req ServerRequest) -> ServerResponse => ServerResponse.bytes(200, "text/html; charset=utf-8", frontend_html()))!!
+    r.get("/api/snapshot", fn(_req ServerRequest) -> ServerResponse => snapshot_body("weather", "demo", 42))!!
+    r.get("/api/run", fn(req ServerRequest) -> ServerResponse => snapshot_body(legend_of(req), mode_of(req), seed_of(req)))!!
+    r.get("/api/events", fn(req ServerRequest) -> ServerResponse => events_body(legend_of(req), mode_of(req), seed_of(req)))!!
     r
 }
 
