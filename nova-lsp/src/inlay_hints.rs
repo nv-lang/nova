@@ -418,7 +418,10 @@ impl<'a> Ctx<'a> {
         if !in_range(pos, self.range) {
             return;
         }
-        let label = format!(": {}", format_type_ref(tr));
+        // Nova type syntax is space-separated (`consume s TcpStream`), not
+        // colon-separated — the hint must read as insertable Nova code
+        // (owner 2026-07-23; was Rust/TS-style ": T").
+        let label = format!(" {}", format_type_ref(tr));
         self.out.push(mk_hint(pos, label, InlayHintKind::TYPE, false, false));
     }
 
@@ -665,7 +668,7 @@ mod tests {
             .filter(|h| h.kind == Some(InlayHintKind::TYPE))
             .collect();
         assert_eq!(type_hints.len(), 1, "one un-annotated binding → one type hint");
-        assert_eq!(label_str(type_hints[0]), ": int", "`ro x = 5` → `: int`");
+        assert_eq!(label_str(type_hints[0]), " int", "`ro x = 5` → ` int`");
         // Anchored right after `x` on line 2 (0-based).
         assert_eq!(type_hints[0].position.line, 2);
     }
