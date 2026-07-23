@@ -25,7 +25,7 @@ module spec_tests.conformance
 fn m196af_f(x int) -> int => x
 // D246-амендмент ([M-ro-launder-via-mut-binding], Ф.2 миграция, 2026-07-23):
 // `mut tag` — passthrough return; `str` always-ro buffer anyway (D26).
-fn m196af_f(x int, mut tag str = "d") -> str => tag
+fn m196af_f(x int, tag str = "d") -> str => "${tag}" // дофикс интегратора: mut-на-default ломал backfill; свежая строка вместо алиаса (D246)
 
 test "free-fn overload: exact-arity sibling wins over a default-reachable one (M-196af)" {
     assert(m196af_f(5) == 5)
