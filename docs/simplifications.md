@@ -9076,3 +9076,27 @@ re-attempt sub-plan ПОСЛЕ Plan 139 Ф.2 (координация risk RG; в
 - **Гейт:** `nova test spec_tests/conformance` 130 PASS / 1 pre-existing FAIL (несвязанный,
   `d316_time_effect_typed_surface.nv` ссылается на ретрактированный free-fn `sleep_until`,
   ветка не трогала файл); `nova test std/src` 67 PASS / 0 FAIL.
+
+## [M-sequential-serve-instances-stale-state] CLOSED (2026-07-23, ветка p-fix-n38-workertls, fable-волна, 221.1 #38)
+
+- **Симптом:** последовательные supervised-accept тесты в одном процессе — первый тест с
+  реальной отменой `supervised(timeout:)`, любой следующий с nested `supervised(deadline:)`
+  получает мгновенный (~10-14мс) ложный TimeoutError с байт-в-байт истёкшим `deadline_ns`
+  первого. Блокировал 5 live-тестов 222.7.
+- **Корень (живая трасса, bracketing-инструментация scope_init/run_impl/worker-resume/reset):**
+  пул воркеров арм-ится лениво на ПЕРВОМ `spawn` процесса — внутри активного
+  `supervised(timeout:)`; `nova_scope_init(&w->scope)` (арм пула, runtime.c) через D349
+  ambient-наследование запекал абсолютный дедлайн арм-сайта в вечную структуру `w->scope`
+  каждого воркера; последующие вложенные supervised на воркер-фибрах (ambient = `w->scope`)
+  наследовали протухшую точку, `nova_deadline_combine` оставлял более раннюю. Гипотеза ОКНА-4
+  (dangling TLS на main) в механизме опровергнута — порча в СТРУКТУРАХ, не в TLS;
+  `nova_runtime_reset` бессилен by-design.
+- **Фикс:** `nova_scope_init_container` (fibers.h) — герметичный init контейнерных scope
+  (`w->scope` + `_nova_orphan_scope`): `deadline_ns=0`, `saved_active_scope=NULL`. Одна запись
+  на арм-сайте до старта потоков, ноль новой синхронизации; enforcement дедлайнов реальных
+  детей — через их `_nova_parent_scope`, семантика не теряется.
+- **Верификация:** repro38g2 RED→GREEN; фикстура
+  `spec_tests/conformance/standalone/m2211_38_sequential_supervised_accept_stale_deadline.nv`
+  RED(до-фикс)→GREEN(фикс); m2217_15/15b δ0 (2/2 PASS); std/src/concurrency δ0 (4/4 PASS);
+  4-way нагрузка фикстуры 32/32 чисто. Кейс-стади:
+  `docs/cases/sequential-serve-scope-leak-2026-07-23.md` (раздел Resolution).

@@ -1,8 +1,14 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Case study — `[M-sequential-serve-instances-stale-state]` (221.1 #38)
 
-**Status: ROOT CAUSE CONFIRMED (hard evidence), FIX NOT LANDED.** Session:
-ОКНО-4 (sonnet), 2026-07-23, worktree `nova-okno4`.
+**Status: RESOLVED 2026-07-23** — fable wave, worktree `nova-n38`, branch
+`p-fix-n38-workertls`; fix `nova_scope_init_container` (see «Resolution»
+at the end). The mechanism hypothesized below (dangling `_nova_active_scope`
+TLS surviving into the next test) was DISPROVEN by live trace — the stale
+deadline actually flows through the worker pool's own long-lived
+`w->scope` STRUCTS, poisoned once at lazy pool-arm time. Diagnosis history
+below kept as-is. Original session: ОКНО-4 (sonnet), 2026-07-23, worktree
+`nova-okno4`.
 
 ## Symptom (nova-http)
 
@@ -139,3 +145,61 @@ class (`reference-mn-race-case-study` precedent).
    see above), but worth tightening in nova-http anyway (`Err(NetError.
    Cancelled) => running = false` instead of blind retry) as defense in
    depth / to avoid the one extra 20ms retry cycle.
+
+## Resolution (fable wave, 2026-07-23, branch `p-fix-n38-workertls`)
+
+Live bracketing instrumentation (tid+worker-id logs in `nova_scope_init`,
+`nova_supervised_run_impl` entry/exit, `nova_scope_deliver_cancel`,
+`nova_runtime_reset`, `_worker_run_one_fiber`, `_worker_main`'s resume
+block) pinned the EXACT write. The trace for the A→C run:
+
+```
+N38 tid=<main> wk=-1 SCOPEINIT q=<q_A outer>   from=<main_scope> inherited_dl=0        <- test A outer (then tightened to now+3s)
+N38 tid=<main> wk=-1 SCOPEINIT q=<w0->scope>   from=<q_A outer>  inherited_dl=78994940089100   <- POOL ARM: 16 worker
+N38 tid=<main> wk=-1 SCOPEINIT q=<w1->scope>   from=<q_A outer>  inherited_dl=78994940089100   <-   scopes born with test
+...  (16 identical lines, one per worker)                                                      <-   A's absolute deadline
+N38 tid=<main> wk=-1 SCOPEINIT q=<q_C outer>   from=<main_scope> inherited_dl=0        <- test C outer: TLS on main is FINE
+N38 tid=<wrk4> wk=4  SCOPEINIT q=<q_C inner>   from=<w4->scope>  inherited_dl=78994940089100   <- read_attempt's supervised(deadline: now+60s)
+N38 tid=<wrk4> wk=4  RUNIMPL   q=<q_C inner>   dl=78994940089100 now=78994970305000    <- combine kept the EARLIER (stale, expired) point
+N38 tid=<wrk4> wk=4  DELIVER_CANCEL q=<q_C inner>                                      <- instant bogus TimeoutError (~10-14ms)
+```
+
+So the real carrier is NOT a dangling TLS pointer on the driving thread
+(test C's OUTER scope inherits a clean 0 — the `...D210` scope in the
+instrumented proof above was read_attempt's INNER supervised on a worker,
+not test C's outer): the worker pool arms LAZILY on the process's FIRST
+`spawn`, which happens INSIDE test A's `supervised(timeout: 3s)`.
+`nova_scope_init(&w->scope)` (runtime.c, pool arm, main thread) inherited
+the ambient D349 deadline — baking test A's absolute deadline into every
+worker's process-lifetime bookkeeping scope. Every later nested supervised
+on a worker-run fiber (ambient scope = `w->scope`) inherited the
+long-expired point, and `nova_deadline_combine` keeps the earlier one.
+`nova_runtime_reset()` is powerless by design here — it resets the calling
+thread's TLS, and the poison lives in the worker-scope STRUCTS.
+
+**Fix** (minimal per mn-conventions — one write at the arm site, before any
+worker thread exists, zero new synchronization): `nova_scope_init_container`
+(fibers.h) — hermetic init for runtime CONTAINER scopes: plain
+`nova_scope_init` + `deadline_ns = 0` + `saved_active_scope = NULL` (the
+latter would otherwise dangle at the armer's C frame forever). Applied to
+both container-scope sites: worker pool `w->scope` (runtime.c pool arm) and
+the lazily-armed `_nova_orphan_scope` (same class; detach severs the parent
+deadline by D349/D50 anyway). Candidates (a) broadcast-reset of worker TLS
+in `nova_runtime_reset` and (b) after-run TLS reset in
+`_worker_run_one_fiber` were rejected: the defect is not IN the TLS
+save/restore discipline (the trace shows it balanced), and both would add
+cross-thread work on hot paths to scrub a value that should never have been
+inherited at birth. Deadline/cancel enforcement for real children flows
+through their `_nova_parent_scope` (deliver_cancel walk / pending_remote),
+never through the worker scope's own `deadline_ns` — clearing it loses
+nothing.
+
+**Verification:** `repro38g2.nv` RED→GREEN; conformance fixture
+`spec_tests/conformance/standalone/
+m2211_38_sequential_supervised_accept_stale_deadline.nv` (two sequential
+supervised-accept tests, second must get a fresh deadline) RED on pre-fix
+runtime → GREEN with fix; `m2217_15`/`m2217_15b` δ0 (both PASS);
+`std/src/concurrency` module tests δ0 (4/4 PASS); 4-way parallel load
+repeat of the fixture 32/32 clean. Instrumentation fully reverted after
+diagnosis (fix commit contains only `nova_scope_init_container` + two call
+sites).
