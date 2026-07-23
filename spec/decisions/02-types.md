@@ -8053,12 +8053,53 @@ auto-derive `str.from(@)` pattern).
 
 ---
 
-## D200. Associated constants — `const` field в `type X`
+## D200. Associated constants — `const Type.NAME` (вне тела типа)
 
 > **Plan 114.4 Ф.2** (extracted from Plan 114 Ф.10 safety hatch).
 > **Status:** 🆕 draft (финализируется в Ф.4).
 
+> **AMEND (решение владельца 2026-07-23): каноническая форма — ВНЕ тела типа,
+> `const Type.NAME <Тип> = <значение>`.** In-body форма (`const` внутри
+> `type X { … }` body — весь исходный текст блока ниже) **РЕТРАКТИРОВАНА** до
+> финализации. Причина: in-body ставила статики В ТЕЛО, вперемешку с полями
+> инстанса, тогда как ВСЁ остальное, привязанное к типу, в Nova объявляется ВНЕ
+> тела через квалификатор `Type.` — конструкторы `fn Type.new(…)`, методы
+> `fn Type @name(…)`. Out-of-body const восстанавливает симметрию (**тело типа =
+> ТОЛЬКО layout инстанса**; всё с квалификатором `Type.` — снаружи) и ближе к
+> rustc-эталону (`impl` держит консты+методы отдельно от полей структуры; у Nova
+> нет `impl` → свободностоящая `const Type.X`, как свободностоящая `fn Type.x`).
+> «Одна дверь»: остаётся ОДНА форма — out-of-body. Миграция **0 сайтов**
+> (in-body формой никто не пользовался: греп std/nova-http/examples = 0).
+>
+> **Каноническая запись:**
+> ```nova
+> type Config value { name str, timeout Duration }   // тело = ТОЛЬКО поля инстанса
+> const Config.VERSION int = 2                        // ← статик, ВНЕ тела
+> const Config.MAX_PEERS int = 1024
+> export const Config.PROTOCOL str = "v2"             // export — cross-module
+>
+> Config.VERSION                                      // ✓ 2 (namespace-доступ)
+> ```
+> Грамматика = обычный module-const `const <имя> <Тип> = <значение>`, где `<имя>`
+> квалифицировано типом: `const Config.VERSION int = 2`. Sum-type и generic —
+> так же (`const Status.VERSION int = 2`, `const Box.TAG int = 0`;
+> T-dependent — `const Box[int].SIZE …` синтаксис уточнить на Ф.4).
+>
+> **Семантика — БЕЗ ИЗМЕНЕНИЙ** (меняется только место объявления): §Семантика
+> ниже целиком в силе — zero-storage в инстансе, top-level C-symbol
+> `Type_NAME` в `.rodata`, namespace-only доступ (`instance.NAME` →
+> `E_CONST_INSTANCE_ACCESS`), strict-constexpr RHS, SCREAMING_SNAKE-lint.
+> **Парсер:** `[M-assoc-const-out-of-body-syntax]` — сейчас `const Type.NAME` даёт
+> `expected type, got '.'`. **Составные значения** (`{ code: 200 }` для
+> `StatusCode.OK`) — ОРТОГОНАЛЬНЫЙ codegen-пробел `[M-d200-assoc-const-composite-value]`,
+> с этой сменой поверхности не связан (нужен при любой форме).
+
 ### Что
+
+> ⚠️ Ниже — исходный in-body текст, РЕТРАКТИРОВАН амендментом выше (форма
+> `const` в теле типа заменена на `const Type.NAME` вне тела). Семантика
+> (storage/access/constexpr) переносится дословно; меняется только синтаксис
+> объявления.
 
 `const` declaration внутри `type X { … }` body — **associated constant**
 типа. Не часть instance layout; accessible через namespace
