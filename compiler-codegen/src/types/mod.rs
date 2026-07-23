@@ -3071,6 +3071,44 @@ fn is_value_type_for_v3(
     }
 }
 
+/// D246-амендмент ([M-ro-launder-via-mut-binding], Ф.1, FINAL — owner
+/// decision 2026-07-23, "подтверждена доками+пробой"): true for the
+/// IRREDUCIBLE scalar primitives — no fields, no indirection, no possible
+/// aliasing EVER (copying the bit-pattern IS the value; there is no
+/// owned-graph to leak through). **Explicit boundary vs the rejected
+/// value-record-class exemption** (`is_value_type_for_v3`, which classifies
+/// value-RECORDS/tuples/`[N]T` as "value" too): a value-record — even
+/// WITHOUT a heap field (probe E: `Point{x,y}`) — is NOT exempt here and
+/// stays `E_READONLY_COERCE`, because the class predicate would need to
+/// recurse into fields to be safe (probe G: a value-record WITH a heap
+/// field leaks) and stays fragile on generics/`Option[Vec[T]]` — a bare
+/// scalar sidesteps that fragility entirely by having no fields to recurse
+/// into. Deliberately excludes `str` (shallow `{ptr *u8, len}` —
+/// value-record-shaped lang item, even though its buffer happens to be
+/// unwritable today; kept conservative/out of scope for Ф.1).
+fn is_bare_scalar_primitive(ty: &TypeRef) -> bool {
+    match ty.strip_modifiers() {
+        TypeRef::Named { path, generics, .. } if path.len() == 1 && generics.is_empty() => {
+            is_bare_scalar_primitive_name(path[0].as_str())
+        }
+        _ => false,
+    }
+}
+
+/// String-name sibling of `is_bare_scalar_primitive`, for call-sites that
+/// only carry a resolved type-NAME (`ConsumeCtx.var_types: HashMap<String,
+/// String>`), not a full `TypeRef`.
+fn is_bare_scalar_primitive_name(name: &str) -> bool {
+    matches!(
+        name,
+        "int" | "uint"
+        | "i8" | "i16" | "i32" | "i64"
+        | "u8" | "u16" | "u32" | "u64"
+        | "f32" | "f64"
+        | "bool" | "char" | "byte"
+    )
+}
+
 /// **Plan 118.5 V3 §V3.1 (2026-06-04):** check binding type for ro+mut
 /// conflict. Emits `E_MUTABILITY_CONFLICT_VALUE_TYPE` для:
 /// - Readonly(Mut(T)) или Mut(Readonly(T)) AST shape WHEN
@@ -6988,7 +7026,14 @@ impl<'a> TypeCheckCtx<'a> {
                 // Add non-mut, non-consume params to ro_binding_names so
                 // is_through_ro_binding fires on index writes `arr[i] = x` (P7
                 // freeze, D246).  `mut` params and `consume` params may mutate.
-                if !p.is_mut && !p.consume {
+                // D246-амендмент ([M-ro-launder-via-mut-binding], Ф.1б,
+                // 2026-07-23): EXCLUDE variadic params (`...args []T`) — each
+                // call site's vararg-collected array is FRESHLY materialized
+                // for that call, with no external alias to launder against
+                // (unlike a normal named param, which aliases whatever the
+                // caller passed in). False-positive found via `Vec[T].of`
+                // (`=> args` — variadic passthrough as `Self`).
+                if !p.is_mut && !p.consume && !p.is_variadic {
                     self.ro_binding_names.borrow_mut().insert(p.name.clone());
                 }
             }
@@ -7018,10 +7063,14 @@ impl<'a> TypeCheckCtx<'a> {
                     // closure literal against a scalar return type BEFORE the literal
                     // coercion (which only widens INT literals — it does not reject).
                     self.check_closure_scalar_return(e, ret, errors);
+                    // D246-амендмент ([M-ro-launder-via-mut-binding], Ф.1б,
+                    // 2026-07-23): 3rd position of the norm — RETURN.
+                    self.check_ro_launder_return(e, ret, &scope, errors);
                     self.materialize_literal_coercion(e, ret);
                     // a block-arrow body `=> { …; return X }` can hold explicit returns.
                     self.materialize_returns_in_expr(e, ret);
                     self.check_closure_scalar_return_in_expr(e, ret, errors);
+                    self.check_ro_launder_return_in_expr(e, ret, &scope, errors);
                 }
             }
             FnBody::Block(b) => {
@@ -7032,11 +7081,14 @@ impl<'a> TypeCheckCtx<'a> {
                         // [M-closure-trailing-scalar-coercion-no-typecheck] fix (see the
                         // dedicated block above `check_closure_scalar_return`'s definition).
                         self.check_closure_scalar_return(trailing, ret, errors);
+                        // D246-амендмент ([M-ro-launder-via-mut-binding], Ф.1б).
+                        self.check_ro_launder_return(trailing, ret, &scope, errors);
                         self.materialize_literal_coercion(trailing, ret);
                     }
                     // … and every explicit `return <expr>` anywhere in the body.
                     self.materialize_returns_in_block(b, ret);
                     self.check_closure_scalar_return_in_block(b, ret, errors);
+                    self.check_ro_launder_return_in_block(b, ret, &scope, errors);
                 }
             }
             FnBody::External => {}
@@ -9685,15 +9737,14 @@ impl<'a> TypeCheckCtx<'a> {
     /// new mut-binding is visible to the original ro-bound name/param
     /// (P7 declares the freeze, but it did not survive re-binding before
     /// this fix — the exact hole `[M-ro-launder-via-mut-binding]` closes).
-    /// Norm is STRICT (owner decision 2026-07-23, reaffirmed 2026-07-23 —
-    /// "всё ❌ кроме `.clone()`"): applies to EVERY storage class and EVERY
-    /// type, no exemption AT ALL — including bare scalar primitives (`int`
-    /// loop-counter copies etc). An earlier revision of this fn carried a
-    /// PROVISIONAL scalar-primitive exemption (spike finding: ~700 hits in
-    /// `std/src` alone are harmless `mut i = n` scalar copies) — REMOVED
-    /// per explicit owner reaffirmation; see the Ф.0/report note in
-    /// `docs/plans/224-ro-launder-l1-coercion.md` for the measured volume
-    /// this uncovers and the open migration-scale question it raises.
+    /// Norm is STRICT (owner decision 2026-07-23, FINAL — «подтверждена
+    /// доками+пробой» after a scalar-primitive exemption spike): applies to
+    /// EVERY storage class EXCEPT the bare scalar primitives (`int`/`i8`../
+    /// `bool`/`char`/…) — see `is_bare_scalar_primitive` doc for the exact
+    /// boundary (scalar-primitive ≠ value-record; a value-record even
+    /// WITHOUT heap fields is still ❌, probe G/E remain neg — recursive
+    /// field-fragility does not apply to a scalar because it has no fields
+    /// AT ALL, whereas a record might recursively embed a heap field).
     fn check_readonly_source_coerce(
         &self,
         value: &Expr,
@@ -9723,9 +9774,15 @@ impl<'a> TypeCheckCtx<'a> {
         }
         // L1 axis (D246-амендмент, [M-ro-launder-via-mut-binding]): value is
         // a bare identifier bound through a `ro` BINDING (local or param),
-        // independent of its type's own L2 modifier.
+        // independent of its type's own L2 modifier. FINAL scalar-primitive
+        // exemption (owner decision 2026-07-23): a bare scalar copy can
+        // never alias (no fields at all — the bit-copy IS the independent
+        // value), so it is exempt; every OTHER type (value-record included,
+        // even without heap fields) stays covered.
         if let ExprKind::Ident(name) = &value.kind {
-            if self.ro_binding_names.borrow().contains(name) {
+            let is_scalar = self.infer_expr_type(value, scope)
+                .map_or(false, |t| is_bare_scalar_primitive(&t));
+            if !is_scalar && self.ro_binding_names.borrow().contains(name) {
                 errors.push(Diagnostic::new(
                     format!(
                         "[E_READONLY_COERCE] источник `{name}` связан как `ro` (L1-binding \
@@ -9733,10 +9790,14 @@ impl<'a> TypeCheckCtx<'a> {
                          P7 freeze), но присваивается в mutable content-view: запись через \
                          новый mut-binding была бы видна оригиналу/вызывающему (D246-\
                          амендмент, [M-ro-launder-via-mut-binding], Ф.1). Решения: \
-                         (a) объяви `{name}` как `mut` с самого начала, если он должен быть \
-                         мутируемым; (b) скопируй явно — `.clone()` (D230) — если нужна \
-                         независимая mutable-копия; (c) оставь цель тоже `ro`, если запись \
-                         не нужна."
+                         (a) если `{name}` — параметр, объяви его `mut {name} T` (in-out \
+                         ВСЕГДА — D326-ревизия §Р3: вызывающий увидит изменения после вызова); \
+                         если локал — объяви его `mut {name} = ...` с самого начала — \
+                         подходит, когда семантика реально in-out/мутируемая с начала; \
+                         (b) скопируй явно — `.clone()` (D230) — если нужна НЕЗАВИСИМАЯ \
+                         mutable-копия (используй ТОЛЬКО когда (a) не подходит — \
+                         задокументируй одной строкой, почему); (c) оставь цель тоже `ro`, \
+                         если запись не нужна."
                     ),
                     value.span,
                 ));
@@ -14872,6 +14933,123 @@ impl<'a> TypeCheckCtx<'a> {
             | ExprKind::Loop { body, .. }
             | ExprKind::For { body, .. } => self.check_closure_scalar_return_in_block(body, ret, errors),
             ExprKind::Block(b) => self.check_closure_scalar_return_in_block(b, ret, errors),
+            _ => {}
+        }
+    }
+
+    /// D246-амендмент ([M-ro-launder-via-mut-binding], Ф.1б, 2026-07-23):
+    /// THIRD position of the norm — RETURN. Mirrors `check_readonly_source_coerce`
+    /// (Let-init) but for a function's own return value: returning a bare
+    /// `Ident` that is L1-ro-bound (bare local `ro x = …` OR a non-`mut`
+    /// param, D176 default, P7 freeze) under a return type that is NOT
+    /// itself `-> ro T` (i.e. mut-default per D184 — the CALLER's binding
+    /// decides) launders the freeze out: the callee hands back the SAME
+    /// object it only had read-only access to, under an implicitly-mut
+    /// contract — `mut w = f()` at the caller then aliases the callee's own
+    /// frozen source. `-> ro T` is exempt (the return itself is frozen
+    /// regardless of what's inside). Scalar-primitive exemption applies
+    /// identically to the other two positions (see `is_bare_scalar_primitive`).
+    fn check_ro_launder_return(
+        &self,
+        value: &Expr,
+        ret: &TypeRef,
+        scope: &HashMap<String, TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        if ret.is_readonly() {
+            return;
+        }
+        if let ExprKind::Ident(name) = &value.kind {
+            let is_scalar = self.infer_expr_type(value, scope)
+                .map_or(false, |t| is_bare_scalar_primitive(&t));
+            if !is_scalar && self.ro_binding_names.borrow().contains(name) {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_READONLY_COERCE] возврат `{name}` — источник связан как `ro` \
+                         (L1-binding — явный `ro {name} = ...` либо параметр без `mut`, \
+                         D176-дефолт, P7 freeze), но объявленный тип возврата НЕ `ro` \
+                         (mut-дефолт биндинга у caller'а, D184): `mut w = f()` у caller'а \
+                         дал бы запись, видимую внутреннему источнику `{name}` (D246-\
+                         амендмент, [M-ro-launder-via-mut-binding], Ф.1б). Решения: \
+                         (a) если `{name}` должен быть mut-параметром — in-out по D326-\
+                         ревизии §Р3, сама функция это НЕ решает изнутри для собственного \
+                         параметра; поменяй сигнатуру функции на `mut {name} T`, если это \
+                         правильная семантика; (b) верни явную независимую копию — \
+                         `{name}.clone()` (D230); (c) объяви возврат `-> ro T`, если источник \
+                         действительно должен остаться заморожен и у caller'а."
+                    ),
+                    value.span,
+                ));
+            }
+        }
+    }
+
+    /// Traversal companion of `check_ro_launder_return` — walks a block for
+    /// its own trailing tail AND every nested explicit `return X`, mirroring
+    /// `check_closure_scalar_return_in_block`'s structure.
+    fn check_ro_launder_return_in_block(
+        &self,
+        b: &Block,
+        ret: &TypeRef,
+        scope: &HashMap<String, TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        for s in &b.stmts {
+            self.check_ro_launder_return_in_stmt(s, ret, scope, errors);
+        }
+        if let Some(t) = &b.trailing {
+            self.check_ro_launder_return_in_expr(t, ret, scope, errors);
+        }
+    }
+
+    fn check_ro_launder_return_in_stmt(
+        &self,
+        s: &Stmt,
+        ret: &TypeRef,
+        scope: &HashMap<String, TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        match s {
+            Stmt::Return { value: Some(e), .. } => self.check_ro_launder_return(e, ret, scope, errors),
+            Stmt::Expr(e) => self.check_ro_launder_return_in_expr(e, ret, scope, errors),
+            Stmt::Defer { body, .. } => self.check_ro_launder_return_in_expr(body, ret, scope, errors),
+            Stmt::ConsumeScope { body, .. } => self.check_ro_launder_return_in_block(body, ret, scope, errors),
+            _ => {}
+        }
+    }
+
+    /// Ищет ВЛОЖЕННЫЕ explicit `return X` (зеркалит
+    /// `check_closure_scalar_return_in_expr`'s traversal scope/limits).
+    fn check_ro_launder_return_in_expr(
+        &self,
+        e: &Expr,
+        ret: &TypeRef,
+        scope: &HashMap<String, TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        match &e.kind {
+            ExprKind::If { then, else_, .. } | ExprKind::IfLet { then, else_, .. } => {
+                self.check_ro_launder_return_in_block(then, ret, scope, errors);
+                if let Some(eb) = else_ {
+                    match eb {
+                        ElseBranch::Block(b) => self.check_ro_launder_return_in_block(b, ret, scope, errors),
+                        ElseBranch::If(x) => self.check_ro_launder_return_in_expr(x, ret, scope, errors),
+                    }
+                }
+            }
+            ExprKind::Match { arms, .. } => {
+                for arm in arms {
+                    match &arm.body {
+                        MatchArmBody::Expr(x) => self.check_ro_launder_return_in_expr(x, ret, scope, errors),
+                        MatchArmBody::Block(b) => self.check_ro_launder_return_in_block(b, ret, scope, errors),
+                    }
+                }
+            }
+            ExprKind::While { body, .. }
+            | ExprKind::WhileLet { body, .. }
+            | ExprKind::Loop { body, .. }
+            | ExprKind::For { body, .. } => self.check_ro_launder_return_in_block(body, ret, scope, errors),
+            ExprKind::Block(b) => self.check_ro_launder_return_in_block(b, ret, scope, errors),
             _ => {}
         }
     }
@@ -30809,7 +30987,11 @@ fn check_readonly_coerce_args(
     for &idx in mut_param_idxs {
         if let Some(CallArg::Item(arg)) = args.get(idx) {
             if let ExprKind::Ident(name) = &arg.kind {
-                if ctx.readonly_locals.contains(name) {
+                // FINAL scalar-primitive exemption (owner decision
+                // 2026-07-23) — see `is_bare_scalar_primitive_name` doc.
+                let is_scalar = ctx.var_types.get(name)
+                    .map_or(false, |t| is_bare_scalar_primitive_name(t));
+                if !is_scalar && ctx.readonly_locals.contains(name) {
                     errors.push(Diagnostic::new(
                         format!(
                             "[E_READONLY_COERCE] аргумент `{}` связан как readonly — либо \
@@ -30822,10 +31004,14 @@ fn check_readonly_coerce_args(
                             name),
                         arg.span,
                     ).with_note(
-                        "решения: (a) сделать source-binding `mut` с самого начала, если он \
-                         должен быть мутируемым; (b) скопировать явно — `.clone()` (D230) — \
-                         если нужна независимая mutable-копия; (c) сделать callee-param \
-                         non-mut (default readonly) или явный `ro T`."
+                        "решения: (a) если источник — параметр текущей функции, объяви его \
+                         `mut` (in-out ВСЕГДА — D326-ревизия §Р3: вызывающий увидит изменения \
+                         после вызова); если локал — объяви `mut` с самого начала — подходит, \
+                         когда семантика реально in-out/мутируемая с начала; (b) скопировать \
+                         явно — `.clone()` (D230) — если нужна НЕЗАВИСИМАЯ mutable-копия \
+                         (используй ТОЛЬКО когда (a) не подходит — задокументируй одной \
+                         строкой, почему); (c) сделать callee-param non-mut (default readonly) \
+                         или явный `ro T`."
                             .to_string(),
                     ));
                 }
