@@ -1,0 +1,25 @@
+// [M-fn-newtype-return-position-broken] (№53, P1-блокер 222.4) форма (г):
+// `@(v)` — вызов САМОГО ПРИЁМНИКА в теле метода на fn-newtype (нужно для
+// Middleware @then, 222.4). До фикса — тот же ICE `[P67-LEGACY] Path call
+// return type unknown (no parts)` как форма (а) (парсер даёт голому `@`
+// `ExprKind::SelfAccess`, не `Ident("self")`). См.
+// docs/plans/backlog-followups.md [M-fn-newtype-return-position-broken].
+module spec_tests.conformance
+
+type N53DHandler fn(int) -> str
+
+fn N53DHandler @twice(v int) -> str => "${@(v)}${@(v)}"
+
+fn n53d_base(x int) -> str => "b${x}"
+
+// Caller-side probe: статик-метод НА ТОМ ЖЕ типе (`current_receiver_type`
+// совпадает) — self-referential dispatch (уже существующая, независимая от
+// №53 ветка `emit_call`'s "4b is_self_ref"), НЕ внешний dot-call на
+// произвольном void*-erased значении вне метода на этом типе (тот путь —
+// отдельный, не входящий в объём №53 пробел, см. отчёт по задаче).
+fn N53DHandler.run_twice(f N53DHandler, v int) -> str => f.twice(v)
+
+test "N53 форма (г): @(v) — вызов приёмника-самого-себя в теле метода на fn-newtype" {
+    ro r = N53DHandler.run_twice(n53d_base, 3)
+    assert(r == "b3b3")
+}

@@ -1,0 +1,26 @@
+// [M-fn-newtype-return-position-broken] (№53, P1-блокер 222.4) форма (б):
+// `ro h Handler = make(); h(3)` — let-биндинг результата call'а, возвращающего
+// fn-newtype, затем вызов биндинга. До фикса — CC-FAIL «passing 'int' to
+// parameter of incompatible type 'nova_str'» (C-типы аргумента/возврата
+// перепутаны местами) — воспроизводилось И с явной аннотацией биндинга, И
+// без неё (оба случая покрыты здесь). См. docs/plans/backlog-followups.md
+// [M-fn-newtype-return-position-broken].
+module spec_tests.conformance
+
+type N53BHandler fn(int) -> str
+
+fn n53b_base(x int) -> str => "base:${x}"
+
+fn n53b_make() -> N53BHandler => n53b_base
+
+test "N53 форма (б): неаннотированный let-биндинг результата call'а, возвращающего fn-newtype" {
+    ro h = n53b_make()
+    ro r = h(3)
+    assert(r == "base:3")
+}
+
+test "N53 форма (б): АННОТИРОВАННЫЙ let-биндинг результата call'а, возвращающего fn-newtype" {
+    ro h N53BHandler = n53b_make()
+    ro r = h(5)
+    assert(r == "base:5")
+}

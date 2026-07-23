@@ -1,0 +1,23 @@
+// [M-fn-newtype-return-position-broken] (№53, P1-блокер 222.4) форма (в):
+// `mw(h)(v)` — вызов результата вызова, когда результат сам fn-newtype (тот
+// же корень что форма (а), но результат call'а с аргументами, а не nullary —
+// ровно middleware-форма 222.4 §4а `fn(next Handler) -> Handler`). До фикса —
+// CC-FAIL «called object type 'void *' is not a function». См.
+// docs/plans/backlog-followups.md [M-fn-newtype-return-position-broken].
+module spec_tests.conformance
+
+type N53CHandler fn(int) -> str
+
+fn n53c_base(x int) -> str => "base:${x}"
+
+// Middleware shape: принимает Handler, возвращает Handler-декорирующий
+// closure (D55 авто-коэрсия closure -> newtype). Фикс проверяет ТОЛЬКО
+// chain-call механику (форма в), не семантику декорирования — closure,
+// а не identity-return `h`, чтобы не задевать [M-ro-launder-via-mut-binding]
+// (ro-параметр в return-позиции — отдельный, несвязанный checker-класс).
+fn n53c_mw(h N53CHandler) -> N53CHandler => |x| h(x)
+
+test "N53 форма (в): mw(h)(v) — вызов результата вызова, когда результат сам fn-newtype" {
+    ro r = n53c_mw(n53c_base)(7)
+    assert(r == "base:7")
+}

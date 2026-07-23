@@ -1,0 +1,18 @@
+// [M-fn-newtype-return-position-broken] (№53, P1-блокер 222.4) форма (а):
+// `make()(3)` — chain-call на результат вызова именованной fn, возвращающей
+// fn-newtype (`-> Handler`). До фикса — ICE `[P67-LEGACY] Path call return
+// type unknown (no parts)` (`emit_c.rs` — `resolve_fn_typeref` не покрывал
+// результат ВЫЗОВА). См. docs/plans/backlog-followups.md
+// [M-fn-newtype-return-position-broken].
+module spec_tests.conformance
+
+type N53AHandler fn(int) -> str
+
+fn n53a_base(x int) -> str => "base:${x}"
+
+fn n53a_make() -> N53AHandler => n53a_base
+
+test "N53 форма (а): make()(3) — chain-call на результат call'а, возвращающего fn-newtype" {
+    ro r = n53a_make()(3)
+    assert(r == "base:3")
+}
