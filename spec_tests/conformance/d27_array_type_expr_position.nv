@@ -1,0 +1,41 @@
+// D27-amendment ([221.1 #24], 2026-07-23): `[]T ≡ Vec[T]` (D27/D239) is
+// USABLE AS A TYPE IN EXPRESSION POSITION even when `T` needs its own
+// parentheses (tuple-type element, e.g. `(str, str)`). Before this
+// amendment, `[](str, str).new()` parsed the leading `[]` as an EMPTY
+// literal, then `(str, str)` as a CALL on it — always a compile error
+// (E7330, "str is a record type, not a value") because calling a value
+// literal is never legal; the diagnostic pointed at the bare type names
+// instead of naming the user's real intent. Since calling an empty
+// literal was ALREADY always illegal, the shape `[](T1, T2, ...)`
+// immediately followed by a genuine type-usage continuation (`.`/`{`) is
+// grammatically free to repurpose as `Vec[(T1, T2, ...)]` — this fixture
+// pins that down. `Vec[(str, str)].new()` (the pre-existing, more verbose
+// canon) remains valid and byte-identical in behaviour — see D27 in
+// spec/decisions/03-syntax.md for the full amendment text.
+module spec_tests.conformance
+
+test "[](str, str).new() — tuple-element []T alias, canon in expr position (D27-amend)" {
+    ro v = [](str, str).new()
+    assert(v.len() == 0)
+}
+
+test "[]int.new() — simple-T []T alias in expr position still works (no regression)" {
+    ro v = []int.new()
+    assert(v.len() == 0)
+}
+
+test "[](str, str).new() + push + tuple-index round-trip (D27-amend)" {
+    mut v = [](str, str).new()
+    v.push(("a", "b"))
+    v.push(("c", "d"))
+    assert(v.len() == 2)
+    assert(v[0].0 == "a")
+    assert(v[0].1 == "b")
+    assert(v[1].0 == "c")
+    assert(v[1].1 == "d")
+}
+
+test "Vec[(str, str)].new() — pre-existing spelled-out canon, byte-identical (D27-amend baseline)" {
+    ro v = Vec[(str, str)].new()
+    assert(v.len() == 0)
+}

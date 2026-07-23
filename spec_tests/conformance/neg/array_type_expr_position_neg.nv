@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR E7330
+//
+// D27-amendment ([221.1 #24], 2026-07-23): `[](str, str)` WITHOUT a
+// trailing type-usage continuation (`.`/`{`) is NOT reinterpreted as a
+// type — it stays the ORIGINAL empty-literal-then-call parse, which is
+// always a compile error (calling a value literal is never legal). This
+// negative fixture pins down that the amendment does not lose the
+// existing diagnostic for a genuinely malformed call: `str`/`str` here
+// are read as bare VALUE arguments to a call on `[]` (the empty literal),
+// and the checker still reports `E7330` ("str is a record type, not a
+// value") on them, exactly as it did before the amendment.
+
+module neg.array_type_expr_position_neg
+
+fn bad() -> () {
+    ro y = [](str, str)
+    ()
+}
