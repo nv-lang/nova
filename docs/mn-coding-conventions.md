@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
-# Конвенция кодирования M:N-рантайма Nova — проактивные правила
+# Конвенция кодирования **Vela** (M:N-рантайм Nova) — проактивные правила
 
 > **Нормативный документ.** Как ПИСАТЬ код `compiler-codegen/nova_rt/`
 > (spawn / cancel / scope / driver / scheduler / GC-интеграция), чтобы гонок

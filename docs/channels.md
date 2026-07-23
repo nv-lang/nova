@@ -123,7 +123,7 @@ ro v = rx.recv()   // Option[int]
 
 Explicit annotation via turbofish: `Channel[int].new(8)`.
 
-**Word-safe `T` only ([M-channel-generic-elem-type]).** The runtime stores
+**Word-safe `T` only ([M-channel-generic-elem-type]).** Vela (M:N runtime) stores
 every element in a single word-sized slot, so `T` must round-trip losslessly
 through it: `int`, `bool`, `char`, fixed-width int types, and any
 pointer-sized type (`[]T`, records, `HashMap`, sums, …) all work. A `T` that
