@@ -28210,6 +28210,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let unwind_cleanup = matches!(outcome, DeferOutcome::FromFrame(_) | DeferOutcome::Interrupt);
         let o_local = self.fresh_tmp();
         self.materialize_scope_outcome(&o_local, outcome);
+        // [M-cancel-loop-accept-swallowed-residual] (221.1 №15, D188 R3
+        // amendment, ОКНО-3 2026-07-23, владелец-решение (б)): the cancel-
+        // shield is armed HERE — immediately before the cleanup dispatch —
+        // narrowed from the previous "over body+cleanup" scope (D159's
+        // letter: only cleanup itself is shielded; the body's own suspend
+        // points stay cancellable). `policy.prev_deadline_var` was already
+        // declared (bare, `=0`) by the prologue; this assigns it. The
+        // matching `nv_consume_leave_shield` runs right after the cleanup
+        // call below (both success and throwing paths, unchanged).
+        self.line(&format!(
+            "{} = nv_consume_enter_shield({});",
+            policy.prev_deadline_var, policy.threshold_var));
         // Plan 173 Ф.5 п.2 (D192-ретракт): watchdog armed around the CLEANUP
         // call only («fiber застрял в cleanup» — body не под порогом). t0 for
         // the duration measured into the ResourceTrace exit-event. Both set
@@ -28957,8 +28969,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             t.strip_prefix("NovaValue_").map(|s| s.to_string()).unwrap_or(t)
         };
         let active_var = format!("_defer_{}_{}_active", block_id, idx);
-        let prevdl_var = format!("_defer_{}_{}_prevdl", block_id, idx);
-        self.line(&format!("{} = nv_consume_enter_shield(0);", prevdl_var));
+        // [M-cancel-loop-accept-swallowed-residual] (221.1 №15, D188 R3
+        // amendment, ОКНО-3 2026-07-23, владелец-решение (б)): the shield is
+        // NO LONGER armed here at resource-capture time — that held the
+        // cancel-mask up over the ENTIRE scope BODY (every suspend/yield
+        // point between capture and cleanup), contradicting D159's "cleanup
+        // completes-then-cancel-propagates" (only CLEANUP itself should be
+        // shielded). `nv_consume_enter_shield` is now called immediately
+        // before the actual cleanup dispatch in `emit_consume_entry_cleanup`
+        // (the ONE place per policy where `Nova_<T>_consume_cleanup` runs),
+        // which also does the matching `nv_consume_leave_shield`. This body
+        // no longer touches the shield at all — cancellation reaches the
+        // body's own suspend points normally now.
         // Plan 217: mirror ConsumeScope's D185 R1 enter-event (NULL-guarded,
         // observability only) — cheap, keeps auto-cleanup structurally
         // observable the same way an explicit `consume{}` block already is.
@@ -30502,16 +30524,24 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     self.line(&format!("int {} = nv_resolve_exit_timeout_ms();", timeout_var));
                 }
 
-                // Plan 110.2.1 (D188 R3): cancel-shield over body + cleanup. enter
-                // returns the previous deadline (nested-shield safety); leave restores
-                // it. Both re-home into the consume-policy so all four run-sites leave.
-                // Plan 173 Ф.5 п.2 (D192-ретракт): enter больше НЕ армит deadline
-                // (mask only); timeout_var = порог watchdog-варна, армится вокруг
-                // самого cleanup-вызова (emit_consume_entry_cleanup).
+                // [M-cancel-loop-accept-swallowed-residual] (221.1 №15, D188
+                // R3 amendment, ОКНО-3 2026-07-23, владелец-решение (б)):
+                // cancel-shield NARROWED to the cleanup phase only (D159's
+                // letter — "cleanup completes-then-cancel-propagates" — the
+                // BODY between capture and cleanup is NOT part of cleanup and
+                // must stay cancellable at its own suspend/yield points).
+                // `nv_consume_enter_shield` is no longer called here (that
+                // held the mask up for the WHOLE body); it now fires
+                // immediately before the cleanup dispatch itself, inside
+                // `emit_consume_entry_cleanup` (the ONE place per policy
+                // where `Nova_<T>_consume_cleanup` actually runs, for
+                // whichever of the four run-sites triggers it) — which
+                // already does the matching `nv_consume_leave_shield` right
+                // after. Just pre-declare the C local here (bare, `=0`) so
+                // all four run-sites can still reference the SAME name for
+                // `nv_consume_leave_shield` after cleanup returns.
                 let prev_deadline_var = self.fresh_tmp();
-                self.line(&format!(
-                    "int64_t {} = nv_consume_enter_shield({});",
-                    prev_deadline_var, timeout_var));
+                self.line(&format!("int64_t {} = 0;", prev_deadline_var));
 
                 // Plan 110.4.4.a (D185, R1) + Plan 173 Ф.5 п.2 (D185 amend):
                 // ResourceTrace.on_resource_enter — observability only
