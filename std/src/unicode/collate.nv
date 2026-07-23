@@ -43,7 +43,13 @@ ro implicit_flat []u32 = parse_flat(IMPLICIT_DATA)
 //   [variable(0/1), primary, secondary, tertiary]
 // so the whole CE stream is a flat []int of quadruples (avoids a struct/tuple
 // HashMap value — see [M-hashmap-tuple-key-mono]).
-fn push_one_ce(mut acc []u32, ce str) -> int {
+// D246-амендмент ([M-ro-launder-via-mut-binding], Ф.2 миграция, 2026-07-23):
+// `ce` — `mut` (in-out по D326-ревизии §Р3) — NOT `.clone()`: `str` не несёт
+// `@clone()` в этой кодовой базе (её буфер `ptr *u8` уже always-ro-pointee
+// по конструкции — нет способа записать в него ВООБЩЕ, так что in-out здесь
+// абсолютно безвреден, cascade на caller (`push_ce_list`) — просто `for mut
+// ce`, без реальной семантической разницы).
+fn push_one_ce(mut acc []u32, mut ce str) -> int {
     mut variable u32 = 0
     mut body = ce
     match ce.strip_prefix("*") {
@@ -75,8 +81,10 @@ fn push_one_ce(mut acc []u32, ce str) -> int {
 }
 
 // Parse a "ce|ce|.." CE list into flat quadruples appended to `acc`.
+// D246-амендмент ([M-ro-launder-via-mut-binding], Ф.2 миграция, 2026-07-23):
+// `for mut ce` — `push_one_ce`'s `ce` param стал `mut` (in-out), см. его doc.
 fn push_ce_list(mut acc []u32, ces str) {
-    for ce in ces.split("|") { push_one_ce(acc, ce) }
+    for mut ce in ces.split("|") { push_one_ce(acc, ce) }
 }
 
 // Implicit weights (UTS #10 §10.1) for a codepoint with no DUCET entry. Appends

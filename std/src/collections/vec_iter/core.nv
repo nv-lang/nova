@@ -525,7 +525,11 @@ export fn RSplitIter @step_by(n int) -> StepByIter[RSplitIter, str]
 
 // ── blanket terminators (Plan 161 Ф.3) ───────────────────────────────────
 
-export fn[I Next[T]] I mut @fold[Acc](init Acc, f fn(Acc, T) -> Acc) -> Acc {
+// D246-амендмент ([M-ro-launder-via-mut-binding], Ф.2 миграция, 2026-07-23):
+// `init` — `mut` (in-out; D326-ревизия §Р3) — генерик `Acc` не может быть
+// статически доказан value-safe (случай G: генерик может нести кучевое
+// поле), а внутренний `mut acc = init` требует mut-content-view источника.
+export fn[I Next[T]] I mut @fold[Acc](mut init Acc, f fn(Acc, T) -> Acc) -> Acc {
     mut acc = init
     while true {
         match @next() {
@@ -606,7 +610,9 @@ export fn[I Next[T]] I mut @collect_into(mut out Vec[T]) -> () {
 }
 
 /// Sum all elements starting from `zero`. Requires `T` to support `+`.
-export fn[I Next[T]] I mut @sum(zero T) -> T {
+// D246-амендмент ([M-ro-launder-via-mut-binding], Ф.2 миграция, 2026-07-23):
+// `zero` — `mut` (in-out; D326-ревизия §Р3) — `T` не статически value-safe.
+export fn[I Next[T]] I mut @sum(mut zero T) -> T {
     mut acc = zero
     while true {
         match @next() {

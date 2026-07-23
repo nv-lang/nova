@@ -41,3 +41,13 @@ export fn VecIter[T] mut @next() -> Option[T] {
     @idx += 1
     Some(v)
 }
+
+/// Shallow copy — an independent cursor over the SAME underlying buffer
+/// (does NOT deep-copy the vector data; `data`/`len` are shared, only `idx`
+/// is per-clone). D246-амендмент ([M-ro-launder-via-mut-binding], Ф.2
+/// миграция, 2026-07-23): sanctioned `.clone()` door for a caller that needs
+/// a private, independently-advancing cursor WITHOUT aliasing the original
+/// (in-out via `mut`-param would be WRONG here — the whole point is that
+/// the clone must NOT propagate its advancement back to the source; see
+/// `vec_lazy.box_iter`, which seeds a deferred-iteration closure).
+export fn VecIter[T] @clone() -> Self => { @data, @idx, @len }

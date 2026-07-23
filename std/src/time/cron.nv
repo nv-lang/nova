@@ -187,9 +187,19 @@ fn parse_range(s str, name str, min int, max int) -> Result[(int, int), ParseCro
 
 
 fn dedup_sort(xs []int) -> []int {
-    if xs.len() == 0 { return xs }
+    // D246-амендмент ([M-ro-launder-via-mut-binding], Ф.1б — return-позиция,
+    // 2026-07-23): `.clone()`, не голый `xs` — тот же read-only-view
+    // contract, что и ниже (см. коммент у `mut sorted`): нельзя вернуть
+    // caller's `xs` напрямую под mut-default return-типом (D184), даже в
+    // early-return ветке.
+    if xs.len() == 0 { return xs.clone() }
     // Простая сортировка bubble + dedup для bootstrap
-    mut sorted = xs
+    // D246-амендмент ([M-ro-launder-via-mut-binding], Ф.2 миграция, 2026-07-23):
+    // `.clone()` (D230), НЕ mut-параметр — `dedup_sort` — read-only view
+    // contract (сортирует и возвращает НОВЫЙ массив, не трогая caller's `xs`
+    // in-out); делать `xs` in-out изменило бы публичный контракт функции без
+    // нужды.
+    mut sorted = xs.clone()
     ro n = sorted.len()
     for i in 0..n {
         for j in 0..n - 1 - i {
