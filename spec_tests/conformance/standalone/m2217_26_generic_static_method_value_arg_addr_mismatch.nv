@@ -1,0 +1,136 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Regression for [M-generic-static-method-value-arg-addr-mismatch] (221.1
+// bug-sweep #26, 2026-07-23). Live prod occurrence: nova-http's
+// `Path[T Deserialize].from_request(req ServerRequest)` (`ServerRequest` is
+// an 8-field value record, past the by-ref size threshold) called as
+// `Path[Concrete].from_request(req)` — reported by a downstream package
+// worktree (extract_test.nv), blocking Plan 222.3 Ф.3 FromRequest extractors
+// end-to-end. A prior investigation tried 10+ minimal-repro variants with a
+// tiny synthetic value type WITHOUT reproducing it — the trigger needs BOTH
+// genericity (mono vs erased type-name divergence) AND a value-record param
+// past the 16-byte auto-by-ref threshold (Plan 172.14); this fixture's `Req`
+// mirrors `ServerRequest`'s actual field count/shape to cross that bar.
+//
+// Root cause: Plan 172.14 taught the NON-generic method/free-fn signature
+// path (`params_c`) to auto-by-ref a large `ro` value-struct param
+// (`method_byref_flag`/`free_fn_byref_flag`, keyed by the SOURCE-level
+// erased type/fn name) — and call-site codegen (`synthesize_method_byref_
+// args`) correctly consults the SAME map and wraps a flagged arg in
+// `&(...)`. But GENERIC mono-instance signature emission has FOUR separate,
+// parallel code paths that never got the same treatment — each computed its
+// own param C-type via a bare `type_ref_to_c`, without ever consulting the
+// byref map:
+//   - `register_mono_method_instance` (generic static/instance method
+//     forward-decl)
+//   - `emit_monomorphized_method_scoped_inner` (generic method definition)
+//   - `register_mono_instance` (generic free-fn forward-decl)
+//   - `emit_monomorphized_fn_scoped_inner` (generic free-fn definition)
+// Each declared the flagged param BY VALUE while the call site (which DOES
+// correctly consult the byref map, since it's the SAME call-site codegen
+// used for non-generic and generic callees alike) passed a POINTER —
+// `CC-FAIL "passing 'T *' to parameter of incompatible type 'T'"` (or the
+// mirror-image mismatch, once only SOME of the four sites were fixed, for a
+// generic free fn that forwards its own by-value param into an already-
+// fixed generic method callee — confirmed while fixing this incrementally).
+//
+// Fix: all four sites now consult `method_byref_flag`/`free_fn_byref_flag`
+// (as appropriate) exactly like `params_c` already does, appending `*` to
+// the computed C param type when flagged. `mut`/in-out params intentionally
+// left untouched (`param_is_inout_ptr`) — no live repro exercises that
+// combination on a generic mono instance, and it would be an unverified,
+// out-of-scope behavior change.
+//
+// Three calling conventions (all reported as failing identically): direct
+// call on a concrete instantiation, bound-generic-dispatch (`T.method(...)`
+// inside a `fn f[T Protocol](...)`), and inside a closure.
+
+module standalone.m2217_26_generic_static_method_value_arg_addr_mismatch
+
+export type FromReq protocol {
+    .from_req(req Req) -> Result[Self, str]
+}
+
+type HeaderMap { n int }
+fn HeaderMap.empty() -> HeaderMap => { n: 0 }
+
+// Mirrors ServerRequest's actual shape (8 fields incl. a nested record, a
+// tuple-Vec, and a []u8) closely enough to cross the 16-byte auto-by-ref
+// threshold — a smaller synthetic type does NOT reproduce this (see the
+// backlog note: 10+ prior attempts with a tiny value type all failed to
+// trigger it).
+export type Req value {
+    ro method  int
+    ro target  str
+    ro path    str
+    ro query   str
+    ro version int
+    ro headers HeaderMap
+    params     [](str, str)
+    ro body    []u8
+}
+
+export type Wrap[T] { priv tag int }
+
+#impl(FromReq)
+export fn Wrap[T].from_req(req Req) -> Result[Wrap[T], str] {
+    ro n = req.body.len()
+    if n >= 0 {
+        Err("n/a")
+    } else {
+        Err("unreachable")
+    }
+}
+
+fn make_req() -> Req {
+    Req {
+        method: 1, target: "/x", path: "/x", query: "",
+        version: 1, headers: HeaderMap.empty(),
+        params: [], body: []u8.new(),
+    }
+}
+
+// direct call outside any closure
+fn direct_call() -> bool {
+    ro req = make_req()
+    match Wrap[int].from_req(req) {
+        Ok(_) => true
+        Err(_) => false
+    }
+}
+
+// bound-generic wrapper
+fn bound_wrapper[T FromReq](req Req) -> Result[T, str] {
+    T.from_req(req)
+}
+
+fn via_bound() -> bool {
+    ro req = make_req()
+    match bound_wrapper[Wrap[int]](req) {
+        Ok(_) => true
+        Err(_) => false
+    }
+}
+
+// inside a closure
+fn via_closure() -> bool {
+    ro req = make_req()
+    ro f fn(Req) -> bool = |r| {
+        match Wrap[int].from_req(r) {
+            Ok(_) => true
+            Err(_) => false
+        }
+    }
+    f(req)
+}
+
+test "generic static-method call with a large value-record arg: direct call" {
+    assert(direct_call() == false)
+}
+
+test "generic static-method call with a large value-record arg: bound-generic dispatch" {
+    assert(via_bound() == false)
+}
+
+test "generic static-method call with a large value-record arg: inside a closure" {
+    assert(via_closure() == false)
+}
