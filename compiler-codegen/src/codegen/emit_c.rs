@@ -18876,6 +18876,50 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                     }
                 }
+                // [M-generic-value-self-protocol-wrapper-mono] (221.1 Ф.2
+                // #25, ОКНО-3 2026-07-23): the two bare-typevar guards above
+                // (`type_params.contains(&name)` direct-Self, and the
+                // "Option[<bare T>]" hardcoded check just above) both miss a
+                // NESTED still-generic inner — `Result[Wrap[T], E]` /
+                // `Option[Wrap[T]]` (`Self` = the receiver's OWN generic
+                // type, e.g. a protocol method `.m(...) -> Result[Self, E]`
+                // on `Wrap[T] value {...}` — `Self` substitutes to
+                // `Wrap[T]`, a `Named` whose OWN generics still mention `T`,
+                // not itself a bare type-param). Falling through to
+                // `type_ref_to_c` below recursively mono's `Wrap[T]` using
+                // the UNSUBSTITUTED literal `T` — `NovaValue_Wrap____
+                // Nova_T_p` — and registers a NovaOpt/NovaRes wrapper struct
+                // for that bogus name (`unknown type name`, CC-FAIL) — same
+                // class of hazard the `generic_type_templates`-gated
+                // `Pair[B,A]` guard below already handles for a BARE generic
+                // return, generalized here to `Option`/`Result`'s FIRST
+                // (Ok/Some) type-arg specifically, RECURSIVELY
+                // (`type_ref_uses_any_type_param`, same helper the `Pair`
+                // guard uses) so a nested `Wrap[T]` is caught too, not just a
+                // direct bare `T`. Scoped to `Option`/`Result` (the two
+                // protocol-conformance-bearing containers actually reported
+                // live) — the erased body is provably unreachable for this
+                // shape (mirrors every other stub-routed case in this
+                // function/`emit_generic_static_method_stub`): the caller-
+                // side mono pass emits the correct concrete instance per
+                // call site.
+                if (name == "Option" || name == "Result") && !generics.is_empty() {
+                    let inner_still_generic = generics.first()
+                        .map_or(false, |g| Self::type_ref_uses_any_type_param(g, type_params));
+                    if inner_still_generic {
+                        if name == "Option" {
+                            let c_name = self.sum_schema_registry
+                                .lookup_sum_schema("Option")
+                                .map(|e| e.c_name.clone())
+                                .unwrap_or_else(|| "NovaOpt_nova_int".into());
+                            return c_name;
+                        }
+                        // Result[X, E] erased placeholder — a real (never-
+                        // dereferenced, per the stub-routing rationale above)
+                        // pointer type is always valid C regardless of `X`.
+                        return "void*".into();
+                    }
+                }
                 // Plan 48 Ф.3: generic type with type-param args (e.g. Pair[B, A] in erased context)
                 // must NOT be monomorphized — return erased base pointer to avoid spurious instances.
                 // Plan 153.2 Ф.2 (STAGE 2): the param check is RECURSIVE
@@ -19044,6 +19088,33 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             } else { false }
         } else { false };
         if has_void_ptr_fields {
+            return self.emit_generic_static_method_stub(f);
+        }
+        // [M-generic-value-self-protocol-wrapper-mono] (221.1 Ф.2 #25, ОКНО-3
+        // 2026-07-23): a protocol-conformance method whose return type is
+        // `Result[X, E]` / `Option[X]` with `X` STILL mentioning the
+        // receiver's own generic type-param recursively (e.g. `Self` on
+        // `Wrap[T] value {...}` substituting to `Wrap[T]`) — same family as
+        // `has_void_ptr_fields` above (erased body provably unreachable for
+        // a still-generic value-kind receiver; the caller-side mono pass
+        // emits the correct concrete instance per call site). Route to the
+        // stub — `erased_type_ref_c` (just fixed alongside this) now returns
+        // a syntactically-safe placeholder for this exact shape instead of
+        // falling through to a bogus bare-typevar mono registration, but the
+        // FULL erased body (this function, not the stub) would still try to
+        // construct/return a REAL Result/Option value into that placeholder
+        // type — invalid. The stub skips body construction entirely (zeroed
+        // dummy return), matching this file's established pattern.
+        let ret_wraps_still_generic_inner = f.return_type.as_ref().map_or(false, |rt| {
+            if let TypeRef::Named { path, generics: rt_generics, .. } = rt {
+                matches!(path.last().map(String::as_str), Some("Result") | Some("Option"))
+                    && rt_generics.first().map_or(false, |inner|
+                        Self::type_ref_uses_any_type_param(inner, &type_params))
+            } else {
+                false
+            }
+        });
+        if ret_wraps_still_generic_inner {
             return self.emit_generic_static_method_stub(f);
         }
         // D109: Methods whose params use bare type params (e.g. find_slot(key K)) generate

@@ -1,0 +1,85 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Regression for [M-generic-value-self-protocol-wrapper-mono] (221.1 №25,
+// ОКНО-3 2026-07-23, found by wave B / nova-http-p2227's `Json[T]`/
+// `PathParam[T]`/`Query[T]` extractor types — see that worktree's
+// respond.nv/extract.nv doc comments for the live prod framing).
+//
+// A generic `value`-kind type conforming to a protocol whose method has NO
+// method-level generic param and returns `Result[Self, E]` (or
+// `Option[Self]`) made the "erased" (unspecialized) method-emission path
+// try to compute a C type for the return annotation BEFORE any type-param
+// substitution is available. `Self` substitutes to the receiver's own
+// generic type (`Wrap[T]`) — a `Named` whose OWN generics still mention the
+// unbound `T`, not itself a bare type-param — which neither of
+// `erased_type_ref_c`'s two existing bare-typevar guards caught (one only
+// handles a literal `Option[<bare T>]`, the other only literal
+// `Result[Self,E]`s wrapped in `generic_type_templates`-registered names).
+// Falling through to the general `type_ref_to_c` fallback recursively
+// mono'd `Wrap[T]` using the UNSUBSTITUTED literal `T` as if it were a
+// concrete type (`NovaValue_Wrap____Nova_T_p`), registering a bogus
+// NovaOpt/NovaRes wrapper struct for it alongside the real per-call-site
+// concrete instances — `unknown type name 'NovaValue_Wrap____Nova_T_p'`,
+// CC-FAIL. Does NOT reproduce for a REFERENCE-kind (`Heap`, the default,
+// no `value` keyword) conformer — `Self` erases safely to a real pointer
+// (`Nova_Wrap*`), and `Option[Ptr]`/`Result[Ptr,E]` need no pointee struct
+// body inline to be valid C.
+//
+// Two independent shapes below (mirrors the two containers the note found
+// affected — Result and Option are NOT the same code path in
+// `erased_type_ref_c`).
+//
+// Fix: `erased_type_ref_c` gained a RECURSIVE (`type_ref_uses_any_type_
+// param`, catches a NESTED `Wrap[T]`, not just a bare `T`) guard for
+// `Result[X,E]`/`Option[X]` returning a safe erased placeholder instead of
+// falling through to the bogus mono path; the erased-method-emission
+// caller additionally routes such methods to the existing
+// `emit_generic_static_method_stub` (same established pattern as the
+// `has_void_ptr_fields` class just above it in the same function) since the
+// FULL erased body would still try to construct a real Result/Option value
+// into the placeholder type otherwise.
+
+module standalone.m2217_25_generic_value_self_protocol_wrapper_mono
+
+type M2217_25Err { ro msg str }
+
+// ── Result[Self, E] shape ──────────────────────────────────────────────────
+type M2217_25MakeableRes protocol {
+    .m(x int) -> Result[Self, M2217_25Err]
+}
+
+type M2217_25WrapRes[T] value { ro data T }
+
+#impl(M2217_25MakeableRes)
+fn M2217_25WrapRes[T].m(x int) -> Result[M2217_25WrapRes[T], M2217_25Err] {
+    ro w M2217_25WrapRes[T] = { data: x }
+    return Ok(w)
+}
+
+test "generic value type + protocol Result[Self,E] method (221.1 №25)" {
+    ro r = M2217_25WrapRes[int].m(5)
+    match r {
+        Ok(w) => assert(w.data == 5)
+        Err(_) => assert(false)
+    }
+}
+
+// ── Option[Self] shape ──────────────────────────────────────────────────────
+type M2217_25MakeableOpt protocol {
+    .m(x int) -> Option[Self]
+}
+
+type M2217_25WrapOpt[T] value { ro data T }
+
+#impl(M2217_25MakeableOpt)
+fn M2217_25WrapOpt[T].m(x int) -> Option[M2217_25WrapOpt[T]] {
+    ro w M2217_25WrapOpt[T] = { data: x }
+    return Some(w)
+}
+
+test "generic value type + protocol Option[Self] method (221.1 №25)" {
+    ro r = M2217_25WrapOpt[int].m(5)
+    match r {
+        Some(w) => assert(w.data == 5)
+        None => assert(false)
+    }
+}
