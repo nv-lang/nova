@@ -15,6 +15,7 @@
 - [bench-conventions.md](bench-conventions.md) — бенчмарки.
 - [lsp-conventions.md](lsp-conventions.md) — языковой сервер (наследует compiler-conventions).
 - [project-philosophy.md](project-philosophy.md) — принятие дизайн-решений языка.
+- [naming-conventions.md](naming-conventions.md) — продуктовые имена (Nova/Polaris/…) и имена артефактов (планы, маркеры, коды диагностик, ветки, фикстуры) · согласовано 2026-07-23.
 - `spec/decisions/` (D-блоки) — нормативная семантика языка (spec-first).
 
 ## Главное правило
