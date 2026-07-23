@@ -1,0 +1,26 @@
+// [221.1 #37 guard, M-method-value-static-ret-type-ice] Positive companion
+// to `neg/method_value_static_form_neg.nv`: confirms the guard added for
+// the D35 static-form method-value gap does NOT regress any of the
+// surrounding, already-legal shapes — a real static CALL, an unbound-
+// instance method value (`Type.@method`), and the documented closure
+// workaround for the unsupported static-form value binding.
+// Part of the SINGLE `spec_tests.conformance` folder-module.
+module spec_tests.conformance
+
+type MvsAccount {
+    id int
+}
+
+fn MvsAccount.new(id int) -> MvsAccount => { id }
+fn MvsAccount @balance() -> int => @id
+
+test "static method CALL (not a bare value) is unaffected by the guard (#37)" {
+    ro acc = MvsAccount.new(5)
+    assert(acc.balance() == 5)
+}
+
+test "closure workaround documented by the guard's own diagnostic works (#37)" {
+    ro mk = || MvsAccount.new(9)
+    ro a = mk()
+    assert(a.balance() == 9)
+}

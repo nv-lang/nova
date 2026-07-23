@@ -29216,6 +29216,70 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         return Ok(());
                     }
                 }
+                // [221.1 №37 guard, M-method-value-static-ret-type-ice] D35
+                // §Method values form 3 ("static": `Type.method`, fn(...)->R)
+                // bound as a VALUE (`ro mk = Account.new` — NOT itself a
+                // `Call`) is NOT YET properly supported end-to-end: only
+                // form 2 (unbound-instance `Type.@method`, the
+                // `name.starts_with('@')` case a few lines below in
+                // `infer_expr_c_type`'s own Member arm) is wired to a real
+                // C closure/fn-pointer type. A bare dotted qualified
+                // reference like `Account.new` parses as `ExprKind::Path(
+                // ["Account", "new"])` (the SAME shape a module-qualified
+                // path uses), NOT `ExprKind::Member` — confirmed empirically
+                // (repro's own `decl.value.kind` dump), so both AST shapes
+                // are checked below. Left unguarded, this RHS reaches
+                // `infer_expr_c_type` (no case for either shape here),
+                // which silently degrades to an EMPTY C type string — the
+                // emitted declaration comes out as bare `mk = Account_new;`
+                // (no type at all), a CC-FAIL one step removed from the
+                // real cause, or an ICE in other call shapes downstream
+                // (see the marker's own history, docs/plans/backlog-
+                // followups.md). Guard, NOT a feature: an honest,
+                // actionable diagnostic in place of that downstream
+                // degradation — checked HERE (not in the type checker)
+                // because codegen's own `method_overloads` map (populated
+                // per-CU, keyed `(type_name, method_name)`, `MethodSig::
+                // is_instance` distinguishing `@method` from `.method`) is
+                // exactly the registry that already tells
+                // `emit_method_value_typed` (form 2) apart from a plain
+                // static call — no new registry needed.
+                let static_method_value_parts: Option<(&str, &str)> = match &decl.value.kind {
+                    ExprKind::Member { obj, name } if !name.starts_with('@') => {
+                        match &obj.kind {
+                            ExprKind::Ident(n) if n.chars().next()
+                                .map(|c| c.is_ascii_uppercase()).unwrap_or(false) =>
+                                Some((n.as_str(), name.as_str())),
+                            ExprKind::Path(parts) if parts.len() == 1 =>
+                                Some((parts[0].as_str(), name.as_str())),
+                            _ => None,
+                        }
+                    }
+                    ExprKind::Path(parts) if parts.len() == 2
+                        && parts[0].chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false)
+                        && !parts[1].starts_with('@') =>
+                    {
+                        Some((parts[0].as_str(), parts[1].as_str()))
+                    }
+                    _ => None,
+                };
+                if let Some((type_name, method_name)) = static_method_value_parts {
+                    let is_static_method = self.method_overloads
+                        .get(&(type_name.to_string(), method_name.to_string()))
+                        .map(|overloads| overloads.iter().any(|s| !s.is_instance))
+                        .unwrap_or(false);
+                    if is_static_method {
+                        return Err(format!(
+                            "[E_METHOD_VALUE_STATIC_UNSUPPORTED] static-form \
+                             method values are not yet supported; use a \
+                             closure `|| {t}.{m}(...)` instead of binding \
+                             `{t}.{m}` itself as a value (D35 §Method values \
+                             form 3 — codegen cannot yet annotate a bare \
+                             static-method reference's fn-pointer type).",
+                            t = type_name, m = method_name,
+                        ));
+                    }
+                }
                 // Infer type BEFORE emitting so record literals get the right type
                 let binding = self.pattern_binding(&decl.pattern)?;
                 // Plan 173.1 Ф.1 [M-codegen-let-locals-overlay-supervised]: when the
