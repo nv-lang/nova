@@ -161,7 +161,7 @@ fn JsonSerializer mut @end_seq() -> Result[(), SerError] {
 export type JsonDeserializer { cur JsonValue, depth int, max_depth int }
 
 #unstable
-export fn JsonDeserializer.at(v JsonValue, depth int, max_depth int) -> JsonDeserializer =>
+export fn JsonDeserializer.new(v JsonValue, depth int, max_depth int) -> JsonDeserializer =>
     { cur: v, depth, max_depth }
 
 /// Имя JSON-типа текущего значения (для сообщений об ошибке).
@@ -242,7 +242,7 @@ fn JsonDeserializer mut @enter_field(key str) -> Result[JsonDeserializer, DeErro
         None => Err(DeError.unexpected("object", json_kind(@cur)))
         Some(m) => match m.get(key) {
             None    => Err(DeError.new(MissingField(key), path: "$.${key}"))
-            Some(v) => Ok(JsonDeserializer.at(v, @depth + 1, @max_depth))
+            Some(v) => Ok(JsonDeserializer.new(v, @depth + 1, @max_depth))
         }
     }
 }
@@ -251,8 +251,8 @@ fn JsonDeserializer mut @enter_field_or_null(key str) -> Result[JsonDeserializer
     match @cur.object() {
         None => Err(DeError.unexpected("object", json_kind(@cur)))
         Some(m) => match m.get(key) {
-            None    => Ok(JsonDeserializer.at(JsonValue.null(), @depth + 1, @max_depth))
-            Some(v) => Ok(JsonDeserializer.at(v, @depth + 1, @max_depth))
+            None    => Ok(JsonDeserializer.new(JsonValue.null(), @depth + 1, @max_depth))
+            Some(v) => Ok(JsonDeserializer.new(v, @depth + 1, @max_depth))
         }
     }
 }
@@ -276,7 +276,7 @@ fn JsonDeserializer mut @enter_index(i int) -> Result[JsonDeserializer, DeError]
     match @cur.array() {
         None    => Err(DeError.unexpected("array", json_kind(@cur)))
         Some(a) => match a.get(i) {
-            Some(v) => Ok(JsonDeserializer.at(v, @depth + 1, @max_depth))
+            Some(v) => Ok(JsonDeserializer.new(v, @depth + 1, @max_depth))
             None    => Err(DeError.new(Other("sequence index out of range")))
         }
     }
@@ -356,7 +356,7 @@ export fn json_encode_pretty[T Serialize](v T) -> Result[str, SerError] {
 /// JsonValue (уже распарсенный DOM) -> T.
 #unstable
 export fn json_from_value[T Deserialize](v JsonValue) -> Result[T, DeError] {
-    mut d = JsonDeserializer.at(v, 0, 128)
+    mut d = JsonDeserializer.new(v, 0, 128)
     T.deserialize(d)
 }
 
@@ -365,7 +365,7 @@ export fn json_from_value[T Deserialize](v JsonValue) -> Result[T, DeError] {
 export fn json_decode[T Deserialize](s str) -> Result[T, DeError] {
     match Json.parse(s) {
         Ok(v)  => {
-            mut d = JsonDeserializer.at(v, 0, 128)
+            mut d = JsonDeserializer.new(v, 0, 128)
             T.deserialize(d)
         }
         Err(e) => Err(DeError.new(Syntax(parse_err_msg(e))))
@@ -377,7 +377,7 @@ export fn json_decode[T Deserialize](s str) -> Result[T, DeError] {
 export fn json_decode_with[T Deserialize](s str, max_depth int) -> Result[T, DeError] {
     match Json.parse(s) {
         Ok(v)  => {
-            mut d = JsonDeserializer.at(v, 0, max_depth)
+            mut d = JsonDeserializer.new(v, 0, max_depth)
             T.deserialize(d)
         }
         Err(e) => Err(DeError.new(Syntax(parse_err_msg(e))))
@@ -391,7 +391,7 @@ export fn json_decode_bytes[T Deserialize](b []u8) -> Result[T, DeError] {
         Ok(s)  => {
             match Json.parse(s) {
                 Ok(v)  => {
-                    mut d = JsonDeserializer.at(v, 0, 128)
+                    mut d = JsonDeserializer.new(v, 0, 128)
                     T.deserialize(d)
                 }
                 Err(e) => Err(DeError.new(Syntax(parse_err_msg(e))))
