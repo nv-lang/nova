@@ -62,7 +62,7 @@ C-символы **остаются `nova_*`**. Это не компромисс
 |---|---|
 | [docs/mn-coding-conventions.md](../mn-coding-conventions.md) | заголовок и текст: «Конвенция кодирования **Vela** (M:N-рантайм Nova)»; «M:N-ядро» → «ядро Vela», сохранив пояснение «M:N» при первом упоминании как термин модели |
 | [docs/debugging-races.md](../debugging-races.md) | реактивный плейбук — «гонки в Vela»; та же связка «проактив (mn-conventions) ↔ реактив» |
-| [docs/naming-conventions.md](../naming-conventions.md) | §1.2: строка **Vela** = M:N-рантайм, зафиксировано 2026-07-23, метафора (Паруса Арго — то, чем идёт корабль/программа); из §1.4 убрать «открытый» статус |
+| [docs/naming-conventions.md](../naming-conventions.md) | ✅ УЖЕ СДЕЛАНО (§0а, это Ф.0): строка **Vela** в §1.2 + очистка §1.4 |
 | [CLAUDE.md](../../CLAUDE.md) | ✅ УЖЕ СДЕЛАНО (§0а). AGENTS.md — НЕ трогать (§0а) |
 | [docs/runtime-tuning.md](../runtime-tuning.md), [docs/channels.md](../channels.md) **+ [channels.ru.md](../channels.ru.md)** | где текст называет «the runtime»/«планировщик» как продукт — «Vela»; технические имена символов не трогать. channels.md и channels.ru.md править согласованно |
 
