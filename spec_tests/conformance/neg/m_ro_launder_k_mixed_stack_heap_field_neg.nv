@@ -1,0 +1,30 @@
+// [M-ro-launder-fullstack-value-exemption] probe K — §72 D246-амендмент
+// (Ф.2, 2026-07-24). MIXED value-record: one stack field (`count int`) PLUS
+// one heap field (`items Vec[int]`). Proves the recursive predicate
+// (`is_fully_stack_value`, types/mod.rs) rejects the WHOLE type on a SINGLE
+// disqualifying field — having "mostly" stack fields does not help; the
+// heap field (`items`) is still shared (shallow-copied handle) between `r`
+// and `r2`, so a write through `r2.items` is visible to `r.items` — the
+// exact D246 unsoundness the ro-launder check exists to close. Companion
+// of probe G (which has ONLY a heap field, no stack field at all) — this
+// fixture confirms the boundary doesn't shift just because SOME fields
+// happen to be scalar.
+//
+// EXPECT_COMPILE_ERROR E_READONLY_COERCE
+
+module neg.m_ro_launder_k_mixed_stack_heap_field_neg
+
+import std.collections.vec.{Vec}
+
+type M72Mixed value {
+    mut count int
+    mut items Vec[int]
+}
+
+fn M72Mixed.new() -> M72Mixed => { count: 0, items: Vec[int].of(1, 2, 3) }
+
+fn main() -> () {
+    ro r = M72Mixed.new()
+    mut r2 = r
+    r2.items.push(99)
+}

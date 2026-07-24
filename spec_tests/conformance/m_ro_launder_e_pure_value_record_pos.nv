@@ -1,0 +1,34 @@
+// [M-ro-launder-fullstack-value-exemption] probe E — §72 D246-амендмент,
+// owner decision 2026-07-24: "ДА — «полностью-стековый value-тип, проба G
+// остаётся neg»". RE-RECLASSIFIED neg→pos (Ф.2 followup к Plan 224/226).
+//
+// История: Plan 224 (2026-07-23) сделала пробу E строгим neg — value-record
+// БЕЗ кучевых полей (`Point{x int, y int}`) отклонялась НАРАВНЕ с любым
+// не-скаляром, потому что тогдашняя норма исключала классовое послабление
+// по типу хранения целиком (см. retired neg/m_ro_launder_e_pure_value_record_neg.nv,
+// git history). §72 РАСШИРЯЕТ исключение с «голый скаляр-примитив» на
+// «полностью-стековый value-тип» (рекурсивный предикат `is_fully_stack_value`,
+// types/mod.rs) — `Point` целиком int-полей КВАЛИФИЦИРУЕТСЯ: копия целиком
+// независима (нет owned-графа для утечки), `.clone()` был бы буквальным
+// дублированием того, что plain-copy уже делает бесплатно. Проба E теперь
+// снова pos — БЕЗ регресса границы: проба G (value-record С кучевым полем,
+// см. neg/m_ro_launder_g_value_record_heap_field_neg.nv) остаётся neg
+// (единственное heap-поле дисквалифицирует ВЕСЬ тип рекурсивно).
+
+module spec_tests.conformance
+
+type M72Point value {
+    mut x int
+    mut y int
+}
+
+fn m72_point_reinit() -> int {
+    ro r = M72Point { x: 1, y: 2 }
+    mut w = r
+    w.x = 99
+    w.x + r.x // 99 + 1 = 100 — независимая копия, оригинал не тронут
+}
+
+test "§72: fully-stack value-record (all-int fields) ro→mut re-init is EXEMPT (probe E, re-reclassified pos)" {
+    assert(m72_point_reinit() == 100)
+}
