@@ -1,0 +1,35 @@
+// [M-method-value-arg-in-generic-combinator-infer] POS: method-level
+// type-param `U` inferred from an UNBOUND method-value ARG's static
+// signature (D35 `Type.@method` = `fn(Recv, params) -> R`), not just from
+// closure literals. `MvInferNum.@to_str` = `fn(MvInferNum) -> str`;
+// `Option[MvInferNum].map[U]` must infer `U := str` from the method-
+// value's return type. (A concrete, non-blanket method on a user record —
+// NOT a bare primitive like `int.@to_str`: that name resolves through
+// prelude's blanket `fn[T] T @to_str() => "${@}"`, which the unbound
+// method-value path does not look up — `method_overloads` only carries
+// CONCRETE per-type registrations, not blanket-impl dispatch; separate,
+// pre-existing gap, out of scope here — see Ф.0 in the review notes.)
+
+module spec_tests.conformance
+
+type MvInferNum { value int }
+fn MvInferNum.new(v int) -> Self => { value: v }
+fn MvInferNum @to_str() -> str => "${@value}"
+
+test "method-value arg infers method-level type-param (Option.map, Some)" {
+    ro a Option[MvInferNum] = Some(MvInferNum.new(42))
+    ro r = a.map(MvInferNum.@to_str)
+    match r {
+        Some(v) => assert(v == "42"),
+        None => assert(false),
+    }
+}
+
+test "method-value arg infers method-level type-param (Option.map, None)" {
+    ro a Option[MvInferNum] = None
+    ro r = a.map(MvInferNum.@to_str)
+    match r {
+        Some(_) => assert(false),
+        None => assert(true),
+    }
+}

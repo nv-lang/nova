@@ -1,0 +1,31 @@
+// [M-method-value-arg-in-generic-combinator-infer] POS: method-value arg
+// on a non-generic combinator (`Option[T] @filter(pred fn(T) -> bool) ->
+// Option[T]`, prelude/core.nv — no method-level type-param to infer)
+// still emits correctly through the SAME arg-detection path (Step 2m runs
+// for every fn-typed param, generic or not; `fn_decl.generics.is_empty()`
+// short-circuits `resolve_method_level_subst` before Step 2m ever
+// executes for THIS callee — regression coverage that the early-return
+// stays untouched). conformance = язык + прелюдия only (test-conventions.md
+// §1) — no std/collections `[]T @filter` here, so this uses `Option`.
+
+module spec_tests.conformance
+
+fn int @mv_is_positive() -> bool => @ > 0
+
+test "method-value arg on non-generic combinator (Option.filter)" {
+    ro a Option[int] = Some(5)
+    ro r = a.filter(int.@mv_is_positive)
+    match r {
+        Some(v) => assert(v == 5),
+        None => assert(false),
+    }
+}
+
+test "method-value arg on non-generic combinator (Option.filter, filtered out)" {
+    ro a Option[int] = Some(-3)
+    ro r = a.filter(int.@mv_is_positive)
+    match r {
+        Some(_) => assert(false),
+        None => assert(true),
+    }
+}

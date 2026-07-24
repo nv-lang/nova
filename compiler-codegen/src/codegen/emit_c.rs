@@ -23011,6 +23011,29 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
     }
 
+    /// [M-method-value-arg-in-generic-combinator-infer] True when `ty` is a
+    /// bare (no own generics) `Named` TypeRef whose name is one of
+    /// `generics` — a reference to one of THIS callee's OWN not-yet-
+    /// resolved method-level type-params (`U` in `map[U]`), as opposed to
+    /// an ALREADY-CONCRETE position (the receiver's own class-level
+    /// generic `T`, or a genuinely concrete named type) that
+    /// `type_ref_to_c` can safely resolve right now via the active
+    /// `current_type_subst`. Used to gate the method-value-arg receiver/
+    /// param MISMATCH check (Step 2m, all 3 sibling sites) to positions
+    /// that are structurally guaranteed already-bound — never a method's
+    /// own still-unresolved type-param (which would otherwise erase to a
+    /// bogus `Nova_<name>*` literal-fallback C-type and false-positive).
+    fn typeref_is_bare_own_generic(
+        ty: &crate::ast::TypeRef,
+        generics: &[crate::ast::GenericParam],
+    ) -> bool {
+        if let crate::ast::TypeRef::Named { path, generics: g, .. } = ty {
+            g.is_empty() && generics.iter().any(|gp| path.join("_") == gp.name)
+        } else {
+            false
+        }
+    }
+
     fn infer_type_param_binding(
         &self,
         param_ty: &crate::ast::TypeRef,
@@ -23358,6 +23381,77 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         if !ret_c.is_empty() && ret_c != "void*" {
                             self.infer_type_param_binding(ret_ty_ref.as_ref(), &ret_c, &mut subst);
                         }
+                    } else if let ExprKind::Member { obj: mv_obj, name: mv_name_full } = &arg.expr().kind {
+                        // [M-method-value-arg-in-generic-combinator-infer]:
+                        // mirror of the ClosureLight branch above, but for an
+                        // UNBOUND method-value arg (`Type.@method`, D35) —
+                        // this function computes the CALL EXPR's own return
+                        // C-type (for the enclosing `ro r = ...` declared var,
+                        // via `infer_call_ret_c`'s B06a sentinel-mono path),
+                        // a DIFFERENT consumer from `resolve_method_level_
+                        // subst` (which only feeds the callee's mono symbol/
+                        // C-name at emission) — both needed the same method-
+                        // value-arg source or the callee mono'd correctly
+                        // while the caller's `let` got the WRONG declared
+                        // type (found empirically: `NovaOpt_Nova_MvInferNum`
+                        // instead of `NovaOpt_nova_str` for `a.map(T.@to_str)`
+                        // — every downstream `match`/field-access on the
+                        // wrongly-typed local then mis-emits). Best-effort
+                        // (`Ok` only; a lookup miss silently leaves the slot
+                        // unresolved here, same permissive style as every
+                        // other source in this function — this function
+                        // returns `Option`, not a hard-error `Result`).
+                        if let Some(mv_name) = mv_name_full.strip_prefix('@') {
+                            if let Ok((_, mv_is_unbound, mv_recv_c_ty, mv_sig)) =
+                                self.method_value_lookup_sig(mv_obj, mv_name, None)
+                            {
+                                if mv_is_unbound {
+                                    let mv_param_tys: Vec<String> = std::iter::once(mv_recv_c_ty)
+                                        .chain(mv_sig.param_c_types.iter().cloned())
+                                        .collect();
+                                    // [M-method-value-arg-in-generic-combinator-infer]
+                                    // neg-case guard (mirrors `resolve_method_
+                                    // level_subst`'s Step 2m — see its doc): a
+                                    // mismatch at an already-concrete position
+                                    // means an INCOMPATIBLE method-value; the
+                                    // authoritative hard error comes from
+                                    // `resolve_method_level_subst` at actual
+                                    // emission — this best-effort function just
+                                    // declines to bind (leaves the slot
+                                    // unresolved) rather than silently adopting
+                                    // a wrong type for the `let`-binding.
+                                    // NOTE: resolves against the LOCAL `subst`
+                                    // accumulator (carrier-bound so far), NOT
+                                    // `self.type_ref_to_c` — this function
+                                    // does not maintain `self.current_type_
+                                    // subst` (unlike `resolve_method_level_
+                                    // subst`), so a `type_ref_to_c` call here
+                                    // would resolve against whatever context
+                                    // happens to be active at the CALL site,
+                                    // not this receiver's own carrier binding
+                                    // — confirmed by a real regression: it
+                                    // false-positived on `Option[MvInferBox]
+                                    // .flat_map(MvInferBox.@unwrap)` (T bound
+                                    // fine via `subst`, but unrelated via
+                                    // `current_type_subst`), silently
+                                    // dropping a valid bind.
+                                    let mismatch = fp.iter().zip(mv_param_tys.iter()).any(|(fp_ty, arg_c)| {
+                                        !Self::typeref_is_bare_own_generic(fp_ty, &callee.generics)
+                                            && Self::apply_type_subst_to_ref(fp_ty, &subst)
+                                                .map(|c| !c.is_empty() && c != "void*" && &c != arg_c).unwrap_or(false)
+                                    });
+                                    if !mismatch {
+                                        for (fp_ty, arg_c) in fp.iter().zip(mv_param_tys.iter()) {
+                                            self.infer_type_param_binding(fp_ty, arg_c, &mut subst);
+                                        }
+                                        let ret_c = &mv_sig.return_c_type;
+                                        if !ret_c.is_empty() && ret_c != "void*" {
+                                            self.infer_type_param_binding(ret_ty_ref.as_ref(), ret_c, &mut subst);
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -23637,6 +23731,83 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             if !closure_ret_c.is_empty() && closure_ret_c != "void*" {
                 self.infer_type_param_binding(
                     &ret_ty_ref, &closure_ret_c, &mut subst_slots);
+            }
+        }
+        // Step 2m [M-method-value-arg-in-generic-combinator-infer]: a
+        // method-value arg (`Type.@method`, D35 UNBOUND method-value — bound
+        // `obj.@method` was removed at check-time, E_BOUND_METHOD_REMOVED,
+        // Plan 132, so only the unbound form can reach codegen here) is not
+        // a closure literal (Step 2 above skips it) and its own C-type
+        // (`infer_expr_c_type`) is an erased `void*` carrying no
+        // `fn(T)->U`-shaped structure for Step 1 to bind against — a
+        // method-level type-param appearing ONLY in a method-value arg's
+        // return position (`map[U](f fn(T)->U)` fed `int.@to_str`) falls
+        // through both Steps 1 and 2 unbound. The method-value's fn-
+        // signature is knowable STATICALLY from the method's own
+        // declaration (no body to infer) — mirror Step 2's ClosureFull
+        // branch, sourcing param/return C-types from the method-value
+        // registry lookup (`method_value_lookup_sig`, shared with actual
+        // emission — see its doc) instead of an explicit `-> T` annotation.
+        // Arg-bearing method-values (e.g. `int.@clamp` needing lo/hi) stay
+        // out of scope: a method-value binds NO call args of its own, so
+        // this only ever lifts an ARG-LESS method reference — that shape
+        // still requires a closure (`a.map(|v| v.clamp(lo, hi))`).
+        for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
+            let (fp, ret_ty_ref) =
+                if let crate::ast::TypeRef::Func { params: fp, return_type: Some(rt), .. } = &param.ty {
+                    (fp.clone(), rt.clone())
+                } else { continue };
+            let (mv_obj, mv_name) = match &arg.expr().kind {
+                ExprKind::Member { obj, name } => match name.strip_prefix('@') {
+                    Some(m) => (obj, m),
+                    None => continue,
+                },
+                _ => continue,
+            };
+            // Same selection `emit_method_value_typed` uses at actual
+            // emission time (`target_sig: None` ⇒ single/first overload) —
+            // whatever gets inferred here is guaranteed consistent with
+            // what gets emitted later for this SAME arg expr.
+            let (_mv_type_name, mv_is_unbound, mv_recv_c_ty, mv_sig) =
+                self.method_value_lookup_sig(mv_obj, mv_name, None)?;
+            if !mv_is_unbound {
+                // Bound `obj.@method` — removed at check-time
+                // (E_BOUND_METHOD_REMOVED, Plan 132); shouldn't reach here,
+                // but skip rather than mis-infer if it somehow does.
+                continue;
+            }
+            let mv_param_tys: Vec<String> = std::iter::once(mv_recv_c_ty)
+                .chain(mv_sig.param_c_types.iter().cloned())
+                .collect();
+            for (fp_ty, arg_c) in fp.iter().zip(mv_param_tys.iter()) {
+                // [M-method-value-arg-in-generic-combinator-infer] neg-case
+                // guard: `fp_ty` positions that are NOT one of THIS
+                // method's own type-params (the receiver's class-level
+                // generic `T`, or a genuinely concrete type) are already
+                // resolvable via the active receiver-only `current_type_
+                // subst` — a mismatch there means a genuinely INCOMPATIBLE
+                // method-value (wrong receiver/param type), not an
+                // inference gap. Silently proceeding would let a bogus
+                // call compile (confirmed empirically: `Option[int].map
+                // (str.@byte_len)` — receiver mismatch int vs str —
+                // compiled clean pre-guard and SEGFAULTED at runtime, a
+                // real C receiver-type mismatch, not a diagnosable Nova
+                // error). Erroring here beats silent memory corruption.
+                if !Self::typeref_is_bare_own_generic(fp_ty, &fn_decl.generics) {
+                    if let Ok(expected_c) = self.type_ref_to_c(fp_ty) {
+                        if !expected_c.is_empty() && expected_c != "void*" && &expected_c != arg_c {
+                            return Err(format!(
+                                "method-value argument type mismatch for `{diag_context}` \
+                                 — expected `{expected_c}`, method-value's signature has `{arg_c}`",
+                            ));
+                        }
+                    }
+                }
+                self.infer_type_param_binding(fp_ty, arg_c, &mut subst_slots);
+            }
+            let ret_c = &mv_sig.return_c_type;
+            if !ret_c.is_empty() && ret_c != "void*" {
+                self.infer_type_param_binding(&ret_ty_ref, ret_c, &mut subst_slots);
             }
         }
         // Step 2f [M-generic-method-self-recursive-return] (Plan 186,
@@ -50645,12 +50816,23 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.emit_method_value_typed(obj, method_name, None)
     }
 
-    fn emit_method_value_typed(
-        &mut self,
+    /// [M-method-value-arg-in-generic-combinator-infer] Static (non-emitting)
+    /// lookup of a method-value expr's (`obj.@method` / `Type.@method`)
+    /// bound/unbound classification, chosen overload signature, and receiver
+    /// C-type — the EXACT selection `emit_method_value_typed` performs
+    /// before it emits any code, factored out so `resolve_method_level_subst`
+    /// (inferring a method-level type-param from a method-value ARG, before
+    /// the arg itself is ever emitted) and `emit_method_value_typed` (actual
+    /// emission) share ONE selection path. Whatever the inference step
+    /// resolves here is therefore guaranteed to match what gets emitted
+    /// later for the SAME arg expr (same `target_sig`/`overloads.first()`
+    /// fallback) — no risk of the two disagreeing.
+    fn method_value_lookup_sig(
+        &self,
         obj: &Expr,
         method_name: &str,
         target_sig: Option<(Vec<String>, String)>,
-    ) -> Result<String, String> {
+    ) -> Result<(String, bool, String, MethodSig), String> {
         // Determine kind: bound (obj is value) vs unbound (obj is Type).
         // Type if obj is Path/Ident starting with uppercase (or primitive type).
         let (type_name, is_unbound) = match &obj.kind {
@@ -50700,11 +50882,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 .ok_or_else(|| format!("method value: empty overload list for `{}.{}`",
                                        type_name, method_name))?
         };
-        let id = self.lambda_counter;
-        self.lambda_counter += 1;
-        let body_name = format!("nova_mv_{}_body", id);
-        let env_name = format!("nova_mv_{}_env", id);
-
         // Determine receiver C-type. Для primitive — value (через ЕДИНЫЙ
         // primitive_name_to_c); для record/sum — pointer Nova_<T>*.
         // Plan 172.1-K5: ручной match РАНЕЕ пропускал i8/i16/i32/u16/u32/u64 → они падали
@@ -50715,6 +50892,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             Some(c) => c.to_string(),
             None => format!("Nova_{}*", type_name),
         };
+        Ok((type_name, is_unbound, recv_c_ty, sig))
+    }
+
+    fn emit_method_value_typed(
+        &mut self,
+        obj: &Expr,
+        method_name: &str,
+        target_sig: Option<(Vec<String>, String)>,
+    ) -> Result<String, String> {
+        let (_type_name, is_unbound, recv_c_ty, sig) =
+            self.method_value_lookup_sig(obj, method_name, target_sig)?;
+        let id = self.lambda_counter;
+        self.lambda_counter += 1;
+        let body_name = format!("nova_mv_{}_body", id);
+        let env_name = format!("nova_mv_{}_env", id);
 
         // Param C-types and ret type.
         let params = &sig.param_c_types;
@@ -51820,6 +52012,64 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             if !closure_ret_c.is_empty() && closure_ret_c != "void*" {
                 self.infer_type_param_binding(
                     &ret_ty_ref_closure, &closure_ret_c, &mut subst_slots);
+            }
+        }
+        // Step 2m [M-method-value-arg-in-generic-combinator-infer]: mirror
+        // of the ClosureLight branch above (and of `resolve_method_level_
+        // subst`'s Step 2m / `resolve_instance_call_subst`'s twin), but for
+        // an UNBOUND method-value arg (`Type.@method`, D35) instead of a
+        // closure literal. This is the THIRD, builtin-Option/Result-
+        // specific sibling that needed the same source: without it, a
+        // method-value arg to `Option[T].map[U]`/`flat_map[U]` left `U`
+        // unresolved here too, and the CALLER (`infer_call_ret_c`'s legacy
+        // hardcoded `"map" | "or" => format!("NovaOpt_{}", elem_ty)`
+        // fallback, elem_ty = T) then declared the enclosing `ro r = ...`
+        // local with the WRONG type `Option[T]` instead of `Option[U]` —
+        // found empirically building `a.map(T.@to_str)`: the CALLEE mono'd
+        // correctly (thanks to `resolve_method_level_subst`'s Step 2m) but
+        // the CALLER's `let` got `NovaOpt_Nova_T` instead of `NovaOpt_
+        // nova_str`, and every downstream `match`/field-access on the
+        // mistyped local then mis-emitted.
+        for (param, arg) in fn_decl.params.iter().zip(args.iter()) {
+            let (fp, ret_ty_ref_mv) =
+                if let crate::ast::TypeRef::Func { params: fp, return_type: Some(rt), .. } = &param.ty {
+                    (fp.clone(), rt.clone())
+                } else { continue };
+            let ExprKind::Member { obj: mv_obj, name: mv_name_full } = &arg.expr().kind else { continue };
+            let Some(mv_name) = mv_name_full.strip_prefix('@') else { continue };
+            let Ok((_, mv_is_unbound, mv_recv_c_ty, mv_sig)) =
+                self.method_value_lookup_sig(mv_obj, mv_name, None) else { continue };
+            if !mv_is_unbound { continue; }
+            let mv_param_tys: Vec<String> = std::iter::once(mv_recv_c_ty)
+                .chain(mv_sig.param_c_types.iter().cloned())
+                .collect();
+            // [M-method-value-arg-in-generic-combinator-infer] neg-case
+            // guard (mirrors `resolve_method_level_subst`'s Step 2m — see
+            // its doc): decline to bind on a receiver/param mismatch
+            // rather than silently adopting a wrong return type here; the
+            // authoritative hard error comes from `resolve_method_level_
+            // subst` at actual emission. Resolves against the LOCAL
+            // `subst_slots` accumulator (already seeded with the
+            // receiver's T from `receiver_subst`), NOT `self.type_ref_
+            // to_c` — this function does not maintain `self.current_type_
+            // subst`, so a `type_ref_to_c` call here would resolve against
+            // whatever context happens to be active at the CALL site, not
+            // THIS receiver's own T — confirmed by a real regression: it
+            // false-positived on `Option[MvInferBox].flat_map(MvInferBox
+            // .@unwrap)` (T bound fine via `subst_slots`, but unrelated
+            // via `current_type_subst`), silently dropping a valid bind.
+            let mismatch = fp.iter().zip(mv_param_tys.iter()).any(|(fp_ty, arg_c)| {
+                !Self::typeref_is_bare_own_generic(fp_ty, &fn_decl.generics)
+                    && Self::apply_type_subst_to_ref(fp_ty, &subst_slots)
+                        .map(|c| !c.is_empty() && c != "void*" && &c != arg_c).unwrap_or(false)
+            });
+            if mismatch { continue; }
+            for (fp_ty, arg_c) in fp.iter().zip(mv_param_tys.iter()) {
+                self.infer_type_param_binding(fp_ty, arg_c, &mut subst_slots);
+            }
+            let ret_c = &mv_sig.return_c_type;
+            if !ret_c.is_empty() && ret_c != "void*" {
+                self.infer_type_param_binding(&ret_ty_ref_mv, ret_c, &mut subst_slots);
             }
         }
         // Резолв return-type через apply_type_subst_to_ref.
