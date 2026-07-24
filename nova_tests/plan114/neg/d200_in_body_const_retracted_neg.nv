@@ -1,0 +1,16 @@
+// D200 AMEND (окно №66) NEG — [M-assoc-const-out-of-body-syntax]: старая
+// in-body форма associated const (`type X { const NAME = v }`) retракти́рована
+// целиком — «одна дверь», каноническая форма ВНЕ тела (`const Type.NAME`).
+
+// EXPECT_COMPILE_ERROR E_CONST_IN_BODY_RETRACTED
+
+module neg.d200_in_body_const_retracted_neg
+
+type Config {
+    const VERSION int = 2
+    name str
+}
+
+test "in-body assoc const rejected" {
+    assert(Config.VERSION == 2)
+}

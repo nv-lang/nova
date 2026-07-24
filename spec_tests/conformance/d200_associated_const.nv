@@ -1,15 +1,19 @@
-// D200 — associated `const` field в `type X`: accessible через namespace `Type.CONST_NAME`,
+// D200 — associated `const`: accessible через namespace `Type.CONST_NAME`,
 // НЕ часть instance layout (type конструируется из instance-полей без const'ов).
-// Spec: spec/decisions/02-types.md:7146 (D200). Норма §«Семантика» п.2-3.
+// [M-assoc-const-out-of-body-syntax] (D200 AMEND, окно №66): каноническая форма
+// сменилась с in-body (`type X { const N = v }`) на out-of-body
+// `const Type.NAME <Тип> = <значение>` — симметрично `fn Type.new`/`fn Type @method`.
+// Spec: spec/decisions/02-types.md (D200). Норма §«Семантика» п.2-3 без изменений.
 module spec_tests.conformance
 
 type D200Config {
-    const VERSION int = 2
-    const PROTOCOL str = "v2"
-    const MAX_PEERS int = 1024
     name str
     timeout int
 }
+
+const D200Config.VERSION int = 2
+const D200Config.PROTOCOL str = "v2"
+const D200Config.MAX_PEERS int = 1024
 
 test "namespace access: Type.CONST резолвится к const-значению (D200)" {
     assert(D200Config.VERSION == 2)
@@ -38,10 +42,11 @@ test "assoc const участвует в constexpr-арифметике на name
 // plan114/neg/d200_composite_str_field_neg.nv).
 
 type D200StatusCode value {
-    const OK D200StatusCode = { code: 200 }
-    const NOT_FOUND D200StatusCode = { code: 404 }
     priv code int
 }
+
+const D200StatusCode.OK D200StatusCode = { code: 200 }
+const D200StatusCode.NOT_FOUND D200StatusCode = { code: 404 }
 
 type D200Point value {
     x int
@@ -49,10 +54,11 @@ type D200Point value {
 }
 
 type D200Rect value {
-    const UNIT D200Rect = { origin: { x: 0, y: 0 }, size: 1 }
     origin D200Point
     size int
 }
+
+const D200Rect.UNIT D200Rect = { origin: { x: 0, y: 0 }, size: 1 }
 
 test "assoc const композитное значение: namespace-доступ + чтение поля (D200 финализация)" {
     assert(D200StatusCode.OK.code == 200)
@@ -70,4 +76,14 @@ test "assoc const композитное значение: использова�
     ro b = D200StatusCode { code: 200 }
     assert(a.code == b.code)
     assert(D200StatusCode.OK.code + 1 == 201)
+}
+
+// [M-assoc-const-out-of-body-syntax] (окно №66): instance-доступ к assoc const
+// через значение — по-прежнему ошибка (namespace-only access, §Семантика п.3),
+// независимо от того, что декларация теперь вне тела типа.
+test "instance-доступ к assoc const остаётся namespace-only (D200, окно №66)" {
+    ro c = D200Config { name: "bob", timeout: 5 }
+    // c.VERSION — было бы E_CONST_INSTANCE_ACCESS; не вызываем здесь (позитивный
+    // test-файл), см. neg-фикстуру plan114/neg/d200_oob_instance_access_neg.nv.
+    assert(c.name == "bob")
 }
