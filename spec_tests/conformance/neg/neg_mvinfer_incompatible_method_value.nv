@@ -1,0 +1,25 @@
+// EXPECT_COMPILE_ERROR method-value argument type mismatch
+//
+// [M-method-value-arg-in-generic-combinator-infer] NEG: an unbound
+// method-value whose RECEIVER type doesn't match the combinator's
+// expected element type must be a compile-time error, not silently
+// accepted. `str.@byte_len` = `fn(str) -> int`, but `a`'s element type is
+// `int` (`Option[int]`) — `Option[T].map[U](f fn(T) -> U)` expects
+// `T = int`, not `str`. Before the receiver/param mismatch guard, this
+// compiled clean (the fix only checked the RETURN position for `U`,
+// never validating the PARAMETER position against the receiver's own
+// already-concrete `T`) and SEGFAULTED at runtime (a real C-level
+// receiver-type mismatch — `Nova_str_method_byte_len` called with an
+// `int` value reinterpreted as `nova_str`). Erroring beats silent memory
+// corruption.
+
+module neg.neg_mvinfer_incompatible_method_value
+
+fn main() {
+    ro a Option[int] = Some(42)
+    ro r = a.map(str.@byte_len)
+    match r {
+        Some(v) => print(v),
+        None => print("none"),
+    }
+}
