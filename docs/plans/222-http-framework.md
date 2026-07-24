@@ -101,8 +101,8 @@ middleware. Кандидат в линт-правило после стабил�
 
 | Репа | Package | Модули |
 |---|---|---|
-| **`nova-http`** (остаётся) | `http` — ядро протокола | `http` (Request/Response/Method/StatusCode/HeaderMap/Url/Cookie/Body/Mime/HttpError), `http.client`, `http.transport`, `http.json` (← `http.serdejson`), `http.net` (← `http.servernet`; оговорка: если извлечение покажет жёсткую завязку на Router — уедет в `polaris.net`) |
-| **`nova-polaris`** (новая) | `polaris` — фреймворк + батарейки | `polaris` (корень: Router/get/post/Handler, ServerRequest/ServerResponse ← `http.server`), `polaris.extract`, `polaris.response` (← `http.server`/respond.nv; **существительное `response`, не `respond`** — вопрос владельца 2026-07-24, Axum `response`-паритет, консистентность с extract/auth/static), `polaris.middleware.*` (← `middleware.*`), `polaris.auth`, `polaris.static`, `polaris.ws`, `polaris.serve` |
+| **`nova-http`** (остаётся) | `http` — ядро протокола | `http` (Request/Response/Method/StatusCode/HeaderMap/Url/Cookie/Body/Mime/HttpError), `http.client`, `http.transport`, `http.json` (← `http.serdejson`), ~~`http.net` (← `http.servernet`)~~ — **оговорка СРАБОТАЛА (проверка импортов 2026-07-24): servernet жёстко завязан на фреймворк-типы** (`../server.{ServerResponse, StreamBody, serialize_response, BackgroundTasks, MultipartLimits}`) — НЕ чистый транспорт → уезжает в **`polaris.net`** |
+| **`nova-polaris`** (новая) | `polaris` — фреймворк + батарейки | `polaris` (корень: Router/get/post/Handler, ServerRequest/ServerResponse ← `http.server`), `polaris.extract`, `polaris.response` (← `http.server`/respond.nv; **существительное `response`, не `respond`** — вопрос владельца 2026-07-24, Axum `response`-паритет, консистентность с extract/auth/static), `polaris.middleware.*` (← `middleware.*`), `polaris.auth`, `polaris.static`, `polaris.ws`, `polaris.serve`, `polaris.net` (← `http.servernet`, см. оговорку слева) |
 
 Зависимость: `polaris` → `http` (пользователь `import polaris.{Router, get, post}`, http-типы
 транзитивно; кому нужен только клиент — `import http`). **Порядок работ:** (1) Middleware
