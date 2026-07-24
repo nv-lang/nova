@@ -1,0 +1,23 @@
+// [M-ro-launder-fullstack-value-exemption] §72 D246-амендмент (Ф.2,
+// 2026-07-24): `str` — отдельное исключение по IMMUTABILITY (D26), НЕ по
+// стековости. `str` — это shallow `{ptr *u8, len}` heap-хэндл (в буквальном
+// смысле НЕ "стек"), но у него нет ни единого mut-метода/index-записи,
+// способного изменить содержимое буфера через ЛЮБОЙ binding — значит
+// aliased-копия не создаёт живой дыры для записи, и exemption безопасен
+// по ДРУГОЙ причине, чем для value-record'ов (см. `is_fully_stack_value`
+// doc, types/mod.rs). Раньше (Plan 224, scalar-only exemption) голый `str`
+// local НЕ входил в исключение — это было "out of scope for Ф.1"
+// bookkeeping, не soundness-находка; §72 закрывает это явно.
+
+module spec_tests.conformance
+
+fn m72_str_reinit() -> str {
+    ro s = "hello"
+    mut t = s
+    t = "world" // rebind — независимый binding, `s` не затронут (str immutable content anyway)
+    t
+}
+
+test "§72: bare `str` local ro→mut re-init is EXEMPT (immutability, D26 — not stackness)" {
+    assert(m72_str_reinit() == "world")
+}

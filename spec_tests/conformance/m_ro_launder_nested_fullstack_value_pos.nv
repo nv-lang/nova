@@ -1,0 +1,38 @@
+// [M-ro-launder-fullstack-value-exemption] §72 D246-амендмент (Ф.2,
+// 2026-07-24): NESTED fully-stack value-record — `M72Outer` embeds another
+// value-record (`M72Inner`) plus a scalar field, all transitively stack-
+// resident. `is_fully_stack_value` (types/mod.rs) recurses through
+// `M72Outer`'s fields INCLUDING the nested `M72Inner` field, which itself
+// recurses through ITS fields (all `int`) — the whole graph is stack, so
+// the ro→mut coercion exemption applies at every nesting depth.
+//
+// Contrast with probe G (neg/m_ro_launder_g_value_record_heap_field_neg.nv):
+// if `M72Inner` had so much as ONE heap field (`Vec`/`HashMap`/...),
+// `is_fully_stack_value(M72Inner)` would be false, which recursively makes
+// `is_fully_stack_value(M72Outer)` false too — see
+// m_ro_launder_k_mixed_stack_heap_field_neg.nv for that exact shape.
+
+module spec_tests.conformance
+
+type M72Inner value {
+    mut a int
+    mut b int
+}
+
+type M72Outer value {
+    mut inner M72Inner
+    mut n int
+}
+
+fn m72_nested_reinit() -> int {
+    ro r = M72Outer { inner: M72Inner { a: 1, b: 2 }, n: 10 }
+    mut w = r
+    w.inner.a = 100
+    w.n = 20
+    // Independent copy: `w` mutated, `r` untouched.
+    w.inner.a + w.n + r.inner.a + r.n // 100 + 20 + 1 + 10 = 131
+}
+
+test "§72: NESTED fully-stack value-record (value-record field of a value-record) ro→mut re-init is EXEMPT" {
+    assert(m72_nested_reinit() == 131)
+}

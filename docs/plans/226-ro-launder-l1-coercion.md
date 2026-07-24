@@ -2,6 +2,96 @@
 
 **Статус:** Ф.0б/Ф.1/Ф.2 (std+examples+spec_tests) СДЕЛАНЫ и провалидированы
 (gates §6 зелёные). nova-http — только инвентарь (не мой мандат, отдельная волна).
+**Ф.2-followup (§72, компилятор-окно №72, 2026-07-24, worktree `nova-fsval`,
+ветка `p-fullstack-value`, sonnet):** exemption РАСШИРЕНО со «скаляр-примитив»
+на «полностью-стековый value-тип» — см. §9 ниже.
+
+## §9. Ф.2-followup (§72, 2026-07-24) — fullstack-value-exemption
+
+**Владелец, 2026-07-24, ДА:** «полностью-стековый value-тип, проба G остаётся
+neg» — расширить `is_bare_scalar_primitive`/`is_bare_scalar_primitive_name`
+(scalar-only exemption, §3-4 выше) на рекурсивный предикат `is_fully_stack_value`
+(types/mod.rs): тип и ВСЕ его поля транзитивно без кучевых
+(`Vec`/`HashMap`/`Set`/heap-record/`Array`); `str` — отдельное исключение по
+**immutability** (D26), не по стековости (нет ни одного write-метода на
+content, значит aliased-копия безопасна независимо от того, что `str` сама
+по себе heap-хэндл `{ptr,len}`). D246-амендмент §72 в
+`spec/decisions/02-types.md` (banner + P8-абзац + ORACLE G + таблица
+конверсий строка исключения — все обновлены на «полностью-стековый»
+формулировку, без изменения структуры остального документа).
+
+**Корень предиката** (`compiler-codegen/src/types/mod.rs`):
+- `is_fully_stack_value(ty: &TypeRef, types: &HashMap<String, &TypeDecl>) -> bool`
+  — база: `is_bare_scalar_primitive_name` (скаляр) ИЛИ `name == "str"`;
+  рекурсия: `Unit`/anonymous `Tuple`/`[N]T` (`FixedArray`) — рекурсия по
+  элементам; `value`-record (`AllocKind::Value`) / `NamedTuple` — рекурсия по
+  ВСЕМ полям (`fields.iter().all(...)`, один heap-филд убивает весь тип);
+  всё остальное (heap-record, `Array`/`[]T`, `Pointer`, `Func`, `Protocol`,
+  `Ref`, generic-instantiated `Named`, module-external `Named`, `Option`/enum
+  sums) — `false` (консервативный false-negative, никогда false-positive).
+- `is_fully_stack_value_name(name: &str, stack_value_type_names: &HashSet<String>) -> bool`
+  — string-name сиблинг для call-argument позиции (`ConsumeCtx.var_types`
+  хранит только ИМЯ типа, не полный `TypeRef`+scope). `stack_value_type_names`
+  — НОВОЕ поле `ConsumeRegistry`, вычисляется ОДИН РАЗ в `build()` — тот же
+  предикат применяется к каждому top-level `TypeDecl` из `module.items`
+  (тот же скоуп, что и соседний `record_field_types` — БЕЗ `peer_files`,
+  существующий прецедент, не новый пробел).
+- Три позиции exemption заменены (`is_bare_scalar_primitive`/`_name` →
+  `is_fully_stack_value`/`_name`): Let-init (`check_readonly_source_coerce`),
+  возврат (`check_ro_launder_return`), аргумент (`check_readonly_coerce_args`).
+  Мёртвый `is_bare_scalar_primitive` (TypeRef-обёртка, больше не вызывается
+  нигде — заменена рекурсивным предикатом на всех трёх сайтах) — удалён;
+  `is_bare_scalar_primitive_name` осталась (используется как базовый случай
+  рекурсии + call-argument name-only путь).
+
+**Вердикты:**
+- `cargo build --release` (compiler-codegen + nova-cli) — чисто, без новых
+  warning'ов на добавленный код.
+- `nova check` на все 10 существующих `m_ro_launder_*` фикстур — **δ0** для
+  ВСЕХ, КРОМЕ пробы E: `a/d/f/h/i/j/return_position/b` держат свой прежний
+  код ошибки без изменений; `m_ro_launder_scalar_primitive_pos` — PASS
+  (без изменений). **Проба G** (`neg/m_ro_launder_g_value_record_heap_field_neg.nv`,
+  value-record С кучевым Vec-полем) — **подтверждена: остаётся
+  `E_READONLY_COERCE`** — граница НЕ сдвинута.
+- **Проба E** (`Point{x int, y int}`, value-record БЕЗ кучевых полей) —
+  RECLASSIFIED neg→pos под §72 (ожидаемо и предсказано в задании). Старый
+  `neg/m_ro_launder_e_pure_value_record_neg.nv` удалён (git history сохраняет
+  Plan-224-версию); новый pos-фикстур
+  `spec_tests/conformance/m_ro_launder_e_pure_value_record_pos.nv` — PASS.
+- Новые фикстуры (`nova test`, полный build+run, env `NOVA_GC_LIB_DIR`/
+  `NOVA_GC_INCLUDE_DIR` → main-repo vcpkg, libuv скопирован без `.git`):
+  `m_ro_launder_e_pure_value_record_pos`, `m_ro_launder_nested_fullstack_value_pos`
+  (вложенный value-record внутри value-record — рекурсия на глубину 2),
+  `m_ro_launder_str_local_mut_pos` (голый `str`-локал, immutability-исключение),
+  `m_ro_launder_scalar_primitive_pos` (регресс-пин, не мой файл) — все
+  4/4 PASS одним прогоном.
+  Новый `neg/m_ro_launder_k_mixed_stack_heap_field_neg.nv` (value-record с
+  ОДНИМ стековым (`int`) И одним кучевым (`Vec`) полем — доказывает, что
+  «в основном стековый» не спасает) — `nova check` подтверждает
+  `E_READONLY_COERCE`.
+- `nova check std/src` — **PASS: 142 FAIL: 27 WARN: 1040** — байт-идентично
+  baseline из §6 (Plan 224/226 Ф.2). Никакой регрессии/нового поведения на
+  std/src (расширение exemption — строго СУПЕРСЕТ прежнего, могло только
+  УМЕНЬШИТЬ число `E_READONLY_COERCE`-хитов, не добавить; 0 изменений
+  означает 0 fullstack-value-паттернов в std/src на сегодня — ожидаемо,
+  Plan 224 Ф.2 уже мигрировал все живые хиты).
+- Мега-CU conformance + флагман-examples `--strict-effects` — **гейт
+  интегратора**, НЕ прогонялся в этой волне (targeted-мандат задания,
+  явный запрет на мега-CU в CPU-дисциплине задания).
+
+**Не добито (не мой мандат/явно out of scope этой волны):**
+- `nova-http`-миграция (345 хитов, соседняя репа) — без изменений, отдельная
+  задача мейнтейнера (см. §4/§8 выше, не тронуто §72).
+- `stack_value_type_names` (ConsumeRegistry) построен ТОЛЬКО из
+  `module.items` — cross-file (`peer_files`) value-record в call-argument
+  позиции конфигурации НЕ распознаётся как fullstack (false-negative,
+  безопасно, но не полно) — тот же скоуп-компромисс, что и у соседнего
+  `record_field_types` (не новый пробел, существующий прецедент).
+- `Option[T]`/generic-instantiated user-типы (`Pair[int,int]`) остаются вне
+  предиката (классифицируются как `false` — не Record/NamedTuple без
+  generic-подстановки) — задокументированный консервативный gap в doc-
+  комментарии `is_fully_stack_value`, не реализовано (эффорт этой волны).
+- Мега-CU/флагман-гейт не прогонялся (интегратор).
 
 ## §0. Контекст
 

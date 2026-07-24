@@ -3075,29 +3075,13 @@ fn is_value_type_for_v3(
 /// decision 2026-07-23, "подтверждена доками+пробой"): true for the
 /// IRREDUCIBLE scalar primitives — no fields, no indirection, no possible
 /// aliasing EVER (copying the bit-pattern IS the value; there is no
-/// owned-graph to leak through). **Explicit boundary vs the rejected
-/// value-record-class exemption** (`is_value_type_for_v3`, which classifies
-/// value-RECORDS/tuples/`[N]T` as "value" too): a value-record — even
-/// WITHOUT a heap field (probe E: `Point{x,y}`) — is NOT exempt here and
-/// stays `E_READONLY_COERCE`, because the class predicate would need to
-/// recurse into fields to be safe (probe G: a value-record WITH a heap
-/// field leaks) and stays fragile on generics/`Option[Vec[T]]` — a bare
-/// scalar sidesteps that fragility entirely by having no fields to recurse
-/// into. Deliberately excludes `str` (shallow `{ptr *u8, len}` —
-/// value-record-shaped lang item, even though its buffer happens to be
-/// unwritable today; kept conservative/out of scope for Ф.1).
-fn is_bare_scalar_primitive(ty: &TypeRef) -> bool {
-    match ty.strip_modifiers() {
-        TypeRef::Named { path, generics, .. } if path.len() == 1 && generics.is_empty() => {
-            is_bare_scalar_primitive_name(path[0].as_str())
-        }
-        _ => false,
-    }
-}
-
-/// String-name sibling of `is_bare_scalar_primitive`, for call-sites that
-/// only carry a resolved type-NAME (`ConsumeCtx.var_types: HashMap<String,
-/// String>`), not a full `TypeRef`.
+/// owned-graph to leak through). Base case of `is_fully_stack_value`
+/// (§72 D246-амендмент, Ф.2, 2026-07-24 — the RECURSIVE successor that
+/// replaced this fn's original TypeRef-wrapper sibling `is_bare_scalar_
+/// primitive` at all three ro-launder call-sites; that wrapper is now dead
+/// code and was removed — see `is_fully_stack_value` doc for the full
+/// current boundary, incl. the `str`-by-immutability exception and probe
+/// G/E dispositions).
 fn is_bare_scalar_primitive_name(name: &str) -> bool {
     matches!(
         name,
@@ -3107,6 +3091,99 @@ fn is_bare_scalar_primitive_name(name: &str) -> bool {
         | "f32" | "f64"
         | "bool" | "char" | "byte"
     )
+}
+
+/// D246-амендмент §72 ([M-ro-launder-fullstack-value-exemption], Ф.2 — owner
+/// decision 2026-07-24: "ДА — «полностью-стековый value-тип, проба G
+/// остаётся neg»"): RECURSIVE successor to the original scalar-only
+/// exemption (`is_bare_scalar_primitive_name` is now this predicate's base
+/// case) for the ro-launder exemption. True iff the type's ENTIRE
+/// owned-graph is stack-resident, i.e. a shallow bit-copy IS the
+/// independent value — no subpath can alias the original:
+///
+///  - bare scalar primitives (base case, unchanged from Ф.1 —
+///    `is_bare_scalar_primitive_name`: no fields at all, nothing to recurse
+///    into).
+///  - `str` (base case, but by a DIFFERENT reasoning — **IMMUTABILITY, not
+///    stackness** (D26). A `str` value is itself a shallow `{ptr *u8, len}`
+///    heap handle — NOT stack in the literal sense the rest of this
+///    predicate uses — so admitting it here is a deliberate, documented
+///    special case: no method/index-write exists for `str` CONTENT through
+///    any binding, so an aliased copy has no live write-hole to exploit,
+///    regardless of depth (top-level local OR nested record field). The
+///    original Ф.1 `is_bare_scalar_primitive` wave excluded bare `str`
+///    locals too, but that was "out of scope for Ф.1" bookkeeping, not a
+///    soundness finding — see that fn's doc comment.
+///  - `Unit` / anonymous `Tuple(..)` / `[N]T` (`FixedArray`) — recurse into
+///    EVERY element. The container itself is inline/stack-embedded, but an
+///    ELEMENT can still secretly be a heap handle (`[3]Vec[int]` embeds 3
+///    ALIASED heap buffers, copied by reference when the array is shallow-
+///    copied) — this is probe G's failure shape one level down, so (unlike
+///    `is_value_type_for_v3`, which classifies a container WITHOUT
+///    recursing into its elements — a different, narrower classification
+///    used by the ro/mut V3 conflict-check) this predicate MUST recurse.
+///  - a user `value`-record (`AllocKind::Value`) or `NamedTuple` whose
+///    fields are ALL `is_fully_stack_value` (recursive). A SINGLE heap
+///    field (`Vec`/`HashMap`/`Set`/a heap-record/`Array`) fails the WHOLE
+///    type — **probe G** (`ServerResponse{HeaderMap,[]u8}`) is the
+///    canonical rejection and MUST stay `E_READONLY_COERCE`: a shallow
+///    bit-copy of the record still shares the heap field's buffer with the
+///    original, so write-through aliasing survives the "stack" wrapper.
+///
+/// Explicitly false (same boundary as ever, just reached recursively now):
+/// heap records (`AllocKind::Heap`/default — includes `AllocKind::
+/// ValueHeapPromoted`, which never appears on a `TypeDecl.allocation`
+/// anyway, see that enum's invariant doc), `Array`/`[]T` (Vec, D239),
+/// `Pointer`, `Func`, `Protocol`, `Ref` (an aliasing VIEW — copying it does
+/// NOT yield an independent value, so it can never be "fully stack"
+/// regardless of what it targets), any generic-instantiated `Named`
+/// (non-empty `generics` — e.g. `Option[int]`, a user generic value-record
+/// — substitution wiring this predicate doesn't have), any module-external
+/// `Named` (path len > 1), and any type shape this checker cannot resolve
+/// structurally (`Option[T]`/enum sums generally — neither `Record` nor
+/// `NamedTuple` here, fall through to `false`). These gaps are KNOWN
+/// conservative false NEGATIVES (reject some sound cases, e.g. `Option
+/// [int]` could soundly be exempt) — never a false POSITIVE (never admits
+/// an unsound coercion). Left as a documented follow-up, not fixed in this
+/// wave (targeted delta, §72).
+fn is_fully_stack_value(ty: &TypeRef, types: &HashMap<String, &TypeDecl>) -> bool {
+    use TypeRef::*;
+    match ty.strip_modifiers() {
+        Named { path, generics, .. } if path.len() == 1 && generics.is_empty() => {
+            let name = path[0].as_str();
+            if is_bare_scalar_primitive_name(name) || name == "str" {
+                return true;
+            }
+            match types.get(name) {
+                Some(td) => match &td.kind {
+                    crate::ast::TypeDeclKind::Record(fields)
+                        if td.allocation == crate::ast::AllocKind::Value =>
+                    {
+                        fields.iter().all(|f| is_fully_stack_value(&f.ty, types))
+                    }
+                    crate::ast::TypeDeclKind::NamedTuple(elems) => {
+                        elems.iter().all(|e| is_fully_stack_value(&e.ty, types))
+                    }
+                    _ => false,
+                },
+                None => false,
+            }
+        }
+        Unit(..) => true,
+        Tuple(elems, ..) => elems.iter().all(|e| is_fully_stack_value(e, types)),
+        FixedArray(_, inner, ..) => is_fully_stack_value(inner, types),
+        _ => false,
+    }
+}
+
+/// String-name sibling of `is_fully_stack_value`, for call-sites that only
+/// carry a resolved type-NAME (`ConsumeCtx.var_types`) plus a precomputed
+/// `stack_value_type_names` set (`ConsumeRegistry`, built once per module —
+/// see that field's doc for the exact recursive computation and its scope
+/// caveat). Mirrors `is_bare_scalar_primitive_name`'s role for the scalar-
+/// only predicate.
+fn is_fully_stack_value_name(name: &str, stack_value_type_names: &HashSet<String>) -> bool {
+    is_bare_scalar_primitive_name(name) || name == "str" || stack_value_type_names.contains(name)
 }
 
 /// **Plan 118.5 V3 §V3.1 (2026-06-04):** check binding type for ro+mut
@@ -9856,7 +9933,7 @@ impl<'a> TypeCheckCtx<'a> {
         // even without heap fields) stays covered.
         if let ExprKind::Ident(name) = &value.kind {
             let is_scalar = self.infer_expr_type(value, scope)
-                .map_or(false, |t| is_bare_scalar_primitive(&t));
+                .map_or(false, |t| is_fully_stack_value(&t, &self.types));
             if !is_scalar && self.ro_binding_names.borrow().contains(name) {
                 errors.push(Diagnostic::new(
                     format!(
@@ -15036,7 +15113,7 @@ impl<'a> TypeCheckCtx<'a> {
         }
         if let ExprKind::Ident(name) = &value.kind {
             let is_scalar = self.infer_expr_type(value, scope)
-                .map_or(false, |t| is_bare_scalar_primitive(&t));
+                .map_or(false, |t| is_fully_stack_value(&t, &self.types));
             if !is_scalar && self.ro_binding_names.borrow().contains(name) {
                 errors.push(Diagnostic::new(
                     format!(
@@ -28282,6 +28359,21 @@ struct ConsumeRegistry {
     /// with ≥2 declarations (covers the receiver-mode-overload combo too,
     /// e.g. `fn T @combo(x T)` / `fn T mut @combo(mut x T)`).
     method_overload_names: HashSet<(String, String)>,
+    /// D246-амендмент §72 ([M-ro-launder-fullstack-value-exemption], Ф.2,
+    /// 2026-07-24): name-keyed companion of `is_fully_stack_value`
+    /// (types/mod.rs free fn) for the call-ARGUMENT ro-launder position,
+    /// which (unlike the let-init/return positions, which run inside
+    /// `TypeCheckCtx` and have a full `types: HashMap<String, &TypeDecl>`)
+    /// only carries a resolved type NAME (`ConsumeCtx.var_types`). Computed
+    /// ONCE per module in `build()`: every top-level `TypeDeclKind::Record`
+    /// (with `allocation == AllocKind::Value`) / `NamedTuple` whose fields
+    /// are ALL (recursively) `is_fully_stack_value`. Scope caveat: sourced
+    /// from `module.items` ONLY — does NOT reach into `peer_files` (same
+    /// fidelity as the neighboring `record_field_types` map above, existing
+    /// precedent, not a new gap introduced by this predicate). A
+    /// cross-file value-record referencing a peer-file field type is a
+    /// conservative false-negative (excluded, not wrongly admitted).
+    stack_value_type_names: HashSet<String>,
     /// **Plan 118.5 V2 [M-118.5-arg-coerce-unsafe] (2026-06-04):** free-fn
     /// name → indices of params that are NOT `unsafe T` typed (their type
     /// has no outer Unsafe wrapper before any Pointer). Used at call sites:
@@ -28842,12 +28934,35 @@ impl ConsumeRegistry {
             .map(|(key, _)| key)
             .collect();
 
+        // D246-амендмент §72 ([M-ro-launder-fullstack-value-exemption], Ф.2):
+        // precompute `stack_value_type_names` — see field doc for scope
+        // (module.items only, mirrors `record_field_types` above).
+        let stack_value_type_names: HashSet<String> = {
+            let mut local_types: HashMap<String, &TypeDecl> = HashMap::new();
+            for item in &module.items {
+                if let Item::Type(td) = item {
+                    local_types.insert(td.name.clone(), td);
+                }
+            }
+            local_types.iter()
+                .filter(|(name, td)| {
+                    let as_named = TypeRef::Named {
+                        path: vec![(*name).clone()],
+                        generics: Vec::new(),
+                        span: td.span,
+                    };
+                    is_fully_stack_value(&as_named, &local_types)
+                })
+                .map(|(name, _)| name.clone())
+                .collect()
+        };
+
         ConsumeRegistry {
             methods, fn_params, method_params, fn_return_types, recv_returning,
             fn_view_params, method_return_types, mut_methods, ro_methods,
             mut_methods_arity, ro_methods_arity, recv_returning_arity,
             fn_mut_params, method_mut_params,
-            fn_overload_names, method_overload_names,
+            fn_overload_names, method_overload_names, stack_value_type_names,
             fn_non_unsafe_params, method_non_unsafe_params,
             record_consume_fields, record_field_names, record_field_types,
             unwrapped_method_return_types, unwrapped_fn_return_types,
@@ -31264,10 +31379,10 @@ fn check_readonly_coerce_args(
     for &idx in mut_param_idxs {
         if let Some(CallArg::Item(arg)) = args.get(idx) {
             if let ExprKind::Ident(name) = &arg.kind {
-                // FINAL scalar-primitive exemption (owner decision
-                // 2026-07-23) — see `is_bare_scalar_primitive_name` doc.
+                // FULLY-stack-value exemption (owner decision 2026-07-24,
+                // §72 D246-амендмент) — see `is_fully_stack_value_name` doc.
                 let is_scalar = ctx.var_types.get(name)
-                    .map_or(false, |t| is_bare_scalar_primitive_name(t));
+                    .map_or(false, |t| is_fully_stack_value_name(t, &ctx.reg.stack_value_type_names));
                 if !is_scalar && ctx.readonly_locals.contains(name) {
                     errors.push(Diagnostic::new(
                         format!(
