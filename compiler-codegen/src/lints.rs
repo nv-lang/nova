@@ -3064,6 +3064,15 @@ pub const CONV_RULES: &[ConvRule] = &[
         text: None,
     },
     ConvRule {
+        id: "W_CONSUME_NAKED_NAME",
+        summary: "`consume`-receiver + голое имя-вид, конвертирующее в ДРУГОЙ тип \
+                  — потребление обязано называться `@into_*()` (§1а, ось \
+                  владения; голое имя зарезервировано за zero-copy видом, \
+                  который receiver не потребляет)",
+        ast: Some(conv_consume_naked_name),
+        text: None,
+    },
+    ConvRule {
         id: "W_TRY_WITHOUT_SIBLING",
         summary: "`try_*` без инфаллибельного сиблинга — префикс `try_` только \
                   для пары infallible/fallible (R3 D325)",
@@ -4018,6 +4027,105 @@ fn conv_static_conversion(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWa
                 ),
             });
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// W_CONSUME_NAKED_NAME — `consume`-receiver + голое имя-вид, конвертирующее
+// в ДРУГОЙ тип (§1а, ось владения). Зеркало W_STATIC_CONVERSION: там —
+// запрещённая статик-дверь `T.from`/`T.parse`, здесь — запрещённая
+// instance-дверь «голое имя потребляет receiver и возвращает другой тип»,
+// когда канон требует `into_*` (§1а: «голое существительное = O(1) вид...
+// НИКОГДА не потребляет receiver»; «`into_*` = потребляющий финализатор»).
+//
+// Исключения (все три — НЕ нарушение, отдельные оси §1а/D117):
+//   - имя уже `into_*` (канон) / `to_*` (ro-источник, отдельный класс) /
+//     `with_*` (D117 wither — не финализатор);
+//   - возврат ТОГО ЖЕ типа, что и receiver (`Self`/`RecvType`, включая
+//     обёрнутый в `Result[RecvType,...]`/`Option[RecvType]`) — это
+//     трансформация/builder-шаг, не конверсия в другой тип; `-> @` на
+//     `consume`-receiver'е синтаксически запрещён (E_CONSUME_RECEIVER_
+//     RETURNS_AT, D8/D133), но проверяем `returns_receiver` защитно;
+//   - Unit-подобный возврат (`-> ()`, отсутствие `->` вовсе, или
+//     `Result[(), E]`/`Option[()]`) — НЕ конверсия в значение вообще:
+//     `close`/`cleanup`/`commit`/`abort`/`release`/`unlock`/`discard`
+//     (RAII-финализаторы D432 `consume @cleanup`, `MutexGuard consume
+//     @unlock`, `File consume @close() -> Result[(), IoError]`) —
+//     императивные глаголы без произведённого значения, другая
+//     именная ось (не «вид, притворяющийся видом»); без этого исключения
+//     правило захлёбывается std-практикой (`std/net/tcp.nv`,
+//     `std/runtime/sync.nv`).
+// ---------------------------------------------------------------------------
+
+/// Payload-тип у `Result[T, E]`/`Option[T]` (первый generic), либо сам тип,
+/// если это не Result/Option. Однослойная развёртка — этого достаточно для
+/// различения «конверсия в значение» vs «финализатор без значения».
+fn conv_unwrap_result_option(ty: &TypeRef) -> &TypeRef {
+    if let TypeRef::Named { path, generics, .. } = ty {
+        let last = path.last().map(String::as_str);
+        if (last == Some("Result") || last == Some("Option")) && !generics.is_empty() {
+            return &generics[0];
+        }
+    }
+    ty
+}
+
+/// `None` (нет `->` вовсе — implicit `()`), явный `TypeRef::Unit`, либо
+/// `Result[(), E]`/`Option[()]` — «финализатор без произведённого значения».
+fn conv_type_is_unit_like(ty: Option<&TypeRef>) -> bool {
+    match ty {
+        None => true,
+        Some(t) => matches!(conv_unwrap_result_option(t), TypeRef::Unit(_)),
+    }
+}
+
+/// Payload (после снятия Result/Option) — ТОТ ЖЕ тип, что и receiver
+/// (`Self`, либо `RecvType` по имени)?
+fn conv_type_same_as_receiver(ty: &TypeRef, recv_name: &str) -> bool {
+    match conv_unwrap_result_option(ty) {
+        TypeRef::Named { path, .. } => match path.last().map(String::as_str) {
+            Some("Self") => true,
+            Some(n) => n == recv_name,
+            None => false,
+        },
+        _ => false,
+    }
+}
+
+fn conv_consume_naked_name(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
+    for f in conv_all_fns(m) {
+        let Some(recv) = &f.receiver else { continue };
+        if recv.kind != ReceiverKind::Instance || !recv.consume {
+            continue;
+        }
+        if f.name.starts_with("into_") || f.name.starts_with("with_") || f.name.starts_with("to_")
+        {
+            continue;
+        }
+        // `-> @` (returns_receiver) mutually excludes `consume` at parse
+        // time (E_CONSUME_RECEIVER_RETURNS_AT) — defensive, not reachable.
+        if f.returns_receiver {
+            continue;
+        }
+        if conv_type_is_unit_like(f.return_type.as_ref()) {
+            continue;
+        }
+        let rt = f.return_type.as_ref().expect("checked non-unit-like above");
+        if conv_type_same_as_receiver(rt, &recv.type_name) {
+            continue;
+        }
+        out.push(LintWarning {
+            rule: "W_CONSUME_NAKED_NAME",
+            diag: Diagnostic::new(
+                format!(
+                    "`consume`-конверсия `{}.{}(...)` в другой тип обязана называться \
+                     `@into_{}()` (nv-coding-style §1а, ось владения): голое имя \
+                     зарезервировано за zero-copy видом, который НЕ потребляет receiver.",
+                    recv.type_name, f.name, f.name
+                ),
+                f.span,
+            ),
+        });
     }
 }
 
@@ -8233,6 +8341,127 @@ mod tests {
         assert!(
             ws.iter().any(|w| w.rule == "W_STATIC_CONVERSION"),
             "nova:allow must only suppress the very next line, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    // W_CONSUME_NAKED_NAME — `consume`-receiver + голое имя-вид,
+    // конвертирующее в другой тип (§1а, ось владения; зеркало
+    // W_STATIC_CONVERSION).
+
+    #[test]
+    fn warns_on_consume_naked_name_into_other_type() {
+        let src = "module foo\n\
+             type Response { ro body []u8 }\n\
+             type HttpError { ro msg str }\n\
+             export fn Response consume @bytes() -> Result[[]u8, HttpError] => Ok(@body)\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            ws.iter().any(|w| w.rule == "W_CONSUME_NAKED_NAME"),
+            "consume + голое имя, конвертирующее в другой тип, должно флагаться, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn does_not_warn_on_consume_into_prefix() {
+        let src = "module foo\n\
+             type Response { ro body []u8 }\n\
+             type HttpError { ro msg str }\n\
+             export fn Response consume @into_bytes() -> Result[[]u8, HttpError] => Ok(@body)\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            !ws.iter().any(|w| w.rule == "W_CONSUME_NAKED_NAME"),
+            "канон into_* не должен флагаться, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn does_not_warn_on_consume_with_mutator() {
+        let src = "module foo\n\
+             type Body { ro limit int }\n\
+             export fn Body consume @with_limit(n int) -> Body => { limit: n }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            !ws.iter().any(|w| w.rule == "W_CONSUME_NAKED_NAME"),
+            "consume @with_* (D117 wither, не финализатор) не должен флагаться, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn does_not_warn_on_non_consume_bare_view() {
+        let src = "module foo\n\
+             type Str2 { ro body []u8 }\n\
+             export fn Str2 @bytes() -> []u8 => @body\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            !ws.iter().any(|w| w.rule == "W_CONSUME_NAKED_NAME"),
+            "не-consume голый вид не должен флагаться, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn does_not_warn_on_consume_same_type_return() {
+        let src = "module foo\n\
+             type Body { ro limit int }\n\
+             export fn Body consume @clamp(n int) -> Body => { limit: n }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            !ws.iter().any(|w| w.rule == "W_CONSUME_NAKED_NAME"),
+            "возврат ТОГО ЖЕ типа (не финализатор в другой тип) не должен флагаться, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn does_not_warn_on_consume_unit_finalizer() {
+        let src = "module foo\n\
+             type Conn { ro fd int }\n\
+             export fn Conn consume @close() -> () => ()\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            !ws.iter().any(|w| w.rule == "W_CONSUME_NAKED_NAME"),
+            "Unit-возврат (RAII-финализатор, не конверсия в значение) не должен флагаться, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn does_not_warn_on_consume_result_unit_finalizer() {
+        let src = "module foo\n\
+             type Fd { ro n int }\n\
+             type IoError { ro msg str }\n\
+             export fn Fd consume @close() -> Result[(), IoError] => Ok(())\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            !ws.iter().any(|w| w.rule == "W_CONSUME_NAKED_NAME"),
+            "`Result[(), E]`-финализатор (close-класс) не должен флагаться, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn nova_allow_suppresses_consume_naked_name() {
+        let src = "module foo\n\
+             type Response { ro body []u8 }\n\
+             type HttpError { ro msg str }\n\
+             // nova:allow W_CONSUME_NAKED_NAME -- test reason\n\
+             export fn Response consume @bytes() -> Result[[]u8, HttpError] => Ok(@body)\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            !ws.iter().any(|w| w.rule == "W_CONSUME_NAKED_NAME"),
+            "nova:allow должен гасить находку, got: {:?}",
             ws.iter().map(|w| w.rule).collect::<Vec<_>>()
         );
     }
