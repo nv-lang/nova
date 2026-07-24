@@ -5938,23 +5938,25 @@ impl CEmitter {
             self.record_schemas.insert("ChannelPair".to_string(), cp_schema);
         }
 
-        // [M-open-range-len-source-hardcoded] Ф.1: register `str`'s layout
-        // (`{ptr *u8, len int}`, nova_rt.h/vtables.h `nova_str`) under the
-        // key `"str"` — mirrors the Error/ChannelPair precedent above. `str`
-        // is a compiler lang-item (never a `.nv` `type` decl), so it never
-        // goes through the normal `emit_type_decl` → `record_schemas`
-        // registration path; without this it would be structurally
-        // invisible to `structural_len_field_ty`/`structural_len_field_access`
-        // (open-range `end` materialization, ExprKind::Index Range-arm) even
-        // though its `len` field is real. `is_value_type("nova_str")` is
-        // already `true` (16-byte stack value, not a heap handle) so the
-        // storage-class predicate picks `.len`, not `->len`, for it.
-        {
-            let mut str_schema = HashMap::new();
-            str_schema.insert("ptr".to_string(), "const uint8_t*".to_string());
-            str_schema.insert("len".to_string(), "nova_int".to_string());
-            self.record_schemas.insert("str".to_string(), str_schema);
-        }
+        // [M-open-range-len-source-hardcoded] Ф.1 (REVERTED — regression
+        // 2026-07-24, integrator mega-CU): a global `record_schemas["str"]`
+        // registration was tried here to make str's `len` visible to
+        // `structural_len_field_ty`/`structural_len_field_access`. That
+        // regressed `neg_str_from_retracted` (D410: `str.from(5)` must stay
+        // a compile error) — putting `"str"` in `record_schemas` at all
+        // revives an UNRELATED generic method/`.from` resolution path that
+        // keys off "is this name in record_schemas", independent of the
+        // `len` field content. str never needs the GLOBAL registry entry
+        // for slice-materialization purposes anyway: its open-range `end`
+        // is computed by its OWN dedicated branch below (`obj_ty ==
+        // "nova_str"`), which the generic structural reroute explicitly
+        // excludes BEFORE ever consulting `record_schemas` (see the
+        // `obj_ty != "nova_str"` guard ahead of `structural_len_field_ty`
+        // in the `ExprKind::Index` Range-arm) — so str's `len` access never
+        // actually went through this global entry in practice. Removed
+        // rather than narrowed: no minimal "ignore me for `.from`" tag on a
+        // schema entry existed to reach for, and str doesn't need the
+        // entry at all.
 
         // Plan 103.1 Ф.6: Pre-register MemOrdering in sum_schemas +
         // sum_schema_registry so test files can use `Relaxed`/`Acquire`/etc.
@@ -50901,23 +50903,34 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// trailing `*` — covers user records AND mono Vec instances, e.g.
     /// `Nova_Vec____nova_int*` → `Vec____nova_int`, the exact key
     /// `drain_generic_type_worklist` registers a mono generic record's
-    /// schema under) plus ONE lang-item carve-out: `nova_str` never goes
-    /// through that `.nv`-decl registration path (see the CU-setup
-    /// pre-registration next to `Error`/`ChannelPair`), so it is looked up
-    /// under the literal key `"str"` instead.
+    /// schema under).
+    ///
+    /// **Deliberately excludes `nova_str`** (regression fix, 2026-07-24,
+    /// integrator mega-CU): an earlier revision of this Ф.1 also
+    /// pre-registered a GLOBAL `record_schemas["str"]` entry so str's `len`
+    /// would be structurally visible here too — that revived an UNRELATED
+    /// generic method/`.from` resolution path keyed on "is `str` present in
+    /// `record_schemas`" and un-retracted `str.from(5)` (D410 says it must
+    /// stay a compile error; `neg_str_from_retracted` caught it). str never
+    /// needed this global entry for slice-materialization anyway — its
+    /// open-range `end` is read by its OWN dedicated branch in the
+    /// `ExprKind::Index` Range-arm (`obj_ty == "nova_str"`), which the
+    /// generic reroute below already excludes BEFORE ever calling this
+    /// function. Keeping `nova_str` OUT of this mapping (rather than
+    /// tagging the schema entry "ignore me for method-lookup", which
+    /// `record_schemas` has no mechanism for) is the narrower fix.
     fn record_schema_key_for_c_type(c_ty: &str) -> Option<String> {
-        if c_ty == "nova_str" {
-            return Some("str".to_string());
-        }
         Self::debt_struct_name_from_c_type(c_ty)
     }
 
     /// [M-open-range-len-source-hardcoded] Ф.1: does `obj_ty` structurally
     /// have a field literally named `len`? Reads `record_schemas` — the
     /// SAME registry every `.nv` record/value-record type's fields land in
-    /// (plus the `str` pre-registration) — never the type's NAME. Returns
-    /// the field's C type so callers can verify it is `nova_int` rather
-    /// than assume.
+    /// — never the type's NAME. Returns the field's C type so callers can
+    /// verify it is `nova_int` rather than assume. Never resolves for
+    /// `nova_str` (see `record_schema_key_for_c_type`) — str's own
+    /// dedicated branch reads `len` separately and is excluded from calling
+    /// this before it would ever matter.
     fn structural_len_field_ty(&self, obj_ty: &str) -> Option<String> {
         let key = Self::record_schema_key_for_c_type(obj_ty)?;
         self.record_schemas.get(&key)?.get("len").cloned()
@@ -50925,10 +50938,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
 
     /// [M-open-range-len-source-hardcoded] Ф.1: the open-range `end`
     /// materialization access for a structurally-`len`-having type (owner
-    /// rule п.1: field found → read it). The C access FORM — `.len` (stack
-    /// value / lang-item like `str`) vs `->len` (heap handle, e.g. a mono
-    /// `Vec[T]`) — is chosen by `Self::is_value_type(obj_ty)`, a storage-
-    /// CLASS predicate, never by the type's name. `recv` MUST already be a
+    /// rule п.1: field found → read it) — Vec and arbitrary user types,
+    /// NOT `str` (never resolves for it, see `record_schema_key_for_c_type`
+    /// — str's own dedicated branch handles its `len` separately). The C
+    /// access FORM — `.len` (stack value, e.g. a `value`-record) vs `->len`
+    /// (heap handle, e.g. a mono `Vec[T]`) — is chosen by
+    /// `Self::is_value_type(obj_ty)`, a storage-CLASS predicate, never by
+    /// the type's name. `recv` MUST already be a
     /// single-eval-safe C expression (a bare identifier/tmp-var): it is
     /// embedded verbatim and may be referenced more than once by the
     /// caller, so a side-effecting `recv` (e.g. a raw call expression)
