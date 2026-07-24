@@ -20001,6 +20001,30 @@ fn collect_coerce_pairs(
         let is_generic_recv = !recv.generics.is_empty();
         let mut generic_params: Vec<String> = Vec::new();
         if is_generic_recv {
+            // Defense-in-depth, not currently reachable via legal syntax:
+            // `generic_params_to_type_refs` (parser/mod.rs) only ever produces
+            // bare single-segment `Named` entries for a receiver's carrier
+            // brackets (`Type[T]`/`Type[T, U]` — a comma-list of plain
+            // identifiers is the ONLY grammar `Type[...]` receiver position
+            // accepts; `Type[[]T]`/`Type[Vec[T]]` is a parse error,
+            // `E_...expected identifier, got '['`, before this function ever
+            // runs) — so `shape_ok` can never observe the nested-shape arm in
+            // practice today. Kept anyway: a future grammar extension
+            // allowing richer receiver-generic expressions must not silently
+            // start accepting shapes this unifier can't handle.
+            //
+            // Known NOT handled by this gate (P3, no realistic carrier — a
+            // `#coerce` pattern is only useful for a TRUE polymorphic
+            // receiver): a bare name that happens to COINCIDE with a real
+            // concrete type (`D429Box[int] @m()`) passes this check (it IS
+            // syntactically a bare single-segment `Named`) and gets treated
+            // as a pattern VARIABLE named `"int"` — `unify_coerce_receiver`
+            // would then rebind `"int"` to whatever concrete arg a DIFFERENT
+            // call site's value carries, silently mistranslating an
+            // instantiation-pinned declaration into a polymorphic one. Not
+            // fixable cheaply here (`lookup` only resolves user `TypeDeclKind`
+            // entries, not built-in primitive names) — flagged, not silently
+            // shipped as correct.
             let mut shape_ok = true;
             for g in &recv.generics {
                 match g {

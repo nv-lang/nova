@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR E_COERCE_GENERIC_PATTERN_UNSUPPORTED
+//
+// Plan 214.1 (D429 amend, §generic-образцы): a METHOD-LEVEL type parameter
+// (`fn[U] Type @method()`, as opposed to the receiver's OWN carrier-bracket
+// generic) is NOT a supported generic `#coerce` pattern shape — nothing at
+// an implicit call-site determines `U` (no turbofish on an implicit
+// insertion). R14 retracted the BLANKET generic reject, but this specific
+// shape remains rejected under the new, narrower code.
+module neg.d429_1_generic_coerce_method_generic_unsupported_neg
+
+type D429MBox { n int }
+
+#coerce
+export fn D429MBox @convert[U]() -> ro U => panic("unreached")
+
+fn main() {
+    print("unreached")
+}

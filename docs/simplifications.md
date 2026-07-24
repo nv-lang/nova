@@ -9174,7 +9174,9 @@ re-attempt sub-plan ПОСЛЕ Plan 139 Ф.2 (координация risk RG; в
   образцов (214.1 реализовала R3' — одно-позиционный конфликт УЖЕ детектируется, но НЕ
   overload-уровневая R5'-неоднозначность с разными O). Снятие — отдельный, не начатый пункт
   (обе полосы, конкретная и generic, один и тот же overload-resolution механизм).
-- **Гейты волны:** `cargo build --release` чисто; targeted pos/neg-фикстуры (см. отчёт
-  волны); `nova test std/src/checksums` δ0; `nova check std/src` байт-идентично (δ0
-  существующего конкретного `#coerce`-механизма str→[]u8 и т.д. — точные числа файлов/байт
-  в отчёте волны). Мега-CU conformance НЕ гонялась (CPU-дисциплина, интегратор).
+- **Гейты волны:** `cargo build --release` чисто; 5 новых targeted pos/neg-фикстур
+  (spec_tests/conformance/standalone + neg) — все PASS; `nova test std/src/checksums`
+  δ0 (3 PASS + 3 SKIP, как до слияния); `nova check std/src` — 142 PASS / 27 FAIL
+  (ВСЕ 27 — pre-existing `neg/*.nv`-фикстуры, correctly-failing by design, ноль
+  связи с `#coerce`) / 1040 WARN — байт-идентично baseline'у. Мега-CU conformance
+  НЕ гонялась (CPU-дисциплина, интегратор).

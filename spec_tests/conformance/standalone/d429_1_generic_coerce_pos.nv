@@ -1,0 +1,74 @@
+// Plan 214.1 (D429 amend, R14 RETRACTED): generic `#coerce` — pattern-matcher
+// pos suite. R14 used to reject ANY `#coerce` on a receiver carrying its own
+// carrier-bracket generics (`Json[T] @method()`) — replaced by a narrow
+// one-directional unifier (design: docs/plans/214.1-generic-coerce.md).
+//
+// Covers: (1) a generic pattern applied at TWO different concrete `T`
+// instantiations (a record AND a primitive int — plan's own example); (2) the
+// existing CONCRETE `#coerce` mechanism (str -> []u8, D429 R1-R13/R15)
+// continues to work byte-identically SIDE BY SIDE with the new generic
+// registry in the SAME program (two-registry design: concrete lookup first,
+// generic pattern registry checked only on a concrete miss — this is the
+// "priority/no-interference" pin: nothing about adding the generic registry
+// changes the pre-existing str->[]u8 behavior).
+// Negatives (self-application R13', Json[Json[T]] one-level R4, R3' duplicate
+// pattern collision) — spec_tests/conformance/neg/d429_1_*.nv.
+module standalone.d429_1_generic_coerce_pos
+
+// ─── generic pattern: Json[T] @data() -> T (the plan's own target example) ───
+
+type D429User { name str, age int }
+
+type D429Json[T] { data T }
+
+#coerce
+export fn D429Json[T] @data() -> ro T => @data
+
+fn d429_wants_user(u D429User) -> str => u.name
+
+fn d429_wants_int(n int) -> int => n
+
+// ─── pre-existing CONCRETE #coerce (str -> []u8, D429 R1-R13/R15) — untouched ───
+
+fn d429_wants_bytes(b []u8) -> int => b.len()
+
+// ─── return-position coercion (D429 R6 position table) ───
+
+fn d429_json_return_user() -> D429User {
+    ro u = D429User { name: "bo", age: 20 }
+    ro j D429Json[D429User] = { data: u }
+    return j
+}
+
+test "generic #coerce: Json[T] -> T bare value in call-arg position, T = record (Plan 214.1)" {
+    ro u = D429User { name: "ada", age: 30 }
+    ro j D429Json[D429User] = { data: u }
+    // `j` has type `D429Json[D429User]`; `d429_wants_user` expects `D429User`
+    // — no exact match, the generic pattern unifies `?T := D429User` and the
+    // bare value is AST-rewritten to `j.data()` (R7, byte-identical to a hand-
+    // written explicit call).
+    assert(d429_wants_user(j) == "ada")
+    // Explicit call-site — same pair, should keep working (canon vs explicit
+    // is a lint concern, D429 R9 — not tested here).
+    assert(j.data().name == "ada")
+}
+
+test "generic #coerce: Json[T] -> T bare value, T = int (Plan 214.1, second distinct T)" {
+    ro ji D429Json[int] = { data: 42 }
+    assert(d429_wants_int(ji) == 42)
+    // let-annotation position (D429 R6) also coerces.
+    ro n int = ji
+    assert(n == 42)
+}
+
+test "generic #coerce: return-position also coerces (Plan 214.1, R6 position table)" {
+    assert(d429_json_return_user().name == "bo")
+}
+
+test "concrete #coerce (str -> []u8) unaffected by the new generic registry (priority/no-interference pin)" {
+    ro s = "hello"
+    // Bare str value at a []u8 call-arg position — pre-existing CONCRETE
+    // #coerce path (std/src/runtime/string/core.nv `str @bytes()`), tried
+    // FIRST and hitting before the generic registry is ever consulted.
+    assert(d429_wants_bytes(s) == 5)
+}
