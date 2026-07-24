@@ -3147,6 +3147,25 @@ fn is_bare_scalar_primitive_name(name: &str) -> bool {
 /// an unsound coercion). Left as a documented follow-up, not fixed in this
 /// wave (targeted delta, §72).
 fn is_fully_stack_value(ty: &TypeRef, types: &HashMap<String, &TypeDecl>) -> bool {
+    // Cycle-guard wrapper: only Named→TypeDecl name-indirection can form a
+    // recursion cycle (`value A { b B }` + `value B { a A }`, or a self-
+    // referential `value A { a A }`). Structural nesting (Tuple/FixedArray/
+    // Unit) is a finite TypeRef tree and cannot loop on its own. Without the
+    // guard a (mutually-)recursive value type overflows the stack — this bit
+    // the mega-CU compile (a single conformance CU carries such a type). A
+    // cycle means the value type is transitively self-containing, i.e.
+    // INFINITE size — never a real fully-stack value — so treating it as
+    // `false` (conservative, never a false positive) is also the correct
+    // answer, not merely a termination hack.
+    let mut on_path: HashSet<String> = HashSet::new();
+    is_fully_stack_value_guarded(ty, types, &mut on_path)
+}
+
+fn is_fully_stack_value_guarded(
+    ty: &TypeRef,
+    types: &HashMap<String, &TypeDecl>,
+    on_path: &mut HashSet<String>,
+) -> bool {
     use TypeRef::*;
     match ty.strip_modifiers() {
         Named { path, generics, .. } if path.len() == 1 && generics.is_empty() => {
@@ -3159,10 +3178,22 @@ fn is_fully_stack_value(ty: &TypeRef, types: &HashMap<String, &TypeDecl>) -> boo
                     crate::ast::TypeDeclKind::Record(fields)
                         if td.allocation == crate::ast::AllocKind::Value =>
                     {
-                        fields.iter().all(|f| is_fully_stack_value(&f.ty, types))
+                        // Cycle back to a type already on the current recursion
+                        // path ⟹ transitively self-containing ⟹ not fully-stack.
+                        if !on_path.insert(name.to_string()) {
+                            return false;
+                        }
+                        let ok = fields.iter().all(|f| is_fully_stack_value_guarded(&f.ty, types, on_path));
+                        on_path.remove(name);
+                        ok
                     }
                     crate::ast::TypeDeclKind::NamedTuple(elems) => {
-                        elems.iter().all(|e| is_fully_stack_value(&e.ty, types))
+                        if !on_path.insert(name.to_string()) {
+                            return false;
+                        }
+                        let ok = elems.iter().all(|e| is_fully_stack_value_guarded(&e.ty, types, on_path));
+                        on_path.remove(name);
+                        ok
                     }
                     _ => false,
                 },
@@ -3170,8 +3201,8 @@ fn is_fully_stack_value(ty: &TypeRef, types: &HashMap<String, &TypeDecl>) -> boo
             }
         }
         Unit(..) => true,
-        Tuple(elems, ..) => elems.iter().all(|e| is_fully_stack_value(e, types)),
-        FixedArray(_, inner, ..) => is_fully_stack_value(inner, types),
+        Tuple(elems, ..) => elems.iter().all(|e| is_fully_stack_value_guarded(e, types, on_path)),
+        FixedArray(_, inner, ..) => is_fully_stack_value_guarded(inner, types, on_path),
         _ => false,
     }
 }
