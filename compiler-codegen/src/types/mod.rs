@@ -20001,34 +20001,48 @@ fn collect_coerce_pairs(
         let is_generic_recv = !recv.generics.is_empty();
         let mut generic_params: Vec<String> = Vec::new();
         if is_generic_recv {
-            // Defense-in-depth, not currently reachable via legal syntax:
-            // `generic_params_to_type_refs` (parser/mod.rs) only ever produces
-            // bare single-segment `Named` entries for a receiver's carrier
-            // brackets (`Type[T]`/`Type[T, U]` — a comma-list of plain
-            // identifiers is the ONLY grammar `Type[...]` receiver position
-            // accepts; `Type[[]T]`/`Type[Vec[T]]` is a parse error,
-            // `E_...expected identifier, got '['`, before this function ever
-            // runs) — so `shape_ok` can never observe the nested-shape arm in
-            // practice today. Kept anyway: a future grammar extension
-            // allowing richer receiver-generic expressions must not silently
-            // start accepting shapes this unifier can't handle.
-            //
-            // Known NOT handled by this gate (P3, no realistic carrier — a
-            // `#coerce` pattern is only useful for a TRUE polymorphic
-            // receiver): a bare name that happens to COINCIDE with a real
-            // concrete type (`D429Box[int] @m()`) passes this check (it IS
-            // syntactically a bare single-segment `Named`) and gets treated
-            // as a pattern VARIABLE named `"int"` — `unify_coerce_receiver`
-            // would then rebind `"int"` to whatever concrete arg a DIFFERENT
-            // call site's value carries, silently mistranslating an
-            // instantiation-pinned declaration into a polymorphic one. Not
-            // fixable cheaply here (`lookup` only resolves user `TypeDeclKind`
-            // entries, not built-in primitive names) — flagged, not silently
-            // shipped as correct.
-            let mut shape_ok = true;
-            for g in &recv.generics {
+            // FIX (probe found `OneBox[Vec[T]]` accepted silently): the
+            // original gate looped `recv.generics`, which the parser ALWAYS
+            // flattens to a bare-typevar list (`generic_params_to_type_refs`
+            // emits `Named{path:[name], generics:[]}` per slot; Plan 153.5's
+            // nested-carrier support in `parse_generic_decl_params_inner`
+            // harvests `Vec[T]`'s free typevar `T` INTO that same flat list)
+            // — so the premise "`Type[Vec[T]]` is a parse error" was wrong,
+            // it parses fine, the nesting just never survives into
+            // `recv.generics`. The TRUE per-slot structural shape survives
+            // separately in `recv.receiver_ty` (Plan 153.5/D263: populated
+            // whenever the receiver carries ANY carrier generics, flat or
+            // nested) — validate ITS top-level slot list instead. A nested
+            // slot (`Vec[T]`) is `Named{path:["Vec"], generics:[T]}` there —
+            // `generics` non-empty — so the existing bare-shape match arm
+            // now correctly rejects it without any other change.
+            let structural_slots: &[TypeRef] = match &recv.receiver_ty {
+                Some(TypeRef::Named { generics, .. }) => generics,
+                // Defense-in-depth, not currently reachable: `receiver_ty` is
+                // built from the SAME carrier slots that populate
+                // `recv.generics` (parser/mod.rs `parse_fn`), so it is always
+                // `Some` here. A future parser change dropping that
+                // invariant must not silently accept an unvalidated shape.
+                _ => &[],
+            };
+            let mut shape_ok = !structural_slots.is_empty();
+            for g in structural_slots {
                 match g {
-                    TypeRef::Named { path, generics: gg, .. } if path.len() == 1 && gg.is_empty() => {
+                    // Bare single-segment Named with no generics of its own
+                    // — BUT (former P3 gap, now actually enforced instead of
+                    // merely flagged) a bare name that happens to COINCIDE
+                    // with a real declared/primitive type (`D429Box[int]
+                    // @m()`) is syntactically indistinguishable from a true
+                    // pattern variable at this layer; resolve it via `lookup`
+                    // (user types) + the primitive-name table and reject
+                    // rather than silently treat a pinned instantiation as
+                    // polymorphic.
+                    TypeRef::Named { path, generics: gg, .. }
+                        if path.len() == 1
+                            && gg.is_empty()
+                            && lookup(path[0].as_str()).is_none()
+                            && !TypeCheckCtx::is_primitive_type_name(&path[0]) =>
+                    {
                         generic_params.push(path[0].clone());
                     }
                     _ => {
@@ -20042,9 +20056,10 @@ fn collect_coerce_pairs(
                     format!(
                         "[E_COERCE_GENERIC_PATTERN_UNSUPPORTED] `#coerce fn {}[..] @{}` — \
                          receiver generic args must be BARE carrier type parameters \
-                         (`{}[T] @{}()`), not a nested or concrete shape (D429 \
-                         §generic-образцы, Plan 214.1 — R4 \"без рекурсии вглубь\": the \
-                         unifier only binds top-level slots).",
+                         (`{}[T] @{}()`), not a nested/concrete shape or a name that collides \
+                         with a real declared/primitive type (D429 §generic-образцы, Plan \
+                         214.1 — R4 \"без рекурсии вглубь\": the unifier only binds top-level \
+                         slots against a TRUE type parameter).",
                         input_name, f.name, input_name, f.name
                     ),
                     f.span,
