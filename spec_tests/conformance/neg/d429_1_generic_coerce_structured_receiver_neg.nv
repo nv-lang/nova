@@ -1,0 +1,28 @@
+// EXPECT_COMPILE_ERROR E_COERCE_GENERIC_PATTERN_UNSUPPORTED
+//
+// Plan 214.1 (D429 amend, §generic-образцы) fix: a receiver generic ARG that
+// is itself a NESTED/structured shape (`OneBox[Vec[T]]`, not a bare carrier
+// type-param `OneBox[T]`) must be rejected — the shallow one-directional
+// unifier (`unify_coerce_receiver`, R4 "без рекурсии вглубь") only binds
+// bare top-level slots, it cannot bind INTO `Vec[T]`'s own nested `T`.
+//
+// This shape actually PARSES (the original `collect_coerce_pairs` comment
+// claiming `Type[Vec[T]]` is a parse error was wrong — carrier-position
+// nested types are legal grammar since Plan 153.5/D263, for the
+// monomorphizer's `[]T`/`Vec[Vec[T]]` receiver-binding use case); it is the
+// GATE that must actually observe and reject it, not the grammar.
+//
+// Doubly dangerous if silently accepted: the receiver's structural form
+// (`Vec[T]`) is not itself enforced anywhere (pre-existing gap, registry
+// #88) — an accepted-but-unvalidated pattern here would apply to ANY
+// `OneBox` instance, not just ones actually wrapping a `Vec`.
+module neg.d429_1_generic_coerce_structured_receiver_neg
+
+type OneBox[T] value { ro v T }
+
+#coerce
+export fn OneBox[Vec[T]] @first() -> ro T => @v[0]
+
+fn main() {
+    println("unreached")
+}
