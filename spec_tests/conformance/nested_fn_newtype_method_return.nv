@@ -1,0 +1,85 @@
+// [M-nested-fn-newtype-bind-then-call-broken] (реестр 221.1 №90, 4-й корень
+// семьи №78/№53, P1): МЕТОД-возврат (не free-fn возврат — тот покрыл №78)
+// вложенного fn-newtype в let-биндинге. `ro wrapped = mw.apply(h)` (метод
+// `Mid @apply(next Hnd) -> Hnd`, где Hnd сам fn-newtype) — идентификатор-
+// вызов `wrapped(3)` мис-диспатчился ПРЯМЫМ вызовом несуществующего
+// top-level `nova_fn_wrapped` (undefined-symbol at link) вместо closure
+// call-through, т.к. `fn_returns_fn_sig`/`fn_param_sigs` регистрировались
+// ТОЛЬКО для RHS-Ident (свободная fn) в let-биндинге — Member-call (метод)
+// RHS не матчился вовсе.
+//
+// Второй, отдельный разрыв, найденный ЗАКРЫВАЯ первый до конца (репро
+// печатает результат): ВНЕШНИЙ dot-call на fn-newtype-значении
+// (`obj.method(...)`, где receiver — void*-erased fn-newtype, ВНЕ метода
+// ЭТОГО ЖЕ типа) падал на безусловный `NULL` — существовавшая
+// self-referential ветка (см. `d52_fnret_d_self_call.nv`'s комментарий
+// "не внешний dot-call на произвольном void*-erased значении вне метода на
+// этом типе") покрывала ТОЛЬКО вызов метода того же типа ИЗНУТРИ его
+// собственного метода, не extern-caller. Без этого `mw.apply(h)` тихо
+// становилось `void* wrapped = NULL;` — даже после починки диспатча
+// `wrapped(3)`, репро печатал бы мусор от вызова NULL, не 35. Оба разрыва
+// закрыты этим окном (`emit_c.rs`: `fn_param_sigs`/`fn_returns_fn_sig`
+// Member-call arm в let-биндинге + `emit_call`'s `obj_ty == "void*"` блок —
+// новая ветка через checker `resolved_types`-канал, `channel_arg_rt`).
+// См. docs/plans/backlog-followups.md [M-nested-fn-newtype-bind-then-call-broken].
+module spec_tests.conformance
+
+type N90Hnd fn(int) -> int
+type N90Mid fn(N90Hnd) -> N90Hnd
+
+fn N90Mid.new(f fn(N90Hnd) -> N90Hnd) -> ro N90Mid => f
+fn N90Mid @apply(next N90Hnd) -> N90Hnd => @(next)
+// "then"-композиция: метод, чей ВОЗВРАТ сам вложенный fn-newtype (N90Mid) —
+// задание п.(б): @then-стиль, метод возвращает Mid, затем ВНЕШНИЙ .apply.
+fn N90Mid @then(next N90Mid) -> N90Mid {
+    ro me = @
+    N90Mid.new(fn(h N90Hnd) -> N90Hnd => n90_flat_compose(me, next, h))
+}
+
+fn n90_flat_compose(m1 N90Mid, m2 N90Mid, h N90Hnd) -> N90Hnd {
+    ro inner = m2(h)
+    fn(req int) -> int => m1(inner)(req)
+}
+
+fn n90_middleware(f fn(int, N90Hnd) -> int) -> N90Mid {
+    ro g = f
+    N90Mid.new(fn(next N90Hnd) -> N90Hnd => n90_flat_handler(g, next))
+}
+fn n90_flat_handler(f fn(int, N90Hnd) -> int, next N90Hnd) -> N90Hnd {
+    ro g = f
+    ro n = next
+    fn(req int) -> int => n90_flat_invoke(g, n, req)
+}
+fn n90_flat_invoke(f fn(int, N90Hnd) -> int, next N90Hnd, req int) -> int => f(req, next)
+
+// БАТАРЕЙКА: конфиг (delta) захвачен в замыкании, отданном
+// method-возвращающей fn (n90_middleware возвращает N90Mid — метод-возврат
+// для @then/@apply дальше, замыкание-конфиг для №90-репро владельца).
+fn n90_add_battery(delta int) -> N90Mid {
+    ro d = delta
+    n90_middleware(fn(req int, next N90Hnd) -> int => next(req) + d)
+}
+fn n90_base(x int) -> int => x * 10
+
+test "N90 форма 1: bind-then-call метод-возврата вложенного fn-newtype (батарейка)" {
+    ro mw = n90_add_battery(5)
+    ro h N90Hnd = n90_base
+    ro wrapped = mw.apply(h)
+    ro r = wrapped(3)
+    assert(r == 35)
+}
+
+test "N90 форма (д): inline-цепочка без промежуточного биндинга (mw.apply(h)(3))" {
+    ro mw = n90_add_battery(5)
+    ro h N90Hnd = n90_base
+    ro r = mw.apply(h)(3)
+    assert(r == 35)
+}
+
+test "N90 @then-стиль: метод возвращает вложенный fn-newtype, СРАЗУ .apply без биндинга" {
+    ro m1 = n90_add_battery(5)
+    ro m2 = n90_add_battery(100)
+    ro h N90Hnd = n90_base
+    ro r = m1.then(m2).apply(h)(3)
+    assert(r == 135)
+}
