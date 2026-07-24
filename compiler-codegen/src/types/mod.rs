@@ -3360,6 +3360,25 @@ struct TypeCheckCtx<'a> {
     /// NEVER also a genuine type/module Path receiver (`Monotonic.now()`) —
     /// unambiguous.
     const_types: HashMap<String, TypeRef>,
+    /// [M-assoc-const-chained-method-call-p67] (окно №73, реестр 221.1 №73):
+    /// `(owner_type, const_name) → declared TypeRef` for every out-of-body
+    /// (D200 AMEND) assoc-const in the merged CU (`self.types`'s `TypeDecl.
+    /// assoc_consts`, built once in `TypeCheckCtx::build`). Mirrors
+    /// `const_types` above one level deeper: a chained method call directly
+    /// on a bare assoc-const RECEIVER — `StatusCode.NOT_FOUND.into_response()`,
+    /// no intermediate binding — is folded by the SAME PascalCase path-
+    /// collector (parser/mod.rs `starts_uppercase` loop, ~8797) into a flat
+    /// 3-segment `ExprKind::Path(["StatusCode", "NOT_FOUND", "into_response"])`
+    /// instead of the `Member{obj: Member{obj: Path[2], name}, name}` shape a
+    /// bound-then-called receiver would get. Consumed by
+    /// `infer_method_call_channel_type`'s 3-segment Path arm: recognizes
+    /// `parts[0..2]` as a known assoc-const receiver and routes `parts[2]`
+    /// through the IDENTICAL instance-method resolution the 2-segment
+    /// top-level-const arm already uses. Assoc-consts WITHOUT an explicit type
+    /// annotation are absent here (out-of-body syntax always carries one —
+    /// D200 AMEND grammar — so this is expected to be total in practice, same
+    /// posture as `const_types`).
+    assoc_const_types: HashMap<(String, String), TypeRef>,
     /// Plan 214 (D429): `#coerce` pair registry (I type name → applicable
     /// pairs), consumed by `assignable`'s accept-path fallback (tried AFTER
     /// the single-wrapper fallback — R11 makes the two mutually exclusive by
@@ -4212,7 +4231,26 @@ impl<'a> TypeCheckCtx<'a> {
             }
         }
 
-        TypeCheckCtx { arity, sig, synth_methods, blanket_method_names, types, const_types, coerce_pairs, sum_variant_names, file_local_types, imported_modules,
+        // [M-assoc-const-chained-method-call-p67] (окно №73): `(Type, CONST) →
+        // declared TypeRef`, mirroring `const_types` above one level deeper —
+        // see `assoc_const_types` field doc. Sourced from `self.types`
+        // (already-merged CU, folder-module peers included) rather than
+        // `module.items` directly, so a `type` declared in one peer file with
+        // its out-of-body `const Type.NAME` attached from another peer (same
+        // `attach_out_of_body_assoc_consts` merge `const_types` above doesn't
+        // need — it's not per-type) is covered identically.
+        let mut assoc_const_types: HashMap<(String, String), TypeRef> = HashMap::new();
+        for (type_name, td) in &types {
+            for ac in &td.assoc_consts {
+                if let Some(ty) = &ac.ty {
+                    assoc_const_types
+                        .entry((type_name.clone(), ac.name.clone()))
+                        .or_insert_with(|| ty.clone());
+                }
+            }
+        }
+
+        TypeCheckCtx { arity, sig, synth_methods, blanket_method_names, types, const_types, assoc_const_types, coerce_pairs, sum_variant_names, file_local_types, imported_modules,
             entry_imported_modules,
             entry_file_ids,
             const_fn_names,
@@ -17993,6 +18031,21 @@ impl<'a> TypeCheckCtx<'a> {
             ExprKind::Path(parts) if parts.len() == 2 => {
                 let rt = self.const_types.get(parts[0].as_str())?.clone();
                 (rt, &parts[1], None)
+            }
+            // [M-assoc-const-chained-method-call-p67] (окно №73): `Type.CONST.method()`
+            // — a chained method call directly on a bare out-of-body assoc-const
+            // receiver, no intermediate binding. Same parser fold as the 2-segment
+            // top-level-const arm above (PascalCase path-collector, ~8797), one
+            // segment deeper: `parts[0..2]` unambiguously names a declared assoc-
+            // const (`assoc_const_types`, built once in `TypeCheckCtx::build` from
+            // `TypeDecl.assoc_consts`) — a genuine 3-segment module/type static Path
+            // (`mod.Type.static_method()`) never collides, since `assoc_const_types`
+            // only ever contains PAIRS that are an actual declared `const Type.NAME`.
+            ExprKind::Path(parts) if parts.len() == 3 => {
+                let rt = self.assoc_const_types
+                    .get(&(parts[0].clone(), parts[1].clone()))?
+                    .clone();
+                (rt, &parts[2], None)
             }
             _ => return None,
         };

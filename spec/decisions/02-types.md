@@ -8156,6 +8156,21 @@ auto-derive `str.from(@)` pattern).
 > ДО const-инициализатора — assoc-const emission-loop поэтому эмитится
 > ПОСЛЕ struct/value-record body своего типа (было — до).
 
+> **AMEND (implementation-note, [M-assoc-const-chained-method-call-p67],
+> окно №73, 2026-07-24):** цепной method-вызов НАПРЯМУЮ на голом assoc-const —
+> `Type.CONST.method()`, без промежуточной привязки в локаль
+> (`StatusCode.NOT_FOUND.into_response()`, `StatusCode.OK.code()`) —
+> резолвится КАК метод на значении const: 3-сегментный Path-call
+> (`Type.CONST.method()`) эквивалентен bind-then-call (`ro x = Type.CONST;
+> x.method()`). Уточнение реализации, не смена семантики D200: namespace-
+> доступ и границы (скаляр/составное значение) выше — без изменений; это
+> закрывает единственный оставшийся разрыв между «const как значение»
+> (работало) и «метод на этом значении без привязки» (ранее — ICE
+> `[P67-LEGACY] Path call return type unknown`, парсер сворачивает цепочку в
+> один `ExprKind::Path([Type, CONST, method])`, симметрично уже закрытому
+> 2-сегментному top-level-const кейсу `BUDGET_MS.to_millis()`). Фикстура:
+> `spec_tests/conformance/assoc_const_chained_method_call.nv`.
+
 ### Что
 
 > ⚠️ Ниже — исходный in-body текст, РЕТРАКТИРОВАН амендментом выше (форма
