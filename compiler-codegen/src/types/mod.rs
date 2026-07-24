@@ -11835,7 +11835,51 @@ impl<'a> TypeCheckCtx<'a> {
         // Plan 172.1 U.4.3 (stage c1): call-site `ExprId` — key for the resolved-callee channel.
         call_id: crate::ast::ExprId,
     ) {
-        let Some(recv_ty) = BoundCtx::infer_arg_ty(obj, scope) else { return; };
+        // [M-samename-extension-method-recv-type-collision] (№92, channel-first
+        // fix per Plan 196 doctrine — owner/integrator correction 2026-07-25):
+        // `BoundCtx::infer_arg_ty` is a deliberately LIGHTWEIGHT, free-standing
+        // (no `&self`) receiver-type probe — its own doc calls it "best-effort"
+        // and it has NO arm for `ExprKind::Member` (field access), so a receiver
+        // written `holder.buf.method()` returned `None` here and this whole
+        // function (and the `resolved_callees` write below it feeds) never ran
+        // for that call site. `emit_c.rs`'s Plan 196.7 checker-span dispatch
+        // (`resolved_callees` → `fn_ret_by_span`) then had nothing to read and
+        // fell through to the codegen-side single-key `method_receivers`
+        // registry — LAST-WINS when ≥2 concrete receiver types register the
+        // same method name (`[]u8 consume @into_body()` + `BodyReader consume
+        // @into_body()`; confirmed live repro, not hypothetical — see the
+        // window brief / `docs/plans/wip/196.5-facet-c-map.md`). Fall back to
+        // the FULL `self.infer_expr_type` (this `TypeCheckCtx`'s own general
+        // expression-type inference, `&self` — it already resolves `Member`
+        // through the record-field schema, `self.types_get_for_file`/
+        // `subst_receiver_generics`, exactly what a field-access receiver
+        // needs) ONLY when the lightweight probe misses AND `obj` is
+        // SPECIFICALLY a field access (`ExprKind::Member`) — the narrow gap
+        // this fix targets. Deliberately NOT a blanket fallback for every
+        // shape `infer_arg_ty` returns `None` for: a first attempt (any-shape
+        // `.or_else`) additionally started resolving `ExprKind::Call`
+        // receivers (a chained mutable-`-> @`-return call,
+        // `inc(inc(&p,10),20)`-shape) — `self.infer_expr_type`'s `Call` arm
+        // and codegen's OWN (frozen, Plan 196.7-adjacent) chain-return
+        // inference for that exact shape disagree on value-vs-pointer for a
+        // `value` record's `Self`-return chain, producing a live regression
+        // (`d326_value_record_fluent.nv`'s fluent-mut chain: codegen emitted
+        // `(p2).x` — `.` on a `NovaValue_P1724Point*` POINTER local — CC-FAIL
+        // "did you mean to use '->'"). `ExprKind::Member` has no such frozen
+        // competing inference path (record-field access is a pure declared-
+        // type lookup, not a call-return channel), so this narrower gate
+        // fixes #92 with zero observed blast radius (mega-CU gate: 565→566
+        // PASS, 0 FAIL — see fix report) instead of the wider `.or_else` (1
+        // FAIL). Every call site `infer_arg_ty` already resolves — including
+        // EVERY other shape it returns `None` for that ISN'T `Member` — stays
+        // byte-identical (this fn `return`s early, same as before).
+        let Some(recv_ty) = BoundCtx::infer_arg_ty(obj, scope).or_else(|| {
+            if matches!(obj.kind, ExprKind::Member { .. }) {
+                self.infer_expr_type(obj, scope)
+            } else {
+                None
+            }
+        }) else { return; };
         // Plan 172.2: normalize the receiver to a single `type_name`, mapping
         // `[]T`/`[N]T` → "Vec" (D239 slice alias) and peeling `ro`/`mut`, so method
         // calls on a SLICE receiver (`out.push(x)` where `out: []u8`) resolve to Vec's

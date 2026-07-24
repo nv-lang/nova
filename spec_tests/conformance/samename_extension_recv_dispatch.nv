@@ -1,0 +1,50 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 92 [M-samename-extension-method-recv-type-collision] — regression for
+// the confirmed 196.5-family bug: SAME-named extension methods declared on
+// DIFFERENT concrete receivers (`[]u8` array-ext / `str` primitive / a
+// user-defined record) previously mis-dispatched through `emit_c.rs`'s
+// single-key `method_receivers` registry (populated by unconditional
+// `HashMap::insert` — last fn-item scanned for a given method NAME wins,
+// silently overwriting every OTHER receiver's registration; the doc at the
+// field itself documents this as a known "backward compat" fallback — see
+// `docs/plans/wip/196.5-facet-c-map.md`).
+//
+// A checker-span fast path (Plan 196.7, `resolved_callees` -> `fn_ret_by_span`)
+// already rescues the common shape (a simple local-variable receiver) — this
+// file's collision-triggering calls therefore go through a receiver EXPRESSION
+// the checker's static inference does not cover (a FIELD ACCESS,
+// `holder.bytes.describe()`), which is the confirmed live repro from the
+// window brief (`Vec` mis-reported as having no `into_body`/`describe` while
+// the single-key fallback silently routed to a foreign type's overload).
+// Both the field-access form (exercises the fix) and a plain local-variable
+// form (regression guard for the pre-existing checker-span path) are pinned
+// for every receiver.
+module spec_tests.conformance
+
+type SamenameRecvUser { tag int }
+
+type SamenameRecvHolder { bytes []u8, name str, user SamenameRecvUser }
+
+// Three receivers, ONE shared method name `describe` — the collision.
+export fn []u8 consume @describe() -> str => "bytes:${@len()}"
+export fn str @describe() -> str => "str:${@}"
+export fn SamenameRecvUser @describe() -> str => "user:${@tag}"
+
+test "samename extension methods on []u8 / str / user-record dispatch to their own receiver (local var)" {
+    ro b []u8 = [1, 2, 3, 4]
+    ro s = "hi"
+    ro u = SamenameRecvUser { tag: 9 }
+    assert(b.describe() == "bytes:4")
+    assert(s.describe() == "str:hi")
+    assert(u.describe() == "user:9")
+}
+
+test "samename extension methods on []u8 / str / user-record dispatch to their own receiver (field access — confirmed RED before Plan 92 fix)" {
+    ro h = SamenameRecvHolder { bytes: [5, 6, 7], name: "yo", user: SamenameRecvUser { tag: 3 } }
+    // `h.bytes` — field access, `[]u8` (array-ext) receiver; the confirmed
+    // live repro shape (checker's `resolved_callees` channel does not cover
+    // a field-access receiver expression).
+    assert(h.bytes.describe() == "bytes:3")
+    assert(h.name.describe() == "str:yo")
+    assert(h.user.describe() == "user:3")
+}
