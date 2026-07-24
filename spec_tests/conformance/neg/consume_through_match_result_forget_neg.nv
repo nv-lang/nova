@@ -1,0 +1,39 @@
+// EXPECT_COMPILE_ERROR D133-not-consumed
+//
+// [M-176-consume-through-result-match] (2026-07-24): must-consume (D133) was
+// NOT tracked when a consume-value was extracted from a `Result` via a
+// match pattern (`Ok(consume x) => { ... }` — an unclosed `x` gave no
+// D133-not-consumed). Root cause: `consume_declare_arm_pattern` registers
+// the pattern-bound obligation BEFORE the arm's own `consume_walk_block`
+// call, so that block's delta-scoped exit-check treated it as a pre-
+// existing OUTER obligation (skipped it, deferring to an enclosing check
+// that never came); the post-match `consume_join` then silently drops the
+// arm-local state entry (by design, to avoid leaking arm-local names past
+// the match) WITHOUT ever having exit-checked it — an obligation that
+// forever resolves to `None` in `check_obligations_at_exit`, bucketed
+// together with `Consumed` (no diagnostic).
+//
+// Fix: exit-check (and clear) the arm's own pattern-bound obligation right
+// at the arm's own exit span (`check_and_clear_arm_pattern_obligations`,
+// types/mod.rs), mirroring the treatment ordinary `consume x = ...` lets
+// already get at block-exit.
+
+module neg.consume_through_match_result_forget_neg
+
+type M176FgStream consume {
+    id int,
+}
+
+fn M176FgStream consume @close() -> () { () }
+
+fn dial(v int) -> Result[M176FgStream, str] => Ok(M176FgStream { id: v })
+
+test "forgot to close consume-value extracted via match Ok(..) — must be D133" {
+    match dial(1) {
+        Ok(consume s) => {
+            // ОШИБКА D133-not-consumed: `s` Live на exit'е arm'а —
+            // никогда не был закрыт, но arm сама по себе не diverges.
+        },
+        Err(_e) => {},
+    }
+}

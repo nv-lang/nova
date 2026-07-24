@@ -1,0 +1,42 @@
+// [M-176-consume-through-result-match] (2026-07-24) — positive companion of
+// neg/consume_through_match_result_forget_neg.nv.
+//
+// Closes the gap: a consume-value extracted from a `Result` via a match
+// pattern (`Ok(consume x) => { ... }`) is now exit-checked for D133-not-
+// consumed at the ARM's own exit (`check_and_clear_arm_pattern_obligations`,
+// types/mod.rs) — previously the obligation registered by
+// `consume_declare_arm_pattern` silently leaked past the match (dropped by
+// `consume_join`'s arm-local-key discard) without ever being checked.
+//
+// This file pins the two LEGITIMATE shapes that must keep compiling:
+// 1. Consumed inside a brace arm (`Ok(consume s) => { s.close() }`).
+// 2. Match-tail passthrough (`Ok(consume s) => s`, brace-less) — ownership
+//    transfers OUT to whatever receives the match's own value (the
+//    canonical `consume lst = match { ... }` idiom, [M-mut-binding-accepts-
+//    must-consume]); this must NOT be flagged as forgotten by the arm's own
+//    exit-check.
+
+module spec_tests.conformance
+
+type M176Stream consume {
+    id int,
+}
+
+fn M176Stream consume @close() -> () { () }
+
+fn dial(v int) -> Result[M176Stream, str] => Ok(M176Stream { id: v })
+
+test "match Ok(consume s) => { s.close() } — closed inside the brace arm" {
+    match dial(1) {
+        Ok(consume s) => { s.close() },
+        Err(_e) => {},
+    }
+}
+
+test "match Ok(consume s) => s — tail-passthrough transfers ownership out" {
+    consume s = match dial(2) {
+        Ok(consume s) => s
+        Err(_e) => panic("dial failed")
+    }
+    s.close()
+}

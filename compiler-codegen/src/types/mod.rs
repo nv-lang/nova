@@ -31609,6 +31609,53 @@ fn consume_declare_arm_pattern(
     for n in &names { ctx.declare(n, None); }
 }
 
+/// [M-176-consume-through-result-match] (2026-07-24): pattern-bound
+/// consume-obligations that `consume_declare_arm_pattern` registers
+/// (`Ok(consume x)` / `Some(consume x)` / `Err(consume x)`, incl. the
+/// nested-tuple/record sub-shapes) are declared BEFORE the arm/then-branch's
+/// own `consume_walk_block` call — so that block's own delta-scoped exit
+/// check (`consume_walk_block_inner`'s `obligations_before` snapshot, taken
+/// AFTER the pattern is already declared) treats them as pre-existing OUTER
+/// obligations and skips them, assuming an enclosing scope will check them
+/// later. But `Match`/`IfLet` never re-check them afterwards either: the
+/// post-arm state-join (`consume_join`) intentionally drops any state key
+/// not present in the pre-match `saved` snapshot (arm-local pattern names
+/// are exactly such keys — see the block-comment above `consume_join` calls
+/// in the `Match` arm), so the entry silently vanishes from `ctx.states`
+/// while surviving forever in `ctx.consume_obligations`. `check_obligations_
+/// at_exit` then looks the name up in `ctx.states`, gets `None` (dropped by
+/// the join), and `None` is bucketed with `Consumed` (fall-through arm,
+/// deliberately — a var truly out of scope must not re-fire) → no
+/// diagnostic, ever. Net effect: `Ok(consume x) => { /* x never closed */ }`
+/// silently passed D133. Fix: exit-check (and unconditionally clear) any
+/// obligation introduced strictly BY THE PATTERN DECLARE — i.e. present in
+/// `ctx.consume_obligations` now but absent from the `obligations_before`
+/// snapshot taken immediately before `consume_declare_arm_pattern` ran —
+/// right here, at the arm/then-branch's own exit span, mirroring exactly
+/// the treatment `consume_walk_block_inner` already gives ordinary `consume`
+/// lets. Symmetric fix for `Match` arms AND `IfLet`'s `then` branch (same
+/// `consume_declare_arm_pattern` call site, same gap).
+fn check_and_clear_arm_pattern_obligations(
+    ctx: &mut ConsumeCtx,
+    obligations_before: &std::collections::HashSet<String>,
+    exit_span: Span,
+    errors: &mut Vec<Diagnostic>,
+) {
+    let new_obligations: Vec<String> = ctx.consume_obligations.iter()
+        .filter(|n| !obligations_before.contains(n.as_str()))
+        .cloned()
+        .collect();
+    if new_obligations.is_empty() { return; }
+    let full_obligations = std::mem::replace(
+        &mut ctx.consume_obligations,
+        new_obligations.iter().cloned().collect());
+    ctx.check_obligations_at_exit(exit_span, errors);
+    ctx.consume_obligations = full_obligations;
+    for n in &new_obligations {
+        ctx.consume_obligations.remove(n);
+    }
+}
+
 fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic>) {
     match s {
         Stmt::Let(decl) => {
@@ -33731,6 +33778,57 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                         // Invoke: mark captured outer vars + closure itself Consumed.
                         ctx.invoke_consume_closure(fname, e.span);
                     }
+                    // [M-consume-fn-value-call-arg-not-tracked] (2026-07-24):
+                    // `fname` resolved to NO known top-level `fn` consume-param
+                    // indices above (`consume_idxs` empty) AND isn't a tracked
+                    // consume-closure either — the remaining possibility for a
+                    // bare-`Ident` call target that still type-checks as callable
+                    // is a first-class fn-VALUE bound to a local name (parameter
+                    // or `let`/alias binding — `ctx.declare`/`declare_alias` both
+                    // register EVERY local, regardless of type, in `states`/
+                    // `var_types`/`aliases`; see `check_consume`'s param loop
+                    // `else { ctx.declare(&p.name, pty) }` arm — reached for
+                    // `TypeRef::Func`-typed params too, since `pty` only resolves
+                    // for single-segment `Named` types). Nova's `fn(T) -> U` type
+                    // grammar has NO per-param `consume` qualifier at all
+                    // (`parse_fn_type_signature` calls plain `parse_type()` per
+                    // param — D156's `fn(consume T) -> U` HOF illustration in
+                    // 02-types.md was never wired into the concrete fn-type
+                    // parser), so the checker has categorically no static
+                    // consume/view signature to consult for `h(ws)`-shaped calls.
+                    // Per the ALREADY-documented backward-compat policy for this
+                    // exact uncertainty ("default = silent-ignore для generic-
+                    // functions без bound", 02-types.md D156 Backward-compat
+                    // section) — treat a bare-Ident consume-obligated arg as
+                    // discharged by this call: codegen's own move-tracking
+                    // already transfers ANY consume-typed value into ANY call
+                    // uniformly (GC-backed, no ABI distinction between "view"/
+                    // "consume" passing) — the diagnostic-only checker was
+                    // simply failing to CREDIT it. This is a soundness net
+                    // improvement, not just noise suppression: previously a
+                    // genuine double-close (`h(r); r.close()`) went undetected
+                    // (checker thought `r` was still Live after `h(r)`) — after
+                    // this fix it correctly fires `D131` use-after-consume on
+                    // the second call. Gated on `fname` being a KNOWN LOCAL
+                    // binding (param/let/alias) — NOT merely "unknown name" —
+                    // so a genuine zero-consume-param top-level `fn` (e.g.
+                    // `println`) is unaffected (it's never a local binding, so
+                    // this arm never fires for it; its legitimately-empty
+                    // `consume_idxs` stands, no spurious consumption).
+                    if consume_idxs.is_empty()
+                        && !is_consume_closure_call
+                        && (ctx.states.contains_key(fname.as_str())
+                            || ctx.var_types.contains_key(fname.as_str())
+                            || ctx.aliases.contains_key(fname.as_str()))
+                    {
+                        for a in args {
+                            if let ExprKind::Ident(arg_name) = &a.expr().kind {
+                                if ctx.consume_obligations.contains(arg_name.as_str()) {
+                                    ctx.mark_consumed(arg_name, e.span);
+                                }
+                            }
+                        }
+                    }
                     // Plan 100.1 (D133 / D3): `panic` = exit-point.
                     // Все Live consume-obligations на panic-call → D133.
                     if fname == "panic" || fname == "exit" || fname == "abort" {
@@ -33810,10 +33908,19 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
             // unwrapped shape ОДИН раз перед pattern-declare.
             let scrut = ctx.scrutinee_unwrapped(scrutinee);
             let saved = ctx.states.clone();
+            // [M-176-consume-through-result-match]: same snapshot-before-
+            // declare discipline as `Match` arms — see
+            // `check_and_clear_arm_pattern_obligations` doc-comment.
+            let obligations_before_pattern = ctx.consume_obligations.clone();
             consume_declare_arm_pattern(ctx, pattern, &scrut, errors);
             // Plan 106: guard sees pattern bindings.
             if let Some(g) = guard { consume_walk_expr(ctx, g, errors); }
             consume_walk_block(ctx, then, errors);
+            // Exit-check + clear `then`'s own pattern-bound obligation(s)
+            // (unconditional — same panic-path rationale as the `Match` arm
+            // sibling above).
+            check_and_clear_arm_pattern_obligations(
+                ctx, &obligations_before_pattern, then.span, errors);
             let then_states = ctx.states.clone();
             ctx.states = saved.clone();
             consume_walk_else(ctx, else_, errors);
@@ -33831,6 +33938,11 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
             let mut joined: Option<HashMap<String, VarState>> = None;
             for arm in arms {
                 ctx.states = saved.clone();
+                // [M-176-consume-through-result-match]: snapshot BEFORE the
+                // pattern declare, so we can isolate exactly the obligation(s)
+                // introduced by THIS arm's own pattern (see
+                // `check_and_clear_arm_pattern_obligations` doc-comment).
+                let obligations_before_pattern = ctx.consume_obligations.clone();
                 consume_declare_arm_pattern(ctx, &arm.pattern, &scrut, errors);
                 if let Some(g) = &arm.guard { consume_walk_expr(ctx, g, errors); }
                 // [M-mut-binding-accepts-must-consume] (2026-07-21):
@@ -33856,9 +33968,37 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                     MatchArmBody::Block(b) => block_diverges(b),
                 };
                 match &arm.body {
-                    MatchArmBody::Expr(ex) => consume_walk_expr(ctx, ex, errors),
+                    MatchArmBody::Expr(ex) => {
+                        consume_walk_expr(ctx, ex, errors);
+                        // [M-176-consume-through-result-match]: brace-less
+                        // `pattern => ident` tail never goes through
+                        // `consume_walk_block` (only `Block` arms do), so it
+                        // misses that function's own bare-Ident tail-
+                        // passthrough handling ([M-mut-binding-accepts-must-
+                        // consume]'s `else if let ExprKind::Ident(name) = &t.kind`
+                        // branch below in `consume_walk_block_inner`) — mirror
+                        // it here: `Ok(consume l) => l` legitimately transfers
+                        // `l`'s obligation OUT to whatever receives the
+                        // match's own value (the canonical `consume lst =
+                        // match { .. }` idiom), it must not be flagged as
+                        // forgotten by the exit-check right below.
+                        if let ExprKind::Ident(name) = &ex.kind {
+                            if ctx.consume_obligations.contains(name.as_str()) {
+                                ctx.mark_consumed(name, ex.span);
+                            }
+                        }
+                    }
                     MatchArmBody::Block(b) => consume_walk_block(ctx, b, errors),
                 }
+                // [M-176-consume-through-result-match]: exit-check + clear
+                // THIS arm's own pattern-bound obligation(s) — see
+                // `check_and_clear_arm_pattern_obligations` doc-comment.
+                // Unconditional (not gated on `arm_diverges`): a panic/return
+                // exit-path with a still-Live pattern binding is D133-not-
+                // consumed too, same as any other `consume` binding's
+                // panic-path (see `consume_err_panic_path.nv`).
+                check_and_clear_arm_pattern_obligations(
+                    ctx, &obligations_before_pattern, arm.span, errors);
                 if arm_diverges { continue; }
                 let arm_states = ctx.states.clone();
                 joined = Some(match joined {

@@ -1192,6 +1192,90 @@ in `compiler-codegen/src/types/mod.rs`. Codegen companion fix (record-inner
 `var_types` registration gap) in `compiler-codegen/src/codegen/emit_c.rs`'s
 `pattern_bind_typed` (mono-Result branch + Option `is_opt` branch).
 
+**Amendment ([M-176-consume-through-result-match], 2026-07-24) — arm-exit
+enforcement gap (checker soundness, no rule change).** Все амендменты выше
+специфицировали, что `Ok(consume x)`/`Some(consume x)`/`Err(consume x)`
+(и tuple-/record-payload варианты) вводят `x` в `consume_obligations`
+must-be-consumed-до-scope-exit наравне с `consume X = expr` (D133) — но
+чекер это правило НЕ проверял на самом arm/then-branch exit'е:
+`consume_declare_arm_pattern` регистрирует обязательство ДО вызова
+`consume_walk_block` для тела arm'а, поэтому блочный delta-scoped
+exit-check (`consume_walk_block_inner`'s `obligations_before`, снятый
+ПОСЛЕ declare) видел его как pre-existing OUTER-обязательство и пропускал,
+рассчитывая на внешнюю проверку, которая никогда не наступала: пост-arm
+join (`consume_join`, `Match`) отбрасывает state-ключи, отсутствовавшие в
+pre-match `saved` (arm-локальные pattern-имена — ровно такие), запись
+исчезает из `ctx.states`, но остаётся НАВСЕГДА в `ctx.consume_obligations`;
+`check_obligations_at_exit` смотрит `None` (dropped by join) и трактует
+это как `Consumed` — без диагностики. Итог: `Ok(consume x) => { /* x
+никогда не закрыт */ }` молча проходило D133 — правило было specified,
+но unenforced именно на этом pattern-site. Фикс — `check_and_clear_
+arm_pattern_obligations` (`compiler-codegen/src/types/mod.rs`): exit-check
++ безусловная очистка (не гейтится на diverging arm — panic/return-path с
+Live pattern-биндингом тоже D133, см. `consume_err_panic_path.nv`) arm'а
+СВОЕГО pattern-обязательства на СВОЁМ exit'е, симметрично для `Match`
+arms и `IfLet`'s `then`. Легитимный tail-passthrough (`Ok(consume l) => l`
+без `{ }` — ownership transfer наружу, канонический `consume lst = match
+{ .. }`) дозеркалил существующее bare-Ident-tail mark-consumed исключение
+([M-mut-binding-accepts-must-consume]) на brace-less `MatchArmBody::Expr`
+форму, которая раньше никогда не проходила через `consume_walk_block` и
+потому не получала эту трактовку. Не новая грамматика/код ошибки — тот же
+`D133-not-consumed`, просто теперь реально firing на pattern-bound
+match-биндингах.
+
+**Amendment ([M-consume-fn-value-call-arg-not-tracked], №55 221.1 registry,
+2026-07-24) — call через первоклассное fn-значение.** Находка на реальном
+коде (nova-http `ws/socket.nv`'s `@cleanup` workaround comment): передача
+consume-обязательного значения через вызов, чей callee — первоклассное
+fn-ЗНАЧЕНИЕ (`f(r)`, где статический тип `f` — голый `fn(T) -> U`), не
+распознавалась чекером как consuming `r` — ложноположительный
+`D133-not-consumed` на exit'е объемлющего scope'а (маскировался только для
+типов с `@cleanup`-фолбэком, поскольку auto-cleanup-eligible типы не
+ошибаются на scope-exit даже когда чекер (ошибочно) всё ещё считает их
+Live). Корень — **не просто пробел чекера, а language-level дыра**:
+грамматика `fn(T) -> U` в принципе НЕ несёт per-param `consume`-
+квалификатор (`parse_fn_type_signature` парсит параметр как голый
+`parse_type()`; иллюстративный `fn(consume T) -> U` из D156 HOF-раздела
+выше по этому файлу — аспирационный design sketch, никогда не был проведён
+в конкретный (non-generic) fn-type parser) — так что у чекера категорически
+нет статической consume/view-сигнатуры для `h(ws)`-подобных вызовов, ЧЕМ
+БЫ ни был реальный callee.
+
+**Решение (checker-эвристика, БЕЗ новой грамматики).** Вместо расширения
+грамматики (что потребовало бы parser + type-compat + ABI работы для
+`fn(consume T) -> U` в конкретных, не-generic позициях — не сделано этим
+фиксом, честно вне объёма) применена уже СУЩЕСТВУЮЩАЯ, задокументированная
+выше в этом файле backward-compat политика для ИМЕННО этой неопределённости
+("default = silent-ignore для generic-functions без bound", раздел выше):
+когда callee вызова — голый `Ident`, который НЕ резолвится в
+зарегистрированную top-level `fn` (т.е. её `consume_idxs` пуст) И не
+consume-closure, но ЯВЛЯЕТСЯ известным ЛОКАЛЬНЫМ биндингом (параметр/`let`/
+alias — `check_consume`'s param-loop `ctx.declare(&p.name, pty)`-ветка
+регистрирует КАЖДЫЙ параметр, включая `fn(T) -> U`-типизированные, в
+`ctx.states`/`ctx.var_types` независимо от типа) — bare-Ident
+consume-обязательный аргумент трактуется как потреблённый этим вызовом.
+Обоснование, почему это SOUND (не просто noise-suppression): codegen
+УЖЕ единообразно передаёт consume-типизированное значение в ЛЮБОЙ call
+(GC-backed, между "view"/"consume" передачей нет ABI-различия) — чекер
+попросту не кредитовал это. Побочный эффект — реальное УЛУЧШЕНИЕ звучности:
+до фикса `f(r); r.close()` (двойной close через fn-значение) молча
+проходил (чекер думал `r` всё ещё Live после `f(r)`); после фикса второй
+вызов корректно триггерит обычный `D131` use-after-consume (см.
+`neg/consume_fn_value_call_arg_double_close_neg.nv`).
+
+**Область (честный defer).** Это ЭВРИСТИКА, не полное решение: она НЕ
+отличает "callee реально consume'ит этот параметр" от "callee лишь читает
+его view-style" — ОБА трактуются как consumed (соответствует "default =
+silent-ignore" секции выше — тот же trade-off, что уже принят для
+generic HOF без `[T consume]` bound). Полное решение требует language-
+уровневого расширения — `consume`-квалификатор в конкретных (non-generic)
+`fn(...)` type-позициях (parser + type-compatibility между присваиваемым/
+передаваемым closure/named-fn и объявленным fn-type + ABI-последствия) —
+НЕ сделано этим фиксом, зафиксировано как followup
+`[M-fn-type-consume-param-syntax]` (docs/plans/backlog-followups.md) для
+отдельного design-цикла (новая грамматика ⇒ отдельный D-амендмент и
+отдельное владельческое решение, не bundled в этот checker-фикс).
+
 ### Связь
 
 - [D131](#d131) — affine consume foundation.
