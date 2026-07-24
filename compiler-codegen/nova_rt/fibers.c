@@ -1,4 +1,9 @@
 /* nova_rt/fibers.c — minicoro implementation unit.
+ *
+ * Vela — M:N-движок конкурентности Nova (spawn/cancel/scope/driver/scheduler);
+ * этот файл несёт стековые фиберы (minicoro) исполнения. Бренд-имя рантайма —
+ * docs/naming-conventions.md §1.2, план 224 (идентификаторы/ABI не переименованы).
+ *
  * Exactly one .c file must define MINICORO_IMPL before including minicoro.h.
  *
  * Plan 22 Ф.3 (D93) production: NovaSchedState теперь lazy-allocated
