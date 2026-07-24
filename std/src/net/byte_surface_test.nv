@@ -51,7 +51,7 @@ test "TcpReadHalf.read / TcpWriteHalf.write over split" {
                 consume s = match TcpStream.connect(SocketAddr.loopback(0)) {
                     Ok(consume c) => c, Err(_) => panic("connect")
                 }
-                mut (rdh, wrh) = s.split()
+                mut (rdh, wrh) = s.into_split()
                 ro n = match wrh.write(Vec[u8].of(9, 8, 7, 6, 5)) {
                     Ok(n) => n, Err(_) => panic("write")
                 }

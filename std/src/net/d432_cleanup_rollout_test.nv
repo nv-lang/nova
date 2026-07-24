@@ -8,8 +8,8 @@
 // it (D432 §4 flow-sensitive dearm, no double-fire).
 //
 // Caveat found while writing this fixture (empirical, not spec-mandated):
-// `TcpStream.split()` returns its halves via a TUPLE-destructuring pattern
-// (`mut (rdh, wrh) = s.split()`), and D432 §2 explicitly does NOT extend
+// `TcpStream.into_split()` returns its halves via a TUPLE-destructuring pattern
+// (`mut (rdh, wrh) = s.into_split()`), and D432 §2 explicitly does NOT extend
 // auto-cleanup to destructured bindings (only bare `consume X = e;` single-
 // `Ident` patterns qualify) — confirmed empirically: a tuple-destructured,
 // never-closed half compiles clean with NO cleanup firing at all (a
@@ -18,7 +18,7 @@
 // rollout — the same file was silently unenforced before `@cleanup` existed
 // on these types too). The halves' new `@cleanup` is therefore reachable in
 // practice only via an explicit re-bind into a bare consume-let
-// (`consume rdh = rdh0`) — shown below — not through `.split()`'s direct
+// (`consume rdh = rdh0`) — shown below — not through `.into_split()`'s direct
 // tuple return. Kept anyway per Plan 217 §8а п.4 ("resources default to
 // auto-cleanup absent an explicit reason not to") and for forward
 // compatibility if the destructure-tracking gap is closed later.
@@ -117,7 +117,7 @@ test "Plan 217.1: UdpSocket explicit close disarms auto-cleanup (no double-fire)
 }
 
 // Split halves reach `@cleanup` only via an explicit re-bind into a bare
-// consume-let (see module doc comment above — `.split()`'s own tuple
+// consume-let (see module doc comment above — `.into_split()`'s own tuple
 // return is NOT tracked by D432's flow analysis).
 test "Plan 217.1: split halves re-bound into bare idents auto-clean independently" {
     mut exit_calls = 0
@@ -133,7 +133,7 @@ test "Plan 217.1: split halves re-bound into bare idents auto-clean independentl
                 Ok(consume c) => c
                 Err(_) => panic("connect")
             }
-            mut (rdh0, wrh0) = s.split()
+            mut (rdh0, wrh0) = s.into_split()
             consume rdh = rdh0
             consume wrh = wrh0
             ro _x = rdh.local_port()
@@ -158,7 +158,7 @@ test "Plan 217.1: split half explicit close disarms auto-cleanup (no double-fire
                 Ok(consume c) => c
                 Err(_) => panic("connect")
             }
-            mut (rdh0, wrh0) = s.split()
+            mut (rdh0, wrh0) = s.into_split()
             consume rdh = rdh0
             consume wrh = wrh0
             rdh.close()
