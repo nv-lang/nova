@@ -5938,6 +5938,24 @@ impl CEmitter {
             self.record_schemas.insert("ChannelPair".to_string(), cp_schema);
         }
 
+        // [M-open-range-len-source-hardcoded] Ф.1: register `str`'s layout
+        // (`{ptr *u8, len int}`, nova_rt.h/vtables.h `nova_str`) under the
+        // key `"str"` — mirrors the Error/ChannelPair precedent above. `str`
+        // is a compiler lang-item (never a `.nv` `type` decl), so it never
+        // goes through the normal `emit_type_decl` → `record_schemas`
+        // registration path; without this it would be structurally
+        // invisible to `structural_len_field_ty`/`structural_len_field_access`
+        // (open-range `end` materialization, ExprKind::Index Range-arm) even
+        // though its `len` field is real. `is_value_type("nova_str")` is
+        // already `true` (16-byte stack value, not a heap handle) so the
+        // storage-class predicate picks `.len`, not `->len`, for it.
+        {
+            let mut str_schema = HashMap::new();
+            str_schema.insert("ptr".to_string(), "const uint8_t*".to_string());
+            str_schema.insert("len".to_string(), "nova_int".to_string());
+            self.record_schemas.insert("str".to_string(), str_schema);
+        }
+
         // Plan 103.1 Ф.6: Pre-register MemOrdering in sum_schemas +
         // sum_schema_registry so test files can use `Relaxed`/`Acquire`/etc.
         // as unqualified variant names without `import std.runtime.sync`.
@@ -34738,57 +34756,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // Plan 96 Ф.2). Missing start -> `0`; missing end ->
                     // `obj.len()`; inclusive end -> `end + 1`.
                     //
-                    // Checked BEFORE `o = emit_expr(obj)` below (not after) so
-                    // `obj` is emitted exactly once for the common closed-range
-                    // case (the receiver of the synthesized `.index()` call) —
-                    // computing `o` here too would double-emit `obj` for no
-                    // reason (its text is unused on this path).
-                    if obj_ty.starts_with("Nova_Vec____") {
-                        let start_e: Box<Expr> = match start.clone() {
-                            Some(s) => s,
-                            None => Box::new(Expr::new(ExprKind::IntLit(0), expr.span)),
-                        };
-                        let end_e: Box<Expr> = match (end.clone(), *inclusive) {
-                            (Some(e), false) => e,
-                            (Some(e), true) => Box::new(Expr::new(
-                                ExprKind::Binary {
-                                    op: BinOp::Add,
-                                    left: e,
-                                    right: Box::new(Expr::new(ExprKind::IntLit(1), expr.span)),
-                                },
-                                expr.span,
-                            )),
-                            (None, _) => Box::new(Expr::new(
-                                ExprKind::Call {
-                                    func: Box::new(Expr::new(
-                                        ExprKind::Member { obj: obj.clone(), name: "len".to_string() },
-                                        expr.span,
-                                    )),
-                                    args: Vec::new(),
-                                    trailing: None,
-                                },
-                                expr.span,
-                            )),
-                        };
-                        let range_arg = Expr::new(
-                            ExprKind::Range { start: Some(start_e), end: Some(end_e), inclusive: false },
-                            expr.span,
-                        );
-                        let synthetic_call = Expr {
-                            kind: ExprKind::Call {
-                                func: Box::new(Expr::new(
-                                    ExprKind::Member { obj: obj.clone(), name: "index".to_string() },
-                                    expr.span,
-                                )),
-                                args: vec![CallArg::Item(range_arg)],
-                                trailing: None,
-                            },
-                            span: expr.span,
-                            id: expr.id,
-                            debug_only: expr.debug_only,
-                        };
-                        return self.emit_expr(&synthetic_call);
-                    }
+                    // [M-open-range-len-source-hardcoded] Ф.1: `o` is now
+                    // computed UNCONDITIONALLY, exactly once, up front for
+                    // every branch below (fixed-array / str / NovaArray_ /
+                    // the generic structural-`len`-field reroute) — the old
+                    // Vec-only early return skipped this (deliberately, per
+                    // the removed comment) but embedded `obj.clone()` TWICE
+                    // in its synthetic AST for an OPEN-ended Vec range (once
+                    // as the `.index()` receiver, once inside `obj.len()`),
+                    // which double-evaluated a side-effecting `obj` at the C
+                    // level — a latent single-eval gap this restructuring
+                    // closes (Ф.0(c)) rather than perpetuates.
                     let o = self.emit_expr(obj)?;
                     // Plan 96 Ф.4.4 — emit_range_bounds: open-ended → подставить
                     // (0, len) / (start, len) / (0, end) / (start, end[+1]).
@@ -34824,6 +34802,23 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             f = fa_from, to = fa_to, e = fa_elem_c
                         ));
                     }
+                    // [M-open-range-len-source-hardcoded] Ф.1: str and
+                    // NovaArray_ keep their OWN dedicated runtime-call fast
+                    // path below (nova_str_slice_*/nova_array_slice_* —
+                    // Границы: out of scope, not touched) — checked FIRST so
+                    // they retain priority. The GENERIC structural-`len`-
+                    // field reroute (Vec's mechanism, generalized) only
+                    // fires for what's left over — Vec itself (no longer
+                    // gated by the `Nova_Vec____` name) and any user type
+                    // with the same structural field.
+                    if obj_ty != "nova_str"
+                        && !obj_ty.starts_with("NovaArray_")
+                        && self.structural_len_field_ty(&obj_ty).as_deref() == Some("nova_int")
+                    {
+                        return self.emit_generic_len_field_range_index(
+                            &obj_ty, &o, start, end, *inclusive, expr,
+                        );
+                    }
                     let len_expr = if obj_ty == "nova_str" {
                         // Для str у нас len в кодпоинтах; nova_str_slice_panic
                         // считает их сам. Для open-ended здесь подставим SIZE_MAX-
@@ -34840,11 +34835,31 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // Plan 152.1 Ф.1b (D249): str slice is BYTE-range — the
                         // open-ended end is the BYTE length `_s.len` (was a codepoint
                         // count). `_s` is defined by the inline byte-slice below.
+                        // [M-open-range-len-source-hardcoded]: this value is a
+                        // structural dead-end in practice — the str arm below
+                        // ALWAYS takes the dedicated `_to_end_*` runtime helper
+                        // for an open-ended `s[a..]` (it computes the byte
+                        // length itself), so `len_expr` is never actually read
+                        // for str; kept verbatim (out of scope, Границы) rather
+                        // than "cleaned up" as an unrelated behavior change.
                         "_s.len".to_string()
                     } else if obj_ty.starts_with("NovaArray_") {
+                        // Legacy compiler-intrinsic array header (NOVA_ARRAY_DECL,
+                        // nova_rt/array.h) — near-dead (Plan 172.12 A7/A8: `[]T`
+                        // is Vec[T]-backed now; this remains only for the erased
+                        // `nova_int` mono-sentinel + the `void_p` closure-array).
+                        // Not a `.nv` type, so it never lands in `record_schemas`
+                        // — kept as its own known-C-layout branch (same
+                        // "legitimate exception" class as the fixed-array
+                        // `fa_total` branch above), untouched by this Ф.1.
                         format!("({})->len", o)
                     } else {
-                        return Err(format!("slice on unsupported type {} (Plan 96)", obj_ty));
+                        return Err(format!(
+                            "[E_OPEN_RANGE_NO_LEN] type `{}` does not support range \
+                             slicing (`[a..]`/`[a..b]`) — no structural `len int` field \
+                             ([M-open-range-len-source-hardcoded])",
+                            obj_ty
+                        ));
                     };
                     let from_expr = match start.as_deref() {
                         Some(s) => self.emit_expr(s)?,
@@ -34884,7 +34899,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         let elem = elem.trim_end_matches('*').trim();
                         return Ok(format!("nova_array_slice_{}({}, {}, {})", elem, o, from_expr, to_expr));
                     } else {
-                        return Err(format!("slice on unsupported type {} (Plan 96)", obj_ty));
+                        // Unreachable by construction: the `len_expr` chain above
+                        // already returns for any `obj_ty` that is neither
+                        // `nova_str` nor `NovaArray_*` (either via the generic
+                        // structural-`len`-field reroute or the honest
+                        // [E_OPEN_RANGE_NO_LEN] error) — kept as a defensive
+                        // fallback, message harmonized with that one.
+                        return Err(format!(
+                            "[E_OPEN_RANGE_NO_LEN] type `{}` does not support range \
+                             slicing (`[a..]`/`[a..b]`) — no structural `len int` field \
+                             ([M-open-range-len-source-hardcoded])",
+                            obj_ty
+                        ));
                     }
                 }
 
@@ -50867,6 +50893,142 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             return Some(s.to_string());
         }
         trimmed.strip_prefix("Nova_").map(|s| s.to_string())
+    }
+
+    /// [M-open-range-len-source-hardcoded] Ф.1: maps a C type to its
+    /// `record_schemas` lookup key, when one exists. Mirrors
+    /// `debt_struct_name_from_c_type` (strip `NovaValue_`/`Nova_` prefix +
+    /// trailing `*` — covers user records AND mono Vec instances, e.g.
+    /// `Nova_Vec____nova_int*` → `Vec____nova_int`, the exact key
+    /// `drain_generic_type_worklist` registers a mono generic record's
+    /// schema under) plus ONE lang-item carve-out: `nova_str` never goes
+    /// through that `.nv`-decl registration path (see the CU-setup
+    /// pre-registration next to `Error`/`ChannelPair`), so it is looked up
+    /// under the literal key `"str"` instead.
+    fn record_schema_key_for_c_type(c_ty: &str) -> Option<String> {
+        if c_ty == "nova_str" {
+            return Some("str".to_string());
+        }
+        Self::debt_struct_name_from_c_type(c_ty)
+    }
+
+    /// [M-open-range-len-source-hardcoded] Ф.1: does `obj_ty` structurally
+    /// have a field literally named `len`? Reads `record_schemas` — the
+    /// SAME registry every `.nv` record/value-record type's fields land in
+    /// (plus the `str` pre-registration) — never the type's NAME. Returns
+    /// the field's C type so callers can verify it is `nova_int` rather
+    /// than assume.
+    fn structural_len_field_ty(&self, obj_ty: &str) -> Option<String> {
+        let key = Self::record_schema_key_for_c_type(obj_ty)?;
+        self.record_schemas.get(&key)?.get("len").cloned()
+    }
+
+    /// [M-open-range-len-source-hardcoded] Ф.1: the open-range `end`
+    /// materialization access for a structurally-`len`-having type (owner
+    /// rule п.1: field found → read it). The C access FORM — `.len` (stack
+    /// value / lang-item like `str`) vs `->len` (heap handle, e.g. a mono
+    /// `Vec[T]`) — is chosen by `Self::is_value_type(obj_ty)`, a storage-
+    /// CLASS predicate, never by the type's name. `recv` MUST already be a
+    /// single-eval-safe C expression (a bare identifier/tmp-var): it is
+    /// embedded verbatim and may be referenced more than once by the
+    /// caller, so a side-effecting `recv` (e.g. a raw call expression)
+    /// would double-evaluate at the C level.
+    fn structural_len_field_access(&self, obj_ty: &str, recv: &str) -> Option<String> {
+        let field_ty = self.structural_len_field_ty(obj_ty)?;
+        if field_ty != "nova_int" {
+            return None;
+        }
+        if Self::is_value_type(obj_ty) {
+            Some(format!("({}).len", recv))
+        } else {
+            Some(format!("({})->len", recv))
+        }
+    }
+
+    /// [M-open-range-len-source-hardcoded] Ф.1: GENERIC open/closed-range
+    /// reroute for any type with a structural `len int` field — generalizes
+    /// the `Nova_Vec____`-only early-return this file used to gate purely
+    /// by C-type name (Plan 194 Ф.3) to the structural predicate above, so
+    /// an arbitrary user type with the same field gets `x[a..]`/`x[a..b]`
+    /// "for free" through its OWN `.nv` `@index(Range)` method — same
+    /// synthetic `obj.index(materialized_range)` re-emission idiom this
+    /// file already uses elsewhere (`rebuilt`/`iter_call`, ~29269/~45729),
+    /// reusing the existing generic-method overload resolution +
+    /// monomorphization + sret/`_out` rewrite. Never invented for str/
+    /// NovaArray_ — the caller only reaches this after excluding both (they
+    /// keep their own dedicated runtime-call fast paths, out of scope here).
+    ///
+    /// Single-eval: `o` (the receiver, already emitted exactly once by the
+    /// caller) is hoisted into a fresh C tmp because it is referenced TWICE
+    /// below when the end is open (once as the `.index()` receiver, once to
+    /// read `len`) — re-embedding the raw `o` STRING twice, as the old
+    /// Vec-only code's `obj.clone()`-in-two-AST-places version did for an
+    /// open-ended `v[a..]`, double-evaluates a side-effecting receiver at
+    /// the C level. Hoisting to a tmp closes that latent gap (Ф.0(c)).
+    fn emit_generic_len_field_range_index(
+        &mut self,
+        obj_ty: &str,
+        o: &str,
+        start: &Option<Box<Expr>>,
+        end: &Option<Box<Expr>>,
+        inclusive: bool,
+        expr: &Expr,
+    ) -> Result<String, String> {
+        let recv_tmp = self.fresh_tmp();
+        self.line(&format!("{} {} = {};", obj_ty, recv_tmp, o));
+        self.var_types.insert(recv_tmp.clone(), obj_ty.to_string());
+        let recv_ident = Expr::new(ExprKind::Ident(recv_tmp.clone()), expr.span);
+
+        let start_e: Box<Expr> = match start.clone() {
+            Some(s) => s,
+            None => Box::new(Expr::new(ExprKind::IntLit(0), expr.span)),
+        };
+        let end_e: Box<Expr> = match (end.clone(), inclusive) {
+            (Some(e), false) => e,
+            (Some(e), true) => Box::new(Expr::new(
+                ExprKind::Binary {
+                    op: BinOp::Add,
+                    left: e,
+                    right: Box::new(Expr::new(ExprKind::IntLit(1), expr.span)),
+                },
+                expr.span,
+            )),
+            (None, _) => {
+                // Structural `len` read (owner rule п.1) — `.len`/`->len`
+                // chosen by storage class, materialized into its OWN fresh
+                // tmp (not inlined as a raw string) so it becomes an `Expr`
+                // embeddable in the synthetic `Range` below.
+                let access = self.structural_len_field_access(obj_ty, &recv_tmp)
+                    .ok_or_else(|| format!(
+                        "[E_OPEN_RANGE_NO_LEN] internal: `{}` lost its structural \
+                         `len int` field between the caller's check and here \
+                         ([M-open-range-len-source-hardcoded])",
+                        obj_ty
+                    ))?;
+                let len_tmp = self.fresh_tmp();
+                self.line(&format!("nova_int {} = ({});", len_tmp, access));
+                self.var_types.insert(len_tmp.clone(), "nova_int".to_string());
+                Box::new(Expr::new(ExprKind::Ident(len_tmp), expr.span))
+            }
+        };
+        let range_arg = Expr::new(
+            ExprKind::Range { start: Some(start_e), end: Some(end_e), inclusive: false },
+            expr.span,
+        );
+        let synthetic_call = Expr {
+            kind: ExprKind::Call {
+                func: Box::new(Expr::new(
+                    ExprKind::Member { obj: Box::new(recv_ident), name: "index".to_string() },
+                    expr.span,
+                )),
+                args: vec![CallArg::Item(range_arg)],
+                trailing: None,
+            },
+            span: expr.span,
+            id: expr.id,
+            debug_only: expr.debug_only,
+        };
+        self.emit_expr(&synthetic_call)
     }
 
     /// [M-178-variant-ctor-target-sum]: like `debt_struct_name_from_c_type`,
