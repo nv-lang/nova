@@ -1,0 +1,34 @@
+// [M-open-range-len-source-hardcoded] Ф.2 pos (heap storage class): a
+// user-defined HEAP record (`type ByteBag { ... }`, default allocation —
+// `Nova_ByteBag*`, no `Nova_Vec____`/`nova_str`/`NovaArray_` involved) with
+// a structural `len int` field gets `x[a..]` open-range slicing "for free"
+// through its OWN `.nv` `@index(Range)` method — the generalized structural
+// reroute (emit_c.rs `emit_generic_len_field_range_index`) dispatches it
+// exactly like `Vec[T]` always has, gated by the field's presence, not by
+// the type's name. The C access form for `len` is `->len` (heap handle),
+// chosen by `Self::is_value_type` (storage-class predicate).
+
+module spec_tests.conformance
+import std.collections.range.{Range}
+
+type ByteBag {
+    len int
+}
+
+fn ByteBag @index(r Range) -> ByteBag {
+    ByteBag { len: r.end - r.start }
+}
+
+fn ByteBag @len() -> int => @len
+
+test "heap user record with len int field gets open-range slice for free" {
+    ro b = ByteBag { len: 10 }
+    ro v = b[3..]
+    assert(v.len() == 7)
+}
+
+test "heap user record with len int field: closed range still works too" {
+    ro b = ByteBag { len: 10 }
+    ro v = b[2..5]
+    assert(v.len() == 3)
+}

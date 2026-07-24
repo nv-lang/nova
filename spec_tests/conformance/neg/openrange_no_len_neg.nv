@@ -1,0 +1,28 @@
+// EXPECT_COMPILE_ERROR E_OPEN_RANGE_NO_LEN
+//
+// [M-open-range-len-source-hardcoded] Ф.2 neg: `Weird` implements
+// `@index(Range)` (so `nova check`'s permissive Range-index result-type
+// inference — `infer_expr_type`'s `ExprKind::Index` arm just returns
+// `obj_tr` unconditionally for any Range index, without verifying an
+// `@index(Range)` impl exists — accepts `w[2..]` at check-time) but has NO
+// field literally named `len` (only `cap`). The open-range `end`
+// materialization in emit_c.rs can't structurally find a `len int` field to
+// read, so codegen must fail with the honest `E_OPEN_RANGE_NO_LEN`
+// diagnostic — not an ICE/panic.
+
+module neg.openrange_no_len_neg
+import std.collections.range.{Range}
+
+type Weird {
+    cap int
+}
+
+fn Weird @index(r Range) -> Weird {
+    Weird { cap: r.end - r.start }
+}
+
+fn main() -> () {
+    ro w = Weird { cap: 5 }
+    ro v = w[2..]
+    ro _ = v
+}

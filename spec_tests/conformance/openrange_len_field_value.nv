@@ -1,0 +1,29 @@
+// [M-open-range-len-source-hardcoded] Ф.2 pos (stack/value storage class):
+// a user-defined VALUE record (`type SmallBag value { ... }`, monomorphizes
+// to the stack-allocated `NovaValue_SmallBag`, no heap allocation) with a
+// structural `len int` field also gets `x[a..]` open-range slicing "for
+// free" — the SAME generalized structural reroute as the heap-record sib
+// (`openrange_len_field_heap.nv`), but the C access form for `len` here is
+// `.len` (stack value), chosen by `Self::is_value_type` returning true for
+// a `NovaValue_`-prefixed, non-pointer C type. This is the OTHER mandatory
+// storage class the owner's rule requires (§"класс хранения — ОБА
+// обязательны").
+
+module spec_tests.conformance
+import std.collections.range.{Range}
+
+type SmallBag value {
+    len int
+}
+
+fn SmallBag @index(r Range) -> SmallBag {
+    SmallBag { len: r.end - r.start }
+}
+
+fn SmallBag @len() -> int => @len
+
+test "value-record with len int field gets open-range slice for free" {
+    ro b = SmallBag { len: 9 }
+    ro v = b[2..]
+    assert(v.len() == 7)
+}
