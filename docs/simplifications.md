@@ -9154,3 +9154,27 @@ re-attempt sub-plan ПОСЛЕ Plan 139 Ф.2 (координация risk RG; в
   (26 PASS/0 FAIL), `examples/flagship/aggregator` `nova check` PASS на всех 4 изменённых
   файлах. Мега-CU conformance и flagship `--strict-effects` НЕ гонялись (CPU-дисциплина,
   интегратор).
+
+## Plan 214.1 (2026-07-24, sonnet, worktree `nova-p2141`, ветка `p214-1-generic-coerce`) — generic `#coerce` (снятие R14)
+
+- **Что сделано:** R14 (бланкет-реджект generic-`#coerce`) снята D429-амендментом
+  (`spec/decisions/02-types.md`, раздел «Generic-образцы»); реализован ВТОРОЙ реестр
+  `generic_coerce_patterns` (`compiler-codegen/src/types/mod.rs`) — образцы вида
+  `Json[T] @data() -> T`, унифицируемые ОДНОСТОРОННЕ и БЕЗ РЕКУРСИИ ВГЛУБЬ против конкретных
+  `(I,O)` на каждом сайте (`generic_coerce_lookup` — accept-путь; `try_coerce_leaf`'s
+  generic-ветка — AST-rewrite), проверяемые ТОЛЬКО при промахе конкретного `coerce_pairs`.
+  R3'/R13' реализованы и покрыты фикстурами; R5' (overload-уровневая ambiguity) — см. маркер
+  ниже.
+- **`[M-coerce-r5-ambiguous-overload-unimplemented]` (открыт, P3, не в объёме 214.1):**
+  D429 R5 обещает `E_COERCE_AMBIGUOUS`, когда ≥2 применимых `#coerce`-пар с РАЗНЫМИ O
+  конкурируют за одну call-arg позицию через РАЗНЫЕ overload-кандидаты (пример из плана 214
+  Ф.4: `str→[]u8` + локальная `str→X`, оверлоады `dump(v []u8)`/`dump(v X)`). Аудит 214.1
+  нашёл: этот код НЕ встречается нигде в компиляторе — ни для конкретных пар (Plan 214 сам
+  never реализовывал этот overload-уровневый путь, только decl-time R3), ни для generic-
+  образцов (214.1 реализовала R3' — одно-позиционный конфликт УЖЕ детектируется, но НЕ
+  overload-уровневая R5'-неоднозначность с разными O). Снятие — отдельный, не начатый пункт
+  (обе полосы, конкретная и generic, один и тот же overload-resolution механизм).
+- **Гейты волны:** `cargo build --release` чисто; targeted pos/neg-фикстуры (см. отчёт
+  волны); `nova test std/src/checksums` δ0; `nova check std/src` байт-идентично (δ0
+  существующего конкретного `#coerce`-механизма str→[]u8 и т.д. — точные числа файлов/байт
+  в отчёте волны). Мега-CU conformance НЕ гонялась (CPU-дисциплина, интегратор).
