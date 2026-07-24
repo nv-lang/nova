@@ -1,0 +1,55 @@
+// [M-fmt-rich-spec-primitive-fresh-sb-redundant] gate fixture (this wave,
+// docs/plans/backlog-followups.md): rich-spec width/align/precision axes NOT
+// covered by the existing Ф.4R Ш0 baseline files (str precision/align, char
+// width, bool width, binary radix+width) — plus MIXED multi-rich-field
+// interpolations (several rich fields inside ONE string) to specifically
+// stress-test the devirtualization in this wave: `*_display_spec` now
+// writes DIRECTLY into the shared (non-empty, already-populated) interp
+// `StringBuilder` instead of a fresh dedicated one per field — a
+// mark-relative `pad_in_place` bug (wrong mark base) would only surface
+// when a SECOND rich field pads/aligns after a FIRST one already wrote
+// content into the same builder. Expected literals verified by hand against
+// the `*_display_spec` family's own documented semantics
+// (std/src/runtime/string_builder.nv) — this is a NEW-behavior-neutral gate
+// (values unaffected by the fresh-SB-vs-shared-SB choice), not a Ш0 baseline
+// snapshot.
+module spec_tests.conformance
+
+test "fmtdirect: primitive rich-spec axes not in the Ш0 baseline (str/char/bool/binary width)" {
+    assert("${42:5}" == "   42")
+    assert("${42:<5}" == "42   ")
+    assert("${42:05}" == "00042")
+    assert("${255:#x}" == "0xff")
+    assert("${255:X}" == "FF")
+    assert("${5:8b}" == "     101")
+    ro s = "hello"
+    assert("${s:.3}" == "hel")
+    ro s2 = "hi"
+    assert("${s2:^7}" == "  hi   ")
+    ro c = 'Q'
+    assert("${c:3}" == "Q  ")
+    ro bl = true
+    assert("${bl:6}" == "true  ")
+    ro f = 3.14159
+    assert("${f:.2}" == "3.14")
+}
+
+test "fmtdirect: MIXED multi-rich-field interpolation (mark-relative pad_in_place stress)" {
+    ro n = 7
+    ro s = "hello"
+    // Two rich fields in one string: the SECOND one (`s:.2`) must pad/
+    // truncate relative to ITS OWN mark, not get confused by the FIRST
+    // field's content already sitting in the shared builder.
+    assert("a${n:5}b${s:.2}c" == "a    7bhec")
+
+    ro bl = true
+    // Three rich fields (int left-align, hex alt-radix, bool left-align)
+    // back-to-back with literal separators between each.
+    assert("${n:<3}|${255:#x}|${bl:6}!" == "7  |0xff|true  !")
+
+    ro f2 = 3.5
+    ro c2 = 'Q'
+    // Zero-pad int, then float width+precision, then char width — three
+    // DIFFERENT `*_display_spec` engines chained in one string.
+    assert("[${n:03}][${f2:10.3}][${c2:3}]" == "[007][     3.500][Q  ]")
+}
