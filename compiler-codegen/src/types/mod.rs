@@ -33778,6 +33778,57 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                         // Invoke: mark captured outer vars + closure itself Consumed.
                         ctx.invoke_consume_closure(fname, e.span);
                     }
+                    // [M-consume-fn-value-call-arg-not-tracked] (2026-07-24):
+                    // `fname` resolved to NO known top-level `fn` consume-param
+                    // indices above (`consume_idxs` empty) AND isn't a tracked
+                    // consume-closure either — the remaining possibility for a
+                    // bare-`Ident` call target that still type-checks as callable
+                    // is a first-class fn-VALUE bound to a local name (parameter
+                    // or `let`/alias binding — `ctx.declare`/`declare_alias` both
+                    // register EVERY local, regardless of type, in `states`/
+                    // `var_types`/`aliases`; see `check_consume`'s param loop
+                    // `else { ctx.declare(&p.name, pty) }` arm — reached for
+                    // `TypeRef::Func`-typed params too, since `pty` only resolves
+                    // for single-segment `Named` types). Nova's `fn(T) -> U` type
+                    // grammar has NO per-param `consume` qualifier at all
+                    // (`parse_fn_type_signature` calls plain `parse_type()` per
+                    // param — D156's `fn(consume T) -> U` HOF illustration in
+                    // 02-types.md was never wired into the concrete fn-type
+                    // parser), so the checker has categorically no static
+                    // consume/view signature to consult for `h(ws)`-shaped calls.
+                    // Per the ALREADY-documented backward-compat policy for this
+                    // exact uncertainty ("default = silent-ignore для generic-
+                    // functions без bound", 02-types.md D156 Backward-compat
+                    // section) — treat a bare-Ident consume-obligated arg as
+                    // discharged by this call: codegen's own move-tracking
+                    // already transfers ANY consume-typed value into ANY call
+                    // uniformly (GC-backed, no ABI distinction between "view"/
+                    // "consume" passing) — the diagnostic-only checker was
+                    // simply failing to CREDIT it. This is a soundness net
+                    // improvement, not just noise suppression: previously a
+                    // genuine double-close (`h(r); r.close()`) went undetected
+                    // (checker thought `r` was still Live after `h(r)`) — after
+                    // this fix it correctly fires `D131` use-after-consume on
+                    // the second call. Gated on `fname` being a KNOWN LOCAL
+                    // binding (param/let/alias) — NOT merely "unknown name" —
+                    // so a genuine zero-consume-param top-level `fn` (e.g.
+                    // `println`) is unaffected (it's never a local binding, so
+                    // this arm never fires for it; its legitimately-empty
+                    // `consume_idxs` stands, no spurious consumption).
+                    if consume_idxs.is_empty()
+                        && !is_consume_closure_call
+                        && (ctx.states.contains_key(fname.as_str())
+                            || ctx.var_types.contains_key(fname.as_str())
+                            || ctx.aliases.contains_key(fname.as_str()))
+                    {
+                        for a in args {
+                            if let ExprKind::Ident(arg_name) = &a.expr().kind {
+                                if ctx.consume_obligations.contains(arg_name.as_str()) {
+                                    ctx.mark_consumed(arg_name, e.span);
+                                }
+                            }
+                        }
+                    }
                     // Plan 100.1 (D133 / D3): `panic` = exit-point.
                     // Все Live consume-obligations на panic-call → D133.
                     if fname == "panic" || fname == "exit" || fname == "abort" {

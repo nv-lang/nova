@@ -4001,3 +4001,27 @@ scope"`) — изолирует дефект от нативного RwLock (л�
 **Текущий обход:** ни одного (defense-in-depth частично держится: explicit `TypeName { field: … }` форма ловится корректно — см. репро `Monotonic { nanos: 42 }` → `E_PRIV_FIELD_INIT`/линт-конфликт; обходится только bare-контекстная форма).
 
 **Follow-up:** унифицировать priv-field-init enforcement в ОДНОМ пост-резолюции чекпоинте (после того, как bare RecordLit получил свой финальный `ResolvedType`, независимо от канала-источника), либо явно опросить каждый существующий канал context-inference и продублировать priv-gate. Затронутые типы прямо сейчас в std: `Duration`/`Timestamp`/`Monotonic` (`time.duration`), `Stdin`/`Stdout`/`Stderr` (`std.io`) — возможно другие, не проверено полным грепом.
+
+## [M-consume-fn-value-call-arg-not-tracked] — ✅ CLOSED 2026-07-24 (окно 67 consume-звучность, №55 221.1 registry)
+
+**Находка (2026-07-23, финальная сантехника):** consume-значение, переданное через вызов ПЕРВОКЛАССНОГО fn-значения (`f(r)`, статический тип `f` — голый `fn(T) -> U`), не распознавалось D131/D133 как consumed — user-типы БЕЗ `@cleanup`-фолбэка ловили ложноположительный `D133-not-consumed` на exit'е объемлющего scope'а; типы С `@cleanup` (реальный workaround — nova-http `ws/socket.nv`) маскировали это (auto-cleanup-eligible типы не ошибаются на scope-exit).
+
+**Корень — language-level, не только checker-пробел:** грамматика `fn(T) -> U` НЕ несёт per-param `consume`-квалификатор вообще (`parse_fn_type_signature`, `compiler-codegen/src/parser/mod.rs`, парсит параметр как голый `parse_type()`); иллюстративный `fn(consume T) -> U` из D156 HOF-раздела (`spec/decisions/02-types.md`) — аспирационный design sketch, никогда не был проведён в конкретный (non-generic) fn-type parser. Чекер категорически не имеет статической consume/view-сигнатуры для вызова через fn-значение.
+
+**Фикс (checker-эвристика, БЕЗ новой грамматики — амендмент D131/D133 в `spec/decisions/05-memory.md`):** когда callee вызова — `Ident`, НЕ резолвящийся в зарегистрированную top-level `fn` (пустой `consume_idxs`) и не consume-closure, но являющийся известным ЛОКАЛЬНЫМ биндингом (параметр/`let`/alias) — bare-Ident consume-обязательный аргумент трактуется как потреблённый этим вызовом (`compiler-codegen/src/types/mod.rs`, `ExprKind::Call`'s `ExprKind::Ident(fname)`-ветка). Соответствует уже существующей "default = silent-ignore" backward-compat политике (D156). Побочный эффект — реальное улучшение звучности: `f(r); r.close()` (двойной close через fn-значение) раньше молча проходил, теперь корректно триггерит `D131`.
+
+**Гейты:** `consume_fn_value_call_arg_ok.nv` (pos) + `neg/consume_fn_value_call_arg_double_close_neg.nv` (D131 double-close теперь ловится) — оба зелёные; regression — 11 существующих d157/d180/detach/M-176 фикстур без изменений в вердиктах; targeted std/net(7) + std/fs(3) + std/concurrency(9) + доп. fn-value-bearing файлы (sync.nv/effects.nv/sql.nv/orm_demo.nv) — все GREEN; flagship aggregator `--strict-effects` GREEN.
+
+**Честный defer (followup ниже):** эвристика НЕ отличает "callee реально consume'ит" от "callee лишь читает view-style" — оба трактуются как consumed (тот же trade-off, что уже принят для generic HOF без `[T consume]` bound). Полное решение = language-расширение, см. `[M-fn-type-consume-param-syntax]` ниже.
+
+## [M-fn-type-consume-param-syntax] — followup из [M-consume-fn-value-call-arg-not-tracked] (2026-07-24): `consume`-квалификатор в конкретных fn-type позициях
+
+**Суть:** `fn(T) -> U` (конкретный, non-generic fn-type — параметры, переменные, поля) не может статически заявить "этот параметр consume'ит своё значение" — `parse_fn_type_signature` не принимает `consume` перед типом параметра (в отличие от `fn name(consume x T)`-деклараций, где это работает). D156 (`spec/decisions/02-types.md`) уже иллюстрирует желаемый синтаксис `fn(consume T) -> U` для generic-HOF bound-контекста, но это НЕ проведено в парсер для конкретных fn-type аннотаций.
+
+**Объём полного решения:** (1) parser — `parse_fn_type_signature`, per-param optional `consume` prefix, аналогично generic-decl `consume`-suffix (`parse_type_args`); (2) type-compatibility — presented-fn/closure/named-fn, назначаемый в `fn(consume T) -> U`-типизированную позицию, обязан сам иметь `consume` на соответствующем параметре (иначе type-mismatch, не просто consume-checker warning); (3) consume-checker — `ExprKind::Call`'s `Ident`-ветка должна консультировать ЭТУ типовую информацию (а не эвристику "любой локальный биндинг = consume", которую применил checker-фикс выше) для ТОЧНОГО (не эвристического) tracking; (4) ABI/mangling-последствия для fn-value passing — не аудировано.
+
+**Почему не в этом окне:** language-меняющая работа (новая грамматика + type-compat + возможные ABI-последствия) — отдельный design-цикл с собственным D-амендментом и владельческим решением, не bundled в checker-фикс окна 67. Текущая эвристика (см. закрытый маркер выше) — sound-improving, но НЕ полная замена.
+
+| Маркер | Суть | Home | Pri |
+|---|---|---|---|
+| `[M-fn-type-consume-param-syntax]` | Concrete `fn(T) -> U` (non-generic fn-type) не несёт `consume`-квалификатор на параметрах — D156's `fn(consume T) -> U` HOF-иллюстрация никогда не была проведена в парсер для конкретных (не generic-bound) fn-type позиций. Полная замена checker-эвристике из `[M-consume-fn-value-call-arg-not-tracked]` требует parser + type-compat + ABI-аудит. | consume-checker / parser | P2 |

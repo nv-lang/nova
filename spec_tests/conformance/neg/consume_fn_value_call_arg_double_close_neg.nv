@@ -1,0 +1,33 @@
+// EXPECT_COMPILE_ERROR D131
+//
+// [M-consume-fn-value-call-arg-not-tracked] (2026-07-24, №55 221.1 registry):
+// positive companion consume_fn_value_call_arg_ok.nv fixes the false-
+// positive; THIS fixture pins the soundness IMPROVEMENT the same fix
+// brings — a genuine double-close through a first-class fn-value call was
+// previously undetected (the checker thought the argument was still Live
+// after `f(r)`, since it had no way to credit the call as consuming). Now
+// that `f(r)` correctly discharges `r`'s obligation, a SECOND use
+// (`r.close()` right after) correctly trips ordinary D131 use-after-consume.
+
+module neg.consume_fn_value_call_arg_double_close_neg
+
+type M55DblRes consume {
+    id int,
+}
+
+fn M55DblRes consume @close() -> () { () }
+
+fn m55_closer(consume x M55DblRes) -> () {
+    x.close()
+}
+
+fn m55_double_close(consume r M55DblRes, f fn(M55DblRes) -> ()) -> () {
+    f(r)
+    // ОШИБКА D131: `r` уже потреблена вызовом `f(r)` выше.
+    r.close()
+}
+
+test "double-close through first-class fn-value call is now caught (D131)" {
+    consume r = M55DblRes { id: 1 }
+    m55_double_close(r, m55_closer)
+}

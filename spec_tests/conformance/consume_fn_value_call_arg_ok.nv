@@ -1,0 +1,46 @@
+// [M-consume-fn-value-call-arg-not-tracked] (2026-07-24, №55 221.1 registry) —
+// positive companion of neg/consume_fn_value_call_arg_double_close_neg.nv.
+//
+// Real-world finding (nova-http `ws/socket.nv`'s `@cleanup` workaround
+// comment): passing a consume-obligated value through a call whose callee
+// is a first-class fn-VALUE (`f(r)`, where `f`'s static type is a bare
+// `fn(T) -> U` — Nova's fn-type grammar has NO per-param `consume`
+// qualifier at all, unlike concrete `fn name(consume x T)` declarations)
+// was NOT recognized by the checker as consuming `r` — a false-positive
+// `D133-not-consumed` at the enclosing scope-exit (previously masked only
+// for types with a `@cleanup` fallback, since auto-cleanup-eligible types
+// don't error at scope-exit even when the checker (wrongly) still thinks
+// they're Live).
+//
+// Fix: when a call's callee is a bare `Ident` that resolves to a KNOWN
+// LOCAL binding (parameter/`let`/alias — i.e. NOT a genuine top-level `fn`
+// declaration, which would have its own already-tracked consume-param
+// indices), treat any bare-Ident consume-obligated argument as discharged
+// by the call — consistent with the existing documented backward-compat
+// policy for consume-values passed to consume-unannotated positions
+// (02-types.md D156 "default = silent-ignore для generic-functions без
+// bound").
+
+module spec_tests.conformance
+
+type M55Res consume {
+    id int,
+}
+
+fn M55Res consume @close() -> () { () }
+
+fn m55_closer(consume x M55Res) -> () {
+    x.close()
+}
+
+// `f`'s static type carries no consume-qualifier (impossible in Nova's
+// `fn(T) -> U` grammar) — `run_with` still correctly discharges `r`'s
+// obligation via the `f(r)` call.
+fn m55_run_with(consume r M55Res, f fn(M55Res) -> ()) -> () {
+    f(r)
+}
+
+test "consume arg passed through first-class fn-value call is recognized as consumed" {
+    consume r = M55Res { id: 1 }
+    m55_run_with(r, m55_closer)
+}
