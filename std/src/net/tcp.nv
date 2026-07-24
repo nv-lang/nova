@@ -299,9 +299,9 @@ export fn TcpStream consume @cleanup(_outcome ScopeOutcome) -> () {
 /// C-side split-refcount'ом, живая share-копия ломала бы «закрывает
 /// последний».
 #stable(since = "0.1")
-export fn TcpStream consume @split() Net -> (TcpReadHalf, TcpWriteHalf) {
+export fn TcpStream consume @into_split() Net -> (TcpReadHalf, TcpWriteHalf) {
     if @rc.fetch_sub(1) != 1 {
-        panic("TcpStream.split(): stream has live share()-copies — split requires sole ownership (close the copies first)")
+        panic("TcpStream.into_split(): stream has live share()-copies — split requires sole ownership (close the copies first)")
     }
     ro h = @handle
     Net.mark_split(TcpStream.from_raw(h))

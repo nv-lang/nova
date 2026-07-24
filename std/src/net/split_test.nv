@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Plan 182 Ф.1 (migrated from nova_tests/plan91_16: tcp_split_echo_slow.nv,
-// tcp_split_mock.nv) — TcpStream.split() into TcpReadHalf/TcpWriteHalf.
+// tcp_split_mock.nv) — TcpStream.into_split() into TcpReadHalf/TcpWriteHalf.
 // Read and write run on DIFFERENT halves backed by independent C-side park
 // slots (read_scope/read_slot vs write_scope/write_slot) — a single shared
 // op_slot would corrupt under the cross-fiber read/write traffic this test
@@ -24,7 +24,7 @@ test "TCP split: server + client exchange via read/write halves _slow" {
                     Ok(consume s) => s
                     Err(_) => panic("connect failed")
                 }
-                mut (cli_rd, cli_wr) = conn.split()
+                mut (cli_rd, cli_wr) = conn.into_split()
 
                 ro wr = cli_wr.write("client-hello")
                 assert(wr.is_ok())
@@ -58,7 +58,7 @@ test "TCP split: server + client exchange via read/write halves _slow" {
                     Ok(consume s) => s
                     Err(_) => { lst.close(); panic("accept failed") }
                 }
-                mut (srv_rd, srv_wr) = srv.split()
+                mut (srv_rd, srv_wr) = srv.into_split()
 
                 mut req_buf []u8 = []u8.new()
                 req_buf.resize(64, 0 as u8)
@@ -86,7 +86,7 @@ test "split mock stream — read half + write half" {
                     Ok(consume c) => c
                     Err(_) => panic("connect")
                 }
-                mut (rdh, wrh) = s.split()
+                mut (rdh, wrh) = s.into_split()
 
                 ro w1 = wrh.write("hello")
                 assert(w1.is_ok())

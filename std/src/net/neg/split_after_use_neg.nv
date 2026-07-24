@@ -16,7 +16,7 @@ test "use stream after split → compile error" {
                     Ok(c) => c
                     Err(_) => panic("connect")
                 }
-                mut (rdh, wrh) = s.split()
+                mut (rdh, wrh) = s.into_split()
                 ro _ = s.write("oops".bytes())   // ERROR: s consumed by split()
                 rdh.close()
                 wrh.close()
