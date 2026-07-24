@@ -1,0 +1,86 @@
+// [M-nested-fn-newtype-bind-then-call-broken] (реестр 221.1 №78, родня №53
+// M-fn-newtype-return-position-broken): ВЛОЖЕННЫЙ newtype-над-fn — callee
+// САМ fn-newtype-ЗНАЧЕНИЕ (локаль/параметр типа `Mid`), а возврат — ТОЖЕ
+// fn-newtype (`Mid = fn(Hnd) -> Hnd`, `Hnd = fn(int) -> int`). До фикса —
+// `ro h2 = m(h)` эмитил присваивание БЕЗ объявления (`infer_call_ret_c`'s
+// B10e арм отклонял ЗАКОННЫЙ `void*` возврат как "неразрешённый generic",
+// падая в терминальный empty-fallback) → C-компилятор: "use of undeclared
+// identifier 'h2'". См. docs/plans/backlog-followups.md
+// [M-nested-fn-newtype-bind-then-call-broken].
+//
+// Три формы-родни, три отдельных продюсер-пробела (закрыты этим же окном):
+//  форма 1 (выше) — let-биндинг результата вызова fn-newtype-ЗНАЧЕНИЯ
+//    (`m(h)`) терял C-тип объявления.
+//  форма 2 (n78 форма 2 ниже) — `m`/`h` как ПАРАМЕТРЫ (не let-биндинги):
+//    `fn_returns_fn_sig` не пропагировался с параметра на его own return —
+//    `h2(5)` падал на bogus `nova_fn_h2` (undefined-symbol).
+//  форма 3 (n78 композиция2 ниже) — СВОБОДНАЯ fn, возвращающая fn-newtype,
+//    чей возврат САМ ВЛОЖЕННЫЙ fn-newtype (`fn compose(..) -> Mid`):
+//    "уровень 2" (что дальше вернёт `c(h)`) нигде не прокидывался на
+//    биндинг `c` — тот же bogus-`nova_fn_<var>` linker-фейл.
+module spec_tests.conformance
+
+type N78Hnd fn(int) -> int
+type N78Mid fn(N78Hnd) -> N78Hnd
+
+fn n78_base(x int) -> int => x + 1
+fn n78_identity_mw(next N78Hnd) -> ro N78Hnd => next
+
+test "N78 форма 1: bind-then-call вложенного fn-newtype (ro h2 = m(h); h2(5))" {
+    ro h N78Hnd = n78_base
+    ro m N78Mid = n78_identity_mw
+    ro h2 = m(h)
+    ro r = h2(5)
+    assert(r == 6)
+}
+
+// Middleware-подобная композиция: m1 оборачивает m2 оборачивает handler —
+// две вложенные fn-newtype-значения, каждое связано в отдельную локаль и
+// вызвано ПОСЛЕДОВАТЕЛЬНО (форма 3 родни, композиция двух bind-then-call).
+fn n78_double(x int) -> int => x * 2
+fn n78_wrap_mw(next N78Hnd) -> ro N78Hnd => next
+
+test "N78 композиция: m1(m2(h)) через промежуточные bind-then-call биндинги" {
+    ro h N78Hnd = n78_double
+    ro m1 N78Mid = n78_wrap_mw
+    ro m2 N78Mid = n78_identity_mw
+    ro h2 = m2(h)
+    ro h3 = m1(h2)
+    ro r = h3(4)
+    assert(r == 8)
+}
+
+// форма 2: `m`/`h` — ПАРАМЕТРЫ функции (не let-биндинги на верхнем уровне),
+// вызванные через ту же bind-then-call цепочку внутри тела. До фикса:
+// `fn_returns_fn_sig` регистрировался ТОЛЬКО при let-биндинге на свободную
+// fn по имени — параметр `m N78Mid` не получал этой пропагации вовсе, и
+// `h2(5)` падал на несуществующий `nova_fn_h2` (undefined-symbol linker-фейл).
+fn n78_apply_mid(m N78Mid, h N78Hnd) -> int {
+    ro h2 = m(h)
+    ro r = h2(5)
+    return r
+}
+
+test "N78 форма 2: параметры-fn-newtype (не let-биндинги) — bind-then-call внутри тела" {
+    ro h N78Hnd = n78_base
+    ro m N78Mid = n78_identity_mw
+    ro r = n78_apply_mid(m, h)
+    assert(r == 6)
+}
+
+// форма 3: СВОБОДНАЯ fn `n78_compose` возвращает N78Mid, чей ВОЗВРАТ сам
+// вложенный fn-newtype (N78Hnd) — "уровень 2" пропагации. До фикса:
+// `ro c N78Mid = n78_compose(m1, m2)` регистрировал `c` как вызываемый
+// (`c(h)` работал), но НЕ распространял, что РЕЗУЛЬТАТ `c(h)` сам далее
+// вызываем — `ro h2 = c(h); h2(5)` падал на bogus `nova_fn_h2`.
+fn n78_compose(m1 N78Mid, m2 N78Mid) -> N78Mid => |h| m1(m2(h))
+
+test "N78 композиция2: compose(..) возвращает вложенный fn-newtype, результат bind-then-call" {
+    ro h N78Hnd = n78_base
+    ro m1 N78Mid = n78_identity_mw
+    ro m2 N78Mid = n78_wrap_mw
+    ro c N78Mid = n78_compose(m1, m2)
+    ro h2 = c(h)
+    ro r = h2(5)
+    assert(r == 6)
+}

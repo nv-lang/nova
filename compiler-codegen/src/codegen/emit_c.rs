@@ -1312,6 +1312,23 @@ pub struct CEmitter {
     /// Maps function name → (param_c_tys, ret_c_ty) when the function returns a fn(...) type.
     /// Used to register let-bindings of function-call results in fn_param_sigs.
     fn_returns_fn_sig: HashMap<String, (Vec<String>, String)>,
+    /// [fix M-nested-fn-newtype-bind-then-call-broken, реестр 221.1 №78,
+    /// форма 3] "level 2" sibling of `fn_returns_fn_sig`: maps free-fn name →
+    /// the callable signature of what CALLING that fn's OWN call-result would
+    /// FURTHER return — i.e. `nested_fn_return_sig` applied to the SAME
+    /// resolved `Func` shape `fn_returns_fn_sig` derives from, one level
+    /// deeper. Needed for a free fn whose declared return is ITSELF a
+    /// fn-newtype whose OWN return is ALSO a (possibly nested) fn-newtype
+    /// (`fn compose(m1 Mid, m2 Mid) -> Mid` where `Mid = fn(Hnd) -> Hnd`):
+    /// `ro c Mid = compose(m1, m2)` gets `c` registered callable via
+    /// `fn_returns_fn_sig["compose"]` (existing propagation) — but a
+    /// FOLLOW-ON `ro h2 = c(h)` needs `h2` to ALSO be callable, which
+    /// requires `fn_returns_fn_sig["c"]` to exist. This table carries that
+    /// fact forward from "compose" so the let-binding producer (~L30377) can
+    /// propagate it onto `c` too, the moment `c` is bound. Populated
+    /// alongside `fn_returns_fn_sig` at fn-decl scan time (same site,
+    /// `emit_fn_forward_decl`).
+    fn_returns_fn_sig_l2: HashMap<String, (Vec<String>, String)>,
     /// Set of function names that are generic (have type parameters).
     /// Generic functions are emitted with void* erasure; call sites must box/unbox.
     generic_fns: HashSet<String>,
@@ -2364,6 +2381,7 @@ impl CEmitter {
             trailing_block_counter: 0,
             lambda_counter: 0,
             fn_returns_fn_sig: HashMap::new(),
+            fn_returns_fn_sig_l2: HashMap::new(),
             generic_fns: HashSet::new(),
             generic_types: HashSet::new(),
             protocol_types: HashSet::new(),
@@ -11070,6 +11088,42 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
     }
 
+    /// [fix M-nested-fn-newtype-bind-then-call-broken, реестр 221.1 №78,
+    /// форма 2]: given an ALREADY-resolved fn-typed shape (`resolve_fn_typeref`'s
+    /// own output — a param's or binding's OWN `Func{..}`), does its RETURN
+    /// type itself resolve (through `resolve_fn_typeref` again — same
+    /// newtype-over-fn/alias call-through) to ANOTHER `Func`? If so, return
+    /// that inner signature's lowered C param/return types — the exact same
+    /// computation `emit_fn_forward_decl` already does for a FREE fn's own
+    /// declared return type (~L16246-16265, populating `fn_returns_fn_sig`).
+    ///
+    /// Needed because a fn-typed PARAMETER (`m Mid` where `Mid = fn(Hnd) ->
+    /// Hnd`) only ever got a `fn_param_sigs` entry (its OWN call signature,
+    /// `(["void*"], "void*")` — correct for calling `m(h)` itself) — nothing
+    /// registered what calling `m` RETURNS is itself callable with. A
+    /// `ro h2 = m(h)` inside the fn body then had no `fn_returns_fn_sig["m"]`
+    /// to propagate onto `h2` (the pre-existing "RHS is a call whose callee
+    /// carries a registered HOF-return sig" let-binding producer, ~L30377,
+    /// is name-generic and already consumes this the moment it exists) — so
+    /// `h2` got a storage C-type (via this fix's OTHER half, the
+    /// `infer_call_ret_c` B10m0 fallback) but NO callable signature, and
+    /// `h2(5)` fell to the "must be a free function" default: a bogus
+    /// `nova_fn_h2` call, undefined-symbol at link time.
+    fn nested_fn_return_sig(&self, resolved_func: &TypeRef) -> Option<(Vec<String>, String)> {
+        let TypeRef::Func { return_type: Some(rt), .. } = resolved_func else { return None; };
+        let TypeRef::Func { params: fp, return_type: rt2, .. } = self.resolve_fn_typeref(rt)? else {
+            unreachable!("resolve_fn_typeref always returns Func or None")
+        };
+        let ptys: Vec<String> = fp.iter()
+            .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
+            .collect();
+        let rty = match rt2.as_ref() {
+            Some(t) => self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()),
+            None => "nova_unit".to_string(),
+        };
+        Some((ptys, rty))
+    }
+
     /// [fix M-fn-newtype-return-position-broken, №53] Shared NovaClosBase
     /// dispatch for a fn-typed callee reached WITHOUT going through the
     /// `ExprKind::Ident` + `fn_param_sigs` fast path in `emit_call` (which
@@ -16263,6 +16317,26 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 None => "nova_unit".to_string(),
             };
             self.fn_returns_fn_sig.insert(f.name.clone(), (ptys, rty));
+            // [fix M-nested-fn-newtype-bind-then-call-broken, реестр 221.1
+            // №78, форма 3]: `return_type` here (`Hnd`, already resolved ONE
+            // level through `resolve_fn_typeref` above) may ITSELF resolve
+            // further (nested fn-newtype-over-fn-newtype return, e.g.
+            // `fn compose(..) -> Mid` where `Mid = fn(Hnd) -> Hnd`). Record
+            // that "level 2" signature so a chain of TWO let-bindings
+            // (`ro c Mid = compose(..); ro h2 = c(h)`) can propagate it
+            // through — see `fn_returns_fn_sig_l2` doc.
+            if let Some(rt) = return_type.as_ref() {
+                if let Some(TypeRef::Func { params: fp2, return_type: rt2, .. }) = self.resolve_fn_typeref(rt) {
+                    let ptys2: Vec<String> = fp2.iter()
+                        .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
+                        .collect();
+                    let rty2 = match rt2.as_ref() {
+                        Some(t) => self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()),
+                        None => "nova_unit".to_string(),
+                    };
+                    self.fn_returns_fn_sig_l2.insert(f.name.clone(), (ptys2, rty2));
+                }
+            }
         }
         // Plan 14 Ф.3: регистрируем сигнатуру free fn в user_fn_sigs для
         // emit free-fn-as-value (`let f = inc`, `xs.map(inc)`).
@@ -19602,6 +19676,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 } else { None }
             })
             .collect();
+        // [fix M-nested-fn-newtype-bind-then-call-broken, реестр 221.1 №78,
+        // форма 2]: same sibling addition as the other `resolve_fn_typeref`
+        // param-registration sites — see `nested_fn_return_sig` doc.
+        let saved_fn_returns_sigs: Vec<(String, Option<(Vec<String>, String)>)> = f.params.iter()
+            .filter_map(|p| {
+                let _ft = self.resolve_fn_typeref(&p.ty)?;
+                let sig = self.nested_fn_return_sig(&_ft)?;
+                let prev = self.fn_returns_fn_sig.insert(p.name.clone(), sig);
+                Some((p.name.clone(), prev))
+            })
+            .collect();
         self.current_receiver_type = Some(recv.type_name.clone());
         self.sync_receiver_rt();
         // Emit body
@@ -19638,6 +19723,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             match prev {
                 Some(old) => { self.fn_param_sigs.insert(name, old); }
                 None => { self.fn_param_sigs.remove(&name); }
+            }
+        }
+        // [fix M-nested-fn-newtype-bind-then-call-broken, №78] restore paired
+        // with the `nested_fn_return_sig` save loop above.
+        for (name, prev) in saved_fn_returns_sigs {
+            match prev {
+                Some(old) => { self.fn_returns_fn_sig.insert(name, old); }
+                None => { self.fn_returns_fn_sig.remove(&name); }
             }
         }
         if is_instance { self.var_types.remove("nova_self"); }
@@ -24584,6 +24677,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Register function-typed params in fn_param_sigs with concrete types
         // Plan 70 PhaseA3: strict — mono'd fn-typed param signature.
         let mut saved_fn_sigs: Vec<(String, Option<(Vec<String>, String)>)> = Vec::new();
+        // [fix M-nested-fn-newtype-bind-then-call-broken, реестр 221.1 №78,
+        // форма 2]: mirrors the top-level-fn primary site's sibling addition —
+        // see `nested_fn_return_sig` doc. Scoped (save/restore) here, matching
+        // this site's own `fn_param_sigs` scoping discipline.
+        let mut saved_fn_returns_sigs: Vec<(String, Option<(Vec<String>, String)>)> = Vec::new();
         for (p, _c_ty) in fn_decl.params.iter().zip(&param_c_tys) {
             if let Some(_ft) = self.resolve_fn_typeref(&p.ty) {
                 let crate::ast::TypeRef::Func { params: fp, return_type, .. } = &_ft else { unreachable!() };
@@ -24602,6 +24700,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 };
                 let prev = self.fn_param_sigs.insert(p.name.clone(), (inner_ptys, inner_ret));
                 saved_fn_sigs.push((p.name.clone(), prev));
+                if let Some(sig) = self.nested_fn_return_sig(&_ft) {
+                    let prev2 = self.fn_returns_fn_sig.insert(p.name.clone(), sig);
+                    saved_fn_returns_sigs.push((p.name.clone(), prev2));
+                }
             }
         }
         // Pre-populate tuple_element_types for array-of-tuple parameters in mono context.
@@ -24995,6 +25097,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             match prev {
                 Some(old) => { self.fn_param_sigs.insert(name, old); }
                 None => { self.fn_param_sigs.remove(&name); }
+            }
+        }
+        // [fix M-nested-fn-newtype-bind-then-call-broken, №78] restore paired
+        // with the `nested_fn_return_sig` save loop above.
+        for (name, prev) in saved_fn_returns_sigs {
+            match prev {
+                Some(old) => { self.fn_returns_fn_sig.insert(name, old); }
+                None => { self.fn_returns_fn_sig.remove(&name); }
             }
         }
         self.current_receiver_type = saved_recv;
@@ -25867,6 +25977,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Register function-typed params in fn_param_sigs with concrete types
         // Plan 70 PhaseA3: strict — mono'd fn-typed param signature.
         let mut saved_fn_sigs: Vec<(String, Option<(Vec<String>, String)>)> = Vec::new();
+        // [fix M-nested-fn-newtype-bind-then-call-broken, реестр 221.1 №78,
+        // форма 2]: mirrors the top-level-fn primary site's sibling addition —
+        // see `nested_fn_return_sig` doc. Scoped (save/restore) here, matching
+        // this site's own `fn_param_sigs` scoping discipline.
+        let mut saved_fn_returns_sigs: Vec<(String, Option<(Vec<String>, String)>)> = Vec::new();
         for (p, _c_ty) in fn_decl.params.iter().zip(&param_c_tys) {
             if let Some(_ft) = self.resolve_fn_typeref(&p.ty) {
                 let crate::ast::TypeRef::Func { params: fp, return_type, .. } = &_ft else { unreachable!() };
@@ -25885,6 +26000,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 };
                 let prev = self.fn_param_sigs.insert(p.name.clone(), (inner_ptys, inner_ret));
                 saved_fn_sigs.push((p.name.clone(), prev));
+                if let Some(sig) = self.nested_fn_return_sig(&_ft) {
+                    let prev2 = self.fn_returns_fn_sig.insert(p.name.clone(), sig);
+                    saved_fn_returns_sigs.push((p.name.clone(), prev2));
+                }
             }
         }
         // Set receiver type (None for free fns)
@@ -25986,6 +26105,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             match prev {
                 Some(old) => { self.fn_param_sigs.insert(name, old); }
                 None => { self.fn_param_sigs.remove(&name); }
+            }
+        }
+        // [fix M-nested-fn-newtype-bind-then-call-broken, №78] restore paired
+        // with the `nested_fn_return_sig` save loop above.
+        for (name, prev) in saved_fn_returns_sigs {
+            match prev {
+                Some(old) => { self.fn_returns_fn_sig.insert(name, old); }
+                None => { self.fn_returns_fn_sig.remove(&name); }
             }
         }
         // D109 Ф.7.7: clean up array_element_types entries added for this call
@@ -26781,6 +26908,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         None => "nova_unit".into(),
                     };
                     self.fn_param_sigs.insert(p.name.clone(), (param_c_tys, ret_c));
+                    // [fix M-nested-fn-newtype-bind-then-call-broken, реестр
+                    // 221.1 №78, форма 2]: this param's OWN call sig (just
+                    // above) says nothing about what CALLING it returns being
+                    // itself callable — needed when the param's fn-newtype
+                    // RETURN is itself a (possibly nested) fn-newtype (`m Mid`
+                    // where `Mid = fn(Hnd) -> Hnd`). No save/restore here,
+                    // matching the un-scoped `fn_param_sigs.insert` two lines
+                    // above (this whole per-param loop is not save/restored
+                    // either — see `nested_fn_return_sig` doc for the full
+                    // failure mode this closes: bogus `nova_fn_h2` link error).
+                    if let Some(sig) = self.nested_fn_return_sig(&_ft) {
+                        self.fn_returns_fn_sig.insert(p.name.clone(), sig);
+                    }
                 }
                 // Register element type for array params of non-primitive types
                 if let TypeRef::Array(inner, _) = &p.ty {
@@ -30270,6 +30410,33 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         if let Some(sig) = self.user_fn_sigs.get(rhs_name).cloned() {
                             self.fn_param_sigs.insert(binding.clone(), sig);
                         }
+                        // [fix M-nested-fn-newtype-bind-then-call-broken, реестр
+                        // 221.1 №78]: propagate `fn_returns_fn_sig` (the INNER
+                        // callable signature of whatever calling `rhs_name` would
+                        // itself return, pre-scanned via `resolve_fn_typeref` —
+                        // №53's own registry) forward onto THIS binding too, not
+                        // just `fn_param_sigs` above. `fn_param_sigs[binding]` only
+                        // carries `rhs_name`'s OWN call signature (flat C-type
+                        // strings — correct for calling `m` itself, e.g. `m(h)`,
+                        // but structurally blind to what `m`'s RETURN is further
+                        // callable with when that return is itself a fn-newtype,
+                        // e.g. `type Mid fn(Hnd) -> Hnd`). Without this, `ro m Mid
+                        // = identity_mw; ro h2 = m(h); h2(5)` left `h2` with NO
+                        // `fn_param_sigs` entry at all — `h2(5)` fell to the "must
+                        // be a free function" default (bogus `nova_fn_h2`,
+                        // undefined-symbol link error). The existing "RHS is a
+                        // call to a fn/binding carrying a registered HOF-return
+                        // sig" propagation a few lines below (`fn_returns_fn_sig`,
+                        // keyed by callee NAME, name-agnostic to free-fn-vs-local)
+                        // already consumes this the moment it exists under `m`'s
+                        // name — this is the ONE additional producer edge needed:
+                        // name-generic (rhs_name may itself be a previously
+                        // propagated LOCAL binding, chaining transitively), so it
+                        // covers `ro m2 = m` re-binding chains too, not just the
+                        // direct free-fn case.
+                        if let Some(sig) = self.fn_returns_fn_sig.get(rhs_name.as_str()).cloned() {
+                            self.fn_returns_fn_sig.insert(binding.clone(), sig);
+                        }
                     }
                 }
                 // If RHS is a lambda, register the binding in fn_param_sigs so inc(5) works
@@ -30380,6 +30547,20 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     if let ExprKind::Ident(fname) = &func.kind {
                         if let Some(sig) = self.fn_returns_fn_sig.get(fname).cloned() {
                             self.fn_param_sigs.insert(binding.clone(), sig);
+                        }
+                        // [fix M-nested-fn-newtype-bind-then-call-broken, реестр
+                        // 221.1 №78, форма 3]: propagate the "level 2" nested
+                        // callable sig too (`fn_returns_fn_sig_l2`, populated at
+                        // fn-decl-scan time — see its doc) as THIS binding's OWN
+                        // "level 1" `fn_returns_fn_sig` entry: `binding` (`c`)
+                        // now carries "what calling ME returns is itself callable
+                        // with", so a FOLLOW-ON `ro h2 = c(h)` re-enters this SAME
+                        // branch (fname = binding's name) and finds it — closing
+                        // the two-hop chain `ro c Mid = compose(..); ro h2 = c(h);
+                        // h2(5)` that previously left `h2` uncallable (bogus
+                        // `nova_fn_h2`, undefined-symbol link error).
+                        if let Some(sig2) = self.fn_returns_fn_sig_l2.get(fname).cloned() {
+                            self.fn_returns_fn_sig.insert(binding.clone(), sig2);
                         }
                         // If RHS is a call to a generic fn returning a tuple, infer element types from args
                         if let Some(&arity) = self.generic_fn_tuple_arity.get(fname.as_str()) {
@@ -55963,6 +56144,32 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             if c_ty.starts_with("NovaTuple_") {
                                 self.icr_trace("B10l_named_tuple_constructor");
                                 return c_ty.clone();
+                            }
+                        }
+                        // [fix M-nested-fn-newtype-bind-then-call-broken, реестр 221.1
+                        // №78]: B10e above (same `fn_param_sigs` table) intentionally
+                        // excludes `ret_ty == "void*"` so a MORE SPECIFIC producer
+                        // further down this cascade (free-fn-by-arity/user_fn_sigs/
+                        // named-tuple-ctor above) can win when `name` shadows a
+                        // same-named free fn. But if EVERY one of those declined too
+                        // (this exact point), `void*` was never a placeholder to
+                        // reject in the first place — it's `fn_param_sigs`'s OWN
+                        // answer for `name`, and for a call through a fn-newtype
+                        // VALUE whose return is ITSELF a (possibly nested)
+                        // fn-newtype (`type Hnd fn(int)->int; type Mid fn(Hnd)->Hnd;
+                        // ro m Mid = identity_mw; ro h2 = m(h)`), `void*` genuinely
+                        // IS the correct storage C-type (D52-амендмент:
+                        // `type_aliases[Hnd] == "void*"`) — the SAME fact `emit_call`'s
+                        // `ExprKind::Ident`+`fn_param_sigs` fast path (~L37009) already
+                        // uses to cast+call `m(h)` correctly. Falling through to
+                        // `String::new()` below dropped `ro h2`'s declared C type
+                        // entirely (the assignment still emitted, `void* h2;` didn't
+                        // — "undeclared identifier `h2`"). Last resort ONLY: every
+                        // more specific producer above still wins when it fires.
+                        if let Some((_, ret_ty)) = self.fn_param_sigs.get(name) {
+                            if !ret_ty.is_empty() {
+                                self.icr_trace("B10m0_fn_param_sigs_void_fallback");
+                                return ret_ty.clone();
                             }
                         }
                         self.icr_trace("B10m_ident_empty_fallback");
