@@ -1192,6 +1192,37 @@ in `compiler-codegen/src/types/mod.rs`. Codegen companion fix (record-inner
 `var_types` registration gap) in `compiler-codegen/src/codegen/emit_c.rs`'s
 `pattern_bind_typed` (mono-Result branch + Option `is_opt` branch).
 
+**Amendment ([M-176-consume-through-result-match], 2026-07-24) — arm-exit
+enforcement gap (checker soundness, no rule change).** Все амендменты выше
+специфицировали, что `Ok(consume x)`/`Some(consume x)`/`Err(consume x)`
+(и tuple-/record-payload варианты) вводят `x` в `consume_obligations`
+must-be-consumed-до-scope-exit наравне с `consume X = expr` (D133) — но
+чекер это правило НЕ проверял на самом arm/then-branch exit'е:
+`consume_declare_arm_pattern` регистрирует обязательство ДО вызова
+`consume_walk_block` для тела arm'а, поэтому блочный delta-scoped
+exit-check (`consume_walk_block_inner`'s `obligations_before`, снятый
+ПОСЛЕ declare) видел его как pre-existing OUTER-обязательство и пропускал,
+рассчитывая на внешнюю проверку, которая никогда не наступала: пост-arm
+join (`consume_join`, `Match`) отбрасывает state-ключи, отсутствовавшие в
+pre-match `saved` (arm-локальные pattern-имена — ровно такие), запись
+исчезает из `ctx.states`, но остаётся НАВСЕГДА в `ctx.consume_obligations`;
+`check_obligations_at_exit` смотрит `None` (dropped by join) и трактует
+это как `Consumed` — без диагностики. Итог: `Ok(consume x) => { /* x
+никогда не закрыт */ }` молча проходило D133 — правило было specified,
+но unenforced именно на этом pattern-site. Фикс — `check_and_clear_
+arm_pattern_obligations` (`compiler-codegen/src/types/mod.rs`): exit-check
++ безусловная очистка (не гейтится на diverging arm — panic/return-path с
+Live pattern-биндингом тоже D133, см. `consume_err_panic_path.nv`) arm'а
+СВОЕГО pattern-обязательства на СВОЁМ exit'е, симметрично для `Match`
+arms и `IfLet`'s `then`. Легитимный tail-passthrough (`Ok(consume l) => l`
+без `{ }` — ownership transfer наружу, канонический `consume lst = match
+{ .. }`) дозеркалил существующее bare-Ident-tail mark-consumed исключение
+([M-mut-binding-accepts-must-consume]) на brace-less `MatchArmBody::Expr`
+форму, которая раньше никогда не проходила через `consume_walk_block` и
+потому не получала эту трактовку. Не новая грамматика/код ошибки — тот же
+`D133-not-consumed`, просто теперь реально firing на pattern-bound
+match-биндингах.
+
 ### Связь
 
 - [D131](#d131) — affine consume foundation.
