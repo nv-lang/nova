@@ -44616,12 +44616,22 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // Trivial specs are normalized to None/Debug by the parser,
                     // so this only fires for genuinely-rich specs.
                     if let crate::ast::FormatSpec::Spec(rich) = spec {
-                        let appended = self.emit_format_spec_value(
-                            e, &arg_ty, &v, rich, &sb)?;
-                        self.line(&format!(
-                            "Nova_StringBuilder_method_append({}, {});",
-                            sb, appended
-                        ));
+                        // [M-fmt-rich-spec-primitive-fresh-sb-redundant]
+                        // (Plan 208 Ш3 devirt, extended to rich specs):
+                        // `emit_format_spec_value` now writes primitive
+                        // arms DIRECTLY into `sb` and signals that with
+                        // `None` — no append needed, mirrors the bare-path
+                        // `continue` a few lines below. Only the composite/
+                        // user-type tail still returns `Some(expr)` (it
+                        // renders into its OWN fresh builder — V1
+                        // simplification #1, unchanged).
+                        if let Some(appended) = self.emit_format_spec_value(
+                            e, &arg_ty, &v, rich, &sb)? {
+                            self.line(&format!(
+                                "Nova_StringBuilder_method_append({}, {});",
+                                sb, appended
+                            ));
+                        }
                         continue;
                     }
                     // **Plan 91.14 Ф.4 (D229):** branch on format spec.
@@ -45014,17 +45024,20 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
     }
 
-    /// Plan 208 Ф.4R Ш3: emit a resolved call to `int_display_spec`
-    /// (`std.runtime.string_builder`, Ф.4R Ш1) into a FRESH temp
-    /// `StringBuilder`, then steal the result to a `nova_str` C
-    /// expression — mirrors the pre-existing composite/user-type
-    /// fallback's own temp-builder pattern a few lines below in
-    /// `emit_format_spec_value` (`fmt_sb`/
-    /// `Nova_StringBuilder_consume_into_str`). C symbol resolved via
-    /// `free_fn_c_name` (compiler-conventions §3 — declaration-resolved,
-    /// not a hand-formatted name guess).
+    /// [M-fmt-rich-spec-primitive-fresh-sb-redundant] (Plan 208 Ш3 devirt,
+    /// applied here to the RICH-spec path): emit a resolved call to
+    /// `int_display_spec` (`std.runtime.string_builder`, Ф.4R Ш1) DIRECTLY
+    /// into the caller-supplied `sb` — no fresh temp `StringBuilder` + steal.
+    /// Sound because `int_display_spec`'s external-pad branch anchors
+    /// `@pad_in_place` at `mark = sb.byte_len()` (captured fresh on entry,
+    /// independent of any prior content already in `sb`) — the exact same
+    /// property that already justifies the BARE primitive path writing
+    /// straight into the real interp `sb` (`emit_interpolated_str` above).
+    /// C symbol resolved via `free_fn_c_name` (compiler-conventions §3 —
+    /// declaration-resolved, not a hand-formatted name guess).
     fn emit_int_display_spec_call(
         &mut self,
+        sb: &str,
         v: &str,
         width: i64,
         radix: i32,
@@ -45034,16 +45047,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         alt: bool,
         align_code: i32,
         fill_cp: i64,
-    ) -> String {
-        let tmp_sb = self.fresh_tmp_named("fmt_sb");
-        self.line(&format!(
-            "Nova_StringBuilder* {} = Nova_StringBuilder_static_new(16);",
-            tmp_sb
-        ));
+    ) {
         let c_fn = self.free_fn_c_name("int_display_spec");
         self.line(&format!(
             "{}({}, (nova_int)({}), ((nova_int){}LL), ((nova_int){}LL), {}, {}, {}, {}, {}, (nova_char)({}U));",
-            c_fn, tmp_sb, v, width, radix,
+            c_fn, sb, v, width, radix,
             if upper { "true" } else { "false" },
             if zero_pad { "true" } else { "false" },
             if sign_plus { "true" } else { "false" },
@@ -45051,17 +45059,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             Self::align_ctor_c(align_code),
             fill_cp,
         ));
-        format!("Nova_StringBuilder_consume_into_str({})", tmp_sb)
     }
 
-    /// Plan 208 Ф.4R Ш3: same shape as `emit_int_display_spec_call`, for
-    /// `f64_display_spec`. `dv` is a pre-cast `(double)(...)` C expression
-    /// (f32 rich specs widen to double BEFORE this call — matches the OLD
-    /// engine's f32-rich-spec behavior byte-for-byte, unchanged by Ф.4R:
-    /// f32 keeps ITS OWN f32-precise engine only on the BARE `${f32val}`
-    /// path, see `emit_interpolated_str`).
+    /// [M-fmt-rich-spec-primitive-fresh-sb-redundant]: same devirtualization
+    /// as `emit_int_display_spec_call`, for `f64_display_spec` — writes
+    /// directly into the caller-supplied `sb`, no fresh temp builder. `dv`
+    /// is a pre-cast `(double)(...)` C expression (f32 rich specs widen to
+    /// double BEFORE this call — matches the OLD engine's f32-rich-spec
+    /// behavior byte-for-byte, unchanged by this fix: f32 keeps ITS OWN
+    /// f32-precise engine only on the BARE `${f32val}` path, see
+    /// `emit_interpolated_str`).
     fn emit_f64_display_spec_call(
         &mut self,
+        sb: &str,
         dv: &str,
         width: i64,
         precision: Option<i64>,
@@ -45069,12 +45079,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         sign_plus: bool,
         align_code: i32,
         fill_cp: i64,
-    ) -> String {
-        let tmp_sb = self.fresh_tmp_named("fmt_sb");
-        self.line(&format!(
-            "Nova_StringBuilder* {} = Nova_StringBuilder_static_new(16);",
-            tmp_sb
-        ));
+    ) {
         let c_fn = self.free_fn_c_name("f64_display_spec");
         let (has_prec, prec) = match precision {
             Some(p) => ("true", p),
@@ -45082,34 +45087,29 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         };
         self.line(&format!(
             "{}({}, ({}), ((nova_int){}LL), {}, ((nova_int){}LL), {}, {}, {}, (nova_char)({}U));",
-            c_fn, tmp_sb, dv, width, has_prec, prec,
+            c_fn, sb, dv, width, has_prec, prec,
             if zero_pad { "true" } else { "false" },
             if sign_plus { "true" } else { "false" },
             Self::align_ctor_c(align_code),
             fill_cp,
         ));
-        format!("Nova_StringBuilder_consume_into_str({})", tmp_sb)
     }
 
-    /// Plan 208 Ф.4R Ш4: same temp-builder shape as
-    /// `emit_int_display_spec_call`/`emit_f64_display_spec_call`, for
-    /// `char_display_spec`/`char_debug_display_spec` — closes the Ш3
-    /// follow-up (rich-spec char stayed on the old `conv.h` engine through
-    /// Ш3). One call site covers both `is_debug` states (only the resolved
-    /// C symbol differs — the two `.nv` functions share a signature).
+    /// [M-fmt-rich-spec-primitive-fresh-sb-redundant]: same devirtualization
+    /// as `emit_int_display_spec_call`, for `char_display_spec`/
+    /// `char_debug_display_spec` — writes directly into the caller-supplied
+    /// `sb`, no fresh temp builder. One call site covers both `is_debug`
+    /// states (only the resolved C symbol differs — the two `.nv` functions
+    /// share a signature).
     fn emit_char_display_spec_call(
         &mut self,
+        sb: &str,
         v: &str,
         width: i64,
         align_code: i32,
         fill_cp: i64,
         is_debug: bool,
-    ) -> String {
-        let tmp_sb = self.fresh_tmp_named("fmt_sb");
-        self.line(&format!(
-            "Nova_StringBuilder* {} = Nova_StringBuilder_static_new(16);",
-            tmp_sb
-        ));
+    ) {
         let c_fn = self.free_fn_c_name(if is_debug {
             "char_debug_display_spec"
         } else {
@@ -45117,51 +45117,48 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         });
         self.line(&format!(
             "{}({}, ({}), ((nova_int){}LL), {}, (nova_char)({}U));",
-            c_fn, tmp_sb, v, width, Self::align_ctor_c(align_code), fill_cp,
+            c_fn, sb, v, width, Self::align_ctor_c(align_code), fill_cp,
         ));
-        format!("Nova_StringBuilder_consume_into_str({})", tmp_sb)
     }
 
-    /// Plan 208 Ф.4R Ш4: same shape, for `bool_display_spec` (Debug ==
-    /// Display for bool — ONE call site, no `is_debug` parameter needed).
+    /// [M-fmt-rich-spec-primitive-fresh-sb-redundant]: same devirtualization,
+    /// for `bool_display_spec` (Debug == Display for bool — ONE call site,
+    /// no `is_debug` parameter needed).
     fn emit_bool_display_spec_call(
         &mut self,
+        sb: &str,
         v: &str,
         width: i64,
         align_code: i32,
         fill_cp: i64,
-    ) -> String {
-        let tmp_sb = self.fresh_tmp_named("fmt_sb");
-        self.line(&format!(
-            "Nova_StringBuilder* {} = Nova_StringBuilder_static_new(16);",
-            tmp_sb
-        ));
+    ) {
         let c_fn = self.free_fn_c_name("bool_display_spec");
         self.line(&format!(
             "{}({}, ({}), ((nova_int){}LL), {}, (nova_char)({}U));",
-            c_fn, tmp_sb, v, width, Self::align_ctor_c(align_code), fill_cp,
+            c_fn, sb, v, width, Self::align_ctor_c(align_code), fill_cp,
         ));
-        format!("Nova_StringBuilder_consume_into_str({})", tmp_sb)
     }
 
-    /// Plan 208 Ф.4R Ш4: same shape, for `str_display_spec`/
-    /// `str_debug_display_spec` (`.N` string precision is this family's own
-    /// `has_prec`/`prec` axis — no separate `nova_fmt_str_precision`
-    /// post-step needed, unlike the retired `conv.h` path).
+    /// [M-fmt-rich-spec-primitive-fresh-sb-redundant]: same devirtualization,
+    /// for `str_display_spec`/`str_debug_display_spec` — writes directly
+    /// into the caller-supplied `sb`. `.N` string precision is this family's
+    /// own `has_prec`/`prec` axis — no separate `nova_fmt_str_precision`
+    /// post-step needed, unlike the retired `conv.h` path. For Debug, the
+    /// quote+escape (`str_debug_fmt`) happens in the `.nv` function's OWN
+    /// scratch buffer BEFORE it writes into `sb` at `mark` — so writing
+    /// directly into a non-empty shared `sb` is exactly as correct as
+    /// writing into a fresh one (the pre-existing BARE str/char-Debug path
+    /// a few lines above already proves this same property in production).
     fn emit_str_display_spec_call(
         &mut self,
+        sb: &str,
         v: &str,
         width: i64,
         precision: Option<i64>,
         align_code: i32,
         fill_cp: i64,
         is_debug: bool,
-    ) -> String {
-        let tmp_sb = self.fresh_tmp_named("fmt_sb");
-        self.line(&format!(
-            "Nova_StringBuilder* {} = Nova_StringBuilder_static_new(16);",
-            tmp_sb
-        ));
+    ) {
         let c_fn = self.free_fn_c_name(if is_debug {
             "str_debug_display_spec"
         } else {
@@ -45173,9 +45170,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         };
         self.line(&format!(
             "{}({}, ({}), ((nova_int){}LL), {}, ((nova_int){}LL), {}, (nova_char)({}U));",
-            c_fn, tmp_sb, v, width, has_prec, prec, Self::align_ctor_c(align_code), fill_cp,
+            c_fn, sb, v, width, has_prec, prec, Self::align_ctor_c(align_code), fill_cp,
         ));
-        format!("Nova_StringBuilder_consume_into_str({})", tmp_sb)
     }
 
     /// **Plan 152.7-B (D374):** lower a rich format spec `${expr:SPEC}` to a C
@@ -45197,6 +45193,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// `nova_fmt_*` chain this function used to co-emit (Ш3's byte-diff-
     /// verification harness) are RETIRED as of this wave — this is now the
     /// ONLY engine, no legacy branch survives.
+    /// [M-fmt-rich-spec-primitive-fresh-sb-redundant]: return value changed
+    /// from `Result<String, String>` to `Result<Option<String>, String>` —
+    /// `None` means a primitive arm already wrote directly into `sb` (no
+    /// append needed by the caller, mirrors the bare-path `continue`
+    /// convention in `emit_interpolated_str`); `Some(expr)` is the ONE
+    /// surviving case, the composite/user-type tail, which still renders
+    /// into its own fresh builder and hands back a C expression for the
+    /// caller to append.
     fn emit_format_spec_value(
         &mut self,
         e: &Expr,
@@ -45204,7 +45208,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         v: &str,
         spec: &crate::ast::format_spec::FormatSpecParsed,
         sb: &str,
-    ) -> Result<String, String> {
+    ) -> Result<Option<String>, String> {
         use crate::ast::format_spec::{Align, Kind, Sign};
 
         // C literal for the fill char (Unicode scalar value).
@@ -45259,10 +45263,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // `_ = sign_plus`: radix formatting is unsigned (two's complement),
             // so the `+` sign flag does not apply (matches Rust).
             let _ = sign_plus;
-            return Ok(self.emit_int_display_spec_call(
-                v, width_lit, base, upper != 0, spec.zero_pad, false,
+            self.emit_int_display_spec_call(
+                sb, v, width_lit, base, upper != 0, spec.zero_pad, false,
                 spec.alternate, align_code(spec.align, false), fill_cp,
-            ));
+            );
+            return Ok(None);
         }
 
         // ---- integer (decimal) — Debug == Display for int (no escaping
@@ -45274,20 +45279,22 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // wired to `int_display_spec` yet, not a deliberate Rust-parity
         // choice; Rust's `{:?}` on an int right-aligns exactly like `{}`).
         if is_int {
-            return Ok(self.emit_int_display_spec_call(
-                v, width_lit, 10, false, spec.zero_pad, sign_plus, false,
+            self.emit_int_display_spec_call(
+                sb, v, width_lit, 10, false, spec.zero_pad, sign_plus, false,
                 align_code(spec.align, false), fill_cp,
-            ));
+            );
+            return Ok(None);
         }
 
         // ---- float — same Debug==Display unification as int above (Ш4
         // closes the same follow-up for float rich specs). ----
         if is_float {
             let dv = format!("(double)({})", v);
-            return Ok(self.emit_f64_display_spec_call(
-                &dv, width_lit, spec.precision.map(|p| p as i64), spec.zero_pad,
+            self.emit_f64_display_spec_call(
+                sb, &dv, width_lit, spec.precision.map(|p| p as i64), spec.zero_pad,
                 sign_plus, align_code(spec.align, false), fill_cp,
-            ));
+            );
+            return Ok(None);
         }
 
         // ---- char — Display (bare UTF-8) vs Debug (quoted+escaped) DO
@@ -45297,17 +45304,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // for chars, same as strings) — Ш4 closes the "char rich stayed on
         // the old engine" follow-up. ----
         if is_char {
-            return Ok(self.emit_char_display_spec_call(
-                v, width_lit, align_code(spec.align, true), fill_cp, is_debug,
-            ));
+            self.emit_char_display_spec_call(
+                sb, v, width_lit, align_code(spec.align, true), fill_cp, is_debug,
+            );
+            return Ok(None);
         }
 
         // ---- bool — Debug == Display (no escaping); default LEFT align
         // (matches the pre-Ш4 generic-tail behavior for bool exactly). ----
         if is_bool {
-            return Ok(self.emit_bool_display_spec_call(
-                v, width_lit, align_code(spec.align, true), fill_cp,
-            ));
+            self.emit_bool_display_spec_call(
+                sb, v, width_lit, align_code(spec.align, true), fill_cp,
+            );
+            return Ok(None);
         }
 
         // ---- str — Display (identity) vs Debug (quoted+escaped) differ;
@@ -45317,10 +45326,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // anymore, Ш4 closes the "str rich stayed on the old engine"
         // follow-up). Default LEFT align (Rust convention). ----
         if is_str {
-            return Ok(self.emit_str_display_spec_call(
-                v, width_lit, spec.precision.map(|p| p as i64),
+            self.emit_str_display_spec_call(
+                sb, v, width_lit, spec.precision.map(|p| p as i64),
                 align_code(spec.align, true), fill_cp, is_debug,
-            ));
+            );
+            return Ok(None);
         }
 
         // ---- user/composite type: dispatch @display(f)/@debug(f), then pad
@@ -45431,14 +45441,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // the comment on `core`'s construction above for why). Strings
         // (and composite types generally) default to LEFT alignment (Rust
         // convention).
-        Ok(format!(
+        Ok(Some(format!(
             "nova_fmt_pad((nova_str){{\"\", 0}}, {}, {}, {}, {}, {})",
             core,
             fill_cp,
             align_code(spec.align, true),
             width_lit,
             zero_pad
-        ))
+        )))
     }
 
     // ---- block expression ----
