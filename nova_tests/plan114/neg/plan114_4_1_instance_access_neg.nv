@@ -5,9 +5,11 @@
 module neg.plan114_4_1_instance_access_neg
 
 type Config {
-    const VERSION int = 2
     name str
 }
+
+// [M-assoc-const-out-of-body-syntax] (окно №66): out-of-body каноническая форма.
+const Config.VERSION int = 2
 
 test "instance access на assoc const rejected" {
     ro c = Config { name: "x" }

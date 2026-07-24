@@ -4682,32 +4682,36 @@ impl Parser {
         let mut assoc_consts = Vec::new();
         self.skip_newlines();
         while !matches!(self.peek().kind, TokenKind::RBrace) {
-            // Plan 114.4.1 (D200) Ф.1: `const NAME T = expr` — associated
-            // constant. Modifier-conflicts detected via lookahead.
+            // [M-assoc-const-out-of-body-syntax] (D200 AMEND, окно №66): in-body
+            // `const NAME T = expr` внутри `type X { ... }` РЕТРАКТИРОВАНА —
+            // «одна дверь», каноническая форма теперь ВНЕ тела:
+            // `const Type.NAME <Тип> = <значение>` (module-scope, симметрично
+            // `fn Type.new`/`fn Type @method`). Тело типа = ТОЛЬКО instance-layout.
             if matches!(self.peek().kind, TokenKind::KwConst) {
-                let ac = self.parse_assoc_const_field(false)?;
-                assoc_consts.push(ac);
-                if self.eat(&TokenKind::Comma).is_some() {
-                    self.skip_newlines();
-                } else {
-                    self.skip_newlines();
-                }
-                continue;
+                let sp = self.peek().span;
+                return Err(Diagnostic::new(
+                    "[E_CONST_IN_BODY_RETRACTED] in-body `const NAME = value` внутри \
+                     тела типа retракти́рована (D200 AMEND, Plan 114.4 окно №66): \
+                     associated const теперь объявляется ВНЕ тела, через квалификатор \
+                     `Type.NAME` — симметрично `fn Type.new`/`fn Type @method`. \
+                     Move `const NAME <Тип> = <значение>` наружу типа как \
+                     `const TypeName.NAME <Тип> = <значение>`."
+                        .to_string(),
+                    sp,
+                ));
             }
-            // Plan 114.4.1 (D200) Ф.1: `export const NAME T = expr` —
-            // public assoc const (cross-module access).
+            // `export const NAME T = expr` внутри тела — та же ретракция.
             if matches!(self.peek().kind, TokenKind::KwExport)
                 && matches!(self.peek_at(1).kind, TokenKind::KwConst)
             {
-                self.bump(); // export
-                let ac = self.parse_assoc_const_field(true)?;
-                assoc_consts.push(ac);
-                if self.eat(&TokenKind::Comma).is_some() {
-                    self.skip_newlines();
-                } else {
-                    self.skip_newlines();
-                }
-                continue;
+                let sp = self.peek().span;
+                return Err(Diagnostic::new(
+                    "[E_CONST_IN_BODY_RETRACTED] in-body `export const NAME = value` \
+                     внутри тела типа retракти́рована (D200 AMEND, Plan 114.4 окно №66): \
+                     move наружу как `export const TypeName.NAME <Тип> = <значение>`."
+                        .to_string(),
+                    sp,
+                ));
             }
             // Plan 124.6 (D225): `#visible_to(OtherType[, ...])` field-level
             // attribute — explicit friend declaration. Methods of listed
@@ -4888,9 +4892,11 @@ impl Parser {
                 };
                 return Err(Diagnostic::new(
                     format!("[{code}] cannot combine `{kw}` with `const` field — \
-                     `const` field — это associated constant (zero-storage, \
-                     namespace access Type.NAME); `{kw}` относится к instance \
-                     field. Choose one (Plan 114.4.1 D200)."),
+                     in-body assoc const retракти́рована целиком (D200 AMEND, \
+                     окно №66): move `const NAME <Тип> = <значение>` наружу \
+                     типа как `const TypeName.NAME <Тип> = <значение>` — там \
+                     `{kw}`-конфликта не возникает (модификаторы применимы \
+                     только к instance-полям)."),
                     self.peek().span,
                 ));
             }
@@ -4980,30 +4986,6 @@ impl Parser {
         Ok((fields, assoc_consts))
     }
 
-    /// Plan 114.4.1 (D200) Ф.1: parse `const NAME [T] = expr` внутри
-    /// `type X { ... }` body. Caller гарантирует что `const`/`export const`
-    /// уже peek'нут; `KwConst` consumed внутри.
-    fn parse_assoc_const_field(&mut self, is_export: bool) -> Result<AssocConst, Diagnostic> {
-        let start = self.peek().span;
-        self.expect(&TokenKind::KwConst)?;
-        let (name, _) = self.parse_ident()?;
-        let ty = if !matches!(self.peek().kind, TokenKind::Eq) {
-            Some(self.parse_type()?)
-        } else {
-            None
-        };
-        self.expect(&TokenKind::Eq)?;
-        self.skip_newlines();
-        let value = self.parse_expr()?;
-        let span = start.merge(value.span);
-        Ok(AssocConst {
-            name,
-            ty,
-            value,
-            span,
-            is_export,
-        })
-    }
 
     /// Plan 172.3 (D310): parse `Member1 | Member2 | …` after the `set` kind-token.
     /// Члены — TypeRef'ы (конкретные типы по идентичности). Минимум один член.
@@ -6067,7 +6049,22 @@ impl Parser {
     fn parse_const_decl(&mut self, is_export: bool, doc: Option<crate::ast::DocBlock>, doc_attrs: Vec<crate::ast::DocAttr>, file_private: bool) -> Result<ConstDecl, Diagnostic> {
         let start = self.peek().span;
         self.expect(&TokenKind::KwConst)?;
-        let (name, _) = self.parse_ident()?;
+        let (mut name, _) = self.parse_ident()?;
+        // [M-assoc-const-out-of-body-syntax] (D200 AMEND, окно №66): каноническая
+        // форма associated const — ВНЕ тела типа, `const Type.NAME <Тип> = <значение>`
+        // (симметрично `fn Type.new` / `fn Type @method` — всё привязанное к типу
+        // объявляется через квалификатор `Type.` снаружи тела). Первый ident может
+        // оказаться типом — если за ним `.`, второй ident — фактическое имя const'а;
+        // qualified name хранится как "Type.NAME" и разбирается downstream'ом
+        // (`imports::attach_out_of_body_assoc_consts`) в `TypeDecl.assoc_consts`
+        // — тот же const-table путь, что и (retракти́рованная) in-body форма.
+        // T-dependent `Box[int].SIZE` — синтаксис на потом ([M-assoc-const-out-of-body-syntax]
+        // followup, не в этом окне): `[` сразу после первого ident НЕ обрабатывается здесь.
+        if matches!(self.peek().kind, TokenKind::Dot) {
+            self.bump(); // .
+            let (const_name, _) = self.parse_ident()?;
+            name = format!("{}.{}", name, const_name);
+        }
         let ty = if !matches!(self.peek().kind, TokenKind::Eq) {
             Some(self.parse_type()?)
         } else {

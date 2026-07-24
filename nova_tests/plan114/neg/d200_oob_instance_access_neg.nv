@@ -1,0 +1,20 @@
+// D200 (окно №66) NEG — [M-assoc-const-out-of-body-syntax]: assoc const
+// объявлена out-of-body (`const Type.NAME <Тип> = <значение>`), но
+// instance-доступ через значение остаётся ошибкой (§Семантика п.3
+// без изменений амендментом — namespace-only access).
+
+// EXPECT_COMPILE_ERROR E_CONST_INSTANCE_ACCESS
+
+module neg.d200_oob_instance_access_neg
+
+type Config value {
+    name str
+    timeout int
+}
+
+const Config.VERSION int = 2
+
+test "instance access on out-of-body assoc const rejected" {
+    ro c = Config { name: "alice", timeout: 30 }
+    assert(c.VERSION == 2)
+}

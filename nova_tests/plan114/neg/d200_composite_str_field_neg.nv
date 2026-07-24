@@ -10,10 +10,12 @@
 module neg.d200_composite_str_field_neg
 
 type Config value {
-    const DEFAULT Config = { retries: 3, name: "x" }
     retries int
     name str
 }
+
+// [M-assoc-const-out-of-body-syntax] (окно №66): out-of-body каноническая форма.
+const Config.DEFAULT Config = { retries: 3, name: "x" }
 
 test "str field in composite assoc const — honest cut" {
     assert(Config.DEFAULT.retries == 3)

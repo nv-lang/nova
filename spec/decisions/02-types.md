@@ -8094,22 +8094,43 @@ auto-derive `str.from(@)` pattern).
 > `StatusCode.OK`) — ОРТОГОНАЛЬНЫЙ codegen-пробел `[M-d200-assoc-const-composite-value]`,
 > с этой сменой поверхности не связан (нужен при любой форме).
 
+> **AMEND (финализация парсера [M-assoc-const-out-of-body-syntax], окно №66,
+> 2026-07-24):** реализовано целиком. Парсер (`parser::parse_const_decl`)
+> принимает `Type.NAME` как qualified module-level const name; резолв
+> (`imports::attach_out_of_body_assoc_consts`, после import-flatten, ДО
+> type-check) переносит qualified decl в `TypeDecl.assoc_consts` — тот же
+> const-table путь, что и in-body форма (namespace-доступ, `E_CONST_INSTANCE_ACCESS`,
+> `.rodata` emission — БЕЗ изменений downstream). **In-body форма отвергнута
+> целиком** (не deprecated) — `[E_CONST_IN_BODY_RETRACTED]` с migration-hint
+> на любую попытку `const NAME = value` внутри `type X { … }` body: «одна
+> дверь» реализована на парсер-уровне, не только текстом амендмента. Cross-file
+> (тип в одном peer-файле folder-module, `const Type.NAME` — в другом) работает
+> (merge — над плоским flatten'ённым item-списком). T-dependent
+> `Box[int].SIZE` — синтаксис по-прежнему followup, парсер такую форму не
+> распознаёт (падает раньше, на `[`). Фикстуры: `spec_tests/conformance/d200_associated_const.nv`
+> мигрирован на out-of-body целиком (δ0 по PASS-результатам — 7 test-блоков,
+> тот же набор assert'ов + новый namespace-only regression test); pos-комбо
+> `StatusCode.OK`/`Rect.UNIT` (составное значение, №60) работает через
+> out-of-body форму без изменений в codegen. Neg: `nova_tests/plan114/neg/d200_oob_instance_access_neg.nv`
+> (`E_CONST_INSTANCE_ACCESS` на out-of-body decl), `d200_in_body_const_retracted_neg.nv`
+> (`E_CONST_IN_BODY_RETRACTED`); мигрированы на out-of-body синтаксис (тот же
+> код ошибки) `plan114_4_1_literal_includes_assoc_neg.nv`,
+> `plan114_4_1_instance_access_neg.nv`, `d200_composite_ctor_call_neg.nv`,
+> `d200_composite_str_field_neg.nv`.
+
 > **AMEND (финализация [M-d200-assoc-const-composite-value], 2026-07-23):**
 > codegen дореализован до составных (record-литерал) constexpr-значений —
-> «only scalar» драфт-оговорка СНЯТА в границах ниже.
+> «only scalar» драфт-оговорка СНЯТА в границах ниже. **Пример переписан
+> out-of-body формой** (окно №66, парсер финализирован — см. AMEND выше;
+> исходно этот блок демонстрировал in-body форму, до её ретракции):
 > ```nova
-> type StatusCode value {
->     const OK StatusCode = { code: 200 }        // ✓ top-level struct-init в .rodata
->     const NOT_FOUND StatusCode = { code: 404 }
->     priv code int
-> }
+> type StatusCode value { priv code int }
+> const StatusCode.OK StatusCode = { code: 200 }        // ✓ top-level struct-init в .rodata
+> const StatusCode.NOT_FOUND StatusCode = { code: 404 }
 > StatusCode.OK.code                              // ✓ 200 — namespace + field read
 >
-> type Rect value {
->     const UNIT Rect = { origin: { x: 0, y: 0 }, size: 1 }  // ✓ вложенная запись
->     origin Point
->     size int
-> }
+> type Rect value { origin Point, size int }
+> const Rect.UNIT Rect = { origin: { x: 0, y: 0 }, size: 1 }  // ✓ вложенная запись
 > Rect.UNIT.origin.x                              // ✓ 0 — рекурсивный field-chain
 > ```
 > **Границы (не расширено):**
@@ -8121,9 +8142,10 @@ auto-derive `str.from(@)` pattern).
 >   раньше (`const PROTOCOL str = "v2"` — отдельная ветка emit).
 > - **Конструктор-вызов НЕ constexpr.** `const OK StatusCode = StatusCode.mk(200)`
 >   → `E_CONST_NOT_CONSTEXPR` (runtime dispatch, не литерал) — не расширяется.
-> - Grammar/место объявления — БЕЗ ИЗМЕНЕНИЙ этим амендментом (то же
->   in-body `const NAME [Тип] = <значение>`, что и скалярный случай, до
->   миграции на out-of-body форму — см. AMEND выше).
+> - Grammar/место объявления на момент ЭТОГО амендмента (2026-07-23) было
+>   БЕЗ ИЗМЕНЕНИЙ (in-body, как и скалярный случай) — синтаксис-поверхность
+>   сменилась ПОЗЖЕ, окном №66 (AMEND выше); семантика/границы этого блока
+>   переносятся дословно на out-of-body форму.
 > **Codegen:** record-литерал эмитится designated-initializer'ом
 > (`{ .field = <value>, ... }`) поверх уже зарегистрированной
 > `record_schemas`/`type_aliases` схемы типа; рекурсия на вложенные поля

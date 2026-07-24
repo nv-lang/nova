@@ -14,9 +14,11 @@ type StatusCode value {
 fn StatusCode.mk(c int) -> StatusCode => { code: c }
 
 type Wrap value {
-    const BAD StatusCode = StatusCode.mk(200)
     x int
 }
+
+// [M-assoc-const-out-of-body-syntax] (окно №66): out-of-body каноническая форма.
+const Wrap.BAD StatusCode = StatusCode.mk(200)
 
 test "ctor-call assoc const rejected" {
     assert(Wrap.BAD.code == 200)

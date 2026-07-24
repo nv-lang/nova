@@ -646,6 +646,71 @@ fn import_targets_std_unicode(imp: &Import) -> bool {
     imp.path.len() >= 2 && imp.path[0] == "std" && imp.path[1] == "unicode"
 }
 
+/// [M-assoc-const-out-of-body-syntax] (D200 AMEND, Plan 114.4 окно №66):
+/// relocate parsed `const Type.NAME <Тип> = <значение>` module-level decls
+/// (dotted `ConstDecl.name`, produced by `parser::parse_const_decl`) into the
+/// matching `TypeDecl.assoc_consts` entry, exactly mirroring what the
+/// (D200-retracted) in-body `type X { const NAME = v }` form used to
+/// populate directly. Everything downstream — namespace-access type
+/// inference, `E_CONST_INSTANCE_ACCESS` instance-access rejection, emit_c's
+/// `.rodata` `Type_NAME` symbol emission — reads `TypeDecl.assoc_consts`
+/// unconditionally and needs no further change.
+///
+/// Runs once over the fully-flattened item list (post import-inline), so it
+/// transparently covers both a single-file `type` + `const Type.NAME` in the
+/// same file AND a folder-module split across peer files (type in one peer,
+/// const in another) — by this point both live in the same flat `Vec<Item>`.
+fn attach_out_of_body_assoc_consts(items: &mut Vec<Item>) -> Result<()> {
+    // Первый проход: вытащить все qualified `Item::Const("Type.NAME", ...)`
+    // из плоского списка (retain оставляет всё остальное на месте, порядок
+    // typedef'ов/fn'ов не трогаем).
+    let mut pending: Vec<crate::ast::ConstDecl> = Vec::new();
+    items.retain(|it| {
+        if let Item::Const(cd) = it {
+            if let Some(dot) = cd.name.find('.') {
+                if dot > 0 && dot + 1 < cd.name.len() {
+                    pending.push(cd.clone());
+                    return false;
+                }
+            }
+        }
+        true
+    });
+    for cd in pending {
+        // `split_once` — ровно один `.` ожидается на этом синтаксисе (V1,
+        // T-independent). T-dependent `Box[int].SIZE` — followup, парсер
+        // сюда такую форму не пропускает (see parse_const_decl doc-comment).
+        let (type_name, const_name) = cd.name.split_once('.').unwrap();
+        let (type_name, const_name) = (type_name.to_string(), const_name.to_string());
+        let target = items.iter_mut().find_map(|it| match it {
+            Item::Type(td) if td.name == type_name => Some(td),
+            _ => None,
+        });
+        match target {
+            Some(td) => {
+                td.assoc_consts.push(crate::ast::AssocConst {
+                    name: const_name,
+                    ty: cd.ty,
+                    value: cd.value,
+                    span: cd.span,
+                    is_export: cd.is_export,
+                });
+            }
+            None => {
+                return Err(anyhow!(
+                    "[E_CONST_UNKNOWN_TYPE] `const {}.{}` — unknown type `{}` \
+                     (D200 out-of-body associated const requires an already \
+                     declared type in this compile unit; T-dependent generic \
+                     receivers like `Box[int].SIZE` are not yet supported, \
+                     [M-assoc-const-out-of-body-syntax] followup)",
+                    type_name, const_name, type_name,
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 pub fn resolve_imports_inline(
     entry_path: &Path,
     module: &mut Module,
@@ -1173,6 +1238,20 @@ pub fn resolve_imports_inline_ex(
         new_items.append(&mut sib.module.items);
     }
     module.items = new_items;
+
+    // [M-assoc-const-out-of-body-syntax] (D200 AMEND, окно №66): fold
+    // module-level `const Type.NAME <Тип> = <значение>` decls (parser
+    // yields them as plain `Item::Const` with a dotted qualified name —
+    // see `parser::parse_const_decl`) into their target `TypeDecl.assoc_consts`
+    // — the SAME const-table field the (now-retracted) in-body form
+    // populated, so every downstream consumer (namespace-access resolve,
+    // `E_CONST_INSTANCE_ACCESS`, emit_c `.rodata` emission) needs zero
+    // changes. Runs HERE (post item-flatten, covers single-file AND
+    // folder-module cross-peer-file cases — type in one peer, const in
+    // another) — all three canonical pipelines call
+    // `resolve_imports_inline[_ex]` before check/emit (module doc-comment
+    // above), so this is the one universal point.
+    attach_out_of_body_assoc_consts(&mut module.items)?;
 
     // Plan 42 Sub-plan 42.4 шаг 2: переносим собранные PeerFile в module.
     // Type-checker (шаг 3) использует это для per-peer name resolution.
