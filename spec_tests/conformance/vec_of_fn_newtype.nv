@@ -1,0 +1,98 @@
+// [M-vec-of-fn-newtype-codegen] (реестр 221.1 №47) — `Vec[T]`/`[]T` with
+// T = a newtype-over-fn (`type X fn(A) -> B`, D52) used to break codegen:
+// `nova build` on `mut v = []QH.new(); v.push(q); v[0]` (QH a fn-newtype)
+// failed with "codegen error: cannot infer type argument `T` for generic
+// function `copy_n_nonoverlapping`" — `Vec[T]`'s internal
+// `RawMem.copy_n_nonoverlapping[T](@data, dst, @len)` (std/collections/vec/
+// core.nv) could never bind its own `T` because the element's C
+// representation genuinely IS `void*` (the closure/fn-newtype value repr,
+// D239/A7) and several call-site type-argument-inference sources treated
+// any "void*" concrete type as an unresolved/erased placeholder — unable to
+// tell "opaque BY DESIGN" apart from "opaque because still generic". Fixed
+// in compiler-codegen/src/codegen/emit_c.rs (4 sites in the same causal
+// chain: `resolve_mono_type_args` Source 1 turbofish x2 legacy copies, a new
+// RT-structural Source for `RawMem.copy_n_nonoverlapping[T]` itself, the
+// `[]QH.new()` → `Vec[QH].new()` turbofish static-dispatch guard, and the
+// `let`-binding `fn_param_sigs` registration for an INDEXED fn-newtype/
+// closure element). Same fix also covers a BARE closure element with no
+// newtype (`Vec[fn(int)->int]`, D52.4/D55 sibling shape) — one fixture
+// covers both.
+// Spec: D52 (spec/decisions/02-types.md) — newtype-over-fn declares AND
+// call-through; D239 (`[]T ≡ Vec[T]`). This fixture is a CODEGEN-INFERENCE
+// fix, not a language change — no new D-decision (compiler-conventions.md
+// §0: bug fix, not new syntax/semantics).
+// Part of the SINGLE `spec_tests.conformance` folder-module (minimal CU).
+module spec_tests.conformance
+
+type VecFnQH fn(int) -> int
+
+fn vec_fn_double(x int) -> int => x * 2
+fn vec_fn_square(x int) -> int => x * x
+fn vec_fn_neg(x int) -> int => 0 - x
+
+test "Vec[fn-newtype] — new/push/index/call a single element" {
+    mut v = []VecFnQH.new()
+    ro q VecFnQH = vec_fn_double
+    v.push(q)
+    ro got = v[0]
+    assert(v.len() == 1)
+    assert(got(21) == 42)
+}
+
+test "Vec[fn-newtype] — multiple elements, indexed calls" {
+    mut v = []VecFnQH.new()
+    // Bind each fn to a `VecFnQH`-annotated local BEFORE pushing (mirrors
+    // test 1) rather than `v.push(vec_fn_double)` directly: a bare free-fn
+    // NAME pushed straight into a Vec[newtype-over-fn] goes through the D55
+    // "obvious single-wrapper" fn→newtype auto-coercion at the call-arg
+    // position, which — isolated during this window's verification, and
+    // confirmed pre-existing on the UNPATCHED compiler too (unrelated to
+    // this ticket's fix) — independently ICEs: `internal error [P67-LEGACY]
+    // Path call return type unknown (no parts)`. Marked
+    // [M-vec-push-direct-fn-newtype-coerce-ice], follow-up (out of scope for
+    // [M-vec-of-fn-newtype-codegen] №47: that one is `Vec[T]`'s OWN internal
+    // `RawMem` type-argument inference, not the D55 push-arg coercion path).
+    ro q0 VecFnQH = vec_fn_double
+    ro q1 VecFnQH = vec_fn_square
+    ro q2 VecFnQH = vec_fn_neg
+    v.push(q0)
+    v.push(q1)
+    v.push(q2)
+    assert(v.len() == 3)
+    // Index into an INTERMEDIATE `ro` local before calling (mirrors test 1's
+    // `ro got = v[0]; got(21)`), rather than calling `v[i](...)` directly
+    // inline: isolated during this window's verification — a DIRECT inline
+    // index-then-call on a Vec[closure/fn-newtype] element (no intermediate
+    // `let`) hits a SEPARATE gap (the `fn_param_sigs` registration this fix
+    // adds is keyed off `Stmt::Let`'s RHS, per the D52-амендмент call-through
+    // convention — an inline `Call{func: Index{...}}` never reaches it) —
+    // same ICE class, confirmed structurally pre-existing (this fix touches
+    // no code on that path). Marked [M-vec-index-call-inline-no-let-ice],
+    // follow-up (out of scope for №47: that one is `Vec[T]`'s OWN internal
+    // `RawMem` type-argument inference).
+    ro e0 = v[0]
+    ro e1 = v[1]
+    ro e2 = v[2]
+    assert(e0(10) == 20)
+    assert(e1(5) == 25)
+    assert(e2(7) == 0 - 7)
+    // NOT covered here: `for f in v { f(...) }` (VecIter[QH].next() call-loop
+    // variable) — isolated during this window's verification and found to hit
+    // a SEPARATE, deeper gap: VecIter's generic `.next() -> Option[T]` mono
+    // for T=fn-newtype/closure emits a `NovaOpt_nova_int`/`NovaOpt_void_p`
+    // typedef mismatch (C compile error, not this ticket's codegen-inference
+    // error) — marked [M-vec-iter-fn-newtype-next-option-mismatch], follow-up
+    // (out of scope for [M-vec-of-fn-newtype-codegen] №47: that one is about
+    // `Vec[T]`'s OWN internal `RawMem` calls, not `VecIter`'s).
+}
+
+test "Vec[bare closure, no newtype] — same codegen path, no named wrapper type" {
+    mut v = Vec[fn(int) -> int].new()
+    v.push(vec_fn_double)
+    v.push(vec_fn_square)
+    ro got0 = v[0]
+    ro got1 = v[1]
+    assert(v.len() == 2)
+    assert(got0(21) == 42)
+    assert(got1(6) == 36)
+}
