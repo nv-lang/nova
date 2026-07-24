@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 /* Plan 83.11 Ф.2: Driver scaffolding. Lifecycle + job queue + main loop.
  *
+ * Vela — M:N-движок конкурентности Nova; этот файл — I/O-драйвер (libuv
+ * job-queue). Бренд-имя рантайма — docs/naming-conventions.md §1.2, план 224
+ * (идентификаторы/ABI не переименованы).
+ *
  * NO logic yet — jobs are stubbed (logged but not processed). Ф.3 migrates
  * Time.sleep to use ARM_SLEEP/CANCEL_SCOPE jobs. Ф.4 adds blocking. Etc.
  *

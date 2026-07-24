@@ -1,5 +1,9 @@
 /* Plan 22 Ф.2: глобальный uv_loop_t lifecycle.
  *
+ * Vela — M:N-движок конкурентности Nova; этот файл — событийный цикл (uv_loop).
+ * Бренд-имя рантайма — docs/naming-conventions.md §1.2, план 224
+ * (идентификаторы/ABI не переименованы).
+ *
  * Простая реализация:
  *   - один static uv_loop_t* (использует uv_default_loop())
  *   - флаг initialized: bool

@@ -1,6 +1,10 @@
 ﻿// SPDX-License-Identifier: MIT OR Apache-2.0
 /* Plan 44 (M:N Этап 0, 2026-05-13) — multi-thread runtime impl.
  *
+ * Vela — M:N-движок конкурентности Nova; этот файл — планировщик (worker-
+ * потоки, per-worker libuv-loop). Бренд-имя рантайма — docs/naming-conventions.md
+ * §1.2, план 224 (идентификаторы/ABI не переименованы).
+ *
  * Minimal proof of concept:
  *   - N worker OS threads (uv_thread_create).
  *   - Each worker: own libuv loop, own scope, mutex-protected push queue.
