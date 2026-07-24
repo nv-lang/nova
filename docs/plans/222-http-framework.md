@@ -94,6 +94,25 @@ middleware. Кандидат в линт-правило после стабил�
 **Триггер пересмотра:** если слои 2-3 начнут churn'ить чаще, чем 0-1 успевает стабилизироваться —
 раскалывать раньше.
 
+#### РЕШЕНИЕ ВЛАДЕЛЬЦА 2026-07-24: раскол УТВЕРЖДЁН — ДВЕ РЕПЫ
+
+«ДВА package — http (ядро) + polaris (фреймворк) … две репы, nova-http остаётся под ядро»;
+«Финальное разбиение — согласен». Фиксация:
+
+| Репа | Package | Модули |
+|---|---|---|
+| **`nova-http`** (остаётся) | `http` — ядро протокола | `http` (Request/Response/Method/StatusCode/HeaderMap/Url/Cookie/Body/Mime/HttpError), `http.client`, `http.transport`, `http.json` (← `http.serdejson`), `http.net` (← `http.servernet`; оговорка: если извлечение покажет жёсткую завязку на Router — уедет в `polaris.net`) |
+| **`nova-polaris`** (новая) | `polaris` — фреймворк + батарейки | `polaris` (корень: Router/get/post/Handler, ServerRequest/ServerResponse ← `http.server`), `polaris.extract`, `polaris.response` (← `http.server`/respond.nv; **существительное `response`, не `respond`** — вопрос владельца 2026-07-24, Axum `response`-паритет, консистентность с extract/auth/static), `polaris.middleware.*` (← `middleware.*`), `polaris.auth`, `polaris.static`, `polaris.ws`, `polaris.serve` |
+
+Зависимость: `polaris` → `http` (пользователь `import polaris.{Router, get, post}`, http-типы
+транзитивно; кому нужен только клиент — `import http`). **Порядок работ:** (1) Middleware
+ре-миграция на голый newtype (в полёте) → (2) package-split внутри nova-http (module-декларации
+`http.*`, подготовка фреймворк-модулей к извлечению) → (3) создание репы `nova-polaris`
+(github `nv-lang/nova-polaris`) + перенос фреймворк-модулей → `module polaris.*`, dep на `http` →
+(4) флагман/примеры: `import http.server` → `polaris`, `examples/nova.lock` += path-dep
+`../../nova-polaris`. Шаги 3-4 — операционные (интегратор сам); шаг 2 — sonnet-окно.
+Порядок тегов при релизе получает нового участника: compress→tls→http→**polaris**→nova.
+
 ## 0. Аудит текущего http против Axum (факты из кода, ревью 2026-07-22)
 
 Прежняя редакция плана самонадеянно приняла существующее за «хороший фундамент» и предлагала тонкий
