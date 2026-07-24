@@ -30412,18 +30412,37 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         self.channel_arg_rt(obj)
                     {
                         if base_name == "Vec" {
-                            if let Some(crate::types::ResolvedType::Named { name: elem_name, .. }) = elem_args.first() {
-                                if let Some(TypeRef::Func { params: fp, return_type, .. }) =
-                                    self.fn_newtype_sigs.get(elem_name.as_str()).cloned()
-                                {
-                                    let ptys: Vec<String> = fp.iter()
-                                        .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".to_string()))
+                            // Two element shapes both erase to `void*` and both need this
+                            // registration: a fn-newtype name (`QH`, call-through via
+                            // `fn_newtype_sigs`, D52-амендмент) and a BARE closure type
+                            // (`Vec[fn(int)->int]`, the RT already IS the `Func` shape —
+                            // no name/registry indirection needed).
+                            let sig: Option<(Vec<String>, String)> = match elem_args.first() {
+                                Some(crate::types::ResolvedType::Named { name: elem_name, .. }) =>
+                                    self.fn_newtype_sigs.get(elem_name.as_str()).cloned().map(|f| {
+                                        if let TypeRef::Func { params: fp, return_type, .. } = f {
+                                            let ptys: Vec<String> = fp.iter()
+                                                .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".to_string()))
+                                                .collect();
+                                            let rty = return_type.as_ref()
+                                                .and_then(|t| self.type_ref_to_c(t).ok())
+                                                .unwrap_or_else(|| "nova_int".to_string());
+                                            (ptys, rty)
+                                        } else {
+                                            (Vec::new(), "nova_int".to_string())
+                                        }
+                                    }),
+                                Some(crate::types::ResolvedType::Func { params, ret, .. }) => {
+                                    let ptys: Vec<String> = params.iter()
+                                        .map(|t| self.resolved_type_to_c(t).unwrap_or_else(|_| "nova_int".to_string()))
                                         .collect();
-                                    let rty = return_type.as_ref()
-                                        .and_then(|t| self.type_ref_to_c(t).ok())
-                                        .unwrap_or_else(|| "nova_int".to_string());
-                                    self.fn_param_sigs.insert(binding.clone(), (ptys, rty));
+                                    let rty = self.resolved_type_to_c(ret).unwrap_or_else(|_| "nova_int".to_string());
+                                    Some((ptys, rty))
                                 }
+                                _ => None,
+                            };
+                            if let Some(sig) = sig {
+                                self.fn_param_sigs.insert(binding.clone(), sig);
                             }
                         }
                     }
@@ -39133,10 +39152,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     // typaram") are unreliable — a genuine 2-letter
                                     // UPPERCASE user type name (`QH`) collides with them —
                                     // so this arm trusts the STRUCTURAL shape instead.
+                                    // `TypeRef::Func` (a BARE closure type-arg, no newtype
+                                    // — `Vec[fn(int)->int].new()`) is included too: it is
+                                    // ALWAYS fully concrete already (no type-param can hide
+                                    // inside a literal `fn(..)->T` turbofish spelling that
+                                    // would need resolving here) and unconditionally lowers
+                                    // to `void*` (~3892) — never an erasure signal.
                                     if let crate::ast::TypeRef::Named { generics, .. } = tr {
                                         if generics.is_empty() {
                                             return Some(c);
                                         }
+                                    }
+                                    if matches!(tr, crate::ast::TypeRef::Func { .. }) {
+                                        return Some(c);
                                     }
                                     None
                                 })
