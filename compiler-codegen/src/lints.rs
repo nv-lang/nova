@@ -14,7 +14,7 @@ use crate::ast::{
     HandlerMethodBody, Import, Item, MatchArm, MatchArmBody, Module, Pattern, ReceiverKind,
     Stmt, TypeDeclKind, TypeRef, VariantPatternKind,
 };
-use crate::diag::{byte_to_line_col, Diagnostic, Span};
+use crate::diag::{byte_to_line_col, Applicability, Diagnostic, Span, Suggestion};
 use std::collections::{HashMap, HashSet};
 
 /// Один lint-warning.
@@ -3252,6 +3252,25 @@ pub const CONV_RULES: &[ConvRule] = &[
         ast: Some(conv_manual_coalesce),
         text: None,
     },
+    ConvRule {
+        id: "W_MANUAL_COLLECT",
+        summary: "ручной collect `mut v = <пустой ctor>; for x in it { v.push(x) }` \
+                  — дрейф от канона `mut v = it.collect()` (nv-coding-style §33, \
+                  прецедент clippy manual_collect/needless_collect, \
+                  [M-manual-collect-lint-missing])",
+        ast: Some(conv_manual_collect),
+        text: None,
+    },
+    ConvRule {
+        id: "W_MANUAL_SLICE_TO_END",
+        summary: "избыточные границы диапазона среза `recv[a..recv.len()]` / \
+                  `recv[0..b]` / `recv[0..recv.len()]` — канон открытые диапазоны \
+                  `recv[a..]` / `recv[..b]` / `recv[..]` (nv-coding-style §34, \
+                  прецедент clippy redundant-slicing, \
+                  [M-manual-slice-bounds-lint-missing])",
+        ast: Some(conv_manual_slice_to_end),
+        text: None,
+    },
 ];
 
 /// id всех правил реестра (для валидации `--rule` и `--list-rules`).
@@ -5828,6 +5847,408 @@ fn conv_manual_coalesce(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarn
             }
             out.push(LintWarning { rule: "W_MANUAL_COALESCE", diag });
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// W_MANUAL_COLLECT ([M-manual-collect-lint-missing], Пункт 22 / Plan 200) —
+// ручной collect: `mut v = <пустой ctor>; for x in <iter> { v.push(x) }` —
+// дрейф от канона `mut v = <iter>.collect()`.
+//
+// Условие БЕЗ ложных срабатываний (строго синтаксически):
+//  (1) `v` объявлена ПУСТЫМ конструктором коллекции (`[]T.new()` /
+//      `Vec[T].new()` / пустой литерал `[]`) НЕПОСРЕДСТВЕННО перед циклом —
+//      for обязан быть СЛЕДУЮЩИМ statement того же блока, поэтому «v не
+//      используется между объявлением и циклом» выполняется тривиально;
+//  (2) тело цикла — РОВНО `v.push(<loop_var>)`: один statement (либо
+//      trailing-выражение), receiver — голый ident `v`, аргумент push —
+//      ГОЛАЯ loop-переменная (не `f(x)`, не под `if`, не несколько);
+//  (3) loop-pattern — простой ident (не destructure).
+//
+// Только identity-collect. Расширения (`push(f(x))` → `.map(f).collect()`;
+// `if c { push(x) }` → `.filter(c).collect()`) — НЕ в этой версии (владелец
+// 2026-07-24). Прецедент clippy `manual_collect`/`needless_collect`.
+// ---------------------------------------------------------------------------
+
+/// `e` — ПУСТОЙ конструктор коллекции: `[]T.new()` / `Vec[T].new()` (ровно
+/// 0 аргументов) либо пустой литерал `[]`. Ненулевой `.new(cap)` или
+/// непустой литерал — НЕ пустой ctor (преаллокация/инициализация меняет
+/// намерение), не матчим.
+fn conv_is_empty_collection_ctor(e: &Expr) -> bool {
+    match &e.kind {
+        // Пустой литерал `[]` (парсер даёт `ArrayLit(vec![])`).
+        ExprKind::ArrayLit(elems) => elems.is_empty(),
+        // `[]T.new()` / `Vec[T].new()` — 0-арг static-ctor.
+        ExprKind::Call { func, args, trailing: None } => {
+            if !args.is_empty() {
+                return false;
+            }
+            let ExprKind::Member { obj, name } = &func.kind else { return false };
+            if name != "new" {
+                return false;
+            }
+            match &obj.kind {
+                // `[]T.new()` → `Path(["__array", <T>])` (D38 slice-sugar).
+                ExprKind::Path(p) => p.first().map(String::as_str) == Some("__array"),
+                // `Vec[T].new()` → `TurboFish{ base: Ident("Vec")/Path..Vec, [T] }`.
+                ExprKind::TurboFish { base, type_args } => {
+                    type_args.len() == 1
+                        && match &base.kind {
+                            ExprKind::Ident(n) => n == "Vec",
+                            ExprKind::Path(p) => p.last().map(String::as_str) == Some("Vec"),
+                            _ => false,
+                        }
+                }
+                _ => false,
+            }
+        }
+        _ => false,
+    }
+}
+
+/// Тело for-цикла — РОВНО одно выражение (один `Stmt::Expr` без trailing,
+/// либо пустые stmts + trailing-выражение). Иначе `None` (несколько
+/// statement'ов / пусто).
+fn conv_for_body_single_expr(b: &Block) -> Option<&Expr> {
+    match (b.stmts.as_slice(), &b.trailing) {
+        ([Stmt::Expr(e)], None) => Some(e),
+        ([], Some(t)) => Some(t.as_ref()),
+        _ => None,
+    }
+}
+
+/// `expr` — РОВНО `v.push(loop_var)`: receiver = голый ident `v`, единственный
+/// аргумент — голый ident `loop_var`, без trailing-блока.
+fn conv_is_identity_push(expr: &Expr, v: &str, loop_var: &str) -> bool {
+    let ExprKind::Call { func, args, trailing: None } = &expr.kind else { return false };
+    let ExprKind::Member { obj, name } = &func.kind else { return false };
+    if name != "push" {
+        return false;
+    }
+    if !matches!(&obj.kind, ExprKind::Ident(n) if n == v) {
+        return false;
+    }
+    match &args[..] {
+        [CallArg::Item(a)] => matches!(&a.kind, ExprKind::Ident(n) if n == loop_var),
+        _ => false,
+    }
+}
+
+/// Непосредственные блоки, которыми ВЛАДЕЕТ узел-выражение (без рекурсии).
+/// Рекурсия обхода делегируется `conv_walk_*` — здесь только извлечение, так
+/// что ни один вложенный блок не пропущен и не посещён дважды.
+fn conv_blocks_of_expr(e: &Expr) -> Vec<&Block> {
+    let mut v: Vec<&Block> = Vec::new();
+    match &e.kind {
+        ExprKind::Block(b) => v.push(b),
+        ExprKind::If { then, else_, .. } | ExprKind::IfLet { then, else_, .. } => {
+            v.push(then);
+            if let Some(ElseBranch::Block(b)) = else_ {
+                v.push(b);
+            }
+        }
+        ExprKind::For { body, .. }
+        | ExprKind::ParallelFor { body, .. }
+        | ExprKind::While { body, .. }
+        | ExprKind::WhileLet { body, .. }
+        | ExprKind::Loop { body, .. }
+        | ExprKind::Supervised { body, .. }
+        | ExprKind::Detach(body)
+        | ExprKind::Blocking(body)
+        | ExprKind::With { body, .. }
+        | ExprKind::Forbid { body, .. }
+        | ExprKind::Realtime { body, .. } => v.push(body),
+        ExprKind::Match { arms, .. } => {
+            for a in arms {
+                if let MatchArmBody::Block(b) = &a.body {
+                    v.push(b);
+                }
+            }
+        }
+        ExprKind::Select { arms } => {
+            for a in arms {
+                v.push(&a.body);
+            }
+        }
+        ExprKind::ClosureLight { body: ClosureBody::Block(b), .. } => v.push(b),
+        ExprKind::ClosureFull(sb) => {
+            if let FnBody::Block(b) = &sb.body {
+                v.push(b);
+            }
+        }
+        _ => {}
+    }
+    v
+}
+
+/// Каноническая `<iter>.collect()`-переписка: рендер итератора через
+/// `print_expr` + (а) обёртка в скобки, если верхний уровень итератора —
+/// низкоприоритетная форма (Range/Binary/…) и без скобок приклеился бы к
+/// `.collect()` неверно; (б) честная `Applicability`. `print_expr` НЕ
+/// расставляет скобки вокруг вложенных Range/closure/if/match и рендерит
+/// `TurboFish` лоссовым плейсхолдером `[..]` → при их наличии где-либо внутри
+/// понижаем до `MaybeIncorrect` (правка правдоподобна, но требует ревью).
+fn conv_collect_canon_iter(iter: &Expr) -> (String, Applicability) {
+    let src = crate::ast::pretty::print_expr(iter);
+    let needs_wrap = matches!(
+        &iter.kind,
+        ExprKind::Range { .. }
+            | ExprKind::Binary { .. }
+            | ExprKind::Unary { .. }
+            | ExprKind::As(..)
+            | ExprKind::Is(..)
+            | ExprKind::Coalesce(..)
+            | ExprKind::Lambda { .. }
+            | ExprKind::ClosureLight { .. }
+            | ExprKind::ClosureFull(..)
+            | ExprKind::If { .. }
+            | ExprKind::IfLet { .. }
+            | ExprKind::Match { .. }
+    );
+    let wrapped = if needs_wrap { format!("({src})") } else { src };
+    let mut faithful = true;
+    conv_walk_expr(iter, false, &mut |_, _| {}, &mut |x, _| {
+        if matches!(
+            &x.kind,
+            ExprKind::Range { .. }
+                | ExprKind::TurboFish { .. }
+                | ExprKind::As(..)
+                | ExprKind::Is(..)
+                | ExprKind::Coalesce(..)
+                | ExprKind::Lambda { .. }
+                | ExprKind::ClosureLight { .. }
+                | ExprKind::ClosureFull(..)
+                | ExprKind::If { .. }
+                | ExprKind::IfLet { .. }
+                | ExprKind::Match { .. }
+        ) {
+            faithful = false;
+        }
+    });
+    let app = if faithful {
+        Applicability::MachineApplicable
+    } else {
+        Applicability::MaybeIncorrect
+    };
+    (wrapped, app)
+}
+
+/// Скан ОДНОЙ последовательности statement'ов на паттерн ручного collect
+/// (соседние `mut v = <пустой ctor>` + `for x in it { v.push(x) }`). Работает
+/// in-place (`out` — владеющий вектор находок), поэтому вызывается прямо из
+/// обходных замыканий — HRTB-ссылки `&Block` живут ровно на время вызова, не
+/// утекают (в отличие от накопления `&Block` в долгоживущий вектор).
+fn conv_scan_block_for_collect(b: &Block, out: &mut Vec<LintWarning>) {
+    let stmts = &b.stmts;
+    for i in 0..stmts.len() {
+        let Stmt::Let(d) = &stmts[i] else { continue };
+        if d.is_ghost || d.consume || !d.mutable {
+            continue; // push требует mut-биндинга
+        }
+        let Pattern::Ident { name, .. } = &d.pattern else { continue };
+        if !conv_is_empty_collection_ctor(&d.value) {
+            continue;
+        }
+        // Следующий statement того же блока обязан быть for-циклом.
+        let Some(Stmt::Expr(for_expr)) = stmts.get(i + 1) else { continue };
+        let ExprKind::For { pattern, iter, body, .. } = &for_expr.kind else { continue };
+        let Pattern::Ident { name: loop_var, .. } = pattern else { continue };
+        let Some(body_expr) = conv_for_body_single_expr(body) else { continue };
+        if !conv_is_identity_push(body_expr, name, loop_var) {
+            continue;
+        }
+        let region = d.span.merge(for_expr.span);
+        let (iter_src, applicability) = conv_collect_canon_iter(iter);
+        let canon = format!("mut {name} = {iter_src}.collect()");
+        out.push(LintWarning {
+            rule: "W_MANUAL_COLLECT",
+            diag: Diagnostic::new(
+                format!(
+                    "ручной collect: `mut {name} = <пустой ctor>` + \
+                     `for {loop_var} in <iter> {{ {name}.push({loop_var}) }}` — \
+                     дрейф от канона `{canon}` (nv-coding-style §33, прецедент \
+                     clippy manual_collect/needless_collect). `.collect()` \
+                     материализует итератор одним выражением.",
+                ),
+                region,
+            )
+            .with_suggestion(Suggestion {
+                message: format!("канон: `{canon}`"),
+                span: region,
+                replacement: canon,
+                applicability,
+            }),
+        });
+    }
+}
+
+fn conv_manual_collect(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
+    // Каждый блок сканируется РОВНО один раз: топ-блоки тел — явно; вложенные
+    // блоки — через владеющий их узел (on_expr / on_stmt). Два прохода
+    // `conv_walk_*` на функцию (expr-владельцы / stmt-владельцы `ConsumeScope`)
+    // — раздельно, чтобы не держать два `&mut out`-замыкания одновременно.
+    for f in conv_all_fns(m) {
+        if let FnBody::Block(b) = &f.body {
+            conv_scan_block_for_collect(b, out);
+        }
+        conv_walk_fn(f, &mut |_, _| {}, &mut |e, _| {
+            for nb in conv_blocks_of_expr(e) {
+                conv_scan_block_for_collect(nb, out);
+            }
+        });
+        conv_walk_fn(
+            f,
+            &mut |s, _| {
+                if let Stmt::ConsumeScope { body, .. } = s {
+                    conv_scan_block_for_collect(body, out);
+                }
+            },
+            &mut |_, _| {},
+        );
+    }
+    for tb in conv_all_test_bodies(m) {
+        conv_scan_block_for_collect(tb, out);
+        conv_walk_block(tb, false, &mut |_, _| {}, &mut |e, _| {
+            for nb in conv_blocks_of_expr(e) {
+                conv_scan_block_for_collect(nb, out);
+            }
+        });
+        conv_walk_block(
+            tb,
+            false,
+            &mut |s, _| {
+                if let Stmt::ConsumeScope { body, .. } = s {
+                    conv_scan_block_for_collect(body, out);
+                }
+            },
+            &mut |_, _| {},
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// W_MANUAL_SLICE_TO_END ([M-manual-slice-bounds-lint-missing], Пункт 22) —
+// избыточные границы диапазона среза. Три редукции (ТОЛЬКО exclusive `..`):
+//  (1) recv[a..recv.len()] / recv[a..recv.byte_len()] -> recv[a..]
+//  (2) recv[0..b]                                     -> recv[..b]
+//  (3) recv[0..recv.len()]                            -> recv[..]
+//
+// Условие БЕЗ ложных срабатываний: end — ГОЛЫЙ 0-арг вызов `.len()`/
+// `.byte_len()` на ТОМ ЖЕ receiver-выражении, что и срез (структурное
+// равенство «чистого места» — ident/`@`/поле/индекс БЕЗ вызовов: вызов в
+// receiver'е нельзя дважды вычислять безопасно, не матчим). Для (2) start —
+// литерал `0`. Тип знать не нужно — матчим по факту вызова len-метода на том
+// же receiver. Fix-it машинный (удаление/замена по точным AST-span'ам).
+// Прецедент clippy redundant-slicing.
+// ---------------------------------------------------------------------------
+
+/// Каноническая строка «чистого места» — детерминированного выражения БЕЗ
+/// вызовов/побочных эффектов: ident / `@` / Path / цепочка полей / индекс с
+/// чистым индексом. `None` для всего, что содержит вызов или произвольное
+/// выражение — тогда «тот же receiver» синтаксически доказать нельзя.
+fn conv_pure_place_key(e: &Expr) -> Option<String> {
+    match &e.kind {
+        ExprKind::Ident(n) => Some(format!("i:{n}")),
+        ExprKind::SelfAccess => Some("@".to_string()),
+        ExprKind::Path(p) => Some(format!("p:{}", p.join("."))),
+        ExprKind::Member { obj, name } => {
+            let base = conv_pure_place_key(obj)?;
+            Some(format!("{base}.{name}"))
+        }
+        ExprKind::Index { obj, index } => {
+            let base = conv_pure_place_key(obj)?;
+            let idx = conv_pure_index_key(index)?;
+            Some(format!("{base}[{idx}]"))
+        }
+        _ => None,
+    }
+}
+
+/// Индекс, допустимый внутри «чистого места»: int-литерал или чистое место.
+fn conv_pure_index_key(e: &Expr) -> Option<String> {
+    match &e.kind {
+        ExprKind::IntLit(n) => Some(format!("n:{n}")),
+        ExprKind::Ident(_)
+        | ExprKind::SelfAccess
+        | ExprKind::Path(_)
+        | ExprKind::Member { .. }
+        | ExprKind::Index { .. } => conv_pure_place_key(e),
+        _ => None,
+    }
+}
+
+/// Если `e` — голый 0-арг вызов `.len()`/`.byte_len()`, вернуть его receiver.
+fn conv_len_call_receiver(e: &Expr) -> Option<&Expr> {
+    let ExprKind::Call { func, args, trailing: None } = &e.kind else { return None };
+    if !args.is_empty() {
+        return None;
+    }
+    let ExprKind::Member { obj, name } = &func.kind else { return None };
+    if name == "len" || name == "byte_len" {
+        Some(obj)
+    } else {
+        None
+    }
+}
+
+fn conv_manual_slice_to_end(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
+    for f in conv_all_fns(m) {
+        conv_walk_fn(f, &mut |_, _| {}, &mut |e, _| {
+            let ExprKind::Index { obj, index } = &e.kind else { return };
+            let ExprKind::Range { start, end, inclusive: false } = &index.kind else { return };
+            // end — голый len/byte_len на ТОМ ЖЕ receiver, что и obj среза?
+            let end_len_same = match end.as_deref() {
+                Some(en) => match (conv_len_call_receiver(en), conv_pure_place_key(obj)) {
+                    (Some(recv), Some(obj_key)) => conv_pure_place_key(recv) == Some(obj_key),
+                    _ => false,
+                },
+                None => false,
+            };
+            // start — литерал `0`?
+            let start_zero = match start.as_deref() {
+                Some(s) => matches!(&s.kind, ExprKind::IntLit(0)),
+                None => false,
+            };
+            let (form, sugg_span, sugg_repl): (&str, Span, String) =
+                if end_len_same && start_zero {
+                    // (3) recv[0..recv.len()] -> recv[..]
+                    ("recv[0..recv.len()] → recv[..]", index.span, "..".to_string())
+                } else if end_len_same {
+                    // (1) recv[a..recv.len()] -> recv[a..]
+                    (
+                        "recv[a..recv.len()] → recv[a..]",
+                        end.as_ref().unwrap().span,
+                        String::new(),
+                    )
+                } else if start_zero {
+                    // (2) recv[0..b] -> recv[..b]
+                    (
+                        "recv[0..b] → recv[..b]",
+                        start.as_ref().unwrap().span,
+                        String::new(),
+                    )
+                } else {
+                    return;
+                };
+            out.push(LintWarning {
+                rule: "W_MANUAL_SLICE_TO_END",
+                diag: Diagnostic::new(
+                    format!(
+                        "избыточная граница диапазона среза ({form}) — канон открытый \
+                         диапазон (spec 02-types.md, nv-coding-style §34, прецедент \
+                         clippy redundant-slicing). Голый `len()`/`byte_len()` как end \
+                         и литерал `0` как start подразумеваются автоматически.",
+                    ),
+                    e.span,
+                )
+                .with_suggestion(Suggestion {
+                    message: "убрать избыточную границу диапазона".to_string(),
+                    span: sugg_span,
+                    replacement: sugg_repl,
+                    applicability: Applicability::MachineApplicable,
+                }),
+            });
+        });
     }
 }
 
@@ -9265,6 +9686,297 @@ mod tests {
              error name (`??` cannot express that), got: {:?}",
             ws2.iter().map(|w| w.rule).collect::<Vec<_>>()
         );
+    }
+
+    // ── Пункт 22 / Plan 200: W_MANUAL_COLLECT ([M-manual-collect-lint-missing])
+
+    fn collect_hits(ws: &[LintWarning]) -> usize {
+        coalesce_rule_hits(ws, "W_MANUAL_COLLECT").len()
+    }
+
+    #[test]
+    fn manual_collect_pos_slice_sugar_new() {
+        let src = "module foo\n\
+             fn run(items []int) -> []int {\n\
+                 mut v = []int.new()\n\
+                 for x in items {\n\
+                     v.push(x)\n\
+                 }\n\
+                 v\n\
+             }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert_eq!(collect_hits(&ws), 1, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+        let hit = coalesce_rule_hits(&ws, "W_MANUAL_COLLECT");
+        assert!(hit[0].diag.message.contains(".collect()"), "got: {}", hit[0].diag.message);
+        let s = hit[0].diag.suggestion.as_ref().expect("suggestion");
+        assert_eq!(s.replacement, "mut v = items.collect()", "got: {:?}", s);
+        assert_eq!(s.applicability, Applicability::MachineApplicable);
+    }
+
+    #[test]
+    fn manual_collect_pos_vec_turbofish_new() {
+        let src = "module foo\n\
+             fn run(items []int) -> []int {\n\
+                 mut v = Vec[int].new()\n\
+                 for x in items {\n\
+                     v.push(x)\n\
+                 }\n\
+                 v\n\
+             }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert_eq!(collect_hits(&ws), 1, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn manual_collect_pos_empty_literal() {
+        let src = "module foo\n\
+             fn run(items []int) -> []int {\n\
+                 mut v []int = []\n\
+                 for x in items {\n\
+                     v.push(x)\n\
+                 }\n\
+                 v\n\
+             }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert_eq!(collect_hits(&ws), 1, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn manual_collect_neg_push_mapped_value() {
+        // `v.push(dbl(x))` — не identity (канон `.map(dbl).collect()`, вне V1).
+        let src = "module foo\n\
+             fn dbl(x int) -> int => x + x\n\
+             fn run(items []int) -> []int {\n\
+                 mut v = []int.new()\n\
+                 for x in items {\n\
+                     v.push(dbl(x))\n\
+                 }\n\
+                 v\n\
+             }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert_eq!(collect_hits(&ws), 0, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn manual_collect_neg_push_under_condition() {
+        // `if x > 0 { v.push(x) }` — под условием (канон `.filter(...).collect()`).
+        let src = "module foo\n\
+             fn run(items []int) -> []int {\n\
+                 mut v = []int.new()\n\
+                 for x in items {\n\
+                     if x > 0 {\n\
+                         v.push(x)\n\
+                     }\n\
+                 }\n\
+                 v\n\
+             }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert_eq!(collect_hits(&ws), 0, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn manual_collect_neg_push_wrong_receiver() {
+        // push в `sink` (не свежий пустой ctor `v`) — не ручной collect.
+        let src = "module foo\n\
+             fn run(items []int, sink []int) -> () {\n\
+                 mut v = []int.new()\n\
+                 for x in items {\n\
+                     sink.push(x)\n\
+                 }\n\
+             }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert_eq!(collect_hits(&ws), 0, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn manual_collect_neg_non_empty_ctor() {
+        // `mut v = [1, 2]` — НЕ пустой ctor.
+        let src = "module foo\n\
+             fn run(items []int) -> []int {\n\
+                 mut v = [1, 2]\n\
+                 for x in items {\n\
+                     v.push(x)\n\
+                 }\n\
+                 v\n\
+             }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert_eq!(collect_hits(&ws), 0, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn manual_collect_neg_preallocated_new() {
+        // `[]int.new(4)` — преаллокация, не «пустой» ctor.
+        let src = "module foo\n\
+             fn run(items []int) -> []int {\n\
+                 mut v = []int.new(4)\n\
+                 for x in items {\n\
+                     v.push(x)\n\
+                 }\n\
+                 v\n\
+             }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert_eq!(collect_hits(&ws), 0, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn manual_collect_neg_multiple_body_stmts() {
+        // Тело цикла — 2 statement'а, не РОВНО push.
+        let src = "module foo\n\
+             fn note(x int) -> () => ()\n\
+             fn run(items []int) -> []int {\n\
+                 mut v = []int.new()\n\
+                 for x in items {\n\
+                     note(x)\n\
+                     v.push(x)\n\
+                 }\n\
+                 v\n\
+             }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert_eq!(collect_hits(&ws), 0, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn manual_collect_neg_stmt_between_decl_and_loop() {
+        // Между объявлением и циклом есть statement — не «непосредственно перед».
+        let src = "module foo\n\
+             fn note() -> () => ()\n\
+             fn run(items []int) -> []int {\n\
+                 mut v = []int.new()\n\
+                 note()\n\
+                 for x in items {\n\
+                     v.push(x)\n\
+                 }\n\
+                 v\n\
+             }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert_eq!(collect_hits(&ws), 0, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn manual_collect_pos_inside_nested_block() {
+        // Паттерн внутри вложенного `if`-блока — обход должен доставать.
+        let src = "module foo\n\
+             fn run(items []int, flag bool) -> []int {\n\
+                 mut out []int = []\n\
+                 if flag {\n\
+                     mut v = []int.new()\n\
+                     for x in items {\n\
+                         v.push(x)\n\
+                     }\n\
+                     out = v\n\
+                 }\n\
+                 out\n\
+             }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert_eq!(collect_hits(&ws), 1, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+    }
+
+    // ── Пункт 22 / Plan 200: W_MANUAL_SLICE_TO_END ([M-manual-slice-bounds-lint-missing])
+
+    fn slice_hits(ws: &[LintWarning]) -> Vec<&LintWarning> {
+        coalesce_rule_hits(ws, "W_MANUAL_SLICE_TO_END")
+    }
+
+    #[test]
+    fn manual_slice_pos_end_len() {
+        let src = "module foo\n\
+             fn run(v []int, a int) -> []int => v[a..v.len()]\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        let hit = slice_hits(&ws);
+        assert_eq!(hit.len(), 1, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+        let s = hit[0].diag.suggestion.as_ref().expect("suggestion");
+        assert_eq!(s.replacement, "", "reduction-1 deletes the end operand");
+        assert_eq!(s.applicability, Applicability::MachineApplicable);
+    }
+
+    #[test]
+    fn manual_slice_pos_end_byte_len_str() {
+        let src = "module foo\n\
+             fn run(s str, a int) -> str => s[a..s.byte_len()]\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert_eq!(slice_hits(&ws).len(), 1, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn manual_slice_pos_start_zero() {
+        let src = "module foo\n\
+             fn run(v []int, b int) -> []int => v[0..b]\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        let hit = slice_hits(&ws);
+        assert_eq!(hit.len(), 1, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+        assert_eq!(hit[0].diag.suggestion.as_ref().unwrap().replacement, "");
+    }
+
+    #[test]
+    fn manual_slice_pos_both_zero_and_len() {
+        let src = "module foo\n\
+             fn run(v []int) -> []int => v[0..v.len()]\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        let hit = slice_hits(&ws);
+        assert_eq!(hit.len(), 1, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+        assert_eq!(hit[0].diag.suggestion.as_ref().unwrap().replacement, "..", "reduction-3 → `[..]`");
+    }
+
+    #[test]
+    fn manual_slice_pos_field_receiver() {
+        let src = "module foo\n\
+             type Buf { mut data []int }\n\
+             fn Buf @tail(a int) -> []int => @data[a..@data.len()]\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert_eq!(slice_hits(&ws).len(), 1, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn manual_slice_neg_different_receiver() {
+        let src = "module foo\n\
+             fn run(x []int, y []int, a int) -> []int => x[a..y.len()]\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert_eq!(slice_hits(&ws).len(), 0, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn manual_slice_neg_arithmetic_end() {
+        let src = "module foo\n\
+             fn run(x []int, a int) -> []int => x[a..x.len() - 1]\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert_eq!(slice_hits(&ws).len(), 0, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn manual_slice_neg_plain_bounds() {
+        let src = "module foo\n\
+             fn run(x []int, a int, b int) -> []int => x[a..b]\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert_eq!(slice_hits(&ws).len(), 0, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn manual_slice_neg_inclusive_range() {
+        // Инклюзивный `..=` НЕ трогаем (редукция для len была бы OOB).
+        let src = "module foo\n\
+             fn run(x []int, b int) -> []int => x[0..=b]\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert_eq!(slice_hits(&ws).len(), 0, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
     }
 }
 

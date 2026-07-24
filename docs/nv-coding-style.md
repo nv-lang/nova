@@ -1307,6 +1307,74 @@ export fn Part @filename() -> Option[str] => @filename
 **Проверка/правка** — чисто пробельная, codegen байт-идентичен (гейт sweep'а). План
 [225](plans/225-blank-line-between-decls.md) — механический проход по 28 файлам.
 
+## 33. `.collect()` вместо ручного for-push (· согласовано 2026-07-24)
+
+**Принцип.** Если пустая коллекция объявляется РОВНО чтобы тут же наполниться
+итератором один-в-один (`push` голой loop-переменной), это ручной collect —
+канон `it.collect()`.
+
+```nova
+// ПЛОХО: ручной collect
+mut chars []char = []char.new()
+for c in scheme.chars() {
+    chars.push(c)
+}
+
+// КАНОН
+mut chars = scheme.chars().collect()   // тип `[]char` выводится, аннотация не нужна
+```
+
+**Форма (семья «ручная форма vs канон», §30).** Дрейф — `mut v = <пустой ctor>`
+(`[]T.new()` / `Vec[T].new()` / литерал `[]`) НЕПОСРЕДСТВЕННО перед
+`for x in <iter> { v.push(x) }`, где тело цикла — РОВНО `push` голой
+loop-переменной. Только **identity-collect**: `.map`/`.filter`-варианты
+(`push(f(x))`, `if c { push(x) }`) в первую версию не входят — там канон
+`it.map(f).collect()` / `it.filter(c).collect()`, вводится отдельно.
+
+**Границы (что НЕ дрейф):** преаллокация `[]T.new(cap: n)` (это НЕ пустой ctor —
+намеренная ёмкость; часто ещё и с `push` ПОСЛЕ цикла — не чистый collect);
+`push(f(x))` / `push` под условием (не identity); push НЕ той переменной /
+НЕ в свежий пустой буфер.
+
+**Проверка (Пункт 22 плана 200, реализовано 2026-07-24):** `W_MANUAL_COLLECT`
+(`compiler-codegen/src/lints.rs`, реестр `CONV_RULES`) — СИНТАКСИЧЕСКИЙ, machine-
+applicable fix-it (`mut v = <iter>.collect()`; для Range/closure-итераторов
+подсказка помечается `MaybeIncorrect` — round-trip печати не байт-точен).
+Прецедент clippy `manual_collect`/`needless_collect`.
+
+## 34. Открытые диапазоны `[a..]` / `[..b]` / `[..]` вместо длинных границ (· согласовано 2026-07-24)
+
+**Принцип.** Конец, равный `len()`/`byte_len()` того же receiver'а, и старт,
+равный `0`, подразумеваются автоматически — писать их явно многословно.
+
+```nova
+// ПЛОХО: избыточные границы
+ro rest = after_scheme[2..after_scheme.byte_len()]
+ro head = bytes[0..n]
+ro all  = v[0..v.len()]
+
+// КАНОН
+ro rest = after_scheme[2..]
+ro head = bytes[..n]
+ro all  = v[..]
+```
+
+**Три редукции (семья §30):** (1) `recv[a..recv.len()]` / `recv[a..recv.byte_len()]`
+→ `recv[a..]`; (2) `recv[0..b]` → `recv[..b]`; (3) `recv[0..recv.len()]` →
+`recv[..]`. `len()` — для `Vec`/slice, `byte_len()` — для `str`.
+
+**Границы (что НЕ дрейф):** end — АРИФМЕТИКА (`x[a..x.len() - 1]`, реальная
+граница, не «до конца»); end — `len()` ДРУГОГО receiver'а (`x[a..y.len()]` — не
+тот же срез); инклюзивный `..=` (редукция до `len()` была бы OOB); receiver с
+вызовом (двойной eval мог бы отличаться — только «чистые места»: ident/`@`/поле/
+индекс).
+
+**Проверка (Пункт 22 плана 200, реализовано 2026-07-24):** `W_MANUAL_SLICE_TO_END`
+(`compiler-codegen/src/lints.rs`, реестр `CONV_RULES`) — СИНТАКСИЧЕСКИЙ (тип не
+нужен, матчит по факту вызова len-метода на том же receiver), machine-applicable
+fix-it (удаление избыточной границы по точному span'у). Прецедент clippy
+redundant-slicing.
+
 ## Известные расхождения для будущего sweep'а
 
 1. **`docs/idioms/size-accessors.md:41-42`** документирует `s.len()` как O(n) codepoint-count,
