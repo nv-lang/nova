@@ -30743,6 +30743,37 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             }
                         }
                     }
+                    // [fix M-nested-fn-newtype-bind-then-call-broken, реестр
+                    // 221.1 №90] 4th root: RHS is a METHOD call (`ro wrapped =
+                    // mw.apply(h)`, `func.kind` is `Member{obj, name}`, NOT
+                    // `Ident` — the arm above never matches a method call at
+                    // all) whose METHOD returns a fn-newtype (`fn Mid @apply(
+                    // next Hnd) -> Hnd`). `fn_returns_fn_sig` is ALREADY
+                    // populated for this case at fn-decl-scan time
+                    // (`emit_fn_forward_decl` ~L16300 runs for EVERY `FnDecl`
+                    // it forward-declares, methods included — it does not gate
+                    // on `f.receiver.is_none()` the way the sibling
+                    // `user_fn_sigs`/`free_fn_inout_params` registrations a few
+                    // lines below it do — so `fn_returns_fn_sig["apply"]`
+                    // already exists), keyed by the bare method name (same
+                    // name-generic, receiver-type-agnostic keying the №78 doc
+                    // above already calls out for free fns — a real but
+                    // pre-existing limitation, not introduced here). Only the
+                    // CONSUMER side was missing: without this arm, `wrapped`
+                    // got a storage C-type but no `fn_param_sigs` entry, and
+                    // `wrapped(3)` fell to the "must be a free function"
+                    // default (bogus `nova_fn_wrapped`, undefined-symbol at
+                    // link time). Mirrors the `Ident` arm above line-for-line.
+                    if let ExprKind::Member { name: method_name, .. } = &func.kind {
+                        if !method_name.starts_with('@') {
+                            if let Some(sig) = self.fn_returns_fn_sig.get(method_name.as_str()).cloned() {
+                                self.fn_param_sigs.insert(binding.clone(), sig);
+                            }
+                            if let Some(sig2) = self.fn_returns_fn_sig_l2.get(method_name.as_str()).cloned() {
+                                self.fn_returns_fn_sig.insert(binding.clone(), sig2);
+                            }
+                        }
+                    }
                 }
                 // [M-vec-of-fn-newtype-codegen] (реестр 221.1 №47): RHS is `v[i]`
                 // indexing a `Vec[QH]` whose element type is a fn-newtype/closure
@@ -35191,6 +35222,36 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 Ok(acc)
             }
             ExprKind::SelfAccess => {
+                // [fix M-nested-fn-newtype-bind-then-call-broken, реестр
+                // 221.1 №90] a bare `@` used AS A VALUE (`ro me = @`, not
+                // `@(v)`/`@method(...)` — those never reach here) inside a
+                // method on a fn-newtype receiver (`fn Mid @then(next Mid) ->
+                // Mid { ro me = @; ... }`) — `nova_self`'s C type is
+                // `Nova_Mid* nova_self` (== `void**`, the SAME "receiver ABI
+                // wraps the value in an EXTRA pointer" shape the `emit_call`
+                // self-ref/producer branches already document for fn-newtype
+                // receivers, D52-амендмент/№53/№90) — is NEVER itself the
+                // value the type denotes; the value is always the
+                // DEREFERENCED payload (a bare `void*` closure). Before this,
+                // the sibling `self_by_ptr_value_record` check below only
+                // recognized VALUE-RECORD receivers (`NovaValue_X*` /
+                // `value_record_names`) as needing a deref — a fn-newtype
+                // receiver fell to the bare `nova_self` else-branch, so
+                // `ro me = @` captured the ADDRESS of the caller's temp
+                // instead of the closure value. `flat_compose(me, ...)`
+                // (declared `void* m1`) then received that address reinterpreted
+                // as a `NovaClosBase*` — wrong shape, segfault at the first
+                // subsequent call-through. Unlike value-records, a fn-newtype
+                // receiver has NO legitimate "return-position aliases the
+                // same pointer" shortcut (its function-return C-type is
+                // always the bare value `void*`, never `Nova_X*`), so this
+                // dereferences UNCONDITIONALLY — no return-position carve-out.
+                let is_fn_newtype_recv = self.current_receiver_type.as_deref()
+                    .map(|t| self.fn_newtype_sigs.contains_key(t))
+                    .unwrap_or(false);
+                if is_fn_newtype_recv {
+                    return Ok("(*nova_self)".into());
+                }
                 // Plan 152.1 Ф.3 / `[M-138.2-vec-self-return]`: a value-record
                 // receiver is passed by-pointer (`NovaValue_X*`), so a BARE `@`
                 // used as a value (`return @`, `=> @`, `f(@)`, `Some(@)`) must be
@@ -37335,6 +37396,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             let inner_name: Option<String> = match &inner_func_uw.kind {
                 ExprKind::Ident(n) => Some(n.clone()),
                 ExprKind::Path(parts) if parts.len() == 1 => parts.first().cloned(),
+                // [fix M-nested-fn-newtype-bind-then-call-broken, реестр 221.1
+                // №90, форма (д)] inline chain, no intermediate let: `mw.apply
+                // (h)(3)` — the INNER call's callee is a METHOD (`Member{obj,
+                // name}`), not a free-fn `Ident`/`Path`. `fn_returns_fn_sig` is
+                // keyed by bare method name (see the let-binding arm's doc,
+                // ~L30722 above) — same lookup, just reached without a `ro`
+                // in between.
+                ExprKind::Member { name, .. } if !name.starts_with('@') => Some(name.clone()),
                 _ => None,
             };
             if let Some((param_tys, ret_ty)) = inner_name
@@ -40531,6 +40600,51 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         let mut arg_strs = vec![recv_arg];
                         for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
                         return Ok(format!("Nova_{}_method_{}({})", recv_ty, method_str, arg_strs.join(", ")));
+                    }
+                    // [fix M-nested-fn-newtype-bind-then-call-broken, реестр
+                    // 221.1 №90] producer-side gap found closing the consumer
+                    // fix above end-to-end: an EXTERNAL dot-call on a
+                    // fn-newtype-typed variable (`mw.apply(h)` in a plain free
+                    // fn — `mw`'s Nova type `Mid` is a fn-newtype, its C repr
+                    // is bare `void*`, indistinguishable from any other
+                    // void*-valued expr by C-type alone) is NOT a
+                    // self-referential call (`is_self_ref` above requires
+                    // `current_receiver_type` to already BE `Mid` — true only
+                    // INSIDE a method on `Mid` itself, e.g. the `d52_fnret_d`
+                    // sibling fixture's explicit note "не внешний dot-call на
+                    // произвольном void*-erased значении вне метода на этом
+                    // типе"). Before this, EVERY such call fell straight to
+                    // the `NULL` fallback below — `ro wrapped = mw.apply(h)`
+                    // silently became `void* wrapped = NULL;`, so даже after
+                    // fixing `wrapped(3)`'s dispatch (this window's OTHER
+                    // half, the `fn_param_sigs`/`fn_returns_fn_sig`
+                    // registration a few thousand lines up), the repro still
+                    // printed garbage from a NULL closure call instead of 35.
+                    // Recover the STATIC Nova type name via the checker's
+                    // resolved-type channel (`channel_arg_rt`, D315) — the
+                    // only channel that survives the void* erasure — then
+                    // dispatch IDENTICALLY to the self-ref branch just above
+                    // (same hoist-to-temp + take-address `recv_arg` shape,
+                    // same mangled `Nova_{T}_method_{m}` C name) once BOTH (a)
+                    // the resolved type is a registered fn-newtype and (b)
+                    // the method genuinely exists on it — so this only ADDS
+                    // dispatch for what was previously an unconditional NULL,
+                    // never shadows any struct/generic/protocol arm elsewhere
+                    // in this match (those all require `obj_ty` to be
+                    // something OTHER than the literal string `"void*"`).
+                    if let Some(crate::types::ResolvedType::Named { name: ext_recv_ty, .. }) =
+                        self.channel_arg_rt(obj)
+                    {
+                        if self.fn_newtype_sigs.contains_key(ext_recv_ty.as_str())
+                            && self.all_methods.contains(&(ext_recv_ty.clone(), method_str.clone()))
+                        {
+                            let obj_c = self.emit_expr(obj)?;
+                            let tmp = self.fresh_tmp();
+                            self.line(&format!("void* {} = (void*)({});", tmp, obj_c));
+                            let mut arg_strs = vec![format!("(&{})", tmp)];
+                            for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
+                            return Ok(format!("Nova_{}_method_{}({})", ext_recv_ty, method_str, arg_strs.join(", ")));
+                        }
                     }
                     for a in args { let _ = self.emit_expr(a.expr())?; }
                     return Ok("NULL".into());
@@ -55090,6 +55204,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         let inner_name: Option<&String> = match &inner_func.kind {
                             ExprKind::Ident(n) => Some(n),
                             ExprKind::Path(parts) if parts.len() == 1 => parts.first(),
+                            // [fix M-nested-fn-newtype-bind-then-call-broken,
+                            // реестр 221.1 №90, форма (д)]: inline method-call
+                            // chain `mw.apply(h)(3)` — mirrors the `emit_call`
+                            // dispatch-side sibling arm (~L37364-37373) so the
+                            // INFERENCE side agrees with what actually gets
+                            // emitted there.
+                            ExprKind::Member { name, .. } if !name.starts_with('@') => Some(name),
                             _ => None,
                         };
                         if let Some((_, ret_c)) = inner_name.and_then(|n| self.fn_returns_fn_sig.get(n.as_str())) {
