@@ -36166,6 +36166,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         if let Some(member_func) = self.variant_chain_as_member(func) {
             return self.emit_call(&member_func, args, call_id);
         }
+        // [M-assoc-const-chained-method-call-p67] (окно №73): a chained method
+        // call directly on a bare out-of-body assoc-const receiver, no
+        // intermediate binding (`StatusCode.NOT_FOUND.into_response()`) — the
+        // SAME parser fold as the variant-chain case just above collapses it
+        // into a flat 3-part Path `[Type, CONST, method]`. Rewrite to the
+        // equivalent Member form and re-enter — see `assoc_const_chain_as_member`.
+        if let Some(member_func) = self.assoc_const_chain_as_member(func) {
+            return self.emit_call(&member_func, args, call_id);
+        }
         // Plan 184 Р10: a value/primitive `mut x T` free-fn param uses the
         // by-pointer in-out ABI (`T*`). Wrap the matching call args in `RefArg`
         // (emits `(&(place))`) so EVERY downstream arg-emission branch passes the
@@ -54348,6 +54357,52 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         ))
     }
 
+    /// [M-assoc-const-chained-method-call-p67] (окно №73, реестр 221.1 №73):
+    /// sibling of `variant_chain_as_member` just above — recognises a chained
+    /// method call directly on a bare out-of-body (D200 AMEND) assoc-const
+    /// receiver, no intermediate binding (`StatusCode.NOT_FOUND.into_response()`,
+    /// `StatusCode.OK.code()`). The SAME PascalCase path-collector fold
+    /// (parser/mod.rs `starts_uppercase` loop, ~8797 — kept greedy so
+    /// `Type.method(...)` static-ctor calls still parse as a single Path)
+    /// collapses `Type.CONST.method()` into ONE flat 3-part Path `[Type,
+    /// CONST, method]` instead of the `Member{obj: Member{...}, name}` shape a
+    /// bound-then-called receiver (`ro sc = StatusCode.NOT_FOUND;
+    /// sc.into_response()`) would get. Rewrite to `Member{obj: Path[Type,
+    /// CONST], name: method}` — `Path[Type, CONST]` already resolves through
+    /// the established assoc-const symbol emission (`Type_CONST`, `emit_expr`'s
+    /// `parts.len()==2` arm), so this flows through the SAME (collision-aware)
+    /// Member-call machinery a bound-then-called receiver already uses, zero
+    /// duplicated dispatch logic.
+    ///
+    /// Guarded on `Type_CONST` being a REGISTERED assoc-const symbol in
+    /// `var_types` (mirrors the `is_assoc_const_symbol` gate at `emit_expr`'s
+    /// Path arm, ~42493) AND `Type` being PascalCase — a genuine nested
+    /// module/type static Path (`mod.Type.static_method()`) never collides:
+    /// `var_types` only ever holds a `Type_CONST` key for an actual declared
+    /// assoc const (types/consts are disjoint Nova DECL namespaces).
+    fn assoc_const_chain_as_member(&self, func: &Expr) -> Option<Expr> {
+        let parts = match &func.kind {
+            ExprKind::Path(p) if p.len() == 3 => p,
+            _ => return None,
+        };
+        let head = &parts[0];
+        let const_name = &parts[1];
+        let symbol = format!("{}_{}", head, const_name);
+        let is_assoc_const = self.var_types.contains_key(&symbol)
+            && head.chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false);
+        if !is_assoc_const {
+            return None;
+        }
+        let recv = Expr::new(
+            ExprKind::Path(vec![head.clone(), const_name.clone()]),
+            func.span,
+        );
+        Some(Expr::new(
+            ExprKind::Member { obj: Box::new(recv), name: parts[2].clone() },
+            func.span,
+        ))
+    }
+
     /// Plan 172.1 U.4.1: thin entry over the legacy re-derivation. When the semantic
     /// pass annotated this Expr (resolved_types), DEBUG-asserts the annotation lowers
     /// to the SAME C-type — proving equivalence across the corpus before U.4.2+ flips
@@ -54403,6 +54458,20 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // the Path-only "no method segment" P67 panic. See
                     // `variant_chain_as_member`.
                     if let Some(member_func) = self.variant_chain_as_member(func) {
+                        return self.infer_call_ret_c(expr, &member_func, args);
+                    }
+                    // [M-assoc-const-chained-method-call-p67] (окно №73): a chained
+                    // method call directly on a bare out-of-body assoc-const
+                    // receiver, no intermediate binding — same flat 3-part Path
+                    // fold as the variant-chain case just above. Defensive mirror:
+                    // the checker now channels this call's return type into
+                    // `resolved_types` ahead of this legacy fn (Channel 2,
+                    // `infer_method_call_channel_type`'s 3-segment Path arm), so in
+                    // practice this rewrite is reached only if that channel missed
+                    // — still resolves correctly instead of falling to the
+                    // Path-only "no method segment" P67 panic below. See
+                    // `assoc_const_chain_as_member`.
+                    if let Some(member_func) = self.assoc_const_chain_as_member(func) {
                         return self.infer_call_ret_c(expr, &member_func, args);
                     }
                     // D39 embed generic-mono-proxy: mirror the emit-side receiver/
