@@ -1,0 +1,60 @@
+// [M-assoc-const-chained-method-call-p67] (окно №73, реестр 221.1 №73):
+// метод, вызванный НАПРЯМУЮ на голом out-of-body assoc-const (D200 AMEND),
+// без промежуточной привязки в локаль — `Type.CONST.method()`. Парсер
+// сворачивает эту цепочку в ОДИН 3-сегментный `ExprKind::Path([Type, CONST,
+// method])` (PascalCase path-collector, parser/mod.rs ~8797 — форма
+// сохраняется, не трогаем) вместо `Member{Member{...}}`, которую получил бы
+// bind-then-call (`ro sc = StatusCode.NOT_FOUND; sc.into_response()`).
+// До фикса это давало ICE emit_c.rs `infer_call_ret_c`
+// "[P67-LEGACY] Path call return type unknown (no method segment)".
+// Symmetric с уже закрытым 2-сегментным top-level-const кейсом
+// (module_const_instance_method.nv, [M-module-const-chars-bytes-resolution]).
+module spec_tests.conformance
+
+type P73StatusCode value {
+    priv v int
+}
+
+fn P73StatusCode @doubled() -> int => @v * 2
+fn P73StatusCode @is_ok() -> bool => @v == 200
+
+const P73StatusCode.OK P73StatusCode = { v: 200 }
+const P73StatusCode.NOT_FOUND P73StatusCode = { v: 404 }
+
+test "assoc-const цепной method-вызов без промежуточной привязки: скаляр (p67-fix)" {
+    assert(P73StatusCode.OK.doubled() == 400)
+    assert(P73StatusCode.NOT_FOUND.doubled() == 808)
+}
+
+test "assoc-const цепной method-вызов: bool-возврат + использование в выражении (p67-fix)" {
+    assert(P73StatusCode.OK.is_ok())
+    assert(!P73StatusCode.NOT_FOUND.is_ok())
+    assert(P73StatusCode.OK.doubled() + 1 == 401)
+}
+
+type P73Point value {
+    x int
+    y int
+}
+
+type P73Rect value {
+    origin P73Point
+    size int
+}
+
+fn P73Rect @corner() -> P73Point => @origin
+fn P73Rect @scaled_size() -> int => @size * 10
+
+const P73Rect.UNIT P73Rect = { origin: { x: 7, y: 9 }, size: 3 }
+
+test "assoc-const цепной method-вызов, возврат композита + чтение поля (p67-fix)" {
+    assert(P73Rect.UNIT.corner().x == 7)
+    assert(P73Rect.UNIT.corner().y == 9)
+    assert(P73Rect.UNIT.scaled_size() == 30)
+}
+
+test "assoc-const цепной method-вызов внутри free-fn (не только top-level test-тело, p67-fix)" {
+    ro a = P73StatusCode.OK.doubled()
+    ro b = P73StatusCode.NOT_FOUND.doubled()
+    assert(a + b == 1208)
+}
