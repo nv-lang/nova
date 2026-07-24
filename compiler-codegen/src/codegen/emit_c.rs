@@ -3051,10 +3051,41 @@ impl CEmitter {
         use crate::ast::TypeRef as TR;
         // View-transparent on the RT side (mirrors the C-lowering `readonly T` ≡ `T`).
         let arg_rt = arg_rt.peel_view();
+        // [M-vec-of-fn-newtype-codegen] (реестр 221.1 №47): the checker types a generic
+        // method body (e.g. `Vec[T]`'s own `@cap`) ONCE, genuinely generically — its
+        // channel RT for an arg built from `T` (e.g. `@data *mut T`) is therefore
+        // `TypedPtr(_, TypeParam("T"))`, naming the ENCLOSING body's OWN still-abstract
+        // template param, never the concrete per-instantiation type (checker has no
+        // per-mono pass to re-check against). At EMIT time, though, we ARE inside one
+        // specific mono'd instantiation, and `current_type_subst` already carries the
+        // REAL substitution for that exact name (Stage-C2 precedent, ~22349, "at EMIT
+        // time current_type_subst already carries exactly that binding") — a hit there is
+        // the SAME "already-established mono truth" signal that precedent trusts, just
+        // read one level deeper (through a pointee, not the call's own turbofish). Redirect
+        // through it before the opacity guard below so this genuinely-resolved substitution
+        // (possibly itself a `Raw` C-name — the bridge's own transitional debt carrier, NOT
+        // a placeholder, see its doc) gets to participate in the structural unification
+        // instead of being read as "still generic". A miss (no entry — truly still-generic/
+        // erased context) falls through unchanged to the ordinary exclusion.
+        let redirected;
+        let arg_rt: &R = if let R::TypeParam(name) = arg_rt {
+            match self.current_type_subst.get(name.as_str()) {
+                Some(sub) => { redirected = sub.clone(); &redirected }
+                None => arg_rt,
+            }
+        } else {
+            arg_rt
+        };
         // Never bind a residual/opaque RT as a "concrete" arg (the string path skips
-        // empty / `void*` for the same reason): a `TypeParam`/`Any`/`Raw`/`Unit` arg is not
-        // a resolved substitution and would make the printer re-emit an erased placeholder.
-        if matches!(arg_rt, R::TypeParam(_) | R::Any | R::Raw(_) | R::Unit) {
+        // empty / `void*` for the same reason): a still-unredirected `TypeParam`/`Any`/
+        // `Unit` arg is not a resolved substitution and would make the printer re-emit an
+        // erased placeholder. `Raw` is deliberately NOT excluded here (unlike the pre-
+        // [M-vec-of-fn-newtype-codegen] version of this guard): the checker channel this
+        // function normally reads from never produces a top-level `Raw` (it is an
+        // EMITTER-side carrier, `Emitter::lift_c_name`-only) — the only way `arg_rt` is
+        // `Raw` at this point is via the redirect just above, where it is BY CONSTRUCTION
+        // an already-resolved mono substitution, never a placeholder.
+        if matches!(arg_rt, R::TypeParam(_) | R::Any | R::Unit) {
             return;
         }
         match param_ty {
@@ -3086,6 +3117,35 @@ impl CEmitter {
                             self.infer_type_param_binding_rt(g, a, slots);
                         }
                     }
+                }
+            }
+            // [M-vec-of-fn-newtype-codegen] (реестр 221.1 №47) `*T`/`*mut T`/`*unsafe T`
+            // param — structural counterpart of the string Pointer arm (~22945). Unifies
+            // against the arg's `TypedPtr` RT directly, so a pointee whose C-lowering
+            // erases to `void*` (fn-newtype-over-closure, bare closure, `any`) still binds
+            // T to its REAL structural type (e.g. `Named{QH}`) — the string sibling can
+            // only strip a `*` off the ALREADY-erased C-name and gives up the moment the
+            // pointee reads `void*` (indistinguishable, at the string layer, from a
+            // genuinely-unresolved/erased slot). `resolve_mono_type_args`'s RT-fallback
+            // source lowers the bound RT back to C afterwards — that lowering legitimately
+            // produces `void*` for a closure-shaped T, which is now a STRUCTURALLY-earned
+            // answer, not a guessed placeholder.
+            TR::Pointer(inner, _) => {
+                let base = match inner.as_ref() {
+                    TR::Mut(ti, _) | TR::Uninit(ti, _) => ti.as_ref(),
+                    other => other,
+                };
+                if let R::TypedPtr(_, pointee) = arg_rt {
+                    self.infer_type_param_binding_rt(base, pointee, slots);
+                }
+            }
+            TR::Mut(inner, _) | TR::Uninit(inner, _) => {
+                if let TR::Pointer(p_inner, _) = inner.as_ref() {
+                    if let R::TypedPtr(_, pointee) = arg_rt {
+                        self.infer_type_param_binding_rt(p_inner, pointee, slots);
+                    }
+                } else {
+                    self.infer_type_param_binding_rt(inner, arg_rt, slots);
                 }
             }
             // fn(..)->T and other shapes: no structural binding (string path skips them too).
@@ -21919,6 +21979,32 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Source 1: turbofish (highest priority)
         for (i, tr) in turbofish_refs.iter().enumerate() {
             if i < subst.len() {
+                // [M-vec-of-fn-newtype-codegen] (реестр 221.1 №47): a BARE turbofish name
+                // (`alloc_buf[T](n)` called from inside `Vec[T]`'s own mono'd body, reusing
+                // the ENCLOSING instantiation's own type-param letter) that is a DIRECT hit
+                // in `type_subst_overrides`/`current_type_subst` is a REAL, final binding —
+                // resolved through the very first check `resolved_named_to_c` makes (before
+                // any protocol/generic-template/erasure fallback can produce a placeholder
+                // "void*"). Checked BEFORE (and bypassing) the general `c_ty != "void*"`
+                // guard below: that guard exists to reject a GENUINELY erased/placeholder
+                // result (e.g. an unresolved protocol-generic argument), which this direct
+                // subst-lookup structurally cannot be — so its "void*" (the true, permanent
+                // C representation of a closure/fn-newtype element, T=QH) must not be
+                // thrown away here the way an actually-ambiguous "void*" would be.
+                if let crate::ast::TypeRef::Named { path, generics, .. } = tr {
+                    if generics.is_empty() {
+                        if let Some(name) = path.last() {
+                            let direct_hit = self.type_subst_overrides.borrow().get(name.as_str()).cloned()
+                                .or_else(|| self.subst_c(name.as_str()));
+                            if let Some(c) = direct_hit {
+                                if !c.is_empty() {
+                                    subst[i].1 = Some(c);
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                }
                 if let Ok(c_ty) = self.type_ref_to_c(tr) {
                     if !c_ty.is_empty() && c_ty != "void*" {
                         subst[i].1 = Some(c_ty);
@@ -21940,6 +22026,40 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             if matches!(param.ty, crate::ast::TypeRef::Array(..)) {
                 let arg_c = self.infer_expr_c_type(arg.expr());
                 self.infer_type_param_binding(&param.ty, &arg_c, &mut subst);
+            }
+        }
+        // Source 2-rt [M-vec-of-fn-newtype-codegen] (реестр 221.1 №47): STRUCTURAL
+        // fallback for a type-param that appears ONLY under a raw/typed pointer
+        // (`*T`/`*mut T`) whose STRING C-type is opaque (`void*`/empty — e.g.
+        // `RawMem.copy_n_nonoverlapping[T](src *T, dst *mut T, ..)` called with
+        // `Vec[QH]`'s `@data`/growth-buffer args, QH a fn-newtype whose C repr genuinely
+        // IS `void*`). Source 2 above (string `infer_type_param_binding`) legitimately
+        // declines on `void*`/empty — it cannot tell "opaque-by-design closure repr"
+        // apart from "erased/unresolved" at the string layer, and the latter really
+        // must stay rejected. The checker channel (`resolved_types[ExprId]`, D315) keeps
+        // the FULL structural type (`TypedPtr(_, Named{QH})`) regardless of how it
+        // C-erases — unify the callee's declared param TypeRefs against that RT
+        // (`infer_type_param_binding_rt`'s Pointer arm) and, for any name this
+        // additionally resolves, lower the bound RT back to a C-string and adopt it.
+        // Gated to fill ONLY still-`None` slots — a slot Source 2 already bound (from a
+        // genuinely concrete arg) is never touched, so the existing Vec[int]/Vec[struct]
+        // path is byte-identical (no arg there ever hits the RT path: `channel_arg_rt`
+        // only fires when the slot is still unresolved, which never happens for them).
+        if subst.iter().any(|(_, v)| v.is_none()) {
+            let rt_slots = self.rt_slots_from_args(
+                fn_decl.params.iter().map(|p| &p.ty),
+                args,
+                &type_params,
+            );
+            for (name, rt_opt) in rt_slots {
+                let Some(rt) = rt_opt else { continue };
+                if let Some(slot) = subst.iter_mut().find(|(n, v)| n == &name && v.is_none()) {
+                    if let Ok(c) = self.resolved_type_to_c(&rt) {
+                        if !c.is_empty() {
+                            slot.1 = Some(c);
+                        }
+                    }
+                }
             }
         }
         // Source 2b: for fn-typed params, infer return type T from closure arg body.
@@ -30268,6 +30388,61 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 .collect();
                             if elem_tys.len() == arity {
                                 self.tuple_element_types.insert(binding.clone(), elem_tys);
+                            }
+                        }
+                    }
+                }
+                // [M-vec-of-fn-newtype-codegen] (реестр 221.1 №47): RHS is `v[i]`
+                // indexing a `Vec[QH]` whose element type is a fn-newtype/closure
+                // (`QH` = `type QH fn(int)->int`) — the C-level element type is
+                // `void*` (the erased closure representation, D239/A7), so nothing
+                // above registers `binding` as callable, and a later `got(21)` falls
+                // through to the "must be a free function" default (mangles a
+                // nonexistent `nova_fn_got` symbol — undefined-symbol link error).
+                // `generic_type_instance_info` only carries the ALREADY-erased C-name
+                // ("void*") for the element — indistinguishable from any OTHER
+                // closure-valued element type — so recovering "this element is
+                // specifically QH" needs the checker's STRUCTURAL channel
+                // (`resolved_types[obj.id]`, D315), which still carries the real
+                // `Named{Vec, [Named{QH}]}` (checker types concrete user code fully,
+                // unlike a generic template body). Mirrors `resolve_fn_typeref`'s own
+                // newtype-over-fn call-through resolution (D52-амендмент).
+                if let ExprKind::Index { obj, .. } = &decl.value.kind {
+                    if let Some(crate::types::ResolvedType::Named { name: base_name, args: elem_args, .. }) =
+                        self.channel_arg_rt(obj)
+                    {
+                        if base_name == "Vec" {
+                            // Two element shapes both erase to `void*` and both need this
+                            // registration: a fn-newtype name (`QH`, call-through via
+                            // `fn_newtype_sigs`, D52-амендмент) and a BARE closure type
+                            // (`Vec[fn(int)->int]`, the RT already IS the `Func` shape —
+                            // no name/registry indirection needed).
+                            let sig: Option<(Vec<String>, String)> = match elem_args.first() {
+                                Some(crate::types::ResolvedType::Named { name: elem_name, .. }) =>
+                                    self.fn_newtype_sigs.get(elem_name.as_str()).cloned().map(|f| {
+                                        if let TypeRef::Func { params: fp, return_type, .. } = f {
+                                            let ptys: Vec<String> = fp.iter()
+                                                .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".to_string()))
+                                                .collect();
+                                            let rty = return_type.as_ref()
+                                                .and_then(|t| self.type_ref_to_c(t).ok())
+                                                .unwrap_or_else(|| "nova_int".to_string());
+                                            (ptys, rty)
+                                        } else {
+                                            (Vec::new(), "nova_int".to_string())
+                                        }
+                                    }),
+                                Some(crate::types::ResolvedType::Func { params, ret, .. }) => {
+                                    let ptys: Vec<String> = params.iter()
+                                        .map(|t| self.resolved_type_to_c(t).unwrap_or_else(|_| "nova_int".to_string()))
+                                        .collect();
+                                    let rty = self.resolved_type_to_c(ret).unwrap_or_else(|_| "nova_int".to_string());
+                                    Some((ptys, rty))
+                                }
+                                _ => None,
+                            };
+                            if let Some(sig) = sig {
+                                self.fn_param_sigs.insert(binding.clone(), sig);
                             }
                         }
                     }
@@ -38946,8 +39121,53 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     if let ExprKind::Ident(type_name) = &base.kind {
                         if self.generic_types.contains(type_name) {
                             let type_args_c: Vec<String> = type_args.iter()
-                                .filter_map(|tr| self.type_ref_to_c(tr).ok())
-                                .filter(|c| !c.is_empty() && c != "void*")
+                                .filter_map(|tr| {
+                                    let c = self.type_ref_to_c(tr).ok()?;
+                                    if c.is_empty() { return None; }
+                                    if c != "void*" { return Some(c); }
+                                    // [M-vec-of-fn-newtype-codegen] (реестр 221.1 №47):
+                                    // `void*` is ALSO the true, final C representation of
+                                    // a real, concrete closure/fn-newtype/`any` type-arg
+                                    // (e.g. `Vec[QH].new()` reached from `[]QH.new()`'s
+                                    // desugar above, `QH` a `type QH fn(int)->int`
+                                    // newtype) — rejecting it here (the general filter
+                                    // exists to drop a genuinely UNRESOLVED generic-param
+                                    // turbofish arg) silently shrinks `type_args_c` below
+                                    // `type_args.len()`, so the `len() == len()` gate
+                                    // fails and this WHOLE generic-instance dispatch is
+                                    // skipped — the call then falls through to an
+                                    // unrelated, looser fallback (observed: mis-dispatches
+                                    // to some OTHER type's `static new`). For a BARE
+                                    // single-segment `Named` type-arg (no generics — the
+                                    // shape checked here) `type_ref_to_c` genuinely
+                                    // reaching `Ok("void*")` is NEVER the "no info at all"
+                                    // erased case (that one either `Err`s — unsubstituted
+                                    // type-param — or falls to the `Nova_<Name>*` stub
+                                    // fallback, ~4522; never `void*`): it is always either
+                                    // a real hit in `current_type_subst`/overrides for
+                                    // THIS exact name (the enclosing mono instantiation's
+                                    // own binding — legit) or a real declared alias/
+                                    // newtype/`any` (also legit). Byte-length heuristics on
+                                    // the NAME itself (e.g. "short + all-uppercase ⇒
+                                    // typaram") are unreliable — a genuine 2-letter
+                                    // UPPERCASE user type name (`QH`) collides with them —
+                                    // so this arm trusts the STRUCTURAL shape instead.
+                                    // `TypeRef::Func` (a BARE closure type-arg, no newtype
+                                    // — `Vec[fn(int)->int].new()`) is included too: it is
+                                    // ALWAYS fully concrete already (no type-param can hide
+                                    // inside a literal `fn(..)->T` turbofish spelling that
+                                    // would need resolving here) and unconditionally lowers
+                                    // to `void*` (~3892) — never an erasure signal.
+                                    if let crate::ast::TypeRef::Named { generics, .. } = tr {
+                                        if generics.is_empty() {
+                                            return Some(c);
+                                        }
+                                    }
+                                    if matches!(tr, crate::ast::TypeRef::Func { .. }) {
+                                        return Some(c);
+                                    }
+                                    None
+                                })
                                 .collect();
                             if type_args_c.len() == type_args.len() {
                                 let mangled = Self::compute_generic_type_c_name(type_name, &type_args_c);
@@ -55519,6 +55739,36 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     // T=int lost при inference → return-type void*.
                                     for (i, tr) in turbofish_args.iter().enumerate() {
                                         if i < subst.len() {
+                                            // [M-vec-of-fn-newtype-codegen] (реестр 221.1 №47):
+                                            // mirror of the identical relaxation in
+                                            // `resolve_mono_type_args`'s own Source 1 — a bare
+                                            // turbofish name (`alloc_buf[T](n)` inside `Vec[T]`'s
+                                            // own mono'd body, reusing the enclosing
+                                            // instantiation's OWN type-param letter) that is a
+                                            // DIRECT hit in `type_subst_overrides`/
+                                            // `current_type_subst` is a real, final binding — not
+                                            // the erasure placeholder the general `c_ty != "void*"`
+                                            // guard below exists to reject. Without this, a
+                                            // `let dst = alloc_buf[T](n)` inside `Vec[QH]`'s `@cap`
+                                            // (T=QH, a fn-newtype whose C repr genuinely IS `void*`)
+                                            // gets an EMPTY declared C type for `dst` (every source
+                                            // below also declines on `void*`), and codegen emits the
+                                            // `let` without its type prefix — an undeclared-`dst`
+                                            // C compile error.
+                                            if let crate::ast::TypeRef::Named { path: tp, generics: tg, .. } = tr {
+                                                if tg.is_empty() {
+                                                    if let Some(tn) = tp.last() {
+                                                        let direct_hit = self.type_subst_overrides.borrow().get(tn.as_str()).cloned()
+                                                            .or_else(|| self.subst_c(tn.as_str()));
+                                                        if let Some(c) = direct_hit {
+                                                            if !c.is_empty() {
+                                                                subst[i].1 = Some(c);
+                                                                continue;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
                                             if let Ok(c_ty) = self.type_ref_to_c(tr) {
                                                 if !c_ty.is_empty() && c_ty != "void*" {
                                                     subst[i].1 = Some(c_ty);
