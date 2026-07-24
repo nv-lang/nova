@@ -1,0 +1,43 @@
+// m221_81_monotonic_static_singlefile.nv — regression pin, реестр 221.1 №81.
+//
+// Мин-репро класса `[P67-LEGACY] Path call return type unknown for
+// method=now`: одиночный Path-call статик-метода (`Monotonic.now()`,
+// объявлен `export fn Monotonic.now() Time -> Monotonic` в
+// std/time/duration/monotonic.nv) ИМПОРТИРОВАННОГО модуля, с эффектом
+// (`Time`), в STANDALONE compile-unit (эта фикстура — отдельный CU в
+// standalone-lane, НЕ мега-CU).
+//
+// Аудит-находка (221.1 №81): сам этот ICE-класс НЕ является дефектом
+// «single-file теряет checker-канал» — `f1_check_call`'s Path(len==2)-ветка
+// корректно резолвит `Monotonic.now()` и пишет `resolved_callees`/
+// `fn_ret_by_span` В ЛЮБОМ compile-unit (одно-файловом и мега-), ЕСЛИ
+// `Monotonic` реально импортирован (`import std.time.duration`, как ниже).
+// Репортнутый ICE был вызван ДРУГИМ багом: `std/src/net/stress_test.nv`
+// вызывал `Monotonic.now()` БЕЗ импорта вообще — молча проходило ТОЛЬКО
+// внутри мега-CU (spec_tests/conformance), где какой-то другой файл ЭТОГО
+// же CU уже импортировал `std.time.duration` (маскировка недостающего
+// импорта); изолированный single-file/folder-компайл (std/net в одиночку)
+// такого соседа не имел — молчание чекера (`method_overloads` вернул
+// `None`, отсутствующий import НЕ диагностируется) доходило до emit_c'ового
+// legacy-фоллбэка `infer_call_ret_c`, у которого канала на этот случай тоже
+// нет → паника. Настоящий фикс — добавленный import в stress_test.nv.
+// Эта фикстура пинит ПОЗИТИВНЫЙ случай (корректный импорт → корректная
+// компиляция single-file/standalone) так, чтобы будущая регрессия в
+// Path-call-канале чекера (Channel 1: `resolved_callees` → `fn_ret_by_span`)
+// для статик-методов ИМПОРТИРОВАННЫХ модулей была поймана здесь.
+// EXPECT_STDOUT M221_81_MONOTONIC_STATIC_SINGLEFILE_OK
+
+module standalone.m221_81_monotonic_static_singlefile
+
+import std.time.duration
+
+fn main() Time -> () {
+    ro t0 = Monotonic.now()
+    ro t1 = Monotonic.now()
+    ro dt = t1.elapsed_since(t0)
+    if dt.millis() >= 0 {
+        println("M221_81_MONOTONIC_STATIC_SINGLEFILE_OK")
+    } else {
+        println("UNEXPECTED")
+    }
+}

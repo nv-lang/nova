@@ -12400,6 +12400,29 @@ impl<'a> TypeCheckCtx<'a> {
                         }
                         if compat.len() == 1 { compat[0] } else { return; }
                     }
+                    // [M-p81-unknown-static-receiver-silent-p67] (окно №81, реестр 221.1):
+                    // `method_overloads` found NOTHING for this `Type.method(...)` — stays a
+                    // silent `return` (pre-existing behavior, byte-identical). INVESTIGATED: a
+                    // checker-side diagnostic here ("Type not declared/imported") was
+                    // prototyped to close the class of bug this arm actually hit (real root
+                    // cause below) but reverted — `nova check std/src` regressed 42 files
+                    // (false positives on: cross-module top-level `const` receivers like
+                    // `I64_MIN.to_nanos()` not covered by the LOCAL-only `const_types` map;
+                    // pure-runtime intrinsic namespaces with no `.nv` `type` decl at all —
+                    // `ChanReader.close_after(...)`, and siblings `Channel`/`CancelToken`/
+                    // `StringBuilder`/`WriteBuffer`/`ReadBuffer` — resolved only via emit_c's
+                    // hardcoded B12*-class dispatch, invisible to the checker's registries).
+                    // A safe general fix needs a real cross-module const index + a checker-
+                    // visible intrinsic-namespace oracle first — out of scope for this window;
+                    // left as a finding, not implemented, to avoid the zero-tolerance
+                    // regression. Root cause of the REPORTED ICE fixed at the true source
+                    // instead: `std/src/net/stress_test.nv` called bare `Monotonic.now()`
+                    // with NO `import std.time.duration` anywhere in its module's peer-file
+                    // group — silently tolerated ONLY inside a huge multi-file compile unit
+                    // (spec_tests/conformance) that happens to ALSO contain an unrelated file
+                    // importing the real declaration (masking the missing import); an
+                    // isolated single-file/folder compile of just std/net has no such
+                    // neighbor, exposing the miss as this ICE. Fixed by adding the import.
                     None => return,
                 }
             }

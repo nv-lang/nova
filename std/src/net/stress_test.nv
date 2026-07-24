@@ -21,6 +21,17 @@
 
 module std.net
 
+// [M-p81-unknown-static-receiver-silent-p67] (окно №81): `Monotonic` was used
+// below with NO import anywhere in this module's peer-file group — silently
+// tolerated only inside a huge multi-file compile unit (spec_tests/conformance)
+// that happens to ALSO contain an unrelated file importing the real
+// declaration (std/time/duration/monotonic.nv); an isolated single-file/folder
+// compile of just std/net (`nova build`/`nova test` on split_test.nv,
+// byte_surface_test.nv, ...) has no such neighbor, exposing the miss as a
+// checker-silent `[P67-LEGACY] ... method=now` ICE in emit_c. Real fix: import
+// the module that actually declares `Monotonic`.
+import std.time.duration
+
 test "net2/stress: 8 fibers × concurrent echo through one listener, per-fiber pattern integrity" {
     with Net = real_net() {
         ro ch_port = Channel.new(8)
