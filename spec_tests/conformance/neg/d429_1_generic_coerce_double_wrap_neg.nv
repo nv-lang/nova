@@ -1,0 +1,28 @@
+// EXPECT_COMPILE_ERROR cannot pass
+//
+// Plan 214.1 (D429 amend, R4 "один уровень", extended to generic patterns):
+// `D429Box[T] @data() -> ro T` unifies EXACTLY one level. A doubly-nested
+// value `D429Box[D429Box[int]]` at a position expecting the INNERMOST `int`
+// must NOT auto-unwrap twice — the single registered pattern unifies
+// `?T := D429Box[int]` (one hop), whose canonical key is `D429Box[int]`, NOT
+// `int` — a second, chained lookup never happens (the design deliberately
+// never loops `generic_coerce_lookup`), so this is an honest type mismatch,
+// not a double-coercion.
+module neg.d429_1_generic_coerce_double_wrap_neg
+
+type D429Box[T] { data T }
+
+#coerce
+export fn D429Box[T] @data() -> ro T => @data
+
+fn d429_dw_needs_int(n int) -> int => n
+
+fn main() {
+    ro inner D429Box[int] = { data: 7 }
+    ro outer D429Box[D429Box[int]] = { data: inner }
+    // `outer` is `D429Box[D429Box[int]]`; ONE unification step gives
+    // `D429Box[int]` (via `outer.data()`), which is still NOT `int` — the
+    // position below expects `int` directly. R4 forbids the second hop, so
+    // this must be a genuine E7301 mismatch, not `outer.data().data()`.
+    print(d429_dw_needs_int(outer))
+}

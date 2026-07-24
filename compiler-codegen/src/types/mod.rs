@@ -3418,6 +3418,21 @@ struct TypeCheckCtx<'a> {
     /// scan of `MapLitCtx`'s own copy (same data, R9 "one window"; see that
     /// function's doc for why two independent builds stay in sync).
     coerce_pairs: HashMap<String, Vec<CoercePairEntry>>,
+    /// Plan 214.1 (D429 amend, R14 RETRACTED): GENERIC `#coerce` patterns —
+    /// receiver base type NAME (`Json`) → applicable patterns, consumed by
+    /// `assignable`'s accept-path fallback AFTER the concrete `coerce_pairs`
+    /// lookup above misses (see `generic_coerce_lookup`). Same
+    /// `collect_coerce_pairs` collector, same parallel-scan-twice shape as
+    /// `coerce_pairs` (R9 "one window").
+    generic_coerce_patterns: HashMap<String, Vec<GenericCoercePattern>>,
+    /// Plan 214.1: the enclosing `#coerce` fn's OWN declaration span while its
+    /// body is being checked — `None` outside any `#coerce` fn body. Feeds
+    /// R13' (anti-self-recursion): a GENERIC pattern's own declaration is
+    /// excluded from `generic_coerce_lookup` candidates while checking that
+    /// SAME declaration's body (`Json[T] @data() -> T => @` would otherwise
+    /// rewrite `@` into `@.data()` — infinite recursion). RAII-published by
+    /// `CoerceSelfGuard`, mirrors `current_fn_return_ty`'s pattern.
+    current_coerce_decl_span: std::cell::RefCell<Option<Span>>,
     /// [M-compress-checksum-structvariant-ctor-xmodule] (Plan 173 P1): ВСЕ
     /// имена sum-вариантов (payload и unit), собранные по `module.items`
     /// НАПРЯМУЮ (Vec-обход — теряет ноль записей), в отличие от `types`
@@ -3695,6 +3710,18 @@ struct FnReturnTyGuard<'a, 'b> {
 impl<'a, 'b> Drop for FnReturnTyGuard<'a, 'b> {
     fn drop(&mut self) {
         *self.ctx.current_fn_return_ty.borrow_mut() = self.prev.take();
+    }
+}
+
+/// Plan 214.1 (D429 amend, R13'): RAII guard for `current_coerce_decl_span`
+/// (mirrors `FnReturnTyGuard` exactly).
+struct CoerceSelfGuard<'a, 'b> {
+    ctx: &'b TypeCheckCtx<'a>,
+    prev: Option<Span>,
+}
+impl<'a, 'b> Drop for CoerceSelfGuard<'a, 'b> {
+    fn drop(&mut self) {
+        *self.ctx.current_coerce_decl_span.borrow_mut() = self.prev.take();
     }
 }
 
@@ -4248,7 +4275,8 @@ impl<'a> TypeCheckCtx<'a> {
         // diagnostics discarded here (already surfaced via `MapLitCtx::
         // check_module`, which runs earlier in `check_module_impl`).
         let coerce_lookup = |n: &str| types.get(n).map(|td| td.kind.clone());
-        let (coerce_pairs, _coerce_errors_dup) = collect_coerce_pairs(module, &coerce_lookup);
+        let (coerce_pairs, generic_coerce_patterns, _coerce_errors_dup) =
+            collect_coerce_pairs(module, &coerce_lookup);
 
         // [M-p67-path-call-const-receiver-method-ice]: const-name → declared
         // type, explicit-annotation consts only (see field doc on
@@ -4281,7 +4309,7 @@ impl<'a> TypeCheckCtx<'a> {
             }
         }
 
-        TypeCheckCtx { arity, sig, synth_methods, blanket_method_names, types, const_types, assoc_const_types, coerce_pairs, sum_variant_names, file_local_types, imported_modules,
+        TypeCheckCtx { arity, sig, synth_methods, blanket_method_names, types, const_types, assoc_const_types, coerce_pairs, generic_coerce_patterns, current_coerce_decl_span: std::cell::RefCell::new(None), sum_variant_names, file_local_types, imported_modules,
             entry_imported_modules,
             entry_file_ids,
             const_fn_names,
@@ -7068,6 +7096,15 @@ impl<'a> TypeCheckCtx<'a> {
         let prev_ret_ty = self.current_fn_return_ty.borrow_mut().take();
         *self.current_fn_return_ty.borrow_mut() = fd.return_type.clone();
         let _ret_ty_guard = FnReturnTyGuard { ctx: self, prev: prev_ret_ty };
+        // Plan 214.1 (D429 amend, R13'): publish `fd`'s OWN span while its
+        // body is being checked, so a GENERIC `#coerce` pattern's own
+        // declaration is excluded from matching against itself (anti-self-
+        // recursion) — a no-op unless `fd.coerce_attr` (cheap either way).
+        let prev_coerce_span = self.current_coerce_decl_span.borrow_mut().take();
+        if fd.coerce_attr {
+            *self.current_coerce_decl_span.borrow_mut() = Some(fd.span);
+        }
+        let _coerce_self_guard = CoerceSelfGuard { ctx: self, prev: prev_coerce_span };
         // generic-match-scope-gap fix: publish the enclosing fn's OWN generic
         // params (name + bounds) — see `current_fn_generics` field doc.
         // Restored on exit via `FnGenericsGuard` (RAII — covers early returns).
@@ -10090,6 +10127,13 @@ impl<'a> TypeCheckCtx<'a> {
                     ),
                 );
             }
+            // Plan 214.1 (D429 amend, R3'): ≥2 GENERIC `#coerce` patterns
+            // unify to the SAME (I,O) pair at this position — `msg` is
+            // already a fully-formed diagnostic (see `Compat::CoerceConflict`
+            // doc).
+            Compat::CoerceConflict { msg } => {
+                errors.push(Diagnostic::new(msg, value.span));
+            }
             Compat::Ok | Compat::Unknown => {}
         }
         // D176 (Plan 108): `readonly T → T` is forbidden (E_READONLY_COERCE).
@@ -12883,6 +12927,15 @@ impl<'a> TypeCheckCtx<'a> {
                         );
                     }
                 }
+                // Plan 214.1 (D429 amend, R3'): see `Compat::CoerceConflict` doc.
+                Compat::CoerceConflict { msg } => {
+                    errors.push(
+                        Diagnostic::new(msg, arg.expr().span).with_note_at(
+                            format!("parameter `{}` declared here", param.name),
+                            param.span,
+                        ),
+                    );
+                }
                 Compat::Ok | Compat::Unknown => {
                     // [M-generic-arg-type-mismatch-silent] The Ty/TyCat lowering
                     // folds every int width into one `TyCat::Int` and drops a
@@ -15364,7 +15417,84 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
         }
+        // Plan 214.1 (D429 amend): GENERIC `#coerce` pattern fallback — tried
+        // ONLY after the CONCRETE `coerce_pairs` lookup above misses (design
+        // §2 pseudocode: concrete lookup first, patterns second — the hot
+        // str/[]u8 concrete path never even reaches `named_base_and_args`).
+        if let Compat::Bad { .. } = &direct {
+            if let Some(verdict) = self.generic_coerce_lookup(expr, expected, scope) {
+                return verdict;
+            }
+        }
         direct
+    }
+
+    /// Plan 214.1 (D429 amend): GENERIC `#coerce` pattern accept-path.
+    /// `None` — no applicable pattern, caller falls through to `direct`'s
+    /// mismatch. `Some(Compat::Ok)` — EXACTLY one pattern unifies to
+    /// `expected`'s canonical key. `Some(Compat::CoerceConflict{..})` — R3':
+    /// ≥2 patterns unify to the SAME (I,O) pair at this position (see that
+    /// variant's doc for why this can only be caught here, not at decl time).
+    ///
+    /// R13' (anti-self-recursion): a pattern whose `decl_span` equals
+    /// `current_coerce_decl_span` (i.e. we are checking THAT SAME
+    /// declaration's own body) is excluded from candidates — `Json[T] @data()
+    /// -> T => @` must stay an honest type mismatch, not rewrite `@` into
+    /// `@.data()` (infinite recursion).
+    fn generic_coerce_lookup(
+        &self,
+        expr: &Expr,
+        expected: &TypeRef,
+        scope: &HashMap<String, TypeRef>,
+    ) -> Option<Compat> {
+        let input_ty = self.coerce_expr_input_shape(expr, scope)?;
+        let (base, concrete_args) = named_base_and_args(&input_ty)?;
+        let patterns = self.generic_coerce_patterns.get(&base)?;
+        let exp_key = coerce_type_key(expected);
+        let self_span = *self.current_coerce_decl_span.borrow();
+        let matches: Vec<&GenericCoercePattern> = patterns
+            .iter()
+            .filter(|p| Some(p.decl_span) != self_span)
+            .filter(|p| {
+                unify_coerce_receiver(&p.params, &concrete_args)
+                    .map(|bindings| {
+                        coerce_type_key(&substitute_coerce_shape(&p.ret_shape, &bindings)) == exp_key
+                    })
+                    .unwrap_or(false)
+            })
+            .collect();
+        match matches.len() {
+            0 => None,
+            1 => Some(Compat::Ok),
+            _ => {
+                let decls: Vec<String> = matches
+                    .iter()
+                    .map(|p| format!("`{base}[..] @{}()`", p.method_name))
+                    .collect();
+                Some(Compat::CoerceConflict {
+                    msg: format!(
+                        "[E_COERCE_DUPLICATE_PAIR] ≥2 generic `#coerce` patterns on `{base}` \
+                         unify to the same pair `{base}[..] → {exp_key}` at this position \
+                         (D429 R3'): {}. At most one `#coerce` may provide a given (I,O) pair \
+                         — remove or rename one of the declarations.",
+                        decls.join(", ")
+                    ),
+                })
+            }
+        }
+    }
+
+    /// Plan 214.1: like `coerce_expr_input_name`, but returns the FULL
+    /// `TypeRef` (generics included) — a generic pattern lookup needs both
+    /// the base name AND the concrete generic args to unify against `params`.
+    /// Same literal fast-path as `coerce_expr_input_name` (a str literal is
+    /// always plain `str`, no generics — irrelevant to any generic pattern,
+    /// but kept for symmetry/consistency with that function).
+    fn coerce_expr_input_shape(&self, expr: &Expr, scope: &HashMap<String, TypeRef>) -> Option<TypeRef> {
+        if matches!(&expr.kind, ExprKind::StrLit(_) | ExprKind::InterpolatedStr { .. }) {
+            return Some(TypeRef::Named { path: vec!["str".to_string()], generics: Vec::new(), span: Span::dummy() });
+        }
+        self.infer_expr_type(expr, scope)
     }
 
     /// Plan 214 (D429): the concrete type NAME a `#coerce` lookup should use
@@ -19242,6 +19372,15 @@ enum Compat {
     /// value-range-unsafe sign-flip / cross). Требует явного `as`. `from`/`to` —
     /// отображения исходного и целевого типов для диагностики.
     Narrowing { from: String, to: String },
+    /// Plan 214.1 (D429 amend, R3'): a GENERIC `#coerce` pattern lookup found
+    /// ≥2 candidates unifying to the SAME (I,O) pair at this exact position —
+    /// `msg` is a fully-formed `[E_COERCE_DUPLICATE_PAIR]`-prefixed
+    /// diagnostic text (mirrors `OutOfRange`'s "ready-made suffix" shape,
+    /// pushed by callers verbatim). Distinct from a plain `Bad` mismatch: the
+    /// position DOES have a valid coercion, just a non-deterministic CHOICE
+    /// of which declaration provides it (see `generic_coerce_lookup` doc for
+    /// why decl-time R3 dedup can't catch this for generic patterns).
+    CoerceConflict { msg: String },
 }
 
 /// Plan 142 (D227 Rule 3/6): диапазон `[min, max]` для sized-int типа.
@@ -19527,10 +19666,14 @@ fn coerce_type_key(ty: &TypeRef) -> String {
                 )
             }
         }
-        // Tuple/Func/Protocol/etc — out of V1 scope (R14 rejects generic decls, and a
-        // #coerce return type this shape would already need method-level generics to
-        // express meaningfully); a stable-enough fallback for a key that will simply
-        // never match anything real.
+        // Tuple/Func/Protocol/etc — out of scope for a #coerce O type (would need
+        // method-level generics to express meaningfully, themselves unsupported —
+        // see `collect_coerce_pairs`'s method-level-generic reject); a stable-enough
+        // fallback for a key that will simply never match anything real. Plan 214.1:
+        // by the time a GENERIC pattern's `ret_shape` reaches this function, it has
+        // already been run through `substitute_coerce_shape` — every `TypeRef` this
+        // function ever sees (concrete pair OR substituted generic pattern) is fully
+        // concrete, so this stringifier never needs to resolve a bare type-param name.
         other => format!("{other:?}"),
     }
 }
@@ -19554,30 +19697,187 @@ fn simple_named_type_name(ty: &TypeRef) -> Option<String> {
     }
 }
 
-/// Plan 214 (D429) Ф.1: scan `module` (entry items + peer_files) for
-/// `#coerce`-attributed `fn`s, validate them (R1 unarity/receiver-form, R2
-/// zero-cost view/finalize shape, R3 one-decl-per-pair, R11 single-wrapper
-/// primacy, R12 effect-freedom, R14 generic-forms-forbidden), and return the
-/// accept/rewrite/lint-shared registry (`I type name → applicable pairs`)
-/// plus any validation diagnostics.
+// ─── Plan 214.1 (D429 amend): generic `#coerce` — R14 RETRACTED ───────────
+//
+// Design (docs/plans/214.1-generic-coerce.md §2-3): a SECOND, separate
+// registry of `GenericCoercePattern`s (keyed by receiver BASE name, e.g.
+// `Json`), checked ONLY when the concrete `coerce_pairs` lookup misses
+// (`Json[User] → User` never touches the hot str/[]u8 concrete path). The
+// receiver's OWN carrier-bracket generics (`Json[T]`) are the ONLY pattern
+// variables V1 supports; unification is ONE-DIRECTIONAL and shallow (R4
+// "без рекурсии вглубь" — binds whole top-level slots, never recurses INTO
+// a slot's own nested generics), so `Json[Json[T]]` at a `User`-expected
+// position binds `?T := Json[User]` (one level), NOT `?T := User` (two
+// levels) — the double-unwrap R4 forbids never happens because nothing
+// EVER chains a second lookup.
+
+/// Plan 214.1: one validated GENERIC `#coerce` pattern. Built ONLY by
+/// [`collect_coerce_pairs`] (same collector, same validation posture as
+/// `CoercePairEntry` — see that struct's doc for the "one window" rationale,
+/// identical here). No decl-time (I,O) IDENTITY exists for a pattern (the
+/// true concrete pair only crystallizes once its `params` are bound at a
+/// SPECIFIC call site) — this is exactly why R3' collision detection lives
+/// at APPLICATION time (`generic_coerce_lookup`), unlike R3's decl-time
+/// `seen_pairs` for concrete pairs.
+#[derive(Debug, Clone)]
+pub(crate) struct GenericCoercePattern {
+    /// Positional carrier-generic parameter NAMES: `Json[T]` → `["T"]`,
+    /// `Pair[K, V]` → `["K", "V"]`. Index *i* corresponds to the receiver's
+    /// *i*-th generic ARG slot — `unify_coerce_receiver` binds these names
+    /// against a concrete value's own generic args at the SAME positions
+    /// (arity mismatch ⇒ no match). Validated at collection time to be bare
+    /// single-segment `TypeRef::Named` references (see `collect_coerce_pairs`
+    /// `E_COERCE_GENERIC_PATTERN_UNSUPPORTED` reject) — never a nested or
+    /// concrete shape.
+    pub params: Vec<String>,
+    /// Declared return type AS WRITTEN — may reference `params` names bare
+    /// (`T`) or nested (`Vec[T]`). Substituted via `substitute_coerce_shape`
+    /// once `params` are bound by a specific unification, then keyed via
+    /// `coerce_type_key` for the exp-key compare — byte-identical
+    /// canonicalization to the concrete-pair path once substitution has made
+    /// it fully concrete.
+    pub ret_shape: TypeRef,
+    /// Method name to call on the receiver (`x` → `x.method_name()`), same
+    /// role as `CoercePairEntry::method_name`.
+    pub method_name: String,
+    /// finalize vs view lane (D429 R2) — same role as `CoercePairEntry`.
+    pub is_finalize: bool,
+    /// Declaring `#coerce fn`'s span — R13' self-exclusion (compared against
+    /// `current_coerce_decl_span`) + future diagnostic "declared here" notes.
+    pub decl_span: Span,
+}
+
+/// Plan 214.1: like `simple_named_type_name`, but ALSO returns the type's
+/// generic ARGS at any arity (possibly empty) — a GENERIC `#coerce` pattern
+/// lookup needs both the base name (`"Json"`, to index `generic_coerce_
+/// patterns`) AND the concrete args (`[User]`, to unify against a pattern's
+/// `params`), which the concrete-only `simple_named_type_name` (empty-
+/// generics-only) can't supply.
+fn named_base_and_args(ty: &TypeRef) -> Option<(String, Vec<TypeRef>)> {
+    match ty {
+        TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) | TypeRef::Uninit(inner, _) => {
+            named_base_and_args(inner)
+        }
+        TypeRef::Named { path, generics, .. } => Some((path.last()?.clone(), generics.clone())),
+        _ => None,
+    }
+}
+
+/// Plan 214.1: one-directional structural unify of a GENERIC `#coerce`
+/// pattern's receiver-generic SLOTS (`params`, each a bare carrier
+/// type-param name by construction) against a concrete value's ACTUAL
+/// generic args at the SAME positions. Deliberately shallow (R4 "без
+/// рекурсии вглубь", design §2): each slot binds to whatever concrete
+/// `TypeRef` sits at that position WHOLESALE — no unification INTO that
+/// arg's own nested structure. The same param name repeated at ≥2 positions
+/// (e.g. a hypothetical `Pair[T, T]` receiver) must bind to a STRUCTURALLY
+/// IDENTICAL concrete arg (compared via `coerce_type_key`) or the whole
+/// unify fails — consistency, not silent aliasing. Arity mismatch (`params.
+/// len() != concrete_args.len()`) — e.g. a 1-param pattern against a value
+/// whose base name happens to collide at a different arity — is simply no
+/// match, not an error (arity mismatches are exceedingly unlikely in
+/// practice: the pattern's arity is the DECLARING type's own arity).
+fn unify_coerce_receiver(
+    params: &[String],
+    concrete_args: &[TypeRef],
+) -> Option<HashMap<String, TypeRef>> {
+    if params.len() != concrete_args.len() {
+        return None;
+    }
+    let mut bindings: HashMap<String, TypeRef> = HashMap::new();
+    for (name, arg) in params.iter().zip(concrete_args) {
+        match bindings.get(name) {
+            Some(existing) => {
+                if coerce_type_key(existing) != coerce_type_key(arg) {
+                    return None;
+                }
+            }
+            None => {
+                bindings.insert(name.clone(), arg.clone());
+            }
+        }
+    }
+    Some(bindings)
+}
+
+/// Plan 214.1: substitute BARE carrier type-param references (per
+/// `bindings`, produced by `unify_coerce_receiver`) into a GENERIC `#coerce`
+/// pattern's `ret_shape`, producing the CONCRETE output type for one
+/// specific unification (`Json[T] -> T` + `?T := User` → `User`; `Json[T] ->
+/// Vec[T]` + `?T := User` → `Vec[User]`). Unlike `unify_coerce_receiver`
+/// (deliberately shallow, R4 — a MATCH/search that must stay bounded),
+/// this recurses freely through nested `generics`/`Array`/wrapper shapes —
+/// it is a plain mechanical replace with no search or ambiguity, so
+/// unbounded depth here carries none of R4's risk.
+fn substitute_coerce_shape(ty: &TypeRef, bindings: &HashMap<String, TypeRef>) -> TypeRef {
+    match ty {
+        TypeRef::Readonly(inner, sp) => {
+            TypeRef::Readonly(Box::new(substitute_coerce_shape(inner, bindings)), *sp)
+        }
+        TypeRef::Mut(inner, sp) => {
+            TypeRef::Mut(Box::new(substitute_coerce_shape(inner, bindings)), *sp)
+        }
+        TypeRef::Uninit(inner, sp) => {
+            TypeRef::Uninit(Box::new(substitute_coerce_shape(inner, bindings)), *sp)
+        }
+        TypeRef::Array(inner, sp) => {
+            TypeRef::Array(Box::new(substitute_coerce_shape(inner, bindings)), *sp)
+        }
+        TypeRef::FixedArray(n, inner, sp) => {
+            TypeRef::FixedArray(*n, Box::new(substitute_coerce_shape(inner, bindings)), *sp)
+        }
+        TypeRef::Named { path, generics, span: _ } if path.len() == 1 && generics.is_empty() => {
+            bindings.get(&path[0]).cloned().unwrap_or_else(|| ty.clone())
+        }
+        TypeRef::Named { path, generics, span } => TypeRef::Named {
+            path: path.clone(),
+            generics: generics.iter().map(|g| substitute_coerce_shape(g, bindings)).collect(),
+            span: *span,
+        },
+        // Tuple/Func/Protocol/Unit/etc — a bound type-param can't legally
+        // appear bare inside these shapes for a V1 #coerce ret_shape (the
+        // receiver-shape validation only ever binds `params` at Named-arg
+        // positions); pass through unchanged.
+        other => other.clone(),
+    }
+}
+
+/// Plan 214 (D429) Ф.1 / Plan 214.1 (D429 amend): scan `module` (entry items
+/// + peer_files) for `#coerce`-attributed `fn`s, validate them (R1
+/// unarity/receiver-form, R2 zero-cost view/finalize shape, R3
+/// one-decl-per-pair for CONCRETE pairs, R11 single-wrapper primacy, R12
+/// effect-freedom, and — Plan 214.1 — the generic-PATTERN shape gate that
+/// replaced R14's blanket reject), and return THREE things: the concrete
+/// accept/rewrite/lint-shared registry (`I type name → applicable pairs`,
+/// UNCHANGED byte-for-byte from Plan 214), the NEW generic-pattern registry
+/// (`I base type name → applicable patterns`, Plan 214.1), and any
+/// validation diagnostics.
 ///
 /// `lookup` — resolve a type NAME to its declared `TypeDeclKind`, EXACTLY the
 /// closure shape `single_wrap_candidates`/`wrap_kind_of` already take (R11
 /// reuses `single_wrap_candidates` verbatim to detect a pair already covered
 /// by the built-in newtype/sum wrapper).
 ///
-/// Called from TWO independent build sites (`MapLitCtx::build` — surfaces the
-/// diagnostics via `MapLitCtx::check_module` — and `TypeCheckCtx::build` —
-/// consumes only `by_input`, diagnostics discarded to avoid double-reporting)
-/// — same parallel-scan shape as `wrap_types`/`types` elsewhere in this file;
-/// deterministic over the same `module`, so both copies agree byte-for-byte
-/// (R9 "one window" is about the DATA being identical, not about a single
-/// shared mutable instance — see `CoercePairEntry` doc).
+/// Called from THREE independent build sites (`MapLitCtx::build` — surfaces
+/// the diagnostics via `MapLitCtx::check_module` — `TypeCheckCtx::build` —
+/// consumes both registries, diagnostics discarded to avoid double-reporting
+/// — and the finalize-lane use-after-consume scan, concrete-pairs-only,
+/// generic patterns discarded there: no fixture requires a generic+finalize
+/// combination in Plan 214.1's scope) — same parallel-scan shape as
+/// `wrap_types`/`types` elsewhere in this file; deterministic over the same
+/// `module`, so all copies agree byte-for-byte (R9 "one window" is about the
+/// DATA being identical, not about a single shared mutable instance — see
+/// `CoercePairEntry` doc).
 fn collect_coerce_pairs(
     module: &Module,
     lookup: &impl Fn(&str) -> Option<TypeDeclKind>,
-) -> (HashMap<String, Vec<CoercePairEntry>>, Vec<Diagnostic>) {
+) -> (
+    HashMap<String, Vec<CoercePairEntry>>,
+    HashMap<String, Vec<GenericCoercePattern>>,
+    Vec<Diagnostic>,
+) {
     let mut by_input: HashMap<String, Vec<CoercePairEntry>> = HashMap::new();
+    let mut generic_patterns: HashMap<String, Vec<GenericCoercePattern>> = HashMap::new();
     let mut errors: Vec<Diagnostic> = Vec::new();
     let mut seen_pairs: HashMap<(String, String), Span> = HashMap::new();
 
@@ -19670,19 +19970,87 @@ fn collect_coerce_pairs(
             }
         }
         let input_name = recv.type_name.clone();
-        // R14: generic #coerce declarations unsupported.
-        if !f.generics.is_empty() || !recv.generics.is_empty() {
+        // Plan 214.1 (D429 amend): R14 RETRACTED — a receiver carrying its
+        // OWN carrier-bracket generics (`Json[T]`) is now a supported GENERIC
+        // PATTERN (see `GenericCoercePattern`/`generic_coerce_lookup`), not a
+        // blanket reject. Still LOUDLY rejected (same "attribute without
+        // effect doesn't exist" posture as every other R-check here — never
+        // a silent skip):
+        //   - a method-level type parameter (`fn[U] Type @method()`) —
+        //     nothing at the receiver determines `U` at an IMPLICIT
+        //     call-site (no turbofish on an implicit insertion);
+        //   - a receiver generic ARG that isn't a bare carrier-param
+        //     reference (nested shape `Json[[]T]`, or a concrete arg
+        //     `Json[int]`) — the shallow one-directional unifier
+        //     (`unify_coerce_receiver`, R4 "без рекурсии вглубь") only binds
+        //     bare top-level slots.
+        if !f.generics.is_empty() {
             errors.push(Diagnostic::new(
                 format!(
-                    "[E_COERCE_GENERIC_UNSUPPORTED] `#coerce fn {} @{}` — generic `#coerce` \
-                     declarations are unsupported in V1 (D429 R14): the pair registry is a \
-                     concrete lookup, not unification. Remove the type parameter, or drop \
-                     `#coerce` and keep the method as an explicit call.",
-                    input_name, f.name
+                    "[E_COERCE_GENERIC_PATTERN_UNSUPPORTED] `#coerce fn {} @{}` — a \
+                     method-level type parameter is not a supported generic `#coerce` shape \
+                     (D429 §generic-образцы, Plan 214.1): nothing at the receiver determines \
+                     it at an implicit call-site. Only the receiver's OWN carrier-bracket \
+                     generics (`{}[T] @{}()`) can be pattern variables.",
+                    input_name, f.name, input_name, f.name
                 ),
                 f.span,
             ));
             continue;
+        }
+        let is_generic_recv = !recv.generics.is_empty();
+        let mut generic_params: Vec<String> = Vec::new();
+        if is_generic_recv {
+            // Defense-in-depth, not currently reachable via legal syntax:
+            // `generic_params_to_type_refs` (parser/mod.rs) only ever produces
+            // bare single-segment `Named` entries for a receiver's carrier
+            // brackets (`Type[T]`/`Type[T, U]` — a comma-list of plain
+            // identifiers is the ONLY grammar `Type[...]` receiver position
+            // accepts; `Type[[]T]`/`Type[Vec[T]]` is a parse error,
+            // `E_...expected identifier, got '['`, before this function ever
+            // runs) — so `shape_ok` can never observe the nested-shape arm in
+            // practice today. Kept anyway: a future grammar extension
+            // allowing richer receiver-generic expressions must not silently
+            // start accepting shapes this unifier can't handle.
+            //
+            // Known NOT handled by this gate (P3, no realistic carrier — a
+            // `#coerce` pattern is only useful for a TRUE polymorphic
+            // receiver): a bare name that happens to COINCIDE with a real
+            // concrete type (`D429Box[int] @m()`) passes this check (it IS
+            // syntactically a bare single-segment `Named`) and gets treated
+            // as a pattern VARIABLE named `"int"` — `unify_coerce_receiver`
+            // would then rebind `"int"` to whatever concrete arg a DIFFERENT
+            // call site's value carries, silently mistranslating an
+            // instantiation-pinned declaration into a polymorphic one. Not
+            // fixable cheaply here (`lookup` only resolves user `TypeDeclKind`
+            // entries, not built-in primitive names) — flagged, not silently
+            // shipped as correct.
+            let mut shape_ok = true;
+            for g in &recv.generics {
+                match g {
+                    TypeRef::Named { path, generics: gg, .. } if path.len() == 1 && gg.is_empty() => {
+                        generic_params.push(path[0].clone());
+                    }
+                    _ => {
+                        shape_ok = false;
+                        break;
+                    }
+                }
+            }
+            if !shape_ok {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_COERCE_GENERIC_PATTERN_UNSUPPORTED] `#coerce fn {}[..] @{}` — \
+                         receiver generic args must be BARE carrier type parameters \
+                         (`{}[T] @{}()`), not a nested or concrete shape (D429 \
+                         §generic-образцы, Plan 214.1 — R4 \"без рекурсии вглубь\": the \
+                         unifier only binds top-level slots).",
+                        input_name, f.name, input_name, f.name
+                    ),
+                    f.span,
+                ));
+                continue;
+            }
         }
         // R12: effect-free.
         if !f.effects.is_empty() {
@@ -19779,6 +20147,23 @@ fn collect_coerce_pairs(
             continue;
         }
 
+        // Plan 214.1: a GENERIC pattern has no decl-time (I,O) identity (the
+        // true pair only crystallizes once `params` are bound at a specific
+        // call site) — R3's `seen_pairs` decl-time dedup is a CONCRETE-only
+        // mechanism; the generic analogue (R3') is detected at APPLICATION
+        // time instead (`generic_coerce_lookup`), by design (see that
+        // function's doc + the design note in `GenericCoercePattern`'s doc).
+        if is_generic_recv {
+            generic_patterns.entry(input_name).or_default().push(GenericCoercePattern {
+                params: generic_params,
+                ret_shape: output_ty,
+                method_name: f.name.clone(),
+                is_finalize,
+                decl_span: f.span,
+            });
+            continue;
+        }
+
         // R3: at most one `#coerce` per (I,O) pair, program-wide.
         let key = (input_name.clone(), output_key.clone());
         if let Some(prev_span) = seen_pairs.get(&key) {
@@ -19807,7 +20192,7 @@ fn collect_coerce_pairs(
         });
     }
 
-    (by_input, errors)
+    (by_input, generic_patterns, errors)
 }
 
 // Plan 172.1 U.5.4: the lossy `TyCat` category enum (and `cat_of`/`cat_of_depth`/
@@ -29013,7 +29398,11 @@ impl ConsumeRegistry {
                 coerce_types_lookup.entry(td.name.clone()).or_insert_with(|| td.kind.clone());
             }
         }
-        let (coerce_by_input, _coerce_errors_dup) = collect_coerce_pairs(
+        // Plan 214.1: generic patterns discarded here — this scan only
+        // tracks CONCRETE finalize-lane O keys for use-after-consume
+        // diagnostics; no fixture in Plan 214.1's scope needs a generic+
+        // finalize combination (see `collect_coerce_pairs` doc).
+        let (coerce_by_input, _generic_patterns_dup, _coerce_errors_dup) = collect_coerce_pairs(
             module,
             &|n: &str| coerce_types_lookup.get(n).cloned(),
         );
@@ -35998,6 +36387,10 @@ struct MapLitCtx {
     /// pairs. Built by `collect_coerce_pairs` (shared with `TypeCheckCtx`'s
     /// accept-path copy) — feeds `MapLitAnnotator::try_coerce_leaf` (rewrite).
     coerce_pairs: HashMap<String, Vec<CoercePairEntry>>,
+    /// Plan 214.1 (D429 amend): GENERIC `#coerce` pattern registry — I BASE
+    /// type name → applicable patterns. Same collector/sharing shape as
+    /// `coerce_pairs` — feeds `MapLitAnnotator::try_coerce_leaf` (rewrite).
+    generic_coerce_patterns: HashMap<String, Vec<GenericCoercePattern>>,
     /// Plan 214 (D429): validation diagnostics from the SAME `collect_coerce_pairs`
     /// call that built `coerce_pairs` — surfaced by `check_module` below (mirrors
     /// how this whole struct's other diagnostics-free build steps route errors:
@@ -36215,7 +36608,7 @@ impl MapLitCtx {
         // `wrap_types` lookup R11 needs (pair-already-covered-by-single-wrapper
         // check) — one collector, shared shape with `TypeCheckCtx::build`'s
         // independent copy (see `collect_coerce_pairs` doc).
-        let (coerce_pairs, coerce_errors) =
+        let (coerce_pairs, generic_coerce_patterns, coerce_errors) =
             collect_coerce_pairs(module, &|n: &str| wrap_types.get(n).cloned());
         MapLitCtx {
             type_methods,
@@ -36229,6 +36622,7 @@ impl MapLitCtx {
             record_field_types,
             wrap_types,
             coerce_pairs,
+            generic_coerce_patterns,
             coerce_errors,
         }
     }
@@ -36254,6 +36648,7 @@ impl MapLitCtx {
                         record_field_types: self.record_field_types.clone(),
                         wrap_types: self.wrap_types.clone(),
                         coerce_pairs: self.coerce_pairs.clone(),
+                        generic_coerce_patterns: self.generic_coerce_patterns.clone(),
                         coerce_errors: Vec::new(),
                     };
                     // Generic-параметры receiver-типа тоже видимы.
@@ -37123,6 +37518,7 @@ pub fn annotate_map_literals(module: &mut Module) {
         fn_generics: HashSet::new(),
         var_types: HashMap::new(),
         current_fn_return_ty: None,
+        current_fn_span: None,
     };
     ann.walk_module(module);
     // Plan 42.4 / Plan 52 Ф.7: peer_files несут per-peer копии items для
@@ -37160,6 +37556,14 @@ struct MapLitAnnotator {
     /// construct is itself in tail position — full tail-position tracking
     /// through arbitrary nesting is out of scope for this fix; see Ф.4).
     current_fn_return_ty: Option<TypeRef>,
+    /// Plan 214.1 (D429 amend, R13'): the CURRENT function's OWN span — set
+    /// on `Item::Fn` entry, cleared on exit, mirrors `current_fn_return_ty`'s
+    /// lifetime exactly. Lets `try_coerce_leaf` exclude a GENERIC pattern's
+    /// own declaration from matching while rewriting THAT SAME declaration's
+    /// body (anti-self-recursion — same rule as `TypeCheckCtx`'s
+    /// `current_coerce_decl_span`, mirrored here for the SEPARATE rewrite
+    /// pass, which does not share that RefCell).
+    current_fn_span: Option<Span>,
 }
 
 impl MapLitAnnotator {
@@ -37192,12 +37596,16 @@ impl MapLitAnnotator {
                     // body walk — consumed by `Stmt::Return` (any nesting depth)
                     // and by `walk_fn_body_block`'s own top-level trailing expr.
                     self.current_fn_return_ty = return_ty.clone();
+                    // Plan 214.1 (D429 amend, R13'): same lifetime, feeds
+                    // `try_coerce_leaf`'s self-exclusion for GENERIC patterns.
+                    self.current_fn_span = Some(f.span);
                     match &mut f.body {
                         FnBody::Expr(e) => self.walk_expr(e, return_ty.as_ref()),
                         FnBody::Block(b) => self.walk_fn_body_block(b),
                         FnBody::External => {}
                     }
                     self.current_fn_return_ty = None;
+                    self.current_fn_span = None;
                 }
                 Item::Test(t) => {
                     self.fn_generics.clear();
@@ -37508,25 +37916,71 @@ impl MapLitAnnotator {
     /// yet — a leaf covers the seed pairs' realistic shapes: a `str` literal
     /// or variable, and a `StringBuilder`/`WriteBuffer` variable).
     fn try_coerce_leaf(&mut self, e: &mut Expr, expected: &TypeRef) {
-        let input_name = match &e.kind {
-            ExprKind::StrLit(_) | ExprKind::InterpolatedStr { .. } => "str".to_string(),
-            ExprKind::Ident(name) => {
-                let Some(ty) = self.var_types.get(name) else { return };
-                let Some(n) = simple_named_type_name(ty) else { return };
-                n
+        // Plan 214.1: the leaf's OWN declared type — needed BOTH for the
+        // pre-existing concrete-name path (`simple_named_type_name`, empty
+        // generics only) AND, when that fails, the NEW generic-pattern path
+        // below (`named_base_and_args`, any arity — `Json[User]`).
+        let leaf_ty: Option<TypeRef> = match &e.kind {
+            ExprKind::StrLit(_) | ExprKind::InterpolatedStr { .. } => {
+                Some(TypeRef::Named { path: vec!["str".to_string()], generics: Vec::new(), span: Span::dummy() })
             }
-            _ => return,
+            ExprKind::Ident(name) => self.var_types.get(name).cloned(),
+            _ => None,
         };
-        let Some(pairs) = self.ctx.coerce_pairs.get(&input_name) else { return };
-        let exp_key = coerce_type_key(expected);
-        // R5: I never legally equals one of its own O's (R3/R11 keep the pair
-        // set disjoint from identity) — this is just a defensive no-op guard,
-        // not a case the seed pairs can hit.
-        if input_name == exp_key {
+        let Some(leaf_ty) = leaf_ty else { return };
+        if let Some(input_name) = simple_named_type_name(&leaf_ty) {
+            let Some(pairs) = self.ctx.coerce_pairs.get(&input_name) else { return };
+            let exp_key = coerce_type_key(expected);
+            // R5: I never legally equals one of its own O's (R3/R11 keep the
+            // pair set disjoint from identity) — this is just a defensive
+            // no-op guard, not a case the seed pairs can hit.
+            if input_name == exp_key {
+                return;
+            }
+            let Some(pair) = pairs.iter().find(|p| p.output_key == exp_key) else { return };
+            let method_name = pair.method_name.clone();
+            Self::splice_coerce_call(e, method_name);
             return;
         }
-        let Some(pair) = pairs.iter().find(|p| p.output_key == exp_key) else { return };
-        let method_name = pair.method_name.clone();
+        // Plan 214.1 (D429 amend): GENERIC pattern path — reached only when
+        // `leaf_ty` carries generics (`simple_named_type_name` returned
+        // `None`, e.g. `Json[User]`). Mirrors R7 (named-call rewrite) + R13'
+        // (self-exclusion via `current_fn_span`) exactly, using the SAME
+        // shallow one-directional unifier `TypeCheckCtx::generic_coerce_
+        // lookup` uses — kept independent here (this pass has no access to
+        // `TypeCheckCtx`, only `MapLitCtx`'s own parallel copy of the
+        // registry, R9 "one window").
+        let Some((base, concrete_args)) = named_base_and_args(&leaf_ty) else { return };
+        let Some(patterns) = self.ctx.generic_coerce_patterns.get(&base) else { return };
+        let exp_key = coerce_type_key(expected);
+        let matches: Vec<&GenericCoercePattern> = patterns
+            .iter()
+            .filter(|p| Some(p.decl_span) != self.current_fn_span)
+            .filter(|p| {
+                unify_coerce_receiver(&p.params, &concrete_args)
+                    .map(|b| coerce_type_key(&substitute_coerce_shape(&p.ret_shape, &b)) == exp_key)
+                    .unwrap_or(false)
+            })
+            .collect();
+        // Ambiguous (R3', ≥2) or no match (0) — leave the AST untouched.
+        // `assignable`'s OWN accept-path fallback (`generic_coerce_lookup`)
+        // already surfaced the R3' diagnostic (if any) or the honest
+        // mismatch; this rewrite pass never emits diagnostics (mirrors
+        // `try_wrap_leaf`'s own "leave as-is on ambiguity" posture).
+        if matches.len() != 1 {
+            return;
+        }
+        let method_name = matches[0].method_name.clone();
+        Self::splice_coerce_call(e, method_name);
+    }
+
+    /// Plan 214.1: shared AST-splice for BOTH the concrete and generic
+    /// `#coerce` rewrite branches above — `e` (`x`) → `x.method_name()`, an
+    /// ordinary named call, byte-identical to what a user would write by
+    /// hand (R7). Factored out once a second call site (generic) needed the
+    /// IDENTICAL splice the original concrete-only `try_coerce_leaf` already
+    /// did inline.
+    fn splice_coerce_call(e: &mut Expr, method_name: String) {
         let span = e.span;
         let old = std::mem::replace(e, Expr::new(ExprKind::UnitLit, span));
         *e = Expr::new(

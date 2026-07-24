@@ -9154,3 +9154,29 @@ re-attempt sub-plan ПОСЛЕ Plan 139 Ф.2 (координация risk RG; в
   (26 PASS/0 FAIL), `examples/flagship/aggregator` `nova check` PASS на всех 4 изменённых
   файлах. Мега-CU conformance и flagship `--strict-effects` НЕ гонялись (CPU-дисциплина,
   интегратор).
+
+## Plan 214.1 (2026-07-24, sonnet, worktree `nova-p2141`, ветка `p214-1-generic-coerce`) — generic `#coerce` (снятие R14)
+
+- **Что сделано:** R14 (бланкет-реджект generic-`#coerce`) снята D429-амендментом
+  (`spec/decisions/02-types.md`, раздел «Generic-образцы»); реализован ВТОРОЙ реестр
+  `generic_coerce_patterns` (`compiler-codegen/src/types/mod.rs`) — образцы вида
+  `Json[T] @data() -> T`, унифицируемые ОДНОСТОРОННЕ и БЕЗ РЕКУРСИИ ВГЛУБЬ против конкретных
+  `(I,O)` на каждом сайте (`generic_coerce_lookup` — accept-путь; `try_coerce_leaf`'s
+  generic-ветка — AST-rewrite), проверяемые ТОЛЬКО при промахе конкретного `coerce_pairs`.
+  R3'/R13' реализованы и покрыты фикстурами; R5' (overload-уровневая ambiguity) — см. маркер
+  ниже.
+- **`[M-coerce-r5-ambiguous-overload-unimplemented]` (открыт, P3, не в объёме 214.1):**
+  D429 R5 обещает `E_COERCE_AMBIGUOUS`, когда ≥2 применимых `#coerce`-пар с РАЗНЫМИ O
+  конкурируют за одну call-arg позицию через РАЗНЫЕ overload-кандидаты (пример из плана 214
+  Ф.4: `str→[]u8` + локальная `str→X`, оверлоады `dump(v []u8)`/`dump(v X)`). Аудит 214.1
+  нашёл: этот код НЕ встречается нигде в компиляторе — ни для конкретных пар (Plan 214 сам
+  never реализовывал этот overload-уровневый путь, только decl-time R3), ни для generic-
+  образцов (214.1 реализовала R3' — одно-позиционный конфликт УЖЕ детектируется, но НЕ
+  overload-уровневая R5'-неоднозначность с разными O). Снятие — отдельный, не начатый пункт
+  (обе полосы, конкретная и generic, один и тот же overload-resolution механизм).
+- **Гейты волны:** `cargo build --release` чисто; 5 новых targeted pos/neg-фикстур
+  (spec_tests/conformance/standalone + neg) — все PASS; `nova test std/src/checksums`
+  δ0 (3 PASS + 3 SKIP, как до слияния); `nova check std/src` — 142 PASS / 27 FAIL
+  (ВСЕ 27 — pre-existing `neg/*.nv`-фикстуры, correctly-failing by design, ноль
+  связи с `#coerce`) / 1040 WARN — байт-идентично baseline'у. Мега-CU conformance
+  НЕ гонялась (CPU-дисциплина, интегратор).

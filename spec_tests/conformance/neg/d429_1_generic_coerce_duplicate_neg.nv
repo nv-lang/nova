@@ -1,0 +1,27 @@
+// EXPECT_COMPILE_ERROR E_COERCE_DUPLICATE_PAIR
+//
+// Plan 214.1 (D429 amend, R3' — "один образец на пару-форму"): TWO generic
+// `#coerce` patterns on the SAME receiver base (`D429Dup[T]`), both
+// unifying `Json[T] -> T` (identical shape, different method names) — this
+// is NOT decl-time-detectable (unlike concrete-pair R3: a pattern's true
+// (I,O) identity only crystallizes once `T` is bound at a SPECIFIC call
+// site), so the collision is caught at the point of APPLICATION, listing
+// both candidate methods.
+module neg.d429_1_generic_coerce_duplicate_neg
+
+type D429Dup[T] { a T }
+
+#coerce
+export fn D429Dup[T] @first() -> ro T => @a
+
+#coerce
+export fn D429Dup[T] @second() -> ro T => @a
+
+fn d429_dup_needs_int(n int) -> int => n
+
+fn main() {
+    ro d D429Dup[int] = { a: 5 }
+    // Both `@first()` and `@second()` unify `D429Dup[int] -> int` here —
+    // ambiguous, no tie-break (mirrors D429 R5's "никакого tie-break").
+    print(d429_dup_needs_int(d))
+}

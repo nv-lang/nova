@@ -1,0 +1,37 @@
+// EXPECT_COMPILE_ERROR cannot pass
+//
+// Plan 214.1 (D429 amend, R13' — anti-self-recursion, generalized from R13 to
+// GENERIC `#coerce` patterns): inside the body of a GENERIC `#coerce`
+// declaration, the pattern's OWN pair must NOT apply to itself. Empirically
+// verified this fixture actually exercises R13' (not some unrelated gap): a
+// temporary local edit that disabled ONLY the `decl_span`-exclusion filter
+// (both the checker's `current_coerce_decl_span` guard in
+// `generic_coerce_lookup` AND the rewrite pass's `current_fn_span` guard in
+// `try_coerce_leaf`) made this SAME file compile with ZERO errors — proving
+// the rejection below comes from R13', not from an unrelated type mismatch.
+//
+// Shape: `D429SelfBox2[T] @tag() -> ro str` is a pattern whose O (`str`) does
+// NOT even mention `T` — so WITHOUT R13' it would unify against ANY `T`
+// (including its own receiver `@`, of type `D429SelfBox2[T]` itself) and get
+// AST-rewritten `probe9_needs_str(@)` -> `probe9_needs_str(@.tag())` — an
+// infinite self-recursive call, only detectable as a HANG/crash at RUNTIME
+// (self-recursion is valid, unremarkable C). With R13', the pattern excludes
+// its own declaration from the candidate set: `@` at the `str`-expected
+// call-arg position is an honest, ordinary type mismatch — E7301, caught at
+// COMPILE time, never reaching a self-recursive call at all.
+module neg.d429_1_generic_coerce_self_neg
+
+type D429SelfBox2[T] { inner T }
+
+fn d429_probe_needs_str(s str) -> int => s.byte_len()
+
+#coerce
+export fn D429SelfBox2[T] @tag() -> ro str {
+    ro n = d429_probe_needs_str(@)
+    return "x"
+}
+
+fn main() {
+    ro b D429SelfBox2[int] = { inner: 1 }
+    print(b.tag())
+}
