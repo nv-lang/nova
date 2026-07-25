@@ -81,8 +81,8 @@ import ./app.{aggregate_live_health, aggregate_live_weather, health_live_sources
 import ./api.{build_snapshot, HandlersDto, snapshot_to_json}
 import std.net.{SocketAddr, TcpListener, real_net, mock_net}
 import std.os.{env, real_os}
-import http.server.{Router, ServerRequest, ServerResponse, StreamBody, sse_event}
-import http.serve.{handle_connection_router}
+import polaris.{Router, ServerRequest, ServerResponse, StreamBody, sse_event}
+import polaris.serve.{handle_connection_router}
 import std.time.duration
 import std.runtime.sync.{AtomicInt}
 

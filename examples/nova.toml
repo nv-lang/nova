@@ -50,3 +50,4 @@ src = "."
 [dependencies]
 tls = { git = "https://github.com/nv-lang/nova-tls", version = "0.1" }
 http = { path = "../../nova-http" }
+polaris = { path = "../../nova-polaris" }

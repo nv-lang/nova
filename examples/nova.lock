@@ -17,6 +17,11 @@ source = "path"
 path = "../../nova-http"
 
 [[package]]
+name = "polaris"
+source = "path"
+path = "../../nova-polaris"
+
+[[package]]
 name = "tls"
 source = "git"
 git = "https://github.com/nv-lang/nova-tls"
