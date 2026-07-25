@@ -2771,11 +2771,41 @@ top-level detach был `SyncDetach` (inline-исполнение). После D
 в implicit main-scope, доживёт до drain'а. **Это поведенческое изменение,
 breaking change** для кода полагавшегося на inline'ность top-level detach.
 
-**Правило 6 — `_nova_active_slot = -1` означает main-flow.** Slot −1
-не индексирует fiber-array (там `count >= 0` fiber'ов). Park/wake API
-не работает с slot −1 (main-flow не может park'нуться через mco_yield —
-нет coroutine'ы). Top-level `Time.sleep` остаётся через busy-yield
-(supervised_step) либо через native sleep, не park-on-uv_timer.
+**Правило 6 — РЕТРАКТИРОВАНО (Plan 221.1 №108, 2026-07-25).** Было:
+`_nova_active_slot = -1` означает main-flow — slot −1 не индексирует
+fiber-array, park/wake API не работает (main-flow не может park'нуться
+через `mco_yield` — нет coroutine'ы), top-level `Time.sleep` шёл через
+busy-yield (`supervised_step`), блокирующий `TcpListener.accept()`
+(и любой другой D93 park-based primitive) ПРЯМО в `main()` крашил
+`nova_sched_park: invalid scope/slot` — «вторая дверь» на одну и ту же
+семантику (park/wake), диагноз владельца: «выглядит как несколько дверей
+на одно и то же».
+Стало: **main-body исполняется КАК ФАЙБЕР** — полноценный слот
+планировщика (mco-coroutine), а не сырой C-поток. `emit_main_wrapper`
+спавнит его в implicit main-scope (тем же dual bootstrap/armed-M:N путём,
+которым `emit_spawn` спавнит любой `supervised { spawn { … } } }`-child —
+`nova_fiber_spawn_into`/`nova_runtime_spawn_into`, `NovaSpawnCtxBase` без
+доп. полей — main ничего не захватывает) и гоняет планировщик до
+завершения (`nova_supervised_run`). `_nova_active_slot >= 0` для user-кода
+на всём протяжении main — park/wake (D93) работает напрямую: блокирующий
+`accept()`/`Time.sleep()`/`Channel.recv()` и т.п. легальны ПРЯМО в
+`main()`, без обёртки `supervised { spawn { … } } }`. Ошибки main-body
+пробрасываются как обычно (Правило 3 не изменилось — top-level всё ещё
+без fail-frame, необработанная ошибка всё ещё `abort()`'ит с тем же
+диагностическим сообщением, что и раньше). Стек main-файбера НЕ выделен
+особым образом — тот же arena-slot (`NOVA_FIBER_STACK` env /
+`nova.toml [runtime].fiber_stack`, builtin-default 4MB), что у любого
+другого fiber'а: (а) держит main внутри Boehm-видимого arena-range
+(бespoke больший стек вне арены потребовал бы отдельного `GC_add_roots`
+— лишний движущийся элемент ради спорной выгоды); (б) 4MB-дефолт уже
+щедрее типичного OS-стека главного потока на большинстве платформ; (в)
+единая ручка `NOVA_FIBER_STACK` для «насколько глубоко Nova-код может
+рекурсировать» — что в `spawn{}`, что в `main()` — без бимодального
+сюрприза. Если глубокий top-level `main()` реально упрётся в лимит —
+отдельный `NOVA_MAIN_FIBER_STACK`-оверрайд заводится ТОГДА (YAGNI сейчас).
+Второй дверь снесена (busy-yield main-flow ветка `time_sleep_ms`'s
+`else if (_nova_active_scope)` теперь структурно недостижима для
+top-level sleep — `mco_running()` всегда non-NULL внутри main-body).
 
 **Правило 7 (future, не реализуется в Plan 22):** SIGINT/Ctrl+C через
 `uv_signal_t` отменяет main-scope cancel-token, fiber'ы получают
@@ -2783,10 +2813,31 @@ cooperative cancel. Optional extension, отдельный план если п�
 
 ### Семантика codegen
 
-`emit_main_wrapper` эмитит:
+`emit_main_wrapper` эмитит (Plan 221.1 №108, Правило 6 ретракция —
+main-body теперь спавнится ФАЙБЕРОМ в implicit main-scope вместо
+прямого вызова на сыром C-потоке; `_nova_main_fiber_entry` — hand-
+transcribed копия `emit_spawn`'s generated entry-fn, `NovaSpawnCtxBase`
+без доп. полей, тот же dual bootstrap/armed-M:N путь):
 
 ```c
-int main(void) {
+static void _nova_main_fiber_entry(mco_coro* _co) {
+    NovaSpawnCtxBase* _c = (NovaSpawnCtxBase*)mco_get_user_data(_co);
+    /* preamble: alloc real scheduler slot (armed) / no-op (bootstrap —
+     * nova_supervised_step owns slot lifecycle), mirrors emit_spawn */
+    ...
+    NovaFailFrame _ff;
+    nova_fail_push(&_ff);
+    if (setjmp(_ff.jmp) == 0) {
+        nova_fn_main_impl();
+        nova_fail_pop();
+    } else {
+        /* kinded error report to the scope — same as any spawn child */
+        ...
+    }
+    /* epilogue: free slot / decrement pending_remote, mirrors emit_spawn */
+}
+
+int main(int argc, char** argv) {
     nova_gc_init();
     nova_evloop_init();
     /* effect-storage registration ... */
@@ -2796,10 +2847,27 @@ int main(void) {
     nova_scope_init(&_nova_main_scope);
     _nova_active_scope = &_nova_main_scope;
     _nova_active_slot  = -1;
+    nova_evloop_install_sigint(&_nova_main_scope);
 
-    nova_fn_main_impl();
+    /* Plan 221.1 №108: spawn main-body as a real fiber into the scope
+     * (same dual bootstrap/armed branch emit_spawn uses), then drive the
+     * scheduler until it completes — `_nova_active_slot >= 0` for the
+     * ENTIRE duration of user code, so D93 park/wake works directly. */
+    NovaSpawnCtxBase* _nova_main_ctx = /* nova_alloc / nova_spawn_pool_acquire */;
+    if (nova_runtime_is_initialized()) {
+        _nova_main_ctx->_nova_parent_scope = &_nova_main_scope;
+        nova_runtime_spawn_into(&_nova_main_scope, _nova_main_fiber_entry, _nova_main_ctx);
+    } else {
+        _nova_main_ctx->_nova_parent_scope = NULL;
+        nova_fiber_spawn_into(&_nova_main_scope, _nova_main_fiber_entry, _nova_main_ctx);
+    }
+    nova_supervised_run(&_nova_main_scope);
 
-    /* D92: drain detach'ов / pending fiber'ов до quiescence. */
+    /* D92: drain detach'ов / pending fiber'ов до quiescence (Правила
+     * 1-5 неизменны — detach top-level идёт через отдельный orphan-scope,
+     * не через _nova_main_scope; этот вызов остаётся belt-and-braces —
+     * идемпотентен, nova_supervised_run уже полностью дренировал ЭТУ
+     * scope-очередь, единственный ребёнок которой — сам main-fiber). */
     nova_supervised_drain_main_scope(&_nova_main_scope);
 
     _nova_active_scope = NULL;
@@ -2865,11 +2933,23 @@ throw'ы в D50 fire-and-forget — должны быть logged, не abort. П
 - ✅ Codegen `emit_main_wrapper` оборачивает в implicit scope.
 - ✅ Runtime `nova_supervised_drain_main_scope` drain до quiescence.
 - ✅ Detach behavior change verified (no regression в `detach_test.nv`).
-- 🟡 **SIGINT handler** (Правило 7) — future extension.
-- 🟡 **Top-level `Time.sleep` через uv_timer** (Правило 6 не работает) —
-  всё ещё busy-yield / native sleep. Под D92 это OK потому что
-  `_nova_active_slot = -1` детектируется в `_nova_time_default_sleep`
-  как "main-flow, не fiber".
+- ✅ **Plan 221.1 №108 (2026-07-25): main-body = файбер.** Правило 6
+  ретрактировано — `_nova_main_fiber_entry` спавнится в implicit
+  main-scope (dual bootstrap/armed-M:N путь, идентичный `emit_spawn`),
+  `nova_supervised_run` гоняет планировщик до завершения.
+  `_nova_active_slot >= 0` для user-кода всю жизнь main — блокирующий
+  `TcpListener.accept()`/`Time.sleep()`/`Channel.recv()` ПРЯМО в
+  `main()` (без `supervised { spawn { … } } }`) работает штатно через
+  D93 park/wake. Busy-yield main-flow ветка `time_sleep_ms`'s
+  `else if (_nova_active_scope)` структурно недостижима для top-level
+  sleep теперь (`mco_running()` всегда non-NULL). Фикстуры:
+  `spec_tests/conformance/standalone/m2211_108_main_fiber_accept.nv`,
+  `m2211_108_main_fiber_sleep.nv`.
+- 🟡 **SIGINT handler** (Правило 7) — future extension, НЕ пересмотрено
+  этим окном: `nova_evloop_install_sigint(&_nova_main_scope)` по-прежнему
+  целится в внешний `_nova_main_scope`, а не в тот момент, когда
+  main-fiber реально паркуется внутри своего собственного слота — та же
+  зона неполноты, что и раньше (не хуже, просто не решена).
 
 ---
 

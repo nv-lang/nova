@@ -1,0 +1,67 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// EXPECT_STDOUT ACCEPTED
+// Feature/regression fixture for [M-bare-fiber-accept-bootstrap-park-
+// invalid-slot] (221.1 bug-sweep #108, D92 Правило 6 ретракция, 2026-07-25).
+//
+// BEFORE this fix: a blocking `TcpListener.accept()` called DIRECTLY in
+// `fn main()` — no `supervised { spawn { … } }` wrapper — crashed
+// `nova: nova_sched_park: invalid scope/slot`. Root cause (D92 §Правило 6,
+// spec/decisions/06-concurrency.md): main-body executed on a raw C thread
+// with `_nova_active_slot == -1` and no coroutine — D93 park/wake requires
+// a real (scope, slot) pair, which top-level main-flow never had. Every
+// existing example (`examples/net/echo_server.nv`, `examples/flagship/
+// aggregator/src/main.nv` — see its own header note on this exact crash)
+// had to route the accept loop through `supervised { spawn { … } }` as a
+// forced workaround.
+//
+// AFTER the fix: `emit_main_wrapper` (compiler-codegen/src/codegen/emit_c.rs)
+// spawns main-body itself as a real fiber into the implicit D92 main-scope
+// and drives it with `nova_supervised_run` — main-body gets a genuine
+// scheduler slot for its ENTIRE execution, so blocking accept works
+// directly in `main()`, matching the Go canon the owner asked for ("зачем
+// тут супервизор и файбер? почему не [прямой цикл в main]?").
+//
+// Self-contained: binds to an OS-assigned port (`SocketAddr.loopback(0)`),
+// a `detach`-ed fire-and-forget client connects to it, `main()`'s own
+// blocking `accept()` (no supervised/spawn around it) unblocks and the
+// process exits cleanly.
+module standalone.m2211_108_main_fiber_accept
+
+import std.net.{SocketAddr, TcpListener, TcpStream, real_net}
+
+fn main() Detach {
+    with Net = real_net() {
+        consume lst = match TcpListener.bind(SocketAddr.loopback(0)) {
+            Ok(consume l)  => l
+            Err(_) => panic("bind failed")
+        }
+        ro port = lst.local_port()
+
+        // Fire-and-forget client (D50) — connects concurrently while this
+        // fiber blocks on accept() below.
+        detach {
+            ro caddr = SocketAddr.loopback(port)
+            match TcpStream.connect(caddr) {
+                Ok(consume conn) => {
+                    consume c = conn
+                    c.close()
+                }
+                Err(_) => println("client connect failed")
+            }
+        }
+
+        // THE FIX under test: blocking accept called DIRECTLY here — no
+        // `supervised { spawn { … } }`, no busy-yield workaround. Parks on
+        // this fiber's real scheduler slot (D93) until the detached client
+        // connects.
+        match lst.accept() {
+            Ok(consume stream) => {
+                consume s = stream
+                println("ACCEPTED")
+                s.close()
+            }
+            Err(_) => println("accept failed")
+        }
+        lst.close()
+    }
+}
