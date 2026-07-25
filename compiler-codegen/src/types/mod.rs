@@ -16500,6 +16500,79 @@ impl<'a> TypeCheckCtx<'a> {
             // Generic records are excluded — field types may reference type params that the
             // bare Named{name} annotation cannot reproduce without generic mono args.
             ExprKind::Member { obj, name } => {
+                // [Plan 228 Ф.1(b), реестр 221.1 №94-v2 mechanism (b)] Method-value
+                // expression `Type.@method` (UNBOUND form — the bound form `x.@len`
+                // was retracted Plan 132, D35 §6081/§6082, so `obj` here is always a
+                // TYPE name, never a value). Before this, `infer_expr_type` had no
+                // arm for it at all: the general Member arm below unconditionally
+                // recurses `infer_expr_type(obj, scope)` first, and a bare type name
+                // (`MvInferNum`, `int`, `str`) is never scope-bound → that recursion
+                // returns `None` (a bare-sum-variant fallback doesn't apply either) →
+                // the WHOLE Member (and therefore the method-value arg it wraps, e.g.
+                // `a.map(MvInferNum.@to_str)`) stayed untyped. That silence is why the
+                // arg-loops in `f1_check_call`/`resolve_return_channel` (`infer_expr_
+                // type(a.expr(), scope)`, used to `unify_type`/`Constraint::Eq` a
+                // method-level generic against the arg) never saw a method-value arg's
+                // shape — `node_substs` stayed unwritten and emit_c's legacy Step2m
+                // (`resolve_method_level_subst`/`resolve_instance_call_subst`/
+                // `infer_method_level_return_for_sum_inner`) re-derived it standalone.
+                // Typing the Member here as the method's callable `Func` shape
+                // (`fn(Recv, params...) -> Ret`) lets the EXISTING arg-loops unify it
+                // structurally — no new inference engine, same sig-registry
+                // (`method_overloads`) `method_value_lookup_sig` (emit_c) already
+                // mirrors for the SAME selection (first-declared overload; ambiguity
+                // resolution via `as fn(...)` annotation is out of scope here exactly
+                // as it is there — Plan 11 Ф.5).
+                //
+                // Gate: `name` carries the `@`-prefix marker (parser, `TokenKind::At`
+                // arm) AND `obj` is a bare `Ident` that is NOT scope-shadowed (a local
+                // variable literally named like a type wins — matches
+                // `method_value_lookup_sig`'s own `var_types`-first check) AND names a
+                // known user type or a primitive. A blanket method (`fn[T] T @m`,
+                // D145) is deliberately NOT covered — `method_overloads` is keyed by
+                // CONCRETE type name; a blanket's receiver is the fn's own generic
+                // param name (`blanket_method_names`, a separate registry), so
+                // `self.method_overloads("int", "to_str")` genuinely misses `int.@to_str`
+                // (prelude's `fn[T] T @to_str() -> str`) — honest miss, not a bug (this
+                // IS №82's answer: bonus mechanism does NOT close it, confirmed
+                // structurally, matching the mvinfer fixtures' own doc comment).
+                if let Some(method_bare) = name.strip_prefix('@') {
+                    if let ExprKind::Ident(tn) = &obj.kind {
+                        if !scope.contains_key(tn)
+                            && (self.is_known_type(tn) || Self::is_primitive_type_name(tn))
+                        {
+                            if let Some(f) = self.method_overloads(tn, method_bare)
+                                .and_then(|overloads| overloads.first())
+                            {
+                                if let Some(recv) = &f.receiver {
+                                    let recv_ty = recv.receiver_ty.clone().unwrap_or_else(|| {
+                                        TypeRef::Named {
+                                            path: vec![recv.type_name.clone()],
+                                            generics: recv.generics.clone(),
+                                            span: recv.span,
+                                        }
+                                    });
+                                    let mut self_subst: HashMap<String, TypeRef> = HashMap::new();
+                                    self_subst.insert("Self".to_string(), recv_ty.clone());
+                                    let mut params: Vec<TypeRef> = vec![recv_ty];
+                                    params.extend(f.params.iter().map(|p| {
+                                        crate::const_fn_trampoline::subst_type_ref_pub(&p.ty, &self_subst)
+                                    }));
+                                    let ret = f.return_type.clone()
+                                        .map(|t| crate::const_fn_trampoline::subst_type_ref_pub(&t, &self_subst))
+                                        .unwrap_or(TypeRef::Unit(expr.span));
+                                    return Some(TypeRef::Func {
+                                        params,
+                                        effects: Vec::new(),
+                                        return_type: Some(Box::new(ret)),
+                                        extern_abi: None,
+                                        span: expr.span,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
                 let obj_tr = self.infer_expr_type(obj, scope)?;
                 // 172.1.2: позиционное tuple-поле `t.0` / `t.1` — элемент кортежа.
                 if let TypeRef::Tuple(tys, _) = &obj_tr {
