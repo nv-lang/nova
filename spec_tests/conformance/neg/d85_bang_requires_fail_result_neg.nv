@@ -1,0 +1,23 @@
+// EXPECT_COMPILE_ERROR E_BANG_REQUIRES_FAIL
+//
+// Plan 221.1 №113 (D85 ENFORCED) — `expr!!` на `Result[T,E]` ВСЕГДА
+// throw-стиль (codegen эмитит throw через enclosing `Fail`, безусловно,
+// в отличие от `?`, который дуален по контексту — `emit_c.rs::in_fail_ctx`
+// коммент «This mirrors the ExprKind::Bang semantics»). Внешняя (exported,
+// D62) fn без `Fail[E']`-совместимого эффекта в сигнатуре → compile error
+// `[E_BANG_REQUIRES_FAIL]` (types/mod.rs `check_fn` — `check_bang_requires_
+// fail_block`). Spec: spec/decisions/04-effects.md D85 «`expr!!` для
+// `Result[T, E]` — throw-стиль».
+module neg.d85_bang_requires_fail_result_neg
+
+type ParseErr { msg str }
+
+fn parse(s str) -> Result[int, ParseErr] {
+    if s == "" { Err(ParseErr { msg: "empty" }) } else { Ok(1) }
+}
+
+// ✗ exported fn, `!!` на Result[int, ParseErr], но НЕТ Fail[ParseErr] в сигнатуре.
+export fn bad_use(s str) -> int {
+    ro n = parse(s)!!                            // ❌ [E_BANG_REQUIRES_FAIL]
+    n
+}

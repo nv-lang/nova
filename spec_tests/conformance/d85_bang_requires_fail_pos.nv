@@ -1,0 +1,77 @@
+// Plan 221.1 №113 (D85 ENFORCED): регресс-гард — легитимные `!!`-формы НЕ
+// ломаются новым чекером `E_BANG_REQUIRES_FAIL` (types/mod.rs `check_fn` /
+// `check_bang_requires_fail_block`). Покрывает: (1) private fn без Fail —
+// D28 auto-inference, exempt из этого энфорса; (2) exported fn с явным
+// `Fail[E]` (Result-`!!`); (3) exported fn с `Fail[RuntimeNoneError]`
+// (Option-`!!`); (4) `?? panic(...)` fallback — `!!` не участвует, Fail не
+// нужен; (5) `!!` внутри `with Fail = ...` — throw ловится ЛОКАЛЬНО этим
+// handler'ом (D158-семья), enclosing fn Fail не нужен.
+
+module spec_tests.conformance
+
+type ParseErr { msg str }
+
+fn parse(s str) -> Result[int, ParseErr] {
+    if s == "" { Err(ParseErr { msg: "empty" }) } else { Ok(1) }
+}
+
+fn first_pos(xs []int) -> Option[int] {
+    for x in xs { if x > 0 { return Some(x) } }
+    None
+}
+
+// (1) private fn, Result-`!!`, БЕЗ явного Fail в сигнатуре — D28
+// auto-inference подставит `Fail` молча; энфорс №113 приватные fn не трогает.
+fn private_uses_bang(s str) -> int {
+    parse(s)!!
+}
+
+// (2) exported fn, явный `Fail[ParseErr]`.
+export fn ok_result_with_fail(s str) Fail[ParseErr] -> int {
+    parse(s)!!
+}
+
+// (3) exported fn, Option-`!!`, явный `Fail[RuntimeNoneError]`.
+export fn ok_option_with_fail(xs []int) Fail[RuntimeNoneError] -> int {
+    first_pos(xs)!!
+}
+
+// (4) exported fn, `?? panic(...)` — `!!` не задействован вовсе.
+export fn ok_panic_fallback(s str) -> int {
+    parse(s) ?? panic("unreachable in test")
+}
+
+// (5) exported fn, `!!` внутри `with Fail = ...` — локальный catch.
+export fn ok_local_with_fail(s str) -> int {
+    with Fail = effect Fail { fail(_e) -> never { interrupt (-1) } } {
+        parse(s)!!
+    }
+}
+
+test "d85 №113: private fn `!!` без Fail — D28 auto-inference (exempt)" {
+    assert(private_uses_bang("x") == 1)
+}
+
+test "d85 №113: exported fn с явным Fail[E] — Result `!!` легален" {
+    with Fail[ParseErr] = |_| interrupt (-1) {
+        assert(ok_result_with_fail("x") == 1)
+    }
+}
+
+test "d85 №113: exported fn с явным Fail[RuntimeNoneError] — Option `!!` легален" {
+    with Fail[RuntimeNoneError] = |_| interrupt (-1) {
+        assert(ok_option_with_fail([1, 2]) == 1)
+    }
+}
+
+test "d85 №113: `?? panic` fallback — Fail не требуется" {
+    // Только happy-path: `panic(...)` при Err аварийно завершил бы процесс
+    // (не возвращает значение) — здесь важно лишь что компилируется/линкуется
+    // БЕЗ Fail в сигнатуре ok_panic_fallback.
+    assert(ok_panic_fallback("x") == 1)
+}
+
+test "d85 №113: `!!` внутри `with Fail = ...` — throw пойман локально" {
+    assert(ok_local_with_fail("x") == 1)
+    assert(ok_local_with_fail("") == -1)
+}

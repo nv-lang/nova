@@ -150,11 +150,23 @@ export fn build_snapshot(report Report, sources []Source, legend str, mode str, 
 }
 
 /// Compact JSON wire form.
+///
+/// `!!`-без-`Fail`, D85 ENFORCED (Plan 221.1 №113): `json_encode` возвращает
+/// `Result[str, SerError]`, но `SnapshotDto` — плоский `#impl(Serialize)` DTO
+/// из примитивов (str/int/bool/record/Vec, все Serialize-производные) без
+/// циклов/непредставимых значений — encode-failure тут структурно
+/// невозможен (инвариант, не recoverable ошибка). `Fail[SerError]` в
+/// сигнатуре растащило бы эффект по всем call-site'ам (тесты, `main.nv`
+/// route-handlers ожидают голый `str`) без единой реальной пользы —
+/// `?? panic(...)` — канон-форма для «программная ошибка/инвариант».
 #stable(since = "0.2")
-export fn snapshot_to_json(dto SnapshotDto) -> str => json_encode(dto)!!
+export fn snapshot_to_json(dto SnapshotDto) -> str =>
+    json_encode(dto) ?? panic("snapshot_to_json: SnapshotDto is a flat Serialize DTO — encode must not fail")
 
 /// Pretty (2-space indent) JSON wire form — `"${v:#}"` doesn't apply to
 /// plain `#impl(Serialize)` DTOs (no `@display`, Serialize ≠ Display);
-/// `json_encode_pretty` is the direct entry point instead.
+/// `json_encode_pretty` is the direct entry point instead. Same
+/// `?? panic(...)` rationale as `snapshot_to_json` above (D85 №113).
 #stable(since = "0.2")
-export fn snapshot_to_json_pretty(dto SnapshotDto) -> str => json_encode_pretty(dto)!!
+export fn snapshot_to_json_pretty(dto SnapshotDto) -> str =>
+    json_encode_pretty(dto) ?? panic("snapshot_to_json_pretty: SnapshotDto is a flat Serialize DTO — encode must not fail")

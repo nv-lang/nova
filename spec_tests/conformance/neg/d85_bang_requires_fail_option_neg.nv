@@ -1,0 +1,17 @@
+// EXPECT_COMPILE_ERROR E_BANG_REQUIRES_FAIL
+//
+// Plan 221.1 №113 (D85 ENFORCED) — `expr!!` на `Option[T]` throw-стиль,
+// требует `Fail[RuntimeNoneError]` в сигнатуре внешней (exported, D62) fn.
+// Spec: spec/decisions/04-effects.md D85 «`expr!!` для `Option[T]` —
+// throw-стиль».
+module neg.d85_bang_requires_fail_option_neg
+
+fn first_pos(xs []int) -> Option[int] {
+    for x in xs { if x > 0 { return Some(x) } }
+    None
+}
+
+// ✗ exported fn, `!!` на Option[int], но НЕТ Fail[RuntimeNoneError] в сигнатуре.
+export fn bad_use(xs []int) -> int {
+    first_pos(xs)!!                              // ❌ [E_BANG_REQUIRES_FAIL]
+}
