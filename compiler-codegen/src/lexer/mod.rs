@@ -718,8 +718,22 @@ impl<'a> Lexer<'a> {
     }
 
     fn lex_string(&mut self, start: usize) -> Result<Token, Diagnostic> {
-        // "..." — обычная строка. Без интерполяции в bootstrap'е.
-        // Поддерживает \n, \t, \r, \\, \", \0.
+        // "..." — строка. Поддерживает \n, \t, \r, \\, \", \0, \x.., \u{..}
+        // и `${...}` интерполяцию (Plan 102, D258-амендмент, PEP 701/JS-путь).
+        //
+        // Ключевой момент: `${...}` — это НЕ строковое содержимое, а Nova-
+        // выражение. Внутри него могут легально встречаться вложенные строки
+        // (`"${m["key"]}"`, `"${req.param("name")}"`) и вложенные
+        // интерполяции (`"${f("x ${y} z")}"`) — их кавычки/скобки НЕ должны
+        // закрывать ЭТУ строку раньше времени (старый баг: одномерный скан
+        // "до первой неэкранированной `"`" слепо натыкался на внутреннюю
+        // `"` и обрывал строку). Когда встречаем неэкранированный `${`,
+        // `scan_interpolation_body` со своим string/brace-aware стеком
+        // находит ИСТИННУЙ конец интерполяции (её `}`), и мы копируем этот
+        // диапазон СЫРЫМ (без escape-декодирования — это исходный Nova-код,
+        // его decode/re-lex делает `desugar_string_interpolation` в
+        // parser/mod.rs через собственный sub-lex), затем продолжаем
+        // обычный посимвольный скан строки после закрывающей `}`.
         self.pos += 1; // "
         let mut s = String::new();
         loop {
@@ -839,6 +853,31 @@ impl<'a> Lexer<'a> {
                             return Err(Diagnostic::new(
                                 format!("unknown escape: \\{}", other as char),
                                 self.span(self.pos - 1, self.pos + 1),
+                            ));
+                        }
+                    }
+                }
+                b'$' if self.peek_at(1) == Some(b'{') => {
+                    // Plan 102 (D258-амендмент): неэкранированный `${` —
+                    // начало интерполяции. `\$` (literal-escape) обработан
+                    // ВЫШЕ (arm `b'\\'`, sentinel-механика) и сюда не
+                    // попадает — здесь только настоящий triggers.
+                    let interp_start = self.pos;
+                    let brace_pos = self.pos + 1;
+                    match scan_interpolation_body(self.bytes, brace_pos) {
+                        Some(close_pos) => {
+                            // Сырая копия ВКЛЮЧИТЕЛЬНО `${` .. `}` — без
+                            // escape-декодирования: это Nova-исходник,
+                            // desugar_string_interpolation() re-lex'ит его
+                            // сама (parser/mod.rs).
+                            s.push_str(&self.src[interp_start..=close_pos]);
+                            self.pos = close_pos + 1;
+                        }
+                        None => {
+                            return Err(Diagnostic::new(
+                                "unterminated interpolation (started here): `${` has no \
+                                 matching `}` before end of string/file",
+                                self.span(interp_start, interp_start + 2),
                             ));
                         }
                     }
@@ -1077,6 +1116,77 @@ fn utf8_char_len(first_byte: u8) -> usize {
         b if b < 0xE0 => 2,
         b if b < 0xF0 => 3,
         _ => 4,
+    }
+}
+
+/// Plan 102 (D258-амендмент): единственный string/brace-aware сканер тела
+/// `${...}`-интерполяции — используется И лексером (`lex_string`, чтобы
+/// корректно найти истинный конец строкового литерала, содержащего
+/// вложенные строки/скобки внутри интерполяции), И парсером
+/// (`desugar_string_interpolation` в `parser/mod.rs`, чтобы разбить уже
+/// вырезанную строку на литерал/expr-части). Один алгоритм, одно место —
+/// не два независимо поддерживаемых дубля (196-консолидация).
+///
+/// `bytes[brace_pos]` ДОЛЖЕН быть байтом `{` из `${`-триггера. Скан вперёд
+/// с небольшим стеком режимов (`false` = expr-режим, `true` = string-режим):
+///
+/// - **expr-режим**: `{`/`}` считаются как обычная вложенность (record-
+///   литералы/блоки — включая вложенную интерполяцию: её `${` не
+///   спец-обрабатывается ЗДЕСЬ на уровне `{`, спец-обработка — при входе В
+///   string-режим ниже, а закрывающая `}` вложенной интерполяции просто
+///   балансируется как обычная закрывающая скобка); `"` открывает вложенную
+///   строку (push string-режим).
+/// - **string-режим**: `\` целиком пропускает следующий байт (чтобы `\"` не
+///   закрыл вложенную строку раньше времени); `"` закрывает вложенную
+///   строку (pop); неэкранированный `${` внутри вложенной строки — ещё одна
+///   (рекурсивная) интерполяция — push нового expr-режим-фрейма; тот же
+///   стек унифицированно обрабатывает произвольную глубину вложенности.
+///
+/// Возвращает `Some(idx)` — индекс закрывающей `}`, парной исходному `${` —
+/// или `None`, если вход кончился раньше, чем интерполяция закрылась
+/// (незакрытая интерполяция).
+pub(crate) fn scan_interpolation_body(bytes: &[u8], brace_pos: usize) -> Option<usize> {
+    // `false` = expr-mode фрейм (стартуем в нём — `brace_pos` это `{`
+    // самого `${`, который мы уже "вошли"), `true` = string-mode фрейм.
+    let mut stack: Vec<bool> = vec![false];
+    let mut i = brace_pos + 1;
+    loop {
+        let b = *bytes.get(i)?;
+        let in_string = *stack.last().expect("стек не пустеет без return");
+        if in_string {
+            match b {
+                b'\\' => i += 2, // весь escape целиком (\" \\ \n \$ ...)
+                b'"' => {
+                    stack.pop();
+                    i += 1;
+                }
+                b'$' if bytes.get(i + 1) == Some(&b'{') => {
+                    // Вложенная интерполяция внутри вложенной строки.
+                    stack.push(false);
+                    i += 2;
+                }
+                _ => i += 1,
+            }
+        } else {
+            match b {
+                b'"' => {
+                    stack.push(true);
+                    i += 1;
+                }
+                b'{' => {
+                    stack.push(false);
+                    i += 1;
+                }
+                b'}' => {
+                    stack.pop();
+                    if stack.is_empty() {
+                        return Some(i);
+                    }
+                    i += 1;
+                }
+                _ => i += 1,
+            }
+        }
     }
 }
 
@@ -1331,5 +1441,96 @@ mod doc_comment_tests {
             .position(|t| matches!(t, TokenKind::KwFn))
             .expect("fn keyword must be in stream");
         assert!(doc_idx < fn_idx, "doc-comment must precede `fn` in stream");
+    }
+}
+
+#[cfg(test)]
+mod interp_nested_string_tests {
+    //! Plan 102 (D258-амендмент, реестр 221.1 №102): unit-тесты на
+    //! `scan_interpolation_body` и `lex_string`'s string/brace-aware
+    //! termination scan — PEP 701/JS-путь для вложенных строк/кавычек
+    //! внутри `${...}`. Гран-кейсы: nested string in a call arg, nested
+    //! string in index syntax, nested interpolation inside a nested
+    //! string, `{}`-nesting (record/block) inside the expr, and genuinely
+    //! unterminated `${` (EOF before the matching `}`).
+    use super::*;
+
+    fn lex_str_content(src: &str) -> String {
+        match Lexer::new(src).lex() {
+            Ok(toks) => match &toks[0].kind {
+                TokenKind::Str(s) => s.clone(),
+                other => panic!("expected Str token, got {:?}", other),
+            },
+            Err(e) => panic!("lex failed: {}", e.message),
+        }
+    }
+
+    #[test]
+    fn nested_quote_in_method_call_arg_does_not_terminate_outer_string() {
+        // The old one-dimensional scan used to stop at the `"` before
+        // `name` — treating it as the outer string's terminator.
+        let content = lex_str_content(r#""hello, ${req.param("name")}""#);
+        assert_eq!(content, r#"hello, ${req.param("name")}"#);
+    }
+
+    #[test]
+    fn nested_quote_in_index_key_does_not_terminate_outer_string() {
+        // The typical `m["key"]` case named explicitly in the plan.
+        let content = lex_str_content(r#""${m["key"]}""#);
+        assert_eq!(content, r#"${m["key"]}"#);
+    }
+
+    #[test]
+    fn nested_interpolation_inside_nested_string() {
+        let content = lex_str_content(r#""${f("x ${y} z")}""#);
+        assert_eq!(content, r#"${f("x ${y} z")}"#);
+    }
+
+    #[test]
+    fn record_literal_braces_inside_interpolation_balance_correctly() {
+        // `{}` that belong to the expression (not a nested string) must
+        // nest correctly — the interpolation's own closing `}` is the
+        // one that brings brace-depth back to zero.
+        let content = lex_str_content(r#""${ if c { a } else { b } }""#);
+        assert_eq!(content, "${ if c { a } else { b } }");
+    }
+
+    #[test]
+    fn escaped_dollar_brace_is_untouched_by_the_fix() {
+        // `\$` sentinel mechanics — delta-0, unrelated to `${` scanning.
+        let content = lex_str_content(r#""literal \${x}""#);
+        assert_eq!(content, "literal \u{0001}${x}");
+    }
+
+    #[test]
+    fn unterminated_interpolation_reports_precise_span_at_the_dollar_brace() {
+        // Exact repro from the plan: `"abc ${x` running off EOF with no
+        // matching `}`.
+        let src = "\"abc ${x";
+        let err = Lexer::new(src).lex().expect_err("must fail to lex");
+        assert!(
+            err.message.contains("unterminated interpolation (started here)"),
+            "unexpected message: {}",
+            err.message
+        );
+        // Span must point at the `${` (byte offset 5..7 in `"abc ${x`),
+        // not at the whole string / whole file.
+        assert_eq!(err.span.start, 5);
+        assert_eq!(err.span.end, 7);
+    }
+
+    #[test]
+    fn scan_interpolation_body_finds_matching_brace_directly() {
+        // `${m["key"]}` — brace_pos is the index of `{` (1).
+        let bytes = b"${m[\"key\"]}";
+        let close = scan_interpolation_body(bytes, 1).expect("must find matching }");
+        assert_eq!(bytes[close], b'}');
+        assert_eq!(close, bytes.len() - 1);
+    }
+
+    #[test]
+    fn scan_interpolation_body_none_when_unterminated() {
+        let bytes = b"${x";
+        assert_eq!(scan_interpolation_body(bytes, 1), None);
     }
 }

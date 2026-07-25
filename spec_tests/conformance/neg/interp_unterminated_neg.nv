@@ -1,0 +1,17 @@
+// EXPECT_COMPILE_ERROR unterminated interpolation (started here)
+//
+// Plan 102 (D258-амендмент) NEG: genuinely unterminated `${` — no matching
+// `}` before end of the source (the exact repro from the plan: `"abc ${x`
+// running off EOF). Pins the NEW precise diagnostic emitted by the lexer's
+// `scan_interpolation_body` (`compiler-codegen/src/lexer/mod.rs`): message
+// says "unterminated interpolation (started here)" and the span points at
+// the `${` that opened the run-away interpolation (not the whole string /
+// whole file) — this is now caught at LEX time, before the parser's
+// `desugar_string_interpolation` split ever runs (its own "unterminated
+// ${...}" branch is defensive-only after this fix — see 196-consolidation
+// note in parser/mod.rs).
+
+module neg.interp_unterminated_neg
+
+fn interp102_unterminated_bad() -> str {
+    "abc ${x

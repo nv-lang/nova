@@ -11698,29 +11698,33 @@ impl Parser {
                 if !cur_lit.is_empty() {
                     parts.push(InterpPart::Lit(std::mem::take(&mut cur_lit)));
                 }
-                // Найти `}` с балансом скобок (поддержка nested {}).
+                // Plan 102 (D258-амендмент, 196-консолидация): найти парную
+                // `}` через ТОТ ЖЕ string/brace-aware хелпер, что использует
+                // лексер (`crate::lexer::scan_interpolation_body`) — не
+                // независимый наивный `{`/`}`-счётчик (старый баг: наивный
+                // счётчик слепо считал КАЖДУЮ `{`/`}`, включая те, что
+                // попадают внутрь вложенной строки как обычный символ —
+                // напр. литерал с фигурной скобкой в аргументе, `${f("a}b")}`,
+                // преждевременно "закрыл" бы интерполяцию на этой `}`).
+                // На практике этот путь недостижим для well-formed токенов:
+                // лексер (`lex_string`) уже гарантирует парность `${`/`}`
+                // ДО того, как включит диапазон в `TokenKind::Str` (иначе
+                // сам вернул бы диагностику "unterminated interpolation
+                // (started here)" с точным span'ом на `${`) — проверка ниже
+                // остаётся defensive (не unreachable!()), т.к. `raw` в
+                // принципе мог бы прийти не только из `lex_string`.
+                let brace_pos = i + 1;
                 let expr_start = i + 2;
-                let mut depth: i32 = 1;
-                let mut j = expr_start;
-                while j < bytes.len() && depth > 0 {
-                    match bytes[j] {
-                        b'{' => depth += 1,
-                        b'}' => {
-                            depth -= 1;
-                            if depth == 0 {
-                                break;
-                            }
-                        }
-                        _ => {}
+                let close_pos = match crate::lexer::scan_interpolation_body(bytes, brace_pos) {
+                    Some(j) => j,
+                    None => {
+                        return Err(Diagnostic::new(
+                            "unterminated ${...} interpolation in string literal",
+                            span,
+                        ));
                     }
-                    j += 1;
-                }
-                if depth != 0 {
-                    return Err(Diagnostic::new(
-                        "unterminated ${...} interpolation in string literal",
-                        span,
-                    ));
-                }
+                };
+                let j = close_pos;
                 let expr_src = &raw[expr_start..j];
                 if expr_src.trim().is_empty() {
                     return Err(Diagnostic::new(

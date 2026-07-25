@@ -1,0 +1,65 @@
+// Plan 102 (D258-амендмент, реестр 221.1 №102): строковый сканер лексера
+// был одномерным — искал первую неэкранированную `"` НЕ отслеживая `${}`-
+// глубину; разбиение на интерполяции было постфактум-проходом поверх уже
+// вырезанной строки. Итог: `"hello, ${req.param("name")}"` и ТИПОВОЙ
+// `"${m["key"]}"` (индекс) ловили "unterminated interpolation"/мусор —
+// внутренняя `"` закрывала внешнюю строку раньше времени.
+//
+// Фикс (PEP 701/JS-путь): `lex_string` теперь string/brace-aware — при
+// встрече неэкранированного `${` вызывает `scan_interpolation_body`
+// (общий хелпер, `compiler-codegen/src/lexer/mod.rs`), который со своим
+// стеком режимов находит ИСТИННУЮ парную `}`, корректно проходя сквозь
+// произвольно вложенные строки/скобки/интерполяции. Тот же хелпер
+// переиспользует `desugar_string_interpolation` (parser/mod.rs) для
+// сплита уже вырезанной строки — один алгоритм, одно место (196-
+// консолидация), не два независимо поддерживаемых дубля.
+//
+// Этот файл покрывает вложенные строки внутри `${...}` — прямые потомки
+// PEP 701/JS precedent: метод со строковым аргументом, индекс со строковым
+// ключом (ТИПОВОЙ кейс), вложенная интерполяция внутри вложенной строки,
+// `\${`-escape (δ0 — механика не менялась) и несколько полей в одной
+// строке.
+//
+// Одна folder-module `spec_tests.conformance`.
+module spec_tests.conformance
+
+type Interp102Req { name str }
+
+// Namespaced field-access `@name` (без скобок) внутри тела метода;
+// использует interpolation (не `+` — `+` для str запрещён, E_STR_CONCAT_PLUS).
+fn Interp102Req @param(key str) -> str => "${@name}:${key}"
+
+type Interp102Map { value str }
+
+// D238: `m["key"]` десугарится в `m.@index("key")` — не требует явной
+// `Index[K,V]`-декларации, метод ищется структурно.
+fn Interp102Map @index(key str) -> str => "map[${key}]=${@value}"
+
+fn interp102_wrap(s str) -> str => "<${s}>"
+
+test "nested string inside a method-call argument inside ${...} — req.param(\"name\")" {
+    ro req = Interp102Req { name: "alice" }
+    assert("hello, ${req.param("name")}" == "hello, alice:name")
+}
+
+test "index syntax with a string key inside ${...} — the typical m[\"key\"] case (D238 @index)" {
+    ro m = Interp102Map { value: "v1" }
+    assert("${m["key"]}" == "map[key]=v1")
+}
+
+test "nested interpolation inside a nested string inside ${...} — f(\"x ${y} z\")" {
+    ro y = 42
+    assert("${interp102_wrap("x ${y} z")}" == "<x 42 z>")
+}
+
+test "escaped dollar-brace (\\$ then a literal brace) unaffected by the fix (delta-0)" {
+    ro s = "literal \${not_interp}"
+    assert(s.contains("\${not_interp}"))
+    assert(!s.contains("literal literal"))
+}
+
+test "mixed multiple interpolated fields in one string, including nested-string forms" {
+    ro req2 = Interp102Req { name: "bob" }
+    ro m2 = Interp102Map { value: "v2" }
+    assert("A=${req2.param("name")} B=${m2["k"]} C=${1 + 2}" == "A=bob:name B=map[k]=v2 C=3")
+}
