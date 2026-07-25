@@ -1,0 +1,17 @@
+// D55/D108 (реестр 221.1 №114) NEG: map-литерал `[k: v]` со значением,
+// РОД которого не совпадает ни с одним unary-вариантом `JsonValue`
+// (obvious single-wrapper D55 amend требует РОВНО ОДНО совпадение по
+// WrapKind — `int`-семья ≠ `float`-семья, см. D55 «Obvious single-wrapper
+// coercion»: "Не путать с cat_compatible_rt's permissive int↔float
+// assignability — здесь int и float — РАЗНЫЕ «роды»"). `42` (IntFamily) не
+// лифтится в `Num(f64)` (Float) — genuine mismatch, не тихая дыра: value
+// unification обязана репортить ошибку (не молча принимать raw-int вместо
+// f64-payload).
+// EXPECT_COMPILE_ERROR map literal values have incompatible types
+
+module neg.d114_map_literal_incompatible_value_neg
+
+import std.encoding.json.{JsonValue}
+import std.collections.hashmap.{HashMap}
+
+fn d114_neg_map_lit(s str) -> HashMap[str, JsonValue] => ["sub": s, "n": 42]

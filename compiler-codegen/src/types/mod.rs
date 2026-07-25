@@ -11053,6 +11053,35 @@ impl<'a> TypeCheckCtx<'a> {
             .is_ok()
     }
 
+    /// [M-option-fn-field-record-literal-elem-type-int] (реестр 221.1 №116):
+    /// is `rt` "concrete enough" for `materialize_literal_coercion`'s ctor arm
+    /// (`Some`/`Ok`/`Err`) to safely stamp the call node's `resolved_types_buf`
+    /// with `expected`? The pre-existing per-site gate (`Union(Primitive,
+    /// ConcreteNamedNoArgs)`, still used AS-IS via `ts_member` for every
+    /// non-`Func` leaf) has NO case for `ResolvedType::Func` at all — a
+    /// `fn(...)->...` generic argument (`Option[fn(A) -> B]`) therefore NEVER
+    /// counted as concrete, so `Some(closure)` against `Option[fn(A) -> B]`
+    /// silently skipped materialization: the Option's element-type mono
+    /// defaulted to `nova_int` downstream, CC-FAIL `NovaOpt_nova_int` vs
+    /// `NovaOpt_NovaClos_*` (record-literal field, bare `let`, AND free-fn
+    /// return position all share this one gate). Recurses into a `Func`'s OWN
+    /// params/return — a `fn(fn(int)->str) -> fn(int)->str` payload is still
+    /// "concrete" as long as every leaf ultimately is.
+    fn ctor_arg_concrete(rt: &ResolvedType) -> bool {
+        match rt {
+            ResolvedType::Func { params, ret, .. } => {
+                params.iter().all(Self::ctor_arg_concrete) && Self::ctor_arg_concrete(ret)
+            }
+            _ => Self::ts_member(
+                rt,
+                constraint_solver::TypeSet::Union(vec![
+                    constraint_solver::TypeSet::Primitive,
+                    constraint_solver::TypeSet::ConcreteNamedNoArgs,
+                ]),
+            ),
+        }
+    }
+
     /// Plan 196 Ф.4b (constraint-core, Project): project a channel container
     /// `ResolvedType` (from `resolved_types_buf`) into the type of its element
     /// via `Constraint::Project`. The §0-canonical container→element rule lives
@@ -12609,13 +12638,63 @@ impl<'a> TypeCheckCtx<'a> {
                         if !typeref_mentions_any(&exp_ty, &callee_gs) {
                             self.materialize_literal_coercion(arg.expr(), &exp_ty);
                         }
-                        if let Compat::Narrowing { from, to } =
-                            self.assignable(arg.expr(), &exp_ty, gs, &callee_gs, scope)
-                        {
-                            // [M-172.1-sync-extern-narrowing-migration]: extern-callee
-                            // (builtin sync/atomics API) — enforcement отложен до
-                            // миграции корпуса (см. второй сайт + backlog).
-                            {
+                        // [M-d55-d108-sum-lift-map-literal-gaps] (реестр 221.1 №114 б):
+                        // a param whose DECLARED type mentions the RECEIVER's own generic
+                        // name (`insert(key K, val V)` on `HashMap[K,V]`) is exactly the
+                        // class `overload_applicability`'s earlier arity/category pre-check
+                        // (this fn, ~line 12468) could NOT validate — it ran `assignable`
+                        // against the RAW, unsubstituted `K`/`V` placeholder (not a real
+                        // declared type at all, so permissive/`Unknown`, never `Bad`) — the
+                        // narrowing-only check below's own doc-comment assumption ("a Bad
+                        // arg is already E_NO_MATCHING_OVERLOAD above") is FALSE for this
+                        // one class: a str passed where a substituted `JsonValue` is
+                        // expected (`fields.insert("sub", sub)` on `HashMap[str,
+                        // JsonValue]`) sailed through both checks silently, and only
+                        // surfaced as a codegen CC-FAIL. Scoped tightly — non-empty
+                        // `recv_generic_names` AND the param's OWN declared type actually
+                        // mentions one — every concrete (non-generic) param call site is
+                        // completely unaffected (zero blast radius, byte-identical). D55
+                        // single-wrap sum-lift (`str` → `JsonValue.Str(..)`) is ALREADY
+                        // accepted here as `Compat::Ok` by `assignable`'s own fallback (the
+                        // same mechanism `try_wrap_leaf` materializes elsewhere) — this
+                        // does not flag those, only genuinely un-liftable mismatches. The
+                        // AST REWRITE (actually inserting the `JsonValue.Str(..)` wrapper
+                        // call so codegen sees a well-typed value) is NOT done here — this
+                        // closes the silent diagnostic hole only; see window report for the
+                        // honest remainder.
+                        let compat = self.assignable(arg.expr(), &exp_ty, gs, &callee_gs, scope);
+                        let recv_generic_names: HashSet<String> = subst.keys().cloned().collect();
+                        let generic_param = !recv_generic_names.is_empty()
+                            && typeref_mentions_any(&param.ty, &recv_generic_names);
+                        match compat {
+                            Compat::Bad { found } if generic_param => {
+                                errors.push(
+                                    Diagnostic::new(
+                                        format!(
+                                            "[E7301] cannot pass value of type `{}` as \
+                                             argument `{}` of type `{}`",
+                                            found, param.name, typeref_display(&exp_ty),
+                                        ),
+                                        arg.expr().span,
+                                    )
+                                    .with_note_at(
+                                        format!("parameter `{}` declared here", param.name),
+                                        param.span,
+                                    ),
+                                );
+                            }
+                            Compat::CoerceConflict { msg } if generic_param => {
+                                errors.push(
+                                    Diagnostic::new(msg, arg.expr().span).with_note_at(
+                                        format!("parameter `{}` declared here", param.name),
+                                        param.span,
+                                    ),
+                                );
+                            }
+                            Compat::Narrowing { from, to } => {
+                                // [M-172.1-sync-extern-narrowing-migration]: extern-callee
+                                // (builtin sync/atomics API) — enforcement отложен до
+                                // миграции корпуса (см. второй сайт + backlog).
                                 errors.push(
                                     Diagnostic::new(
                                         format!(
@@ -12632,6 +12711,7 @@ impl<'a> TypeCheckCtx<'a> {
                                     ),
                                 );
                             }
+                            _ => {}
                         }
                     }
                 }
@@ -15489,16 +15569,18 @@ impl<'a> TypeCheckCtx<'a> {
                         // иначе без аннотации.
                         if value.id.is_set() {
                             if let TypeRef::Named { generics, .. } = expected {
+                                // [M-option-fn-field-record-literal-elem-type-int]
+                                // (реестр 221.1 №116): `ctor_arg_concrete` (not the bare
+                                // `Union(Primitive, ConcreteNamedNoArgs)` gate) — a
+                                // `fn(...)->...` generic arg (`Option[fn(A) -> B]`) is
+                                // "concrete" too when its own params/return are, so
+                                // `Some(closure)` against `Option[fn(A) -> B]` now
+                                // materializes instead of silently skipping (root cause
+                                // of the Option-mono defaulting to `nova_int`).
                                 let all_concrete = !generics.is_empty()
                                     && generics.iter().all(|g| {
                                         let rt = ResolvedType::from_type_ref(g);
-                                        Self::ts_member(
-                                            &rt,
-                                            constraint_solver::TypeSet::Union(vec![
-                                                constraint_solver::TypeSet::Primitive,
-                                                constraint_solver::TypeSet::ConcreteNamedNoArgs,
-                                            ]),
-                                        )
+                                        Self::ctor_arg_concrete(&rt)
                                     });
                                 if all_concrete {
                                     let rt = ResolvedType::from_type_ref(expected);
@@ -15562,6 +15644,46 @@ impl<'a> TypeCheckCtx<'a> {
                     for it in items {
                         if let ArrayElem::Item(x) = it {
                             self.materialize_literal_coercion(x, elem);
+                        }
+                    }
+                }
+            }
+            // [M-option-fn-field-record-literal-elem-type-int] (реестр 221.1 №116):
+            // `Type { field: value, ... }` against a concrete (non-generic) declared
+            // `Record` type — recurse into EACH field's value against the FIELD's
+            // OWN declared type (mirrors the `TupleLit`/`ArrayLit` element-wise
+            // recursion just above). Without this arm a record literal's field
+            // values NEVER reached this materializing walk — a field carries its
+            // OWN nested expected-typed sub-position (`Type { hook: Some(closure) }`
+            // where `hook Option[fn(A) -> B]` needs `closure` materialized against
+            // `fn(A) -> B`, not against the outer record's own type — the `Call`
+            // arm above already unwraps `Some(..)`/`Ok(..)`/`Err(..)` against
+            // `Option[T]`/`Result[T,E]`, it just never got THIS field's `T` handed
+            // to it before). Anonymous literals (D55 record-coercion) are handled
+            // identically — `expected` alone decides the field schema, `type_name`
+            // is not consulted. Scoped to non-generic declared records (mirrors
+            // this function's other `td.generics.is_empty()`-gated arms) —
+            // a generic record's field types would need receiver-generic
+            // substitution first, out of scope here.
+            ExprKind::RecordLit { fields, .. } => {
+                if let TypeRef::Named { path, generics, .. } = expected {
+                    if generics.is_empty() {
+                        if let Some(name) = path.last() {
+                            if let Some(td) = self.types.get(name) {
+                                if td.generics.is_empty() {
+                                    if let TypeDeclKind::Record(decl_fields) = &td.kind {
+                                        for f in fields {
+                                            if let Some(v) = &f.value {
+                                                if let Some(fd) =
+                                                    decl_fields.iter().find(|df| df.name == f.name)
+                                                {
+                                                    self.materialize_literal_coercion(v, &fd.ty);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -37482,6 +37604,18 @@ struct MapLitCtx {
     /// именем существует ровно на **одном** типе без overload (для резолва
     /// instance-call `obj.method(...)` без type-inference receiver'а).
     unique_method_param_types: HashMap<String, Vec<(String, TypeRef)>>,
+    /// [M-d55-d108-sum-lift-map-literal-gaps] (реестр 221.1 №114 б): `Type.method`
+    /// (same key scheme as `method_param_types`) → the method's RECEIVER's own
+    /// declared generic parameter NAMES, in declaration order (`HashMap[K, V]`
+    /// → `["K", "V"]`). Lets `MapLitAnnotator` build a `{K: str, V: JsonValue}`
+    /// substitution when the call-site RECEIVER's concrete type is statically
+    /// known (`var_types`, from an explicit let/const annotation) — so a
+    /// generic instance-method call-arg (`fields.insert("sub", sub)` on
+    /// `HashMap[str, JsonValue]`) gets a REAL concrete `expected` type for
+    /// `try_wrap_leaf`/`try_coerce_leaf`, not the useless raw `V` placeholder
+    /// the name-only `method_param_types`/`resolve_call_params` path alone
+    /// would hand back (D55 §"Generic-параметр после конкретизации" ⛔-row).
+    method_receiver_generic_names: HashMap<String, Vec<String>>,
     /// Имена generic-параметров, видимых в текущей функции. Заполняется
     /// per-fn в `check_fn`. Generic `K` — permissive (Hashable не enforce'ится
     /// статически: bound-проверка — отдельный механизм Plan 15).
@@ -37533,6 +37667,9 @@ impl MapLitCtx {
         let mut method_overloads: HashMap<String, Vec<&FnDecl>> = HashMap::new();
         // имя метода → множество (type_name) на которых он определён.
         let mut method_owner_count: HashMap<String, Vec<&FnDecl>> = HashMap::new();
+        // [M-d55-d108-sum-lift-map-literal-gaps] (реестр 221.1 №114 б): see
+        // `method_receiver_generic_names` field doc.
+        let mut method_receiver_generic_names: HashMap<String, Vec<String>> = HashMap::new();
         // Plan 52 Ф.19: canonical identity для `#from_fields`. Через
         // peer_files определяем какой peer-файл объявил TypeDecl с
         // маркером — если path содержит сегмент `collections/hashmap` или
@@ -37690,8 +37827,26 @@ impl MapLitCtx {
                             .or_default()
                             .insert(f.name.clone());
                         let key = format!("{}.{}", recv.type_name, f.name);
-                        method_overloads.entry(key).or_default().push(f);
+                        method_overloads.entry(key.clone()).or_default().push(f);
                         method_owner_count.entry(f.name.clone()).or_default().push(f);
+                        // [M-d55-d108-sum-lift-map-literal-gaps] (реестр 221.1 №114 б):
+                        // receiver's OWN declared generic-param names (`HashMap[K, V]`
+                        // → `["K", "V"]`), same bare-name extraction `build_recv_subst`
+                        // uses (types/mod.rs). `or_insert_with` (first-wins, never
+                        // overwritten) mirrors `extract_params`'s own single-candidate
+                        // gate downstream — a multi-overload key never gets a
+                        // `method_param_types` entry either, so a harmless stale
+                        // first-wins entry here is unreachable in practice.
+                        method_receiver_generic_names.entry(key).or_insert_with(|| {
+                            recv.generics.iter().filter_map(|g| match g {
+                                TypeRef::Named { path, generics, .. }
+                                    if path.len() == 1 && generics.is_empty() =>
+                                {
+                                    Some(path[0].clone())
+                                }
+                                _ => None,
+                            }).collect()
+                        });
                     } else {
                         fn_overloads.entry(f.name.clone()).or_default().push(f);
                     }
@@ -37739,6 +37894,7 @@ impl MapLitCtx {
             fn_param_types,
             method_param_types,
             unique_method_param_types,
+            method_receiver_generic_names,
             fn_generics: HashSet::new(),
             from_pairs_types,
             record_field_types,
@@ -37765,6 +37921,7 @@ impl MapLitCtx {
                         fn_param_types: self.fn_param_types.clone(),
                         method_param_types: self.method_param_types.clone(),
                         unique_method_param_types: self.unique_method_param_types.clone(),
+                        method_receiver_generic_names: self.method_receiver_generic_names.clone(),
                         fn_generics: f.generics.iter().map(|g| g.name.clone()).collect(),
                         from_pairs_types: self.from_pairs_types.clone(),
                         record_field_types: self.record_field_types.clone(),
@@ -38341,6 +38498,20 @@ impl MapLitCtx {
                 None => inferred = Some(this),
                 Some(prev) => {
                     if !simple_types_compatible(prev, &this) {
+                        // [M-d55-d108-sum-lift-map-literal-gaps] (реестр 221.1 №114 а):
+                        // an element whose own literal/scalar type doesn't STRUCTURALLY
+                        // match `prev` may still be a legal value — D108 states the
+                        // key/value positions of a map literal are full D55 "known
+                        // expected type" positions, carrying the SAME "obvious
+                        // single-wrapper" sum-lift `try_wrap_leaf` materializes for every
+                        // OTHER such position (`5_000_000_000.0` → `JsonValue.Num(..)`
+                        // against an expected `HashMap[str, JsonValue]`). Only consulted
+                        // against an EXPLICIT `expected` (not a same-role peer inferred
+                        // from an earlier, unannotated element — there is no wrap TARGET
+                        // to lift into in that case).
+                        if expected.is_some() && self.is_single_wrap_eligible(&this, prev) {
+                            continue;
+                        }
                         let hint = if role == "value" {
                             " — возможно нужен общий тип, напр. `HashMap[K, JsonValue]`?"
                         } else {
@@ -38364,6 +38535,28 @@ impl MapLitCtx {
         }
         let _ = lit_span;
         inferred
+    }
+
+    /// [M-d55-d108-sum-lift-map-literal-gaps] (реестр 221.1 №114 а): is `this`
+    /// (an element's own simple type, from `simple_expr_type`) auto-liftable
+    /// into `target` via the SAME "obvious single-wrapper" sum/newtype
+    /// mechanism `try_wrap_leaf`/`assignable` use elsewhere (§ "Obvious
+    /// single-wrapper coercion", D55 amend)? Mirrors `assignable`'s own
+    /// single-wrap fallback exactly (`single_wrap_candidates` +
+    /// `wrap_kind_of`, exactly-one-match required) — reuses that decision,
+    /// does not reimplement it.
+    fn is_single_wrap_eligible(&self, this: &TypeRef, target: &TypeRef) -> bool {
+        let lookup = |n: &str| self.wrap_types.get(n).cloned();
+        let candidates = single_wrap_candidates(&lookup, target);
+        if candidates.is_empty() {
+            return false;
+        }
+        let this_kind = wrap_kind_of(this, &lookup, 0);
+        candidates
+            .iter()
+            .filter(|(_, inner)| wrap_kind_of(inner, &lookup, 0) == this_kind)
+            .count()
+            == 1
     }
 
     /// Enforce `K: Hashable` для ключевого типа map-литерала.
@@ -38955,6 +39148,46 @@ impl MapLitAnnotator {
         first
     }
 
+    /// [M-d55-d108-sum-lift-map-literal-gaps] (реестр 221.1 №114 б): when
+    /// `func` is `obj.method(...)` and the RECEIVER's own concrete type is
+    /// statically known (`var_types`, populated from an explicit let/const
+    /// annotation), substitute the method's DECLARED (still-generic) param
+    /// types with the receiver's concrete generic type-args (`HashMap[str,
+    /// JsonValue]` → `{K: str, V: JsonValue}`) — mirrors `check_instance_
+    /// overload`'s own `build_recv_subst`/`subst_typeref` (types/mod.rs), just
+    /// scoped to this lightweight annotator's OWN, narrower type knowledge.
+    /// `None` when the receiver's type isn't known, the generic arity doesn't
+    /// match, or the method isn't registered (multi-overload key, or simply
+    /// absent) — the caller falls back to the existing (unsubstituted)
+    /// `resolve_call_params`, byte-identical for every other call site.
+    fn resolve_generic_method_call_params(&self, func: &Expr) -> Option<Vec<(String, TypeRef)>> {
+        let ExprKind::Member { obj, name: method_name } = &func.kind else { return None };
+        let ExprKind::Ident(recv_name) = &obj.kind else { return None };
+        let recv_ty = self.var_types.get(recv_name)?;
+        let TypeRef::Named { path, generics: recv_generics, .. } = recv_ty else { return None };
+        if recv_generics.is_empty() {
+            return None;
+        }
+        let type_name = path.last()?;
+        let key = format!("{}.{}", type_name, method_name);
+        let decl_params = self.ctx.method_param_types.get(&key)?;
+        let gen_names = self.ctx.method_receiver_generic_names.get(&key)?;
+        if gen_names.len() != recv_generics.len() {
+            return None;
+        }
+        let subst: HashMap<String, TypeRef> = gen_names
+            .iter()
+            .cloned()
+            .zip(recv_generics.iter().cloned())
+            .collect();
+        Some(
+            decl_params
+                .iter()
+                .map(|(n, t)| (n.clone(), subst_typeref(t, &subst)))
+                .collect(),
+        )
+    }
+
     /// Plan 200 (sql-autoconv) D55 amend: rewrite `e` IN PLACE into
     /// `Type.Variant(payload)` when `e` is a plain leaf (literal / var
     /// `Ident`) and `expected` is a declared sum type with EXACTLY ONE
@@ -39223,6 +39456,20 @@ impl MapLitAnnotator {
                 }
             }
         }
+        // [M-d55-d108-sum-lift-map-literal-gaps] (реестр 221.1 №114 а): the
+        // MapLit's OWN key/value expected types (just computed above, for
+        // whole-literal K/V inference) must ALSO reach `try_wrap_leaf`/
+        // `try_coerce_leaf` on EACH element in step 2's descent below — not
+        // just widen the whole literal's `HashMap[K,V]` inference. Cloned
+        // here (immutable read of the fields step 1 just populated) because
+        // step 2 re-borrows `e.kind` mutably right after — the two borrows
+        // can't overlap.
+        let (map_key_expected, map_val_expected): (Option<TypeRef>, Option<TypeRef>) =
+            if let ExprKind::MapLit { inferred_key, inferred_value, .. } = &e.kind {
+                (inferred_key.clone(), inferred_value.clone())
+            } else {
+                (None, None)
+            };
         // Plan 52 Ф.10: D55 map-coercion для `{field: v}` в позиции
         // `#from_fields`-типа (= HashMap[str, V]). Если expected —
         // HashMap-with-#from_fields-маркер И литерал анонимный,
@@ -39240,14 +39487,28 @@ impl MapLitAnnotator {
                 }
             }
         }
+        // [M-d55-d108-sum-lift-map-literal-gaps] (реестр 221.1 №114 а): same
+        // clone-before-descent trick as `map_key_expected`/`map_val_expected`
+        // above — `inferred_map_v` (just possibly populated) is the D55 value
+        // position's expected type for the `{field: v}` map-coercion shorthand
+        // (D52 §2); step 2's RecordLit descent below needs it to reach
+        // `try_wrap_leaf`/`try_coerce_leaf` per-field (previously every field
+        // walked with `expected=None` in this branch, so a `{sub, exp:
+        // 5_000_000_000.0}`-shorthand value never got sum-lifted either).
+        let record_map_v_expected: Option<TypeRef> =
+            if let ExprKind::RecordLit { type_name: None, inferred_map_v, .. } = &e.kind {
+                inferred_map_v.clone()
+            } else {
+                None
+            };
         // 2. Спуск в под-выражения с propagation expected-type где известен.
         match &mut e.kind {
             ExprKind::MapLit { elems, .. } => {
                 for me in elems.iter_mut() {
                     match me {
                         crate::ast::MapElem::Pair(k, v) => {
-                            self.walk_expr(k, None);
-                            self.walk_expr(v, None);
+                            self.walk_expr(k, map_key_expected.as_ref());
+                            self.walk_expr(v, map_val_expected.as_ref());
                         }
                         crate::ast::MapElem::Spread(e) => self.walk_expr(e, None),
                     }
@@ -39277,7 +39538,23 @@ impl MapLitAnnotator {
                 self.walk_expr(func, None);
                 // Argument-позиция — propagation expected типа параметра
                 // (фундамент Ф.3a).
-                let params = self.ctx.resolve_call_params(func);
+                // [M-d55-d108-sum-lift-map-literal-gaps] (реестр 221.1 №114 б):
+                // receiver-generic-aware resolution FIRST — when `func` is
+                // `obj.method(...)` and `obj`'s own concrete type is statically
+                // known (`var_types`), substitutes the method's DECLARED
+                // (still-generic) param types with the receiver's concrete
+                // type-args (`HashMap[str, JsonValue]` → `{K: str, V:
+                // JsonValue}`) so `try_wrap_leaf`/`try_coerce_leaf` below see a
+                // REAL concrete `expected` (`JsonValue`), not the useless raw
+                // `V` placeholder the name-only `resolve_call_params` path
+                // hands back (that path has zero receiver-type knowledge — a
+                // global-unique-method-name lookup only, D55 §"Generic-
+                // параметр после конкретизации" ⛔-row). Falls back to the
+                // existing (unsubstituted) resolution when the receiver's type
+                // isn't known or has no matching generic-arity entry — every
+                // OTHER call site is unaffected, byte-identical.
+                let params = self.resolve_generic_method_call_params(func)
+                    .or_else(|| self.ctx.resolve_call_params(func));
                 // [M-d55-anon-recordlit-codegen-gap] fix: `Some`/`Ok`/`Err`
                 // — built-in sum-variant constructors, не обычные fn/method
                 // (не попадают в `fn_param_types`/`resolve_call_params`).
@@ -39395,8 +39672,31 @@ impl MapLitAnnotator {
                     .and_then(|name| self.ctx.record_field_types.get(name))
                     .cloned();
                 for f in fields.iter_mut() {
+                    // [M-d55-d108-sum-lift-map-literal-gaps] (реестр 221.1 №114 а):
+                    // D52 §2 field-punning (`{sub, ...}`, `f.value == None`) in the
+                    // D108 map-coercion shorthand SPECIFICALLY (`record_map_v_expected`
+                    // set — i.e. `type_name` is `None`, so this is NOT an ordinary
+                    // typed record literal) has NO `Expr` node at all for `try_wrap_
+                    // leaf`/`try_coerce_leaf` to touch here — `desugar.rs::
+                    // build_record_map_block` synthesizes the punned field's value
+                    // expression (a bare `Ident(name)`) LATER, at desugar time, AFTER
+                    // this annotate pass has already run. Materialize it HERE instead
+                    // (same shape desugar would build) so the wrap can actually apply
+                    // BEFORE desugar reads `f.value` — scoped tightly to the map-
+                    // coercion branch only (`field_types` is always `None` there, so
+                    // this cannot fire for an ordinary typed record literal's own
+                    // field-punning, which stays untouched/byte-identical).
+                    if f.value.is_none() && !f.is_spread && record_map_v_expected.is_some() {
+                        f.value = Some(Expr::new(ExprKind::Ident(f.name.clone()), f.span));
+                    }
                     if let Some(v) = &mut f.value {
-                        let fty = field_types.as_ref().and_then(|m| m.get(&f.name)).cloned();
+                        // `record_map_v_expected` — the D108/D55 map-coercion shorthand's
+                        // (`{sub, exp: ...}`) inferred `V`, set when `type_name` is `None`
+                        // (so `field_types` above is always `None` in that shape — no
+                        // conflict, this is a pure fallback for the OTHER anonymous case
+                        // `field_types` doesn't cover).
+                        let fty = field_types.as_ref().and_then(|m| m.get(&f.name)).cloned()
+                            .or_else(|| record_map_v_expected.clone());
                         self.walk_expr(v, fty.as_ref());
                     }
                 }
