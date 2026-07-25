@@ -1543,6 +1543,11 @@ binding управляет «можно ли модифицировать **пе
 > drop outer `let` keyword; identifier-pattern требует `ro`/`mut`;
 > constructor/destructure pattern bare = immutable, `mut` inside;
 > `consume` запрещён в conditions; outer-`mut` запрещён.
+> AMEND (2026-07-25, реестр 221.1 №95): парсер-энфорс ретракции —
+> `if let`/`while let` (Rust-style outer `let`) до этого момента
+> тихо принимались парсером наравне с каноном («две двери»); теперь
+> дают `E_IF_LET_RETRACTED` со span на `let`. Пишите паттерн напрямую:
+> `if Some(x) = expr { ... }` / `while Some(x) = expr { ... }`.
 
 ### Что
 

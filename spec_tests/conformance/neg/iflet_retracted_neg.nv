@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR E_IF_LET_RETRACTED
+//
+// `if let` (Rust-style outer `let`) retracted — D34 amended by Plan 114
+// D184: pattern-bind grammar unified with match arms, outer `let` dropped.
+// Canon: `if Pat = expr { ... }` (see iflet_option_elem.nv). Парсер-энфорс
+// добавлен в реестре 221.1 №95 [M-if-let-retraction-not-enforced]: до
+// этого момента парсер тихо принимал обе формы («две двери»).
+
+module neg.iflet_retracted_neg
+
+test "if let is retracted" {
+    ro opt = Some(1)
+    if let Some(v) = opt {
+        assert(v == 1)
+    }
+}
