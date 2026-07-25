@@ -16334,6 +16334,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         Some(t) => self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()),
                         None => "nova_unit".to_string(),
                     };
+                    self.icr_trace("N78_fnretsig_l2_populate");
                     self.fn_returns_fn_sig_l2.insert(f.name.clone(), (ptys2, rty2));
                 }
             }
@@ -23406,6 +23407,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 self.method_value_lookup_sig(mv_obj, mv_name, None)
                             {
                                 if mv_is_unbound {
+                                    self.icr_trace("MVI_ricsub_step2m_entered");
                                     let mv_param_tys: Vec<String> = std::iter::once(mv_recv_c_ty)
                                         .chain(mv_sig.param_c_types.iter().cloned())
                                         .collect();
@@ -23551,6 +23553,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 }
             }
             if complete {
+                self.icr_trace("MVI_rmls_channel_hit");
                 if trace_ns {
                     eprintln!(
                         "[NODE_SUBSTS] consumer=resolve_method_level_subst call_id={:?} ctx={} hit n={}",
@@ -23776,6 +23779,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // but skip rather than mis-infer if it somehow does.
                 continue;
             }
+            self.icr_trace("MVI_rmls_step2m_entered");
             let mv_param_tys: Vec<String> = std::iter::once(mv_recv_c_ty)
                 .chain(mv_sig.param_c_types.iter().cloned())
                 .collect();
@@ -30606,6 +30610,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // covers `ro m2 = m` re-binding chains too, not just the
                         // direct free-fn case.
                         if let Some(sig) = self.fn_returns_fn_sig.get(rhs_name.as_str()).cloned() {
+                            self.icr_trace("N78_ident_rhs_fnretsig_propagate");
                             self.fn_returns_fn_sig.insert(binding.clone(), sig);
                         }
                     }
@@ -30717,6 +30722,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     let func = func.unwrap_turbofish();
                     if let ExprKind::Ident(fname) = &func.kind {
                         if let Some(sig) = self.fn_returns_fn_sig.get(fname).cloned() {
+                            self.icr_trace("N78_call_rhs_l1_propagate");
                             self.fn_param_sigs.insert(binding.clone(), sig);
                         }
                         // [fix M-nested-fn-newtype-bind-then-call-broken, реестр
@@ -30731,6 +30737,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // h2(5)` that previously left `h2` uncallable (bogus
                         // `nova_fn_h2`, undefined-symbol link error).
                         if let Some(sig2) = self.fn_returns_fn_sig_l2.get(fname).cloned() {
+                            self.icr_trace("N78_call_rhs_l2_propagate");
                             self.fn_returns_fn_sig.insert(binding.clone(), sig2);
                         }
                         // If RHS is a call to a generic fn returning a tuple, infer element types from args
@@ -30767,9 +30774,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     if let ExprKind::Member { name: method_name, .. } = &func.kind {
                         if !method_name.starts_with('@') {
                             if let Some(sig) = self.fn_returns_fn_sig.get(method_name.as_str()).cloned() {
+                                self.icr_trace("N90_member_rhs_l1_propagate");
                                 self.fn_param_sigs.insert(binding.clone(), sig);
                             }
                             if let Some(sig2) = self.fn_returns_fn_sig_l2.get(method_name.as_str()).cloned() {
+                                self.icr_trace("N90_member_rhs_l2_propagate");
                                 self.fn_returns_fn_sig.insert(binding.clone(), sig2);
                             }
                         }
@@ -50573,6 +50582,44 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let mut initial_bound = param_names.clone();
         Self::collect_truly_free_idents(body, &mut initial_bound, &mut body_idents);
         // Free vars = body idents that exist in var_types and are not lambda params
+        //
+        // [investigated M-closure-ctx-freefn-callee-unresolved-fnnt, №96]: a
+        // top-level free-fn CALLEE referenced by bare name from inside a
+        // closure whose OTHER captures carry a fn-newtype (e.g. `step(dd, n,
+        // r)`) can get miscaptured as a phantom env field when `var_types`
+        // (a SINGLE GLOBAL table, never scoped/reset between declarations —
+        // see the note above) happens to carry a STALE bare-name entry for
+        // that identifier left over from an unrelated declaration elsewhere
+        // in the SAME compile (e.g. `Range @step_by(step int)`'s OWN param
+        // `step`, seeded into `var_types["step"]` while ITS return-type was
+        // inferred, then never cleared before this file's free fn `step` is
+        // referenced) — producing `use of undeclared identifier` in the
+        // env-populate statement (the CALL itself still mangles correctly;
+        // only the bogus capture-field init breaks).
+        //
+        // The "exclude global function names" filter below is meant to
+        // guard exactly this, but is CURRENTLY A NO-OP (tests whether
+        // `var_types[n]`'s VALUE starts with the string "fn_ret_" — that
+        // string is never a value in this map, only ever a KEY PREFIX
+        // `var_types["fn_ret_<name>"]`, see the forward-decl registration
+        // ~L16158/16215 and the `is_user_fn` reader ~L32511). A name-level
+        // fix (checking `var_types.contains_key(&format!("fn_ret_{}", n))`
+        // instead) was tried and REVERTED: `fn_ret_<name>` is intentionally
+        // UNQUALIFIED/shared across every same-named method/fn in the WHOLE
+        // program (Plan 152.4.3's own doc, ~L16159 — the type-qualified key
+        // is a SEPARATE, additional entry), so a genuinely-captured LOCAL
+        // whose name merely COINCIDES with some unrelated fn/method
+        // elsewhere in std (`primary`, `next`, `n` — all common std names)
+        // got wrongly EXCLUDED from its own real capture, regressing
+        // `mvinfer_vec_map_method_value.nv` (`undeclared identifier
+        // 'primary'` — a genuine local, referenced as a plain value, never
+        // called). The correct fix needs USE-SITE precision (is THIS
+        // specific Ident occurrence a call-callee that resolves to a free
+        // fn — checker `resolved_callees`/absence-of-local, not a global
+        // name-table membership test) — bigger than a local patch here.
+        // Left as the pre-existing (safe, over-CAPTURING rather than
+        // under-capturing) no-op behavior; #96 repro re-documented as an
+        // open residual gap, not closed by this window.
         let mut free_vars: Vec<(String, String)> = body_idents.iter()
             .filter(|n| !param_names.contains(*n) && self.var_types.contains_key(*n))
             .filter(|n| {
@@ -52063,6 +52110,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         args: &[CallArg],
         receiver_subst: &[(String, String)],
     ) -> Option<String> {
+        self.icr_trace("MVI_imlrfs_entered");
         let fn_decl = self.generic_type_methods.get(sum_name)?
             .iter().find(|m| m.name == method)?.clone();
         // Если метод без method-level generics — receiver_subst достаточен.
@@ -52154,6 +52202,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             let Ok((_, mv_is_unbound, mv_recv_c_ty, mv_sig)) =
                 self.method_value_lookup_sig(mv_obj, mv_name, None) else { continue };
             if !mv_is_unbound { continue; }
+            self.icr_trace("MVI_imlrfs_step2m_entered");
             let mv_param_tys: Vec<String> = std::iter::once(mv_recv_c_ty)
                 .chain(mv_sig.param_c_types.iter().cloned())
                 .collect();
