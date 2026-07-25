@@ -40686,8 +40686,32 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // never shadows any struct/generic/protocol arm elsewhere
                     // in this match (those all require `obj_ty` to be
                     // something OTHER than the literal string `"void*"`).
+                    // [Plan 228 Ф.4, реестр 221.1 №97] `channel_arg_rt(obj)` — the
+                    // checker's `resolved_types` channel — carries the L2 `readonly`
+                    // content-view LOSSLESSLY (D315/U.5.5(a)): a receiver bound from a
+                    // `-> ro Mid`-returning static ctor (`Mid.new(...)`, this fixture's
+                    // OWN `fn Mid.new(...) -> ro Mid`) resolves to `Readonly(Named{Mid})`,
+                    // not a bare `Named{Mid}` — the match below required the LATTER
+                    // exactly, so an external dot-call on a `ro`-typed fn-newtype
+                    // receiver (`m1.then(m2)`, `m1`'s declared/inferred type carrying
+                    // `ro`) fell straight through to the unconditional `NULL` fallback a
+                    // few lines down — `ro composed = m1.then(m2)` silently became
+                    // `void* composed = NULL;`, and the LATER `composed.apply(h)` (whose
+                    // OWN receiver type, `Mid` from `@then`'s `-> Mid` — no `ro` — hits
+                    // the bare-`Named` case and dispatches correctly) then read through
+                    // that NULL — segfault at `Nova_Mid_method_apply`'s `*nova_self`.
+                    // `readonly T` is transparent for C-lowering purposes everywhere else
+                    // in this file (mirrors `resolved_type_to_c`'s own peel) — peel it
+                    // here too before the `Named` match, so a `ro`-returning ctor's
+                    // result is recognized identically to a non-`ro` one (the C
+                    // representation — bare `void*` — is IDENTICAL either way; `ro` is a
+                    // write-capability annotation, not a distinct runtime shape).
+                    let mut ext_recv_rt = self.channel_arg_rt(obj);
+                    while let Some(crate::types::ResolvedType::Readonly(inner)) = ext_recv_rt {
+                        ext_recv_rt = Some(*inner);
+                    }
                     if let Some(crate::types::ResolvedType::Named { name: ext_recv_ty, .. }) =
-                        self.channel_arg_rt(obj)
+                        ext_recv_rt
                     {
                         if self.fn_newtype_sigs.contains_key(ext_recv_ty.as_str())
                             && self.all_methods.contains(&(ext_recv_ty.clone(), method_str.clone()))
@@ -57982,7 +58006,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         && self.var_types.contains_key("nova_self")
                     {
                         let raw = self.var_types.get("nova_self").cloned().unwrap();
-                        return if Self::is_value_struct_ptr(&raw) {
+                        // [Plan 228 Ф.4, реестр 221.1 №97] same fn-newtype-receiver
+                        // fix as the "Channel 3" copy of this SAME check below
+                        // (~L58119) — this earlier checker-channel copy runs FIRST
+                        // and must not short-circuit past it with the stale
+                        // double-indirection `Nova_Mid*` receiver type. See that
+                        // site's doc for the full root-cause.
+                        let is_fn_newtype_recv = self.current_receiver_type.as_deref()
+                            .map(|t| self.fn_newtype_sigs.contains_key(t))
+                            .unwrap_or(false);
+                        return if is_fn_newtype_recv {
+                            "void*".to_string()
+                        } else if Self::is_value_struct_ptr(&raw) {
                             raw.trim_end_matches('*').trim().to_string()
                         } else {
                             raw
@@ -58094,7 +58129,31 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             match &expr.kind {
                 ExprKind::SelfAccess if self.var_types.contains_key("nova_self") => {
                     let raw = self.var_types.get("nova_self").cloned().unwrap();
-                    return if Self::is_value_struct_ptr(&raw) {
+                    // [Plan 228 Ф.4, реестр 221.1 №97] a fn-newtype receiver's C
+                    // storage type (`Nova_Mid* nova_self` == `void**` — the
+                    // receiver ABI's EXTRA indirection, D52-амендмент/№53/№90)
+                    // is NEVER the bare `@`-as-VALUE's own type (`ro outer = @`).
+                    // `emit_expr_inner`'s SelfAccess arm (~L35306) already
+                    // dereferences unconditionally for this receiver kind
+                    // (`(*nova_self)`, a bare `void*`) — this C-TYPE counterpart
+                    // must mirror it (same fact, two windows — compiler-
+                    // conventions §0) or the declared type (`Nova_Mid* outer`,
+                    // double indirection) and the assigned value (`(*nova_self)`,
+                    // single indirection) split, and `outer`'s LATER external
+                    // dot-call (`outer.apply(...)`, dispatched via `emit_call`'s
+                    // "obj_ty is already Nova_X*" fast path — no `&tmp` hoist,
+                    // unlike a bare `void*` capture) reads one indirection level
+                    // too many — `*nova_self` inside `Nova_Mid_method_apply`
+                    // dereferences the CLOSURE POINTER ITSELF as if it were an
+                    // address-of-slot — segfault (found via №96/№97 δ0-репро:
+                    // `m1.then(m2)`'s `.then()`-lambda body `outer.apply(inner.
+                    // apply(next))` crashed inside the `outer.apply` leg).
+                    let is_fn_newtype_recv = self.current_receiver_type.as_deref()
+                        .map(|t| self.fn_newtype_sigs.contains_key(t))
+                        .unwrap_or(false);
+                    return if is_fn_newtype_recv {
+                        "void*".to_string()
+                    } else if Self::is_value_struct_ptr(&raw) {
                         raw.trim_end_matches('*').trim().to_string()
                     } else {
                         raw
