@@ -46915,6 +46915,68 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // matched flag: tracks if any arm matched (needed for guard fallthrough)
         self.line(&format!("int {} = 0;", matched_tmp));
 
+        // [fix M-serve-router-nova-fn-hook-undefined, реестр 221.1 №107]: a
+        // match arm that destructures a Func-typed payload out of a single-
+        // arg generic wrapper (`Some(hook)` over `Option[fn(...) -> ...]` —
+        // the `@take_upgrade()`-style shape, `nova-polaris/src/net/serve.nv`)
+        // never registered `fn_param_sigs` for the bound name —
+        // `pattern_bind_typed` (below) only tracks the binding's storage C
+        // TYPE (`var_types`), never its CALL signature. A later `hook(x)`
+        // call-site therefore misses every `fn_param_sigs`-gated closure-call
+        // special case (~L37525) and falls through to the "must be a free
+        // function" default (`free_fn_c_name`), emitting a bogus
+        // `nova_fn_hook` reference — undefined symbol at LINK time (this is
+        // the same documented failure mode `nested_fn_return_sig`'s own
+        // doc-comment describes for a sibling shape, ~L11144 — "a bogus
+        // `nova_fn_h2` call, undefined-symbol at link time"). Fix: read the
+        // SCRUTINEE's checker-resolved type (`resolved_types`, §0/196
+        // channel — the SAME authoritative source the Plan-228 HOF-binding
+        // registration above already trusts for `let`), peel ONE single-arg
+        // generic wrapper layer (`Option[T]` and kin) to find a `Func`, and
+        // register `fn_param_sigs` for every direct single-payload `Ident`
+        // binding across the arms — covers `Some(hook)` generically (any
+        // single-arg tuple-variant, not hardcoded to `Some`). A channel miss
+        // (non-Func scrutinee, the overwhelming common case) is a silent
+        // no-op — byte-identical for every match that isn't this shape.
+        // NOTE: uses `resolved_type_to_c` (direct ResolvedType→C, handles
+        // Scalar/Float/Bool/Str/... primitives) rather than
+        // `resolved_type_to_typeref_named` (a narrower Named/Func/Unit/
+        // Readonly-only round-trip built for the Plan-228 HOF-binding case,
+        // which has no arm for a primitive-typed Func PARAM — e.g.
+        // `fn(int) -> int`'s `int` param — and would silently `?`-bail the
+        // whole conversion for exactly the common case, found via
+        // `NOVA_DEBUG_107` tracing against this fix's own standalone
+        // fixture: `resolved_types` DID carry
+        // `Named{"Option",[Func{params:[Scalar{64,...}],ret:Scalar{64,...}}]}`
+        // correctly, but the round-trip through `resolved_type_to_typeref_named`
+        // still produced `None` on the `Scalar` param).
+        let scrutinee_wrapped_fn_sig: Option<(Vec<String>, String)> =
+            if scrutinee.id.is_set() {
+                self.resolved_types.get(&scrutinee.id).cloned().and_then(|rt| {
+                    use crate::types::ResolvedType as R;
+                    let func_rt = match &rt {
+                        R::Func { .. } => Some(rt.clone()),
+                        R::Named { args, .. } if args.len() == 1 => {
+                            match &args[0] {
+                                f @ R::Func { .. } => Some(f.clone()),
+                                _ => None,
+                            }
+                        }
+                        _ => None,
+                    }?;
+                    let R::Func { params, ret, .. } = &func_rt else { return None; };
+                    let ptys: Result<Vec<String>, String> =
+                        params.iter().map(|p| self.resolved_type_to_c(p)).collect();
+                    let rty = self.resolved_type_to_c(ret);
+                    match (ptys, rty) {
+                        (Ok(p), Ok(r)) => Some((p, r)),
+                        _ => None,
+                    }
+                })
+            } else {
+                None
+            };
+
         for arm in arms {
             // Each arm: if (!matched && pattern_cond) { bind; if(guard) { body; matched=1; } }
             let cond = self.pattern_cond(&arm.pattern, &scr_tmp)?;
@@ -46926,6 +46988,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
 
             // Emit pattern bindings
             self.pattern_bind_typed(&arm.pattern, &scr_tmp)?;
+            if let Some(sig) = &scrutinee_wrapped_fn_sig {
+                if let Pattern::Variant { kind: VariantPatternKind::Tuple { patterns, .. }, .. } = &arm.pattern {
+                    if let [Pattern::Ident { name, .. }] = patterns.as_slice() {
+                        self.fn_param_sigs.insert(name.clone(), sig.clone());
+                    }
+                }
+            }
 
             if let Some(g) = &arm.guard {
                 let gv = self.emit_expr(g)?;
