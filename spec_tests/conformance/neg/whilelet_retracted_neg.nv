@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR E_IF_LET_RETRACTED
+//
+// `while let` (Rust-style outer `let`) retracted — D34 amended by Plan 114
+// D184: pattern-bind grammar unified with match arms, outer `let` dropped.
+// Canon: `while Pat = expr { ... }` (see licm_while_let_ok.nv). Парсер-
+// энфорс добавлен в реестре 221.1 №95
+// [M-if-let-retraction-not-enforced]: до этого момента парсер тихо
+// принимал обе формы («две двери»).
+
+module neg.whilelet_retracted_neg
+
+test "while let is retracted" {
+    mut opt = Some(1)
+    while let Some(v) = opt {
+        opt = None
+    }
+    assert(true)
+}

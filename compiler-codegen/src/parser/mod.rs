@@ -9743,33 +9743,17 @@ impl Parser {
 
     fn parse_if(&mut self) -> Result<Expr, Diagnostic> {
         let start = self.expect(&TokenKind::KwIf)?.span;
-        // `if let pattern = expr { ... }` — D34 legacy (will be removed
-        // after Ф.5/Ф.6 corpus migration; oneday emits E_KW_REMOVED_LET).
+        // `if let pattern = expr { ... }` — Rust-форма RETRACTED (D184,
+        // Plan 114; парсер-энфорс — реестр 221.1 №95,
+        // [M-if-let-retraction-not-enforced]). Канон — unified pattern
+        // grammar БЕЗ `let`: `if Pat = expr { ... }` (D34, 03-syntax.md:1540).
         if matches!(self.peek().kind, TokenKind::KwLet) {
-            self.bump();
-            let pattern = self.parse_pattern()?;
-            self.expect(&TokenKind::Eq)?;
-            // Plan 106: parse scrutinee stopping before `&&` (parse_eq level)
-            // so that `&&` is available for the optional guard clause.
-            let scrutinee = self.with_no_struct_or_trailing(|p| p.parse_eq())?;
-            let guard = if matches!(self.peek().kind, TokenKind::AmpAmp) {
-                self.bump();
-                Some(Box::new(self.with_no_struct_or_trailing(|p| p.parse_expr())?))
-            } else {
-                None
-            };
-            let then = self.parse_block()?;
-            let else_ = self.parse_optional_else()?;
-            let end = then.span;
-            return Ok(Expr::new(
-                ExprKind::IfLet {
-                    pattern,
-                    scrutinee: Box::new(scrutinee),
-                    guard,
-                    then,
-                    else_,
-                },
-                start.merge(end),
+            let sp = self.peek().span;
+            return Err(Diagnostic::new(
+                "[E_IF_LET_RETRACTED] `if let` retracted (Plan 114/D184) — \
+                 write the pattern directly: `if Some(x) = expr { ... }`."
+                    .to_string(),
+                sp,
             ));
         }
         // Plan 114 (D184): `if ro IDENT = e` / `if mut IDENT = e` —
@@ -10075,31 +10059,17 @@ impl Parser {
 
     fn parse_while(&mut self) -> Result<Expr, Diagnostic> {
         let start = self.expect(&TokenKind::KwWhile)?.span;
-        // `while let pattern = expr` — D34 legacy.
+        // `while let pattern = expr` — Rust-форма RETRACTED (D184, Plan 114;
+        // парсер-энфорс — реестр 221.1 №95,
+        // [M-if-let-retraction-not-enforced]). Канон: `while Pat = expr { ... }`
+        // (D34, 03-syntax.md:1540).
         if matches!(self.peek().kind, TokenKind::KwLet) {
-            self.bump();
-            let pattern = self.parse_pattern()?;
-            self.expect(&TokenKind::Eq)?;
-            // Plan 106: parse scrutinee stopping before `&&` (parse_eq level).
-            let scrutinee = self.with_no_struct_or_trailing(|p| p.parse_eq())?;
-            let guard = if matches!(self.peek().kind, TokenKind::AmpAmp) {
-                self.bump();
-                Some(Box::new(self.with_no_struct_or_trailing(|p| p.parse_expr())?))
-            } else {
-                None
-            };
-            let body = self.parse_block()?;
-            let end = body.span;
-            return Ok(Expr::new(
-                ExprKind::WhileLet {
-                    pattern,
-                    scrutinee: Box::new(scrutinee),
-                    guard,
-                    body,
-                    invariants: vec![],
-                    decreases: None,
-                },
-                start.merge(end),
+            let sp = self.peek().span;
+            return Err(Diagnostic::new(
+                "[E_IF_LET_RETRACTED] `while let` retracted (Plan 114/D184) — \
+                 write the pattern directly: `while Some(x) = expr { ... }`."
+                    .to_string(),
+                sp,
             ));
         }
         // Plan 114 (D184): `while ro IDENT = e` / `while mut IDENT = e`.
