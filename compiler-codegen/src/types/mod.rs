@@ -5542,6 +5542,19 @@ impl<'a> TypeCheckCtx<'a> {
                 FnBody::External => {}
             }
         }
+        // Plan 221.1 №113 (D85 ENFORCED): `!!` always throw-style, requires
+        // enclosing `Fail[E']`-compatible effect (или `with Fail = ...` local
+        // handler — see walker doc above). Scope: EXPORTED fn only (D62) —
+        // private fn остаются под D28 auto-inference (`infer_effects`),
+        // см. doc-комментарий walker'а выше про порядок проходов в `main.rs`.
+        if fd.is_export {
+            let fail_ok = has_fail_effect(&fd.effects);
+            match &fd.body {
+                FnBody::Block(b) => check_bang_requires_fail_block(b, fail_ok, errors),
+                FnBody::Expr(e) => check_bang_requires_fail_expr(e, fail_ok, errors),
+                FnBody::External => {}
+            }
+        }
         // Plan 114.4.2 (D199): set flag для scope-local const skip
         // когда мы внутри const fn body. Body checker
         // (check_const_fn_decl) точнее покрывает validation.
@@ -36254,6 +36267,205 @@ fn check_try_return_only_expr(e: &Expr, ret_ok: bool, errors: &mut Vec<Diagnosti
         }
         // Closures/lambdas — свой return-контекст; skip (safe false-negative).
         // Прочие простые узлы (Ident/Lit/…) без вложенных `?`.
+        _ => {}
+    }
+}
+
+// ── Plan 221.1 №113 (D85 ENFORCED, ЧЕКЕР-КАНАЛ): `!!` требует enclosing
+// `Fail[E']` ──────────────────────────────────────────────────────────────
+//
+// D85: `expr!!` — ВСЕГДА throw-стиль (в отличие от `?`, который дуален —
+// return-only ИЛИ throw-стиль по контексту; см. `emit_c.rs::in_fail_ctx`,
+// комментарий «This mirrors the ExprKind::Bang semantics» — Bang не имеет
+// return-slot ветки, throw безусловен). Значит `!!` ВСЕГДА требует, чтобы
+// либо (a) enclosing fn-sig нёс `Fail[E']`-совместимый эффект, либо (b)
+// выражение — внутри `with Fail = handler { ... }` (D158-семья), который
+// ловит throw локально до выхода из текущей fn.
+//
+// **Scope (D62 экономика приватных fn):** энфорс применяется ТОЛЬКО к
+// EXPORTED fn (`fd.is_export`). Приватные fn остаются под D28
+// auto-inference (`infer_effects` в `main.rs` молча подставляет `Fail`
+// приватной fn с throw/`!!` в теле, ДО второго `check_module`-прохода) —
+// если бы этот walker флагал приватные fn безусловно, ПЕРВЫЙ
+// `check_module`-проход (до `infer_effects`, см. `main.rs` cmd_compile)
+// упал бы hard error'ом на КАЖДОЙ приватной fn с идиомой `!!` без явного
+// `Fail` — устоявшийся паттерн D28, НЕ баг. Дыра №113 — именно в том, что
+// EXPORTED fn (D62: «явная декларация обязательна») НИКАК не проверяется;
+// сюда и целится `E_BANG_REQUIRES_FAIL`.
+//
+// Closures/lambdas — как у `E_TRY_IN_FAIL_FN` выше: свой return/effect-
+// контекст, walker skip (тот же safe false-neg waiver).
+//
+// Defer-body — НЕ рекурсим: `check_defer_body_inner` (см. ниже,
+// `ExprKind::Bang(_)` ветка) уже покрывает `!!` внутри `defer`/`errdefer`
+// своей D158-диагностикой (fail_throw_allowed на основе enclosing fn-sig
+// ИЛИ `inside_fail_handler_depth`) — не дублируем/не конфликтуем.
+
+fn check_bang_requires_fail_block(b: &Block, fail_ok: bool, errors: &mut Vec<Diagnostic>) {
+    for s in &b.stmts {
+        match s {
+            Stmt::ConsumeScope { init, body, .. } => {
+                check_bang_requires_fail_expr(init, fail_ok, errors);
+                check_bang_requires_fail_block(body, fail_ok, errors);
+            }
+            // defer/errdefer body — governed by check_defer_body_inner (D158), skip.
+            Stmt::Defer { .. } => {}
+            Stmt::Let(decl) => check_bang_requires_fail_expr(&decl.value, fail_ok, errors),
+            Stmt::Const(_) => {}
+            Stmt::Expr(e) => check_bang_requires_fail_expr(e, fail_ok, errors),
+            Stmt::Assign { target, value, .. } => {
+                check_bang_requires_fail_expr(target, fail_ok, errors);
+                check_bang_requires_fail_expr(value, fail_ok, errors);
+            }
+            Stmt::Return { value, .. } => {
+                if let Some(v) = value { check_bang_requires_fail_expr(v, fail_ok, errors); }
+            }
+            Stmt::Throw { value, .. } => check_bang_requires_fail_expr(value, fail_ok, errors),
+            Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => check_bang_requires_fail_expr(expr, fail_ok, errors),
+            Stmt::Apply { args, .. } => {
+                for a in args { check_bang_requires_fail_expr(a, fail_ok, errors); }
+            }
+            Stmt::Calc { steps, .. } => {
+                for step in steps { check_bang_requires_fail_expr(&step.expr, fail_ok, errors); }
+            }
+            Stmt::TupleAssign { lhs, rhs, .. } => {
+                for e in lhs { check_bang_requires_fail_expr(e, fail_ok, errors); }
+                for e in rhs { check_bang_requires_fail_expr(e, fail_ok, errors); }
+            }
+            Stmt::Break(_) | Stmt::Continue(_) | Stmt::Reveal { .. } => {}
+        }
+    }
+    if let Some(t) = &b.trailing {
+        check_bang_requires_fail_expr(t, fail_ok, errors);
+    }
+}
+
+fn check_bang_requires_fail_expr(e: &Expr, fail_ok: bool, errors: &mut Vec<Diagnostic>) {
+    match &e.kind {
+        ExprKind::Bang(inner) => {
+            if !fail_ok {
+                errors.push(Diagnostic::new(
+                    "[E_BANG_REQUIRES_FAIL] `!!` бросает через эффект `Fail[…]` — добавь `Fail[E]` \
+                     в сигнатуру (для `Option` — `Fail[RuntimeNoneError]`), либо обработай значением \
+                     (`?? fallback` / `?? panic(\"...\")`/ `match`), либо пробрось `?` (D85, ENFORCED \
+                     план 221.1 №113 — `expr!!` всегда throw-стиль, `Fail` в сигнатуре обязателен).".to_string(),
+                    e.span,
+                ));
+            }
+            check_bang_requires_fail_expr(inner, fail_ok, errors);
+        }
+        ExprKind::Try(inner) | ExprKind::RefArg(inner) | ExprKind::Throw(inner) => {
+            check_bang_requires_fail_expr(inner, fail_ok, errors);
+        }
+        ExprKind::Block(b) => check_bang_requires_fail_block(b, fail_ok, errors),
+        ExprKind::If { cond, then, else_ } => {
+            check_bang_requires_fail_expr(cond, fail_ok, errors);
+            check_bang_requires_fail_block(then, fail_ok, errors);
+            if let Some(ElseBranch::Block(b)) = else_ { check_bang_requires_fail_block(b, fail_ok, errors); }
+            if let Some(ElseBranch::If(e2)) = else_ { check_bang_requires_fail_expr(e2, fail_ok, errors); }
+        }
+        ExprKind::IfLet { scrutinee, then, else_, .. } => {
+            check_bang_requires_fail_expr(scrutinee, fail_ok, errors);
+            check_bang_requires_fail_block(then, fail_ok, errors);
+            if let Some(ElseBranch::Block(b)) = else_ { check_bang_requires_fail_block(b, fail_ok, errors); }
+            if let Some(ElseBranch::If(e2)) = else_ { check_bang_requires_fail_expr(e2, fail_ok, errors); }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            check_bang_requires_fail_expr(scrutinee, fail_ok, errors);
+            for a in arms {
+                match &a.body {
+                    MatchArmBody::Expr(e2) => check_bang_requires_fail_expr(e2, fail_ok, errors),
+                    MatchArmBody::Block(b) => check_bang_requires_fail_block(b, fail_ok, errors),
+                }
+                if let Some(g) = &a.guard { check_bang_requires_fail_expr(g, fail_ok, errors); }
+            }
+        }
+        ExprKind::For { iter, body, .. } | ExprKind::ParallelFor { iter, body, .. } => {
+            check_bang_requires_fail_expr(iter, fail_ok, errors);
+            check_bang_requires_fail_block(body, fail_ok, errors);
+        }
+        ExprKind::While { cond, body, .. } => {
+            check_bang_requires_fail_expr(cond, fail_ok, errors);
+            check_bang_requires_fail_block(body, fail_ok, errors);
+        }
+        ExprKind::WhileLet { scrutinee, body, .. } => {
+            check_bang_requires_fail_expr(scrutinee, fail_ok, errors);
+            check_bang_requires_fail_block(body, fail_ok, errors);
+        }
+        ExprKind::Loop { body, .. } => check_bang_requires_fail_block(body, fail_ok, errors),
+        ExprKind::Select { arms } => {
+            for arm in arms {
+                match &arm.op {
+                    SelectOp::Recv { chan, .. } => check_bang_requires_fail_expr(chan, fail_ok, errors),
+                    SelectOp::Send { chan, value } => {
+                        check_bang_requires_fail_expr(chan, fail_ok, errors);
+                        check_bang_requires_fail_expr(value, fail_ok, errors);
+                    }
+                    SelectOp::Default => {}
+                }
+                if let Some(g) = &arm.guard { check_bang_requires_fail_expr(g, fail_ok, errors); }
+                check_bang_requires_fail_block(&arm.body, fail_ok, errors);
+            }
+        }
+        // `with Fail = ...` — throw ловится ЛОКАЛЬНО этим handler'ом (D158-семья):
+        // расширяем fail_ok на время body, если среди bindings есть Fail-эффект.
+        ExprKind::With { bindings, body } => {
+            let has_fail_binding = bindings.iter().any(|wb| {
+                matches!(&wb.effect, TypeRef::Named { path, .. } if path.last().map(|s| s.as_str()) == Some("Fail"))
+            });
+            check_bang_requires_fail_block(body, fail_ok || has_fail_binding, errors);
+        }
+        ExprKind::Forbid { body, .. }
+        | ExprKind::Realtime { body, .. }
+        | ExprKind::Detach(body) | ExprKind::Blocking(body) => {
+            check_bang_requires_fail_block(body, fail_ok, errors);
+        }
+        ExprKind::Supervised { body, cancel, deadline } => {
+            if let Some(c) = cancel { check_bang_requires_fail_expr(c, fail_ok, errors); }
+            if let Some(_dl) = deadline { check_bang_requires_fail_expr(&_dl.expr, fail_ok, errors); }
+            check_bang_requires_fail_block(body, fail_ok, errors);
+        }
+        ExprKind::Call { func, args, .. } => {
+            // Trailing block/fn — closure-like (own scope) → skip (как closures).
+            check_bang_requires_fail_expr(func, fail_ok, errors);
+            for a in args { check_bang_requires_fail_expr(a.expr(), fail_ok, errors); }
+        }
+        ExprKind::Spawn(e) => check_bang_requires_fail_expr(e, fail_ok, errors),
+        ExprKind::Binary { left, right, .. } => {
+            check_bang_requires_fail_expr(left, fail_ok, errors);
+            check_bang_requires_fail_expr(right, fail_ok, errors);
+        }
+        ExprKind::Unary { operand, .. } => check_bang_requires_fail_expr(operand, fail_ok, errors),
+        ExprKind::Coalesce(a, b) => {
+            check_bang_requires_fail_expr(a, fail_ok, errors);
+            check_bang_requires_fail_expr(b, fail_ok, errors);
+        }
+        ExprKind::As(e2, _) | ExprKind::Is(e2, _) => check_bang_requires_fail_expr(e2, fail_ok, errors),
+        ExprKind::Member { obj, .. } | ExprKind::Index { obj, .. } => check_bang_requires_fail_expr(obj, fail_ok, errors),
+        ExprKind::TurboFish { base, .. } => check_bang_requires_fail_expr(base, fail_ok, errors),
+        ExprKind::Interrupt(Some(body)) => check_bang_requires_fail_expr(body, fail_ok, errors),
+        ExprKind::Range { start, end, .. } => {
+            if let Some(s) = start { check_bang_requires_fail_expr(s, fail_ok, errors); }
+            if let Some(en) = end { check_bang_requires_fail_expr(en, fail_ok, errors); }
+        }
+        ExprKind::ArrayLit(elems) => {
+            for el in elems {
+                match el {
+                    ArrayElem::Item(e2) | ArrayElem::Spread(e2) => check_bang_requires_fail_expr(e2, fail_ok, errors),
+                }
+            }
+        }
+        ExprKind::TupleLit(elems) => {
+            for el in elems { check_bang_requires_fail_expr(el, fail_ok, errors); }
+        }
+        ExprKind::RecordLit { fields, .. } => {
+            for f in fields {
+                if let Some(v) = &f.value { check_bang_requires_fail_expr(v, fail_ok, errors); }
+            }
+        }
+        // Closures/lambdas — свой return/effect-контекст; skip (safe false-negative,
+        // тот же waiver что у E_TRY_IN_FAIL_FN).
+        // Прочие простые узлы (Ident/Lit/…) без вложенных `!!`.
         _ => {}
     }
 }
