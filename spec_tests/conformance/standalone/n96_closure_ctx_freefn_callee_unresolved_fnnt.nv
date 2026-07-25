@@ -1,0 +1,54 @@
+// EXPECT_STDOUT 33
+//
+// [M-closure-ctx-freefn-callee-unresolved-fnnt, №96]: top-level fn calling
+// ANOTHER top-level fn BY NAME from inside a closure whose params/captures
+// carry a fn-newtype (`Hnd`/`Mid`) emits the callee UNMANGLED — CC-FAIL "use
+// of undeclared identifier 'step'". Exact pattern of the real Middleware
+// @then/battery chain (nova-http) that crashes at runtime. Found by the
+// coordinator while Plan 221.1 №94 (fn-newtype resolve consolidation) was
+// in flight — added to the №94 gate corpus per addendum.
+module standalone.n96_closure_ctx_freefn_callee_unresolved_fnnt
+
+// №90-репро, но fn-newtype несёт RECORD-аргументы (как реальный Handler)
+type Req value { ro n int }
+type Hnd fn(Req) -> Req
+type Mid fn(Hnd) -> Hnd
+
+fn Mid.new(f fn(Hnd) -> Hnd) -> ro Mid => f
+fn Mid @apply(next Hnd) -> Hnd => @(next)
+
+fn Mid @then(inner Mid) -> Mid {
+    ro outer = @
+    Mid.new(fn(next Hnd) -> Hnd => outer.apply(inner.apply(next)))
+}
+
+fn mk(delta int) -> Mid {
+    ro d = delta
+    Mid.new(fn(next Hnd) -> Hnd => wrapn(d, next))
+}
+fn wrapn(d int, next Hnd) -> Hnd {
+    ro dd = d
+    ro n = next
+    fn(r Req) -> Req => step(dd, n, r)
+}
+fn step(d int, next Hnd, r Req) -> Req {
+    ro out = next(r)
+    ro res Req = { n: out.n + d }
+    res
+}
+
+fn base(r Req) -> Req {
+    ro res Req = { n: r.n * 10 }
+    res
+}
+
+fn main() {
+    ro m1 = mk(1)
+    ro m2 = mk(2)
+    ro composed = m1.then(m2)
+    ro h Hnd = base
+    ro wrapped = composed.apply(h)
+    ro arg Req = { n: 3 }
+    ro res = wrapped(arg)
+    println("${res.n}")   // ожидаю 33: base=30, +2 (внутр), +1 (внешн)
+}

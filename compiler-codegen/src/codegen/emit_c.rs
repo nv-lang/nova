@@ -1312,23 +1312,6 @@ pub struct CEmitter {
     /// Maps function name → (param_c_tys, ret_c_ty) when the function returns a fn(...) type.
     /// Used to register let-bindings of function-call results in fn_param_sigs.
     fn_returns_fn_sig: HashMap<String, (Vec<String>, String)>,
-    /// [fix M-nested-fn-newtype-bind-then-call-broken, реестр 221.1 №78,
-    /// форма 3] "level 2" sibling of `fn_returns_fn_sig`: maps free-fn name →
-    /// the callable signature of what CALLING that fn's OWN call-result would
-    /// FURTHER return — i.e. `nested_fn_return_sig` applied to the SAME
-    /// resolved `Func` shape `fn_returns_fn_sig` derives from, one level
-    /// deeper. Needed for a free fn whose declared return is ITSELF a
-    /// fn-newtype whose OWN return is ALSO a (possibly nested) fn-newtype
-    /// (`fn compose(m1 Mid, m2 Mid) -> Mid` where `Mid = fn(Hnd) -> Hnd`):
-    /// `ro c Mid = compose(m1, m2)` gets `c` registered callable via
-    /// `fn_returns_fn_sig["compose"]` (existing propagation) — but a
-    /// FOLLOW-ON `ro h2 = c(h)` needs `h2` to ALSO be callable, which
-    /// requires `fn_returns_fn_sig["c"]` to exist. This table carries that
-    /// fact forward from "compose" so the let-binding producer (~L30377) can
-    /// propagate it onto `c` too, the moment `c` is bound. Populated
-    /// alongside `fn_returns_fn_sig` at fn-decl scan time (same site,
-    /// `emit_fn_forward_decl`).
-    fn_returns_fn_sig_l2: HashMap<String, (Vec<String>, String)>,
     /// Set of function names that are generic (have type parameters).
     /// Generic functions are emitted with void* erasure; call sites must box/unbox.
     generic_fns: HashSet<String>,
@@ -2381,7 +2364,6 @@ impl CEmitter {
             trailing_block_counter: 0,
             lambda_counter: 0,
             fn_returns_fn_sig: HashMap::new(),
-            fn_returns_fn_sig_l2: HashMap::new(),
             generic_fns: HashSet::new(),
             generic_types: HashSet::new(),
             protocol_types: HashSet::new(),
@@ -11088,6 +11070,59 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
     }
 
+    /// [Plan 228 Ф.2(a), реестр 221.1 №94-v2] Minimal `ResolvedType` →
+    /// `TypeRef` NORMALIZER for the unified HOF-binding channel registration
+    /// (`Stmt::Let` handling, below): the checker's `resolved_types[call_id]`
+    /// channel may materialize a HOF-binding RHS's type as EITHER a bare name
+    /// (`ResolvedType::Named{X}`, peeled through `fn_newtype_sigs` by
+    /// `resolve_fn_typeref` already) OR — for a bare reference to a free
+    /// function BY NAME (`ro m Mid = identity_mw`, no call at all — the
+    /// checker's universal per-Ident writer, `types/mod.rs` `f1_expr_inner`
+    /// ~7836, channels the free fn's OWN declared signature directly) — a
+    /// literal `ResolvedType::Func{..}`. Round-tripping that second shape
+    /// back to `TypeRef::Func` (so `nested_fn_return_sig`/the C-lowering
+    /// below can treat both shapes identically) needs ONLY `Named`/`Func`/
+    /// `Unit` — the three ResolvedType variants that can ever appear inside
+    /// a HOF-binding's own callable signature (params/return of a fn-newtype
+    /// or plain free fn are never raw pointers/tuples/arrays in this corpus'
+    /// forms; a shape this doesn't cover returns `None` → honest fallback to
+    /// legacy, never a wrong type).
+    fn resolved_type_to_typeref_named(
+        &self,
+        rt: &crate::types::ResolvedType,
+        span: Span,
+    ) -> Option<TypeRef> {
+        use crate::types::ResolvedType as R;
+        match rt {
+            R::Named { name, args, .. } if args.is_empty() => Some(TypeRef::Named {
+                path: vec![name.clone()],
+                generics: Vec::new(),
+                span,
+            }),
+            R::Func { params, ret, .. } => {
+                let ps: Option<Vec<TypeRef>> = params.iter()
+                    .map(|p| self.resolved_type_to_typeref_named(p, span))
+                    .collect();
+                let r = self.resolved_type_to_typeref_named(ret, span)?;
+                Some(TypeRef::Func {
+                    params: ps?,
+                    effects: Vec::new(),
+                    return_type: Some(Box::new(r)),
+                    extern_abi: None,
+                    span,
+                })
+            }
+            R::Unit => Some(TypeRef::Unit(span)),
+            // D246 L2 axis: `readonly T` is a transparent CONTENT-view for C-lowering
+            // purposes (mirrors `resolved_type_to_c`'s own peel) — a free fn's `-> ro
+            // N78Hnd` return (a real corpus shape: `n78_identity_mw`) must not fail
+            // normalization just because its declared return carries a `ro`
+            // annotation the callable SIGNATURE itself doesn't care about.
+            R::Readonly(inner) => self.resolved_type_to_typeref_named(inner, span),
+            _ => None,
+        }
+    }
+
     /// [fix M-nested-fn-newtype-bind-then-call-broken, реестр 221.1 №78,
     /// форма 2]: given an ALREADY-resolved fn-typed shape (`resolve_fn_typeref`'s
     /// own output — a param's or binding's OWN `Func{..}`), does its RETURN
@@ -16317,27 +16352,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 None => "nova_unit".to_string(),
             };
             self.fn_returns_fn_sig.insert(f.name.clone(), (ptys, rty));
-            // [fix M-nested-fn-newtype-bind-then-call-broken, реестр 221.1
-            // №78, форма 3]: `return_type` here (`Hnd`, already resolved ONE
-            // level through `resolve_fn_typeref` above) may ITSELF resolve
-            // further (nested fn-newtype-over-fn-newtype return, e.g.
-            // `fn compose(..) -> Mid` where `Mid = fn(Hnd) -> Hnd`). Record
-            // that "level 2" signature so a chain of TWO let-bindings
-            // (`ro c Mid = compose(..); ro h2 = c(h)`) can propagate it
-            // through — see `fn_returns_fn_sig_l2` doc.
-            if let Some(rt) = return_type.as_ref() {
-                if let Some(TypeRef::Func { params: fp2, return_type: rt2, .. }) = self.resolve_fn_typeref(rt) {
-                    let ptys2: Vec<String> = fp2.iter()
-                        .map(|t| self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()))
-                        .collect();
-                    let rty2 = match rt2.as_ref() {
-                        Some(t) => self.type_ref_to_c(t).unwrap_or_else(|_| "nova_int".into()),
-                        None => "nova_unit".to_string(),
-                    };
-                    self.icr_trace("N78_fnretsig_l2_populate");
-                    self.fn_returns_fn_sig_l2.insert(f.name.clone(), (ptys2, rty2));
-                }
-            }
         }
         // Plan 14 Ф.3: регистрируем сигнатуру free fn в user_fn_sigs для
         // emit free-fn-as-value (`let f = inc`, `xs.map(inc)`).
@@ -30576,6 +30590,79 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                     }
                 }
+                // [Plan 228 Ф.2(a), реестр 221.1 №94-v2] Unified channel-fed
+                // HOF-binding registration: read the CHECKER's own materialized
+                // return type for this let's RHS (`resolved_types[decl.value.id]`,
+                // 196.4 channel — Ф.2's companion checker-producer donation
+                // (`resolve_fn_newtype_typeref` in types/mod.rs) additionally
+                // populates it for "calling a scope-bound fn-newtype-typed
+                // local", the exact form the six legacy arms below exist for).
+                // If that result is a fn-newtype/alias-of-fn NAME (peels via
+                // `fn_newtype_sigs`, D52-амендмент's own registry — same
+                // call-through `resolve_fn_typeref` performs) OR already a bare
+                // `Func` shape, ONE registration gives `binding` both (a) its
+                // OWN callable signature (`fn_param_sigs`) and (b) — if THAT
+                // signature's return is itself another fn-newtype —
+                // `binding`'s nested callable signature (`fn_returns_fn_sig`,
+                // `nested_fn_return_sig`) — regardless of which AST shape
+                // (`Ident`/`Call`/`Member` RHS) produced the value. This is
+                // exactly what the six hand-written arms below (Ident/
+                // Call-L1/Call-L2/Member-L1/Member-L2) each re-derive
+                // independently by re-scanning the RHS's OWN AST shape — the
+                // checker already told us the call's RESULT type, which alone
+                // determines both signatures. Gated to fire ONLY on a genuine
+                // channel hit; a miss (residual/erased, or
+                // any scenario the channel doesn't cover) leaves the SIBLING
+                // fallbacks below (Lambda/ClosureLight/ClosureFull/method-value,
+                // untouched by this plan — different RHS shapes) to run as
+                // before. The six legacy arms this registration REPLACES
+                // (Ident/Call-L1/Call-L2/Member-L1/Member-L2 +
+                // `fn_returns_fn_sig_l2`) were removed outright after δ0-корпус
+                // NO-HIT-верификация — see docs/plans/228-fnnt-channel-materialization.md.
+                if decl.value.id.is_set() {
+                    if let Some(rt) = self.resolved_types.get(&decl.value.id).cloned() {
+                        // Two channel shapes reach here: (1) a fn-newtype/alias
+                        // NAME (`Named{X}`) — peel via `fn_newtype_sigs`
+                        // directly (`resolve_fn_typeref`'s own registry), the
+                        // common case for a CALL whose return is a fn-newtype
+                        // (№78/№90 Call/Member forms); (2) a bare
+                        // `ResolvedType::Func` — the checker's universal
+                        // per-Ident writer (types/mod.rs `f1_expr_inner`
+                        // ~7836) channels this directly for a RHS that is
+                        // simply a NAME reference to a free fn (`ro m Mid =
+                        // identity_mw`, no call at all — the №78 Ident form),
+                        // round-tripped back to `TypeRef` by
+                        // `resolved_type_to_typeref_named` (Named/Func/Unit
+                        // only — the shapes a HOF-binding signature can ever
+                        // carry) so both cases share the SAME lowering tail.
+                        let peeled: Option<TypeRef> = match &rt {
+                            crate::types::ResolvedType::Named { name, args, .. } if args.is_empty() => {
+                                self.fn_newtype_sigs.get(name).cloned()
+                            }
+                            crate::types::ResolvedType::Func { .. } => {
+                                self.resolved_type_to_typeref_named(&rt, decl.value.span)
+                            }
+                            _ => None,
+                        };
+                        if let Some(TypeRef::Func { params, return_type, .. }) = &peeled {
+                            let ptys_r: Result<Vec<String>, String> =
+                                params.iter().map(|t| self.type_ref_to_c(t)).collect();
+                            let rty_r: Result<String, String> = match return_type.as_deref() {
+                                Some(t) => self.type_ref_to_c(t),
+                                None => Ok("nova_unit".to_string()),
+                            };
+                            if let (Ok(ptys), Ok(rty)) = (ptys_r, rty_r) {
+                                self.icr_trace("N228_hof_binding_channel_hit");
+                                self.fn_param_sigs.insert(binding.clone(), (ptys, rty));
+                            }
+                        }
+                        if let Some(func_ty) = &peeled {
+                            if let Some(sig2) = self.nested_fn_return_sig(func_ty) {
+                                self.fn_returns_fn_sig.insert(binding.clone(), sig2);
+                            }
+                        }
+                    }
+                }
                 // Plan 14 Ф.3: если RHS — Ident, ссылающийся на user fn
                 // (`let f = inc`), регистрируем binding в fn_param_sigs
                 // через user_fn_sigs. Тогда `f(x)` пойдёт через
@@ -30585,34 +30672,20 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         if let Some(sig) = self.user_fn_sigs.get(rhs_name).cloned() {
                             self.fn_param_sigs.insert(binding.clone(), sig);
                         }
-                        // [fix M-nested-fn-newtype-bind-then-call-broken, реестр
-                        // 221.1 №78]: propagate `fn_returns_fn_sig` (the INNER
-                        // callable signature of whatever calling `rhs_name` would
-                        // itself return, pre-scanned via `resolve_fn_typeref` —
-                        // №53's own registry) forward onto THIS binding too, not
-                        // just `fn_param_sigs` above. `fn_param_sigs[binding]` only
-                        // carries `rhs_name`'s OWN call signature (flat C-type
-                        // strings — correct for calling `m` itself, e.g. `m(h)`,
-                        // but structurally blind to what `m`'s RETURN is further
-                        // callable with when that return is itself a fn-newtype,
-                        // e.g. `type Mid fn(Hnd) -> Hnd`). Without this, `ro m Mid
-                        // = identity_mw; ro h2 = m(h); h2(5)` left `h2` with NO
-                        // `fn_param_sigs` entry at all — `h2(5)` fell to the "must
-                        // be a free function" default (bogus `nova_fn_h2`,
-                        // undefined-symbol link error). The existing "RHS is a
-                        // call to a fn/binding carrying a registered HOF-return
-                        // sig" propagation a few lines below (`fn_returns_fn_sig`,
-                        // keyed by callee NAME, name-agnostic to free-fn-vs-local)
-                        // already consumes this the moment it exists under `m`'s
-                        // name — this is the ONE additional producer edge needed:
-                        // name-generic (rhs_name may itself be a previously
-                        // propagated LOCAL binding, chaining transitively), so it
-                        // covers `ro m2 = m` re-binding chains too, not just the
-                        // direct free-fn case.
-                        if let Some(sig) = self.fn_returns_fn_sig.get(rhs_name.as_str()).cloned() {
-                            self.icr_trace("N78_ident_rhs_fnretsig_propagate");
-                            self.fn_returns_fn_sig.insert(binding.clone(), sig);
-                        }
+                        // [Plan 228 Ф.2(a) снос, реестр 221.1 №94-v2, было fix
+                        // M-nested-fn-newtype-bind-then-call-broken №78]: the
+                        // `fn_returns_fn_sig`-forward-propagation legacy arm
+                        // (`ro m Mid = identity_mw; ro h2 = m(h); h2(5)`) is now
+                        // NO-HIT — the unified channel-fed registration above
+                        // (above) covers this exact RHS shape (a bare
+                        // reference to a free fn, or to a previously-propagated
+                        // local — `types/mod.rs` `infer_expr_type`'s Ident arm now
+                        // types the bare-fn-value case directly, so the checker's
+                        // universal per-Ident writer channels it). Verified
+                        // NO-HIT on δ0-корпус (14 фикстур, isolated compiles,
+                        // `NOVA_TRACE_ICR`): trace ID `N78_ident_rhs_fnretsig_
+                        // propagate` never fires. Removed per NO-HIT-снос
+                        // protocol — see docs/plans/228-fnnt-channel-materialization.md.
                     }
                 }
                 // If RHS is a lambda, register the binding in fn_param_sigs so inc(5) works
@@ -30721,25 +30794,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // D38: turbofish прозрачен — смотрим под него.
                     let func = func.unwrap_turbofish();
                     if let ExprKind::Ident(fname) = &func.kind {
-                        if let Some(sig) = self.fn_returns_fn_sig.get(fname).cloned() {
-                            self.icr_trace("N78_call_rhs_l1_propagate");
-                            self.fn_param_sigs.insert(binding.clone(), sig);
-                        }
-                        // [fix M-nested-fn-newtype-bind-then-call-broken, реестр
-                        // 221.1 №78, форма 3]: propagate the "level 2" nested
-                        // callable sig too (`fn_returns_fn_sig_l2`, populated at
-                        // fn-decl-scan time — see its doc) as THIS binding's OWN
-                        // "level 1" `fn_returns_fn_sig` entry: `binding` (`c`)
-                        // now carries "what calling ME returns is itself callable
-                        // with", so a FOLLOW-ON `ro h2 = c(h)` re-enters this SAME
-                        // branch (fname = binding's name) and finds it — closing
-                        // the two-hop chain `ro c Mid = compose(..); ro h2 = c(h);
-                        // h2(5)` that previously left `h2` uncallable (bogus
-                        // `nova_fn_h2`, undefined-symbol link error).
-                        if let Some(sig2) = self.fn_returns_fn_sig_l2.get(fname).cloned() {
-                            self.icr_trace("N78_call_rhs_l2_propagate");
-                            self.fn_returns_fn_sig.insert(binding.clone(), sig2);
-                        }
+                        // [Plan 228 Ф.2(a) снос, реестр 221.1 №94-v2, было fix
+                        // M-nested-fn-newtype-bind-then-call-broken №78 форма 3]:
+                        // both the L1 (`fn_returns_fn_sig`) and L2
+                        // (`fn_returns_fn_sig_l2`) forward-propagation legacy
+                        // arms (`ro c Mid = compose(..); ro h2 = c(h)`) are now
+                        // NO-HIT — the unified channel-fed registration above
+                        // (above) covers this call-RHS shape via the
+                        // checker's 196.4 return-type channel. Verified NO-HIT
+                        // on δ0-корпус (14 фикстур, isolated compiles,
+                        // `NOVA_TRACE_ICR`). Removed per NO-HIT-снос protocol —
+                        // see docs/plans/228-fnnt-channel-materialization.md.
                         // If RHS is a call to a generic fn returning a tuple, infer element types from args
                         if let Some(&arity) = self.generic_fn_tuple_arity.get(fname.as_str()) {
                             let elem_tys: Vec<String> = args.iter().take(arity)
@@ -30750,39 +30815,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             }
                         }
                     }
-                    // [fix M-nested-fn-newtype-bind-then-call-broken, реестр
-                    // 221.1 №90] 4th root: RHS is a METHOD call (`ro wrapped =
-                    // mw.apply(h)`, `func.kind` is `Member{obj, name}`, NOT
-                    // `Ident` — the arm above never matches a method call at
-                    // all) whose METHOD returns a fn-newtype (`fn Mid @apply(
-                    // next Hnd) -> Hnd`). `fn_returns_fn_sig` is ALREADY
-                    // populated for this case at fn-decl-scan time
-                    // (`emit_fn_forward_decl` ~L16300 runs for EVERY `FnDecl`
-                    // it forward-declares, methods included — it does not gate
-                    // on `f.receiver.is_none()` the way the sibling
-                    // `user_fn_sigs`/`free_fn_inout_params` registrations a few
-                    // lines below it do — so `fn_returns_fn_sig["apply"]`
-                    // already exists), keyed by the bare method name (same
-                    // name-generic, receiver-type-agnostic keying the №78 doc
-                    // above already calls out for free fns — a real but
-                    // pre-existing limitation, not introduced here). Only the
-                    // CONSUMER side was missing: without this arm, `wrapped`
-                    // got a storage C-type but no `fn_param_sigs` entry, and
-                    // `wrapped(3)` fell to the "must be a free function"
-                    // default (bogus `nova_fn_wrapped`, undefined-symbol at
-                    // link time). Mirrors the `Ident` arm above line-for-line.
-                    if let ExprKind::Member { name: method_name, .. } = &func.kind {
-                        if !method_name.starts_with('@') {
-                            if let Some(sig) = self.fn_returns_fn_sig.get(method_name.as_str()).cloned() {
-                                self.icr_trace("N90_member_rhs_l1_propagate");
-                                self.fn_param_sigs.insert(binding.clone(), sig);
-                            }
-                            if let Some(sig2) = self.fn_returns_fn_sig_l2.get(method_name.as_str()).cloned() {
-                                self.icr_trace("N90_member_rhs_l2_propagate");
-                                self.fn_returns_fn_sig.insert(binding.clone(), sig2);
-                            }
-                        }
-                    }
+                    // [Plan 228 Ф.2(a) снос, реестр 221.1 №94-v2, было fix
+                    // M-nested-fn-newtype-bind-then-call-broken №90]: the
+                    // METHOD-call RHS mirror of the `Ident` arm above (`ro
+                    // wrapped = mw.apply(h)`, `func.kind` is `Member{obj,
+                    // name}` — a method whose OWN return is a fn-newtype) is
+                    // now NO-HIT — the unified channel-fed registration above
+                    // (above) covers method-call RHS the same way
+                    // it covers free-fn-call RHS (both go through the SAME
+                    // 196.4 return-type channel keyed by `decl.value.id`, not
+                    // by the RHS's AST shape). Verified NO-HIT on δ0-корпус
+                    // (14 фикстур, isolated compiles, `NOVA_TRACE_ICR`).
+                    // Removed per NO-HIT-снос protocol — see
+                    // docs/plans/228-fnnt-channel-materialization.md.
                 }
                 // [M-vec-of-fn-newtype-codegen] (реестр 221.1 №47): RHS is `v[i]`
                 // indexing a `Vec[QH]` whose element type is a fn-newtype/closure
@@ -40641,8 +40686,32 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // never shadows any struct/generic/protocol arm elsewhere
                     // in this match (those all require `obj_ty` to be
                     // something OTHER than the literal string `"void*"`).
+                    // [Plan 228 Ф.4, реестр 221.1 №97] `channel_arg_rt(obj)` — the
+                    // checker's `resolved_types` channel — carries the L2 `readonly`
+                    // content-view LOSSLESSLY (D315/U.5.5(a)): a receiver bound from a
+                    // `-> ro Mid`-returning static ctor (`Mid.new(...)`, this fixture's
+                    // OWN `fn Mid.new(...) -> ro Mid`) resolves to `Readonly(Named{Mid})`,
+                    // not a bare `Named{Mid}` — the match below required the LATTER
+                    // exactly, so an external dot-call on a `ro`-typed fn-newtype
+                    // receiver (`m1.then(m2)`, `m1`'s declared/inferred type carrying
+                    // `ro`) fell straight through to the unconditional `NULL` fallback a
+                    // few lines down — `ro composed = m1.then(m2)` silently became
+                    // `void* composed = NULL;`, and the LATER `composed.apply(h)` (whose
+                    // OWN receiver type, `Mid` from `@then`'s `-> Mid` — no `ro` — hits
+                    // the bare-`Named` case and dispatches correctly) then read through
+                    // that NULL — segfault at `Nova_Mid_method_apply`'s `*nova_self`.
+                    // `readonly T` is transparent for C-lowering purposes everywhere else
+                    // in this file (mirrors `resolved_type_to_c`'s own peel) — peel it
+                    // here too before the `Named` match, so a `ro`-returning ctor's
+                    // result is recognized identically to a non-`ro` one (the C
+                    // representation — bare `void*` — is IDENTICAL either way; `ro` is a
+                    // write-capability annotation, not a distinct runtime shape).
+                    let mut ext_recv_rt = self.channel_arg_rt(obj);
+                    while let Some(crate::types::ResolvedType::Readonly(inner)) = ext_recv_rt {
+                        ext_recv_rt = Some(*inner);
+                    }
                     if let Some(crate::types::ResolvedType::Named { name: ext_recv_ty, .. }) =
-                        self.channel_arg_rt(obj)
+                        ext_recv_rt
                     {
                         if self.fn_newtype_sigs.contains_key(ext_recv_ty.as_str())
                             && self.all_methods.contains(&(ext_recv_ty.clone(), method_str.clone()))
@@ -50597,35 +50666,36 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // env-populate statement (the CALL itself still mangles correctly;
         // only the bogus capture-field init breaks).
         //
-        // The "exclude global function names" filter below is meant to
-        // guard exactly this, but is CURRENTLY A NO-OP (tests whether
-        // `var_types[n]`'s VALUE starts with the string "fn_ret_" — that
-        // string is never a value in this map, only ever a KEY PREFIX
-        // `var_types["fn_ret_<name>"]`, see the forward-decl registration
-        // ~L16158/16215 and the `is_user_fn` reader ~L32511). A name-level
-        // fix (checking `var_types.contains_key(&format!("fn_ret_{}", n))`
-        // instead) was tried and REVERTED: `fn_ret_<name>` is intentionally
+        // [Plan 228 Ф.3, реестр 221.1 №96 — fix M-closure-ctx-freefn-callee-
+        // unresolved-fnnt] The "exclude global function names" filter used to
+        // be a structural no-op (compared `var_types[n]`'s VALUE against the
+        // string "fn_ret_", which is only ever a KEY PREFIX, never a value —
+        // see git history). A name-level fix (`var_types.contains_key(&format!
+        // ("fn_ret_{}", n))`) was tried and REVERTED: `fn_ret_<name>` is
         // UNQUALIFIED/shared across every same-named method/fn in the WHOLE
-        // program (Plan 152.4.3's own doc, ~L16159 — the type-qualified key
-        // is a SEPARATE, additional entry), so a genuinely-captured LOCAL
-        // whose name merely COINCIDES with some unrelated fn/method
-        // elsewhere in std (`primary`, `next`, `n` — all common std names)
-        // got wrongly EXCLUDED from its own real capture, regressing
-        // `mvinfer_vec_map_method_value.nv` (`undeclared identifier
-        // 'primary'` — a genuine local, referenced as a plain value, never
-        // called). The correct fix needs USE-SITE precision (is THIS
-        // specific Ident occurrence a call-callee that resolves to a free
-        // fn — checker `resolved_callees`/absence-of-local, not a global
-        // name-table membership test) — bigger than a local patch here.
-        // Left as the pre-existing (safe, over-CAPTURING rather than
-        // under-capturing) no-op behavior; #96 repro re-documented as an
-        // open residual gap, not closed by this window.
+        // program, so it wrongly excluded a genuinely-captured LOCAL whose
+        // name merely COINCIDES with some unrelated fn/method elsewhere in
+        // std (`primary`, `next`, `n`) — regressing `mvinfer_vec_map_method_
+        // value.nv`. The correct fix needs USE-SITE precision: is THIS
+        // specific Ident occurrence a call-callee the CHECKER resolved to a
+        // genuine declaration — exactly what `collect_resolved_call_target_
+        // names_expr` already provides (`resolved_callees`, keyed by the
+        // Call's own `ExprId`, populated ONLY for an unambiguously-resolved
+        // free-fn/method call, NEVER for a dynamic closure-variable
+        // invocation). Same channel, same helper, same fix shape as the
+        // sibling `emit_spawn` capture filter already uses for the
+        // analogous bug (`M-parfor-capture-callee-name-collides-std-local`,
+        // ~L12924) — reused here, not reinvented.
+        let mut resolved_fn_call_names: HashSet<String> = HashSet::new();
+        self.collect_resolved_call_target_names_expr(body, &mut resolved_fn_call_names);
         let mut free_vars: Vec<(String, String)> = body_idents.iter()
             .filter(|n| !param_names.contains(*n) && self.var_types.contains_key(*n))
             .filter(|n| {
-                // Exclude global function names (they are registered too, but are not "captured")
-                let ty = self.var_types.get(*n).map(|s| s.as_str()).unwrap_or("");
-                !ty.starts_with("fn_ret_")
+                // Exclude names the checker resolved as a call-callee to a
+                // genuine global fn/method declaration at THIS call site —
+                // not a captured local (the call itself mangles correctly
+                // regardless; only the bogus capture-field init was the bug).
+                !resolved_fn_call_names.contains(*n)
             })
             .map(|n| (n.clone(), self.var_types.get(n).cloned().unwrap_or_else(|| "nova_int".into())))
             .collect();
@@ -57936,7 +58006,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         && self.var_types.contains_key("nova_self")
                     {
                         let raw = self.var_types.get("nova_self").cloned().unwrap();
-                        return if Self::is_value_struct_ptr(&raw) {
+                        // [Plan 228 Ф.4, реестр 221.1 №97] same fn-newtype-receiver
+                        // fix as the "Channel 3" copy of this SAME check below
+                        // (~L58119) — this earlier checker-channel copy runs FIRST
+                        // and must not short-circuit past it with the stale
+                        // double-indirection `Nova_Mid*` receiver type. See that
+                        // site's doc for the full root-cause.
+                        let is_fn_newtype_recv = self.current_receiver_type.as_deref()
+                            .map(|t| self.fn_newtype_sigs.contains_key(t))
+                            .unwrap_or(false);
+                        return if is_fn_newtype_recv {
+                            "void*".to_string()
+                        } else if Self::is_value_struct_ptr(&raw) {
                             raw.trim_end_matches('*').trim().to_string()
                         } else {
                             raw
@@ -58048,7 +58129,31 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             match &expr.kind {
                 ExprKind::SelfAccess if self.var_types.contains_key("nova_self") => {
                     let raw = self.var_types.get("nova_self").cloned().unwrap();
-                    return if Self::is_value_struct_ptr(&raw) {
+                    // [Plan 228 Ф.4, реестр 221.1 №97] a fn-newtype receiver's C
+                    // storage type (`Nova_Mid* nova_self` == `void**` — the
+                    // receiver ABI's EXTRA indirection, D52-амендмент/№53/№90)
+                    // is NEVER the bare `@`-as-VALUE's own type (`ro outer = @`).
+                    // `emit_expr_inner`'s SelfAccess arm (~L35306) already
+                    // dereferences unconditionally for this receiver kind
+                    // (`(*nova_self)`, a bare `void*`) — this C-TYPE counterpart
+                    // must mirror it (same fact, two windows — compiler-
+                    // conventions §0) or the declared type (`Nova_Mid* outer`,
+                    // double indirection) and the assigned value (`(*nova_self)`,
+                    // single indirection) split, and `outer`'s LATER external
+                    // dot-call (`outer.apply(...)`, dispatched via `emit_call`'s
+                    // "obj_ty is already Nova_X*" fast path — no `&tmp` hoist,
+                    // unlike a bare `void*` capture) reads one indirection level
+                    // too many — `*nova_self` inside `Nova_Mid_method_apply`
+                    // dereferences the CLOSURE POINTER ITSELF as if it were an
+                    // address-of-slot — segfault (found via №96/№97 δ0-репро:
+                    // `m1.then(m2)`'s `.then()`-lambda body `outer.apply(inner.
+                    // apply(next))` crashed inside the `outer.apply` leg).
+                    let is_fn_newtype_recv = self.current_receiver_type.as_deref()
+                        .map(|t| self.fn_newtype_sigs.contains_key(t))
+                        .unwrap_or(false);
+                    return if is_fn_newtype_recv {
+                        "void*".to_string()
+                    } else if Self::is_value_struct_ptr(&raw) {
                         raw.trim_end_matches('*').trim().to_string()
                     } else {
                         raw

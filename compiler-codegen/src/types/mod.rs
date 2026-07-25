@@ -4402,6 +4402,33 @@ impl<'a> TypeCheckCtx<'a> {
             || !self.sig_table.find_fn_modules(name).is_empty()
     }
 
+    /// [Plan 228 Ф.2(a) producer, реестр 221.1 №94-v2] checker-side call-through
+    /// resolver: is `ty` — directly, or through a newtype-over-fn / alias-of-fn
+    /// name — structurally a `fn(...) -> ...` shape? Checker-side mirror of
+    /// emit_c's `resolve_fn_typeref` (`fn_newtype_sigs`, D52-амендмент), but
+    /// sourced from `self.types` (the checker's OWN registry — no separate
+    /// pre-scanned table needed, it already has full `TypeDecl` access).
+    /// Readonly/Mut/Uninit wrappers are transparent (mirror `resolve_fn_typeref`'s
+    /// own peel, same reason: `ro next Handler` params/locals).
+    fn resolve_fn_newtype_typeref(&self, ty: &TypeRef) -> Option<TypeRef> {
+        match ty {
+            TypeRef::Func { .. } => Some(ty.clone()),
+            TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) | TypeRef::Uninit(inner, _) => {
+                self.resolve_fn_newtype_typeref(inner)
+            }
+            TypeRef::Named { path, generics, .. } if generics.is_empty() => {
+                let name = path.last()?;
+                match &self.types.get(name)?.kind {
+                    TypeDeclKind::Newtype(inner) | TypeDeclKind::Alias(inner) => {
+                        self.resolve_fn_newtype_typeref(inner)
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
     /// U.2.3.3: overload set for `(type, method)`, base (`sig`) ∪ synth overlay.
     /// For any (type, method) the overloads live in EXACTLY ONE source (synth is
     /// registered only when base lacks the method), so synth-first ∥ base is
@@ -8963,6 +8990,36 @@ impl<'a> TypeCheckCtx<'a> {
                                     if let Some(rt) = rt {
                                         self.resolved_types_buf.borrow_mut().insert(e.id, rt);
                                     }
+                                }
+                            }
+                        } else if let Some(var_ty) = scope.get(fname).cloned() {
+                            // [Plan 228 Ф.2(a) producer, реестр 221.1 №94-v2] Calling a
+                            // SCOPE-BOUND LOCAL whose type is itself callable — a bare
+                            // `fn(...)->...` value OR a fn-newtype/alias name that peels
+                            // (through `self.types`, mirrors emit_c's `resolve_fn_typeref`)
+                            // to one (`ro m Mid = identity_mw; ro h2 = m(h)`, №78/№90
+                            // family). Every arm above this one is explicitly gated
+                            // `!scope.contains_key(fname)` (constructor/free-fn producers,
+                            // which by construction never apply to a local) — a call whose
+                            // callee IS a scope binding fell through ALL of them silently:
+                            // `resolved_types_buf`/`resolved_types` (196.4 channel) was
+                            // NEVER written for this call shape at all, so Ф.2(a)'s unified
+                            // emit-side HOF-binding registration (reading
+                            // `resolved_types[decl.value.id]`) had nothing to read for
+                            // exactly the forms it targets. Donating the producer here
+                            // (not emit) per compiler-conventions §0: the checker already
+                            // knows `fname`'s scope type; peeling it through a newtype/
+                            // alias name to find the declared `Func` shape is the SAME
+                            // call-through `resolve_fn_typeref` performs at emit-time —
+                            // no new inference, just not thrown away.
+                            if let Some(TypeRef::Func { return_type, .. }) =
+                                self.resolve_fn_newtype_typeref(&var_ty)
+                            {
+                                let ret = return_type.map(|b| *b)
+                                    .unwrap_or_else(|| TypeRef::Unit(e.span));
+                                if !typeref_mentions_any(&ret, gs) {
+                                    let rt = ResolvedType::from_type_ref(&ret);
+                                    self.resolved_types_buf.borrow_mut().insert(e.id, rt);
                                 }
                             }
                         }
@@ -16288,6 +16345,31 @@ impl<'a> TypeCheckCtx<'a> {
                         return Self::resolved_to_typeref(rt, expr.span);
                     }
                 }
+                // [Plan 228 Ф.2(a) producer, реестр 221.1 №94-v2] Bare reference
+                // to a free fn BY NAME, not a call (`ro m Mid = identity_mw`) —
+                // the sixth legacy arm this plan targets (`fn_returns_fn_sig`'s
+                // Ident-RHS propagation, emit_c.rs) exists because `m`'s value
+                // literally IS `identity_mw` — a first-class fn value whose type
+                // is `identity_mw`'s OWN declared `Func` shape. Single
+                // non-generic, receiver-less overload only (same single-
+                // candidate discipline as the free-fn-CALL producer, `f1_expr_
+                // inner`'s Ident/Call arm ~8925) — an ambiguous or generic name
+                // is honestly left unresolved (`None`) rather than guessing.
+                if let Some(overloads) = self.sig.fn_decls.get(name) {
+                    let candidates: Vec<&&FnDecl> = overloads.iter()
+                        .filter(|f| f.receiver.is_none() && f.generics.is_empty())
+                        .collect();
+                    if let [f] = candidates.as_slice() {
+                        let params: Vec<TypeRef> = f.params.iter().map(|p| p.ty.clone()).collect();
+                        return Some(TypeRef::Func {
+                            params,
+                            effects: f.effects.clone(),
+                            return_type: f.return_type.clone().map(Box::new),
+                            extern_abi: None,
+                            span: expr.span,
+                        });
+                    }
+                }
                 // Last resort: if name = a unit-variant of a known sum type, infer as that type.
                 // Covers bare enum variants (`D52Red`, `None`) used in expression position.
                 // [M-hashmap-order-bare-variant-flake] (2026-07-13): `self.types` is a
@@ -16500,6 +16582,79 @@ impl<'a> TypeCheckCtx<'a> {
             // Generic records are excluded — field types may reference type params that the
             // bare Named{name} annotation cannot reproduce without generic mono args.
             ExprKind::Member { obj, name } => {
+                // [Plan 228 Ф.1(b), реестр 221.1 №94-v2 mechanism (b)] Method-value
+                // expression `Type.@method` (UNBOUND form — the bound form `x.@len`
+                // was retracted Plan 132, D35 §6081/§6082, so `obj` here is always a
+                // TYPE name, never a value). Before this, `infer_expr_type` had no
+                // arm for it at all: the general Member arm below unconditionally
+                // recurses `infer_expr_type(obj, scope)` first, and a bare type name
+                // (`MvInferNum`, `int`, `str`) is never scope-bound → that recursion
+                // returns `None` (a bare-sum-variant fallback doesn't apply either) →
+                // the WHOLE Member (and therefore the method-value arg it wraps, e.g.
+                // `a.map(MvInferNum.@to_str)`) stayed untyped. That silence is why the
+                // arg-loops in `f1_check_call`/`resolve_return_channel` (`infer_expr_
+                // type(a.expr(), scope)`, used to `unify_type`/`Constraint::Eq` a
+                // method-level generic against the arg) never saw a method-value arg's
+                // shape — `node_substs` stayed unwritten and emit_c's legacy Step2m
+                // (`resolve_method_level_subst`/`resolve_instance_call_subst`/
+                // `infer_method_level_return_for_sum_inner`) re-derived it standalone.
+                // Typing the Member here as the method's callable `Func` shape
+                // (`fn(Recv, params...) -> Ret`) lets the EXISTING arg-loops unify it
+                // structurally — no new inference engine, same sig-registry
+                // (`method_overloads`) `method_value_lookup_sig` (emit_c) already
+                // mirrors for the SAME selection (first-declared overload; ambiguity
+                // resolution via `as fn(...)` annotation is out of scope here exactly
+                // as it is there — Plan 11 Ф.5).
+                //
+                // Gate: `name` carries the `@`-prefix marker (parser, `TokenKind::At`
+                // arm) AND `obj` is a bare `Ident` that is NOT scope-shadowed (a local
+                // variable literally named like a type wins — matches
+                // `method_value_lookup_sig`'s own `var_types`-first check) AND names a
+                // known user type or a primitive. A blanket method (`fn[T] T @m`,
+                // D145) is deliberately NOT covered — `method_overloads` is keyed by
+                // CONCRETE type name; a blanket's receiver is the fn's own generic
+                // param name (`blanket_method_names`, a separate registry), so
+                // `self.method_overloads("int", "to_str")` genuinely misses `int.@to_str`
+                // (prelude's `fn[T] T @to_str() -> str`) — honest miss, not a bug (this
+                // IS №82's answer: bonus mechanism does NOT close it, confirmed
+                // structurally, matching the mvinfer fixtures' own doc comment).
+                if let Some(method_bare) = name.strip_prefix('@') {
+                    if let ExprKind::Ident(tn) = &obj.kind {
+                        if !scope.contains_key(tn)
+                            && (self.is_known_type(tn) || Self::is_primitive_type_name(tn))
+                        {
+                            if let Some(f) = self.method_overloads(tn, method_bare)
+                                .and_then(|overloads| overloads.first())
+                            {
+                                if let Some(recv) = &f.receiver {
+                                    let recv_ty = recv.receiver_ty.clone().unwrap_or_else(|| {
+                                        TypeRef::Named {
+                                            path: vec![recv.type_name.clone()],
+                                            generics: recv.generics.clone(),
+                                            span: recv.span,
+                                        }
+                                    });
+                                    let mut self_subst: HashMap<String, TypeRef> = HashMap::new();
+                                    self_subst.insert("Self".to_string(), recv_ty.clone());
+                                    let mut params: Vec<TypeRef> = vec![recv_ty];
+                                    params.extend(f.params.iter().map(|p| {
+                                        crate::const_fn_trampoline::subst_type_ref_pub(&p.ty, &self_subst)
+                                    }));
+                                    let ret = f.return_type.clone()
+                                        .map(|t| crate::const_fn_trampoline::subst_type_ref_pub(&t, &self_subst))
+                                        .unwrap_or(TypeRef::Unit(expr.span));
+                                    return Some(TypeRef::Func {
+                                        params,
+                                        effects: Vec::new(),
+                                        return_type: Some(Box::new(ret)),
+                                        extern_abi: None,
+                                        span: expr.span,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
                 let obj_tr = self.infer_expr_type(obj, scope)?;
                 // 172.1.2: позиционное tuple-поле `t.0` / `t.1` — элемент кортежа.
                 if let TypeRef::Tuple(tys, _) = &obj_tr {
