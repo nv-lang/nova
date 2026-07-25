@@ -140,21 +140,21 @@ test "Once: call_once runs exactly once" {
     assert(count.load() == 1)
 }
 
-test "Semaphore: try_acquire_permit guard — Some/None + auto-release on scope exit" {
+test "Semaphore: try_acquire guard — Some/None + auto-release on scope exit" {
     mut sem = Semaphore.new(1)
     {
-        consume p = match sem.try_acquire_permit() {
+        consume p = match sem.try_acquire() {
             Some(consume p) => p,
             None => { assert(false); return },
         }
         assert(sem.available_permits() == 0)
-        match sem.try_acquire_permit() {
+        match sem.try_acquire() {
             Some(consume p2) => { assert(false); p2.release() },
             None => {},
         }
     }
     assert(sem.available_permits() == 1)
-    match sem.try_acquire_permit() {
+    match sem.try_acquire() {
         Some(consume p3) => p3.release(),
         None => assert(false),
     }

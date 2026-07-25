@@ -215,8 +215,8 @@ static inline nova_unit Nova_Semaphore_method_release(Nova_Semaphore* s) {
     return Nova_Semaphore_method_release_n(s, 1);
 }
 
-/* ── try_acquire() ─────────────────────────────────────────────────────── */
-static inline nova_bool Nova_Semaphore_method_try_acquire(Nova_Semaphore* s) {
+/* ── try_acquire_raw() (private bridge for try_acquire) ─────────────────────────────────────────────────────── */
+static inline nova_bool Nova_Semaphore_method_try_acquire_raw(Nova_Semaphore* s) {
     nova_mutex_lock(&s->mu);
     /* Fair: only fast-path if no waiters (don't jump the queue). */
     if (s->head == NULL && s->permits > 0) {
@@ -248,7 +248,7 @@ static inline nova_int Nova_Semaphore_method_ptr_as_int(Nova_Semaphore* s) {
 static inline nova_bool Nova_Semaphore_method_acquire_for(Nova_Semaphore* s,
                                                                void* timeout) {
     int64_t nanos = *(int64_t*)timeout;
-    if (nanos <= 0) return Nova_Semaphore_method_try_acquire(s);
+    if (nanos <= 0) return Nova_Semaphore_method_try_acquire_raw(s);
 
     /* Fast path: check immediately before any timer setup. */
     nova_mutex_lock(&s->mu);

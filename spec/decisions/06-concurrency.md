@@ -5011,7 +5011,12 @@ type Semaphore  /* opaque */
 fn Semaphore.new(permits int) -> Self     /* permits >= 0 */
 fn Semaphore mut @acquire()                /* parks until permit available */
 fn Semaphore mut @release()                /* incr permits, wake FIFO head */
-fn Semaphore mut @try_acquire() -> bool
+fn Semaphore mut @try_acquire() -> Option[Permit]  /* AMEND 2026-07-26 (№R3-ревью
+   владельца, D325 R3): non-parking половина пары acquire/try_acquire, Permit-guard
+   (@cleanup авто-release, D432). Прежние ДВЕ двери ретрактированы: bool-форма
+   `try_acquire() -> bool` (manual-release анти-паттерн, D9) стала приватным
+   мостом @try_acquire_raw; `try_acquire_permit` (R3-нарушитель: сиблинга
+   acquire_permit не существовало) переименован в try_acquire. */
 fn Semaphore mut @acquire_for(timeout Duration) -> bool
 fn Semaphore mut @acquire_n(n int)         /* batch */
 fn Semaphore mut @release_n(n int)
