@@ -23,7 +23,6 @@
 
 module text.markdown_minimal
 
-
 /// Convert minimal CommonMark subset → HTML.
 ///
 /// Поддерживает: headings (`#`), paragraphs, `*italic*`, `**bold**`,
@@ -131,7 +130,6 @@ export fn Markdown.to_html(md str) -> str {
     buf
 }
 
-
 fn flush_paragraph(mut buf StringBuilder, consume paragraph StringBuilder) -> () {
     ro text = paragraph.into_str()
     ro trimmed = text.trim_ascii()
@@ -141,7 +139,6 @@ fn flush_paragraph(mut buf StringBuilder, consume paragraph StringBuilder) -> ()
         buf.append("</p>\n")
     }
 }
-
 
 // Inline parsing: **bold**, *italic*, `code`, [text](url)
 //
@@ -247,7 +244,6 @@ fn render_inline(s str) -> str {
     buf
 }
 
-
 // Push-loop materialisation of `s.chars()` — see `render_inline` doc.
 fn to_chars(s str) -> []char {
     mut out []char = []char.new(cap: s.byte_len())
@@ -264,7 +260,6 @@ fn find_in(sc []char, target char, start int) -> Option[int] {
     None
 }
 
-
 fn escape_html(s str) -> str {
     consume buf = StringBuilder.new(cap: s.byte_len())
     for c in s.chars() {
@@ -278,6 +273,5 @@ fn escape_html(s str) -> str {
     }
     buf
 }
-
 
 // Тесты — см. peer-файл markdown_minimal_test.nv (module text.markdown_minimal_test).

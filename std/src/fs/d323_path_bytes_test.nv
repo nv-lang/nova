@@ -2,7 +2,6 @@
 // POSIX + Windows lexical manipulation; non-UTF-8 bytes round-trip losslessly.
 module std.fs
 
-
 test "d323: posix Path join/parent/extension; is_absolute" {
     ro d323_p = Path.posix("/usr/local/bin")
     assert(d323_p.is_absolute())

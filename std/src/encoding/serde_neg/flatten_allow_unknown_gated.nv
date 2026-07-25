@@ -4,6 +4,7 @@
 // ([M-180-serde-flatten]) — the hardest field-attribute, honestly scoped
 // out (needs a companion "fields-only" synth variant).
 module serde_neg.flatten_allow_unknown_gated
+
 import std.encoding.serde.{Serialize, Deserialize, Serializer, Deserializer, SerError, DeError}
 
 #impl(Serialize + Deserialize)

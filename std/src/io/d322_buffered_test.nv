@@ -7,7 +7,6 @@
 
 module std.io
 
-
 test "BufReader serves reads through its buffer" {
     mut src = BytesReader.new("hello world")
     mut br = BufReader[BytesReader].new(src)

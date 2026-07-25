@@ -19,7 +19,6 @@ import std.crypto.hmac.{HmacSha256}
 import std.encoding.base64.{Base64}
 import std.encoding.json.{Json, JsonValue}
 
-
 /// Errors при JWT операциях.
 #stable(since = "0.1")
 export type JwtError enum
@@ -29,7 +28,6 @@ export type JwtError enum
     | TokenExpired { exp_ms u64, now_ms u64 }
     | NotYetValid { nbf_ms u64, now_ms u64 }
     | DecodingFailed
-
 
 /// Create JWT с алгоритмом HS256 (HMAC-SHA-256). `claims` — обычно `Object`
 /// с полями iss/sub/exp/iat/...
@@ -54,7 +52,6 @@ fn make_header_hs256() -> HashMap[str, JsonValue] {
     m.insert("typ", JsonValue.Str("JWT"))
     m
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Decode + Verify
@@ -160,6 +157,5 @@ export fn Jwt.validate_hs256(secret []u8, token str) Time -> Result[JsonValue, J
 
     Ok(claims)
 }
-
 
 // Тесты — см. peer-файл jwt_test.nv (module crypto.jwt_test).

@@ -31,7 +31,6 @@
 
 module identifiers.uuid
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Тип
 // ──────────────────────────────────────────────────────────────────────────
@@ -77,7 +76,6 @@ export type ParseUuidError enum
     | InvalidHex { position int }
     | MissingDash { position int }
 
-
 /// Nil UUID — все нули. Корректный по RFC 4122 § 4.1.7.
 #stable(since = "0.1")
 export const NIL Uuid = { hi: 0, lo: 0 }
@@ -90,7 +88,6 @@ export const MAX Uuid = { hi: 0xFFFFFFFFFFFFFFFF, lo: 0xFFFFFFFFFFFFFFFF }
 #stable(since = "0.1")
 export fn Uuid.new(hi u64, lo u64) -> Self =>
     { hi, lo }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Версия 4 — random
@@ -115,7 +112,6 @@ export fn Uuid.v4() Random -> Self {
 
     { hi, lo }
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Версия 7 — sortable, timestamp-based
@@ -142,7 +138,6 @@ export fn Uuid.v7() Time Random -> Self {
 
     { hi, lo }
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Геттеры
@@ -175,7 +170,6 @@ export fn Uuid @timestamp_ms() -> u64 =>
 export fn Uuid @is_nil() -> bool =>
     @hi == 0 && @lo == 0
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Сравнение и hash (D46)
 // ──────────────────────────────────────────────────────────────────────────
@@ -201,7 +195,6 @@ export fn Uuid @compare(other Uuid) -> int {
 /// Hash — XOR двух u64 половин. Подходит для HashMap key (Hash protocol).
 #stable(since = "0.1")
 export fn Uuid @hash() -> u64 => @hi ^ @lo
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Сериализация (D410)
@@ -263,7 +256,6 @@ fn hex_digit(n u8) -> char {
         Err(_) => '?'
     }
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Парсинг
@@ -340,6 +332,5 @@ fn hex_value(c char, position int) Fail[ParseUuidError] -> u8 {
         throw InvalidHex { position }
     }
 }
-
 
 // Тесты — см. peer-файл uuid_test.nv (module identifiers.uuid_test).

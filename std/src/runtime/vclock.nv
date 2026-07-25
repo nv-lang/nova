@@ -19,7 +19,6 @@
 
 module runtime.vclock
 
-
 /// Registers the calling fiber's absolute virtual deadline (`deadline_ms`,
 /// in the caller's own virtual-clock domain) and cooperatively parks until
 /// EITHER it is the earliest pending deadline in its scope, OR every other

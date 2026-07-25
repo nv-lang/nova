@@ -10,7 +10,6 @@
 
 module collections.priority_queue
 
-
 /// Приоритетная очередь (binary min-heap). Всегда извлекает минимальный элемент.
 ///
 /// Требует `T: Ord` — тип должен поддерживать оператор `<`.
@@ -31,7 +30,6 @@ export type PriorityQueue[T Ord] {
     mut items []T              // internal: heap-ordered, _items[0] = min
 }
 
-
 /// Создать пустую `PriorityQueue`.
 #stable(since = "0.1")
 export fn PriorityQueue[T].new() -> Self =>
@@ -45,13 +43,11 @@ export fn PriorityQueue[T] @len() -> int => @items.len()
 #stable(since = "0.1")
 export fn PriorityQueue[T] @is_empty() -> bool => @items.len() == 0
 
-
 /// Посмотреть минимальный элемент без удаления.
 #stable(since = "0.1")
 export fn PriorityQueue[T] @peek() -> Option[T] {
     if @items.len() == 0 { None } else { Some(@items[0]) }
 }
-
 
 /// Добавить элемент в очередь. O(log n).
 #stable(since = "0.1")
@@ -59,7 +55,6 @@ export fn PriorityQueue[T] mut @push(item T) -> () {
     @items.push(item)
     @sift_up(@items.len() - 1)
 }
-
 
 /// Удалить и вернуть минимальный элемент. O(log n). `None` если пусто.
 #stable(since = "0.1")
@@ -77,7 +72,6 @@ export fn PriorityQueue[T] mut @pop() -> Option[T] {
     Some(top)
 }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Heap operations
 // ──────────────────────────────────────────────────────────────────────────
@@ -94,7 +88,6 @@ fn PriorityQueue[T] mut @sift_up(idx int) -> () {
         }
     }
 }
-
 
 fn PriorityQueue[T] mut @sift_down(idx int) -> () {
     mut i = idx
@@ -114,6 +107,5 @@ fn PriorityQueue[T] mut @sift_down(idx int) -> () {
         i = smallest
     }
 }
-
 
 // Тесты — см. peer-файл priority_queue_test.nv (module collections.priority_queue_test).

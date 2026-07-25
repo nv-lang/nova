@@ -14,7 +14,6 @@
 
 module collections.deque
 
-
 /// Двусторонняя очередь: push/pop с обоих концов в O(1) amortized.
 ///
 /// Реализована на динамическом массиве. Текущая bootstrap-версия:
@@ -40,7 +39,6 @@ export type Deque[T] {
     mut items []T   // internal storage
 }
 
-
 /// Создать пустой `Deque`.
 #stable(since = "0.1")
 export fn Deque[T].new() -> Self => { items: [] }
@@ -52,7 +50,6 @@ export fn Deque[T] @len() -> int => @items.len()
 /// Возвращает `true` если deque пуст.
 #stable(since = "0.1")
 export fn Deque[T] @is_empty() -> bool => @items.len() == 0
-
 
 /// Добавить элемент в конец. O(1) amortized.
 #stable(since = "0.1")
@@ -68,11 +65,9 @@ export fn Deque[T] mut @push_front(x T) -> () {
     @items = new_items
 }
 
-
 /// Удалить и вернуть последний элемент. O(1).
 #stable(since = "0.1")
 export fn Deque[T] mut @pop_back() -> Option[T] => @items.pop()
-
 
 /// Удалить и вернуть первый элемент. O(n) в текущей реализации; O(1) в production.
 #stable(since = "0.1")
@@ -82,7 +77,6 @@ export fn Deque[T] mut @pop_front() -> Option[T] {
     @items = @items[1..@items.len()]
     Some(value)
 }
-
 
 /// Посмотреть первый элемент без удаления. `None` если deque пуст.
 #stable(since = "0.1")
@@ -96,12 +90,10 @@ export fn Deque[T] @back() -> Option[T] {
     if @items.len() == 0 { None } else { Some(@items[@items.len() - 1]) }
 }
 
-
 /// Получить элемент по индексу. `None` если `i` вне диапазона.
 #stable(since = "0.1")
 export fn Deque[T] @get(i int) -> Option[T] {
     if i < 0 || i >= @items.len() { None } else { Some(@items[i]) }
 }
-
 
 // Тесты — см. peer-файл deque_test.nv (module collections.deque_test).

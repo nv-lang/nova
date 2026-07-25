@@ -83,6 +83,7 @@
 module testing.handlers
 
 import std.runtime.vclock
+
 // Plan 175 Ф.3 (D316 typed retype): `Time`'s schema is typed
 // (`sleep(Duration)`/`now()->Timestamp`/`now_monotonic()->Monotonic`) —
 // `fixed_ms`/`mut_clock` below construct these directly now.
@@ -107,7 +108,6 @@ import std.runtime.vclock
 // когда декларация жила здесь, такой CU не имел effect_schemas["Random"]
 // и codegen падал ICE «Path call return type unknown» на `Random.u64()`.
 // Здесь остаются только handler-фабрики (`seeded`).
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Random — xoshiro256++ handler-фабрика
@@ -147,7 +147,6 @@ fn splitmix64_step(seed u64) -> u64 {
 
 fn rotl64(x u64, k int) -> u64 =>
     (x << k) | (x >> (64 - k))
-
 
 /// xoshiro256++ Random handler, детерминированный по `seed`. Same seed → same sequence.
 /// Works for seed=0 (splitmix64 гарантирует non-zero state).
@@ -216,11 +215,9 @@ export fn seeded(seed u64) -> Effect[Random] {
     }
 }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Time — handler-фабрики
 // ──────────────────────────────────────────────────────────────────────────
-
 
 /// `Time` handler с fixed timestamp. `sleep(d)` — no-op. Для тестов где
 /// продвижение времени не нужно (uuid v7, jwt exp checks).
@@ -247,7 +244,6 @@ export fn fixed_ms(ms u64) -> Effect[Time] {
         sleep(d) -> () => ()
     }
 }
-
 
 /// `Time` handler с virtual mutable clock. `sleep(d)` продвигает время на d (no real wait).
 /// Для rate_limiter/retry/cron тестов — точная имитация прошедшего времени.
@@ -310,7 +306,6 @@ export fn mut_clock(start_ms u64) -> Effect[Time] {
         }
     }
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Tests: peer file `core_test.nv` (Plan 200 П17 folder-module split, same

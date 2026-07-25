@@ -17,7 +17,6 @@ module concurrency.rate_limiter
 
 import std.time.duration
 
-
 /// Token bucket rate limiter. `capacity` = max burst, `refill_per_sec` = sustained rate.
 ///
 /// Использует Time effect → детерминирован в тестах под `th.fixed_ms(...)`.
@@ -39,7 +38,6 @@ export type TokenBucket {
     mut last_refill Monotonic // internal: последний refill момент (Monotonic.now())
 }
 
-
 /// Init TokenBucket. Стартует с full `capacity` tokens.
 ///
 /// # Examples
@@ -55,7 +53,6 @@ export fn TokenBucket.new(capacity i64, refill_per_sec f64) Time -> Self =>
         tokens: capacity as f64,
         last_refill: Monotonic.now(),
     }
-
 
 // Refill bucket на основе прошедшего времени.
 //
@@ -75,12 +72,10 @@ fn TokenBucket mut @refill() Time -> () {
     @last_refill = now
 }
 
-
 /// Try acquire 1 token. `true` если получилось, `false` если bucket пуст.
 #stable(since = "0.1")
 export fn TokenBucket mut @acquire() Time -> bool =>
     @acquire_n(1)
-
 
 /// Try acquire `n` tokens atomically (all-or-nothing).
 #stable(since = "0.1")
@@ -95,7 +90,6 @@ export fn TokenBucket mut @acquire_n(n int) Time -> bool
         false
     }
 }
-
 
 /// Current available tokens (refresh'нутый под current Time).
 #stable(since = "0.1")

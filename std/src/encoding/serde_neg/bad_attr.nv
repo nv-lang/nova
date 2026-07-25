@@ -5,6 +5,7 @@
 // key instead (see serde_neg/on_sum_rename_all.nv for the NEW rename_all-on-
 // sum-type diagnostic that took over this file's old role).
 module serde_neg.bad_attr
+
 import std.encoding.serde.{Serialize, Deserialize, Serializer, Deserializer, SerError, DeError}
 
 #serde(this_key_does_not_exist = "x")

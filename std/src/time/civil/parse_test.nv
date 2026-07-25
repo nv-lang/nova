@@ -6,7 +6,6 @@ module time.civil
 
 import std.time.duration
 
-
 // ── iso_roundtrip: parse(to_iso(x)) == x на каждый тип (критерий 6) ──
 
 test "iso_roundtrip: Date (вкл. отрицательные годы)" {
@@ -65,7 +64,6 @@ test "rfc9557_roundtrip: ZonedDateTime через [zone]-bracket (лосслес
     assert(!"2026-07-10T14:30:00-04:00".to_zoned_datetime().is_ok())
 }
 
-
 // ── strict-parse: reject-кейсы (Q9) ──
 
 test "strict: Feb-30 / month-13 / hour-25 на PARSE — Err (parses==constructs)" {
@@ -110,7 +108,6 @@ test "range: RFC-3339 вне окна ±292y → InvalidValue(Year)" {
     })
 }
 
-
 // ── OffsetConflict (D321 R2) ──
 
 test "OffsetConflict: рассогласованный offset — RejectMismatch default → Err" {
@@ -133,7 +130,6 @@ test "OffsetConflict: рассогласованный offset — RejectMismatch
     ro preferred = drifted.to_zoned_datetime(Prefer)!!
     assert(preferred.compare(canon) == 0)
 }
-
 
 // ── pattern-DSL (Q3): builder, round-trip, optional-секции ──
 
@@ -174,7 +170,6 @@ test "pattern: strict-валидация собранных полей (Feb-30 �
     ro f = DateTimeFormat.new().year4().lit("-").month2().lit("-").day2()
     assert(!"2024-02-30".to_date_with(f).is_ok())
 }
-
 
 // ── Display (критерий 9): full-datetime строковый вид ──
 // NB: интерполяция `"${d}"` value-record'а минует user @to_str (lookup

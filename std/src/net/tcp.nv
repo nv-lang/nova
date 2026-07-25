@@ -58,7 +58,9 @@ fn TcpListener.from_raw(h *()) -> TcpListener => { handle: h }
 fn TcpStream.from_raw(h *()) -> TcpStream => { handle: h, rc: AtomicInt.new(1) }
 // Plan 201: share-копия — тот же handle И ТОТ ЖЕ rc (alias владения).
 fn share_copy(h *(), rc AtomicInt) -> TcpStream => { handle: h, rc }
+
 fn TcpReadHalf.from_raw(h *()) -> TcpReadHalf => { handle: h }
+
 fn TcpWriteHalf.from_raw(h *()) -> TcpWriteHalf => { handle: h }
 
 // Null-handle test for a cold-path constructor return.
@@ -68,12 +70,19 @@ fn is_null(p *()) -> bool => (0 as *()) == p
 // Path-call return type (mirrors the old net.c pattern — variant construction
 // must stay out of an effect-handler body).
 fn listener_ok(h *()) -> Result[TcpListener, NetError] => Ok(TcpListener.from_raw(h))
+
 fn stream_ok(h *()) -> Result[TcpStream, NetError] => Ok(TcpStream.from_raw(h))
+
 fn err_listener(code int) -> Result[TcpListener, NetError] => Err(NetError.from_code(code))
+
 fn err_stream(code int) -> Result[TcpStream, NetError] => Err(NetError.from_code(code))
+
 fn int_ok(n int) -> Result[int, NetError] => Ok(n)
+
 fn int_err(code int) -> Result[int, NetError] => Err(NetError.from_code(code))
+
 fn unit_ok() -> Result[(), NetError] => Ok(())
+
 fn unit_err(code int) -> Result[(), NetError] => Err(NetError.from_code(code))
 
 // Tuple-return helper (codegen tuple inference in handler bodies).

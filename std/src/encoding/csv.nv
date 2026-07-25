@@ -3,13 +3,11 @@
 
 module encoding.csv
 
-
 /// Errors при парсинге CSV (unterminated quote, unexpected char).
 #stable(since = "0.1")
 export type ParseCsvError enum
     | UnterminatedQuote { line int }
     | UnexpectedChar { line int, col int, char char }
-
 
 /// Parse CSV document в `[][]str` (records of fields). Supports quoted fields
 /// (`"..."`) с escape `""` → `"`.
@@ -88,7 +86,6 @@ export fn Csv.parse(input str) Fail[ParseCsvError] -> [][]str { // [M-lint-findi
 
     records
 }
-
 
 // Сериализация [][]str → str.
 /// Encode `[][]str` обратно в CSV string. Auto-quote fields с `,`/`"`/`\n`.

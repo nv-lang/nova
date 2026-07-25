@@ -43,7 +43,6 @@
 
 module runtime.fibers
 
-
 // ─── fibers namespace ───────────────────────────────────────────────────
 
 /// Байты, зарезервированные через `mmap` для per-thread fiber arena (Linux/macOS).

@@ -29,7 +29,6 @@
 
 module encoding.base64
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Ошибки
 // ──────────────────────────────────────────────────────────────────────────
@@ -40,7 +39,6 @@ export type Base64Error enum
     | InvalidLength { actual int }
     | InvalidChar { position int, char char }
     | InvalidPadding { position int }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Alphabet и lookup
@@ -107,7 +105,6 @@ fn decode_char(c char) -> Option[u8] {
     }
 }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Encoding
 // ──────────────────────────────────────────────────────────────────────────
@@ -172,7 +169,6 @@ fn encode_with(data []u8, alphabet fn(u8) -> char, with_padding bool) -> str {
 
     buf
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Decoding
@@ -274,7 +270,6 @@ fn decode_at(s str, pos int) -> Result[u8, Base64Error] {
         None => Err(InvalidLength { actual: s.byte_len() })
     }
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Тесты — RFC 4648 § 10 test vectors — peer file `core_test.nv` (Plan 200

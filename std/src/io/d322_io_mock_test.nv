@@ -4,7 +4,6 @@
 
 module std.io
 
-
 test "mock_io captures stdout via write_str" {
     mut cap = IoCapture.new([]u8.new())
     with Io = mock_io(cap) {

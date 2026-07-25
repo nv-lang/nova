@@ -47,8 +47,6 @@ fn host_style() -> PathStyle => Windows
 #cfg(!target_os = "windows")
 fn host_style() -> PathStyle => Posix
 
-
-
 // Is `b` a separator under `style`?
 fn byte_is_sep(b u8, style PathStyle) -> bool {
     match style {
@@ -278,6 +276,7 @@ export fn Path @file_name_bytes() -> Option[[]u8] {
 }
 
 fn is_dot(b []u8) -> bool => b.len() == 1 && b[0] == B_DOT
+
 fn is_dotdot(b []u8) -> bool => b.len() == 2 && b[0] == B_DOT && b[1] == B_DOT
 
 /// The parent path (everything but the final component). `None` for a bare root

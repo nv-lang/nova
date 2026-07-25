@@ -10,7 +10,6 @@
 
 module time.civil
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Позиционные примитивы
 // ──────────────────────────────────────────────────────────────────────────
@@ -143,7 +142,6 @@ fn offset_at_pos(s str, pos0 int) -> Result[(int, int), ParseDateTimeError] {
 fn expect_end(s str, pos int) -> Result[(), ParseDateTimeError] =>
     if pos != s.byte_len() { Err(FormatMismatch(pos, "end of input")) }
     else { Ok(()) }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Публичные str-конверсии (§1а)
@@ -306,7 +304,6 @@ export fn str @to_period() -> Result[Period, ParseDateTimeError] {
     if seen == 0 { return Err(FormatMismatch(1, "period component")) }
     Ok(Period.new(years: years as i32, months: months as i32, days: days as i32))
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Timestamp: RFC-3339 display (закрывает зависимость 175 full-datetime)

@@ -28,7 +28,6 @@
 
 module time.cron
 
-
 /// Errors при парсинге cron-выражения.
 #stable(since = "0.1")
 export type ParseCronError enum
@@ -36,12 +35,10 @@ export type ParseCronError enum
     | InvalidValue { field str, value str }
     | OutOfRange { field str, value int, min int, max int }
 
-
 // Парсенное поле. Set всех допустимых значений.
 type CronField {
     values []int                    // отсортированный, без дубликатов
 }
-
 
 /// Parsed cron expression — 5 fields (minute/hour/day-of-month/month/day-of-week).
 #stable(since = "0.1")
@@ -53,7 +50,6 @@ export type CronExpr {
     day_week   CronField
 }
 
-
 /// Time-point для cron matching. Обычно decode'нутый из Timestamp.
 #stable(since = "0.1")
 export type CronTime {
@@ -63,7 +59,6 @@ export type CronTime {
     month     int             // 1..12
     day_week  int             // 0..6 (0 = Sunday)
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Парсинг
@@ -101,7 +96,6 @@ export fn str @to_cron() -> Result[CronExpr, ParseCronError] {
         day_week:  parse_field(clean[4], "day_week",  0, 6)?,
     })
 }
-
 
 fn parse_field(s str, name str, min int, max int) -> Result[CronField, ParseCronError] {
     // List: "1,5,10" → объединение
@@ -159,7 +153,6 @@ fn parse_field(s str, name str, min int, max int) -> Result[CronField, ParseCron
     Ok({ values: [v] })
 }
 
-
 fn parse_int_in(s str, name str, min int, max int) -> Result[int, ParseCronError] {
     ro n = match int.try_from(s) {
         Ok(x)  => x
@@ -170,7 +163,6 @@ fn parse_int_in(s str, name str, min int, max int) -> Result[int, ParseCronError
     }
     Ok(n)
 }
-
 
 fn parse_range(s str, name str, min int, max int) -> Result[(int, int), ParseCronError] {
     ro parts = s.split("-").collect()
@@ -184,7 +176,6 @@ fn parse_range(s str, name str, min int, max int) -> Result[(int, int), ParseCro
     }
     Ok((lo, hi))
 }
-
 
 fn dedup_sort(xs []int) -> []int {
     // D246-амендмент ([M-ro-launder-via-mut-binding], Ф.1б — return-позиция,
@@ -219,7 +210,6 @@ fn dedup_sort(xs []int) -> []int {
     out
 }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Matching
 // ──────────────────────────────────────────────────────────────────────────
@@ -233,13 +223,11 @@ export fn CronExpr @matches(t CronTime) -> bool =>
     && field_contains(@month, t.month)
     && field_contains(@day_week, t.day_week)
 
-
 fn field_contains(f CronField, v int) -> bool {
     for x in f.values {
         if x == v { return true }
     }
     false
 }
-
 
 // Тесты — см. peer-файл cron_test.nv (module time.cron_test).

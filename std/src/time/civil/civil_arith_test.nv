@@ -6,7 +6,6 @@ module time.civil
 
 import std.time.duration
 
-
 // ── Period: конструкторы, компоненты, ISO ──
 
 test "Period: конструкторы + компоненты (§21б new + дефолты)" {
@@ -52,7 +51,6 @@ test "Period @to_iso: PnYnMnD" {
     assert(Period.new(months: -1).to_iso() == "P-1M")
 }
 
-
 // ── Date + Period: CLAMP biggest-unit-first (Q7) ──
 
 test "feb_clamp: Jan31 + 1mo = Feb28 (Feb29 в високосный)" {
@@ -94,7 +92,6 @@ test "DateTime + Period: календарный сдвиг, wall-time неизм
     assert(dt3.date() == Date.new(2026, Jan, 31)!!)
 }
 
-
 // ── 3-tier (D317): try_* → Result, saturating_* → clamp ──
 
 test "try_plus/try_minus: Ok в диапазоне, RangeOverflow за границей" {
@@ -122,7 +119,6 @@ test "saturating_plus/minus: clamp к min/max вместо trap" {
     ro d = Date.new(2026, Jul, 10)!!
     assert(d.saturating_plus(Period.of_days(1)) == Date.new(2026, Jul, 11)!!)
 }
-
 
 // ── Period.between / Date @minus(Date) ──
 

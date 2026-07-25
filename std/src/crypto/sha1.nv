@@ -13,7 +13,6 @@ module crypto.sha1
 
 import std.encoding.hex.{Hex}
 
-
 /// SHA-1 hash state (FIPS 180-4). **Insecure** для cryptographic signatures
 /// (collision attacks с 2017). OK для Git commit hashes, legacy compatibility.
 /// Используй [`Sha256`] для security.
@@ -168,6 +167,5 @@ fn Sha1 mut @process_block(block []u8) -> () {
 
 fn rotl32(x u32, n int) -> u32 =>
     ((x << n) | (x >> (32 - n))) & 0xFFFFFFFF
-
 
 // Тесты — см. peer-файл sha1_test.nv (module crypto.sha1_test).

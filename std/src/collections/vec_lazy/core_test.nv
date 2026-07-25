@@ -60,6 +60,7 @@ module collections.vec_lazy
 
 import std.collections.vec.{Vec, VecIter}
 import std.collections.set.{Set}
+
 test "lazy map -> filter -> collect" {
     ro v = Vec[int].of(1, 2, 3, 4, 5, 6)
     ro got = v.lazy().map(|x| x * 10).filter(|x| x > 25).collect()

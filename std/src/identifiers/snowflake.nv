@@ -11,12 +11,9 @@
 
 module identifiers.snowflake
 
-
-
 // Custom epoch: 2020-01-01 UTC = 1577836800000 ms since Unix epoch.
 // Можно настроить под проект, но для совместимости используем стандартный.
 const TWITTER_EPOCH_MS i64 = 1577836800000
-
 
 /// Ошибки генератора Snowflake ID.
 ///
@@ -26,7 +23,6 @@ const TWITTER_EPOCH_MS i64 = 1577836800000
 export type SnowflakeError enum
     | InvalidMachineId { value int }
     | ClockBackwards { now i64, last i64 }
-
 
 /// Генератор Twitter Snowflake 64-bit ID.
 ///
@@ -59,7 +55,6 @@ export type SnowflakeGen {
     mut sequence i64                        // internal: 0..4095
 }
 
-
 /// Создать генератор для заданного `machine_id` (0..1023).
 ///
 /// `Err(InvalidMachineId)` если `machine_id` вне диапазона.
@@ -74,7 +69,6 @@ export fn SnowflakeGen.new(machine_id int) -> Result[Self, SnowflakeError] {
         sequence: 0,
     })
 }
-
 
 /// Сгенерировать следующий уникальный ID.
 ///
@@ -112,7 +106,6 @@ export fn SnowflakeGen mut @next() Time -> Result[i64, SnowflakeError] {
     Ok((ts_offset << 22) | (@machine_id << 12) | @sequence)
 }
 
-
 /// Компоненты Snowflake ID после декодирования.
 #stable(since = "0.1")
 export type SnowflakeParts {
@@ -120,7 +113,6 @@ export type SnowflakeParts {
     ro machine_id int
     ro sequence int
 }
-
 
 /// Разобрать Snowflake ID на составляющие компоненты.
 ///

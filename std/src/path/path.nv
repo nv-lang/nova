@@ -27,7 +27,6 @@
 
 module path.path
 
-
 /// Join path components с `/`-separator. Variadic — принимает позиционные
 /// args либо spread `...arr`.
 ///
@@ -196,7 +195,6 @@ export fn Path.normalize(p str) -> str {
     ro result = buf.into_str()
     if result.byte_len() == 0 { "." } else { result }
 }
-
 
 // Helpers
 // `/` и `.` — ASCII байты; UTF-8 continuation/lead-байты многобайтовых

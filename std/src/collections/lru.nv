@@ -36,7 +36,6 @@ export type Lru[K Hash, V] {
     mut store HashMap[K, V]     // internal storage
 }
 
-
 /// Создать пустой LRU кэш с заданной ёмкостью.
 #stable(since = "0.1")
 export fn Lru[K, V].new(capacity int) -> Self =>
@@ -45,7 +44,6 @@ export fn Lru[K, V].new(capacity int) -> Self =>
         order: [],
         store: HashMap[K, V].new(),
     }
-
 
 /// Число элементов в кэше.
 #stable(since = "0.1")
@@ -59,7 +57,6 @@ export fn Lru[K, V] @is_empty() -> bool => @store.len() == 0
 #stable(since = "0.1")
 export fn Lru[K, V] @contains(k K) -> bool => @store.contains(k)
 
-
 /// Получить значение по ключу и обновить recency (move-to-front).
 #stable(since = "0.1")
 export fn Lru[K, V] mut @get(k K) -> Option[V] {
@@ -72,7 +69,6 @@ export fn Lru[K, V] mut @get(k K) -> Option[V] {
         }
     }
 }
-
 
 /// Вставить или обновить пару. Если кэш полон — вытесняет LRU элемент.
 #stable(since = "0.1")
@@ -98,7 +94,6 @@ export fn Lru[K, V] mut @put(k K, v V) -> () {
     @store.insert(k, v)
 }
 
-
 fn Lru[K, V] mut @move_to_front(k K) -> () {
     // Найти k в order, удалить, поставить в начало.
     mut new_order []K = [k]
@@ -107,6 +102,5 @@ fn Lru[K, V] mut @move_to_front(k K) -> () {
     }
     @order = new_order
 }
-
 
 // Тесты — см. peer-файл lru_test.nv (module collections.lru_test).

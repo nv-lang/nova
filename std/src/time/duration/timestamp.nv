@@ -71,13 +71,14 @@ export fn[T Ints] T @to_unix_nanos() -> Timestamp =>
 #stable(since = "0.1")
 export fn Timestamp.now() Time -> Timestamp => Time.now()
 
-
 /// Unix epoch seconds (truncating). Negative для timestamps до 1970.
 #stable(since = "0.1")
 export fn Timestamp @unix_seconds() => @nanos / 1_000_000_000
+
 /// Unix epoch milliseconds (truncating).
 #stable(since = "0.1")
 export fn Timestamp @unix_millis() => @nanos / 1_000_000
+
 /// Unix epoch nanoseconds (raw `i64`).
 #stable(since = "0.1")
 export fn Timestamp @unix_nanos() => @nanos
@@ -131,7 +132,6 @@ export fn Timestamp @checked_sub(d Duration) -> Option[Timestamp] =>
 #stable(since = "0.1")
 export fn Timestamp @minus(other Timestamp) -> Duration =>
     sat_sub_i64(@nanos, other.nanos, i64.MIN, i64.MAX).to_nanos()
-
 
 /// Compare.compare — memcmp-style int return (D183 amendment, Plan 91.8a.2).
 /// `==`, `!=`, `<`, `<=`, `>`, `>=` operators synthesized via @compare.

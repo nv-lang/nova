@@ -90,6 +90,7 @@ fn JsonSerializer mut @finish_obj() -> Result[(), SerError] {
 // ── Serializer-протокол ──
 
 fn JsonSerializer mut @serialize_bool(v bool) -> Result[(), SerError] => @put(JsonValue.bool(v))
+
 fn JsonSerializer mut @serialize_int(v int) -> Result[(), SerError] {
     // Q15/D346: reject integers that would silently lose precision in the f64
     // JSON number — SYMMETRIC with `is_exact_int` on the deser side (`|n| <
@@ -100,22 +101,27 @@ fn JsonSerializer mut @serialize_int(v int) -> Result[(), SerError] {
     }
     @put(JsonValue.num(v as f64))
 }
+
 fn JsonSerializer mut @serialize_uint(v u64) -> Result[(), SerError] {
     if v >= 9007199254740992 {
         return Err(SerError.new(SerLossyInteger(v.to_str())))
     }
     @put(JsonValue.num(v as f64))
 }
+
 fn JsonSerializer mut @serialize_float(v f64) -> Result[(), SerError] {
     if v.is_nan() || v.is_infinite() {
         return Err(SerError.new(NonFiniteFloat))
     }
     @put(JsonValue.num(v))
 }
+
 fn JsonSerializer mut @serialize_str(v str) -> Result[(), SerError] => @put(JsonValue.str(v))
+
 fn JsonSerializer mut @serialize_bytes(v []u8) -> Result[(), SerError] =>
     @put(JsonValue.str(Base64.encode(v)))
 fn JsonSerializer mut @serialize_unit() -> Result[(), SerError] => @put(JsonValue.null())
+
 fn JsonSerializer mut @serialize_none() -> Result[(), SerError] => @put(JsonValue.null())
 
 fn JsonSerializer mut @begin_struct(name str, len int) -> Result[(), SerError] {
@@ -124,7 +130,9 @@ fn JsonSerializer mut @begin_struct(name str, len int) -> Result[(), SerError] {
     @stack.push(SerFrame.obj_frame())
     Ok(())
 }
+
 fn JsonSerializer mut @struct_field(key str) -> Result[(), SerError] => @set_pending(key)
+
 fn JsonSerializer mut @end_struct() -> Result[(), SerError] => @finish_obj()
 
 fn JsonSerializer mut @begin_map(len int) -> Result[(), SerError] {
@@ -133,7 +141,9 @@ fn JsonSerializer mut @begin_map(len int) -> Result[(), SerError] {
     @stack.push(SerFrame.obj_frame())
     Ok(())
 }
+
 fn JsonSerializer mut @map_key(key str) -> Result[(), SerError] => @set_pending(key)
+
 fn JsonSerializer mut @end_map() -> Result[(), SerError] => @finish_obj()
 
 fn JsonSerializer mut @begin_seq(len int) -> Result[(), SerError] {
@@ -142,6 +152,7 @@ fn JsonSerializer mut @begin_seq(len int) -> Result[(), SerError] {
     @stack.push(SerFrame.arr_frame())
     Ok(())
 }
+
 fn JsonSerializer mut @end_seq() -> Result[(), SerError] {
     @depth -= 1
     match @stack.pop() {
@@ -186,18 +197,21 @@ fn JsonDeserializer mut @deser_bool() -> Result[bool, DeError] {
         None    => Err(DeError.unexpected("bool", json_kind(@cur)))
     }
 }
+
 fn JsonDeserializer mut @deser_str() -> Result[str, DeError] {
     match @cur.str() {
         Some(s) => Ok(s)
         None    => Err(DeError.unexpected("string", json_kind(@cur)))
     }
 }
+
 fn JsonDeserializer mut @deser_float() -> Result[f64, DeError] {
     match @cur.num() {
         Some(n) => Ok(n)
         None    => Err(DeError.unexpected("number", json_kind(@cur)))
     }
 }
+
 fn JsonDeserializer mut @deser_int() -> Result[int, DeError] {
     match @cur.num() {
         None => Err(DeError.unexpected("int", json_kind(@cur)))
@@ -210,6 +224,7 @@ fn JsonDeserializer mut @deser_int() -> Result[int, DeError] {
         }
     }
 }
+
 fn JsonDeserializer mut @deser_uint() -> Result[u64, DeError] {
     match @cur.num() {
         None => Err(DeError.unexpected("uint", json_kind(@cur)))
@@ -224,6 +239,7 @@ fn JsonDeserializer mut @deser_uint() -> Result[u64, DeError] {
         }
     }
 }
+
 fn JsonDeserializer mut @deser_bytes() -> Result[[]u8, DeError] {
     match @cur.str() {
         None => Err(DeError.unexpected("base64 string", json_kind(@cur)))
@@ -233,7 +249,9 @@ fn JsonDeserializer mut @deser_bytes() -> Result[[]u8, DeError] {
         }
     }
 }
+
 fn JsonDeserializer mut @is_null() -> Result[bool, DeError] => Ok(@cur.is_null())
+
 fn JsonDeserializer mut @is_str() -> Result[bool, DeError] => Ok(@cur.is_str())
 
 fn JsonDeserializer mut @enter_field(key str) -> Result[JsonDeserializer, DeError] {
@@ -246,6 +264,7 @@ fn JsonDeserializer mut @enter_field(key str) -> Result[JsonDeserializer, DeErro
         }
     }
 }
+
 fn JsonDeserializer mut @enter_field_or_null(key str) -> Result[JsonDeserializer, DeError] {
     if @depth + 1 > @max_depth { return Err(DeError.new(DepthLimitExceeded)) }
     match @cur.object() {
@@ -265,12 +284,14 @@ fn JsonDeserializer mut @has_field(key str) -> Result[bool, DeError] {
         Some(m) => Ok(m.get(key).is_some())
     }
 }
+
 fn JsonDeserializer mut @seq_len() -> Result[int, DeError] {
     match @cur.array() {
         None    => Err(DeError.unexpected("array", json_kind(@cur)))
         Some(a) => Ok(a.len())
     }
 }
+
 fn JsonDeserializer mut @enter_index(i int) -> Result[JsonDeserializer, DeError] {
     if @depth + 1 > @max_depth { return Err(DeError.new(DepthLimitExceeded)) }
     match @cur.array() {
@@ -281,6 +302,7 @@ fn JsonDeserializer mut @enter_index(i int) -> Result[JsonDeserializer, DeError]
         }
     }
 }
+
 fn JsonDeserializer mut @map_keys() -> Result[[]str, DeError] {
     match @cur.object() {
         None => Err(DeError.unexpected("object", json_kind(@cur)))
@@ -293,6 +315,7 @@ fn JsonDeserializer mut @map_keys() -> Result[[]str, DeError] {
         }
     }
 }
+
 fn JsonDeserializer mut @enter_key(key str) -> Result[JsonDeserializer, DeError] => @enter_field(key)
 
 // ── error-rendering (line/col из ParseJsonError сохраняются в тексте) ──
@@ -316,7 +339,6 @@ fn parse_err_msg(e ParseJsonError) -> str {
             "trailing content at line ${line}, col ${col}"
     }
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Публичный API (§3.8) — record-DTO, разблокировка Plan 178 typed .json[T].

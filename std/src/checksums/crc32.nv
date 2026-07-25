@@ -24,7 +24,6 @@
 
 module checksums.crc32
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Lookup table
 // ──────────────────────────────────────────────────────────────────────────
@@ -50,7 +49,6 @@ fn table_value(i u8) -> u32 {
 // Wrapper для удобного доступа. Будущая оптимизация — закэшировать
 // в массив через `let TABLE [256]u32 = ...` когда будут comptime массивы.
 fn lookup(i u8) -> u32 => table_value(i)
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Public API
@@ -103,6 +101,5 @@ export fn crc32_update(state u32, data []u8) -> u32 {
 #stable(since = "0.1")
 export fn crc32_finalize(state u32) -> u32 =>
     state ^ 0xFFFFFFFF
-
 
 // Тесты — см. peer-файл crc32_test.nv (module checksums.crc32).

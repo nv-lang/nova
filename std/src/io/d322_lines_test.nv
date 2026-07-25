@@ -3,7 +3,6 @@
 
 module std.io
 
-
 test "lines strips trailing CR (CRLF), yields final line without newline" {
     mut r = BytesReader.new("a\r\nbb\nccc")
     match lines(r) {

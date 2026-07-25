@@ -26,14 +26,12 @@ module crypto.hmac
 import std.crypto.sha256.{Sha256}
 import std.encoding.hex.{Hex}
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // SHA-256 specific (block_size = 64, output_size = 32)
 // ──────────────────────────────────────────────────────────────────────────
 
 const SHA256_BLOCK_SIZE = 64
 const SHA256_OUTPUT_SIZE = 32
-
 
 /// HMAC-SHA-256 (RFC 2104) — keyed message authentication. 32-byte tag.
 ///
@@ -94,7 +92,6 @@ fn constant_time_eq(a [32]u8, b [32]u8) -> bool {
     diff == 0
 }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Key normalization (RFC 2104 § 2)
 // ──────────────────────────────────────────────────────────────────────────
@@ -115,6 +112,5 @@ fn normalize_key_sha256(key []u8) -> []u8 {
     while block.len() < SHA256_BLOCK_SIZE { block.push(0x00) }
     block
 }
-
 
 // Тесты — см. peer-файл hmac_test.nv (module crypto.hmac_test).

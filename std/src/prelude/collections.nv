@@ -83,7 +83,6 @@ module prelude.collections
 // `std.prelude.*` submodule (cycle protection). См. file-header выше.
 import std.prelude.core.{Option}
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Next[T] + Iter[I] protocols (D241+D242, Plan 138)
 // ──────────────────────────────────────────────────────────────────────────
@@ -161,6 +160,7 @@ export type Iter[I] protocol {
 // tripping the D29 early-return cycle guard (verified experimentally).
 import std.runtime.string
 import std.runtime.char
+
 // [M-ptr-raw-access-contract-and-unaligned] item 3 note: f32/f64
 // `.to_bits()`/`.from_bits()` (now plain Nova-body methods in
 // std/runtime/numeric.nv, no longer compiler intrinsics) need NO import

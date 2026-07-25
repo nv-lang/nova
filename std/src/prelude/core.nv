@@ -155,7 +155,6 @@ export type Result[T, E] enum Ok(T) | Err(E)
 #stable(since = "0.1")
 export type ScopeOutcome enum Success | Failure(any) | Panic(str)
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Record types
 // ──────────────────────────────────────────────────────────────────────────
@@ -177,7 +176,6 @@ export type Error {
 // DEFER: Static fn `Error.new(msg)` остаётся в codegen special-case
 // (Error — record, не sum). Декларация перенесётся в Plan 62.C вместе
 // с RuntimeError.
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // str — lang-item value-record (Plan 139.1, closes [M-139-f0-lang-item-decl])
@@ -218,7 +216,6 @@ type str value priv(type) {
     ptr *u8
     len int
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Option[T] methods (D26 §283-306)
@@ -325,7 +322,6 @@ fn Option[T] @flat_map[U](flat_map_fn fn(T) -> Option[U]) -> Option[U]
 #stable(since = "0.1")
 fn Option[T] @filter(pred fn(T) -> bool) -> Option[T]
   => match @ { Some(v) => if pred(v) { Some(v) } else { None }, None => None }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Result[T, E] methods (D26 §283-306)

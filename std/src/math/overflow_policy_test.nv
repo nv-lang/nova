@@ -251,6 +251,7 @@ test "206.1: raw unary `-` — unsigned negation does NOT panic (still raw wrapa
 
 // Plan 200 Step 0 (D74 amend): `@clamp` — бланкет над `Ints`, вытесняет старый
 // конкретный `int @clamp` (std/runtime/defaults.nv). Multi-width + lo>hi edge.
+
 test "Step 0/D74: clamp — Ints-бланкет multi-width (i64/u32/i8), в диапазоне/выше/ниже" {
     ro a i64 = 15
     assert(a.clamp(0, 10) == 10)          // выше hi -> hi

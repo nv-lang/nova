@@ -10,13 +10,11 @@ module time.civil
 
 import std.time.duration
 
-
 // NB: сама декларация `type DateTime` живёт в time_of_day.nv (после
 // TimeOfDay): codegen эмитит value-record структуры в порядке обработки
 // файлов (лексикографическом), а by-value поле требует complete-типа —
 // `datetime.nv` < `time_of_day.nv` дал бы incomplete NovaValue_TimeOfDay.
 // Обход по конвенции §4а, маркер [M-175.1-value-in-value-emit-order].
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Конструкторы
@@ -69,7 +67,6 @@ export fn DateTime.new(y i32, m Month, d i32,
 // Вернуть перегрузку после фикса. Композит DateTime.new(y,m,d,h=0,...) —
 // статик-путь, манглится корректно, живёт ниже.
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Компоненты (property-методы по арности)
 // ──────────────────────────────────────────────────────────────────────────
@@ -109,7 +106,6 @@ export fn DateTime @second() -> int => @time.second()
 /// День недели (делегат Date).
 #stable(since = "0.1")
 export fn DateTime @weekday() -> Weekday => @date.weekday()
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Арифметика: Duration (elapsed, инстант-семантика с day-carry).
@@ -151,7 +147,6 @@ export fn DateTime @duration_until(other DateTime) -> Duration {
     ro nano_diff = other.time().to_nanos_of_day() - @time.to_nanos_of_day()
     day_diff.to_days() + nano_diff.to_nanos()
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Compare + Display

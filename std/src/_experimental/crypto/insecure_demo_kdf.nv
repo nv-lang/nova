@@ -40,14 +40,12 @@ module crypto.insecure_demo_kdf
 
 import std.crypto.sha256.{Sha256}
 
-
 /// Errors при insecure-demo-KDF операциях.
 #experimental(note = "демо-KDF, НЕ настоящая крипто-примитива; см. Plan 193")
 export type InsecureDemoKdfError enum
     | InvalidCost { value int }
     | InvalidHash { reason str }
     | PasswordTooLong { length int, max int }
-
 
 // Cost factor: 2^cost rounds. 10 = 1024 rounds (default). Минимум 4,
 // максимум 31. Эти границы унаследованы от bcrypt-конвенции для
@@ -57,7 +55,6 @@ const MIN_COST int = 4
 const MAX_COST int = 31
 const DEFAULT_COST int = 10
 const MAX_PASSWORD_LEN int = 72        // унаследованный bcrypt-лимит (демо, не защита)
-
 
 // Hash формат (СВОЙ, не bcrypt-совместимый и не $2*$-подобный, чтобы
 // не выдавать себя за настоящий bcrypt/crypt-формат):
@@ -69,7 +66,6 @@ const MAX_PASSWORD_LEN int = 72        // унаследованный bcrypt-л
 
 const SALT_LEN int = 16          // 16 random bytes → 22 base64 chars
 const FORMAT_TAG str = "ndk1"
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Public API
@@ -103,7 +99,6 @@ export fn InsecureDemoKdf.hash(password str, cost int) Random -> Result[str, Ins
     ro cost_str = if cost < 10 { "0${cost}" } else { cost.to_str() }
     Ok("$${FORMAT_TAG}$${cost_str}$${demo_base64_encode(salt)}${demo_base64_encode(hashed)}")
 }
-
 
 /// ⚠ INSECURE — демо-KDF, НЕ настоящий bcrypt/argon2.
 ///
@@ -140,7 +135,6 @@ export fn InsecureDemoKdf.verify(password str, hash_str str) -> bool {
     constant_time_eq(computed, expected_hash)
 }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Internal — упрощённая KDF (НЕ EksBlowfishSetup, НЕ Blowfish — просто
 // повторяющийся SHA-256; см. предупреждение в шапке файла)
@@ -168,7 +162,6 @@ fn demo_kdf(password []u8, salt []u8, cost int) -> []u8 {
     bytes[0..23]
 }
 
-
 fn constant_time_eq(a []u8, b []u8) -> bool {
     if a.len() != b.len() { return false }
     mut diff = 0
@@ -177,7 +170,6 @@ fn constant_time_eq(a []u8, b []u8) -> bool {
     }
     diff == 0
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Demo-KDF's own Base64 (alphabet отличается от standard; заимствован из
@@ -191,7 +183,6 @@ fn constant_time_eq(a []u8, b []u8) -> bool {
 // Без padding, group по 3 bytes → 4 chars.
 
 const DEMO_ALPHABET str = "./ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
-
 
 fn demo_base64_encode(data []u8) -> str {
     consume buf = StringBuilder.new(cap: data.len() * 4 / 3 + 4)
@@ -221,7 +212,6 @@ fn demo_base64_encode(data []u8) -> str {
     }
     buf.into_str()
 }
-
 
 // DEMO_ALPHABET (64 ASCII chars) — прямой byte-доступ O(1) вместо
 // ретрактированного `chars().nth(idx)` O(n) скана (D260-амендмент).
@@ -298,7 +288,6 @@ fn byte_to_char(bytes []u8, i int) -> Option[char] {
         None    => None
     }
 }
-
 
 fn demo_decode_char(c Option[char]) -> Option[u32] {
     match c {

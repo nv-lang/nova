@@ -56,7 +56,6 @@
 
 module std.bench
 
-
 // ─── bench namespace ────────────────────────────────────────────────────
 
 /// Black-box barrier — предотвращает dead-code elimination в benchmarks.

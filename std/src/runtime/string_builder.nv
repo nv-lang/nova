@@ -202,6 +202,7 @@ export fn StringBuilder mut @append(x f64) -> @ {
     @reserve(F64_FMT_CAP)
     unsafe { @advance(f64_fmt(x, @spare(), F64_FMT_CAP)) }
 }
+
 export fn StringBuilder mut @append(b bool) -> @ { if b { @append("true") } else { @append("false") } }
 // Plan 154.1 [M-154.1-f32-display-debug] + Plan 180: f32 via `@to_str()` →
 // the f32-precise shortest-round-trip formatter (nova_f32_to_str). Widening to
@@ -320,7 +321,6 @@ fn utf8_char_count(bytes []u8) -> int {
     }
     n
 }
-
 
 // Known-length primitive/str write with width/align/fill padding, WITHOUT a
 // shift (D422 §4 "известная длина... write_padded... без сдвига"): `bytes`

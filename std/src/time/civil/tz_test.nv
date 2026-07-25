@@ -7,7 +7,6 @@ module time.civil
 
 import std.time.duration
 
-
 // ── tz_load: to_timezone (§1а) ──
 
 test "tz_load: curated-имена Ok, unknown → Err(UnknownZone)" {
@@ -44,7 +43,6 @@ test "tzdb_version доступна (D321 §tzdb)" {
     assert(tzdb_version().byte_len() > 0)
     assert(tzdb_version().contains("curated"))
 }
-
 
 // ── dst_gap_named: America/New_York spring-forward 2026-03-08 ──
 
@@ -115,7 +113,6 @@ test "Sydney (южное полушарие): DST октябрь→апрель"
     assert(syd.resolve_local(ovl).is_overlap())
 }
 
-
 // ── dst_roundtrip: RFC-9557 [zone] идентичность через переход ──
 
 test "dst_roundtrip: instant-переход через wall-арифметику named-зоны" {
@@ -131,7 +128,6 @@ test "dst_roundtrip: instant-переход через wall-арифметику
     // офсеты по инстанту согласованы с offset_at
     assert(ny.offset_at(after.to_timestamp()!!).to_seconds() == -14_400)
 }
-
 
 // ── TZif-парсер: синтетические байты (мокабельно, без ОС) ──
 

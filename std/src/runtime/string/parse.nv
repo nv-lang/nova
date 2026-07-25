@@ -10,7 +10,6 @@ module runtime.string
 
 import std.prelude.core.{Option, Some, None, Result, Ok, Err}
 
-
 /// Error variants for the integer parse engines. Exported so callers can match on them.
 export type ParseIntError enum Empty | InvalidDigit | Overflow | InvalidRadix
 

@@ -3,6 +3,7 @@
 // meaningless — a skipped field is never on the wire, so renaming it has
 // no effect. Rejected at compile time rather than silently ignored.
 module serde_neg.skip_rename_conflict
+
 import std.encoding.serde.{Serialize, Deserialize, Serializer, Deserializer, SerError, DeError}
 
 #impl(Serialize + Deserialize)

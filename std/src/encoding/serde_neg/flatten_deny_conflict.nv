@@ -4,6 +4,7 @@
 // mixed into the parent wire object and cannot be attributed by the
 // parent's unknown-field check without `#serde(allow_unknown)`.
 module serde_neg.flatten_deny_conflict
+
 import std.encoding.serde.{Serialize, Deserialize, Serializer, Deserializer, SerError, DeError}
 
 #impl(Serialize + Deserialize)

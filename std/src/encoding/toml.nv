@@ -29,7 +29,6 @@ module encoding.toml
 
 import std.collections.hashmap.{HashMap}
 
-
 /// TOML value variants (string/int/float/bool/array/table).
 #stable(since = "0.1")
 export type TomlValue enum
@@ -49,7 +48,6 @@ export type ParseTomlError enum
     | InvalidString { line int, reason str }
     | DuplicateKey { line int, key str }
     | UnclosedTable { line int }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Parser state
@@ -85,7 +83,6 @@ fn TomlParser.new(s str) -> Self {
     }
 }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Public API
 // ──────────────────────────────────────────────────────────────────────────
@@ -100,7 +97,6 @@ export fn Toml.parse(s str) Fail[ParseTomlError] -> TomlValue { // [M-lint-findi
     p.parse_document()
     TomlTable(p.root)
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Lexing helpers
@@ -144,7 +140,6 @@ fn TomlParser mut @skip_whitespace_and_newlines() -> () {
         }
     }
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Document parsing
@@ -248,7 +243,6 @@ fn is_bare_key_char(c char) -> bool {
     c == '-'
 }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Key = Value
 // ──────────────────────────────────────────────────────────────────────────
@@ -284,7 +278,6 @@ fn TomlParser mut @parse_value() Fail[ParseTomlError] -> TomlValue {
 fn is_num_start(c char) -> bool =>
     c == '-' || c == '+' || (c >= '0' && c <= '9')
 
-
 fn TomlParser mut @parse_basic_string() Fail[ParseTomlError] -> str {
     @advance()          // open "
     consume buf = StringBuilder.new()
@@ -313,7 +306,6 @@ fn TomlParser mut @parse_basic_string() Fail[ParseTomlError] -> str {
     s
 }
 
-
 fn TomlParser mut @parse_bool() Fail[ParseTomlError] -> TomlValue {
     if @match_keyword("true") { TomlBool(true) }
     else if @match_keyword("false") { TomlBool(false) }
@@ -333,7 +325,6 @@ fn TomlParser mut @match_keyword(kw str) -> bool {
     }
     true
 }
-
 
 fn TomlParser mut @parse_number() Fail[ParseTomlError] -> TomlValue {
     ro start = @pos
@@ -372,7 +363,6 @@ fn TomlParser mut @parse_number() Fail[ParseTomlError] -> TomlValue {
     }
 }
 
-
 fn TomlParser mut @parse_array() Fail[ParseTomlError] -> TomlValue {
     @advance()          // [
     mut items []TomlValue = []
@@ -396,7 +386,6 @@ fn TomlParser mut @parse_array() Fail[ParseTomlError] -> TomlValue {
     @advance()
     TomlArray(items)
 }
-
 
 fn TomlParser mut @parse_inline_table() Fail[ParseTomlError] -> TomlValue {
     @advance()          // {
@@ -436,7 +425,6 @@ fn TomlParser mut @parse_inline_table() Fail[ParseTomlError] -> TomlValue {
     @advance()
     TomlTable(t)
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Path resolution для nested tables

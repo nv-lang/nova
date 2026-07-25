@@ -196,7 +196,6 @@ export type Random effect {
     bytes(n int) -> []u8                // массовая генерация
 }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Plan 110.4.3 (D185) — ResourceTrace observability effect (Plan 173 Ф.2.R1 rename)
 // ──────────────────────────────────────────────────────────────────────────
@@ -239,7 +238,6 @@ export type ResourceTrace effect {
     on_resource_enter(label str) -> ()
     on_resource_exit(label str, outcome ScopeOutcome, duration_ms int, overrun bool) -> ()
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Plan 173.2 — Supervisor effect (supervision-as-effect) + Decision
@@ -312,7 +310,6 @@ export type Decision enum Escalate | Stop
 export type Supervisor effect {
     on_child_fail(idx int, err any) -> Decision
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Plan 110.4.5 (D195) — Application effect для top-level lifecycle

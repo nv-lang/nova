@@ -29,7 +29,6 @@ export type Period value {
     ro days i32
 }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Конструкторы (§21б: new + дефолт-параметры; of_* — удобные одиночные)
 // ──────────────────────────────────────────────────────────────────────────
@@ -65,7 +64,6 @@ export fn Period.from_weeks(w i32) -> Period => { years: 0, months: 0, days: w *
 #stable(since = "0.1")
 export fn Period.zero() -> Period => { years: 0, months: 0, days: 0 }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Компоненты + предикаты
 // ──────────────────────────────────────────────────────────────────────────
@@ -85,7 +83,6 @@ export fn Period @days() -> i32 => @days
 /// Все компоненты нулевые.
 #stable(since = "0.1")
 export fn Period @is_zero() -> bool => @years == 0 && @months == 0 && @days == 0
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Period-арифметика (покомпонентная; без нормализации)
@@ -128,7 +125,6 @@ export fn Period @compare(other Period) -> int {
     if @days < other.days { -1 } else if @days > other.days { 1 } else { 0 }
 }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // ISO-8601 PnYnMnD
 // ──────────────────────────────────────────────────────────────────────────
@@ -147,7 +143,6 @@ export fn Period @to_iso() -> str {
 /// Display = ISO-форма.
 #stable(since = "0.1")
 export fn Period @to_str() -> str => @to_iso()
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Date + Period: CLAMP biggest-unit-first (Q7). Внутренний движок → Result,
@@ -288,7 +283,6 @@ export fn Period.between(start Date, end Date) -> Period {
     ro p Period = { years: years as i32, months: rem_months as i32, days: days as i32 }
     if negate { p.neg() } else { p }
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // DateTime + Period (календарная семантика: сдвигается дата, время неизменно)

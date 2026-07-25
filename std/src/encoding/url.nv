@@ -30,7 +30,6 @@
 
 module encoding.url
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Тип
 // ──────────────────────────────────────────────────────────────────────────
@@ -56,7 +55,6 @@ export type Url {
     ro fragment  Option[str]
 }
 
-
 /// Errors при парсинге URL.
 #stable(since = "0.1")
 export type ParseUrlError enum
@@ -65,7 +63,6 @@ export type ParseUrlError enum
     | InvalidScheme { value str }
     | InvalidPort { value str }
     | InvalidPercentEncoding { position int }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Парсинг
@@ -231,7 +228,6 @@ fn is_alphanum(c char) -> bool {
 fn is_scheme_char(c char) -> bool =>
     is_alphanum(c) || c == '+' || c == '-' || c == '.'
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Сериализация (D410)
 // ──────────────────────────────────────────────────────────────────────────
@@ -296,7 +292,6 @@ export fn Url @to_str() -> str {
 
     buf
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Percent-encoding (RFC 3986 § 2.1)

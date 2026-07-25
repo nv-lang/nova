@@ -11,7 +11,6 @@ module runtime.string
 import std.prelude.core.{Option, Some, None}
 import std.runtime.string_builder.{StringBuilder}
 
-
 // Убирает ASCII whitespace с начала и конца. Plan 152.2 Ф.2: теперь ZERO-COPY
 // (sub-view через `@[start..end]`, не alloc-копия) — закрывает
 // [M-139-f1-trim-view]. str иммутабелен (R8) + GC держит буфер живым через view.
