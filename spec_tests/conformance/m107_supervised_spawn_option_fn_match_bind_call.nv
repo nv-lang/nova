@@ -1,0 +1,95 @@
+// [fix M-serve-router-nova-fn-hook-undefined, реестр 221.1 №107]: regression
+// for the `serve_router`/`serve_connection` (nova-polaris) link failure.
+//
+// ROOT CAUSE: a match arm destructuring a Func-typed payload out of a
+// single-arg generic wrapper (`Some(hook) => { ... hook(x) ... }` over
+// `Option[fn(...) -> ...]` — the exact shape `net/serve.nv`'s `run_request`
+// uses for its ws-hijack/recover-500 plumbing, `resp.take_upgrade()`) never
+// registered `fn_param_sigs` (emit_c.rs's closure-call dispatch table) for
+// the bound name — only `let`/fn-param bindings did. A later `hook(x)`
+// call-site therefore fell through every `fn_param_sigs`-gated closure-call
+// special case straight to the "must be a free function" default
+// (`free_fn_c_name`), emitting a bogus `nova_fn_hook` reference — undefined
+// symbol at LINK time (compiles clean, `nova check` clean; only `nova build`
+// linking ever surfaces it — the reason this shipped unnoticed: neither
+// `spec_tests/conformance` nor the flagship aggregator exercises a match arm
+// that both (a) destructures a Func out of an Option/generic wrapper AND
+// (b) calls the bound closure — `net/serve.nv`'s `run_request` was believed
+// to be the ONLY call-site in the whole corpus with this exact shape).
+//
+// FIX (channel-fed, mirrors the Plan-228 HOF-binding `let`-registration
+// immediately above `emit_match`'s own per-arm loop in emit_c.rs): read the
+// match SCRUTINEE's checker-resolved type (`resolved_types`, §0/196
+// channel), peel one single-arg generic wrapper layer (`Option[T]` and kin)
+// to find a `Func`, and register `fn_param_sigs` for every direct
+// single-payload `Ident` binding across the arms — generic (any single-arg
+// tuple-variant, not hardcoded to `Some`), a silent no-op for every match
+// that isn't this shape (byte-identical elsewhere).
+//
+// Mirrors `ServerResponse.upgrade`/`@upgrade(h)`/`@take_upgrade()`
+// (nova-polaris src/server.nv, src/net/serve.nv) exactly — a `mut`
+// `Option[fn(...)->...]` STRUCT FIELD, set via a fluent setter (`@upgrade =
+// Some(h)` field ASSIGNMENT, D117/D409) and read back through a `@`-property
+// method. NOT a record-LITERAL `{ hook: Some(...) }` construction — that
+// shape hits a SEPARATE, unrelated pre-existing gap (Option[Func] element-
+// type mis-inference at record-literal construction, CC-FAIL
+// `NovaOpt_nova_int` vs `NovaOpt_NovaClos_ii_p` — outside this bug's scope,
+// reported to the integrator) that the real production code never exercises
+// either (`ws_upgrade.nv`'s `@on_upgrade` also assigns via
+// `@upgrade = Some(h)`, never a literal).
+module spec_tests.conformance
+
+type M107Hooked value { mut hook Option[fn(int) -> int] }
+
+fn M107Hooked mut @set_hook(h fn(int) -> int) -> @ {
+    @hook = Some(h)
+}
+
+fn M107Hooked @take_hook() -> Option[fn(int) -> int] => @hook
+
+test "107: match-arm Option[fn] payload call under supervised{spawn{}} + custom Supervisor links and runs" {
+    // `h` is produced AND consumed by the SAME (spawned) fiber — never
+    // captured from the outer scope — same discipline `run_request`
+    // (serve.nv) documents at length for `resp` (the M:N share-ness checker
+    // cannot prove a captured `Option[fn...]`-bearing struct safe to alias
+    // across a spawn boundary, `[E_CONCURRENT_MUT_CAPTURE]`; a fresh
+    // in-fiber local sidesteps it entirely).
+    mut out = AtomicInt.new(0)
+    with Supervisor = effect Supervisor {
+        on_child_fail(idx, err) -> Decision {
+            return Decision.Stop
+        }
+    } {
+        supervised {
+            spawn {
+                mut h = M107Hooked { hook: None }
+                h.set_hook(fn(x int) -> int => x * 2)
+                match h.take_hook() {
+                    Some(hook) => { out.store(hook(21)) }
+                    None => {}
+                }
+            }
+        }
+    }
+    assert(out.load() == 42)
+}
+
+test "107: match-arm Option[fn] payload None-arm leaves closure uncalled" {
+    mut out = AtomicInt.new(-1)
+    with Supervisor = effect Supervisor {
+        on_child_fail(idx, err) -> Decision {
+            return Decision.Stop
+        }
+    } {
+        supervised {
+            spawn {
+                ro h = M107Hooked { hook: None }
+                match h.take_hook() {
+                    Some(hook) => { out.store(hook(21)) }
+                    None => { out.store(0) }
+                }
+            }
+        }
+    }
+    assert(out.load() == 0)
+}
