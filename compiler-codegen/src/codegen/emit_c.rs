@@ -27843,31 +27843,33 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         ));
         self.indent += 1;
         self.line("NovaSpawnCtxBase* _c = (NovaSpawnCtxBase*)mco_get_user_data(_co);");
-        // Preamble: allocate a real scheduler slot. Bootstrap path (_nova_
-        // parent_scope == NULL): nova_fiber_spawn_into already pushed this
-        // fiber into _nova_main_scope's fibers[] array and nova_supervised_
-        // step sets _nova_active_slot around every resume — nothing to do
-        // here (mirrors emit_spawn's identical bootstrap branch). Armed M:N
-        // path (_nova_parent_scope != NULL): this entry runs on a worker
-        // thread's own resume loop, which does NOT know the scope-index —
-        // self-allocate on first resume (mirrors emit_spawn exactly).
-        self.line("if (_c->_nova_parent_scope) {");
-        self.indent += 1;
-        self.line("_nova_active_slot = nova_scope_alloc_slot(_nova_active_scope, _co);");
-        self.line("_c->_nova_worker_slot = _nova_active_slot;");
-        self.line("_c->_nova_fiber_scope = _nova_active_scope;");
-        self.line("if (_c->_nova_init_snapshot && _nova_active_slot >= 0) {");
-        self.indent += 1;
-        self.line("_nova_active_scope->fiber_effect_snapshot[_nova_active_slot] = _c->_nova_init_snapshot;");
-        self.line("_c->_nova_init_snapshot = NULL;");
-        self.indent -= 1;
-        self.line("}");
-        self.indent -= 1;
-        self.line("} else {");
-        self.indent += 1;
+        // [P108-followup, integrator gate red 2026-07-25, round 2 —
+        // repro_cross_effect_throw wrong-value (not a hang)]: mark this
+        // coroutine as THE root main-fiber for the duration of its run.
+        // `nova_interrupt`/`nova_interrupt_ptr` (effects.c) compare
+        // `mco_running()` against this to treat main-fiber-hosted code as
+        // main-flow-equivalent for the D61 cross-effect handler-arm
+        // routing fast-path (see effects.h `_nova_main_fiber_co` doc
+        // comment for the full rationale — that fast-path used to gate on
+        // `!mco_running()`, a proxy that broke once main itself became a
+        // fiber). Cleared before returning (both exit paths) so a LATER
+        // fiber that happens to reuse this same arena slot's memory
+        // address (e.g. a detach spawned during D92 drain, after
+        // main-body itself has finished) never falsely matches.
+        self.line("_nova_main_fiber_co = (void*)_co;");
+        // [P108-followup, integrator gate red 2026-07-25]: main-body is
+        // ALWAYS bootstrap-spawned (`nova_fiber_spawn_into`, never
+        // `nova_runtime_spawn_into`) — see the call site below for the full
+        // rationale. `_c->_nova_parent_scope` is therefore ALWAYS NULL here;
+        // `nova_supervised_step` (which resumes bootstrap fibers directly on
+        // ITS OWN calling thread — the true process main thread) owns slot
+        // lifecycle for this fiber exactly like any other bootstrap-spawned
+        // fiber, so there is nothing to self-allocate on first resume. Kept
+        // as an explicit no-op assignment (not deleted) so this stays
+        // byte-structurally comparable to `emit_spawn`'s identical preamble
+        // shape, and so a FUTURE change of the call-site's spawn choice
+        // (should one ever be needed) does not silently skip re-adding this.
         self.line("_c->_nova_worker_slot = -1;");
-        self.indent -= 1;
-        self.line("}");
         // Fail-frame so a throw/panic inside main-body longjmps back HERE
         // (on this fiber's own stack) rather than escaping across the
         // coroutine boundary. D92 Правило 3: main-body errors propagate as
@@ -27890,35 +27892,26 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.indent += 1;
         self.line("/* interrupt: scope state already set, fiber dies cleanly (mirrors emit_spawn). */");
         self.indent -= 1;
-        self.line("} else if (_c->_nova_parent_scope) {");
-        self.indent += 1;
-        self.line("nova_fiber_report_child_kinded(_c, _ff.error_msg.ptr, _ff.error_kind, _ff.error_reason_ptr, _ff.error_user_payload, _ff.error_user_type_id);");
-        self.indent -= 1;
         self.line("} else {");
         self.indent += 1;
+        // [P108-followup]: always the bootstrap/local report path — see the
+        // call site below for why main-body is NEVER remote/worker-spawned
+        // (`_c->_nova_parent_scope` is always NULL here, so the
+        // `nova_fiber_report_child_kinded` remote-report branch `emit_spawn`
+        // needs never applies to main).
         self.line("nova_fiber_report_error_kinded(_ff.error_msg.ptr, _ff.error_kind, _ff.error_reason_ptr);");
         self.indent -= 1;
         self.line("}");
         self.indent -= 1;
         self.line("}");
-        // Epilogue: mirrors emit_spawn's remote-fiber cleanup (free scope
-        // slot, decrement pending_remote, wake the driving thread). No-op
-        // under bootstrap (_nova_parent_scope == NULL — nova_supervised_step
-        // owns slot lifecycle for that path, exactly as for any other
-        // bootstrap-spawned fiber).
-        self.line("if (_c->_nova_parent_scope) {");
-        self.indent += 1;
-        self.line("if (_c->_nova_worker_slot >= 0) {");
-        self.indent += 1;
-        self.line("nova_scope_free_slot(_nova_active_scope, _c->_nova_worker_slot);");
-        self.line("_nova_active_slot = -1;");
-        self.indent -= 1;
-        self.line("}");
-        self.line("(void)nova_aint_inc(&_c->_nova_parent_scope->pending_sweeps);");
-        self.line("(void)nova_aint_fetch_sub_release(&_c->_nova_parent_scope->pending_remote);");
-        self.line("nova_runtime_signal_main();");
-        self.indent -= 1;
-        self.line("}");
+        // No epilogue needed: bootstrap-spawned fibers (this one, always —
+        // see call site) never increment `pending_remote`/allocate a worker
+        // slot in the first place (`nova_fiber_spawn_into`, not
+        // `nova_runtime_spawn_into`) — `nova_supervised_step` owns this
+        // fiber's slot lifecycle entirely, exactly as for any other
+        // bootstrap-spawned fiber (mirrors `emit_spawn`'s identical
+        // no-op-under-bootstrap epilogue shape).
+        self.line("_nova_main_fiber_co = NULL;");
         self.indent -= 1;
         self.line("}");
         self.line("");
@@ -27998,39 +27991,60 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.line("nova_evloop_install_sigint(&_nova_main_scope);");
         // [M-bare-fiber-accept-bootstrap-park-invalid-slot] (221.1 №108,
         // D92 Правило 6 ретракция): spawn main-body as a real fiber INTO
-        // the implicit main-scope (mirrors what `emit_spawn` does at any
-        // ordinary `supervised { spawn { … } }` call site — same dual
-        // bootstrap/armed-M:N branch, same ctx-acquire, same runtime
-        // primitives), then drive the scheduler with `nova_supervised_run`
-        // until it completes. This is what gives main-body a genuine
-        // (scope, slot) pair — `_nova_active_slot >= 0` for the entire
-        // duration of user code — so `nova_sched_park` (D93 park/wake:
-        // blocking accept/recv/Time.sleep) works directly in `main()`
-        // without any `supervised{spawn{…}}` wrapper. `nova_supervised_run`
-        // re-throws the scope's first_error on normal completion (D92
-        // Правило 3: main-body errors propagate as usual) — since this
-        // outer C frame still has no NovaFailFrame, an uncaught error still
-        // aborts with the same diagnostic as the old direct call.
+        // the implicit main-scope, then drive the scheduler with
+        // `nova_supervised_run` until it completes. This is what gives
+        // main-body a genuine (scope, slot) pair — `_nova_active_slot >= 0`
+        // for the entire duration of user code — so `nova_sched_park` (D93
+        // park/wake: blocking accept/recv/Time.sleep) works directly in
+        // `main()` without any `supervised{spawn{…}}` wrapper.
+        //
+        // [P108-followup, integrator gate red 2026-07-25 — mega-CU 577/5,
+        // all 5 TIMEOUT]: the FIRST cut of this fix mirrored `emit_spawn`'s
+        // dual bootstrap/armed-M:N branch verbatim (`nova_runtime_is_
+        // initialized() ? nova_runtime_spawn_into(...) : nova_fiber_spawn_
+        // into(...)`) — WRONG for main specifically. `nova_runtime_auto_
+        // arm()` (a few lines above `main_wrapper`, unconditional at
+        // program start, D138 default-on) sets `_armed = true` BEFORE this
+        // site ever runs, so `nova_runtime_is_initialized()` is ALWAYS true
+        // here — every program's main-body was being pushed onto a WORKER
+        // THREAD's deque via `nova_runtime_spawn_into`, never the true
+        // process main OS thread. That silently flips EVERY top-level
+        // `supervised{}`/`detach{}`/cross-effect-throw/test-runner-chunk in
+        // the ENTIRE program into "nested supervised on a worker thread"
+        // from the runtime's perspective (`_nova_on_worker_thread()` is
+        // thread-identity-based) — a fundamentally different, narrower
+        // code path (cooperative `nova_runtime_worker_pump_scope` instead
+        // of the plain main-thread `uv_run` wait-loop, watchdog disabled,
+        // different orphan-scope/signal_main thread-affinity assumptions)
+        // that most tests never hit but several did (top-level detach,
+        // cross-effect throw, multierror-scope, the folder-CU test-runner
+        // driving hundreds of chunks) — all 5 timeouts, zero crashes,
+        // exactly the "wrong door reached silently" signature.
+        //
+        // Fix: main-body is ALWAYS bootstrap-spawned (`nova_fiber_spawn_
+        // into`) — pinned to THIS calling OS thread (the real process main
+        // thread), driven by `nova_supervised_step`'s direct `mco_resume`
+        // on that same thread, regardless of the process-wide armed/
+        // unarmed state. This is NOT a loss of concurrency: children the
+        // user's code spawns/detaches from within main-body still go
+        // through the ordinary armed/bootstrap decision at THEIR OWN
+        // `spawn{}`/`detach{}` call sites (`emit_spawn`/`emit_detach`,
+        // unchanged) — only main-body's OWN hosting thread is pinned, so
+        // every existing "am I on the main thread or a worker" assumption
+        // in the runtime keeps seeing exactly what it saw before #108.
+        // `nova_supervised_run` re-throws the scope's first_error on normal
+        // completion (D92 Правило 3: main-body errors propagate as usual)
+        // — since this outer C frame still has no NovaFailFrame, an
+        // uncaught error still aborts with the same diagnostic as the old
+        // direct call.
         self.line("{");
         self.indent += 1;
-        self.line("nova_bool _nova_main_is_init = nova_runtime_is_initialized();");
-        self.line("NovaSpawnCtxBase* _nova_main_ctx = (NovaSpawnCtxBase*)(_nova_main_is_init ? nova_spawn_pool_acquire(sizeof(NovaSpawnCtxBase)) : nova_alloc(sizeof(NovaSpawnCtxBase)));");
+        self.line("NovaSpawnCtxBase* _nova_main_ctx = (NovaSpawnCtxBase*)nova_alloc(sizeof(NovaSpawnCtxBase));");
         self.line("_nova_main_ctx->_nova_worker_slot = -1;");
         self.line("_nova_main_ctx->_nova_parent_slot = -1;");
-        self.line("if (_nova_main_is_init) {");
-        self.indent += 1;
-        self.line("_nova_main_ctx->_nova_parent_scope = &_nova_main_scope;");
-        self.line("_nova_main_ctx->_nova_init_snapshot = (NovaEffectSnapshot*)nova_alloc(sizeof(NovaEffectSnapshot));");
-        self.line("nova_effect_snapshot_save(_nova_main_ctx->_nova_init_snapshot);");
-        self.line("nova_runtime_spawn_into(&_nova_main_scope, _nova_main_fiber_entry, _nova_main_ctx);");
-        self.indent -= 1;
-        self.line("} else {");
-        self.indent += 1;
         self.line("_nova_main_ctx->_nova_parent_scope = NULL;");
         self.line("_nova_main_ctx->_nova_init_snapshot = NULL;");
         self.line("nova_fiber_spawn_into(&_nova_main_scope, _nova_main_fiber_entry, _nova_main_ctx);");
-        self.indent -= 1;
-        self.line("}");
         self.line("nova_supervised_run(&_nova_main_scope);");
         self.indent -= 1;
         self.line("}");

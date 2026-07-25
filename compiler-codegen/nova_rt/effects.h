@@ -1629,6 +1629,29 @@ extern __thread NovaEffectRegistry _nova_effect_registry;
  * Worker threads call this at startup to populate their TLS registry. */
 extern void (*_nova_register_effects_fn)(void);
 
+/* Plan 221.1 №108 (2026-07-25, integrator gate-red followup): the `mco_coro*`
+ * of the main-body fiber (`_nova_main_fiber_entry`, emit_c.rs), set at its
+ * own entry and cleared at its own exit. `void*` (not `mco_coro*`) so this
+ * header doesn't need to see minicoro.h — cast at both write (fibers.h-
+ * generated entry fn, which DOES see mco_coro) and read (`nova_interrupt`/
+ * `nova_interrupt_ptr` below, effects.c, which includes minicoro.h) sites.
+ *
+ * WHY this exists: `nova_interrupt`'s cross-effect handler-arm routing
+ * fast-path (D61 Plan 61 followup #1, below) used to gate on `!mco_running()`
+ * as a proxy for "definitely same-stack, no cross-fiber-boundary risk" — a
+ * proxy that was CORRECT back when top-level main-flow ran on a raw C thread
+ * (never a coroutine). Plan 221.1 №108 made main-body itself a genuine
+ * `mco` fiber (D92 Правило 6 ретракция — see 06-concurrency.md), so
+ * `!mco_running()` is now ALWAYS false even for plain top-level code with NO
+ * `spawn`/`supervised`/fiber-boundary anywhere in sight — the proxy stopped
+ * matching the property it was standing in for. `mco_running() ==
+ * _nova_main_fiber_co` restores exactly that original property: true only
+ * while the ROOT main-fiber itself is the currently-resumed coroutine (never
+ * true while a genuinely-spawned child fiber — which CAN have a real
+ * cross-stack owner-iframe — is running, since `mco_running()` always
+ * reflects the ACTUAL currently-active coroutine, nested resumes included). */
+extern void* _nova_main_fiber_co;
+
 /* Регистрация handler-storage. Idempotent (по адресу). Вызывается из
  * codegen'а при первом использовании эффекта (или статически перед main). */
 static inline void nova_register_effect_storage(void** slot_addr) {

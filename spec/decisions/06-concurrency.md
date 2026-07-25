@@ -2782,17 +2782,64 @@ busy-yield (`supervised_step`), блокирующий `TcpListener.accept()`
 на одно и то же».
 Стало: **main-body исполняется КАК ФАЙБЕР** — полноценный слот
 планировщика (mco-coroutine), а не сырой C-поток. `emit_main_wrapper`
-спавнит его в implicit main-scope (тем же dual bootstrap/armed-M:N путём,
-которым `emit_spawn` спавнит любой `supervised { spawn { … } } }`-child —
-`nova_fiber_spawn_into`/`nova_runtime_spawn_into`, `NovaSpawnCtxBase` без
-доп. полей — main ничего не захватывает) и гоняет планировщик до
-завершения (`nova_supervised_run`). `_nova_active_slot >= 0` для user-кода
-на всём протяжении main — park/wake (D93) работает напрямую: блокирующий
+спавнит его в implicit main-scope и гоняет планировщик до завершения
+(`nova_supervised_run`). `_nova_active_slot >= 0` для user-кода на всём
+протяжении main — park/wake (D93) работает напрямую: блокирующий
 `accept()`/`Time.sleep()`/`Channel.recv()` и т.п. легальны ПРЯМО в
 `main()`, без обёртки `supervised { spawn { … } } }`. Ошибки main-body
 пробрасываются как обычно (Правило 3 не изменилось — top-level всё ещё
 без fail-frame, необработанная ошибка всё ещё `abort()`'ит с тем же
-диагностическим сообщением, что и раньше). Стек main-файбера НЕ выделен
+диагностическим сообщением, что и раньше).
+
+**Спавн-путь — ТОЛЬКО bootstrap, НИКОГДА armed (амендмент к амендменту,
+интегратор-гейт 2026-07-25, мега-CU 577/5, все 5 TIMEOUT).** Первая версия
+этого фикса спавнила main-fiber ТЕМ ЖЕ dual bootstrap/armed-M:N путём, что
+`emit_spawn` — `nova_runtime_is_initialized() ? nova_runtime_spawn_into(...)
+: nova_fiber_spawn_into(...)`. ОШИБКА: `nova_runtime_auto_arm()` (несколько
+строк выше в `int main()`, unconditional, D138 default-on) взводит
+`_armed = true` ДО этой точки — `nova_runtime_is_initialized()` здесь
+ВСЕГДА true, так что main-body ВСЕГДА пушился в WORKER-THREAD deque, а не
+исполнялся на настоящем главном OS-потоке. Это молча превращало КАЖДЫЙ
+top-level `supervised{}`/`detach{}`/cross-effect-throw/test-runner-chunk
+ЛЮБОЙ программы в «вложенный supervised на worker-потоке» с точки зрения
+рантайма (`_nova_on_worker_thread()` — thread-identity-based) — другой,
+более узкий кодопуть (cooperative `nova_runtime_worker_pump_scope` вместо
+plain main-thread `uv_run`-ожидания, watchdog отключён, другие допущения
+о thread-affinity в orphan-scope/signal_main). Симптом: 4 из 5
+таймаутов (top-level detach ×2, folder-CU test-runner на сотнях чанков,
+multierror-scope) — зависания без крашей, ровно сигнатура «тихо попал не
+в ту дверь». Фикс: main-fiber ВСЕГДА `nova_fiber_spawn_into` (bootstrap,
+пришпилен к ВЫЗЫВАЮЩЕМУ OS-потоку — истинному процесс-main), НЕЗАВИСИМО
+от process-wide armed/unarmed состояния. Не потеря конкурентности: дети,
+которых user-код спавнит/detach'ит ИЗНУТРИ main-body, по-прежнему проходят
+ОБЫЧНОЕ armed/bootstrap решение в СВОИХ СОБСТВЕННЫХ точках `spawn{}`/
+`detach{}` (`emit_spawn`/`emit_detach`, не тронуты) — пришпилен только
+хостинг САМОГО main-body, так что каждое существующее допущение рантайма
+«я на главном потоке или на worker'е» видит ровно то же, что видело до
+№108.
+
+**D61 cross-effect handler-arm routing — main-fiber = main-flow-эквивалент
+для этого gate'а (тот же гейт-раунд).** 5-й таймаут-файл (`repro_cross_
+effect_throw`) после спавн-фикса выше перестал висеть, но начал давать
+НЕВЕРНОЕ значение (не таймаут). Корень: `nova_interrupt`/`nova_interrupt_
+ptr` (effects.c, D61 Plan 61 followup #1) гейтуют cross-effect
+handler-arm fast-path (throw ДРУГОГО типа изнутри handler-arm должен
+skip'нуть направо к OWNER-у, минуя текущий handler) условием
+`!mco_running()` — раньше корректный proxy «точно main-flow, точно один
+стек» (top-level ВСЕГДА исполнялся на сыром потоке, никогда в coroutine).
+№108 сделал main body ВСЕГДА `mco_running()!=NULL` — proxy перестал
+соответствовать своему исходному свойству ДАЖЕ для plain top-level кода
+без единой `spawn`/`supervised`-границы. Фикс: `_nova_main_fiber_co`
+(effects.h/effects.c, `void*` — не видит `mco_coro`, чтобы не тянуть
+minicoro.h в effects.h) — `mco_coro*` корневого main-fiber'а, ставится/
+чистится в `_nova_main_fiber_entry`. Гейт заменён на
+`nova_cross_effect_route_safe()` = `!mco_running() || mco_running() ==
+_nova_main_fiber_co` — восстанавливает исходное свойство («точно
+main-fiber, без риска cross-fiber stack») для main-hosted кода, оставляя
+ГЕНУИННО spawn'нутые/detach'нутые дети (где риск cross-stack longjmp
+реален) на старом, безопасном deferred-`interrupt_pending`-пути.
+
+Стек main-файбера НЕ выделен
 особым образом — тот же arena-slot (`NOVA_FIBER_STACK` env /
 `nova.toml [runtime].fiber_stack`, builtin-default 4MB), что у любого
 другого fiber'а: (а) держит main внутри Boehm-видимого arena-range
@@ -2817,24 +2864,26 @@ cooperative cancel. Optional extension, отдельный план если п�
 main-body теперь спавнится ФАЙБЕРОМ в implicit main-scope вместо
 прямого вызова на сыром C-потоке; `_nova_main_fiber_entry` — hand-
 transcribed копия `emit_spawn`'s generated entry-fn, `NovaSpawnCtxBase`
-без доп. полей, тот же dual bootstrap/armed-M:N путь):
+без доп. полей; ВСЕГДА bootstrap — см. интегратор-гейт followup выше,
+`nova_runtime_spawn_into` для main конкретно бьёт thread-identity
+допущения по всему рантайму):
 
 ```c
 static void _nova_main_fiber_entry(mco_coro* _co) {
     NovaSpawnCtxBase* _c = (NovaSpawnCtxBase*)mco_get_user_data(_co);
-    /* preamble: alloc real scheduler slot (armed) / no-op (bootstrap —
-     * nova_supervised_step owns slot lifecycle), mirrors emit_spawn */
-    ...
+    _nova_main_fiber_co = (void*)_co;  /* D61 cross-effect gate, см. выше */
+    _c->_nova_worker_slot = -1;  /* всегда bootstrap — nova_supervised_step владеет slot'ом */
     NovaFailFrame _ff;
     nova_fail_push(&_ff);
     if (setjmp(_ff.jmp) == 0) {
         nova_fn_main_impl();
         nova_fail_pop();
     } else {
-        /* kinded error report to the scope — same as any spawn child */
+        /* kinded error report — local path only (никогда remote/worker) */
         ...
     }
-    /* epilogue: free slot / decrement pending_remote, mirrors emit_spawn */
+    _nova_main_fiber_co = NULL;
+    /* нет epilogue: bootstrap-fiber'ы не инкрементят pending_remote */
 }
 
 int main(int argc, char** argv) {
@@ -2849,18 +2898,16 @@ int main(int argc, char** argv) {
     _nova_active_slot  = -1;
     nova_evloop_install_sigint(&_nova_main_scope);
 
-    /* Plan 221.1 №108: spawn main-body as a real fiber into the scope
-     * (same dual bootstrap/armed branch emit_spawn uses), then drive the
-     * scheduler until it completes — `_nova_active_slot >= 0` for the
-     * ENTIRE duration of user code, so D93 park/wake works directly. */
-    NovaSpawnCtxBase* _nova_main_ctx = /* nova_alloc / nova_spawn_pool_acquire */;
-    if (nova_runtime_is_initialized()) {
-        _nova_main_ctx->_nova_parent_scope = &_nova_main_scope;
-        nova_runtime_spawn_into(&_nova_main_scope, _nova_main_fiber_entry, _nova_main_ctx);
-    } else {
-        _nova_main_ctx->_nova_parent_scope = NULL;
-        nova_fiber_spawn_into(&_nova_main_scope, _nova_main_fiber_entry, _nova_main_ctx);
-    }
+    /* Plan 221.1 №108: spawn main-body as a real fiber into the scope,
+     * then drive the scheduler until it completes — `_nova_active_slot
+     * >= 0` for the ENTIRE duration of user code, so D93 park/wake works
+     * directly. ALWAYS `nova_fiber_spawn_into` (bootstrap, pinned to THIS
+     * calling — the true process main — OS thread), NEVER
+     * `nova_runtime_spawn_into` (would push main-body onto a worker
+     * thread's deque — see the gate-red followup note above). */
+    NovaSpawnCtxBase* _nova_main_ctx = (NovaSpawnCtxBase*)nova_alloc(sizeof(NovaSpawnCtxBase));
+    _nova_main_ctx->_nova_parent_scope = NULL;
+    nova_fiber_spawn_into(&_nova_main_scope, _nova_main_fiber_entry, _nova_main_ctx);
     nova_supervised_run(&_nova_main_scope);
 
     /* D92: drain detach'ов / pending fiber'ов до quiescence (Правила
@@ -2935,14 +2982,21 @@ throw'ы в D50 fire-and-forget — должны быть logged, не abort. П
 - ✅ Detach behavior change verified (no regression в `detach_test.nv`).
 - ✅ **Plan 221.1 №108 (2026-07-25): main-body = файбер.** Правило 6
   ретрактировано — `_nova_main_fiber_entry` спавнится в implicit
-  main-scope (dual bootstrap/armed-M:N путь, идентичный `emit_spawn`),
-  `nova_supervised_run` гоняет планировщик до завершения.
+  main-scope ВСЕГДА bootstrap-путём (`nova_fiber_spawn_into`, пришпилен
+  к вызывающему — истинному процесс-main — OS-потоку; НИКОГДА
+  `nova_runtime_spawn_into`, см. интегратор-гейт followup выше — armed
+  path пушил main-body на worker-поток, молча меняя thread-identity для
+  ЛЮБОГО top-level `supervised{}`/`detach{}` в программе), `nova_
+  supervised_run` гоняет планировщик до завершения.
   `_nova_active_slot >= 0` для user-кода всю жизнь main — блокирующий
   `TcpListener.accept()`/`Time.sleep()`/`Channel.recv()` ПРЯМО в
   `main()` (без `supervised { spawn { … } } }`) работает штатно через
   D93 park/wake. Busy-yield main-flow ветка `time_sleep_ms`'s
   `else if (_nova_active_scope)` структурно недостижима для top-level
-  sleep теперь (`mco_running()` всегда non-NULL). Фикстуры:
+  sleep теперь (`mco_running()` всегда non-NULL). D61 cross-effect
+  handler-arm routing (`nova_interrupt`/`nova_interrupt_ptr`) исправлен
+  симметрично — `_nova_main_fiber_co` даёт main-fiber-hosted коду тот же
+  fast-path, что раньше давал `!mco_running()`. Фикстуры:
   `spec_tests/conformance/standalone/m2211_108_main_fiber_accept.nv`,
   `m2211_108_main_fiber_sleep.nv`.
 - 🟡 **SIGINT handler** (Правило 7) — future extension, НЕ пересмотрено

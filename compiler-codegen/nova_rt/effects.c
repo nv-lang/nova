@@ -53,6 +53,20 @@ nova_int (*_nova_supervisor_decide_fn)(void* scope, nova_int idx,
  *         `nova_interrupt(v)` on main-flow where with-frame is reachable.
  *
  * 3. **On main-flow** (no fiber): longjmp directly to with-frame. */
+/* Plan 221.1 №108 followup (2026-07-25) — see effects.h `_nova_main_fiber_co`
+ * doc comment for the full rationale. `!mco_running()` used to mean
+ * "definitely main-flow, no coroutine, same-stack" — main-body becoming a
+ * fiber (#108) broke that equivalence for plain top-level code with no
+ * spawn/supervised boundary anywhere. This restores the original property:
+ * true for genuine main-flow (pre-#108 builds, or any future non-fiber
+ * caller) AND for the root main-fiber itself; false for any genuinely
+ * spawned/detached child fiber (where the original cross-stack-longjmp UB
+ * concern this gate exists for is still real). */
+static inline int nova_cross_effect_route_safe(void) {
+    mco_coro* co = mco_running();
+    return !co || (void*)co == _nova_main_fiber_co;
+}
+
 void nova_interrupt(nova_int value) {
     /* Plan 61 followup #1: handler-arm interrupt routing. Если активен
      * handler-arm (set by Nova_Fail_fail / nova_throw_typed dispatchers),
@@ -70,7 +84,7 @@ void nova_interrupt(nova_int value) {
      * (default path ниже). */
     if (_nova_current_handler_iframe
         && _nova_interrupt_top != _nova_current_handler_iframe
-        && !mco_running()) {
+        && nova_cross_effect_route_safe()) {
         /* owner != top — walk chain. Если intermediate DEFER_SCOPE frames
          * есть → fall through к top (defer cleanup → re-issue → propagate).
          * Если только WITHBLOCK frames (nested with) → skip directly к owner. */
@@ -157,7 +171,7 @@ void nova_interrupt_ptr(void* value) {
      * в fiber context (UB across coroutine boundary). */
     if (_nova_current_handler_iframe
         && _nova_interrupt_top != _nova_current_handler_iframe
-        && !mco_running()) {
+        && nova_cross_effect_route_safe()) {
         int has_defer_between = 0;
         NovaInterruptFrame* p = _nova_interrupt_top;
         while (p && p != _nova_current_handler_iframe) {
@@ -293,3 +307,6 @@ __thread NovaEffectRegistry _nova_effect_registry;
  * to register all program effects (built-ins + user-defined). Called by
  * each worker thread at startup so it has its own TLS-address registry. */
 void (*_nova_register_effects_fn)(void) = NULL;
+
+/* Plan 221.1 №108 followup — see effects.h doc comment. */
+void* _nova_main_fiber_co = NULL;
