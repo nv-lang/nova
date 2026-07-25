@@ -1,0 +1,29 @@
+// [M-fn-value-binding-untyped-silent] (реестр 221.1 №101, 2026-07-25) —
+// positive companion of the three neg/p101_fn_value_*_neg.nv fixtures.
+// Legitimate fn-value shapes that must stay fully legal after the fix:
+//   1. unannotated binding to a bare fn-value (`ro t4 = p101_test4`) — the
+//      inferred `Func` type is simply what `t4` carries, nothing to reject;
+//   2. a call THROUGH that binding with correct arity + arg types — now
+//      actually arg-checked (previously silently unchecked) and must PASS;
+//   3. an ANNOTATED binding to a declared fn-newtype (`P101Handler`) —
+//      `typeref_is_func_compatible` peels the Newtype/Func chain so this
+//      stays legal (Plan 228's whole HOF-binding channel point);
+//   4. a call through THAT fn-newtype-typed binding (unaffected by
+//      `check_fn_value_call`, which only fires for a bare `TypeRef::Func`
+//      scope entry — the newtype call keeps using its pre-existing,
+//      already-working lowering).
+
+module spec_tests.conformance
+
+type P101Handler fn(int) -> int
+
+fn p101_test4(a int) -> int => a * 2
+
+test "fn-value binding + call stay legal (unannotated, fn-newtype-annotated)" {
+    ro t4 = p101_test4
+    ro r4 = t4(21)
+    ro h P101Handler = p101_test4
+    ro r5 = h(21)
+    assert(r4 == 42, "unannotated fn-value binding + call must work")
+    assert(r5 == 42, "fn-newtype-annotated fn-value binding + call must work")
+}

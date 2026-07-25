@@ -1,0 +1,22 @@
+// EXPECT_COMPILE_ERROR E_FN_VALUE_CALL_ARITY
+//
+// [M-fn-value-binding-untyped-silent] (реестр 221.1 №101 b, 2026-07-25):
+// arity through a fn-value binding call was also unchecked (same root cause
+// as the sibling argtype fixture — `f1_check_call`'s Ident-callee arm never
+// reaches a fn-value LOCAL at all). `check_fn_value_call` now checks arity
+// FIRST (before any per-arg type check) — a new stable code
+// `E_FN_VALUE_CALL_ARITY` (no pre-existing free-fn-call arity code exists:
+// ordinary global-fn arity mismatches are deferred to C-compile-time by
+// design, since arity there participates in OVERLOAD resolution; a fn-value
+// call has no overload set at all — an honest checker-side diagnostic here
+// is strictly better than a downstream C-signature CC-FAIL).
+
+module neg.p101_fn_value_call_arity_neg
+
+fn p101_test3(a int, b int) -> int => a + b
+
+fn main() {
+    ro t3 = p101_test3
+    ro r = t3(1)
+    print(r)
+}

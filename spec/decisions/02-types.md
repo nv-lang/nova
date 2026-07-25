@@ -10724,6 +10724,21 @@ resp.header(..)` пишет в `HeaderMap` вызывающего). **ИСКЛЮ
 Дверь для НЕ-скалярных типов: `mut b = a.clone()` (D230) для независимой
 копии, либо сделай источник `mut` с самого начала, если copy не нужна.
 
+**AMEND 2026-07-25 №106 ([M-ro-launder-pattern-bind-not-enforced], реестр
+221.1, Plan 224/226 зона):** §G/§H выше были прописаны и enforced ТОЛЬКО для
+ДЕКЛАРИРОВАННЫХ `ro`-биндингов/D176-параметров — ПАТТЕРН-биндинги (match-arm
+`Ok(b0) => …`, `if Some(x) = …`, D34 «bare pattern-bind = immutable») в L1
+launder-таблицу (`ro_binding_names`) заведены НЕ были, так что то же самое
+отмывание проходило МОЛЧА через паттерн: `Ok(b0) => { mut b = b0 }` на
+кучевом payload (`b0` — bare pattern-bind, D34-immutable) НЕ давал
+`E_READONLY_COERCE`, хотя семантически — тот же класс §G (`b` содержит тот
+же handle, что `b0`/оригинальный источник). **Норма:** pattern-bind
+получает L1-статус ИДЕНТИЧНО explicit-биндингу — bare (`Ok(b0)`) = ro-
+freeze (P7), `mut` внутри паттерна (`Ok(mut b0)`) = mut, участвует в §G/§H
+launder-проверке на общих основаниях (включая §72 fully-stack-исключение —
+bare-bind скаляра → `mut` остаётся ✅). Канон-запись для решения — mut
+ВНУТРИ паттерна (`Ok(mut b)`), не отдельный cross-binding.
+
 **H. CROSS-BINDING call-argument (AMEND 2026-07-23):** тот же класс без
 промежуточного re-init — аргумент напрямую: `fn outer(v []int) { fill(v) }`
 при `fn fill(mut v []int)` → `E_READONLY_COERCE` на `fill(v)` (`v` — L1-ro

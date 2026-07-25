@@ -1,0 +1,21 @@
+// EXPECT_COMPILE_ERROR E7301
+//
+// [M-fn-value-binding-untyped-silent] (реестр 221.1 №101 b, 2026-07-25): a
+// CALL through a fn-value binding (`ro t2 = p101_test2; t2("oops")`) was not
+// arg-type-checked at all — `f1_check_call`'s Ident-callee arm resolves a
+// callee ONLY through `sig.fn_decls` (global fn declarations); `t2` is a
+// LOCAL, so the whole arm fell through to a bare `return`, zero arg
+// checking. Fixed via `check_fn_value_call` (types/mod.rs): when the
+// Ident-callee is not a known global fn, look it up in `scope`; if it is
+// bound to a `TypeRef::Func`, run the SAME per-arg `assignable` check a
+// resolved `FnDecl` callee gets.
+
+module neg.p101_fn_value_call_argtype_neg
+
+fn p101_test2(a int) -> int => a + 1
+
+fn main() {
+    ro t2 = p101_test2
+    ro r = t2("oops")
+    print(r)
+}

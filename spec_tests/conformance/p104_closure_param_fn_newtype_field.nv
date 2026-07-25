@@ -1,0 +1,30 @@
+// [M-closure-param-fn-newtype-field-access-int-miscompile] (реестр 221.1
+// №104, №34-окна pre-existing repro probe34_router3). Closure literal, чей
+// параметр НЕ имеет явной аннотации (`|req| req.path`), а его РЕАЛЬНЫЙ тип
+// известен только из контекста let-биндинга — ИМЕНОВАННОГО fn-newtype
+// (`type P104Handler fn(P104Req) -> str`). `emit_lambda`'s param-type
+// derivation раньше не имело канал-чтения ВООБЩЕ (только `context_param_
+// tys`/`nova_int`-дефолт) — доступ к str-полю параметра (`req.path`)
+// миксомпилился как int-field-access (`(nova_int)(req.path)`).
+//
+// Fix: чекер (`f1_check_assign_let`, types/mod.rs) пишет let-аннотацию
+// closure-литерала в `resolved_types[closure.id]` (слот, который для
+// closure до этого не писал НИКТО — `infer_expr_type` не имеет арма
+// `ExprKind::Closure*`); `emit_lambda` (emit_c.rs) читает канал первым
+// (`closure_channel_param_tys`, пилит NAMED fn-newtype через `fn_newtype_
+// sigs` — тот же peel, что уже делает `[M-nested-fn-newtype-bind-then-call-
+// broken]` HOF-биндинг-канал, Plan 228) — ДО context_param_tys/nova_int-
+// дефолта.
+module spec_tests.conformance
+
+type P104Req value { path str }
+type P104Handler fn(P104Req) -> str
+
+fn p104_call(h P104Handler, req P104Req) -> str => h(req)
+
+test "closure param типизируется из fn-newtype-контекста — str-поле НЕ миксомпилится в int" {
+    ro h P104Handler = |req| req.path
+    ro req = P104Req { path: "/hello" }
+    ro result = p104_call(h, req)
+    assert(result == "/hello")
+}

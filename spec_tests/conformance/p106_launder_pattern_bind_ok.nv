@@ -1,0 +1,57 @@
+// [M-ro-launder-pattern-bind-not-enforced] (реестр 221.1 №106, D34/D246) —
+// positive companion of neg/p106_launder_pattern_bind_neg.nv. Legitimate
+// pattern-bind shapes that must stay legal after the fix:
+//   1. `Ok(mut x)` — the pattern ITSELF declares the binding `mut` (D34
+//      канон-запись) — a subsequent `mut`-cross-binding from `x` is fine
+//      (`x` was never L1-ro to begin with);
+//   2. bare pattern-bind of a FULLY-STACK scalar (`int`) — §72 exemption
+//      (D246-амендмент, owner decision 2026-07-23, FINAL): a bare scalar
+//      copy can never alias (no fields at all), so `mut n = n0` off a bare
+//      `Ok(n0)` stays legal exactly like the existing scalar-primitive
+//      `ro`-binding exemption (m_ro_launder_scalar_primitive_pos.nv).
+module spec_tests.conformance
+
+import std.collections.vec.{Vec}
+
+type P106Basket value {
+    mut items Vec[int]
+}
+
+fn P106Basket.new() -> P106Basket => { items: Vec[int].of(1, 2, 3) }
+
+fn p106_source() -> Result[P106Basket, str] => Ok(P106Basket.new())
+
+fn p106_int_source() -> Result[int, str] => Ok(41)
+
+fn p106_mut_pattern() -> int {
+    match p106_source() {
+        Ok(mut x) => {
+            // `mut` INSIDE the pattern — `x` is mut from the start (D34),
+            // not laundered through a separate cross-binding.
+            x.items.push(99)
+            x.items.len()
+        }
+        Err(_) => 0
+    }
+}
+
+fn p106_scalar_bare_bind_reinit() -> int {
+    match p106_int_source() {
+        Ok(n0) => {
+            // §72 exemption: bare pattern-bind of a fully-stack scalar →
+            // `mut` re-init is legal (no owned-graph to leak through).
+            mut n = n0
+            n += 1
+            n
+        }
+        Err(_) => 0
+    }
+}
+
+test "M106 pos 1: `Ok(mut x)` pattern-bind — no launder (mut declared in pattern)" {
+    assert(p106_mut_pattern() == 4)
+}
+
+test "M106 pos 2: bare int pattern-bind + mut re-init — §72 scalar exemption" {
+    assert(p106_scalar_bare_bind_reinit() == 42)
+}
