@@ -50,3 +50,73 @@ test "116: free-fn return Option[fn] = Some(closure)" {
         None => assert(false)
     }
 }
+
+// [M-option-fn-field-record-literal-elem-type-int] FOLLOW-UP (integrator
+// A/B repro 2026-07-26): `Option[Handler]` where `Handler` is a fn-NEWTYPE
+// (`type HFn fn(int) -> int`, D52), NOT a literal `fn(...)->...` spelled at
+// the field — mirrors nova-polaris `server_router.nv`'s `mut fallback
+// Option[Handler]` exactly (fluent same-name setter/getter overloaded by
+// arity, D117). The first #116 fix only special-cased a DIRECT `R::Func`
+// inner in `resolved_named_to_c`'s `Option` arm — a fn-newtype NAME
+// (`Handler`/`HFn`) lowers to `R::Named{"HFn"}` there, missed entirely, so
+// the FIELD DECLARATION stayed on the OLD `NovaOpt_nova_int` erasure while
+// `Some(h)` CONSTRUCTION sites (already fixed via `fn_typed_var_clos_c_type`,
+// keyed by name/checker-channel regardless of newtype-vs-bare-Func spelling)
+// moved to the NEW `NovaClos_*`/`NovaClosBase` lowering — two sides of the
+// SAME pair disagreeing → CC-FAIL. Exercises the THREE concrete argument
+// shapes the real flagship build hit: bare fn-typed PARAMETER, a CALL whose
+// return type is the fn-newtype, and a FIELD READ of a fn-newtype-typed
+// field — `resolved_type_clos_ptr_c`'s shared peel (via `fn_newtype_sigs`)
+// must agree with the field declaration for all three.
+type HFn fn(int) -> int
+
+type M116bHolder { handler HFn }
+
+type M116bRouter value { mut fallback Option[HFn] }
+
+fn M116bRouter.new() -> M116bRouter => { fallback: None }
+
+// Same-name setter/getter overloaded by arity (D117), exactly `Router.
+// @fallback` in server_router.nv.
+fn M116bRouter mut @fallback(h HFn) -> @ { @fallback = Some(h) }
+fn M116bRouter @fallback() -> Option[HFn] => @fallback
+
+test "116 follow-up: fn-newtype Option[HFn] — bare-var Some(h) via fluent setter" {
+    mut r = M116bRouter.new()
+    r.fallback(fn(x int) -> int => x * 2)
+    match r.fallback() {
+        Some(f) => assert(f(21) == 42)
+        None => assert(false)
+    }
+}
+
+// Fresh closure built INSIDE the free fn (no ro-bound param round-tripped
+// through the return, D246 launder-neutral) — exercises `Some(call-return)`
+// construction, the exact `Some(wrap_handler(layers, h))` shape from the
+// flagship repro.
+fn m116b_make(bump int) -> HFn => fn(x int) -> int => x + bump
+
+fn M116bRouter mut @fallback_wrapped(bump int) -> @ { @fallback = Some(m116b_make(bump)) }
+
+test "116 follow-up: fn-newtype Option[HFn] — Some(call-return) construction" {
+    mut r = M116bRouter.new()
+    r.fallback_wrapped(1)
+    match r.fallback() {
+        Some(f) => assert(f(41) == 42)
+        None => assert(false)
+    }
+}
+
+fn M116bRouter mut @fallback_from_holder(holder M116bHolder) -> @ {
+    @fallback = Some(holder.handler)
+}
+
+test "116 follow-up: fn-newtype Option[HFn] — Some(field-read) construction" {
+    mut r = M116bRouter.new()
+    ro holder = M116bHolder { handler: fn(x int) -> int => x - 1 }
+    r.fallback_from_holder(holder)
+    match r.fallback() {
+        Some(f) => assert(f(43) == 42)
+        None => assert(false)
+    }
+}

@@ -4413,20 +4413,25 @@ impl CEmitter {
                     // always agree — this was the root cause of `Some(closure)`
                     // against an `Option[fn(...)->...]` field/let/return
                     // CC-FAILing (`NovaOpt_nova_int` vs `NovaOpt_NovaClos_*`).
-                    let inner_c = if let crate::types::ResolvedType::Func { params, ret, .. } = inner {
-                        let param_cs: Vec<String> = params
-                            .iter()
-                            .map(|p| {
-                                self.resolved_type_to_c(p)
-                                    .unwrap_or_else(|_| "nova_int".to_string())
-                            })
-                            .collect();
-                        let ret_c = self
-                            .resolved_type_to_c(ret)
-                            .unwrap_or_else(|_| "nova_int".to_string());
-                        format!("{}*", Self::clos_struct_name(&param_cs, &ret_c))
-                    } else {
-                        self.resolved_type_to_c(inner)?
+                    // [M-option-fn-field-record-literal-elem-type-int] follow-up
+                    // (реестр 221.1 №116, integrator A/B repro 2026-07-26):
+                    // `inner` isn't ALWAYS a literal `R::Func` even when it truly
+                    // denotes a callable — `Option[Handler]` where `type Handler
+                    // fn(A) -> B` (D52 newtype/alias-over-fn) lowers `Handler` to
+                    // `R::Named{"Handler"}` here, NOT `R::Func`. `resolved_type_
+                    // clos_ptr_c` peels a `Named` through `fn_newtype_sigs` (the
+                    // SAME registry `resolve_fn_typeref`/the checker's newtype-
+                    // to-Func chain already use) to its underlying `Func` shape
+                    // FIRST, so a fn-newtype/alias name is treated identically to
+                    // a literal `Func` — this keeps the field-declaration site
+                    // in agreement with every OTHER `Option[Handler]`-touching
+                    // site that already needed the same peel (`Some(v)`
+                    // construction — see that fn's own doc for the full
+                    // integrator-repro story, `server_router.nv`'s `mut fallback
+                    // Option[Handler]`).
+                    let inner_c = match self.resolved_type_clos_ptr_c(inner) {
+                        Some(c) => c,
+                        None => self.resolved_type_to_c(inner)?,
                     };
                     if inner_c == "void*" {
                         return Ok("NovaOpt_nova_int".to_string());
@@ -51395,26 +51400,92 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// [M-option-fn-field-record-literal-elem-type-int] (реестр 221.1 №116,
     /// follow-up found via `m107_supervised_spawn_option_fn_match_bind_call.
     /// nv`'s pre-existing `@hook = Some(h)` — `h` a BARE fn-typed parameter,
-    /// not an inline closure literal): `infer_expr_c_type` on a plain
-    /// fn-typed variable/param reference returns the generic, opaque
-    /// `"void*"` (the correct VALUE representation for ANY callable — actual
-    /// dispatch goes through the separate `fn_param_sigs` signature channel,
+    /// not an inline closure literal, AND the integrator's 2026-07-26 A/B
+    /// repro — `server_router.nv`'s `Some(wrap_handler(layers, h))`/
+    /// `Some(e.handler)`, a CALL-return and a FIELD-read, not a bare Ident):
+    /// `infer_expr_c_type` on a plain fn-typed expression returns the
+    /// generic, opaque `"void*"` (the correct VALUE representation for ANY
+    /// callable — actual dispatch goes through separate signature channels,
     /// not the static storage C type) — the SAME "void* == erased" collision
     /// `resolved_named_to_c`'s `Option` arm hit, but at THIS `Some(v)`
-    /// construction site instead. When `expr` is a bare `Ident` this compiler
-    /// already has a REGISTERED callable signature for (`fn_param_sigs`,
-    /// keyed by name — param/return C types), reconstruct the SAME concrete
-    /// closure-pointer type name (`Self::clos_struct_name`) that the
-    /// `Option`-arm fix now also uses, so `Some(h)` against an
-    /// `Option[fn(...)->...]`-typed target agrees with the field's declared
-    /// C type instead of falling to the generic `NovaOpt_nova_int` runtime
-    /// helper. `None` for anything else (non-Ident, or a name with no
-    /// registered signature) — existing `infer_expr_c_type`/erased fallback
-    /// stays byte-identical.
+    /// construction site instead. Two lookups, either sufficient:
+    ///   1. `expr` is a bare `Ident` with a REGISTERED callable signature
+    ///      (`fn_param_sigs`, keyed by name) — covers a fn-typed parameter/
+    ///      local reference (`Some(h)`).
+    ///   2. `expr`'s CHECKER-resolved type (`self.resolved_types`, the same
+    ///      channel `resolved_named_to_c`'s `Option` arm's `Named`-peel
+    ///      reads via `fn_newtype_sigs`) is — directly or through a
+    ///      fn-newtype/alias name — a `Func` (`resolved_type_clos_ptr_c`,
+    ///      shared with that arm). Covers a CALL whose return type is a
+    ///      fn-newtype (`wrap_handler(...)`) and a field READ of a
+    ///      fn-newtype-typed field (`e.handler`) — any expr shape the
+    ///      checker materialized a type for, not just a bare name.
+    /// Reconstructs the SAME concrete closure-pointer type name (`Self::
+    /// clos_struct_name`) the `Option`-arm fix uses, so `Some(...)` against
+    /// an `Option[fn(...)->...]`/`Option[Handler]`-typed target agrees with
+    /// the field's declared C type instead of falling to the generic
+    /// `NovaOpt_nova_int` runtime helper. `None` when neither lookup hits —
+    /// existing `infer_expr_c_type`/erased fallback stays byte-identical.
     fn fn_typed_var_clos_c_type(&self, expr: &Expr) -> Option<String> {
-        let ExprKind::Ident(name) = &expr.kind else { return None };
-        let (param_tys, ret_ty) = self.fn_param_sigs.get(name)?;
-        Some(format!("{}*", Self::clos_struct_name(param_tys, ret_ty)))
+        if let ExprKind::Ident(name) = &expr.kind {
+            if let Some((param_tys, ret_ty)) = self.fn_param_sigs.get(name) {
+                return Some(format!("{}*", Self::clos_struct_name(param_tys, ret_ty)));
+            }
+        }
+        if expr.id.is_set() {
+            if let Some(rt) = self.resolved_types.get(&expr.id) {
+                if let Some(c) = self.resolved_type_clos_ptr_c(rt) {
+                    return Some(c);
+                }
+            }
+        }
+        None
+    }
+
+    /// [M-option-fn-field-record-literal-elem-type-int] (реестр 221.1 №116):
+    /// shared peel — is `rt` (directly, or through a fn-newtype/alias `Named`
+    /// name via `fn_newtype_sigs`) a `Func`? If so, the CONCRETE closure-
+    /// pointer C type (`Self::clos_struct_name` — `NovaClos_ii*` for
+    /// `fn(int) -> int`, `NovaClosBase*` for any other arity/shape) that
+    /// BOTH `resolved_named_to_c`'s `Option` arm (field/let/return
+    /// declarations) and `fn_typed_var_clos_c_type` (`Some(v)` construction
+    /// sites) must agree on — one shared decision, not two copies that could
+    /// drift (exactly the class of bug the integrator's A/B repro caught:
+    /// the two sites disagreeing on `Option[Handler]`). `None` for anything
+    /// that isn't callable (the caller falls back to ordinary `resolved_
+    /// type_to_c`/erasure, unchanged).
+    fn resolved_type_clos_ptr_c(&self, rt: &crate::types::ResolvedType) -> Option<String> {
+        use crate::types::ResolvedType as R;
+        let (params, ret): (Vec<crate::ast::TypeRef>, crate::ast::TypeRef) = match rt {
+            R::Func { params, ret, .. } => {
+                let param_cs: Vec<String> = params
+                    .iter()
+                    .map(|p| self.resolved_type_to_c(p).unwrap_or_else(|_| "nova_int".to_string()))
+                    .collect();
+                let ret_c = self
+                    .resolved_type_to_c(ret)
+                    .unwrap_or_else(|_| "nova_int".to_string());
+                return Some(format!("{}*", Self::clos_struct_name(&param_cs, &ret_c)));
+            }
+            R::Named { name, args, .. } if args.is_empty() => {
+                let tr = self.fn_newtype_sigs.get(name)?;
+                let crate::ast::TypeRef::Func { params, return_type, .. } = tr else { return None };
+                (
+                    params.clone(),
+                    return_type
+                        .as_ref()
+                        .map(|t| (**t).clone())
+                        .unwrap_or(crate::ast::TypeRef::Unit(Span::dummy())),
+                )
+            }
+            _ => return None,
+        };
+        let param_cs: Vec<String> = params
+            .iter()
+            .map(|p| self.type_ref_to_c(p).unwrap_or_else(|_| "nova_int".to_string()))
+            .collect();
+        let ret_c = self.type_ref_to_c(&ret).unwrap_or_else(|_| "nova_int".to_string());
+        Some(format!("{}*", Self::clos_struct_name(&param_cs, &ret_c)))
     }
 
     fn clos_struct_name(param_tys: &[String], ret_ty: &str) -> &'static str {
