@@ -382,6 +382,7 @@ fn routes() Time -> Router {
 }
 
 fn legend_of(req ServerRequest) -> str => req.query_param("legend") ?? "weather"
+
 fn mode_of(req ServerRequest) -> str => req.query_param("mode") ?? "demo"
 
 fn seed_of(req ServerRequest) -> int {

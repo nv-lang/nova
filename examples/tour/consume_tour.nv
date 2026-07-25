@@ -31,6 +31,7 @@ fn main() {
 
 // A bare consume-let, never explicitly consumed: this COMPILES (D432
 // auto-cleanup covers it) — before D432 this was a D133 compile error.
+
 test "D432: bare consume-let never touched still compiles + runs" {
     consume r = make(1)
     ro _id = r.id
@@ -38,6 +39,7 @@ test "D432: bare consume-let never touched still compiles + runs" {
 }
 
 // Explicit consume still works exactly as before D432 (strict linear form).
+
 test "explicit consume + close still works (pre-D432 form)" {
     consume r2 = make(2)
     r2.close()

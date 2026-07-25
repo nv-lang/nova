@@ -26,6 +26,7 @@ import tls.{TlsStream, ServerConfig}
 const PORT u16 = 7778
 
 fn server_cert() -> []u8 => embed("certs/localhost_cert.pem")
+
 fn server_key() -> []u8 => embed("certs/localhost_key.pem")
 
 fn main() {

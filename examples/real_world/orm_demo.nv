@@ -44,7 +44,6 @@ import std.data.sql.{Sql, SqlValue, Db, DbRow, SqlBuilder}
 import std.collections.vec_seq.{map}
 import std.text.{join}
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Domain — две сущности с relation
 // ──────────────────────────────────────────────────────────────────────────
@@ -71,7 +70,6 @@ type Post {
     ro created_at Timestamp
 }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Errors
 // ──────────────────────────────────────────────────────────────────────────
@@ -81,7 +79,6 @@ export type RepoError
     | Inconsistent(str)
     | Conflict                           // optimistic-locking version mismatch
     | Db_(DbError)
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Repo[T] — generic repository
@@ -109,7 +106,6 @@ export type ColumnValue {
     name  str
     value SqlValue
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // CRUD — find / list / insert / update / delete / bulk_load
@@ -236,7 +232,6 @@ export fn Repo[T] @bulk_load[K](fk_col str, keys []K, key_to_sql fn(K) -> SqlVal
     @list_with(q)
 }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Query[T] — fluent query-builder
 // ──────────────────────────────────────────────────────────────────────────
@@ -301,7 +296,6 @@ export fn Query[T] @fetch_all() Db Fail[RepoError] -> []T =>
 export fn Query[T] @fetch_first() Db Fail[RepoError] -> Option[T] =>
     @repo.find_one(@builder.build())
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Pagination — cursor-based
 // ──────────────────────────────────────────────────────────────────────────
@@ -340,7 +334,6 @@ export fn Repo[T] @fetch_page(after Option[u64], size int) Db Fail[RepoError] ->
     }
 }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // User repository — конкретные реализации from_row / to_columns
 // ──────────────────────────────────────────────────────────────────────────
@@ -378,7 +371,6 @@ fn user_to_columns(u User) -> []ColumnValue =>
         { name: "balance", value: I(u.balance) },
     ]
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Post repository
 // ──────────────────────────────────────────────────────────────────────────
@@ -413,7 +405,6 @@ fn post_to_columns(p Post) -> []ColumnValue =>
         { name: "body",    value: S(p.body) },
     ]
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Relations — composability через repo'и
 // ──────────────────────────────────────────────────────────────────────────
@@ -445,7 +436,6 @@ export fn posts_of_many(user_ids []UserId) Db Fail[RepoError] -> HashMap[UserId,
     }
     grouped
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Transactions — savepoints через handler-композицию
@@ -486,7 +476,6 @@ export fn transfer_balance(from_id UserId, to_id UserId, amount i64) Db Fail[Rep
         repo.update_versioned(to_updated,   to.version)
     })
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Тесты — handler-substitution вместо mocks
@@ -638,6 +627,7 @@ test "bulk_load — anti-N+1 для списка id'ов" {
 }
 
 // transfer с rollback на throw — главный transaction-тест.
+
 test "transfer rolls back on throw" {
     mut commits = 0
     mut rollbacks = 0
@@ -669,6 +659,7 @@ test "transfer rolls back on throw" {
 }
 
 // Optimistic locking — Conflict при mismatch версии.
+
 test "update_versioned throws Conflict on version mismatch" {
     mut storage = HashMap[u64, DbRow].new()
     seed_user(storage, 1, "alice", "a@example.com", 100)

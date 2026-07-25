@@ -64,6 +64,7 @@ module app
 
 import ../domain.{Source, SourceData, AggError, TaskStatus, TaskResult, Report}
 import std.net.{SocketAddr, TcpStream}
+
 // Explicit import required for the C runtime to link `Monotonic`/`Duration`
 // support (prelude-visible type alone is not enough — the `.c` companion is
 // only pulled in once the module is actually imported by the CU; observed as

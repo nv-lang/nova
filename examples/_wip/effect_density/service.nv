@@ -10,7 +10,6 @@ module effect_density.service
 import effect_density.domain.*
 import effect_density.repository as repo
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // transfer_money — главная public-функция домена
 // ──────────────────────────────────────────────────────────────────────────
@@ -53,7 +52,6 @@ export fn transfer_money(
             New => do_transfer(req)
         }
     }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // do_transfer — приватная, эффекты ВЫВОДЯТСЯ (D28)
@@ -102,7 +100,6 @@ fn do_transfer(req TransferRequest) -> Transfer {
     })
 }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Validators — чистые функции
 // ──────────────────────────────────────────────────────────────────────────
@@ -111,7 +108,6 @@ fn do_transfer(req TransferRequest) -> Transfer {
 // Один эффект — рекордно мало для прикладного кода.
 fn validate_amount(m Money) Fail[TransferError] -> ||
     if m.amount <= 0 { throw NonPositiveAmount }
-
 
 // validate_pair — тоже один эффект Fail.
 // Чистая логика, никакого IO.
@@ -123,7 +119,6 @@ fn validate_pair(from Account, to Account, amount Money) Fail[TransferError] -> 
     if to.balance.currency != amount.currency   { throw CurrencyMismatch }
     if from.balance.amount < amount.amount      { throw InsufficientFunds }
 }
-
 
 // Чистые функции — БЕЗ ЭФФЕКТОВ. Это база, на которой стоит вся гарантия
 // детерминизма Nova (D28). Можно мемоизировать, вызвать в любом потоке,
@@ -138,7 +133,6 @@ fn add_money(a Money, b Money) Fail[TransferError] -> Money =>
 fn sub_money(a Money, b Money) Fail[TransferError] -> Money =>
     if a.currency != b.currency { throw CurrencyMismatch }
     else { Money { amount: a.amount - b.amount, currency: a.currency } }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // account_view — простая read-only public функция
@@ -159,7 +153,6 @@ export fn account_view(id AccountId) Db Cache AuthContext Fail[TransferError] ->
     AccountDto.from(acc)
 }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Request/Response DTO
 // ──────────────────────────────────────────────────────────────────────────
@@ -176,7 +169,6 @@ type AccountDto {
     balance  Money
     closed   bool
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Helpers
