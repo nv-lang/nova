@@ -1065,6 +1065,50 @@ fn infer_generic_subst(
     Ok(subst)
 }
 
+/// Plan 221.1 №88 (i)/(iii) [D239](../../spec/decisions/02-types.md#d239--t--синтаксический-псевдоним-vect):
+/// `[]T` is a syntactic alias for `Vec[T]` — recursively rewrite every
+/// `Array` node (at ANY depth) into the equivalent `Named{path:["Vec"],
+/// generics:[…]}` form. Two independent call sites need the SAME
+/// canonicalization and must never drift apart: the parser (carrier-slot
+/// parsing, `parser/mod.rs`'s `parse_generic_decl_params_inner`, so a
+/// RECEIVER declared `OneBox[[]T]`/`Vec[[]u8]` stores a canonical
+/// `receiver_ty`) and the checker (`unify_type`'s two operands here —
+/// `check_receiver_shape_match`, Plan 221.1 №88 (i) — canonicalizes BOTH the
+/// declared receiver shape AND the call-site's INFERRED receiver type before
+/// unifying: a `[]u8` written as a NESTED GENERIC ARG in an ordinary type
+/// annotation, e.g. `ro v Vec[[]u8] = …`, is parsed by the GENERAL type-ref
+/// parser — untouched by the carrier-slot canonicalization — so its inferred
+/// type keeps the raw `Array(Named u8)` shape; without re-canonicalizing
+/// here too, that cosmetic spelling difference alone would false-positive
+/// `E_RECV_SHAPE_MISMATCH` even though `Vec[[]u8]` IS `Vec[Vec[u8]]`).
+/// `FixedArray` has no established Vec-equivalence under D239 and is left
+/// alone.
+pub(crate) fn canonicalize_array_to_vec(ty: &TypeRef) -> TypeRef {
+    match ty {
+        TypeRef::Array(inner, span) => TypeRef::Named {
+            path: vec!["Vec".to_string()],
+            generics: vec![canonicalize_array_to_vec(inner)],
+            span: *span,
+        },
+        TypeRef::Named { path, generics, span } => TypeRef::Named {
+            path: path.clone(),
+            generics: generics.iter().map(canonicalize_array_to_vec).collect(),
+            span: *span,
+        },
+        TypeRef::Tuple(items, span) => TypeRef::Tuple(
+            items.iter().map(canonicalize_array_to_vec).collect(),
+            *span,
+        ),
+        TypeRef::Readonly(inner, span) => {
+            TypeRef::Readonly(Box::new(canonicalize_array_to_vec(inner)), *span)
+        }
+        TypeRef::Mut(inner, span) => {
+            TypeRef::Mut(Box::new(canonicalize_array_to_vec(inner)), *span)
+        }
+        other => other.clone(),
+    }
+}
+
 /// Recursive unification. Если pattern (const_fn's TypeRef) — generic
 /// param name (single Named, no generics, в generic_names set) — match с
 /// concrete. Иначе recurse structurally. Mismatch — Err.

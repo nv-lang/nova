@@ -1,0 +1,22 @@
+// EXPECT_COMPILE_ERROR E_RECV_SHAPE_MISMATCH
+//
+// Plan 221.1 №88 (i) [M-structured-receiver-generic-not-enforced]: a method
+// declared with a STRUCTURAL receiver (`fn P88SmBox[Vec[T]] @first()`) called
+// on a receiver that does NOT structurally unify with that shape
+// (`P88SmBox[int]`, no `Vec` layer at all) must be an honest checker error —
+// verified pre-fix: `nova check`/`nova build` both PASSED silently for this
+// exact shape (`OneBox[int].first()` where `@first` is `Vec[T]`-shaped), and
+// the built binary's `print(b.first())` printed NOTHING at runtime (no
+// honest signal anywhere in the pipeline until this fix).
+module neg.p88_recv_shape_mismatch_neg
+
+type P88SmBox[T] value { ro v T }
+
+fn P88SmBox[Vec[T]] @first() -> ro T => @v[0]
+
+fn main() {
+    ro b P88SmBox[int] = { v: 5 }
+    // `P88SmBox[int]` does not unify with the declared `P88SmBox[Vec[T]]`
+    // receiver shape — E_RECV_SHAPE_MISMATCH.
+    println(b.first())
+}
