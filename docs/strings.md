@@ -389,3 +389,29 @@ assert("${3.14159:.2}" == "3.14")   // precision (f64); for str = truncate
 A malformed spec is a **compile error** (`E_FORMAT_SPEC_UNKNOWN` / `E_BAD_FORMAT_SPEC`),
 never a silent pass. (Generalizing the formatter to write into any `Write` sink —
 `@display(mut w Write)` — is roadmap, Plan 152.7.1.)
+
+### Nested strings inside `${...}` (Plan 102, D44-amendment)
+
+The `${...}` body is a real Nova expression, so it may legally contain its own
+string literals — including the ordinary `"` quote character — without
+escaping. This is the PEP 701 / JS template-literal precedent: once inside
+`${`, the lexer is scanning *expression* syntax, not *string* syntax, so a
+nested `"..."` is just another string literal, not a terminator for the
+outer one.
+
+```nova
+ro name = req.param("name")           // plain code, for reference
+
+"hello, ${req.param("name")}"         // method call with a string argument
+"${m["key"]}"                         // index syntax with a string key (D238 @index)
+"${f("x ${y} z")}"                    // interpolation nested inside a nested string
+```
+
+Record-literal/block braces `{ }` inside the expression nest correctly too
+(e.g. `${ if cond { a } else { b } }`), and the `\${` escape for a literal
+`${` is unchanged. What changed is only that the scanner that finds the
+matching `}` of an interpolation is now string/brace-aware (one shared
+routine, `scan_interpolation_body` in `compiler-codegen/src/lexer/mod.rs`,
+used by both the lexer and the parser's split step) instead of stopping at
+the first unescaped `"` it sees — the old one-dimensional scan used to treat
+that inner `"` as the end of the *outer* string literal.
