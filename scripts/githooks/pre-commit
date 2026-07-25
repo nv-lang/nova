@@ -13,4 +13,20 @@ case "$AN $AE" in
     echo "pre-commit: author '$AN <$AE>' blocked — restore owner git identity." >&2
     exit 1;;
 esac
+# 3) 232 Ф.3: амендмент decisions без касания обзорных spec/*.md и без маркера [overview: n/a].
+if git diff --cached --name-only | grep -q '^spec/decisions/'; then
+  if ! git diff --cached --name-only | grep -qE '^spec/[^/]+\.md$'; then
+    MSG_FILE="$1"
+    if [ -z "${1:-}" ] || ! grep -q '\[overview: n/a\]' "${MSG_FILE:-/dev/null}" 2>/dev/null; then
+      # pre-commit не видит сообщение — проверка маркера в commit-msg невозможна здесь;
+      # мягкий блок с подсказкой обхода через env-переменную.
+      if [ -z "${NOVA_OVERVIEW_NA:-}" ]; then
+        echo "pre-commit(232): staged menyaet spec/decisions/, no ne trogaet obzornye spec/*.md." >&2
+        echo "  Libo obnovi zatronutyi spec/<tema>.md v etom zhe kommite," >&2
+        echo "  libo osoznanno propusti: NOVA_OVERVIEW_NA=1 git commit ..." >&2
+        exit 1
+      fi
+    fi
+  fi
+fi
 exit 0
