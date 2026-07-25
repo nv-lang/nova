@@ -4192,6 +4192,15 @@ static inline nova_unit time_sleep_ms(nova_int ms) {
         if (mco_running()) {
             nova_fiber_yield();
         } else if (_nova_active_scope) {
+            /* Plan 221.1 №108: sibling of the busy-yield door below
+             * (`ms > 0` branch's doc comment) — same NO-HIT candidate,
+             * same opt-in trace. */
+            if (NOVA_UNLIKELY(getenv("NOVA_TRACE_BUSY_YIELD_SLEEP") != NULL)) {
+                fprintf(stderr,
+                    "nova: [NO-HIT-TRACE] busy-yield main-flow Time.sleep(0) "
+                    "hit (scope=%p) — Plan 221.1 #108 candidate for removal\n",
+                    (void*)_nova_active_scope);
+            }
             nova_supervised_step(_nova_active_scope);
         }
         return NOVA_UNIT;
@@ -4216,6 +4225,32 @@ static inline nova_unit time_sleep_ms(nova_int ms) {
         }
         return NOVA_UNIT;
     } else if (_nova_active_scope) {
+        /* Main flow inside a scope, NOT a fiber (`mco_running() == NULL`)
+         * — the D92 Правило 6 busy-yield fallback. Plan 221.1 №108
+         * (2026-07-25): since `emit_main_wrapper` now spawns main-body AS
+         * A FIBER (`_nova_main_fiber_entry`), every path that used to land
+         * here from top-level user code should now hit the `mco_running()`
+         * branch above instead — this branch is BELIEVED structurally
+         * unreachable through normal program flow post-#108 (main-body,
+         * every `supervised{}` body incl. nested, every test/bench-runner
+         * chunk — all execute inside the main-fiber now). NOT YET removed
+         * by NO-HIT procedure: that requires a corpus-wide trace proof
+         * (spec_tests/conformance mega-CU + flagship) which is the
+         * INTEGRATOR's authoritative gate, not this window's (mega-CU
+         * explicitly out of scope here). `NOVA_TRACE_BUSY_YIELD_SLEEP=1`
+         * opt-in (zero-cost when unset — one branch on a cached bool) logs
+         * to stderr on every hit; flip it on for the mega-CU + flagship
+         * gate run — zero hits there is the NO-HIT proof this branch (and
+         * its `time_sleep_ms(0)`-path sibling above, the bare
+         * `nova_supervised_step` call) needs before deletion. A hit found
+         * that IS legitimate (not a bug) means: don't delete, explain why
+         * here instead. */
+        if (NOVA_UNLIKELY(getenv("NOVA_TRACE_BUSY_YIELD_SLEEP") != NULL)) {
+            fprintf(stderr,
+                "nova: [NO-HIT-TRACE] busy-yield main-flow Time.sleep hit "
+                "(scope=%p) — Plan 221.1 #108 candidate for removal, see "
+                "fibers.h time_sleep_ms doc comment\n", (void*)_nova_active_scope);
+        }
         /* Main flow inside a scope (D92 implicit либо explicit supervised):
          * drain queue + bounded uv_run пока deadline не пройдёт.
          * Plan 22 Ф.6: вместо busy-loop'а — drain ready, потом uv_run

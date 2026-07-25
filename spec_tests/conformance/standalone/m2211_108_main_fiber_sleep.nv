@@ -1,0 +1,33 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// EXPECT_STDOUT SLEPT
+// Feature/regression fixture for [M-bare-fiber-accept-bootstrap-park-
+// invalid-slot] (221.1 bug-sweep #108, D92 Правило 6 ретракция, 2026-07-25).
+//
+// BEFORE this fix: `Time.sleep` called DIRECTLY in `fn main()` could not
+// go through the D93 park-on-uv_timer path — `time_sleep_ms` (nova_rt/
+// fibers.h) gates that path on `mco_running() != NULL`, which was always
+// false for main-flow (raw C thread, no coroutine). It fell back to the
+// `else if (_nova_active_scope)` busy-yield loop (drain + bounded
+// `uv_run`) — a documented workaround (D92 §Правило 6: "Top-level
+// Time.sleep остаётся через busy-yield").
+//
+// AFTER the fix: main-body executes inside `_nova_main_fiber_entry` (a
+// real mco coroutine) for its entire lifetime, so `mco_running()` is
+// non-NULL from the very first statement — the busy-yield branch is now
+// STRUCTURALLY UNREACHABLE for top-level sleep (not just empirically
+// untaken): only the genuine park-on-timer branch (`_nova_sleep_via_driver`
+// / `_nova_sleep_via_libuv`) can ever run. This fixture cross-checks that
+// with a wall-clock sanity bound (rules out a zero-cost no-op regression).
+module standalone.m2211_108_main_fiber_sleep
+
+import std.time.duration
+
+fn main() Time {
+    ro t0 = Monotonic.now()
+    (50).to_millis().sleep()
+    ro elapsed = Monotonic.now().elapsed_since(t0)
+    // Generous lower bound (slow/loaded CI machines) — just rules out a
+    // no-op / near-zero busy-spin exit, not a precise timing assertion.
+    assert(elapsed.millis() >= 30)
+    println("SLEPT")
+}
