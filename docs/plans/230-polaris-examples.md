@@ -41,6 +41,27 @@
 | 09 | `graceful/` | ServerPolicy (лимиты/admission), BackgroundTasks, recover-500, graceful shutdown |
 | 10 | `mini-service/` | «всё вместе» (уровень флагмана, компактнее): json-api + auth + middleware-стек + static + graceful — референс-структура реального сервиса |
 
+### 2а. Первоисточники (решение владельца 2026-07-25: «взять за основу примеры с др. фреймворков наиболее известные»)
+
+Каждый пример строится по УЗНАВАЕМОМУ канону индустрии (структура/сценарий — оттуда,
+код — идиоматичный Nova; в README примера — строка «по мотивам: <ссылка>»):
+
+| Наш | Первоисточник-канон |
+|---|---|
+| 01 hello | axum `hello-world`, Express hello |
+| 02 routing | axum `routes-and-handlers-close-together`, chi routing |
+| 03 json-api | axum `todos` + FastAPI tutorial (items CRUD) — самый цитируемый REST-старт |
+| 04 middleware | axum tower-middleware showcase, Express middleware chain |
+| 05 auth | axum `jwt` + FastAPI OAuth2/security tutorial |
+| 06 static-site | axum `static-file-server` |
+| 07 sse-stream | axum `sse` |
+| 08 websocket-echo | axum `websockets` (chat/echo) |
+| 09 graceful | axum `graceful-shutdown` + `key-value-store` (state) |
+| 10 mini-service | **RealWorld (Conduit)** — сокращённый профиль знаменитой спеки «Medium-clone API»: users/auth + articles CRUD + пагинация; узнаваемый бенчмарк зрелости фреймворка |
+
+10-й как RealWorld-mini — сильный сигнал сообществу («Polaris проходит RealWorld-профиль»);
+полный RealWorld-порт — отдельный после-релизный кандидат.
+
 ## 3. Гейты волны
 
 - `run_smokes` зелёный: 10/10 собираются `--strict-effects`, smoke-запрос отвечает.
