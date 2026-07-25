@@ -1,0 +1,44 @@
+#!/bin/sh
+# scripts/gate.sh — ЕДИНЫЙ авторитетный гейт (план 231 трек Д п.1).
+# Запуск из корня целевого дерева (main-репа или worktree):  bash scripts/gate.sh
+# Ассерты делает СКРИПТ, не интегратор: любой провал = exit 1 с внятной строкой.
+#
+# Состав (CLAUDE.md/dev-workflow):
+#   1) cargo build --release (nova-cli)
+#   2) мега-CU spec_tests/conformance ОДНИМ CU: exit=0 И строка "PASS: N  FAIL: 0" присутствует
+#   3) nova check std/src (БЕЗ NOVA_STD_PATH): канон "PASS: 142  FAIL: 27  WARN: 1040"
+#   4) флагман examples/flagship/aggregator --strict-effects: строка "built:"
+set -u
+ROOT="$(pwd)"
+MAIN_REPO="d:/Sources/nv-lang/nova"
+export NOVA_GC_LIB_DIR="D:\\Sources\\nv-lang\\nova\\compiler-codegen\\vcpkg_installed\\x64-windows-static\\lib"
+export NOVA_INCLUDE_DIR="D:\\Sources\\nv-lang\\nova\\compiler-codegen\\vcpkg_installed\\x64-windows-static\\include"
+unset NOVA_STD_PATH 2>/dev/null || true
+
+fail() { echo "GATE FAIL: $1" >&2; exit 1; }
+
+echo "== gate: cargo build --release =="
+( cd "$ROOT/nova-cli" && cargo build --release ) || fail "cargo build"
+NOVA="$ROOT/nova-cli/target/release/nova.exe"
+[ -x "$NOVA" ] || fail "nova.exe not found: $NOVA"
+
+echo "== gate: mega-CU (spec_tests/conformance, one CU) =="
+MEGA_LOG="${TMPDIR:-/tmp}/gate_mega_$$.log"
+"$NOVA" test --positive --compile-error "$ROOT/spec_tests/conformance" >"$MEGA_LOG" 2>&1
+MEGA_EXIT=$?
+MEGA_LINE=$(grep -E "PASS: [0-9]+ +FAIL: [0-9]+" "$MEGA_LOG" | tail -1)
+echo "mega-CU exit=$MEGA_EXIT :: $MEGA_LINE"
+[ "$MEGA_EXIT" -eq 0 ] || { grep -E "FAIL|TIMEOUT" "$MEGA_LOG" | grep -v "FAIL: 0" | head -10 >&2; fail "mega-CU exit=$MEGA_EXIT"; }
+echo "$MEGA_LINE" | grep -qE "PASS: [0-9]+ +FAIL: 0\b" || fail "mega-CU: PASS/FAIL:0 line missing (crash prints none — see $MEGA_LOG)"
+
+echo "== gate: check std/src (byte-canon) =="
+STD_LINE=$("$NOVA" check "$ROOT/std/src" 2>&1 | grep -E "^PASS" | tail -1)
+echo "std :: $STD_LINE"
+echo "$STD_LINE" | grep -q "PASS: 142  FAIL: 27  WARN: 1040" || fail "check std drifted from canon 142/27/1040: '$STD_LINE'"
+
+echo "== gate: flagship aggregator --strict-effects =="
+FLAG_LINE=$("$NOVA" build "$ROOT/examples/flagship/aggregator/src/main.nv" --strict-effects 2>&1 | tail -1)
+echo "flagship :: $FLAG_LINE"
+echo "$FLAG_LINE" | grep -q "built:" || fail "flagship not built: '$FLAG_LINE'"
+
+echo "GATE OK"
