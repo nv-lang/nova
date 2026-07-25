@@ -207,7 +207,7 @@ fn server() Net Fail -> () {
     // D416 в 06-concurrency.md, 2026-07-10): постфикс `strategy = …,
     // max_restarts = …` РЕТРАКНУТ. Supervision = эффект-хендлеры:
     //   with Supervisor = effect Supervisor {
-    //       on_child_fail(idx, err) => if err is Transient { Decision.Stop }
+    //       on_child_fail(idx int, err any) -> Decision => if err is Transient { Decision.Stop }
     //                                  else { Decision.Escalate }
     //   } { supervised { … } }
     // Встроенные политики: std.concurrency.supervisor.escalate()/.stop().

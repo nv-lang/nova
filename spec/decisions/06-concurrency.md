@@ -7016,7 +7016,7 @@ std (`concurrency/cancellation.nv` `within`/`race2` — реальные TOCTOU-
 (обе `detach consume` формы). Флагман (`examples/flagship/aggregator/src/
 main.nv`) переписан на явный move.
 
-## D416. Supervision-as-effect — `Supervisor`/`on_child_fail(idx, err) → Decision` (Plan 173.2)
+## D416. Supervision-as-effect — `Supervisor`/`on_child_fail(idx int, err any) -> Decision` (Plan 173.2)
 
 > Дом [Plan 173.2](../../docs/plans/173.2-supervision-as-effect.md)
 > (sign-off решений §2 2026-06-21; §3b-резолюция owner 2026-06-26; реализация

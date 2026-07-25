@@ -268,7 +268,7 @@ export type Decision enum Escalate | Stop
 /// `spawn`/`parallel for` внутри `supervised { ... }` (Plan 173.2, D-блок
 /// supervision-as-effect; Erlang-style supervision = handler strategy).
 ///
-/// **Операция** `on_child_fail(idx, err) -> Decision`:
+/// **Операция** `on_child_fail(idx int, err any) -> Decision`:
 ///   - `idx` — retention-слот упавшего ребёнка (173.0 `child_error[]`,
 ///     spawn-порядок remote-детей scope'а);
 ///   - `err` — значение ошибки как `any`: typed-throw payload (сужается
