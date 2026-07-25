@@ -437,6 +437,11 @@ shutdown из 222.7). Мелкий.
 wss из коробки), шаг 2 hyper-модель (конвейер generic over std.io Read/Write, после №105).
 Пример 11-https + serving.md-раздел. Полный состав — реестр №121.
 
+### 222.20 — эффект-поверхность Polaris и пакетов 🔴 разведка → **отдельный файл [222.20](222.20-effects-audit.md)** (решение владельца 2026-07-26)
+Инвентарь эффектов по polaris/http/tls/compress + КЛЮЧЕВОЙ дизайн-вопрос: Handler без
+эффектов — как пользователю Db/Net/Fail в хендлерах (R5-форвардинг vs ambient vs D431);
+main-канон Net Time Detach; Fail-политика API; паника vs Fail (recover-500).
+
 ## 8. Маркеры (регистрируются этим планом)
 
 - `[M-serde-field-attrs-unimplemented]` (P2) — rename/rename_all/skip/default/flatten спроектированы в
