@@ -1,0 +1,34 @@
+// [M-coalesce-panic-unit-result-cc-fail] (реестр 221.1 №118): `expr ?? panic
+// ("...")` on `Result[(), E]` (unit Ok-payload) миксомпилил — CC-FAIL
+// `incompatible operand types ('nova_unit' and 'nova_int')`. D86-форма `??
+// panic` легальна для ЛЮБОГО Result (работает на str-нагрузке, репорт
+// №113's report_json-миграция) — unit-нагрузка не должна быть исключением.
+//
+// Root cause: `emit_expr_with_target_type` (emit_c.rs) excluded `target_ty_c
+// == "nova_unit"` ALONGSIDE `"nova_int"` from the divergent-expr dummy
+// substitution (`emit_divergent_with_target_125`) — but unlike `nova_int`
+// (where the pre-existing `(nova_int)0LL` dummy genuinely IS already the
+// right type, hence the historical skip), `nova_unit` is a STRUCT typedef
+// (`NOVA_UNIT` is a compound-literal macro) — leaving the untouched
+// `(nova_int)0LL` dummy in a `nova_unit`-typed ternary branch is a real C
+// type clash, not a no-op. Fix: drop the `nova_unit` exclusion —
+// `typed_zero_value_125`/`emit_divergent_with_target_125` already handle
+// `nova_unit` correctly (return the `NOVA_UNIT` macro), they just never got
+// routed to for a `nova_unit` target before.
+module spec_tests.conformance
+
+fn d118_op(ok bool) -> Result[(), str] {
+    if ok { Ok(()) } else { Err("boom") }
+}
+
+test "118: ?? panic on Result[(), E] — statement position" {
+    d118_op(true) ?? panic("d118_op failed")
+    assert(true)
+}
+
+fn d118_tail(ok bool) -> () => d118_op(ok) ?? panic("d118_tail failed")
+
+test "118: ?? panic on Result[(), E] — tail of fn -> ()" {
+    d118_tail(true)
+    assert(true)
+}

@@ -1,0 +1,26 @@
+// D55 (реестр 221.1 №114 б) NEG: `m.insert(key, val)` generic call-arg
+// position on `HashMap[str, JsonValue]` — `val`'s DECLARED param type is the
+// receiver's own generic `V`, substituted here to `JsonValue`. `42`
+// (IntFamily) doesn't lift into ANY `JsonValue` unary variant (`Num` wants
+// `f64`, a different D55 "obvious single-wrapper" род) — a genuinely
+// incompatible value. Before this window's fix `check_instance_overload`
+// only ever reported `Compat::Narrowing` for such a param — a `Compat::Bad`
+// verdict here (assignable's own single-wrap fallback tried and failed) was
+// silently DROPPED (assumed "already caught by the arity/category
+// pre-check above", which is FALSE for a raw, unsubstituted generic param —
+// that earlier check runs against the placeholder `V`, permissive by
+// construction) — the mismatch surfaced only downstream as a codegen
+// CC-FAIL (`passing 'nova_int' to parameter of incompatible type
+// 'Nova_JsonValue *'`), not a clean diagnostic.
+// EXPECT_COMPILE_ERROR E7301
+
+module neg.d114_insert_generic_arg_incompatible_neg
+
+import std.encoding.json.{JsonValue}
+import std.collections.hashmap.{HashMap}
+
+fn d114_neg_insert() -> HashMap[str, JsonValue] {
+    mut m HashMap[str, JsonValue] = HashMap[str, JsonValue].new()
+    m.insert("n", 42)
+    return m
+}

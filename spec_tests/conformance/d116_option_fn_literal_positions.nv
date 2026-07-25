@@ -1,0 +1,52 @@
+// [M-option-fn-field-record-literal-elem-type-int] (реестр 221.1 №116):
+// `Option[fn(...)->...]`-поле/binding, инициализируемое `Some(closure)` в
+// литерал-позиции (record-literal field, bare `let`, free-fn return) —
+// CC-FAIL `NovaOpt_nova_int` vs `NovaOpt_NovaClos_*` (element-type Option
+// дефолтился к `nova_int` — expected-тип не доезжал до Option-mono).
+//
+// Root cause: `materialize_literal_coercion`'s `Some`/`Ok`/`Err`-ctor arm
+// (types/mod.rs) gated the whole-node `resolved_types_buf` annotation on
+// ЛЮБОЙ non-concrete generic argument via `Union(Primitive,
+// ConcreteNamedNoArgs)` — a `Func`-shaped generic (`fn(A) -> B`) has no case
+// in EITHER set, so `Option[fn(A) -> B]` never counted as "all concrete" →
+// `Some(closure)` never got the resolved-type annotation at all. Fixed via
+// `ctor_arg_concrete` (recurses into `Func`'s own params/return). SEPARATELY:
+// `materialize_literal_coercion` had NO `RecordLit` arm at all — a record
+// literal's field values never reached this walk to begin with (the record-
+// literal-field shape from the bug report) — added, mirrors the existing
+// `TupleLit`/`ArrayLit` element-wise recursion.
+//
+// Companion regression (already covered, kept distinct): `M107Hooked { hook:
+// Some(h) }` set via FLUENT SETTER (not literal) is
+// `m107_supervised_spawn_option_fn_match_bind_call.nv`'s scope — THIS file
+// is specifically the literal-construction shape that file's own comment
+// flags as "a separate, unrelated pre-existing gap ... outside this bug's
+// scope".
+module spec_tests.conformance
+
+type M116Hooked value { mut hook Option[fn(int) -> int] }
+
+fn m116_make_hook() -> Option[fn(int) -> int] => Some(fn(x int) -> int => x * 3)
+
+test "116: record-литерал Option[fn]-поле через Some(closure)" {
+    ro rec = M116Hooked { hook: Some(fn(x int) -> int => x * 2) }
+    match rec.hook {
+        Some(f) => assert(f(21) == 42)
+        None => assert(false)
+    }
+}
+
+test "116: bare let Option[fn] = Some(closure)" {
+    ro h Option[fn(int) -> int] = Some(fn(x int) -> int => x + 100)
+    match h {
+        Some(f) => assert(f(1) == 101)
+        None => assert(false)
+    }
+}
+
+test "116: free-fn return Option[fn] = Some(closure)" {
+    match m116_make_hook() {
+        Some(f) => assert(f(10) == 30)
+        None => assert(false)
+    }
+}

@@ -1,0 +1,67 @@
+// D55/D108 (реестр 221.1 №114): map-литерал `[k: v]` и `{}`-map-coercion
+// shorthand — value-позиция несёт ПОЛНЫЙ D55 known-target-type sum-lift
+// (D108 §"Правило — типы и coercion": "значения: ... 30.0 → Num(...)").
+// Владелец: JWT-пример, `["sub": s, "exp": 5_000_000_000.0]` против
+// `HashMap[str, JsonValue]` — str лифтился в `Str`, f64 → `Num` НЕ лифтился
+// («map literal values have incompatible types JsonValue and f64») — value
+// unification происходила ПРОТИВ raw literal type до/вместо per-element D55
+// coercion. Root cause (а): `unify_exprs` (types/mod.rs, `check_map_lit`/
+// `check_record_map_coercion`) сравнивало КАЖДЫЙ элемент structurally против
+// expected V, не учитывая obvious-single-wrapper sum-lift (`is_single_wrap_
+// eligible`, та же машинерия что `try_wrap_leaf`/`assignable`). Root cause
+// (rewrite): `MapLitAnnotator`'s per-element descent (и MapLit, и
+// RecordLit-map-coercion field-punning shorthand `{sub, ...}`) вело
+// `expected=None` в try_wrap_leaf/try_coerce_leaf — починено пробросом
+// `inferred_key`/`inferred_value`/`inferred_map_v` (плюс материализация
+// punned-field's Ident ДО desugar, который иначе синтезирует голый Ident
+// уже ПОСЛЕ annotate-прохода).
+//
+// Task (б): `m.insert("sub", sub)` на `HashMap[str, JsonValue]` (generic
+// call-arg = D55 ⛔-строка) — расширена receiver-generic-aware резолюция
+// (`resolve_generic_method_call_params`, требует явную type-annotation на
+// receiver'е) поверх существующей `try_wrap_leaf`-машинерии.
+module spec_tests.conformance
+
+import std.encoding.json.{JsonValue}
+import std.collections.hashmap.{HashMap}
+
+test "d114: map-литерал [k:v] — str+f64 значения лифтятся (Str/Num)" {
+    ro s = "alice"
+    mut m HashMap[str, JsonValue] = ["sub": s, "exp": 5_000_000_000.0]
+    match m.get("sub") {
+        Some(v) => assert(v.is_str())
+        None => assert(false)
+    }
+    match m.get("exp") {
+        Some(v) => assert(v.is_num())
+        None => assert(false)
+    }
+}
+
+test "d114: {}-map-coercion shorthand (D52 §2 field-punning `{sub}`) + explicit-поле лифт" {
+    ro sub = "alice"
+    mut m HashMap[str, JsonValue] = {sub, exp: 5_000_000_000.0}
+    match m.get("sub") {
+        Some(v) => assert(v.is_str())
+        None => assert(false)
+    }
+    match m.get("exp") {
+        Some(v) => assert(v.is_num())
+        None => assert(false)
+    }
+}
+
+test "d114: явный HashMap[str, JsonValue].new() + .insert(str-key, str-value) лифт" {
+    ro sub = "alice"
+    mut m HashMap[str, JsonValue] = HashMap[str, JsonValue].new()
+    m.insert("sub", sub)
+    m.insert("exp", 5_000_000_000.0)
+    match m.get("sub") {
+        Some(v) => assert(v.is_str())
+        None => assert(false)
+    }
+    match m.get("exp") {
+        Some(v) => assert(v.is_num())
+        None => assert(false)
+    }
+}
