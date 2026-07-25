@@ -1,0 +1,31 @@
+// [M-samename-extension-method-recv-type-collision] (реестр 221.1 №92,
+// закрыт окном №92): ОДНОИМЁННЫЕ extension-методы на РАЗНЫХ конкретных
+// ресиверах (`[]u8 @to_body()` + `str @to_body()` в nova-http) ломали
+// codegen целиком (196.5 facet-c-map method_receivers — single-key
+// last-wins съедал одну из регистраций; infer_arg_ty Member-гэп →
+// resolved_callees). Регресс-аудит 2026-07-25: именной фикстуры не было —
+// эта закрывает пробел: оба метода обязаны диспатчиться по типу ресивера,
+// включая использование результата аргументом (Member-позиция).
+module spec_tests.conformance
+
+type P92Wrap { tag str }
+
+fn []u8 @p92_kind() -> str => "bytes"
+fn str @p92_kind() -> str => "str"
+
+fn p92_wrap(t str) -> P92Wrap => { tag: t }
+
+test "P92 одноимённые extension-методы на разных ресиверах диспатчатся по типу" {
+    ro b []u8 = [1, 2, 3]
+    ro s = "hello"
+    assert(b.p92_kind() == "bytes")
+    assert(s.p92_kind() == "str")
+}
+
+test "P92 результат одноимённого метода в Member/арг-позиции (infer_arg_ty)" {
+    ro b []u8 = [7]
+    ro w1 = p92_wrap(b.p92_kind())
+    ro w2 = p92_wrap("x".p92_kind())
+    assert(w1.tag == "bytes")
+    assert(w2.tag == "str")
+}

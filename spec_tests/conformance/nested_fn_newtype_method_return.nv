@@ -83,3 +83,22 @@ test "N90 @then-стиль: метод возвращает вложенный f
     ro r = m1.then(m2).apply(h)(3)
     assert(r == 135)
 }
+
+// [M-fn-newtype-then-composition-segfault] (реестр 221.1 №97, 6-й разрыв
+// семьи, закрыт 228-Ф.4): ТОЧНАЯ polaris-форма @then — ПРЯМАЯ вложенная
+// композиция dot-call'ов в closure (`outer.apply(inner.apply(next))`), БЕЗ
+// flat-хелпера (@then выше обходит её n90_flat_compose'ом — исторический
+// обход сегфолта). Регресс-щит ранее жил только во внешней polaris
+// middleware_test («@then composes») — мега-CU его не гонит.
+fn N90Mid @then_direct(inner N90Mid) -> N90Mid {
+    ro outer = @
+    N90Mid.new(fn(next N90Hnd) -> N90Hnd => outer.apply(inner.apply(next)))
+}
+
+test "N97 polaris-форма: прямая вложенная композиция в closure (identity-независимо, без капчеров конфига)" {
+    ro m1 = n90_add_battery(5)
+    ro m2 = n90_add_battery(100)
+    ro h N90Hnd = n90_base
+    ro r = m1.then_direct(m2).apply(h)(3)
+    assert(r == 135)
+}
