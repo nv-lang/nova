@@ -50642,35 +50642,36 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // env-populate statement (the CALL itself still mangles correctly;
         // only the bogus capture-field init breaks).
         //
-        // The "exclude global function names" filter below is meant to
-        // guard exactly this, but is CURRENTLY A NO-OP (tests whether
-        // `var_types[n]`'s VALUE starts with the string "fn_ret_" — that
-        // string is never a value in this map, only ever a KEY PREFIX
-        // `var_types["fn_ret_<name>"]`, see the forward-decl registration
-        // ~L16158/16215 and the `is_user_fn` reader ~L32511). A name-level
-        // fix (checking `var_types.contains_key(&format!("fn_ret_{}", n))`
-        // instead) was tried and REVERTED: `fn_ret_<name>` is intentionally
+        // [Plan 228 Ф.3, реестр 221.1 №96 — fix M-closure-ctx-freefn-callee-
+        // unresolved-fnnt] The "exclude global function names" filter used to
+        // be a structural no-op (compared `var_types[n]`'s VALUE against the
+        // string "fn_ret_", which is only ever a KEY PREFIX, never a value —
+        // see git history). A name-level fix (`var_types.contains_key(&format!
+        // ("fn_ret_{}", n))`) was tried and REVERTED: `fn_ret_<name>` is
         // UNQUALIFIED/shared across every same-named method/fn in the WHOLE
-        // program (Plan 152.4.3's own doc, ~L16159 — the type-qualified key
-        // is a SEPARATE, additional entry), so a genuinely-captured LOCAL
-        // whose name merely COINCIDES with some unrelated fn/method
-        // elsewhere in std (`primary`, `next`, `n` — all common std names)
-        // got wrongly EXCLUDED from its own real capture, regressing
-        // `mvinfer_vec_map_method_value.nv` (`undeclared identifier
-        // 'primary'` — a genuine local, referenced as a plain value, never
-        // called). The correct fix needs USE-SITE precision (is THIS
-        // specific Ident occurrence a call-callee that resolves to a free
-        // fn — checker `resolved_callees`/absence-of-local, not a global
-        // name-table membership test) — bigger than a local patch here.
-        // Left as the pre-existing (safe, over-CAPTURING rather than
-        // under-capturing) no-op behavior; #96 repro re-documented as an
-        // open residual gap, not closed by this window.
+        // program, so it wrongly excluded a genuinely-captured LOCAL whose
+        // name merely COINCIDES with some unrelated fn/method elsewhere in
+        // std (`primary`, `next`, `n`) — regressing `mvinfer_vec_map_method_
+        // value.nv`. The correct fix needs USE-SITE precision: is THIS
+        // specific Ident occurrence a call-callee the CHECKER resolved to a
+        // genuine declaration — exactly what `collect_resolved_call_target_
+        // names_expr` already provides (`resolved_callees`, keyed by the
+        // Call's own `ExprId`, populated ONLY for an unambiguously-resolved
+        // free-fn/method call, NEVER for a dynamic closure-variable
+        // invocation). Same channel, same helper, same fix shape as the
+        // sibling `emit_spawn` capture filter already uses for the
+        // analogous bug (`M-parfor-capture-callee-name-collides-std-local`,
+        // ~L12924) — reused here, not reinvented.
+        let mut resolved_fn_call_names: HashSet<String> = HashSet::new();
+        self.collect_resolved_call_target_names_expr(body, &mut resolved_fn_call_names);
         let mut free_vars: Vec<(String, String)> = body_idents.iter()
             .filter(|n| !param_names.contains(*n) && self.var_types.contains_key(*n))
             .filter(|n| {
-                // Exclude global function names (they are registered too, but are not "captured")
-                let ty = self.var_types.get(*n).map(|s| s.as_str()).unwrap_or("");
-                !ty.starts_with("fn_ret_")
+                // Exclude names the checker resolved as a call-callee to a
+                // genuine global fn/method declaration at THIS call site —
+                // not a captured local (the call itself mangles correctly
+                // regardless; only the bogus capture-field init was the bug).
+                !resolved_fn_call_names.contains(*n)
             })
             .map(|n| (n.clone(), self.var_types.get(n).cloned().unwrap_or_else(|| "nova_int".into())))
             .collect();
