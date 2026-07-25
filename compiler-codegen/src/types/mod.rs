@@ -4402,6 +4402,33 @@ impl<'a> TypeCheckCtx<'a> {
             || !self.sig_table.find_fn_modules(name).is_empty()
     }
 
+    /// [Plan 228 Ф.2(a) producer, реестр 221.1 №94-v2] checker-side call-through
+    /// resolver: is `ty` — directly, or through a newtype-over-fn / alias-of-fn
+    /// name — structurally a `fn(...) -> ...` shape? Checker-side mirror of
+    /// emit_c's `resolve_fn_typeref` (`fn_newtype_sigs`, D52-амендмент), but
+    /// sourced from `self.types` (the checker's OWN registry — no separate
+    /// pre-scanned table needed, it already has full `TypeDecl` access).
+    /// Readonly/Mut/Uninit wrappers are transparent (mirror `resolve_fn_typeref`'s
+    /// own peel, same reason: `ro next Handler` params/locals).
+    fn resolve_fn_newtype_typeref(&self, ty: &TypeRef) -> Option<TypeRef> {
+        match ty {
+            TypeRef::Func { .. } => Some(ty.clone()),
+            TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) | TypeRef::Uninit(inner, _) => {
+                self.resolve_fn_newtype_typeref(inner)
+            }
+            TypeRef::Named { path, generics, .. } if generics.is_empty() => {
+                let name = path.last()?;
+                match &self.types.get(name)?.kind {
+                    TypeDeclKind::Newtype(inner) | TypeDeclKind::Alias(inner) => {
+                        self.resolve_fn_newtype_typeref(inner)
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
     /// U.2.3.3: overload set for `(type, method)`, base (`sig`) ∪ synth overlay.
     /// For any (type, method) the overloads live in EXACTLY ONE source (synth is
     /// registered only when base lacks the method), so synth-first ∥ base is
@@ -8963,6 +8990,36 @@ impl<'a> TypeCheckCtx<'a> {
                                     if let Some(rt) = rt {
                                         self.resolved_types_buf.borrow_mut().insert(e.id, rt);
                                     }
+                                }
+                            }
+                        } else if let Some(var_ty) = scope.get(fname).cloned() {
+                            // [Plan 228 Ф.2(a) producer, реестр 221.1 №94-v2] Calling a
+                            // SCOPE-BOUND LOCAL whose type is itself callable — a bare
+                            // `fn(...)->...` value OR a fn-newtype/alias name that peels
+                            // (through `self.types`, mirrors emit_c's `resolve_fn_typeref`)
+                            // to one (`ro m Mid = identity_mw; ro h2 = m(h)`, №78/№90
+                            // family). Every arm above this one is explicitly gated
+                            // `!scope.contains_key(fname)` (constructor/free-fn producers,
+                            // which by construction never apply to a local) — a call whose
+                            // callee IS a scope binding fell through ALL of them silently:
+                            // `resolved_types_buf`/`resolved_types` (196.4 channel) was
+                            // NEVER written for this call shape at all, so Ф.2(a)'s unified
+                            // emit-side HOF-binding registration (reading
+                            // `resolved_types[decl.value.id]`) had nothing to read for
+                            // exactly the forms it targets. Donating the producer here
+                            // (not emit) per compiler-conventions §0: the checker already
+                            // knows `fname`'s scope type; peeling it through a newtype/
+                            // alias name to find the declared `Func` shape is the SAME
+                            // call-through `resolve_fn_typeref` performs at emit-time —
+                            // no new inference, just not thrown away.
+                            if let Some(TypeRef::Func { return_type, .. }) =
+                                self.resolve_fn_newtype_typeref(&var_ty)
+                            {
+                                let ret = return_type.map(|b| *b)
+                                    .unwrap_or_else(|| TypeRef::Unit(e.span));
+                                if !typeref_mentions_any(&ret, gs) {
+                                    let rt = ResolvedType::from_type_ref(&ret);
+                                    self.resolved_types_buf.borrow_mut().insert(e.id, rt);
                                 }
                             }
                         }
@@ -16286,6 +16343,31 @@ impl<'a> TypeCheckCtx<'a> {
                 if expr.id.is_set() {
                     if let Some(rt) = self.resolved_types_buf.borrow().get(&expr.id) {
                         return Self::resolved_to_typeref(rt, expr.span);
+                    }
+                }
+                // [Plan 228 Ф.2(a) producer, реестр 221.1 №94-v2] Bare reference
+                // to a free fn BY NAME, not a call (`ro m Mid = identity_mw`) —
+                // the sixth legacy arm this plan targets (`fn_returns_fn_sig`'s
+                // Ident-RHS propagation, emit_c.rs) exists because `m`'s value
+                // literally IS `identity_mw` — a first-class fn value whose type
+                // is `identity_mw`'s OWN declared `Func` shape. Single
+                // non-generic, receiver-less overload only (same single-
+                // candidate discipline as the free-fn-CALL producer, `f1_expr_
+                // inner`'s Ident/Call arm ~8925) — an ambiguous or generic name
+                // is honestly left unresolved (`None`) rather than guessing.
+                if let Some(overloads) = self.sig.fn_decls.get(name) {
+                    let candidates: Vec<&&FnDecl> = overloads.iter()
+                        .filter(|f| f.receiver.is_none() && f.generics.is_empty())
+                        .collect();
+                    if let [f] = candidates.as_slice() {
+                        let params: Vec<TypeRef> = f.params.iter().map(|p| p.ty.clone()).collect();
+                        return Some(TypeRef::Func {
+                            params,
+                            effects: f.effects.clone(),
+                            return_type: f.return_type.clone().map(Box::new),
+                            extern_abi: None,
+                            span: expr.span,
+                        });
                     }
                 }
                 // Last resort: if name = a unit-variant of a known sum type, infer as that type.
