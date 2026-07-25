@@ -17,6 +17,9 @@ unset NOVA_STD_PATH 2>/dev/null || true
 
 fail() { echo "GATE FAIL: $1" >&2; exit 1; }
 
+echo "== gate: arch-ratchet =="
+bash "$ROOT/scripts/arch-ratchet.sh" || fail "arch-ratchet (emit_c growth)"
+
 echo "== gate: cargo build --release =="
 ( cd "$ROOT/nova-cli" && cargo build --release ) || fail "cargo build"
 NOVA="$ROOT/nova-cli/target/release/nova.exe"
