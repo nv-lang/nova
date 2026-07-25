@@ -7196,6 +7196,132 @@ pre-existing erased-base-body лимит, который ЛОМАЕТ и flat `f
 `Vec[Vec[T]] @flatten` (как все stdlib), работает полностью; slice-form nested-receiver
 binding доказан отдельно (`@count_all`/`@first_row`).
 
+### AMEND (2026-07-25, Plan 221.1 №88 `[M-structured-receiver-generic-not-enforced]`): энфорс + юзер-carriers + `[]`-алиас в слотах + запрет затенения
+
+Четыре дельты поверх предыдущего AMEND, закрывающие дыры карты владельца
+(вопросы `Type[[]T]`/`Type[Vec[T]]`/двусмысленность T, 2026-07-24).
+
+**(i) Call-site энфорс формы (главная звучность).** До этого AMEND метод со
+структурным receiver'ом (`fn Vec[Vec[T]] @flatten`, юзер-carrier ниже) вызванный
+на НЕ-унифицирующемся ресивере (`Vec[int].flatten()`) не диагностировался НИГДЕ
+— либо случайный CC-FAIL глубоко в codegen, либо (для receiver'а без вообще
+никаких typevar'ов) **молчание**: verified-проба — `OneBox[int].first()`, где
+`@first` объявлен `fn OneBox[Vec[T]] @first() -> T`, проходил `nova check` И
+`nova build` без единой диагностики; собранный бинарь на `print(b.first())`
+печатал **ничего** (не панику, не мусор — тихий no-op где-то в codegen).
+Теперь: на call-site метода со структурным receiver'ом (`Receiver.receiver_ty`
+— Plan 153.5/D263 слот) чекер прогоняет **ту же** depth-agnostic структурную
+унификацию, что мономорфизатор уже использует для биндинга (`build_recv_subst`
+→ `const_fn_trampoline::unify_type`, НЕ shallow `unify_coerce_receiver`
+Plan 214.1 — тот намеренно one-level, R4 «без рекурсии вглубь», непригоден для
+многоуровневого mismatch). Bindable typevar-имена — объединение
+`receiver.generics` (carrier-декларация, покрывает и flat, и (ii) nested-
+harvest) И `fn.generics` (`fn[T]`-префикс/method-level — иначе ЛОЖНО отвергло
+бы ВСЕ 7 `fn[T] []T @method` методов vec.nv, verified regression class).
+Несовпадение → `E_RECV_SHAPE_MISMATCH` («method `X` requires receiver shape
+`Y`, got `Z`»). **Единственный кандидат** (по `(receiver-база, имя-метода)`) —
+best-effort posture, зеркалит `check_method_call_bounds` (Plan 101.2): ≥2
+overload'ов по arity → пропуск (не второе гадание за резолвом overload'а, а
+исключительно форма ОДНОЗНАЧНОГО кандидата).
+
+**(ii) Юзер-carriers легальны.** 153.5-механика (harvest + depth-agnostic
+структурная унификация) НЕ Vec-специфична — верифицировано: `fn
+OneBox[Vec[T]] @first() -> T => @v[0]` (произвольный юзер-тип `OneBox[T]` как
+внешний carrier, БЕЗ `fn[T]`-префикса — по доктрине carrier-скобки САМИ есть
+декларация, `fn Vec[Vec[T]] @flatten`-идиома) работает без единой правки
+codegen/mono — parser уже строил `receiver_ty` depth-agnostic для ЛЮБОГО
+именованного carrier'а, не только `Vec`. `fn[T] OneBox[Vec[T]] @first()`
+(С префиксом) корректно отвергается `E_DUPLICATE_GENERIC_DECL` — carrier уже
+декларирует `T`, префикс дублирует; это ОЖИДАЕМОЕ поведение, не баг. Известное
+ортогональное ограничение (verified, вне scope): мономорф юзер-carrier'а
+(в отличие от std-шного `Vec[Vec[T]]`) CC-FAIL'ит на НЕ-`int` `T` (напр.
+`OneBox[Vec[str]]` → `returning 'Nova_Vec____nova_str *' from a function with
+incompatible result type 'nova_str'`) — codegen-гэп для generic-value-типов
+с вложенным generic-аргументом, отдельный от 88-объёма (чекер/грамматика).
+Также verified отдельно, вне 88-объёма: синтезированный `.new()`-конструктор
+для generic value-типа с вложенным `Vec`-аргументом (`OneBox[Vec[int]].new(v:
+...)`) резолвится в НЕСВЯЗАННЫЙ C-символ (`Nova_EmbeddedDir_static_new`) —
+воспроизводится БЕЗ единого метода на типе; обход — anon-литерал + let-
+аннотация (прецедент d277, `OneBox[Vec[int]] = { v: ... }`).
+
+**(iii) `[]`-алиас в carrier-слотах (D239).** Грамматика раньше отвергала
+`OneBox[[]T]`/`Vec[[]u8]` («expected identifier, got `[`») — carrier-слот
+парсился ТОЛЬКО через `parse_ident`/`Ident[`-nested-detect, слот, начинающийся
+с `[`, не имел ветки. Новая ветка в `parse_generic_decl_params_inner`
+(`in_carrier_position`) парсит слот, начинающийся с `[`, через `parse_type`
+(годится `[]T`, `[][]T`, …), затем **канонизует** результат в `Vec[...]`-форму
+(общий хелпер `const_fn_trampoline::canonicalize_array_to_vec`, рекурсивный,
+любая глубина) — так и flat, и nested carrier-слоты хранят ОДНУ каноническую
+форму, независимо от того, какой синоним D239 автор написал. Тот же хелпер
+применяется к call-site'овому инферренному типу receiver'а перед унификацией
+(i) — без этого `ro v Vec[[]u8] = ...` (обычная type-annotation, идущая через
+ОБЩИЙ парсер типов, не через carrier-слот-канонизацию) породила бы ложный
+`E_RECV_SHAPE_MISMATCH` на чисто косметическом расхождении спеллинга.
+`OneBox[[]T] @m()` теперь ≡ `OneBox[Vec[T]] @m()` byte-for-byte структурно.
+
+**(iv) Запрет затенения (решение владельца).** Имя в receiver-carrier-скобках,
+СОВПАДАЮЩЕЕ с уже объявленным реальным типом ИЛИ примитивом (`int`/`str`/…),
+двусмысленно: это опечатка typevar'а, случайно попавшая на имя реального типа,
+или намеренная **специализация** конкретным типом? Специализация НЕ
+поддерживается (может стать фичей позже, явно) — раньше это молча принималось
+(имя не typevar-формы — короткое uppercase, `ident_is_typevar` — не харвестится
+как generic, остаётся литеральной ссылкой на тип) И **не проверялось вообще**
+— метод регистрировался под `method_table[base]` и (до (i)) диспатчился на
+ЛЮБОЙ ресивер той же базы. Проба владельца: `type Wid` + `fn Vec[Vec[Wid]]
+@wsum` — раньше молча компилировался (мусор), теперь `E_RECV_GENERIC_SHADOWS_TYPE`
+(«receiver generic param `Wid` затеняет объявленный тип `Wid` — переименуй
+параметр»). Примитивы отвергаются той же нормой (`fn OneBox[Vec[int]] @m()` —
+тоже `E_RECV_GENERIC_SHADOWS_TYPE`).
+
+**Область (iv) — ТОЛЬКО nested-слоты (depth ≥ 2 от корня receiver'а),
+намеренно НЕ «любая глубина».** Verified regression при первой (broader)
+реализации: `std/src/encoding/serde/serde.nv` — `fn HashMap[str, V Serialize]
+@serialize[...]` — **прямой (depth-1) carrier-слот** `str`, намеренная
+частичная конкретная специализация ключа (K = str буквально, V остаётся
+generic) — production-код, давно и молча так работающий (flat bare-ident
+carrier-слот харвестится **безусловно**, без `ident_is_typevar`-гейта, парсер
+`parse_generic_decl_params_inner`, non-nested ветка — отдельная, СТАРШАЯ,
+известная permissive-механика, НЕ предмет этого окна). depth-1 remains
+permissive БЕЗ проверки (out-of-scope находка, не тронуто; вероятно свой
+маркер — см. отчёт окна). Аналогично `[]`-slice-sugar top-level ресивер
+(`fn []u8 @to_str_unchecked`, std/runtime/string) исключён из (iv) целиком —
+отдельная, уже звучная (свои `E_UNDECLARED_TYPEVAR_IN_RECEIVER`/
+`E_BARE_TYPEVAR_NEEDS_PREFIX` гейты) механика, не carrier-форма.
+
+**№91 `[M-nested-vec-concrete-extension-unresolved]` — честный вердикт, НЕ
+закрыт полностью.** Slice-sugar top-level форма (`fn [][]u8 @m()`, конкретный
+элемент `u8`) резолвится и работает end-to-end (build+run verified) — но эта
+форма НЕ трогалась этим окном (отдельный, уже звучный путь), похоже была
+рабочей и раньше. Carrier-форма (`fn Vec[[]u8] @m()` ≡ `Vec[Vec[u8]]`)
+**теперь честно отвергается** правилом (iv) (`u8` — примитив, nested, depth
+2) — специализация конкретным примитивом не поддерживается по явному решению
+владельца («Примитивы… тоже отвергать»), так что №91's carrier-спеллинг НЕ
+становится вызываемым, а получает громкую, осмысленную ошибку взамен прежнего
+непрозрачного `E7320`. Если владелец хочет carrier-спеллинг ТОЖЕ рабочим —
+это отдельная фича (явная поддержка concrete-специализации), не входит в
+текущую доктрину «специализация НЕ поддерживается».
+
+**`#coerce`-заглушка (`E_COERCE_GENERIC_PATTERN_UNSUPPORTED`, p2141f) —
+СОХРАНЕНА, не снята.** Причина: `#coerce`'s собственный унификатор
+(`unify_coerce_receiver`, Plan 214.1) остаётся ПРИНЦИПИАЛЬНО shallow (R4 «без
+рекурсии вглубь» — design-инвариант того окна, не забытая недоделка) и НЕ
+переиспользует (i)'s глубокий `unify_type` — эти два окна намеренно не
+слиты. Снятие заглушки потребовало бы ОТДЕЛЬНОГО решения — либо углубить
+`#coerce`'s унификатор (рискует R4-инвариантами того плана), либо провести
+`#coerce`-путь через (i)'s механизм (архитектурная работа вне 88-объёма).
+Regression-verified: `spec_tests/conformance/neg/
+d429_1_generic_coerce_structured_receiver_neg.nv` по-прежнему падает тем же
+кодом байт-в-байт.
+
+**Гейт:** `nova check std/src` 142/27/1040 (байт-идентично, без
+`NOVA_STD_PATH`); `nova test std/src/collections/vec` — зелёный (restructure/
+flatten живут там, один агрегированный CU-отчёт per test-conventions.md);
+новые фикстуры `spec_tests/conformance/standalone/p88_structured_receiver_pos.nv`
++ `spec_tests/conformance/neg/p88_recv_shape_mismatch_neg.nv` +
+`spec_tests/conformance/neg/p88_recv_generic_shadows_type_neg.nv` +
+`spec_tests/conformance/neg/p88_recv_generic_shadows_primitive_neg.nv` —
+`nova test` дословно PASS на все четыре.
+
 ### Backward-compat
 
 - **100% преserve** для existing `fn Option[T] @map[U]`, `fn HashMap[K, V] @keys`,

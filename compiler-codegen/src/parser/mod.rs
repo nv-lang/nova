@@ -7082,11 +7082,48 @@ impl Parser {
             // `Ident[` (ident immediately followed by `[`) is a nested generic
             // type (`Vec[T]`, `Vec[Vec[T]]`, …), NOT a bare typevar-with-bound.
             // Parse the whole slot as a type and harvest its free typevars.
+            // Plan 221.1 №88 (iii) / D239: a carrier slot spelled with `[]`-sugar
+            // (`OneBox[[]T]`, `Vec[[]u8]`) — the slot itself starts with `[`
+            // rather than `Ident[`. Same free-typevar harvest as the nested
+            // `Ident[` branch below, then D239-canonicalize (`[]T` ≡ `Vec[T]`)
+            // so the stored slot always matches the shape `unify_type`/call-site
+            // concrete receiver types use (Vec instances always infer as
+            // `Named{Vec,...}`, never `TypeRef::Array` — see `f3_check_member_ctx`
+            // requiring `TypeRef::Named`). Without canonicalization the stored
+            // `Array(...)` slot would never structurally unify against a real
+            // call-site `Vec[...]` receiver, silently breaking dispatch.
+            if in_carrier_position && matches!(self.peek().kind, TokenKind::LBracket) {
+                let slot_ty_raw = self.parse_type()?;
+                let slot_ty = Self::canonicalize_slice_alias(slot_ty_raw);
+                let mut tvars: Vec<(String, Span)> = Vec::new();
+                Self::collect_free_typevars(&slot_ty, &mut tvars);
+                for (tv, tv_span) in tvars {
+                    if !params.iter().any(|p: &GenericParam| p.name == tv) {
+                        params.push(GenericParam {
+                            name: tv,
+                            bounds: Vec::new(),
+                            default: None,
+                            consume_bound: false,
+                            span: tv_span,
+                        });
+                    }
+                }
+                slot_types.push(slot_ty);
+                if self.eat(&TokenKind::Comma).is_none() {
+                    break;
+                }
+                self.skip_newlines();
+                continue;
+            }
             if in_carrier_position
                 && matches!(self.peek().kind, TokenKind::Ident(_))
                 && matches!(self.peek_at(1).kind, TokenKind::LBracket)
             {
-                let slot_ty = self.parse_type()?;
+                let slot_ty_raw = self.parse_type()?;
+                // Plan 221.1 №88 (iii) / D239: canonicalize any `[]`-sugar
+                // appearing NESTED inside this slot too (`Vec[[]T]`), same
+                // rationale as the sibling branch above.
+                let slot_ty = Self::canonicalize_slice_alias(slot_ty_raw);
                 let mut tvars: Vec<(String, Span)> = Vec::new();
                 Self::collect_free_typevars(&slot_ty, &mut tvars);
                 for (tv, tv_span) in tvars {
@@ -7262,6 +7299,19 @@ impl Parser {
             | TypeRef::Ref(inner, _) => Self::collect_free_typevars(inner, out),
             TypeRef::Protocol { .. } | TypeRef::Unit(_) => {}
         }
+    }
+
+    /// Plan 221.1 №88 (iii) / [D239](../../spec/decisions/02-types.md#d239--t--синтаксический-псевдоним-vect):
+    /// `[]T` is a syntactic alias for `Vec[T]` — canonicalize a CARRIER SLOT
+    /// so `OneBox[[]T]`/`Vec[[]u8]` store the SAME `receiver_ty` shape as
+    /// `OneBox[Vec[T]]`/`Vec[Vec[u8]]`. Thin wrapper over the SHARED
+    /// canonicalizer (`const_fn_trampoline::canonicalize_array_to_vec`) — the
+    /// checker's call-site shape enforcement (Plan 221.1 №88 (i),
+    /// `check_receiver_shape_match`) canonicalizes the CALL-SITE'S inferred
+    /// type with the exact same function before unifying, so both sides MUST
+    /// use one implementation or the two would silently drift.
+    fn canonicalize_slice_alias(ty: TypeRef) -> TypeRef {
+        crate::const_fn_trampoline::canonicalize_array_to_vec(&ty)
     }
 
     /// Plan 153.5 (D263): for a slice-spelled receiver type `Array(Array(...

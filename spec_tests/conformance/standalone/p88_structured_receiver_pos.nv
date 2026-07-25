@@ -1,0 +1,50 @@
+// Plan 221.1 №88 [M-structured-receiver-generic-not-enforced]: structural
+// generic-receiver pos suite — (ii) user-named carriers (not just Vec) bind
+// via the SAME depth-agnostic structural unification Plan 153.5 already uses
+// for `Vec[Vec[T]]`/`[][]T`; (iii) a `[]`-prefixed carrier SLOT (`OneBox[[]T]`)
+// is a D239 alias for `OneBox[Vec[T]]` and behaves identically; (i)'s
+// enforcement (see neg/p88_recv_shape_mismatch_neg.nv) does not reject a
+// CORRECTLY-shaped call site.
+//
+// module = standalone (own runtime `test` blocks, mirrors
+// spec_tests/conformance/standalone/d429_1_generic_coerce_pos.nv precedent).
+//
+// T kept to `int` throughout — a non-int T on a USER carrier type (as
+// opposed to std's own `Vec[Vec[T]]` @flatten, which works with any T)
+// CC-FAILs codegen (verified while writing this fixture: `P88OneBox[Vec[str]]`
+// → "returning 'Nova_Vec____nova_str *' from a function with incompatible
+// result type 'nova_str'") — a pre-existing, OUT-OF-SCOPE mono/codegen gap
+// for user-carrier generic receivers, unrelated to (i)/(ii)/(iii)/(iv)'s
+// checker/grammar-only scope. Noted as smежное in the window report.
+module standalone.p88_structured_receiver_pos
+
+type P88OneBox[T] value { ro v T }
+
+// (ii) user-named carrier (NOT Vec/HashMap/Option — a fresh user type),
+// declared WITHOUT `fn[T]` prefix (doctrine: carrier brackets themselves are
+// the declaration, per 153.5 harvest doctrine — same idiom `fn Vec[Vec[T]]
+// @flatten` uses in std/src/collections/vec/restructure.nv).
+fn P88OneBox[Vec[T]] @first() -> ro T => @v[0]
+
+// (iii) D239 alias in a carrier slot: `[]T` ≡ `Vec[T]` — same shape as
+// `@first` above, spelled with slice-sugar instead of the `Vec[T]` carrier.
+fn P88OneBox[[]T] @last() -> ro T {
+    ro n = @v.len()
+    return @v[n - 1]
+}
+
+test "(ii) user-carrier structural receiver: P88OneBox[Vec[T]] binds T and dispatches" {
+    ro b P88OneBox[Vec[int]] = { v: Vec[int].of(10, 20, 30) }
+    assert(b.first() == 10)
+}
+
+test "(iii) []T carrier-slot alias behaves identically to Vec[T] spelling (D239)" {
+    ro b P88OneBox[Vec[int]] = { v: Vec[int].of(10, 20, 30) }
+    assert(b.last() == 30)
+}
+
+test "(i) enforcement does not reject a correctly-shaped call site" {
+    ro b P88OneBox[Vec[int]] = { v: Vec[int].of(7, 8, 9) }
+    assert(b.first() == 7)
+    assert(b.last() == 9)
+}

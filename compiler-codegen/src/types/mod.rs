@@ -5707,6 +5707,75 @@ impl<'a> TypeCheckCtx<'a> {
                     ));
                 }
             }
+            // Plan 221.1 №88 (iv) [M-structured-receiver-generic-not-enforced]:
+            // ЗАПРЕТ ЗАТЕНЕНИЯ (owner decision) — a receiver CARRIER-BRACKET
+            // slot (no `fn[T]` prefix; declared by APPEARANCE per (ii)'s
+            // doctrine, `fn Vec[Vec[T]] @flatten` style) whose name COINCIDES
+            // with an already-declared real type (`self.types`) or a
+            // primitive scalar name is ambiguous: is `Wid` meant as a fresh
+            // typevar that happens to collide, or a deliberate concrete
+            // specialization (`fn Vec[Vec[Wid]] @wsum` binding NOTHING,
+            // silently registering under the SAME `method_table["Vec"]` key
+            // as every other Vec-shaped receiver)? Specialization by concrete
+            // type is NOT supported (may become a feature later) — reject
+            // loudly instead of accepting it as an unenforced no-op that
+            // dispatches on ANY `Vec[...]` receiver at the call site.
+            //
+            // Walks EVERY leaf slot of `r.receiver_ty` (bare single-segment
+            // `Named` with empty generics — a "slot" position, not a
+            // container name like `Vec`/`OneBox` itself), at any nesting
+            // depth, so `fn Vec[Vec[Wid]] @wsum` is caught even though `Wid`
+            // (not typevar-shaped: >2 chars) was never harvested into
+            // `r.generics` by the parser's `ident_is_typevar` heuristic —
+            // parser/mod.rs's `collect_free_typevars` deliberately SKIPS
+            // non-typevar-shaped names (so a genuine nested type reference
+            // like `Vec[Vec[int]]`'s "int" isn't mis-harvested as a param);
+            // this checker-side walk has no such gate — EVERY leaf is a
+            // candidate for the collision check, harvested-as-generic or not.
+            //
+            // Skip names already in `fd.generics` (the `fn[T]`-PREFIX set) —
+            // those are B4's turf (`E_PREFIX_SHADOWS_NAMED_TYPE` just above);
+            // this check is the carrier-bracket-only counterpart.
+            // Named-carrier receivers ONLY (`Vec[...]`, `OneBox[...]`) — the
+            // top-level SLICE-sugar receiver (`fn[T] [][]T @m`, `type_name`
+            // synthesized as `"[]T"`/`"[][]T"`) is a SEPARATE, already-sound
+            // mechanism (its own `E_UNDECLARED_TYPEVAR_IN_RECEIVER`/
+            // `E_BARE_TYPEVAR_NEEDS_PREFIX` gates just above already narrow
+            // typevar-treatment to short-uppercase names ONLY) — a CONCRETE
+            // slice element (`fn []u8 @to_str_unchecked`, std/runtime/string)
+            // is an intentional, unambiguous, already-relied-upon concrete
+            // receiver, not a shadow.
+            if !r.type_name.starts_with("[]") {
+                if let Some(rty) = &r.receiver_ty {
+                let fd_generic_names: HashSet<&str> =
+                    fd.generics.iter().map(|g| g.name.as_str()).collect();
+                let mut leaves: Vec<(String, Span)> = Vec::new();
+                Self::collect_receiver_carrier_slot_leaves(rty, 0, &mut leaves);
+                let mut reported: HashSet<String> = HashSet::new();
+                for (leaf_name, leaf_span) in leaves {
+                    if fd_generic_names.contains(leaf_name.as_str()) { continue; }
+                    if !reported.insert(leaf_name.clone()) { continue; }
+                    let is_shadow = self.types.contains_key(&leaf_name)
+                        || Self::is_primitive_scalar_type_name(&leaf_name);
+                    if is_shadow {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "[E_RECV_GENERIC_SHADOWS_TYPE] receiver generic param \
+                                 `{leaf}` затеняет объявленный тип `{leaf}` — переименуй \
+                                 параметр (Plan 221.1 №88, доктрина владельца: \
+                                 специализация receiver'а конкретным типом НЕ \
+                                 поддерживается). Если `{leaf}` — реальный тип, дай \
+                                 параметру другое имя (`fn {rn}[…{leaf}2…] @{m}(...)`); \
+                                 если это опечатка typevar'а — используй короткое \
+                                 uppercase-имя (`T`/`U`/`K`/`V`).",
+                                leaf = leaf_name, rn = r.type_name, m = fd.name,
+                            ),
+                            leaf_span,
+                        ));
+                    }
+                }
+                }
+            }
             // Plan 101.1 B3 (Ф.2 E_DUPLICATE_GENERIC_DECL):
             // Detect `fn[K, V] HashMap[K, V] @method` — generics в `fn[…]`
             // дублируют carrier-brackets `Name[K, V]`. Удалите fn-prefix
@@ -6580,6 +6649,86 @@ impl<'a> TypeCheckCtx<'a> {
             | TypeRef::Uninit(inner, _)
             | TypeRef::Ref(inner, _) => Self::collect_named_idents(inner, out),
         }
+    }
+
+    /// Plan 221.1 №88 (iv): collect every "slot leaf" of a receiver's
+    /// structured type (`r.receiver_ty`) — a bare single-segment `Named` with
+    /// EMPTY generics — found at NESTING DEPTH ≥ 2 (i.e. reached only by
+    /// descending into at least one INNER container slot: `Vec[Vec[Wid]]`'s
+    /// `Wid`, not `HashMap[str, V]`'s direct `str`). A container position
+    /// (`Named` with NONEMPTY generics, e.g. the `Vec`/`OneBox` in
+    /// `Vec[Vec[T]]` / `OneBox[Vec[T]]`) is never itself reported — only
+    /// descended into.
+    ///
+    /// **Depth ≥ 2 only, deliberately — NOT "any depth"**: a DIRECT
+    /// (depth-1) carrier slot already has an established, RELIED-UPON
+    /// permissive meaning distinct from a nested one — verified regression
+    /// while implementing this check: `std/src/encoding/serde/serde.nv`
+    /// declares `fn HashMap[str, V Serialize] @serialize[...]` — a direct
+    /// slot named `str` (a real primitive!) intentionally partial-specializes
+    /// the KEY type while leaving `V` generic. The parser's OWN carrier-slot
+    /// harvest already treats depth-1 and depth-2+ differently (flat bare-ident
+    /// slots — `parse_generic_decl_params_inner`'s non-nested branch — harvest
+    /// UNCONDITIONALLY regardless of name shape; a NESTED slot — `Ident[`
+    /// branch — only harvests typevar-SHAPED names, Plan 153.5's
+    /// `ident_is_typevar` gate). The map's own probe for this bug is
+    /// consistently nested (`Vec[Vec[Wid]]`, depth 2) — this walk mirrors that
+    /// exact scope. A depth-1 name colliding with a real type is a SEPARATE,
+    /// pre-existing, out-of-scope permissiveness (noted, not touched here —
+    /// see commit message / report).
+    ///
+    /// Mirrors `parser::collect_free_typevars`'s traversal shape, but WITHOUT
+    /// its `ident_is_typevar` shape-gate: this walk exists specifically to
+    /// catch names that gate WOULD reject-as-a-typevar (real type names,
+    /// primitives) — see the E_RECV_GENERIC_SHADOWS_TYPE call site above.
+    fn collect_receiver_carrier_slot_leaves(ty: &TypeRef, depth: usize, out: &mut Vec<(String, Span)>) {
+        match ty {
+            TypeRef::Named { path, generics, span } => {
+                if path.len() == 1 && generics.is_empty() {
+                    if depth >= 2 {
+                        out.push((path[0].clone(), *span));
+                    }
+                } else {
+                    for g in generics {
+                        Self::collect_receiver_carrier_slot_leaves(g, depth + 1, out);
+                    }
+                }
+            }
+            TypeRef::Array(inner, _) | TypeRef::FixedArray(_, inner, _) => {
+                // D239 canonicalization (iii) already rewrites every `[]`-alias
+                // found inside a carrier slot into `Named{Vec,...}` at parse
+                // time, so `Array` should not normally survive into a carrier
+                // `receiver_ty` — kept defensively, depth pass-through (`[]`
+                // is transparent sugar, not itself a "container slot" level).
+                Self::collect_receiver_carrier_slot_leaves(inner, depth, out);
+            }
+            TypeRef::Tuple(items, _) => {
+                for it in items {
+                    Self::collect_receiver_carrier_slot_leaves(it, depth + 1, out);
+                }
+            }
+            TypeRef::Readonly(inner, _)
+            | TypeRef::Mut(inner, _)
+            | TypeRef::Uninit(inner, _)
+            | TypeRef::Pointer(inner, _)
+            | TypeRef::Ref(inner, _) => Self::collect_receiver_carrier_slot_leaves(inner, depth, out),
+            TypeRef::Func { .. } | TypeRef::Protocol { .. } | TypeRef::Unit(_) => {}
+        }
+    }
+
+    /// Plan 221.1 №88 (iv): primitive scalar type names — same set used
+    /// elsewhere for the "is this a bound-method unbound-receiver type name"
+    /// heuristic (`f3_check_member_ctx`'s `is_type_name` check). A receiver
+    /// carrier slot named `int`/`str`/… is ALSO a shadow (the doctrine bans
+    /// primitives too, not just user types — `self.types` never carries
+    /// primitives, so they need this separate check).
+    fn is_primitive_scalar_type_name(name: &str) -> bool {
+        matches!(
+            name,
+            "int" | "i8" | "i16" | "i32" | "i64"
+                | "u8" | "u16" | "u32" | "u64"
+                | "f32" | "f64" | "bool" | "char" | "str"
+        )
     }
 
     // --- Ф.2: walk тел (turbofish / as / is / let-аннотации) ------------
@@ -21831,6 +21980,16 @@ impl<'a> BoundCtx<'a> {
     fn walk_expr(&self, e: &Expr, scope: &mut HashMap<String, TypeRef>, errors: &mut Vec<Diagnostic>) {
         // Проверяем сам call перед рекурсией в args (порядок не важен).
         self.check_call_bounds(e, scope, errors);
+        // Plan 221.1 №88 (i): structural receiver shape enforcement
+        // (`Vec[int].flatten()` → E_RECV_SHAPE_MISMATCH). Own top-level hook
+        // (not folded into `check_call_bounds`'s Member-branch above, which
+        // `return`s early after `check_method_call_bounds` — bound-checking
+        // and shape-checking are independent concerns).
+        if let ExprKind::Call { func, .. } = &e.kind {
+            if let ExprKind::Member { obj, name: method_name } = &func.kind {
+                self.check_receiver_shape_match(obj, method_name, e.span, scope, errors);
+            }
+        }
         // Plan 46 (D102): argument binding diagnostics.
         self.check_call_argbind(e, scope, errors);
         // Plan 207 cmpxchg-lint волна B (D425 амендмент): compare_exchange(_weak)
@@ -22547,6 +22706,116 @@ impl<'a> BoundCtx<'a> {
                     &concrete_t, bound, &gp.name, method_name, span, errors,
                 );
             }
+        }
+    }
+
+    /// Plan 221.1 №88 (i) [M-structured-receiver-generic-not-enforced]:
+    /// call-site enforcement of a STRUCTURAL receiver shape (`fn Vec[Vec[T]]
+    /// @flatten`, `fn[T] [][]T @m`, (ii) user carriers `fn OneBox[Vec[T]]
+    /// @first`) — `Vec[int].flatten()` / `OneBox[int].first()` (receiver
+    /// does NOT structurally unify with the declared shape) must be an
+    /// honest checker error, not silent garbage. Verified probe (pre-fix):
+    /// `nova check`/`nova build` both PASS for `OneBox[int].first()` where
+    /// `@first` is `fn OneBox[Vec[T]] @first() -> T => @v[0]`; the built
+    /// binary's `print(b.first())` prints NOTHING at runtime (no honest
+    /// signal anywhere in the pipeline).
+    ///
+    /// Reuses the SAME depth-agnostic structural unifier `build_recv_subst`
+    /// already uses to bind a receiver typevar at mono/narrowing time
+    /// (`const_fn_trampoline::unify_type`, Plan 153.5) — NOT the shallow
+    /// `unify_coerce_receiver` (Plan 214.1, `#coerce`-only, R4 "без рекурсии
+    /// вглубь": binds a whole top-level slot, never recurses into it — wrong
+    /// tool here, a mismatch two levels deep must be caught, e.g.
+    /// `Vec[Vec[T]]` vs a call-site `Vec[int]`).
+    ///
+    /// **Best-effort / single-candidate-only** (mirrors `check_method_call_bounds`
+    /// right above): obj-type not resolvable, method not found, OR ≥2
+    /// overloads for this (receiver-base, method-name) pair → skip silently
+    /// (codegen/other paths own disambiguation there — this gate never
+    /// second-guesses an overload RESOLUTION, only a single unambiguous
+    /// candidate's shape). Only methods with a STRUCTURED receiver
+    /// (`receiver.receiver_ty.is_some()`) are in scope — a plain nominal
+    /// receiver (`fn Widget @method`) needs no shape check: its dispatch is
+    /// already exact by nominal type name via `method_table`.
+    fn check_receiver_shape_match(
+        &self,
+        obj: &Expr,
+        method_name: &str,
+        span: Span,
+        scope: &HashMap<String, TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        let Some(obj_ty) = Self::infer_arg_ty(obj, scope) else { return; };
+        // Peel ro/mut/uninit wrappers — mirrors `build_recv_subst`'s own peel
+        // loop; the DECLARED receiver shape never carries these.
+        let mut peeled = &obj_ty;
+        loop {
+            match peeled {
+                TypeRef::Readonly(i, _) | TypeRef::Mut(i, _) | TypeRef::Uninit(i, _) => peeled = i,
+                _ => break,
+            }
+        }
+        let TypeRef::Named { path, .. } = peeled else { return; };
+        let Some(base) = path.last() else { return; };
+        let Some(methods_for_recv) = self.sig.method_table.get(base) else { return; };
+        let Some(overloads) = methods_for_recv.get(method_name) else { return; };
+        let callee: &FnDecl = match overloads.as_slice() {
+            [single] => single,
+            _ => return, // ambiguous by arity — codegen/other paths resolve, not this gate
+        };
+        let Some(recv) = &callee.receiver else { return; };
+        if !matches!(recv.kind, ReceiverKind::Instance) { return; }
+        // No structured shape (`receiver_ty` — Plan 153.5) — plain nominal
+        // receiver, dispatch already exact by `method_table` base key alone.
+        let Some(decl_ty) = &recv.receiver_ty else { return; };
+        // Bindable typevar names: carrier-declared (`recv.generics`, covers
+        // BOTH flat `Vec[T]` and (ii) nested-harvested `Vec[Vec[T]]`/
+        // user-carrier slots) UNION `fn[T]`-prefix / method-level
+        // (`callee.generics`). A prefix-form receiver (`fn[T] []T @m`)
+        // carries its typevar ONLY in `callee.generics`, NOT `recv.generics`
+        // (parser/mod.rs — prefix generics prepended into `fn_generics`, never
+        // into the Receiver's own `.generics`); omitting this union would
+        // treat `T` as a FIXED CONCRETE name and false-positive on EVERY
+        // `fn[T]`-prefix method (vec.nv's 7 methods) — a verified regression
+        // class, not hypothetical.
+        let mut generic_names: HashSet<String> = HashSet::new();
+        for g in &recv.generics {
+            if let TypeRef::Named { path, generics, .. } = g {
+                if path.len() == 1 && generics.is_empty() {
+                    generic_names.insert(path[0].clone());
+                }
+            }
+        }
+        for g in &callee.generics {
+            generic_names.insert(g.name.clone());
+        }
+        // Plan 221.1 №88 (iii): canonicalize BOTH operands (D239, `[]T` ≡
+        // `Vec[T]`) before unifying — `decl_ty` is already canonical (the
+        // parser canonicalizes every carrier slot), but the call-site's
+        // OWN inferred type may not be: `[]u8` written as a nested generic
+        // ARG in an ordinary type annotation (`ro v Vec[[]u8] = …`) goes
+        // through the GENERAL type-ref parser, untouched by the carrier-slot
+        // canonicalization, and keeps the raw `Array(Named u8)` shape. Without
+        // re-canonicalizing here too, that cosmetic spelling difference alone
+        // would false-positive this diagnostic even though `Vec[[]u8]` IS
+        // `Vec[Vec[u8]]` (verified regression while implementing this check).
+        let decl_ty_canon = crate::const_fn_trampoline::canonicalize_array_to_vec(decl_ty);
+        let peeled_canon = crate::const_fn_trampoline::canonicalize_array_to_vec(peeled);
+        let mut subst: HashMap<String, TypeRef> = HashMap::new();
+        if crate::const_fn_trampoline::unify_type(&decl_ty_canon, &peeled_canon, &generic_names, &mut subst).is_err() {
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_RECV_SHAPE_MISMATCH] method `{method}` requires receiver shape \
+                     `{expected}`, got `{actual}` — the call-site receiver does not \
+                     structurally unify with the method's declared receiver (Plan 153.5 \
+                     structural receiver, D239 alias). Restructure the call-site value to \
+                     match the declared shape, or double-check this is the method you meant.",
+                    method = method_name,
+                    expected = typeref_display(&decl_ty_canon),
+                    actual = typeref_display(&peeled_canon),
+                ),
+                span,
+            ));
         }
     }
 

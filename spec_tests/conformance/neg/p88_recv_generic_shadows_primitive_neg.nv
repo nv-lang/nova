@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR E_RECV_GENERIC_SHADOWS_TYPE
+//
+// Plan 221.1 №88 (iv): the shadow-forbid rule ALSO rejects primitives, not
+// just user types — a nested carrier slot literally named `int`/`u8`/…
+// (e.g. a typo'd typevar that happened to land on a primitive name) gets the
+// SAME honest rejection as a user-type collision.
+module neg.p88_recv_generic_shadows_primitive_neg
+
+type P88PrimBox[T] value { ro v T }
+
+fn P88PrimBox[Vec[int]] @p88take() -> int => 0
+
+fn main() {
+    println("unreached")
+}

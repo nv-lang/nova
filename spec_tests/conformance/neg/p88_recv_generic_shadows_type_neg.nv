@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR E_RECV_GENERIC_SHADOWS_TYPE
+//
+// Plan 221.1 №88 (iv) [M-structured-receiver-generic-not-enforced]: owner
+// decision — a NESTED carrier-slot name that COINCIDES with an already-
+// declared real type (`type P88Wid`) is ambiguous (fresh typevar that
+// happens to collide, OR a deliberate concrete specialization?) and is NOT
+// supported — reject loudly instead of silently registering a no-op method
+// under `method_table["Vec"]` that would dispatch on ANY `Vec[...]`
+// receiver. Probe from the bug map: `fn Vec[Vec[Wid]] @wsum`.
+module neg.p88_recv_generic_shadows_type_neg
+
+type P88Wid value { n int }
+
+fn Vec[Vec[P88Wid]] @p88wsum() -> int => 0
+
+fn main() {
+    println("unreached")
+}
