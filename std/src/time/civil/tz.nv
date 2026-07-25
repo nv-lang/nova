@@ -17,12 +17,10 @@
 
 module time.civil
 
-
 /// Версия embedded curated-таблицы (D321 §tzdb: expose tzdb-version).
 /// Реальный TZif-файл (load_timezone) актуален версии OS-tzdata.
 #stable(since = "0.1")
 export fn tzdb_version() -> str => "nova-curated-2026a"
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Rule-based генераторы транзишенов
@@ -103,7 +101,6 @@ fn rules_australia_sydney() -> ZoneRules {
     }
     { transitions, offsets }
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // str @to_timezone — §1а-конверсия (embedded, чистая)

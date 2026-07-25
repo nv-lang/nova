@@ -48,7 +48,6 @@ module concurrency.cancellation
 // между Duration в Nova-side и int ms в runtime). Это отдельный bug
 // `[M-time-effect-schema-mismatch-sleep]` — следующая итерация.
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // race2[T] — два fiber'а соревнуются, first-result-wins
 // ──────────────────────────────────────────────────────────────────────────

@@ -11,6 +11,7 @@ module runtime.string
 import std.prelude.core.{Option, Some, None}
 import std.collections.vec.{Vec}
 import std.runtime.raw_mem.{RawMem}
+
 // `SplitIter`/`RSplitIter` (Plan 199): the TYPES + `#impl(Next[str])` live in
 // `std.collections.vec_iter` (a sibling opt-in module), NOT here — this
 // module is `#no_prelude` and links into every compiled program, so it must
@@ -20,7 +21,6 @@ import std.runtime.raw_mem.{RawMem}
 // this is a plain forward reference to a type name. See vec_iter.nv's header
 // for the full rationale.
 import std.collections.vec_iter.{SplitIter, RSplitIter}
-
 
 // True если строка начинается с prefix. Plan 152.1: byte-compare через
 // RawMem.compare (memcmp) вместо byte-loop. `@ptr`/`prefix.ptr` — priv `*ro u8`
@@ -86,7 +86,6 @@ export fn str @rfind(needle str) -> Option[int] {
     }
     None
 }
-
 
 // Split по separator — LAZY (Plan 199, Rust `str::split` parity). Returns a
 // `SplitIter` (zero-copy, zero-heap value iterator; see vec_iter.nv) instead

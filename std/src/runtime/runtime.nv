@@ -49,7 +49,6 @@
 
 module runtime.runtime
 
-
 // ─── runtime namespace ──────────────────────────────────────────
 
 /// ARM M:N runtime с целевым числом `n` worker threads.

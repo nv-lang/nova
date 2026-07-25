@@ -23,7 +23,6 @@ module runtime.string
 import std.prelude.core.{Option, Some, None}
 import std.collections.range.{Range}
 
-
 // Byte-range sub-view `s[r.start, r.end)`. The numeric bounds are a `requires`
 // CONTRACT (D257 / Plan 140.2): Z3-proven call-sites elide the check (zero-cost),
 // unproven ones are checked at runtime (and in release — enforce-with-elision,

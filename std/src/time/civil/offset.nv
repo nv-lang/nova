@@ -15,7 +15,6 @@
 
 module time.civil
 
-
 /// Фиксированный сдвиг от UTC в секундах (±18h) — value-record.
 ///
 /// Положительный — восточнее Гринвича (`+05:30` = 19800).
@@ -23,7 +22,6 @@ module time.civil
 export type Offset value {
     ro seconds i32
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Конструкторы
@@ -83,7 +81,6 @@ export fn Offset.from_hm(h i32, m i32) -> Result[Offset, DateError] {
 #stable(since = "0.6")
 export fn Offset.local() Time -> Offset => { seconds: Time.local_offset_sec() as i32 }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Компоненты
 // ──────────────────────────────────────────────────────────────────────────
@@ -102,7 +99,6 @@ export fn Offset @compare(other Offset) -> int =>
     if @seconds < other.seconds { -1 }
     else if @seconds > other.seconds { 1 }
     else { 0 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // ISO-форма: `Z` | `±HH:MM` | `±HH:MM:SS` (под-минутные — с секундами)

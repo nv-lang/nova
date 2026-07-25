@@ -4,7 +4,6 @@
 
 module std.io
 
-
 test "d322: copy is generic over Read+Write (effect-free conformers, Q15)" {
     mut d322_r = BytesReader.new("payload")
     mut d322_w = BytesWriter.new()

@@ -23,13 +23,11 @@ module encoding.ini
 
 import std.collections.hashmap.{HashMap}
 
-
 /// Errors при парсинге INI.
 #stable(since = "0.1")
 export type ParseIniError enum
     | InvalidLine { line int, content str }
     | UnclosedSection { line int }
-
 
 /// Parse INI document → `HashMap[section, HashMap[key, value]]`. Keys в дефолтной
 /// (без секции) хранятся под ключом `""`.
@@ -93,7 +91,6 @@ export fn Ini.parse(s str) Fail[ParseIniError] -> HashMap[str, HashMap[str, str]
     result
 }
 
-
 // Сериализация обратно в INI.
 /// Encode `HashMap[section, HashMap[key, value]]` → INI string. Default section
 /// (key `""`) выводится без `[section]` header'а сверху.
@@ -129,6 +126,5 @@ export fn Ini.encode(data HashMap[str, HashMap[str, str]]) -> str {
     }
     buf
 }
-
 
 // Тесты — см. peer-файл ini_test.nv (module encoding.ini_test).

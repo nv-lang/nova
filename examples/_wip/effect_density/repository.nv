@@ -10,7 +10,6 @@ module effect_density.repository
 
 import effect_density.domain.*
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Account repo
 // ──────────────────────────────────────────────────────────────────────────
@@ -48,7 +47,6 @@ export fn account_get(id AccountId) Db Cache Fail[RepoError] -> Account {
     }
 }
 
-
 // Обновление баланса. Используется внутри транзакции перевода.
 // Эффекты: Db (exec), Cache (инвалидация), Fail[DbError].
 // Logger тут НЕТ — лог делает service-слой, repository не должен решать
@@ -64,7 +62,6 @@ export fn account_update_balance(id AccountId, new_balance Money) Db Cache Fail[
     if affected == 0 { throw RepoError.NotFound }
     Cache.invalidate("account:${id}")
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Transfer repo
@@ -87,7 +84,6 @@ export fn transfer_insert(t Transfer) Db Fail[RepoError] -> () {
     ()
 }
 
-
 export fn transfer_update_status(id TransferId, status TransferStatus) Db Fail[RepoError] -> () {
     // D48 sql`...`-tag. D55 + D52: status и id — newtype'ы, явный
     // cast к underlying для coerce в SqlValue.
@@ -97,7 +93,6 @@ export fn transfer_update_status(id TransferId, status TransferStatus) Db Fail[R
     if affected == 0 { throw RepoError.NotFound }
 }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Helpers — private. Эффекты ВЫВОДЯТСЯ компилятором (D28).
 // ──────────────────────────────────────────────────────────────────────────
@@ -106,8 +101,8 @@ export fn transfer_update_status(id TransferId, status TransferStatus) Db Fail[R
 fn row_to_account(row DbRow) -> Result[Account, RepoError] => ...
 
 fn encode_account(a Account) -> bytes => ...
-fn decode_account(b bytes) -> Result[Account, RepoError] => ...
 
+fn decode_account(b bytes) -> Result[Account, RepoError] => ...
 
 // ──────────────────────────────────────────────────────────────────────────
 // Ошибки repository

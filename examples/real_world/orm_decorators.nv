@@ -26,7 +26,6 @@ module real_world.orm_decorators
 import std.data.sql.{Sql, Db, DbRow, DbError}
 import std.collections.vec_seq.{filter}
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // 1. Soft-delete decorator
 // ──────────────────────────────────────────────────────────────────────────
@@ -78,7 +77,6 @@ export fn with_soft_delete(real Effect[Db]) -> Effect[Db] => effect Db {
     in_transaction(b) -> T => real.in_transaction(b)
 }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // 2. Audit-trail decorator
 // ──────────────────────────────────────────────────────────────────────────
@@ -121,7 +119,6 @@ fn write_audit_entry(user_id u64, q Sql, affected int) Detach -> () {
     ()
 }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // 3. Read/write splitting (read-replica routing)
 // ──────────────────────────────────────────────────────────────────────────
@@ -146,7 +143,6 @@ export fn with_read_replica(primary Effect[Db], replica Effect[Db]) -> Effect[Db
         primary.in_transaction(|| with Db = primary { b() })
     }
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // 4. Композиция декораторов
@@ -196,7 +192,6 @@ export fn build_db(primary Effect[Db], replica Effect[Db], current_user_id u64) 
 //     }
 // }
 // ```
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Тесты — handler decorator behaviors
@@ -299,6 +294,7 @@ test "audit: каждый exec пишется в detach-задачу" {
 }
 
 // Композиционный тест: все три декоратора одновременно.
+
 test "compose: soft-delete + audit + read-replica" {
     mut primary_log []CapturedQuery = []
     mut replica_log []CapturedQuery = []

@@ -70,6 +70,7 @@ export type EnvVar value {
 /// The key of this variable.
 #stable(since = "0.1")
 export fn EnvVar @key() -> str => @key
+
 /// The value of this variable.
 #stable(since = "0.1")
 export fn EnvVar @value() -> str => @value

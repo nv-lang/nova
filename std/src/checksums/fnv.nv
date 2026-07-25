@@ -21,7 +21,6 @@
 
 module checksums.fnv
 
-
 // FNV-1a 32-bit
 const FNV1A_32_OFFSET u32 = 0x811C9DC5
 const FNV1A_32_PRIME  u32 = 0x01000193
@@ -29,7 +28,6 @@ const FNV1A_32_PRIME  u32 = 0x01000193
 // FNV-1a 64-bit
 const FNV1A_64_OFFSET u64 = 0xCBF29CE484222325
 const FNV1A_64_PRIME  u64 = 0x100000001B3
-
 
 /// FNV-1a 32-bit hash. Non-cryptographic. НЕ для passwords/integrity (см. SHA-256).
 ///
@@ -50,7 +48,6 @@ export fn Fnv.hash32(data []u8) -> u32 {
     h
 }
 
-
 /// FNV-1a 64-bit hash. Non-cryptographic, fast, low collision для small/medium inputs.
 #stable(since = "0.1")
 export fn Fnv.hash64(data []u8) -> u64 {
@@ -63,12 +60,10 @@ export fn Fnv.hash64(data []u8) -> u64 {
     h
 }
 
-
 /// Convenience: hash UTF-8 строки в u64.
 #stable(since = "0.1")
 export fn Fnv.hash_str(s str) -> u64 =>
     Fnv.hash64(s.bytes())
-
 
 /// Streaming state для FNV-1a 64-bit (incremental updates).
 #stable(since = "0.1")
@@ -76,12 +71,10 @@ export type Fnv64State {
     mut h u64    // internal accumulator
 }
 
-
 /// Init Fnv64State (offset basis по FNV spec).
 #stable(since = "0.1")
 export fn Fnv64.new() -> Fnv64State =>
     { h: FNV1A_64_OFFSET }
-
 
 /// Update state с очередным chunk байт.
 #stable(since = "0.1")
@@ -93,10 +86,8 @@ export fn Fnv64State mut @update(data []u8) -> () {
     }
 }
 
-
 /// Finalize — return final hash.
 #stable(since = "0.1")
 export fn Fnv64State @finalize() -> u64 => @h
-
 
 // Тесты — см. peer-файл fnv_test.nv (module checksums.fnv).

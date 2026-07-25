@@ -20,7 +20,6 @@ module data.semver_range
 // Plan 35 Ф.1: cross-file resolve. Version тип определён в semver.
 import std.data.semver
 
-
 /// Один comparator в version requirement (`>=1.2.3`, `<2.0.0`, `=1.0.0`).
 #stable(since = "0.1")
 export type Comparator enum
@@ -55,7 +54,6 @@ export type ParseRangeError enum
     | EmptyInput
     | InvalidComparator { value str }
     | InvalidVersion { value str }
-
 
 /// Parse version requirement expression.
 ///
@@ -138,7 +136,6 @@ fn parse_version(s str) -> Result[Version, ParseRangeError] =>
         Err(_) => Err(InvalidVersion { value: s })
     }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Matching
 // ──────────────────────────────────────────────────────────────────────────
@@ -167,6 +164,5 @@ fn comparator_matches(c Comparator, v Version) -> bool => match c {
     Lt(req) => v < req
     Le(req) => v <= req
 }
-
 
 // Тесты — см. peer-файл semver_range_test.nv (module data.semver_range_test).

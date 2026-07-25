@@ -34,7 +34,6 @@
 
 module identifiers.ulid
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Тип
 // ──────────────────────────────────────────────────────────────────────────
@@ -63,7 +62,6 @@ export type ParseUlidError enum
     | InvalidLength { actual int, expected int }
     | InvalidChar { position int, char char }
     | TimestampOverflow                              // > 2^48 ms (~10889 AD)
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Crockford's Base32 alphabet
@@ -141,7 +139,6 @@ fn decode_char(c char) -> Option[u8] {
     None
 }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Генерация
 // ──────────────────────────────────────────────────────────────────────────
@@ -168,7 +165,6 @@ export fn Ulid.new() Time Random Fail[ParseUlidError] -> Self { // [M-lint-findi
     { ts_part, rand_part }
 }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Геттеры
 // ──────────────────────────────────────────────────────────────────────────
@@ -177,7 +173,6 @@ export fn Ulid.new() Time Random Fail[ParseUlidError] -> Self { // [M-lint-findi
 #stable(since = "0.1")
 export fn Ulid @timestamp_ms() -> u64 =>
     @ts_part >> 16
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Сравнение (D46)
@@ -201,7 +196,6 @@ export fn Ulid @compare(other Ulid) -> int {
         0
     }
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Сериализация (D410)
@@ -285,7 +279,6 @@ export fn Ulid @to_str() -> str {
     buf
 }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Парсинг
 // ──────────────────────────────────────────────────────────────────────────
@@ -362,6 +355,5 @@ fn decode_char_or_throw(s str, pos int) Fail[ParseUlidError] -> u8 {
         None => throw InvalidLength { actual: s.byte_len(), expected: 26 }
     }
 }
-
 
 // Тесты — см. peer-файл ulid_test.nv (module identifiers.ulid_test).

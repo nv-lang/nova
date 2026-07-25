@@ -175,7 +175,6 @@ export fn Monotonic @checked_duration_since(other Monotonic) -> Option[Duration]
         }
     }
 
-
 // ── Compare (D183 amendment, Plan 91.8a.2 part 3) ──
 //
 // @compare single source — operators ==/!=/</<=/>/>= synthesized.
@@ -187,7 +186,6 @@ export fn Monotonic @compare(other Monotonic) -> int =>
     if @nanos < other.nanos { -1 }
     else if @nanos > other.nanos { 1 }
     else { 0 }
-
 
 // ── Display / Debug (Plan 175 Ф.3(d)/Ф.4, D237) ──
 //
@@ -212,7 +210,6 @@ export fn Monotonic @debug(mut f Fmt) -> () {
     f.write(@nanos.to_nanos().to_str())
     f.write(")")
 }
-
 
 // Note: NO `Monotonic.unix_seconds()`, `Monotonic.from_unix_*()`,
 // `Monotonic + Timestamp`, `Monotonic - Timestamp` overloads. D124 правило 3:

@@ -12,7 +12,6 @@ module data.sql
 
 import std.text          // []str @join(sep) — используется в sql() tag fn
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // SqlValue — closed sum для SQL-аргументов
 // ──────────────────────────────────────────────────────────────────────────
@@ -41,7 +40,6 @@ export type SqlValue enum
     | Bytes([]u8)
     | Null
 
-
 /// SQL fragment: template + args. Параметры передаются драйверу отдельно
 /// от template — **SQL injection невозможен**.
 ///
@@ -55,7 +53,6 @@ export type Sql {
     ro template str
     ro args     []SqlValue
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Sql composition — concat и with_filter
@@ -107,7 +104,6 @@ export fn Sql @with_filter(predicate Sql) -> Sql =>
         args:     [...@args, ...predicate.args],
     }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // `sql\`...\``-tag функция
 // ──────────────────────────────────────────────────────────────────────────
@@ -123,7 +119,6 @@ export fn Sql @with_filter(predicate Sql) -> Sql =>
 #stable(since = "0.1")
 export fn sql(parts []str, args []SqlValue) -> Sql =>
     { template: parts.join("?"), args }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Db effect — стандартный эффект для запросов
@@ -145,7 +140,6 @@ export type Db effect {
 /// Errors при выполнении DB operations.
 #stable(since = "0.1")
 export type DbError enum Connection | Constraint(str) | Timeout | Other(str)
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // DbRow — результат запроса
@@ -175,7 +169,6 @@ export fn DbRow @get(name str) -> Option[SqlValue] {
 /// Get column value by positional index.
 #stable(since = "0.1")
 export fn DbRow @at(i int) -> Option[SqlValue] => @values.get(i)
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // SqlValue extractors — typed accessors для парсинга строк
@@ -266,7 +259,6 @@ export fn DbRow @get_bool(name str) -> Result[bool, DbError] =>
         None    => Err(DbError.Constraint("missing column: ${name}"))
     }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // SqlBuilder — динамический WHERE через method chain
 // ──────────────────────────────────────────────────────────────────────────
@@ -348,6 +340,5 @@ export fn SqlBuilder @build() -> Sql {
         None    => body
     }
 }
-
 
 // Тесты — см. peer-файл sql_test.nv (module data.sql_test).

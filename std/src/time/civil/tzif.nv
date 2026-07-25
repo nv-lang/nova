@@ -17,7 +17,6 @@ module time.civil
 import std.fs.{Path, read}
 import std.os.{env}
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Byte-helpers (big-endian)
 // ──────────────────────────────────────────────────────────────────────────
@@ -41,7 +40,6 @@ fn be_i64(b []u8, pos int) -> i64 {
     ro lo = be_u32(b, pos + 4)
     hi * 4_294_967_296 + lo
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // TZif-парсер
@@ -135,7 +133,6 @@ export fn TimeZone.from_tzif(id str, bytes []u8) -> Result[TimeZone, DateError] 
     ro z IanaZone = { id, rules }
     Ok(Iana(z))
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // OS-tzdata-first загрузчик

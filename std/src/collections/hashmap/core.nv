@@ -104,7 +104,6 @@ export type HashMap[K Hash, V] priv {
     tombstones int
 }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Constructor / static
 // ──────────────────────────────────────────────────────────────────────────
@@ -137,7 +136,6 @@ export fn HashMap[K, V].new(cap int = 16) -> HashMap[K, V]
     }
 }
 
-
 /// Построить `HashMap` из массива пар `(key, value)`.
 ///
 /// # Examples
@@ -155,7 +153,6 @@ export fn HashMap[K, V].from(pairs [](K, V)) -> Self { // [M-lint-findings-stati
     }
     m
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Методы инстанса
@@ -201,7 +198,6 @@ export fn HashMap[K, V] mut @cap(n int) -> @
     }
 }
 
-
 /// Найти значение по ключу. Возвращает `Some(value)` или `None`.
 ///
 /// # Examples
@@ -221,12 +217,10 @@ export fn HashMap[K, V] @get(key K) -> Option[V] {
     }
 }
 
-
 /// Проверить наличие ключа без извлечения значения.
 #stable(since = "0.1")
 export fn HashMap[K, V] @contains(key K) -> bool =>
     if Some(_) = @get(key) { true } else { false }
-
 
 /// Вставить пару `(key, value)`.
 ///
@@ -267,7 +261,6 @@ export fn HashMap[K, V] mut @insert(key K, value V) -> Option[V] {
     }
 }
 
-
 /// Fast-path вставка без проверки дубликатов — только для map-literal desugar.
 ///
 /// Используется компилятором при десугаринге `[k: v, ...]` (D108).
@@ -286,7 +279,6 @@ export fn HashMap[K, V] mut @insert_new(key K, value V) {
     @buckets[idx] = Occupied { key, value }
     @count += 1
 }
-
 
 /// Создать независимую копию map (deep / рекурсивно поэлементно).
 ///
@@ -317,7 +309,6 @@ export fn HashMap[K Clone, V Clone] @clone() -> HashMap[K, V] {
     }
     copy
 }
-
 
 /// Order-independent структурное равенство — `true` iff обе мапы имеют одинаковую
 /// длину и каждая пара `(k, v)` из `self` присутствует в `other` с равным
@@ -355,7 +346,6 @@ export fn HashMap[K, V] @equal(other HashMap[K, V]) -> bool {
     true
 }
 
-
 /// Слить все пары из `other` в `self` (override semantics: existing keys перезаписываются).
 ///
 /// # Examples
@@ -373,7 +363,6 @@ export fn HashMap[K, V] mut @merge_from(other HashMap[K, V]) {
         @insert(k, v)
     }
 }
-
 
 /// Вернуть новый `HashMap` из пар, для которых `pred(k, v)` возвращает `true`.
 ///
@@ -393,7 +382,6 @@ export fn HashMap[K, V] @filter(pred fn(K, V) -> bool) -> HashMap[K, V] {
     out
 }
 
-
 // Plan 56 deferred: @map_values[U] / @map_keys[K2] требуют method-level
 // generic params на generic type (HashMap[K,V].@method[U] — два уровня
 // generic). Plan 48 mono pass partial — sentinel registered, но body emit
@@ -407,7 +395,6 @@ export fn HashMap[K, V] @filter(pred fn(K, V) -> bool) -> HashMap[K, V] {
 //           _ => {}
 //       }
 //   }
-
 
 /// Удалить пару по ключу. Возвращает `Some(value)` если ключ был, иначе `None`.
 ///
@@ -434,7 +421,6 @@ export fn HashMap[K, V] mut @remove(key K) -> Option[V] {
     }
 }
 
-
 /// Удалить все элементы. Не освобождает внутренний массив (capacity сохраняется).
 #stable(since = "0.1")
 export fn HashMap[K, V] mut @clear() {
@@ -445,7 +431,6 @@ export fn HashMap[K, V] mut @clear() {
     @tombstones = 0
 }
 
-
 // Plan 52.x / 55 / 56 — closure: @clone() / @merge_from() (объявлены
 // выше) РАБОТАЮТ. mono-pass corruption, мешавшая generic helper-methods
 // с pattern-match, устранена Plan 55.4 (save/restore current_fn_return_ty
@@ -454,7 +439,6 @@ export fn HashMap[K, V] mut @clear() {
 // idiomatic `for (k, v)`. Map-spread `[...m, k: v]` тоже работает
 // (Plan 55 spread-инфраструктура). Regression-покрытие:
 // nova_tests/map_literals/positive_clone_merge.nv + positive_spread.nv.
-
 
 /// Вернуть значение по ключу, или вставить `fallback()` и вернуть его.
 ///
@@ -475,7 +459,6 @@ export fn HashMap[K, V] mut @get_or_insert(key K, fallback fn() -> V) -> V {
     @insert(key, v)
     v
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Итерация
@@ -516,7 +499,6 @@ export fn HashMapIter[K, V] mut @next() -> Option[(K, V)] {
     None
 }
 
-
 /// Итератор только по ключам в произвольном порядке.
 #stable(since = "0.1")
 export fn HashMap[K, V] @keys() -> KeysIter[K, V] =>
@@ -530,7 +512,6 @@ export fn KeysIter[K, V] mut @next() -> Option[K] =>
         None         => None
     }
 
-
 /// Итератор только по значениям в произвольном порядке.
 #stable(since = "0.1")
 export fn HashMap[K, V] @values() -> ValuesIter[K, V] =>
@@ -543,7 +524,6 @@ export fn ValuesIter[K, V] mut @next() -> Option[V] =>
         Some((_, v)) => Some(v)
         None         => None
     }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Внутренние helpers
@@ -579,7 +559,6 @@ fn HashMap[K, V] @find_slot(key K) -> int {
     }
 }
 
-
 // HashMap.mut @maybe_grow() — пересоздать массив, если load factor
 // превышен или слишком много tombstones.
 // Load factor = 3/4 (75%): used * 4 < buckets * 3 → не растём.
@@ -598,7 +577,6 @@ fn HashMap[K, V] mut @maybe_grow() {
     @rehash(new_cap)
 }
 
-
 // HashMap.mut @rehash(new_cap) — пересчёт хешей в новом массиве.
 //
 // Используется при росте и при cleanup tombstones.
@@ -614,7 +592,6 @@ fn HashMap[K, V] mut @rehash(new_cap int) {
         }
     }
 }
-
 
 // new_buckets(cap) — создать массив Empty слотов длины cap.
 //
@@ -647,7 +624,6 @@ fn new_buckets[K, V](cap int) -> Vec[Slot[K, V]] { // [M-153.x-array-new-not-vec
     buckets
 }
 
-
 // next_pow2(n) — наименьшая степень двойки ≥ n.
 //
 // Чистая функция. При n ≤ 1 возвращает 1.
@@ -662,7 +638,6 @@ fn next_pow2(n int) -> int {
     x = x | (x >> 32)
     x + 1
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Что показывает эта реализация

@@ -46,6 +46,7 @@ test "M-187 spawn nested lexically inside another spawn (one supervised) compile
 // (эта волна закрыла CODEGEN-половину: CC-FAIL "use of undeclared
 // identifier _nova_scope_q_N"). >16 вложенно-порождённых детей на скоуп —
 // остаётся за маркером [M-173.0-R2].
+
 test "M-187 nested spawn: several inner spawns per outer spawn, all join" {
     mut total = AtomicInt.new(0)
     supervised {

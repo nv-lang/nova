@@ -3,6 +3,7 @@
 // zero value (a user-defined record, here) and no `default = "fn"` override
 // is a compile error with an actionable message, not a silent bad-codegen.
 module serde_neg.skip_no_default
+
 import std.encoding.serde.{Serialize, Deserialize, Serializer, Deserializer, SerError, DeError}
 
 #impl(Serialize + Deserialize)

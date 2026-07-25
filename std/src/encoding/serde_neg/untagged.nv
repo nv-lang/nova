@@ -3,6 +3,7 @@
 // ([M-180-untagged-codegen-mono]) — deriving an untagged sum perturbs
 // std/encoding/json codegen in the same CU. Rejected at compile time.
 module serde_neg.untagged
+
 import std.encoding.serde.{Serialize, Deserialize, Serializer, Deserializer, SerError, DeError}
 
 #serde(untagged)

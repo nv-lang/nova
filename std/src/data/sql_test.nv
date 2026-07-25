@@ -115,6 +115,7 @@ test "Sql.with_filter — handler-decorator use case" {
 // threads expected types through let/const/call-arg/array-element/tuple/
 // record-field positions, so no new pass/pipeline wiring was needed.
 // Spec: D55 amend, spec/decisions/02-types.md.
+
 test "sql tag bare-literal/var interpolation auto-coerces to SqlValue (D55 obvious-coercion)" {
     ro n = 1
     ro q = sql`UPDATE users SET name = ${"alice"} WHERE id = ${1} AND active = ${true} AND age = ${n}`
@@ -142,6 +143,7 @@ test "sql tag bare-literal/var interpolation auto-coerces to SqlValue (D55 obvio
 // ${n}`)` with `n` an `int` VARIABLE (not `${I(n as i64)}`) — the
 // tag-fn call-arg is nested one level deeper (method-chain receiver), and
 // the int→i64 widening must stay invisible.
+
 test "sql tag interpolation of int VARIABLE via method-chain builder (owner directive)" {
     ro n = 10
     ro q = Sql.builder(sql`SELECT * FROM users`).set_suffix(sql`LIMIT ${n}`).build()
@@ -156,6 +158,7 @@ test "sql tag interpolation of int VARIABLE via method-chain builder (owner dire
 // tag-templates — any explicit sum-typed binding with exactly one matching
 // unary variant (int→I, str→S), matching D55's existing record/map-literal
 // coercion positions (annotated `let`).
+
 test "D55 obvious sum-coercion at plain let-annotation (non-array, non-tag)" {
     ro v SqlValue = 42
     match v {
@@ -171,6 +174,7 @@ test "D55 obvious sum-coercion at plain let-annotation (non-array, non-tag)" {
 
 // D55 amend: array literal `[]SqlValue` element-position coercion works
 // stand-alone too (not only via the tag-template desugar path).
+
 test "D55 obvious sum-coercion at array-literal element position" {
     ro args []SqlValue = [1, "alice", true]
     assert(args.len() == 3)
@@ -191,6 +195,7 @@ test "D55 obvious sum-coercion at array-literal element position" {
 // Explicit `SqlValue.I(1)` must stay valid — the value is ALREADY the
 // target type, `try_wrap_leaf` only fires on a plain literal/`Ident` leaf
 // (a `Call` node is never a wrap trigger), so this is not double-wrapped.
+
 test "explicit SqlValue.I(...) interpolation still valid (no double-wrap)" {
     ro q = sql`WHERE id = ${SqlValue.I(1)}`
     match q.args[0] {

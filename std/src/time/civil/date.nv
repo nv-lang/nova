@@ -28,7 +28,6 @@ export type Date value {
     ro epoch_day i64
 }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Границы (Q4). NB: имена не MIN/MAX-консты — известный чекер-гэп
 // [M-175-type-const-max-shadows-builtin] (user type-const MAX/MIN шэдоуит
@@ -38,6 +37,7 @@ export type Date value {
 
 // −999999-01-01 (epoch_day) и 999999-12-31 — вычислены Hinnant-формулой.
 fn min_epoch_day() -> i64 => -365961662
+
 fn max_epoch_day() -> i64 => 364522971
 
 /// Минимальный год civil-диапазона.
@@ -57,7 +57,6 @@ export fn Date.min_value() -> Date => { epoch_day: min_epoch_day() }
 #stable(since = "0.1")
 export fn Date.max_value() -> Date => { epoch_day: max_epoch_day() }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Floor-division helpers (Hinnant-алгоритмы требуют floor-семантику;
 // `/`/`%` в C — truncated toward zero).
@@ -70,7 +69,6 @@ fn floor_div(a i64, b i64) -> i64 {
 }
 
 fn floor_mod(a i64, b i64) -> i64 => a - floor_div(a, b) * b
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Hinnant core: civil ↔ epoch-day
@@ -112,7 +110,6 @@ fn civil_from_days(z0 i64) -> (i64, i64, i64) {
     ro y = if m <= 2 { y0 + 1 } else { y0 }
     (y, m, d)
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Конструкторы (§21б: Type.new; validate-by-default → Result, Q6)
@@ -174,7 +171,6 @@ export fn Date.from_normalized(y i32, m i32, d i32) -> Date {
 
 // NB: `Date.today(tz TimeZone) Time -> Date` определяется в zoned.nv (Ф.3) —
 // зависит от TimeZone/ZonedDateTime; co-equal файлы модуля это допускают.
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Компоненты
@@ -240,7 +236,6 @@ export fn Date @days_in_month() -> int {
     days_in_month(y, m) as int
 }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // ISO-week (yyyy-Www-D). ⚠ week-based-year ≠ calendar-year у границ
 // Jan1/Dec31 (java.time `Y` vs `y` footgun): 2027-01-01 (Fri) принадлежит
@@ -267,7 +262,6 @@ export fn Date @iso_week_year() -> i32 {
     ro (wy, _, _) = civil_from_days(thursday)
     wy as i32
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Адъюстеры (java.time TemporalAdjusters-подмножество)
@@ -326,7 +320,6 @@ export fn Date @nth_weekday(n int, w Weekday) -> Result[Date, DateError] {
     Ok({ epoch_day: first.to_epoch_day() + offset })
 }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Разность дат (exact-day)
 // ──────────────────────────────────────────────────────────────────────────
@@ -335,7 +328,6 @@ export fn Date @nth_weekday(n int, w Weekday) -> Result[Date, DateError] {
 #stable(since = "0.1")
 export fn Date @days_until(other Date) -> int =>
     (other.to_epoch_day() - @epoch_day) as int
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Compare (D183: операторы синтезируются из @compare)
@@ -347,7 +339,6 @@ export fn Date @compare(other Date) -> int =>
     if @epoch_day < other.epoch_day { -1 }
     else if @epoch_day > other.epoch_day { 1 }
     else { 0 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Display (ISO-8601) — полный parse в format.nv (Ф.5)

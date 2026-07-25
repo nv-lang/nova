@@ -15,6 +15,7 @@ fn MAddr @serialize[S Serializer](mut s S) -> Result[(), SerError] {
     @zip.serialize(s)?
     s.end_struct()
 }
+
 fn MAddr.deserialize[D Deserializer](mut d D) -> Result[MAddr, DeError] {
     mut s0 = d.enter_field("city")?
     ro city = s0.deser_str()?
@@ -31,6 +32,7 @@ type MUser value {
     ro email Option[str]
     ro score f64
 }
+
 fn MUser @serialize[S Serializer](mut s S) -> Result[(), SerError] {
     s.begin_struct("MUser", 6)?
     s.struct_field("name")?
@@ -47,6 +49,7 @@ fn MUser @serialize[S Serializer](mut s S) -> Result[(), SerError] {
     @score.serialize(s)?
     s.end_struct()
 }
+
 fn MUser.deserialize[D Deserializer](mut d D) -> Result[MUser, DeError] {
     mut s0 = d.enter_field("name")?
     ro name = s0.deser_str()?

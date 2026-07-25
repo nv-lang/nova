@@ -106,6 +106,7 @@ test "parse: ошибка — неизвестный токен" {
 // не Latin-1-фантом байта (@peek()/@advance() честно -> Option[u8], но
 // BadTok(char)/UnexpectedChar{found} декодируют реальный codepoint на
 // границе конструирования ошибки — см. Lexer.@char_at в json.nv).
+
 test "parse: ошибка — non-ASCII мусор несёт настоящий символ" {
     ro r = Json.parse("é")
     assert(match r {
@@ -236,6 +237,7 @@ test "числа: разные форматы" {
 // [M-json-lexer-byte-cursor] (Баг 1): non-ASCII в строке БЕЗ escape + число
 // сразу после — раньше @pos (codepoint-курсор через nth) расходился с
 // байтовыми срезами @read_number, портя число.
+
 test "Баг 1: non-ASCII в строке без escape + число после" {
     ro v = Json.parse("[\"é\", 12]")!!
     match v.array() {
@@ -249,6 +251,7 @@ test "Баг 1: non-ASCII в строке без escape + число после"
 }
 
 // Многобайтовый codepoint прямо в ключе объекта.
+
 test "Баг 1: многобайтовый codepoint в ключе объекта" {
     ro v = Json.parse("{\"héllo\": 1}")!!
     match v.object() {
@@ -259,6 +262,7 @@ test "Баг 1: многобайтовый codepoint в ключе объект�
 
 // [M-json-escape-bf-empty] (Баг 2): \b/\f обязаны декодироваться в
 // codepoint U+0008/U+000C (не в пустую строку) и сериализоваться обратно.
+
 test "Баг 2: round-trip \\b\\f" {
     ro v = Json.parse("\"\\b\\f\"")!!
     match v.str() {

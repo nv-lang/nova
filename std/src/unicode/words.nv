@@ -41,7 +41,9 @@ ro wb_flat []u32 = parse_flat(WB_DATA)
 fn wbcat(cp u32) -> int => range_lookup3(wb_flat, cp)
 
 fn wb_ignorable(c int) -> bool => c == WB_EXTEND || c == WB_FORMAT || c == WB_ZWJ
+
 fn wb_ahletter(c int) -> bool => c == WB_ALETTER || c == WB_HEBREW
+
 fn wb_midnumletq(c int) -> bool => c == WB_MIDNUMLET || c == WB_SQ
 
 // Incremental Regional_Indicator run-parity (WB15/16): fold one codepoint into the

@@ -99,6 +99,7 @@ test "StringBuilder: @into_str_checked Ok/Err" {
 
 // Zero-alloc appendы (2026-07-20): байт-паритет с прежним to_str-путём,
 // включая f32-канон (НЕ f64-расширение: 0.1 БЕЗ double-хвоста) и крайние капы.
+
 test "SB append int/f64/f32 zero-alloc byte-parity" {
     consume sb = StringBuilder.new()
     sb.append(0).append(" ").append(-9223372036854775807 - 1).append(" ").append(1.5)
@@ -111,6 +112,7 @@ test "SB append int/f64/f32 zero-alloc byte-parity" {
 // Plan 208 Ф.4R Ш1 (owner 2026-07-20): `*_display_spec` family gate —
 // cross-checked directly against `spec_tests/conformance/d422_f4r_baseline_
 // *.nv` (Ш0 byte-parity contract), same expected literals.
+
 test "int_display_spec: decimal + radix, zero_pad, width/align/fill" {
     consume sb1 = StringBuilder.new()
     int_display_spec(sb1, -1, 0, 16, false, false, false, false, Align.Right, ' ')

@@ -38,6 +38,7 @@ ro gcb_flat []u32 = parse_flat(GCB_DATA)
 ro extpict_flat []u32 = parse_flat(EXTPICT_DATA)
 
 fn gcb(cp u32) -> int => range_lookup3(gcb_flat, cp)
+
 fn is_ext_pict(cp u32) -> bool => in_ranges2(extpict_flat, cp)
 
 // GB9c (Indic Conjunct Break, Unicode 15.1+): Indic_Conjunct_Break property.

@@ -21,7 +21,6 @@
 #no_prelude
 module runtime.numeric
 
-
 // ─── f64 ───
 
 // IEEE 754 bit-pattern double как u64 (reinterpret-cast).

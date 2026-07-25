@@ -23,7 +23,6 @@
 
 module std.sort
 
-
 /// In-place insertion sort для `[]int` (stable, O(n²)).
 ///
 /// Подходит для arrays до ~1000 elements. Для крупных наборов
@@ -49,7 +48,6 @@ export fn []int mut @sort() -> @ {
         @[j + 1] = key
     }
 }
-
 
 /// In-place insertion sort с custom comparator `cmp(a, b) -> int`.
 ///
@@ -78,7 +76,6 @@ export fn []int mut @sort_by(cmp fn(int, int) -> int) -> @ {
     }
 }
 
-
 // NOTE (Plan 153.x consolidation): the concrete `[]int @binary_search ->
 // Option[int]` that lived here was REMOVED. Under D239 (`[]T ≡ Vec[T]`) it
 // became a second `@binary_search` on `[]int` whose RETURN TYPE conflicts
@@ -104,7 +101,6 @@ export fn []int mut @sort_by(cmp fn(int, int) -> int) -> @ {
 // `[M-153.x-array-new-not-vec]` — full consolidation into the Vec family is
 // gated on that fix.
 
-
 /// Minimum value в `[]int`. `None` для empty.
 ///
 /// # Examples
@@ -129,7 +125,6 @@ export fn []int @min() -> Option[int] {
     Some(m)
 }
 
-
 /// Maximum value в `[]int`. `None` для empty.
 ///
 /// # Examples
@@ -153,7 +148,6 @@ export fn []int @max() -> Option[int] {
     }
     Some(m)
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Plan 91.8c: Generic [T Compare] versions (D185)

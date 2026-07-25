@@ -42,6 +42,7 @@ export fn resolve(host str, port u16) Net -> Result[[]SocketAddr, NetError] {
 
 // Result constructors (regular fns — keep variant construction out of handlers).
 fn lookup_ok(base int, count int) -> Result[(int, int), NetError] => Ok((base, count))
+
 fn err_lookup(code int) -> Result[(int, int), NetError] => Err(NetError.from_code(code))
 
 // Build an owned []SocketAddr from a DNS result array (C base pointer + count),

@@ -15,7 +15,6 @@
 
 module time.civil
 
-
 // Элемент паттерна (module-private; surface — только builder-методы).
 type FmtItem enum
     | FYear4
@@ -31,14 +30,12 @@ type FmtItem enum
     | FOptStart
     | FOptEnd
 
-
 /// Type-safe builder формата даты/времени (Q3). Директивы — методы,
 /// компилятор ловит опечатки на этапе резолва (в отличие от strftime/"2006").
 #stable(since = "0.1")
 export type DateTimeFormat {
     items []FmtItem
 }
-
 
 /// Пустой формат — наполняется fluent-директивами.
 #stable(since = "0.1")
@@ -92,7 +89,6 @@ export fn DateTimeFormat mut @opt_start() -> @ { @items.push(FOptStart) }
 #stable(since = "0.1")
 export fn DateTimeFormat mut @opt_end() -> @ { @items.push(FOptEnd) }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Формат
 // ──────────────────────────────────────────────────────────────────────────
@@ -131,7 +127,6 @@ export fn DateTimeFormat @format(dt DateTime) -> str {
 /// Отформатировать дату (время-директивы дают 00 полночи).
 #stable(since = "0.1")
 export fn DateTimeFormat @format_date(d Date) -> str => @format(d.at_midnight())
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Parse по паттерну
@@ -257,7 +252,6 @@ export fn str @to_date_with(f DateTimeFormat) -> Result[Date, ParseDateTimeError
         Ok(dt) => Ok(dt.date()),
         Err(e) => Err(e),
     }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Display (D410/D237): full-datetime @display — закрывает зависимость 175

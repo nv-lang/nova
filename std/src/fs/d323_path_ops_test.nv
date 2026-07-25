@@ -4,7 +4,6 @@
 // cases, with_extension and equals coverage.
 module std.fs
 
-
 // ─── POSIX ──
 
 test "posix: join / parent / file_name / extension / stem" {

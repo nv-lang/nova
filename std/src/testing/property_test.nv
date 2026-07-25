@@ -9,12 +9,12 @@ module testing.property_test
 import std.testing.property
 import std.testing.handlers as th
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Тесты
 // ──────────────────────────────────────────────────────────────────────────
 
 // Простейший property — обращение списка дважды даёт исходный.
+
 test "reverse-reverse == identity для []int" {
     with Random = th.seeded(42) {
         ro gen = ArrayGen.default(IntGen.default())
@@ -26,6 +26,7 @@ test "reverse-reverse == identity для []int" {
 }
 
 // Idempotence sort'а.
+
 test "sort idempotent для []int" {
     with Random = th.seeded(42) {
         ro gen = ArrayGen.default(IntGen.default())
@@ -40,6 +41,7 @@ test "sort idempotent для []int" {
 }
 
 // Длина после concat = сумма длин.
+
 test "len(a + b) == len(a) + len(b) для []int" {
     with Random = th.seeded(123) {
         ro gen = ArrayGen.default(IntGen.default())
@@ -52,6 +54,7 @@ test "len(a + b) == len(a) + len(b) для []int" {
 }
 
 // String concat ассоциативен.
+
 test "string concat associative" {
     with Random = th.seeded(7) {
         ro gen = StrGen.default()
@@ -64,6 +67,7 @@ test "string concat associative" {
 }
 
 // Bool: !!x == x.
+
 test "double negation для bool" {
     with Random = th.seeded(1) {
         ro gen = BoolGen.new()
@@ -77,6 +81,7 @@ test "double negation для bool" {
 // Условие «все элементы массива положительные» нарушается легко —
 // runner найдёт массив с одним отрицательным элементом и шринкнет
 // его до минимального ([0]) или ([-1]).
+
 test "shrinking демо: ищем минимальный counterexample" {
     ro gen = ArrayGen.default(IntGen.new(-100, 100))
     mut caught = false

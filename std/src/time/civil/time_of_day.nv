@@ -11,7 +11,6 @@ module time.civil
 
 import std.time.duration
 
-
 /// Время суток (wall-clock, без даты/зоны) — value-record, наносекунды
 /// от полуночи. Plain-тип D319: НЕ точка на оси.
 #stable(since = "0.1")
@@ -19,10 +18,8 @@ export type TimeOfDay value {
     ro nanos_of_day i64
 }
 
-
 // Наносекунд в сутках = 86_400 * 1e9.
 fn nanos_per_day() -> i64 => 86_400_000_000_000
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Конструкторы
@@ -67,7 +64,6 @@ export fn TimeOfDay.from_nanos_of_day(n i64) -> Result[TimeOfDay, DateError] =>
         Ok({ nanos_of_day: n })
     }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Компоненты
 // ──────────────────────────────────────────────────────────────────────────
@@ -93,7 +89,6 @@ export fn TimeOfDay @nano() -> int => (@nanos_of_day % 1_000_000_000) as int
 /// Сырые наносекунды от полуночи.
 #stable(since = "0.1")
 export fn TimeOfDay @to_nanos_of_day() -> i64 => @nanos_of_day
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Арифметика (TimeBased ONLY — D320: Period здесь НЕ принимается)
@@ -130,7 +125,6 @@ export fn TimeOfDay @minus(d Duration) -> (TimeOfDay, i64) =>
 #stable(since = "0.1")
 export fn TimeOfDay @duration_until(other TimeOfDay) -> Duration =>
     (other.nanos_of_day - @nanos_of_day).to_nanos()
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Compare + Display
@@ -172,7 +166,6 @@ export fn TimeOfDay @to_iso() -> str =>
 /// Display = ISO-форма.
 #stable(since = "0.1")
 export fn TimeOfDay @to_str() -> str => @to_iso()
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // DateTime — ДЕКЛАРАЦИЯ здесь (методы в datetime.nv): value-record с

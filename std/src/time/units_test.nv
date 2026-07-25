@@ -16,7 +16,6 @@ module time.units_test
 import std.time.duration
 import std.testing.handlers as th
 
-
 test "Timestamp.now() работает как раньше после переименования Time-опов" {
     with Time = th.fixed_ms(1_700_000_000_000) {
         assert(Timestamp.now().unix_millis() == 1_700_000_000_000)
@@ -35,6 +34,7 @@ test "Timestamp.now() — mut_clock тоже совместим" {
 // Замер по `Monotonic` — независим от wall-clock (D124/D316).
 // Короткий сон (50ms), допуск сверху свободный (планировщик/CI jitter);
 // снизу — строгий (никогда не должен доспать МЕНЬШЕ запрошенного).
+
 test "Duration.@sleep() спит не меньше запрошенного (замер по Monotonic)" {
     ro t0 = Monotonic.now()
     50.to_millis().sleep()
@@ -46,6 +46,7 @@ test "Duration.@sleep() спит не меньше запрошенного (з�
 // `Duration.@sleep()` под mock: продвигает виртуальные часы `mut_clock`
 // ровно на округлённое-вверх число миллисекунд — доказывает что сахар
 // зовёт переименованную `sleep`-операцию корректно (не сломан рефакторингом).
+
 test "Duration.@sleep() под mut_clock продвигает виртуальное время" {
     with Time = th.mut_clock(0 as u64) {
         assert(Timestamp.now().unix_millis() == 0)
@@ -56,6 +57,7 @@ test "Duration.@sleep() под mut_clock продвигает виртуальн
 
 // Sub-millisecond duration округляется ВВЕРХ (никогда не 0 sleep для
 // положительной длительности) — доказывает ceil, не truncate.
+
 test "Duration.@sleep() округляет sub-ms длительность вверх под mock" {
     with Time = th.mut_clock(0 as u64) {
         500.to_micros().sleep()   // 0.5ms → должно спать 1ms, не 0
@@ -71,6 +73,7 @@ test "Duration.@sleep() округляет sub-ms длительность вв�
 // теста) на много порядков меньше; настоящий unix epoch в 2026м — больше.
 // Это и есть детектор дефекта: до фикса default-путь возвращал
 // _nova_monotonic_ms() и тест падал бы (uptime ms << epoch ms).
+
 test "Timestamp.now() без with-обработчика — настоящее wall-clock время (не monotonic uptime)" {
     ro ms = Timestamp.now().unix_millis()
     assert(ms > 1_700_000_000_000)
@@ -78,6 +81,7 @@ test "Timestamp.now() без with-обработчика — настоящее 
 
 // Monotonic не задета фиксом (тот же time_monotonic_ns источник, что и
 // до фикса — фикс трогал только now()/wall-clock путь).
+
 test "Monotonic.now() всё ещё монотонно растёт после фикса wall-clock" {
     ro t0 = Monotonic.now()
     ro t1 = Monotonic.now()

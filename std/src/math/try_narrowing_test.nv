@@ -173,6 +173,7 @@ test "try_to_<T> — same-signedness расширение (widening) всегд�
 // зоны этой волны (compiler-codegen/src/{types/mod.rs, emit_c.rs} заняты
 // параллельной Duration-волной). Элементы ниже читаются по индексу в
 // типизированную локаль — тот же обход, что и everywhere в этом файле.
+
 test "try_to_u8 — Vec[T].of как источник границ (влезает/не влезает по обе стороны)" {
     ro fits = Vec[i32].of(0, 1, 127, 254, 255)
     ro f0 i32 = fits[0]

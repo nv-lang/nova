@@ -6,7 +6,6 @@
 // (Plan 182 Ф.2).
 module std.os
 
-
 test "real_os: pid > 0; cwd resolves; temp_dir is non-empty" {
     with Os = real_os() {
         assert(pid() > 0)

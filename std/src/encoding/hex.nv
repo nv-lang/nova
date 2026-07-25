@@ -12,13 +12,11 @@
 
 module encoding.hex
 
-
 /// Errors при парсинге hex-строки.
 #stable(since = "0.1")
 export type ParseHexError enum
     | OddLength { actual int }
     | InvalidChar { position int, char char }
-
 
 /// Encode bytes как lowercase hex (e.g. `[0xDE, 0xAD]` → `"dead"`).
 #stable(since = "0.1")
@@ -59,7 +57,6 @@ fn digit(n u8, upper bool) -> char {
     }
 }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Decoding
 // ──────────────────────────────────────────────────────────────────────────
@@ -98,6 +95,5 @@ fn digit_value(s str, pos int) -> Result[int, ParseHexError] {
         None => Err(InvalidChar { position: pos, char: ' ' })
     }
 }
-
 
 // Тесты — см. peer-файл hex_test.nv (module encoding.hex_test).

@@ -8,7 +8,6 @@ module time.civil
 import std.time.duration
 import std.testing.handlers as th
 
-
 // ── Offset ──
 
 test "Offset: конструкторы + валидация ±18h" {
@@ -40,6 +39,7 @@ test "Offset @to_iso: Z / ±HH:MM / под-минутные с секундам�
 // [M-175.1-local-offset-effect-op]. Мокабельность через handler-литерал
 // обязательна (владелец: системная зона машины должна быть доступна, но
 // тесты не должны зависеть от реального TZ окружения CI-машины).
+
 test "Offset.local() мокабелен произвольным handler-литералом" {
     ro off = with Time = effect Time {
         sleep(d Duration) -> () => ()
@@ -60,7 +60,6 @@ test "Offset.local() — mock-coherence с th.fixed_ms/th.mut_clock (UTC, 0)" {
     assert(off2.is_utc())
 }
 
-
 // ── TimeZone: Utc / Fixed — always unambiguous (D321 R5) ──
 
 test "Utc/Fixed: resolve_local всегда Unique" {
@@ -80,7 +79,6 @@ test "TimeZone @to_str: идентичность" {
     ro f TimeZone = Fixed(Offset.from_hm(5, 30)!!)
     assert(f.to_str() == "+05:30")
 }
-
 
 // ── DateTime → ZonedDateTime → Timestamp round-trip (Fixed) ──
 
@@ -127,7 +125,6 @@ test "with_zone: тот же момент, другая wall-time" {
     assert(z.compare(m) == 0)
 }
 
-
 // ── Q4: range ±292y — Err ТОЛЬКО civil→Timestamp, один tick за границей ──
 
 test "range_292y: to_timestamp Err вне окна + граница" {
@@ -148,7 +145,6 @@ test "range_292y: to_timestamp Err вне окна + граница" {
     ro bot = (-9_223_372_036_854_775_807 - 1).to_unix_nanos().to_zoned(Fixed(Offset.from_hm(-18, 0)!!))
     assert(bot.date().year() == 1677)
 }
-
 
 // ── Disambiguation 4-way на синтетических правилах (D321 R1; реальные
 //    IANA — Ф.4). Модель America/New_York spring-forward 2026-03-08 07:00Z:
@@ -225,7 +221,6 @@ test "вне переходов IANA-зона резолвится Unique + offs
     assert(tz.offset_at(zw.to_timestamp()!!).to_seconds() == -18_000)
 }
 
-
 // ── Арифметика: wall-vs-elapsed асимметрия (D320 R4) ──
 
 test "wall-vs-elapsed: +P1D через spring-forward = 23h elapsed" {
@@ -243,7 +238,6 @@ test "wall-vs-elapsed: +P1D через spring-forward = 23h elapsed" {
     assert(exact.to_timestamp()!! - before.to_timestamp()!! == 24.to_hours())
 }
 
-
 // ── now() мокабелен (критерий 8) ──
 
 test "ZonedDateTime.now(tz) / Date.today(tz) под mock Time-handler" {
@@ -260,7 +254,6 @@ test "ZonedDateTime.now(tz) / Date.today(tz) под mock Time-handler" {
         assert(Date.today(Fixed(Offset.from_hm(5, 30)!!)) == Date.new(2023, Nov, 15)!!)
     }
 }
-
 
 // ── ISO display (полный parse — Ф.5) ──
 

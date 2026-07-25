@@ -203,18 +203,23 @@ export fn VecIter[T] @filter_map[U](f fn(T) -> Option[U]) -> FilterMapIter[VecIt
 // ── adapters ON a `MapIter` source (continue the chain) ─────────────────────
 
 export fn MapIter[I, T, U] @map[V](f fn(U) -> V) -> MapIter[Self, U, V] => { src: @, f }
+
 export fn MapIter[I, T, U] @filter(pred fn(U) -> bool) -> FilterIter[Self, U] => { src: @, pred }
+
 export fn MapIter[I, T, U] @filter_map[V](f fn(U) -> Option[V]) -> FilterMapIter[Self, U, V] => { src: @, f }
 
 // ── adapters ON a `FilterIter` source (continue the chain) ──────────────────
 
 export fn FilterIter[I, T] @map[U](f fn(T) -> U) -> MapIter[Self, T, U] => { src: @, f }
+
 export fn FilterIter[I, T] @filter(pred fn(T) -> bool) -> FilterIter[Self, T] => { src: @, pred }
+
 export fn FilterIter[I, T] @filter_map[U](f fn(T) -> Option[U]) -> FilterMapIter[Self, T, U] => { src: @, f }
 
 // ── adapters ON a `FilterMapIter` source (continue the chain) ───────────────
 
 export fn FilterMapIter[I, T, U] @map[V](f fn(U) -> V) -> MapIter[Self, U, V] => { src: @, f }
+
 export fn FilterMapIter[I, T, U] @filter(pred fn(U) -> bool) -> FilterIter[Self, U] => { src: @, pred }
 
 // ── @take / @skip / @enumerate — per adapter type ────────────────────────────
@@ -257,6 +262,7 @@ export fn TakeIter[I, T] @skip(n int) -> SkipIter[Self, T]
     requires n >= 0
     => { src: @, to_skip: n }
 export fn TakeIter[I, T] @map[U](f fn(T) -> U) -> MapIter[Self, T, U] => { src: @, f }
+
 export fn TakeIter[I, T] @filter(pred fn(T) -> bool) -> FilterIter[Self, T] => { src: @, pred }
 
 export fn SkipIter[I, T] @take(n int) -> TakeIter[Self, T]
@@ -266,6 +272,7 @@ export fn SkipIter[I, T] @skip(n int) -> SkipIter[Self, T]
     requires n >= 0
     => { src: @, to_skip: n }
 export fn SkipIter[I, T] @map[U](f fn(T) -> U) -> MapIter[Self, T, U] => { src: @, f }
+
 export fn SkipIter[I, T] @filter(pred fn(T) -> bool) -> FilterIter[Self, T] => { src: @, pred }
 
 // ── @step_by — yields every n-th element (zero-cost, inline counter) ────────
@@ -316,7 +323,9 @@ export fn StepByIter[I, T] @skip(n int)  -> SkipIter[Self, T]
     requires n >= 0
     => { src: @, to_skip: n }
 export fn StepByIter[I, T] @map[U](f fn(T) -> U) -> MapIter[Self, T, U] => { src: @, f }
+
 export fn StepByIter[I, T] @filter(pred fn(T) -> bool) -> FilterIter[Self, T] => { src: @, pred }
+
 export fn StepByIter[I, T] @enumerate() -> EnumerateIter[Self, T] => { src: @, i: 0 }
 
 // ── @enumerate — per adapter type ──────────────────────────────────────────
@@ -324,17 +333,25 @@ export fn StepByIter[I, T] @enumerate() -> EnumerateIter[Self, T] => { src: @, i
 // Cannot be blanket because the return type names `EnumerateIter` explicitly.
 
 export fn VecIter[T] @enumerate() -> EnumerateIter[Self, T] => { src: @, i: 0 }
+
 export fn MapIter[I, T, U] @enumerate() -> EnumerateIter[Self, U] => { src: @, i: 0 }
+
 export fn FilterIter[I, T] @enumerate() -> EnumerateIter[Self, T] => { src: @, i: 0 }
+
 export fn FilterMapIter[I, T, U] @enumerate() -> EnumerateIter[Self, U] => { src: @, i: 0 }
+
 export fn TakeIter[I, T] @enumerate() -> EnumerateIter[Self, T] => { src: @, i: 0 }
+
 export fn SkipIter[I, T] @enumerate() -> EnumerateIter[Self, T] => { src: @, i: 0 }
 
 // ── chaining adapters ON `EnumerateIter` ────────────────────────────────────
 
 export fn EnumerateIter[I, T] @map[U](f fn((int, T)) -> U) -> MapIter[Self, (int, T), U] => { src: @, f }
+
 export fn EnumerateIter[I, T] @filter(pred fn((int, T)) -> bool) -> FilterIter[Self, (int, T)] => { src: @, pred }
+
 export fn EnumerateIter[I, T] @filter_map[U](f fn((int, T)) -> Option[U]) -> FilterMapIter[Self, (int, T), U] => { src: @, f }
+
 export fn EnumerateIter[I, T] @take(n int) -> TakeIter[Self, (int, T)]
     requires n >= 0
     => { src: @, left: n }
@@ -429,8 +446,11 @@ export fn SplitIter mut @next() -> Option[str] {
 // specific to `str.split` — any future concrete (non-generic) `Next[T]`
 // iterator with an adapter entry point would hit the same gap.
 export fn SplitIter @map[U](f fn(str) -> U) -> MapIter[SplitIter, str, U] => { src: @, f }
+
 export fn SplitIter @filter(pred fn(str) -> bool) -> FilterIter[SplitIter, str] => { src: @, pred }
+
 export fn SplitIter @filter_map[U](f fn(str) -> Option[U]) -> FilterMapIter[SplitIter, str, U] => { src: @, f }
+
 export fn SplitIter @take(n int) -> TakeIter[SplitIter, str]
     requires n >= 0
     => { src: @, left: n }
@@ -438,6 +458,7 @@ export fn SplitIter @skip(n int) -> SkipIter[SplitIter, str]
     requires n >= 0
     => { src: @, to_skip: n }
 export fn SplitIter @enumerate() -> EnumerateIter[SplitIter, str] => { src: @, i: 0 }
+
 export fn SplitIter @step_by(n int) -> StepByIter[SplitIter, str]
     requires n > 0
     => { src: @, step: n, first: true, rem: n - 1 }
@@ -487,8 +508,11 @@ export fn RSplitIter mut @next() -> Option[str] {
 // ── adapters ON an `RSplitIter` source (chain entry) ─────────────────────
 
 export fn RSplitIter @map[U](f fn(str) -> U) -> MapIter[RSplitIter, str, U] => { src: @, f }
+
 export fn RSplitIter @filter(pred fn(str) -> bool) -> FilterIter[RSplitIter, str] => { src: @, pred }
+
 export fn RSplitIter @filter_map[U](f fn(str) -> Option[U]) -> FilterMapIter[RSplitIter, str, U] => { src: @, f }
+
 export fn RSplitIter @take(n int) -> TakeIter[RSplitIter, str]
     requires n >= 0
     => { src: @, left: n }
@@ -496,6 +520,7 @@ export fn RSplitIter @skip(n int) -> SkipIter[RSplitIter, str]
     requires n >= 0
     => { src: @, to_skip: n }
 export fn RSplitIter @enumerate() -> EnumerateIter[RSplitIter, str] => { src: @, i: 0 }
+
 export fn RSplitIter @step_by(n int) -> StepByIter[RSplitIter, str]
     requires n > 0
     => { src: @, step: n, first: true, rem: n - 1 }

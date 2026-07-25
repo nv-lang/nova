@@ -23,6 +23,7 @@ import std.runtime.string_builder.{StringBuilder}
 // (`fn[T] T @to_str() -> str => "${@}"`, string/core.nv). Должен продолжать
 // резолвиться даже когда `char` уже имеет конкретный receiver-метод
 // (`@to_stringbuilder()` ниже) в SIG-COMPLETE builtin_sig_modules-реестре.
+
 test "char @to_str(): bare-T blanket resolves alongside a concrete char method" {
     ro a = 'A'.to_str()
     assert(a == "A")
@@ -35,6 +36,7 @@ test "char @to_str(): bare-T blanket resolves alongside a concrete char method" 
 // Конкретный extension-метод на `char` (не через blanket) — регистрируется в
 // builtin_sig_modules (string_builder.nv → BUILTIN_SIG_MODULES), делая `char`
 // SIG-COMPLETE. Должен резолвиться нормально И не затенять @to_str() выше.
+
 test "char @to_stringbuilder(): concrete method coexists with the blanket" {
     consume sb = 'A'.to_stringbuilder()
     ro s = sb.into_str()
@@ -43,6 +45,7 @@ test "char @to_stringbuilder(): concrete method coexists with the blanket" {
 
 // Оба метода на одном значении в одном выражении — прямой репро исходного
 // бага (blanket .to_str() рядом со звонком, доказывающим SIG-COMPLETE char).
+
 test "char: to_str() and to_stringbuilder() together on the same value" {
     ro c = 'x'
     ro viastr = c.to_str()
@@ -69,6 +72,7 @@ test "char: to_str() and to_stringbuilder() together on the same value" {
 // НЕ cross-package: same-CU/same-package коллизия имени метода. Фикс:
 // codegen предпочитает bare-T blanket (`mono_method_decls[("T"/1-2 uppercase
 // letters, method)]`) ПЕРЕД name-only fallback для ПРИМИТИВНОГО receiver'а.
+
 test "char.to_str().bytes() nested for-in — no []u8.to_str() name collision" {
     mut total = 0
     for c in "aB".chars() {

@@ -13,7 +13,6 @@ module runtime.string
 
 import std.prelude.core.{Option, Some, None}
 
-
 // Module-private: decode one UTF-8 codepoint at bytes[i].
 // Returns (codepoint, step_bytes). R-UTF8: assumes valid UTF-8.
 // On invalid lead byte / truncated tail: returns (U+FFFD, 1) — Unicode canon
@@ -34,7 +33,6 @@ fn decode_utf8(bytes []u8, i int, n int) -> (int, int) {
     }
     (0xFFFD, 1)
 }
-
 
 // ─── CharsIter — codepoint decoding lens (Plan 152.1 Ф.3, D250) ───
 //
@@ -117,7 +115,6 @@ export fn CharsIter @count() -> int {
 // valid UTF-8 buffer has no trailing continuation-only tail.)
 export fn CharsIter @is_empty() -> bool => @pos >= @buf.byte_len()
 
-
 // ─── str codepoint lenses (Plan 152.1 Ф.3, D250) ───
 
 // Lazy codepoint iterator over the string (borrows `self`; O(1) to create).
@@ -145,7 +142,6 @@ export fn str @to_code_points() -> []int {
     for c in @chars() { out.push(c as int) }
     out
 }
-
 
 // ─── CharIndicesIter — (byte_offset, char) pairs (Plan 91.18 Ф.10) ───
 //

@@ -58,7 +58,6 @@
 
 module prelude.errors
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Runtime errors (D26 §«Bottom-уровневые runtime-ошибки»)
 // ──────────────────────────────────────────────────────────────────────────
@@ -90,7 +89,6 @@ export type RuntimeError enum
     | AssertFailed(str)
     | NoHandler(str)
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // ReadBuffer errors (D26 §«Прочие prelude-типы»)
 // ──────────────────────────────────────────────────────────────────────────
@@ -114,7 +112,6 @@ export type RuntimeError enum
 #stable(since = "0.1")
 export type ReadBufferError enum
     | UnexpectedEnd { wanted int, available int }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Option-unwrap error (D85)
@@ -144,7 +141,6 @@ export type ReadBufferError enum
 /// ```
 #stable(since = "0.1")
 export type RuntimeNoneError
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Plan 100.4.1 (D158): MultiError — composite error для failable cleanup
@@ -249,7 +245,6 @@ fn MultiError @find_first_panic() -> Option[str] {
     None
 }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Plan 110 D193 / D90 §7 amend — typed cancel/timeout/truncation errors
 // ──────────────────────────────────────────────────────────────────────────
@@ -334,7 +329,6 @@ export type MultiErrorTruncated {
     ro depth int
 }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Char conversion errors (D54/D77)
 // ──────────────────────────────────────────────────────────────────────────
@@ -375,7 +369,6 @@ export type CharFromError
 /// ```
 #stable(since = "0.1")
 export type TryFromCharError
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Numeric narrowing error ([M-numeric-try-narrowing], 2026-07-20, D430)

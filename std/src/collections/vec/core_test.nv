@@ -35,6 +35,7 @@ test "grow — 1000 pushes preserve order" {
 // smallest repro. Fixed by adding the missing Pointer/Mut/Unsafe arm to
 // `infer_type_param_binding` (emit_c.rs) and turning the silent fallback
 // into a loud `?` propagation.
+
 test "grow — Vec[u8] past initial capacity (non-str T mono regression)" {
     mut v = Vec[u8].new()
     for i in 0..40 { v.push(i as u8) }

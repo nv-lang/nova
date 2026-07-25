@@ -44,7 +44,6 @@
 
 module data.semver
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Тип
 // ──────────────────────────────────────────────────────────────────────────
@@ -76,7 +75,6 @@ export type Version {
     ro build []str
 }
 
-
 /// Errors при парсинге semver-строки (D30 convention).
 #stable(since = "0.1")
 export type ParseVersionError enum
@@ -88,7 +86,6 @@ export type ParseVersionError enum
     | EmptyIdentifier { section str }
     | InvalidIdentifier { section str, value str }
 
-
 /// Simple constructor без pre/build. Самый частый случай.
 #stable(since = "0.1")
 export fn Version.new(major u64, minor u64, patch u64) -> Self =>
@@ -98,7 +95,6 @@ export fn Version.new(major u64, minor u64, patch u64) -> Self =>
 #stable(since = "0.1")
 export fn Version.full(major u64, minor u64, patch u64, pre []str, build []str) -> Self =>
     { major, minor, patch, pre, build }
-
 
 /// Major version number.
 #stable(since = "0.1")
@@ -123,7 +119,6 @@ export fn Version @has_build() -> bool => @build.len() > 0
 /// True если stable release: не pre-release, major > 0.
 #stable(since = "0.1")
 export fn Version @is_stable() -> bool => @pre.len() == 0 && @major > 0
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Парсинг
@@ -299,7 +294,6 @@ fn is_ascii_ident_char(c char) -> bool {
     n == 45                        // -
 }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Сериализация (D410)
 // ──────────────────────────────────────────────────────────────────────────
@@ -329,7 +323,6 @@ fn join_dots(parts []str) -> str {
     }
     sb
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Сравнение (semver.org § 11)
@@ -420,6 +413,5 @@ fn pre_eq(a []str, b []str) -> bool {
 }
 
 // Note: @le/@gt/@ge removed — use @compare(other) <=/>/>=  0, or < > <= >= operators.
-
 
 // Тесты — см. peer-файл semver_test.nv (module data.semver_test).

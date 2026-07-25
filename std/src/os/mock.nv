@@ -112,6 +112,7 @@ fn MockOs mut @env_put(key []u8, val []u8) -> int {
 // ─── Operations (return int/str codes: real_os-identical) ──
 
 fn MockOs @mem_arg_count() -> int => @args.len()
+
 fn MockOs @mem_arg_at(i int) -> str {
     if i >= 0 && i < @args.len() { @args[i] } else { "" }
 }
@@ -120,28 +121,34 @@ fn MockOs @mem_env_get(key []u8) -> Option[str] {
     ro k = unsafe { key.to_str_unchecked() }
     match @env_find(k) { Some(j) => Some(unsafe { @env_vals[j].to_str_unchecked() }), None => None }
 }
+
 fn MockOs @mem_env_has(key []u8) -> bool {
     ro k = unsafe { key.to_str_unchecked() }
     match @env_find(k) { Some(_) => true, None => false }
 }
+
 fn MockOs mut @mem_env_remove(key []u8) -> int {
     ro k = unsafe { key.to_str_unchecked() }
     match @env_find(k) { Some(j) => { @env_live[j] = false; 0 }, None => 0 }
 }
+
 fn MockOs @mem_env_len() -> int {
     mut c = 0
     mut i = 0
     while i < @env_keys.len() { if @env_live[i] { c += 1 }; i += 1 }
     c
 }
+
 fn MockOs @mem_env_key_at(i int) -> str {
     match @nth_live(i) { Some(j) => @env_keys[j], None => "" }
 }
+
 fn MockOs @mem_env_val_at(i int) -> str {
     match @nth_live(i) { Some(j) => unsafe { @env_vals[j].to_str_unchecked() }, None => "" }
 }
 
 fn MockOs @mem_cwd() -> str => @cwd_path
+
 fn MockOs mut @mem_set_cwd(path []u8) -> int { @cwd_path = unsafe { path.to_str_unchecked() }; 0 }
 
 fn MockOs mut @mem_exit(code int) -> int { @exited = true; @exit_code_v = code; 0 }

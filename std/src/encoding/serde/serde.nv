@@ -200,18 +200,23 @@ export type Deserialize protocol {
 // ──────────────────────────────────────────────────────────────────────────
 
 fn bool @serialize[S Serializer](mut s S) -> Result[(), SerError] => s.serialize_bool(@)
+
 fn bool.deserialize[D Deserializer](mut d D) -> Result[bool, DeError] => d.deser_bool()
 
 fn int @serialize[S Serializer](mut s S) -> Result[(), SerError] => s.serialize_int(@)
+
 fn int.deserialize[D Deserializer](mut d D) -> Result[int, DeError] => d.deser_int()
 
 fn u64 @serialize[S Serializer](mut s S) -> Result[(), SerError] => s.serialize_uint(@)
+
 fn u64.deserialize[D Deserializer](mut d D) -> Result[u64, DeError] => d.deser_uint()
 
 fn f64 @serialize[S Serializer](mut s S) -> Result[(), SerError] => s.serialize_float(@)
+
 fn f64.deserialize[D Deserializer](mut d D) -> Result[f64, DeError] => d.deser_float()
 
 fn str @serialize[S Serializer](mut s S) -> Result[(), SerError] => s.serialize_str(@)
+
 fn str.deserialize[D Deserializer](mut d D) -> Result[str, DeError] => d.deser_str()
 
 // ── narrow numeric scalars (D342: int i64-wide widen on ser, range-check on
@@ -228,34 +233,42 @@ fn i8.deserialize[D Deserializer](mut d D) -> Result[i8, DeError] {
     ro n = d.deser_int()?
     if n < -128 || n > 127 { Err(DeError.new(OutOfRange(n.to_str()))) } else { Ok(n as i8) }
 }
+
 fn i16.deserialize[D Deserializer](mut d D) -> Result[i16, DeError] {
     ro n = d.deser_int()?
     if n < -32768 || n > 32767 { Err(DeError.new(OutOfRange(n.to_str()))) } else { Ok(n as i16) }
 }
+
 fn i32.deserialize[D Deserializer](mut d D) -> Result[i32, DeError] {
     ro n = d.deser_int()?
     if n < -2147483648 || n > 2147483647 { Err(DeError.new(OutOfRange(n.to_str()))) } else { Ok(n as i32) }
 }
+
 fn i64.deserialize[D Deserializer](mut d D) -> Result[i64, DeError] {
     ro n = d.deser_int()?
     Ok(n as i64)
 }
+
 fn u8.deserialize[D Deserializer](mut d D) -> Result[u8, DeError] {
     ro n = d.deser_uint()?
     if n > 255 { Err(DeError.new(OutOfRange(n.to_str()))) } else { Ok(n as u8) }
 }
+
 fn u16.deserialize[D Deserializer](mut d D) -> Result[u16, DeError] {
     ro n = d.deser_uint()?
     if n > 65535 { Err(DeError.new(OutOfRange(n.to_str()))) } else { Ok(n as u16) }
 }
+
 fn u32.deserialize[D Deserializer](mut d D) -> Result[u32, DeError] {
     ro n = d.deser_uint()?
     if n > 4294967295 { Err(DeError.new(OutOfRange(n.to_str()))) } else { Ok(n as u32) }
 }
+
 fn uint.deserialize[D Deserializer](mut d D) -> Result[uint, DeError] {
     ro n = d.deser_uint()?
     Ok(n as uint)
 }
+
 fn f32.deserialize[D Deserializer](mut d D) -> Result[f32, DeError] {
     ro n = d.deser_float()?
     Ok(n as f32)

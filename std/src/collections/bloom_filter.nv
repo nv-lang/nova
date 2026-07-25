@@ -17,7 +17,6 @@
 
 module collections.bloom_filter
 
-
 /// Вероятностная структура данных для проверки принадлежности к множеству.
 ///
 /// Гарантирует отсутствие false negatives — если `contains` вернул `false`,
@@ -45,7 +44,6 @@ export type BloomFilter {
     mut bits []u8                // internal: packed bit array (1 u8 = 8 bits)
 }
 
-
 /// Создать filter с явными параметрами.
 ///
 /// - `bits_size` — количество битов (округляется вверх до байтов)
@@ -69,7 +67,6 @@ export fn BloomFilter.new(bits_size int, num_hashes int) -> Self {
         bits,
     }
 }
-
 
 /// Создать filter с оптимальными параметрами для заданных `expected_n` элементов
 /// и целевого `false_pos_rate` (0.0–1.0).
@@ -97,7 +94,6 @@ export fn BloomFilter.optimal(expected_n int, false_pos_rate f64) -> Self {
     Self.new(m, k_safe)
 }
 
-
 /// Добавить строку в filter. После этого `contains(s)` гарантированно вернёт `true`.
 #stable(since = "0.1")
 export fn BloomFilter mut @insert(s str) -> () {
@@ -113,7 +109,6 @@ export fn BloomFilter mut @insert(s str) -> () {
     }
 }
 
-
 /// Проверить вероятное наличие строки. `false` — точно отсутствует. `true` — вероятно присутствует.
 #stable(since = "0.1")
 export fn BloomFilter @contains(s str) -> bool {
@@ -128,7 +123,6 @@ export fn BloomFilter @contains(s str) -> bool {
     true
 }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Bit manipulation
 // ──────────────────────────────────────────────────────────────────────────
@@ -140,14 +134,12 @@ fn BloomFilter mut @set_bit(idx int) -> () {
     @bits[byte_idx] = ((@bits[byte_idx] as int) | (mask as int)) as u8
 }
 
-
 fn BloomFilter @bit(idx int) -> bool {
     ro byte_idx = idx / 8
     ro bit_in_byte = idx % 8
     ro mask = (1 << bit_in_byte)
     ((@bits[byte_idx] as int) & mask) != 0
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Hash functions — простые (FNV-1a варианты)
@@ -172,6 +164,5 @@ fn hash2(s str) -> u64 {
     }
     h
 }
-
 
 // Тесты — см. peer-файл bloom_filter_test.nv (module collections.bloom_filter_test).

@@ -5,6 +5,7 @@
 // role: `rename_all` used to be simply unrecognized grammar; now it IS
 // recognized grammar, but scoped away from sum types.)
 module serde_neg.rename_all_on_sum
+
 import std.encoding.serde.{Serialize, Deserialize, Serializer, Deserializer, SerError, DeError}
 
 #serde(rename_all = "camelCase")

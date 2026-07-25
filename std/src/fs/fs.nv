@@ -32,6 +32,7 @@ const E_INVAL = 22
 fn wrap_unit(rc int, op str) -> Result[(), IoError] {
     if rc < 0 { Err(IoError.from_os(0 - rc, op)) } else { Ok(()) }
 }
+
 fn wrap_int(rc int, op str) -> Result[int, IoError] {
     if rc < 0 { Err(IoError.from_os(0 - rc, op)) } else { Ok(rc) }
 }
@@ -49,10 +50,15 @@ ro STAT_IMAGE_BYTES int = fs_stat_image_bytes()
 fn stat_image() -> []u8 => []u8.new().resize(STAT_IMAGE_BYTES, 0 as u8)
 
 fn img_size(img []u8) -> int => unsafe { fs_stat_size(img.ptr()) }
+
 fn img_mode(img []u8) -> int => unsafe { fs_stat_mode(img.ptr()) }
+
 fn img_kind(img []u8) -> int => unsafe { fs_stat_kind(img.ptr()) }
+
 fn img_mtime_ns(img []u8) -> i64 => unsafe { fs_stat_mtime_ns(img.ptr()) }
+
 fn img_atime_ns(img []u8) -> i64 => unsafe { fs_stat_atime_ns(img.ptr()) }
+
 fn img_ctime_ns(img []u8) -> i64 => unsafe { fs_stat_ctime_ns(img.ptr()) }
 
 // Build a Metadata from a filled stat image (valid immediately after a

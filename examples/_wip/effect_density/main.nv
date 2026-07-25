@@ -15,7 +15,6 @@ module effect_density.main
 import effect_density.http as http
 import effect_density.domain.*
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // run — entry point
 // ──────────────────────────────────────────────────────────────────────────
@@ -51,7 +50,6 @@ export fn run(cfg Config) Net Io Fail[StartupError] -> () {
     }
 }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // route — диспатчер запросов
 // ──────────────────────────────────────────────────────────────────────────
@@ -74,7 +72,6 @@ fn route(req Request) Db Cache Logger Clock IdGen Metrics Trace Idempotency Fail
         }
     }
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Альтернативные handler'ы для тестов и dev-режима
@@ -99,7 +96,6 @@ fn run_in_test_mode(cfg Config, fixtures TestData) Fail -> () {
     }
 }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Конфиг и заглушки handler'ов (объявления)
 // ──────────────────────────────────────────────────────────────────────────
@@ -113,27 +109,40 @@ type Config {
 
 type StartupError | ConfigInvalid(str) | DbDown | RedisDown
 
-
 // Реальные handler'ы — реализации эффектов. Каждая — обычная функция,
 // возвращающая Effect[Effect]. Сигнатуры тут не критичны для этого
 // примера, поэтому просто объявления.
 fn postgres_connect(url str) Net Fail[StartupError] -> Effect[Db] => ...
+
 fn redis_connect(url str) Net Fail[StartupError] -> Effect[Cache] => ...
+
 fn json_logger(out Stdout) -> Effect[Logger] => ...
+
 fn prom_registry() -> Effect[Metrics] => ...
+
 fn otel_tracer(endpoint str) Net -> Effect[Trace] => ...
+
 fn redis_idem(c Effect[Cache]) -> Effect[Idempotency] => ...
+
 fn parse_auth(headers []KV) Fail[HttpError] -> Effect[AuthContext] => ...
 
 // Чистые stub'ы для тестов
 fn in_memory_db(seed []Account) -> Effect[Db] => ...
+
 fn noop_cache() -> Effect[Cache] => ...
+
 fn capture_logger() -> Effect[Logger] => ...
+
 fn fixed_clock(t Timestamp) -> Effect[Clock] => ...
+
 fn seeded_id_gen(seed u64) -> Effect[IdGen] => ...
+
 fn noop_metrics() -> Effect[Metrics] => ...
+
 fn noop_tracer() -> Effect[Trace] => ...
+
 fn in_memory_idem() -> Effect[Idempotency] => ...
+
 fn fake_admin() -> Effect[AuthContext] => ...
 
 // Чистые константы прод-handler'ов — никаких эффектов в типе.

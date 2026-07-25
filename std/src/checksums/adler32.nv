@@ -19,7 +19,6 @@
 
 module checksums.adler32
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Public API
 // ──────────────────────────────────────────────────────────────────────────
@@ -70,6 +69,5 @@ export fn adler32_update(state u32, data []u8) -> u32 {
 /// Финализирует Adler-32 state — identity (значение уже в финальной форме).
 #stable(since = "0.1")
 export fn adler32_finalize(state u32) -> u32 => state
-
 
 // Тесты — см. peer-файл adler32_test.nv (module checksums.adler32).

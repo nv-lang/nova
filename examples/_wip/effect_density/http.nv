@@ -12,7 +12,6 @@ module effect_density.http
 import effect_density.domain.*
 import effect_density.service as svc
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // POST /api/transfers — создать перевод
 // ──────────────────────────────────────────────────────────────────────────
@@ -39,7 +38,6 @@ export fn handle_create_transfer(
     }
 }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // GET /api/accounts/{id}
 // ──────────────────────────────────────────────────────────────────────────
@@ -57,7 +55,6 @@ export fn handle_get_account(req Request) Db Cache AuthContext Fail[HttpError] -
     }
 }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // GET /healthz — пример МИНИМАЛЬНОГО handler'а
 // ──────────────────────────────────────────────────────────────────────────
@@ -71,13 +68,13 @@ export fn handle_health(req Request) Db -> Response =>
         Err(_) => Response.text(503, "db down")
     }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Helpers — частные функции, эффекты выводятся
 // ──────────────────────────────────────────────────────────────────────────
 
 // Чистые — никаких эффектов кроме Fail.
 fn parse_transfer_request(body bytes) Fail[ParseError] -> TransferRequest => ...
+
 fn parse_id(s Option[str]) Fail[HttpError] -> AccountId => ...
 
 // Чистая.
@@ -93,7 +90,6 @@ fn to_http_error(e TransferError) -> HttpError =>
         CurrencyMismatch | NonPositiveAmount | SameAccount =>
             HttpError.BadRequest("validation")
     }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // HTTP-типы (упрощённые)

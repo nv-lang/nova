@@ -1,6 +1,7 @@
 // EXPECT_COMPILE_ERROR E_SERDE_TAGGING_ON_NON_SUM
 // Plan 180 Ф.6 (D382): tagging attributes apply only to sum types.
 module serde_neg.on_record
+
 import std.encoding.serde.{Serialize, Deserialize, Serializer, Deserializer, SerError, DeError}
 
 #serde(tag = "kind")

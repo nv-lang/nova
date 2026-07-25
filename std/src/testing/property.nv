@@ -27,7 +27,6 @@
 
 module testing.property
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Конфигурация
 // ──────────────────────────────────────────────────────────────────────────
@@ -50,7 +49,6 @@ export fn PropertyConfig.default() -> PropertyConfig =>
         seed: 0,
     }
 
-
 /// Throw'нутое из `assert_prop` при failure. Runner catches + начинает shrinking.
 #stable(since = "0.1")
 export type PropertyFailed {
@@ -62,7 +60,6 @@ export type PropertyFailed {
 #stable(since = "0.1")
 export fn PropertyFailed.new(msg str) -> PropertyFailed =>
     { message: msg, context: "" }
-
 
 /// Property-test assertion. Throws PropertyFailed на false — runner ловит +
 /// шринкает (vs. обычный `assert(...)` который panics без shrinking).
@@ -81,7 +78,6 @@ export fn assert_prop_msg(cond bool, msg str) Fail[PropertyFailed] -> () { // [M
     }
 }
 
-
 /// Generator[T] structural protocol — для property-based testing.
 ///
 /// `generate()` — pure-функция от ambient Random → значение `T`.
@@ -91,7 +87,6 @@ export type Generator[T] protocol {
     @generate() Random -> T
     @shrink(value T) -> []T
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Встроенные генераторы для примитивов
@@ -139,7 +134,6 @@ export fn IntGen @shrink(value int) -> []int {
     steps
 }
 
-
 /// Bool generator: `p_percent`% true (default 50/50). Shrinks к false.
 ///
 /// [2026-07-08, батч 3 172.13]: было `type BoolGen { }` (без полей) — но
@@ -173,7 +167,6 @@ export fn BoolGen @shrink(value bool) -> []bool {
     if value { steps.push(false) }
     steps
 }
-
 
 /// Str generator — печатные ASCII длиной `[0, max_len]`. Shrinks к "" / коротким префиксам.
 #stable(since = "0.1")
@@ -221,7 +214,6 @@ export fn StrGen @shrink(value str) -> []str {
     }
     steps
 }
-
 
 /// Array generator — `[]T` длиной `[0, max_len]`. Каждый элемент через `elem` generator.
 /// Shrinks к пустому массиву / меньшим.
@@ -282,7 +274,6 @@ export fn ArrayGen[G, T] @shrink(value []T) -> [][]T {
     steps
 }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Property runner
 // ──────────────────────────────────────────────────────────────────────────
@@ -292,7 +283,6 @@ type RunResult enum
     | Pass
     | Fail(PropertyFailed)
 
-
 // Прогнать body один раз, поймав Fail.
 fn run_once[T](body fn(T) Fail[PropertyFailed] -> (), value T) -> RunResult {
     with Fail[PropertyFailed] = |e| interrupt Fail(e) {
@@ -300,7 +290,6 @@ fn run_once[T](body fn(T) Fail[PropertyFailed] -> (), value T) -> RunResult {
         Pass
     }
 }
-
 
 // Поиск минимального failing input через bisection. Шринкаем
 // рекурсивно: на каждом шаге пробуем все shrink-варианты, берём
@@ -349,7 +338,6 @@ fn shrink_loop[G Generator[T], T](gen G,
     (current, current_failure)
 }
 
-
 // Главный API: прогнать property-test.
 //
 /// Run property test — `num_tests` cases через generator + body. На failure —
@@ -370,7 +358,6 @@ export fn property[G Generator[T], T](gen G,
                       body fn(T) Fail[PropertyFailed] -> ()) Random Fail[PropertyFailed] -> () {
     property_with(gen, body, PropertyConfig.default())
 }
-
 
 /// Like `property` но с custom `PropertyConfig` (num_tests/shrink_steps/seed).
 #stable(since = "0.1")

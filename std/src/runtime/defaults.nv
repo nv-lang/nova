@@ -16,8 +16,11 @@ export fn int.new() -> Self => 0
 
 // Unsigned integers.
 export fn u8.new()  -> Self => 0
+
 export fn u16.new() -> Self => 0
+
 export fn u32.new() -> Self => 0
+
 export fn u64.new() -> Self => 0
 
 // Plan 70.5: uint = alias u64 (Nova-side); primitive type в codegen.
@@ -25,12 +28,16 @@ export fn uint.new() -> Self => 0
 
 // Signed integers.
 export fn i8.new()  -> Self => 0
+
 export fn i16.new() -> Self => 0
+
 export fn i32.new() -> Self => 0
+
 export fn i64.new() -> Self => 0
 
 // Floating point.
 export fn f32.new() -> Self => 0.0
+
 export fn f64.new() -> Self => 0.0
 
 // ─── Boolean ───
@@ -56,11 +63,17 @@ export fn char @compare(other char) -> int =>
 // disk-loaded prelude-модуля, как char @compare.) Unicode-aware — Phase B (152.3b/152.4).
 
 export fn char @is_ascii() -> bool => @ <= '\u{7F}'
+
 export fn char @is_ascii_digit() -> bool => @ >= '0' && @ <= '9'
+
 export fn char @is_ascii_lowercase() -> bool => @ >= 'a' && @ <= 'z'
+
 export fn char @is_ascii_uppercase() -> bool => @ >= 'A' && @ <= 'Z'
+
 export fn char @is_ascii_alphabetic() -> bool => @is_ascii_lowercase() || @is_ascii_uppercase()
+
 export fn char @is_ascii_alphanumeric() -> bool => @is_ascii_alphabetic() || @is_ascii_digit()
+
 export fn char @is_ascii_hexdigit() -> bool =>
     @is_ascii_digit() || (@ >= 'a' && @ <= 'f') || (@ >= 'A' && @ <= 'F')
 
@@ -74,6 +87,7 @@ export fn char @to_ascii_uppercase() -> char {
         match (@ as int - 32).to_char() { Ok(u) => u, Err(_) => @ }
     } else { @ }
 }
+
 export fn char @to_ascii_lowercase() -> char {
     if @is_ascii_uppercase() {
         match (@ as int + 32).to_char() { Ok(l) => l, Err(_) => @ }
@@ -170,31 +184,51 @@ export fn bool @compare(other Self) -> int => (@ as int) - (other as int)
 // min / max — scalar value comparison ([M-153-scalar-min-max], D239 §2).
 // Returns the smaller / larger of the two values.
 export fn int @min(other int) -> int => if @ < other { @ } else { other }
+
 export fn int @max(other int) -> int => if @ > other { @ } else { other }
 
 export fn u8  @min(other Self) -> Self => if @ < other { @ } else { other }
+
 export fn u8  @max(other Self) -> Self => if @ > other { @ } else { other }
+
 export fn u16 @min(other Self) -> Self => if @ < other { @ } else { other }
+
 export fn u16 @max(other Self) -> Self => if @ > other { @ } else { other }
+
 export fn u32 @min(other Self) -> Self => if @ < other { @ } else { other }
+
 export fn u32 @max(other Self) -> Self => if @ > other { @ } else { other }
+
 export fn u64 @min(other Self) -> Self => if @ < other { @ } else { other }
+
 export fn u64 @max(other Self) -> Self => if @ > other { @ } else { other }
+
 export fn uint @min(other Self) -> Self => if @ < other { @ } else { other }
+
 export fn uint @max(other Self) -> Self => if @ > other { @ } else { other }
 
 export fn i8  @min(other Self) -> Self => if @ < other { @ } else { other }
+
 export fn i8  @max(other Self) -> Self => if @ > other { @ } else { other }
+
 export fn i16 @min(other Self) -> Self => if @ < other { @ } else { other }
+
 export fn i16 @max(other Self) -> Self => if @ > other { @ } else { other }
+
 export fn i32 @min(other Self) -> Self => if @ < other { @ } else { other }
+
 export fn i32 @max(other Self) -> Self => if @ > other { @ } else { other }
+
 export fn i64 @min(other Self) -> Self => if @ < other { @ } else { other }
+
 export fn i64 @max(other Self) -> Self => if @ > other { @ } else { other }
 
 export fn f32 @min(other Self) -> Self => if @ < other { @ } else { other }
+
 export fn f32 @max(other Self) -> Self => if @ > other { @ } else { other }
+
 export fn f64 @min(other Self) -> Self => if @ < other { @ } else { other }
+
 export fn f64 @max(other Self) -> Self => if @ > other { @ } else { other }
 
 // clamp — restrict value to [lo, hi] range.

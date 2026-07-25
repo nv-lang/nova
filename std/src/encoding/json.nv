@@ -37,7 +37,6 @@ module encoding.json
 // его импортировать (explicit-imports principle).
 import std.collections.hashmap.{HashMap}
 
-
 /// JsonValue — рекурсивный sum-type для произвольного JSON-документа.
 ///
 /// Поддерживает D55 record-coercion: literal `{ "k": v }` в позиции
@@ -52,7 +51,6 @@ export type JsonValue enum
     | Array([]JsonValue)
     | Object(HashMap[str, JsonValue])
 
-
 /// `ParseJsonError` — категории ошибок JSON-парсера с позицией для диагностики.
 ///
 /// Конвенция D30 (`Parse<TypeName>Error`). Все варианты содержат `line` и
@@ -66,7 +64,6 @@ export type ParseJsonError enum
     | InvalidNumber { line int, col int, text str }
     | DuplicateKey { line int, col int, key str }
     | TrailingContent { line int, col int }
-
 
 /// Construct JSON null. Shortcut для `JsonValue.Null`.
 #stable(since = "0.1")
@@ -95,7 +92,6 @@ export fn JsonValue.array(items []JsonValue) -> Self => Array(items)
 /// canonical output используйте sorted iteration.
 #stable(since = "0.1")
 export fn JsonValue.object(fields HashMap[str, JsonValue]) -> Self => Object(fields)
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Геттеры / предикаты
@@ -155,7 +151,6 @@ export fn JsonValue @array() -> Option[[]JsonValue] =>
 #stable(since = "0.1")
 export fn JsonValue @object() -> Option[HashMap[str, JsonValue]] =>
     match @ { Object(m) => Some(m), _ => None }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Lexer — token type и tokenization
@@ -577,7 +572,6 @@ fn Lexer mut @read_number() -> Result[f64, ParseJsonError] {
 fn digit_here(b Option[u8]) -> bool =>
     match b { Some(x) => is_digit(x), None => false }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Parser — recursive descent
 // ──────────────────────────────────────────────────────────────────────────
@@ -726,7 +720,6 @@ fn Parser mut @parse_member(mut fields HashMap[str, JsonValue]) -> Result[(), Pa
     Ok(())
 }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Public API: парсинг
 // ──────────────────────────────────────────────────────────────────────────
@@ -759,7 +752,6 @@ export fn Json.parse(s str) -> Result[JsonValue, ParseJsonError] { // [M-lint-fi
 #stable(since = "0.1")
 export fn JsonValue.try_from(s str) -> Result[JsonValue, ParseJsonError] => // [M-lint-findings-static-conversion]
     Json.parse(s)
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Сериализация: @to_str() -> str
@@ -863,7 +855,6 @@ fn format_object(m HashMap[str, JsonValue]) -> str {
     buf.append("}")
     buf
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Pretty-print с отступами

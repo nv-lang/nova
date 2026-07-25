@@ -13,7 +13,6 @@ module concurrency.timer
 
 import std.time.duration
 
-
 /// Create a one-shot `ChanReader[()]` that closes after `d` elapses.
 ///
 /// The channel produces no value — `recv()` returns `Some(())` after the
@@ -88,7 +87,6 @@ fn ChanReader_close_after_doc_marker(d Duration) -> () {
     // (post-bootstrap), this file is doc-only.
     ro _ = d
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Plan 65 Ф.13 — `tick_every` namespace squat (forward-declared, NOT impl)

@@ -26,6 +26,7 @@
 module collections.vec_seq
 
 import std.collections.vec.{Vec}
+
 test "map preserves length and applies function" {
     ro v []int = [1, 2, 3]
     ro doubled = v.map(|x| x * 2)

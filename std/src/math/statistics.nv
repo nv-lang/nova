@@ -22,13 +22,11 @@
 
 module math.statistics
 
-
 /// Errors при stats-расчётах (empty input, invalid percentile).
 #stable(since = "0.1")
 export type StatsError enum
     | EmptyInput
     | InvalidPercentile { value f64 }
-
 
 /// Arithmetic mean. `Err(EmptyInput)` для empty array.
 #stable(since = "0.1")
@@ -111,7 +109,6 @@ export fn Stats.sum(xs []f64) -> f64 {
     s
 }
 
-
 fn sort_copy(xs []f64) -> []f64 {
     mut sorted []f64 = []
     for x in xs { sorted.push(x) }
@@ -125,7 +122,6 @@ fn sort_copy(xs []f64) -> []f64 {
     }
     sorted
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Streaming accumulator (Welford's online algorithm)
@@ -148,7 +144,6 @@ export type StreamingStats {
     mut max_val f64
 }
 
-
 /// Init empty StreamingStats (Welford).
 #stable(since = "0.1")
 export fn Stats.streaming() -> StreamingStats =>
@@ -159,7 +154,6 @@ export fn Stats.streaming() -> StreamingStats =>
         min_val: 0.0,
         max_val: 0.0,
     }
-
 
 /// Add one value к accumulator. O(1).
 #stable(since = "0.1")
@@ -177,7 +171,6 @@ export fn StreamingStats mut @add(x f64) -> () {
     ro delta2 = x - @mean_val
     @m2 += delta * delta2
 }
-
 
 /// Count of values added.
 #stable(since = "0.1")

@@ -119,6 +119,7 @@ test "Plan 217.1: UdpSocket explicit close disarms auto-cleanup (no double-fire)
 // Split halves reach `@cleanup` only via an explicit re-bind into a bare
 // consume-let (see module doc comment above — `.into_split()`'s own tuple
 // return is NOT tracked by D432's flow analysis).
+
 test "Plan 217.1: split halves re-bound into bare idents auto-clean independently" {
     mut exit_calls = 0
     with ResourceTrace = effect ResourceTrace {

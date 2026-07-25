@@ -28,7 +28,6 @@ module crypto.sha256
 
 import std.encoding.hex.{Hex}
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // State
 // ──────────────────────────────────────────────────────────────────────────
@@ -41,7 +40,6 @@ export type Sha256 {
     mut buffer []u8                   // pending < 64 bytes
     mut total_len u64                   // total bytes
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Constants — FIPS 180-4 § 4.2.2
@@ -79,7 +77,6 @@ fn k_constant(i int) -> u32 {
     table[i]
 }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // API
 // ──────────────────────────────────────────────────────────────────────────
@@ -107,7 +104,6 @@ export fn Sha256.hash_str(data []u8) -> str {
     ro digest = Sha256.hash(data)
     Hex.encode(digest[0..32])
 }
-
 
 /// Incremental update — feed bytes в state.
 #stable(since = "0.1")
@@ -163,7 +159,6 @@ export fn Sha256 mut @finalize() -> [32]u8 {
     }
     out
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Internal — process 64-byte block (FIPS 180-4 § 6.2)
@@ -250,6 +245,5 @@ fn write_be_u32(out mut [32]u8, offset int, v u32) -> () {
     out[offset + 2] = ((v >> 8)  & 0xFF) as u8
     out[offset + 3] = (v & 0xFF) as u8
 }
-
 
 // Тесты — см. peer-файл sha256_test.nv (module crypto.sha256_test).

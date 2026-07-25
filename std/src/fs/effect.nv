@@ -104,9 +104,11 @@ fn file_type_of(kind int) -> FileType => { k: kind }
 /// True for a regular file.
 #stable(since = "0.1")
 export fn FileType @is_file() -> bool => @k == KIND_FILE
+
 /// True for a directory.
 #stable(since = "0.1")
 export fn FileType @is_dir() -> bool => @k == KIND_DIR
+
 /// True for a symbolic link.
 #stable(since = "0.1")
 export fn FileType @is_symlink() -> bool => @k == KIND_SYMLINK
@@ -167,18 +169,23 @@ export fn Metadata.new(kind int, size int, mode int, mtime_ns i64, atime_ns i64,
 /// The file kind.
 #stable(since = "0.1")
 export fn Metadata @file_type() -> FileType => @kind
+
 /// True for a regular file.
 #stable(since = "0.1")
 export fn Metadata @is_file() -> bool => @kind.is_file()
+
 /// True for a directory.
 #stable(since = "0.1")
 export fn Metadata @is_dir() -> bool => @kind.is_dir()
+
 /// True for a symbolic link (only via `symlink_metadata`).
 #stable(since = "0.1")
 export fn Metadata @is_symlink() -> bool => @kind.is_symlink()
+
 /// File size in bytes.
 #stable(since = "0.1")
 export fn Metadata @len() -> int => @size
+
 /// Portable permissions view.
 #stable(since = "0.1")
 export fn Metadata @permissions() -> Permissions => Permissions.from_mode(@mode)
@@ -186,9 +193,11 @@ export fn Metadata @permissions() -> Permissions => Permissions.from_mode(@mode)
 /// Last-modification time, or `None` when unavailable.
 #stable(since = "0.1")
 export fn Metadata @modified() -> Option[Timestamp] => Some(@mtime_ns.to_unix_nanos())
+
 /// Last-access time, or `None` when unavailable.
 #stable(since = "0.1")
 export fn Metadata @accessed() -> Option[Timestamp] => Some(@atime_ns.to_unix_nanos())
+
 /// Creation/birth time, or `None` when the platform does not record it.
 #stable(since = "0.1")
 export fn Metadata @created() -> Option[Timestamp] {
@@ -214,18 +223,23 @@ export fn DirEntry.new(name []u8, kind int) -> DirEntry =>
 /// The bare entry name (no directory prefix).
 #stable(since = "0.1")
 export fn DirEntry @file_name() -> Path => @name
+
 /// The entry name as a string, or `None` if it is not valid UTF-8.
 #stable(since = "0.1")
 export fn DirEntry @name_str() -> Option[str] => @name.to_str()
+
 /// The entry kind.
 #stable(since = "0.1")
 export fn DirEntry @file_type() -> FileType => @kind
+
 /// True for a directory entry.
 #stable(since = "0.1")
 export fn DirEntry @is_dir() -> bool => @kind.is_dir()
+
 /// True for a regular-file entry.
 #stable(since = "0.1")
 export fn DirEntry @is_file() -> bool => @kind.is_file()
+
 /// True for a symlink entry.
 #stable(since = "0.1")
 export fn DirEntry @is_symlink() -> bool => @kind.is_symlink()

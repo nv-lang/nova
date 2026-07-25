@@ -33,13 +33,12 @@ module concurrency.supervised_deadline_test
 
 import std.time.duration
 
-
 // Хелпер для проверки `is TimeoutError` (D54/174.3 narrowing на `any`):
 // принимает `any`, значение TimeoutError бокс'ится, внутри — is-дискриминация.
 fn is_timeout_error(e any) -> bool => e is TimeoutError
 
-
 // 1. Тело укладывается в срок → нормальный проход, TimeoutError НЕ летит.
+
 test "within-budget: тело успевает — срок не срабатывает" {
     mut done = false
     supervised(timeout: 30.to_seconds()) {
@@ -49,9 +48,9 @@ test "within-budget: тело успевает — срок не срабаты�
     assert(done)
 }
 
-
 // 2. + 3. timeout истёк → TimeoutError, ловится `is TimeoutError`,
 //    и sleep(5000) прерван РАНО (elapsed << 5000).
+
 test "timeout fires: TimeoutError caught, sleep interrupted early" {
     // Typed catch by `Fail[TimeoutError]` proves the escaping error is a
     // TimeoutError (dispatch is by type-id — a non-TimeoutError would not
@@ -78,8 +77,8 @@ test "timeout fires: TimeoutError caught, sleep interrupted early" {
     assert(elapsed < 2000)
 }
 
-
 // 4. Абсолютная форма `deadline: Monotonic`.
+
 test "deadline (absolute Monotonic) fires TimeoutError" {
     mut caught = false
     ro r = with Fail[TimeoutError] = |_e| {
@@ -95,9 +94,9 @@ test "deadline (absolute Monotonic) fires TimeoutError" {
     assert(caught)
 }
 
-
 // 5. Вложенные сроки: внутренний срок ДЛИННЕЕ внешнего — не может продлить.
 //    Внешний (100ms) срабатывает, sleep(5000) во вложенной области прерван рано.
+
 test "nested: inner deadline cannot extend outer" {
     mut caught = false
     ro t0 = Timestamp.now().unix_millis()
@@ -118,9 +117,9 @@ test "nested: inner deadline cannot extend outer" {
     assert(elapsed < 2000)
 }
 
-
 // 6. `deadline:` + `cancel:` вместе — раннее из двух.
 //    6a. cancel раньше срока → штатная отмена, TimeoutError НЕ летит.
+
 test "deadline+cancel: cancel earlier — no TimeoutError" {
     ro tok = CancelToken.new()
     mut timed_out = false
@@ -140,6 +139,7 @@ test "deadline+cancel: cancel earlier — no TimeoutError" {
 }
 
 //    6b. срок раньше cancel → TimeoutError.
+
 test "deadline+cancel: deadline earlier — TimeoutError" {
     ro tok = CancelToken.new()
     mut timed_out = false
@@ -156,9 +156,9 @@ test "deadline+cancel: deadline earlier — TimeoutError" {
     assert(r == 0)
 }
 
-
 // 7. Нулевой срок → мгновенный TimeoutError (D349: срок в прошлом/сейчас
 //    = немедленное истечение; тело-дети отменяются на первом suspend).
+
 test "zero timeout: immediate TimeoutError" {
     mut caught = false
     ro r = with Fail[TimeoutError] = |_e| {
@@ -174,7 +174,6 @@ test "zero timeout: immediate TimeoutError" {
     assert(r == 0)
 }
 
-
 // 8. [M-178-server-graceful-deadline]: a cancelled child must actually
 //    unwind at its `Time.sleep`, not run its remaining body to completion.
 //    Repro: the child sends a marker on a channel AFTER `Time.sleep`
@@ -185,6 +184,7 @@ test "zero timeout: immediate TimeoutError" {
 //    the marker — the outer `supervised` still returned/threw on time
 //    (independent gate), masking the leak unless something specifically
 //    checked what the child did AFTER the sleep call.
+
 test "deadline cancels a spawned child's in-flight sleep (no leaked marker)" {
     ro (tx, rx) = Channel.new(1)
     mut caught = false

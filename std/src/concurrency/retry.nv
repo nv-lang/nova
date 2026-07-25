@@ -17,7 +17,6 @@ module concurrency.retry
 
 import std.time.duration
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Policy types
 // ──────────────────────────────────────────────────────────────────────────
@@ -32,7 +31,6 @@ export type Backoff enum
     | Exponential { initial Duration, multiplier f64, max_delay Duration }
     | Linear { initial Duration, increment Duration, max_delay Duration }
 
-
 /// Jitter — рандомизация delay'я для избежания thundering-herd.
 ///
 /// `NoJitter` — exact base delay. `FullJitter` — uniform 0..base.
@@ -43,7 +41,6 @@ export type Jitter enum
     | FullJitter
     | EqualJitter
 
-
 /// Retry policy: max_attempts (включая первую попытку) + backoff + jitter.
 #stable(since = "0.1")
 export type RetryPolicy {
@@ -51,7 +48,6 @@ export type RetryPolicy {
     ro backoff Backoff
     ro jitter Jitter
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Constructors
@@ -85,7 +81,6 @@ export fn RetryPolicy.fixed(max_attempts int, delay Duration) -> Self =>
 #stable(since = "0.1")
 export fn RetryPolicy.custom(max_attempts int, backoff Backoff, jitter Jitter) -> Self =>
     { max_attempts, backoff, jitter }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Execute
@@ -140,7 +135,6 @@ export fn RetryPolicy @execute[T, E](body fn() Fail[E] -> T) Time Random Fail[E]
     }
 }
 
-
 // Вычисляет delay для attempt-номера (1-based — первый retry это attempt=1).
 fn RetryPolicy @compute_delay(attempt int) Random -> Duration {
     ro base = match @backoff {
@@ -165,7 +159,6 @@ fn RetryPolicy @compute_delay(attempt int) Random -> Duration {
 
     apply_jitter(@jitter, base)
 }
-
 
 fn apply_jitter(j Jitter, d Duration) Random -> Duration => match j {
     NoJitter => d

@@ -19,6 +19,7 @@ import std.io.{ErrorKind}
 // ONE body, mono'd against a pure conformer and an effectful one) ───
 
 fn read_file_via[F ReadFs](f F, path str) -> Result[[]u8, IoError] => f.read_file(path)
+
 fn exists_via[F ReadFs](f F, path str) -> Result[bool, IoError] => f.path_exists(path)
 
 test "EmbeddedDir @read_file/@path_exists (extension methods, direct call) — sanity before R1" {

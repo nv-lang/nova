@@ -83,7 +83,6 @@ import std.runtime.string_builder.{StringBuilder, int_display_spec, f64_display_
 // imports itself (no cycle risk pulling it into `prelude.protocols`).
 import std.prelude.errors.{RangeError}
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Equality / Hashing / Ordering protocols (D109)
 // ──────────────────────────────────────────────────────────────────────────
@@ -157,7 +156,6 @@ export type Compare protocol {
     @compare(other Self) -> int
 }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Plan 137 (D237) — Clone protocol (renamed from Clone)
 // ──────────────────────────────────────────────────────────────────────────
@@ -207,7 +205,6 @@ export type Compare protocol {
 export type Clone protocol {
     @clone() -> Self
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Plan 208 Ф.2 (D422) — Write / Fmt / FmtCtx — Unified Formatter
@@ -362,11 +359,17 @@ export fn FmtCtx.rich(sink Write, mark int,
 
 export fn FmtCtx mut @write(bytes []u8) -> () { @sink.write(bytes) }
 export fn FmtCtx @width() -> Option[int] => @width
+
 export fn FmtCtx @precision() -> Option[int] => @precision
+
 export fn FmtCtx @align() -> Option[Align] => @align
+
 export fn FmtCtx @fill() -> char => @fill
+
 export fn FmtCtx @sign() -> Sign => @sign
+
 export fn FmtCtx @alternate() -> bool => @alternate
+
 export fn FmtCtx @kind() -> FmtKind => @kind
 
 /// Type-owned padding (D422 §2/§4): a type that wants to pad ITSELF (rather
@@ -417,7 +420,6 @@ export fn FmtCtx mut @pad(bytes []u8) -> () {
 #stable(since = "0.1")
 export type Display protocol { @display(mut f Fmt) -> () }
 
-
 /// Protocol для отладочного представления — sibling к Display (D229; D237 rename).
 /// D422 (Plan 208 Ф.2): sink parameter `Write` → `Fmt`; **REQUIRED, no
 /// default body** — same D422 §3 rationale as `Display` above. The old
@@ -450,7 +452,6 @@ export type Display protocol { @display(mut f Fmt) -> () }
 /// ```
 #stable(since = "0.1")
 export type Debug protocol { @debug(mut f Fmt) -> () }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Plan 110 (D188 / D192 / D194) — Cleanup[E] + WithExitTimeout
@@ -527,7 +528,6 @@ export type WithExitTimeout protocol {
     @exit_timeout_ms() -> int
 }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Plan 138 (D238 / D240) — Index[K, V] + MutIndex[K, V] protocols
 // ──────────────────────────────────────────────────────────────────────────
@@ -581,7 +581,6 @@ export type Index[K, V] protocol {
 export type MutIndex[K, V] protocol {
     mut @index(key K, val V)
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // D299 — AsSlice[T] protocol (Plan 153.1, 2026-06-17)
@@ -768,7 +767,6 @@ fn str @debug(mut f Fmt) -> () {
     str_debug_display_spec(sb, @, 0, false, -1, Align.Left, ' ')
     f.write(sb.into_str().bytes())
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Option[T] / Result[T,E] — Debug + Display impl (Plan 208 Ф.3: Display added)

@@ -9,7 +9,6 @@ module time.civil
 
 import std.time.duration
 
-
 // ── Date: конструктор + validate-by-default (Q6) ──
 
 test "Date.new: валидные даты" {
@@ -47,7 +46,6 @@ test "Date.new: month-13 недостижим по типам, day 0/32 → Err"
     assert(!Date.new(2026, Apr, 31).is_ok())   // 30-дневный месяц
 }
 
-
 // ── Hinnant epoch-day: канон + round-trip ──
 
 test "epoch-day канон: 1970-01-01 = 0, 2000-03-01 = 11017 (Hinnant)" {
@@ -76,7 +74,6 @@ test "отрицательные годы: proleptic, year 0 = 1 BCE (Q10)" {
     ro bc = Date.new(-1, Dec, 31)!!
     assert(bc.days_until(d) == 1)
 }
-
 
 // ── Weekday / day_of_year / адъюстеры ──
 
@@ -123,7 +120,6 @@ test "nth_weekday: второй вторник июля-2026 = 14-е; 5-й по�
     assert(!Date.new(2026, Feb, 1)!!.nth_weekday(5, Mon).is_ok())
 }
 
-
 // ── ISO-week (week-year ≠ calendar-year у границ) ──
 
 test "iso_week: обычная середина года" {
@@ -145,7 +141,6 @@ test "iso_week: week-year != calendar-year на границе (footgun-fixture)
     assert(d2.iso_week() == 1)
 }
 
-
 // ── Date normalize (явный opt-in, Q6) ──
 
 test "from_normalized: перенос дня и месяца" {
@@ -156,7 +151,6 @@ test "from_normalized: перенос дня и месяца" {
     ro d3 = Date.from_normalized(2026, 0, 5)   // месяц 0 → Dec предыдущего
     assert(d3.year() == 2025 && d3.month() == Dec)
 }
-
 
 // ── Compare / структурное == ──
 
@@ -175,7 +169,6 @@ test "Date.min_value/max_value компилируются и упорядоче�
     assert(Date.min_value().month() == Jan && Date.min_value().day() == 1)
     assert(Date.max_value().month() == Dec && Date.max_value().day() == 31)
 }
-
 
 // ── TimeOfDay ──
 
@@ -210,7 +203,6 @@ test "TimeOfDay compare + midnight" {
     assert(TimeOfDay.midnight() < TimeOfDay.new(0, 0, s: 1)!!)
     assert(TimeOfDay.midnight().to_nanos_of_day() == 0)
 }
-
 
 // ── DateTime ──
 
@@ -257,7 +249,6 @@ test "DateTime.new композит == ступенчатая форма" {
     assert(a.hour() == 10 && a.minute() == 0)
 }
 
-
 test "DateTime.new композит: невалидные поля → Err" {
     // биндинг, НЕ chained .is_ok() на вызове: chain-канал на 5-арг статик-
     // перегрузке выводит тип 2-арг формы (DateTime) — известная chain-семья.
@@ -271,7 +262,6 @@ test "DateTime.new композит: цепочка до зоны (smoke)" {
     ro z = DateTime.new(2026, Jun, 8, 10, 0)!!.to_zoned("+03:00".to_timezone()!!)!!
     assert(z.time().hour() == 10)
 }
-
 
 // ── YearMonth / MonthDay ──
 
@@ -307,7 +297,6 @@ test "MonthDay: Feb-29 валиден как анниверсари (Q1)" {
     assert(!MonthDay.new(Feb, 30).is_ok())
 }
 
-
 // ── Month enum ──
 
 test "Month: number/length/next/prev" {
@@ -322,7 +311,6 @@ test "Month: number/length/next/prev" {
     assert(Month.from_number(7)!! == Jul)
     assert(!Month.from_number(13).is_ok())
 }
-
 
 // ── ISO display (полный parse — Ф.5) ──
 

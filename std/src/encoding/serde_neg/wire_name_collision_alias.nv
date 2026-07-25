@@ -3,6 +3,7 @@
 // is rejected at compile time (an ambiguous read-time route is never a
 // runtime surprise here).
 module serde_neg.wire_name_collision_alias
+
 import std.encoding.serde.{Serialize, Deserialize, Serializer, Deserializer, SerError, DeError}
 
 #impl(Serialize + Deserialize)

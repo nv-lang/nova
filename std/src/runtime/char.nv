@@ -18,7 +18,6 @@
 
 module runtime.char
 
-
 // ─── str ───
 
 // Plan 174.2 (str.from-ретракция): `export extern "nova" fn str.from(c char)`

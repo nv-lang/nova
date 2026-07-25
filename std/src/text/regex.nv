@@ -28,7 +28,6 @@
 
 module text.regex
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // AST после парсинга pattern'а
 // ──────────────────────────────────────────────────────────────────────────
@@ -48,7 +47,6 @@ export type RegexNode enum
     | NRepeat { node RegexNode, min int, max int }
     | NAnchorStart
     | NAnchorEnd
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // NFA states (после компиляции)
@@ -72,7 +70,6 @@ export type NfaState enum
     | SAnchorStart { out int }
     | SAnchorEnd { out int }
 
-
 /// Compiled regex. RE2-style NFA simulation — O(n*m) guaranteed, нет catastrophic
 /// backtracking. Нет backreferences и lookbehind (math.требуют backtracking).
 #stable(since = "0.1")
@@ -82,7 +79,6 @@ export type Regex {
     ro anchored_start bool
 }
 
-
 /// Errors при compile regex pattern.
 #stable(since = "0.1")
 export type CompileError enum
@@ -91,7 +87,6 @@ export type CompileError enum
     | InvalidEscape { position int, char char }
     | InvalidQuantifier { position int }
     | NothingToRepeat { position int }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Parsing — pattern → AST
@@ -359,7 +354,6 @@ fn decode_escape_char(c char) -> char => match c {
     other => other
 }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Compile AST → NFA
 // ──────────────────────────────────────────────────────────────────────────
@@ -468,7 +462,6 @@ fn Compiler mut @compile_node(node RegexNode, out_state int) -> int {
     }
 }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Public API
 // ──────────────────────────────────────────────────────────────────────────
@@ -517,7 +510,6 @@ export fn Regex.compile(pattern str) -> Result[Regex, CompileError] {
         })
     }
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // NFA simulation (Thompson)
@@ -573,7 +565,6 @@ fn step_out(s NfaState) -> int => match s {
     SCharClass { out, .. } => out
     _ => -1
 }
-
 
 // Попробовать matchить начиная с position `start_pos` в tchars (subject text
 // materialised as `[]char` by the caller — `Regex.matches`/`@find`/`@find_all`
@@ -637,7 +628,6 @@ fn final_state(re Regex) -> int {
     -1
 }
 
-
 // Полное соответствие?
 // Push-loop materialisation of `s.chars()` (not `.collect()` — crashes
 // codegen on CharsIter). Decoded ONCE per public entry call — see `try_match`
@@ -698,6 +688,5 @@ export fn Regex @find_all(text str) -> [](int, int) {
     }
     results
 }
-
 
 // Тесты — см. peer-файл regex_test.nv (module text.regex_test).

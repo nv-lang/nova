@@ -13,7 +13,6 @@
 
 module path.glob
 
-
 /// Match path against glob pattern. POSIX-style:
 /// `*` (one segment), `**` (recursive), `?` (single char), `[abc]` / `[a-z]` / `[!abc]`.
 ///
@@ -97,7 +96,6 @@ fn match_at(pattern []char, pi int, path []char, si int) -> bool {
     if path.get(si) != Some(p) { return false }
     match_at(pattern, pi + 1, path, si + 1)
 }
-
 
 fn match_class(pattern []char, start int, c char) -> (bool, int) {
     mut pi = start

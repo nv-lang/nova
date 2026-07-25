@@ -32,6 +32,7 @@ ro cased_flat []u32 = parse_flat(CASED_DATA)
 ro caseign_flat []u32 = parse_flat(CASE_IGNORABLE_DATA)
 
 fn is_cased(cp u32) -> bool => in_ranges2(cased_flat, cp)
+
 fn is_case_ignorable(cp u32) -> bool => in_ranges2(caseign_flat, cp)
 
 // Greek sigma — the one context-dependent lowercase in the no-locale subset.

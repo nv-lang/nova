@@ -106,8 +106,6 @@ export const HOUR   Duration = { nanos: 3_600_000_000_000 }
 // member-const resolution (172-zone, owner-gated). Follow-up
 // `[M-175-type-const-max-shadows-builtin]` (docs/plans/backlog-followups.md).
 
-
-
 // ──────────────────────────────────────────────────────────────────────────
 // Конструкторы — Plan 200 Step 2 (D410/D317 amend, 2026-07-16, владелец):
 // единый `to_*`-бланкет над `Ints` (i8..i64/u8..u64/int/uint) вместо
@@ -198,7 +196,6 @@ export fn f64 @checked_to_seconds() -> Option[Duration] =>
         None => None,
     }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Конверсия обратно в числа
 // ──────────────────────────────────────────────────────────────────────────
@@ -206,9 +203,11 @@ export fn f64 @checked_to_seconds() -> Option[Duration] =>
 /// Total duration in nanoseconds (raw underlying value).
 #stable(since = "0.1")
 export fn Duration @nanos() => @nanos
+
 /// Total duration in microseconds (truncating division — sub-μs nanoseconds dropped).
 #stable(since = "0.1")
 export fn Duration @micros() => @nanos / 1_000
+
 /// Total duration in milliseconds (truncating — sub-ms nanoseconds dropped).
 ///
 /// # Examples
@@ -217,18 +216,23 @@ export fn Duration @micros() => @nanos / 1_000
 /// ```
 #stable(since = "0.1")
 export fn Duration @millis() => @nanos / 1_000_000
+
 /// Total duration in whole seconds (truncating).
 #stable(since = "0.1")
 export fn Duration @seconds() => @nanos / 1_000_000_000
+
 /// Total duration in whole minutes (truncating).
 #stable(since = "0.1")
 export fn Duration @minutes() => @nanos / 60_000_000_000
+
 /// Total duration in whole hours (truncating).
 #stable(since = "0.1")
 export fn Duration @hours() => @nanos / 3_600_000_000_000
+
 /// Total duration in whole days (truncating).
 #stable(since = "0.1")
 export fn Duration @days() => @nanos / 86_400_000_000_000
+
 /// Total duration as fractional seconds (`f64`).
 ///
 /// Preserves sub-second precision (unlike [`seconds`] which truncates).
@@ -239,9 +243,11 @@ export fn Duration @days() => @nanos / 86_400_000_000_000
 /// ```
 #stable(since = "0.1")
 export fn Duration @seconds_f64() -> f64 => (@nanos as f64) / 1_000_000_000.0
+
 /// Total duration as fractional milliseconds (`f64`).
 #stable(since = "0.1")
 export fn Duration @millis_f64() => (@nanos as f64) / 1_000_000.0
+
 /// Sleep for this duration via the ambient `Time` effect.
 ///
 /// Plan 175 Ф.3 (D316 typed retype): `Time.sleep` now takes a typed
@@ -266,7 +272,6 @@ export fn Duration @sleep() Time -> () => Time.sleep(@)
 // `deadline.sleep_until()` (std/time/duration/monotonic.nv
 // `Monotonic @sleep_until()`, pre-existing). No free-function alias.
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Predicates
 // ──────────────────────────────────────────────────────────────────────────
@@ -284,7 +289,6 @@ export fn Duration @is_negative() => @nanos < 0
 /// True если duration строго положительная (`nanos > 0`).
 #stable(since = "0.1")
 export fn Duration @is_positive() => @nanos > 0
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Decomposition — разложение на компоненты (для display / форматирования)
@@ -335,7 +339,6 @@ export fn Duration @parts() -> DurationParts {
     ro nanos = (r5 % 1_000) as int
     { days, hours, minutes, seconds, millis, micros, nanos }
 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Overflow-safe i64 primitives (Plan 175 Ф.1c / D317) — module-private.
@@ -438,7 +441,6 @@ fn f64_nanos_or_trap(x f64) -> i64 =>
         Some(r) => r,
         None => panic("Duration arithmetic error: non-finite or out-of-range f64"),
     }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Арифметика (D46) — overflow-safe (Plan 175 Ф.1c / D317).
@@ -593,7 +595,6 @@ export fn Duration @min(other Duration) -> Duration =>
 export fn Duration @max(other Duration) -> Duration =>
     if @nanos > other.nanos { @ } else { other }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Compare (D183 amendment, Plan 91.8a.2 part 3): @compare даёт ==/!=/<>/etc
 // через synthesis. Magic methods @eq/@lt/@le/@gt/@ge удалены.
@@ -606,7 +607,6 @@ export fn Duration @compare(other Duration) -> int =>
     if @nanos < other.nanos { -1 }
     else if @nanos > other.nanos { 1 }
     else { 0 }
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Display (D410)
@@ -696,7 +696,6 @@ export fn Duration @to_human() -> str {
     result.trim_ascii()
 }
 
-
 // ──────────────────────────────────────────────────────────────────────────
 // Time effect — главный AI-first момент
 // ──────────────────────────────────────────────────────────────────────────
@@ -721,7 +720,6 @@ export fn Duration @to_human() -> str {
 // снос рукописного Time-диспатча), так что единственный источник
 // ambient-поведения теперь — always-present prelude default handler.
 
-
 // Plan 200 Step 2 (D410/D317 amend): int/f64 per-width fluent constructors
 // (`int @seconds()`, singular `@second()`/`@minute()`/etc., `f64 @nanos()`/
 // `@micros()`/`@millis()`/`@minutes()`/`@hours()`/`@days()`) RETRACTED —
@@ -731,7 +729,6 @@ export fn Duration @to_human() -> str {
 // остальных единиц не имели внешних потребителей — repo-wide grep пуст).
 // Singular-алиасы (`1.second()`, `1.hour()`, ...) убраны без замены (DRY —
 // `1.to_seconds()`, `1.to_hours()`).
-
 
 // ──────────────────────────────────────────────────────────────────────────
 // Утилиты — структурные шаблоны
