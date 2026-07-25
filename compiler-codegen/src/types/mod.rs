@@ -10285,6 +10285,16 @@ impl<'a> TypeCheckCtx<'a> {
         // `uint`, not the collapsed `nova_int`). DEFINITE site — this binding commits to
         // `ann` regardless of the `assignable` verdict below (an error aborts codegen).
         self.materialize_literal_coercion(value, ann);
+        // [M-fn-value-binding-untyped-silent] (реестр 221.1 №101): a bare
+        // fn-VALUE RHS against a non-func-compatible annotation (`ro t1 str =
+        // test1`) — narrow, call-site-scoped check (see its own doc for why
+        // this is NOT folded into `assignable`/`assignable_direct`). Checked
+        // BEFORE `assignable` (mirrors `check_closure_scalar_return`'s own
+        // ordering for the return-position sibling) — `assignable` would
+        // otherwise silently accept it (`Func` → `Any` via `resolved_cat_of`).
+        if self.check_fn_value_mismatch(value, ann, scope, errors) {
+            return;
+        }
         match self.assignable(value, ann, gs, gs, scope) {
             Compat::Bad { found } => {
                 errors.push(
@@ -12506,6 +12516,105 @@ impl<'a> TypeCheckCtx<'a> {
         }
     }
 
+    /// [M-fn-value-binding-untyped-silent] (реестр 221.1 №101 b): `f1_check_call`'s
+    /// Ident-callee arm only resolves a callee through `sig.fn_decls` (global fn
+    /// declarations) — a call through a LOCAL bound to a first-class `TypeRef::Func`
+    /// value (HOF param, or a Plan-228 fn-value binding: `ro t1 = test1; t1(...)`)
+    /// has no `FnDecl` to check against and previously skipped arg-checking
+    /// entirely. `name` is not itself in `sig.fn_decls` (caller already checked) —
+    /// look it up in `scope` instead; no-op (`Compat::Unknown`-equivalent skip) if
+    /// it isn't bound to a `Func` there (an ordinary unresolved-name call, handled/
+    /// reported elsewhere).
+    fn check_fn_value_call(
+        &self,
+        name: &str,
+        args: &[CallArg],
+        call_span: Span,
+        gs: &HashSet<String>,
+        scope: &HashMap<String, TypeRef>,
+        call_id: crate::ast::ExprId,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        let Some(TypeRef::Func { params, return_type, .. }) = scope.get(name) else {
+            return;
+        };
+        // Named/Spread args carry no per-param name/shape info to check against a
+        // bare fn-value signature (no `FnDecl` param names/defaults to resolve them
+        // against) — stay honest and skip rather than guess (mirrors the codebase's
+        // general "undecidable → Unknown, not an error" discipline).
+        if args.iter().any(|a| !matches!(a, CallArg::Item(_))) {
+            return;
+        }
+        if args.len() != params.len() {
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_FN_VALUE_CALL_ARITY] `{}` (fn-value, `{}`) expects {} argument{}, \
+                     found {}",
+                    name,
+                    typeref_display(&TypeRef::Func {
+                        params: params.clone(),
+                        effects: Vec::new(),
+                        return_type: return_type.clone(),
+                        extern_abi: None,
+                        span: call_span,
+                    }),
+                    params.len(),
+                    if params.len() == 1 { "" } else { "s" },
+                    args.len(),
+                ),
+                call_span,
+            ));
+            return;
+        }
+        for (arg, param_ty) in args.iter().zip(params.iter()) {
+            let arg_expr = arg.expr();
+            match self.assignable(arg_expr, param_ty, gs, gs, scope) {
+                Compat::Bad { found } => {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E7301] cannot pass value of type `{}` as an argument of \
+                             `{}` declared as `{}`",
+                            found, name, typeref_display(param_ty),
+                        ),
+                        arg_expr.span,
+                    ));
+                }
+                Compat::OutOfRange { msg } => {
+                    errors.push(Diagnostic::new(
+                        format!("[E_LIT_OUT_OF_RANGE] {msg}"),
+                        arg_expr.span,
+                    ));
+                }
+                Compat::Narrowing { from, to } => {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_IMPLICIT_NARROWING] cannot pass value of type `{}` as an \
+                             argument of narrower type `{}` — implicit int narrowing loses \
+                             range; use an explicit `... as {}` cast (D54)",
+                            from, to, to,
+                        ),
+                        arg_expr.span,
+                    ));
+                }
+                Compat::CoerceConflict { msg } => {
+                    errors.push(Diagnostic::new(msg, arg_expr.span));
+                }
+                Compat::Ok | Compat::Unknown => {}
+            }
+        }
+        // Channel materialization (§0/§1), symmetric with the resolved-FnDecl call
+        // sites below: annotate the call's own return type so downstream channel
+        // consumers (codegen) read it instead of re-deriving.
+        if call_id.is_set() {
+            if let Some(ret) = return_type {
+                if !typeref_mentions_any(ret, gs) {
+                    let rt = ResolvedType::from_type_ref(ret);
+                    self.resolved_types_buf.borrow_mut().insert(call_id, rt);
+                }
+            }
+        }
+    }
+
     fn f1_check_call(
         &self,
         func: &Expr,
@@ -12621,7 +12730,19 @@ impl<'a> TypeCheckCtx<'a> {
                         }
                         return;
                     }
-                    _ => return,
+                    // [M-fn-value-binding-untyped-silent] fix (реестр 221.1 №101 b,
+                    // 2026-07-25): `n` names no VISIBLE global fn (or none at all) —
+                    // this whole match's ONLY Ident-callee path is fn_decls-keyed, so
+                    // a call through a LOCAL bound to a first-class `Func` value (a HOF
+                    // param, or the Plan-228 fn-value binding channel — `ro t1 = test1;
+                    // t1("oops")`) fell straight through to `return` with ZERO
+                    // arg-checking. Channel-parallel narrow check (own fn below) —
+                    // arity + per-arg `assignable`, symmetric with the resolved-FnDecl
+                    // arg-loop further down for an actual callee.
+                    _ => {
+                        self.check_fn_value_call(n, args, base.span, gs, scope, call_id, errors);
+                        return;
+                    }
                 }
             }
             ExprKind::Path(parts) if parts.len() == 2 => {
@@ -15493,6 +15614,57 @@ impl<'a> TypeCheckCtx<'a> {
         ));
     }
 
+    /// [M-fn-value-binding-untyped-silent] (реестр 221.1 №101, 2026-07-25): does
+    /// `value`'s inferred type resolve to `TypeRef::Func` while `expected` does
+    /// NOT itself denote a func-compatible position (bare `Func` or a declared
+    /// fn-newtype/alias chain, `typeref_is_func_compatible`)? Pushes `[E7301]`
+    /// and returns `true` if so.
+    ///
+    /// Deliberately NOT folded into the shared `assignable`/`assignable_direct`
+    /// (tried first, reverted) — those run for EVERY call-argument/let/return
+    /// check in the whole codebase, and `infer_expr_type`'s Plan-228 fn_decls
+    /// fallback resolves an out-of-scope bare name that HAPPENS to also name a
+    /// free fn elsewhere in a huge merged compile unit (spec_tests/conformance +
+    /// transitively-imported std is one multi-hundred-file CU) to that unrelated
+    /// fn's `Func` shape. That mistyping was already latent (Plan 228) but
+    /// harmless everywhere else (`resolved_cat_of` collapses `Func` → `Any`,
+    /// permissive) — folding a Func-mismatch check into the shared path turned
+    /// it into a false-positive `[E7301]` on a genuinely-unrelated `int`
+    /// argument (repro: `offset`, a std/fs-family local name colliding with an
+    /// unrelated conformance helper `fn offset(int,int,int)`). Called ONLY from
+    /// the two positions this window actually needs — an annotated `let` RHS
+    /// (`f1_check_assign_let`) and a fn-value-typed call argument
+    /// (`check_fn_value_call`) — where a `Func`-shaped value being the exact
+    /// wrong thing IS the point of the check, not an incidental side effect of
+    /// a call-argument loop this window never asked to touch.
+    fn check_fn_value_mismatch(
+        &self,
+        value: &Expr,
+        expected: &TypeRef,
+        scope: &HashMap<String, TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) -> bool {
+        let Some(found_tr) = self.infer_expr_type(value, scope) else {
+            return false;
+        };
+        if !matches!(found_tr, TypeRef::Func { .. }) {
+            return false;
+        }
+        if self.typeref_is_func_compatible(expected) {
+            return false;
+        }
+        errors.push(Diagnostic::new(
+            format!(
+                "[E7301] cannot assign value of type `{}` to `{}`: a fn-value \
+                 cannot be coerced into a non-fn-compatible type (use a bare \
+                 `fn(...) -> ...` annotation or a declared fn-newtype instead)",
+                typeref_display(&found_tr), typeref_display(expected),
+            ),
+            value.span,
+        ));
+        true
+    }
+
     fn check_closure_scalar_return_in_block(&self, b: &Block, ret: &TypeRef, errors: &mut Vec<Diagnostic>) {
         for s in &b.stmts {
             self.check_closure_scalar_return_in_stmt(s, ret, errors);
@@ -15847,6 +16019,45 @@ impl<'a> TypeCheckCtx<'a> {
         }
     }
 
+    /// [M-fn-value-binding-untyped-silent] (реестр 221.1 №101): does `tr` denote
+    /// a func-compatible position — a bare `TypeRef::Func`, a fn-POINTER type
+    /// (`*fn(...)` / `*unsafe fn(...)` / `*uninit fn(...)`, D216/D353 —
+    /// `Pointer(Func{..})`, possibly Uninit-wrapped), OR a `Named` reference to
+    /// a declared fn-newtype/alias chain that ULTIMATELY resolves to `Func`
+    /// (`type Handler fn(ServerRequest) -> str`, D52)? Peels the compile-time-
+    /// only view modifiers first (mirrors `check_closure_scalar_return`'s
+    /// peel). Depth-guarded against a pathological alias cycle (mirrors
+    /// `resolved_cat_of_depth`'s guard) — generics-carrying Named refs are NOT
+    /// peeled (a fn-newtype has none; bail conservatively to `false` rather
+    /// than mis-resolve a parametric unrelated type of the same name).
+    fn typeref_is_func_compatible(&self, tr: &TypeRef) -> bool {
+        self.typeref_is_func_compatible_depth(tr, 0)
+    }
+
+    fn typeref_is_func_compatible_depth(&self, tr: &TypeRef, depth: u32) -> bool {
+        if depth > 16 {
+            return false;
+        }
+        match tr {
+            TypeRef::Func { .. } => true,
+            TypeRef::Readonly(inner, _)
+            | TypeRef::Mut(inner, _)
+            | TypeRef::Uninit(inner, _)
+            | TypeRef::Ref(inner, _)
+            | TypeRef::Pointer(inner, _) => self.typeref_is_func_compatible_depth(inner, depth + 1),
+            TypeRef::Named { path, generics, .. } if generics.is_empty() => {
+                let Some(n) = path.last() else { return false; };
+                match self.types.get(n).map(|td| &td.kind) {
+                    Some(TypeDeclKind::Newtype(inner)) | Some(TypeDeclKind::Alias(inner)) => {
+                        self.typeref_is_func_compatible_depth(inner, depth + 1)
+                    }
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
+    }
+
     fn assignable_direct(
         &self,
         expr: &Expr,
@@ -16127,6 +16338,20 @@ impl<'a> TypeCheckCtx<'a> {
         let Some(found_tr) = self.infer_expr_type(expr, scope) else {
             return Compat::Unknown;
         };
+        // [M-fn-value-binding-untyped-silent] (реестр 221.1 №101): the Func-
+        // mismatch check that used to live HERE was REVERTED — folded into the
+        // shared `assignable_direct` (used by every call-argument/let/return
+        // check in the whole codebase), `infer_expr_type`'s Plan-228 fn_decls
+        // fallback resolved an out-of-scope bare name that coincidentally also
+        // names a free fn ELSEWHERE in the huge merged compile unit to that
+        // unrelated fn's `Func` shape — previously harmless (collapsed to `Any`
+        // downstream), this turned a pre-existing, unrelated scope-threading gap
+        // into a false-positive `[E7301]` (repro: `offset`, a std/fs-family local
+        // colliding with an unrelated conformance helper `fn offset(int,int,int)`).
+        // The narrow, call-site-scoped replacement is `check_fn_value_mismatch`
+        // (near `check_closure_scalar_return`) — invoked ONLY from the two
+        // positions this window actually needs (an annotated `let`, a fn-value
+        // call argument), not from every `assignable` call site in the codebase.
         // Plan 125.1 (Ф.1) — never-subtype-of-T per spec D25: `never` assignable
         // to any expected type (bottom type). `from_type_ref` mirrors `ty_of_ref`
         // (both map `never` → `Never`, neither resolves aliases).
@@ -16549,9 +16774,41 @@ impl<'a> TypeCheckCtx<'a> {
                     return Some(tr);
                 }
                 // Ident not in scope: try resolved_types_buf first.
+                //
+                // [M-fn-value-binding-untyped-silent] fix (реестр 221.1 №101,
+                // 2026-07-25): `f1_expr_inner`'s Ident-annotation producer
+                // (~L7985) runs on THIS SAME Ident BEFORE this fn is reached
+                // from `f1_check_assign_let`/`assignable` — it calls `infer_
+                // expr_type` itself (recursing through the fn_decls fallback
+                // below, successfully), then LOSSY-round-trips the result
+                // through `ResolvedType::from_type_ref` → cache →
+                // `resolved_to_typeref`. That reverse conversion honestly
+                // gives up (`return None`) on `Func`/`Any`/`Ptr`/`TypeParam`/
+                // `Raw` (irreconstructible without extra context) — but the
+                // OLD code here `return`ed that `None` UNCONDITIONALLY,
+                // discarding it as "Unknown, skip" and never trying the
+                // fn_decls/bare-variant fallbacks below AT ALL once a (lossy)
+                // cache entry existed. A bare free-fn reference (`ro t1 str =
+                // test1`) round-trips to `None` this way on EVERY subsequent
+                // lookup — silently un-typing itself right when a caller
+                // (`check_fn_value_mismatch`, near `check_closure_scalar_return`)
+                // needed the real `Func` shape most. Only skip the fallbacks on
+                // an actual cache HIT (`Some(tr)`); a round-trip MISS falls
+                // through instead of short-circuiting. Low blast radius: a
+                // `None`-vs-`Func` difference is inert for every OTHER existing
+                // consumer of `infer_expr_type` — `resolved_cat_of` collapses
+                // `Func` → `Any` just like the old `None`-driven `Compat::
+                // Unknown` was permissive, so nothing downstream newly rejects
+                // on this alone (confirmed: folding a Func-mismatch check
+                // straight into the shared `assignable_direct` — tried first —
+                // DID regress a same-named free-fn/out-of-scope-local collision
+                // elsewhere in the huge merged CU; reverted in favor of the
+                // narrow, call-site-scoped `check_fn_value_mismatch`).
                 if expr.id.is_set() {
                     if let Some(rt) = self.resolved_types_buf.borrow().get(&expr.id) {
-                        return Self::resolved_to_typeref(rt, expr.span);
+                        if let Some(tr) = Self::resolved_to_typeref(rt, expr.span) {
+                            return Some(tr);
+                        }
                     }
                 }
                 // [Plan 228 Ф.2(a) producer, реестр 221.1 №94-v2] Bare reference

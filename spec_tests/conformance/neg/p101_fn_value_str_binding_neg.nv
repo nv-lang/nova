@@ -1,0 +1,23 @@
+// EXPECT_COMPILE_ERROR E7301
+//
+// [M-fn-value-binding-untyped-silent] (реестр 221.1 №101, 2026-07-25): the
+// checker did not type a bare fn-VALUE reference against its let-annotation
+// at all — `ro t1 str = p101_test1` (binding a FUNCTION to a `str` slot)
+// compiled clean. Root cause: `resolved_cat_of_depth` collapses
+// `TypeRef::Func` → `Any` (needed elsewhere for generic/protocol positions),
+// and `cat_compatible_rt`'s `(Any,_) => true` bypass then silently accepted
+// ANY expected type once the value's inferred type reached `Func` (Plan 228
+// taught `infer_expr_type` to type a bare free-fn Ident as its own `Func`
+// shape — that channel fact used to have nothing checking it at the binding
+// site). Fixed in `assignable_direct` (types/mod.rs): a `Func`-typed value
+// against a target that does NOT itself resolve func-compatible (bare
+// `Func` or a fn-newtype/alias chain) is now a definite `[E7301]` mismatch.
+
+module neg.p101_fn_value_str_binding_neg
+
+fn p101_test1(a int) -> int => a + 1
+
+fn main() {
+    ro t1 str = p101_test1
+    print(t1)
+}
