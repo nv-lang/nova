@@ -1,0 +1,85 @@
+// [M-concrete-instance-arity-overload-mangle] (реестр 221.1 №34) repro/
+// regression test.
+//
+// A plain (non-generic-receiver) type carrying TWO same-name method
+// overloads: an ordinary one (`@get(path str, h Handler)`) and an
+// UNRELATED method-level-generic sibling (`@get[R](path str, f fn(int) ->
+// R)`). Adding the generic sibling used to break codegen for the
+// CONCRETE overload's own call sites whose argument is itself a `Call`
+// expression (not a bare closure literal) — `[E7001] cannot infer C type
+// for closure-arg return type (R)` — because:
+//   (a) `method_overloads[(rt, method)]` holds both a concrete `MethodSig`
+//       and a `__mono_method__` sentinel (generic-mono routing
+//       placeholder) — codegen's `has_sentinel_here` then unconditionally
+//       enters the generic-mono dispatch path for EVERY call to that
+//       method name, concrete or not;
+//   (b) `mono_method_decls` is a single-value map keyed by (receiver,
+//       method) — it can only ever hold the GENERIC FnDecl, never the
+//       concrete sibling, so that dispatch always mono's the wrong
+//       overload;
+//   (c) the generic-mono path's own closure-arg return-type inference
+//       only recognizes a bare `ClosureLight` — a `Call`-expression
+//       argument defeats it → spurious E7001.
+//
+// Fix (checker + codegen channel, §0): the checker (`check_instance_
+// overload`) now additionally prefers a compatible CONCRETE overload over
+// a compatible method-level-generic sibling ("D84 concrete beats
+// generic") when the call's argument is NOT itself a bare closure
+// literal (gated — a bare closure literal's return type is not fully
+// re-derived by `assignable`, so an unqualified tie-break would
+// mis-dispatch the generic method's OWN legitimate closure-literal call
+// sites to the concrete overload). `resolved_callees[call_id]` then
+// carries the concrete FnDecl's span; codegen's `has_sentinel_here`
+// dispatch site (emit_c.rs) reads that channel and skips its
+// `mono_method_decls`-only lookup whenever the checker resolved a
+// DIFFERENT span, falling through to the general (non-sentinel)
+// candidate/`channel_choice` dispatch, which lowers the concrete
+// `MethodSig` correctly.
+//
+// This test exercises BOTH overload forms with DIFFERENT observable
+// results, so a mis-dispatch (wrong body / wrong C symbol) is caught by
+// value, not merely by "compiles":
+//   - concrete form, argument is a bare closure literal;
+//   - concrete form, argument is a `Call` expression (the exact trap
+//     shape, `wrap_handler(...)`);
+//   - generic form, own call site (closure literal, R inferred as int).
+
+module spec_tests.conformance
+
+type Handler fn(int) -> str
+
+type ArityBox {
+    tag int,
+}
+
+export fn ArityBox mut @get(path str, h Handler) -> str {
+    h(path.byte_len())
+}
+
+// Unrelated/uncalled-by-the-concrete-form bound-generic sibling — its mere
+// existence used to hijack dispatch for the concrete overload above.
+export fn ArityBox mut @get[R](path str, f fn(int) -> R) -> R {
+    f(path.byte_len())
+}
+
+fn wrap_handler(h Handler) -> ro Handler {
+    h
+}
+
+test "concrete overload dispatches with a bare closure-literal argument" {
+    mut b = ArityBox { tag: 1 }
+    ro r = b.get("/alpha", |n| { "len=${n.to_str()}" })
+    assert(r == "len=6")
+}
+
+test "concrete overload dispatches with a Call-expression argument" {
+    mut b = ArityBox { tag: 1 }
+    ro r = b.get("/beta", wrap_handler(|n| { "wrapped=${n.to_str()}" }))
+    assert(r == "wrapped=5")
+}
+
+test "generic overload's own call site still dispatches correctly" {
+    mut b = ArityBox { tag: 1 }
+    ro r = b.get("/gamma", |n| n * 2)
+    assert(r == 12)
+}

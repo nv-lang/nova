@@ -40863,6 +40863,72 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                 None
                                             }
                                         });
+                                    // [M-concrete-instance-arity-overload-mangle] (реестр
+                                    // 221.1 №34): a plain (non-generic-receiver) type can
+                                    // carry TWO same-name overloads — an ordinary one and a
+                                    // method-level-generic sibling (`@get[R IntoResponse]`).
+                                    // `method_overloads[(rt, method)]` then holds BOTH a
+                                    // concrete `MethodSig` and a `__mono_method__` sentinel
+                                    // (`fn_span: None`, ~16154), so `has_sentinel_here`
+                                    // fires for EVERY call to that method name — even ones
+                                    // the checker resolved to the CONCRETE overload.
+                                    // `mono_method_decls` is a single-value map keyed by
+                                    // (rt, method) (last generic-method registration wins,
+                                    // ~16132), so `fn_decl_opt` above ALWAYS yields the
+                                    // GENERIC FnDecl regardless of which overload this
+                                    // call-site actually resolved to — a concrete call
+                                    // whose arg is itself a `Call` expr (not a bare closure
+                                    // literal) then fails the generic path's own closure-arg
+                                    // return-type inference (~41142) → spurious E7001.
+                                    // Consult the checker's `resolved_callees` channel
+                                    // (§0, same idiom as `channel_choice` at ~41419 below):
+                                    // a call-site the checker resolved to a span DIFFERENT
+                                    // from the generic method's OWN declaration span was
+                                    // resolved to the concrete sibling — drop `fn_decl_opt`
+                                    // here so control falls through to the general
+                                    // candidate/`channel_choice` dispatch below (~41317+),
+                                    // which reads the SAME channel and picks the concrete
+                                    // `MethodSig` by matching `fn_span`. No channel entry
+                                    // (legacy calls, or a method with only ONE generic
+                                    // overload — the pre-existing common case) keeps the
+                                    // old unconditional behavior, byte-identical.
+                                    // trace-ID for a future channel NO-HIT investigation:
+                                    // [TRACE-34-fndecl-channel-miss].
+                                    //
+                                    // GATED to calls where NO argument is a bare closure
+                                    // literal (`ClosureLight`/`ClosureFull`) — mirrors the
+                                    // identical gate on the checker's producer side
+                                    // (`check_instance_overload`, types/mod.rs). A closure
+                                    // literal's return type is not always fully verified by
+                                    // the checker's `assignable` against a NAMED concrete
+                                    // fn-newtype param (return-type leniency), so
+                                    // `resolved_callees` can carry a concrete span for a
+                                    // call whose closure body actually targets the GENERIC
+                                    // overload (e.g. returns a type only the generic's own
+                                    // bound accepts) — trusting the channel there would
+                                    // route the closure into the concrete C function anyway
+                                    // (wrong param/return type, confirmed live: a
+                                    // `Body`-returning closure passed to a `str`-returning
+                                    // concrete sibling → CC-FAIL "passing `nova_str` to
+                                    // parameter of incompatible type `Nova_Body*`"). Bare
+                                    // closure literals were NEVER the broken shape (the
+                                    // generic-mono path below already infers their return
+                                    // type correctly from the body, ClosureLight arm
+                                    // ~41142) — only a `Call`-expression argument was.
+                                    let has_bare_closure_arg = args.iter().any(|a| matches!(
+                                        a.expr().kind,
+                                        ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_)
+                                    ));
+                                    let fn_decl_opt = if has_bare_closure_arg {
+                                        fn_decl_opt
+                                    } else {
+                                        fn_decl_opt.filter(|fd| {
+                                            match self.resolved_callees.get(&call_id) {
+                                                Some(chosen_span) => *chosen_span == fd.span,
+                                                None => true,
+                                            }
+                                        })
+                                    };
                                     if let Some(fn_decl) = fn_decl_opt {
                                         // Plan 101 [M-fn-prefix-int-only-mono]: pre-bind T
                                         // (first generic) из receiver-elem ДО
