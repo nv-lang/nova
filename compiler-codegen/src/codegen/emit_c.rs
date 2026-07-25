@@ -30619,13 +30619,31 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // (Ident/Call-L1/Call-L2/Member-L1/Member-L2 +
                 // `fn_returns_fn_sig_l2`) were removed outright after δ0-корпус
                 // NO-HIT-верификация — see docs/plans/228-fnnt-channel-materialization.md.
+                // [M-closure-param-fn-newtype-field-access-int-miscompile]
+                // (реестр 221.1 №104): precise per-DECLARATION flag — `binding`
+                // is a GLOBAL, ever-growing, name-keyed map across the WHOLE
+                // compile unit (never cleared between declarations), so a
+                // RE-CHECK of `self.fn_param_sigs.contains_key(binding)` after
+                // this block is NOT proof that THIS channel hit is what put it
+                // there — an EARLIER, wholly unrelated declaration reusing the
+                // same local variable NAME elsewhere in the corpus (`f`/`g`/`h`
+                // are extremely common) can ALREADY have an entry, giving a
+                // false "already handled" positive that would wrongly skip the
+                // `ClosureLight` arm's OWN registrations below (in particular
+                // `unanno_light_clos`, the D402 call-site width-preserving
+                // re-derivation — NOT gated on `fn_param_sigs` at all — was the
+                // real regression this exact re-check caused; confirmed via
+                // `d402_closure_return_width.nv` isolated-file RUN-FAIL).
+                let mut hof_channel_handled = false;
                 if decl.value.id.is_set() {
                     if let Some(rt) = self.resolved_types.get(&decl.value.id).cloned() {
                         // Two channel shapes reach here: (1) a fn-newtype/alias
                         // NAME (`Named{X}`) — peel via `fn_newtype_sigs`
                         // directly (`resolve_fn_typeref`'s own registry), the
                         // common case for a CALL whose return is a fn-newtype
-                        // (№78/№90 Call/Member forms); (2) a bare
+                        // (№78/№90 Call/Member forms) — OR, since №104, the
+                        // checker's OWN let-annotation fact for a `ClosureLight`
+                        // RHS (types/mod.rs `f1_check_assign_let`); (2) a bare
                         // `ResolvedType::Func` — the checker's universal
                         // per-Ident writer (types/mod.rs `f1_expr_inner`
                         // ~7836) channels this directly for a RHS that is
@@ -30654,6 +30672,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             if let (Ok(ptys), Ok(rty)) = (ptys_r, rty_r) {
                                 self.icr_trace("N228_hof_binding_channel_hit");
                                 self.fn_param_sigs.insert(binding.clone(), (ptys, rty));
+                                hof_channel_handled = true;
                             }
                         }
                         if let Some(func_ty) = &peeled {
@@ -30730,7 +30749,30 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // аннотация, берём типы оттуда; иначе все params/ret
                 // дефолтятся в nova_int. Это позволяет `let zero = || 0;
                 // zero()` корректно резолвиться через NOVA_CLOS_CALL_*.
-                if let ExprKind::ClosureLight { params, body } = &decl.value.kind {
+                //
+                // [M-closure-param-fn-newtype-field-access-int-miscompile]
+                // (реестр 221.1 №104): this arm's OWN `decl.ty.as_ref()`
+                // structural match only recognizes a BARE `fn(...) -> ...`
+                // annotation — a NAMED fn-newtype annotation (`type Handler
+                // fn(ServerRequest) -> str`) fell straight to the
+                // `nova_int`-default branch below, miscompiling every
+                // str/record-typed closure param access. `binding`'s channel
+                // block above (N228_hof_binding_channel_hit) now ALSO covers
+                // this exact case for a `ClosureLight` RHS (types/mod.rs
+                // `f1_check_assign_let` writes the let-annotation's
+                // `ResolvedType` into `resolved_types` for a closure-literal
+                // RHS — a slot no other producer ever wrote for a closure) —
+                // skip this arm's WEAKER fallback derivation entirely when the
+                // channel already resolved `binding`'s signature THIS
+                // declaration (`hof_channel_handled` — a precise per-statement
+                // flag, NOT a `fn_param_sigs.contains_key` re-check: that map
+                // is name-keyed and global across the whole compile unit, so
+                // it can already contain an unrelated EARLIER declaration's
+                // entry for the SAME common local name — see the flag's own
+                // doc above for the regression that caused).
+                if hof_channel_handled {
+                    // handled by the channel block above.
+                } else if let ExprKind::ClosureLight { params, body } = &decl.value.kind {
                     let arity = params.len();
                     let (param_c_tys, ret_c) = if let Some(TypeRef::Func { params: anno_params, return_type: anno_ret, .. }) = decl.ty.as_ref() {
                         // Plan 70 PhaseA1.4: strict — ClosureLight typed via let-annotation.
@@ -50654,13 +50696,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
 
         // Determine param C types — use explicit types, or default to nova_int.
         // Plan 70 PhaseA2: strict — if param annotated, translation must succeed.
-        // Without annotation, context_param_tys (bidirectional) or default int (Cat D).
+        // Without annotation: [M-closure-param-fn-newtype-field-access-int-
+        // miscompile] (реестр 221.1 №104) channel first (`closure_channel_
+        // param_tys` — the checker's own let-annotation fact, peeled through a
+        // NAMED fn-newtype same as the ret-side sibling), THEN
+        // context_param_tys (bidirectional HOF-argument position), THEN
+        // default int (Cat D).
+        let channel_param_tys = self.closure_channel_param_tys(closure_id, params.len());
         let param_c_tys: Vec<String> = params.iter().enumerate().map(|(i, p)| -> Result<String, String> {
             if let Some(ty) = &p.ty {
                 self.type_ref_to_c(ty).map_err(|e| self.err_no_int_fallback(
                     &format!("lambda#{} param `{}` annotation", id, p.name),
                     &e,
                 ))
+            } else if let Some(ch) = &channel_param_tys {
+                Ok(ch[i].clone())
             } else if let Some(ctx) = context_param_tys {
                 Ok(ctx.get(i).map(|(ty, _)| ty.clone()).unwrap_or_else(|| "nova_int".into()))
             } else {
@@ -53624,6 +53674,48 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
             _ => None,
         }
+    }
+
+    /// [M-closure-param-fn-newtype-field-access-int-miscompile] (реестр
+    /// 221.1 №104): PARAM-type sibling of `closure_channel_ret_c`, for a
+    /// `ClosureLight` whose params carry NO explicit annotation (`|req| ...`)
+    /// — `emit_lambda`'s own param-type derivation had no channel read at
+    /// all (only `context_param_tys`/`nova_int` default), so a closure bound
+    /// under a NAMED fn-newtype let-annotation (`ro h Handler = |req| ...`,
+    /// `type Handler fn(ServerRequest) -> str`) miscompiled every param field
+    /// access as an int (`req.path` → `(nova_int)(req.path)`). Reads the
+    /// checker's annotation of the closure literal itself
+    /// (`resolved_types[closure_id]`, populated by `f1_check_assign_let` for
+    /// a `ClosureLight` RHS under a let-annotation — types/mod.rs) and,
+    /// unlike the ret-only sibling, ALSO peels a NAMED fn-newtype/alias-of-fn
+    /// (`fn_newtype_sigs`, D52-амендмент) — the let-annotation is typically
+    /// the NAMED newtype itself (`Handler`), not a bare `Func` shape (mirrors
+    /// the SAME peel the HOF-binding channel block above (`~L30638`, Plan
+    /// 228) already performs for the exact same reason — round-trips through
+    /// `resolved_type_to_typeref_named` so both `Named` and bare `Func`
+    /// channel shapes share one lowering tail). `None` on ANY miss (unset
+    /// id, no channel entry, doesn't peel to `Func`, param count mismatch,
+    /// or a param fails to lower) — the caller falls back to legacy
+    /// (`context_param_tys`/default `nova_int`), unchanged.
+    fn closure_channel_param_tys(&self, closure_id: crate::ast::ExprId, arity: usize) -> Option<Vec<String>> {
+        if !closure_id.is_set() {
+            return None;
+        }
+        let rt = self.resolved_types.get(&closure_id)?.clone();
+        let peeled: Option<TypeRef> = match &rt {
+            crate::types::ResolvedType::Named { name, args, .. } if args.is_empty() => {
+                self.fn_newtype_sigs.get(name).cloned()
+            }
+            crate::types::ResolvedType::Func { .. } => {
+                self.resolved_type_to_typeref_named(&rt, crate::diag::Span::dummy())
+            }
+            _ => None,
+        };
+        let TypeRef::Func { params, .. } = peeled? else { return None; };
+        if params.len() != arity {
+            return None;
+        }
+        params.iter().map(|t| self.type_ref_to_c(t).ok()).collect()
     }
 
     /// Plan 38: numeric type constants — `int.MAX` / `f64.NAN` / etc.

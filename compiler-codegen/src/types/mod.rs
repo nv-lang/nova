@@ -10353,6 +10353,30 @@ impl<'a> TypeCheckCtx<'a> {
         if self.check_fn_value_mismatch(value, ann, scope, errors) {
             return;
         }
+        // [M-closure-param-fn-newtype-field-access-int-miscompile] (реестр
+        // 221.1 №104): a closure LITERAL RHS with no explicit param/return
+        // types (`|req| req.path`) relies entirely on emit_c's `fn_param_sigs`
+        // legacy derivation for its OWN params' C types — that derivation only
+        // recognized a BARE `fn(...) -> ...` let-annotation (`decl.ty`
+        // structurally `TypeRef::Func`), silently falling to the
+        // `nova_int`-for-every-param bootstrap default for a NAMED fn-newtype
+        // annotation (`type Handler fn(ServerRequest) -> str`) instead —
+        // `req.path` then miscompiled as an int-field access
+        // (`(nova_int)(req.path)` / int_to_str). `infer_expr_type` has NO arm
+        // for `ExprKind::Closure*` at all (never types a closure's OWN
+        // ExprId), so this channel slot is otherwise VOID for a closure RHS —
+        // filling it with the let-annotation's raw `ResolvedType` here is
+        // ADDITIVE (nothing else ever writes this slot for a closure), not an
+        // overwrite of any existing fact. The EXISTING emit_c channel-consumer
+        // (`resolved_types.get(&decl.value.id)` → `fn_newtype_sigs` peel for a
+        // `Named` fn-newtype, OR direct for a bare `Func` — Plan 228's
+        // `[M-nested-fn-newtype-bind-then-call-broken]` unified HOF-binding
+        // registration) already reads this exact slot; this just extends
+        // WHICH RHS SHAPES populate it (Ident/Call already did; closures did
+        // not).
+        if value.id.is_set() && matches!(value.kind, ExprKind::ClosureLight { .. }) {
+            self.resolved_types_buf.borrow_mut().insert(value.id, ResolvedType::from_type_ref(ann));
+        }
         match self.assignable(value, ann, gs, gs, scope) {
             Compat::Bad { found } => {
                 errors.push(
