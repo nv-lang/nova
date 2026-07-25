@@ -15,7 +15,7 @@ test "parse nested — root is object" {
 
 test "parse nested — arr key present" {
     ro parsed = Json.parse("{\"arr\": [1, {\"k\": \"v\"}]}")!!
-    if let Some(root) = parsed.object() {
+    if Some(root) = parsed.object() {
         assert(root.contains("arr"))
     } else {
         assert(false)
@@ -55,7 +55,7 @@ test "nested object encoded round-trips via re-encode" {
     assert(decoded.is_object())
 
     // Verify root level shape
-    if let Some(droot) = decoded.object() {
+    if Some(droot) = decoded.object() {
         assert(droot.len() == 1)
         assert(droot.contains("arr"))
     } else {

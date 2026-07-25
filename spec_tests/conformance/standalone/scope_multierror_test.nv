@@ -56,7 +56,7 @@ test "MultiError: не-primary детская ошибка читается supp
     ro want = if caught == 111 { 222 } else { 111 }
     ro e0 = supd.get(0)!!
     assert(e0 is int)
-    if let Some(v) = e0.try_as[int]() {
+    if Some(v) = e0.try_as[int]() {
         assert(v == want)
     } else {
         assert(false)
@@ -117,7 +117,7 @@ test "MultiError: default-Escalate — suppressed ⊆ прочие детски�
     while i < supd.len() {
         ro e = supd.get(i)!!
         assert(e is int)
-        if let Some(v) = e.try_as[int]() {
+        if Some(v) = e.try_as[int]() {
             assert(v >= 501 && v <= 503)
             assert(v != caught)
         } else {

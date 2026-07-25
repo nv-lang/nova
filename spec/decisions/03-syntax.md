@@ -15,7 +15,7 @@
 | [D27](#d27-синтаксис-массивов-t-префикс-nt-фиксированные) | Синтаксис массивов: `[]T` префикс, `[N]T` фиксированные |
 | [D30](#d30-стиль-именования) | Стиль именования |
 | [D33](#d33-const-vs-let--compile-time-vs-runtime) | `const` vs `let` — compile-time vs runtime |
-| [D34](#d34-if-let-и-while-let-для-pattern-matching-в-условии) | `if let` и `while let` для pattern matching в условии |
+| [D34](#d34-pattern-bind-в-ifwhile-conditions--unified-grammar-с-match-arms) | Pattern-bind в `if`/`while` conditions (без `let` — ретракция Plan 114) |
 | [D35](#d35-методы-инстанса-через--self-отменён) | Методы инстанса через `@`, `self` отменён |
 | [D37](#d37-доступ-к-полям-name-для-record-n-для-позиционных-и-кортежей) | Доступ к полям: `.name` для record, `.N` для позиционных |
 | [D38](#d38-создание-массивов-и-turbofish-для-дженериков) | Создание массивов и turbofish для дженериков |
@@ -3442,23 +3442,23 @@ if opt is None { ... }
 ```
 
 **Без биндинга** — `is` это просто `bool`. Для извлечения значения
-из варианта используется `if let` (D34), который комбинирует check
+из варианта используется pattern-bind `if` (D34), который комбинирует check
 и binding в одном выражении:
 
 ```nova
 // Без биндинга — только yes/no:
 if r is Ok { println("ok") }
 
-// С биндингом — if let:
+// С биндингом — pattern-bind if:
 if Ok(n) = r { use(n) }
 ```
 
 Это даёт чёткое разделение:
 - **`is`** = «yes/no» (короткий guard).
-- **`if let`** = «yes + extract» (binding form).
+- **`if Pattern = expr`** = «yes + extract» (binding form, D34 — без `let`).
 
 Поэтому `is` **не поддерживает binding-форму** на sum-типах —
-`r is Ok(n)` ошибка, нужно `if let Ok(n) = r`. Это согласовано
+`r is Ok(n)` ошибка, нужно `if Ok(n) = r`. Это согласовано
 с D9 «один очевидный путь»: одна форма для одной задачи.
 
 **Реализация:** компилятор знает теги вариантов и эмитит
@@ -3475,7 +3475,7 @@ fn process(x User) -> () =>
 
 #### Методы на `any` для extraction (комплементарные `is`)
 
-Для `if let`-стиля и работы через эффект `Fail`:
+Для pattern-bind-`if`-стиля и работы через эффект `Fail`:
 
 ```nova
 // Опциональный cast — Option[T]
@@ -3490,7 +3490,7 @@ fn any.as[T](x any) Fail[TypeMismatch] -> T =>
 Использование:
 
 ```nova
-// if let
+// pattern-bind if
 if Some(n) = arg.try_as[int]() {
     process_int(n)
 }
@@ -3504,7 +3504,7 @@ ro n int = arg.as[int]?
 | Способ | Когда применять |
 |---|---|
 | `match { is T => ... }` | несколько вариантов, exhaustive обработка |
-| `if let Some(n) = x.try_as[T]()` | один-два типа, mostly happy path |
+| `if Some(n) = x.try_as[T]()` | один-два типа, mostly happy path |
 | `let n = x.as[T]?` | один тип, ожидается этот тип; несовпадение — ошибка |
 
 ### Почему
@@ -3554,7 +3554,7 @@ match shape {
 }
 ```
 
-Каждая форма для своего сценария: `is` — guard, `if let` — guard +
+Каждая форма для своего сценария: `is` — guard, pattern-bind `if` — guard +
 extract, `match` — exhaustive multi-way.
 
 #### Smart cast — стандартная эргономика
@@ -3580,8 +3580,8 @@ TypeScript narrowing, C# pattern matching, Swift binding-pattern. Все
   типами, у которых tag **уже есть структурно** (`any`-boxing,
   sum-discriminant). Для record/primitives — compile error.
 - **`is Variant(binding)` с биндингом на sum-типах.** Дублирует
-  `if let Variant(binding) = expr` (D34). Чтобы избежать двух форм
-  для одной задачи — `is` без binding, `if let` с binding.
+  `if Variant(binding) = expr` (D34). Чтобы избежать двух форм
+  для одной задачи — `is` без binding, pattern-bind `if` с binding.
 - **`x.is[int]()` метод** вместо оператора. Менее читаемо в условиях
   (`if x.is[int]()`-запись хуже `if x is int`). Operator проще.
 - **`as` для `any → T`** без runtime-проверки. Type-небезопасно
@@ -3610,8 +3610,8 @@ TypeScript narrowing, C# pattern matching, Swift binding-pattern. Все
   protocol-тип, для которого работает `is`.
 - [D44](#d44-числовые-литералы) — numeric `as`-cast (`100 as u32`)
   как частный случай D54.
-- [D34](#d34-if-let-и-while-let-для-pattern-matching-в-условии) —
-  `if let Some(n) = x.try_as[T]()` использует `if let`-форму.
+- [D34](#d34-pattern-bind-в-ifwhile-conditions--unified-grammar-с-match-arms) —
+  `if Some(n) = x.try_as[T]()` использует pattern-bind-форму (D34).
 - [D19](#d19-match-arms-через--не--) — `=>` в match-arms,
   `is`-pattern наследует ту же стрелку.
 - [08-runtime.md → D26](08-runtime.md#d26) — `try_as` и `as` методы
@@ -3625,20 +3625,20 @@ TypeScript narrowing, C# pattern matching, Swift binding-pattern. Все
 - **`is` для error/cancel-detection в `Result[T, E]`.** `r is Err`
   работает (variant check), но иногда хочется проверить конкретный
   payload — `r is Err(NotFound)`. Сейчас это не поддерживается
-  (binding запрещён), нужно `if let Err(NotFound) = r`.
+  (binding запрещён), нужно `if Err(NotFound) = r`.
 
 ### Эволюция
 
 **v1:** `is` работал только для `any`-значений. Sum-варианты
-проверялись через `match` или `if let` — короткой `is`-формы не было.
+проверялись через `match` или pattern-bind `if` — короткой `is`-формы не было.
 Это вынуждало писать convention `@is_circle()` методы для часто
 проверяемых вариантов, что засоряет API типов.
 
 **v2 (текущая, 2026-05-06):** `is` расширен на sum-варианты —
 `shape is Circle` работает. Cтоимость localized: tag для sum уже
 есть в layout'е, никакого нового runtime-overhead'а. Биндинг-форма
-**не** добавлена — это работа `if let` (D34); чёткое разделение
-ролей: `is` = yes/no, `if let` = yes + extract.
+**не** добавлена — это работа pattern-bind `if` (D34); чёткое разделение
+ролей: `is` = yes/no, pattern-bind `if` = yes + extract.
 
 Это убрало нужду в `@is_X` convention'ах из syntax.md.
 
@@ -4070,9 +4070,9 @@ match event {
   конструкторы.
 - [D27](#d27-синтаксис-массивов-t-префикс-nt-фиксированные) — `[]T`
   как тип, на котором работают array-patterns.
-- [D34](#d34-if-let-и-while-let-для-pattern-matching-в-условии) —
+- [D34](#d34-pattern-bind-в-ifwhile-conditions--unified-grammar-с-match-arms) —
   pattern-bind в условиях; array/tuple-patterns доступны и в
-  `if let`/`while let`.
+  pattern-bind `if`/`while` (D34).
 - Закрывает Q-positional-partial-pattern.
 
 ### Открытые вопросы
@@ -11685,7 +11685,7 @@ ro {line: l0, col: c0, ..} = @    \ переименование — та же m
 - **Позиция**: после `ro`/`mut` токен `{` однозначен; конфликтов с блоком (не бывает слева
   от `=`) и D55-коэрцией литералов (та — справа) нет.
 - **Irrefutability**: паттерн обязан быть неопровержимым — записи и named-tuple да; варианты
-  сумм/литералы — НЕТ (`[E_REFUTABLE_BINDING]`, для них `match`/`if let`).
+  сумм/литералы — НЕТ (`[E_REFUTABLE_BINDING]`, для них `match`/pattern-bind `if`).
 - **Семантика — pattern-native, БЕЗ отдельного AST-десугара**: `ro {a, b, ..} = e`
   концептуально ≡ `ro _tmp = e; ro a = _tmp.a; ro b = _tmp.b` (`e` вычисляется один раз;
   копия для value-полей, разделяемая ссылка для кучевых), НО реализовано не переписыванием

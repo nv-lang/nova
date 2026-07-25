@@ -4,7 +4,7 @@
 // — случаев, где тип элемента не всегда очевиден из источника.
 //
 // ПРИМЕЧАНИЕ: деструктуризация боксированного sum-элемента прямо в теле
-// for-in (`for o Option[int] in opts { if let Some(v) = o { ... } }`)
+// for-in (`for o Option[int] in opts { if Some(v) = o { ... } }`)
 // упирается в отдельный pre-existing codegen-дефект value/pointer-модели
 // (см. docs/simplifications.md `[M-iflet-match-boxed-sum-ptr]`) — он не
 // связан с аннотацией типа и здесь не воспроизводится: тест проверяет

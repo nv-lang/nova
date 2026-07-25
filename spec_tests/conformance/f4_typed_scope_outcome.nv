@@ -45,7 +45,7 @@ fn f4_run_str() -> str {
             match o {
                 Success      => ()
                 Failure(err) => {
-                    if let Some(m) = err.try_as[str]() {
+                    if Some(m) = err.try_as[str]() {
                         got = m
                     }
                 }

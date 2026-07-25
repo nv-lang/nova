@@ -8,7 +8,7 @@ type Counter7_1 {
 fn Counter7_1 @count_options() -> int {
     mut x = 0
     mut state = Some(0)
-    while let Some(v) = state {
+    while Some(v) = state {
         if v >= @limit + @limit {
             state = None
         } else {

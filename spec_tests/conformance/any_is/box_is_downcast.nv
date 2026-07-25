@@ -19,7 +19,7 @@ test "int: box → is → narrowing → try_as" {
         assert(n + 1 == 43)
     }
     // optional downcast — match extracts the value
-    if let Some(v) = n.try_as[int]() {
+    if Some(v) = n.try_as[int]() {
         assert(v == 42)
     } else {
         assert(false)
@@ -36,7 +36,7 @@ test "str: box → is → narrowing (method on narrowed value)" {
         assert(s.len() == 5)                 // s narrowed to str → str methods work
         assert(s.starts_with("hel"))
     }
-    if let Some(v) = s.try_as[str]() {
+    if Some(v) = s.try_as[str]() {
         assert(v == "hello")
     } else {
         assert(false)
@@ -49,7 +49,7 @@ test "record: box → is → try_as extracts fields" {
     ro p any = p0 as any
     assert(p is Point)
     assert(!(p is int))
-    if let Some(pt) = p.try_as[Point]() {
+    if Some(pt) = p.try_as[Point]() {
         assert(pt.x == 1)
         assert(pt.y == 2)
     } else {
@@ -78,7 +78,7 @@ test "implicit upcast: call arg / let / return without `as any`" {
     assert(n is int)
     // implicit return upcast (`fn -> any => concrete`)
     ro w any = boxed(9)
-    if let Some(v) = w.try_as[int]() {
+    if Some(v) = w.try_as[int]() {
         assert(v == 9)
     } else {
         assert(false)
@@ -91,7 +91,7 @@ fn describe(x any) -> str {
     if x is int {
         return "int:${x}"          // x narrowed to int here
     }
-    if let Some(s) = x.try_as[str]() {
+    if Some(s) = x.try_as[str]() {
         return "str:${s}"
     }
     "other"

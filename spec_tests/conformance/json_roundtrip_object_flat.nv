@@ -17,7 +17,7 @@ test "parse flat object — keys present" {
 
 test "parse flat object — len = 2" {
     ro parsed = Json.parse("{\"k\": \"v\", \"n\": 42}")!!
-    if let Some(m) = parsed.object() {
+    if Some(m) = parsed.object() {
         assert(m.len() == 2)
     } else {
         assert(false)
@@ -31,7 +31,7 @@ test "roundtrip flat object preserves len + key existence" {
     ro orig = JsonValue.object(m)
     ro encoded = orig.to_str()
     ro decoded = Json.parse(encoded)!!
-    if let Some(dm) = decoded.object() {
+    if Some(dm) = decoded.object() {
         assert(dm.len() == 2)
         assert(dm.contains("k"))
         assert(dm.contains("n"))

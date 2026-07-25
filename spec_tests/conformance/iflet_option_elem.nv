@@ -1,7 +1,7 @@
 // Plan 89 Ф.2.1 — деструктуризация боксированного Option-элемента
 // массива через `if let` в теле for-in.
 //
-// До Plan 89: `for o in []Option[int] { if let Some(v) = o }` → CC-FAIL
+// До Plan 89: `for o in []Option[int] { if Some(v) = o }` → CC-FAIL
 // (`.tag` на указателе `NovaOpt_T*`). Фикс Ф.1: emit_for деболксит
 // value-sum элемент в значение.
 
