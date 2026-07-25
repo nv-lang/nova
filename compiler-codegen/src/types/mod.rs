@@ -12313,22 +12313,82 @@ impl<'a> TypeCheckCtx<'a> {
         // naturally scope to non-generic — see `fn_ret_by_span` / `c_name_by_span`.)
         let mut any_arity = false;
         let mut compat_spans: Vec<crate::diag::Span> = Vec::new();
+        // [M-concrete-instance-arity-overload-mangle] (реестр 221.1 №34): track
+        // the compatible FnDecls alongside their spans — the comment above
+        // ("Generic instance methods... NOT in codegen's span indexes, so the
+        // consume/assert naturally scope to non-generic") assumed a
+        // method-level-generic sibling (`@get[R](path str, f fn(int) -> R)`)
+        // would never show up here ALONGSIDE a compatible concrete overload
+        // (`@get(path str, h Handler)`) — but `assignable` structurally
+        // coerces a closure/fn-newtype arg to a generic `fn(..) -> R` slot
+        // just as readily as to the concrete named param type, so BOTH land
+        // in `compat_spans` and the `len()==1` unique-choice rule below
+        // silently produces NO record for a call that is, in fact,
+        // unambiguous to a human (and already type-checks green). Codegen's
+        // `has_sentinel_here` dispatch (emit_c.rs) then unconditionally
+        // routes ANY call to that method name through the generic mono path
+        // (its single-value `mono_method_decls` map cannot hold the concrete
+        // sibling at all) — breaking calls whose argument is itself a `Call`
+        // expression (E7001, the generic path's own closure-arg-return
+        // inference only recognizes a bare `ClosureLight`).
+        let mut compat_fns: Vec<&FnDecl> = Vec::new();
         for f in overloads {
             match self.overload_applicability(f, args, gs, scope) {
                 Some(true) => {
                     any_arity = true;
                     compat_spans.push(f.span);
+                    compat_fns.push(f);
                 }
                 Some(false) => any_arity = true,
                 None => {} // arity-fail for this candidate
             }
         }
         let any_compat = !compat_spans.is_empty();
+        // D84 "concrete beats generic" (precedent already established at the
+        // array-facade site above, ~12196): when a concrete (non-generic)
+        // overload is compatible ALONGSIDE ≥1 method-level-generic sibling,
+        // the concrete one is the unambiguous intended callee — a bare
+        // generic-mono routing candidate is not a real alternative the
+        // caller chose between (mirrors the `fn_span: None` sentinel design
+        // codegen uses for the same reason, emit_c.rs ~16154). Exactly ONE
+        // concrete match still wins deterministically even when several
+        // generic siblings ALSO structurally apply.
+        //
+        // GATED to calls where NO argument is a bare closure literal
+        // (`ClosureLight`/`ClosureFull`) directly at this call site.
+        // `assignable` is lenient about a closure literal's OWN return type
+        // against a concrete fn-newtype param (full body inference is
+        // deferred, not re-derived here) — verified empirically: a closure
+        // whose body returns `int` (`|n| n * 2`) still reports `Compat::Ok`
+        // against a concrete `Handler = fn(int) -> str` param, so an
+        // unqualified tie-break would WRONGLY prefer the concrete overload
+        // over the correct generic one for the generic method's OWN
+        // legitimate call sites — confirmed live (repro34c: routed to the
+        // `nova_str`-returning concrete mono, `int` reinterpreted as a
+        // `nova_str` heap pointer → GC "Out of Memory"). A `Call`-expression
+        // argument (the ACTUAL bug shape, [M-concrete-instance-arity-
+        // overload-mangle]) has already been fully typed to a concrete
+        // return type before `assignable` sees it, so no such leniency gap
+        // exists there — the tie-break stays exact for the shape it targets.
+        let has_bare_closure_arg = args.iter().any(|a| matches!(
+            a.expr().kind,
+            ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_)
+        ));
+        let concrete_compat: Vec<crate::diag::Span> = if has_bare_closure_arg {
+            Vec::new()
+        } else {
+            compat_fns.iter()
+                .filter(|f| f.generics.is_empty())
+                .map(|f| f.span)
+                .collect()
+        };
         // Single-overload → codegen picks it regardless (c1). Multi-overload → record only
         // when EXACTLY ONE overload is type-compatible (the unambiguous choice); 0 or ≥2
         // compatible = error / genuine ambiguity → leave to codegen (no record).
         let chosen_span = if overloads.len() == 1 {
             Some(overloads[0].span)
+        } else if concrete_compat.len() == 1 {
+            Some(concrete_compat[0])
         } else if compat_spans.len() == 1 {
             Some(compat_spans[0])
         } else {
