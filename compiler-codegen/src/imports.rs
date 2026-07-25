@@ -1232,9 +1232,39 @@ pub fn resolve_imports_inline_ex(
     // Prepend merged items: imported сначала, потом user code (entry +
     // sibling peers). Это важно для bootstrap single-pass codegen —
     // typedef'ы должны появиться ДО use-site.
+    //
+    // Plan 221.1 №99 (`[M-entry-value-embed-forward-decl-order]`): entry's
+    // own items merge into the SAME alphabetical position it would occupy
+    // as an ordinary sibling — NOT unconditionally first. `siblings` is
+    // already filename-sorted (`sib_paths.sort()` above); before this fix
+    // the entry ALWAYS jumped the queue ahead of every one of its self-
+    // collected siblings regardless of filename, so an entry needing a
+    // BY-VALUE embed from an alphabetically-EARLIER sibling (e.g. nova-http's
+    // `server.nv` embedding `multipart.nv`'s `MultipartLimits` — a `value`
+    // record, `m` < `s`) got that dependency's C struct body emitted AFTER
+    // its own embedding struct — a hard C error (`field has incomplete type
+    // 'NovaValue_MultipartLimits'`) — codegen's `emit_module` walks
+    // `module.items` in this exact order to emit type declarations, and a
+    // by-value field needs its type's COMPLETE body already emitted, not
+    // just forward-declared. The SAME pair compiled fine whenever the file
+    // needing the embed was itself just an ordinary (non-entry) peer or
+    // import target — `resolve_one`'s peer collection for an IMPORTED
+    // folder-module sorts ALL its peers alphabetically with no special
+    // treatment for any one of them (only the entry's OWN self-collected
+    // siblings, handled here, ever special-cased "self" ahead of the
+    // group) — which is why this never surfaced in the nova-http monolith
+    // (server.nv was always reached as an ordinary peer there, never as
+    // literally the file passed to `nova build`/`nova test`).
     let mut new_items = merged_items;
+    let entry_file_name = entry_path.file_name();
+    let entry_insert_at = siblings.iter()
+        .position(|s| s.path.file_name() > entry_file_name)
+        .unwrap_or(siblings.len());
+    for sib in siblings[..entry_insert_at].iter_mut() {
+        new_items.append(&mut sib.module.items);
+    }
     new_items.append(&mut module.items);
-    for sib in &mut siblings {
+    for sib in siblings[entry_insert_at..].iter_mut() {
         new_items.append(&mut sib.module.items);
     }
     module.items = new_items;

@@ -1,0 +1,17 @@
+// Plan 221.1 №99 (`[M-entry-value-embed-forward-decl-order]`) — peer holding
+// the `value`-allocation type embedded BY VALUE by `z_holder.nv` (this
+// directory's alphabetically-LATER peer — see that file's header comment
+// for the ordering bug this fixture guards against; targeted directly,
+// e.g. `nova test nova_tests/modules/entry_value_embed_order/z_holder.nv`,
+// so `z_holder.nv` is the literal compile ENTRY, matching how the real
+// bug needs the embedder to be the entry, not merely an ordinary peer of
+// one — under the default folder-module-grouped `nova test` sweep this
+// pair's alphabetically-first file, `a_value.nv`, is picked as the
+// group's representative entry instead, which does not exercise the bug
+// since it needs nothing from its sibling).
+
+module modules.entry_value_embed_order
+
+export type EntryValue value {
+    ro n int
+}

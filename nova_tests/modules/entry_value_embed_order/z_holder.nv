@@ -1,0 +1,37 @@
+// Plan 221.1 №99 (`[M-entry-value-embed-forward-decl-order]`): regression —
+// an ENTRY-file compilation needs a BY-VALUE embed from an alphabetically-
+// EARLIER folder-module peer (`a_value.nv`, `a` < `z`). Run this file
+// directly as the compile entry (`nova test
+// nova_tests/modules/entry_value_embed_order/z_holder.nv` — NOT the
+// directory, see `a_value.nv`'s header comment for why) to exercise it.
+//
+// `resolve_imports_inline_ex`'s entry-folder-module self-sibling merge
+// (compiler-codegen/src/imports.rs) used to always place the entry's own
+// items before ALL its sibling peers' items in `module.items`, regardless
+// of filename ordering between entry and sibling (only the siblings among
+// themselves were alphabetically sorted). Before the fix (entry now merges
+// into the SAME alphabetical position it would occupy as an ordinary
+// peer), this by-value embed produced `field has incomplete type
+// 'NovaValue_EntryValue'`: `EntryHolder`'s body (entry file, always
+// emitted first) referenced `EntryValue`'s body (sibling, emitted after)
+// before it existed. The exact real-world shape (Polaris audit finding,
+// P1 blocker): nova-http's `server.nv` (`export type ServerRequest value {
+// ... multipart_limits MultipartLimits ... }`) embeds `multipart.nv`'s
+// `MultipartLimits value { ... }` — `m` < `s`, an alphabetically-EARLIER
+// peer — and only failed once `server.nv` itself became the compile entry
+// (`nova test src` walking it as its own file, since `src/` is not a
+// uniform folder-module — a few peers declare their own distinct per-file
+// module names, so the usual "group under one alphabetically-first
+// representative" path never applies there), never when `server.nv` was
+// reached merely as an ordinary (non-entry) peer or import target.
+
+module modules.entry_value_embed_order
+
+type EntryHolder value {
+    ro f EntryValue
+}
+
+test "entry-module peer value-embeds an alphabetically-earlier sibling's value type" {
+    ro h = EntryHolder { f: EntryValue { n: 42 } }
+    assert(h.f.n == 42)
+}
