@@ -9695,7 +9695,42 @@ impl<'a> TypeCheckCtx<'a> {
                 // Plan 124.2 (D221): pattern destructure priv-field check.
                 let scrut_ty = self.infer_expr_type(scrutinee, scope);
                 self.check_priv_pattern_recursive(pattern, scrut_ty.as_ref(), errors);
+                // [M-ro-launder-pattern-bind-not-enforced] (реестр 221.1
+                // №106, D34): extend `scope`/`ro_binding_names` with the
+                // `if let` pattern's OWN binding (`if Some(x) = ...`) before
+                // walking `then` — mirrors the `Match`-arm treatment
+                // immediately below (SAME `match_arm_bindings` helper +
+                // `pattern_bind_mutability` L1-launder registration; a bare
+                // pattern-bind is D34-immutable, `mut x` is mut). Without the
+                // `scope` extension, `then` never saw `x`'s TYPE at all
+                // (a pre-existing, separate gap from the launder hole this
+                // window closes — fixed here as its unavoidable
+                // prerequisite: the launder check's scalar exemption, §72,
+                // needs `infer_expr_type` to actually resolve the bound
+                // name's type to tell a scalar bare-bind apart from a
+                // heap-owning one).
+                let binds = self.match_arm_bindings(pattern, scrut_ty.as_ref());
+                let mut saved: Vec<(String, Option<TypeRef>)> = Vec::new();
+                for (n, t) in &binds {
+                    saved.push((n.clone(), scope.insert(n.clone(), t.clone())));
+                }
+                let ro_snapshot: std::collections::HashSet<String> =
+                    self.ro_binding_names.borrow().clone();
+                for (n, is_mut) in Self::pattern_bind_mutability(pattern) {
+                    let mut set = self.ro_binding_names.borrow_mut();
+                    set.remove(&n);
+                    if !is_mut {
+                        set.insert(n);
+                    }
+                }
                 self.f1_block(then, gs, scope, errors);
+                *self.ro_binding_names.borrow_mut() = ro_snapshot;
+                for (n, prev) in saved {
+                    match prev {
+                        Some(t) => { scope.insert(n, t); }
+                        None => { scope.remove(&n); }
+                    }
+                }
                 if let Some(eb) = else_ {
                     self.f1_else(eb, gs, scope, errors);
                 }
@@ -9747,6 +9782,28 @@ impl<'a> TypeCheckCtx<'a> {
                     for (n, t) in &binds {
                         saved.push((n.clone(), scope.insert(n.clone(), t.clone())));
                     }
+                    // [M-ro-launder-pattern-bind-not-enforced] (реестр 221.1
+                    // №106, D34/D246-амендмент): a match-arm pattern binding
+                    // (`Ok(b0) => ...`) is L1-immutable per D34 ("bare-биндинг
+                    // конструктор-паттерна = immutable") — a bare pattern-bound
+                    // name gets the SAME ro-freeze the launder table already
+                    // gives an explicit `ro x = ...` local / non-`mut` param
+                    // (D246 ORACLE G); `mut b0` inside the pattern is mut,
+                    // exactly as `mut x = ...` is. Without this, `Ok(b0) =>
+                    // { mut b = b0 }` on a heap-owning payload laundered
+                    // through the launder check MOLча (the check only ever
+                    // consulted `ro_binding_names`, never populated for
+                    // pattern binds). Snapshot/restore matches the SAME
+                    // `saved`/`scope` arm-body lifetime immediately above.
+                    let ro_snapshot: std::collections::HashSet<String> =
+                        self.ro_binding_names.borrow().clone();
+                    for (n, is_mut) in Self::pattern_bind_mutability(&arm.pattern) {
+                        let mut set = self.ro_binding_names.borrow_mut();
+                        set.remove(&n);
+                        if !is_mut {
+                            set.insert(n);
+                        }
+                    }
                     match &arm.body {
                         MatchArmBody::Expr(e) => {
                             self.f1_expr(e, gs, scope, errors)
@@ -9755,6 +9812,7 @@ impl<'a> TypeCheckCtx<'a> {
                             self.f1_block(b, gs, scope, errors)
                         }
                     }
+                    *self.ro_binding_names.borrow_mut() = ro_snapshot;
                     for (n, prev) in saved {
                         match prev {
                             Some(t) => { scope.insert(n, t); }
@@ -11478,6 +11536,34 @@ impl<'a> TypeCheckCtx<'a> {
             return Some(ret);
         }
         None
+    }
+
+    /// [M-ro-launder-pattern-bind-not-enforced] (реестр 221.1 №106, D34):
+    /// companion of `match_arm_bindings` — walks the SAME recognized pattern
+    /// shapes (bare `Pattern::Ident` top-level; single-arg tuple-variant
+    /// sub-`Ident`, e.g. `Ok(b)` / `Ok(mut b)`) collecting each binding's OWN
+    /// `is_mut` flag (D34: bare pattern-bind = immutable/ro-freeze, `mut
+    /// name` = mut) — independent of the scrutinee's type (unlike
+    /// `match_arm_bindings`, there is no type to resolve here, just the
+    /// pattern's own static shape). Deliberately kept in LOCKSTEP with
+    /// `match_arm_bindings`'s shape recognition (same two arms, same
+    /// guard) — a binding `scope` doesn't know about (an un-recognized
+    /// pattern shape) gets no L1 launder-table entry either; registering one
+    /// anyway would be a name in `ro_binding_names` with no matching `scope`
+    /// entry — harmless in isolation, but an inconsistency with no upside.
+    fn pattern_bind_mutability(pattern: &Pattern) -> Vec<(String, bool)> {
+        match pattern {
+            Pattern::Ident { name, is_mut, .. } => vec![(name.clone(), *is_mut)],
+            Pattern::Variant { kind: VariantPatternKind::Tuple { patterns, rest }, .. }
+                if !rest && patterns.len() == 1 =>
+            {
+                match &patterns[0] {
+                    Pattern::Ident { name, is_mut, .. } => vec![(name.clone(), *is_mut)],
+                    _ => Vec::new(),
+                }
+            }
+            _ => Vec::new(),
+        }
     }
 
     fn match_arm_bindings(

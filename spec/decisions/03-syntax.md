@@ -1548,6 +1548,14 @@ binding управляет «можно ли модифицировать **пе
 > тихо принимались парсером наравне с каноном («две двери»); теперь
 > дают `E_IF_LET_RETRACTED` со span на `let`. Пишите паттерн напрямую:
 > `if Some(x) = expr { ... }` / `while Some(x) = expr { ... }`.
+> AMEND (2026-07-25, реестр 221.1 №106, [M-ro-launder-pattern-bind-not-
+> enforced]): «bare bindings inside pattern default immutable» (правило 1
+> выше) была ДЕКЛАРАЦИЕЙ без энфорса на cross-binding — паттерн-биндинги
+> (match arm / `if Some(x) =`) не были заведены в L1 launder-таблицу
+> (D246 §ORACLE G), так что `Ok(b0) => { mut b = b0 }` на кучевом payload
+> отмывало readonly-заморозку МОЛЧА. Чекер теперь заводит bare
+> pattern-bind = L1-ro (ту же launder-проверку, что явный `ro x = ...`),
+> `mut x` внутри паттерна = mut — см. D246 §ORACLE G AMEND ниже.
 
 ### Что
 

@@ -1,0 +1,38 @@
+// EXPECT_COMPILE_ERROR E_READONLY_COERCE
+//
+// [M-ro-launder-pattern-bind-not-enforced] (реестр 221.1 №106, D34/D246):
+// вскрыто владельцем 2026-07-25 (`Ok(req0) => { mut req = req0 }` в polaris
+// server.nv — «это не должно компилиться»). D34 фиксирует bare-биндинг
+// конструктор-паттерна = immutable; D246 ORACLE G требует
+// `E_READONLY_COERCE` на cross-binding `mut b = <L1-ro источник>` для
+// не-fully-stack типов — но launder-энфорс (Plan 224/226) видел ТОЛЬКО
+// декларированные `ro`-биндинги/D176-параметры; ПАТТЕРН-биндинги (match
+// arm / `if Some(x) =`) в L1-таблицу не были заведены вовсе → launder через
+// паттерн проходил МОЛЧА. Кучевой payload (Vec-поле) — `mut b = b0` должен
+// быть E_READONLY_COERCE (то же самое отмывание, что probe G уже ловит для
+// явного `ro`-биндинга, m_ro_launder_g_value_record_heap_field_neg.nv).
+
+module neg.p106_launder_pattern_bind_neg
+
+import std.collections.vec.{Vec}
+
+type P106Basket value {
+    mut items Vec[int]
+}
+
+fn P106Basket.new() -> P106Basket => { items: Vec[int].of(1, 2, 3) }
+
+fn p106_source() -> Result[P106Basket, str] => Ok(P106Basket.new())
+
+fn main() -> () {
+    match p106_source() {
+        Ok(b0) => {
+            // b0 — bare pattern-bind (immutable, D34) кучевого Vec-поля;
+            // `mut b = b0` отмывает readonly-freeze — ДОЛЖНО быть
+            // E_READONLY_COERCE (дыра до этого фикса: проходило молча).
+            mut b = b0
+            b.items.push(99)
+        }
+        Err(_) => {}
+    }
+}

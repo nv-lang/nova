@@ -37,7 +37,15 @@ test "for-in []Option[str] — боксированный элемент с str 
     mut total_len = 0
     for o in names {
         if Some(n) = o {
-            total_len = total_len + n.len()
+            // [M-ro-launder-pattern-bind-not-enforced] (реестр 221.1 №106)
+            // side-fix: `n`'s type reaches `scope` now (if-let pattern-bind
+            // scope-population, needed as this window's own prerequisite —
+            // see `f1_expr`'s `IfLet` arm) — was previously invisible to the
+            // checker, masking this retired API (D249 lens model: `str.len()`
+            // was retired long before, this call was simply never checked).
+            // `byte_len()` is the correct O(1) replacement for pure-ASCII
+            // literals like these.
+            total_len = total_len + n.byte_len()
         }
     }
     assert(total_len == 8)
