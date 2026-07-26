@@ -2578,7 +2578,7 @@ Note — several codegen gaps discovered during Ф.2 were FIXED (not deferred): 
   binding=nova_unit; codegen корректен); partial-prelude+[]T теперь чистый loud-fail
   ([M-partial-prelude-primitive-method-registry]). Коммиты 0292f3694/65d165e75/99b3d2ce2.
 
-- **[M-hex-blob-embed-d412]** (2026-07-07, P2, Plan: **186** (docs/plans/186-hex-blob-embed.md), очередь после
+- ✅ ЗАКРЫТ (Plan 186, 2026-07-09; статус-синк 2026-07-26) **[M-hex-blob-embed-d412]** (2026-07-07, P2, Plan: **186** (docs/plans/186-hex-blob-embed.md), очередь после
   172.12-A8/174.5; Wave: [sonnet] по карте плана 186) — реализовать D412: (1) лексер
   `x"…"`-литерала (hex-цифры + разделители `_`/пробел/перенос; E_HEX_BLOB_ODD,
   E_HEX_BLOB_CHAR) → компайл-тайм `[]u8`; (2) интринсик `embed("path")` (путь-литерал
