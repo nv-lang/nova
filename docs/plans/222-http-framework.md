@@ -442,6 +442,13 @@ wss из коробки), шаг 2 hyper-модель (конвейер generic 
 эффектов — как пользователю Db/Net/Fail в хендлерах (R5-форвардинг vs ambient vs D431);
 main-канон Net Time Detach; Fail-политика API; паника vs Fail (recover-500).
 
+### 222.21 — поверхность Router/Middleware: кросс-фреймворк-разбор 🟠 разведка → **отдельный файл [222.21](222.21-router-api-surface.md)** (вопросы владельца 2026-07-25)
+Сравнение `route`/`nest`/`layer` с Axum·chi·Gin·Express·Actix·FastAPI·ASP.NET·Fiber·Hono.
+`route` — паритет+. Пробелы: П1 `merge`, П2 **инлайн-группа** (`Group`/`scope` — есть у ВСЕХ,
+кроме нас), П3 `route_layer` (MW не на 404), П4 per-route MW. Плюс вопрос именования
+**`layer` → `use`** (де-факто лингва-франка: chi/Gin/Express/Fiber/Hono/ASP.NET; `layer` — только
+Axum/tower) и разбор FastAPI-композита `include_router(prefix=,tags=,dependencies=)`.
+
 ## 8. Маркеры (регистрируются этим планом)
 
 - `[M-serde-field-attrs-unimplemented]` (P2) — rename/rename_all/skip/default/flatten спроектированы в
