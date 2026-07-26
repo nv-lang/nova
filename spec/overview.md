@@ -108,7 +108,6 @@
 | Structured concurrency, supervision | Erlang/OTP, Swift |
 | Контракты, refinement-types | Eiffel, Dafny, F* |
 | Capability security | E, Pony |
-| Time-travel debugging | rr, Hypothesis |
 
 ## Tooling из коробки
 
@@ -153,8 +152,6 @@
   content-addressed-хранилище не строилось
 - Hot reload в dev-режиме
 - AI-friendly патчи в diagnostic'ах (для LLM)
-<!-- TODO(232): уточнить у владельца — амбиция «time-travel debugging»
-     (`nova run --record` / `nova replay`) исходно опиралась на
      интерпретатор, который ретрактирован; актуальная форма этой идеи
      (если она ещё жива) не описана ни в одном известном плане на
      момент этой ревизии — не изобретаю новую команду. -->
