@@ -381,6 +381,11 @@ impl<'a> Collector<'a> {
                 self.walk_expr(a);
                 self.walk_expr(b);
             }
+            ExprKind::CoalesceReturnFallback(inner) => {
+                if let Some(e) = inner {
+                    self.walk_expr(e);
+                }
+            }
             ExprKind::As(e, _) | ExprKind::Is(e, _) => self.walk_expr(e),
             ExprKind::Binary { left, right, .. } => {
                 self.walk_expr(left);

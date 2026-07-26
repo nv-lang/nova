@@ -491,6 +491,7 @@ impl Backend {
         self.state.references_index.mark_primed();
 
         if self.state.is_shutting_down() {
+            self.end_progress_on_shutdown(&token).await;
             return;
         }
 
@@ -529,6 +530,7 @@ impl Backend {
         for (i, path) in to_reindex.iter().enumerate() {
             if self.state.is_shutting_down() {
                 tracing::info!("nova-lsp: initial scan aborted — shutdown requested");
+                self.end_progress_on_shutdown(&token).await;
                 return;
             }
             let Some(uri) = Url::from_file_path(path).ok() else { continue };
@@ -585,6 +587,7 @@ impl Backend {
         );
 
         if self.state.is_shutting_down() {
+            self.end_progress_on_shutdown(&token).await;
             return;
         }
 
@@ -607,6 +610,7 @@ impl Backend {
         if let Ok(check_results) = results {
             for cr in check_results {
                 if self.state.is_shutting_down() {
+                    self.end_progress_on_shutdown(&token).await;
                     return;
                 }
                 let rope = Rope::from_str(&cr.source);
@@ -622,6 +626,7 @@ impl Backend {
         }
 
         if self.state.is_shutting_down() {
+            self.end_progress_on_shutdown(&token).await;
             return;
         }
 
@@ -646,6 +651,26 @@ impl Backend {
                 value: ProgressParamsValue::WorkDone(value),
             })
             .await;
+    }
+
+    /// Best-effort `WorkDoneProgress::End` for a token whose scan is bailing
+    /// out early (`is_shutting_down()`) — without this, `run_initial_scan_
+    /// with_progress`'s early `return`s leave the client's progress spinner
+    /// open forever (found 2026-07-26: owner's "indexing workspace: type-
+    /// checking" never clears, even across a clean client restart, because
+    /// the KILLED instance's token was never closed — only the NEW instance's
+    /// own cycle completes cleanly, and old orphaned tokens accumulate).
+    /// Safe to call here: `shutdown()` gives in-flight tasks a ~100ms grace
+    /// window before the transport actually dies (LSP `exit` comes later),
+    /// so this notification still has a live stream to write to.
+    async fn end_progress_on_shutdown(&self, token: &NumberOrString) {
+        self.send_progress(
+            token,
+            WorkDoneProgress::End(WorkDoneProgressEnd {
+                message: Some("cancelled — shutting down".to_string()),
+            }),
+        )
+        .await;
     }
 }
 
