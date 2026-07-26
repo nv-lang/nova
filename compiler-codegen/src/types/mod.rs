@@ -12599,6 +12599,59 @@ impl<'a> TypeCheckCtx<'a> {
                 .map(|f| f.span)
                 .collect()
         };
+        // [M-2223-arity-sibling-static-protocol-dispatch-int-fallback] (реестр
+        // 221.1, Гэп №2, 222.3 §5 повтор): a CONCRETE sibling that FAILS the
+        // exact-match filters above (`concrete_sibling_return_type_ok`/
+        // `closure_args_match_concrete`) is STRUCTURALLY PROVEN incompatible
+        // for THIS `ClosureFull` argument — but `overload_applicability`'s
+        // coarse per-candidate check above still lets it into `compat_spans`
+        // (its `assignable` collapses every `Func`-shaped expected type to
+        // `Any`, permissive-by-design, U.3.1 doc). When exactly ONE OTHER
+        // (generic) candidate is ALSO in `compat_spans`, the genuinely
+        // unambiguous call (`r.get(1, fn(a A105) -> str {...})` — only the
+        // arity-1 generic sibling's closure shape actually matches; the
+        // concrete sibling wants `fn(int) -> str`, not `fn(A105) -> str`)
+        // never reaches the `compat_spans.len() == 1` fallback below
+        // (`len() == 2`: the proven-incompatible concrete + the correct
+        // generic) — `chosen_span` stays `None`, and CODEGEN's single-valued
+        // `mono_method_decls` (last-generic-registration-wins, emit_c.rs
+        // ~16132) then force-routes the call into WHICHEVER generic sibling
+        // was registered LAST — for 2+ same-named generic siblings of
+        // DIFFERENT arity, that can be the WRONG one (a 1-param call routed
+        // into a 2-param generic decl), leaving the extra type-param(s)
+        // unbound → the classic "unresolved generic → `nova_int` fallback"
+        // → `[E_UNKNOWN_STATIC_METHOD] int.<protocol-method>(...)` for any
+        // protocol-bound static call inside that wrong body (confirmed via
+        // `nova-p2gap2` repro: 2 arity-siblings, each statically dispatching
+        // a protocol method on its own method-level typevar).
+        //
+        // Prune a concrete span PROVEN incompatible here using the SAME
+        // already-verified exact-match filters this function already computes
+        // for `concrete_compat` — this can only ever REMOVE a span this
+        // function has already structurally disproven, never add ambiguity
+        // (it does not touch `compat_spans` when every concrete candidate in
+        // it is either absent or still exact-match-compatible). `ClosureLight`
+        // stays fully exempt (`has_bare_closurelight_arg` short-circuits to
+        // the unmodified `compat_spans`, mirroring the D84 tie-break's own
+        // exemption above — a bare closure literal's return type isn't fully
+        // verified by `assignable`, so no structural disproof is available).
+        let compat_spans: Vec<crate::diag::Span> = if has_bare_closurelight_arg {
+            compat_spans
+        } else {
+            let disproven_concrete: Vec<crate::diag::Span> = compat_fns.iter()
+                .filter(|f| f.generics.is_empty())
+                .filter(|f| !self.concrete_sibling_return_type_ok(f, args, scope)
+                    || !self.closure_args_match_concrete(f, args))
+                .map(|f| f.span)
+                .collect();
+            if disproven_concrete.is_empty() {
+                compat_spans
+            } else {
+                compat_spans.into_iter()
+                    .filter(|sp| !disproven_concrete.contains(sp))
+                    .collect()
+            }
+        };
         // Single-overload → codegen picks it regardless (c1). Multi-overload → record only
         // when EXACTLY ONE overload is type-compatible (the unambiguous choice); 0 or ≥2
         // compatible = error / genuine ambiguity → leave to codegen (no record).

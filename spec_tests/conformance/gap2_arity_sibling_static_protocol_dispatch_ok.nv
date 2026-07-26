@@ -1,0 +1,101 @@
+// [M-2223-arity-sibling-static-protocol-dispatch-int-fallback] (реестр 221.1,
+// Гэп №2 из 222.3 §5 повтора, docs/plans/backlog-followups.md) — regression
+// test.
+//
+// Symptom (pre-fix): TWO (or more) method-level-generic siblings of the SAME
+// method name, differing ONLY in the handler closure's OWN param arity
+// (`@get[T1,R](x, h fn(T1)->R)` vs `@get[T1,T2,R](x, h fn(T1,T2)->R)` — the
+// exact Router-style extractor-count shape Plan 222.3 §5's sugar needs), each
+// delegating via a SAME-named call into a CONCRETE sibling
+// (`@get(x, h fn(int)->str)`) with a `ClosureFull` argument that statically
+// dispatches a protocol method on its OWN enclosing method-level typevar
+// (`T1.from_req(req)` / `T2.from_req(req)`) — compiled INCORRECTLY: the
+// outer test call (a single-arity `ClosureFull` argument) got silently
+// routed by codegen into the WRONG (higher-arity) generic sibling's mono
+// body, leaving that sibling's OWN extra typevar unbound → the standard
+// "unresolved generic → `nova_int`" fallback → `[E_UNKNOWN_STATIC_METHOD]
+// int.from_req(...)`.
+//
+// Root cause: `check_instance_overload` (types/mod.rs) computes a tight,
+// exact-match `concrete_compat` (via `concrete_sibling_return_type_ok` /
+// `closure_args_match_concrete`) to let a CONCRETE sibling win the D84
+// tie-break — but the COARSE `compat_spans` bucket (fed by
+// `overload_applicability`, whose `assignable` collapses every `Func`-shaped
+// expected type to `Any`) still counted a concrete sibling PROVEN
+// incompatible by that same exact-match check as "compatible". A call site
+// with exactly ONE correct generic candidate PLUS one proven-incompatible
+// concrete candidate therefore had `compat_spans.len() == 2`, never reached
+// the `compat_spans.len() == 1` unambiguous-fallback, and left
+// `resolved_callees` empty — deferring to codegen's single-valued
+// `mono_method_decls` (last-generic-registration-wins, emit_c.rs ~16132),
+// which force-routed the call into whichever generic sibling was registered
+// LAST regardless of arity match.
+//
+// Fix: prune a concrete span already PROVEN incompatible (by the exact-match
+// filters this function already computes) out of `compat_spans` too, so the
+// remaining genuinely-unique generic candidate reaches the
+// `compat_spans.len() == 1` fallback and gets recorded into
+// `resolved_callees` — codegen then reads the CORRECT arity-matched sibling
+// via the existing №130 by-span retry (emit_c.rs ~41190), instead of falling
+// through to the single-key `mono_method_decls` last-wins registry.
+// `ClosureLight` stays exempt (unchanged, mirrors the D84 tie-break's own
+// exemption).
+module spec_tests.conformance
+
+type FromReqGap2 protocol {
+    .from_req(req int) -> Result[Self, str]
+}
+
+type AGap2 { tag int }
+#impl(FromReqGap2)
+fn AGap2.from_req(req int) -> Result[AGap2, str] => Ok(AGap2 { tag: req })
+
+type BGap2 { tag int }
+#impl(FromReqGap2)
+fn BGap2.from_req(req int) -> Result[BGap2, str] => Ok(BGap2 { tag: req * 10 })
+
+type RGap2 { tag int }
+fn RGap2.new() -> RGap2 => { tag: 0 }
+
+export fn RGap2 mut @get(x int, h fn(int) -> str) -> str {
+    h(x)
+}
+
+export fn RGap2 mut @get[T1 FromReqGap2, R](x int, h fn(T1) -> R) -> R {
+    ro inner = @get(x, fn(req int) -> str {
+        match T1.from_req(req) {
+            Ok(_) => "ok"
+            Err(_) => "err"
+        }
+    })
+    assert(inner == "ok")
+    match T1.from_req(x) {
+        Ok(v) => h(v)
+        Err(_) => panic("bad1")
+    }
+}
+
+export fn RGap2 mut @get[T1 FromReqGap2, T2 FromReqGap2, R](x int, h fn(T1, T2) -> R) -> R {
+    ro inner = @get(x, fn(req int) -> str {
+        match T2.from_req(req) {
+            Ok(_) => "ok"
+            Err(_) => "err"
+        }
+    })
+    assert(inner == "ok")
+    match T1.from_req(x) {
+        Ok(v1) => match T2.from_req(x) {
+            Ok(v2) => h(v1, v2)
+            Err(_) => panic("bad2")
+        }
+        Err(_) => panic("bad1")
+    }
+}
+
+test "Gap #2: 2 same-name arity-siblings, each protocol-static-dispatching on its own typevar, delegating into a concrete same-name sibling" {
+    mut r = RGap2.new()
+    ro s1 = r.get(1, fn(a AGap2) -> str { "a=${a.tag.to_str()}" })
+    ro s2 = r.get(2, fn(a AGap2, b BGap2) -> str { "a=${a.tag.to_str()},b=${b.tag.to_str()}" })
+    assert(s1 == "a=1")
+    assert(s2 == "a=2,b=20")
+}
