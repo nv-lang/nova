@@ -1,0 +1,53 @@
+// [M-2223-closurefull-generic-overload-resolution] (реестр 221.1 №124)
+// repro/regression test — companion to
+// `arity_overload_concrete_vs_bound_generic.nv` (№34), which locked in the
+// SAME concrete-vs-generic-sibling shape for a `ClosureLight` (`|x| ...`) /
+// `Call`-expression argument. This file exercises the THIRD closure form:
+// `ClosureFull` (`fn(x T) -> U { ... }`), the fully-typed literal
+// Router-style extractor sugar (Plan 222.3 §5) actually needs.
+//
+// Root cause (before the fix): the D84 "concrete beats generic" tie-break
+// (`check_instance_overload`, types/mod.rs) and its codegen mirror
+// (`emit_c.rs` ~41158) excluded EVERY bare closure literal — `ClosureLight`
+// AND `ClosureFull` alike — from ever winning the tie-break, so a
+// `ClosureFull` argument to the CONCRETE overload was unconditionally
+// force-routed into the unrelated bound-generic sibling's mono-dispatch
+// path, whose own closure-arg return-type inference has no arm for a
+// `Call`-shaped C symbol lookup on a concrete param — `[E7001] cannot infer
+// C type for closure-arg return type (R)`. `ClosureLight`'s exemption is
+// warranted (its return type needs a full body-walk not done at this
+// layer — a real leniency gap, `repro34c`); `ClosureFull`'s grammar
+// mandates every param AND the return type spelled explicitly, so no such
+// leniency gap exists for it.
+//
+// Fix: narrow the tie-break's exemption to `ClosureLight` only; a
+// `ClosureFull` argument now additionally requires an EXACT structural
+// match (`closure_args_match_concrete`/`peel_func_shape_depth`, types/
+// mod.rs, `typeref_equal`) between the closure's own fully-typed signature
+// and the concrete candidate's declared Func-shaped param before the
+// concrete overload's span is trusted — so a genuinely mismatched
+// `ClosureFull` (see the NEG companion) still correctly falls through
+// instead of silently miscompiling.
+
+module spec_tests.conformance
+
+type Handler124 fn(int) -> str
+
+type Box124 {
+    tag int,
+}
+
+export fn Box124 mut @get(path str, h Handler124) -> str {
+    h(path.byte_len())
+}
+
+// Unrelated/uncalled-by-the-concrete-form bound-generic sibling.
+export fn Box124 mut @get[R](path str, f fn(int) -> R) -> R {
+    f(path.byte_len())
+}
+
+test "concrete overload dispatches with a ClosureFull-literal argument, generic sibling present" {
+    mut b = Box124 { tag: 1 }
+    ro r = b.get("/alpha", fn(n int) -> str { "len=${n.to_str()}" })
+    assert(r == "len=6")
+}

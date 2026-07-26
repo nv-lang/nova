@@ -12516,25 +12516,40 @@ impl<'a> TypeCheckCtx<'a> {
         // concrete match still wins deterministically even when several
         // generic siblings ALSO structurally apply.
         //
-        // GATED to calls where NO argument is a bare closure literal
-        // (`ClosureLight`/`ClosureFull`) directly at this call site.
-        // `assignable` is lenient about a closure literal's OWN return type
-        // against a concrete fn-newtype param (full body inference is
-        // deferred, not re-derived here) — verified empirically: a closure
-        // whose body returns `int` (`|n| n * 2`) still reports `Compat::Ok`
-        // against a concrete `Handler = fn(int) -> str` param, so an
-        // unqualified tie-break would WRONGLY prefer the concrete overload
-        // over the correct generic one for the generic method's OWN
-        // legitimate call sites — confirmed live (repro34c: routed to the
-        // `nova_str`-returning concrete mono, `int` reinterpreted as a
-        // `nova_str` heap pointer → GC "Out of Memory"). A `Call`-expression
-        // argument (the ACTUAL bug shape, [M-concrete-instance-arity-
-        // overload-mangle]) has already been fully typed to a concrete
-        // return type before `assignable` sees it, so no such leniency gap
-        // exists there — the tie-break stays exact for the shape it targets.
-        let has_bare_closure_arg = args.iter().any(|a| matches!(
+        // GATED to calls where NO argument is a bare `ClosureLight` literal
+        // (`|x| ...`) directly at this call site. `assignable` is lenient
+        // about a `ClosureLight` literal's OWN return type against a concrete
+        // fn-newtype param (full body inference is deferred, not re-derived
+        // here) — verified empirically: a closure whose body returns `int`
+        // (`|n| n * 2`) still reports `Compat::Ok` against a concrete
+        // `Handler = fn(int) -> str` param, so an unqualified tie-break would
+        // WRONGLY prefer the concrete overload over the correct generic one
+        // for the generic method's OWN legitimate call sites — confirmed live
+        // (repro34c: routed to the `nova_str`-returning concrete mono, `int`
+        // reinterpreted as a `nova_str` heap pointer → GC "Out of Memory"). A
+        // `Call`-expression argument (the ACTUAL bug shape, [M-concrete-
+        // instance-arity-overload-mangle]) has already been fully typed to a
+        // concrete return type before `assignable` sees it, so no such
+        // leniency gap exists there — the tie-break stays exact for the shape
+        // it targets.
+        //
+        // [M-2223-closurefull-generic-overload-resolution] (реестр 221.1
+        // №124): `ClosureFull` (`fn(x T) -> U { ... }`) used to be lumped
+        // into this SAME exemption by a stale over-broad comment — but its
+        // grammar mandates every param type AND the return type spelled
+        // explicitly (no leniency gap the `ClosureLight` rationale above
+        // describes), so it does NOT need the exemption; it needs the
+        // separate EXACT structural check below instead
+        // (`closure_args_match_concrete`). Excluding it from the concrete
+        // tie-break entirely used to force EVERY `ClosureFull`-argument call
+        // through the generic-mono path even when an unrelated bound-generic
+        // sibling merely happened to exist alongside a genuinely intended
+        // concrete overload — `[E7001] cannot infer C type for closure-arg
+        // return type` (Router-style extractor sugar's target shape, Plan
+        // 222.3 §5 diagnosis).
+        let has_bare_closurelight_arg = args.iter().any(|a| matches!(
             a.expr().kind,
-            ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_)
+            ExprKind::ClosureLight { .. }
         ));
         // [M-generic-mono-multi-instantiation-concrete-sibling-collision]
         // (реестр 221.1 №105): additionally require the concrete candidate's
@@ -12543,14 +12558,20 @@ impl<'a> TypeCheckCtx<'a> {
         // `concrete_sibling_return_type_ok`'s doc for the full mechanism
         // (`assignable`'s bare-`Func`→`Any` collapse otherwise lets a
         // return-type-incompatible NAMED function value win this tie-break
-        // over its real bound-generic target). Closures stay exempt via the
-        // `has_bare_closure_arg` short-circuit above (unchanged).
-        let concrete_compat: Vec<crate::diag::Span> = if has_bare_closure_arg {
+        // over its real bound-generic target). `ClosureLight` stays exempt
+        // via the `has_bare_closurelight_arg` short-circuit above (unchanged);
+        // `ClosureFull` additionally requires an EXACT structural match
+        // (`closure_args_match_concrete`, №124) — `concrete_sibling_return_
+        // type_ok` alone degrades PERMISSIVE for a bare closure literal (its
+        // `infer_expr_type` call has no closure arm), which would silently
+        // accept a signature-MISMATCHED `ClosureFull` too.
+        let concrete_compat: Vec<crate::diag::Span> = if has_bare_closurelight_arg {
             Vec::new()
         } else {
             compat_fns.iter()
                 .filter(|f| f.generics.is_empty())
                 .filter(|f| self.concrete_sibling_return_type_ok(f, args, scope))
+                .filter(|f| self.closure_args_match_concrete(f, args))
                 .map(|f| f.span)
                 .collect()
         };
@@ -16421,6 +16442,90 @@ impl<'a> TypeCheckCtx<'a> {
                 _ => false,
             };
             if !ok {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// [M-2223-closurefull-generic-overload-resolution] (реестр 221.1 №124):
+    /// peel `tr` the SAME way `peel_func_return_depth`/`typeref_is_func_
+    /// compatible_depth` do (view-wrappers + a declared fn-newtype/alias
+    /// chain) down to a bare `TypeRef::Func`, returning a CLONE of that
+    /// FULL Func shape (params AND return type — `peel_func_return_depth`
+    /// only keeps the return half). `None` — `tr` is not (transitively)
+    /// Func-shaped at all.
+    fn peel_func_shape_depth(&self, tr: &TypeRef, depth: u32) -> Option<TypeRef> {
+        if depth > 16 {
+            return None;
+        }
+        match tr {
+            TypeRef::Func { .. } => Some(tr.clone()),
+            TypeRef::Readonly(inner, _)
+            | TypeRef::Mut(inner, _)
+            | TypeRef::Uninit(inner, _)
+            | TypeRef::Ref(inner, _)
+            | TypeRef::Pointer(inner, _) => self.peel_func_shape_depth(inner, depth + 1),
+            TypeRef::Named { path, generics, .. } if generics.is_empty() => {
+                let n = path.last()?;
+                match self.types.get(n).map(|td| &td.kind) {
+                    Some(TypeDeclKind::Newtype(inner)) | Some(TypeDeclKind::Alias(inner)) => {
+                        self.peel_func_shape_depth(inner, depth + 1)
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// [M-2223-closurefull-generic-overload-resolution] (реестр 221.1 №124):
+    /// does concrete candidate `f`'s OWN declared Func-shaped param(s), paired
+    /// with a `ClosureFull` LITERAL argument (`fn(x T) -> U { ... }`) at this
+    /// call site, match the closure's own signature EXACTLY? A `ClosureFull`
+    /// literal's grammar mandates every param type AND the return type spelled
+    /// explicitly — unlike `ClosureLight` (`|x| ...`, D84's original exemption
+    /// rationale: its return type needs a full body-walk this layer doesn't
+    /// do), so an exact structural comparison (`typeref_equal`) is decidable
+    /// right here with zero inference. This is the companion `f`-decl-shape
+    /// check to `concrete_sibling_return_type_ok` (#105) — that helper only
+    /// re-derives a RETURN type via `infer_expr_type`, which has NO arm for a
+    /// bare closure literal (`ClosureFull` included) and silently degrades to
+    /// permissive (`None` → `continue`) for one; calling it alone on a
+    /// `ClosureFull` arg would therefore treat ANY signature — matching or
+    /// not — as compatible, the exact silent-miscompile failure mode #105
+    /// closed for named function values. Reading the literal's OWN AST
+    /// annotations directly (no `infer_expr_type` involved) avoids that gap.
+    /// Permissive (`true`) whenever either side isn't decidable structurally
+    /// (candidate param not Func-shaped, or the paired arg isn't a
+    /// `ClosureFull`) — a generic sibling's OWN legitimate `ClosureFull` call
+    /// site (whose shape does NOT structurally match the unrelated concrete
+    /// sibling's fixed param type) correctly returns `false` here, so
+    /// `concrete_compat` (caller) excludes the concrete candidate and the
+    /// generic path still wins for it.
+    fn closure_args_match_concrete(&self, f: &FnDecl, args: &[CallArg]) -> bool {
+        let Ok(bindings) = crate::argbind::bind_call_args(&f.params, args) else { return true; };
+        for (pi, binding) in bindings.iter().enumerate() {
+            let ai = match binding {
+                crate::argbind::ArgBinding::Positional(i)
+                | crate::argbind::ArgBinding::Named(i) => *i,
+                _ => continue,
+            };
+            let Some(param) = f.params.get(pi) else { continue; };
+            if param.is_variadic {
+                continue;
+            }
+            let Some(arg) = args.get(ai) else { continue; };
+            let ExprKind::ClosureFull(sb) = &arg.expr().kind else { continue; };
+            let Some(param_func) = self.peel_func_shape_depth(&param.ty, 0) else { continue; };
+            let arg_func = TypeRef::Func {
+                params: sb.params.iter().map(|p| p.ty.clone()).collect(),
+                effects: Vec::new(),
+                return_type: sb.return_type.clone().map(Box::new),
+                extern_abi: None,
+                span: sb.span,
+            };
+            if !typeref_equal(&param_func, &arg_func) {
                 return false;
             }
         }
