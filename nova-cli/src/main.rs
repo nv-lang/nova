@@ -1386,43 +1386,18 @@ fn ensure_entry_peer_path(module: &mut nova_codegen::ast::Module, file_path: &Pa
 /// со сниппетом (а не byte-offset, применённый к entry-исходнику).
 ///
 /// Источники peer'ов перечитываются с диска — дёшево, вызывается только
-/// при наличии ошибок. file_id'ы резолвера сплошные (1..N), регистрация
-/// в порядке id совпадает с авто-инкрементом `SourceMap::register`.
+/// при наличии ошибок. [M-crossmerge-diagnostic-sourcemap-file-id-misattribution]
+/// (№132, 2026-07-26): реализация вынесена в
+/// `nova_codegen::diag::SourceMap::from_peer_files` (было продублировано
+/// здесь и в `compiler-codegen::test_runner`, причём копия в
+/// `test_runner.rs` несла позиционный баг — эта, cli-шная, версия уже
+/// адресовала peer по РЕАЛЬНОМУ `file_id`, а не по порядку вставки).
 fn build_source_map(
     module: &nova_codegen::ast::Module,
     entry_src: &str,
     entry_path: &Path,
 ) -> nova_codegen::diag::SourceMap {
-    let mut map = nova_codegen::diag::SourceMap::new();
-    map.register_main(entry_path.to_path_buf(), entry_src.to_string());
-    let max_fid = module
-        .peer_files
-        .iter()
-        .map(|p| p.file_id)
-        .max()
-        .unwrap_or(0);
-    for fid in 1..=max_fid {
-        let (p, s) = module
-            .peer_files
-            .iter()
-            .find(|pf| pf.file_id == fid)
-            .map(|pf| {
-                let src = std::fs::read_to_string(&pf.path).unwrap_or_default();
-                (pf.path.clone(), src)
-            })
-            .unwrap_or_else(|| (PathBuf::from("<unknown>"), String::new()));
-        // Снять Windows verbatim-префикс `\\?\` (peer-пути канонизированы
-        // резолвером) — чтобы диагностика показывала чистый путь.
-        let p = {
-            let s = p.to_string_lossy();
-            match s.strip_prefix(r"\\?\") {
-                Some(rest) => PathBuf::from(rest),
-                None => p.clone(),
-            }
-        };
-        map.register(p, s);
-    }
-    map
+    nova_codegen::diag::SourceMap::from_peer_files(&module.peer_files, entry_path, entry_src)
 }
 
 /// [M-test-runner-shared-temp-collision]: root temp directory for a `nova

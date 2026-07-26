@@ -3991,31 +3991,31 @@ fn codegen_to_c(
     // `SrcResolver::Single { source: src, file: path }`, which ignores
     // `span.file_id` entirely — cross-file errors printed at the ENTRY
     // file's line/col instead of the true one). `render_with_map` (diag.rs)
-    // resolves per-span via a `SourceMap`; build one here from
-    // `module.peer_files`, populated by `resolve_imports_inline_ex` above in
-    // strictly ascending `file_id` order (entry = 0 first; each subsequent
-    // peer's `file_id` is assigned and pushed before recursing into its own
-    // imports — see imports.rs:1414-1457), so sequential `register` calls
-    // below reproduce the same id assignment. Peer source text isn't kept
-    // post-parse, so non-entry files are re-read from disk (diagnostic path
-    // only — no perf concern). Falls back to a single-file map (identical to
-    // the old behavior) when `peer_files` is empty (no repo root found —
-    // `resolve_imports_inline_ex` was never called).
-    let source_map = {
-        let mut sm = crate::diag::SourceMap::new();
-        for pf in &module.peer_files {
-            if pf.file_id == crate::diag::MAIN_FILE_ID {
-                sm.register_main(path.to_path_buf(), src.to_string());
-            } else {
-                let content = std::fs::read_to_string(&pf.path).unwrap_or_default();
-                sm.register(pf.path.clone(), content);
-            }
-        }
-        if sm.is_empty() {
-            sm.register_main(path.to_path_buf(), src.to_string());
-        }
-        sm
-    };
+    // resolves per-span via a `SourceMap`.
+    //
+    // [M-crossmerge-diagnostic-sourcemap-file-id-misattribution] (№132,
+    // 2026-07-26): this used to build the map by pushing `module.peer_files`
+    // in vector order and letting `SourceMap::register`'s auto-increment
+    // assign ids POSITIONALLY — on the false assumption that insertion
+    // order into `peer_files` always matches ascending `file_id` order.
+    // That assumption breaks already for a single multi-peer folder module
+    // (the resolver allocates every peer's id up front in PASS 1, then
+    // pushes peers one at a time in PASS 2, recursing into each peer's own
+    // imports — which pushes THAT peer's transitively-reached peer_files
+    // with HIGHER ids — before pushing the NEXT (alphabetically later)
+    // sibling peer of the SAME folder, whose id is LOWER than what was
+    // just pushed). Diamond dependency graphs (e.g. `std` reachable both
+    // directly and transitively through `http`) just made the resulting
+    // id/position drift observable at scale (integrator repro:
+    // `nova-polaris test src --strict-effects` → 38 of 39 diagnostics with
+    // correct MESSAGE but garbage `file:line`, e.g. landing on
+    // `http/src/mime.nv` for a `std`-side effect diagnostic). Fixed by
+    // `SourceMap::from_peer_files`, which looks up each `file_id` EXPLICITLY
+    // (`HashMap<FileId, &PeerFile>`) rather than trusting push order — same
+    // robust pattern `nova-cli::build_source_map` already used. Peer source
+    // text isn't kept post-parse, so non-entry files are re-read from disk
+    // (diagnostic path only — no perf concern).
+    let source_map = crate::diag::SourceMap::from_peer_files(&module.peer_files, path, src);
 
     // Plan 186 (D412): `embed("path")` → HexBlobLit. После import-inline
     // (пути peer-файлов известны через span.file_id → peer_files), ДО

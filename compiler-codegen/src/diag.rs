@@ -133,6 +133,66 @@ impl SourceMap {
     pub fn is_empty(&self) -> bool {
         self.files.is_empty()
     }
+
+    /// [M-crossmerge-diagnostic-sourcemap-file-id-misattribution]
+    /// (№132, 2026-07-26): строит `SourceMap` из `module.peer_files`,
+    /// адресуя каждый peer по его РЕАЛЬНОМУ `file_id` — НЕ по порядку
+    /// вставки в `peer_files`.
+    ///
+    /// Прежнее предположение («`file_id` присваивался строго по
+    /// возрастанию, порядок вставки в `peer_files` совпадает с порядком
+    /// присвоения id») ложно уже для одного multi-peer folder-модуля:
+    /// резолвер (`imports.rs` `resolve_one`) аллоцирует id для ВСЕХ
+    /// peer'ов модуля разом (PASS 1), но пушит их в `peer_files` по
+    /// одному, рекурсивно уходя в собственные импорты каждого peer'а
+    /// МЕЖДУ пушами (PASS 2) — импорты первого (алфавитно) peer'а
+    /// пушат транзитивные peer_files с id БОЛЬШЕ, чем ещё не
+    /// запушенный второй peer той же папки, чей id МЕНЬШЕ. Итог:
+    /// `peer_files[i].file_id != i` уже на простом двух-peer случае —
+    /// diamond-графы (std, достижимый и напрямую, и транзитивно через
+    /// http) лишь довели частоту до наблюдаемой (интегратор-репро
+    /// `nova-polaris test src --strict-effects`: 38 из 39 диагностик
+    /// с одинаковым текстом, но случайным `file:line`).
+    ///
+    /// Робастный инвариант — ТОЛЬКО явный `file_id -> peer` lookup,
+    /// без предположений о порядке вставки (тот же паттерн уже был
+    /// в `nova-cli::build_source_map`, здесь обобщён на оба вызывающих
+    /// места). Пропуски в диапазоне id (`#cfg`-неактивный peer тоже
+    /// потребляет id, но никогда не пушится) заполняются
+    /// `<unknown>`-заглушкой — она никогда не адресуется реальным
+    /// span'ом, но держит позицию `fid` в векторе на месте.
+    pub fn from_peer_files(
+        peer_files: &[crate::ast::PeerFile],
+        entry_path: &std::path::Path,
+        entry_src: &str,
+    ) -> SourceMap {
+        let mut map = SourceMap::new();
+        map.register_main(entry_path.to_path_buf(), entry_src.to_string());
+        let by_id: std::collections::HashMap<FileId, &crate::ast::PeerFile> =
+            peer_files.iter().map(|pf| (pf.file_id, pf)).collect();
+        let max_fid = peer_files.iter().map(|p| p.file_id).max().unwrap_or(0);
+        for fid in 1..=max_fid {
+            let (p, s) = match by_id.get(&fid) {
+                Some(pf) => {
+                    let src = std::fs::read_to_string(&pf.path).unwrap_or_default();
+                    (pf.path.clone(), src)
+                }
+                None => (PathBuf::from("<unknown>"), String::new()),
+            };
+            // Снять Windows verbatim-префикс `\\?\` (peer-пути
+            // канонизированы резолвером) — чтобы диагностика показывала
+            // чистый путь.
+            let p = {
+                let s = p.to_string_lossy();
+                match s.strip_prefix(r"\\?\") {
+                    Some(rest) => PathBuf::from(rest),
+                    None => p,
+                }
+            };
+            map.register(p, s);
+        }
+        map
+    }
 }
 
 /// Насколько безопасно инструменту (`nova fix` / LSP code-action)
