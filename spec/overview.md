@@ -44,8 +44,14 @@
 
 ## Поддерживающие решения
 
-1. **Один язык — три режима компиляции:** AOT (как Go/Rust), JIT (как
-   .NET), интерпретатор (как Python). Один и тот же исходник.
+1. **Компилируется ТОЛЬКО через C-backend (AOT), как Go/Rust.** Ранняя
+   идея «один исходник — три режима исполнения» (AOT/JIT/интерпретатор)
+   **не реализуется**: `nova run file.nv` (tree-walking интерпретатор)
+   ретрактирован — команда осталась в CLI только как заглушка,
+   которая явно сообщает об этом и направляет на `nova build`/`nova
+   test` (см. [`docs/promts/read-project.md`](../docs/promts/read-project.md)).
+   Тестируется и шипится код тоже только через C-codegen — нет
+   отдельного «интерпретируемого» пути с другой семантикой.
 2. **Память: managed по умолчанию (current: Boehm conservative GC; v1.0+:
    concurrent GC), regions opt-in для real-time.** Программист пишет код без
    префиксов памяти — циклы освобождаются автоматически. **Текущее состояние
@@ -76,6 +82,18 @@
    контракты через `protocol` (см. [decisions/01-philosophy.md#d1](decisions/01-philosophy.md#d1), [decisions/02-types.md#d42](decisions/02-types.md#d42)).
 5. **Контракты в сигнатуре.** `requires`/`ensures`/`invariant` —
    опциональны, но проверяются статически где можно.
+6. **Structured concurrency поверх M:N-планировщика (кодовое имя рантайма —
+   Vela).** `spawn`/`supervised`/`detach`/cancel-token'ы — те же fiber'ы
+   (mco-coroutines), что несут async/await-инфраструктуру из раздела выше.
+   **`main()` сам исполняется как файбер** ([D92](decisions/06-concurrency.md#d92),
+   ретракция Правила 6, 2026-07-25) — блокирующие park/wake-операции
+   (`Time.sleep`, `TcpListener.accept()`, `Channel.recv()`) легальны
+   **прямо в `main()`**, без обёртки в `supervised { spawn { … } }`.
+   Супервизия падений — обычный эффект `Supervisor`
+   ([D416](decisions/06-concurrency.md#d416)): готовые политики
+   `escalate()`/`stop()`, пользовательские — handler-литерал
+   `on_child_fail(idx, err) -> Decision`. Naming-конвенции для этого слоя —
+   [`docs/mn-coding-conventions.md`](../docs/mn-coding-conventions.md).
 
 ## Что заимствует у кого
 
@@ -86,35 +104,76 @@
 | Производительность, traits, мономорфизация | Rust |
 | Concurrent GC, простота памяти для backend | Go, Java ZGC |
 | Pattern matching, ADT, sum-types | OCaml/Rust |
-| REPL + AOT в одном | Common Lisp / Julia |
 | Регионы памяти | Zig, Odin |
 | Structured concurrency, supervision | Erlang/OTP, Swift |
-| Запуск скрипта как `nova file.nv` | Python |
 | Контракты, refinement-types | Eiffel, Dafny, F* |
 | Capability security | E, Pony |
 | Time-travel debugging | rr, Hypothesis |
 
 ## Tooling из коробки
 
-**Сегодня (bootstrap)** — реализовано в `nova` CLI ([nova-cli/](../nova-cli/)):
+**Сегодня** — реализовано в `nova` CLI ([nova-cli/](../nova-cli/)):
 
-- `nova run file.nv` — интерпретатор для скриптов
-- `nova build file.nv` — статический бинарь через C-backend
-- `nova check file.nv` — типечек + lint без запуска
+- `nova build file.nv` — статический бинарь через C-backend (единственный
+  путь исполнения, см. «Поддерживающие решения» п.1)
+- `nova check [paths]` — типечек + lint без сборки (`--strict-effects` —
+  Plan 197, транзитивные эффекты как hard error; `--lint` — те же
+  convention-правила, что `nova lint`)
 - `nova test [filter]` — discovery + parallel прогон `.nv` тестов
+  (C-codegen pipeline; структурированные ошибки с EXPECT-маркерами для
+  negative-тестов, D89)
+- `nova lint` — реестр конвенционных `W_*`-правил (Plan 185),
+  info-режим по умолчанию, `--deny` — CI-гейт
+- `nova doc file.nv [--format markdown|json|html]` — генератор документации:
+  doc-tests (`--test`), покрытие (`--coverage[-threshold]`), watch-режим,
+  mutation-testing для контрактов (`--mutate-contracts`) — Plan 45, ЗАКРЫТ
+- `nova bench file.nv` — прогон бенчмарков (release-mode, samples,
+  regression-гейт) — Plan 57
+- `nova add`/`nova update`/`nova info` — управление зависимостями
+  (git/path-зависимости + `nova.lock`; `nova info --diff` — effect-surface
+  diff публичного API пакета как supply-chain-гейт) — Plan 03.1-03.4
 - `nova regen-runtime [--check]` — регенерация `std/runtime/*.nv`
   stubs из `runtime_registry.rs` (Plan 13)
-- Структурированные ошибки с EXPECT-маркерами для negative-тестов (D89)
+- `nova daemon start/stop/status` — резидентный build-daemon (только
+  latency-оптимизация повторных `nova build`, поведение байт-идентично
+  без него) — Plan 219
+- **LSP** (`nova-lsp/`) — completion/hover/diagnostics/goto/rename,
+  выполнен целиком (Plan 104.10, «V2 production», ЗАКРЫТ 2026-07-04);
+  конвенции разработки — [`docs/lsp-conventions.md`](../docs/lsp-conventions.md)
+- `nova run file.nv` — **НЕ поддерживается**: команда осталась в CLI
+  только как понятная ошибка («используйте `nova build`/`nova test`»),
+  сам интерпретатор (treewalk) не обслуживается
 
-**Roadmap** (не в bootstrap):
+**Roadmap** (не реализовано):
 
-- `nova fmt`, `nova lint`, `nova bench`, `nova doc`
+- `nova fmt`
 - `nova check --fragment '...'` — типечекинг одной функции без проекта
-- `nova run --record trace.nrec` / `nova replay trace.nrec` — time-travel
-- LSP — часть компилятора
-- Пакетный менеджер — content-addressed (как Deno + Nix)
+- Пакетный менеджер, content-addressed (как Deno + Nix) — сегодняшний
+  `nova add`/`update` устроен проще (git/path-зависимости + lockfile),
+  content-addressed-хранилище не строилось
 - Hot reload в dev-режиме
 - AI-friendly патчи в diagnostic'ах (для LLM)
+<!-- TODO(232): уточнить у владельца — амбиция «time-travel debugging»
+     (`nova run --record` / `nova replay`) исходно опиралась на
+     интерпретатор, который ретрактирован; актуальная форма этой идеи
+     (если она ещё жива) не описана ни в одном известном плане на
+     момент этой ревизии — не изобретаю новую команду. -->
+
+## Экосистема (отдельные репозитории)
+
+Ядро языка (этот репозиторий) целенаправленно узкое; прикладные слои
+живут отдельными пакетами/репозиториями поверх него:
+
+- **`nova-http`** — байтовый HTTP-транспорт (клиент/сервер поверх `std/net`).
+- **Polaris** (`nova-polaris`) — веб-фреймворк поверх `nova-http`,
+  Axum/FastAPI-модель (Router/Handler/Middleware/extractors); в разработке,
+  полная EN+RU документация — отдельным планом (229).
+- **`nova-tls`** — TLS поверх `std/net`, vendored C + `.nv`-фасад, без Rust
+  в рантайм-пути.
+
+<!-- TODO(232): точный публичный статус/зрелость Polaris (что уже стабильно
+     для внешнего пользователя, а не только для разработки) — за пределами
+     этого репозитория, сверить с nova-polaris при следующей ревизии. -->
 
 ## Что выкинуто из обычных языков
 
