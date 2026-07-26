@@ -1,0 +1,56 @@
+// [M-closurefull-explicit-return-body-unit-mistype] (реестр 221.1 №128)
+// repro/regression test — found by window p124 while diagnosing №130,
+// fixed by window p130 alongside №130's arity-applicability layer.
+//
+// Root cause: `emit_block_expr` (`compiler-codegen/src/codegen/emit_c.rs`)
+// — the general "block used in expression position" codegen helper, reused
+// verbatim as the WHOLE body of a lambda-lifted `ClosureFull` literal
+// (`nova_lambda_N_body`, see the `nova_lambda_*` family, ~L51090+) — infers
+// the block's C VALUE TYPE purely from `block.trailing` (the block's
+// implicit trailing expression). A `ClosureFull` body whose LAST (or only)
+// statement is an EXPLICIT `return expr;` has NO `block.trailing` at all
+// (`return expr;` is a `Stmt::Return`, not a trailing expression) — so the
+// block-value type silently defaulted to `nova_unit`, declaring the
+// synthesized temp (`_nv_tmp_N`) with the WRONG C type. The lambda-body
+// wrapper's own `return {temp};` (emitted AFTER the block, meant to satisfy
+// the enclosing C function's declared return type) then read that
+// wrongly-`nova_unit`-typed temp — `error: returning 'nova_unit' from a
+// function with incompatible result type 'nova_int'` — even though the
+// REAL `return a * 2;` statement, emitted verbatim inside the block, is
+// what actually executes at runtime (the outer `return {temp};` is dead
+// code, but C still type-checks it).
+//
+// Fix: `emit_block_expr`'s block-type inference additionally falls back to
+// the LAST statement's own `return`-expression type when there is no
+// `block.trailing` — a plain top-level `fn` body (routed through a
+// DIFFERENT emission path entirely) was never affected; ONLY a `ClosureFull`
+// literal's lambda-lifted body reuses `emit_block_expr` for its whole
+// `{ ... }` form.
+//
+// Discriminator: without the fix, `apply`'s ClosureFull-literal argument
+// (explicit `return a * 2` as the ONLY body statement) is a CC-FAIL; a
+// top-level `fn` with the identical explicit-return body compiles fine
+// (companion positive control, same file, no CC-FAIL either way — locks in
+// the delta this bug was specific to).
+module spec_tests.conformance
+
+fn d128_top_level_return(a int) -> int { return a * 2 }
+
+fn d128_apply(x int, f fn(int) -> int) -> int => f(x)
+
+test "№128: top-level fn with explicit return (control — always worked)" {
+    assert(d128_top_level_return(21) == 42)
+}
+
+test "№128: ClosureFull literal with explicit return, passed as a call arg" {
+    ro r = d128_apply(21, fn(a int) -> int { return a * 2 })
+    assert(r == 42)
+}
+
+test "№128: ClosureFull literal with explicit return, non-int (str) payload" {
+    ro r = d128_apply(3, fn(a int) -> int {
+        ro doubled = a * 2
+        return doubled
+    })
+    assert(r == 6)
+}

@@ -46171,10 +46171,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 }
             }
         }
-        // Infer block type from trailing expression (if any)
-        let block_ty = block.trailing.as_ref()
-            .map(|e| self.infer_expr_c_type(e))
-            .unwrap_or_else(|| "nova_unit".into());
+        // Infer block type from trailing expr, else (№128) from a LAST `return expr` stmt (no trailing form — nova_unit default here mistypes the synthesized temp, CC-FAIL vs the real fn's return type).
+        let block_ty_src = block.trailing.as_deref().or_else(|| match block.stmts.last() { Some(crate::ast::Stmt::Return { value: Some(e), .. }) => Some(e), _ => None });
+        let block_ty = block_ty_src.map(|e| self.infer_expr_c_type(e)).unwrap_or_else(|| "nova_unit".into());
         // Restore prior var_types view; the real body emit below re-registers
         // these locals with their authoritative codegen types.
         for (name, old) in saved_block_locals.into_iter().rev() {
