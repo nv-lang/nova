@@ -1,0 +1,72 @@
+// Plan 221.1 №131 (D62 ENFORCED): регресс-гард — легитимные формы raw
+// effect-op вызова (`Effect.op(...)`) НЕ ломаются новым чекером
+// `E_RAW_EFFECT_OP_UNDECLARED` (types/mod.rs `check_capabilities_at` →
+// `check_raw_effect_op_declared`). Покрывает: (1) exported fn с явной
+// декларацией эффекта в сигнатуре; (2) private fn БЕЗ декларации — D28
+// auto-inference (`infer_effects`) молча подставляет эффект, energфорс
+// №131 приватные fn не трогает (симметрично E_BANG_REQUIRES_FAIL/№113);
+// (3) exported fn БЕЗ декларации, но с обвязкой `with Effect = … { … }` —
+// handler установлен ЛОКАЛЬНО, обязательство погашено (D11/Правило 4);
+// (4) handler-литерал (`effect X { op() => … }`), чьё тело зовёт СЫРОЙ оп
+// ДРУГОГО эффекта — тело опа анализируется в контексте установки
+// (лексическое окружение `with`), не как отдельная «сигнатура» (форма
+// p_effect_in_effect из opus-design-note 222.20-Ф.2 §0 Ф-C/Ф-D).
+
+module spec_tests.conformance
+
+type Log1 effect {
+    info(msg str) -> ()
+}
+
+type Log2 effect {
+    info(msg str) -> ()
+}
+
+// (1) exported fn, явная декларация Log1.
+export fn ok_declared(s str) Log1 -> int {
+    Log1.info(s)
+    1
+}
+
+// (2) private fn, БЕЗ декларации — D28 auto-inference подставит Log1.
+fn ok_private_inferred(s str) -> int {
+    Log1.info(s)
+    1
+}
+
+// (3) exported fn БЕЗ декларации, но `with Log1 = …` вокруг вызова —
+// обязательство погашено локально.
+export fn ok_with_scope(s str) -> int {
+    with Log1 = effect Log1 { info(m) -> () => () } {
+        Log1.info(s)
+    }
+    1
+}
+
+// (4) handler-литерал для Log1, чьё тело зовёт СЫРОЙ оп Log2 — форма
+// p_effect_in_effect: Log2 берётся из лексического окружения установки
+// (внешний `with Log2 = …`), не требует отдельной "сигнатуры" у тела опа.
+export fn ok_effect_in_effect(s str) -> int {
+    with Log2 = effect Log2 { info(m) -> () => () } {
+        with Log1 = effect Log1 { info(m) -> () => Log2.info(m) } {
+            Log1.info(s)
+        }
+    }
+    1
+}
+
+test "d62 №131: exported fn с явной декларацией — raw op легален" {
+    assert(ok_declared("x") == 1)
+}
+
+test "d62 №131: private fn без декларации — D28 auto-inference (exempt)" {
+    assert(ok_private_inferred("x") == 1)
+}
+
+test "d62 №131: exported fn без декларации, но с локальным `with` — легален" {
+    assert(ok_with_scope("x") == 1)
+}
+
+test "d62 №131: handler-литерал зовёт сырой оп другого эффекта (p_effect_in_effect) — легален" {
+    assert(ok_effect_in_effect("x") == 1)
+}
