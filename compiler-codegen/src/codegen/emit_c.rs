@@ -41369,6 +41369,16 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                         self.current_type_subst = saved_subst;
                                                         ret_c
                                                     }
+                                                    // [M-2223-closurefull-arity2plus-typevar-param-return-infer] (222.3 §5):
+                                                    // NO arm existed for `ClosureFull` — bind callee typevars (`T1`/`T2` in
+                                                    // `fn(T1,T2)->R`) from its own explicit param types, read return off
+                                                    // `sb.return_type` (always `Some`) — reached when `node_substs` misses.
+                                                    crate::ast::ExprKind::ClosureFull(sb) => {
+                                                        for (cpt, op) in closure_param_tys.iter().zip(sb.params.iter()) {
+                                                            if let Ok(c) = self.type_ref_to_c(&op.ty) { if !c.is_empty() && c != "void*" { self.infer_type_param_binding(cpt, &c, &mut subst_pending); } }
+                                                        }
+                                                        sb.return_type.as_ref().and_then(|rt| self.type_ref_to_c(rt).ok()).unwrap_or_default()
+                                                    }
                                                     _ => String::new(),
                                                     }
                                                 };
