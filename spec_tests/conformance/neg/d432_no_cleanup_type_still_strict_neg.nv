@@ -1,0 +1,17 @@
+// EXPECT_COMPILE_ERROR D133-not-consumed
+// D432 — a consume-type WITHOUT @cleanup stays strict-linear (unchanged):
+// gibrid C's auto-cleanup relaxation applies ONLY to types that declare an
+// effect-pure `@cleanup`. A regular consume-method (`@close`) alone does
+// NOT make the type auto-cleanup-eligible.
+module neg.d432_no_cleanup_type_still_strict_neg
+
+type D432NoCleanup consume { id int }
+
+fn D432NoCleanup consume @close() -> () { () }
+
+fn d432_make_nc(id int) -> D432NoCleanup => { id }
+
+fn d432_neg_never_consumed() -> () {
+    consume r = d432_make_nc(1)
+    ro _x = r.id
+}

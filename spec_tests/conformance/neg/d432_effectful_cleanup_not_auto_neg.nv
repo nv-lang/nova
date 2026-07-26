@@ -1,0 +1,22 @@
+// EXPECT_COMPILE_ERROR D133-not-consumed
+// D432 ограждение 1 (эффект-чистота, ГЛАВНОЕ): `@cleanup` с НЕПУСТЫМ
+// effect-row (fallible cleanup) is NOT auto-cleanup-eligible — stays
+// strict-linear. Auto-cleanup starts ONLY for Cleanup[never]/effect-pure
+// cleanup methods (six existing std types today); fallible-cleanup
+// (File/Transaction-style) is a deliberately separate future decision.
+module neg.d432_effectful_cleanup_not_auto_neg
+
+type D432Boom { msg str }
+
+type D432Fallible consume { id int }
+
+fn D432Fallible consume @cleanup(_outcome ScopeOutcome) Fail[D432Boom] -> () {
+    ()
+}
+
+fn d432_make_f(id int) -> D432Fallible => { id }
+
+fn d432_neg_fallible_cleanup() Fail[D432Boom] -> () {
+    consume r = d432_make_f(1)
+    ro _x = r.id
+}
