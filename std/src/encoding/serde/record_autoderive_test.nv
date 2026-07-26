@@ -49,3 +49,70 @@ test "auto-derive with None + empty vec" {
     assert(dec.tags.len() == 0)
     assert(dec.score == -0.5)
 }
+
+// Plan 221.1 №111 — `Vec[T Serialize]` as a unit of (de)serialization.
+// `VecWrapper.items` uses the EXPLICIT generic spelling `Vec[VecItem]` (as
+// opposed to `tags []str` above, which uses the `[]T` array-sugar spelling)
+// — both are the SAME receiver per D239, but the auto-derive synthesizer's
+// per-field `@items.serialize(s)?`/static `Vec[VecItem].deserialize(sub)?`
+// dispatched to serde.nv's `fn[T Serialize] []T @serialize[S Serializer]`/
+// `fn[T Deserialize] []T.deserialize[D Deserializer]` container-conformance
+// blanket, registered under the LITERAL "[]T" method_table key (parser
+// spelling) — the checker's receiver-return-type resolution recognized the
+// `[]T`-sugar spelling (an Array TypeRef) but bailed on the explicit
+// `Vec[T]`-generic spelling (a Named TypeRef with a concrete type-arg),
+// ICE'ing `[P67-LEGACY] method call `.serialize` return type unknown`
+// (emit_c.rs) — a struct field with an explicit-generic Vec-of-serializable
+// element never compiled at all before this fix.
+#impl(Serialize + Deserialize)
+type VecItem value { ro name str, ro count int }
+
+#impl(Serialize + Deserialize)
+type VecWrapper value { ro items Vec[VecItem] }
+
+test "auto-derive record field with explicit Vec[T] generic spelling round-trip" {
+    ro w = VecWrapper{ items: [VecItem{ name: "a", count: 1 }, VecItem{ name: "b", count: 2 }] }
+    ro enc = json_encode(w)!!
+    ro dec = json_decode[VecWrapper](enc)!!
+    assert(dec.items.len() == 2)
+    assert(dec.items[0].name == "a")
+    assert(dec.items[0].count == 1)
+    assert(dec.items[1].name == "b")
+    assert(dec.items[1].count == 2)
+}
+
+test "auto-derive record field with explicit Vec[T] generic spelling — empty vec" {
+    ro w = VecWrapper{ items: [] }
+    ro dec = json_decode[VecWrapper](json_encode(w)!!)!!
+    assert(dec.items.len() == 0)
+}
+
+// Direct (top-level, no struct wrapper) serialization of a BARE `Vec[T]`
+// value — the OTHER half of №111 ("иной краш-путь"): before this fix, ANY
+// direct `json_encode(vec)` call — regardless of `[]T`/`Vec[T]` spelling and
+// regardless of element type (verified: reproduced identically for a bare
+// `[]str`) — was REJECTED at the generic-bound check
+// (`json_encode[T Serialize]`) with "type `Vec` does not satisfy `Serialize`
+// bound", because that check consulted `method_table.get("Vec")` directly and
+// never considered the "[]T"-keyed container-conformance blanket at all. Fixed
+// by recursing into the element type when a matching slice-typevar blanket is
+// registered for the bound's required method(s).
+//
+// Decode direction NOT covered here: `json_decode[Vec[VecItem]](enc)` (a
+// direct top-level turbofish target, as opposed to a struct field's nested
+// `Vec[T].deserialize` call synthesized by the derive machinery, which DOES
+// work — see `VecWrapper` above) hits a SEPARATE, pre-existing mono-
+// collection gap (linker: `undefined symbol …_static_deserialize`),
+// element-independent (reproduces for `Vec[str]` too) and unmasked — not
+// introduced — by this fix (previously hidden behind the bound-check's false
+// rejection). Filed as a follow-up (see registry), out of №111's scope.
+test "direct top-level Vec[T] serialization (no enclosing struct)" {
+    ro items = [VecItem{ name: "x", count: 10 }, VecItem{ name: "y", count: 20 }]
+    ro enc = json_encode(items)!!
+    assert(enc.starts_with("["))
+    assert(enc.ends_with("]"))
+    assert(enc.contains("\"name\":\"x\""))
+    assert(enc.contains("\"count\":10"))
+    assert(enc.contains("\"name\":\"y\""))
+    assert(enc.contains("\"count\":20"))
+}

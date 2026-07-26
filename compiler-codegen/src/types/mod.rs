@@ -24855,6 +24855,56 @@ impl<'a> BoundCtx<'a> {
                 }
             }
         }
+        // Plan 221.1 №111: a `[]T`/`Vec[T]` container-conformance blanket
+        // (`fn[T Bound] []T @method`, e.g. serde.nv's `Serialize`/
+        // `Deserialize` on `[]T`) registers under the LITERAL "[]<declared-
+        // typevar-name>" method_table key (parser spelling), never under
+        // "Vec" — so a DIRECT bound-check on a bare `Vec[X]`/`[]X` argument
+        // (`json_encode(items)` with no enclosing struct field) always fell
+        // through to the plain `method_table.get("Vec")` lookup below and
+        // reported "type `Vec` does not satisfy" UNCONDITIONALLY, for every
+        // element type including a plain `[]str` (verified: fails
+        // identically for `Vec[Item]` and bare `[]str`). Search for a
+        // registered slice-typevar method (by required-method NAME) whose own
+        // generic parameter carries THIS SAME bound (confirms it is really a
+        // matching blanket, not a coincidental other-typevar method sharing
+        // the name), and if one exists for every required method, the
+        // container's OWN satisfaction reduces to whether its ELEMENT type
+        // satisfies the identical bound (the blanket's `[T Bound]` premise) —
+        // recurse. `elem_of_vec_like` returns `None` for anything but a
+        // single-level concrete-or-generic `Vec[X]`/`[]X` shape, so nested
+        // containers (`Vec[Vec[T]]`) and non-Vec receivers are untouched.
+        if concrete_name == "Vec" {
+            if let Some(elem_ty) = elem_of_vec_like(concrete) {
+                if let Some(bn) = bound_name {
+                    let blanket_for_all = required.iter().all(|req| {
+                        self.sig.method_table.iter().any(|(recv_key, methods)| {
+                            let Some(bare) = recv_key.strip_prefix("[]") else { return false };
+                            methods.get(&req.name).map_or(false, |fns| {
+                                fns.iter().any(|f| {
+                                    f.generics.iter().any(|g| {
+                                        g.name == bare
+                                            && g.bounds.iter().any(|b| {
+                                                matches!(b, TypeRef::Named { path, .. }
+                                                    if path.last().map(|s| s.as_str()) == Some(bn))
+                                            })
+                                    })
+                                })
+                            })
+                        })
+                    });
+                    if blanket_for_all {
+                        let mut elem_errors: Vec<Diagnostic> = Vec::new();
+                        self.check_satisfaction_against_methods(
+                            &elem_ty, required, bound_name, type_param_name, fn_name, span,
+                            &mut elem_errors,
+                        );
+                        errors.extend(elem_errors);
+                        return;
+                    }
+                }
+            }
+        }
         let empty: HashMap<String, Vec<&FnDecl>> = HashMap::new();
         let concrete_methods = self.sig.method_table.get(&concrete_name).unwrap_or(&empty);
         let mut missing: Vec<String> = Vec::new();
@@ -24897,6 +24947,21 @@ impl<'a> BoundCtx<'a> {
              См. spec/decisions/02-types.md#d72 и #d142 (anonymous protocol).",
             concrete_name));
         errors.push(Diagnostic::new(msg, span));
+    }
+}
+
+/// Plan 221.1 №111: element type of a single-level `[]X`/`Vec[X]` receiver
+/// (either legal D239 spelling), for the container-conformance bound-check
+/// recursion in `check_satisfaction_against_methods`. `None` for anything
+/// else (bare `Vec` with no/multiple type-args, a non-Vec Named type, tuple,
+/// nested container, …) — those are out of scope for this narrow carve-out.
+fn elem_of_vec_like(ty: &TypeRef) -> Option<TypeRef> {
+    match ty {
+        TypeRef::Array(inner, _) | TypeRef::FixedArray(_, inner, _) => Some((**inner).clone()),
+        TypeRef::Named { path, generics, .. } if path.len() == 1 && path[0] == "Vec" && generics.len() == 1 => {
+            Some(generics[0].clone())
+        }
+        _ => None,
     }
 }
 
