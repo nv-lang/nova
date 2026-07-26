@@ -40420,10 +40420,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // (present in `all_methods`, incl. Vec/HashMap/Set/StringBuilder/
                 // WriteBuffer/#impl(Clone) records) takes precedence: this arm only
                 // fires when no such method exists for the receiver's concrete type.
+                // [M-2223-generic-method-instance-mono-symbol-collision] (№125):
+                // guard only matched HEAP `Nova_X*` — a `value` receiver lowers
+                // to `NovaValue_X` (no `*`), skipping this arm and hitting the
+                // single-key `method_receivers["clone"]` last-wins fallback
+                // (222.3 §5 Blocker Б's mixup class). Mirror for the value form.
                 if method == "clone" && args.is_empty()
-                    && obj_ty.starts_with("Nova_")
-                    && obj_ty.ends_with('*')
-                    && obj_ty != "void*"
+                    && ((obj_ty.starts_with("Nova_") && obj_ty.ends_with('*') && obj_ty != "void*")
+                        || (obj_ty.starts_with("NovaValue_") && !obj_ty.ends_with('*')))
                 {
                     let recv_nova = Self::debt_nova_type_name_from_c(&obj_ty);
                     let has_user_clone = self.all_methods
@@ -41160,31 +41164,26 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     // trace-ID for a future channel NO-HIT investigation:
                                     // [TRACE-34-fndecl-channel-miss].
                                     //
-                                    // GATED to calls where NO argument is a bare closure
-                                    // literal (`ClosureLight`/`ClosureFull`) — mirrors the
-                                    // identical gate on the checker's producer side
-                                    // (`check_instance_overload`, types/mod.rs). A closure
-                                    // literal's return type is not always fully verified by
-                                    // the checker's `assignable` against a NAMED concrete
-                                    // fn-newtype param (return-type leniency), so
-                                    // `resolved_callees` can carry a concrete span for a
-                                    // call whose closure body actually targets the GENERIC
-                                    // overload (e.g. returns a type only the generic's own
-                                    // bound accepts) — trusting the channel there would
-                                    // route the closure into the concrete C function anyway
-                                    // (wrong param/return type, confirmed live: a
-                                    // `Body`-returning closure passed to a `str`-returning
-                                    // concrete sibling → CC-FAIL "passing `nova_str` to
-                                    // parameter of incompatible type `Nova_Body*`"). Bare
-                                    // closure literals were NEVER the broken shape (the
-                                    // generic-mono path below already infers their return
-                                    // type correctly from the body, ClosureLight arm
-                                    // ~41142) — only a `Call`-expression argument was.
-                                    let has_bare_closure_arg = args.iter().any(|a| matches!(
+                                    // GATED to calls where NO argument is a bare
+                                    // `ClosureLight` literal (`|x| ...`) — mirrors the
+                                    // checker's producer-side gate (`check_instance_
+                                    // overload`, types/mod.rs). `ClosureLight`'s return
+                                    // type isn't fully verified by `assignable` (return-
+                                    // type leniency, confirmed live footgun — see that
+                                    // site's doc); `Call`-expr args were always trusted.
+                                    // [M-2223-closurefull-generic-overload-resolution]
+                                    // (№124): `ClosureFull` used to be lumped in too —
+                                    // its grammar mandates param/return types spelled
+                                    // out, so the checker companion
+                                    // (`closure_args_match_concrete`) verifies an EXACT
+                                    // match before writing `resolved_callees`; trusting
+                                    // it here unblocks the concrete overload's own
+                                    // `ClosureFull` sites (previously `[E7001]`).
+                                    let has_bare_closurelight_arg = args.iter().any(|a| matches!(
                                         a.expr().kind,
-                                        ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_)
+                                        ExprKind::ClosureLight { .. }
                                     ));
-                                    let fn_decl_opt = if has_bare_closure_arg {
+                                    let fn_decl_opt = if has_bare_closurelight_arg {
                                         fn_decl_opt
                                     } else {
                                         fn_decl_opt.filter(|fd| {

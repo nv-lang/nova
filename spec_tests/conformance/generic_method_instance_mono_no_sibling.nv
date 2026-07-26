@@ -1,0 +1,86 @@
+// [M-2223-generic-method-instance-mono-symbol-collision] (реестр 221.1
+// №125) repro/regression test.
+//
+// Diagnosed hypothesis (222.3 §5 stop-report, backlog-followups.md): ONE
+// declared method-level-generic instance method (typevar lives ONLY in the
+// method's own params/return, NOT the receiver — the receiver type itself
+// is NOT generic), called TWICE with DIFFERENT concrete types and NO
+// sibling overload at all, was hypothesized to collide on a single C
+// symbol/body — `mono_method_decls`/`mono_method_decls_by_span`-style
+// per-(receiver-type, method-name) registration allegedly mangling the C
+// name WITHOUT the actual per-call-site type-args, unlike a receiver-
+// generic mono (`Vec[T]`, where T is part of the receiver mangling and so
+// differs naturally).
+//
+// This window (p124, sonnet) audited the actual per-instance codegen path
+// (`register_mono_method_instance` + `compute_mono_name`, emit_c.rs) and
+// found it DOES key the mono C symbol by the full per-call-site
+// `type_subst` (`Nova_<Recv>_method_<name>____<arg1>__<arg2>`), NOT by
+// receiver+method-name alone — confirmed by extensive (~10 structural
+// variants: bare scalar T, user record T, `value`-kind (`NovaValue_`) T,
+// protocol-BOUND T, T exposed only nested inside a closure-typed param
+// (matching the exact diagnosed `h fn(T1) -> R` shape), a `-> @` Self-
+// chaining return, separate receiver instances, separate `test{}` blocks,
+// and 2/3 distinct instantiations) manual repro attempts — NONE reproduced
+// the hypothesized collision; every instantiation received its own
+// correctly-substituted C symbol and correct runtime value. This file locks
+// that positive result in as a regression test (the hypothesis may have
+// already been an artifact of interaction with code specific to the
+// original nova-http/polaris `Router.@get` extractor-sugar prototype that
+// was NOT captured by an isolated minimal repro — see the window's report
+// for the full list of variants tried).
+//
+// NOTE — a DIFFERENT, genuinely confirmed bug was found in the adjacent
+// STATIC method-level-generic form (`fn Type @method[T](x T) -> T`, called
+// as `Type.method(x)`) — it panics `[P67-LEGACY] Path call return type
+// unknown` unconditionally (with or without an explicit turbofish); root-
+// caused to a missing checker-channel (`resolved_types[call.id]`) entry for
+// this call shape (Channel 2, `infer_expr_c_type`/`infer_call_ret_c`,
+// emit_c.rs). Deferred (see the registry's №125 follow-up entry) — the
+// INSTANCE form this file locks in is unaffected.
+
+module spec_tests.conformance
+
+type Router125 {
+    tag int,
+}
+
+// Method-level generic — T lives ONLY in this method's own params/return,
+// Router125 itself carries no generics. No sibling overload of `m` exists.
+export fn Router125 mut @m[T](x T) -> T {
+    x.clone()
+}
+
+type ExA125 value {
+    va int,
+}
+
+type ExB125 value {
+    vb str,
+}
+
+type ExC125 {
+    vc bool,
+}
+
+test "№125: method-level-generic instance method, THREE different T, no siblings — scalar" {
+    mut r = Router125 { tag: 1 }
+    ro a = r.m(5)
+    ro b = r.m("hello")
+    ro c = r.m(true)
+    assert(a == 5)
+    assert(b == "hello")
+    assert(c == true)
+}
+
+test "№125: same shape with user record/value types, separate receiver instances" {
+    mut r1 = Router125 { tag: 1 }
+    ro a = r1.m(ExA125 { va: 5 })
+    mut r2 = Router125 { tag: 2 }
+    ro b = r2.m(ExB125 { vb: "hi" })
+    mut r3 = Router125 { tag: 3 }
+    ro c = r3.m(ExC125 { vc: true })
+    assert(a.va == 5)
+    assert(b.vb == "hi")
+    assert(c.vc == true)
+}
