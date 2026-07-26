@@ -19191,7 +19191,32 @@ impl<'a> TypeCheckCtx<'a> {
         // generic-instance ресиверов дало CC-FAIL «member base nova_int»
         // (blanket-матч на generic-instance подставляет не тот углеродный тип;
         // yield был всего −11). Residual до arg-binding inference / typed-IR.
+        //
+        // Plan 221.1 №111 (D239 `[]T` ≡ `Vec[T]` spelling parity): a `Vec[X]`
+        // receiver with exactly ONE CONCRETE (non-generic) type-arg is the
+        // SAME slice-typevar receiver as `[]X` in the other legal spelling —
+        // it must be equally eligible for the slice-typevar blanket-method
+        // branch below (`fn[T Bound] []T @method`, e.g. serde.nv's container-
+        // conformance `@serialize`). Excluding it here (as any OTHER
+        // non-empty-generics `Named` receiver — `Option[T]`,
+        // `EnumerateIter[VecIter[int], int]`, etc. — legitimately is, per the
+        // comment above) meant a struct field declared `items Vec[Item]`
+        // (explicit generic syntax) never reached the slice-typevar match
+        // arm that `items []Item` (array-sugar syntax) does, leaving the
+        // `.serialize`/`.deserialize` call return type unresolved and
+        // surfacing downstream as `[P67-LEGACY] method call return type
+        // unknown` (emit_c.rs) for the EXPLICIT spelling only — confirmed via
+        // minimal repro: `[]Item` builds clean, `Vec[Item]` ICEs, byte-
+        // identical struct otherwise. Only this single-level concrete-Vec
+        // shape is carved out; `Vec[Vec[T]]`/`Vec[Option[T]]` (element itself
+        // generic) still fall through to the generic-instance channel
+        // unchanged (mirrors the Array arm's own `inner` concreteness gate).
         let peeled_ok = match peeled {
+            TypeRef::Named { path, generics, .. }
+                if path.len() == 1 && path[0] == "Vec" && generics.len() == 1 =>
+            {
+                matches!(&generics[0], TypeRef::Named { generics: ig, .. } if ig.is_empty())
+            }
             TypeRef::Named { generics, .. } => generics.is_empty(),
             TypeRef::Array(inner, _) => matches!(inner.as_ref(), TypeRef::Named { generics, .. } if generics.is_empty()),
             _ => false,
@@ -19214,10 +19239,19 @@ impl<'a> TypeCheckCtx<'a> {
                 } else if recv_key.starts_with("[]")
                     && f.generics.iter().any(|g| g.name == &recv_key[2..])
                 {
-                    // Single-level slice typevar: `fn[T] []T @m`.
+                    // Single-level slice typevar: `fn[T] []T @m`. Plan 221.1
+                    // №111: `Vec[X]` (explicit generic spelling, `peeled_ok`
+                    // above already restricted it to a single CONCRETE
+                    // type-arg) binds the SAME typevar from its sole generic
+                    // arg — `[]X` and `Vec[X]` are one receiver shape (D239).
                     match peeled {
                         TypeRef::Array(inner, _) => {
                             (recv_key[2..].to_string(), (**inner).clone())
+                        }
+                        TypeRef::Named { path, generics, .. }
+                            if path.len() == 1 && path[0] == "Vec" && generics.len() == 1 =>
+                        {
+                            (recv_key[2..].to_string(), generics[0].clone())
                         }
                         _ => continue,
                     }
