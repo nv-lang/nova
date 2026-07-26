@@ -136,3 +136,70 @@ test "Числовой паритет-2: radix-N работает для нов�
         Err(_) => assert(false, "expected Ok(255)")
     }
 }
+
+// ── Plan 232.1 Т1 (2026-07-26): str.to_bool / str.to_char ─────────────────
+
+test "232.1 Т1: str.to_bool — 'true'/'false' строго lowercase" {
+    match "true".to_bool() {
+        Ok(b)  => assert(b == true)
+        Err(_) => assert(false, "expected Ok(true)")
+    }
+    match "false".to_bool() {
+        Ok(b)  => assert(b == false)
+        Err(_) => assert(false, "expected Ok(false)")
+    }
+}
+
+test "232.1 Т1: str.to_bool — 'TRUE' (регистр) / '' → Err" {
+    match "TRUE".to_bool() {
+        Ok(_)         => assert(false, "expected Err(Invalid) — регистр не lowercase")
+        Err(Invalid)  => {}
+        Err(_)        => assert(false, "expected Invalid variant")
+    }
+    match "".to_bool() {
+        Ok(_)      => assert(false, "expected Err(Empty)")
+        Err(Empty) => {}
+        Err(_)     => assert(false, "expected Empty variant")
+    }
+}
+
+test "232.1 Т1: str.to_bool — прочий мусор → Err(Invalid)" {
+    match "1".to_bool() {
+        Ok(_)         => assert(false, "expected Err(Invalid) — '1' не 'true'/'false'")
+        Err(Invalid)  => {}
+        Err(_)        => assert(false, "expected Invalid variant")
+    }
+    match "yes".to_bool() {
+        Ok(_)         => assert(false, "expected Err(Invalid)")
+        Err(Invalid)  => {}
+        Err(_)        => assert(false, "expected Invalid variant")
+    }
+}
+
+test "232.1 Т1: str.to_char — 'a' / 'ф' / '🎈' → Ok, ровно один codepoint" {
+    match "a".to_char() {
+        Ok(c)  => { ro want char = 'a'; assert(c == want) }
+        Err(_) => assert(false, "expected Ok('a')")
+    }
+    match "ф".to_char() {
+        Ok(c)  => { ro want char = 'ф'; assert(c == want) }
+        Err(_) => assert(false, "expected Ok('ф')")
+    }
+    match "🎈".to_char() {
+        Ok(c)  => { ro want char = '🎈'; assert(c == want) }
+        Err(_) => assert(false, "expected Ok('🎈')")
+    }
+}
+
+test "232.1 Т1: str.to_char — '' → Err(Empty), 'ab' → Err(TooManyChars)" {
+    match "".to_char() {
+        Ok(_)      => assert(false, "expected Err(Empty)")
+        Err(Empty) => {}
+        Err(_)     => assert(false, "expected Empty variant")
+    }
+    match "ab".to_char() {
+        Ok(_)              => assert(false, "expected Err(TooManyChars)")
+        Err(TooManyChars)  => {}
+        Err(_)             => assert(false, "expected TooManyChars variant")
+    }
+}

@@ -110,10 +110,25 @@ fn parse_decimal_f64(s str) -> Result[f64, ParseFloatError] =>
 | Overflow | InvalidRadix` и `type ParseFloatError enum Empty | Invalid`
 (`std/runtime/string/parse.nv`).
 
-<!-- TODO(232): уточнить у владельца: str → bool — в std не найден ни
-     `bool.try_from(s)`, ни `s.to_bool()`; парсинг bool из строки, похоже,
-     ещё не реализован (или не решён по имени). Не выдумываю форму —
-     см. раздел «Bool» ниже. -->
+### str → bool (parse, fallible)
+
+**Канон (Plan 232.1 Т1, owner decision «добавить», 2026-07-26):**
+`s.to_bool()` — строго `"true"`/`"false"`, lowercase-only (Rust
+`str::parse::<bool>`-канон; нет case-insensitive/`"1"`/`"0"`/`"yes"`-алиасов).
+
+| From → To | Через | Failure |
+|---|---|---|
+| `str → bool` | `s.to_bool()` | пусто → `Err(Empty)`; что угодно кроме точно `"true"`/`"false"` → `Err(Invalid)` |
+
+```nova
+fn parse_flag(s str) -> Result[bool, ParseBoolError] => s.to_bool()
+
+assert("true".to_bool() == Ok(true))
+assert("TRUE".to_bool().is_err())      // регистр не lowercase → Err(Invalid)
+```
+
+`type ParseBoolError enum Empty | Invalid` (`std/runtime/string/parse.nv`)
+— тот же двухвариантный паттерн, что `ParseFloatError`.
 
 ### numeric → str (format, infallible) — единый вход `.to_str()`
 
@@ -151,12 +166,24 @@ ro f = 3.14.to_str()           // "3.14"
 
 ### str → char (single codepoint, fallible)
 
-<!-- TODO(232): уточнить у владельца: дедикейтед статик/метод «ровно один
-     codepoint из str» (бывший `char.try_from(s str)`) в текущем std не
-     найден построчным грепом. Ближайший рабочий путь — `s.chars().next()`
-     (первый codepoint как `Option[char]`, без проверки «ровно один»),
-     но это другая семантика (не отвергает multi-char строку явной
-     ошибкой) — не подгоняю под старую сигнатуру доки. -->
+**Канон (Plan 232.1 Т1, owner decision «добавить», 2026-07-26):**
+`s.to_char()` парсит РОВНО один Unicode codepoint (не байт — `"é".to_char()`
+успешен, хотя `é` — 2 UTF-8 байта). Ресивер-форма на источнике, тот же
+принцип, что `str @to_int()`.
+
+| Через | Failure |
+|---|---|
+| `s.to_char() -> Result[char, ParseCharError]` | пусто → `Err(Empty)`; >1 codepoint → `Err(TooManyChars)` |
+
+```nova
+assert("a".to_char() == Ok('a'))
+assert("ab".to_char() == Err(TooManyChars))    // строгий отказ, не first-char silently
+```
+
+`type ParseCharError enum Empty | TooManyChars` (`std/runtime/string/parse.nv`)
+— **НЕ** переиспользует `CharFromError` (см. раздел «int → char» ниже): тот
+домен — codepoint вне диапазона Unicode scalar value/surrogate, недостижим
+для str→char (байты `str` уже валидный UTF-8, R-UTF8).
 
 ### int → char (codepoint range-check, fallible)
 
@@ -423,6 +450,7 @@ ro p = Port.try_from(8080)?
 - ✅ `as`-cast (numeric/newtype/sum), narrowing wraparound, float→int saturation
 - ✅ `str @to_*` parse-семья (`to_int`/`to_i64`/`to_u64`/`to_i8`/`to_i16`/`to_i32`/
   `to_u8`/`to_u16`/`to_u32`/`to_f64`) — Plan 174.1, полный `SignedInts`/`UnsignedInts`-набор
+- ✅ `str @to_bool()`/`str @to_char()` — Plan 232.1 Т1 (2026-07-26)
 - ✅ bare-`T @to_str()` blanket + специализации (`char`, `[]u8`) — Plan 174.2
 - ✅ `[]u8 @to_str()`/`@to_str_lossy()`/`@to_str_unchecked()`/`@into_str_unchecked()` — D325
 - ✅ `(cp int).to_char()`, `u8.try_from(c char)` — D54/D77-naming
@@ -436,11 +464,6 @@ ro p = Port.try_from(8080)?
 - ⛔ `str.try_from([]u8)` / `str.from_bytes(...)` — заменены `[]u8 @to_str()`-семьёй
 - ⛔ Методы `.unwrap()`/`.unwrap_or()`/`.unwrap_or_else()` на `Option`/`Result` — 2026-07-07
 - ⛔ Старый sum-синтаксис без `enum`-маркера — D406 (2026-07-01)
-
-Открыто/не найдено в std (см. TODO-пометки в тексте выше):
-
-- ❓ `str → bool` parse (нет ни `bool.try_from(s)`, ни `s.to_bool()`)
-- ❓ `str → char` (единственный codepoint, с явным отказом на multi-char строке)
 
 ---
 

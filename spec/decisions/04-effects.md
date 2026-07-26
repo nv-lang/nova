@@ -6574,6 +6574,34 @@ effect-операции, same-module `to_str()`-коллизия на `int`-rece
 - **Коллекторы `[]Result`:** работа со списком результатов — `sequence: []Result[T,E] -> Result[[]T,E]` (fail-fast) и `partition: []Result[T,E] -> ([]T,[]E)` (prelude, Plan 177 Ф.2c; прецеденты: Rust `FromIterator for Result`, Go `errors.Join`).
 - **Cross-domain композиция (trade-off):** авто-`From`-конверсия ошибок при `?` **отклонена** (D85 amend 174.2) → смешение доменов (`IoError` + `ParseIntError` в одной fn) требует `.map_err(...)` на сайте либо явный domain-sum-error. Обратное (обернуть Fail-код в Result) — идиома `with Fail[E] = |e| interrupt Err(e) { … }` (аналог Kotlin `runCatching` / Swift `Result(catching:)`).
 
+### Amend — `str @to_bool()` / `str @to_char()` (Plan 232.1 Т1, owner decision «добавить», 2026-07-26)
+
+Закрыты два ❓-пробела `spec/conversions.md` (str→bool, str→char), оставшиеся
+после Plan 174.1 «конверсия — метод на источнике». Оба — R1/R2-конформны
+(обычное имя `to_*`, без `try_`-префикса — infallible-сиблинга нет), домфайл
+`std/src/runtime/string/parse.nv` (рядом с `to_int`/`to_f64`, тот же
+`#no_prelude` модуль `runtime.string`):
+
+- **`fn str @to_bool() -> Result[bool, ParseBoolError]`** — строго
+  `"true"`/`"false"`, lowercase-only (Rust `str::parse::<bool>`-канон, БЕЗ
+  case-insensitive/`"1"`/`"0"`-алиасов). `ParseBoolError enum Empty |
+  Invalid` — тот же двухвариантный `Empty`/`Invalid`-паттерн, что уже
+  `ParseFloatError` (D178 amend V2 соседствует, тот же `runtime.string`
+  движок-файл).
+- **`fn str @to_char() -> Result[char, ParseCharError]`** — ровно один
+  Unicode codepoint (не байт); пусто → `Err(Empty)`, >1 codepoint →
+  `Err(TooManyChars)`. **Новый** `ParseCharError enum Empty | TooManyChars`
+  — НЕ переиспользует `CharFromError` (`std/runtime/char.nv`,
+  `(cp int).to_char()`): тот домен — «int вне диапазона Unicode scalar
+  value/surrogate», недостижим для str→char (байты str уже валидный UTF-8,
+  R-UTF8), другая семья ошибок — тот же принцип «не переиспользовать
+  нерелевантный error-тип», что уже `RangeError` vs `ParseIntError` (D430
+  §Связь).
+
+Тесты рядом (`std/src/runtime/string_test.nv`, module test-peer). Канон
+`check std/src` не сдвинулся (142/27/1040 — новые `test`-блоки внутри уже
+существующего файла, не новый файл).
+
 ## D316 — `Time`: плумбинг-эффект, единый источник схемы + `TimerMetrics`-split (Plan 175 Ф.1, 2026-07-04)
 
 > **Амендмент (Plan 200 П12-хвост, 2026-07-21):** свободные обёртки `sleep(d Duration)` и
