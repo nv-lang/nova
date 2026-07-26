@@ -25064,6 +25064,16 @@ struct CapState {
     /// fns, allocation) stay LEGAL for `ro` (only `const` has the stricter
     /// E_CONST_EFFECT_IN_INIT purity rule).
     const_init: bool,
+    /// Plan 221.1 №131 (D62 ENFORCED): `true` when walking an `export fn`
+    /// body — mirrors the `if fd.is_export` gate `check_fn` already applies
+    /// to `E_BANG_REQUIRES_FAIL` (№113). `check_capabilities_at`'s raw
+    /// effect-op check (`[E_RAW_EFFECT_OP_UNDECLARED]`) fires ONLY here;
+    /// private fn (and `main`, which is bare `fn` — not `export fn`, see
+    /// `examples/flagship/aggregator/src/main.nv`) fall through to D28
+    /// auto-inference (`infer_effects`) instead — same scope split as the
+    /// named-fn transitive class. Left `false` (default) for `Item::Test`/
+    /// `Item::Let`/`Item::Const` roots — never export, never hard-gated.
+    is_export: bool,
 }
 
 impl CapState {
@@ -25119,6 +25129,9 @@ impl<'a> CapabilityCtx<'a> {
             match item {
                 Item::Fn(f) => {
                     let mut state = CapState::default();
+                    // Plan 221.1 №131 (D62 ENFORCED): raw effect-op hard-gate
+                    // scope — see `CapState.is_export` doc.
+                    state.is_export = f.is_export;
                     // Plan 42 Sub-plan 42.A: file-level #forbid initial frame.
                     if !file_forbidden.is_empty() {
                         state.forbidden_stack.push(file_forbidden.clone());
@@ -25798,6 +25811,7 @@ impl<'a> CapabilityCtx<'a> {
                         e.span,
                     ));
                 }
+                self.check_raw_effect_op_declared(head, &path[1], state, e.span, errors);
             }
         }
         // 2. Free-fn call: lookup callee.effects.
@@ -25975,6 +25989,71 @@ impl<'a> CapabilityCtx<'a> {
                 span,
             ));
         }
+    }
+
+    /// Plan 221.1 №131 (D62 ENFORCED): `[E_RAW_EFFECT_OP_UNDECLARED]`. A
+    /// SYNTHESIS: D28 §Правило вывода п.1 makes DIRECT effect-op usage
+    /// (`Effect.op(...)` called straight in the body — no intervening named
+    /// fn) mandatory in `export fn` signatures UNCONDITIONALLY (not gated
+    /// behind `--strict-effects`, unlike the transitive-via-named-fn class
+    /// above — `E_UNDECLARED_TRANSITIVE_EFFECT` is an experimental warning
+    /// promoted to error by that flag; this is baseline language semantics,
+    /// same footing as `Fail`/`E_BANG_REQUIRES_FAIL`). Before this window
+    /// `Effect.op(...)` was invisible to EVERY effect-check in the compiler
+    /// (opus design-note 222.20-Ф.2, probes 4b-4j) — D62's "явная
+    /// декларация обязательна" was decoration, not enforcement, for this
+    /// call shape.
+    ///
+    /// **Scope** mirrors `E_BANG_REQUIRES_FAIL` (№113) exactly: fires ONLY
+    /// when `state.is_export` (the enclosing fn is `export fn`). Private fn
+    /// (and `main`, which is bare `fn`) fall through to D28 auto-inference
+    /// — see `infer_effects`'s raw-effect-op walker (`types/mod.rs`,
+    /// `push_raw_effect_ops_into_fn`), which silently adds the effect to
+    /// `f.effects`, mirroring the existing `Fail`-on-throw auto-push.
+    /// `state.effect_root` (test-block bodies, D414 §2 — no enclosing
+    /// signature to declare against) is exempt, same boundary as
+    /// `check_transitive_effect_strict` above; in practice this is already
+    /// implied by `!state.is_export` (test-block state never sets
+    /// `is_export`), kept explicit for readability/defensiveness.
+    /// `with EffectName = …` in scope discharges the obligation locally
+    /// (`state.with_handler_stack`), same D11/Правило-4 semantics as the
+    /// named-fn class — `#default_handler` (D431) does NOT discharge it:
+    /// D431 is a RUNTIME ambient-construction fallback, orthogonal to this
+    /// STATIC declaration requirement (D431 text never claims otherwise —
+    /// verified probe 3, Ф-E of the design note; NOT a second hole).
+    fn check_raw_effect_op_declared(
+        &self,
+        eff_name: &str,
+        op_name: &str,
+        state: &CapState,
+        span: Span,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        if !state.is_export || state.effect_root {
+            return;
+        }
+        if eff_name == "Fail" {
+            return;
+        }
+        if state.declared_effects.contains(eff_name) {
+            return;
+        }
+        if state.with_handler_stack.iter().any(|h| h == eff_name) {
+            return;
+        }
+        errors.push(Diagnostic::new(
+            format!(
+                "[E_RAW_EFFECT_OP_UNDECLARED] raw call to effect operation `{eff}.{op}` \
+                 requires effect `{eff}`, not declared in this `export fn`'s signature and \
+                 not handled by an enclosing `with {eff} = …` block (D62/D28: direct \
+                 effect-op usage is always mandatory in exported signatures — unlike a call \
+                 to a named fn that itself declares `{eff}`, this is unconditional, not \
+                 gated behind `--strict-effects`). Hint: add `{eff}` to this fn's effect-row, \
+                 or install `with {eff} = handler {{ … }}` around this call.",
+                eff = eff_name, op = op_name,
+            ),
+            span,
+        ));
     }
 
     /// Plan 16 D63: единичная проверка effect'a против forbidden-стека.
@@ -28344,6 +28423,30 @@ pub(crate) fn render_type_ref(t: &TypeRef) -> String {
 /// они resource-capability и должны быть видны в сигнатуре, программист
 /// объявляет явно. Только Fail имеет особый placeholder-режим.
 pub fn infer_effects(module: &mut Module) {
+    // Plan 221.1 №131 (D28 §Правило вывода п.1 — companion to the
+    // Fail-on-throw push below): known effect-type names in this CU, needed
+    // to recognize the `Effect.op(...)` raw-call shape (same discrimination
+    // `CapabilityCtx.effect_decls` / `check_handler_op_declarations` use).
+    // Scans `module.items` + peer-files (co-equal folder-module files,
+    // D-folder-module convention) — module.items alone would miss effects
+    // declared in a sibling file of the same folder-module.
+    let mut known_effects: HashSet<String> = HashSet::new();
+    for it in &module.items {
+        if let Item::Type(td) = it {
+            if matches!(td.kind, TypeDeclKind::Effect(_)) {
+                known_effects.insert(td.name.clone());
+            }
+        }
+    }
+    for pf in &module.peer_files {
+        for it in &pf.items_here {
+            if let Item::Type(td) = it {
+                if matches!(td.kind, TypeDeclKind::Effect(_)) {
+                    known_effects.insert(td.name.clone());
+                }
+            }
+        }
+    }
     for item in &mut module.items {
         if let Item::Fn(f) = item {
             if f.is_export {
@@ -28357,7 +28460,247 @@ pub fn infer_effects(module: &mut Module) {
                     span,
                 });
             }
+            // Plan 221.1 №131 (D62 ENFORCED, D28 §Правило вывода п.1): a
+            // DIRECT raw effect-op call (`Effect.op(...)`) in a private fn's
+            // OWN body is a direct effect — the compiler auto-adds it to
+            // the signature, same footing as the `Fail`-on-throw push
+            // above ("этот эффект добавляется" — mandatory inference, not
+            // a mere warning). Mirrors the EXPORTED hard-error gate
+            // (`check_raw_effect_op_declared`, `CapState.is_export`) —
+            // this is the private-fn side of the same D62 scope split.
+            if !known_effects.is_empty() {
+                let mut used: HashSet<String> = HashSet::new();
+                collect_raw_effect_ops_in_fn(f, &known_effects, &mut used);
+                if !used.is_empty() {
+                    let already: HashSet<String> = f.effects.iter()
+                        .filter_map(|e| match e {
+                            TypeRef::Named { path, .. } => path.last().cloned(),
+                            _ => None,
+                        })
+                        .collect();
+                    let mut new_names: Vec<String> = used.into_iter()
+                        .filter(|n| !already.contains(n))
+                        .collect();
+                    // Deterministic order — HashSet iteration order is not stable,
+                    // and effect-row order is visible (`--show-effects`, error text).
+                    new_names.sort();
+                    let span = f.span;
+                    for name in new_names {
+                        f.effects.push(TypeRef::Named { path: vec![name], generics: vec![], span });
+                    }
+                }
+            }
         }
+    }
+}
+
+/// Plan 221.1 №131: собирает имена эффектов, чьи операции вызваны ПРЯМО
+/// (`Effect.op(...)`) в теле `f` — сама `f`, БЕЗ вложенных `Lambda`/
+/// `HandlerLit`/`ProtocolLit` тел (у них своя scope-граница эффектов, тот
+/// же принцип что `has_throw_in_expr`'s `Lambda => false`, см. её
+/// комментарий). `known` — множество имён деклараций `type X effect {…}`
+/// в этом CU (эффект НЕ в этом множестве — не эффект, не считается, даже
+/// если совпадает по имени с локальной переменной/типом).
+fn collect_raw_effect_ops_in_fn(f: &FnDecl, known: &HashSet<String>, out: &mut HashSet<String>) {
+    match &f.body {
+        FnBody::Expr(e) => collect_raw_effect_ops_expr(e, known, out),
+        FnBody::Block(b) => collect_raw_effect_ops_block(b, known, out),
+        FnBody::External => {}
+    }
+}
+
+/// Path-голова 2-сегментного call-вида `Effect.op(...)` — та же форма,
+/// что распознаёт `check_capabilities_at`'s "1. Effect-op call" (см. её
+/// построение `path` из `ExprKind::Path`/`Member{obj: Ident, ..}`).
+fn raw_effect_op_head(func: &Expr) -> Option<String> {
+    match &func.kind {
+        ExprKind::Path(parts) if parts.len() == 2 => Some(parts[0].clone()),
+        ExprKind::Member { obj, .. } => match &obj.kind {
+            ExprKind::Ident(n) => Some(n.clone()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn collect_raw_effect_ops_block(b: &Block, known: &HashSet<String>, out: &mut HashSet<String>) {
+    for s in &b.stmts {
+        collect_raw_effect_ops_stmt(s, known, out);
+    }
+    if let Some(t) = &b.trailing {
+        collect_raw_effect_ops_expr(t, known, out);
+    }
+}
+
+fn collect_raw_effect_ops_stmt(s: &Stmt, known: &HashSet<String>, out: &mut HashSet<String>) {
+    match s {
+        Stmt::Expr(e) => collect_raw_effect_ops_expr(e, known, out),
+        Stmt::Let(decl) => collect_raw_effect_ops_expr(&decl.value, known, out),
+        Stmt::Const(_) => {}
+        Stmt::Assign { target, value, .. } => {
+            collect_raw_effect_ops_expr(target, known, out);
+            collect_raw_effect_ops_expr(value, known, out);
+        }
+        Stmt::Return { value, .. } => {
+            if let Some(v) = value { collect_raw_effect_ops_expr(v, known, out); }
+        }
+        Stmt::Throw { value, .. } => collect_raw_effect_ops_expr(value, known, out),
+        Stmt::Break(_) | Stmt::Continue(_) => {}
+        // D90: defer/errdefer body — как и has_throw, отдельный scope с
+        // ограничениями; сырые опы там всё равно принадлежат ЭТОЙ fn
+        // (defer не заводит своей сигнатуры) — сканируем.
+        Stmt::Defer { body, .. } => collect_raw_effect_ops_expr(body, known, out),
+        Stmt::ConsumeScope { init, body, .. } => {
+            collect_raw_effect_ops_expr(init, known, out);
+            collect_raw_effect_ops_block(body, known, out);
+        }
+        Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => collect_raw_effect_ops_expr(expr, known, out),
+        Stmt::Apply { args, .. } => {
+            for a in args { collect_raw_effect_ops_expr(a, known, out); }
+        }
+        Stmt::Calc { steps, .. } => {
+            for step in steps { collect_raw_effect_ops_expr(&step.expr, known, out); }
+        }
+        Stmt::Reveal { .. } => {}
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            for e in lhs { collect_raw_effect_ops_expr(e, known, out); }
+            for e in rhs { collect_raw_effect_ops_expr(e, known, out); }
+        }
+    }
+}
+
+fn collect_raw_effect_ops_expr(e: &Expr, known: &HashSet<String>, out: &mut HashSet<String>) {
+    match &e.kind {
+        ExprKind::Call { func, args, .. } => {
+            if let Some(head) = raw_effect_op_head(func) {
+                if known.contains(&head) {
+                    out.insert(head);
+                }
+            }
+            collect_raw_effect_ops_expr(func, known, out);
+            for a in args { collect_raw_effect_ops_expr(a.expr(), known, out); }
+        }
+        ExprKind::Throw(inner) | ExprKind::Try(inner) | ExprKind::Bang(inner)
+        | ExprKind::Unary { operand: inner, .. } => collect_raw_effect_ops_expr(inner, known, out),
+        ExprKind::Binary { left, right, .. } => {
+            collect_raw_effect_ops_expr(left, known, out);
+            collect_raw_effect_ops_expr(right, known, out);
+        }
+        ExprKind::Member { obj, .. } => collect_raw_effect_ops_expr(obj, known, out),
+        ExprKind::Index { obj, index } => {
+            collect_raw_effect_ops_expr(obj, known, out);
+            collect_raw_effect_ops_expr(index, known, out);
+        }
+        ExprKind::If { cond, then, else_, .. } => {
+            collect_raw_effect_ops_expr(cond, known, out);
+            collect_raw_effect_ops_block(then, known, out);
+            match else_ {
+                Some(ElseBranch::Block(b)) => collect_raw_effect_ops_block(b, known, out),
+                Some(ElseBranch::If(e2)) => collect_raw_effect_ops_expr(e2, known, out),
+                None => {}
+            }
+        }
+        ExprKind::IfLet { scrutinee, then, else_, .. } => {
+            collect_raw_effect_ops_expr(scrutinee, known, out);
+            collect_raw_effect_ops_block(then, known, out);
+            match else_ {
+                Some(ElseBranch::Block(b)) => collect_raw_effect_ops_block(b, known, out),
+                Some(ElseBranch::If(e2)) => collect_raw_effect_ops_expr(e2, known, out),
+                None => {}
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            collect_raw_effect_ops_expr(scrutinee, known, out);
+            for arm in arms {
+                match &arm.body {
+                    MatchArmBody::Expr(e2) => collect_raw_effect_ops_expr(e2, known, out),
+                    MatchArmBody::Block(b) => collect_raw_effect_ops_block(b, known, out),
+                }
+                if let Some(g) = &arm.guard { collect_raw_effect_ops_expr(g, known, out); }
+            }
+        }
+        ExprKind::While { cond, body, .. } => {
+            collect_raw_effect_ops_expr(cond, known, out);
+            collect_raw_effect_ops_block(body, known, out);
+        }
+        ExprKind::WhileLet { scrutinee, body, .. } => {
+            collect_raw_effect_ops_expr(scrutinee, known, out);
+            collect_raw_effect_ops_block(body, known, out);
+        }
+        ExprKind::For { iter, body, .. } => {
+            collect_raw_effect_ops_expr(iter, known, out);
+            collect_raw_effect_ops_block(body, known, out);
+        }
+        ExprKind::Loop { body, .. } => collect_raw_effect_ops_block(body, known, out),
+        ExprKind::Select { arms } => {
+            for a in arms {
+                match &a.op {
+                    SelectOp::Recv { chan, .. } => collect_raw_effect_ops_expr(chan, known, out),
+                    SelectOp::Send { chan, value } => {
+                        collect_raw_effect_ops_expr(chan, known, out);
+                        collect_raw_effect_ops_expr(value, known, out);
+                    }
+                    SelectOp::Default => {}
+                }
+                if let Some(g) = &a.guard { collect_raw_effect_ops_expr(g, known, out); }
+                collect_raw_effect_ops_block(&a.body, known, out);
+            }
+        }
+        ExprKind::Block(b) => collect_raw_effect_ops_block(b, known, out),
+        // Own effect-row scope — same reasoning as `has_throw_in_expr`'s
+        // `Lambda => false` and handler-op-decl's HandlerLit skip above:
+        // a raw op used inside a nested closure/handler-literal/protocol-
+        // literal body is that construct's OWN obligation (its coercion
+        // target / the `with`-establishment context), not this fn's.
+        ExprKind::Lambda { .. } | ExprKind::HandlerLit { .. } | ExprKind::ProtocolLit { .. } => {}
+        ExprKind::Range { start, end, .. } => {
+            if let Some(s) = start { collect_raw_effect_ops_expr(s, known, out); }
+            if let Some(e2) = end { collect_raw_effect_ops_expr(e2, known, out); }
+        }
+        ExprKind::TupleLit(elems) => {
+            for e2 in elems { collect_raw_effect_ops_expr(e2, known, out); }
+        }
+        ExprKind::ArrayLit(elems) => {
+            for el in elems {
+                match el {
+                    ArrayElem::Item(e2) => collect_raw_effect_ops_expr(e2, known, out),
+                    ArrayElem::Spread(e2) => collect_raw_effect_ops_expr(e2, known, out),
+                }
+            }
+        }
+        ExprKind::RecordLit { fields, .. } => {
+            for fld in fields {
+                if let Some(v) = &fld.value { collect_raw_effect_ops_expr(v, known, out); }
+            }
+        }
+        // `with X = …` LOCALLY discharges `X` (D11/Правило 4) — но other
+        // effects used inside `body` still belong to this fn; scan both
+        // the handler-construction expr and the body, same as
+        // `has_throw_in_expr`'s `With` arm. We don't special-case the
+        // discharged name here: it's harmless if `X` also appears raw
+        // elsewhere OUTSIDE this with-block in the same fn (still a real
+        // direct use needing declaration); a raw op INSIDE the with-block
+        // for the SAME `X` it installs would double-count into `used` but
+        // that's conservative-safe for private auto-inference (adds `X`
+        // to the signature even though technically discharged locally —
+        // over-declaring in private is harmless, D28 §"Случайное
+        // расширение").
+        ExprKind::With { bindings, body } => {
+            for bd in bindings { collect_raw_effect_ops_expr(&bd.handler, known, out); }
+            collect_raw_effect_ops_block(body, known, out);
+        }
+        ExprKind::Spawn(inner) => collect_raw_effect_ops_expr(inner, known, out),
+        ExprKind::Supervised { body, cancel, deadline } => {
+            collect_raw_effect_ops_block(body, known, out);
+            if let Some(c) = cancel { collect_raw_effect_ops_expr(c, known, out); }
+            if let Some(dl) = deadline { collect_raw_effect_ops_expr(&dl.expr, known, out); }
+        }
+        ExprKind::ParallelFor { iter, body, .. } => {
+            collect_raw_effect_ops_expr(iter, known, out);
+            collect_raw_effect_ops_block(body, known, out);
+        }
+        ExprKind::TurboFish { base, .. } => collect_raw_effect_ops_expr(base, known, out),
+        _ => {}
     }
 }
 

@@ -1,0 +1,27 @@
+// EXPECT_COMPILE_ERROR E_RAW_EFFECT_OP_UNDECLARED
+//
+// Plan 221.1 №131 (D62 ENFORCED) — a RAW effect-op call (`Effect.op(...)`
+// called directly, no intervening named fn) is a DIRECT effect (D28
+// §Правило вывода п.1: "Использование операции эффекта прямо в теле →
+// этот эффект добавляется — обязательный для public"). Before this window
+// this call shape was invisible to EVERY effect-check in the compiler
+// (opus design-note 222.20-Ф.2, probes 4b/4c/4d/4g/4h/4j) — D62's "явная
+// декларация обязательна" was decoration, not enforcement, for raw ops.
+// `export fn` without `Log1` in its own signature and no enclosing
+// `with Log1 = …` → compile error `[E_RAW_EFFECT_OP_UNDECLARED]`
+// (types/mod.rs `check_capabilities_at` → `check_raw_effect_op_declared`).
+// UNCONDITIONAL — unlike `E_UNDECLARED_TRANSITIVE_EFFECT` (Plan 197), this
+// fires WITHOUT `--strict-effects` (same footing as `E_BANG_REQUIRES_FAIL`,
+// №113). Spec: spec/decisions/04-effects.md D62/D28.
+module neg.d62_raw_effect_op_undeclared_neg
+
+type Log1 effect {
+    info(msg str) -> ()
+}
+
+// ✗ exported fn, raw `Log1.info(...)` call, but NO `Log1` in the signature
+// and no enclosing `with Log1 = …`.
+export fn bad_use(s str) -> int {
+    Log1.info(s)                                  // ❌ [E_RAW_EFFECT_OP_UNDECLARED]
+    1
+}
