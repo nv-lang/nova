@@ -110,14 +110,27 @@ type Logger effect {
     log(msg str) -> ()
 }
 
-ro console = handler Logger {
-    log(msg) => println(msg)
+ro console = effect Logger {
+    log(msg) -> () => println(msg)
 }
 ```
 
-`handler Logger { ... }` — handler-литерал ([D61](decisions/04-effects.md#d61)).
-Префикс `handler` обязателен и однозначно отличает от record-литерала
-`User { id: 1 }`.
+`effect Logger { ... }` — handler-литерал: то же ключевое слово `effect`,
+что и в декларации типа ([D61](decisions/04-effects.md#d61)/[D142](decisions/02-types.md#d142)
+— symmetry между декларацией и литералом для `effect`/`protocol`).
+**Старое ключевое слово `handler` для литерала retracted без
+deprecated-алиаса** (2026-05-23, clean break) — компилятор на встрече
+`handler X { ... }` выдаёт diagnostic «`handler` keyword removed; use
+`effect` (D142)». Однозначность с record-литералом (`User { id: 1 }`)
+обеспечивает сам keyword `effect`/`protocol`, а не отдельный префикс.
+
+**Каждая операция handler-литерала обязана указывать `-> Тип` явно**
+([D434](decisions/04-effects.md#d434), 2026-07-22) — единственное
+место в языке, где раньше была синтаксическая опциональность
+return-типа. Пропуск даёт `E_INCOMPLETE_HANDLER_OP_DECL`, несовпадение
+с типом операции в декларации эффекта — `E_HANDLER_OP_RETURN_TYPE_MISMATCH`.
+Типы параметров при этом по-прежнему можно не повторять (`log(msg) ->
+() => ...`) — обязателен только возврат.
 
 ## Имя эффекта в коде — три позиции
 
@@ -180,6 +193,43 @@ LLM (и человек), читая сигнатуру, **знает все по
 у вызывающих **сломается**, потому что появился эффект `Log`. Тихо
 протащить нельзя. **Это фича.**
 
+## Прямые эффекты, не транзитивные ([D28](decisions/04-effects.md#d28))
+
+Сигнатура объявляет только эффекты, чьи операции функция вызывает
+**сама** — не эффекты вложенных вызовов:
+
+```nova
+type Db effect {
+    exec(stmt str) -> ()
+}
+
+fn save(name str) Db -> () {
+    Db.exec(name)              // прямое использование — Db в сигнатуре обязателен
+}
+
+fn helper(name str) -> () {
+    save(name)                  // транзитивное Db — по умолчанию только warning
+}
+```
+
+- **Прямой** эффект не объявлен → **compile error**, всегда.
+- **Транзитивный** эффект не объявлен → **warning**, подавляемый через
+  `#allow_transit(Db, Log)` на функции или `transit_effects = "off"` в
+  `Nova.toml`.
+- **Флаг `--strict-effects`** (`nova check`/`build`/`test`, Plan 197) переводит
+  это предупреждение в жёсткую ошибку `E_UNDECLARED_TRANSITIVE_EFFECT` —
+  проектная конвенция требует собирать `std/**` и `examples/**` именно с этим
+  флагом (см. `CLAUDE.md`). Тот же флаг ловит `E_EFFECT_ERASED_IN_FN_TYPE` —
+  присваивание/передачу функции в более узкий по эффектам `fn(...) Row -> T`.
+- **`Fail[E]`** — исключение из «прямого»: throw остаётся **строго
+  транзитивным** и обязателен в сигнатуре везде, где может произойти
+  (см. «Операторы `?` и `!!`» ниже) — компилятор здесь не ослабляет
+  проверку никаким флагом.
+- Приватная (без `export`) функция может **не писать** прямые эффекты
+  вручную вообще — компилятор выводит их из тела автоматически (в т.ч.
+  добавляет `Fail[E]`, если приватная функция где-то использует `!!`/`throw`).
+  В `export fn` прямые эффекты обязаны быть явными — это публичный контракт.
+
 ## Async — невидимая инфраструктура (D62)
 
 Suspension в Nova — **не эффект**, а ambient runtime-инфраструктура.
@@ -206,6 +256,23 @@ inverse-маркер.
 Подробно — [decisions/06-concurrency.md#d14](decisions/06-concurrency.md#d14),
 [decisions/04-effects.md#d62](decisions/04-effects.md#d62).
 
+## Дефолтный handler без `with` ([D431](decisions/04-effects.md#d431))
+
+Некоторые эффекты (`Time` — эталонный пример) работают **без явного
+`with`**, если программист не подставил свой handler:
+
+```nova
+fn log_uptime() Time Io -> () =>
+    println("${Time.now()}")   // handler не установлен — используется дефолтный (real-clock)
+```
+
+Это не «эффект без handler'а» — компилятор синтезирует **ленивый,
+once-per-thread** дефолт-конструктор через атрибут
+`#default_handler(EffectName)` на обычной handler-литерал-фабрике в
+`.nv`-исходнике (не хардкод в Rust). `with Effect = ...` по-прежнему
+полностью переопределяет дефолт — механизм не теряет мокабельность,
+просто снимает необходимость писать `with` для типового bootstrap-случая.
+
 ## Что НЕ эффект — Panic
 
 Не каждое прерывание — эффект. **Аппаратные/математические сбои**
@@ -221,15 +288,29 @@ inverse-маркер.
 это смерть текущего fiber'а, runtime обрабатывает на границе:
 
 ```nova
-fn handle_request(r Request) Db Log -> Response =>
-    process(r)             // если panic — fiber умирает, runtime вернёт 500
+import std.concurrency.supervisor as sup
 
-fn server() Net Fail -> () =>
-    supervised {
-        spawn handle_requests()
-    } strategy = one_for_one
-    // supervisor рестартует упавшие fiber'ы
+fn handle_request(id int) -> int =>
+    id / id                // если panic (напр. id == 0 → div/0) — fiber умирает
+
+fn server(ids []int) -> () =>
+    with Supervisor = sup.stop() {           // упавший ребёнок НЕ отменяет siblings
+        supervised {
+            for id in ids { spawn { handle_request(id) } }
+        }
+    }
 ```
+
+Стратегия супервизии — обычный **эффект-handler** (`Supervisor`,
+[D416](decisions/06-concurrency.md#d416)), а не именованный параметр:
+готовые политики — `sup.stop()` (упавший «выкинут», остальные продолжают,
+его ошибка не теряется — retained) и `sup.escalate()` (эквивалент дефолта:
+ошибка становится primary, siblings кооперативно отменяются). Пользовательская
+политика — обычный handler-литерал: `on_child_fail(idx int, err any) -> Decision`,
+где `Decision` — `Escalate` или `Stop`. **`Restart`-семейство в словаре
+отсутствует** (ретрактировано 2026-07-10) — рестарт-идиома для fiber'ов
+инородна structured concurrency; повтор попытки живёт внутри тела ребёнка
+(`std.concurrency.retry`), не в супервизоре.
 
 `panic` — это смерть **fiber'а**, не процесса. В сервере падает только
 текущий запрос, остальное работает. Если нужно гарантированно гасить
@@ -279,7 +360,20 @@ fn pipeline_throw(s str) Fail[ParseError] -> int {
 ```
 
 Оба оператора работают и для `Option[T]`, и для `Result[T, E]`. Для
-`Option!!` бросается `RuntimeNoneError` (prelude unit-тип).
+`Option!!` бросается `RuntimeNoneError` (prelude unit-тип). Методы-близнецы
+`.unwrap()` / `.unwrap_or(v)` / `.unwrap_or_else(f)` **ретрактированы**
+(2026-07-07) — единственный канонический путь операторный (`!!`, `??`),
+методов на `Option`/`Result` с тем же смыслом в prelude нет.
+
+**Энфорс на границе экспорта ([№113](decisions/04-effects.md#d85),
+2026-07-25).** `expr!!` в `export fn`, чья сигнатура не несёт совместимый
+`Fail[E]` (и throw не пойман локальным `with Fail = ... {}`) — compile
+error `E_BANG_REQUIRES_FAIL`. Для **приватных** функций это не действует —
+там работает D28 auto-inference (см. выше): `Fail` молча подставляется в
+эффект-строку, если тело использует `throw`/`!!`. Если `!!` защищает
+программный инвариант, а не реальную fallibility (типовой пример — сеттер
+над compile-time-известным литералом), выход — `?? panic("...")` вместо
+протаскивания `Fail` в публичную сигнатуру.
 
 Параллельно остаётся **`??`** — coalesce / кастомный fallback:
 
@@ -288,6 +382,14 @@ ro port = config.get("port") ?? 8080                   // default
 ro port = config.get("port") ?? throw MyError          // custom throw
 ro port = config.get("port") ?? panic("no port")       // panic (D13)
 ```
+
+Форма **`?? return ...`** (ранний выход из объемлющей функции) —
+**ретрактирована** ([D86](decisions/04-effects.md#d86) amend, 2026-07-23,
+`E_COALESCE_RETURN_FALLBACK`): она была второй дверью к `?`, а не
+независимой нишей. Канон вместо неё — `X?` (та же обёртка наружу),
+`.ok()?` (Result → функция отдаёт Option), `.map_err(...)?` (меняется тип
+ошибки), `.ok_or(err)?` (Option → функция отдаёт Result), либо явный
+`match`, если обёртки для проброса нет вовсе.
 
 ## Альтернатива: явный Result
 
