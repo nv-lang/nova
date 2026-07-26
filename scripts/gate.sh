@@ -45,3 +45,13 @@ echo "flagship :: $FLAG_LINE"
 echo "$FLAG_LINE" | grep -q "built:" || fail "flagship not built: '$FLAG_LINE'"
 
 echo "GATE OK"
+
+echo "== gate: D-number uniqueness =="
+DUPES=$(grep -rhoE "^## D[0-9]+\." spec/decisions/*.md | sort | uniq -d)
+if [ -n "$DUPES" ]; then
+  echo "GATE FAIL: duplicate D-block numbers: $DUPES" >&2
+  # известная коллизия D431 (реестр №123) — допускаем ДО перенумерации, прочие = красный
+  EXTRA=$(echo "$DUPES" | grep -v "^## D431\.")
+  [ -n "$EXTRA" ] && exit 1
+fi
+echo "GATE OK (final)"
