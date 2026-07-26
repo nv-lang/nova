@@ -114,6 +114,59 @@ export fn str @to_f64() -> Result[f64, ParseFloatError] {
     if unsafe { str_parse_f64(@, &v) } { Ok(v) } else { Err(Invalid) }
 }
 
+// ── Plan 232.1 Т1 (2026-07-26, owner decision "добавить"): `str @to_bool()` ─
+//
+// Error variants for `str.to_bool()`. Exported so callers can match on them.
+export type ParseBoolError enum Empty | Invalid
+
+/// Strict `bool` parse — lowercase-only `"true"`/`"false"`, mirrors Rust
+/// `str::parse::<bool>` (no case-insensitive fallback, no `"1"`/`"0"`/
+/// `"yes"`/`"no"` aliases). Empty string → `Err(Empty)` — same
+/// distinguishable-from-generic-garbage split as `@to_f64`/`@to_int` above;
+/// anything else that isn't exactly `"true"` or `"false"` → `Err(Invalid)`
+/// (mirrors `@to_f64`'s `Invalid` for "well-formed-but-not-this" garbage).
+#stable(since = "0.1")
+export fn str @to_bool() -> Result[bool, ParseBoolError] {
+    if @is_empty() { return Err(Empty) }
+    if @ == "true" { return Ok(true) }
+    if @ == "false" { return Ok(false) }
+    Err(Invalid)
+}
+
+// ── Plan 232.1 Т1 (2026-07-26): `str @to_char()` — exactly one codepoint ──
+//
+// Error variants for `str.to_char()`. Exported so callers can match on them.
+// Deliberately NOT `CharFromError` (std/runtime/char.nv, `(cp int).to_char()`
+// domain) — that error means "int value outside the Unicode scalar range /
+// surrogate", which cannot occur here (a `str`'s bytes are always valid
+// UTF-8 by construction, R-UTF8 — every decoded codepoint is already a
+// legal scalar value). The only failure modes for str→char are "no
+// codepoints" and "more than one" — a different domain, so a sibling type
+// (not a reused double) per D30-family precedent (`ParseIntError` vs
+// `RangeError` — "not reused, different domain", see D430). Variant split
+// mirrors Rust's `core::char::ParseCharError` (`EmptyString`/`TooManyChars`)
+// renamed to this module's `Empty`/`...` convention (`ParseIntError`/
+// `ParseFloatError` above both use `Empty` for the same "nothing there"
+// case).
+export type ParseCharError enum Empty | TooManyChars
+
+/// Parses exactly one Unicode codepoint — not byte (`"é".to_char()`
+/// succeeds even though `é` is 2 UTF-8 bytes; `"🎈".to_char()` succeeds as
+/// one 4-byte codepoint). Empty string → `Err(Empty)`. More than one
+/// codepoint → `Err(TooManyChars)`.
+#stable(since = "0.1")
+export fn str @to_char() -> Result[char, ParseCharError] {
+    mut it = @chars()
+    ro c = match it.next() {
+        Some(c) => c
+        None => return Err(Empty)
+    }
+    match it.next() {
+        None => Ok(c)
+        Some(_) => Err(TooManyChars)
+    }
+}
+
 // ── Plan 174.1 (2026-07-08): `str @to_*` integer conversion surface ───────
 // Live set per actual consumers (owner decision) — originally NOT the full
 // SignedInts/UnsignedInts type-set: `to_int`, `to_i64`, `to_u64`, `to_u32`,
