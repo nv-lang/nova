@@ -1,8 +1,15 @@
 # Nova — конверсии типов
 
 Сводная страница всех правил конверсии в одном месте. Полные
-D-decisions: [D54](decisions/03-syntax.md#d54),
-[D73](decisions/08-runtime.md#d73), [D77](decisions/08-runtime.md#d77).
+D-decisions: [D54](decisions/03-syntax.md#d54) (`as`),
+[D52](decisions/02-types.md#d52) (newtype/alias/sum),
+[D325](decisions/04-effects.md#d325) (единый fallible-контракт std),
+[D410](decisions/03-syntax.md#d410) (`to_str`/`bytes`-семейство),
+[D429](decisions/02-types.md#d429) (`#coerce` — zero-cost implicit),
+[D430](decisions/04-effects.md#d430) (checked narrowing `try_to_*`).
+`From`/`Into`/`TryFrom`/`TryInto` как **протоколы** ретрактированы
+2026-07-06 ([D73](decisions/08-runtime.md#d73)/[D77](decisions/08-runtime.md#d77)) —
+подробности в разделе «Именование `from`/`try_from`» ниже.
 
 ---
 
@@ -10,13 +17,17 @@ D-decisions: [D54](decisions/03-syntax.md#d54),
 
 | Механизм | Когда | Пример |
 |---|---|---|
-| `as` | infallible numeric/newtype/sum cast | `42 as f64`, `n as i16` |
-| `T.from(v)` / `v.into()` | infallible struct/format конверсия | `str.from(42)`, `c.into()` |
-| `T.try_from(v)?` | fallible parsing/validation | `int.try_from("42")?` |
+| `as` | infallible numeric/newtype/sum cast, compile-time, без runtime-кода | `42 as f64`, `n as i16` |
+| `.to_str()` | универсальная конверсия значения **в строку** (bare-`T` blanket + специализации) | `42.to_str()`, `bs.to_str()` |
+| `T.from(v)` / `T.try_from(v)` | конкретный статик-конструктор — **имя-конвенция**, НЕ протокол/auto-derive | `Fahrenheit.from(c)`, `u32.try_from(port_str)` |
+| `consume @into_ЦЕЛЬ()` | потребляющая передача владения (конкретное имя на источнике) | `sb.into_str()`, `wb.into_bytes()` |
+| `#coerce` | декларативная **неявная** zero-cost конверсия в позиции с известным типом (view/finalize) | `w.write(s)` — `str` неявно `.bytes()` |
 
-**Auto-derive 4-way** (D73): пишешь одну форму — компилятор синтезирует три остальные.
-- `T.from(v V)` ↔ `v.@into() -> T`
-- `T.try_from(v V)` ↔ `v.@try_into() -> Result[T, E]`
+**Важно (2026-07-06 ретракция, см. ниже):** `.from(v)` / `.try_from(v)` —
+это ПАРА конкретных статик-методов на конкретном типе, не generic-протокол
+`From[T]`/`TryFrom[T,E]`. Компилятор **не синтезирует** обратную форму
+(`.into()`/`.try_into()`) автоматически — программист пишет ровно то, что
+объявил. «Универсального» `.into()` в языке больше нет.
 
 ---
 
@@ -49,37 +60,84 @@ ro m = (-1.0) as u32           // saturates to 0
 ro nan = 0.0 / 0.0 as i16      // 0
 ```
 
+### Checked narrowing — `try_to_*` ([D430](decisions/04-effects.md#d430), 2026-07-20)
+
+`as` между целочисленными ширинами всегда wraparound (тихая потеря
+старших бит). Если нужна **проверка**, а не тихий wrap — bounded-бланкет
+`@try_to_<T>()` на любом типе из `Ints`-набора, симметрично для всех
+целевых ширин (`i8`/`i16`/`i32`/`i64`/`int`/`u8`/`u16`/`u32`/`u64`/`uint`):
+
+```nova
+ro ok = (100 as u32).try_to_u8()       // Ok(100 as u8)
+ro err = (300 as u32).try_to_u8()      // Err(RangeError) — не влезло
+ro neg = (-1 as i32).try_to_u8()       // Err(RangeError) — отрицательное → unsigned
+```
+
+`RangeError` — unit-тип («не влезло», без payload — сам факт исчерпывающий).
+`as` остаётся быстрым обрезающим кастом без изменений — `try_to_*` не
+заменяет его, а добавляет проверяемую альтернативу рядом.
+
 ---
 
 ## Numeric ↔ str
 
-### str → numeric (parse, fallible)
+### str → numeric (parse, fallible) — метод НА ИСТОЧНИКЕ, не статик на цели
+
+**Канон (Plan 174.1, 2026-07-08, owner decision — superseded ранний
+static-constructor дизайн `T.parse(s)`/`T.try_from(s)`):** конверсия строки
+в число — это метод **на `str`** (`s.to_int()`), а не статик-конструктор на
+целевом типе. Зеркалит `s.to_str()`-семью в обратную сторону.
 
 | From → To | Через | Failure |
 |---|---|---|
-| `str → int/i64` | `int.try_from(s)?` | non-digit / overflow |
-| `str → i8/i16/i32` | `i32.try_from(s)?` | + range out-of-bounds |
-| `str → u8/u16/u32/u64` | `u32.try_from(s)?` | + negative / overflow |
-| `str → f64/f32` | `f64.try_from(s)?` | invalid number format |
+| `str → int` | `s.to_int(radix: int = 10)` | non-digit / overflow / (custom radix) invalid radix |
+| `str → i64/u64` | `s.to_i64()` / `s.to_u64()` | без доп. range-check (та же ширина, что движок) |
+| `str → i8/i16/i32/u8/u16/u32` | `s.to_i8()` / `s.to_i16()` / `s.to_i32()` / `s.to_u8()` / `s.to_u16()` / `s.to_u32()` | + range-check в целевую ширину |
+| `str → f64` | `s.to_f64()` | invalid number format |
 
 ```nova
-ro n = int.try_from("42")?     // Ok(42)
-ro m = int.try_from("abc")     // Err
-ro f = f64.try_from("3.14")?   // Ok(3.14)
+fn parse_decimal(s str) -> Result[int, ParseIntError] =>
+    Ok(s.to_int()?)             // radix 10 по умолчанию, Ok(42)
+
+fn parse_hex(s str) -> Result[u32, ParseIntError] =>
+    Ok(s.to_u32(radix: 16)?)    // hex-парсинг
+
+fn parse_decimal_f64(s str) -> Result[f64, ParseFloatError] =>
+    Ok(s.to_f64()?)             // Ok(3.14)
 ```
 
-### numeric → str (format, infallible)
+Ошибки — структурные enum'ы: `type ParseIntError enum Empty | InvalidDigit
+| Overflow | InvalidRadix` и `type ParseFloatError enum Empty | Invalid`
+(`std/runtime/string/parse.nv`).
+
+<!-- TODO(232): уточнить у владельца: str → bool — в std не найден ни
+     `bool.try_from(s)`, ни `s.to_bool()`; парсинг bool из строки, похоже,
+     ещё не реализован (или не решён по имени). Не выдумываю форму —
+     см. раздел «Bool» ниже. -->
+
+### numeric → str (format, infallible) — единый вход `.to_str()`
+
+**Канон (Plan 174.2, 2026-07-14):** `str.from(scalar)` **ретрактирован**.
+Единственный публичный вход «значение → строка» — bare-`T` blanket
+`fn[T] T @to_str() -> str => "${@}"` ([D410](decisions/03-syntax.md#d410)
+amend), специализируемый конкретными перегрузками там, где нужна другая
+arity/семантика (например decode для `[]u8`, см. ниже).
 
 | From → To | Через |
 |---|---|
-| `int/iN/uN → str` | `str.from(n)` |
-| `f64/f32 → str` | `str.from(f)` |
-| `byte → str` | `str.from(b)` |
+| `int/iN/uN → str` | `n.to_str()` |
+| `f64/f32 → str` | `f.to_str()` |
+| `bool → str` | `b.to_str()` |
+| `char → str` | `c.to_str()` |
 
 ```nova
-ro s = str.from(42)            // "42"
-ro f = str.from(3.14)          // "3.14"
+ro s = 42.to_str()             // "42"
+ro f = 3.14.to_str()           // "3.14"
 ```
+
+Интерполяция (`"${n}"`) лоуэрится в тот же путь напрямую (для примитивов —
+в Display-хелпер C-уровня, без повторного вызова `.to_str()` — рекурсии
+нет).
 
 ---
 
@@ -89,36 +147,74 @@ ro f = str.from(3.14)          // "3.14"
 
 | Через | Семантика |
 |---|---|
-| `str.from(c char)` | infallible UTF-8 encode (1-4 байта) |
-| `c.into() -> str` | auto-derived из `str.from(char)` |
+| `c.to_str()` | infallible UTF-8 encode (1-4 байта) — специализация `to_str()`-blanket'а, byte-identical бывшему `str.from(char)` |
 
 ### str → char (single codepoint, fallible)
 
-| Через | Failure |
-|---|---|
-| `char.try_from(s str)?` | empty / multi-char / invalid UTF-8 |
+<!-- TODO(232): уточнить у владельца: дедикейтед статик/метод «ровно один
+     codepoint из str» (бывший `char.try_from(s str)`) в текущем std не
+     найден построчным грепом. Ближайший рабочий путь — `s.chars().next()`
+     (первый codepoint как `Option[char]`, без проверки «ровно один»),
+     но это другая семантика (не отвергает multi-char строку явной
+     ошибкой) — не подгоняю под старую сигнатуру доки. -->
 
 ### int → char (codepoint range-check, fallible)
 
+**Канон (владелец, 2026-07-09):** ресивер-форма на **источнике**
+(`(cp int).to_char()`), не статик `char.try_from(n)` — тот же принцип
+цепочечности, что у `str @to_int()`: `(32 + off).to_char()?`.
+
 | Через | Failure |
 |---|---|
-| `char.try_from(n int)?` | `n < 0` / `n > 0x10FFFF` / surrogate |
+| `(cp int).to_char() -> Result[char, CharFromError]` | `cp < 0` / `cp > 0x10FFFF` / surrogate `[0xD800, 0xDFFF]` |
+
+```nova
+fn describe(cp int) -> str =>
+    match cp.to_char() {
+        Ok(c)              => "codepoint ${cp} = '${c}'"
+        Err(CharFromError) => "codepoint ${cp} вне диапазона"
+    }
+```
 
 ### char → byte (only if codepoint < 256, fallible)
 
+Эта пара **осталась статик-формой** (не мигрировала на ресивер) — единственный
+случай, где `try_` остался на целевом типе:
+
 | Через | Failure |
 |---|---|
-| `byte.try_from(c char)?` | codepoint > 0xFF |
+| `u8.try_from(c char) -> Result[u8, TryFromCharError]` | codepoint > 0xFF (не Latin-1) |
 
 **Исключение:** `'A' as byte`, `'A' as int`, `'A' as u8` — разрешены
-для char-литералов (compile-time-known codepoint).
+для char-литералов (compile-time-known codepoint), см. D54.
 
-### []byte ↔ str
+### []byte ↔ str — единая `to_str`-семья (D325/174.1)
 
-| From → To | Через | Failure |
+**Канон:** `[]u8`-decode тоже идёт через `to_str()` — конкретная
+перегрузка (arity/семантика decode, не format) побеждает bare-`T` blanket
+по правилу «конкретное побеждает generic» ([D84](decisions/10-overloading.md#d84)).
+`str.try_from([]u8)` / отдельный `str.from_bytes(...)` — исторические
+имена, **отозваны**, актуальны только формы ниже:
+
+| Форма | Тип | Семантика |
 |---|---|---|
-| `str → []byte` | `bytes()` метод | infallible (UTF-8 уже валиден) |
-| `[]byte → str` | `str.try_from(bs []byte)?` | invalid UTF-8 |
+| `bs.to_str()` | `-> Result[str, Utf8Error]` | checked decode; `Utf8Error{byte_offset}` указывает первый невалидный байт |
+| `bs.to_str_lossy()` | `-> str` | infallible, невалидные последовательности заменяются replacement-символом |
+| `unsafe { bs.to_str_unchecked() }` | `-> str` | без проверки, вызывающий гарантирует валидный UTF-8 |
+| `unsafe { bs.consume.into_str_unchecked() }` | `-> str` | как выше, но потребляющий zero-copy move буфера |
+
+```nova
+fn decode(bytes []u8) -> str =>
+    match bytes.to_str() {
+        Ok(s)                        => s
+        Err(Utf8Error{byte_offset})  => "invalid UTF-8 at ${byte_offset}"
+    }
+```
+
+**str → []byte** (view, infallible, zero-copy) — голый вид, не
+трансформация: `s.bytes() -> ro []u8` ([D410](decisions/03-syntax.md#d410) —
+`as_bytes` переименован в `bytes`; это же имя — первая объявленная
+`#coerce`-пара, см. раздел «Zero-cost неявные конверсии» ниже).
 
 ---
 
@@ -128,19 +224,25 @@ ro f = str.from(3.14)          // "3.14"
 |---|---|---|
 | `bool → int` | `as` | `true=1`, `false=0` |
 | `bool → byte` / `bool → f64` | `as` | то же |
-| `bool → str` | `str.from(b)` | `"true"` / `"false"` |
-| `str → bool` | `bool.try_from(s)?` | match `"true"`/`"false"` strict |
+| `bool → str` | `b.to_str()` | `"true"` / `"false"` |
 | **`int/byte/f64/etc → bool`** | **запрещено** | use `n != 0` |
 
 ```nova
-ro s = str.from(true)          // "true"
-ro b = bool.try_from("true")?  // Ok(true)
-ro n = if x != 0 { ... }       // explicit
+ro s = true.to_str()           // "true"
+ro n = 5
+ro ok = if n != 0 { true } else { false }   // explicit != 0, не truthy-int
 ```
+
+str → bool — см. TODO выше (не найдено в std на момент этой ревизии).
 
 ---
 
 ## Newtype ↔ underlying
+
+Newtype (`type X Y`, без `alias`, [D52](decisions/02-types.md#d52)) —
+**отдельный** от источника тип; конверсия — явный `as` (identity, тот же
+C-repr). Это отличается от `alias` (`type X alias Y`) — там `X` и `Y`
+взаимозаменяемы **без всякого cast'а** (не отдельный тип).
 
 | Через | Семантика |
 |---|---|
@@ -148,7 +250,7 @@ ro n = if x != 0 { ... }       // explicit
 | `nt as int` | identity |
 
 ```nova
-type UserId alias int
+type UserId int
 ro u UserId = 42 as UserId
 ro n int = u as int            // 42
 ```
@@ -157,10 +259,11 @@ ro n int = u as int            // 42
 
 ## Sum-variant ↔ int (discriminant)
 
-Для sum'ов с числовыми discriminants:
+Sum-тип требует маркер `enum` после имени ([D406](decisions/02-types.md#d406),
+2026-07-01 — старый синтаксис с ведущим `|` без `enum` отменён):
 
 ```nova
-type ErrorCode | NotFound = 404 | InternalError = 500
+type ErrorCode enum NotFound = 404 | InternalError = 500
 ro code = NotFound as int      // 404
 ```
 
@@ -186,37 +289,117 @@ truthy, известный bug-class.
 
 ---
 
-## Запрещённые конверсии — таблица
+## Zero-cost неявные конверсии — `#coerce` ([D429](decisions/02-types.md#d429), Plan 214/214.1)
 
-| Запрещено через `as` | Альтернатива |
-|---|---|
-| `int as char`, `iN/uN as char` | `char.try_from(n)?` |
-| `char as byte` (кроме CharLit) | `byte.try_from(c)?` |
-| `int/byte/f64 as bool` | `n != 0` |
-| `str as int/i32/f64/bool` | `T.try_from(s)?` |
-| `int/f64/bool/char as str` | `str.from(v)` |
-| `T as U` для произвольных types | `U.from(v)` или `U.try_from(v)?` |
-| `if int_value` | `if n != 0` |
+Отдельно от явных механизмов выше — декларативный атрибут `#coerce` на
+**унарной** функции объявляет **неявную** конверсию `I → O`, вставляемую
+компилятором в позиции с известным ожидаемым типом (call-arg, `ro`/`mut`
+с аннотацией, return, элемент коллекции) — БЕЗ явного вызова на месте:
+
+Форма показана на свежем примере (`str @bytes()`/`StringBuilder @into_str()` —
+уже объявленные в std пары, показывать их повторно здесь означало бы
+конфликт деклараций):
+
+```nova
+type Meters { ro raw f64 }
+type Boxed consume { ro payload int }
+
+#coerce
+fn Meters @value() -> ro f64 => @raw            // view — Meters → ro f64
+
+#coerce
+fn Boxed consume @unbox() -> int => @payload    // finalize — потребляющий move
+```
+
+Канон call-сайта — **голое значение**, не явный вызов. Реальная std-пара
+`str @bytes() -> ro []u8` включается автоматически там, где позиция ждёт
+`[]u8`, а на руках `str`:
+
+```nova
+import std.runtime.write_buffer.{WriteBuffer}
+
+fn write_greeting(wb mut WriteBuffer, s str) -> () =>
+    wb.write_bytes(s)   // s неявно .bytes() — не пишем это руками
+```
+
+Две «полосы», обе гарантированно zero-cost:
+- **view** — не-`consume` метод с `ro`-возвратом (заём, без аллокации);
+- **finalize** — `consume`-метод с владеющим возвратом (move, ресивер
+  разряжается в точке вставки; use-after — обычная compile-error линейности).
+
+Правила (см. D429 полностью): ровно одна декларация на пару `(I, O)`;
+один уровень (цепочки НЕ разворачиваются, коэрсии не компонуются друг с
+другом и с single-wrapper — конфликт = ошибка, не тихий выбор); exact-match
+всегда побеждает коэрсию; `#coerce`-функция обязана быть без эффектов.
+Первые декларации в std: `str @bytes() -> ro []u8`, `StringBuilder consume
+@into_str() -> str`, `WriteBuffer consume @into_bytes() -> []u8`. Механизм
+работает и для generic-образцов (`Json[T] @data() -> T`, снятие ограничения
+Plan 214.1, 2026-07-24).
+
+`as` **не** задействует `#coerce` (D429 R10) — `as` остаётся закрытым,
+задокументированным в спеке множеством конверсий; `#coerce` — открытый
+пользовательский реестр, смешение двух дало бы третью дверь к одной паре.
 
 ---
 
-## Auto-derive 4-way
+## Именование `from`/`try_from` — конвенция, не протокол (⛔ ретракция 2026-07-06)
 
-[D73](decisions/08-runtime.md#d73) — программист пишет одну форму
-конверсии, компилятор даёт три:
+**До 2026-07-06** `From[T]`/`Into[U]`/`TryFrom[T,E]`/`TryInto[U,E]` были
+generic-протоколами с авто-выводом обратной формы («4-way auto-derive»):
+написал `T.from(v)` — компилятор сам синтезировал `v.into()`. **Решением
+владельца эти четыре протокола упразднены целиком:**
+
+1. В Rust conversion-bounds — костыль отсутствия перегрузок; в Nova
+   перегрузки есть ([D84](decisions/10-overloading.md#d84)), `From`/`Into`
+   как generic-bound в живом std не использовались НИ РАЗУ.
+2. `?` не делает auto-`From`-конверсию ошибки ([D325](decisions/04-effects.md#d325):
+   один `XError` на домен, конверсия — явный `.map_err(...)`).
+3. Все реальные вызовы `.into()` в дереве играли роль «представление в
+   строку» — это ось `to_str()`, а не передача владения.
+4. Уходит компиляторная магия синтеза (§3 compiler-conventions):
+   blanket identity `From`, auto-derive `From→Into`, 4-шаговый resolution.
+
+**Что остаётся** (три независимых конвенции ИМЁН, каждая — обычная
+Nova-функция без протокола за спиной):
+
+- **(а) `.from(x)` / `.try_from(x)`** — конкретные статик-методы,
+  конструктор-конверсия по конвенции имени (не generic-bound-able).
+  `try_` — **только** когда есть infallible-сиблинг с тем же именем без
+  префикса (R3, [D325](decisions/04-effects.md#d325)); одиночная
+  фаллибельная операция без сиблинга — bare-имя без `try_` (пример —
+  `s.to_int()`, не `s.try_int()`).
+- **(б) `consume @into_ЦЕЛЬ()`** — конкретное имя для потребляющей
+  передачи владения (`into_str`, `into_raw`, `into_bytes`,
+  `into_str_unchecked`). Не общая операция `.into()` — генерик-версии
+  больше нет, каждое имя объявляется на своём типе явно.
+- **(в) `.to_str()` / семейство `to_*`** — представление и трансформация
+  (см. [D410](decisions/03-syntax.md#d410)).
+
+**Компилятор НИЧЕГО не синтезирует между этими тремя** — ни обратную
+форму, ни цепочку. Если тип хочет оба направления — программист пишет оба
+явно, разными именами.
 
 ```nova
-// Программист пишет одну:
-fn Celsius.try_from(n int) -> Result[Celsius, str] => ...
+type Celsius f64
+type Fahrenheit f64
 
-// Компилятор синтезирует:
-fn int @try_into() -> Result[Celsius, str] => Celsius.try_from(@)
+fn Fahrenheit.from(c Celsius) -> Self =>
+    Self((c as f64) * 9.0 / 5.0 + 32.0)
+
+// Компилятор НЕ синтезирует c.into() — Into больше нет. Если нужна
+// обратная форма — пишем отдельную функцию явно:
+fn Celsius.from(f Fahrenheit) -> Self =>
+    Self(((f as f64) - 32.0) * 5.0 / 9.0)
 ```
 
-Bootstrap-status: реализовано в codegen (Plan 08 Ф.3) для пары
-`try_from` ↔ `try_into` и `from` ↔ `into`. Транзитивный auto-derive
-(`A.from(B)` + `B.from(C)` ⇒ `A.from(C)`) **не делается** — каждая пара
-регистрируется явно.
+Fallible-версия — то же самое, но статик возвращает `Result`:
+
+```nova
+fn Port.try_from(n u16) -> Result[Self, str] =>
+    if n == 0 { Err("port 0 reserved") } else { Ok(Port(n)) }
+
+ro p = Port.try_from(8080)?
+```
 
 ---
 
@@ -224,7 +407,7 @@ Bootstrap-status: реализовано в codegen (Plan 08 Ф.3) для пар
 
 | Язык | Где близок к Nova |
 |---|---|
-| Rust | `as` semantics, From/Into pair, char::from_u32 |
+| Rust | `as` semantics, `from`/`try_from` naming, char::from_u32 |
 | Swift | strict bool, no implicit coerce, Int(throwing:) |
 | Kotlin | strict if-cond:bool, .toInt()/.toIntOrNull() |
 | Go | `_ = strconv.ParseInt(s)` ≈ try_from |
@@ -233,23 +416,31 @@ Bootstrap-status: реализовано в codegen (Plan 08 Ф.3) для пар
 
 ---
 
-## Bootstrap status (2026-05-08)
+## Текущий статус (актуализировано после ревизии 2026-07-26)
 
-Реализовано в bootstrap-codegen:
+Реализовано и стабильно:
 
-- ✅ Plan 05: `as`-cast как явный C-cast (narrowing wraparound для int)
-- ✅ Plan 07: float→int saturation (defined на NaN/Inf/out-of-range)
-- ✅ Plan 08 Ф.1+Ф.2: runtime helpers + bootstrap-table для int/f64/bool/char ↔ str
-- ✅ Plan 08 Ф.3: 4-way auto-derive synthesis (try_from ↔ try_into, from ↔ into)
-- ✅ Plan 08 Ф.4: strict `if cond: bool` (codegen check)
-- ✅ Plan 08 Ф.5: as-cast restrictions для char/byte/bool
+- ✅ `as`-cast (numeric/newtype/sum), narrowing wraparound, float→int saturation
+- ✅ `str @to_*` parse-семья (`to_int`/`to_i64`/`to_u64`/`to_i8`/`to_i16`/`to_i32`/
+  `to_u8`/`to_u16`/`to_u32`/`to_f64`) — Plan 174.1, полный `SignedInts`/`UnsignedInts`-набор
+- ✅ bare-`T @to_str()` blanket + специализации (`char`, `[]u8`) — Plan 174.2
+- ✅ `[]u8 @to_str()`/`@to_str_lossy()`/`@to_str_unchecked()`/`@into_str_unchecked()` — D325
+- ✅ `(cp int).to_char()`, `u8.try_from(c char)` — D54/D77-naming
+- ✅ Checked narrowing `@try_to_i8()`..`@try_to_uint()` — D430 (2026-07-20)
+- ✅ `#coerce` (view/finalize) — D429/214.1, три std-пары + generic-образцы
 
-Не реализовано (отложено):
+Ретрактировано (не воскрешать без нового sign-off):
 
-- ❌ Plan 08 Ф.6: generic-bound `[T Into[X]]` enforcement в type-checker
-- ❌ Транзитивный auto-derive (consciously)
-- ❌ Compile-error suggestions с file:line:col (TBD)
-- ❌ char as raw-bytes / lossy unicode conversions
+- ⛔ Протоколы `From`/`Into`/`TryFrom`/`TryInto` и их auto-derive синтез — 2026-07-06
+- ⛔ `str.from(scalar)` static-конструктор — 2026-07-14 (заменён `.to_str()`)
+- ⛔ `str.try_from([]u8)` / `str.from_bytes(...)` — заменены `[]u8 @to_str()`-семьёй
+- ⛔ Методы `.unwrap()`/`.unwrap_or()`/`.unwrap_or_else()` на `Option`/`Result` — 2026-07-07
+- ⛔ Старый sum-синтаксис без `enum`-маркера — D406 (2026-07-01)
+
+Открыто/не найдено в std (см. TODO-пометки в тексте выше):
+
+- ❓ `str → bool` parse (нет ни `bool.try_from(s)`, ни `s.to_bool()`)
+- ❓ `str → char` (единственный codepoint, с явным отказом на multi-char строке)
 
 ---
 
@@ -257,7 +448,11 @@ Bootstrap-status: реализовано в codegen (Plan 08 Ф.3) для пар
 
 - [03-syntax.md → D54](decisions/03-syntax.md#d54) — `as` оператор
 - [03-syntax.md → D44](decisions/03-syntax.md#d44) — числовые литералы
-- [03-syntax.md → D81](decisions/03-syntax.md#d81) — narrowing semantics
-- [02-types.md → D52](decisions/02-types.md#d52) — newtype declarations
-- [08-runtime.md → D73](decisions/08-runtime.md#d73) — From/Into protocol
-- [08-runtime.md → D77](decisions/08-runtime.md#d77) — TryFrom/TryInto
+- [03-syntax.md → D410](decisions/03-syntax.md#d410) — `to_str`/`bytes`/`into_*`-семейство имён
+- [02-types.md → D52](decisions/02-types.md#d52) — newtype/alias/sum-декларации
+- [02-types.md → D406](decisions/02-types.md#d406) — `enum`-маркер sum-типа
+- [02-types.md → D429](decisions/02-types.md#d429) — `#coerce` (zero-cost implicit view/finalize)
+- [04-effects.md → D430](decisions/04-effects.md#d430) — checked narrowing `try_to_*`
+- [04-effects.md → D325](decisions/04-effects.md#d325) — единый fallible-контракт std (Result-everywhere)
+- [08-runtime.md → D73](decisions/08-runtime.md#d73) — `From`/`Into` (⛔ протокол ретрактирован 2026-07-06)
+- [08-runtime.md → D77](decisions/08-runtime.md#d77) — `TryFrom`/`TryInto` (⛔ протокол ретрактирован 2026-07-06)
