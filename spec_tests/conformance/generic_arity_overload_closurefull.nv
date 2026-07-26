@@ -1,0 +1,64 @@
+// [M-2223-generic-arity-overload-applicability] (реестр 221.1 №130) repro/
+// regression test — (г)-слой of №124, deliberately deferred by window p124
+// (backlog-followups.md, «222.3 §5» section, Блокер А (г)).
+//
+// Shape: TWO/THREE method-level-generic `@get` siblings on the SAME receiver,
+// generic ONLY in the closure's return type `R` — the closure's OWN fixed
+// parameter list differs in ARITY across siblings (1/2/3 params). The
+// Router-style extractor sugar (Plan 222.3 §5) needs exactly this: `@get`
+// overloaded by how many extractors the handler closure declares
+// (`fn(T1) -> R` / `fn(T1, T2) -> R` / `fn(T1, T2, T3) -> R`).
+//
+// Root cause (before the fix): `overload_applicability` (types/mod.rs) only
+// checks the OUTER call's own arity (`path`, `h` — 2 args for EVERY sibling)
+// via `bind_call_args`, then `assignable(h_arg, param.ty)` against each
+// sibling's Func-shaped `h` param — `assignable`'s `TypeRef::Func →
+// ResolvedType::Any` permissive collapse reports `Compat::Ok` for ANY
+// `ClosureFull` literal against ANY Func-shaped param, REGARDLESS of the
+// closure's own declared parameter COUNT. So a 1-param closure literal
+// registers as "compatible" against the 2-param AND 3-param siblings too —
+// `compat_spans.len() > 1` → `chosen_span = None` → codegen's single-valued
+// `mono_method_decls` last-wins fallback dispatches to whichever sibling won
+// the map insert race, mistyping the closure call (CC-FAIL "too many
+// arguments" / "too few arguments", or a silent wrong-arity C call).
+//
+// Fix: `closure_args_match_concrete`/`peel_func_shape_depth` foundation (№124)
+// extended with an ARITY-only structural check usable for GENERIC (not just
+// concrete) siblings — a `ClosureFull` literal's OWN param count must match
+// the Func-shaped param's declared param count before a generic candidate is
+// trusted as the UNIQUE compatible overload.
+//
+// Discriminator: without the fix, this file's THREE calls (arity 1/2/3) are
+// ambiguous against each other (2 or 3 siblings simultaneously "compatible"
+// for a single call site) and either fail to compile or dispatch to the
+// wrong sibling body at runtime.
+module spec_tests.conformance
+
+type Router130 {
+    tag int,
+}
+
+// Sibling arity 1: handler closure takes exactly one (int) param.
+export fn Router130 mut @get[R](path str, h fn(int) -> R) -> R {
+    h(path.byte_len())
+}
+
+// Sibling arity 2: handler closure takes exactly two (int, str) params.
+export fn Router130 mut @get[R](path str, h fn(int, str) -> R) -> R {
+    h(path.byte_len(), path)
+}
+
+// Sibling arity 3: handler closure takes exactly three (int, str, bool) params.
+export fn Router130 mut @get[R](path str, h fn(int, str, bool) -> R) -> R {
+    h(path.byte_len(), path, true)
+}
+
+test "№130: generic-vs-generic siblings of arity 1/2/3, ClosureFull dispatch by closure's own param count" {
+    mut r = Router130 { tag: 1 }
+    ro r1 = r.get("/alpha", fn(n int) -> str { "n=${n.to_str()}" })
+    ro r2 = r.get("/beta", fn(n int, s str) -> str { "n=${n.to_str()},s=${s}" })
+    ro r3 = r.get("/gamma", fn(n int, s str, b bool) -> str { "n=${n.to_str()},s=${s},b=${b.to_str()}" })
+    assert(r1 == "n=6")
+    assert(r2 == "n=5,s=/beta")
+    assert(r3 == "n=6,s=/gamma,b=true")
+}
