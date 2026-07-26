@@ -29,18 +29,18 @@ echo "== gate: mega-CU (spec_tests/conformance, one CU) =="
 MEGA_LOG="${TMPDIR:-/tmp}/gate_mega_$$.log"
 "$NOVA" test --positive --compile-error "$ROOT/spec_tests/conformance" >"$MEGA_LOG" 2>&1
 MEGA_EXIT=$?
-MEGA_LINE=$(grep -E "PASS: [0-9]+ +FAIL: [0-9]+" "$MEGA_LOG" | tail -1)
+MEGA_LINE=$(sed -e "s/\[[0-9;]*m//g" "$MEGA_LOG" | grep -E "PASS: [0-9]+ +FAIL: [0-9]+" | tail -1)
 echo "mega-CU exit=$MEGA_EXIT :: $MEGA_LINE"
 [ "$MEGA_EXIT" -eq 0 ] || { grep -E "FAIL|TIMEOUT" "$MEGA_LOG" | grep -v "FAIL: 0" | head -10 >&2; fail "mega-CU exit=$MEGA_EXIT"; }
 echo "$MEGA_LINE" | grep -qE "PASS: [0-9]+ +FAIL: 0\b" || fail "mega-CU: PASS/FAIL:0 line missing (crash prints none — see $MEGA_LOG)"
 
 echo "== gate: check std/src (byte-canon) =="
-STD_LINE=$("$NOVA" check "$ROOT/std/src" 2>&1 | grep -E "^PASS" | tail -1)
+STD_LINE=$("$NOVA" check "$ROOT/std/src" 2>&1 | sed -e "s/\[[0-9;]*m//g" | grep -E "^PASS" | tail -1)
 echo "std :: $STD_LINE"
 echo "$STD_LINE" | grep -q "PASS: 142  FAIL: 27  WARN: 1040" || fail "check std drifted from canon 142/27/1040: '$STD_LINE'"
 
 echo "== gate: flagship aggregator --strict-effects =="
-FLAG_LINE=$("$NOVA" build "$ROOT/examples/flagship/aggregator/src/main.nv" --strict-effects 2>&1 | tail -1)
+FLAG_LINE=$("$NOVA" build "$ROOT/examples/flagship/aggregator/src/main.nv" --strict-effects 2>&1 | sed -e "s/\[[0-9;]*m//g" | tail -1)
 echo "flagship :: $FLAG_LINE"
 echo "$FLAG_LINE" | grep -q "built:" || fail "flagship not built: '$FLAG_LINE'"
 
