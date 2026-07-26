@@ -8,15 +8,13 @@
 module spec_tests.conformance
 
 test "Semaphore: try_acquire (Option[Permit]) / счётчик разрешений (D170; R3-пара acquire/try_acquire)" {
-    // auto-`@cleanup` вернут (фикс №122, реестр 221.1:
-    // [M-cleanup-permit-lost-in-folder-cu] — `LinearityRegistry::
-    // absorb_external`, types/mod.rs, не проверяла Cleanup[E]-форму для
-    // extern-типов из builtin_modules(), в отличие от локального прохода —
-    // `cleanup_pure_types` не получал Permit ЭТИМ путём. Общий предикат
-    // `is_pure_cleanup_decl` теперь используется обоими проходами). Bare-block
-    // форма ниже покрывает scope-exit auto-release; match-arm (`Some(consume
-    // p) => p`) форма покрыта fixture-парой standalone/permit_cleanup_folder_
-    // cu_pair.nv (test-conventions §231-п.3).
+    // auto-`@cleanup` РАЗВЁРНУТ обратно (обход снят): симптом №122
+    // ([M-cleanup-permit-lost-in-folder-cu]) на реальном folder-CU НЕ
+    // воспроизводится после №114-влития; absorb_external-гипотеза ОТВЕРГНУТА
+    // доказательно (см. надгробие в types/mod.rs — 6 NEG-тестов permit_leak-
+    // семьи кодируют обратное намеренно). Root cause открыт — №122 в реестре
+    // как наблюдение; рецидив ЭТОГО теста = переоткрытие. Match-arm форма
+    // покрыта парой standalone/permit_cleanup_folder_cu_pair.nv (§231-п.3).
     mut d170_sem = Semaphore.new(2)
     assert(d170_sem.available_permits() == 2)
     {
