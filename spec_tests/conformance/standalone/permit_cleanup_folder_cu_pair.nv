@@ -1,0 +1,48 @@
+// [M-cleanup-permit-lost-in-folder-cu] (реестр 221.1 №122) — standalone half
+// of the fixture PAIR (test-conventions §231-п.3: identical form, two
+// contexts). Folder-CU half: `d170_coordination_primitives.nv`'s first test
+// (spec_tests/conformance, ~1053-peer folder module) — SAME auto-`@cleanup`
+// shape (bare-block scope-exit here; d170 additionally exercises the
+// match-arm/consume-let arm-scope form and a second release/re-acquire
+// round).
+//
+// Investigation note (sonnet, nova-p105, 2026-07-26): a genuine structural
+// gap was found and fixed alongside this pair — `LinearityRegistry::
+// absorb_external` (types/mod.rs), the pass that folds `Permit`/
+// `MutexGuard`/`TcpStream`/… `@cleanup` metadata in from the EMBEDDED
+// builtin `.nv` sources (`ExternalRegistry::builtin_modules()`, the surface
+// visible WITHOUT any explicit `import`), populated `consume_types`/
+// `consume_methods` but never checked for the real `Cleanup[E]` protocol
+// shape — only the LOCAL-module loop (a type merged as a literal `Item` in
+// `module.items`, e.g. via an explicit `import`) did; `cleanup_pure_types`
+// never gained these types through the builtin-only path. This file DOES
+// carry an explicit `import std.runtime.sync` (`.try_acquire()` — a
+// Nova-BODY method, not `extern` — needs the REAL parsed module merged in
+// as literal `Item`s to be codegen-able at all; the builtin-only surface is
+// pure-`extern`-only) — so BOTH this file and `d170` reach `cleanup_
+// pure_types` via the LOCAL loop already, and this window's own repro
+// attempt against the real folder-CU did NOT reproduce the stuck-permit
+// symptom even on the pre-fix binary (see the fix's own comment in
+// `types/mod.rs` for the full honesty note). The `absorb_external` fix
+// still closes a real, verified asymmetry for any CU relying purely on
+// builtin/implicit-extern visibility for a `@cleanup` type — kept as a
+// genuine improvement; this pair locks the (already-working) explicit-
+// import shape as a regression test.
+// EXPECT_STDOUT 2-1-2
+
+module standalone.permit_cleanup_folder_cu_pair
+
+import std.runtime.sync
+
+fn main() {
+    mut sem = Semaphore.new(2)
+    print("${sem.available_permits()}-")
+    {
+        consume p = match sem.try_acquire() {
+            Some(consume x) => x
+            None => panic("permit must be available")
+        }
+        print("${sem.available_permits()}-")
+    }
+    println("${sem.available_permits()}")
+}

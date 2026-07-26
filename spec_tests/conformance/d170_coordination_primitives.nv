@@ -8,34 +8,41 @@
 module spec_tests.conformance
 
 test "Semaphore: try_acquire (Option[Permit]) / счётчик разрешений (D170; R3-пара acquire/try_acquire)" {
-    // ЯВНЫЙ p.release() вместо auto-@cleanup: [M-cleanup-permit-lost-in-folder-cu]
-    // (реестр 221.1 №122) — идентичная auto-форма зелёная standalone
-    // (p_permit_xmod) и в sync_test (std-CU), но в conformance folder-CU
-    // release на scope-exit НЕ срабатывает. После фикса №122 — вернуть
-    // auto-форму (правило разворачивания обходов).
+    // auto-`@cleanup` вернут (фикс №122, реестр 221.1:
+    // [M-cleanup-permit-lost-in-folder-cu] — `LinearityRegistry::
+    // absorb_external`, types/mod.rs, не проверяла Cleanup[E]-форму для
+    // extern-типов из builtin_modules(), в отличие от локального прохода —
+    // `cleanup_pure_types` не получал Permit ЭТИМ путём. Общий предикат
+    // `is_pure_cleanup_decl` теперь используется обоими проходами). Bare-block
+    // форма ниже покрывает scope-exit auto-release; match-arm (`Some(consume
+    // p) => p`) форма покрыта fixture-парой standalone/permit_cleanup_folder_
+    // cu_pair.nv (test-conventions §231-п.3).
     mut d170_sem = Semaphore.new(2)
     assert(d170_sem.available_permits() == 2)
-    consume d170_p1 = match d170_sem.try_acquire() {
-        Some(consume p) => p
-        None => panic("permit 1 must be available")
+    {
+        consume d170_p1 = match d170_sem.try_acquire() {
+            Some(consume p) => p
+            None => panic("permit 1 must be available")
+        }
+        consume d170_p2 = match d170_sem.try_acquire() {
+            Some(consume p) => p
+            None => panic("permit 2 must be available")
+        }
+        assert(d170_sem.available_permits() == 0)
+        match d170_sem.try_acquire() {
+            Some(_) => assert(false)
+            None    => ()
+        }
     }
-    consume d170_p2 = match d170_sem.try_acquire() {
-        Some(consume p) => p
-        None => panic("permit 2 must be available")
+    assert(d170_sem.available_permits() == 2)
+    {
+        consume d170_p3 = match d170_sem.try_acquire() {
+            Some(consume p) => p
+            None => panic("permit must be available after release")
+        }
+        assert(d170_sem.available_permits() == 1)
     }
-    assert(d170_sem.available_permits() == 0)
-    match d170_sem.try_acquire() {
-        Some(_) => assert(false)
-        None    => ()
-    }
-    d170_p2.release()
-    assert(d170_sem.available_permits() == 1)
-    consume d170_p3 = match d170_sem.try_acquire() {
-        Some(consume p) => p
-        None => panic("permit must be available after release")
-    }
-    d170_p3.release()
-    d170_p1.release()
+    assert(d170_sem.available_permits() == 2)
 }
 
 test "CountDownLatch: count_down_n с насыщением, try_await, await-на-нуле (D170)" {
