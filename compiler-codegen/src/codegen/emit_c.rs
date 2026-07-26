@@ -1748,6 +1748,7 @@ pub struct CEmitter {
     /// Plan 48: generic instance-method FnDecls for method monomorphization.
     /// Key = (receiver_type_name, method_name). Methods with own type params (e.g. @execute[T,E]).
     mono_method_decls: HashMap<(String, String), crate::ast::FnDecl>,
+    mono_method_decls_by_span: HashMap<crate::diag::Span, crate::ast::FnDecl>, // №130: by-span twin, not last-wins
     /// Plan 11 Follow-up: receiver-generic method FnDecls для Self.method() fast-path
     /// (mono enrollment в Path/Member emit). Отдельная карта, чтобы не trigger
     /// другие code paths которые observe mono_method_decls.
@@ -2456,6 +2457,7 @@ impl CEmitter {
             free_fn_byref_params: HashMap::new(),
             method_byref_params: HashMap::new(),
             mono_method_decls: HashMap::new(),
+            mono_method_decls_by_span: HashMap::new(),
             self_method_decls: HashMap::new(),
             mono_worklist: Vec::new(),
             mono_instantiated: HashSet::new(),
@@ -16170,6 +16172,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             if let Some(recv) = &f.receiver {
                 // Регистрируем все generic methods (включая `[]T`-ext) в mono_method_decls.
                 self.mono_method_decls.insert((recv.type_name.clone(), f.name.clone()), f.clone());
+                self.mono_method_decls_by_span.insert(f.span, f.clone()); // №130
                 // Register sentinel MethodSig so call sites can find and mono-route this method.
                 let sentinel_name = format!("__mono_method__{}__{}", recv.type_name, f.name);
                 let sig = MethodSig {
@@ -41183,15 +41186,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                         a.expr().kind,
                                         ExprKind::ClosureLight { .. }
                                     ));
-                                    let fn_decl_opt = if has_bare_closurelight_arg {
-                                        fn_decl_opt
-                                    } else {
-                                        fn_decl_opt.filter(|fd| {
-                                            match self.resolved_callees.get(&call_id) {
-                                                Some(chosen_span) => *chosen_span == fd.span,
-                                                None => true,
-                                            }
-                                        })
+                                    // №130: by-span retry on a span mismatch (mono_method_decls is last-wins, ~16172).
+                                    let fn_decl_opt = match (has_bare_closurelight_arg, self.resolved_callees.get(&call_id)) {
+                                        (true, _) | (_, None) => fn_decl_opt,
+                                        (false, Some(sp)) => fn_decl_opt.filter(|fd| *sp == fd.span).or_else(|| self.mono_method_decls_by_span.get(sp).cloned()),
                                     };
                                     if let Some(fn_decl) = fn_decl_opt {
                                         // Plan 101 [M-fn-prefix-int-only-mono]: pre-bind T
@@ -41499,7 +41497,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                             fn_decl.generics.iter().map(|g| g.name.clone()).collect();
                                         let recv_rt_slots = self.rt_slots_from_call(
                                             call_id, fn_decl.params.iter().map(|p| &p.ty), args, &recv_slot_names);
-                                        let base_c_name = format!("Nova_{}_method_{}", rt, method);
+                                        // №130: ≥2 generic siblings sharing (rt,method,type_subst) mangle to ONE name — dedup collapses DIFFERENT bodies onto ONE symbol (RUN-FAIL OOM, live-confirmed) — disambiguate by span.
+                                        let sib_n = self.method_overloads.get(&(rt.clone(), method.clone())).map_or(0, |v| v.len());
+                                        let base_c_name = if sib_n > 1 { format!("Nova_{}_method_{}__ov{}", rt, method, fn_decl.span.start) } else { format!("Nova_{}_method_{}", rt, method) };
                                         let mono_name = Self::compute_mono_name(&base_c_name, &type_subst);
                                         // Plan 101 [M-fn-prefix-int-only-mono]: register с recv_type
                                         // "[]T" (или depth-matched "[][]T"… — Plan 153.5) если
@@ -46171,10 +46171,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 }
             }
         }
-        // Infer block type from trailing expression (if any)
-        let block_ty = block.trailing.as_ref()
-            .map(|e| self.infer_expr_c_type(e))
-            .unwrap_or_else(|| "nova_unit".into());
+        // Infer block type from trailing expr, else (№128) from a LAST `return expr` stmt (no trailing form — nova_unit default here mistypes the synthesized temp, CC-FAIL vs the real fn's return type).
+        let block_ty_src = block.trailing.as_deref().or_else(|| match block.stmts.last() { Some(crate::ast::Stmt::Return { value: Some(e), .. }) => Some(e), _ => None });
+        let block_ty = block_ty_src.map(|e| self.infer_expr_c_type(e)).unwrap_or_else(|| "nova_unit".into());
         // Restore prior var_types view; the real body emit below re-registers
         // these locals with their authoritative codegen types.
         for (name, old) in saved_block_locals.into_iter().rev() {

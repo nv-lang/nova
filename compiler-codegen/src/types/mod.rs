@@ -12133,6 +12133,30 @@ impl<'a> TypeCheckCtx<'a> {
                 continue;
             }
             let Some(arg) = args.get(ai) else { continue; };
+            // [M-2223-generic-arity-overload-applicability] (реестр 221.1
+            // №130, (г)-слой №124): a `ClosureFull` literal argument's OWN
+            // declared param COUNT vs a Func-shaped param's declared param
+            // count — decidable BEFORE `assignable` below, which collapses
+            // EVERY `TypeRef::Func`-shaped `expected` to `ResolvedType::Any`
+            // (permissive-by-design, U.3.1 doc above) and therefore never
+            // rejects an arity mismatch on its own. Without this, TWO (or
+            // three) method-level-generic siblings differing ONLY in the
+            // handler closure's OWN param arity (`fn(T1) -> R` vs `fn(T1,
+            // T2) -> R` — Router-style extractor-count overloading, Plan
+            // 222.3 §5's actual target shape) all register as "compatible"
+            // for a single call site regardless of which arity the literal
+            // closure argument actually declares — `compat_spans.len() > 1`
+            // in `check_instance_overload` → no unique `resolved_callees`
+            // entry → codegen's single-valued mono-dispatch last-wins →
+            // `[E7001]` / wrong-arity C call. See `closure_arg_arity_ok`'s
+            // doc for why an ARITY-only check (not the exact structural
+            // `closure_args_match_concrete`, №124) is the right generality
+            // here — that helper's `typeref_equal` would never match a
+            // generic candidate's OWN typevars against the caller's concrete
+            // closure types, even on the CORRECT sibling.
+            if !self.closure_arg_arity_ok(&param.ty, arg.expr()) {
+                return Some(false);
+            }
             if matches!(
                 self.assignable(arg.expr(), &param.ty, gs, &callee_gs, scope),
                 Compat::Bad { .. }
@@ -16532,6 +16556,40 @@ impl<'a> TypeCheckCtx<'a> {
         true
     }
 
+    /// [M-2223-generic-arity-overload-applicability] (реестр 221.1 №130):
+    /// single-`(param, arg)` companion to `closure_args_match_concrete`
+    /// (№124) — that helper's `typeref_equal` full-structural check is
+    /// correct ONLY for a CONCRETE candidate (every param type is a real,
+    /// caller-independent type), never for a method-level-GENERIC candidate,
+    /// whose Func-shaped param mentions the callee's OWN typevars (`fn(T1) ->
+    /// R`) — those can never structurally equal a call site's fully-concrete
+    /// closure literal (`fn(int) -> str`), even when arity/binding is
+    /// otherwise exactly right. Called from `overload_applicability`
+    /// (§ U.3.1/U.4.3, shared by free-fn/static-method/instance-method
+    /// overload resolution alike) — BEFORE the `assignable`-based category
+    /// check, which structurally cannot decide this (`TypeRef::Func` expected
+    /// types collapse to `ResolvedType::Any` there, permissive by design).
+    ///
+    /// What IS decidable regardless of genericity: a `ClosureFull` literal's
+    /// grammar mandates every param spelled explicitly, so its own declared
+    /// param COUNT is exact — comparing counts (not types) disambiguates
+    /// generic siblings that differ ONLY in how many params their handler
+    /// closure takes (Router-style extractor-count overloading, Plan 222.3
+    /// §5's target shape: `@get[R](path, h fn(T1) -> R)` vs `@get[R](path, h
+    /// fn(T1, T2) -> R)`).
+    ///
+    /// Permissive (`true`) whenever either side isn't decidable this way
+    /// (`arg_expr` isn't a `ClosureFull` literal, or `param_ty` isn't
+    /// Func-shaped at all) — mirrors `closure_args_match_concrete`'s own
+    /// permissive fallback, zero blast radius for every other arg/param
+    /// shape.
+    fn closure_arg_arity_ok(&self, param_ty: &TypeRef, arg_expr: &Expr) -> bool {
+        let ExprKind::ClosureFull(sb) = &arg_expr.kind else { return true; };
+        let Some(param_func) = self.peel_func_shape_depth(param_ty, 0) else { return true; };
+        let TypeRef::Func { params, .. } = &param_func else { return true; };
+        params.len() == sb.params.len()
+    }
+
     fn assignable_direct(
         &self,
         expr: &Expr,
@@ -19726,7 +19784,21 @@ impl<'a> TypeCheckCtx<'a> {
         let f: &FnDecl = match self.method_overloads(&type_name, method) {
             Some(overloads) => match overloads.as_slice() {
                 [f] => *f,
-                _ => return None,
+                // [M-2223-generic-arity-overload-applicability] (№130): ≥2
+                // generic siblings of the SAME name (arity-differing handler
+                // closures, `@get[R](h fn(T1)->R)` vs `@get[R](h fn(T1,T2)
+                // ->R)`) used to bail here unconditionally — but
+                // `check_instance_overload` (types/mod.rs, same pass, runs
+                // FIRST via `f1_check_call`) already disambiguated THIS
+                // call-site's sibling via `closure_arg_arity_ok` and wrote it
+                // to `resolved_callees`; reuse that choice instead of
+                // discarding the closure-arg return-type inference entirely.
+                multi => match call_id.and_then(|cid| self.resolved_callees.borrow().get(&cid).copied())
+                    .and_then(|sp| multi.iter().find(|cand| cand.span == sp))
+                {
+                    Some(f) => *f,
+                    None => return None,
+                },
             },
             // NARROWED (post-bisect, conformance regression on
             // c_keyword_ident_mangling): the original scan ALSO matched a
@@ -19820,6 +19892,30 @@ impl<'a> TypeCheckCtx<'a> {
             let TypeRef::Func { params: fp, return_type: Some(fr), .. } = &pd.ty else {
                 continue;
             };
+            // [M-closurefull-own-generic-sibling-return-infer-gap] (реестр
+            // 221.1 №127, window p130): a `ClosureFull` literal (`fn(x T) ->
+            // U { ... }`) declares its return type EXPLICITLY in the
+            // grammar — unlike `ClosureLight` below, which has none and
+            // needs the body-walk/`cscope`-seed machinery to derive one.
+            // Before this arm this fn only matched `ClosureLight` and fell
+            // through to `continue` for EVERY `ClosureFull` arg, leaving `R`
+            // permanently unbound in `subst` — `out` below still mentioned
+            // it → this whole channel bailed (`None`) for the shape Plan
+            // 222.3 §5's extractor sugar actually needs, even with ZERO
+            // sibling competition (confirmed: fails identically for a
+            // single, wholly-unambiguous generic method).
+            if let ExprKind::ClosureFull(sb) = &arg_expr.kind {
+                if sb.params.len() == fp.len() {
+                    if let (Some(body_tr), TypeRef::Named { path: rp, generics: rg, .. }) =
+                        (sb.return_type.clone(), fr.as_ref())
+                    {
+                        if rp.len() == 1 && rg.is_empty() && method_names.contains(&rp[0]) {
+                            subst.entry(rp[0].clone()).or_insert(body_tr);
+                        }
+                    }
+                }
+                continue;
+            }
             let ExprKind::ClosureLight { params: cp, body } = &arg_expr.kind else {
                 continue;
             };
