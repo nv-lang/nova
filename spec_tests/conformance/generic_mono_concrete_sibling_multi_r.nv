@@ -1,0 +1,76 @@
+// [M-generic-mono-multi-instantiation-concrete-sibling-collision] (реестр
+// 221.1 №105) repro/regression test — companion to
+// arity_overload_concrete_vs_bound_generic.nv (№34).
+//
+// №34 closed dispatch for a CONCRETE call site whose argument is a `Call`
+// expression, alongside an unrelated method-level-generic sibling. №105
+// asks the INVERSE question: with the SAME concrete-sibling shape, does the
+// GENERIC overload itself still monomorphize correctly across TWO DIFFERENT
+// `R` instantiations (a real requirement for a Router-style
+// `@get[R](path, fn(Req) -> R)` API — Plan 222.3's own target shape)?
+//
+// Investigation (sonnet, nova-p105, 2026-07-26): a BARE CLOSURE-LITERAL
+// argument to the generic overload is UNAFFECTED by the sibling — the D84
+// "concrete beats generic" tie-break (types/mod.rs, №34) is already gated
+// off whenever any call argument is a closure literal, so both `R`
+// instantiations mono independently and correctly regardless of the
+// concrete sibling's presence. This test locks that in (POSITIVE, runtime
+// asserts on BOTH `R` values) plus a control WITHOUT the sibling.
+//
+// A DIFFERENT, narrower gap was found and fixed alongside this: a
+// NAMED-FUNCTION-VALUE argument (not a bare closure literal) used to make
+// the D84 tie-break wrongly prefer the concrete sibling even when its
+// declared return type does NOT match the passed function's actual return
+// type — `assignable`'s `TypeRef::Func → ResolvedType::Any` collapse made
+// ANY function value "compatible" with ANY Func-shaped param, so "not a
+// bare closure" alone was treated as "safe to prefer concrete". Silently
+// routed to the concrete C symbol, bit-reinterpreting the wrong-typed
+// return value (confirmed live, `nova_str` read out of a `nova_int`/`bool`
+// result — empty/garbage output, no diagnostic). Fixed in the SAME
+// tie-break (`concrete_sibling_return_type_ok`, types/mod.rs) — see the NEG
+// companion `neg/generic_mono_concrete_sibling_named_fn_neg.nv`, which locks
+// in the now-HONEST compile error in place of the old silent miscompile.
+
+module spec_tests.conformance
+
+type Handler105 fn(int) -> str
+
+type Router105 {
+    tag int,
+}
+
+export fn Router105 mut @get(path str, h Handler105) -> str {
+    h(path.byte_len())
+}
+
+// Unrelated/uncalled-by-the-concrete-form bound-generic sibling.
+export fn Router105 mut @get[R](path str, f fn(int) -> R) -> R {
+    f(path.byte_len())
+}
+
+type Router105Solo {
+    tag int,
+}
+
+// Same generic method, no concrete sibling at all — control.
+export fn Router105Solo mut @get[R](path str, f fn(int) -> R) -> R {
+    f(path.byte_len())
+}
+
+test "№105: generic method with a concrete sibling — TWO different R (int, bool) closures mono correctly" {
+    mut r = Router105 { tag: 1 }
+    ro r_concrete = r.get("/alpha", |n| { "len=${n.to_str()}" })
+    ro r_int = r.get("/gamma", |n| n * 2)
+    ro r_bool = r.get("/delta", |n| n > 3)
+    assert(r_concrete == "len=6")
+    assert(r_int == 12)
+    assert(r_bool == true)
+}
+
+test "№105 control: same generic method WITHOUT a concrete sibling — two different R closures" {
+    mut r = Router105Solo { tag: 1 }
+    ro r_int = r.get("/gamma", |n| n * 2)
+    ro r_bool = r.get("/delta", |n| n > 3)
+    assert(r_int == 12)
+    assert(r_bool == true)
+}
