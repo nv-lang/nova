@@ -12536,11 +12536,21 @@ impl<'a> TypeCheckCtx<'a> {
             a.expr().kind,
             ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_)
         ));
+        // [M-generic-mono-multi-instantiation-concrete-sibling-collision]
+        // (реестр 221.1 №105): additionally require the concrete candidate's
+        // OWN Func-shaped param(s) to genuinely accept the arg's ACTUAL return
+        // type wherever that is statically decidable — see
+        // `concrete_sibling_return_type_ok`'s doc for the full mechanism
+        // (`assignable`'s bare-`Func`→`Any` collapse otherwise lets a
+        // return-type-incompatible NAMED function value win this tie-break
+        // over its real bound-generic target). Closures stay exempt via the
+        // `has_bare_closure_arg` short-circuit above (unchanged).
         let concrete_compat: Vec<crate::diag::Span> = if has_bare_closure_arg {
             Vec::new()
         } else {
             compat_fns.iter()
                 .filter(|f| f.generics.is_empty())
+                .filter(|f| self.concrete_sibling_return_type_ok(f, args, scope))
                 .map(|f| f.span)
                 .collect()
         };
@@ -16301,6 +16311,120 @@ impl<'a> TypeCheckCtx<'a> {
             }
             _ => false,
         }
+    }
+
+    /// [M-generic-mono-multi-instantiation-concrete-sibling-collision]
+    /// (реестр 221.1 №105): peel `tr` the SAME way `typeref_is_func_compatible_
+    /// depth` does (view-wrappers + a declared fn-newtype/alias chain) down to a
+    /// bare `TypeRef::Func`, and return its DECLARED return type (cloned; inner
+    /// `None` = implicit `()`). Outer `None` — `tr` is not (transitively)
+    /// Func-shaped at all — undecidable, caller stays permissive (old
+    /// behavior). Companion to `typeref_is_func_compatible` (bool-only); this
+    /// one needs the actual return-type payload.
+    fn peel_func_return_depth(&self, tr: &TypeRef, depth: u32) -> Option<Option<TypeRef>> {
+        if depth > 16 {
+            return None;
+        }
+        match tr {
+            TypeRef::Func { return_type, .. } => Some(return_type.as_deref().cloned()),
+            TypeRef::Readonly(inner, _)
+            | TypeRef::Mut(inner, _)
+            | TypeRef::Uninit(inner, _)
+            | TypeRef::Ref(inner, _)
+            | TypeRef::Pointer(inner, _) => self.peel_func_return_depth(inner, depth + 1),
+            TypeRef::Named { path, generics, .. } if generics.is_empty() => {
+                let n = path.last()?;
+                match self.types.get(n).map(|td| &td.kind) {
+                    Some(TypeDeclKind::Newtype(inner)) | Some(TypeDeclKind::Alias(inner)) => {
+                        self.peel_func_return_depth(inner, depth + 1)
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// [M-generic-mono-multi-instantiation-concrete-sibling-collision]
+    /// (реестр 221.1 №105): does concrete candidate `f`'s OWN declared
+    /// Func-shaped param(s) genuinely accept the paired arg's ACTUAL return
+    /// type, wherever that return type is statically KNOWN? `assignable` /
+    /// `cat_compatible_rt` collapse EVERY bare `TypeRef::Func` (and, through
+    /// it, every fn-newtype param like `Handler = fn(int) -> str`) to
+    /// `ResolvedType::Any` — a deliberate permissiveness for the closure-
+    /// LITERAL case (D84 comment above: "codegen does the FINAL exact-C-type
+    /// selection"), because a literal's own return type needs a full body-walk
+    /// this layer doesn't do. That SAME escape hatch also swallows a NAMED
+    /// FUNCTION VALUE (or any other non-closure fn-typed expr) whose return
+    /// type IS fully resolvable right here — e.g. `.get(path, handler_int)`
+    /// where `handler_int: fn(int) -> int` against a concrete `Handler =
+    /// fn(int) -> str` sibling param — silently treating a definite
+    /// return-type MISMATCH as "compatible", so the D84 tie-break below
+    /// (caller) wins the concrete overload over the call's actual target (a
+    /// bound-generic sibling with a DIFFERENT `R`) purely because "not a bare
+    /// closure literal" was the only guard. Runtime effect: codegen dispatches
+    /// to the CONCRETE C symbol and bit-reinterprets the wrong-typed return
+    /// value (confirmed live: `probe105_router6c` — `int`/`bool`-returning
+    /// named handlers routed through the `str`-returning concrete mono, empty/
+    /// garbage `nova_str` output, no compile error). Conservative both ways:
+    /// only a param/arg pair where EITHER side isn't Func-shaped, or the
+    /// return-type category itself is undecidable (`Any`, a generic param,
+    /// …), stays permissive (`true`) — byte-identical for every existing
+    /// shape (closures stay exempt via the caller's own `has_bare_closure_arg`
+    /// gate; the #34 fixture's `wrap_handler(...)` `Call`-expr — a REAL
+    /// `Handler`-typed return — still matches exactly, `str`==`str`).
+    fn concrete_sibling_return_type_ok(
+        &self,
+        f: &FnDecl,
+        args: &[CallArg],
+        scope: &HashMap<String, TypeRef>,
+    ) -> bool {
+        let Ok(bindings) = crate::argbind::bind_call_args(&f.params, args) else { return true; };
+        for (pi, binding) in bindings.iter().enumerate() {
+            let ai = match binding {
+                crate::argbind::ArgBinding::Positional(i)
+                | crate::argbind::ArgBinding::Named(i) => *i,
+                _ => continue,
+            };
+            let Some(param) = f.params.get(pi) else { continue; };
+            if param.is_variadic {
+                continue;
+            }
+            let Some(arg) = args.get(ai) else { continue; };
+            let Some(param_ret) = self.peel_func_return_depth(&param.ty, 0) else { continue; };
+            // [M-105 follow-up] `infer_expr_type` has no general "free-fn CALL
+            // returning a bare fn-VALUE" arm (its `Call` handling targets typed
+            // callee/receiver returns, not this narrower shape) — a factory call
+            // like `make_int_handler()` (`-> fn(int) -> int`) came back `None`
+            // here, silently falling through to the SAME permissive gap this
+            // whole helper exists to close. Fallback: an UNAMBIGUOUS (single-
+            // overload) free-fn callee's OWN declared return type, read directly
+            // off `self.sig` — bypasses `infer_expr_type` entirely, no body-walk.
+            let arg_ty = self.infer_expr_type(arg.expr(), scope).or_else(|| {
+                let ExprKind::Call { func, .. } = &arg.expr().kind else { return None; };
+                let ExprKind::Ident(fname) = &func.kind else { return None; };
+                let overloads = self.sig.free_fns(fname)?;
+                match overloads.as_slice() {
+                    [only] => only.return_type.clone(),
+                    _ => None,
+                }
+            });
+            let Some(arg_ty) = arg_ty else { continue; };
+            let Some(arg_ret) = self.peel_func_return_depth(&arg_ty, 0) else { continue; };
+            let ok = match (&param_ret, &arg_ret) {
+                (None, None) => true,
+                (Some(p), Some(a)) => cat_compatible_rt(
+                    &self.resolved_cat_of(a, &HashSet::new()),
+                    &self.resolved_cat_of(p, &HashSet::new()),
+                ),
+                // one side implicit `()`, the other a real value type — definite mismatch.
+                _ => false,
+            };
+            if !ok {
+                return false;
+            }
+        }
+        true
     }
 
     fn assignable_direct(
@@ -29657,6 +29781,33 @@ impl LinearityRegistry {
                             .entry(recv.type_name.clone())
                             .or_default()
                             .push(fd.name.clone());
+                        // [M-cleanup-permit-lost-in-folder-cu] (реестр 221.1
+                        // №122) investigation note (§0 honesty, NOT applied):
+                        // this `absorb_external` sibling (embedded/builtin
+                        // `.nv` sources, `ExternalRegistry::builtin_modules()`)
+                        // structurally lacks the `cleanup_pure_types` check the
+                        // LOCAL-module loop above (`build`) has always had for
+                        // the SAME `Item::Fn` shape — looked like a live
+                        // asymmetry bug and a plausible root cause for the
+                        // stuck-`available_permits()` symptom. REJECTED after
+                        // the mega-CU gate: `neg/permit_leak_neg.nv` (+5
+                        // sibling guard-leak neg tests, deliberately no
+                        // explicit `import`, `// EXPECT_COMPILE_ERROR D133`)
+                        // encode the OPPOSITE as INTENDED behavior — a
+                        // `Permit`/`MutexGuard`/etc. reached ONLY through this
+                        // builtin/implicit path must stay strict-linear
+                        // (D131), not affine-auto-cleanup — so mirroring the
+                        // local loop's check here is NOT simply "closing an
+                        // asymmetry", it silently defeats those tests' whole
+                        // point (6 NEG-NO-ERROR in the mega-CU gate). Left
+                        // un-fixed; the window's own repro attempt against the
+                        // real ~1053-peer `spec_tests/conformance` folder-CU
+                        // (where `d174_sync_consume_guards.nv` DOES explicitly
+                        // `import std.runtime.sync`, feeding `Permit` into
+                        // `module.items` as a literal `Item` and so through
+                        // the LOCAL loop instead) did not reproduce the
+                        // original №122 symptom either — root cause remains
+                        // OPEN, flagged for the next window.
                     }
                 }
             }

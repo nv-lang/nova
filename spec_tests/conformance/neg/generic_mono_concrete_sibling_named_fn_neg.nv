@@ -1,0 +1,49 @@
+// EXPECT_COMPILE_ERROR E7001
+//
+// [M-generic-mono-multi-instantiation-concrete-sibling-collision] (реестр
+// 221.1 №105) — companion NEG to `generic_mono_concrete_sibling_multi_r.nv`.
+//
+// A NAMED-FUNCTION-VALUE argument (not a bare closure literal) passed to a
+// generic method that ALSO has a concrete, differently-return-typed sibling
+// overload: before the fix, the checker's D84 "concrete beats generic"
+// tie-break (types/mod.rs, №34) wrongly preferred the concrete overload
+// here — `assignable` collapses every bare `TypeRef::Func` (any function
+// VALUE's type, closure or named) to `ResolvedType::Any`, so ANY function
+// value looked "compatible" with the concrete `Handler105`-typed param
+// regardless of its ACTUAL return type — silently routing this call to the
+// concrete C symbol and bit-reinterpreting `handler_int`'s `int` return as
+// the concrete's declared `str`. No diagnostic, wrong runtime value (empty
+// string). Fixed via `concrete_sibling_return_type_ok` — the tie-break now
+// verifies the two return types actually agree wherever that is statically
+// decidable; here they provably don't (`int` vs `str`), so the tie-break no
+// longer claims the concrete overload, the call falls back to genuinely
+// AMBIGUOUS-overload codegen dispatch (no `.nv`-visible way to disambiguate
+// a bare function reference's `R` today — a separate, wider gap; see the
+// window brief), and codegen's `[M-no-silent-nova-int-fallback]` honesty
+// guard now reports E7001 instead of silently miscompiling.
+
+module neg.generic_mono_concrete_sibling_named_fn_neg
+
+type Handler105Neg fn(int) -> str
+
+type Router105Neg {
+    tag int,
+}
+
+export fn Router105Neg mut @get(path str, h Handler105Neg) -> str {
+    h(path.byte_len())
+}
+
+export fn Router105Neg mut @get[R](path str, f fn(int) -> R) -> R {
+    f(path.byte_len())
+}
+
+fn handler_int(n int) -> int {
+    n * 2
+}
+
+test "named-function-value handler, return type mismatched vs concrete sibling → honest error" {
+    mut r = Router105Neg { tag: 1 }
+    ro r_int = r.get("/gamma", handler_int)
+    assert(r_int == 12)
+}
