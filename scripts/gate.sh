@@ -44,8 +44,6 @@ FLAG_LINE=$("$NOVA" build "$ROOT/examples/flagship/aggregator/src/main.nv" --str
 echo "flagship :: $FLAG_LINE"
 echo "$FLAG_LINE" | grep -q "built:" || fail "flagship not built: '$FLAG_LINE'"
 
-echo "GATE OK"
-
 echo "== gate: D-number uniqueness =="
 DUPES=$(grep -rhoE "^## D[0-9]+\." spec/decisions/*.md | sort | uniq -d)
 if [ -n "$DUPES" ]; then
