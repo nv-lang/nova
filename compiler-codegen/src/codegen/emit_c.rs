@@ -17620,6 +17620,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         Ok(())
     }
 
+
     fn emit_record_type(&mut self, name: &str, fields: &[RecordField]) -> Result<(), String> {
         let mut schema = HashMap::new();
         // [M-option-self-recursive-record-mono]: mark this record concrete WHILE
@@ -17768,14 +17769,58 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// Plan 120 (D215): emit a named-tuple type as a value-type C struct.
     /// `type Point(x f64, y f64)` → `typedef struct NovaTuple_Point { double x; double y; } NovaTuple_Point;`
     /// Registered in `type_aliases` so `type_ref_to_c(Named{Point})` returns `NovaTuple_Point` (no pointer).
+    ///
+    /// [реестр 221.1 №139 Round 4] Captured into `pending_value_nodes` — see
+    /// `render_unified_value_types` doc. Round 2 audited this category and
+    /// found it safe UN-touched ("ordinary `Item::Type` declaration in the
+    /// type-decl loop, not a deferred category") — TRUE at the time
+    /// (`__VALUE_RECORD_DEFS__` sat at its OLD early position and named
+    /// tuples render directly, in-loop, at essentially the SAME early
+    /// position — no ordering gap existed between the two). Round 3 then
+    /// moved the unified section to become the FIRST thing in the type-decl
+    /// loop's output — meaning anything captured into it now renders
+    /// BEFORE named tuples, which still render at their OLD in-loop
+    /// position. Integrator's mega-CU caught the resulting gap directly
+    /// (`a_q3_println_debug_record`: a value node needing `NovaTuple_
+    /// D414pfPair`/`NovaTuple_Vec36` by value, now positioned ahead of
+    /// them). Folding named tuples into the SAME graph — instead of
+    /// special-casing their position again — is what actually closes this:
+    /// whichever of {named tuple, value-record, generic-instance, mono
+    /// tuple/fixarr} needs another BY VALUE, Kahn's sort now sees it
+    /// regardless of which category either side belongs to.
     fn emit_named_tuple_type(&mut self, name: &str, fields: &[NamedTupleField]) -> Result<(), String> {
+        // [реестр 221.1 №139 Round 4] `opt_snap` mirrors
+        // `emit_value_record_type`'s per-node NovaOpt cut-and-move — a
+        // named tuple's OWN `Option[T]`/`Result[T,E]` field needs that
+        // specific wrapper struct available before THIS node too, now that
+        // named tuples share the early unified position. (A global
+        // "NovaOpt/NovaRes as graph nodes" version was tried and reverted
+        // this same round — see the note on the `opt_snap` declaration in
+        // `drain_generic_type_worklist` for why.)
+        let opt_snap = self.novaopt_typedefs_buf.borrow().len();
+        let mut fwd_decls = String::new();
+        let mut nt_field_c_tys: Vec<String> = Vec::new();
+        let saved_out = std::mem::take(&mut self.out);
         self.line(&format!("typedef struct NovaTuple_{0} NovaTuple_{0};", name));
         self.line(&format!("struct NovaTuple_{} {{", name));
         self.indent += 1;
         let mut schema = HashMap::new();
-        let mut nt_field_c_tys: Vec<String> = Vec::new();
         for f in fields {
             let ty_c = self.type_ref_to_c(&f.ty)?;
+            // By-pointer field to a late-emitted struct → forward typedef
+            // into THIS node's own text (mirrors `emit_value_record_type`'s
+            // `fwd_decls` — named tuples never had this before because they
+            // always rendered in-place, ahead of anything the unified graph
+            // now might sort them against).
+            if let Some(pointee) = ty_c.strip_suffix('*') {
+                let pointee = pointee.trim();
+                if self.debt_is_guaranteed_struct_tag(pointee) {
+                    let fwd = format!("typedef struct {p} {p};\n", p = pointee);
+                    if !fwd_decls.contains(&fwd) {
+                        fwd_decls.push_str(&fwd);
+                    }
+                }
+            }
             schema.insert(f.name.clone(), ty_c.clone());
             nt_field_c_tys.push(ty_c.clone());
             let mangled = Self::mangle_field_name(&f.name);
@@ -17784,6 +17829,68 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.indent -= 1;
         self.line("};");
         self.line("");
+        let struct_def = std::mem::replace(&mut self.out, saved_out);
+        // Same NovaOpt cut-and-move as `emit_value_record_type` — a named
+        // tuple's OWN `Option[T]`/`Result[T,E]` field needs that specific
+        // wrapper struct available before THIS node too, now that named
+        // tuples share the early unified position.
+        let mut opt_delta = {
+            let mut buf = self.novaopt_typedefs_buf.borrow_mut();
+            let d = buf[opt_snap..].to_string();
+            buf.truncate(opt_snap);
+            d
+        };
+        for fty in &nt_field_c_tys {
+            if !fty.starts_with("NovaOpt_") || fty.ends_with('*') {
+                continue;
+            }
+            let typedef_needle = format!("typedef struct {} {{", fty);
+            if opt_delta.contains(&typedef_needle) {
+                continue;
+            }
+            let mut buf = self.novaopt_typedefs_buf.borrow_mut();
+            let Some(td_start) = buf.find(&typedef_needle) else { continue; };
+            let td_end = match buf[td_start..].find('\n') {
+                Some(rel) => td_start + rel + 1,
+                None => buf.len(),
+            };
+            let typedef_line = buf[td_start..td_end].to_string();
+            buf.replace_range(td_start..td_end, "");
+            let sani = &fty["NovaOpt_".len()..];
+            let eq_needle = format!("{}nova_bool nova_opt_eq_{}(", self.top_level_storage_inline(), sani);
+            let eq_block = if let Some(eq_start) = buf.find(&eq_needle) {
+                let header_end = buf[eq_start..].find('\n')
+                    .map(|r| eq_start + r)
+                    .unwrap_or(buf.len());
+                let is_definition = buf[eq_start..header_end].trim_end().ends_with('{');
+                if is_definition {
+                    let close_rel = buf[eq_start..].find("\n}\n")
+                        .map(|r| eq_start + r + "\n}\n".len());
+                    match close_rel {
+                        Some(eq_end) => {
+                            let b = buf[eq_start..eq_end].to_string();
+                            buf.replace_range(eq_start..eq_end, "");
+                            b
+                        }
+                        None => String::new(),
+                    }
+                } else {
+                    String::new()
+                }
+            } else {
+                String::new()
+            };
+            drop(buf);
+            opt_delta.push_str(&typedef_line);
+            opt_delta.push_str(&eq_block);
+        }
+        let mut combined = String::new();
+        combined.push_str(&fwd_decls);
+        combined.push_str(&opt_delta);
+        combined.push_str(&struct_def);
+        self.pending_value_nodes.push((
+            format!("NovaTuple_{}", name), nt_field_c_tys.clone(), combined,
+        ));
         self.record_schemas.insert(name.to_string(), schema);
         // Plan 172.14 Ф.1: упорядоченные C-типы полей для C-размера (см.
         // симметричный захват в emit_value_record_type).
@@ -25605,17 +25712,35 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                 }
                 // [реестр 221.1 №139 Round 3] Snapshot BEFORE emitting —
-                // mirrors the `opt_snap` restored in `emit_value_record_type`:
-                // this instance's OWN field lowering (inside the call below)
-                // may register a NORMAL (non-late-payload) NovaOpt/NovaRes
+                // mirrors the `opt_snap` in `emit_value_record_type`: this
+                // instance's OWN field lowering (inside the call below) may
+                // register a NORMAL (non-late-payload) NovaOpt/NovaRes
                 // (e.g. an `Option[SomeType]` field) whose wrapper struct
                 // this instance's body needs BY VALUE — but that wrapper's
-                // marker (`__NOVAOPT_TYPEDEFS__`/`__NOVARES_TYPEDEFS__`) sits
-                // AFTER the unified section this instance (if Record-kind)
-                // is about to join. Cut-and-move the delta into this node's
-                // own text, same technique, so it doesn't matter which side
-                // of the unified/NovaOpt marker boundary this instance ends
-                // up sorted relative to ITS OWN siblings.
+                // marker (`__NOVAOPT_TYPEDEFS__`/`__NOVARES_TYPEDEFS__`)
+                // sits AFTER the unified section this instance (if
+                // Record-kind) is about to join. Cut-and-move the delta
+                // into this node's own text, same technique, so it doesn't
+                // matter which side of the unified/NovaOpt marker boundary
+                // this instance ends up sorted relative to ITS OWN
+                // siblings.
+                //
+                // [Round 4 note] A GLOBAL "NovaOpt/NovaRes as proper unified
+                // graph nodes" version was tried and REVERTED in this same
+                // window — it broke a DIFFERENT, unrelated case
+                // (`NovaOpt_NovaClos_ii_p`, a closure-pointer Option payload
+                // registered through a separate code path this change
+                // didn't account for) on the very corpus (`a_q3_println_
+                // debug_record`) this round is trying to fix. The per-node
+                // cut here is proven correct on every test run this
+                // session; its known narrow gap (documented in the round-4
+                // completeness audit) — two DIFFERENT unified nodes sharing
+                // the IDENTICAL `Option[SameType]`/`Result[Same,Same]` as
+                // their OWN field, where only the first to register wins
+                // the only buffer copy — is not exercised anywhere in the
+                // tested corpus; closing it properly needs a dedicated
+                // follow-up window, not a rushed rewrite under this one's
+                // time budget.
                 let opt_snap = self.novaopt_typedefs_buf.borrow().len();
                 let res_snap = self.novares_typedefs_buf.borrow().len();
                 self.emit_generic_type_instance(&template.clone(), &type_subst, &mangled)?;
