@@ -303,11 +303,31 @@ fn resolve_real_nova_tls_v0_1_0_via_file_url() {
     std::env::remove_var("NOVA_HOME");
     assert!(res.is_ok(), "sync real nova-tls via file://: {:?}", res.err());
 
+    // Ожидание вычисляем ИЗ РЕПЫ, а не хардкодим: `^0.1` обязан выбрать
+    // НАИБОЛЬШИЙ доступный 0.1.x. Прежняя версия теста ждала ровно "0.1.0" —
+    // это был не инвариант, а снимок момента (тогда v0.1.0 и был старшим);
+    // с появлением v0.1.1..v0.1.3 у соседней nova-tls тест покраснел, хотя
+    // резолвер отработал ПРАВИЛЬНО (Plan 233-волна, 2026-07-27).
+    let tags_out = Command::new("git")
+        .args(["-C", &nova_tls_dir.to_string_lossy(), "tag", "-l", "v0.1.*"])
+        .output()
+        .expect("run git tag -l v0.1.*");
+    let expected_patch = String::from_utf8_lossy(&tags_out.stdout)
+        .lines()
+        .filter_map(|t| t.trim().strip_prefix("v0.1.")?.parse::<u64>().ok())
+        .max()
+        .expect("at least one v0.1.x tag (guarded above)");
+    let expected_version = format!("0.1.{}", expected_patch);
+
     let lock = lockfile::load(&consumer).expect("load").expect("lock exists");
     assert_eq!(lock.packages.len(), 1);
     match &lock.packages[0].source {
         LockedSource::Git { version, commit, .. } => {
-            assert_eq!(version.as_deref(), Some("0.1.0"), "^0.1 resolves to tag v0.1.0");
+            assert_eq!(
+                version.as_deref(),
+                Some(expected_version.as_str()),
+                "^0.1 обязан резолвиться в НАИБОЛЬШИЙ доступный тег v0.1.x",
+            );
             assert_eq!(commit.len(), 40, "full commit hash recorded");
         }
         other => panic!("expected Git lock entry, got {:?}", other),
