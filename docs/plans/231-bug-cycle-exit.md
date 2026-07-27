@@ -31,20 +31,24 @@
 | `scripts/check-guard-wiring.sh` | **мета-страж**: каждый страж документирован/подключён/покрыт | ✅ | ✅ selftest-цикл | ✅ |
 | `scripts/check-no-runtime-copy.sh` | копия рантайма внутри пакетной репы (реестр 221.1 №138) | ✅ | ✅ gate | ✅ |
 | `scripts/check-no-manual-status-table.sh` | рукописная сводная таблица статусов планов | ✅ | ✅ gate | ✅ |
-| `scripts/lint-no-silent-int-fallback.sh` | тихий int-fallback в кодогене (класс «молчаливых дыр») | ✅ | ⚠️ проверить | ❌ трек Ж |
-| `scripts/hardcode-audit.sh` | хардкод-схемы вместо .nv-источника (196) | ✅ | ⚠️ проверить | ❌ трек Ж |
-| `scripts/strict_effects_smoke.sh` | сборка std/examples под `--strict-effects` | ✅ | ⚠️ проверить | ❌ трек Ж |
+| `scripts/lint-no-silent-int-fallback.sh` | тихий int-fallback в кодогене (класс «молчаливых дыр») | ✅ | ручной (проверено 2026-07-27: НЕ в gate.sh/CI) | ❌ трек Ж |
+| `scripts/hardcode-audit.sh` | хардкод-схемы вместо .nv-источника (196) | ✅ | ручной (проверено 2026-07-27: НЕ в gate.sh/CI; сейчас КРАСНЫЙ — кат.B/E выросли сверх baseline) | ❌ трек Ж |
+| `scripts/strict_effects_smoke.sh` | сборка std/examples под `--strict-effects` | ✅ | ручной (проверено 2026-07-27: НЕ в gate.sh/CI) | ❌ трек Ж |
 | `scripts/tsan_concurrency.sh` | гонки в M:N-рантайме (TSan) | ✅ | ручной | ❌ трек Ж |
 | `scripts/gen-plan-status.sh` | генерация `docs/plans/STATUS.md` (не страж — генератор) | ✅ | ручной | н/д |
-| `scripts/claude-hooks/guard-git.py` | до-исполнения: `git config user.*`, `git add -A/.`, `git stash` | ⚠️ шапки нет | ✅ settings.json | ❌ трек Ж |
-| `scripts/claude-hooks/guard-memory.py` | feedback-заметка памяти без поля `enforcement:` | ⚠️ шапки нет | ✅ settings.json | ❌ трек Ж |
-| `scripts/githooks/pre-commit` | конфликт-маркеры, авторство≠Claude, амендмент без обзорной спеки | ⚠️ тонкая | ✅ 5 реп | ❌ трек Ж |
+| `scripts/claude-hooks/guard-git.py` | до-исполнения: `git config user.*`, `git add -A/.`, `git stash` | ✅ | ✅ settings.json | ❌ трек Ж |
+| `scripts/claude-hooks/guard-memory.py` | feedback-заметка памяти без поля `enforcement:` | ✅ | ✅ settings.json | ❌ трек Ж |
+| `scripts/githooks/pre-commit` | конфликт-маркеры, авторство≠Claude, амендмент без обзорной спеки | ✅ | ✅ 5 реп (независимые копии — см. `scripts/githooks/README.md`) | ❌ трек Ж |
 | D-number uniqueness | дубли `## DNNN.` между файлами спеки | — | ✅ в gate.sh | ❌ трек Ж |
 
 **Состояние на 2026-07-27:** самотесты есть у 3 механизмов из 14 (форма задана, остальные — трек Ж §4в).
-Колонка «Док» для хуков закрывается волной `p231-scripts-docs` (шапки + README по папкам).
+Колонка «Док» для хуков ✅ **ЗАКРЫТА волной `p231-scripts-docs`** (полные шапки guard-git.py/
+guard-memory.py/pre-commit по образцу check-no-runtime-copy.sh + README в каждой подпапке
+`scripts/`, реорганизованной в `scripts/gate.sh` + `scripts/guards/` + `scripts/tools/` +
+`scripts/claude-hooks/` + `scripts/githooks/`).
 Пометка ⚠️ «проверить» = механизм есть и документирован, но не подтверждено, что его реально
-зовёт гейт — проверить и либо подключить, либо честно перевести в «ручной».
+зовёт гейт — проверено той же волной: `lint-no-silent-int-fallback.sh`/`hardcode-audit.sh`/
+`strict_effects_smoke.sh` НЕ вызываются ни `gate.sh`, ни CI — переведены в «ручной» ниже.
 
 **НАЙДЕНО УСТАНОВЩИКОМ 2026-07-27 (почему реестр и нужен):** `pre-commit` числился настроенным
 в пяти репах, а фактически каталог `scripts/githooks` существовал ТОЛЬКО в nova — в nova-http,
