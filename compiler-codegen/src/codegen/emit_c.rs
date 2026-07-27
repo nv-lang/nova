@@ -17399,24 +17399,35 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // UNION of both categories is correct in general).
         //
         // Round-1/2's `hoist_pending_generic_type_defs` (force-drain +
-        // relocate) and the NovaOpt `opt_delta` hoist below are BOTH now
-        // UNNECESSARY and REMOVED: this record's position moved from the
-        // early `__VALUE_RECORD_DEFS__` marker to the unified section
-        // (spliced at the OLD, safely-late `__GENERIC_TYPE_DEFS__` position),
-        // which sits AFTER `__NOVAOPT_TYPEDEFS__`/`__NOVARES_TYPEDEFS__`/
-        // `__MONO_TUPLE_TYPEDEFS__` already — any NON-late-value-payload
-        // NovaOpt/NovaRes/tuple/fixarr this record's fields need is already
-        // complete by construction, no hoist required. (A late VALUE-payload
-        // Option/Result — e.g. `Option[value-record]` — was ALREADY routed
+        // relocate) is now UNNECESSARY and REMOVED: this record's position
+        // moves relative to OTHER value-types (generic-instances/tuples)
+        // via the unified topo-sort itself, not a manual hoist.
+        //
+        // The NovaOpt `opt_delta` hoist below, however, is STILL NEEDED —
+        // this record renders at the EARLY unified position
+        // (`__VALUE_RECORD_DEFS__`, still the earliest safe marker: a PLAIN
+        // value-record used elsewhere as an ordinary `Option[T]`/`Result[T,E]`
+        // payload — e.g. std prelude's `Utf8Error` — must be available
+        // BEFORE `__NOVAOPT_TYPEDEFS__`/`__NOVARES_TYPEDEFS__`, ruling out
+        // moving value-records to a later position), which is BEFORE those
+        // NORMAL (non-late) NovaOpt/NovaRes markers — so a record whose OWN
+        // field is `Option[AnotherValueRecord]` (a plain, non-mono payload —
+        // e.g. flagship's `ExtDto.opt_rec Option[ValRec]`) needs that
+        // SPECIFIC `NovaOpt_NovaValue_ValRec` wrapper struct complete
+        // BEFORE this record's own struct — but it would otherwise only be
+        // declared at the later, non-late-payload marker position. (A late
+        // VALUE-payload Option/Result whose payload contains "____" — a
+        // MONO'd generic value-record — is a DIFFERENT case, already routed
         // by `register_novaopt_decl_forced` to the separate, even-later
-        // `__NOVAOPT_VR_TYPEDEFS__`/`__NOVARES_VR_TYPEDEFS__` markers —
-        // untouched by this change.)
+        // `__NOVAOPT_VR_TYPEDEFS__`/`__NOVARES_VR_TYPEDEFS__` markers,
+        // untouched here.)
         //
         // A by-POINTER field to a mono'd generic struct (`Nova_X____…*`) /
         // value-record / named-tuple still only needs a forward typedef
         // ahead of THIS record's own struct (the pointee's full body may
         // legitimately sort to EITHER side in the unified order) —
         // collected into `fwd_decls`, unchanged.
+        let opt_snap = self.novaopt_typedefs_buf.borrow().len();
         let mut fwd_decls = String::new();
         // Plan 172.12 A8: by-value field C-types, for the pre-registered
         // NovaOpt block relocation below.
@@ -17489,13 +17500,114 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             },
         );
         let struct_def = std::mem::replace(&mut self.out, saved_out);
+        // Restore the NovaOpt typedefs this record's by-value fields
+        // registered (delta since `opt_snap`) into THIS node's own text;
+        // truncate the shared buffer back so the later
+        // `/*__NOVAOPT_TYPEDEFS__*/` splice does not re-emit them.
+        // Registration order (innermost-first) is preserved, so nested
+        // `NovaOpt_NovaOpt_…` stays topologically valid.
+        let mut opt_delta = {
+            let mut buf = self.novaopt_typedefs_buf.borrow_mut();
+            let d = buf[opt_snap..].to_string();
+            buf.truncate(opt_snap);
+            d
+        };
+        // Plan 172.12 A8 (приёмка, ExtDto-class): the delta only covers Opts
+        // registered FIRST during THIS record's field lowering. An Opt that
+        // was PRE-registered by an earlier consumer (e.g. a protocol
+        // vtable slot lowering the same `Option[[]str]`) is seen-dedup'd →
+        // its FULL typedef stays at the later `/*__NOVAOPT_TYPEDEFS__*/`
+        // splice, AFTER this struct → "unknown type" on the by-value
+        // field. MOVE such a block (typedef line + its `nova_opt_eq_*` fn)
+        // from the shared buffer into this node's own text — same
+        // reasoning the fresh-registration case already gets, just via an
+        // explicit lookup instead of relying on delta-since-snapshot.
+        for fty in &field_c_tys {
+            if !fty.starts_with("NovaOpt_") || fty.ends_with('*') {
+                continue;
+            }
+            let typedef_needle = format!("typedef struct {} {{", fty);
+            if opt_delta.contains(&typedef_needle) {
+                continue; // already moved into this node's own text
+            }
+            let mut buf = self.novaopt_typedefs_buf.borrow_mut();
+            let Some(td_start) = buf.find(&typedef_needle) else {
+                continue; // runtime-predeclared (array.h) or not registered here
+            };
+            let td_end = match buf[td_start..].find('\n') {
+                Some(rel) => td_start + rel + 1,
+                None => buf.len(),
+            };
+            let typedef_line = buf[td_start..td_end].to_string();
+            buf.replace_range(td_start..td_end, "");
+            // The eq fn block: from its header line through the first `\n}\n`
+            // (all register_novaopt_decl eq bodies are flat — a single return /
+            // tag-checks, no nested braces at column 0). ONLY move a
+            // DEFINITION (header line ending `{`): for some Opts the buffer
+            // holds a mere PROTOTYPE (`…);` — the definition lives in the late
+            // [M-172.1-option-eq-record-structural] channel); cutting from a
+            // prototype through the next `\n}\n` would swallow innocent
+            // neighbouring blocks. A prototype may safely stay at the late
+            // splice — eq call-sites live in fn bodies emitted after it.
+            let sani = &fty["NovaOpt_".len()..];
+            // Plan 209 Ф.1: needle must track the actual emitted storage-class
+            // prefix — `top_level_storage_inline()` drops "static inline "
+            // under multi-TU (nova_opt_eq_* bodies get promoted to a single
+            // external part; see recon-notes.md §4), so a hardcoded needle
+            // would silently stop matching and this hoist would no-op.
+            let eq_needle = format!("{}nova_bool nova_opt_eq_{}(", self.top_level_storage_inline(), sani);
+            let eq_block = if let Some(eq_start) = buf.find(&eq_needle) {
+                let header_end = buf[eq_start..].find('\n')
+                    .map(|r| eq_start + r)
+                    .unwrap_or(buf.len());
+                let is_definition = buf[eq_start..header_end].trim_end().ends_with('{');
+                if is_definition {
+                    let close_rel = buf[eq_start..].find("\n}\n")
+                        .map(|r| eq_start + r + "\n}\n".len());
+                    match close_rel {
+                        Some(eq_end) => {
+                            let b = buf[eq_start..eq_end].to_string();
+                            buf.replace_range(eq_start..eq_end, "");
+                            b
+                        }
+                        None => String::new(),
+                    }
+                } else {
+                    String::new()
+                }
+            } else {
+                String::new()
+            };
+            drop(buf);
+            // Forward-declare the payload's mono struct name (pointer payload
+            // `Nova_X____…*` inside the moved typedef) ahead of everything.
+            if let Some(open) = typedef_line.find('{') {
+                if let Some(val_pos) = typedef_line.find(" value;") {
+                    let payload = typedef_line[open + 1..val_pos].trim();
+                    if let Some(pointee) = payload.strip_suffix('*') {
+                        let pointee = pointee.trim();
+                        if pointee.starts_with("Nova") && pointee.contains("____") {
+                            let fwd = format!("typedef struct {p} {p};\n", p = pointee);
+                            if !fwd_decls.contains(&fwd) {
+                                fwd_decls.push_str(&fwd);
+                            }
+                        }
+                    }
+                }
+            }
+            opt_delta.push_str(&typedef_line);
+            opt_delta.push_str(&eq_block);
+        }
         // [Round 3] Capture (name, field-C-types, rendered text) instead of
         // appending directly — `render_unified_value_types` (called once,
         // at true finalize) topologically sorts EVERY value-type node
         // (this one included) and renders them in dependency order. See the
-        // fn-level doc above for why the round-1/2 hoists are gone.
+        // fn-level doc above for why the round-1/2 hoists are gone (the
+        // NovaOpt `opt_delta` hoist just above is NOT one of them — it's
+        // orthogonal, still needed, see its own doc).
         let mut combined = String::new();
         combined.push_str(&fwd_decls);
+        combined.push_str(&opt_delta);
         combined.push_str(&struct_def);
         self.pending_value_nodes.push((
             format!("NovaValue_{}", name), field_c_tys.clone(), combined,
@@ -25492,6 +25604,20 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         self.user_type_fwd_decls.push_str(&fwd);
                     }
                 }
+                // [реестр 221.1 №139 Round 3] Snapshot BEFORE emitting —
+                // mirrors the `opt_snap` restored in `emit_value_record_type`:
+                // this instance's OWN field lowering (inside the call below)
+                // may register a NORMAL (non-late-payload) NovaOpt/NovaRes
+                // (e.g. an `Option[SomeType]` field) whose wrapper struct
+                // this instance's body needs BY VALUE — but that wrapper's
+                // marker (`__NOVAOPT_TYPEDEFS__`/`__NOVARES_TYPEDEFS__`) sits
+                // AFTER the unified section this instance (if Record-kind)
+                // is about to join. Cut-and-move the delta into this node's
+                // own text, same technique, so it doesn't matter which side
+                // of the unified/NovaOpt marker boundary this instance ends
+                // up sorted relative to ITS OWN siblings.
+                let opt_snap = self.novaopt_typedefs_buf.borrow().len();
+                let res_snap = self.novares_typedefs_buf.borrow().len();
                 self.emit_generic_type_instance(&template.clone(), &type_subst, &mangled)?;
                 let instance_code = std::mem::take(&mut self.out);
                 // [реестр 221.1 №139 Round 3] Record-kind instances go into
@@ -25499,10 +25625,27 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // the direct-append `generic_type_defs_buf` — see
                 // `render_unified_value_types` doc. Everything else
                 // (Sum/Newtype/etc. — side-channel left `None`) is
-                // untouched, byte-identical to before.
+                // untouched, byte-identical to before — including these
+                // NovaOpt/NovaRes snapshots, which only matter for the
+                // Record-kind (unified-section) branch; a non-Record
+                // instance keeps rendering at its ORIGINAL safely-late
+                // `generic_type_defs_buf` position, same as always, so any
+                // delta here is simply left in place (not cut) for it.
                 match self.last_generic_record_instance.take() {
                     Some((node_name, field_ctys)) => {
-                        self.pending_value_nodes.push((node_name, field_ctys, instance_code));
+                        let opt_delta = {
+                            let mut buf = self.novaopt_typedefs_buf.borrow_mut();
+                            if buf.len() > opt_snap { buf.split_off(opt_snap) } else { String::new() }
+                        };
+                        let res_delta = {
+                            let mut buf = self.novares_typedefs_buf.borrow_mut();
+                            if buf.len() > res_snap { buf.split_off(res_snap) } else { String::new() }
+                        };
+                        let mut combined = String::new();
+                        combined.push_str(&opt_delta);
+                        combined.push_str(&res_delta);
+                        combined.push_str(&instance_code);
+                        self.pending_value_nodes.push((node_name, field_ctys, combined));
                     }
                     None => {
                         self.generic_type_defs_buf.push_str(&instance_code);
