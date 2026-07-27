@@ -89,9 +89,31 @@ nova-cli/target/release/nova build <file.nv>
 nova-cli/target/release/nova check <file.nv>
 ```
 
-В worktree без vcpkg/libuv — env-override на main-репу: `NOVA_GC_LIB_DIR`, `NOVA_INCLUDE_DIR`,
-`NOVA_GC_INCLUDE_DIR` (= `<main>/compiler-codegen/vcpkg_installed/x64-windows-static/{lib,include}`),
-плюс `NOVA_CG_INCLUDE`/`NOVA_RT_DIR` для standalone-пакетов. Детали и ловушки — `read-toolchain.md`.
+### Сборка вне главной репы (worktree, nova-http/tls/polaris/compress) — БЕЗ КОПИРОВАНИЯ
+
+**НИЧЕГО НЕ КОПИРОВАТЬ.** Все пути указываются переменными на главную репу — блок ниже
+копируется целиком (замени `<main>` на путь к репе `nova`):
+
+```sh
+M=<main>                      # напр. D:/Sources/nv-lang/nova
+export NOVA_STD_PATH="$M/std/src"
+export NOVA_RT_DIR="$M/compiler-codegen/nova_rt"
+export NOVA_CG_INCLUDE="$M/compiler-codegen"
+export NOVA_GC_LIB_DIR="$M/compiler-codegen/vcpkg_installed/x64-windows-static/lib"
+export NOVA_INCLUDE_DIR="$M/compiler-codegen/vcpkg_installed/x64-windows-static/include"
+export NOVA_GC_INCLUDE_DIR="$NOVA_INCLUDE_DIR"
+```
+
+**ЗАПРЕЩЕНО копировать `compiler-codegen/` (рантайм) внутрь пакетной репы или worktree.**
+Копия не под git → её протухание НЕВИДИМО, и она ШАДОВИТ настоящий рантайм. Реальная цена
+промаха (2026-07-27, реестр 221.1 №138): полтора часа диагностики «регрессии компилятора» в
+nova-http, которой не было — заголовки копии были сняты ДО фикса №108 и не объявляли символ,
+который компилятор уже эмитит; плюс больше гигабайта мусора по репам (526 МБ в polaris,
+331 МБ в одном worktree). Проверено: polaris `nova test src --strict-effects` даёт 35/0/16
+БЕЗ всякой копии, только на переменных выше.
+
+Машинный страж: `scripts/check-no-runtime-copy.sh` (в `gate.sh`; самотест —
+`scripts/selftest/test-check-no-runtime-copy.sh`). Детали и прочие ловушки — `read-toolchain.md`.
 
 ## 4. Состояние тестов (baseline 2026-07-13)
 

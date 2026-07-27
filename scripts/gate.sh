@@ -20,6 +20,23 @@ fail() { echo "GATE FAIL: $1" >&2; exit 1; }
 echo "== gate: arch-ratchet =="
 bash "$ROOT/scripts/arch-ratchet.sh" || fail "arch-ratchet (emit_c growth)"
 
+# Реестр 221.1 №138 (урок 2026-07-27): копия рантайма внутри пакетной репы/
+# worktree не под git → её протухание невидимо, и она ШАДОВИТ настоящий
+# рантайм. Реальная цена промаха: полтора часа диагностики «регрессии
+# компилятора» в nova-http, которой не было (устаревшие заголовки копии не
+# объявляли символ из фикса №108), плюс >1 ГБ мусора по репам. Копия НЕ нужна —
+# есть штатные NOVA_RT_DIR/NOVA_CG_INCLUDE (см. шапку самого стража).
+echo "== gate: no-runtime-copy =="
+bash "$ROOT/scripts/check-no-runtime-copy.sh" || fail "копия рантайма в пакетной репе/worktree (№138)"
+
+# Трек Ж (231): страж без самотеста — доверие на слово. Самотесты дешёвые
+# (секунды) и проверяют ОБА свойства: ловит нарушение / не даёт ложняка.
+echo "== gate: selftests стражей =="
+for st in "$ROOT"/scripts/selftest/test-*.sh; do
+    [ -e "$st" ] || continue
+    bash "$st" || fail "самотест стража: $(basename "$st")"
+done
+
 echo "== gate: cargo build --release =="
 ( cd "$ROOT/nova-cli" && cargo build --release ) || fail "cargo build"
 NOVA="$ROOT/nova-cli/target/release/nova.exe"
