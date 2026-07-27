@@ -16,7 +16,7 @@ for d in (Path('docs'), Path('spec')):
 
 print(f"Files to process: {len(files)}")
 result = subprocess.run(
-    [sys.executable, 'scripts/plan114_rewrite.py', '--ext', '.md'] + files,
+    [sys.executable, 'scripts/tools/plan114_rewrite.py', '--ext', '.md'] + files,
     capture_output=True, text=True,
 )
 print(result.stdout)

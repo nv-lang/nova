@@ -13,7 +13,7 @@
 //! directly — this file is the PRIMARY correctness gate instead, calling
 //! `nova_codegen::types::check_module` directly on the SAME snippets (mirror
 //! of the fixtures, kept inline so this file has zero I/O dependency).
-//! `scripts/strict_effects_smoke.sh` is a secondary CLI-level smoke test
+//! `scripts/guards/strict_effects_smoke.sh` is a secondary CLI-level smoke test
 //! against a built `nova` binary, driving the actual fixture files.
 //!
 //! `NOVA_STRICT_EFFECTS` is process-global state (env var), read by

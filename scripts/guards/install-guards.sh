@@ -29,8 +29,8 @@
 # read-project.md`), не трогает содержимое настроек кроме `core.hooksPath`.
 #
 # ИСПОЛЬЗОВАНИЕ:
-#   scripts/install-guards.sh            # установить и проверить
-#   scripts/install-guards.sh --check    # только проверить, ничего не менять
+#   scripts/guards/install-guards.sh            # установить и проверить
+#   scripts/guards/install-guards.sh --check    # только проверить, ничего не менять
 # Коды: 0 — всё установлено и работает; 1 — что-то не установилось/не прошло.
 #
 # План: docs/plans/231-bug-cycle-exit.md §4в (трек Ж).
@@ -38,7 +38,8 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# Скрипт живёт в scripts/guards/ — корень репы на два уровня выше.
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 FAMILY_PARENT="$(cd "$REPO_ROOT/.." && pwd)"
 CHECK_ONLY=0
 [ "${1:-}" = "--check" ] && CHECK_ONLY=1
@@ -84,10 +85,12 @@ if [ "$CHECK_ONLY" -eq 1 ]; then
     say "пропуск (режим проверки)"
 else
     chmod +x "$REPO_ROOT"/scripts/*.sh 2>/dev/null || true
-    chmod +x "$REPO_ROOT"/scripts/selftest/*.sh 2>/dev/null || true
+    chmod +x "$REPO_ROOT"/scripts/guards/*.sh 2>/dev/null || true
+    chmod +x "$REPO_ROOT"/scripts/guards/selftest/*.sh 2>/dev/null || true
+    chmod +x "$REPO_ROOT"/scripts/tools/*.sh 2>/dev/null || true
     chmod +x "$REPO_ROOT"/scripts/githooks/* 2>/dev/null || true
     chmod +x "$REPO_ROOT"/scripts/claude-hooks/*.py 2>/dev/null || true
-    say "выставлены (scripts, selftest, githooks, claude-hooks)"
+    say "выставлены (scripts, guards, guards/selftest, tools, githooks, claude-hooks)"
 fi
 
 # ── 3. Хуки Claude Code объявлены в настройках ────────────────────────────────
@@ -107,13 +110,13 @@ fi
 
 # ── 4. Диагностика: механизмы должны РАБОТАТЬ, а не просто лежать ────────────
 echo "[4/4] диагностика — прогон мета-стража и самотестов"
-if bash "$REPO_ROOT/scripts/check-guard-wiring.sh" >/dev/null 2>&1; then
+if bash "$REPO_ROOT/scripts/guards/check-guard-wiring.sh" >/dev/null 2>&1; then
     say "ok: все стражи документированы, подключены, покрыты самотестами"
 else
-    bad "мета-страж не прошёл — запусти scripts/check-guard-wiring.sh и почини"
+    bad "мета-страж не прошёл — запусти scripts/guards/check-guard-wiring.sh и почини"
 fi
 shopt -s nullglob
-for st in "$REPO_ROOT"/scripts/selftest/test-*.sh; do
+for st in "$REPO_ROOT"/scripts/guards/selftest/test-*.sh; do
     if bash "$st" >/dev/null 2>&1; then
         say "ok: самотест $(basename "$st")"
     else

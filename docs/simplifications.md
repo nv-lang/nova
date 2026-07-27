@@ -3595,7 +3595,7 @@ vec.nv не компилируется в exe → Plan 91 (std MVP) blocked.
     ~180ms/spawn timing out 10K+. Stress tests verify correctness
     через `// ENV NOVA_AUTOARM=0` (cooperative) — all PASS.
   - **TSAN gate Linux 0 races** — script delivered
-    (`scripts/tsan_concurrency.sh`); execution на Linux runner —
+    (`scripts/guards/tsan_concurrency.sh`); execution на Linux runner —
     followup (Windows-only dev environment).
 
 - **Почему:** flip activation closed default-on M:N runtime
@@ -7066,7 +7066,7 @@ vec.nv не компилируется в exe → Plan 91 (std MVP) blocked.
     ~180ms/spawn timing out 10K+. Stress tests verify correctness
     через `// ENV NOVA_AUTOARM=0` (cooperative) — all PASS.
   - **TSAN gate Linux 0 races** — script delivered
-    (`scripts/tsan_concurrency.sh`); execution на Linux runner —
+    (`scripts/guards/tsan_concurrency.sh`); execution на Linux runner —
     followup (Windows-only dev environment).
 
 - **Почему:** flip activation closed default-on M:N runtime

@@ -119,6 +119,6 @@ Unix-ветки (те же флаги: `-O0 -g -w -c -fPIC -D_GNU_SOURCE -DNOVA_
 
 - Ветка `p-fix-rt-headers`, база `main` @ `2d9a15acc`.
 - `NOVA_GC_LIB_DIR`/`NOVA_GC_INCLUDE_DIR` → `D:\Sources\nv-lang\nova\compiler-codegen\vcpkg_installed\x64-windows-static\{lib,include}`.
-- libuv submodule скопирован из main + `.git` удалён (`scripts/setup_worktree_p118.sh`).
+- libuv submodule скопирован из main + `.git` удалён (`scripts/tools/setup_worktree_p118.sh`).
 - WSL-репро: `~/rtheaders_check` (копия `compiler-codegen` с фиксами) +
   `~/rt_check.sh` (скрипт, реплицирует `build_rt_archive_lib` Unix-ветку).

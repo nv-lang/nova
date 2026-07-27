@@ -10,7 +10,7 @@
 # must pass WITHOUT the flag (byte-identical-behavior guarantee) and FAIL
 # WITH the flag, with stderr containing the fixture's own `[E_...]` code.
 #
-# Usage: scripts/strict_effects_smoke.sh [path/to/nova(.exe)]
+# Usage: scripts/guards/strict_effects_smoke.sh [path/to/nova(.exe)]
 # Default binary: nova-cli/target/debug/nova(.exe) relative to repo root.
 #
 # Plan 231 (docs/plans/231-bug-cycle-exit.md) treats this as one of the
@@ -20,7 +20,8 @@
 # *.yml — run it by hand whenever spec_tests/strict_effects/ fixtures or
 # the `--strict-effects` code path change.
 set -euo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+# Script lives in scripts/guards/ — repo root is two levels up.
+cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
 NOVA_BIN="${1:-nova-cli/target/debug/nova.exe}"
 if [ ! -f "$NOVA_BIN" ]; then

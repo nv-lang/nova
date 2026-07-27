@@ -8,7 +8,7 @@
 # в docs/conventions-governance.md («Статус плана — только пофайлово»).
 #
 # Единственный источник статуса — строка `**Статус:**` в docs/plans/NNN-*.md;
-# сводка — сгенерированный docs/plans/STATUS.md (bash scripts/gen-plan-status.sh).
+# сводка — сгенерированный docs/plans/STATUS.md (bash scripts/tools/gen-plan-status.sh).
 #
 # Часть семейства машинных стражей плана 231 «Выход из цикла точечных
 # фиксов» (docs/plans/231-bug-cycle-exit.md, трек Д «машинное принуждение
@@ -22,7 +22,7 @@
 #   | 123 | [foo.md](foo.md) | ... | ✅ ЗАКРЫТ ... |
 # т.е. первая колонка — число (план), где-то в строке — ссылка на .md-файл
 # плана, и в строке встречается один из статус-эмодзи (✅/📋/🟡/🔴/⏸/⛔/🟣).
-# ИСПОЛЬЗОВАНИЕ: scripts/check-no-manual-status-table.sh [корень-репы]
+# ИСПОЛЬЗОВАНИЕ: scripts/guards/check-no-manual-status-table.sh [корень-репы]
 # Без аргумента — своя репа; аргумент нужен самотесту (фикстуры).
 # Коды: 0 — чисто, 1 — найдена ручная статус-таблица.
 # План: docs/plans/231-bug-cycle-exit.md §4в (трек Ж); правило —
@@ -34,7 +34,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="${1:-$(cd "$SCRIPT_DIR/.." && pwd)}"  # аргумент — для самотеста на фикстурах
+# Скрипт живёт в scripts/guards/ — корень репы на два уровня выше.
+REPO_ROOT="${1:-$(cd "$SCRIPT_DIR/../.." && pwd)}"  # аргумент — для самотеста на фикстурах
 README="$REPO_ROOT/docs/plans/README.md"
 THRESHOLD=3
 
@@ -57,7 +58,7 @@ if [ "$hits" -ge "$THRESHOLD" ]; then
   echo "Рукописная статус-таблица ЗАПРЕЩЕНА (см. docs/conventions-governance.md," >&2
   echo "раздел «Статус плана — только пофайлово, ручная сводная таблица запрещена»)." >&2
   echo "Статус ведётся ТОЛЬКО пофайлово (**Статус:** в docs/plans/NNN-*.md);" >&2
-  echo "сводка — сгенерированный docs/plans/STATUS.md (bash scripts/gen-plan-status.sh)." >&2
+  echo "сводка — сгенерированный docs/plans/STATUS.md (bash scripts/tools/gen-plan-status.sh)." >&2
   exit 1
 fi
 

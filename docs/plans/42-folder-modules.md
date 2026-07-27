@@ -543,7 +543,7 @@ decl типов уже работает (Plan 36 followup). Verify на test'е.
   (`even.nv`↔`odd.nv`) компилирует двунаправленную рекурсию. Отдельный
   folder-module-specific 2-pass **не нужен**.
 - **42.6 — Migration std/* + nova_tests/* под parent.X** (D29 rev-3) ✅
-  ЗАКРЫТ 2026-05-13. `scripts/migrate_modules_rev3.ps1` — automated
+  ЗАКРЫТ 2026-05-13. `scripts/tools/migrate_modules_rev3.ps1` — automated
   walker: для каждого `.nv` файла computes expected `module parent.X`
   по filesystem path и переписывает legacy `module package.full.path`
   declaration. Применён к `std/` (package=`std`) и `nova_tests/`

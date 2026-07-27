@@ -5021,7 +5021,7 @@ ensure generic is monomorphized, или register type в external_registry.
 См. Plan 70 ([M-no-silent-nova-int-fallback]).
 ```
 
-**Internal lint guard (CI).** `scripts/lint-no-silent-int-fallback.sh`
+**Internal lint guard (CI).** `scripts/guards/lint-no-silent-int-fallback.sh`
 greps `compiler-codegen/src/` против baseline counts из
 `docs/codegen-erasure-sites.md`. Bumping baseline требует:
 1. Inline comment с rationale «почему erasure безопасна»
@@ -5034,7 +5034,7 @@ CI gate fails если added counts превышают baseline без updates.
 - [x] Helper infra `err_no_int_fallback` + `record_strict_error` (Ф.1 / Ф.B0)
 - [x] Cat A1/A2 migration: 90 → 8 (only Cat B holdovers remain)
 - [x] Cat B documentation: 10 sites listed в codegen-erasure-sites.md
-- [x] Internal lint guard `scripts/lint-no-silent-int-fallback.sh`
+- [x] Internal lint guard `scripts/guards/lint-no-silent-int-fallback.sh`
 - [x] Spec D368 (этот блок)
 - [x] 796+ PASS / 0 FAIL nova test (0 regressions vs baseline 761)
 

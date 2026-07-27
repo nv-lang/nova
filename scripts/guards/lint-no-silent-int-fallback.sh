@@ -20,8 +20,8 @@
 #   - `record_strict_error(context, cause)` для cascade-blocked sites
 #
 # Usage:
-#   ./scripts/lint-no-silent-int-fallback.sh           # default scan
-#   ./scripts/lint-no-silent-int-fallback.sh --strict  # fail on ANY match
+#   ./scripts/guards/lint-no-silent-int-fallback.sh           # default scan
+#   ./scripts/guards/lint-no-silent-int-fallback.sh --strict  # fail on ANY match
 #
 # Exit:
 #   0 — no new violations beyond baseline
@@ -53,7 +53,8 @@ BASELINE_WILDCARD_NOVA_INT=26        # _ => "nova_int" (Cat B/D legitimate)
                                      # Cat D: D1/D2 in sum_schema_registry.rs (Plan 62.A.bis,
                                      #   type_ref_to_c_minimal — schema-registration only).
 
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Script lives in scripts/guards/ — repo root is two levels up.
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CODEGEN_SRC="${PROJECT_ROOT}/compiler-codegen/src"
 
 # Pattern 1: type_ref_to_c result with silent nova_int fallback

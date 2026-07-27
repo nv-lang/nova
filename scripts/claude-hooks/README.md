@@ -54,8 +54,8 @@ echo '{"tool_input":{"file_path":"memory/feedback-x.md","content":"без пол
 самих файлов.
 
 На 2026-07-27 у этих двух хуков **нет** отдельного регресс-самотеста в
-`scripts/selftest/` (см. таблицу покрытия в
-[`scripts/selftest/README.md`](../selftest/README.md) и план 231 §4в) —
+`scripts/guards/selftest/` (см. таблицу покрытия в
+[`scripts/guards/selftest/README.md`](../guards/selftest/README.md) и план 231 §4в) —
 их поведение верифицировано только руками при вводе (2026-07-26).
 
 ## Чем отличаются от `scripts/githooks/`

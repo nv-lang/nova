@@ -18,7 +18,7 @@ unset NOVA_STD_PATH 2>/dev/null || true
 fail() { echo "GATE FAIL: $1" >&2; exit 1; }
 
 echo "== gate: arch-ratchet =="
-bash "$ROOT/scripts/arch-ratchet.sh" || fail "arch-ratchet (emit_c growth)"
+bash "$ROOT/scripts/guards/arch-ratchet.sh" || fail "arch-ratchet (emit_c growth)"
 
 # Реестр 221.1 №138 (урок 2026-07-27): копия рантайма внутри пакетной репы/
 # worktree не под git → её протухание невидимо, и она ШАДОВИТ настоящий
@@ -27,12 +27,12 @@ bash "$ROOT/scripts/arch-ratchet.sh" || fail "arch-ratchet (emit_c growth)"
 # объявляли символ из фикса №108), плюс >1 ГБ мусора по репам. Копия НЕ нужна —
 # есть штатные NOVA_RT_DIR/NOVA_CG_INCLUDE (см. шапку самого стража).
 echo "== gate: no-runtime-copy =="
-bash "$ROOT/scripts/check-no-runtime-copy.sh" || fail "копия рантайма в пакетной репе/worktree (№138)"
+bash "$ROOT/scripts/guards/check-no-runtime-copy.sh" || fail "копия рантайма в пакетной репе/worktree (№138)"
 
 # Трек Ж (231): страж без самотеста — доверие на слово. Самотесты дешёвые
 # (секунды) и проверяют ОБА свойства: ловит нарушение / не даёт ложняка.
 echo "== gate: selftests стражей =="
-for st in "$ROOT"/scripts/selftest/test-*.sh; do
+for st in "$ROOT"/scripts/guards/selftest/test-*.sh; do
     [ -e "$st" ] || continue
     bash "$st" || fail "самотест стража: $(basename "$st")"
 done

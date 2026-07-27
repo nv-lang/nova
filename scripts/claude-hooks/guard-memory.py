@@ -26,9 +26,9 @@ infra.md): «каждый новый инцидент класса „забыл
     hooks.PreToolUse[].matcher = "Write"
     → command: python scripts/claude-hooks/guard-memory.py
 Хук получает JSON вызова инструмента через stdin (`tool_input.file_path`,
-`tool_input.content`). Самотеста в scripts/selftest/ ПОКА НЕТ — план 231
+`tool_input.content`). Самотеста в scripts/guards/selftest/ ПОКА НЕТ — план 231
 §4в: «Write без enforcement: (блок), с полем (пропуск)» — см. таблицу
-покрытия в scripts/selftest/README.md.
+покрытия в scripts/guards/selftest/README.md.
 """
 from __future__ import annotations
 

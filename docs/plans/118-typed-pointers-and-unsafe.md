@@ -2395,7 +2395,7 @@ partial + Ф.6 partial + Ф.9 partial (examples + docs/typed-pointers.md
 | Docs overview | docs/typed-pointers.md (~340 lines) | ✅ |
 | Logs (simplifications + project-creation) | Updated per task | ✅ |
 | Nova-private discussion-log | Session 1 + Session 2 entries | ✅ |
-| Worktree setup script | scripts/setup_worktree_p118.sh | ✅ |
+| Worktree setup script | scripts/tools/setup_worktree_p118.sh | ✅ |
 
 ### Session 2 grand commits на plan-118 branch (worktree)
 

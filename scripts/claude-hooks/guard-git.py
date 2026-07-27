@@ -37,8 +37,8 @@ fail-closed по правилам (паттерн совпал → exit 2).
     hooks.PreToolUse[].matcher = "Bash|PowerShell"
     → command: python scripts/claude-hooks/guard-git.py
 Хук получает JSON вызова инструмента через stdin (`tool_input.command`).
-Самотеста в scripts/selftest/ ПОКА НЕТ — см. таблицу покрытия план 231 §4в
-и scripts/selftest/README.md.
+Самотеста в scripts/guards/selftest/ ПОКА НЕТ — см. таблицу покрытия план 231 §4в
+и scripts/guards/selftest/README.md.
 """
 from __future__ import annotations
 

@@ -3570,7 +3570,7 @@ impl Parser {
                 "[E_KW_REMOVED_READONLY] `readonly` keyword renamed to `ro` \
                  in Plan 114 (D184). Use `ro name Type` instead of \
                  `readonly name Type`. Error code E_READONLY_* preserved as \
-                 stable API. Run scripts/plan114_rewrite.py to migrate.".to_string(),
+                 stable API. Run scripts/tools/plan114_rewrite.py to migrate.".to_string(),
                 self.peek().span,
             ));
         }
@@ -4868,7 +4868,7 @@ impl Parser {
                      renamed to `ro` in Plan 114 (D184). Use `ro NAME TYPE` \
                      instead of `readonly NAME TYPE`. Error code \
                      E_READONLY_FIELD preserved as stable API. Run \
-                     scripts/plan114_rewrite.py to migrate.".to_string(),
+                     scripts/tools/plan114_rewrite.py to migrate.".to_string(),
                     self.peek().span,
                 ));
             }
@@ -5544,14 +5544,14 @@ impl Parser {
         // Plan 114 (D184) Ф.1.5: `let` keyword retracted. Lexer всё ещё
         // узнаёт лексему — здесь parser отвергает с понятным сообщением
         // вместо generic 'unknown identifier'. Migrate через
-        // scripts/plan114_rewrite.py (R1-R10).
+        // scripts/tools/plan114_rewrite.py (R1-R10).
         let span = self.peek().span;
         return Err(Diagnostic::new(
             "[E_KW_REMOVED_LET] `let` keyword removed in Plan 114 (D184). \
              Use `ro X = expr` for immutable binding, `mut X = expr` for \
              mutable, `consume X = expr` for owned. For pattern-bind in \
              condition use `if Some(x) = e` (drop `let`) or `if ro X = e` \
-             for identifier-pattern. Run scripts/plan114_rewrite.py to \
+             for identifier-pattern. Run scripts/tools/plan114_rewrite.py to \
              migrate.".to_string(),
             span,
         ));
@@ -6626,7 +6626,7 @@ impl Parser {
                      renamed to `ro` in Plan 114 (D184). Use `ro TYPE` \
                      instead of `readonly TYPE` in param/return/field/binding \
                      positions. Error codes E_READONLY_* preserved as stable \
-                     API. Run scripts/plan114_rewrite.py to migrate.".to_string(),
+                     API. Run scripts/tools/plan114_rewrite.py to migrate.".to_string(),
                     start,
                 ));
             }

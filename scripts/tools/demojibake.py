@@ -39,14 +39,14 @@ SAFETY
 
 USAGE
     # dry-run: report status per file (clean / would-fix / nochange / FAILED)
-    python scripts/demojibake.py path/to/file.rs [more files ...]
+    python scripts/tools/demojibake.py path/to/file.rs [more files ...]
 
     # apply in place (preserves UTF-8 BOM):
-    python scripts/demojibake.py --write path/to/file.rs
+    python scripts/tools/demojibake.py --write path/to/file.rs
 
     # repo sweep (PowerShell example):
     #   Get-ChildItem -Recurse -Include *.rs |
-    #     %{ python scripts/demojibake.py --write $_.FullName }
+    #     %{ python scripts/tools/demojibake.py --write $_.FullName }
     Always dry-run first and eyeball the diff (git diff) before committing.
 
 ROOT CAUSE (important)

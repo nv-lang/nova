@@ -23,8 +23,8 @@
 verification.
 
 Usage:
-    python scripts/plan114_rewrite.py PATH [PATH ...]    # apply in-place
-    python scripts/plan114_rewrite.py --dry PATH         # dry-run, show diff stats
+    python scripts/tools/plan114_rewrite.py PATH [PATH ...]    # apply in-place
+    python scripts/tools/plan114_rewrite.py --dry PATH         # dry-run, show diff stats
 """
 from __future__ import annotations
 

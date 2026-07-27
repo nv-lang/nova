@@ -19,7 +19,7 @@ from pathlib import Path
 DRY_RUN = '--dry-run' in sys.argv
 VERBOSE = '--verbose' in sys.argv or DRY_RUN
 
-ROOT = Path(__file__).parent.parent / 'nova_tests'
+ROOT = Path(__file__).parent.parent.parent / 'nova_tests'  # scripts/tools/ -> repo root -> nova_tests
 
 # Names that look like stdlib types - skip renaming these (they're references, not local defs)
 STDLIB_NAMES = {
