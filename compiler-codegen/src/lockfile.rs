@@ -456,6 +456,27 @@ fn walk_replace_scope(
         }
         let dep_toml = dep_dir.join("nova.toml");
         if let Some(dep_manifest) = crate::manifest::parse_manifest(&dep_toml, &dep_dir) {
+            // Реестр 221.1 №135(б): непереносимый `path` в манифесте ЗАВИСИМОСТИ.
+            // `manifest_warnings` вызывался только на КОРНЕВОМ манифесте, поэтому
+            // потребитель пакета, чей манифест несёт `path = "../соседняя-репа"`,
+            // не узнавал об этом ничего — до момента, когда сборка у него просто
+            // не находила каталог (измерено на nova-polaris → nova-http, блокер
+            // тегов A-V7). Тот же обход зависимостей, что уже используется для
+            // `W_REPLACE_IN_DEPENDENCY` ниже, — правило и текст берём готовые.
+            for w in crate::manifest::manifest_warnings(&dep_manifest, &dep_toml) {
+                if w.code == "W_DEP_PATH_NO_RELEASE" {
+                    out.push(crate::manifest::ManifestWarning {
+                        code: "W_DEP_PATH_NO_RELEASE_IN_DEPENDENCY",
+                        message: format!(
+                            "зависимость `{}` НЕПЕРЕНОСИМА: {}\n    \
+                             следствие: этот пакет не соберётся у того, у кого \
+                             нет соседнего каталога — почини в самом пакете \
+                             `{}`, а не здесь",
+                            dep.name, w.message, dep_toml.display(),
+                        ),
+                    });
+                }
+            }
             for name in dep_manifest.replace.keys() {
                 out.push(crate::manifest::ManifestWarning {
                     code: "W_REPLACE_IN_DEPENDENCY",
