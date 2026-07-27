@@ -51,7 +51,7 @@ nova check lib.nv                # single file
 
 nova build app.nv -o app         # compile to a native binary (the way to run code)
 ./app                            # then execute it
-nova add mathlib --path ../mathlib   # add a dependency, update nova.lock
+nova add mathlib --path ../mathlib   # add a dependency, update nova.lock.toml
 nova info mathlib                # a dependency's effect-surface
 nova test nova_tests             # compile + run all nova_tests/
 nova test nova_tests/plan118     # a single subdirectory
@@ -288,7 +288,7 @@ compile and run tests, use [`nova test`](#nova-test) /
 ### `nova add`
 
 Add a dependency to `[dependencies]` of the current package's
-`nova.toml` and update `nova.lock` ([Plan 03.1](plans/03.1-path-git-dependencies.md)).
+`nova.toml` and update `nova.lock.toml` ([Plan 03.1](plans/03.1-path-git-dependencies.md)).
 
 ```
 nova add NAME (--path DIR | --git URL [--tag T | --branch B | --rev R | --version REQ])
@@ -309,11 +309,11 @@ nova add NAME (--path DIR | --git URL [--tag T | --branch B | --rev R | --versio
   optional (no pin → default branch, still recorded as an exact commit
   in the lock).
 - `--version` selects the highest matching semver tag of the repository
-  and records both the resolved version and commit in `nova.lock`.
+  and records both the resolved version and commit in `nova.lock.toml`.
 - Edits the `[dependencies]` section (creates it if absent). A
   duplicate name → exit `2`.
 - After editing, runs lock sync: materializes a git dependency in the
-  cache and writes the resolved commit to `nova.lock`.
+  cache and writes the resolved commit to `nova.lock.toml`.
 - Must run inside a package (a `nova.toml` with `[package]`), not on a
   bare `[workspace]` manifest.
 
@@ -327,7 +327,7 @@ nova add libfoo  --git https://example.org/libfoo.nv --version "^1.2"
 
 ### `nova update`
 
-Re-resolve git dependencies and refresh `nova.lock`
+Re-resolve git dependencies and refresh `nova.lock.toml`
 ([Plan 03.1](plans/03.1-path-git-dependencies.md) /
 [03.2](plans/03.2-version-resolution.md)).
 
@@ -337,7 +337,7 @@ nova update [NAME] [--precise NAME@VERSION]
 
 - `NAME` — a single git dependency to update. Omitted → all git
   dependencies.
-- Drops the targeted git entries from `nova.lock`, then re-resolves
+- Drops the targeted git entries from `nova.lock.toml`, then re-resolves
   them: branch/tag pins pick up the current commit, `version`-range
   pins pick the highest matching tag. Untargeted dependencies stay
   pinned (reproducibility).
@@ -1146,8 +1146,9 @@ nova consume-analyze PATH [--format human|json] [--fail-on-uncovered]
 | `NOVA_CODEGEN` | (reserved) | Override path to `nova-codegen` binary |
 | `NOVA_MONO_DEPTH` | `build`, `test`, `test-build`, `bench` | Monomorphization-instantiation depth limit (default 500) |
 | `NOVA_REACH_DCE` | `build`, `test`, `test-build` | Reachability-codegen DCE ([Plan 159](plans/159-reachability-codegen.md), [D283](decisions/09-tooling.md#d283)). Unset / `≠0` → **ON** (default): emit to C only declarations reachable from `main`. `=0` → **OFF**: byte-identical pre-159 behavior (emit everything) — escape hatch for over-prune diagnosis |
-| `NOVA_HOME` | `add`, `build` (git deps) | Root for the git dependency cache; default `~/.nova` (cache under `<NOVA_HOME>/git`) |
+| `NOVA_HOME` | `add`, `build` (git deps) | Root for the git dependency cache; default `~/.nova` (cache under `<NOVA_HOME>/git`, global proxy config at `<NOVA_HOME>/config.toml`) |
 | `NOVA_OFFLINE` | `add`, `build` (git deps) | `=1` → forbid network (clone/fetch); build only from the existing cache |
+| `NOVA_PKG_PROXY` | `add`, `build` (git deps) | HTTP(S) proxy for package downloads (Plan 233 §1). Layered, first existing wins: (1) `NOVA_PKG_PROXY` env, or standard `HTTPS_PROXY`/`HTTP_PROXY` env (git honors those natively); (2) `[net] proxy = "..."` in the uncommitted `nova.override.toml` next to `nova.toml`; (3) `[net] proxy = "..."` in the global `~/.nova/config.toml` (or `<NOVA_HOME>/config.toml`). NOT supported in the committed `nova.toml` — proxy is a dev-machine/CI concern, not a package property |
 | `NOVA_SMT_BACKEND` | `contracts` | SMT backend (`trivial`, `z3`) |
 | `NOVA_PERF_TIMER` | `bench corpus` (auto-set) | Enables `__PERF__` markers in the compiler |
 | `NOVA_PERF_TIMER_AGGREGATE` | `bench corpus` | Aggregate `__PERF__` across passes |

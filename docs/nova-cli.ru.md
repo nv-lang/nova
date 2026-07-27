@@ -50,7 +50,7 @@ nova check lib.nv                # одиночный файл
 
 nova build app.nv -o app         # скомпилировать в native binary (так и запускают код)
 ./app                            # затем выполнить его
-nova add mathlib --path ../mathlib   # добавить зависимость, обновить nova.lock
+nova add mathlib --path ../mathlib   # добавить зависимость, обновить nova.lock.toml
 nova info mathlib                # effect-surface зависимости
 nova test nova_tests             # компиляция + запуск всех nova_tests/
 nova test nova_tests/plan118     # один поддиректорий
@@ -289,7 +289,7 @@ Nova компилируется в C; поддерживаемого интер�
 ### `nova add`
 
 Добавить зависимость в `[dependencies]` `nova.toml` текущего пакета и
-обновить `nova.lock` ([Plan 03.1](plans/03.1-path-git-dependencies.md)).
+обновить `nova.lock.toml` ([Plan 03.1](plans/03.1-path-git-dependencies.md)).
 
 ```
 nova add NAME (--path DIR | --git URL [--tag T | --branch B | --rev R | --version REQ])
@@ -310,11 +310,11 @@ nova add NAME (--path DIR | --git URL [--tag T | --branch B | --rev R | --versio
   опциональны (без пина — ветка по умолчанию, в lock всё равно пишется
   точный commit).
 - `--version` выбирает наибольший подходящий semver-тег репозитория и
-  пишет в `nova.lock` и версию, и commit.
+  пишет в `nova.lock.toml` и версию, и commit.
 - Правит секцию `[dependencies]` (создаёт при отсутствии). Дубль имени
   → exit `2`.
 - После правки запускает lock-sync: материализует git-зависимость в
-  кэше и пишет резолвнутый commit в `nova.lock`.
+  кэше и пишет резолвнутый commit в `nova.lock.toml`.
 - Работает только внутри пакета (`nova.toml` с `[package]`), не на
   голом `[workspace]`-манифесте.
 
@@ -328,7 +328,7 @@ nova add libfoo  --git https://example.org/libfoo.nv --version "^1.2"
 
 ### `nova update`
 
-Пере-резолвить git-зависимости и обновить `nova.lock`
+Пере-резолвить git-зависимости и обновить `nova.lock.toml`
 ([Plan 03.1](plans/03.1-path-git-dependencies.md) /
 [03.2](plans/03.2-version-resolution.md)).
 
@@ -338,7 +338,7 @@ nova update [NAME] [--precise NAME@VERSION]
 
 - `NAME` — конкретная git-зависимость для обновления. Без аргумента —
   все git-зависимости.
-- Снимает целевые git-записи из `nova.lock`, затем пере-резолвит:
+- Снимает целевые git-записи из `nova.lock.toml`, затем пере-резолвит:
   branch/tag-пины берут текущий commit, `version`-диапазоны — наибольший
   подходящий тег. Остальные остаются зафиксированными
   (воспроизводимость).
@@ -1144,8 +1144,9 @@ nova consume-analyze PATH [--format human|json] [--fail-on-uncovered]
 | `NOVA_CODEGEN` | (зарезервировано) | Override пути к `nova-codegen` binary |
 | `NOVA_MONO_DEPTH` | `build`, `test`, `test-build`, `bench` | Лимит monomorphization-инстанциаций (default 500) |
 | `NOVA_REACH_DCE` | `build`, `test`, `test-build` | Reachability-codegen DCE ([Plan 159](plans/159-reachability-codegen.md), [D283](decisions/09-tooling.md#d283)). Не задана / `≠0` → **ON** (default): в C эмитится только достижимое от `main`. `=0` → **OFF**: байт-идентичное до-159 поведение (эмитить всё) — escape hatch для диагностики over-prune |
-| `NOVA_HOME` | `add`, `build` (git-deps) | Корень кэша git-зависимостей; default `~/.nova` (кэш в `<NOVA_HOME>/git`) |
+| `NOVA_HOME` | `add`, `build` (git-deps) | Корень кэша git-зависимостей; default `~/.nova` (кэш в `<NOVA_HOME>/git`, глобальный proxy-конфиг в `<NOVA_HOME>/config.toml`) |
 | `NOVA_OFFLINE` | `add`, `build` (git-deps) | `=1` → запрет сети (clone/fetch); сборка только из готового кэша |
+| `NOVA_PKG_PROXY` | `add`, `build` (git-deps) | HTTP(S)-прокси для скачивания пакетов (План 233 §1). Слоями, первый существующий выигрывает: (1) env `NOVA_PKG_PROXY`, либо стандартные `HTTPS_PROXY`/`HTTP_PROXY` (git уважает их сам); (2) `[net] proxy = "..."` в НЕкоммитимом `nova.override.toml` рядом с `nova.toml`; (3) `[net] proxy = "..."` в глобальном `~/.nova/config.toml` (либо `<NOVA_HOME>/config.toml`). В коммитимом `nova.toml` НЕ поддержан — прокси это свойство машины/CI, не пакета |
 | `NOVA_SMT_BACKEND` | `contracts` | SMT-backend (`trivial`, `z3`) |
 | `NOVA_PERF_TIMER` | `bench corpus` (auto-set) | Включает `__PERF__` маркеры в компиляторе |
 | `NOVA_PERF_TIMER_AGGREGATE` | `bench corpus` | Aggregate `__PERF__` по проходам |

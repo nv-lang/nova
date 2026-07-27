@@ -44,8 +44,12 @@ venv/
 # Личные рабочие материалы
 docs/.sessions/
 
-# D420 (Plan 204): machine-local [replace] overrides — never committed
-# (dev-only path override on top of a package's release git+version dep).
+# D420 (Plan 204) / Plan 233 §2а (renamed): machine-local [replace] +
+# [net] proxy overrides — never committed (dev-only overrides on top of a
+# package's release git+version dep / env proxy). nova.override.toml is
+# the current canonical name; nova.local.toml kept for the transitional
+# period (old name still read by the tooling with a deprecation warning).
+nova.override.toml
 nova.local.toml
 
 # Артефакты компиляции примеров

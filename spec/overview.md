@@ -129,8 +129,10 @@
 - `nova bench file.nv` — прогон бенчмарков (release-mode, samples,
   regression-гейт) — Plan 57
 - `nova add`/`nova update`/`nova info` — управление зависимостями
-  (git/path-зависимости + `nova.lock`; `nova info --diff` — effect-surface
-  diff публичного API пакета как supply-chain-гейт) — Plan 03.1-03.4
+  (git/path-зависимости + `nova.lock.toml`; `nova info --diff` —
+  effect-surface diff публичного API пакета как supply-chain-гейт) —
+  Plan 03.1-03.4. Прокси для скачивания (`NOVA_PKG_PROXY` /
+  `nova.override.toml` `[net] proxy` / `~/.nova/config.toml`) — Plan 233
 - `nova regen-runtime [--check]` — регенерация `std/runtime/*.nv`
   stubs из `runtime_registry.rs` (Plan 13)
 - `nova daemon start/stop/status` — резидентный build-daemon (только

@@ -1684,9 +1684,10 @@ D78 выше описывает **полный** целевой tooling-стек
   (`$NOVA_HOME/git` либо `~/.nova/git`); offline-режим `NOVA_OFFLINE=1`.
 - `nova add` / `nova update` — правка `[dependencies]` + `nova.lock`.
 
-**Фактический формат `nova.lock` (v1, реализованное подмножество)** —
-раздельные поля вместо комбинированного `source`-префикса; registry-
-записи (с `hash`) добавит Plan 03.3:
+**Фактический формат `nova.lock.toml`** (v1, реализованное подмножество;
+имя файла — `nova.lock.toml`, см. амендмент Plan 233 ниже) — раздельные
+поля вместо комбинированного `source`-префикса; registry-записи (с
+`hash`) добавит Plan 03.3:
 
 ```toml
 version = 1
@@ -1722,6 +1723,57 @@ hash-пина (локальны, мутабельны). Неизвестные �
 effect-surface / capability-confined deps (Plan 03.4),
 `[dev-dependencies]`, `[features]`-резолюция; PubGrub-CDCL — followup
 registry-масштаба (D139).
+
+> **Амендмент (Plan 233, владелец 2026-07-26) — прокси для скачивания
+> пакетов + переименование lock/override-файлов.**
+>
+> **§1. Прокси.** Прокси — свойство СРЕДЫ разработчика/CI, не пакета
+> (прецедент: cargo `~/.cargo/config.toml` `[http].proxy`, НЕ
+> `Cargo.toml`; go `GOPROXY` env) — коммитимый `nova.toml` создал бы
+> переносимость-ловушку (у каждого своя сеть). В коммитимом `nova.toml`
+> `[net] proxy` **НЕ поддерживается** (осознанно). Резолв — слоями,
+> ПЕРВЫЙ существующий выигрывает:
+> 1. env `NOVA_PKG_PROXY`, либо стандартные `HTTPS_PROXY`/`HTTP_PROXY`
+>    (git уважает их сам — наш git-вызов не стерилизует env,
+>    `git_cache::run_git` не вызывает `env_clear()`).
+> 2. `[net] proxy = "..."` в НЕкоммитимом `nova.override.toml` рядом с
+>    `nova.toml` (ближайший вверх по дереву — тот же поиск, что
+>    `[replace]`).
+> 3. `[net] proxy = "..."` в глобальном пользовательском
+>    `~/.nova/config.toml` (либо `<NOVA_HOME>/config.toml`) — новый
+>    файл-слой, минимальная реализация (только `[net] proxy`, forward-
+>    compat парсер).
+>
+> Резолвнутое значение передаётся git-вызову явным `-c http.proxy=<url>`
+> (единый git config key для http:// и https://) — покрывает и
+> `NOVA_PKG_PROXY` (не git-нативная переменная), и файловые слои 2/3, о
+> которых git ничего не знает. Реализация — `compiler-codegen/src/
+> pkg_proxy.rs` (слои резолва) + `git_cache.rs::run_git` (инъекция).
+>
+> **§2/§2а. Переименование.** Итоговая схема имён (согласована с
+> владельцем, три итерации): `nova.toml` (без изменений) / **`nova.lock`
+> → `nova.lock.toml`** / **`nova.local.toml` → `nova.override.toml`**.
+> Мотивация lock: расширение `.lock` абстрактно — редакторы не включают
+> TOML-подсветку без плагина; `.lock.toml` (двойное расширение,
+> прецедент `*.d.ts`/`*.tar.gz`) даёт универсальную подсветку везде.
+> Мотивация override: `nova.local.toml`/`nova.override.toml` — визуальная
+> коллизия «local»/«lock» снята, «override» точнее описывает содержимое
+> (replace-пути И `[net] proxy` — оба оверрайды резолва, не просто
+> «локальные» настройки); прецедент механики — `docker-compose.override.yml`.
+> Оба файла **не коммитятся** (`.gitignore`).
+>
+> **Миграция (реализовано тем же слиянием).** Резолвер/писатель читает
+> ОБА имени (старое и новое); старое имя при чтении даёт deprecation
+> warning (`W_LOCK_LEGACY_NAME` для lock, `W_OVERRIDE_TOML_DEPRECATED`
+> для override); ПИШЕТ всегда новое имя. `nova_codegen::lockfile::load`
+> проверяет `nova.lock.toml`, при отсутствии — fallback на legacy
+> `nova.lock`; `sync`/`nova add`/`nova update` пишут только
+> `nova.lock.toml` (legacy-файл, если был, не удаляется автоматически —
+> least-surprise, следующее чтение уже берёт новое имя без warning).
+> `nova_codegen::manifest::parse_manifest` аналогично для
+> `nova.override.toml`/`nova.local.toml` (секция `[replace]`). Если
+> присутствуют ОБА имени в одной директории — новое побеждает без
+> warning.
 
 ### Связь
 
