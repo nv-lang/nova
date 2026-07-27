@@ -77,5 +77,54 @@
 # для них дыры нет. Верифицировано: m2217_26 standalone CC-FAIL→PASS;
 # исходное репро №139 + 4 вариации + регресс-фикстура (расширенная
 # tuple-полем) — все зелёные после доработки.
-lines=63246
+# Рост 63246→63326 осознан (реестр 221.1 №139, Round 3 — ФИНАЛЬНЫЙ, замена
+# заплаток round 1/2 на единый механизм): интегратор поймал ВТОРУЮ регрессию
+# от round 1/2 — флагман `examples/flagship/aggregator --strict-effects`:
+# "field has incomplete type 'NovaValue_HeaderName'" (nova-http
+# `HeaderEntry value { name HeaderName, value HeaderValue }` — ПРОСТОЙ
+# value-record нуждается в ДРУГОМ value-record'е по значению; НЕ generic-
+# инстанс, вопреки первоначальному предположению). Диагноз интегратора
+# ПОДТВЕРЖДЁН: round 1/2 чинили ОДНО направление зависимости (generic-
+# инстанс нуждается в tuple/NovaOpt/NovaRes), round 3 регрессия — ОБРАТНОЕ
+# направление (generic-инстанс/value-record нуждается в ДРУГОМ value-
+# record'е) — фиксированный маркер-порядок в принципе не может закрыть ОБЕ
+# стороны разом. ФИКС (не заплатка №3, а единый механизм, как просил
+# интегратор): `pending_value_nodes` — общий список узлов (имя, C-типы
+# полей, УЖЕ отрендеренный текст) от `emit_value_record_type`
+# (пользовательские value-record'ы), `drain_generic_type_worklist`
+# (generic-инстансы Record-вида, через side-channel
+# `last_generic_record_instance`) и mono tuple/fixed-array (свёрнуты в САМ
+# `render_unified_value_types` — Utf8Error-класс: обычный
+# `Option[Utf8Error]`-payload требует value-record ДО
+# `__NOVAOPT_TYPEDEFS__`, значит вся секция обязана сидеть на самой ранней
+# безопасной позиции, `__VALUE_RECORD_DEFS__`, а не на месте старого
+# `__GENERIC_TYPE_DEFS__`). Кан-алгоритм топосортирует по рёбрам "поле A по
+# значению — это узел B"; указатель — не ребро (нужен только forward-decl).
+# HEAP record'ы (`emit_record_type`) СОЗНАТЕЛЬНО НЕ включены в граф — их
+# прямая позиция в `self.out` уже структурно ПОСЛЕ всего preamble
+# (протестировано и отменено: включение heap-record'ов сломало
+# `Nova_FmtCtx.align Option[Align]` — обычное поле, не late-payload,
+# полагающееся на СВОЮ исходную позднюю позицию). Побочные находки той же
+# волны: (а) `debt_is_guaranteed_struct_tag` + generic-инстансный pointer-
+# forward-decl пре-пасс не распознавали позиционные mono-tuple/fixarr теги
+# (`_NovaTuple_..`/`_NovaFixArr_..`, ВНИМАНИЕ — с подчёркиванием, НЕ голое
+# `_NovaTuple`, иначе ловит legacy анонимную `_NovaTupleN` →
+# "typedef redefinition with different types", тоже поймано и исправлено
+# этой волной); (б) `opt_delta`-хойст (NovaOpt/NovaRes для СОБСТВЕННОГО
+# non-late Option/Result-поля record'а) — round 3 сначала ошибочно удалил
+# его как "более не нужный", затем ВОССТАНОВИЛ (для value-record'ов И для
+# generic-инстансов) при находке `ExtDto.opt_rec Option[ValRec]`
+# (`NovaOpt_NovaValue_ValRec` не найден) — ТОТ ЖЕ Utf8Error-класс, просто
+# внутри собственного, не чужого, поля. Round 1/2 инфраструктура
+# (`hoist_pending_generic_type_defs`, `render_value_composite_typedefs`)
+# УДАЛЕНА целиком — единый проход её не использует. Верифицировано:
+# основное репро №139 + вариации b2..b7 (m139-фикстура) — PASS;
+# m2217_26 standalone (round-1 регрессия) — PASS; флагман
+# `--strict-effects` — было 2×CC-FAIL → 0 CC-FAIL (единственный оставшийся
+# `RUN-FAIL` — задокументированный НЕЗАВИСИМЫЙ pre-existing флейк
+# `[M-flagship-aggregate-mixed-fanout-flake]`, 221.1 №20, 3/3 FAIL под
+# нагрузкой + 4/4 PASS изолированно уже на main ДО этого окна —
+# воспроизведено 2/5 PASS в этой сессии, подтверждает флейк, не регрессию);
+# `nova check std/src` канон 144/27/1057 не сдвинулся.
+lines=63326
 infer=348
