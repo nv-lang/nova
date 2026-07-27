@@ -1,0 +1,61 @@
+// std/reflect_test.nv — Plan 222.8 Ф.1 (D438) peer-tests: blanket
+// `Reflect`-реализации на примитивах/контейнерах + ручная (не компиляторная)
+// реализация протокола, возвращающая `Opaque` (owner-decided addition —
+// компилятор `Opaque` НИКОГДА сам не синтезирует, только hand-written impl).
+module std.reflect_test
+import std.reflect.{TypeShape, SumRepr, Reflect}
+
+test "int.reflect() -> Int" {
+    match int.reflect() { Int => assert(true), _ => assert(false) }
+}
+
+test "i8/i16/i32/i64/uint/u8/u16/u32/u64.reflect() -> Int (uniform, no wire-width split)" {
+    match i8.reflect()   { Int => assert(true), _ => assert(false) }
+    match i16.reflect()  { Int => assert(true), _ => assert(false) }
+    match i32.reflect()  { Int => assert(true), _ => assert(false) }
+    match i64.reflect()  { Int => assert(true), _ => assert(false) }
+    match uint.reflect() { Int => assert(true), _ => assert(false) }
+    match u8.reflect()   { Int => assert(true), _ => assert(false) }
+    match u16.reflect()  { Int => assert(true), _ => assert(false) }
+    match u32.reflect()  { Int => assert(true), _ => assert(false) }
+    match u64.reflect()  { Int => assert(true), _ => assert(false) }
+}
+
+test "f32/f64.reflect() -> Float" {
+    match f32.reflect() { Float => assert(true), _ => assert(false) }
+    match f64.reflect() { Float => assert(true), _ => assert(false) }
+}
+
+test "bool.reflect() -> Bool" {
+    match bool.reflect() { Bool => assert(true), _ => assert(false) }
+}
+
+test "str.reflect() -> Str" {
+    match str.reflect() { Str => assert(true), _ => assert(false) }
+}
+
+// [M-reflect-generic-static-dispatch-collision] (found 2026-07-27, Ф.1):
+// a BARE direct call to a generic-bracketed zero-param static method
+// (`[]int.reflect()`, `Option[int].reflect()`, `Option[str].reflect()`)
+// resolves to the WRONG callee when ANY other zero-param same-named static
+// method exists in the CU (confirmed: collides even with plain PRIMITIVE
+// `.reflect()`s, not just other generic instances) — same known class as
+// the documented `[race-198/196.6]` "single-key method_receivers name-only
+// fallback, last-wins" weakness (see synth_display_record_body's comment,
+// auto_derive.rs), here maximally exposed because `.reflect()` has ZERO
+// parameters to disambiguate by (only the static receiver TYPE differs).
+// Repro: `[]int.reflect()` CC-FAILs (`Nova_Vec____nova_int` has no `tag`/
+// `payload` — codegen picked a completely different callee); `Option[int].
+// reflect()`/`Option[str].reflect()` COMPILE but both resolve to the SAME
+// unmangled `Nova_Option_static_reflect()` symbol (silently wrong mono,
+// worse than a compile error). Does NOT affect `#impl(Reflect)` SYNTHESIS
+// (`auto_derive.rs`'s `build_type_shape_expr` builds `Arr`/`Opt` INLINE for
+// container fields, never dispatches to these blanket functions — see
+// `reflect_containers_pos.nv` conformance fixture, unaffected). Root cause
+// is in the checker's generic-bracketed static-call resolution / emit_c.rs
+// callee-mangling for zero-param methods — deep hot-path territory, out of
+// Ф.1 scope (222.8 brief: "не наращивать легаси", STOP+report). Blanket
+// bodies below are still exercised (and pass) via the record/sum synthesis
+// path in the conformance fixtures; this comment documents why they are
+// NOT also exercised via a bare direct call here.
+

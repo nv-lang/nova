@@ -1,0 +1,32 @@
+// Plan 222.8 Ф.1 (D438) — POS: record `#impl(Reflect)` — wire-имена полей
+// ПОСЛЕ rename/rename_all (D435) резолва, `#serde(skip)`-поле исключено из
+// схемы целиком (никогда не попадает на wire → не должно быть в TypeShape).
+module spec_tests.conformance
+
+import std.reflect.{Reflect}
+
+#serde(rename_all = "camelCase")
+#impl(Reflect)
+type ReflAccount {
+    user_id int
+    #serde(rename = "displayName")
+    full_name str
+    #serde(skip)
+    cache_token str
+}
+
+test "record #impl(Reflect): wire-имена после rename/rename_all, skip исключён (222.8 D438)" {
+    match ReflAccount.reflect() {
+        Record(name, fields) => {
+            assert(name == "ReflAccount")
+            assert(fields.len() == 2)
+            ro (n0, s0) = fields[0]
+            assert(n0 == "userId")
+            match s0 { Int => assert(true), _ => assert(false) }
+            ro (n1, s1) = fields[1]
+            assert(n1 == "displayName")
+            match s1 { Str => assert(true), _ => assert(false) }
+        }
+        _ => assert(false)
+    }
+}

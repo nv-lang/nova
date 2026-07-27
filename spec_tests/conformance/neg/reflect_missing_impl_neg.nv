@@ -1,0 +1,23 @@
+// EXPECT_COMPILE_ERROR E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL
+//
+// Plan 222.8 Ф.1 (D438) — NEG: `#impl(Reflect)` on a record whose field type
+// does not implement `Reflect` -> auto-derive synthesis fails at compile
+// time (mirrors Serialize's identical diagnostic class — precedent
+// n2_field_lacks_protocol_neg.nv / d316_monotonic_non_serializable_neg.nv).
+module neg.reflect_missing_impl_neg
+
+import std.reflect.{Reflect}
+
+type BareInner {
+    n int
+}
+
+#impl(Reflect)
+type WrapBare {
+    inner BareInner
+}
+
+test "field lacks Reflect fails compile" {
+    ro w = WrapBare { inner: BareInner { n: 0 } }
+    assert(w.inner.n == 0)
+}

@@ -1,0 +1,67 @@
+// Plan 222.8 Ф.1 (D438) — POS: Vec/Option/примитивы через record-поля
+// (compiler-side inline `Arr`/`Opt` synthesis — `build_type_shape_expr`,
+// NOT a dispatch call to the std blanket `[]T.reflect()`/`Option[T].
+// reflect()` functions; see std/src/reflect_test.nv's documented
+// `[M-reflect-generic-static-dispatch-collision]` for why a BARE direct
+// call to those blanket functions is currently unreliable — this fixture
+// exercises the actually-used, working code path) + a manual (non-
+// synthesized) `#impl(Reflect)`-equivalent returning `Opaque` (owner
+// addition 2026-07-27 — the compiler NEVER synthesizes `Opaque` itself).
+module spec_tests.conformance
+
+import std.reflect.{Reflect}
+
+#impl(Reflect)
+type ReflContainers {
+    tags []str
+    scores []int
+    nickname Option[str]
+    limit Option[int]
+}
+
+test "Vec/Option container fields -> Arr/Opt (inline synthesis) (222.8 D438)" {
+    match ReflContainers.reflect() {
+        Record(name, fields) => {
+            assert(name == "ReflContainers")
+            assert(fields.len() == 4)
+            ro (n0, s0) = fields[0]
+            assert(n0 == "tags")
+            match s0 {
+                Arr(items) => match items { Str => assert(true), _ => assert(false) }
+                _ => assert(false)
+            }
+            ro (n1, s1) = fields[1]
+            assert(n1 == "scores")
+            match s1 {
+                Arr(items) => match items { Int => assert(true), _ => assert(false) }
+                _ => assert(false)
+            }
+            ro (n2, s2) = fields[2]
+            assert(n2 == "nickname")
+            match s2 {
+                Opt(inner) => match inner { Str => assert(true), _ => assert(false) }
+                _ => assert(false)
+            }
+            ro (n3, s3) = fields[3]
+            assert(n3 == "limit")
+            match s3 {
+                Opt(inner) => match inner { Int => assert(true), _ => assert(false) }
+                _ => assert(false)
+            }
+        }
+        _ => assert(false)
+    }
+}
+
+// `Reflect` is structural (D42) — a hand-written `.reflect()` satisfies it
+// without `#impl(Reflect)` (that attribute only REQUESTS compiler synthesis).
+type ReflRawHandle { fd int }
+
+fn ReflRawHandle.reflect() -> TypeShape => Opaque("ReflRawHandle")
+
+test "manual (non-synthesized) Reflect impl returning Opaque — compiler never synthesizes Opaque itself (222.8 D438)" {
+    match ReflRawHandle.reflect() {
+        Opaque(name) => assert(name == "ReflRawHandle")
+        _ => assert(false)
+    }
+}
