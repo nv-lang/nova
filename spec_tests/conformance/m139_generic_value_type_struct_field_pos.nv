@@ -1,0 +1,196 @@
+// Regression `[M-user-generic-value-type-as-struct-field]` (реестр 221.1
+// №139, окно p139, 2026-07-27). A user-defined GENERIC `value` type used as
+// a STRUCT FIELD's type (e.g. `type Bundle value { w Wrap[int], n int }`)
+// failed to compile: `CC-FAIL ... error: unknown type name
+// 'NovaValue_Wrap____nova_int'`.
+//
+// Root cause was NOT a missing mono-collector seed — `type_ref_to_c` (via
+// `resolved_named_to_c`'s generic-template branch) already registers the
+// field's generic-type instance into `generic_type_worklist` correctly, the
+// moment the field's C-type name is computed. The real bug is ORDERING
+// between two independently-spliced buffers: the drained instance text
+// always lands in the shared `generic_type_defs_buf`, spliced ONCE at the
+// single `/*__GENERIC_TYPE_DEFS__*/` marker — which sits in the generated
+// file AFTER `__VALUE_RECORD_DEFS__` (spliced early, from `emit_preamble`)
+// and AFTER a heap record's own direct `self.out` position
+// (`emit_record_type` has no buffer redirect at all). So a BY-VALUE field
+// embedding a user generic-type instance always referenced a struct that
+// hadn't been declared yet — independent of whether that instance was ALSO
+// used elsewhere (e.g. via a constructor call): the call's own registration
+// drains into the exact same late-spliced buffer, so it never helped.
+//
+// Fix: `hoist_pending_generic_type_defs` (emit_c.rs) force-drains the
+// worklist right after a record's fields are lowered and cuts the
+// freshly-emitted delta OUT of `generic_type_defs_buf` (so the later marker
+// splice does not duplicate it), handing the text back to the caller to
+// splice directly ahead of its OWN struct — wired into both
+// `emit_value_record_type` (value records) and `emit_record_type` (heap
+// records).
+//
+// FOLLOW-UP (same window, integrator-caught mega-CU regression on an
+// UNRELATED pre-existing fixture,
+// `standalone/m2217_26_generic_static_method_value_arg_addr_mismatch`):
+// hoisting a generic-instance body EARLY can itself break if that body
+// references ANOTHER deferred, single-marker-spliced category (mono
+// tuple/fixed-array, `NovaOpt_<T>`, `NovaRes_<ok>_<err>`) that would
+// otherwise render even LATER in the file — same bug, one level deeper.
+// Concretely: ANY value-record field typed `[]( ... )` (Vec-of-tuple, a
+// very common shape — `Req.params []( str, str)` in the regression, nothing
+// to do with user generic value-types specifically) registers a Vec-mono
+// instance into the SAME `generic_type_worklist` my hoist drains, and that
+// Vec-mono's OWN body (`_NovaTuple_.. * data`) needs the tuple typedef
+// available at the EARLY hoisted position too. Fix:
+// `render_value_composite_typedefs` (the existing tuple/fixarr
+// finalize-splice topo-sort, extracted into a reusable pure method — every
+// entry is `#ifndef`-guarded, so an early duplicate render is always safe)
+// plus a cut-and-move delta for `NovaOpt`/`NovaRes` (not guarded — reusing
+// the SAME technique the pre-existing `opt_delta` hoist in
+// `emit_value_record_type` already uses for a record's own direct fields,
+// just scoped to content the forced drain itself newly causes). M139B6/B7
+// below cover this class directly.
+//
+// ROUND 3 (same window): integrator's mega-CU caught a SECOND regression —
+// `examples/flagship/aggregator --strict-effects`: "field has incomplete
+// type 'NovaValue_HeaderName'" (nova-http `HeaderEntry value { name
+// HeaderName, value HeaderValue }` — a PLAIN value-record needing ANOTHER
+// plain value-record by value; not a generic instance at all). Diagnosis:
+// rounds 1/2 only fixed ONE direction of the dependency (generic-instance
+// needs tuple/NovaOpt/NovaRes); the real corpus needs it in BOTH directions
+// simultaneously — no fixed marker/hoist order can satisfy both. FIX: a
+// single unified topological sort (`pending_value_nodes` +
+// `render_unified_value_types`, Kahn's algorithm) over EVERY value-type
+// category together (user value-records, Record-kind generic-instances,
+// mono tuple/fixed-array) — replacing rounds 1/2's ad-hoc hoists entirely.
+//
+// ROUND 4 (same window): integrator's FULL mega-CU (589 tests) caught a
+// THIRD gap — `a_q3_println_debug_record` went from an intermittent
+// RUNTIME flake to a DETERMINISTIC `CC-FAIL` ("unknown type name
+// 'NovaTuple_D414pfPair'"/`'NovaTuple_Vec36'`): NAMED tuples
+// (`type Point(x f64, y f64)`, `emit_named_tuple_type`) were the ONE
+// category round 2 audited and correctly left OUT of the graph AT THE TIME
+// (they rendered in-place, at essentially the same early position as
+// `__VALUE_RECORD_DEFS__` then sat) — round 3 moved the unified section to
+// become the FIRST thing emitted, ahead of named tuples' still-unchanged
+// in-loop position, re-opening the exact ordering gap for this one
+// category. FIX: named tuples now ALSO capture into `pending_value_nodes`
+// (M139B8 below) — completing the node set the coordinator asked to be
+// closed once and for all (full audit of every deferred-emission category
+// in emit_c.rs is in the round-4 report, not repeated here).
+//
+// Covers the minimal repro plus every variation from the окно p139 brief:
+// multiple distinct generic-field instances, nesting, a generic value-type
+// field on a non-value (heap) record, a field whose instance has no OTHER
+// use-site in the file (pure field-only seed), a generic instance
+// instantiated DIRECTLY over a tuple type, a Vec-of-tuple field (the round-2
+// regression shape), and a value-type field typed as a NAMED tuple (the
+// round-4 regression shape).
+module spec_tests.conformance
+
+type M139Wrap[T] value { priv data T }
+fn M139Wrap[T].make(v T) -> M139Wrap[T] => { data: v }
+fn M139Wrap[T] @data() -> T => @data
+
+// Minimal repro: generic value-type as a field of ANOTHER value record.
+type M139Bundle value { w M139Wrap[int], n int }
+
+test "m139: generic value-тип полем структуры" {
+    ro b = M139Bundle { w: M139Wrap[int].make(7), n: 1 }
+    assert(b.w.data() == 7)
+    assert(b.n == 1)
+}
+
+// Variation: several fields, each a DIFFERENT generic instance.
+type M139B2 value { a M139Wrap[int], b M139Wrap[str] }
+
+test "m139: несколько generic-полей разных инстансов" {
+    ro b = M139B2 { a: M139Wrap[int].make(7), b: M139Wrap[str].make("hi") }
+    assert(b.a.data() == 7)
+    assert(b.b.data() == "hi")
+}
+
+// Variation: nesting — a generic value-type instantiated over ANOTHER
+// instance of itself.
+type M139B3 value { w M139Wrap[M139Wrap[int]] }
+
+test "m139: вложенность generic-полей" {
+    ro b = M139B3 { w: M139Wrap[M139Wrap[int]].make(M139Wrap[int].make(7)) }
+    assert(b.w.data().data() == 7)
+}
+
+// Variation: generic value-type field on a non-value (heap) record —
+// `emit_record_type`'s side of the fix (no buffer redirect, unlike the
+// value-record path above).
+type M139B4 { w M139Wrap[int] }
+
+test "m139: generic value-тип полем НЕ-value record" {
+    ro b = M139B4 { w: M139Wrap[int].make(7) }
+    assert(b.w.data() == 7)
+}
+
+// Variation: the field's instance (`M139Wrap[bool]`) has no OTHER use-site
+// anywhere in this file besides constructing this one field — the "pure
+// field-only seed" case named in the p139 brief. (Structurally this cannot
+// be made to differ from the repro above within Nova: some construction
+// expression is always needed to populate a field's value, and that
+// expression is itself a "use" of the type. Kept as an explicit named
+// scenario per the review checklist, not because the fix's code path
+// distinguishes it from M139Bundle above — it does not.)
+type M139B5 value { w M139Wrap[bool], n int }
+
+test "m139: generic-поле, инстанс которого больше нигде не используется" {
+    ro b = M139B5 { w: M139Wrap[bool].make(true), n: 1 }
+    assert(b.n == 1)
+}
+
+// Follow-up variation: the generic instance's OWN body (not a container
+// wrapping it) directly embeds a tuple type BY VALUE — `data (str, str)`
+// after substitution. Exercises `render_value_composite_typedefs` being
+// called from the hoist path for the hoisted instance's OWN field, not a
+// nested container.
+type M139B6 value { w M139Wrap[(str, str)] }
+
+test "m139: generic-поле, чьё тело САМО хранит tuple по значению" {
+    ro b = M139B6 { w: M139Wrap[(str, str)].make(("a", "b")) }
+    ro pair = b.w.data()
+    assert(pair.0 == "a")
+    assert(pair.1 == "b")
+}
+
+// Follow-up variation: the EXACT regression shape — a value-record field
+// typed `[](tuple)` (Vec-of-tuple). No user generic value-type involved at
+// all; `[]T ≡ Vec[T]` (D239) registers its OWN mono instance into the same
+// `generic_type_worklist` the hoist drains, and that Vec-mono's body embeds
+// the tuple type by pointer — needs the tuple typedef complete/forward-
+// declared at the hoisted position too.
+type M139B7 value {
+    ro name str
+    params []( str, str)
+}
+
+test "m139: value-record поле []( tuple) — Vec-of-tuple тоже триггерит hoist" {
+    mut b = M139B7 { name: "x", params: [] }
+    b.params.push(("a", "b"))
+    assert(b.params.len() == 1)
+    assert(b.params[0].0 == "a")
+    assert(b.params[0].1 == "b")
+    assert(b.name == "x")
+}
+
+// Round-4 variation: a value-type field typed as a NAMED tuple
+// (`type M139Pair(a int, b int)`) — the EXACT regression shape from
+// `a_q3_println_debug_record` (`NovaTuple_D414pfPair`/`NovaTuple_Vec36`
+// unknown after the unified section moved ahead of named tuples' in-loop
+// position). `M139Pair` must now be captured into `pending_value_nodes`
+// (via `emit_named_tuple_type`) exactly like `M139Wrap`/`M139Bundle`, so
+// Kahn's sort places it correctly relative to `M139B8` regardless of which
+// one the type-decl loop happens to reach first.
+type M139Pair(a int, b int)
+
+type M139B8 value { pair M139Pair, n int }
+
+test "m139: value-тип с полем — ИМЕНОВАННЫЙ кортеж" {
+    ro b = M139B8 { pair: M139Pair(a: 1, b: 2), n: 3 }
+    assert(b.pair.a == 1)
+    assert(b.pair.b == 2)
+    assert(b.n == 3)
+}
