@@ -1515,7 +1515,7 @@ fn resolve_one(
                  expected:       {}\n  \
                  importing file: {}\n  \
                  hint: проверьте `path` в `[replace]` (nova.toml или \
-                 nova.local.toml) — на несуществующий override-путь \
+                 nova.override.toml) — на несуществующий override-путь \
                  компилятор НЕ откатывается тихо на git/декларированный \
                  источник; либо исправьте путь, либо уберите override",
                 imp.path[0], p, importer_path.display(),

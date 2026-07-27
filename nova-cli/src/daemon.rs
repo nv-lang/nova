@@ -30,8 +30,9 @@
 //! **Инвалидация.** Toolchain — ключ = pref+explicit_clang+explicit_vcvars+
 //! env_fingerprint (хеш PATH+NOVA_CLANG+NOVA_VCVARS+ProgramFiles(x86));
 //! смена любого → промах → демон детектит заново (как клиент делал бы
-//! сам). Dep-lock — ключ = хеш(entry `nova.toml`)+хеш(`nova.lock`, если
-//! есть) — "по содержимому, не mtime" (план §2.1). **Известный OPEN**
+//! сам). Dep-lock — ключ = хеш(entry `nova.toml`)+хеш(lockfile'а, если
+//! есть — `nova.lock.toml`, либо legacy `nova.lock`) — "по содержимому,
+//! не mtime" (план §2.1). **Известный OPEN**
 //! (не блокер Ф.1, задокументирован в `docs/plans/wip/219-impl-notes.md`):
 //! не покрывает правку ТРАНЗИТИВНОГО манифеста (path/git-зависимости
 //! другого пакета) без изменения entry-манифеста/lock — полный обход
@@ -298,15 +299,23 @@ fn env_fingerprint() -> String {
     format!("{:016x}", h.finish())
 }
 
-/// Хеш (entry `nova.toml` content) + (`nova.lock` content, если есть) —
+/// Хеш (entry `nova.toml` content) + (lockfile content, если есть) —
 /// "по содержимому, не mtime" (план §2.1). Публичная — используется и
 /// перед dep-lock (Prime-запрос) и после успешного `sync()` (Commit).
+///
+/// Plan 233 §2: lockfile — новое имя `nova.lock.toml`
+/// (`nova_codegen::lockfile::LOCK_FILE_NAME`), с fallback на legacy
+/// `nova.lock` (`LEGACY_LOCK_FILE_NAME`), тем же приоритетом, что
+/// `lockfile::load` (без повторного warning здесь — это только
+/// cache-инвалидационный хеш, не пользовательское чтение).
 pub fn dep_combined_hash(pkg_dir: &Path) -> Option<String> {
     let toml_bytes = std::fs::read(pkg_dir.join("nova.toml")).ok()?;
     let mut h = DefaultHasher::new();
     "nova-daemon-dep-v1".hash(&mut h);
     toml_bytes.hash(&mut h);
-    match std::fs::read(pkg_dir.join("nova.lock")) {
+    let lock_bytes = std::fs::read(pkg_dir.join(nova_codegen::lockfile::LOCK_FILE_NAME))
+        .or_else(|_| std::fs::read(pkg_dir.join(nova_codegen::lockfile::LEGACY_LOCK_FILE_NAME)));
+    match lock_bytes {
         Ok(lock_bytes) => {
             true.hash(&mut h);
             lock_bytes.hash(&mut h);
@@ -768,6 +777,9 @@ mod tests {
         std::env::temp_dir().join(format!("nova_p219_{}_{}_{}", tag, std::process::id(), nanos))
     }
 
+    /// Plan 233 §2 (back-compat): legacy lock name `nova.lock` still
+    /// participates in the hash (fallback), regression coverage for the
+    /// pre-Plan-233 filename.
     #[test]
     fn dep_hash_stable_and_content_sensitive() {
         let root = tmp_root("dephash");
@@ -784,6 +796,28 @@ mod tests {
         std::fs::write(root.join("nova.toml"), "[package]\nname=\"t2\"\n").unwrap();
         let h4 = dep_combined_hash(&root).expect("hash");
         assert_ne!(h3, h4, "manifest content change changes the hash");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Plan 233 §2: NEW lock name `nova.lock.toml` participates in the
+    /// hash too (preferred over legacy when both would exist — see
+    /// `nova_codegen::lockfile::load`'s precedence, mirrored here via
+    /// `or_else`).
+    #[test]
+    fn dep_hash_content_sensitive_new_lock_name() {
+        let root = tmp_root("dephash_new");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("nova.toml"), "[package]\nname=\"t\"\n").unwrap();
+        let h1 = dep_combined_hash(&root).expect("hash");
+
+        std::fs::write(root.join("nova.lock.toml"), "# lock v1\n").unwrap();
+        let h2 = dep_combined_hash(&root).expect("hash");
+        assert_ne!(h1, h2, "adding nova.lock.toml changes the hash");
+
+        std::fs::write(root.join("nova.lock.toml"), "# lock v1 changed\n").unwrap();
+        let h3 = dep_combined_hash(&root).expect("hash");
+        assert_ne!(h2, h3, "changing nova.lock.toml content changes the hash");
 
         let _ = std::fs::remove_dir_all(&root);
     }
