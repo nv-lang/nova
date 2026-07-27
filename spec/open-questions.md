@@ -733,7 +733,8 @@ pattern match с `Fail[InvalidVariant]`. Конфликт значений за�
 ## Q16. Bitflags ✅ ЗАКРЫТО (D46)
 
 > С введением [D46 (operator overloading)](decisions/03-syntax.md#d46) вопрос
-> закрывается **Вариантом C** (newtype над int с методами `@or`, `@and`):
+> закрывается **Вариантом C** (newtype над int с методами `@bitor`, `@bitand` —
+> имена по D46-амендменту 2026-07-27, прежние `@or`/`@and` ретрактированы):
 >
 > ```nova
 > type Permission(int)
@@ -741,10 +742,10 @@ pattern match с `Fail[InvalidVariant]`. Конфликт значений за�
 > const WRITE   Permission = Permission(2)
 > const EXECUTE Permission = Permission(4)
 >
-> fn Permission @or(other Permission) -> Permission =>
+> fn Permission @bitor(other Permission) -> Permission =>
 >     Permission(@0 | other.0)
 >
-> fn Permission @and(other Permission) -> Permission =>
+> fn Permission @bitand(other Permission) -> Permission =>
 >     Permission(@0 & other.0)
 >
 > fn Permission @contains(flag Permission) =>
@@ -754,7 +755,7 @@ pattern match с `Fail[InvalidVariant]`. Конфликт значений за�
 > if p.contains(READ) { ... }
 > ```
 >
-> Типобезопасность сохранена, оператор `|` работает через `@or`.
+> Типобезопасность сохранена, оператор `|` работает через `@bitor`.
 > Stdlib `Bitflags[T]` (Вариант A) **не нужен**.
 
 **Контекст.** Permissions, capabilities, set-of-options — частый паттерн:
