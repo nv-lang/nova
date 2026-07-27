@@ -17552,6 +17552,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             },
         );
         let struct_def = std::mem::replace(&mut self.out, saved_out);
+        // [реестр 221.1 №139] Hoist ahead any user GENERIC value-type
+        // instance this record's by-value fields registered as a mono seed
+        // (e.g. `w Wrap[int]` → `NovaValue_Wrap____nova_int`) — see
+        // `hoist_pending_generic_type_defs` doc. Must land in
+        // `value_record_defs_buf` BEFORE `struct_def` below (this record's
+        // own by-value field needs that instance's struct COMPLETE, not
+        // merely forward-declared).
+        let gti_hoist = self.hoist_pending_generic_type_defs()?;
         // Hoist the NovaOpt typedefs this record's by-value fields registered
         // (delta since `opt_snap`) ahead of the struct; truncate the shared
         // buffer back so the late `/*__NOVAOPT_TYPEDEFS__*/` splice does not
@@ -17658,6 +17666,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             opt_delta.push_str(&typedef_line);
             opt_delta.push_str(&eq_block);
         }
+        self.value_record_defs_buf.push_str(&gti_hoist);
         self.value_record_defs_buf.push_str(&fwd_decls);
         self.value_record_defs_buf.push_str(&opt_delta);
         self.value_record_defs_buf.push_str(&struct_def);
@@ -17721,6 +17730,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                 }
             }
+        }
+        // [реестр 221.1 №139] Hoist ahead any user GENERIC value-type
+        // instance the pre-pass above registered as a mono seed while
+        // computing field C-types (e.g. `w Wrap[int]` → BY-VALUE
+        // `NovaValue_Wrap____nova_int` — the pointer-forward-decl branch just
+        // above only helps pointer fields; a by-value field needs the
+        // instance's struct COMPLETE before THIS `struct Nova_<name>` opens).
+        // See `hoist_pending_generic_type_defs` doc. No buffer redirect here
+        // (unlike `emit_value_record_type`) — push straight into `self.out`
+        // at the current position, ahead of the struct below.
+        let gti_hoist = self.hoist_pending_generic_type_defs()?;
+        if !gti_hoist.is_empty() {
+            self.out.push_str(&gti_hoist);
         }
         self.line(&format!("typedef struct Nova_{0} Nova_{0};", name));
         self.line(&format!("struct Nova_{} {{", name));
@@ -25385,6 +25407,53 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.current_receiver_type = None;
         self.sync_receiver_rt();
         Ok(())
+    }
+
+    /// [реестр 221.1 №139, M-user-generic-value-type-as-struct-field] A
+    /// non-generic record/value-record field whose C-type is a user GENERIC
+    /// type instance (e.g. `Wrap[int]` → `NovaValue_Wrap____nova_int`) needs
+    /// that instance's COMPLETE struct body available before THIS record's
+    /// own struct — true unconditionally for a BY-VALUE embed (`NovaValue_…`,
+    /// no pointer indirection), and the `type_ref_to_c` call that computed
+    /// the field's C-name already registered the instance into
+    /// `generic_type_worklist` (`resolved_named_to_c`'s generic-template
+    /// branch — the SEED fires correctly). The gap is ORDERING: the drained
+    /// text normally lands in the shared `generic_type_defs_buf`, spliced
+    /// ONCE at the single `/*__GENERIC_TYPE_DEFS__*/` marker positioned in
+    /// the file AFTER both `__VALUE_RECORD_DEFS__` (emitted in the early
+    /// `emit_preamble`) and a heap record's own direct `self.out` position
+    /// (`emit_record_type`, no buffer redirect) — so a by-value generic-
+    /// instance field always referenced an as-yet-undeclared struct
+    /// ("unknown type name"), independent of whether the instance is ALSO
+    /// used elsewhere (e.g. via a constructor call) — the call's own
+    /// registration timing doesn't help because it drains into the SAME
+    /// late-spliced shared buffer.
+    ///
+    /// Force-drains the worklist NOW (safe: `drain_generic_type_worklist` is
+    /// already called opportunistically from many other mid-stream points in
+    /// this file — idempotent via `emitted_generic_type_instances`) and cuts
+    /// the freshly-appended delta OUT of `generic_type_defs_buf` (so the
+    /// later marker splice does not duplicate it), returning it for the
+    /// caller to splice directly ahead of its OWN struct text. Nested
+    /// generics (`Wrap[Wrap[int]]`) stay correctly ordered inside the
+    /// returned delta — `drain_generic_type_worklist` loops until the queue
+    /// (including newly-enqueued nested instances) is empty, and
+    /// `register_generic_instances_in_typeref`/`resolved_named_to_c` both
+    /// register inner args before the outer instance (depth-first). Returns
+    /// an empty string (true no-op) when nothing was pending — the
+    /// overwhelmingly common case for records without generic-instance
+    /// fields, so callers pay zero cost.
+    fn hoist_pending_generic_type_defs(&mut self) -> Result<String, String> {
+        if self.generic_type_worklist.borrow().is_empty() {
+            return Ok(String::new());
+        }
+        let snap = self.generic_type_defs_buf.len();
+        self.drain_generic_type_worklist()?;
+        if self.generic_type_defs_buf.len() > snap {
+            Ok(self.generic_type_defs_buf.split_off(snap))
+        } else {
+            Ok(String::new())
+        }
     }
 
     /// Plan 48 Ф.2: emit a monomorphized function body.
