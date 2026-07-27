@@ -1,0 +1,80 @@
+// std/reflect_test.nv — Plan 222.8 Ф.1 (D438) peer-tests: blanket
+// `Reflect`-реализации на примитивах/контейнерах + ручная (не компиляторная)
+// реализация протокола, возвращающая `Opaque` (owner-decided addition —
+// компилятор `Opaque` НИКОГДА сам не синтезирует, только hand-written impl).
+module std.reflect
+
+test "int.reflect() -> Int" {
+    match int.reflect() { Int => assert(true), _ => assert(false) }
+}
+
+test "i8/i16/i32/i64/uint/u8/u16/u32/u64.reflect() -> Int (uniform, no wire-width split)" {
+    match i8.reflect()   { Int => assert(true), _ => assert(false) }
+    match i16.reflect()  { Int => assert(true), _ => assert(false) }
+    match i32.reflect()  { Int => assert(true), _ => assert(false) }
+    match i64.reflect()  { Int => assert(true), _ => assert(false) }
+    match uint.reflect() { Int => assert(true), _ => assert(false) }
+    match u8.reflect()   { Int => assert(true), _ => assert(false) }
+    match u16.reflect()  { Int => assert(true), _ => assert(false) }
+    match u32.reflect()  { Int => assert(true), _ => assert(false) }
+    match u64.reflect()  { Int => assert(true), _ => assert(false) }
+}
+
+test "f32/f64.reflect() -> Float" {
+    match f32.reflect() { Float => assert(true), _ => assert(false) }
+    match f64.reflect() { Float => assert(true), _ => assert(false) }
+}
+
+test "bool.reflect() -> Bool" {
+    match bool.reflect() { Bool => assert(true), _ => assert(false) }
+}
+
+test "str.reflect() -> Str" {
+    match str.reflect() { Str => assert(true), _ => assert(false) }
+}
+
+test "[]int.reflect() -> Arr(Int) (Vec[T]/[]T alias blanket)" {
+    match []int.reflect() {
+        Arr(items) => match items { Int => assert(true), _ => assert(false) }
+        _ => assert(false)
+    }
+}
+
+test "[]str.reflect() -> Arr(Str)" {
+    match []str.reflect() {
+        Arr(items) => match items { Str => assert(true), _ => assert(false) }
+        _ => assert(false)
+    }
+}
+
+test "Option[int].reflect() -> Opt(Int)" {
+    match Option[int].reflect() {
+        Opt(inner) => match inner { Int => assert(true), _ => assert(false) }
+        _ => assert(false)
+    }
+}
+
+test "Option[str].reflect() -> Opt(Str)" {
+    match Option[str].reflect() {
+        Opt(inner) => match inner { Str => assert(true), _ => assert(false) }
+        _ => assert(false)
+    }
+}
+
+// ── Opaque: ТОЛЬКО ручная реализация (owner-decided addition). Компилятор
+// сам `Opaque` не синтезирует — здесь ручной `#impl(Reflect)` на локальном
+// типе, имитирующем "сырой", не подлежащий схеме тип (напр. ServerRequest
+// в бандл-extractor'е 222.8 §1.3, вне Ф.1-объёма).
+// `Reflect` — структурный протокол (D42): предоставить `.reflect()` с нужной
+// сигнатурой достаточно для соответствия, `#impl(Reflect)` НЕ нужен (это
+// атрибут для ЗАПРОСА компиляторного СИНТЕЗА, RawHandle его не просит).
+type RawHandle { fd int }
+
+fn RawHandle.reflect() -> TypeShape => Opaque("RawHandle")
+
+test "manual #impl(Reflect) returning Opaque — compiler never synthesizes this itself" {
+    match RawHandle.reflect() {
+        Opaque(name) => assert(name == "RawHandle")
+        _ => assert(false)
+    }
+}
