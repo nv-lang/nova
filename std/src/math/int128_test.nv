@@ -207,7 +207,7 @@ test "равенство и !=" {
 // ── Битовые и сдвиги ──────────────────────────────────────────────────────
 
 test "битовые операции" {
-    assert(ZERO.not() == NEG_ONE)
+    assert(ZERO.bitnot() == NEG_ONE)
     assert(NEG_ONE.and(ONE) == ONE)
     assert(ZERO.or(ONE) == ONE)
     assert(ONE.xor(ONE) == ZERO)
