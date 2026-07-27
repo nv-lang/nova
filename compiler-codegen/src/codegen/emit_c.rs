@@ -8488,166 +8488,13 @@ impl CEmitter {
         // DAG. `/*__MONO_FIXARR_TYPEDEFS__*/` is kept downstream as a
         // permanent no-op splice (always empty) purely so compile-units with
         // zero fixarr instances keep byte-identical preamble output.
-        enum ValueCompositeInst {
-            Tuple(Vec<String>),
-            FixArr(usize, String),
-        }
-        fn vc_mangled(inst: &ValueCompositeInst) -> String {
-            match inst {
-                ValueCompositeInst::Tuple(elems) => CEmitter::compute_mono_tuple_c_name(elems),
-                ValueCompositeInst::FixArr(n, elem) => CEmitter::compute_mono_fixed_array_c_name(*n, elem),
-            }
-        }
-        // Raw field C-type strings whose BY-VALUE use requires the referenced
-        // type's typedef to already be complete (pointer/`_p`-suffixed refs
-        // are incomplete-type-OK — no dep; same rule for both families).
-        fn vc_dep_fields(inst: &ValueCompositeInst) -> Vec<&str> {
-            match inst {
-                ValueCompositeInst::Tuple(elems) => elems.iter().map(|s| s.as_str()).collect(),
-                ValueCompositeInst::FixArr(_, elem) => vec![elem.as_str()],
-            }
-        }
-
-        let mut tuple_instances: Vec<Vec<String>> = self.mono_tuple_instances
-            .borrow().iter().cloned().collect();
-        tuple_instances.sort(); // initial deterministic order для tie-breaking
-        let mut fixarr_instances: Vec<(usize, String)> = self.mono_fixed_array_instances
-            .borrow().iter().cloned().collect();
-        fixarr_instances.sort();
-        // Combined initial order: all tuples (pre-sorted) then all fixarrs
-        // (pre-sorted) — when one family is absent this degenerates to
-        // exactly the old per-family order (byte-parity for pure fixtures).
-        let mut vc_remaining: Vec<ValueCompositeInst> = tuple_instances.into_iter()
-            .map(ValueCompositeInst::Tuple)
-            .chain(fixarr_instances.into_iter().map(|(n, e)| ValueCompositeInst::FixArr(n, e)))
-            .collect();
-        let known_names: std::collections::HashSet<String> = vc_remaining.iter()
-            .map(vc_mangled)
-            .collect();
-        let mut emitted: std::collections::HashSet<String> = std::collections::HashSet::new();
-        let mut vc_sorted: Vec<ValueCompositeInst> = Vec::with_capacity(vc_remaining.len());
-        while !vc_remaining.is_empty() {
-            let mut next_remaining = Vec::new();
-            let mut progress = false;
-            for inst in vc_remaining.drain(..) {
-                // Element types могут ссылаться mangled struct name (direct
-                // mono'd value — нуждается в complete typedef) или pointer/
-                // `_p`-suffixed form (incomplete OK, без dep). Strip pointer
-                // suffix для check. `known_names` покрывает ОБЕ семьи —
-                // fixarr-в-tuple и tuple-в-fixarr равно видимы.
-                let deps_satisfied = vc_dep_fields(&inst).iter().all(|elem| {
-                    let core = elem.trim_end_matches('*').trim_end_matches("_p");
-                    !known_names.contains(core) || emitted.contains(core)
-                });
-                if deps_satisfied {
-                    emitted.insert(vc_mangled(&inst));
-                    vc_sorted.push(inst);
-                    progress = true;
-                } else {
-                    next_remaining.push(inst);
-                }
-            }
-            if !progress {
-                // Cyclic deps не possible для value-composite struct'ов
-                // (конечная глубина nesting); emit оставшиеся anyway чтобы
-                // не зависнуть.
-                vc_sorted.extend(next_remaining);
-                break;
-            }
-            vc_remaining = next_remaining;
-        }
-        let mut tuple_decls = String::new();
-        if !vc_sorted.is_empty() {
-            // Plan 168 (D300): before emitting tuple typedefs, forward-declare any
-            // heap generic struct types (Nova_Vec____..., etc.) that appear as pointer
-            // element types. These may be emitted into generic_type_defs_buf (after the
-            // user_type_fwd_decls marker) but their typedef is needed for the field
-            // declaration here. A `typedef struct X X;` before the first use is sufficient
-            // because pointer-to-incomplete-type is valid C. (Tuple elements only — a
-            // fixarr element never references a mono'd heap generic by this path.)
-            let mut tuple_fwd_seen: std::collections::HashSet<String> =
-                std::collections::HashSet::new();
-            for inst in &vc_sorted {
-                let elems: &[String] = match inst {
-                    ValueCompositeInst::Tuple(elems) => elems.as_slice(),
-                    ValueCompositeInst::FixArr(_, _) => continue,
-                };
-                for elem in elems.iter() {
-                    // Only emit fwd-decl for pointer-to-user-struct types: `Nova_...*`
-                    // (excluding primitive-pointer aliases like `Nova_u32*` which are
-                    // handled separately, and value-record types like `NovaValue_...`).
-                    let base = elem.trim_end_matches('*');
-                    if base.len() == elem.len() { continue; } // not a pointer
-                    if !base.starts_with("Nova_") { continue; }
-                    if base.contains("__") { // mono'd instance like Nova_Vec____uint32_t
-                        if tuple_fwd_seen.insert(base.to_string()) {
-                            // Only emit if not already in user_type_fwd_decls
-                            let fwd = format!("typedef struct {0} {0};\n", base);
-                            if !self.user_type_fwd_decls.contains(&fwd) {
-                                tuple_decls.push_str(&fwd);
-                            }
-                        }
-                    }
-                }
-            }
-            // Header comments are printed LAZILY, the first time each family is
-            // actually encountered in topo order (not hoisted unconditionally
-            // ahead of all entries) — when the two families have no cross
-            // dependency (the overwhelming common case) the topo order stays
-            // family-grouped (all tuples, then all fixarrs, per the initial
-            // combined ordering below), so this reproduces the OLD two-section
-            // byte layout exactly: tuple header + tuple entries, THEN fixarr
-            // header + fixarr entries. Only genuinely interleaved-by-dependency
-            // cases (the bug this fix addresses) see the two headers apart from
-            // their own family's first entry.
-            let mut tuple_header_printed = false;
-            let mut fixarr_header_printed = false;
-            for inst in &vc_sorted {
-                match inst {
-                    ValueCompositeInst::Tuple(elems) => {
-                        if !tuple_header_printed {
-                            tuple_header_printed = true;
-                            tuple_decls.push_str("/* Plan 59: mono'd tuple typedefs — real element types, no int-slot erasure. */\n");
-                            tuple_decls.push_str("/* Plan 115 D214: tagged struct form — позволяет shim header'у\n");
-                            tuple_decls.push_str(" * forward-declare same typedef для external fn tuple-return ABI без redefinition. */\n");
-                        }
-                        let mangled = Self::compute_mono_tuple_c_name(elems);
-                        let fields: String = elems.iter().enumerate()
-                            .map(|(i, c)| format!("{} f{}; ", c, i))
-                            .collect();
-                        // Plan 115: tagged form (`struct NAME { ... }`) — multiple
-                        // identical declarations of same tag are compatible per C99 §6.7.2.3.
-                        // Forward-declared (via shim header) typedef и Nova-emitted typedef
-                        // resolve к same type — no redefinition error.
-                        tuple_decls.push_str(&format!(
-                            "#ifndef NOVA_TUPLE_TYPEDEF_{}\n", mangled));
-                        tuple_decls.push_str(&format!(
-                            "#define NOVA_TUPLE_TYPEDEF_{}\n", mangled));
-                        tuple_decls.push_str(&format!(
-                            "typedef struct {} {{ {}}} {};\n", mangled, fields, mangled));
-                        tuple_decls.push_str("#endif\n");
-                    }
-                    ValueCompositeInst::FixArr(n, elem) => {
-                        if !fixarr_header_printed {
-                            fixarr_header_printed = true;
-                            tuple_decls.push_str(
-                                "/* [M-fixed-array-value-semantics]: mono'd [N]T INLINE struct typedefs — \
-                                 stack/field value, no heap pointer, no len/cap (D27). */\n");
-                        }
-                        let mangled = Self::compute_mono_fixed_array_c_name(*n, elem);
-                        tuple_decls.push_str(&format!(
-                            "#ifndef NOVA_FIXARR_TYPEDEF_{}\n", mangled));
-                        tuple_decls.push_str(&format!(
-                            "#define NOVA_FIXARR_TYPEDEF_{}\n", mangled));
-                        tuple_decls.push_str(&format!(
-                            "typedef struct {} {{ {} data[{}]; }} {};\n", mangled, elem, n, mangled));
-                        tuple_decls.push_str("#endif\n");
-                    }
-                }
-            }
-        }
+        // [реестр 221.1 №139 follow-up] Extracted into `render_value_composite_typedefs`
+        // (defined right below) so `hoist_pending_generic_type_defs` can call the SAME
+        // topo-sort+render to early-splice tuple/fixarr deps a hoisted generic-instance
+        // body needs — see that fn's doc. Byte-identical here (pure extraction, same
+        // body, same `self` registries, called from the same point).
+        let tuple_decls = self.render_value_composite_typedefs();
         self.out = self.out.replace("/*__MONO_TUPLE_TYPEDEFS__*/", &tuple_decls);
-
         // Plan 186 [bug-2 audit-197 fix]: splice extern prototypes for FREE
         // external fn returning a tuple (see `extern_fn_tuple_protos` field
         // doc). Empty/non-empty pattern mirrors __NOVARES_VR_TYPEDEFS__ above.
@@ -25409,6 +25256,183 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         Ok(())
     }
 
+    /// [реестр 221.1 №139 follow-up] Extracted from the `/*__MONO_TUPLE_TYPEDEFS__*/`
+    /// finalize splice (pure — reads only `self.mono_tuple_instances`/
+    /// `self.mono_fixed_array_instances`/`self.user_type_fwd_decls`, no `self.out`
+    /// mutation) so it can ALSO be called EARLY, mid-stream, from
+    /// `hoist_pending_generic_type_defs`: a hoisted generic-type-instance body
+    /// (e.g. a Vec-mono struct with a `_NovaTuple_...* data` field) may depend on a
+    /// tuple/fixarr typedef that — un-hoisted — would only appear later, at the
+    /// single late `/*__MONO_TUPLE_TYPEDEFS__*/` marker. Every tuple/fixarr typedef
+    /// this renders is wrapped in an `#ifndef`/`#define`/`#endif` guard (see below),
+    /// so an EARLY duplicate render is always safe — the later finalize-pass call
+    /// (unchanged, same call) just no-ops via the guard for anything already emitted
+    /// early. Renders the CURRENT full registry state (not a delta) each call —
+    /// simpler and more robust than tracking exactly what a hoist newly caused
+    /// (handles cross-record/transitively-nested deps for free); the cost is bounded
+    /// redundant (but harmless, guarded) re-emission at each hoist point.
+    fn render_value_composite_typedefs(&self) -> String {
+        enum ValueCompositeInst {
+            Tuple(Vec<String>),
+            FixArr(usize, String),
+        }
+        fn vc_mangled(inst: &ValueCompositeInst) -> String {
+            match inst {
+                ValueCompositeInst::Tuple(elems) => CEmitter::compute_mono_tuple_c_name(elems),
+                ValueCompositeInst::FixArr(n, elem) => CEmitter::compute_mono_fixed_array_c_name(*n, elem),
+            }
+        }
+        // Raw field C-type strings whose BY-VALUE use requires the referenced
+        // type's typedef to already be complete (pointer/`_p`-suffixed refs
+        // are incomplete-type-OK — no dep; same rule for both families).
+        fn vc_dep_fields(inst: &ValueCompositeInst) -> Vec<&str> {
+            match inst {
+                ValueCompositeInst::Tuple(elems) => elems.iter().map(|s| s.as_str()).collect(),
+                ValueCompositeInst::FixArr(_, elem) => vec![elem.as_str()],
+            }
+        }
+
+        let mut tuple_instances: Vec<Vec<String>> = self.mono_tuple_instances
+            .borrow().iter().cloned().collect();
+        tuple_instances.sort(); // initial deterministic order для tie-breaking
+        let mut fixarr_instances: Vec<(usize, String)> = self.mono_fixed_array_instances
+            .borrow().iter().cloned().collect();
+        fixarr_instances.sort();
+        // Combined initial order: all tuples (pre-sorted) then all fixarrs
+        // (pre-sorted) — when one family is absent this degenerates to
+        // exactly the old per-family order (byte-parity for pure fixtures).
+        let mut vc_remaining: Vec<ValueCompositeInst> = tuple_instances.into_iter()
+            .map(ValueCompositeInst::Tuple)
+            .chain(fixarr_instances.into_iter().map(|(n, e)| ValueCompositeInst::FixArr(n, e)))
+            .collect();
+        let known_names: std::collections::HashSet<String> = vc_remaining.iter()
+            .map(vc_mangled)
+            .collect();
+        let mut emitted: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut vc_sorted: Vec<ValueCompositeInst> = Vec::with_capacity(vc_remaining.len());
+        while !vc_remaining.is_empty() {
+            let mut next_remaining = Vec::new();
+            let mut progress = false;
+            for inst in vc_remaining.drain(..) {
+                // Element types могут ссылаться mangled struct name (direct
+                // mono'd value — нуждается в complete typedef) или pointer/
+                // `_p`-suffixed form (incomplete OK, без dep). Strip pointer
+                // suffix для check. `known_names` покрывает ОБЕ семьи —
+                // fixarr-в-tuple и tuple-в-fixarr равно видимы.
+                let deps_satisfied = vc_dep_fields(&inst).iter().all(|elem| {
+                    let core = elem.trim_end_matches('*').trim_end_matches("_p");
+                    !known_names.contains(core) || emitted.contains(core)
+                });
+                if deps_satisfied {
+                    emitted.insert(vc_mangled(&inst));
+                    vc_sorted.push(inst);
+                    progress = true;
+                } else {
+                    next_remaining.push(inst);
+                }
+            }
+            if !progress {
+                // Cyclic deps не possible для value-composite struct'ов
+                // (конечная глубина nesting); emit оставшиеся anyway чтобы
+                // не зависнуть.
+                vc_sorted.extend(next_remaining);
+                break;
+            }
+            vc_remaining = next_remaining;
+        }
+        let mut tuple_decls = String::new();
+        if !vc_sorted.is_empty() {
+            // Plan 168 (D300): before emitting tuple typedefs, forward-declare any
+            // heap generic struct types (Nova_Vec____..., etc.) that appear as pointer
+            // element types. These may be emitted into generic_type_defs_buf (after the
+            // user_type_fwd_decls marker) but their typedef is needed for the field
+            // declaration here. A `typedef struct X X;` before the first use is sufficient
+            // because pointer-to-incomplete-type is valid C. (Tuple elements only — a
+            // fixarr element never references a mono'd heap generic by this path.)
+            let mut tuple_fwd_seen: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+            for inst in &vc_sorted {
+                let elems: &[String] = match inst {
+                    ValueCompositeInst::Tuple(elems) => elems.as_slice(),
+                    ValueCompositeInst::FixArr(_, _) => continue,
+                };
+                for elem in elems.iter() {
+                    // Only emit fwd-decl for pointer-to-user-struct types: `Nova_...*`
+                    // (excluding primitive-pointer aliases like `Nova_u32*` which are
+                    // handled separately, and value-record types like `NovaValue_...`).
+                    let base = elem.trim_end_matches('*');
+                    if base.len() == elem.len() { continue; } // not a pointer
+                    if !base.starts_with("Nova_") { continue; }
+                    if base.contains("__") { // mono'd instance like Nova_Vec____uint32_t
+                        if tuple_fwd_seen.insert(base.to_string()) {
+                            // Only emit if not already in user_type_fwd_decls
+                            let fwd = format!("typedef struct {0} {0};\n", base);
+                            if !self.user_type_fwd_decls.contains(&fwd) {
+                                tuple_decls.push_str(&fwd);
+                            }
+                        }
+                    }
+                }
+            }
+            // Header comments are printed LAZILY, the first time each family is
+            // actually encountered in topo order (not hoisted unconditionally
+            // ahead of all entries) — when the two families have no cross
+            // dependency (the overwhelming common case) the topo order stays
+            // family-grouped (all tuples, then all fixarrs, per the initial
+            // combined ordering below), so this reproduces the OLD two-section
+            // byte layout exactly: tuple header + tuple entries, THEN fixarr
+            // header + fixarr entries. Only genuinely interleaved-by-dependency
+            // cases (the bug this fix addresses) see the two headers apart from
+            // their own family's first entry.
+            let mut tuple_header_printed = false;
+            let mut fixarr_header_printed = false;
+            for inst in &vc_sorted {
+                match inst {
+                    ValueCompositeInst::Tuple(elems) => {
+                        if !tuple_header_printed {
+                            tuple_header_printed = true;
+                            tuple_decls.push_str("/* Plan 59: mono'd tuple typedefs — real element types, no int-slot erasure. */\n");
+                            tuple_decls.push_str("/* Plan 115 D214: tagged struct form — позволяет shim header'у\n");
+                            tuple_decls.push_str(" * forward-declare same typedef для external fn tuple-return ABI без redefinition. */\n");
+                        }
+                        let mangled = Self::compute_mono_tuple_c_name(elems);
+                        let fields: String = elems.iter().enumerate()
+                            .map(|(i, c)| format!("{} f{}; ", c, i))
+                            .collect();
+                        // Plan 115: tagged form (`struct NAME { ... }`) — multiple
+                        // identical declarations of same tag are compatible per C99 §6.7.2.3.
+                        // Forward-declared (via shim header) typedef и Nova-emitted typedef
+                        // resolve к same type — no redefinition error.
+                        tuple_decls.push_str(&format!(
+                            "#ifndef NOVA_TUPLE_TYPEDEF_{}\n", mangled));
+                        tuple_decls.push_str(&format!(
+                            "#define NOVA_TUPLE_TYPEDEF_{}\n", mangled));
+                        tuple_decls.push_str(&format!(
+                            "typedef struct {} {{ {}}} {};\n", mangled, fields, mangled));
+                        tuple_decls.push_str("#endif\n");
+                    }
+                    ValueCompositeInst::FixArr(n, elem) => {
+                        if !fixarr_header_printed {
+                            fixarr_header_printed = true;
+                            tuple_decls.push_str(
+                                "/* [M-fixed-array-value-semantics]: mono'd [N]T INLINE struct typedefs — \
+                                 stack/field value, no heap pointer, no len/cap (D27). */\n");
+                        }
+                        let mangled = Self::compute_mono_fixed_array_c_name(*n, elem);
+                        tuple_decls.push_str(&format!(
+                            "#ifndef NOVA_FIXARR_TYPEDEF_{}\n", mangled));
+                        tuple_decls.push_str(&format!(
+                            "#define NOVA_FIXARR_TYPEDEF_{}\n", mangled));
+                        tuple_decls.push_str(&format!(
+                            "typedef struct {} {{ {} data[{}]; }} {};\n", mangled, elem, n, mangled));
+                        tuple_decls.push_str("#endif\n");
+                    }
+                }
+            }
+        }
+        tuple_decls
+    }
+
     /// [реестр 221.1 №139, M-user-generic-value-type-as-struct-field] A
     /// non-generic record/value-record field whose C-type is a user GENERIC
     /// type instance (e.g. `Wrap[int]` → `NovaValue_Wrap____nova_int`) needs
@@ -25443,17 +25467,66 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// an empty string (true no-op) when nothing was pending — the
     /// overwhelmingly common case for records without generic-instance
     /// fields, so callers pay zero cost.
+    ///
+    /// [реестр 221.1 №139 follow-up, integrator-caught regression
+    /// `m2217_26_generic_static_method_value_arg_addr_mismatch`] A hoisted
+    /// instance's body can ITSELF reference OTHER deferred categories that
+    /// normally render/splice ONCE, later in the file than the position we
+    /// hoist into — same class of bug, audited exhaustively against every
+    /// preamble marker positioned after `__VALUE_RECORD_DEFS__`:
+    /// - mono tuple/fixed-array (`_NovaTuple_..`/`_NovaTupleN`/`_NovaFixArr_..`,
+    ///   e.g. a `Vec`-mono's `T* data` where `T` is `(str, str)`) — normally
+    ///   `__MONO_TUPLE_TYPEDEFS__`. Handled by prepending a render of the
+    ///   CURRENT registry state (`render_value_composite_typedefs` — every
+    ///   entry is individually `#ifndef`-guarded, see its doc, so an early
+    ///   duplicate never collides with the later finalize-pass splice; it
+    ///   just no-ops there via the guard — simpler than a delta, and covers
+    ///   deps that pre-date this record too).
+    /// - `NovaOpt_<T>`/`NovaRes_<ok>_<err>` (e.g. a mono method's own field
+    ///   typed `Option[..]`/`Result[..]`) — normally `__NOVAOPT_TYPEDEFS__`/
+    ///   `__NOVARES_TYPEDEFS__`. UNLIKE tuples these are NOT `#ifndef`-C-
+    ///   guarded (only Rust-level `*_decls_seen` dedup against re-registering
+    ///   the SAME content, not against re-EMITTING it) — a duplicate render
+    ///   would be a real redefinition error, so these use the cut-and-MOVE
+    ///   delta technique instead (mirrors the pre-existing `opt_delta` hoist
+    ///   in `emit_value_record_type`, scoped there to a record's OWN direct
+    ///   fields — this covers the same buffers but for content the FORCED
+    ///   drain itself causes, which that pre-existing mechanism cannot see).
+    /// - Named tuples (`type Point(x f64, y f64)` → `NovaTuple_Point`) are
+    ///   NOT part of this risk class at all — checked: they are ordinary
+    ///   `Item::Type` declarations emitted directly in the "1. Type
+    ///   declarations" loop (`emit_named_tuple_type`), not a deferred
+    ///   registry+single-marker category, so no transitive-hoist gap exists
+    ///   for them.
+    /// Order mirrors the ORIGINAL (un-hoisted) relative marker order in
+    /// `emit_preamble` (tuple/fixarr, then NovaOpt, then NovaRes, then the
+    /// generic-instance bodies themselves) — the dependency direction is
+    /// always "generic-instance body depends on the others", never reverse.
     fn hoist_pending_generic_type_defs(&mut self) -> Result<String, String> {
         if self.generic_type_worklist.borrow().is_empty() {
             return Ok(String::new());
         }
-        let snap = self.generic_type_defs_buf.len();
+        let gti_snap = self.generic_type_defs_buf.len();
+        let opt_snap = self.novaopt_typedefs_buf.borrow().len();
+        let res_snap = self.novares_typedefs_buf.borrow().len();
         self.drain_generic_type_worklist()?;
-        if self.generic_type_defs_buf.len() > snap {
-            Ok(self.generic_type_defs_buf.split_off(snap))
-        } else {
-            Ok(String::new())
+        if self.generic_type_defs_buf.len() <= gti_snap {
+            return Ok(String::new());
         }
+        let gti_delta = self.generic_type_defs_buf.split_off(gti_snap);
+        let opt_delta = {
+            let mut buf = self.novaopt_typedefs_buf.borrow_mut();
+            if buf.len() > opt_snap { buf.split_off(opt_snap) } else { String::new() }
+        };
+        let res_delta = {
+            let mut buf = self.novares_typedefs_buf.borrow_mut();
+            if buf.len() > res_snap { buf.split_off(res_snap) } else { String::new() }
+        };
+        let mut out = self.render_value_composite_typedefs();
+        out.push_str(&opt_delta);
+        out.push_str(&res_delta);
+        out.push_str(&gti_delta);
+        Ok(out)
     }
 
     /// Plan 48 Ф.2: emit a monomorphized function body.
