@@ -49,12 +49,41 @@
 // just scoped to content the forced drain itself newly causes). M139B6/B7
 // below cover this class directly.
 //
+// ROUND 3 (same window): integrator's mega-CU caught a SECOND regression —
+// `examples/flagship/aggregator --strict-effects`: "field has incomplete
+// type 'NovaValue_HeaderName'" (nova-http `HeaderEntry value { name
+// HeaderName, value HeaderValue }` — a PLAIN value-record needing ANOTHER
+// plain value-record by value; not a generic instance at all). Diagnosis:
+// rounds 1/2 only fixed ONE direction of the dependency (generic-instance
+// needs tuple/NovaOpt/NovaRes); the real corpus needs it in BOTH directions
+// simultaneously — no fixed marker/hoist order can satisfy both. FIX: a
+// single unified topological sort (`pending_value_nodes` +
+// `render_unified_value_types`, Kahn's algorithm) over EVERY value-type
+// category together (user value-records, Record-kind generic-instances,
+// mono tuple/fixed-array) — replacing rounds 1/2's ad-hoc hoists entirely.
+//
+// ROUND 4 (same window): integrator's FULL mega-CU (589 tests) caught a
+// THIRD gap — `a_q3_println_debug_record` went from an intermittent
+// RUNTIME flake to a DETERMINISTIC `CC-FAIL` ("unknown type name
+// 'NovaTuple_D414pfPair'"/`'NovaTuple_Vec36'`): NAMED tuples
+// (`type Point(x f64, y f64)`, `emit_named_tuple_type`) were the ONE
+// category round 2 audited and correctly left OUT of the graph AT THE TIME
+// (they rendered in-place, at essentially the same early position as
+// `__VALUE_RECORD_DEFS__` then sat) — round 3 moved the unified section to
+// become the FIRST thing emitted, ahead of named tuples' still-unchanged
+// in-loop position, re-opening the exact ordering gap for this one
+// category. FIX: named tuples now ALSO capture into `pending_value_nodes`
+// (M139B8 below) — completing the node set the coordinator asked to be
+// closed once and for all (full audit of every deferred-emission category
+// in emit_c.rs is in the round-4 report, not repeated here).
+//
 // Covers the minimal repro plus every variation from the окно p139 brief:
 // multiple distinct generic-field instances, nesting, a generic value-type
 // field on a non-value (heap) record, a field whose instance has no OTHER
 // use-site in the file (pure field-only seed), a generic instance
-// instantiated DIRECTLY over a tuple type, and a Vec-of-tuple field
-// (the exact regression shape — no user generic type involved at all).
+// instantiated DIRECTLY over a tuple type, a Vec-of-tuple field (the round-2
+// regression shape), and a value-type field typed as a NAMED tuple (the
+// round-4 regression shape).
 module spec_tests.conformance
 
 type M139Wrap[T] value { priv data T }
@@ -145,4 +174,23 @@ test "m139: value-record поле []( tuple) — Vec-of-tuple тоже триг�
     assert(b.params[0].0 == "a")
     assert(b.params[0].1 == "b")
     assert(b.name == "x")
+}
+
+// Round-4 variation: a value-type field typed as a NAMED tuple
+// (`type M139Pair(a int, b int)`) — the EXACT regression shape from
+// `a_q3_println_debug_record` (`NovaTuple_D414pfPair`/`NovaTuple_Vec36`
+// unknown after the unified section moved ahead of named tuples' in-loop
+// position). `M139Pair` must now be captured into `pending_value_nodes`
+// (via `emit_named_tuple_type`) exactly like `M139Wrap`/`M139Bundle`, so
+// Kahn's sort places it correctly relative to `M139B8` regardless of which
+// one the type-decl loop happens to reach first.
+type M139Pair(a int, b int)
+
+type M139B8 value { pair M139Pair, n int }
+
+test "m139: value-тип с полем — ИМЕНОВАННЫЙ кортеж" {
+    ro b = M139B8 { pair: M139Pair(a: 1, b: 2), n: 3 }
+    assert(b.pair.a == 1)
+    assert(b.pair.b == 2)
+    assert(b.n == 3)
 }
