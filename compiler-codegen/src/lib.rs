@@ -30,6 +30,7 @@ pub mod nfc;
 pub mod number_exprs;
 pub mod parser;
 pub mod perf_timer;
+pub mod pkg_proxy;
 pub mod protocols;
 pub mod resolver;
 pub mod self_return_lower;

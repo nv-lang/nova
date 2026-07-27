@@ -241,7 +241,7 @@ enum Cmd {
         file: PathBuf,
     },
     /// Plan 03.1 Ф.5: добавить зависимость в `[dependencies]` nova.toml
-    /// текущего пакета и обновить nova.lock.
+    /// текущего пакета и обновить nova.lock.toml.
     Add {
         /// Имя зависимости (должно совпадать с `[package].name` пакета).
         name: String,
@@ -251,7 +251,7 @@ enum Cmd {
         /// Plan 204 дофикс №2 (owner correction №3): разрешить `--path`,
         /// выходящий за границу текущего git-репозитория, записать голым
         /// `path` в `[dependencies]` (старое поведение). Без флага такой
-        /// `--path` отклоняется с подсказкой (git-форма + nova.local.toml
+        /// `--path` отклоняется с подсказкой (git-форма + nova.override.toml
         /// [replace]) — path вне репы не clone-safe.
         #[arg(long, requires = "path")]
         allow_external_path: bool,
@@ -272,7 +272,7 @@ enum Cmd {
         version: Option<String>,
     },
     /// Plan 03.1 Ф.5 / 03.2 Ф.4: пере-резолвить git-зависимости и
-    /// обновить nova.lock. Без аргумента — все git-зависимости.
+    /// обновить nova.lock.toml. Без аргумента — все git-зависимости.
     Update {
         /// Имя зависимости для обновления (опционально — иначе все git).
         name: Option<String>,
@@ -4030,7 +4030,7 @@ fn insert_dependency(text: &str, name: &str, value: &str) -> Result<String> {
 }
 
 /// Plan 03.1 Ф.5: `nova add` — добавить зависимость в `nova.toml`
-/// текущего пакета и обновить `nova.lock`.
+/// текущего пакета и обновить `nova.lock.toml`.
 fn cmd_add(
     name: &str,
     path: Option<&str>,
@@ -4076,7 +4076,7 @@ fn cmd_add(
                     "--path `{}` выходит за границу текущего git-репозитория \
                      — не clone-safe (`git clone` НЕ принесёт `{}`)\n  \
                      hint: релизная форма — `nova add {} --git <URL> --version <x.y>`, \
-                     а `path` — dev-override в `nova.local.toml` (не коммитится):\n    \
+                     а `path` — dev-override в `nova.override.toml` (не коммитится):\n    \
                      [replace]\n    {} = {{ path = \"{}\" }}\n  \
                      чтобы всё же записать голый внешний path в [dependencies] \
                      (не рекомендуется) — повтори с --allow-external-path",
@@ -4114,15 +4114,15 @@ fn cmd_add(
         toml_path.display(),
     );
 
-    // Обновить nova.lock (материализует git-зависимость, фиксирует commit).
+    // Обновить nova.lock.toml (материализует git-зависимость, фиксирует commit).
     nova_codegen::lockfile::sync(&pkg_dir)
-        .map_err(|e| anyhow!("nova.lock не обновлён: {}", e))?;
-    println!("{} nova.lock обновлён", green("locked:"));
+        .map_err(|e| anyhow!("nova.lock.toml не обновлён: {}", e))?;
+    println!("{} nova.lock.toml обновлён", green("locked:"));
     Ok(())
 }
 
 /// Plan 03.1 Ф.5: `nova update` — пере-резолвить git-пины и обновить
-/// `nova.lock`.
+/// `nova.lock.toml`.
 fn cmd_update(name: Option<&str>, precise: Option<&str>) -> Result<()> {
     let pkg_dir = package_dir_from_cwd().ok_or_else(|| {
         usage_err("`nova update` запускается внутри Nova-пакета (нет nova.toml)")
@@ -4898,7 +4898,7 @@ fn cmd_build(
         daemon::maybe_auto_spawn(&repo);
     }
 
-    // Plan 03.1 Ф.4: синхронизировать `nova.lock` пакета entry-файла —
+    // Plan 03.1 Ф.4: синхронизировать `nova.lock.toml` пакета entry-файла —
     // зафиксировать граф зависимостей (path/git) для воспроизводимой
     // сборки. Запускается ДО резолва импортов: материализует git-deps в
     // кэше и загружает зафиксированные commit'ы, которыми затем
@@ -4914,21 +4914,22 @@ fn cmd_build(
                 .map_err(|e| anyhow!("{}", e))?;
         }
         let _t = nova_codegen::perf_timer::PerfTimer::new("dep-lock");
-        // Plan 219: демон подтвердил, что entry `nova.toml`+`nova.lock` не
-        // изменились с прошлого резолва в этом сеансе демона (хеш
-        // содержимого, см. `daemon::dep_combined_hash`) → пропускаем
-        // дорогой resolve_version_deps/collect_dep_graph_ex/перезапись, но
+        // Plan 219: демон подтвердил, что entry `nova.toml`+lockfile
+        // (`nova.lock.toml`, либо legacy `nova.lock`) не изменились с
+        // прошлого резолва в этом сеансе демона (хеш содержимого, см.
+        // `daemon::dep_combined_hash`) → пропускаем дорогой
+        // resolve_version_deps/collect_dep_graph_ex/перезапись, но
         // git-пины подгружаем ВСЕГДА (`load_pins` — дешёвый первый шаг,
         // который делает и сам `sync()`) — resolve_imports_inline ниже
         // зависит от материализованных git-deps на диске.
         let skip_dep_lock = daemon_prime.as_ref().map(|p| p.skip_dep_lock).unwrap_or(false);
         if skip_dep_lock {
             nova_codegen::lockfile::load_pins(&pkg_dir)
-                .map_err(|e| anyhow!("резолюция зависимостей (nova.lock): {}", e))?;
+                .map_err(|e| anyhow!("резолюция зависимостей (nova.lock.toml): {}", e))?;
             eprintln!("{} build daemon — dep-graph unchanged, skipping lock resolution", green("note:"));
         } else {
             nova_codegen::lockfile::sync(&pkg_dir)
-                .map_err(|e| anyhow!("резолюция зависимостей (nova.lock): {}", e))?;
+                .map_err(|e| anyhow!("резолюция зависимостей (nova.lock.toml): {}", e))?;
             if let Some(hash) = daemon::dep_combined_hash(&pkg_dir) {
                 daemon::try_commit(&repo, &pkg_dir, &hash);
             }

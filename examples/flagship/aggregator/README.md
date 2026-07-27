@@ -118,7 +118,7 @@ GitHub: на 2026-07-17 в `nova-http`'s GitHub-репозитории нет е
 берёт локальное рабочее дерево as-is. Когда тот коммит попадёт в GitHub —
 кандидат на упрощение обратно до `git clone --depth 1` (симметрично
 `nova-gate.yml`). `tls`/`compress` — git-зависимости (`{ git = ...,
-version = "0.1" }`, `examples/nova.lock`) — резолвятся АВТОМАТИЧЕСКИ самим
+version = "0.1" }`, `examples/nova.lock.toml`) — резолвятся АВТОМАТИЧЕСКИ самим
 компилятором Nova при первом обращении, sibling/clone им не нужен.
 
 Известные ограничения (admission `MAX_INFLIGHT_CONNS = 16`, replay-SSE

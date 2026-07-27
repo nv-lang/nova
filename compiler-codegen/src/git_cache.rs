@@ -19,7 +19,7 @@
 //! операции — сборка только из готового кэша.
 //!
 //! **Воспроизводимость.** Даже `branch`-пин в Ф.4 фиксируется в
-//! `nova.lock` точным commit'ом — см. `resolve_git_dep` параметр
+//! `nova.lock.toml` точным commit'ом — см. `resolve_git_dep` параметр
 //! `locked_commit`.
 
 use crate::manifest::GitPin;
@@ -38,18 +38,27 @@ pub struct GitResolution {
     pub commit: String,
 }
 
-/// Корень кэша git-зависимостей: `$NOVA_HOME/git`, иначе `~/.nova/git`.
-pub fn git_cache_root() -> Result<PathBuf> {
+/// Plan 233 §1: корень пользовательских Nova-данных — `$NOVA_HOME`, иначе
+/// `~/.nova`. Общий базис для кэша git-зависимостей (`git_cache_root`,
+/// `<root>/git`) и глобального `[net] proxy`-конфига
+/// (`pkg_proxy::global_config_proxy`, `<root>/config.toml`) — обе точки
+/// уважают один и тот же `NOVA_HOME`-override.
+pub fn nova_home_dir() -> Result<PathBuf> {
     if let Some(h) = std::env::var_os("NOVA_HOME") {
-        return Ok(PathBuf::from(h).join("git"));
+        return Ok(PathBuf::from(h));
     }
     let home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .ok_or_else(|| anyhow!(
-            "не удалось определить домашнюю директорию для кэша git \
+            "не удалось определить домашнюю директорию Nova \
              (ни HOME, ни USERPROFILE, ни NOVA_HOME не заданы)"
         ))?;
-    Ok(PathBuf::from(home).join(".nova").join("git"))
+    Ok(PathBuf::from(home).join(".nova"))
+}
+
+/// Корень кэша git-зависимостей: `$NOVA_HOME/git`, иначе `~/.nova/git`.
+pub fn git_cache_root() -> Result<PathBuf> {
+    Ok(nova_home_dir()?.join("git"))
 }
 
 /// Offline-режим (`NOVA_OFFLINE=1|true|on`): сетевые операции запрещены,
@@ -83,8 +92,28 @@ fn repo_id(url: &str) -> String {
 
 /// Запустить `git` с аргументами; вернуть trimmed stdout или ошибку с
 /// stderr. `cwd` — рабочий каталог (для `git -C` эквивалента).
+///
+/// **Plan 233 §1 (прокси).** `Command::new("git")` здесь НЕ вызывает
+/// `env_clear()` — процесс наследует родительское окружение целиком, так
+/// что стандартные `HTTPS_PROXY`/`HTTP_PROXY` (которые сам git уважает при
+/// сетевых операциях) доходят до git без какого-либо дополнительного кода.
+/// `NOVA_PKG_PROXY` — не git-нативная переменная, поэтому резолвится через
+/// `pkg_proxy::resolve_pkg_proxy_for_cwd()` (слои: env → `nova.override.toml`
+/// → `~/.nova/config.toml`, см. модуль `pkg_proxy`) и передаётся явным
+/// `-c http.proxy=<url>` — покрывает и layer 1 (на случай, если сама
+/// переменная `NOVA_PKG_PROXY` внезапно оказалась бы невидна для git), и
+/// layers 2/3 (файловые слои, о которых git ничего не знает). `http.proxy`
+/// — единый git config key для http:// и https:// (git per-doc: "Override
+/// the HTTP proxy, normally configured using the http_proxy, https_proxy,
+/// and all_proxy environment variables") — не нужен отдельный `https.proxy`.
+/// Инъекция безвредна и для чисто локальных под-команд (`rev-parse`,
+/// `tag --list`, `worktree add`) — git просто не использует `http.proxy`
+/// вне сетевых операций.
 fn run_git(args: &[&str], cwd: Option<&Path>) -> Result<String> {
     let mut cmd = Command::new("git");
+    if let Some(proxy) = crate::pkg_proxy::resolve_pkg_proxy_for_cwd() {
+        cmd.arg("-c").arg(format!("http.proxy={}", proxy));
+    }
     cmd.args(args);
     if let Some(d) = cwd {
         cmd.current_dir(d);
@@ -176,7 +205,7 @@ fn memo() -> &'static Mutex<HashMap<String, GitResolution>> {
     MEMO.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// Plan 03.1 Ф.4: таблица зафиксированных в `nova.lock` commit'ов
+/// Plan 03.1 Ф.4: таблица зафиксированных в `nova.lock.toml` commit'ов
 /// (`git-url` → `commit`). `resolve_git_dep` без явного `locked_commit`
 /// сверяется с ней — это и есть воспроизводимость из lockfile.
 fn lock_table() -> &'static Mutex<HashMap<String, String>> {
@@ -184,7 +213,7 @@ fn lock_table() -> &'static Mutex<HashMap<String, String>> {
     T.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// Plan 03.1 Ф.4: загрузить пины из `nova.lock`. После этого
+/// Plan 03.1 Ф.4: загрузить пины из `nova.lock.toml`. После этого
 /// `resolve_git_dep` для перечисленных URL берёт зафиксированный commit
 /// (а не резолвит пин «вживую») — детерминированная сборка.
 pub fn install_lock_entries<I>(entries: I)
@@ -243,7 +272,7 @@ fn lock_for_key(key: &str) -> Arc<Mutex<()>> {
 /// (`git_cache_root()`); вернуть checkout рабочего дерева на нужном
 /// commit'е.
 ///
-/// `locked_commit` — точный commit из `nova.lock` (Ф.4): если задан,
+/// `locked_commit` — точный commit из `nova.lock.toml` (Ф.4): если задан,
 /// пин (особенно `branch`) **игнорируется как селектор** и используется
 /// именно этот commit — воспроизводимость. `None` — резолв пина «вживую».
 pub fn resolve_git_dep(
@@ -251,7 +280,7 @@ pub fn resolve_git_dep(
     pin: &GitPin,
     locked_commit: Option<&str>,
 ) -> Result<GitResolution> {
-    // Явный `locked_commit` приоритетнее; иначе — таблица из `nova.lock`.
+    // Явный `locked_commit` приоритетнее; иначе — таблица из `nova.lock.toml`.
     let effective: Option<String> = locked_commit
         .map(|s| s.to_string())
         .or_else(|| locked_commit_for(url));
@@ -356,7 +385,7 @@ pub fn resolve_git_dep_in(
             }
             rev_parse(&db, locked).ok_or_else(|| {
                 anyhow!(
-                    "зафиксированный в nova.lock commit `{}` git-зависимости \
+                    "зафиксированный в nova.lock.toml commit `{}` git-зависимости \
                      `{}` не найден в репозитории",
                     locked,
                     url

@@ -90,8 +90,9 @@ fn nova_build_hard_errors_on_committed_replace() {
         "expected E_REPLACE_IN_MANIFEST in stderr, got: {}", stderr,
     );
     assert!(
-        stderr.contains("nova.local.toml"),
-        "expected a nova.local.toml hint, got: {}", stderr,
+        // Plan 233 §2а: hint renamed nova.local.toml -> nova.override.toml.
+        stderr.contains("nova.override.toml"),
+        "expected a nova.override.toml hint, got: {}", stderr,
     );
 
     fs::remove_dir_all(&dir).ok();
@@ -99,7 +100,7 @@ fn nova_build_hard_errors_on_committed_replace() {
 
 /// `nova add extlib --path <DIR>` where `DIR` is OUTSIDE the current git
 /// repo — refused (no `--allow-external-path`): nova.toml unchanged, stderr
-/// carries the git+version / nova.local.toml recipe hint.
+/// carries the git+version / nova.override.toml recipe hint.
 #[test]
 fn add_external_path_without_flag_is_refused_with_hint() {
     let repo_app = unique("add_ext_app");
@@ -117,7 +118,8 @@ fn add_external_path_without_flag_is_refused_with_hint() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(!out.status.success(), "add must refuse; stderr: {}", stderr);
     assert!(stderr.contains("--allow-external-path"), "stderr: {}", stderr);
-    assert!(stderr.contains("nova.local.toml"), "stderr: {}", stderr);
+    // Plan 233 §2а: hint renamed nova.local.toml -> nova.override.toml.
+    assert!(stderr.contains("nova.override.toml"), "stderr: {}", stderr);
 
     let toml_after = fs::read_to_string(repo_app.join("nova.toml")).unwrap();
     assert_eq!(toml_before, toml_after, "nova.toml must be unchanged on refusal");

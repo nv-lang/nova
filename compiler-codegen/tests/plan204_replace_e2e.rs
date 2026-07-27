@@ -8,7 +8,9 @@
 //!
 //! **Дофикс №2 (2026-07-13, владелец вскрыл дыру):** закоммиченный
 //! `[replace]` ломает чистый клон — исправлено:
-//!   1. `[replace]` живёт ТОЛЬКО в соседнем `nova.local.toml` (не коммитится).
+//!   1. `[replace]` живёт ТОЛЬКО в соседнем override-файле (не коммитится;
+//!      Plan 233 §2а переименовал `nova.local.toml` -> `nova.override.toml`,
+//!      старое имя всё ещё читается с deprecation warning).
 //!      В КОММИЧЕННОМ `nova.toml` — жёсткая ошибка `E_REPLACE_IN_MANIFEST`
 //!      (не warning, без депрекейшна).
 //!   2. Go-scope: `[replace]` действует ТОЛЬКО для корня текущей сборки;
@@ -162,10 +164,11 @@ fn replace_does_not_leak_into_lock() {
     }
 
     // Second sync with replace still active — lock byte-identical.
-    let text1 = fs::read_to_string(consumer.join("nova.lock")).unwrap();
+    // Plan 233 §2: lockfile writes always go to the NEW name `nova.lock.toml`.
+    let text1 = fs::read_to_string(consumer.join("nova.lock.toml")).unwrap();
     lockfile::sync(&consumer).expect("second sync");
     std::env::remove_var("NOVA_HOME");
-    let text2 = fs::read_to_string(consumer.join("nova.lock")).unwrap();
+    let text2 = fs::read_to_string(consumer.join("nova.lock.toml")).unwrap();
     assert_eq!(text1, text2, "repeat sync with active replace must not rewrite lock");
 
     fs::remove_dir_all(&libb).ok();
@@ -331,11 +334,12 @@ fn fn_names(items: &[Item]) -> HashSet<String> {
         .collect()
 }
 
-/// Plan 204 дофикс №2 (owner correction): `nova.local.toml` (не коммитится)
-/// merges its `[replace]` into the effective manifest — REAL end-to-end
-/// resolution (`imports::resolve_imports_inline_ex`), not just
+/// Plan 204 дофикс №2 (owner correction) / Plan 233 §2а (renamed):
+/// `nova.override.toml` (не коммитится) merges its `[replace]` into the
+/// effective manifest — REAL end-to-end resolution
+/// (`imports::resolve_imports_inline_ex`), not just
 /// `manifest::parse_manifest` inspection. `app`'s declared `libx` points at
-/// a directory whose module defines `wrong_marker`; `nova.local.toml`
+/// a directory whose module defines `wrong_marker`; `nova.override.toml`
 /// overrides it to a sibling defining `right_marker` instead. If the
 /// override weren't honored, resolution would hard-fail (`right_marker`
 /// undefined in `libx_wrong`) rather than silently pick the wrong one — a
@@ -352,7 +356,7 @@ fn local_toml_replace_is_honored_in_real_resolution() {
          [dependencies]\nlibx = { path = \"../libx_wrong\" }\n",
     );
     write_file(
-        &app_dir.join("nova.local.toml"),
+        &app_dir.join("nova.override.toml"),
         "[replace]\nlibx = { path = \"../libx_right\" }\n",
     );
     write_file(
@@ -383,7 +387,7 @@ fn local_toml_replace_is_honored_in_real_resolution() {
     let stdlib = root.join("no_stdlib");
 
     imports::resolve_imports_inline_ex(&app_nv, &mut module, &proj, &stdlib, false).expect(
-        "nova.local.toml [replace] must be honored — resolution must pick \
+        "nova.override.toml [replace] must be honored — resolution must pick \
          libx_right (right_marker), not the declared libx_wrong",
     );
     assert!(fn_names(&module.items).contains("right_marker"));
@@ -464,10 +468,10 @@ fn nested_git_dependency_replace_ignored_build_succeeds_with_warning() {
     fs::remove_dir_all(&cache_home).ok();
 }
 
-/// Plan 204 дофикс №2 owner correction: missing path behind an ACTIVE
-/// ROOT `[replace]` override (nova.local.toml) — dedicated
-/// `E_REPLACE_PATH_MISSING` error, NOT a silent fallback to the declared
-/// git/path source.
+/// Plan 204 дофикс №2 owner correction / Plan 233 §2а (renamed): missing
+/// path behind an ACTIVE ROOT `[replace]` override (nova.override.toml) —
+/// dedicated `E_REPLACE_PATH_MISSING` error, NOT a silent fallback to the
+/// declared git/path source.
 #[test]
 fn root_replace_missing_path_is_honest_error() {
     let root = unique("replace_missing_e2e");
@@ -479,7 +483,7 @@ fn root_replace_missing_path_is_honest_error() {
          [dependencies]\nlibx = { path = \"../libx_real\" }\n",
     );
     write_file(
-        &app_dir.join("nova.local.toml"),
+        &app_dir.join("nova.override.toml"),
         "[replace]\nlibx = { path = \"../libx_does_not_exist\" }\n",
     );
     write_file(
