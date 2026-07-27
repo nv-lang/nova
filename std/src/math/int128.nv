@@ -14,7 +14,7 @@
 //   - a.wrapping_add(b) / a.checked_add(b) / a.saturating_add(b)   политики (R4)
 //   - a.compare(b) / a == b           знаковое сравнение (D183)
 //   - a.shl(n) / a.shr(n)             сдвиги (shr — АРИФМЕТИЧЕСКИЙ)
-//   - a.bitand(b) / .bitor(b) / .bitxor(b) / .bitnot()
+//   - a & b, a | b, a ^ b, !a       побитовые (@and/@or/@xor/@not)
 //   - a.to_str()                      десятичная запись
 //
 // Decisions:
@@ -418,24 +418,24 @@ export fn i128 @compare(other i128) -> int {
 // Битовые операции и сдвиги
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Побитовое И.
+/// Побитовое И — оператор `a & b` (03-syntax.md §Mapping: `&` → `@and`).
 #stable(since = "0.1")
-export fn i128 @bitand(other i128) -> i128 =>
+export fn i128 @and(other i128) -> i128 =>
     i128(@hi & other.hi, @lo & other.lo)
 
-/// Побитовое ИЛИ.
+/// Побитовое ИЛИ — оператор `a | b`.
 #stable(since = "0.1")
-export fn i128 @bitor(other i128) -> i128 =>
+export fn i128 @or(other i128) -> i128 =>
     i128(@hi | other.hi, @lo | other.lo)
 
-/// Побитовое исключающее ИЛИ.
+/// Побитовое исключающее ИЛИ — оператор `a ^ b`.
 #stable(since = "0.1")
-export fn i128 @bitxor(other i128) -> i128 =>
+export fn i128 @xor(other i128) -> i128 =>
     i128(@hi ^ other.hi, @lo ^ other.lo)
 
-/// Побитовое отрицание.
+/// Побитовое отрицание — оператор `!a`.
 #stable(since = "0.1")
-export fn i128 @bitnot() -> i128 =>
+export fn i128 @not() -> i128 =>
     i128(@hi ^ (-1 as i64), @lo ^ 0xFFFFFFFFFFFFFFFF)
 
 /// Сдвиг влево на `n` бит (0..127); при `n >= 128` — ноль.
@@ -471,23 +471,25 @@ export fn i128 @shr(n int) -> i128 {
 #stable(since = "0.1")
 export fn i128 @to_str() -> str {
     if @is_zero() { return "0" }
-    ro table = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
+    // `[]u8` вместо `[]char` (1 байт против 4) и ОДИН bulk-`append` вместо
+    // N поштучных — оптимизация владельца 2026-07-27.
+    ro table = "0123456789".bytes()
     ro (mh0, ml0) = magnitude(@)
     mut mh = mh0
     mut ml = ml0
-    mut digits = []char.new()
+    mut digits = []u8.new()
     while mh != 0 || ml != 0 {
         ro (qh, ql, _rh, rl) = u_divmod(mh, ml, 0, 10)
         digits.push(table[rl as int])
         mh = qh
         ml = ql
     }
+    // `u_divmod` отдаёт цифры МЛАДШЕЙ ВПЕРЁД — без разворота вывод зеркальный
+    // (255 → "552"). Разворот на ≤39 элементах дешевле поштучных append'ов.
+    digits.reverse()
     consume sb = StringBuilder.new()
     if @is_neg() { sb.append("-") }
-    mut i = digits.len() - 1
-    while i >= 0 {
-        sb.append(digits[i])
-        i = i - 1
-    }
+    sb.append(digits)
     sb.into_str()
 }
+
