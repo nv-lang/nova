@@ -1,0 +1,73 @@
+// Plan 222.8 Ф.1 (D438) — POS: self-referential / mutually-recursive types
+// — the compiler's type graph is visible AT SYNTHESIS time; the back-edge
+// of a cycle emits `TypeShape.Ref(name)` instead of inlining forever, so
+// the produced value is finite BY CONSTRUCTION (no depth limit involved).
+module spec_tests.conformance
+
+import std.reflect.{Reflect}
+
+#impl(Reflect)
+type ReflLinkNode {
+    value int
+    next Option[ReflLinkNode]
+}
+
+#impl(Reflect)
+type ReflA {
+    b ReflB
+}
+
+#impl(Reflect)
+type ReflB {
+    a Option[ReflA]
+}
+
+test "self-referential type: direct back-edge -> Ref(name) (222.8 D438)" {
+    match ReflLinkNode.reflect() {
+        Record(name, fields) => {
+            assert(name == "ReflLinkNode")
+            assert(fields.len() == 2)
+            ro (n0, s0) = fields[0]
+            assert(n0 == "value")
+            match s0 { Int => assert(true), _ => assert(false) }
+            ro (n1, s1) = fields[1]
+            assert(n1 == "next")
+            match s1 {
+                Opt(inner) => match inner {
+                    Ref(refname) => assert(refname == "ReflLinkNode")
+                    _ => assert(false)
+                }
+                _ => assert(false)
+            }
+        }
+        _ => assert(false)
+    }
+}
+
+test "mutually recursive types: A embeds B inline, B's back-edge to A -> Ref(A) (222.8 D438)" {
+    match ReflA.reflect() {
+        Record(name, fields) => {
+            assert(name == "ReflA")
+            assert(fields.len() == 1)
+            ro (n0, s0) = fields[0]
+            assert(n0 == "b")
+            match s0 {
+                Record(bname, bfields) => {
+                    assert(bname == "ReflB")
+                    assert(bfields.len() == 1)
+                    ro (bn0, bs0) = bfields[0]
+                    assert(bn0 == "a")
+                    match bs0 {
+                        Opt(inner) => match inner {
+                            Ref(refname) => assert(refname == "ReflA")
+                            _ => assert(false)
+                        }
+                        _ => assert(false)
+                    }
+                }
+                _ => assert(false)
+            }
+        }
+        _ => assert(false)
+    }
+}

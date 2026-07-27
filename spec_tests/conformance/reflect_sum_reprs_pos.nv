@@ -1,0 +1,122 @@
+// Plan 222.8 Ф.1 (D438) — POS: sum `#impl(Reflect)` — `SumRepr` разметка из
+// уже распарсенных `#serde(tag/content)` (D382/D435, reuse серде-целиком) +
+// вариант-формы (unit/single-tuple-transparent/multi-tuple-positional/record).
+module spec_tests.conformance
+
+import std.reflect.{Reflect}
+
+#serde(tag = "kind")
+#impl(Reflect)
+type ReflShape enum
+    | ReflNil
+    | ReflCircle { r int }
+
+#serde(tag = "t", content = "c")
+#impl(Reflect)
+type ReflNode enum
+    | ReflLeaf
+    | ReflVal(int)
+    | ReflSpan(int, int)
+    | ReflNamed { id int, name str }
+
+#impl(Reflect)
+type ReflColor enum
+    | ReflRed
+    | ReflGreen
+    | ReflBlue
+
+test "internally-tagged sum -> Sum(name, Tagged(tag), variants); unit + record payload (222.8 D438)" {
+    match ReflShape.reflect() {
+        Sum(name, repr, variants) => {
+            assert(name == "ReflShape")
+            match repr { Tagged(tag) => assert(tag == "kind"), _ => assert(false) }
+            assert(variants.len() == 2)
+            ro (v0n, v0s) = variants[0]
+            assert(v0n == "ReflNil")
+            match v0s { Unit => assert(true), _ => assert(false) }
+            ro (v1n, v1s) = variants[1]
+            assert(v1n == "ReflCircle")
+            match v1s {
+                Record(rn, rf) => {
+                    assert(rn == "ReflCircle")
+                    assert(rf.len() == 1)
+                    ro (f0n, f0s) = rf[0]
+                    assert(f0n == "r")
+                    match f0s { Int => assert(true), _ => assert(false) }
+                }
+                _ => assert(false)
+            }
+        }
+        _ => assert(false)
+    }
+}
+
+test "adjacently-tagged sum -> Sum(name, TaggedContent(tag,content), all variant shapes) (222.8 D438)" {
+    match ReflNode.reflect() {
+        Sum(name, repr, variants) => {
+            assert(name == "ReflNode")
+            match repr {
+                TaggedContent(tag, content) => {
+                    assert(tag == "t")
+                    assert(content == "c")
+                }
+                _ => assert(false)
+            }
+            assert(variants.len() == 4)
+            ro (n0, s0) = variants[0]
+            assert(n0 == "ReflLeaf")
+            match s0 { Unit => assert(true), _ => assert(false) }
+            // single-element tuple variant -> TRANSPARENT (element shape directly)
+            ro (n1, s1) = variants[1]
+            assert(n1 == "ReflVal")
+            match s1 { Int => assert(true), _ => assert(false) }
+            // multi-element tuple variant -> synthetic Record(variant, [("0",..),("1",..)])
+            ro (n2, s2) = variants[2]
+            assert(n2 == "ReflSpan")
+            match s2 {
+                Record(rn, rf) => {
+                    assert(rn == "ReflSpan")
+                    assert(rf.len() == 2)
+                    ro (f0n, f0s) = rf[0]
+                    assert(f0n == "0")
+                    match f0s { Int => assert(true), _ => assert(false) }
+                    ro (f1n, f1s) = rf[1]
+                    assert(f1n == "1")
+                    match f1s { Int => assert(true), _ => assert(false) }
+                }
+                _ => assert(false)
+            }
+            // record-payload variant -> Record(variant, [(field, ..), ..]), RAW field names
+            ro (n3, s3) = variants[3]
+            assert(n3 == "ReflNamed")
+            match s3 {
+                Record(rn, rf) => {
+                    assert(rn == "ReflNamed")
+                    assert(rf.len() == 2)
+                    ro (f0n, f0s) = rf[0]
+                    assert(f0n == "id")
+                    match f0s { Int => assert(true), _ => assert(false) }
+                    ro (f1n, f1s) = rf[1]
+                    assert(f1n == "name")
+                    match f1s { Str => assert(true), _ => assert(false) }
+                }
+                _ => assert(false)
+            }
+        }
+        _ => assert(false)
+    }
+}
+
+test "externally-tagged sum (default, no #serde attrs) -> Sum(name, External, variants) (222.8 D438)" {
+    match ReflColor.reflect() {
+        Sum(name, repr, variants) => {
+            assert(name == "ReflColor")
+            match repr { External => assert(true), _ => assert(false) }
+            assert(variants.len() == 3)
+            ro (n0, s0) = variants[0]
+            assert(n0 == "ReflRed")
+            match s0 { Unit => assert(true), _ => assert(false) }
+        }
+        _ => assert(false)
+    }
+}
