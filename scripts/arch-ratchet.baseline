@@ -52,5 +52,30 @@
 # (standalone-изолированная копия PASS 1/0 — общий мега-CU на этой машине
 # упирается в НЕЗАВИСИМЫЙ pre-existing P0
 # `[M-conformance-megacu-intermittent-run-crash]`, не регрессия этого окна).
-lines=63173
+# Рост 63173→63246 осознан (реестр 221.1 №139, follow-up — интегратор поймал
+# регрессию мега-CU): `hoist_pending_generic_type_defs` (см. запись выше)
+# переносит generic-инстанс ВПЕРЁД, но его собственное тело может ссылаться
+# на ДРУГИЕ отложенные категории, которые сами сплайсятся ОДИН раз, ПОСЛЕ
+# позиции, куда мы теперь хойстим — тот же класс бага на шаг глубже. Аудит
+# каждого preamble-маркера после `__VALUE_RECORD_DEFS__`: (1) mono tuple/
+# fixed-array (`_NovaTuple_..`/`_NovaTupleN`/`_NovaFixArr_..`,
+# `__MONO_TUPLE_TYPEDEFS__`) — репро `m2217_26_generic_static_method_value_
+# arg_addr_mismatch` (value-record с `[](str,str)`-полем → Vec-mono с
+# `_NovaTuple_2_8_nova_str_8_nova_str* data` внутри хойстнутого тела, CC-FAIL
+# "unknown type name") — каждая typedef `#ifndef`-guarded, поэтому ФИКС:
+# существующий finalize-топосорт+рендер вынесен в чистый метод
+# `render_value_composite_typedefs` (byte-identical extraction, тот же
+# call-сайт) и ДОПОЛНИТЕЛЬНО вызывается из `hoist_pending_generic_type_defs`
+# — ранний дубль безопасен (guard же). (2) `NovaOpt_<T>`/`NovaRes_<ok>_<err>`
+# (`__NOVAOPT_TYPEDEFS__`/`__NOVARES_TYPEDEFS__`) — НЕ `#ifndef`-guarded
+# (только Rust-side dedup против повторной РЕГИСТРАЦИИ, не против повторной
+# ЭМИССИИ) → та же техника cut-and-move delta, что уже существующий
+# `opt_delta` в `emit_value_record_type`, но для контента, который вызывает
+# САМ forced-drain (тот существующий hoist его не видит). (3) Именованные
+# tuple (`type Point(...)` → `NovaTuple_Point`) — проверено и ИСКЛЮЧЕНО:
+# обычная `Item::Type`-декларация в типовом loop'е, не отложенная категория,
+# для них дыры нет. Верифицировано: m2217_26 standalone CC-FAIL→PASS;
+# исходное репро №139 + 4 вариации + регресс-фикстура (расширенная
+# tuple-полем) — все зелёные после доработки.
+lines=63246
 infer=348
