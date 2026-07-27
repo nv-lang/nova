@@ -1318,7 +1318,7 @@ pub fn check_module_path_with_kind(
     }
     // [M-D78-strict-removal] 2026-06-01: rev-1 legacy form больше не
     // accepted (full corpus migration completed; ~846 files migrated to
-    // rev-3 via scripts/d78_audit_migrate.py). Declaration в rev-1 form
+    // rev-3 via scripts/tools/d78_audit_migrate.py). Declaration в rev-1 form
     // теперь → hard error E_D78_MODULE_PATH_MISMATCH.
 
     let exp_legacy_str = expected_legacy

@@ -46,18 +46,26 @@
 # обнови константы BASELINE_* на новые фактические, отметив дату.
 #
 # ИСПОЛЬЗОВАНИЕ:
-# $ bash scripts/hardcode-audit.sh
+# $ bash scripts/guards/hardcode-audit.sh
 #   → вывод таблицы 7 категорий, exit 0 если не выросло, 1 если выросло
 #
-# $ bash scripts/hardcode-audit.sh --list A
+# $ bash scripts/guards/hardcode-audit.sh --list A
 #   → показать конкретные сайты (первые 20) категории A
 #
 # Требования: POSIX bash + grep (никаких внешних зависимостей).
+#
+# Часть программы машинного принуждения норм плана 231 «Выход из цикла
+# точечных фиксов» (docs/plans/231-bug-cycle-exit.md, трек Д) — tripwire
+# того же вида, что arch-ratchet.sh, только по 7 категориям хардкода
+# вместо строк emit_c.rs. ПРОВЕРЕНО 2026-07-27: НЕ вызывается автоматически
+# ни из scripts/gate.sh, ни из .github/workflows/*.yml — запускать вручную
+# на волнах Plan 196 §3 (аудит долга «есть .nv-декларация + Rust-копия»).
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# Скрипт живёт в scripts/guards/ — корень репы на два уровня выше.
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # =====================================================================
 # BASELINE (волна p196-hardcode-detector, 2026-07-22)

@@ -1915,7 +1915,7 @@ testable за ~30 минут (revert + nova test + cross-platform smoke).
 | A5 | `ro` keyword works в всех 4 позициях | 🟢 binding + field + type-mod + param |
 | A6 | `consume X = expr` не сломан | 🟢 plan73: 25/0 |
 | A7 | Error codes сохранены как stable API | 🟢 E_READONLY_FIELD/CONTENT/COERCE/PARAM_NOT_MUT |
-| A8 | Bulk-script consistent rewrite | 🟢 ~12K sites, scripts/plan114_rewrite.py R1-R12 |
+| A8 | Bulk-script consistent rewrite | 🟢 ~12K sites, scripts/tools/plan114_rewrite.py R1-R12 |
 | A9 | String literals + comments не тронуты | 🟢 (line comments skipped, in-string false positives — none) |
 | A10 | Tree-sitter grammar | ✅ RESOLVED 2026-05-31: tree-sitter-nova 0.2.0 (84/84) — `[M-114-tree-sitter-grammar]` закрыт (отдельный репо) |
 | A11 | LSP semantic tokens + quick-fix | ✅ RESOLVED 2026-05-31: code_action_provider + E_KW_REMOVED_LET (91/0) — `[M-114-lsp-quickfixes]` закрыт (отдельный репо) |
@@ -1979,7 +1979,7 @@ evaluator). Каждая фаза self-contained per плановой safety hat
 | 1 | Ф.0.1 | `388edc05029` | Draft D184 в `spec/decisions/03-syntax.md` |
 | 2 | Ф.1.1 | `6eed72a2816` | Lexer KwRo + lexeme recognition KwLet/KwReadonly |
 | 3 | Ф.1.2-1.4 | `affd9e4ef06` | Parser: ro/mut/consume binding-stmt + if/while pattern unified + field/param/type-mod swap |
-| 4 | Ф.5-Ф.6 | `809b3a8e9d8` | Bulk rewrite 1293 .nv файла (~9728 lines) via scripts/plan114_rewrite.py |
+| 4 | Ф.5-Ф.6 | `809b3a8e9d8` | Bulk rewrite 1293 .nv файла (~9728 lines) via scripts/tools/plan114_rewrite.py |
 | 5 | Ф.1.6 | `b75218d3b4f`+ | Plan114 fixtures: 5 positive + 3 negative — 8/8 PASS |
 | 6 | Ф.8.2 | `fbb9c5e3351` | D33 rewrite + D175 + D176 (ro field + return-type defaults + @-inheritance) |
 | 7 | Ф.8.2 | `e0bbf8f6cfa` | D34 amend (unified pattern grammar с match arms) |
@@ -2006,7 +2006,7 @@ evaluator). Каждая фаза self-contained per плановой safety hat
   if_pattern_ok, ro_field_ok, ro_type_modifier_ok, +
   mut_at_module_level_neg, consume_in_condition_neg,
   ambiguous_ident_pattern_neg. 8/8 PASS via `target/release/nova.exe test`.
-- **Ф.5** ✅ — `scripts/plan114_rewrite.py` R1-R12 applied к std/+prelude/;
+- **Ф.5** ✅ — `scripts/tools/plan114_rewrite.py` R1-R12 applied к std/+prelude/;
   1556 let bindings + 78 readonly converted; cargo build green.
 - **Ф.6** ✅ — applied к nova_tests/+examples/+bench/; 1239 файлов,
   8088 line changes (1560 в std + 8004 = 9564 total bindings; 131
@@ -2047,7 +2047,7 @@ Safety hatches per plan позволяют ship Plan 114 без Ф.9/Ф.10/Ф.11
   dispatch + parse_let_decl + KwReadonly arms в legacy-error emitter
   `E_KW_REMOVED_LET` / `E_KW_REMOVED_READONLY`. Сейчас dual-accept (с
   миграцией корпуса в одном commit'е, hard-cutover hint в plan
-  выполнен через scripts/plan114_rewrite.py). Финальный shave-off
+  выполнен через scripts/tools/plan114_rewrite.py). Финальный shave-off
   обоих legacy keywords — один followup commit перед merge.
 - **`[M-114-diag-terminology]`** Ф.2 — compiler-codegen strings
   «let mut binding» → «mut binding» и т.п. (5 файлов). Cosmetic.
@@ -2071,7 +2071,7 @@ Safety hatches per plan позволяют ship Plan 114 без Ф.9/Ф.10/Ф.11
 ### Critical lessons / discipline
 
 - **Hard cutover discipline.** Parser dual-accept'ит legacy keywords
-  на time-of-migration; corpus rewrite scripts/plan114_rewrite.py
+  на time-of-migration; corpus rewrite scripts/tools/plan114_rewrite.py
   migrates ~10K sites в одном commit'е (Ф.5/Ф.6 atomic). Ф.1.5
   закрывает legacy paths финальным commit'ом — это не dual-syntax
   fallback, а migration ordering: rewrite-then-shave-off.

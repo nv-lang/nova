@@ -8,11 +8,20 @@
 # сортировочного ключа подномеров плана). Никаких внешних зависимостей.
 #
 # Идемпотентно и детерминированно: тот же docs/plans/*.md → тот же вывод.
+#
+# Часть семейства машинных стражей плана 231 «Выход из цикла точечных
+# фиксов» (docs/plans/231-bug-cycle-exit.md, трек Д «машинное принуждение
+# норм»; docs/plans/231.2-enforcement-infra.md — исполнительный дом трека Д).
+# Сама норма «статус плана — только пофайлово, сводка только генератором» —
+# в docs/conventions-governance.md; этот скрипт и есть тот генератор,
+# на который она ссылается, и парный страж — check-no-manual-status-table.sh
+# (не даёт вернуться к рукописной сводной таблице).
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# Скрипт живёт в scripts/tools/ — корень репы на два уровня выше.
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PLANS_DIR="$REPO_ROOT/docs/plans"
 OUT_FILE="$PLANS_DIR/STATUS.md"
 
@@ -133,11 +142,11 @@ awk -F'\t' '
 ' "$ROWS_TMP" | sort -t "$(printf '\t')" -k1,1 | cut -f2- > "$KEYED_TMP"
 
 {
-  echo '<!-- AUTO-GENERATED — НЕ РЕДАКТИРОВАТЬ РУКАМИ. Регенерация: bash scripts/gen-plan-status.sh -->'
+  echo '<!-- AUTO-GENERATED — НЕ РЕДАКТИРОВАТЬ РУКАМИ. Регенерация: bash scripts/tools/gen-plan-status.sh -->'
   echo
   echo '# Статусы планов (сводный обзор)'
   echo
-  echo "> **Автосгенерировано**: \`bash scripts/gen-plan-status.sh\`, дата генерации: $(date -u '+%Y-%m-%d %H:%M UTC')."
+  echo "> **Автосгенерировано**: \`bash scripts/tools/gen-plan-status.sh\`, дата генерации: $(date -u '+%Y-%m-%d %H:%M UTC')."
   echo '> **⚠ Этот файл ПРОТУХАЕТ между перегенерациями** — git-копия отражает момент'
   echo '> последнего запуска, не текущее состояние. Источник правды — ТОЛЬКО строка'
   echo '> `**Статус:**` в самом файле плана; при любом сомнении — перегенерируй или'

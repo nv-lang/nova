@@ -3,7 +3,7 @@
 **Онбординг (читай в этом порядке):**
 1. [docs/promts/read-project.md](docs/promts/read-project.md) — что за проект, текущее состояние, куда двигаться, команды.
 2. [docs/dev-workflow.md](docs/dev-workflow.md) — процесс и жёсткие операционные правила.
-3. [docs/plans/README.md](docs/plans/README.md) — навигация/приоритеты/очередь планов. **Статус плана — пофайлово** (строка `**Статус:**` в `docs/plans/NNN-*.md`, единственный source of truth); сводный обзор — сгенерированный [docs/plans/STATUS.md](docs/plans/STATUS.md) (`bash scripts/gen-plan-status.sh`). Рукописная индекс-таблица статусов запрещена (conventions-governance).
+3. [docs/plans/README.md](docs/plans/README.md) — навигация/приоритеты/очередь планов. **Статус плана — пофайлово** (строка `**Статус:**` в `docs/plans/NNN-*.md`, единственный source of truth); сводный обзор — сгенерированный [docs/plans/STATUS.md](docs/plans/STATUS.md) (`bash scripts/tools/gen-plan-status.sh`). Рукописная индекс-таблица статусов запрещена (conventions-governance).
 4. [AGENTS.md](AGENTS.md) — build/test-справка (EN).
 
 **Жёсткие правила (полные — в dev-workflow.md):**

@@ -17,8 +17,9 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-GUARD="$REPO_ROOT/scripts/check-no-runtime-copy.sh"
+# Скрипт живёт в scripts/guards/selftest/ — корень репы на три уровня выше.
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+GUARD="$REPO_ROOT/scripts/guards/check-no-runtime-copy.sh"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT

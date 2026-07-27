@@ -112,8 +112,8 @@ nova-http, которой не было — заголовки копии был
 331 МБ в одном worktree). Проверено: polaris `nova test src --strict-effects` даёт 35/0/16
 БЕЗ всякой копии, только на переменных выше.
 
-Машинный страж: `scripts/check-no-runtime-copy.sh` (в `gate.sh`; самотест —
-`scripts/selftest/test-check-no-runtime-copy.sh`). Детали и прочие ловушки — `read-toolchain.md`.
+Машинный страж: `scripts/guards/check-no-runtime-copy.sh` (в `gate.sh`; самотест —
+`scripts/guards/selftest/test-check-no-runtime-copy.sh`). Детали и прочие ловушки — `read-toolchain.md`.
 
 ## 4. Состояние тестов (baseline 2026-07-13)
 

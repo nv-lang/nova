@@ -298,7 +298,7 @@ module parent.name                          // первая строка фай�
   **silently** (no warning), что hid'ило accumulated drift между spec
   и corpus.
 - **2026-06-01 (bug fix):** добавлен warning `W_D78_REV1_DEPRECATED` +
-  migration script `scripts/d78_audit_migrate.py`.
+  migration script `scripts/tools/d78_audit_migrate.py`.
 - **2026-06-01 `[M-D78-strict-removal]` ✅:** после полной миграции
   corpus (~846 files) rev-1 acceptance удалён. rev-1 form теперь →
   hard error `E_D78_MODULE_PATH_MISMATCH`. Warning `W_D78_REV1_DEPRECATED`
@@ -671,7 +671,7 @@ LLM знает фиксированный список — «известная 
   deviation от spec. Audit 2026-06-01 показал ~847 violators в
   corpus (43% nova_tests, 100% bench). Bug fix добавил deprecation
   warning **`W_D78_REV1_DEPRECATED`** + migration script
-  `scripts/d78_audit_migrate.py` с поддержкой `_test.nv` peer detection
+  `scripts/tools/d78_audit_migrate.py` с поддержкой `_test.nv` peer detection
   (правило F) и `internal/` (rev-3.1).
 - **rev-3 strict removal `[M-D78-strict-removal]` ✅** (2026-06-01):
   после полной миграции corpus (~846 files в `nova_tests/`, `examples/`,

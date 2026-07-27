@@ -7,11 +7,11 @@
 # покрывает races частично, не строгий ThreadSanitizer).
 #
 # Usage:
-#   ./scripts/tsan_concurrency.sh [filter]
+#   ./scripts/guards/tsan_concurrency.sh [filter]
 #
 # Example:
-#   ./scripts/tsan_concurrency.sh concurrency/  # all concurrency
-#   ./scripts/tsan_concurrency.sh fiber_throw   # single test
+#   ./scripts/guards/tsan_concurrency.sh concurrency/  # all concurrency
+#   ./scripts/guards/tsan_concurrency.sh fiber_throw   # single test
 #
 # Requirements:
 #   - Linux host (Ubuntu 22.04+ либо WSL2).
@@ -21,6 +21,12 @@
 #
 # Output: TSAN findings приходят на stderr через TSAN runtime; non-zero
 # exit code = races detected.
+#
+# Часть программы машинного принуждения плана 231 (docs/plans/231-bug-
+# cycle-exit.md, трек Д) — race-гейт для M:N-рантайма (docs/mn-coding-
+# conventions.md). ПРОВЕРЕНО 2026-07-27: НЕ вызывается автоматически ни
+# из scripts/gate.sh (тот Windows-only), ни из .github/workflows/*.yml —
+# запускать вручную из WSL2/Linux при правке nova_rt/**-concurrency.
 
 set -euo pipefail
 

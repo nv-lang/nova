@@ -293,7 +293,7 @@ latched), `deltimer_cancel_during_fire` (exactly-once), `runq_overflow_assert` (
 + existing `cancel_runtime_not_init`/`cancel_unbound_token`/`cancel_zero_fibers_in_scope`/
 `close_cb_after_fiber_dead`/`scope_freed_during_cancel` (no regression).
 
-**Stress** (via `scripts/stress_bisect.sh`, n per debugging-races.md heuristic): `stress_iso_3e`
+**Stress** (via `scripts/tools/stress_bisect.sh`, n per debugging-races.md heuristic): `stress_iso_3e`
 66→200, `stress_iso_large` 66, NEW `maxprocs1_lost_wake_stress` 66, 3 iso-cancel fixtures 66,
 `cancel_semantics_test` 66 (WATCHDOG_DUMP UNSET — Lesson #1), `cancel_storm_1000` 66,
 `fibers_10k_sleep_cancel` 30, NEW `note_reuse_stress` 66 (MSVC), GC-suite 30; + state-dump
@@ -507,7 +507,7 @@ verdict `safe-to-commit`; 2 «fatal» CAS-находки опровергнут�
 - exe реально исполняется: `grow_vs_wake_explicit.exe` → «1/1 passed», 213ms (не no-op).
 - harness детектит фейлы (контроль): `park_wake_stress` 13/7 (его `+=` race ловится) →
   значит зелёные ниже — настоящие.
-- **closure-stress (scripts/stress_bisect.sh, compile-once, armed exe):
+- **closure-stress (scripts/tools/stress_bisect.sh, compile-once, armed exe):
   grow_vs_wake_explicit 100/100, stress_iso_3e 66/66, semaphore_batch_n 30/30 armed.**
 - **MAXPROCS=1 (АКУТНЫЙ — §13.6.2: гонка острее на низком worker-count) И 16:**
   grow_vs_wake_explicit 100/100 @MP=1 + 66/66 @MP=16; stress_iso_3e 66/66 @MP=1.

@@ -483,7 +483,7 @@ inline-тестах до фикса). После Plan 70 Phase A2/A3 эти ме
     silently substituted return type — теперь strict:
     register_mono_instance ret_c, register_mono_method_instance ret_c,
     emit_monomorphized_fn ret_c, 3× emit_call closure-arg ret.
-  - **Ф.2 internal lint guard:** `scripts/lint-no-silent-int-fallback.sh`
+  - **Ф.2 internal lint guard:** `scripts/guards/lint-no-silent-int-fallback.sh`
     с baseline counts (Cat A1=8, Cat A2=24). CI gate против регресса.
   - **Ф.3 Cat B audit:** `docs/codegen-erasure-sites.md` — 10 Cat B
     documented (B1-B10) + 20 Cat D dispatch wildcards listed.

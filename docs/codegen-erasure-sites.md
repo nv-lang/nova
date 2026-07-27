@@ -8,7 +8,7 @@
 > 1. Иметь inline-комментарий с rationale «почему erasure безопасна»
 > 2. Быть listed в этом документе с file:line + причина
 > 3. Survived peer review при добавлении (CI lint guard
->    `scripts/lint-no-silent-int-fallback.sh` использует baseline count
+>    `scripts/guards/lint-no-silent-int-fallback.sh` использует baseline count
 >    из этого файла)
 
 ---
@@ -328,7 +328,7 @@ holdovers).
 
 ## Lint baseline reconciliation
 
-`scripts/lint-no-silent-int-fallback.sh` использует baseline counts:
+`scripts/guards/lint-no-silent-int-fallback.sh` использует baseline counts:
 
 - `BASELINE_TYPE_REF_TO_C_UNWRAP_OR=8` — соответствует Cat B sites
   B1, B4, B5, B6, B7, B8, B9 + B10's grep-only-match (variant).
@@ -387,6 +387,6 @@ path only; never output to emitted C.
 
 - **Plan 70 doc:** `docs/plans/70-no-silent-nova-int-fallback.md`
 - **Spec D127:** «Strict type propagation в codegen» (Plan 70 Ф.4)
-- **Lint script:** `scripts/lint-no-silent-int-fallback.sh`
+- **Lint script:** `scripts/guards/lint-no-silent-int-fallback.sh`
 - **Audit baseline:** `docs/plans/70-artifacts/audit-2026-05-18.md`
 - **Strict helpers:** `compiler-codegen/src/codegen/emit_c.rs` `err_no_int_fallback`, `record_strict_error`

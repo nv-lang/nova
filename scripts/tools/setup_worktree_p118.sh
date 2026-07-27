@@ -3,7 +3,7 @@
 # для release nova test runs в nova-p118 worktree.
 #
 # Per memory project-worktree-nova-test-setup. Usage:
-#   bash scripts/setup_worktree_p118.sh
+#   bash scripts/tools/setup_worktree_p118.sh
 #
 # After running, env vars NOVA_GC_INCLUDE_DIR / NOVA_GC_LIB_DIR are set
 # для current shell session pointing к main repo vcpkg_installed.
@@ -12,7 +12,8 @@
 
 set -euo pipefail
 
-WORKTREE_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# Скрипт живёт в scripts/tools/ — корень worktree на два уровня выше.
+WORKTREE_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 MAIN_REPO="D:/Sources/nv-lang/nova"
 
 if [ ! -d "$MAIN_REPO/compiler-codegen/nova_rt/libuv" ]; then

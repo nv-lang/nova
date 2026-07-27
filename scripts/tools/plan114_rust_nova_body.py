@@ -5,7 +5,7 @@ Only touches contents of `nova_body: Some("...")` literals — embedded
 Nova code that should use new keyword syntax after Plan 114 D184.
 
 Usage:
-    python scripts/plan114_rust_nova_body.py FILE [FILE ...]
+    python scripts/tools/plan114_rust_nova_body.py FILE [FILE ...]
 """
 from __future__ import annotations
 

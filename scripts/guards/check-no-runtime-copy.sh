@@ -33,14 +33,15 @@
 # nova_rt законен, это его дом.
 #
 # ИСПОЛЬЗОВАНИЕ:
-#   scripts/check-no-runtime-copy.sh [каталог ...]
+#   scripts/guards/check-no-runtime-copy.sh [каталог ...]
 # Без аргументов проверяются соседние репы/worktree рядом с главной.
 # Выход: 0 — чисто, 1 — найдена копия (печатает путь, размер и что делать).
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# Скрипт живёт в scripts/guards/ — корень репы на два уровня выше.
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # Главная репа — та, где живёт исходник рантайма (у неё есть свой Cargo.toml
 # в compiler-codegen/). Её nova_rt законен и проверкой не считается копией.

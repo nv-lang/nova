@@ -8,8 +8,8 @@
 # Folder-module peers уже в rev-3 (declare folder-name) — walker их пропускает.
 #
 # Usage:
-#   pwsh scripts/migrate_modules_rev3.ps1 -DryRun       # preview changes
-#   pwsh scripts/migrate_modules_rev3.ps1               # apply
+#   pwsh scripts/tools/migrate_modules_rev3.ps1 -DryRun       # preview changes
+#   pwsh scripts/tools/migrate_modules_rev3.ps1               # apply
 
 param(
     [switch]$DryRun
@@ -24,7 +24,8 @@ $Members = @(
     @{ Path = "nova_tests"; Package = "nova_tests" }
 )
 
-$repoRoot = Resolve-Path "$PSScriptRoot\.."
+# Скрипт живёт в scripts/tools/ — корень репы на два уровня выше.
+$repoRoot = Resolve-Path "$PSScriptRoot\..\.."
 $totalChecked = 0
 $totalMigrated = 0
 $totalSkipped = 0

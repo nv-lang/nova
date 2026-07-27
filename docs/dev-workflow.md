@@ -91,7 +91,7 @@ Nova-workspace `nova.toml` (members: `std`, `examples`, `nova_tests`). Подр�
 - **Индекс** всех планов — [docs/plans/README.md](plans/README.md) (большой файл, читать
   страницами через offset/limit). **Статус** — только пофайлово: строка `**Статус:**` внутри
   самого `docs/plans/NNN-*.md`; сводный обзор — сгенерированный [docs/plans/STATUS.md](plans/STATUS.md)
-  (регенерация: `bash scripts/gen-plan-status.sh`). Ручная сводная таблица статусов — запрещена
+  (регенерация: `bash scripts/tools/gen-plan-status.sh`). Ручная сводная таблица статусов — запрещена
   (см. [conventions-governance.md](conventions-governance.md)).
 - **Корень `docs/plans/` — только планы** (`NNN[.x]-<slug>.md`) + `README.md`/`STATUS.md`/
   `backlog-followups.md`. Рабочие файлы агентов (чекпоинты/progress/notes/карты/verification

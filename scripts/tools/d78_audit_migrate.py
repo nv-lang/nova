@@ -15,8 +15,8 @@ D78 rev-3 rule:
 `internal/` special-case (rev-3.1) — `owner.internal.target` (3 segments).
 
 Usage:
-    python scripts/d78_audit_migrate.py --audit ROOT [ROOT ...]
-    python scripts/d78_audit_migrate.py --migrate ROOT [ROOT ...]
+    python scripts/tools/d78_audit_migrate.py --audit ROOT [ROOT ...]
+    python scripts/tools/d78_audit_migrate.py --migrate ROOT [ROOT ...]
 """
 from __future__ import annotations
 

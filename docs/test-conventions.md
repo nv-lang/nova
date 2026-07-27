@@ -328,7 +328,7 @@ Folder-module не применяется если:
 
 При конфликтах имён есть выходы (в порядке предпочтения):
 - **`priv(file)`** (Plan 170, предпочтительно): пометить конфликтующие top-level `fn`/`const`/тип-без-методов как `priv(file) fn helper()` → file-private, ноль rename, имена читаемы. **Ограничение:** `priv(file)` типы С методами НЕ дискриминируются по файлу (коллизия метод-символа `Nova_<T>_static_<m>`) → для них ordinal-rename.
-- **Ordinal-suffix rename**: `Counter` в 3 файлах → `Counter1`/`Counter2`/`Counter3` (алфавитный порядок по имени файла). Массовый рефактор — `python scripts/catb_convert.py <dir>`.
+- **Ordinal-suffix rename**: `Counter` в 3 файлах → `Counter1`/`Counter2`/`Counter3` (алфавитный порядок по имени файла). Массовый рефактор — `python scripts/tools/catb_convert.py <dir>`.
 - **Уникальный prefix** (для нового кода): `feature_a_helper()` вместо `helper()`.
 - **Оставить standalone** (если переименование ломает смысл теста или dir заблокирована `nova.toml`).
 
@@ -544,10 +544,10 @@ fn feature_b_helper() -> int { ... }    // не конфликтует
 
 ```sh
 # dry-run (показывает что изменится):
-python scripts/catb_convert.py --dry-run nova_tests/plan_foo
+python scripts/tools/catb_convert.py --dry-run nova_tests/plan_foo
 
 # применить:
-python scripts/catb_convert.py nova_tests/plan_foo
+python scripts/tools/catb_convert.py nova_tests/plan_foo
 ```
 
 Скрипт переименовывает `Counter` → `Counter1`/`Counter2`/... (по алфавиту файла), переносит EXPECT_COMPILE_ERROR → `neg/`, обновляет все ссылки внутри файлов. Не трогает stdlib-типы (Vec, Option, Result, str, int и др.).

@@ -16,13 +16,13 @@
 #   3. ПРОВЕРЕН — имеет самотест `scripts/selftest/test-<имя>.sh`, который
 #      доказывает ОБА свойства: ловит нарушение / не даёт ложняка.
 #
-# ЧТО ПРОВЕРЯЕТ. Для каждого файла `scripts/check-*.sh` (соглашение имён для
-# стражей) — все три пункта выше. Разовые инструменты волн (миграции,
-# конвертеры) стражами не считаются и не проверяются — они называются иначе
-# (см. `scripts/README.md`, раздел про две группы).
+# ЧТО ПРОВЕРЯЕТ. Для каждого файла `scripts/guards/check-*.sh` (соглашение
+# имён для стражей) — все три пункта выше. Разовые инструменты волн (миграции,
+# конвертеры, `scripts/tools/`) стражами не считаются и не проверяются.
+# (см. `scripts/README.md` — карта guards/ vs tools/).
 #
 # ИСПОЛЬЗОВАНИЕ:
-#   scripts/check-guard-wiring.sh [корень-репы]
+#   scripts/guards/check-guard-wiring.sh [корень-репы]
 # Без аргумента — проверяется репа, в которой лежит сам скрипт. Аргумент нужен
 # самотесту: он собирает игрушечные репы-фикстуры и натравливает стража на них
 # (без параметра страж всегда смотрел бы на настоящую репу, и фикстуры ничего
@@ -38,9 +38,10 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="${1:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+# Скрипт живёт в scripts/guards/ — корень репы на два уровня выше.
+REPO_ROOT="${1:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 GATE="$REPO_ROOT/scripts/gate.sh"
-SELFTEST_DIR="$REPO_ROOT/scripts/selftest"
+SELFTEST_DIR="$REPO_ROOT/scripts/guards/selftest"
 
 # Минимум содержательной шапки: столько строк комментария в первых 20.
 MIN_HEADER_LINES=8
@@ -48,10 +49,10 @@ MIN_HEADER_LINES=8
 problems=0
 report() { echo "  ✗ $1" >&2; problems=$((problems + 1)); }
 
-echo "check-guard-wiring: проверяю стражи scripts/check-*.sh"
+echo "check-guard-wiring: проверяю стражи scripts/guards/check-*.sh"
 
 shopt -s nullglob
-guards=("$REPO_ROOT"/scripts/check-*.sh)
+guards=("$REPO_ROOT"/scripts/guards/check-*.sh)
 if [ "${#guards[@]}" -eq 0 ]; then
     echo "  стражей не найдено — нечего проверять"
     exit 0
@@ -103,8 +104,8 @@ if [ "$problems" -ne 0 ]; then
 автопроверке или сам содержит ошибки». Новый страж обязан иметь ВСЕ ТРИ:
   1) содержательную шапку со ссылкой на план (образец — check-no-runtime-copy.sh);
   2) шаг в scripts/gate.sh (или покрытие через цикл самотестов);
-  3) самотест scripts/selftest/test-<имя>.sh, доказывающий, что страж ловит
-     нарушение и не даёт ложных срабатываний (образец —
+  3) самотест scripts/guards/selftest/test-<имя>.sh, доказывающий, что страж
+     ловит нарушение и не даёт ложных срабатываний (образец —
      selftest/test-check-no-runtime-copy.sh).
 См. docs/plans/231-bug-cycle-exit.md §4в.
 HINT
