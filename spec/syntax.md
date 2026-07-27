@@ -1673,8 +1673,9 @@ typed bounded channel с blocking-семантикой. **Единственны
 (альтернатива — shared `mut` — UB при preemption).
 
 ```nova
-ro { tx, rx } = Channel.new(10)    // -> { tx ChanWriter[T], rx ChanReader[T] }; cap 10 (0 = unbuffered)
-tx.send(value)                       // блокирует если буфер полон; -> bool (false = закрыт)
+ro (tx, rx) = Channel[T].new(10)     // -> (ChanWriter[T], ChanReader[T]); cap 10 (0 = unbuffered)
+tx.send(value)                       // ЗАБИРАЕТ владение `value` (consume, D79/D91-амендмент);
+                                      // блокирует если буфер полон; -> bool (false = закрыт)
 ro v = rx.recv()                     // Option[T]; None = closed + drained
 tx.close()                            // idempotent
 
@@ -1683,6 +1684,15 @@ while Some(msg) = rx.recv() {
     process(msg)
 }
 ```
+
+`send`/`try_send` **забирают владение** отправленным значением — после
+`tx.send(value)` переменная `value` недоступна (использование = compile
+error, существующая линейная проверка D131). Причина: канал не копирует и не
+изолирует буфер — общий указатель на кучу без передачи владения был бы
+гонкой данных под M:N по построению (два fiber'а на разных ОС-потоках
+мутируют один объект). Намеренное разделение доступа к каналу (не значения!)
+— через `tx.share()` (доп. writer-handle на тот же буфер, D91), не через
+повторное использование уже отправленного значения.
 
 `select { ... }` — мультиплексирование recv-операций с опциональным
 `timeout` case:

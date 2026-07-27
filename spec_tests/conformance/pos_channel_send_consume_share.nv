@@ -1,0 +1,26 @@
+// Plan 221.1 №144 (D79/D91-амендмент): `send`/`try_send` теперь consume-
+// параметр — намеренное разделение остаётся возможным через явный
+// `ChanWriter.share()` (D91, docs/channels.md §"share — multi-writer"),
+// НЕ через повторное использование уже отправленного значения. Каждый
+// writer шлёт СВОИ (свежие) значения — сама отправка по-прежнему move,
+// расщепление происходит на уровне канала (доп. writer-handle), не значения.
+
+module spec_tests.conformance
+
+test "channel send consume + share(): намеренное разделение через доп. writer" {
+    ro (tx, rx) = Channel[Vec[int]].new(4)
+    ro tx2 = tx.share()
+
+    ro v1 = Vec[int].of(1)
+    ro v2 = Vec[int].of(2)
+    tx.send(v1)
+    tx2.send(v2)
+    tx.close()
+    tx2.close()
+
+    mut total = 0
+    while Some(got) = rx.recv() {
+        total = total + got.len()
+    }
+    assert(total == 2)
+}

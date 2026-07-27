@@ -30999,6 +30999,27 @@ impl ConsumeRegistry {
             }
         }
 
+        // 1a. Channel builtin consume-параметры (Plan 221.1 №144, D79/D91-
+        //     амендмент, 2026-07-27): `send`/`try_send` ЗАБИРАЮТ владение
+        //     отправленным значением (иначе канал передаёт общий указатель на
+        //     кучу без изоляции — измеренный дефект: отправитель дописывает
+        //     значение ПОСЛЕ send, получатель видит мутацию). `ChanWriter`
+        //     не имеет `.nv` type-decl (см. `ChanReader.close_after`-хардкод
+        //     в infer_expr_type — тот же класс: builtin без .nv-декларации),
+        //     поэтому НЕЛЬЗЯ прогнать через `builtin_sig_modules`/
+        //     `absorb_external` — это зарегистрировало бы "ChanWriter" как
+        //     sig-complete builtin-тип (см. `sig_complete_builtin` guard),
+        //     и любой НЕ объявленный здесь метод (`close`/`share`/
+        //     `is_closed`) стал бы E7320 unknown-method. Прямая вставка в
+        //     ЭТОТ (изолированный от self.sig/self.types) реестр —
+        //     единственный безопасный канал. Пара с `Stmt::Let`'s tuple-
+        //     destructure спецкейсом (`consume_walk_stmt`, ниже) который
+        //     привязывает var_types["tx"]="ChanWriter" для
+        //     `ro (tx, rx) = Channel[T].new(n)` — без него этот метод_params
+        //     никогда не найдёт получателя (var_types был бы None).
+        method_params.insert(("ChanWriter".to_string(), "send".to_string()), vec![0]);
+        method_params.insert(("ChanWriter".to_string(), "try_send".to_string()), vec![0]);
+
         // 1b. Protocol declarations (`type P protocol { mut @m(...) / @m(...) }`):
         //     register method receiver-mutability под именем PROTOCOL'а (не
         //     concrete impl-типа) — иначе параметр/local статического
@@ -34106,6 +34127,30 @@ fn check_and_clear_arm_pattern_obligations(
     }
 }
 
+/// Plan 221.1 №144 (D79/D91-амендмент): `value` — вызов `Channel.new(cap)` /
+/// `Channel[T].new(cap)`? Mirror BYTE-FOR-BYTE того же AST-шейпа, что уже
+/// распознаёт codegen (`emit_c.rs::emit_tuple_destructure`'s `is_channel_new`,
+/// D91/Plan 21 comment «special-case for `let (tx, rx) = Channel.new(cap)`»)
+/// — один и тот же контракт, две независимые проверки (codegen эмитит
+/// `Nova_ChannelPair`, чекер здесь типизирует `tx`/`rx` как `ChanWriter`/
+/// `ChanReader` для consume-параметров `send`/`try_send`, см.
+/// `ConsumeRegistry::build` §1a).
+fn is_channel_new_call(value: &Expr) -> bool {
+    let ExprKind::Call { func, .. } = &value.kind else { return false };
+    let f = func.unwrap_turbofish();
+    match &f.kind {
+        ExprKind::Member { obj, name } => {
+            name == "new" && (
+                matches!(&obj.kind, ExprKind::Ident(n) if n == "Channel")
+                || matches!(&obj.kind, ExprKind::TurboFish { base, .. }
+                    if matches!(&base.kind, ExprKind::Ident(n) if n == "Channel"))
+            )
+        }
+        ExprKind::Path(parts) => parts.len() == 2 && parts[0] == "Channel" && parts[1] == "new",
+        _ => false,
+    }
+}
+
 fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic>) {
     match s {
         Stmt::Let(decl) => {
@@ -34389,9 +34434,29 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
                         }).filter(|caps| !caps.is_empty())
                     } else { None };
 
-                for n in &names {
-                    // Тип привязываем только к одиночному ident-pattern'у.
-                    let t = if names.len() == 1 { ty.clone() } else { None };
+                // Plan 221.1 №144 (D79/D91-амендмент): `ro (tx, rx) =
+                // Channel[T].new(n)` — позиционный tuple-pattern (ДВЕ имени,
+                // сам Pattern::Tuple — не Record, где reorder `{ rx, tx }`
+                // сломал бы позиционное сопоставление) над вызовом
+                // `Channel.new`/`Channel[T].new`. Без этого var_types["tx"]
+                // остаётся None (см. комментарий ниже «Тип привязываем
+                // только к одиночному ident-pattern'у») и `ConsumeRegistry`'s
+                // `("ChanWriter","send")` consume-параметр (§1a) НИКОГДА не
+                // находит receiver — `tx.send(v)` не помечает `v` consumed.
+                let is_channel_new_tuple = names.len() == 2
+                    && matches!(&decl.pattern, Pattern::Tuple(..))
+                    && is_channel_new_call(&decl.value);
+
+                for (i, n) in names.iter().enumerate() {
+                    // Тип привязываем только к одиночному ident-pattern'у,
+                    // ЛИБО к позиционной tx/rx-паре Channel.new (выше).
+                    let t = if names.len() == 1 {
+                        ty.clone()
+                    } else if is_channel_new_tuple {
+                        Some(if i == 0 { "ChanWriter" } else { "ChanReader" }.to_string())
+                    } else {
+                        None
+                    };
                     // Plan 100.1 (D133 / D9): `consume tx = ...` binding.
                     if decl.consume {
                         ctx.declare_consume_binding(n, t);
