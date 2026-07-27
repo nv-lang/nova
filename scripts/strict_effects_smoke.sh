@@ -12,6 +12,13 @@
 #
 # Usage: scripts/strict_effects_smoke.sh [path/to/nova(.exe)]
 # Default binary: nova-cli/target/debug/nova(.exe) relative to repo root.
+#
+# Plan 231 (docs/plans/231-bug-cycle-exit.md) treats this as one of the
+# machine-enforcement guards for a norm the checker enforces only behind a
+# flag (track Д — "machine enforcement of norms"). NOTE (verified
+# 2026-07-27): NOT invoked by scripts/gate.sh or any .github/workflows/
+# *.yml — run it by hand whenever spec_tests/strict_effects/ fixtures or
+# the `--strict-effects` code path change.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 

@@ -21,6 +21,12 @@
 #
 # Output: TSAN findings приходят на stderr через TSAN runtime; non-zero
 # exit code = races detected.
+#
+# Часть программы машинного принуждения плана 231 (docs/plans/231-bug-
+# cycle-exit.md, трек Д) — race-гейт для M:N-рантайма (docs/mn-coding-
+# conventions.md). ПРОВЕРЕНО 2026-07-27: НЕ вызывается автоматически ни
+# из scripts/gate.sh (тот Windows-only), ни из .github/workflows/*.yml —
+# запускать вручную из WSL2/Linux при правке nova_rt/**-concurrency.
 
 set -euo pipefail
 

@@ -26,6 +26,15 @@
 # Exit:
 #   0 — no new violations beyond baseline
 #   1 — new violation detected (CI fail)
+#
+# Plan 231 (docs/plans/231-bug-cycle-exit.md) folds this ratchet-style
+# guard into the broader "machine enforcement of norms" program (track Д)
+# alongside arch-ratchet.sh/hardcode-audit.sh — baseline-diff-must-be-
+# justified-inline is the same pattern as scripts/arch-ratchet.baseline.
+# NOTE (verified 2026-07-27): NOT currently invoked by scripts/gate.sh or
+# any .github/workflows/*.yml — run it manually when touching Cat A1/A2
+# sites (compiler-conventions.md), it is not yet wired into an automatic
+# gate.
 
 set -euo pipefail
 
