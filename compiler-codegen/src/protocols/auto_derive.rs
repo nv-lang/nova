@@ -32,10 +32,10 @@
 use std::collections::HashSet;
 
 use crate::ast::{
-    BinOp, Block, CallArg, Expr, ExprKind, FnBody, FnDecl, GenericParam, MatchArm, MatchArmBody,
-    NamedTupleField, Param, Pattern, RecordField, RecordLitField, RecordPatternField, Receiver,
-    ReceiverKind, RenameConvention, SerdeArg, SerdeTagging, Stmt, SumVariant, SumVariantKind,
-    TypeDecl, TypeDeclKind, TypeRef, VariantPatternKind,
+    ArrayElem, BinOp, Block, CallArg, Expr, ExprKind, FnBody, FnDecl, GenericParam, MatchArm,
+    MatchArmBody, NamedTupleField, Param, Pattern, RecordField, RecordLitField,
+    RecordPatternField, Receiver, ReceiverKind, RenameConvention, SerdeArg, SerdeTagging, Stmt,
+    SumVariant, SumVariantKind, TypeDecl, TypeDeclKind, TypeRef, VariantPatternKind,
 };
 use crate::diag::Span;
 
@@ -52,12 +52,22 @@ pub const DEBUG:   &str = "Debug";
 /// record/container → static `.deserialize`, `Option` → inline null-check).
 pub const SERIALIZE:   &str = "Serialize";
 pub const DESERIALIZE: &str = "Deserialize";
+/// Plan 222.8 Ф.1 (D438): `Reflect` — 9th auto-derive protocol. Synthesizes
+/// `.reflect() -> TypeShape`, a STATIC (no receiver value) description of a
+/// type's structural shape — format/domain-independent (std/src/reflect.nv).
+/// Same field-walk infra as Serialize (`resolve_fields`/`wire_name_for`/
+/// `serde_tagging_mode`), but builds a single literal VALUE expression
+/// instead of a push-protocol call sequence — see `synthesize_reflect`'s doc
+/// section below for why (type-graph cycles need compile-time `Ref`
+/// substitution, unlike per-instance protocols whose recursion terminates on
+/// finite runtime data).
+pub const REFLECT: &str = "Reflect";
 
 /// True если `proto_name` — один из known built-in protocols.
 pub fn is_builtin_protocol(proto_name: &str) -> bool {
     matches!(
         proto_name,
-        EQUAL | HASH | CLONE | COMPARE | DISPLAY | DEBUG | SERIALIZE | DESERIALIZE
+        EQUAL | HASH | CLONE | COMPARE | DISPLAY | DEBUG | SERIALIZE | DESERIALIZE | REFLECT
     )
 }
 
@@ -67,7 +77,7 @@ pub fn is_builtin_protocol(proto_name: &str) -> bool {
 /// drifting with a stale, renamed list (the old LSP table still named the
 /// pre-D237 `Printable`/`Hashable`/`Equatable`/`Ordered`/`Cloneable` protocols).
 pub fn builtin_protocol_names() -> &'static [&'static str] {
-    &[EQUAL, HASH, CLONE, COMPARE, DISPLAY, DEBUG, SERIALIZE, DESERIALIZE]
+    &[EQUAL, HASH, CLONE, COMPARE, DISPLAY, DEBUG, SERIALIZE, DESERIALIZE, REFLECT]
 }
 
 /// Получить имя метода built-in protocol'а (single-method assumption).
@@ -82,6 +92,7 @@ pub fn builtin_protocol_method(proto_name: &str) -> Option<&'static str> {
         DEBUG   => Some("debug"),
         SERIALIZE   => Some("serialize"),
         DESERIALIZE => Some("deserialize"),
+        REFLECT     => Some("reflect"),
         _ => None,
     }
 }
@@ -973,11 +984,20 @@ fn synthesize_method_inner<Q: DeriveQuery>(
     method_name: &str,
 ) -> Result<FnDecl, DeriveError> {
     let is_serde = protocol == SERIALIZE || protocol == DESERIALIZE;
+    // Plan 222.8 Ф.1 (D438): Reflect needs its OWN container-aware
+    // eligibility (bespoke `Option`/`Vec` recursion, like serde) — a plain
+    // field/payload type must either provide an explicit `.reflect()` or
+    // declare `#impl(Reflect)`. Kept SEPARATE from `is_serde` (not folded
+    // into one flag) because the two have different scalar/container rules
+    // (no byte-seq/HashMap/narrow-scalar wire concerns for Reflect).
+    let is_reflect = protocol == REFLECT;
     // Validate field eligibility (kind-dependent).
     if let Some(fields) = iter_fields(type_decl) {
         for f in &fields {
             let eligible = if is_serde {
                 check_field_eligibility_serde(_ctx.query, &f.ty, protocol, method_name)
+            } else if is_reflect {
+                check_field_eligibility_reflect(_ctx.query, &f.ty, protocol, method_name)
             } else {
                 check_field_eligibility(_ctx.query, &f.ty, protocol, method_name)
             };
@@ -997,12 +1017,13 @@ fn synthesize_method_inner<Q: DeriveQuery>(
             kind: kind_name.to_string(),
             protocol: protocol.to_string(),
         });
-    } else if is_serde {
-        // Plan 180 Ф.2-sum (D345): externally-tagged sum serde. Validate that
-        // every variant's payload element is serde-eligible (mirror of the
-        // record-field check) so an unserializable payload surfaces a typed
-        // `E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL` (named by variant), not a bad
-        // synth. On success, fall through to the sum dispatch below.
+    } else if is_serde || is_reflect {
+        // Plan 180 Ф.2-sum (D345) / Plan 222.8 Ф.1 (D438): externally-tagged
+        // sum serde / Reflect. Validate that every variant's payload element
+        // is eligible (mirror of the record-field check) so an unshapeable
+        // payload surfaces a typed `E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL`
+        // (named by variant), not a bad synth. On success, fall through to
+        // the sum dispatch below.
         if let Some(variants) = iter_sum_variants(type_decl) {
             for v in variants {
                 let payload: Vec<&TypeRef> = match &v.kind {
@@ -1011,7 +1032,12 @@ fn synthesize_method_inner<Q: DeriveQuery>(
                     SumVariantKind::Record(fields) => fields.iter().map(|f| &f.ty).collect(),
                 };
                 for ty in payload {
-                    if !check_field_eligibility_serde(_ctx.query, ty, protocol, method_name) {
+                    let eligible = if is_reflect {
+                        check_field_eligibility_reflect(_ctx.query, ty, protocol, method_name)
+                    } else {
+                        check_field_eligibility_serde(_ctx.query, ty, protocol, method_name)
+                    };
+                    if !eligible {
                         return Err(DeriveError::FieldLacksProtocol {
                             type_name: type_decl.name.clone(),
                             field_name: v.name.clone(),
@@ -1034,6 +1060,7 @@ fn synthesize_method_inner<Q: DeriveQuery>(
         DEBUG       => synthesize_debug(_ctx, type_decl),
         SERIALIZE   => synthesize_serialize(_ctx, type_decl),
         DESERIALIZE => synthesize_deserialize(_ctx, type_decl),
+        REFLECT     => synthesize_reflect(_ctx, type_decl),
         _ => unreachable!("is_builtin_protocol guarded earlier"),
     }
 }
@@ -3488,6 +3515,344 @@ pub fn inject_synthesized_methods_filtered<F: Fn(&str) -> bool>(
         module.items.push(Item::Fn(fd));
     }
     count
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Plan 222.8 Ф.1 (D438) — Reflect auto-derive: synthesize `.reflect() ->
+// TypeShape` for record/sum types carrying `#impl(Reflect)`. Same field-walk
+// as Serialize (`resolve_fields`/`wire_name_for` for record wire-names,
+// `serde_tagging_mode` for sum repr — "ничего нового не решается", brief
+// 222.8 §1.2) but produces a single literal VALUE expression (not a
+// push-protocol call sequence): a type's shape is a STATIC property of the
+// type GRAPH, which can be genuinely cyclic (self-referential / mutually
+// recursive types) — unlike Equal/Hash/Serialize, whose per-instance
+// recursion always terminates on finite RUNTIME data (a linked list's
+// `@equal` bottoms out because the VALUE is finite; `TypeShape` of a
+// self-referential type would not, if built by unconditional dispatch).
+//
+// `in_progress` tracks the chain of type names currently being INLINED; a
+// field naming one of those types emits `TypeShape.Ref(name)` INSTEAD of
+// expanding further — the ONLY place a cycle is broken, so the produced
+// literal AST is always finite by construction (not by a depth limit), and
+// covers indirect/mutual cycles too (A→B→A: by the time B's own expansion
+// reaches the field back to A, A is still on the SAME shared stack).
+//
+// A type providing an EXPLICIT (hand-written) `.reflect()` — e.g. a manual
+// `Opaque(name)` wrapper for a raw/unshapeable type (owner-decided addition
+// to `TypeShape`, see std/src/reflect.nv) — is DISPATCHED (a plain static
+// call), never inlined: the compiler does not know what a hand-written body
+// does, so it trusts it rather than trying to expand it. The compiler NEVER
+// synthesizes `Opaque` itself — no "which types are opaque" policy lives
+// here; that is entirely the hand-written impl's call.
+// ────────────────────────────────────────────────────────────────────────
+
+/// Scalar primitive → `TypeShape` leaf. Narrower than serde's scalar sets
+/// (`serde_supported_scalar`/`serde_container_scalar`) on purpose: Reflect
+/// has no wire-precision concern (no widen/narrow direction to pick — it
+/// describes a TYPE, not a wire encoding), so every integer width maps
+/// uniformly to `Int`. `char`/`byte`/`i128`/`u128` still have no `TypeShape`
+/// variant of their own (no faithful shape) and are NOT included here,
+/// mirroring serde's exclusion of the same primitives for the same reason.
+fn reflect_scalar_shape(name: &str) -> Option<Expr> {
+    match name {
+        "int" | "i8" | "i16" | "i32" | "i64" | "uint" | "u8" | "u16" | "u32" | "u64" =>
+            Some(ident("Int")),
+        "f32" | "f64" => Some(ident("Float")),
+        "bool" => Some(ident("Bool")),
+        "str" => Some(ident("Str")),
+        _ => None,
+    }
+}
+
+/// Reflect-aware field eligibility — mirrors `check_field_eligibility_serde`'s
+/// shape (bespoke `Option`/`Vec` recursion; a plain named type must either
+/// provide an explicit `.reflect()` or declare `#impl(Reflect)`), minus the
+/// byte-seq/HashMap/narrow-scalar wire concerns that don't apply here.
+/// `Tuple` field types are NOT supported directly (v1 scope) — tuples only
+/// appear internally, for multi-element sum-variant tuple-payload synthesis
+/// (`build_variant_shape_expr`), not as a first-class field type.
+pub fn check_field_eligibility_reflect<Q: DeriveQuery>(
+    query: &Q,
+    field_type: &TypeRef,
+    protocol: &str,
+    method_name: &str,
+) -> bool {
+    match field_type.strip_modifiers() {
+        TypeRef::Named { path, generics, .. } => {
+            let name = match path.last() { Some(n) => n.as_str(), None => return false };
+            if reflect_scalar_shape(name).is_some() { return true; }
+            match name {
+                "Option" | "Vec" if generics.len() == 1 =>
+                    check_field_eligibility_reflect(query, &generics[0], protocol, method_name),
+                _ => {
+                    if query.type_provides_method(name, method_name) { return true; }
+                    if let Some(td) = query.lookup_type(name) {
+                        if td.impl_protocols.iter().any(|p| p == protocol) { return true; }
+                    }
+                    false
+                }
+            }
+        }
+        TypeRef::Array(inner, _) | TypeRef::FixedArray(_, inner, _) =>
+            check_field_eligibility_reflect(query, inner, protocol, method_name),
+        TypeRef::Unit(_) => true,
+        _ => false,
+    }
+}
+
+/// `(a, b)` tuple-literal expression — used for `TypeShape.Record`/`.Sum`'s
+/// `[](str, TypeShape)` payload entries.
+fn tuple2(a: Expr, b: Expr) -> Expr {
+    ex(ExprKind::TupleLit(vec![a, b]))
+}
+
+/// Sum tagging mode (already parsed/validated for serde, `serde_tagging_mode`
+/// — D382/D435) → `TypeShape.SumRepr` constructor expression. Reused
+/// WHOLESALE (not re-parsed) per the 222.8 brief ("ничего нового не
+/// решается, форма разметки уже вычислена для serde") — this DOES mean
+/// Reflect inherits the same `#serde(untagged)` synthesis gate as Serialize/
+/// Deserialize (`E_SERDE_UNTAGGED_GATED`, `[M-180-untagged-codegen-mono]`)
+/// even though Reflect itself never touches `json.nv`'s mono-ordering —
+/// a deliberate, documented simplification (D438), not a hidden coupling:
+/// revisit if/when the untagged codegen gate lifts.
+fn sum_repr_expr(mode: &SerdeTagging) -> Expr {
+    match mode {
+        SerdeTagging::External => ident("External"),
+        SerdeTagging::Internal { tag } => call(ident("Tagged"), vec![str_lit(tag)]),
+        SerdeTagging::Adjacent { tag, content } =>
+            call(ident("TaggedContent"), vec![str_lit(tag), str_lit(content)]),
+        // Unreachable in practice — `serde_tagging_mode` errors (gated)
+        // before ever returning this variant; kept for match-exhaustiveness.
+        SerdeTagging::Untagged => ident("Untagged"),
+    }
+}
+
+/// FnDecl shell for a STATIC synthesized method with no params/generics
+/// (`.reflect() -> TypeShape`) — `make_synth_method` hardcodes an INSTANCE
+/// receiver (`@method`), `make_serde_method` forces a `[G Bound]` generic +
+/// one param (the Serializer/Deserializer shape); Reflect's `.reflect()`
+/// needs neither. `file_id`-tagged span mirrors `make_serde_method`'s
+/// `fn_span` rationale (identifier resolution walks the WHOLE body using the
+/// FnDecl's own span's file_id — must be the type's declaring file, not
+/// whatever file happens to be the compilation entry).
+fn make_reflect_method(type_name: &str, body_expr: Expr, file_id: crate::diag::FileId) -> FnDecl {
+    let fn_span = Span::with_file(0, 0, file_id);
+    FnDecl {
+        name: "reflect".to_string(),
+        receiver: Some(Receiver {
+            type_name: type_name.to_string(),
+            generics: vec![],
+            carrier_bounds: vec![],
+            receiver_ty: None,
+            kind: ReceiverKind::Static,
+            mutable: false,
+            consume: false,
+            span: fn_span,
+        }),
+        params: vec![],
+        effects: vec![],
+        return_type: Some(type_ref_named("TypeShape")),
+        return_is_const: false,
+        returns_receiver: false,
+        body: FnBody::Block(block_trailing(body_expr)),
+        span: fn_span,
+        is_export: false,
+        is_external: false,
+        compiler_generated: true,
+        ..FnDecl::default()
+    }
+}
+
+/// Named non-scalar, non-container type reference `name` encountered while
+/// building a `TypeShape` value: a cycle back-edge (`name` already on
+/// `in_progress`) → `Ref(name)`; an EXPLICIT (hand-written) `.reflect()` →
+/// dispatched via a static call (trusts the user's own body — this is the
+/// `Opaque` escape hatch); an auto-derivable (`#impl(Reflect)`) type →
+/// INLINED (pushed onto `in_progress`, its own shape built recursively,
+/// popped) — see the section doc above for why inlining (not dispatch) is
+/// required for correctness on a genuinely cyclic type graph.
+fn build_named_type_shape<Q: DeriveQuery>(
+    query: &Q,
+    name: &str,
+    in_progress: &mut Vec<String>,
+    file_id: crate::diag::FileId,
+    owner_type: &str,
+    field_name: &str,
+) -> Result<Expr, DeriveError> {
+    if in_progress.iter().any(|n| n == name) {
+        return Ok(call(ident("Ref"), vec![str_lit(name)]));
+    }
+    if query.type_provides_method(name, "reflect") {
+        // Plan 221.1 №33 rationale (`member_call_at`/`deser_field_expr` doc):
+        // a call synthesized for a HOST type's own body that dispatches to a
+        // DIFFERENT type's static method is extension-policy-sensitive —
+        // tag with the CURRENT synthesis's file_id, not span_dummy's
+        // MAIN_FILE_ID. Simple named receiver → `Path([Type, "reflect"])`
+        // (the static-call shape the parser emits; a `Member{Ident(Type)}`
+        // form would wrongly dispatch as an INSTANCE method).
+        return Ok(call_at(
+            ex_at(ExprKind::Path(vec![name.to_string(), "reflect".to_string()]), file_id),
+            vec![],
+            file_id,
+        ));
+    }
+    match query.lookup_type(name) {
+        Some(td) if td.impl_protocols.iter().any(|p| p == REFLECT) => {
+            in_progress.push(name.to_string());
+            let result = build_type_decl_shape(query, td, in_progress);
+            in_progress.pop();
+            result
+        }
+        _ => Err(DeriveError::FieldLacksProtocol {
+            type_name: owner_type.to_string(),
+            field_name: field_name.to_string(),
+            field_type: name.to_string(),
+            protocol: REFLECT.to_string(),
+        }),
+    }
+}
+
+/// Build the `TypeShape` value-expression for a field/payload type `ty`.
+/// `Option[T]`/`Vec[T]`/`[]T` recurse into the element and wrap
+/// (`Opt(..)`/`Arr(..)`) — built HERE directly (not by dispatching to the
+/// std blanket `Option[T Reflect].reflect()`/`[]T.reflect()`), so a
+/// self-referential element (`type Node { children []Node }`) still goes
+/// through the SAME `in_progress` cycle check as a direct field.
+fn build_type_shape_expr<Q: DeriveQuery>(
+    query: &Q,
+    ty: &TypeRef,
+    in_progress: &mut Vec<String>,
+    file_id: crate::diag::FileId,
+    owner_type: &str,
+    field_name: &str,
+) -> Result<Expr, DeriveError> {
+    if let Some(inner) = option_inner(ty) {
+        let shape = build_type_shape_expr(query, &inner, in_progress, file_id, owner_type, field_name)?;
+        return Ok(call(ident("Opt"), vec![shape]));
+    }
+    match ty.strip_modifiers() {
+        TypeRef::Named { path, generics, .. } => {
+            let name = path.last().map(|s| s.as_str()).unwrap_or("");
+            if let Some(scalar) = reflect_scalar_shape(name) {
+                return Ok(scalar);
+            }
+            if name == "Vec" && generics.len() == 1 {
+                let shape = build_type_shape_expr(query, &generics[0], in_progress, file_id, owner_type, field_name)?;
+                return Ok(call(ident("Arr"), vec![shape]));
+            }
+            build_named_type_shape(query, name, in_progress, file_id, owner_type, field_name)
+        }
+        TypeRef::Array(inner, _) | TypeRef::FixedArray(_, inner, _) => {
+            let shape = build_type_shape_expr(query, inner, in_progress, file_id, owner_type, field_name)?;
+            Ok(call(ident("Arr"), vec![shape]))
+        }
+        TypeRef::Unit(_) => Ok(ident("Unit")),
+        _ => Err(DeriveError::FieldLacksProtocol {
+            type_name: owner_type.to_string(),
+            field_name: field_name.to_string(),
+            field_type: type_ref_render(ty),
+            protocol: REFLECT.to_string(),
+        }),
+    }
+}
+
+/// Build the `TypeShape` value-expression for one sum variant's payload,
+/// keyed by variant name at the call site (`build_type_decl_shape`'s
+/// `Sum(name, repr, variants)` list). Unit → `Unit`; single-element tuple →
+/// TRANSPARENT (the element's own shape directly — mirrors serde's own
+/// "single payload → bare content" treatment, e.g. adjacent-tagging's
+/// `Val(int)` → `{"t":"Val","c":9}`, not `{"t":"Val","c":[9]}`); multi-
+/// element tuple → a synthetic `Record(variant_name, [("0",..),("1",..)])`
+/// (positional fields named by index — a documented Ф.1 representation
+/// choice, D438); record payload → `Record(variant_name, [(field,..)])`
+/// using RAW field names (no wire-rename: D435's own scope note says
+/// `SumVariantKind::Record` payload fields don't consume field-attrs yet,
+/// `[M-126-sum-*-rich]` — mirrors `synth_serialize_sum_body`'s identical
+/// choice, `ser_struct_field_stmt(&mut stmts, &f.name, ..)`).
+fn build_variant_shape_expr<Q: DeriveQuery>(
+    query: &Q,
+    v: &SumVariant,
+    in_progress: &mut Vec<String>,
+    file_id: crate::diag::FileId,
+    owner_type: &str,
+) -> Result<Expr, DeriveError> {
+    match &v.kind {
+        SumVariantKind::Unit => Ok(ident("Unit")),
+        SumVariantKind::Tuple(tys) if tys.len() == 1 =>
+            build_type_shape_expr(query, &tys[0], in_progress, file_id, owner_type, &v.name),
+        SumVariantKind::Tuple(tys) => {
+            let mut items: Vec<ArrayElem> = Vec::new();
+            for (i, ty) in tys.iter().enumerate() {
+                let shape = build_type_shape_expr(query, ty, in_progress, file_id, owner_type, &v.name)?;
+                items.push(ArrayElem::Item(tuple2(str_lit(&i.to_string()), shape)));
+            }
+            Ok(call(ident("Record"), vec![str_lit(&v.name), ex(ExprKind::ArrayLit(items))]))
+        }
+        SumVariantKind::Record(fields) => {
+            let mut items: Vec<ArrayElem> = Vec::new();
+            for f in fields {
+                let shape = build_type_shape_expr(query, &f.ty, in_progress, file_id, owner_type, &f.name)?;
+                items.push(ArrayElem::Item(tuple2(str_lit(&f.name), shape)));
+            }
+            Ok(call(ident("Record"), vec![str_lit(&v.name), ex(ExprKind::ArrayLit(items))]))
+        }
+    }
+}
+
+/// Build the full `TypeShape` value-expression for a record/sum `TypeDecl`
+/// (the entry point AND the recursive-inline step, shared — see
+/// `build_named_type_shape`). Record → `Record(name, [(wire, shape), ..])`
+/// (`resolve_fields`/`wire_name_for` — D435 rename/rename_all/alias, `skip`
+/// fields excluded, exactly like `synthesize_serialize`'s record body). Sum
+/// → `Sum(name, repr, [(variant, shape), ..])` (`serde_tagging_mode` for
+/// `repr` — D382/D435).
+fn build_type_decl_shape<Q: DeriveQuery>(
+    query: &Q,
+    td: &TypeDecl,
+    in_progress: &mut Vec<String>,
+) -> Result<Expr, DeriveError> {
+    let file_id = td.span.file_id;
+    if let Some(fields) = iter_fields(td) {
+        let (_type_opts, resolved) = resolve_fields(td, &fields)?;
+        let mut items: Vec<ArrayElem> = Vec::new();
+        for rf in &resolved {
+            if rf.opts.skip { continue; }
+            let shape = build_type_shape_expr(
+                query, &rf.field.ty, in_progress, file_id, &td.name, &rf.field.name,
+            )?;
+            items.push(ArrayElem::Item(tuple2(str_lit(&rf.wire), shape)));
+        }
+        Ok(call(ident("Record"), vec![str_lit(&td.name), ex(ExprKind::ArrayLit(items))]))
+    } else if let Some(variants) = iter_sum_variants(td) {
+        let mode = serde_tagging_mode(td)?;
+        let repr_expr = sum_repr_expr(&mode);
+        let mut items: Vec<ArrayElem> = Vec::new();
+        for v in variants {
+            let shape = build_variant_shape_expr(query, v, in_progress, file_id, &td.name)?;
+            items.push(ArrayElem::Item(tuple2(str_lit(&v.name), shape)));
+        }
+        Ok(call(ident("Sum"), vec![str_lit(&td.name), repr_expr, ex(ExprKind::ArrayLit(items))]))
+    } else {
+        Err(DeriveError::UnsupportedTypeKind {
+            type_name: td.name.clone(),
+            kind: type_decl_kind_name(td).to_string(),
+            protocol: REFLECT.to_string(),
+        })
+    }
+}
+
+/// Synthesize `.reflect() -> TypeShape` (Plan 222.8 Ф.1, D438). Record/sum
+/// type-DECL-kinds only (`UnsupportedTypeKind` for Newtype/Alias/Effect/
+/// Protocol/Opaque — the type-decl-kind sense, NOT to be confused with the
+/// unrelated `TypeShape.Opaque` VALUE variant, which this synthesizer never
+/// produces — see the section doc above).
+pub fn synthesize_reflect<Q: DeriveQuery>(
+    ctx: &mut AutoDeriveCtx<'_, Q>,
+    type_decl: &TypeDecl,
+) -> Result<FnDecl, DeriveError> {
+    let mut in_progress = vec![type_decl.name.clone()];
+    let body_expr = build_type_decl_shape(ctx.query, type_decl, &mut in_progress)?;
+    Ok(make_reflect_method(&type_decl.name, body_expr, type_decl.span.file_id))
 }
 
 // ────────────────────────────────────────────────────────────────────────
