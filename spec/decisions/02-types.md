@@ -16221,6 +16221,163 @@ an explicit, opt-in escape hatch serde-style forward-compat APIs still need).
 
 ---
 
+## D438 — `Reflect` protocol + `TypeShape` structural reflection (Plan 222.8 Ф.1, 2026-07-27) {#d438}
+
+**What.** A 9th built-in auto-derive protocol, `Reflect` (`std/src/reflect.nv`,
+`module std.reflect`), alongside Equal/Hash/Clone/Compare/Display/Debug/
+Serialize/Deserialize (D237/D340/D341). `.reflect() -> TypeShape` — a
+**STATIC** method (no receiver value: it describes a TYPE, not an instance)
+returning a **format- and domain-independent** description of a type's
+structural shape. Not a word about HTTP/OpenAPI/JSON anywhere in the
+protocol or `TypeShape` itself — deliberately general enough for an
+OpenAPI-schema emitter, a GraphQL SDL generator, a CLI-arg generator, or a
+debug pretty-printer, all reading the SAME tree. The first consumer is
+`nova-polaris`'s OpenAPI generator (Plan 222.8 Ф.2/Ф.3, `docs/plans/
+222.8-openapi-gen.md`) — deliberately out of THIS decision's scope; `Reflect`
+carries no knowledge of HTTP roles (`Path`/`Query`/`Json` wrappers), response
+codes, or wire formats. That interpretation lives in the consuming library,
+not the compiler or std.
+
+**`TypeShape`** (`std/src/reflect.nv`):
+
+```nova
+export type SumRepr enum
+    | External
+    | Tagged(tag str)
+    | TaggedContent(tag str, content str)
+    | Untagged
+
+export type TypeShape enum
+    | Record(name str, fields [](str, TypeShape))
+    | Sum(name str, repr SumRepr, variants [](str, TypeShape))
+    | Ref(name str)
+    | Str | Int | Float | Bool | Unit
+    | Arr(items TypeShape)
+    | Opt(inner TypeShape)
+    | Opaque(name str)
+
+export type Reflect protocol {
+    .reflect() -> TypeShape
+}
+```
+
+`Reflect` is a **structural** protocol (D42) like every other Nova protocol:
+a type satisfies it by providing a matching `.reflect()` method, with or
+without `#impl(Reflect)`. `#impl(Reflect)` on a type declaration REQUESTS
+compiler synthesis of that method (opt-in, same as the other 8 auto-derive
+protocols) — it is not a conformance marker. A type providing its own
+hand-written `.reflect()` satisfies `Reflect` without ever writing
+`#impl(Reflect)` (see `Opaque` below).
+
+**Compiler synthesis (`compiler-codegen/src/protocols/auto_derive.rs`,
+`synthesize_reflect`).** Same field-walk infrastructure as Serialize/
+Deserialize (D340/D341/D435) — reused, not duplicated:
+- **Record field wire-names** — `resolve_fields`/`wire_name_for` (D435):
+  `TypeShape.Record`'s `fields` list carries names AFTER `rename`/
+  `rename_all`/alias resolution — the WIRE contract, not the raw Nova field
+  name. `#serde(skip)` fields are excluded (never on the wire, so absent
+  from the schema too — a schema entry for a field that never serializes
+  would be actively misleading to a consumer like an OpenAPI emitter).
+- **Sum representation** — `serde_tagging_mode` (D382/D435), reused
+  WHOLESALE (not re-parsed): `SumRepr.External`/`Tagged(tag)`/
+  `TaggedContent(tag, content)` mirror `SerdeTagging::External`/`Internal`/
+  `Adjacent`. **This means `Reflect` synthesis inherits the SAME
+  `#serde(untagged)` gate as Serialize/Deserialize**
+  (`E_SERDE_UNTAGGED_GATED`, `[M-180-untagged-codegen-mono]`) even though
+  `Reflect` itself never touches `json.nv`'s mono-ordering — a deliberate,
+  documented simplification (favor code reuse over a parallel permissive
+  path for a single field-count of extra freedom); revisit if/when the
+  untagged codegen gate lifts.
+- **Sum variant shapes** (no existing precedent to reuse — new Ф.1 choice):
+  unit variant → `Unit`; single-element tuple variant → the element's shape
+  DIRECTLY (transparent, mirroring serde's own "single payload → bare
+  content" treatment, e.g. adjacent-tagged `Val(int)` → `{"t":"Val","c":9}`,
+  not `{"t":"Val","c":[9]}`); multi-element tuple variant → a synthetic
+  `Record(variant_name, [("0", ..), ("1", ..)])` (positional fields named by
+  index); record-payload variant → `Record(variant_name, [(field, ..), ..])`
+  using RAW field names — sum-variant record fields do not yet consume
+  `#serde(rename...)` (D435's own scope note, `[M-126-sum-*-rich]`), mirrors
+  `synthesize_serialize`'s identical choice for the same reason.
+- **Field/variant-payload eligibility** — a NEW `check_field_eligibility_
+  reflect` (mirrors `check_field_eligibility_serde`'s shape: bespoke
+  `Option`/`Vec` recursion, a named type must provide an explicit
+  `.reflect()` or declare `#impl(Reflect)`) — narrower scalar set than
+  serde's (no wire-precision concern: every integer width maps uniformly to
+  `Int`, no widen/narrow split; `char`/`byte`/`i128`/`u128` excluded, same
+  reasoning as serde — no faithful `TypeShape` leaf for them). A nested type
+  without `Reflect` conformance is a typed `E_AUTO_DERIVE_FIELD_LACKS_
+  PROTOCOL`, mirroring Serialize's identical diagnostic class (not an ICE,
+  not a silent hole).
+
+**Recursion (`Ref`) — the one genuinely NEW mechanism, no serde precedent.**
+Unlike Equal/Hash/Serialize (per-INSTANCE protocols whose recursion always
+terminates on finite RUNTIME data — a linked list's `@equal` bottoms out
+because the VALUE is finite), `TypeShape` describes the TYPE GRAPH itself,
+which can be genuinely cyclic (self-referential: `type Node { next
+Option[Node] }`; or mutually recursive: `A` embeds `B`, `B` embeds
+`Option[A]`). The synthesizer inlines nested named types' shapes directly
+(builds `Record`/`Sum` literals recursively via `build_type_decl_shape`, NOT
+by dispatching runtime calls to each type's own separately-synthesized
+`.reflect()` — a dispatch chain would recurse unconditionally at runtime
+with no data-driven base case, since `.reflect()` takes no `self` to pattern-
+match on). An `in_progress` stack tracks the chain of type names currently
+being inlined; a field naming one of THOSE types emits `TypeShape.Ref(name)`
+instead of expanding further. This is the ONLY place a cycle is broken, so
+the produced value is finite BY CONSTRUCTION (a compile-time graph-cycle
+check), never by a depth limit, and handles indirect/mutual cycles too (by
+the time `B`'s own inline expansion reaches its field back to `A`, `A` is
+still on the SAME shared stack `B`'s expansion inherited). A type with an
+EXPLICIT hand-written `.reflect()` (not `#impl(Reflect)`-derived) is
+DISPATCHED (a plain static call), never inlined — the compiler does not
+know what a hand-written body does, so it trusts it rather than expanding
+it; this is also how `Opaque` composes safely with the recursion machinery
+(see below).
+
+**`Opaque(name)`** (owner addition, 2026-07-27, mid-Ф.1). A `TypeShape` leaf
+meaning "this type's shape is intentionally not described" — for raw/
+unshapeable types (e.g. a raw `ServerRequest` handle that appears as an
+extractor-bundle field per 222.8 §1.3, but is never itself part of a JSON
+schema). **The compiler NEVER synthesizes `Opaque` itself** — no "which
+types are opaque" policy exists anywhere in `auto_derive.rs`; that decision
+belongs entirely to whoever writes a manual `.reflect()` implementation
+(typically a library wrapper type). Consumers (an OpenAPI emitter, etc.)
+are expected to skip/omit `Opaque` fields from generated schemas.
+
+**Blanket implementations** (`std/src/reflect.nv`, `.nv` code, not compiler
+special-cases — same style as `Display`/`Debug`'s primitive blanket bodies
+in `prelude/protocols.nv`): `int`/`i8..i64`/`uint`/`u8..u64` → `Int`;
+`f32`/`f64` → `Float`; `bool` → `Bool`; `str` → `Str`; `fn[T Reflect] []T.
+reflect() -> TypeShape => Arr(T.reflect())`; `fn Option[T Reflect].reflect()
+-> TypeShape => Opt(T.reflect())`. These blankets are NOT invoked by the
+compiler's own record/sum synthesis path (which builds `Arr(..)`/`Opt(..)`
+directly inline for the same cycle-safety reason as above) — they exist for
+general/library code that wants a container's shape without going through
+auto-derive (e.g. `Vec[SomeType].reflect()` called directly).
+
+**Scope boundary (explicit, Ф.1).** Tuple-typed FIELDS (`(A, B)` as a
+record field's own type, not a sum-variant payload) are NOT supported —
+`check_field_eligibility_reflect` has no `Tuple` arm, unlike the generic
+`check_field_eligibility` used by Equal/Hash/Clone/Compare (a documented
+narrower scope, `[M-222.8-reflect-tuple-field]` if ever needed). `resolve_
+fields`'s wire-collision validation (`E_SERDE_WIRE_NAME_COLLISION` etc.) is
+inherited for record types (a `Reflect`-only type without `#impl(Serialize)`
+still gets that validation "for free" via the shared `resolve_fields` call)
+— a deliberate, documented consequence of reuse, not a targeted feature.
+`Result[T, E]` has no blanket (deferred — 222.8 §1.2 "см. 1.3-статусы").
+Doc-comments → `description` is explicitly OUT of scope (222.8 §3, owner
+decision: a docstring may carry internal notes, auto-publishing it is
+unsafe without opt-in) — `TypeShape` carries no description/doc field at
+all.
+
+**Why not fold into `Serialize`** (per 222.8 §0, already-rejected designs
+carried forward, not re-litigated here): `Serialize` is a general capability
+not tied to JSON (§0.3 of the 222.8 plan); baking JSON-Schema-shaped output
+into it would be a layering violation, and would cost binary size for every
+`#impl(Serialize)` type that never touches HTTP. `TypeShape` is a SEPARATE,
+opt-in protocol for exactly this reason.
+
+---
+
 ## D417. Closure-литерал против скалярного return-типа — `E_CLOSURE_SCALAR_RETURN` (2026-07-10)
 
 **Дыра.** Ни `assignable` (сверка типов только в позициях call-arg / annotated-`let`),
