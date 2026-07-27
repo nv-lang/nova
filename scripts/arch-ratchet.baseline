@@ -17,5 +17,40 @@
 # 4 изолированных репро (арность 1/2/3, с/без конкурирующего конкретного
 # sibling) + мега-CU spec_tests/conformance 586/1/67 (единственный FAIL —
 # документированный pre-existing intermittent a_q3_println_debug_record).
-lines=63104
+# Рост 63104→63173 осознан (реестр 221.1 №139, окно p139): user-defined
+# GENERIC value-type как ПОЛЕ структуры (`type Bundle value { w Wrap[int] }`)
+# → CC-FAIL "unknown type name 'NovaValue_Wrap____nova_int'". Диагноз (не
+# гипотеза из брифа — та оказалась НЕВЕРНОЙ, проверено чтением кода):
+# `type_ref_to_c`/`resolved_named_to_c` УЖЕ регистрирует generic-инстанс
+# поля в `generic_type_worklist` корректно в момент лоуэринга C-имени —
+# сборщик mono-инстансов НЕ дырявый, seed срабатывает. Реальный баг —
+# ПОРЯДОК СПЛАЙСА между двумя буферами emit_c: drained-текст всегда попадает
+# в общий `generic_type_defs_buf`, сплайсящийся ОДИН РАЗ в единственный
+# маркер `/*__GENERIC_TYPE_DEFS__*/` — который в файле СТОИТ ПОСЛЕ
+# `__VALUE_RECORD_DEFS__` (ранний маркер, `emit_preamble`) И после прямой
+# позиции heap-record'а в `self.out` (`emit_record_type` без buffer-редиректа
+# вовсе). Т.е. by-value поле-generic-инстанс ссылается на ещё не
+# объявленную структуру НЕЗАВИСИМО от того, используется ли инстанс где-то
+# ещё (вызовом конструктора) — регистрация вызова дренится в ТОТ ЖЕ поздний
+# буфер, не помогает. Это ЧИСТО codegen-emission-layer забота (порядок C-
+# текстовых буферов уже РЕЗОЛВЛЕННЫХ типов), не «чекер-канал» — для неё
+# структурно нет другого дома, кроме emit_c.rs (родня прецедента
+# 63096→63104 выше: канал недостижим без более широкой перестройки).
+# Фикс — `hoist_pending_generic_type_defs`: force-drain worklist сразу
+# после лоуэринга полей record'а + вырезка свежего delta ИЗ
+# `generic_type_defs_buf` (поздний сплайс не дублирует), возврат вызывающему
+# для сплайса ПЕРЕД СВОИМ struct — ТОЧНО тот же идиом, что уже существующий
+# `opt_delta`/`fwd_decls` hoist в ЭТОЙ ЖЕ функции (`emit_value_record_type`,
+# NovaOpt/pointer-forward-decl) — не новая заплатка, а вторая инстанциация
+# уже принятого локального паттерна, симметрично применённая в
+# `emit_record_type` (heap-record, без buffer-редиректа — push прямо в
+# `self.out`). No-op (0 доп. работы) когда у record'а нет generic-полей.
+# Верифицировано: репро + 4 вариации брифа (несколько инстансов, вложенность,
+# non-value record, field-only-seed) — все CC-FAIL до фикса → PASS после,
+# на pre-fix/post-fix бинарях (baseline rebuild подтверждён). Регресс-
+# фикстура `spec_tests/conformance/m139_generic_value_type_struct_field_pos.nv`
+# (standalone-изолированная копия PASS 1/0 — общий мега-CU на этой машине
+# упирается в НЕЗАВИСИМЫЙ pre-existing P0
+# `[M-conformance-megacu-intermittent-run-crash]`, не регрессия этого окна).
+lines=63173
 infer=348
