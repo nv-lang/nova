@@ -142,11 +142,11 @@ awk -F'\t' '
 ' "$ROWS_TMP" | sort -t "$(printf '\t')" -k1,1 | cut -f2- > "$KEYED_TMP"
 
 {
-  echo '<!-- AUTO-GENERATED — НЕ РЕДАКТИРОВАТЬ РУКАМИ. Регенерация: bash scripts/gen-plan-status.sh -->'
+  echo '<!-- AUTO-GENERATED — НЕ РЕДАКТИРОВАТЬ РУКАМИ. Регенерация: bash scripts/tools/gen-plan-status.sh -->'
   echo
   echo '# Статусы планов (сводный обзор)'
   echo
-  echo "> **Автосгенерировано**: \`bash scripts/gen-plan-status.sh\`, дата генерации: $(date -u '+%Y-%m-%d %H:%M UTC')."
+  echo "> **Автосгенерировано**: \`bash scripts/tools/gen-plan-status.sh\`, дата генерации: $(date -u '+%Y-%m-%d %H:%M UTC')."
   echo '> **⚠ Этот файл ПРОТУХАЕТ между перегенерациями** — git-копия отражает момент'
   echo '> последнего запуска, не текущее состояние. Источник правды — ТОЛЬКО строка'
   echo '> `**Статус:**` в самом файле плана; при любом сомнении — перегенерируй или'

@@ -7,11 +7,11 @@
 # покрывает races частично, не строгий ThreadSanitizer).
 #
 # Usage:
-#   ./scripts/tsan_concurrency.sh [filter]
+#   ./scripts/guards/tsan_concurrency.sh [filter]
 #
 # Example:
-#   ./scripts/tsan_concurrency.sh concurrency/  # all concurrency
-#   ./scripts/tsan_concurrency.sh fiber_throw   # single test
+#   ./scripts/guards/tsan_concurrency.sh concurrency/  # all concurrency
+#   ./scripts/guards/tsan_concurrency.sh fiber_throw   # single test
 #
 # Requirements:
 #   - Linux host (Ubuntu 22.04+ либо WSL2).

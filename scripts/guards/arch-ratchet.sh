@@ -1,5 +1,5 @@
 #!/bin/sh
-# scripts/arch-ratchet.sh — архитектурный храповик легаси-кодогена emit_c.rs.
+# scripts/guards/arch-ratchet.sh — архитектурный храповик легаси-кодогена emit_c.rs.
 #
 # ПОЧЕМУ. План 196 «Одна правда» требует, чтобы новая семантика шла через
 # чекер-канал (resolved_*), а не наращивала per-синтаксис-позицию разбор в
@@ -27,7 +27,7 @@
 # который обязан быть объяснён текстом рядом.
 #
 # ИСПОЛЬЗОВАНИЕ:
-#   bash scripts/arch-ratchet.sh
+#   bash scripts/guards/arch-ratchet.sh
 # Запускается из scripts/gate.sh (шаг «arch-ratchet», до cargo build —
 # дёшево и быстро). Выход: 0 — метрики ≤ baseline, 1 — рост без правки
 # baseline (печатает какая метрика и на сколько).
