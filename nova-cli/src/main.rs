@@ -1987,6 +1987,41 @@ fn cmd_check(
         paths.iter().cloned().collect()
     };
 
+    // Реестр 221.1 №135 (вопрос владельца 2026-07-27 «path в nova.toml разве
+    // не должен быть запрещён?»): диагностики манифеста ЖИЛИ ТОЛЬКО в
+    // `cmd_build` — `nova check` их не звал вовсе, поэтому непереносимый
+    // `path = "../внешняя-репа"` в закоммиченном манифесте не показывался
+    // никак (измерено на nova-polaris: `nova check src` молчал, хотя манифест
+    // несёт `http = { path = "../nova-http" }`, из-за чего пакет не собрался
+    // бы у внешнего потребителя — см. блокер тегов A-V7, план 221 Ф.2).
+    // Правило НЕ трогаем — оно верное и живёт в `manifest_warnings`; чиним
+    // ровно неподключённость: `check` — та команда, которой пользуются, чтобы
+    // спросить «всё ли в порядке с пакетом».
+    // NB: `manifest::find_manifest` ждёт путь к ФАЙЛУ (берёт `.parent()`) и
+    // возвращает уже разобранный `Manifest` — для «директория или файл» и для
+    // дедупликации по пакету идём вверх сами; один и тот же манифест не
+    // предупреждает дважды, даже если в аргументах несколько путей пакета.
+    let mut warned_pkgs: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    for p in &resolved_paths {
+        let mut dir = if p.is_dir() { p.clone() } else {
+            p.parent().map(|d| d.to_path_buf()).unwrap_or_else(|| p.clone())
+        };
+        loop {
+            let toml_path = dir.join("nova.toml");
+            if toml_path.is_file() {
+                if warned_pkgs.insert(dir.clone()) {
+                    if let Some(m) = nova_codegen::manifest::parse_manifest(&toml_path, &dir) {
+                        for w in nova_codegen::manifest::manifest_warnings(&m, &toml_path) {
+                            eprintln!("  {} {} [{}]", bold(&yellow("warning:")), w.message, w.code);
+                        }
+                    }
+                }
+                break;
+            }
+            if !dir.pop() { break; }
+        }
+    }
+
     // Собираем список .nv файлов: для file — сам файл, для dir — рекурсивный walk.
     let std_runtime_dir = std_runtime_dir_hint();
     let mut files: Vec<PathBuf> = Vec::new();
