@@ -1,6 +1,6 @@
-//! Plan 03.1 Ф.4 — `nova.lock`: фиксация графа зависимостей.
+//! Plan 03.1 Ф.4 — `nova.lock.toml`: фиксация графа зависимостей.
 //!
-//! `nova.lock` пинит точные версии всех (транзитивных) зависимостей —
+//! `nova.lock.toml` пинит точные версии всех (транзитивных) зависимостей —
 //! воспроизводимая сборка. Коммитится в репозиторий (как `Cargo.lock`
 //! для бинарей).
 //!
@@ -33,7 +33,7 @@
 //!   03.4): неизвестные ключи парсер игнорирует, формат расширяем без
 //!   breaking change.
 //!
-//! **Воспроизводимость.** `sync` загружает существующий `nova.lock` в
+//! **Воспроизводимость.** `sync` загружает существующий `nova.lock.toml` в
 //! `git_cache`-таблицу пинов до резолва графа — git-зависимости с уже
 //! зафиксированным commit'ом не резолвятся «вживую» (ветка не «уедет»).
 
@@ -63,14 +63,14 @@ pub enum LockedSource {
     },
 }
 
-/// Одна запись `nova.lock`.
+/// Одна запись `nova.lock.toml`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LockedDep {
     pub name: String,
     pub source: LockedSource,
 }
 
-/// Разобранный / собранный `nova.lock`.
+/// Разобранный / собранный `nova.lock.toml`.
 #[derive(Debug, Clone)]
 pub struct LockFile {
     pub version: u32,
@@ -78,7 +78,7 @@ pub struct LockFile {
     pub packages: Vec<LockedDep>,
 }
 
-/// Текущая версия формата `nova.lock`.
+/// Текущая версия формата `nova.lock.toml`.
 pub const LOCK_VERSION: u32 = 1;
 
 /// Строковое представление пина для записи в lockfile.
@@ -93,11 +93,11 @@ fn pin_str(pin: &GitPin) -> String {
 }
 
 impl LockFile {
-    /// Сериализовать в текст `nova.lock`.
+    /// Сериализовать в текст `nova.lock.toml`.
     pub fn render(&self) -> String {
         let mut s = String::new();
         s.push_str(
-            "# nova.lock — сгенерирован автоматически (Plan 03.1 / D78).\n\
+            "# nova.lock.toml — сгенерирован автоматически (Plan 03.1 / D78).\n\
              # Фиксирует точные версии зависимостей для воспроизводимых\n\
              # сборок. Не редактируйте вручную; коммитьте в репозиторий.\n\n",
         );
@@ -124,7 +124,7 @@ impl LockFile {
         s
     }
 
-    /// Разобрать текст `nova.lock`. Неизвестные ключи игнорируются
+    /// Разобрать текст `nova.lock.toml`. Неизвестные ключи игнорируются
     /// (forward-compat — Plan 03.4 расширит формат).
     pub fn parse(text: &str) -> Result<LockFile> {
         let mut version: u32 = LOCK_VERSION;
@@ -208,7 +208,7 @@ impl LockFile {
 fn record_to_dep(fields: &[(String, String)]) -> Result<LockedDep> {
     let get = |k: &str| fields.iter().find(|(fk, _)| fk == k).map(|(_, v)| v.as_str());
     let name = get("name")
-        .ok_or_else(|| anyhow!("nova.lock: запись [[package]] без `name`"))?
+        .ok_or_else(|| anyhow!("nova.lock.toml: запись [[package]] без `name`"))?
         .to_string();
     let source = get("source").unwrap_or("");
     let locked = match source {
@@ -220,30 +220,64 @@ fn record_to_dep(fields: &[(String, String)]) -> Result<LockedDep> {
             pin: get("pin").unwrap_or("default").to_string(),
             commit: get("commit")
                 .ok_or_else(|| {
-                    anyhow!("nova.lock: git-запись `{}` без `commit`", name)
+                    anyhow!("nova.lock.toml: git-запись `{}` без `commit`", name)
                 })?
                 .to_string(),
             version: get("version").map(|s| s.to_string()),
         },
-        other => bail!("nova.lock: запись `{}` с неизвестным source `{}`", name, other),
+        other => bail!("nova.lock.toml: запись `{}` с неизвестным source `{}`", name, other),
     };
     Ok(LockedDep { name, source: locked })
 }
 
-/// Путь к `nova.lock` пакета.
+/// Plan 233 §2: канонiческое (новое) имя lockfile'а — `.toml`-расширение
+/// даёт универсальную TOML-подсветку в любом редакторе/на GitHub без
+/// плагинов (старое `nova.lock` — абстрактное расширение, редакторы его не
+/// распознают как TOML). Всегда используется при ЗАПИСИ (`sync`/
+/// `drop_git_locks`).
+pub const LOCK_FILE_NAME: &str = "nova.lock.toml";
+
+/// Legacy-имя (pre-Plan-233) — при ЧТЕНИИ поддержано наравне с новым (см.
+/// `load`), но только пока новое имя отсутствует; при обнаружении
+/// печатается deprecation warning. Никогда не используется при записи.
+pub const LEGACY_LOCK_FILE_NAME: &str = "nova.lock";
+
+/// Путь к `nova.lock.toml` пакета (новое, канонiческое имя — см.
+/// `LOCK_FILE_NAME`). Используется и для чтения (см. `load` — в паре с
+/// legacy-путём), и ВСЕГДА для записи.
 pub fn lock_path(pkg_dir: &Path) -> PathBuf {
-    pkg_dir.join("nova.lock")
+    pkg_dir.join(LOCK_FILE_NAME)
 }
 
-/// Загрузить `nova.lock` пакета, если он есть.
+/// Путь к legacy `nova.lock` пакета (pre-Plan-233 имя). Только для чтения
+/// (fallback в `load`, deprecation warning) — запись никогда сюда не идёт.
+pub fn legacy_lock_path(pkg_dir: &Path) -> PathBuf {
+    pkg_dir.join(LEGACY_LOCK_FILE_NAME)
+}
+
+/// Загрузить lockfile пакета, если он есть. Plan 233 §2: читает ОБА имени —
+/// новое (`nova.lock.toml`, приоритет, без warning) и, если новое
+/// отсутствует, legacy (`nova.lock`, deprecation warning на stderr).
+/// Отсутствуют оба — `Ok(None)`.
 pub fn load(pkg_dir: &Path) -> Result<Option<LockFile>> {
     let path = lock_path(pkg_dir);
-    if !path.is_file() {
-        return Ok(None);
+    if path.is_file() {
+        let text = std::fs::read_to_string(&path)
+            .with_context(|| format!("чтение {}", path.display()))?;
+        return Ok(Some(LockFile::parse(&text)?));
     }
-    let text = std::fs::read_to_string(&path)
-        .with_context(|| format!("чтение {}", path.display()))?;
-    Ok(Some(LockFile::parse(&text)?))
+    let legacy = legacy_lock_path(pkg_dir);
+    if legacy.is_file() {
+        eprintln!(
+            "warning: {} устарел, переименуйте в {} [W_LOCK_LEGACY_NAME]",
+            legacy.display(),
+            path.display(),
+        );
+        let text = std::fs::read_to_string(&legacy)
+            .with_context(|| format!("чтение {}", legacy.display()))?;
+        return Ok(Some(LockFile::parse(&text)?));
+    }
+    Ok(None)
 }
 
 /// Собрать полный (транзитивный) граф зависимостей пакета `entry_pkg_dir`.
@@ -301,7 +335,7 @@ fn visit_pkg(
         // `[dependencies]` (git url + резолвнутый тег + commit), а НЕ
         // `[replace]`-override. `[replace]` — локальный overlay: применяется
         // только в module-resolution/сборке (imports.rs, effective_source),
-        // в `nova.lock` не записывается вовсе. Сборка с активным replace
+        // в `nova.lock.toml` не записывается вовсе. Сборка с активным replace
         // просто использует path поверх lock, не переписывая его —
         // lock остаётся публикуемым источником истины.
         match &dep.source {
@@ -439,11 +473,11 @@ fn walk_replace_scope(
     }
 }
 
-/// Синхронизировать `nova.lock` пакета `entry_pkg_dir`:
+/// Синхронизировать `nova.lock.toml` пакета `entry_pkg_dir`:
 ///   1. загрузить существующий lock в `git_cache`-таблицу пинов
 ///      (воспроизводимость — git-deps не резолвятся «вживую»);
 ///   2. собрать актуальный граф зависимостей;
-///   3. записать `nova.lock`.
+///   3. записать `nova.lock.toml`.
 ///
 /// Вызывается из `nova build`. Возвращает собранный граф.
 pub fn sync(entry_pkg_dir: &Path) -> Result<Vec<LockedDep>> {
@@ -471,7 +505,7 @@ fn sync_ex(
     // взял зафиксированные резолвером commit'ы и версии.
     let resolved = resolve_version_deps(entry_pkg_dir, &preferred, extra_root)?;
     let graph = collect_dep_graph_ex(entry_pkg_dir, &resolved)?;
-    // Не плодим `nova.lock` на ровном месте: пустой граф и файла ещё нет
+    // Не плодим `nova.lock.toml` на ровном месте: пустой граф и файла ещё нет
     // — фиксировать нечего. Если lock уже был (зависимости убрали) —
     // перезаписываем, чтобы он отражал актуальное состояние.
     if graph.is_empty() && existing.is_none() {
@@ -487,7 +521,7 @@ fn sync_ex(
     Ok(graph)
 }
 
-/// Загрузить `nova.lock` (если есть) в `git_cache`-таблицу пинов — без
+/// Загрузить `nova.lock.toml` (если есть) в `git_cache`-таблицу пинов — без
 /// перезаписи файла. Для read-only потребителей (например `nova run`
 /// уже собранного проекта).
 pub fn load_pins(entry_pkg_dir: &Path) -> Result<()> {
@@ -501,7 +535,7 @@ pub fn load_pins(entry_pkg_dir: &Path) -> Result<()> {
 /// `only = Some(name)` — обновить одну зависимость; `None` — все
 /// git-зависимости. `path`-deps пинов не имеют — не затрагиваются.
 ///
-/// Реализация: снять целевые git-записи из существующего `nova.lock`,
+/// Реализация: снять целевые git-записи из существующего `nova.lock.toml`,
 /// затем `sync` — снятые с пина зависимости резолвятся «вживую» (берётся
 /// текущий commit ветки/тега), остальные остаются зафиксированными.
 pub fn update(entry_pkg_dir: &Path, only: Option<&str>) -> Result<Vec<LockedDep>> {
@@ -509,7 +543,7 @@ pub fn update(entry_pkg_dir: &Path, only: Option<&str>) -> Result<Vec<LockedDep>
     sync(entry_pkg_dir)
 }
 
-/// Снять git-записи из `nova.lock`: `only = Some(name)` — одну, `None`
+/// Снять git-записи из `nova.lock.toml`: `only = Some(name)` — одну, `None`
 /// — все. Path-deps не затрагиваются. Снятая с пина зависимость при
 /// следующем `sync` пере-резолвится «вживую».
 fn drop_git_locks(entry_pkg_dir: &Path, only: Option<&str>) -> Result<()> {
@@ -648,9 +682,9 @@ impl DependencyProvider for GitProvider {
 /// Plan 03.2 Ф.3/Ф.4: согласованно разрешить версионные git-зависимости
 /// пакета `entry_pkg_dir`, зафиксировать выбранные commit'ы в
 /// `git_cache`-таблице пинов и вернуть карту `url → resolved-version`
-/// (для `version`-поля `nova.lock`).
+/// (для `version`-поля `nova.lock.toml`).
 ///
-/// `preferred` — версии из существующего `nova.lock`: резолвер держит
+/// `preferred` — версии из существующего `nova.lock.toml`: резолвер держит
 /// их, пока ограничения позволяют (воспроизводимость). Реагирует только
 /// на `{ git = "...", version = "..." }`-зависимости; иначе — no-op.
 fn resolve_version_deps(
@@ -842,5 +876,127 @@ mod tests {
         let names: Vec<&str> = graph.iter().map(|d| d.name.as_str()).collect();
         assert_eq!(names, vec!["leaf", "mid"]); // sorted, без самого app
         std::fs::remove_dir_all(&base).ok();
+    }
+
+    fn tmp_pkg(tag: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "nova_p233_lock_{}_{}_{}",
+            tag,
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+    }
+
+    /// Plan 233 §2: `lock_path` — новое каноническое имя.
+    #[test]
+    fn lock_path_uses_new_name() {
+        let dir = PathBuf::from("some/pkg");
+        assert_eq!(lock_path(&dir), dir.join("nova.lock.toml"));
+        assert_eq!(legacy_lock_path(&dir), dir.join("nova.lock"));
+    }
+
+    /// `load` читает НОВОЕ имя (`nova.lock.toml`), если оно есть — без
+    /// обращения к legacy-файлу вовсе.
+    #[test]
+    fn load_reads_new_name() {
+        let dir = tmp_pkg("new_name");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("nova.lock.toml"),
+            "version = 1\n\n[[package]]\nname = \"p\"\nsource = \"path\"\npath = \"../p\"\n",
+        )
+        .unwrap();
+        let lf = load(&dir).expect("load").expect("Some");
+        assert_eq!(lf.packages.len(), 1);
+        assert_eq!(lf.packages[0].name, "p");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Plan 233 §2 (back-compat): `load` falls back to the LEGACY name
+    /// (`nova.lock`) when the new name is absent — content still parses.
+    #[test]
+    fn load_falls_back_to_legacy_name() {
+        let dir = tmp_pkg("legacy_name");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("nova.lock"),
+            "version = 1\n\n[[package]]\nname = \"legacy\"\nsource = \"path\"\npath = \"../legacy\"\n",
+        )
+        .unwrap();
+        let lf = load(&dir).expect("load").expect("Some");
+        assert_eq!(lf.packages.len(), 1);
+        assert_eq!(lf.packages[0].name, "legacy");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Both names present — the NEW name wins (legacy ignored, no
+    /// warning), mirroring `manifest`'s override-file precedence.
+    #[test]
+    fn load_prefers_new_name_when_both_present() {
+        let dir = tmp_pkg("both_names");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("nova.lock.toml"),
+            "version = 1\n\n[[package]]\nname = \"new\"\nsource = \"path\"\npath = \"../new\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("nova.lock"),
+            "version = 1\n\n[[package]]\nname = \"old\"\nsource = \"path\"\npath = \"../old\"\n",
+        )
+        .unwrap();
+        let lf = load(&dir).expect("load").expect("Some");
+        assert_eq!(lf.packages[0].name, "new");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Neither name present — `Ok(None)`, matching pre-Plan-233 behavior.
+    #[test]
+    fn load_none_when_neither_name_present() {
+        let dir = tmp_pkg("neither_name");
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(load(&dir).expect("load").is_none());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Plan 233 §2: `sync` on a package whose ONLY existing lock is the
+    /// LEGACY name still reads it (preferred versions honored) but writes
+    /// the graph to the NEW name — legacy file is left untouched on disk
+    /// (least-surprise; `load` will prefer the new file on next read, so
+    /// the deprecation warning naturally stops firing afterwards).
+    #[test]
+    fn sync_reads_legacy_writes_new_name() {
+        let dir = tmp_pkg("sync_legacy_to_new");
+        let sub = dir.join("leaf");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(
+            dir.join("nova.toml"),
+            "[package]\nname = \"app\"\n[lib]\nsrc = \".\"\n\
+             [dependencies]\nleaf = { path = \"leaf\" }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            sub.join("nova.toml"),
+            "[package]\nname = \"leaf\"\n[lib]\nsrc = \".\"\n[dependencies]\n",
+        )
+        .unwrap();
+        // Pre-existing LEGACY lock (stale content — sync must overwrite via
+        // the NEW name, not edit the legacy file in place).
+        std::fs::write(dir.join("nova.lock"), "version = 1\n").unwrap();
+
+        let graph = sync(&dir).expect("sync");
+        assert_eq!(graph.len(), 1);
+        assert!(dir.join("nova.lock.toml").is_file(), "sync must write the NEW name");
+        let new_content = std::fs::read_to_string(dir.join("nova.lock.toml")).unwrap();
+        assert!(new_content.contains("leaf"), "content: {}", new_content);
+        // Legacy file untouched (still its stale placeholder content) —
+        // sync never edits/deletes it.
+        let legacy_content = std::fs::read_to_string(dir.join("nova.lock")).unwrap();
+        assert_eq!(legacy_content, "version = 1\n");
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

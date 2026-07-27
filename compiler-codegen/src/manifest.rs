@@ -160,29 +160,37 @@ pub struct Manifest {
     /// СЕЙЧАС» (`[replace]`) — go-школа (D-block Q-dependency-versioning).
     /// Пусто, если секция отсутствует. См. [`Manifest::effective_source`].
     ///
-    /// **Plan 204 дофикс №2:** объединяет ДВА источника — `[replace]` из
-    /// самого `nova.toml` (закоммиченный, см. `replace_in_committed_manifest`)
-    /// и `[replace]` из необязательного соседнего `nova.local.toml`
-    /// (машино-локальный, не коммитится). `nova.local.toml` побеждает при
-    /// совпадении ключа (более специфичный, машино-локальный оверрайд).
-    /// Само по себе это поле НЕ учитывает go-scope (корень vs зависимость)
-    /// — это делает `Manifest::effective_source`'s caller
+    /// **Plan 204 дофикс №2 / Plan 233 §2а (переименование):** объединяет
+    /// ДВА источника — `[replace]` из самого `nova.toml` (закоммиченный,
+    /// см. `replace_in_committed_manifest`) и `[replace]` из необязательного
+    /// соседнего override-файла (машино-локальный, не коммитится — новое
+    /// имя `nova.override.toml`, legacy `nova.local.toml` читается тоже, с
+    /// deprecation warning, см. `override_legacy_name_used`). Override-файл
+    /// побеждает при совпадении ключа (более специфичный, машино-локальный
+    /// оверрайд). Само по себе это поле НЕ учитывает go-scope (корень vs
+    /// зависимость) — это делает `Manifest::effective_source`'s caller
     /// (`imports::lookup_dependency`), консультируя его ТОЛЬКО когда
     /// текущий манифест — корень собираемого дерева.
     pub replace: HashMap<String, DepSource>,
     /// **Plan 204 дофикс №2:** `true`, если `[replace]` объявлен
     /// непосредственно в ЭТОМ `nova.toml` (закоммиченном файле) — а не
-    /// только в соседнем `nova.local.toml`. Триггерит `W_REPLACE_IN_MANIFEST`
+    /// только в соседнем override-файле. Триггерит `W_REPLACE_IN_MANIFEST`
     /// (`manifest_warnings`): закоммиченный `[replace]` ломает чистый клон
     /// (путь, валидный на машине автора, отсутствует у клонирующего).
     pub replace_in_committed_manifest: bool,
-    /// **Plan 204 дофикс №2:** секции/ключи `nova.local.toml`, отличные от
-    /// `[replace]` — эта волна поддерживает в `nova.local.toml` ТОЛЬКО
+    /// **Plan 204 дофикс №2 / Plan 233 §2а:** секции/ключи override-файла,
+    /// отличные от `[replace]` — эта волна поддерживает в нём ТОЛЬКО
     /// `[replace]`. Каждая запись — метка вида `"section"` (секция целиком)
     /// или `"section.key"` (конкретный ключ) для diagnostic message.
-    /// Пусто, если `nova.local.toml` отсутствует либо полностью валиден.
-    /// Триггерит `W_LOCAL_TOML_UNSUPPORTED_KEY`.
-    pub local_toml_unsupported: Vec<String>,
+    /// Пусто, если override-файл отсутствует либо полностью валиден.
+    /// Триггерит `W_OVERRIDE_TOML_UNSUPPORTED_KEY`.
+    pub override_toml_unsupported: Vec<String>,
+    /// **Plan 233 §2а:** `true`, если override-данные (`[replace]` и/или
+    /// `override_toml_unsupported`) взяты из LEGACY-имени `nova.local.toml`
+    /// — новое имя `nova.override.toml` в той же директории ОТСУТСТВОВАЛО.
+    /// Триггерит `W_OVERRIDE_TOML_DEPRECATED` (`manifest_warnings`). `false`,
+    /// если override-файла нет вовсе, либо присутствует новое имя.
+    pub override_legacy_name_used: bool,
 }
 
 /// Plan 149 D233: `[runtime]` section config — fiber arena tuning.
@@ -348,17 +356,18 @@ fn parse_dep_forbid(raw_val: &str) -> Vec<String> {
         .collect()
 }
 
-/// Plan 204 дофикс №2: разобрать `nova.local.toml` — необязательный,
-/// НЕ коммитящийся файл рядом с `nova.toml` для машино-локальных
-/// оверрайдов. В этой волне поддержана ТОЛЬКО секция `[replace]` (тот же
-/// формат записи, что и `[replace]` в `nova.toml`). Прочие секции/ключи не
-/// отклоняют парсинг (forward-compat — будущие волны могут добавить
-/// поддержанные ключи без breaking change) — но собираются как
-/// `unsupported`-метки для `W_LOCAL_TOML_UNSUPPORTED_KEY`.
+/// Plan 204 дофикс №2 / Plan 233 §2а: разобрать override-файл
+/// (`nova.override.toml` — новое имя, либо legacy `nova.local.toml`) —
+/// необязательный, НЕ коммитящийся файл рядом с `nova.toml` для
+/// машино-локальных оверрайдов. В этой волне поддержана ТОЛЬКО секция
+/// `[replace]` (тот же формат записи, что и `[replace]` в `nova.toml`).
+/// Прочие секции/ключи не отклоняют парсинг (forward-compat — будущие
+/// волны могут добавить поддержанные ключи без breaking change) — но
+/// собираются как `unsupported`-метки для `W_OVERRIDE_TOML_UNSUPPORTED_KEY`.
 ///
 /// Returns `(replace_map, unsupported_labels)`. Файл отсутствует/пуст/не
 /// читается → `(HashMap::new(), Vec::new())`.
-fn parse_local_toml(path: &Path) -> (HashMap<String, DepSource>, Vec<String>) {
+fn parse_override_toml(path: &Path) -> (HashMap<String, DepSource>, Vec<String>) {
     let mut replace: HashMap<String, DepSource> = HashMap::new();
     let mut unsupported: Vec<String> = Vec::new();
     let Ok(text) = std::fs::read_to_string(path) else {
@@ -611,18 +620,31 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
         None
     };
     // Plan 204 дофикс №2: `[replace]` объявленный ПРЯМО в этом (закоммиченном)
-    // nova.toml — до слияния с nova.local.toml, для W_REPLACE_IN_MANIFEST.
+    // nova.toml — до слияния с override-файлом, для W_REPLACE_IN_MANIFEST.
     let replace_in_committed_manifest = !replace.is_empty();
-    // Plan 204 дофикс №2: соседний nova.local.toml (та же директория, что и
-    // toml_path) — необязательный, машино-локальный, НЕ коммитится.
-    // `[replace]` из него сливается поверх committed [replace] (побеждает
-    // при совпадении ключа — более специфичный, machine-local override).
-    let local_toml_path = dir.join("nova.local.toml");
-    let mut local_toml_unsupported: Vec<String> = Vec::new();
-    if local_toml_path.is_file() {
-        let (local_replace, unsupported) = parse_local_toml(&local_toml_path);
-        local_toml_unsupported = unsupported;
-        for (k, v) in local_replace {
+    // Plan 204 дофикс №2 / Plan 233 §2а: соседний override-файл (та же
+    // директория, что и toml_path) — необязательный, машино-локальный, НЕ
+    // коммитится. Новое имя `nova.override.toml` проверяется первым; если
+    // отсутствует — legacy `nova.local.toml` (deprecation warning через
+    // `override_legacy_name_used` → `manifest_warnings`). `[replace]` из
+    // него сливается поверх committed [replace] (побеждает при совпадении
+    // ключа — более специфичный, machine-local override).
+    let override_toml_path = dir.join("nova.override.toml");
+    let legacy_override_toml_path = dir.join("nova.local.toml");
+    let mut override_toml_unsupported: Vec<String> = Vec::new();
+    let mut override_legacy_name_used = false;
+    let effective_override_path: Option<PathBuf> = if override_toml_path.is_file() {
+        Some(override_toml_path)
+    } else if legacy_override_toml_path.is_file() {
+        override_legacy_name_used = true;
+        Some(legacy_override_toml_path)
+    } else {
+        None
+    };
+    if let Some(override_path) = &effective_override_path {
+        let (override_replace, unsupported) = parse_override_toml(override_path);
+        override_toml_unsupported = unsupported;
+        for (k, v) in override_replace {
             replace.insert(k, v);
         }
     }
@@ -638,7 +660,8 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
         runtime,
         replace,
         replace_in_committed_manifest,
-        local_toml_unsupported,
+        override_toml_unsupported,
+        override_legacy_name_used,
     })
 }
 
@@ -696,19 +719,20 @@ pub fn git_repo_root(dir: &Path) -> Option<PathBuf> {
     }
 }
 
-/// Plan 204 дофикс №2 (owner correction): `[replace]` объявленный ПРЯМО в
-/// закоммиченном `nova.toml` — ЖЁСТКАЯ ОШИБКА (не warning), без периода
-/// депрекейшна: закоммиченный `[replace]` ломает чистый клон, если
-/// override-путь существует только на машине автора манифеста.
-/// `[replace]` разрешён ИСКЛЮЧИТЕЛЬНО в соседнем `nova.local.toml`
-/// (машино-локальный, не коммитится — см. `parse_local_toml`).
+/// Plan 204 дофикс №2 (owner correction) / Plan 233 §2а (переименование):
+/// `[replace]` объявленный ПРЯМО в закоммиченном `nova.toml` — ЖЁСТКАЯ
+/// ОШИБКА (не warning), без периода депрекейшна: закоммиченный `[replace]`
+/// ломает чистый клон, если override-путь существует только на машине
+/// автора манифеста. `[replace]` разрешён ИСКЛЮЧИТЕЛЬНО в соседнем
+/// override-файле — новое имя `nova.override.toml` (legacy `nova.local.toml`
+/// тоже читается, см. `parse_override_toml`).
 pub fn check_no_committed_replace(m: &Manifest, toml_path: &Path) -> Result<(), String> {
     if m.replace_in_committed_manifest {
         return Err(format!(
             "[E_REPLACE_IN_MANIFEST] [replace] объявлен прямо в {} \
              (закоммиченный файл) — запрещено\n  \
-             fix: перенеси секцию [replace] в nova.local.toml рядом \
-             (не коммитится — добавь nova.local.toml в .gitignore); \
+             fix: перенеси секцию [replace] в nova.override.toml рядом \
+             (не коммитится — добавь nova.override.toml в .gitignore); \
              закоммиченный [replace] ломает чистый клон, если override-путь \
              существует только на твоей машине",
             toml_path.display(),
@@ -730,9 +754,12 @@ pub fn check_no_committed_replace(m: &Manifest, toml_path: &Path) -> Result<(), 
 ///     репозитория (сосед-репозиторий).
 ///   - `W_REPLACE_UNKNOWN_DEP`: `[replace]` ссылается на имя, которого нет
 ///     в `[dependencies]` — нечего заменять (typo / забытый dependency-entry).
-///   - `W_LOCAL_TOML_UNSUPPORTED_KEY` (Plan 204 дофикс №2): соседний
-///     `nova.local.toml` содержит секцию/ключ, отличные от `[replace]` —
-///     эта волна поддерживает в нём ТОЛЬКО `[replace]`.
+///   - `W_OVERRIDE_TOML_UNSUPPORTED_KEY` (Plan 204 дофикс №2 / Plan 233
+///     §2а): соседний override-файл содержит секцию/ключ, отличные от
+///     `[replace]` — эта волна поддерживает в нём ТОЛЬКО `[replace]`.
+///   - `W_OVERRIDE_TOML_DEPRECATED` (Plan 233 §2а): override-данные взяты
+///     из LEGACY-имени `nova.local.toml` — рекомендация переименовать в
+///     `nova.override.toml`.
 ///
 /// **`[replace]` в закоммиченном `nova.toml` — см. `check_no_committed_replace`
 /// (жёсткая ошибка, не warning, вызывается отдельно ДО этой функции).**
@@ -754,7 +781,7 @@ pub fn manifest_warnings(m: &Manifest, toml_path: &Path) -> Vec<ManifestWarning>
                          публикуемого источника (версия/git)\n    \
                          подсказка: релизная форма — `{} = {{ git = \"...\", \
                          version = \"x.y\" }}` в [dependencies], а `path` — в \
-                         `[replace] {} = {{ path = \"...\" }}` (nova.local.toml) \
+                         `[replace] {} = {{ path = \"...\" }}` (nova.override.toml) \
                          для локальной разработки",
                         d.name, toml_path.display(), d.name, d.name,
                     ),
@@ -774,17 +801,33 @@ pub fn manifest_warnings(m: &Manifest, toml_path: &Path) -> Vec<ManifestWarning>
             });
         }
     }
-    if !m.local_toml_unsupported.is_empty() {
-        let local_path = toml_path.parent()
+    // Plan 233 §2а: имя override-файла, ФАКТИЧЕСКИ использованного при
+    // резолве (для точных путей в diagnostic message) — legacy, если
+    // `override_legacy_name_used`, иначе новое каноническое имя.
+    let override_file_name = if m.override_legacy_name_used { "nova.local.toml" } else { "nova.override.toml" };
+    if m.override_legacy_name_used {
+        let legacy_path = toml_path.parent()
             .map(|d| d.join("nova.local.toml"))
             .unwrap_or_else(|| PathBuf::from("nova.local.toml"));
-        for label in &m.local_toml_unsupported {
+        out.push(ManifestWarning {
+            code: "W_OVERRIDE_TOML_DEPRECATED",
+            message: format!(
+                "{} устарел, переименуйте в nova.override.toml",
+                legacy_path.display(),
+            ),
+        });
+    }
+    if !m.override_toml_unsupported.is_empty() {
+        let override_path = toml_path.parent()
+            .map(|d| d.join(override_file_name))
+            .unwrap_or_else(|| PathBuf::from(override_file_name));
+        for label in &m.override_toml_unsupported {
             out.push(ManifestWarning {
-                code: "W_LOCAL_TOML_UNSUPPORTED_KEY",
+                code: "W_OVERRIDE_TOML_UNSUPPORTED_KEY",
                 message: format!(
-                    "{}: неподдерживаемый ключ/секция `{}` — nova.local.toml \
+                    "{}: неподдерживаемый ключ/секция `{}` — {} \
                      поддерживает в этой волне ТОЛЬКО [replace]",
-                    local_path.display(), label,
+                    override_path.display(), label, override_file_name,
                 ),
             });
         }
@@ -1621,7 +1664,7 @@ mod parse_tests {
     /// `check_no_committed_replace` — см. `committed_replace_is_hard_error`
     /// ниже; `manifest_warnings` больше не эмитит ничего про `[replace]`
     /// в закоммиченном файле (только `W_REPLACE_UNKNOWN_DEP` /
-    /// `W_LOCAL_TOML_UNSUPPORTED_KEY`).
+    /// `W_OVERRIDE_TOML_UNSUPPORTED_KEY`).
     #[test]
     fn manifest_no_warning_when_path_is_replace_override() {
         let (path, dir) = write_toml(
@@ -1638,7 +1681,8 @@ mod parse_tests {
 
     /// Plan 204 дофикс №2 (owner correction): `[replace]` declared directly
     /// in the COMMITTED `nova.toml` — `check_no_committed_replace` must
-    /// hard-Err with `E_REPLACE_IN_MANIFEST`, no deprecation window.
+    /// hard-Err with `E_REPLACE_IN_MANIFEST`, no deprecation window. Plan
+    /// 233 §2а: the hint now points at the NEW name `nova.override.toml`.
     #[test]
     fn committed_replace_is_hard_error() {
         let (path, dir) = write_toml(
@@ -1650,18 +1694,44 @@ mod parse_tests {
         let m = parse_manifest(&path, &dir).expect("parse");
         let err = check_no_committed_replace(&m, &path).expect_err("must hard-error");
         assert!(err.contains("E_REPLACE_IN_MANIFEST"), "err: {}", err);
-        assert!(err.contains("nova.local.toml"), "err hints nova.local.toml: {}", err);
+        assert!(err.contains("nova.override.toml"), "err hints nova.override.toml: {}", err);
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    /// `[replace]` living ONLY in `nova.local.toml` (nothing in the
+    /// `[replace]` living ONLY in `nova.override.toml` (nothing in the
     /// committed `nova.toml`) — `check_no_committed_replace` must be Ok,
     /// AND `effective_source` must still honor the override (merged into
     /// `m.replace` by `parse_manifest`).
     #[test]
-    fn local_toml_only_replace_is_not_a_hard_error() {
+    fn override_toml_only_replace_is_not_a_hard_error() {
         let (path, dir) = write_toml(
-            "local_only_replace_ok",
+            "override_only_replace_ok",
+            "[package]\nname = \"x\"\n[lib]\nsrc = \".\"\n\
+             [dependencies]\ntls = { git = \"https://x.org/tls\", version = \"0.1\" }\n",
+        );
+        std::fs::write(
+            dir.join("nova.override.toml"),
+            "[replace]\ntls = { path = \"../nova-tls\" }\n",
+        ).unwrap();
+        let m = parse_manifest(&path, &dir).expect("parse");
+        assert!(check_no_committed_replace(&m, &path).is_ok());
+        assert!(!m.replace_in_committed_manifest);
+        assert!(!m.override_legacy_name_used, "new name present — must NOT flag legacy");
+        match m.effective_source(&m.dependencies[0]) {
+            DepSource::Path(p) => assert_eq!(p, "../nova-tls"),
+            other => panic!("nova.override.toml [replace] must still be honored, got {:?}", other),
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Plan 233 §2а: `[replace]` living in the LEGACY `nova.local.toml`
+    /// name — still read (back-compat) AND still honored by
+    /// `effective_source`, but `manifest_warnings` must flag
+    /// `W_OVERRIDE_TOML_DEPRECATED` recommending the rename.
+    #[test]
+    fn legacy_local_toml_replace_still_honored_with_deprecation_warning() {
+        let (path, dir) = write_toml(
+            "legacy_local_toml_replace",
             "[package]\nname = \"x\"\n[lib]\nsrc = \".\"\n\
              [dependencies]\ntls = { git = \"https://x.org/tls\", version = \"0.1\" }\n",
         );
@@ -1670,49 +1740,84 @@ mod parse_tests {
             "[replace]\ntls = { path = \"../nova-tls\" }\n",
         ).unwrap();
         let m = parse_manifest(&path, &dir).expect("parse");
-        assert!(check_no_committed_replace(&m, &path).is_ok());
-        assert!(!m.replace_in_committed_manifest);
+        assert!(m.override_legacy_name_used, "legacy name used — must flag it");
         match m.effective_source(&m.dependencies[0]) {
             DepSource::Path(p) => assert_eq!(p, "../nova-tls"),
-            other => panic!("nova.local.toml [replace] must still be honored, got {:?}", other),
+            other => panic!("legacy nova.local.toml [replace] must still be honored, got {:?}", other),
         }
+        let ws = manifest_warnings(&m, &path);
+        let deprecated: Vec<_> = ws.iter().filter(|w| w.code == "W_OVERRIDE_TOML_DEPRECATED").collect();
+        assert_eq!(deprecated.len(), 1, "ws: {:?}", ws);
+        assert!(deprecated[0].message.contains("nova.override.toml"), "msg: {}", deprecated[0].message);
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    /// `nova.local.toml` with a section OTHER than `[replace]` — the
-    /// unsupported key/section is recorded (`W_LOCAL_TOML_UNSUPPORTED_KEY`),
+    /// Plan 233 §2а: both `nova.override.toml` (new) AND `nova.local.toml`
+    /// (legacy) present in the same directory — the NEW name wins, no
+    /// deprecation warning (matches `pkg_proxy`'s
+    /// `new_override_name_wins_over_legacy_when_both_present`).
+    #[test]
+    fn new_override_name_wins_over_legacy_when_both_present() {
+        let (path, dir) = write_toml(
+            "both_override_names",
+            "[package]\nname = \"x\"\n[lib]\nsrc = \".\"\n\
+             [dependencies]\ntls = { git = \"https://x.org/tls\", version = \"0.1\" }\n",
+        );
+        std::fs::write(
+            dir.join("nova.override.toml"),
+            "[replace]\ntls = { path = \"../new-wins\" }\n",
+        ).unwrap();
+        std::fs::write(
+            dir.join("nova.local.toml"),
+            "[replace]\ntls = { path = \"../legacy-loses\" }\n",
+        ).unwrap();
+        let m = parse_manifest(&path, &dir).expect("parse");
+        assert!(!m.override_legacy_name_used);
+        match m.effective_source(&m.dependencies[0]) {
+            DepSource::Path(p) => assert_eq!(p, "../new-wins"),
+            other => panic!("new nova.override.toml must win, got {:?}", other),
+        }
+        let ws = manifest_warnings(&m, &path);
+        assert!(ws.iter().all(|w| w.code != "W_OVERRIDE_TOML_DEPRECATED"), "ws: {:?}", ws);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// `nova.override.toml` with a section OTHER than `[replace]` — the
+    /// unsupported key/section is recorded (`W_OVERRIDE_TOML_UNSUPPORTED_KEY`),
     /// but parsing itself is NOT rejected (forward-compat: unknown keys are
     /// soft-flagged, not fatal).
     #[test]
-    fn local_toml_unsupported_section_warns() {
+    fn override_toml_unsupported_section_warns() {
         let (path, dir) = write_toml(
-            "local_toml_unsupported",
+            "override_toml_unsupported",
             "[package]\nname = \"x\"\n[lib]\nsrc = \".\"\n",
         );
         std::fs::write(
-            dir.join("nova.local.toml"),
+            dir.join("nova.override.toml"),
             "[dependencies]\nfoo = { path = \"../foo\" }\n",
         ).unwrap();
         let m = parse_manifest(&path, &dir).expect("parse");
         let ws = manifest_warnings(&m, &path);
         let unsupported: Vec<_> = ws.iter()
-            .filter(|w| w.code == "W_LOCAL_TOML_UNSUPPORTED_KEY")
+            .filter(|w| w.code == "W_OVERRIDE_TOML_UNSUPPORTED_KEY")
             .collect();
         assert_eq!(unsupported.len(), 1, "ws: {:?}", ws);
         assert!(unsupported[0].message.contains("dependencies.foo"), "msg: {}", unsupported[0].message);
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    /// `nova.local.toml` absent — no unsupported-key warnings, `replace`
-    /// unaffected (byte-identical to pre-dофикс behavior).
+    /// Override-файл (ни новое, ни legacy имя) absent — no unsupported-key
+    /// warnings, `replace` unaffected (byte-identical to pre-дофикс
+    /// behavior).
     #[test]
-    fn no_local_toml_is_a_no_op() {
+    fn no_override_toml_is_a_no_op() {
         let (path, dir) = write_toml(
-            "no_local_toml",
+            "no_override_toml",
             "[package]\nname = \"x\"\n[lib]\nsrc = \".\"\n",
         );
         let m = parse_manifest(&path, &dir).expect("parse");
-        assert!(m.local_toml_unsupported.is_empty());
+        assert!(m.override_toml_unsupported.is_empty());
+        assert!(!m.override_legacy_name_used);
         assert!(m.replace.is_empty());
         assert!(!m.replace_in_committed_manifest);
         std::fs::remove_dir_all(&dir).ok();
