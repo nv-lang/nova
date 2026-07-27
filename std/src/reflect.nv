@@ -31,8 +31,8 @@ module std.reflect
 /// `External` — дефолт serde (тип без атрибутов разметки).
 export type SumRepr enum
     | External
-    | Tagged(tag str)
-    | TaggedContent(tag str, content str)
+    | Tagged(str)
+    | TaggedContent(str, str)
     | Untagged
 
 /// Структурная форма типа — независима от формата/домена.
@@ -54,17 +54,17 @@ export type SumRepr enum
 /// - `Opaque(name)` — форма намеренно не описывается (см. модульный
 ///   docstring); компилятор её не синтезирует.
 export type TypeShape enum
-    | Record(name str, fields [](str, TypeShape))
-    | Sum(name str, repr SumRepr, variants [](str, TypeShape))
-    | Ref(name str)
+    | Record(str, [](str, TypeShape))
+    | Sum(str, SumRepr, [](str, TypeShape))
+    | Ref(str)
     | Str
     | Int
     | Float
     | Bool
     | Unit
-    | Arr(items TypeShape)
-    | Opt(inner TypeShape)
-    | Opaque(name str)
+    | Arr(TypeShape)
+    | Opt(TypeShape)
+    | Opaque(str)
 
 /// `.reflect()` — СТАТИЧЕСКИЙ метод (описывает ТИП, не зависит от значения).
 /// Компилятор синтезирует тело для record/sum-типов с явным `#impl(Reflect)`
