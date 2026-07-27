@@ -6,7 +6,7 @@
 # Состав (CLAUDE.md/dev-workflow):
 #   1) cargo build --release (nova-cli)
 #   2) мега-CU spec_tests/conformance ОДНИМ CU: exit=0 И строка "PASS: N  FAIL: 0" присутствует
-#   3) nova check std/src (БЕЗ NOVA_STD_PATH): канон "PASS: 142  FAIL: 27  WARN: 1040"
+#   3) nova check std/src (БЕЗ NOVA_STD_PATH): канон "PASS: 144  FAIL: 27  WARN: 1057"
 #   4) флагман examples/flagship/aggregator --strict-effects: строка "built:"
 set -u
 ROOT="$(pwd)"
@@ -54,7 +54,7 @@ echo "$MEGA_LINE" | grep -qE "PASS: [0-9]+ +FAIL: 0\b" || fail "mega-CU: PASS/FA
 echo "== gate: check std/src (byte-canon) =="
 STD_LINE=$("$NOVA" check "$ROOT/std/src" 2>&1 | sed -e "s/\[[0-9;]*m//g" | grep -E "^PASS" | tail -1)
 echo "std :: $STD_LINE"
-echo "$STD_LINE" | grep -q "PASS: 142  FAIL: 27  WARN: 1040" || fail "check std drifted from canon 142/27/1040: '$STD_LINE'"
+echo "$STD_LINE" | grep -q "PASS: 144  FAIL: 27  WARN: 1057" || fail "check std drifted from canon 144/27/1057: '$STD_LINE'"
 
 echo "== gate: flagship aggregator --strict-effects =="
 FLAG_LINE=$("$NOVA" build "$ROOT/examples/flagship/aggregator/src/main.nv" --strict-effects 2>&1 | sed -e "s/\[[0-9;]*m//g" | tail -1)
