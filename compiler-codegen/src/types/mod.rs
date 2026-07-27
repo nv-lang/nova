@@ -24616,6 +24616,27 @@ impl<'a> BoundCtx<'a> {
                 path: vec!["str".to_string()], generics: vec![], span: e.span }),
             ExprKind::CharLit(_) => Some(TypeRef::Named {
                 path: vec!["char".to_string()], generics: vec![], span: e.span }),
+            // [M-inline-cast-receiver-method-resolution] (реестр 221.1 №149): an
+            // inline `as`-cast in RECEIVER position (`(x as u64).to_i128()`) was
+            // invisible to this lightweight probe — no arm matched
+            // `ExprKind::As`, so `check_instance_overload` (and every other
+            // caller of `infer_arg_ty`) silently got `None` for the receiver
+            // type and skipped resolution entirely. `ro v = x as u64; v.m()`
+            // worked (the `Ident` arm above resolves through `scope`), only the
+            // INLINE form was blind — the checker consumer treated a channel
+            // gap as "nothing to resolve" and codegen's own name-only fallback
+            // (`method_receivers` last-wins) silently picked a DIFFERENT
+            // same-named overload (int128.nv's `int`/`i64 @to_i128` instead of
+            // `u64 @to_i128`), producing either a wrong value or — for
+            // `int @to_i128() => (@ as i64).to_i128()` — infinite self-
+            // recursion (stack overflow, no diagnostic). The `as`-target type
+            // IS the receiver's static type by definition (same source
+            // `infer_expr_type`'s own `ExprKind::As(_, ty) => Some(ty.clone())`
+            // arm already uses); this is purely additive coverage — every
+            // caller previously got `None` here and either fell through to a
+            // narrower fallback or a no-op, never a WRONG answer, so no
+            // existing resolution can flip.
+            ExprKind::As(_, ty) => Some(ty.clone()),
             // Plan 207 cmpxchg-lint волна B: `Atomic*.new(...)` static ctor → `Self`.
             // Narrowly scoped to the `Atomic` type family (NOT a general `Type.new()`
             // inference — that would widen this best-effort bound-checker's blast
