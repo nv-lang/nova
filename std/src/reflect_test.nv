@@ -2,7 +2,8 @@
 // `Reflect`-реализации на примитивах/контейнерах + ручная (не компиляторная)
 // реализация протокола, возвращающая `Opaque` (owner-decided addition —
 // компилятор `Opaque` НИКОГДА сам не синтезирует, только hand-written impl).
-module std.reflect
+module std.reflect_test
+import std.reflect.{TypeShape, SumRepr, Reflect}
 
 test "int.reflect() -> Int" {
     match int.reflect() { Int => assert(true), _ => assert(false) }
