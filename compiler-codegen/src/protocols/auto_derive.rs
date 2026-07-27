@@ -3546,6 +3546,34 @@ pub fn inject_synthesized_methods_filtered<F: Fn(&str) -> bool>(
 // here; that is entirely the hand-written impl's call.
 // ────────────────────────────────────────────────────────────────────────
 
+/// Qualified `TypeShape.Variant` reference — `Path(["TypeShape", name])`, NOT
+/// a bare `Ident(name)`. Plan 222.8 Ф.1 found ([M-reflect-bare-variant-cu-
+/// collision]): the checker's expected-type-driven resolution of a BARE
+/// capitalized identifier/call — the same mechanism `deerror_unknown_variant`
+/// et al. rely on elsewhere in this file — does NOT reliably disambiguate
+/// when the CU also happens to declare an UNRELATED symbol of the identical
+/// name (e.g. `spec_tests/conformance/v3_generic_newtype_non_ptr_inner_ok.nv`
+/// declares an unrelated generic newtype `Tagged[T, U](int)`; in the merged
+/// conformance mega-CU, a bare `Tagged("kind")` silently miscompiled into a
+/// cast against THAT type's constructor instead of `SumRepr.Tagged`).
+/// `TypeShape`/`SumRepr`'s variant names (`Record`/`Sum`/`Int`/`Str`/…) are
+/// short and common enough that bare construction is a real collision risk
+/// in any large compile unit, not a contrived edge case — so EVERY
+/// `TypeShape`/`SumRepr` value this synthesizer builds is qualified,
+/// unconditionally, rather than only patching the one collision found.
+/// (Bare unqualified construction verified independently to work in
+/// isolation via a scratch probe — `SumRepr.Tagged(..)`/`TypeShape.Record(..
+/// )` qualified-call syntax compiles and resolves correctly, so this is a
+/// zero-risk hardening, not a new syntax being introduced.)
+fn typeshape_variant(name: &str) -> Expr {
+    ex(ExprKind::Path(vec!["TypeShape".to_string(), name.to_string()]))
+}
+
+/// Qualified `SumRepr.Variant` reference — see `typeshape_variant` doc.
+fn sumrepr_variant(name: &str) -> Expr {
+    ex(ExprKind::Path(vec!["SumRepr".to_string(), name.to_string()]))
+}
+
 /// Scalar primitive → `TypeShape` leaf. Narrower than serde's scalar sets
 /// (`serde_supported_scalar`/`serde_container_scalar`) on purpose: Reflect
 /// has no wire-precision concern (no widen/narrow direction to pick — it
@@ -3556,10 +3584,10 @@ pub fn inject_synthesized_methods_filtered<F: Fn(&str) -> bool>(
 fn reflect_scalar_shape(name: &str) -> Option<Expr> {
     match name {
         "int" | "i8" | "i16" | "i32" | "i64" | "uint" | "u8" | "u16" | "u32" | "u64" =>
-            Some(ident("Int")),
-        "f32" | "f64" => Some(ident("Float")),
-        "bool" => Some(ident("Bool")),
-        "str" => Some(ident("Str")),
+            Some(typeshape_variant("Int")),
+        "f32" | "f64" => Some(typeshape_variant("Float")),
+        "bool" => Some(typeshape_variant("Bool")),
+        "str" => Some(typeshape_variant("Str")),
         _ => None,
     }
 }
@@ -3617,13 +3645,13 @@ fn tuple2(a: Expr, b: Expr) -> Expr {
 /// revisit if/when the untagged codegen gate lifts.
 fn sum_repr_expr(mode: &SerdeTagging) -> Expr {
     match mode {
-        SerdeTagging::External => ident("External"),
-        SerdeTagging::Internal { tag } => call(ident("Tagged"), vec![str_lit(tag)]),
+        SerdeTagging::External => sumrepr_variant("External"),
+        SerdeTagging::Internal { tag } => call(sumrepr_variant("Tagged"), vec![str_lit(tag)]),
         SerdeTagging::Adjacent { tag, content } =>
-            call(ident("TaggedContent"), vec![str_lit(tag), str_lit(content)]),
+            call(sumrepr_variant("TaggedContent"), vec![str_lit(tag), str_lit(content)]),
         // Unreachable in practice — `serde_tagging_mode` errors (gated)
         // before ever returning this variant; kept for match-exhaustiveness.
-        SerdeTagging::Untagged => ident("Untagged"),
+        SerdeTagging::Untagged => sumrepr_variant("Untagged"),
     }
 }
 
@@ -3680,7 +3708,7 @@ fn build_named_type_shape<Q: DeriveQuery>(
     field_name: &str,
 ) -> Result<Expr, DeriveError> {
     if in_progress.iter().any(|n| n == name) {
-        return Ok(call(ident("Ref"), vec![str_lit(name)]));
+        return Ok(call(typeshape_variant("Ref"), vec![str_lit(name)]));
     }
     if query.type_provides_method(name, "reflect") {
         // Plan 221.1 №33 rationale (`member_call_at`/`deser_field_expr` doc):
@@ -3728,7 +3756,7 @@ fn build_type_shape_expr<Q: DeriveQuery>(
 ) -> Result<Expr, DeriveError> {
     if let Some(inner) = option_inner(ty) {
         let shape = build_type_shape_expr(query, &inner, in_progress, file_id, owner_type, field_name)?;
-        return Ok(call(ident("Opt"), vec![shape]));
+        return Ok(call(typeshape_variant("Opt"), vec![shape]));
     }
     match ty.strip_modifiers() {
         TypeRef::Named { path, generics, .. } => {
@@ -3738,15 +3766,15 @@ fn build_type_shape_expr<Q: DeriveQuery>(
             }
             if name == "Vec" && generics.len() == 1 {
                 let shape = build_type_shape_expr(query, &generics[0], in_progress, file_id, owner_type, field_name)?;
-                return Ok(call(ident("Arr"), vec![shape]));
+                return Ok(call(typeshape_variant("Arr"), vec![shape]));
             }
             build_named_type_shape(query, name, in_progress, file_id, owner_type, field_name)
         }
         TypeRef::Array(inner, _) | TypeRef::FixedArray(_, inner, _) => {
             let shape = build_type_shape_expr(query, inner, in_progress, file_id, owner_type, field_name)?;
-            Ok(call(ident("Arr"), vec![shape]))
+            Ok(call(typeshape_variant("Arr"), vec![shape]))
         }
-        TypeRef::Unit(_) => Ok(ident("Unit")),
+        TypeRef::Unit(_) => Ok(typeshape_variant("Unit")),
         _ => Err(DeriveError::FieldLacksProtocol {
             type_name: owner_type.to_string(),
             field_name: field_name.to_string(),
@@ -3777,7 +3805,7 @@ fn build_variant_shape_expr<Q: DeriveQuery>(
     owner_type: &str,
 ) -> Result<Expr, DeriveError> {
     match &v.kind {
-        SumVariantKind::Unit => Ok(ident("Unit")),
+        SumVariantKind::Unit => Ok(typeshape_variant("Unit")),
         SumVariantKind::Tuple(tys) if tys.len() == 1 =>
             build_type_shape_expr(query, &tys[0], in_progress, file_id, owner_type, &v.name),
         SumVariantKind::Tuple(tys) => {
@@ -3786,7 +3814,7 @@ fn build_variant_shape_expr<Q: DeriveQuery>(
                 let shape = build_type_shape_expr(query, ty, in_progress, file_id, owner_type, &v.name)?;
                 items.push(ArrayElem::Item(tuple2(str_lit(&i.to_string()), shape)));
             }
-            Ok(call(ident("Record"), vec![str_lit(&v.name), ex(ExprKind::ArrayLit(items))]))
+            Ok(call(typeshape_variant("Record"), vec![str_lit(&v.name), ex(ExprKind::ArrayLit(items))]))
         }
         SumVariantKind::Record(fields) => {
             let mut items: Vec<ArrayElem> = Vec::new();
@@ -3794,7 +3822,7 @@ fn build_variant_shape_expr<Q: DeriveQuery>(
                 let shape = build_type_shape_expr(query, &f.ty, in_progress, file_id, owner_type, &f.name)?;
                 items.push(ArrayElem::Item(tuple2(str_lit(&f.name), shape)));
             }
-            Ok(call(ident("Record"), vec![str_lit(&v.name), ex(ExprKind::ArrayLit(items))]))
+            Ok(call(typeshape_variant("Record"), vec![str_lit(&v.name), ex(ExprKind::ArrayLit(items))]))
         }
     }
 }
@@ -3822,7 +3850,7 @@ fn build_type_decl_shape<Q: DeriveQuery>(
             )?;
             items.push(ArrayElem::Item(tuple2(str_lit(&rf.wire), shape)));
         }
-        Ok(call(ident("Record"), vec![str_lit(&td.name), ex(ExprKind::ArrayLit(items))]))
+        Ok(call(typeshape_variant("Record"), vec![str_lit(&td.name), ex(ExprKind::ArrayLit(items))]))
     } else if let Some(variants) = iter_sum_variants(td) {
         let mode = serde_tagging_mode(td)?;
         let repr_expr = sum_repr_expr(&mode);
@@ -3831,7 +3859,7 @@ fn build_type_decl_shape<Q: DeriveQuery>(
             let shape = build_variant_shape_expr(query, v, in_progress, file_id, &td.name)?;
             items.push(ArrayElem::Item(tuple2(str_lit(&v.name), shape)));
         }
-        Ok(call(ident("Sum"), vec![str_lit(&td.name), repr_expr, ex(ExprKind::ArrayLit(items))]))
+        Ok(call(typeshape_variant("Sum"), vec![str_lit(&td.name), repr_expr, ex(ExprKind::ArrayLit(items))]))
     } else {
         Err(DeriveError::UnsupportedTypeKind {
             type_name: td.name.clone(),
