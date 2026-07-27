@@ -494,10 +494,28 @@ fn snapshot_body(legend str, mode str, seed int) Time -> ServerResponse {
 // This file now routes `SnapshotDto` through `snapshot_to_json` (already
 // typed, `report_json.nv`) instead of the hand-written string renderers this
 // workaround used. `EmitRecord`'s SSE payload (`emit_record_json` below)
-// stays hand-written — a deliberate wire-shape choice, not a workaround; see
-// that function's own note.
-
-fn json_escape(s str) -> str => s.replace("\\", "\\\\").replace("\"", "\\\"")
+// stays hand-written — Plan 221.1 №141 (`[M-flagship-emit-record-hand-
+// rolled-json]`) attempted the typed `#impl(Serialize)` + `json_encode`
+// migration this comment used to promise (`Option[str]` err field +
+// `#serde(skip_serializing_if = "is_none")`, both landed and tested) — DID
+// NOT ship it: verified with an isolated repro (2 fields, no polaris/http
+// dependency) that `json_encode`'s object-field ORDER is NON-DETERMINISTIC
+// across process runs for record-derived `Serialize` (`JsonSerializer`'s
+// `SerFrame.obj` is a plain `HashMap[str, JsonValue]`, `std/src/encoding/
+// serde/json.nv` — no insertion-order tracking; the module's own "Map-
+// детерминизм: encode сортирует ключи" claim covers ONLY the explicit
+// `HashMap[str,V] @serialize` VALUE codepath, `serde.nv:339`, NOT a plain
+// record's own derived field emission, which goes through the SAME
+// HashMap-backed frame). Repro output, 5 consecutive runs of the identical
+// binary: `{"id":"weather-1","elapsed_ms":42,"t_ms":100}` (stable,
+// hand-written) vs `{"id":...,"t_ms":...,"elapsed_ms":...}` /
+// `{"t_ms":...,"id":...,"elapsed_ms":...}` / … (json_encode, order differs
+// EVERY run). Migrating would violate the hard byte-for-byte wire
+// requirement (SSE contract consumed by the www site) — worse than the
+// stale rationale this comment used to cite. Follow-up: new marker
+// `[M-json-encode-record-field-order-nondeterministic]` (fix — preserve
+// declaration order in `SerFrame`, e.g. an ordered pairs `Vec` instead of
+// `HashMap`, or a stable secondary sort key — THEN retry this migration).
 
 // ── GET /api/events: SSE replay of the run's Emit timeline ─────────────────
 
@@ -519,6 +537,11 @@ fn json_escape(s str) -> str => s.replace("\\", "\\\\").replace("\"", "\\\"")
 // this package already threads through `Channel[TaskStatus]` in
 // `aggregate.nv`'s `fetch_guarded`), so it fits the one supported multi-field
 // shape without changing the field-access call sites below at all.
+// Wire payload for one replayed event (SSE `data:` line). Hand-rendered —
+// NOT `#impl(Serialize)` + `json_encode` (see Plan 221.1 №141 note above —
+// tried, reverted: json_encode's field order is non-deterministic per-run
+// for record types). The wire shape conditionally OMITS `"error"` unless
+// `kind == "lane_failed"`.
 type EmitRecord {
     ro kind       str    // "lane_started" | "lane_done" | "lane_failed" | "lane_cancelled"
     ro id         str
@@ -527,16 +550,8 @@ type EmitRecord {
     ro t_ms       int
 }
 
-// Wire payload for one replayed event (SSE `data:` line). Hand-rendered —
-// NOT `#impl(Serialize)` + `json_encode`, unlike `SnapshotDto` above
-// (`[M-187-http-serde-setcookie-serialize-collision]` — RESOLVED, that WAS
-// the compiler bug this file used to work around). Kept hand-written here on
-// PURPOSE, not as a bug workaround: the wire shape conditionally OMITS
-// `"error"` unless `kind == "lane_failed"` (plain record-derive would always
-// emit it, e.g. `"error":""`, changing the SSE contract the frontend
-// consumes) — follow-up (not this fix's scope): migrate to typed serde via
-// an `Option[str]` err field / a custom `#impl(Serialize)` body once one of
-// those shapes is confirmed frontend-compatible.
+fn json_escape(s str) -> str => s.replace("\\", "\\\\").replace("\"", "\\\"")
+
 fn emit_record_json(r EmitRecord) -> str {
     ro err_field = if r.kind == "lane_failed" {
         ",\"error\":\"${json_escape(r.err)}\""
@@ -550,7 +565,7 @@ fn emit_record_json(r EmitRecord) -> str {
 /// declared, same as `snapshot_body`.
 fn events_body(legend str, mode str, seed int) Time -> ServerResponse {
     ro t0 Monotonic = Monotonic.now()
-    ro { tx, rx } = Channel.new(256)
+    ro (tx, rx) = Channel[EmitRecord].new(256)
     ro rr = with Emit = effect Emit {
         lane_started(id str, idx int) -> () {
             ro t_ms = Monotonic.now().elapsed_since(t0).millis() as int

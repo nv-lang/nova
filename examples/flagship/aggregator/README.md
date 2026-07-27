@@ -322,8 +322,19 @@ examples/flagship/aggregator/
   (`cmd_build`) не вызывал `inject_synthesized_methods_filtered` для
   `#impl(Serialize)` (в отличие от `nova test`) → mono `json_encode[T]`
   падал в name-only fallback → подхватывал чужой `SetCookie.serialize()`.
-  Фикс — один вызов в `cmd_build`. `EmitRecord`'s SSE payload
-  (`emit_record_json`) остаётся ручным по design (wire-shape выбор, не обход).
+  Фикс — один вызов в `cmd_build`. `EmitRecord`'s SSE payload — Plan 221.1
+  №141 (2026-07-27) ПОПРОБОВАЛ ту же типизированную `json_encode`-миграцию
+  (`Option[str]` err + `#serde(skip_serializing_if = "is_none")`, оба уже
+  landed) и ОТКАТИЛ её: изолированным репро (2 поля, без polaris/http)
+  доказано, что `json_encode`'s порядок полей объекта НЕ детерминирован
+  между прогонами одного и того же бинаря для record-derived `Serialize`
+  (`JsonSerializer`'s `SerFrame.obj` — обычный `HashMap[str, JsonValue]`,
+  без сохранения порядка вставки). `EmitRecord` остаётся hand-written по
+  ЭТОЙ причине (провод обязан быть байт-в-байт, SSE-контракт потребляет
+  www) — новый маркер
+  `[M-json-encode-record-field-order-nondeterministic]` заведён отдельно;
+  вероятно затрагивает и `SnapshotDto`/`/api/snapshot` тоже (тот же
+  механизм) — см. следующий пункт.
 - **HTTP JSON-снапшот не байт-в-байт детерминирован** между прогонами с
   одним `seed` — см. «Как это тестируется → Детерминизм» выше (реальные
   часы, не симуляция).
