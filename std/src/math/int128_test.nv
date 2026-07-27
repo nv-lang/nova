@@ -1,0 +1,258 @@
+// Тесты math.int128 — 128-битное знаковое целое.
+//
+// Опорные значения считаны независимо (Python-эталон произвольной точности),
+// а не выведены из этой же реализации.
+
+module math.int128_test
+
+import std.math.int128.{i128, ZERO, ONE, NEG_ONE, MIN, MAX}
+
+// ── Конверсии и предикаты ──────────────────────────────────────────────────
+
+test "конверсии из i64/u64/int" {
+    assert((0 as i64).to_i128() == ZERO)
+    assert((1 as i64).to_i128() == ONE)
+    assert((-1 as i64).to_i128() == NEG_ONE)
+    // Знаковое расширение проверяем по НАБЛЮДАЕМОМУ поведению, не по layout.
+    ro neg5 = (-5 as i64).to_i128()
+    assert(neg5.is_neg())
+    assert(neg5.to_str() == "-5")
+    // u64 — нулевое расширение: 2^64-1 остаётся ПОЛОЖИТЕЛЬНЫМ (в i64 был бы -1).
+    // NB: приёмник БИНДИМ — инлайн `(x as u64).to_i128()` резолвится мимо u64-перегрузки
+    // (`[M-inline-cast-receiver-method-resolution]`).
+    ro u = 0xFFFFFFFFFFFFFFFF as u64
+    ro big = u.to_i128()
+    assert(big.is_neg() == false)
+    assert(big.to_str() == "18446744073709551615")
+}
+
+test "предикаты" {
+    assert(ZERO.is_zero())
+    assert(ONE.is_zero() == false)
+    assert(NEG_ONE.is_neg())
+    assert(MIN.is_neg())
+    assert(MAX.is_neg() == false)
+}
+
+test "обратная конверсия в i64" {
+    assert((42 as i64).to_i128().to_i64_checked() == Some(42 as i64))
+    assert((-42 as i64).to_i128().to_i64_checked() == Some(-42 as i64))
+    // 2^64 в i64 не помещается.
+    assert(i128(1, 0).to_i64_checked() == None)
+    assert(MAX.to_i64_checked() == None)
+}
+
+// ── Сложение и вычитание ──────────────────────────────────────────────────
+
+test "сложение: перенос через 64-битную границу" {
+    ro a = i128(0, 0xFFFFFFFFFFFFFFFF)     // 2^64 - 1
+    assert((a + ONE) == i128(1, 0))        // 2^64
+    assert((i128(1, 0) - ONE) == a)
+}
+
+test "сложение отрицательных" {
+    assert((NEG_ONE + NEG_ONE) == i128(-1, 0xFFFFFFFFFFFFFFFE))   // -2
+    assert((NEG_ONE + ONE) == ZERO)
+    assert((ZERO - ONE) == NEG_ONE)
+}
+
+test "вычитание через границу (заём)" {
+    assert((i128(1, 0) - i128(0, 1)) == i128(0, 0xFFFFFFFFFFFFFFFF))
+}
+
+// ── Переполнение: флаги, политики ─────────────────────────────────────────
+
+test "overflowing_add: флаг на границе MAX" {
+    ro (r1, of1) = MAX.overflowing_add(ONE)
+    assert(of1)
+    assert(r1 == MIN)                       // обёртка по модулю 2^128
+    ro (_r2, of2) = MAX.overflowing_add(NEG_ONE)
+    assert(of2 == false)
+}
+
+test "overflowing_sub: флаг на границе MIN" {
+    ro (r1, of1) = MIN.overflowing_sub(ONE)
+    assert(of1)
+    assert(r1 == MAX)
+    ro (_r2, of2) = MIN.overflowing_sub(NEG_ONE)
+    assert(of2 == false)
+}
+
+test "checked_*: None при переполнении" {
+    assert(MAX.checked_add(ONE) == None)
+    assert(MAX.checked_add(ZERO) == Some(MAX))
+    assert(MIN.checked_sub(ONE) == None)
+    assert(MIN.checked_mul(NEG_ONE) == None)     // -MIN не представим
+}
+
+test "saturating_*: клампит к границам" {
+    assert(MAX.saturating_add(ONE) == MAX)
+    assert(MIN.saturating_sub(ONE) == MIN)
+    assert(MAX.saturating_mul((2 as i64).to_i128()) == MAX)
+    assert(MIN.saturating_mul((2 as i64).to_i128()) == MIN)
+}
+
+test "wrapping_*: модульная арифметика" {
+    assert(MAX.wrapping_add(ONE) == MIN)
+    assert(MIN.wrapping_sub(ONE) == MAX)
+}
+
+// ── Умножение ─────────────────────────────────────────────────────────────
+
+test "умножение: помещается в 64 бита" {
+    ro a = (1000000007 as i64).to_i128()
+    ro b = (1000000009 as i64).to_i128()
+    assert((a * b).to_str() == "1000000016000000063")
+}
+
+test "умножение: результат ШИРЕ 64 бит" {
+    // 2^63 * 2 = 2^64 — старшая половина становится ненулевой.
+    ro a = i128(0, 0x8000000000000000)
+    assert((a * (2 as i64).to_i128()) == i128(1, 0))
+    // (2^64-1)^2 = 2^128 - 2^65 + 1 — ПРЕВЫШАЕТ MAX (2^127-1), значит переполнение,
+    // а не «широкий, но валидный» результат: оператор `*` обязан паниковать.
+    ro m = i128(0, 0xFFFFFFFFFFFFFFFF)
+    ro (wrapped, of) = m.overflowing_mul(m)
+    assert(of)
+    assert(wrapped == m.wrapping_mul(m))
+    assert(wrapped.to_str() == "-36893488147419103231")   // 2^128-2^65+1 по модулю 2^128
+}
+
+test "умножение со знаками" {
+    ro a = (-7 as i64).to_i128()
+    ro b = (6 as i64).to_i128()
+    assert((a * b) == (-42 as i64).to_i128())
+    assert((a * (-6 as i64).to_i128()) == (42 as i64).to_i128())
+}
+
+test "overflowing_mul: флаг при потере старших бит" {
+    ro (_r, of) = MAX.overflowing_mul((2 as i64).to_i128())
+    assert(of)
+    ro (r2, of2) = (123456789 as i64).to_i128().overflowing_mul((987654321 as i64).to_i128())
+    assert(of2 == false)
+    assert(r2.to_str() == "121932631112635269")
+}
+
+// ── Деление и остаток ─────────────────────────────────────────────────────
+// ПРИМЕЧАНИЕ: оператор `%` на named-tuple не лоуэрится в `@rem`
+// (`[M-named-tuple-operator-overload-incomplete]`, CC-FAIL) — до фикса зовём
+// метод `.rem(b)` напрямую. Операторы `+ - * /` работают.
+
+test "деление: базовое" {
+    ro a = (100 as i64).to_i128()
+    ro b = (7 as i64).to_i128()
+    assert((a / b) == (14 as i64).to_i128())
+    assert(a.rem(b) == (2 as i64).to_i128())
+}
+
+test "деление: усечение к нулю, остаток со знаком делимого" {
+    ro sa = (-100 as i64).to_i128()
+    ro sb = (7 as i64).to_i128()
+    assert((sa / sb) == (-14 as i64).to_i128())     // усечение, не floor
+    assert(sa.rem(sb) == (-2 as i64).to_i128())      // знак делимого
+    assert(((100 as i64).to_i128() / (-7 as i64).to_i128()) == (-14 as i64).to_i128())
+    assert((100 as i64).to_i128().rem((-7 as i64).to_i128()) == (2 as i64).to_i128())
+}
+
+test "деление: широкие значения" {
+    // 2^100 / 2^50 = 2^50
+    ro big = ONE.shl(100)
+    ro mid = ONE.shl(50)
+    assert((big / mid) == mid)
+    assert(big.rem(mid) == ZERO)
+    // MAX / 1 и MAX / MAX
+    assert((MAX / ONE) == MAX)
+    assert((MAX / MAX) == ONE)
+    assert(MAX.rem(MAX) == ZERO)
+}
+
+test "деление: MIN-края" {
+    assert((MIN / ONE) == MIN)
+    assert(MIN.rem(NEG_ONE) == ZERO)
+    assert((MIN / (2 as i64).to_i128()).to_str() == "-85070591730234615865843651857942052864")
+}
+
+// ── Отрицание и модуль ────────────────────────────────────────────────────
+
+test "отрицание" {
+    assert((-ONE) == NEG_ONE)
+    assert((-NEG_ONE) == ONE)
+    assert((-ZERO) == ZERO)
+    assert((-MAX) == MIN + ONE)          // ~MAX+1; литерал -2^63 писать нельзя (trap)
+}
+
+test "abs" {
+    assert((-42 as i64).to_i128().abs() == (42 as i64).to_i128())
+    assert((42 as i64).to_i128().abs() == (42 as i64).to_i128())
+    assert(ZERO.abs() == ZERO)
+}
+
+// ── Сравнение ─────────────────────────────────────────────────────────────
+
+test "сравнение знаковое" {
+    assert(MIN.compare(MAX) == -1)
+    assert(MAX.compare(MIN) == 1)
+    assert(ONE.compare(ONE) == 0)
+    assert(NEG_ONE.compare(ZERO) == -1)
+    assert(ZERO.compare(NEG_ONE) == 1)
+    // Старшие равны — сравнение младших БЕЗЗНАКОВОЕ.
+    assert(i128(0, 1).compare(i128(0, 0xFFFFFFFFFFFFFFFF)) == -1)
+}
+
+test "равенство и !=" {
+    assert(ONE == ONE)
+    assert((ONE != ZERO))
+}
+
+// ── Битовые и сдвиги ──────────────────────────────────────────────────────
+
+test "битовые операции" {
+    assert(ZERO.bitnot() == NEG_ONE)
+    assert(NEG_ONE.bitand(ONE) == ONE)
+    assert(ZERO.bitor(ONE) == ONE)
+    assert(ONE.bitxor(ONE) == ZERO)
+}
+
+test "сдвиг влево" {
+    assert(ONE.shl(0) == ONE)
+    assert(ONE.shl(1) == (2 as i64).to_i128())
+    assert(ONE.shl(63) == i128(0, 0x8000000000000000))
+    assert(ONE.shl(64) == i128(1, 0))                  // через границу
+    assert(ONE.shl(127) == MIN)                        // старший бит = знак
+    assert(ONE.shl(128) == ZERO)
+}
+
+test "сдвиг вправо АРИФМЕТИЧЕСКИЙ" {
+    assert(i128(1, 0).shr(64) == ONE)
+    assert((4 as i64).to_i128().shr(2) == ONE)
+    // Знак размножается: -1 >> n остаётся -1.
+    assert(NEG_ONE.shr(1) == NEG_ONE)
+    assert(NEG_ONE.shr(127) == NEG_ONE)
+    assert(MIN.shr(127) == NEG_ONE)
+    // Положительное — нулями.
+    assert(MAX.shr(127) == ZERO)
+}
+
+// ── Строковое представление ───────────────────────────────────────────────
+
+test "to_str: базовое" {
+    assert(ZERO.to_str() == "0")
+    assert(ONE.to_str() == "1")
+    assert(NEG_ONE.to_str() == "-1")
+    assert((1234567890 as i64).to_i128().to_str() == "1234567890")
+    assert((-1234567890 as i64).to_i128().to_str() == "-1234567890")
+}
+
+test "to_str: границы 128 бит" {
+    // Эталоны: 2^127-1 и -2^127.
+    assert(MAX.to_str() == "170141183460469231731687303715884105727")
+    assert(MIN.to_str() == "-170141183460469231731687303715884105728")
+    // 2^64 — ровно через границу половин.
+    assert(i128(1, 0).to_str() == "18446744073709551616")
+}
+
+test "to_str: круговой прогон через умножение" {
+    // 10^30 = (10^15)^2 — не помещается в 64 бита.
+    ro e15 = (1000000000000000 as i64).to_i128()
+    assert((e15 * e15).to_str() == "1000000000000000000000000000000")
+}

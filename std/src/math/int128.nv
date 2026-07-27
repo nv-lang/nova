@@ -1,0 +1,493 @@
+// stdlib/math/int128.nv — 128-битное знаковое целое `i128` поверх пары 64-битных
+// половин (дополнительный код, two's complement).
+//
+// Зачем: компилятор исключает `i128`/`u128` из набора примитивов `Ints`
+// (02-types.md), аппаратной 128-битной арифметики у нас нет — тип строится
+// библиотечно над `i64`/`u64` через компиляторный интринсик `@overflowing_*`
+// (D423), который даёт аппаратный флаг переполнения.
+//
+// API (в стиле stdlib/math/complex.nv):
+//   - i128(hi, lo)                    прямой конструктор (D215 named-tuple)
+//   - n.to_i128()                     из `i64`/`u64` (конверсия на ИСТОЧНИКЕ, §1а)
+//   - a + b, a - b, a * b, a / b, a % b, -a    обычная алгебра (D46/D363)
+//   - a.overflowing_add(b) -> (i128, bool)     примитив-политика (D423 R2-форма)
+//   - a.wrapping_add(b) / a.checked_add(b) / a.saturating_add(b)   политики (R4)
+//   - a.compare(b) / a == b           знаковое сравнение (D183)
+//   - a.shl(n) / a.shr(n)             сдвиги (shr — АРИФМЕТИЧЕСКИЙ)
+//   - a.bitand(b) / .bitor(b) / .bitxor(b) / .bitnot()
+//   - a.to_str()                      десятичная запись
+//
+// Decisions:
+//   - D215 named-tuple: `type i128(hi i64 = 0, lo u64 = 0)` — стековое значение,
+//     `i128()` даёт 0; всё иммутабельно (операции возвращают новое значение).
+//   - D423: `@overflowing_*` на `u64` — единственный источник переноса/займа;
+//     `wrapping_*` там, где wraparound ПО СПЕЦИФИКАЦИИ (модульная арифметика
+//     дополнительного кода), обычный `+` — где переполнение доказано невозможным
+//     (тогда trap-дефолт работает как ассерт).
+//   - D46/D363: операторы через `@plus`/`@minus`/`@times`/`@div`/`@rem`/`@neg`;
+//     `!=` выводится из `@equal` автоматически.
+//   - Знаковое деление — УСЕЧЕНИЕ К НУЛЮ (как Rust/C99): частное усекается,
+//     остаток несёт знак делимого.
+//
+// Имя типа строчное (`i128`, не `I128`) — намеренно: тип продолжает семью
+// примитивов `i64`/`u64` и читается на месте вызова как один из них.
+
+module math.int128
+
+// ──────────────────────────────────────────────────────────────────────────
+// Тип и константы
+// ──────────────────────────────────────────────────────────────────────────
+
+/// 128-битное знаковое целое (дополнительный код): `hi` — старшие 64 бита
+/// со знаком, `lo` — младшие 64 бита без знака.
+///
+/// # Examples
+/// ```nova
+/// ro a = 1000000007.to_i128() * 1000000009.to_i128()
+/// assert(a.to_str() == "1000000016000000063")
+/// ```
+#stable(since = "0.1")
+export type i128(hi i64 = 0, lo u64 = 0)
+
+/// 0.
+#stable(since = "0.1")
+export const ZERO i128 = i128()
+
+/// 1.
+#stable(since = "0.1")
+export const ONE i128 = i128(0, 1)
+
+/// -1 (все биты установлены).
+#stable(since = "0.1")
+export const NEG_ONE i128 = i128(-1, 0xFFFFFFFFFFFFFFFF)
+
+/// Минимальное значение: -2^127.
+///
+/// Старшая половина задана БИТОВЫМ ШАБЛОНОМ, а не литералом
+/// `-9223372036854775808`: такой литерал разбирается как отрицание числа
+/// `9223372036854775808`, которое в `i64` не помещается → trap «negation
+/// overflow» ещё до применения знака (та же ловушка, что у `i64::MIN` в C/Rust).
+#stable(since = "0.1")
+export const MIN i128 = i128((0x8000000000000000 as u64) as i64, 0)
+
+/// Максимальное значение: 2^127 - 1.
+#stable(since = "0.1")
+export const MAX i128 = i128(9223372036854775807, 0xFFFFFFFFFFFFFFFF)
+
+// ──────────────────────────────────────────────────────────────────────────
+// Конверсии (на ИСТОЧНИКЕ — §1а nv-coding-style, не `i128.from(x)`)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// `i64` → `i128` со знаковым расширением.
+#stable(since = "0.1")
+export fn i64 @to_i128() -> i128 =>
+    i128(if @ < 0 { -1 } else { 0 }, @ as u64)
+
+/// `u64` → `i128` (нулевое расширение; всегда неотрицательно).
+#stable(since = "0.1")
+export fn u64 @to_i128() -> i128 => i128(0, @)
+
+/// `int` → `i128` со знаковым расширением.
+///
+/// Тело ПРЯМОЕ, не делегирование в `(@ as i64).to_i128()`: `int` и `i64` на
+/// 64-битной платформе совпадают по представлению, поэтому такой каст не меняет
+/// резолв метода — вызов уходит обратно в эту же функцию (бесконечная рекурсия,
+/// поймано пробой: stack overflow).
+#stable(since = "0.1")
+export fn int @to_i128() -> i128 =>
+    i128(if @ < 0 { -1 } else { 0 }, @ as u64)
+
+/// Младшие 64 бита как `u64` (усечение — старшие биты отбрасываются).
+#stable(since = "0.1")
+export fn i128 @to_u64_wrapping() -> u64 => @lo
+
+/// В `i64`, если значение помещается; иначе `None`.
+#stable(since = "0.1")
+export fn i128 @to_i64_checked() -> Option[i64] {
+    ro sign_ext = if (@lo as i64) < 0 { -1 as i64 } else { 0 as i64 }
+    if @hi == sign_ext { Some(@lo as i64) } else { None }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Предикаты
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Значение равно нулю.
+#stable(since = "0.1")
+export fn i128 @is_zero() -> bool => @hi == 0 && @lo == 0
+
+/// Значение отрицательно (старший бит установлен).
+#stable(since = "0.1")
+export fn i128 @is_neg() -> bool => @hi < 0
+
+// ──────────────────────────────────────────────────────────────────────────
+// Приватные беззнаковые примитивы над парой (hi u64, lo u64)
+// ──────────────────────────────────────────────────────────────────────────
+
+// Сложение с переносом. `wrapping_*` — модульная арифметика ПО СПЕЦИФИКАЦИИ
+// дополнительного кода, не небрежность (D423 §миграция).
+fn u_add(ah u64, al u64, bh u64, bl u64) -> (u64, u64) {
+    ro (lo, carry) = al.overflowing_add(bl)
+    ro c = if carry { 1 as u64 } else { 0 as u64 }
+    (ah.wrapping_add(bh).wrapping_add(c), lo)
+}
+
+// Вычитание с займом.
+fn u_sub(ah u64, al u64, bh u64, bl u64) -> (u64, u64) {
+    ro (lo, borrow) = al.overflowing_sub(bl)
+    ro b = if borrow { 1 as u64 } else { 0 as u64 }
+    (ah.wrapping_sub(bh).wrapping_sub(b), lo)
+}
+
+// Беззнаковое `a >= b`.
+fn u_ge(ah u64, al u64, bh u64, bl u64) -> bool =>
+    if ah != bh { ah > bh } else { al >= bl }
+
+// Сдвиг влево на 1 бит.
+fn u_shl1(ah u64, al u64) -> (u64, u64) =>
+    ((ah << 1) | (al >> 63), al << 1)
+
+/// Полное произведение `u64 × u64 → (старшие 64, младшие 64)`.
+///
+/// Аппаратного 128-битного промежутка нет, поэтому классическое разложение на
+/// 32-битные половины. Переполнение `u64` здесь НЕВОЗМОЖНО (доказано на
+/// граничном максимуме: `0xFFFF…FF × 0xFFFF…FF` → `(2^64-2, 1)`), поэтому
+/// обычный `+` — trap-дефолт работает как ассерт корректности разложения.
+fn mul_wide(a u64, b u64) -> (u64, u64) {
+    ro mask = 0xFFFFFFFF as u64
+    ro al = a & mask
+    ro ah = a >> 32
+    ro bl = b & mask
+    ro bh = b >> 32
+    ro p0 = al * bl
+    ro p1 = al * bh
+    ro p2 = ah * bl
+    ro p3 = ah * bh
+    ro mid = (p0 >> 32) + (p1 & mask) + (p2 & mask)
+    ro lo = (p0 & mask) | (mid << 32)
+    ro hi = p3 + (p1 >> 32) + (p2 >> 32) + (mid >> 32)
+    (hi, lo)
+}
+
+// Беззнаковое деление с остатком: сдвиг-вычитание, 128 итераций.
+// Возвращает (q_hi, q_lo, r_hi, r_lo).
+fn u_divmod(nh u64, nl u64, dh u64, dl u64) -> (u64, u64, u64, u64) {
+    mut qh = 0 as u64
+    mut ql = 0 as u64
+    mut rh = 0 as u64
+    mut rl = 0 as u64
+    mut i = 127
+    while i >= 0 {
+        ro (sh, sl) = u_shl1(rh, rl)
+        rh = sh
+        rl = sl
+        ro bit = if i >= 64 { (nh >> (i - 64)) & 1 } else { (nl >> i) & 1 }
+        rl = rl | bit
+        if u_ge(rh, rl, dh, dl) {
+            ro (dh2, dl2) = u_sub(rh, rl, dh, dl)
+            rh = dh2
+            rl = dl2
+            if i >= 64 {
+                qh = qh | ((1 as u64) << (i - 64))
+            } else {
+                ql = ql | ((1 as u64) << i)
+            }
+        }
+        i = i - 1
+    }
+    (qh, ql, rh, rl)
+}
+
+// Беззнаковая величина |x| как пара (hi, lo). Для MIN даёт ровно 2^127 —
+// это корректная величина, невыразимая в знаковом i128.
+fn magnitude(x i128) -> (u64, u64) {
+    if x.is_neg() {
+        u_sub(0, 0, x.hi as u64, x.lo)
+    } else {
+        (x.hi as u64, x.lo)
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Политики переполнения (D423: `overflowing_*` — примитив, остальное поверх)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Сложение с флагом знакового переполнения: `(результат по модулю 2^128, было ли)`.
+#stable(since = "0.1")
+export fn i128 @overflowing_add(other i128) -> (i128, bool) {
+    ro (hi, lo) = u_add(@hi as u64, @lo, other.hi as u64, other.lo)
+    ro sum = i128(hi as i64, lo)
+    // Знаковое переполнение: знаки слагаемых совпали, а знак суммы отличается.
+    ro same_sign = @is_neg() == other.is_neg()
+    (sum, same_sign && sum.is_neg() != @is_neg())
+}
+
+/// Вычитание с флагом знакового переполнения.
+#stable(since = "0.1")
+export fn i128 @overflowing_sub(other i128) -> (i128, bool) {
+    ro (hi, lo) = u_sub(@hi as u64, @lo, other.hi as u64, other.lo)
+    ro diff = i128(hi as i64, lo)
+    // Переполнение: знаки операндов различались, а знак результата разошёлся с уменьшаемым.
+    ro diff_sign = @is_neg() != other.is_neg()
+    (diff, diff_sign && diff.is_neg() != @is_neg())
+}
+
+/// Умножение с флагом знакового переполнения (младшие 128 бит + признак потери).
+#stable(since = "0.1")
+export fn i128 @overflowing_mul(other i128) -> (i128, bool) {
+    ro prod = @wrapping_mul(other)
+    if @is_zero() || other.is_zero() {
+        (prod, false)
+    } else {
+        // Обратная проверка делением: если частное не восстанавливает операнд —
+        // старшие биты потеряны. Отдельно ловим единственный неделимый случай
+        // MIN * -1 (величина 2^127 не представима).
+        ro min_case = (@ == MIN && other == NEG_ONE) || (other == MIN && @ == NEG_ONE)
+        if min_case {
+            (prod, true)
+        } else {
+            (prod, prod.div(other) != @)
+        }
+    }
+}
+
+/// Сложение по модулю 2^128 (флаг переполнения игнорируется).
+#stable(since = "0.1")
+export fn i128 @wrapping_add(other i128) -> i128 {
+    ro (r, _of) = @overflowing_add(other)
+    r
+}
+
+/// Вычитание по модулю 2^128.
+#stable(since = "0.1")
+export fn i128 @wrapping_sub(other i128) -> i128 {
+    ro (r, _of) = @overflowing_sub(other)
+    r
+}
+
+/// Умножение по модулю 2^128 (младшие 128 бит произведения).
+#stable(since = "0.1")
+export fn i128 @wrapping_mul(other i128) -> i128 {
+    ro (ph, pl) = mul_wide(@lo, other.lo)
+    // Перекрёстные члены дают только старшую половину; всё, что выше 2^128,
+    // отбрасывается по определению модульного умножения.
+    ro cross = (@hi as u64).wrapping_mul(other.lo)
+        .wrapping_add(@lo.wrapping_mul(other.hi as u64))
+    i128(ph.wrapping_add(cross) as i64, pl)
+}
+
+/// Сложение, `None` при переполнении.
+#stable(since = "0.1")
+export fn i128 @checked_add(other i128) -> Option[i128] {
+    ro (r, of) = @overflowing_add(other)
+    if of { None } else { Some(r) }
+}
+
+/// Вычитание, `None` при переполнении.
+#stable(since = "0.1")
+export fn i128 @checked_sub(other i128) -> Option[i128] {
+    ro (r, of) = @overflowing_sub(other)
+    if of { None } else { Some(r) }
+}
+
+/// Умножение, `None` при переполнении.
+#stable(since = "0.1")
+export fn i128 @checked_mul(other i128) -> Option[i128] {
+    ro (r, of) = @overflowing_mul(other)
+    if of { None } else { Some(r) }
+}
+
+/// Сложение с насыщением к `MIN`/`MAX`.
+#stable(since = "0.1")
+export fn i128 @saturating_add(other i128) -> i128 {
+    ro (r, of) = @overflowing_add(other)
+    if of {
+        if other.is_neg() { MIN } else { MAX }
+    } else { r }
+}
+
+/// Вычитание с насыщением.
+#stable(since = "0.1")
+export fn i128 @saturating_sub(other i128) -> i128 {
+    ro (r, of) = @overflowing_sub(other)
+    if of {
+        if other.is_neg() { MAX } else { MIN }
+    } else { r }
+}
+
+/// Умножение с насыщением.
+#stable(since = "0.1")
+export fn i128 @saturating_mul(other i128) -> i128 {
+    ro (r, of) = @overflowing_mul(other)
+    if of {
+        if @is_neg() == other.is_neg() { MAX } else { MIN }
+    } else { r }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Операторы (trap при переполнении — согласовано с trap-дефолтом D423)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// `a + b`. Паникует при переполнении (как примитивная арифметика).
+#stable(since = "0.1")
+export fn i128 @plus(other i128) -> i128 {
+    ro (r, of) = @overflowing_add(other)
+    if of { panic("i128 add overflow") }
+    r
+}
+
+/// `a - b`. Паникует при переполнении.
+#stable(since = "0.1")
+export fn i128 @minus(other i128) -> i128 {
+    ro (r, of) = @overflowing_sub(other)
+    if of { panic("i128 sub overflow") }
+    r
+}
+
+/// `a * b`. Паникует при переполнении.
+#stable(since = "0.1")
+export fn i128 @times(other i128) -> i128 {
+    ro (r, of) = @overflowing_mul(other)
+    if of { panic("i128 mul overflow") }
+    r
+}
+
+/// `-a`. Паникует на `MIN` (величина 2^127 не представима).
+#stable(since = "0.1")
+export fn i128 @neg() -> i128 {
+    if @ == MIN { panic("i128 neg overflow: -MIN не представим") }
+    ro (hi, lo) = u_sub(0, 0, @hi as u64, @lo)
+    i128(hi as i64, lo)
+}
+
+/// Абсолютная величина. Паникует на `MIN`.
+#stable(since = "0.1")
+export fn i128 @abs() -> i128 => if @is_neg() { -@ } else { @ }
+
+/// `a / b` — усечение к нулю (как Rust/C99). Паникует при делении на ноль
+/// и на `MIN / -1`.
+#stable(since = "0.1")
+export fn i128 @div(other i128) -> i128 {
+    if other.is_zero() { panic("i128 division by zero") }
+    if @ == MIN && other == NEG_ONE { panic("i128 div overflow: MIN / -1") }
+    ro (nh, nl) = magnitude(@)
+    ro (dh, dl) = magnitude(other)
+    ro (qh, ql, _rh, _rl) = u_divmod(nh, nl, dh, dl)
+    ro q = i128(qh as i64, ql)
+    if @is_neg() != other.is_neg() { negate_raw(q) } else { q }
+}
+
+/// `a % b` — остаток со знаком ДЕЛИМОГО (как Rust/C99). Паникует при делении на ноль.
+#stable(since = "0.1")
+export fn i128 @rem(other i128) -> i128 {
+    if other.is_zero() { panic("i128 remainder by zero") }
+    if @ == MIN && other == NEG_ONE { return ZERO }
+    ro (nh, nl) = magnitude(@)
+    ro (dh, dl) = magnitude(other)
+    ro (_qh, _ql, rh, rl) = u_divmod(nh, nl, dh, dl)
+    ro r = i128(rh as i64, rl)
+    if @is_neg() { negate_raw(r) } else { r }
+}
+
+// Отрицание БЕЗ проверки на MIN — для внутренних путей, где величина заведомо
+// представима (частное/остаток по модулю уже меньше делимого).
+fn negate_raw(x i128) -> i128 {
+    ro (hi, lo) = u_sub(0, 0, x.hi as u64, x.lo)
+    i128(hi as i64, lo)
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Сравнение (D183)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Равенство. `!=` выводится автоматически.
+#stable(since = "0.1")
+export fn i128 @equal(other i128) -> bool => @hi == other.hi && @lo == other.lo
+
+/// Знаковое сравнение: -1 / 0 / 1.
+#stable(since = "0.1")
+export fn i128 @compare(other i128) -> int {
+    if @hi != other.hi {
+        if @hi < other.hi { -1 } else { 1 }
+    } else if @lo != other.lo {
+        if @lo < other.lo { -1 } else { 1 }
+    } else { 0 }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Битовые операции и сдвиги
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Побитовое И.
+#stable(since = "0.1")
+export fn i128 @bitand(other i128) -> i128 =>
+    i128(@hi & other.hi, @lo & other.lo)
+
+/// Побитовое ИЛИ.
+#stable(since = "0.1")
+export fn i128 @bitor(other i128) -> i128 =>
+    i128(@hi | other.hi, @lo | other.lo)
+
+/// Побитовое исключающее ИЛИ.
+#stable(since = "0.1")
+export fn i128 @bitxor(other i128) -> i128 =>
+    i128(@hi ^ other.hi, @lo ^ other.lo)
+
+/// Побитовое отрицание.
+#stable(since = "0.1")
+export fn i128 @bitnot() -> i128 =>
+    i128(@hi ^ (-1 as i64), @lo ^ 0xFFFFFFFFFFFFFFFF)
+
+/// Сдвиг влево на `n` бит (0..127); при `n >= 128` — ноль.
+#stable(since = "0.1")
+export fn i128 @shl(n int) -> i128 {
+    if n <= 0 { return @ }
+    if n >= 128 { return ZERO }
+    if n >= 64 {
+        i128((@lo << (n - 64)) as i64, 0)
+    } else {
+        i128(((@hi as u64) << n | (@lo >> (64 - n))) as i64, @lo << n)
+    }
+}
+
+/// АРИФМЕТИЧЕСКИЙ сдвиг вправо на `n` бит (знак размножается).
+#stable(since = "0.1")
+export fn i128 @shr(n int) -> i128 {
+    ro fill = if @is_neg() { -1 as i64 } else { 0 as i64 }
+    if n <= 0 { return @ }
+    if n >= 128 { return i128(fill, fill as u64) }
+    if n >= 64 {
+        i128(fill, (@hi >> (n - 64)) as u64)
+    } else {
+        i128(@hi >> n, (@lo >> n) | ((@hi as u64) << (64 - n)))
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Строковое представление
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Десятичная запись со знаком.
+#stable(since = "0.1")
+export fn i128 @to_str() -> str {
+    if @is_zero() { return "0" }
+    ro table = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
+    ro (mh0, ml0) = magnitude(@)
+    mut mh = mh0
+    mut ml = ml0
+    mut digits = []char.new()
+    while mh != 0 || ml != 0 {
+        ro (qh, ql, _rh, rl) = u_divmod(mh, ml, 0, 10)
+        digits.push(table[rl as int])
+        mh = qh
+        ml = ql
+    }
+    consume sb = StringBuilder.new()
+    if @is_neg() { sb.append("-") }
+    mut i = digits.len() - 1
+    while i >= 0 {
+        sb.append(digits[i])
+        i = i - 1
+    }
+    sb.into_str()
+}
