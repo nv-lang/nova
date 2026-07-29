@@ -323,18 +323,19 @@ examples/flagship/aggregator/
   `#impl(Serialize)` (в отличие от `nova test`) → mono `json_encode[T]`
   падал в name-only fallback → подхватывал чужой `SetCookie.serialize()`.
   Фикс — один вызов в `cmd_build`. `EmitRecord`'s SSE payload — Plan 221.1
-  №141 (2026-07-27) ПОПРОБОВАЛ ту же типизированную `json_encode`-миграцию
-  (`Option[str]` err + `#serde(skip_serializing_if = "is_none")`, оба уже
-  landed) и ОТКАТИЛ её: изолированным репро (2 поля, без polaris/http)
-  доказано, что `json_encode`'s порядок полей объекта НЕ детерминирован
-  между прогонами одного и того же бинаря для record-derived `Serialize`
-  (`JsonSerializer`'s `SerFrame.obj` — обычный `HashMap[str, JsonValue]`,
-  без сохранения порядка вставки). `EmitRecord` остаётся hand-written по
-  ЭТОЙ причине (провод обязан быть байт-в-байт, SSE-контракт потребляет
-  www) — новый маркер
-  `[M-json-encode-record-field-order-nondeterministic]` заведён отдельно;
-  вероятно затрагивает и `SnapshotDto`/`/api/snapshot` тоже (тот же
-  механизм) — см. следующий пункт.
+  №141 (2026-07-27) первой попыткой ПОПРОБОВАЛ ту же типизированную
+  `json_encode`-миграцию и ОТКАТИЛ её: изолированным репро (2 поля, без
+  polaris/http) доказано, что `json_encode`'s порядок полей объекта НЕ
+  детерминирован между прогонами одного и того же бинаря для
+  record-derived `Serialize` (`JsonSerializer`'s `SerFrame.obj` — обычный
+  `HashMap[str, JsonValue]`, без сохранения порядка вставки). Новый маркер
+  `[M-json-encode-record-field-order-nondeterministic]` (реестр 221.1 №148)
+  зафиксировал корень и ЗАКРЫЛ его 2026-07-29: `JsonObject`
+  (`std/src/encoding/json.nv`) — упорядоченная map (порядок вставки, не
+  hash-порядок), `SerFrame.obj` теперь несёт её → порядок полей record'а
+  на проводе = порядок ОБЪЯВЛЕНИЯ полей, детерминированно между процессами.
+  №141 повторён на этой базе и ЗАВЕРШЁН: `EmitRecord` — `#impl(Serialize)`
+  + `json_encode`, hand-written строк в `main.nv` больше нет.
 - **HTTP JSON-снапшот не байт-в-байт детерминирован** между прогонами с
   одним `seed` — см. «Как это тестируется → Детерминизм» выше (реальные
   часы, не симуляция).

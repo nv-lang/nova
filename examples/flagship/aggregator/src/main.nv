@@ -16,9 +16,10 @@
 // `nova test`'s run-to-completion sweep — this file has no `test { }` blocks
 // of its own (the `build_snapshot`-driven field-population logic this
 // file's handlers depend on is exercised by `src/api/report_json_test.nv`;
-// this file's own hand-rendered JSON text layer,
-// `[M-187-http-serde-setcookie-serialize-collision]` below, is covered by
-// the smoke test — curl-diffing the wire bytes — not a `test{}` block).
+// this file's own JSON wire layer — typed `#impl(Serialize)` +
+// `json_encode` throughout since Plan 221.1 №141, no hand-rendered strings
+// left — is covered by the smoke test — curl-diffing the wire bytes — not
+// a `test{}` block).
 //
 // Owner requirement (hard, this rewrite's whole reason to exist): the PREVIOUS
 // draft of this file (never committed — a from-scratch rewrite, not an edit)
@@ -85,6 +86,7 @@ import polaris.{Router, ServerRequest, ServerResponse, StreamBody, sse_event}
 import polaris.serve.{handle_connection_router}
 import std.time.duration
 import std.runtime.sync.{AtomicInt}
+import std.encoding.serde.{Serialize, json_encode}
 
 // Loopback port: env override (`AGGREGATOR_PORT`) or this default.
 const DEFAULT_PORT u16 = 8187
@@ -493,29 +495,24 @@ fn snapshot_body(legend str, mode str, seed int) Time -> ServerResponse {
 // resolves correctly once the derived method is a real, registered `FnDecl`.
 // This file now routes `SnapshotDto` through `snapshot_to_json` (already
 // typed, `report_json.nv`) instead of the hand-written string renderers this
-// workaround used. `EmitRecord`'s SSE payload (`emit_record_json` below)
-// stays hand-written — Plan 221.1 №141 (`[M-flagship-emit-record-hand-
-// rolled-json]`) attempted the typed `#impl(Serialize)` + `json_encode`
-// migration this comment used to promise (`Option[str]` err field +
-// `#serde(skip_serializing_if = "is_none")`, both landed and tested) — DID
-// NOT ship it: verified with an isolated repro (2 fields, no polaris/http
-// dependency) that `json_encode`'s object-field ORDER is NON-DETERMINISTIC
-// across process runs for record-derived `Serialize` (`JsonSerializer`'s
-// `SerFrame.obj` is a plain `HashMap[str, JsonValue]`, `std/src/encoding/
-// serde/json.nv` — no insertion-order tracking; the module's own "Map-
-// детерминизм: encode сортирует ключи" claim covers ONLY the explicit
-// `HashMap[str,V] @serialize` VALUE codepath, `serde.nv:339`, NOT a plain
-// record's own derived field emission, which goes through the SAME
-// HashMap-backed frame). Repro output, 5 consecutive runs of the identical
-// binary: `{"id":"weather-1","elapsed_ms":42,"t_ms":100}` (stable,
-// hand-written) vs `{"id":...,"t_ms":...,"elapsed_ms":...}` /
-// `{"t_ms":...,"id":...,"elapsed_ms":...}` / … (json_encode, order differs
-// EVERY run). Migrating would violate the hard byte-for-byte wire
-// requirement (SSE contract consumed by the www site) — worse than the
-// stale rationale this comment used to cite. Follow-up: new marker
-// `[M-json-encode-record-field-order-nondeterministic]` (fix — preserve
-// declaration order in `SerFrame`, e.g. an ordered pairs `Vec` instead of
-// `HashMap`, or a stable secondary sort key — THEN retry this migration).
+// workaround used. `EmitRecord`'s SSE payload (`emit_record_json`) was the
+// ONE remaining hand-rolled JSON site — Plan 221.1 №141
+// (`[M-flagship-emit-record-hand-rolled-json]`) first tried the typed
+// `#impl(Serialize)` + `json_encode` migration here and had to REVERT it: an
+// isolated repro (2 fields, no polaris/http dependency) showed
+// `json_encode`'s object-field ORDER was NON-DETERMINISTIC across process
+// runs for record-derived `Serialize` (`JsonSerializer`'s `SerFrame.obj` was
+// a plain `HashMap[str, JsonValue]` — no insertion-order tracking), which
+// would have violated the hard byte-for-byte wire requirement (SSE contract
+// consumed by the www site). Follow-up marker
+// `[M-json-encode-record-field-order-nondeterministic]` (реестр 221.1 №148)
+// fixed the root cause — `JsonObject` (`std/src/encoding/json.nv`) is now an
+// ORDERED map (insertion order, independent of the per-process hash-seed),
+// and `JsonSerializer`'s `SerFrame.obj` carries one, so a record's derived
+// field emission goes out in DECLARATION order, deterministically, across
+// processes. №148 closed, so this migration was retried and landed below —
+// `EmitRecord` is now `#impl(Serialize)` + `json_encode`, same as every
+// other DTO in this file.
 
 // ── GET /api/events: SSE replay of the run's Emit timeline ─────────────────
 
@@ -537,29 +534,35 @@ fn snapshot_body(legend str, mode str, seed int) Time -> ServerResponse {
 // this package already threads through `Channel[TaskStatus]` in
 // `aggregate.nv`'s `fetch_guarded`), so it fits the one supported multi-field
 // shape without changing the field-access call sites below at all.
-// Wire payload for one replayed event (SSE `data:` line). Hand-rendered —
-// NOT `#impl(Serialize)` + `json_encode` (see Plan 221.1 №141 note above —
-// tried, reverted: json_encode's field order is non-deterministic per-run
-// for record types). The wire shape conditionally OMITS `"error"` unless
-// `kind == "lane_failed"`.
+// Wire payload for one replayed event (SSE `data:` line) — typed
+// `#impl(Serialize)` + `json_encode` (Plan 221.1 №141, landed once №148
+// closed the field-order blocker, see the file-header note above). Field
+// ORDER on the wire = DECLARATION order below (`id`, `elapsed_ms`, `error`,
+// `t_ms`) — matches the hand-rolled string this migration replaces
+// byte-for-byte. `kind` is `#serde(skip)`: it never reaches the JSON body —
+// the SSE EVENT NAME already carries it (`sse_event(r.kind, ...)` below).
+// `error` is `#serde(rename = "error")` (Rust-field `err`, wire `error`) +
+// `#serde(skip_serializing_if = "is_empty")`: omitted from the wire exactly
+// when `err == ""`, which — by construction (every `lane_*` emitter below
+// passes `err: ""` except `lane_failed`) — is exactly the old hand-rolled
+// condition (`kind == "lane_failed"`).
+#impl(Serialize)
 type EmitRecord {
+    #serde(skip)
     ro kind       str    // "lane_started" | "lane_done" | "lane_failed" | "lane_cancelled"
     ro id         str
     ro elapsed_ms int
+    #serde(rename = "error")
+    #serde(skip_serializing_if = "is_empty")
     ro err        str    // "" unless kind == "lane_failed"
     ro t_ms       int
 }
 
-fn json_escape(s str) -> str => s.replace("\\", "\\\\").replace("\"", "\\\"")
-
-fn emit_record_json(r EmitRecord) -> str {
-    ro err_field = if r.kind == "lane_failed" {
-        ",\"error\":\"${json_escape(r.err)}\""
-    } else {
-        ""
-    }
-    "{\"id\":\"${json_escape(r.id)}\",\"elapsed_ms\":${r.elapsed_ms}${err_field},\"t_ms\":${r.t_ms}}"
-}
+/// `!!`-без-`Fail` (D85, same rationale as `report_json.nv`'s
+/// `snapshot_to_json`): `EmitRecord` is a flat `Serialize` DTO of
+/// primitives — encode-failure is structurally impossible here.
+fn emit_record_json(r EmitRecord) -> str =>
+    json_encode(r) ?? panic("emit_record_json: EmitRecord is a flat Serialize DTO — encode must not fail")
 
 /// `Emit` is discharged here (`with Emit = <recorder>`); `Time` stays
 /// declared, same as `snapshot_body`.
