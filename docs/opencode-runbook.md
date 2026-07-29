@@ -9,10 +9,20 @@
 
 ## Установка и состояние
 
-- Бинарь: `C:/Users/Евгений/AppData/Roaming/npm/opencode` (ставится npm-ом), `opencode --version` → `1.18.9`.
-- Конфиг пользователя: `C:/Users/Евгений/.config/opencode/opencode.jsonc`.
-- Данные/сессии: `C:/Users/Евгений/.local/share/opencode/` (`opencode.db`, `auth.json`).
+- Ставится npm-ом глобально (`npm i -g opencode-ai`); проверка — `opencode --version`.
+- Конфиг пользователя: `~/.config/opencode/opencode.jsonc` (под Windows — в профиле пользователя).
+- Данные/сессии: `~/.local/share/opencode/` (`opencode.db`, `auth.json`).
 - Проверить провайдеров: `opencode auth list`.
+
+## Auth НЕ нужен для бесплатных моделей (проверено 2026-07-30)
+
+Модели с префиксом `opencode/` (весь список ниже) идут через собственный шлюз
+opencode и работают **без единого credential**: проверено фактом — `opencode auth
+list` → `0 credentials`, `auth.json` отсутствует, env-переменных нет, а
+`opencode run -m opencode/big-pickle` выполнил полное задание. `opencode auth login`
+нужен ТОЛЬКО для чужих провайдеров (`anthropic/...`, `openai/...`,
+`openrouter/...`). То есть для нашего сценария «бесплатное параллельное окно»
+никакой настройки не требуется: поставил → `opencode run` → работает.
 
 ## Команда запуска (headless — то, что нужно)
 
