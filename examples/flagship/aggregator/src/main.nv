@@ -16,9 +16,10 @@
 // `nova test`'s run-to-completion sweep — this file has no `test { }` blocks
 // of its own (the `build_snapshot`-driven field-population logic this
 // file's handlers depend on is exercised by `src/api/report_json_test.nv`;
-// this file's own hand-rendered JSON text layer,
-// `[M-187-http-serde-setcookie-serialize-collision]` below, is covered by
-// the smoke test — curl-diffing the wire bytes — not a `test{}` block).
+// this file's own JSON wire layer — typed `#impl(Serialize)` +
+// `json_encode` throughout since Plan 221.1 №141, no hand-rendered strings
+// left — is covered by the smoke test — curl-diffing the wire bytes — not
+// a `test{}` block).
 //
 // Owner requirement (hard, this rewrite's whole reason to exist): the PREVIOUS
 // draft of this file (never committed — a from-scratch rewrite, not an edit)
