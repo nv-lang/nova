@@ -1,0 +1,51 @@
+// Реестр 221.1 №137 (`[M-reflect-generic-static-dispatch-collision]`, FIXED
+// 2026-07-29): a BARE direct call to a generic-bracketed zero-param static
+// method (`Vec[str].reflect()`/`[]str.reflect()`, `Option[int].reflect()`,
+// `Option[str].reflect()`) used to resolve to the WRONG callee — the
+// checker-channel TurboFish static-call dispatch (`emit_call`'s "1b" arm in
+// emit_c.rs + its `infer_call_ret_c` return-type twin) never covered
+// `Option`/`Result` (Plan 62.A deliberately excludes them from
+// `generic_types` — they use the `NovaOpt_<T>`/sum_schema_registry
+// INSTANCE-method machinery instead) nor array-ext (`[]T`-receiver) STATIC
+// methods (registered under `mono_method_decls[("[]T", …)]`, not
+// `generic_type_methods["Vec"]`). Both gaps fixed in the SAME dispatch
+// mechanism (T resolved structurally from the turbofish's own `type_args` —
+// no name-guessing), mirroring the pattern already used for ordinary user
+// generic types (`HashMap[K,V].new()` and friends).
+//
+// See std/src/reflect_test.nv for the primitive/collision-history docs and
+// the remaining narrower `[M-array-ext-static-erased-body-no-generic-
+// dispatch]` gap (`[]int.reflect()` — element type `nova_int` specifically —
+// still fails; NOT this defect, a separate erased-body-completeness issue,
+// out of scope here).
+module spec_tests.conformance
+
+import std.reflect.{TypeShape, Reflect}
+
+test "Vec[str].reflect() -> Arr(Str) via turbofish (was: collided with Option's reflect)" {
+    match Vec[str].reflect() {
+        Arr(items) => match items { Str => assert(true), _ => assert(false) }
+        _ => assert(false)
+    }
+}
+
+test "[]str.reflect() -> Arr(Str) via []T alias sugar (desugars through the same turbofish route)" {
+    match []str.reflect() {
+        Arr(items) => match items { Str => assert(true), _ => assert(false) }
+        _ => assert(false)
+    }
+}
+
+test "Option[int].reflect() -> Opt(Int) (was: silently resolved to the wrong, un-mono'd callee)" {
+    match Option[int].reflect() {
+        Opt(inner) => match inner { Int => assert(true), _ => assert(false) }
+        _ => assert(false)
+    }
+}
+
+test "Option[str].reflect() -> Opt(Str) (distinct T from the int case above, same call-site shape)" {
+    match Option[str].reflect() {
+        Opt(inner) => match inner { Str => assert(true), _ => assert(false) }
+        _ => assert(false)
+    }
+}

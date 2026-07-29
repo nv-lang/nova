@@ -34,28 +34,83 @@ test "str.reflect() -> Str" {
     match str.reflect() { Str => assert(true), _ => assert(false) }
 }
 
-// [M-reflect-generic-static-dispatch-collision] (found 2026-07-27, Ф.1):
-// a BARE direct call to a generic-bracketed zero-param static method
-// (`[]int.reflect()`, `Option[int].reflect()`, `Option[str].reflect()`)
-// resolves to the WRONG callee when ANY other zero-param same-named static
-// method exists in the CU (confirmed: collides even with plain PRIMITIVE
-// `.reflect()`s, not just other generic instances) — same known class as
-// the documented `[race-198/196.6]` "single-key method_receivers name-only
-// fallback, last-wins" weakness (see synth_display_record_body's comment,
-// auto_derive.rs), here maximally exposed because `.reflect()` has ZERO
-// parameters to disambiguate by (only the static receiver TYPE differs).
-// Repro: `[]int.reflect()` CC-FAILs (`Nova_Vec____nova_int` has no `tag`/
-// `payload` — codegen picked a completely different callee); `Option[int].
-// reflect()`/`Option[str].reflect()` COMPILE but both resolve to the SAME
-// unmangled `Nova_Option_static_reflect()` symbol (silently wrong mono,
-// worse than a compile error). Does NOT affect `#impl(Reflect)` SYNTHESIS
-// (`auto_derive.rs`'s `build_type_shape_expr` builds `Arr`/`Opt` INLINE for
-// container fields, never dispatches to these blanket functions — see
-// `reflect_containers_pos.nv` conformance fixture, unaffected). Root cause
-// is in the checker's generic-bracketed static-call resolution / emit_c.rs
-// callee-mangling for zero-param methods — deep hot-path territory, out of
-// Ф.1 scope (222.8 brief: "не наращивать легаси", STOP+report). Blanket
-// bodies below are still exercised (and pass) via the record/sum synthesis
-// path in the conformance fixtures; this comment documents why they are
-// NOT also exercised via a bare direct call here.
+// [M-reflect-generic-static-dispatch-collision] (found 2026-07-27, Ф.1;
+// FIXED реестр 221.1 №137, 2026-07-29): a BARE direct call to a
+// generic-bracketed zero-param static method (`[]str.reflect()`,
+// `Option[int].reflect()`, `Option[str].reflect()`) used to resolve to the
+// WRONG callee when ANY other zero-param same-named static method existed
+// in the CU (collided even with plain PRIMITIVE `.reflect()`s) — same known
+// class as the documented `[race-198/196.6]` "single-key method_receivers
+// name-only fallback, last-wins" weakness. Root cause: the checker's
+// generic-bracketed TurboFish static-call dispatch (`emit_call`'s "1b" arm,
+// `infer_call_ret_c`'s twin) resolves T STRUCTURALLY from the turbofish's
+// own `type_args` for ordinary user generic types, but (a) never covered
+// `Option`/`Result` at all (Plan 62.A deliberately excludes them from
+// `generic_types` — they use `NovaOpt_<T>`/sum_schema_registry INSTANCE
+// dispatch instead — so a user STATIC method on `Option[T]`/`Result[T,E]`
+// had zero routes), and (b) missed array-ext (`[]T`-receiver) static
+// methods for the SAME structural reason (`generic_type_methods["Vec"]`
+// doesn't hold them — registered under `mono_method_decls[("[]T", …)]`
+// instead). Both fixed in the checker/codegen channel (no name-guessing —
+// T still comes from the turbofish AST node itself).
+//
+// `[]int.reflect()` (element type `nova_int` specifically) still does NOT
+// work — a SEPARATE, narrower defect,
+// `[M-array-ext-static-erased-body-no-generic-dispatch]`: the array-ext
+// static-method family's `nova_int` element is served by a pre-existing
+// ERASED (non-monomorphized) body (`emit_fn`, kept intentionally per
+// `slice_static_generic_method.nv`'s `echo2` int-element regression guard —
+// it works fine for a body that doesn't call methods ON its own bound `T`).
+// `.reflect()`'s body calls `T.reflect()` — the erased body has no real `T`
+// to call it on and emits an undefined `nova_fn_T_reflect()` placeholder
+// (link error). Fixing this needs a genuine per-nova_int mono route for
+// STATIC array-ext methods (mirroring the Plan 101.1 INSTANCE-side mono-only
+// treatment) — out of scope here, reported separately (not touched: fixing
+// it risks the existing erased-int-path `echo2` conformance guard).
+//
+// Does NOT affect `#impl(Reflect)` SYNTHESIS's OWN field-walk delegation to
+// a generic field's `.reflect()` (реестр 221.1 №146,
+// `[M-reflect-fieldwalk-generic-field-not-monomorphized]`, fixed same
+// commit) — that was a SEPARATE defect in `auto_derive.rs` itself (the
+// field-walk discarded the field's type-args before delegating), not in
+// this dispatch mechanism; see `reflect_generic_field_walk_pos.nv`
+// conformance fixture.
+test "[]str.reflect() -> Arr(Str)" {
+    match []str.reflect() {
+        Arr(items) => match items { Str => assert(true), _ => assert(false) }
+        _ => assert(false)
+    }
+}
+
+test "Option[int].reflect() -> Opt(Int)" {
+    match Option[int].reflect() {
+        Opt(inner) => match inner { Int => assert(true), _ => assert(false) }
+        _ => assert(false)
+    }
+}
+
+test "Option[str].reflect() -> Opt(Str)" {
+    match Option[str].reflect() {
+        Opt(inner) => match inner { Str => assert(true), _ => assert(false) }
+        _ => assert(false)
+    }
+}
+
+// ── Opaque: ТОЛЬКО ручная реализация (owner-decided addition). Компилятор
+// сам `Opaque` не синтезирует — здесь ручной `#impl(Reflect)` на локальном
+// типе, имитирующем "сырой", не подлежащий схеме тип (напр. ServerRequest
+// в бандл-extractor'е 222.8 §1.3, вне Ф.1-объёма).
+// `Reflect` — структурный протокол (D42): предоставить `.reflect()` с нужной
+// сигнатурой достаточно для соответствия, `#impl(Reflect)` НЕ нужен (это
+// атрибут для ЗАПРОСА компиляторного СИНТЕЗА, RawHandle его не просит).
+type RawHandle { fd int }
+
+fn RawHandle.reflect() -> TypeShape => Opaque("RawHandle")
+
+test "manual #impl(Reflect) returning Opaque — compiler never synthesizes this itself" {
+    match RawHandle.reflect() {
+        Opaque(name) => assert(name == "RawHandle")
+        _ => assert(false)
+    }
+}
 

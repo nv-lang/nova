@@ -8691,7 +8691,7 @@ impl<'a> TypeCheckCtx<'a> {
                             if matches!(&mod_obj.kind, ExprKind::Ident(_))
                                 && self.types.contains_key(tyname)
                             {
-                                if let Some((tr, _node_subst)) =
+                                if let Some((tr, _node_subst, _fn_span)) =
                                     self.resolve_generic_static_return(tyname, method, &[], e.span)
                                 {
                                     if !typeref_mentions_any(&tr, gs) {
@@ -17998,7 +17998,7 @@ impl<'a> TypeCheckCtx<'a> {
                             // the former name-keyed ctor hardcode below — a Self-returning
                             // ctor (`new`/…) resolves here to the SAME `Type[Targs]`, and
                             // ANY other static method (`of`, user ctors) now infers too.
-                            if let Some((rt, ordered)) = self.resolve_generic_static_return(
+                            if let Some((rt, ordered, fn_span)) = self.resolve_generic_static_return(
                                 tyname, ctor, type_args, expr.span,
                             ) {
                                 // [M-196.5-node-substs] Producer C write: this call shape
@@ -18017,6 +18017,31 @@ impl<'a> TypeCheckCtx<'a> {
                                         );
                                     }
                                     self.node_substs.borrow_mut().insert(expr.id, ordered);
+                                }
+                                // Реестр 221.1 №137 (`[M-reflect-generic-static-dispatch-
+                                // collision]`): additionally materialize `resolved_callees`
+                                // (WHICH FnDecl — the single overload `resolve_generic_static_
+                                // return` already resolved above, `fn_span`) + `resolved_types`
+                                // (the call's OWN substituted return type) for this call shape.
+                                // Closes a channel gap: this producer previously fed ONLY
+                                // `node_substs` (used defensively by codegen's OWN independent
+                                // dispatch, e.g. the `Vec`/`HashMap` turbofish-static arm in
+                                // emit_c.rs, which recomputes structurally and only
+                                // shadow-verifies against `node_substs`) — a receiver EXCLUDED
+                                // from codegen's generic-type-instance machinery for unrelated
+                                // representation reasons (`Option`/`Result`, Plan 62.A: value
+                                // repr `NovaOpt_<T>`/`NovaRes_<..>`, not the heap
+                                // `Nova_<Type>____<T>*` convention) had NO dispatch route at
+                                // all — codegen fell through to the coarse name-only
+                                // `method_receivers` fallback (collision with any other
+                                // same-named zero-arg static). Writing BOTH channels here lets
+                                // codegen READ the resolved callee + return type directly
+                                // instead of re-deriving them by scanning its own registry by
+                                // name — the §0/196 channel-first contract.
+                                if expr.id.is_set() {
+                                    self.resolved_callees.borrow_mut().insert(expr.id, fn_span);
+                                    self.resolved_types_buf.borrow_mut()
+                                        .insert(expr.id, ResolvedType::from_type_ref(&rt));
                                 }
                                 return Some(rt);
                             }
@@ -18493,13 +18518,21 @@ impl<'a> TypeCheckCtx<'a> {
     /// `names.chain(method_names_ordered)` convention (9777) even though THIS call
     /// shape (`Type[T].method(args)`, ONE bracket, on the type) never supplies
     /// method-level values — see the completeness-gate comment at the tail of this fn.
+    /// Реестр 221.1 №137 (`[M-reflect-generic-static-dispatch-collision]`):
+    /// return tuple gained `Span` (the resolved single-overload `f`'s decl
+    /// span) — codegen needs it to select the SAME `FnDecl` via
+    /// `resolved_callees` (channel), instead of re-deriving "which overload"
+    /// itself by a name-only scan of its own parallel registry
+    /// (`generic_type_methods`). Additive: existing 2-tuple callers still
+    /// destructure the first two elements; span is free (already in scope
+    /// as `f.span`).
     fn resolve_generic_static_return(
         &self,
         tyname: &str,
         method: &str,
         type_args: &[TypeRef],
         span: Span,
-    ) -> Option<(TypeRef, Vec<(String, ResolvedType)>)> {
+    ) -> Option<(TypeRef, Vec<(String, ResolvedType)>, Span)> {
         // Synth-aware (base ∪ auto-derive overlay), same source the dispatch channel reads.
         let overloads = self.method_overloads(tyname, method)?;
         // Single overload only — ≥2 is permissive (codegen / hardcode fallback handle it,
@@ -18588,7 +18621,7 @@ impl<'a> TypeCheckCtx<'a> {
         } else {
             Vec::new()
         };
-        Some((out, ordered))
+        Some((out, ordered, f.span))
     }
 
     /// Plan 200 П19: peel `ro`/`mut` TYPE wrappers off a receiver `TypeRef` and, if the

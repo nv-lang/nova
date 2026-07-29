@@ -1,0 +1,68 @@
+// Реестр 221.1 №146 (`[M-reflect-fieldwalk-generic-field-not-monomorphized]`,
+// FIXED 2026-07-29): `#impl(Reflect)` synthesis's field-walk
+// (auto_derive.rs's `build_named_type_shape`, called from
+// `build_type_shape_expr`'s `TypeRef::Named` arm) discarded a field type's
+// OWN generic type-args before delegating to that type's `.reflect()` —
+// `Outer { param Wrapper[TodoId] }`'s field-walk emitted the UNQUALIFIED
+// `Path(["Wrapper", "reflect"])` (no way to recover `T`), which resolves
+// (post-137-fix) to the un-mono'd `Nova_Wrapper_static_reflect` — a symbol
+// whose body is `return NULL` (or, pre-137-fix, silently the WRONG mono).
+// Symptom on the live server: `nova: fiber stack overflow in slot 0`
+// (confirmed reproducible on the pre-fix compiler with exactly this
+// fixture's shape). Fix: thread the field's type-args through and emit a
+// TurboFish-qualified `Member{obj: TurboFish{Ident("Wrapper"), [TodoId]},
+// name: "reflect"}` instead — the SAME dispatch mechanism №137 fixed then
+// correctly mono's `Nova_Wrapper____NovaValue_TodoId_static_reflect`.
+//
+// Root cause lived ENTIRELY in auto_derive.rs (synthesis), not in the type
+// system or the dispatch mechanism itself — this fixture's `Wrapper[T]`
+// uses a HAND-WRITTEN (not auto-derived) `.reflect()` specifically to keep
+// the repro minimal and isolate the field-walk defect from any auto-derive-
+// on-a-generic-receiver concerns (a separate, pre-existing gap: a bare
+// receiver-bound generic field inside an AUTO-DERIVED generic type is not
+// yet supported by `check_field_eligibility_reflect` — unrelated to this
+// defect, not exercised here).
+module spec_tests.conformance
+
+import std.reflect.{TypeShape, Reflect}
+
+type Wrapper[T] {
+    value T
+}
+
+fn Wrapper[T Reflect].reflect() -> TypeShape => Record("Wrapper", [("value", T.reflect())])
+
+#impl(Reflect)
+type FieldWalkTodoId {
+    id int
+}
+
+#impl(Reflect)
+type FieldWalkOuter {
+    param Wrapper[FieldWalkTodoId]
+}
+
+test "Outer's #impl(Reflect) field-walk correctly monomorphizes a generic field's T (146 repro)" {
+    match FieldWalkOuter.reflect() {
+        Record(name, fields) => {
+            assert(name == "FieldWalkOuter")
+            assert(fields.len() == 1)
+            ro (n0, s0) = fields[0]
+            assert(n0 == "param")
+            match s0 {
+                Record(wname, wfields) => {
+                    assert(wname == "Wrapper")
+                    assert(wfields.len() == 1)
+                    ro (fn0, fs0) = wfields[0]
+                    assert(fn0 == "value")
+                    match fs0 {
+                        Record(tname, _) => assert(tname == "FieldWalkTodoId")
+                        _ => assert(false)
+                    }
+                }
+                _ => assert(false)
+            }
+        }
+        _ => assert(false)
+    }
+}
