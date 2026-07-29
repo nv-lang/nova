@@ -1,0 +1,131 @@
+# nova-gate для SourceCraft CI/CD
+# Адаптация .github/workflows/nova-gate.yml под SourceCraft.
+# Авторитетный merge-гейт: conformance + флагман-examples + anti-rot.
+# См. docs/test-conventions.md §«Авторитетный merge-гейт».
+
+on:
+  push:
+    - workflows:
+        - nova-gate
+      filter:
+        branches:
+          - main
+  pull_request:
+    - workflows:
+        - nova-gate
+      filter:
+        target_branches:
+          - main
+
+workflows:
+  nova-gate:
+    tasks:
+      - name: gate
+        cubes:
+          - name: init-submodules
+            script:
+              - git submodule update --init --recursive
+
+          - name: install-rustup
+            script:
+              - if ! command -v rustup &>/dev/null; then curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.85; fi
+              - rustup default 1.85
+
+          - name: install-system-deps
+            script:
+              - sudo apt-get update
+              - sudo apt-get install -y clang cmake make libgc-dev build-essential
+
+          - name: build-nova-cli
+            script:
+              - cargo build --release --manifest-path nova-cli/Cargo.toml
+
+          - name: conformance-gate
+            script:
+              - |
+                set -uo pipefail
+                set +e
+                log="$(mktemp)"
+                ./nova-cli/target/release/nova test --positive --compile-error \
+                    --timeout 300 --jobs 4 spec_tests/conformance \
+                    > "${log}" 2>&1
+                code=$?
+                cat "${log}"
+                if [ "${code}" -ne 0 ]; then
+                  echo "### ❌ FAILED: spec_tests/conformance"
+                  tail -n 100 "${log}"
+                  exit "${code}"
+                fi
+                echo "### ✅ PASSED: spec_tests/conformance"
+
+          - name: clone-nova-http
+            script:
+              - git clone --depth 1 https://github.com/nv-lang/nova-http "${SOURCECRAFT_WORKSPACE}/../nova-http"
+
+          - name: flagship-examples-gate
+            script:
+              - |
+                set -uo pipefail
+                set +e
+                mkdir -p /tmp/nova-gate-bin
+                targets=(
+                  "aggregator|examples/flagship/aggregator/src/main.nv"
+                  "echo_server_net|examples/net/echo_server.nv"
+                  "echo_client_net|examples/net/echo_client.nv"
+                  "echo_server_tls|examples/tls/echo_server.nv"
+                  "echo_client_tls|examples/tls/echo_client.nv"
+                )
+                failed=""
+                for entry in "${targets[@]}"; do
+                  name="${entry%%|*}"
+                  src="${entry#*|}"
+                  echo "::group::build ${name} (${src})"
+                  log="/tmp/nova-gate-bin/${name}.log"
+                  ./nova-cli/target/release/nova build "${src}" --strict-effects \
+                      -o "/tmp/nova-gate-bin/${name}" > "${log}" 2>&1
+                  code=$?
+                  cat "${log}"
+                  echo "::endgroup::"
+                  if [ "${code}" -ne 0 ]; then
+                    failed="${failed} ${name}"
+                    echo "### ❌ FAILED: flagship build — ${name} (${src})"
+                    tail -n 100 "${log}"
+                  fi
+                done
+                if [ -n "${failed}" ]; then
+                  echo "::error::flagship examples build failed for:${failed}"
+                  exit 1
+                fi
+                echo "### ✅ PASSED: all flagship examples"
+
+          - name: examples-anti-rot
+            script:
+              - |
+                set -uo pipefail
+                set +e
+                failed=""
+                while read -r kind path; do
+                  case "${kind}" in BUILD|CHECK) ;; *) continue ;; esac
+                  [ "${kind}" = "BUILD" ] && cmd=build || cmd=check
+                  echo "::group::${cmd} ${path}"
+                  log="$(mktemp)"
+                  if [ "${cmd}" = "build" ]; then
+                    ./nova-cli/target/release/nova build "${path}" --strict-effects \
+                        -o "/tmp/nova-gate-bin/ex_$(basename "${path}" .nv)" > "${log}" 2>&1
+                  else
+                    ./nova-cli/target/release/nova check "${path}" --strict-effects > "${log}" 2>&1
+                  fi
+                  code=$?
+                  cat "${log}"
+                  echo "::endgroup::"
+                  if [ "${code}" -ne 0 ]; then
+                    failed="${failed} ${path}"
+                    echo "### ❌ FAILED: examples anti-rot — ${path}"
+                    tail -n 60 "${log}"
+                  fi
+                done < docs/plans/wip/197-f5-gate-list.txt
+                if [ -n "${failed}" ]; then
+                  echo "::error::examples anti-rot failed for:${failed}"
+                  exit 1
+                fi
+                echo "### ✅ PASSED: all examples anti-rot"
