@@ -56351,12 +56351,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             type_args.clone()
                         } else { vec![] };
                     let func = func.unwrap_turbofish();
-                    // [реестр 221.1 №137, путь A] `Option[T]`/`Result[T,E]`
-                    // static-turbofish return-type: legacy-твин здесь больше
-                    // не нужен — resolved_callees/resolved_types уже
-                    // материализованы чекером для этого call-site
-                    // (`resolve_generic_static_return`), эта fn — только
-                    // fallback после промаха обоих каналов.
+                    // [№137, путь A] Option/Result static-turbofish return-type: канал
+                    // покрывает это здесь ДО вызова этой fn — твин не нужен.
                     // D109: TurboFish member call on generic type, e.g. HashMap[str,int].new().
                     // func = Member { obj: TurboFish(Ident("HashMap"), [str,int]), name: "new" }.
                     // infer_expr_c_type(TurboFish→Ident("HashMap")) = "nova_int" (wrong).
