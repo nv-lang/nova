@@ -3699,9 +3699,31 @@ fn make_reflect_method(type_name: &str, body_expr: Expr, file_id: crate::diag::F
 /// INLINED (pushed onto `in_progress`, its own shape built recursively,
 /// popped) — see the section doc above for why inlining (not dispatch) is
 /// required for correctness on a genuinely cyclic type graph.
+///
+/// `generics` — реестр 221.1 №146 (`[M-reflect-fieldwalk-generic-field-not-
+/// monomorphized]`) fix: type-args поля-ресивера, ЕСЛИ `name` сам
+/// generic-инстанциация (`PathParam[TodoIdParam]`, `Query[T]`, `Json[T]` —
+/// канон-бандл 222.8). До фикса эта функция получала только голое `name` —
+/// `build_type_shape_expr`'s Named-арм ОБРЕЗАЛ `generics` до вызова сюда,
+/// и explicit-`.reflect()`-ветка ниже эмитила НЕКВАЛИФИЦИРОВАННЫЙ
+/// `Path([name, "reflect"])` — статический вызов БЕЗ receiver-типа. Codegen
+/// (emit_c.rs `ExprKind::Path` static-call арм) резолвит такой bare-Path
+/// вызов по ИМЕНИ (`Nova_<name>_static_reflect`, БЕЗ mono-суффикса T) — для
+/// generic-ресивера это НЕМОНОМОРФИЗИРОВАННЫЙ общий символ (тело — `return
+/// NULL`, т.к. настоящее тело существует только per-T через
+/// `Nova_<name>____<T>_static_reflect`). Symptom на живом сервере: `nova:
+/// fiber stack overflow in slot 0` (пустой NULL-shape ломает downstream
+/// OpenAPI-генерацию). Фикс: когда `generics` НЕ пуст, эмитим
+/// TurboFish-квалифицированный `Member{obj: TurboFish{Ident(name),
+/// generics}, name: "reflect"}` — ТА ЖЕ форма (`Type[T].method()`), что
+/// codegen уже правильно монет для обычных генерик-типов через
+/// `emit_call`'s "1b" static-turbofish dispatch (реестр 221.1 №137 фикс,
+/// тот же коммит) — резолв T приходит СТРУКТУРНО из AST-узла (turbofish
+/// type_args), не восстанавливается по имени.
 fn build_named_type_shape<Q: DeriveQuery>(
     query: &Q,
     name: &str,
+    generics: &[TypeRef],
     in_progress: &mut Vec<String>,
     file_id: crate::diag::FileId,
     owner_type: &str,
@@ -3718,11 +3740,26 @@ fn build_named_type_shape<Q: DeriveQuery>(
         // MAIN_FILE_ID. Simple named receiver → `Path([Type, "reflect"])`
         // (the static-call shape the parser emits; a `Member{Ident(Type)}`
         // form would wrongly dispatch as an INSTANCE method).
-        return Ok(call_at(
-            ex_at(ExprKind::Path(vec![name.to_string(), "reflect".to_string()]), file_id),
-            vec![],
+        //
+        // №146: a GENERIC named receiver (`generics` non-empty) MUST instead
+        // use the TurboFish-qualified `Type[Args].reflect()` shape — see the
+        // fn-doc above. Without turbofish type-args the receiver's `T` is
+        // unrecoverable downstream (codegen has no other channel to it).
+        if generics.is_empty() {
+            return Ok(call_at(
+                ex_at(ExprKind::Path(vec![name.to_string(), "reflect".to_string()]), file_id),
+                vec![],
+                file_id,
+            ));
+        }
+        let turbofish = ex_at(
+            ExprKind::TurboFish {
+                base: Box::new(ident_at(name, file_id)),
+                type_args: generics.to_vec(),
+            },
             file_id,
-        ));
+        );
+        return Ok(member_call_at(turbofish, "reflect", vec![], file_id));
     }
     match query.lookup_type(name) {
         Some(td) if td.impl_protocols.iter().any(|p| p == REFLECT) => {
@@ -3768,7 +3805,7 @@ fn build_type_shape_expr<Q: DeriveQuery>(
                 let shape = build_type_shape_expr(query, &generics[0], in_progress, file_id, owner_type, field_name)?;
                 return Ok(call(typeshape_variant("Arr"), vec![shape]));
             }
-            build_named_type_shape(query, name, in_progress, file_id, owner_type, field_name)
+            build_named_type_shape(query, name, generics, in_progress, file_id, owner_type, field_name)
         }
         TypeRef::Array(inner, _) | TypeRef::FixedArray(_, inner, _) => {
             let shape = build_type_shape_expr(query, inner, in_progress, file_id, owner_type, field_name)?;
