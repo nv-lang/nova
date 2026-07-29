@@ -17989,40 +17989,6 @@ impl<'a> TypeCheckCtx<'a> {
                                 expr.span,
                             ));
                         }
-                        // Реестр 221.1 №137 (путь A, симметричное расширение на
-                        // array-ext): ЛЮБОЙ ДРУГОЙ static-метод, объявленный
-                        // непосредственно на `[]T` (например, std/reflect.nv
-                        // `fn[T Reflect] []T.reflect() -> TypeShape`), НЕ
-                        // покрыт ctor-списком выше и зарегистрирован в
-                        // `method_table` под ключом `"[]T"` — ТЕМ ЖЕ, что и
-                        // TurboFish-receiver `Vec[T]` (D239-алиас на уровне
-                        // спеллинга), но РАЗНЫМ ключом реестра (см. doc у
-                        // `E_STRUCTURED_RECEIVER...`, ~5754: "slice-sugar —
-                        // СЕПАРАТНЫЙ, уже здравый механизм"). Резолвим
-                        // структурно ЧЕРЕЗ ТОТ ЖЕ `resolve_generic_static_
-                        // return`, что и TurboFish-арка ниже, передав "[]T"
-                        // как tyname — тот же канал (resolved_callees +
-                        // resolved_types), тот же single-overload гейт.
-                        if parts.len() == 2 && parts[0] == "__array" {
-                            let elem_tr = TypeRef::Named {
-                                path: vec![parts[1].clone()],
-                                generics: Vec::new(),
-                                span: expr.span,
-                            };
-                            if let Some((rt, ordered, fn_span)) = self
-                                .resolve_generic_static_return("[]T", ctor, &[elem_tr], expr.span)
-                            {
-                                if expr.id.is_set() && !ordered.is_empty() {
-                                    self.node_substs.borrow_mut().insert(expr.id, ordered);
-                                }
-                                if expr.id.is_set() {
-                                    self.resolved_callees.borrow_mut().insert(expr.id, fn_span);
-                                    self.resolved_types_buf.borrow_mut()
-                                        .insert(expr.id, ResolvedType::from_type_ref(&rt));
-                                }
-                                return Some(rt);
-                            }
-                        }
                     }
                     if let ExprKind::TurboFish { base, type_args } = &obj.kind {
                         if let ExprKind::Ident(tyname) = &base.kind {
@@ -18032,23 +17998,9 @@ impl<'a> TypeCheckCtx<'a> {
                             // the former name-keyed ctor hardcode below — a Self-returning
                             // ctor (`new`/…) resolves here to the SAME `Type[Targs]`, and
                             // ANY other static method (`of`, user ctors) now infers too.
-                            // Реестр 221.1 №137 (путь A): `Vec[T]` ≡ `[]T` —
-                            // D239 spelling alias, но РАЗНЫЕ ключи method_table
-                            // (slice-sugar receiver регистрируется под "[]T",
-                            // см. doc ~5754). Если lookup под буквальным
-                            // "Vec" промахнулся, пробуем алиас-ключ "[]T" —
-                            // та же направленность, что и обратная нормализация
-                            // "[]X"→"Vec" в другом месте (~18740), просто в
-                            // другую сторону.
                             if let Some((rt, ordered, fn_span)) = self.resolve_generic_static_return(
                                 tyname, ctor, type_args, expr.span,
-                            ).or_else(|| {
-                                if tyname == "Vec" {
-                                    self.resolve_generic_static_return("[]T", ctor, type_args, expr.span)
-                                } else {
-                                    None
-                                }
-                            }) {
+                            ) {
                                 // [M-196.5-node-substs] Producer C write: this call shape
                                 // (`Member{obj:TurboFish}`) never reaches ANY legacy return-
                                 // channel producer (see the comment at f1_check_call ~10622),

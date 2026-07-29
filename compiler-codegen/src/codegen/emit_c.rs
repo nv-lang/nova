@@ -40491,19 +40491,23 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     // args, and emit a per-elem static mono.
                                     // Skip <elem> == nova_int — the erased base IS the
                                     // nova_int instance, so that call stays byte-identical.
-                                    // [реестр 221.1 №137, путь A] FnDecl lookup prefers the
-                                    // checker channel (`resolved_callees[call_id]` →
-                                    // `mono_method_decls_by_span`, №130) over the name-only
-                                    // key — degrades to the old lookup on a channel miss.
+                                    // [реестр 221.1 №137, путь A — АРХИТЕКТУРНЫЙ ТУПИК,
+                                    // см. FINDINGS.md] Не читаем канал здесь: эта ветка
+                                    // достижима ТОЛЬКО для методов, зарегистрированных под
+                                    // "[]T" (не "Vec") ключом method_table — а checker's
+                                    // `resolve_generic_static_return` для tyname="[]T"
+                                    // структурно требует T в receiver.generics, который
+                                    // ВСЕГДА пуст для `[]T`-спеллинга (T приходит с
+                                    // METHOD-level `fn[T]` префикса) — `resolved_callees`
+                                    // для ЭТОГО call-site НИКОГДА не заполняется, чтение
+                                    // канала было бы мёртвым кодом. Оставлен baseline
+                                    // name-only lookup без изменений.
                                     if base_name == "Vec" {
                                         if let Some(elem_c) = type_args_c.first().cloned() {
                                             if elem_c != "nova_int" {
                                                 let key = ("[]T".to_string(), method.to_string());
-                                                let by_span = self.resolved_callees.get(&call_id)
-                                                    .and_then(|sp| self.mono_method_decls_by_span.get(sp));
-                                                if let Some(fn_decl) = by_span
-                                                    .or_else(|| self.mono_method_decls.get(&key))
-                                                    .cloned()
+                                                if let Some(fn_decl) =
+                                                    self.mono_method_decls.get(&key).cloned()
                                                 {
                                                     let is_static = matches!(
                                                         fn_decl.receiver.as_ref().map(|r| &r.kind),
@@ -56430,14 +56434,39 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                             .zip(type_args_c.iter())
                                             .map(|(g, c)| (g.name.clone(), Some(c.clone())))
                                             .collect();
-                                        // [реестр 221.1 №137, путь A] `.or_else`-твин для
-                                        // `[]T`-static методов больше не нужен — чекер пробует
-                                        // алиас-ключ "[]T" в `resolve_generic_static_return`
-                                        // (types/mod.rs), канал уже отвечает раньше этой fn.
+                                        // [реестр 221.1 №137, путь A — АРХИТЕКТУРНЫЙ ТУПИК,
+                                        // см. FINDINGS.md] Канал НЕ покрывает эту ветку:
+                                        // `[]T`-static метод хранит T на METHOD-level
+                                        // (`fn[T] []T.method()`), а `resolve_generic_static_
+                                        // return` структурно требует T в RECEIVER-carrier
+                                        // generics (`recv.generics`) — для `[]T`-спеллинга
+                                        // `recv.generics` ВСЕГДА пуст (парсер, ~3097), так что
+                                        // канал молча возвращает None для ЛЮБОГО tyname="[]T"
+                                        // вызова. `generic_type_methods["Vec"]` тоже не хранит
+                                        // такие методы (регистрируются под "[]T", не "Vec").
+                                        // Оставлен legacy name-only fallback (не растёт: тот
+                                        // же код, что был в baseline до №137).
                                         let method_ret_opt = self.generic_type_methods.get(type_name)
                                             .and_then(|ms| ms.iter().find(|m| m.name == *method_name))
                                             .and_then(|fd| fd.return_type.as_ref()
-                                                .and_then(|rt| Self::apply_type_subst_to_ref(rt, &type_subst)));
+                                                .and_then(|rt| Self::apply_type_subst_to_ref(rt, &type_subst)))
+                                            .or_else(|| {
+                                                if type_name != "Vec" { return None; }
+                                                let fd = self.mono_method_decls.get(
+                                                    &("[]T".to_string(), method_name.to_string()))?;
+                                                let is_static = matches!(
+                                                    fd.receiver.as_ref().map(|r| &r.kind),
+                                                    Some(crate::ast::ReceiverKind::Static));
+                                                if !is_static { return None; }
+                                                let arr_subst: Vec<(String, Option<String>)> = fd.generics
+                                                    .iter().enumerate()
+                                                    .map(|(i, g)| (g.name.clone(),
+                                                        if i == 0 { type_args_c.first().cloned() } else { None }))
+                                                    .collect();
+                                                let rt = fd.return_type.as_ref()?;
+                                                Self::apply_type_subst_to_ref(rt, &arr_subst)
+                                                    .or_else(|| self.type_ref_to_c(rt).ok())
+                                            });
                                         if let Some(method_ret) = method_ret_opt {
                                             if !method_ret.is_empty() && method_ret != "void*" {
                                                 return if method_ret == format!("Nova_{}*", type_name) {
