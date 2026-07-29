@@ -40203,64 +40203,40 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                 }
 
-                // 1a3. [реестр 221.1 №137] `[M-reflect-generic-static-dispatch-
-                // collision]`: static call on `Option[T]`/`Result[T,E]` via
-                // turbofish (`Option[int].reflect()`). `Option`/`Result` are
-                // DELIBERATELY excluded from `generic_types`/
-                // `generic_type_templates` (Plan 62.A: they use the
-                // `NovaOpt_<T>`/`NovaRes_<ok>_<err>` value-repr + sum_schema_registry
-                // dispatch for INSTANCE methods, not the heap-`Nova_<Type>____<T>*`
-                // generic-template machinery) — so the general "1b" arm just below
-                // (gated on `self.generic_types.contains`) never fires for them, and
-                // a user STATIC method declared directly on `Option[T]`/`Result[T,E]`
-                // (e.g. `fn Option[T Reflect].reflect() -> TypeShape`, std/reflect.nv)
-                // had NO dispatch route at all: it fell all the way through to the
-                // coarse name-only `method_receivers` fallback (~43230), which
-                // resolves purely by METHOD NAME and picks whichever OTHER
-                // co-compiled type registered that name LAST — silently wrong
-                // (or, when no other type shares the name, an outright undefined-
-                // symbol link error, since the unmangled `Nova_Option_static_<m>`
-                // it emits is never itself defined — only the per-T mono is).
-                // Fix: mirror the EXISTING instance-side `DeclaredBody` dispatch
-                // (~39190 above, `obj_ty.starts_with("NovaOpt_")`) for the STATIC/
-                // turbofish shape — the FnDecl is already collected in
-                // `generic_type_methods["Option"/"Result"]` (1a2 above,
-                // `is_builtin_mono_sum` branch, keyed off `builtin_sum_type_params`
-                // populated at type-registration time), so no name-guessing is
-                // needed: `T` comes STRUCTURALLY from the turbofish's own
-                // `type_args`, exactly like the general "1b" arm does for every
-                // other generic type.
+                // 1a3. [реестр 221.1 №137, путь A] static call on
+                // `Option[T]`/`Result[T,E]` via turbofish (`Option[int].
+                // reflect()`) — `Option`/`Result` excluded from
+                // `generic_types` (Plan 62.A), так что "1b" ниже не
+                // срабатывает. ЧТЕНИЕ КАНАЛА: чекер уже разрешил ЭТОТ
+                // call-site (`resolve_generic_static_return`, types/mod.rs)
+                // и записал ВЫБРАННЫЙ FnDecl.span в `resolved_callees` —
+                // берём его и находим ту же декларацию по span (не по
+                // имени) в уже существующем `generic_type_methods`, вместо
+                // повторного разрешения "какая перегрузка" на стороне emit.
                 if let ExprKind::TurboFish { base, type_args } = &obj.kind {
                     if let ExprKind::Ident(type_name) = &base.kind {
-                        if matches!(type_name.as_str(), "Option" | "Result")
-                            && self.builtin_sum_type_params.contains_key(type_name)
-                        {
-                            let param_names = self.builtin_sum_type_params
-                                .get(type_name).cloned().unwrap_or_default();
-                            let type_args_c: Vec<String> = type_args.iter()
-                                .filter_map(|tr| self.type_ref_to_c(tr).ok())
-                                .filter(|c| !c.is_empty())
-                                .collect();
-                            if type_args_c.len() == type_args.len()
-                                && type_args_c.len() == param_names.len()
-                            {
-                                let fn_decl = self.generic_type_methods.get(type_name.as_str())
-                                    .and_then(|ms| ms.iter().find(|m| {
-                                        m.name == *method
-                                            && matches!(m.receiver.as_ref().map(|r| &r.kind),
-                                                Some(crate::ast::ReceiverKind::Static))
-                                    }))
-                                    .cloned();
-                                if let Some(fn_decl) = fn_decl {
+                        if matches!(type_name.as_str(), "Option" | "Result") {
+                            let fn_decl = self.resolved_callees.get(&call_id)
+                                .and_then(|sp| self.generic_type_methods.get(type_name.as_str())
+                                    .and_then(|ms| ms.iter().find(|m| m.span == *sp)))
+                                .cloned();
+                            if let Some(fn_decl) = fn_decl {
+                                let param_names = self.builtin_sum_type_params
+                                    .get(type_name.as_str()).cloned().unwrap_or_default();
+                                let type_args_c: Vec<String> = type_args.iter()
+                                    .filter_map(|tr| self.type_ref_to_c(tr).ok())
+                                    .filter(|c| !c.is_empty())
+                                    .collect();
+                                if type_args_c.len() == type_args.len()
+                                    && type_args_c.len() == param_names.len()
+                                {
                                     let type_subst: Vec<(String, String)> = param_names.iter()
                                         .cloned()
                                         .zip(type_args_c.iter().cloned())
                                         .collect();
-                                    let t_suffix: String = type_args_c.iter()
-                                        .map(|c| c.trim_end_matches('*').trim()
-                                            .replace('*', "_p").replace(' ', "_"))
-                                        .collect::<Vec<_>>()
-                                        .join("__");
+                                    let t_suffix = type_args_c.iter()
+                                        .map(|c| Self::sanitize_c_for_ident(c))
+                                        .collect::<Vec<_>>().join("__");
                                     let mono_name = format!(
                                         "Nova_{}_static_{}_{}", type_name, method, t_suffix);
                                     self.register_mono_method_instance(
@@ -40509,59 +40485,30 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     // — is registered as an array-ext mono under
                                     // `mono_method_decls[("[]T", method)]`, NOT as a `Vec`
                                     // generic_type_method, so the lookup above (method_decl)
-                                    // MISSES it. Its ERASED base (emit_fn eager, array-ext)
-                                    // hardcodes the receiver element to `nova_int`; a call
-                                    // spelled `Vec[<elem>].method(..)` with <elem> != int
-                                    // (str / record) would REUSE that single nova_int mono,
-                                    // returning a wrong-element `Vec` (garbage `.len()`) or a
-                                    // param type-mismatch CC-FAIL. Monomorphize per call-site
-                                    // element: bind the receiver typevar (first generic) to
-                                    // <elem> from the turbofish type-arg, method-level
-                                    // generics from the args, and emit a per-elem static mono.
-                                    // Historically this whole special-case was skipped for
-                                    // <elem> == nova_int on the theory that "the erased base
-                                    // IS the nova_int instance, so that call stays byte-
-                                    // identical" — true for the OTHER array-ext methods this
-                                    // comment was written for (push/pop/len/…, which have a
-                                    // separate non-turbofish dispatch route for the erased
-                                    // nova_int base), but NOT true in general: a STATIC
-                                    // array-ext method (`fn[T Reflect] []T.reflect()`) has NO
-                                    // other dispatch route at all — `emit_fn`'s array-ext
-                                    // static fall-through (~27211) DOES emit the erased
-                                    // `Nova_NovaArray_nova_int_static_<m>` body unconditionally
-                                    // (that family "has no mono routing yet" per the comment
-                                    // there), but nothing here was calling it: `Vec[int].
-                                    // reflect()`/`[]int.reflect()` fell all the way through to
-                                    // the coarse name-only `method_receivers` fallback below,
-                                    // landing on whichever OTHER co-compiled type registered
-                                    // the same method name LAST (реестр 221.1 №137,
-                                    // `[M-reflect-generic-static-dispatch-collision]`).
-                                    // Fix: for `elem_c == nova_int`, call the EXISTING erased
-                                    // symbol directly (it is guaranteed emitted — see above) —
-                                    // do NOT re-enter `register_mono_method_instance` for it
-                                    // (that would enqueue a SECOND body under the identical
-                                    // name → C redefinition; the erased-base emission is on an
-                                    // entirely separate, non-worklist code path).
+                                    // MISSES it. Monomorphize per call-site element: bind the
+                                    // receiver typevar (first generic) to <elem> from the
+                                    // turbofish type-arg, method-level generics from the
+                                    // args, and emit a per-elem static mono.
+                                    // Skip <elem> == nova_int — the erased base IS the
+                                    // nova_int instance, so that call stays byte-identical.
+                                    // [реестр 221.1 №137, путь A] FnDecl lookup prefers the
+                                    // checker channel (`resolved_callees[call_id]` →
+                                    // `mono_method_decls_by_span`, №130) over the name-only
+                                    // key — degrades to the old lookup on a channel miss.
                                     if base_name == "Vec" {
                                         if let Some(elem_c) = type_args_c.first().cloned() {
-                                            let key = ("[]T".to_string(), method.to_string());
-                                            if let Some(fn_decl) =
-                                                self.mono_method_decls.get(&key).cloned()
-                                            {
-                                                let is_static = matches!(
-                                                    fn_decl.receiver.as_ref().map(|r| &r.kind),
-                                                    Some(crate::ast::ReceiverKind::Static));
-                                                if is_static && elem_c == "nova_int" {
-                                                    let mono_name = format!(
-                                                        "Nova_NovaArray_nova_int_static_{}", method);
-                                                    let mut arg_strs = Vec::new();
-                                                    for a in args {
-                                                        arg_strs.push(self.emit_expr(a.expr())?);
-                                                    }
-                                                    return Ok(format!(
-                                                        "{}({})", mono_name, arg_strs.join(", ")));
-                                                }
-                                                if is_static {
+                                            if elem_c != "nova_int" {
+                                                let key = ("[]T".to_string(), method.to_string());
+                                                let by_span = self.resolved_callees.get(&call_id)
+                                                    .and_then(|sp| self.mono_method_decls_by_span.get(sp));
+                                                if let Some(fn_decl) = by_span
+                                                    .or_else(|| self.mono_method_decls.get(&key))
+                                                    .cloned()
+                                                {
+                                                    let is_static = matches!(
+                                                        fn_decl.receiver.as_ref().map(|r| &r.kind),
+                                                        Some(crate::ast::ReceiverKind::Static));
+                                                    if is_static {
                                                         let mut subst_pending: Vec<(String, Option<String>)> =
                                                             fn_decl.generics.iter().enumerate()
                                                                 .map(|(i, g)| (g.name.clone(),
@@ -40625,6 +40572,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                         self.current_type_subst = saved;
                                                         return Ok(format!("{}({})", mono_name, arg_strs.join(", ")));
                                                 }
+                                            }
                                             }
                                         }
                                     }
@@ -56407,58 +56355,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             type_args.clone()
                         } else { vec![] };
                     let func = func.unwrap_turbofish();
-                    // [реестр 221.1 №137] `Option[T]`/`Result[T,E]` static-method
-                    // turbofish call return-type inference — inference-side twin
-                    // of the emit-side 1a3 fix (~40206 above). `Option`/`Result`
-                    // are excluded from `generic_types` (Plan 62.A), so the D109
-                    // arm right below (gated on `self.generic_types.contains`)
-                    // never fires for them — without this, a static method's
-                    // return type silently fell through to later arms that
-                    // default to unrelated types, mistyping the call-site's local
-                    // var. `T` comes structurally from the turbofish's type_args,
-                    // no name-guessing.
-                    if let ExprKind::Member { obj, name: method_name } = &func.kind {
-                        if let ExprKind::TurboFish { base, type_args } = &obj.kind {
-                            if let ExprKind::Ident(type_name) = &base.kind {
-                                if matches!(type_name.as_str(), "Option" | "Result")
-                                    && self.builtin_sum_type_params.contains_key(type_name)
-                                {
-                                    let param_names = self.builtin_sum_type_params
-                                        .get(type_name).cloned().unwrap_or_default();
-                                    let type_args_c: Vec<String> = type_args.iter()
-                                        .filter_map(|tr| self.type_ref_to_c(tr).ok())
-                                        .filter(|c| !c.is_empty())
-                                        .collect();
-                                    if type_args_c.len() == type_args.len()
-                                        && type_args_c.len() == param_names.len()
-                                    {
-                                        let fd_opt = self.generic_type_methods.get(type_name.as_str())
-                                            .and_then(|ms| ms.iter().find(|m| {
-                                                m.name == *method_name
-                                                    && matches!(m.receiver.as_ref().map(|r| &r.kind),
-                                                        Some(crate::ast::ReceiverKind::Static))
-                                            }))
-                                            .cloned();
-                                        if let Some(fd) = fd_opt {
-                                            let subst: Vec<(String, Option<String>)> = param_names.iter()
-                                                .cloned()
-                                                .zip(type_args_c.iter().cloned().map(Some))
-                                                .collect();
-                                            if let Some(rt) = fd.return_type.as_ref() {
-                                                if let Some(c) = Self::apply_type_subst_to_ref(rt, &subst)
-                                                    .or_else(|| self.type_ref_to_c(rt).ok())
-                                                {
-                                                    if !c.is_empty() && c != "void*" {
-                                                        return c;
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    // [реестр 221.1 №137, путь A] `Option[T]`/`Result[T,E]`
+                    // static-turbofish return-type: legacy-твин здесь больше
+                    // не нужен — resolved_callees/resolved_types уже
+                    // материализованы чекером для этого call-site
+                    // (`resolve_generic_static_return`), эта fn — только
+                    // fallback после промаха обоих каналов.
                     // D109: TurboFish member call on generic type, e.g. HashMap[str,int].new().
                     // func = Member { obj: TurboFish(Ident("HashMap"), [str,int]), name: "new" }.
                     // infer_expr_c_type(TurboFish→Ident("HashMap")) = "nova_int" (wrong).
@@ -56528,55 +56430,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                             .zip(type_args_c.iter())
                                             .map(|(g, c)| (g.name.clone(), Some(c.clone())))
                                             .collect();
+                                        // [реестр 221.1 №137, путь A] `.or_else`-твин для
+                                        // `[]T`-static методов больше не нужен — чекер пробует
+                                        // алиас-ключ "[]T" в `resolve_generic_static_return`
+                                        // (types/mod.rs), канал уже отвечает раньше этой fn.
                                         let method_ret_opt = self.generic_type_methods.get(type_name)
                                             .and_then(|ms| ms.iter().find(|m| m.name == *method_name))
                                             .and_then(|fd| fd.return_type.as_ref()
-                                                .and_then(|rt| Self::apply_type_subst_to_ref(rt, &type_subst)))
-                                            .or_else(|| {
-                                                // [реестр 221.1 №137] `[M-reflect-generic-static-
-                                                // dispatch-collision]` — twin of the emit-side
-                                                // `[M-slice-static-deserialize-garbage-len]` fix
-                                                // (~40432): a user STATIC array-ext method
-                                                // (`fn[T Reflect] []T.reflect()`) is registered
-                                                // under `mono_method_decls[("[]T", method)]`, NOT
-                                                // `generic_type_methods["Vec"]` (the lookup just
-                                                // above always misses it) — without this fallback
-                                                // the method's return type silently defaulted to
-                                                // `concrete_type` below (= "returns `Vec[T]`
-                                                // itself", correct for real ctors like `.new()`,
-                                                // WRONG for an unrelated return type such as
-                                                // `TypeShape`), producing a mistyped local var
-                                                // (`Nova_Vec____<elem>*` instead of
-                                                // `Nova_TypeShape*`) and a downstream CC-FAIL
-                                                // reading `.tag` off the wrong struct.
-                                                if type_name != "Vec" { return None; }
-                                                let fd = self.mono_method_decls.get(
-                                                    &("[]T".to_string(), method_name.to_string()))?;
-                                                let is_static = matches!(
-                                                    fd.receiver.as_ref().map(|r| &r.kind),
-                                                    Some(crate::ast::ReceiverKind::Static));
-                                                if !is_static { return None; }
-                                                let arr_subst: Vec<(String, Option<String>)> = fd.generics
-                                                    .iter().enumerate()
-                                                    .map(|(i, g)| (g.name.clone(),
-                                                        if i == 0 { type_args_c.first().cloned() } else { None }))
-                                                    .collect();
-                                                let rt = fd.return_type.as_ref()?;
-                                                // `apply_type_subst_to_ref` (static, no registry
-                                                // access) handles the receiver-typevar-substitution
-                                                // shape (`T`/`Option[T]`/`Vec[T]`/…) but deliberately
-                                                // returns `None` for a plain CONCRETE user type with
-                                                // no generics (e.g. `TypeShape`, `.reflect()`'s own
-                                                // return type) — it "can't tell `Ordering` [a user
-                                                // type] from an unresolved type-param `U`" (see its
-                                                // own doc, ~24367). `TypeShape` doesn't reference the
-                                                // receiver's `T` at all, so no subst is even needed —
-                                                // `self.type_ref_to_c` (registry-aware, `&self`) reads
-                                                // `record_schemas`/`sum_schemas` and resolves it
-                                                // directly.
-                                                Self::apply_type_subst_to_ref(rt, &arr_subst)
-                                                    .or_else(|| self.type_ref_to_c(rt).ok())
-                                            });
+                                                .and_then(|rt| Self::apply_type_subst_to_ref(rt, &type_subst)));
                                         if let Some(method_ret) = method_ret_opt {
                                             if !method_ret.is_empty() && method_ret != "void*" {
                                                 return if method_ret == format!("Nova_{}*", type_name) {
