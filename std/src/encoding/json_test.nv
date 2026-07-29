@@ -9,8 +9,7 @@
 
 module encoding.json_test
 
-import std.encoding.json.{Json, JsonValue, ParseJsonError, pretty}
-import std.collections.hashmap.{HashMap}
+import std.encoding.json.{Json, JsonValue, JsonObject, ParseJsonError, pretty}
 
 test "parse: примитивы" {
     assert(Json.parse("null")!!.is_null())
@@ -171,7 +170,7 @@ test "to_str: array round-trip" {
 }
 
 test "to_str: nested object round-trip" {
-    mut m = HashMap[str, JsonValue].new()
+    mut m = JsonObject.new()
     m.insert("name", JsonValue.Str("alice"))
     m.insert("score", JsonValue.Num(95.5))
     ro v = JsonValue.Object(m)
@@ -196,7 +195,7 @@ test "D325: JsonValue.try_from(s) и Json.parse(s) работают" {
 }
 
 test "pretty: формат с отступами" {
-    mut m = HashMap[str, JsonValue].new()
+    mut m = JsonObject.new()
     m.insert("name", JsonValue.Str("alice"))
     ro v = JsonValue.Object(m)
     ro p = v.to_str_pretty()
@@ -207,11 +206,71 @@ test "pretty: формат с отступами" {
 }
 
 test "D422: ${v:#} = to_str_pretty(), ${v} = to_str() (unified @display)" {
-    mut m = HashMap[str, JsonValue].new()
+    mut m = JsonObject.new()
     m.insert("name", JsonValue.Str("alice"))
     ro v = JsonValue.Object(m)
     assert("${v:#}" == v.to_str_pretty())
     assert("${v}" == v.to_str())
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// [M-json-encode-record-field-order-nondeterministic] (реестр 221.1 №148):
+// порядок полей `Object` обязан совпадать с порядком ВСТАВКИ (для
+// record-DTO — порядком объявления полей) и быть детерминированным между
+// запусками. Внутрипроцессный тест НЕ ловит межпроцессную недетерминированность
+// (HashMap-итерация раньше расходилась только между разными process'ами —
+// per-process randomized siphash seed) — см. также отдельную межпроцессную
+// проверку в отчёте задачи (два запуска бинаря, побайтовое сравнение).
+// ──────────────────────────────────────────────────────────────────────────
+
+test "JsonObject: порядок вставки сохраняется при @iter()/@keys()" {
+    mut m = JsonObject.new()
+    m.insert("z_first", JsonValue.Num(1.0))
+    m.insert("a_second", JsonValue.Num(2.0))
+    m.insert("m_third", JsonValue.Num(3.0))
+
+    ro keys = m.keys()
+    assert(keys.len() == 3)
+    assert(keys[0] == "z_first")
+    assert(keys[1] == "a_second")
+    assert(keys[2] == "m_third")
+
+    mut collected []str = []
+    for (k, _v) in m.iter() {
+        collected.push(k)
+    }
+    assert(collected == ["z_first", "a_second", "m_third"])
+}
+
+test "JsonObject: повторная вставка ключа НЕ двигает позицию" {
+    mut m = JsonObject.new()
+    m.insert("a", JsonValue.Num(1.0))
+    m.insert("b", JsonValue.Num(2.0))
+    m.insert("a", JsonValue.Num(99.0))   // обновление, не re-append
+
+    ro keys = m.keys()
+    assert(keys.len() == 2)
+    assert(keys[0] == "a")
+    assert(keys[1] == "b")
+    assert(m.get("a") == Some(JsonValue.Num(99.0)))
+}
+
+// Пин конкретного ожидаемого порядка полей — record из 3 полей, порядок
+// ОБЪЯВЛЕНИЯ (не hash-порядок, не сортировка).
+test "to_str: порядок полей Object детерминирован — пин конкретного вывода" {
+    mut m = JsonObject.new()
+    m.insert("id", JsonValue.Str("weather-1"))
+    m.insert("elapsed_ms", JsonValue.Num(42.0))
+    m.insert("t_ms", JsonValue.Num(100.0))
+    ro v = JsonValue.Object(m)
+    assert(v.to_str() == "{\"id\":\"weather-1\",\"elapsed_ms\":42,\"t_ms\":100}")
+}
+
+// Round-trip: parse -> encode сохраняет порядок полей ИЗ ТЕКСТА (не hash-порядок).
+test "parse->to_str: порядок полей из текста сохраняется round-trip" {
+    ro src = "{\"t_ms\":100,\"id\":\"weather-1\",\"elapsed_ms\":42}"
+    ro v = Json.parse(src)!!
+    assert(v.to_str() == src)
 }
 
 test "whitespace терпимость" {

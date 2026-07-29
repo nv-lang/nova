@@ -37,6 +37,104 @@ module encoding.json
 // его импортировать (explicit-imports principle).
 import std.collections.hashmap.{HashMap}
 
+// [M-json-encode-record-field-order-nondeterministic] (реестр 221.1 №148):
+// `HashMap[str, JsonValue]` не хранит порядок вставки, а итерация хеш-таблицы
+// НЕДЕТЕРМИНИРОВАНА между процессами (`nova_str_hash` зовёт рандомизированный
+// per-process siphash-seed — HashDoS-защита, `nova_rt.h` — трогать НЕЛЬЗЯ).
+// `JsonObject` ниже — упорядоченная map (вектор ключей в порядке вставки +
+// HashMap для O(1) поиска, аналог serde_json `IndexMap`/`preserve_order`) —
+// порядок полей хранится ОТДЕЛЬНО от хеш-таблицы, поэтому детерминирован
+// внутри и МЕЖДУ процессами. `JsonValue.Object` несёт `JsonObject` (не голый
+// HashMap) — см. ниже.
+/// Упорядоченная JSON-object map: вектор ключей в порядке вставки +
+/// `HashMap[str, JsonValue]` для O(1) поиска значений. Итерация (`@iter()`,
+/// `for (k, v) in obj`) всегда идёт в порядке вставки — НЕ в hash-порядке.
+/// Повторная вставка существующего ключа обновляет значение и НЕ двигает
+/// позицию ключа (как `HashMap.insert`).
+#stable(since = "0.1")
+export type JsonObject priv {
+    key_order []str
+    map HashMap[str, JsonValue]
+}
+
+/// Создать пустой `JsonObject`.
+#stable(since = "0.1")
+export fn JsonObject.new() -> Self =>
+    { key_order: [], map: HashMap[str, JsonValue].new() }
+
+/// Число пар в объекте.
+#stable(since = "0.1")
+export fn JsonObject @len() -> int => @map.len()
+
+/// `true` если объект пуст.
+#stable(since = "0.1")
+export fn JsonObject @is_empty() -> bool => @map.is_empty()
+
+/// Найти значение по ключу.
+#stable(since = "0.1")
+export fn JsonObject @get(key str) -> Option[JsonValue] => @map.get(key)
+
+/// Проверить наличие ключа.
+#stable(since = "0.1")
+export fn JsonObject @contains(key str) -> bool => @map.contains(key)
+
+/// Вставить/обновить пару `(key, value)`. Возвращает `Some(old_value)` если
+/// ключ уже существовал (значение перезаписано, позиция в порядке вставки
+/// НЕ меняется — как `HashMap.insert`), иначе `None` (ключ добавлен в конец
+/// порядка вставки).
+#stable(since = "0.1")
+export fn JsonObject mut @insert(key str, value JsonValue) -> Option[JsonValue] {
+    ro old = @map.insert(key, value)
+    if old.is_none() {
+        @key_order.push(key)
+    }
+    old
+}
+
+/// Ключи в порядке вставки.
+#stable(since = "0.1")
+export fn JsonObject @keys() -> []str => @key_order
+
+/// Order-independent структурное равенство (D109/D237 `Equal`-impl) —
+/// зеркало `HashMap[K, V] @equal`. Семантическое равенство JSON-объектов не
+/// зависит от порядка полей (только порядок СЕРИАЛИЗАЦИИ детерминирован —
+/// это отдельное свойство).
+#stable(since = "0.1")
+export fn JsonObject @equal(other JsonObject) -> bool {
+    if @len() != other.len() {
+        return false
+    }
+    for (k, v) in @iter() {
+        match other.get(k) {
+            Some(ov) => {
+                if v != ov {
+                    return false
+                }
+            }
+            None => return false
+        }
+    }
+    true
+}
+
+// Iterator pattern — тот же паттерн, что HashMapIter (hashmap/core.nv), но
+// идёт по `@key_order`, не по bucket-массиву — отсюда порядок вставки.
+type JsonObjectIter { obj JsonObject, pos int }
+
+/// Итератор по парам `(key, value)` В ПОРЯДКЕ ВСТАВКИ (не hash-порядок).
+#stable(since = "0.1")
+export fn JsonObject @iter() -> JsonObjectIter => { obj: @, pos: 0 }
+
+export fn JsonObjectIter mut @next() -> Option[(str, JsonValue)] {
+    if @pos >= @obj.key_order.len() {
+        None
+    } else {
+        ro k = @obj.key_order[@pos]
+        @pos += 1
+        Some((k, @obj.map.get(k) ?? panic("JsonObject: key_order/map desync — invariant violated")))
+    }
+}
+
 /// JsonValue — рекурсивный sum-type для произвольного JSON-документа.
 ///
 /// Поддерживает D55 record-coercion: literal `{ "k": v }` в позиции
@@ -49,7 +147,7 @@ export type JsonValue enum
     | Num(f64)
     | Str(str)
     | Array([]JsonValue)
-    | Object(HashMap[str, JsonValue])
+    | Object(JsonObject)
 
 /// `ParseJsonError` — категории ошибок JSON-парсера с позицией для диагностики.
 ///
@@ -88,10 +186,22 @@ export fn JsonValue.array(items []JsonValue) -> Self => Array(items)
 
 /// Construct JSON object из `HashMap[str, JsonValue]`.
 ///
-/// Order keys не гарантируется (HashMap не upholds insertion order). Для
-/// canonical output используйте sorted iteration.
+/// `HashMap` не хранит порядок вставки, поэтому ключи берутся
+/// ОТСОРТИРОВАННЫМИ (детерминированно, в отличие от случайного
+/// hash-порядка). Для порядка ОБЪЯВЛЕНИЯ полей записи используйте
+/// `JsonObject` напрямую (`JsonValue.Object(obj)`) — так делает
+/// record-сериализатор (`encoding.serde.json`).
 #stable(since = "0.1")
-export fn JsonValue.object(fields HashMap[str, JsonValue]) -> Self => Object(fields)
+export fn JsonValue.object(fields HashMap[str, JsonValue]) -> Self {
+    mut keys []str = []
+    for k in fields.keys() { keys.push(k) }
+    keys.sort()
+    mut obj = JsonObject.new()
+    for k in keys {
+        obj.insert(k, fields.get(k) ?? panic("JsonValue.object: key from fields.keys() missing from fields — invariant violated"))
+    }
+    Object(obj)
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Геттеры / предикаты
@@ -149,7 +259,7 @@ export fn JsonValue @array() -> Option[[]JsonValue] =>
 
 /// Extract object map. `None` если тип не Object.
 #stable(since = "0.1")
-export fn JsonValue @object() -> Option[HashMap[str, JsonValue]] =>
+export fn JsonValue @object() -> Option[JsonObject] =>
     match @ { Object(m) => Some(m), _ => None }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -657,7 +767,7 @@ fn Parser mut @parse_array() -> Result[JsonValue, ParseJsonError] {
 
 fn Parser mut @parse_object() -> Result[JsonValue, ParseJsonError] {
     @advance()?    // {
-    mut fields = HashMap[str, JsonValue].new()
+    mut fields = JsonObject.new()
 
     // Пустой объект
     if @cur.tok == RBrace {
@@ -686,7 +796,7 @@ fn Parser mut @parse_object() -> Result[JsonValue, ParseJsonError] {
     Ok(Object(fields))
 }
 
-fn Parser mut @parse_member(mut fields HashMap[str, JsonValue]) -> Result[(), ParseJsonError] {
+fn Parser mut @parse_member(mut fields JsonObject) -> Result[(), ParseJsonError] {
     // ключ — string token
     ro key_tp = @cur
     ro key = match key_tp.tok {
@@ -838,13 +948,13 @@ fn format_array(xs []JsonValue) -> str {
     buf
 }
 
-fn format_object(m HashMap[str, JsonValue]) -> str {
+fn format_object(m JsonObject) -> str {
     consume buf = StringBuilder.new()
     buf.append("{")
     mut first = true
-    // [M-91.13-codegen-none-arm-nested-generic-mismatch] (2026-06-05):
-    // HashMap.iter() yields (K, V) tuple per hashmap.nv:441 — destructure
-    // explicitly. `entry.key / .value` была wrong API assumption.
+    // [M-json-encode-record-field-order-nondeterministic]: `JsonObject.@iter()`
+    // идёт в порядке ВСТАВКИ (`@key_order`), не в hash-порядке — отсюда
+    // детерминизм поля-порядка в выводе (см. JsonObject выше).
     for (k, v) in m {
         if !first { buf.append(",") }
         buf.append(format_string(k))
@@ -868,7 +978,7 @@ fn format_object(m HashMap[str, JsonValue]) -> str {
 ///
 /// # Examples
 /// ```nova
-/// let mut m = HashMap[str, JsonValue].new()
+/// let mut m = JsonObject.new()
 /// m.insert("name", Str("alice"))
 /// let s = Object(m).to_str_pretty()
 /// assert(s.contains("\n"))
@@ -887,7 +997,7 @@ export fn JsonValue @to_str_pretty() -> str => pretty_at(@, 0)
 ///
 /// # Examples
 /// ```nova
-/// let mut m = HashMap[str, JsonValue].new()
+/// let mut m = JsonObject.new()
 /// m.insert("name", Str("alice"))
 /// let v = Object(m)
 /// assert("${v:#}" == v.to_str_pretty())
@@ -929,15 +1039,13 @@ fn pretty_array(xs []JsonValue, depth int) -> str {
     buf
 }
 
-fn pretty_object(m HashMap[str, JsonValue], depth int) -> str {
+fn pretty_object(m JsonObject, depth int) -> str {
     ro inner_indent = indent(depth + 1)
     ro outer_indent = indent(depth)
     consume buf = StringBuilder.new()
     buf.append("{\n")
     mut first = true
-    // [M-91.13-codegen-none-arm-nested-generic-mismatch] (2026-06-05):
-    // HashMap.iter() yields (K, V) tuple — destructure explicitly
-    // (см. format_object выше).
+    // JsonObject.@iter() — порядок вставки (см. format_object выше).
     for (k, v) in m {
         if !first { buf.append(",\n") }
         buf.append(inner_indent)
