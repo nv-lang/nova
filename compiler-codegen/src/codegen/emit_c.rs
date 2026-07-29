@@ -40491,17 +40491,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     // args, and emit a per-elem static mono.
                                     // Skip <elem> == nova_int — the erased base IS the
                                     // nova_int instance, so that call stays byte-identical.
-                                    // [реестр 221.1 №137, путь A — АРХИТЕКТУРНЫЙ ТУПИК,
-                                    // см. FINDINGS.md] Не читаем канал здесь: эта ветка
-                                    // достижима ТОЛЬКО для методов, зарегистрированных под
-                                    // "[]T" (не "Vec") ключом method_table — а checker's
-                                    // `resolve_generic_static_return` для tyname="[]T"
-                                    // структурно требует T в receiver.generics, который
-                                    // ВСЕГДА пуст для `[]T`-спеллинга (T приходит с
-                                    // METHOD-level `fn[T]` префикса) — `resolved_callees`
-                                    // для ЭТОГО call-site НИКОГДА не заполняется, чтение
-                                    // канала было бы мёртвым кодом. Оставлен baseline
-                                    // name-only lookup без изменений.
+                                    // [№137, путь A — тупик, см. FINDINGS.md] канал сюда
+                                    // не дотягивается: T для "[]T"-ключа живёт на fn[T]
+                                    // префиксе, не в receiver.generics — не читаем канал.
                                     if base_name == "Vec" {
                                         if let Some(elem_c) = type_args_c.first().cloned() {
                                             if elem_c != "nova_int" {
@@ -56434,18 +56426,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                             .zip(type_args_c.iter())
                                             .map(|(g, c)| (g.name.clone(), Some(c.clone())))
                                             .collect();
-                                        // [реестр 221.1 №137, путь A — АРХИТЕКТУРНЫЙ ТУПИК,
-                                        // см. FINDINGS.md] Канал НЕ покрывает эту ветку:
-                                        // `[]T`-static метод хранит T на METHOD-level
-                                        // (`fn[T] []T.method()`), а `resolve_generic_static_
-                                        // return` структурно требует T в RECEIVER-carrier
-                                        // generics (`recv.generics`) — для `[]T`-спеллинга
-                                        // `recv.generics` ВСЕГДА пуст (парсер, ~3097), так что
-                                        // канал молча возвращает None для ЛЮБОГО tyname="[]T"
-                                        // вызова. `generic_type_methods["Vec"]` тоже не хранит
-                                        // такие методы (регистрируются под "[]T", не "Vec").
-                                        // Оставлен legacy name-only fallback (не растёт: тот
-                                        // же код, что был в baseline до №137).
+                                        // [№137, путь A — тупик, см. FINDINGS.md] канал не
+                                        // покрывает: T для "[]T" на fn[T] префиксе, не в
+                                        // receiver.generics — legacy name-only fallback ниже.
                                         let method_ret_opt = self.generic_type_methods.get(type_name)
                                             .and_then(|ms| ms.iter().find(|m| m.name == *method_name))
                                             .and_then(|fd| fd.return_type.as_ref()
