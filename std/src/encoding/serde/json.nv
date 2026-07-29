@@ -10,13 +10,19 @@
 //   decode_bytes/decode_with (§3.8).
 //
 // Soundness (D346): depth-guard (Q14 default 128), numeric точное-целое-check
-// (Q15 -> LossyInteger/OutOfRange, no silent-lossy). Map-детерминизм: encode
-// сортирует ключи (serde.nv HashMap-impl).
+// (Q15 -> LossyInteger/OutOfRange, no silent-lossy). Детерминизм полей-порядка
+// (реестр 221.1 №148, [M-json-encode-record-field-order-nondeterministic]):
+// struct/record-поля (begin_struct/struct_field) идут в ПОРЯДКЕ ОБЪЯВЛЕНИЯ —
+// `SerFrame.obj` — `JsonObject` (encoding.json), упорядоченная map, а не голый
+// `HashMap` (который порядок вставки не хранит, а его hash-итерация вдобавок
+// рандомизирована МЕЖДУ процессами — HashDoS-защита seed'а, трогать нельзя).
+// Отдельно: явный `HashMap[str, V]`-VALUE (не struct-поля, а map-тип в теле
+// записи) по-прежнему сортирует ключи (`serde.nv:345` `keys.sort()`) — это
+// не relates к порядку struct-полей, а к произвольной map-СОДЕРЖИМОЙ.
 
 module encoding.serde
 
-import std.encoding.json.{JsonValue, Json, ParseJsonError, pretty}
-import std.collections.hashmap.{HashMap}
+import std.encoding.json.{JsonValue, JsonObject, Json, ParseJsonError, pretty}
 import std.encoding.base64.{Base64}
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -26,11 +32,16 @@ import std.encoding.base64.{Base64}
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Frame стека сериализации: obj (с pending-ключом) или arr.
-type SerFrame { is_obj bool, obj HashMap[str, JsonValue], arr []JsonValue, pending str }
+///
+/// `obj` — `JsonObject` (упорядоченная map), НЕ голый `HashMap`: struct-поля
+/// (`begin_struct`/`struct_field`) идут в порядке `serialize_field`-вызовов,
+/// т.е. в порядке ОБЪЯВЛЕНИЯ полей записи — это и есть детерминированный
+/// field-order fix (реестр 221.1 №148).
+type SerFrame { is_obj bool, obj JsonObject, arr []JsonValue, pending str }
 fn SerFrame.obj_frame() -> SerFrame =>
-    { is_obj: true, obj: HashMap[str, JsonValue].new(), arr: [], pending: "" }
+    { is_obj: true, obj: JsonObject.new(), arr: [], pending: "" }
 fn SerFrame.arr_frame() -> SerFrame =>
-    { is_obj: false, obj: HashMap[str, JsonValue].new(), arr: [], pending: "" }
+    { is_obj: false, obj: JsonObject.new(), arr: [], pending: "" }
 
 /// Сериализатор: drive Serialize -> строит JsonValue -> @to_str() компактный JSON.
 /// Несёт depth-counter (Q14).
@@ -83,7 +94,10 @@ fn JsonSerializer mut @finish_obj() -> Result[(), SerError] {
     @depth -= 1
     match @stack.pop() {
         None    => Err(SerError.new(SerOther("end without begin")))
-        Some(fr) => @put(JsonValue.object(fr.obj))
+        // Прямая конструкция варианта из УЖЕ упорядоченного `fr.obj` (JsonObject)
+        // — НЕ `JsonValue.object(HashMap)` (та перегонка сортирует ключи, что
+        // потеряло бы порядок объявления полей записи).
+        Some(fr) => @put(JsonValue.Object(fr.obj))
     }
 }
 
