@@ -83,6 +83,15 @@
 module testing.handlers
 
 import std.runtime.vclock
+// [M-inline-cast-receiver-method-resolution] (реестр 221.1 №149): нужен ЯВНО —
+// `now()` ниже зовёт бланкет `fn[T Ints] T @to_unix_millis()`, который живёт в
+// `time.duration`. Комментарий ниже («no explicit import needed») верен только
+// для ТИПОВ из сигнатуры эффект-опа; МЕТОД так не приезжает. До фикса резолва
+// приёмника-инлайн-каста (`(ms as int).to_unix_millis()`) тип приёмника не
+// вычислялся вовсе, проверка молча пропускалась и недостача импорта не
+// проявлялась — файл падал по иной причине и числился в каноне `check std`
+// как известный FAIL. Теперь резолв честный, зависимость обязана быть явной.
+import std.time.duration
 
 // Plan 175 Ф.3 (D316 typed retype): `Time`'s schema is typed
 // (`sleep(Duration)`/`now()->Timestamp`/`now_monotonic()->Monotonic`) —
