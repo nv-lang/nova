@@ -4440,23 +4440,12 @@ impl CEmitter {
             None => return Ok(None),
         };
         // [M-155.a-flagship-anon-record-literal-enum-payload]: mirrors the
-        // Ok/Err fix a few hundred lines up ([M-181-anon-record-in-ctor-arg-
-        // codegen]) for the general `Sum.Variant(args)` explicit-receiver
-        // ctor. A payload arg may be an ANONYMOUS record literal
-        // (`TaskStatus.Done({ id, payload: .. })`) — its own bare-literal
-        // codegen arm (emit_record_lit's D55 inferred-type-context branch)
-        // only fires from `expected_record_type`, which — unscoped here —
-        // carried whatever the ENCLOSING expression left set (e.g. the
-        // fn's OWN return-type struct, or the sum name itself), never this
-        // variant field's ACTUAL declared struct — "anonymous record
-        // literal: expected struct 'TaskStatus' not in record_schemas"
-        // instead of the real payload type (`SourceData`). The variant's
-        // OWN `field_c_types` (resolved from the schema, not guessed) give
-        // the correct per-arg target — scope it while emitting each arg.
-        // Byte-identical for non-anon-record args (the field is only
-        // consulted by the anon-record-without-spread branch) and for
-        // scalar/str payload slots (`debt_struct_name_from_c_type` returns
-        // `None` for those, same as the pre-existing `saved_expected`).
+        // Ok/Err fix above ([M-181-anon-record-in-ctor-arg-codegen]) for the
+        // general `Sum.Variant(args)` ctor. An anon record-lit payload arg
+        // (`TaskStatus.Done({ id, .. })`) needs `expected_record_type` scoped
+        // to ITS OWN field type (not whatever the enclosing expr left set) —
+        // else "anonymous record literal: expected struct 'TaskStatus' not
+        // in record_schemas" instead of the real payload (`SourceData`).
         let saved_expected = self.expected_record_type.clone();
         let mut arg_strs = Vec::with_capacity(args.len());
         for (a, fty) in args.iter().zip(field_c_types.iter()) {
@@ -20931,19 +20920,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             cty.starts_with("Nova_") && cty.ends_with('*') && !cty.ends_with("**");
         if is_single_nova_ptr {
             // [M-156-bare-unit-variant-eq-invalid-cast]: приёмная сторона.
-            // Операнд может прийти НЕ настоящим `Nova_X*`-выражением, а
-            // erased-scalar формой из emit_expr'шного D109-конструктора
-            // qualified unit-варианта (`Type.Variant` в generic-context
-            // намеренно кастуется в `(nova_int)(intptr_t)nova_make_..()` —
-            // см. ~emit_c.rs:33580). Раньше `(l)->tag`/`(r)->tag` (и вызовы
-            // @equal/@compare/named-eq-fn ниже) разыменовывали ТЕКСТ операнда
-            // как есть → «member reference type 'nova_int' is not a pointer»
-            // при сравнении sum-значения с bare zero-field вариантом (`s ==
-            // MySign.Pos`). Ре-каст к объявленному `cty` — no-op для уже
-            // настоящего указателя, round-trip для erased-scalar формы;
-            // единая точка входа в `Nova_X*`-ветку — покрывает все под-пути
-            // (tag+payload рекурсия, @equal/@compare dispatch, named-eq-fn
-            // вызов при cyclic recursion) одним изменением.
+            // Операнд может быть erased-scalar формой D109-конструктора
+            // (`(nova_int)(intptr_t)nova_make_X_Variant()`, ~emit_c.rs:33580),
+            // а `->tag` ниже разыменовывал текст как есть → CC-FAIL при
+            // `s == MySign.Pos`. Ре-каст к `cty` — no-op для настоящего
+            // указателя, round-trip для erased-формы; покрывает разом
+            // tag-рекурсию, @equal/@compare, named-eq-fn (одна точка входа).
             let l = format!("(({})({}))", cty, l);
             let r = format!("(({})({}))", cty, r);
             let l = l.as_str();
