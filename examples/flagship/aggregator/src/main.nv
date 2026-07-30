@@ -68,10 +68,10 @@ fn resolve_addr(port int) Os -> SocketAddr =>
 // ── fn main: accept-loop (the only part that needs manual handling —
 //    `http.servernet` has no reusable accept-loop function) ───────────
 
-// [M-187-nested-spawn-scope-var-cc-fail] workaround: exactly ONE `spawn`
-// holds the entire accept loop. Per-connection handling uses `detach { }`.
-// [M-187-high-concurrency-connection-wedge] mitigation: admission control
-// via `AtomicInt` permit counter — over budget: close immediately.
+// The accept loop runs directly in main's own fiber; each accepted
+// connection is handed to an orphan fiber via `detach consume`.
+// Admission control: an `AtomicInt` permit counter caps concurrent
+// connections — over budget the connection is closed immediately.
 fn main() Time Detach {
     // Flat `with Os = ..., Net = ...` is equivalent to nested `with`
     // blocks, but clearer in the first example a reader sees.
@@ -131,12 +131,8 @@ fn legend_of(req ServerRequest) -> str => req.query_param("legend") ?? "weather"
 
 fn mode_of(req ServerRequest) -> str => req.query_param("mode") ?? "demo"
 
-fn seed_of(req ServerRequest) -> int {
-    match req.query_param("seed") {
-        Some(s) => s.to_int() ?? 42
-        None    => 42
-    }
-}
+fn seed_of(req ServerRequest) -> int =>
+    req.query_param("seed").flat_map(|s| s.to_int().ok()) ?? 42
 
 // ── Run dispatch (legend x mode -> Report + context) ────────────────────────
 
