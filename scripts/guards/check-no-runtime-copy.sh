@@ -67,6 +67,22 @@ for t in "${targets[@]}"; do
     if is_main_repo "$t"; then
         continue  # дом рантайма — законно
     fi
+    # 2026-07-31: junction/symlink на главный nova_rt — ЗАКОННО и рекомендовано.
+    # Ссылка не протухает (это не снимок, а живой указатель на настоящий rt),
+    # диска не ест и снимает саму причину копирования: env-переменные не
+    # переживают свежие шеллы агентов, а fallback-путь <репа>/compiler-codegen/
+    # nova_rt через junction ведёт в правильное место. Прецедент: ТРИ разных
+    # агента (deepseek x2, sonnet) за один день скопировали rt в nova-bigint,
+    # получив одну и ту же ошибку «нет rt» в шелле без env.
+    # bash в Git for Windows видит junction как symlink (-L) ЛИБО как каталог;
+    # добиваем проверкой fsutil reparsepoint для чистого junction-случая.
+    if [ -L "$rt" ]; then
+        continue  # symlink — законно
+    fi
+    winpath="$(cygpath -w "$rt" 2>/dev/null || echo "$rt")"
+    if fsutil reparsepoint query "$winpath" >/dev/null 2>&1; then
+        continue  # junction (reparse point) — законно
+    fi
     size="$(du -sh "$t/compiler-codegen" 2>/dev/null | cut -f1)"
     echo "НАЙДЕНА КОПИЯ РАНТАЙМА: $t/compiler-codegen ($size)" >&2
     found=1
