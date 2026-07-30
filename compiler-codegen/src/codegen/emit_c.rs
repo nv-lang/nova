@@ -20908,6 +20908,24 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let is_single_nova_ptr =
             cty.starts_with("Nova_") && cty.ends_with('*') && !cty.ends_with("**");
         if is_single_nova_ptr {
+            // [M-156-bare-unit-variant-eq-invalid-cast]: приёмная сторона.
+            // Операнд может прийти НЕ настоящим `Nova_X*`-выражением, а
+            // erased-scalar формой из emit_expr'шного D109-конструктора
+            // qualified unit-варианта (`Type.Variant` в generic-context
+            // намеренно кастуется в `(nova_int)(intptr_t)nova_make_..()` —
+            // см. ~emit_c.rs:33580). Раньше `(l)->tag`/`(r)->tag` (и вызовы
+            // @equal/@compare/named-eq-fn ниже) разыменовывали ТЕКСТ операнда
+            // как есть → «member reference type 'nova_int' is not a pointer»
+            // при сравнении sum-значения с bare zero-field вариантом (`s ==
+            // MySign.Pos`). Ре-каст к объявленному `cty` — no-op для уже
+            // настоящего указателя, round-trip для erased-scalar формы;
+            // единая точка входа в `Nova_X*`-ветку — покрывает все под-пути
+            // (tag+payload рекурсия, @equal/@compare dispatch, named-eq-fn
+            // вызов при cyclic recursion) одним изменением.
+            let l = format!("(({})({}))", cty, l);
+            let r = format!("(({})({}))", cty, r);
+            let l = l.as_str();
+            let r = r.as_str();
             let type_name = Self::debt_strip_nova_prefix_or_empty(cty)
                 .trim_end_matches('*')
                 .to_string();
