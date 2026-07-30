@@ -1617,6 +1617,40 @@ pub struct CEmitter {
     /// lookup at Ident emission attribute'ит ссылку к её peer'у через
     /// `expr.span.file_id`. Exported consts → no mangle.
     private_const_c_names: HashMap<(crate::diag::FileId, String), String>,
+    /// [fix M-samename-export-const-cross-module-c-symbol-collision, реестр
+    /// 221.1 №151] Names of `export const` declared in ≥2 DISTINCT modules of
+    /// this CU (the EXPORT counterpart of `colliding_type_names`/
+    /// `colliding_fn_names` — those axes already qualify colliding types/fns;
+    /// `export const` had NO qualification at all: `private_const_c_names`
+    /// above is populated ONLY for non-exported consts by original design
+    /// ("Exported consts не mangle'ятся ... collision — ambiguity error
+    /// type-checker'а уровня D29" — a check the checker never actually
+    /// implements, so two `export const`s sharing a bare name in different
+    /// modules emit the SAME bare `_nova_const_<name>_value` C global →
+    /// CC-FAIL `redefinition ... with a different type`). Built in
+    /// `emit_module` from `peer_files`, mirroring the D381 `type_def_modules`
+    /// collision count. Empty for any CU without a same-name export-const
+    /// collision → every lookup below is a no-op (byte-identical).
+    colliding_const_names: HashSet<String>,
+    /// [fix №151] name → qualified C base for the MOST RECENTLY processed
+    /// declaration of that (colliding) name (`emit_const_decl` overwrites this
+    /// entry every time it processes a same-name colliding export const).
+    /// Mirrors — deliberately — the SAME "last-processed-wins" characteristic
+    /// `var_types` (keyed flatly by bare source name, Ident type-inference)
+    /// already has for a same-name collision: a genuinely AMBIGUOUS reference
+    /// (a file importing BOTH colliding candidates unqualified, e.g.
+    /// `mcrepro/step4.nv`) has no clean disambiguation signal available at
+    /// this layer (the resolved-type channel does not carry per-const import
+    /// identity yet), so reference-site resolution reads THIS map — built
+    /// from the SAME processing order that decided `var_types[name]`'s final
+    /// type — guaranteeing the read's C TYPE and its C SYMBOL stay consistent
+    /// (eliminating the C-level redefinition/type-mismatch), even though
+    /// WHICH candidate wins a genuine same-file dual-import ambiguity remains
+    /// processing-order-dependent — not a new behavior, only extended
+    /// consistently from type-inference to symbol-selection. A real fix
+    /// (checker-side ambiguity diagnostic or a resolved-const-identity
+    /// channel) is a followup, not attempted here (see report).
+    const_qualified_by_name: HashMap<String, String>,
     /// Plan 170 (D307): file-private FREE-FN C-name mangling. Same per-file
     /// resolution model as `private_const_c_names`: `((file_id, source_name)
     /// → file-discriminated C name)`. A `priv(file) fn helper` gets a unique
@@ -2503,6 +2537,8 @@ impl CEmitter {
             imported_modules: HashSet::new(),
             fn_module_map: HashMap::new(),
             private_const_c_names: HashMap::new(),
+            colliding_const_names: HashSet::new(),
+            const_qualified_by_name: HashMap::new(),
             file_priv_fn_c_names: HashMap::new(),
             file_priv_free_fn_decls: HashMap::new(),
             current_emit_file_id: None,
@@ -5734,6 +5770,50 @@ impl CEmitter {
                                 .or_insert(mangled);
                         }
                     }
+                }
+            }
+        }
+
+        // [fix M-samename-export-const-cross-module-c-symbol-collision,
+        // реестр 221.1 №151]: collision-aware qualification for `export
+        // const` — mirrors D381's `type_def_modules` axis (see
+        // `colliding_const_names` field doc for the full rationale +
+        // reference-side resolution strategy/known limit). Count DISTINCT
+        // declaring modules per export-const simple name across the WHOLE
+        // CU; ≥2 → colliding. `effective_modpath`/`emit_file_module` are
+        // already populated by the D381 block above (unconditional, same
+        // scope) — reused here for the definition-site qualifier.
+        {
+            use std::collections::BTreeSet;
+            let mut export_const_def_modules: HashMap<String, BTreeSet<Vec<String>>> =
+                HashMap::new();
+            if module.peer_files.is_empty() {
+                for item in &module.items {
+                    if let Item::Const(c) = item {
+                        if c.is_export {
+                            export_const_def_modules.entry(c.name.clone())
+                                .or_default()
+                                .insert(module.name.clone());
+                        }
+                    }
+                }
+            } else {
+                for pf in &module.peer_files {
+                    let m = effective_modpath(pf);
+                    for item in &pf.items_here {
+                        if let Item::Const(c) = item {
+                            if c.is_export {
+                                export_const_def_modules.entry(c.name.clone())
+                                    .or_default()
+                                    .insert(m.clone());
+                            }
+                        }
+                    }
+                }
+            }
+            for (name, mods) in &export_const_def_modules {
+                if mods.len() >= 2 {
+                    self.colliding_const_names.insert(name.clone());
                 }
             }
         }
@@ -9367,11 +9447,31 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Plan 91.12 (D126 retract followup): для module-private consts
         // используем mangled C name из `private_const_c_names` (источник —
         // pre-pass в emit_module). Ключ — (file_id из span декларации,
-        // source name). Exported consts → имя как есть.
+        // source name). Exported consts → имя как есть, ЕСЛИ bare-имя не
+        // коллидирует с export const'ом ДРУГОГО модуля (см. ниже).
+        //
+        // [fix M-samename-export-const-cross-module-c-symbol-collision,
+        // реестр 221.1 №151]: a colliding `export const` gets THE SAME
+        // `Nova_const_<modpath>_<name>` qualifier the non-export axis above
+        // uses — `colliding_const_names`/`const_qualified_by_name` field docs
+        // explain the reference-side resolution + its known ambiguous-dual-
+        // import limit. Byte-identical when non-colliding.
         let c_name = self.private_const_c_names
             .get(&(c.span.file_id, c.name.clone()))
             .cloned()
-            .unwrap_or_else(|| c.name.clone());
+            .unwrap_or_else(|| {
+                if c.is_export && self.colliding_const_names.contains(&c.name) {
+                    if let Some(modpath) = self.emit_file_module.get(&c.span.file_id) {
+                        if !modpath.is_empty() {
+                            return format!("Nova_const_{}_{}", modpath.join("_"), c.name);
+                        }
+                    }
+                }
+                c.name.clone()
+            });
+        if c.is_export && self.colliding_const_names.contains(&c.name) {
+            self.const_qualified_by_name.insert(c.name.clone(), c_name.clone());
+        }
         // Emit as a static const variable (MSVC-safe, no VLAs or macros needed)
         // We emit the value as an expression; for string literals this needs
         // a compound literal initialiser which MSVC doesn't support at file scope.
@@ -33234,9 +33334,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // consts further below — a different C-naming convention;
                 // see `emit_const_decl`/`emit_lazy_const`).
                 if self.lazy_consts.contains(name) {
+                    // [fix M-samename-export-const-cross-module-c-symbol-
+                    // collision, реестр 221.1 №151]: `private_const_c_names`
+                    // only covers non-export/file-priv consts (per-file key);
+                    // a colliding EXPORT const's qualifier lives in
+                    // `const_qualified_by_name` (global-by-name — see its
+                    // field doc for the reference-resolution rationale +
+                    // known limit) — consulted as the SECOND fallback, before
+                    // the bare-name default.
                     let qualifier = self.private_const_c_names
                         .get(&(expr.span.file_id, name.clone()))
                         .cloned()
+                        .or_else(|| self.const_qualified_by_name.get(name).cloned())
                         .unwrap_or_else(|| name.clone());
                     return Ok(format!("_nova_const_{}_value", qualifier));
                 }
@@ -33267,6 +33376,16 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     .get(&(expr.span.file_id, name.clone()))
                 {
                     return Ok(mangled.clone());
+                }
+                // [fix №151] EAGER (constexpr-initialiser) colliding export
+                // const — mirrors the lazy branch's `const_qualified_by_name`
+                // fallback above (this map's value IS the final eager symbol
+                // itself, no `_nova_const_..._value` wrapper — same
+                // convention `emit_const_decl`'s eager arm already uses).
+                if self.colliding_const_names.contains(name) {
+                    if let Some(mangled) = self.const_qualified_by_name.get(name) {
+                        return Ok(mangled.clone());
+                    }
                 }
                 // [M-c-keyword-ident-collision] (Plan 172.13): plain local-var/
                 // param read (and, since Stmt::Assign lowers its target via
