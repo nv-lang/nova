@@ -171,6 +171,19 @@ This is an early release; treat it accordingly.
   checks (stripped in release builds unless proven false).
 - **The garbage collector is stop-the-world** (Boehm GC); a concurrent,
   incremental collector is on the post-1.0 roadmap, not in this release.
+- **Sharing mutable state across fibers is not fully checked yet.** The
+  compiler rejects a direct `mut` capture inside a `spawn`/`detach`/
+  `parallel for` body (`E_CONCURRENT_MUT_CAPTURE`), but that check sits on
+  the *syntactic* boundary of the block. A closure that captures `mut`
+  state and is created **outside**, then handed in — as a parameter, a
+  struct field, a channel payload or an effect handler — carries the same
+  access past the check, and today that compiles silently. Measured, not
+  theorised: a shared `Vec` written from 8 fibers through such a closure
+  produced a wrong length or a crash in **40 out of 40 runs** (the same
+  program with an `AtomicInt` is clean 20/20). Until the transitive check
+  lands, share across fibers only through internally synchronised types
+  (`Atomic*`, `Mutex`, channel ends, `#share` types) or immutable (`ro`)
+  captures. Tracked as entry 150 in `docs/plans/221.1-bug-sweep.md`.
 - **The language specification is authoritative but written in Russian**
   (`spec/decisions/`); this release's English-facing documentation
   (README, quickstart, language tour) is a curated subset, not a full
