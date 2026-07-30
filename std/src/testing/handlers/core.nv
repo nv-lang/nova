@@ -246,7 +246,7 @@ export fn fixed_ms(ms u64) -> Effect[Time] {
         // Plan 175.1 (D316 amend + D321, 2026-07-10): mock-coherence с
         // now/now_monotonic выше — фиксированные часы означают
         // фиксированную (UTC) зону, детерминизм важнее реалистичности.
-        // closes [M-175.1-local-offset-effect-op] slot-coherence.
+        // закрыл [M-175.1-local-offset-effect-op] (slot-coherence).
         local_offset_sec() -> int => 0
         // Plan 175 Ф.3: `sleep(d)` — `d` — typed `Duration` now (was int
         // ms wire). fixed_ms is a no-op clock — argument unused either way.
@@ -273,7 +273,7 @@ export fn mut_clock(start_ms u64) -> Effect[Time] {
         // escape hatch, see import comment above).
         now_monotonic() -> Monotonic => (current_ms * 1_000_000).to_monotonic_nanos()
         // Plan 175.1 (D316 amend + D321, 2026-07-10): mock-coherence,
-        // фиксированная (UTC) зона — closes [M-175.1-local-offset-effect-op]
+        // фиксированная (UTC) зона — закрыл [M-175.1-local-offset-effect-op]
         // slot-coherence (симметрично fixed_ms выше).
         local_offset_sec() -> int => 0
         // Plan 175 Ф.3 (D316 typed retype): `sleep(d)` — `d` типизирован

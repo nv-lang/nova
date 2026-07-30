@@ -71,10 +71,10 @@ export const I    Complex = Complex(im: 1.0)
 // конструктор). Канон на call-site: `Complex(re, im)`, `Complex(re: x)`,
 // `Complex(im: x)`, `Complex(re: n as f64)` для int. Побочный эффект:
 // снятие `Complex.new`-style static-namespace функций (все были `-> Self`,
-// без вычислений/валидации) обходит codegen-gap [M-...]: static `Type.fn()
+// без вычислений/валидации) обходило codegen-gap: static `Type.fn()
 // -> Self` для named-tuple + instance-методы того же типа в одном CU давали
-// pointer/value-repr конфликт (`NovaTuple_Complex`) — см. историю в
-// docs/plans/backlog-followups.md. `from_polar` (вычисление polar→cartesian)
+// pointer/value-repr конфликт (`NovaTuple_Complex`) — gap закрыт 2026-07-06,
+// фикс сохранил решение владельца. `from_polar` (вычисление polar→cartesian)
 // и str-экстеншен `s.to_complex()` (парсинг, 174.1) ОСТАЮТСЯ — несут логику, не тривиальны.
 
 /// Из полярных координат: `r * (cos θ + i·sin θ)`. theta в радианах.

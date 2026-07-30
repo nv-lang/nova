@@ -245,10 +245,10 @@ export fn Vec[T] @cap() -> int => @cap
 /// gives a predictable realloc point for slice detach (153.4). Returns `@`.
 ///
 /// The getter/setter overload monomorphizes correctly: the generic-method
-/// arity-overload-mono dispatch gap [M-138.2-generic-method-overload-mono] is
-/// fixed, so a mono'd `v.cap(10)` disambiguates to this 1-arg setter (not the
-/// 0-arg getter). This is the accessor-convention form the distinct `@cap_to`
-/// workaround was holding the place for.
+/// arity-overload-mono dispatch gap [M-138.2-generic-method-overload-mono] was
+/// closed (2026-07-12), so a mono'd `v.cap(10)` disambiguates to this 1-arg
+/// setter (not the 0-arg getter). This accessor-convention form replaced the
+/// distinct `@cap_to` helper that held the place during the gap.
 export fn Vec[T] mut @cap(n int) -> @
     requires n >= @len
 {
