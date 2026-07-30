@@ -17343,8 +17343,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // the TLS slot itself; a real `with` still overrides normally,
             // since `emit_with` always overwrites `_nova_handler_X` on entry
             // and restores the PRIOR value — NULL or the default — on exit).
-            // An effect with no registered default keeps today's behaviour
-            // (NULL-deref if used without an enclosing `with`) unchanged.
+            // An effect with no registered default falls through to the
+            // null-check + `nv_panic` guard below (Plan 221.1 №158) — a
+            // controlled panic, no longer a bare NULL-deref.
             if let Some(fn_name) = self.default_handler_fns.get(name).cloned() {
                 let ctor_c_name = self.free_fn_c_name(&fn_name);
                 self.line(&format!(
@@ -17437,6 +17438,30 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                 }
             } else {
+                // Plan 221.1 №158 (D62 §«Семантика проверки»: "Активный handler
+                // в runtime отсутствует на момент операции → runtime fail
+                // (panic)"): раньше здесь был голый `_nova_handler_{name}->{field}(...)`
+                // БЕЗ null-проверки — при отсутствующем handler'е (нет
+                // `with {name} = …` в динамическом стеке вызова, и нет
+                // `#default_handler`, см. lazy-install выше) это разыменовывало
+                // NULL и валило ВЕСЬ процесс access-violation'ом. В merged CU
+                // (folder-module, spec_tests/conformance) один такой сегфолт
+                // убивал ВЕСЬ бинарь — ни один тест из файла-жертвы, ни из
+                // соседних peer-файлов не успевал отрапортовать PASS/FAIL,
+                // и раннер приписывал RUN-FAIL произвольному (алфавитно
+                // первому) файлу набора (см. test_runner.rs run-fail
+                // attribution). Теперь отсутствие handler'а — управляемый
+                // `nv_panic` (тот же путь, что ловит `_nova_test_frame`/
+                // `_nova_fail_top` для любого другого паника) — ловится ИЛИ
+                // локальным test-harness'ом (эта тест-функция репортит FAIL,
+                // остальные тесты в CU продолжают жить), ИЛИ окружающим `with
+                // Fail = …`/scope, как любой другой panic. `return ({ret}){{0}}`
+                // после nv_panic — недостижимый dummy для C (nv_panic не
+                // помечен `_Noreturn`, реально всегда longjmp/abort).
+                self.line(&format!(
+                    "if (!_nova_handler_{name}) {{ nv_panic(nova_str_from_cstr(\"unhandled effect `{name}.{op}`: no active handler (missing `with {name} = …` around this call)\")); return ({ret}){{0}}; }}",
+                    name = name, op = m.name, ret = ret
+                ));
                 self.line(&format!(
                     "return _nova_handler_{name}->{field}({args});",
                     name = name, field = mangled, args = call_args_str
