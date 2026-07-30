@@ -801,6 +801,28 @@ pub struct CEmitter {
     /// Maps protocol_name → (type_param_names, method_signatures).
     /// Populated when a Protocol TypeDecl is processed.
     protocol_method_registry: HashMap<String, (Vec<String>, Vec<EffectMethod>)>,
+    /// [fix M-user-type-name-collides-with-stdlib-type-in-c-symbol, реестр 221.1
+    /// №154] `Protocol name → declaring file_id`. `emit_protocol_box_typedef`
+    /// lowers a protocol's OWN method param/return types (building the
+    /// `NovaVtable_<Proto>` struct) OUTSIDE the `current_emit_file_id`-setting
+    /// scope that guards the normal type-decl emission loop (that loop only
+    /// wraps `emit_type_decl`, while the protocol vtable pre-emit runs earlier,
+    /// at module top). Without a defining file to resolve FROM, `ref_type_base`
+    /// falls through all its resolution branches for a BARE colliding type name
+    /// referenced inside the protocol's own file (e.g. std's `Fmt.sign() -> Sign`
+    /// referencing `runtime.fmt_buf`'s OWN `Sign`, colliding with a user `Sign`
+    /// elsewhere in the CU) and returns the bare, unqualified name — producing
+    /// `Nova_Sign*` in the vtable while the ACTUAL struct was correctly
+    /// qualified to `Nova_runtime_fmt_buf_Sign` by `def_type_base` (which DOES
+    /// know its own file). CC-FAIL `unknown type name 'Nova_Sign'`. Populated at
+    /// both `protocol_method_registry` insert sites (non-generic + generic) from
+    /// the protocol `TypeDecl`'s own `span.file_id`; consulted by
+    /// `emit_protocol_box_typedef` to temporarily set `current_emit_file_id`
+    /// while lowering the protocol's method signatures — mirrors the existing
+    /// `any_type_file_collision()`-gated save/restore idiom used elsewhere
+    /// (e.g. `emit_monomorphized_method_scoped_inner`). Empty/no-op for any CU
+    /// without a collision (byte-identical).
+    protocol_decl_file: HashMap<String, crate::diag::FileId>,
     /// Plan 72 P3-B: companion vtable C variable for each protocol-typed var.
     /// Maps var_name → vtable_c_var_name (e.g. "x" → "__vt_x").
     /// Present only when a concrete type was assigned at declaration.
@@ -2312,6 +2334,7 @@ impl CEmitter {
             fn_protocol_params: HashMap::new(),
             fn_any_params: HashMap::new(),
             protocol_method_registry: HashMap::new(),
+            protocol_decl_file: HashMap::new(),
             protocol_var_vtable: HashMap::new(),
             emitted_vtable_types: HashSet::new(),
             emitted_vtable_instances: HashSet::new(),
@@ -6646,6 +6669,8 @@ impl CEmitter {
                             t.name.clone(),
                             (Vec::new(), flat_methods),
                         );
+                        // [fix №154] declaring file — see `protocol_decl_file` doc.
+                        self.protocol_decl_file.insert(t.name.clone(), t.span.file_id);
                         non_generic_protocols.push(t.name.clone());
                     }
                 }
@@ -6804,6 +6829,8 @@ impl CEmitter {
                             t.name.clone(),
                             (type_params, flat_methods),
                         );
+                        // [fix №154] declaring file — see `protocol_decl_file` doc.
+                        self.protocol_decl_file.insert(t.name.clone(), t.span.file_id);
                         continue;
                     }
                     // Plan 138.2 Ф.0c: skip the imported generic template when
@@ -10393,6 +10420,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // иначе C `duplicate member 'get'`.
         // Plan 91.8a.2 followup 2026-05-29: Self-typed params lower to `void*`
         // в vtable struct (same lowering used by thunk emission below).
+        // [fix M-user-type-name-collides-with-stdlib-type-in-c-symbol, реестр
+        // 221.1 №154]: lower the protocol's OWN method param/return types under
+        // ITS declaring file — see `protocol_decl_file` doc above. GATED
+        // (byte-identical for a CU without a collision — mirrors the existing
+        // `any_type_file_collision()`-gated save/restore idiom used by
+        // `emit_monomorphized_method_scoped_inner` and the type-decl loop).
+        let saved_emit_file_id_proto = self.current_emit_file_id;
+        if self.any_type_file_collision() {
+            if let Some(&fid) = self.protocol_decl_file.get(proto_name) {
+                self.current_emit_file_id = Some(fid);
+            }
+        }
         let method_param_c: Vec<(String, Vec<String>)> = methods.iter().map(|m| {
             let pts: Vec<String> = m.params.iter()
                 .filter_map(|p| {
@@ -10491,6 +10530,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             let mangled_name = Self::mangle_op(&m.name, param_c_types, &all_method_pairs);
             fields.push_str(&format!("    {} (*{})({}); \n", ret_c, mangled_name, params_str));
         }
+        // [fix №154] restore — see save above.
+        self.current_emit_file_id = saved_emit_file_id_proto;
         self.current_type_subst = old_subst;
         // Vtable struct typedef (skip если runtime уже даёт его).
         let args_desc = if args_mangled.is_empty() {
