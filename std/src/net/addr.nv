@@ -23,7 +23,8 @@ module std.net
 /// let a4 = SocketAddr.loopback(8080)       // 127.0.0.1:8080
 /// let a6 = SocketAddr.loopback_v6(8080)    // [::1]:8080
 /// let av = SocketAddr.v4(192, 168, 1, 1, 80)
-/// let ap = SocketAddr.from_str("127.0.0.1:9090")!!
+/// let ap = "127.0.0.1:9090".to_socket_addr()!!
+/// let aw = SocketAddr.any(8080)            // 0.0.0.0:8080, ALL interfaces
 /// ```
 #stable(since = "0.1")
 export type SocketAddr value { priv raw []u8 }
@@ -46,40 +47,85 @@ fn SocketAddr.from_image(b []u8) -> SocketAddr => { raw: b }
 fn SocketAddr @ptr() -> *() => @raw.ptr() as *()
 
 /// Create IPv4 loopback address 127.0.0.1:port (port 0 = OS-assigned).
+///
+/// `port` is `int`, not `u16` — a `u16` boundary here would let an
+/// out-of-range value (e.g. from `env(...).to_int()`) truncate SILENTLY
+/// (`70000 as u16` == 4464 — the server comes up on the WRONG port with no
+/// diagnostic). `int` + `requires` fails loudly, at the right place; for a
+/// literal port the contract is proved statically (D24 TrivialBackend),
+/// zero runtime cost (owner decision 2026-07-30).
 #stable(since = "0.1")
-export fn SocketAddr.loopback(port u16) -> SocketAddr {
+export fn SocketAddr.loopback(port int) -> SocketAddr
+    requires port >= 0 && port <= 0xffff
+{
     mut b = addr_image()
-    unsafe { net_addr_loopback_into(port, b.ptr()) }
+    unsafe { net_addr_loopback_into(port as u16, b.ptr()) }
     SocketAddr.from_image(b)
 }
 
-/// Create IPv6 loopback address [::1]:port.
+/// Create IPv6 loopback address [::1]:port. See [`SocketAddr.loopback`] for
+/// why `port` is `int`, not `u16`.
 #stable(since = "0.1")
-export fn SocketAddr.loopback_v6(port u16) -> SocketAddr {
+export fn SocketAddr.loopback_v6(port int) -> SocketAddr
+    requires port >= 0 && port <= 0xffff
+{
     mut b = addr_image()
-    unsafe { net_addr_loopback_v6_into(port, b.ptr()) }
+    unsafe { net_addr_loopback_v6_into(port as u16, b.ptr()) }
     SocketAddr.from_image(b)
 }
 
-/// Create IPv4 address from dotted-quad octets.
+/// Create IPv4 address from dotted-quad octets. See [`SocketAddr.loopback`]
+/// for why `port` is `int`, not `u16`.
 #stable(since = "0.1")
-export fn SocketAddr.v4(a u8, b u8, c u8, d u8, port u16) -> SocketAddr {
+export fn SocketAddr.v4(a u8, b u8, c u8, d u8, port int) -> SocketAddr
+    requires port >= 0 && port <= 0xffff
+{
     mut img = addr_image()
-    unsafe { net_addr_v4_into(a, b, c, d, port, img.ptr()) }
+    unsafe { net_addr_v4_into(a, b, c, d, port as u16, img.ptr()) }
     SocketAddr.from_image(img)
+}
+
+/// Create IPv4 "any interface" address 0.0.0.0:port — binds to ALL local
+/// interfaces (Go `net.Listen("tcp", ":port")` / nginx convention), **NOT**
+/// loopback. Use [`SocketAddr.loopback`] for a localhost-only bind (also see
+/// there for why `port` is `int`, not `u16`).
+#stable(since = "0.1")
+export fn SocketAddr.any(port int) -> SocketAddr
+    requires port >= 0 && port <= 0xffff
+{
+    mut img = addr_image()
+    unsafe { net_addr_v4_into(0, 0, 0, 0, port as u16, img.ptr()) }
+    SocketAddr.from_image(img)
+}
+
+/// Create IPv6 "any interface" address [::]:port — mirrors [`SocketAddr.any`]
+/// for IPv6; **NOT** loopback (see [`SocketAddr.loopback_v6`]).
+#stable(since = "0.1")
+export fn SocketAddr.any_v6(port int) -> SocketAddr
+    requires port >= 0 && port <= 0xffff
+{
+    mut b = addr_image()
+    unsafe { net_addr_any_v6_into(port as u16, b.ptr()) }
+    SocketAddr.from_image(b)
 }
 
 /// Parse "host:port" into a SocketAddr.
 ///
 /// Returns `Err(NetError.InvalidAddr(s))` on a malformed address,
 /// `Err(NetError.InvalidPort)` on an out-of-range port. IPv6 literals must be
-/// bracketed: `"[::1]:9090"`. Pure — parses a literal, no DNS / no I/O.
+/// bracketed: `"[::1]:9090"`. An empty host before the colon (`":8080"`) is
+/// the Go/nginx **"any interface"** convention — parses to `0.0.0.0:8080`,
+/// **NOT** loopback (see [`SocketAddr.any`] to build the same value without a
+/// string). Pure — parses a literal, no DNS / no I/O. Canon `x.to_*()`
+/// conversion from a `ro`-source (§1а, nv-coding-style; retracted static-door
+/// twin was `SocketAddr.from_str`, removed 2026-07-30,
+/// `[M-from-str-static-conversion-lint-gap]`).
 #stable(since = "0.1")
-export fn SocketAddr.from_str(s str) -> Result[SocketAddr, NetError] {
+export fn str @to_socket_addr() -> Result[SocketAddr, NetError] {
     mut b = addr_image()
-    ro code = unsafe { net_addr_parse(s.ptr(), s.byte_len(), b.ptr()) }
+    ro code = unsafe { net_addr_parse(@ptr(), @byte_len(), b.ptr()) }
     if code == 2 { Err(NetError.InvalidPort) }
-    else if code != 0 { Err(NetError.InvalidAddr(s)) }
+    else if code != 0 { Err(NetError.InvalidAddr(@)) }
     else { Ok(SocketAddr.from_image(b)) }
 }
 

@@ -156,7 +156,7 @@ fn fetch_one(id str, latency_ms int, should_fail bool, idx int) Net Time -> Resu
     if should_fail {
         return Err(AggError.Upstream(id))
     }
-    ro addr = SocketAddr.loopback((BASE_PORT + idx) as u16)
+    ro addr = SocketAddr.loopback(BASE_PORT + idx)
     consume stream = match TcpStream.connect(addr) {
         Ok(consume s)  => s
         Err(e) => return Err(AggError.Transport(e.to_str()))

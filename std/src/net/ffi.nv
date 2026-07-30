@@ -32,6 +32,10 @@ extern "C" fn net_addr_loopback_into(port u16, out *mut u8) -> ()
 extern "C" fn net_addr_loopback(port u16) -> *()
 extern "C" fn net_addr_loopback_v6_into(port u16, out *mut u8) -> ()
 extern "C" fn net_addr_v4_into(a u8, b u8, c u8, d u8, port u16, out *mut u8) -> ()
+// [M-socket-addr-port-only-form]: IPv6 "any interface" wildcard [::]:port
+// (v4 wildcard reuses net_addr_v4_into(0,0,0,0,port,out) — no dedicated entry
+// point needed, see addr.nv SocketAddr.any).
+extern "C" fn net_addr_any_v6_into(port u16, out *mut u8) -> ()
 // Parse "host:port" (s,len) into the 20-byte caller image `out`.
 // Returns 0=OK, 1=invalid address, 2=invalid port.
 extern "C" fn net_addr_parse(s *u8, len int, out *mut u8) -> int

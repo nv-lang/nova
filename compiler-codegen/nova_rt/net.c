@@ -232,6 +232,16 @@ void net_addr_v4_into(uint8_t a, uint8_t b, uint8_t c, uint8_t d,
     r->bytes[0] = a; r->bytes[1] = b; r->bytes[2] = c; r->bytes[3] = d;
 }
 
+/* [M-socket-addr-port-only-form]: IPv6 "any interface" wildcard [::]:port. */
+void net_addr_any_v6_into(uint16_t port, uint8_t* out) {
+    NovaNetAddr* a = (NovaNetAddr*)out;
+    struct sockaddr_in6 in6;
+    uv_ip6_addr("::", port, &in6);
+    struct sockaddr_storage ss; memset(&ss, 0, sizeof(ss));
+    memcpy(&ss, &in6, sizeof(in6));
+    _nn2_addr_from_ss(&ss, a);
+}
+
 nova_int net_addr_parse(const uint8_t* s, nova_int len, NovaNetAddr* out) {
     char* buf = (char*)alloca((size_t)len + 1);
     memcpy(buf, s, (size_t)len);
@@ -242,10 +252,15 @@ nova_int net_addr_parse(const uint8_t* s, nova_int len, NovaNetAddr* out) {
 
     int port_n = atoi(colon + 1);
     if (port_n <= 0 || port_n > 65535) return 2;
+    /* [M-socket-addr-port-only-form]: empty host before the colon (":8080")
+     * is the Go/nginx "any interface" convention — 0.0.0.0, NOT loopback.
+     * Must be decided BEFORE truncating `buf` at the colon (after which the
+     * host substring is unconditionally empty). */
+    nova_bool wildcard_host = (colon == buf);
     *colon = '\0';
 
     struct sockaddr_in in4;
-    if (uv_ip4_addr(buf, port_n, &in4) == 0) {
+    if (uv_ip4_addr(wildcard_host ? "0.0.0.0" : buf, port_n, &in4) == 0) {
         struct sockaddr_storage ss; memset(&ss, 0, sizeof(ss));
         memcpy(&ss, &in4, sizeof(in4));
         _nn2_addr_from_ss(&ss, out);
