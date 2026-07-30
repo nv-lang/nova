@@ -31,17 +31,16 @@ V1 **не** включает: цепные операции с автомати�
 ### 2.1. Представление
 
 ```nova
-type RoundingMode enum
-    HALF_EVEN   // banker's rounding (Java default)
-    HALF_UP     // школьное 0.5 → +1
-    HALF_DOWN   // 0.5 → 0
-    DOWN        // truncation (Java FLOOR аналог) — к нулю
-    UP          // от нуля (CEILING для положительных)
-    CEILING     // к +∞
-    FLOOR       // к -∞
+// D406-канон: варианты через `|`, PascalCase (как `Sign enum Neg | Zero | Pos` в 235;
+// SCREAMING_CASE — Java-стиль, у нас так пишутся только const).
+type RoundingMode enum HalfEven | HalfUp | HalfDown | Down | Up | Ceiling | Floor
+// HalfEven — banker's (Java default) · HalfUp — школьное 0.5→+1 · HalfDown — 0.5→0
+// Down — к нулю (truncation) · Up — от нуля · Ceiling — к +∞ · Floor — к -∞
 
-type MathContext {
-    precision u64,     // количество ЗНАЧАЩИХ цифр мантиссы (не знаков после запятой)
+type MathContext value {   // value: дешёвая пара, копия честная
+    precision int,   // ЗНАЧАЩИХ цифр мантиссы (не знаков после запятой); ИНВАРИАНТ ≥ 1.
+                     // Java precision=0 «unlimited» НЕ поддерживаем в V1: неограниченное
+                     // 1/3 не терминируется; конструктор с 0 — panic/requires.
     rm RoundingMode,
 }
 
@@ -78,54 +77,63 @@ scale = a.scale + b.scale
 → BigDecimal { mant, scale }  // без decimal-normalize (lazy)
 ```
 
-**Деление (ключевая сложность — как у BigInt Кнут D):**
+**Деление (ключевая сложность):**
 ```
-// Вычислить mant = a / b с точностью p значащих цифр (p = mc.precision)
-// a / b = (a.mant × 10^{a.scale}) / (b.mant × 10^{b.scale})
-//        = (a.mant × 10^{a.scale - b.scale}) / b.mant
+// ТРЕБОВАНИЕ: !b.is_zero() — деление на ноль паникует (паритет int; норма ДИЗАЙНА, не только тест).
+// a/b = (a.mant / b.mant) × 10^{-(a.scale - b.scale)}.
+// Значащих цифр у квотиента ≈ digits(a.mant) - digits(b.mant) + k (±1) при расширении
+// делимого на 10^k — k ОБЯЗАН учитывать длины мантисс.
+// (Фикс ревью 2026-07-30: прежняя редакция расширяла на p+2 БЕЗ учёта digits и клала
+//  result_scale = p — неверно уже на 100/8 при p=4: quot получал 7 цифр, «сдвиг на одну»
+//  не спасал; плюс округление по одной отброшенной цифре ТЕРЯЛО sticky-хвост от rem —
+//  2.5000001 под HalfEven округлялся бы как ровно 2.5.)
 
-// Расширяем делимое на p + 2 цифры — p цифр результата + 1 для округления
-// + 1 запас на возможный carry после округления (9.95 → 10.0 при p=2).
-scale_diff = a.scale - b.scale
-extended_precision = p + 2 + max(0, -scale_diff)
-extended = a.mant × 10^{extended_precision}
+sign = знак результата (произведение знаков); далее работаем на |mant| —
+       BigInt @div_rem (235) trunc-к-нулю, rem знака ДЕЛИМОГО: сравнения с half
+       на отрицательных ломаются, знак навешивается в конце
+da = a.mant.digits(); db = b.mant.digits()
+k = max(0, p + 2 - da + db)                    // квотиент получит >= p+1 значащих цифр
+(quot, rem) = (|a.mant| × 10^k).div_rem(|b.mant|)
+sticky = rem != 0                              // ненулевой хвост НИЖЕ последней цифры quot
 
-(quot, rem) = BigInt @div_rem(extended, b.mant)
+// ОДНА десятичная доокруглка до p значащих цифр (§2.3); sticky участвует в «ровно половина»:
+(rounded, d) = round_to_precision(quot, p, mc.rm, sign, sticky)  // d = отброшено цифр (+1 при carry 99→100)
 
-// quot имеет ≤ p + 2 значащих цифр.
-// Перед округлением отбрасываем младшую цифру → p + 1 остаётся.
-(quot, round_digit) = chop_last_digit(quot)
-
-// Десятичное округление последней цифры (0..9) по mc.rm:
-rounded = apply_rounding(quot, round_digit, mc.rm)
-
-// Если carry дал p+1 цифр (99→100), сдвигаем scale:
-if rounded.digits() > p:
-    rounded /= 10
-    result_scale = p - 1
-else:
-    result_scale = p
-
-→ BigDecimal { mant: rounded, scale: result_scale }
+result_scale = a.scale - b.scale + k - d
+→ BigDecimal { mant: apply_sign(rounded, sign), scale: result_scale }
 ```
 
-### 2.3. Округление — `MathContext.apply(mant, target_precision, rm)`
+### 2.3. Округление — `round_to_precision(mant_abs, target_precision, rm, sign, sticky)`
 
-Отбрасывание младших цифр мантиссы до `target_precision`:
+Отбрасывание младших цифр НЕОТРИЦАТЕЛЬНОЙ мантиссы до `target_precision` значащих цифр.
+Знак — ПАРАМЕТРОМ: (а) div_rem на отрицательных ломает сравнения с `half` (rem знака делимого);
+(б) `Ceiling`/`Floor` обязаны смотреть на знак ИСХОДНОГО значения — знак усечённого quot
+теряется на «-0.4 → quot 0» (Sign.Zero), и Floor не дал бы -1. `sticky` — есть ли ненулевой
+хвост НИЖЕ отбрасываемых цифр (от деления §2.2; при прямом `@round` числа — false).
+Возвращает `(rounded, d)` — d нужен вызывающему для коррекции scale.
+
 ```
-factor = 10^{mant.digits() - target_precision}
-(quot, rem) = mant.div_rem(factor)
-half = factor / 2
+d = mant_abs.digits() - target_precision
+if d <= 0 → return (mant_abs, 0)         // уже не длиннее цели — guard (иначе 10^отрицательное)
+factor = 10^d
+(quot, rem) = mant_abs.div_rem(factor)    // mant_abs >= 0 → rem >= 0
+half = factor / 2                          // = 5×10^{d-1}, точно
+gt_half = rem > half || (rem == half && sticky)   // sticky сдвигает «ровно половину» в «больше»
+eq_half = rem == half && !sticky
+tail    = rem != 0 || sticky
 carry = match rm:
-    HALF_EVEN => rem > half || (rem == half && quot.is_odd())
-    HALF_UP   => rem >= half
-    HALF_DOWN => rem > half
-    DOWN      => false  // truncate
-    UP        => rem != 0
-    CEILING   => quot.sign == Pos && rem != 0
-    FLOOR     => quot.sign == Neg && rem != 0
+    HalfEven => gt_half || (eq_half && quot.is_odd())
+    HalfUp   => gt_half || eq_half
+    HalfDown => gt_half
+    Down     => false                      // truncate
+    Up       => tail
+    Ceiling  => sign == Pos && tail
+    Floor    => sign == Neg && tail
 rounded = quot + (carry ? 1 : 0)
-→ rounded
+if rounded.digits() > target_precision:    // carry 99→100
+    rounded = rounded / 10                 // хвост после carry нулевой по построению
+    d += 1
+→ (rounded, d)
 ```
 
 ### 2.4. Нормализация — `BigDecimal.normalize()`
@@ -136,10 +144,12 @@ rounded = quot + (carry ? 1 : 0)
 ```
 loop:
     if mant.is_zero() → return BigDecimal(mant=Zero, scale=0)
-    (mant, rem) = mant.div_rem(10)  // BigInt @div_rem
-    if rem != 0 → break  // последняя цифра не ноль
+    (q, rem) = mant.div_rem(10)   // ВО ВРЕМЕННЫЕ — фиксировать деление можно только при rem == 0
+    if rem != 0 → break            // последняя цифра не ноль; mant НЕ тронут
+    mant = q
     scale -= 1
-// повтор
+// (фикс ревью 2026-07-30: прежняя редакция писала `(mant, rem) = mant.div_rem(10)` ДО
+//  проверки rem — перезаписывала мантиссу и ТЕРЯЛА последнюю ненулевую цифру: 123 → 12)
 ```
 
 **⚠ O(n²):** BigInt `div_rem(10)` — полный проход по лимбам; нормализация числа с 500 конечными нулями стоит 500 полных делений. V1: корректность > скорость; V2 требует trailing-zero-count через степени 10 (бинарный поиск).
@@ -150,34 +160,37 @@ loop:
 
 - `fn[T Ints] T @to_bigdecimal() -> BigDecimal` — `BigInt::from(T)`, `scale = 0`.
 - `i128 @to_bigdecimal() -> BigDecimal` — явная перегрузка (i128 не член Ints; Ints может отсутствовать к моменту V1 — тогда все перегрузки явные).
-- `str @to_bigdecimal() -> Option[BigDecimal]` — см. 2.9 «Формат строки».
-- `BigDecimal @to_str(scale_pad: int? = None) -> str`:
+- `str @to_bigdecimal() -> Result[BigDecimal, ParseBigDecimalError]` — см. 2.9 «Формат строки». (Result, НЕ Option — D325 R1 «Result = любая падающая операция», Option только genuine absence R4; эталоны: `to_version`/`to_complex`/`to_int`. Один структурный error-тип на домен.)
+- `BigDecimal @to_str(scale_pad int = 0) -> str` (0 = без дополнения; `int? = None` — не-Nova-синтаксис):
   ```
-  if scale >= 0:
-      (int_part, frac) = mant.div_rem(10^{scale})
-      // frac дополняется слева нулями до scale цифр
-      int_part @to_str + '.' + pad_left(frac @to_str, scale, '0')
-  if scale < 0:
-      // целое с неявными нулями: mant × 10^{-scale}
-      (mant × 10^{-scale}) @to_str  // без точки
+  // ЗНАК СНАЧАЛА: div_rem на отрицательной мантиссе теряет «-0.5»
+  // (trunc-к-нулю: (-5).div_rem(10) = (0, -5) — int_part = 0, знак пропал → печаталось бы "0.5").
+  sign = if mant.is_neg() { "-" } else { "" };  m = |mant|
+  if scale > 0:
+      (int_part, frac) = m.div_rem(10^{scale})
+      sign + int_part @to_str + '.' + pad_left(frac @to_str, scale, '0')
+  if scale <= 0:
+      // целое с неявными нулями: m × 10^{-scale}; при большом |scale| материализует
+      // гигантский BigInt — документировано, V1 приемлемо
+      sign + (m × 10^{-scale}) @to_str  // без точки
   ```
   Параметр `scale_pad` — минимальное число цифр после запятой (дополнение справа нулями).
 - `BigDecimal @to_int() -> Option[int]` — fits-проверка (BigInt @to_int).
 - `BigDecimal @to_i128() -> Option[i128]` — явная перегрузка (i128 не Ints).
 - `BigDecimal @round(ctx: MathContext) -> BigDecimal` — округление до `ctx.precision` значащих цифр (precision-based, см. 2.3).
-- `BigDecimal @scale(target: int, rm: RoundingMode) -> BigDecimal` — округление до `target` десятичных знаков (scale-based, установка свойства scale). Аналог Java `setScale(int, RoundingMode)`. Если `target > scale` — мантисса дополняется нулями (без округления); если `target < scale` — округление по `rm`. `target < 0` — округление до `10^{|target|}` (аналог Java `setScale(-2)` = to hundreds).
+- `BigDecimal @scale(target: int, rm: RoundingMode) -> BigDecimal` — округление до `target` десятичных знаков (scale-based, установка свойства scale). Аналог Java `setScale(int, RoundingMode)`. Если `target > scale` — мантисса дополняется нулями (без округления); если `target < scale` — округление по `rm`. `target < 0` — округление до `10^{|target|}` (аналог Java `setScale(-2)` = to hundreds). **Имя пересмотреть на Ф.0:** поле `scale` уже даёт одноимённое свойство-читатель `@scale()` (D84); перегрузка того же имени операцией «установить с округлением» смешивает чтение свойства и вычисление — рекомендация **`@rescale(target, rm)`**.
 
 ### 2.6. Операторный desugar и равенство
 
 **Desugar:** `+`/`-`/`*` → `@plus/@minus/@times`. `/` **НЕ десугарится** — `@div(b, mc)` требует явного `MathContext` (деление BigDecimal неоднозначно без точности). Оператор `a / b` в V1 не поддерживается; только `a.@div(b, mc)`.
 
-**Равенство:** BigDecimal — value-record. В Nova `==` на value-record **структурное** по умолчанию (D328): field-by-field (BigInt-поля через BigInt.@equal, int-поля через `==`). `#impl(Equal)` не требуется для `==`, но нужен для `#impl(Compare)`, `@hash` и использования в `HashMap`.
+**Равенство:** BigDecimal ОБЯЗАН объявить собственные `@equal`/`@hash`/`@compare` — структурное `==` value-record (D328) здесь НЕВЕРНО: lazy normalize допускает разные `(mant, scale)` у равных значений (`1.0 = {10,1}` vs `1 = {1,0}`), field-by-field дал бы `1.0 != 1`. **Ф.0-пин (блокер):** проверить пробой, что `==` при ОБЪЯВЛЕННОМ у типа `@equal` диспетчеризуется в него, а не в структурное; если структурное побеждает — вопрос владельцу ДО Ф.1. (Прежняя редакция утверждала одновременно «== структурное, #impl(Equal) не требуется» и «@equal нормализует оба операнда» — эти утверждения несовместимы.)
 
 **Lazy normalize + @equal:** Поскольку normalize не вызывается в операциях, два значения с одинаковым числовым значением могут иметь разное mant+scale (`1.0 = {10, 1}`, `1 = {1, 0}`). Структурное `==` на value-record дало бы Java-gotcha. Решение:
 
 - `@equal` нормализует ОБА операнда перед memberwise-сравнением (паритет Rust `bigdecimal`).
 - `@hash` нормализует перед хэшированием.
-- `@compare` нормализует, затем лексикографически по (scale, mant) или через BigInt.
+- `@compare` — НЕ через нормализацию и НЕ лексикографически (фикс ревью 2026-07-30: normalize не уравнивает scale — `1.5={15,1}` vs `2={2,0}`, лексикографика по (scale, mant) сравнила бы 1.5 > 2). Правильно: сравнить знаки; при равных — выровнять scale (домножить мантиссу с МЕНЬШИМ scale на `10^diff`, как в сложении) и сравнить BigInt-мантиссы с учётом знака.
 
 **⚠** Первый `@equal`/`@hash` на ненормализованном значении платит O(n²). Последующие вызовы — O(1), если значение уже нормализовано. Для V1 этого достаточно; V2 — кэш нормализованной формы в value-record или lazy-normalize-on-construction через trailing-zero-count.
 
@@ -193,7 +206,7 @@ BigDecimal НЕ отдельная репа — живёт в той же реп
 
 ### 2.9. Формат строки для `str @to_bigdecimal`
 
-Спецификация входного формата (не хуже Rust `bigdecimal`, но без Unicode-digit-сюрпризов Java):
+Возврат — `Result[BigDecimal, ParseBigDecimalError]` (см. 2.5); в таблице ниже `Err` = `Err(ParseBigDecimalError)`. Спецификация входного формата (не хуже Rust `bigdecimal`, но без Unicode-digit-сюрпризов Java):
 
 ```
 bigdecimal-str := [sign] (int-part ['.' [frac-part]] | '.' frac-part) [exp-part]
@@ -207,11 +220,11 @@ digit          := '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9'
 
 **Правила:**
 - Символ `_` удаляется из digit-последовательностей ДО вычисления scale (как в Rust/Python 3.6+). `1_000.5_00` → `1000.500`.
-- Ровно одна точка; второе вхождение `'.'` → `None`. Ровно одна экспонента; второе `'e'`/`'E'` → `None`.
-- Пустой int-part или frac-part после удаления `_` → `None` (кроме случая `'.'` с обеих сторон пусто → тоже `None`).
-- Экспонента без digits после sign (или без sign и без digits) → `None`.
+- Ровно одна точка; второе вхождение `'.'` → `Err`. Ровно одна экспонента; второе `'e'`/`'E'` → `Err`.
+- Пустой int-part или frac-part после удаления `_` → `Err` (кроме случая `'.'` с обеих сторон пусто → тоже `None`).
+- Экспонента без digits после sign (или без sign и без digits) → `Err`.
 - Scale = `len(frac_part_cleaned) - exp_value`. Scale может быть отрицательным (экспонента больше числа дробных цифр).
-- Обработка только ASCII `'0'..'9'`. Не-ASCII цифры (арабские, деванагари) → `None`.
+- Обработка только ASCII `'0'..'9'`. Не-ASCII цифры (арабские, деванагари) → `Err`.
 
 **Примеры:**
 | Вход | Результат | Почему |
@@ -223,14 +236,14 @@ digit          := '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9'
 | `"1e-3"` | mant=1, scale=3 | экспонента -3: 0 - (-3) = 3 |
 | `"1.5E+2"` | mant=15, scale=-1 | frac=1 цифра, exp=2: 1-2=-1 |
 | `"1_000.50"` | mant=100050, scale=2 | `_` удалён |
-| `"123.45.6"` | `None` | две точки |
-| `"1e"` | `None` | пустая экспонента |
-| `""` | `None` | пустая строка |
-| `"hello"` | `None` | не-цифры |
+| `"123.45.6"` | `Err` | две точки |
+| `"1e"` | `Err` | пустая экспонента |
+| `""` | `Err` | пустая строка |
+| `"hello"` | `Err` | не-цифры |
 
 ## 3. Фазы
 
-- **Ф.0 Разведка/дизайн-фиксация (короткая, после закрытия Plan 235):** (1) фикстура операторного desugar на value-record с `@plus/@compare` для BigDecimal — подтвердить, что `+`/`<` работают; (2) выбор `MathContext`-формата; (3) API-ревью владельцем.
+- **Ф.0 Разведка/дизайн-фиксация (короткая, после закрытия Plan 235):** (1) фикстура операторного desugar на value-record с `@plus/@compare` для BigDecimal — подтвердить, что `+`/`<` работают; (2) выбор `MathContext`-формата; (3) API-ревью владельцем; (4) ПИН `==`→`@equal`-диспетча на value-record с объявленным `@equal` (§2.6 — блокер: если структурное D328 побеждает, `1.0 != 1`); (5) имя `@rescale` vs `@scale` (§2.5); (6) пин-тест знаковой конвенции BigInt `@div_rem` (235: trunc-к-нулю, rem знака делимого) — на ней держатся §2.2-2.5 (все сравнения с half ведутся на |mant|).
 
 - **Ф.1 Представление + нормализация + конверсии (sonnet):** `type BigDecimal value {…}`, `type MathContext`, `type RoundingMode`; `T @to_bigdecimal`/`i128 @to_bigdecimal`/`str @to_bigdecimal`; `to_str`/`normalize`.
 
@@ -251,9 +264,9 @@ digit          := '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9'
 ## 5. Риски
 
 | Риск | Митигация |
-|---|---|---|
+|---|---|
 | Нормализация: `div_rem(10)` в цикле — O(n²) при большом числе конечных нулей | Вызывается только в `@equal`, `@hash` и явном `normalize()`. V1: корректность > скорость. Документировать: normalize дорог для чисел с >10⁴ trailing zeros |
-| Деление: quot-догадка BigInt div_rem (Кнут D) может давать лишнюю цифру при малых знаменателях | Ф.3 явно проверяет `quot.digits()` и корректирует scale |
+| Деление — самая рискованная арифметика: k-расширение (учёт digits), sticky, carry 99→100 | Ф.3: worked-примеры (1/8, 100/8, 2/3, 1/3 при p=1..4) + sticky-вектора (2.5000001 при HalfEven → 3, не 2) + инвариант a.div(b,mc).times(b) ≈ a |
 | Округление: `HALF_EVEN` требует проверки чётности — BigInt `@is_even()` за O(1) | `is_even` на BigInt тривиален |
 | scale overflow: `add(a,b)` → `|a.scale ± b.scale|` может превысить `int::MAX` | Паритет Rust: scale = int (64-bit), overflow физически невозможен для представимых чисел (2⁶³ знака > атомов во вселенной). Документировать: не паниковать, обрезать до `int::MAX`? или panic? Рекомендация: panic по паритету `int` overflow в Nova |
 | Операторы на value-record не десугарятся (`@plus`/`@times`) | Ф.0-пин; fallback = методы без операторов (`a.plus(b)` вместо `a + b`) |

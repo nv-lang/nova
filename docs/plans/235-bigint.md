@@ -66,8 +66,9 @@
 - **API V1 (конверсии — СТРОГО `to_*`-канон, nv-coding-style §1/D410: `from_*` только для
   концептов-не-ресиверов; линт W_STATIC_CONVERSION):**
   `fn[T Ints] T @to_bigint() -> BigInt` (generic по образцу `T @to_millis` — все ширины
-  одним методом, infallible) и `str @to_bigint() -> Option[BigInt]` (десятичная, ведущий
-  `-`; fallible → Option) — extension-методы в модуле bigint; статики только
+  одним методом, infallible) и `str @to_bigint() -> Result[BigInt, ParseBigIntError]` (десятичная, ведущий
+  `-`; fallible → Result — D325 R1, Option только для genuine absence R4; эталоны
+  `to_version`/`to_complex`/`to_int`; выровнено при ревью 236, 2026-07-30) — extension-методы в модуле bigint; статики только
   не-конверсионные: `BigInt.zero()/one()`. Операции: `@plus/@minus/@times` +
   `@div_rem -> (BigInt, BigInt)` (деление trunc-к-нулю — паритет `int`), производные
   `@div/@rem`; `@neg/@abs`; `@compare/@equal` (операторы `==`/`<` через существующий
