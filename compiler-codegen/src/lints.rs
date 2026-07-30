@@ -4003,13 +4003,32 @@ fn conv_type_is_closure(ty: &TypeRef) -> bool {
 // флагуется всегда; спорные точки — комментарий-маркер на месте.
 // ---------------------------------------------------------------------------
 
+/// CamelCase → snake_case по границам слов (nv-coding-style §1а, 2026-07-30:
+/// «имя типа внутри `to_*` — snake_case по границам CamelCase»). Используется
+/// только для диагностики-подсказки в [`conv_static_conversion`] — не
+/// нормативный движок именования (лексикализованные исключения `datetime`/
+/// `bigint`/`bigdecimal`/`bigfloat` тут не разворачиваются, это на совести
+/// автора миграции).
+fn conv_camel_to_snake(name: &str) -> String {
+    let mut out = String::with_capacity(name.len() + 4);
+    for (i, ch) in name.chars().enumerate() {
+        if ch.is_uppercase() && i > 0 {
+            out.push('_');
+        }
+        for lower in ch.to_lowercase() {
+            out.push(lower);
+        }
+    }
+    out
+}
+
 fn conv_static_conversion(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
     for f in conv_all_fns(m) {
         let Some(recv) = &f.receiver else { continue };
         if recv.kind != ReceiverKind::Static {
             continue;
         }
-        if (f.name == "from" || f.name == "parse") && !f.params.is_empty() {
+        if (f.name == "from" || f.name == "parse" || f.name == "from_str") && !f.params.is_empty() {
             out.push(LintWarning {
                 rule: "W_STATIC_CONVERSION",
                 diag: Diagnostic::new(
@@ -4021,7 +4040,7 @@ fn conv_static_conversion(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWa
                          концепт-источника под содержательным именем (`from_polar`).",
                         recv.type_name,
                         f.name,
-                        recv.type_name.to_lowercase()
+                        conv_camel_to_snake(&recv.type_name)
                     ),
                     f.span,
                 ),
@@ -8342,6 +8361,58 @@ mod tests {
         assert!(
             ws.iter().any(|w| w.rule == "W_STATIC_CONVERSION"),
             "nova:allow must only suppress the very next line, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    // [M-from-str-static-conversion-lint-gap] (2026-07-30): детектор был
+    // слеп к `from_str`-морфологии (матчил только буквальные `from`/`parse`).
+
+    #[test]
+    fn warns_on_static_from_str() {
+        // pos: `Type.from_str(s str)` — та же «пятая дверь», что и голый
+        // `from`, просто другим именем — канон `str @to_path()`.
+        let src = "module foo\n\
+             type Path { ro bytes []u8 }\n\
+             export fn Path.from_str(s str) -> Path => { bytes: s.bytes() }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            ws.iter().any(|w| w.rule == "W_STATIC_CONVERSION"),
+            "ожидался W_STATIC_CONVERSION на `Path.from_str`, получено: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_warning_on_from_polar_concept_source() {
+        // neg: `from_polar` — источник НЕ значение-ресивер, а концепт (пара
+        // r/theta) — легальная дверь по §1а, НЕ должна расширяться слепо.
+        let src = "module foo\n\
+             type Complex { ro re f64, ro im f64 }\n\
+             export fn Complex.from_polar(r f64, theta f64) -> Complex => \
+             { re: r, im: theta }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            !ws.iter().any(|w| w.rule == "W_STATIC_CONVERSION"),
+            "не должен fire на `from_polar` (концепт-источник), получено: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_warning_on_from_raw_parts_concept_source() {
+        // neg: `from_raw_parts`-класс (сырой хендл/указатель — концепт, не
+        // значение-ресивер) — легальная дверь, вторая явная граница §1а.
+        let src = "module foo\n\
+             type Buf { ro ptr *() }\n\
+             export fn Buf.from_raw_parts(p *(), len int) -> Buf => { ptr: p }\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            !ws.iter().any(|w| w.rule == "W_STATIC_CONVERSION"),
+            "не должен fire на `from_raw_parts` (концепт-источник), получено: {:?}",
             ws.iter().map(|w| w.rule).collect::<Vec<_>>()
         );
     }
