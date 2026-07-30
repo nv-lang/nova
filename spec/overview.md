@@ -90,7 +90,7 @@
    (`Time.sleep`, `TcpListener.accept()`, `Channel.recv()`) легальны
    **прямо в `main()`**, без обёртки в `supervised { spawn { … } }`.
    То же самое верно и **прямо в теле `supervised { … }`** без
-   промежуточного `spawn` ([D435](decisions/06-concurrency.md#d435),
+   промежуточного `spawn` ([D439](decisions/06-concurrency.md#d439),
    2026-07-30) — но такая прямая блокирующая операция НЕ защищена
    `timeout:`/`cancel:` этого scope (enforcement живёт только в join-цикле,
    который стартует после statement'ов тела); для защиты дедлайном/токеном

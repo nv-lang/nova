@@ -12378,7 +12378,7 @@ impl<'a> TypeCheckCtx<'a> {
                 format!(
                     "[E_UNKNOWN_METHOD] no method `{}` on fixed-array type `[N]T` — a \
                      `[N]T` receiver only has the compiler-synthesized `@len()`/`@ptr()` \
-                     accessors (D431) plus indexing (`arr[i]`, D238); it is a distinct \
+                     accessors (D440) plus indexing (`arr[i]`, D238); it is a distinct \
                      inline value type, not `Vec[T]` — Vec's own methods do not apply.\n  \
                      fix: check the method name for a typo, or copy into a `[]T`/`Vec[T]` \
                      first if you need the fuller Vec surface.",

@@ -82,11 +82,11 @@ peeled-"Vec"-имя. Неg-фикстура использует typo-ветку
 - [x] Checker synthesis (2 producer hooks + E_UNKNOWN_METHOD гейт)
 - [x] Codegen synthesis (emit_call Member arm)
 - [x] Rebuild green (checker+codegen, затем повторно после E_UNKNOWN_METHOD гейта)
-- [x] D431 spec-блок — полный decision-блок в `spec/decisions/03-syntax.md`
-      (amendment-заметка в D27 + отдельный `## D431.` перед `## D30`)
-- [x] Фикстуры: pos `spec_tests/conformance/d431_fixarr_len_ptr.nv` (3 test-блока:
+- [x] D440 spec-блок — полный decision-блок в `spec/decisions/03-syntax.md`
+      (amendment-заметка в D27 + отдельный `## D440.` перед `## D30`)
+- [x] Фикстуры: pos `spec_tests/conformance/d440_fixarr_len_ptr.nv` (3 test-блока:
       len на 3 разных N, RawMem.copy round-trip, mut-перегрузка запись);
-      neg `spec_tests/conformance/neg/d431_fixarr_unknown_method_neg.nv`
+      neg `spec_tests/conformance/neg/d440_fixarr_unknown_method_neg.nv`
       (typo → E_UNKNOWN_METHOD, EXPECT_COMPILE_ERROR)
 - [x] Верификация — 5 прогонов, все зелёные (см. финальный отчёт)
 - [x] Байт-паритет — 2 нетронутых фикстуры, SHA-256 идентичны против

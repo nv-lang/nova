@@ -13873,7 +13873,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
         }
 
-        // Plan 221.1 №162 (D435): do NOT repoint _nova_active_scope/_slot at
+        // Plan 221.1 №162 (D439): do NOT repoint _nova_active_scope/_slot at
         // `queue` — untouched, a direct body blocking op parks correctly on
         // this coroutine's real (scope,slot). fibers.h (nova_scope_free_slot) + D435.
         self.line(&format!("NovaFiberQueue* {} = _nova_active_scope;", prev_scope_var));

@@ -25,7 +25,7 @@ structured-concurrency примитивы есть в языке, и как па
 | [D174](#d174-sync-primitives-consume-integration-plan-1039) | Consume guards V2 — `MutexGuard`, `ReadGuard`, `WriteGuard`, `Permit`, `OnceGuard` consume types; guard-returning API; D169–D171 cross-refs updated |
 | [D425](#d425-cas-возвращает-свидетеля-провала-compare_exchange-bool--resultt-plan-207) | CAS возвращает свидетеля провала: `compare_exchange`/`compare_exchange_weak` `bool` → `Result[(), T]` (amends D168 §1) |
 | [D426](#d426-atomic-семейство-консолидация-имён-atomicisizeatomicusize--atomicintatomicuint-легаси-atomicint-и-atomicptr-сняты-plan-207) | Atomic-семейство: консолидация имён — `AtomicIsize`/`AtomicUsize` → `AtomicInt`/`AtomicUint`, легаси `AtomicInt` и `AtomicPtr` сняты (amends D168, D425) |
-| [D435](#d435-supervised--прямая-блокирующая-операция-в-теле-без-spawn-plan-2211-162) | `supervised{}` — прямая блокирующая операция в теле без `spawn` парkуется штатно; не защищена дедлайном/токеном ЭТОГО scope (amends D14/D50/D71/D75) |
+| [D439](#d439-supervised--прямая-блокирующая-операция-в-теле-без-spawn-plan-2211-162) | `supervised{}` — прямая блокирующая операция в теле без `spawn` парkуется штатно; не защищена дедлайном/токеном ЭТОГО scope (amends D14/D50/D71/D75) |
 
 ---
 
@@ -7584,7 +7584,7 @@ address-sized, `intptr_t`/`uintptr_t` — Plan 133), а `AtomicPtr` был
 
 ---
 
-## D435. `supervised{}` — прямая блокирующая операция в теле без `spawn` (Plan 221.1 №162)
+## D439. `supervised{}` — прямая блокирующая операция в теле без `spawn` (Plan 221.1 №162)
 
 > **Статус:** ✅ landed (реестр 221.1 №162, P1, 2026-07-30). Amends
 > [D14](#d14-fiber-runtime--невидимая-инфраструктура) (невидимая

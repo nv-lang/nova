@@ -1,14 +1,14 @@
-// D431 — `[N]T` FixedArray receiver: unknown-method typo → E_UNKNOWN_METHOD.
-// `[N]T` only has the compiler-synthesized `@len()`/`@ptr()` accessors (D431)
+// D440 — `[N]T` FixedArray receiver: unknown-method typo → E_UNKNOWN_METHOD.
+// `[N]T` only has the compiler-synthesized `@len()`/`@ptr()` accessors (D440)
 // plus indexing (`arr[i]`, D238) — it is NOT `Vec[T]` (distinct inline value
 // type, [M-fixed-array-value-semantics]), so Vec's method surface (`.push`,
-// `.iter`, …) does not apply. Before this D431 gate a FixedArray receiver's
+// `.iter`, …) does not apply. Before this D440 gate a FixedArray receiver's
 // unknown method leaked past the checker straight into a codegen
 // `[P67-LEGACY]` ICE (verified: `a.lenx()` for `a [4]u8` panicked internally
 // instead of a clean diagnostic) — this fixture pins the clean rejection.
 // EXPECT_COMPILE_ERROR E_UNKNOWN_METHOD
 
-module neg.d431_fixarr_unknown_method_neg
+module neg.d440_fixarr_unknown_method_neg
 
 fn f() -> int {
     ro a [4]u8 = [1, 2, 3, 4]

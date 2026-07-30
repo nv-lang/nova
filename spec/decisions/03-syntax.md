@@ -797,12 +797,12 @@ fn classify(x int) -> str =>
 > Тесты: `nova_tests/fixed_array/` (pos+neg+panics), GC-удержание —
 > `gc_forced_collect.nv`.
 
-> **Amended ([D431](#d431-fixedarray-len-и-ptr-аксессоры-plan-200-п19-2026-07-21),
+> **Amended ([D440](#d440-fixedarray-len-и-ptr-аксессоры-plan-200-п19-2026-07-21),
 > 2026-07-21): `[N]T @len()` / `@ptr()` accessors.** `[N]T` получает
 > зеркало Vec/str-поверхности — `arr.len()` (компайл-тайм `N`) и
 > `arr.ptr()`/`mut`-перегрузка `-> *mut T` (адрес первого элемента).
 > Компилятор-синтез (НЕ `.nv`-декларация — method-level const-generic
-> `N` в языке отсутствует). Подробности — D431.
+> `N` в языке отсутствует). Подробности — D440.
 
 > **Amended (221.1 №24, 2026-07-23, ОКНО-4, владелец: путь (б)):
 > `[](T1, T2, ...)` — `[]T`-алиас как ТИП в EXPRESSION-позиции, когда
@@ -900,7 +900,7 @@ generic. Перешли на Go-style; ~50 мест в документах ис
 
 ---
 
-## D431. FixedArray len и ptr аксессоры (Plan 200 П19, 2026-07-21)
+## D440. FixedArray len и ptr аксессоры (Plan 200 П19, 2026-07-21)
 
 **Source:** [Plan 200](../../docs/plans/200-std-improvements.md) Пункт 19. **Status:** ✅ ACTIVE.
 **Связь:** [D27](#d27-синтаксис-массивов-t-префикс-nt-фиксированные) (`[N]T` value-класс, амендмент выше),
@@ -993,7 +993,7 @@ pad-оптимизация не могла собраться — `RawMem.copy` 
 `parse_mono_fixed_array_name` — ту же функцию, что и `arr[i]`-чтение).
 Тесты: `spec_tests/conformance/` (standalone) — pos (`.len()`, `.ptr()` +
 `RawMem.copy` round-trip, mut-перегрузка запись), neg (bare `arr.len` без
-скобок — обычная диагностика, не новая форма). D431 NEW.
+скобок — обычная диагностика, не новая форма). D440 NEW.
 
 ---
 

@@ -1,4 +1,4 @@
-// D431 — `[N]T @len()` / `@ptr()` компилятор-синтезированные аксессоры (зеркало
+// D440 — `[N]T @len()` / `@ptr()` компилятор-синтезированные аксессоры (зеркало
 // Vec/str, Plan 200 Пункт 19). Механизм — та же структурная FixedArray-магия,
 // что `arr[i]` (D238-семья): нет `.nv`-декларации (method-level const-generic N
 // в языке отсутствует, см. Ш0-проба в спеке), checker+codegen синтезируют обе
@@ -7,7 +7,7 @@ module spec_tests.conformance
 
 import std.runtime.raw_mem.{RawMem}
 
-test "[N]T @len() — компайл-тайм N, разные размеры (D431)" {
+test "[N]T @len() — компайл-тайм N, разные размеры (D440)" {
     ro a1 [1]u8 = [7]
     ro a4 [4]u8 = [1, 2, 3, 4]
     ro a16 [16]u8 = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
@@ -16,7 +16,7 @@ test "[N]T @len() — компайл-тайм N, разные размеры (D4
     assert(a16.len() == 16)
 }
 
-test "[N]T @ptr() — round-trip через RawMem.copy (D431, unsafe)" {
+test "[N]T @ptr() — round-trip через RawMem.copy (D440, unsafe)" {
     ro src [4]u8 = [10, 20, 30, 40]
     mut dst [4]u8 = [0, 0, 0, 0]
     unsafe {
@@ -28,7 +28,7 @@ test "[N]T @ptr() — round-trip через RawMem.copy (D431, unsafe)" {
     assert(dst[3] == 40)
 }
 
-test "[N]T @ptr() mut-перегрузка — запись через ptr видна в arr (D431)" {
+test "[N]T @ptr() mut-перегрузка — запись через ptr видна в arr (D440)" {
     mut a [4]u8 = [0, 0, 0, 0]
     unsafe {
         a.ptr().write(99 as u8)

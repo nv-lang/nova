@@ -645,7 +645,7 @@ ICE `[P67-LEGACY] Ident 'guard' not in var_types` — воспроизведён
 
 **Статус:** ✅ СДЕЛАНО 2026-07-21 (worktree `nova-p19`, ветка `p200-19-fixarr`, sonnet, коммиты
 `4c022a1ec` (чекпоинт: checker+codegen синтез) + `01a0ea94c` (фикстуры + E_UNKNOWN_METHOD гейт +
-D431)). Влито в main интегратором: merge `1a7296c73` (рассинхрон-фикс 2026-07-21 по
+D440)). Влито в main интегратором: merge `1a7296c73` (рассинхрон-фикс 2026-07-21 по
 аудиту — фраза «не влито» писалась до мёржа и не была обновлена).
 
 **Ш0-вердикт (первым делом, подтвердил дизайн):** проба `fn [4]u8 @probe() -> int => 4` — **НЕ
@@ -669,13 +669,13 @@ FixedArray-ресиверы целиком ("Vec" не в `is_primitive_recv_nam
 (любой метод кроме `len`/`ptr` на `TypeRef::FixedArray` → чистый `[E_UNKNOWN_METHOD]`; `Array`/
 `[]T`, реально `Vec[T]`, не затронут).
 
-**D431** (`spec/decisions/03-syntax.md`) — полный decision-блок после D27 + amendment-заметка в
+**D440** (`spec/decisions/03-syntax.md`) — полный decision-блок после D27 + amendment-заметка в
 самом D27.
 
-**Фикстуры:** pos `spec_tests/conformance/d431_fixarr_len_ptr.nv` (3 test-блока: `.len()` на
+**Фикстуры:** pos `spec_tests/conformance/d440_fixarr_len_ptr.nv` (3 test-блока: `.len()` на
 трёх разных N; `unsafe { RawMem.copy(arr.ptr(), dst.ptr(), arr.len()) }` round-trip; mut-
 перегрузка — запись через `.ptr().write(...)` видна в `arr`); neg
-`spec_tests/conformance/neg/d431_fixarr_unknown_method_neg.nv` (typo `.lenx()` →
+`spec_tests/conformance/neg/d440_fixarr_unknown_method_neg.nv` (typo `.lenx()` →
 `EXPECT_COMPILE_ERROR E_UNKNOWN_METHOD`, было ICE до гейта).
 
 **Верификация (5/5 зелёных):** `nova test std/src/collections/vec` PASS 1/0; `nova test
