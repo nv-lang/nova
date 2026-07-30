@@ -66,14 +66,57 @@ variant` теперь `!is_turbofish && debt_find_variant_ctx(...).is_some()`.
 Byte-identical для bare-Ident вызовов (единственная форма, где №136
 когда-либо был нужен).
 
-## Дальше по плану
+## Ratchet: комментарий пришлось урезать
 
-1. RED подтверждён (`scratch159/`, CC-FAIL undefined symbol: Tagged).
-2. Пересобираю nova-cli, прогоняю scratch159 → ожидаю GREEN.
-3. `nova test spec_tests/conformance/reflect_sum_reprs_pos.nv` — точная
-   строка PASS/FAIL.
-4. Точечный набор reflect_sum_reprs_pos + v3_generic_newtype_non_ptr_
-   inner_ok + пара соседей.
-5. `nova check std/src` — ожидание FAIL: 26 (без изменений).
-6. `bash scripts/guards/arch-ratchet.sh`.
-7. Флагман aggregator `--strict-effects`.
+Первая версия фикса добавила развёрнутый doc-комментарий (+32 строки) —
+`arch-ratchet.sh` упал (`lines=63783 > baseline=63751`). Обоснование убрано
+из кода в commit message + этот файл + реестр; итоговый диф emit_c.rs —
+только код (2 insertions), `wc -l` == 63751 == baseline. Ratchet зелёный
+БЕЗ правки baseline.
+
+## Итоговые вердикты (дословно)
+
+1. Мин-репро `scratch159/` (a_reflect.nv + b_newtype.nv, один module/CU):
+   RED до фикса (`CC-FAIL scratch159/a_reflect # ... undefined symbol:
+   Tagged`) → GREEN после (`PASS: 1  FAIL: 0`).
+2. `nova test spec_tests/conformance/reflect_sum_reprs_pos.nv` (тянет весь
+   conformance-CU): `undefined symbol: Tagged` ОТСУТСТВУЕТ (проверено ДО и
+   ПОСЛЕ урезания комментария — идентично). Строка дословно:
+   `PASS: 0  FAIL: 1` — CC-FAIL сменился на ДРУГОЙ, ранее замаскированный
+   дефект (см. ниже «Попутный дефект»).
+3. Точечный набор (reflect_sum_reprs_pos + v3_generic_newtype_non_ptr_
+   inner_ok + reflect_containers_pos + v3_user_generic_newtype_ok, один
+   folder/CU): `PASS: 1  FAIL: 0`.
+4. `nova check std/src`: `PASS: 147  FAIL: 26` — ровно 26, без изменений.
+5. `bash scripts/guards/arch-ratchet.sh`: `lines=63751 <= 63751`,
+   `infer=348 <= 348` — зелёный, baseline не тронут.
+6. `nova build examples/flagship/aggregator/src/main.nv --strict-effects`:
+   `built: .../main.exe (26.12s)`.
+
+## Попутный дефект (НЕ исправлен, вне рамок №159)
+
+Проверка 2 (весь conformance-CU) вскрыла ДРУГОЙ, ранее замаскированный
+CC-FAIL (маскировка тем же механизмом, что и №158: `undefined symbol:
+Tagged` скрывал его до этого фикса):
+
+```
+spec_tests/conformance/reflect_sum_reprs_pos.c:144180:15: error:
+initializing 'nova_unit' with an expression of incompatible type
+'Nova_TypeShape *'
+```
+
+Локальная переменная-scrutinee `_nv_scr_13737` в теле теста-инстанса
+`..._222_8_D438__2409` объявлена как `nova_unit` вместо `Nova_TypeShape*`
+для ТОЙ ЖЕ конструкции `ReflShape.reflect()`, которая в другом месте того
+же огромного CU (напр. в моём `scratch159/a_reflect.nv`, соло) резолвится
+верно. `Nova_ReflShape_static_reflect` объявлена и определена корректно
+(`Nova_TypeShape*`, строки 20205/84682 .c) — расходится именно ТИП
+ЛОКАЛЬНОЙ ПЕРЕМЕННОЙ в этом ОДНОМ call-site (тест №2409 из тысяч в мега-CU,
+номер — счётчик де-дупликации имён, не признак повторного копирования).
+Похоже на order/scale-зависимый сбой в резолве возвращаемого типа
+static-метода `.reflect()` при тысячах конкурирующих одноимённых
+static-методов в одном CU (last-wins/stale-cache гипотеза, не проверено
+глубже — вне рамок задания). Кандидат для НОВОЙ записи реестра 221.1;
+здесь только зафиксирован факт находки, воспроизводится строго через
+полный conformance-CU (в scratch159/ с двумя файлами эта форма не
+проявляется — нужен масштаб).
