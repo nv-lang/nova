@@ -306,7 +306,7 @@ test "mut_clock auto-idle-advance: часы после конкурентных 
 // int->Offset ATTEMPTED + REVERTED same wave, Plan 175.2 Ф.2-v4 П11 — see
 // std/time/duration/time_effect.nv file-header comment /
 // [M-offset-result-mono-bleed-if-let]) ─────────────────────────────────────
-// closes [M-175.1-local-offset-effect-op].
+// закрыл [M-175.1-local-offset-effect-op].
 
 test "fixed_ms.local_offset_sec() — mock-coherence, фиксированный UTC (0)" {
     ro off = with Time = fixed_ms(0 as u64) { Time.local_offset_sec() }
