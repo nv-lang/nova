@@ -52,27 +52,17 @@ echo "mega-CU exit=$MEGA_EXIT :: $MEGA_LINE"
 # и наивный фильтр молча роняет — тогда «зелено» означает «ничего не увидел».
 echo "$MEGA_LINE" | grep -qE "PASS: [0-9]+ +FAIL: [0-9]+" \
     || fail "mega-CU: строки PASS/FAIL нет вовсе (краш не печатает её — см. $MEGA_LOG)"
-# Известный красный ОДИН и ИМЕНОВАННЫЙ (2026-07-29). `FAIL: 0` здесь стоял
-# нормативно, но фактически недостижим: `a_q3_println_debug_record` даёт
-# RUN-FAIL СТАБИЛЬНО (реестр 221.1 №131 — 6/6, не интермиттент, хотя числится
-# под именем закрытого `[M-conformance-megacu-intermittent-run-crash]`). Из-за
-# этого гейт был красным на ЧИСТОМ main, то есть приёмка через него не работала
-# вообще. Whitelist-по-имени вместо ослабления счёта: допускается ровно
-# FAIL: 1 и ровно этот файл; ЛЮБОЙ другой FAIL (и любой рост числа) — красный.
-MEGA_FAIL_N=$(echo "$MEGA_LINE" | sed -e "s/.*FAIL: *\([0-9]*\).*/\1/")
-MEGA_FAILED_FILES=$(sed -e "s/\[[0-9;]*m//g" "$MEGA_LOG" \
-    | grep -E "^(RUN-FAIL|CC-FAIL|NEG-NO-ERROR)" \
-    | sed -e "s/ *#.*//" -e "s/^[A-Z-]*  *//" | sort -u)
-if [ "$MEGA_FAIL_N" != "0" ]; then
-    UNEXPECTED=$(echo "$MEGA_FAILED_FILES" | grep -v "a_q3_println_debug_record" | grep -v "^$")
-    if [ -n "$UNEXPECTED" ]; then
-        echo "$UNEXPECTED" >&2
-        fail "mega-CU: FAIL=$MEGA_FAIL_N, среди них НЕ известный a_q3 (см. выше и $MEGA_LOG)"
-    fi
-    [ "$MEGA_FAIL_N" -le 1 ] \
-        || fail "mega-CU: FAIL=$MEGA_FAIL_N — известный красный ровно ОДИН (a_q3)"
-    echo "mega-CU: 1 известный красный (a_q3_println_debug_record, реестр 221.1 — P0), прочие зелёные"
-fi
+# 2026-07-30: whitelist СНЯТ — мега-CU впервые полностью зелёный (591/0/67).
+# История, чтобы не завели снова «на всякий случай»: whitelist допускал ровно один
+# красный по ИМЕНИ `a_q3_println_debug_record`. Имя оказалось ЛОЖНЫМ — раннер
+# приписывал падение первому по алфавиту файлу слитого CU, а сам `a_q3` был невиновен
+# (изолированно 5/5). Настоящих виновников оказалось трое, слоями: `d62` (NULL-deref
+# handler'а, реестр №158) прятал `Tagged` (гейт №136 бил по TurboFish-форме, №159),
+# который прятал третий дефект. Каждый обрывал прогон раньше следующего.
+# Мораль: whitelist по имени в слитом CU — не смягчение, а слепое пятно. Если красный
+# вернётся — чинить, а не заносить в исключения.
+[ "$MEGA_EXIT" -eq 0 ] || { grep -E "FAIL|TIMEOUT" "$MEGA_LOG" | grep -v "FAIL: 0" | head -10 >&2; fail "mega-CU exit=$MEGA_EXIT"; }
+echo "$MEGA_LINE" | grep -qE "PASS: [0-9]+ +FAIL: 0([^0-9]|$)" || fail "mega-CU: FAIL != 0 (см. $MEGA_LOG)"
 
 echo "== gate: check std/src (byte-canon) =="
 STD_LINE=$("$NOVA" check "$ROOT/std/src" 2>&1 | sed -e "s/\[[0-9;]*m//g" | grep -E "^PASS" | tail -1)
