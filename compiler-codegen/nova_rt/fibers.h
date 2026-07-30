@@ -1145,6 +1145,76 @@ static inline void nova_scope_free_slot(NovaFiberQueue* scope, int slot) {
     /* sched_state parked[slot] is already false (wake cleared it). */
 }
 
+/* Plan 221.1 №162: register the CURRENTLY RUNNING coroutine — the fiber
+ * executing a `supervised{}` BODY inline, not a freshly spawned child — as a
+ * real slot of the brand-new scope `q`, so a blocking operation written
+ * DIRECTLY in the body (no intervening `spawn`) has a valid (scope,slot) to
+ * park on.
+ *
+ * Root cause this closes: `nova_scope_init` always starts a scope at
+ * `count == 0` (fibers.h) — slots are registered ONLY by
+ * `nova_fiber_spawn_into`/`nova_scope_alloc_slot` for genuine children. A
+ * `supervised{}` body's OWN statements run inline on the SAME coroutine that
+ * entered the block (codegen only swaps `_nova_active_scope`, see
+ * `emit_supervised` in emit_c.rs) — `_nova_active_slot` was left pointing at
+ * whatever slot (or -1) the ENCLOSING scope had assigned, which is
+ * meaningless in the brand-new scope. A direct blocking call
+ * (`nova_sched_park(new_scope, stale_slot)`) then fails the
+ * `slot < scope->count` bounds check (count is still 0) and aborts. Compare
+ * `main`: `emit_nova_main_scoped_inner` spawns the main body itself AS A
+ * FIBER into `_nova_main_scope` via `nova_fiber_spawn_into` (giving it a
+ * genuine slot 0) — that is exactly the pattern this function extends to
+ * user-level `supervised{}` bodies, WITHOUT the cost of actually creating a
+ * second coroutine (the body keeps running inline; only the bookkeeping
+ * slot is synthesized).
+ *
+ * Deliberately NOT a call to plain `nova_scope_alloc_slot`: that helper's
+ * contract also REPOINTS the global `_nova_error_state_p` TLS at a fresh,
+ * empty per-fiber error-state bucket (correct for a fiber's own first-resume
+ * preamble, wrong here — the calling coroutine already has a live bucket
+ * tracking its OWN in-flight error/trace state, inherited from whatever
+ * scope spawned IT; clobbering it would sever that correlation for the rest
+ * of the body). This wrapper saves/restores `_nova_error_state_p` around the
+ * call so the self-slot registration is otherwise-invisible bookkeeping.
+ *
+ * `fiber_fail_top[slot]`/`fiber_interrupt_top[slot]`/`fiber_effect_snapshot[slot]`
+ * are written (NULL) by `nova_scope_alloc_slot` but never consulted for this
+ * slot: the self-slot is always freed (`nova_scope_free_slot`) BEFORE the
+ * scope's join loop (`nova_supervised_run`/`_run_cancel`) starts, so
+ * `nova_supervised_step` — which is what reads those per-slot chains — never
+ * iterates over it. (It also must never `mco_resume` it: slot 0 there would
+ * BE the coroutine currently calling `nova_supervised_run`, and a coroutine
+ * cannot resume itself.)
+ *
+ * Cancellation/deadline symmetry: while the self-slot is live (i.e. while a
+ * direct blocking op in the body is actually parked), it IS a normal entry
+ * in `scope->fibers[]`/`parked[]`/`parked_co[]` — so a deadline/cancel-token
+ * bound to THIS scope, once its join loop starts polling, can find and
+ * interrupt it exactly like any child. The one caveat (documented in the
+ * D-amendment, spec/decisions/06-concurrency.md): deadline/cancel enforcement
+ * for a scope only runs from WITHIN `nova_supervised_run`'s own drive loop —
+ * which starts strictly AFTER the body's inline statements finish. A direct
+ * blocking op in the body therefore parks/resumes normally but is NOT
+ * raced against this scope's OWN `timeout:`/cancel token while it is
+ * directly blocked (nothing is polling yet); a body statement that needs
+ * that protection should wrap the blocking call in `spawn { … }` instead,
+ * which IS driven by the join loop from the start.
+ *
+ * Returns the allocated slot index (>=0), or -1 if called outside any fiber
+ * context (D92: should not happen in user code post-#108/emit_nova_main_scoped;
+ * defensive fallback only — leaves `_nova_active_slot` for the caller to
+ * decide, and any actual blocking attempt still hits its own dedicated
+ * not-in-fiber-context diagnostic). Caller MUST free the slot via
+ * `nova_scope_free_slot` before running the scope's join loop. */
+static inline int nova_scope_alloc_body_self_slot(NovaFiberQueue* scope) {
+    mco_coro* co = mco_running();
+    if (!co) return -1;
+    NovaFiberErrorState* saved_error_state = _nova_error_state_p;
+    int slot = nova_scope_alloc_slot(scope, co);
+    _nova_error_state_p = saved_error_state;  /* undo alloc_slot's fresh-bucket repoint */
+    return slot;
+}
+
 /* Plan 44.5 L5: pin SpawnCtx в parent supervised scope ctx_pins для
  * GC root protection в окне между nova_runtime_spawn_into и worker
  * resume'ом fiber'а. */
