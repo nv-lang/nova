@@ -75,6 +75,12 @@ void net_addr_loopback_into(uint16_t port, uint8_t* out);
 void net_addr_loopback_v6_into(uint16_t port, uint8_t* out);
 void net_addr_v4_into(uint8_t a, uint8_t b, uint8_t c, uint8_t d,
                            uint16_t port, uint8_t* out);
+/* [M-socket-addr-port-only-form]: "any interface" wildcard addresses
+ * (0.0.0.0:port / [::]:port — Go/nginx `:port` convention), NOT loopback.
+ * v4 wildcard needs no dedicated C entry point (`net_addr_v4_into(0,0,0,0,
+ * port, out)` already builds it structurally); v6 wildcard needs `uv_ip6_addr`
+ * on "::", mirroring `net_addr_loopback_v6_into`. */
+void net_addr_any_v6_into(uint16_t port, uint8_t* out);
 /* Parse "host:port" from (s,len). Fills *out on success. Returns 0=OK,
  * 1=invalid address, 2=invalid port. No TLS. */
 nova_int          net_addr_parse(const uint8_t* s, nova_int len, NovaNetAddr* out);

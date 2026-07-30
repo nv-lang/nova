@@ -12,7 +12,7 @@
 // Используется в D78 SAT-resolver для package dependencies.
 //
 // API:
-//   s.to_versionreq() -> Result[VersionReq, ParseRangeError]
+//   s.to_version_req() -> Result[VersionReq, ParseRangeError]
 //   req.matches(version Version) -> bool
 
 module data.semver_range
@@ -39,7 +39,7 @@ export type ComparatorSet {
 ///
 /// # Examples
 /// ```nova
-/// let req = "^1.2.3".to_versionreq()!!  // >=1.2.3 <2.0.0
+/// let req = "^1.2.3".to_version_req()!!  // >=1.2.3 <2.0.0
 /// assert(req.matches("1.5.0".to_version()!!))
 /// ```
 #stable(since = "0.1")
@@ -62,10 +62,10 @@ export type ParseRangeError enum
 /// `*` (any).
 ///
 /// Статик `VersionReq.parse(s)` ретрактирован (nv-coding-style §1а,
-/// «пятая дверь») — конверсия живёт на источнике (`s.to_versionreq()`),
+/// «пятая дверь») — конверсия живёт на источнике (`s.to_version_req()`),
 /// как и `s.to_version()` в semver.nv.
 #stable(since = "0.1")
-export fn str @to_versionreq() -> Result[VersionReq, ParseRangeError] {
+export fn str @to_version_req() -> Result[VersionReq, ParseRangeError] {
     ro trimmed = @trim_ascii()
     if trimmed.byte_len() == 0 { return Err(EmptyInput) }
 

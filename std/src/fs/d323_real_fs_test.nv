@@ -12,7 +12,7 @@ test "real_fs: write / read / stat / read_dir / remove round-trip" {
     with Fs = real_fs() {
         supervised {
             spawn {
-                ro dir = Path.from_str("fs_rt_scratch")
+                ro dir = "fs_rt_scratch".to_path()
                 ro _ = remove_dir_all(dir)   // best-effort clean from a prior run
                 match create_dir(dir) { Ok(()) => assert(true), Err(_) => assert(false) }
                 ro f = dir.join("hello.txt")
@@ -31,7 +31,7 @@ test "real_fs: open nonexistent -> NotFound" {
     with Fs = real_fs() {
         supervised {
             spawn {
-                match read_text(Path.from_str("fs_rt_scratch/does_not_exist_zzz")) {
+                match read_text("fs_rt_scratch/does_not_exist_zzz".to_path()) {
                     Ok(_)  => assert(false)
                     Err(e) => match e.kind { ErrorKind.NotFound => assert(true), _ => assert(false) }
                 }

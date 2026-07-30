@@ -11,7 +11,7 @@ type io.Read  protocol { @read(buf mut []u8) -> Result[int, IoError] }   // Ok(0
 type io.Write protocol { @write(data []u8) -> Result[int, IoError]; @flush() -> Result[(), IoError] }
 
 with Fs = mem_fs() {                    // deterministic test, no disk
-    consume f = File.create(Path.from_str("out.txt"))!!
+    consume f = File.create("out.txt".to_path())!!
     f.write("hi".bytes())!!
     // f un-closed at scope-exit -> compile error (D133); explicit @close() needed
     // for close-Result to reach a `Result`-flavored happy path

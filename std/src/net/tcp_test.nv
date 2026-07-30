@@ -139,15 +139,15 @@ test "net2/tcp: connect to a refused port yields Err (closed socket → NetError
     }
 }
 
-test "net2/tcp: from_str rejects a malformed address" {
-    match SocketAddr.from_str("this is not an address") {
+test "net2/tcp: to_socket_addr rejects a malformed address" {
+    match "this is not an address".to_socket_addr() {
         Ok(_)  => assert(false)
         Err(e) => assert(e.to_str().contains("invalid address"))
     }
 }
 
-test "net2/tcp: from_str round-trips a v4 literal" {
-    ro a = must(SocketAddr.from_str("127.0.0.1:9090"))
+test "net2/tcp: to_socket_addr round-trips a v4 literal" {
+    ro a = must("127.0.0.1:9090".to_socket_addr())
     assert(a.is_v4())
     assert(a.port() == 9090)
     assert(a.ip() == "127.0.0.1")

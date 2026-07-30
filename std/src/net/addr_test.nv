@@ -34,15 +34,71 @@ test "net2/addr: value semantics — a copy is independent data" {
     assert(a.port() == 25)
 }
 
-test "net2/addr: from_str rejects out-of-range port" {
-    match SocketAddr.from_str("127.0.0.1:70000") {
+test "net2/addr: to_socket_addr rejects out-of-range port" {
+    match "127.0.0.1:70000".to_socket_addr() {
         Ok(_)  => assert(false)
         Err(e) => assert(e.to_str().contains("invalid port"))
     }
 }
 
-test "net2/addr: from_str parses a v6 literal" {
-    ro a = must(SocketAddr.from_str("[::1]:8443"))
+test "net2/addr: to_socket_addr parses a v6 literal" {
+    ro a = must("[::1]:8443".to_socket_addr())
     assert(a.is_v6())
     assert(a.port() == 8443)
+}
+
+test "net2/addr: to_socket_addr parses a v4 literal" {
+    ro a = must("127.0.0.1:8080".to_socket_addr())
+    assert(a.is_v4())
+    assert(a.port() == 8080)
+    assert(a.ip() == "127.0.0.1")
+}
+
+// [M-socket-addr-port-only-form]: ":port" (empty host) is the Go/nginx "any
+// interface" convention — 0.0.0.0, NOT loopback.
+test "net2/addr: to_socket_addr on bare \":port\" parses as 0.0.0.0 wildcard" {
+    ro a = must(":8080".to_socket_addr())
+    assert(a.is_v4())
+    assert(a.port() == 8080)
+    assert(a.ip() == "0.0.0.0")
+}
+
+test "net2/addr: to_socket_addr rejects garbage input" {
+    match "мусор".to_socket_addr() {
+        Ok(_)  => assert(false)
+        Err(e) => assert(e.to_str().contains("invalid address"))
+    }
+}
+
+test "net2/addr: any() is the 0.0.0.0 wildcard, mirrors loopback" {
+    ro a = SocketAddr.any(8080)
+    assert(a.is_v4())
+    assert(a.port() == 8080)
+    assert(a.ip() == "0.0.0.0")
+}
+
+test "net2/addr: any_v6() is the [::] wildcard, mirrors loopback_v6" {
+    ro a = SocketAddr.any_v6(8080)
+    assert(a.is_v6())
+    assert(a.port() == 8080)
+    assert(a.ip() == "::")
+}
+
+// [port int + requires] (owner decision 2026-07-30): `port` is `int`, not
+// `u16` — the upper bound 65535 is INCLUSIVE (a real, legal port), only
+// out-of-`u16`-range and negative values are contract violations.
+
+test "net2/addr: any(65535) is OK — inclusive upper bound" {
+    ro a = SocketAddr.any(65535)
+    assert(a.is_v4())
+    assert(a.port() == 65535)
+    assert(a.ip() == "0.0.0.0")
+}
+
+test "net2/addr: any() port above 65535 panics the contract" panics "requires failed" {
+    ro _a = SocketAddr.any(65536)
+}
+
+test "net2/addr: any() negative port panics the contract" panics "requires failed" {
+    ro _a = SocketAddr.any(-1)
 }

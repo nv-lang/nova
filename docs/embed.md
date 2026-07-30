@@ -358,7 +358,7 @@ fn main() {
     with Net = real_net(), Fs = real_fs() {
         mut mux = ServeMux.new()
         if dev_mode() {
-            serve_assets(mut mux, DirFs.new(Path.from_str("./frontend")))   // диск, live-reload
+            serve_assets(mut mux, DirFs.new("./frontend".to_path()))   // диск, live-reload
         } else {
             serve_assets(mut mux, embed_dir("../frontend"))                // вшито в бинарь
         }

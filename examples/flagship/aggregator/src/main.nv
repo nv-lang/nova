@@ -30,7 +30,14 @@ import std.runtime.sync.{AtomicInt}
 import std.encoding.serde.{Serialize, json_encode}
 
 // Loopback port: env override (`AGGREGATOR_PORT`) or this default.
-const DEFAULT_PORT u16 = 8187
+//
+// `int`, not `u16` (owner decision 2026-07-30): a `u16` boundary here is
+// illusory type-safety — `AGGREGATOR_PORT=70000` → `to_int()` → 70000 →
+// `as u16` truncates SILENTLY to 4464, the server comes up on the WRONG port
+// with no diagnostic. `int` + `requires` (`SocketAddr.loopback`/`.any`/etc.,
+// `std/net/addr.nv`) fails loudly, at the right place; for a literal port
+// the contract is proved statically (D24 TrivialBackend), zero runtime cost.
+const DEFAULT_PORT int = 8187
 
 // [M-187-high-concurrency-connection-wedge] mitigation: max concurrent
 // connections. Over budget: closed immediately (admission control).
@@ -44,16 +51,19 @@ const LIVE_BUDGET_MS = 4000
 
 fn frontend_html() -> []u8 => embed("../frontend/index.html")
 
-fn resolve_port() Os -> u16 =>
-    env("AGGREGATOR_PORT").flat_map(|s| s.to_int().ok()).map(|n| n as u16) ?? DEFAULT_PORT
+// No `as u16` cast — an out-of-range value (e.g. 70000) stays a plain `int`
+// all the way to `SocketAddr.loopback`'s `requires` contract below, which
+// panics loudly instead of the old silent truncate-and-bind-wrong-port.
+fn resolve_port() Os -> int =>
+    env("AGGREGATOR_PORT").flat_map(|s| s.to_int().ok()) ?? DEFAULT_PORT
 
 // Bind address: env override (`AGGREGATOR_BIND`, e.g. "0.0.0.0" for Docker —
 // `-p host:container` can't reach a loopback-bound listener) or the local
 // dev default `127.0.0.1` (unchanged — see `docker/README.md`'s Dockerfile
 // for the container-side override, `ENV AGGREGATOR_BIND=0.0.0.0`). A
 // malformed value falls back to loopback too (honest default over a crash).
-fn resolve_addr(port u16) Os -> SocketAddr =>
-    env("AGGREGATOR_BIND").flat_map(|host| SocketAddr.from_str("${host}:${port}").ok()) ?? SocketAddr.loopback(port)
+fn resolve_addr(port int) Os -> SocketAddr =>
+    env("AGGREGATOR_BIND").flat_map(|host| "${host}:${port}".to_socket_addr().ok()) ?? SocketAddr.loopback(port)
 
 // ── fn main: accept-loop (the only part that needs manual handling —
 //    `http.servernet` has no reusable accept-loop function) ───────────
