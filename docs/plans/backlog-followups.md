@@ -4128,3 +4128,12 @@ scope"`) — изолирует дефект от нативного RwLock (л�
 | `[M-json-byte-peek]` | Json lexer: `peek()`/`advance()` возвращали `Option[char]` вместо `Option[u8]` — потеря байтов на UTF-8 токенах. Фикс: `Option[u8]`. | std/json | ✅ DONE |
 | `[M-json-escape-bf-empty]` | Json: `\b`/`\f` escape последовательности декодировались в пустую строку. Фикс: `\b`→`U+0008`, `\f`→`U+000C`. | std/json | ✅ DONE |
 | `[M-json-lexer-byte-cursor]` | Json lexer: `pos` был codepoint-курсор, не байтовый — ошибки позиционирования на non-ASCII. Фикс: байтовый курсор. | std/json | ✅ DONE |
+| `[M-md5-array-repeat-literal-parser]` | MD5: `[0; 16]` / `[0; 16]u32` (array-repeat literal) не поддерживался — использован явный литерал. Аналитический маркер (parser gap, общий с M-hmac/M-sha1). | floating (parser) | P3 |
+| `[M-no-silent-nova-int-fallback]` | Silent `nova_int` fallback при нерезолвящемся типе заменён честным `E7001` compile-error. Починен. | Plan 196 | ✅ DONE |
+| `[M-parfor-capture-callee-name-collides-std-local]` | `parfor` capture: stale `var_types` запись с чужим param-именем — коллизия в parallel-for capture. Починен (scope-cleanup при parfor). | Plan 187 | ✅ DONE |
+| `[M-semver-trailing-dash-plus]` | Semver: trailing `-`/`+` различается от отсутствия pre-release/build metadata. Фикс: trailing dash — пустой pre-release; trailing plus — пустой build. | std/semver | ✅ DONE |
+| `[M-serde-encode-pointer-op-regression]` | Serde encode: `E_POINTER_OP_USE_METHOD` на blanket `to_str` — регрессия при переходе на blanket-реализацию. Починен (access path для blanket methods). | Plan 196 | ✅ DONE |
+| `[M-set-from-iter-self-new-default-arg-backfill]` | `Set.from_iter`: `Self.new()` в generic-static теле — callnorm gap (default-arg не бэкафилился в generic context). Починен. | Plan 196 | ✅ DONE |
+| `[M-sha1-array-repeat-literal-parser]` | SHA1: `[0; 20]` / `[0; 80]u32` (array-repeat literal) не поддерживался — использован явный литерал. Аналитический маркер (parser gap, общий с M-hmac/M-md5). | floating (parser) | P3 |
+| `[M-vec-spelling-consume-block-body-untyped]` | Vec-spelling: consume block body без явного типа — inference gap при инициализации Vec из consume-block. Починен. | Plan 196 | ✅ DONE |
+| `[M-vr-binop-wrapper-decl-order-standalone-cu]` | Value-record arithmetic: DCE-seed терял методы при standalone build — wrapper fn для binary operator не декларировался в нужном порядке. Починен (decl-order fix). | floating (codegen) | ✅ DONE |
