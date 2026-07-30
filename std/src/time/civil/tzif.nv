@@ -152,7 +152,7 @@ export fn load_timezone(name str) Fs Os -> Result[TimeZone, DateError] {
             // может просто не быть на этом слое) — переходим к следующему
             // слою (nv-coding-style §4: явный Result→Option вместо
             // swallow-match на `Err(_)`).
-            match read(Path.from_str("${dir}/${name}")).ok() {
+            match read("${dir}/${name}".to_path()).ok() {
                 Some(bytes) => return TimeZone.from_tzif(name, bytes),
                 None => {}   // нет файла → следующий слой
             }
@@ -160,7 +160,7 @@ export fn load_timezone(name str) Fs Os -> Result[TimeZone, DateError] {
         None => {}
     }
     // 2. Стандартный POSIX-каталог (тот же намеренный fallback).
-    match read(Path.from_str("/usr/share/zoneinfo/${name}")).ok() {
+    match read("/usr/share/zoneinfo/${name}".to_path()).ok() {
         Some(bytes) => return TimeZone.from_tzif(name, bytes),
         None => {}
     }

@@ -21,7 +21,7 @@ test "concurrent metadata: 2 fibers stat distinct files" {
     with Fs = real_fs() {
         supervised {
             spawn {
-                ro dir = Path.from_str("cst_a2")
+                ro dir = "cst_a2".to_path()
                 ro _ = remove_dir_all(dir)
                 match create_dir(dir) { Ok(()) => assert(true), Err(_) => assert(false) }
                 ro f = dir.join("f.txt")
@@ -30,7 +30,7 @@ test "concurrent metadata: 2 fibers stat distinct files" {
                 ro _2 = remove_dir_all(dir)
             }
             spawn {
-                ro dir = Path.from_str("cst_b2")
+                ro dir = "cst_b2".to_path()
                 ro _ = remove_dir_all(dir)
                 match create_dir(dir) { Ok(()) => assert(true), Err(_) => assert(false) }
                 ro f = dir.join("f.txt")
@@ -46,7 +46,7 @@ test "concurrent metadata: 16 fibers stat + read_dir on a shared file" {
     with Fs = real_fs() {
         supervised {
             spawn {
-                ro dir = Path.from_str("cst_shared16")
+                ro dir = "cst_shared16".to_path()
                 ro _ = remove_dir_all(dir)
                 match create_dir(dir) { Ok(()) => assert(true), Err(_) => assert(false) }
                 ro f = dir.join("f.txt")

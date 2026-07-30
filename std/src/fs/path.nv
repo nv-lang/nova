@@ -12,7 +12,7 @@
 //   - Posix: `/` is the only separator; `\` is an ordinary filename byte.
 //   - Windows: both `/` and `\` separate; `C:` drive prefixes and `\\srv\share`
 //     UNC prefixes are recognised; `\` is the canonical separator on output.
-// `Path.from_str` uses the HOST style (`HOST_STYLE`, #cfg-константа); `Path.posix`
+// `str @to_path()` uses the HOST style (`HOST_STYLE`, #cfg-константа); `Path.posix`
 // / `Path.windows` pin a style explicitly, so a single test run can exercise
 // BOTH platforms' semantics (the Ф.2 gate). Pinning the style — rather than a
 // compile-time `#cfg` split — is what makes cross-platform path logic testable.
@@ -78,9 +78,13 @@ export type Path value {
 
 // ─── Constructors ──
 
-/// Path from a `str`, using the HOST platform's lexical style.
+/// Path from a `str`, using the HOST platform's lexical style. Infallible —
+/// any `str` is a valid raw-byte path (validity is a filesystem-time concern,
+/// not a lexical one). Canon `x.to_*()` conversion from a `ro`-source (§1а,
+/// nv-coding-style; retracted static-door twin was `Path.from_str`, removed
+/// 2026-07-30, `[M-from-str-static-conversion-lint-gap]`).
 #stable(since = "0.1")
-export fn Path.from_str(s str) -> Path => { bytes: s.bytes(), style: host_style() }
+export fn str @to_path() -> Path => { bytes: @bytes(), style: host_style() }
 
 /// Path from raw OS bytes, HOST style (preserves non-UTF-8 bytes verbatim).
 #stable(since = "0.1")
