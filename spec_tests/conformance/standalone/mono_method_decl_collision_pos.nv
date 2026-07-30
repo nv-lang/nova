@@ -1,0 +1,66 @@
+// №129: legitimate cases that must NOT trigger E_MONO_METHOD_KEY_COLLISION
+// (mono_method_decls, emit_c.rs). Companion to
+// `spec_tests/conformance/neg/mono_method_decl_collision_neg.nv`.
+//  1. Ordinary D145 prefix-generic bare-typevar-receiver method (`fn[T] T
+//     @method()`, same registration path as a blanket but with no protocol
+//     bound) — single declaration, no collision.
+//  2. Two blanket terminators for the SAME protocol but DIFFERENT method
+//     names (mirrors `d355_blanket_protocol.nv`'s `@d355_drain`/
+//     `@d355_is_empty` pair) — distinct keys, no collision.
+//  3. Two DIFFERENT concrete implementors sharing ONE blanket declaration
+//     (the №130 by-span scenario) — same key, SAME span, must stay legal.
+module standalone.mono_method_decl_collision_pos
+
+type M129Src[T] protocol {
+    mut @pull() -> Option[T]
+}
+
+type M129A {
+    mut n int
+}
+fn M129A mut @pull() -> Option[int] {
+    if @n <= 0 { None }
+    else { @n -= 1; Some(@n) }
+}
+
+type M129B {
+    mut n int
+}
+fn M129B mut @pull() -> Option[int] {
+    if @n <= 0 { None }
+    else { @n -= 1; Some(@n) }
+}
+
+fn[T] T @m129_self() -> T => @
+
+fn[I M129Src[T]] I mut @drain() -> int {
+    mut count = 0
+    while true {
+        match @pull() {
+            Some(_) => { count += 1 },
+            None => return count,
+        }
+    }
+    count
+}
+
+fn[I M129Src[T]] I mut @is_empty() -> bool {
+    match @pull() {
+        Some(_) => false,
+        None => true,
+    }
+}
+
+test "D145 bare-typevar-receiver method, no protocol bound (129 pos)" {
+    ro n = 42
+    assert(n.m129_self() == 42)
+}
+
+test "same blanket, two different implementors of the SAME protocol (129 pos / 130 precedent)" {
+    mut a = M129A { n: 2 }
+    mut b = M129B { n: 5 }
+    assert(a.drain() == 2)
+    assert(b.drain() == 5)
+    mut c = M129A { n: 0 }
+    assert(c.is_empty())
+}

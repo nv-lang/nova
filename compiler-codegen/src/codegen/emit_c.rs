@@ -16227,8 +16227,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
         }
         // Plan 48: Generic free functions → store for monomorphization; no erased forward decl.
+        // №129 Task C: честная диагностика вместо last-wins на cross-module
+        // одноимённость — см. mono_method_registry.rs.
         if !f.generics.is_empty() && f.receiver.is_none() {
-            self.mono_fn_decls.insert(f.name.clone(), f.clone());
+            super::mono_method_registry::check_mono_fn_decl_collision(
+                self.mono_fn_decls.get(&f.name), f.span, &f.name,
+            )?;
+            self.mono_fn_decls.entry(f.name.clone()).or_insert_with(|| f.clone());
             // Track tuple return arity so call sites can populate tuple_element_types
             if let Some(TypeRef::Tuple(elems, _)) = &f.return_type {
                 self.generic_fn_tuple_arity.insert(f.name.clone(), elems.len());
@@ -16250,7 +16255,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         if !f.generics.is_empty() {
             if let Some(recv) = &f.receiver {
                 // Регистрируем все generic methods (включая `[]T`-ext) в mono_method_decls.
-                self.mono_method_decls.insert((recv.type_name.clone(), f.name.clone()), f.clone());
+                // №129: честная диагностика вместо last-wins — см. mono_method_registry.rs.
+                let key = (recv.type_name.clone(), f.name.clone());
+                super::mono_method_registry::check_mono_method_decl_collision(
+                    self.mono_method_decls.get(&key), f.span, &recv.type_name, &f.name,
+                )?;
+                self.mono_method_decls.entry(key).or_insert_with(|| f.clone());
                 self.mono_method_decls_by_span.insert(f.span, f.clone()); // №130
                 // Register sentinel MethodSig so call sites can find and mono-route this method.
                 let sentinel_name = format!("__mono_method__{}__{}", recv.type_name, f.name);
