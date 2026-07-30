@@ -192,21 +192,7 @@ fn deadline_elapsed_ms(t0 Monotonic) Time -> int {
 /// returned `TaskResult` — Report and Emit are the same truth, by
 /// construction (no separate race to keep in sync).
 fn fetch_guarded(source Source, shared_deadline Monotonic, idx int) Net Time Emit -> TaskResult {
-    // [M-flagship-monotonic-now-bare-binding-ice]: ЗАКРЫТ (попутно M-176
-    // Path→Member фиксом 67717dcb1/747a79c65; заморожен фикстурой
-    // regressions/monotonic_now_bare_binding/; const-ресивер-shape той же
-    // семьи ЖИВ — [M-p67-path-call-const-receiver-method-ice], backlog).
-    // Аннотации `Monotonic` по файлу оставлены (безвредны). Историческое:
-    // un-annotated `ro t0 = Monotonic.now()` ICE'ило emit_c.rs ("[P67-LEGACY]
-    // Path call return type unknown for method=now — checker must annotate") — the
-    // checker apparently needs an expected-type hint (a declared LHS type,
-    // or the call used directly as an argument, as in
-    // std/concurrency/supervised_deadline_test.nv's
-    // `Monotonic.now() + 100.to_millis()`) to resolve the return
-    // type of this specific overloaded static-path call. Reproduced in
-    // isolation (bare 5-line probe, no other code). Workaround: explicit
-    // `Monotonic` annotation on every such binding, throughout this file.
-    ro t0 Monotonic = Monotonic.now()
+    ro t0 = Monotonic.now()
     ro sid = source.id
     Emit.lane_started(sid, idx)
     // [M-flagship-spawn-capture-value-struct-ptr-mismatch] (see fetch_one's
@@ -251,7 +237,7 @@ fn fetch_guarded(source Source, shared_deadline Monotonic, idx int) Net Time Emi
 /// budget).
 #stable(since = "0.1")
 export fn aggregate(sources []Source, budget Duration) Net Time Emit -> Report {
-    ro t0 Monotonic = Monotonic.now()
+    ro t0 = Monotonic.now()
     ro shared_deadline Monotonic = t0 + budget
     // Plan 87: the loop-variable type must be annotated when the checker
     // can't infer the collected `[]T` element type from the trailing probe

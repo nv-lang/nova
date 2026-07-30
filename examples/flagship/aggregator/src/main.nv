@@ -266,33 +266,11 @@ fn main() Time Detach {
                                     // finishes the connection is the one
                                     // that frees its own slot).
                                     //
-                                    // [M-detach-consume-escape-unchecked]
-                                    // (closed): `stream` is a `consume`-typed
-                                    // `TcpStream` bound by the `Ok(consume
-                                    // stream)` match-arm ABOVE — an
-                                    // enclosing scope relative to this
-                                    // `detach`. A bare `detach { …stream… }`
-                                    // captured it BY REFERENCE from that
-                                    // enclosing scope: `detach` is a
-                                    // fire-and-forget orphan fiber (D50) that
-                                    // may run AFTER the match-arm's own scope
-                                    // has already exited → use-after-consume/
-                                    // use-after-free — a real gap the
-                                    // compiler did not catch (`spawn consume`
-                                    // already caught the symmetric case,
-                                    // D415 §4; `detach` did not, until the
-                                    // D415 §4 extension that added this
-                                    // diagnostic —
-                                    // `E_LINEAR_CAPTURE_IN_FIBER`,
-                                    // `types/mod.rs`
-                                    // `check_capture_boundary`/
-                                    // `ScopeBinding.linear_pattern`). Fix:
-                                    // explicit `detach consume stream { … }`
-                                    // — ownership of `stream` moves INTO the
-                                    // orphan fiber; the fiber is now the sole
-                                    // owner for the rest of its own body, so
-                                    // it outliving the match-arm's scope is
-                                    // no longer a use-after-free.
+                                    // `detach consume stream` (was
+                                    // `[M-detach-consume-escape-unchecked]`,
+                                    // closed): ownership of `stream` moves
+                                    // INTO the orphan fiber, safe against
+                                    // use-after-consume.
                                     detach consume stream {
                                         // `routes()` is cheap (a handful of
                                         // `Router` entries) — rebuilt per
@@ -314,58 +292,14 @@ fn main() Time Detach {
     }
 }
 
-// [M-187-supervised-nested-fiber-slot-race]: **UPDATE 2026-07-16 — this
-// specific bug (the sequential-request hang described below) is CLOSED ✅
-// (README "Стабильность сервера": 83.4.5.12, a runtime-side fix, unrelated
-// to this file's own shape). The per-connection `supervised { spawn {
-// ... } }` wrapper this note originally justified is GONE (bounded-accept
-// mitigation above `fn main` replaced it with `detach { }`) — the
-// narrative below is kept as history (why sequential-per-connection was
-// ever the shape, and why the wrapper existed) but no longer describes
-// live code in this file.** Historical text follows, unedited.**
-//
-// runtime bug (fiber
-// scheduler, `nova_rt/fibers.h`-family — NOT a `compiler-codegen` codegen
-// bug, NOT worked around in-place, NOT fully eliminated — MITIGATED only,
-// disclosed honestly.** With THIS file serving many SEQUENTIAL HTTP
-// requests over the LIFETIME of one process (each request's handler running
-// `aggregate()`'s own `parallel for` + `fetch_guarded`'s nested
-// `supervised(deadline:)`), the server intermittently hangs on some later
-// request — `NOVA_RUNTIME_DUMP` (`SIGABRT`-adjacent watchdog dump,
-// `nova_sched_park`-family) shows `[supervised] ... pending_remote=1` with
-// `count=0`: a child scope's slot never gets marked done. Reproduced with
-// `nova build` + repeated `curl`: usually the 2nd request hangs, sometimes
-// the 3rd–7th, occasionally ten-plus requests run clean — the exact
-// frequency shifted (worse) under heavier concurrent CPU load on this dev
-// machine (other unrelated `nova` builds running in parallel worktrees) in
-// this session's own testing, so contention is plausibly a contributing
-// factor to the TIMING — but the runtime's OWN 5s watchdog fired every
-// time this was hit, actively diagnosing a permanently-stuck slot (not
-// merely "still running, just slow": `curl` was given up to 10s, well past
-// the watchdog's own 5s, and never got a response) — genuinely
-// PROBABILISTIC, matching the shape of this codebase's own documented M:N
-// stale-slot race class (`docs/cases/mn-race-stale-slot-2026-05.md`) rather
-// than a deterministic logic bug. `aggregate_test.nv`'s OWN 17-test suite
-// calls `aggregate()` repeatedly within ONE test-binary process and never
-// hits this — the difference this file introduces is DEPTH: a `spawn` many
-// layers deep (`main`'s own `supervised{spawn{...}}` accept-loop +
-// PER-CONNECTION `supervised{spawn{...}}` + `aggregate`'s OWN internal
-// `parallel for`'s implicit scope + `fetch_guarded`'s
-// `supervised(deadline:)`) — a nesting depth no existing test in this
-// codebase exercises. Tried and kept: wrapping each connection in its OWN
-// self-contained `supervised{spawn{...}}` (this file's current shape, see
-// `[M-187-nested-spawn-scope-var-cc-fail]` above) — REDUCES the observed
-// hang frequency relative to a bare `handle_connection(...)` call with NO
-// wrapper at all (that shape hung reproducibly on request #2, both tries),
-// but does NOT eliminate it. Root cause not investigated further (runtime
-// C-side, `nova_rt/fibers.h`'s scope/slot bookkeeping under repeated nested
-// `supervised` — well outside a `.nv`-only package's remit; a real fix
-// likely needs the fiber scheduler's own maintainer). Practical impact,
-// disclosed in the package README: this demo server may need an occasional
-// restart under sustained interactive use until this is fixed upstream —
-// NOT a fake/degraded demo (every SUCCESSFUL response is fully real,
-// concurrent `aggregate()` output, nothing faked to route around this), a
-// genuine reliability caveat.
+// [M-187-supervised-nested-fiber-slot-race]: CLOSED ✅ (README
+// "Стабильность сервера": 83.4.5.12, runtime-side fix). The
+// per-connection `supervised { spawn { ... } }` wrapper this note
+// originally justified is GONE — bounded-accept mitigation above `fn main`
+// replaced it with `detach { }`. Historical context: a runtime scheduler
+// race (stale supervised slot under deep nested `spawn`/`supervised`
+// scopes) caused intermittent request hangs. The runtime fix eliminated
+// the race; the code shape is canonical.
 
 // ── Router: every endpoint is a route, no manual parsing/routing/wire ──────
 // (Plan 222: migrated off the retired `ServeMux` — segment-trie `Router`,

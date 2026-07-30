@@ -120,11 +120,7 @@ export type Report value {
 /// Канон nv-coding-style §1а (2026-07-18): метод на источнике вместо
 /// статик-конверсии `Report.from` (W_STATIC_CONVERSION).
 ///
-/// [M-slice-ext-receiver-for-in-elem-type] gate carrier: `for r in @` iterates
-/// the BARE slice-extension receiver directly (fixed 2026-07-18 —
-/// compiler-codegen/src/types/mod.rs `f1_check_fn`, scope["@"] now carries the
-/// receiver's real structured type instead of a flattened "[]T" spelling the
-/// for-in element-type inference didn't recognize).
+/// `for r in @` iterates the slice-extension receiver directly.
 #stable(since = "0.1")
 export fn []TaskResult @to_report(wall_ms int) -> Report {
     mut done = 0
