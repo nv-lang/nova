@@ -5454,18 +5454,38 @@ impl CEmitter {
             let mut type_def_files: HashMap<String, HashMap<Vec<String>, Vec<String>>> =
                 HashMap::new();
             let record_def = |td: &TypeDecl, mods: &mut HashMap<String, BTreeSet<Vec<String>>>, m: &[String]| -> bool {
-                // Collision-qualify only the concrete (non-generic) nominal types
-                // with a POINTER `Nova_<name>*` struct/tag identity used uniformly
-                // at def+ref without alias indirection: Sum and HEAP Record. Value-
-                // records (`NovaValue_`), NamedTuple, Newtype/Alias (`type_aliases`
-                // indirection), Effect/Protocol/TypeSet, Opaque (nova_rt headers)
-                // and generics (mono-path naming) are a distinct axis — excluded so
-                // def/ref qualification stays consistent (followup for those kinds).
+                // Collision-qualify concrete (non-generic) nominal types with a
+                // POINTER `Nova_<name>*` struct/tag identity used uniformly at
+                // def+ref without alias indirection: Sum and HEAP Record. Value-
+                // records (`NovaValue_`), NamedTuple, Effect/Protocol/TypeSet,
+                // Opaque (nova_rt headers) and generics (mono-path naming) are a
+                // distinct axis — excluded so def/ref qualification stays
+                // consistent (followup for those kinds).
+                //
+                // [fix M-user-type-name-collides-with-stdlib-type-in-c-symbol,
+                // реестр 221.1 №154, форма (б)] Newtype (`type X(i8)`) is now ALSO
+                // qualifiable — its bare `typedef <inner> Nova_<name>;` collides
+                // exactly like Sum/Record when a same-named type exists in
+                // another module (e.g. user `type Sign(i8)` vs std
+                // `runtime.fmt_buf.Sign`, a Sum) → CC-FAIL `typedef redefinition
+                // with different types`. Newtype has NO `Nova_<name>*` pointer
+                // identity (its alias indirection in `type_aliases` is keyed by
+                // the bare SOURCE name, same convention as Sum/Record's
+                // `sum_schemas`/`record_schemas` — only the EMITTED typedef text
+                // needs the qualified base), so it is safe to fold into the same
+                // detection set. Runtime-backed newtypes (OnceCell/Mutex/Atomic*
+                // — hand-written struct in `nova_rt/*.h`, no typedef ever emitted
+                // by us at all, see `debt_is_runtime_backed_newtype`) are excluded
+                // — nothing to qualify.
                 let heap_record = matches!(
                     (&td.kind, td.allocation),
                     (TypeDeclKind::Record(_), crate::ast::AllocKind::Heap)
                 );
-                let qualifiable = matches!(td.kind, TypeDeclKind::Sum(_)) || heap_record;
+                let plain_newtype = matches!(td.kind, TypeDeclKind::Newtype(_))
+                    && !Self::debt_is_runtime_backed_newtype(td.name.as_str());
+                let qualifiable = matches!(td.kind, TypeDeclKind::Sum(_))
+                    || heap_record
+                    || plain_newtype;
                 if qualifiable
                     && td.generics.is_empty()
                     && !RUNTIME_DEFINED_TYPES.contains(&td.name.as_str())
@@ -16966,11 +16986,23 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     return Ok(());
                 }
                 let inner_c = self.type_ref_to_c(inner)?;
+                // [fix №154 форма (б)] Emit the typedef under `def_base` (the
+                // collision-aware qualified base — see the `record_def`/
+                // `qualifiable` doc above), not the bare `t.name`: a colliding
+                // Newtype simple name (`Sign` vs std's `runtime.fmt_buf.Sign`)
+                // otherwise emits a second `typedef ... Nova_Sign;` for a
+                // DIFFERENT underlying C type → CC-FAIL `typedef redefinition
+                // with different types`. Byte-identical when non-colliding
+                // (`def_base` ≡ `t.name`). `type_aliases` stays keyed by the
+                // bare SOURCE name — same convention as `sum_schemas`/
+                // `record_schemas` (reference sites resolve the alias by source
+                // name; only the emitted C text needs the qualified base).
+                //
                 // Emit into user_type_fwd_decls (spliced before value-record defs
                 // and tuple typedefs) so that value-record fields of newtype can
                 // reference this typedef without forward-declaration issues.
                 self.user_type_fwd_decls.push_str(&format!(
-                    "typedef {} Nova_{};\n", inner_c, t.name));
+                    "typedef {} Nova_{};\n", inner_c, def_base));
                 // Newtypes are typedef'd scalars — use inner type directly (no pointer indirection)
                 self.type_aliases.insert(t.name.clone(), inner_c);
             }
