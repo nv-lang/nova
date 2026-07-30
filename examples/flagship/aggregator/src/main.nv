@@ -1,77 +1,18 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// Plan 187 — flagship concurrent aggregator: entry point (Ф.MVP-2 переделка).
+// Flagship concurrent aggregator: HTTP server entry point.
 //
-// EXPECT_TIMEOUT_MS 5000 — `fn main()` below is a REAL long-running server
-// (accept loop, never returns on its own): `nova test`'s default run-to-
-// completion sweep (no test blocks, so it drives `fn main()` directly, same
-// as any other entry-point-only `.nv` file) would hang forever waiting for
-// exit, then hit a scheduler teardown crash on forced kill
-// (`nova_sched_park: invalid scope/slot`) — this marker moves this file into
-// the `TestType::Timeout` category, EXCLUDED from the default `{Positive}`
-// selection (`nova test flagship/aggregator --strict-effects`, no `--timeout`/
-// `--full`), same convention as nova-http's own live-socket smoke tests
-// (`servernet/rt/handle_connection_smoke.nv`). Real end-to-end verification
-// of this file happens via `nova build` + manual run + curl (see the
-// package's own README "как это тестируется" / plan 187 gate step), not
-// `nova test`'s run-to-completion sweep — this file has no `test { }` blocks
-// of its own (the `build_snapshot`-driven field-population logic this
-// file's handlers depend on is exercised by `src/api/report_json_test.nv`;
-// this file's own JSON wire layer — typed `#impl(Serialize)` +
-// `json_encode` throughout since Plan 221.1 №141, no hand-rendered strings
-// left — is covered by the smoke test — curl-diffing the wire bytes — not
-// a `test{}` block).
+// This is the demo server that serves the waterfall UI:
+//   - `GET /` — embedded frontend
+//   - `GET /api/snapshot` — fixed demo run (weather, seed=42)
+//   - `GET /api/run?legend=&mode=&seed=` — fresh run, JSON snapshot
+//   - `GET /api/events?legend=&mode=&seed=` — SSE replay of the same run
 //
-// Owner requirement (hard, this rewrite's whole reason to exist): the PREVIOUS
-// draft of this file (never committed — a from-scratch rewrite, not an edit)
-// hand-rolled HTTP (`read_request_line`/`route`/`serialize_response`) while
-// the `http` package sat right there unused. Manual parsing/routing/response-
-// serialization/SSE-byte-framing is BANNED — the flagship's whole pitch is
-// "a server in Nova = the `http` package + ~20 lines", not reinvented
-// plumbing.
+// Every endpoint is a `Router` route — no manual parsing/routing/wire
+// formatting. HTTP handling (routing, request parsing, response serialization,
+// SSE wire format) comes from the `http` package.
 //
-// This file now does ONLY wiring:
-//   - a manual accept LOOP (legitimately hand-rolled — `http.servernet` has no
-//     reusable accept-loop function yet, only single-shot `handle_connection`,
-//     see that module's own header) that spawns
-//     `http.servernet.handle_connection_router(stream, routes())` per connection;
-//   - EVERY endpoint is a `Router` route (`http.server`, Plan 222 — replaces
-//     the retired `ServeMux`) — routing, request
-//     parsing, response serialization, and (for `/api/events`) the SSE wire
-//     format all come from the `http` package.
-//
-// The one design fact that makes this possible: `http.server`'s `Handler` is
-// a PURE closure type (`fn(ServerRequest) -> ServerResponse`, no effect row —
-// `server.nv`'s own header explains why: CORE stays mock-testable without a
-// runtime effect-handler stack). That looks like it would forbid a handler
-// from ever calling `aggregate()` (`Net Time Emit`) — but a handler's BODY can
-// open its own `with Net = mock_net()/real_net() { ... }` (+ `with Emit =
-// ...`) and fully DISCHARGE those effects before returning its
-// `ServerResponse`; the closure's OWN exposed type stays effect-free, same as
-// any other fully-discharged effectful call (`aggregate_test.nv`'s `test { }`
-// blocks do exactly this). Verified directly by this rewrite compiling/
-// running (`nova test` gate) — the real handlers (`snapshot_body`/
-// `events_body` below, wired as plain closures auto-lifted to Handler (D55)) ARE the proof.
-// This is what lets `/api/run`/`/api/events` do PER-REQUEST fresh
-// `aggregate()` calls (fresh `mode`/`seed`/live-vs-mock) from inside an
-// otherwise-pure `Router` route, with no second dispatch mechanism needed
-// alongside `Router`.
-//
-// `/api/events` is a SSE REPLAY, not a live per-request push: the whole run
-// settles first (so the JSON `run_summary` + every lane's real `t_ms` are
-// already known), then the FULL event list is handed to `http.server`'s
-// `StreamBody.from_chunks` + `ServerResponse.sse` (`[M-178-server-streaming]`,
-// landed) — `handle_connection` drives the true incremental chunked write
-// over the socket, this file just builds the (already-complete) chunk list.
-// A genuinely live push (chunks arriving AS lanes settle, mid-request) is a
-// separate, already-scoped-out marker (`[M-187-sse-live-stream]`, plan 187
-// §9.3 п.3, owner decision) — unrelated to today's http-package-only
-// requirement, so no new marker here for it.
-//
-// Endpoints: `GET /` (embedded `frontend/index.html`), `GET /api/snapshot`
-// (fallback: fixed weather/demo/seed=42 run), `GET /api/run?legend=&mode=
-// &seed=` (fresh run, JSON snapshot — §9.5 wire contract, `report_json.nv`),
-// `GET /api/events?legend=&mode=&seed=` (SSE replay of the same run's `Emit`
-// timeline, real `t_ms` offsets).
+// `EXPECT_TIMEOUT_MS 5000` because `fn main` is a long-running server
+// (accept loop) — `nova test` would hang without this marker.
 
 module main
 
@@ -91,33 +32,8 @@ import std.encoding.serde.{Serialize, json_encode}
 // Loopback port: env override (`AGGREGATOR_PORT`) or this default.
 const DEFAULT_PORT u16 = 8187
 
-// [M-187-high-concurrency-connection-wedge] mitigation (bounded-accept,
-// owner decision, 2026-07-16): max number of connections handled
-// CONCURRENTLY at once (over budget: closed immediately, no queue — see
-// the accept loop below). Architectural NOTE this constant's value pins
-// down empirically: the wedge is NOT primarily about raw connection
-// *count* (the OLD code already served connections one-at-a-time,
-// sequentially, and still wedged around ~80 per
-// `docs/plans/backlog-followups.md`) — it is about how many `aggregate()`
-// calls' OWN internal fan-out (`parallel for` + `fetch_guarded`'s nested
-// `supervised(deadline:)`, several fibers each) are alive in the scheduler
-// AT THE SAME TIME. Measured directly on this machine (repeated
-// `xargs -P80`/`-P200` bursts against this binary, `NOVA_WATCHDOG_DUMP_SECS`
-// dumps on the wedged runs showing multiple workers'
-// `STUCK_ALIVE_NOT_PARKED` fibers under `[supervised] ... pending_remote=1`
-// — the same stale-slot symptom as the pre-existing marker below `main`):
-// HISTORY: while the scheduler wedge was open, this constant was the
-// mitigation — `= 2` was the empirical cliff (3+ reproduced a permanent
-// wedge; see `docs/history/simplifications-closed.md`,
-// `[M-187-high-concurrency-connection-wedge]`). The wedge's root cause
-// (non-work-conserving nested `supervised` pump parking ready fibers of a
-// SIBLING scope) is FIXED in the runtime (work-conserving pump,
-// `nova_rt/runtime.c`, merge `14decdfb1`), gate-proven at width 16 with
-// `xargs -P80`/`-P200` bursts (no permanent-000, full recovery). `16`
-// (matching the runtime's worker-pool size) is now the real backpressure
-// bound, not a wedge workaround: admission control stays because honestly
-// rejecting excess load is the right behavior for a bounded demo server —
-// re-run the burst gate if you change this.
+// [M-187-high-concurrency-connection-wedge] mitigation: max concurrent
+// connections. Over budget: closed immediately (admission control).
 const MAX_INFLIGHT_CONNS int = 16
 
 // Live legends use a wall-clock (not simulated) budget — generous enough for
@@ -139,97 +55,21 @@ fn resolve_port() Os -> u16 =>
 fn resolve_addr(port u16) Os -> SocketAddr =>
     env("AGGREGATOR_BIND").flat_map(|host| SocketAddr.from_str("${host}:${port}").ok()) ?? SocketAddr.loopback(port)
 
-// ── fn main: accept-loop (the only legitimately hand-rolled part — see the
-//    file-header note: http.servernet has no reusable accept-loop function
-//    yet) ────────────────────────────────────────────────────────────────
+// ── fn main: accept-loop (the only part that needs manual handling —
+//    `http.servernet` has no reusable accept-loop function) ───────────
 
-// [M-187-nested-spawn-scope-var-cc-fail]: **compiler codegen bug, NOT worked
-// around in-place — the SHAPE below routes around it entirely (accept loop
-// runs INSIDE one dedicated `spawn`, connections served SEQUENTIALLY, no
-// nested spawn at all).** Two shapes tried before this one, both broken:
-//   (1) `supervised { spawn { <accept-loop>; while running { ... Ok(stream)
-//       => spawn { handle_connection(...) } ... } } }` — an acceptor fiber
-//       that itself `spawn`s a per-connection worker fiber on every accepted
-//       connection (`spawn` LEXICALLY NESTED inside another `spawn`, both
-//       under one `supervised`). CC-FAILs: generated C (`main.c`) has the
-//       OUTER spawn's own fiber function reference `&_nova_scope_q_6` (the
-//       `supervised` scope variable, needed so the inner spawn can register
-//       as a child of the SAME scope) — never threaded into the outer
-//       spawn's own context struct — `error: use of undeclared identifier
-//       '_nova_scope_q_6'`, 3 call sites.
-//   (2) accept loop moved OUT of any `spawn`, directly into `supervised`'s
-//       OWN body (reasoning: `.bind`/`.accept()` are ordinary suspending
-//       `Net` ops, no fiber should be needed) + one spawn per connection
-//       (sibling spawns, not nested — compiles and LINKS fine). Runtime
-//       crash the INSTANT the binary actually runs, before even printing
-//       the "listening on" line: `nova: nova_sched_park: invalid scope/slot`
-//       — a blocking suspend (the first `.accept()`) directly on the fiber
-//       that OWNS a `supervised` scope (not a properly spawned child of it)
-//       corrupts the scheduler's slot bookkeeping. No existing example in
-//       this codebase runs a blocking accept loop directly in `supervised`'s
-//       own body either — every precedent (`echo_server.nv`,
-//       `servernet/rt/handle_connection_smoke.nv`) wraps it in exactly ONE
-//       `spawn`.
-// Root cause of both not investigated further (compiler/runtime-side,
-// `emit_c.rs`'s spawn-context-capture pass + `fibers.h`'s scope/slot
-// bookkeeping — out of this package's remit). WORKAROUND (this shape):
-// exactly ONE `spawn` (matching every proven precedent) holds bind + the
-// WHOLE accept loop — the ONE known-good shape given the two failure modes
-// above. Per-connection handling itself no longer needs a SECOND `spawn`
-// nested under this one (see `[M-187-high-concurrency-connection-wedge]`
-// mitigation note below — `detach { }` is used instead, a different
-// codegen path with no `supervised`-scope-var to thread through, so this
-// CC-fail plainly does not apply to it).
-//
-// [M-187-high-concurrency-connection-wedge] mitigation (bounded-accept,
-// app-level, owner decision 2026-07-16): the OPEN architectural scheduler
-// issue (`docs/plans/backlog-followups.md`, `examples/flagship/aggregator/
-// README.md` "Известные ограничения") is that this binary's M:N runtime
-// wedges PERMANENTLY (never recovers, not merely slow) once too many
-// connections are in flight at once (~80 simultaneous reproduces it every
-// time; ~40 shows transient backpressure that still recovers; ~20 is
-// clean). The real fix is a scheduler-level park/join rework — tried in a
-// separate research track, shelved there because it introduced memory
-// corruption; the CURRENT runtime (busy-poll baseline, unchanged by this
-// commit) is memory-safe, just has this concurrency ceiling. Mitigation
-// (this file only, no runtime/compiler change): admission control BEFORE
-// a connection is ever handed to a handler fiber at all — an
-// `AtomicInt` permit counter (`MAX_INFLIGHT_CONNS`, see its own doc-comment
-// above) is checked right after `accept()` returns; within budget, the
-// connection is handled CONCURRENTLY via `detach { }` (D50 fire-and-forget
-// — under this binary's armed M:N runtime that is a REAL worker-pool
-// dispatch, `spec/decisions/06-concurrency.md` line ~426, not the
-// synchronous `SyncDetach` test-only handler); over budget, the connection
-// is closed immediately (honest reject — no unbounded queue, no attempt to
-// read/respond, so none of the banned "hand-rolled HTTP" applies to the
-// reject path either). This directly replaces the OLD per-connection
-// `supervised { spawn { ... } }` shape (was: strictly SEQUENTIAL — see the
-// retained `[M-187-sequential-2nd-request-hang]` note inside the loop below
-// for why that shape existed) with bounded CONCURRENT handling — a real
-// behavior change, empirically gated (this commit's own `loadtest.ps1` +
-// concurrent-curl run, see the package README for the recorded before/
-// after) precisely because trading "always safe, sometimes wedges dead at
-// high connection counts" for "bounded-concurrent, verified to survive the
-// same load" is the whole point of this mitigation.
+// [M-187-nested-spawn-scope-var-cc-fail] workaround: exactly ONE `spawn`
+// holds the entire accept loop. Per-connection handling uses `detach { }`.
+// [M-187-high-concurrency-connection-wedge] mitigation: admission control
+// via `AtomicInt` permit counter — over budget: close immediately.
 fn main() Time Detach {
-    // Один `with` на оба эффекта вместо вложенных: `with X = h1, Y = h2 { … }`
-    // РАВНО вложенным (спека 04-effects.md, D-раздел «Правила with», п.4).
-    // Плоская форма — то, как это и пишут в реальном коде (см. std/src/
-    // concurrency/retry_test.nv); вложенность в ПЕРВОМ примере языка заставляла
-    // читателя думать про иерархию обработчиков там, где её нет.
+    // Flat `with Os = ..., Net = ...` is equivalent to nested `with`
+    // blocks, but clearer in the first example a reader sees.
     with Os = real_os(), Net = real_net() {
         ro port = resolve_port()
         ro addr = resolve_addr(port)
-        // NB (реестр 221.1 №162): ни `supervised`, ни внешнего `spawn` здесь
-        // НЕТ — детей у этого scope не было ни одного, то есть structured
-        // concurrency ничего не давала: ждать некого, отменять нечего.
-        // Обёртка была остатком прежней формы `supervised { spawn { … } }`
-        // НА КАЖДОЕ СОЕДИНЕНИЕ; после перехода на bounded-accept + `detach`
-        // смысл ушёл, а ритуал остался.
-        // Plan 173.3 (D415 §2): listener lives ENTIRELY inside
-        // this fiber (same discipline as echo_server.nv) — a
-        // mut-capture of an outer listener from spawn's body
-        // would be E_CONCURRENT_MUT_CAPTURE.
+        // Listener lives entirely inside this fiber (same discipline as
+        // `echo_server.nv` — mut-capture from a spawn would be illegal).
         consume lst = TcpListener.bind(addr) ?? panic("Failed to bind: ${port}")
         println("Nova flagship aggregator listening on http://${addr.ip()}:${lst.local_port()}")
         // Bounded-accept permit counter (see the marker note
@@ -245,43 +85,13 @@ fn main() Time Detach {
             match lst.accept() {
                 Ok(consume stream) => {
                     if inflight.load() >= MAX_INFLIGHT_CONNS {
-                        // Over budget: honest reject, no queue —
-                        // close immediately, no read/response
-                        // attempted (not "manual HTTP", nothing
-                        // is parsed/routed/serialized on this
-                        // path at all).
-                        // best-effort close при сбросе сверх-лимитного
-                        // соединения (admission control shed): ошибку
-                        // закрытия некуда репортить и незачем.
-                        // nova:allow W_RESULT_DISCARDED -- намеренный дроп: best-effort close при shed
+                        // Over budget: close immediately (admission
+                        // control shed), no read/response attempted.
+                        // nova:allow W_RESULT_DISCARDED
                         ro _ = stream.close()
                     } else {
                         ro _ = inflight.fetch_add(1)
-                        // [M-187-sequential-2nd-request-hang]'s
-                        // OLD per-connection `supervised {
-                        // spawn { ... } }` (strictly sequential
-                        // — accept loop blocked on this
-                        // connection's own join before the next
-                        // `accept()`) is replaced by `detach { }`
-                        // here: bounded CONCURRENT handling, see
-                        // `[M-187-high-concurrency-connection-
-                        // wedge]` mitigation note above `fn
-                        // main`. The permit is released inside
-                        // the detached body itself (fiber that
-                        // finishes the connection is the one
-                        // that frees its own slot).
-                        //
-                        // `detach consume stream` (was
-                        // `[M-detach-consume-escape-unchecked]`,
-                        // closed): ownership of `stream` moves
-                        // INTO the orphan fiber, safe against
-                        // use-after-consume.
                         detach consume stream {
-                            // `routes()` is cheap (a handful of
-                            // `Router` entries) — rebuilt per
-                            // connection, same shape as
-                            // nova-http's own
-                            // servernet/rt/handle_connection_smoke.nv.
                             ro _ = handle_connection_router(stream, routes())
                             ro _ = inflight.fetch_sub(1)
                         }
@@ -294,21 +104,9 @@ fn main() Time Detach {
     }
 }
 
-// [M-187-supervised-nested-fiber-slot-race]: CLOSED ✅ (README
-// "Стабильность сервера": 83.4.5.12, runtime-side fix). The
-// per-connection `supervised { spawn { ... } }` wrapper this note
-// originally justified is GONE — bounded-accept mitigation above `fn main`
-// replaced it with `detach { }`. Historical context: a runtime scheduler
-// race (stale supervised slot under deep nested `spawn`/`supervised`
-// scopes) caused intermittent request hangs. The runtime fix eliminated
-// the race; the code shape is canonical.
-
 // ── Router: every endpoint is a route, no manual parsing/routing/wire ──────
-// (Plan 222: migrated off the retired `ServeMux` — segment-trie `Router`,
-// nova-http `server_router.nv`. Routes here are static and known conflict-
-// free by construction (four distinct literal paths, no shared `{param}`/
-// `{*catch-all}` slots) — `!!` unwraps `Router.@get`'s `Result` the same way
-// `router_test.nv`'s own fixtures do for statically-known-good registrations.)
+// Routes here are static and known conflict-free by construction — `!!`
+// unwraps `Router.@get`'s `Result` the way known-good registrations do.
 
 fn routes() Time -> Router {
     mut r = Router.new()
@@ -333,9 +131,8 @@ fn seed_of(req ServerRequest) -> int {
 // ── Run dispatch (legend x mode -> Report + context) ────────────────────────
 
 /// One resolved run: the settled `Report`, the `sources` list that produced
-/// it (for `report_json.nv`'s id-keyed `kind`/`probes` lookup), the budget
-/// actually used (ms), and a description of the installed handlers (UI
-/// effect-badge, plan 187 §9.4 деливерабл 11 — wave 2, field carried now).
+/// it, the budget actually used (ms), and a description of the installed
+/// handlers (UI effect-badge).
 type RunResult value {
     ro report    Report
     ro sources   []Source
@@ -343,19 +140,10 @@ type RunResult value {
     ro handlers  HandlersDto
 }
 
-/// Same `aggregate()`/`aggregate_live_*` call, only `legend`/`mode`/`seed`
-/// (and, for `mode=live`, which real fetcher) differ — the effect-system
-/// pitch made concrete: ONE dispatcher, the `with Net = ...` (or which
-/// `aggregate_*` fn) installed per branch is the only thing that changes.
-/// `Emit`/`Time` stay UNDISCHARGED here (declared in the row) — `Time` has
-/// no `with Time = ...` anywhere in this package (no real-clock handler
-/// factory exists in `std.time`, matching every other production call site
-/// in this package, e.g. `aggregate.nv`'s own `deadline_elapsed_ms`/
-/// `fetch_one` — `Time` just propagates up to the ambient runtime default,
-/// same as `Net`/`Emit` propagate up to whatever `main()` eventually
-/// installs). The two callers below (`snapshot_body`/`events_body`) install
-/// different `Emit` handlers (`null_emit()` vs a real recorder) and, between
-/// them, fully discharge `Time` too — see those functions' own notes.
+/// Same `aggregate()`/`aggregate_live_*` call — only the legend, mode, seed,
+/// and the installed `Net` handler differ. The effect-system pitch made
+/// concrete: ONE dispatcher, the `with Net = ...` per branch is the only
+/// thing that changes.
 fn run_net(legend str, mode str, seed int) Emit Time -> RunResult {
     if legend == "weather" {
         if mode == "live" {
@@ -397,10 +185,8 @@ fn run_net(legend str, mode str, seed int) Emit Time -> RunResult {
 
 // ── GET / (fallback) and /api/run: plain JSON snapshot ─────────────────────
 
-/// `Emit` is discharged here (`with Emit = null_emit()`); `Time` stays
-/// declared (ambient default, see `run_net`'s own note) — probing whether
-/// `Handler` (`fn(ServerRequest) -> ServerResponse`) tolerates a
-/// default-only remaining row.
+/// `Emit` is discharged here (`with Emit = null_emit()`). `Time` is left
+/// to the ambient runtime default.
 fn snapshot_body(legend str, mode str, seed int) Time -> ServerResponse {
     ro rr = with Emit = null_emit() { run_net(legend, mode, seed) }
     ro seed_out = if mode == "live" { 0 } else { seed }
@@ -409,79 +195,18 @@ fn snapshot_body(legend str, mode str, seed int) Time -> ServerResponse {
 }
 
 // ── JSON rendering: typed `std.encoding.serde.json_encode` ─────────────────
-//
-// [M-187-http-serde-setcookie-serialize-collision]: RESOLVED — root cause was
-// NOT a per-call dispatch mis-resolution in `emit_c.rs` (the family this
-// marker's name suggested, cf. 196.7/98e3663cc). `nova build` (`cmd_build`,
-// nova-cli/src/main.rs) never called `auto_derive::inject_synthesized_
-// methods_filtered` for `#impl(Serialize)` — unlike `nova test`'s
-// `test_runner.rs` pipeline, which already did. The checker validates
-// `v.serialize(s)` against a derived signature computed ON-DEMAND
-// (`AutoDeriveQueryBridge`) without ever adding a real `FnDecl` to
-// `module.items` on the build path — so codegen's method registration
-// (`method_overloads`/`mono_method_decls`) had NOTHING under
-// `(RecordType, "serialize")`, and the call fell through every receiver-
-// typed dispatch window straight into the single-key, name-only
-// `method_receivers` last-wins fallback, which picked whatever OTHER
-// concrete `@serialize` was registered last in the compile unit — `http`'s
-// unrelated `SetCookie @serialize() -> str` (RFC 6265bis Set-Cookie
-// serialization), pulled in transitively by any `http.*` import. Fixed by
-// adding the same injection call to `cmd_build` (mirrors `test_runner.rs`);
-// no `emit_c.rs` change needed — the existing type-directed dispatch already
-// resolves correctly once the derived method is a real, registered `FnDecl`.
-// This file now routes `SnapshotDto` through `snapshot_to_json` (already
-// typed, `report_json.nv`) instead of the hand-written string renderers this
-// workaround used. `EmitRecord`'s SSE payload (`emit_record_json`) was the
-// ONE remaining hand-rolled JSON site — Plan 221.1 №141
-// (`[M-flagship-emit-record-hand-rolled-json]`) first tried the typed
-// `#impl(Serialize)` + `json_encode` migration here and had to REVERT it: an
-// isolated repro (2 fields, no polaris/http dependency) showed
-// `json_encode`'s object-field ORDER was NON-DETERMINISTIC across process
-// runs for record-derived `Serialize` (`JsonSerializer`'s `SerFrame.obj` was
-// a plain `HashMap[str, JsonValue]` — no insertion-order tracking), which
-// would have violated the hard byte-for-byte wire requirement (SSE contract
-// consumed by the www site). Follow-up marker
-// `[M-json-encode-record-field-order-nondeterministic]` (реестр 221.1 №148)
-// fixed the root cause — `JsonObject` (`std/src/encoding/json.nv`) is now an
-// ORDERED map (insertion order, independent of the per-process hash-seed),
-// and `JsonSerializer`'s `SerFrame.obj` carries one, so a record's derived
-// field emission goes out in DECLARATION order, deterministically, across
-// processes. №148 closed, so this migration was retried and landed below —
-// `EmitRecord` is now `#impl(Serialize)` + `json_encode`, same as every
-// other DTO in this file.
+// All DTOs use `#impl(Serialize)` + `json_encode` — no hand-rolled JSON.
 
 // ── GET /api/events: SSE replay of the run's Emit timeline ─────────────────
 
-// One recorded `Emit` op, timestamped relative to the run's OWN start (`t0`,
-// captured before `run_net` is called) — real `Emit`-fired wall-clock
-// offsets, not synthesized. Sent over a `Channel` (D415: `lane_*` ops fire
-// from worker fibers, a bare `mut` capture would be a data race) and drained
-// only AFTER `run_net` returns (every lane already joined by then — race-free,
-// same reasoning as `aggregate_test.nv`'s own Emit tests).
-//
-// Deliberately a HEAP record (`type X { … }`, no `value` — D290/02-types.md
-// §2694-2708), NOT a value-record: `Channel[T].try_send` requires a
-// word-safe (pointer-sized) payload (`[M-channel-generic-elem-type]`,
-// already documented in nova-http's `server/streaming_test.nv`) — the
-// runtime channel slot is a single `nova_int`-sized word, and a multi-`str`-
-// field value-record is NOT word-safe (`E_CHANNEL_UNSOUND_ELEM_TYPE`, hit
-// directly by this file before this fix). A heap record is ALWAYS a bare
-// `Nova_<X>*` pointer (same representation class as the sum-type `TaskStatus`
-// this package already threads through `Channel[TaskStatus]` in
-// `aggregate.nv`'s `fetch_guarded`), so it fits the one supported multi-field
-// shape without changing the field-access call sites below at all.
-// Wire payload for one replayed event (SSE `data:` line) — typed
-// `#impl(Serialize)` + `json_encode` (Plan 221.1 №141, landed once №148
-// closed the field-order blocker, see the file-header note above). Field
-// ORDER on the wire = DECLARATION order below (`id`, `elapsed_ms`, `error`,
-// `t_ms`) — matches the hand-rolled string this migration replaces
-// byte-for-byte. `kind` is `#serde(skip)`: it never reaches the JSON body —
-// the SSE EVENT NAME already carries it (`sse_event(r.kind, ...)` below).
-// `error` is `#serde(rename = "error")` (Rust-field `err`, wire `error`) +
-// `#serde(skip_serializing_if = "is_empty")`: omitted from the wire exactly
-// when `err == ""`, which — by construction (every `lane_*` emitter below
-// passes `err: ""` except `lane_failed`) — is exactly the old hand-rolled
-// condition (`kind == "lane_failed"`).
+// One recorded `Emit` op, timestamped relative to the run's own start.
+// Sent over a `Channel` (lane ops fire from worker fibers — a bare `mut`
+// capture would be a data race) and drained only after `run_net` returns.
+// Deliberately a heap record (not `value`): `Channel[T].try_send` needs a
+// word-safe payload — a multi-field value-record is not word-safe, a heap
+// record is always a pointer and fits in one word.
+// `kind` is `#serde(skip)` — the SSE event name carries it.
+// `error` is renamed (Rust-field `err`, wire `"error"`) and skipped when empty.
 #impl(Serialize)
 type EmitRecord {
     #serde(skip)
@@ -494,14 +219,13 @@ type EmitRecord {
     ro t_ms       int
 }
 
-/// `!!`-без-`Fail` (D85, same rationale as `report_json.nv`'s
-/// `snapshot_to_json`): `EmitRecord` is a flat `Serialize` DTO of
-/// primitives — encode-failure is structurally impossible here.
+/// `EmitRecord` is a flat `Serialize` DTO of primitives — encode-failure
+/// is structurally impossible.
 fn emit_record_json(r EmitRecord) -> str =>
     json_encode(r) ?? panic("emit_record_json: EmitRecord is a flat Serialize DTO — encode must not fail")
 
-/// `Emit` is discharged here (`with Emit = <recorder>`); `Time` stays
-/// declared, same as `snapshot_body`.
+/// `Emit` is discharged here (`with Emit = <recorder>`). `Time` is left
+/// to the ambient runtime default.
 fn events_body(legend str, mode str, seed int) Time -> ServerResponse {
     ro t0 Monotonic = Monotonic.now()
     ro (tx, rx) = Channel[EmitRecord].new(256)

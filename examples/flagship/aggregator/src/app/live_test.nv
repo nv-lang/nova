@@ -1,21 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// Plan 187 — flagship concurrent aggregator: LIVE legend tests (offline).
+// Flagship concurrent aggregator: LIVE legend tests (offline).
 //
-// Per plan 187 §9.4 деливерабл 5: "сетевые тесты в test-блоки не вносить —
-// гейт должен быть зелёным офлайн; live-пути покрыть мок-тестами хендлер-
-// подменой." These tests substitute `with Net = mock_net()` (D361 mock-
-// first — `lookup`/`connect`/`read`/`close` all stubbed, no socket) for
-// `aggregate_live_health`'s SHAPE (fan-out size, deadline/cancel wiring) —
-// they do NOT reach `github.com`/etc for real; a manual `nova build` +
-// run against real `real_net()` (see PROGRESS-run-A.md for the transcript)
-// is how the ACTUAL live network path was verified this session.
-// `aggregate_live_weather` was BLOCKED (`[M-187-weather-live-tls-diamond-
-// blocked]`) until 2026-07-17 — its test used to pin the honest-fail
-// contract. The diamond is RESOLVED (live.nv header; tls v0.1.2 lock bump):
-// the weather path now runs the REAL TLS pipeline, so under mock_net lanes
-// fail at the TLS layer (mock TCP can't handshake), NOT with the old
-// blocker hint — the test below pins exactly that: settled lanes, no
-// resurrected blocker marker.
+// These tests substitute `with Net = mock_net()` — they exercise the shape
+// (fan-out, deadline/cancel wiring) without reaching real external hosts.
+// A manual `nova build` + run against `real_net()` is how the live path
+// is verified. The weather path uses the real TLS pipeline; under mock_net
+// lanes fail at the TLS layer (mock TCP can't handshake).
 
 module app
 

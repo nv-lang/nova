@@ -1,34 +1,18 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// Plan 187 — flagship concurrent aggregator: JSON snapshot bridge.
+// Flagship concurrent aggregator: JSON snapshot bridge.
 //
-// Typed `#impl(Serialize)` snapshot DTOs feeding the waterfall UI (mockup:
-// `docs/research/assets/15-showcase-mockup.html` → copied/adapted into
-// `frontend/index.html`, plan 187 §9.3 п.2). `GET /api/snapshot`/`/api/run`
-// (backend/main.nv) serve this JSON; `GET /api/events` (emit.nv timings +
-// this file's per-result shape) replays it as SSE.
-//
-// Plan 187 Ф.MVP-2 деливерабл 2 (2026-07-14): switched from hand-built
-// `JsonValue`/`HashMap` to typed `#impl(Serialize)` DTOs + `json_encode`
-// (`std.encoding.serde`, D344) — the `[M-178-server-typed-body]` codegen
-// defect that forced the dynamic-JSON workaround is CLOSED (merge
-// `77239c014`, 2026-07-12; see `nova-http/src/serdejson/
-// typed_body_repro_test.nv`). The DTOs below are a deliberate SNAPSHOT
-// shape, not a re-export of the domain types (`Report`/`TaskResult`/
-// `TaskStatus`, `app/domain.nv`) — the wire contract (plan 187 §9.5) adds
-// fields the domain model doesn't carry (`kind`/`probes` from `Source`,
-// run context `legend`/`mode`/`seed`/`budget_ms`/`handlers`, leak-accounting
-// `fibers_spawned`/`fibers_closed`) and needs a FIXED tag shape for
-// `TaskStatus` (`{"state": "done"|"failed"|"cancelled", "error"?}`) rather
-// than the auto-derived externally-tagged enum wire form
-// (`"Cancelled"` / `{"Failed":"..."}` / `{"Done":{...}}, — D345 Ф.2) that
-// `#impl(Serialize)` on `TaskStatus` directly would produce.
+// Typed `#impl(Serialize)` snapshot DTOs feeding the waterfall UI.
+// The DTOs are a deliberate snapshot shape — not a re-export of domain
+// types — because the wire contract adds context fields (source kind/probes,
+// run legend/mode/seed/budget, leak-accounting, handler info) and needs
+// a fixed tag shape for `TaskStatus` rather than the auto-derived enum form.
 
 module api
 
 import ../domain.{Report, TaskResult, TaskStatus, Source}
 import std.encoding.serde.{Serialize, json_encode, json_encode_pretty}
 
-// ── DTOs (plan 187 §9.5 wire contract) ──────────────────────────────────────
+// ── DTOs (wire contract) ────────────────────────────────────────────────────
 
 #impl(Serialize)
 export type StatusDto value {
@@ -79,11 +63,9 @@ fn status_dto(status TaskStatus) -> StatusDto {
     }
 }
 
-// `report.results` is COMPLETION order (dense, plan 173.1 `parallel for`
-// codegen — spec/decisions/06-concurrency.md "Порядок = completion order"),
-// not the original `sources` order — look the matching `Source` up by id to
-// recover `kind`/`probes` for the wire. Linear scan (fan-out is a handful of
-// sources, plan 187 scale) — not worth a HashMap for this size.
+// `report.results` is in completion order, not the original `sources`
+// order — look up the matching `Source` by id to recover `kind`/`probes`
+// for the wire. Linear scan (fan-out is small) — not worth a HashMap.
 fn source_by_id(sources []Source, id str) -> Source {
     mut found = sources[0]
     for s in sources {
@@ -97,32 +79,14 @@ fn result_dto(r TaskResult, sources []Source) -> ResultDto {
     { id: r.id, kind: src.detail, probes: src.sub_count, status: status_dto(r.status), elapsed_ms: r.elapsed_ms }
 }
 
-// [M-187-leaks-introspection]: `std.runtime.fibers.slot_count()`/
-// `.slots_active()` (used by `app/aggregate_test.nv`'s own 0-leak test) are
-// an "honest no-op sentinel" on Windows (that test's own header comment) —
-// `slot_count() == 0` here (this session's dev/gate platform), so a live
-// before/after delta around `aggregate()` would silently report a FAKE
-// `0`/`0` on the very platform this ships from, not a real measurement.
-// Honest fallback (plan 187 §9.4 деливерабл 2's own permission: "если
-// интроспекция недоступна — считать spawn/settle в самом aggregate"):
-// count STRUCTURALLY instead of via runtime introspection. Every lane spawns
-// exactly two fibers (the `parallel for` desugar's own per-iteration spawn,//
-// `app/aggregate.nv` deliverable-1 note, plus `fetch_guarded`'s own nested
-// `supervised(deadline:) { spawn { ... } }` race) — and BOTH are
-// structurally guaranteed closed (joined) before `aggregate()` returns
-// (`parallel for` "ждёт всех"; the inner `supervised` scope always drains
-// before its own block exits, cancelled or not) — `report.results.len()`
-// IS the settled-lane count by construction, so `fibers_spawned ==
-// fibers_closed == 2 * report.results.len()`, always, and "0 leaks" is a
-// structural invariant of this design, not a number that can drift — see
-// `app/aggregate_test.nv`'s "0 fiber-slot leak" test for the runtime-
-// introspected confirmation on platforms where it isn't a no-op.
+// Fiber introspection (`slot_count`/`slots_active`) is not available on
+// all platforms — count structurally instead. Every lane spawns exactly two
+// fibers, both structurally guaranteed closed before `aggregate()` returns:
+// `fibers_spawned == fibers_closed == 2 * report.results.len()`.
 fn fiber_count_of(report Report) -> int => 2 * report.results.len()
 
 /// Build the wire snapshot from a settled `Report` + the run's context
-/// (which `sources` fed it, which legend/mode/seed produced it, which
-/// handlers were installed). Pure — no effects; `aggregate()` itself is the
-/// only effectful step (backend/main.nv, server.nv).
+/// (sources, legend/mode/seed, handlers). Pure — no effects.
 #stable(since = "0.2")
 export fn build_snapshot(report Report, sources []Source, legend str, mode str, seed int,
         budget_ms int, handlers HandlersDto) -> SnapshotDto {
@@ -151,22 +115,17 @@ export fn build_snapshot(report Report, sources []Source, legend str, mode str, 
 
 /// Compact JSON wire form.
 ///
-/// `!!`-без-`Fail`, D85 ENFORCED (Plan 221.1 №113): `json_encode` возвращает
-/// `Result[str, SerError]`, но `SnapshotDto` — плоский `#impl(Serialize)` DTO
-/// из примитивов (str/int/bool/record/Vec, все Serialize-производные) без
-/// циклов/непредставимых значений — encode-failure тут структурно
-/// невозможен (инвариант, не recoverable ошибка). `Fail[SerError]` в
-/// сигнатуре растащило бы эффект по всем call-site'ам (тесты, `main.nv`
-/// route-handlers ожидают голый `str`) без единой реальной пользы —
-/// `?? panic(...)` — канон-форма для «программная ошибка/инвариант».
+/// `SnapshotDto` is a flat `#impl(Serialize)` DTO of primitives — no
+/// cycles or unrepresentable values, so encode-failure is structurally
+/// impossible. `?? panic(...)` is the canonical form for invariant
+/// violations.
 #stable(since = "0.2")
 export fn snapshot_to_json(dto SnapshotDto) -> str =>
     json_encode(dto) ?? panic("snapshot_to_json: SnapshotDto is a flat Serialize DTO — encode must not fail")
 
-/// Pretty (2-space indent) JSON wire form — `"${v:#}"` doesn't apply to
-/// plain `#impl(Serialize)` DTOs (no `@display`, Serialize ≠ Display);
-/// `json_encode_pretty` is the direct entry point instead. Same
-/// `?? panic(...)` rationale as `snapshot_to_json` above (D85 №113).
+/// Pretty (2-space indent) JSON wire form — `json_encode_pretty` is the
+/// direct entry point (no `@display` for `#impl(Serialize)` DTOs). Same
+/// `?? panic(...)` rationale as `snapshot_to_json` above.
 #stable(since = "0.2")
 export fn snapshot_to_json_pretty(dto SnapshotDto) -> str =>
     json_encode_pretty(dto) ?? panic("snapshot_to_json_pretty: SnapshotDto is a flat Serialize DTO — encode must not fail")
