@@ -100,6 +100,14 @@
    `escalate()`/`stop()`, пользовательские — handler-литерал
    `on_child_fail(idx, err) -> Decision`. Naming-конвенции для этого слоя —
    [`docs/mn-coding-conventions.md`](../docs/mn-coding-conventions.md).
+   **Модель памяти между файберами** ([D415](decisions/06-concurrency.md#d415-data-race-freedom--share-атрибут-capture-check-consume-в-spawn-plan-1733),
+   [D441](decisions/06-concurrency.md#d441), 2026-07-31): `mut`-захват — линейный ресурс одного файбера, пересекать
+   границу (`spawn`/`detach`/`parallel for`/канал/`with`-обработчик вокруг
+   fiber-содержащего тела) может только явным move (`consume`), `ro`-видом
+   или значением из белого списка синхронизированных типов (`Atomic*`,
+   `Mutex`, концы канала, `#share`-типы) — проверяется транзитивно, в том
+   числе когда замыкание пересекает границу как ДАННЫЕ (параметром/каналом),
+   не только при прямом синтаксическом захвате.
 
 ## Что заимствует у кого
 

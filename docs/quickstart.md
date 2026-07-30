@@ -109,8 +109,12 @@ const BUDGET_MS int = 120   // total budget for the whole run, ms
 // result thrown away.
 fn probe(latency_ms int, deadline Monotonic) Time -> str {
     ro { tx, rx } = Channel.new(1)
-    mut timed_out = false
-    with Fail[TimeoutError] = |_e| { timed_out = true } {
+    // A `with Fail[T]` handler runs IN THE FIBER of the failing operation,
+    // not the installing scope's fiber (see spec/decisions/06-concurrency.md
+    // D441) — a bare `mut` flag captured there is a data race under M:N.
+    // `AtomicBool` is the synchronized alternative.
+    mut timed_out = AtomicBool.new(false)
+    with Fail[TimeoutError] = |_e| { timed_out.store(true) } {
         supervised(deadline: deadline) {
             spawn {
                 Time.sleep(latency_ms)
@@ -118,7 +122,7 @@ fn probe(latency_ms int, deadline Monotonic) Time -> str {
             }
         }
     }
-    if timed_out {
+    if timed_out.load() {
         "cancelled"
     } else {
         match rx.try_recv() {

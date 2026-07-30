@@ -171,19 +171,36 @@ This is an early release; treat it accordingly.
   checks (stripped in release builds unless proven false).
 - **The garbage collector is stop-the-world** (Boehm GC); a concurrent,
   incremental collector is on the post-1.0 roadmap, not in this release.
-- **Sharing mutable state across fibers is not fully checked yet.** The
-  compiler rejects a direct `mut` capture inside a `spawn`/`detach`/
-  `parallel for` body (`E_CONCURRENT_MUT_CAPTURE`), but that check sits on
-  the *syntactic* boundary of the block. A closure that captures `mut`
-  state and is created **outside**, then handed in — as a parameter, a
-  struct field, a channel payload or an effect handler — carries the same
-  access past the check, and today that compiles silently. Measured, not
-  theorised: a shared `Vec` written from 8 fibers through such a closure
-  produced a wrong length or a crash in **40 out of 40 runs** (the same
-  program with an `AtomicInt` is clean 20/20). Until the transitive check
-  lands, share across fibers only through internally synchronised types
-  (`Atomic*`, `Mutex`, channel ends, `#share` types) or immutable (`ro`)
-  captures. Tracked as entry 150 in `docs/plans/221.1-bug-sweep.md`.
+- **Sharing mutable state across fibers is checked, including the
+  transitive paths.** The compiler has always rejected a direct `mut`
+  capture inside a `spawn`/`detach`/`parallel for` body
+  (`E_CONCURRENT_MUT_CAPTURE`). This release closes the two gaps measured
+  under entry 150 in `docs/plans/221.1-bug-sweep.md` (D441,
+  `spec/decisions/06-concurrency.md`): a closure that captures `mut` state
+  created **outside** a fiber boundary and is then handed in — as a
+  parameter to a function that itself spawns it, or sent down a channel —
+  is now flagged at the crossing point, same as a direct capture (measured:
+  a shared `Vec` written from 8 fibers through such a closure produced a
+  wrong length or crashed in 60 out of 60 runs before the fix; the same
+  program with an `AtomicInt` was clean 20/20 — both are pinned as
+  conformance fixtures). And an effect handler installed with `with X =
+  … { … spawn … }` around a fiber-launching body — which actually runs
+  *in the fiber of the failing operation*, not the installing scope's
+  fiber (measured: an unsynchronised counter in such a handler lost
+  updates in 2 of 5 batches of 64×20 concurrent child failures) — now gets
+  the same check, under a dedicated diagnostic
+  (`E_HANDLER_MUT_CAPTURE_IN_FIBER`). The one deliberate exception is
+  `Supervisor.on_child_fail`, which the runtime genuinely serialises on
+  the scope's drive fiber (D416 §2) — pinned by its own fixture proving
+  an unsynchronised counter stays exact across the same 64×20 load.
+  Share mutable state across fibers through internally synchronised types
+  (`Atomic*`, `Mutex`, channel ends, `#share` types); `ro` (immutable)
+  captures remain always safe. Two structural risks remain honestly
+  un-enforced because no live call site exercises them yet: a closure
+  stored as a struct/collection field and called back out later, and a
+  named-function call graph deeper than one hop between the closure's
+  origin and the `spawn` that invokes it — see D441 §5 for the precise
+  boundary.
 - **The language specification is authoritative but written in Russian**
   (`spec/decisions/`); this release's English-facing documentation
   (README, quickstart, language tour) is a curated subset, not a full
