@@ -4118,3 +4118,13 @@ scope"`) — изолирует дефект от нативного RwLock (л�
 | `[M-d73-d77-retraction-migration]` | Retraction-миграция D73/D77-форм: старый синтаксис убран, кодовая база приведена к актуальной spec-форме. | spec cleanup | ✅ DONE |
 | `[M-flagship-...]` | Флагманский маркер: `report_json_test` — расшифровка лога флагманского теста. Аналитический маркер (не баг, not actionable). | floating (analytics) | P3 |
 | `[M-flagship-monotonic-now-bare-binding-ice]` | `Monotonic.now()` bare binding ICE: вызов статического метода на bare type-name (без скобок) в single-file контексте. Починен. | Plan 196 | ✅ DONE |
+| `[M-flagship-spawn-capture-value-struct-ptr-mismatch]` | CC-FAIL: spawn capture value-struct передавался как `*` вместо inline value — mismatch в C-типе замыкания. Починен (value-record capture-path). | Plan 187 | ✅ DONE |
+| `[M-flagship-spawn-throw-segfault]` | Segfault при `spawn throw` с multifield payload — раскладка payload'а на стеке не учитывала multi-slot эффект-значения. Починен. | Plan 187 | ✅ DONE |
+| `[M-fmt-buf-module-path]` | `fmt_buf` module path isolation: отдельный модуль от `runtime.string_builder` для переиспользования без циклической зависимости. Реализовано. | std | ✅ DONE |
+| `[M-freefn-named-default-arg-shift]` | Freefn named default arg shift: при nameonly-вызове аргументы со сдвигом пропускали default filler. Починен (call-site arg alignment). | Plan 196 | ✅ DONE |
+| `[M-fs-real-io-bare-test-block-sched-park]` | Реальный Fs I/O в bare test блоке — fiber-scheduler scope/slot issue: park-слот не инициализирован для синтетического скоупа. Починен (scheduler fallback). | Plan 187 | ✅ DONE |
+| `[M-generic-method-self-recursive-return]` | Self-recursive generic-enum return: mono generic-метод, возвращающий generic-тип того же enum — бесконечная рекурсия mono. Починен (recursion guard). | Plan 196 | ✅ DONE |
+| `[M-hmac-array-repeat-literal-parser]` | Hmac: `[0; 32]` (array-repeat literal) не поддерживался парсером — использован явный литерал `[0,0,...,0]`. Аналитический маркер (parser gap). | floating (parser) | P3 |
+| `[M-json-byte-peek]` | Json lexer: `peek()`/`advance()` возвращали `Option[char]` вместо `Option[u8]` — потеря байтов на UTF-8 токенах. Фикс: `Option[u8]`. | std/json | ✅ DONE |
+| `[M-json-escape-bf-empty]` | Json: `\b`/`\f` escape последовательности декодировались в пустую строку. Фикс: `\b`→`U+0008`, `\f`→`U+000C`. | std/json | ✅ DONE |
+| `[M-json-lexer-byte-cursor]` | Json lexer: `pos` был codepoint-курсор, не байтовый — ошибки позиционирования на non-ASCII. Фикс: байтовый курсор. | std/json | ✅ DONE |
