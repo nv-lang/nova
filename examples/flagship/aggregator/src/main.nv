@@ -218,14 +218,19 @@ fn main() Time Detach {
             ro addr = resolve_addr(port)
             supervised {
                 spawn {
+                    // ВНЕШНИЙ `spawn` ОБЯЗАТЕЛЕН — проверено экспериментом
+                    // 2026-07-30 (реестр 221.1 №162). Выглядит лишним (внутри
+                    // ровно один файбер на всё тело, родитель тут же встаёт
+                    // ждать — полезной параллельности ноль), но без него бинарь
+                    // ПАДАЕТ на старте: `nova: nova_sched_park: invalid scope/slot`.
+                    // Причина рантаймовая: блокирующий accept-loop внутри
+                    // `supervised` должен исполняться в ДОЧЕРНЕМ файбере —
+                    // планировщику иначе некуда парковать. Не снимать.
                     // Plan 173.3 (D415 §2): listener lives ENTIRELY inside
                     // this fiber (same discipline as echo_server.nv) — a
                     // mut-capture of an outer listener from spawn's body
                     // would be E_CONCURRENT_MUT_CAPTURE.
-                    consume lst = match TcpListener.bind(addr) {
-                        Ok(consume l)  => l
-                        Err(_) => panic("Failed to bind: ${port}")
-                    }
+                    consume lst = TcpListener.bind(addr) ?? panic("Failed to bind: ${port}")
                     println("Nova flagship aggregator listening on http://${addr.ip()}:${lst.local_port()}")
                     // Bounded-accept permit counter (see the marker note
                     // above `fn main`) — `AtomicInt` is `#share` (D415), so
