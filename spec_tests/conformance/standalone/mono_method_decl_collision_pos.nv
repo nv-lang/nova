@@ -64,3 +64,27 @@ test "same blanket, two different implementors of the SAME protocol (129 pos / 1
     mut c = M129A { n: 0 }
     assert(c.is_empty())
 }
+
+// №129 приёмка (2026-07-30): кросс-протокольная пара под ОДНОЙ буквой typevar
+// и ОДНИМ именем метода, различающаяся ТОЛЬКО мутабельностью получателя —
+// легальный D84-overload, ОБЯЗАН собираться чисто (первый вариант проверки
+// коллизий бил по нему ложно; уточнённая сравнивает форму сигнатуры).
+// Метод намеренно НЕ вызывается (вызов multi-candidate blanket'а упирается в
+// отдельный pre-existing пробел [M-p67-legacy-multiblanket-return-type]);
+// bait-тест ниже держит декларации от DCE через живого имплементора.
+type M129SrcB[T] protocol {
+    mut @pull_b() -> Option[T]
+}
+
+fn M129A mut @pull_b() -> Option[int] {
+    if @n <= 0 { None } else { @n -= 1; Some(@n) }
+}
+
+fn[I M129Src[T]] I @probe129() -> int => 111
+
+fn[I M129SrcB[T]] I mut @probe129() -> int => 222
+
+test "cross-protocol mut-axis overload pair registers cleanly (129 refined)" {
+    mut bait = M129A { n: 1 }
+    assert(!bait.is_empty())
+}

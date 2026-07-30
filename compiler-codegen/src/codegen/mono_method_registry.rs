@@ -39,18 +39,53 @@
 use crate::ast::FnDecl;
 use crate::diag::Span;
 
-/// `Ok(())` — можно вставлять (новый ключ, либо повторная регистрация той же
-/// декларации). `Err(..)` — коллизия РАЗНЫХ деклов на одном ключе; текст
-/// диагностики цитирует оба span'а и объясняет фикс.
+/// Форма сигнатуры для D84-осей overload'а: арность, мутабельность/consume
+/// получателя, текстовые типы параметров, тип возврата. Две декларации с
+/// РАЗНОЙ формой — легальный overload (чекер держит обе в `env.fns`, диспетч
+/// у вызова идёт по точной перегрузке через `[M-138.2]`
+/// `mono_method_fndecl_for_name` / by-span №130 — значение `mono_method_decls`
+/// для них лишь fallback, и last-wins для этого случая эмпирически безвреден:
+/// весь зелёный корпус 592 теста жил на нём). Две декларации с ОДНОЙ формой —
+/// настоящая коллизия: у чекера они не могли пройти E_METHOD_REDEFINITION для
+/// реального типа, значит это blanket-пара разных протоколов под одной буквой
+/// typevar (№129-кейс) — честная ошибка.
+///
+/// Ложное срабатывание, поймано приёмкой №129 на мега-CU (гейт интегратора,
+/// 2026-07-30): `Router130 @get(path, h)` / `@get(path, h, opts)` — легальный
+/// арность-overload на КОНКРЕТНОМ типе бил ошибкой. Отсюда это уточнение:
+/// сравниваем форму, а не только span.
+fn signature_shape(f: &FnDecl) -> String {
+    let recv = f
+        .receiver
+        .as_ref()
+        .map(|r| format!("mut={} consume={}", r.mutable, r.consume))
+        .unwrap_or_default();
+    let params: Vec<String> = f.params.iter().map(|p| format!("{:?}", p.ty)).collect();
+    format!(
+        "{recv}|{arity}|{params:?}|{ret:?}",
+        arity = f.params.len(),
+        params = params,
+        ret = f.return_type,
+    )
+}
+
+/// `Ok(())` — можно вставлять (новый ключ, повторная регистрация той же
+/// декларации, либо легальный D84-overload с РАЗНОЙ формой сигнатуры — для
+/// него сохраняется прежнее поведение реестра). `Err(..)` — коллизия РАЗНЫХ
+/// деклов ОДНОЙ формы на одном ключе; текст диагностики цитирует оба span'а.
 pub(crate) fn check_mono_method_decl_collision(
     existing: Option<&FnDecl>,
     new_span: Span,
     recv_type_name: &str,
     method_name: &str,
+    new_decl: &FnDecl,
 ) -> Result<(), String> {
     let Some(existing) = existing else { return Ok(()); };
     if existing.span == new_span {
         return Ok(()); // та же физическая декларация — idempotent re-insert.
+    }
+    if signature_shape(existing) != signature_shape(new_decl) {
+        return Ok(()); // легальный D84-overload — оси различают, вставка разрешена.
     }
     Err(format!(
         "[E_MONO_METHOD_KEY_COLLISION] два РАЗНЫХ объявления метода `@{method}()` \
@@ -71,61 +106,6 @@ pub(crate) fn check_mono_method_decl_collision(
          чекер считает их валидными отдельными объявлениями.",
         method = method_name,
         recv_type_name = recv_type_name,
-        existing_span = existing.span,
-        new_span = new_span,
-    ))
-}
-
-/// №129 Task C follow-up: `mono_fn_decls` — `HashMap<String, FnDecl>` в
-/// `emit_c.rs`, keyed ONLY by bare fn name, storing the body/template for
-/// EVERY non-receiver generic free function so the monomorphization worklist
-/// (Plan 48) can drain it later. Nova's folder-module package allows two
-/// DIFFERENT modules to each declare a module-private generic free fn with
-/// the SAME bare name (perfectly legal — nothing outside either module can
-/// even reference the other's private symbol by that name); `module.items`
-/// at this point is the WHOLE package's flattened item list, so both
-/// declarations reach this insertion. Unlike `mono_method_decls`'s blanket
-/// case, this is NOT an inherently ambiguous situation — each caller
-/// resolves its own module's `helper` unambiguously — but this registry's
-/// bare-name key conflates them anyway: whichever declaration is registered
-/// SECOND silently overwrites the first, and EVERY caller of either name —
-/// regardless of which module's `helper` it meant — gets the same (wrong,
-/// for one of the two call sites) monomorphized body. Confirmed empirically
-/// (audit №129, `scratch_repro/modtest/`): two peer modules each declaring
-/// a private `fn[T] helper(x T) -> int` (bodies returning 111 / 222) —
-/// calling module A's OWN `helper` from ITS OWN caller returns 222 (module
-/// B's body), a silent wrong-value bug, not a crash.
-///
-/// The CORRECT fix is a module/file-qualified key threaded through this
-/// registry's ~10 read sites (worklist drain, `#realtime`/`#blocking`
-/// classification, tuple-arity lookups, …) — out of scope for a same-
-/// pattern insert-time check (would need read-site context most of those
-/// sites don't currently carry). Diagnosing here (registration time) at
-/// least converts the silent wrong-value outcome into an honest, actionable
-/// error instead of shipping a miscompile — the proper fix (qualified key)
-/// is left to the dedicated follow-up window the case A/C triage calls for.
-pub(crate) fn check_mono_fn_decl_collision(
-    existing: Option<&FnDecl>,
-    new_span: Span,
-    fn_name: &str,
-) -> Result<(), String> {
-    let Some(existing) = existing else { return Ok(()); };
-    if existing.span == new_span {
-        return Ok(()); // та же физическая декларация — idempotent re-insert.
-    }
-    Err(format!(
-        "[E_MONO_FN_KEY_COLLISION] два РАЗНЫХ объявления generic-свободной функции `{fn_name}` \
-         делят один ключ в реестре кодогена (`mono_fn_decls`), который хранит РОВНО ОДНО FnDecl \
-         на голое имя функции БЕЗ учёта модуля/файла. Это ЛЕГАЛЬНАЯ ситуация на уровне языка — \
-         два РАЗНЫХ модуля вправе каждый объявить свою module-private generic-функцию `{fn_name}` \
-         (ничто извне не может сослаться на чужую приватную функцию по этому имени) — но реестр \
-         кодогена их путает: вторая регистрация молча вытеснила бы первую (last-wins), и вызовы \
-         `{fn_name}(...)` из ЛЮБОГО из двух модулей ошибочно исполняли бы тело ВТОРОЙ.\n  \
-         первое объявление: {existing_span}\n  второе объявление: {new_span}\n  \
-         fix: переименуй одну из функций (уникальное имя убирает коллизию) — корректный fix \
-         реестра (ключ, учитывающий модуль/файл) требует отдельного окна: 129/Task C, см. \
-         mono_method_registry.rs.",
-        fn_name = fn_name,
         existing_span = existing.span,
         new_span = new_span,
     ))
