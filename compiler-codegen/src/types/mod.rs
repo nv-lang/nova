@@ -25366,6 +25366,19 @@ struct CapabilityCtx<'a> {
     /// builtin-модули типа sync.nv — иначе `Mutex`/`RwLock`/etc, у которых
     /// TypeDecl приходит ТОЛЬКО через `builtin_sig_modules()`, не резолвятся).
     type_decls: HashMap<String, &'a TypeDecl>,
+    /// Plan 238 Ф.1 (D441 §1-2): pre-pass, computed once in `build` — per
+    /// free-fn name, the set of that fn's OWN fn-typed PARAMETER names which
+    /// are invoked somewhere inside a `spawn`/`detach`/`parallel for`/
+    /// `blocking` body within the fn's own definition (any nesting depth).
+    /// Consulted at each CALL SITE (`check_transitive_closure_arg`) so a
+    /// closure passed BY VALUE into such a parameter gets the same
+    /// share-safety check as if it were inlined directly at the boundary —
+    /// closing the transitive gap `race150/b_closure_bypass.nv` measures
+    /// (closure created outside `spawn`, crosses the fiber boundary as data
+    /// via a plain fn-parameter, invisible to the syntactic-boundary-only
+    /// check). See `spawn_tainted_params_of_fn` for the (documented,
+    /// conservative-UNDER-approximation) AST coverage.
+    spawn_tainted_params: HashMap<String, HashSet<String>>,
 }
 
 /// Plan 173.3 (D415 §2): adapter — `CapabilityCtx.type_decls` as a
@@ -25397,6 +25410,25 @@ struct ScopeBinding {
     /// see them; this flag is the ONLY signal that the binding is a linear/
     /// consume resource, and is authoritative regardless of `ty`.
     linear_pattern: bool,
+    /// Plan 238 Ф.1 (D441 §1-2): when this binding's INIT expression is a
+    /// closure literal (`Lambda`/`ClosureLight`/`ClosureFull` — e.g. `ro
+    /// push = || { v.push(1) }`), the literal's OWN free-variable set
+    /// (computed once, via `capture_scan_expr` on the init expr, at
+    /// `Stmt::Let` registration time). `None` for anything else (fn
+    /// PARAMETERS of a fn-type included — opaque at the definition site,
+    /// their concrete captures are only known at each CALL site, see
+    /// `spawn_tainted_params_of_fn`/`check_transitive_closure_arg`).
+    ///
+    /// Closes the №150 Ф.1 transitive gap: a closure created OUTSIDE
+    /// `spawn`/`detach`/`parallel for`, then passed as a plain `Ident` VALUE
+    /// into a call whose callee invokes it inside one of those boundaries,
+    /// carried its captured environment across the fiber boundary
+    /// completely invisibly to the original (direct-boundary-only)
+    /// `check_capture_boundary`. Recording the literal's free vars here lets
+    /// `check_transitive_closure_arg` re-run the SAME share-safety
+    /// resolution against them at the call site, as if the closure body
+    /// were inlined there.
+    closure_free_vars: Option<Vec<String>>,
 }
 
 /// Plan 16: capability state передаётся через walk как mutable.
@@ -25505,7 +25537,20 @@ impl<'a> CapabilityCtx<'a> {
                 }
             }
         }
-        CapabilityCtx { sig, effect_decls, type_decls }
+        // Plan 238 Ф.1 (D441 §1-2): compute the spawn-tainted-parameter
+        // pre-pass over ALL free fns in this compile-unit's module BEFORE
+        // any call-site is checked — a caller earlier in file order than
+        // its callee must still see the callee's taint fact.
+        let mut spawn_tainted_params: HashMap<String, HashSet<String>> = HashMap::new();
+        for item in &module.items {
+            if let Item::Fn(fd) = item {
+                let tainted = spawn_tainted_params_of_fn(fd);
+                if !tainted.is_empty() {
+                    spawn_tainted_params.insert(fd.name.clone(), tainted);
+                }
+            }
+        }
+        CapabilityCtx { sig, effect_decls, type_decls, spawn_tainted_params }
     }
 
     fn check_module(&self, module: &Module, errors: &mut Vec<Diagnostic>) {
@@ -25623,7 +25668,7 @@ impl<'a> CapabilityCtx<'a> {
         // spawn/parallel-for capture-check can see a captured name bound in.
         let mut frame: HashMap<String, ScopeBinding> = HashMap::new();
         for p in &f.params {
-            frame.insert(p.name.clone(), ScopeBinding { mutable: p.is_mut, ty: Some(p.ty.clone()), linear_pattern: false });
+            frame.insert(p.name.clone(), ScopeBinding { mutable: p.is_mut, ty: Some(p.ty.clone()), linear_pattern: false, closure_free_vars: None });
         }
         state.scopes.push(frame);
         match &f.body {
@@ -25662,6 +25707,25 @@ impl<'a> CapabilityCtx<'a> {
                 // dominant unannotated forms — `mut mu = Mutex.new()` (must
                 // NOT be flagged) and `mut acc = 0` (MUST be flagged) —
                 // resolve without full inference (CapabilityCtx has none).
+                // Plan 238 Ф.1 (D441 §1-2): if the init expr is a closure
+                // literal, record its OWN free-variable set now (before it
+                // can be shadowed) — `check_transitive_closure_arg` looks
+                // this up later when the bound name is passed BY VALUE into
+                // a call whose callee invokes it inside a spawn/detach/
+                // parallel-for/channel-send boundary (the transitive path
+                // repro `race150/b_closure_bypass.nv` exercises: `ro push =
+                // || { v.push(1) }` then `parallel_spawn(push, ..)`).
+                let closure_vars: Option<Vec<String>> = match &d.value.kind {
+                    ExprKind::Lambda { .. }
+                    | ExprKind::ClosureLight { .. }
+                    | ExprKind::ClosureFull(_) => {
+                        let mut shadow = HashSet::new();
+                        let mut free = HashSet::new();
+                        capture_scan_expr(&d.value, &mut shadow, &mut free);
+                        Some(free.into_iter().collect())
+                    }
+                    _ => None,
+                };
                 if let Some(frame) = state.scopes.last_mut() {
                     let ty = d.ty.clone().or_else(|| {
                         capture_syntactic_init_type(&d.value, &self.type_decls)
@@ -25671,6 +25735,7 @@ impl<'a> CapabilityCtx<'a> {
                             mutable: d.mutable || pat_mut,
                             ty: ty.clone(),
                             linear_pattern: pat_consume,
+                            closure_free_vars: closure_vars.clone(),
                         });
                     }
                 }
@@ -25773,6 +25838,26 @@ impl<'a> CapabilityCtx<'a> {
                     }
                     state.with_handler_stack.push(n.clone());
                 }
+                // Plan 238 Ф.3 (D441 §3): a handler installed around a
+                // fiber-containing body executes IN THE FIBER of the
+                // failing/child operation (Ф.0 measurement) — mut-captures
+                // there are the same race as a direct spawn-body capture.
+                // EXCEPTION (D416§2 carve-out): `Supervisor`'s
+                // `on_child_fail` is measured SERIALIZED on the scope's
+                // drive fiber (one call at a time, in slot order) — pinned
+                // by `supervisor_on_child_fail_serialized_pin_test.nv`.
+                if block_contains_fiber_boundary(body) {
+                    for b in bindings {
+                        let eff_name = match &b.effect {
+                            TypeRef::Named { path, .. } => path.last().cloned(),
+                            _ => None,
+                        };
+                        if eff_name.as_deref() == Some("Supervisor") {
+                            continue;
+                        }
+                        self.check_handler_capture(&b.handler, state, errors);
+                    }
+                }
                 self.walk_block(body, state, errors);
                 for _ in &pushed { state.with_handler_stack.pop(); }
             }
@@ -25823,6 +25908,74 @@ impl<'a> CapabilityCtx<'a> {
                             }
                         }
                         _ => {}
+                    }
+                }
+                // Plan 238 Ф.1(а) (D441 §1-2): transitive parameter-crossing
+                // — this call's callee may invoke ONE OF ITS OWN fn-typed
+                // parameters inside `spawn`/`detach`/`parallel for`/
+                // `blocking` (`spawn_tainted_params`, precomputed pre-pass).
+                // If the ARGUMENT at that position is a closure we can
+                // resolve (literal, or a plain name snapshotted at its
+                // `let`), check its captures for share-safety exactly as if
+                // it were inlined at the boundary — closes the
+                // `race150/b_closure_bypass.nv` gap (closure created
+                // outside `spawn`, crosses as data via a fn-parameter).
+                if let ExprKind::Ident(callee_name) = &func.kind {
+                    if let Some(tainted) = self.spawn_tainted_params.get(callee_name) {
+                        if let Some(fdecls) = self.sig.free_fns(callee_name) {
+                            // D84 overloads: V1 does not disambiguate — match
+                            // by arity (conservative: the common case is a
+                            // single free-fn definition per name anyway).
+                            if let Some(fd) = fdecls.iter().find(|f| f.params.len() == args.len()) {
+                                for (i, p) in fd.params.iter().enumerate() {
+                                    if !tainted.contains(&p.name) { continue; }
+                                    if let Some(arg) = args.get(i) {
+                                        self.check_transitive_closure_arg(
+                                            arg.expr(), callee_name, &p.name, state, errors,
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                // Plan 238 Ф.1(б) (D441 §1-2): channel-send of a closure —
+                // `chan.send(value)` name-heuristic (same approximation
+                // `state.const_init` already uses above for `send`/`recv`:
+                // no static Channel-type proof, matched by method name).
+                // The receiving end may run in a different, concurrent
+                // fiber by construction, so a closure value crossing here
+                // gets the identical treatment as the direct-boundary case.
+                if let ExprKind::Member { name, .. } = &func.kind {
+                    if name == "send" {
+                        if let Some(value_arg) = args.first() {
+                            let mut shadow = HashSet::new();
+                            let mut free = HashSet::new();
+                            let free_opt = match &value_arg.expr().kind {
+                                ExprKind::Lambda { .. }
+                                | ExprKind::ClosureLight { .. }
+                                | ExprKind::ClosureFull(_) => {
+                                    capture_scan_expr(value_arg.expr(), &mut shadow, &mut free);
+                                    Some(free)
+                                }
+                                ExprKind::Ident(vname) => state.scopes.iter().rev()
+                                    .find_map(|f| f.get(vname))
+                                    .and_then(|b| b.closure_free_vars.as_ref())
+                                    .map(|v| v.iter().cloned().collect()),
+                                _ => None,
+                            };
+                            if let Some(free) = free_opt {
+                                self.flag_boundary_captures(
+                                    free,
+                                    value_arg.expr().span,
+                                    state,
+                                    "sent into a channel (D441 §1(б) — the receiving \
+                                     end may run in a different, concurrent fiber)",
+                                    "E_CONCURRENT_MUT_CAPTURE",
+                                    errors,
+                                );
+                            }
+                        }
                     }
                 }
                 self.walk_expr(func, state, errors);
@@ -25880,7 +26033,7 @@ impl<'a> CapabilityCtx<'a> {
                 // invisible — no frame was ever pushed here).
                 let mut frame: HashMap<String, ScopeBinding> = HashMap::new();
                 for (name, is_mut, is_consume) in pattern_capture_names(pattern) {
-                    frame.insert(name, ScopeBinding { mutable: is_mut, ty: None, linear_pattern: is_consume });
+                    frame.insert(name, ScopeBinding { mutable: is_mut, ty: None, linear_pattern: is_consume, closure_free_vars: None });
                 }
                 state.scopes.push(frame);
                 if let Some(g) = guard { self.walk_expr(g, state, errors); }
@@ -25906,7 +26059,7 @@ impl<'a> CapabilityCtx<'a> {
                     // see them.
                     let mut frame: HashMap<String, ScopeBinding> = HashMap::new();
                     for (name, is_mut, is_consume) in pattern_capture_names(&arm.pattern) {
-                        frame.insert(name, ScopeBinding { mutable: is_mut, ty: None, linear_pattern: is_consume });
+                        frame.insert(name, ScopeBinding { mutable: is_mut, ty: None, linear_pattern: is_consume, closure_free_vars: None });
                     }
                     state.scopes.push(frame);
                     if let Some(g) = &arm.guard { self.walk_expr(g, state, errors); }
@@ -26062,7 +26215,7 @@ impl<'a> CapabilityCtx<'a> {
                 // local, not shared across siblings).
                 let mut frame: HashMap<String, ScopeBinding> = HashMap::new();
                 for (name, is_mut, is_consume) in pattern_capture_names(pattern) {
-                    frame.insert(name, ScopeBinding { mutable: is_mut, ty: elem_type.clone(), linear_pattern: is_consume });
+                    frame.insert(name, ScopeBinding { mutable: is_mut, ty: elem_type.clone(), linear_pattern: is_consume, closure_free_vars: None });
                 }
                 state.scopes.push(frame);
                 self.check_capture_boundary(body, state, errors);
@@ -26074,7 +26227,7 @@ impl<'a> CapabilityCtx<'a> {
                 self.walk_expr(iter, state, errors);
                 let mut frame: HashMap<String, ScopeBinding> = HashMap::new();
                 for (name, is_mut, is_consume) in pattern_capture_names(pattern) {
-                    frame.insert(name, ScopeBinding { mutable: is_mut, ty: elem_type.clone(), linear_pattern: is_consume });
+                    frame.insert(name, ScopeBinding { mutable: is_mut, ty: elem_type.clone(), linear_pattern: is_consume, closure_free_vars: None });
                 }
                 state.scopes.push(frame);
                 for s in &body.stmts { self.walk_stmt(s, state, errors); }
@@ -26094,7 +26247,7 @@ impl<'a> CapabilityCtx<'a> {
                 // capturing it is checked.
                 let mut frame: HashMap<String, ScopeBinding> = HashMap::new();
                 for (name, is_mut, is_consume) in pattern_capture_names(pattern) {
-                    frame.insert(name, ScopeBinding { mutable: is_mut, ty: None, linear_pattern: is_consume });
+                    frame.insert(name, ScopeBinding { mutable: is_mut, ty: None, linear_pattern: is_consume, closure_free_vars: None });
                 }
                 state.scopes.push(frame);
                 if let Some(g) = guard { self.walk_expr(g, state, errors); }
@@ -26517,6 +26670,39 @@ impl<'a> CapabilityCtx<'a> {
         let mut shadow: HashSet<String> = HashSet::new();
         let mut free: HashSet<String> = HashSet::new();
         capture_scan_block(body, &mut shadow, &mut free);
+        self.flag_boundary_captures(
+            free,
+            body.span,
+            state,
+            "captured by reference in a `spawn`/`parallel for`/`detach` body",
+            "E_CONCURRENT_MUT_CAPTURE",
+            errors,
+        );
+    }
+
+    /// Plan 238 Ф.1/Ф.3 (D441): shared core — resolve every name in `free`
+    /// against `state.scopes` and emit the appropriate fiber-boundary
+    /// diagnostic for each unsafe one. Factored out of the original
+    /// (direct-boundary-only) `check_capture_boundary` so the SAME
+    /// resolution/classification logic backs three crossing points:
+    /// (1) a `spawn`/`detach`/`parallel for` body itself (`crossing_desc`
+    /// = "captured by reference in a …body"); (2) a `with`-handler
+    /// installed around a fiber-containing body (Ф.3,
+    /// `check_handler_capture`); (3) a closure passed BY VALUE into a
+    /// spawn-tainted parameter or a channel send (Ф.1 transitive path,
+    /// `check_transitive_closure_arg`). `mut_code` lets the handler call
+    /// site use a distinct E-code (`E_HANDLER_MUT_CAPTURE_IN_FIBER`) from
+    /// the direct/transitive ones (`E_CONCURRENT_MUT_CAPTURE`) while
+    /// sharing the same message body and share/linear classification.
+    fn flag_boundary_captures(
+        &self,
+        free: HashSet<String>,
+        span: Span,
+        state: &CapState,
+        crossing_desc: &str,
+        mut_code: &str,
+        errors: &mut Vec<Diagnostic>,
+    ) {
         let share_q = CapShareQuery(&self.type_decls);
         // (name, why) — `why` is the per-field refusal explanation
         // ([M-173.3-share-leakage-explain]): the FIRST poison path returned
@@ -26612,17 +26798,17 @@ impl<'a> CapabilityCtx<'a> {
             errors.push(Diagnostic::new(
                 format!(
                     "[E_LINEAR_CAPTURE_IN_FIBER] `{n}` (linear consume-тип \
-                     `{ty}`) захвачен в тело `spawn`/`parallel for`/`detach`: \
-                     by-value копия обёртки в N файберов = N алиасов одного \
-                     ресурса БЕЗ учёта владения → double-close/интерференция \
-                     (Plan 201 / 173.1 by-value капчур). Возьмите \
-                     `@share()`-копию per-fiber (`ro w = {n}.share()` перед \
-                     `spawn {{ …w… }}` — refcount закрывает последним) либо \
-                     явный move: `spawn consume {n} {{ … }}` / \
-                     `detach consume {n} {{ … }}` (D415 §4).",
-                    n = name, ty = ty
+                     `{ty}`) {cross}: by-value копия обёртки в N файберов = \
+                     N алиасов одного ресурса БЕЗ учёта владения → \
+                     double-close/интерференция (Plan 201 / 173.1 by-value \
+                     капчур). Возьмите `@share()`-копию per-fiber (`ro w = \
+                     {n}.share()` перед `spawn {{ …w… }}` — refcount \
+                     закрывает последним) либо явный move: \
+                     `spawn consume {n} {{ … }}` / `detach consume {n} {{ … }}` \
+                     (D415 §4).",
+                    n = name, ty = ty, cross = crossing_desc
                 ),
-                body.span,
+                span,
             ));
         }
         pattern_linear_flagged.sort(); // deterministic diagnostic order
@@ -26630,28 +26816,27 @@ impl<'a> CapabilityCtx<'a> {
             errors.push(Diagnostic::new(
                 format!(
                     "[E_LINEAR_CAPTURE_IN_FIBER] `{n}` (явный `consume`-биндинг \
-                     из pattern, напр. `Ok(consume {n})`) захвачен в тело \
-                     `spawn`/`parallel for`/`detach` из объемлющего scope: \
-                     by-value копия обёртки в N файберов = N алиасов одного \
-                     ресурса БЕЗ учёта владения → use-after-consume/double-\
-                     close (Plan 173.3 / [M-detach-consume-escape-unchecked], \
-                     D415 §4 расширение). Передайте владение явным move: \
+                     из pattern, напр. `Ok(consume {n})`) {cross} из \
+                     объемлющего scope: by-value копия обёртки в N файберов = \
+                     N алиасов одного ресурса БЕЗ учёта владения → \
+                     use-after-consume/double-close (Plan 173.3 / \
+                     [M-detach-consume-escape-unchecked], D415 §4 \
+                     расширение). Передайте владение явным move: \
                      `spawn consume {n} {{ … }}` / `detach consume {n} {{ … }}` \
                      — тело получает `{n}` во владение, cleanup срабатывает \
                      при выходе из ЕГО собственного тела, а не объемлющего \
                      scope.",
-                    n = name
+                    n = name, cross = crossing_desc
                 ),
-                body.span,
+                span,
             ));
         }
         flagged.sort(); // deterministic diagnostic order (HashSet iteration)
         for (name, why) in flagged {
             errors.push(Diagnostic::new(
                 format!(
-                    "[E_CONCURRENT_MUT_CAPTURE] outer `mut` binding `{}` \
-                     captured by reference in a `spawn`/`parallel for`/`detach` \
-                     body: \
+                    "[{code}] outer `mut` binding `{}` \
+                     {cross}: \
                      {} — under M:N scheduling this alias is a data race (the \
                      child fiber may run concurrently with, or migrate across \
                      threads from, the parent/siblings). Allowed captures \
@@ -26662,10 +26847,111 @@ impl<'a> CapabilityCtx<'a> {
                      view), or use an internally-synchronized `#share` type \
                      (`Mutex`/`Atomic*` — or a user lock-free type vouched \
                      with `#share`).",
-                    name, why, name, name, name
+                    name, why, name, name, name, code = mut_code, cross = crossing_desc
                 ),
-                body.span,
+                span,
             ));
+        }
+    }
+
+    /// Plan 238 Ф.1 (D441 §1-2): call-site half of the transitive-parameter
+    /// check. `arg` is the expression passed at a position `spawn_tainted_
+    /// params` flagged for the callee (that parameter IS invoked inside a
+    /// `spawn`/`detach`/`parallel for`/`blocking` body somewhere in the
+    /// callee's own definition). Resolve `arg`'s free variables — either
+    /// directly (a closure LITERAL passed inline) or via the `let`-time
+    /// snapshot (`ScopeBinding.closure_free_vars`, a plain `Ident`
+    /// referencing a previously-bound closure, exactly `race150/
+    /// b_closure_bypass.nv`'s `parallel_spawn(push, ..)` shape) — then run
+    /// them through the SAME share-safety resolution as a direct spawn-body
+    /// capture would get, AT THE CALLER's scope (where the closure's own
+    /// captures still resolve, since Nova has no closure re-entry that
+    /// would rebind them differently).
+    ///
+    /// Anything else (an opaque expression we cannot trace to a literal or
+    /// a recorded snapshot — e.g. a further fn-parameter passed through
+    /// unchanged, a field read, a call returning a closure) is a
+    /// documented, conservative no-op: under-approximation, not a false
+    /// positive (Plan 238 report — honest limitation, not silently grown
+    /// scope).
+    fn check_transitive_closure_arg(
+        &self,
+        arg: &Expr,
+        callee_name: &str,
+        param_name: &str,
+        state: &CapState,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        let free_vars: Option<HashSet<String>> = match &arg.kind {
+            ExprKind::Lambda { .. } | ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_) => {
+                let mut shadow = HashSet::new();
+                let mut free = HashSet::new();
+                capture_scan_expr(arg, &mut shadow, &mut free);
+                Some(free)
+            }
+            ExprKind::Ident(name) => state.scopes.iter().rev()
+                .find_map(|f| f.get(name))
+                .and_then(|b| b.closure_free_vars.as_ref())
+                .map(|v| v.iter().cloned().collect()),
+            _ => None,
+        };
+        if let Some(free) = free_vars {
+            let crossing = format!(
+                "created outside any fiber boundary, then passed BY VALUE \
+                 into `{callee}`'s parameter `{param}` — `{callee}` invokes \
+                 `{param}` inside its OWN `spawn`/`detach`/`parallel for`/\
+                 `blocking` body (D441 §1: transitive crossing — the value \
+                 carries its captured environment across the fiber \
+                 boundary just like a direct capture would, only one \
+                 function-call hop away from the syntactic boundary)",
+                callee = callee_name, param = param_name,
+            );
+            self.flag_boundary_captures(free, arg.span, state, &crossing, "E_CONCURRENT_MUT_CAPTURE", errors);
+        }
+    }
+
+    /// Plan 238 Ф.3 (D441 §3): check a `with`-handler's mut-captures when
+    /// its body (the `with … { body }` it is installed around) contains a
+    /// `spawn`/`detach`/`parallel for` — Ф.0 measured the handler executes
+    /// IN THE FIBER of the failing/child operation (2/5 runs of 64×20
+    /// concurrent child failures lost updates on an unsynchronized
+    /// `cnt = cnt + 1` inside the handler), so a mut-capture there is
+    /// data-race-equivalent to a direct spawn-body capture. Caller
+    /// (`ExprKind::With` in `walk_expr`) has already excluded the D416§2
+    /// `Supervisor.on_child_fail` carve-out (serialized on the scope's
+    /// drive fiber — not concurrent with siblings) before calling this.
+    fn check_handler_capture(&self, handler: &Expr, state: &CapState, errors: &mut Vec<Diagnostic>) {
+        let crossing = "captured by reference in a `with`-handler installed \
+                         around a body containing `spawn`/`detach`/`parallel for` \
+                         (D441 §3 — the handler runs IN THE FIBER of the failing/\
+                         child operation, not the installing scope's fiber; see \
+                         Ф.0 measurement — 2/5 runs lost updates under 64×20 \
+                         concurrent child failures)";
+        match &handler.kind {
+            ExprKind::Lambda { .. } | ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_) => {
+                let mut shadow = HashSet::new();
+                let mut free = HashSet::new();
+                capture_scan_expr(handler, &mut shadow, &mut free);
+                self.flag_boundary_captures(free, handler.span, state, crossing, "E_HANDLER_MUT_CAPTURE_IN_FIBER", errors);
+            }
+            ExprKind::HandlerLit { methods, .. } => {
+                for m in methods {
+                    let mut shadow: HashSet<String> = m.params.iter().map(|p| p.name.clone()).collect();
+                    let mut free = HashSet::new();
+                    match &m.body {
+                        HandlerMethodBody::Block(b) => capture_scan_block(b, &mut shadow, &mut free),
+                        HandlerMethodBody::Expr(e) => capture_scan_expr(e, &mut shadow, &mut free),
+                    }
+                    self.flag_boundary_captures(free, handler.span, state, crossing, "E_HANDLER_MUT_CAPTURE_IN_FIBER", errors);
+                }
+            }
+            // Call-shaped policy (`escalate()`/`stop()`/builtin factory) —
+            // no user closure body to inspect, nothing to capture. Plain
+            // `Ident` referencing a handler value bound elsewhere — V1 does
+            // not trace it back to a literal here (documented limitation,
+            // conservative no-op — same honesty stance as
+            // `check_transitive_closure_arg`'s opaque-expression case).
+            _ => {}
         }
     }
 }
@@ -27038,6 +27324,327 @@ fn capture_scan_fn_sig_body(sb: &FnSigBody, shadow: &mut HashSet<String>, free: 
         FnBody::Expr(e) => capture_scan_expr(e, &mut inner_shadow, free),
         FnBody::Block(b) => capture_scan_block(b, &mut inner_shadow, free),
         FnBody::External => {}
+    }
+}
+
+/// Plan 238 Ф.1 (D441 §1-2): is `ty` a fn/closure-shaped type (unwrapping the
+/// transparent binding-modifier wrappers `ro`/`mut`/uninit/`ref`, mirroring
+/// `share_check::share_rec`'s own unwrap)? Used to find a fn's OWN
+/// fn-typed parameters for the spawn-tainted-parameter pre-pass.
+fn typeref_is_func_shaped(ty: &TypeRef) -> bool {
+    match ty {
+        TypeRef::Func { .. } => true,
+        TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) | TypeRef::Ref(inner, _) => {
+            typeref_is_func_shaped(inner)
+        }
+        _ => false,
+    }
+}
+
+/// Plan 238 Ф.1 (D441 §1-2): does `b` contain, ANYWHERE (any nesting depth),
+/// a `spawn`/`detach`/`parallel for`/`blocking` node? Used both by the
+/// spawn-tainted-parameter pre-pass and by the Ф.3 with-handler check (a
+/// handler installed around a body with NO fiber boundary at all runs
+/// synchronously in the parent — capturing `mut` there is ordinary
+/// sequential code, not a race; gating on this predicate is what keeps the
+/// (very common) sequential `with Fail[T] = |e| { mut x = .. } { ..no
+/// spawn.. }` idiom legal).
+///
+/// Conservative UNDER-approximation (documented, safe direction — matches
+/// this module's stance elsewhere): an unhandled AST shape (e.g. a boundary
+/// buried inside an array/map/tuple-literal element, or behind a NESTED
+/// closure literal) can only cause a MISSED detection (false negative,
+/// i.e. a real violation slips through), never a false positive.
+fn block_contains_fiber_boundary(b: &Block) -> bool {
+    b.stmts.iter().any(stmt_contains_fiber_boundary)
+        || b.trailing.as_ref().map_or(false, |t| expr_contains_fiber_boundary(t))
+}
+
+fn stmt_contains_fiber_boundary(s: &Stmt) -> bool {
+    match s {
+        Stmt::Expr(e) => expr_contains_fiber_boundary(e),
+        Stmt::Let(d) => expr_contains_fiber_boundary(&d.value),
+        Stmt::Assign { target, value, .. } => {
+            expr_contains_fiber_boundary(target) || expr_contains_fiber_boundary(value)
+        }
+        Stmt::Return { value, .. } => value.as_ref().map_or(false, expr_contains_fiber_boundary),
+        Stmt::Throw { value, .. } => expr_contains_fiber_boundary(value),
+        Stmt::Defer { body, .. } => expr_contains_fiber_boundary(body),
+        Stmt::ConsumeScope { init, body, .. } => {
+            expr_contains_fiber_boundary(init) || block_contains_fiber_boundary(body)
+        }
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            lhs.iter().any(expr_contains_fiber_boundary) || rhs.iter().any(expr_contains_fiber_boundary)
+        }
+        Stmt::Const(_) | Stmt::Break(_) | Stmt::Continue(_) | Stmt::AssertStatic { .. }
+        | Stmt::Assume { .. } | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => false,
+    }
+}
+
+fn expr_contains_fiber_boundary(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Spawn(_) | ExprKind::Detach(_) | ExprKind::ParallelFor { .. } | ExprKind::Blocking(_) => true,
+        ExprKind::Block(b) => block_contains_fiber_boundary(b),
+        ExprKind::If { cond, then, else_ } => {
+            expr_contains_fiber_boundary(cond)
+                || block_contains_fiber_boundary(then)
+                || else_branch_contains_fiber_boundary(else_)
+        }
+        ExprKind::IfLet { scrutinee, guard, then, else_, .. } => {
+            expr_contains_fiber_boundary(scrutinee)
+                || guard.as_ref().map_or(false, |g| expr_contains_fiber_boundary(g))
+                || block_contains_fiber_boundary(then)
+                || else_branch_contains_fiber_boundary(else_)
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            expr_contains_fiber_boundary(scrutinee)
+                || arms.iter().any(|a| {
+                    a.guard.as_ref().map_or(false, expr_contains_fiber_boundary)
+                        || match &a.body {
+                            MatchArmBody::Expr(be) => expr_contains_fiber_boundary(be),
+                            MatchArmBody::Block(bb) => block_contains_fiber_boundary(bb),
+                        }
+                })
+        }
+        ExprKind::For { iter, body, .. } => {
+            expr_contains_fiber_boundary(iter) || block_contains_fiber_boundary(body)
+        }
+        ExprKind::While { cond, body, .. } => {
+            expr_contains_fiber_boundary(cond) || block_contains_fiber_boundary(body)
+        }
+        ExprKind::WhileLet { scrutinee, guard, body, .. } => {
+            expr_contains_fiber_boundary(scrutinee)
+                || guard.as_ref().map_or(false, |g| expr_contains_fiber_boundary(g))
+                || block_contains_fiber_boundary(body)
+        }
+        ExprKind::Loop { body, .. } => block_contains_fiber_boundary(body),
+        ExprKind::Supervised { body, .. } => block_contains_fiber_boundary(body),
+        ExprKind::With { body, .. } => block_contains_fiber_boundary(body),
+        ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => block_contains_fiber_boundary(body),
+        ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) => {
+            expr_contains_fiber_boundary(inner)
+        }
+        ExprKind::Coalesce(a, b) => expr_contains_fiber_boundary(a) || expr_contains_fiber_boundary(b),
+        ExprKind::Binary { left, right, .. } => {
+            expr_contains_fiber_boundary(left) || expr_contains_fiber_boundary(right)
+        }
+        ExprKind::Unary { operand, .. } => expr_contains_fiber_boundary(operand),
+        ExprKind::Member { obj, .. } => expr_contains_fiber_boundary(obj),
+        ExprKind::Index { obj, index } => {
+            expr_contains_fiber_boundary(obj) || expr_contains_fiber_boundary(index)
+        }
+        ExprKind::Call { func, args, trailing } => {
+            expr_contains_fiber_boundary(func)
+                || args.iter().any(|a| expr_contains_fiber_boundary(a.expr()))
+                || trailing.as_ref().map_or(false, |t| match t {
+                    crate::ast::Trailing::Block(b) => block_contains_fiber_boundary(b),
+                    crate::ast::Trailing::LegacyBlockWithParams(tb) => {
+                        block_contains_fiber_boundary(&tb.body)
+                    }
+                    crate::ast::Trailing::Fn(sb) => match &sb.body {
+                        FnBody::Block(b) => block_contains_fiber_boundary(b),
+                        FnBody::Expr(e) => expr_contains_fiber_boundary(e),
+                        FnBody::External => false,
+                    },
+                })
+        }
+        _ => false,
+    }
+}
+
+fn else_branch_contains_fiber_boundary(else_: &Option<ElseBranch>) -> bool {
+    match else_ {
+        Some(ElseBranch::Block(b)) => block_contains_fiber_boundary(b),
+        Some(ElseBranch::If(e)) => expr_contains_fiber_boundary(e),
+        None => false,
+    }
+}
+
+/// Plan 238 Ф.1 (D441 §1-2): which of `fd`'s OWN fn-typed parameters are
+/// invoked inside a `spawn`/`detach`/`parallel for`/`blocking` body
+/// somewhere in `fd`'s definition? Free function (no `CapabilityCtx` need —
+/// pure AST fact, computed once per fn in the `build` pre-pass).
+fn spawn_tainted_params_of_fn(fd: &FnDecl) -> HashSet<String> {
+    let func_params: HashSet<String> = fd.params.iter()
+        .filter(|p| typeref_is_func_shaped(&p.ty))
+        .map(|p| p.name.clone())
+        .collect();
+    if func_params.is_empty() {
+        return HashSet::new();
+    }
+    let mut boundaries: Vec<HashSet<String>> = Vec::new();
+    match &fd.body {
+        FnBody::Block(b) => collect_fiber_boundary_frees_block(b, &mut boundaries),
+        FnBody::Expr(e) => collect_fiber_boundary_frees_expr(e, &mut boundaries),
+        FnBody::External => {}
+    }
+    let mut tainted = HashSet::new();
+    for free in &boundaries {
+        for p in &func_params {
+            if free.contains(p) {
+                tainted.insert(p.clone());
+            }
+        }
+    }
+    tainted
+}
+
+/// Collect the free-variable set of EVERY `spawn`/`detach`/`parallel for`/
+/// `blocking` body found anywhere within `b` (any nesting depth) into
+/// `out` (one `HashSet` per boundary found). Mirrors `capture_scan_block`'s
+/// AST coverage for the container-shaped nodes it needs to descend through
+/// to FIND boundaries (as opposed to `capture_scan_*`, which folds
+/// everything transitively into ONE set and never distinguishes "inside a
+/// boundary" from "outside one").
+fn collect_fiber_boundary_frees_block(b: &Block, out: &mut Vec<HashSet<String>>) {
+    for s in &b.stmts {
+        collect_fiber_boundary_frees_stmt(s, out);
+    }
+    if let Some(t) = &b.trailing {
+        collect_fiber_boundary_frees_expr(t, out);
+    }
+}
+
+fn collect_fiber_boundary_frees_stmt(s: &Stmt, out: &mut Vec<HashSet<String>>) {
+    match s {
+        Stmt::Expr(e) => collect_fiber_boundary_frees_expr(e, out),
+        Stmt::Let(d) => collect_fiber_boundary_frees_expr(&d.value, out),
+        Stmt::Assign { target, value, .. } => {
+            collect_fiber_boundary_frees_expr(target, out);
+            collect_fiber_boundary_frees_expr(value, out);
+        }
+        Stmt::Return { value, .. } => {
+            if let Some(v) = value { collect_fiber_boundary_frees_expr(v, out); }
+        }
+        Stmt::Throw { value, .. } => collect_fiber_boundary_frees_expr(value, out),
+        Stmt::Defer { body, .. } => collect_fiber_boundary_frees_expr(body, out),
+        Stmt::ConsumeScope { init, body, .. } => {
+            collect_fiber_boundary_frees_expr(init, out);
+            collect_fiber_boundary_frees_block(body, out);
+        }
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            for e in lhs { collect_fiber_boundary_frees_expr(e, out); }
+            for e in rhs { collect_fiber_boundary_frees_expr(e, out); }
+        }
+        _ => {}
+    }
+}
+
+fn collect_fiber_boundary_frees_expr(e: &Expr, out: &mut Vec<HashSet<String>>) {
+    match &e.kind {
+        ExprKind::Spawn(inner) => {
+            let mut shadow = HashSet::new();
+            let mut free = HashSet::new();
+            capture_scan_expr(inner, &mut shadow, &mut free);
+            out.push(free);
+            collect_fiber_boundary_frees_expr(inner, out);
+        }
+        ExprKind::Detach(b) | ExprKind::Blocking(b) => {
+            let mut shadow = HashSet::new();
+            let mut free = HashSet::new();
+            capture_scan_block(b, &mut shadow, &mut free);
+            out.push(free);
+            collect_fiber_boundary_frees_block(b, out);
+        }
+        ExprKind::ParallelFor { iter, body, .. } => {
+            collect_fiber_boundary_frees_expr(iter, out);
+            let mut shadow = HashSet::new();
+            let mut free = HashSet::new();
+            capture_scan_block(body, &mut shadow, &mut free);
+            out.push(free);
+            collect_fiber_boundary_frees_block(body, out);
+        }
+        ExprKind::Block(b) => collect_fiber_boundary_frees_block(b, out),
+        ExprKind::If { cond, then, else_ } => {
+            collect_fiber_boundary_frees_expr(cond, out);
+            collect_fiber_boundary_frees_block(then, out);
+            match else_ {
+                Some(ElseBranch::Block(b)) => collect_fiber_boundary_frees_block(b, out),
+                Some(ElseBranch::If(e2)) => collect_fiber_boundary_frees_expr(e2, out),
+                None => {}
+            }
+        }
+        ExprKind::IfLet { scrutinee, guard, then, else_, .. } => {
+            collect_fiber_boundary_frees_expr(scrutinee, out);
+            if let Some(g) = guard { collect_fiber_boundary_frees_expr(g, out); }
+            collect_fiber_boundary_frees_block(then, out);
+            match else_ {
+                Some(ElseBranch::Block(b)) => collect_fiber_boundary_frees_block(b, out),
+                Some(ElseBranch::If(e2)) => collect_fiber_boundary_frees_expr(e2, out),
+                None => {}
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            collect_fiber_boundary_frees_expr(scrutinee, out);
+            for a in arms {
+                if let Some(g) = &a.guard { collect_fiber_boundary_frees_expr(g, out); }
+                match &a.body {
+                    MatchArmBody::Expr(be) => collect_fiber_boundary_frees_expr(be, out),
+                    MatchArmBody::Block(bb) => collect_fiber_boundary_frees_block(bb, out),
+                }
+            }
+        }
+        ExprKind::For { iter, body, .. } => {
+            collect_fiber_boundary_frees_expr(iter, out);
+            collect_fiber_boundary_frees_block(body, out);
+        }
+        ExprKind::While { cond, body, .. } => {
+            collect_fiber_boundary_frees_expr(cond, out);
+            collect_fiber_boundary_frees_block(body, out);
+        }
+        ExprKind::WhileLet { scrutinee, guard, body, .. } => {
+            collect_fiber_boundary_frees_expr(scrutinee, out);
+            if let Some(g) = guard { collect_fiber_boundary_frees_expr(g, out); }
+            collect_fiber_boundary_frees_block(body, out);
+        }
+        ExprKind::Loop { body, .. } => collect_fiber_boundary_frees_block(body, out),
+        ExprKind::Supervised { body, cancel, deadline } => {
+            if let Some(c) = cancel { collect_fiber_boundary_frees_expr(c, out); }
+            if let Some(dl) = deadline { collect_fiber_boundary_frees_expr(&dl.expr, out); }
+            collect_fiber_boundary_frees_block(body, out);
+        }
+        ExprKind::With { bindings, body } => {
+            for b in bindings { collect_fiber_boundary_frees_expr(&b.handler, out); }
+            collect_fiber_boundary_frees_block(body, out);
+        }
+        ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
+            collect_fiber_boundary_frees_block(body, out)
+        }
+        ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) => {
+            collect_fiber_boundary_frees_expr(inner, out)
+        }
+        ExprKind::Coalesce(a, b) => {
+            collect_fiber_boundary_frees_expr(a, out);
+            collect_fiber_boundary_frees_expr(b, out);
+        }
+        ExprKind::Binary { left, right, .. } => {
+            collect_fiber_boundary_frees_expr(left, out);
+            collect_fiber_boundary_frees_expr(right, out);
+        }
+        ExprKind::Unary { operand, .. } => collect_fiber_boundary_frees_expr(operand, out),
+        ExprKind::Member { obj, .. } => collect_fiber_boundary_frees_expr(obj, out),
+        ExprKind::Index { obj, index } => {
+            collect_fiber_boundary_frees_expr(obj, out);
+            collect_fiber_boundary_frees_expr(index, out);
+        }
+        ExprKind::Call { func, args, trailing } => {
+            collect_fiber_boundary_frees_expr(func, out);
+            for a in args { collect_fiber_boundary_frees_expr(a.expr(), out); }
+            if let Some(t) = trailing {
+                match t {
+                    crate::ast::Trailing::Block(b) => collect_fiber_boundary_frees_block(b, out),
+                    crate::ast::Trailing::LegacyBlockWithParams(tb) => {
+                        collect_fiber_boundary_frees_block(&tb.body, out)
+                    }
+                    crate::ast::Trailing::Fn(sb) => match &sb.body {
+                        FnBody::Block(b) => collect_fiber_boundary_frees_block(b, out),
+                        FnBody::Expr(e2) => collect_fiber_boundary_frees_expr(e2, out),
+                        FnBody::External => {}
+                    },
+                }
+            }
+        }
+        _ => {}
     }
 }
 
