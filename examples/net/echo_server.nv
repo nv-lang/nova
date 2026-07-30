@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// Plan 83.12: Echo server example.
-// Plan 183 Ф.3: migrated onto std.net2 (byte-surface `Net`, D407).
-//
-// Listens on 127.0.0.1:7777 (configurable). Accepts one connection, reads
-// data, echoes it back. Demonstrates the TcpListener + TcpStream async API.
+// Echo server example. Listens on 127.0.0.1:7777, accepts one connection,
+// reads data, echoes it back. Demonstrates TcpListener + TcpStream async
+// API.
 //
 // Usage:
 //   nova build examples/net/echo_server.nv -o echo_server && ./echo_server
@@ -24,9 +22,9 @@ fn main() {
 
         supervised {
             spawn {
-                // Plan 173.3 (D415 §2): listener живёт ЦЕЛИКОМ в серверном
-                // fiber'е (bind/accept/close) — mut-захват внешнего listener'а
-                // телом spawn был бы E_CONCURRENT_MUT_CAPTURE.
+                // listener живёт целиком в серверном fiber'е (bind/accept/close)
+                // — mut-захват внешнего listener'а телом spawn был бы
+                // E_CONCURRENT_MUT_CAPTURE.
                 consume lst = match TcpListener.bind(addr) {
                     Ok(consume l)  => l
                     Err(_) => panic("Failed to bind: ${PORT}")

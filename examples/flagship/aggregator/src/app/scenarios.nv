@@ -1,20 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// Plan 187 — flagship concurrent aggregator: synthetic Demo/Chaos scenarios.
+// Flagship concurrent aggregator: synthetic Demo/Chaos scenarios.
 //
-// Research 15 §5a/§5b (two legends, same `aggregate` code, different sources):
-// weather (open-meteo, collect-until-deadline) and health-check (SLA-timeout
-// ping). Live sources (real open-meteo / real domains) are BLOCKED on Plan
-// 116 std/tls and out of scope this pass (plan 187 §3 Ф.3b) — everything
-// here is synthetic (`should_fail`/`latency_ms` drive the app-level
-// simulation in aggregate.nv's `fetch_one`, see that file's header comment).
-//
-// "Demo" = fixed table (byte-for-byte reproducible — stronger than a seeded
-// PRNG). "Chaos" = the same table perturbed by a tiny local splitmix64 PRNG
-// (deterministic PER SEED, still reproducible for a given seed, but varied
-// run-to-run when the caller feeds a time-based seed) — intentionally NOT
-// `std.testing.handlers.seeded` (that substitutes the ambient `Random`
-// EFFECT for tests; here we want a plain pure-value generator with no effect
-// dependency, since scenario-building is not itself an I/O concern).
+// Two legends, same `aggregate` code, different sources: weather and health.
+// "Demo" = fixed table (byte-for-byte reproducible). "Chaos" = the same
+// table perturbed by a local splitmix64 PRNG (deterministic per seed).
+// A pure-value generator is used (not the `Random` effect) since scenario-
+// building is not an I/O concern.
 
 module app
 
@@ -62,12 +53,9 @@ export const HEALTH_BUDGET_MS = 1200
 // ── Chaos: perturb a demo table by a seeded PRNG ────────────────────────────
 
 /// Same source identities as `base`, but latency jittered (±200ms, floor
-/// 30ms) and outcome re-rolled (~15% simulated upstream failure) by a tiny
-/// local splitmix64 stream keyed on `seed`. Same `seed` → same chaos run
-/// (still reproducible for regression/screenshots); vary `seed` (e.g. from
-/// `Monotonic.now()`) for a genuinely different run each time — that is the
-/// "Chaos" mode toggle in the mockup (`docs/research/assets/15-showcase-
-/// mockup.html`, "seed = random · каждый забег другой").
+/// 30ms) and outcome re-rolled (~15% simulated upstream failure) by a local
+/// splitmix64 stream keyed on `seed`. Same seed → same chaos run; vary
+/// seed for a different run each time.
 #stable(since = "0.1")
 export fn chaos_variant(base []Source, seed u64) -> []Source {
     mut state = splitmix64_step(seed)
@@ -91,10 +79,8 @@ export fn chaos_variant(base []Source, seed u64) -> []Source {
 // re-implemented locally (not imported) so scenario-building carries no
 // `Random`-effect dependency — see module header.
 fn splitmix64_step(seed u64) -> u64 {
-    // Plan 206 (D423): sized-int overflow traps by default; splitmix64 is
-    // modular-by-design → explicit `.wrapping_add`/`.wrapping_mul` opt-out
-    // (mirrors std/testing/handlers.nv's splitmix64_step). Без этого `*`
-    // паникует `integer overflow: *` на chaos-прогоне (нашёл loadtest.ps1).
+    // Sized-int overflow traps by default; splitmix64 is modular-by-design,
+    // so explicit `.wrapping_add`/`.wrapping_mul` opt-out is needed.
     mut z = seed.wrapping_add(0x9E3779B97F4A7C15)
     z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9)
     z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB)

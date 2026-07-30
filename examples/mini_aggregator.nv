@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // mini_aggregator.nv — суть флагманского демо (examples/flagship/aggregator)
-// в ~30 строках кода: одновременный опрос N «источников» с ОБЩИМ бюджетом
+// в ~30 строках кода: одновременный опрос N источников с общим бюджетом
 // времени и честной отменой опоздавших. Без сети, без HTTP, без UI —
 // только ядро паттерна: `parallel for` + `supervised(deadline:)`.
 //
@@ -8,22 +8,19 @@
 //   nova-cli/target/release/nova build examples/mini_aggregator.nv -o mini_agg && ./mini_agg
 //
 // Печатает (структурно детерминированно; wall ≈ бюджет, не сумма задержек):
-//   done=4 cancelled=2 wall=~150-170ms — два «медленных» источника отменены
+//   done=4 cancelled=2 wall=~150-170ms — два медленных источника отменены
 //   на 120-мс бюджете, а не дожиты до конца (сумма задержек была бы 1300 мс).
 
 module nova_examples.mini_aggregator
 
 import std.time.duration
 
-const BUDGET_MS int = 120   // общий бюджет на ВЕСЬ забег, мс
+const BUDGET_MS int = 120   // общий бюджет на весь забег, мс
 
-// Один «источник»: ждёт свою задержку (симуляция сети) и рапортует в канал.
-// Дедлайн — ОДНА абсолютная точка (t0 + бюджет) на всех, канон D408: джиттер
-// старта ланов не размывает общий бюджет. Опоздавший спавн честно
-// ОБРЫВАЕТСЯ (его Time.sleep прерывается), канал остаётся пуст, исход —
-// "cancelled". Файл заодно пинует три закрытых codegen-фикса standalone-CU:
-// имя fn `probe` (коллизия с std-локалом, capture-по-резолву), `t0 + Duration`
-// (DCE-seed vr-binop) и `BUDGET_MS.to_millis()` (const-ресивер, P67-семья).
+// Один источник: ждёт свою задержку (симуляция сети) и рапортует в канал.
+// Дедлайн — одна абсолютная точка (t0 + бюджет) на всех: джиттер старта
+// ланов не размывает общий бюджет. Опоздавший spawn честно обрывается
+// (его Time.sleep прерывается), канал остаётся пуст, исход — "cancelled".
 fn probe(latency_ms int, deadline Monotonic) Time -> str {
     ro { tx, rx } = Channel.new(1)
     mut timed_out = false
@@ -56,7 +53,7 @@ fn fan_out(latencies []int, deadline Monotonic) Time -> []str {
 fn main() Time {
     ro latencies []int = [20, 40, 60, 80, 300, 800]   // мс; последние два не успеют
     ro t0 Monotonic = Monotonic.now()
-    ro deadline Monotonic = t0 + BUDGET_MS.to_millis()   // одна точка на всех (D408)
+    ro deadline Monotonic = t0 + BUDGET_MS.to_millis()   // одна абсолютная точка на всех
     ro outcomes = fan_out(latencies, deadline)
     mut done = 0
     mut cancelled = 0

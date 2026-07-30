@@ -1,65 +1,17 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// Plan 187 — flagship concurrent aggregator: LIVE legends (deliverable 5).
+// Flagship concurrent aggregator: LIVE legends.
 //
-// `aggregate()`/`fetch_guarded()`/`fetch_one()` (aggregate.nv) stay UNCHANGED
-// — that trio is the Demo/Chaos synthetic path (loopback `Net`, seeded
-// latency/failure knobs) and the one quoted verbatim in the UI's "Код"
-// panel/README as the killer-narrative signature. Live sources hit REAL
-// external hosts with genuinely different addressing (DNS host names /
-// HTTPS URLs, not a `BASE_PORT + idx` loopback probe) — bolting that onto
-// `Source`/`fetch_one` would either grow `Source` with live-only fields no
-// Demo/Chaos caller needs, or fork `fetch_one`'s signature. Instead, this
-// file re-runs the SAME race-a-lane-against-a-shared-`supervised(deadline:)`
-// SHAPE (peer of `aggregate.nv`, same module `backend.app` — reuses
-// `deadline_elapsed_ms`, `[]TaskResult @to_report`, `TaskResult`/`TaskStatus`/`SourceData`/
-// `AggError`/`Emit` directly, no import needed) against two small, honest
-// live fetchers below. Same cancellation guarantee, same `Report`/`Emit`
-// contract feeding `report_json.nv` unchanged — only the fetch body and the
-// source list differ, which IS the effect-system pitch (`with Net = ...`
-// swaps the world) one level up: here it's "which fn populates the fan-out"
-// that swaps, not just the handler.
+// `aggregate()`/`fetch_guarded()`/`fetch_one()` (aggregate.nv) are the
+// Demo/Chaos synthetic path. Live sources hit real external hosts — this
+// file re-runs the same race-a-lane-against-a-shared-deadline shape against
+// honest live fetchers.
 //
-// health legend, live: plain TCP connect timing (`std.net.resolve` + `Net`)
-// against a handful of well-known real domains — NOT the Demo/Chaos table
-// (`scenarios.nv`'s `health_demo_sources` has synthetic names like
-// "mirror-remote"/"registry-eu" that don't resolve).
-//
-// weather legend, live: a real `https://api.open-meteo.com` GET (no API
-// key) per city — hand-rolled `TcpStream.connect` + `TlsStream.connect`
-// (nova-tls, `examples/tls/echo_client.nv` pattern), NOT
-// `http.client`/`http.transport.real_http()` (this file imports `tls`
-// directly, on purpose — see `[M-187-weather-live-tls-diamond-blocked]`
-// below for why that used to be impossible).
-//
-// [M-187-weather-live-tls-diamond-blocked] — RESOLVED (worktree
-// `nova-tlsdiamond`, fix-tls-diamond): was a genuine diamond-dependency
-// resolver bug, not a single-file/workaroundable issue. `examples/nova.toml`
-// depended on BOTH `tls` (local `path`) AND `http` (local `path`) — and
-// `nova-http/nova.toml` itself depends on `tls` via `git`+version, a
-// DIFFERENT, separately-fetched physical copy
-// (`~/.nova/git/co/nova-tls-<hash>/...`). `imports.rs::lookup_dependency`'s
-// `[replace]` handling (Plan 204 дофикс №2, D420) only ever honored a
-// `[replace]` override for the dependency edge OWNED by the manifest that
-// happened to be root — a same-named package reached TRANSITIVELY (`tls`
-// nested inside `http`'s own `[dependencies]`) never consulted it, so there
-// was no way to unify the two physical `tls` copies: same-CU compilation
-// hit `[E_METHOD_REDEFINITION] метод 'TlsStream.connect' уже определён`
-// (two physical `tls` packages each declaring the identical method, treated
-// as a redefinition instead of "same logical package, dedup").
-//
-// FIX (Plan 204 дофикс №3, D420 amendment, 09-tooling.md): root's
-// `[replace]` now applies to ANY occurrence of a same-named package
-// anywhere in the build graph — direct or transitive — matching real Cargo
-// `[patch]`/Go-module `replace` semantics (`lookup_dependency`'s
-// `root_override`, no longer gated to `pkg_dir == root`). Companion fix:
-// `examples/nova.toml`'s own `tls` dep moved from a bare `path` to the SAME
-// canonical `git`+`version` form as `nova-http`'s (`examples/nova.local.toml`
-// — gitignored — still overrides both to this worktree's local `nova-tls`
-// checkout for fast iteration); `nova.lock` now records `tls` exactly once.
+// - health legend, live: plain TCP connect timing against well-known domains.
+// - weather legend, live: real `https://api.open-meteo.com` GET per city
+//   (no API key), using `TcpStream.connect` + `TlsStream.connect`.
 //
 
-// `seed` is caller-ignored for live (plan 187 §9.4 деливерабл 3) — there is
-// nothing to seed, the network IS the randomness.
+// `seed` is caller-ignored for live — the network is the randomness.
 
 module app
 
@@ -111,37 +63,14 @@ fn live_fetch_tcp(host str) Net Time -> Result[SourceData, AggError] {
 }
 
 /// A real `https://api.open-meteo.com/v1/forecast` GET for `(lat, lon)`:
-/// resolve → TCP connect → (intended) TLS handshake → GET → read → close.
-///
-/// **Diamond RESOLVED** (Plan 204 дофикс №3, D420 — file header): this file
-/// imports `tls` DIRECTLY (`ClientConfig` above) while `main.nv` imports
-/// `http.server` (which pulls `tls` TRANSITIVELY) into the SAME compile
-/// unit. Before the resolver fix this hard-failed at type-check with
-/// `[E_METHOD_REDEFINITION] метод 'TlsStream.connect' уже определён` (two
-/// physical `tls` copies). It now type-checks cleanly and cross-package
-/// `tls` symbols (`ClientConfig.new`, `TcpStream.connect`) LINK — the
-/// diamond is gone (`nova.lock` records `tls` exactly once).
-///
-/// **Still deferred: the TLS handshake itself** — a SEPARATE, orthogonal
-/// codegen gap, NOT the dependency diamond and NOT fixable from this file:
-/// [M-187-tls-cross-pkg-consume-cleanup]. `nova-tls`'s `TlsStream.connect`
-/// internally CONSUMES the `TcpStream` argument, emitting a call to
-/// `Nova_TcpStream_consume_cleanup` — but that cleanup's DEFINITION (from
-/// `std/net/tcp.nv`'s `TcpStream consume @cleanup`) is only emitted when the
-/// consume site is in the ROOT package's own code; a consume happening
-/// INSIDE an external package (nova-tls) doesn't register the type for
-/// cleanup-definition emission, so the symbol is referenced-but-undefined at
-/// link (`lld-link: undefined symbol: Nova_TcpStream_consume_cleanup`).
-/// Minimal repro: any `TlsStream.connect(tcp, cfg)` from a downstream
-/// package. This is emit_c.rs codegen territory (consume-cleanup / cross-
-/// package method emission), tracked separately from the resolver fix.
-///
-/// So this lane does the REAL DNS resolve + REAL TCP connect (proving
-/// `handlers.net == "real"` and the live `Net` path), builds the real
-/// `ClientConfig` (proving the cross-package `tls` symbol links post-diamond
-/// -fix), then honestly fails at the handshake step with the marker above —
-/// NOT the retired `tls diamond dependency` message. `lat`/`lon` kept so the
-/// signature doesn't change the day the codegen gap closes.
+/// resolve → TCP connect → TLS handshake → GET → read → close.
+/// [M-187-tls-cross-pkg-consume-cleanup] workaround: `TlsStream.connect`
+/// consumes its `TcpStream` argument inside nova-tls, but the consume-
+/// cleanup symbol for `TcpStream` is only emitted when the consume site
+/// is in the root package's own code — so the TLS handshake fails to link
+/// from a downstream package. This lane does real DNS + TCP + builds the
+/// `ClientConfig` (proving cross-package `tls` symbols link), then
+/// honestly fails at the handshake step with the marker's error.
 fn live_fetch_weather(id str, lat f64, lon f64) Net Time -> Result[SourceData, AggError] {
     ro host = "api.open-meteo.com"
     match resolve(host, 443 as u16) {
@@ -150,10 +79,9 @@ fn live_fetch_weather(id str, lat f64, lon f64) Net Time -> Result[SourceData, A
                 Err(AggError.Transport("resolve: no address for ${host}"))
             } else {
                 // Full live HTTPS: TCP connect -> TLS handshake -> GET -> read.
-                // Diamond RESOLVED (Plan 204 дофикс) + cross-package consume-
-                // cleanup CLOSED ([M-187-tls-cross-pkg-consume-cleanup], Plan
-                // 187 wave) — `TlsStream.connect` (consumes the TcpStream inside
-                // nova-tls) now links. This is a REAL open-meteo HTTPS request.
+                // [M-187-tls-cross-pkg-consume-cleanup]: `TlsStream.connect`
+                // (consumes the TcpStream inside nova-tls) links if the
+                // codegen gap is closed.
                 ro cfg = ClientConfig.new(host)
                 match TcpStream.connect(addrs[0]) {
                     Err(e) => Err(AggError.Transport(e.to_str()))
@@ -180,9 +108,8 @@ fn live_fetch_weather(id str, lat f64, lon f64) Net Time -> Result[SourceData, A
 
 // ── Race-a-lane (same shape as aggregate.nv's fetch_guarded) ────────────────
 
-/// See `aggregate.nv`'s `fetch_guarded` — identical race-against-a-shared-
-/// deadline shape (`supervised(deadline:)` + spawn + `Channel[TaskStatus]`
-/// handoff + `Fail[TimeoutError]` catch), applied to `live_fetch_tcp`.
+/// Same race-against-a-shared-deadline shape as `aggregate.nv`'s
+/// `fetch_guarded`, applied to `live_fetch_tcp`.
 fn live_lane_tcp(host str, shared_deadline Monotonic, idx int) Net Time Emit -> TaskResult {
     ro t0 Monotonic = Monotonic.now()
     Emit.lane_started(host, idx)
@@ -246,7 +173,7 @@ fn live_lane_weather(id str, lat f64, lon f64, shared_deadline Monotonic, idx in
     TaskResult { id, status, elapsed_ms }
 }
 
-// ── Entry points (mirror aggregate()'s shape — plan 187 §9.4 деливерабл 3/5) ─
+// ── Entry points (mirror aggregate()'s shape) ───────────────────────────────
 
 /// Live health legend: real TCP-connect timing against `health_live_hosts()`,
 /// raced against the SAME real `supervised(deadline:)` cancel as Demo/Chaos.
@@ -254,8 +181,9 @@ fn live_lane_weather(id str, lat f64, lon f64, shared_deadline Monotonic, idx in
 export fn aggregate_live_health(budget Duration) Net Time Emit -> Report {
     ro hosts = health_live_hosts()
     ro t0 Monotonic = Monotonic.now()
-    // [M-187-monotonic-plus-operator-mono]: see this file's end-of-file note
-    // — `t0.plus(budget)` (explicit method), not `t0 + budget` (operator).
+    // [M-187-monotonic-plus-operator-mono] workaround: use `t0.plus(budget)`
+    // instead of `t0 + budget` — the operator form CC-fails when used at
+    // multiple call sites within one compile unit.
     ro shared_deadline Monotonic = t0.plus(budget)
     ro results = parallel for idx int in 0..hosts.len() {
         live_lane_tcp(hosts[idx], shared_deadline, idx)
@@ -307,26 +235,8 @@ export fn weather_live_sources() -> []Source {
     out
 }
 
-// [M-187-monotonic-plus-operator-mono]: **compiler codegen bug, NOT worked
-// around in-place — the CALL SHAPE above routes around it entirely
-// (`t0.plus(budget)`, not `t0 + budget`).** `aggregate.nv`'s own
-// `aggregate()` uses the `+` OPERATOR form (`t0 + budget`) for the exact
-// same `Monotonic + Duration -> Monotonic` combination and compiles/runs
-// fine on its own. Once THIS file adds a SECOND and THIRD call site of the
-// same operator combination within the SAME compile unit (one CU = the
-// whole `backend.app` module + whatever `.nv` has `fn main`), `nova build`
-// CC-FAILs: `error: returning 'int' from a function with incompatible
-// result type 'NovaValue_Monotonic'` inside a compiler-generated wrapper
-// `nova_vr_binop_Nova_Monotonic_method_plus` — looks like the SAME family
-// of generics/operator-wrapper mono-cache collisions already documented
-// elsewhere in this codebase for a repeated instantiation within one CU
-// (`[M-172.1-var-types-cu-name-leak]`, `[M-flagship-nested-hashmap-
-// jsonvalue-mono]`) — a duplicate/mismatched codegen when the same
-// operator+types pair is lowered more than once in one CU, not something
-// specific to `Monotonic`/`Duration`. Root cause not investigated further
-// (compiler-side, out of this session's remit). WORKAROUND: call the
-// underlying named method directly (`Monotonic @plus(d Duration) ->
-// Monotonic`, `std/time/duration.nv`) instead of the `+` operator, at both
-// call sites in THIS file — `aggregate.nv`'s own (sole, still operator-form)
-// call site is untouched (deliverable 1 is proven-stable; not worth
-// touching for a defect that doesn't reproduce there alone).
+// [M-187-monotonic-plus-operator-mono] workaround: use `t0.plus(budget)`
+// instead of `t0 + budget`. The `+` operator CC-fails when the same
+// operator+types pair is lowered more than once in one compile unit — a
+// generics/operator-wrapper mono-cache collision, not specific to
+// `Monotonic`/`Duration`.

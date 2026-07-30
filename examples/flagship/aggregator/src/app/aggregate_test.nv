@@ -1,19 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// Plan 187 — flagship concurrent aggregator: backend tests.
+// Flagship concurrent aggregator: backend tests.
 //
-// Plan 187 §4/§6: handler substitution (`with Net = mock_net()`, `with Emit =
-// <handler literal>`), NOT a mocking framework — the exact same
-// `aggregate`/`fetch_one` code that would run under `real_net()` (Live,
-// deferred). Budgets here are small (tens of ms) so the suite stays fast;
-// `scenarios.nv`'s demo tables (used by the HTTP endpoint / a manual run) use
-// UI-scale latencies instead.
-//
-// Every test installs `with Emit = null_emit()` alongside `with Net =
-// mock_net()` now that `aggregate`'s real effect row includes `Emit` (emit.nv)
-// — the dedicated "Emit fires the right events" tests near the bottom
-// substitute their OWN inline `effect Emit { ... }` handler literal instead
-// (draining a `Channel[str]` event log — the sanctioned cross-fiber handoff,
-// D415 — since `lane_*` ops fire from worker fibers, not the test's own).
+// Handler substitution (`with Net = mock_net()`, `with Emit = ...`), NOT
+// a mocking framework — the same `aggregate`/`fetch_one` code that runs
+// under `real_net()` (Live). Budgets are small (tens of ms) so the suite
+// stays fast. Tests that verify `Emit` events use an inline handler literal
+// draining a `Channel` (since `lane_*` ops fire from worker fibers).
 
 module app
 
@@ -42,7 +34,7 @@ fn status_of(results []TaskResult, id str) -> TaskStatus {
     found
 }
 
-// ── POS: mixed outcomes settle correctly ────────────────────────────────────
+// ── POS: mixed outcomes settle correctly ───────────────────────────────────
 
 test "aggregate: done/failed/cancelled settle correctly on a mixed fan-out" {
     with Net = mock_net() {
@@ -77,7 +69,7 @@ test "aggregate: done/failed/cancelled settle correctly on a mixed fan-out" {
     }
 }
 
-// ── POS: fan-out is actually concurrent (wall << sequential) ───────────────
+// ── POS: fan-out is actually concurrent (wall << sequential) ──────────────
 
 test "aggregate: wall time beats sequential sum (speedup > 1)" {
     with Net = mock_net() {
@@ -90,7 +82,7 @@ test "aggregate: wall time beats sequential sum (speedup > 1)" {
     }
 }
 
-// ── POS: the SAME code serves a different source list (Weather ↔ Health) ───
+// ── POS: the SAME code serves a different source list (Weather ↔ Health) ──
 
 test "aggregate: same code, two source lists (handler/source swap only)" {
     with Net = mock_net() {
@@ -104,15 +96,10 @@ test "aggregate: same code, two source lists (handler/source swap only)" {
     }
 }
 
-// ── NEG: a source past the deadline is GENUINELY cancelled early ───────────
-//    (real `supervised(deadline:)` cancel, plan 187 Ф.MVP-2 деливерабл 1 —
-//    see aggregate.nv's file-header note). The lane's `(300).to_millis().sleep()` is
-//    interrupted AT the shared deadline (~40ms), not run to completion —
-//    `wall_ms` must stay close to the budget, well under the source's own
-//    (uncancelled) 300ms latency. This replaces the earlier self-checked-
-//    soft-deadline test (which asserted the OPPOSITE — `wall_ms >= 300`,
-//    i.e. the fetch always ran to completion); that assertion now correctly
-//    FAILS since the cancel is real.
+// ── NEG: a source past the deadline is genuinely cancelled early ──────────
+//    The lane's `(300).to_millis().sleep()` is interrupted at the shared
+//    deadline (~40ms), not run to completion — `wall_ms` stays close to
+//    the budget, well under 300ms.
 
 test "aggregate: source past deadline is cancelled early — wall_ms bounded by budget, not by source latency" {
     with Net = mock_net() {
@@ -129,7 +116,7 @@ test "aggregate: source past deadline is cancelled early — wall_ms bounded by 
     }
 }
 
-// ── NEG: an upstream failure surfaces as Failed, does not crash the run ────
+// ── NEG: an upstream failure surfaces as Failed, does not crash the run ───
 
 test "aggregate: upstream failure surfaces as Failed, run completes" {
     with Net = mock_net() {
@@ -143,7 +130,7 @@ test "aggregate: upstream failure surfaces as Failed, run completes" {
     }
 }
 
-// ── EDGE: every source overruns the budget → all cancelled, 0 leaks-shaped ─
+// ── EDGE: every source overruns the budget → all cancelled ────────────────
 
 test "aggregate: all sources over budget -> all cancelled" {
     with Net = mock_net() {
@@ -161,7 +148,7 @@ test "aggregate: all sources over budget -> all cancelled" {
     }
 }
 
-// ── EDGE: empty source list → empty report, no panic ────────────────────────
+// ── EDGE: empty source list → empty report, no panic ───────────────────────
 
 test "aggregate: empty source list -> empty report, no panic" {
     with Net = mock_net() {
@@ -176,8 +163,7 @@ test "aggregate: empty source list -> empty report, no panic" {
     }
 }
 
-// ── 0 leaks (fiber arena — Linux/macOS only; honest no-op sentinel on Windows,
-//    see std/runtime/fibers.nv header) ───────────────────────────────────────
+// ── 0 leaks (fiber arena — Linux/macOS only; honest no-op on Windows) ─────
 
 test "aggregate: 0 fiber-slot leak after cascading cancellation" {
     if fibers.slot_count() != 0 {
@@ -192,43 +178,17 @@ test "aggregate: 0 fiber-slot leak after cascading cancellation" {
     }
 }
 
-// ── Emit: handler substitution (NOT a mocking library) ──────────────────────
+// ── Emit: handler substitution (NOT a mocking library) ─────────────────────
 //
-// Each test below installs its OWN inline `effect Emit { ... }` literal that
-// funnels events into a `Channel[str]` — the same handoff primitive
-// `fetch_guarded` itself uses for its per-lane result (D415). `lane_*` ops
-// fire from whichever fiber is running that lane; draining the channel only
-// AFTER `aggregate()` has returned is race-free because `aggregate` has
-// already joined every spawned lane by then (structured concurrency) — no
-// producer can still be writing while the test drains.
+// Each test installs its own inline `effect Emit { ... }` literal that
+// funnels events into a `Channel` (integer-coded event tags — workaround
+// for a codegen issue with `Channel[str]` receive-side type inference).
+// Int literals are used instead of named `const`s (workaround for a
+// handler-literal capture defect). Draining the channel only after
+// `aggregate()` returns is race-free — every spawned lane has already
+// joined by then (structured concurrency).
 
-// [M-flagship-channel-str-recv-typaret]: a `Channel[str]` (T inferred from a
-// `str` `try_send`) miscompiles on the RECEIVE side once the received value
-// is actually USED as a `str` (e.g. `==` / a stdlib `str` method) — CC-FAIL
-// "passing 'nova_int' to parameter of incompatible type 'nova_str'"
-// (`Nova_str_method_equal(tag, ...)` called with `tag` typed `nova_int`).
-// `Channel[TaskStatus]` (fetch_guarded, above) and plain `Channel[int]`
-// (docs/channels.md) both round-trip fine — this looks like the generic
-// erasure slot failing to re-tag a raw scalar back to `nova_str`
-// specifically, distinct from the boxed/pointer-represented `TaskStatus`
-// case. Reproduced in isolation (bare `Channel.new(n)` + `str` try_send +
-// `try_recv` + `==` on the received value, no other code). Workaround below:
-// int-coded event tags over the channel instead of `str` tags — the events
-// these tests care about (kind of event, not payload) fit an int code fine,
-// and `Channel[int]` is a well-trodden path elsewhere in the codebase.
-//
-// [M-flagship-handler-lit-const-capture]: a SEPARATE defect from the above —
-// a module-level `const` referenced INSIDE an `effect X { op(...) {...} }`
-// handler-literal body is wrongly treated as a free variable to CAPTURE
-// (context-struct field + `_ctx->EVT_DONE = EVT_DONE;`) instead of resolving
-// to the qualified global (`Nova_const_..._EVT_DONE`) the way it correctly
-// does everywhere else in the same file — "use of undeclared identifier
-// EVT_DONE" (no local of that name exists to capture at the assignment
-// site). Workaround: plain int literals (`1`/`2`/`3`) inside the handler
-// bodies below, not named consts — a literal isn't an identifier to
-// mis-capture. `EVT_*` names live only in this comment now.
-
-// ── POS: a start event fires for every source, exactly once each ──────────
+// ── POS: a start event fires for every source, exactly once each ─────────
 
 test "aggregate: Emit fires lane_started exactly once per source" {
     ro { tx, rx } = Channel.new(16)
@@ -255,9 +215,7 @@ test "aggregate: Emit fires lane_started exactly once per source" {
     assert(count == 4)
 }
 
-// ── POS: per-lane terminal events (done/failed/cancelled) tally exactly like
-//    the settled Report — Emit narration and the Report are the SAME truth,
-//    told twice (event stream vs summary), not two different truths. ───────
+// ── POS: per-lane terminal events tally exactly like the settled Report ───
 
 test "aggregate: Emit lane outcomes tally exactly like the settled Report" {
     ro { tx, rx } = Channel.new(16)
@@ -292,13 +250,10 @@ test "aggregate: Emit lane outcomes tally exactly like the settled Report" {
     }
 }
 
-// ── POS: swarm_done fires exactly once, with the SAME tallies the caller
-//    reads off the returned Report. `swarm_done` fires from `aggregate`'s
-//    own top-level code on the CALLING fiber (not from inside `spawn`) —
-//    a direct `mut`-capture (no channel) is race-free here, same idiom as
-//    std/concurrency/retry_test.nv's `with Fail[str] = |e| { caught = e; ... }`
-//    (D415's "bare mut from spawn is a race" concerns concurrent WORKER
-//    fibers, not this single-fiber synchronous callback). ──────────────────
+// ── POS: swarm_done fires exactly once, with the same tallies as the
+//    returned Report. `swarm_done` fires from `aggregate`'s own top-level
+//    code on the calling fiber (not from inside `spawn`) — a direct
+//    `mut`-capture is race-free here. ─────────────────────────────────────
 
 test "aggregate: Emit swarm_done matches the returned Report, fires once" {
     mut fired = 0
@@ -336,7 +291,7 @@ test "aggregate: Emit swarm_done matches the returned Report, fires once" {
     }
 }
 
-// ── NEG: a cancelled lane fires lane_cancelled, not lane_done/lane_failed ──
+// ── NEG: a cancelled lane fires lane_cancelled, not lane_done/lane_failed ─
 
 test "aggregate: source past deadline fires lane_cancelled, nothing else" {
     ro { tx, rx } = Channel.new(4)
@@ -360,27 +315,14 @@ test "aggregate: source past deadline fires lane_cancelled, nothing else" {
     }
 }
 
-// ── Determinism (plan 187 §9, деливерабл-добор шаг 3) ───────────────────────
+// ── Determinism ──────────────────────────────────────────────────────────────
 //
-// **Scope note, honest disclosure:** `chaos_variant` (scenarios.nv, PURE —
-// no effects, a local splitmix64 stream keyed on `seed`) IS byte-for-byte
-// deterministic per seed — verified below, two independent calls with the
-// SAME seed produce an IDENTICAL source list (id/detail/sub_count/latency/
-// should_fail, every field). The full HTTP `/api/run` JSON snapshot is NOT
-// fully byte-identical run-to-run even for the SAME seed, though — `elapsed_
-// ms`/`wall_ms`/`sequential_ms` are REAL measured `Time.sleep`+fiber-
-// scheduling durations (this package's whole pitch is REAL concurrency, not
-// simulated timing), and `report.results`' COMPLETION order (hence the JSON
-// `results` array order) is real-scheduling-dependent too near the
-// budget boundary — confirmed empirically this session (`nova build` +
-// repeated `curl "…/api/run?legend=weather&mode=demo&seed=42"`: same
-// `fanout`/same which-lane-fails/same `budget_ms`/same `legend`/`mode`/
-// `seed` every time, but `elapsed_ms` values and `results` array ORDER vary
-// by tens to hundreds of ms between runs under load). What IS guaranteed
-// deterministic per seed, tested below + by `report_json_test.nv`'s own
-// `build_snapshot` tests: the INPUT (which sources exist, which are
-// seeded to fail, target latencies) and the pure JSON-shape mapping from a
-// given `Report` — i.e. everything upstream of the real wall clock.
+// `chaos_variant` (scenarios.nv, pure — no effects, a local splitmix64
+// stream keyed on `seed`) is byte-for-byte deterministic per seed. The full
+// HTTP JSON snapshot is NOT fully byte-identical run-to-run — `elapsed_ms`,
+// `wall_ms`, and completion order are real scheduling-dependent values.
+// What IS guaranteed deterministic per seed: the input sources and the
+// pure JSON-shape mapping from a given `Report`.
 
 test "chaos_variant: same seed -> identical source list, every field" {
     ro base = [

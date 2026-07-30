@@ -1,14 +1,6 @@
-// [M-flagship-spawn-throw-segfault] — RE-VERIFY (Плана 187): свежий бинарь
-// НЕ воспроизводит SIGSEGV. Раньше `throw` мультиполевого (несколько
-// str/[]u8 полей) payload-enum'а, брошенный ИЗ ФУНКЦИИ, вызванной внутри
-// `spawn`, под `with Fail[E] = ... { supervised(deadline:) { spawn { ... }
-// } }`, крашил процесс (SIGSEGV, без вывода вообще — подозрение: GC-roots
-// через longjmp-based unwind). Однополевой (`str`) throwaway-enum той же
-// формой НЕ крашил — только богатые многополевые типы. Регресс-фикстура —
-// заморозить закрытие: multi-field enum (str×2 + int + []u8), throw ИЗ
-// вызываемой функции (не inline в spawn-теле), под
-// `supervised(deadline:)`, с `with Fail[E]` обёрткой снаружи.
-// Единица: folder-module `spec_tests.conformance`.
+// Регресс-фикстура: multi-field enum (str×2 + int + []u8), throw из
+// вызываемой функции (не inline в spawn-теле), под `supervised(deadline:)`,
+// с `with Fail[E]` обёрткой снаружи. Ранее падал SIGSEGV.
 module regressions.spawn_throw_multifield_payload
 
 import std.time.duration

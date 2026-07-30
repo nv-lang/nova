@@ -23,20 +23,14 @@
 // **не меняя ни строчки бизнес-кода**.
 //
 // Используемые фичи:
-// - [D48](../spec/decisions/03-syntax.md#d48) tagged template `sql\`...\``
-// - [D52](../spec/decisions/02-types.md#d52) record + literal coercion +
-//   field punning
-// - [D53](../spec/decisions/02-types.md#d53) `Db` как effect
-// - [D31](../spec/decisions/04-effects.md#d31) handler-литералы и
-//   handler-лямбда
-// - [D11](../spec/decisions/04-effects.md#d11) `with`-блок для подмены
-//   handler'а
-// - [D60](../spec/decisions/03-syntax.md#d60) spread в record-литералах
-//   для immutable update
-// - [D42](../spec/decisions/02-types.md#d42) generics на repo-уровне
-//   (Модель A) и на методах (bulk_load[K])
-// - [D55](../spec/decisions/02-types.md#d55) literal coercion для
-//   newtype → SqlValue.
+// - tagged template `sql\`...\``
+// - record + literal coercion + field punning
+// - `Db` как effect
+// - handler-литералы и handler-лямбда
+// - `with`-блок для подмены handler'а
+// - spread в record-литералах для immutable update
+// - generics на repo-уровне (Модель A) и на методах (bulk_load[K])
+// - literal coercion для newtype → SqlValue.
 
 module real_world.orm_demo
 
@@ -48,7 +42,7 @@ import std.text.{join}
 // Domain — две сущности с relation
 // ──────────────────────────────────────────────────────────────────────────
 
-// Newtype'ы (D52) — domain-safety: `UserId` и `PostId` в сигнатурах
+// Newtype'ы — domain-safety: `UserId` и `PostId` в сигнатурах
 // нельзя перепутать. В SQL coerce'ятся через `as u64`.
 type UserId u64
 type PostId u64
@@ -84,7 +78,7 @@ export type RepoError
 // Repo[T] — generic repository
 // ──────────────────────────────────────────────────────────────────────────
 
-// Repo[T] фиксирован на domain-типе на уровне записи (D42 Модель A).
+// Repo[T] фиксирован на domain-типе на уровне записи (Модель A).
 // Программист поставляет три функции:
 //
 // - `from_row` — DbRow → T (парсер). В реальном ORM это derive-макрос.
@@ -216,7 +210,7 @@ export fn Repo[T] @delete(id u64) Db Fail[RepoError] -> bool {
     Db.exec(q) > 0
 }
 
-// bulk_load — generic метод-уровня дженерик `[K]` (D42 Модель B): тип
+// bulk_load — generic метод-уровня дженерик `[K]` (Модель B): тип
 // ключа неизвестен на repo-уровне (UserId, PostId, str — любой). Принимает
 // имя FK-колонки и список значений, возвращает map id → entity.
 //
@@ -250,7 +244,7 @@ export fn Repo[T] @query() -> Query[T] =>
         builder: Sql.builder(sql`SELECT * FROM ${S(@table)} WHERE 1 = 1`),
     }
 
-// Все where_* методы возвращают `mut self` через D60 spread — но
+// Все where_* методы возвращают `mut self` через spread — но
 // SqlBuilder уже mut, так что просто делегируем и возвращаем @.
 export fn Query[T] mut @where_eq(col str, value SqlValue) -> Query[T] {
     @builder.where_eq(col, value)
@@ -447,7 +441,7 @@ export fn posts_of_many(user_ids []UserId) Db Fail[RepoError] -> HashMap[UserId,
 // - вложенные `Db.in_transaction` — внешняя транзакция + savepoint
 //   на каждый шаг (handler сам решает BEGIN/SAVEPOINT/COMMIT по
 //   nesting-level).
-// - **D60 spread в UPDATE**: `{ ...from, balance: from.balance - amount }`
+// - **spread в UPDATE**: `{ ...from, balance: from.balance - amount }`
 //   обновляет только нужное поле, остальные — копируются.
 // - optimistic locking через `update_versioned` — если версия не
 //   совпала, throw Conflict, handler делает rollback.
@@ -466,7 +460,7 @@ export fn transfer_balance(from_id UserId, to_id UserId, amount i64) Db Fail[Rep
             throw Inconsistent("insufficient balance for ${from_id as u64}")
         }
 
-        // D60 spread — immutable update без перечисления остальных полей.
+        // spread — immutable update без перечисления остальных полей.
         ro from_updated = { ...from, balance: from.balance - amount }
         ro to_updated   = { ...to,   balance: to.balance + amount }
 

@@ -1,31 +1,19 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// Plan 187 — flagship concurrent aggregator: progress-event effect.
+// Flagship concurrent aggregator: progress-event effect.
 //
-// Owner decision (plan 187 §7 item 1, locked for this session, 2026-07-12):
-// task-progress events are a real EFFECT (`Emit`), NOT a channel. `spawn`/
-// `parallel for` fibers inherit the ambient handler-stack snapshot (D80,
-// spec/decisions/06-concurrency.md "Handler scoping per-fiber") — installing
+// Task-progress events are a real EFFECT (`Emit`), not a channel. Installing
 // `with Emit = <handler>` once around the orchestrator reaches every worker
-// fiber with no channel threaded through, exactly like `with Net = mock_net()`
-// already does for the transport effect.
-//
-// This is orthogonal to the existing per-lane RESULT handoff in aggregate.nv
-// (`Channel[TaskStatus]`, D415: a bare `mut` written from inside `spawn` is a
-// data race even for a single writer — channel is the sanctioned handoff).
-// That channel carries the VALUE a lane produced and is read exactly once by
-// the lane's own orchestrating call; `Emit` carries a side-channel PROGRESS
-// narration for a live UI (waterfall / SSE bridge) that nobody downstream is
-// required to consume — default installed handler is `null_emit()`, a no-op
-// sink, so `aggregate` stays callable without every caller wiring up a UI.
+// fiber (fibers inherit the ambient handler-stack snapshot). This is
+// orthogonal to the per-lane result channel — `Emit` carries progress
+// narration for a live UI, optional for the caller (`null_emit()` is the
+// no-op default).
 
 module app
 
-/// Progress events for the flagship aggregator's live visualization
-/// (waterfall UI / SSE bridge — plan 187 §3 Ф.1, `[M-178-server-streaming]`
-/// gated; see `report_json.nv` for the snapshot-JSON fallback used until
-/// that lands). Per-lane lifecycle (`lane_*`, fired from whichever fiber is
-/// running that lane) + one swarm-level summary (`swarm_done`, fired once
-/// from the orchestrating fiber after every lane has settled).
+/// Progress events for the aggregator's live visualization (waterfall UI /
+/// SSE bridge). Per-lane lifecycle (`lane_*`, fired from whichever fiber is
+/// running that lane) + one swarm-level summary (`swarm_done`, fired from
+/// the orchestrating fiber after every lane settles).
 #stable(since = "0.1")
 export type Emit effect {
     // A lane began fetching (`idx` = its fan-out slot, for stable UI ordering).
@@ -43,10 +31,9 @@ export type Emit effect {
     swarm_done(fanout int, done int, failed int, cancelled int, wall_ms int, sequential_ms int) -> ()
 }
 
-/// No-op sink — the default ambient handler for callers who don't care about
-/// progress events (keeps `aggregate` callable without a mandatory `with
-/// Emit = ...` at every call site; the ops still dispatch through the
-/// vtable, they just do nothing).
+/// No-op sink — the default ambient handler for callers who don't need
+/// progress events. Keeps `aggregate` callable without a mandatory `with
+/// Emit = ...` at every call site.
 #stable(since = "0.1")
 export fn null_emit() -> Effect[Emit] => effect Emit {
     lane_started(_id str, _idx int) -> () {}

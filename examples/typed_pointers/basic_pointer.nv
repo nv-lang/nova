@@ -1,21 +1,18 @@
-// Plan 118 / 138.5 D216 — typed pointer family basic example (final model).
+// Typed pointer family basic example.
 //
 // Pointer TYPE carries pointee-mutability only, written POSTFIX (after `*`):
 //   *T          — pointer to readonly T (canonical; `*T ≡ *ro T` universally)
 //   *mut T      — pointer to mutable T (deref-store allowed; the only opt-in)
-//   *uninit T   — pointer к possibly-uninit T (MaybeUninit semantic)
-// An explicit `*ro T` is a HARD ERROR E_REDUNDANT_POINTER_RO (Plan 147 / D246;
-// the bare `*T` already IS the ro-pointee canon — fix-it: drop the `ro`).
+//   *uninit T   — pointer to possibly-uninit T (MaybeUninit semantic)
+// An explicit `*ro T` is a hard error E_REDUNDANT_POINTER_RO — the bare `*T`
+// already IS the ro-pointee canon.
 //
-// Reassignability of the pointer variable itself (can you do `p = other`)
-// is BINDING, not type: `let p` = fixed, `mut p` = reassignable (D36) —
-// exactly like any other variable. There is no `mut *` / `ro *` prefix.
+// Reassignability of the pointer variable itself is binding, not type:
+// `let p` = fixed, `mut p` = reassignable — exactly like any other variable.
+// There is no `mut *` / `ro *` prefix.
 //
 // Nullable pointers use `Option[*T]` (NPO: None = null, 8 bytes). FFI
 // nullable-uninit uses `Option[*uninit T]`.
-//
-// V1 scope: type-system distinction enabled; pointer ops + auto-deref
-// + unsafe context enforcement landing per Plan 118 Ф.4.
 
 module typed_pointers.basic_pointer
 
@@ -36,7 +33,7 @@ extern "nova" fn buffer_at_offset(buf Option[*Buffer], idx i64) -> i64
 // Returning typed pointer.
 extern "nova" fn allocate_buffer(size i64) -> * Buffer
 
-// ─── FFI / nullable / uninit patterns (final model) ─────────────────────
+// ─── FFI / nullable / uninit patterns ───────────────────────────────────
 //
 // FFI borrow pattern: a possibly-null handle to a valid Buffer. The C
 // `Buffer*` (nullable) maps to `Option[*Buffer]` — None = null, Some = a
@@ -44,9 +41,9 @@ extern "nova" fn allocate_buffer(size i64) -> * Buffer
 extern "nova" fn ffi_borrow_buffer(handle Option[*Buffer]) -> i64
 
 // Readonly view pattern: pointer to a readonly Buffer. The bare `*Buffer` IS
-// the readonly-pointee canon (`*T ≡ *ro T` per Plan 147 / D246; an explicit
-// `*ro Buffer` is a hard error E_REDUNDANT_POINTER_RO). The pointer variable's
-// reassignability is the bind site's concern (`ro`/`mut` name), not the type.
+// the readonly-pointee canon (`*T ≡ *ro T`; an explicit `*ro Buffer` is a
+// hard error E_REDUNDANT_POINTER_RO). The pointer variable's reassignability
+// is the bind site's concern (`ro`/`mut` name), not the type.
 extern "nova" fn observe_readonly_view(view *Buffer) -> i64
 
 // Opaque-handle pattern: pointer to possibly-uninit storage — `*uninit
@@ -56,15 +53,13 @@ extern "nova" fn observe_readonly_view(view *Buffer) -> i64
 extern "nova" fn raw_alloc_slot(slot *uninit Buffer) -> ()
 
 test "typed pointer family — declarations parse + type-check" {
-    // V1 limit: pointer creation (&) + deref (*) + auto-deref require
-    // unsafe context — proper enforcement landing в Ф.3.3-3.5.
+    // Pointer creation (&) + deref (*) + auto-deref require unsafe context.
     // Declarations alone exercise parser + type-checker.
     assert(1 == 1)
 }
 
 test "FFI / nullable / uninit pointer forms — declarations parse" {
     // Option[*T] (nullable), *T (ro pointee canon), *uninit T (uninit pointee)
-    // declarations exercise the parser + type-checker. Runtime semantics
-    // covered в Plan 118 Ф.4.
+    // declarations exercise the parser + type-checker.
     assert(1 == 1)
 }

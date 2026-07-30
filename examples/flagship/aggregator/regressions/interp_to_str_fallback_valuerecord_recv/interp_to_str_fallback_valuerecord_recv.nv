@@ -1,20 +1,8 @@
-// Plan 187 (flagship integration) — [M-187-interp-to_str-fallback-valuerecord-recv]
-// POS: string interpolation of a VALUE-record (`type X value {...}`) reached
-// only through the D410 `@to_str()` fallback (no `@display`/`@debug` impl)
-// previously passed the receiver BY VALUE to the generated
-// `Nova_X_method_to_str(NovaValue_X*)` (pointer-receiver ABI, D226/A6) instead
-// of `&obj` — a C compile error ("passing struct to parameter of incompatible
-// type ... take the address with &"). Repro requires the value arriving via
-// enum-variant pattern-match destructuring (`Has(e) => ...`), the exact shape
-// that broke on `http`'s `ErrSource.Compress(CompressError)`
-// (nova-http `error.nv` `HttpError @to_str()`, `Some(Compress(e)) =>
-// "${base}: ${e}"`) while building `examples/flagship/aggregator`.
-//
-// Fix: `emit_interpolated_str`'s D410 to_str()-fallback branch
-// (compiler-codegen/src/codegen/emit_c.rs) now routes the receiver through
-// `prepare_method_recv` — the same value-struct receiver adaptation already
-// used by the neighboring @display/@debug branch (Plan 175 Ф.3(d)) and every
-// other value-struct method-call site. No language change — codegen-only.
+// Регресс-фикстура: string interpolation of a VALUE-record reached through
+// the `@to_str()` fallback (no `@display`/`@debug` impl) previously passed
+// the receiver BY VALUE instead of `&obj` — a C compile error. Fix:
+// `emit_interpolated_str`'s to_str()-fallback branch now routes the receiver
+// through `prepare_method_recv`.
 
 module regressions.interp_to_str_fallback_valuerecord_recv
 

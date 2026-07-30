@@ -1,6 +1,7 @@
-// effects_d61.nv — handler-substitution в D61-синтаксисе.
+// effects_d61.nv — handler-substitution: effect-синтаксис, interrupt, прямой
+// вызов handler-значения.
 //
-// Особенности D61:
+// Особенности:
 //   - `effect` keyword (вместо устаревшего `protocol`)
 //   - `effect X { ... }` keyword для handler-литерала
 //   - `return v` или финальное выражение в handler-method
@@ -36,7 +37,7 @@ fn main() {
         println("total = ", total)        // 1 + 2 + 3 = 6
     }
 
-    // D61: interrupt прерывает with-блок
+    // interrupt прерывает with-блок
     ro r = with Switch = effect Switch {
         flip() -> bool {
             interrupt 999       // вместо bool отдаём int как результат всего with
@@ -47,7 +48,7 @@ fn main() {
     }
     println("interrupt result = ", r)    // 999
 
-    // D61: handler-значение через переменную, прямой вызов h.op
+    // handler-значение через переменную, прямой вызов h.op
     ro switcher = effect Switch {
         flip() -> bool => true
     }

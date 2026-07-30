@@ -1,13 +1,6 @@
-// [M-flagship-monotonic-now-bare-binding-ice] — RE-VERIFY (Плана 187): свежий
-// бинарь НЕ воспроизводит. `ro t0 = Monotonic.now()` (без явной аннотации
-// `Monotonic`) раньше ICE'ил emit_c.rs ("[P67-LEGACY] Path call return type
-// unknown for method=now — checker must annotate"). Закрыто ПОПУТНО
-// commit'ами 67717dcb1/747a79c65 (M-176 variant-chain Path→Member fix,
-// landed на main непосредственно перед этой багфикс-волной) — тот же
-// механизм закрыл и этот, изначально отдельный, репро. Регресс-фикстура —
-// заморозить закрытие: как голая привязка, так и полная форма из
-// `fetch_guarded`/`aggregate` (flagship-187), включая бинарный `t0 + budget`.
-// Единица: folder-module `spec_tests.conformance`.
+// Регресс-фикстура: `ro t0 = Monotonic.now()` (без явной аннотации) ранее
+// ICE'ил emit_c.rs. Закрыто попутно. Регресс-фикстура замораживает как
+// голую привязку, так и полную форму, включая бинарный `t0 + budget`.
 module regressions.monotonic_now_bare_binding
 
 import std.time.duration

@@ -11,13 +11,13 @@ fn main() {
     ro p = Point { x: 1.0, y: 2.0 }
     println("p.x = ", p.x, ", p.y = ", p.y)
 
-    // Field punning (D52)
+    // Field punning
     ro x = 5.0
     ro y = 6.0
     ro p2 = Point { x, y }
     println("p2.x = ", p2.x)
 
-    // Spread (D60)
+    // Spread
     ro p3 = { ...p, y: 10.0 }
     println("p3.x = ", p3.x, ", p3.y = ", p3.y)
 }

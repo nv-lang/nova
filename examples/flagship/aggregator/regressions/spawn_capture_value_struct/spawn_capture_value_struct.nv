@@ -1,19 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// [M-flagship-spawn-capture-value-struct-ptr-mismatch] — RE-VERIFY
-// (2026-07-20, оркестратор): свежий бинарь НЕ воспроизводит. Раньше захват
-// мульти-полевого `value`-структ ПАРАМЕТРА (`Source`: 2 str + 3 скаляра) в
-// spawn-ctx под `supervised(deadline:)` (две closure-глубины) CC-FAILил
-// ДВАЖДЫ в одной сгенерированной функции: (1) `_nova_spawn_0_ctx->source =
-// source;` — "assigning to 'NovaValue_Source' from incompatible type
-// 'NovaValue_Source *'" (value-поле ctx vs by-pointer-ABI параметр);
-// (2) "use of undeclared identifier 'source'" в теле spawned-fn
-// (capture-macro подстановка отсутствовала для структ-типизированного
-// захвата). Обход в aggregate.nv (деструктуризация в скаляры до spawn) БЫЛ
-// единственной причиной сигнатуры `fetch_one(id, latency_ms, should_fail,
-// idx)` вместо `fetch_one(source Source, idx)`. Эта фикстура — заморозить
-// закрытие: та же форма (мульти-полевой параметр, поля читаются ВНУТРИ
-// spawn под supervised), скаляр через канал (str не word-safe у Channel —
-// E_CHANNEL_UNSOUND_ELEM_TYPE, отдельная известная граница).
+// Регресс-фикстура: мульти-полевой value-структ параметр, захваченный в
+// spawn-ctx под `supervised(deadline:)`. Ранее CC-FAILил из-за несовместимости
+// value-поля ctx и by-pointer-ABI параметра, а также отсутствия capture-macro
+// подстановки для структ-типизированного захвата.
 module regressions.spawn_capture_value_struct
 
 import std.time.duration

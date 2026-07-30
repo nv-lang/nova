@@ -1,15 +1,11 @@
-// Plan 118 D216 §9 — `unsafe fn` keyword syntax for fn declaration.
-//
-// `unsafe fn` body implicitly в unsafe context (pointer ops без
-// unsafe{} wrap). Callers must `unsafe { ... }` wrap the call (V1
-// scaffold; full E_UNSAFE_CALL_REQUIRES_WRAP enforcement landing
-// в Ф.3.3-3.5 followup).
+// `unsafe fn` keyword — body implicitly in unsafe context (pointer ops
+// without unsafe{} wrap). Callers must `unsafe { ... }` wrap the call.
 
 module typed_pointers.unsafe_fn_keyword
 
 unsafe fn risky_compute(x i64, y i64) -> i64 {
     // Body implicitly unsafe — pointer ops would not require additional
-    // unsafe { } wrap here (per D216 §9).
+    // unsafe { } wrap here.
     x * y + 100
 }
 

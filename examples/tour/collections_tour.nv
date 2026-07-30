@@ -10,7 +10,7 @@ fn main() {
     ro xs []int = []int.of(1, 2, 3, 4, 5, 6, 7, 8)
     println("count=${xs.iter().count()} evens=${xs.iter().filter(|x| x % 2 == 0).count()}")
 
-    // Map-literal `[k: v, ...]` constructs a HashMap[K, V] directly (D108).
+    // Map-literal `[k: v, ...]` constructs a HashMap[K, V] directly.
     ro m HashMap[str, int] = ["a": 1, "b": 2, "c": 3]
     ro key = "b"
     ro val = m.get(key)

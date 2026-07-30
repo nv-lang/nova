@@ -1,22 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// Plan 187 — flagship concurrent aggregator: domain types.
+// Flagship concurrent aggregator: domain types.
 //
-// Pure data, no effects. Shared by the backend (aggregate.nv), the synthetic
-// scenarios (scenarios.nv), and the JSON snapshot (report_json.nv).
-//
-// [M-187-errorkind-parsejsonerror-variant-collision]: split into its OWN
-// folder-module (`src.domain`, separate from `src.app`) specifically so
-// `src/api/report_json.nv` (needs these types + `std.encoding.serde`'s
-// `json_encode`, which transitively pulls `std.encoding.json.ParseJsonError`)
-// does NOT also pull in `src/app/aggregate.nv`/`live.nv`'s `std.net` import
-// (which transitively pulls `std.io.error.ErrorKind`, same file as
-// `IoError`) into the SAME compile unit — see `report_json_test.nv`'s own
-// file-header note for the full collision writeup (two unrelated sum types
-// each declaring a variant literally named `UnexpectedEof`, one 0-arg, one
-// 2-arg — a same-CU cross-type codegen bug, not fixed in-place, compiler-side,
-// out of this package's remit). `src/app/*.nv` (which DOES need `std.net`)
-// imports these types back via `../domain.{...}` — no behavior change, pure
-// module-boundary move.
+// Pure data, no effects. Shared by the backend, synthetic scenarios, and
+// the JSON snapshot. Separated into its own module (`src.domain`) so that
+// `src/api/report_json.nv` (needs `std.encoding.serde`) does not pull in
+// `std.net` (transitively via `src/app`), avoiding a codegen collision
+// between two unrelated sum types that both name a variant `UnexpectedEof`.
 
 module domain
 
@@ -24,9 +13,7 @@ module domain
 
 /// One fan-out source (a city for the weather legend, a domain for the
 /// health-check legend, ...). `latency_ms`/`should_fail` are the Demo/Chaos
-/// simulation knobs (see aggregate.nv `fetch_one` — plan 187 §7 item 6, this
-/// is the "seeded-latency wrapper" applied at the call-site, not inside a
-/// custom `Net` handler; owner sign-off on the final API shape is pending).
+/// simulation knobs — applied at the call site, not inside a `Net` handler.
 export type Source value {
     ro id          str      // display name (city / domain / model)
     ro detail      str      // secondary info shown in the UI ("7 days" / "3 checks")
@@ -63,21 +50,13 @@ export fn AggError @to_str() -> str {
 
 // ── Per-task outcome ─────────────────────────────────────────────────────
 
-/// Mirrors the waterfall UI states (mockup: done / fail / cancel).
+/// Mirrors the waterfall UI states (done / fail / cancel).
 ///
-/// **`Cancelled` is a REAL runtime cancel** (plan 187 Ф.MVP-2 деливерабл 1,
-/// 2026-07-14 — see aggregate.nv's file header for the full story).
-/// `aggregate.nv`'s `fetch_guarded` races each lane's fetch against a real
-/// `supervised(deadline:)` (D408) scope sharing one absolute deadline; a
-/// lane still in flight when the deadline hits is genuinely interrupted (its
-/// `Time.sleep`/`Net` op is cut short, the underlying fetch is abandoned, no
-/// Done/Failed payload is ever produced for it) — `wall_ms` for a fan-out
-/// with a straggler is bounded by the shared `budget`, not by the slowest
-/// source. (Earlier, 2026-07-12 resumption-6: this was a self-checked SOFT
-/// deadline — let the fetch run to completion, then relabel after the fact
-/// — dropped once the `[M-178-server-graceful-deadline]` fibers.h fix
-/// (`Time.sleep` now re-checks `cancel_requested` on every park return) made
-/// the real cancel race-free.)
+/// **`Cancelled` is a real runtime cancel:** `fetch_guarded` races each lane
+/// against a `supervised(deadline:)` scope with one shared absolute deadline.
+/// A lane still in flight when the deadline hits is genuinely interrupted —
+/// `wall_ms` for a fan-out with a straggler is bounded by the shared
+/// `budget`, not by the slowest source.
 export type TaskStatus enum
     | Done(SourceData)
     | Failed(str)
@@ -104,7 +83,7 @@ export fn TaskResult @is_cancelled() -> bool =>
 
 // ── Report ───────────────────────────────────────────────────────────────
 
-/// The killer-narrative output: `aggregate(sources, budget) Net Time -> Report`.
+/// The main output type: `aggregate(sources, budget) -> Report`.
 export type Report value {
     ro results      []TaskResult
     ro wall_ms       int
@@ -115,12 +94,8 @@ export type Report value {
 }
 
 /// Build a `Report` from settled task results + measured wall time. The
-/// sequential estimate is the sum of every lane's own elapsed time (what a
-/// one-source-at-a-time loop would have cost) — the "×N faster" HUD figure.
-/// Канон nv-coding-style §1а (2026-07-18): метод на источнике вместо
-/// статик-конверсии `Report.from` (W_STATIC_CONVERSION).
-///
-/// `for r in @` iterates the slice-extension receiver directly.
+/// sequential estimate is the sum of every lane's own elapsed time — the
+/// "×N faster" HUD figure. Method on source (not static conversion).
 #stable(since = "0.1")
 export fn []TaskResult @to_report(wall_ms int) -> Report {
     mut done = 0

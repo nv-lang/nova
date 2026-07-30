@@ -1,26 +1,9 @@
-// [M-187-errorkind-parsejsonerror-variant-collision] — два sum-типа с
-// ОДНОИМЁННЫМ вариантом РАЗНОЙ арности (реально: std.io.ErrorKind.
-// UnexpectedEof — unit, 0 полей; std.encoding.json.ParseJsonError.
-// UnexpectedEof — record, 2 поля {line, col}) в одном CU → codegen путал
-// приёмник для БАРЕ (без `Type.`-квалификации) record-литерала варианта:
-// `err = Some(UnexpectedEof { @line, @col })` (запись деп глубоко внутри
-// Option-присваивания, НЕ прямой `return`/tail-позиции фн) эмитила
-// 0-арный конструктор чужого sum'а вместо 2-арного своего —
-// "too many arguments to function call, expected 0, have 2".
-//
-// Корень: bare record-literal вариант-конструктор шёл через СТАРЫЙ
-// "context-first" пробник (Plan 62.A.bis), который сверялся ТОЛЬКО с
-// `current_fn_return_ty` НАПРЯМУЮ (`-> Sum` буквально) — фн, возвращающая
-// `Result[_, Sum]`/присваивающая в `Option[Sum]`-переменную, этот пробник
-// не проходила, и он молча падал на `find_variant_compat`'s
-// first-registered-wins (БЕЗ учёта арности вообще). Фикс: тот же путь
-// теперь идёт через `debt_find_variant_ctx` (D381 arity-aware дизамбиг,
-// уже существовавший для CALL-формы `Variant(args)`) — арность
-// record-литерала (`fields.len()`) сама разруливает коллизию.
-//
-// Минимальный репро БЕЗ std.io/std.encoding.json (два своих sum'а с
-// одноимённым вариантом разной арности).
-// Единица: folder-module `spec_tests.conformance`.
+// Регресс-фикстура: два sum-типа с одноимённым вариантом разной арности
+// в одном CU. Codegen путал приёмник для bare record-литерала варианта.
+// Корень: старый "context-first" пробник сверялся только с
+// `current_fn_return_ty`. Фикс: тот же путь идёт через arity-aware
+// дизамбиг — арность record-литерала разруливает коллизию.
+// Минимальный репро без std.io/std.encoding.json.
 module regressions.errorkind_variant_arity_collision
 
 type M187KindA enum

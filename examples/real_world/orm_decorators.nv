@@ -12,14 +12,11 @@
 // В Nova — handler-функция, обычная high-order function над `Effect[Db]`.
 //
 // Используемые фичи:
-// - [D11](../spec/decisions/04-effects.md#d11) `with X = h { ... }`
-// - [D31](../spec/decisions/04-effects.md#d31) handler-литералы и
-//   handler-method (`op(p) => expr` и `op(p) { block }`)
-// - [D10](../spec/decisions/04-effects.md#d10) effects + handlers
-// - [D40](../spec/decisions/03-syntax.md#d40) общий закон `=>` ↔ `{}`
-//   для handler-method'ов
-// - `Sql.with_filter` ([stdlib_sql.nv](stdlib_sql.nv)) — добавить
-//   предикат к существующему запросу
+// - `with X = h { ... }` — установка handler-а через with-block
+// - handler-литералы и handler-method (`op(p) => expr` и `op(p) { block }`)
+// - effects + handlers
+// - общий закон `=>` ↔ `{}` для handler-method'ов
+// - `Sql.with_filter` — добавить предикат к существующему запросу
 
 module real_world.orm_decorators
 
@@ -95,7 +92,7 @@ export fn with_audit(real Effect[Db], current_user_id u64) -> Effect[Db] => effe
     exec(q) -> int {
         ro result = real.exec(q)
 
-        // detach — fire-and-forget audit-запись (D50). В тестах
+        // detach — fire-and-forget audit-запись. В тестах
         // `with Detach = SyncDetach` делает тест-цикл полностью
         // детерминированным — audit-запись произойдёт синхронно.
         detach {
@@ -276,7 +273,7 @@ test "read-replica: внутри transaction всё на primary" {
 test "audit: каждый exec пишется в detach-задачу" {
     mut log []CapturedQuery = []
 
-    // SyncDetach (D50) — канонический test-mocking handler, исполняет
+    // SyncDetach — канонический test-mocking handler, исполняет
     // `detach { ... }` синхронно и детерминированно. write_audit_entry
     // сама ничего не логирует (иллюстративный stub), поэтому наблюдаем
     // косвенно: with_audit детачит ровно раз на каждый exec (не query) —

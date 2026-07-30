@@ -1,126 +1,62 @@
-// std/prelude/effects.nv — file-based source of truth для prelude
-// effects. Plan 62 phase 62.F.
-//
-// Декларации добавлены в этот файл, чтобы:
-//   1) `nova doc` показывал canonical API в одном месте (AI-readable),
-//   2) splittable prelude работал (`#prelude(effects)` opt-in
-//      только effects без core/runtime/errors/collections/protocols),
-//   3) `Fail[E]` имел formal declaration совпадающую с тем что
-//      hardcoded type-checker'ом и codegen'ом видит как single-element
-//      path `["Fail"]` (см. compiler-codegen/src/codegen/emit_c.rs:1059,
-//      types/mod.rs:3148, codegen/emit_c.rs:3186).
-//
-// Архитектурные правила (Plan 62 §«Стратификация»):
-//   - **ZERO imports.** Plan 175 Ф.2-v3 добавляла временное исключение
-//     (`import std.time.duration.{Duration, Timestamp, Monotonic}`) для
-//     типизированной `Time`-схемы, жившей здесь. Plan 175.2 Ф.2-v4 (П6,
-//     owner code-review, 2026-07-22) переносит `Time` + его
-//     `#default_handler` (`real_time`, П8-rename) ОБРАТНО в co-equal файл
-//     `std/time/duration/time_effect.nv` (та же логика, что вынесла
-//     `Time` из prelude в Plan 175 родителе Ф.2-исходно, ДО того как
-//     v3 временно вернула её сюда за ambient-safety) — ambient (Time без
-//     `with`, без import) был РЕТРАКТИРОВАН уже в Ф.2-v3/Ф.3, так что
-//     prelude-резидентство ради ambient-доступности избыточно: effect-row
-//     имена резолвятся compile-unit-wide вне зависимости от модуля
-//     объявления (07-modules §393, precedent — `std/time/civil/tzif.nv`
-//     `Fs Os -> ...` без импорта имён). Реальная причина переноса —
-//     `nanos`-поля `Monotonic`/`Timestamp`/`Duration` становятся
-//     module-private (D220, П5 той же волны): handler, живущий В
-//     `time.duration`, конструирует их record-литералом без публичного
-//     `from_ns`. ZERO-imports правило снова строго верно для ЭТОГО файла.
-//   - Auto-import `std.prelude` отключён внутри `std.prelude.*` через
-//     `is_prelude_self_module` (compiler-codegen/src/manifest.rs:314+).
-//
-// **Bootstrap status (Plan 62.F):**
-//
-// - **`Fail[E]`** — formal declaration. Hardcoded recognition в type-checker
-//   и codegen остаётся неизменной — declaration здесь даёт canonical API
-//   + AI/doc surface. Codegen skip'ает emit_effect_type через
-//   RUNTIME_DEFINED_EFFECTS (emit_c.rs RUNTIME_DEFINED_TYPES extension),
-//   потому что `NovaVtable_Fail` уже определён в nova_rt/effects.h.
-//
-// - **`Time`** — MOVED OUT (Plan 175.2 Ф.2-v4, П6) → `std/time/duration/
-//   time_effect.nv` (`module time.duration`, co-equal с `core.nv`/
-//   `monotonic.nv`/`timestamp.nv`). См. header-комментарий этого файла +
-//   header-комментарий `time_effect.nv` для полной истории/rationale.
-//
-// - **`Mem`** — formal declaration ниже. Runtime introspection effect
-//   (alloc_count/free_count/live/reset). Hardcoded codegen
-//   pre-registration (emit_c.rs:1093-1098) остаётся; same skip
-//   через RUNTIME_DEFINED_TYPES.
-//
-// - **`Detach`** — keyword-construct `detach { ... }` (D50), NOT
-//   declarable effect. Остаётся специальным syntactic form в парсере
-//   + builtin type "Detach" (types/mod.rs:2080).
+// std/prelude/effects.nv — file-based declarations for prelude effects:
+// Fail[E], Mem, Detach (keyword). All are runtime-defined — declarations here
+// provide canonical API surface for `nova doc` and splittable prelude.
 
 module prelude.effects
 
-/// **Failable-эффект** — единственный способ объявить ошибку в сигнатуре
-/// функции (D25, D62, D65; spec/decisions/04-effects.md).
+/// **Failable-эффект** — способ объявить ошибку в сигнатуре функции.
 ///
 /// **Параметр `E`** — тип значения, передаваемого в `fail(e)`. Может быть
 /// любой Nova-тип (sum-type, record, str, int, etc.). Соглашение:
 /// доменные ошибки — sum-типы (см. `std.prelude.errors.RuntimeError`).
 ///
 /// **Сигнатура `fail(e E) -> never`** — операция не возвращает управление.
-/// По D61 (str. 1430-1434) handler-body для never-операции обязан
-/// завершиться `interrupt v`, `throw err`, `panic(...)` или `exit(...)`.
+/// handler-body для never-операции обязан завершиться `interrupt v`,
+/// `throw err`, `panic(...)` или `exit(...)`.
 ///
 /// **Syntactic sugar:**
 ///   - `throw expr` desugar'ится в `Fail[E].fail(expr)` где `E` infer'ится
 ///     из expr type.
-///   - postfix `expr!!` на `Option[T]` / `Result[T, E]` (D85) тоже
+///   - postfix `expr!!` на `Option[T]` / `Result[T, E]` тоже
 ///     desugar'ится в `Fail` через unwrap-or-fail.
 ///
-/// **Handler-формы (D31 sugar + D55 explicit):**
+/// **Handler-формы:**
 /// ```
-/// // Lambda-форма (D31): inferred Fail[E] handler.
+/// // Lambda-форма: inferred Fail[E] handler.
 /// with Fail[E] = |e| { panic("got {}", e) } { body }
 ///
-/// // Explicit handler-форма (D55): full Effect[Fail[E]] declaration.
+/// // Explicit handler-форма: full Effect[Fail[E]] declaration.
 /// with Fail[E] = effect Fail[E] { fail(e) -> never => panic("...") } { body }
 /// ```
 ///
-/// **Default handler:** runtime устанавливает `Nova_Fail_fail` который
-/// вызывает `nova_throw` → longjmp к ближайшему fail-frame (test_frame
-/// или spawn-entry frame). Бесшумная propagation в caller'а.
+/// **Default handler:** runtime устанавливает обработчик, который вызывает
+/// `nova_throw` с longjmp к ближайшему fail-frame — бесшумная propagation
+/// в caller'а.
 ///
-/// **Auto-inference (D62/D65 placeholder):** если функция содержит `throw`
-/// и `Fail` отсутствует в effect-row → компилятор автоматически добавляет
-/// `Fail` (см. `infer_effects`, types/mod.rs:2844+). Эта эвристика
-/// применяется ТОЛЬКО к non-exported функциям; exported требуют явный
-/// `Fail[E]` для documentation/AI clarity.
+/// **Auto-inference:** если функция содержит `throw` и `Fail` отсутствует
+/// в effect-row, компилятор автоматически добавляет `Fail`. Применяется
+/// только к non-exported функциям; exported требуют явный `Fail[E]`.
 #stable(since = "0.1")
 export type Fail[E] effect {
     fail(e E) -> never
 }
 
-// `Time` effect + its `real_time()` default-handler — MOVED to
-// `std/time/duration/time_effect.nv` (Plan 175.2 Ф.2-v4, П6). See that
-// file's header comment for the full rationale (module-private `nanos`
-// access on `Monotonic`/`Timestamp`/`Duration`, D220 per-field).
+// `Time` effect + its `real_time()` default-handler — moved to
+// `std/time/duration/time_effect.nv`.
 
-/// **TimerMetrics-effect** — read-only introspection timer-runtime
-/// (Plan 65 Ф.11 counters; вынесены из `Time` в Plan 175 Ф.1 / Q1).
+/// **TimerMetrics-effect** — read-only introspection timer-runtime counters.
 ///
-/// **Назначение:** наблюдать `NOVA_TIMER_METRICS`-счётчики (alloc/fire/
-/// cancel таймеров `ChanReader.close_after`) без превращения `Time` в
-/// раздутый эффект — test-handler'ам `Time` не нужно стабить 5
-/// бессмысленных read-only опов. Симметрично `Mem` (introspection-only).
+/// **Назначение:** наблюдать счётчики таймеров alloc/fire/cancel без
+/// превращения `Time` в раздутый эффект. Симметрично `Mem`.
 ///
 /// **Operations (все `() -> int`, ns/ms-счётчики):**
 ///   - `timer_alloc_total()` — суммарно аллоцировано таймеров.
 ///   - `timer_alloc_active()` — активных сейчас (alloc − fired − cancelled).
 ///   - `timer_fired()` — сработавших естественно.
-///   - `timer_cancelled()` — отменённых (cancel-token / scope-exit cleanup).
+///   - `timer_cancelled()` — отменённых.
 ///   - `timer_longest_pending_ms()` — rolling-max ожидания (ms).
 ///
-/// **Default handler** (без `with`): runtime hooks через
-/// `Nova_TimerMetrics_timer_*` (см. nova_rt/channels.h). Read-only — НЕ
-/// suspend-effect (разрешён в `realtime {}`, как `Mem`).
-///
-/// **Единый источник схемы:** как `Time`/`Mem`, codegen читает эту
-/// декларацию (RUNTIME_DEFINED_TYPES + BUILTIN_VTABLE_NAMES skip).
+/// **Default handler:** runtime hooks, read-only — не suspend-effect.
 #stable(since = "0.1")
 export type TimerMetrics effect {
     timer_alloc_total() -> int
@@ -130,32 +66,23 @@ export type TimerMetrics effect {
     timer_longest_pending_ms() -> int
 }
 
-/// **Mem-effect** — runtime introspection эффект для memory allocator
-/// stats (D11 / D62).
+/// **Mem-effect** — runtime introspection эффект для memory allocator stats.
 ///
 /// **Назначение:** leak/growth тесты могут наблюдать allocator counters
-/// без exposing GC internals. Используется внутренними memory-growth
-/// тестами (nova_tests/runtime/memory_growth.nv) и в diagnostic
-/// harness (см. nova_tests/concurrency/sleep_leak_check.nv).
+/// без exposing GC internals.
 ///
 /// **Operations:**
 ///   - `alloc_count() -> int` — total nova_alloc calls с момента gc_init
 ///     или последнего `reset()`.
-///   - `free_count() -> int` — total free calls (plain malloc backend → 0).
+///   - `free_count() -> int` — total free calls.
 ///   - `live() -> int` — `alloc_count() - free_count()`, грубая оценка
 ///     live allocations.
 ///   - `reset() -> ()` — zero stats counters (per-test isolation).
 ///
-/// **Default handler** (без `with` block): runtime hooks через
-/// nova_mem_stats_* (см. nova_rt/runtime.c).
+/// **Default handler:** runtime hooks, read-only.
 ///
-/// **Не user-overridable beyond bootstrap:** хотя effect-declaration
-/// allows `with Mem = handler {...}`, semantically counters reflect
-/// underlying allocator state — handler-override бесполезен (mocked
-/// counters не влияют на actual heap).
-///
-/// Match codegen `effect_schemas["Mem"]` (emit_c.rs:1093-1098). Skip
-/// emission через RUNTIME_DEFINED_TYPES.
+/// **Не user-overridable:** хотя `with Mem = handler {...}` разрешён,
+/// semantically counters отражают реальное состояние аллокатора.
 #stable(since = "0.1")
 export type Mem effect {
     alloc_count() -> int
@@ -164,7 +91,7 @@ export type Mem effect {
     reset() -> ()
 }
 
-/// **Random-effect** — ambient PRNG (D11 / D61).
+/// **Random-effect** — ambient PRNG.
 ///
 /// **Назначение:** AI-first substitution случайности. Production-код
 /// (`Uuid.v4()`, `Ulid.new()`, retry-jitter) объявляет
@@ -176,20 +103,11 @@ export type Mem effect {
 /// Handler-фабрика `seeded(seed u64) -> Effect[Random]` (xoshiro256++) —
 /// в `std/testing/handlers.nv`.
 ///
-/// **[M-random-u64-path-return-ice] (Plan 172.13 батч 3):** декларация
-/// перенесена сюда из `std/testing/handlers.nv`. `Random` — ambient-эффект,
-/// на который ссылаются модули БЕЗ импорта testing.handlers (uuid, ulid,
-/// retry); когда декларация жила вне prelude, CU такого модуля не имел
-/// `effect_schemas["Random"]`, и codegen падал ICE «Path call return type
-/// unknown» на `Random.u64()`. Prelude — единственный источник схемы
-/// (симметрично `Time`, D316), но в отличие от Time у Random НЕТ
-/// runtime-vtable в nova_rt/*.h — `NovaVtable_Random` + dispatch эмитятся
-/// codegen'ом из этой декларации (обычный user-effect путь, БЕЗ
-/// RUNTIME_DEFINED_TYPES skip).
-///
-/// **Default handler:** пока НЕ установлен (`_nova_handler_Random == NULL`
-/// вне `with Random = ...`); CSPRNG-фабрика `secure()` запланирована
-/// (см. spec/open-questions.md).
+/// **[M-random-u64-path-return-ice]:** декларация перенесена сюда из
+/// `std/testing/handlers.nv`. Когда декларация жила вне prelude, модули
+/// (uuid, ulid, retry) не имели `effect_schemas["Random"]`, и codegen падал
+/// ICE «Path call return type unknown». Prelude — единственный источник
+/// схемы. Эмитится как обычный user-effect (без RUNTIME_DEFINED_TYPES).
 #stable(since = "0.1")
 export type Random effect {
     u64() -> u64                        // 64 случайных бита
@@ -197,42 +115,24 @@ export type Random effect {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Plan 110.4.3 (D185) — ResourceTrace observability effect (Plan 173 Ф.2.R1 rename)
+// ResourceTrace observability effect
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Plan 110 D185 (rename Plan 173 Ф.2.R1): `ResourceTrace` effect — observability-only
-/// handler dispatch для tracing resource-scope entry/exit. Default handler — no-op,
-/// zero-overhead если не использован. Orthogonal к Cleanup[E].@cleanup (resource
-/// lifecycle) — слой для metrics/tracing.
+/// `ResourceTrace` effect — observability-only handler dispatch для tracing
+/// resource-scope entry/exit. Default handler — no-op, zero-overhead если не
+/// использован. Orthogonal к `Cleanup[E].@cleanup` — слой для metrics/tracing.
 ///
-/// **Operations (Plan 173 Ф.5 п.2 — D185 amend, D192-ретракт):**
+/// **Operations:**
 ///   - `on_resource_enter(label str)` — invoked при входе в
-///     `consume X = ... { body }` scope-block. Timeout ДРОПНУТ из enter
-///     (§3a/п.8): порог — внутренний параметр watchdog-варна, наблюдаемость
-///     превышения структурна — через exit-событие ниже.
+///     `consume X = ... { body }` scope-block.
 ///   - `on_resource_exit(label str, outcome ScopeOutcome, duration_ms int,
 ///     overrun bool)` — invoked при выходе из scope с финальным outcome.
-///     `duration_ms` — измеренная длительность cleanup-вызова; `overrun` —
-///     true, если cleanup превысил watchdog-порог (3-level D192-resolution:
-///     WithExitTimeout → Application → default 5000ms). Force-прерывания
-///     cleanup'а НЕ существует (D192-ретракт) — cleanup всегда добегает.
+///     Cleanup всегда добегает (force-прерывания не существует).
 ///
-/// **Handler restrictions (D185):**
+/// **Handler restrictions:**
 ///   - Handler не может `throw` (observability должна быть idempotent).
 ///   - Handler не может `suspend` (sync-only).
 ///   - Return type `()` (observability-only, not value-returning).
-///
-/// **OpenTelemetry integration (D185 §otel):** reference impl
-/// `ResourceTraceHandler.to_otel(exporter)` маппит operations в OTel spans:
-///   - on_resource_enter → create span с attributes (resource.label,
-///     resource.start_time_ns).
-///   - on_resource_exit → close span с status (OK/ERROR_failed/
-///     ERROR_panic) + duration_ms.
-///
-/// **Bootstrap status (Plan 110.4.3):** declaration here; runtime
-/// integration с codegen ConsumeScope dispatch landing в Plan 110.4.4
-/// (effect emit when handler active). Default handler — silent no-op
-/// (codegen elides calls when no handler bound).
 #stable(since = "0.1")
 export type ResourceTrace effect {
     on_resource_enter(label str) -> ()
@@ -240,90 +140,72 @@ export type ResourceTrace effect {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Plan 173.2 — Supervisor effect (supervision-as-effect) + Decision
+// Supervisor effect (supervision-as-effect) + Decision
 // ──────────────────────────────────────────────────────────────────────────
 
-/// **Решение супервизора** на падение ребёнка scope'а (Plan 173.2).
+/// **Решение супервизора** на падение ребёнка scope'а.
 /// Возвращается хендлером `Supervisor.on_child_fail`.
 ///
-///   - `Escalate` — ошибка ребёнка становится primary-ошибкой scope'а
-///     (precedence PANIC > USER > CANCEL, D13), siblings кооперативно
-///     отменяются, scope перевыбрасывает наружу. Поведение дефолта
-///     (без супервизора).
+///   - `Escalate` — ошибка ребёнка становится primary-ошибкой scope'а,
+///     siblings кооперативно отменяются, scope перевыбрасывает наружу.
+///     Поведение дефолта (без супервизора).
 ///   - `Stop` — ребёнок «выкинут»: его ошибка НЕ эскалируется, siblings
-///     НЕ отменяются, scope продолжает работу. Ошибка остаётся retained
-///     per-slot (173.0) — не теряется молча, доступна диагностике.
+///     НЕ отменяются, scope продолжает работу. Ошибка доступна диагностике.
 ///
-/// `Restart`-семейство РЕТРАКТИРОВАНО (решение владельца 2026-07-10, D416):
-/// рестарт — идиома акторных систем (Erlang/OTP), а `supervised` — структурная
-/// конкуренция; эталоны класса (Kotlin coroutineScope / Swift TaskGroup /
-/// Java Joiner) рестарта не имеют. Повтор попытки живёт ВНУТРИ тела ребёнка —
-/// `std/concurrency/retry` — где нет проблемы изоляции состояния.
+/// `Restart`-семейство ретрактировано: рестарт — идиома акторных систем,
+/// а `supervised` — структурная конкуренция. Повтор попытки живёт внутри
+/// тела ребёнка — `std/concurrency/retry`.
 #stable(since = "0.1")
 export type Decision enum Escalate | Stop
 
 /// **Supervisor-эффект** — подменяемая политика реакции на падение ребёнка
-/// `spawn`/`parallel for` внутри `supervised { ... }` (Plan 173.2, D-блок
-/// supervision-as-effect; Erlang-style supervision = handler strategy).
+/// `spawn`/`parallel for` внутри `supervised { ... }`.
 ///
 /// **Операция** `on_child_fail(idx int, err any) -> Decision`:
-///   - `idx` — retention-слот упавшего ребёнка (173.0 `child_error[]`,
-///     spawn-порядок remote-детей scope'а);
+///   - `idx` — retention-слот упавшего ребёнка (spawn-порядок remote-детей
+///     scope'а);
 ///   - `err` — значение ошибки как `any`: typed-throw payload (сужается
 ///     `err is T`), для string-throw / panic — `str`-сообщение.
 ///
-/// **Стратегии = хендлеры** (значения эффекта); отдельной сущности
-/// «имя стратегии» нет. Встроенные политики: `std.concurrency.supervisor`
-/// (`escalate()` / `stop()`).
+/// **Стратегии = хендлеры:** отдельной сущности «имя стратегии» нет.
+/// Встроенные политики: `std.concurrency.supervisor` (`escalate()` / `stop()`).
 ///
 /// ```nova
 /// import std.concurrency.supervisor as sup
 /// with Supervisor = sup.stop() {
 ///     supervised {
-///         for u in urls { spawn { fetch(u) } }   // упавший НЕ отменяет siblings
+///         for u in urls { spawn { fetch(u) } }
 ///     }
 /// }
 /// ```
 ///
-/// **Дефолт (нет хендлера):** сегодняшний all-or-throw — первая реальная
-/// ошибка отменяет siblings и перевыбрасывается (байт-паритет со старым
-/// поведением; supervision-ветка рантайма вообще не активируется).
+/// **Дефолт (нет хендлера):** первая ошибка отменяет siblings и
+/// перевыбрасывается (байт-паритет со старым поведением).
 ///
-/// **Семантика вызова:** хендлер исполняется СЕРИАЛИЗОВАННО, на main-flow
-/// драйв-цикла scope'а (субстрат 173.0), по одному падению, до освобождения
-/// SpawnCtx упавшего. panic ребёнка тоже доходит до решения (kind PANIC);
-/// индуцированные отмены siblings (kind CANCEL) хендлеру НЕ показываются —
-/// это следствие эскалации, не корневое падение.
+/// **Семантика вызова:** хендлер исполняется сериализованно, по одному
+/// падению. panic ребёнка тоже доходит до решения; индуцированные отмены
+/// siblings хендлеру не показываются.
 ///
-/// **Ограничения хендлера** (closed handler effect-set, Q-блок 173.2):
-/// `throw`/`Fail` разрешён — трактуется как Escalate-with-error (ошибка
-/// хендлера идёт в primary-machinery scope'а); `interrupt` и
-/// suspend-операции (`Time.sleep`) в теле хендлера запрещены —
-/// компилятор отклоняет (drain-loop нельзя блокировать).
-///
-/// **Периметр MVP:** политика применяется к remote-детям armed M:N
-/// runtime (дефолтный путь исполнения; источник (idx, err) — per-slot
-/// `child_error[]` 173.0). Bootstrap/single-thread путь (`NOVA_NO_AUTOARM=1`)
-/// и implicit main-scope (`detach` на top-level) остаются на дефолтном
-/// Escalate-all.
+/// **Ограничения хендлера:** `throw`/`Fail` разрешён (Escalate-with-error);
+/// `interrupt` и suspend-операции (`Time.sleep`) запрещены.
 #stable(since = "0.1")
 export type Supervisor effect {
     on_child_fail(idx int, err any) -> Decision
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Plan 110.4.5 (D195) — Application effect для top-level lifecycle
+// Application effect для top-level lifecycle
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Plan 110 D195: Application effect для top-level application lifecycle
+/// Application effect для top-level application lifecycle
 /// (finalizers + default exit_timeout для cleanup-scopes).
 ///
 /// **Operations:**
 ///   - `register_finalizer(f fn() -> ())` — register fn to run при
 ///     exit из enclosing `with Application = handler { ... }` scope.
 ///     Topo-order: reverse of registration (LIFO).
-///   - `default_exit_timeout_ms() -> int` — Level-2 fallback для
-///     ConsumeScope timeout resolution (D192 3-level fallback).
+///   - `default_exit_timeout_ms() -> int` — fallback для ConsumeScope
+///     timeout resolution.
 ///
 /// **Use cases:**
 ///   - `Application.register_finalizer(|| metrics.flush())` — clean
@@ -331,19 +213,12 @@ export type Supervisor effect {
 ///   - `with Application = Application.handler(default_exit_timeout_ms: 10_000)`
 ///     — set global cleanup timeout.
 ///
-/// **Nesting semantics (D195 R1-R8):**
-///   - R1 inner handler wins (effect-stack semantics).
-///   - R2 finalizer registry NOT inherited (test isolation).
-///   - R3 default exit_timeout NOT inherited.
-///   - R6 cross-fiber: spawn child видит parent's Application
-///     via D80 effect snapshot.
-///   - R8 abort/SIGKILL не fires finalizers (OS limitation, не bug).
-///
-/// **Bootstrap status (Plan 110.4.5):** effect + handler declarations
-/// here. Codegen integration с D192 Level-2 resolution landing в
-/// Plan 110.4.6 (codegen check Application handler в
-/// nv_resolve_exit_timeout). Cross-fiber propagation через D80 effect
-/// snapshot — landing в 110.4.7.
+/// **Nesting semantics:**
+///   - Inner handler wins (effect-stack semantics).
+///   - Finalizer registry NOT inherited (test isolation).
+///   - Default exit_timeout NOT inherited.
+///   - Cross-fiber: spawn child видит parent's Application via effect snapshot.
+///   - abort/SIGKILL не fires finalizers (OS limitation).
 #stable(since = "0.1")
 export type Application effect {
     register_finalizer(f fn() -> ()) -> ()

@@ -1,22 +1,8 @@
-// [M-187-nested-spawn-scope-var-cc-fail] — `spawn` LEXICALLY NESTED inside
-// another `spawn`'s own body, both under ONE `supervised` (no intervening
-// nested `supervised`) — CC-FAILed: generated C referenced the OUTER
-// `supervised`'s scope-queue local (`_nova_scope_q_N`) from INSIDE the
-// outer spawn's own fiber function, where that local is out of scope
-// ("use of undeclared identifier"). Root cause: `current_scope_queue` was
-// never threaded through the outer spawn's OWN ctx struct the way ordinary
-// captured variables are — only a Nova-source `Ident` reference gets
-// captured by `emit_spawn`'s AST scan, and the scope-queue variable is a
-// codegen-internal name, never an AST `Ident`.
-//
-// Fix: `emit_spawn` now ALWAYS threads the active scope queue through an
-// implicit ctx field (`_nova_captured_scope_q`, unconditional — cheap, and
-// correct whether or not the body actually nests another `spawn`), and
-// repoints `current_scope_queue` at that captured field for the duration of
-// its own body emission — mirroring the existing `is_outer_cap`
-// capture-macro treatment ordinary captured variables already get.
-//
-// Единица: folder-module `spec_tests.conformance`.
+// Регресс-фикстура: `spawn` лексически вложен внутрь другого `spawn`,
+// оба под одним `supervised`. Ранее CC-FAILил — generated C ссылался на
+// scope-queue local внешнего supervised, который вне области видимости
+// внутри fiber-функции внешнего spawn. Fix: `emit_spawn` теперь всегда
+// пробрасывает активный scope queue через неявное ctx-поле.
 module regressions.nested_spawn_scope_var
 
 test "M-187 spawn nested lexically inside another spawn (one supervised) compiles and runs" {
@@ -35,17 +21,10 @@ test "M-187 spawn nested lexically inside another spawn (one supervised) compile
     assert(inner_ran.load() == 1)
 }
 
-// NB (граница покрытия, найдено этой же волной): суммарное число детей
-// скоупа здесь НАМЕРЕННО ≤ NOVA_SCOPE_INITIAL_CAP (16). Вложенный spawn
-// регистрируется в родительский скоуп УЖЕ во время его drain-фазы — рост
-// child_error[]/child_ctx[] в этот момент бьёт задокументированный
-// R2-tripwire рантайма (`assert(!_drain_started)`, fibers.h
-// nova_scope_grow_children, [M-173.0-R2]): санкционированный фикс там —
-// chunked stable-address storage (Option A, план 173.0 §EXEC R2), НЕ
-// ослабление ассерта — отдельная работа рантайм-подложки, вне волны 187
-// (эта волна закрыла CODEGEN-половину: CC-FAIL "use of undeclared
-// identifier _nova_scope_q_N"). >16 вложенно-порождённых детей на скоуп —
-// остаётся за маркером [M-173.0-R2].
+// NB (граница покрытия): суммарное число детей скоупа здесь ≤ 16.
+// Вложенный spawn регистрируется в родительский скоуп во время его drain-
+// фазы — рост child_error[]/child_ctx[] в этот момент бьёт tripwire
+// рантайма. >16 вложенно-порождённых детей на скоуп — открытая граница.
 
 test "M-187 nested spawn: several inner spawns per outer spawn, all join" {
     mut total = AtomicInt.new(0)

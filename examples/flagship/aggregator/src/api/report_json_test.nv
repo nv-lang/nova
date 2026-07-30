@@ -1,63 +1,20 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// Plan 187 — flagship concurrent aggregator: JSON snapshot bridge tests.
+// Flagship concurrent aggregator: JSON snapshot bridge tests.
 //
-// Pure functions (`build_snapshot`/`snapshot_to_json` — `Report -> DTO ->
-// str`, no effects) — tested directly. Assertions are substring checks on
-// the serialized string (NOT `std.encoding.json.Json.parse` round-trips),
-// same idiom the "failed lane"/"kind-probes" tests below already used for
-// the 3-levels-deep-nesting gap (`[M-flagship-nested-hashmap-jsonvalue-
-// mono]`, see that note below) — kept even after the fix described next,
-// since it sidesteps THAT unrelated gap too.
+// Pure functions (`build_snapshot`/`snapshot_to_json` — no effects) —
+// tested directly. Assertions are substring checks (not JSON parse
+// round-trips) to avoid a codegen gap with deeply nested generic types.
 //
-// [M-187-errorkind-parsejsonerror-variant-collision]: **compiler codegen
-// bug, NOT worked around by weakening tests — worked around by a real
-// module-boundary fix (`src/domain/domain.nv`, split out of `src/app` this
-// same session).** Discovered wiring `src/main.nv`'s `resolve_port()`
-// (`AGGREGATOR_PORT`, `std.os`) into this package: `nova test
-// flagship/aggregator` CC-FAILed building `src/api/report_json.c` — `error:
-// too many arguments to function call, expected 0, have 2 | Nova_ErrorKind*
-// _nv_tmp_686 = nova_make_ErrorKind_UnexpectedEof((nova_self->line),
-// (nova_self->col))`. Bisected (isolated minimal-probe test, `std.os` NOT
-// involved at all — a red herring from the original hypothesis): TWO
-// unrelated sum types each declare a variant literally named `UnexpectedEof`
-// — `std.io.error.ErrorKind` (pulled in transitively by `std.net`, via
-// `std/net/tcp.nv`'s `import std.io.{IoError}` — `IoError`/`ErrorKind` are
-// declared in the SAME source file, inseparable) is a UNIT variant (0
-// fields); `std.encoding.json.ParseJsonError` (pulled in transitively by
-// `std.encoding.serde`'s JSON backend — needed for `json_encode`/
-// `json_encode_pretty`, this package's whole typed-serde deliverable 2) is a
-// 2-field record variant. Once BOTH types are present in ONE compile unit —
-// this file's own target used to pull `std.net` transitively via `import
-// ../app.{Report, TaskResult, ...}` (`src/app` = ONE D78 folder-module,
-// `aggregate.nv`/`live.nv` peers import `std.net` for the REAL fan-out) —
-// codegen emits the wrong (0-arg) constructor for the 2-arg call, REGARDLESS
-// of whether `ParseJsonError.UnexpectedEof` is ever actually constructed
-// (confirmed: removing every `Json.parse` call from this file, even reducing
-// it to a single trivial `json_encode`-only test, did NOT clear the
-// CC-FAIL — mere co-presence of both type declarations in the CU is
-// sufficient. `[M-flagship-...]`-family root cause not investigated further,
-// compiler-side, out of this package's remit). FIX: `src/domain/domain.nv`
-// (Source/SourceData/AggError/TaskStatus/TaskResult/Report — pure data, zero
-// effects) is now its OWN D78 folder-module, separate from `src/app`
-// (`aggregate.nv`/`live.nv`, which need `std.net` for the real fan-out).
-// This file (and `report_json.nv`) now import `../domain` directly — pure
-// data only, no `std.net`, no `ErrorKind` in this CU at all — while
-// `src/app/*.nv` imports `../domain` right back for its own use of these
-// types (no behavior change anywhere, pure module-boundary move).
+// The domain types live in their own folder-module (`src/domain`) separate
+// from `src/app` (which needs `std.net`) — this avoids a codegen collision
+// between two unrelated sum types that both name a variant `UnexpectedEof`.
 
 module api
 
 import ../domain.{Report, TaskResult, TaskStatus, SourceData, Source}
 
-// [M-flagship-anon-record-literal-enum-payload] (closed, 221.1 №155а): a
-// BARE record literal (`{ id, payload: ... }`) as an enum-variant payload
-// argument used to confuse codegen's expected-type propagation here —
-// "anonymous record literal: expected struct 'TaskStatus' not in
-// record_schemas" (it looked for a `TaskStatus` schema instead of the
-// variant's own payload type, `SourceData`) — codegen fix:
-// `try_emit_explicit_variant_ctor` now scopes `expected_record_type` per
-// payload arg from the variant's own field types. The explicit
-// `SourceData` prefix workaround is no longer needed.
+// A bare record literal (`{ id, payload: ... }`) as an enum-variant payload
+// argument uses the variant's own field types for expected-type propagation.
 fn done_result(id str, ms int) -> TaskResult =>
     { id, status: TaskStatus.Done({ id, payload: []u8.new() }), elapsed_ms: ms }
 
@@ -80,7 +37,7 @@ fn srcs_for(ids []str) -> []Source {
     out
 }
 
-// ── POS: full shape shows up in the serialized JSON ─────────────────────────
+// ── POS: full shape shows up in the serialized JSON ────────────────────────
 
 test "build_snapshot -> snapshot_to_json: every top-level field round-trips" {
     ro report = [
@@ -104,19 +61,11 @@ test "build_snapshot -> snapshot_to_json: every top-level field round-trips" {
     assert(s.contains("\"results\":["))
 }
 
-// [M-flagship-nested-hashmap-jsonvalue-mono]: parsing THREE levels deep
-// (top object -> "results" array -> element object -> nested "status"
-// object) CC-FAILs: "unknown type name 'NovaOpt_Nova_JsonValue_p_p'" / a
-// doubled `Nova_HashMap____nova_str__Nova_JsonValue_p_p` — a generics-
-// monomorphization naming collision for the recursive `Option[HashMap[str,
-// JsonValue]]` instantiation once it is unwrapped/re-derived a second time
-// in the same function. std/encoding/json_test.nv's own coverage never
-// nests this deep (object-in-array-in-object). Reproduced in isolation.
-// Workaround below (and throughout this file): assert on the serialized
-// STRING directly (order-independent per-field substrings — `format_object`
-// does not guarantee HashMap/serde key order) instead of re-parsing.
+// Workaround for a generics monomorphization naming collision with deeply
+// nested types: assert on the serialized STRING directly (substring checks)
+// instead of parsing back into JSON objects.
 
-// ── POS: a failed lane carries its error text in status.error ──────────────
+// ── POS: a failed lane carries its error text in status.error ─────────────
 
 test "snapshot_to_json: failed lane carries its error text" {
     ro report = [failed_result("bad", "upstream failure: bad", 10)].to_report(10)
@@ -126,10 +75,8 @@ test "snapshot_to_json: failed lane carries its error text" {
     assert(s.contains("\"error\":\"upstream failure: bad\""))
 }
 
-// ── POS: a done lane's status carries a null (not a string) error ──────────
-//    (D344 Option[T]::None -> JSON `null`, key still present; `[M-180-serde-field-
-//    attributes]` closed; the UI/README's `status.error?` optionality is "null or a
-//    string", not "key present or absent").
+// ── POS: a done lane's status carries a null (not a string) error ─────────
+//    `Option[T]::None` serializes as JSON `null` with the key still present.
 
 test "snapshot_to_json: done lane's status carries a null error, not a string" {
     ro report = [done_result("fast-a", 15)].to_report(15)
@@ -139,7 +86,7 @@ test "snapshot_to_json: done lane's status carries a null error, not a string" {
     assert(s.contains("\"error\":null"))
 }
 
-// ── POS: kind/probes come from the matching Source, by id ──────────────────
+// ── POS: kind/probes come from the matching Source, by id ─────────────────
 
 test "snapshot_to_json: result kind/probes are pulled from the matching Source" {
     ro report = [done_result("only-one", 15)].to_report(15)
@@ -150,7 +97,7 @@ test "snapshot_to_json: result kind/probes are pulled from the matching Source" 
     assert(s.contains("\"probes\":7"))
 }
 
-// ── EDGE: empty report -> empty results array, zero tallies, no panic ──────
+// ── EDGE: empty report -> empty results array, zero tallies, no panic ─────
 
 test "snapshot_to_json: empty report -> empty results array, zero tallies" {
     ro report = []TaskResult.new().to_report(0)
@@ -162,7 +109,7 @@ test "snapshot_to_json: empty report -> empty results array, zero tallies" {
     assert(s.contains("\"fibers_spawned\":0"))
 }
 
-// ── POS: pretty form (D419 json_encode_pretty) still carries the same tallies
+// ── POS: pretty form (`json_encode_pretty`) still carries the same tallies
 
 test "snapshot_to_json_pretty: still carries the same tallies, whitespace aside" {
     ro report = [done_result("fast-a", 15)].to_report(15)
