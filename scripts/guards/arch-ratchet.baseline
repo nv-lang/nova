@@ -201,5 +201,57 @@
 # (б) уезжает в канал и лимит опускается назад.
 # Верификация этого слияния: обе фикстуры reflect PASS 2/0, `nova test std/src/reflect_test.nv`
 # PASS 1/0, `nova check std/src` FAIL строго 26, мега-CU и флагман — гейтом ниже.
-lines=63521
+#
+# Рост 63521→63739 (+218) осознан (реестр 221.1 №154+№151+№136, окно
+# mangle-module-qualification, sonnet, 2026-07-30) — ПУТЬ B, поднято ИСПОЛНИТЕЛЕМ
+# (не интегратором лично) — ждёт приёмки/ревью интегратора этим слиянием.
+# ПОЧЕМУ ЭТО EMIT-СЛОЙ, А НЕ КАНАЛ: весь рост — это C-ИМЕНОВАНИЕ (module-
+# qualified mangling схем для protocol-vtable/Newtype/export-const), которое
+# принципиально нельзя перенести в чекер — чекер не эмитит C-текст/имена
+# символов, только резолвит СЕМАНТИКУ (какая декларация имелась в виду).
+# Единственная часть, которая ДЕЙСТВИТЕЛЬНО про резолв имени (№136, bare
+# variant vs newtype-ctor), сделана В КАНАЛЕ (`types/mod.rs`, +25 строк,
+# НЕ в этом файле) — emit_c.rs получил только СИММЕТРИЧНЫЙ codegen-side
+# guard (переупорядочивание существующей проверки `debt_find_variant_ctx`
+# перед существующим newtype-alias intercept, не новая эвристика).
+# Разбивка (+218 в emit_c.rs):
+#  (а) №154 форма (а) protocol vtable, ~+40: новое поле `protocol_decl_file`
+#      (имя протокола -> declaring file_id) + populate в двух местах
+#      регистрации `protocol_method_registry` + save/restore
+#      `current_emit_file_id` в `emit_protocol_box_typedef` (тот же
+#      any_type_file_collision()-гейтед идиом, что уже применяется в
+#      `emit_monomorphized_method_scoped_inner` — не новый паттерн, тот же).
+#      Корень: emit_protocol_box_typedef лоуэрит СОБСТВЕННЫЕ param/return
+#      типы протокола ВНЕ гейта, которым уже пользуется D381 для структур/
+#      сумм — Fmt.sign()->Sign (std) не мог квалифицироваться от коллизии
+#      с пользовательским Sign, though def_type_base уже умел.
+#  (б) №154 форма (б) Newtype, ~+35: `qualifiable` в D381-детекции получил
+#      `plain_newtype`-ветку (было явно исключено "distinct axis, followup"
+#      — сам комментарий это признавал); typedef Newtype переведён на
+#      `def_base`. Тот же паттерн D381, применённый к оси, которую D381
+#      сознательно не покрывал.
+#  (в) №151 export const, ~+120 (largest часть роста): `private_const_c_names`
+#      по дизайну НЕ покрывал `export const` (комментарий: "collision —
+#      ambiguity error чекера", чекер эту диагностику никогда не
+#      реализовывал — followup, не начат в этом окне). Добавлены
+#      `colliding_const_names`+`const_qualified_by_name` (детекция + запись
+#      манглинга) — тот же D381-паттерн для НОВОЙ оси (константы), плюс
+#      правки в 2 reference-сайтах (lazy/eager Ident) и 1 def-сайте
+#      (emit_const_decl). Все с подробным doc-comment (совокупно ~половина
+#      этих строк — комментарии/rationale, не код).
+#  (г) №136 codegen-side guard, ~+25: см. выше — переупорядочивание, не
+#      новая эвристика; парная канальная правка в types/mod.rs (+25, вне
+#      этого файла, не считается в lines этой метрики).
+# ДОЛГ: №151 остаётся без честной чекер-диагностики неоднозначности импорта
+# (E_AMBIGUOUS_IMPORT) для файла, импортирующего ОБА коллидирующих export
+# const без квалификатора — codegen-фикс даёт СОГласованный (тип<->символ),
+# но processing-order-зависимый выбор для этого редкого случая (см. отчёт
+# окна + doc-comment `const_qualified_by_name`). Отдельная волна.
+# Верификация этого слияния: репро №154 (обе формы, RED->GREEN) + bigint-
+# sign сценарий владельца (match, PASS) + репро №151 (RED->GREEN, mcrepro/
+# step2..4+isolated все PASS) + репро №136 (RED->GREEN, silent-wrong-C ->
+# correct constructor+match) + control 2a/2b/3a/3b/3c (PASS, не сломаны) +
+# `nova check std/src` FAIL строго 26 (не сдвинулся) — гейт мега-CU/
+# флагман см. отчёт окна (точечные прогоны, не полный гейт — интегратор).
+lines=63739
 infer=348
