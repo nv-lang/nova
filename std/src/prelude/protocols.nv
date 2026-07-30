@@ -1,103 +1,54 @@
 // std/prelude/protocols.nv — file-based source of truth для prelude
 // conversion / equality / ordering / hashing / display protocols.
-// Plan 62 phase 62.E.
 //
-// Декларации добавлены в этот файл, чтобы:
-//   1) `nova doc` показывал canonical API в одном месте (AI-readable),
-//   2) пользователь мог shadow'ить эти names в своём коде с warning'ом
-//      (Plan 62.F W_PRELUDE_SHADOW),
-//   3) splittable prelude работал (`#prelude(protocols)` opt-in
-//      только protocols без core/runtime/errors/collections).
+// Декларации в этом файле, чтобы:
+//   1) `nova doc` показывал canonical API в одном месте,
+//   2) пользователь мог shadow'ить эти names с warning'ом,
+//   3) splittable prelude работал (`#prelude(protocols)` opt-in).
 //
-// Архитектурные правила (Plan 62 §«Стратификация»):
-//   - **Один explicit import**: `std.prelude.core.{Ordering}` нужен для
-//     signature `cmp(other Self) -> Ordering`. Auto-import `std.prelude`
-//     отключён внутри `std.prelude.*` (cycle protection,
-//     `is_prelude_self_module` в compiler-codegen/src/manifest.rs:314+),
-//     поэтому Ordering надо завезти explicitly. `std.prelude.core` не
-//     импортирует обратно `std.prelude.protocols` — cycle отсутствует.
+// Один explicit import: `std.prelude.core.Ordering` для signature
+// `cmp(other Self) -> Ordering`. `std.prelude.core` не импортирует обратно
+// `std.prelude.protocols` — cycle отсутствует.
 //
-// **Bootstrap status (Plan 62.E):**
-//
-// - **`From[T]` / `Into[U]` / `TryFrom[T, E]` / `TryInto[U, E]`** —
-//   ретрактированы (D73/D77, 2026-07-06). См. spec/decisions/08-runtime.md#d73.
-//   Остаётся: `.from(x)`/`.try_from(x)` конвенция имён (не протокол),
-//   `consume @into_ЦЕЛЬ()` (D131), `to_str()`/`to_*` (D410).
-// - **`Hash`** — `hash() -> u64` only (split из combined hash+eq в
-//   `std/collections/hashmap.nv` per D109 split policy). Совместимо с
-//   structural matching: type удовлетворяющий combined `Hash`
-//   (hash+eq) автоматически удовлетворяет split `Hash` (только hash).
-// - **`Equal`** — `eq(other Self) -> bool` (split из combined per D109).
-// - **`Compare`** — `cmp(other Self) -> Ordering` (D109 strict).
-//   Ordering импортирован explicitly из `std.prelude.core` (cycle prot).
-//
-// **NOT migrated (Plan 62.E scope — deferred / in-progress):**
-//
-// - **`Display`** — `fmt(sb StringBuilder) -> ()` зависит от
-//   `StringBuilder` (opaque runtime type, hardcoded в type-checker
-//   builtins). До 62.D.bis (опаковые типы → `external type`) Display
-//   declaration не может ссылаться на StringBuilder через cross-file
-//   resolve. См. DEFER comment ниже.
-//
-// **NOT modified (Plan 62.E explicit non-goals):**
-//
-// - Built-in dispatch Hash/Eq/Ord для примитивов (`int.hash()`,
-//   `str.eq()`, etc.) в codegen — остаётся.
-// - `lints.rs:565` `collect_protocol_names` HashSet — идемпотентно
-//   с этими declarations (HashSet de-dups; protocol resolution
-//   не ломается).
+// **Ретрактировано:** `From[T]` / `Into[U]` / `TryFrom[T, E]` /
+// `TryInto[U, E]` — остаётся конвенция имён (не протокол).
+// **`Hash`** — `hash() -> u64` only (split из combined hash+eq).
+// **`Equal`** — `eq(other Self) -> bool` (split).
+// **`Compare`** — `cmp(other Self) -> Ordering`.
+// **`Display`** — DEFER: зависит от StringBuilder (opaque runtime type).
 
 module prelude.protocols
 
-// Plan 91.8a (D183): Ordering sum-type удалён; Compare.compare возвращает int
-// (memcmp-style: < 0 / 0 / > 0). Никаких imports из core не требуется.
+// Ordering sum-type удалён; Compare.compare возвращает int (< 0 / 0 / > 0).
 
-// Plan 208 Ф.2 (D422): `Fmt`'s `@align()` axis reuses the SAME `Align` enum
-// `StringBuilder.@pad_in_place`/`@write_padded` already take (D179 amend,
-// Ф.1) — one type, not a second one. `Sign`/`FmtKind` are new (Ф.2 scope,
-// not introduced in Ф.1) but live in the SAME file (`runtime.fmt_buf`) for
-// a single format-enum home. `runtime.fmt_buf` is `#no_prelude` (only
-// builtin primitives) so this import does not reopen the
-// `prelude → collections → string_builder` cycle `protocols.nv` itself
-// otherwise stays clear of.
+// `Fmt`'s `@align()` axis reuses the same `Align` enum as
+// `StringBuilder.@pad_in_place`/`@write_padded`. `Sign`/`FmtKind` live in
+// `runtime.fmt_buf` — it is `#no_prelude` so this import does not reopen
+// the prelude → collections → string_builder cycle.
 import std.runtime.fmt_buf.{Align, Sign, FmtKind}
 
-// Plan 208 Ф.4R Ш2 (D422 §5 V1-упрощение #3 closeout): primitive `@display`/
-// `@debug` bodies below call the SAME `*_display_spec` family the compiler's
-// own fast-path devirtualizes to (Ш3) — the single-source-of-truth render
-// engine now lives in `runtime.string_builder` (Ш1 architecture-v2 moved it
-// there FROM `fmt_buf.nv` specifically to avoid a fmt_buf↔string_builder
-// import cycle; see `docs/plans/wip/208-f4r-notes.md` Ш1). Importing
-// `runtime.string_builder` HERE is NOT a new cycle: `string_builder.nv` is
-// `#no_prelude` and does not import `prelude.protocols` (or anything that
-// does) back — one-directional, same shape as the `fmt_buf` import above.
-// (The BLOCKING cycle that stopped Ш2 originally was importing
-// `prelude.protocols` FROM `fmt_buf.nv` — the reverse direction, which
-// really did loop; going protocols → string_builder here never did.)
+// Primitive `@display`/`@debug` bodies below call the `*_display_spec`
+// family from `runtime.string_builder` — the single-source-of-truth render
+// engine. `string_builder.nv` is `#no_prelude` and does not import back.
 import std.runtime.string_builder.{StringBuilder, int_display_spec, f64_display_spec, f32_display_spec, bool_display_spec, char_display_spec, char_debug_display_spec, str_debug_display_spec}
 
-// [M-numeric-try-narrowing] (2026-07-20, D430): `RangeError` — return type
-// of the `try_to_<T>` checked-narrowing family further down in this file.
-// Same import shape as `collections.nv`'s `{CharFromError, TryFromCharError,
-// ReadBufferError, UnexpectedEnd}` line — `std.prelude.errors` has ZERO
-// imports itself (no cycle risk pulling it into `prelude.protocols`).
+// [M-numeric-try-narrowing]: `RangeError` — return type of
+// `try_to_<T>` checked-narrowing family further down.
+// `std.prelude.errors` has ZERO imports (no cycle risk).
 import std.prelude.errors.{RangeError}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Equality / Hashing / Ordering protocols (D109)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Хэшируемые типы — для `HashMap[K, ...]` / `HashSet[K]` (D109,
-/// spec/decisions/04-effects.md; D237 rename Hash → Hash).
+/// Хэшируемые типы — для `HashMap[K, ...]` / `HashSet[K]`.
 ///
-/// **Split policy (D109):** `Hash` определяет только `hash() -> u64`,
-/// equality вынесена в отдельный `Equal`. Это упрощает структурную
-/// проверку: `[K Hash]` означает "достаточно для хэш-таблицы lookup'а
-/// **до** collision check", `[K Hash + Equal]` — полный contract.
+/// `Hash` определяет только `hash() -> u64`, equality вынесена
+/// в отдельный `Equal`. `[K Hash]` — достаточно для lookup'а до collision
+/// check, `[K Hash + Equal]` — полный contract.
 ///
-/// **Bootstrap:** примитивы (`int`/`str`/`bool`/`char`/числовые) — auto-
-/// hashable per type-checker special-case (emit_c.rs:5817). Именованные
-/// типы должны явно реализовать `fn T @hash() -> u64`.
+/// Примитивы (`int`/`str`/`bool`/`char`/числовые) — auto-hashable.
+/// Именованные типы должны явно реализовать `fn T @hash() -> u64`.
 ///
 /// # Examples
 ///
@@ -111,12 +62,10 @@ export type Hash protocol {
     @hash() -> u64
 }
 
-/// Равенство (D109; D237 rename Equal → Equal, @equal → @equal).
-///
-/// `Self == Self` через явный метод. Plan 91.8a.2 (D183 amendment):
+/// Равенство. `Self == Self` через явный метод.
 /// Если тип satisfies Compare, @equal auto-synthesized через compare;
-/// иначе implementer пишет @equal явно (e.g. Vector3, Complex без linear
-/// order). Operators ==/!= synthesized автоматически.
+/// иначе implementer пишет @equal явно.
+/// Operators ==/!= synthesized автоматически.
 ///
 /// # Examples
 ///
@@ -136,9 +85,9 @@ export type Equal protocol {
     @equal(other Self) -> bool => @compare(other) == 0
 }
 
-/// Полный порядок (D109, D183 amendment Plan 91.8a.2; D237 rename Compare → Compare).
-/// Orthogonal с Equal (no embed); Equal получает default body через
-/// coercion к Compare. Возвращает `int` (memcmp-style: < 0, 0, > 0).
+/// Полный порядок. Orthogonal с Equal (no embed); Equal получает
+/// default body через coercion к Compare. Возвращает `int`
+/// (memcmp-style: < 0, 0, > 0).
 ///
 /// Транзитивность и antisymmetry — программистская обязанность (compiler
 /// не верифицирует). Для partial order — отдельный protocol (Plan 62.E+).
@@ -157,43 +106,25 @@ export type Compare protocol {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Plan 137 (D237) — Clone protocol (renamed from Clone)
+// Clone protocol
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Deep recursive copy (Plan 126, D230; D237 rename Clone → Clone).
+/// Deep recursive copy.
 ///
 /// Single-method protocol для глубокой копии value-record / heap-record /
 /// named tuple / sum-type. Auto-derive через `#impl(Clone)` на типе:
 /// compiler synthesize'ит memberwise рекурсивную копию каждого поля.
 ///
 /// **Auto-derive rules:**
-/// - Primitive types (int/f64/bool/char/byte/str): copy semantics built-in;
-///   `str` clone = новая аллокация с тем же контентом.
+/// - Primitive types: copy semantics built-in; `str` clone = новая аллокация.
 /// - `[]T`: new array с recursive clone элементов.
 /// - Record/NamedTuple: memberwise `field.clone()` chain.
 /// - Sum-type: match-arms, payload рекурсивно clone'ится.
-/// - Reference fields в value-record: clone underlying (`[]T` deep copy).
 ///
-/// **Cycle detection:** type `A` ссылающийся на `A` сам (через embed) →
-/// `E_AUTO_DERIVE_CYCLE` при попытке synthesize.
+/// **Cycle detection:** type `A` → `E_AUTO_DERIVE_CYCLE`.
 ///
-/// **Field eligibility:** каждое поле type'а должно implement Clone
-/// (либо primitive, либо `#impl(Clone)`). Иначе →
+/// **Field eligibility:** каждое поле должно implement Clone → иначе
 /// `E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL`.
-///
-/// # Examples
-///
-/// ```nova
-/// #impl(Clone)
-/// type Vec3 value {
-///     x f64
-///     y f64
-///     z f64
-/// }
-///
-/// ro a = Vec3 { x: 1.0, y: 2.0, z: 3.0 }
-/// ro b = a.clone()  // synthesized: Vec3 { x: @x.clone(), y: @y.clone(), z: @z.clone() }
-/// ```
 ///
 /// Manual impl (override default):
 ///
@@ -207,34 +138,23 @@ export type Clone protocol {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Plan 208 Ф.2 (D422) — Write / Fmt / FmtCtx — Unified Formatter
+// Write / Fmt / FmtCtx — Unified Formatter
 // ──────────────────────────────────────────────────────────────────────────
 //
-// D419 RETRACT/SUPERSEDED (spec/decisions/02-types.md#d419): the two-method
-// `@display(mut w Write)` + optional `@display_fmt(mut f Fmt)` scheme is
-// gone. ONE required primitive per type — `@display(mut f Fmt)` /
-// `@debug(mut f Fmt)` — below. `Fmt` embeds `Write` (D145 protocol-embed,
-// `use Write`) and adds the full spec-axis surface (width/precision/align/
-// fill/sign/alternate/kind) plus type-owned `@pad`. See D422 §1-§3.
+// `Fmt` embeds `Write` (protocol-embed, `use Write`) and adds spec-axis
+// surface (width/precision/align/fill/sign/alternate/kind) + `@pad`.
 
-/// Byte sink for formatting — minimal, infallible (Plan 208 Ф.2, D422 §1,
-/// D374 AMEND ×2). `@write` takes `[]u8`, not `str`: more fundamental,
-/// unifies the shape with `io.Write` (Plan 176) without merging the two
-/// protocols (fmt-`Write` is infallible; io-`Write` returns
-/// `Result[(), IoError]` — "two byte relatives", D325).
+/// Byte sink for formatting — minimal, infallible. `@write` takes `[]u8`,
+/// not `str`: more fundamental, unifies the shape with `io.Write` without
+/// merging the two protocols (fmt-`Write` is infallible; io-`Write` returns
+/// `Result[(), IoError]`).
 ///
-/// str-VALUE arguments need an explicit `.bytes()` (D176, zero-copy view);
-/// str-LITERAL arguments coerce to `[]u8` automatically (D55 amend — the
-/// same "literal in a typed position" carve-out as int-literal→newtype).
+/// str-VALUE arguments need an explicit `.bytes()` (zero-copy view);
+/// str-LITERAL arguments coerce to `[]u8` automatically.
 ///
-/// `@reserve`/`@advance` are deliberately NOT here (design review 2026-07-15,
-/// D422 §1): a raw `*mut u8` doesn't belong in a shared protocol, and an
-/// io-sink cannot hand out a pointer to bytes it hasn't received yet. They
-/// stay concrete methods on `StringBuilder` (D179 amend) — the compiler uses
-/// them directly for the zero-COPY top-level interpolation path; generic
-/// `@display`/`@debug` bodies (sink typed only as `Fmt`/`Write`) render a
-/// primitive into a stack buffer and make one `@write` call — zero-ALLOC,
-/// no heap, mirroring Rust's minimal `fmt::Write`.
+/// `@reserve`/`@advance` are deliberately NOT here: a raw `*mut u8` doesn't
+/// belong in a shared protocol. They stay concrete methods on `StringBuilder`
+/// — the compiler uses them for the zero-COPY interpolation path.
 ///
 /// # Examples
 ///
@@ -247,14 +167,12 @@ export type Write protocol {
     mut @write(bytes []u8) -> ()
 }
 
-/// Format-spec context — sink (`use Write`, D145 protocol-embed) + the axes
-/// a `${x:SPEC}` rich spec carries (Plan 208 Ф.2, D422 §2). Every
-/// `@display`/`@debug` implementor receives one of these (never a bare
-/// `Write`) so a type CAN react to width/align/fill/sign/alternate/kind/
-/// precision — but padding itself is compiler-owned by default (§`@pad`).
+/// Format-spec context — sink (`use Write`, protocol-embed) + the axes
+/// a `${x:SPEC}` rich spec carries. Every `@display`/`@debug` implementor
+/// receives one of these (never a bare `Write`) so a type can react to
+/// width/align/fill/sign/alternate/kind/precision.
 ///
-/// `use Write` composes `@write([]u8)` into `Fmt`'s method-set (same
-/// mechanism as any other `protocol { use A, B }`, D145) — any `Fmt`
+/// `use Write` composes `@write([]u8)` into `Fmt`'s method-set — any `Fmt`
 /// structurally satisfies `Write` too.
 ///
 /// # Examples
@@ -280,26 +198,15 @@ export type Fmt protocol {
 }
 
 /// Concrete `Fmt` implementor the compiler constructs at every `${x[:SPEC]}`
-/// call site (Plan 208 Ф.2, D422 §2). Not intended for direct user
-/// construction — `FmtCtx.bare`/`FmtCtx.rich` below are the two shapes the
-/// codegen hand-synthesizes (bare interpolation has no spec at all; a rich
-/// `${x:SPEC}` carries the parsed axes). Primitive int/bool/etc fields only
-/// (no Nova enum literals cross the hand-synthesized C call boundary) —
-/// `.rich`'s constructor does the int/bool → `Option[T]`/enum mapping on the
-/// `.nv` side.
+/// call site. Not intended for direct user construction — `FmtCtx.bare`/
+/// `FmtCtx.rich` below are the two shapes the codegen hand-synthesizes.
+/// Primitive int/bool/etc fields only — `.rich`'s constructor does the
+/// int/bool → `Option[T]`/enum mapping on the `.nv` side.
 ///
 /// `mark` — the sink's byte length just BEFORE the type's `@display`/
-/// `@debug` body runs, needed by `@pad_in_place` (composite/streaming render
-/// whose length is only known AFTER the body streams into `sink`, D422 §4).
-/// `pad_consumed`/`prec_consumed` mirror each other: `pad_consumed` flips
-/// true when the type calls `@pad` itself (compiler then skips its own
-/// auto-pad); `prec_consumed` is NOT flip-able via any `Fmt` method (no
-/// setter in the protocol, D422 §2 lists none) — it exists on the struct for
-/// symmetry/future use but Ф.2 leaves it permanently `false` (see
-/// `docs/plans/208-impl-progress.md` for why the D419-era "did the type look
-/// at precision" auto-truncation fallback is NOT carried forward for the
-/// composite/user-type path — Rust's own Debug/derive ignores `.N` the same
-/// way; a type that wants precision semantics reads `@precision()` itself).
+/// `@debug` body runs, needed by `@pad_in_place`.
+/// `pad_consumed` flips true when the type calls `@pad` itself (compiler
+/// then skips its own auto-pad).
 #stable(since = "0.1")
 export type FmtCtx {
     sink Write
@@ -385,25 +292,13 @@ export fn FmtCtx mut @pad(bytes []u8) -> () {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Plan 137 (D237) — Display + Debug protocols (renamed from Display/Debug)
-// Plan 208 Ф.2 (D422 §3) — ONE required primitive, no to_str-calling default
+// Display + Debug protocols
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Форматирование в строку (для println, str.from, etc).
-/// D237 rename: Display → Display, @display → @display.
-/// D422 (Plan 208 Ф.2): sink parameter changed from `Write` to `Fmt`
-/// (D374 AMEND ×2) — a `Fmt` gives width/align/fill/sign/alternate/kind
-/// axes on top of the same `@write`. **REQUIRED, no default body**
-/// (D422 §3 invariant): a `to_str()`-calling default was the D419-era
-/// cycle trap (`to_str`'s own blanket body is `"${@}"`, which for a type
-/// with no real `@display` would recurse into the very default calling it).
-/// `@to_str()` is now a bounded-`Display` blanket instead (only callable on
-/// a type that ALREADY has a real `@display`, std/runtime/string/core.nv)
-/// — no cycle is structurally possible. Auto-derive (record/sum/tuple)
-/// synthesizes a real `@display` on demand, so structural types stay
-/// Display-capable without a hand-written impl; a non-derivable opaque type
-/// with no `@display` is a compile error at the `${x}` call site, not an
-/// infinite loop (D422 §3 point 4).
+/// **REQUIRED, no default body**: `@to_str()` is a bounded-`Display`
+/// blanket instead (only callable on a type that already has a real
+/// `@display`). Auto-derive synthesizes a real `@display` on demand.
 ///
 /// # Examples
 ///
@@ -420,23 +315,18 @@ export fn FmtCtx mut @pad(bytes []u8) -> () {
 #stable(since = "0.1")
 export type Display protocol { @display(mut f Fmt) -> () }
 
-/// Protocol для отладочного представления — sibling к Display (D229; D237 rename).
-/// D422 (Plan 208 Ф.2): sink parameter `Write` → `Fmt`; **REQUIRED, no
-/// default body** — same D422 §3 rationale as `Display` above. The old
-/// default (`w.write(str.from_debug(@))`) is retracted along with
-/// `str.from_debug` itself (Plan 174.2 left it an unimplemented symbol;
-/// D422 removes even the dead reference — see D422 §"Связь").
+/// Protocol для отладочного представления — sibling к Display.
+/// **REQUIRED, no default body**.
 ///
 /// **Distinction от Display:**
 /// - `Display.@display` — user-facing display (e.g., `Point(1, 2)`, `"hello"`).
 /// - `Debug.@debug` — diagnostic representation (e.g.,
-///   `Point { x: 1, y: 2 }`, `"\"hello\\n\""` с quote-escape), matches
-///   Rust `#[derive(Debug)]` shape.
+///   `Point { x: 1, y: 2 }`, `"\"hello\\n\""` с quote-escape).
 ///
-/// **Trigger:** `${expr:?}` syntax inside Nova interp-strings (Plan 91.14 Ф.2).
-/// Bare `${expr}` (no `:?`) routes к Display.@display (unchanged).
+/// **Trigger:** `${expr:?}` syntax inside Nova interp-strings.
+/// Bare `${expr}` (no `:?`) routes к `Display.@display`.
 ///
-/// **Auto-derive:** synthesized on-demand при первом encounter `${x:?}`.
+/// **Auto-derive:** synthesized on-demand.
 ///
 /// # Examples
 ///
@@ -454,24 +344,20 @@ export type Display protocol { @display(mut f Fmt) -> () }
 export type Debug protocol { @debug(mut f Fmt) -> () }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Plan 110 (D188 / D192 / D194) — Cleanup[E] + WithExitTimeout
+// Cleanup[E] + WithExitTimeout
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Plan 110 (D188): контракт ресурса для `consume X = expr { body }`
-/// scope-block'а. **Один** метод `cleanup` вызывается ровно один раз
-/// при выходе из body (success/throw/panic/cancel).
+/// Контракт ресурса для `consume X = expr { body }` scope-block'а.
+/// **Один** метод `cleanup` вызывается ровно один раз при выходе из body.
 ///
-/// **`E`** — тип ошибок, которые `cleanup` сам может throw (commit
-/// failure, flush failure). Если ресурс infallible — используйте
-/// `Cleanup[never]` (D194), это даёт caller'у право не объявлять
-/// `Fail[E]` + codegen hot-path elision.
+/// **`E`** — тип ошибок, которые `cleanup` сам может throw.
+/// Если ресурс infallible — используйте `Cleanup[never]`.
 ///
-/// **R-rules (D188):**
-/// - R1: если `init` throws — `cleanup` не вызывается (partial-construction).
-/// - R2: exactly-once invariant (runtime counter).
+/// **R-rules:**
+/// - R1: если `init` throws — `cleanup` не вызывается.
+/// - R2: exactly-once invariant.
 /// - R3: cancel-shield by default внутри `cleanup` body.
-/// - R4: watchdog-threshold resolution at scope-entry (3-level; D192-ретракт:
-///   порог ВАРНА «fiber застрял в cleanup», не прерывания — cleanup добегает).
+/// - R4: watchdog-threshold resolution at scope-entry.
 /// - R5: LIFO composition для вложенных consume{}.
 /// - R6: release-acquire memory ordering между body и cleanup.
 ///
@@ -500,23 +386,18 @@ export type Cleanup[E] protocol {
     consume @cleanup(outcome ScopeOutcome) Fail[E] -> ()
 }
 
-/// Plan 110 (D192; ретракт Plan 173 Ф.5 п.2): опциональный protocol для
-/// ресурсов с custom watchdog-порогом (ex-`exit_timeout`). **Не** часть
-/// Cleanup — structural-match: любой тип с методом
+/// Опциональный protocol для ресурсов с custom watchdog-порогом.
+/// **Не** часть Cleanup — structural-match: любой тип с методом
 /// `exit_timeout_ms() -> int` автоматически satisfies.
 ///
-/// Порог = источник watchdog-ВАРНА «fiber застрял в cleanup» (D192-ретракт:
-/// force-прерывания нет; превышение видно в ResourceTrace exit-событии
-/// как duration_ms/overrun). 3-level resolution (codegen consume-prologue):
+/// 3-level resolution (codegen consume-prologue):
 /// 1. WithExitTimeout impl (этот protocol) — если есть;
 /// 2. Application effect handler — `default_exit_timeout_ms()`;
 /// 3. Hardcoded fallback — 5000 ms.
 ///
-/// `Mutex` / `Sem` / `Lock` намеренно **не** implement — для них
-/// hardcoded 5s достаточен (releases instant).
+/// `Mutex` / `Sem` / `Lock` намеренно **не** implement — hardcoded 5s достаточен.
 ///
-/// **Bootstrap:** `int` милисекунд вместо `Duration` (последний в std/time/,
-/// не prelude — избегаем cross-module import).
+/// `int` милисекунд вместо `Duration` — избегаем cross-module import.
 ///
 /// # Examples
 ///
@@ -529,19 +410,16 @@ export type WithExitTimeout protocol {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Plan 138 (D238 / D240) — Index[K, V] + MutIndex[K, V] protocols
+// Index[K, V] + MutIndex[K, V] protocols
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Индексный доступ `a[key]` — magic-метод `@index` для `a[key]` выражений
-/// на user-типах. Паникует при invalid key (OOB, missing key etc).
+/// на user-типах. Паникует при invalid key.
 ///
 /// Встроенные `[]T` и `str` удовлетворяют через built-in codegen path;
-/// user-типы (`[]T`, `HashMap[K,V]` и т.д.) реализуют явно.
+/// user-типы реализуют явно.
 ///
-/// # D238 (spec/decisions/03-syntax.md)
-///
-/// `a[key]` десугаринг в `a.index(key)` для любого типа реализующего
-/// `Index[K, V]`. `K` — тип ключа, `V` — тип возвращаемого значения.
+/// `a[key]` десугаринг в `a.index(key)`.
 ///
 /// # Examples
 ///
@@ -563,10 +441,7 @@ export type Index[K, V] protocol {
 /// Индексная запись `a[key] = val` — magic-метод `mut @index` для assignment
 /// lhs. Read-only типы реализуют только `Index`. Мутабельные — оба.
 ///
-/// # D240 (spec/decisions/03-syntax.md)
-///
-/// `a[key] = val` десугаринг в `a.@index(key, val)` (write-overload `@index`
-/// с `mut`-receiver) для типов реализующих `MutIndex[K, V]`.
+/// `a[key] = val` десугаринг в `a.@index(key, val)`.
 ///
 /// # Examples
 ///
@@ -583,17 +458,14 @@ export type MutIndex[K, V] protocol {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// D299 — AsSlice[T] protocol (Plan 153.1, 2026-06-17)
+// AsSlice[T] protocol
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Raw contiguous-buffer protocol: a type that exposes a pointer + length
 /// pair suitable for bulk `RawMem.copy` operations.
 ///
-/// Implemented by `[]T` (`Vec[T]` under the definition-site name). Allows
-/// `@append` and similar bulk-copy methods to accept any contiguous source
-/// without per-element iteration.
-///
-/// # D299 (spec/decisions/02-types.md)
+/// Implemented by `[]T`. Allows `@append` and similar bulk-copy methods
+/// to accept any contiguous source without per-element iteration.
 ///
 /// # Examples
 ///
@@ -610,79 +482,16 @@ export type AsSlice[T] protocol {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Plan 154.1 (D269) — concrete Display + Debug for primitive scalars
+// Concrete Display + Debug for primitive scalars
 // ──────────────────────────────────────────────────────────────────────────
 //
-// Why these exist (the `vec_debug_pos` mis-dispatch, Plan 154.1):
-//   A container's monomorphized `[]T @debug` body calls `@data[i].debug(sb)`
-//   on the ELEMENT. When T is a primitive (`int`, `f64`, ...), the element has
-//   no concrete `@debug` method, so codegen's single-key `method_receivers`
-//   fallback used to mis-route the call to the container's own erased
-//   `Nova_Vec_method_debug` stub (a type-confused no-op). Giving each primitive
-//   a CONCRETE `@display`/`@debug` lets element-dispatch resolve correctly
-//   (`Nova_int_method_debug`), and the guard in emit_c.rs (Plan 154.1 Ф.1)
-//   turns any remaining primitive-via-generic mis-dispatch into a loud error.
-//
-// Display bodies are uniform `sb.append(@)` — they dispatch on the value's
-// type through the typed `@append` overloads on StringBuilder (str/char/int/
-// f64/bool; see std/runtime/string_builder.nv). No intermediate `nova_str`
-// from an interp-string temp StringBuilder.
-//
-// Debug bodies: for `int`/`f64`/`bool` the debug form is identical to display
-// (`nova_*_to_debug_str` == `nova_*_to_str`), so they reuse `sb.append(@)`.
-// For `char`/`str` debug adds quotes + escapes (`'c'`, `"a\nb"`); that logic
-// lives in the conv.h `nova_char_to_debug_str` / `nova_str_to_debug_str`
-// formatters, reached from Nova via the interp `:?` spec. The interp path uses
-// the conv.h formatter DIRECTLY for primitives (never re-dispatches to this
-// method), so the char/str debug bodies do NOT recurse.
-//
-// `#impl(Display)` / `#impl(Debug)` opt-in (Plan 154.1 Ф.2 / D268) binds the
-// protocol to the primitive type and checks the signature.
-//
-// `f32` (Plan 154.1 followup [M-154.1-f32-display-debug], 2026-06-14): now
-// covered — conv.h `nova_f32_to_str`/`_to_debug_str` widen to double + reuse
-// the f64 formatter; `@append(f32)` casts to f64; interp-map routes `${f32}`
-// directly to conv.h. Numeric debug == display (no escaping).
-
-// Plan 208 Ф.4R Ш2 (D422 §5, V1-упрощение #3 CLOSEOUT, 2026-07-21): тела ниже
-// БОЛЬШЕ НЕ круговая заглушка через интерполяцию ("${@}"/"${@:?}" — тот старый
-// вид звал компиляторный fast-path САМ НА СЕБЯ через codegen-lowering, живя
-// как трюк, не реальная семантика). Теперь — ПРЯМЫЕ вызовы того же
-// `*_display_spec`-семейства (`runtime.string_builder`), которое Ш3 девиртуализует
-// компиляторный fast-path на (`${x}`/`${x:spec}` литеральных мест). Протокольный
-// путь (полиморфный `v.display(f)`/`v.debug(f)` через абстрактный `Fmt`, e.g.
-// `Option[T Display]`/`Result[…]` ниже, будущий generic `Vec[T]`/`[]T`) теперь
-// зовёт ТОТ ЖЕ .nv-рендер-движок, а не отдельную циркулярную дорожку — closing
-// the "one source of truth" invariant (§10R inвариант-приёмка).
-//
-// Механизм: `@display(mut f Fmt)` получает АБСТРАКТНЫЙ `Fmt` (не конкретный
-// `StringBuilder`, который `*_display_spec` требует по сигнатуре) — так что
-// каждое тело рендерит в СВЕЖИЙ scratch `StringBuilder` (маленький,
-// стек-подобный по духу — как §3's "generic-путь: рендер в буфер + один
-// write" — `*_display_spec` пишет digit-loop через `@reserve`/`@advance`
-// НАПРЯМУЮ на этот конкретный SB, а не байт-за-байтом через абстрактный
-// `Write`), затем ОДИН `f.write(scratch.into_str().bytes())` копирует итог в
-// реальный sink. `width=0`/`Align.Left`/`fill=' '` — no-op паддинг-оси (bare
-// вызов без спека; `@pad_in_place` рано возвращает при `content_chars >=
-// width`, т.е. `width<=0` всегда безопасный no-op); `radix=10`/
-// `upper=false`/`zero_pad=false`/`sign_plus=false`/`alt=false` — decimal
-// bare-рендер, зеркалит старое bare-поведение байт-в-байт (не квирк, не
-// новое поведение — то же, что компиляторный fast-path эмитит для bare int).
-//
-// Debug-тело численных примитивов идентично Display (D229 — числа не
-// экранируются) — `*_display_spec` тот же вызов, что и Display-тело (см.
-// docstring `int_display_spec`/`f64_display_spec` в string_builder.nv:
-// "Debug for int/f64 is identical to Display per conv.h"). `char`/`str`
-// Debug зовут `*_debug_display_spec`-близнецов (кавычки+эскейпы,
-// `str_debug_fmt`/`char_debug_fmt`, fmt_buf.nv Ш1 движок).
-//
-// Compiler's OWN interpolation codegen (`emit_interpolated_str`/
-// `emit_format_spec_value`, Ш3) devirtualizes bare/rich-spec int/f64/f32 (и,
-// после этого Ш2, композиция для остальных примитивов остаётся возможной
-// follow-up'ом Ш3 — см. 208-f4r-notes.md "Follow-up") ПРЯМО на резолв
-// `*_display_spec`, минуя ЭТИ protocol-тела — они exercised когда примитив
-// дошёл сюда ПОЛИМОРФНО (через `Fmt`-typed generic sink), т.е. эти два пути
-// теперь СХОДЯТСЯ на одном движке, не дублируют семантику.
+// Даём каждому примитиву concrete `@display`/`@debug` чтобы
+// element-dispatch в generic контейнере резолвился правильно (не падал на
+// type-confused stub). Тела зовут `*_display_spec`-семейство из
+// `runtime.string_builder` — единый render engine.
+// Debug численных примитивов идентичен Display (D229 — числа не экранируются).
+// `char`/`str` Debug добавляют кавычки и эскейпы.
+[M-154.1-f32-display-debug]
 #impl(Display)
 fn int @display(mut f Fmt) -> () {
     consume sb = StringBuilder.new()
@@ -769,28 +578,13 @@ fn str @debug(mut f Fmt) -> () {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Option[T] / Result[T,E] — Debug + Display impl (Plan 208 Ф.3: Display added)
+// Option[T] / Result[T,E] — Debug + Display impl
 // ──────────────────────────────────────────────────────────────────────────
-// Plan 91.15 Ф.2 originally declared these in `std/prelude/core.nv`, next to the
-// Option/Result type declarations. Plan 169.2.1 (D303) moved them HERE because
-// they reference the `Debug` protocol and the `Write` sink — both declared in
-// THIS module — so under a partial `#prelude(core, runtime)` (no `protocols`)
-// they raised `E_IMPL_UNKNOWN_PROTOCOL`. Hosting them with the protocols they
-// implement keeps `core` self-contained (its "ZERO imports" architecture rule)
-// and lets `#prelude(core, runtime)` compile. The `Option`/`Result` types are
-// visible here via the prelude auto-import (re-exported from `prelude.core`).
-// Plan 208 Ф.3 (D422 §4): `@display` counterparts added below (Debug-only
-// before this phase — see the note ahead of them for why that was a real
-// gap, not a stylistic omission). String literals below (`"Some("`, `"Ok("`,
-// …) are passed BARE, no `.bytes()` — the D55 str-literal→`[]u8` coercion
-// (spec/decisions/02-types.md, "Str-литерал → []u8 coercion") landed as
-// codegen support in this same Ф.3 wave for exactly this shape (a literal
-// argument to a call named `write`); see that spec section's "Статус
-// реализации" note for the precise (narrower-than-originally-drafted)
-// scope. NOTE: this does NOT apply to the interpolated-string bodies further
-// up this file (`f.write("${@}".bytes())` for `int`/`f64`/…) — those are
-// `ExprKind::InterpolatedStr`, not a bare literal, so they still need the
-// explicit `.bytes()`.
+// Moved here from `std/prelude/core.nv` because they reference `Debug`
+// and `Write` — declared in THIS module. Under partial `#prelude(core,
+// runtime)` (no `protocols`) they raised `E_IMPL_UNKNOWN_PROTOCOL`.
+// String literals below are passed bare, no `.bytes()` — str-literal→`[]u8`
+// coercion applies. Interpolated-string bodies still need explicit `.bytes()`.
 
 /// Debug representation for Option[T]: `Some(value)` or `None`.
 /// Requires `[T Debug]` — propagates the bound to the inner value.
@@ -839,18 +633,9 @@ fn Result[T Debug, E Debug] @debug(mut f Fmt) -> () {
     }
 }
 
-// Plan 208 Ф.3 (D422 §4): Display counterparts — were missing entirely
-// before Ф.3 (only `@debug` existed above), so bare `${some_option}` /
-// `${some_result}` (no `:?`) failed to compile (`E_BAD_FORMAT_SPEC`/
-// "does not implement Display") for ANY `Option`/`Result` value. Body shape
-// is IDENTICAL to the `@debug` twins above — `Some`/`Ok`/`Err` are tuple
-// payloads (no field names to begin with), so there is nothing for D422 §4's
-// compact-vs-named split to diverge over here (that split matters for
-// record-shaped output, e.g. auto-derive below / `synth_fmt_sum_body`'s
-// Record-kind variant arm). The only real difference from `@debug` is the
-// inner call: `.display(f)` instead of `.debug(f)` — e.g. a `str` payload
-// renders bare (`Some(hi)`) under Display vs quoted (`Some("hi")`) under
-// Debug, matching `Debug`/`Display`'s existing str behavior everywhere else.
+// Display counterparts — were missing before (only `@debug` existed),
+// so bare `${some_option}` failed to compile. Body identical to `@debug`
+// but calls `.display(f)` instead of `.debug(f)`.
 
 /// Display representation for Option[T]: `Some(value)` or `None`.
 /// Requires `[T Display]` — propagates the bound to the inner value.
@@ -899,52 +684,19 @@ fn Result[T Display, E Display] @display(mut f Fmt) -> () {
     }
 }
 
-// Plan 172.3 (D310): stdlib type-set bounds over the primitive integer families.
-// A type-set is a named set of concrete types usable as a generic bound
-// (`fn[T SignedInts] …`), монорфизируется per member. Signed and unsigned are
-// SEPARATE sets — u64.MAX = 2^64-1 ∉ i64, so a single body cannot be sound for
-// both (E_TYPE_SET_MIXED_SIGNEDNESS guards user-declared mixed sets).
-//
-// Главный потребитель — Plan 174.1 (primitive parse API): один
-// `fn[T SignedInts] T.try_parse(...)` вместо ×N per-type обёрток.
-type SignedInts   set i8 | i16 | i32 | i64 | int   // мн.число = семейство сетов (П15/200, владелец 2026-07-16)
+// Type-set bounds for primitive integer families. Signed/unsigned are
+// separate sets (E_TYPE_SET_MIXED_SIGNEDNESS guards user-declared mixed).
+type SignedInts   set i8 | i16 | i32 | i64 | int
 type UnsignedInts set u8 | u16 | u32 | u64 | uint
 
-// Plan 206 Ф.0 (D423): полное объединение SignedInts ∪ UnsignedInts — единый
-// bound для `@overflowing_*`/`@checked_*`/`@saturating_*`/`@wrapping_*`
-// (один бланкет на op вместо ×2 через SignedInts/UnsignedInts раздельно).
-// D310 §«Знаковость» запрещает ЧАСТИЧНЫЙ signed/unsigned микс (несоундно —
-// разные value-domains); ПОЛНОЕ объединение (все 5 signed + все 5 unsigned,
-// без пропусков) — отдельно разрешённый случай (D423 amends D310): тело
-// использует только per-member-моно `T.MAX`/`T.MIN`-резолв и знак-агностичные
-// сравнения (`rhs < 0` у unsigned константно false), несоундности из
-// частичного микса тут нет. Тот же случай, что иллюстративный `AnyNumber`
-// в самом тексте D310 (02-types.md).
-// ВНИМАНИЕ читателю: `Ints` ВКЛЮЧАЕТ И БЕЗЗНАКОВЫЕ (все 10 целых типов) —
-// не «только знаковые по аналогии с int» (ловушка имени; Go-прецедент
-// constraints.Integer — тоже все целые). Знаковые-только = `SignedInts`.
+// `Ints` = SignedInts ∪ UnsignedInts — единый bound для
+// `@overflowing_*`/`@checked_*`/`@saturating_*`/`@wrapping_*`.
+// ВКЛЮЧАЕТ И БЕЗЗНАКОВЫЕ (все 10 целых типов) — не «только знаковые».
 type Ints set i8 | i16 | i32 | i64 | int | u8 | u16 | u32 | u64 | uint
 
-// Plan 206 Ф.2 (D423): три .nv-бланкета над компиляторным интринсиком
-// `@overflowing_add/_sub/_mul` (генерик `fn[T Ints] T @overflowing_op(rhs T)
-// -> (T, bool)`, Ф.1 hardcoded dispatch, см. 206-progress.md). По одному
-// бланкету на op — работает и для signed, и для unsigned Ints без
-// дублирования тела (диспетч бланкетов над примитивами — D164-фикс).
-//
-// - `checked_*` -> `Option[T]` (overflow -> `None`, иначе `Some(wrapped)`).
-// - `wrapping_*` -> `T` (модульная арифметика: берёт `wrapped`, флаг игнор).
-// - `saturating_*` -> `T` (overflow -> клампит к `T.MAX`/`T.MIN`,
-//   ОП-СПЕЦИФИЧНАЯ формула направления, НЕ «по знаку rhs» одинаково для
-//   всех трёх — см. план §Дизайн):
-//     add: overflow -> `rhs > 0 ? MAX : MIN`
-//     sub: overflow -> `rhs < 0 ? MAX : MIN` (вычли отрицательное -> вверх)
-//     mul: overflow -> `(a < 0) == (rhs < 0) ? MAX : MIN` (одинаковый знак
-//          операндов -> произведение вверх)
-//   Все три формулы автоматически корректны и для unsigned: `x < 0`
-//   константно `false` для unsigned-члена мономорфизации -> ветки
-//   схлопываются в правильную сторону (unsigned add/mul -> MAX, unsigned
-//   sub -> MIN=0).
-// - `unchecked_*` — ОТЛОЖЕН (владелец 2026-07-14), не реализуется здесь.
+// Three blanket methods over compiler intrinsic `@overflowing_add/_sub/_mul`:
+// `checked_*` -> Option[T], `wrapping_*` -> T, `saturating_*` -> T.
+// `unchecked_*` отложен.
 
 /// `checked_add` — `None` при overflow, иначе `Some(a + b)`.
 #stable(since = "0.1")
@@ -1026,36 +778,12 @@ export fn[T Ints] T @saturating_mul(rhs T) -> T {
     }
 }
 
-// ── Plan 206.1 (D427): div/rem/neg policy wrappers ──────────────────────
+// ── div/rem/neg policy wrappers ──────────────────────────────────────
 //
-// `div`/`mod`/`neg` have NO `__builtin_*_overflow` (unlike add/sub/mul) — the
-// compiler-side guard (emit_c.rs, raw `/`/`%`/unary `-` lowering) is a plain
-// comparison, not a HW flag (see `nova_<T>_checked_div/_rem/_neg`,
-// nova_rt/effects.h). The `.nv` policy wrappers below can't reuse THAT
-// panicking C helper directly (a `.nv` body can't catch its own panic to
-// build `Option`) — instead they detect the SAME two conditions in `.nv`
-// using ONLY constructs already proven to compile inside a `fn[T Ints]`
-// blanket body:
-//   - `rhs == 0` — a bare literal comparison (no signedness pitfall, 0 is
-//     valid for any T).
-//   - the one quotient-overflow case (`@ == T.MIN && rhs == -1`) — CANNOT be
-//     written as a literal `-1` comparison: the checker hard-rejects a
-//     negative literal assigned/compared against an UNSIGNED monomorphized
-//     T (D227 Rule 4), so `rhs == -1` would fail to compile for the
-//     unsigned members of a single `Ints` blanket (confirmed empirically,
-//     Plan 206.1 progress log). Reformulated as `rhs.negate() == 1` via the
-//     ALREADY-hardware-checked `@overflowing_sub` intrinsic (`0 - rhs`,
-//     receiver built from `0 as T` (D227-safe: `0` is non-negative, the cast
-//     is valid for every Ints member) — for unsigned T this can never be `1` with `ovf == false`
-///    (unsigned `checked_neg` only ever succeeds at 0), so the extra guard
-//     is provably a no-op for unsigned members, matching the plan's
-//     "unsigned div: только b==0-guard" design exactly, in ONE shared body.
-// Calling ANOTHER `.nv` blanket (e.g. `@checked_sub`) from inside one of
-// these bodies hits a separate, pre-existing generic-return-type-inference
-// gap ([P67-LEGACY] "return type unknown" — confirmed empirically, NOT
-// specific to div/neg) — worked around by calling the compiler INTRINSIC
-// `@overflowing_sub` directly (the same call the shipped `@checked_sub`/
-// `@wrapping_sub` above already make), never another hand-rolled `.nv` fn.
+// `div`/`mod`/`neg` have no `__builtin_*_overflow` intrinsic — conditions
+// detected manually in `.nv`: `rhs == 0` and `@ == T.MIN && rhs == -1`
+// (reformulated as `rhs.negate() == 1` via `overflowing_sub` to avoid
+// negative literal for unsigned monomorphization).
 
 /// `checked_div` — `None` when `rhs == 0` (division by zero — a domain
 /// error, not an overflow) or when `@ == T.MIN && rhs == -1` (the one
@@ -1088,8 +816,8 @@ export fn[T Ints] T @checked_rem(rhs T) -> Option[T] {
 }
 
 /// `wrapping_div` — **panics on `rhs == 0`** (division by zero has no wrap
-/// semantics — same as the raw `/` operator, D427); the one overflow case
-/// (`T.MIN / -1`) wraps to `T.MIN` instead of trapping.
+/// semantics); the one overflow case (`T.MIN / -1`) wraps to `T.MIN` instead
+/// of trapping.
 #stable(since = "0.1")
 export fn[T Ints] T @wrapping_div(rhs T) -> T {
     if @ == T.MIN {
@@ -1100,9 +828,8 @@ export fn[T Ints] T @wrapping_div(rhs T) -> T {
     @ / rhs
 }
 
-/// `wrapping_rem` — **panics on `rhs == 0`**; `T.MIN % -1` wraps to `0` (the
-/// true mathematical remainder — never actually computed via the trapping
-/// hardware `idiv`, short-circuited here instead).
+/// `wrapping_rem` — **panics on `rhs == 0`**; `T.MIN % -1` wraps to `0`
+/// (the true mathematical remainder, short-circuited).
 #stable(since = "0.1")
 export fn[T Ints] T @wrapping_rem(rhs T) -> T {
     if @ == T.MIN {
@@ -1114,11 +841,8 @@ export fn[T Ints] T @wrapping_rem(rhs T) -> T {
 }
 
 /// `checked_neg` — signed: `None` iff `@ == T.MIN` (two's-complement
-/// asymmetry). Unsigned: `None` unless `@ == 0` (negating any nonzero
-/// unsigned value has no representation). Both derived from the SAME
-/// `__builtin_sub_overflow`-backed `@overflowing_sub` flag (`0 - @`, receiver
-/// built from `0 as T` — always exactly representable, never overflows) — one
-/// body is sound for both signednesses, no separate branch needed.
+/// asymmetry). Unsigned: `None` unless `@ == 0`. One body sound for both
+/// signednesses via `@overflowing_sub`.
 #stable(since = "0.1")
 export fn[T Ints] T @checked_neg() -> Option[T] {
     ro zero = 0 as T
@@ -1126,11 +850,9 @@ export fn[T Ints] T @checked_neg() -> Option[T] {
     if overflowed { None } else { Some(wrapped) }
 }
 
-/// `wrapping_neg` — modular negation, never panics (unlike the raw unary `-`
-/// operator, which traps on signed `T.MIN` — D427). Signed `T.MIN` maps to
-/// itself (two's-complement asymmetry); unsigned negation is the standard
-/// `(2ⁿ − x) mod 2ⁿ` wraparound. Same `0 - @` computation as `checked_neg`,
-/// flag ignored.
+/// `wrapping_neg` — modular negation, never panics (unlike raw unary `-`).
+/// Signed `T.MIN` maps to itself; unsigned negation is `(2ⁿ − x) mod 2ⁿ`
+/// wraparound. Same `0 - @` computation as `checked_neg`, flag ignored.
 #stable(since = "0.1")
 export fn[T Ints] T @wrapping_neg() -> T {
     ro zero = 0 as T
@@ -1138,12 +860,7 @@ export fn[T Ints] T @wrapping_neg() -> T {
     wrapped
 }
 
-// Plan 200 Step 0 (D74 amend, владелец 2026-07-16): `clamp` над `Ints` — один
-// бланкет вместо ×10 per-width конкретных методов (та же экономия, что
-// checked_*/saturating_*/wrapping_* выше). Вытесняет старый конкретный
-// `int @clamp` (std/runtime/defaults.nv) — теперь i8..i64/u8..u64/int/uint все
-// получают `@clamp` через ЭТОТ бланкет. `f64 @clamp` НЕ входит (float ∉ Ints)
-// и остаётся отдельным конкретным методом в defaults.nv.
+// `clamp` blanket над `Ints` — replaces per-type concrete methods.
 
 /// `clamp` — ограничивает значение диапазоном `[lo, hi]`: при `@ < lo` -> `lo`;
 /// при `@ > hi` -> `hi`; иначе -> `@` без изменений. Контракт скопирован 1:1 со
@@ -1156,19 +873,8 @@ export fn[T Ints] T @wrapping_neg() -> T {
 export fn[T Ints] T @clamp(lo T, hi T) -> T =>
     if @ < lo { lo } else if @ > hi { hi } else { @ }
 
-// [Числовой паритет, 2026-07-19] `signum`/`is_negative`/`is_positive` над
-// `SignedInts` — были концертными ТОЛЬКО на `int` (std/runtime/defaults.nv, D74),
-// i8/i16/i32/i64 не имели этих методов вовсе. Тела — чистые сравнения (`@ < 0`/
-// `@ > 0`), БЕЗ арифметики, значит без риска overflow (в отличие от `abs`, где
-// `-@` на `T.MIN` трапит — оставлено нетронутым до отдельного решения
-// владельца). Вытесняет старый конкретный `int @signum`/`@is_negative`/
-// `@is_positive` (std/runtime/defaults.nv) — теперь i8/i16/i32/i64/int все
-// получают эти методы через ЭТОТ бланкет. `UnsignedInts` НЕ входит — как и в
-// Rust, unsigned-типы не имеют `signum`/`is_negative`/`is_positive` (сравнение
-// с 0 для unsigned мат. вырождено: `is_negative` всегда `false`,
-// `is_positive` эквивалентен `!= 0`, `signum` не имеет отдельного -1-плеча) —
-// расширение на `UnsignedInts` было бы искусственным добавлением API, которого
-// нет у эталона (rustc-as-reference), поэтому не добирается.
+// `signum`/`is_negative`/`is_positive` над `SignedInts` — replaces per-type
+// concrete methods. `UnsignedInts` не входит (Rust-паритет).
 
 /// `signum` — знак значения: `-1`, если `@ < 0`; `1`, если `@ > 0`; иначе `0`.
 #stable(since = "0.1")
@@ -1183,43 +889,14 @@ export fn[T SignedInts] T @is_negative() -> bool => @ < 0
 #stable(since = "0.1")
 export fn[T SignedInts] T @is_positive() -> bool => @ > 0
 
-// [Числовой паритет-2, 2026-07-20] `saturating_neg` над `SignedInts` — Rust
-// даёт `saturating_neg` ТОЛЬКО signed-типам (`int_macros.rs`; unsigned
-// `uNN::saturating_neg` не существует в Rust std — в отличие от
-// `checked_neg`/`wrapping_neg` выше, которые Rust даёт ОБОИМ знакам и
-// которые здесь остаются `Ints`-бланкетами). Единственный непредставимый
-// случай — `@ == T.MIN` (тот же, что у `checked_neg`) — клампится к `T.MAX`;
-// иначе обычный `-@` (никогда не трапит вне `MIN`, т.к. диапазон signed
-// симметричен всюду кроме `MIN`).
+// `saturating_neg` над `SignedInts` — clamp `T.MIN` to `T.MAX`.
 /// `saturating_neg` — при `@ == T.MIN` клампит к `T.MAX`, иначе `-@`.
 #stable(since = "0.1")
 export fn[T SignedInts] T @saturating_neg() -> T =>
     if @ == T.MIN { T.MAX } else { -@ }
 
-// [Числовой паритет-2, 2026-07-20] `abs`/`checked_abs`/`wrapping_abs`/
-// `saturating_abs` над `SignedInts` — раньше единственный конкретный `int
-// @abs()` (std/runtime/math.nv, `extern "nova"` -> C `llabs`, D109-хардкод
-// в `runtime_registry.rs`/`emit_c.rs::int_method_to_c`) был UB на `T.MIN`
-// (`llabs(LLONG_MIN)` не определён C-стандартом — `-LLONG_MIN` не
-// представим в `long long`). Узкие signed (i8/i16/i32/i64) не имели `abs`
-// вовсе. И то, и другое заменено ОДНИМ `.nv`-бланкетом на `SignedInts`
-// (охватывает `int` тоже — старый extern-хардкод RETRACTED, см.
-// runtime_registry.rs/emit_c.rs): `abs` = `if @ < 0 { -@ } else { @ }` —
-// унарный `-@` УЖЕ трапит на `T.MIN` компиляторным guard'ом (D427 §R2,
-// landed до этой волны, сообщение "negation overflow") → трап на `MIN`
-// это НЕ новая overflow-политика, а прямое следствие уже действующего
-// trap-guard'а на `-`, тот же принцип, что trap-дефолт для `+`/`-`/`*`
-// (D423 §R3) — bare `abs` наследует ту же дисциплину, что bare-операторы.
-// `checked_abs`/`saturating_abs`/`wrapping_abs` — та же тройка политик,
-// что `checked_neg`/`saturating_neg`/`wrapping_neg` выше (Rust-паритет:
-// `iNN::checked_abs`/`saturating_abs`/`wrapping_abs` — все существуют
-// только для signed). Прямая `@ == T.MIN` ветка (не `(0).checked_sub`-
-// reformulation, как у `checked_neg`) корректна здесь, т.к. бланкет
-// ТОЛЬКО над `SignedInts`, не над полным `Ints` — знаковой инверсии
-// условия overflow между signed/unsigned (D427 §R4.2) тут нет, потому что
-// unsigned не в охвате вовсе. `UnsignedInts` НЕ входит — как и в Rust,
-// unsigned `.abs()` не существует (identity, искусственное расширение
-// охвата эталона).
+// `abs`/`checked_abs`/`wrapping_abs`/`saturating_abs` над `SignedInts` —
+// replaces old `extern "nova"` hardcoded `int @abs()` which was UB on T.MIN.
 
 /// `abs` — модуль значения; трапит на `T.MIN` ("negation overflow" — тот
 /// же trap, что голый унарный `-@`, НЕ новая политика).
@@ -1246,34 +923,10 @@ export fn[T SignedInts] T @saturating_abs() -> T =>
 export fn[T SignedInts] T @wrapping_abs() -> T =>
     if @ == T.MIN { T.MIN } else if @ < 0 { -@ } else { @ }
 
-// [Числовой паритет-2, 2026-07-20] Целочисленный `pow`/`checked_pow`/
-// `saturating_pow`/`wrapping_pow` над `Ints` — Rust-паритет сигнатуры:
-// `exp` фиксированно `u32` (`Self::pow(self, exp: u32) -> Self`,
-// `checked_pow`/`wrapping_pow`/`saturating_pow` — та же сигнатура), для
-// ЛЮБОГО `Self` (signed или unsigned) — отрицательных степеней у целых
-// нет, `u32` с запасом покрывает любой не-мгновенно-overflow'ящий exp.
-// Реализация — exponentiation by squaring (стандартный алгоритм, Rust
-// core `checked_pow` как референс: quadratic base-squaring ТОЛЬКО пока
-// экспонента не исчерпана — избегает лишнего squaring-шага на последней
-// итерации, которого не требует финальный результат). `pow` использует
-// СЫРЫЕ `*` (трапит на overflow — D423 §R3, тот же trap-дефолт, что у
-// `+`/`-`/`*`, никакой новой политики). `checked_pow`/`saturating_pow`/
-// `wrapping_pow` используют компиляторный интринсик `@overflowing_mul`
-// НАПРЯМУЮ на локалях (`acc`/`base`, ТИПА `T`) — НЕ вызывают `.nv`-бланкет
-// `@checked_mul`/`@wrapping_mul` изнутри (nested-.nv-blanket-call ICE,
-// `[P67-LEGACY]` — задокументировано D427 §R4.3: вызов ОДНОГО `.nv`-written
-// generic-blanket-метода ИЗНУТРИ ДРУГОГО generic-blanket-тела падает
-// независимо от вида receiver'а). Локальный `T`-receiver для
-// `@overflowing_mul` — тот же паттерн, что `zero.overflowing_sub(rhs)` в
-// `checked_div`/`checked_neg` выше (не только `@`-self receiver).
-// `saturating_pow` — направление насыщения ЗАВИСИТ ТОЛЬКО от знака
-// ИСХОДНОГО `@` и чётности `exp` (истинный математический знак результата),
-// НЕ от того, на каком шаге алгоритма произошёл overflow — тот же
-// однократный post-hoc выбор, что делает Rust `saturating_pow`
-// (`match checked_pow { Some(x) => x, None if self<0 && exp%2==1 => MIN,
-// None => MAX }`); `@ < 0` константно `false` для unsigned-членов `Ints`
-// → формула автоматически схлопывается в «всегда MAX» для unsigned, тот
-// же приём, что `saturating_mul`/`saturating_add` выше.
+// `pow`/`checked_pow`/`saturating_pow`/`wrapping_pow` над `Ints` —
+// exponentiation by squaring. `exp: u32` (Rust-паритет).
+// `pow` traps on overflow (сырой `*`); `checked_*`/`saturating_*`/`wrapping_*`
+// use `overflowing_mul` intrinsic directly (avoid nested-blanket-call ICE).
 
 /// `pow` — целочисленное возведение в степень (exponentiation by
 /// squaring). Трапит на overflow (сырой `*`, D423 §R3 trap-дефолт).
@@ -1369,62 +1022,14 @@ export fn[T Ints] T @wrapping_pow(exp u32) -> T {
     acc
 }
 
-// ── [M-numeric-try-narrowing] (2026-07-20, D430, owner-approved backlog
-// item): checked narrowing число→число, CHAINED form —
-// `(300u32).try_to_u8() -> Result[u8, RangeError]` — a method on the SOURCE
-// value (owner decision: NOT a Rust-style static `u8::try_from`), same
-// receiver-form convention as `str.to_i8`/`checked_*`/`saturating_*` above.
-// `as` stays the fast truncating cast, unchanged; `try_to_<T>` is the
-// checked sibling — `Err(RangeError)` when the value does not fit `<T>`'s
-// range, `Ok(narrowed)` otherwise.
-//
-// Blanket strategy: ONE `fn[S Ints] S @try_to_<T>()` blanket PER TARGET
-// type `<T>` (10 total — i8/i16/i32/i64/int/u8/u16/u32/u64/uint), bounded
-// over the FULL `Ints` set (mixing signed+unsigned sources in one body,
-// SAME idiom as `@checked_add`/`@saturating_mul` above), NOT two separate
-// SignedInts/UnsignedInts overloads sharing the method name — no precedent
-// in this file for two same-named blankets over disjoint type-sets, and a
-// single `Ints`-wide body with a sign-agnostic `if @ < 0 { .. } else { .. }`
-// split (the exact branch shape `saturating_pow` already uses successfully)
-// avoids that open question entirely.
-//
-// Soundness: each body widens `@` to the FULL-WIDTH domain of matching
-// sign — `i64` on the `@ < 0` branch (only ever reachable for signed
-// members; constant-false and dead at runtime for unsigned members, but
-// still compiled — see below), `u64` on the `@ >= 0` branch (reachable for
-// every member, since `@ < 0` is constant-false for unsigned `Ints`
-// members). `i64`/`u64` are wide enough to hold ANY `SignedInts`/
-// `UnsignedInts` member exactly AND wide enough to hold any target's
-// `MIN`/`MAX` exactly (the target itself is always some `Ints` member too)
-// — so no cast in this section ever truncates/wraps a value the
-// comparison depends on. (A naive alternative — casting the target's
-// `MAX`/`MIN` DOWN into the source type `S` instead — breaks the moment
-// the target is WIDER than `S`: e.g. `u32.MAX as i32` wraps to `-1` and
-// corrupts an `i32 @try_to_u32()` check. Widening `@` UP instead of
-// narrowing the bound DOWN sidesteps that whole bug class.)
-//
-// D227 Rule 4 (negative literal into unsigned-mono = hard error) is never
-// triggered: `i8.MIN`/`i16.MIN`/... are compile-time constants of a FIXED
-// concrete (signed) type, cast only into `i64` (also signed) on the `@ <
-// 0` branch — never into an unsigned type anywhere in this section. The
-// only comparison against an unsigned target's implicit lower bound is
-// `@ < 0` itself (a literal `0` — non-negative, always legal regardless of
-// `S`'s signedness, same shape `checked_div`/`saturating_pow` above already
-// rely on). `@ as i64` inside an `Ints`-wide blanket has a working,
-// shipped precedent — `std/time/duration/core.nv`'s
-// `fn[T Ints] T @to_nanos() -> Duration => { nanos: @ as i64 }`.
-//
-// Full matrix (100 pairs via 10 blankets × 10 monomorphized `Ints`
-// members each, INCLUDING same-signedness WIDENING pairs like
-// `i8.try_to_i64()` and the 10 identity pairs like `i8.try_to_i8()` —
-// always `Ok`) is a deliberate simplification, not scope creep: Nova
-// type-sets have no width-based exclusion mechanism, so hand-splitting
-// the "genuinely risky" ~55 pairs out of `Ints` would mean reverting to
-// N² per-type methods — exactly what the blanket form exists to avoid.
-// This mirrors Rust's OWN `TryFrom` numeric impls, which likewise cover
-// the complete pairwise matrix (its widening impls are documented as
-// "never fails" rather than omitted). `as` remains the zero-check fast
-// path for callers who already know a conversion is widening.
+// [M-numeric-try-narrowing]: checked narrowing число→число, CHAINED form.
+// `(300u32).try_to_u8() -> Result[u8, RangeError]` — method on source value.
+// `as` stays fast truncating cast. ONE blanket per target type `<T>` over
+// full `Ints` set.
+// Single `Ints`-wide body with sign-agnostic `if @ < 0 { .. } else { .. }`
+// split: each body widens `@` to `i64`/`u64` (wide enough for any member),
+// so no cast truncates. Full 10×10 matrix is deliberate (mirrors Rust
+// `TryFrom` coverage). `as` remains the zero-check fast path.
 
 /// `try_to_i8` — checked narrowing conversion into `i8` (range
 /// `[-128, 127]`). `Err(RangeError)` if `@` does not fit; `Ok(@ as i8)`
