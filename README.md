@@ -223,6 +223,21 @@ programmer writes nothing special.
 - [docs/typed-pointers.md](docs/typed-pointers.md) — `*T` family canonical syntax (V2/V3 right-binding rule, `safe` keyword, modifier composition rules)
 - [compiler-codegen/](compiler-codegen/) — Nova compiler (Rust): parser, type-checker, C-backend codegen, native runtime
 
+## Ecosystem
+
+The compiler, the standard library, and the specification live in this
+repository. Everything that does not have to ship with the compiler is a
+separate package, written in Nova itself and pulled in via `nova.lock.toml`:
+
+| Package | What it is | Released |
+|---|---|---|
+| [nova-tls](https://github.com/nv-lang/nova-tls) | TLS client/server — handshake, ALPN, SNI, cert hot-reload | `v0.1.4` |
+| [nova-http](https://github.com/nv-lang/nova-http) | HTTP/1.1 client + server — request/response, headers, URL, transport | `v0.1.1` |
+| [nova-compress](https://github.com/nv-lang/nova-compress) | `deflate` / `gzip` / `zlib` / `brotli` codecs | `v0.1.1` |
+| [nova-polaris](https://github.com/nv-lang/nova-polaris) | Polaris ⭐ — web framework atop the HTTP core: router, extractors, middleware, auth, websockets | not yet tagged |
+| [nova-bigint](https://github.com/nv-lang/nova-bigint) | Arbitrary-precision integers in pure Nova, no C dependencies | in progress |
+| [tree-sitter-nova](https://github.com/nv-lang/tree-sitter-nova) | Tree-sitter grammar for the language | `v0.1.0` |
+
 ## Status
 
 **v0.1.0 — the first public release.** Early, but working: the compiler
@@ -487,6 +502,23 @@ into these editor plugins is in progress.
 
 See [editors/README.md](editors/README.md) for the full overview,
 install commands per editor, and roadmap (LSP, tree-sitter, JetBrains).
+
+## Mirrors
+
+**GitHub is the source of truth.** Issues and pull requests are accepted
+there and nowhere else. The other two hosts are mirrors, kept in sync by
+pushing to all three — a change made directly on a mirror will be
+overwritten by the next push, so please do not send patches to them.
+
+| Host | Organization | Role |
+|---|---|---|
+| GitHub | [github.com/nv-lang](https://github.com/nv-lang) | **source of truth** — issues, pull requests, releases |
+| GitVerse | [gitverse.ru/nv-lang](https://gitverse.ru/nv-lang) | mirror |
+| SourceCraft | [sourcecraft.dev/nv-lang](https://sourcecraft.dev/nv-lang/repos) | mirror |
+
+Every repository listed under [Ecosystem](#ecosystem) exists on all three
+hosts under the same name, so any of them can be cloned if GitHub is not
+reachable for you.
 
 ## License
 
