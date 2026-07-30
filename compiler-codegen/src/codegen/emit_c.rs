@@ -4422,26 +4422,31 @@ impl CEmitter {
         if self.generic_types.contains(&sum_base) || self.generic_types.contains(recv_type) {
             return Ok(None);
         }
-        // The receiver sum must OWN a payload variant `variant` of matching arity.
-        // Try the qualified base first, then the bare receiver name (schema keys
-        // are byte-identical for non-colliding sums).
-        let owns = |me: &Self, key: &str| -> bool {
+        // Receiver sum must OWN a payload variant of matching arity — need its
+        // field_c_types (not just a bool), see [M-155.a] below (221.1, NOTES.md).
+        let find_fields = |me: &Self, key: &str| -> Option<Vec<String>> {
             me.sum_schema_registry
                 .lookup_sum_schema(key)
-                .map(|e| {
-                    e.variants.iter().any(|v| {
-                        v.variant_name == variant && v.field_c_types.len() == args.len()
-                    })
+                .and_then(|e| {
+                    e.variants.iter()
+                        .find(|v| v.variant_name == variant && v.field_c_types.len() == args.len())
+                        .map(|v| v.field_c_types.clone())
                 })
-                .unwrap_or(false)
         };
-        if !owns(self, &sum_base) && !owns(self, recv_type) {
-            return Ok(None);
-        }
+        let field_c_types = match find_fields(self, &sum_base).or_else(|| find_fields(self, recv_type)) {
+            Some(f) => f,
+            None => return Ok(None),
+        };
+        // [M-155.a-flagship-anon-record-literal-enum-payload] (221.1, rationale
+        // in NOTES.md / commit 2c1edf56c): scope expected_record_type per arg
+        // from the variant's OWN field type — mirrors [M-181] for Ok/Err.
+        let saved_expected = self.expected_record_type.clone();
         let mut arg_strs = Vec::with_capacity(args.len());
-        for a in args {
+        for (a, fty) in args.iter().zip(field_c_types.iter()) {
+            self.expected_record_type = Self::debt_struct_name_from_c_type(fty);
             arg_strs.push(self.emit_expr(a.expr())?);
         }
+        self.expected_record_type = saved_expected;
         Ok(Some(format!(
             "nova_make_{}_{}({})",
             sum_base,
@@ -20908,6 +20913,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let is_single_nova_ptr =
             cty.starts_with("Nova_") && cty.ends_with('*') && !cty.ends_with("**");
         if is_single_nova_ptr {
+            // [M-156-bare-unit-variant-eq-invalid-cast] (221.1, rationale in
+            // NOTES.md / commit b5c4a689e): re-cast to `cty` — no-op for a
+            // real pointer, round-trip for the D109 erased-scalar ctor form.
+            let l = format!("(({})({}))", cty, l);
+            let r = format!("(({})({}))", cty, r);
+            let l = l.as_str();
+            let r = r.as_str();
             let type_name = Self::debt_strip_nova_prefix_or_empty(cty)
                 .trim_end_matches('*')
                 .to_string();

@@ -1,0 +1,43 @@
+// [M-flagship-anon-record-literal-enum-payload] / 221.1 №155а — a BARE
+// (anonymous) record literal used directly as a sum-variant's payload
+// ARGUMENT in an explicit-receiver constructor call (`Sum.Variant({ .. })`)
+// CC-FAILed: "anonymous record literal: expected struct '<Sum>' not in
+// record_schemas" — codegen looked for a schema named after the SUM type
+// instead of the variant's own payload struct.
+//
+// Root: `try_emit_explicit_variant_ctor` (the sole emission site for this
+// call shape) emitted each payload arg via a bare `emit_expr`, without
+// scoping `expected_record_type` (the D55 inferred-type-context signal an
+// anonymous record literal needs) to the variant's OWN field type — it
+// inherited whatever the ENCLOSING expression had left set instead. Mirrors
+// the pre-existing Ok(v)/Err(e) fix ([M-181-anon-record-in-ctor-arg-codegen]).
+//
+// Fix: scope `expected_record_type` per payload arg from the resolved
+// variant's `field_c_types`. The flagship aggregator's own
+// `report_json_test.nv` carried this exact shape as a hand-written
+// workaround (`TaskStatus.Done(SourceData { .. })`); the workaround was
+// removed in the same window this fixture landed.
+// Единица: folder-module `spec_tests.conformance`.
+module spec_tests.conformance
+
+type M155aPayload {
+    ro id      str
+    ro tally   int
+}
+
+type M155aStatus enum
+    | Done(M155aPayload)
+    | Failed(str)
+    | Pending
+
+fn m155a_make_done(id str, tally int) -> M155aStatus =>
+    M155aStatus.Done({ id, tally })
+
+test "M-155a bare record literal as sum-variant payload arg" {
+    ro st = m155a_make_done("job-1", 42)
+    match st {
+        Done(p)   => { assert(p.id == "job-1"); assert(p.tally == 42) }
+        Failed(_) => assert(false)
+        Pending   => assert(false)
+    }
+}

@@ -1,0 +1,41 @@
+// [M-156-bare-unit-variant-eq-invalid-cast] (221.1 bug-sweep) — `==`/`!=`
+// between a sum-type VALUE and a BARE zero-field variant of that same sum
+// (`s == MySign.Pos`) CC-FAILed: "member reference type 'nova_int' is not
+// a pointer".
+//
+// Root: `Type.Variant` (qualified unit-variant constructor, D109) is
+// SOMETIMES emitted as an erased scalar `(nova_int)(intptr_t)nova_make_
+// <Type>_<Variant>()` — needed for generic-context uses where the value
+// must round-trip through a `nova_int`/void* erasure slot (e.g. `Slot.Empty`
+// pushed into a generic `Vec[Slot[K,V]]` bucket inside a still-generic
+// hashmap fn). `emit_field_eq`'s structural sum-eq dereferenced that operand
+// text directly (`(r)->tag`) without checking whether it was a REAL pointer
+// or this erased-scalar cast form.
+//
+// Fix: `emit_field_eq`'s `Nova_X*` branch now re-casts both operands to the
+// declared pointer type before use — a no-op for an already-real pointer,
+// a round-trip for the erased-scalar ctor form. Единица: folder-module
+// `spec_tests.conformance`.
+module spec_tests.conformance
+
+type M156Sign enum
+    | Neg
+    | Zero
+    | Pos
+
+fn m156_classify(n int) -> M156Sign {
+    if n < 0 { M156Sign.Neg }
+    else if n == 0 { M156Sign.Zero }
+    else { M156Sign.Pos }
+}
+
+test "M-156 sum value == bare zero-field variant literal" {
+    ro s = m156_classify(5)
+    assert(s == M156Sign.Pos)
+    assert(s != M156Sign.Neg)
+    assert(s != M156Sign.Zero)
+
+    ro z = m156_classify(0)
+    assert(z == M156Sign.Zero)
+    assert(!(z == M156Sign.Pos))
+}
