@@ -216,83 +216,85 @@ fn main() Time Detach {
         ro port = resolve_port()
         with Net = real_net() {
             ro addr = resolve_addr(port)
-            supervised {
-                spawn {
-                    // ВНЕШНИЙ `spawn` ОБЯЗАТЕЛЕН — проверено экспериментом
-                    // 2026-07-30 (реестр 221.1 №162). Выглядит лишним (внутри
-                    // ровно один файбер на всё тело, родитель тут же встаёт
-                    // ждать — полезной параллельности ноль), но без него бинарь
-                    // ПАДАЕТ на старте: `nova: nova_sched_park: invalid scope/slot`.
-                    // Причина рантаймовая: блокирующий accept-loop внутри
-                    // `supervised` должен исполняться в ДОЧЕРНЕМ файбере —
-                    // планировщику иначе некуда парковать. Не снимать.
-                    // Plan 173.3 (D415 §2): listener lives ENTIRELY inside
-                    // this fiber (same discipline as echo_server.nv) — a
-                    // mut-capture of an outer listener from spawn's body
-                    // would be E_CONCURRENT_MUT_CAPTURE.
-                    consume lst = TcpListener.bind(addr) ?? panic("Failed to bind: ${port}")
-                    println("Nova flagship aggregator listening on http://${addr.ip()}:${lst.local_port()}")
-                    // Bounded-accept permit counter (see the marker note
-                    // above `fn main`) — `AtomicInt` is `#share` (D415), so
-                    // capturing it (by reference) into the per-connection
-                    // `detach { }` below to `fetch_sub` on completion is a
-                    // legal cross-fiber capture without a `consume`/channel
-                    // dance, same exemption `sync_test.nv`'s own fixtures
-                    // rely on.
-                    mut inflight = AtomicInt.new(0)
-                    mut running = true
-                    while running {
-                        match lst.accept() {
-                            Ok(consume stream) => {
-                                if inflight.load() >= MAX_INFLIGHT_CONNS {
-                                    // Over budget: honest reject, no queue —
-                                    // close immediately, no read/response
-                                    // attempted (not "manual HTTP", nothing
-                                    // is parsed/routed/serialized on this
-                                    // path at all).
-                                    // best-effort close при сбросе сверх-лимитного
-                                    // соединения (admission control shed): ошибку
-                                    // закрытия некуда репортить и незачем.
-                                    // nova:allow W_RESULT_DISCARDED -- намеренный дроп: best-effort close при shed
-                                    ro _ = stream.close()
-                                } else {
-                                    ro _ = inflight.fetch_add(1)
-                                    // [M-187-sequential-2nd-request-hang]'s
-                                    // OLD per-connection `supervised {
-                                    // spawn { ... } }` (strictly sequential
-                                    // — accept loop blocked on this
-                                    // connection's own join before the next
-                                    // `accept()`) is replaced by `detach { }`
-                                    // here: bounded CONCURRENT handling, see
-                                    // `[M-187-high-concurrency-connection-
-                                    // wedge]` mitigation note above `fn
-                                    // main`. The permit is released inside
-                                    // the detached body itself (fiber that
-                                    // finishes the connection is the one
-                                    // that frees its own slot).
-                                    //
-                                    // `detach consume stream` (was
-                                    // `[M-detach-consume-escape-unchecked]`,
-                                    // closed): ownership of `stream` moves
-                                    // INTO the orphan fiber, safe against
-                                    // use-after-consume.
-                                    detach consume stream {
-                                        // `routes()` is cheap (a handful of
-                                        // `Router` entries) — rebuilt per
-                                        // connection, same shape as
-                                        // nova-http's own
-                                        // servernet/rt/handle_connection_smoke.nv.
-                                        ro _ = handle_connection_router(stream, routes())
-                                        ro _ = inflight.fetch_sub(1)
-                                    }
-                                }
+            // NB (реестр 221.1 №162): ни `supervised`, ни внешнего `spawn` здесь
+            // НЕТ — детей у этого scope не было ни одного, то есть structured
+            // concurrency ничего не давала: ждать некого, отменять нечего.
+            // Обёртка была остатком прежней формы `supervised { spawn { … } }`
+            // НА КАЖДОЕ СОЕДИНЕНИЕ; после перехода на bounded-accept + `detach`
+            // смысл ушёл, а ритуал остался.
+            // ВНЕШНИЙ `spawn` ОБЯЗАТЕЛЕН — проверено экспериментом
+            // 2026-07-30 (реестр 221.1 №162). Выглядит лишним (внутри
+            // ровно один файбер на всё тело, родитель тут же встаёт
+            // ждать — полезной параллельности ноль), но без него бинарь
+            // ПАДАЕТ на старте: `nova: nova_sched_park: invalid scope/slot`.
+            // Причина рантаймовая: блокирующий accept-loop внутри
+            // `supervised` должен исполняться в ДОЧЕРНЕМ файбере —
+            // планировщику иначе некуда парковать. Не снимать.
+            // Plan 173.3 (D415 §2): listener lives ENTIRELY inside
+            // this fiber (same discipline as echo_server.nv) — a
+            // mut-capture of an outer listener from spawn's body
+            // would be E_CONCURRENT_MUT_CAPTURE.
+            consume lst = TcpListener.bind(addr) ?? panic("Failed to bind: ${port}")
+            println("Nova flagship aggregator listening on http://${addr.ip()}:${lst.local_port()}")
+            // Bounded-accept permit counter (see the marker note
+            // above `fn main`) — `AtomicInt` is `#share` (D415), so
+            // capturing it (by reference) into the per-connection
+            // `detach { }` below to `fetch_sub` on completion is a
+            // legal cross-fiber capture without a `consume`/channel
+            // dance, same exemption `sync_test.nv`'s own fixtures
+            // rely on.
+            mut inflight = AtomicInt.new(0)
+            mut running = true
+            while running {
+                match lst.accept() {
+                    Ok(consume stream) => {
+                        if inflight.load() >= MAX_INFLIGHT_CONNS {
+                            // Over budget: honest reject, no queue —
+                            // close immediately, no read/response
+                            // attempted (not "manual HTTP", nothing
+                            // is parsed/routed/serialized on this
+                            // path at all).
+                            // best-effort close при сбросе сверх-лимитного
+                            // соединения (admission control shed): ошибку
+                            // закрытия некуда репортить и незачем.
+                            // nova:allow W_RESULT_DISCARDED -- намеренный дроп: best-effort close при shed
+                            ro _ = stream.close()
+                        } else {
+                            ro _ = inflight.fetch_add(1)
+                            // [M-187-sequential-2nd-request-hang]'s
+                            // OLD per-connection `supervised {
+                            // spawn { ... } }` (strictly sequential
+                            // — accept loop blocked on this
+                            // connection's own join before the next
+                            // `accept()`) is replaced by `detach { }`
+                            // here: bounded CONCURRENT handling, see
+                            // `[M-187-high-concurrency-connection-
+                            // wedge]` mitigation note above `fn
+                            // main`. The permit is released inside
+                            // the detached body itself (fiber that
+                            // finishes the connection is the one
+                            // that frees its own slot).
+                            //
+                            // `detach consume stream` (was
+                            // `[M-detach-consume-escape-unchecked]`,
+                            // closed): ownership of `stream` moves
+                            // INTO the orphan fiber, safe against
+                            // use-after-consume.
+                            detach consume stream {
+                                // `routes()` is cheap (a handful of
+                                // `Router` entries) — rebuilt per
+                                // connection, same shape as
+                                // nova-http's own
+                                // servernet/rt/handle_connection_smoke.nv.
+                                ro _ = handle_connection_router(stream, routes())
+                                ro _ = inflight.fetch_sub(1)
                             }
-                            Err(_) => { running = false }
                         }
                     }
-                    lst.close()
+                    Err(_) => { running = false }
                 }
             }
+            lst.close()
         }
     }
 }
