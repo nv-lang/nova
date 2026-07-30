@@ -10,6 +10,39 @@ use crate::diag::{Diagnostic, FileId, MAIN_FILE_ID, Span};
 use crate::parser::{impl_spec_base_name, impl_spec_args_text};
 use std::collections::{HashMap, HashSet};
 
+/// Plan 196 (gs-bounds migration, spike `docs/plans/wip/196-gs-spike.md`):
+/// `gs` ("generics in scope") used to be `HashSet<String>` — ONLY the names of the
+/// generic-parameters visible in the current fn/type-decl body, no protocol bounds
+/// (`GenericParam.bounds`, `ast/mod.rs`). That lost the one piece of information a
+/// resolver needs to dispatch a call on a BARE generic-param receiver by its bound
+/// (`Option[T Debug]@debug`'s body calling `v.debug(f)` where `v: T`, `T: Debug`) —
+/// the pre-existing narrow precedent for carrying bounds through, `current_fn_generics`
+/// (`RefCell<Vec<GenericParam>>` below), proved the pattern works; this generalizes it
+/// to every `gs` site. Keyed by name (the lookup every reader already did via
+/// `.contains`/`.contains_key`); value is the full declaration, built ONCE per
+/// fn/type-decl (not on any per-expr hot path) and passed down by reference through
+/// the existing recursive `walk_*`/`f1_*` traversal — no ExprId involved (bounds are
+/// per-DECLARATION, not per-call-site; see spike §3).
+pub(crate) type GenericScope = HashMap<String, GenericParam>;
+
+/// Plan 196 gs-bounds: shared membership check for BOTH the legacy name-only carrier
+/// (`HashSet<String>` — still used for method-level generic sets like `method_names`/
+/// `self_only`/`recv_generic_names`, which are a DIFFERENT concept from the
+/// declaration-level `GenericScope` above and are not part of this migration) and the
+/// new bounds-carrying `GenericScope`, so a single `typeref_mentions_any`/
+/// `mark_type_params` body serves both without duplicating the recursive walk.
+pub(crate) trait GenericNameSet {
+    fn has_generic_name(&self, name: &str) -> bool;
+}
+impl GenericNameSet for HashSet<String> {
+    #[inline]
+    fn has_generic_name(&self, name: &str) -> bool { self.contains(name) }
+}
+impl GenericNameSet for GenericScope {
+    #[inline]
+    fn has_generic_name(&self, name: &str) -> bool { self.contains_key(name) }
+}
+
 // Plan 172.13 Ф.1: constraint-based inference core scaffold (unification +
 // occurs-check + type-set membership). NOT wired into `f1_expr_inner`
 // globally yet — Ф.2 migrates ad-hoc producer packages onto it one at a
@@ -4665,7 +4698,7 @@ impl<'a> TypeCheckCtx<'a> {
                 }
                 Item::Type(td) => self.check_type_decl(td, errors),
                 Item::Const(cd) => {
-                    let empty = HashSet::new();
+                    let empty: GenericScope = HashMap::new();
                     if let Some(t) = &cd.ty {
                         self.walk_typeref(t, &empty, errors);
                     }
@@ -4689,7 +4722,7 @@ impl<'a> TypeCheckCtx<'a> {
                     // implicit grant + explicit test_access list). Guard
                     // restores previous state on drop.
                     let _tb_guard = TestBlockGuard::enter(self, t.test_access.clone());
-                    let empty = HashSet::new();
+                    let empty: GenericScope = HashMap::new();
                     self.walk_block(&t.body, &empty, errors);
                 }
                 // Plan 148 Ф.3 ([M-114.4-strict-partition]): module-level `ro`
@@ -4724,12 +4757,12 @@ impl<'a> TypeCheckCtx<'a> {
                     // the f1 assignability pass too (handles priv record-init
                     // and write checks that fire from f1_check_assign_let).
                     let _tb_guard = TestBlockGuard::enter(self, t.test_access.clone());
-                    let gs: HashSet<String> = HashSet::new();
+                    let gs: GenericScope = HashMap::new();
                     let mut scope: HashMap<String, TypeRef> = HashMap::new();
                     self.f1_block(&t.body, &gs, &mut scope, errors);
                 }
                 Item::Const(cd) => {
-                    let gs: HashSet<String> = HashSet::new();
+                    let gs: GenericScope = HashMap::new();
                     let mut scope: HashMap<String, TypeRef> = HashMap::new();
                     if let Some(ann) = &cd.ty {
                         // A `const` binding is immutable (ro content-view).
@@ -4765,12 +4798,12 @@ impl<'a> TypeCheckCtx<'a> {
                             }
                         }
                         Item::Test(t) => {
-                            let gs: HashSet<String> = HashSet::new();
+                            let gs: GenericScope = HashMap::new();
                             let mut scope: HashMap<String, TypeRef> = HashMap::new();
                             self.f1_block(&t.body, &gs, &mut scope, &mut peer_errors);
                         }
                         Item::Const(cd) => {
-                            let gs: HashSet<String> = HashSet::new();
+                            let gs: GenericScope = HashMap::new();
                             let mut scope: HashMap<String, TypeRef> = HashMap::new();
                             self.f1_expr(&cd.value, &gs, &mut scope, &mut peer_errors);
                         }
@@ -5577,15 +5610,16 @@ impl<'a> TypeCheckCtx<'a> {
         let _ta_guard = PrivTestAccessGuard { ctx: self, prev: prev_ta };
         // Generic-scope функции: её собственные generic-параметры +
         // generic-параметры receiver-типа (`fn Box[T] @get() -> T`).
-        let mut gs: HashSet<String> = HashSet::new();
+        let mut gs: GenericScope = HashMap::new();
         for g in &fd.generics {
-            gs.insert(g.name.clone());
+            gs.insert(g.name.clone(), g.clone());
         }
         if let Some(r) = &fd.receiver {
             for tr in &r.generics {
-                if let TypeRef::Named { path, .. } = tr {
+                if let TypeRef::Named { path, span, .. } = tr {
                     if path.len() == 1 {
-                        gs.insert(path[0].clone());
+                        gs.entry(path[0].clone())
+                            .or_insert_with(|| GenericParam::unbounded(path[0].clone(), *span));
                     }
                 }
             }
@@ -5609,7 +5643,7 @@ impl<'a> TypeCheckCtx<'a> {
                 let elem = &r.type_name[2..];
                 let is_single_upper = elem.len() <= 2
                     && elem.chars().all(|c| c.is_ascii_uppercase());
-                if is_single_upper && !gs.contains(elem) {
+                if is_single_upper && !gs.contains_key(elem) {
                     errors.push(Diagnostic::new(
                         format!(
                             "[E_UNDECLARED_TYPEVAR_IN_RECEIVER] `fn []{elem} @{m}` — \
@@ -5629,7 +5663,7 @@ impl<'a> TypeCheckCtx<'a> {
             // type-check error elsewhere). Distinct from B1 (which targets `[]T`).
             let tn = r.type_name.as_str();
             if tn.len() <= 2 && tn.chars().all(|c| c.is_ascii_uppercase()) {
-                if !gs.contains(tn) && !self.types.contains_key(tn) {
+                if !gs.contains_key(tn) && !self.types.contains_key(tn) {
                     errors.push(Diagnostic::new(
                         format!(
                             "[E_BARE_TYPEVAR_NEEDS_PREFIX] `fn {tn} @{m}` — \
@@ -5881,9 +5915,9 @@ impl<'a> TypeCheckCtx<'a> {
                 td.span,
             ));
         }
-        let mut gs: HashSet<String> = HashSet::new();
+        let mut gs: GenericScope = HashMap::new();
         for g in &td.generics {
-            gs.insert(g.name.clone());
+            gs.insert(g.name.clone(), g.clone());
         }
         for g in &td.generics {
             for b in &g.bounds {
@@ -5920,7 +5954,7 @@ impl<'a> TypeCheckCtx<'a> {
                 for m in methods {
                     let mut ms = gs.clone();
                     for g in &m.generics {
-                        ms.insert(g.name.clone());
+                        ms.insert(g.name.clone(), g.clone());
                     }
                     for p in &m.params {
                         self.walk_typeref(&p.ty, &ms, errors);
@@ -5937,7 +5971,7 @@ impl<'a> TypeCheckCtx<'a> {
                 for m in methods {
                     let mut ms = gs.clone();
                     for g in &m.generics {
-                        ms.insert(g.name.clone());
+                        ms.insert(g.name.clone(), g.clone());
                     }
                     for p in &m.params {
                         self.walk_typeref(&p.ty, &ms, errors);
@@ -6140,9 +6174,9 @@ impl<'a> TypeCheckCtx<'a> {
         // Generic params of the decl under check — a bare param `T` is not a
         // user type and cannot close a value cycle (mirrors the size walk, which
         // has no entry for an unresolved param → None).
-        let mut gs: HashSet<String> = HashSet::new();
+        let mut gs: GenericScope = HashMap::new();
         for g in &td.generics {
-            gs.insert(g.name.clone());
+            gs.insert(g.name.clone(), g.clone());
         }
         // DFS over the inline-containment graph starting at `td.name`. `on_path`
         // is the set of type names currently on the DFS stack; a back-edge into
@@ -6219,7 +6253,7 @@ impl<'a> TypeCheckCtx<'a> {
         t: &TypeRef,
         root: &str,
         on_path: &mut HashSet<String>,
-        gs: &HashSet<String>,
+        gs: &GenericScope,
     ) -> Option<Span> {
         match t {
             TypeRef::Named { path, generics, span } => {
@@ -6233,7 +6267,7 @@ impl<'a> TypeCheckCtx<'a> {
                 }
                 let name = &path[0];
                 // Bare generic-param of the root decl — not a user type. STOP.
-                if gs.contains(name) {
+                if gs.contains_key(name) {
                     return None;
                 }
                 // Primitives are finite leaves (and are NOT in self.types). STOP.
@@ -6329,7 +6363,7 @@ impl<'a> TypeCheckCtx<'a> {
         &self,
         inner: &Expr,
         _ty: &TypeRef,
-        gs: &HashSet<String>,
+        gs: &GenericScope,
         scope: &HashMap<String, TypeRef>,
         errors: &mut Vec<Diagnostic>,
     ) {
@@ -6339,7 +6373,7 @@ impl<'a> TypeCheckCtx<'a> {
         let TypeRef::Named { path, .. } = &op_tr else { return };
         let Some(base) = path.last() else { return };
         // Generic type-parameter → unknown at this site → permissive.
-        if gs.contains(base) { return; }
+        if gs.contains_key(base) { return; }
         // Prelude sum-types (variant check, v2) → OK.
         if base == "Option" || base == "Result" || base == "any" { return; }
         let is_record = match self.types.get(base) {
@@ -6424,7 +6458,7 @@ impl<'a> TypeCheckCtx<'a> {
     /// НЕ heap, аналогично Tuple/Unit ниже)**, generic-параметр и НЕИЗВЕСТНОЕ
     /// имя → `false` (не подтверждён heap → `ref` в запрещённой позиции
     /// реджектится: «ref нехраним, не имеет размера как тип»).
-    fn ref_target_confirmed_heap(&self, inner: &TypeRef, gs: &HashSet<String>) -> bool {
+    fn ref_target_confirmed_heap(&self, inner: &TypeRef, gs: &GenericScope) -> bool {
         use TypeRef::*;
         match inner {
             Array(..) | Pointer(..) | Func { .. } | Protocol { .. } => true,
@@ -6438,7 +6472,7 @@ impl<'a> TypeCheckCtx<'a> {
             Tuple(..) | Unit(..) | FixedArray(..) => false,
             Named { path, .. } => {
                 let name = path.last().map(|s| s.as_str()).unwrap_or("");
-                if gs.contains(name) {
+                if gs.contains_key(name) {
                     return false; // generic-параметр — storage неизвестен
                 }
                 if name == "Vec" {
@@ -6472,7 +6506,7 @@ impl<'a> TypeCheckCtx<'a> {
     fn walk_ref_return(
         &self,
         tr: &TypeRef,
-        gs: &HashSet<String>,
+        gs: &GenericScope,
         errors: &mut Vec<Diagnostic>,
     ) {
         match tr {
@@ -6485,7 +6519,7 @@ impl<'a> TypeCheckCtx<'a> {
     fn walk_typeref(
         &self,
         tr: &TypeRef,
-        gs: &HashSet<String>,
+        gs: &GenericScope,
         errors: &mut Vec<Diagnostic>,
     ) {
         match tr {
@@ -6506,7 +6540,7 @@ impl<'a> TypeCheckCtx<'a> {
                 // falls back в tagged form automatically (inner c_ty =
                 // NovaOpt_X struct, не pointer).
                 // generic-параметр в scope — абстрактное имя, не тип.
-                if gs.contains(name) {
+                if gs.contains_key(name) {
                     return;
                 }
                 // Plan 134: встроенный тип `ptr` (и его C-имя `nova_ptr`) удалён.
@@ -6749,7 +6783,7 @@ impl<'a> TypeCheckCtx<'a> {
     fn walk_block(
         &self,
         b: &Block,
-        gs: &HashSet<String>,
+        gs: &GenericScope,
         errors: &mut Vec<Diagnostic>,
     ) {
         for s in &b.stmts {
@@ -6763,7 +6797,7 @@ impl<'a> TypeCheckCtx<'a> {
     fn walk_stmt(
         &self,
         s: &Stmt,
-        gs: &HashSet<String>,
+        gs: &GenericScope,
         errors: &mut Vec<Diagnostic>,
     ) {
         match s {
@@ -6851,7 +6885,7 @@ impl<'a> TypeCheckCtx<'a> {
     fn walk_expr(
         &self,
         e: &Expr,
-        gs: &HashSet<String>,
+        gs: &GenericScope,
         errors: &mut Vec<Diagnostic>,
     ) {
         match &e.kind {
@@ -6869,7 +6903,7 @@ impl<'a> TypeCheckCtx<'a> {
                     _ => None,
                 };
                 if let Some(name) = target {
-                    if !gs.contains(name) && !arity_exempt(name) {
+                    if !gs.contains_key(name) && !arity_exempt(name) {
                         if let Some(info) = self.arity.get(name) {
                             // turbofish всегда указывает аргументы явно —
                             // пустой `[]` не парсится; проверяем как есть.
@@ -6979,7 +7013,7 @@ impl<'a> TypeCheckCtx<'a> {
                 if let Some(tn) = type_name {
                     if let Some(last) = tn.last() {
                         if last != "Self"
-                            && !gs.contains(last)
+                            && !gs.contains_key(last)
                             && !self.types.contains_key(last)
                             // [M-compress-checksum-structvariant-ctor-xmodule]:
                             // `self.types` — HashMap keyed по имени суммы; при
@@ -7225,7 +7259,7 @@ impl<'a> TypeCheckCtx<'a> {
     fn walk_else(
         &self,
         eb: &ElseBranch,
-        gs: &HashSet<String>,
+        gs: &GenericScope,
         errors: &mut Vec<Diagnostic>,
     ) {
         match eb {
@@ -7237,7 +7271,7 @@ impl<'a> TypeCheckCtx<'a> {
     fn walk_fn_sig_body(
         &self,
         sb: &FnSigBody,
-        gs: &HashSet<String>,
+        gs: &GenericScope,
         errors: &mut Vec<Diagnostic>,
     ) {
         for p in &sb.params {
@@ -7484,7 +7518,7 @@ impl<'a> TypeCheckCtx<'a> {
     fn f1_block(
         &self,
         b: &Block,
-        gs: &HashSet<String>,
+        gs: &GenericScope,
         scope: &mut HashMap<String, TypeRef>,
         errors: &mut Vec<Diagnostic>,
     ) {
@@ -7526,7 +7560,7 @@ impl<'a> TypeCheckCtx<'a> {
     fn f1_stmt(
         &self,
         s: &Stmt,
-        gs: &HashSet<String>,
+        gs: &GenericScope,
         scope: &mut HashMap<String, TypeRef>,
         errors: &mut Vec<Diagnostic>,
     ) {
@@ -7809,7 +7843,7 @@ impl<'a> TypeCheckCtx<'a> {
     fn check_try_carrier_match(
         &self,
         inner: &Expr,
-        gs: &HashSet<String>,
+        gs: &GenericScope,
         scope: &HashMap<String, TypeRef>,
         errors: &mut Vec<Diagnostic>,
     ) {
@@ -7869,7 +7903,7 @@ impl<'a> TypeCheckCtx<'a> {
         a: &Expr,
         ret_value: &Option<Box<Expr>>,
         whole_span: Span,
-        gs: &HashSet<String>,
+        gs: &GenericScope,
         scope: &HashMap<String, TypeRef>,
         errors: &mut Vec<Diagnostic>,
     ) {
@@ -7901,7 +7935,7 @@ impl<'a> TypeCheckCtx<'a> {
     fn f1_expr(
         &self,
         e: &Expr,
-        gs: &HashSet<String>,
+        gs: &GenericScope,
         scope: &mut HashMap<String, TypeRef>,
         errors: &mut Vec<Diagnostic>,
     ) {
@@ -7952,7 +7986,7 @@ impl<'a> TypeCheckCtx<'a> {
     fn record_expr_type_ide(
         &self,
         e: &Expr,
-        gs: &HashSet<String>,
+        gs: &GenericScope,
         scope: &HashMap<String, TypeRef>,
     ) {
         // Synthetic / compiler-generated expressions carry a default (zero-width) span.
@@ -7982,7 +8016,7 @@ impl<'a> TypeCheckCtx<'a> {
     fn f1_expr_inner(
         &self,
         e: &Expr,
-        gs: &HashSet<String>,
+        gs: &GenericScope,
         scope: &mut HashMap<String, TypeRef>,
         errors: &mut Vec<Diagnostic>,
     ) {
@@ -8754,7 +8788,7 @@ impl<'a> TypeCheckCtx<'a> {
                                 if let TypeRef::Named { path, generics, .. } = peeled {
                                     if path.len() == 1
                                         && generics.is_empty()
-                                        && gs.contains(&path[0])
+                                        && gs.contains_key(&path[0])
                                     {
                                         if let Some(td) = self.types.get("Serialize") {
                                             if let TypeDeclKind::Protocol { methods, .. } =
@@ -8891,7 +8925,7 @@ impl<'a> TypeCheckCtx<'a> {
                         // `current_type_subst` at the mono instance's own
                         // emission time (same contract every other TypeParam-
                         // channelled return relies on) — no new lowering needed.
-                        if parts.len() == 2 && parts[1] == "deserialize" && gs.contains(&parts[0]) {
+                        if parts.len() == 2 && parts[1] == "deserialize" && gs.contains_key(&parts[0]) {
                             // Return type read from the PROTOCOL DECLARATION (not
                             // hardcoded): `Result[Self, DeError]` with `Self` → `T`.
                             // If the CU has no `Deserialize` protocol in scope, or
@@ -9679,7 +9713,7 @@ impl<'a> TypeCheckCtx<'a> {
                                 // ПРЯМО в буфер (минуя TypeRef — урок утечки bare Named).
                                 if path.len() == 1 {
                                     if let Some(en) = path[0].strip_prefix("[]") {
-                                        if gs.contains(en) {
+                                        if gs.contains_key(en) {
                                             self.resolved_types_buf.borrow_mut().insert(
                                                 e.id,
                                                 ResolvedType::TypeParam(en.to_string()),
@@ -10245,7 +10279,7 @@ impl<'a> TypeCheckCtx<'a> {
     fn f1_else(
         &self,
         eb: &ElseBranch,
-        gs: &HashSet<String>,
+        gs: &GenericScope,
         scope: &mut HashMap<String, TypeRef>,
         errors: &mut Vec<Diagnostic>,
     ) {
@@ -10258,7 +10292,7 @@ impl<'a> TypeCheckCtx<'a> {
     fn f1_fn_sig_body(
         &self,
         sb: &FnSigBody,
-        gs: &HashSet<String>,
+        gs: &GenericScope,
         scope: &mut HashMap<String, TypeRef>,
         errors: &mut Vec<Diagnostic>,
     ) {
@@ -10371,7 +10405,7 @@ impl<'a> TypeCheckCtx<'a> {
         ann: &TypeRef,
         name: &str,
         binding_mut: bool,
-        gs: &HashSet<String>,
+        gs: &GenericScope,
         scope: &HashMap<String, TypeRef>,
         errors: &mut Vec<Diagnostic>,
     ) {
@@ -10951,7 +10985,7 @@ impl<'a> TypeCheckCtx<'a> {
         elem_type: &Option<TypeRef>,
         pattern: &Pattern,
         body: &Block,
-        gs: &HashSet<String>,
+        gs: &GenericScope,
         scope: &mut HashMap<String, TypeRef>,
         errors: &mut Vec<Diagnostic>,
     ) {
@@ -10977,7 +11011,7 @@ impl<'a> TypeCheckCtx<'a> {
         &self,
         iter: &Expr,
         ann: &TypeRef,
-        gs: &HashSet<String>,
+        gs: &GenericScope,
         scope: &HashMap<String, TypeRef>,
         errors: &mut Vec<Diagnostic>,
     ) {
@@ -12141,7 +12175,7 @@ impl<'a> TypeCheckCtx<'a> {
         &self,
         callee: &FnDecl,
         args: &[CallArg],
-        gs: &HashSet<String>,
+        gs: &GenericScope,
         scope: &HashMap<String, TypeRef>,
     ) -> Option<bool> {
         let bindings = crate::argbind::bind_call_args(&callee.params, args).ok()?;
@@ -12244,7 +12278,7 @@ impl<'a> TypeCheckCtx<'a> {
         obj: &Expr,
         method_name: &str,
         args: &[CallArg],
-        gs: &HashSet<String>,
+        gs: &GenericScope,
         scope: &HashMap<String, TypeRef>,
         span: crate::diag::Span,
         errors: &mut Vec<Diagnostic>,
@@ -12665,8 +12699,8 @@ impl<'a> TypeCheckCtx<'a> {
                 let subst = f.receiver.as_ref()
                     .map(|r| build_recv_subst(r, &recv_ty))
                     .unwrap_or_default();
-                let callee_gs: HashSet<String> =
-                    f.generics.iter().map(|g| g.name.clone()).collect();
+                let callee_gs: GenericScope =
+                    f.generics.iter().map(|g| (g.name.clone(), g.clone())).collect();
                 if let Ok(bindings) = crate::argbind::bind_call_args(&f.params, args) {
                     for (pi, binding) in bindings.iter().enumerate() {
                         let ai = match binding {
@@ -12812,7 +12846,7 @@ impl<'a> TypeCheckCtx<'a> {
         name: &str,
         args: &[CallArg],
         call_span: Span,
-        gs: &HashSet<String>,
+        gs: &GenericScope,
         scope: &HashMap<String, TypeRef>,
         call_id: crate::ast::ExprId,
         errors: &mut Vec<Diagnostic>,
@@ -12902,7 +12936,7 @@ impl<'a> TypeCheckCtx<'a> {
         func: &Expr,
         args: &[CallArg],
         trailing_present: bool,
-        gs: &HashSet<String>,
+        gs: &GenericScope,
         scope: &HashMap<String, TypeRef>,
         errors: &mut Vec<Diagnostic>,
         // Plan 172.1 U.3.4: call-site `ExprId` — key for the resolved-callee channel.
@@ -13101,7 +13135,7 @@ impl<'a> TypeCheckCtx<'a> {
                 // this call shape (`serde.nv`'s `T.deserialize(d)`/`V.deserialize(sub)`)
                 // never uses named args (196.5-facet-c-map.md §1/probe notes).
                 if overloads.is_none()
-                    && gs.contains(parts[0].as_str())
+                    && gs.contains_key(parts[0].as_str())
                     && args.iter().any(|a| matches!(a, CallArg::Named { .. }))
                 {
                     errors.push(Diagnostic::new(
@@ -15266,7 +15300,7 @@ impl<'a> TypeCheckCtx<'a> {
     fn resolve_interp_user_value_type(
         &self,
         ex: &Expr,
-        gs: &HashSet<String>,
+        gs: &GenericScope,
         scope: &HashMap<String, TypeRef>,
     ) -> Option<String> {
         // CharLit is never a user type — mirrors emit_c's
@@ -15280,7 +15314,7 @@ impl<'a> TypeCheckCtx<'a> {
             }
             _ => return None,
         };
-        if gs.contains(&tname) {
+        if gs.contains_key(&tname) {
             return None; // generic type-param in scope — mono-time concern.
         }
         if matches!(
@@ -15309,7 +15343,7 @@ impl<'a> TypeCheckCtx<'a> {
     fn check_interp_no_display(
         &self,
         ex: &Expr,
-        gs: &HashSet<String>,
+        gs: &GenericScope,
         scope: &HashMap<String, TypeRef>,
         spec: &crate::ast::FormatSpec,
         errors: &mut Vec<Diagnostic>,
@@ -15402,7 +15436,7 @@ impl<'a> TypeCheckCtx<'a> {
     fn check_interp_no_debug(
         &self,
         ex: &Expr,
-        gs: &HashSet<String>,
+        gs: &GenericScope,
         scope: &HashMap<String, TypeRef>,
         spec: &crate::ast::FormatSpec,
         errors: &mut Vec<Diagnostic>,
@@ -16176,8 +16210,8 @@ impl<'a> TypeCheckCtx<'a> {
         &self,
         expr: &Expr,
         expected: &TypeRef,
-        expr_gs: &HashSet<String>,
-        exp_gs: &HashSet<String>,
+        expr_gs: &GenericScope,
+        exp_gs: &GenericScope,
         scope: &HashMap<String, TypeRef>,
     ) -> Compat {
         let direct = self.assignable_direct(expr, expected, expr_gs, exp_gs, scope);
@@ -16483,8 +16517,8 @@ impl<'a> TypeCheckCtx<'a> {
             let ok = match (&param_ret, &arg_ret) {
                 (None, None) => true,
                 (Some(p), Some(a)) => cat_compatible_rt(
-                    &self.resolved_cat_of(a, &HashSet::new()),
-                    &self.resolved_cat_of(p, &HashSet::new()),
+                    &self.resolved_cat_of(a, &HashMap::new()),
+                    &self.resolved_cat_of(p, &HashMap::new()),
                 ),
                 // one side implicit `()`, the other a real value type — definite mismatch.
                 _ => false,
@@ -16618,8 +16652,8 @@ impl<'a> TypeCheckCtx<'a> {
         &self,
         expr: &Expr,
         expected: &TypeRef,
-        expr_gs: &HashSet<String>,
-        exp_gs: &HashSet<String>,
+        expr_gs: &GenericScope,
+        exp_gs: &GenericScope,
         scope: &HashMap<String, TypeRef>,
     ) -> Compat {
         // U.5.2: category через структурный `ResolvedType` (lossless width/sign) —
@@ -16963,7 +16997,7 @@ impl<'a> TypeCheckCtx<'a> {
         &self,
         expr: &Expr,
         expected: &TypeRef,
-        exp_gs: &HashSet<String>,
+        exp_gs: &GenericScope,
         scope: &HashMap<String, TypeRef>,
     ) -> Option<String> {
         // Peel the same transparent view-wrappers `resolved_cat_of_depth` recurses
@@ -16996,7 +17030,7 @@ impl<'a> TypeCheckCtx<'a> {
                 // checks this FIRST too (before ever consulting `self.types`), so a name
                 // shadowing both a real protocol and a local type-param always resolves as
                 // the type-param there; mirror that precedence here.
-                if exp_gs.contains(name) {
+                if exp_gs.contains_key(name) {
                     return None;
                 }
                 // [M-fmt-write-protocol-collision-cycle-adjacent] (2026-07-21):
@@ -17033,7 +17067,7 @@ impl<'a> TypeCheckCtx<'a> {
         // fn, still erased at this call site) — undecidable, enforced at the eventual
         // concrete call site instead (mirrors `check_satisfaction`'s
         // `current_fn_generic_names` skip in `BoundCtx`).
-        if exp_gs.contains(&concrete_name) {
+        if exp_gs.contains_key(&concrete_name) {
             return None;
         }
         // Built-in primitives have no `method_table` registry here (their real methods
@@ -17165,11 +17199,11 @@ impl<'a> TypeCheckCtx<'a> {
     /// 172.1.2 Шаг 1: пометить residual generic-параметры ЯВНЫМ носителем.
     /// `Named{name, module:[], args:[]}` с name ∈ params → `TypeParam(name)`;
     /// рекурсивно по args/Tuple/Array/TypedPtr/Readonly/Func. Идемпотентно.
-    fn mark_type_params(rt: ResolvedType, params: &std::collections::HashSet<String>) -> ResolvedType {
+    fn mark_type_params(rt: ResolvedType, params: &impl GenericNameSet) -> ResolvedType {
         use ResolvedType as R;
         match rt {
             R::Named { name, module, args } => {
-                if module.is_empty() && args.is_empty() && params.contains(&name) {
+                if module.is_empty() && args.is_empty() && params.has_generic_name(&name) {
                     R::TypeParam(name)
                 } else {
                     R::Named {
@@ -19796,7 +19830,7 @@ impl<'a> TypeCheckCtx<'a> {
         fp: &[TypeRef],
         arg_expr: &Expr,
         outer_scope: &HashMap<String, TypeRef>,
-        unresolved: &HashSet<String>,
+        unresolved: &impl GenericNameSet,
     ) -> Option<TypeRef> {
         match &arg_expr.kind {
             ExprKind::ClosureLight { params: cp, body } => {
@@ -20578,14 +20612,14 @@ impl<'a> TypeCheckCtx<'a> {
     /// Like the old `cat_of` (and UNLIKE `from_type_ref`), int-family names resolve to
     /// `Scalar` REGARDLESS of generics (`int[X]`→`Scalar`) — name match, not
     /// `ty_of_ref`'s generics-guard.
-    fn resolved_cat_of(&self, tr: &TypeRef, gs: &HashSet<String>) -> ResolvedType {
+    fn resolved_cat_of(&self, tr: &TypeRef, gs: &GenericScope) -> ResolvedType {
         self.resolved_cat_of_depth(tr, gs, 0)
     }
 
     fn resolved_cat_of_depth(
         &self,
         tr: &TypeRef,
-        gs: &HashSet<String>,
+        gs: &GenericScope,
         depth: u32,
     ) -> ResolvedType {
         use ResolvedType as R;
@@ -20595,7 +20629,7 @@ impl<'a> TypeCheckCtx<'a> {
         match tr {
             TypeRef::Named { path, generics, .. } => {
                 let Some(name) = path.last() else { return R::Any; };
-                if gs.contains(name) {
+                if gs.contains_key(name) {
                     return R::Any; // generic type-param → permissive
                 }
                 // Int-family — UNGUARDED on generics (mirrors cat_of, not from_type_ref).
@@ -21617,16 +21651,25 @@ fn distinct_mono(p: &ResolvedType, a: &ResolvedType) -> bool {
 }
 
 /// Ф.1: generic-scope функции — её параметры + generics receiver-типа.
-fn fn_generic_scope(fd: &FnDecl) -> HashSet<String> {
-    let mut gs: HashSet<String> = HashSet::new();
+/// Plan 196 gs-bounds: value is the FULL `GenericParam` (bounds/default/consume_bound),
+/// not just the bare name — see `GenericScope`'s doc. `fd.generics` is the source of
+/// truth for bounds; the receiver-generics loop below only ever ADDS bare names already
+/// declared there (dup-insert is a no-op) — `GenericParam::unbounded` is a fallback ONLY
+/// for the (undeclared-typevar-in-receiver diagnostic's own target) case where a
+/// receiver names a typevar `fn_generic_scope`'s OWN caller never validated against
+/// `fd.generics`, so we must not panic/clobber: synthesize a bound-less entry rather
+/// than assume one already exists.
+fn fn_generic_scope(fd: &FnDecl) -> GenericScope {
+    let mut gs: GenericScope = HashMap::new();
     for g in &fd.generics {
-        gs.insert(g.name.clone());
+        gs.insert(g.name.clone(), g.clone());
     }
     if let Some(r) = &fd.receiver {
         for tr in &r.generics {
-            if let TypeRef::Named { path, .. } = tr {
+            if let TypeRef::Named { path, span, .. } = tr {
                 if path.len() == 1 {
-                    gs.insert(path[0].clone());
+                    gs.entry(path[0].clone())
+                        .or_insert_with(|| GenericParam::unbounded(path[0].clone(), *span));
                 }
             }
         }
@@ -21727,10 +21770,10 @@ fn prim_ref(name: &str, span: Span) -> TypeRef {
 /// reject a half-substituted return type (one still carrying a method-level
 /// typevar the turbofish did not bind). Recurses through every TypeRef shape
 /// that can carry a generic name.
-fn typeref_mentions_any(ty: &TypeRef, names: &HashSet<String>) -> bool {
+fn typeref_mentions_any(ty: &TypeRef, names: &impl GenericNameSet) -> bool {
     match ty {
         TypeRef::Named { path, generics, .. } => {
-            (path.len() == 1 && names.contains(&path[0]))
+            (path.len() == 1 && names.has_generic_name(&path[0]))
                 || generics.iter().any(|g| typeref_mentions_any(g, names))
         }
         TypeRef::Array(inner, _)
@@ -21807,7 +21850,7 @@ pub(crate) enum CoalesceReturnAdvice {
 pub(crate) fn coalesce_return_fallback_advice(
     op_ty: Option<&TypeRef>,
     ret_ty: Option<&TypeRef>,
-    gs: &HashSet<String>,
+    gs: &GenericScope,
 ) -> CoalesceReturnAdvice {
     let (op_ty, ret_ty) = match (op_ty, ret_ty) {
         (Some(a), Some(b)) => (a, b),

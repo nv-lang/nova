@@ -1114,14 +1114,18 @@ pub(crate) fn canonicalize_array_to_vec(ty: &TypeRef) -> TypeRef {
 /// concrete. Иначе recurse structurally. Mismatch — Err.
 /// Plan 172.1 Session C: pub(crate) — переиспользуется `build_recv_subst` для
 /// структурной унификации nested-receiver (`Vec[Vec[T]]`) вместо shallow-zip.
-pub(crate) fn unify_type(
+/// Plan 196 gs-bounds: generic over `crate::types::GenericNameSet` — a caller may
+/// pass either the legacy name-only `HashSet<String>` (method-level generic sets) or
+/// the bounds-carrying `GenericScope` (`callee_gs_inner` et al.); this fn only ever
+/// asks "is this name a generic-param?", never reads bounds itself.
+pub(crate) fn unify_type<S: crate::types::GenericNameSet>(
     pattern: &TypeRef,
     concrete: &TypeRef,
-    generic_names: &HashSet<String>,
+    generic_names: &S,
     subst: &mut HashMap<String, TypeRef>,
 ) -> Result<(), String> {
     if let TypeRef::Named { path, generics, .. } = pattern {
-        if path.len() == 1 && generics.is_empty() && generic_names.contains(&path[0]) {
+        if path.len() == 1 && generics.is_empty() && generic_names.has_generic_name(&path[0]) {
             let g_name = &path[0];
             if let Some(prev) = subst.get(g_name) {
                 // Already bound — must match.
