@@ -9099,7 +9099,31 @@ impl<'a> TypeCheckCtx<'a> {
                             // name and a free-fn name never collide in Nova's
                             // namespace, but checking type identity first is the
                             // cheaper, more direct match for a ctor call.
-                            let is_newtype_or_tuple_ctor = self.types.get(fname.as_str())
+                            // [fix M-bare-variant-name-resolves-to-unrelated-type-in-cu,
+                            // реестр 221.1 №136]: a bare `fname` can ALSO legitimately be
+                            // a sum-variant constructor name (`Tagged(kind)` meaning
+                            // `SumRepr.Tagged`) — `self.types` only ever stores TOP-LEVEL
+                            // type declarations (a variant name is nested inside its
+                            // owning `Sum`'s variant list, never a separate `self.types`
+                            // entry), so an UNRELATED Newtype/NamedTuple sharing that bare
+                            // name (`type Tagged[T,U](int)` in a different, also-imported
+                            // file) silently won this producer unconditionally — the
+                            // channel recorded `Named{Tagged}` (the newtype), codegen's
+                            // OWN independent resolution then built the SUM's constructor
+                            // call text (see emit_call's `debt_find_variant_ctx` guard,
+                            // fixed the same window) — the TWO disagreed, one CC-FAIL
+                            // traded for another. Guard: skip the newtype/tuple producer
+                            // when `fname` is ALSO a variant name of some Sum visible in
+                            // this module's own `self.types` (imports included) — the
+                            // variant-constructor arms elsewhere in this match already
+                            // handle that shape correctly. Byte-identical when no sum in
+                            // scope declares a variant of this bare name.
+                            let shadows_sum_variant = self.types.values().any(|td| {
+                                matches!(&td.kind, TypeDeclKind::Sum(variants)
+                                    if variants.iter().any(|v| v.name == *fname))
+                            });
+                            let is_newtype_or_tuple_ctor = !shadows_sum_variant
+                                && self.types.get(fname.as_str())
                                 .map(|td| matches!(&td.kind, TypeDeclKind::Newtype(_) | TypeDeclKind::NamedTuple(_)))
                                 .unwrap_or(false);
                             if is_newtype_or_tuple_ctor {

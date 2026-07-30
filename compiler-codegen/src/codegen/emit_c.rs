@@ -801,6 +801,28 @@ pub struct CEmitter {
     /// Maps protocol_name → (type_param_names, method_signatures).
     /// Populated when a Protocol TypeDecl is processed.
     protocol_method_registry: HashMap<String, (Vec<String>, Vec<EffectMethod>)>,
+    /// [fix M-user-type-name-collides-with-stdlib-type-in-c-symbol, реестр 221.1
+    /// №154] `Protocol name → declaring file_id`. `emit_protocol_box_typedef`
+    /// lowers a protocol's OWN method param/return types (building the
+    /// `NovaVtable_<Proto>` struct) OUTSIDE the `current_emit_file_id`-setting
+    /// scope that guards the normal type-decl emission loop (that loop only
+    /// wraps `emit_type_decl`, while the protocol vtable pre-emit runs earlier,
+    /// at module top). Without a defining file to resolve FROM, `ref_type_base`
+    /// falls through all its resolution branches for a BARE colliding type name
+    /// referenced inside the protocol's own file (e.g. std's `Fmt.sign() -> Sign`
+    /// referencing `runtime.fmt_buf`'s OWN `Sign`, colliding with a user `Sign`
+    /// elsewhere in the CU) and returns the bare, unqualified name — producing
+    /// `Nova_Sign*` in the vtable while the ACTUAL struct was correctly
+    /// qualified to `Nova_runtime_fmt_buf_Sign` by `def_type_base` (which DOES
+    /// know its own file). CC-FAIL `unknown type name 'Nova_Sign'`. Populated at
+    /// both `protocol_method_registry` insert sites (non-generic + generic) from
+    /// the protocol `TypeDecl`'s own `span.file_id`; consulted by
+    /// `emit_protocol_box_typedef` to temporarily set `current_emit_file_id`
+    /// while lowering the protocol's method signatures — mirrors the existing
+    /// `any_type_file_collision()`-gated save/restore idiom used elsewhere
+    /// (e.g. `emit_monomorphized_method_scoped_inner`). Empty/no-op for any CU
+    /// without a collision (byte-identical).
+    protocol_decl_file: HashMap<String, crate::diag::FileId>,
     /// Plan 72 P3-B: companion vtable C variable for each protocol-typed var.
     /// Maps var_name → vtable_c_var_name (e.g. "x" → "__vt_x").
     /// Present only when a concrete type was assigned at declaration.
@@ -1595,6 +1617,40 @@ pub struct CEmitter {
     /// lookup at Ident emission attribute'ит ссылку к её peer'у через
     /// `expr.span.file_id`. Exported consts → no mangle.
     private_const_c_names: HashMap<(crate::diag::FileId, String), String>,
+    /// [fix M-samename-export-const-cross-module-c-symbol-collision, реестр
+    /// 221.1 №151] Names of `export const` declared in ≥2 DISTINCT modules of
+    /// this CU (the EXPORT counterpart of `colliding_type_names`/
+    /// `colliding_fn_names` — those axes already qualify colliding types/fns;
+    /// `export const` had NO qualification at all: `private_const_c_names`
+    /// above is populated ONLY for non-exported consts by original design
+    /// ("Exported consts не mangle'ятся ... collision — ambiguity error
+    /// type-checker'а уровня D29" — a check the checker never actually
+    /// implements, so two `export const`s sharing a bare name in different
+    /// modules emit the SAME bare `_nova_const_<name>_value` C global →
+    /// CC-FAIL `redefinition ... with a different type`). Built in
+    /// `emit_module` from `peer_files`, mirroring the D381 `type_def_modules`
+    /// collision count. Empty for any CU without a same-name export-const
+    /// collision → every lookup below is a no-op (byte-identical).
+    colliding_const_names: HashSet<String>,
+    /// [fix №151] name → qualified C base for the MOST RECENTLY processed
+    /// declaration of that (colliding) name (`emit_const_decl` overwrites this
+    /// entry every time it processes a same-name colliding export const).
+    /// Mirrors — deliberately — the SAME "last-processed-wins" characteristic
+    /// `var_types` (keyed flatly by bare source name, Ident type-inference)
+    /// already has for a same-name collision: a genuinely AMBIGUOUS reference
+    /// (a file importing BOTH colliding candidates unqualified, e.g.
+    /// `mcrepro/step4.nv`) has no clean disambiguation signal available at
+    /// this layer (the resolved-type channel does not carry per-const import
+    /// identity yet), so reference-site resolution reads THIS map — built
+    /// from the SAME processing order that decided `var_types[name]`'s final
+    /// type — guaranteeing the read's C TYPE and its C SYMBOL stay consistent
+    /// (eliminating the C-level redefinition/type-mismatch), even though
+    /// WHICH candidate wins a genuine same-file dual-import ambiguity remains
+    /// processing-order-dependent — not a new behavior, only extended
+    /// consistently from type-inference to symbol-selection. A real fix
+    /// (checker-side ambiguity diagnostic or a resolved-const-identity
+    /// channel) is a followup, not attempted here (see report).
+    const_qualified_by_name: HashMap<String, String>,
     /// Plan 170 (D307): file-private FREE-FN C-name mangling. Same per-file
     /// resolution model as `private_const_c_names`: `((file_id, source_name)
     /// → file-discriminated C name)`. A `priv(file) fn helper` gets a unique
@@ -2312,6 +2368,7 @@ impl CEmitter {
             fn_protocol_params: HashMap::new(),
             fn_any_params: HashMap::new(),
             protocol_method_registry: HashMap::new(),
+            protocol_decl_file: HashMap::new(),
             protocol_var_vtable: HashMap::new(),
             emitted_vtable_types: HashSet::new(),
             emitted_vtable_instances: HashSet::new(),
@@ -2480,6 +2537,8 @@ impl CEmitter {
             imported_modules: HashSet::new(),
             fn_module_map: HashMap::new(),
             private_const_c_names: HashMap::new(),
+            colliding_const_names: HashSet::new(),
+            const_qualified_by_name: HashMap::new(),
             file_priv_fn_c_names: HashMap::new(),
             file_priv_free_fn_decls: HashMap::new(),
             current_emit_file_id: None,
@@ -5431,18 +5490,38 @@ impl CEmitter {
             let mut type_def_files: HashMap<String, HashMap<Vec<String>, Vec<String>>> =
                 HashMap::new();
             let record_def = |td: &TypeDecl, mods: &mut HashMap<String, BTreeSet<Vec<String>>>, m: &[String]| -> bool {
-                // Collision-qualify only the concrete (non-generic) nominal types
-                // with a POINTER `Nova_<name>*` struct/tag identity used uniformly
-                // at def+ref without alias indirection: Sum and HEAP Record. Value-
-                // records (`NovaValue_`), NamedTuple, Newtype/Alias (`type_aliases`
-                // indirection), Effect/Protocol/TypeSet, Opaque (nova_rt headers)
-                // and generics (mono-path naming) are a distinct axis — excluded so
-                // def/ref qualification stays consistent (followup for those kinds).
+                // Collision-qualify concrete (non-generic) nominal types with a
+                // POINTER `Nova_<name>*` struct/tag identity used uniformly at
+                // def+ref without alias indirection: Sum and HEAP Record. Value-
+                // records (`NovaValue_`), NamedTuple, Effect/Protocol/TypeSet,
+                // Opaque (nova_rt headers) and generics (mono-path naming) are a
+                // distinct axis — excluded so def/ref qualification stays
+                // consistent (followup for those kinds).
+                //
+                // [fix M-user-type-name-collides-with-stdlib-type-in-c-symbol,
+                // реестр 221.1 №154, форма (б)] Newtype (`type X(i8)`) is now ALSO
+                // qualifiable — its bare `typedef <inner> Nova_<name>;` collides
+                // exactly like Sum/Record when a same-named type exists in
+                // another module (e.g. user `type Sign(i8)` vs std
+                // `runtime.fmt_buf.Sign`, a Sum) → CC-FAIL `typedef redefinition
+                // with different types`. Newtype has NO `Nova_<name>*` pointer
+                // identity (its alias indirection in `type_aliases` is keyed by
+                // the bare SOURCE name, same convention as Sum/Record's
+                // `sum_schemas`/`record_schemas` — only the EMITTED typedef text
+                // needs the qualified base), so it is safe to fold into the same
+                // detection set. Runtime-backed newtypes (OnceCell/Mutex/Atomic*
+                // — hand-written struct in `nova_rt/*.h`, no typedef ever emitted
+                // by us at all, see `debt_is_runtime_backed_newtype`) are excluded
+                // — nothing to qualify.
                 let heap_record = matches!(
                     (&td.kind, td.allocation),
                     (TypeDeclKind::Record(_), crate::ast::AllocKind::Heap)
                 );
-                let qualifiable = matches!(td.kind, TypeDeclKind::Sum(_)) || heap_record;
+                let plain_newtype = matches!(td.kind, TypeDeclKind::Newtype(_))
+                    && !Self::debt_is_runtime_backed_newtype(td.name.as_str());
+                let qualifiable = matches!(td.kind, TypeDeclKind::Sum(_))
+                    || heap_record
+                    || plain_newtype;
                 if qualifiable
                     && td.generics.is_empty()
                     && !RUNTIME_DEFINED_TYPES.contains(&td.name.as_str())
@@ -5691,6 +5770,50 @@ impl CEmitter {
                                 .or_insert(mangled);
                         }
                     }
+                }
+            }
+        }
+
+        // [fix M-samename-export-const-cross-module-c-symbol-collision,
+        // реестр 221.1 №151]: collision-aware qualification for `export
+        // const` — mirrors D381's `type_def_modules` axis (see
+        // `colliding_const_names` field doc for the full rationale +
+        // reference-side resolution strategy/known limit). Count DISTINCT
+        // declaring modules per export-const simple name across the WHOLE
+        // CU; ≥2 → colliding. `effective_modpath`/`emit_file_module` are
+        // already populated by the D381 block above (unconditional, same
+        // scope) — reused here for the definition-site qualifier.
+        {
+            use std::collections::BTreeSet;
+            let mut export_const_def_modules: HashMap<String, BTreeSet<Vec<String>>> =
+                HashMap::new();
+            if module.peer_files.is_empty() {
+                for item in &module.items {
+                    if let Item::Const(c) = item {
+                        if c.is_export {
+                            export_const_def_modules.entry(c.name.clone())
+                                .or_default()
+                                .insert(module.name.clone());
+                        }
+                    }
+                }
+            } else {
+                for pf in &module.peer_files {
+                    let m = effective_modpath(pf);
+                    for item in &pf.items_here {
+                        if let Item::Const(c) = item {
+                            if c.is_export {
+                                export_const_def_modules.entry(c.name.clone())
+                                    .or_default()
+                                    .insert(m.clone());
+                            }
+                        }
+                    }
+                }
+            }
+            for (name, mods) in &export_const_def_modules {
+                if mods.len() >= 2 {
+                    self.colliding_const_names.insert(name.clone());
                 }
             }
         }
@@ -6646,6 +6769,8 @@ impl CEmitter {
                             t.name.clone(),
                             (Vec::new(), flat_methods),
                         );
+                        // [fix №154] declaring file — see `protocol_decl_file` doc.
+                        self.protocol_decl_file.insert(t.name.clone(), t.span.file_id);
                         non_generic_protocols.push(t.name.clone());
                     }
                 }
@@ -6804,6 +6929,8 @@ impl CEmitter {
                             t.name.clone(),
                             (type_params, flat_methods),
                         );
+                        // [fix №154] declaring file — see `protocol_decl_file` doc.
+                        self.protocol_decl_file.insert(t.name.clone(), t.span.file_id);
                         continue;
                     }
                     // Plan 138.2 Ф.0c: skip the imported generic template when
@@ -9320,11 +9447,31 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Plan 91.12 (D126 retract followup): для module-private consts
         // используем mangled C name из `private_const_c_names` (источник —
         // pre-pass в emit_module). Ключ — (file_id из span декларации,
-        // source name). Exported consts → имя как есть.
+        // source name). Exported consts → имя как есть, ЕСЛИ bare-имя не
+        // коллидирует с export const'ом ДРУГОГО модуля (см. ниже).
+        //
+        // [fix M-samename-export-const-cross-module-c-symbol-collision,
+        // реестр 221.1 №151]: a colliding `export const` gets THE SAME
+        // `Nova_const_<modpath>_<name>` qualifier the non-export axis above
+        // uses — `colliding_const_names`/`const_qualified_by_name` field docs
+        // explain the reference-side resolution + its known ambiguous-dual-
+        // import limit. Byte-identical when non-colliding.
         let c_name = self.private_const_c_names
             .get(&(c.span.file_id, c.name.clone()))
             .cloned()
-            .unwrap_or_else(|| c.name.clone());
+            .unwrap_or_else(|| {
+                if c.is_export && self.colliding_const_names.contains(&c.name) {
+                    if let Some(modpath) = self.emit_file_module.get(&c.span.file_id) {
+                        if !modpath.is_empty() {
+                            return format!("Nova_const_{}_{}", modpath.join("_"), c.name);
+                        }
+                    }
+                }
+                c.name.clone()
+            });
+        if c.is_export && self.colliding_const_names.contains(&c.name) {
+            self.const_qualified_by_name.insert(c.name.clone(), c_name.clone());
+        }
         // Emit as a static const variable (MSVC-safe, no VLAs or macros needed)
         // We emit the value as an expression; for string literals this needs
         // a compound literal initialiser which MSVC doesn't support at file scope.
@@ -10393,6 +10540,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // иначе C `duplicate member 'get'`.
         // Plan 91.8a.2 followup 2026-05-29: Self-typed params lower to `void*`
         // в vtable struct (same lowering used by thunk emission below).
+        // [fix M-user-type-name-collides-with-stdlib-type-in-c-symbol, реестр
+        // 221.1 №154]: lower the protocol's OWN method param/return types under
+        // ITS declaring file — see `protocol_decl_file` doc above. GATED
+        // (byte-identical for a CU without a collision — mirrors the existing
+        // `any_type_file_collision()`-gated save/restore idiom used by
+        // `emit_monomorphized_method_scoped_inner` and the type-decl loop).
+        let saved_emit_file_id_proto = self.current_emit_file_id;
+        if self.any_type_file_collision() {
+            if let Some(&fid) = self.protocol_decl_file.get(proto_name) {
+                self.current_emit_file_id = Some(fid);
+            }
+        }
         let method_param_c: Vec<(String, Vec<String>)> = methods.iter().map(|m| {
             let pts: Vec<String> = m.params.iter()
                 .filter_map(|p| {
@@ -10491,6 +10650,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             let mangled_name = Self::mangle_op(&m.name, param_c_types, &all_method_pairs);
             fields.push_str(&format!("    {} (*{})({}); \n", ret_c, mangled_name, params_str));
         }
+        // [fix №154] restore — see save above.
+        self.current_emit_file_id = saved_emit_file_id_proto;
         self.current_type_subst = old_subst;
         // Vtable struct typedef (skip если runtime уже даёт его).
         let args_desc = if args_mangled.is_empty() {
@@ -16925,11 +17086,23 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     return Ok(());
                 }
                 let inner_c = self.type_ref_to_c(inner)?;
+                // [fix №154 форма (б)] Emit the typedef under `def_base` (the
+                // collision-aware qualified base — see the `record_def`/
+                // `qualifiable` doc above), not the bare `t.name`: a colliding
+                // Newtype simple name (`Sign` vs std's `runtime.fmt_buf.Sign`)
+                // otherwise emits a second `typedef ... Nova_Sign;` for a
+                // DIFFERENT underlying C type → CC-FAIL `typedef redefinition
+                // with different types`. Byte-identical when non-colliding
+                // (`def_base` ≡ `t.name`). `type_aliases` stays keyed by the
+                // bare SOURCE name — same convention as `sum_schemas`/
+                // `record_schemas` (reference sites resolve the alias by source
+                // name; only the emitted C text needs the qualified base).
+                //
                 // Emit into user_type_fwd_decls (spliced before value-record defs
                 // and tuple typedefs) so that value-record fields of newtype can
                 // reference this typedef without forward-declaration issues.
                 self.user_type_fwd_decls.push_str(&format!(
-                    "typedef {} Nova_{};\n", inner_c, t.name));
+                    "typedef {} Nova_{};\n", inner_c, def_base));
                 // Newtypes are typedef'd scalars — use inner type directly (no pointer indirection)
                 self.type_aliases.insert(t.name.clone(), inner_c);
             }
@@ -33161,9 +33334,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // consts further below — a different C-naming convention;
                 // see `emit_const_decl`/`emit_lazy_const`).
                 if self.lazy_consts.contains(name) {
+                    // [fix M-samename-export-const-cross-module-c-symbol-
+                    // collision, реестр 221.1 №151]: `private_const_c_names`
+                    // only covers non-export/file-priv consts (per-file key);
+                    // a colliding EXPORT const's qualifier lives in
+                    // `const_qualified_by_name` (global-by-name — see its
+                    // field doc for the reference-resolution rationale +
+                    // known limit) — consulted as the SECOND fallback, before
+                    // the bare-name default.
                     let qualifier = self.private_const_c_names
                         .get(&(expr.span.file_id, name.clone()))
                         .cloned()
+                        .or_else(|| self.const_qualified_by_name.get(name).cloned())
                         .unwrap_or_else(|| name.clone());
                     return Ok(format!("_nova_const_{}_value", qualifier));
                 }
@@ -33194,6 +33376,16 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     .get(&(expr.span.file_id, name.clone()))
                 {
                     return Ok(mangled.clone());
+                }
+                // [fix №151] EAGER (constexpr-initialiser) colliding export
+                // const — mirrors the lazy branch's `const_qualified_by_name`
+                // fallback above (this map's value IS the final eager symbol
+                // itself, no `_nova_const_..._value` wrapper — same
+                // convention `emit_const_decl`'s eager arm already uses).
+                if self.colliding_const_names.contains(name) {
+                    if let Some(mangled) = self.const_qualified_by_name.get(name) {
+                        return Ok(mangled.clone());
+                    }
                 }
                 // [M-c-keyword-ident-collision] (Plan 172.13): plain local-var/
                 // param read (and, since Stmt::Assign lowers its target via
@@ -38012,11 +38204,37 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
             _ => None,
         };
+        // [fix M-bare-variant-name-resolves-to-unrelated-type-in-cu, реестр
+        // 221.1 №136]: `type_aliases` is a FLAT `HashMap<String, String>`
+        // keyed by the BARE type name across the WHOLE CU (every Newtype/
+        // Alias declaration registers into it regardless of which file
+        // declares it — see `emit_type_decl`'s Newtype/Alias arms). A bare
+        // sum-variant constructor call (`Tagged("kind")`, meaning
+        // `SumRepr.Tagged`) and an UNRELATED Newtype (`type Tagged[T,U](int)`
+        // in a different file) sharing the same simple name previously hit
+        // THIS newtype-identity-cast intercept FIRST — silently casting the
+        // arg to the newtype's inner C type (`(nova_int)(strlit)` for a
+        // string arg) with NO error/warning, since a Newtype's alias check
+        // ran unconditionally before the sum-variant-constructor check
+        // (`debt_find_variant_ctx`) below ever got a chance. Guard: only take
+        // the newtype-identity path when `name` is NOT ALSO a recognised
+        // sum-variant name (of matching arity) — `debt_find_variant_ctx`
+        // already carries the D381 arity/hint/fn-return-sum disambiguation
+        // used for a variant shared across MULTIPLE colliding sums (see its
+        // own doc), so reusing it here means an UNAMBIGUOUS (or already-
+        // disambiguable) variant now wins over an unrelated same-named
+        // newtype — byte-identical for the overwhelming common case (no
+        // sum in the CU declares a variant of this bare name at all, so
+        // `debt_find_variant_ctx` returns `None` and this newtype path
+        // proceeds exactly as before).
         if let Some(name) = name_opt {
-            if let Some(aliased_c) = self.type_aliases.get(name).cloned() {
-                if args.len() == 1 {
-                    let v = self.emit_expr(args[0].expr())?;
-                    return Ok(format!("(({})({}))", aliased_c, v));
+            let shadowed_by_variant = self.debt_find_variant_ctx(name, Some(args.len())).is_some();
+            if !shadowed_by_variant {
+                if let Some(aliased_c) = self.type_aliases.get(name).cloned() {
+                    if args.len() == 1 {
+                        let v = self.emit_expr(args[0].expr())?;
+                        return Ok(format!("(({})({}))", aliased_c, v));
+                    }
                 }
             }
         }
