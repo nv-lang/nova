@@ -49,18 +49,17 @@ module api
 
 import ../domain.{Report, TaskResult, TaskStatus, SourceData, Source}
 
-// [M-flagship-anon-record-literal-enum-payload]: a BARE record literal
-// (`{ id, payload: ... }`) as an enum-variant payload argument
-// (`TaskStatus.Done({ ... })`) confuses codegen's expected-type propagation
-// here — "anonymous record literal: expected struct 'TaskStatus' not in
-// record_schemas" (it looks for a `TaskStatus` schema instead of the
-// variant's own payload type, `SourceData`). The OUTER literal stays bare
-// (return-position — the checker rejects a redundant type prefix there,
-// "the return type `-> TaskResult` already declares it"); only the INNER
-// one (an enum-variant call ARGUMENT, not a return value) needs the
-// explicit `SourceData` prefix to sidestep the gap.
+// [M-flagship-anon-record-literal-enum-payload] (closed, 221.1 №155а): a
+// BARE record literal (`{ id, payload: ... }`) as an enum-variant payload
+// argument used to confuse codegen's expected-type propagation here —
+// "anonymous record literal: expected struct 'TaskStatus' not in
+// record_schemas" (it looked for a `TaskStatus` schema instead of the
+// variant's own payload type, `SourceData`) — codegen fix:
+// `try_emit_explicit_variant_ctor` now scopes `expected_record_type` per
+// payload arg from the variant's own field types. The explicit
+// `SourceData` prefix workaround is no longer needed.
 fn done_result(id str, ms int) -> TaskResult =>
-    { id, status: TaskStatus.Done(SourceData { id, payload: []u8.new() }), elapsed_ms: ms }
+    { id, status: TaskStatus.Done({ id, payload: []u8.new() }), elapsed_ms: ms }
 
 fn failed_result(id str, err str, ms int) -> TaskResult =>
     { id, status: TaskStatus.Failed(err), elapsed_ms: ms }
