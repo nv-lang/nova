@@ -23,10 +23,14 @@ import std.concurrency.supervisor as sup
 import std.time.duration
 
 test "MultiError: не-primary детская ошибка читается suppressed() после ловли primary" {
+    // Plan 238 Ф.4 (D441 §3): `with Fail[T]` handler — AtomicInt вместо
+    // mut-int (E_HANDLER_MUT_CAPTURE_IN_FIBER). `Supervisor.on_child_fail`
+    // ниже НЕ мигрирован — D416§2-carve-out (сериализован, `failed` там уже
+    // `AtomicInt` изначально).
     mut failed = AtomicInt.new(0)
-    mut caught = -1
+    mut caught = AtomicInt.new(-1)
     ro _ = with Fail[int] = |e| {
-        caught = e
+        caught.store(e)
         0
     } {
         with Supervisor = effect Supervisor {
@@ -50,10 +54,11 @@ test "MultiError: не-primary детская ошибка читается supp
         }
         99
     }
-    assert(caught == 111 || caught == 222)
+    ro caught_val = caught.load()
+    assert(caught_val == 111 || caught_val == 222)
     ro supd = suppressed()
     assert(supd.len() == 1)
-    ro want = if caught == 111 { 222 } else { 111 }
+    ro want = if caught_val == 111 { 222 } else { 111 }
     ro e0 = supd.get(0)!!
     assert(e0 is int)
     if Some(v) = e0.try_as[int]() {
@@ -98,9 +103,10 @@ test "MultiError: default-Escalate — suppressed ⊆ прочие детски�
     // сколько успело зафиксироваться, столько retained (0..2). Инвариант
     // (любое расписание): каждый suppressed-элемент — int из набора тегов,
     // НЕ равный primary; CANCEL-производные не попадают.
-    mut caught = -1
+    // Plan 238 Ф.4 (D441 §3): AtomicInt вместо mut-int (см. тест выше).
+    mut caught = AtomicInt.new(-1)
     ro _ = with Fail[int] = |e| {
-        caught = e
+        caught.store(e)
         0
     } {
         supervised {
@@ -110,7 +116,8 @@ test "MultiError: default-Escalate — suppressed ⊆ прочие детски�
         }
         99
     }
-    assert(caught >= 501 && caught <= 503)
+    ro caught_val = caught.load()
+    assert(caught_val >= 501 && caught_val <= 503)
     ro supd = suppressed()
     assert(supd.len() <= 2)
     mut i = 0
@@ -119,7 +126,7 @@ test "MultiError: default-Escalate — suppressed ⊆ прочие детски�
         assert(e is int)
         if Some(v) = e.try_as[int]() {
             assert(v >= 501 && v <= 503)
-            assert(v != caught)
+            assert(v != caught_val)
         } else {
             assert(false)
         }

@@ -1,0 +1,36 @@
+// mut_capture_transitive_atomic_control_test.nv — Plan 238 Ф.6 (D441 §3):
+// pos-twin репро C из ветки p150-race-repro (race150/c_atomic_control.nv).
+// Тот же код, что neg-twin (`neg/mut_capture_transitive_via_param_neg.nv`),
+// но замыкание закрывается на `AtomicInt` вместо голого `Vec` — белый
+// список (D415/§3 в D441) делает транзитивную передачу через параметр
+// БЕЗОПАСНОЙ, энфорс обязан НЕ флагать. Рантайм-измерение (RACE150_FINDINGS.md):
+// 20/20 прогонов чисты (expected == got на каждом), доказывая, что дело
+// именно в отсутствии синхронизации у неудачного варианта, а не в баге
+// самого рантайма/спавна.
+//
+// Бежит ARMED на дефолтном worker-count (M:N — периметр правила).
+
+module standalone.mut_capture_transitive_atomic_control_test
+
+import std.runtime.sync.{AtomicInt}
+
+fn parallel_spawn(f fn() -> (), n int, m int) {
+    supervised {
+        for _ in 0..n {
+            spawn {
+                for _ in 0..m {
+                    f()
+                }
+            }
+        }
+    }
+}
+
+test "closure passed by value into a spawn-invoking parameter, closing over AtomicInt — legal, exact count" {
+    ro n = 8
+    ro m = 1000
+    mut counter = AtomicInt.new(0)
+    ro add = || { counter.fetch_add(1) }
+    parallel_spawn(add, n, m)
+    assert(counter.load() == n * m)
+}

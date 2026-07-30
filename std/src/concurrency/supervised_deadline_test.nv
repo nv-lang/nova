@@ -56,11 +56,14 @@ test "timeout fires: TimeoutError caught, sleep interrupted early" {
     // TimeoutError (dispatch is by type-id — a non-TimeoutError would not
     // route here). The `is TimeoutError` narrowing form is exercised in the
     // `outcome`-based test below.
-    mut caught_typed = false
+    // Plan 238 Ф.4 (D441 §3): `with Fail[TimeoutError]` handler исполняется
+    // в файбере падающей операции — AtomicBool вместо mut-флага
+    // (E_HANDLER_MUT_CAPTURE_IN_FIBER).
+    mut caught_typed = AtomicBool.new(false)
     ro t0 = Timestamp.now().unix_millis()
     ro r = with Fail[TimeoutError] = |e| {
         // `is TimeoutError` narrowing (e boxed to `any` через хелпер).
-        caught_typed = is_timeout_error(e)
+        caught_typed.store(is_timeout_error(e))
         0
     } {
         supervised(timeout: 100.to_millis()) {
@@ -71,7 +74,7 @@ test "timeout fires: TimeoutError caught, sleep interrupted early" {
     ro elapsed = Timestamp.now().unix_millis() - t0
     // Handler сработал на TimeoutError → r = 0 (не 99).
     assert(r == 0)
-    assert(caught_typed)
+    assert(caught_typed.load())
     // Ключевой замер: sleep(5000) прерван отменой около срока (100ms),
     // НЕ доспал до конца. Порог щедрый (2000ms) под медленный CI.
     assert(elapsed < 2000)
@@ -80,9 +83,10 @@ test "timeout fires: TimeoutError caught, sleep interrupted early" {
 // 4. Абсолютная форма `deadline: Monotonic`.
 
 test "deadline (absolute Monotonic) fires TimeoutError" {
-    mut caught = false
+    // Plan 238 Ф.4 (D441 §3): AtomicBool вместо mut-флага.
+    mut caught = AtomicBool.new(false)
     ro r = with Fail[TimeoutError] = |_e| {
-        caught = true
+        caught.store(true)
         0
     } {
         supervised(deadline: Monotonic.now() + 100.to_millis()) {
@@ -91,17 +95,18 @@ test "deadline (absolute Monotonic) fires TimeoutError" {
         7
     }
     assert(r == 0)
-    assert(caught)
+    assert(caught.load())
 }
 
 // 5. Вложенные сроки: внутренний срок ДЛИННЕЕ внешнего — не может продлить.
 //    Внешний (100ms) срабатывает, sleep(5000) во вложенной области прерван рано.
 
 test "nested: inner deadline cannot extend outer" {
-    mut caught = false
+    // Plan 238 Ф.4 (D441 §3): AtomicBool вместо mut-флага.
+    mut caught = AtomicBool.new(false)
     ro t0 = Timestamp.now().unix_millis()
     ro r = with Fail[TimeoutError] = |_e| {
-        caught = true
+        caught.store(true)
         0
     } {
         supervised(timeout: 100.to_millis()) {
@@ -113,7 +118,7 @@ test "nested: inner deadline cannot extend outer" {
     }
     ro elapsed = Timestamp.now().unix_millis() - t0
     assert(r == 0)
-    assert(caught)
+    assert(caught.load())
     assert(elapsed < 2000)
 }
 
@@ -122,9 +127,10 @@ test "nested: inner deadline cannot extend outer" {
 
 test "deadline+cancel: cancel earlier — no TimeoutError" {
     ro tok = CancelToken.new()
-    mut timed_out = false
+    // Plan 238 Ф.4 (D441 §3): AtomicBool вместо mut-флага.
+    mut timed_out = AtomicBool.new(false)
     ro r = with Fail[TimeoutError] = |_e| {
-        timed_out = true
+        timed_out.store(true)
         0
     } {
         supervised(cancel: tok, timeout: 30.to_seconds()) {
@@ -134,7 +140,7 @@ test "deadline+cancel: cancel earlier — no TimeoutError" {
         5
     }
     // Отмена сделала работу до срока → нет TimeoutError → r = 5.
-    assert(!timed_out)
+    assert(!timed_out.load())
     assert(r == 5)
 }
 
@@ -142,9 +148,10 @@ test "deadline+cancel: cancel earlier — no TimeoutError" {
 
 test "deadline+cancel: deadline earlier — TimeoutError" {
     ro tok = CancelToken.new()
-    mut timed_out = false
+    // Plan 238 Ф.4 (D441 §3): AtomicBool вместо mut-флага.
+    mut timed_out = AtomicBool.new(false)
     ro r = with Fail[TimeoutError] = |_e| {
-        timed_out = true
+        timed_out.store(true)
         0
     } {
         supervised(cancel: tok, timeout: 100.to_millis()) {
@@ -152,7 +159,7 @@ test "deadline+cancel: deadline earlier — TimeoutError" {
         }
         5
     }
-    assert(timed_out)
+    assert(timed_out.load())
     assert(r == 0)
 }
 
@@ -160,9 +167,10 @@ test "deadline+cancel: deadline earlier — TimeoutError" {
 //    = немедленное истечение; тело-дети отменяются на первом suspend).
 
 test "zero timeout: immediate TimeoutError" {
-    mut caught = false
+    // Plan 238 Ф.4 (D441 §3): AtomicBool вместо mut-флага.
+    mut caught = AtomicBool.new(false)
     ro r = with Fail[TimeoutError] = |_e| {
-        caught = true
+        caught.store(true)
         0
     } {
         supervised(timeout: 0.to_millis()) {
@@ -170,7 +178,7 @@ test "zero timeout: immediate TimeoutError" {
         }
         3
     }
-    assert(caught)
+    assert(caught.load())
     assert(r == 0)
 }
 
@@ -187,9 +195,10 @@ test "zero timeout: immediate TimeoutError" {
 
 test "deadline cancels a spawned child's in-flight sleep (no leaked marker)" {
     ro (tx, rx) = Channel.new(1)
-    mut caught = false
+    // Plan 238 Ф.4 (D441 §3): AtomicBool вместо mut-флага.
+    mut caught = AtomicBool.new(false)
     ro r = with Fail[TimeoutError] = |_e| {
-        caught = true
+        caught.store(true)
         0
     } {
         supervised(timeout: 100.to_millis()) {
@@ -202,7 +211,7 @@ test "deadline cancels a spawned child's in-flight sleep (no leaked marker)" {
         1
     }
     assert(r == 0)
-    assert(caught)
+    assert(caught.load())
     // Grace window past the child's full (uncancelled) sleep duration.
     (3200).to_millis().sleep()
     ro leaked = rx.try_recv()

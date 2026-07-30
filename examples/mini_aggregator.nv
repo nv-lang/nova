@@ -23,8 +23,11 @@ const BUDGET_MS int = 120   // общий бюджет на весь забег,
 // (его Time.sleep прерывается), канал остаётся пуст, исход — "cancelled".
 fn probe(latency_ms int, deadline Monotonic) Time -> str {
     ro { tx, rx } = Channel.new(1)
-    mut timed_out = false
-    with Fail[TimeoutError] = |_e| { timed_out = true } {
+    // Plan 238 (D441 §3): `with Fail[T]` handler исполняется В ФАЙБЕРЕ
+    // падающей операции — AtomicBool вместо mut-флага
+    // (E_HANDLER_MUT_CAPTURE_IN_FIBER, D415 белый список).
+    mut timed_out = AtomicBool.new(false)
+    with Fail[TimeoutError] = |_e| { timed_out.store(true) } {
         supervised(deadline: deadline) {
             spawn {
                 (latency_ms).to_millis().sleep()
@@ -32,7 +35,7 @@ fn probe(latency_ms int, deadline Monotonic) Time -> str {
             }
         }
     }
-    if timed_out {
+    if timed_out.load() {
         "cancelled"
     } else {
         match rx.try_recv() {

@@ -24,11 +24,13 @@ test "Supervisor=stop + parallel for: собери выживших (упавш�
 }
 
 test "Supervisor=escalate + parallel for: падение итерации эскалируется (паритет с дефолтом)" {
-    mut caught = false
-    mut got = -1
+    // Plan 238 Ф.4 (D441 §3): `with Fail[T]` handler — AtomicBool/AtomicInt
+    // вместо mut-флагов (E_HANDLER_MUT_CAPTURE_IN_FIBER).
+    mut caught = AtomicBool.new(false)
+    mut got = AtomicInt.new(-1)
     ro _ = with Fail[int] = |e| {
-        caught = true
-        got = e
+        caught.store(true)
+        got.store(e)
         0
     } {
         ro xs = with Supervisor = sup.escalate() {
@@ -39,6 +41,6 @@ test "Supervisor=escalate + parallel for: падение итерации эск
         }
         xs.len()
     }
-    assert(caught)
-    assert(got == 555)
+    assert(caught.load())
+    assert(got.load() == 555)
 }

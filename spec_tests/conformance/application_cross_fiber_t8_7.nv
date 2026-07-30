@@ -29,7 +29,10 @@ fn Res3 consume @cleanup(_outcome ScopeOutcome) -> () {
 }
 
 test "Plan 110.4.7 A110.4.7.a: child fiber inherits Application via D80 snapshot" {
-    mut child_overrun = false
+    // Plan 238 Ф.4 (D441 §3): ResourceTrace-хендлер исполняется в файбере
+    // ребёнка (spawn-содержащее тело) — AtomicBool вместо mut-флага
+    // (E_HANDLER_MUT_CAPTURE_IN_FIBER).
+    mut child_overrun = AtomicBool.new(false)
     with Application = effect Application {
         register_finalizer(_f) -> () {
             return ()
@@ -41,7 +44,7 @@ test "Plan 110.4.7 A110.4.7.a: child fiber inherits Application via D80 snapshot
         with ResourceTrace = effect ResourceTrace {
             on_resource_enter(_label) -> () { return () }
             on_resource_exit(_label, _outcome, _duration_ms, overrun) -> () {
-                child_overrun = overrun
+                child_overrun.store(overrun)
                 return ()
             }
         } {
@@ -57,5 +60,5 @@ test "Plan 110.4.7 A110.4.7.a: child fiber inherits Application via D80 snapshot
             }
         }
     }
-    assert(child_overrun == true)
+    assert(child_overrun.load() == true)
 }

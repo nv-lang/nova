@@ -5,9 +5,12 @@
 
 module spec_tests.conformance
 test "triple nested throw — outermost handler catches" {
-    mut caught = false
+    // Plan 238 Ф.4 (D441 §3): `with Fail[T]` handler runs IN THE FIBER of
+    // the failing operation (Ф.0 measurement) — AtomicBool вместо mut-флага
+    // (E_HANDLER_MUT_CAPTURE_IN_FIBER), тот же приём, что и test2 ниже.
+    mut caught = AtomicBool.new(false)
     ro _ = with Fail[int] = |e| {
-        caught = true
+        caught.store(true)
         0
     } {
         supervised {
@@ -23,7 +26,7 @@ test "triple nested throw — outermost handler catches" {
         }
         0
     }
-    assert(caught)
+    assert(caught.load())
 }
 
 test "triple nested — normal completion all levels" {

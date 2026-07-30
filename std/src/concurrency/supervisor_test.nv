@@ -35,9 +35,12 @@ test "stop(): падение ребёнка не эскалируется, sibli
 }
 
 test "escalate(): падение эскалируется наружу (паритет с дефолтом)" {
-    mut caught = false
+    // Plan 238 Ф.4 (D441 §3): `with Fail[T]` handler исполняется в файбере
+    // падающей операции — AtomicBool вместо mut-флага
+    // (E_HANDLER_MUT_CAPTURE_IN_FIBER).
+    mut caught = AtomicBool.new(false)
     ro _ = with Fail[int] = |e| {
-        caught = true
+        caught.store(true)
         0
     } {
         with Supervisor = sup.escalate() {
@@ -47,5 +50,5 @@ test "escalate(): падение эскалируется наружу (пари
         }
         99
     }
-    assert(caught)
+    assert(caught.load())
 }
