@@ -4424,24 +4424,46 @@ impl CEmitter {
         }
         // The receiver sum must OWN a payload variant `variant` of matching arity.
         // Try the qualified base first, then the bare receiver name (schema keys
-        // are byte-identical for non-colliding sums).
-        let owns = |me: &Self, key: &str| -> bool {
+        // are byte-identical for non-colliding sums) — need the variant's OWN
+        // `field_c_types` now (not just a bool), see the [M-155.a] fix below.
+        let find_fields = |me: &Self, key: &str| -> Option<Vec<String>> {
             me.sum_schema_registry
                 .lookup_sum_schema(key)
-                .map(|e| {
-                    e.variants.iter().any(|v| {
-                        v.variant_name == variant && v.field_c_types.len() == args.len()
-                    })
+                .and_then(|e| {
+                    e.variants.iter()
+                        .find(|v| v.variant_name == variant && v.field_c_types.len() == args.len())
+                        .map(|v| v.field_c_types.clone())
                 })
-                .unwrap_or(false)
         };
-        if !owns(self, &sum_base) && !owns(self, recv_type) {
-            return Ok(None);
-        }
+        let field_c_types = match find_fields(self, &sum_base).or_else(|| find_fields(self, recv_type)) {
+            Some(f) => f,
+            None => return Ok(None),
+        };
+        // [M-155.a-flagship-anon-record-literal-enum-payload]: mirrors the
+        // Ok/Err fix a few hundred lines up ([M-181-anon-record-in-ctor-arg-
+        // codegen]) for the general `Sum.Variant(args)` explicit-receiver
+        // ctor. A payload arg may be an ANONYMOUS record literal
+        // (`TaskStatus.Done({ id, payload: .. })`) — its own bare-literal
+        // codegen arm (emit_record_lit's D55 inferred-type-context branch)
+        // only fires from `expected_record_type`, which — unscoped here —
+        // carried whatever the ENCLOSING expression left set (e.g. the
+        // fn's OWN return-type struct, or the sum name itself), never this
+        // variant field's ACTUAL declared struct — "anonymous record
+        // literal: expected struct 'TaskStatus' not in record_schemas"
+        // instead of the real payload type (`SourceData`). The variant's
+        // OWN `field_c_types` (resolved from the schema, not guessed) give
+        // the correct per-arg target — scope it while emitting each arg.
+        // Byte-identical for non-anon-record args (the field is only
+        // consulted by the anon-record-without-spread branch) and for
+        // scalar/str payload slots (`debt_struct_name_from_c_type` returns
+        // `None` for those, same as the pre-existing `saved_expected`).
+        let saved_expected = self.expected_record_type.clone();
         let mut arg_strs = Vec::with_capacity(args.len());
-        for a in args {
+        for (a, fty) in args.iter().zip(field_c_types.iter()) {
+            self.expected_record_type = Self::debt_struct_name_from_c_type(fty);
             arg_strs.push(self.emit_expr(a.expr())?);
         }
+        self.expected_record_type = saved_expected;
         Ok(Some(format!(
             "nova_make_{}_{}({})",
             sum_base,
