@@ -13873,48 +13873,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
         }
 
-        // Plan 221.1 №162 (was: unconditional `_nova_active_scope = &queue`
-        // here — see the removed doc comment/history for the full story):
-        // `_nova_active_scope`/`_nova_active_slot` are the (scope,slot) pair
-        // EVERY blocking primitive parks on (nova_sched_park, select,
-        // nova_blocking_offload, nova_sched_park_with_unlock — channels.h,
-        // sync_primitives.h, fs.c). That pair is only ever VALID while
-        // something is actually DRIVING (mco_resuming) this exact coroutine
-        // using THAT SAME (scope,slot) bookkeeping — which is true for a
-        // genuinely spawned child (its owning scope's `nova_supervised_step`
-        // sets the pair fresh before each resume, fibers.h) but NOT true for
-        // a `supervised{}` body's OWN statements: those run INLINE, on the
-        // SAME coroutine that entered the block, with NOBODY driving a
-        // fresh resume loop for `queue` yet (`nova_supervised_run(&queue)`
-        // — the only thing that ever iterates `queue`'s fibers — starts
-        // strictly AFTER this body finishes). Pointing `_nova_active_scope`
-        // at the brand-new, still-empty `queue` here made a direct blocking
-        // op in the body abort (`nova_sched_park`: `slot < scope->count`
-        // fails, count is still 0). A synthesized self-slot in `queue`
-        // (an earlier version of this fix) does not work either: the
-        // coroutine's REAL driver (whichever scope's step loop — or bare
-        // `main()` — is actually mco_resuming it right now) keeps consulting
-        // ITS OWN bookkeeping, sees no parked bit set there, and resumes it
-        // again while it's genuinely parked elsewhere — a double-resume
-        // hazard that hangs instead of aborting.
-        //
-        // Fix: leave `_nova_active_scope`/`_nova_active_slot` COMPLETELY
-        // UNTOUCHED for the body-statement-execution window. They already
-        // correctly hold this coroutine's REAL, currently-driven (scope,
-        // slot) — inherited from whatever resumed us (an outer
-        // `nova_supervised_step`, or `main()`'s own `_nova_main_scope` drive
-        // loop) — which is exactly the registration a direct blocking op
-        // must park on to be found/woken correctly. `spawn{}` inside the
-        // body is unaffected: it routes via the compile-time-tracked
-        // `current_scope_queue` (below), never via this runtime TLS, and a
-        // spawned child gets ITS OWN correct (scope,slot) the first time
-        // `nova_supervised_step` (running `queue`'s OWN join loop, called
-        // via `nova_supervised_run` further down) actually resumes it.
-        //
-        // `prev_scope_var` is kept only so a defensive restore stays
-        // trivially correct if some future edit reintroduces a conditional
-        // swap; today it is a no-op bookend (assigned, never reassigned to
-        // `&queue`, restored to itself).
+        // Plan 221.1 №162 (D435): do NOT repoint _nova_active_scope/_slot at
+        // `queue` — untouched, a direct body blocking op parks correctly on
+        // this coroutine's real (scope,slot). fibers.h (nova_scope_free_slot) + D435.
         self.line(&format!("NovaFiberQueue* {} = _nova_active_scope;", prev_scope_var));
 
         // Activate scope: spawn inside body routes into queue.
