@@ -19363,9 +19363,49 @@ impl<'a> TypeCheckCtx<'a> {
                 Some(r) => r.clone(),
                 None => TypeRef::Unit(m.span),
             };
+            // [M-196-gs-bounds-self-in-protocol-return] a protocol method may return
+            // `Self` (`Deserializer.enter_field(key str) -> Result[Self, DeError]`,
+            // `std/src/encoding/serde/serde.nv`) — the implementor's OWN concrete type,
+            // not a real declared type named "Self". A first version of this fn
+            // substituted `Self` -> `peeled` unconditionally (mirroring the sibling
+            // `mentions_self` handling a few lines up in this same fn) — but that
+            // regressed the flagship (`nova-polaris` build, `[E_RECV_METHOD_MISMATCH]`
+            // on the `.deser_int`-family dispatch reached through an `enter_field(..)?`
+            // chain): substituting Self INSIDE a compound carrier (`Result[Self, E]`)
+            // interacts with the `?`-operator's carrier-unwrap machinery in a way this
+            // window did not fully chase down (receiver miscategorized as `[]T`, then
+            // as `DeError`, depending on the exact substituted shape — a live, deeper
+            // bug in that pipeline, not something a bounds-only carrier fix should
+            // paper over). Narrowed instead: only substitute a BARE `-> Self` return
+            // (mirrors the direct-receiver branch's OWN restriction to non-compound
+            // returns); a `Self` nested inside a carrier is declined (`continue` to the
+            // next bound / fall through to legacy) — exactly the SAME (safe, already-
+            // working) codepath these calls took before this fn existed at all. Zero
+            // regression: this only narrows what the NEW fallback covers, it does not
+            // change any pre-existing resolution.
+            let ret = match &ret {
+                TypeRef::Named { path: rp, generics: rg, .. }
+                    if rp.len() == 1 && rp[0] == "Self" && rg.is_empty() =>
+                {
+                    peeled.clone()
+                }
+                other if typeref_mentions_any(other, &Self::self_only_gs()) => continue,
+                other => other.clone(),
+            };
             return Some(ret);
         }
         None
+    }
+
+    /// Plan 196 gs-bounds: singleton `GenericScope`-shaped `{"Self": ...}` marker used
+    /// ONLY as a `typeref_mentions_any` probe (name-membership check) — never read for
+    /// its (dummy) bound content. Avoids a second, HashSet-typed overload of the same
+    /// probe just for this one caller.
+    fn self_only_gs() -> GenericScope {
+        std::iter::once((
+            "Self".to_string(),
+            GenericParam::unbounded("Self".to_string(), Span::dummy()),
+        )).collect()
     }
 
     /// Plan 172.1 D145/D282: prefix-generic receiver fallback for
