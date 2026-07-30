@@ -3479,6 +3479,20 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
 
     // Step 3 — run с timeout.
     let run_start = Instant::now();
+    // Plan 221.1 №158: peer set for this CU (entry + any same-module
+    // folder-peers, same predicate `walk_nv_filtered_ex`/`collect_marker_sources`
+    // use) — needed for two things below: (a) force `NOVA_DIAG_SEGV=1` for
+    // this run when it's a folder-module (peer_paths.len() > 1), so a
+    // genuine crash leaves a stack trace to attribute against; (b) turn
+    // that trace into an honest culprit-or-"не определён" RUN-FAIL detail
+    // (`attribute_merged_cu_crash` below) instead of silently blaming
+    // whichever file `walk_nv_filtered_ex` collapsed the folder-module
+    // discovery down to (alphabetically first — the exact bug that let
+    // `d62_raw_effect_op_pos`'s NULL-handler segfault masquerade as
+    // `a_q3_println_debug_record`/`d61_effect_handler_direct_call` for
+    // weeks). Single-file CUs (the overwhelming majority) get
+    // `peer_paths.len() == 1` — zero added env, zero behavior change.
+    let peer_paths = collect_peer_paths(opts.nv_file);
     // [M-test-runner-tempdir-race-jobs] fix: retry a TRANSIENT exec-lock on
     // spawning the just-linked `exe_file` — under `--jobs N` a freshly
     // written .exe can momentarily fail to open for execution (Windows
@@ -3512,6 +3526,14 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
         // NOVA_MAXPROCS, мог переопределить бюджет своей директивой.
         if let Some(budget) = opts.maxprocs_budget {
             run_cmd.env("NOVA_MAXPROCS", budget.to_string());
+        }
+        // Plan 221.1 №158: folder-module (merged) CU — force the in-process
+        // SEGV stack-trace diagnostic on so a genuine crash can be honestly
+        // attributed below, instead of guessed. Ставится ДО `// ENV`-
+        // директив, как и NOVA_MAXPROCS выше, чтобы тест мог явно
+        // переопределить (`// ENV NOVA_DIAG_SEGV=0`) при желании.
+        if peer_paths.len() > 1 {
+            run_cmd.env("NOVA_DIAG_SEGV", "1");
         }
         // Plan 83.1 Ф.2: apply `// ENV NAME=VALUE` directives to the test exe.
         for (key, val) in &env_vars {
@@ -3675,11 +3697,50 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
                     .into_iter()
                     .rev()
                     .collect();
-                let detail = if !fail_lines.is_empty() {
+                let raw_detail = if !fail_lines.is_empty() {
                     fail_lines.join(" | ")
                 } else {
                     let last_lines: Vec<&str> = stdout.lines().chain(stderr.lines()).rev().take(3).collect();
                     last_lines.into_iter().rev().collect::<Vec<_>>().join(" | ")
+                };
+                // Plan 221.1 №158: merged (folder-module) CU — a genuine crash
+                // (`fail_lines` empty: no harness "FAIL:"/"panic: " line was
+                // EVER printed, i.e. the process died mid-run with no clue of
+                // its own) used to be silently reported under whichever peer
+                // file `walk_nv_filtered_ex` collapsed the folder-module
+                // discovery down to (alphabetically first) — nothing in the
+                // detail hinted this was a multi-file merge, so `RUN-FAIL
+                // a_q3_...` read as "a_q3 is broken" for WEEKS while the real
+                // culprit (`d62_raw_effect_op_pos`'s NULL-handler segfault)
+                // was three files away. Prefix an honest merged-CU marker:
+                // the REAL culprit when the SEGV-DIAG stack trace (forced on
+                // via `NOVA_DIAG_SEGV=1` above for exactly this case) lets us
+                // pin it down through its keystone frame's Nova-mangled fn
+                // name (`attribute_merged_cu_crash`), or an EXPLICIT "не
+                // определён" + the full candidate list otherwise — never
+                // silence, never a guess dressed up as a fact.
+                let detail = if peer_paths.len() > 1 && fail_lines.is_empty() {
+                    let names: Vec<String> = peer_paths.iter()
+                        .map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_default())
+                        .collect();
+                    match attribute_merged_cu_crash(&stderr, &peer_paths) {
+                        Some(culprit) => format!(
+                            "[MERGED CU, {} файлов: {}] вероятный виновник: {} | {}",
+                            peer_paths.len(), names.join(", "),
+                            culprit.file_name().map(|n| n.to_string_lossy().into_owned())
+                                .unwrap_or_default(),
+                            raw_detail
+                        ),
+                        None => format!(
+                            "[MERGED CU, {} файлов: {}] файл-виновник НЕ определён (нет \
+                             однозначного кадра в SEGV-стеке — нужен NOVA_DIAG_SEGV-\
+                             совместимый crash или уникальный `nova_fn_...` кадр) | {}",
+                            peer_paths.len(), names.join(", "), raw_detail
+                        ),
+                    }
+                } else {
+                    raw_detail
                 };
                 // [M-test-runner-tempdir-race-jobs] investigation aid: opt-in
                 // full dump (exit code + last 50 lines) for a genuine
@@ -3871,6 +3932,146 @@ fn collect_marker_sources(entry_src: &str, entry_path: &Path) -> Vec<String> {
         sources.push(peer_src);
     }
     sources
+}
+
+/// Plan 221.1 №158: same peer-discovery predicate as `collect_marker_sources`
+/// (entry + same-`module X`-declaring `.nv` siblings in its directory), but
+/// returns the PATHS (entry first, then peers sorted) instead of source
+/// text. Used by `run_one` to (a) decide whether to force
+/// `NOVA_DIAG_SEGV=1` for the run step (only worth the extra stderr for an
+/// actual folder-module/merged CU — `len() > 1`), and (b) list honest
+/// RUN-FAIL candidates / feed `attribute_merged_cu_crash` when the run
+/// crashes outright. Single-file CUs (the overwhelming majority) get back
+/// a one-element vec, `len() == 1` — every caller must gate on that, not on
+/// `is_folder_module_peer`/`is_folder_module_dir` (which additionally
+/// require ≥2 files AND — for the latter — a "has tests" check irrelevant
+/// here: we want the peer SET whether or not `opts.nv_file` itself is the
+/// walk's collapsed entry).
+fn collect_peer_paths(entry_path: &Path) -> Vec<PathBuf> {
+    let mut out = vec![entry_path.to_path_buf()];
+    let Some(dir) = entry_path.parent() else { return out; };
+    let Ok(entry_src) = std::fs::read_to_string(entry_path) else { return out; };
+    let Some(my_decl) = crate::imports::scan_module_decl(&entry_src) else { return out; };
+    let Ok(rd) = std::fs::read_dir(dir) else { return out; };
+    let mut peers: Vec<PathBuf> = rd
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("nv"))
+        .filter(|p| p.as_path() != entry_path)
+        .collect();
+    peers.sort();
+    for peer in peers {
+        let Ok(peer_src) = std::fs::read_to_string(&peer) else { continue; };
+        if crate::imports::scan_module_decl(&peer_src).as_ref() != Some(&my_decl) {
+            continue;
+        }
+        out.push(peer);
+    }
+    out
+}
+
+/// Plan 221.1 №158: demangle a Nova codegen fn C-symbol
+/// (`nova_fn_<len><seg><len><seg>…`, Itanium-style length-prefixed segments
+/// — see `emit_c.rs`'s `mangle_fn`/generic `nova_fn_<modpath>_<name>`
+/// scheme) into `(module_path_segments, short_fn_name)`. Returns `None` for
+/// anything that doesn't fit the scheme — synthetic names like
+/// `nova_fn_main_impl`, `nova_test_<description>_<idx>`, `Nova_<Effect>_<op>`
+/// dispatch shims, or the collision-disambiguated `nova_fn_<mod>_f<id>_<name>`
+/// variant (Plan 209/emit_c.rs `mangle_fn` file-id fallback) — callers must
+/// treat `None` as "this frame isn't attributable", not as an error, and
+/// keep looking at the NEXT stack frame.
+fn demangle_nova_fn(sym: &str) -> Option<(Vec<String>, String)> {
+    let rest = sym.strip_prefix("nova_fn_")?;
+    let bytes = rest.as_bytes();
+    let mut i = 0usize;
+    let mut segs: Vec<String> = Vec::new();
+    while i < bytes.len() {
+        let start = i;
+        while i < bytes.len() && bytes[i].is_ascii_digit() {
+            i += 1;
+        }
+        if i == start {
+            return None; // no length prefix here — not this mangling scheme
+        }
+        let len: usize = rest[start..i].parse().ok()?;
+        if len == 0 || i + len > rest.len() {
+            return None;
+        }
+        segs.push(rest[i..i + len].to_string());
+        i += len;
+    }
+    if segs.len() < 2 {
+        // need at least one module segment + the fn's own short name
+        return None;
+    }
+    let short_name = segs.pop().unwrap();
+    Some((segs, short_name))
+}
+
+/// Plan 221.1 №158: parse `segv_diag.c`'s `_nova_segv_veh` stack-trace block
+/// (`  #NN <addr>  <module>!<name>+0x<disp>  (<file>:<line>)`, printed to
+/// stderr only when `NOVA_DIAG_SEGV=1` — forced on above for merged CUs)
+/// into an ordered list of raw symbol names (frame 0 = crash site first).
+/// `name == "?"` (SymFromAddr failed to resolve, e.g. runtime/libc frames
+/// past the fiber entry) is skipped — never fed to `demangle_nova_fn` as a
+/// spurious "match".
+fn parse_segv_stack_frames(stderr: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for line in stderr.lines() {
+        let t = line.trim_start();
+        if !t.starts_with('#') {
+            continue;
+        }
+        let Some(bang) = t.find('!') else { continue; };
+        let after = &t[bang + 1..];
+        let Some(plus) = after.find("+0x") else { continue; };
+        let name = &after[..plus];
+        if name.is_empty() || name == "?" {
+            continue;
+        }
+        out.push(name.to_string());
+    }
+    out
+}
+
+/// Plan 221.1 №158: best-effort honest attribution for a merged
+/// (folder-module) CU's genuine RUN-FAIL crash. Walks the SEGV-DIAG stack
+/// trace (`parse_segv_stack_frames`, present in `stderr` only because the
+/// run step forced `NOVA_DIAG_SEGV=1` for this CU — see the `run_cmd.env`
+/// call above) top-down (frame 0 = crash site), demangling each frame's
+/// symbol (`demangle_nova_fn`) until one succeeds, then checks which
+/// peer SOURCE FILE actually declares a top-level `fn <short_name>(` /
+/// `fn <short_name> (` matching it (peer files all share the SAME `module
+/// X` — the short name alone, no module-path disambiguation needed).
+///
+/// Returns `Some(path)` ONLY on an unambiguous single-file match for SOME
+/// frame; `None` when there's no SEGV-DIAG block at all (e.g. an `abort()`/
+/// non-access-violation crash — `nv_panic`'s own last-resort path, or a
+/// stack-overflow that never reaches the VEH), no frame demangles, or a
+/// demangled name matches zero or MORE THAN ONE peer file (ambiguous —
+/// honesty requires refusing to guess, not picking the first alphabetically
+/// the way the OLD bug did one level up). Callers must render `None` as an
+/// explicit "не определён" + full candidate list, never silently fall back
+/// to naming a file.
+fn attribute_merged_cu_crash(stderr: &str, peer_paths: &[PathBuf]) -> Option<PathBuf> {
+    for sym in parse_segv_stack_frames(stderr) {
+        let Some((_, short_name)) = demangle_nova_fn(&sym) else { continue; };
+        let needle_a = format!("fn {}(", short_name);
+        let needle_b = format!("fn {} (", short_name);
+        let matches: Vec<&PathBuf> = peer_paths.iter()
+            .filter(|p| {
+                std::fs::read_to_string(p)
+                    .map(|src| src.contains(&needle_a) || src.contains(&needle_b))
+                    .unwrap_or(false)
+            })
+            .collect();
+        if matches.len() == 1 {
+            return Some(matches[0].clone());
+        }
+        // Zero or ambiguous match for THIS frame — try the next one instead
+        // of guessing.
+    }
+    None
 }
 
 /// Plan 52 Ф.9: возвращает `(codegen_warnings, lint_warnings)` — последние
@@ -7675,6 +7876,86 @@ mod tests {
             &nv_path, &src, None, ast::ContractsMode::Checked, &repo, &stdlib_dir,
         );
         assert!(result.is_ok(), "P3-B vtable dispatch: codegen должен успешно скомпилировать, но: {:?}", result.err());
+    }
+
+    // ---- Plan 221.1 №158: honest merged-CU RUN-FAIL attribution ----
+
+    #[test]
+    fn demangle_nova_fn_splits_module_and_short_name() {
+        let (segs, name) = demangle_nova_fn(
+            "nova_fn_10spec_tests11conformance11ok_declared",
+        ).expect("should demangle");
+        assert_eq!(segs, vec!["spec_tests".to_string(), "conformance".to_string()]);
+        assert_eq!(name, "ok_declared");
+    }
+
+    #[test]
+    fn demangle_nova_fn_rejects_synthetic_names() {
+        // `nova_fn_main_impl` / test wrappers / dispatch shims are NOT this
+        // scheme (no length-prefix after `nova_fn_`) — must return None so
+        // callers skip to the next stack frame instead of misparsing.
+        assert!(demangle_nova_fn("nova_fn_main_impl").is_none());
+        assert!(demangle_nova_fn("Nova_Log1_info").is_none());
+        assert!(demangle_nova_fn("nova_test_d62__131__0").is_none());
+    }
+
+    #[test]
+    fn attribute_merged_cu_crash_finds_real_culprit_from_captured_segv_trace() {
+        // Real `NOVA_DIAG_SEGV=1` stderr captured 2026-07-30 off the ACTUAL
+        // pre-fix `d62_raw_effect_op_pos.nv` crash (`Nova_Log1_info`
+        // deref'ing a NULL `_nova_handler_Log1`) — see registry №158. Before
+        // this fix, `walk_nv_filtered_ex`'s folder-module collapse blamed
+        // whichever peer sorted first alphabetically (`a_q3_...`), never the
+        // real file. This asserts the NEW attribution correctly reads the
+        // KEYSTONE frame (`nova_fn_10spec_tests11conformance11ok_declared`)
+        // and maps it back to `d62_raw_effect_op_pos.nv` — the ONLY peer that
+        // actually declares `fn ok_declared`.
+        let stderr = r#"
+=== [SEGV-DIAG] EXCEPTION_ACCESS_VIOLATION ===
+=== Stack trace (frame[1] = caller of crash site = KEYSTONE) ===
+  #00 00007FF6269C55CB  d62_raw_effect_op_pos!Nova_Log1_info+0x2B  (d62_raw_effect_op_pos.c:1281)
+  #01 00007FF6269C5323  d62_raw_effect_op_pos!nova_fn_10spec_tests11conformance11ok_declared+0x33  (d62_raw_effect_op_pos.c:9256)
+  #02 00007FF6269C4AD6  d62_raw_effect_op_pos!nova_test_d62__131__exported_fn_______________________raw_op_________0+0x26  (d62_raw_effect_op_pos.c:9433)
+  #03 00007FF6269C4276  d62_raw_effect_op_pos!nova_test_chunk_0+0x186  (d62_raw_effect_op_pos.c:10265)
+  #04 00007FF6269C3E3B  d62_raw_effect_op_pos!nova_fn_main_impl+0x3B  (d62_raw_effect_op_pos.c:10361)
+=== [SEGV-DIAG END] ===
+"#;
+        let root = std::env::temp_dir().join(format!("nova_p221_attr_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("create temp root");
+        let a_q3 = root.join("a_q3_println_debug_record.nv");
+        let d61 = root.join("d61_effect_handler_direct_call.nv");
+        let d62 = root.join("d62_raw_effect_op_pos.nv");
+        std::fs::write(&a_q3, "module spec_tests.conformance\nfn unrelated_a() -> int { 1 }\n").unwrap();
+        std::fs::write(&d61, "module spec_tests.conformance\nfn unrelated_d61() -> int { 2 }\n").unwrap();
+        std::fs::write(
+            &d62,
+            "module spec_tests.conformance\nexport fn ok_declared(s str) -> int { 1 }\n",
+        ).unwrap();
+        let peers = vec![a_q3.clone(), d61.clone(), d62.clone()];
+        let culprit = attribute_merged_cu_crash(stderr, &peers);
+        assert_eq!(culprit, Some(d62), "must name the REAL culprit, not the alphabetically-first peer (a_q3)");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn attribute_merged_cu_crash_honestly_refuses_to_guess() {
+        // No SEGV-DIAG block at all (e.g. a stack-overflow/abort that never
+        // reaches the VEH) — must return `None`, never fall back to naming
+        // some file as if it were determined.
+        assert_eq!(attribute_merged_cu_crash("no diag here", &[]), None);
+        // A keystone frame whose short name matches MULTIPLE peers is
+        // ambiguous — must also refuse (`None`), not pick the first one.
+        let stderr = "  #01 0000000000000000  x!nova_fn_5mymod6shared+0x1  (x.c:1)\n";
+        let root = std::env::temp_dir().join(format!("nova_p221_attr_ambig_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("create temp root");
+        let f1 = root.join("f1.nv");
+        let f2 = root.join("f2.nv");
+        std::fs::write(&f1, "fn shared() -> int { 1 }\n").unwrap();
+        std::fs::write(&f2, "fn shared() -> int { 2 }\n").unwrap();
+        assert_eq!(attribute_merged_cu_crash(stderr, &[f1, f2]), None);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
 }
