@@ -16227,14 +16227,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
         }
         // Plan 48: Generic free functions → store for monomorphization; no erased forward decl.
-        // №129 Task C: жёсткая ошибка на cross-module одноимённость ПРОБОВАЛАСЬ
-        // и ОТКАЧЕНА приёмкой (2026-07-30): красила легальный зелёный корпус —
-        // два фикстурных модуля мега-CU каждый со своим module-private
-        // `fn[T] check_ok(...)` (языково легально, ничьё имя наружу не течёт).
-        // Реальный дефект (last-wins по голому имени = чужое тело, репро
-        // 222 vs 111) ЖИВ и учтён: [M-mono-fn-decls-module-qualified-key]
-        // (backlog) — правильный фикс это module-qualified ключ через ~10
-        // read-сайтов, отдельное окно; insert-time ошибка тут не работает.
+        // №129: insert-time ошибка на одноимённость ОТКАЧЕНА приёмкой — красила
+        // легальные module-private одноимённые fn (check_ok ×2 в мега-CU).
+        // Дефект last-wins жив: [M-mono-fn-decls-module-qualified-key].
         if !f.generics.is_empty() && f.receiver.is_none() {
             self.mono_fn_decls.insert(f.name.clone(), f.clone());
             // Track tuple return arity so call sites can populate tuple_element_types
@@ -16258,10 +16253,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         if !f.generics.is_empty() {
             if let Some(recv) = &f.receiver {
                 // Регистрируем все generic methods (включая `[]T`-ext) в mono_method_decls.
-                // №129: честная диагностика вместо last-wins — см. mono_method_registry.rs.
-                // Легальный D84-overload проходит проверку и вставляется ПРЕЖНИМ
-                // last-wins insert'ом (зелёный корпус жил на нём; менять на
-                // first-wins = менять наблюдаемое поведение без нужды).
+                // №129: коллизия ОДИНАКОВОЙ формы = ошибка; легальный D84-overload
+                // проходит и вставляется прежним last-wins (mono_method_registry.rs).
                 let key = (recv.type_name.clone(), f.name.clone());
                 super::mono_method_registry::check_mono_method_decl_collision(
                     self.mono_method_decls.get(&key), f.span, &recv.type_name, &f.name, f,
