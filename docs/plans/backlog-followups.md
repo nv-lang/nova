@@ -4071,3 +4071,20 @@ scope"`) — изолирует дефект от нативного RwLock (л�
 |---|---|---|---|
 | `[M-closurefull-own-generic-sibling-return-infer-gap]` | ПРЕДСУЩЕСТВУЮЩИЙ (не regressed этим окном): полностью-типизированный `ClosureFull` (`fn(x T)->U{...}`) аргумент к МЕТОД-LEVEL-GENERIC методу (без concrete-сиблинга вовсе, ЛИБО с ним — не важно) не может вывести R codegen'ом (`~41305+`, `ret_slot_name`/`closure_return_generics`) — честный `[E7001]`, не миксомпил, но блокирует ClosureFull как форму для generic HOF/Router-сахара целиком. Bare `ClosureLight` для ТОЙ ЖЕ формы работает (`generic_mono_concrete_sibling_multi_r.nv`). | codegen generic-mono closure-arg return infer | 🟡 P2 — блокирует 222.3-сахар (ClosureFull — канон формы, №104) даже после №124 |
 | `[M-static-generic-method-path-call-p67-panic]` | STATIC method-level-generic вызов (`Type.method[T](x)`/`Type.method(x)`, receiver не generic) КРАШИТ `[P67-LEGACY]` безусловно — чекер не пишет `resolved_types[call.id]` для этой формы (Channel 2 miss → легаси-fallback panic, `infer_call_ret_c` структурно не может нести per-instantiation тип). Мин-репро в тексте выше. | checker channel (`resolved_types`) для static-Path generic-вызовов | 🔴 P1-P2 — компилятор-окно (mono-фаза №125-трек; static-форма ПОЛНОСТЬЮ нерабочая, не просто гипотетическая коллизия) |
+
+## P3 — Неучтённые маркеры UNREGISTERED (долг 221.1 №155/№161)
+
+> Маркеры из `UNREGISTERED.txt`, найденные при инвентаризации 2026-07-30. Большинство — уже выполненные фиксы/реализации, не зарегистрированные в реестре, либо осознанные ограничения / deferred follow-ups. Заводятся постфактум для закрытия долга храповика.
+
+| Маркер | Суть | Home | Pri |
+|---|---|---|---|
+| `[M-100.6-consume-rvalue-in-result-ok]` | `Result[_,_]` `Ok(consume_expr)` при consume-rvalue (напр. `Ok(String.from("x"))`) — `E_MOVE_IN_RVALUE` (D133 strict-check запрещает перемещение во временный). Рабочий обход: прямой cross-package dispatch без `Ok`-обёртки. Ограничение лексического анализа, не soundness. | floating (checker) | P3 |
+| `[M-108-empty-frompairs-nonhashmap-kv-infer-gap]` | ✅ **CLOSED 2026-07-10.** Parser `extract_hashmap_kv` был захардкожен на имя "HashMap" — `empty.fromPairs(...)` на не-HashMap типе не выводил K/V. Фикс: обобщён на любой тип с двумя type-параметрами. | floating (parser) | ✅ DONE |
+| `[M-110.9.2-with-exit-timeout-level1]` | Plan 110.9.2 V1.1: `with_exit` timeout Level 1 — timeout-защита эффект-блоков. Реализована в составе Plan 110.9. | Plan 110.9.2 | ✅ DONE |
+| `[M-110.9.3-register-finalizer-lifo]` | Plan 110.9.3 V1.1: `register_finalizer` в LIFO-порядке (runtime). Реализована в составе Plan 110.9. | Plan 110.9.3 | ✅ DONE |
+| `[M-110.9.4-ffi-cancel-unsafe-lint]` | Plan 110.9.4 V1.1: `W_FFI_CANCEL_UNSAFE` lint — предупреждение при FFI-вызове с cancel-эффектом без `unsafe`. Реализована в составе Plan 110.9. | Plan 110.9.4 | ✅ DONE |
+| `[M-110.9.5-on-exit-strict-signature]` | Plan 110.9.5 V1.1: cleanup-функции `on_exit` с non-`Unit` возвратом отвергаются. Реализована в составе Plan 110.9. | Plan 110.9.5 | ✅ DONE |
+| `[M-140-generic-method-contract-mono-drop]` | ✅ **FIXED 2026-07-?**. Контракты (`requires`/`ensures`) generic-методов дропались при мономорфизации — условие не эмитилось в mono'd теле. Фикс: contract-clause propagation через mono-кэш. | Plan 140 codegen | ✅ DONE |
+| `[M-153.2-collect-into]` | Stage 4 `collect_into` — drain итератора в caller-provided буфер (амортизация alloc). Реализован поверх слот-архитектуры Plan 153.2. | Plan 153.2 | ✅ DONE |
+| `[M-156-bare-unit-variant-eq-invalid-cast]` | ✅ **FIXED.** CC-FAIL при `==` между sum-value и bare unit variant — `member reference type 'nova_int' is not a pointer`. Корень: Eq-лоуэринг для bare unit variant (`SomeEnum.Variant == SomeEnum.Variant`) кастовал variant-id как field-pointer. Фикс: emit bare unit variant Eq через variant-id comparison (int), не member-access. | floating (codegen) | ✅ DONE |
+| `[M-172.1-some-target-coerce]` | `Some(literal)` не инферил target generic-type (напр. `Option[MyStruct]` от `Some(MyStruct{...})`) — параллельный gap к `Ok(literal)` fix D85. Починен в Plan 172.1. | Plan 172.1 | ✅ DONE |
