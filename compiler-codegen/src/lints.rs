@@ -5819,7 +5819,8 @@ fn conv_coalesce_advice_for_return(
     } else {
         TypeRef::Named { path: vec!["Option".to_string()], generics: vec![], span: dummy_span }
     };
-    crate::types::coalesce_return_fallback_advice(Some(&op_ty), ret_ty.as_ref(), &HashSet::new())
+    crate::types::coalesce_return_fallback_advice(
+        Some(&op_ty), ret_ty.as_ref(), &HashMap::new())
 }
 
 fn conv_manual_coalesce(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
