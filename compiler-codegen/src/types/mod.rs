@@ -5618,8 +5618,16 @@ impl<'a> TypeCheckCtx<'a> {
             for tr in &r.generics {
                 if let TypeRef::Named { path, span, .. } = tr {
                     if path.len() == 1 {
-                        gs.entry(path[0].clone())
-                            .or_insert_with(|| GenericParam::unbounded(path[0].clone(), *span));
+                        // Plan 196 gs-bounds: see `fn_generic_scope`'s twin doc — a
+                        // receiver carrier-bracket bound (`fn Option[T Debug] @debug`)
+                        // lives in `r.carrier_bounds`, NOT `r.generics` (bare names);
+                        // prefer it over a synthesized bound-less entry.
+                        gs.entry(path[0].clone()).or_insert_with(|| {
+                            r.carrier_bounds.iter()
+                                .find(|cb| cb.name == path[0])
+                                .cloned()
+                                .unwrap_or_else(|| GenericParam::unbounded(path[0].clone(), *span))
+                        });
                     }
                 }
             }
@@ -8638,7 +8646,7 @@ impl<'a> TypeCheckCtx<'a> {
                     if let Some(watch) = std::env::var_os("NOVA_CALL_TRACE") {
                         if let ExprKind::Member { name: mn, .. } = &func.kind {
                             if *mn == watch.to_string_lossy() {
-                                let r = self.infer_method_call_channel_type(e, scope);
+                                let r = self.infer_method_call_channel_type(e, scope, gs);
                                 if r.is_none() {
                                     let ExprKind::Member { obj: ao, .. } = &func.kind else { unreachable!() };
                                     let ok = match &ao.kind {
@@ -8653,7 +8661,7 @@ impl<'a> TypeCheckCtx<'a> {
                             }
                         }
                     }
-                    if let Some(tr) = self.infer_method_call_channel_type(e, scope) {
+                    if let Some(tr) = self.infer_method_call_channel_type(e, scope, gs) {
                         // 172.1.2 Шаг 3.1: gs-gate заменён на mark_type_params —
                         // return с residual-параметром аннотируется ЯВНЫМ TypeParam
                         // (лоуэринг: receiver-instance map → subst → Err → legacy).
@@ -18755,7 +18763,11 @@ impl<'a> TypeCheckCtx<'a> {
         recv_ty: &TypeRef,
         method: &str,
     ) -> Option<TypeRef> {
-        self.resolve_instance_method_return_arity(recv_ty, method, None, None, None, None)
+        // No live caller today (kept for API symmetry with `resolve_generic_static_return`
+        // — see that fn's doc); no enclosing `gs` to thread, so the Plan 196 gs-bounds
+        // fallback below is a no-op here (empty scope), not a regression.
+        let empty_gs: GenericScope = HashMap::new();
+        self.resolve_instance_method_return_arity(recv_ty, method, None, None, None, None, &empty_gs)
     }
 
     /// 172.1.2 (2026-07-03): arity-aware вариант — при >1 перегрузке выбирает
@@ -18780,6 +18792,13 @@ impl<'a> TypeCheckCtx<'a> {
         // `resolve_return_channel` call below as ground-truth overlay (see that fn's doc).
         // `None` from every pre-existing caller (inferred-only instance calls).
         explicit_type_args: Option<&[TypeRef]>,
+        // Plan 196 gs-bounds: the CALLER's own generic-scope (bounds-carrying, not just
+        // names) — consulted ONLY as the LAST fallback below, when the receiver turns out
+        // to be a bare generic-param-in-scope with no real method_table/self.types entry
+        // (a genuine typevar, e.g. `v: T` inside `Option[T Debug]@debug`'s body calling
+        // `v.debug(f)`). Threading an EMPTY scope is always safe (no false positives —
+        // just misses the new fallback, same as before this param existed).
+        gs: &GenericScope,
     ) -> Option<TypeRef> {
         // Normalize receiver: peel ro/mut views; `[]T`/`[N]T` → "Vec" (D239 slice alias),
         // so a slice receiver resolves Vec's methods (std's pervasive spelling). Mirror of
@@ -18892,7 +18911,14 @@ impl<'a> TypeCheckCtx<'a> {
                     }
                 }
                 // Plan 172.1 D145/D282: prefix-generic receiver fallback.
-                return self.resolve_prefix_generic_method_return(peeled, method);
+                if let Some(ret) = self.resolve_prefix_generic_method_return(peeled, method) {
+                    return Some(ret);
+                }
+                // Plan 196 gs-bounds (generalizes `resolve_generic_bound_method_return`,
+                // the match-scrutinee-only sibling below, to EVERY instance-call receiver
+                // now that `gs` carries bounds, not just names — see that fn's doc for the
+                // shared root cause, `docs/plans/196-one-truth-closeout.md` B11q/B11r).
+                return self.resolve_generic_bound_receiver_method(peeled, method, arity, gs);
             }
         };
         // Single overload; при >1 — arity-фильтр (172.1.2): единственная
@@ -19251,6 +19277,97 @@ impl<'a> TypeCheckCtx<'a> {
         Some(out)
     }
 
+    /// Plan 196 gs-bounds: resolve an instance-method call whose RECEIVER is a bare
+    /// generic-parameter-in-scope (`v: T`) via `T`'s declared PROTOCOL bound — e.g.
+    /// `v.debug(f)` inside `Option[T Debug]@debug`'s own body (`std/src/prelude/
+    /// protocols.nv`), where `v`'s type is the plain typevar `T`, not a real type, so
+    /// neither `method_overloads` nor `self.types.get(type_name)` above find anything.
+    ///
+    /// This is the SAME pattern as [`resolve_generic_bound_method_return`] below —
+    /// which is scoped, by its own doc, to ONLY the match-scrutinee call site (reading
+    /// `current_fn_generics`, a `RefCell<Vec<GenericParam>>` populated for exactly this
+    /// narrow need) — generalized to ANY instance-call receiver, now that `gs` itself
+    /// carries bounds (Plan 196 gs-migration) instead of bare names. Root cause and
+    /// scope measured in `docs/plans/wip/196-gs-spike.md` / `196-one-truth-closeout.md`
+    /// (B11q/B11r `Nova_Option_method_debug_*` legacy dispatch): before this fallback
+    /// existed, ANY protocol-bound-dispatched call on a bare generic receiver missed
+    /// Channel 2 entirely and fell to codegen's name-pattern-matching legacy arms.
+    ///
+    /// Narrow, permissive, additive-only — reached ONLY after every concrete-type
+    /// resolution path above (and [`resolve_prefix_generic_method_return`]) has
+    /// already missed, so it cannot divert an existing concrete resolution:
+    /// - first matching bound (bounds are a conjunction — D145 multi-bound — but the
+    ///   first protocol that declares the method wins, mirroring the sibling fn);
+    /// - arity must match when the caller supplied one (0-arity match-scrutinee siblng
+    ///   passes `None` via its own call path — not this one);
+    /// - a method-level generic on the protocol method itself is unsupported (→ try the
+    ///   next bound, else `None` — no regression, legacy still covers it).
+    fn resolve_generic_bound_receiver_method(
+        &self,
+        peeled: &TypeRef,
+        method: &str,
+        arity: Option<usize>,
+        gs: &GenericScope,
+    ) -> Option<TypeRef> {
+        let TypeRef::Named { path, generics, .. } = peeled else { return None };
+        if path.len() != 1 || !generics.is_empty() {
+            return None;
+        }
+        let gp = gs.get(path[0].as_str())?;
+        for bound in &gp.bounds {
+            let TypeRef::Named { path: bpath, generics: bargs, .. } = bound else { continue };
+            if bpath.len() != 1 {
+                continue;
+            }
+            let Some(td) = self.types.get(bpath[0].as_str()) else { continue };
+            let TypeDeclKind::Protocol { methods, .. } = &td.kind else { continue };
+            // [M-196-gs-bounds-parametric-bound-hazard] a PARAMETRIC protocol bound
+            // (`D355Source[T]` — Plan 161/D355 blanket dispatch,
+            // `spec_tests/conformance/d355_blanket_protocol.nv`) writes its own type-arg
+            // (`T`) as a BARE name that is NOT necessarily a key of the enclosing `gs`
+            // (D355's `T` is inferred from the bound, never a real entry of `fd.generics`
+            // — see that fixture's own §1 comment). Substituting the protocol method's
+            // return through such a bound can leave a residual `Named("T")` that
+            // `mark_type_params` (gated on `gs.contains_key`) then FAILS to recognize as a
+            // type-param, so it gets channeled as a bogus CONCRETE type — confirmed via
+            // repro (this exact fixture CC-FAILed: `NovaOpt_nova_int` initialized from
+            // `NovaOpt_nova_str`, a cross-mono-instance mixup) when this guard was
+            // missing. Restricting to NON-parametric bounds (`Debug`/`Display` — zero own
+            // generics, D com D422) is safe: their method's return type can only mention
+            // names ALREADY in the enclosing `gs` (nothing new is introduced by the
+            // bound), so `mark_type_params` covers it correctly. Parametric-bound
+            // dispatch (D355-style) is intentionally NOT handled here — out of this
+            // window's scope (see report); still resolved by whatever path already
+            // handles the D355 fixture (unaffected — this fn simply declines it, `None`).
+            if !td.generics.is_empty() {
+                continue;
+            }
+            let Some(m) = methods.iter().find(|m| {
+                m.name == method || m.name.trim_start_matches('@') == method
+            }) else { continue };
+            if let Some(a) = arity {
+                if m.params.len() != a { continue; }
+            }
+            if !m.generics.is_empty() {
+                // Method-level generic on the protocol method — would need arg-type-
+                // driven substitution too; unsupported here (mirrors the sibling fn).
+                continue;
+            }
+            if !bargs.is_empty() {
+                // Non-parametric protocol (`td.generics` empty, just excluded above) but
+                // the bound itself was WRITTEN with type-args (`T Debug[X]` — malformed/
+                // unsupported spelling) — decline rather than guess.
+                continue;
+            }
+            let ret = match &m.return_type {
+                Some(r) => r.clone(),
+                None => TypeRef::Unit(m.span),
+            };
+            return Some(ret);
+        }
+        None
+    }
+
     /// Plan 172.1 D145/D282: prefix-generic receiver fallback for
     /// [`resolve_instance_method_return`].  Called when no concrete-type overload
     /// is registered under the caller's `type_name`.  Scans `method_table` for a
@@ -19446,6 +19563,11 @@ impl<'a> TypeCheckCtx<'a> {
         &self,
         e: &Expr,
         scope: &HashMap<String, TypeRef>,
+        // Plan 196 gs-bounds: threaded down to `resolve_instance_method_return_arity`'s
+        // new bound-receiver fallback (see that fn's doc) — the enclosing fn/type-decl's
+        // OWN generic-scope, so a call on a bare generic receiver (`v.debug(f)`, `v: T`)
+        // can dispatch by `T`'s protocol bound instead of missing Channel 2 entirely.
+        gs: &GenericScope,
     ) -> Option<TypeRef> {
         let ExprKind::Call { func, args: call_args, .. } = &e.kind else { return None; };
         // Plan 200 П19: `[N]T @len()`/`@ptr()` — same compiler-synthesized FixedArray
@@ -19512,7 +19634,7 @@ impl<'a> TypeCheckCtx<'a> {
                 // Receiver type: chain-aware (recurse for a Call receiver), else leaf via
                 // infer_expr_type.
                 let rt = self
-                    .infer_method_call_channel_type(obj, scope)
+                    .infer_method_call_channel_type(obj, scope, gs)
                     .or_else(|| self.infer_expr_type(obj, scope))
                     // 172.1.2 (Call:.len closure): третий источник — КАНАЛ: Member-ресиверы
                     // generic-тел (`@_buckets`, `@data`) аннотированы Шагом 2b как
@@ -19562,7 +19684,7 @@ impl<'a> TypeCheckCtx<'a> {
         let call_id = if e.id.is_set() { Some(e.id) } else { None };
         self.resolve_instance_method_return_arity(
             &recv_ty, name, Some(call_arity), Some((call_args.as_slice(), scope)), call_id,
-            explicit_type_args)
+            explicit_type_args, gs)
             .or_else(|| {
                 // [M-196-producer-b-turbofish] An explicit turbofish call-site skips the
                 // closure-arg-inference fallback: `explicit_type_args` already fixes every
@@ -21668,8 +21790,21 @@ fn fn_generic_scope(fd: &FnDecl) -> GenericScope {
         for tr in &r.generics {
             if let TypeRef::Named { path, span, .. } = tr {
                 if path.len() == 1 {
-                    gs.entry(path[0].clone())
-                        .or_insert_with(|| GenericParam::unbounded(path[0].clone(), *span));
+                    // Plan 196 gs-bounds: `fn Option[T Debug] @debug(...)` writes its
+                    // bound in the RECEIVER's carrier brackets, not a `fn[...]` prefix —
+                    // `Receiver.carrier_bounds` (`ast/mod.rs`) is the SEPARATE field that
+                    // carries it (`r.generics` here is just the bare name list). A prior
+                    // version of this fn always synthesized `GenericParam::unbounded`
+                    // for a receiver-generic name, silently dropping carrier-bracket
+                    // bounds — confirmed via repro (`[GSBOUND] gp.bounds=[]` trace) that
+                    // this was the reason `Option[T Debug]@debug`'s OWN `T` never
+                    // resolved through `resolve_generic_bound_receiver_method`.
+                    gs.entry(path[0].clone()).or_insert_with(|| {
+                        r.carrier_bounds.iter()
+                            .find(|cb| cb.name == path[0])
+                            .cloned()
+                            .unwrap_or_else(|| GenericParam::unbounded(path[0].clone(), *span))
+                    });
                 }
             }
         }
