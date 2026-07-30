@@ -491,7 +491,7 @@ export type AsSlice[T] protocol {
 // `runtime.string_builder` — единый render engine.
 // Debug численных примитивов идентичен Display (D229 — числа не экранируются).
 // `char`/`str` Debug добавляют кавычки и эскейпы.
-[M-154.1-f32-display-debug]
+// [M-154.1-f32-display-debug]
 #impl(Display)
 fn int @display(mut f Fmt) -> () {
     consume sb = StringBuilder.new()
