@@ -38204,11 +38204,37 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
             _ => None,
         };
+        // [fix M-bare-variant-name-resolves-to-unrelated-type-in-cu, реестр
+        // 221.1 №136]: `type_aliases` is a FLAT `HashMap<String, String>`
+        // keyed by the BARE type name across the WHOLE CU (every Newtype/
+        // Alias declaration registers into it regardless of which file
+        // declares it — see `emit_type_decl`'s Newtype/Alias arms). A bare
+        // sum-variant constructor call (`Tagged("kind")`, meaning
+        // `SumRepr.Tagged`) and an UNRELATED Newtype (`type Tagged[T,U](int)`
+        // in a different file) sharing the same simple name previously hit
+        // THIS newtype-identity-cast intercept FIRST — silently casting the
+        // arg to the newtype's inner C type (`(nova_int)(strlit)` for a
+        // string arg) with NO error/warning, since a Newtype's alias check
+        // ran unconditionally before the sum-variant-constructor check
+        // (`debt_find_variant_ctx`) below ever got a chance. Guard: only take
+        // the newtype-identity path when `name` is NOT ALSO a recognised
+        // sum-variant name (of matching arity) — `debt_find_variant_ctx`
+        // already carries the D381 arity/hint/fn-return-sum disambiguation
+        // used for a variant shared across MULTIPLE colliding sums (see its
+        // own doc), so reusing it here means an UNAMBIGUOUS (or already-
+        // disambiguable) variant now wins over an unrelated same-named
+        // newtype — byte-identical for the overwhelming common case (no
+        // sum in the CU declares a variant of this bare name at all, so
+        // `debt_find_variant_ctx` returns `None` and this newtype path
+        // proceeds exactly as before).
         if let Some(name) = name_opt {
-            if let Some(aliased_c) = self.type_aliases.get(name).cloned() {
-                if args.len() == 1 {
-                    let v = self.emit_expr(args[0].expr())?;
-                    return Ok(format!("(({})({}))", aliased_c, v));
+            let shadowed_by_variant = self.debt_find_variant_ctx(name, Some(args.len())).is_some();
+            if !shadowed_by_variant {
+                if let Some(aliased_c) = self.type_aliases.get(name).cloned() {
+                    if args.len() == 1 {
+                        let v = self.emit_expr(args[0].expr())?;
+                        return Ok(format!("(({})({}))", aliased_c, v));
+                    }
                 }
             }
         }
