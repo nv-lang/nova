@@ -4108,3 +4108,13 @@ scope"`) — изолирует дефект от нативного RwLock (л�
 | `[M-196-probes-b12r-terminal]` | Known-red probe b12r terminal — регрессионный тест Plan 196 (закрыт вместе с Plan 196). | Plan 196 | ✅ DONE |
 | `[M-196-probes-b12s-terminal]` | Known-red probe b12s terminal — регрессионный тест Plan 196 (закрыт вместе с Plan 196). | Plan 196 | ✅ DONE |
 | `[M-202-...]` | Generic-match scope-gap: `x` в match-арме generic-метода не резолвился как локальная переменная (scope-visibility). Починен в Plan 202. | Plan 202 | ✅ DONE |
+| `[M-208-time-display-fmt-migration-gap]` | Duration `Display`/`Debug` сигнатура мигрирована на `Fmt` (Plan 208 Ф.2/D422). Реализовано в Plan 208. | Plan 208 | ✅ DONE |
+| `[M-73.2-err-payload-consume]` | `Err`-payload consume-волна: pattern-биндинг `Err(consume e)` — consume-аннотация на payload-паттерне sum-variant. Реализовано в Plan 73.2. | Plan 73.2 | ✅ DONE |
+| `[M-91.11-from-char-direct]` | `char.to_stringbuilder()` — fluent chain (`sb.append(ch)`), совместимость с D180. Реализовано в Plan 91.11. | Plan 91.11 | ✅ DONE |
+| `[M-atomicint-record-field-typedef-collision]` | ✅ **FIXED.** `AtomicInt` как поле record — CC-FAIL duplicate typedef (typedef коллизия между `Nova_AtomicInt` и его value-record вариантом). Фикс: codegen различает value и non-value typedef. | floating (codegen) | ✅ DONE |
+| `[M-boehm-...]` | Boehm GC large buffer retention при fiber-reuse — `net.c` не освобождал `close`-on-free буферы. Починен: free-on-close для GC-буферов (Plan 187/110.9). | Plan 187 | ✅ DONE |
+| `[M-canceltoken-prelude-decl]` | `CancelToken` перенесён из builtins HashSet в формальные prelude-декларации — тип становится видимым для чекера/документации. Реализовано. | prelude | ✅ DONE |
+| `[M-d216-unsafe-map-single-file-gaps]` | `unsafe`-атрибут отложен до per-overload энфорса A11-карты (D216). Single-file gaps: unsafe-маркировка не пропагировалась на FFI-импорты в однофайловом режиме. | floating (unsafe tracking) | P3 |
+| `[M-d73-d77-retraction-migration]` | Retraction-миграция D73/D77-форм: старый синтаксис убран, кодовая база приведена к актуальной spec-форме. | spec cleanup | ✅ DONE |
+| `[M-flagship-...]` | Флагманский маркер: `report_json_test` — расшифровка лога флагманского теста. Аналитический маркер (не баг, not actionable). | floating (analytics) | P3 |
+| `[M-flagship-monotonic-now-bare-binding-ice]` | `Monotonic.now()` bare binding ICE: вызов статического метода на bare type-name (без скобок) в single-file контексте. Починен. | Plan 196 | ✅ DONE |
