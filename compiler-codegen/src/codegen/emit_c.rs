@@ -4422,10 +4422,8 @@ impl CEmitter {
         if self.generic_types.contains(&sum_base) || self.generic_types.contains(recv_type) {
             return Ok(None);
         }
-        // The receiver sum must OWN a payload variant `variant` of matching arity.
-        // Try the qualified base first, then the bare receiver name (schema keys
-        // are byte-identical for non-colliding sums) — need the variant's OWN
-        // `field_c_types` now (not just a bool), see the [M-155.a] fix below.
+        // Receiver sum must OWN a payload variant of matching arity — need its
+        // field_c_types (not just a bool), see [M-155.a] below (221.1, NOTES.md).
         let find_fields = |me: &Self, key: &str| -> Option<Vec<String>> {
             me.sum_schema_registry
                 .lookup_sum_schema(key)
@@ -4439,13 +4437,9 @@ impl CEmitter {
             Some(f) => f,
             None => return Ok(None),
         };
-        // [M-155.a-flagship-anon-record-literal-enum-payload]: mirrors the
-        // Ok/Err fix above ([M-181-anon-record-in-ctor-arg-codegen]) for the
-        // general `Sum.Variant(args)` ctor. An anon record-lit payload arg
-        // (`TaskStatus.Done({ id, .. })`) needs `expected_record_type` scoped
-        // to ITS OWN field type (not whatever the enclosing expr left set) —
-        // else "anonymous record literal: expected struct 'TaskStatus' not
-        // in record_schemas" instead of the real payload (`SourceData`).
+        // [M-155.a-flagship-anon-record-literal-enum-payload] (221.1, rationale
+        // in NOTES.md / commit 2c1edf56c): scope expected_record_type per arg
+        // from the variant's OWN field type — mirrors [M-181] for Ok/Err.
         let saved_expected = self.expected_record_type.clone();
         let mut arg_strs = Vec::with_capacity(args.len());
         for (a, fty) in args.iter().zip(field_c_types.iter()) {
@@ -20919,13 +20913,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let is_single_nova_ptr =
             cty.starts_with("Nova_") && cty.ends_with('*') && !cty.ends_with("**");
         if is_single_nova_ptr {
-            // [M-156-bare-unit-variant-eq-invalid-cast]: приёмная сторона.
-            // Операнд может быть erased-scalar формой D109-конструктора
-            // (`(nova_int)(intptr_t)nova_make_X_Variant()`, ~emit_c.rs:33580),
-            // а `->tag` ниже разыменовывал текст как есть → CC-FAIL при
-            // `s == MySign.Pos`. Ре-каст к `cty` — no-op для настоящего
-            // указателя, round-trip для erased-формы; покрывает разом
-            // tag-рекурсию, @equal/@compare, named-eq-fn (одна точка входа).
+            // [M-156-bare-unit-variant-eq-invalid-cast] (221.1, rationale in
+            // NOTES.md / commit b5c4a689e): re-cast to `cty` — no-op for a
+            // real pointer, round-trip for the D109 erased-scalar ctor form.
             let l = format!("(({})({}))", cty, l);
             let r = format!("(({})({}))", cty, r);
             let l = l.as_str();
