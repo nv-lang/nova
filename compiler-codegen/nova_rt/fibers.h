@@ -1145,6 +1145,32 @@ static inline void nova_scope_free_slot(NovaFiberQueue* scope, int slot) {
     /* sched_state parked[slot] is already false (wake cleared it). */
 }
 
+/* Plan 221.1 №162 [REJECTED APPROACH — kept as a comment, not code, so the
+ * next person doesn't re-discover the same dead end]: a `supervised{}`
+ * body's OWN statements run inline on the SAME coroutine that entered the
+ * block, with no slot reserved for them in the fresh (count==0) scope — a
+ * direct blocking op (no `spawn`) then failed `nova_sched_park`'s
+ * `slot < scope->count` check and aborted. The tempting fix is a function
+ * HERE that registers the calling coroutine as a real slot of the new scope
+ * (mirroring how `emit_nova_main_scoped_inner` spawns the main body AS A
+ * FIBER into `_nova_main_scope`) — an earlier revision of this fix did
+ * exactly that (`nova_scope_alloc_body_self_slot`, alloc_slot(new_scope, co)
+ * + repoint `_nova_active_slot`) and it is WRONG: it registers the SAME
+ * coroutine under a SECOND scope's bookkeeping while the coroutine's REAL
+ * driver — whichever scope's `nova_supervised_step` (or bare `main()`) is
+ * actually `mco_resume`-ing it right now — keeps consulting ITS OWN
+ * bookkeeping, sees no parked bit set there once the direct block yields,
+ * and resumes the coroutine again while it is genuinely parked elsewhere.
+ * Confirmed empirically: the abort turned into a hang (the double-resume
+ * corrupts the intended single-winner park/wake protocol), not a fix.
+ *
+ * The actual fix (`emit_supervised`, emit_c.rs) is to NOT swap
+ * `_nova_active_scope`/`_nova_active_slot` at all for the body-statement-
+ * execution window — they already correctly hold this coroutine's REAL,
+ * currently-driven (scope,slot), inherited from whoever resumed it, which
+ * is exactly what a direct blocking op must park on. See emit_c.rs's
+ * `emit_supervised` doc comment for the full reasoning. */
+
 /* Plan 44.5 L5: pin SpawnCtx в parent supervised scope ctx_pins для
  * GC root protection в окне между nova_runtime_spawn_into и worker
  * resume'ом fiber'а. */

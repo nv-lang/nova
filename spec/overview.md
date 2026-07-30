@@ -89,6 +89,12 @@
    ретракция Правила 6, 2026-07-25) — блокирующие park/wake-операции
    (`Time.sleep`, `TcpListener.accept()`, `Channel.recv()`) легальны
    **прямо в `main()`**, без обёртки в `supervised { spawn { … } }`.
+   То же самое верно и **прямо в теле `supervised { … }`** без
+   промежуточного `spawn` ([D435](decisions/06-concurrency.md#d435),
+   2026-07-30) — но такая прямая блокирующая операция НЕ защищена
+   `timeout:`/`cancel:` этого scope (enforcement живёт только в join-цикле,
+   который стартует после statement'ов тела); для защиты дедлайном/токеном
+   нужен `spawn { … }`.
    Супервизия падений — обычный эффект `Supervisor`
    ([D416](decisions/06-concurrency.md#d416)): готовые политики
    `escalate()`/`stop()`, пользовательские — handler-литерал

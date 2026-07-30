@@ -13873,11 +13873,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
         }
 
-        // Set _nova_active_scope to this queue so that on main-flow,
-        // Time.sleep (default handler) finds the right scope to drive.
-        // Saved/restored around the body.
+        // Plan 221.1 №162 (D435): do NOT repoint _nova_active_scope/_slot at
+        // `queue` — untouched, a direct body blocking op parks correctly on
+        // this coroutine's real (scope,slot). fibers.h (nova_scope_free_slot) + D435.
         self.line(&format!("NovaFiberQueue* {} = _nova_active_scope;", prev_scope_var));
-        self.line(&format!("_nova_active_scope = &{};", queue_var));
 
         // Activate scope: spawn inside body routes into queue.
         let prev = std::mem::replace(&mut self.current_scope_queue, Some(queue_var.clone()));

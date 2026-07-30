@@ -351,7 +351,27 @@ static inline void _nova_park_clear_slot(NovaFiberQueue* scope, int slot) {
  * (or a cancel goready) dispatches us. Не вызывать из не-fiber кода. */
 static inline void nova_sched_park(NovaFiberQueue* scope, int slot) {
     if (!scope || slot < 0 || slot >= scope->count) {
-        fprintf(stderr, "nova: nova_sched_park: invalid scope/slot\n");
+        /* Plan 221.1 №162: name the SITUATION, not just the failed bounds
+         * check. The overwhelmingly common cause (closed by
+         * nova_scope_alloc_body_self_slot for `supervised{}`/main-body
+         * bodies) is a blocking operation running in a scope that never
+         * reserved a slot for the fiber currently attempting to park in
+         * it — either a scope with no children AND no self-registration
+         * (a runtime/codegen bug: every `supervised{}` body and the
+         * main-body fiber must self-register, see
+         * nova_scope_alloc_body_self_slot in fibers.h), or a stale
+         * (scope,slot) pair carried over from a DIFFERENT scope (e.g.
+         * `_nova_active_slot` not saved/restored symmetrically around a
+         * nested scope). */
+        fprintf(stderr,
+            "nova: blocking operation attempted with no reserved fiber-slot "
+            "in this scope (scope=%p count=%d slot=%d) -- a scope only has "
+            "slots for its self-registered body (nova_scope_alloc_body_self_slot) "
+            "and for spawn'd children; this pair is neither, which means the "
+            "TLS (_nova_active_scope,_nova_active_slot) is stale for the "
+            "scope actually being blocked in. See Plan 221.1 #162 / "
+            "spec/decisions/06-concurrency.md.\n",
+            (void*)scope, scope ? scope->count : -1, slot);
         abort();
     }
     mco_coro* co = mco_running();
@@ -390,7 +410,17 @@ static inline void nova_sched_park_with_unlock(NovaFiberQueue* scope, int slot,
                                                  void (*unlock_fn)(void*),
                                                  void* unlock_arg) {
     if (!scope || slot < 0 || slot >= scope->count) {
-        fprintf(stderr, "nova: nova_sched_park_with_unlock: invalid scope/slot\n");
+        /* Plan 221.1 №162: same situation as nova_sched_park above — see its
+         * comment for the full explanation (self-slot vs stale scope/slot). */
+        fprintf(stderr,
+            "nova: blocking operation attempted with no reserved fiber-slot "
+            "in this scope (scope=%p count=%d slot=%d) -- a scope only has "
+            "slots for its self-registered body (nova_scope_alloc_body_self_slot) "
+            "and for spawn'd children; this pair is neither, which means the "
+            "TLS (_nova_active_scope,_nova_active_slot) is stale for the "
+            "scope actually being blocked in. See Plan 221.1 #162 / "
+            "spec/decisions/06-concurrency.md.\n",
+            (void*)scope, scope ? scope->count : -1, slot);
         abort();
     }
     mco_coro* co = mco_running();
