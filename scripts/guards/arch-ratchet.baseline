@@ -267,5 +267,16 @@
 # Верификация слияния: мин-репро обоих номеров RED→GREEN; обход в витрине СНЯТ
 # (`report_json_test.nv` на bare-форме) и тест PASS; `nova check std/src` FAIL строго 26;
 # флагман `built:`; мега-CU — гейтом.
-lines=63751
+# Рост 63751→63760 (+10) осознан (реестр 221.1 №129, окно p129-registry-audit,
+# sonnet, 2026-07-30) — ПУТЬ B, поднято ИНТЕГРАТОРОМ после ЛИЧНОЙ проверки диффа.
+# Весь рост = ДВА вызова проверок коллизий на двух insert-сайтах mono-реестров;
+# сама логика (check_mono_method_decl_collision / check_mono_fn_decl_collision,
+# тексты диагностик, doc-обоснования) — в НОВОМ codegen/mono_method_registry.rs
+# (132 строки, вне этой метрики). Проверено глазами: никаких новых эвристик в
+# emit_c; insert → entry().or_insert_with() — при коллизии РАЗНЫХ деклов теперь
+# [E_MONO_METHOD_KEY_COLLISION]/[E_MONO_FN_KEY_COLLISION] вместо тихого last-wins
+# (репро №129: чужое тело функции, 222 вместо 111, БЕЗ предупреждения).
+# ДОЛГ (отдельная волна): полный фикс mono_fn_decls = module-qualified ключ
+# (~10 read-сайтов); текущее — конверсия miscompile→честная ошибка.
+lines=63760
 infer=348
