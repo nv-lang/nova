@@ -38209,35 +38209,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Call { func: TurboFish { base: Ident("MyHandle"), .. }, .. };
         // identity cast same as non-generic case — `T` parameter — это
         // type-system fiction, C-level value identical.
-        // [fix M-136-turbofish-newtype-ctor-shadowed-by-samename-variant,
-        // реестр 221.1 №159]: `name_opt` used to collapse the Ident and
-        // TurboFish call shapes into the SAME bare name for the
-        // `shadowed_by_variant` gate below — but they are NOT equally
-        // ambiguous. `Name(args)` (plain Ident callee) is genuinely
-        // ambiguous between a sum-variant constructor (`SumRepr.Tagged`
-        // spelled bare) and a newtype/tuple-ctor of the SAME bare name —
-        // that ambiguity is exactly what №136 disambiguates via
-        // `debt_find_variant_ctx`. `Name[T, U](args)` (explicit TurboFish
-        // generics on the callee) has NO such ambiguity: Nova has no syntax
-        // for naming a sum-variant's own type-args this way (a variant
-        // never carries its OWN turbofish — the sum's generics live on the
-        // `Sum[T].Variant(..)` qualifier, a distinct Path/Member shape) — a
-        // TurboFish callee is UNCONDITIONALLY a generic type/newtype
-        // constructor. Reusing `shadowed_by_variant` for it breaks a
-        // legitimate generic-newtype call whenever some UNRELATED sum
-        // happens to declare a same-named, same-arity variant (found via
-        // reflect_sum_reprs_pos.nv + v3_generic_newtype_non_ptr_inner_ok.nv:
-        // std.reflect.SumRepr's `Tagged(str)` (arity 1) collides with the
-        // conformance corpus's own `type Tagged[T, U](int)`, ALSO arity 1 —
-        // `Tagged[Persistent, Email](999)` was mis-detected as "shadowed",
-        // skipped the identity-cast below, fell through with no other arm
-        // ever claiming a TurboFish callee, and degenerated to a literal,
-        // never-defined `Tagged(999)` call — CC-FAIL "undefined symbol:
-        // Tagged" at link time). `is_turbofish` keeps the Ident path's
-        // #136 gate byte-identical (still the sole source of real
-        // ambiguity) while making the TurboFish path unconditional, mirroring
-        // the "T — type-system fiction" identity-cast rationale already
-        // documented above for the non-colliding case.
         let (name_opt, is_turbofish): (Option<&String>, bool) = match &func.kind {
             ExprKind::Ident(n) => (Some(n), false),
             ExprKind::TurboFish { base, .. } => {
@@ -38267,12 +38238,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // newtype — byte-identical for the overwhelming common case (no
         // sum in the CU declares a variant of this bare name at all, so
         // `debt_find_variant_ctx` returns `None` and this newtype path
-        // proceeds exactly as before). №159: skipped entirely for a
-        // TurboFish callee (see doc above) — always eligible for the
-        // identity-cast there.
+        // proceeds exactly as before). №159: gate skipped for TurboFish.
         if let Some(name) = name_opt {
-            let shadowed_by_variant = !is_turbofish
-                && self.debt_find_variant_ctx(name, Some(args.len())).is_some();
+            let shadowed_by_variant = !is_turbofish && self.debt_find_variant_ctx(name, Some(args.len())).is_some();
             if !shadowed_by_variant {
                 if let Some(aliased_c) = self.type_aliases.get(name).cloned() {
                     if args.len() == 1 {
