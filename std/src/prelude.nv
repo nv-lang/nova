@@ -242,95 +242,25 @@ export import std.runtime.string.{pad_left, pad_right, repeat, replace, compare,
 // cycle. `core` stays unicode-free → partial `#prelude(core,…)` is fixed.
 
 /// Prelude version marker — verify в тестах что auto-import работает.
-/// Bump'ается при каждой migration phase Plan 62.
+/// Bump'ается при каждой migration phase.
 ///   - 1 = pre-migration (только этот placeholder).
-///   - 2 = Plan 62.A done (core types в file-based form).
-///     Plan 62.B reused version 2 (runtime fns added).
-///     Plan 62.C reused version 2 (error types added).
-///     Plan 62.D non-opaque reused version 2 (Iter[T] added).
-///     Plan 62.E reused version 2 (protocols added).
-///   - 3 = Plan 62.F done (effects.Fail[E] added) + **Plan 62 closed**.
-///   - 4 = Plan 62.D non-opaque bis-1 done: Range / RangeIter теперь
-///     auto-available через prelude facade (re-export из
-///     std.collections.range), 4 latent codegen bugs закрыты
-///     (match inference + closure scope analysis + D29 W_PRELUDE_SHADOW).
-///   - 5 = Plan 62.F.bis done (2026-05-18): edition versioning
-///     (`[package].edition` → `std/prelude/<sanitized>.nv` resolver) +
-///     structured W_PRELUDE_SHADOW lint с `allow_prelude_shadow`
-///     suppress + Time/Mem formal effect declarations + spec D-block
-///     amendments.
-///   - 6 = Plan 62.D.bis done (2026-05-18): StringBuilder / WriteBuffer /
-///     ReadBuffer formally declared via new D126 `external type` syntax
-///     в std/prelude/collections.nv. Auto-available через prelude facade
-///     — закрывает последний known-by-name hole в D26 visible prelude.
-///     Methods продолжают жить в std/runtime/<name>.nv (external fn,
-///     D82, unchanged).
-///   - 7 = Plan 62.B.bis done (2026-05-18): print / println formally
-///     declared в std/prelude/runtime.nv через D69 variadic + `[]any` —
-///     canonical D26 signature `fn print(...items []any) -> ()`. Plan 67
-///     hotfix (infer_print_helper refactor через infer_expr_c_type)
-///     absorbed как Ф.0. Codegen special-case (emit_c.rs:11270) fires
-///     перед variadic routing (Ф.1 reorder) — preserves per-arg type
-///     info, synthesized `[]any` array никогда не строится.
-///   - 8 = Plan 62.E.bis done (2026-05-20): TryFrom / TryInto formally
-///     re-exported через prelude facade. Effect-блокер снят Plan 56
-///     Ф.2.7-revert (D122 amended — эффекты в protocol-методах
-///     разрешены под mono-dispatch); декларации используют форму
-///     `try_from(t T) -> Result[Self, E]` (D77, migration path b).
-///   - 9 = Plan 62.C.bis done (2026-05-20): RuntimeNoneError
-///     (unit-type, D85 — ошибка `Option!!` на None) formally
-///     задекларирован в std/prelude/errors.nv + re-export через facade.
-///     Блокер снят Plan 72 P1-B (bodyless-type support в parser).
-///     Remaining deferred sub-plans: 62.A.bis sum_schemas removal
-///     (ждёт Plan 59 Ф.7.5 increment 2).
-///   - 10 = Plan 91 Ф.2.5 done (2026-05-28, D177): str Nova-body methods
-///     (parse_int_radix / pad_left / pad_right / repeat / replace) теперь
-///     auto-available через prelude re-export из std.runtime.string.
-///   - 11 = Plan 91 Ф.2.6 done (2026-05-28, D178): str API cleanup:
-///     bytes→to_bytes, chars→to_chars, parse_int_radix+parse_int→parse_int(radix=10),
-///     compare added, split→readonly []str, readonly param syntax.
-///   - 12 = Plan 138 (D239): `[]T` ≡ `Vec[T]` foundation (record/sig
-///     lowering, array-literal typed-Vec construction) — gated on the Vec
-///     template being present per compilation unit.
-///   - 13 = (reserved increment — see chronology above).
-///   - 14 = Plan 138.2 Ф.0-final (D239 universal flip, 2026-06-11): `Vec`/
-///     `VecIter` re-exported from prelude → `[]T ≡ Vec[T]` UNIVERSAL. Every
-///     prelude unit lowers value/type-position `[]T` to typed
-///     `Nova_Vec____<elem>*` storage. `#no_prelude` units keep the legacy
-///     NovaArray path (graceful degrade).
-///   - 15 = D73/D77 retraction (2026-07-06): `From`/`Into`/`TryFrom`/
-///     `TryInto` protocol declarations removed from std/prelude/protocols.nv
-///     facade re-export (auto-derive synthesis removed from compiler too).
-///     Remaining: Hash/Equal/Compare/Display. Static `.from`/`.try_from`
-///     naming convention and `to_str()`/`to_*` (D410) are unaffected.
-///   - 16 = Plan 174.1 done (2026-07-08): `str.parse_int` (D177/D178/D325
-///     triad) RETRACTED as public API — removed from this facade's
-///     `std.runtime.string` re-export. Replaced by conversion METHODS ON
-///     THE SOURCE: `str.to_int()`/`to_i64()`/`to_u64()`/`to_u32()`/`to_u8()`/
-///     `to_f64()` (std/runtime/string/parse.nv) — added to this re-export
-///     list. (An earlier same-day design, static `T.parse(s)` on the numeric
-///     type, was superseded by the owner before landing; a type-set-bounded
-///     generic for it also hit a live path-call codegen gap,
-///     [M-174.1-parse-typeset-pathcall], out of scope here.)
-///   - 17 = Plan 196.3 done (2026-07-12, D109/D74 checker-visibility
-///     migration): `std.runtime.math` (`f64`/`f32` math intrinsics +
-///     `int.abs()`) now plain-imported (same pattern as `char`/`defaults`
-///     above) so the checker resolves them via `method_table` instead of
-///     the emit_c.rs-only `primitive_instance_method_known` existence
-///     whitelist. Auto-available without explicit import (unchanged
-///     surface); codegen emission (`f64_method_to_c`/`int_method_to_c`)
-///     unaffected.
-///   - 18 = Plan 210 done (2026-07-16, D412-амендмент): `EmbeddedDir` /
-///     `EmbeddedEntry` formally declared в std/prelude/embed.nv +
-///     re-exported через facade — `embed_dir("dir")` компайл-тайм
-///     интринсик (резолвер embed_resolve.rs синтезирует
-///     `EmbeddedDir.new([EmbeddedEntry{...}, …])`, отсортировано по path).
-///     Payload'ы — zero-copy static rodata (существующая HexBlobLit-арм,
-///     emit_c.rs НЕ менялся).
-///   - 19 = [M-numeric-try-narrowing] done (2026-07-20, D430): `RangeError`
-///     (unit-type, checked numeric-narrowing error) declared in
-///     std/prelude/errors.nv + re-exported through this facade —
-///     `try_to_<T>` family (std/prelude/protocols.nv, `fn[S Ints] S
-///     @try_to_i8()`/.../`@try_to_uint()`) returns `Result[T, RangeError]`.
+///   - 2 = core types, runtime fns, error types, Iter[T], protocols в file-based form.
+///   - 3 = effects.Fail[E] added, Plan 62 closed.
+///   - 4 = Range / RangeIter auto-available через prelude facade, 4 codegen bugs закрыты.
+///   - 5 = edition versioning + W_PRELUDE_SHADOW lint + Time/Mem effect declarations.
+///   - 6 = StringBuilder / WriteBuffer / ReadBuffer formally declared через `external type`.
+///   - 7 = print / println formally declared через variadic + `[]any`.
+///   - 8 = TryFrom / TryInto formally re-exported через prelude facade.
+///   - 9 = RuntimeNoneError formally declared.
+///   - 10 = str Nova-body methods (pad_left/pad_right/repeat/replace) auto-available.
+///   - 11 = str API cleanup: to_bytes/to_chars/compare.
+///   - 12 = `[]T` ≡ `Vec[T]` foundation.
+///   - 13 = reserved.
+///   - 14 = `[]T ≡ Vec[T]` universal.
+///   - 15 = From/Into/TryFrom/TryInto protocol declarations removed.
+///   - 16 = str.parse_int retracted; str.to_int()/to_i64()/... methods added.
+///   - 17 = std.runtime.math (f64/f32 math intrinsics + int.abs()) plain-imported.
+///   - 18 = EmbeddedDir / EmbeddedEntry formally declared.
+///   - 19 = RangeError + try_to_&lt;T&gt; narrowing family.
 #stable(since = "0.1")
 export const PRELUDE_VERSION = 19

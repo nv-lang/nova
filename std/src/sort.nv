@@ -26,7 +26,7 @@ module std.sort
 /// In-place insertion sort для `[]int` (stable, O(n²)).
 ///
 /// Подходит для arrays до ~1000 elements. Для крупных наборов
-/// дождитесь Plan 91 followup `[sort-pdq]` (pdq-sort) или
+/// дождитесь followup [sort-pdq] (pdq-sort) или
 /// `[sort-generic-T]` (intro-sort).
 ///
 /// # Examples
@@ -54,7 +54,7 @@ export fn []int mut @sort() -> @ {
 /// `cmp` возвращает negative если `a` должен идти раньше `b`, 0 если
 /// порядок не важен, positive если `a` после `b`. Sort стабилен —
 /// equal-pairs (`cmp == 0`) сохраняют исходный порядок. Совместимо с
-/// C `memcmp`/`strcmp` convention (см. D183).
+/// C `memcmp`/`strcmp` convention.
 ///
 /// # Examples
 /// ```nova

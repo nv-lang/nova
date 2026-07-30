@@ -27,7 +27,7 @@
 // протокола `Reflect` (библиотечные обёртки) решают, что непрозрачно.
 module std.reflect
 
-/// Разметка суммы на wire (D382/D435 `#serde(tag/content/untagged)`).
+/// Разметка суммы на wire (`#serde(tag/content/untagged)`).
 /// `External` — дефолт serde (тип без атрибутов разметки).
 export type SumRepr enum
     | External
@@ -46,7 +46,7 @@ export type SumRepr enum
 ///   элементами → синтетический `Record(variant_name, [("0", ..), ("1", ..)])`
 ///   (позиционные поля по индексу); record-вариант → `Record(variant_name,
 ///   [(field, shape), ..])` с СЫРЫМИ именами полей (rename/rename_all для
-///   sum-вариантов вне scope D435, `[M-126-sum-*-rich]`).
+///   sum-вариантов вне scope).
 /// - `Ref(name)` — back-edge рекурсивного типа: тип `name` уже разворачивается
 ///   выше по графу (см. модульный docstring).
 /// - `Arr(items)` — гомогенный контейнер (`Vec[T]`/`[]T`).

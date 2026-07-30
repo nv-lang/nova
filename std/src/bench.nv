@@ -92,7 +92,7 @@ export extern "nova" fn bench.allocs() -> int
 #stable(since = "0.1")
 export extern "nova" fn bench.now_ns() -> int
 
-/// Plan 57.G.5 — Custom metric value. Каждый вызов emits ONE sample;
+/// Custom metric value. Каждый вызов emits ONE sample;
 /// CLI aggregates все calls per-bench → JSON `custom_metrics[]` field
 /// с count/min/max/sum/median.
 ///
