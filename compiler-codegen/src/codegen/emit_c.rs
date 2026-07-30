@@ -17343,8 +17343,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // the TLS slot itself; a real `with` still overrides normally,
             // since `emit_with` always overwrites `_nova_handler_X` on entry
             // and restores the PRIOR value — NULL or the default — on exit).
-            // An effect with no registered default keeps today's behaviour
-            // (NULL-deref if used without an enclosing `with`) unchanged.
+            // No registered default → falls through to the null-check +
+            // `nv_panic` guard below (№158) — controlled panic, not NULL-deref.
             if let Some(fn_name) = self.default_handler_fns.get(name).cloned() {
                 let ctor_c_name = self.free_fn_c_name(&fn_name);
                 self.line(&format!(
@@ -17436,10 +17436,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         self.line("return time_local_offset_sec();");
                     }
                 }
-            } else {
+            } else { // №158: null handler → `nv_panic` (D62 "runtime fail (panic)"), не NULL-deref.
                 self.line(&format!(
-                    "return _nova_handler_{name}->{field}({args});",
-                    name = name, field = mangled, args = call_args_str
+                    "if (!_nova_handler_{name}) {{ nv_panic(nova_str_from_cstr(\"unhandled effect `{name}.{op}`: no active handler (missing `with {name} = …` around this call)\")); return ({ret}){{0}}; }} return _nova_handler_{name}->{field}({args});",
+                    name = name, op = m.name, ret = ret, field = mangled, args = call_args_str
                 ));
             }
             self.indent -= 1;

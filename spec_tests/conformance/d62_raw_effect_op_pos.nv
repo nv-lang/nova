@@ -11,6 +11,31 @@
 // ДРУГОГО эффекта — тело опа анализируется в контексте установки
 // (лексическое окружение `with`), не как отдельная «сигнатура» (форма
 // p_effect_in_effect из opus-design-note 222.20-Ф.2 §0 Ф-C/Ф-D).
+//
+// Plan 221.1 №158 (2026-07-30): формы (1)/(2) проверяют, что раннему
+// (`declared_effects`/D28-inference) обязательству ДОСТАТОЧНО для
+// `check_raw_effect_op_declared` внутри тела `ok_declared`/
+// `ok_private_inferred` — это СТАТИЧЕСКИЙ факт про сигнатуру/inference,
+// не про наличие handler'а в runtime. D62 §«Семантика проверки» отдельно
+// и безусловно требует: «Активный handler в runtime отсутствует на
+// момент операции → runtime fail (panic)» — сигнатурная декларация НЕ
+// устанавливает handler, она лишь ПЕРЕДАЁТ обязательство вызывающему
+// (тот обязан либо тоже объявить эффект, либо погасить его `with`).
+// У `test`-блока нет слота для декларации эффекта (`state.effect_root`,
+// D414 §2) — единственный способ погасить обязательство для теста-
+// вызывающего — обернуть САМ ВЫЗОВ в `with Log1 = …`, как ниже. Обёртка
+// стоит СНАРУЖИ (в test-блоке, вокруг вызова `ok_declared`/
+// `ok_private_inferred`), а НЕ внутри их тел — иначе тест начал бы
+// проверять форму (3) (with-погашение ВНУТРИ тела) вместо формы (1)/(2)
+// (декларация/inference БЕЗ локального with). До этого коммита здесь
+// не было `with` вовсе → `Nova_Log1_info` разыменовывал NULL
+// (`_nova_handler_Log1`) — голый access violation валил весь процесс
+// (мега-CU `spec_tests/conformance` целиком, см. test_runner.rs
+// run-fail attribution note). emit_c.rs теперь превращает отсутствие
+// handler'а в управляемый `nv_panic` (№158) — но управляемый panic
+// всё равно НЕ "успех"; тест по-прежнему обязан установить handler,
+// чтобы реально проверить "легальная форма исполняется корректно",
+// а не просто "не падает процессом".
 
 module spec_tests.conformance
 
@@ -56,11 +81,21 @@ export fn ok_effect_in_effect(s str) -> int {
 }
 
 test "d62 №131: exported fn с явной декларацией — raw op легален" {
-    assert(ok_declared("x") == 1)
+    // №158: handler для Log1 нужен СНАРУЖИ вызова — D62 «Активный handler
+    // в runtime отсутствует → runtime fail (panic)», сигнатурная
+    // декларация только передаёт обязательство вызывающему.
+    with Log1 = effect Log1 { info(m) -> () => () } {
+        assert(ok_declared("x") == 1)
+    }
 }
 
 test "d62 №131: private fn без декларации — D28 auto-inference (exempt)" {
-    assert(ok_private_inferred("x") == 1)
+    // №158: та же причина — D28 auto-inference добавляет Log1 в
+    // сигнатуру ok_private_inferred СТАТИЧЕСКИ, но не устанавливает
+    // handler в runtime; вызывающий (этот test) обязан его установить.
+    with Log1 = effect Log1 { info(m) -> () => () } {
+        assert(ok_private_inferred("x") == 1)
+    }
 }
 
 test "d62 №131: exported fn без декларации, но с локальным `with` — легален" {
