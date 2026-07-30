@@ -70,9 +70,8 @@
 Rust-парити (`ToSocketAddrs::to_socket_addrs`); сплющивание (`to_socketaddr`) стирает границы
 слов. **Исключение** — типы, чьё имя лексикализовано индустрией как ОДНО слово: `datetime`,
 `bigint`, `bigdecimal`, `bigfloat` (Python-модуль `datetime`, Java `BigDecimal`) — пишутся
-слитно: `to_datetime`, `to_bigint`. Известный дрейф: `to_versionreq` (`VersionReq` не
-лексикализован — должно быть `to_version_req`; мигрировать при заходе в semver-модуль,
-см. «Известные расхождения»).
+слитно: `to_datetime`, `to_bigint`. Дрейф `to_versionreq` мигрирован на `to_version_req`
+2026-07-30 (`std/data/semver_range.nv`, `[M-from-str-static-conversion-lint-gap]`-волна).
 
 **Голое имя-вид ЗАПРЕЩЕНО на `consume`-receiver'е.** Потребление владения
 выражается ТОЛЬКО `into_*`; голое существительное — только zero-copy вид,
@@ -1426,17 +1425,13 @@ redundant-slicing.
 
 ## Известные расхождения для будущего sweep'а
 
-0. **`to_versionreq`** (`std/data/semver_range.nv:68`) — против правила §1а «имя типа в `to_*`
-   snake по границам CamelCase» (`VersionReq` не лексикализован): должно быть `to_version_req`.
-   Мигрировать при следующем заходе в semver-модуль (декла + 2 вызова).
-
-1. **`docs/idioms/size-accessors.md:41-42`** документирует `s.len()` как O(n) codepoint-count,
+0. **`docs/idioms/size-accessors.md:41-42`** документирует `s.len()` как O(n) codepoint-count,
    но `strings.md:71` / `core.nv:22` — это compile-error `E_STR_NO_LEN` (Plan 152.1/D249).
    Idiom-doc устарел; `strings.md` авторитетен.
-2. **Стиль-дрейф:** часть строкового кода ещё пишет `i = i + 1` вместо `i += 1` (`search.nv`,
+1. **Стиль-дрейф:** часть строкового кода ещё пишет `i = i + 1` вместо `i += 1` (`search.nv`,
    `core.nv`) и имеет инлайн-`;` (`parse.nv:64`). Новый код — `+=`/без `;`; механический sweep
    приведёт существующее в соответствие (Plan 91.18 Ф.8).
-3. **Контракт-разрыв (высокоценный followup):** строковые методы почти без `requires`/`ensures`
+2. **Контракт-разрыв (высокоценный followup):** строковые методы почти без `requires`/`ensures`
    при идеальных целях (offset'ы, radix-диапазон). Правило 5 + elidable-bounds модель
    (`contracts.md:204`) — добавление бесплатно в runtime при доказуемости.
 
