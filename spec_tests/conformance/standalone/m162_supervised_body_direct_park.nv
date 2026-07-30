@@ -1,0 +1,73 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Regression for 221.1 registry #162 (P1, 2026-07-30): a blocking operation
+// written DIRECTLY in a `supervised{}` body — with NO intervening `spawn` —
+// used to abort the process on start:
+//
+//   nova: nova_sched_park: invalid scope/slot
+//
+// Root cause (compiler-codegen/nova_rt): `nova_scope_init` always starts a
+// scope at `count == 0` (fibers.h) — a scope only gets slots via
+// `nova_fiber_spawn_into`/`nova_scope_alloc_slot`, called for genuine
+// spawned children. `emit_supervised` (emit_c.rs) runs the body's OWN
+// statements INLINE on the SAME coroutine that entered the block — it only
+// ever swapped `_nova_active_scope` to the fresh queue, leaving
+// `_nova_active_slot` pointing at whatever slot (or -1) the ENCLOSING scope
+// had assigned. A direct blocking call then parked against
+// (new_empty_scope, stale_slot) — `nova_sched_park`'s `slot < scope->count`
+// bounds check failed (count was still 0) and the process aborted.
+// `supervised { spawn { <blocking op> } }` never hit this: the blocking op
+// ran inside a genuinely NEW coroutine registered via `nova_fiber_spawn_into`
+// with its OWN valid slot.
+//
+// Fix: `nova_scope_alloc_body_self_slot` (fibers.h) registers the CALLING
+// coroutine itself as a real slot of the new scope — mirroring how
+// `emit_nova_main_scoped_inner` spawns the main body AS A FIBER into
+// `_nova_main_scope` for the exact same reason — freed again before the
+// scope's join loop (`nova_supervised_run`) starts. See its doc comment and
+// spec/decisions/06-concurrency.md (D-amendment) for the full design and the
+// one documented limitation: a direct (non-`spawn`) blocking op in the body
+// is NOT raced against this scope's OWN `timeout:`/cancel token, because
+// deadline/cancel enforcement only runs from within the join loop, which
+// starts strictly AFTER the body's inline statements finish.
+module standalone.m162_supervised_body_direct_park
+
+import std.time.duration
+
+test "supervised body direct sleep (no spawn) parks and resumes instead of aborting" {
+    // Pre-fix: aborts on start with "nova_sched_park: invalid scope/slot".
+    supervised { (5).to_millis().sleep() }
+    assert(true)
+}
+
+test "supervised body direct block coexists with a spawned child in the same scope" {
+    mut child_ran = AtomicBool.new(false)
+    supervised {
+        spawn { child_ran.store(true) }
+        // Self-slot (body) + child slot must coexist without aliasing —
+        // the join loop below must still wait for the spawned child.
+        (5).to_millis().sleep()
+    }
+    assert(child_ran.load())
+}
+
+test "supervised body direct channel recv (no spawn wrapping recv) parks until a spawned sender fires" {
+    ro ch = Channel.new(1)
+    ro tx = ch.tx
+    ro rx = ch.rx
+    mut got = -1
+
+    supervised {
+        spawn {
+            (5).to_millis().sleep()
+            tx.send(42)
+        }
+        // Direct recv in the body — parks on the self-slot until the
+        // spawned sibling above sends.
+        match rx.recv() {
+            Some(v) => { got = v }
+            None => { got = -1 }
+        }
+    }
+
+    assert(got == 42)
+}
