@@ -1,0 +1,13 @@
+// №129 Task C regression probe (companion to
+// `crossmod_samename_typecheck_bleed` — same class of cross-module
+// same-name bleed, here for a GENERIC FREE FUNCTION rather than a type).
+// Peer `mfd_a`: exports its OWN `helper[T]`, body returns 111.
+module mono_fn_decl_collision.mfd_a
+
+export fn[T] helper(x T) -> int {
+    111
+}
+
+export fn mfd_a_call() -> int {
+    helper(1)
+}

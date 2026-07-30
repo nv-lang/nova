@@ -1,0 +1,30 @@
+// EXPECT_COMPILE_ERROR E_MONO_FN_KEY_COLLISION
+//
+// №129 Task C: `mfd_a` and `mfd_b` (peer files here) each declare their OWN
+// generic free function `helper[T]` — perfectly legal Nova (two different
+// modules, two different symbols, nothing ambiguous at the language level:
+// `mfd_a_call` unambiguously means `mfd_a`'s `helper`, `mfd_b_call` means
+// `mfd_b`'s). But codegen's `mono_fn_decls` (emit_c.rs) is keyed ONLY by the
+// bare fn name — no module/file qualification — so once both are imported
+// into the SAME compile unit (here, transitively via this entry peer),
+// `mfd_b`'s registration silently overwrote `mfd_a`'s in `mono_fn_decls`
+// before the №129 fix: `mfd_a_call()` returned 222 (mfd_b's body) instead
+// of its own 111 — a silent WRONG VALUE, not a crash. Confirmed via the
+// isolated `scratch_repro/modtest/` 2-module repro in the №129 audit
+// worktree before this fixture was written.
+//
+// №129's fix (mono_method_registry.rs `check_mono_fn_decl_collision`)
+// upgrades this from a silent miscompile to an honest, actionable
+// diagnostic — it does NOT yet make the (legal) cross-module same-name
+// case actually WORK; that requires a module/file-qualified key threaded
+// through ~10 read sites, left to a dedicated follow-up window (see the
+// registry's doc comment).
+module mono_fn_decl_collision.mfd_entry
+
+import ./mfd_a.{mfd_a_call}
+import ./mfd_b.{mfd_b_call}
+
+test "cross-module same-name generic free fn — each call must run its OWN module's body (129 Task C)" {
+    assert(mfd_a_call() == 111)
+    assert(mfd_b_call() == 222)
+}

@@ -1,0 +1,56 @@
+// EXPECT_COMPILE_ERROR E_MONO_METHOD_KEY_COLLISION
+//
+// №129 (реестр 221.1, №125-корень / №149-блокер): two blanket declarations
+// bound to TWO DIFFERENT protocols (`P129SourceA`/`P129SourceB`, unrelated —
+// no shared method, so `E_BLANKET_CONFLICT`'s protocol-based grouping does NOT fire —
+// contrast `blanket_conflict_neg.nv`/`blanket_conflict_diffname_neg.nv`,
+// which are both SAME-protocol cases), sharing the SAME bound-typevar
+// spelling (`I`) and the SAME method name (`summarize`), differing only in
+// receiver mutability — a valid D84 overload axis (types/mod.rs Plan 135:
+// `existing_recv_mut != new_recv_mut` bypasses the exact-signature dedup),
+// so the checker's own generic duplicate-signature check does NOT catch
+// this either (contrast `blanket_dup_neg.nv`'s identical-signature case).
+// `mono_method_decls` (emit_c.rs) is keyed ONLY by (receiver spelling,
+// method name) — no protocol dimension, no D84-overload axis — so these two
+// legally-distinct declarations collide on ONE key it can hold exactly one
+// `FnDecl` for. Before the №129 fix this built CLEAN with zero diagnostic
+// (silent last-wins) when the ambiguous method was never called, or reached
+// an unrelated internal-error panic when it was.
+//
+// A concrete implementor of AT LEAST one protocol (referenced from a `test`
+// block) is required here — with NO implementor referenced anywhere, DCE
+// (`is_dead_method`, emit_c.rs's forward-decl loop) strips BOTH blanket
+// declarations before the colliding registration is ever attempted, and the
+// diagnostic below would not fire (a real, separate limitation of a codegen-
+// stage check vs. `E_BLANKET_CONFLICT`'s checker-stage one, which runs
+// before DCE and needs no such bait).
+module neg.mono_method_decl_collision_neg
+
+type P129SourceA[T] protocol {
+    mut @pull_a() -> Option[T]
+}
+
+type P129SourceB[T] protocol {
+    mut @pull_b() -> Option[T]
+}
+
+type P129CountA {
+    mut n int
+}
+fn P129CountA mut @pull_a() -> Option[int] {
+    if @n <= 0 { None }
+    else { @n -= 1; Some(@n) }
+}
+
+fn[I P129SourceA[T]] I @summarize() -> int {
+    111
+}
+
+fn[I P129SourceB[T]] I mut @summarize() -> int {
+    222
+}
+
+test "reachability bait — keeps the blanket decls from being DCE'd away" {
+    mut a = P129CountA { n: 3 }
+    assert(a.n == 3)
+}

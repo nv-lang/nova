@@ -1,0 +1,12 @@
+// №129 Task C regression probe — peer `mfd_b`: exports its OWN, UNRELATED
+// `helper[T]` (same bare name as `mfd_a`'s, different body — returns 222).
+// Legal Nova: two peer modules may each declare their own `helper`.
+module mono_fn_decl_collision.mfd_b
+
+export fn[T] helper(x T) -> int {
+    222
+}
+
+export fn mfd_b_call() -> int {
+    helper(1)
+}
