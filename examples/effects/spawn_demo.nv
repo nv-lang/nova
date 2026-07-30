@@ -1,16 +1,16 @@
-// spawn_demo.nv — D50: spawn внутри structured-scope (supervised/parallel for).
+// spawn_demo.nv — spawn внутри structured-scope (supervised/parallel for).
 //
-// По D50/D415 (06-concurrency.md): `spawn body` — fire-and-forget, возвращает
-// unit. Результаты concurrent-вычислений — через `#share`-примитивы
-// (`Atomic*`/`Mutex`) / каналы или `parallel for` (homogeneous results);
-// голый mut-захват — E_CONCURRENT_MUT_CAPTURE (гонка). `let r = spawn
-// { expr }` — compile-error (spawn не возвращает значение).
+// `spawn body` — fire-and-forget, возвращает unit. Результаты concurrent-
+// вычислений — через `#share`-примитивы (`Atomic*`/`Mutex`) / каналы или
+// `parallel for` (homogeneous results); голый mut-захват —
+// E_CONCURRENT_MUT_CAPTURE (гонка). `let r = spawn { expr }` — compile-error
+// (spawn не возвращает значение).
 
 module effects.spawn_demo
 
 fn main() {
     // Простое spawn внутри supervised: fiber вычисляет, результат через
-    // #share-примитив (D415).
+    // #share-примитив.
     mut r1 = AtomicInt.new(0)
     supervised {
         spawn {
@@ -43,11 +43,10 @@ fn main() {
     // каждого элемента. Здесь собираем результат через mut-аккумулятор
     // внутри supervised-scope.
     //
-    // NB: forma `ro results = parallel for ... { expr }` (массив результатов
-    // по D71) пока корректно типизируется только в `test {}`-блоках; в теле
-    // обычной `fn` value-typing `parallel for` даёт `()` — pre-existing
-    // compiler gap, см. отчёт Plan 91 Ф.6. Поэтому пример использует
-    // statement-форму + AtomicInt-аккумулятор (D415: mut-захват = гонка).
+    // Форма `ro results = parallel for ... { expr }` (массив результатов)
+    // корректно типизируется в `test {}`-блоках; в обычной `fn` value-typing
+    // `parallel for` даёт `()` — поэтому пример использует statement-форму
+    // + AtomicInt-аккумулятор (mut-захват из spawn = гонка).
     mut sum_sq = AtomicInt.new(0)
     supervised {
         parallel for i in 0..5 {

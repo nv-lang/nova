@@ -23,7 +23,7 @@ fn main() {
     ro extended = [0, ...nums, 4, 5]
     println("extended.len = ", extended.len())
 
-    // 4. Pattern matching на массиве (D59)
+    // 4. Pattern matching на массиве
     ro first = match extended {
         [] => -1
         [x, ..] => x

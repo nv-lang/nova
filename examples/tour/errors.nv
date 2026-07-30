@@ -10,7 +10,7 @@ fn parse_digit(s str) -> Result[int, ParseErr] {
     Ok((c as int) - 48)
 }
 
-// `?` propagates Err out of a Result-returning function (D85).
+// `?` propagates Err out of a Result-returning function.
 fn parse_two(a str, b str) -> Result[int, ParseErr] {
     ro x = parse_digit(a)?
     ro y = parse_digit(b)?

@@ -1,15 +1,14 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// Plan 193 Ф.3: TLS echo server example — nova-tls (external native-module
-// dependency, Plan 195 pattern: `.nv` facade + `.c` shim + prebuilt mbedTLS
-// `.lib`, zero Rust) used exactly like a local `std.*` module once declared
-// in `[dependencies]` (see `../nova.toml` and `README.md` next to this file).
+// TLS echo server example — nova-tls (external native-module dependency,
+// `.nv` facade + `.c` shim + prebuilt mbedTLS `.lib`, zero Rust) used
+// exactly like a local `std.*` module once declared in `[dependencies]`
+// (see `../nova.toml` and `README.md` next to this file).
 //
 // Accepts one TCP connection on 127.0.0.1:7778, performs a TLS server
 // handshake using a self-signed `localhost` certificate (test-only fixture,
 // see `certs/README.md`), reads a message, echoes it back over the
-// encrypted stream. Mirrors examples/net/echo_server.nv 1:1 — same
-// TcpListener/spawn/supervised shape — with a `TlsStream.accept` step
-// inserted between `accept()` and the read/write.
+// encrypted stream. Mirrors examples/net/echo_server.nv with a
+// `TlsStream.accept` step inserted between `accept()` and the read/write.
 //
 // Usage:
 //   nova build examples/tls/echo_server.nv -o echo_server && ./echo_server
@@ -36,9 +35,8 @@ fn main() {
 
         supervised {
             spawn {
-                // Listener + TLS session live entirely in this fiber (same
-                // D415 §2 reasoning as examples/net/echo_server.nv: a
-                // mut-capture of either across the spawn boundary would be
+                // Listener + TLS session live entirely in this fiber (mut-
+                // capture of either across the spawn boundary would be
                 // E_CONCURRENT_MUT_CAPTURE).
                 consume lst = match TcpListener.bind(addr) {
                     Ok(consume l)  => l

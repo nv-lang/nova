@@ -9,15 +9,15 @@ fn Counter mut @inc() -> () {
     @n += 1
 }
 
-// Property-by-arity (D84/D409): reading is `@x() -> T`, writing is
+// Property-by-arity: reading is `@x() -> T`, writing is
 // `mut @x(v T) -> @` — a fluent setter that returns the receiver.
 fn Counter @value() -> int => @n
 fn Counter mut @value(v int) -> @ {
-    @n = v   // D409: fluent setter, receiver returned automatically
+    @n = v   // fluent setter, receiver returned automatically
 }
 
 // `protocol` = structural interface (behavior contract on a type).
-// `#impl(...)` opts a type into a protocol explicitly (D186).
+// `#impl(...)` opts a type into a protocol explicitly.
 type Sized protocol {
     @size() -> int
 }

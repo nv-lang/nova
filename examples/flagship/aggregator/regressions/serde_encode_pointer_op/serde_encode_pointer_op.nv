@@ -1,36 +1,12 @@
-// [M-serde-encode-pointer-op-regression] (Плана 187 гейт-находка, P0 —
-// РЕГРЕССИЯ main) — `#impl(Serialize)`-тип + `json_encode(v)` в свежем CU
-// падал CODEGEN-FAIL `E_POINTER_OP_USE_METHOD` ("operator `p + i` on raw
-// pointer retired"), БЕЗ file:line (Plan 70 silent-fallback детектор).
-//
-// Минимальный (не-serde) корень: `arr[i]` (индекс НЕ-аннотированного
-// массива-литерала) `.to_str()`, конкатенированный `+` с ещё одним таким же
-// вызовом. `int`/`char` `.to_str()` реализованы ЕДИНЫМ "bare-T blanket"
-// generic-методом (`fn[T] T @to_str() -> str`, std/src/runtime/string/
-// core.nv) — приёмник САМ generic-параметр метода (`fn[T] T @method()`),
-// поэтому его forward-decl идёт ЦЕЛИКОМ через `mono_method_decls`/
-// `method_overloads`-sentinel путь (`!f.generics.is_empty()` ветка,
-// emit_c.rs) и НИКОГДА не публикует type-qualified `fn_ret_<recv>_<method>`
-// ключ (Plan 152.4.3) — только `register_mono_method_instance` знает
-// КОНКРЕТНЫЙ `ret_c` для каждой mono-инстанциации, но раньше не публиковал
-// его в тот же реестр. Итог: `infer_call_ret_c`'s type-qualified lookup
-// ВСЕГДА промахивался для примитивного ресивера через этот blanket,
-// падая на receiver-БЛИНД name-only fallback (`fn_ret_to_str`,
-// last-registered-wins across ЛЮБОГО другого метода с тем же именем) —
-// который в serde-CU выигрывал `[]u8 @to_str() -> Result[str, Utf8Error]`,
-// подменяя `str` на `Result`-формы (= raw-pointer-формы), что триггерило
-// Plan 70 detector на последующей `+`-конкатенации.
-//
+// Регресс-фикстура: `#impl(Serialize)`-тип + `json_encode(v)` в свежем CU
+// падал CODEGEN-FAIL. Корень — type-qualified lookup для generic-метода
+// blanket `fn[T] T @to_str() -> str` не публиковал type-qualified ключ,
+// из-за чего name-only fallback подменял тип возврата при наличии serde.
 // Фикс: `register_mono_method_instance` теперь публикует type-qualified
-// `fn_ret_<конкретный-C-тип-ресивера>_<method>` для каждой mono-
-// инстанциации receiver-own-generic метода — тот же реестр, та же
-// конвенция, что и обычный (не-generic) forward-decl путь уже использовал.
+// ключ для каждой mono-инстанциации receiver-own-generic метода.
 //
-// STANDALONE (не в общем conformance-CU): `import std.encoding.serde`
-// втягивает test-peer файлы serde folder-модуля (их локальные `User`/
-// `Shape`/`DeError`) в CU — в общем CU это коллидировало бы с
-// одноимёнными placeholder-типами существующих фикстур (bare-name реестр
-// чекера, отдельная известная щель — см. доклад волны 187).
+// STANDALONE: `import std.encoding.serde` втягивает свои файлы side-by-side
+// — в общем CU коллизировало бы с одноимёнными placeholder-типами.
 module regressions.serde_encode_pointer_op
 
 import std.encoding.serde.{Serialize, json_encode}
@@ -44,9 +20,9 @@ test "M-187 serde json_encode на скалярном #impl(Serialize) record н
     assert(s.byte_len() > 0)
 }
 
-// Прямой (не-serde) корень бага — индексированный массив-литерал + to_str + `+`.
-// ВАЖНО: этот тест обязан жить в ОДНОМ CU с serde-импортом выше — красная
-// форма требует со-присутствия `[]u8 @to_str() -> Result[...]` (втянут serde)
+// Прямой корень бага — индексированный массив-литерал + to_str + `+`.
+// Тест обязан жить в ОДНОМ CU с serde-импортом выше — красная форма
+// требует со-присутствия `[]u8 @to_str() -> Result[...]` (втянут serde)
 // с примитивным blanket-`to_str()`.
 fn m187_hex_pair(n int) -> str {
     ro digits = ['0','1','2','3','4','5','6','7','8','9','a','b','c','d','e','f']
@@ -60,15 +36,11 @@ test "M-187 arr[i].to_str() + arr[j].to_str() (unannotated array literal) не �
     assert(s.byte_len() == 2)
 }
 
-// [M-187-d182-turbofish-new-nameonly-collision] (попутная гейт-находка тем же
-// слиянием): `Type[A,B].new(позиционные)` — generic-static через TurboFish —
-// давал ЛОЖНЫЙ D102 ("параметр `path` имеет значение по умолчанию"): best-effort
-// argbind-резолв чекера не имеет TurboFish-ветки в infer_arg_ty, падал в
-// name-only скан по всем типам и находил ЧУЖОЙ арность-совместимый `.new`
-// (serde `DeError.new(kind, path = "")`), которого никто не вызывал.
-// Фикс: TurboFish-ресивер выходит из best-effort диагностики (резолв этой
-// формы — за codegen'ом, как и задумано в check_call_argbind). Красная форма
-// требует serde-типов в CU — потому тест живёт здесь.
+// Попутная регрессия: `Type[A,B].new(позиционные)` — generic-static через
+// TurboFish — давал ложную диагностику D102: best-effort argbind-резолв
+// чекера не имеет TurboFish-ветки, падал в name-only скан. Фикс: TurboFish-
+// ресивер выходит из best-effort диагностики. Красная форма требует serde-
+// типов в CU — потому тест живёт здесь.
 type M187TfPair[A, B] { fst A, snd B }
 
 fn M187TfPair[A, B].new(a A, b B) -> Self => { fst: a, snd: b }

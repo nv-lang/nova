@@ -1,17 +1,16 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// Plan 193 Ф.3: TLS echo client example — see echo_server.nv / README.md
-// for the nova-tls dependency setup this pair demonstrates.
+// TLS echo client example — see echo_server.nv / README.md for the
+// nova-tls dependency setup this pair demonstrates.
 //
 // Connects to echo_server.nv over TCP, performs a TLS client handshake,
 // sends a message, reads the echo back. Mirrors examples/net/echo_client.nv
-// 1:1 — same TcpStream.connect/spawn/supervised shape — with a
-// `TlsStream.connect` step inserted right after the TCP connect.
+// 1:1 with a `TlsStream.connect` step inserted right after the TCP connect.
 //
-// Trust: the server's self-signed `localhost` cert IS its own root here
+// Trust: the server's self-signed `localhost` cert is its own root here
 // (`VerificationMode.CustomRoots`) — the realistic pattern for a pinned
-// internal/dev cert. `InsecureSkipVerify` also exists (config.nv) but is
-// explicitly documented "ТОЛЬКО тесты" (tests only) — not shown here on
-// purpose; a real client should always verify against *something*.
+// internal/dev cert. `InsecureSkipVerify` also exists but is documented as
+// "ТОЛЬКО тесты" (tests only) — a real client should always verify against
+// something.
 //
 // Usage (start echo_server.nv first):
 //   nova build examples/tls/echo_server.nv -o echo_server && ./echo_server &
@@ -60,7 +59,7 @@ fn main() {
                                         match stream.read_to_vec(256) {
                                             Err(e) => { println("Read failed: ${e.to_str()}"); stream.close() }
                                             Ok(echo_bytes) => {
-                                                // [M-174.1-vec-method-chain-elem-erasure]: explicit []u8 local.
+                                                // explicit []u8 local (chain not needed).
                                                 ro eb []u8 = echo_bytes
                                                 ro echo = unsafe { eb.to_str_unchecked() }
                                                 println("Echo: ${echo}")

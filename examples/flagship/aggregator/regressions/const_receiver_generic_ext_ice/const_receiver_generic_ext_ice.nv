@@ -1,28 +1,9 @@
-// [M-p67-path-call-const-receiver-method-ice] — `const BUDGET_MS int = 120`
-// + `BUDGET_MS.to_millis()` панили ICE emit_c.rs: "[P67-LEGACY] Path call
-// return type unknown for method=to_millis — checker must annotate".
-//
-// Корень: парсер (parser/mod.rs, PascalCase path-collector) решает
-// Path-vs-Member ТОЛЬКО по регистру первой буквы идентификатора
-// (`starts_uppercase`). SCREAMING_SNAKE_CASE-имя константы (`BUDGET_MS`)
-// начинается с заглавной — парсер жадно сворачивает `BUDGET_MS.to_millis`
-// в единый 2-сегментный `ExprKind::Path(["BUDGET_MS", "to_millis"])`
-// вместо `Member{obj: Ident("BUDGET_MS"), name: "to_millis"}`, который
-// получает обычная переменная. Чекер аннотировал return-тип метода в
-// `resolved_types` ТОЛЬКО для Member-формы (f3_check_member_ctx) — Path-
-// форма с const-ресивером падала мимо всех B12*-веток `infer_call_ret_c`
-// в финальную ICE-панику.
-//
-// Брат из той же семьи — `ro t0 = Monotonic.now()` (bare-binding без
-// аннотации типа) — закрыт ПОПУТНО commit 67717dcb1 (M-176 variant-chain
-// Path→Member), но тот фикс покрывал только 3-сегментный `[Type, Variant,
-// method]` shape (nullary-variant chain-call). 2-сегментный
-// `[CONST_IDENT, method]` shape с const-ресивером и generic-extension
-// методом (`fn[T Ints] T @to_millis()`, std.time.duration) остался живым
-// остатком — этот фикс закрывает именно его (types/mod.rs: const-ресивер
-// теперь получает тот же member-annotate путь, что и обычная переменная).
-//
-// Единица: folder-module `spec_tests.conformance`-подобная (см. соседей).
+// Регресс-фикстура: `const BUDGET_MS int = 120` + `BUDGET_MS.to_millis()`
+// ранее ICE'ил emit_c.rs. Корень: парсер по регистру первой буквы решает
+// Path-vs-Member, и SCREAMING_SNAKE_CASE-константа жадно сворачивалась
+// в Path. Чекер аннотировал return-тип только для Member-формы, а Path-
+// форма с const-ресивером падала мимо всех веток в ICE. Фикс: const-
+// ресивер теперь получает тот же member-annotate путь, что и переменная.
 module regressions.const_receiver_generic_ext_ice
 
 import std.time.duration

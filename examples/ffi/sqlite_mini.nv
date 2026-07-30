@@ -1,16 +1,13 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //
-// Plan 115 D214 — minimal libsqlite3 binding sketch.
-//
-// V1 — example only (без real libsqlite3 link). Demonstrates structure of
-// extern "nova" fn declarations + typed handle wrap + error mapping.
-// Real link integration в followup `[M-115-ffi-build-pipeline]`.
+// Minimal libsqlite3 binding sketch. Example only (без реального
+// libsqlite3 link). Демонстрирует структуру extern "nova" fn declarations
+// + typed handle wrap + error mapping.
 //
 // Pattern:
-//   1. extern "nova" fn declarations match C shim (см. docs/ffi-cookbook.md
-//      §«Example 1 — libsqlite3 binding» для full C shim).
+//   1. extern "nova" fn declarations match C shim (см. docs/ffi-cookbook.md).
 //   2. Wrap raw *() returns в typed record handles.
-//   3. Multi-value return через tuple-by-value ABI (Plan 115 D214 §2).
+//   3. Multi-value return через tuple-by-value ABI.
 //   4. consume close() для resource ownership.
 
 module ffi.sqlite_mini
@@ -32,8 +29,7 @@ type DbError
     | StepFailed(int)
 
 // External declarations — sqlite3_ffi.h (см. cookbook).
-// V1: shim header нужен в compiler-codegen/nova_rt/ для actual link
-// (followup [M-115-ffi-build-pipeline] добавит user-side --c-shim CLI).
+// Shim header нужен в compiler-codegen/nova_rt/ для actual link.
 extern "nova" fn mini_sqlite_open(path str) -> (*(), int)
 extern "nova" fn mini_sqlite_close(db *()) -> int
 extern "nova" fn mini_sqlite_exec(db *(), sql str) -> int
@@ -44,10 +40,8 @@ extern "nova" fn mini_sqlite_finalize(stmt *()) -> int
 
 // Layer 2: typed wrappers.
 
-// [M-174.6-rawptr-extern-unsafe-infer] (D424 rule 1, Plan 174.6 M4): every
-// `mini_sqlite_*` extern above carries a raw pointer (`*()`) in a param or
-// (for `mini_sqlite_open`, nested in its `(*(), int)` tuple return) the
-// return type — each is `unsafe fn` BY INFERENCE, calls wrapped below.
+// Every `mini_sqlite_*` extern above carries a raw pointer — each is
+// `unsafe fn` by inference, calls wrapped below.
 
 fn Db.open(path str) Fail[DbError] -> Db {
     ro (raw, rc) = unsafe { mini_sqlite_open(path) }
@@ -91,8 +85,7 @@ fn Stmt consume @close() -> () {
 }
 
 // Example usage. Would actually exercise libsqlite3 if shim is wired up
-// at build time. V1 — illustrative only (test annotated as
-// EXPECT_COMPILE_ERROR в test fixtures когда shim не linked).
+// at build time. Illustrative only.
 fn open_and_close_demo(path str) Fail[DbError] -> int {
     ro db = Db.open(path)
     db.exec("CREATE TABLE IF NOT EXISTS users (id INT, name TEXT)")

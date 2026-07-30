@@ -1,4 +1,4 @@
-// effects_tour.nv — effects in function signatures, handler substitution (D61).
+// effects_tour.nv — effects in function signatures, handler substitution.
 module tour.effects_tour
 
 // An `effect` declares operations whose implementation is decided at the

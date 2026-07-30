@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// Plan 83.12: Echo client example.
-// Plan 183 Ф.3: migrated onto std.net2 (byte-surface `Net`, D407).
-//
-// Connects to an echo server, sends a message, reads the echo back.
-// Demonstrates TcpStream.connect + write + read.
+// Echo client example. Connects to an echo server, sends a message, reads
+// the echo back. Demonstrates TcpStream.connect + write + read.
 //
 // Usage (start echo_server.nv first):
 //   nova build examples/net/echo_server.nv -o echo_server && ./echo_server &
@@ -37,7 +34,6 @@ fn main() {
                                 match stream.read_to_vec(256) {
                                     Err(_) => { println("Read failed"); stream.close() }
                                     Ok(echo_bytes) => {
-                                        // [M-174.1-vec-method-chain-elem-erasure]: explicit []u8 local.
                                         ro eb []u8 = echo_bytes
                                         ro echo = unsafe { eb.to_str_unchecked() }
                                         println("Echo: ${echo}")
