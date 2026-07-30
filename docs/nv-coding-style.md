@@ -65,6 +65,15 @@
 []u8.to_str*/into_str_unchecked. `from` уместен ТОЛЬКО когда источник — не
 значение-ресивер, а концепт (from_polar, embed). Проверка (185): W_STATIC_CONVERSION.
 
+**Имя типа внутри `to_*` — snake_case по границам CamelCase** (· согласовано 2026-07-30):
+`SocketAddr` → `to_socket_addr`, `ErrorKind` → `to_error_kind`, `IoError` → `to_io_error` —
+Rust-парити (`ToSocketAddrs::to_socket_addrs`); сплющивание (`to_socketaddr`) стирает границы
+слов. **Исключение** — типы, чьё имя лексикализовано индустрией как ОДНО слово: `datetime`,
+`bigint`, `bigdecimal`, `bigfloat` (Python-модуль `datetime`, Java `BigDecimal`) — пишутся
+слитно: `to_datetime`, `to_bigint`. Известный дрейф: `to_versionreq` (`VersionReq` не
+лексикализован — должно быть `to_version_req`; мигрировать при заходе в semver-модуль,
+см. «Известные расхождения»).
+
 **Голое имя-вид ЗАПРЕЩЕНО на `consume`-receiver'е.** Потребление владения
 выражается ТОЛЬКО `into_*`; голое существительное — только zero-copy вид,
 НЕ потребляющий receiver (первая строка таблицы). Смешение — нарушение оси:
@@ -1416,6 +1425,10 @@ fix-it (удаление избыточной границы по точному
 redundant-slicing.
 
 ## Известные расхождения для будущего sweep'а
+
+0. **`to_versionreq`** (`std/data/semver_range.nv:68`) — против правила §1а «имя типа в `to_*`
+   snake по границам CamelCase» (`VersionReq` не лексикализован): должно быть `to_version_req`.
+   Мигрировать при следующем заходе в semver-модуль (декла + 2 вызова).
 
 1. **`docs/idioms/size-accessors.md:41-42`** документирует `s.len()` как O(n) codepoint-count,
    но `strings.md:71` / `core.nv:22` — это compile-error `E_STR_NO_LEN` (Plan 152.1/D249).
