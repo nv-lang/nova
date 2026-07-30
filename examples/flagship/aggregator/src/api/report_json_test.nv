@@ -128,9 +128,8 @@ test "snapshot_to_json: failed lane carries its error text" {
 }
 
 // ── POS: a done lane's status carries a null (not a string) error ──────────
-//    (D344 Option[T]::None -> JSON `null`, key still present — serde
-//    auto-derive doesn't support field-skip yet, `[M-180-serde-field-
-//    attributes]`; the UI/README's `status.error?` optionality is "null or a
+//    (D344 Option[T]::None -> JSON `null`, key still present; `[M-180-serde-field-
+//    attributes]` closed; the UI/README's `status.error?` optionality is "null or a
 //    string", not "key present or absent").
 
 test "snapshot_to_json: done lane's status carries a null error, not a string" {

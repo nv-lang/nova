@@ -1,4 +1,4 @@
-# nova.lock.toml — сгенерирован автоматически (Plan 03.1 / D78; Plan 233 §2 переименовал nova.lock).
+# nova.lock.toml — сгенерирован автоматически (Plan 03.1 / D78).
 # Фиксирует точные версии зависимостей для воспроизводимых
 # сборок. Не редактируйте вручную; коммитьте в репозиторий.
 
@@ -15,6 +15,13 @@ commit = "47b0a642460ee247d18c398148b1fae7acaacfc6"
 name = "http"
 source = "path"
 path = "../../nova-http"
+
+[[package]]
+name = "http"
+source = "git"
+git = "https://github.com/nv-lang/nova-http"
+pin = "version:>=0.1.0, <0.2.0"
+commit = "5257f3026b54b264bef4842a0077225305ef40a5"
 
 [[package]]
 name = "polaris"
