@@ -4098,3 +4098,13 @@ scope"`) — изолирует дефект от нативного RwLock (л�
 | `[M-187-interp-to_str-fallback-valuerecord-recv]` | Interpreter: `to_str` fallback на value-record receiver (`str @to_str() -> @to_str()` self-call) — бесконечная рекурсия. Фикс: interp отличает value-record самовызов от внешнего `@to_str`. | Plan 187 interp | ✅ DONE |
 | `[M-187-leaks-introspection]` | Утечка ресурсов в `introspection report_json` — parser/checker visitation не освобождал временные структуры при ошибке валидации. Починен в Plan 187 (arena-фиксация). | Plan 187 | ✅ DONE |
 | `[M-187-nested-spawn-scope-var-cc-fail]` | `spawn` лексически вложенный в другой `spawn` — CC-FAIL «scope-queue out of scope»: runtime panic при парковке внутреннего fiber. Починен в Plan 187 (scope-chain propagation). | Plan 187 | ✅ DONE |
+| `[M-187-sequential-2nd-request-hang]` | Sequential 2nd request hang: fiber-park после первого request не возобновлялся для второго (флагманский баг). Починен в Plan 187 (park/wake reset). | Plan 187 | ✅ DONE |
+| `[M-187-weather-live-tls-diamond-blocked]` | Weather live: TLS diamond dependency — взаимная блокировка при TLS-рукопожатии в concurrent-фиберах. Починен (scheduler-очередь, non-blocking TLS). | Plan 187 | ✅ DONE |
+| `[M-196-method-turbofish-block-rewrite-ice]` | ICE в `callnorm.rs` `try_normalize_cal` при method-turbofish + block-rewrite (`x.method[T]() { ... }`). Починен: block-rewrite guard на turbofish-пути. | Plan 196 | ✅ DONE |
+| `[M-196-mono-block-notrailing-ret-ignored]` | Mono block без trailing return: codegen безусловно дописывал `return NOVA_UNIT` после тела mono'd функции, затирая реальный return. Починен: emit return только если block действительно unit-терминатор. | Plan 196 | ✅ DONE |
+| `[M-196-probes-b10m-phase1c]` | Known-red probe b10m phase1c — регрессионный тест Plan 196 phase 1c (закрыт вместе с Plan 196). | Plan 196 | ✅ DONE |
+| `[M-196-probes-b11al-terminal]` | Known-red probe b11al terminal — регрессионный тест Plan 196 (закрыт вместе с Plan 196). | Plan 196 | ✅ DONE |
+| `[M-196-probes-b12q-terminal]` | Known-red probe b12q terminal — регрессионный тест Plan 196 (закрыт вместе с Plan 196). | Plan 196 | ✅ DONE |
+| `[M-196-probes-b12r-terminal]` | Known-red probe b12r terminal — регрессионный тест Plan 196 (закрыт вместе с Plan 196). | Plan 196 | ✅ DONE |
+| `[M-196-probes-b12s-terminal]` | Known-red probe b12s terminal — регрессионный тест Plan 196 (закрыт вместе с Plan 196). | Plan 196 | ✅ DONE |
+| `[M-202-...]` | Generic-match scope-gap: `x` в match-арме generic-метода не резолвился как локальная переменная (scope-visibility). Починен в Plan 202. | Plan 202 | ✅ DONE |
