@@ -1,0 +1,15 @@
+// [221.1 #159] peer-файл ТОГО ЖЕ модуля с посторонним generic newtype
+// `Tagged[T, U](int)`, копия релевантного фрагмента
+// spec_tests/conformance/v3_generic_newtype_non_ptr_inner_ok.nv:98 (без
+// прочего шума файла — только коллидирующий тип).
+module scratch159
+
+type Persistent(int)
+type Email(int)
+
+type Tagged[T, U](int)
+
+test "multi-param non-ptr generic newtype (context peer, unrelated to Reflect)" {
+    ro h = Tagged[Persistent, Email](999)
+    assert(h.0 == 999)
+}

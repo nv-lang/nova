@@ -38209,12 +38209,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Call { func: TurboFish { base: Ident("MyHandle"), .. }, .. };
         // identity cast same as non-generic case — `T` parameter — это
         // type-system fiction, C-level value identical.
-        let name_opt: Option<&String> = match &func.kind {
-            ExprKind::Ident(n) => Some(n),
+        let (name_opt, is_turbofish): (Option<&String>, bool) = match &func.kind {
+            ExprKind::Ident(n) => (Some(n), false),
             ExprKind::TurboFish { base, .. } => {
-                if let ExprKind::Ident(n) = &base.kind { Some(n) } else { None }
+                if let ExprKind::Ident(n) = &base.kind { (Some(n), true) } else { (None, false) }
             }
-            _ => None,
+            _ => (None, false),
         };
         // [fix M-bare-variant-name-resolves-to-unrelated-type-in-cu, реестр
         // 221.1 №136]: `type_aliases` is a FLAT `HashMap<String, String>`
@@ -38238,9 +38238,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // newtype — byte-identical for the overwhelming common case (no
         // sum in the CU declares a variant of this bare name at all, so
         // `debt_find_variant_ctx` returns `None` and this newtype path
-        // proceeds exactly as before).
+        // proceeds exactly as before). №159: gate skipped for TurboFish.
         if let Some(name) = name_opt {
-            let shadowed_by_variant = self.debt_find_variant_ctx(name, Some(args.len())).is_some();
+            let shadowed_by_variant = !is_turbofish && self.debt_find_variant_ctx(name, Some(args.len())).is_some();
             if !shadowed_by_variant {
                 if let Some(aliased_c) = self.type_aliases.get(name).cloned() {
                     if args.len() == 1 {
