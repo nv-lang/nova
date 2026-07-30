@@ -74,12 +74,17 @@ test "большой вход: буфер K=16 (back-pressure), память O(C
 }
 
 test "ошибка ребёнка → Escalate: acc не возвращается, ошибка доходит до with Fail" {
-    mut caught = false
-    mut got = 0
+    // Plan 238 Ф.4 (D441 §3): `with Fail[T]` handler исполняется в файбере
+    // падающего ребёнка (parallel-for = spawn per element) — AtomicBool/
+    // AtomicInt вместо mut-флагов (E_HANDLER_MUT_CAPTURE_IN_FIBER).
+    // `reached_after` НЕ мутируется в хендлере (обычный sequential-код
+    // после with-блока) — остаётся plain `mut bool`.
+    mut caught = AtomicBool.new(false)
+    mut got = AtomicInt.new(0)
     mut reached_after = false
     ro _ = with Fail[int] = |e| {
-        caught = true
-        got = e
+        caught.store(true)
+        got.store(e)
         0
     } {
         ro xs = parallel for i in 0..6 {
@@ -91,7 +96,7 @@ test "ошибка ребёнка → Escalate: acc не возвращаетс�
         reached_after = true
         xs.len()
     }
-    assert(caught)
-    assert(got == 42)
+    assert(caught.load())
+    assert(got.load() == 42)
     assert(!reached_after)
 }

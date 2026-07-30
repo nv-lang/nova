@@ -26,11 +26,14 @@ module spec_tests.conformance
 test "supervised: N одновременных детей с РАЗНЫМИ ошибками — well-formed retained re-throw" {
     ro n = 40
     for run in 0..5 {
-        mut caught = false
-        mut got = -1
+        // Plan 238 Ф.4 (D441 §3): `with Fail[T]` handler исполняется в
+        // файбере падающей операции — AtomicBool/AtomicInt вместо
+        // mut-флагов (E_HANDLER_MUT_CAPTURE_IN_FIBER).
+        mut caught = AtomicBool.new(false)
+        mut got = AtomicInt.new(-1)
         ro _ = with Fail[int] = |e| {
-            caught = true
-            got = e
+            caught.store(true)
+            got.store(e)
             0
         } {
             supervised {
@@ -47,10 +50,11 @@ test "supervised: N одновременных детей с РАЗНЫМИ ош
         // но она обязана быть ЦЕЛЫМ тегом из множества этого прогона:
         // tag ∈ {1000, 1002, 1004, ..., 1000+n-2}. Любое искажение (не-чётный
         // остаток, значение вне диапазона) — симптом R1/R2 corruption.
-        assert(caught)
-        assert(got >= 1000)
-        assert(got < 1000 + n)
-        assert((got - 1000) % 2 == 0)
+        assert(caught.load())
+        ro got_val = got.load()
+        assert(got_val >= 1000)
+        assert(got_val < 1000 + n)
+        assert((got_val - 1000) % 2 == 0)
     }
 }
 
@@ -63,11 +67,12 @@ test "supervised: одновременные разные ошибки — decis
     ro n = 12
     mut total_caught = 0
     for run in 0..8 {
-        mut caught = false
-        mut got = -1
+        // Plan 238 Ф.4 (D441 §3): та же миграция, что и в тесте выше.
+        mut caught = AtomicBool.new(false)
+        mut got = AtomicInt.new(-1)
         ro _ = with Fail[int] = |e| {
-            caught = true
-            got = e
+            caught.store(true)
+            got.store(e)
             0
         } {
             supervised {
@@ -78,10 +83,10 @@ test "supervised: одновременные разные ошибки — decis
             }
             99
         }
-        assert(caught)
-        assert(got >= 2000)
-        assert(got < 2000 + n)
-        if caught { total_caught += 1 }
+        assert(caught.load())
+        assert(got.load() >= 2000)
+        assert(got.load() < 2000 + n)
+        if caught.load() { total_caught += 1 }
     }
     assert(total_caught == 8)
 }

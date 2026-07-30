@@ -37,11 +37,13 @@ fn M2217B15Res consume @cleanup(_outcome ScopeOutcome) -> () { () }
 fn m2217b15_make(tag int) -> M2217B15Res => { tag }
 
 test "supervised(timeout:) cancels a consume-bound busy loop (D188 R3 shield narrowed to cleanup only, 221.1 №15)" {
-    mut exit_calls = 0
+    // Plan 238 Ф.4 (D441 §3): ResourceTrace-хендлер исполняется в файбере
+    // ребёнка — AtomicInt вместо mut-счётчика (E_HANDLER_MUT_CAPTURE_IN_FIBER).
+    mut exit_calls = AtomicInt.new(0)
     with ResourceTrace = effect ResourceTrace {
         on_resource_enter(_label) -> () { return () }
         on_resource_exit(_label, _outcome, _duration_ms, _overrun) -> () {
-            exit_calls += 1
+            exit_calls.fetch_add(1)
             return ()
         }
     } {
@@ -57,5 +59,5 @@ test "supervised(timeout:) cancels a consume-bound busy loop (D188 R3 shield nar
             }
         }
     }
-    assert(exit_calls == 1)
+    assert(exit_calls.load() == 1)
 }

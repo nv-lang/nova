@@ -11,8 +11,11 @@ type PSource { id str, host str, latency_ms int, port int, flag bool }
 
 fn guarded(source PSource) Time -> int {
     ro { tx, rx } = Channel.new(1)
-    mut timed_out = false
-    with Fail[TimeoutError] = |_e| { timed_out = true } {
+    // Plan 238 (D441 §3): `with Fail[T]` handler исполняется В ФАЙБЕРЕ
+    // падающей операции — AtomicBool вместо mut-флага
+    // (E_HANDLER_MUT_CAPTURE_IN_FIBER).
+    mut timed_out = AtomicBool.new(false)
+    with Fail[TimeoutError] = |_e| { timed_out.store(true) } {
         supervised(timeout: 200.to_millis()) {
             spawn {
                 (source.latency_ms).to_millis().sleep()
@@ -20,7 +23,7 @@ fn guarded(source PSource) Time -> int {
             }
         }
     }
-    if timed_out {
+    if timed_out.load() {
         -1
     } else {
         rx.try_recv() ?? -2

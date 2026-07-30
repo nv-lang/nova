@@ -216,11 +216,13 @@ test "D432: auto-cleanup fires on throw-path too" {
 // gate) — this test therefore only exercises defect (b) functionally;
 // defect (a) is guarded separately as noted above.
 test "D432: bare consume-let inside spawn closure auto-cleans exactly once" {
-    mut exit_calls = 0
+    // Plan 238 Ф.4 (D441 §3): ResourceTrace-хендлер исполняется в файбере
+    // ребёнка — AtomicInt вместо mut-счётчика (E_HANDLER_MUT_CAPTURE_IN_FIBER).
+    mut exit_calls = AtomicInt.new(0)
     with ResourceTrace = effect ResourceTrace {
         on_resource_enter(_label) -> () { return () }
         on_resource_exit(_label, _outcome, _duration_ms, _overrun) -> () {
-            exit_calls += 1
+            exit_calls.fetch_add(1)
             return ()
         }
     } {
@@ -231,7 +233,7 @@ test "D432: bare consume-let inside spawn closure auto-cleans exactly once" {
             }
         }
     }
-    assert(exit_calls == 1)
+    assert(exit_calls.load() == 1)
 }
 
 // (9) [M-217-break-continue-loop-boundary-bleed] regression guard: a `break`

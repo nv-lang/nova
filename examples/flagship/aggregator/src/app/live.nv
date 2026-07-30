@@ -114,8 +114,11 @@ fn live_lane_tcp(host str, shared_deadline Monotonic, idx int) Net Time Emit -> 
     ro t0 Monotonic = Monotonic.now()
     Emit.lane_started(host, idx)
     ro { tx, rx } = Channel.new(1)
-    mut timed_out = false
-    with Fail[TimeoutError] = |_e| { timed_out = true } {
+    // Plan 238 (D441 §3): `with Fail[T]` handler исполняется В ФАЙБЕРЕ
+    // падающей операции — AtomicBool вместо mut-флага
+    // (E_HANDLER_MUT_CAPTURE_IN_FIBER).
+    mut timed_out = AtomicBool.new(false)
+    with Fail[TimeoutError] = |_e| { timed_out.store(true) } {
         supervised(deadline: shared_deadline) {
             spawn {
                 ro outcome = live_fetch_tcp(host)
@@ -128,7 +131,7 @@ fn live_lane_tcp(host str, shared_deadline Monotonic, idx int) Net Time Emit -> 
         }
     }
     ro elapsed_ms = deadline_elapsed_ms(t0)
-    ro status = if timed_out {
+    ro status = if timed_out.load() {
         TaskStatus.Cancelled
     } else {
         rx.try_recv() ?? TaskStatus.Cancelled
@@ -146,8 +149,11 @@ fn live_lane_weather(id str, lat f64, lon f64, shared_deadline Monotonic, idx in
     ro t0 Monotonic = Monotonic.now()
     Emit.lane_started(id, idx)
     ro { tx, rx } = Channel.new(1)
-    mut timed_out = false
-    with Fail[TimeoutError] = |_e| { timed_out = true } {
+    // Plan 238 (D441 §3): `with Fail[T]` handler исполняется В ФАЙБЕРЕ
+    // падающей операции — AtomicBool вместо mut-флага
+    // (E_HANDLER_MUT_CAPTURE_IN_FIBER).
+    mut timed_out = AtomicBool.new(false)
+    with Fail[TimeoutError] = |_e| { timed_out.store(true) } {
         supervised(deadline: shared_deadline) {
             spawn {
                 ro outcome = live_fetch_weather(id, lat, lon)
@@ -160,7 +166,7 @@ fn live_lane_weather(id str, lat f64, lon f64, shared_deadline Monotonic, idx in
         }
     }
     ro elapsed_ms = deadline_elapsed_ms(t0)
-    ro status = if timed_out {
+    ro status = if timed_out.load() {
         TaskStatus.Cancelled
     } else {
         rx.try_recv() ?? TaskStatus.Cancelled

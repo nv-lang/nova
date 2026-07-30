@@ -19,9 +19,12 @@ fn m187_thrower(id str, detail str) Fail[M187ThrowErr] Time -> M187Data {
 }
 
 fn m187_guarded(src M187Src, deadline Monotonic) Time -> bool {
-    mut caught = false
+    // Plan 238 (D441 §3): `with Fail[T]` handler исполняется В ФАЙБЕРЕ
+    // падающей операции — AtomicBool вместо mut-флага
+    // (E_HANDLER_MUT_CAPTURE_IN_FIBER).
+    mut caught = AtomicBool.new(false)
     ro _ = with Fail[M187ThrowErr] = |_e| {
-        caught = true
+        caught.store(true)
         0
     } {
         supervised(deadline: deadline) {
@@ -31,7 +34,7 @@ fn m187_guarded(src M187Src, deadline Monotonic) Time -> bool {
         }
         99
     }
-    caught
+    caught.load()
 }
 
 test "M-187 throw мультиполевого payload-enum из fn внутри spawn (supervised deadline) не крашит" {
