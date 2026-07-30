@@ -1,143 +1,61 @@
-// std/prelude/core.nv — file-based source of truth для core prelude
-// types. Plan 62 phase 62.A.
+// std/prelude/core.nv — file-based source of truth для core prelude types.
 //
-// Декларации перенесены из hardcoded type-checker builtins HashSet в
-// этот файл, чтобы:
-//   1) `nova doc` показывал canonical API в одном месте (AI-readable),
-//   2) пользователь мог shadow'ить эти types в своём коде с warning'ом,
-//   3) splittable prelude работал (`#prelude(core)` opt-in
-//      только core без runtime/io).
+// Декларации перенесены из hardcoded type-checker builtins в этот файл:
+//   1) `nova doc` показывает canonical API в одном месте,
+//   2) пользователь может shadow'ить эти типы с warning'ом,
+//   3) splittable prelude работает (`#prelude(core)` opt-in).
 //
-// Архитектурные правила (Plan 62 §«Стратификация»):
-//   - **ZERO imports.** Все declarations self-contained на primitives
-//     или forward-reference через built-in effects (`Fail` распознан
-//     type-checker'ом).
-//   - Никаких `use std.runtime.*` — иначе circular import через
-//     auto-imported prelude.
+// Правила:
+//   - **ZERO imports** — всё self-contained на primitives или
+//     forward-reference через built-in effects.
+//   - Никаких `use std.runtime.*` (circular import через auto-imported prelude).
 //
-// **Bootstrap status (Plan 62.A):**
-//
-// - Type declarations (Option/Result/Some/None/Ok/Err/Error/Ordering)
-//   перенесены сюда.
-// - Methods на Option/Result задекларированы здесь (`external fn`);
-//   dispatch остаётся **hardcoded** в codegen (emit_c.rs:11567-11675+ —
-//   `is_some`/`is_none`/`unwrap`/`unwrap_or`/`unwrap_or_else`/`map`/`or`/
-//   `ok_or`/`is_ok`/`is_err`/`ok`/`err`/`map_err`) и runtime helpers
-//   (nova_rt/array.h `Nova_Option_method_*` / `Nova_Result_method_*`).
-//   Plan 62.B (2026-05-20) разблокировал Result `-> T`/`-> E` методы —
-//   см. блок Result ниже.
-//
-// **Сохранено как hardcoded (Plan 62.A explicitly defer):**
-//
-// - Codegen pre-populated `sum_schemas[Result]` (emit_c.rs:966-969) —
-//   bootstrap monomorphization compromise. Удаление отложено до Plan 59
-//   (tuple-mono extension на sum-types).
-// - Codegen pre-populated `record_schemas[Error]` (emit_c.rs:977-985) —
-//   осталось как infrastructure для `Nova_Error_static_new` runtime
-//   helper. Удаление в Plan 62.A.bis (generic schema registry).
-// - Pattern-match dispatch (`emit_c.rs:13543+`) — runtime helpers
-//   `Nova_Option_method_*` (array.h) бессрочно для bootstrap.
-//
-// **NOT yet (Plan 62.B/C/D/E/F):**
-//
-// - RuntimeError (Plan 62.C), runtime functions print/println/panic/
-//   exit/assert (Plan 62.B), effects Fail/Time/Mem/Detach (Plan 62.F),
-//   protocols From/Into/... (Plan 62.E), collections Iter/Range/...
-//   (Plan 62.D).
-//
-// **Plan 76 (2026-05-21): bottom-тип `never`.**
-//
-// - Bottom-тип переименован `Never` → `never` и оформлен как строчный
-//   встроенный примитив (как `int`/`bool`). В prelude НЕ объявляется —
-//   примитивы не декларируются. Известен компилятору напрямую через
-//   type-checker builtins HashSet (`ty_of_ref` + `type_ref_is_never`).
-//   Идея «`type Never =` empty-sum в prelude» отменена: встроенный
-//   bottom-тип не должен быть ни капитализированным, ни в prelude.
-//
-// **РАЗБЛОКИРОВАНО в Plan 62.B (2026-05-20):**
-//
-// - **Option/Result API из D26 §283-306** — все методы Option (включая
-//   новый `or`) и Result (`unwrap`/`unwrap_or`/`unwrap_or_else`/`map`/
-//   `map_err`) теперь декларируются здесь. Прежний блокер: declaration
-//   через `external fn` с return-type `T` (generic param) даёт
-//   `external_registry::type_ref_to_c` → стаб `"Nova_T*"`, который
-//   `infer_expr_c_type` возвращал для `r ?? 0`; binop-dispatch
-//   принимал `Nova_*` за sum-type pointer → `->tag` comparison вместо
-//   value-equality. Лечение: `is_generic_stub_c` (emit_c.rs) —
-//   generic-aware lookup-блоки пропускают стаб `Nova_<X>*`, давая
-//   управление specialized `Nova_Result*`/`NovaOpt_` веткам, знающим
-//   concrete тип. См. блоки методов ниже.
+// Сохранено как hardcoded:
+//   - codegen pre-populated `sum_schemas[Result]` (bootstrap compromise);
+//   - codegen pre-populated `record_schemas[Error]` (infrastructure для
+//     `Nova_Error_static_new`);
+//   - pattern-match dispatch + runtime helpers Option/Result.
 
 module prelude.core
 
-// Plan 169.2.1 (D303): `core` is unicode-free again. The char Unicode-aware
-// methods (`'a'.is_alphabetic()` etc.) moved BACK to `std/unicode/category.nv`
-// (reverting the Plan 162 Ф.4 hoist). They are made prelude-available — usable
-// without an explicit `import std.unicode` — through a re-export in
-// `std/prelude.nv` (the rolling facade), NOT through `core`. Removing
-// `import std.unicode` from here breaks the chain `prelude.core → std.unicode →
-// std.collections → prelude.core`: a partial `#prelude(core, …)` no longer
-// pulls `normalize.nv::cps_to_str` (whose `consume sb = StringBuilder…` tripped
-// D133 when `collections` was absent). See plan107, [M-169.2.1-core-unicode-decouple].
+// `core` is unicode-free. Unicode methods moved to `std/unicode/category.nv`,
+// re-exported through `std/prelude.nv` (not through core).
+// [M-169.2.1-core-unicode-decouple]
 
 // ──────────────────────────────────────────────────────────────────────────
 // Sum types
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Optional value — `Some(v)` либо `None`. Idiomatic путь для
-/// fallible операций без exceptions / null. См. D26 spec.
-///
-/// **Bootstrap**: codegen имеет специальный value-type `NovaOpt_<T>`
-/// (nova_rt/array.h) и dispatches методы через emit_c.rs:11567+. Эта
-/// Nova-level декларация даёт type-checker'у канонический type-name
-/// для cross-file resolve; pre-populated `sum_schemas[Option]`
-/// (emit_c.rs:960-964) — runtime schema source-of-truth.
+/// fallible операций без exceptions / null.
 #stable(since = "0.1")
 export type Option[T] enum Some(T) | None
 
 /// Result of fallible computation. `Ok(v)` — success, `Err(e)` —
-/// failure with typed error payload `e: E`. См. D26 spec.
-///
-/// **Bootstrap**: codegen имеет heap-allocated `Nova_Result*` (nova_rt/
-/// array.h) hardcoded на `(Ok: nova_int, Err: nova_str)` (mono
-/// compromise — Plan 14 Q-result-monomorphization). Эта Nova-level
-/// декларация — canonical type-name; pre-populated `sum_schemas[Result]`
-/// (emit_c.rs:966-969) — runtime schema source-of-truth.
+/// failure with typed error payload `e: E`.
 #stable(since = "0.1")
 export type Result[T, E] enum Ok(T) | Err(E)
 
-// Plan 91.8a (D183): `Ordering` sum-type удалён. Compare.compare
-// теперь возвращает int (memcmp-style: < 0 / 0 / > 0). Тривиальное
-// rationale в D183 — single canonical path для comparison aligned с
-// str.compare (D178). Less/Equal/Greater также удалены из exports.
+// `Ordering` sum-type удалён — `compare.compare` возвращает int.
+//
+// Bottom-тип `never` — строчный встроенный примитив (как `int`/`bool`),
+// в prelude НЕ объявляется. Известен компилятору напрямую.
 
-// Plan 76 (2026-05-21): bottom-тип `never` — строчный встроенный
-// примитив (как `int`/`bool`), в prelude НЕ объявляется. Известен
-// компилятору напрямую (type-checker builtins HashSet, `ty_of_ref` +
-// `type_ref_is_never`). См. docs/plans/76-never-lowercase-keyword.md.
-
-/// Plan 110 (D188): exit-outcome для `consume X = expr { body }`
-/// scope-block'а. `Cleanup.cleanup` получает это значение и решает
-/// что делать с ресурсом (commit/rollback/release/etc).
+/// Exit-outcome для `consume X = expr { body }` scope-block'а.
+/// `Cleanup.cleanup` получает это значение и решает что делать с ресурсом.
 ///
-/// **Typed Failure payload** (Plan 173 Ф.4 #5, D188/D190): `Failure` carries
-/// the erased original error as `any` (was bootstrap `str` — closed
-/// [M-110-multierror-any]). `@cleanup`/`defer(o)` bodies narrow it with
-/// `if err is T` (D54/174.3) to recover the typed cause:
-/// - a typed `throw MyErr{..}` surfaces as `Failure(any=MyErr)` → `err is MyErr`;
-/// - a bare `throw "msg"` surfaces as `Failure(any=str)` → `err is str`;
-/// - a cooperative cancel surfaces as `Failure(any=CancelError{reason})` →
-///   `err is CancelError` (D90 §7 amend — typed, no more `"cancel: "` prefix);
+/// `Failure` carries the erased original error as `any`. Hooks narrow it
+/// with `if err is T` to recover the typed cause:
+/// - a typed `throw MyErr{..}` surfaces as `Failure(any=MyErr)`;
+/// - a bare `throw "msg"` surfaces as `Failure(any=str)`;
+/// - a cooperative cancel surfaces as `Failure(any=CancelError{reason})`;
 /// - `interrupt` surfaces as `Failure(any=str="interrupt")`.
-/// `ScopeOutcome[E]` (a per-scope typed outcome) stays **rejected** (D190) —
-/// the erased `any` is the single canonical surface.
 ///
 /// **Variants:**
-/// - `Success` — body завершился нормально (включая `return v`).
-/// - `Failure(err)` — body throw'нул / cancel / interrupt; `err: any`
-///   (Plan 173 Ф.2.B2/B3 D314 + Ф.4 #5 typed payload).
+/// - `Success` — body завершился нормально.
+/// - `Failure(err)` — body throw'нул / cancel / interrupt; `err: any`.
 /// - `Panic(msg)` — body panic'нул; resource НЕ должен throw в этом
-///   случае (это bug), но может выполнить emergency cleanup.
+///   случае, но может выполнить emergency cleanup.
 ///
 /// # Examples
 ///
@@ -161,234 +79,132 @@ export type ScopeOutcome enum Success | Failure(any) | Panic(str)
 
 /// Lightweight error record для quick-and-dirty failure cases.
 /// Поле `msg` — readonly UTF-8 string, описание ошибки. Для
-/// structured runtime errors см. `RuntimeError` (Plan 62.C). См. D26.
-///
-/// **Bootstrap**: `Nova_Error` typedef + `Nova_Error_static_new` runtime
-/// helper в nova_rt/array.h. Pre-populated `record_schemas[Error]`
-/// (emit_c.rs:977-985) регистрирует `msg: nova_str`; `method_receivers`
-/// маппит `new` на `Error`. Codegen для `Error.new(...)` идёт через
-/// runtime helper, не через Nova-level декларацию.
+/// structured runtime errors см. `RuntimeError`.
 #stable(since = "0.1")
 export type Error {
     ro msg str
 }
 
-// DEFER: Static fn `Error.new(msg)` остаётся в codegen special-case
-// (Error — record, не sum). Декларация перенесётся в Plan 62.C вместе
-// с RuntimeError.
+// Static fn `Error.new(msg)` — codegen special-case (Error — record, не sum).
 
 // ──────────────────────────────────────────────────────────────────────────
-// str — lang-item value-record (Plan 139.1, closes [M-139-f0-lang-item-decl])
+// str — lang-item value-record [M-139-f0-lang-item-decl]
 // ──────────────────────────────────────────────────────────────────────────
 
 /// UTF-8 string — immutable, value-typed view `{ ptr *u8, len int }`.
 ///
-/// **Lang-item (Plan 139.1):** `str` — это полноценный Nova value-record,
-/// а не хардкод-примитив. Объявление здесь делает `str` источником правды
-/// для:
-///   - **privacy** (`priv(type)` поля): `s.ptr` / `s.len` снаружи str-методов →
-///     `E_PRIV_FIELD_READ` (D220). Доступ к байтам — через публичные методы
-///     (`@len`, `@byte_at`, `@as_bytes`), объявленные в `std/runtime/string.nv`.
-///   - **field layout / sizeof** (16 байт на x64): `ptr` — backing UTF-8
-///     buffer, `len` — длина в БАЙТАХ (D26 rev: `str.len = bytes`).
+/// `str` — полноценный Nova value-record. Объявление здесь делает `str`
+/// источником правды для:
+///   - **privacy** (`priv(type)` поля): `s.ptr` / `s.len` снаружи str-методов
+///     недоступны (через публичные методы `@len`, `@byte_at`, `@as_bytes`).
+///   - **field layout / sizeof** (16 байт на x64).
 ///
-/// **3-axis model (Plan 147, D246):** поле `ptr *u8` — bare `*u8` —
-/// это ro-pointee canon (`*T ≡ *ro T`): pointee read-only, запись
-/// `s.ptr[i] = …` → `E_POINTER_RO_ASSIGN`. `*ro u8` — HARD ERROR (используй
-/// `*u8`).
+/// **Field `ptr *u8`** — bare `*u8`: ro-pointee canon (`*T ≡ *ro T`),
+/// запись `s.ptr[i] = …` → `E_POINTER_RO_ASSIGN`.
 ///
-/// **ABI-bridge:** C-тип этого value-record'а — существующий typedef
-/// `nova_str` (`{ const uint8_t* ptr; int64_t len; }`, `nova_rt/nova_rt.h`),
-/// layout-идентичный. ~354 рантайм-сайта + literal-lowering не меняются.
-/// Codegen НЕ эмитит `NovaValue_str` struct — `str` в `RUNTIME_DEFINED_TYPES`
-/// (emit_c.rs) skip-list, как `Option`/`Result`/`Error`. См. D26, 02-types.md.
-///
-/// **Bootstrap (R1/R2):** доступен pre-method (str нужен в panic/interp до
-/// своих методов); literal-lowering зависит только от layout, не от методов.
+/// **ABI-bridge:** C-тип — `nova_str` (`{ const uint8_t* ptr; int64_t len; }`).
+/// Codegen не эмитит struct — `str` в RUNTIME_DEFINED_TYPES skip-list.
 #stable(since = "0.1")
-// priv(type) — НАМЕРЕННО и НАВСЕГДА (решение владельца 2026-07-20, закрытие
-// П2-хвоста Plan 200): методы str живут в ДРУГОМ модуле (runtime.string, 38
-// прямых чтений @ptr/@len) — field-priv (D281, границы модуля) сломал бы их
-// все; перенос деклы в runtime.string невозможен (bootstrap: prelude первичен,
-// lang-item Plan 139.1). Итераторный прецедент П2 (priv(type)→priv) сюда НЕ
-// переносится: у итераторов тип и методы в одном модуле, у str — в разных.
+// priv(type) — методы str живут в другом модуле (runtime.string),
+// field-priv сломал бы их. Перенос декларации в runtime.string невозможен
+// (bootstrap: prelude первичен).
 type str value priv(type) {
     ptr *u8
     len int
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Option[T] methods (D26 §283-306)
+// Option[T] methods
 // ──────────────────────────────────────────────────────────────────────────
 //
-// **Plan 62.A follow-up (2026-05-18):** decoded after 62.A.bis Phase 3
-// унифицировал method dispatch через `sum_schema_registry`. Декларации
-// здесь объявляют canonical Nova-level signature; codegen
-// (`emit_c.rs:11710+`) ищет `MethodRouting` через registry и эмитит
-// либо trampoline в `nova_rt/array.h`, либо inline expansion
-// (`<inline>` sentinel — для Fail-effected / closure-applying методов
-// которым нужен AST-aware emit).
-//
-// **Convention**: signature должна matchить runtime trampoline /
-// inline emit в `compiler-codegen/src/codegen/emit_c.rs`. Init
-// `init_prelude_decls()` копирует HardcodedBaseline `method_routing` в
-// DeclaredFromPrelude entry — behavior-preserving migration источника
-// правды без изменения dispatch.
+// Signature должна matchить runtime trampoline / inline emit
+// в codegen. Init копирует `method_routing` в DeclaredFromPrelude —
+// behavior-preserving migration.
 
 /// True если Option содержит значение.
-///
-/// **Plan 95 Ф.4.1**: Nova-body метод (`match @`). Compiles в тот же
-/// `o.tag == NOVA_TAG_Option_Some` что и прежний C-трамплин
-/// `Nova_Option_method_is_some_<T>` — функциональной разницы нет.
-/// Ценность — de-magic / single-source-of-truth: «что делает is_some»
-/// читается прямо здесь, не в C-рантайме. Маршрутизация — через
-/// `MethodRouting::DeclaredBody` в `sum_schema_registry`.
 #stable(since = "0.1")
 fn Option[T] @is_some() -> bool => match @ { Some(_) => true, None => false }
 
-// Plan 91.7 (D180): Option[T].new() declined as canonical .new() —
-// codegen does not currently support generic static methods on builtin
-// sum-types (Option/Result). Workaround: use `None` directly.
-// Tracked: [M-91.7-option-new-static] — потенциальный followup.
+// Option[T].new() declined — codegen не поддерживает generic static
+// методы на builtin sum-types (Option/Result). Workaround: use `None`
+// directly. [M-91.7-option-new-static]
 
 /// True если Option пустой (None).
-///
-/// **Plan 95 Ф.4.1**: см. `is_some` — параллельный перенос.
 #stable(since = "0.1")
 fn Option[T] @is_none() -> bool => match @ { Some(_) => false, None => true }
 
-// [M-unwrap-twins-retraction] (2026-07-07, D85/D86 amend): `@unwrap()` /
-// `@unwrap_or(default)` / `@unwrap_or_else(f)` РЕТРАКТИРОВАНЫ — дублировали
+// [M-unwrap-twins-retraction] (2026-07-07): `@unwrap()` /
+// `@unwrap_or(default)` / `@unwrap_or_else(f)` ретрактированы — дублировали
 // операторы `x!!` / `x ?? v` / `x ?? f()`. Все вызовы мигрированы на
-// операторную форму; см. spec/decisions/04-effects.md D85 (unwrap→!!) и
-// D86 (unwrap_or[_else]→??).
+// операторную форму.
 
 /// Применяет `map_fn` к содержимому Some, возвращает Some(map_fn(v)). None пропускает.
-///
-/// **Plan 99.3 Ф.1**: Nova-body через `DeclaredBody`-routing. Full
-/// mono per (T, U) — паритет с Rust `Option::<T>::map<U, F>(...)`.
-/// Inline-emit `NovaClos_ii` cast убран (см. `emit_c.rs` Option.map).
-/// Param-name `map_fn` (не `f`) — избегаем shadowing user-функций с
-/// именем `f` (см. `contracts/trivial_congruence_positive`).
+/// Param-name `map_fn` (не `f`) — избегаем shadowing user-функций с именем `f`.
 #stable(since = "0.1")
 fn Option[T] @map[U](map_fn fn(T) -> U) -> Option[U]
   => match @ { Some(v) => Some(map_fn(v)), None => None }
 
 /// `Some(v) -> Ok(v)`, `None -> Err(err)`. Полезно для conversion
 /// Option в Result-чейн.
-///
-/// **Plan 99.3 Ф.3**: Nova-body. Mono per (T, E) — Plan 99.2
-/// contextual `Ok(v)`/`Err(err)` ctors используют return-type
-/// `Result[T, E]` для typed `NovaRes_<T>_<E>*`. Паритет Rust
-/// `Option::<T>::ok_or<E>(self, err: E) -> Result<T, E>`.
 #stable(since = "0.1")
 fn Option[T] @ok_or[E](err E) -> Result[T, E]
   => match @ { Some(v) => Ok(v), None => Err(err) }
 
 /// `Some(v) -> Some(v)`, `None -> other`. Возвращает другой Option если
 /// текущий пустой (fallback chain).
-///
-/// **Plan 95.bis Ф.1**: Nova-body (`match @`) поверх инфры Plan 95.
-/// Тот же tag-check, что и прежний `NOVA_ARRAY_IMPL`-trampoline.
 #stable(since = "0.1")
 fn Option[T] @or(other Option[T]) -> Option[T] => match @ { Some(v) => Some(v), None => other }
 
 /// Bind/monadic chain: `Some(v) -> flat_map_fn(v)`, `None -> None`. В отличие
 /// от `@map`, `flat_map_fn` сам возвращает `Option[U]` — вложенность
-/// `Option[Option[U]]` не образуется (снимать было бы нечем).
+/// `Option[Option[U]]` не образуется.
 ///
-/// **Plan 200 Пункт 14** (research `docs/research/2026-07-16-option-result-
-/// combinators.md`): единственный из канонических комбинаторов, невыразимый
-/// через `??`/`!!`/`.map`/`match` — value-fallback у Nova операторный (D86),
-/// но bind-цепочка fallible-шагов без ручного снятия вложенности требует
-/// отдельного метода. Имя `flat_map` (не `and_then`/`then`) — сиблинг к `map`,
-/// без булевого багажа `and`/`or` и без коллизии с Promise-`then`/`bool::then`.
-/// Param-name `flat_map_fn` (не `f`) — см. `map` выше (shadowing).
+/// Единственный из канонических комбинаторов, невыразимый через `??`/`!!`/
+/// `.map`/`match` — bind-цепочка fallible-шагов без ручного снятия вложенности
+/// требует отдельного метода. Имя `flat_map` (не `and_then`/`then`) — сиблинг
+/// к `map`, без булевого багажа `and`/`or` и без коллизии с `bool::then`.
+/// Param-name `flat_map_fn` (не `f`) — избегаем shadowing.
 ///
 /// Fallible-шаг (замыкание возвращает `Result`): канон — явная `.ok()` на
-/// месте вызова, `opt.flat_map(|v| do_thing(v).ok())` — сброс ошибки виден
-/// глазами там, где происходит. Кросс-carrier перегрузки НЕТ намеренно
-/// (владелец 2026-07-16: тихое глотание Err + вторая дверь D9).
+/// месте вызова, `opt.flat_map(|v| do_thing(v).ok())`.
 #stable(since = "0.1")
 fn Option[T] @flat_map[U](flat_map_fn fn(T) -> Option[U]) -> Option[U]
   => match @ { Some(v) => flat_map_fn(v), None => None }
 
 /// `Some(v) -> Some(v)` если `pred(v)`, иначе `None`. `None` остаётся `None`.
-///
-/// **Plan 200 Пункт 14**: `??`/`.map` не отбрасывают `Some` по предикату —
-/// единственный способ вернуть `None` из `Some`, не зная заранее значения,
-/// без явного `match`. Param-name `pred` — паритет с `Vec`/`Iter`
-/// `@filter(pred fn(T) -> bool)` (`std/collections/*`).
+/// `??`/`.map` не отбрасывают `Some` по предикату — единственный способ
+/// вернуть `None` из `Some` без явного `match`. Param-name `pred` —
+/// паритет с `Vec`/`Iter` `@filter`.
 #stable(since = "0.1")
 fn Option[T] @filter(pred fn(T) -> bool) -> Option[T]
   => match @ { Some(v) => if pred(v) { Some(v) } else { None }, None => None }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Result[T, E] methods (D26 §283-306)
+// Result[T, E] methods
 // ──────────────────────────────────────────────────────────────────────────
-//
-// Bootstrap'овое представление — `Nova_Result*` heap-pointer с hardcoded
-// `(Ok: nova_int, Err: nova_str)` (Plan 14 Q-result-monomorphization).
-// Generic в Nova-декларации — для type-checker'а; codegen monomorphизация
-// до bootstrap'овых типов будет в Plan 62.B+ / Plan 59 extension. Все
-// Result methods — non-per-T (single trampoline на bootstrap mono).
 
 /// True если Result — Ok variant.
-///
-/// **Plan 95 Ф.5.1**: Nova-body метод (`match @`). Параллель с
-/// `Option.is_some` (Plan 95 Ф.4) — компилируется в тот же tag-check,
-/// что и прежний C-трамплин `Nova_Result_method_is_ok`. Маршрутизация
-/// через `MethodRouting::DeclaredBody` в `sum_schema_registry`.
 #stable(since = "0.1")
 fn Result[T, E] @is_ok() -> bool => match @ { Ok(_) => true, Err(_) => false }
 
 /// True если Result — Err variant.
-///
-/// **Plan 95 Ф.5.1**: см. `is_ok` — параллельный перенос.
 #stable(since = "0.1")
 fn Result[T, E] @is_err() -> bool => match @ { Ok(_) => false, Err(_) => true }
 
-// **Plan 62.B (2026-05-20):** Result-методы, возвращающие `T`/`E`
-// (unwrap/unwrap_or/unwrap_or_else/map/map_err), РАЗБЛОКИРОВАНЫ.
-//
-// Прежний блокер (Plan 62.A report §«17 methods defer»): декларация
-// `Result[T, E] @unwrap_or(default T) -> T` даёт return-type `T`, который
-// `external_registry::type_ref_to_c` маппит в generic-стаб `"Nova_T*"`
-// (`_ => format!("Nova_{}*", name)`). `infer_expr_c_type` возвращал этот
-// стаб для `r ?? 0`; binop-dispatch принимал `Nova_*` за sum-type
-// pointer и эмитил `->tag == ->tag` вместо value-equality → CC-FAIL.
-//
-// **Лечение** (emit_c.rs `is_generic_stub_c`): generic-aware lookup-блоки
-// (`method_overloads`, `external_registry.by_key`, `external_registry.
-// lookup`) распознают стаб `Nova_<X>*` (X — 1-2 заглавные буквы) и
-// пропускают его, давая управление specialized `Nova_Result*` ветке
-// `infer_expr_c_type`, которая знает concrete Ok/Err-тип из bootstrap
-// mono `(Ok: nova_int, Err: nova_str)` / `result_type_params` tracking'а.
-//
-// `map`/`map_err` имеют method-level generic (`[U]`/`[F]`); в bootstrap
-// codegen использует mono Ok=nova_int (полноценный U≠T — Plan 59 ext).
-
-// [M-unwrap-twins-retraction] (2026-07-07, D85/D86 amend): `@unwrap()` /
-// `@unwrap_or(default)` / `@unwrap_or_else(f)` РЕТРАКТИРОВАНЫ — дублировали
-// операторы `x!!` / `x ?? v`. Result's `unwrap_or_else(fn(E) -> T)` давал
-// доступ к error-значению в fallback — `??` его отбрасывает (0 канон.
-// использований с реальным доступом к `e`; там где нужен — явный `match`).
-// Все вызовы мигрированы; см. spec/decisions/04-effects.md D85/D86.
+// [M-unwrap-twins-retraction] (2026-07-07): `@unwrap()` /
+// `@unwrap_or(default)` / `@unwrap_or_else(f)` ретрактированы —
+// дублировали операторы `x!!` / `x ?? v`. Result's `unwrap_or_else(fn(E) -> T)`
+// давал доступ к error-значению в fallback — `??` его отбрасывает.
+// Все вызовы мигрированы на операторную форму.
 
 /// Применяет `map_fn` к Ok-значению: `Ok(v) -> Ok(map_fn(v))`, `Err(e)` пропускает.
-///
-/// **Plan 99.3 Ф.5**: Nova-body. Full mono per (T, U, E) — паритет
-/// Rust `Result::<T,E>::map<U, F: FnOnce(T) -> U>(self, op: F)
-/// -> Result<U, E>`. Param-name `map_fn` (не `f`) — см. Option.map.
+/// Param-name `map_fn` (не `f`) — см. Option.map.
 #stable(since = "0.1")
 fn Result[T, E] @map[U](map_fn fn(T) -> U) -> Result[U, E]
   => match @ { Ok(v) => Ok(map_fn(v)), Err(e) => Err(e) }
 
 /// Применяет `err_fn` к Err-payload: `Err(e) -> Err(err_fn(e))`, `Ok(v)` пропускает.
-///
-/// **Plan 99.3 Ф.6**: Nova-body. Full mono per (T, E, F) — паритет
-/// Rust `Result::<T,E>::map_err<F2, O: FnOnce(E) -> F2>(self, op: O)
-/// -> Result<T, F2>`. Param-name `err_fn` (не `f`) — см. Option.map.
+/// Param-name `err_fn` (не `f`) — см. Option.map.
 #stable(since = "0.1")
 fn Result[T, E] @map_err[F](err_fn fn(E) -> F) -> Result[T, F]
   => match @ { Ok(v) => Ok(v), Err(e) => Err(err_fn(e)) }
@@ -396,33 +212,22 @@ fn Result[T, E] @map_err[F](err_fn fn(E) -> F) -> Result[T, F]
 /// Bind/monadic chain: `Ok(v) -> flat_map_fn(v)`, `Err(e) -> Err(e)`. В
 /// отличие от `@map`, `flat_map_fn` сам возвращает `Result[U, E]` —
 /// вложенность `Result[Result[U,E], E]` не образуется.
-///
-/// **Plan 200 Пункт 14** (research `docs/research/2026-07-16-option-result-
-/// combinators.md`): зеркало `Option.flat_map` — та же мотивация (D86:
-/// value-fallback операторный, но bind-цепочка fallible-шагов невыразима
-/// `??`/`.map`). Param-name `flat_map_fn` — см. `Option.flat_map`.
+/// Зеркало `Option.flat_map` — та же мотивация.
+/// Param-name `flat_map_fn` — см. `Option.flat_map`.
 #stable(since = "0.1")
 fn Result[T, E] @flat_map[U](flat_map_fn fn(T) -> Result[U, E]) -> Result[U, E]
   => match @ { Ok(v) => flat_map_fn(v), Err(e) => Err(e) }
 
 /// `Ok(v) -> Some(v)`, `Err(_) -> None`. Discards error.
-///
-/// **Plan 95.bis Ф.1**: Nova-body. Тот же tag-check + `NovaOpt_<T>`
-/// constructor, что и прежний `Nova_Result_method_ok_<n>` trampoline.
 #stable(since = "0.1")
 fn Result[T, E] @ok() -> Option[T] => match @ { Ok(v) => Some(v), Err(_) => None }
 
 /// `Err(e) -> Some(e)`, `Ok(_) -> None`. Discards Ok-value.
-///
-/// **Plan 95.bis Ф.1**: Nova-body, зеркально `ok()`. Прежний inline
-/// emit в codegen (`emit_c.rs:11903+`) с heap-boxed payload удалён —
-/// mono'd Nova-body эмитит правильный `NovaOpt_<E>` напрямую.
 #stable(since = "0.1")
 fn Result[T, E] @err() -> Option[E] => match @ { Ok(_) => None, Err(e) => Some(e) }
 
-/// Plan 177 Ф.2c (D325): fail-fast коллектор списка результатов. Первая `Err`
-/// обрывает и возвращается (short-circuit); иначе `Ok` со ВСЕМИ значениями в
-/// порядке. Прецедент: Rust `Result: FromIterator` (`collect::<Result<Vec<_>,_>>`).
+/// Fail-fast коллектор списка результатов. Первая `Err` обрывает и
+/// возвращается (short-circuit); иначе `Ok` со ВСЕМИ значениями в порядке.
 ///
 /// ```nova
 /// assert(sequence([Ok(1), Ok(2), Ok(3)]) == Ok([1, 2, 3]))
@@ -440,9 +245,8 @@ export fn[T, E] sequence(items []Result[T, E]) -> Result[[]T, E] {
     Ok(out)
 }
 
-/// Plan 177 Ф.2c (D325): разделяет список результатов на успехи и ошибки —
-/// ОБЕ стороны сохранены (в отличие от `sequence`, который обрывается на первой
-/// `Err`). Прецедент: Go `errors.Join`-стиль сбора, Rust `partition_result`.
+/// Разделяет список результатов на успехи и ошибки — ОБЕ стороны
+/// сохранены (в отличие от `sequence`, который обрывается на первой `Err`).
 ///
 /// ```nova
 /// ro (oks, errs) = partition([Ok(1), Err("a"), Ok(2), Err("b")])
@@ -462,12 +266,7 @@ export fn[T, E] partition(items []Result[T, E]) -> ([]T, []E) {
     (oks, errs)
 }
 
-// Plan 169.2.1 (D303): the `Option[T] @debug` / `Result[T,E] @debug`
-// `#impl(Debug)` methods (Plan 91.15 Ф.2) moved OUT of `core` into
-// `std/prelude/protocols.nv`. They reference the `Debug` protocol and the
-// `Write` sink type — both declared in `protocols.nv` — so under a partial
-// `#prelude(core, runtime)` (no `protocols`) they raised `E_IMPL_UNKNOWN_PROTOCOL`
-// (`Debug`/`Write` unknown). That error was previously masked by the unicode
-// D133 failure; removing the unicode import (above) exposed it. Hosting the
-// impls next to the protocols they implement restores core's "ZERO imports /
-// self-contained" architecture rule and lets `#prelude(core, runtime)` compile.
+// `Option[T] @debug` / `Result[T,E] @debug` moved OUT of `core` into
+// `std/prelude/protocols.nv` — они ссылаются на `Debug`/`Write`, объявленные
+// в protocols. Под partial `#prelude(core, runtime)` (без protocols) они
+// давали E_IMPL_UNKNOWN_PROTOCOL.
