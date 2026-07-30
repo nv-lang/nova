@@ -1,0 +1,24 @@
+// EXPECT_COMPILE_ERROR [E_CONCURRENT_MUT_CAPTURE] outer `mut` binding `c` captured by reference in a `spawn`/`parallel for`/`detach` body: `Counters` is poisoned at `Counters.a` (`int`): a writable cell
+//
+// Plan 238 Ф.2/Ф.6 (D441 §2): pos-twin —
+// `standalone/mut_capture_record_atomic_fields_test.nv` (тот же record-
+// composition-механизм, но поле из белого списка). Здесь поле `a` — голый
+// `int`, БЕЗ синхронизации — `share_check::mut_alias_failure` отказывает
+// транзитивно (существующая, до-238 машина; Ф.2 лишь фикстура-подтверждение).
+
+module neg.mut_capture_record_bare_mut_field_neg
+
+type Counters {
+    mut a int
+    b int
+}
+
+fn Counters.make() -> Counters => { a: 0, b: 0 }
+
+fn main() {
+    mut c = Counters.make()
+    supervised {
+        spawn { c.a = c.a + 1 }
+    }
+    println("a=", c.a)
+}

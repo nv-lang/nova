@@ -1,0 +1,29 @@
+// mut_capture_record_atomic_fields_test.nv — Plan 238 Ф.2/Ф.6 (D441 §2):
+// белый список разделяемо ТРАНЗИТИВНО по составу — record, каждое поле
+// которого из белого списка (`Atomic*`), разделяем через `mut`-захват в
+// spawn наравне с самим `Atomic*`. Механизм — существующий (до Ф.2)
+// `protocols::share_check::mut_alias_failure`, уже транзитивный по
+// `TypeDeclKind::Record`; эта фикстура лишь ПОДТВЕРЖДАЕТ поведение, кода
+// не потребовалось. Neg-twin (голый mut-поле) —
+// `neg/mut_capture_record_bare_mut_field_neg.nv`.
+
+module standalone.mut_capture_record_atomic_fields_test
+
+import std.runtime.sync.{AtomicInt}
+
+type Counters {
+    a AtomicInt
+    b AtomicInt
+}
+
+fn Counters.make() -> Counters => { a: AtomicInt.new(0), b: AtomicInt.new(0) }
+
+test "record composed entirely of Atomic* fields — mut-capture into spawn is legal" {
+    mut c = Counters.make()
+    supervised {
+        spawn { c.a.fetch_add(1) }
+        spawn { c.b.fetch_add(1) }
+    }
+    assert(c.a.load() == 1)
+    assert(c.b.load() == 1)
+}

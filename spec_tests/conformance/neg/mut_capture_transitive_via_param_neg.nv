@@ -1,0 +1,33 @@
+// EXPECT_COMPILE_ERROR [E_CONCURRENT_MUT_CAPTURE] outer `mut` binding `v` created outside any fiber boundary, then passed BY VALUE into `parallel_spawn`'s parameter `f`
+//
+// Plan 238 Ф.1/Ф.6 (D441 §3): транзитивный путь №150 — замыкание с
+// mut-захватом создано СНАРУЖИ `spawn`, но пересекает границу файбера КАК
+// ДАННЫЕ (передано параметром в функцию, которая сама зовёт этот параметр
+// из `spawn`). Синтаксическая граница D415 §2 этого не видит — граница
+// видит только имя `f`, не то, что оно закрывает. Репро B из ветки
+// p150-race-repro (race150/b_closure_bypass.nv): без энфорса `nova check`
+// молчал (0 errors), а рантайм под нагрузкой давал 60/60 грязных прогонов
+// (неверный `len()` или SIGSEGV) — измерение в RACE150_FINDINGS.md.
+// Pos-twin (тот же код, AtomicInt вместо Vec) —
+// `standalone/mut_capture_transitive_atomic_control_test.nv`.
+
+module neg.mut_capture_transitive_via_param_neg
+
+fn parallel_spawn(f fn() -> (), n int, m int) {
+    supervised {
+        for _ in 0..n {
+            spawn {
+                for _ in 0..m {
+                    f()
+                }
+            }
+        }
+    }
+}
+
+fn main() {
+    mut v = Vec[int].new()
+    ro push = || { v.push(1) }
+    parallel_spawn(push, 8, 10000)
+    println("len=", v.len())
+}

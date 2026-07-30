@@ -1,0 +1,42 @@
+// supervisor_on_child_fail_serialized_pin_test.nv — Plan 238 Ф.3/Ф.6
+// (D441 §3, D416§2 carve-out): `Supervisor.on_child_fail` исполняется
+// СЕРИАЛИЗОВАННО на drive-файбере scope'а (D416 §2), поэтому не флагуется
+// Ф.3-энфорсом (E_HANDLER_MUT_CAPTURE_IN_FIBER), хотя мутирует НЕатомарный
+// mut-счётчик под конкурентным падением N детей. Инвертированная проба Ф.0
+// (fail_handler_conc_probe.nv в докее плана — доказавшая ПРОТИВОПОЛОЖНОЕ для
+// `with Fail[T]`, 2/5 батчей с потерями на 64×20): здесь ассертим ТОЧНОЕ
+// совпадение счётчика на КАЖДОМ раунде — доказательство сериализации, не
+// просто печать факта, как в исходной пробе.
+//
+// Бежит ARMED на дефолтном worker-count (M:N — периметр гарантии D416§2).
+
+module standalone.supervisor_on_child_fail_serialized_pin_test
+
+test "Supervisor.on_child_fail non-atomic counter stays exact under concurrent child failures (D416§2 pin)" {
+    ro n = 64
+    ro rounds = 20
+    mut lost_total = 0
+    for run in 0..rounds {
+        mut cnt = 0
+        mut after_scope = 0
+        with Supervisor = effect Supervisor {
+            on_child_fail(idx, err) -> Decision {
+                ro _ = idx
+                ro _ = err
+                cnt = cnt + 1   // намеренно НЕатомарно — D416§2 обязан сериализовать
+                return Decision.Stop
+            }
+        } {
+            supervised {
+                for i in 0..n {
+                    spawn { throw i }
+                }
+            }
+            after_scope = 1
+        }
+        assert(after_scope == 1)
+        if cnt != n { lost_total = lost_total + 1 }
+        assert(cnt == n)
+    }
+    assert(lost_total == 0)
+}
