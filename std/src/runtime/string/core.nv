@@ -1,9 +1,8 @@
-// AUTO-SPLIT from std/runtime/string.nv (Plan 152.0 Ф.2). Bodies byte-identical.
-// Co-equal file of module `runtime.string` (folder = one module, AMEND F4).
+// Co-equal file of module `runtime.string` (folder = one module).
 // Role: identity / length / bytes / conversions / constructors / low-level helpers.
 //
-// Plan 91 Ф.2.5/2.6 (D177/D178): str Nova-body methods. #no_prelude breaks the
-// prelude->string->prelude import cycle.
+// `str` Nova-body methods. #no_prelude breaks the prelude->string->prelude
+// import cycle.
 
 #no_prelude
 module runtime.string
@@ -12,20 +11,19 @@ import std.prelude.core.{Result, Ok, Err}
 import std.collections.vec.{Vec}
 import std.runtime.raw_mem.{RawMem}
 
-// `panic` used below is an always-available compiler intrinsic
-// ([panic-assert-intrinsic] 2026-07-11) — no redeclaration needed even
-// under `#no_prelude`.
+// `panic` used below is an always-available compiler intrinsic — no
+// redeclaration needed even under `#no_prelude`.
 
-// Длина строки в БАЙТАХ. O(1). Plan 152.1 Ф.4 (D249): единственный length-метод
+// Длина строки в БАЙТАХ. O(1). Единственный length-метод
 // на самом `str` — bare `@len()` / `@char_len()` ретайрнуты (lens-модель; bare
 // `s.len()` снаружи → E_STR_NO_LEN). codepoint-длина — `s.chars().count()`
-// (O(n)). Nova-body — читает priv-поле `@len` напрямую (str — declared lang-item,
-// Plan 139.1; receiver `str` ⇒ type-method privacy ⇒ видит priv-поля; bare
+// (O(n)). Nova-body — читает priv-поле `@len` напрямую (str — declared lang-item;
+// receiver `str` ⇒ type-method privacy ⇒ видит priv-поля; bare
 // self-field-read `@len` НЕ ловится E_STR_NO_LEN — он для НЕ-self receiver'ов).
-// D26: str.len = bytes. Бывший nova_str_byte_len = `(nova_int)s.len` — идентично.
+// str.len = bytes.
 export fn str @byte_len() -> int => @len
 
-// Plan 152.1 Ф.4 (D249): `@char_len()` (codepoint count) and `@byte_at(i)` (byte
+// `@char_len()` (codepoint count) and `@byte_at(i)` (byte
 // access) are RETIRED in favour of the lens model — codepoint count is
 // `s.chars().count()` (O(n), explicit), byte access is `s.bytes()[i]`
 // (O(1), bounds-checked). Bare `s.char_len()` / `s.byte_at(i)` → E_STR_NO_LEN.
@@ -33,7 +31,7 @@ export fn str @byte_len() -> int => @len
 // True если строка пустая. O(1) через @byte_len (байты).
 export fn str @is_empty() -> bool => @byte_len() == 0
 
-// Plan 91.7 (D180): canonical default. Возвращает пустую строку.
+// Канонический дефолт. Возвращает пустую строку.
 export fn str.new() -> Self => ""
 
 // Convert a known-valid codepoint int → char. Return type `char` drives the
@@ -46,34 +44,33 @@ fn cp_to_char(cp int) -> char {
     }
 }
 
-// Plan 91.8a.2 part 3 (D183 amendment): magic methods @eq/@lt/@le/@gt/@ge
-// удалены. str.@compare (D178) даёт все 6 operators через synthesis.
+// Magic-методы @eq/@lt/@le/@gt/@ge удалены; `str.@compare` даёт все 6
+// операторов через synthesis.
 
 // SipHash-1-3 + per-process random seed (DoS-resistant); используется в
-// std.collections.HashMap. Plan 139.2 Ф.4: НЕустранимая C-граница (security) —
+// std.collections.HashMap. Неустранимая C-граница (security) —
 // seed (nova_hash_seed_k0/k1, getrandom/BCryptGenRandom) НЕ экспонируется на
 // Nova-сторону; перенос в Nova = hash-flooding/DoS-регрессия HashMap. См.
-// nova_rt.h (nova_str_hash/nova_siphash13) + [M-139.1-hash-irreducible-crypto-seed].
+// nova_rt.h (nova_str_hash/nova_siphash13).
 export extern "nova" fn str @hash() -> u64
 
-// D410 (2026-07-06): `@to_bytes()` (allocating-copy twin of `@bytes()`) RETRACTED —
+// `@to_bytes()` (allocating-copy twin of `@bytes()`) RETRACTED —
 // its exact meaning is `@bytes().clone()`, spelled explicitly at the call site now.
-// D176: zero-copy view of str UTF-8 bytes as readonly []u8 (no memcpy).
-// Plan 139.2 Ф.0: Nova-body. `str` is a declared lang-item (Plan 139.1) with
+// Zero-copy view of str UTF-8 bytes as readonly []u8 (no memcpy).
+// Nova-body. `str` is a declared lang-item with
 // priv fields `ptr *u8` / `len int`; this method's receiver is `str`, so it has
 // type-method priv access (privacy is type-based, not module-based) and can read
 // `@ptr` / `@len` (the fields) directly. The zero-copy view is built via the
-// 2-arg VIEW-overload `[]u8.new(ptr *u8, len)` (владелец 2026-07-17): `unsafe
+// 2-arg VIEW-overload `[]u8.new(ptr *u8, len)`: `unsafe
 // fn`, `cap == len`, `-> ro` — call-сайт несёт unsafe-обязательство (источник
 // переживает view), каст в *mut спрятан в new, а `ro []u8`-возврат запрещает
-// любую запись через view (L2), сохраняя иммутабельность str-буфера (R8).
-// Прежняя форма — 3-арг `Vec[u8].new(@ptr as *mut u8, n, n)` с явным кастом.
-// `@len` is spelled `@len()` (the method, = `nova_str_byte_len` = the `len`
-// field, O(1)): the bare field read `@len` trips D117 (E_SIZE_ACCESSOR_FIELD —
-// size-like accessors are method-only). `@ptr` is not a size accessor, so the
+// любую запись через view, сохраняя иммутабельность str-буфера.
+// `@len` is spelled `@len()` (the method, = the `len`
+// field, O(1)): the bare field read `@len` trips E_SIZE_ACCESSOR_FIELD —
+// size-like accessors are method-only. `@ptr` is not a size accessor, so the
 // direct priv-field read is allowed.
-// Plan 214 (D429): #coerce — declares the implicit view-lane pair `str → ro
-// []u8`. Absorbs the retired name-gated D55 str-literal→[]u8 hack: any str
+// `#coerce`: declares the implicit view-lane pair `str → ro
+// []u8`. Any str
 // VALUE (not just a literal) now coerces at a call-arg/let-const/return/
 // element `[]u8` position via this exact method, byte-in-byte identical to
 // the explicit `.bytes()` call it replaces.
@@ -82,7 +79,7 @@ export fn str @bytes() -> ro []u8 => unsafe { []u8.new(@ptr, @byte_len()) }
 
 // Raw pointer to the first byte of the UTF-8 data (like Rust `str::as_ptr`).
 // The pointer is valid for @byte_len() bytes. Caller must not write through it
-// (str buffer is immutable, D176 R8) and must not retain past the str lifetime.
+// (str buffer is immutable) and must not retain past the str lifetime.
 // Primarily for `extern "C" fn` FFI that takes `const uint8_t* / size_t` pair.
 export fn str @ptr() -> *u8 => @ptr
 
@@ -93,7 +90,7 @@ fn is_cont(b int) -> bool => (b & 0xC0) == 0x80
 // in `bytes[0..n]`, or `-1` if the whole range is well-formed UTF-8. The offset
 // points at the lead byte of the bad sequence (or, for an incomplete trailing
 // sequence, at its lead byte). Overlong / surrogate / out-of-range sequences are
-// rejected (mirrors the retired C `_nova_validate_utf8`). Powers both the bool
+// rejected. Powers both the bool
 // `validate_utf8` predicate (lossy fast-path pick) and the typed
 // `str.from_bytes` decode (`Utf8Error{byte_offset}`).
 fn first_invalid_utf8(bytes []u8, n int) -> int {
@@ -130,21 +127,19 @@ fn first_invalid_utf8(bytes []u8, n int) -> int {
 fn validate_utf8(bytes []u8, n int) -> bool => first_invalid_utf8(bytes, n) < 0
 
 // Module-private str static method: build a freshly-allocated str by copying
-// `n` bytes from the raw source pointer `src` (`*u8`). Plan 199 Ф.3 (D418,
-// retracts D26 §Nul-termination): the buffer is EXACTLY `n` bytes — no trailing
-// NUL. `str` is a pure `ptr[len]` view; C-FFI goes through the explicit
-// copy-based `str.to_cstr()` (std/ffi/cstr.nv), so no str buffer reserves a
-// terminator. The `*mut u8` buffer is re-labelled to the str field's `*u8`
-// (ro pointee) on construction — L3 narrowing, always safe. The returned str
-// OWNS its buffer (no aliasing of the source).
+// `n` bytes from the raw source pointer `src` (`*u8`). The buffer is EXACTLY
+// `n` bytes — no trailing NUL. `str` is a pure `ptr[len]` view; C-FFI goes
+// through the explicit copy-based `str.to_cstr()` (std/ffi/cstr.nv), so no str
+// buffer reserves a terminator. The `*mut u8` buffer is re-labelled to the str
+// field's `*u8` (ro pointee) on construction — narrowing, always safe. The
+// returned str OWNS its buffer (no aliasing of the source).
 //
 // Declared as a `str.` STATIC method (not a free fn) so its receiver type is
 // `str` → `current_recv_type == "str"` → it may construct the `str{...}`
-// value-record (type-based privacy, Plan 139.1/D220). A free fn has no receiver
+// value-record (type-based privacy). A free fn has no receiver
 // and would trip E_PRIV_FIELD_INIT.
-// Контракт vs fast-path (владелец 2026-07-17): `n < 0` = баг вызывающего →
-// `requires` (D257: trap/Z3-элизия), НЕ тихое прощение; `n == 0` — легальный
-// вход → fast-path `""` без аллокации.
+// Контракт vs fast-path: `n < 0` = баг вызывающего → `requires` (trap), НЕ
+// тихое прощение; `n == 0` — легальный вход → fast-path `""` без аллокации.
 fn str.alloc_copy(src *u8, n int) -> Self
     requires n >= 0
 {
@@ -157,41 +152,27 @@ fn str.alloc_copy(src *u8, n int) -> Self
     str { ptr: buf, len: n }
 }
 
-// Plan 174.1 (owner decision, 2026-07-08): []u8 → str conversions are METHODS
-// ON THE SOURCE (`[]u8 @to_str()`/`@to_str_lossy()`/`@to_str_unchecked()`/
-// `@into_str_unchecked()`), mirroring the numeric `str @to_int()` family —
-// the static `str.from_bytes`/`from_bytes_lossy`/`from_bytes_unchecked`
-// constructors are RETRACTED (one door). Bodies are byte-identical to the
-// retired statics; only the receiver moved from a `bytes []u8` PARAMETER to
-// the implicit `@` receiver.
+// []u8 → str conversions are METHODS ON THE SOURCE (`[]u8 @to_str()`/
+// `@to_str_lossy()`/`@to_str_unchecked()`/`@into_str_unchecked()`), mirroring
+// the numeric `str @to_int()` family — one door for byte → string conversion.
 
-// Module-private ctor `str.new(buf, len)` (арность-сиблинг `str.new()`,
-// канон «конструктор-поглотитель = Type.new», владелец 2026-07-16). Rename
-// от временного `wrap_owned` — было ЗАБЛОКИРОВАНО primitive-static
-// арность-слепым резолвом (2-арг `str.new` рядом с 0-арг падал в
-// E_UNKNOWN_STATIC_METHOD); закрыто [M-str-primitive-static-arity-overload]
-// (2026-07-17, checker `f1_check_call` теперь пропускает multi-known-overload
-// primitive Path-статики через тот же arity+compat resolved_callees-канал,
-// что и non-primitive типы + emit_c.rs channel-first lookup перед
-// C-type-string strict match — см. docs/simplifications.md).
-// wrap an already-owned, NUL-terminated buffer as a str value (zero-copy, no
-// allocation/copy). Receiver `str` ⇒ type-based privacy to construct
-// `str{...}` directly (Plan 139.1/D220, same rationale as `str.alloc_copy`
-// above) — needed because `[]u8 @into_str_unchecked()` (below) has receiver
-// `[]u8`, not `str`, so it cannot build the literal itself.
-// Параметр `*u8` (владелец 2026-07-17): поле `str.ptr` — ro-pointee, mut-каст
-// был лишним. `unsafe`-атрибут ОТЛОЖЕН до [M-d216-unsafe-map-single-file-gaps]
-// (per-overload энфорс): сейчас A11 ключует статики (тип,имя) БЕЗ арности —
-// атрибут потребовал бы unsafe у safe `str.new()` 0-арг (живой сайт: d372-
-// фикстура conformance). Добавить атрибут ВМЕСТЕ с фиксом карты.
+// Module-private ctor `str.new(buf, len)` (арность-сиблинг `str.new()`;
+// канон «конструктор-поглотитель = Type.new»). Обёртывает уже owned-буфер
+// как str-значение (zero-copy, без аллокации/копии). Receiver `str` ⇒
+// type-based privacy, чтобы собрать `str{...}` напрямую (тот же приём, что
+// `str.alloc_copy` выше) — нужно, потому что `[]u8 @into_str_unchecked()`
+// (ниже) имеет receiver `[]u8`, а не `str`, и не может собрать литерал сам.
+// Параметр `*u8`: поле `str.ptr` — ro-pointee, mut-каст был лишним.
+// [M-d216-unsafe-map-single-file-gaps] обход: unsafe-атрибут отложен — карта
+// unsafe-энфорса ключует статики (тип,имя) БЕЗ арности, атрибут зацепил бы и
+// safe 0-арг `str.new()`; добавить атрибут ВМЕСТЕ с фиксом карты.
 fn str.new(buf *u8, len int) -> Self {
     str { ptr: buf, len }
 }
 
 // Unchecked: no validation, O(n) copy. Caller guarantees valid UTF-8.
-// Plan 139.2 Ф.2 (original Nova-body): reads (ptr,len) via the public Vec
-// getters and copies into a fresh owned, NUL-terminated buffer (alloc_copy).
-// Identical bytes to the retired C nova_str_from_bytes_unchecked.
+// Reads (ptr,len) via the public Vec getters and copies into a fresh owned
+// buffer (alloc_copy).
 export unsafe fn []u8 @to_str_unchecked() -> str {
     str.alloc_copy(@ptr(), @len())
 }
@@ -199,14 +180,12 @@ export unsafe fn []u8 @to_str_unchecked() -> str {
 // Lossy: replaces invalid UTF-8 sequences with U+FFFD. Always succeeds.
 // Fast path — when the whole input is valid UTF-8, just copy (alloc_copy).
 // Slow path — emit each valid sequence verbatim and replace each invalid lead
-// byte with the 3-byte U+FFFD (0xEF 0xBF 0xBD), advancing 1 byte. Identical
-// output to the retired C nova_str_from_bytes_lossy.
+// byte with the 3-byte U+FFFD (0xEF 0xBF 0xBD), advancing 1 byte.
 export fn []u8 @to_str_lossy() -> str {
     ro n = @len()
     // FAST-PATH (перф, НЕ валидация — медленный путь ниже самодостаточен и сам
     // чинит FFFD): валидный вход (типовой) = один скан + один memcpy, вместо
     // цикла + cap(n*3)-над-аллокации + второй копии. Rust-парити from_utf8_lossy.
-    // Сознательно НЕ удалять как «дубль» (владелец-ревью 2026-07-17).
     if validate_utf8(@, n) {
         return str.alloc_copy(@ptr(), n)
     }
@@ -248,40 +227,36 @@ export fn []u8 @to_str_lossy() -> str {
             i += 1
         }
     }
-    // Zero-copy кража буфера (владелец 2026-07-21): `out` валиден по построению —
-    // `alloc_copy` платил ВТОРУЮ полную копию; `into_str_unchecked` забирает буфер
-    // как есть (cap-хвост висит на той же GC-аллокации — как у SB @into_str).
+    // Zero-copy кража буфера: `out` валиден по построению — `alloc_copy`
+    // платил бы ВТОРУЮ полную копию; `into_str_unchecked` забирает буфер
+    // как есть (cap-хвост висит на той же GC-аллокации).
     unsafe { out.into_str_unchecked() }
 }
 
 // Steal variant: consume []u8, zero-copy reuse of the data ptr. `consume`
-// receiver (D131) — the []u8 is unusable after the call. Plan 91.10: D163
-// `needs <Cap>` retracted, plain fn syntax.
+// receiver — the []u8 is unusable after the call.
 //
-// Plan 199 Ф.3 (D418, retracts D26 §Nul-termination): a `str` no longer
-// reserves a trailing NUL, so there is nothing to write past `len` and no
-// `cap > len` room requirement. The stolen buffer is ALWAYS reused in place
-// (`@ptr()` + `str.new(buf, len)`), regardless of capacity — the former
-// `cap == len` alloc+copy fallback (which existed solely to make room for the
-// terminator) is gone. `str` is a pure `ptr[len]` view over the consumed bytes.
-// (2026-07-16, владелец: `Vec @into_raw()` ретрактирован — передача владения
-// живёт ЗДЕСЬ, в consume-ресивере; указатель берётся обычным `mut @ptr()`.)
+// A `str` reserves no trailing NUL, so there is nothing to write past `len`
+// and no `cap > len` room requirement. The stolen buffer is ALWAYS reused in
+// place (`@ptr()` + `str.new(buf, len)`), regardless of capacity. `str` is a
+// pure `ptr[len]` view over the consumed bytes; ownership transfer lives in
+// this consume-receiver (the pointer is taken via the plain `@ptr()`).
 export unsafe fn []u8 consume @into_str_unchecked() -> str {
     ro n = @len()
     // Consume self discharges ownership; the raw buffer pointer wraps directly.
     // `ro`-биндинг → ro-оверлоад `@ptr() -> *u8` — точный тип параметра
     // `str.new(buf *u8, len)` (arg-binding не сужает *mut→*ro при подборе
-    // оверлоада — см. E_UNKNOWN_STATIC_METHOD-фолбэк, вскрыто 2026-07-17).
+    // оверлоада).
     ro buf = @ptr()
     str.new(buf, n)
 }
 
-// Plan 176 Ф.0.5 (D322, D325): fallible byte→str decode.
+// Fallible byte→str decode.
 //
 /// UTF-8 decode error for `[]u8.to_str()`: the input `[]u8` was not well-formed
 /// UTF-8. `byte_offset` is the index of the first byte where decoding failed —
 /// the lead byte of the ill-formed sequence, or the lead byte of an incomplete
-/// trailing sequence. Sibling of `encoding.utf16.Utf16Error` (D255); homed here
+/// trailing sequence. Sibling of `encoding.utf16.Utf16Error`; homed here
 /// in `runtime.string` next to the `to_str*` family and `InvalidCodepoint`,
 /// so the `#no_prelude` core needs no cross-module `encoding` import (mirrors the
 /// `InvalidCodepoint` precedent — str-conversion errors live with `str`).
@@ -292,16 +267,13 @@ export type Utf8Error value {
 /// Checked `[]u8` → `str` (fallible UTF-8 decode). Returns `Ok(str)` when the
 /// bytes are well-formed UTF-8, else `Err(Utf8Error{byte_offset})` locating the
 /// first ill-formed byte — the `str` is NOT constructed on the error path
-/// (R-UTF8 invariant: every `str` is valid UTF-8).
+/// (invariant: every `str` is valid UTF-8).
 ///
-/// Canonical D325 form: the ordinary name `to_str` returns `Result` and pairs,
-/// per D77 symmetry, with the infallible `to_str_unchecked`/`into_str_unchecked`
+/// Canonical form: the ordinary name `to_str` returns `Result` and pairs,
+/// by symmetry, with the infallible `to_str_unchecked`/`into_str_unchecked`
 /// and the always-succeeding `to_str_lossy`. Backs `io.read_to_string`.
 /// Precedents: Rust `str::from_utf8`, Go `utf8.Valid` + cast, Zig
 /// `utf8ValidateSlice`.
-///
-/// (Plan 176 Ф.0.5 — reformulation of the retired `str.try_from([]u8)`
-/// intrinsic; Plan 174.1 — moved from static `str.from_bytes` to `[]u8 @to_str()`.)
 export fn []u8 @to_str() -> Result[str, Utf8Error] {
     ro n = @len()
     ro off = first_invalid_utf8(@, n)
@@ -311,54 +283,37 @@ export fn []u8 @to_str() -> Result[str, Utf8Error] {
     Err(Utf8Error { byte_offset: off })
 }
 
-// [M-174.1-to-str-name-collision-codegen-bug] RESOLVED 2026-07-15 (Plan 196.7):
-// the `@decode_utf8()` byte-identical alias that used to live here — the call-
-// site workaround for the name-collision mis-dispatch of `[]u8 @to_str()` in a
-// CU that also has a D410 `T.to_str()` / the bare-T `fn[T] T @to_str` blanket —
-// is REMOVED. The dispatch is now correct via the one-window channel: the
-// checker resolves `bytes.to_str()` to THIS `[]u8 @to_str` by the array-spelling
-// key and records it in `resolved_callees`; codegen honors that concrete callee
-// instead of the name-keyed blanket (types/mod.rs `check_instance_overload` +
-// emit_c.rs blanket-dispatch guard). All former call sites use `.to_str()`.
-
-// Plan 174.2 (D410-амендмент, str.from-ретракция): ОДИН публичный вход
-// «скаляр → строка» — `@to_str()`. Bare-T blanket (D145 форма, зеркалит
-// `fn[T] T @identity() -> T => @`): "строка из значения = подставить
+// Один публичный вход «скаляр → строка» — `@to_str()`. Bare-T blanket
+// (зеркалит `fn[T] T @identity() -> T => @`): "строка из значения = подставить
 // значение в интерполяцию". Инвариант рекурсии: `"${@}"` для ПРИМИТИВА
-// лоуэрится ПРЯМО в Display-хелпер (`nova_int_to_str`/`nova_f64_to_str`/…,
-// emit_c.rs::emit_interpolated_str primitive_to_str_fn dispatch) — НЕ через
-// `.to_str()` снова, цикла нет. Для НЕ-примитива `"${@}"` идёт через
+// лоуэрится ПРЯМО в Display-хелпер (`nova_int_to_str`/`nova_f64_to_str`/…) —
+// НЕ через `.to_str()` снова, цикла нет. Для НЕ-примитива `"${@}"` идёт через
 // Display.@display (explicit или auto-derive) — тоже не через `.to_str()`.
-// Инвариант специализации (D84 «concrete побеждает generic» + D285
-// receiver-compatibility): конкретный `T @to_str()` (напр. `char` ниже,
+// Инвариант специализации: конкретный `T @to_str()` (напр. `char` ниже,
 // `[]u8 @to_str() -> Result[str, Utf8Error]` выше — другая arity/семантика,
 // decode а не format) ВСЕГДА побеждает этот blanket по receiver-типу —
 // blanket применяется только когда конкретной перегрузки на T нет.
 export fn[T] T @to_str() -> str => "${@}"
 
-// D410 (2026-07-06): `@to_chars()` (materializing-copy twin of `@chars()`) RETRACTED —
-// its exact meaning is `@chars().collect()`, spelled explicitly at the call site now.
-// D178: lexicographic comparison, like C strcmp. Returns negative/0/positive.
-// Plan 139.2 Ф.3: Nova-body — byte-loop над @bytes() обоих операндов (как
-// C strcmp / memcmp), length-aware tiebreak. Возвращает (a_byte - b_byte) на
-// первом различии (u8 0..255 ⇒ разность даёт тот же знак, что memcmp), затем
-// при равенстве префикса — знак (@len() - other.len()). Семантика идентична
-// бывшему C `nova_str_compare` (array.h:989: memcmp(min_len) + length tiebreak
-// -1/0/1). Метод вызываем напрямую (`s.compare(t)`) и Compare-протоколом
-// (`@compare(o) == 0` synthesis, D178). Plan 152.5a D-R4: ОПЕРАТОРЫ
-// `<`/`<=`/`>`/`>=` теперь синтезируются из `@compare` (emit_c.rs nova_str BinOp
-// arm → `Nova_str_method_compare(l,r) OP 0`), `==`/`!=` из `@equal`, `+` из `@concat`
-// — хардкод C `nova_str_lt`/`eq`/`concat` в operator-lowering снят. Закрывает
-// `[M-139.1-operator-lowered-methods]`.
+// `@to_chars()` (materializing-copy twin of `@chars()`) RETRACTED — its exact
+// meaning is `@chars().collect()`, spelled explicitly at the call site now.
+// Lexicographic comparison, like C strcmp. Returns negative/0/positive.
+// Nova-body — byte-loop над @bytes() обоих операндов (как C strcmp / memcmp),
+// length-aware tiebreak. Возвращает (a_byte - b_byte) на первом различии
+// (u8 0..255 ⇒ разность даёт тот же знак, что memcmp), затем при равенстве
+// префикса — знак (@len() - other.len()). Метод вызываем напрямую
+// (`s.compare(t)`) и Compare-протоколом (`@compare(o) == 0` synthesis).
+// ОПЕРАТОРЫ `<`/`<=`/`>`/`>=` синтезируются из `@compare`
+// (`Nova_str_method_compare(l,r) OP 0`), `==`/`!=` из `@equal`, `+` из `@concat`.
 export fn str @compare(other str) -> int {
     ro (an, bn) = (@byte_len(), other.byte_len())
     ro min = an.min(bn)
-    // Plan 152.5a D-R4: RawMem.compare (= memcmp) over the shared prefix instead
-    // of a byte-loop — perf-parity with the retired C nova_str_compare, so the
-    // synthesized `<`/`<=`/`>`/`>=` operators (now Nova-routed) carry no penalty.
-    // `@ptr`/`other.ptr` are priv `*ro u8` (type-method privacy, str's home module,
-    // same as @starts_with). memcmp result is sign-correct (magnitude irrelevant
-    // for Ord); length-tiebreak on a shared prefix (identical to byte-loop form).
+    // RawMem.compare (= memcmp) over the shared prefix instead of a byte-loop —
+    // perf-parity with the C form, so the synthesized `<`/`<=`/`>`/`>=`
+    // operators carry no penalty. `@ptr`/`other.ptr` are priv `*ro u8`
+    // (type-method privacy, str's home module, same as @starts_with). memcmp
+    // result is sign-correct (magnitude irrelevant for Ord); length-tiebreak
+    // on a shared prefix.
     ro c = unsafe { RawMem.compare(@ptr, other.ptr, min) }
     if c != 0 { return c }
     if an < bn { return -1 }
@@ -366,12 +321,11 @@ export fn str @compare(other str) -> int {
     0
 }
 
-// Content equality (Plan 152.5a D-R4, Plan 91.8b). Backs the `==`/`!=` operators
-// (emit_c.rs nova_str BinOp arm → `Nova_str_method_equal`) and the `Equal` protocol,
-// replacing the retired C `nova_str_eq`. Length-first short-circuit (unequal length
-// ⇒ not equal, O(1)) then RawMem.compare (= memcmp) over the bytes — perf-parity
-// with the C form (which did the same length-check + memcmp). `@ptr`/`other.ptr` are
-// priv `*ro u8` (type-method privacy, str's home module).
+// Content equality. Backs the `==`/`!=` operators
+// (`Nova_str_method_equal`) and the `Equal` protocol.
+// Length-first short-circuit (unequal length ⇒ not equal, O(1)) then
+// RawMem.compare (= memcmp) over the bytes. `@ptr`/`other.ptr` are priv
+// `*ro u8` (type-method privacy, str's home module).
 export fn str @equal(other str) -> bool {
     ro n = @byte_len()
     if n != other.byte_len() { return false }
@@ -382,7 +336,8 @@ export fn str @equal(other str) -> bool {
 // idx==byte_len, или байт по idx НЕ continuation (`(b & 0xC0) != 0x80`). Для
 // безопасной нарезки: `s[a..b]` паникует при рассечении, `is_char_boundary` —
 // предварительная проверка без паники. O(1).
-// nova:allow W_PARAM_NO_CONTRACT -- намеренный total-предикат (D251-контракт: false на любом невалидном idx, включая отрицательные)
+// nova:allow W_PARAM_NO_CONTRACT -- намеренный total-предикат (false на любом
+// невалидном idx, включая отрицательные)
 export fn str @is_char_boundary(idx int) -> bool {
     ro n = @byte_len()
     if idx == 0 || idx == n { return true }
@@ -391,7 +346,7 @@ export fn str @is_char_boundary(idx int) -> bool {
     (bytes[idx] as int & 0xC0) != 0x80
 }
 
-// Plan 91.18 Ф.5: checked codepoint → str conversion.
+// Checked codepoint → str conversion.
 // `str.from_codepoint` (char.nv) is unchecked — invalid cp → silent empty str.
 // `str.try_from_codepoint` validates via `char.from` and returns a Result.
 
@@ -410,10 +365,10 @@ export fn str.try_from_codepoint(cp int) -> Result[str, InvalidCodepoint] {
 // Module-private: ASCII lowercase of a single byte (A-Z → a-z; else unchanged).
 fn ascii_lower_byte(b int) -> int => if b >= 65 && b <= 90 { b + 32 } else { b }
 
-// ASCII case-insensitive equality (Plan 152.5a, D254). Без Unicode-таблиц: только
+// ASCII case-insensitive equality. Без Unicode-таблиц: только
 // A-Z/a-z складываются. Длины должны совпадать (ASCII-case не меняет байт-длину).
 // Rust `str::eq_ignore_ascii_case`. Для Unicode case-folding — `eq_ignore_case`
-// (152.5b, делегат std/unicode).
+// (делегат std/unicode).
 export fn str @eq_ignore_ascii_case(other str) -> bool {
     ro n = @byte_len()
     if n != other.byte_len() { return false }

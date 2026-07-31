@@ -1,12 +1,10 @@
-// AUTO-SPLIT from std/runtime/string.nv (Plan 152.0 Ф.2). Bodies byte-identical.
-// Co-equal file of module `runtime.string` (folder = one module, AMEND F4).
-// Role: codepoint layer — `CharsIter` decoding lens (Plan 152.1 Ф.3, D250) +
-//       legacy `char_at`/`get` (retired in Ф.4 → use `for c in chars()` /
-//       `.indices()`; positional `chars().nth(i)` itself later retracted,
-//       D260-амендмент).
+// Co-equal file of module `runtime.string` (folder = one module).
+// Role: codepoint layer — `CharsIter` decoding lens + `CharIndicesIter`
+// (byte_offset, char) pairs. Legacy positional access (`char_at`/`get`) is
+// retired — use `for c in chars()` / `.indices()`.
 //
-// Plan 91 Ф.2.5/2.6 (D177/D178): str Nova-body methods. #no_prelude breaks the
-// prelude->string->prelude import cycle.
+// `str` Nova-body methods. #no_prelude breaks the prelude->string->prelude
+// import cycle.
 
 #no_prelude
 module runtime.string
@@ -14,11 +12,11 @@ module runtime.string
 import std.prelude.core.{Option, Some, None}
 
 // Module-private: decode one UTF-8 codepoint at bytes[i].
-// Returns (codepoint, step_bytes). R-UTF8: assumes valid UTF-8.
+// Returns (codepoint, step_bytes). Assumes valid UTF-8.
 // On invalid lead byte / truncated tail: returns (U+FFFD, 1) — Unicode canon
 // (Rust from_utf8_lossy, Go range-over-string); повреждение ВИДИМО, а не
-// маскируется под легальный символ (решение владельца 2026-07-08).
-// runtime.string decode; std.unicode has decode_at (intentional per-module copy, folder boundary).
+// маскируется под легальный символ.
+// runtime.string decode; std.unicode has decode_at (intentional per-module copy).
 fn decode_utf8(bytes []u8, i int, n int) -> (int, int) {
     ro b = bytes[i] as int
     if b < 0x80 { return (b, 1) }
@@ -34,7 +32,7 @@ fn decode_utf8(bytes []u8, i int, n int) -> (int, int) {
     (0xFFFD, 1)
 }
 
-// ─── CharsIter — codepoint decoding lens (Plan 152.1 Ф.3, D250) ───
+// ─── CharsIter — codepoint decoding lens ───
 //
 // `chars()` is a DECODING lens (not a reinterpretation like `bytes()`):
 // codepoints are not stored contiguously — they are decoded on the fly. So the
@@ -43,20 +41,16 @@ fn decode_utf8(bytes []u8, i int, n int) -> (int, int) {
 // would invite the `for i in 0..len { at(i) }` = O(n²) footgun that we removed
 // from `str[i]` (invariant I2 "no hidden O(n)"). Mirrors Rust `str::chars()`.
 //
-// Field-level `priv` (D281 module-boundary; corrected from `value priv(type)` —
-// Plan 200 pt.2, `priv(type)` for iterator fields was over-strict: D267 lets any
-// module write extension-methods for a type, so `priv(type)` fields are
-// obviated anyway; the real external boundary is module-`priv`): the iterator
+// Field-level `priv` (module-boundary): the iterator
 // holds `buf` (the source str, an alias of the same UTF-8 buffer —
 // conservative GC sees `ptr` through the str field and keeps the buffer
 // alive) + `pos` (current byte offset). No priv-poking, no `unsafe`:
 // decoding reads bytes via the public zero-copy `buf.bytes()` view.
 //
 // `value` = stack-allocated (no per-iteration heap churn). CharsIter is the first
-// general value-record iterator; Plan 152.1 Ф.3 added the codegen support it
-// needs (for-in `NovaValue_*` iterator-struct derivation + by-pointer `&it` for
-// `mut @next()`; value-record self-return deref for `@iter() => @`, which also
-// fixes `[M-138.2-vec-self-return]`).
+// general value-record iterator; it needs the for-in codegen support for
+// `NovaValue_*` iterator-struct derivation + by-pointer `&it` for
+// `mut @next()`; value-record self-return deref for `@iter() => @`.
 export type CharsIter value {
     priv buf str    // borrows str (alias of the buffer; GC sees ptr through the field)
     priv pos int    // current byte offset into buf
@@ -64,16 +58,15 @@ export type CharsIter value {
 
 // Module-private constructor. A static method on `CharsIter` has
 // `current_recv_type == "CharsIter"` → it may initialise the `priv` fields
-// (type-based privacy, Plan 139.1/D220). `str @chars()` (receiver `str`)
+// (type-based privacy). `str @chars()` (receiver `str`)
 // cannot init CharsIter's priv fields directly, so it routes through here —
 // same pattern as `str.alloc_copy` constructing `str{...}`.
 fn CharsIter.new(buf str) -> CharsIter => { buf, pos: 0 }
 
 // `Next[char]`: decode the codepoint at `buf[pos]`, advance `pos` by its UTF-8
 // byte length, return it. `None` when exhausted (`pos >= byte_len`). Amortised
-// O(1). The decode cursor is the UTF-8 algorithm that used to live in the
-// retired `@char_at` (reads bytes via `@buf.bytes()`, no `unsafe`).
-// R-UTF8 (D26 AMEND): the source str is always valid UTF-8, so the decode is
+// O(1). Reads bytes via the public `@buf.bytes()` view, no `unsafe`.
+// The source str is always valid UTF-8, so the decode is
 // total — no malformed-sequence branch is reachable (the `else` arm only guards
 // against a truncated tail and degrades to a single-byte step).
 #impl(Next[char])
@@ -103,10 +96,9 @@ export fn CharsIter @count() -> int {
     count
 }
 
-// `@nth(idx int) -> Option[char]` — RETRACTED (2026-07-06, D260-амендмент,
-// [M-d73-d77-retraction-migration] Block 4): a non-mut positional scan from
-// the current `pos` was exactly the reintroduced-forbidden codepoint `s[i]`
-// (`E_STR_NO_INT_INDEX`, D249) wearing an iterator-method costume — O(n) per
+// `@nth(idx int) -> Option[char]` — RETRACTED: a non-mut positional scan from
+// the current `pos` would be the reintroduced-forbidden codepoint `s[i]`
+// (`E_STR_NO_INT_INDEX`) wearing an iterator-method costume — O(n) per
 // call, O(n²) in a loop. Callers migrate to target iteration: `for c in
 // s.chars()`, `.indices()` for (offset, char) pairs, or `.skip(n)` +
 // `.next()`-style composition on adapters that support it.
@@ -115,16 +107,14 @@ export fn CharsIter @count() -> int {
 // valid UTF-8 buffer has no trailing continuation-only tail.)
 export fn CharsIter @is_empty() -> bool => @pos >= @buf.byte_len()
 
-// ─── str codepoint lenses (Plan 152.1 Ф.3, D250) ───
+// ─── str codepoint lenses ───
 
 // Lazy codepoint iterator over the string (borrows `self`; O(1) to create).
 // The codepoint layer of the lens model: `s.chars().count()` for codepoint
 // length, `for c in s.chars()` (or just `for c in s`) to walk (positional
-// `.nth(i)` was retracted — D260-амендмент, use `for`/`.indices()` instead).
-// D410 (2026-07-06): bare noun = O(1) view/lens
-// (borrows); `.collect()` at the call site materialises an owned `[]char`
-// (`s.chars().collect()`) — the retired `to_chars()` close-copy twin is exactly
-// that, spelled explicitly now.
+// `.nth(i)` was retracted — use `for`/`.indices()` instead).
+// Bare noun = O(1) view/lens (borrows); `.collect()` at the call site
+// materialises an owned `[]char` (`s.chars().collect()`).
 export fn str @chars() -> CharsIter => CharsIter.new(@)
 
 // `Iter` for str: `s.iter()` => `s.chars()`, so `for c in s` decodes
@@ -136,14 +126,13 @@ export fn str @iter() -> CharsIter => @chars()
 // Raw int codepoints without the char wrapper — for low-level protocols/tables.
 // Values are identical to `@chars()` cast to int.
 // `"a😀".to_code_points() == [0x61, 0x1F600]`.
-// Moved from std.encoding.utf16 → runtime.string (Plan 91.18 Ф.2).
 export fn str @to_code_points() -> []int {
     mut out []int = []int.new(cap: @byte_len())
     for c in @chars() { out.push(c as int) }
     out
 }
 
-// ─── CharIndicesIter — (byte_offset, char) pairs (Plan 91.18 Ф.10) ───
+// ─── CharIndicesIter — (byte_offset, char) pairs ───
 //
 // `chars().indices()` adapts CharsIter into a stream of (byte-offset, char)
 // pairs. `off` is the byte index of the *start* of the codepoint — compatible
