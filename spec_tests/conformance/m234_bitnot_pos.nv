@@ -1,0 +1,66 @@
+// План 234 Ф.2 (D46-амендмент 2026-07-27): новый оператор `~a` -> `@bitnot()`
+// — побитовое дополнение, перегружаемое для пользовательских типов.
+// Приоритет — унарный, как `!`/унарный `-`. Примитивы: integer-promotion
+// таблица (узкие БЕЗЗНАКОВЫЕ — XOR-маска; узкие знаковые и широкие — голый
+// `~`). Знаковое: `~x == -(x + 1)`.
+module spec_tests.conformance
+
+type M234Flags { bits int }
+
+fn M234Flags @bitnot() -> M234Flags => { bits: ~@bits }
+
+test "m234: @bitnot на record-типе через оператор ~" {
+    ro m234_f = M234Flags { bits: 0b1100 }
+    assert((~m234_f).bits == ~0b1100)
+}
+
+test "m234: ~ integer-promotion таблица — узкие беззнаковые (XOR-маска)" {
+    assert(~(0xF0 as u8) == (0x0F as u8))
+    assert(~(0x00 as u8) == (0xFF as u8))
+    assert(~(0xFF00 as u16) == (0x00FF as u16))
+    assert(~(0x0000 as u16) == (0xFFFF as u16))
+}
+
+test "m234: ~ integer-promotion таблица — узкие знаковые (голый ~)" {
+    assert(~(5 as i8) == (-6 as i8))
+    assert(~(-6 as i8) == (5 as i8))
+    assert(~(5 as i16) == (-6 as i16))
+}
+
+test "m234: ~ на широких/uint (голый ~, продвижения нет)" {
+    assert(~(5 as i32) == -6)
+    assert(~(5 as u32) == (4294967290 as u32))
+    assert(~(5 as i64) == (-6 as i64))
+    assert(~5 == -6)
+    // u64/uint: избегаем литералов вблизи u64::MAX как таковых — `x as
+    // uint`/`x as u64` для отрицательного-по-битам i64-литерала идёт через
+    // ОТДЕЛЬНУЮ (не этого плана) intermediate-конверсию `nova_int_to_uint`,
+    // которая КЛАМПИТ отрицательное в 0 (не raw bit-reinterpret) — попутно
+    // найденный пред-существующий гэп int/uint литералов вне периметра 234
+    // (см. отчёт окна), не тестируем через него. Вместо — `~0` (безопасный
+    // литерал) даёт all-ones, XOR с which проверяет `~x` без больших
+    // литералов вовсе.
+    ro m234_ones64 = ~(0 as u64)
+    assert((~(5 as u64)) == (m234_ones64 ^ (5 as u64)))
+    ro m234_onesu = ~(0 as uint)
+    assert((~(5 as uint)) == (m234_onesu ^ (5 as uint)))
+}
+
+test "m234: ~ знаковое тождество и двойное применение" {
+    ro m234_x = 41
+    assert(~m234_x == -(m234_x + 1))
+    assert(~~m234_x == m234_x)
+    ro m234_neg = -17
+    assert(~m234_neg == -(m234_neg + 1))
+}
+
+test "m234: ~ приоритет — постфикс сильнее унарного (как !/-)" {
+    ro m234_v = -3
+    // `~v.abs()` разбирается как `~(v.abs())`, не `(~v).abs()`.
+    assert(~m234_v.abs() == ~3)
+    // `as` — тоже постфикс: `~x as T` = `~(x as T)`.
+    ro m234_chained = ~5 as u8
+    assert(m234_chained == (0xFA as u8))
+    ro m234_explicit = (~(5 as u8)) as int
+    assert(m234_explicit == 250)
+}

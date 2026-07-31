@@ -152,8 +152,14 @@ export fn Set[T Clone] @clone() -> Self =>
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Объединение `a | b` — все элементы из обоих множеств.
+///
+/// Имя метода `@bitor` (не `@or`) — план 234 / D46-амендмент 2026-07-27:
+/// RETRACT `@and`/`@or`/`@xor` → `@bitand`/`@bitor`/`@bitxor` (`&`/`|`/`^` в
+/// Nova чисто побитовые; план ошибочно считал потребителей старых имён в
+/// std нулевыми — этот файл был пропущен при исходном аудите, найден и
+/// мигрирован тем же слиянием).
 #stable(since = "0.1")
-export fn Set[T] @or(other Set[T]) -> Self {
+export fn Set[T] @bitor(other Set[T]) -> Self {
     mut out = Self.new()
     for x in @map.keys() { out.insert(x) }
     for x in other.map.keys() { out.insert(x) }
@@ -162,7 +168,7 @@ export fn Set[T] @or(other Set[T]) -> Self {
 
 /// Пересечение `a & b` — элементы присутствующие в обоих множествах.
 #stable(since = "0.1")
-export fn Set[T] @and(other Set[T]) -> Self {
+export fn Set[T] @bitand(other Set[T]) -> Self {
     mut out = Self.new()
     for x in @map.keys() {
         if other.contains(x) { out.insert(x) }

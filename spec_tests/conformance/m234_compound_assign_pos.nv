@@ -1,0 +1,77 @@
+// План 234 Ф.2а (D46-амендмент §C, решение владельца 2026-07-27: "мы просто
+// забыли про них"): compound-присваивания `&=` `|=` `^=` `<<=` `>>=`.
+// Десугар в `a = a <op> b`; отдельного операторного метода нет —
+// пользовательские типы диспетчеризуются тем же `@bitand`/`@bitor`/
+// `@bitxor` (не `@shl`/`@shr` — см. отчёт окна, `<<`/`>>` на
+// пользовательском типе — отдельный пред-существующий гэп вне периметра).
+module spec_tests.conformance
+
+test "m234: &= |= ^= на int" {
+    mut m234_m = 0b1100
+    m234_m &= 0b1010
+    assert(m234_m == 0b1000)
+
+    mut m234_n = 0b1100
+    m234_n |= 0b0011
+    assert(m234_n == 0b1111)
+
+    mut m234_p = 0b1100
+    m234_p ^= 0b1010
+    assert(m234_p == 0b0110)
+}
+
+test "m234: <<= >>= на int, знаковых и беззнаковых" {
+    mut m234_sh = 1
+    m234_sh <<= 4
+    assert(m234_sh == 16)
+
+    mut m234_sh2 = 16
+    m234_sh2 >>= 4
+    assert(m234_sh2 == 1)
+
+    mut m234_u = 1 as uint
+    m234_u <<= 3
+    assert(m234_u == (8 as uint))
+
+    mut m234_i = -16
+    m234_i >>= 2
+    assert(m234_i == -4)
+}
+
+test "m234: compound-присваивания на узких ширинах (та же таблица эмиссии)" {
+    mut m234_u8v = 0xF0 as u8
+    m234_u8v &= 0x0F as u8
+    assert(m234_u8v == (0 as u8))
+
+    mut m234_i8v = 5 as i8
+    m234_i8v ^= -1 as i8
+    assert(m234_i8v == (-6 as i8))
+
+    mut m234_u16v = 0xFF00 as u16
+    m234_u16v |= 0x00FF as u16
+    assert(m234_u16v == (0xFFFF as u16))
+}
+
+// Пользовательский тип: desugar `a = a <op> b` переиспользует @bitand/
+// @bitor/@bitxor (Ф.1) — тот же record-тип и методы, что в
+// m234_bitwise_rename_pos.nv, но локальный (одноимённый в CU дал бы
+// коллизию имени типа) — единственное значение-получатель, no operator method.
+type M234CaMask { bits int }
+
+fn M234CaMask @bitand(other M234CaMask) -> M234CaMask => { bits: @bits & other.bits }
+fn M234CaMask @bitor(other M234CaMask) -> M234CaMask => { bits: @bits | other.bits }
+fn M234CaMask @bitxor(other M234CaMask) -> M234CaMask => { bits: @bits ^ other.bits }
+
+test "m234: &= |= ^= на пользовательском типе (desugar через @bitand/@bitor/@bitxor)" {
+    mut m234_cm = M234CaMask { bits: 0b1100 }
+    m234_cm &= M234CaMask { bits: 0b1010 }
+    assert(m234_cm.bits == 0b1000)
+
+    mut m234_co = M234CaMask { bits: 0b1100 }
+    m234_co |= M234CaMask { bits: 0b0011 }
+    assert(m234_co.bits == 0b1111)
+
+    mut m234_cx = M234CaMask { bits: 0b1100 }
+    m234_cx ^= M234CaMask { bits: 0b1010 }
+    assert(m234_cx.bits == 0b0110)
+}
