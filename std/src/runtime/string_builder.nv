@@ -293,10 +293,10 @@ export fn StringBuilder mut @reserve(n int) -> @
     @buf.reserve(n)
 }
 
-/// Указатель на ПЕРВЫЙ свободный байт хвоста (`[byte_len(), cap)`) — дверь
-/// протокола сырой записи: `reserve(n)` → `spare()` → запись ≤n байт →
-/// `advance(k)`. Rust-парити `spare_capacity_mut`. Разыменование — unsafe;
-/// сам указатель валиден до следующей реаллокации (`reserve`/`append`).
+/// Pointer to the FIRST free byte of the tail (`[byte_len(), cap)`) — the door
+/// of the raw-write protocol: `reserve(n)` → `spare()` → write ≤n bytes →
+/// `advance(k)`. Rust parity `spare_capacity_mut`. Dereferencing is unsafe;
+/// the pointer itself is valid until the next reallocation (`reserve`/`append`).
 export fn StringBuilder mut @spare() -> *mut u8 => @buf.ptr().offset(@buf.len())
 
 // Commit `n` bytes of previously-`@reserve`d spare capacity to the live
