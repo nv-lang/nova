@@ -1,0 +1,121 @@
+// №172 / A-V13 (реестр 221.1): `requires`/`ensures` с вызовом метода/free-fn
+// в условии на `#unverified` fn молча НЕ enforce'ился в рантайме (нарушение
+// enforce-with-elision, docs/contracts.ru.md — `#unverified` отключает только
+// SMT-*верификацию*, НЕ runtime-check).
+//
+// Root cause (Ф.0, до фикса): `compiler-codegen/src/codegen/emit_c.rs`,
+// ДВА зеркальных сайта — non-generic `emit_fn`-путь (`let verifiable = ...`,
+// ~L27825) и MONO'd generic-method путь (`let mono_verifiable = ...`,
+// ~L25387) — гасили runtime-emit requires/ensures ЦЕЛИКОМ через
+// `&& !matches!(f.verify_mode, VerifyMode::Unverified)`. Матрица Ф.0 (до
+// фикса) показала: дефект ШИРЕ заявленного в тикете — под `#unverified`
+// НЕ enforce'ился ЛЮБОЙ контракт (простое условие `requires n > 0` включая),
+// не только с вызовом метода. Fix: `verifiable`/`mono_verifiable` больше не
+// смотрят на `verify_mode` — единственное условие runtime-emit'а —
+// непустой `f.contracts` (плюс существующая per-clause Z3-proven-элизия).
+module spec_tests.conformance
+
+type M172Box(v int = 0)
+type M172Wrap(inner M172Box = M172Box())
+
+fn M172Box @m172_is_bad() -> bool => @v < 0
+fn M172Wrap @m172_inner_box() -> M172Box => @inner
+
+fn m172_free_is_bad(b M172Box) -> bool => b.v < 0
+
+// --- requires: простое условие, #unverified (регресс δ0 — уже работало
+// до фикса; фиксирует, что фикс не сломал существующий путь). ---
+#unverified
+fn m172_simple_check(n int) -> int
+    requires n > 0
+{
+    n
+}
+
+// --- requires: вызов метода на параметре (НЕ self), #unverified. ---
+#unverified
+fn m172_method_call_check(b M172Box) -> int
+    requires !b.m172_is_bad()
+{
+    b.v
+}
+
+// --- requires: вызов свободной fn, #unverified. ---
+#unverified
+fn m172_free_fn_check(b M172Box) -> int
+    requires !m172_free_is_bad(b)
+{
+    b.v
+}
+
+// --- requires: цепочка `a.b().c()`, #unverified. ---
+#unverified
+fn m172_chain_check(w M172Wrap) -> int
+    requires !w.m172_inner_box().m172_is_bad()
+{
+    w.inner.v
+}
+
+// --- ensures: вызов метода на result, #unverified (та же семья — mirror). ---
+#unverified
+fn m172_method_call_ensures(b M172Box) -> M172Box
+    ensures !result.m172_is_bad()
+{
+    M172Box(b.v)
+}
+
+// --- mono/generic path (второй сайт фикса, `mono_verifiable`): bounded
+// generic `#unverified`-метод с простым self-условием, тот же класс, что
+// `Vec[T] @index` / `Bag[int] @at` (Plan 140 cgfix комментарий). ---
+export #unverified fn[T Ints] T @m172_generic_unverified_check() -> T
+    requires @ > (0 as T)
+=> @
+
+test "№172 pos: requires simple condition holds — passes" {
+    assert(m172_simple_check(5) == 5)
+}
+
+test "№172 neg: requires simple condition violated — contract panic (δ0 regression)" panics "requires failed" {
+    m172_simple_check(-1)
+}
+
+test "№172 pos: requires method-call-in-condition holds — passes" {
+    assert(m172_method_call_check(M172Box(5)) == 5)
+}
+
+test "№172 neg: requires method-call-in-condition violated — contract panic" panics "requires failed" {
+    m172_method_call_check(M172Box(-5))
+}
+
+test "№172 pos: requires free-fn-call-in-condition holds — passes" {
+    assert(m172_free_fn_check(M172Box(5)) == 5)
+}
+
+test "№172 neg: requires free-fn-call-in-condition violated — contract panic" panics "requires failed" {
+    m172_free_fn_check(M172Box(-5))
+}
+
+test "№172 pos: requires chain a.b().c() holds — passes" {
+    assert(m172_chain_check(M172Wrap(M172Box(5))) == 5)
+}
+
+test "№172 neg: requires chain a.b().c() violated — contract panic" panics "requires failed" {
+    m172_chain_check(M172Wrap(M172Box(-5)))
+}
+
+test "№172 pos: ensures method-call-in-condition holds — passes" {
+    ro m172_r = m172_method_call_ensures(M172Box(5))
+    assert(m172_r.v == 5)
+}
+
+test "№172 neg: ensures method-call-in-condition violated — contract panic (mirror)" panics "ensures failed" {
+    m172_method_call_ensures(M172Box(-5))
+}
+
+test "№172 pos: mono/generic-method #unverified requires holds — passes" {
+    assert((5 as i32).m172_generic_unverified_check() == 5 as i32)
+}
+
+test "№172 neg: mono/generic-method #unverified requires violated — contract panic (mono-path site)" panics "requires failed" {
+    (-5 as i32).m172_generic_unverified_check()
+}

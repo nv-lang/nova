@@ -25384,8 +25384,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // quantifiers skip. Plan 194 A4 (ретракт `#unchecked`): per-fn/module
         // opt-out убран — requires/ensures gate только по `contracts_elided_for`
         // (константно `false` до будущей mode-based элизии, A3+).
-        let mono_verifiable = !fn_decl.contracts.is_empty()
-            && !matches!(fn_decl.verify_mode, VerifyMode::Unverified);
+        // №172: `#unverified` гасит только SMT-верификацию, НЕ runtime-emit.
+        let mono_verifiable = !fn_decl.contracts.is_empty();
         let mono_has_contracts = mono_verifiable
             && !self.contracts_elided_for(ContractKind::Requires);
         let mono_has_ensures = mono_verifiable
@@ -27822,8 +27822,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Plan 194 A4 (ретракт `#unchecked`): per-fn/module opt-out убран —
         // `contracts_elided_for(kind)` константно `false` (requires/ensures
         // ВСЕГДА enforced, кроме Z3-proven-elided сайтов через `continue`).
-        let verifiable = !f.contracts.is_empty()
-            && !matches!(f.verify_mode, VerifyMode::Unverified);
+        // №172: `#unverified` гасит только SMT-верификацию, НЕ runtime-emit.
+        let verifiable = !f.contracts.is_empty();
         let has_contracts = verifiable && !self.contracts_elided_for(ContractKind::Requires);
         // Plan 33.3 Ф.9.4 (D24): `decreases <expr>` для fn → recursion-depth
         // guard. Каждый entry в fn инкрементит thread-local counter; если
