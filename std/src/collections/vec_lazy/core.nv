@@ -1,6 +1,6 @@
 // std.collections.vec_lazy — LAZY iterator adapters & terminators on `Vec[T]`.
 //
-// Plan 153.2 (D260). The boxed-fluent lazy iterator layer: a `v.lazy()`
+// The boxed-fluent lazy iterator layer: a `v.lazy()`
 // pipeline `v.lazy().map(f).filter(p).collect()` performs **no intermediate
 // allocations** — each adapter wraps the upstream `step` closure and pulls one
 // element at a time on demand; only a terminator drives the chain.
@@ -11,35 +11,34 @@
 // `collections.vec_lazy`), NOT a peer inside the `std/collections/vec/`
 // folder-module (`collections.vec`) — exactly the placement `vec_seq.nv` uses.
 // A `.nv` file physically inside `vec/` MUST declare `module collections.vec`
-// (D29 rev-3 path rule, E_D78_MODULE_PATH_MISMATCH) and would then inherit the
-// folder's `#prelude(...)` membership. Keeping the lazy layer as a sibling file
-// makes it **not** prelude-visible: it must be brought in with
-// `import std.collections.vec_lazy`.
+// and would then inherit the folder's `#prelude(...)` membership. Keeping the
+// lazy layer as a sibling file makes it **not** prelude-visible: it must be
+// brought in with `import std.collections.vec_lazy`.
 //
 // The reason is the same one documented in `vec_seq.nv`: a prelude-global
 // generic-type method whose body stores/forwards a CLOSURE leaks its method-
 // level generics (`[U]`, `[Acc]`) and its callback params (`f`/`pred`) into
-// every compilation unit's merged body ([M-codegen-var-types-fn-scope] + D145).
-// A unit with a top-level `fn f` / `fn op` / `type Acc` would then collide.
-// The lazy adapters are closure-dense (every adapter takes `f`/`pred`), so they
-// stay behind an opt-in import — exactly as the eager `vec_seq` combinators do.
+// every compilation unit's merged body. A unit with a top-level `fn f` /
+// `fn op` / `type Acc` would then collide.
+// [M-codegen-var-types-fn-scope] обход: closure-dense generic-методы (каждый
+// адаптер берёт `f`/`pred`) живут за opt-in import, как eager `vec_seq`.
 //
-// ── Relationship to the eager `vec_seq` combinators (Q-iterator-laziness)
+// ── Relationship to the eager `vec_seq` combinators
 //
 // `vec_seq` (`v.map(f)` → new `Vec`, eager) is RETAINED unchanged as the
 // transitional eager surface. The lazy layer here is the canonical, allocation-
-// free path per Q-iterator-laziness; the two coexist behind separate explicit
-// imports. (`vec_seq` is not re-expressed as sugar over `lazy` to avoid forcing
-// the lazy import on eager users.)
+// free path; the two coexist behind separate explicit imports. (`vec_seq` is
+// not re-expressed as sugar over `lazy` to avoid forcing the lazy import on
+// eager users.)
 //
-// ── Architecture (the proven boxed-fluent shape, Plan 153.2 lift 996ca01a)
+// ── Architecture (the proven boxed-fluent shape)
 //
 //   type BoxIter[T] { priv step fn() -> Option[T] }     // the boxed cursor
 //   fn Vec[T] @lazy() -> BoxIter[T]                      // entry (bridge)
 //   adapters : fn BoxIter[T] @map[U](..) -> BoxIter[U]   // return a new BoxIter
 //   terminators : fn BoxIter[T] mut @collect() -> Vec[T] // drive the chain
 //
-// ── FromIterator / collect-target (Plan 153.6, D264)
+// ── FromIterator / collect-target
 //
 // `@collect()` is the default collect-target (`-> Vec[T]`); `@collect_set()` is
 // the `Set[T]` collect-target (dedup, `[T Hash]`). Other targets compose over
@@ -75,12 +74,12 @@ export fn BoxIter[T] mut @next() -> Option[T] => (@step)()
 
 /// Bridge a `VecIter[T]` into a `BoxIter[T]` (free constructor, capturing the
 /// cursor). The entry point `Vec[T] @lazy()` routes through here.
-// D246-амендмент ([M-ro-launder-via-mut-binding], Ф.2 миграция, 2026-07-23):
-// `.clone()` (D230), НЕ `mut`-параметр — closure нужна ПРИВАТНАЯ, независимо
+//
+// `.clone()`, НЕ `mut`-параметр — closure нужна ПРИВАТНАЯ, независимо
 // продвигающаяся копия курсора (advancement НЕ должен быть виден caller'у,
 // иначе in-out param'а вернул бы неверную семантику: caller's `it` "прыгнул"
-// бы синхронно с closure). VecIter's `@clone()` — дешёвая shallow-копия
-// (тот же buffer pointer, независимый `idx`).
+// бы синхронно с closure). `@clone()` — дешёвая shallow-копия (тот же buffer
+// pointer, независимый `idx`).
 export fn box_iter[T](it VecIter[T]) -> BoxIter[T] {
     mut src = it.clone()
     { step: || src.next() }
@@ -147,8 +146,8 @@ export fn BoxIter[T] @filter_map[U](f fn(T) -> Option[U]) -> BoxIter[U] {
 /// the same stage, e.g. `enumerate().map(|p| p.0 * 100 + p.1)`. Chaining a
 /// tuple-PRESERVING adapter directly after `enumerate` (`enumerate().filter(..)`
 /// / `.take(n)` / `.skip(n)`, where the element stays the `(int, T)` tuple) is
-/// gated on a residual `Option[<mono-tuple>]` closure-typing gap
-/// `[M-153.2-tuple-elem-adapter]`; collapse the tuple with `map` first.
+/// not supported by the closure-typing layer; collapse the tuple with `map`
+/// first.
 export fn BoxIter[T] @enumerate() -> BoxIter[(int, T)] {
     mut src = @
     mut i = 0
@@ -237,9 +236,9 @@ export fn BoxIter[T] @step_by(n int) -> BoxIter[T]
 /// ```
 export fn BoxIter[A] @zip[B](mut other BoxIter[B]) -> BoxIter[(A, B)] {
     mut src = @
-    // Plan 184 Р10: capture a LOCAL copy of `other` before the closure (the
-    // returned BoxIter outlives the call — a captured in-out param reference
-    // would dangle). `BoxIter` is a heap handle, so this is a handle rebind.
+    // Capture a LOCAL copy of `other` before the closure (the returned BoxIter
+    // outlives the call — a captured in-out param reference would dangle).
+    // `BoxIter` is a heap handle, so this is a handle rebind.
     mut oth = other
     { step: || match src.next() {
         Some(a) => match oth.next() {
@@ -261,7 +260,7 @@ export fn BoxIter[A] @zip[B](mut other BoxIter[B]) -> BoxIter[(A, B)] {
 /// ```
 export fn BoxIter[T] @chain(mut other BoxIter[T]) -> BoxIter[T] {
     mut src = @
-    // Plan 184 Р10: capture a LOCAL copy of `other` before the closure (see @zip).
+    // Capture a LOCAL copy of `other` before the closure (see @zip).
     mut oth = other
     mut first_done = false
     { step: || {
@@ -306,14 +305,13 @@ export fn BoxIter[T] @flat_map[U](f fn(T) -> BoxIter[U]) -> BoxIter[U] {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Slice-view iterators — chunks / chunks_exact / rchunks / windows (Plan 153.4)
+// Slice-view iterators — chunks / chunks_exact / rchunks / windows
 // ──────────────────────────────────────────────────────────────────────────
 //
-// These are the LAZY half of the Plan 153.4 slice surface (`[M-153.4-chunks-
-// windows-lazy]`, D262). Each is an instance method on `Vec[T]` (not on
-// `BoxIter`) that returns a `BoxIter[Vec[T]]` — a lazy iterator whose every
-// yielded element is a **zero-copy `[]T` view** (`Vec[T]` header with
-// `cap == len`) over the SAME backing buffer (Plan 96 D-single-type / D238),
+// These are the LAZY half of the slice-view surface. Each is an instance
+// method on `Vec[T]` (not on `BoxIter`) that returns a `BoxIter[Vec[T]]` — a
+// lazy iterator whose every yielded element is a **zero-copy `[]T` view**
+// (`Vec[T]` header with `cap == len`) over the SAME backing buffer,
 // exactly like `v[a..b]` (slice.nv). No outer `Vec[Vec[T]]` is allocated up
 // front (the Rust `slice::chunks`/`windows` model): each `step` pull builds one
 // sub-range view on demand. Drive the chain with any terminator —
@@ -325,7 +323,7 @@ export fn BoxIter[T] @flat_map[U](f fn(T) -> BoxIter[U]) -> BoxIter[U] {
 // folder) for the same reason as every other adapter: the bodies store a
 // capturing closure (the `step` thunk), and a prelude-global generic-type method
 // whose body forwards a closure leaks its generics into every compilation unit
-// ([M-codegen-var-types-fn-scope] + D145). Keeping them behind `import
+// ([M-codegen-var-types-fn-scope]). Keeping them behind `import
 // std.collections.vec_lazy` confines that to opt-in users.
 //
 // Contract `n > 0` (a `requires`, enforced as a runtime panic at the call): a
@@ -336,9 +334,8 @@ export fn BoxIter[T] @flat_map[U](f fn(T) -> BoxIter[U]) -> BoxIter[U] {
 // (`ro done Option[Self] = None`) rather than a bare `return None`: a bare `None`
 // in a closure body whose element type is the *concrete* `Vec[T]` view (not a
 // free generic flowing from the receiver) would otherwise be monomorphised to a
-// default `Option[<elem>]` and mismatch the `BoxIter[Self]` step's return type
-// (the closure-typing gap behind `[M-153.2-tuple-elem-adapter]`). Annotating the
-// local pins it to `Option[Self]`.
+// default `Option[<elem>]` and mismatch the `BoxIter[Self]` step's return type.
+// Annotating the local pins it to `Option[Self]`.
 
 /// Lazily split into non-overlapping `[]T` chunks of `n` elements, left to right
 /// — the last chunk is SHORT (`len % n` elements) when `n` does not divide
@@ -474,8 +471,8 @@ export fn Vec[T] @windows(n int) -> BoxIter[Self]
 
 /// Drain the iterator into a fresh `Vec[T]` — the default collect-target.
 ///
-/// This is the lazy half of the **FromIterator / collect-target** bridge
-/// (Plan 153.6 / D264): a whole pipeline materialises here, in one pass, with
+/// This is the lazy half of the **FromIterator / collect-target** bridge:
+/// a whole pipeline materialises here, in one pass, with
 /// no intermediate `Vec` per stage. To target a *different* collection, either
 /// use a typed terminator (`@collect_set()` below) or hand the collected `Vec`
 /// to that collection's `from`/`from_iter` constructor —
@@ -518,9 +515,7 @@ export fn BoxIter[T Hash] mut @collect_set() -> Set[T] {
 }
 
 /// Left fold: thread `init` through `f(acc, x)` over every element.
-// D246-амендмент ([M-ro-launder-via-mut-binding], Ф.2 миграция, 2026-07-23):
-// `init` — `mut` (in-out; D326-ревизия §Р3) — генерик `Acc` не статически
-// value-safe.
+// `init` — `mut` (in-out) — генерик `Acc` не статически value-safe.
 export fn BoxIter[T] mut @fold[Acc](mut init Acc, f fn(Acc, T) -> Acc) -> Acc {
     mut acc = init
     while true {
@@ -563,8 +558,7 @@ export fn BoxIter[T] mut @count() -> int {
 /// Sum the remaining elements starting from `zero` (the additive identity for
 /// `T`, e.g. `0` / `0.0`). Allocation-free; `zero` makes the element type and
 /// the empty-iterator result explicit without a numeric protocol.
-// D246-амендмент ([M-ro-launder-via-mut-binding], Ф.2 миграция, 2026-07-23):
-// `zero` — `mut` (in-out; D326-ревизия §Р3) — `T` не статически value-safe.
+// `zero` — `mut` (in-out) — `T` не статически value-safe.
 export fn BoxIter[T] mut @sum(mut zero T) -> T {
     mut acc = zero
     while true {
@@ -622,18 +616,9 @@ export fn BoxIter[T] mut @for_each(f fn(T) -> ()) -> () {
 }
 
 /// Smallest remaining element by the element's own `Compare`, or `None`.
-/// [M-202-ident-x-module-alias-collision] fix: match-arm bind was named
-/// bare `x` — a checker gap (`match_arm_bindings` can't resolve the
-/// generic `Option[T]` scrutinee of `@next()` inside THIS generic body, so
-/// `x` never lands in `scope`) let it fall through to the `imported_modules`
-/// module-call branch of `f1_check_call`'s `Member` dispatch whenever a
-/// USER program imported any module whose last path segment was literally
-/// `x` — false `[E7401] no function 'compare' in module 'x'`. Renamed to
-/// `cand` (checker gap itself is a separate, deeper latent issue — not
-/// fixed here, see backlog). Mirror of `vec_iter/core.nv`'s identical fix
-/// (not empirically reached by the marker's own repro — `vec_lazy` wasn't
-/// pulled into that build's module graph — but same textual pattern, fixed
-/// proactively).
+// The match-arm bind is named `cand` (not bare `x`) to avoid a checker
+// edge case with generic `Option[T]` scrutinees colliding with imported
+// module aliases.
 export fn BoxIter[T Compare] mut @min() -> Option[T] {
     mut best = match @next() {
         Some(first) => first,
@@ -649,8 +634,7 @@ export fn BoxIter[T Compare] mut @min() -> Option[T] {
 }
 
 /// Largest remaining element by the element's own `Compare`, or `None`.
-/// [M-202-ident-x-module-alias-collision] fix: see `@min` above (same
-/// bare-`x` match-arm-bind collision with imported module aliases).
+// The match-arm bind is named `cand` — see `@min` above (same edge case).
 export fn BoxIter[T Compare] mut @max() -> Option[T] {
     mut best = match @next() {
         Some(first) => first,
@@ -665,8 +649,7 @@ export fn BoxIter[T Compare] mut @max() -> Option[T] {
     Some(best)
 }
 
-// `@nth(n int) -> Option[T]` — RETRACTED (2026-07-06, D260-амендмент,
-// [M-d73-d77-retraction-migration] Block 4): positional access disguised as
+// `@nth(n int) -> Option[T]` — RETRACTED: positional access disguised as
 // an O(1)-looking method call while draining the iterator up to `n` — same
 // footgun family as the retired `CharsIter @nth`. Callers migrate to target
 // iteration (`for x in it`, `.skip(n).next()`, manual counted loop).
