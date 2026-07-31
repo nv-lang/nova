@@ -24,6 +24,11 @@
 // СУТЬ проблемной формы 222.3 (protocol-bound T, `T.from_req(...)` внутри
 // generic-тела, диспетч в fn-параметр `h`) без примешивания той, другой,
 // проблемы.
+//
+// [M-172.1-var-types-cu-name-leak] compliance: локальные/параметр-имена
+// domain-prefixed (`m140_...`) — см. заголовок peer-файла для полного
+// объяснения (мега-CU прогон поймал голый `u`/`v`/`c` коллизирующим с
+// `d34_pattern_bind_conditions.nv` в том же CU).
 module spec_tests.conformance
 
 type M140Resp value { priv body str }
@@ -32,22 +37,22 @@ export fn M140Resp @body() -> str => @body
 // generic `fn post_typed_model[T FromReq](path str, req str, h fn(T) -> Resp)
 // -> Resp` — форма из плана 222.3 §5: диспетчит `T.from_req(req)` и, при
 // успехе, вызывает свой fn-параметр `h` на распакованном значении.
-fn m140_post_typed_model[T M140FromReq](path str, req str, h fn(T) -> M140Resp) -> M140Resp {
-    match T.from_req(req) {
-        Ok(v) => h(v)
-        Err(e) => M140Resp { body: e }
+fn m140_post_typed_model[T M140FromReq](m140_path str, m140_req str, m140_h fn(T) -> M140Resp) -> M140Resp {
+    match T.from_req(m140_req) {
+        Ok(m140_v) => m140_h(m140_v)
+        Err(m140_e) => M140Resp { body: m140_e }
     }
 }
 
-fn m140_handle_item_to_resp(c M140CreateItem) -> M140Resp =>
-    { body: "item:${c.name()}" }
-fn m140_handle_upgrade_to_resp(u M140Upgrade) -> M140Resp =>
-    { body: "upgrade:${u.token()}" }
+fn m140_handle_item_to_resp(m140_c M140CreateItem) -> M140Resp =>
+    { body: "item:${m140_c.name()}" }
+fn m140_handle_upgrade_to_resp(m140_u M140Upgrade) -> M140Resp =>
+    { body: "upgrade:${m140_u.token()}" }
 
 test "№140 Ф.3 приёмка: bare-sugar post_typed-model — two DIFFERENT T in one CU, correct dispatch" {
-    ro resp_a = m140_post_typed_model[M140CreateItem]("/items", "payload-a", m140_handle_item_to_resp)
-    ro resp_b = m140_post_typed_model[M140Upgrade]("/upgrades", "payload-b", m140_handle_upgrade_to_resp)
+    ro m140_resp_a = m140_post_typed_model[M140CreateItem]("/items", "payload-a", m140_handle_item_to_resp)
+    ro m140_resp_b = m140_post_typed_model[M140Upgrade]("/upgrades", "payload-b", m140_handle_upgrade_to_resp)
 
-    assert(resp_a.body() == "item:payload-a")
-    assert(resp_b.body() == "upgrade:payload-b")
+    assert(m140_resp_a.body() == "item:payload-a")
+    assert(m140_resp_b.body() == "upgrade:payload-b")
 }
