@@ -1,10 +1,10 @@
 pub mod assoc_ro;
-pub mod bitwise_ops;
 pub mod emit_c;
 pub mod external_registry;
 pub mod gc_layout;
 pub mod may_gc;
 pub mod mono_method_registry;
+pub mod operator_dispatch;
 pub mod overload_sig;
 pub mod preempt_keep;
 pub mod runtime_registry;

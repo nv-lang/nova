@@ -1166,54 +1166,29 @@ fn collect_expr(e: &Expr, out: &mut HashSet<String>) {
             out.insert("eq".to_string());
             out.insert("compare".to_string());
             out.insert("concat".to_string());
-            out.insert("plus".to_string());
-            out.insert("minus".to_string());
-            out.insert("times".to_string());
-            out.insert("div".to_string());
-            out.insert("rem".to_string());
-            // Plan 234: `a & b` / `a | b` / `a ^ b` on a user type dispatch to
-            // `@bitand`/`@bitor`/`@bitxor` (emit fast-path mirroring @plus/@times).
-            // These magic selectors never appear syntactically (`a & b`, not
-            // `a.bitand(b)`), so without seeding here reachability-DCE dropped
-            // the method bodies as dead (type reachable, method name not —
-            // `collect_expr` does not see an operator as a selector). Found by
-            // minimal repro; same class as the historical @plus seeding.
-            out.insert("bitand".to_string());
-            out.insert("bitor".to_string());
-            out.insert("bitxor".to_string());
-            // [M-shl-shr-user-type-no-dispatch] (int128 cluster; plan 234 "fix
-            // with the same pattern"): `a << b` / `a >> b` on a user type now
-            // dispatch to `@shl`/`@shr` (emit_c.rs fast-path mirroring
-            // `@minus`'s heterogeneous-param pattern). Same AST-invisible
-            // magic-selector class as `bitand`/`bitor`/`bitxor` above — without
-            // seeding, reachability-DCE drops the `@shl`/`@shr` body whenever
-            // the operator form (not a literal `.shl(...)` call) is the only
-            // caller in the CU.
-            out.insert("shl".to_string());
-            out.insert("shr".to_string());
+            // Plan opunify (BRIEF_opunify.md): every table binary operator
+            // (`+ - * / % & | ^ << >>`) dispatches to a magic selector that
+            // never appears syntactically (`a + b`, not `a.plus(b)`) — seed
+            // ALL of them by iterating `operator_dispatch::BINOP_TABLE`
+            // instead of a hand-maintained list, so a NEW table entry can
+            // never repeat the "forgot to seed" class of bug (plan 234's
+            // Bit*, int128-wave's Shl/Shr, and the pre-opunify gap in
+            // `+ * / %`'s own generic-mono arm all hit this exact class).
+            for entry in crate::codegen::operator_dispatch::BINOP_TABLE {
+                out.insert(entry.method_name.to_string());
+            }
         }
         ExprKind::Unary { operand, op } => {
             collect_expr(operand, out);
-            // Plan 234: `~a` dispatches to `@bitnot` on user types (emit unary-`~`
-            // arm) — same AST-invisible magic selector as the binary operators
-            // above; without seeding, reachability-DCE drops the `@bitnot`
-            // body when `~` is its only caller.
-            if matches!(op, crate::ast::UnOp::BitNot) {
-                out.insert("bitnot".to_string());
-            }
-            // [M-neg-not-selectors-dce-gap] (int128 cluster; plan 234 follow-up):
-            // `-a` / `!a` on a user type dispatch to `@neg`/`@not` — the SAME
-            // reachability-DCE gap as `@bitnot` just above, pre-existing since
-            // BEFORE plan 234 (unlike bitand/bitor/bitxor/bitnot, `@neg`/`@not`
-            // were never added to this seed list at all). Without seeding, a
-            // custom type whose ONLY caller of `@neg`/`@not` is the operator
-            // form (`-x`, `!x`) has its method body dropped as dead by
-            // reachability-DCE → undefined-symbol link error.
-            if matches!(op, crate::ast::UnOp::Neg) {
-                out.insert("neg".to_string());
-            }
-            if matches!(op, crate::ast::UnOp::Not) {
-                out.insert("not".to_string());
+            // Plan opunify: `-a`/`!a`/`~a` on a user type dispatch to
+            // `@neg`/`@not`/`@bitnot` (emit_c.rs unary arm) — same
+            // AST-invisible magic-selector class as the binary operators
+            // above. Seeded from `operator_dispatch::UNOP_TABLE` (was: three
+            // separate hand-written `matches!` arms, added one-by-one as
+            // each DCE gap was found — plan 234 for `~`, its int128 follow-up
+            // for `-`/`!`).
+            if let Some(method_name) = crate::codegen::operator_dispatch::unop_method_name(*op) {
+                out.insert(method_name.to_string());
             }
         }
         ExprKind::Try(i) | ExprKind::Bang(i) | ExprKind::RefArg(i) => collect_expr(i, out),
