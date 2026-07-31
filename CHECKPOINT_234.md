@@ -103,7 +103,79 @@ warnings), точечно проверено scratch-репро (build/run, не
   без явного `.neg()`/`.not()` где-то рядом в std сегодня, видимо, не
   бьёт — не проверял explicitly).
 
-Дальше по плану: фикстуры m234_* pos/neg (spec_tests/conformance +
-conformance/neg/), Ф.3 миграция std (9 сайтов), гейты (nova check std/src,
-nova test std/src/math int128 δ0, флагман --strict-effects, ratchet,
-marker-sync).
+## ЗАВЕРШЕНО (2026-07-31) — все коммиты в ветке p234-bitwise-2, main НЕ трогал
+
+Коммиты: d8bac6832 (Ф.1/Ф.2/Ф.2а компилятор), 197d25d19 (pos-фикстуры +
+Set[T] rename), e3cbf83c1 (neg-фикстуры), 236459e0d (Ф.3 миграция std),
+9701fcae0 (ratchet-рефактор bitwise_ops.rs).
+
+Попутно найдено и МИГРИРОВАНО (не просто найдено): `std/src/collections/
+set/core.nv` — `Set[T] @and`/`@or` жили под операторной перегрузкой D46
+(`a & b`/`a | b` intersection/union) — план ошибочно считал int128.nv
+ЕДИНСТВЕННЫМ потребителем старых имён; найдено мега-CU прогоном
+(`plan123_chain_elem_p1_set_ops_iter_ok.nv`), переименовано в @bitand/@bitor
+той же волной (иначе Ф.1 был бы регрессией для Set).
+
+### Гейты (вердикты дословно)
+
+- `cargo build --release --manifest-path nova-cli/Cargo.toml` → `Finished
+  release profile [optimized] target(s)` — чисто, 58 warnings (baseline,
+  без новых).
+- Фикстуры pos (изолированные копии, test-build): `iso_m234_bitwise_rename_pos`
+  → `PASS`; `iso_m234_bitnot_pos` → `PASS`; `iso_m234_compound_assign_pos`
+  → `PASS`.
+- Фикстуры neg (`nova check`, все шесть): `[E_UNARY_OPERAND_TYPE]` — ровно
+  ожидаемая диагностика на каждом из `m234_bitnot_bool_neg`,
+  `m234_bitnot_f64_neg`, `m234_bitnot_str_neg`, `m234_neg_bool_neg`,
+  `m234_neg_str_neg`, `m234_not_int_neg`.
+- `nova check std/src` → `PASS: 147  FAIL: 26  WARN: 60` — FAIL: 26
+  ровно baseline, не сдвинулся.
+- `nova test std/src/math std/src/checksums` → `PASS: 8  FAIL: 0` (int128
+  δ0 — int128_test.nv PASS, включая упрощённый `@bitnot` тела через `~`).
+  `std/src/crypto` — КАЖДЫЙ файл individually test-build PASS (md5_test,
+  sha1_test, sha256_test, hmac_test, jwt_test); folder-batch `nova test
+  std/src/crypto` падает `P67-LEGACY` ICE на `Timestamp.now()` в jwt.nv —
+  ПРЕД-СУЩЕСТВУЮЩИЙ мега-CU/cross-file гэп, воспроизведён БЕЗ участия
+  migrated-файлов (jwt_test.nv + hmac_test.nv individually PASS, комбо —
+  крашится), НЕ регрессия этого окна.
+- `nova test std/src/collections/set` → `PASS: 1  FAIL: 0` (Set-рename δ0).
+- Флагман: `nova build examples/flagship/aggregator/src/main.nv
+  --strict-effects` → `built:` (только пред-существующие warnings —
+  new-then-cap лint, W_DEP_PATH_NO_RELEASE на внешних git-зависимостях,
+  unused-import в main.nv — ни один не мой).
+- `bash scripts/guards/arch-ratchet.sh` → **FAIL**: `lines=63849 >
+  baseline=63807` (+42), `infer=349 > baseline=348` (+1). Ratchet
+  baseline СВОЙ НЕ двигал (путь B — решение интегратора после личной
+  проверки). Обоснование остатка: 5 новых dispatch-точек (2×Bit*-fast-path,
+  1×compound-assign-route, 1×BitNot-custom-dispatch, 1×BitNot-primitive-
+  emission) + 1 infer_expr_c_type-вызов (чтение ширины operand'а для `~`
+  таблицы) — держал НОВУЮ логику максимально в отдельном модуле
+  `codegen/bitwise_ops.rs` (mono_method_registry.rs/№129, assoc_ro.rs/№157
+  паттерн), emit_c.rs получил только тонкие call-сайты; трижды сжимал
+  комментарии (изначально +115/+1 → +77/+1 после экстракции модуля →
+  +42/+1 после финальной чистки).
+- `bash scripts/guards/check-marker-registry-sync.sh` → `ok: неучтённых
+  0 <= baseline 0`.
+
+### Попутно найдено, НЕ чиню (вне периметра плана 234) — сводка
+
+1. `<<`/`>>` (голые) на пользовательском `Nova_T*`-типе не dispatch'ятся
+   на `@shl`/`@shr` вовсе (тот же класс дыры, что чинил Ф.1 для Bit*, но
+   для shl/shr никто fast-path не заводил) — из-за этого `<<=`/`>>=`
+   (Ф.2а) на пользовательском типе не переиспользуют overloaded-route.
+2. `@neg`/`@not` (пред-существующие) имеют ТОЧНО ТАКОЙ ЖЕ
+   reachability-DCE гэп на плоских record-типах, что был у bitand/bitor/
+   bitxor до этого окна (`collect_used_names` не сидит "neg"/"not" для
+   `ExprKind::Unary` вовсе) — "bitnot" я засеял (нужно для своей фичи),
+   "neg"/"not" НЕ трогал.
+3. `int`/`uint` (wide-default) литеральный каст для значений, чей i64-
+   bit-pattern отрицателен (например `18446744073709551610 as uint`),
+   идёт через промежуточную `nova_int_to_uint`-конверсию, которая КЛАМПИТ
+   отрицательное в 0 (не raw bit-reinterpret) — обнаружено при попытке
+   написать пин-тест на `~(5 as uint)` против большого decimal-литерала;
+   не относится к `~`, переписал фикстуру на XOR-с-all-ones вместо
+   литерала. `to_str`/`println` для `u64`/`uint` со старшим битом тоже
+   печатают как ЗНАКОВОЕ (`-6` вместо `18446744073709551610`).
+4. Часть B (см. выше) — новый, более узкий диагноз receiver-shape-
+   специфичного dispatch-бага (`Unary(Neg(Cast))` → неверно выбирает
+   blanket вместо конкретного метода).
