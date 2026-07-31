@@ -67,7 +67,8 @@ fn m172_method_call_ensures(b M172Box) -> M172Box
 // --- mono/generic path (второй сайт фикса, `mono_verifiable`): bounded
 // generic `#unverified`-метод с простым self-условием, тот же класс, что
 // `Vec[T] @index` / `Bag[int] @at` (Plan 140 cgfix комментарий). ---
-export #unverified fn[T Ints] T @m172_generic_unverified_check() -> T
+#unverified
+export fn[T Ints] T @m172_generic_unverified_check() -> T
     requires @ > (0 as T)
 => @
 

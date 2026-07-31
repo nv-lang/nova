@@ -38,6 +38,10 @@ echo "== gate: marker-registry-sync =="
 bash "$ROOT/scripts/guards/check-marker-registry-sync.sh" "$ROOT" || fail "маркеры в коде без записи в реестре (№155/№161)"
 
 echo "== gate: selftests стражей =="
+
+echo "== gate: doc-hygiene (язык/чистота публичной доки, правило владельца 2026-07-31) =="
+bash "$ROOT/scripts/guards/check-doc-hygiene.sh" "$ROOT" || fail "doc-hygiene (кириллица/внутренние ссылки в /// или линте — рост запрещён)"
+bash "$ROOT/scripts/guards/selftest/test-check-doc-hygiene.sh" || fail "doc-hygiene selftest"
 for st in "$ROOT"/scripts/guards/selftest/test-*.sh; do
     [ -e "$st" ] || continue
     bash "$st" || fail "самотест стража: $(basename "$st")"
