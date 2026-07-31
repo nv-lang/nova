@@ -12,6 +12,10 @@ printf 'cyrillic_doc=0\ninternal_doc=0\ncyrillic_lint=0\n' > "$TMP/scripts/guard
 # (2) чистое дерево — зелёный
 sh "$TMP/scripts/guards/check-doc-hygiene.sh" "$TMP" >/dev/null 2>&1 || { echo "SELFTEST FAIL: ложняк на чистом"; rm -rf "$TMP"; exit 1; }
 
+# (2а) мультибайтная пунктуация (em-dash, «») в английском /// — НЕ кириллица
+printf '/// English doc — with dash and «guillemets», no growth\nfn probe0() -> int => 1\n' > "$TMP/std/src/d.nv"
+sh "$TMP/scripts/guards/check-doc-hygiene.sh" "$TMP" >/dev/null 2>&1 || { echo "SELFTEST FAIL: ложняк на em-dash/«» (байтовый класс?)"; rm -rf "$TMP"; exit 1; }
+
 # (1) рост кириллицы в /// — красный
 printf '/// документация по-русски\nfn probe() -> int => 1\n' > "$TMP/std/src/p.nv"
 sh "$TMP/scripts/guards/check-doc-hygiene.sh" "$TMP" >/dev/null 2>&1 && { echo "SELFTEST FAIL: не поймал рост"; rm -rf "$TMP"; exit 1; }

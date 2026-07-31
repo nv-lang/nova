@@ -31,15 +31,20 @@ for pkg in nova-bigint nova-polaris nova-http nova-compress nova-tls; do
     [ -d "$parent/$pkg/src" ] && doc_dirs+=("$parent/$pkg/src")
 done
 
+# Кириллица — ТОЧНЫМИ UTF-8-байтами (D0 81|90-BF, D1 80-8F|91): класс
+# [а-яА-ЯёЁ] в байтовом grep ложнит на любом мультибайте с continuation-байтом
+# в диапазоне (em-dash, «») — урок 2026-07-31, +6 фантомного «роста» от тире.
+CYR="$(printf '(\320[\201\220-\277]|\321[\200-\217\221])')"
+
 cyr=0
 intr=0
 for d in "${doc_dirs[@]}"; do
     [ -d "$d" ] || continue
-    c=$(grep -rE '^[[:space:]]*//[/!].*[а-яА-ЯёЁ]' --include='*.nv' "$d" 2>/dev/null | wc -l)
+    c=$(grep -raE "^[[:space:]]*//[/!].*$CYR" --include='*.nv' "$d" 2>/dev/null | wc -l)
     i=$(grep -rE '^[[:space:]]*//[/!].*(\[M-|Plan [0-9]|План [0-9]|D[0-9]{2,3}[^0-9]|№[0-9]|Ф\.[0-9]|реестр|CLOSED|FIXED)' --include='*.nv' "$d" 2>/dev/null | wc -l)
     cyr=$((cyr + c)); intr=$((intr + i))
 done
-lint_cyr=$(grep -c '[а-яА-ЯёЁ]' "$ROOT/compiler-codegen/src/lints.rs" 2>/dev/null)
+lint_cyr=$(grep -acE "$CYR" "$ROOT/compiler-codegen/src/lints.rs" 2>/dev/null)
 lint_cyr=${lint_cyr:-0}
 
 fail=0
