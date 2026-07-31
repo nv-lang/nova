@@ -1302,6 +1302,16 @@ pub struct AssocConst {
     pub span: Span,
     /// `export const FOO …` — public cross-module access.
     pub is_export: bool,
+    /// Plan 157 (D200 amend): `true` when this entry originated from
+    /// `ro Type.NAME [Type] = expr` (associated **ro**-value) rather than
+    /// `const Type.NAME`. A `ro` associated value is NOT required to be
+    /// constexpr (constructor calls / heap allocation are legal) and is
+    /// codegen'd via the module-level `ro` lazy-static-global machine
+    /// (`emit_lazy_const`, Plan 152.4) instead of the strict-constexpr
+    /// `.rodata` literal path. Namespace-only access / instance-access
+    /// rejection / no-record-literal-field rules are shared unchanged with
+    /// `const` (both live in the same `assoc_consts` list). Default `false`.
+    pub is_lazy_ro: bool,
 }
 
 /// Plan 120 (D215): field in a named tuple type declaration.
@@ -1589,6 +1599,15 @@ pub struct ConstDecl {
     /// D29). Лесенка: `priv(file)` ⊂ module-default ⊂ `export`. Взаимоисключаема
     /// с `is_export`. Default `false`.
     pub file_private: bool,
+    /// Plan 157 (D200 amend): `true` when this decl was parsed from the
+    /// qualified `ro Type.NAME [Type] = expr` form (associated **ro**-value,
+    /// not `const`). Set by `parser::parse_assoc_ro_decl`; carried into the
+    /// matching `AssocConst.is_lazy_ro` by `imports::attach_out_of_body_
+    /// assoc_consts`. `false` for every genuine `const` (including the
+    /// out-of-body `const Type.NAME` form parsed by `parse_const_decl`) and
+    /// for the synthetic `ConstDecl` `types/mod.rs` builds to register a
+    /// bare module-level `ro NAME = expr` binder for name-resolution.
+    pub is_lazy_ro: bool,
 }
 
 #[derive(Debug, Clone)]

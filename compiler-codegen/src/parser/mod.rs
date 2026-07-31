@@ -1670,7 +1670,26 @@ impl Parser {
                         d.span
                     );
                 }
-                Item::Let(self.parse_ro_mut_binding(false)?)
+                // Plan 157 (D200 amend): `ro Type.NAME [Type] = expr` —
+                // associated ro-value. Lookahead ONLY (no tokens consumed
+                // yet beyond the already-eaten `ro`... no, `ro` itself is
+                // NOT yet consumed here): `KwRo Ident '.' Ident` — the
+                // qualified out-of-body form, symmetric with `const
+                // Type.NAME`'s own dotted-name detection in
+                // `parse_const_decl`. A bare `ro NAME = expr` never has a
+                // `.` right after the first ident (that would make it a
+                // destructuring/variant pattern with no `const`-equivalent,
+                // already routed generically by `parse_ro_mut_binding` /
+                // `check_ro_module_partition`), so this lookahead cannot
+                // misfire on the existing bare form.
+                let is_assoc_ro = matches!(self.peek_at(1).kind, TokenKind::Ident(_))
+                    && matches!(self.peek_at(2).kind, TokenKind::Dot)
+                    && matches!(self.peek_at(3).kind, TokenKind::Ident(_));
+                if is_assoc_ro {
+                    Item::Const(self.parse_assoc_ro_decl(is_export, file_private)?)
+                } else {
+                    Item::Let(self.parse_ro_mut_binding(false)?)
+                }
             }
             // Plan 114 (D184): `mut X = expr` запрещён на module-level
             // (module-level mutable global — anti-pattern).
@@ -6084,6 +6103,55 @@ impl Parser {
             value,
             span: start.merge(value_span),
             file_private,
+            is_lazy_ro: false,
+        })
+    }
+
+    /// Plan 157 (D200 amend): `ro Type.NAME [Type] = expr` — associated
+    /// **ro**-value on a type (out-of-body, qualifier `Type.`), mirroring
+    /// `parse_const_decl`'s out-of-body `const Type.NAME` handling but for
+    /// the `ro` keyword. Produces a `ConstDecl` with `is_lazy_ro: true` so it
+    /// flows through the EXACT SAME `Item::Const` → `imports::attach_out_of_
+    /// body_assoc_consts` → `TypeDecl.assoc_consts` pipeline as `const
+    /// Type.NAME` (namespace-only access, `E_CONST_INSTANCE_ACCESS`,
+    /// cross-module `export` — all reused unchanged); the ONE semantic
+    /// difference (constexpr-eligibility) is enforced downstream by the
+    /// `is_lazy_ro` flag, not here. Caller (`parse_item`'s `KwRo` arm) has
+    /// already confirmed the `Ident '.' Ident` lookahead before calling this.
+    fn parse_assoc_ro_decl(&mut self, is_export: bool, file_private: bool) -> Result<ConstDecl, Diagnostic> {
+        let start = self.peek().span;
+        self.expect(&TokenKind::KwRo)?;
+        let (type_name, _) = self.parse_ident()?;
+        self.expect(&TokenKind::Dot)?;
+        let (ro_name, _) = self.parse_ident()?;
+        let name = format!("{}.{}", type_name, ro_name);
+        let ty = if !matches!(self.peek().kind, TokenKind::Eq) {
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+        if !matches!(self.peek().kind, TokenKind::Eq) {
+            return Err(Diagnostic::new(
+                "[E_BINDING_REQUIRES_INIT] `ro Type.NAME` requires initialization \
+                 — write `ro Type.NAME <Тип> = expr` (Plan 157, D200 amend).".to_string(),
+                self.peek().span,
+            ));
+        }
+        self.expect(&TokenKind::Eq)?;
+        self.skip_newlines();
+        let value = self.parse_expr()?;
+        let value_span = value.span;
+        self.expect_newline_or_eof().ok();
+        Ok(ConstDecl {
+            doc: None,
+            doc_attrs: Vec::new(),
+            is_export,
+            name,
+            ty,
+            value,
+            span: start.merge(value_span),
+            file_private,
+            is_lazy_ro: true,
         })
     }
 

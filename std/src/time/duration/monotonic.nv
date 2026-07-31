@@ -128,7 +128,11 @@ export fn Monotonic @elapsed_since(other Monotonic) -> Duration =>
     if @nanos > other.nanos {
         sat_sub_i64(@nanos, other.nanos, i64.MIN, i64.MAX).to_nanos()
     } else {
-        0.to_nanos()
+        // Plan 157 (§157): `Duration.ZERO` now resolves (out-of-body
+        // qualified assoc-const migration, core.nv) — direct reference
+        // instead of the `0.to_nanos()` zero-construct workaround, matching
+        // this method's own docstring.
+        Duration.ZERO
     }
 
 /// Suspend until THIS **monotonic** deadline (П12-хвост 2026-07-21: метод

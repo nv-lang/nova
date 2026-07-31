@@ -8232,6 +8232,9 @@ impl CEmitter {
                 }
             }
         }
+        // Plan 157: associated `ro Type.NAME` — see assoc_ro.rs (kept out of
+        // emit_c.rs, arch-ratchet precedent `mono_method_registry.rs`).
+        self.emit_assoc_ro_lazy_globals(module)?;
 
         // Plan 172.14 Ф.1: классификация больших (>16Б C-ABI) read-only
         // value-struct параметров free-fn'ов — ДО эмиссии forward-decl'ов
@@ -9576,7 +9579,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// reachable in one CU since Plan 175 Ф.2-v3 made `std.time.duration`
     /// transitively pulled into every CU) no longer collide into one
     /// `_nova_const_ZERO_value` C global.
-    fn emit_lazy_const(&mut self, name: &str, c_name: &str, ty_c: &str, value: &Expr) -> Result<(), String> {
+    pub(crate) fn emit_lazy_const(&mut self, name: &str, c_name: &str, ty_c: &str, value: &Expr) -> Result<(), String> {
         // Регистрируем имя как lazy — use-site Ident(name) станет голым
         // чтением `c_name`.
         self.lazy_consts.insert(name.to_string());
@@ -11166,7 +11169,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     ///
     /// (Endgame U.6.1 — collapsing this `TypeRef`→`ResolvedType` adapter hop at the ~120
     /// declared-type call sites — is intentionally OUT of U.4.8 scope.)
-    fn type_ref_to_c(&self, ty: &TypeRef) -> Result<String, String> {
+    pub(crate) fn type_ref_to_c(&self, ty: &TypeRef) -> Result<String, String> {
         self.resolved_type_to_c(&crate::types::ResolvedType::from_type_ref(ty))
     }
 
@@ -17170,6 +17173,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // error the moment a composite value was attempted). Scalar assoc
         // consts are unaffected — they never depended on struct layout.
         for ac in &t.assoc_consts {
+            // Plan 157: `ro Type.NAME` — NOT constexpr-required, handled by
+            // `emit_assoc_ro_lazy_globals` (assoc_ro.rs) instead of the
+            // strict-constexpr path below.
+            if ac.is_lazy_ro {
+                continue;
+            }
             let ty_c = if let Some(ty) = &ac.ty {
                 self.type_ref_to_c(ty)?
             } else {
@@ -33519,8 +33528,16 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Plan 114.4.1 (D200): associated constants — `Type.NAME`
                 // emitted as `Type_NAME` C-symbol. Symbol present в var_types
                 // если emit_type_decl уже emitted assoc const declaration.
+                //
+                // [M-157-assoc-ro-lazy-read]: a `ro Type.NAME` (assoc_ro.rs)
+                // registers `Type_NAME` in `lazy_consts` too — check FIRST,
+                // its storage is the eager-init global `_nova_const_<sym>_
+                // value`, not a bare `.rodata` symbol (mirrors the Ident arm above).
                 if parts.len() == 2 {
                     let symbol = format!("{}_{}", parts[0], parts[1]);
+                    if self.lazy_consts.contains(&symbol) {
+                        return Ok(format!("_nova_const_{}_value", symbol));
+                    }
                     if self.var_types.contains_key(&symbol) {
                         return Ok(symbol);
                     }
@@ -59033,7 +59050,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     // `b11x_novaarray_user_ext_methods.nv`) — dead SHADOW scaffolding goes
     // with the arm it fed (see docs/plans/196.5-stage-d-notes.md).
 
-    fn infer_expr_c_type(&self, expr: &Expr) -> String {
+    pub(crate) fn infer_expr_c_type(&self, expr: &Expr) -> String {
         // Plan 194 Ф.3 (vrange-роутинг): a bare closed `ExprKind::Range` VALUE
         // (both bounds present — the only shape that can appear as a plain
         // argument; open-ended is index-syntax-only, Plan 96 Ф.2) is a

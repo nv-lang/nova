@@ -1,0 +1,23 @@
+// EXPECT_COMPILE_ERROR E_LOCAL_NOT_MUT
+//
+// Plan 157 (§157, 221.1 bug-sweep, D200 amend): `ro Type.NAME` is read-only —
+// there is no `mut Type.NAME` form (D200 §Modifier-conflicts), so reassigning
+// the namespace-qualified name is ALWAYS an error, same diagnostic code as a
+// plain `ro`-local reassignment (`E_LOCAL_NOT_MUT`). This also closes a
+// pre-existing gap shared with `const Type.NAME`: before this fix neither
+// form's namespace-qualified path was checked as an assignment target at all
+// (silently accepted by the checker, and — for the `ro` runtime-init form —
+// genuinely writable at the C level, since its storage is a plain non-const
+// global, unlike `const`'s C `const`-qualified `.rodata` symbol).
+module neg.plan157_ro_assoc_reassign_neg
+
+type P157RecNeg value { limbs []u32 }
+
+// Non-constexpr initialiser (heap `Vec` field via `.new()`) — isolates the
+// reassignment diagnostic from the sibling `E_RO_FOR_CONSTEXPR_PREFER_CONST`
+// partition check (a literal-only RHS would trip that one FIRST instead).
+export ro P157RecNeg.SEED P157RecNeg = { limbs: Vec[u32].new(0) }
+
+fn main() -> () {
+    P157RecNeg.SEED = { limbs: Vec[u32].new(0) }
+}

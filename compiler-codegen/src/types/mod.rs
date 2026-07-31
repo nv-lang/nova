@@ -1555,6 +1555,7 @@ fn check_module_impl(
                                 value: ld.value.clone(),
                                 span: ld.span,
                                 file_private: false,
+                                is_lazy_ro: true,
                             },
                         );
                     }
@@ -4739,6 +4740,45 @@ impl<'a> TypeCheckCtx<'a> {
                 Item::Bench(_) | Item::Lemma(_) => {}
             }
         }
+        // Plan 157 (D200 amend): associated `ro Type.NAME` — same strict
+        // const/ro partition symmetry as bare module-level `ro`
+        // (`check_ro_module_partition` above, [M-114.4-strict-partition]).
+        // A constexpr-eligible RHS has a `const Type.NAME` equivalent and
+        // must use it; `ro Type.NAME` is reserved for genuinely runtime
+        // values (constructor calls / heap allocation / non-const refs).
+        // Runs over `module.items` post-`attach_out_of_body_assoc_consts`
+        // (imports.rs, pre-type-check), so every out-of-body `ro Type.NAME`
+        // — same-file or split across folder-module peers — is already
+        // attached to its `TypeDecl.assoc_consts` by this point.
+        for item in &module.items {
+            if let Item::Type(td) = item {
+                for ac in &td.assoc_consts {
+                    if !ac.is_lazy_ro {
+                        continue;
+                    }
+                    if check_const_constexpr_ex(
+                        &ac.value, &partition_known_consts, &partition_const_fn_names,
+                        &partition_named_tuple_names,
+                    ).is_ok() {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "[E_RO_FOR_CONSTEXPR_PREFER_CONST] associated `ro {}.{} = …` \
+                                 has a constexpr-eligible initialiser (literal / arithmetic on \
+                                 literals / record/tuple/array literal of constexpr fields / \
+                                 reference to another `const` / `const fn` call). The `const`/\
+                                 `ro` partition is strict at the associated level too (Plan 157, \
+                                 D200 amend — same policy as bare module-level `ro`): a \
+                                 constexpr-eligible RHS must be declared `const {0}.{1} = …`, \
+                                 not `ro {0}.{1} = …`. Use `const` here, or keep `ro` only for \
+                                 a runtime value (constructor call / allocation).",
+                                td.name, ac.name
+                            ),
+                            ac.span,
+                        ));
+                    }
+                }
+            }
+        }
         // Ф.1: assignability — отдельный scope-aware проход по телам
         // (var-типы локальных переменных нужны только здесь).
         for item in &module.items {
@@ -7731,6 +7771,36 @@ impl<'a> TypeCheckCtx<'a> {
                                 name, name, name),
                             target.span,
                         ));
+                    }
+                }
+                // Plan 157 (D200 amend): `Type.NAME = …` — reassigning a
+                // namespace-qualified associated value (`const Type.NAME` OR
+                // `ro Type.NAME`). Neither has a mutable binding to begin
+                // with (there is no `mut Type.NAME` form — D200 §Modifier-
+                // conflicts), so this is ALWAYS an error, same class/code as
+                // the plain-`ro`-local reassignment check just above
+                // (E_LOCAL_NOT_MUT) — an associated `ro`/`const` value is
+                // even MORE fixed than a local: there is no `mut`-annotated
+                // escape hatch for it at all.
+                if let ExprKind::Path(parts) = &target.kind {
+                    if parts.len() == 2 {
+                        if let Some(td) = self.types.get(parts[0].as_str()) {
+                            if let Some(ac) = td.assoc_consts.iter().find(|ac| ac.name == parts[1]) {
+                                let kw = if ac.is_lazy_ro { "ro" } else { "const" };
+                                errors.push(Diagnostic::new(
+                                    format!(
+                                        "[E_LOCAL_NOT_MUT] associated `{kw} {ty}.{name}` не \
+                                         может быть переприсвоено (`{ty}.{name} = ...`) — \
+                                         namespace-qualified associated values (D200 / Plan \
+                                         157) read-only ВСЕГДА, `mut Type.NAME` формы не \
+                                         существует. Та же диагностика, что у обычного \
+                                         `ro`-local reassignment.",
+                                        kw = kw, ty = parts[0], name = parts[1]
+                                    ),
+                                    target.span,
+                                ));
+                            }
+                        }
                     }
                 }
                 // [M-scalar-nonliteral-narrowing-not-enforced] (D54): reassignment

@@ -62,11 +62,9 @@ test "min / max" {
 }
 
 test "predicates" {
-    // NB: `Duration.ZERO` как value-const-reference упирается в pre-existing
-    // value-record const-emission gap (symbol `ZERO` vs ref `Duration_ZERO`),
-    // не time-специфичный — follow-up [M-175-value-record-const-ref]. Значение
-    // строится через to_nanos(0) (та же конвенция, что nova_tests/plan91_fe4).
-    assert(0.to_nanos().is_zero())
+    // Plan 157 (§157): `Duration.ZERO` теперь резолвится (D200 out-of-body
+    // qualified const migration, core.nv).
+    assert(Duration.ZERO.is_zero())
     assert((-1.to_seconds()).is_negative())
     assert(1.to_seconds().is_positive())
 }
@@ -319,9 +317,8 @@ test "Ф.3(b): (Duration).sleep() метод-канон под mock-clock про
     with Time = th.mut_clock(1000 as u64) {
         (500.to_millis()).sleep()
         assert(Timestamp.now().unix_millis() == 1500)
-        // Duration.ZERO как const-reference — pre-existing [M-175-value-record-const-ref]
-        // gap (не time-специфичный); workaround — to_nanos(0), см. "predicates" выше.
-        (0.to_nanos()).sleep()  // немедленно, часы не двигаются
+        // Plan 157 (§157): прямая ссылка вместо to_nanos(0)-обхода.
+        Duration.ZERO.sleep()  // немедленно, часы не двигаются
         assert(Timestamp.now().unix_millis() == 1500)
     }
 }
