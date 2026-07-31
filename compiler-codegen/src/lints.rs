@@ -1172,7 +1172,7 @@ fn collect_expr(e: &Expr, out: &mut HashSet<String>) {
             // ALL of them by iterating `operator_dispatch::BINOP_TABLE`
             // instead of a hand-maintained list, so a NEW table entry can
             // never repeat the "forgot to seed" class of bug (plan 234's
-            // Bit*, int128-связка's Shl/Shr, and the pre-opunify gap in
+            // Bit*, int128-wave's Shl/Shr, and the pre-opunify gap in
             // `+ * / %`'s own generic-mono arm all hit this exact class).
             for entry in crate::codegen::operator_dispatch::BINOP_TABLE {
                 out.insert(entry.method_name.to_string());
