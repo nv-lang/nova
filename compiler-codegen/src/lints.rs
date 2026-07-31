@@ -1181,8 +1181,8 @@ fn collect_expr(e: &Expr, out: &mut HashSet<String>) {
             out.insert("bitand".to_string());
             out.insert("bitor".to_string());
             out.insert("bitxor".to_string());
-            // [M-shl-shr-user-type-no-dispatch] (int128-связка, план 234 «фикс
-            // тем же паттерном»): `a << b` / `a >> b` on a user type now
+            // [M-shl-shr-user-type-no-dispatch] (int128 cluster; plan 234 "fix
+            // with the same pattern"): `a << b` / `a >> b` on a user type now
             // dispatch to `@shl`/`@shr` (emit_c.rs fast-path mirroring
             // `@minus`'s heterogeneous-param pattern). Same AST-invisible
             // magic-selector class as `bitand`/`bitor`/`bitxor` above — without
@@ -1201,7 +1201,7 @@ fn collect_expr(e: &Expr, out: &mut HashSet<String>) {
             if matches!(op, crate::ast::UnOp::BitNot) {
                 out.insert("bitnot".to_string());
             }
-            // [M-neg-not-selectors-dce-gap] (int128-связка, план 234 «попутно»):
+            // [M-neg-not-selectors-dce-gap] (int128 cluster; plan 234 follow-up):
             // `-a` / `!a` on a user type dispatch to `@neg`/`@not` — the SAME
             // reachability-DCE gap as `@bitnot` just above, pre-existing since
             // BEFORE plan 234 (unlike bitand/bitor/bitxor/bitnot, `@neg`/`@not`
