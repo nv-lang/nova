@@ -25940,19 +25940,15 @@ impl<'a> CapabilityCtx<'a> {
                 // fiber-containing body executes IN THE FIBER of the
                 // failing/child operation (Ф.0 measurement) — mut-captures
                 // there are the same race as a direct spawn-body capture.
-                // EXCEPTION (D416§2 carve-out): `Supervisor`'s
-                // `on_child_fail` is measured SERIALIZED on the scope's
-                // drive fiber (one call at a time, in slot order) — pinned
-                // by `supervisor_on_child_fail_serialized_pin_test.nv`.
+                // D416§2 carve-out for `Supervisor` REVOKED (2026-07-31,
+                // acceptance of A-V10): the serialization pin fixture
+                // FAILED 5/10 isolated runs — the documented drive-fiber
+                // serialization guarantee is NOT upheld by the runtime
+                // (registry №173, M:N window with №165/№169). Until the
+                // runtime actually serializes, a Supervisor handler's
+                // mut-capture is the same race as any other handler's.
                 if block_contains_fiber_boundary(body) {
                     for b in bindings {
-                        let eff_name = match &b.effect {
-                            TypeRef::Named { path, .. } => path.last().cloned(),
-                            _ => None,
-                        };
-                        if eff_name.as_deref() == Some("Supervisor") {
-                            continue;
-                        }
                         self.check_handler_capture(&b.handler, state, errors);
                     }
                 }

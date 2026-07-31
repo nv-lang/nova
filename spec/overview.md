@@ -98,7 +98,11 @@
    Супервизия падений — обычный эффект `Supervisor`
    ([D416](decisions/06-concurrency.md#d416)): готовые политики
    `escalate()`/`stop()`, пользовательские — handler-литерал
-   `on_child_fail(idx, err) -> Decision`. Naming-конвенции для этого слоя —
+   `on_child_fail(idx, err) -> Decision`. Внимание: документированная в D416§2
+   сериализация `on_child_fail` на drive-файбере рантаймом пока НЕ
+   обеспечивается (опровергнуто измерением 2026-07-31, реестр №173) —
+   mut-захваты в таком обработчике проверяются энфорсом D441 как у любого
+   другого, исключения нет. Naming-конвенции для этого слоя —
    [`docs/mn-coding-conventions.md`](../docs/mn-coding-conventions.md).
    **Модель памяти между файберами** ([D415](decisions/06-concurrency.md#d415-data-race-freedom--share-атрибут-capture-check-consume-в-spawn-plan-1733),
    [D441](decisions/06-concurrency.md#d441), 2026-07-31): `mut`-захват — линейный ресурс одного файбера, пересекать
