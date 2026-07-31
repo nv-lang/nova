@@ -15,29 +15,29 @@ import std.identifiers.uuid.{Uuid}
 import std.crypto.md5.{Md5}
 import std.crypto.sha1.{Sha1}
 
-/// DNS namespace UUID (RFC 4122 Appendix C). Используется для name-based UUIDs
-/// от DNS-имён (e.g. www.example.com).
+/// DNS namespace UUID (RFC 4122 Appendix C). Used for name-based UUIDs
+/// from DNS names (e.g. www.example.com).
 #stable(since = "0.1")
 export fn namespace_dns() -> Uuid =>
     Uuid.new(0x6ba7b8109dad11d1, 0x80b400c04fd430c8)
 
-/// URL namespace UUID (RFC 4122 Appendix C). Для URL-based name UUIDs.
+/// URL namespace UUID (RFC 4122 Appendix C). For URL-based name UUIDs.
 #stable(since = "0.1")
 export fn namespace_url() -> Uuid =>
     Uuid.new(0x6ba7b8119dad11d1, 0x80b400c04fd430c8)
 
-/// OID namespace UUID (RFC 4122 Appendix C). Для ISO OID identifiers.
+/// OID namespace UUID (RFC 4122 Appendix C). For ISO OID identifiers.
 #stable(since = "0.1")
 export fn namespace_oid() -> Uuid =>
     Uuid.new(0x6ba7b8129dad11d1, 0x80b400c04fd430c8)
 
-/// X.500 namespace UUID (RFC 4122 Appendix C). Для X.500 DN-based name UUIDs.
+/// X.500 namespace UUID (RFC 4122 Appendix C). For X.500 DN-based name UUIDs.
 #stable(since = "0.1")
 export fn namespace_x500() -> Uuid =>
     Uuid.new(0x6ba7b8149dad11d1, 0x80b400c04fd430c8)
 
 /// UUID v3: name-based, MD5(namespace || name). **Legacy** — MD5 broken,
-/// предпочитайте `Uuid.v5` для новых проектов.
+/// prefer `Uuid.v5` for new projects.
 #stable(since = "0.1")
 export fn Uuid.v3(namespace Uuid, name str) -> Self {
     mut input []u8 = []
@@ -52,7 +52,7 @@ export fn Uuid.v3(namespace Uuid, name str) -> Self {
     bytes_to_uuid(bytes)
 }
 
-/// UUID v5: name-based, SHA-1(namespace || name). Detеrministic (same inputs → same UUID).
+/// UUID v5: name-based, SHA-1(namespace || name). Deterministic (same inputs → same UUID).
 ///
 /// # Examples
 /// ```nova

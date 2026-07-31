@@ -41,8 +41,8 @@ module identifiers.ulid
 /// ULID — 128-bit Universally Unique Lexicographically Sortable Identifier.
 ///
 /// 48 bits timestamp ms (lexicographically sortable) + 80 bits random.
-/// Crockford's Base32 encoding (26 chars, без I/L/O/U — нет визуальной путаницы).
-/// Use cases: primary keys (B-tree friendly), distributed event IDs, файловые имена.
+/// Crockford's Base32 encoding (26 chars, without I/L/O/U — no visual confusion).
+/// Use cases: primary keys (B-tree friendly), distributed event IDs, file names.
 ///
 /// # Examples
 /// ```nova
@@ -56,7 +56,7 @@ export type Ulid {
     ro rand_part u64     // public: 64 бита random
 }
 
-/// Errors при парсинге ULID-строки.
+/// Errors when parsing a ULID string.
 #stable(since = "0.1")
 export type ParseUlidError enum
     | InvalidLength { actual int, expected int }
@@ -143,12 +143,12 @@ fn decode_char(c char) -> Option[u8] {
 // Генерация
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Generate new ULID с текущим timestamp и random частью.
+/// Generate a new ULID with the current timestamp and random part.
 ///
-/// Использует Time + Random effects (ambient). В тестах детерминируется
-/// через `with Time = th.fixed_ms(...), Random = th.seeded(...)`.
+/// Uses Time + Random effects (ambient). In tests it is made deterministic
+/// via `with Time = th.fixed_ms(...), Random = th.seeded(...)`.
 ///
-/// Throws `TimestampOverflow` если ms ≥ 2^48 (~10889 AD).
+/// Throws `TimestampOverflow` if ms ≥ 2^48 (~10889 AD).
 #stable(since = "0.1")
 export fn Ulid.new() Time Random Fail[ParseUlidError] -> Self { // [M-lint-findings-fail-public-signature]
     ro ms = Timestamp.now().unix_millis() as u64
@@ -169,7 +169,7 @@ export fn Ulid.new() Time Random Fail[ParseUlidError] -> Self { // [M-lint-findi
 // Геттеры
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Extract Unix timestamp ms из ULID (старшие 48 бит ts_part).
+/// Extract the Unix timestamp ms from a ULID (the upper 48 bits of ts_part).
 #stable(since = "0.1")
 export fn Ulid @timestamp_ms() -> u64 =>
     @ts_part >> 16
@@ -178,13 +178,13 @@ export fn Ulid @timestamp_ms() -> u64 =>
 // Сравнение (D46)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Equality (`==`) — structural по обеим частям.
+/// Equality (`==`) — structural over both parts.
 #stable(since = "0.1")
 export fn Ulid @equal(other Ulid) -> bool =>
     @ts_part == other.ts_part && @rand_part == other.rand_part
 
-/// Compare — лексикографический order по timestamp, затем random.
-/// Точно как сравнение строк-ULID'ов лексикографически — главная фича.
+/// Compare — lexicographic order by timestamp, then random.
+/// Exactly like comparing ULID strings lexicographically — the key feature.
 /// Returns <0, 0, >0.
 #stable(since = "0.1")
 export fn Ulid @compare(other Ulid) -> int {
@@ -201,7 +201,7 @@ export fn Ulid @compare(other Ulid) -> int {
 // Сериализация (D410)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `to_str()` — 26-char Crockford Base32 string. Round-trip с `Ulid.from`.
+/// `to_str()` — 26-char Crockford Base32 string. Round-trip with `Ulid.from`.
 ///
 /// # Examples
 /// ```nova
