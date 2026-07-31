@@ -1,0 +1,89 @@
+// Regression re-verification for the backlog entry
+// `[M-reflect-derive-generic-wrapper-field-null-shape]` (P1, зона A-V11,
+// docs/plans/backlog-followups.md, registered 2026-07-31 from a
+// nova-polaris observation dated 2026-07-27 — see `GetItemBundle`'s test
+// comment in `nova-polaris/src/extract_test.nv`). The observation predates
+// registry №146's fix (`[M-reflect-fieldwalk-generic-field-not-
+// monomorphized]`, commit 263440459d8, 2026-07-29, CLOSED 2026-07-30,
+// `77ea6df12`): `#impl(Reflect)` field-walk synthesis (auto_derive.rs,
+// `build_named_type_shape`) discarded a field's OWN generic type-args and
+// emitted an unqualified `Path([name, "reflect"])`, which resolves to the
+// UN-monomorphized stub symbol (`return NULL;`) instead of the field's real
+// mono-instance — symptom on the live server: fiber stack overflow (NULL
+// shape consumed by openapi-эмиттер/GC traversal downstream).
+//
+// Repro effort (окно p-reflect-nullshape, sonnet, 2026-07-31): built this
+// worktree's compiler from HEAD (which already contains №146's fix),
+// reproduced the EXACT shape polaris's `PathParam[T]`/`Query[T]`/`Json[T]`
+// use (a `value`-type generic wrapper with a HAND-WRITTEN, `#impl(Reflect)`-
+// tagged `.reflect()` — mirrors extract.nv's real code, NOT an auto-derived
+// wrapper) as a bundle field, both standalone and via `--keep-artifacts`
+// generated-C inspection. Result: the field-walk DOES emit the correctly
+// TurboFish-qualified, correctly-mangled mono symbol
+// (`Nova_<Wrap>____Nova_<Inner>_p_static_reflect`) with a REAL body (not a
+// `return NULL;` stub) — deep content assertions on the nested shape (not
+// merely non-NULL) pass. This fixture locks that behavior in as a
+// regression: if the field-walk ever again drops a field's type-args (or
+// fails to register/emit the resulting mono-instance's body), this fixture
+// turns RUN-FAIL (wrong/garbage nested name) or CC-FAIL (undefined symbol),
+// not silently NULL.
+//
+// NOT exercised here (separate, PRE-EXISTING, already-documented gap, see
+// `reflect_generic_field_walk_pos.nv`'s own doc-comment): auto-DERIVING
+// `#impl(Reflect)` directly ON a generic receiver type itself (no
+// hand-written `.reflect()`) — that path hits `E_AUTO_DERIVE_FIELD_LACKS_
+// PROTOCOL` honestly at compile time (`check_field_eligibility_reflect` does
+// not resolve a bare receiver-bound typevar field) and is a DIFFERENT defect
+// class, not this one.
+module spec_tests.conformance
+
+import std.reflect.{TypeShape, Reflect}
+
+type MRflWrap [T] value {
+    v T
+}
+
+#impl(Reflect)
+fn MRflWrap[T Reflect].reflect() -> TypeShape =>
+    TypeShape.Record("MRflWrap", [("v", T.reflect())])
+
+#impl(Reflect)
+type MRflLeaf value {
+    ro id int
+}
+
+#impl(Reflect)
+type MRflBundle {
+    f MRflWrap[MRflLeaf]
+}
+
+test "m_rfl: single generic-value-wrapper field — field-walk gives the REAL nested shape, not NULL" {
+    match MRflBundle.reflect() {
+        Record(m_rfl_name, m_rfl_fields) => {
+            assert(m_rfl_name == "MRflBundle")
+            assert(m_rfl_fields.len() == 1)
+            ro (m_rfl_fname, m_rfl_fshape) = m_rfl_fields[0]
+            assert(m_rfl_fname == "f")
+            match m_rfl_fshape {
+                Record(m_rfl_wname, m_rfl_wfields) => {
+                    assert(m_rfl_wname == "MRflWrap")
+                    assert(m_rfl_wfields.len() == 1)
+                    ro (m_rfl_wfname, m_rfl_wfshape) = m_rfl_wfields[0]
+                    assert(m_rfl_wfname == "v")
+                    match m_rfl_wfshape {
+                        Record(m_rfl_lname, m_rfl_lfields) => {
+                            assert(m_rfl_lname == "MRflLeaf")
+                            assert(m_rfl_lfields.len() == 1)
+                        }
+                        // The historical bug: a NULL/un-mono'd shape would
+                        // either crash the match itself or land here as
+                        // garbage — never a correctly-named `Record`.
+                        _ => assert(false)
+                    }
+                }
+                _ => assert(false)
+            }
+        }
+        _ => assert(false)
+    }
+}

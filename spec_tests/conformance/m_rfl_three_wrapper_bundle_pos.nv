@@ -1,0 +1,144 @@
+// Regression re-verification, canon-bundle class (Plan 222.8 §1.3 /
+// nova-polaris `GetItemBundle`): a record whose fields are SEVERAL DIFFERENT
+// `value`-type generic extractor-wrapper instantiations
+// (`PathParam[T]`/`Query[T]`/`Json[T]` in polaris — modeled here without the
+// http/polaris dependency, see `m_rfl_generic_value_wrapper_field_pos.nv`'s
+// doc-comment for the full backlog/№146 cross-reference). Extends the
+// single-field case to: (a) THREE distinct wrapper types in ONE bundle
+// (b) a bundle mixing generic-wrapper fields with a PLAIN (non-generic)
+// field, matching `GetItemBundle`'s `id/filter/payload/raw` 4-field shape
+// exactly (c) TWO bundles reusing the SAME wrapper type with DIFFERENT T in
+// the SAME compile-unit (cross-mono collision class, родня №140's
+// domain — a distinct wrapper-mono-key must not collide with a sibling
+// bundle's own instantiation of the same generic wrapper).
+module spec_tests.conformance
+
+import std.reflect.{TypeShape, Reflect}
+
+type MRflPathWrap [T] value { data T }
+#impl(Reflect)
+fn MRflPathWrap[T Reflect].reflect() -> TypeShape =>
+    TypeShape.Record("MRflPathWrap", [("data", T.reflect())])
+
+type MRflQueryWrap [T] value { data T }
+#impl(Reflect)
+fn MRflQueryWrap[T Reflect].reflect() -> TypeShape =>
+    TypeShape.Record("MRflQueryWrap", [("data", T.reflect())])
+
+type MRflJsonWrap [T] value { data T }
+#impl(Reflect)
+fn MRflJsonWrap[T Reflect].reflect() -> TypeShape =>
+    TypeShape.Record("MRflJsonWrap", [("data", T.reflect())])
+
+#impl(Reflect)
+type MRflIdParam value { ro id int }
+
+#impl(Reflect)
+type MRflSearchQuery value { ro q str, ro limit int }
+
+#impl(Reflect)
+type MRflCreateItem value { ro name str, ro qty int }
+
+// Plain (non-generic) passthrough field, hand-written `Opaque` reflect —
+// mirrors `Req`/`Headers` in polaris (never auto-derived, per std/reflect.nv).
+type MRflReq { path str }
+#impl(Reflect)
+fn MRflReq.reflect() -> TypeShape => TypeShape.Opaque("MRflReq")
+
+// The canon shape: THREE different generic-wrapper fields + one plain field,
+// #impl(Reflect) auto-derived on the BUNDLE itself (field-walk exercises all
+// four fields' resolution/registration in one synthesized `.reflect()`).
+#impl(Reflect)
+type MRflFourBundle {
+    id      MRflPathWrap[MRflIdParam],
+    filter  MRflQueryWrap[MRflSearchQuery],
+    payload MRflJsonWrap[MRflCreateItem],
+    raw     MRflReq,
+}
+
+test "m_rfl: GetItemBundle-canon shape — three DIFFERENT generic-wrapper fields + one plain field, deep per-field content" {
+    match MRflFourBundle.reflect() {
+        Record(m_rfl_name, m_rfl_fields) => {
+            assert(m_rfl_name == "MRflFourBundle")
+            assert(m_rfl_fields.len() == 4)
+            ro (m_rfl_n0, m_rfl_s0) = m_rfl_fields[0]
+            ro (m_rfl_n1, m_rfl_s1) = m_rfl_fields[1]
+            ro (m_rfl_n2, m_rfl_s2) = m_rfl_fields[2]
+            ro (m_rfl_n3, m_rfl_s3) = m_rfl_fields[3]
+            assert(m_rfl_n0 == "id" && m_rfl_n1 == "filter" && m_rfl_n2 == "payload" && m_rfl_n3 == "raw")
+            match m_rfl_s0 {
+                Record(m_rfl_wn0, m_rfl_wf0) => {
+                    assert(m_rfl_wn0 == "MRflPathWrap")
+                    ro (_, m_rfl_inner0) = m_rfl_wf0[0]
+                    match m_rfl_inner0 { Record(t, _) => assert(t == "MRflIdParam") _ => assert(false) }
+                }
+                _ => assert(false)
+            }
+            match m_rfl_s1 {
+                Record(m_rfl_wn1, m_rfl_wf1) => {
+                    assert(m_rfl_wn1 == "MRflQueryWrap")
+                    ro (_, m_rfl_inner1) = m_rfl_wf1[0]
+                    match m_rfl_inner1 { Record(t, _) => assert(t == "MRflSearchQuery") _ => assert(false) }
+                }
+                _ => assert(false)
+            }
+            match m_rfl_s2 {
+                Record(m_rfl_wn2, m_rfl_wf2) => {
+                    assert(m_rfl_wn2 == "MRflJsonWrap")
+                    ro (_, m_rfl_inner2) = m_rfl_wf2[0]
+                    match m_rfl_inner2 { Record(t, _) => assert(t == "MRflCreateItem") _ => assert(false) }
+                }
+                _ => assert(false)
+            }
+            match m_rfl_s3 {
+                Opaque(m_rfl_rn) => assert(m_rfl_rn == "MRflReq")
+                _ => assert(false)
+            }
+        }
+        _ => assert(false)
+    }
+}
+
+// Cross-mono class: TWO bundles reusing the SAME generic wrapper
+// (`MRflPathWrap[T]`) with DIFFERENT `T`, in the SAME compile-unit — the
+// field-walk's resolved mono-key for one bundle's field must not bleed into
+// the other's.
+#impl(Reflect)
+type MRflAltId value { ro alt_id int }
+
+#impl(Reflect)
+type MRflBundleA { p MRflPathWrap[MRflIdParam] }
+
+#impl(Reflect)
+type MRflBundleB { p MRflPathWrap[MRflAltId] }
+
+test "m_rfl: two bundles, SAME wrapper MRflPathWrap[T], DIFFERENT T, same CU — no cross-mono collision" {
+    ro m_rfl_shape_a = MRflBundleA.reflect()
+    ro m_rfl_shape_b = MRflBundleB.reflect()
+    match m_rfl_shape_a {
+        Record(_, m_rfl_fa) => {
+            ro (_, m_rfl_sa) = m_rfl_fa[0]
+            match m_rfl_sa {
+                Record(_, m_rfl_wfa) => {
+                    ro (_, m_rfl_ia) = m_rfl_wfa[0]
+                    match m_rfl_ia { Record(t, _) => assert(t == "MRflIdParam") _ => assert(false) }
+                }
+                _ => assert(false)
+            }
+        }
+        _ => assert(false)
+    }
+    match m_rfl_shape_b {
+        Record(_, m_rfl_fb) => {
+            ro (_, m_rfl_sb) = m_rfl_fb[0]
+            match m_rfl_sb {
+                Record(_, m_rfl_wfb) => {
+                    ro (_, m_rfl_ib) = m_rfl_wfb[0]
+                    match m_rfl_ib { Record(t, _) => assert(t == "MRflAltId") _ => assert(false) }
+                }
+                _ => assert(false)
+            }
+        }
+        _ => assert(false)
+    }
+}
