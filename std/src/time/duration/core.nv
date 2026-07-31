@@ -78,20 +78,28 @@ export type Duration value {
 }
 
 /// Zero duration — 0 nanoseconds. Useful как default / sentinel value.
+///
+/// Plan 157 (§157, 221.1 bug-sweep): migrated to the D200 out-of-body
+/// qualified form (`const Duration.NAME`) — the bare `export const ZERO
+/// Duration = …` form this replaces declared a plain top-level `ZERO`
+/// symbol, so `Duration.ZERO` (used aspirationally in doc-comments/tests
+/// below) never actually resolved to it (assoc-const lookup expects the
+/// qualified `Duration_ZERO` C-symbol). `Duration.ZERO` now genuinely
+/// resolves.
 #stable(since = "0.1")
-export const ZERO Duration = { nanos: 0 }
+export const Duration.ZERO Duration = { nanos: 0 }
 
 /// One second.
 #stable(since = "0.1")
-export const SECOND Duration = { nanos: 1_000_000_000 }
+export const Duration.SECOND Duration = { nanos: 1_000_000_000 }
 
 /// One minute (60 seconds).
 #stable(since = "0.1")
-export const MINUTE Duration = { nanos: 60_000_000_000 }
+export const Duration.MINUTE Duration = { nanos: 60_000_000_000 }
 
 /// One hour (3600 seconds).
 #stable(since = "0.1")
-export const HOUR   Duration = { nanos: 3_600_000_000_000 }
+export const Duration.HOUR   Duration = { nanos: 3_600_000_000_000 }
 
 // Saturation boundaries are ±(2⁶³−1) ns ≈ ±292 years (symmetric; the
 // two's-complement `i64::MIN` = -2⁶³ is deliberately excluded so `@neg`/`@abs`
