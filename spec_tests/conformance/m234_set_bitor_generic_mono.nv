@@ -1,0 +1,23 @@
+// Plan 234 acceptance regression (mega-CU CC-FAIL, found via a_q3 link error):
+// `|` / `&` on a GENERIC receiver (`Set[int]`) dispatched through the flat
+// record fast-path, which emits the call but never registers the mono
+// instance — `undefined symbol: Set____nova_int_method_bitor`. The guard now
+// routes mono'd names (`____`) to the generic dispatch arm, which registers
+// the instantiation (register_mono_method_instance) before emitting the call.
+// Non-generic overloads are covered by the m234_* operator fixtures; this one
+// pins the generic-receiver path end-to-end (compile, link, run, assert).
+module spec_tests.conformance
+
+test "234: `|` and `&` on Set[int] — generic mono registration via operator dispatch" {
+    mut m234_sbg_a = Set[int].new()
+    m234_sbg_a.insert(1)
+    m234_sbg_a.insert(2)
+    mut m234_sbg_b = Set[int].new()
+    m234_sbg_b.insert(2)
+    m234_sbg_b.insert(3)
+    ro m234_sbg_union = m234_sbg_a | m234_sbg_b
+    assert(m234_sbg_union.len() == 3)
+    ro m234_sbg_inter = m234_sbg_a & m234_sbg_b
+    assert(m234_sbg_inter.len() == 1)
+    assert(m234_sbg_inter.contains(2))
+}

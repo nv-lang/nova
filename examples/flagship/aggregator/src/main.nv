@@ -213,6 +213,10 @@ fn snapshot_body(legend str, mode str, seed int) Time -> ServerResponse {
 // record is always a pointer and fits in one word.
 // `kind` is `#serde(skip)` — the SSE event name carries it.
 // `error` is renamed (Rust-field `err`, wire `"error"`) and skipped when empty.
+/// SSE `replay_info` payload — replay timing metadata for the client player.
+#impl(Serialize)
+type ReplayInfo { total_ms int, time_scale int }
+
 #impl(Serialize)
 type EmitRecord {
     #serde(skip)
@@ -258,19 +262,13 @@ fn events_body(legend str, mode str, seed int) Time -> ServerResponse {
     }
     tx.close()
     mut records []EmitRecord = []
-    mut draining = true
-    while draining {
-        match rx.try_recv() {
-            Some(r) => { records.push(r) }
-            None    => { draining = false }
-        }
-    }
+    while Some(r) = rx.try_recv() { records.push(r) }
     ro total_ms = Monotonic.now().elapsed_since(t0).millis() as int
     ro seed_out = if mode == "live" { 0 } else { seed }
     ro dto = build_snapshot(rr.report, rr.sources, legend, mode, seed_out, rr.budget_ms, rr.handlers)
 
     mut chunks [][]u8 = []
-    chunks.push(sse_event("replay_info", "{\"total_ms\":${total_ms},\"time_scale\":1}"))
+    chunks.push(sse_event("replay_info", json_encode(ReplayInfo { total_ms, time_scale: 1 }) ?? panic("replay_info: flat Serialize DTO — encode must not fail")))
     for r in records {
         chunks.push(sse_event(r.kind, emit_record_json(r)))
     }
