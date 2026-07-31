@@ -34297,6 +34297,45 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // No @minus registered — leave to fall-through (would
                         // become invalid C, caught later).
                     }
+                    // [M-shl-shr-user-type-no-dispatch]: `<<`/`>>` on a user
+                    // type (raw C over `Nova_T*` was a CC-FAIL). Mirrors
+                    // `@minus` above, not the Bit* fast-path below (`@shl`/
+                    // `@shr` take heterogeneous `n int`). Thin call-site —
+                    // algorithm in `bitwise_ops::resolve_shift_dispatch`.
+                    if matches!(op, BinOp::Shl | BinOp::Shr)
+                        && lty.starts_with("Nova_") && lty.ends_with('*')
+                    {
+                        if let Some(op_method) = super::bitwise_ops::shift_method_name(*op) {
+                            let recv_full = lty.trim_end_matches('*').to_string();
+                            let recv_short = Self::debt_strip_nova_trim_start_bare(&recv_full).to_string();
+                            let overloads = self.method_overloads
+                                .get(&(recv_short.clone(), op_method.to_string())).cloned();
+                            let mono_fn_decl = recv_short.find("____").and_then(|idx| {
+                                self.self_method_decls
+                                    .get(&(recv_short[..idx].to_string(), op_method.to_string()))
+                                    .cloned()
+                            });
+                            match super::bitwise_ops::resolve_shift_dispatch(
+                                *op, &rty, &recv_full, &recv_short,
+                                overloads.as_deref(), mono_fn_decl,
+                            ) {
+                                super::bitwise_ops::ShiftResolution::Concrete(c_name) => {
+                                    return Ok(format!("{}({}, {})", c_name, l, r));
+                                }
+                                super::bitwise_ops::ShiftResolution::GenericMono {
+                                    fn_decl, type_subst, mono_name,
+                                } => {
+                                    self.register_mono_method_instance(
+                                        &fn_decl, type_subst, &mono_name, &recv_short);
+                                    return Ok(format!("{}({}, {})", mono_name, l, r));
+                                }
+                                super::bitwise_ops::ShiftResolution::NoMatchingOverload(msg) => {
+                                    return Err(msg);
+                                }
+                                super::bitwise_ops::ShiftResolution::NotFound => {}
+                            }
+                        }
+                    }
                     // План 234 Ф.1 (codegen/bitwise_ops.rs): generic Bit*
                     // dispatch (RETRACT @or/@and/@xor), `BitXor` — новый.
                     if let Some(op_method) = super::bitwise_ops::bitop_method_name(*op) {
@@ -43338,16 +43377,26 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             || has_unconstrained_blanket
                             || has_typeset_blanket_for_primitive);
                     if recv_is_candidate {
-                        // Find all bare-typevar blanket entries for this method name.
-                        let blanket_key_opt: Option<(String, String)> = self.mono_method_decls
+                        // [M-int128-blanket-dispatch-first-by-name]: collect ALL
+                        // bare-typevar blanket candidates for this method name —
+                        // not just the first a HashMap iteration happens to
+                        // produce. With two type-set-bounded blankets sharing a
+                        // method name, testing only the first-found candidate's
+                        // `protocols_match` below silently mis-dispatched
+                        // whenever it didn't cover the receiver's family (the
+                        // actually-matching candidate was never tried). Sort for
+                        // determinism (HashMap order is hash-seed-dependent).
+                        let mut blanket_keys: Vec<(String, String)> = self.mono_method_decls
                             .keys()
-                            .find(|(tvname, mname)| {
+                            .filter(|(tvname, mname)| {
                                 mname == method
                                     && tvname.len() <= 2
                                     && tvname.chars().all(|c| c.is_ascii_uppercase())
                             })
-                            .cloned();
-                        if let Some(blanket_key) = blanket_key_opt {
+                            .cloned()
+                            .collect();
+                        blanket_keys.sort();
+                        for blanket_key in blanket_keys {
                             if let Some(fn_decl) = self.mono_method_decls.get(&blanket_key).cloned() {
                                 // Check: does the receiver's protocol set satisfy the
                                 // blanket's receiver typevar bounds?
