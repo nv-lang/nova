@@ -1698,14 +1698,6 @@ impl Parser {
             // Plan 114 (D184): `ro X = expr` — module-level immutable binding.
             // Заменяет `let X = expr` host для non-constexpr lazy-init.
             TokenKind::KwRo => {
-                if let Some(d) = &pending_doc {
-                    eprintln!(
-                        "warning: doc-comment (`///`) before `ro` is ignored \
-                         — `ro` declarations are not documented (Plan 45 Ф.3). \
-                         span: {:?}",
-                        d.span
-                    );
-                }
                 // Plan 157 (D200 amend): `ro Type.NAME [Type] = expr` —
                 // associated ro-value. Lookahead ONLY (no tokens consumed
                 // yet beyond the already-eaten `ro`... no, `ro` itself is
@@ -1722,8 +1714,20 @@ impl Parser {
                     && matches!(self.peek_at(2).kind, TokenKind::Dot)
                     && matches!(self.peek_at(3).kind, TokenKind::Ident(_));
                 if is_assoc_ro {
-                    Item::Const(self.parse_assoc_ro_decl(is_export, file_private)?)
+                    // №157 + LSP-находка владельца 2026-07-31: ассоциированная
+                    // ro-константа — публичная API-поверхность; doc-comment
+                    // легален и уходит в nova doc/hover (симметрия
+                    // parse_const_decl). Warning остаётся только для bare-формы.
+                    Item::Const(self.parse_assoc_ro_decl(is_export, pending_doc.clone(), pending_doc_attrs.clone(), file_private)?)
                 } else {
+                    if let Some(d) = &pending_doc {
+                        eprintln!(
+                            "warning: doc-comment (`///`) before bare module-level \
+                             `ro` is ignored (Plan 45 Ф.3; associated `ro Type.NAME` \
+                             IS documented since Plan 157). span: {:?}",
+                            d.span
+                        );
+                    }
                     Item::Let(self.parse_ro_mut_binding(false)?)
                 }
             }
@@ -6178,7 +6182,7 @@ impl Parser {
     /// difference (constexpr-eligibility) is enforced downstream by the
     /// `is_lazy_ro` flag, not here. Caller (`parse_item`'s `KwRo` arm) has
     /// already confirmed the `Ident '.' Ident` lookahead before calling this.
-    fn parse_assoc_ro_decl(&mut self, is_export: bool, file_private: bool) -> Result<ConstDecl, Diagnostic> {
+    fn parse_assoc_ro_decl(&mut self, is_export: bool, doc: Option<crate::ast::DocBlock>, doc_attrs: Vec<crate::ast::DocAttr>, file_private: bool) -> Result<ConstDecl, Diagnostic> {
         let start = self.peek().span;
         self.expect(&TokenKind::KwRo)?;
         let (type_name, _) = self.parse_ident()?;
@@ -6203,8 +6207,8 @@ impl Parser {
         let value_span = value.span;
         self.expect_newline_or_eof().ok();
         Ok(ConstDecl {
-            doc: None,
-            doc_attrs: Vec::new(),
+            doc,
+            doc_attrs,
             is_export,
             name,
             ty,
