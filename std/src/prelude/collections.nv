@@ -1,80 +1,55 @@
 // std/prelude/collections.nv — file-based source of truth для prelude
-// collection-related types и iterator protocol. Plan 62 phase 62.D
-// (non-opaque scope).
+// collection-related types и iterator protocol.
 //
 // Декларации перенесены/добавлены в этот файл, чтобы:
 //   1) `nova doc` показывал canonical API в одном месте (AI-readable),
 //   2) пользователь мог shadow'ить эти names в своём коде с warning'ом
-//      (Plan 62.F W_PRELUDE_SHADOW),
+//      (W_PRELUDE_SHADOW),
 //   3) splittable prelude работал (`#prelude(collections)` opt-in
 //      только collections без core/runtime/errors).
 //
-// Архитектурные правила (Plan 62 §«Стратификация»):
+// Архитектурные правила:
 //   - **Один explicit import**: `std.prelude.core.{Option}` — нужен
 //     для signature `next() -> Option[T]`. Auto-import `std.prelude`
 //     отключён внутри `std.prelude.*` (cycle protection,
-//     `is_prelude_self_module` в compiler-codegen/src/manifest.rs:314+),
-//     поэтому Option надо завезти explicitly. `std.prelude.core` не
-//     импортирует обратно `std.prelude.collections` — cycle отсутствует.
+//     `is_prelude_self_module` в manifest.rs), поэтому Option надо
+//     завезти explicitly. `std.prelude.core` не импортирует обратно
+//     `std.prelude.collections` — cycle отсутствует.
 //
-// **Bootstrap status (Plan 62.D non-opaque):**
+// **Bootstrap status:**
 //
 // - **`Iterable[T]` protocol** объявлен здесь formally — раньше существовал
-//   ТОЛЬКО как structural duck-typing per D58 (codegen for-in dispatch:
-//   emit_c.rs:14324+ ищет метод `mut next() -> Option[T]` без проверки
-//   протокольной декларации). Формальная декларация:
+//   ТОЛЬКО как structural duck-typing (codegen for-in dispatch ищет метод
+//   `mut next() -> Option[T]` без проверки протокольной декларации).
+//   Формальная декларация:
 //     - даёт `nova doc` source-of-truth для `Iterable[T]` API,
-//     - регистрируется в `BoundCtx.protocol_specs` (types/mod.rs:368) —
-//       eligible как bound (`T Iter`) per D72,
+//     - регистрируется как eligible bound (`T Iter`),
 //     - НЕ ломает существующий structural for-in dispatch (codegen
 //       продолжает искать `next` метод напрямую — protocol declaration
 //       не enforced на arbitrary type annotations типа `-> Iter[int]`),
-//     - идемпотентна с `lints.rs:565` `collect_protocol_names` который
-//       уже хардкодит "Iter" в HashSet встроенных protocols
-//       (HashSet de-dups, lints поведение не меняется).
+//     - идемпотентна с collect_protocol_names который уже хардкодит
+//       "Iter" в HashSet встроенных protocols (HashSet de-dups, lints
+//       поведение не меняется).
 //   Signature в декларации — `next() -> Option[T]` БЕЗ `mut` (bootstrap
 //   parser не поддерживает `mut` префикс в protocol-method declaration;
 //   receiver mutability подразумевается use-case'ом и объявляется на
 //   стороне implementer'а: `fn RangeIter mut @next() -> ...`).
 //
-// **Plan 62.D non-opaque bis-1 closure (2026-05-18):**
-//
 // - **`Range` / `RangeIter`** остаются в `std/collections/range.nv`
-//   (canonical location для модуля `std.collections.range`). Восемь
-//   существующих файлов explicitly импортируют их по этому пути:
-//     - nova_tests/modules/{export_import_reexport, selective_import,
-//       folder_per_file_imports/reader}.nv
-//     - nova_tests/negative_capability/selective_import_*_rejected.nv
-//     - nova_tests/syntax/step_by_cross_file.nv
-//   Перенос файла сломал бы эти imports — поэтому декларации остаются
-//   на месте, а `std/prelude.nv` facade re-export'ит их селективно:
+//   (canonical location для модуля `std.collections.range`), а
+//   `std/prelude.nv` facade re-export'ит их селективно:
 //     `export import std.collections.range.{Range, RangeIter}`.
+//   Регрессии, триггерившиеся этой re-export-строкой, закрыты: match
+//   inference для pattern bindings, closure capture inner-shadowing
+//   (scope-aware free-ident collection), closure mono'd arg-name drop,
+//   user-shadow (`W_PRELUDE_SHADOW` warning + codegen emit dedup —
+//   user-декларации выигрывают, prelude-merged duplicates skip'аются).
 //
-//   До Plan 62.D bis-1 эта re-export-строка триггерила 4 регрессии
-//   (cancel_semantics_test / closure_rev / p48_closure_arg_inference /
-//   for_in_range_iter). Bis-1 закрыл все четыре баги:
-//     1. Match inference (Nova_Range* vs nova_str) — pattern bindings
-//        installed в `infer_expr_c_type(Match)` через
-//        `pattern_binding_overrides` RefCell (emit_c.rs:18936+).
-//        Без этого stale `r` из var_types другого scope перебивал
-//        правильный inner-type из scrutinee.
-//     2. Closure capture inner-shadowing — scope-aware
-//        `collect_truly_free_idents` (emit_c.rs:16621+) уважает inner
-//        let-bindings и lambda params. Раньше misnamed
-//        `collect_free_idents` собирал ВСЕ идентификаторы.
-//     3. Closure mono'd arg-name drop — same root cause как #2.
-//     4. D29 user-shadow — `W_PRELUDE_SHADOW` basic warning
-//        (types/mod.rs:117+) + codegen emit dedup (emit_c.rs:1300+).
-//        User declarations выигрывают, prelude-merged duplicates
-//        skip'аются.
-//
-// **Plan 62.D.bis done (2026-05-18):** `StringBuilder` / `WriteBuffer` /
-// `ReadBuffer` formally declared via new `external type` syntax (D126).
-// Backing implementation остаётся в `nova_rt/<name>.h`/.c; method
-// declarations — в `std/runtime/<name>.nv` через `external fn` (D82,
-// unchanged). Type-decl + methods — два разных файла, связанных по
-// receiver-type name. См. spec/decisions/03-syntax.md §D126 +
-// docs/plans/62.D.bis-opaque-types-and-external-type-d-block.md.
+// **Opaque types:** `StringBuilder` / `WriteBuffer` / `ReadBuffer` formally
+// declared через new `external type` syntax. Backing implementation остаётся
+// в runtime; method declarations — в `std/runtime/<name>.nv` через
+// `external fn` (unchanged). Type-decl + methods — два разных файла,
+// связанных по receiver-type name.
 
 module prelude.collections
 
@@ -84,7 +59,7 @@ module prelude.collections
 import std.prelude.core.{Option}
 
 // ──────────────────────────────────────────────────────────────────────────
-// Next[T] + Iter[I] protocols (D241+D242, Plan 138)
+// Next[T] + Iter[I] protocols
 // ──────────────────────────────────────────────────────────────────────────
 //
 // Конвенция: имя протокола = магический метод который он требует.
@@ -130,39 +105,33 @@ export type Iter[I] protocol {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Built-in opaque accumulator/buffer types (D126, Plan 04, Plan 62.D.bis)
+// Built-in opaque accumulator/buffer types
 // ──────────────────────────────────────────────────────────────────────────
 //
 // `external type X` — opaque, реализация в runtime (nova_rt/<name>.h/.c).
-// Body отсутствует (declared в parser/mod.rs:2055+ как TypeDeclKind::Opaque).
-// Codegen skip'ает emission (emit_c.rs:4986+). Methods объявляются отдельно
-// в `std/runtime/<name>.nv` через `external fn` (D82); связь — по
-// receiver-type name. См. spec/decisions/03-syntax.md §D126 для семантики.
-//
-// До Plan 62.D.bis (2026-05-18) эти типы существовали как «known-by-name»
-// (D26 prose-only); D126 закрывает последний knew-by-name hole в D26
-// visible prelude (после 62.A/B/C/D-non-opaque/E/F).
+// Body отсутствует (declared как TypeDeclKind::Opaque).
+// Codegen skip'ает emission. Methods объявляются отдельно
+// в `std/runtime/<name>.nv` через `external fn`; связь — по
+// receiver-type name. См. spec/decisions/03-syntax.md §external type для
+// семантики.
 
-// [M-vec-access-e7320-as-bytes-str] (fix, 2026-07-07): the `#no_prelude`
-// helpers this facade re-exports below (string_builder.nv, write_buffer.nv)
-// call `str.@bytes()` (string_builder.nv), and str.@bytes()'s own
-// callers pull in `().to_char()` (std/runtime/string/core.nv:42) —
-// both assume a FULL `std.prelude` is already in the CU. A consumer that
-// opts into `#prelude(collections)` only (partial prelude, D174) never
-// brings in `std.runtime.string` / `std.runtime.char`, so those bodies hit
-// E7320 (`no field or method as_bytes on type str`) the moment they're
-// actually compiled into such a CU. A partial-prelude facade must be
-// self-contained w.r.t. its OWN re-exports' dependencies — bring them here
-// explicitly. Must live in a transitively-pulled facade like this one, not
-// the entry file: `std.runtime.string` (core.nv) itself imports
-// `std.collections.vec`, and importing it directly from an entry module
-// re-enters the string↔vec resolution cycle before this facade is visited,
-// tripping the D29 early-return cycle guard (verified experimentally).
+// The `#no_prelude` helpers this facade re-exports below (string_builder.nv,
+// write_buffer.nv) call `str.@bytes()` (string_builder.nv), and str.@bytes()'s
+// own callers pull in `().to_char()` (std/runtime/string/core.nv) — both
+// assume a FULL `std.prelude` is already in the CU. A consumer that opts into
+// `#prelude(collections)` only (partial prelude) never brings in
+// `std.runtime.string` / `std.runtime.char`, so those bodies hit E7320 (`no
+// field or method as_bytes on type str`) the moment they're actually compiled
+// into such a CU. A partial-prelude facade must be self-contained w.r.t. its
+// OWN re-exports' dependencies — bring them here explicitly. Must live in a
+// transitively-pulled facade like this one, not the entry file:
+// `std.runtime.string` (core.nv) itself imports `std.collections.vec`, and
+// importing it directly from an entry module re-enters the string↔vec
+// resolution cycle before this facade is visited, tripping the cycle guard.
 import std.runtime.string
 import std.runtime.char
 
-// [M-ptr-raw-access-contract-and-unaligned] item 3 note: f32/f64
-// `.to_bits()`/`.from_bits()` (now plain Nova-body methods in
+// f32/f64 `.to_bits()`/`.from_bits()` (plain Nova-body methods in
 // std/runtime/numeric.nv, no longer compiler intrinsics) need NO import
 // here — their ACTUAL callers (write_buffer.nv / read_buffer.nv) carry
 // their own explicit `import std.runtime.numeric` (#no_prelude
@@ -185,8 +154,8 @@ import std.runtime.char
 // `compare` overload (`str`'s), so the SYMPTOM is a C-compile type error
 // (`passing 'nova_byte' to parameter of incompatible type 'nova_str'`) only
 // once something actually monomorphizes `Vec[u8].compare` (e.g. an
-// auto-derived `Compare` for a `[]u8`-having record — Plan 126.2 injects one
-// for every merged type unconditionally, including this facade's own
+// auto-derived `Compare` for a `[]u8`-having record, injected for every
+// merged type unconditionally, including this facade's own
 // StringBuilder/WriteBuffer/ReadBuffer). The silent mis-dispatch itself is a
 // separate, narrower defect in its own right — see
 // [M-partial-prelude-primitive-method-registry] backlog entry.
@@ -208,16 +177,16 @@ import std.runtime.defaults
 // facade's own re-exports depend on.
 import std.prelude.errors.{CharFromError, TryFromCharError, ReadBufferError, UnexpectedEnd}
 
-// Plan 109 (D179): StringBuilder — Nova-defined consume type in std/runtime/string_builder.nv.
+// StringBuilder — Nova-defined consume type in std/runtime/string_builder.nv.
 export import std.runtime.string_builder.{StringBuilder}
 
-// Plan 91.12 (D126 retract, 2026-06-01): WriteBuffer и ReadBuffer теперь
-// тоже Nova-defined types (по паттерну StringBuilder/Plan 109).
+// WriteBuffer и ReadBuffer — тоже Nova-defined types (по паттерну
+// StringBuilder):
 //   - WriteBuffer (consume record `{ mut buf []u8 }`) — std/runtime/write_buffer.nv
 //   - ReadBuffer  (cursor record `{ ro data []u8, mut pos int }`) — std/runtime/read_buffer.nv
 // Старые `external type WriteBuffer` / `external type ReadBuffer` declarations
 // удалены вместе с C runtime headers (`nova_rt/{write,read}_buffer.h`).
-// API surface: `@write_*` методы + `@read_*` (Result-форма, D325 — единый
-// fallible-контракт, Plan 177). См. Plan 91.12 для migration details.
+// API surface: `@write_*` методы + `@read_*` (Result-форма, единый
+// fallible-контракт).
 export import std.runtime.write_buffer.{WriteBuffer}
 export import std.runtime.read_buffer.{ReadBuffer}
