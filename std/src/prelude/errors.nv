@@ -62,24 +62,24 @@ module prelude.errors
 // Runtime errors (D26 §«Bottom-уровневые runtime-ошибки»)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Bottom-уровневые runtime-ошибки. Бросаются автоматически compiler'ом
-/// (`a/b` на 0, `arr[i]` out-of-bounds, type mismatch, и т.д.) либо
-/// вручную через `throw`. См. D26 spec / D65.
+/// Bottom-level runtime errors. Thrown automatically by the compiler
+/// (`a/b` on 0, `arr[i]` out-of-bounds, type mismatch, etc.) or
+/// manually via `throw`. See D26 spec / D65.
 ///
-/// `StackOverflow` и `OutOfMemory` НЕ входят — они panic (D13), не Fail.
+/// `StackOverflow` and `OutOfMemory` are NOT included — they panic (D13),
+/// not Fail.
 ///
-/// **Bootstrap**: `Nova_RuntimeError*` typedef + `nova_make_RuntimeError_*`
-/// constructors живут в `nova_rt/array.h` (~lines 557-610). Pre-populated
-/// `sum_schemas["RuntimeError"]` (emit_c.rs:1029-1048) регистрирует
-/// 6 variants; `init_prelude_decls_from_items` (Plan 62.C) распознаёт
-/// эту декларацию и регистрирует Prelude entry в `sum_schema_registry`
-/// inheriting variant info и (currently empty) `method_routing` от
-/// HardcodedBaseline.
+/// **Bootstrap**: the `Nova_RuntimeError*` typedef + `nova_make_RuntimeError_*`
+/// constructors live in `nova_rt/array.h` (~lines 557-610). The pre-populated
+/// `sum_schemas["RuntimeError"]` (emit_c.rs:1029-1048) registers 6 variants;
+/// `init_prelude_decls_from_items` (Plan 62.C) registers a Prelude entry in
+/// `sum_schema_registry` — inheriting variant info and the (currently empty)
+/// `method_routing` — from HardcodedBaseline.
 ///
-/// **Variant set strict-equality (Plan 62.A.bis acceptance):** этот
-/// declaration МУСТ matchить ровно 6 вариантов HardcodedBaseline entry
-/// (sum_schema_registry.rs:458-483). Расширение variant set требует
-/// edition bump (Plan 62.F).
+/// **Variant set strict-equality (Plan 62.A.bis acceptance):** this
+/// declaration MUST match exactly the 6 variants of the HardcodedBaseline
+/// entry (sum_schema_registry.rs:458-483). Extending the variant set
+/// requires an edition bump (Plan 62.F).
 #stable(since = "0.1")
 export type RuntimeError enum
     | DivByZero
@@ -93,22 +93,22 @@ export type RuntimeError enum
 // ReadBuffer errors (D26 §«Прочие prelude-типы»)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Ошибка чтения буфера: данных меньше чем ожидалось. Throw'ится
-/// `@read_*` методами `ReadBuffer` (см. nova_rt/read_buffer.h) когда
-/// cursor выходит за границы underlying byte-slice.
+/// Buffer read error: fewer bytes than expected. Thrown by the
+/// `@read_*` methods of `ReadBuffer` (see nova_rt/read_buffer.h) when the
+/// cursor goes past the underlying byte-slice boundary.
 ///
-/// **Bootstrap**: actual error payload в `Nova_Fail_fail` — это
+/// **Bootstrap**: the actual error payload in `Nova_Fail_fail` is a
 /// formatted `nova_str` ("ReadBuffer.UnexpectedEnd: wanted N, available M",
-/// см. nova_rt/read_buffer.h:62-77 и :254-272), НЕ structured
-/// `Nova_ReadBufferError*`. Эта Nova-level декларация даёт type-checker'у
-/// канонический type-name для signatures `Fail[ReadBufferError]` /
-/// `Result[T, ReadBufferError]` (см. runtime_registry.rs:893-954) и
-/// pattern-matching конструкций. Конверсия в structured payload
-/// отложена (см. spec/decisions/08-runtime.md §«Bootstrap-ограничения»).
+/// see nova_rt/read_buffer.h:62-77 and :254-272), NOT a structured
+/// `Nova_ReadBufferError*`. This Nova-level declaration gives the
+/// type-checker a canonical type name for `Fail[ReadBufferError]` /
+/// `Result[T, ReadBufferError]` signatures (see runtime_registry.rs:893-954)
+/// and pattern-matching constructs. Conversion to a structured payload is
+/// deferred (see spec/decisions/08-runtime.md §«Bootstrap-ограничения»).
 ///
 /// Variants:
-///   - `UnexpectedEnd { wanted int, available int }` — попытка прочитать
-///     `wanted` байтов когда осталось `available < wanted`.
+///   - `UnexpectedEnd { wanted int, available int }` — an attempt to read
+///     `wanted` bytes when `available < wanted` remain.
 #stable(since = "0.1")
 export type ReadBufferError enum
     | UnexpectedEnd { wanted int, available int }
@@ -117,21 +117,21 @@ export type ReadBufferError enum
 // Option-unwrap error (D85)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Ошибка разворачивания пустого `Option`. Бросается оператором `expr!!`
-/// когда `expr` — `None` (D85: `Option!!` → `throw RuntimeNoneError`).
-/// Функция, использующая `opt!!`, должна иметь `Fail[RuntimeNoneError]`
-/// в сигнатуре (см. spec/decisions/04-effects.md §D85).
+/// Unwrap error of an empty `Option`. Thrown by the `expr!!` operator
+/// when `expr` is `None` (D85: `Option!!` → `throw RuntimeNoneError`).
+/// A function using `opt!!` must have `Fail[RuntimeNoneError]`
+/// in its signature (see spec/decisions/04-effects.md §D85).
 ///
-/// Unit-тип (без вариантов / полей) — носит сам факт «развернули None»,
-/// полезной нагрузки нет.
+/// Unit type (no variants / fields) — it carries the bare fact "an None
+/// was unwrapped", no payload.
 ///
-/// **Bootstrap:** actual throw в `nova_rt/effects.h` — это string-payload
-/// (`nova_throw(nova_str_from_cstr("RuntimeNoneError"))`), structured
-/// `Nova_RuntimeNoneError*` payload не строится. Эта Nova-level
-/// декларация даёт type-checker'у канонический type-name для сигнатур
-/// `Fail[RuntimeNoneError]` / pattern-matching. Конверсия в structured
-/// payload отложена (тот же mechanism что у `ReadBufferError` — см.
-/// spec/decisions/08-runtime.md §«Bootstrap-ограничения»).
+/// **Bootstrap:** the actual throw in `nova_rt/effects.h` is a string
+/// payload (`nova_throw(nova_str_from_cstr("RuntimeNoneError"))`); no
+/// structured `Nova_RuntimeNoneError*` payload is built. This Nova-level
+/// declaration gives the type-checker a canonical type name for
+/// `Fail[RuntimeNoneError]` signatures / pattern-matching. Conversion to a
+/// structured payload is deferred (same mechanism as `ReadBufferError` —
+/// see spec/decisions/08-runtime.md §«Bootstrap-ограничения»).
 ///
 /// # Examples
 ///
@@ -146,28 +146,28 @@ export type RuntimeNoneError
 // Plan 100.4.1 (D158): MultiError — composite error для failable cleanup
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Composite error от **failable defer body** (D158).
+/// Composite error from a **failable defer body** (D158).
 ///
-/// Когда cleanup-fail происходит **во время propagation другой ошибки** —
-/// primary error НЕ заменяется; cleanup-error appended в chain `suppressed`.
-/// Caller инспектирует composite через `.primary()` / `.suppressed()` API.
+/// When a cleanup failure occurs **while another error is propagating** —
+/// the primary error is NOT replaced; the cleanup error is appended to the
+/// `suppressed` chain. The caller inspects the composite via `.primary()` / `.suppressed()`.
 ///
-/// # Сценарии
+/// # Scenarios
 ///
-/// **A. Cleanup-fail на normal exit** — `MultiError { primary: cleanup_err,
-/// suppressed: [] }`. Single error; surface as обычный `Fail`.
+/// **A. Cleanup failure on normal exit** — `MultiError { primary: cleanup_err,
+/// suppressed: [] }`. Single error; surfaces as a plain `Fail`.
 ///
-/// **B. Cleanup-fail во время propagation primary'a** — `MultiError {
+/// **B. Cleanup failure during primary propagation** — `MultiError {
 /// primary: original_err, suppressed: [cleanup_err1, cleanup_err2, ...] }`.
-/// Caller видит root cause + cascaded cleanup failures.
+/// The caller sees the root cause + cascaded cleanup failures.
 ///
-/// **C. Multi-defer LIFO accumulation** — обрабатывается Plan 100.4.4 (D161).
+/// **C. Multi-defer LIFO accumulation** — handled by Plan 100.4.4 (D161).
 ///
 /// # Bootstrap
 ///
-/// String-based: `primary: str` + `suppressed: []str`. Runtime materialize
-/// MultiError из `NovaFailFrame.error_suppressed` chain (через
-/// `nova_failframe_suppressed_count` / `nova_failframe_suppressed_at`).
+/// String-based: `primary: str` + `suppressed: []str`. The runtime
+/// materializes MultiError from the `NovaFailFrame.error_suppressed` chain
+/// (via `nova_failframe_suppressed_count` / `nova_failframe_suppressed_at`).
 ///
 /// Production-grade typed payload (`primary: E1`, `suppressed: []E2`) —
 /// Plan 100.4.4 + 100.4.5.
@@ -216,9 +216,9 @@ fn MultiError @fmt_chain() -> str => @primary
 // Plan 110.4.1 (D193) — MultiError iteration + walk + panic detection
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Plan 110 D193: walk over all errors в chain LIFO order
+/// Plan 110 D193: walk over all errors in the chain in LIFO order
 /// (primary first, then suppressed[0], suppressed[1], ...).
-/// Возвращает []str — массив всех messages.
+/// Returns []str — an array of all messages.
 #stable(since = "0.1")
 fn MultiError @walk() -> []str {
     mut result []str = []str.new(cap: @suppressed.len() + 1)
@@ -229,9 +229,9 @@ fn MultiError @walk() -> []str {
     result
 }
 
-/// Plan 110 D193: find first panic message в chain (если есть).
-/// Bootstrap: ищет prefix "panic:" в messages — full typed panic
-/// discrimination после `any` payload migration ([M-110-multierror-any]).
+/// Plan 110 D193: find the first panic message in the chain (if any).
+/// Bootstrap: searches the "panic:" prefix in messages — full typed panic
+/// discrimination after the `any` payload migration ([M-110-multierror-any]).
 #stable(since = "0.1")
 fn MultiError @find_first_panic() -> Option[str] {
     if @primary.starts_with("panic:") {
@@ -249,14 +249,14 @@ fn MultiError @find_first_panic() -> Option[str] {
 // Plan 110 D193 / D90 §7 amend — typed cancel/timeout/truncation errors
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Cancel-as-error payload (D90 §7 amend, Plan 110). При cancel/interrupt
-/// в `consume {}` body — outcome приходит как `Failure(CancelError { ... })`.
-/// Resource'у видна типизированная причина cancel'а вместо опаковой
-/// «cancellation».
+/// Cancel-as-error payload (D90 §7 amend, Plan 110). On cancel/interrupt
+/// in a `consume {}` body — the outcome arrives as
+/// `Failure(CancelError { ... })`. The resource sees a typed cancel reason
+/// instead of an opaque "cancellation".
 ///
-/// **Bootstrap status (Plan 110 Ф.6.6):** declaration here; codegen path
-/// `nv_consume_emit_cancel_as_failure` материализует payload при
-/// cancel-доставке в body (Plan 110 Ф.9.4).
+/// **Bootstrap status (Plan 110 Ф.6.6):** declaration here; the codegen
+/// path `nv_consume_emit_cancel_as_failure` materializes the payload on
+/// cancel delivery into the body (Plan 110 Ф.9.4).
 ///
 /// # Examples
 ///
@@ -281,28 +281,28 @@ export type CancelError {
     ro reason str
 }
 
-/// Scope-deadline exceeded (Plan 174 / D349, план 173 §3a). Выбрасывается
-/// runtime'ом наружу из `supervised(deadline:/timeout:) { ... }` когда срок
-/// области истёк: все fiber'ы области кооперативно отменяются (тот же путь,
-/// что `cancel:`), их cleanup'ы добегают, и наружу летит типизированный
-/// `TimeoutError` — ловится `is TimeoutError` (D54/174.3) или
-/// `with Fail[TimeoutError]`.
+/// Scope-deadline exceeded (Plan 174 / D349, plan 173 §3a). Thrown by the
+/// runtime outward from `supervised(deadline:/timeout:) { ... }` when the
+/// scope's deadline is reached: all the scope's fibers are cooperatively
+/// cancelled (same path as `cancel:`), their cleanups run to completion,
+/// and a typed `TimeoutError` flies outward — caught with `is TimeoutError`
+/// (D54/174.3) or `with Fail[TimeoutError]`.
 ///
-/// `deadline_ns` — превышенная точка на монотонных часах (абсолютные
-/// наносекунды, epoch реализации; только дельты значимы). NB: ретрактнутый
-/// `CleanupTimeoutError` (D192-ретракт, Plan 173 Ф.5 п.2) был про
-/// cleanup-бюджет ресурса и УДАЛЁН (превышение = watchdog-варн + overrun в
-/// ResourceTrace exit-событии); этот тип — про срок ЦЕЛОЙ области
-/// (bounded-shutdown) и живёт. Реальная USER-ошибка внутри области
-/// побеждает срок (USER-precedence): при истечении срока И user-throw'е наружу
-/// летит user-ошибка, не `TimeoutError`.
+/// `deadline_ns` — the exceeded point on the monotonic clock (absolute
+/// nanoseconds, implementation epoch; only deltas matter). NB: the
+/// retracted `CleanupTimeoutError` (D192 retract, Plan 173 Ф.5 п.2) was
+/// about a resource's cleanup budget and was REMOVED (exceeding = watchdog
+/// warning + overrun in the ResourceTrace exit event); this type is about
+/// the deadline of the WHOLE scope (bounded-shutdown) and stays. A real
+/// USER error inside the scope beats the deadline (USER-precedence): on
+/// deadline AND user-throw, the user error flies outward, not `TimeoutError`.
 ///
 /// # Examples
 ///
 /// ```nova
 /// fn fetch_bounded() Fail[TimeoutError] -> () {
 ///     supervised(timeout: 5.to_seconds()) {
-///         spawn { slow_download() }  // если > 5s — TimeoutError
+///         spawn { slow_download() }  // if > 5s — TimeoutError
 ///     }
 /// }
 ///
@@ -317,13 +317,13 @@ export type TimeoutError {
     ro deadline_ns i64
 }
 
-/// Sentinel composed в `MultiError.suppressed` когда cleanup-cascade
-/// глубина превышает `D193` depth-limit (256). Дальнейшие compose silently
-/// ignored; pointer на этот sentinel signal'ит «cascade was truncated at
-/// depth N».
+/// Sentinel composed into `MultiError.suppressed` when the cleanup-cascade
+/// depth exceeds the `D193` depth-limit (256). Further composes are silently
+/// ignored; a pointer to this sentinel signals "cascade was truncated at
+/// depth N".
 ///
 /// **Bootstrap status (Plan 110 Ф.6.6):** declaration here; emission
-/// в `nv_compose_error` (Plan 110 Ф.6.5).
+/// in `nv_compose_error` (Plan 110 Ф.6.5).
 #stable(since = "0.1")
 export type MultiErrorTruncated {
     ro depth int
@@ -333,11 +333,11 @@ export type MultiErrorTruncated {
 // Char conversion errors (D54/D77)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Ошибка конверсии `int` → `char`. Выбрасывается `(cp int).to_char()`
-/// когда codepoint вне диапазона [0, 0x10FFFF] или является surrogate
+/// Error of converting `int` → `char`. Thrown by `(cp int).to_char()`
+/// when the codepoint is outside [0, 0x10FFFF] or is a surrogate
 /// [0xD800, 0xDFFF].
 ///
-/// Unit-тип — сам факт «невалидный codepoint», payload не нужен.
+/// Unit type — the bare fact "invalid codepoint", no payload needed.
 ///
 /// [M-f64-try-parse-to-parse-f64] (2026-07-07): renamed from `CharTryFromError`
 /// — `char.try_from` renamed to `char.from` (R3: was the only static char
@@ -354,10 +354,10 @@ export type MultiErrorTruncated {
 #stable(since = "0.1")
 export type CharFromError
 
-/// Ошибка конверсии `char` → `u8`. Выбрасывается `u8.try_from(c char)`
-/// когда codepoint > 0xFF (символ не является Latin-1).
+/// Error of converting `char` → `u8`. Thrown by `u8.try_from(c char)`
+/// when the codepoint > 0xFF (the character is not Latin-1).
 ///
-/// Unit-тип — сам факт «символ не вмещается в u8».
+/// Unit type — the bare fact "the character does not fit in u8".
 ///
 /// # Examples
 ///
@@ -374,25 +374,25 @@ export type TryFromCharError
 // Numeric narrowing error ([M-numeric-try-narrowing], 2026-07-20, D430)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Ошибка проверяемого сужающего числового преобразования (число→число).
-/// Возвращается `try_to_<T>` семейством (`std/prelude/protocols.nv`,
-/// `fn[S Ints] S @try_to_i8()`/`@try_to_u8()`/... — по одному бланкету на
-/// целевой тип `<T>`, охватывает весь `Ints`-набор источников) когда
-/// исходное значение не влезает в диапазон целевого типа `<T>` (`as`
-/// остаётся быстрым обрезающим кастом — без изменений).
+/// Error of a checked narrowing numeric conversion (number→number).
+/// Returned by the `try_to_<T>` family (`std/prelude/protocols.nv`,
+/// `fn[S Ints] S @try_to_i8()`/`@try_to_u8()`/... — one blanket per target
+/// type `<T>`, covering the whole `Ints` source set) when the source value
+/// does not fit the target type `<T>` range (`as` stays the fast truncating
+/// cast — unchanged).
 ///
-/// Unit-тип — сам факт «не влезло», payload не нужен (тот же прецедент,
-/// что `CharFromError`/`TryFromCharError` выше — «факт без данных»).
+/// Unit type — the bare fact "did not fit", no payload needed (same
+/// precedent as `CharFromError`/`TryFromCharError` above — "a fact without data").
 ///
 /// # Examples
 ///
 /// ```nova
 /// match (300u32).try_to_u8() {
-///     Ok(v) => ...                  // влезло — value as u8
+///     Ok(v) => ...                  // fits — value as u8
 ///     Err(RangeError) => ...        // 300 > u8.MAX (255)
 /// }
 /// ro n = (-1i32).try_to_u8()
-/// assert(n == Err(RangeError))      // отрицательное → unsigned
+/// assert(n == Err(RangeError))      // negative → unsigned
 /// ```
 #stable(since = "0.1")
 export type RangeError

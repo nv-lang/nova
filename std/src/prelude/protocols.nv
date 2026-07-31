@@ -41,31 +41,31 @@ import std.prelude.errors.{RangeError}
 // Equality / Hashing / Ordering protocols (D109)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Хэшируемые типы — для `HashMap[K, ...]` / `HashSet[K]`.
+/// Hashable types — for `HashMap[K, ...]` / `HashSet[K]`.
 ///
-/// `Hash` определяет только `hash() -> u64`, equality вынесена
-/// в отдельный `Equal`. `[K Hash]` — достаточно для lookup'а до collision
-/// check, `[K Hash + Equal]` — полный contract.
+/// `Hash` defines only `hash() -> u64`; equality is factored out into a
+/// separate `Equal`. `[K Hash]` is enough for lookup up to the collision
+/// check, `[K Hash + Equal]` — the full contract.
 ///
-/// Примитивы (`int`/`str`/`bool`/`char`/числовые) — auto-hashable.
-/// Именованные типы должны явно реализовать `fn T @hash() -> u64`.
+/// Primitives (`int`/`str`/`bool`/`char`/numeric) — auto-hashable.
+/// Named types must explicitly implement `fn T @hash() -> u64`.
 ///
 /// # Examples
 ///
 /// ```nova
 /// type UserId { value u64 }
 /// fn UserId @hash() -> u64 => @value
-/// // UserId теперь удовлетворяет Hash structurally.
+/// // UserId now satisfies Hash structurally.
 /// ```
 #stable(since = "0.1")
 export type Hash protocol {
     @hash() -> u64
 }
 
-/// Равенство. `Self == Self` через явный метод.
-/// Если тип satisfies Compare, @equal auto-synthesized через compare;
-/// иначе implementer пишет @equal явно.
-/// Operators ==/!= synthesized автоматически.
+/// Equality. `Self == Self` via an explicit method.
+/// If a type satisfies Compare, @equal is auto-synthesized via compare;
+/// otherwise the implementer writes @equal explicitly.
+/// The ==/!= operators are synthesized automatically.
 ///
 /// # Examples
 ///
@@ -85,12 +85,12 @@ export type Equal protocol {
     @equal(other Self) -> bool => @compare(other) == 0
 }
 
-/// Полный порядок. Orthogonal с Equal (no embed); Equal получает
-/// default body через coercion к Compare. Возвращает `int`
+/// Total order. Orthogonal to Equal (no embed); Equal gets its default
+/// body via coercion to Compare. Returns `int`
 /// (memcmp-style: < 0, 0, > 0).
 ///
-/// Транзитивность и antisymmetry — программистская обязанность (compiler
-/// не верифицирует). Для partial order — отдельный protocol (Plan 62.E+).
+/// Transitivity and antisymmetry are a programmer obligation (the compiler
+/// does not verify them). For partial order — a separate protocol (Plan 62.E+).
 ///
 /// # Examples
 ///
@@ -111,19 +111,19 @@ export type Compare protocol {
 
 /// Deep recursive copy.
 ///
-/// Single-method protocol для глубокой копии value-record / heap-record /
-/// named tuple / sum-type. Auto-derive через `#impl(Clone)` на типе:
-/// compiler synthesize'ит memberwise рекурсивную копию каждого поля.
+/// Single-method protocol for deep-copying a value-record / heap-record /
+/// named tuple / sum type. Auto-derive via `#impl(Clone)` on the type:
+/// the compiler synthesizes a memberwise recursive copy of each field.
 ///
 /// **Auto-derive rules:**
-/// - Primitive types: copy semantics built-in; `str` clone = новая аллокация.
-/// - `[]T`: new array с recursive clone элементов.
+/// - Primitive types: copy semantics built-in; `str` clone = a new allocation.
+/// - `[]T`: a new array with recursive clone of elements.
 /// - Record/NamedTuple: memberwise `field.clone()` chain.
-/// - Sum-type: match-arms, payload рекурсивно clone'ится.
+/// - Sum type: match arms, the payload is cloned recursively.
 ///
 /// **Cycle detection:** type `A` → `E_AUTO_DERIVE_CYCLE`.
 ///
-/// **Field eligibility:** каждое поле должно implement Clone → иначе
+/// **Field eligibility:** every field must implement Clone → otherwise
 /// `E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL`.
 ///
 /// Manual impl (override default):
@@ -295,7 +295,7 @@ export fn FmtCtx mut @pad(bytes []u8) -> () {
 // Display + Debug protocols
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Форматирование в строку (для println, str.from, etc).
+/// Formatting into a string (for println, str.from, etc).
 /// **REQUIRED, no default body**: `@to_str()` is a bounded-`Display`
 /// blanket instead (only callable on a type that already has a real
 /// `@display`). Auto-derive synthesizes a real `@display` on demand.
@@ -315,16 +315,16 @@ export fn FmtCtx mut @pad(bytes []u8) -> () {
 #stable(since = "0.1")
 export type Display protocol { @display(mut f Fmt) -> () }
 
-/// Protocol для отладочного представления — sibling к Display.
+/// Protocol for the debug representation — sibling of Display.
 /// **REQUIRED, no default body**.
 ///
-/// **Distinction от Display:**
+/// **Distinction from Display:**
 /// - `Display.@display` — user-facing display (e.g., `Point(1, 2)`, `"hello"`).
 /// - `Debug.@debug` — diagnostic representation (e.g.,
-///   `Point { x: 1, y: 2 }`, `"\"hello\\n\""` с quote-escape).
+///   `Point { x: 1, y: 2 }`, `"\"hello\\n\""` with quote-escape).
 ///
 /// **Trigger:** `${expr:?}` syntax inside Nova interp-strings.
-/// Bare `${expr}` (no `:?`) routes к `Display.@display`.
+/// Bare `${expr}` (no `:?`) routes to `Display.@display`.
 ///
 /// **Auto-derive:** synthesized on-demand.
 ///
@@ -347,19 +347,19 @@ export type Debug protocol { @debug(mut f Fmt) -> () }
 // Cleanup[E] + WithExitTimeout
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Контракт ресурса для `consume X = expr { body }` scope-block'а.
-/// **Один** метод `cleanup` вызывается ровно один раз при выходе из body.
+/// Resource contract for a `consume X = expr { body }` scope block.
+/// The single `cleanup` method is called exactly once on body exit.
 ///
-/// **`E`** — тип ошибок, которые `cleanup` сам может throw.
-/// Если ресурс infallible — используйте `Cleanup[never]`.
+/// **`E`** — the type of errors that `cleanup` itself may throw.
+/// If the resource is infallible, use `Cleanup[never]`.
 ///
 /// **R-rules:**
-/// - R1: если `init` throws — `cleanup` не вызывается.
+/// - R1: if `init` throws — `cleanup` is not called.
 /// - R2: exactly-once invariant.
-/// - R3: cancel-shield by default внутри `cleanup` body.
+/// - R3: cancel-shield by default inside the `cleanup` body.
 /// - R4: watchdog-threshold resolution at scope-entry.
-/// - R5: LIFO composition для вложенных consume{}.
-/// - R6: release-acquire memory ordering между body и cleanup.
+/// - R5: LIFO composition for nested consume{}.
+/// - R6: release-acquire memory ordering between body and cleanup.
 ///
 /// # Examples
 ///
@@ -378,7 +378,7 @@ export type Debug protocol { @debug(mut f Fmt) -> () }
 ///     consume tx = Db.begin() {
 ///         do_work()?
 ///     }
-///     // tx.cleanup вызван ровно один раз; commit/rollback по outcome.
+///     // tx.cleanup called exactly once; commit/rollback by outcome.
 /// }
 /// ```
 #stable(since = "0.1")
@@ -386,23 +386,23 @@ export type Cleanup[E] protocol {
     consume @cleanup(outcome ScopeOutcome) Fail[E] -> ()
 }
 
-/// Опциональный protocol для ресурсов с custom watchdog-порогом.
-/// **Не** часть Cleanup — structural-match: любой тип с методом
-/// `exit_timeout_ms() -> int` автоматически satisfies.
+/// Optional protocol for resources with a custom watchdog threshold.
+/// **Not** part of Cleanup — structural match: any type with an
+/// `exit_timeout_ms() -> int` method automatically satisfies it.
 ///
 /// 3-level resolution (codegen consume-prologue):
-/// 1. WithExitTimeout impl (этот protocol) — если есть;
+/// 1. WithExitTimeout impl (this protocol) — if present;
 /// 2. Application effect handler — `default_exit_timeout_ms()`;
 /// 3. Hardcoded fallback — 5000 ms.
 ///
-/// `Mutex` / `Sem` / `Lock` намеренно **не** implement — hardcoded 5s достаточен.
+/// `Mutex` / `Sem` / `Lock` deliberately do **not** implement it — hardcoded 5s is enough.
 ///
-/// `int` милисекунд вместо `Duration` — избегаем cross-module import.
+/// `int` milliseconds instead of `Duration` — avoids a cross-module import.
 ///
 /// # Examples
 ///
 /// ```nova
-/// fn Transaction @exit_timeout_ms() -> int => 30_000   // 30 секунд
+/// fn Transaction @exit_timeout_ms() -> int => 30_000   // 30 seconds
 /// ```
 #stable(since = "0.1")
 export type WithExitTimeout protocol {
@@ -413,13 +413,13 @@ export type WithExitTimeout protocol {
 // Index[K, V] + MutIndex[K, V] protocols
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Индексный доступ `a[key]` — magic-метод `@index` для `a[key]` выражений
-/// на user-типах. Паникует при invalid key.
+/// Indexed access `a[key]` — the `@index` magic method for `a[key]`
+/// expressions on user types. Panics on an invalid key.
 ///
-/// Встроенные `[]T` и `str` удовлетворяют через built-in codegen path;
-/// user-типы реализуют явно.
+/// Built-in `[]T` and `str` satisfy it via the built-in codegen path;
+/// user types implement it explicitly.
 ///
-/// `a[key]` десугаринг в `a.index(key)`.
+/// `a[key]` desugars to `a.index(key)`.
 ///
 /// # Examples
 ///
@@ -438,10 +438,10 @@ export type Index[K, V] protocol {
     @index(key K) -> V
 }
 
-/// Индексная запись `a[key] = val` — magic-метод `mut @index` для assignment
-/// lhs. Read-only типы реализуют только `Index`. Мутабельные — оба.
+/// Indexed write `a[key] = val` — the `mut @index` magic method for the
+/// assignment lhs. Read-only types implement only `Index`; mutable ones — both.
 ///
-/// `a[key] = val` десугаринг в `a.@index(key, val)`.
+/// `a[key] = val` desugars to `a.@index(key, val)`.
 ///
 /// # Examples
 ///
@@ -698,50 +698,50 @@ type Ints set i8 | i16 | i32 | i64 | int | u8 | u16 | u32 | u64 | uint
 // `checked_*` -> Option[T], `wrapping_*` -> T, `saturating_*` -> T.
 // `unchecked_*` отложен.
 
-/// `checked_add` — `None` при overflow, иначе `Some(a + b)`.
+/// `checked_add` — `None` on overflow, else `Some(a + b)`.
 #stable(since = "0.1")
 export fn[T Ints] T @checked_add(rhs T) -> Option[T] {
     ro (wrapped, overflowed) = @overflowing_add(rhs)
     if overflowed { None } else { Some(wrapped) }
 }
 
-/// `checked_sub` — `None` при overflow, иначе `Some(a - b)`.
+/// `checked_sub` — `None` on overflow, else `Some(a - b)`.
 #stable(since = "0.1")
 export fn[T Ints] T @checked_sub(rhs T) -> Option[T] {
     ro (wrapped, overflowed) = @overflowing_sub(rhs)
     if overflowed { None } else { Some(wrapped) }
 }
 
-/// `checked_mul` — `None` при overflow, иначе `Some(a * b)`.
+/// `checked_mul` — `None` on overflow, else `Some(a * b)`.
 #stable(since = "0.1")
 export fn[T Ints] T @checked_mul(rhs T) -> Option[T] {
     ro (wrapped, overflowed) = @overflowing_mul(rhs)
     if overflowed { None } else { Some(wrapped) }
 }
 
-/// `wrapping_add` — модульная арифметика (2^n wraparound); флаг overflow игнорируется.
+/// `wrapping_add` — modular arithmetic (2^n wraparound); the overflow flag is ignored.
 #stable(since = "0.1")
 export fn[T Ints] T @wrapping_add(rhs T) -> T {
     ro (wrapped, _overflowed) = @overflowing_add(rhs)
     wrapped
 }
 
-/// `wrapping_sub` — модульная арифметика (2^n wraparound); флаг overflow игнорируется.
+/// `wrapping_sub` — modular arithmetic (2^n wraparound); the overflow flag is ignored.
 #stable(since = "0.1")
 export fn[T Ints] T @wrapping_sub(rhs T) -> T {
     ro (wrapped, _overflowed) = @overflowing_sub(rhs)
     wrapped
 }
 
-/// `wrapping_mul` — модульная арифметика (2^n wraparound); флаг overflow игнорируется.
+/// `wrapping_mul` — modular arithmetic (2^n wraparound); the overflow flag is ignored.
 #stable(since = "0.1")
 export fn[T Ints] T @wrapping_mul(rhs T) -> T {
     ro (wrapped, _overflowed) = @overflowing_mul(rhs)
     wrapped
 }
 
-/// `saturating_add` — при overflow клампит к `T.MAX`/`T.MIN` (направление
-/// по знаку `rhs`: прибавили положительное -> перелилось вверх -> `MAX`).
+/// `saturating_add` — on overflow clamps to `T.MAX`/`T.MIN` (direction
+/// by the sign of `rhs`: added a positive -> overflowed up -> `MAX`).
 #stable(since = "0.1")
 export fn[T Ints] T @saturating_add(rhs T) -> T {
     ro (wrapped, overflowed) = @overflowing_add(rhs)
@@ -752,9 +752,9 @@ export fn[T Ints] T @saturating_add(rhs T) -> T {
     }
 }
 
-/// `saturating_sub` — при overflow клампит к `T.MAX`/`T.MIN` (направление по
-/// знаку `rhs`: вычли отрицательное -> перелилось вверх -> `MAX`; unsigned
-/// underflow -> `MIN` = 0).
+/// `saturating_sub` — on overflow clamps to `T.MAX`/`T.MIN` (direction by
+/// the sign of `rhs`: subtracted a negative -> overflowed up -> `MAX`;
+/// unsigned underflow -> `MIN` = 0).
 #stable(since = "0.1")
 export fn[T Ints] T @saturating_sub(rhs T) -> T {
     ro (wrapped, overflowed) = @overflowing_sub(rhs)
@@ -765,9 +765,9 @@ export fn[T Ints] T @saturating_sub(rhs T) -> T {
     }
 }
 
-/// `saturating_mul` — при overflow клампит к `T.MAX`/`T.MIN` (направление по
-/// знаку операндов: одинаковый знак -> произведение положительное ->
-/// перелилось вверх -> `MAX`; разный знак -> вниз -> `MIN`).
+/// `saturating_mul` — on overflow clamps to `T.MAX`/`T.MIN` (direction by
+/// the operands' sign: same sign -> positive product -> overflowed up ->
+/// `MAX`; different sign -> down -> `MIN`).
 #stable(since = "0.1")
 export fn[T Ints] T @saturating_mul(rhs T) -> T {
     ro (wrapped, overflowed) = @overflowing_mul(rhs)
@@ -862,13 +862,13 @@ export fn[T Ints] T @wrapping_neg() -> T {
 
 // `clamp` blanket над `Ints` — replaces per-type concrete methods.
 
-/// `clamp` — ограничивает значение диапазоном `[lo, hi]`: при `@ < lo` -> `lo`;
-/// при `@ > hi` -> `hi`; иначе -> `@` без изменений. Контракт скопирован 1:1 со
-/// старого конкретного `int @clamp` (std/runtime/defaults.nv, до Plan 200 Step
-/// 0): порядок проверок фиксирован (`@ < lo` первым), поэтому при `lo > hi`
-/// метод НЕ паникует — просто ведёт себя по той же формуле: при `lo > hi`
-/// результат всегда `lo` (если `@ < lo`) либо `hi` (иначе) — сам `@` при
-/// перевёрнутом диапазоне не возвращается никогда (эмпирика 2026-07-17).
+/// `clamp` — clamps the value to the `[lo, hi]` range: on `@ < lo` -> `lo`;
+/// on `@ > hi` -> `hi`; otherwise -> `@` unchanged. The contract is copied
+/// 1:1 from the old concrete `int @clamp` (std/runtime/defaults.nv, before
+/// Plan 200 Step 0): the check order is fixed (`@ < lo` first), so with
+/// `lo > hi` the method does NOT panic — it just follows the same formula:
+/// `lo > hi` → the result is always `lo` (if `@ < lo`) or `hi` (otherwise);
+/// `@` itself is never returned for an inverted range (empirics 2026-07-17).
 #stable(since = "0.1")
 export fn[T Ints] T @clamp(lo T, hi T) -> T =>
     if @ < lo { lo } else if @ > hi { hi } else { @ }
@@ -876,21 +876,21 @@ export fn[T Ints] T @clamp(lo T, hi T) -> T =>
 // `signum`/`is_negative`/`is_positive` над `SignedInts` — replaces per-type
 // concrete methods. `UnsignedInts` не входит (Rust-паритет).
 
-/// `signum` — знак значения: `-1`, если `@ < 0`; `1`, если `@ > 0`; иначе `0`.
+/// `signum` — the value's sign: `-1` if `@ < 0`; `1` if `@ > 0`; else `0`.
 #stable(since = "0.1")
 export fn[T SignedInts] T @signum() -> T =>
     if @ < 0 { -1 } else if @ > 0 { 1 } else { 0 }
 
-/// `is_negative` — строгая проверка знака: `true` iff `@ < 0`.
+/// `is_negative` — strict sign check: `true` iff `@ < 0`.
 #stable(since = "0.1")
 export fn[T SignedInts] T @is_negative() -> bool => @ < 0
 
-/// `is_positive` — строгая проверка знака: `true` iff `@ > 0`.
+/// `is_positive` — strict sign check: `true` iff `@ > 0`.
 #stable(since = "0.1")
 export fn[T SignedInts] T @is_positive() -> bool => @ > 0
 
 // `saturating_neg` над `SignedInts` — clamp `T.MIN` to `T.MAX`.
-/// `saturating_neg` — при `@ == T.MIN` клампит к `T.MAX`, иначе `-@`.
+/// `saturating_neg` — clamps `T.MIN` to `T.MAX`, otherwise `-@`.
 #stable(since = "0.1")
 export fn[T SignedInts] T @saturating_neg() -> T =>
     if @ == T.MIN { T.MAX } else { -@ }
@@ -898,27 +898,27 @@ export fn[T SignedInts] T @saturating_neg() -> T =>
 // `abs`/`checked_abs`/`wrapping_abs`/`saturating_abs` над `SignedInts` —
 // replaces old `extern "nova"` hardcoded `int @abs()` which was UB on T.MIN.
 
-/// `abs` — модуль значения; трапит на `T.MIN` ("negation overflow" — тот
-/// же trap, что голый унарный `-@`, НЕ новая политика).
+/// `abs` — absolute value; traps on `T.MIN` ("negation overflow" — the
+/// same trap as bare unary `-@`, NOT a new policy).
 #stable(since = "0.1")
 export fn[T SignedInts] T @abs() -> T =>
     if @ < 0 { -@ } else { @ }
 
-/// `checked_abs` — `None` iff `@ == T.MIN` (единственный непредставимый
-/// случай — `|T.MIN|` не влезает в `T`), иначе `Some(|@|)`.
+/// `checked_abs` — `None` iff `@ == T.MIN` (the only unrepresentable case —
+/// `|T.MIN|` does not fit in `T`), else `Some(|@|)`.
 #stable(since = "0.1")
 export fn[T SignedInts] T @checked_abs() -> Option[T] {
     if @ == T.MIN { return None }
     Some(if @ < 0 { -@ } else { @ })
 }
 
-/// `saturating_abs` — при `@ == T.MIN` клампит к `T.MAX`, иначе `|@|`.
+/// `saturating_abs` — clamps `T.MIN` to `T.MAX`, otherwise `|@|`.
 #stable(since = "0.1")
 export fn[T SignedInts] T @saturating_abs() -> T =>
     if @ == T.MIN { T.MAX } else if @ < 0 { -@ } else { @ }
 
-/// `wrapping_abs` — модульно: `T.MIN` отображается сам в себя (тот же
-/// two's-complement-эффект, что `wrapping_neg(T.MIN) == T.MIN`), иначе `|@|`.
+/// `wrapping_abs` — modular: `T.MIN` maps to itself (the same
+/// two's-complement effect as `wrapping_neg(T.MIN) == T.MIN`), else `|@|`.
 #stable(since = "0.1")
 export fn[T SignedInts] T @wrapping_abs() -> T =>
     if @ == T.MIN { T.MIN } else if @ < 0 { -@ } else { @ }
@@ -928,10 +928,10 @@ export fn[T SignedInts] T @wrapping_abs() -> T =>
 // `pow` traps on overflow (сырой `*`); `checked_*`/`saturating_*`/`wrapping_*`
 // use `overflowing_mul` intrinsic directly (avoid nested-blanket-call ICE).
 
-/// `pow` — целочисленное возведение в степень (exponentiation by
-/// squaring). Трапит на overflow (сырой `*`, D423 §R3 trap-дефолт).
-/// `exp` — `u32` (Rust-паритет: отрицательных степеней для целых нет).
-/// `pow(0) == 1` (включая `0.pow(0) == 1`, математическая конвенция).
+/// `pow` — integer exponentiation (exponentiation by squaring). Traps on
+/// overflow (raw `*`, D423 §R3 trap default). `exp` — `u32` (Rust parity:
+/// no negative powers for integers). `pow(0) == 1` (including
+/// `0.pow(0) == 1`, the mathematical convention).
 #stable(since = "0.1")
 export fn[T Ints] T @pow(exp u32) -> T {
     if exp == 0 { return 1 as T }
@@ -949,7 +949,7 @@ export fn[T Ints] T @pow(exp u32) -> T {
     acc
 }
 
-/// `checked_pow` — `None`, если overflow на любом шаге squaring, иначе
+/// `checked_pow` — `None` if overflow on any squaring step, otherwise
 /// `Some(result)`.
 #stable(since = "0.1")
 export fn[T Ints] T @checked_pow(exp u32) -> Option[T] {
@@ -972,10 +972,10 @@ export fn[T Ints] T @checked_pow(exp u32) -> Option[T] {
     None
 }
 
-/// `saturating_pow` — при overflow клампит к `T.MAX`/`T.MIN` по знаку
-/// ИСТИННОГО (непереполнённого) результата: `@ < 0 && exp` нечётный ->
-/// `T.MIN`, иначе `T.MAX` (Rust-паритет формулы). Для unsigned `@ < 0`
-/// константно `false` -> всегда `T.MAX`, корректно.
+/// `saturating_pow` — on overflow clamps to `T.MAX`/`T.MIN` by the sign
+/// of the TRUE (non-overflowed) result: `@ < 0 && exp` odd ->
+/// `T.MIN`, else `T.MAX` (Rust parity of the formula). For unsigned,
+/// `@ < 0` is constantly `false` -> always `T.MAX`, correct.
 #stable(since = "0.1")
 export fn[T Ints] T @saturating_pow(exp u32) -> T {
     if exp == 0 { return 1 as T }
@@ -1001,8 +1001,8 @@ export fn[T Ints] T @saturating_pow(exp u32) -> T {
     acc
 }
 
-/// `wrapping_pow` — модульная арифметика на каждом шаге squaring, флаг
-/// overflow игнорируется; никогда не паникует.
+/// `wrapping_pow` — modular arithmetic on each squaring step, the
+/// overflow flag is ignored; never panics.
 #stable(since = "0.1")
 export fn[T Ints] T @wrapping_pow(exp u32) -> T {
     if exp == 0 { return 1 as T }

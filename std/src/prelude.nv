@@ -241,51 +241,51 @@ export import std.runtime.string.{pad_left, pad_right, repeat, replace, compare,
 // opt-in free-function form and never enters the prelude→unicode→collections
 // cycle. `core` stays unicode-free → partial `#prelude(core,…)` is fixed.
 
-/// Prelude version marker — verify в тестах что auto-import работает.
-/// Bump'ается при каждой migration phase Plan 62.
-///   - 1 = pre-migration (только этот placeholder).
-///   - 2 = Plan 62.A done (core types в file-based form).
+/// Prelude version marker — verified in tests to confirm auto-import works.
+/// Bumped on every Plan 62 migration phase.
+///   - 1 = pre-migration (only this placeholder).
+///   - 2 = Plan 62.A done (core types in file-based form).
 ///     Plan 62.B reused version 2 (runtime fns added).
 ///     Plan 62.C reused version 2 (error types added).
 ///     Plan 62.D non-opaque reused version 2 (Iter[T] added).
 ///     Plan 62.E reused version 2 (protocols added).
 ///   - 3 = Plan 62.F done (effects.Fail[E] added) + **Plan 62 closed**.
-///   - 4 = Plan 62.D non-opaque bis-1 done: Range / RangeIter теперь
-///     auto-available через prelude facade (re-export из
-///     std.collections.range), 4 latent codegen bugs закрыты
+///   - 4 = Plan 62.D non-opaque bis-1 done: Range / RangeIter now
+///     auto-available via the prelude facade (re-export from
+///     std.collections.range), 4 latent codegen bugs closed
 ///     (match inference + closure scope analysis + D29 W_PRELUDE_SHADOW).
 ///   - 5 = Plan 62.F.bis done (2026-05-18): edition versioning
 ///     (`[package].edition` → `std/prelude/<sanitized>.nv` resolver) +
-///     structured W_PRELUDE_SHADOW lint с `allow_prelude_shadow`
+///     structured W_PRELUDE_SHADOW lint with `allow_prelude_shadow`
 ///     suppress + Time/Mem formal effect declarations + spec D-block
 ///     amendments.
 ///   - 6 = Plan 62.D.bis done (2026-05-18): StringBuilder / WriteBuffer /
 ///     ReadBuffer formally declared via new D126 `external type` syntax
-///     в std/prelude/collections.nv. Auto-available через prelude facade
-///     — закрывает последний known-by-name hole в D26 visible prelude.
-///     Methods продолжают жить в std/runtime/<name>.nv (external fn,
-///     D82, unchanged).
+///     in std/prelude/collections.nv. Auto-available via the prelude
+///     facade — closes the last known-by-name hole in D26 visible
+///     prelude. Methods continue to live in std/runtime/<name>.nv
+///     (external fn, D82, unchanged).
 ///   - 7 = Plan 62.B.bis done (2026-05-18): print / println formally
-///     declared в std/prelude/runtime.nv через D69 variadic + `[]any` —
+///     declared in std/prelude/runtime.nv via D69 variadic + `[]any` —
 ///     canonical D26 signature `fn print(...items []any) -> ()`. Plan 67
-///     hotfix (infer_print_helper refactor через infer_expr_c_type)
-///     absorbed как Ф.0. Codegen special-case (emit_c.rs:11270) fires
-///     перед variadic routing (Ф.1 reorder) — preserves per-arg type
-///     info, synthesized `[]any` array никогда не строится.
+///     hotfix (infer_print_helper refactor via infer_expr_c_type)
+///     absorbed as Ф.0. Codegen special-case (emit_c.rs:11270) fires
+///     before variadic routing (Ф.1 reorder) — preserves per-arg type
+///     info, the synthesized `[]any` array is never built.
 ///   - 8 = Plan 62.E.bis done (2026-05-20): TryFrom / TryInto formally
-///     re-exported через prelude facade. Effect-блокер снят Plan 56
-///     Ф.2.7-revert (D122 amended — эффекты в protocol-методах
-///     разрешены под mono-dispatch); декларации используют форму
+///     re-exported via the prelude facade. Effect blocker lifted by Plan
+///     56 Ф.2.7-revert (D122 amended — effects in protocol methods are
+///     allowed under mono-dispatch); declarations use the form
 ///     `try_from(t T) -> Result[Self, E]` (D77, migration path b).
 ///   - 9 = Plan 62.C.bis done (2026-05-20): RuntimeNoneError
-///     (unit-type, D85 — ошибка `Option!!` на None) formally
-///     задекларирован в std/prelude/errors.nv + re-export через facade.
-///     Блокер снят Plan 72 P1-B (bodyless-type support в parser).
-///     Remaining deferred sub-plans: 62.A.bis sum_schemas removal
-///     (ждёт Plan 59 Ф.7.5 increment 2).
+///     (unit-type, D85 — the `Option!!` on None error) formally
+///     declared in std/prelude/errors.nv + re-export via the facade.
+///     Blocker lifted by Plan 72 P1-B (bodyless-type support in the
+///     parser). Remaining deferred sub-plans: 62.A.bis sum_schemas
+///     removal (awaits Plan 59 Ф.7.5 increment 2).
 ///   - 10 = Plan 91 Ф.2.5 done (2026-05-28, D177): str Nova-body methods
-///     (parse_int_radix / pad_left / pad_right / repeat / replace) теперь
-///     auto-available через prelude re-export из std.runtime.string.
+///     (parse_int_radix / pad_left / pad_right / repeat / replace) now
+///     auto-available via prelude re-export from std.runtime.string.
 ///   - 11 = Plan 91 Ф.2.6 done (2026-05-28, D178): str API cleanup:
 ///     bytes→to_bytes, chars→to_chars, parse_int_radix+parse_int→parse_int(radix=10),
 ///     compare added, split→readonly []str, readonly param syntax.
@@ -320,13 +320,13 @@ export import std.runtime.string.{pad_left, pad_right, repeat, replace, compare,
 ///     whitelist. Auto-available without explicit import (unchanged
 ///     surface); codegen emission (`f64_method_to_c`/`int_method_to_c`)
 ///     unaffected.
-///   - 18 = Plan 210 done (2026-07-16, D412-амендмент): `EmbeddedDir` /
-///     `EmbeddedEntry` formally declared в std/prelude/embed.nv +
-///     re-exported через facade — `embed_dir("dir")` компайл-тайм
-///     интринсик (резолвер embed_resolve.rs синтезирует
-///     `EmbeddedDir.new([EmbeddedEntry{...}, …])`, отсортировано по path).
-///     Payload'ы — zero-copy static rodata (существующая HexBlobLit-арм,
-///     emit_c.rs НЕ менялся).
+///   - 18 = Plan 210 done (2026-07-16, D412 amendment): `EmbeddedDir` /
+///     `EmbeddedEntry` formally declared in std/prelude/embed.nv +
+///     re-exported via the facade — `embed_dir("dir")` compile-time
+///     intrinsic (the embed_resolve.rs resolver synthesizes
+///     `EmbeddedDir.new([EmbeddedEntry{...}, …])`, sorted by path).
+///     Payloads — zero-copy static rodata (existing HexBlobLit arm,
+///     emit_c.rs untouched).
 ///   - 19 = [M-numeric-try-narrowing] done (2026-07-20, D430): `RangeError`
 ///     (unit-type, checked numeric-narrowing error) declared in
 ///     std/prelude/errors.nv + re-exported through this facade —
