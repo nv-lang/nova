@@ -34218,15 +34218,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                     // План 234 Ф.1 (codegen/bitwise_ops.rs): Bit* на плоском
                     // record'е — та же схема, что @plus/@times (было: сырой C).
-                    // ГАРД (приёмка 234, мега-CU CC-FAIL a_q3): mono-имя
-                    // генерика (`Set____nova_int`) обязано идти в generic-ветку
-                    // ниже — она регистрирует инстанцию через
-                    // register_mono_method_instance; эта плоская ветка эмитила
-                    // вызов БЕЗ тела (undefined symbol на `Set[int] | Set[int]`).
-                    if !type_name_sum.contains("____")
-                        && is_single_nova_ptr(&lty)
-                        && is_single_nova_ptr(&rty)
-                    {
+                    // Гард `____` (приёмка 234): mono-имя генерика обязано пройти в
+                    // generic-ветку ниже (register_mono_method_instance) — здесь вызов
+                    // эмитился без тела (undefined symbol на `Set[int] | Set[int]`).
+                    if !type_name_sum.contains("____") && is_single_nova_ptr(&lty) && is_single_nova_ptr(&rty) {
                         if let Some(op_method) = super::bitwise_ops::bitop_method_name(*op) {
                             return Ok(format!("{}_method_{}({}, {})", dispatch_type_name, op_method, l, r));
                         }
