@@ -49,20 +49,20 @@ export fn PropertyConfig.default() -> PropertyConfig =>
         seed: 0,
     }
 
-/// Throw'нутое из `assert_prop` при failure. Runner catches + начинает shrinking.
+/// Thrown from `assert_prop` on failure. The runner catches it and starts shrinking.
 #stable(since = "0.1")
 export type PropertyFailed {
     ro message str
     ro context str
 }
 
-/// Create PropertyFailed с message. Context заполняется runner'ом.
+/// Create PropertyFailed with a message. The context is filled in by the runner.
 #stable(since = "0.1")
 export fn PropertyFailed.new(msg str) -> PropertyFailed =>
     { message: msg, context: "" }
 
-/// Property-test assertion. Throws PropertyFailed на false — runner ловит +
-/// шринкает (vs. обычный `assert(...)` который panics без shrinking).
+/// Property-test assertion. Throws PropertyFailed on false — the runner catches it +
+/// shrinks it (vs. a plain `assert(...)` which panics without shrinking).
 #stable(since = "0.1")
 export fn assert_prop(cond bool) Fail[PropertyFailed] -> () { // [M-lint-findings-fail-public-signature]
     if !cond {
@@ -70,7 +70,7 @@ export fn assert_prop(cond bool) Fail[PropertyFailed] -> () { // [M-lint-finding
     }
 }
 
-/// Like `assert_prop` но с custom message.
+/// Like `assert_prop` but with a custom message.
 #stable(since = "0.1")
 export fn assert_prop_msg(cond bool, msg str) Fail[PropertyFailed] -> () { // [M-lint-findings-fail-public-signature]
     if !cond {
@@ -78,10 +78,10 @@ export fn assert_prop_msg(cond bool, msg str) Fail[PropertyFailed] -> () { // [M
     }
 }
 
-/// Generator[T] structural protocol — для property-based testing.
+/// Generator[T] structural protocol — for property-based testing.
 ///
-/// `generate()` — pure-функция от ambient Random → значение `T`.
-/// `shrink(v)` — итератор «меньших» вариантов для бисекции при failure.
+/// `generate()` — a pure function from the ambient Random → a value `T`.
+/// `shrink(v)` — an iterator of "smaller" variants for bisection on failure.
 #stable(since = "0.1")
 export type Generator[T] protocol {
     @generate() Random -> T
@@ -92,24 +92,24 @@ export type Generator[T] protocol {
 // Встроенные генераторы для примитивов
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Uniform int generator в диапазоне `[min, max]`. Shrinks к 0 / границам.
+/// Uniform int generator in the range `[min, max]`. Shrinks toward 0 / the bounds.
 #stable(since = "0.1")
 export type IntGen {
     ro min int
     ro max int
 }
 
-/// Create IntGen с custom range.
+/// Create IntGen with a custom range.
 #stable(since = "0.1")
 export fn IntGen.new(min int, max int) -> IntGen =>
     { min, max }
 
-/// Default IntGen — `[-1000, 1000]` (типичный для tests).
+/// Default IntGen — `[-1000, 1000]` (typical for tests).
 #stable(since = "0.1")
 export fn IntGen.default() -> IntGen =>
     IntGen.new(-1000, 1000)
 
-/// Generate uniform int в `[min, max]`.
+/// Generate a uniform int in `[min, max]`.
 #stable(since = "0.1")
 export fn IntGen @generate() Random -> int {
     ro range = @max - @min + 1
@@ -134,14 +134,14 @@ export fn IntGen @shrink(value int) -> []int {
     steps
 }
 
-/// Bool generator: `p_percent`% true (default 50/50). Shrinks к false.
+/// Bool generator: `p_percent`% true (default 50/50). Shrinks toward false.
 ///
-/// [2026-07-08, батч 3 172.13]: было `type BoolGen { }` (без полей) — но
-/// ПУСТОЙ record-литерал (`{ }` / `BoolGen { }`) не поддержан грамматикой
-/// ни в одной позиции (парсится как пустой блок → unit); это был
-/// единственный пустой record во всём std. Поле `p_percent` — честная
-/// степень свободы по образцу соседей (IntGen min/max, StrGen max_len),
-/// аналог QuickCheck frequency.
+/// [2026-07-08, batch 3 172.13]: it was `type BoolGen { }` (no fields) — but the
+/// EMPTY record literal (`{ }` / `BoolGen { }`) is not supported by the grammar
+/// in any position (parses as an empty block → unit); this was the
+/// only empty record in the whole std. The `p_percent` field is an honest
+/// degree of freedom following the neighbors' pattern (IntGen min/max, StrGen max_len),
+/// an analogue of QuickCheck frequency.
 #stable(since = "0.1")
 export type BoolGen {
     ro p_percent int
@@ -151,7 +151,7 @@ export type BoolGen {
 #stable(since = "0.1")
 export fn BoolGen.new() -> BoolGen => { p_percent: 50 }
 
-/// Create BoolGen с заданной вероятностью true (в процентах, 0..100).
+/// Create BoolGen with a given probability of true (in percent, 0..100).
 #stable(since = "0.1")
 export fn BoolGen.with_percent(p int) -> BoolGen => { p_percent: p }
 
@@ -160,7 +160,7 @@ export fn BoolGen.with_percent(p int) -> BoolGen => { p_percent: p }
 export fn BoolGen @generate() Random -> bool =>
     (Random.u64() % 100) < (@p_percent as u64)
 
-/// Shrink bool — `true` → `false`, `false` → ничего.
+/// Shrink bool — `true` → `false`, `false` → nothing.
 #stable(since = "0.1")
 export fn BoolGen @shrink(value bool) -> []bool {
     mut steps []bool = []
@@ -168,13 +168,13 @@ export fn BoolGen @shrink(value bool) -> []bool {
     steps
 }
 
-/// Str generator — печатные ASCII длиной `[0, max_len]`. Shrinks к "" / коротким префиксам.
+/// Str generator — printable ASCII of length `[0, max_len]`. Shrinks toward "" / short prefixes.
 #stable(since = "0.1")
 export type StrGen {
     ro max_len int
 }
 
-/// Create StrGen с custom max length.
+/// Create StrGen with a custom max length.
 #stable(since = "0.1")
 export fn StrGen.new(max_len int) -> StrGen =>
     { max_len }
@@ -202,7 +202,7 @@ export fn StrGen @generate() Random -> str {
     buf
 }
 
-/// Shrink string — "" / половина / на 1 короче.
+/// Shrink string — "" / half / one shorter.
 #stable(since = "0.1")
 export fn StrGen @shrink(value str) -> []str {
     mut steps []str = []
@@ -215,21 +215,21 @@ export fn StrGen @shrink(value str) -> []str {
     steps
 }
 
-/// Array generator — `[]T` длиной `[0, max_len]`. Каждый элемент через `elem` generator.
-/// Shrinks к пустому массиву / меньшим.
+/// Array generator — `[]T` of length `[0, max_len]`. Each element via the `elem` generator.
+/// Shrinks toward the empty array / smaller ones.
 ///
-/// [2026-07-08, батч 3 172.13]: было `ro elem Generator[T]` (протокол как
-/// ТИП ПОЛЯ/параметра) — но протоколы Nova compile-time-only (D53), у
-/// protocol-typed значений НЕТ runtime-диспетча: `@elem.generate()`
-/// эмитился как NULL. Канон — bounded generic (`G Generator[T]`, статический
-/// диспетч по конкретному типу генератора, как `Vec@extend[S Iter[T]]`).
+/// [2026-07-08, batch 3 172.13]: it was `ro elem Generator[T]` (a protocol as a
+/// FIELD/PARAMETER TYPE) — but Nova protocols are compile-time-only (D53), and
+/// protocol-typed values have NO runtime dispatch: `@elem.generate()`
+/// was emitted as NULL. The canon is a bounded generic (`G Generator[T]`, static
+/// dispatch on the concrete generator type, like `Vec@extend[S Iter[T]]`).
 #stable(since = "0.1")
 export type ArrayGen[G Generator[T], T] {
     ro elem G
     ro max_len int
 }
 
-/// Create ArrayGen с custom elem generator + max length.
+/// Create ArrayGen with a custom elem generator + max length.
 #stable(since = "0.1")
 export fn ArrayGen[G, T].new(elem G, max_len int) -> ArrayGen[G, T] =>
     { elem, max_len }
@@ -239,7 +239,7 @@ export fn ArrayGen[G, T].new(elem G, max_len int) -> ArrayGen[G, T] =>
 export fn ArrayGen[G, T].default(elem G) -> ArrayGen[G, T] =>
     ArrayGen[G, T].new(elem, 32)
 
-/// Generate random `[]T` длиной `[0, max_len]` (каждый elem через nested generator).
+/// Generate a random `[]T` of length `[0, max_len]` (each elem via a nested generator).
 #stable(since = "0.1")
 export fn ArrayGen[G, T] @generate() Random -> []T {
     ro len = (Random.u64() as int).abs() % (@max_len + 1)
@@ -250,7 +250,7 @@ export fn ArrayGen[G, T] @generate() Random -> []T {
     result
 }
 
-/// Shrink array — empty / halves / без последнего.
+/// Shrink array — empty / halves / without the last.
 #stable(since = "0.1")
 export fn ArrayGen[G, T] @shrink(value []T) -> [][]T {
     mut steps [][]T = []
@@ -340,10 +340,10 @@ fn shrink_loop[G Generator[T], T](gen G,
 
 // Главный API: прогнать property-test.
 //
-/// Run property test — `num_tests` cases через generator + body. На failure —
-/// shrinking → throw `PropertyFailed` с minimal example.
+/// Run a property test — `num_tests` cases via the generator + body. On failure —
+/// shrinking → throw `PropertyFailed` with the minimal example.
 ///
-/// Использует Random ambient → детерминирован под `with Random = th.seeded(...)`.
+/// Uses the ambient Random → deterministic under `with Random = th.seeded(...)`.
 ///
 /// # Examples
 /// ```nova
@@ -359,7 +359,7 @@ export fn property[G Generator[T], T](gen G,
     property_with(gen, body, PropertyConfig.default())
 }
 
-/// Like `property` но с custom `PropertyConfig` (num_tests/shrink_steps/seed).
+/// Like `property` but with a custom `PropertyConfig` (num_tests/shrink_steps/seed).
 #stable(since = "0.1")
 export fn property_with[G Generator[T], T](gen G,
                             body fn(T) Fail[PropertyFailed] -> (),
