@@ -96,8 +96,8 @@ type Parser {
     pattern str
     // Push-loop materialisation of `pattern.chars()` (not `.collect()` —
     // crashes codegen on CharsIter). `@peek()` is called at every parse step;
-    // decoding via the ретрактированный `chars().nth(@pos)` was an O(n) scan
-    // per call (D260-амендмент). `chs.get(@pos)` is O(1). Pattern literals can
+    // decoding via `chars().nth(@pos)` would be an O(n) scan
+    // per call. `chs.get(@pos)` is O(1). Pattern literals can
     // contain non-ASCII chars (e.g. matching literal Unicode text), so this
     // must be a real codepoint vector, not a byte view.
     chs []char
@@ -197,8 +197,8 @@ fn Parser mut @parse_braced_quantifier(atom RegexNode) Fail[CompileError] -> Reg
 }
 
 // Извлечён в отдельную fn: consume-binding `m_str` живёт целиком в СВОЁМ
-// top-level function scope (не внутри ветки `if`-expression) — иначе D162
-// (uncovered-error-path) не может доказать cleanup-покрытие для throw'ов
+// top-level function scope (не внутри ветки `if`-expression) — иначе
+// компилятор не может доказать cleanup-покрытие для throw'ов
 // снаружи ветки (`if @peek() != Some('}')` после этого блока).
 fn Parser mut @parse_quantifier_max(start int) Fail[CompileError] -> int {
     consume m_str = StringBuilder.new()
@@ -210,10 +210,8 @@ fn Parser mut @parse_quantifier_max(start int) Fail[CompileError] -> int {
     }
     ro m = m_str.into_str()
     if m.byte_len() == 0 { return -1 }        // {n,} — unbounded
-    // [M-d162-structural-throw-sibling] (батч 3): естественная match-форма
-    // возвращена — D162 теперь видит throw внутри match-ветки как явную
-    // обработку error-path (обходной `if parsed.is_err() { throw ... }` +
-    // `parsed!!` волны 3б снят).
+    // [M-d162-structural-throw-sibling] обход: естественная match-форма
+    // вместо `if parsed.is_err() { throw ... }` + `parsed!!`
     match int.try_from(m) {
         Ok(v)  => v
         Err(_) => throw InvalidQuantifier { position: start }
@@ -471,12 +469,11 @@ fn Compiler mut @compile_node(node RegexNode, out_state int) -> int {
 /// Поддержка: `.`, `[a-z]`, `[^abc]`, `\d \w \s \D \W \S`, `^`, `$`,
 /// `*`, `+`, `?`, `{n}`, `{n,m}`, `(...)`, `(?:...)`, `|`.
 ///
-/// D325: публичный API — Result. Внутренние `@parse_*` НЕ экспортированы и
-/// остаются на Fail[CompileError]: их возврат — RegexNode с ПРЯМОЙ рекурсией
+/// Публичный API — Result. Внутренние `@parse_*` не экспортированы и
+/// остаются на Fail[CompileError]: их возврат — RegexNode с прямой рекурсией
 /// (NStar(RegexNode) и т.п.), а `Result[RegexNode, _]` крашит кодоген
 /// (аллокация в десятки ГБ / зависание; минимальная репродукция — enum с
-/// directly-recursive вариантом внутри Result) [M-result-direct-recursive-enum].
-/// Fail наружу не протекает — гасится хендлером здесь.
+/// directly-recursive вариантом внутри Result). Fail наружу не протекает — гасится хендлером здесь.
 ///
 /// # Examples
 /// ```nova
@@ -519,8 +516,7 @@ export fn Regex.compile(pattern str) -> Result[Regex, CompileError] {
 // шагаем по character-edge'ам. ε-переходы expand'ятся в add_state().
 
 // `tchars` — subject text materialised as `[]char` ONCE by the caller (see
-// `try_match`) instead of scanning via the ретрактированный `chars().nth()`
-// (D260-амендмент).
+// `try_match`) instead of scanning via `chars().nth()`.
 fn add_state(set mut []bool, states []NfaState, idx int, pos int, tchars []char) -> () {
     if idx < 0 || idx >= states.len() { return () }
     if set[idx] { return () }
@@ -568,8 +564,8 @@ fn step_out(s NfaState) -> int => match s {
 
 // Попробовать matchить начиная с position `start_pos` в tchars (subject text
 // materialised as `[]char` by the caller — `Regex.matches`/`@find`/`@find_all`
-// decode ONCE, not per `try_match` call, restoring the doc's claimed O(n*m)
-// instead of the O(n²)-per-scan the ретрактированный `chars().nth()` caused).
+// decode ONCE, not per `try_match` call, restoring O(n*m)
+// instead of O(n²)-per-scan that `chars().nth()` would cause).
 // Возвращает Some(end_pos) если matched (consumed [start_pos..end_pos]),
 // иначе None.
 fn try_match(re Regex, tchars []char, start_pos int) -> Option[int] {
@@ -631,7 +627,7 @@ fn final_state(re Regex) -> int {
 // Полное соответствие?
 // Push-loop materialisation of `s.chars()` (not `.collect()` — crashes
 // codegen on CharsIter). Decoded ONCE per public entry call — see `try_match`
-// doc for why (D260-амендмент, [M-d73-d77-retraction-migration] Block 4).
+// doc for why. [M-d73-d77-retraction-migration]
 fn to_chars(s str) -> []char {
     mut out []char = []char.new(cap: s.byte_len())
     for c in s.chars() { out.push(c) }

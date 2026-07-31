@@ -50,8 +50,7 @@ export fn Sha1.hash_str(data []u8) -> str {
 /// Incremental update — feed bytes в state.
 #stable(since = "0.1")
 export fn Sha1 mut @update(data []u8) -> () {
-    // Plan 206 Ф.2 (D423): FIPS 180-4 длина в битах mod 2^64 — модульная
-    // арифметика по спецификации, не баг.
+    // FIPS 180-4: длина в битах mod 2^64 — модульная арифметика по спецификации.
     @total_len = @total_len.wrapping_add(data.len() as u64)
     for b in data {
         @buffer.push(b)
@@ -82,8 +81,7 @@ export fn Sha1 mut @finalize() -> [20]u8 {
         pos += 64
     }
 
-    // [M-sha1-array-repeat-literal-parser]: явный 20-элементный литерал
-    // вместо неподдерживаемого `[0; 20]`.
+    // [M-sha1-array-repeat-literal-parser] обход: парсер не поддерживает Rust-style [0; 20].
     mut out [20]u8 = [
         0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0,
@@ -100,8 +98,7 @@ export fn Sha1 mut @finalize() -> [20]u8 {
 }
 
 fn Sha1 mut @process_block(block []u8) -> () {
-    // [M-sha1-array-repeat-literal-parser]: явный 80-элементный литерал
-    // вместо неподдерживаемого `[0; 80]`.
+    // [M-sha1-array-repeat-literal-parser] обход: парсер не поддерживает Rust-style [0; 80].
     mut w [80]u32 = [
         0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0,

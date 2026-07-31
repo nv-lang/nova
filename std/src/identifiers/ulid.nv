@@ -249,19 +249,6 @@ export fn Ulid @to_str() -> str {
             //   shift2 == 15: окно [15..19] пересекает границу — r_lo даёт бит 15,
             //   r_hi даёт биты 0..3 → нужно объединять (см. ветку ниже).
             //   shift2 ∈ {10, 5, 0}: окно целиком внутри r_lo (shift2+4 < 16).
-            //
-            // [BUG-2 fix] Раньше здесь стояла ДОХЛАЯ (никогда не читаемая)
-            // проба-в-одну-строку `low_bits = (r_lo >> shift2) & ((1 << (5 -
-            // shift2)) - 1)` — черновик отменённого «всё в одном выражении»
-            // подхода выше, оставленный по ошибке. Для shift2 ∈ {10, 15}
-            // `5 - shift2` — отрицательное число, а весь этот под-выражение
-            // типизируется как u64 (контекст `&` с r_lo/r_hi) → `nova_u64_
-            // checked_sub(5, shift2)` детерминированно underflow'ил на КАЖДОМ
-            // вызове `to_str()` (D423 trap-default честно поймал бывший тихий
-            // wraparound мёртвого кода) — RUN-FAIL "integer overflow: -"
-            // (std/src/identifiers/ulid_test.nv). Не легитимный ULID-wraparound
-            // (нет физического смысла — значение нигде не читалось), поэтому
-            // wrapping_*/checked_* тут не нужны — просто удалено.
             if shift2 + 4 >= 16 {
                 // Window spans r_lo high and r_hi low
                 ro from_lo = r_lo >> shift2                            // младшие биты выходного значения
@@ -342,7 +329,7 @@ export fn Ulid.from(s str) Fail[ParseUlidError] -> Self { // [M-lint-findings-st
 }
 
 // Crockford base32 alphabet is pure ASCII — direct byte access O(1) instead
-// of the ретрактированный `chars().nth(pos)` O(n) scan (D260-амендмент).
+// of O(n) char-by-char scan.
 fn decode_char_or_throw(s str, pos int) Fail[ParseUlidError] -> u8 {
     match s.bytes().get(pos) {
         Some(b) => {

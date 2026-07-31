@@ -76,8 +76,8 @@ export fn Markdown.to_html(md str) -> str {
             flush_paragraph(buf, paragraph)
             consume paragraph = StringBuilder.new()
             if in_list { buf.append("</ul>\n"); in_list = false }
-            // Целевая for-in итерация вместо ретрактированного `chars().nth(level)`
-            // (D260-амендмент) — последовательный скан, случайный доступ не нужен.
+            // Целевая for-in итерация вместо `chars().nth(level)`
+            // — последовательный скан, случайный доступ не нужен.
             mut level = 0
             for c in line.chars() {
                 if level == 6 { break }
@@ -143,11 +143,11 @@ fn flush_paragraph(mut buf StringBuilder, consume paragraph StringBuilder) -> ()
 // Inline parsing: **bold**, *italic*, `code`, [text](url)
 //
 // Random-access index scan (lookahead/backahead на i+1, end+1, ...) — не
-// последовательный for-in паттерн, поэтому вместо ретрактированного
-// `chars().nth(i)` (D260-амендмент) материализуем `[]char` ОДИН раз (O(n)
-// push-loop, не `.collect()` — CharsIter `.collect()` крашит кодоген,
-// [M-d73-d77-retraction-migration] Block 2 precedent) и далее — O(1)
-// `Vec[char] @get(i)`.
+// последовательный for-in паттерн, поэтому вместо
+// `chars().nth(i)` материализуем `[]char` ОДИН раз (O(n)
+// push-loop, не `.collect()` — CharsIter `.collect()` крашит кодоген).
+// [M-d73-d77-retraction-migration] обход: push-loop вместо .collect()
+// Далее — O(1) `Vec[char] @get(i)`.
 fn render_inline(s str) -> str {
     consume buf = StringBuilder.new(cap: s.byte_len())
     ro sc = to_chars(s)
@@ -230,8 +230,7 @@ fn render_inline(s str) -> str {
 
         // Литерал — экранируем HTML-спецсимволы (пропущенное экранирование
         // здесь — pre-existing content-баг: escape_html() вызывался только
-        // для code/link сегментов, обычный текст проходил raw; обнаружено
-        // 2026-07-08 через `nova test --full`, `nova check` этого не ловил).
+        // для code/link сегментов, обычный текст проходил raw).
         match c {
             '<' => buf.append("&lt;")
             '>' => buf.append("&gt;")
