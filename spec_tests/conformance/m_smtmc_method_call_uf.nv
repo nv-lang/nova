@@ -1,0 +1,99 @@
+// [M-smtmc] Task 1/2 (владелец-норматив 2026-07-31): «Если контракт не
+// доказывается компилятором — он работает в рантайме» — БЕЗ обязательных
+// атрибутов-костылей. Раньше метод-вызов в requires/ensures (`b.method()`,
+// цепочка `a.b().c()`) был compile-error класса «call expressions in
+// contracts not yet supported → пометь #unverified» (encode.rs ~245,
+// pipeline.rs E2401 [CONTRACT_UNSUPPORTED]) — вымогательство костыля.
+// Фикс: member-вызов ЧИСТОГО метода кодируется как UF (uninterpreted
+// function) ТЕМ ЖЕ путём, что и свободные `#pure`-fn (verify/encode.rs
+// `method_uf_name`/`MethodInfo`); недоказуемое UF-условие — штатный
+// runtime-fallback (Plan 172/A-V13). Требование ЧИСТОТЫ вызываемого
+// метода/fn остаётся (см. m_smtmc_effectful_method_neg.nv в neg/) — но
+// выводится (Purity::Pure, SCC inference Ф.3 Plan 33.5), не по атрибуту.
+module spec_tests.conformance
+
+type MSmtmcBox(v int = 0)
+type MSmtmcWrap(inner MSmtmcBox = MSmtmcBox())
+
+fn MSmtmcBox @m_smtmc_is_bad() -> bool => @v < 0
+fn MSmtmcWrap @m_smtmc_inner_box() -> MSmtmcBox => @inner
+
+// Свободная fn БЕЗ `#pure` — чистота ВЫВОДИТСЯ (Purity::Pure, SCC
+// inference); атрибут не вымогается (Task 2).
+fn m_smtmc_free_is_bad(b MSmtmcBox) -> bool => b.v < 0
+
+// pos: requires с методом-предикатом на параметре (НЕ self), БЕЗ атрибутов.
+fn m_smtmc_method_call_check(b MSmtmcBox) -> int
+    requires !b.m_smtmc_is_bad()
+{
+    b.v
+}
+
+// pos: requires с вызовом свободной fn без `#pure` (выведенная чистота).
+fn m_smtmc_free_fn_check(b MSmtmcBox) -> int
+    requires !m_smtmc_free_is_bad(b)
+{
+    b.v
+}
+
+// pos: цепочка `a.b().c()` в requires.
+fn m_smtmc_chain_check(w MSmtmcWrap) -> int
+    requires !w.m_smtmc_inner_box().m_smtmc_is_bad()
+{
+    w.inner.v
+}
+
+// pos: ensures с методом на `result` (mirror формы requires).
+fn m_smtmc_method_call_ensures(b MSmtmcBox) -> MSmtmcBox
+    ensures !result.m_smtmc_is_bad()
+{
+    MSmtmcBox(b.v)
+}
+
+// регресс δ0: простое условие без вызовов, уже работавшее до фикса.
+fn m_smtmc_simple_check(n int) -> int
+    requires n > 0
+{
+    n
+}
+
+test "m_smtmc pos: requires method-call-in-condition holds — passes" {
+    assert(m_smtmc_method_call_check(MSmtmcBox(5)) == 5)
+}
+
+test "m_smtmc neg: requires method-call-in-condition violated — contract panic" panics "requires failed" {
+    m_smtmc_method_call_check(MSmtmcBox(-5))
+}
+
+test "m_smtmc pos: requires free-fn-call (no #pure, inferred purity) holds — passes" {
+    assert(m_smtmc_free_fn_check(MSmtmcBox(5)) == 5)
+}
+
+test "m_smtmc neg: requires free-fn-call (no #pure, inferred purity) violated — contract panic" panics "requires failed" {
+    m_smtmc_free_fn_check(MSmtmcBox(-5))
+}
+
+test "m_smtmc pos: requires chain a.b().c() holds — passes" {
+    assert(m_smtmc_chain_check(MSmtmcWrap(MSmtmcBox(5))) == 5)
+}
+
+test "m_smtmc neg: requires chain a.b().c() violated — contract panic" panics "requires failed" {
+    m_smtmc_chain_check(MSmtmcWrap(MSmtmcBox(-5)))
+}
+
+test "m_smtmc pos: ensures method-call-in-condition holds — passes" {
+    ro m_smtmc_r = m_smtmc_method_call_ensures(MSmtmcBox(5))
+    assert(m_smtmc_r.v == 5)
+}
+
+test "m_smtmc neg: ensures method-call-in-condition violated — contract panic (mirror)" panics "ensures failed" {
+    m_smtmc_method_call_ensures(MSmtmcBox(-5))
+}
+
+test "m_smtmc pos: requires simple condition holds — passes (regression δ0)" {
+    assert(m_smtmc_simple_check(5) == 5)
+}
+
+test "m_smtmc neg: requires simple condition violated — contract panic (regression δ0)" panics "requires failed" {
+    m_smtmc_simple_check(-1)
+}

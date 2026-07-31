@@ -208,10 +208,12 @@ impl VerificationPipeline {
         let empty_pure: std::collections::HashSet<String> = std::collections::HashSet::new();
         let pure_fns = collect_pure_fns(module, &empty_pure);
         let trusted_fns = collect_trusted_fns(module);
+        let methods = collect_methods(module);
         let var_sorts: std::collections::HashMap<String, SortRef> = fd.params.iter()
             .map(|p| (p.name.clone(), type_to_sort(&p.ty))).collect();
         let ctx = super::encode::EncodeCtx {
             pure_views: &pure_views, pure_fns: &pure_fns, trusted_fns: &trusted_fns, var_sorts,
+            methods: &methods,
         };
         // fn-level frame-safe seed: vec len-инвариантен над ВСЕМ телом fn (не
         // только в цикле) → `v[0..v.len()]` / `v[i]` вне явного цикла кандидаты.
@@ -221,6 +223,13 @@ impl VerificationPipeline {
 
         let declare = |backend: &mut dyn SmtBackend| {
             for p in &fd.params { backend.declare_var(&p.name, type_to_sort(&p.ty)); }
+            // Task 1 ([M-smtmc]): pre-declare method-call UFs с правильными
+            // sorts — без этого backend auto-declare'ит с Int domain/range
+            // по умолчанию, что ломает bool-предикаты (`!x.is_zero()`).
+            for (name, info) in &methods {
+                let uf = super::encode::method_uf_name(&info.recv_type_tag, name, info.param_sorts.len());
+                backend.declare_function(&uf, &info.param_sorts, info.return_sort.clone());
+            }
         };
 
         // Pass A — БЕЗ requires: bounds только из loop/code (always-safe).
@@ -275,13 +284,20 @@ impl VerificationPipeline {
         let empty_pure: std::collections::HashSet<String> = std::collections::HashSet::new();
         let pure_fns = collect_pure_fns(module, &empty_pure);
         let trusted_fns = collect_trusted_fns(module);
+        let methods = collect_methods(module);
         let var_sorts: std::collections::HashMap<String, SortRef> = fd.params.iter()
             .map(|p| (p.name.clone(), type_to_sort(&p.ty))).collect();
         let ctx = super::encode::EncodeCtx {
             pure_views: &pure_views, pure_fns: &pure_fns, trusted_fns: &trusted_fns, var_sorts,
+            methods: &methods,
         };
         let declare = |backend: &mut dyn SmtBackend| {
             for p in &fd.params { backend.declare_var(&p.name, type_to_sort(&p.ty)); }
+            // Task 1 ([M-smtmc]): pre-declare method-call UFs (см. prove_vec_index_sites).
+            for (name, info) in &methods {
+                let uf = super::encode::method_uf_name(&info.recv_type_tag, name, info.param_sorts.len());
+                backend.declare_function(&uf, &info.param_sorts, info.return_sort.clone());
+            }
         };
 
         // Pass A — БЕЗ requires: range-bounds только из loop/code/литералов (always-safe).
@@ -349,7 +365,11 @@ impl VerificationPipeline {
         let var_sorts: std::collections::HashMap<String, SortRef> = fd.params.iter()
             .map(|p| (p.name.clone(), type_to_sort(&p.ty))).collect();
         let trusted_fns = collect_trusted_fns(module);
-        let ctx = super::encode::EncodeCtx { pure_views: &pure_views, pure_fns: &pure_fns, trusted_fns: &trusted_fns, var_sorts };
+        let methods = collect_methods(module);
+        let ctx = super::encode::EncodeCtx {
+            pure_views: &pure_views, pure_fns: &pure_fns, trusted_fns: &trusted_fns, var_sorts,
+            methods: &methods,
+        };
 
         // Plan 33.3 Ф.9: pre-declare все pure_view UFs в backend'е.
         // Вез этого Z3 auto-declare'ит UF с Int sorts по умолчанию;
@@ -358,6 +378,13 @@ impl VerificationPipeline {
         for (op_name, sig) in &pure_views {
             let uf = super::encode::pure_view_uf_name(&sig.effect_name, op_name);
             backend.declare_function(&uf, &sig.param_sorts, sig.return_sort.clone());
+        }
+        // Task 1 ([M-smtmc], 2026-07-31): pre-declare method-call UFs с
+        // правильными sorts — без этого auto-declare даёт Int domain/range
+        // по умолчанию, что ломает bool-предикаты (`!x.is_zero()`).
+        for (name, info) in &methods {
+            let uf = super::encode::method_uf_name(&info.recv_type_tag, name, info.param_sorts.len());
+            backend.declare_function(&uf, &info.param_sorts, info.return_sort.clone());
         }
 
         // Plan 33.4 D.0.2: pre-declare UFs для #pure fns + emit body axioms.
@@ -1103,7 +1130,11 @@ impl VerificationPipeline {
         let var_sorts: std::collections::HashMap<String, SortRef> = ld.params.iter()
             .map(|p| (p.name.clone(), type_to_sort(&p.ty))).collect();
         let trusted_fns = collect_trusted_fns(module);
-        let ctx = super::encode::EncodeCtx { pure_views: &pure_views, pure_fns: &pure_fns, trusted_fns: &trusted_fns, var_sorts };
+        let methods = collect_methods(module);
+        let ctx = super::encode::EncodeCtx {
+            pure_views: &pure_views, pure_fns: &pure_fns, trusted_fns: &trusted_fns, var_sorts,
+            methods: &methods,
+        };
 
         // Pre-declare pure_view UFs.
         for (op_name, sig) in &pure_views {
@@ -1113,6 +1144,11 @@ impl VerificationPipeline {
         // Pre-declare pure_fn UFs.
         for (fn_name, info) in &pure_fns {
             let uf = super::encode::pure_fn_uf_name(fn_name);
+            backend.declare_function(&uf, &info.param_sorts, info.return_sort.clone());
+        }
+        // Task 1 ([M-smtmc]): pre-declare method-call UFs.
+        for (name, info) in &methods {
+            let uf = super::encode::method_uf_name(&info.recv_type_tag, name, info.param_sorts.len());
             backend.declare_function(&uf, &info.param_sorts, info.return_sort.clone());
         }
 
@@ -1258,6 +1294,36 @@ pub(super) fn collect_pure_fns(
             body_expr,
             is_opaque: fd.is_opaque,
             fuel: fd.fuel,
+        });
+    }
+    out
+}
+
+/// Task 1 ([M-smtmc], владелец-норматив 2026-07-31): собрать все instance-
+/// методы модуля (`fn Type @method(...)`) в реестр для method-call UF
+/// encoding в контрактах (encode.rs `MethodInfo`/`method_uf_name`). В
+/// отличие от `collect_pure_fns` НЕ фильтрует по purity — encoder кодирует
+/// любой member-call структурно; purity-гейт — на checker-этапе
+/// (types/mod.rs ContractCtx, тот же `pure_fn_names`, что и для свободных
+/// fn). Ключ реестра — имя метода (V1 name-based tradeoff, паритет с
+/// `pure_fns`/`pure_fn_names`).
+pub(super) fn collect_methods(module: &Module) -> std::collections::HashMap<String, encode::MethodInfo> {
+    let mut out = std::collections::HashMap::new();
+    for item in &module.items {
+        let Item::Fn(fd) = item else { continue };
+        let Some(recv) = &fd.receiver else { continue };
+        let recv_ty = TypeRef::Named {
+            path: vec![recv.type_name.clone()],
+            generics: Vec::new(),
+            span: fd.span,
+        };
+        let mut param_sorts = vec![type_to_sort(&recv_ty)];
+        param_sorts.extend(fd.params.iter().map(|p| type_to_sort(&p.ty)));
+        let return_sort = fd.return_type.as_ref().map(type_to_sort).unwrap_or(SortRef::Int);
+        out.insert(fd.name.clone(), encode::MethodInfo {
+            param_sorts,
+            return_sort,
+            recv_type_tag: recv.type_name.clone(),
         });
     }
     out
@@ -2792,9 +2858,14 @@ pub(super) fn encode_axiom(
     // Encode body.
     static EMPTY_FNS: std::sync::OnceLock<std::collections::HashMap<String, super::encode::PureFnInfo>> = std::sync::OnceLock::new();
     static EMPTY_TRUSTED: std::sync::OnceLock<std::collections::HashMap<String, super::encode::TrustedFnInfo>> = std::sync::OnceLock::new();
+    static EMPTY_METHODS: std::sync::OnceLock<std::collections::HashMap<String, super::encode::MethodInfo>> = std::sync::OnceLock::new();
     let empty_fns = EMPTY_FNS.get_or_init(std::collections::HashMap::new);
     let empty_trusted = EMPTY_TRUSTED.get_or_init(std::collections::HashMap::new);
-    let ctx = super::encode::EncodeCtx { pure_views, pure_fns: empty_fns, trusted_fns: empty_trusted, var_sorts: std::collections::HashMap::new() };
+    let empty_methods = EMPTY_METHODS.get_or_init(std::collections::HashMap::new);
+    let ctx = super::encode::EncodeCtx {
+        pure_views, pure_fns: empty_fns, trusted_fns: empty_trusted,
+        var_sorts: std::collections::HashMap::new(), methods: empty_methods,
+    };
     let body = super::encode::encode_expr_with_ctx(ax.formula, &ctx).ok()?;
     // Build binders Vec — явный или inferred sort, default Int.
     let binders: Vec<(String, SortRef)> = binder_names.iter()
@@ -4363,6 +4434,7 @@ fn bv_scope_ctx<'a>(ctx: &encode::EncodeCtx<'a>, scope: &BvScope) -> encode::Enc
         pure_fns: ctx.pure_fns,
         trusted_fns: ctx.trusted_fns,
         var_sorts: scope.sorts.clone(),
+        methods: ctx.methods,
     }
 }
 

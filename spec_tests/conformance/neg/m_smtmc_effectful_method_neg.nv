@@ -1,0 +1,28 @@
+// EXPECT_COMPILE_ERROR requires it to be pure
+//
+// [M-smtmc] Task 1/2 (владелец-норматив 2026-07-31): Task 1 разрешил
+// ЧИСТЫЙ method-call в контракте (UF-encoding, без `#unverified`), НО
+// требование ЧИСТОТЫ вызываемого метода НЕ ослаблено — эффектный вызов
+// (body которого содержит `with`-блок, не проходит SCC pure-inference,
+// Ф.3 Plan 33.5) в `requires` остаётся compile-error (types/mod.rs
+// ContractCtx::walk_expr, Member-call arm). Изолированный файл (свой
+// compile-unit, EXPECT_COMPILE_ERROR) — вне conformance mega-CU.
+module neg.m_smtmc_effectful_method_neg
+
+type MSmtmcNegEff effect {
+    tick() -> int
+}
+
+type MSmtmcNegBox(v int = 0)
+
+fn MSmtmcNegBox @m_smtmc_neg_is_bad() -> bool {
+    with MSmtmcNegEff = effect MSmtmcNegEff { tick() -> int => 1 } {
+        MSmtmcNegEff.tick() > 0 && @v < 0
+    }
+}
+
+fn m_smtmc_neg_check(b MSmtmcNegBox) -> int
+    requires !b.m_smtmc_neg_is_bad()
+{
+    b.v
+}

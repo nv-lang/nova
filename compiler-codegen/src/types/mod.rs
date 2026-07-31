@@ -39644,39 +39644,56 @@ impl ContractCtx {
                         }
                         return;
                     }
-                    // Plan 33.2 Ф.7 composition: вызов другой fn в контракте
-                    // разрешён ТОЛЬКО если она `#pure`.
+                    // Plan 33.2 Ф.7 composition: чистота вызываемой fn
+                    // ВЫВОДИТСЯ (Purity::Pure — SCC inference, Ф.3 Plan
+                    // 33.5, `pure_fn_names` ниже); `#pure` — добровольное
+                    // подтверждение для границ, где вывод недоступен
+                    // (extern), НЕ обязательное условие композиции
+                    // (владелец-норматив 2026-07-31: атрибут-костыль нельзя
+                    // вымогать там, где чистота выводима).
                     if self.fn_names.contains(name) && !self.pure_fn_names.contains(name) {
                         errors.push(Diagnostic::new(
                             format!(
-                                "calling user function `{}` in contracts requires `#pure` attribute \
-                                 (Plan 33.2 composition: only #pure functions allowed)",
-                                name
+                                "calling function `{}` in a contract requires it to be pure \
+                                 (purity is inferred automatically for effect-free bodies — \
+                                 Plan 33.5 SCC inference, no attribute needed); `{}` has \
+                                 effects and cannot be used in a contract",
+                                name, name
                             ),
                             e.span,
                         ));
                     }
                 }
-                // Plan 140.2 Part A (D256): self-method call `@method()` в контракте.
-                // SMT-encoder поддерживает только встроенные #pure-аксессоры
-                // (`@len()`/`@cap()`/`@byte_len()`/`@is_empty()` → `_field_*_int(_self)`);
-                // прочие `@method()` (в т.ч. non-pure / mut-receiver) НЕ кодируются —
-                // даём внятную ошибку на checker-этапе вместо обобщённого E2401.
-                if let ExprKind::Member { obj, name } = &func.kind {
-                    if matches!(obj.kind, ExprKind::SelfAccess)
-                        && !matches!(name.as_str(), "len" | "cap" | "byte_len" | "is_empty")
+                // Task 1/2 ([M-smtmc], владелец-норматив 2026-07-31): method-
+                // call композиция — как и свободная fn-composition чуть
+                // выше, но для `obj.method(...)` (включая self-метод
+                // `@method()`). Purity выводится ТЕМ ЖЕ реестром
+                // `pure_fn_names`, что и для свободных fn (SCC inference,
+                // Ф.3 Plan 33.5, покрывает методы наравне со свободными fn —
+                // `ContractCtx::build` не различает receiver). Требование
+                // самой чистоты (эффектный вызов = error) НЕ ослаблено;
+                // ПРЕЖДЕ этот arm безусловно блокировал любой non-accessor
+                // self-метод (Plan 140.2 D256) — теперь чистый метод (self
+                // или чужой receiver) кодируется как UF (verify/encode.rs
+                // Task 1) и проходит; блокируется только реально эффектный.
+                // Встроенные size-аксессоры (`len`/`cap`/`byte_len`/
+                // `is_empty`, Plan 60 D117 / Plan 140.2) кодируются как
+                // built-in field-UF независимо от purity-реестра модуля —
+                // не гейтуем.
+                if let ExprKind::Member { name, .. } = &func.kind {
+                    if !matches!(name.as_str(), "len" | "cap" | "byte_len" | "is_empty")
+                        && self.fn_names.contains(name) && !self.pure_fn_names.contains(name)
                     {
                         errors.push(Diagnostic::new(
                             format!(
-                                "self-метод `@{}()` в контракте не поддерживается SMT-encoder'ом \
-                                 (Plan 140.2: разрешены только #pure-аксессоры \
-                                 `@len()`/`@cap()`/`@byte_len()`/`@is_empty()`); \
-                                 ссылайтесь на поле напрямую (`@{}`) или вынесите логику в #pure fn",
-                                name, name,
+                                "calling method `.{}()` in a contract requires it to be pure \
+                                 (purity is inferred automatically for effect-free bodies — \
+                                 Plan 33.5 SCC inference, no attribute needed); `{}` has \
+                                 effects and cannot be used in a contract",
+                                name, name
                             ),
                             e.span,
                         ));
-                        return;
                     }
                 }
                 // Walk callee + args.

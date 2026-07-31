@@ -43,6 +43,14 @@ pub struct EncodeCtx<'a> {
     /// Plan 33.3 Ф.11: типы переменных (params + let bindings).
     /// Нужны для dispatch `+` → `fp.add` vs Int `+` при FP аргументах.
     pub var_sorts: HashMap<String, SortRef>,
+    /// Task 1 ([M-smtmc], владелец-норматив 2026-07-31): реестр instance-
+    /// методов модуля для method-call UF encoding в контрактах. Ключ —
+    /// имя метода (тот же V1 name-based tradeoff, что `pure_fns`/
+    /// `pure_fn_names`: разные типы с методом одного имени делят UF-
+    /// неймспейс — не новое ограничение, паритет с существующей purity-
+    /// инфраструктурой). Purity вызываемого метода энфорсится на checker-
+    /// этапе (types/mod.rs ContractCtx), НЕ здесь — encoder только кодирует.
+    pub methods: &'a HashMap<String, MethodInfo>,
 }
 
 /// Signature of a `#pure` fn for SMT encoding (Plan 33.4 D.0.2).
@@ -66,6 +74,31 @@ pub struct PureFnInfo {
 /// SMT UF name for a pure fn: `_pure_fn_<name>`.
 pub fn pure_fn_uf_name(fn_name: &str) -> String {
     format!("_pure_fn_{}", fn_name)
+}
+
+/// Task 1 ([M-smtmc], 2026-07-31): signature of an instance method for
+/// method-call UF encoding in contracts (`obj.method(args)` → UF, receiver
+/// as first UF argument — same non-inlined UF path as an opaque/composed
+/// `#pure` fn, D.0.2). Unlike `PureFnInfo`, method calls are NEVER inlined
+/// (no `body_expr`): the receiver is an arbitrary expression, not a named
+/// param, so body-substitution would need `@`/self-rewriting machinery this
+/// V1 encoder doesn't have — UF-only is the norm the owner asked for
+/// ("не доказано — работает в рантайме", 2026-07-31).
+#[derive(Debug, Clone)]
+pub struct MethodInfo {
+    /// SMT sorts for the UF's fixed argument list: `[receiver_sort, params...]`.
+    pub param_sorts: Vec<SortRef>,
+    pub return_sort: SortRef,
+    /// Best-effort tag for the declared receiver type (`Receiver::type_name`)
+    /// baked into the UF name for readability/collision-reduction across
+    /// differently-typed same-named methods. Sanitized to `[A-Za-z0-9_]`.
+    pub recv_type_tag: String,
+}
+
+/// SMT UF name for a method call: `_method_<recv_type_tag>_<name>_<arity>`.
+/// `arity` includes the receiver (it is the first UF argument).
+pub fn method_uf_name(recv_type_tag: &str, name: &str, arity: usize) -> String {
+    format!("_method_{}_{}_{}", sanitize_for_var(recv_type_tag), name, arity)
 }
 
 #[derive(Debug, Clone)]
@@ -102,10 +135,12 @@ impl<'a> EncodeCtx<'a> {
         static EMPTY_VIEWS: std::sync::OnceLock<HashMap<String, PureViewSig>> = std::sync::OnceLock::new();
         static EMPTY_FNS: std::sync::OnceLock<HashMap<String, PureFnInfo>> = std::sync::OnceLock::new();
         static EMPTY_TRUSTED: std::sync::OnceLock<HashMap<String, TrustedFnInfo>> = std::sync::OnceLock::new();
+        static EMPTY_METHODS: std::sync::OnceLock<HashMap<String, MethodInfo>> = std::sync::OnceLock::new();
         let views = EMPTY_VIEWS.get_or_init(HashMap::new);
         let fns = EMPTY_FNS.get_or_init(HashMap::new);
         let trusted = EMPTY_TRUSTED.get_or_init(HashMap::new);
-        EncodeCtx { pure_views: views, pure_fns: fns, trusted_fns: trusted, var_sorts: HashMap::new() }
+        let methods = EMPTY_METHODS.get_or_init(HashMap::new);
+        EncodeCtx { pure_views: views, pure_fns: fns, trusted_fns: trusted, var_sorts: HashMap::new(), methods }
     }
 }
 
@@ -240,6 +275,35 @@ pub fn encode_expr_with_ctx(e: &Expr, ctx: &EncodeCtx) -> Result<SmtTerm, Encodi
                             vec![obj_t],
                         ));
                     }
+                }
+            }
+            // Task 1 ([M-smtmc], владелец-норматив 2026-07-31): general
+            // method-call `obj.method(args...)` в контракте → UF, ТЕМ ЖЕ
+            // путём, что и свободные `#pure` fn (composition arm выше):
+            // имя UF из (тип ресивера, имя метода, арность), ресивер —
+            // первый аргумент UF. Раньше это была `EncodingError::
+            // Unsupported` ("call expressions... not yet supported"),
+            // которая на pipeline-этапе превращалась в hard compile error
+            // [E2401] требующий `#unverified` — вымогательство костыля.
+            // Недоказуемое UF-условие — штатный runtime-fallback (Plan
+            // 172/A-V13). Требование ЧИСТОТЫ вызываемого метода остаётся:
+            // энфорсится на checker-этапе (types/mod.rs ContractCtx,
+            // выведенная Purity::Pure — не по атрибуту), не здесь; encoder
+            // кодирует любой member-call структурно, не гейтует purity.
+            if trailing.is_none() {
+                if let ExprKind::Member { obj, name } = &func.kind {
+                    let obj_t = encode_expr_with_ctx(obj, ctx)?;
+                    let mut encoded_args = Vec::with_capacity(args.len() + 1);
+                    encoded_args.push(obj_t);
+                    for a in args {
+                        encoded_args.push(encode_expr_with_ctx(a.expr(), ctx)?);
+                    }
+                    let arity = encoded_args.len();
+                    let recv_tag = ctx.methods.get(name)
+                        .map(|info| info.recv_type_tag.as_str())
+                        .unwrap_or("any");
+                    let uf = method_uf_name(recv_tag, name, arity);
+                    return Ok(SmtTerm::App(uf, encoded_args));
                 }
             }
             Err(EncodingError::Unsupported(format!(
