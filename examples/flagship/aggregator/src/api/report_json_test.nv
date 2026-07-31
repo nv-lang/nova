@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Flagship concurrent aggregator: JSON snapshot bridge tests.
 //
-// Pure functions (`build_snapshot`/`snapshot_to_json` — no effects) —
+// Pure functions (`build_snapshot`/`dto_json` — no effects) —
 // tested directly. Assertions are substring checks (not JSON parse
 // round-trips) to avoid a codegen gap with deeply nested generic types.
 //
@@ -39,14 +39,14 @@ fn srcs_for(ids []str) -> []Source {
 
 // ── POS: full shape shows up in the serialized JSON ────────────────────────
 
-test "build_snapshot -> snapshot_to_json: every top-level field round-trips" {
+test "build_snapshot -> dto_json: every top-level field round-trips" {
     ro report = [
         done_result("fast-a", 15),
         failed_result("bad", "upstream failure: bad", 10),
         cancelled_result("slow", 120),
     ].to_report(118)
     ro dto = build_snapshot(report, srcs_for(["fast-a", "bad", "slow"]), "weather", "demo", 7, 120, handlers_demo())
-    ro s = snapshot_to_json(dto)
+    ro s = dto_json(dto)
     assert(s.contains("\"fanout\":3"))
     assert(s.contains("\"done\":1"))
     assert(s.contains("\"failed\":1"))
@@ -67,10 +67,10 @@ test "build_snapshot -> snapshot_to_json: every top-level field round-trips" {
 
 // ── POS: a failed lane carries its error text in status.error ─────────────
 
-test "snapshot_to_json: failed lane carries its error text" {
+test "dto_json: failed lane carries its error text" {
     ro report = [failed_result("bad", "upstream failure: bad", 10)].to_report(10)
     ro dto = build_snapshot(report, srcs_for(["bad"]), "health", "demo", 0, 100, handlers_demo())
-    ro s = snapshot_to_json(dto)
+    ro s = dto_json(dto)
     assert(s.contains("\"state\":\"failed\""))
     assert(s.contains("\"error\":\"upstream failure: bad\""))
 }
@@ -78,31 +78,31 @@ test "snapshot_to_json: failed lane carries its error text" {
 // ── POS: a done lane's status carries a null (not a string) error ─────────
 //    `Option[T]::None` serializes as JSON `null` with the key still present.
 
-test "snapshot_to_json: done lane's status carries a null error, not a string" {
+test "dto_json: done lane's status carries a null error, not a string" {
     ro report = [done_result("fast-a", 15)].to_report(15)
     ro dto = build_snapshot(report, srcs_for(["fast-a"]), "health", "demo", 0, 100, handlers_demo())
-    ro s = snapshot_to_json(dto)
+    ro s = dto_json(dto)
     assert(s.contains("\"state\":\"done\""))
     assert(s.contains("\"error\":null"))
 }
 
 // ── POS: kind/probes come from the matching Source, by id ─────────────────
 
-test "snapshot_to_json: result kind/probes are pulled from the matching Source" {
+test "dto_json: result kind/probes are pulled from the matching Source" {
     ro report = [done_result("only-one", 15)].to_report(15)
     ro srcs = [Source.new("only-one", "7 days", 7, 0, false)]
     ro dto = build_snapshot(report, srcs, "weather", "demo", 0, 100, handlers_demo())
-    ro s = snapshot_to_json(dto)
+    ro s = dto_json(dto)
     assert(s.contains("\"kind\":\"7 days\""))
     assert(s.contains("\"probes\":7"))
 }
 
 // ── EDGE: empty report -> empty results array, zero tallies, no panic ─────
 
-test "snapshot_to_json: empty report -> empty results array, zero tallies" {
+test "dto_json: empty report -> empty results array, zero tallies" {
     ro report = []TaskResult.new().to_report(0)
     ro dto = build_snapshot(report, []Source.new(), "weather", "demo", 0, 100, handlers_demo())
-    ro s = snapshot_to_json(dto)
+    ro s = dto_json(dto)
     assert(s.contains("\"fanout\":0"))
     assert(s.contains("\"done\":0"))
     assert(s.contains("\"results\":[]"))
@@ -111,10 +111,10 @@ test "snapshot_to_json: empty report -> empty results array, zero tallies" {
 
 // ── POS: pretty form (`json_encode_pretty`) still carries the same tallies
 
-test "snapshot_to_json_pretty: still carries the same tallies, whitespace aside" {
+test "dto_json_pretty: still carries the same tallies, whitespace aside" {
     ro report = [done_result("fast-a", 15)].to_report(15)
     ro dto = build_snapshot(report, srcs_for(["fast-a"]), "weather", "demo", 0, 100, handlers_demo())
-    ro pretty = snapshot_to_json_pretty(dto)
+    ro pretty = dto_json_pretty(dto)
     assert(pretty.contains("\n"))    // pretty-printed, not compact
     // Whitespace-normalized substring check (pretty inserts "key": value
     // with a space after the colon + indentation — compact doesn't) so this

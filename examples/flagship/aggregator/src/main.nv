@@ -20,14 +20,14 @@ import ./domain.{Source, Report}
 import ./app.{Emit, null_emit}
 import ./app.{aggregate, weather_demo_sources, WEATHER_BUDGET_MS, health_demo_sources, HEALTH_BUDGET_MS, chaos_variant}
 import ./app.{aggregate_live_health, aggregate_live_weather, health_live_sources, weather_live_sources}
-import ./api.{build_snapshot, HandlersDto, snapshot_to_json}
+import ./api.{build_snapshot, HandlersDto, dto_json}
 import std.net.{SocketAddr, TcpListener, real_net, mock_net}
 import std.os.{env, real_os}
 import polaris.{Router, ServerRequest, ServerResponse, StreamBody, sse_event}
 import polaris.serve.{handle_connection_router}
 import std.time.duration
 import std.runtime.sync.{AtomicInt}
-import std.encoding.serde.{Serialize, json_encode}
+import std.encoding.serde.{Serialize}
 
 // Loopback port: env override (`AGGREGATOR_PORT`) or this default.
 //
@@ -197,11 +197,12 @@ fn snapshot_body(legend str, mode str, seed int) Time -> ServerResponse {
     ro rr = with Emit = null_emit() { run_net(legend, mode, seed) }
     ro seed_out = if mode == "live" { 0 } else { seed }
     ro dto = build_snapshot(rr.report, rr.sources, legend, mode, seed_out, rr.budget_ms, rr.handlers)
-    ServerResponse.bytes(200, "application/json", snapshot_to_json(dto).bytes())
+    ServerResponse.bytes(200, "application/json", dto_json(dto).bytes())
 }
 
-// ── JSON rendering: typed `std.encoding.serde.json_encode` ─────────────────
-// All DTOs use `#impl(Serialize)` + `json_encode` — no hand-rolled JSON.
+// ── JSON rendering: one spelling app-wide — `api.dto_json` ─────────────────
+// All DTOs use `#impl(Serialize)` + `dto_json` (typed serde encode with the
+// flat-DTO panic invariant) — no hand-rolled JSON, no per-type wrappers.
 
 // ── GET /api/events: SSE replay of the run's Emit timeline ─────────────────
 
@@ -229,10 +230,6 @@ type EmitRecord {
     ro t_ms       int
 }
 
-/// `EmitRecord` is a flat `Serialize` DTO of primitives — encode-failure
-/// is structurally impossible.
-fn emit_record_json(r EmitRecord) -> str =>
-    json_encode(r) ?? panic("emit_record_json: EmitRecord is a flat Serialize DTO — encode must not fail")
 
 /// `Emit` is discharged here (`with Emit = <recorder>`). `Time` is left
 /// to the ambient runtime default.
@@ -268,10 +265,10 @@ fn events_body(legend str, mode str, seed int) Time -> ServerResponse {
     ro dto = build_snapshot(rr.report, rr.sources, legend, mode, seed_out, rr.budget_ms, rr.handlers)
 
     mut chunks [][]u8 = []
-    chunks.push(sse_event("replay_info", json_encode(ReplayInfo { total_ms, time_scale: 1 }) ?? panic("replay_info: flat Serialize DTO — encode must not fail")))
+    chunks.push(sse_event("replay_info", dto_json(ReplayInfo { total_ms, time_scale: 1 })))
     for r in records {
-        chunks.push(sse_event(r.kind, emit_record_json(r)))
+        chunks.push(sse_event(r.kind, dto_json(r)))
     }
-    chunks.push(sse_event("run_summary", snapshot_to_json(dto)))
+    chunks.push(sse_event("run_summary", dto_json(dto)))
     ServerResponse.sse(StreamBody.from_chunks(chunks))
 }

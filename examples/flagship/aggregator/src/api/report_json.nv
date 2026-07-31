@@ -113,19 +113,19 @@ export fn build_snapshot(report Report, sources []Source, legend str, mode str, 
     }
 }
 
-/// Compact JSON wire form.
+/// Compact JSON wire form of any of this app's DTOs.
 ///
-/// `SnapshotDto` is a flat `#impl(Serialize)` DTO of primitives — no
+/// Every DTO here is a flat `#impl(Serialize)` record of primitives — no
 /// cycles or unrepresentable values, so encode-failure is structurally
 /// impossible. `?? panic(...)` is the canonical form for invariant
-/// violations.
+/// violations. One helper, one name — the single JSON spelling app-wide.
 #stable(since = "0.2")
-export fn snapshot_to_json(dto SnapshotDto) -> str =>
-    json_encode(dto) ?? panic("snapshot_to_json: SnapshotDto is a flat Serialize DTO — encode must not fail")
+export fn dto_json[T Serialize](v T) -> str =>
+    json_encode(v) ?? panic("dto_json: flat Serialize DTO — encode must not fail")
 
 /// Pretty (2-space indent) JSON wire form — `json_encode_pretty` is the
 /// direct entry point (no `@display` for `#impl(Serialize)` DTOs). Same
-/// `?? panic(...)` rationale as `snapshot_to_json` above.
+/// `?? panic(...)` rationale as `dto_json` above.
 #stable(since = "0.2")
-export fn snapshot_to_json_pretty(dto SnapshotDto) -> str =>
-    json_encode_pretty(dto) ?? panic("snapshot_to_json_pretty: SnapshotDto is a flat Serialize DTO — encode must not fail")
+export fn dto_json_pretty[T Serialize](v T) -> str =>
+    json_encode_pretty(v) ?? panic("dto_json_pretty: flat Serialize DTO — encode must not fail")
