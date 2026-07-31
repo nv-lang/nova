@@ -413,6 +413,15 @@ pub struct FnDecl {
     /// Plan 113 (D172): `#blocking` attribute перед `fn`.
     /// Runtime threadpool offload — callers wrap fn in uv_queue_work, fiber parks.
     pub blocking_attr: bool,
+    /// A-V10 (D441 §5 №167 closure, Plan 238): `#thread_affine` attribute
+    /// перед `extern fn` — маркирует M:N-небезопасный лист (thread-affine/
+    /// нереэнтерабельный C-side вызов: TLS-состояние, потокопривязанный
+    /// handle и т.п.). Парсер (тот же путь, что `blocking_attr`) требует
+    /// `is_external` (checker enforces — E_THREAD_AFFINE_NOT_EXTERN).
+    /// Транзитивно поднимается по именованному графу вызовов
+    /// (`thread_affine_closure` в `types/mod.rs`) и гейтится на границе
+    /// `spawn`/`detach`/`parallel for` (`E_THREAD_AFFINE_IN_FIBER`).
+    pub thread_affine_attr: bool,
     /// Plan 154.1 (D268): `#impl(P1 + P2 + ...)` ведущий атрибут на МЕТОД-декларации
     /// (`fn T @m`) — opt-in объявление, что метод реализует метод протокола(ов) P.
     /// Checker валидирует подпись против P + привязывает P к receiver-типу
