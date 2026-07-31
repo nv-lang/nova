@@ -1,0 +1,26 @@
+// EXPECT_COMPILE_ERROR [E_HANDLER_MUT_CAPTURE_IN_FIBER] captured by reference in a PRECOMPUTED `with`-handler
+//
+// A-V10 (D441 §5 №168 closure — Plan 238 honest-gap #168, `docs/plans/
+// 221.1-bug-sweep.md`): Ф.3 (Plan 238) caught only a handler-LITERAL
+// written directly at the `with X = |..| {..} { .. }` install site. A
+// PRECOMPUTED handler — `ro handler = |..| {..}` bound first, then
+// `with X = handler { ...spawn... }` — was invisible: `check_handler_
+// capture`'s bare-`Ident` arm was a documented no-op (D441 §5 point 6).
+// Fixed by resolving the `Ident` the SAME way Ф.1's `check_transitive_
+// closure_arg` already resolves a closure passed by value into a
+// spawn-tainted parameter — the `let`/`ro`-time `closure_free_vars`
+// snapshot.
+
+module neg.handler_mut_capture_precomputed_neg
+
+fn main() {
+    mut count = 0
+    ro handler = fn(e int) -> never { count = count + 1; panic("boom: {e}") }
+    supervised {
+        with Fail[int] = handler {
+            spawn {
+                println("child")
+            }
+        }
+    }
+}

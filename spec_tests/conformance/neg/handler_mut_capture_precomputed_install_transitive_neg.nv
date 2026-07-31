@@ -1,0 +1,33 @@
+// EXPECT_COMPILE_ERROR [E_CONCURRENT_MUT_CAPTURE] created outside any fiber boundary, then passed BY VALUE into `install_and_run`'s parameter `h`
+//
+// A-V10 (D441 §5 №168 closure — install-position transitivity): a
+// fn-typed parameter used as the HANDLER at an install site
+// (`with X = h { ...spawn... }`, where `h` is the callee's OWN parameter,
+// not a name bound inside the callee) is exactly as tainted as one
+// literally INVOKED inside the boundary — Ф.1а's original
+// `spawn_tainted_params_of_fn` pre-pass now also treats a `with`-handler
+// install as a boundary-crossing use of the parameter (`collect_fiber_
+// boundary_frees_expr`'s `With` arm extension), so this closure's
+// `check_transitive_closure_arg` call-site check fires the SAME way it
+// already fires for `race150/b_closure_bypass.nv`'s direct-invocation
+// shape (`neg/mut_capture_transitive_via_param_neg.nv`).
+
+module neg.handler_mut_capture_precomputed_install_transitive_neg
+
+fn install_and_run(h fn(int) -> never, n int) {
+    supervised {
+        with Fail[int] = h {
+            for _ in 0..n {
+                spawn {
+                    println("child")
+                }
+            }
+        }
+    }
+}
+
+fn main() {
+    mut count = 0
+    ro handler = fn(e int) -> never { count = count + 1; panic("boom: {e}") }
+    install_and_run(handler, 4)
+}
