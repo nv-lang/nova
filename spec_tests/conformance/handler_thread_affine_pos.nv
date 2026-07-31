@@ -1,0 +1,57 @@
+// A-V10 (D441 §5 №167 closure — pos-twin of `neg/thread_affine_direct_in_
+// fiber_neg.nv` / `neg/thread_affine_transitive_in_fiber_neg.nv`): the
+// SAME `#thread_affine` leaf/transitive shapes must stay LEGAL:
+//   1. leaf called OUTSIDE any fiber boundary — legal (D441 §5 №167's
+//      whole point is the CROSSING, not the call itself);
+//   2. an UNMARKED extern, called INSIDE `spawn` — legal, unchanged
+//      baseline behavior (`#thread_affine` is opt-in per D441 §5, `std`
+//      today marks none — A-V10 brief §4);
+//   3. a transitively-tainted WRAPPER (calls the leaf synchronously, in
+//      its own fiber, no nested `spawn` of its own) called OUTSIDE any
+//      fiber boundary — legal, same reasoning as (1) one hop removed
+//      (`thread_affine_closure`'s fixed-point, `neg/thread_affine_
+//      transitive_in_fiber_neg.nv` is this fixture's INSIDE-a-boundary
+//      neg-twin).
+//
+// A fourth shape — a wrapper that invokes its leaf INSIDE ITS OWN
+// `spawn` (`fn w() { spawn { abs(-1) } }`) — is deliberately NOT a pos
+// fixture here: that inner `spawn`+leaf combination is ALWAYS a direct
+// violation on its own (`own_fiber_call_names_of_fn` correctly does NOT
+// add `abs` to `w`'s transitive-taint set, since the call is inside `w`'s
+// OWN nested fiber boundary — decoupled from whichever fiber calls `w` —
+// but `w`'s OWN definition still gets flagged for its own internal
+// spawn+leaf pairing, so `w` itself can never appear in a fully-clean pos
+// fixture). Verified by hand instead (not committed — `nova check` on an
+// ad-hoc `w`-shaped file emits EXACTLY ONE error, at `w`'s own `spawn`
+// site, with NO second/spurious error at a caller that invokes `w()`
+// from a legal, boundary-free context — confirms the "stop at nested
+// fiber boundary" call-graph exclusion does not over-taint `w` itself).
+
+module spec_tests.conformance
+
+#thread_affine
+extern "C" fn abs(x i32) -> i32
+
+extern "C" fn floor(x f64) -> f64
+
+fn wraps_leaf_synchronously() -> i32 {
+    abs(-7)
+}
+
+test "thread_affine leaf called outside any fiber boundary — легально" {
+    ro r = abs(-4)
+    assert(r == 4)
+}
+
+test "немаркированный extern, вызванный внутри spawn — легально (базовое поведение не изменилось)" {
+    supervised {
+        spawn {
+            ro _r = floor(1.5)
+        }
+    }
+}
+
+test "транзитивно-меченая обёртка (зовёт лист синхронно, БЕЗ собственного spawn), вызванная снаружи любой fiber-границы — легально" {
+    ro r = wraps_leaf_synchronously()
+    assert(r == 7)
+}

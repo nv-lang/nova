@@ -1,0 +1,23 @@
+// EXPECT_COMPILE_ERROR [E_THREAD_AFFINE_IN_FIBER] call to `abs` — declared `#thread_affine`
+//
+// A-V10 (D441 §5 №167 closure — Plan 238 honest-gap #167, `docs/plans/
+// 221.1-bug-sweep.md`): `infer_effects` had no "M:N-unsafe leaf" category
+// — a thread-affine/non-reentrant C-side extern (TLS state, a
+// potocol-bound handle, etc.) could be called from ANY fiber, including
+// one that may run on a worker thread other than the one the leaf
+// requires. `#thread_affine` marks the leaf directly on the `extern fn`
+// declaration (same parser path as `#blocking`); this fixture is the
+// BASE case — direct call, zero intermediate frames.
+
+module neg.thread_affine_direct_in_fiber_neg
+
+#thread_affine
+extern "C" fn abs(x i32) -> i32
+
+fn calls_leaf_directly_in_spawn() {
+    supervised {
+        spawn {
+            ro _r = abs(-1)
+        }
+    }
+}

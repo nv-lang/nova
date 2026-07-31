@@ -1,0 +1,26 @@
+// EXPECT_COMPILE_ERROR [E_THREAD_AFFINE_IN_FIBER] call to `wraps_leaf` — transitively reaches the `#thread_affine` leaf `abs`
+//
+// A-V10 (D441 §5 №167 closure): transitive lift — a wrapper fn that
+// invokes a `#thread_affine` leaf DIRECTLY in ITS OWN fiber (not inside
+// its own `spawn`) is itself just as thread-affine as the leaf; a caller
+// that then invokes the WRAPPER inside a `spawn`/`detach`/`parallel for`
+// body gets the same `E_THREAD_AFFINE_IN_FIBER` diagnostic, with the
+// chain named (`thread_affine_closure`'s fixed-point over the NAMED
+// free-fn call graph, `own_fiber_call_names_of_fn`).
+
+module neg.thread_affine_transitive_in_fiber_neg
+
+#thread_affine
+extern "C" fn abs(x i32) -> i32
+
+fn wraps_leaf() -> i32 {
+    abs(-1)
+}
+
+fn calls_wrapper_in_spawn() {
+    supervised {
+        spawn {
+            ro _r = wraps_leaf()
+        }
+    }
+}
