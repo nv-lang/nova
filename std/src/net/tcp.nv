@@ -30,11 +30,11 @@ export type TcpListener consume value { priv handle *() }
 /// Connected async TCP stream. `connect`/`read`/`write`/`close` carry `Net`.
 /// `close()` consumes (use-after-close is a compile error, D133).
 ///
-/// Plan 201 (D188-амендмент): `rc` — разделяемый refcount владельцев:
-/// `@share()`-копии несут ТОТ ЖЕ `AtomicInt`; `@close`/`@cleanup` =
-/// `fetch_sub`, реальный extern-close сокета выполняет ТОЛЬКО последний
-/// владелец (переход к 0). Refcount целиком в nv (конвенция §3) — ноль
-/// нового C.
+/// Plan 201 (D188 amendment): `rc` — a shared refcount of owners:
+/// `@share()` copies carry THE SAME `AtomicInt`; `@close`/`@cleanup` =
+/// `fetch_sub`, the real extern socket close runs ONLY in the LAST owner
+/// (transition to 0). The refcount lives entirely in nv (convention §3) — zero
+/// new C.
 #stable(since = "0.1")
 export type TcpStream consume value { priv handle *(), priv rc AtomicInt }
 
@@ -125,10 +125,10 @@ export fn TcpListener mut @set_reuse_address(on bool) Net {
 #stable(since = "0.1")
 export fn TcpListener consume @close() Net { Net.close_listener(@) }
 
-/// D432/Plan 217.1 `Cleanup[never]`-имплементация: cleanup = `@close()`.
-/// Делает `TcpListener` пригодным для авто-`@cleanup` (гибрид C, D432) —
-/// непотреблённый к концу скоупа listener закрывается автоматически, как
-/// `TcpStream` (см. ниже).
+/// D432/Plan 217.1 `Cleanup[never]` implementation: cleanup = `@close()`.
+/// Makes `TcpListener` usable with auto-`@cleanup` (C hybrid, D432) — an
+/// unconsumed listener at scope end closes automatically, like `TcpStream`
+/// (see below).
 #stable(since = "0.1")
 export fn TcpListener consume @cleanup(_outcome ScopeOutcome) -> () {
     @close()
@@ -259,30 +259,30 @@ export fn TcpStream mut @set_nodelay(on bool) Net { Net.set_nodelay(@, on) }
 #stable(since = "0.1")
 export fn TcpStream mut @set_keepalive(on bool) Net { Net.set_keepalive(@, on) }
 
-/// **Alias одного TCP-потока, НЕ независимая копия** (Plan 201,
-/// D188-амендмент): `share()` возвращает второго ВЛАДЕЛЬЦА того же
-/// сокета — байты чтения/записи ДЕЛЯТСЯ между копиями, а сокет
-/// **закрывает последний** владелец (`rc` fetch_add при share,
-/// fetch_sub при `close`/`cleanup`; реальный extern-close — только при
-/// переходе rc к 0). Каждая копия — owned linear-значение со СВОИМ
-/// consume-обязательством (D133): её тоже нужно закрыть.
+/// **Alias of ONE TCP stream, NOT an independent copy** (Plan 201,
+/// D188 amendment): `share()` returns a second OWNER of the same socket —
+/// read/write bytes are SHARED between the copies, and the socket is
+/// **closed by the LAST** owner (`rc` fetch_add on share, fetch_sub on
+/// `close`/`cleanup`; the real extern-close runs only when rc reaches 0).
+/// Each copy is an owned linear value with its OWN consume obligation
+/// (D133): it must be closed too.
 ///
-/// Канонические применения: escape из `consume X { … }`-блока
-/// (`TlsStream.new(stream.share(), session)`) и per-fiber копия при
-/// многофиберном доступе (`ro w = s.share(); spawn { …w… }` —
-/// E_LINEAR_CAPTURE_IN_FIBER запрещает захват без share).
+/// Canonical uses: escaping a `consume X { … }` block
+/// (`TlsStream.new(stream.share(), session)`) and a per-fiber copy for
+/// multi-fiber access (`ro w = s.share(); spawn { …w… }` —
+/// E_LINEAR_CAPTURE_IN_FIBER forbids capture without share).
 ///
-/// Имя `share` (НЕ `clone`): Clone-протокол в Nova — независимая
-/// глубокая копия; alias-семантика — всегда `share()`.
+/// Named `share` (NOT `clone`): Nova's Clone protocol — an independent
+/// deep copy; alias semantics — always `share()`.
 #stable(since = "0.1")
 export fn TcpStream @share() -> TcpStream {
     @rc.fetch_add(1)
     share_copy(@handle, @rc)
 }
 
-/// Close the stream (consume). Plan 201: при `share()`-копиях реальный
-/// extern-close выполняет только ПОСЛЕДНИЙ владелец (rc → 0); остальные
-/// close лишь отпускают свою долю владения.
+/// Close the stream (consume). Plan 201: with `share()` copies the real
+/// extern-close runs only in the LAST owner (rc → 0); the other closes only
+/// release their share of ownership.
 #stable(since = "0.1")
 export fn TcpStream consume @close() Net {
     if @rc.fetch_sub(1) == 1 {
@@ -290,10 +290,10 @@ export fn TcpStream consume @close() Net {
     }
 }
 
-/// D188 `Cleanup[never]`-имплементация (Plan 201): cleanup = `@close()`
-/// (rc-aware — реальный extern-close только у последнего владельца).
-/// Делает `TcpStream` пригодным для `consume s = … { … }` /
-/// `consume s { … }` scope-block'ов.
+/// D188 `Cleanup[never]` implementation (Plan 201): cleanup = `@close()`
+/// (rc-aware — the real extern-close only in the last owner).
+/// Makes `TcpStream` usable in `consume s = … { … }` /
+/// `consume s { … }` scope blocks.
 #stable(since = "0.1")
 export fn TcpStream consume @cleanup(_outcome ScopeOutcome) -> () {
     @close()
@@ -303,10 +303,10 @@ export fn TcpStream consume @cleanup(_outcome ScopeOutcome) -> () {
 /// connection but have independent park slots, so they may be moved into
 /// separate fibers and used concurrently; the socket closes after BOTH close.
 ///
-/// Plan 201: split требует ЕДИНОЛИЧНОГО владения — `split()` на
-/// `share()`-нутом стриме (rc > 1) = runtime panic: половины считаются
-/// C-side split-refcount'ом, живая share-копия ломала бы «закрывает
-/// последний».
+/// Plan 201: split requires SOLE ownership — `split()` on a
+/// `share()`-ed stream (rc > 1) = runtime panic: the halves are counted by a
+/// C-side split-refcount, and a live share-copy would break the
+/// "last-owner-closes" invariant.
 #stable(since = "0.1")
 export fn TcpStream consume @into_split() Net -> (TcpReadHalf, TcpWriteHalf) {
     if @rc.fetch_sub(1) != 1 {
@@ -337,7 +337,7 @@ export fn TcpReadHalf consume @close() Net {
     Net.close_stream(TcpStream.from_raw(@handle))
 }
 
-/// D432/Plan 217.1 `Cleanup[never]`-имплементация: cleanup = `@close()`.
+/// D432/Plan 217.1 `Cleanup[never]` implementation: cleanup = `@close()`.
 #stable(since = "0.1")
 export fn TcpReadHalf consume @cleanup(_outcome ScopeOutcome) -> () {
     @close()
@@ -361,7 +361,7 @@ export fn TcpWriteHalf consume @close() Net {
     Net.close_stream(TcpStream.from_raw(@handle))
 }
 
-/// D432/Plan 217.1 `Cleanup[never]`-имплементация: cleanup = `@close()`.
+/// D432/Plan 217.1 `Cleanup[never]` implementation: cleanup = `@close()`.
 #stable(since = "0.1")
 export fn TcpWriteHalf consume @cleanup(_outcome ScopeOutcome) -> () {
     @close()
