@@ -27,32 +27,32 @@
 // протокола `Reflect` (библиотечные обёртки) решают, что непрозрачно.
 module std.reflect
 
-/// Разметка суммы на wire (D382/D435 `#serde(tag/content/untagged)`).
-/// `External` — дефолт serde (тип без атрибутов разметки).
+/// Sum tagging on the wire (D382/D435 `#serde(tag/content/untagged)`).
+/// `External` — serde default (a type without tagging attributes).
 export type SumRepr enum
     | External
     | Tagged(str)
     | TaggedContent(str, str)
     | Untagged
 
-/// Структурная форма типа — независима от формата/домена.
+/// The structural shape of a type — independent of the format/domain.
 ///
-/// - `Record(name, fields)` — record-тип; `fields` — `(wire_name, shape)` в
-///   порядке объявления, ПОСЛЕ rename/rename_all; `#serde(skip)`-поля
-///   исключены (никогда не попадают на wire).
-/// - `Sum(name, repr, variants)` — sum-тип; `variants` — `(variant_name,
-///   shape)`; unit-вариант → `Unit`; одноэлементный tuple-вариант →
-///   ПРОЗРАЧНО форма самого элемента (без обёртки); tuple-вариант с 2+
-///   элементами → синтетический `Record(variant_name, [("0", ..), ("1", ..)])`
-///   (позиционные поля по индексу); record-вариант → `Record(variant_name,
-///   [(field, shape), ..])` с СЫРЫМИ именами полей (rename/rename_all для
-///   sum-вариантов вне scope D435, `[M-126-sum-*-rich]`).
-/// - `Ref(name)` — back-edge рекурсивного типа: тип `name` уже разворачивается
-///   выше по графу (см. модульный docstring).
-/// - `Arr(items)` — гомогенный контейнер (`Vec[T]`/`[]T`).
+/// - `Record(name, fields)` — a record type; `fields` — `(wire_name, shape)` in
+///   declaration order, AFTER rename/rename_all; `#serde(skip)` fields
+///   are excluded (never reach the wire).
+/// - `Sum(name, repr, variants)` — a sum type; `variants` — `(variant_name,
+///   shape)`; a unit variant → `Unit`; a single-element tuple variant →
+///   TRANSPARENTLY the shape of the element itself (no wrapper); a tuple variant with 2+
+///   elements → a synthetic `Record(variant_name, [("0", ..), ("1", ..)])`
+///   (positional fields by index); a record variant → `Record(variant_name,
+///   [(field, shape), ..])` with RAW field names (rename/rename_all for
+///   sum variants is out of D435 scope, `[M-126-sum-*-rich]`).
+/// - `Ref(name)` — back-edge of a recursive type: the type `name` is already unfolding
+///   higher up the graph (see the module docstring).
+/// - `Arr(items)` — a homogeneous container (`Vec[T]`/`[]T`).
 /// - `Opt(inner)` — `Option[T]`.
-/// - `Opaque(name)` — форма намеренно не описывается (см. модульный
-///   docstring); компилятор её не синтезирует.
+/// - `Opaque(name)` — the shape is intentionally not described (see the module
+///   docstring); the compiler does not synthesize it.
 export type TypeShape enum
     | Record(str, [](str, TypeShape))
     | Sum(str, SumRepr, [](str, TypeShape))
@@ -66,10 +66,10 @@ export type TypeShape enum
     | Opt(TypeShape)
     | Opaque(str)
 
-/// `.reflect()` — СТАТИЧЕСКИЙ метод (описывает ТИП, не зависит от значения).
-/// Компилятор синтезирует тело для record/sum-типов с явным `#impl(Reflect)`
-/// (auto_derive.rs); blanket-реализации ниже покрывают примитивы и
-/// контейнеры. `Opaque` — ТОЛЬКО через ручную реализацию этого протокола.
+/// `.reflect()` — a STATIC method (describes the TYPE, independent of the value).
+/// The compiler synthesizes the body for record/sum types with an explicit `#impl(Reflect)`
+/// (auto_derive.rs); the blanket implementations below cover primitives and
+/// containers. `Opaque` — ONLY through a manual implementation of this protocol.
 ///
 /// # Examples
 /// ```nova
@@ -151,7 +151,7 @@ fn str.reflect() -> TypeShape => Str
 // (методы применимы к обеим формам записи).
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `Vec[T]`/`[]T` — гомогенный контейнер.
+/// `Vec[T]`/`[]T` — a homogeneous container.
 #unstable
 #impl(Reflect)
 fn[T Reflect] []T.reflect() -> TypeShape => Arr(T.reflect())
