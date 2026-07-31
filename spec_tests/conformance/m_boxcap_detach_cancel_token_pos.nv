@@ -1,0 +1,108 @@
+// [M-detach-box-capture-cancel-token-reachable] regression guard (backlog-
+// followups.md, P1 opened 2026-07-31, окно serve/sonnet). Reported shape:
+// the MOMENT a `CancelToken` value is reachable in a function whose body
+// also contains a multi-capture `detach consume … { … inflight.
+// try_acquire() … }` (an explicit `consume` capture PLUS an implicit
+// mutable capture), C-codegen was said to lose the boxing symbol for the
+// UNRELATED `inflight` capture (`use of undeclared identifier
+// '_nova_detach_0_box_inflight'`). Repro description lives in nova-polaris'
+// `src/net/serve.nv` (own `serve()` doc-comment, task 222.22).
+//
+// Investigation (Plan boxcap Ф.0, window 2026-07-31): exhaustively
+// reconstructed BOTH described trigger forms — (a) a bare extra
+// `stop CancelToken` fn parameter referenced only by an outer
+// `supervised(cancel: stop)` wrapping the accept loop (this file, below);
+// (b) a `CancelToken` field embedded in a multi-field ref-passed value-
+// struct ALSO captured into the same `detach` — against a FRESH compiler
+// build off current main tip (no local emit_c.rs changes), including a
+// verbatim copy of nova-polaris' own `src/` with the literal attempted
+// patch applied (both forms) run through its real, full compile-unit
+// (`nova test src/doc_samples_test.nv`, `src/rt/serve_policy_smoke.nv`).
+// ALL variants compiled AND ran clean — the reported box-symbol loss did
+// NOT reproduce. Conclusion: not reproducible on current main; the
+// original report likely predates a `main` fix or was taken against a
+// stale compiler binary. This fixture pins the CURRENTLY-CORRECT behavior
+// in place (m_boxcap_-prefixed locals/params — CU name-leak discipline)
+// so a future regression is caught by this gate. Verified individually
+// via a disposable standalone-module twin (own compile-unit, NOT the
+// spec_tests/conformance mega-CU — that authoritative run is the
+// integrator's gate, per this task's own CPU-discipline instruction).
+module spec_tests.conformance
+
+import std.net.{TcpListener, TcpStream, NetError, SocketAddr, real_net}
+import std.time.duration
+import std.runtime.sync.{Semaphore}
+
+fn m_boxcap_serve(consume m_boxcap_listener TcpListener, m_boxcap_stop CancelToken) Net Time Detach {
+    mut m_boxcap_inflight = Semaphore.new(4)
+    mut m_boxcap_running = true
+    supervised(cancel: m_boxcap_stop) {
+        while m_boxcap_running {
+            match m_boxcap_listener.accept() {
+                Ok(consume m_boxcap_stream) => {
+                    // Multi-capture detach: `m_boxcap_stream` (explicit
+                    // consume) + `m_boxcap_inflight` (implicit mutable
+                    // capture) — the exact shape the marker names.
+                    detach consume m_boxcap_stream {
+                        match m_boxcap_inflight.try_acquire() {
+                            Some(consume m_boxcap_permit) => {
+                                ro _ = m_boxcap_stream.write_str("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+                                m_boxcap_permit.release()
+                            }
+                            None => {
+                                ro _ = m_boxcap_stream.write_str("HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n")
+                            }
+                        }
+                    }
+                }
+                Err(m_boxcap_e) => {
+                    match m_boxcap_e {
+                        NetError.Cancelled => { m_boxcap_running = false }
+                        _ => { (20).to_millis().sleep() }
+                    }
+                }
+            }
+        }
+    }
+}
+
+test "m_boxcap detach box-capture + reachable CancelToken: serve, respond, cancel-shutdown (regression guard)" {
+    with Net = real_net() {
+        ro (m_boxcap_port_tx, m_boxcap_port_rx) = Channel.new(1)
+        ro (m_boxcap_got_tx, m_boxcap_got_rx) = Channel.new(1)
+        ro m_boxcap_stop = CancelToken.new()
+        with Fail[TimeoutError] = |_e| {} {
+            supervised(timeout: 5.to_seconds()) {
+                spawn {
+                    consume m_boxcap_lst = match TcpListener.bind(SocketAddr.loopback(0)) {
+                        Ok(consume l) => l
+                        Err(_) => { ro _ = m_boxcap_port_tx.try_send(0 as u16); return }
+                    }
+                    ro _ = m_boxcap_port_tx.try_send(m_boxcap_lst.local_port())
+                    m_boxcap_serve(m_boxcap_lst, m_boxcap_stop)
+                }
+                spawn {
+                    ro m_boxcap_port = match m_boxcap_port_rx.recv() { Some(p) => p, None => 0 as u16 }
+                    match TcpStream.connect(SocketAddr.loopback(m_boxcap_port)) {
+                        Ok(consume m_boxcap_conn) => {
+                            consume m_boxcap_cli = m_boxcap_conn
+                            ro _ = m_boxcap_cli.write_str("GET / HTTP/1.1\r\nHost: x\r\n\r\n")
+                            match m_boxcap_cli.read_to_vec(4096) {
+                                Ok(m_boxcap_chunk) => { ro _ = m_boxcap_got_tx.try_send(m_boxcap_chunk) }
+                                Err(_) => ()
+                            }
+                            m_boxcap_cli.close()
+                        }
+                        Err(_) => ()
+                    }
+                    m_boxcap_stop.cancel("test done")
+                }
+            }
+        }
+        m_boxcap_got_tx.close()
+        ro m_boxcap_got = m_boxcap_got_rx.try_recv() ?? []u8.new()
+        ro m_boxcap_s = unsafe { m_boxcap_got.to_str_unchecked() }
+        assert(m_boxcap_s.contains("200"))
+        assert(m_boxcap_stop.is_cancelled())
+    }
+}

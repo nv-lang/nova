@@ -1,0 +1,84 @@
+// [M-effect-handler-mutex-hashmap-value-capture] regression guard (backlog-
+// followups.md, P1 opened 2026-07-31, same window/marker-class as
+// [M-detach-box-capture-cancel-token-reachable]). Reported shape: a
+// stateful effect handler closing over a `value` record with `Mutex`+
+// `HashMap` fields fails C-codegen with "assigning to NovaValue_T from
+// incompatible type NovaValue_T *; dereference with *". Repro description
+// lives in nova-polaris' `src/metrics.nv` file banner (task 222.23) — said
+// to reproduce with a BARE registry, no `detach`/`spawn`/`serve()` at all.
+//
+// Investigation (Plan boxcap Ф.0, window 2026-07-31): reconstructed both
+// plausible capture shapes — (a) an escaping factory fn (`-> Effect[X]`)
+// capturing the registry as a plain `ro` PARAMETER (by-value, non-mut
+// capture path in `emit_handler_lit`); (b) an escaping factory capturing a
+// `mut` LOCAL of the SAME value-record type (heap-box capture path,
+// mirrors `emit_lambda`'s closure-capture box logic) — against a fresh
+// compiler build off current main tip (no local emit_c.rs changes). BOTH
+// compiled AND ran clean (generated C inspected directly: ctx field types
+// and box/deref sites are internally consistent in both variants, no
+// `NovaValue_T`/`NovaValue_T*` mismatch anywhere). Conclusion: not
+// reproducible on current main; likely predates a `main`-side fix or was
+// taken against a stale compiler binary. This fixture pins the mut-local/
+// escaping-handler variant (the stricter of the two — heap-boxed capture)
+// in place so a future regression is caught by this gate. Verified
+// individually via a disposable standalone-module twin (own compile-unit,
+// NOT the spec_tests/conformance mega-CU — that authoritative run is the
+// integrator's gate, per this task's own CPU-discipline instruction).
+module spec_tests.conformance
+
+import std.runtime.sync.{Mutex}
+import std.collections.hashmap.{HashMap}
+
+type M_boxcap_Registry value {
+    priv m_boxcap_lock     Mutex
+    priv m_boxcap_counters HashMap[str, int]
+}
+
+fn M_boxcap_Registry.new() -> M_boxcap_Registry => {
+    m_boxcap_lock: Mutex.new(),
+    m_boxcap_counters: HashMap[str, int].new(),
+}
+
+fn M_boxcap_Registry @m_boxcap_record(m_boxcap_name str) {
+    mut m_boxcap_lock = @m_boxcap_lock
+    consume m_boxcap_g = m_boxcap_lock.lock()
+    mut m_boxcap_counters = @m_boxcap_counters
+    ro m_boxcap_cur = m_boxcap_counters.get(m_boxcap_name) ?? 0
+    ro _ = m_boxcap_counters.insert(m_boxcap_name, m_boxcap_cur + 1)
+    m_boxcap_g.unlock()
+}
+
+fn M_boxcap_Registry @m_boxcap_value(m_boxcap_name str) -> int {
+    mut m_boxcap_lock = @m_boxcap_lock
+    consume m_boxcap_g = m_boxcap_lock.lock()
+    mut m_boxcap_counters = @m_boxcap_counters
+    ro m_boxcap_v = m_boxcap_counters.get(m_boxcap_name) ?? 0
+    m_boxcap_g.unlock()
+    m_boxcap_v
+}
+
+type M_boxcap_Metrics effect {
+    counter(name str) -> ()
+    value(name str) -> int
+}
+
+// `m_boxcap_reg` is a MUT LOCAL declared INSIDE the escaping factory (not
+// a param) — the stricter heap-box capture path (mirrors the described
+// "stateful #default_handler" attempt shape more closely than a by-value
+// `ro` param capture would).
+fn m_boxcap_metrics_handler() -> Effect[M_boxcap_Metrics] {
+    mut m_boxcap_reg = M_boxcap_Registry.new()
+    effect M_boxcap_Metrics {
+        counter(name) -> () => m_boxcap_reg.m_boxcap_record(name)
+        value(name) -> int => m_boxcap_reg.m_boxcap_value(name)
+    }
+}
+
+test "m_boxcap effect handler capturing value-record{Mutex,HashMap}: counter increments through handler (regression guard)" {
+    ro m_boxcap_h = m_boxcap_metrics_handler()
+    with M_boxcap_Metrics = m_boxcap_h {
+        M_boxcap_Metrics.counter("hits")
+        M_boxcap_Metrics.counter("hits")
+        assert(M_boxcap_Metrics.value("hits") == 2)
+    }
+}
