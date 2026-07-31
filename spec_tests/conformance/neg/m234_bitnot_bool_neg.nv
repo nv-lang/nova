@@ -1,0 +1,12 @@
+// EXPECT_COMPILE_ERROR E_UNARY_OPERAND_TYPE
+//
+// План 234 Ф.2 (D46-амендмент §D, решение владельца 2026-07-27): `~` только
+// для целочисленных — `~true` на `bool` НЕ логическое (то — `!`), честная
+// ошибка чекера, не CC-FAIL.
+module neg.m234_bitnot_bool_neg
+
+fn main() {
+    ro m234_x = true
+    ro m234_y = ~m234_x
+    println("${m234_y}")
+}

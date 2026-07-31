@@ -1,0 +1,11 @@
+// EXPECT_COMPILE_ERROR E_UNARY_OPERAND_TYPE
+//
+// План 234 (владелец 2026-07-27) — `-"str"` на `str`: унарный `-` требует
+// числовой тип, честная ошибка чекера.
+module neg.m234_neg_str_neg
+
+fn main() {
+    ro m234_x = "abc"
+    ro m234_y = -m234_x
+    println("${m234_y}")
+}

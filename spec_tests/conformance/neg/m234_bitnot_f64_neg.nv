@@ -1,0 +1,11 @@
+// EXPECT_COMPILE_ERROR E_UNARY_OPERAND_TYPE
+//
+// План 234 Ф.2 (D46-амендмент §D): `~1.5` на `f64` — побитовое дополнение
+// не определено для чисел с плавающей точкой.
+module neg.m234_bitnot_f64_neg
+
+fn main() {
+    ro m234_x = 1.5
+    ro m234_y = ~m234_x
+    println("${m234_y}")
+}
