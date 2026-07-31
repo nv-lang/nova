@@ -25071,6 +25071,30 @@ impl<'a> BoundCtx<'a> {
             // narrower fallback or a no-op, never a WRONG answer, so no
             // existing resolution can flip.
             ExprKind::As(_, ty) => Some(ty.clone()),
+            // [M-neg-cast-receiver-blanket-dispatch] (int128-связка, план 234 часть B):
+            // `Neg`/`Not`/`BitNot` are type-preserving unary operators — mirrors this
+            // `TypeCheckCtx`'s own general `infer_expr_type`'s `ExprKind::Unary` arm
+            // ("Neg/Not/BitNot: result = operand type"). Without this arm, a receiver
+            // written `(-N as i64).mk()` — parsed as `Unary(Neg, As(N, i64))` — matched
+            // NO arm above (fell to the blanket `_ => None` below), so
+            // `check_instance_overload` bailed out silently and recorded NO
+            // `resolved_callees` entry for the call. Codegen's Plan 196.7 "concrete
+            // beats generic" channel-first dispatch (`emit_c.rs` ~43189) then had
+            // nothing to read and fell through into the generic type-set-bounded
+            // blanket dispatch path — even when an EXACT concrete overload (`i64
+            // @mk()`) exists and should win by D84 "concrete beats generic". A bare
+            // `(N as i64).mk()` (no `Neg`) already worked via the `As` arm just above
+            // ([M-inline-cast-receiver-method-resolution], plan 234 part B step 1).
+            // `AddrOf`/`RawAddrOf`/`Deref` are deliberately excluded — those change
+            // the type (pointer creation/dereference), they do not preserve it.
+            ExprKind::Unary { op, operand }
+                if matches!(
+                    op,
+                    crate::ast::UnOp::Neg | crate::ast::UnOp::Not | crate::ast::UnOp::BitNot
+                ) =>
+            {
+                Self::infer_arg_ty(operand, scope)
+            }
             // Plan 207 cmpxchg-lint волна B: `Atomic*.new(...)` static ctor → `Self`.
             // Narrowly scoped to the `Atomic` type family (NOT a general `Type.new()`
             // inference — that would widen this best-effort bound-checker's blast
