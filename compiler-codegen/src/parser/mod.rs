@@ -1355,6 +1355,10 @@ impl Parser {
         // "`#coerce` is only valid before `fn`" once the post-export loop
         // finally consumes it with `export` now stuck in between.
         let pre_coerce = self.parse_coerce_attr();
+        // A-V10 (D441 §5 №167 closure): pre-parse `#thread_affine` here too —
+        // mirrors `pre_cancel_safe`/`pre_coerce` exactly (attribute may be
+        // written on its own line before `export`/`extern`).
+        let pre_thread_affine = self.parse_thread_affine_attr();
 
         // Plan 170 (D307): `priv(file)` top-level visibility modifier — file-private.
         // Parsed BEFORE `export` (mutually exclusive). Forms:
@@ -1494,6 +1498,10 @@ impl Parser {
         // Plan 214 (D429): `#coerce` — declares an implicit zero-cost conversion.
         // Parsed alongside the other leading `#`-attributes (any order, same loop).
         let mut coerce_attr = pre_coerce || self.parse_coerce_attr();
+        // A-V10 (D441 §5 №167 closure): `#thread_affine` — parsed alongside
+        // the other leading `#`-attributes (any order, same loop), same
+        // contextual-Ident path as `#cancel_safe`/`#coerce`.
+        let mut thread_affine_attr = pre_thread_affine || self.parse_thread_affine_attr();
         loop {
             let mut progressed = false;
             if matches!(realtime_attr, RealtimeAttr::None) {
@@ -1513,6 +1521,10 @@ impl Parser {
             }
             if !coerce_attr && self.parse_coerce_attr() {
                 coerce_attr = true;
+                progressed = true;
+            }
+            if !thread_affine_attr && self.parse_thread_affine_attr() {
+                thread_affine_attr = true;
                 progressed = true;
             }
             if !progressed { break; }
@@ -1544,6 +1556,30 @@ impl Parser {
             let span = self.peek().span;
             return Err(Diagnostic::new(
                 "`#coerce` is only valid before `fn`",
+                span,
+            ));
+        }
+        if thread_affine_attr
+            && !matches!(self.peek().kind, TokenKind::KwFn)
+            && !matches!(self.peek().kind, TokenKind::Hash)
+        {
+            let span = self.peek().span;
+            return Err(Diagnostic::new(
+                "`#thread_affine` is only valid before `fn`",
+                span,
+            ));
+        }
+        // A-V10 (D441 §5 №167 closure): `#thread_affine` marks a leaf that
+        // is unsafe to call off its ORIGINAL OS thread (thread-affine/
+        // non-reentrant C-side state) — only meaningful on the FFI boundary
+        // itself, an `extern` fn (no Nova-level body to mark instead).
+        if thread_affine_attr && !is_external {
+            let span = self.peek().span;
+            return Err(Diagnostic::new(
+                "[E_THREAD_AFFINE_NOT_EXTERN] `#thread_affine` is only valid on \
+                 `extern` fn declarations (D441 §5 №167: it marks an M:N-unsafe \
+                 leaf — a C-side call bound to its calling OS thread — and only \
+                 an FFI boundary can make that promise).",
                 span,
             ));
         }
@@ -1644,7 +1680,7 @@ impl Parser {
             ));
         }
         let parsed = match self.peek().kind {
-            TokenKind::KwFn => Item::Fn(self.parse_fn(is_export, is_external, extern_abi, realtime_attr, blocking_attr, cancel_safe_attr, coerce_attr, impl_protocols, contract_attrs, pending_doc.clone(), pending_doc_attrs.clone(), file_private)?),
+            TokenKind::KwFn => Item::Fn(self.parse_fn(is_export, is_external, extern_abi, realtime_attr, blocking_attr, thread_affine_attr, cancel_safe_attr, coerce_attr, impl_protocols, contract_attrs, pending_doc.clone(), pending_doc_attrs.clone(), file_private)?),
             TokenKind::KwType => Item::Type(self.parse_type_decl(is_export, is_external, type_attrs, impl_protocols, zero_on_move_attr, pub_to_attr, serde_attrs, pending_doc.clone(), pending_doc_attrs.clone(), file_private)?),
             TokenKind::KwLet => {
                 if let Some(d) = &pending_doc {
@@ -1869,6 +1905,27 @@ impl Parser {
             TokenKind::Ident(n) if n == "coerce" => {
                 self.bump(); // #
                 self.bump(); // coerce
+                self.skip_newlines();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// A-V10 (D441 §5 №167 closure): parse `#thread_affine` attribute перед
+    /// `extern fn`-declaration. `thread_affine` — обычный identifier (не
+    /// keyword в lexer'е), парсится контекстно после `#`, тем же путём, что
+    /// `cancel_safe`/`coerce` выше (мирроринг `#blocking`'s file-attribute
+    /// slot, но без нового lexer-keyword — не нужен для одного контекстного
+    /// имени). Returns true if the attribute was present.
+    fn parse_thread_affine_attr(&mut self) -> bool {
+        if !matches!(self.peek().kind, TokenKind::Hash) {
+            return false;
+        }
+        match &self.peek_at(1).kind {
+            TokenKind::Ident(n) if n == "thread_affine" => {
+                self.bump(); // #
+                self.bump(); // thread_affine
                 self.skip_newlines();
                 true
             }
@@ -3088,7 +3145,7 @@ impl Parser {
 
     // ─── fn ──────────────────────────────────────────────────────────────
 
-    fn parse_fn(&mut self, is_export: bool, is_external: bool, extern_abi: Option<String>, realtime_attr: RealtimeAttr, blocking_attr: bool, cancel_safe_attr: bool, coerce_attr: bool, impl_protocols: Vec<String>, contract_attrs: ContractAttrs, doc: Option<crate::ast::DocBlock>, doc_attrs: Vec<crate::ast::DocAttr>, file_private: bool) -> Result<FnDecl, Diagnostic> {
+    fn parse_fn(&mut self, is_export: bool, is_external: bool, extern_abi: Option<String>, realtime_attr: RealtimeAttr, blocking_attr: bool, thread_affine_attr: bool, cancel_safe_attr: bool, coerce_attr: bool, impl_protocols: Vec<String>, contract_attrs: ContractAttrs, doc: Option<crate::ast::DocBlock>, doc_attrs: Vec<crate::ast::DocAttr>, file_private: bool) -> Result<FnDecl, Diagnostic> {
         let start = self.peek().span;
         self.expect(&TokenKind::KwFn)?;
 
@@ -3541,6 +3598,9 @@ impl Parser {
             span: start.merge(end_span),
             realtime_attr,
             blocking_attr,
+            // A-V10 (D441 §5 №167 closure): `#thread_affine` ведущий атрибут
+            // перед `extern fn`.
+            thread_affine_attr,
             cancel_safe_attr,
             // Plan 214 (D429): `#coerce` ведущий атрибут перед `fn`.
             coerce_attr,

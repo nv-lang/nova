@@ -1,0 +1,38 @@
+// A-V10 (D441 §5 №168 closure — pos-twin of `neg/handler_mut_capture_
+// precomputed_neg.nv`): the same PRECOMPUTED-handler shape
+// (`ro handler = fn(...) {...}` bound first, `with X = handler { ... }`
+// installed later) must stay LEGAL in the two cases D415/§3-in-D441's
+// white list already covers:
+//   1. the precomputed handler's capture is an `Atomic*` (synchronized,
+//      transitively share-safe) instead of a bare `mut` cell;
+//   2. the precomputed handler's capture IS a bare `mut` cell, but the
+//      `with`-body it is installed around contains NO fiber boundary at
+//      all (`block_contains_fiber_boundary` gate) — ordinary sequential
+//      code, not a race, same reasoning Ф.3's ORIGINAL literal-handler
+//      arm already legalizes for the sequential `with Fail[T] = |e| { mut
+//      x = .. } { ..no spawn.. }` idiom.
+
+module spec_tests.conformance
+
+import std.runtime.sync.{AtomicInt}
+
+test "precomputed handler, Atomic-захват, with-тело содержит spawn — легально" {
+    mut counter = AtomicInt.new(0)
+    ro handler = fn(e int) -> never { counter.fetch_add(1); panic("boom: {e}") }
+    supervised {
+        with Fail[int] = handler {
+            spawn {
+                println("child")
+            }
+        }
+    }
+    assert(counter.load() == 0)
+}
+
+test "precomputed handler, mut-захват, with-тело БЕЗ fiber-границы — легально" {
+    mut count = 0
+    ro handler = fn(e int) -> never { count = count + 1; panic("boom: {e}") }
+    ro result = with Fail[int] = handler { 42 }
+    assert(result == 42)
+    assert(count == 0)
+}

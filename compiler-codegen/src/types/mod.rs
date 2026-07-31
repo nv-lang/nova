@@ -25449,6 +25449,27 @@ struct CapabilityCtx<'a> {
     /// check). See `spawn_tainted_params_of_fn` for the (documented,
     /// conservative-UNDER-approximation) AST coverage.
     spawn_tainted_params: HashMap<String, HashSet<String>>,
+    /// A-V10 (D441 §5 №167 closure): names of free fns declared
+    /// `#thread_affine` directly (`extern` leaves — checker enforces
+    /// `is_external`, see `E_THREAD_AFFINE_NOT_EXTERN`). Base case for the
+    /// `E_THREAD_AFFINE_IN_FIBER` boundary check: calling one of these
+    /// names inside a `spawn`/`detach`/`parallel for` body is a direct
+    /// violation, zero intermediate frames.
+    thread_affine_leaves: HashSet<String>,
+    /// A-V10 (D441 §5 №167 closure): per free-fn name, `Some((leaf,
+    /// first_hop))` when the fn is NOT itself `#thread_affine` but
+    /// transitively (directly or through further named calls) reaches one,
+    /// computed once by `thread_affine_closure` (fixed-point over the
+    /// NAMED free-fn call graph — `own_fiber_call_names`, which is scoped
+    /// to calls made IN THE CALLER'S OWN FIBER: it deliberately stops at
+    /// any nested `spawn`/`detach`/`parallel for`/`blocking` sub-body,
+    /// since those start a fresh, independent fiber decoupled from
+    /// whichever fiber invoked the wrapper — a fn that only ever calls its
+    /// `#thread_affine` leaf INSIDE its own `spawn` does NOT inherit the
+    /// leaf's unsafety). `first_hop` is this fn's own direct callee that
+    /// starts the chain to `leaf` — at least one intermediate frame for the
+    /// diagnostic (D441 §5 №167 wording).
+    thread_affine_transitive: HashMap<String, (String, String)>,
 }
 
 /// Plan 173.3 (D415 §2): adapter — `CapabilityCtx.type_decls` as a
@@ -25620,7 +25641,14 @@ impl<'a> CapabilityCtx<'a> {
                 }
             }
         }
-        CapabilityCtx { sig, effect_decls, type_decls, spawn_tainted_params }
+        // A-V10 (D441 §5 №167 closure): thread-affine leaf/transitive
+        // pre-pass, same "computed once over module.items before any
+        // call-site is checked" timing as `spawn_tainted_params` above.
+        let (thread_affine_leaves, thread_affine_transitive) = thread_affine_closure(module);
+        CapabilityCtx {
+            sig, effect_decls, type_decls, spawn_tainted_params,
+            thread_affine_leaves, thread_affine_transitive,
+        }
     }
 
     fn check_module(&self, module: &Module, errors: &mut Vec<Diagnostic>) {
@@ -26238,6 +26266,10 @@ impl<'a> CapabilityCtx<'a> {
                 // with, or migrate across threads from, the orphan) and was a
                 // silent gap. Same capture-check boundary as `spawn`.
                 self.check_capture_boundary(body, state, errors);
+                // A-V10 (D441 §5 №167 closure): thread-affine boundary
+                // check — same class as `spawn`, `detach` is just as much
+                // a fresh, possibly-different-OS-thread fiber.
+                self.check_thread_affine_boundary(body, errors);
                 self.walk_block(body, state, errors);
             }
             ExprKind::Blocking(body) => {
@@ -26289,6 +26321,10 @@ impl<'a> CapabilityCtx<'a> {
                 }
                 state.scopes.push(frame);
                 self.check_capture_boundary(body, state, errors);
+                // A-V10 (D441 §5 №167 closure): thread-affine boundary
+                // check — `parallel for`'s per-element body is the same
+                // fan-out fiber-per-element concurrency as `spawn`.
+                self.check_thread_affine_boundary(body, errors);
                 for s in &body.stmts { self.walk_stmt(s, state, errors); }
                 if let Some(t) = &body.trailing { self.walk_expr(t, state, errors); }
                 state.scopes.pop();
@@ -26707,6 +26743,9 @@ impl<'a> CapabilityCtx<'a> {
     fn check_spawn_capture(&self, body: &Expr, state: &CapState, errors: &mut Vec<Diagnostic>) {
         if let ExprKind::Block(b) = &body.kind {
             self.check_capture_boundary(b, state, errors);
+            // A-V10 (D441 §5 №167 closure): same unwrap, thread-affine
+            // boundary check alongside the capture-check.
+            self.check_thread_affine_boundary(b, errors);
         }
     }
 
@@ -26748,6 +26787,76 @@ impl<'a> CapabilityCtx<'a> {
             "E_CONCURRENT_MUT_CAPTURE",
             errors,
         );
+    }
+
+    /// A-V10 (D441 §5 №167 closure): does `body` (a `spawn`/`detach`/
+    /// `parallel for` body — the SAME boundary class as
+    /// `check_capture_boundary`, called alongside it at every call site)
+    /// directly name-call a `#thread_affine` leaf, or a fn that
+    /// transitively reaches one (`own_fiber_call_names_of_fn` /
+    /// `thread_affine_closure`, computed once in `build`)? No `state`
+    /// dependency — pure name lookup against the whole-module pre-pass, no
+    /// lexical-scope resolution needed (unlike the mut-capture checks).
+    fn check_thread_affine_boundary(&self, body: &Block, errors: &mut Vec<Diagnostic>) {
+        let mut called: HashSet<String> = HashSet::new();
+        own_fiber_call_names_block(body, &mut called);
+        let mut names: Vec<&String> = called.iter().collect();
+        names.sort(); // deterministic diagnostic order (HashSet iteration)
+        for name in names {
+            if self.thread_affine_leaves.contains(name) {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_THREAD_AFFINE_IN_FIBER] call to `{name}` — declared \
+                         `#thread_affine` (D441 §5 №167: an M:N-unsafe leaf, \
+                         bound to the OS thread that first calls it — \
+                         thread-local state / a non-reentrant C-side handle) \
+                         — directly inside a `spawn`/`detach`/`parallel for` \
+                         body: under M:N scheduling this fiber may run on ANY \
+                         worker thread, not the one `{name}` requires. Fix: \
+                         call `{name}` from the main fiber BEFORE `spawn` \
+                         (its result, if any, can then be captured `ro` into \
+                         the fiber), or route it through a dedicated \
+                         blocking channel served by the ONE thread `{name}` \
+                         is affine to.",
+                        name = name,
+                    ),
+                    body.span,
+                ));
+            } else if let Some((leaf, first_hop)) = self.thread_affine_transitive.get(name) {
+                // One recorded intermediate frame (`first_hop`) is enough
+                // per D441 §5 №167 wording ("хотя бы один промежуточный
+                // фрейм") — render it plainly when `first_hop == leaf`
+                // (one-hop chain, `name` calls `leaf` directly) instead of
+                // a redundant `a → b → … → b`.
+                let chain = if first_hop == leaf {
+                    format!("`{name}` → `{leaf}`", name = name, leaf = leaf)
+                } else {
+                    format!(
+                        "`{name}` → `{first_hop}` → … → `{leaf}`",
+                        name = name, first_hop = first_hop, leaf = leaf,
+                    )
+                };
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_THREAD_AFFINE_IN_FIBER] call to `{name}` — \
+                         transitively reaches the `#thread_affine` leaf \
+                         `{leaf}` (chain: {chain}; D441 §5 №167: an \
+                         M:N-unsafe leaf, bound to the OS thread that first \
+                         calls it — thread-local state / a non-reentrant \
+                         C-side handle) — inside a `spawn`/`detach`/`parallel \
+                         for` body: under M:N scheduling this fiber may run \
+                         on ANY worker thread, not the one `{leaf}` requires. \
+                         Fix: call `{name}` from the main fiber BEFORE \
+                         `spawn` (its result, if any, can then be captured \
+                         `ro` into the fiber), or route it through a \
+                         dedicated blocking channel served by the ONE thread \
+                         `{leaf}` is affine to.",
+                        name = name, leaf = leaf, chain = chain,
+                    ),
+                    body.span,
+                ));
+            }
+        }
     }
 
     /// Plan 238 Ф.1/Ф.3 (D441): shared core — resolve every name in `free`
@@ -26966,12 +27075,23 @@ impl<'a> CapabilityCtx<'a> {
             _ => None,
         };
         if let Some(free) = free_vars {
+            // A-V10 (D441 §5 №168 closure): `{param}` is tainted either
+            // because `{callee}` INVOKES it inside its own `spawn`/`detach`/
+            // `parallel for`/`blocking` body (Ф.1а, original), or because
+            // `{callee}` INSTALLS it as a `with`-handler around such a body
+            // (install-position extension, `collect_fiber_boundary_frees_
+            // expr`'s `With` arm) — one shared message covers both, since
+            // both are the identical transitive-crossing shape from the
+            // caller's point of view (a value created outside any fiber
+            // boundary, carried across it by value, one function-call hop
+            // away from the syntactic boundary).
             let crossing = format!(
                 "created outside any fiber boundary, then passed BY VALUE \
                  into `{callee}`'s parameter `{param}` — `{callee}` invokes \
-                 `{param}` inside its OWN `spawn`/`detach`/`parallel for`/\
-                 `blocking` body (D441 §1: transitive crossing — the value \
-                 carries its captured environment across the fiber \
+                 `{param}`, OR installs it as a `with`-handler around a body \
+                 that invokes it, inside its OWN `spawn`/`detach`/`parallel \
+                 for`/`blocking` body (D441 §1/§5 №168: transitive crossing — \
+                 the value carries its captured environment across the fiber \
                  boundary just like a direct capture would, only one \
                  function-call hop away from the syntactic boundary)",
                 callee = callee_name, param = param_name,
@@ -27015,12 +27135,49 @@ impl<'a> CapabilityCtx<'a> {
                     self.flag_boundary_captures(free, handler.span, state, crossing, "E_HANDLER_MUT_CAPTURE_IN_FIBER", errors);
                 }
             }
+            // A-V10 (D441 §5 №168 closure): plain `Ident` referencing a
+            // PRECOMPUTED handler value (`ro h = |..| {..}` then
+            // `with X = h { ...spawn... }`) — the literal is not written at
+            // the `with`-site itself, so it was invisible to the two arms
+            // above (Plan 238 Ф.3's original honest gap, D441 §5 point 6).
+            // Resolve it the SAME way Ф.1's `check_transitive_closure_arg`
+            // already resolves a closure passed BY VALUE into a
+            // spawn-tainted parameter: the `let`/`ro`-time snapshot
+            // (`ScopeBinding.closure_free_vars`, populated in `walk_stmt`'s
+            // `Stmt::Let` arm for every closure-literal init, REGARDLESS of
+            // how the bound name is later used — recorded before it can be
+            // shadowed). A name that does NOT resolve to a recorded
+            // snapshot (fn declared elsewhere, effect-op factory result,
+            // etc.) stays a documented conservative no-op — under-
+            // approximation, never a false positive, same honesty stance as
+            // `check_transitive_closure_arg`'s own opaque-expression case.
+            ExprKind::Ident(name) => {
+                if let Some(free) = state.scopes.iter().rev()
+                    .find_map(|f| f.get(name))
+                    .and_then(|b| b.closure_free_vars.as_ref())
+                {
+                    let free_set: HashSet<String> = free.iter().cloned().collect();
+                    let precomputed_crossing = format!(
+                        "captured by reference in a PRECOMPUTED `with`-handler \
+                         (`{name}`, not a literal written at the `with`-site) \
+                         installed around a body containing `spawn`/`detach`/\
+                         `parallel for` (D441 §5 №168 closure — the handler was \
+                         evaluated ahead of time (\"обработчик, вычисленный \
+                         заранее\") and resolved here via the same `let`/`ro`\
+                         -time closure-capture snapshot Ф.1 already uses for \
+                         spawn-tainted parameters; it runs IN THE FIBER of the \
+                         failing/child operation exactly like a literal \
+                         handler — see Ф.0 measurement, D441 §3)",
+                        name = name,
+                    );
+                    self.flag_boundary_captures(
+                        free_set, handler.span, state, &precomputed_crossing,
+                        "E_HANDLER_MUT_CAPTURE_IN_FIBER", errors,
+                    );
+                }
+            }
             // Call-shaped policy (`escalate()`/`stop()`/builtin factory) —
-            // no user closure body to inspect, nothing to capture. Plain
-            // `Ident` referencing a handler value bound elsewhere — V1 does
-            // not trace it back to a literal here (documented limitation,
-            // conservative no-op — same honesty stance as
-            // `check_transitive_closure_arg`'s opaque-expression case).
+            // no user closure body to inspect, nothing to capture.
             _ => {}
         }
     }
@@ -27559,6 +27716,235 @@ fn spawn_tainted_params_of_fn(fd: &FnDecl) -> HashSet<String> {
     tainted
 }
 
+/// A-V10 (D441 §5 №167 closure): whole-module pre-pass — which free fns are
+/// `#thread_affine` LEAVES, and which free fns TRANSITIVELY (directly or
+/// through further named calls, in their OWN fiber — see
+/// `own_fiber_call_names`) reach one? Fixed-point worklist over the named
+/// free-fn call graph, mirroring `spawn_tainted_params_of_fn`'s "computed
+/// once in `build`, keyed by fn name" shape (the closest existing
+/// transitive-inference precedent in this module — neither `infer_effects`
+/// (№131, per-fn direct-effect detection, explicitly NOT transitive across
+/// callers per its own doc comment) nor `#pure` (a manually-declared
+/// attribute, never inferred) is a literal call-graph closure; this is a
+/// new, small, honestly-documented fixed point built for exactly this
+/// D441 §5 point-4 gap).
+///
+/// Returns `(leaves, transitive)`: `leaves` = names declared
+/// `#thread_affine` directly; `transitive[name] = (leaf, first_hop)` for
+/// every OTHER free fn whose OWN-fiber call graph reaches a leaf, with
+/// `first_hop` = `name`'s own direct callee that starts the chain (at
+/// least one intermediate frame, D441 §5 №167 wording — "цепочка подъёма
+/// (хотя бы один промежуточный фрейм)").
+fn thread_affine_closure(module: &Module) -> (HashSet<String>, HashMap<String, (String, String)>) {
+    let mut leaves: HashSet<String> = HashSet::new();
+    let mut adjacency: HashMap<String, HashSet<String>> = HashMap::new();
+    for item in &module.items {
+        if let Item::Fn(fd) = item {
+            if fd.thread_affine_attr {
+                leaves.insert(fd.name.clone());
+            }
+            adjacency.insert(fd.name.clone(), own_fiber_call_names_of_fn(fd));
+        }
+    }
+    let mut transitive: HashMap<String, (String, String)> = HashMap::new();
+    if leaves.is_empty() {
+        return (leaves, transitive);
+    }
+    // Standard iterative dataflow: each fn is marked AT MOST once, call
+    // graph is finite ⇒ guaranteed termination, no cycle special-casing
+    // needed (a cycle with no path to a leaf simply never gets marked).
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for (caller, callees) in &adjacency {
+            if leaves.contains(caller) || transitive.contains_key(caller) {
+                continue;
+            }
+            // Deterministic pick among multiple qualifying callees —
+            // sort names first so the chosen `first_hop` doesn't depend on
+            // HashSet iteration order (diagnostic-text determinism).
+            let mut sorted_callees: Vec<&String> = callees.iter().collect();
+            sorted_callees.sort();
+            for callee in sorted_callees {
+                if leaves.contains(callee) {
+                    transitive.insert(caller.clone(), (callee.clone(), callee.clone()));
+                    changed = true;
+                    break;
+                } else if let Some((leaf, _)) = transitive.get(callee) {
+                    let leaf = leaf.clone();
+                    transitive.insert(caller.clone(), (leaf, callee.clone()));
+                    changed = true;
+                    break;
+                }
+            }
+        }
+    }
+    (leaves, transitive)
+}
+
+/// A-V10 (D441 §5 №167 closure): named free-fn calls made in `fd`'s OWN
+/// FIBER — i.e. anywhere in its body EXCEPT inside a nested `spawn`/
+/// `detach`/`parallel for`/`blocking` sub-body (those start a FRESH,
+/// independent fiber, decoupled from whichever fiber called `fd` — a
+/// wrapper that only ever invokes its `#thread_affine` leaf INSIDE its own
+/// `spawn` does NOT inherit the leaf's unsafety, since the leaf then runs
+/// on a brand-new child fiber, not the caller's) and except inside a
+/// nested closure/handler-literal body (own scope boundary, same
+/// convention as `collect_raw_effect_ops_in_fn`). Deliberately the SAME
+/// traversal shape as `expr_contains_fiber_boundary`'s coverage, reused for
+/// BOTH purposes this wave needs: (1) building the free-fn call graph here,
+/// and (2) `check_thread_affine_boundary` scans a spawn/detach/parallel-for
+/// BODY with the identical function — since it also stops at any FURTHER
+/// nested boundary, a call two levels deep is not double-reported (the
+/// inner boundary gets its own independent check when `walk_expr` reaches
+/// it).
+fn own_fiber_call_names_of_fn(fd: &FnDecl) -> HashSet<String> {
+    let mut out = HashSet::new();
+    match &fd.body {
+        FnBody::Block(b) => own_fiber_call_names_block(b, &mut out),
+        FnBody::Expr(e) => own_fiber_call_names_expr(e, &mut out),
+        FnBody::External => {}
+    }
+    out
+}
+
+fn own_fiber_call_names_block(b: &Block, out: &mut HashSet<String>) {
+    for s in &b.stmts {
+        own_fiber_call_names_stmt(s, out);
+    }
+    if let Some(t) = &b.trailing {
+        own_fiber_call_names_expr(t, out);
+    }
+}
+
+fn own_fiber_call_names_stmt(s: &Stmt, out: &mut HashSet<String>) {
+    match s {
+        Stmt::Expr(e) => own_fiber_call_names_expr(e, out),
+        Stmt::Let(d) => own_fiber_call_names_expr(&d.value, out),
+        Stmt::Assign { target, value, .. } => {
+            own_fiber_call_names_expr(target, out);
+            own_fiber_call_names_expr(value, out);
+        }
+        Stmt::Return { value, .. } => {
+            if let Some(v) = value { own_fiber_call_names_expr(v, out); }
+        }
+        Stmt::Throw { value, .. } => own_fiber_call_names_expr(value, out),
+        Stmt::Defer { body, .. } => own_fiber_call_names_expr(body, out),
+        Stmt::ConsumeScope { init, body, .. } => {
+            own_fiber_call_names_expr(init, out);
+            own_fiber_call_names_block(body, out);
+        }
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            for e in lhs { own_fiber_call_names_expr(e, out); }
+            for e in rhs { own_fiber_call_names_expr(e, out); }
+        }
+        Stmt::Const(_) | Stmt::Break(_) | Stmt::Continue(_) | Stmt::AssertStatic { .. }
+        | Stmt::Assume { .. } | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
+    }
+}
+
+fn own_fiber_call_names_expr(e: &Expr, out: &mut HashSet<String>) {
+    match &e.kind {
+        ExprKind::Call { func, args, trailing } => {
+            if let ExprKind::Ident(name) = &func.kind {
+                out.insert(name.clone());
+            }
+            for a in args { own_fiber_call_names_expr(a.expr(), out); }
+            if let Some(t) = trailing {
+                match t {
+                    crate::ast::Trailing::Block(b) => own_fiber_call_names_block(b, out),
+                    crate::ast::Trailing::LegacyBlockWithParams(tb) => {
+                        own_fiber_call_names_block(&tb.body, out)
+                    }
+                    // Trailing closure-sugar — own scope, skip (mirrors
+                    // `collect_raw_effect_ops`'s `Lambda => {}` stance).
+                    crate::ast::Trailing::Fn(_) => {}
+                }
+            }
+        }
+        // Fresh, independent fiber — deliberately NOT recursed into (see
+        // fn-level doc comment above). `ParallelFor`'s `iter` still runs in
+        // the CALLER's fiber (evaluated once, before fan-out), so it IS
+        // scanned; only `body` (the per-element fiber) is skipped.
+        ExprKind::Spawn(_) | ExprKind::Detach(_) | ExprKind::Blocking(_) => {}
+        ExprKind::ParallelFor { iter, .. } => own_fiber_call_names_expr(iter, out),
+        ExprKind::Block(b) => own_fiber_call_names_block(b, out),
+        ExprKind::If { cond, then, else_ } => {
+            own_fiber_call_names_expr(cond, out);
+            own_fiber_call_names_block(then, out);
+            match else_ {
+                Some(ElseBranch::Block(b)) => own_fiber_call_names_block(b, out),
+                Some(ElseBranch::If(e2)) => own_fiber_call_names_expr(e2, out),
+                None => {}
+            }
+        }
+        ExprKind::IfLet { scrutinee, guard, then, else_, .. } => {
+            own_fiber_call_names_expr(scrutinee, out);
+            if let Some(g) = guard { own_fiber_call_names_expr(g, out); }
+            own_fiber_call_names_block(then, out);
+            match else_ {
+                Some(ElseBranch::Block(b)) => own_fiber_call_names_block(b, out),
+                Some(ElseBranch::If(e2)) => own_fiber_call_names_expr(e2, out),
+                None => {}
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            own_fiber_call_names_expr(scrutinee, out);
+            for a in arms {
+                if let Some(g) = &a.guard { own_fiber_call_names_expr(g, out); }
+                match &a.body {
+                    MatchArmBody::Expr(be) => own_fiber_call_names_expr(be, out),
+                    MatchArmBody::Block(bb) => own_fiber_call_names_block(bb, out),
+                }
+            }
+        }
+        ExprKind::For { iter, body, .. } => {
+            own_fiber_call_names_expr(iter, out);
+            own_fiber_call_names_block(body, out);
+        }
+        ExprKind::While { cond, body, .. } => {
+            own_fiber_call_names_expr(cond, out);
+            own_fiber_call_names_block(body, out);
+        }
+        ExprKind::WhileLet { scrutinee, guard, body, .. } => {
+            own_fiber_call_names_expr(scrutinee, out);
+            if let Some(g) = guard { own_fiber_call_names_expr(g, out); }
+            own_fiber_call_names_block(body, out);
+        }
+        ExprKind::Loop { body, .. } => own_fiber_call_names_block(body, out),
+        ExprKind::Supervised { body, cancel, deadline } => {
+            if let Some(c) = cancel { own_fiber_call_names_expr(c, out); }
+            if let Some(dl) = deadline { own_fiber_call_names_expr(&dl.expr, out); }
+            own_fiber_call_names_block(body, out);
+        }
+        // Same stance as `expr_contains_fiber_boundary`'s `With` arm — only
+        // `body` is scanned, not the handler expression (handler invocation
+        // timing is a separate, already-covered concern — D441 §3/§5 №168).
+        ExprKind::With { body, .. } => own_fiber_call_names_block(body, out),
+        ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
+            own_fiber_call_names_block(body, out)
+        }
+        ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) => {
+            own_fiber_call_names_expr(inner, out)
+        }
+        ExprKind::Coalesce(a, b) => {
+            own_fiber_call_names_expr(a, out);
+            own_fiber_call_names_expr(b, out);
+        }
+        ExprKind::Binary { left, right, .. } => {
+            own_fiber_call_names_expr(left, out);
+            own_fiber_call_names_expr(right, out);
+        }
+        ExprKind::Unary { operand, .. } => own_fiber_call_names_expr(operand, out),
+        ExprKind::Member { obj, .. } => own_fiber_call_names_expr(obj, out),
+        ExprKind::Index { obj, index } => {
+            own_fiber_call_names_expr(obj, out);
+            own_fiber_call_names_expr(index, out);
+        }
+        _ => {}
+    }
+}
+
 /// Collect the free-variable set of EVERY `spawn`/`detach`/`parallel for`/
 /// `blocking` body found anywhere within `b` (any nesting depth) into
 /// `out` (one `HashSet` per boundary found). Mirrors `capture_scan_block`'s
@@ -27674,6 +28060,28 @@ fn collect_fiber_boundary_frees_expr(e: &Expr, out: &mut Vec<HashSet<String>>) {
             collect_fiber_boundary_frees_block(body, out);
         }
         ExprKind::With { bindings, body } => {
+            // A-V10 (D441 §5 №168 closure — install-position transitivity):
+            // when `body` contains a fiber boundary (same gate the Ф.3
+            // with-handler check itself uses — `block_contains_fiber_
+            // boundary`), the HANDLER EXPRESSION is itself an install-
+            // position crossing: a fn-typed parameter `h` used as
+            // `with X = h { ...spawn... }` is exactly as tainted as one
+            // literally INVOKED inside the boundary (Ф.1а's original
+            // scan). Push the handler's own free-variable set as a
+            // boundary set too, so `spawn_tainted_params_of_fn` (which
+            // just tests `free.contains(param_name)`) picks up `h` the
+            // SAME way it already picks up a spawn-tainted callee param —
+            // no separate pre-pass needed. A bare `Ident("h")` handler's
+            // free-var set from `capture_scan_expr` is just `{h}`, which
+            // is exactly what's needed here.
+            if block_contains_fiber_boundary(body) {
+                for b in bindings {
+                    let mut shadow = HashSet::new();
+                    let mut free = HashSet::new();
+                    capture_scan_expr(&b.handler, &mut shadow, &mut free);
+                    out.push(free);
+                }
+            }
             for b in bindings { collect_fiber_boundary_frees_expr(&b.handler, out); }
             collect_fiber_boundary_frees_block(body, out);
         }
