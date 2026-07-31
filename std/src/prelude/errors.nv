@@ -1,85 +1,65 @@
 // std/prelude/errors.nv — file-based source of truth для prelude error
-// types. Plan 62 phase 62.C.
+// types.
 //
-// Декларации перенесены из hardcoded type-checker builtins HashSet
-// (compiler-codegen/src/types/mod.rs:2027-2029) в этот файл, чтобы:
-//   1) `nova doc` показывал canonical API в одном месте (AI-readable),
-//   2) пользователь мог shadow'ить эти types в своём коде с warning'ом
-//      (Plan 62.F W_PRELUDE_SHADOW),
-//   3) splittable prelude работал (`#prelude(errors)` opt-in
-//      только errors без core/runtime).
-//
-// Архитектурные правила (Plan 62 §«Стратификация»):
+// Архитектурные правила:
 //   - **ZERO imports.** Все declarations self-contained на primitives
 //     (`int`, `str`). Никаких `use std.runtime.*` — иначе circular
 //     import через auto-imported prelude.
 //
-// **Bootstrap status (Plan 62.C):**
+// Bootstrap status:
 //
 // - `RuntimeError` declared here как plain `type` (не `external`) —
 //   variants visible для type-checker'а через cross-file resolve.
 //   Codegen НЕ doubly-emit'ит C struct: `emit_type_decl`
-//   (emit_c.rs:4871+) skip'ает RuntimeError через RUNTIME_DEFINED_TYPES
-//   список — implementation остаётся в `nova_rt/array.h`
+//   skip'ает RuntimeError через RUNTIME_DEFINED_TYPES список —
+//   implementation остаётся в `nova_rt/array.h`
 //   (`Nova_RuntimeError` + `nova_make_RuntimeError_<Variant>`
-//   constructors, lines ~565-610).
-// - `init_prelude_decls_from_items` (sum_schema_registry.rs:526+)
-//   распознаёт RuntimeError type decl, регистрирует Prelude entry
-//   с variants + abi + method_routing **inherited от HardcodedBaseline**
-//   (behavior-preserving migration — Plan 62.A.bis architecture).
-// - Pre-populated `sum_schemas["RuntimeError"]` (emit_c.rs:1029-1048)
-//   оставлен как ABI-compat fallback baseline per 62.A.bis design
-//   («HardcodedBaseline остаётся fallback; lookup precedence
-//   DeclaredFromPrelude > HardcodedBaseline»).
+//   constructors).
+// - `init_prelude_decls_from_items` распознаёт RuntimeError type decl,
+//   регистрирует Prelude entry с variants + abi + method_routing
+//   **inherited от HardcodedBaseline** (behavior-preserving migration).
+// - Pre-populated `sum_schemas["RuntimeError"]` оставлен как ABI-compat
+//   fallback baseline («HardcodedBaseline остаётся fallback; lookup
+//   precedence DeclaredFromPrelude > HardcodedBaseline»).
 // - `ReadBufferError` — нет HardcodedBaseline entry; codegen
 //   distinguish'ет sum-type через type-name только (runtime-level
-//   payload — string-based throw, см. nova_rt/read_buffer.h:62-77).
+//   payload — string-based throw, см. nova_rt/read_buffer.h).
 //   Variants регистрируются через registry для cross-file resolve.
 //
-// **62.C.bis (2026-05-20): `RuntimeNoneError` мигрирован.**
+// `RuntimeNoneError` (unit-type) задекларирован ниже. Декларация —
+// canonical type-name для type-checker'а; runtime throw остаётся
+// string-payload (`nova_rt/effects.h`), structured payload отложен
+// (тот же mechanism что у `ReadBufferError`).
+// Bottom-тип НЕ мигрируется сюда — это строчный встроенный примитив
+// `never`, не капитализированный prelude-тип.
 //
-// - **`type RuntimeNoneError`** (unit-type per D85) задекларирован ниже.
-//   Блокер снят: Plan 72 P1-B добавил bodyless-type support в parser
-//   (`type Name` без вариантов / полей теперь parsable). Декларация —
-//   canonical type-name для type-checker'а; runtime throw остаётся
-//   string-payload (`nova_rt/effects.h`), structured payload отложен
-//   (тот же mechanism что у `ReadBufferError`).
-//   Bottom-тип НЕ мигрируется сюда — это строчный встроенный примитив
-//   `never` (Plan 76, закрыт 2026-05-21), не капитализированный
-//   prelude-тип.
-//
-// **DEFER Plan 62.C → 62.B/F:**
-//
-// - **Throw-point conversion to structured `RuntimeError`-payload**
-//   (compiler:    a/b на 0, arr[i] out-of-bounds, etc.) остаётся отдельной
-//   задачей — требует расширения fail-frame mechanism с `nova_str` на
-//   `void*` payload. См. spec/decisions/08-runtime.md §«Bootstrap-
-//   ограничения» (~lines 370-376).
+// DEFER: throw-point conversion to structured `RuntimeError`-payload
+// (compiler: a/b на 0, arr[i] out-of-bounds, etc.) остаётся отдельной
+// задачей — требует расширения fail-frame mechanism с `nova_str` на
+// `void*` payload.
 
 module prelude.errors
 
 // ──────────────────────────────────────────────────────────────────────────
-// Runtime errors (D26 §«Bottom-уровневые runtime-ошибки»)
+// Runtime errors (bottom-level runtime errors)
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Bottom-уровневые runtime-ошибки. Бросаются автоматически compiler'ом
 /// (`a/b` на 0, `arr[i]` out-of-bounds, type mismatch, и т.д.) либо
-/// вручную через `throw`. См. D26 spec / D65.
+/// вручную через `throw`.
 ///
-/// `StackOverflow` и `OutOfMemory` НЕ входят — они panic (D13), не Fail.
+/// `StackOverflow` и `OutOfMemory` НЕ входят — они panic, не Fail.
 ///
 /// **Bootstrap**: `Nova_RuntimeError*` typedef + `nova_make_RuntimeError_*`
-/// constructors живут в `nova_rt/array.h` (~lines 557-610). Pre-populated
-/// `sum_schemas["RuntimeError"]` (emit_c.rs:1029-1048) регистрирует
-/// 6 variants; `init_prelude_decls_from_items` (Plan 62.C) распознаёт
-/// эту декларацию и регистрирует Prelude entry в `sum_schema_registry`
-/// inheriting variant info и (currently empty) `method_routing` от
-/// HardcodedBaseline.
+/// constructors живут в `nova_rt/array.h`. Pre-populated
+/// `sum_schemas["RuntimeError"]` регистрирует 6 variants;
+/// `init_prelude_decls_from_items` распознаёт эту декларацию и регистрирует
+/// Prelude entry в `sum_schema_registry`, inheriting variant info и
+/// (currently empty) `method_routing` от HardcodedBaseline.
 ///
-/// **Variant set strict-equality (Plan 62.A.bis acceptance):** этот
-/// declaration МУСТ matchить ровно 6 вариантов HardcodedBaseline entry
-/// (sum_schema_registry.rs:458-483). Расширение variant set требует
-/// edition bump (Plan 62.F).
+/// **Variant set strict-equality:** этот declaration МУСТ matchить ровно
+/// 6 вариантов HardcodedBaseline entry. Расширение variant set требует
+/// edition bump.
 #stable(since = "0.1")
 export type RuntimeError enum
     | DivByZero
@@ -90,7 +70,7 @@ export type RuntimeError enum
     | NoHandler(str)
 
 // ──────────────────────────────────────────────────────────────────────────
-// ReadBuffer errors (D26 §«Прочие prelude-типы»)
+// ReadBuffer errors
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Ошибка чтения буфера: данных меньше чем ожидалось. Throw'ится
@@ -99,12 +79,10 @@ export type RuntimeError enum
 ///
 /// **Bootstrap**: actual error payload в `Nova_Fail_fail` — это
 /// formatted `nova_str` ("ReadBuffer.UnexpectedEnd: wanted N, available M",
-/// см. nova_rt/read_buffer.h:62-77 и :254-272), НЕ structured
-/// `Nova_ReadBufferError*`. Эта Nova-level декларация даёт type-checker'у
-/// канонический type-name для signatures `Fail[ReadBufferError]` /
-/// `Result[T, ReadBufferError]` (см. runtime_registry.rs:893-954) и
-/// pattern-matching конструкций. Конверсия в structured payload
-/// отложена (см. spec/decisions/08-runtime.md §«Bootstrap-ограничения»).
+/// см. nova_rt/read_buffer.h), НЕ structured `Nova_ReadBufferError*`.
+/// Эта Nova-level декларация даёт type-checker'у канонический type-name
+/// для signatures `Fail[ReadBufferError]` / `Result[T, ReadBufferError]`
+/// и pattern-matching конструкций. Конверсия в structured payload отложена.
 ///
 /// Variants:
 ///   - `UnexpectedEnd { wanted int, available int }` — попытка прочитать
@@ -114,13 +92,12 @@ export type ReadBufferError enum
     | UnexpectedEnd { wanted int, available int }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Option-unwrap error (D85)
+// Option-unwrap error
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Ошибка разворачивания пустого `Option`. Бросается оператором `expr!!`
-/// когда `expr` — `None` (D85: `Option!!` → `throw RuntimeNoneError`).
-/// Функция, использующая `opt!!`, должна иметь `Fail[RuntimeNoneError]`
-/// в сигнатуре (см. spec/decisions/04-effects.md §D85).
+/// когда `expr` — `None` (`Option!!` → `throw RuntimeNoneError`). Функция,
+/// использующая `opt!!`, должна иметь `Fail[RuntimeNoneError]` в сигнатуре.
 ///
 /// Unit-тип (без вариантов / полей) — носит сам факт «развернули None»,
 /// полезной нагрузки нет.
@@ -130,8 +107,7 @@ export type ReadBufferError enum
 /// `Nova_RuntimeNoneError*` payload не строится. Эта Nova-level
 /// декларация даёт type-checker'у канонический type-name для сигнатур
 /// `Fail[RuntimeNoneError]` / pattern-matching. Конверсия в structured
-/// payload отложена (тот же mechanism что у `ReadBufferError` — см.
-/// spec/decisions/08-runtime.md §«Bootstrap-ограничения»).
+/// payload отложена (тот же mechanism что у `ReadBufferError`).
 ///
 /// # Examples
 ///
@@ -143,10 +119,10 @@ export type ReadBufferError enum
 export type RuntimeNoneError
 
 // ──────────────────────────────────────────────────────────────────────────
-// Plan 100.4.1 (D158): MultiError — composite error для failable cleanup
+// MultiError — composite error для failable cleanup
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Composite error от **failable defer body** (D158).
+/// Composite error от **failable defer body**.
 ///
 /// Когда cleanup-fail происходит **во время propagation другой ошибки** —
 /// primary error НЕ заменяется; cleanup-error appended в chain `suppressed`.
@@ -161,7 +137,7 @@ export type RuntimeNoneError
 /// primary: original_err, suppressed: [cleanup_err1, cleanup_err2, ...] }`.
 /// Caller видит root cause + cascaded cleanup failures.
 ///
-/// **C. Multi-defer LIFO accumulation** — обрабатывается Plan 100.4.4 (D161).
+/// **C. Multi-defer LIFO accumulation** — обрабатывается runtime'ом.
 ///
 /// # Bootstrap
 ///
@@ -170,7 +146,7 @@ export type RuntimeNoneError
 /// `nova_failframe_suppressed_count` / `nova_failframe_suppressed_at`).
 ///
 /// Production-grade typed payload (`primary: E1`, `suppressed: []E2`) —
-/// Plan 100.4.4 + 100.4.5.
+/// deferred.
 ///
 /// # Examples
 ///
@@ -208,15 +184,15 @@ fn MultiError @primary() -> str => @primary
 fn MultiError @suppressed() -> []str => @suppressed
 
 /// Human-readable summary of composite — primary + numbered list of
-/// suppressed. Used by D7 diagnostic format.
+/// suppressed.
 #stable(since = "0.1")
 fn MultiError @fmt_chain() -> str => @primary
 
 // ──────────────────────────────────────────────────────────────────────────
-// Plan 110.4.1 (D193) — MultiError iteration + walk + panic detection
+// MultiError iteration + walk + panic detection
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Plan 110 D193: walk over all errors в chain LIFO order
+/// Walk over all errors в chain LIFO order
 /// (primary first, then suppressed[0], suppressed[1], ...).
 /// Возвращает []str — массив всех messages.
 #stable(since = "0.1")
@@ -229,9 +205,9 @@ fn MultiError @walk() -> []str {
     result
 }
 
-/// Plan 110 D193: find first panic message в chain (если есть).
+/// Find first panic message в chain (если есть).
 /// Bootstrap: ищет prefix "panic:" в messages — full typed panic
-/// discrimination после `any` payload migration ([M-110-multierror-any]).
+/// discrimination после `any` payload migration.
 #stable(since = "0.1")
 fn MultiError @find_first_panic() -> Option[str] {
     if @primary.starts_with("panic:") {
@@ -246,17 +222,17 @@ fn MultiError @find_first_panic() -> Option[str] {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Plan 110 D193 / D90 §7 amend — typed cancel/timeout/truncation errors
+// Typed cancel/timeout/truncation errors
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Cancel-as-error payload (D90 §7 amend, Plan 110). При cancel/interrupt
+/// Cancel-as-error payload. При cancel/interrupt
 /// в `consume {}` body — outcome приходит как `Failure(CancelError { ... })`.
 /// Resource'у видна типизированная причина cancel'а вместо опаковой
 /// «cancellation».
 ///
-/// **Bootstrap status (Plan 110 Ф.6.6):** declaration here; codegen path
+/// **Bootstrap status:** declaration here; codegen path
 /// `nv_consume_emit_cancel_as_failure` материализует payload при
-/// cancel-доставке в body (Plan 110 Ф.9.4).
+/// cancel-доставке в body.
 ///
 /// # Examples
 ///
@@ -281,16 +257,16 @@ export type CancelError {
     ro reason str
 }
 
-/// Scope-deadline exceeded (Plan 174 / D349, план 173 §3a). Выбрасывается
+/// Scope-deadline exceeded. Выбрасывается
 /// runtime'ом наружу из `supervised(deadline:/timeout:) { ... }` когда срок
 /// области истёк: все fiber'ы области кооперативно отменяются (тот же путь,
 /// что `cancel:`), их cleanup'ы добегают, и наружу летит типизированный
-/// `TimeoutError` — ловится `is TimeoutError` (D54/174.3) или
+/// `TimeoutError` — ловится `is TimeoutError` или
 /// `with Fail[TimeoutError]`.
 ///
 /// `deadline_ns` — превышенная точка на монотонных часах (абсолютные
 /// наносекунды, epoch реализации; только дельты значимы). NB: ретрактнутый
-/// `CleanupTimeoutError` (D192-ретракт, Plan 173 Ф.5 п.2) был про
+/// `CleanupTimeoutError` был про
 /// cleanup-бюджет ресурса и УДАЛЁН (превышение = watchdog-варн + overrun в
 /// ResourceTrace exit-событии); этот тип — про срок ЦЕЛОЙ области
 /// (bounded-shutdown) и живёт. Реальная USER-ошибка внутри области
@@ -318,19 +294,19 @@ export type TimeoutError {
 }
 
 /// Sentinel composed в `MultiError.suppressed` когда cleanup-cascade
-/// глубина превышает `D193` depth-limit (256). Дальнейшие compose silently
+/// глубина превышает depth-limit (256). Дальнейшие compose silently
 /// ignored; pointer на этот sentinel signal'ит «cascade was truncated at
 /// depth N».
 ///
-/// **Bootstrap status (Plan 110 Ф.6.6):** declaration here; emission
-/// в `nv_compose_error` (Plan 110 Ф.6.5).
+/// **Bootstrap status:** declaration here; emission
+/// в `nv_compose_error`.
 #stable(since = "0.1")
 export type MultiErrorTruncated {
     ro depth int
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Char conversion errors (D54/D77)
+// Char conversion errors
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Ошибка конверсии `int` → `char`. Выбрасывается `(cp int).to_char()`
@@ -339,9 +315,9 @@ export type MultiErrorTruncated {
 ///
 /// Unit-тип — сам факт «невалидный codepoint», payload не нужен.
 ///
-/// [M-f64-try-parse-to-parse-f64] (2026-07-07): renamed from `CharTryFromError`
-/// — `char.try_from` renamed to `char.from` (R3: was the only static char
-/// conversion without an infallible sibling).
+/// Renamed from `CharTryFromError` — `char.try_from` renamed to
+/// `char.from` (was the only static char conversion without an infallible
+/// sibling).
 ///
 /// # Examples
 ///
@@ -371,7 +347,7 @@ export type CharFromError
 export type TryFromCharError
 
 // ──────────────────────────────────────────────────────────────────────────
-// Numeric narrowing error ([M-numeric-try-narrowing], 2026-07-20, D430)
+// Numeric narrowing error
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Ошибка проверяемого сужающего числового преобразования (число→число).

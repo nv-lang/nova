@@ -1,4 +1,4 @@
-//! Plan 45 Ф.35.3 — JSON parser/serializer по RFC 8259.
+//! JSON parser/serializer по RFC 8259.
 //!
 //! Independent implementation — не порт. Покрывает все JSON-типы (null,
 //! bool, number, string, array, object), escape-sequences (включая
@@ -21,31 +21,29 @@
 
 module encoding.json
 
-// [M-91.13-codegen-none-arm-nested-generic-mismatch] (2026-06-05):
 // json.nv использует HashMap[K, V] в return types и fn-body literals
-// (Object variant + Json.parse).  HashMap живёт в std/collections/hashmap.nv
-// и НЕ в std.prelude.  Без явного `import` peer_files codegen-prepass
+// (Object variant + Json.parse). HashMap живёт в std/collections/hashmap.nv
+// и НЕ в std.prelude. Без явного `import` peer_files codegen-prepass
 // не подтягивает hashmap.nv → HashMap не регистрируется в
-// `generic_type_templates` → fn-signature emission для `object()` (тогда ещё `as_object()`, D410 rename)
-// эмитит erased `NovaOpt_nova_int` вместо concrete `NovaOpt_Nova_HashMap_p`,
+// `generic_type_templates` → fn-signature emission для `object()` эмитит
+// erased `NovaOpt_nova_int` вместо concrete `NovaOpt_Nova_HashMap_p`,
 // body-pass позже видит concrete тип → mismatch CC-FAIL.
 //
 // Fix: explicit `import` — peer_files pipeline загружает hashmap.nv,
-// и Plan 48.1 prepass (`emit_c.rs:1959-1977`) регистрирует HashMap
-// как concrete generic template.  Это правильное (а не workaround)
-// решение: json.nv действительно ИСПОЛЬЗУЕТ HashMap, поэтому ДОЛЖЕН
-// его импортировать (explicit-imports principle).
+// и prepass регистрирует HashMap как concrete generic template. Это
+// правильное (а не workaround) решение: json.nv действительно
+// ИСПОЛЬЗУЕТ HashMap, поэтому ДОЛЖЕН его импортировать
+// (explicit-imports principle).
 import std.collections.hashmap.{HashMap}
 
-// [M-json-encode-record-field-order-nondeterministic] (реестр 221.1 №148):
-// `HashMap[str, JsonValue]` не хранит порядок вставки, а итерация хеш-таблицы
-// НЕДЕТЕРМИНИРОВАНА между процессами (`nova_str_hash` зовёт рандомизированный
-// per-process siphash-seed — HashDoS-защита, `nova_rt.h` — трогать НЕЛЬЗЯ).
-// `JsonObject` ниже — упорядоченная map (вектор ключей в порядке вставки +
-// HashMap для O(1) поиска, аналог serde_json `IndexMap`/`preserve_order`) —
-// порядок полей хранится ОТДЕЛЬНО от хеш-таблицы, поэтому детерминирован
-// внутри и МЕЖДУ процессами. `JsonValue.Object` несёт `JsonObject` (не голый
-// HashMap) — см. ниже.
+// `HashMap[str, JsonValue]` не хранит порядок вставки, а итерация
+// хеш-таблицы НЕДЕТЕРМИНИРОВАНА между процессами (`nova_str_hash` зовёт
+// рандомизированный per-process siphash-seed — HashDoS-защита, `nova_rt.h`
+// — трогать НЕЛЬЗЯ). `JsonObject` ниже — упорядоченная map (вектор ключей
+// в порядке вставки + HashMap для O(1) поиска, аналог serde_json
+// `IndexMap`/`preserve_order`) — порядок полей хранится ОТДЕЛЬНО от
+// хеш-таблицы, поэтому детерминирован внутри и МЕЖДУ процессами.
+// `JsonValue.Object` несёт `JsonObject` (не голый HashMap) — см. ниже.
 /// Упорядоченная JSON-object map: вектор ключей в порядке вставки +
 /// `HashMap[str, JsonValue]` для O(1) поиска значений. Итерация (`@iter()`,
 /// `for (k, v) in obj`) всегда идёт в порядке вставки — НЕ в hash-порядке.
@@ -95,8 +93,8 @@ export fn JsonObject mut @insert(key str, value JsonValue) -> Option[JsonValue] 
 #stable(since = "0.1")
 export fn JsonObject @keys() -> []str => @key_order
 
-/// Order-independent структурное равенство (D109/D237 `Equal`-impl) —
-/// зеркало `HashMap[K, V] @equal`. Семантическое равенство JSON-объектов не
+/// Order-independent структурное равенство — зеркало
+/// `HashMap[K, V] @equal`. Семантическое равенство JSON-объектов не
 /// зависит от порядка полей (только порядок СЕРИАЛИЗАЦИИ детерминирован —
 /// это отдельное свойство).
 #stable(since = "0.1")
@@ -137,7 +135,7 @@ export fn JsonObjectIter mut @next() -> Option[(str, JsonValue)] {
 
 /// JsonValue — рекурсивный sum-type для произвольного JSON-документа.
 ///
-/// Поддерживает D55 record-coercion: literal `{ "k": v }` в позиции
+/// Поддерживает record-coercion: literal `{ "k": v }` в позиции
 /// `JsonValue` подгоняется в `Object`. Поддерживает structural equality
 /// (тесты round-trip полагаются на `==`).
 #stable(since = "0.1")
@@ -151,7 +149,7 @@ export type JsonValue enum
 
 /// `ParseJsonError` — категории ошибок JSON-парсера с позицией для диагностики.
 ///
-/// Конвенция D30 (`Parse<TypeName>Error`). Все варианты содержат `line` и
+/// Все варианты содержат `line` и
 /// `col` (1-based) — для IDE squiggles или CLI error messages.
 #stable(since = "0.1")
 export type ParseJsonError enum
@@ -279,12 +277,12 @@ type Token enum
     | NumTok(f64)
     | StrTok(str)
     | EofTok
-    // [M-181-json-trailing-content]: an unrecognized leading character is lexed
-    // into this sentinel token (carrying the char) instead of failing the lexer
-    // outright. This lets a value-completing prefetch SUCCEED so the top-level
-    // trailing-content check (`Json.parse`) can classify garbage AFTER a complete
-    // value as `TrailingContent` — while mid-structure consumers still convert it
-    // to `UnexpectedChar` via their catch-all arms (taxonomy preserved).
+    // [M-181-json-trailing-content] обход: неопознанный ведущий символ
+    // лексируется в sentinel-токен (с символом) вместо fail-а лексера —
+    // prefetch, завершающий value, УСПЕВАЕТ, и top-level trailing-content
+    // чек (`Json.parse`) классифицирует мусор ПОСЛЕ полного value как
+    // `TrailingContent`; mid-structure потребители конвертят его в
+    // `UnexpectedChar` через catch-all arms (таксономия сохранена).
     | BadTok(char)
 
 type TokenWithPos {
@@ -304,32 +302,29 @@ type Lexer {
 fn Lexer.new(input str) -> Self =>
     { input, pos: 0, line: 1, col: 1 }
 
-// [M-json-lexer-byte-cursor] (Баг 1, json-санация): @pos — ВСЕГДА байтовый
-// курсор (не codepoint). Раньше @peek() шёл через `chars().nth(@pos)` —
-// O(n) на каждый вызов (O(n²) лексер) и рассинхронизировался с байтовыми
-// срезами `@input[start..@pos]` в @read_number на non-ASCII входе.
-// JSON-структура (whitespace/punctuation/keywords/numbers) — всегда ASCII,
-// поэтому байт-как-char валиден для всех сравнений вне строк; multibyte
-// байты попадают только в @read_string, который их не декодирует (см. там).
+// @pos — ВСЕГДА байтовый курсор (не codepoint). `@peek()` идёт по байтам,
+// рассинхронизации с байтовыми срезами `@input[start..@pos]` нет на
+// non-ASCII входе. JSON-структура (whitespace/punctuation/keywords/numbers) —
+// всегда ASCII, поэтому байт-как-char валиден для всех сравнений вне строк;
+// multibyte байты попадают только в @read_string, который их не декодирует
+// (см. там).
 //
-// [M-json-byte-peek] (2026-07-07): @peek()/@advance() раньше возвращали
-// Option[char], маскируя сырой байт под codepoint
-// (`(byte as int).to_char() ?? ' '` — для UTF-8 лид-байта это ФАНТОМНЫЙ
-// Latin-1 символ, не настоящий codepoint; а `?? ' '` был мёртвым sentinel —
-// байт 0..255 всегда валиден как codepoint, fallback никогда не
-// срабатывал). Убрано: @peek()/@advance() теперь честно -> Option[u8].
+// `@peek()`/@advance() возвращают Option[u8] — честный сырой байт, не
+// codepoint. (Раньше они маскировали байт под char через
+// `(byte as int).to_char() ?? ' '` — для UTF-8 лид-байта это был
+// ФАНТОМНЫЙ Latin-1 символ, не настоящий codepoint; а `?? ' '` был
+// мёртвым sentinel — байт 0..255 всегда валиден как codepoint.)
 //
 // Стиль сравнений — байт-константы (см. блок `const B_*` ниже), НЕ inline
-// `b == ('x' as u8)`. Изначально выбирался inline char-литерал каст (D54
-// разрешает `as u8` для CHAR-ЛИТЕРАЛА, прецедент std/encoding/base64.nv:206),
-// но он ломает компиляцию: match-arm guard, чьё условие заканчивается
-// ГОЛЫМ parenthesized-выражением прямо перед `=>` (напр.
+// `b == ('x' as u8)`. Изначально выбирался inline char-литерал каст
+// (разрешён для CHAR-ЛИТЕРАЛА, прецедент std/encoding/base64.nv), но он
+// ломает компиляцию: match-arm guard, чьё условие заканчивается ГОЛЫМ
+// parenthesized-выражением прямо перед `=>` (напр.
 // `Some(b) if b == ('{' as u8) => ...`), компилятор ложно распознаёт как
-// ретрактированный legacy-lambda `(x) => body` (Plan 19 D22-rev) —
-// компиляторный гэп (repro: scratchpad/repro_legacy_lambda_guard.nv,
-// см. отчёт задачи). `IDENT(args) => ...` (вызов функции/константа без
-// скобок) не триггерит — отсюда именованные `const B_* u8` вместо inline-
-// каста: guard заканчивается голым идентификатором, не `)`.
+// ретрактированный legacy-lambda `(x) => body` — компиляторный гэп.
+// `IDENT(args) => ...` (вызов функции/константа без скобок) не триггерит —
+// отсюда именованные `const B_* u8` вместо inline-каста: guard заканчивается
+// голым идентификатором, не `)`.
 //
 // Места, где реально нужен char (диагностика — BadTok/UnexpectedChar/
 // InvalidEscape/InvalidUnicode): ASCII байт (< 0x80, гарантирован guard'ом)
@@ -338,7 +333,7 @@ fn Lexer.new(input str) -> Self =>
 // см. там).
 
 // Байтовые константы структурного JSON (всегда ASCII) — единый стиль
-// сравнений на весь файл (см. [M-json-byte-peek] выше). Значение и ASCII-
+// сравнений на весь файл (см. выше). Значение и ASCII-
 // комментарий на каждой строке.
 const B_SPACE     u8 = 0x20  // ' '
 const B_TAB       u8 = 0x09  // '\t'
@@ -372,7 +367,7 @@ const B_UPPER_E   u8 = 0x45  // 'E'
 const B_UPPER_F   u8 = 0x46  // 'F'
 
 // Текущий байт (Option, None на конце входа). O(1). Честный байт — не char
-// (см. [M-json-byte-peek] выше).
+// (см. выше).
 fn Lexer @peek() -> Option[u8] {
     ro bytes = @input.bytes()
     if @pos >= bytes.len() {
@@ -425,10 +420,10 @@ fn Lexer mut @skip_whitespace() -> () {
 }
 
 // Прочитать следующий токен. Возвращает Result[TokenWithPos, ParseJsonError]
-// (D325 — Result-everywhere). Lexer.@advance/@peek дают Option (не fallible).
+// (Result-everywhere). Lexer.@advance/@peek дают Option (не fallible).
 fn Lexer mut @next_token() -> Result[TokenWithPos, ParseJsonError] {
     @skip_whitespace()
-    // D411: record-pattern binding snapshot — 2 of 4 Lexer fields (`input`,
+    // record-pattern binding snapshot — 2 of 4 Lexer fields (`input`,
     // `pos` omitted), so the explicit `..` is required (partial-list rule).
     ro {line, col, ..} = @
 
@@ -445,13 +440,14 @@ fn Lexer mut @next_token() -> Result[TokenWithPos, ParseJsonError] {
         Some(b) if b == B_LOWER_F  => @read_keyword("false", FalseTok, line, col)
         Some(b) if b == B_LOWER_N  => @read_keyword("null",  NullTok,  line, col)
         Some(b) if is_num_start(b) => Ok({ tok: NumTok(@read_number()?), line, col })
-        // [M-181-json-trailing-content]: unrecognized leading char → BadTok sentinel
-        // (NOT a hard lex Err). A value-completing prefetch then SUCCEEDS, so trailing
-        // garbage after a complete top-level value is classified `TrailingContent`
-        // (Json.parse), while a BadTok reached mid-value/structure is turned into
-        // `UnexpectedChar` by the parser's catch-all arms (taxonomy unchanged).
-        // [M-json-byte-peek]: настоящий codepoint (не Latin-1-фантом) через
-        // @char_at — @pos ещё не сдвинут (peek, не advance), позиция валидна.
+        // [M-181-json-trailing-content] обход: неопознанный ведущий символ →
+        // BadTok sentinel (не жёсткий lex Err). Prefetch, завершающий value,
+        // тогда УСПЕВАЕТ, и trailing-мусор после полного top-level value
+        // классифицируется `TrailingContent` (Json.parse), а BadTok,
+        // достигнутый mid-value/structure, превращается в `UnexpectedChar`
+        // catch-all arms'ами парсера (таксономия неизменна).
+        // Настоящий codepoint (не Latin-1-фантом) через @char_at — @pos ещё
+        // не сдвинут (peek, не advance), позиция валидна.
         Some(_) => {
             ro bad_char = @char_at(@pos)
             @advance()
@@ -460,10 +456,8 @@ fn Lexer mut @next_token() -> Result[TokenWithPos, ParseJsonError] {
     }
 }
 
-// [M-json-byte-peek]: лексер теперь байт-based — сравнения напрямую по u8,
-// без char ASCII-core делегации (у u8 таких методов нет; char-методы
-// работают на char, не на u8 — Plan 152.3a делегация здесь больше не
-// применима).
+// Лексер байт-based — сравнения напрямую по u8, без char ASCII-core
+// делегации (у u8 таких методов нет; char-методы работают на char, не на u8).
 fn is_num_start(b u8) -> bool => b == B_MINUS || is_digit(b)
 
 fn is_digit(b u8) -> bool => b >= B_DIGIT_0 && b <= B_DIGIT_9
@@ -486,8 +480,8 @@ fn hex_digit_val(b u8) -> int {
 fn Lexer mut @read_keyword(kw str, t Token, line int, col int) -> Result[TokenWithPos, ParseJsonError] {
     // `kw` — короткий ASCII-литерал ("true"/"false"/"null"); байтовая
     // итерация (`kw.bytes()`) эквивалентна char-итерации для чистого ASCII
-    // и даёт `u8` напрямую — без char→u8 каста runtime-переменной (D54
-    // разрешает `as u8` только для CharLit, не для `char` из `kw.chars()`).
+    // и даёт `u8` напрямую — без char→u8 каста runtime-переменной
+    // (каст `as u8` разрешён только для CharLit, не для `char` из `kw.chars()`).
     for expected in kw.bytes() {
         match @peek() {
             Some(b) if b == expected => { @advance() }
@@ -505,13 +499,13 @@ fn Lexer mut @read_keyword(kw str, t Token, line int, col int) -> Result[TokenWi
 
 // Чтение JSON-строки в кавычках. Возвращает декодированный str.
 //
-// [M-json-lexer-byte-cursor] (Баг 1): копим БАЙТЫ напрямую, не через
-// @advance()'s Option[char] — вход уже валидный UTF-8, decode/re-encode не
-// нужен (и был бы некорректен: byte 0xC3 — часть multibyte-последовательности,
-// а не codepoint U+00C3). Литеральные runs между escape-последовательностями
-// копируются одним batch-append (не char-by-char конкатенацией — убирает
-// второй O(n²) паттерн, `buf = buf + c.to_str()`).
-// D133: `buf` — type-level consume (StringBuilder), обязан быть потреблён на
+// Копим БАЙТЫ напрямую, не через @advance()'s Option[char] — вход уже
+// валидный UTF-8, decode/re-encode не нужен (и был бы некорректен:
+// byte 0xC3 — часть multibyte-последовательности, а не codepoint U+00C3).
+// Литеральные runs между escape-последовательностями копируются одним
+// batch-append (не char-by-char конкатенацией — убирает второй O(n²)
+// паттерн, `buf = buf + c.to_str()`).
+// `buf` — type-level consume (StringBuilder), обязан быть потреблён на
 // КАЖДОМ exit-point. Ранний `return Err(..)` посреди цикла нарушил бы это —
 // поэтому ошибка копится в `err` и цикл всегда доходит до одного финального
 // `buf.into_str()`; Err/Ok решается ПОСЛЕ потребления.
@@ -558,8 +552,8 @@ fn Lexer mut @read_escape() -> Result[str, ParseJsonError] {
         Some(b) if b == B_QUOTE     => Ok("\"")
         Some(b) if b == B_BACKSLASH => Ok("\\")
         Some(b) if b == B_SLASH     => Ok("/")
-        Some(b) if b == B_LOWER_B   => Ok(str.from_codepoint(0x08))  // Баг 2: \b → backspace
-        Some(b) if b == B_LOWER_F   => Ok(str.from_codepoint(0x0C))  // Баг 2: \f → form feed
+        Some(b) if b == B_LOWER_B   => Ok(str.from_codepoint(0x08))  // \b → backspace
+        Some(b) if b == B_LOWER_F   => Ok(str.from_codepoint(0x0C))  // \f → form feed
         Some(b) if b == B_LOWER_N   => Ok("\n")
         Some(b) if b == B_LOWER_R   => Ok("\r")
         Some(b) if b == B_LOWER_T   => Ok("\t")
@@ -619,7 +613,7 @@ fn Lexer mut @read_hex_quad() -> Result[int, ParseJsonError] {
 // Чтение числа: optional '-', integer part, optional '.fraction',
 // optional 'e[+-]exp'. Возвращает f64.
 fn Lexer mut @read_number() -> Result[f64, ParseJsonError] {
-    // D411: record-pattern binding snapshot with rename — 3 of 4 Lexer
+    // record-pattern binding snapshot with rename — 3 of 4 Lexer
     // fields (`input` omitted), so `..` is required (partial-list rule).
     ro {pos: start, line: start_line, col: start_col, ..} = @
 
@@ -730,7 +724,7 @@ fn tok_first_char(t Token) -> char => match t {
     RBracket => ']'
     Comma    => ','
     Colon    => ':'
-    BadTok(c) => c   // [M-181-json-trailing-content]: surface the actual bad char
+    BadTok(c) => c   // surface the actual bad char
     _        => '?'
 }
 
@@ -836,7 +830,7 @@ fn Parser mut @parse_member(mut fields JsonObject) -> Result[(), ParseJsonError]
 
 /// Parse JSON-документ из строки. Главная точка входа.
 ///
-/// Возвращает `Result[JsonValue, ParseJsonError]` (D325 — Result-everywhere).
+/// Возвращает `Result[JsonValue, ParseJsonError]` (Result-everywhere).
 /// На call-site: `Json.parse(s)?` (проброс) / `Json.parse(s)!!` (throw) /
 /// `match` (ветвление по ошибке).
 ///
@@ -858,7 +852,7 @@ export fn Json.parse(s str) -> Result[JsonValue, ParseJsonError] { // [M-lint-fi
 }
 
 /// `try_from` — алиас [`Json.parse`] по конвенции имён конструктора-конверсии
-/// (D325 — fallible → Result). Поведение идентично `Json.parse`.
+/// (fallible → Result). Поведение идентично `Json.parse`.
 #stable(since = "0.1")
 export fn JsonValue.try_from(s str) -> Result[JsonValue, ParseJsonError] => // [M-lint-findings-static-conversion]
     Json.parse(s)
@@ -867,7 +861,7 @@ export fn JsonValue.try_from(s str) -> Result[JsonValue, ParseJsonError] => // [
 // Сериализация: @to_str() -> str
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `to_str()` — сериализация в compact JSON (single line, без отступов, D410).
+/// `to_str()` — сериализация в compact JSON (single line, без отступов).
 ///
 /// Интерполяция (`"${v}"`) и `v.to_str()` используют этот же метод через
 /// компиляторный Display-fallback. Для multi-line форматирования используй
@@ -952,9 +946,9 @@ fn format_object(m JsonObject) -> str {
     consume buf = StringBuilder.new()
     buf.append("{")
     mut first = true
-    // [M-json-encode-record-field-order-nondeterministic]: `JsonObject.@iter()`
-    // идёт в порядке ВСТАВКИ (`@key_order`), не в hash-порядке — отсюда
-    // детерминизм поля-порядка в выводе (см. JsonObject выше).
+    // JsonObject.@iter() идёт в порядке ВСТАВКИ (`@key_order`), не в
+    // hash-порядке — отсюда детерминизм поля-порядка в выводе
+    // (см. JsonObject выше).
     for (k, v) in m {
         if !first { buf.append(",") }
         buf.append(format_string(k))
@@ -986,13 +980,11 @@ fn format_object(m JsonObject) -> str {
 #stable(since = "0.1")
 export fn JsonValue @to_str_pretty() -> str => pretty_at(@, 0)
 
-/// Plan 208 Ф.2 (D422): the ONE required `Display` primitive for `JsonValue`
+/// THE ONE required `Display` primitive for `JsonValue`
 /// — `${v:#}` (alternate/pretty-flag) renders the same output as
 /// [`to_str_pretty`]; any other spec (bare `${v}`, `.N` precision, etc.)
 /// falls back to the compact `@to_str()` — `#` is the only axis this type
-/// reacts to. Was the D419-era optional `@display_fmt` hook (a second method
-/// alongside `@display`'s to_str-calling default); D422 retracts that split
-/// — this IS `@display` now, unconditionally dispatched for every
+/// reacts to. This IS `@display`, unconditionally dispatched for every
 /// `${v[:SPEC]}` site (bare included), not a rich-spec-only opt-in.
 ///
 /// # Examples
