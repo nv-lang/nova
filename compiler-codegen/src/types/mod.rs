@@ -17700,7 +17700,11 @@ impl<'a> TypeCheckCtx<'a> {
                 use crate::ast::UnOp;
                 let op_tr = self.infer_expr_type(operand, scope)?;
                 match op {
-                    UnOp::Neg | UnOp::Not => Some(op_tr),
+                    // Plan 234 Ф.2 (D46-амендмент): `~x` — тип результата =
+                    // тип операнда (как `-x`; на пользовательских типах
+                    // `@bitnot() -> Self` обычно, но эта channel-инфра не
+                    // проверяет саму сигнатуру, только структурное эхо типа).
+                    UnOp::Neg | UnOp::Not | UnOp::BitNot => Some(op_tr),
                     UnOp::Deref => match op_tr {
                         TypeRef::Pointer(inner, _) => Some(match *inner {
                             TypeRef::Mut(t, _) | TypeRef::Readonly(t, _) => *t,
@@ -23432,7 +23436,56 @@ impl<'a> BoundCtx<'a> {
                 self.walk_expr(left, scope, errors);
                 self.walk_expr(right, scope, errors);
             }
-            ExprKind::Unary { operand, .. } => self.walk_expr(operand, scope, errors),
+            ExprKind::Unary { op, operand } => {
+                // Plan 234 (владелец 2026-07-27, гейт Ф.2): унарное семейство
+                // `!`/`-`/`~` × неподдерживаемый тип операнда — честная ошибка
+                // ЧЕКЕРА, не CC-FAIL с текстом clang. `~` определён ТОЛЬКО для
+                // целочисленных (D46-амендмент §D); заодно закрыт весь список
+                // неподдерживаемых комбинаций для `-`/`!` (владелец: "и прочие
+                // комбинации — пройтись единообразно одной волной"). Conservative
+                // (как E_MIXED_WIDTH_ARITH/E_RELATIONAL_OPERAND_NOT_ORDERED выше):
+                // фиксируем ТОЛЬКО когда тип операнда достоверно известен (bool/
+                // str/f32/f64/int-family) — permissive на unknown/generic/custom
+                // (custom-типы без нужного @neg/@not/@bitnot ловятся ниже по
+                // конвейеру существующим codegen CC-FAIL, как и другие operator-
+                // overload промахи в этом языке).
+                if let Some(operand_ty) = Self::infer_arg_ty(operand, scope) {
+                    use ResolvedType as R;
+                    let rt = ResolvedType::from_type_ref(&operand_ty);
+                    let is_bool = matches!(rt, R::Bool);
+                    let is_str = typeref_is_str(&operand_ty);
+                    let is_float = matches!(rt, R::Float { .. });
+                    let is_numeric = matches!(rt, R::Scalar { .. }) || is_float;
+                    let bad = match op {
+                        UnOp::Neg if is_bool || is_str => Some((
+                            "-", "числовой (int/float-семейство) или пользовательский \
+                             тип с `@neg()`",
+                        )),
+                        UnOp::Not if is_numeric || is_str => Some((
+                            "!", "`bool` или пользовательский тип с `@not()`",
+                        )),
+                        UnOp::BitNot if is_bool || is_float || is_str => Some((
+                            "~", "целочисленный (`i8`..`i64`/`u8`..`u64`/`int`/`uint`) \
+                             или пользовательский тип с `@bitnot()`",
+                        )),
+                        _ => None,
+                    };
+                    if let Some((op_src, expected)) = bad {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "[E_UNARY_OPERAND_TYPE] operator `{}` requires {} — \
+                                 operand type here is not compatible (D46-амендмент \
+                                 2026-07-27 / план 234: `~` — целочисленный-only, `!` — \
+                                 логический, `-` — числовой; type coercion между этими \
+                                 семьями не выполняется).",
+                                op_src, expected
+                            ),
+                            e.span,
+                        ));
+                    }
+                }
+                self.walk_expr(operand, scope, errors);
+            }
             ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) => self.walk_expr(inner, scope, errors),
             ExprKind::Coalesce(a, b) => {
                 self.walk_expr(a, scope, errors);

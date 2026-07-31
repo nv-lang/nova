@@ -8175,6 +8175,21 @@ impl Parser {
                     span,
                 ))
             }
+            // Plan 234 Ф.2 (D46-амендмент): `~x` — побитовое дополнение.
+            // Тот же унарный приоритет, что `!`/унарный `-` (D46 §2:
+            // "Приоритет — унарный, как `!` и унарный `-`").
+            TokenKind::Tilde => {
+                self.bump();
+                let operand = self.parse_unary()?;
+                let span = start.merge(operand.span);
+                Ok(Expr::new(
+                    ExprKind::Unary {
+                        op: UnOp::BitNot,
+                        operand: Box::new(operand),
+                    },
+                    span,
+                ))
+            }
             // Plan 118.7 D216 §4 amend: `raw &x` — сырой стек-адрес без
             // escape analysis / auto-promote. Требует `unsafe {}` (type-
             // checker enforces E_UNSAFE_REQUIRED). Те же lvalue-ограничения
@@ -11492,6 +11507,12 @@ impl Parser {
                     TokenKind::MinusEq => Some(AssignOp::Sub),
                     TokenKind::StarEq => Some(AssignOp::Mul),
                     TokenKind::SlashEq => Some(AssignOp::Div),
+                    // Plan 234 Ф.2а (D46-амендмент §C): compound bitwise-присваивания.
+                    TokenKind::AmpEq => Some(AssignOp::BitAnd),
+                    TokenKind::PipeEq => Some(AssignOp::BitOr),
+                    TokenKind::CaretEq => Some(AssignOp::BitXor),
+                    TokenKind::ShlEq => Some(AssignOp::Shl),
+                    TokenKind::ShrEq => Some(AssignOp::Shr),
                     _ => None,
                 };
                 if let Some(op) = op {

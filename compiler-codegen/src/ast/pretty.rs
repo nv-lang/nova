@@ -269,6 +269,8 @@ fn unop_str(op: &UnOp) -> &'static str {
     match op {
         UnOp::Neg => "-",
         UnOp::Not => "!",
+        // Plan 234 Ф.2 (D46-амендмент): побитовое дополнение.
+        UnOp::BitNot => "~",
         // Plan 118 D216 §4-5: pointer creation + deref.
         UnOp::AddrOf => "&",
         // Plan 118.7: raw &x — сырой стек-адрес без promote.

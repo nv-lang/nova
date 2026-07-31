@@ -352,6 +352,15 @@ pub fn encode_expr_with_ctx(e: &Expr, ctx: &EncodeCtx) -> Result<SmtTerm, Encodi
                 UnOp::Neg if is_fp => Ok(SmtTerm::App("fp.neg".into(), vec![v])),
                 UnOp::Neg => Ok(SmtTerm::App("-".into(),
                     vec![SmtTerm::IntLit(0), v])),
+                // Plan 234 Ф.2 (D46-амендмент): `~x` в контрактах — не
+                // поддержано (Z3-энкодер здесь не различает bitvector-режим
+                // для унарных операторов вовсе, см. TODO рядом; конкретный
+                // encoding `bvnot` требует того же bv_width-инференса, что
+                // бинарный путь выше — followup, не блокер плана 234:
+                // побитовый `~` в requires/ensures — редкий случай).
+                UnOp::BitNot => Err(EncodingError::Unsupported(
+                    "Plan 234 `~` (bitwise not) not yet supported in SMT verification".into()
+                )),
                 // Plan 118 D216 §4-5: pointer ops not supported в SMT
                 // verification (Z3 не моделирует raw pointers; contracts
                 // на typed pointer ops — Ф.4 followup).

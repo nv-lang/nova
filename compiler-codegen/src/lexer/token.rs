@@ -233,6 +233,19 @@ pub enum TokenKind {
     Shl,
     /// `>>` — right shift
     Shr,
+    /// `~` — Plan 234 Ф.2 (D46-амендмент): побитовое дополнение (унарный,
+    /// приоритет как `!`/унарный `-`). НЕ связан с `!` (логическое).
+    Tilde,
+    /// `&=` — Plan 234 Ф.2а (D46-амендмент §C): compound bitwise-and.
+    AmpEq,
+    /// `|=` — Plan 234 Ф.2а.
+    PipeEq,
+    /// `^=` — Plan 234 Ф.2а.
+    CaretEq,
+    /// `<<=` — Plan 234 Ф.2а (добавлен по симметрии со сдвигами).
+    ShlEq,
+    /// `>>=` — Plan 234 Ф.2а.
+    ShrEq,
     FatArrow,
     Arrow,
     /// Plan 33.1 (D24): `==>` — логическая импликация в контрактах.
@@ -358,6 +371,12 @@ impl TokenKind {
             TokenKind::Caret => "`^`",
             TokenKind::Shl => "`<<`",
             TokenKind::Shr => "`>>`",
+            TokenKind::Tilde => "`~`",
+            TokenKind::AmpEq => "`&=`",
+            TokenKind::PipeEq => "`|=`",
+            TokenKind::CaretEq => "`^=`",
+            TokenKind::ShlEq => "`<<=`",
+            TokenKind::ShrEq => "`>>=`",
             TokenKind::FatArrow => "`=>`",
             TokenKind::Arrow => "`->`",
             TokenKind::Implies => "`==>`",
