@@ -681,8 +681,30 @@ fn lint_unused_imports(m: &Module) -> Vec<LintWarning> {
         // Pre-resolution / single-file без populated peer_files — flat.
         check_imports_unused(&m.imports, &m.items, &mut warnings);
     } else {
-        // Per-peer (Plan 42.15 Rule C — импорты изолированы по peer'ам).
-        for pf in &m.peer_files {
+        // Per-peer (Plan 42.15 Rule C — импорты изолированы по peer'ам),
+        // но ТОЛЬКО ENTRY-модуля собственные co-equal peer'ы
+        // (`pf.is_entry_module`) — [M-lint-phantom-prelude-unused-import]
+        // (владелец 2026-07-31, репро nova-bigint/src/bigint.nv).
+        //
+        // `m.peer_files` после `resolve_imports_inline_ex` — это ПОЛНЫЙ
+        // транзитивный import-граф, инлайненный в один `Module` для
+        // cross-file type-check (каждый транзитивно затянутый модуль —
+        // включая `std.collections.vec`/`hashmap`/`set`/`raw_mem` через
+        // авто-prelude — пушит СВОИ peer-файлы в тот же плоский вектор,
+        // см. `imports.rs::resolve_imports_inline_ex`). Без фильтра этот
+        // цикл линтовал unused-import ЧУЖИХ модулей (их собственная
+        // импорт-гигиена — забота ИХ ЛИНТА, не файла, который их всего
+        // лишь транзитивно использует) и вешал находки на спаны entry-
+        // файла: имена вроде `Vec`/`HashMap`/`RawMem`/`VecIter`/`Set`
+        // (prelude-реэкспорт → `std/collections/vec/*.nv` и соседи), КОТОРЫХ
+        // проверяемый файл вообще не импортирует, репортились как «unused
+        // import» этого файла — 7 фантомов на `bigint.nv`, при этом файл
+        // не импортирует НИ ОДНО из них (см. маркер).
+        //
+        // `is_entry_module` уже ровно этот фильтр в соседних lint-проходах
+        // (`collect_prelude_visibility`-consumer выше, `escape_analyze.rs`)
+        // — тот же идиом, применяем его и здесь.
+        for pf in m.peer_files.iter().filter(|pf| pf.is_entry_module) {
             check_imports_unused(&pf.imports, &pf.items_here, &mut warnings);
         }
     }
@@ -8054,6 +8076,100 @@ mod tests {
         );
         let ws = lint_module(&m);
         assert!(!ws.iter().any(|w| w.rule == "unused-import"));
+    }
+
+    // [M-lint-phantom-prelude-unused-import] (владелец 2026-07-31, репро
+    // nova-bigint/src/bigint.nv): `lint_unused_imports` итерировал ВЕСЬ
+    // `m.peer_files` (после `resolve_imports_inline_ex` — это полный
+    // транзитивный import-граф, инлайненный в один `Module`), а не только
+    // entry-модуля собственные co-equal peer'ы (`pf.is_entry_module`) —
+    // unused-import ЧУЖОГО транзитивно затянутого модуля (auto-prelude →
+    // `std.collections.vec`/`hashmap`/`raw_mem`/…) вешался на проверяемый
+    // файл как «фантомная» находка об имени, которое файл вообще не
+    // импортирует.
+
+    #[test]
+    fn phantom_prelude_unused_import_not_flagged_on_foreign_peer() {
+        // Синтетический repro-shape: entry-модуль `foo` без своих импортов
+        // + "чужой" peer (module_name `std.collections.vec`, is_entry_module
+        // = false) с ЕГО СОБСТВЕННЫМ неиспользуемым импортом — как если бы
+        // резолвер инлайнил транзитивно затянутый `std/collections/vec/
+        // core.nv` (auto-prelude → Vec) в общий `peer_files`. Импорт-гигиена
+        // чужого модуля — не находка ЭТОГО файла.
+        let entry_m = parse("module foo\nfn run() -> int => 0\n");
+        let foreign_m = parse("module bar\nimport baz.{Unused}\nfn helper() -> int => 0\n");
+
+        let mut m = entry_m;
+        let entry_peer = crate::ast::PeerFile {
+            path: std::path::PathBuf::from("/synthetic/entry.nv"),
+            file_id: crate::diag::FileId::from(0_u32),
+            imports: m.imports.clone(),
+            items_here: m.items.clone(),
+            imported_item_names: HashSet::new(),
+            is_entry_module: true,
+            module_name: m.name.clone(),
+        };
+        let foreign_peer = crate::ast::PeerFile {
+            path: std::path::PathBuf::from("/synthetic/std/collections/vec/core.nv"),
+            file_id: crate::diag::FileId::from(7_u32),
+            imports: foreign_m.imports.clone(),
+            items_here: foreign_m.items.clone(),
+            imported_item_names: HashSet::new(),
+            is_entry_module: false,
+            module_name: vec!["std".to_string(), "collections".to_string(), "vec".to_string()],
+        };
+        m.peer_files = vec![entry_peer, foreign_peer];
+
+        let ws = lint_module(&m);
+        assert!(
+            !ws.iter().any(|w| w.rule == "unused-import"),
+            "foreign (non-entry) peer's own unused import must NOT surface as \
+             a phantom finding on the checked file, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn unused_import_still_fires_for_entry_own_peer_group() {
+        // Companion-негатив: фикс не должен ослепить линт к РЕАЛЬНОМУ
+        // unused-import в СОБСТВЕННОЙ peer-группе entry-модуля — исключаются
+        // только чужие (non-entry) peer'ы.
+        let entry_m = parse("module foo\nimport bar.{Unused}\nfn run() -> int => 0\n");
+        let foreign_m = parse("module baz\nimport qux.{AlsoUnused}\nfn helper() -> int => 0\n");
+
+        let mut m = entry_m;
+        let entry_peer = crate::ast::PeerFile {
+            path: std::path::PathBuf::from("/synthetic/entry.nv"),
+            file_id: crate::diag::FileId::from(0_u32),
+            imports: m.imports.clone(),
+            items_here: m.items.clone(),
+            imported_item_names: HashSet::new(),
+            is_entry_module: true,
+            module_name: m.name.clone(),
+        };
+        let foreign_peer = crate::ast::PeerFile {
+            path: std::path::PathBuf::from("/synthetic/std/somewhere.nv"),
+            file_id: crate::diag::FileId::from(9_u32),
+            imports: foreign_m.imports.clone(),
+            items_here: foreign_m.items.clone(),
+            imported_item_names: HashSet::new(),
+            is_entry_module: false,
+            module_name: vec!["std".to_string(), "somewhere".to_string()],
+        };
+        m.peer_files = vec![entry_peer, foreign_peer];
+
+        let ws = lint_module(&m);
+        let hits: Vec<&LintWarning> = ws.iter().filter(|w| w.rule == "unused-import").collect();
+        assert_eq!(
+            hits.len(), 1,
+            "exactly one unused-import (entry's own `Unused`), got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+        assert!(
+            hits[0].diag.message.contains("Unused") && !hits[0].diag.message.contains("AlsoUnused"),
+            "should name entry's own unused import, not the foreign peer's, got: {}",
+            hits[0].diag.message
+        );
     }
 
     // Plan 33.8 Ф.3.3: `assume` вне `#trusted` → lint `trust-introduced`.

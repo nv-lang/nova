@@ -2505,15 +2505,42 @@ fn check_one_file(path: &Path, verbose: bool, conv_lint: bool) -> CheckResult {
     // 4. infer_effects (D28) — fills in inferred effects on private fn.
     nova_codegen::types::infer_effects(&mut module);
 
-    // 5. lints::lint_module — anonymous-embed override, etc.
-    let mut lint_warnings: Vec<String> = nova_codegen::lints::lint_module(&module)
+    // 5. lints::lint_module — anonymous-embed override, unused-import, etc.
+    // [M-lint-phantom-prelude-unused-import] (владелец 2026-07-31): a lint
+    // finding can carry a NON-entry `span.file_id` (per-peer unused-import,
+    // Plan 42.15 Rule C — `lint_unused_imports` walks the entry module's own
+    // co-equal peer files, each with ITS OWN byte offsets). Decoding such a
+    // span against the ENTRY file's `src` unconditionally (old code) landed
+    // line:col on unrelated text in the entry file (another import, a doc
+    // comment) — same class of cross-file misattribution already fixed for
+    // hard errors via `build_source_map`/`render_with_map` above (Plan 81
+    // Ф.8.1). Mirrored here, but built ONLY on demand (peer sources are
+    // re-read from disk) — most files have zero non-entry-file lint findings,
+    // so this must not cost every `nova check` a disk read per peer.
+    let raw_lint_warnings = nova_codegen::lints::lint_module(&module);
+    let needs_lint_smap = raw_lint_warnings
+        .iter()
+        .any(|w| w.diag.span.file_id != nova_codegen::diag::MAIN_FILE_ID);
+    let lint_smap = if needs_lint_smap {
+        Some(build_source_map(&module, &src, path))
+    } else {
+        None
+    };
+    let mut lint_warnings: Vec<String> = raw_lint_warnings
         .into_iter()
         .map(|w| {
-            let (line, col) = nova_codegen::diag::byte_to_line_col(&src, w.diag.span.start);
+            let (warn_src, warn_path): (&str, String) =
+                if w.diag.span.file_id == nova_codegen::diag::MAIN_FILE_ID {
+                    (src.as_str(), path.display().to_string())
+                } else {
+                    let map = lint_smap.as_ref().expect("built above when file_id != MAIN");
+                    (map.source_for(w.diag.span.file_id), map.path_for(w.diag.span.file_id).to_string())
+                };
+            let (line, col) = nova_codegen::diag::byte_to_line_col(warn_src, w.diag.span.start);
             // Plan 181 (D347): demangle synthesized `__sN` rebind names so a lint
             // on a rebound variable shows the original user name, not `x__s1`.
             let msg = nova_codegen::alpha_rename::demangle_rebind_names(&w.diag.message);
-            format!("{}:{}:{}: {} [{}]", path.display(), line, col, msg, w.rule)
+            format!("{}:{}:{}: {} [{}]", warn_path, line, col, msg, w.rule)
         })
         .collect();
     // Plan 210: embed_dir's W_EMBED_DIR_* (captured earlier, before
