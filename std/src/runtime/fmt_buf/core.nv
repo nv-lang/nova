@@ -1,51 +1,39 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //
-// std.runtime.fmt_buf — Plan 208 Ф.1 (D422 "Unified Formatter", spec/decisions/
-// 02-types.md) buffer-primitives. Written ADDITIVELY (Ф.1): at the time this
-// module was created, nothing called into it yet — `${x}` interpolation went
-// entirely through the pre-existing `nova_rt/conv.h` C helpers. Ф.2 has since
-// landed `@display(mut f Fmt)`/`@debug(mut f Fmt)` (the D419-era
-// `@display_fmt` optional hook is fully retracted, not merely superseded) and
-// rewired `emit_interpolated_str`/`emit_format_spec_value` onto the unified
-// `FmtCtx` dispatch — but PRIMITIVE int/bool/char/radix/width formatting
-// still goes through `conv.h` directly (a deliberate Ф.2 simplification, not
-// wired to these buffer-primitives yet — see docs/plans/208-impl-progress.md
-// "Осознанные упрощения" #1); `conv.h` retirement in favor of these is Ф.4
-// scope. Exercised for now only by the inline `test { }` blocks at the end of
-// this file — see the comment there for why (module-privacy: a separate
-// `fmt_buf_test.nv` peer would be a genuinely different module, forcing
-// these to be exported).
+// std.runtime.fmt_buf — buffer-primitives for int/bool/char/radix/width
+// formatting. `${x}` interpolation and the `@display`/`@debug` protocol go
+// through the unified `FmtCtx` dispatch; primitive formatting renders
+// directly into caller-owned buffers (zero-alloc) through the functions in
+// this module. Exercised for now only by the inline `test { }` blocks at the
+// end of this file — a separate `fmt_buf_test.nv` peer would be a genuinely
+// different module, forcing these to be exported (module-privacy).
 //
-// Scope (D422 §5 + §9 "Буфер-примитивы"):
+// Scope:
 //   - `int_fmt`/`bool_fmt`/`char_fmt` — zero-alloc digit-loop / UTF-8 encode
 //     directly into a caller-owned `*mut u8` buffer (no `nova_alloc`, no GC
 //     pressure) — the `.nv` replacement for the equivalent int/bool/char
 //     helpers in `conv.h` (`nova_fmt_int_body`/`nova_bool_to_str`/
-//     `nova_char_to_str`), NOT wired in yet (Ф.2/Ф.4 retire the C originals).
+//     `nova_char_to_str`).
 //   - `nova_f64_fmt` — the ONE C-extern this design keeps (dtoa/shortest-
-//     round-trip is not portably expressible in `.nv`); D282 literal-name
+//     round-trip is not portably expressible in `.nv`); literal-name
 //     `extern "C" fn`, body in `nova_rt/nova_rt.h` (next to the existing
 //     `nova_f64_shortest`/`nova_f32_shortest` it reuses). `f64_fmt` is the
 //     `.nv`-side wrapper converting the `FloatKind` enum to the `int` the
 //     C-ABI boundary carries (enums do not cross `extern "C"` directly).
-//     (Plan 208 Ф.4R §10R-Д3, owner 2026-07-21: renamed from `f64_fmt_into`
-//     — the `_into` suffix is retired repo-wide, see the family-norm note
-//     right above the buffer-primitives below.)
-//   - `Align`/`FloatKind` — the D406 enum-marker types D422 §6 lists; `Align`
+//   - `Align`/`FloatKind` — the enum-marker types; `Align`
 //     is exported here because `StringBuilder.@pad_in_place`/`@write_padded`
-//     (D179 amend, `std/src/runtime/string_builder.nv`) take it directly.
+//     (`std/src/runtime/string_builder.nv`) take it directly.
 //     `Sign`/`FmtKind` are NOT introduced here — those are `Fmt`-protocol axis
-//     types, out of Ф.1 scope (Ф.2 wave, when `Fmt`/`Write` themselves change).
+//     types.
 //
 // Everything except `Align`/`FloatKind` stays module-private (no `export`) —
-// D422 §5: "буфер-примитивы — ВНУТРЕННИЕ (.nv, не публичные)".
+// "буфер-примитивы — ВНУТРЕННИЕ (.nv, не публичные)".
 //
-// Family norm (Plan 208 Ф.4R §10R-Д3, owner 2026-07-21 — this line IS the
-// "шапка fmt_buf фиксирует норму семьи" the amendment calls for): every
-// `*_fmt` function (`int_fmt`/`bool_fmt`/`char_fmt`/`f64_fmt`/`f32_fmt`)
+// Family norm: every `*_fmt` function (`int_fmt`/`bool_fmt`/`char_fmt`/
+// `f64_fmt`/`f32_fmt`)
 // renders INTO a caller-owned `(buf, cap)` — writing-into-buffer is the
 // family's DEFINITION, not a suffix. There is no `_into` variant anywhere in
-// this family (retired repo-wide): a "simple render" is the SAME function
+// this family: a "simple render" is the SAME function
 // called with its axis parameters (`spec`/`kind`+`prec`) omitted, resolved
 // through ordinary free-fn default-arg backfill (`callnorm.rs`), not a
 // separate bridge function.
@@ -59,34 +47,33 @@
 #no_prelude
 module runtime.fmt_buf
 
-// ─── Enums (D406 enum-marker syntax) ───
+// ─── Enums ───────────────────────────────────────────────────────
 
 /// Padding alignment axis — shared by `StringBuilder.@pad_in_place`/
-/// `@write_padded` (D179 amend) today, and by the `Fmt` protocol's
-/// `@align()` axis once Ф.2 lands (D422 §2/§6).
+/// `@write_padded` today, and by the `Fmt` protocol's
+/// `@align()` axis.
 #unstable
 export type Align enum Left | Right | Center
 
 /// Which float rendering `f64_fmt` should produce. Crosses the
 /// `extern "C" fn nova_f64_fmt` ABI boundary as a plain `int`
-/// (0=Shortest/1=Fixed/2=Sci, D422 §5) — this enum is the `.nv`-side
+/// (0=Shortest/1=Fixed/2=Sci) — this enum is the `.nv`-side
 /// convenience the `f64_fmt` wrapper below converts at the boundary.
 #unstable
 export type FloatKind enum Shortest | Fixed | Sci
 
-/// Plan 208 Ф.2 (D422 §2/§6): the `Fmt` protocol's `@sign()` axis — whether
+/// The `Fmt` protocol's `@sign()` axis — whether
 /// a non-negative numeric value forces a leading `+` (`{:+}` Rust parity).
 /// Lives here (not `prelude.protocols`) so it sits next to `Align`/`FloatKind`
 /// — one home for every format-axis enum.
 #unstable
 export type Sign enum Minus | Plus
 
-/// Plan 208 Ф.2 (D422 §2/§6): the `Fmt` protocol's `@kind()` axis — which
+/// The `Fmt` protocol's `@kind()` axis — which
 /// representation `${x:SPEC}` requested. `Display`/`Debug` are the two a
 /// type's own `@display`/`@debug` body is invoked under today; `Hex`/`Oct`/
 /// `Bin`/`Exp` are reserved for when radix/exponential specs route through
-/// `@kind()` instead of the compiler's direct `conv.h` fast path (not yet —
-/// Ф.2 keeps that fast path for primitives, see `emit_format_spec_value`).
+/// `@kind()` instead of the compiler's direct fast path for primitives.
 #unstable
 export type FmtKind enum Display | Debug | Hex | Oct | Bin | Exp
 
@@ -94,12 +81,12 @@ export type FmtKind enum Display | Debug | Hex | Oct | Bin | Exp
 //
 // Deliberately narrow: only the axes `int_fmt`'s digit-loop needs (radix,
 // zero-pad-to-width, forced `+`, alternate `0x`/`0o`/`0b` prefix). This is
-// NOT the compiler-facing `FormatSpec`/`Fmt` (Ф.2) — no `width` meaning
+// NOT the compiler-facing `FormatSpec`/`Fmt` — no `width` meaning
 // beyond zero-pad target, no fill/precision (those live one layer up, at
-// the `write_padded`/`pad_in_place` StringBuilder level, D422 §4).
-// `value` (владелец 2026-07-20): маленький POD (2×int + 4×bool) — на стеке,
+// the `write_padded`/`pad_in_place` StringBuilder level).
+// `value`: маленький POD (2×int + 4×bool) — на стеке,
 // БЕЗ GC-заголовка на каждый вызов рендера (последняя лишняя аллокация
-// zero-alloc-пути; D215/D328 value-семантика, structural ==).
+// zero-alloc-пути; value-семантика, structural ==).
 export type FmtSpec value {
     width int       // zero-pad target total width (prefix+digits); only
                     // consulted when `zero_pad` is true
@@ -110,7 +97,7 @@ export type FmtSpec value {
                     // `width` (Rust `{:04}` semantics)
     sign_plus bool  // force a leading '+' for non-negative DECIMAL values
                     // (no effect on radix != 10 — those never carry a sign,
-                    // D422 mirrors the existing `nova_fmt_int_radix_body`
+                    // mirrors the existing `nova_fmt_int_radix_body`
                     // two's-complement-bits convention)
     alt bool        // alternate form: emit the `0x`/`0o`/`0b` prefix
                     // (radix != 10 only)
@@ -141,12 +128,11 @@ fn hex_digit(d u64, upper bool) -> u8 {
 /// than the full rendered length, mirroring the buffer-safety discipline
 /// `f64_fmt` also follows.
 ///
-/// Plan 208 Ф.4R §10R-Д3 (owner 2026-07-21): this is now the SOLE public
-/// entry for int rendering — the former `int_fmt_into(v, buf, cap)` bridge
-/// (plain-decimal shortcut) is retired; `spec` defaults to `FmtSpec.new()`
+/// This is the SOLE public
+/// entry for int rendering; `spec` defaults to `FmtSpec.new()`
 /// so the simple call shape (`int_fmt(v, buf, cap)`) still works. `unsafe
-/// fn` (raw `buf` write) — call-sites wrap in `unsafe { }` (D424-style
-/// discipline, mirrors every other buffer-primitive here).
+/// fn` (raw `buf` write) — call-sites wrap in `unsafe { }`,
+/// mirrors every other buffer-primitive here.
 export unsafe fn int_fmt(v int, buf *mut u8, cap int, spec FmtSpec = FmtSpec.new()) -> int
     requires cap >= 0 && (spec.radix == 10 || spec.radix == 16 || spec.radix == 8 || spec.radix == 2)
 {
@@ -155,8 +141,7 @@ export unsafe fn int_fmt(v int, buf *mut u8, cap int, spec FmtSpec = FmtSpec.new
     // 1. Magnitude (unsigned) — decimal negates via the INT64_MIN-safe
     //    "negate-then-widen" idiom (mirrors `nova_fmt_int_body` in conv.h);
     //    radix formatting reinterprets the raw two's-complement bit pattern
-    //    (`int as u64` is a direct bit-cast — no saturation, D405/[D-int-
-    //    u64-bitcast]).
+    //    (`int as u64` is a direct bit-cast — no saturation).
     mut neg = false
     mut mag u64 = 0
     if spec.radix == 10 {
@@ -304,27 +289,17 @@ export fn char_fmt(v char, buf *mut u8, cap int) -> int {
     n
 }
 
-// ─── float — the sole C-extern (D422 §5) ───
+// ─── float — the sole C-extern ─────────────────────────────────────
 //
-// Plan 208 Ф.4R §10R-Д (owner 2026-07-20/21, `docs/plans/208-unified-
-// formatter.md` §10R-Д — SOURCE OF TRUTH for this family's norm): suffix
-// `_into` is RETIRED for the whole `*_fmt` family — it used to mean two
-// different things (this C-extern boundary AND the `.nv`-side "simple
-// render" bridges below), while every member of the family writes into
-// `(buf, cap)` regardless of suffix — that IS the family (not the suffix).
-// Norm: `тип_fmt` + axes as DEFAULT ARGS (`int_fmt`/`f64_fmt`/`f32_fmt` are
-// now the ONLY public entry points; "simple render" = the same function
-// called with its axis args omitted, backed by callnorm's free-fn default-
-// arg backfill — proven standalone AND already exercised by the existing
-// `spec_tests/conformance/d102_named_args_default_params.nv` conformance
-// fixture before this wave). Value-first order (§10R-Д1) and type-first
-// names (§10R-Д2) were already in place before this wave; this wave (Д3)
-// only removes the now-redundant bridge layer and its suffix.
+// Family norm: suffix `_into` is retired for the whole `*_fmt` family —
+// every member writes into `(buf, cap)` regardless of suffix; that IS the
+// family (not the suffix). `тип_fmt` + axes as DEFAULT ARGS
+// (`int_fmt`/`f64_fmt`/`f32_fmt` are the ONLY public entry points;
+// "simple render" = the same function called with its axis args omitted,
+// backed by callnorm's free-fn default-arg backfill).
 
-/// `extern "C" fn` — LITERAL C symbol name (D282; the literal is now
-/// `nova_`-prefixed header-style, matching `nova_f64_shortest`/
-/// `nova_print_f64` in the same header — a DIFFERENT literal than before
-/// this wave, not a departure from D282's "no compiler mangling" contract).
+/// `extern "C" fn` — LITERAL C symbol name (`nova_`-prefixed header-style,
+/// matching `nova_f64_shortest`/`nova_print_f64` in the same header).
 /// Body: `nova_rt/nova_rt.h` (`nova_f64_fmt`, right after
 /// `nova_f32_shortest`), reusing the existing `nova_f64_shortest` engine for
 /// `kind == 0`. Writes at most `cap` bytes into `buf`, returns bytes written
@@ -334,19 +309,17 @@ export fn char_fmt(v char, buf *mut u8, cap int) -> int {
 /// ONLY through `f64_fmt`.
 extern "C" fn nova_f64_fmt(v f64, buf *mut u8, cap int, kind int, prec int) -> int
 
-/// f32-собрат `nova_f64_fmt` (владелец 2026-07-20): shortest через
-/// `nova_f32_shortest` — тот же движок, что печать/`to_str` f32 (НЕ
-/// f64-расширение: без double-хвостов). Module-private — callers reach this
-/// ONLY through `f32_fmt` below.
+/// f32 counterpart of `nova_f64_fmt`: shortest via
+/// `nova_f32_shortest` — the same engine f32 printing/`to_str` use (NOT an
+/// f64 extension: no double rounding tails). Module-private — callers reach
+/// this ONLY through `f32_fmt` below.
 extern "C" fn nova_f32_fmt(v f32, buf *mut u8, cap int) -> int
 
 /// `.nv`-side wrapper: converts `FloatKind` → the `int` `nova_f64_fmt`
-/// carries across the `extern "C"` ABI boundary (D422 §5 — enums don't cross
-/// `extern "C"` directly). Defaults (`kind`/`prec`) make this the SAME entry
-/// point the retired `f64_fmt_shortest_into` bridge used to be — simple call
-/// shape `f64_fmt(v, buf, cap)` renders shortest round-trip, identical to
-/// the old bridge's behavior. `unsafe fn` (raw `buf` write, D424-style
-/// discipline) — call-sites wrap in `unsafe { }`.
+/// carries across the `extern "C"` ABI boundary (enums don't cross
+/// `extern "C"` directly). Defaults (`kind`/`prec`) make the simple call
+/// shape `f64_fmt(v, buf, cap)` render shortest round-trip.
+/// `unsafe fn` (raw `buf` write) — call-sites wrap in `unsafe { }`.
 export unsafe fn f64_fmt(v f64, buf *mut u8, cap int, kind FloatKind = FloatKind.Shortest, prec int = -1) -> int
     requires cap >= 0
 {
@@ -359,21 +332,19 @@ export unsafe fn f64_fmt(v f64, buf *mut u8, cap int, kind FloatKind = FloatKind
 }
 
 /// `.nv`-side wrapper over `nova_f32_fmt` — shortest-only (f32 has no
-/// Fixed/Sci axis, D422: the user-facing rich-spec path widens through f64
-/// instead). Same call shape the retired `f32_fmt_shortest_into` bridge used
-/// to be. `unsafe fn` (raw `buf` write) — call-sites wrap in `unsafe { }`.
+/// Fixed/Sci axis; the user-facing rich-spec path widens through f64
+/// instead). `unsafe fn` (raw `buf` write) — call-sites wrap in `unsafe { }`.
 export unsafe fn f32_fmt(v f32, buf *mut u8, cap int) -> int
     requires cap >= 0
     => unsafe { nova_f32_fmt(v, buf, cap) }
 
-// ─── Debug-escape engine (Находка А, Plan 208 Ф.4R Ш1, owner 2026-07-20) ───
+// ─── Debug-escape engine ──────────────────────────────────────────────
 //
 // Portable `.nv` replacement for `nova_rt/conv.h`'s `nova_str_to_debug_str`/
-// `nova_char_to_debug_str` — ADDITIVE (nothing calls these yet; Ш2 wires the
-// primitive `@debug` bodies onto them, Ш3 wires the compiler fast-path).
+// `nova_char_to_debug_str`.
 // Byte-for-byte port of the C escape tables (see
-// `spec_tests/conformance/d422_f4r_baseline_strcharboolu64.nv`, the Ш0
-// contract these MUST reproduce): `"`/`\` → `\"`/`\\`; `\n`/`\t`/`\r`/NUL →
+// `spec_tests/conformance/d422_f4r_baseline_strcharboolu64.nv`, the contract
+// these MUST reproduce): `"`/`\` → `\"`/`\\`; `\n`/`\t`/`\r`/NUL →
 // `\n`/`\t`/`\r`/`\0`; other control bytes (< 0x20) → `\xHH` (lowercase,
 // NO braces — conv.h's own header comment says `\x{HH}` but the actual C
 // code emits `\xHH`; this port matches the REAL behavior). `char` debug
@@ -409,8 +380,8 @@ fn write_hex_esc_at(buf *mut u8, cap int, pos int, c u8) -> int {
 
 /// UTF-8-encode `cp` into `buf[pos..)` at an ARBITRARY offset (bounds-checked
 /// truncate) — used by `char_debug_fmt`'s passthrough case. Deliberately a
-/// FRESH helper (not a refactor of `char_fmt` above, which stays untouched
-/// per Ш1's "нич­его существующего не менять"), same encode table, same
+/// FRESH helper (not a refactor of `char_fmt` above, which stays untouched —
+/// nothing existing may change), same encode table, same
 /// truncate-defensively contract. Returns bytes conceptually needed (1..4).
 fn utf8_encode_at(cp int, buf *mut u8, cap int, pos int) -> int {
     mut need = 1
@@ -489,28 +460,7 @@ export fn char_debug_fmt(v char, buf *mut u8, cap int) -> int {
     pos.min(cap)
 }
 
-// `*_display_spec` family (Plan 208 Ф.4R Ш1, RELOCATED to
-// `string_builder.nv` — 2026-07-20 architecture fix, see
-// `docs/plans/wip/208-f4r-notes.md` "Ш1 architecture fix"): a first attempt
-// put this family HERE, requiring `import std.runtime.string_builder.
-// {StringBuilder}` — since `string_builder.nv` ALREADY imports THIS module
-// (`Align`/`int_fmt_into`/…, renamed `int_fmt` since §10R-Д3 — historical
-// narrative below kept as-written, names at the time of THIS investigation),
-// that closed an inter-module cycle. Plan 162
-// (D29 rev-5) documents inter-module cycles as SUPPORTED in general, but
-// empirical testing found this SPECIFIC cycle **order-dependently broken**:
-// a third file's import resolution for symbols from BOTH modules silently
-// fails with "undefined identifier" for `int_fmt_into`/etc INSIDE
-// `string_builder.nv` itself, but ONLY when that third file's OWN import of
-// `fmt_buf` textually precedes its import of `string_builder` — swapping
-// the two import lines alone flips CODEGEN-FAIL to PASS. This is a genuine
-// compiler defect in cyclic-import resolution (collect-first DFS early-
-// return, imports.rs ~1634-1650, plausibly returns before `fmt_buf`'s own
-// declarations are fully collected when re-entered mid-collection) — NOT
-// something a caller's import order should ever affect. Rather than ship a
-// fragile, footgun-prone dependency on import ordering, `*_display_spec`
-// moved to `string_builder.nv`, which has a SAFE, ONE-DIRECTIONAL
-// dependency on this module (no cycle at all) — `int_fmt`/`fmt_f64`/
-// `FmtSpec` are now `export`ed above (their own declarations) specifically
-// so `string_builder.nv` can reach them.
+// The `*_display_spec` family lives in `string_builder.nv` (its dependency
+// on this module is ONE-DIRECTIONAL — no import cycle): `int_fmt`/`f64_fmt`/
+// `FmtSpec` are `export`ed above so `string_builder.nv` can reach them.
 

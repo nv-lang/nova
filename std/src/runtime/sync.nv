@@ -1,21 +1,19 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// Plan 18 std.sync: fiber-aware synchronization primitives.
+// std.sync: fiber-aware synchronization primitives.
 //
 // AtomicInt   — lock-free address-sized atomic integer (nova_int width,
-//               intptr_t — Plan 133). Plan 207 (2026-07-16): consolidated
-//               name — absorbs the former int32-precision legacy AtomicInt
-//               (its subset API is covered by this type's SeqCst defaults)
-//               and the former Isize spelling.
+//               intptr_t). Its SeqCst-default API covers the former
+//               int32-precision legacy AtomicInt subset.
 // AtomicUint  — lock-free address-sized unsigned atomic integer (nova_uint
-//               width, uintptr_t). Plan 207: consolidated from Usize spelling.
+//               width, uintptr_t).
 // AtomicBool  — lock-free atomic boolean; swap() useful for one-shot ownership.
 // Mutex       — fair FIFO fiber-aware mutex; park/wake via nova_sched.
 // WaitGroup   — counter-based rendezvous; wait() parks until count == 0.
 // Once        — exactly-once execution barrier; run()/done() pair.
-// MemOrdering — memory ordering enum for atomic ops and fences (Plan 103.1).
-// fence()     — memory fence function; ordered by MemOrdering (Plan 103.1).
+// MemOrdering — memory ordering enum for atomic ops and fences.
+// fence()     — memory fence function; ordered by MemOrdering.
 //
-// Sync-class annotations (Plan 103.6):
+// Sync-class annotations:
 //   #realtime — leaf method; allowed in realtime{} and blocking{}.
 //   #parks         — may park the calling fiber; forbidden in realtime{} and blocking{}.
 //   #wakes         — leaf wake (no self-park, but wakes waiters); forbidden in realtime{}.
@@ -29,11 +27,11 @@ module runtime.sync
 /// Memory ordering для atomic operations и fences. Контролирует
 /// happens-before отношения между операциями в разных fiber'ах.
 ///
-/// Default ordering для simple-overload методов — `SeqCst` (design decision M1):
+/// Default ordering для simple-overload методов — `SeqCst`:
 /// безопасно для всех use cases, может быть переопределено для
-/// perf-critical кода через `_ordered` overloads (Plan 103.2+).
+/// perf-critical кода через `_ordered` overloads.
 ///
-/// **Семантика** (D167):
+/// **Семантика**:
 ///
 /// - `Relaxed`: только атомарность операции; нет happens-before.
 ///   Use case: telemetry counters, statistics. Цена: dirty reads
@@ -67,7 +65,7 @@ export type MemOrdering enum
 /// Используется для отделения unsynchronized reads/writes от synchronized
 /// (publish/subscribe pattern, refcount-drop с deferred-free).
 ///
-/// **Семантика** (D167):
+/// **Семантика**:
 ///
 /// - `fence(MemOrdering.Relaxed)`: no-op. Валиден синтаксически для
 ///   consistency, но не имеет ordering эффекта (Acquire/Release нужны).
@@ -94,7 +92,7 @@ export type MemOrdering enum
 #stable(since = "0.1")
 export extern "nova" fn fence(ord MemOrdering)
 
-// ─── CAS-witness raw carriers (Plan 207 [M-cas-return-witnessed-value]) ──
+// ─── CAS-witness raw carriers ───────────────────────────────────
 //
 // `compare_exchange`/`compare_exchange_weak` return `Result[(), T]`: `Ok(())`
 // on success, `Err(actual)` on failure where `actual` is the value the C11
@@ -129,7 +127,7 @@ type CasRawBool(ok bool, witness bool)
 ///
 /// # Default ordering
 ///
-/// Methods без `MemOrdering` параметра используют `SeqCst` (M1) — safest.
+/// Methods без `MemOrdering` параметра используют `SeqCst` — safest.
 /// Для perf-critical использовать overloads с explicit [`MemOrdering`].
 ///
 /// # See Also
@@ -170,7 +168,7 @@ export extern "nova" fn AtomicI64 mut @swap(v i64) -> i64
 #realtime
 extern "nova" fn AtomicI64 mut @cmpxchg(expected i64, desired i64, weak bool, success MemOrdering, failure MemOrdering) -> CasRawI64
 
-/// Compare-and-swap (Plan 207 [M-cas-return-witnessed-value]): `Ok(())` — успех
+/// Compare-and-swap: `Ok(())` — успех
 /// (значение заменено на `desired`). `Err(actual)` — провал, `actual` = фактически
 /// прочитанное значение (witness), даром из C11 op — без повторного `load()` в CAS-цикле.
 #realtime
@@ -284,7 +282,7 @@ export extern "nova" fn AtomicI32 mut @swap(v i32) -> i32
 #realtime
 extern "nova" fn AtomicI32 mut @cmpxchg(expected i32, desired i32, weak bool, success MemOrdering, failure MemOrdering) -> CasRawI32
 
-/// Compare-and-swap (Plan 207 [M-cas-return-witnessed-value]): `Ok(())` — успех
+/// Compare-and-swap: `Ok(())` — успех
 /// (значение заменено на `desired`). `Err(actual)` — провал, `actual` = фактически
 /// прочитанное значение (witness), даром из C11 op — без повторного `load()` в CAS-цикле.
 #realtime
@@ -398,7 +396,7 @@ export extern "nova" fn AtomicI16 mut @swap(v i16) -> i16
 #realtime
 extern "nova" fn AtomicI16 mut @cmpxchg(expected i16, desired i16, weak bool, success MemOrdering, failure MemOrdering) -> CasRawI16
 
-/// Compare-and-swap (Plan 207 [M-cas-return-witnessed-value]): `Ok(())` — успех
+/// Compare-and-swap: `Ok(())` — успех
 /// (значение заменено на `desired`). `Err(actual)` — провал, `actual` = фактически
 /// прочитанное значение (witness), даром из C11 op — без повторного `load()` в CAS-цикле.
 #realtime
@@ -479,7 +477,7 @@ export extern "nova" fn AtomicI16 mut @fetch_nand(v i16) -> i16
 /// Lock-free 8-bit signed atomic integer.
 ///
 /// Byte-sized flags and narrow counters.
-/// Wraparound: i8 [-128, 127]; overflow wraps modularly (D168).
+/// Wraparound: i8 [-128, 127]; overflow wraps modularly.
 #stable(since = "0.1")
 #share
 export type AtomicI8(*())
@@ -512,7 +510,7 @@ export extern "nova" fn AtomicI8 mut @swap(v i8) -> i8
 #realtime
 extern "nova" fn AtomicI8 mut @cmpxchg(expected i8, desired i8, weak bool, success MemOrdering, failure MemOrdering) -> CasRawI8
 
-/// Compare-and-swap (Plan 207 [M-cas-return-witnessed-value]): `Ok(())` — успех
+/// Compare-and-swap: `Ok(())` — успех
 /// (значение заменено на `desired`). `Err(actual)` — провал, `actual` = фактически
 /// прочитанное значение (witness), даром из C11 op — без повторного `load()` в CAS-цикле.
 #realtime
@@ -593,7 +591,7 @@ export extern "nova" fn AtomicI8 mut @fetch_nand(v i8) -> i8
 /// Lock-free 64-bit unsigned atomic integer.
 ///
 /// Wide unsigned counters, timestamps.
-/// Wraparound: unsigned overflow wraps modularly (D168).
+/// Wraparound: unsigned overflow wraps modularly.
 #stable(since = "0.1")
 #share
 export type AtomicU64(*())
@@ -626,7 +624,7 @@ export extern "nova" fn AtomicU64 mut @swap(v u64) -> u64
 #realtime
 extern "nova" fn AtomicU64 mut @cmpxchg(expected u64, desired u64, weak bool, success MemOrdering, failure MemOrdering) -> CasRawU64
 
-/// Compare-and-swap (Plan 207 [M-cas-return-witnessed-value]): `Ok(())` — успех
+/// Compare-and-swap: `Ok(())` — успех
 /// (значение заменено на `desired`). `Err(actual)` — провал, `actual` = фактически
 /// прочитанное значение (witness), даром из C11 op — без повторного `load()` в CAS-цикле.
 #realtime
@@ -707,7 +705,7 @@ export extern "nova" fn AtomicU64 mut @fetch_nand(v u64) -> u64
 /// Lock-free 32-bit unsigned atomic integer.
 ///
 /// Bitset slots, refcount. Most common unsigned atomic.
-/// Wraparound: unsigned overflow wraps modularly (D168).
+/// Wraparound: unsigned overflow wraps modularly.
 #stable(since = "0.1")
 #share
 export type AtomicU32(*())
@@ -740,7 +738,7 @@ export extern "nova" fn AtomicU32 mut @swap(v u32) -> u32
 #realtime
 extern "nova" fn AtomicU32 mut @cmpxchg(expected u32, desired u32, weak bool, success MemOrdering, failure MemOrdering) -> CasRawU32
 
-/// Compare-and-swap (Plan 207 [M-cas-return-witnessed-value]): `Ok(())` — успех
+/// Compare-and-swap: `Ok(())` — успех
 /// (значение заменено на `desired`). `Err(actual)` — провал, `actual` = фактически
 /// прочитанное значение (witness), даром из C11 op — без повторного `load()` в CAS-цикле.
 #realtime
@@ -821,7 +819,7 @@ export extern "nova" fn AtomicU32 mut @fetch_nand(v u32) -> u32
 /// Lock-free 16-bit unsigned atomic integer.
 ///
 /// Sized unsigned counters.
-/// Wraparound: unsigned overflow wraps modularly (D168).
+/// Wraparound: unsigned overflow wraps modularly.
 #stable(since = "0.1")
 #share
 export type AtomicU16(*())
@@ -854,7 +852,7 @@ export extern "nova" fn AtomicU16 mut @swap(v u16) -> u16
 #realtime
 extern "nova" fn AtomicU16 mut @cmpxchg(expected u16, desired u16, weak bool, success MemOrdering, failure MemOrdering) -> CasRawU16
 
-/// Compare-and-swap (Plan 207 [M-cas-return-witnessed-value]): `Ok(())` — успех
+/// Compare-and-swap: `Ok(())` — успех
 /// (значение заменено на `desired`). `Err(actual)` — провал, `actual` = фактически
 /// прочитанное значение (witness), даром из C11 op — без повторного `load()` в CAS-цикле.
 #realtime
@@ -935,7 +933,7 @@ export extern "nova" fn AtomicU16 mut @fetch_nand(v u16) -> u16
 /// Lock-free 8-bit unsigned atomic integer (byte).
 ///
 /// Byte-sized unsigned flags, bitmap bytes.
-/// Wraparound: u8 [0, 255]; overflow wraps modularly (D168).
+/// Wraparound: u8 [0, 255]; overflow wraps modularly.
 #stable(since = "0.1")
 #share
 export type AtomicU8(*())
@@ -968,7 +966,7 @@ export extern "nova" fn AtomicU8 mut @swap(v u8) -> u8
 #realtime
 extern "nova" fn AtomicU8 mut @cmpxchg(expected u8, desired u8, weak bool, success MemOrdering, failure MemOrdering) -> CasRawU8
 
-/// Compare-and-swap (Plan 207 [M-cas-return-witnessed-value]): `Ok(())` — успех
+/// Compare-and-swap: `Ok(())` — успех
 /// (значение заменено на `desired`). `Err(actual)` — провал, `actual` = фактически
 /// прочитанное значение (witness), даром из C11 op — без повторного `load()` в CAS-цикле.
 #realtime
@@ -1048,16 +1046,12 @@ export extern "nova" fn AtomicU8 mut @fetch_nand(v u8) -> u8
 
 /// Lock-free platform-word signed atomic integer.
 ///
-/// `int` = `nova_int` = `intptr_t` (address-sized, Plan 133; на x64
+/// `int` = `nova_int` = `intptr_t` (address-sized; на x64
 /// совпадает по ширине с `int64_t`). Platform-word signed atomic.
 /// Useful for signed indexes and offsets.
 ///
-/// Plan 207 (2026-07-16 консолидация имён): раньше назывался `Atomic` +
-/// `Isize` — переименован в `AtomicInt`, поглотив место прежнего legacy
-/// `AtomicInt` (int32-backed урезанный API без `MemOrdering`-параметров,
-/// снят целиком; его вызовы (`new/load/store/fetch_add/fetch_sub/
-/// compare_exchange` без ordering) покрываются дефолтными
-/// SeqCst-перегрузками этого типа один-в-один).
+/// SeqCst-default overloads cover the former int32-backed legacy
+/// AtomicInt API one-to-one.
 #stable(since = "0.1")
 #share
 export type AtomicInt(*())
@@ -1090,7 +1084,7 @@ export extern "nova" fn AtomicInt mut @swap(v int) -> int
 #realtime
 extern "nova" fn AtomicInt mut @cmpxchg(expected int, desired int, weak bool, success MemOrdering, failure MemOrdering) -> CasRawInt
 
-/// Compare-and-swap (Plan 207 [M-cas-return-witnessed-value]): `Ok(())` — успех
+/// Compare-and-swap: `Ok(())` — успех
 /// (значение заменено на `desired`). `Err(actual)` — провал, `actual` = фактически
 /// прочитанное значение (witness), даром из C11 op — без повторного `load()` в CAS-цикле.
 #realtime
@@ -1170,12 +1164,9 @@ export extern "nova" fn AtomicInt mut @fetch_nand(v int) -> int
 
 /// Lock-free platform-word unsigned atomic integer.
 ///
-/// `uint` = `nova_uint` = `uintptr_t` (address-sized, Plan 133/70.5; на
+/// `uint` = `nova_uint` = `uintptr_t` (address-sized; на
 /// x64 совпадает по ширине с `uint64_t`). Platform-word unsigned atomic.
 /// Useful for array indexes, buffer sizes.
-///
-/// Plan 207 (2026-07-16 консолидация имён): раньше назывался `Atomic` +
-/// `Usize` — переименован в `AtomicUint`.
 #stable(since = "0.1")
 #share
 export type AtomicUint(*())
@@ -1208,7 +1199,7 @@ export extern "nova" fn AtomicUint mut @swap(v uint) -> uint
 #realtime
 extern "nova" fn AtomicUint mut @cmpxchg(expected uint, desired uint, weak bool, success MemOrdering, failure MemOrdering) -> CasRawUint
 
-/// Compare-and-swap (Plan 207 [M-cas-return-witnessed-value]): `Ok(())` — успех
+/// Compare-and-swap: `Ok(())` — успех
 /// (значение заменено на `desired`). `Err(actual)` — провал, `actual` = фактически
 /// прочитанное значение (witness), даром из C11 op — без повторного `load()` в CAS-цикле.
 #realtime
@@ -1291,8 +1282,7 @@ export extern "nova" fn AtomicUint mut @fetch_nand(v uint) -> uint
 /// `swap()` полезен для one-shot ownership паттерна:
 /// `if !flag.swap(true) { /* только первый caller выполняет */ }`.
 ///
-/// Ordering-aware overloads добавлены в Plan 103.2.
-/// Methods без `MemOrdering` используют `SeqCst` (M1) — safest default.
+/// Methods без `MemOrdering` используют `SeqCst` — safest default.
 ///
 /// # See Also
 ///
@@ -1329,7 +1319,7 @@ export extern "nova" fn AtomicBool mut @store(v bool)
 #realtime
 extern "nova" fn AtomicBool mut @cmpxchg(expected bool, desired bool, weak bool, success MemOrdering, failure MemOrdering) -> CasRawBool
 
-/// Compare-and-swap с explicit orderings (Plan 207 [M-cas-return-witnessed-value]).
+/// Compare-and-swap с explicit orderings.
 /// `Ok(())` — успех. `Err(actual)` — провал, `actual` = witness (фактически
 /// прочитанное значение, даром из C11 op).
 #realtime
@@ -1386,9 +1376,9 @@ export extern "nova" fn AtomicBool mut @fetch_xor(v bool, ord MemOrdering) -> bo
 #stable(since = "0.1")
 export extern "nova" fn AtomicBool mut @fetch_xor(v bool) -> bool
 
-// ─── Plan 103.9 (D174): Consume guard types ──────────────────────
+// ─── Consume guard types ───────────────────────────────────────
 //
-// Guard types are consume-typed (Plan 100 D131): the holding fiber
+// Guard types are consume-typed: the holding fiber
 // must explicitly call the consume method (unlock/release/commit/abort)
 // OR the compiler enforces via scope-exit obligation.
 //
@@ -1429,21 +1419,21 @@ export type Permit consume { ptr int }
 
 /// Guard returned by `Once.start()`. Consume-typed: must call `.commit()` or `.abort()`.
 ///
-/// **Plan 217.1 (D432 rollout) — considered and rejected for auto-`@cleanup`.**
+/// **Auto-`@cleanup` considered and rejected.**
 /// Unlike `MutexGuard`/`ReadGuard`/`WriteGuard`/`Permit`/`TcpStream` (a single
 /// idempotent release action, safe to silently auto-run), `OnceGuard`'s two
 /// discharge methods are NOT interchangeable: `.commit()` permanently
 /// transitions `Once` to `DONE` (skips setup forever after), `.abort()` to
-/// `POISONED` (all future callers re-panic). D432's auto-cleanup can only
+/// `POISONED` (all future callers re-panic). Auto-cleanup can only
 /// react to `ScopeOutcome` (`Success`/`Failure`/`Panic`), not to *why* a
 /// `Success`-looking path never reached `.commit()` — e.g. an early `return`
 /// after a non-throwing failure check would auto-resolve to `Success` and
 /// silently `.commit()` a `Once` whose setup never actually completed, a
 /// permanent, unrecoverable false-positive (no code path ever retries a
-/// `DONE` `Once`). Contrast `Transaction`/`Db` (D432's own canonical
-/// `@cleanup` example): a spurious auto-`commit()` there just costs a later,
+/// `DONE` `Once`). Contrast `Transaction`/`Db` (canonical
+/// `@cleanup` types): a spurious auto-`commit()` there just costs a later,
 /// recoverable rollback — `OnceGuard` has no such safety net. Kept strictly
-/// linear (D133): the explicit `.commit()`/`.abort()` choice stays mandatory.
+/// linear: the explicit `.commit()`/`.abort()` choice stays mandatory.
 /// Separately, a real fiber panic before either call today leaks the `Once`
 /// in `IN_PROGRESS` forever (deadlocks all waiters) — a pre-existing gap,
 /// NOT closed by this rollout (would need an asymmetric "auto-abort-only-on-
@@ -1474,7 +1464,7 @@ export type OnceGuard consume { ptr int }
 #stable(since = "0.1")
 export extern "nova" fn MutexGuard consume @unlock()
 
-/// Plan 110 D194 (Cleanup[never]): cleanup calls unlock. Used by
+/// Cleanup[never]: cleanup calls unlock. Used by
 /// `consume g = mu.acquire() { body }` scope-block automatic cleanup.
 /// Infallible (never throws); same C impl as unlock.
 #wakes
@@ -1488,7 +1478,7 @@ export extern "nova" fn MutexGuard consume @cleanup(_outcome ScopeOutcome) -> ()
 #stable(since = "0.1")
 export extern "nova" fn ReadGuard consume @unlock()
 
-/// Plan 110 D194 (Cleanup[never]): cleanup calls unlock.
+/// Cleanup[never]: cleanup calls unlock.
 #wakes
 #stable(since = "0.1")
 export extern "nova" fn ReadGuard consume @cleanup(_outcome ScopeOutcome) -> ()
@@ -1500,7 +1490,7 @@ export extern "nova" fn ReadGuard consume @cleanup(_outcome ScopeOutcome) -> ()
 #stable(since = "0.1")
 export extern "nova" fn WriteGuard consume @unlock()
 
-/// Plan 110 D194 (Cleanup[never]): cleanup calls unlock.
+/// Cleanup[never]: cleanup calls unlock.
 #wakes
 #stable(since = "0.1")
 export extern "nova" fn WriteGuard consume @cleanup(_outcome ScopeOutcome) -> ()
@@ -1514,7 +1504,7 @@ export extern "nova" fn WriteGuard consume @cleanup(_outcome ScopeOutcome) -> ()
 #stable(since = "0.1")
 export extern "nova" fn Permit consume @release()
 
-/// Plan 110 D194 (Cleanup[never]): cleanup calls release.
+/// Cleanup[never]: cleanup calls release.
 #wakes
 #stable(since = "0.1")
 export extern "nova" fn Permit consume @cleanup(_outcome ScopeOutcome) -> ()
@@ -1557,9 +1547,9 @@ export extern "nova" fn OnceGuard consume @abort()
 /// - `[WaitGroup]` — ожидание завершения нескольких fiber'ов
 /// - `[Once]` — exactly-once execution barrier
 ///
-/// **Plan 173.3 (D415 §2): `#share` audited vouch.** `Mutex` wraps a raw
+/// **`#share` audited vouch.** `Mutex` wraps a raw
 /// runtime handle (opaque-handle newtype `type Mutex(*())`, same shape as
-/// `Condvar`/`OnceCell`/`Lazy` — Plan 91.12 V2, D126 retract) — the poison
+/// `Condvar`/`OnceCell`/`Lazy`) — the poison
 /// base by construction. `#share` is the author's vouch that the handle IS
 /// real synchronization (a fair FIFO fiber-aware lock) the auto-derive
 /// engine can't see through the opaque pointer: safe to alias/capture across
@@ -1575,7 +1565,7 @@ export extern "nova" fn Mutex.new() -> Self
 
 /// Захватить mutex. Паркует вызывающий fiber до освобождения.
 ///
-/// V2 (Plan 103.9, D174): returns `MutexGuard consume` — статически
+/// V2: returns `MutexGuard consume` — статически
 /// enforced release через consume-type system. Old callers that discard
 /// the return value (`mu.lock()` as statement) continue to compile;
 /// only `consume g = mu.lock()` creates a consumption obligation.
@@ -1587,7 +1577,7 @@ export extern "nova" fn Mutex mut @lock() -> MutexGuard consume
 
 /// (Deprecated) Освободить mutex без guard.
 ///
-/// V2 (Plan 103.9): Use `MutexGuard.unlock()` (returned by `lock()`) instead.
+/// V2: Use `MutexGuard.unlock()` (returned by `lock()`) instead.
 /// Bare `unlock()` remains for V1 backward compat with `#deprecated` warning.
 #deprecated(since = "0.2", note = "use consume g = mu.lock(); defer g.unlock() instead (Plan 103.9 guard API)")
 #wakes
@@ -1601,7 +1591,7 @@ export extern "nova" fn Mutex mut @unlock()
 #stable(since = "0.1")
 export extern "nova" fn Mutex mut @try_lock() -> bool
 
-// ─── Mutex extensions (Plan 103.3) ───────────────────────────────
+// ─── Mutex extensions ──────────────────────────────────────────
 
 /// Создать mutex с LIFO (unfair) политикой освобождения.
 ///
@@ -1609,7 +1599,7 @@ export extern "nova" fn Mutex mut @try_lock() -> bool
 /// Преимущество: меньше переключений контекста в high-contention сценариях
 /// с короткими критическими секциями.
 ///
-/// **PREFERRED PATTERN (M15):** используй `with_lock { }` вместо lock/unlock.
+/// **PREFERRED PATTERN:** используй `with_lock { }` вместо lock/unlock.
 #realtime
 #stable(since = "0.1")
 export extern "nova" fn Mutex.new_unfair() -> Self
@@ -1619,12 +1609,10 @@ export extern "nova" fn Mutex.new_unfair() -> Self
 /// Возвращает `true` если lock захвачен, `false` если истёк timeout.
 /// timeout <= 0 — эквивалентно `try_lock()`.
 ///
-/// W_TRY_WITHOUT_SIBLING AMEND (2026-07-17, lint-разкраснение, владелец):
-/// переименован из `try_lock_for` — `try_`-префикс легален только как
-/// fallible-половина одноимённого infallible (`from`/`try_from`, D77);
-/// `lock_for` не имеет infallible-сиблинга с этим именем (`lock()` — другая
-/// арность/семантика, не тайм-аутный вариант) — соло-операция без Result
-/// берёт обычное имя (R3 D325, nv-coding-style §1). Возврат `bool` не менялся.
+/// Naming: `try_`-префикс легален только как fallible-половина одноимённого
+/// infallible (`from`/`try_from`); `lock_for` не имеет infallible-сиблинга
+/// с этим именем (`lock()` — другая арность/семантика, не тайм-аутный
+/// вариант) — соло-операция без Result берёт обычное имя. Возврат `bool` не менялся.
 ///
 /// # Examples
 ///
@@ -1642,8 +1630,7 @@ export extern "nova" fn Mutex.new_unfair() -> Self
 /// because lock_for uses a libuv timer that may park even for short timeouts.
 /// Annotated `#realtime` (not `#parks`) because failure path is non-parking;
 /// compiler enforces via dedicated warning, not an error. (Diagnostic ID kept
-/// as `W_REALTIME_TRY_LOCK_FOR_TIMER` — a spec-level rename would need its own
-/// D-amendment; scope here is the method name only.)
+/// as `W_REALTIME_TRY_LOCK_FOR_TIMER`; scope here is the method name only.)
 #realtime
 #stable(since = "0.1")
 export extern "nova" fn Mutex mut @lock_for(timeout Duration) -> bool
@@ -1656,10 +1643,10 @@ export extern "nova" fn Mutex mut @lock_for(timeout Duration) -> bool
 #stable(since = "0.1")
 export extern "nova" fn Mutex @is_locked() -> bool
 
-/// ПРЕДПОЧТИТЕЛЬНЫЙ ПАТТЕРН (M15). Захват + автоматическое освобождение
+/// ПРЕДПОЧТИТЕЛЬНЫЙ ПАТТЕРН. Захват + автоматическое освобождение
 /// через `defer` — unlock никогда не будет забыт даже при panic в body.
 ///
-/// V2 (Plan 103.9): thin wrapper над `MutexGuard consume`; user code
+/// V2: thin wrapper над `MutexGuard consume`; user code
 /// не изменится.
 ///
 /// # Examples
@@ -1683,7 +1670,7 @@ export fn Mutex mut @with_lock[R](body fn() -> R) -> R {
     body()
 }
 
-// ─── RwLock (Plan 103.3) ─────────────────────────────────────────
+// ─── RwLock ─────────────────────────────────────────────────────
 
 /// Fiber-aware reader-writer lock.
 ///
@@ -1691,7 +1678,7 @@ export fn Mutex mut @with_lock[R](body fn() -> R) -> R {
 /// Несколько читателей могут держать lock одновременно.
 /// Только один писатель, без читателей.
 ///
-/// **PREFERRED PATTERN (M15):** используй `with_read { }` / `with_write { }`.
+/// **PREFERRED PATTERN:** используй `with_read { }` / `with_write { }`.
 ///
 /// # Examples
 ///
@@ -1711,7 +1698,7 @@ export fn Mutex mut @with_lock[R](body fn() -> R) -> R {
 /// - `[Mutex]` — эксклюзивный доступ (проще, меньше overhead)
 /// - `[ReentrantMutex]` — рекурсивный mutex
 ///
-/// Plan 173.3 (D415 §2): `#share` audited vouch — same reasoning as `Mutex`.
+/// `#share` audited vouch — same reasoning as `Mutex`.
 #stable(since = "0.1")
 #share
 export type RwLock(*())
@@ -1730,7 +1717,7 @@ export extern "nova" fn RwLock.new_reader_priority() -> Self
 
 /// Захватить read lock. Паркует если активен или ожидает писатель (writer-priority).
 ///
-/// V2 (Plan 103.9, D174): returns `ReadGuard consume`. Use `guard.unlock()` to release.
+/// V2: returns `ReadGuard consume`. Use `guard.unlock()` to release.
 /// Old callers that discard the return value still compile.
 #parks
 #stable(since = "0.1")
@@ -1751,17 +1738,16 @@ export extern "nova" fn RwLock mut @try_read() -> bool
 
 /// Попытаться захватить read lock в течение timeout.
 ///
-/// W_TRY_WITHOUT_SIBLING AMEND (2026-07-17, lint-разкраснение, владелец):
-/// переименован из `try_read_for` — `try_`-префикс легален только как
-/// fallible-половина одноимённого infallible (D77); `read_for` без
-/// infallible-сиблинга с этим именем — обычное имя, без `try_` (R3 D325).
+/// Naming: `try_`-префикс легален только как fallible-половина одноимённого
+/// infallible; `read_for` без infallible-сиблинга с этим именем — обычное
+/// имя, без `try_`.
 #parks
 #stable(since = "0.1")
 export extern "nova" fn RwLock mut @read_for(timeout Duration) -> bool
 
 /// Захватить write lock. Ждёт завершения всех читателей и других писателей.
 ///
-/// V2 (Plan 103.9, D174): returns `WriteGuard consume`. Use `guard.unlock()` to release.
+/// V2: returns `WriteGuard consume`. Use `guard.unlock()` to release.
 /// Old callers that discard the return value still compile.
 #parks
 #stable(since = "0.1")
@@ -1782,8 +1768,8 @@ export extern "nova" fn RwLock mut @try_write() -> bool
 
 /// Попытаться захватить write lock в течение timeout.
 ///
-/// W_TRY_WITHOUT_SIBLING AMEND (2026-07-17, lint-разкраснение, владелец):
-/// переименован из `try_write_for` — та же ретракция, что у `read_for` выше.
+/// Naming: `try_`-префикс легален только как fallible-половина одноимённого
+/// infallible; `write_for` без infallible-сиблинга — обычное имя, без `try_`.
 #parks
 #stable(since = "0.1")
 export extern "nova" fn RwLock mut @write_for(timeout Duration) -> bool
@@ -1800,7 +1786,7 @@ export extern "nova" fn RwLock @is_write_locked() -> bool
 
 /// Read-захват с автоматическим освобождением через defer.
 ///
-/// **PREFERRED PATTERN (M15).** V2 (Plan 103.9): thin wrapper над `ReadGuard consume`.
+/// **PREFERRED PATTERN.** V2: thin wrapper над `ReadGuard consume`.
 #parks
 #stable(since = "0.1")
 export fn RwLock mut @with_read[R](body fn() -> R) -> R {
@@ -1811,7 +1797,7 @@ export fn RwLock mut @with_read[R](body fn() -> R) -> R {
 
 /// Write-захват с автоматическим освобождением через defer.
 ///
-/// **PREFERRED PATTERN (M15).** V2 (Plan 103.9): thin wrapper над `WriteGuard consume`.
+/// **PREFERRED PATTERN.** V2: thin wrapper над `WriteGuard consume`.
 #parks
 #stable(since = "0.1")
 export fn RwLock mut @with_write[R](body fn() -> R) -> R {
@@ -1820,7 +1806,7 @@ export fn RwLock mut @with_write[R](body fn() -> R) -> R {
     body()
 }
 
-// ─── ReentrantMutex (Plan 103.3) ─────────────────────────────────
+// ─── ReentrantMutex ─────────────────────────────────────────────
 
 /// Рекурсивный mutex: тот же fiber может lock() несколько раз без deadlock.
 ///
@@ -1830,11 +1816,11 @@ export fn RwLock mut @with_write[R](body fn() -> R) -> R {
 /// **Используй по умолчанию `[Mutex]`** — он обнаружит double-lock ошибку
 /// немедленно. ReentrantMutex — для миграции legacy кода.
 ///
-/// **Взаимодействие с Condvar (Plan 103.4):** `Condvar.wait()` освобождает
+/// **Взаимодействие с Condvar:** `Condvar.wait()` освобождает
 /// ВЕСЬ lock (count → 0), wake повторно захватывает с count=1.
 /// AI-diagnostic `W_REENTRANT_CONDVAR_RECOMMEND` при смешивании.
 ///
-/// **PREFERRED PATTERN (M15):** используй `with_lock { }`.
+/// **PREFERRED PATTERN:** используй `with_lock { }`.
 ///
 /// # Examples
 ///
@@ -1846,7 +1832,7 @@ export fn RwLock mut @with_write[R](body fn() -> R) -> R {
 /// rm.unlock()         // освобождён когда count = 0
 /// ```
 ///
-/// Plan 173.3 (D415 §2): `#share` audited vouch — same reasoning as `Mutex`.
+/// `#share` audited vouch — same reasoning as `Mutex`.
 #stable(since = "0.1")
 #share
 export type ReentrantMutex(*())
@@ -1874,8 +1860,8 @@ export extern "nova" fn ReentrantMutex mut @try_lock() -> bool
 
 /// Попытаться захватить в течение timeout.
 ///
-/// W_TRY_WITHOUT_SIBLING AMEND (2026-07-17, lint-разкраснение, владелец):
-/// переименован из `try_lock_for` — та же ретракция, что у `Mutex.lock_for`.
+/// Naming: `try_`-префикс легален только как fallible-половина одноимённого
+/// infallible; `lock_for` без infallible-сиблинга — обычное имя, без `try_`.
 #parks
 #stable(since = "0.1")
 export extern "nova" fn ReentrantMutex mut @lock_for(timeout Duration) -> bool
@@ -1887,7 +1873,7 @@ export extern "nova" fn ReentrantMutex @lock_count() -> int
 
 /// Захват с автоматическим освобождением через defer.
 ///
-/// **PREFERRED PATTERN (M15 V1).**
+/// **PREFERRED PATTERN.**
 #parks
 #stable(since = "0.1")
 export fn ReentrantMutex mut @with_lock[R](body fn() -> R) -> R {
@@ -1919,10 +1905,10 @@ export fn ReentrantMutex mut @with_lock[R](body fn() -> R) -> R {
 /// - `[Mutex]` — взаимное исключение
 /// - `[Once]` — exactly-once barrier
 ///
-/// Plan 173.3 (D415 §2): `#share` audited vouch — same reasoning as `Mutex`.
-/// (Required for the `spawn` example right above: `wg` captured — by
-/// reference, no `consume`/move — into THREE sibling `spawn` bodies is
-/// exactly the capture-check's baseline "safe" case, D415 §2.)
+/// `#share` audited vouch — same reasoning as `Mutex`.
+/// (Required for the `spawn` example right above: `wg` captured by reference
+/// into sibling `spawn` bodies is exactly the capture-check's baseline
+/// "safe" case.)
 #stable(since = "0.1")
 #share
 export type WaitGroup(*())
@@ -1963,7 +1949,7 @@ export type OnceState enum
     | Done
     | Poisoned
 
-// ─── Once (hardened, Plan 103.5) ─────────────────────────────────
+// ─── Once ───────────────────────────────────────────────────────
 
 /// Exactly-once execution barrier with panic-safe closure API.
 ///
@@ -1987,7 +1973,7 @@ export type OnceState enum
 /// - `[OnceCell]` — value-capturing one-time init
 /// - `[Lazy]` — auto-init on first access
 ///
-/// Plan 173.3 (D415 §2): `#share` audited vouch — same reasoning as `Mutex`.
+/// `#share` audited vouch — same reasoning as `Mutex`.
 #stable(since = "0.1")
 #share
 export type Once(*())
@@ -2033,16 +2019,15 @@ export extern "nova" fn Once mut @run() -> bool
 #stable(since = "0.1")
 export extern "nova" fn Once mut @done()
 
-// ─── Once V2 guard API (Plan 103.9, D174) ────────────────────────
+// ─── Once V2 guard API ──────────────────────────────────────────
 
 /// (Internal) Returns `true` if this fiber won the race to initialize.
 ///
 /// Same state machine as `run()`. Used by `start()` body to check
 /// whether to allocate an `OnceGuard`. Not for direct use — prefer `start()`.
 ///
-/// W_TRY_WITHOUT_SIBLING AMEND (2026-07-17, lint-разкраснение, владелец):
-/// переименован из `try_start_won` — соло racy-операция без infallible-
-/// сиблинга берёт обычное имя, без `try_`-префикса (R3 D325).
+/// Naming: соло racy-операция без infallible-сиблинга берёт обычное имя,
+/// без `try_`-префикса.
 #parks
 #stable(since = "0.1")
 export extern "nova" fn Once mut @start_won() -> bool
@@ -2058,8 +2043,8 @@ export extern "nova" fn Once mut @make_guard() -> OnceGuard consume
 /// Attempt to start once initialization. Returns `Some(guard)` to the winning
 /// fiber; `None` to subsequent callers (who park until DONE or re-panic if POISONED).
 ///
-/// W_TRY_WITHOUT_SIBLING AMEND (2026-07-17, lint-разкраснение, владелец):
-/// переименован из `try_start` — та же ретракция, что у `start_won` выше.
+/// Naming: соло racy-операция без infallible-сиблинга берёт обычное имя,
+/// без `try_`-префикса.
 ///
 /// # Examples
 ///
@@ -2112,10 +2097,9 @@ export fn Once mut @start() -> Option[OnceGuard consume] {
 /// - `[Once]` — once-only execution without a value
 /// - `[Lazy]` — auto-init wrapper (poisons on panic)
 ///
-/// **Plan 91.12 V2 (D126 retract):** decl migrated from `external type OnceCell[T]`
-/// to opaque-handle newtype `type OnceCell[T](*())`. C struct + per-T methods
-/// continue to be emitted by codegen (emit_oncecell_instance); ABI unchanged.
-/// Plan 173.3 (D415 §2): `#share` audited vouch — exactly-once init IS
+/// Opaque-handle newtype `type OnceCell[T](*())`. C struct + per-T methods
+/// are emitted by codegen (emit_oncecell_instance); ABI unchanged.
+/// `#share` audited vouch — exactly-once init IS
 /// internal synchronization (same reasoning as `Once`/`Mutex`).
 #stable(since = "0.1")
 #share
@@ -2180,11 +2164,10 @@ export extern "nova" fn OnceCell[T] @is_initialized() -> bool
 /// - `[OnceCell]` — finer-grained control (set/take/retry)
 /// - `[Once]` — once-only execution without a value
 ///
-/// **Plan 91.12 V2 (D126 retract):** decl migrated from `external type Lazy[T]`
-/// to opaque-handle newtype `type Lazy[T](*())`. C struct + per-T methods
-/// continue to be emitted by codegen (emit_lazy_instance); ABI unchanged.
-/// Plan 173.3 (D415 §2): `#share` audited vouch — exactly-once init IS
-/// internal synchronization (same reasoning as `Once`/`Mutex`).
+/// Opaque-handle newtype `type Lazy[T](*())`. C struct + per-T methods
+/// are emitted by codegen (emit_lazy_instance); ABI unchanged.
+/// `#share` audited vouch — exactly-once init IS internal synchronization
+/// (same reasoning as `Once`/`Mutex`).
 #stable(since = "0.1")
 #share
 export type Lazy[T](*())
@@ -2207,12 +2190,11 @@ export extern "nova" fn Lazy[T] mut @force() -> T
 #stable(since = "0.1")
 export extern "nova" fn Lazy[T] @is_forced() -> bool
 
-// ============================================================================
-// PLAN-103.4 COORDINATION PRIMITIVES (alphabetical, parallel-agent marker blocks)
-// Each agent fills ONLY its own block; final merge keeps all 4 in order.
-// ============================================================================
+// ────────────────────────────────────────────────────────────────
+// Coordination primitives
+// ────────────────────────────────────────────────────────────────
 
-// === PLAN-103.4 BARRIER (Agent B) ===
+// === Barrier ===
 
 /// Reusable N-party rendezvous (CyclicBarrier-style).
 ///
@@ -2229,9 +2211,9 @@ export extern "nova" fn Lazy[T] @is_forced() -> bool
 /// Call `reset()` to repair a broken barrier.
 ///
 /// # Memory model
-/// Allocated uncollectable (GC-race fix Plan 103.3 M6).
+/// Allocated uncollectable (GC-race fix).
 ///
-/// Plan 173.3 (D415 §2): `#share` audited vouch — same reasoning as `Mutex`.
+/// `#share` audited vouch — same reasoning as `Mutex`.
 #stable(since = "0.1")
 #share
 export type Barrier(*())
@@ -2277,9 +2259,9 @@ export extern "nova" fn Barrier @is_broken() -> bool
 #stable(since = "0.1")
 export extern "nova" fn Barrier mut @reset()
 
-// === END PLAN-103.4 BARRIER ===
+// === End Barrier ===
 
-// === PLAN-103.4 CONDVAR (Agent D) ===
+// === Condvar ===
 
 // ─── WaitResult ──────────────────────────────────────────────────
 
@@ -2298,7 +2280,7 @@ export type WaitResult enum
 
 // ─── Condvar ─────────────────────────────────────────────────────
 
-/// Fiber-aware condition variable. Tied to `Mutex` (M10 design principle).
+/// Fiber-aware condition variable. Tied to `Mutex`.
 ///
 /// Allows fibers to park until a predicate on shared state becomes true,
 /// without busy-waiting.
@@ -2323,21 +2305,20 @@ export type WaitResult enum
 ///
 /// `Condvar.wait(reentrant_m)` releases the ENTIRE recursive lock count
 /// (lock_count → 0) and re-acquires as count=1 on wake. This is intentional
-/// — restoring original count is a Java pitfall (see Plan 103.4 §Ф.4).
+/// — restoring original count is a Java pitfall.
 /// `W_REENTRANT_CONDVAR_RECOMMEND` lint warns when `ReentrantMutex` is used.
 ///
 /// # Precondition
 ///
 /// The mutex must be locked before calling `wait()` / `wait_for()`.
-/// Unconditional runtime panic if not (Plan 103.3/103.4 pattern).
+/// Unconditional runtime panic if not.
 ///
-/// **Plan 91.12 V2 (D126 retract):** decl migrated from `external type Condvar`
-/// to opaque-handle newtype `type Condvar(*())`. C struct `Nova_Condvar`
+/// Opaque-handle newtype `type Condvar(*())`. C struct `Nova_Condvar`
 /// continues to live in `nova_rt/sync_condvar.h`; ABI unchanged. Codegen
 /// suppresses the Nova-level `typedef void* Nova_Condvar` (would conflict
 /// with runtime header's struct typedef) — see emit_c.rs §RUNTIME_BACKED_NEWTYPES.
 ///
-/// Plan 173.3 (D415 §2): `#share` audited vouch — same reasoning as `Mutex`.
+/// `#share` audited vouch — same reasoning as `Mutex`.
 #stable(since = "0.1")
 #share
 export type Condvar(*())
@@ -2393,9 +2374,9 @@ export extern "nova" fn Condvar mut @notify_one()
 #stable(since = "0.1")
 export extern "nova" fn Condvar mut @notify_all()
 
-// === END PLAN-103.4 CONDVAR ===
+// === End Condvar ===
 
-// === PLAN-103.4 COUNTDOWNLATCH (Agent C) ===
+// === CountDownLatch ===
 
 /// One-shot count-down rendezvous (Java-style). Immutable initial count.
 ///
@@ -2427,11 +2408,10 @@ export extern "nova" fn Condvar mut @notify_all()
 /// # See Also
 ///
 /// - `[WaitGroup]` — mutable-count variant (add/done/wait)
-/// - `[Barrier]` — N-party reusable rendezvous (Plan 103.4)
+/// - `[Barrier]` — N-party reusable rendezvous
 ///
-/// Plan 173.3 (D415 §2): `#share` audited vouch — required by the
-/// `parallel for` example right above (`latch` captured by reference across
-/// sibling per-element fibers).
+/// `#share` audited vouch — required by the `parallel for` example right
+/// above (`latch` captured by reference across sibling per-element fibers).
 #stable(since = "0.1")
 #share
 export type CountDownLatch(*())
@@ -2479,10 +2459,8 @@ export extern "nova" fn CountDownLatch @try_await() -> bool
 /// `false` if the timeout expired first.
 /// timeout <= 0 is equivalent to `try_await()`.
 ///
-/// W_TRY_WITHOUT_SIBLING AMEND (2026-07-17, lint-разкраснение, владелец):
-/// переименован из `try_await_for` — `await_for` не имеет infallible-
-/// сиблинга с этим именем (`await()` — другая арность/семантика) — обычное
-/// имя, без `try_`-префикса (R3 D325).
+/// Naming: `await_for` не имеет infallible-сиблинга с этим именем
+/// (`await()` — другая арность/семантика) — обычное имя, без `try_`-префикса.
 #parks
 #stable(since = "0.1")
 export extern "nova" fn CountDownLatch @await_for(timeout Duration) -> bool
@@ -2494,19 +2472,19 @@ export extern "nova" fn CountDownLatch @await_for(timeout Duration) -> bool
 #stable(since = "0.1")
 export extern "nova" fn CountDownLatch @current_count() -> int
 
-// === END PLAN-103.4 COUNTDOWNLATCH ===
+// === End CountDownLatch ===
 
-// === PLAN-103.4 SEMAPHORE (Agent A) ===
+// === Semaphore ===
 
-/// Fiber-aware counting semaphore. Bounded permits (M11).
-/// Fair FIFO waiter queue (Plan 103.3 M6 consistency).
+/// Fiber-aware counting semaphore. Bounded permits.
+/// Fair FIFO waiter queue.
 ///
 /// # Use case
 /// - Connection pool capacity (Semaphore.new(max_connections))
 /// - Rate limiting (N concurrent requests)
 /// - Resource pool (parallel workers, bounded)
 ///
-/// # Over-release (D170 §2)
+/// # Over-release
 /// `release()` without a prior `acquire()` increments permits past the
 /// initial count (Java-compatible semantics).
 ///
@@ -2515,16 +2493,16 @@ export extern "nova" fn CountDownLatch @current_count() -> int
 /// atomically. FIFO fairness: if head waiter needs k > available permits,
 /// later waiters are NOT skipped (prevents large-acquire starvation).
 ///
-/// # M15 V1 pattern: `with_permit { }` — preferred API
+/// # `with_permit { }` — preferred API
 /// Acquires, runs body, releases via `defer`. Panic-safe.
-/// V2 (Plan 103.9): wraps `Permit consume` guard.
+/// V2: wraps `Permit consume` guard.
 ///
 /// # See Also
 ///
 /// - `[Mutex]` — mutual exclusion (binary semaphore with ownership)
 /// - `[WaitGroup]` — count-down rendezvous
 ///
-/// Plan 173.3 (D415 §2): `#share` audited vouch — same reasoning as `Mutex`.
+/// `#share` audited vouch — same reasoning as `Mutex`.
 #stable(since = "0.1")
 #share
 export type Semaphore(*())
@@ -2535,7 +2513,7 @@ export extern "nova" fn Semaphore.new(permits int) -> Self
 
 /// Acquire 1 permit. Parks until a permit becomes available (FIFO order).
 ///
-/// V2 (Plan 103.9, D174): returns `Permit consume`. Use `permit.release()` to release.
+/// V2: returns `Permit consume`. Use `permit.release()` to release.
 /// Old callers that discard the return value still compile.
 ///
 /// # Realtime
@@ -2548,15 +2526,14 @@ export extern "nova" fn Semaphore mut @acquire() -> Permit consume
 ///
 /// V2: use `Permit.release()` (returned by `acquire()`) instead.
 /// Over-release (release without prior acquire) increments permits past initial
-/// (D170 §2 — Java semantics, V1).
+/// (Java semantics, V1).
 #deprecated(since = "0.2", note = "use consume p = sem.acquire(); defer p.release() instead (Plan 103.9 guard API)")
 #wakes
 #stable(since = "0.1")
 export extern "nova" fn Semaphore mut @release()
 
 /// Private bool bridge for `try_acquire` (Permit-guard form below is the
-/// ONLY public probe — R3 D325: `try_acquire` pairs with `acquire`, and the
-/// bool+manual-release door is retired, D9).
+/// ONLY public probe: `try_acquire` pairs with `acquire`).
 ///
 /// Only succeeds if permits > 0 AND no waiters are queued (FIFO fairness).
 #realtime
@@ -2571,11 +2548,10 @@ extern "nova" fn Semaphore mut @ptr_as_int() -> int
 /// Try to acquire 1 permit without parking, returning a guard.
 ///
 /// `Some(Permit)` on success — the permit auto-releases via `@cleanup` on
-/// scope exit (panic-safe: cleanup runs on unwind too, D432), same guard
-/// semantics as `acquire()`. `None` if permits are exhausted or waiters are
-/// queued (FIFO fairness). Named as the non-parking half of the `acquire`/
-/// `try_acquire` pair (R3 D325; renamed from `try_acquire_permit`,
-/// 2026-07-26 owner review — no `acquire_permit` sibling existed).
+/// scope exit (panic-safe: cleanup runs on unwind too), same guard semantics
+/// as `acquire()`. `None` if permits are exhausted or waiters are queued
+/// (FIFO fairness). Named as the non-parking half of the `acquire`/
+/// `try_acquire` pair.
 ///
 /// Designed for admission control (bounded accept: take slot or reject
 /// immediately) — see Semaphore doc «Connection pool capacity».
@@ -2590,10 +2566,8 @@ export fn Semaphore mut @try_acquire() -> Option[Permit] {
 /// Returns `false` if the timeout expires before a permit becomes available.
 /// `timeout <= Duration.zero` behaves as the non-parking probe (`try_acquire`).
 ///
-/// W_TRY_WITHOUT_SIBLING AMEND (2026-07-17, lint-разкраснение, владелец):
-/// переименован из `try_acquire_for` — `acquire_for` не имеет infallible-
-/// сиблинга с этим именем (`acquire()` — другая арность/семантика) —
-/// обычное имя, без `try_`-префикса (R3 D325).
+/// Naming: `acquire_for` не имеет infallible-сиблинга с этим именем
+/// (`acquire()` — другая арность/семантика) — обычное имя, без `try_`-префикса.
 ///
 /// # Realtime
 /// Forbidden inside `realtime { }` — may park the fiber.
@@ -2629,10 +2603,10 @@ export extern "nova" fn Semaphore mut @acquire_n(n int)
 #stable(since = "0.1")
 export extern "nova" fn Semaphore mut @release_n(n int)
 
-/// PREFERRED PATTERN (M15): acquire + body + automatic release via defer.
+/// PREFERRED PATTERN: acquire + body + automatic release via defer.
 ///
 /// Panic-safe: `defer permit.release()` runs even if body throws.
-/// V2 (Plan 103.9): thin wrapper over `Permit consume` guard.
+/// V2: thin wrapper over `Permit consume` guard.
 /// User code does not change.
 ///
 /// # Examples
@@ -2651,5 +2625,5 @@ export fn Semaphore mut @with_permit[R](body fn() -> R) -> R {
     body()
 }
 
-// === END PLAN-103.4 SEMAPHORE ===
+// === End Semaphore ===
 
