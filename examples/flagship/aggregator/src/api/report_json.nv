@@ -11,6 +11,7 @@ module api
 
 import ../domain.{Report, TaskResult, TaskStatus, Source}
 import std.encoding.serde.{Serialize, json_encode, json_encode_pretty}
+import std.collections.vec_seq.{map}
 
 // ── DTOs (wire contract) ────────────────────────────────────────────────────
 
@@ -90,10 +91,7 @@ fn fiber_count_of(report Report) -> int => 2 * report.results.len()
 #stable(since = "0.2")
 export fn build_snapshot(report Report, sources []Source, legend str, mode str, seed int,
         budget_ms int, handlers HandlersDto) -> SnapshotDto {
-    mut results []ResultDto = []
-    for r in report.results {
-        results.push(result_dto(r, sources))
-    }
+    ro results = report.results.map(|r| result_dto(r, sources))
     ro fibers = fiber_count_of(report)
     {
         fanout: report.results.len(),

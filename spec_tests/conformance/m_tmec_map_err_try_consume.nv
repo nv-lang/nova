@@ -1,0 +1,24 @@
+// [M-try-map-err-chain-loses-payload-type] (owner review, 2026-07-31):
+// `consume x = expr.map_err(|e| ...)?` — the consume checker must see the
+// unwrapped Ok-payload type THROUGH the `map_err` link (map_err preserves the
+// Ok type, only the error type changes). Before the fix the binding type came
+// back empty/`Result`, so the D432 cleanup-affinity of the payload type was
+// invisible and a false `D133-not-consumed` fired. The bare-call form
+// (`consume x = mk()?`) always worked — this pins the map_err+`?` chain.
+module spec_tests.conformance
+
+type MTmecRes consume { ro id int }
+
+export fn MTmecRes consume @cleanup(_outcome ScopeOutcome) -> () {}
+
+fn m_tmec_mk(ok bool) -> Result[MTmecRes, int] =>
+    if ok { Ok(MTmecRes { id: 7 }) } else { Err(1) }
+
+fn m_tmec_use() -> Result[int, str] {
+    consume m_tmec_r = m_tmec_mk(true).map_err(|e| "code-${e}")?
+    Ok(m_tmec_r.id)
+}
+
+test "map_err+try chain: consume binding sees payload type, cleanup affinity holds" {
+    assert(m_tmec_use() == Ok(7))
+}

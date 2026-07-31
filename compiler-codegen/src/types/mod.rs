@@ -17557,6 +17557,28 @@ impl<'a> TypeCheckCtx<'a> {
             // Bang (`expr!!`) unwraps Option[T]→T or Result[T,E]→T.
             // Conservative: only when the inner type resolves and is a known container.
             ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) => {
+                // [M-try-map-err-chain-loses-payload-type] (владелец, 2026-07-31):
+                // `X.map_err(f)?` — возврат `@map_err[F]` стирается (typevar F
+                // не подставлен), сама цепочка часто вовсе не резолвится, но
+                // Ok-payload map_err НЕ меняет: тип = Ok-тип receiver'а X.
+                // Хук ДО общей развязки — receiver резолвится и тогда, когда
+                // цепочка нет (Result[T,E] у X → T).
+                if let ExprKind::Call { func, .. } = &inner.kind {
+                    if let ExprKind::Member { obj, name } = &func.kind {
+                        if name == "map_err" {
+                            if let Some(TypeRef::Named { path: op, generics: og, .. }) =
+                                self.infer_expr_type(obj, scope)
+                            {
+                                let ob = op.last().map(String::as_str);
+                                if (ob == Some("Result") || ob == Some("Option"))
+                                    && !og.is_empty()
+                                {
+                                    return Some(og[0].clone());
+                                }
+                            }
+                        }
+                    }
+                }
                 let inner_tr = self.infer_expr_type(inner, scope)?;
                 if let TypeRef::Named { path, generics, .. } = &inner_tr {
                     let base = path.last().map(String::as_str);
@@ -33451,6 +33473,23 @@ impl<'a> ConsumeCtx<'a> {
             // Free function call by bare name.
             ExprKind::Ident(fname) => {
                 self.reg.unwrapped_fn_return_types.get(fname).cloned()
+            }
+            // [M-try-map-err-chain-loses-payload-type] (владелец, 2026-07-31):
+            // `X.map_err(f)` — Ok-payload НЕ меняется (`Result[T,E] → Result[T,F]`,
+            // prelude), поэтому unwrapped-тип цепочки = unwrapped-тип receiver'а.
+            // Без этого `consume x = T.f().map_err(..)?` терял тип payload'а →
+            // D432-аффинность @cleanup-типа не видна → ложный D133-not-consumed.
+            // Err-companion НЕ рекурсирует (map_err меняет E — honest None там).
+            ExprKind::Member { obj, name: method } if method == "map_err" => {
+                match &obj.kind {
+                    ExprKind::Ident(recv) if recv != "self" => {
+                        let canon = self.canonical(recv);
+                        self.var_unwrapped_types.get(&canon)
+                            .or_else(|| self.var_unwrapped_types.get(recv.as_str()))
+                            .cloned()
+                    }
+                    _ => self.infer_unwrapped_call_type(obj),
+                }
             }
             // `recv.method()` / `self.method()` / `@method()`.
             ExprKind::Member { obj, name: method } => {

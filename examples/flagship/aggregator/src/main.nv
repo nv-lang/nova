@@ -28,6 +28,7 @@ import polaris.serve.{handle_connection_router}
 import std.time.duration
 import std.runtime.sync.{AtomicInt}
 import std.encoding.serde.{Serialize}
+import std.collections.vec_seq.{map}
 
 // Loopback port: env override (`AGGREGATOR_PORT`) or this default.
 //
@@ -266,9 +267,7 @@ fn events_body(legend str, mode str, seed int) Time -> ServerResponse {
 
     mut chunks [][]u8 = []
     chunks.push(sse_event("replay_info", dto_json(ReplayInfo { total_ms, time_scale: 1 })))
-    for r in records {
-        chunks.push(sse_event(r.kind, dto_json(r)))
-    }
+    chunks.extend(records.map(|r| sse_event(r.kind, dto_json(r))))
     chunks.push(sse_event("run_summary", dto_json(dto)))
     ServerResponse.sse(StreamBody.from_chunks(chunks))
 }

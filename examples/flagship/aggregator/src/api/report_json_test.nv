@@ -12,6 +12,7 @@
 module api
 
 import ../domain.{Report, TaskResult, TaskStatus, SourceData, Source}
+import std.collections.vec_seq.{map}
 
 // A bare record literal (`{ id, payload: ... }`) as an enum-variant payload
 // argument uses the variant's own field types for expected-type propagation.
@@ -29,13 +30,8 @@ fn handlers_demo() -> HandlersDto => { net: "mock(seed=42)", time: "real" }
 // A `Source` list matching the ids used by `done_result`/`failed_result`/
 // `cancelled_result` above, so `build_snapshot`'s id-lookup (`source_by_id`)
 // finds `kind`/`probes` for each.
-fn srcs_for(ids []str) -> []Source {
-    mut out []Source = []
-    for id in ids {
-        out.push(Source.new(id, "unit-${id}", 3, 0, false))
-    }
-    out
-}
+fn srcs_for(ids []str) -> []Source =>
+    ids.map(|id| Source.new(id, "unit-${id}", 3, 0, false))
 
 // ── POS: full shape shows up in the serialized JSON ────────────────────────
 
