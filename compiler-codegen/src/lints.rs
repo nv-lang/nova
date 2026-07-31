@@ -1171,28 +1171,23 @@ fn collect_expr(e: &Expr, out: &mut HashSet<String>) {
             out.insert("times".to_string());
             out.insert("div".to_string());
             out.insert("rem".to_string());
-            // Plan 234 Ф.1 (D46-амендмент): `a & b` / `a | b` / `a ^ b` на
-            // пользовательском типе дispатчатся на `@bitand`/`@bitor`/`@bitxor`
-            // (emit_c.rs, ~34194 — тот же `is_single_nova_ptr` fast-path, что
-            // @plus/@times) — те же магические селекторы, что никогда не
-            // появляются синтаксически (`a & b`, не `a.bitand(b)`). Без сидов
-            // здесь reachability-DCE рушила метод как мёртвый (тип-имя
-            // достижимо, имя метода — нет, т.к. `collect_expr` не видит
-            // оператор как селектор): найдено минимальным репро (`type Mask {
-            // bits int }` + `fn Mask @bitand(...)`, `a & b` — dispatch-строка
-            // корректна, но C-тело `@bitand` не эмитится вовсе → undefined
-            // symbol на линковке).
+            // Plan 234: `a & b` / `a | b` / `a ^ b` on a user type dispatch to
+            // `@bitand`/`@bitor`/`@bitxor` (emit fast-path mirroring @plus/@times).
+            // These magic selectors never appear syntactically (`a & b`, not
+            // `a.bitand(b)`), so without seeding here reachability-DCE dropped
+            // the method bodies as dead (type reachable, method name not —
+            // `collect_expr` does not see an operator as a selector). Found by
+            // minimal repro; same class as the historical @plus seeding.
             out.insert("bitand".to_string());
             out.insert("bitor".to_string());
             out.insert("bitxor".to_string());
         }
         ExprKind::Unary { operand, op } => {
             collect_expr(operand, out);
-            // Plan 234 Ф.2 (D46-амендмент): `~a` дispатчится на `@bitnot` для
-            // пользовательских типов (emit_c.rs unary-`~` arm) — тот же
-            // невидимый-для-AST-селектора магический метод, что и бинарные
-            // операторы выше; без сида reachability-DCE дропает `@bitnot`
-            // тело на типе, где `~` — единственный вызывающий сайт.
+            // Plan 234: `~a` dispatches to `@bitnot` on user types (emit unary-`~`
+            // arm) — same AST-invisible magic selector as the binary operators
+            // above; without seeding, reachability-DCE drops the `@bitnot`
+            // body when `~` is its only caller.
             if matches!(op, crate::ast::UnOp::BitNot) {
                 out.insert("bitnot".to_string());
             }

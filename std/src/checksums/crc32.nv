@@ -100,7 +100,7 @@ export fn crc32_update(state u32, data []u8) -> u32 {
     crc
 }
 
-/// Финализирует CRC-32 state — побитовое дополнение (IEEE 802.3 convention).
+/// Finalizes the CRC-32 state — bitwise complement (IEEE 802.3 convention).
 #stable(since = "0.1")
 export fn crc32_finalize(state u32) -> u32 =>
     ~state
