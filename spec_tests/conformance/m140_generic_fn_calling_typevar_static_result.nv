@@ -1,0 +1,171 @@
+// [M-generic-fn-calling-its-fn-param-cross-mono-collision] реестр 221.1 №140 —
+// repro/regression (Ф.1, sonnet, worktree p140-fnparam-subst).
+//
+// Дефект (найден окном 222.8, Ф.0-разведка окном 222.3/2223 2026-07-31,
+// root-cause этим окном): generic-функция с fn-параметром `f fn(T) -> ...`,
+// вызывающая ВНУТРИ своего generic-тела СТАТИЧЕСКИЙ protocol-метод
+// НЕПОСРЕДСТВЕННО НА СВОЁМ receiver-типопараметре (`T.from_req(s)` —
+// протокол объявлен `.from_req(...)`, т.е. `ReceiverKind::Static`, вызывается
+// как `T.method(args)`, где T связан protocol-bound generic'ом), ломает
+// ПРОИЗВОДНОЕ от результата этого вызова — match-биндинг / let-биндинг /
+// цепочку — при ДВУХ И БОЛЕЕ конкретных T-инстанциях в одном CU.
+//
+// Root cause: `infer_expr_c_type`'s Channel 4 (emit_c.rs, "var_types for Path
+// call T.method(args)") строила lookup-ключ `fn_ret_{parts[0]}_{parts[1]}` из
+// СЫРОГО (несмонообразованного) AST-имени `parts[0]` — буквально "T", как
+// написано в исходнике generic-шаблона, — вместо конкретного типа ТЕКУЩЕЙ
+// mono-инстанциации. Ключ `fn_ret_T_from_req` никогда не регистрировался
+// (регистрация — только под конкретными именами типов, `fn_ret_CreateItem_
+// from_req` / `fn_ret_Upgrade_from_req`), поэтому Channel 4 промахивался —
+// ОБА раза, для ОБЕИХ T-инстанциаций — и inference проваливался в legacy
+// `infer_call_ret_c`'s бакет B12o: NAME-ONLY ключ `fn_ret_{method}`
+// (`fn_ret_from_req`), общий на ВСЕ типы, реализующие протокол,
+// last-registration-wins. Поскольку `Upgrade.from_req` объявлен В ФАЙЛЕ
+// ПОСЛЕДНИМ, ОБА mono-тела (`typed_invoke[CreateItem,_]` И
+// `typed_invoke[Upgrade,_]`) читали ТИП UPGRADE для scrutinee/биндинга —
+// первое тело (CreateItem) получало неверно типизированный биндинг `v`
+// (Upgrade вместо CreateItem), что ронялось на вызове `f(v)` (C-типы не
+// совпадают — cross-mono коллизия).
+//
+// Fix (чекер-канал недостижим честно — resolved_callees/resolved_types
+// ОБА промахивались для этого expr, см. отчёт задания; codegen var_types-
+// канал, расширение СУЩЕСТВУЮЩЕЙ точки): Channel 4 теперь подставляет
+// `parts[0]` через `self.subst_c(...)` + `Self::debt_nova_type_name_from_c`
+// (тот же паттерн, уже использованный чуть выше по файлу для generic-ctor
+// inference, ~emit_c.rs:59108) ПЕРЕД построением ключа — так типизированный
+// lookup находит УЖЕ корректно зарегистрированный `fn_ret_<конкретный-тип>_
+// <method>` для ТЕКУЩЕЙ mono-инстанциации, вместо промаха в last-wins
+// fallback. Fallback на буквальное имя сохранён — byte-identical для всех
+// НЕ-typevar статических вызовов (`str.from`, `char.try_from`, …).
+//
+// Смежная находка (репро/расследование, ПОДТВЕРЖДЕНО пробой на unfixed
+// сборке): прямой вызов fn-параметра `f(x)`, включая match/let-bind/цепочку
+// НА ЕГО результате, БЕЗ протокольного `T.method()`-диспетча — уже работал
+// корректно ДО этого фикса (см. регресс-тест ниже) — дефект специфичен
+// именно к Path-статик-вызову на protocol-bound typevar'е.
+module spec_tests.conformance
+
+type M140FromReq protocol {
+    .from_req(s str) -> Result[Self, str]
+}
+type M140IntoResp protocol {
+    @into_resp() -> str
+}
+
+type M140CreateItem value { priv name str }
+export fn M140CreateItem @name() -> str => @name
+#impl(M140FromReq)
+export fn M140CreateItem.from_req(s str) -> Result[M140CreateItem, str] =>
+    Ok(M140CreateItem { name: s })
+#impl(M140IntoResp)
+export fn M140CreateItem @into_resp() -> str => @name
+
+type M140Upgrade value { priv token str }
+export fn M140Upgrade @token() -> str => @token
+#impl(M140FromReq)
+export fn M140Upgrade.from_req(s str) -> Result[M140Upgrade, str] =>
+    Ok(M140Upgrade { token: s })
+#impl(M140IntoResp)
+export fn M140Upgrade @into_resp() -> str => @token
+
+fn m140_handle_item(c M140CreateItem) -> Result[M140CreateItem, str] => Ok(c)
+fn m140_handle_upgrade(u M140Upgrade) -> Result[M140Upgrade, str] => Ok(u)
+fn m140_handle_item_bare(c M140CreateItem) -> M140CreateItem => c
+fn m140_handle_upgrade_bare(u M140Upgrade) -> M140Upgrade => u
+
+// --- pos: match-биндинг на результате T.from_req(s), вложенный match на
+// результате f(v) (repro3-класс). ---
+fn m140_dispatch_match[T M140FromReq, R M140IntoResp](f fn(T) -> Result[R, str], s str) -> str {
+    match T.from_req(s) {
+        Ok(v) => match f(v) {
+            Ok(r) => r.into_resp()
+            Err(e) => e
+        }
+        Err(e) => e
+    }
+}
+
+// --- pos: цепочка f(v).into_resp() прямо на результате вызова, без
+// промежуточного Ok-биндинга (repro6-класс). ---
+fn m140_dispatch_chain[T M140FromReq, R M140IntoResp](f fn(T) -> R, s str) -> str {
+    match T.from_req(s) {
+        Ok(v) => f(v).into_resp()
+        Err(e) => e
+    }
+}
+
+// --- pos: let-биндинг сценария T.from_req(s), затем match на локале
+// (`ro y = ...; match y { ... }` форма). ---
+fn m140_dispatch_let_bind[T M140FromReq, R M140IntoResp](f fn(T) -> R, s str) -> str {
+    ro y = T.from_req(s)
+    match y {
+        Ok(v) => f(v).into_resp()
+        Err(e) => e
+    }
+}
+
+test "№140 pos: match-arm binding on T.from_req(s) result, two T-instances in one CU (CreateItem)" {
+    ro r = m140_dispatch_match[M140CreateItem, M140CreateItem](m140_handle_item, "hello")
+    assert(r == "hello")
+}
+
+test "№140 pos: match-arm binding on T.from_req(s) result, two T-instances in one CU (Upgrade)" {
+    ro r = m140_dispatch_match[M140Upgrade, M140Upgrade](m140_handle_upgrade, "world")
+    assert(r == "world")
+}
+
+test "№140 pos: chain f(v).into_resp() on T.from_req(s) result (CreateItem)" {
+    ro r = m140_dispatch_chain[M140CreateItem, M140CreateItem](m140_handle_item_bare, "hi")
+    assert(r == "hi")
+}
+
+test "№140 pos: chain f(v).into_resp() on T.from_req(s) result (Upgrade)" {
+    ro r = m140_dispatch_chain[M140Upgrade, M140Upgrade](m140_handle_upgrade_bare, "yo")
+    assert(r == "yo")
+}
+
+test "№140 pos: ro y = T.from_req(s); match y { ... } let-bound scrutinee (CreateItem)" {
+    ro r = m140_dispatch_let_bind[M140CreateItem, M140CreateItem](m140_handle_item_bare, "aa")
+    assert(r == "aa")
+}
+
+test "№140 pos: ro y = T.from_req(s); match y { ... } let-bound scrutinee (Upgrade)" {
+    ro r = m140_dispatch_let_bind[M140Upgrade, M140Upgrade](m140_handle_upgrade_bare, "bb")
+    assert(r == "bb")
+}
+
+// --- regression δ0: прямой вызов fn-параметра (без match/let/chain на
+// результате, без T.method() protocol-dispatch) — уже работал сегодня,
+// обязан остаться рабочим. ---
+fn m140_direct_call[T, R](f fn(T) -> R, x T) -> R => f(x)
+
+test "№140 regression δ0: direct fn-param call, no match/T.method() involved" {
+    ro item = M140CreateItem { name: "n1" }
+    ro upgrade = M140Upgrade { token: "t1" }
+    ro a = m140_direct_call[M140CreateItem, M140CreateItem](m140_handle_item_bare, item)
+    ro b = m140_direct_call[M140Upgrade, M140Upgrade](m140_handle_upgrade_bare, upgrade)
+    assert(a.into_resp() == "n1")
+    assert(b.into_resp() == "t1")
+}
+
+// --- regression δ0: match/let-bind ПРЯМО на результате fn-param вызова —
+// без T.method() protocol-dispatch — уже работал ДО этого фикса (root-cause
+// изолирован строго к Channel-4 T.method() пути); зафиксировано как δ0.
+fn m140_direct_match[T, R](f fn(T) -> Result[R, str], x T) -> str {
+    match f(x) {
+        Ok(r) => r.into_resp()
+        Err(e) => e
+    }
+}
+
+test "№140 regression δ0: match directly on f(x) result, no T.method() (CreateItem)" {
+    ro item = M140CreateItem { name: "cc" }
+    ro r = m140_direct_match[M140CreateItem, M140CreateItem](m140_handle_item, item)
+    assert(r == "cc")
+}
+
+test "№140 regression δ0: match directly on f(x) result, no T.method() (Upgrade)" {
+    ro upgrade = M140Upgrade { token: "dd" }
+    ro r = m140_direct_match[M140Upgrade, M140Upgrade](m140_handle_upgrade, upgrade)
+    assert(r == "dd")
+}

@@ -1,0 +1,53 @@
+// Ф.3 (задание №140, sonnet, worktree p140-fnparam-subst) — приёмка "по
+// смыслу": локальная фикстура-модель формы, которую bare-сахар 222.3 НЕ
+// смог доставить (`docs/plans/221.1-bug-sweep.md` строка `| 140 |`, план
+// 222.3-extractors.md §5 — `Router @post_typed[T1, R](path, h)` строит
+// внутри своего generic-тела адаптер, диспетчащий через `T1.from_request
+// (req)` и вызывающий свой fn-параметр `h`). Репу polaris НЕ трогаем — это
+// НЕЗАВИСИМАЯ локальная модель ТОЙ ЖЕ структурной формы: generic-функция с
+// protocol-bound receiver-типопараметром T, вызывающая СТАТИЧЕСКИЙ
+// `T.from_req(...)` и передающая распакованное значение своему
+// fn-параметру `h`, для ДВУХ РАЗНЫХ T в одном CU — именно эта форма ловила
+// [M-generic-fn-calling-its-fn-param-cross-mono-collision] (см. peer-файл
+// `m140_generic_fn_calling_typevar_static_result.nv` для root-cause/фикса).
+// Использует ТЕ ЖЕ типы M140CreateItem/M140Upgrade/M140FromReq (peer-файл,
+// один folder-module = один CU, co-equal файлы — не дублируем декларации).
+//
+// Упрощение относительно 222.3's Router API (осознанное, чтобы фикстура
+// проверяла РОВНО №140, не путаясь с посторонними дефектами): функция
+// возвращает `M140Resp` НАПРЯМУЮ (не строит промежуточное
+// `fn(str) -> Resp`-замыкание для последующего вызова через let-биндинг) —
+// вызов замыкания, возвращённого generic-функцией, через `ro route = ...;
+// route(...)` упирается в ОТДЕЛЬНЫЙ, ПОКА НЕ ЗАКРЫТЫЙ дефект
+// [M-fn-return-value-bound-var-call-broken] (см. отчёт задания — не по
+// пути этого фикса, честно не чинится здесь). Прямая форма ниже сохраняет
+// СУТЬ проблемной формы 222.3 (protocol-bound T, `T.from_req(...)` внутри
+// generic-тела, диспетч в fn-параметр `h`) без примешивания той, другой,
+// проблемы.
+module spec_tests.conformance
+
+type M140Resp value { priv body str }
+export fn M140Resp @body() -> str => @body
+
+// generic `fn post_typed_model[T FromReq](path str, req str, h fn(T) -> Resp)
+// -> Resp` — форма из плана 222.3 §5: диспетчит `T.from_req(req)` и, при
+// успехе, вызывает свой fn-параметр `h` на распакованном значении.
+fn m140_post_typed_model[T M140FromReq](path str, req str, h fn(T) -> M140Resp) -> M140Resp {
+    match T.from_req(req) {
+        Ok(v) => h(v)
+        Err(e) => M140Resp { body: e }
+    }
+}
+
+fn m140_handle_item_to_resp(c M140CreateItem) -> M140Resp =>
+    { body: "item:${c.name()}" }
+fn m140_handle_upgrade_to_resp(u M140Upgrade) -> M140Resp =>
+    { body: "upgrade:${u.token()}" }
+
+test "№140 Ф.3 приёмка: bare-sugar post_typed-model — two DIFFERENT T in one CU, correct dispatch" {
+    ro resp_a = m140_post_typed_model[M140CreateItem]("/items", "payload-a", m140_handle_item_to_resp)
+    ro resp_b = m140_post_typed_model[M140Upgrade]("/upgrades", "payload-b", m140_handle_upgrade_to_resp)
+
+    assert(resp_a.body() == "item:payload-a")
+    assert(resp_b.body() == "upgrade:payload-b")
+}

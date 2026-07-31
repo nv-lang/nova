@@ -59417,6 +59417,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // (char.try_from, str.from, f32.from_bits …) are in method_table with C-types, not in
         // fn_decls, so the checker cannot channel them via resolved_callees. var_types holds the
         // correct C return type from forward-decl registration (fn_ret_{recv}_{name}).
+        //
+        // №140 [M-generic-fn-calling-its-fn-param-cross-mono-collision]: `parts[0]` may
+        // be a protocol-bound GENERIC TYPE PARAM (`T.from_req(s)` inside a generic body)
+        // — substitute via `current_type_subst` FIRST (same `subst_c` +
+        // `debt_nova_type_name_from_c` pattern as ~59108) so the key targets THIS mono
+        // instantiation, not the un-substituted literal "T" (which misses and used to
+        // fall through to `infer_call_ret_c`'s NAME-ONLY last-wins fallback — cross-mono
+        // collision across every T-instantiation sharing the protocol method name).
+        // Falls back to the literal name otherwise — byte-identical elsewhere.
         if expr.id.is_set() {
             if let ExprKind::Call { func, .. } = &expr.kind {
                 if let ExprKind::Path(parts) = &func.kind {
@@ -59426,7 +59435,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         if parts[0] == "str" && parts[1] == "from" {
                             return "nova_str".into();
                         }
-                        let tq = format!("fn_ret_{}_{}", parts[0], parts[1]);
+                        let recv_name = self.subst_c(parts[0].as_str())
+                            .map(|c| Self::debt_nova_type_name_from_c(&c))
+                            .unwrap_or_else(|| parts[0].clone());
+                        let tq = format!("fn_ret_{}_{}", recv_name, parts[1]);
                         if let Some(ret) = self.var_types.get(&tq) {
                             return ret.clone();
                         }
