@@ -7,11 +7,11 @@
 
 module time.duration
 
-/// Timestamp — момент во времени в Unix epoch nanoseconds.
+/// Timestamp — an instant in time in Unix epoch nanoseconds.
 ///
-/// Stored как signed `i64` относительно 1970-01-01 UTC. Range покрывает
-/// ±292 years (т.е. до ~2262 включительно). Для дат за пределами этого
-/// окна используй BigDate (Plan 45.C).
+/// Stored as a signed `i64` relative to 1970-01-01 UTC. The range covers
+/// ±292 years (i.e. up to ~2262 inclusive). For dates beyond this window use
+/// BigDate (Plan 45.C).
 ///
 /// # Examples
 /// ```nova
@@ -20,7 +20,7 @@ module time.duration
 /// ```
 ///
 /// **Plan 175 Ф.1b (D316):** `value`-record — stack-allocated, zero-GC.
-/// Окно i64-ns ≈ 1677-09-21 .. 2262-04-11 (±292 года от эпохи, Q16).
+/// The i64-ns window ≈ 1677-09-21 .. 2262-04-11 (±292 years from the epoch, Q16).
 ///
 /// **Plan 175.2 Ф.2-v4 (П5, D220 per-field):** `nanos` is `priv` (module-
 /// private per D281) since this wave — was `ro` (publicly constructible
@@ -55,12 +55,12 @@ export fn[T Ints] T @to_unix_millis() -> Timestamp =>
 export fn[T Ints] T @to_unix_nanos() -> Timestamp =>
     { nanos: @ as i64 }
 
-/// Текущее wall-clock-время (Unix epoch).
+/// Current wall-clock time (Unix epoch).
 ///
-/// **Plan 175 Ф.3 (D316 typed retype):** тонкая ergonomic-обёртка над
-/// typed `Time.now()` (эффект `Time`, возвращает `Timestamp` напрямую —
-/// больше не int-wire + wrap). Мокабелен:
-/// `with Time = th.fixed_ms(...)` подменяет часы детерминированно.
+/// **Plan 175 Ф.3 (D316 typed retype):** a thin ergonomic wrapper over the
+/// typed `Time.now()` (the `Time` effect returns a `Timestamp` directly —
+/// no more int-wire + wrap). Mockable:
+/// `with Time = th.fixed_ms(...)` replaces the clock deterministically.
 ///
 /// # Examples
 /// ```nova
@@ -71,7 +71,7 @@ export fn[T Ints] T @to_unix_nanos() -> Timestamp =>
 #stable(since = "0.1")
 export fn Timestamp.now() Time -> Timestamp => Time.now()
 
-/// Unix epoch seconds (truncating). Negative для timestamps до 1970.
+/// Unix epoch seconds (truncating). Negative for timestamps before 1970.
 #stable(since = "0.1")
 export fn Timestamp @unix_seconds() => @nanos / 1_000_000_000
 
@@ -83,7 +83,7 @@ export fn Timestamp @unix_millis() => @nanos / 1_000_000
 #stable(since = "0.1")
 export fn Timestamp @unix_nanos() => @nanos
 
-/// `Timestamp + Duration → Timestamp` — сдвинуть момент вперёд (deadline, expiry).
+/// `Timestamp + Duration → Timestamp` — move the instant forward (deadline, expiry).
 ///
 /// # Examples
 /// ```nova
@@ -91,19 +91,19 @@ export fn Timestamp @unix_nanos() => @nanos
 /// let deadline = start + 30.to_seconds()
 /// assert(deadline.unix_seconds() == 1030)
 /// ```
-/// **Plan 175 Ф.1c (D317):** saturates at the i64 boundary (окно 1677..2262 —
+/// **Plan 175 Ф.1c (D317):** saturates at the i64 boundary (window 1677..2262 —
 /// mirror Go `addSec`-clamp). For explicit overflow-detection use [`checked_add`].
 #stable(since = "0.1")
 export fn Timestamp @plus(d Duration) -> Timestamp =>
     sat_add_i64(@nanos, d.nanos, i64.MIN, i64.MAX).to_unix_nanos()
 
-/// `Timestamp - Duration → Timestamp` — сдвинуть момент назад.
+/// `Timestamp - Duration → Timestamp` — move the instant backward.
 /// **Saturates at boundary** (D317).
 #stable(since = "0.1")
 export fn Timestamp @minus(d Duration) -> Timestamp =>
     sat_sub_i64(@nanos, d.nanos, i64.MIN, i64.MAX).to_unix_nanos()
 
-/// Checked `Timestamp + Duration` — `None` если результат вне i64-окна (D317).
+/// Checked `Timestamp + Duration` — `None` if the result is outside the i64 window (D317).
 #stable(since = "0.1")
 export fn Timestamp @checked_add(d Duration) -> Option[Timestamp] =>
     match @nanos.checked_add(d.nanos) {
@@ -111,7 +111,7 @@ export fn Timestamp @checked_add(d Duration) -> Option[Timestamp] =>
         None => None,
     }
 
-/// Checked `Timestamp - Duration` — `None` если результат вне i64-окна (D317).
+/// Checked `Timestamp - Duration` — `None` if the result is outside the i64 window (D317).
 #stable(since = "0.1")
 export fn Timestamp @checked_sub(d Duration) -> Option[Timestamp] =>
     match @nanos.checked_sub(d.nanos) {
@@ -119,9 +119,9 @@ export fn Timestamp @checked_sub(d Duration) -> Option[Timestamp] =>
         None => None,
     }
 
-/// `Timestamp - Timestamp → Duration` — elapsed time между двумя моментами.
+/// `Timestamp - Timestamp → Duration` — elapsed time between two instants.
 ///
-/// Signed: если `self < other`, result отрицательный.
+/// Signed: if `self < other`, the result is negative.
 ///
 /// # Examples
 /// ```nova
@@ -135,7 +135,7 @@ export fn Timestamp @minus(other Timestamp) -> Duration =>
 
 /// Compare.compare — memcmp-style int return (D183 amendment, Plan 91.8a.2).
 /// `==`, `!=`, `<`, `<=`, `>`, `>=` operators synthesized via @compare.
-/// `self < other` означает `self` раньше чем `other`.
+/// `self < other` means `self` is earlier than `other`.
 #stable(since = "0.1")
 export fn Timestamp @compare(other Timestamp) -> int =>
     if @nanos < other.nanos { -1 }
@@ -143,9 +143,9 @@ export fn Timestamp @compare(other Timestamp) -> int =>
     else { 0 }
 
 /// Debug (Plan 175 Ф.3(d)/Ф.4, D237). **NOTE:** `@display` (full RFC-3339
-/// datetime) live в `std/time/civil/format.nv` (Plan 175.1, вне scope этой
-/// волны — civil-time уже сделан, не трогаем). `@debug` здесь — raw-ns
-/// diagnostic form (не зависит от civil-слоя): `Timestamp(unix_ns=...)`.
+/// datetime) lives in `std/time/civil/format.nv` (Plan 175.1, out of the scope
+/// of this wave — civil-time is already done, not touching it). `@debug` here —
+/// a raw-ns diagnostic form (does not depend on the civil layer): `Timestamp(unix_ns=...)`.
 /// Signature migrated to `Fmt` — Plan 208 Ф.2/D422,
 /// [M-208-time-display-fmt-migration-gap].
 #stable(since = "0.1")
@@ -155,9 +155,9 @@ export fn Timestamp @debug(mut f Fmt) -> () {
     f.write(")")
 }
 
-/// True если `self` уже в прошлом относительно текущего `Time.now()`.
+/// True if `self` is already in the past relative to the current `Time.now()`.
 ///
-/// Использует ambient `Time` effect — детерминирован в тестах под
+/// Uses the ambient `Time` effect — deterministic in tests under
 /// `with Time = th.fixed_ms(...)`.
 ///
 /// # Examples
@@ -171,14 +171,14 @@ export fn Timestamp @debug(mut f Fmt) -> () {
 export fn Timestamp @is_past() Time -> bool =>
     @nanos < Timestamp.now().nanos
 
-/// Сколько остаётся до момента `self`. Положительная если в будущем,
-/// отрицательная если в прошлом.
+/// How long until the instant `self`. Positive if in the future,
+/// negative if in the past.
 #stable(since = "0.1")
 export fn Timestamp @time_until() Time -> Duration =>
     @minus(Timestamp.now())
 
-/// Сколько прошло с момента `self`. Положительная если в прошлом,
-/// отрицательная если в будущем.
+/// How much time has passed since the instant `self`. Positive if in the past,
+/// negative if in the future.
 #stable(since = "0.1")
 export fn Timestamp @elapsed() Time -> Duration =>
     Timestamp.now().minus(@)
