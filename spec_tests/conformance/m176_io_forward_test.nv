@@ -1,0 +1,93 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// [M-176-io-forward-bounded-generic] (Plan 176 Ф.1/Ф.2, backlog-followups.md,
+// sonnet, worktree p176-io-forward) — regression: forwarding a BOUNDED generic
+// parameter as the argument to ANOTHER bounded-generic function with the SAME
+// (or a covering) bound must NOT be rejected with a false "does not satisfy"
+// diagnostic — `std.io.read_to_string[R Read]` forwarding `r` into
+// `read_to_end[R2 Read](r R2)` is the real shape (`std/src/io/core.nv`).
+//
+// Root cause (fixed, `types/mod.rs::check_satisfaction`, `BoundCtx`): the
+// passthrough-typevar skip added by [M-property-testing-rot] (Plan 172.13
+// батч 3) matched by NAME only (`current_fn_generic_names: HashSet<String>`),
+// so it skipped the check unconditionally whenever the forwarded arg's type
+// happened to be SOME generic-param name of the caller — even an UNBOUNDED
+// one, silently accepting a genuinely-unsatisfied forward instead of the
+// honest diagnostic (see the NEG regression in `neg/
+// m176_io_forward_no_bound_neg.nv`). Fix: the skip now reads the caller's OWN
+// declared bound(s) for that name (Plan 196 gs — `current_fn_gs:
+// RefCell<GenericScope>`, name → full `GenericParam`) and only accepts when
+// one of them actually COVERS the callee's required bound — exact-name match,
+// or a structural superset via the already-DFS-flattened `protocol_specs`
+// (`generic_bound_covers`) — see report for the exact diff.
+//
+// This file covers the POS forward shapes (all four combinations named in the
+// task brief); the NEG (bound-less forward, honest error preserved) and the
+// concrete-type δ0 regression each need their own compile-unit — see
+// `neg/m176_io_forward_no_bound_neg.nv` (compile-error) and this file's own
+// δ0 test below (concrete type, no forward at all).
+//
+// Peer file of the `spec_tests.conformance` folder-module (D29); cross-module
+// half lives in `m176_io_forward_a/kind.nv` (imported below) so the "free fn
+// forward" pos case genuinely crosses a module boundary, like the real bug.
+module spec_tests.conformance
+
+import spec_tests.conformance.m176_io_forward_a.{M176Src, m176_drain, M176Counter}
+
+// ── pos (a): свободная fn -> свободная fn, ТОТ ЖЕ bound, ЧЕРЕЗ ГРАНИЦУ
+// МОДУЛЯ (m176_drain — imported from m176_io_forward_a) ──
+export fn m176_forward_free[S M176Src](mut src S) -> []int {
+    m176_drain(src)
+}
+
+// ── pos (b): цепочка ТРЁХ форвардов, каждый хоп — свой bounded generic-
+// параметр (root fn m176_drain уже cross-module; two more local hops) ──
+fn m176_forward_chain_b[S M176Src](mut src S) -> []int {
+    m176_forward_free(src)
+}
+fn m176_forward_chain_a[S M176Src](mut src S) -> []int {
+    m176_forward_chain_b(src)
+}
+
+// ── pos (c): метод -> свободная. Receiver-generic type wraps S (bound
+// M176Src), its OWN method forwards `@inner` into the free bounded-generic
+// fn — mirrors `BufWriter[W Write] mut @drain()` forwarding `@inner` into
+// `write_all[W2 Write]` (`std/src/io/buffered.nv`). ──
+type M176Wrap[S M176Src] priv {
+    mut inner S
+}
+fn M176Wrap[S M176Src] mut @m176_drain_via_method() -> []int {
+    m176_drain(@inner)
+}
+
+test "m176 pos (a): cross-module free fn -> free fn forward, same bound, use result" {
+    mut m176_c = M176Counter { n: 0, max: 3 }
+    ro m176_got = m176_forward_free(m176_c)
+    assert(m176_got.len() == 3)
+    assert(m176_got[0] == 0)
+    assert(m176_got[2] == 2)
+}
+
+test "m176 pos (b): chain of three forwards, same bound throughout, use result" {
+    mut m176_c = M176Counter { n: 0, max: 2 }
+    ro m176_got = m176_forward_chain_a(m176_c)
+    assert(m176_got.len() == 2)
+    assert(m176_got[1] == 1)
+}
+
+test "m176 pos (c): method forward into free bounded-generic fn, use result" {
+    mut m176_w M176Wrap[M176Counter] = { inner: M176Counter { n: 0, max: 4 } }
+    ro m176_got = m176_w.m176_drain_via_method()
+    assert(m176_got.len() == 4)
+    assert(m176_got[3] == 3)
+}
+
+// regression δ0: a CONCRETE (non-generic) type calling the bounded-fn
+// directly — no forwarding involved at all — must keep working exactly as
+// before this fix (the fix only widens the passthrough-typevar skip's
+// condition; it must not touch the concrete-type path).
+test "m176 regression δ0: concrete type calling bounded generic fn directly (no forward)" {
+    mut m176_c = M176Counter { n: 0, max: 5 }
+    ro m176_got = m176_drain(m176_c)
+    assert(m176_got.len() == 5)
+    assert(m176_got[4] == 4)
+}

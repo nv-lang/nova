@@ -1,0 +1,36 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// [M-176-io-forward-bounded-generic] (Plan 176 Ф.1/Ф.2, checker) — cross-module
+// half of `m176_io_forward_test.nv`'s "свободные fn ×2 модуля" pos case. This
+// module exists purely so the forward call in the test file crosses a real
+// module boundary (`import ... .{M176Src, m176_drain, M176Counter}`), mirroring
+// the real defect's shape (`std.io.read_to_end[R Read]` forwarded from a
+// caller in a DIFFERENT module, e.g. `std.io.buffered`/other std callers).
+module conformance.m176_io_forward_a
+
+/// Minimal source protocol — stand-in for `std.io.Read` (same shape class:
+/// a single mutating method returning an `Option`/`Result`-wrapped value).
+export type M176Src protocol {
+    mut @m176_next() -> Option[int]
+}
+
+/// Bounded-generic collector — stand-in for `std.io.read_to_end[R Read]`: the
+/// FORWARD TARGET whose bound must be satisfied by a caller's own generic
+/// param, not just a concrete type.
+export fn m176_drain[S M176Src](mut src S) -> []int {
+    mut m176_out []int = []int.new()
+    loop {
+        match src.m176_next() {
+            Some(m176_v) => m176_out.push(m176_v)
+            None => return m176_out
+        }
+    }
+}
+
+/// Concrete conformer — stand-in for a real `File`/`TcpStream`/etc.
+export type M176Counter {
+    mut n int
+    max int
+}
+export fn M176Counter mut @m176_next() -> Option[int] {
+    if @n >= @max { None } else { ro m176_v = @n; @n += 1; Some(m176_v) }
+}
