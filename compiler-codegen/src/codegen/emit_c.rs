@@ -34216,13 +34216,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     {
                         return Ok(format!("{}_method_div({}, {})", dispatch_type_name, l, r));
                     }
-                    // План 234 Ф.1 (codegen/bitwise_ops.rs): Bit* на плоском
+                    // План 234 Ф.1 (codegen/operator_dispatch.rs): Bit* на плоском
                     // record'е — та же схема, что @plus/@times (было: сырой C).
                     // Гард `____` (приёмка 234): mono-имя генерика обязано пройти в
                     // generic-ветку ниже (register_mono_method_instance) — здесь вызов
                     // эмитился без тела (undefined symbol на `Set[int] | Set[int]`).
                     if !type_name_sum.contains("____") && is_single_nova_ptr(&lty) && is_single_nova_ptr(&rty) {
-                        if let Some(op_method) = super::bitwise_ops::bitop_method_name(*op) {
+                        if let Some(op_method) = super::operator_dispatch::bitop_method_name(*op) {
                             return Ok(format!("{}_method_{}({}, {})", dispatch_type_name, op_method, l, r));
                         }
                     }
@@ -34301,11 +34301,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // type (raw C over `Nova_T*` was a CC-FAIL). Mirrors
                     // `@minus` above, not the Bit* fast-path below (`@shl`/
                     // `@shr` take heterogeneous `n int`). Thin call-site —
-                    // algorithm in `bitwise_ops::resolve_shift_dispatch`.
+                    // algorithm in `operator_dispatch::resolve_shift_dispatch`.
                     if matches!(op, BinOp::Shl | BinOp::Shr)
                         && lty.starts_with("Nova_") && lty.ends_with('*')
                     {
-                        if let Some(op_method) = super::bitwise_ops::shift_method_name(*op) {
+                        if let Some(op_method) = super::operator_dispatch::shift_method_name(*op) {
                             let recv_full = lty.trim_end_matches('*').to_string();
                             let recv_short = Self::debt_strip_nova_trim_start_bare(&recv_full).to_string();
                             let overloads = self.method_overloads
@@ -34315,30 +34315,30 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     .get(&(recv_short[..idx].to_string(), op_method.to_string()))
                                     .cloned()
                             });
-                            match super::bitwise_ops::resolve_shift_dispatch(
+                            match super::operator_dispatch::resolve_shift_dispatch(
                                 *op, &rty, &recv_full, &recv_short,
                                 overloads.as_deref(), mono_fn_decl,
                             ) {
-                                super::bitwise_ops::ShiftResolution::Concrete(c_name) => {
+                                super::operator_dispatch::ShiftResolution::Concrete(c_name) => {
                                     return Ok(format!("{}({}, {})", c_name, l, r));
                                 }
-                                super::bitwise_ops::ShiftResolution::GenericMono {
+                                super::operator_dispatch::ShiftResolution::GenericMono {
                                     fn_decl, type_subst, mono_name,
                                 } => {
                                     self.register_mono_method_instance(
                                         &fn_decl, type_subst, &mono_name, &recv_short);
                                     return Ok(format!("{}({}, {})", mono_name, l, r));
                                 }
-                                super::bitwise_ops::ShiftResolution::NoMatchingOverload(msg) => {
+                                super::operator_dispatch::ShiftResolution::NoMatchingOverload(msg) => {
                                     return Err(msg);
                                 }
-                                super::bitwise_ops::ShiftResolution::NotFound => {}
+                                super::operator_dispatch::ShiftResolution::NotFound => {}
                             }
                         }
                     }
-                    // План 234 Ф.1 (codegen/bitwise_ops.rs): generic Bit*
+                    // План 234 Ф.1 (codegen/operator_dispatch.rs): generic Bit*
                     // dispatch (RETRACT @or/@and/@xor), `BitXor` — новый.
-                    if let Some(op_method) = super::bitwise_ops::bitop_method_name(*op) {
+                    if let Some(op_method) = super::operator_dispatch::bitop_method_name(*op) {
                         if let Some(idx) = type_name_sum.find("____") {
                             let base_type = type_name_sum[..idx].to_string();
                             let mono_args = &type_name_sum[idx + 4..];
@@ -34766,10 +34766,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                 }
                 // План 234 Ф.2: `~x` на примитиве — таблица эмиссии в
-                // codegen/bitwise_ops.rs (integer promotion, обоснование там).
+                // codegen/operator_dispatch.rs (integer promotion, обоснование там).
                 if matches!(op, UnOp::BitNot) {
                     let operand_ty = self.infer_expr_c_type(operand);
-                    return Ok(super::bitwise_ops::bitnot_primitive_emit(&v, &operand_ty));
+                    return Ok(super::operator_dispatch::bitnot_primitive_emit(&v, &operand_ty));
                 }
                 let op_str = match op {
                     UnOp::Neg => "-",
