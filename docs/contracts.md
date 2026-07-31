@@ -194,10 +194,21 @@ When such a contract is unproven and fires at runtime, the violation message
 renders the self-access **readably** — `requires failed: 0 <= i && i < @len` —
 naming the actual field, not a placeholder (Plan 140.2 / D256 §Diagnostics).
 
-Calling a non-accessor `@method()` (or a non-`#pure` / `mut`-receiver method)
-in a contract is a clear compile error — the SMT encoder cannot model arbitrary
-method bodies. Reference the field directly, or extract a `#pure` free function
-(Plan 140.2 / D256).
+Calling **any** method in a contract — `@method()` on the receiver, or
+`obj.method()` on another value, including a chain (`a.b().c()`) — is encoded
+as an uninterpreted function (UF), the same non-inlined path used for a
+composed `#pure` free function: the UF's name is derived from the method,
+its receiver is the UF's first argument. An unproven UF-condition is not a
+compile error — it falls back to the ordinary runtime check (enforce-with-
+elision), like any other unproven contract.
+
+What **is** still required is that the called method be **pure** — no
+effects, `mut` receiver, or non-terminating recursion without a
+`decreases`. Purity is *inferred* the same way it is for a free function
+(SCC analysis over the call graph, no attribute needed); an effectful
+method in a contract remains a compile error. `#pure` is never required to
+satisfy this — it exists for boundaries inference cannot reach (`extern`
+fns) or as a voluntary explicit assertion.
 
 ### Bounds as an elidable contract (`Vec @index`)
 
@@ -313,17 +324,25 @@ fn sum_nonneg(a int, b int) -> int
 ### `#pure`
 
 Marks a function as **pure** — no side effects, no effects in its
-row. Pure functions can be called freely inside contract expressions
-(`requires`/`ensures`/`invariant`), where effectful calls are
+row. Pure functions (and methods) can be called freely inside contract
+expressions (`requires`/`ensures`/`invariant`), where effectful calls are
 forbidden.
 
+Purity does **not** require this attribute: it is *inferred* automatically
+for any function or method whose body is effect-free (SCC analysis over
+the call graph — `const fn` in Rust is the closest analogue). `#pure` is
+a voluntary, explicit assertion; the compiler never demands it as a way to
+unlock contract composition. It matters at boundaries inference cannot see
+through — an `extern`/FFI function has no Nova body to analyze, so its
+purity (if any) must be declared, not inferred.
+
 ```nova
-#pure
+// No `#pure` needed here — the body is effect-free, purity is inferred.
 fn is_positive(x int) -> bool => x > 0
 
 #verify
 fn safe_log(x int) -> int
-    requires is_positive(x)    // #pure call allowed in contract
+    requires is_positive(x)    // inferred-pure call allowed in contract
     ensures  result >= 0
 {
     x - 1
@@ -393,13 +412,15 @@ fn call_ffi() -> int {
 
 ---
 
-## `#pure` function composition
+## Pure function/method composition
 
-`#pure` functions compose freely in contract expressions. This lets
-you build reusable predicates:
+Pure functions and methods compose freely in contract expressions — a free
+function call is inlined (or UF-encoded if `#opaque`); a method call
+(`obj.method()`, including a chain) is always UF-encoded, receiver as the
+first argument. This lets you build reusable predicates without `#pure`,
+as long as the body is effect-free (purity is inferred, see `#pure` above):
 
 ```nova
-#pure
 fn in_range(x int, lo int, hi int) -> bool => x >= lo && x <= hi
 
 #verify
@@ -410,11 +431,13 @@ fn clamp_tight(x int) -> int
 }
 ```
 
-Non-pure functions in contracts are a compile error:
+Effectful functions/methods in contracts are a compile error:
 
 ```
-error: effectful function call in contract expression
-  contracts require #pure or side-effect-free expressions
+error: calling function `f` in a contract requires it to be pure
+  (purity is inferred automatically for effect-free bodies —
+  Plan 33.5 SCC inference, no attribute needed); `f` has effects
+  and cannot be used in a contract
 ```
 
 ---
@@ -939,7 +962,7 @@ result-ref       = 'result'                  // only in ensures
 |---|---|---|
 | `#verify` | fn | **Strict** SMT: compile error if contracts not proven (was `#must_verify` pre-Plan 33.3) |
 | `#unverified` | fn | Skip SMT; contracts enforced at runtime in debug **and** release (unproven) |
-| `#pure` | fn | Pure (no effects), usable in contract expressions |
+| `#pure` | fn | Explicit pure declaration (no effects); usable in contract expressions. Voluntary — purity is inferred automatically for effect-free bodies; needed only where inference can't reach (`extern` fns) |
 | `#nooverflow` | fn | Add overflow proof obligations for every `+`/`-`/`*` on sized integers |
 | `#trusted` | fn / `with` binding | Accept contracts as axioms without proof |
 | `#opaque` | `#pure` fn | Hide body from SMT; require `reveal` to expose |
@@ -956,7 +979,7 @@ result-ref       = 'result'                  // only in ensures
 | `W2401` | `contract not verified statically` | SMT returned Unknown or timed out; falls back to runtime check |
 | `W2402` | `unverified: ...` | Various: dead lemma, duplicate apply/reveal, reveal in non-verify context |
 | `W2403` | `opaque: ...` | `reveal` for non-opaque fn, `#fuel(0)`, dead `#opaque` (never revealed) |
-| `E2401` | `unsupported expression in contract` | Effectful call, match, lambda, or non-`#pure` in contract position |
+| `E2401` | `unsupported expression in contract` | match, lambda, tuple literal, or other construct the SMT encoder cannot represent at all (calls — free fn or method — are always encodable; an *effectful* callee is instead a dedicated "requires it to be pure" compile error, not E2401) |
 | `E2402` | `contract violation` | SMT disproved the contract (found counterexample) |
 | `E2412` | `cross-check disagreement` | Z3 and CVC5 returned opposite definite verdicts for a VC (cross-check mode only) |
 | `trust-introduced` | warning | `assume` outside `#trusted` context |

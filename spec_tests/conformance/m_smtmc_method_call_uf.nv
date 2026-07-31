@@ -1,4 +1,4 @@
-// [M-smtmc] Task 1/2 (владелец-норматив 2026-07-31): «Если контракт не
+// Task 1/2 (владелец-норматив 2026-07-31, окно p-smt-methodcall): «Если контракт не
 // доказывается компилятором — он работает в рантайме» — БЕЗ обязательных
 // атрибутов-костылей. Раньше метод-вызов в requires/ensures (`b.method()`,
 // цепочка `a.b().c()`) был compile-error класса «call expressions in
@@ -55,6 +55,29 @@ fn m_smtmc_simple_check(n int) -> int
     requires n > 0
 {
     n
+}
+
+// Task 3: та же ФОРМА, что `requires !other.mant.is_zero()` в
+// `BigDecimal @div` (nova-bigint/src/bigdecimal.nv:417-419, ДРУГАЯ репа,
+// не трогаем) — field-доступ, ЗАТЕМ метод-предикат (не два метода подряд,
+// в отличие от chain-теста выше). Доказывает: эта форма компилируется
+// БЕЗ `#unverified` локально — `@div`/`@rescale` там снять интегратору.
+type MSmtmcMant(digits int = 0)
+fn MSmtmcMant @m_smtmc_mant_is_zero() -> bool => @digits == 0
+type MSmtmcDivisor(mant MSmtmcMant = MSmtmcMant())
+
+fn m_smtmc_div_check(other MSmtmcDivisor) -> int
+    requires !other.mant.m_smtmc_mant_is_zero()
+{
+    other.mant.digits
+}
+
+test "m_smtmc pos: requires field-then-method (BigDecimal @div form) holds — passes" {
+    assert(m_smtmc_div_check(MSmtmcDivisor(MSmtmcMant(5))) == 5)
+}
+
+test "m_smtmc neg: requires field-then-method (BigDecimal @div form) violated — contract panic" panics "requires failed" {
+    m_smtmc_div_check(MSmtmcDivisor(MSmtmcMant(0)))
 }
 
 test "m_smtmc pos: requires method-call-in-condition holds — passes" {

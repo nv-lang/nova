@@ -191,10 +191,21 @@ uninterpreted `_field_<name>(_self)`, поэтому `@len` в `requires` и `@l
 рендерит self-access **читаемо** — `requires failed: 0 <= i && i < @len` —
 называя реальное поле, а не плейсхолдер (Plan 140.2 / D256 §Диагностика).
 
-Вызов non-accessor `@method()` (или non-`#pure` / `mut`-receiver метода) в
-контракте — внятная ошибка компиляции: SMT-encoder не моделирует произвольные
-тела методов. Ссылайтесь на поле напрямую или вынесите логику в `#pure` fn
-(Plan 140.2 / D256).
+Вызов ЛЮБОГО метода в контракте — `@method()` на receiver'е или
+`obj.method()` на другом значении, включая цепочку (`a.b().c()`) —
+кодируется как uninterpreted function (UF), тем же не-инлайнящим путём,
+что и composed свободная `#pure`-fn: имя UF — из метода, receiver —
+первый аргумент UF. Недоказанное UF-условие — НЕ ошибка компиляции, оно
+уходит в обычный runtime-check (enforce-with-elision), как любой другой
+недоказанный контракт.
+
+Что по-прежнему ОБЯЗАТЕЛЬНО — вызываемый метод должен быть **чистым**: без
+эффектов, без `mut`-receiver'а, без незавершающейся рекурсии без
+`decreases`. Чистота ВЫВОДИТСЯ тем же способом, что и для свободной fn
+(SCC-анализ по call-графу, атрибут не нужен); эффектный метод в контракте
+остаётся ошибкой компиляции. `#pure` для этого НИКОГДА не обязателен — он
+нужен на границах, куда вывод не достаёт (`extern` fn), или как
+добровольное явное подтверждение.
 
 ### Границы как элидируемый контракт (`Vec @index`)
 
@@ -302,17 +313,25 @@ fn sum_nonneg(a int, b int) -> int
 ### `#pure`
 
 Помечает функцию как **чистую** — без side effects, без эффектов в
-effect-row. Чистые функции можно свободно вызывать внутри контрактных
-выражений (`requires`/`ensures`/`invariant`), где вызовы с эффектами
-запрещены.
+effect-row. Чистые функции (и методы) можно свободно вызывать внутри
+контрактных выражений (`requires`/`ensures`/`invariant`), где вызовы с
+эффектами запрещены.
+
+Этот атрибут НЕ обязателен для чистоты как таковой: она ВЫВОДИТСЯ
+автоматически для любой fn/метода с effect-free телом (SCC-анализ по
+call-графу — ближайший аналог: `const fn` в Rust). `#pure` — добровольное
+явное подтверждение; компилятор никогда не вымогает его как способ
+разблокировать композицию в контракте. Атрибут важен на границах, куда
+вывод не достаёт — у `extern`/FFI-функции нет Nova-тела для анализа,
+поэтому её чистоту (если есть) нужно объявить, а не вывести.
 
 ```nova
-#pure
+// #pure не нужен — тело effect-free, чистота выводится.
 fn is_positive(x int) -> bool => x > 0
 
 #verify
 fn safe_log(x int) -> int
-    requires is_positive(x)    // вызов #pure в контракте разрешён
+    requires is_positive(x)    // вызов выведенно-чистой fn в контракте разрешён
     ensures  result >= 0
 {
     x - 1
@@ -379,13 +398,15 @@ fn call_ffi() -> int {
 
 ---
 
-## Композиция `#pure`-функций
+## Композиция чистых функций/методов
 
-`#pure`-функции свободно компонуются в контрактных выражениях.
-Позволяет создавать переиспользуемые предикаты:
+Чистые функции и методы свободно компонуются в контрактных выражениях —
+вызов свободной fn инлайнится (или кодируется UF, если `#opaque`); вызов
+метода (`obj.method()`, включая цепочку) ВСЕГДА кодируется UF, receiver —
+первый аргумент. Позволяет создавать переиспользуемые предикаты без
+`#pure`, пока тело effect-free (чистота выводится, см. `#pure` выше):
 
 ```nova
-#pure
 fn in_range(x int, lo int, hi int) -> bool => x >= lo && x <= hi
 
 #verify
@@ -396,11 +417,13 @@ fn clamp_tight(x int) -> int
 }
 ```
 
-Non-pure функция в контракте — ошибка компиляции:
+Эффектная функция/метод в контракте — ошибка компиляции:
 
 ```
-error: effectful function call in contract expression
-  contracts require #pure or side-effect-free expressions
+error: calling function `f` in a contract requires it to be pure
+  (purity is inferred automatically for effect-free bodies —
+  Plan 33.5 SCC inference, no attribute needed); `f` has effects
+  and cannot be used in a contract
 ```
 
 ---
@@ -926,7 +949,7 @@ result-ref       = 'result'                  // только в ensures
 | Атрибут | На | Значение |
 |---|---|---|
 | `#verify` | fn | Включить SMT-верификацию |
-| `#pure` | fn | Чистая (нет эффектов), используется в контрактах |
+| `#pure` | fn | Явное объявление чистоты (нет эффектов); используется в контрактах. Добровольно — чистота выводится автоматически для effect-free тел; нужен только там, куда вывод не достаёт (`extern` fn) |
 | `#unverified` | fn | Пропустить SMT, оставить как runtime check |
 | `#must_verify` | fn | Требовать SMT-доказательство — ошибка компиляции если недоказуемо |
 | `#trusted` | fn / `with` binding | Принять контракты как аксиомы без доказательства |
@@ -943,7 +966,7 @@ result-ref       = 'result'                  // только в ensures
 | `W2401` | `contract not verified statically` | SMT вернул Unknown или timeout; откат на runtime check |
 | `W2402` | `unverified: ...` | Разное: мёртвая лемма, дублирующий apply/reveal, reveal вне verify-контекста |
 | `W2403` | `opaque: ...` | `reveal` для не-opaque fn, `#fuel(0)`, мёртвый `#opaque` (ни разу не reveal'ился) |
-| `E2401` | `unsupported expression in contract` | Вызов с эффектом, match, lambda или не-`#pure` в контрактной позиции |
+| `E2401` | `unsupported expression in contract` | match, lambda, tuple-литерал или другая конструкция, которую SMT-encoder не умеет представить вообще (вызовы — свободная fn или метод — ВСЕГДА encodable; эффектный вызываемый — отдельная ошибка «requires it to be pure», не E2401) |
 | `E2402` | `contract violation` | SMT опроверг контракт (нашёл контрпример) |
 | `E2412` | `cross-check disagreement` | Z3 и CVC5 дали противоположные определённые вердикты для VC (только в cross-check режиме) |
 | `trust-introduced` | warning | `assume` вне `#trusted`-контекста |

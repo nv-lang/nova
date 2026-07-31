@@ -1,6 +1,6 @@
 // EXPECT_COMPILE_ERROR requires it to be pure
 //
-// [M-smtmc] Task 1/2 (владелец-норматив 2026-07-31): Task 1 разрешил
+// Task 1/2 (владелец-норматив 2026-07-31, окно p-smt-methodcall): Task 1 разрешил
 // ЧИСТЫЙ method-call в контракте (UF-encoding, без `#unverified`), НО
 // требование ЧИСТОТЫ вызываемого метода НЕ ослаблено — эффектный вызов
 // (body которого содержит `with`-блок, не проходит SCC pure-inference,
