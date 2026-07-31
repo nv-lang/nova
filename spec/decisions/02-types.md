@@ -8297,6 +8297,89 @@ auto-derive `str.from(@)` pattern).
 > 2-сегментному top-level-const кейсу `BUDGET_MS.to_millis()`). Фикстура:
 > `spec_tests/conformance/assoc_const_chained_method_call.nv`.
 
+> **Amend D200 ([Plan 157](../../docs/plans/221.1-bug-sweep.md), §157,
+> 2026-07-31): `ro Type.NAME [Тип] = <выражение>` — associated **ro-value**
+> (не constexpr).** Владелец лично предложил форму («через `ro` сделать
+> константу», конкретно `ro BigInt.ZERO BigInt = { sign: Zero, limbs:
+> []u32.new() }`) как ответ на измеренный факт: `const Type.NAME` **в
+> принципе** не может держать поле с кучевой аллокацией (`Vec`-поле —
+> `E_CONST_REFERS_NON_CONSTEXPR` / `E_CONST_NOT_CONSTEXPR`, strict-constexpr
+> RHS — п. «Семантика» №1 выше, без изменений). До этого амендмента такая
+> форма парсилась (дефолтная дот-нотация `parse_pattern` сворачивает
+> `Type.NAME` в `Pattern::Variant`), но не была узнана НИГДЕ дальше по
+> пайплайну — декларация тихо терялась (CC-FAIL «undeclared identifier» на
+> use-site) либо (при call-подобном использовании) падала в ICE
+> `[P67-LEGACY] Path call return type unknown`
+> (`[M-associated-ro-const-path-call-ice]`, №157 в
+> [221.1](../../docs/plans/221.1-bug-sweep.md)).
+>
+> **Каноническая запись:**
+> ```nova
+> type BigInt value { sign Sign, limbs []u32 }
+> export ro BigInt.ZERO BigInt = { sign: Zero, limbs: []u32.new() }  // ✓ runtime-init
+>
+> BigInt.ZERO                                    // ✓ read — та же namespace-семантика, что у const
+> ```
+> Грамматика: `[export] ro Type.NAME [Тип] = <выражение>` на module-level —
+> ровно тот же qualified-name синтаксис, что `const Type.NAME` (D200 AMEND
+> окно №66), с `ro` вместо `const`.
+>
+> **Чем `ro Type.NAME` отличается от `const Type.NAME` (когда что выбирать):**
+>
+> | | `const Type.NAME` | `ro Type.NAME` |
+> |---|---|---|
+> | Initializer | **Strict constexpr** (literal / арифметика над literals / record-литерал из constexpr-полей / ссылка на другой `const` — п. «Семантика» №1) | **Любое выражение** — конструктор-вызов, кучевая аллокация (`Vec.new()`, `HashMap.new()`, …), вызов обычной (не `const`) fn |
+> | Инициализация | Compile-time (`.rodata`-литерал, `static const T Type_NAME`) | **Runtime, ОДНОКРАТНО** — переиспользует существующую машину module-level `ro NAME = EXPR` («eager once-init», Plan 152.4/`emit_lazy_const`), КАЧЕСТВЕННО ТА ЖЕ, только keyed по квалифицированному `Type_NAME`, а не голому имени. Инициализация происходит ДО `main` (топологически упорядоченный `nova_consts_init()`), НЕ лениво по первому обращению — «once» ⇒ единожды за весь запуск, не per-access |
+> | Instance access / namespace / export / record-literal-запрет | **Без изменений** — п. «Семантика» №2-6 целиком в силе для ОБЕИХ форм (обе живут в одном и том же `TypeDecl.assoc_consts`, отличаются только internal-флагом `is_lazy_ro`) | То же |
+> | Переприсваивание `Type.NAME = …` | Ошибка (нет `mut Type.NAME` формы — п. «Modifier-conflicts» №6) | Ошибка, **тот же код `E_LOCAL_NOT_MUT`**, что у reassignment обычного `ro`-локала (симметрия: ассоциированное значение фиксировано СИЛЬНЕЕ локала — у локала есть escape-hatch `mut x = …`, у `Type.NAME` его нет вовсе) |
+> | Constexpr-eligible RHS написан через `ro` | — | `E_RO_FOR_CONSTEXPR_PREFER_CONST` — **та же строгая partition-политика**, что у bare module-level `ro`/`const` (`[M-114.4-strict-partition]`, Plan 148 Ф.3): «одна дверь» — если RHS constexpr-eligible, он ОБЯЗАН быть `const Type.NAME`, `ro Type.NAME` в этом случае — ошибка, не тихий разрешённый дубль |
+>
+> **Выбор:** `const Type.NAME` — когда значение можно вычислить на этапе
+> компиляции (числа, строки-скаляры, вложенные записи из скаляров).
+> `ro Type.NAME` — когда значению НУЖЕН рантайм (конструктор, кучевая
+> аллокация, вызов не-const функции) — типовой случай: value-record с полем
+> `Vec`/`HashMap`/`Set`/`StringBuilder`/произвольным heap-record.
+>
+> **Codegen:** переиспользует машину module-level `ro` БЕЗ дублирования
+> (`emit_lazy_const`, тот же путь, что уже эмитит eager-init global +
+> topo-sort зависимостей для bare `ro NAME = expr`); квалифицированный
+> C-symbol (`Type_NAME`, тот же формат, что у `const`-эмиссии) передаётся
+> И как ключ Nova-уровня, И как C-qualifier — коллизий с реальными
+> Nova-идентификаторами не бывает (голый Nova-идентификатор не содержит
+> `_` на стыке type/const в этой позиции по построению квалификации).
+> Эмиссия — В ТОЙ ЖЕ фазе пайплайна, что bare module-level `ro` (после
+> generic-type-defs, чтобы кучевое generic-поле типа `[]u32`/`Vec[T]` уже
+> имело typedef), НЕ в той же точке, что `const`-эмиссия (сразу после
+> struct-тела типа) — иначе кучевой generic-C-тип мог бы быть недоступен.
+>
+> **Известный узкий разрыв (НЕ этим амендментом; см. отчёт волны Plan
+> 157):** `emit_expr_c_type`'s финальный P67-LEGACY Path-fallback резолвит
+> НЕАННОТИРОВАННЫЙ локал-биндинг (`ro z = Type.NAME`) через ГОЛЫЙ последний
+> сегмент имени в глобальной (не type-qualified) таблице — если ДВА разных
+> типа имеют associated `const`/`ro` с ОДИНАКОВЫМ последним сегментом имени
+> где-то в одном compile unit (например, чужой `Type.ZERO` рядом с уже
+> существующим bare top-level `export const ZERO Duration = {...}`,
+> `std/src/time/duration/core.nv:82`, транзитивно тянущимся в КАЖДЫЙ CU) —
+> инференс типа локала может ошибочно выбрать НЕ ТОТ тип. Это ПРЕДшествующий
+> дефект (воспроизводится идентично и для уже отгруженного `const
+> Type.NAME`), не специфичный для `ro`-формы; явная типовая аннотация на
+> биндинге (`ro z Type = Type.NAME`) — обходной путь. Отдельно
+> зарегистрирован разрыв в юнбаунд-4-сегментной цепочке
+> `Type.NAME.field.method()` (унаследованный от того же класса, что уже
+> известный 3-сегментный `[M-assoc-const-chained-method-call-p67]`, но
+> сейчас покрывающий только `Type.CONST.method()`, НЕ
+> `Type.CONST.field.method()`) — тот же ICE `[P67-LEGACY] Path call return
+> type unknown`, воспроизводится идентично для уже отгруженного `const
+> Type.NAME`, не специфичен для `ro`.
+>
+> Фикстуры: `spec_tests/conformance/plan157_ro_assoc_value.nv` (pos —
+> namespace access / выражение / match / eager-once-init identity),
+> `spec_tests/conformance/neg/plan157_ro_assoc_reassign_neg.nv` (neg —
+> `E_LOCAL_NOT_MUT` на `Type.NAME = …`), `spec_tests/conformance/neg/
+> plan157_ro_assoc_prefer_const_neg.nv` (neg —
+> `E_RO_FOR_CONSTEXPR_PREFER_CONST` на constexpr-eligible RHS написанный
+> через `ro`).
+
 ### Что
 
 > ⚠️ Ниже — исходный in-body текст, РЕТРАКТИРОВАН амендментом выше (форма
