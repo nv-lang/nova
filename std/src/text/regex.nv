@@ -32,7 +32,7 @@ module text.regex
 // AST после парсинга pattern'а
 // ──────────────────────────────────────────────────────────────────────────
 
-/// AST node после parsing'а regex pattern (internal — обычно не нужен напрямую).
+/// AST node after parsing a regex pattern (internal — usually not needed directly).
 #stable(since = "0.1")
 export type RegexNode enum
     | NEmpty
@@ -59,7 +59,7 @@ export type RegexNode enum
 //
 // State хранится как индекс в []NfaState.
 
-/// NFA state — Thompson construction (internal). State хранится индексом в `[]NfaState`.
+/// NFA state — Thompson construction (internal). State is stored as an index into `[]NfaState`.
 #stable(since = "0.1")
 export type NfaState enum
     | SMatch
@@ -70,8 +70,8 @@ export type NfaState enum
     | SAnchorStart { out int }
     | SAnchorEnd { out int }
 
-/// Compiled regex. RE2-style NFA simulation — O(n*m) guaranteed, нет catastrophic
-/// backtracking. Нет backreferences и lookbehind (math.требуют backtracking).
+/// Compiled regex. RE2-style NFA simulation — O(n*m) guaranteed, no catastrophic
+/// backtracking. No backreferences or lookbehind (both require backtracking).
 #stable(since = "0.1")
 export type Regex {
     ro states []NfaState
@@ -79,7 +79,7 @@ export type Regex {
     ro anchored_start bool
 }
 
-/// Errors при compile regex pattern.
+/// Errors when compiling a regex pattern.
 #stable(since = "0.1")
 export type CompileError enum
     | UnclosedGroup { position int }
@@ -466,17 +466,17 @@ fn Compiler mut @compile_node(node RegexNode, out_state int) -> int {
 // Public API
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Compile regex pattern. `Err(CompileError)` на синтаксических ошибках.
+/// Compile a regex pattern. `Err(CompileError)` on syntax errors.
 ///
-/// Поддержка: `.`, `[a-z]`, `[^abc]`, `\d \w \s \D \W \S`, `^`, `$`,
+/// Supported: `.`, `[a-z]`, `[^abc]`, `\d \w \s \D \W \S`, `^`, `$`,
 /// `*`, `+`, `?`, `{n}`, `{n,m}`, `(...)`, `(?:...)`, `|`.
 ///
-/// D325: публичный API — Result. Внутренние `@parse_*` НЕ экспортированы и
-/// остаются на Fail[CompileError]: их возврат — RegexNode с ПРЯМОЙ рекурсией
-/// (NStar(RegexNode) и т.п.), а `Result[RegexNode, _]` крашит кодоген
-/// (аллокация в десятки ГБ / зависание; минимальная репродукция — enum с
-/// directly-recursive вариантом внутри Result) [M-result-direct-recursive-enum].
-/// Fail наружу не протекает — гасится хендлером здесь.
+/// D325: public API is Result. Internal `@parse_*` are NOT exported and
+/// stay on Fail[CompileError]: their return is a RegexNode with DIRECT recursion
+/// (NStar(RegexNode) etc.), and `Result[RegexNode, _]` crashes codegen
+/// (tens-of-GB allocations / hangs; minimal repro — an enum with
+/// a directly-recursive variant inside Result) [M-result-direct-recursive-enum].
+/// Fail does not leak outward — it is swallowed by the handler here.
 ///
 /// # Examples
 /// ```nova
@@ -638,7 +638,7 @@ fn to_chars(s str) -> []char {
     out
 }
 
-/// True если regex matches anywhere в text (substring match).
+/// True if the regex matches anywhere in text (substring match).
 #stable(since = "0.1")
 export fn Regex @matches(text str) -> bool {
     ro tchars = to_chars(text)
@@ -650,7 +650,7 @@ export fn Regex @matches(text str) -> bool {
 }
 
 // Найти первое вхождение, вернуть (start, end).
-/// Find first match — returns `Some((start, end))` byte-offsets, или `None`.
+/// Find first match — returns `Some((start, end))` byte-offsets, or `None`.
 #stable(since = "0.1")
 export fn Regex @find(text str) -> Option[(int, int)] {
     ro tchars = to_chars(text)

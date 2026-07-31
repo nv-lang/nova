@@ -95,25 +95,25 @@ fn ChanReader_close_after_doc_marker(d Duration) -> () {
 /// `ChanReader.tick_every(d Duration) -> ChanReader[()]` — periodic
 /// ticker channel (placeholder).
 ///
-/// **Status: NOT IMPLEMENTED.** Реализация в **Plan 66**
+/// **Status: NOT IMPLEMENTED.** Implementation in **Plan 66**
 /// (`docs/plans/66-timer-wheel-and-tick-every.md`).
 ///
-/// Цель этого declaration — **зарезервировать имя** в stdlib чтобы
-/// external crate / user code не определил конфликтующее
-/// `ChanReader.tick_every` до того как core реализация будет shipped.
-/// Также служит discovery-сигналом для AI agents: «такой API ожидается,
-/// но пока не доступен».
+/// The purpose of this declaration — **reserve the name** in the stdlib so that
+/// external crate / user code cannot define a conflicting
+/// `ChanReader.tick_every` before the core implementation ships.
+/// Also serves as a discovery signal for AI agents: "such an API is expected,
+/// but not available yet".
 ///
-/// Plan 66 будет:
-/// - Семантика: периодический tick каждые `d`, drop-on-overflow по
-///   умолчанию (Tokio `MissedTickBehavior::Skip`). Опциональный enum
-///   для Burst/Delay (Tokio parity).
-/// - Реализация: requires custom timer-wheel runtime (current libuv
-///   per-handle overhead неприемлем для 10k+ concurrent tickers).
-///   В Plan 65 — libuv per-timer. В Plan 66 — Tokio-style hierarchical
+/// Plan 66 will cover:
+/// - Semantics: a periodic tick every `d`, drop-on-overflow by
+///   default (Tokio `MissedTickBehavior::Skip`). An optional enum
+///   for Burst/Delay (Tokio parity).
+/// - Implementation: requires a custom timer-wheel runtime (current libuv
+///   per-handle overhead is unacceptable for 10k+ concurrent tickers).
+///   In Plan 65 — libuv per-timer. In Plan 66 — Tokio-style hierarchical
 ///   bucketing.
 ///
-/// До Plan 66 implementation: вызов этой функции panic'ует с явным
+/// Until the Plan 66 implementation: calling this function panics with explicit
 /// guidance.
 #unstable
 #stable(since = "0.6")
