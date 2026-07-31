@@ -30,62 +30,62 @@ type FmtItem enum
     | FOptStart
     | FOptEnd
 
-/// Type-safe builder формата даты/времени (Q3). Директивы — методы,
-/// компилятор ловит опечатки на этапе резолва (в отличие от strftime/"2006").
+/// Type-safe date/time format builder (Q3). Directives are methods, so the
+/// compiler catches typos at resolve time (unlike strftime/"2006").
 #stable(since = "0.1")
 export type DateTimeFormat {
     items []FmtItem
 }
 
-/// Пустой формат — наполняется fluent-директивами.
+/// Empty format — filled in with fluent directives.
 #stable(since = "0.1")
 export fn DateTimeFormat.new() -> DateTimeFormat => { items: [] }
 
-/// Год, 4+ цифры с нулями (пролептический знак для отрицательных).
+/// Year, 4+ zero-padded digits (proleptic sign for negatives).
 #stable(since = "0.1")
 export fn DateTimeFormat mut @year4() -> @ { @items.push(FYear4) }
 
-/// Месяц, 2 цифры (01..12).
+/// Month, 2 digits (01..12).
 #stable(since = "0.1")
 export fn DateTimeFormat mut @month2() -> @ { @items.push(FMonth2) }
 
-/// День месяца, 2 цифры (01..31).
+/// Day of month, 2 digits (01..31).
 #stable(since = "0.1")
 export fn DateTimeFormat mut @day2() -> @ { @items.push(FDay2) }
 
-/// Час, 2 цифры (00..23).
+/// Hour, 2 digits (00..23).
 #stable(since = "0.1")
 export fn DateTimeFormat mut @hour2() -> @ { @items.push(FHour2) }
 
-/// Минута, 2 цифры.
+/// Minute, 2 digits.
 #stable(since = "0.1")
 export fn DateTimeFormat mut @minute2() -> @ { @items.push(FMinute2) }
 
-/// Секунда, 2 цифры.
+/// Second, 2 digits.
 #stable(since = "0.1")
 export fn DateTimeFormat mut @second2() -> @ { @items.push(FSecond2) }
 
-/// Миллисекунды, ровно 3 цифры.
+/// Milliseconds, exactly 3 digits.
 #stable(since = "0.1")
 export fn DateTimeFormat mut @frac3() -> @ { @items.push(FFrac3) }
 
-/// Имя месяца ("Jan".."Dec", ASCII; локализация — вне scope, i18n-followup).
+/// Month name ("Jan".."Dec", ASCII; localization out of scope, i18n-followup).
 #stable(since = "0.1")
 export fn DateTimeFormat mut @month_name() -> @ { @items.push(FMonthName) }
 
-/// Имя дня недели ("Mon".."Sun").
+/// Weekday name ("Mon".."Sun").
 #stable(since = "0.1")
 export fn DateTimeFormat mut @weekday_name() -> @ { @items.push(FWeekdayName) }
 
-/// Литерал (разделители).
+/// Literal (separators).
 #stable(since = "0.1")
 export fn DateTimeFormat mut @lit(s str) -> @ { @items.push(FLit(s)) }
 
-/// Начало optional-секции (parse: backtrack при не-матче).
+/// Start of an optional section (parse: backtrack on non-match).
 #stable(since = "0.1")
 export fn DateTimeFormat mut @opt_start() -> @ { @items.push(FOptStart) }
 
-/// Конец optional-секции.
+/// End of an optional section.
 #stable(since = "0.1")
 export fn DateTimeFormat mut @opt_end() -> @ { @items.push(FOptEnd) }
 
@@ -96,7 +96,7 @@ export fn DateTimeFormat mut @opt_end() -> @ { @items.push(FOptEnd) }
 fn fmt_pad2(n int) -> str =>
     if n < 10 { "0${n}" } else { n.to_str() }
 
-/// Отформатировать plain DateTime по паттерну.
+/// Format a plain DateTime with the pattern.
 #stable(since = "0.1")
 export fn DateTimeFormat @format(dt DateTime) -> str {
     mut out = ""
@@ -124,7 +124,7 @@ export fn DateTimeFormat @format(dt DateTime) -> str {
     out
 }
 
-/// Отформатировать дату (время-директивы дают 00 полночи).
+/// Format a date (time directives yield midnight 00).
 #stable(since = "0.1")
 export fn DateTimeFormat @format_date(d Date) -> str => @format(d.at_midnight())
 
@@ -188,8 +188,8 @@ fn apply_item(item FmtItem, s str, pos int, mut f FmtFields) -> Result[int, Pars
     }
 }
 
-/// Разобрать строку по паттерну (§1а-форма: `s.to_datetime_with(f)`).
-/// Собранные поля проходят ту же строгую валидацию, что `Date.new`/
+/// Parse a string with the pattern (§1а form: `s.to_datetime_with(f)`).
+/// The collected fields go through the same strict validation as `Date.new`/
 /// `TimeOfDay.new` (Q9: «parses» == «constructs»).
 #stable(since = "0.1")
 export fn str @to_datetime_with(f DateTimeFormat) -> Result[DateTime, ParseDateTimeError] {
@@ -245,7 +245,7 @@ export fn str @to_datetime_with(f DateTimeFormat) -> Result[DateTime, ParseDateT
     Ok(date.at(time))
 }
 
-/// Разобрать дату по паттерну (время-директивы допустимы, отбрасываются).
+/// Parse a date with the pattern (time directives allowed, discarded).
 #stable(since = "0.1")
 export fn str @to_date_with(f DateTimeFormat) -> Result[Date, ParseDateTimeError] =>
     match @to_datetime_with(f) {
@@ -257,19 +257,19 @@ export fn str @to_date_with(f DateTimeFormat) -> Result[Date, ParseDateTimeError
 // Display (D410/D237): full-datetime @display — закрывает зависимость 175
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Display: ISO-форма.
+/// Display: the ISO form.
 #stable(since = "0.1")
 export fn Date @display(mut w Write) -> () { w.write(@to_iso().bytes()) }
 
-/// Display: ISO-форма.
+/// Display: the ISO form.
 #stable(since = "0.1")
 export fn TimeOfDay @display(mut w Write) -> () { w.write(@to_iso().bytes()) }
 
-/// Display: ISO-форма.
+/// Display: the ISO form.
 #stable(since = "0.1")
 export fn DateTime @display(mut w Write) -> () { w.write(@to_iso().bytes()) }
 
-/// Display: ISO/RFC-9557-форма.
+/// Display: the ISO/RFC-9557 form.
 #stable(since = "0.1")
 export fn ZonedDateTime @display(mut w Write) -> () { w.write(@to_iso().bytes()) }
 
@@ -281,7 +281,7 @@ export fn Period @display(mut w Write) -> () { w.write(@to_iso().bytes()) }
 #stable(since = "0.1")
 export fn Offset @display(mut w Write) -> () { w.write(@to_iso().bytes()) }
 
-/// Display: RFC-3339 UTC — full-datetime вид `Timestamp` (закрывает
-/// зависимость 175: больше не сырое число наносекунд).
+/// Display: RFC-3339 UTC — the full-datetime view of `Timestamp` (closes
+/// dependency 175: no longer a raw count of nanoseconds).
 #stable(since = "0.1")
 export fn Timestamp @display(mut w Write) -> () { w.write(@to_rfc3339().bytes()) }

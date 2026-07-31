@@ -15,9 +15,9 @@
 
 module time.civil
 
-/// Фиксированный сдвиг от UTC в секундах (±18h) — value-record.
+/// Fixed offset from UTC in seconds (±18h) — a value-record.
 ///
-/// Положительный — восточнее Гринвича (`+05:30` = 19800).
+/// Positive — east of Greenwich (`+05:30` = 19800).
 #stable(since = "0.1")
 export type Offset value {
     ro seconds i32
@@ -27,11 +27,11 @@ export type Offset value {
 // Конструкторы
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Нулевой сдвиг (UTC).
+/// Zero offset (UTC).
 #stable(since = "0.1")
 export fn Offset.utc() -> Offset => { seconds: 0 }
 
-/// Из секунд → `Result` (±64800).
+/// From seconds → `Result` (±64800).
 #stable(since = "0.1")
 export fn Offset.from_seconds(s i32) -> Result[Offset, DateError] =>
     if s < -64_800 || s > 64_800 {
@@ -40,7 +40,7 @@ export fn Offset.from_seconds(s i32) -> Result[Offset, DateError] =>
         Ok({ seconds: s })
     }
 
-/// Из часов+минут (знак задаёт `h`; `m` 0..59 — модуль, знак наследуется).
+/// From hours+minutes (`h` carries the sign; `m` 0..59 — the modulus, sign inherited).
 ///
 /// # Examples
 /// ```nova
@@ -57,19 +57,19 @@ export fn Offset.from_hm(h i32, m i32) -> Result[Offset, DateError] {
     Offset.from_seconds(total as i32)
 }
 
-/// Системный UTC-сдвиг ТЕКУЩЕЙ локальной зоны машины (D316 amend + D321,
-/// 2026-07-10) — closes [M-175.1-local-offset-effect-op]. DST уже учтён
-/// (это сдвиг, который наблюдал бы свежий `Timestamp.now()` ПРЯМО СЕЙЧАС,
-/// не фиксированный standard-time сдвиг).
+/// System UTC offset of the machine's CURRENT local zone (D316 amend + D321,
+/// 2026-07-10) — closes [M-175.1-local-offset-effect-op]. DST is already
+/// accounted for (this is the offset a fresh `Timestamp.now()` would observe
+/// RIGHT NOW, not a fixed standard-time offset).
 ///
-/// **Явный запрос, не implicit-дефолт** (D319 R1): `ZonedDateTime`/остальной
-/// civil-API по-прежнему требуют явный `TimeZone`/`Offset` на каждом
-/// call-site — тот же класс операции, что java.time `ZoneId.systemDefault()`
-/// / Temporal `Now.timeZoneId()` (explicit query, вызывающий сам решает,
-/// использовать ли результат).
+/// **An explicit query, not an implicit default** (D319 R1):
+/// `ZonedDateTime`/the rest of the civil API still require an explicit
+/// `TimeZone`/`Offset` at every call-site — the same operation class as
+/// java.time `ZoneId.systemDefault()` / Temporal `Now.timeZoneId()` (an
+/// explicit query; the caller decides whether to use the result).
 ///
-/// **Мокабелен** — `Time`-эффект, `with Time = handler {...}` подменяет
-/// (`std/testing/handlers.nv` — `fixed_ms`/`mut_clock` дают детерминированный
+/// **Mockable** — a `Time` effect; `with Time = handler {...}` substitutes
+/// (`std/testing/handlers.nv` — `fixed_ms`/`mut_clock` give a deterministic
 /// `0` — UTC).
 ///
 /// # Examples
@@ -85,15 +85,15 @@ export fn Offset.local() Time -> Offset => { seconds: Time.local_offset_sec() as
 // Компоненты
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Полный сдвиг в секундах (канон).
+/// Full offset in seconds (canon).
 #stable(since = "0.1")
 export fn Offset @to_seconds() -> i32 => @seconds
 
-/// Нулевой ли сдвиг (UTC).
+/// Whether the offset is zero (UTC).
 #stable(since = "0.1")
 export fn Offset @is_utc() -> bool => @seconds == 0
 
-/// Compare по секундам.
+/// Compare by seconds.
 #stable(since = "0.1")
 export fn Offset @compare(other Offset) -> int =>
     if @seconds < other.seconds { -1 }
@@ -104,7 +104,7 @@ export fn Offset @compare(other Offset) -> int =>
 // ISO-форма: `Z` | `±HH:MM` | `±HH:MM:SS` (под-минутные — с секундами)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// ISO-8601/RFC-3339 форма: `Z` для нуля, иначе `±HH:MM[:SS]`.
+/// ISO-8601/RFC-3339 form: `Z` for zero, otherwise `±HH:MM[:SS]`.
 #stable(since = "0.1")
 export fn Offset @to_iso() -> str {
     if @seconds == 0 { return "Z" }
@@ -118,6 +118,6 @@ export fn Offset @to_iso() -> str {
     if s == 0 { base } else { "${base}:${pad2(s)}" }
 }
 
-/// Display = ISO-форма.
+/// Display = the ISO form.
 #stable(since = "0.1")
 export fn Offset @to_str() -> str => @to_iso()
