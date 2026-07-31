@@ -500,6 +500,11 @@ impl Z3Backend {
             (op_name, args_arr) if op_name.starts_with("_trusted_") => {
                 return self.uf_app(op_name, args_arr);
             }
+            // Task 1 ([M-smtmc], 2026-07-31): method-call UFs (`_method_*`) —
+            // тот же real-UF путь, что `_pure_fn_*`/`_trusted_*`.
+            (op_name, args_arr) if op_name.starts_with("_method_") => {
+                return self.uf_app(op_name, args_arr);
+            }
             // Legacy: record member access (`_field_X(obj)`) кодируется
             // через fake fresh-const trick.
             (op_name, args_arr) if op_name.starts_with("_field_") => {

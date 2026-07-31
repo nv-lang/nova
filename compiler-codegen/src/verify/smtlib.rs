@@ -398,7 +398,12 @@ impl SmtLibEmitter {
     ) -> Result<String, EmitError> {
         // UF-семейства и `_field_*` обрабатываются до общей эмиссии
         // аргументов (у `_field_*` своя логика свежих констант).
-        if op.starts_with("_view_") || op.starts_with("_pure_fn_") || op.starts_with("_trusted_") {
+        // Task 1 ([M-smtmc], 2026-07-31): `_method_*` — method-call UF в
+        // контрактах, ТЕМ ЖЕ путём (`emit_uf`, real congruence-respecting
+        // UF), что и `_pure_fn_*`.
+        if op.starts_with("_view_") || op.starts_with("_pure_fn_") || op.starts_with("_trusted_")
+            || op.starts_with("_method_")
+        {
             return self.emit_uf(op, args, bound);
         }
         if op.starts_with("_field_") {

@@ -14,7 +14,7 @@ use super::encode;
 use super::backend::try_prove;
 use super::pipeline::{
     VerificationPipeline, VerifyResult, AxiomInfo,
-    collect_pure_views, collect_pure_fns, collect_trusted_fns, encode_axiom, infer_binder_sorts,
+    collect_pure_views, collect_pure_fns, collect_trusted_fns, collect_methods, encode_axiom, infer_binder_sorts,
     format_counterexample, unknown_to_diag_message, substitute_old, type_to_sort,
     infer_pure_fns_scc,
 };
@@ -300,9 +300,13 @@ fn verify_liskov_method(
     let mut warnings: Vec<Diagnostic> = Vec::new();
     let pure_fns = collect_pure_fns(module, inferred_pure);
     let trusted_fns = collect_trusted_fns(module);
+    let methods = collect_methods(module);
     let var_sorts: std::collections::HashMap<String, SortRef> = effect_params.iter()
         .map(|p| (p.name.clone(), type_to_sort(&p.ty))).collect();
-    let ctx = super::encode::EncodeCtx { pure_views, pure_fns: &pure_fns, trusted_fns: &trusted_fns, var_sorts };
+    let ctx = super::encode::EncodeCtx {
+        pure_views, pure_fns: &pure_fns, trusted_fns: &trusted_fns, var_sorts,
+        methods: &methods,
+    };
     let mut backend = pipeline.create_backend();
 
     for (op_name, sig) in pure_views {
@@ -311,6 +315,11 @@ fn verify_liskov_method(
     }
     for (fn_name, info) in &pure_fns {
         let uf = super::encode::pure_fn_uf_name(fn_name);
+        backend.declare_function(&uf, &info.param_sorts, info.return_sort.clone());
+    }
+    // Task 1 ([M-smtmc]): pre-declare method-call UFs.
+    for (name, info) in &methods {
+        let uf = super::encode::method_uf_name(&info.recv_type_tag, name, info.param_sorts.len());
         backend.declare_function(&uf, &info.param_sorts, info.return_sort.clone());
     }
 
@@ -429,13 +438,23 @@ fn verify_static_axiom_with_handler(
 ) -> VerifyResult {
     let pure_fns = collect_pure_fns(module, inferred_pure);
     let trusted_fns = collect_trusted_fns(module);
-    let ctx = super::encode::EncodeCtx { pure_views, pure_fns: &pure_fns, trusted_fns: &trusted_fns, var_sorts: std::collections::HashMap::new() };
+    // Task 1 ([M-smtmc]): `method_uf_registry` — не переименовывать в
+    // `methods`, параметр функции уже занял это имя (`&[HandlerMethod]`).
+    let method_uf_registry = collect_methods(module);
+    let ctx = super::encode::EncodeCtx {
+        pure_views, pure_fns: &pure_fns, trusted_fns: &trusted_fns,
+        var_sorts: std::collections::HashMap::new(), methods: &method_uf_registry,
+    };
 
     let mut backend = pipeline.create_backend();
 
     for (op_name, sig) in pure_views {
         let uf = super::encode::pure_view_uf_name(&sig.effect_name, op_name);
         backend.declare_function(&uf, &sig.param_sorts, sig.return_sort.clone());
+    }
+    for (name, info) in &method_uf_registry {
+        let uf = super::encode::method_uf_name(&info.recv_type_tag, name, info.param_sorts.len());
+        backend.declare_function(&uf, &info.param_sorts, info.return_sort.clone());
     }
 
     for method in methods {
@@ -844,8 +863,18 @@ fn verify_post_axiom_with_handler(
 
     let pure_fns = collect_pure_fns(module, inferred_pure);
     let trusted_fns = collect_trusted_fns(module);
-    let ctx = super::encode::EncodeCtx { pure_views, pure_fns: &pure_fns, trusted_fns: &trusted_fns, var_sorts: std::collections::HashMap::new() };
+    // Task 1 ([M-smtmc]): `method_uf_registry` — параметр `methods`
+    // (`&[HandlerMethod]`) уже занимает это имя в данной функции.
+    let method_uf_registry = collect_methods(module);
+    let ctx = super::encode::EncodeCtx {
+        pure_views, pure_fns: &pure_fns, trusted_fns: &trusted_fns,
+        var_sorts: std::collections::HashMap::new(), methods: &method_uf_registry,
+    };
     let mut backend = pipeline.create_backend();
+    for (name, info) in &method_uf_registry {
+        let uf = super::encode::method_uf_name(&info.recv_type_tag, name, info.param_sorts.len());
+        backend.declare_function(&uf, &info.param_sorts, info.return_sort.clone());
+    }
 
     for (op_name, sig) in pure_views {
         let uf = super::encode::pure_view_uf_name(&sig.effect_name, op_name);
