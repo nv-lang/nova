@@ -40,7 +40,7 @@ module crypto.insecure_demo_kdf
 
 import std.crypto.sha256.{Sha256}
 
-/// Errors при insecure-demo-KDF операциях.
+/// Errors in insecure-demo-KDF operations.
 #experimental(note = "демо-KDF, НЕ настоящая крипто-примитива; см. Plan 193")
 export type InsecureDemoKdfError enum
     | InvalidCost { value int }
@@ -71,11 +71,11 @@ const FORMAT_TAG str = "ndk1"
 // Public API
 // ──────────────────────────────────────────────────────────────────────────
 
-/// ⚠ INSECURE — демо-KDF, НЕ настоящий bcrypt/argon2. НЕ использовать
-/// для защиты реальных паролей (см. предупреждение в шапке файла).
+/// ⚠ INSECURE — demo-KDF, NOT a real bcrypt/argon2. Do NOT use
+/// for protecting real passwords (see the warning at the top of the file).
 ///
-/// Hash password с cost factor (2^cost rounds, 10 = 1024 rounds default).
-/// Format `$ndk1$<cost>$<salt><hash>`. Random effect — для salt.
+/// Hash password with a cost factor (2^cost rounds, 10 = 1024 rounds default).
+/// Format `$ndk1$<cost>$<salt><hash>`. Random effect — for the salt.
 ///
 /// # Examples
 /// ```nova
@@ -100,10 +100,10 @@ export fn InsecureDemoKdf.hash(password str, cost int) Random -> Result[str, Ins
     Ok("$${FORMAT_TAG}$${cost_str}$${demo_base64_encode(salt)}${demo_base64_encode(hashed)}")
 }
 
-/// ⚠ INSECURE — демо-KDF, НЕ настоящий bcrypt/argon2.
+/// ⚠ INSECURE — demo-KDF, NOT a real bcrypt/argon2.
 ///
-/// Verify password против demo-KDF hash. **Constant-time** для security.
-/// Returns `false` на любой malformed input (нет throw).
+/// Verify password against a demo-KDF hash. **Constant-time** for security.
+/// Returns `false` on any malformed input (no throw).
 #experimental(note = "демо-KDF, НЕ настоящий bcrypt; см. Plan 193")
 export fn InsecureDemoKdf.verify(password str, hash_str str) -> bool {
     // Parse format

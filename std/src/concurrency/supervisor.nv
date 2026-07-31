@@ -25,10 +25,10 @@
 
 module concurrency.supervisor
 
-/// Политика «эскалировать всё» — эквивалент дефолта (нет супервизора):
-/// ошибка первого упавшего ребёнка становится primary, siblings кооперативно
-/// отменяются, scope перевыбрасывает наружу. Полезна как явная базовая точка
-/// (или внешний слой, поверх которого локально ставится иная политика).
+/// The "escalate everything" policy — equivalent to the default (no supervisor):
+/// the error of the first failed child becomes primary, siblings cooperatively
+/// get cancelled, the scope rethrows outward. Useful as an explicit baseline
+/// (or an outer layer, on top of which a different policy is set locally).
 #stable(since = "0.1")
 export fn escalate() -> Effect[Supervisor] {
     effect Supervisor {
@@ -36,10 +36,10 @@ export fn escalate() -> Effect[Supervisor] {
     }
 }
 
-/// Политика «выкинуть упавшего» — падение ребёнка НЕ эскалируется и НЕ
-/// отменяет siblings: scope продолжает работу, как будто упавший ребёнок
-/// просто завершился без результата (его ошибка остаётся retained per-slot,
-/// 173.0 — не теряется молча). Аналог Erlang `temporary`-ребёнка.
+/// The "drop the failed" policy — a child's failure is NOT escalated and does NOT
+/// cancel siblings: the scope keeps running as if the failed child
+/// just finished without a result (its error stays retained per-slot,
+/// 173.0 — not silently lost). Analog of an Erlang `temporary` child.
 #stable(since = "0.1")
 export fn stop() -> Effect[Supervisor] {
     effect Supervisor {

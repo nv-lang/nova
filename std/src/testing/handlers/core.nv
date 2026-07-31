@@ -157,8 +157,8 @@ fn splitmix64_step(seed u64) -> u64 {
 fn rotl64(x u64, k int) -> u64 =>
     (x << k) | (x >> (64 - k))
 
-/// xoshiro256++ Random handler, детерминированный по `seed`. Same seed → same sequence.
-/// Works for seed=0 (splitmix64 гарантирует non-zero state).
+/// xoshiro256++ Random handler, deterministic by `seed`. Same seed → same sequence.
+/// Works for seed=0 (splitmix64 guarantees non-zero state).
 ///
 /// # Examples
 /// ```nova
@@ -228,8 +228,8 @@ export fn seeded(seed u64) -> Effect[Random] {
 // Time — handler-фабрики
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `Time` handler с fixed timestamp. `sleep(d)` — no-op. Для тестов где
-/// продвижение времени не нужно (uuid v7, jwt exp checks).
+/// `Time` handler with a fixed timestamp. `sleep(d)` — no-op. For tests where
+/// time advancement is not needed (uuid v7, jwt exp checks).
 #stable(since = "0.1")
 export fn fixed_ms(ms u64) -> Effect[Time] {
     effect Time {
@@ -254,10 +254,10 @@ export fn fixed_ms(ms u64) -> Effect[Time] {
     }
 }
 
-/// `Time` handler с virtual mutable clock. `sleep(d)` продвигает время на d (no real wait).
-/// Для rate_limiter/retry/cron тестов — точная имитация прошедшего времени.
+/// `Time` handler with a virtual mutable clock. `sleep(d)` advances time by d (no real wait).
+/// For rate_limiter/retry/cron tests — an exact simulation of elapsed time.
 ///
-/// Sub-ms durations округляются floor.
+/// Sub-ms durations are rounded down (floor).
 #stable(since = "0.1")
 export fn mut_clock(start_ms u64) -> Effect[Time] {
     mut current_ms = start_ms

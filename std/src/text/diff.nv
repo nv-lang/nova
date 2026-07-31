@@ -7,16 +7,16 @@
 
 module text.diff
 
-/// Diff operation на один элемент: Equal (одинаков), Insert (только в b), Delete (только в a).
+/// Diff operation on one element: Equal (same), Insert (only in b), Delete (only in a).
 #stable(since = "0.1")
 export type DiffOp enum
     | Equal(str)
     | Insert(str)
     | Delete(str)
 
-/// Compute LCS-based diff между двумя `[]str`. O(NM) memory + time.
+/// Compute LCS-based diff between two `[]str`. O(NM) memory + time.
 ///
-/// Используется для CI snapshot tests (rejected, accepted, etc.).
+/// Used for CI snapshot tests (rejected, accepted, etc.).
 ///
 /// # Examples
 /// ```nova
@@ -71,7 +71,7 @@ export fn Diff.compute(a []str, b []str) -> []DiffOp {
     ops_rev
 }
 
-/// Pretty-print: `+` для Insert, `-` для Delete, ` ` для Equal. Newline-separated.
+/// Pretty-print: `+` for Insert, `-` for Delete, ` ` for Equal. Newline-separated.
 #stable(since = "0.1")
 export fn Diff.format(ops []DiffOp) -> str {
     consume buf = StringBuilder.new()

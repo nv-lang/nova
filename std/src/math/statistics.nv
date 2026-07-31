@@ -22,13 +22,13 @@
 
 module math.statistics
 
-/// Errors при stats-расчётах (empty input, invalid percentile).
+/// Errors in stats calculations (empty input, invalid percentile).
 #stable(since = "0.1")
 export type StatsError enum
     | EmptyInput
     | InvalidPercentile { value f64 }
 
-/// Arithmetic mean. `Err(EmptyInput)` для empty array.
+/// Arithmetic mean. `Err(EmptyInput)` for an empty array.
 #stable(since = "0.1")
 export fn Stats.mean(xs []f64) -> Result[f64, StatsError] {
     if xs.len() == 0 { return Err(EmptyInput) }
@@ -56,7 +56,7 @@ export fn Stats.variance(xs []f64) -> Result[f64, StatsError] {
 export fn Stats.stddev(xs []f64) -> Result[f64, StatsError] =>
     Ok(Stats.variance(xs)?.sqrt())
 
-/// Median (50th percentile). Sorts copy of xs внутри.
+/// Median (50th percentile). Sorts a copy of xs internally.
 #stable(since = "0.1")
 export fn Stats.median(xs []f64) -> Result[f64, StatsError] {
     if xs.len() == 0 { return Err(EmptyInput) }
@@ -69,7 +69,7 @@ export fn Stats.median(xs []f64) -> Result[f64, StatsError] {
     }
 }
 
-/// Percentile p ∈ [0, 100] с linear interpolation. `Err(InvalidPercentile)` если out of range.
+/// Percentile p ∈ [0, 100] with linear interpolation. `Err(InvalidPercentile)` if out of range.
 #stable(since = "0.1")
 export fn Stats.percentile(xs []f64, p f64) -> Result[f64, StatsError] {
     if xs.len() == 0 { return Err(EmptyInput) }
@@ -88,7 +88,7 @@ export fn Stats.percentile(xs []f64, p f64) -> Result[f64, StatsError] {
     }
 }
 
-/// Min и max за один pass — `(lo, hi)` tuple.
+/// Min and max in one pass — `(lo, hi)` tuple.
 #stable(since = "0.1")
 export fn Stats.min_max(xs []f64) -> Result[(f64, f64), StatsError] {
     if xs.len() == 0 { return Err(EmptyInput) }
@@ -133,7 +133,7 @@ fn sort_copy(xs []f64) -> []f64 {
 
 /// Streaming statistics accumulator (Welford's online algorithm).
 ///
-/// Stable variance computation для длинных streams без FP precision loss.
+/// Stable variance computation for long streams without FP precision loss.
 /// O(1) memory, O(1) per `add`.
 #stable(since = "0.1")
 export type StreamingStats {
@@ -155,7 +155,7 @@ export fn Stats.streaming() -> StreamingStats =>
         max_val: 0.0,
     }
 
-/// Add one value к accumulator. O(1).
+/// Add one value to the accumulator. O(1).
 #stable(since = "0.1")
 export fn StreamingStats mut @add(x f64) -> () {
     @count += 1
@@ -176,14 +176,14 @@ export fn StreamingStats mut @add(x f64) -> () {
 #stable(since = "0.1")
 export fn StreamingStats @count_value() -> i64 => @count
 
-/// Mean. `Err(EmptyInput)` если ничего не added.
+/// Mean. `Err(EmptyInput)` if nothing was added.
 #stable(since = "0.1")
 export fn StreamingStats @mean() -> Result[f64, StatsError] {
     if @count == 0 { return Err(EmptyInput) }
     Ok(@mean_val)
 }
 
-/// Sample variance (Welford'овский). `Err(EmptyInput)`.
+/// Sample variance (Welford's). `Err(EmptyInput)`.
 #stable(since = "0.1")
 export fn StreamingStats @variance() -> Result[f64, StatsError] {
     if @count == 0 { return Err(EmptyInput) }
