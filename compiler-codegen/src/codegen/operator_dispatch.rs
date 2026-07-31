@@ -88,23 +88,6 @@ pub(crate) fn unop_method_name(op: UnOp) -> Option<&'static str> {
     UNOP_TABLE.iter().find(|e| e.op == op).map(|e| e.method_name)
 }
 
-/// Back-compat thin wrapper (pre-unification name, still referenced by a
-/// couple of call-sites/tests): the THREE homogeneous bitwise ops only.
-pub(crate) fn bitop_method_name(op: BinOp) -> Option<&'static str> {
-    match op {
-        BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor => binop_method_name(op),
-        _ => None,
-    }
-}
-
-/// Back-compat thin wrapper: the TWO heterogeneous shift ops only.
-pub(crate) fn shift_method_name(op: BinOp) -> Option<&'static str> {
-    match op {
-        BinOp::Shl | BinOp::Shr => binop_method_name(op),
-        _ => None,
-    }
-}
-
 /// Outcome of resolving a table-driven binary operator dispatch for a heap
 /// `Nova_T*` (record/sum VALUE, single pointer) receiver.
 pub(crate) enum BinOpResolution {
@@ -202,24 +185,23 @@ pub(crate) fn resolve_binop_dispatch(
         }
         return BinOpResolution::NotFound;
     }
-    BinOpResolution::NotFound
-}
-
-/// [M-shl-shr-user-type-no-dispatch] back-compat alias: pre-unification name
-/// for `resolve_binop_dispatch` — kept so the shift call-site in `emit_c.rs`
-/// (and any external reference) can migrate in its own commit rather than
-/// changing both the resolver AND every call-site in a single diff.
-pub(crate) type ShiftResolution = BinOpResolution;
-
-pub(crate) fn resolve_shift_dispatch(
-    op: BinOp,
-    rty: &str,
-    recv_full: &str,
-    recv_short: &str,
-    overloads: Option<&[MethodSig]>,
-    mono_fn_decl: Option<FnDecl>,
-) -> ShiftResolution {
-    resolve_binop_dispatch(op, rty, recv_full, recv_short, overloads, mono_fn_decl)
+    // No `____` marker — non-generic (flat) receiver.
+    match entry.shape {
+        // Homogeneous flat receiver: the checker already guarantees the
+        // overload exists (it type-checked `Self op Self`), so no runtime
+        // `method_overloads` lookup is needed — emit the direct call. This
+        // is the SAME blind emission `+ * / % & | ^` always did pre-
+        // unification (byte-identical for every currently-passing flat
+        // case); now routed through this ONE resolver instead of being
+        // duplicated per operator at the call-site.
+        OperandShape::Homogeneous =>
+            BinOpResolution::Concrete(format!("{}_method_{}", recv_full, op_method)),
+        // Heterogeneous flat receiver with NO registered overload set at
+        // all (the `overloads` param was `None`) — nothing to dispatch to;
+        // leave to fall-through (would become invalid C, caught later).
+        // Matches the pre-unification `@minus`/shift behavior exactly.
+        OperandShape::Heterogeneous => BinOpResolution::NotFound,
+    }
 }
 
 /// План 234 Ф.2 — integer-promotion таблица эмиссии унарного `~` на
@@ -252,21 +234,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn bitop_names_match_d46() {
-        assert_eq!(bitop_method_name(BinOp::BitAnd), Some("bitand"));
-        assert_eq!(bitop_method_name(BinOp::BitOr), Some("bitor"));
-        assert_eq!(bitop_method_name(BinOp::BitXor), Some("bitxor"));
-        assert_eq!(bitop_method_name(BinOp::Add), None);
-    }
-
-    #[test]
-    fn shift_names_match_d46() {
-        assert_eq!(shift_method_name(BinOp::Shl), Some("shl"));
-        assert_eq!(shift_method_name(BinOp::Shr), Some("shr"));
-        assert_eq!(shift_method_name(BinOp::BitAnd), None);
-    }
-
-    #[test]
     fn binop_table_covers_arithmetic_bitwise_and_shift() {
         assert_eq!(binop_method_name(BinOp::Add), Some("plus"));
         assert_eq!(binop_method_name(BinOp::Sub), Some("minus"));
@@ -279,6 +246,33 @@ mod tests {
         assert_eq!(binop_method_name(BinOp::Shl), Some("shl"));
         assert_eq!(binop_method_name(BinOp::Shr), Some("shr"));
         assert_eq!(binop_method_name(BinOp::Eq), None);
+    }
+
+    #[test]
+    fn resolve_homogeneous_flat_receiver_emits_direct_call() {
+        // No `____` marker, no overloads passed in (checker already
+        // guaranteed the flat receiver has the overload) — Homogeneous ops
+        // (`+ * / % & | ^`) resolve to a direct call, mirroring the
+        // pre-unification blind emission exactly.
+        match resolve_binop_dispatch(BinOp::Add, "Nova_Duration", "Nova_Duration", "Duration", None, None) {
+            BinOpResolution::Concrete(c) => assert_eq!(c, "Nova_Duration_method_plus"),
+            _ => panic!("expected Concrete"),
+        }
+        match resolve_binop_dispatch(BinOp::BitOr, "Nova_SetX", "Nova_SetX", "SetX", None, None) {
+            BinOpResolution::Concrete(c) => assert_eq!(c, "Nova_SetX_method_bitor"),
+            _ => panic!("expected Concrete"),
+        }
+    }
+
+    #[test]
+    fn resolve_heterogeneous_flat_receiver_no_overloads_is_not_found() {
+        // Mirrors the pre-unification `@minus`/shift behavior: no
+        // registered overload SET at all (not even a mismatched one) and no
+        // `____` marker => NotFound, left for the caller's fall-through.
+        match resolve_binop_dispatch(BinOp::Sub, "nova_int", "Nova_Timestamp", "Timestamp", None, None) {
+            BinOpResolution::NotFound => {}
+            _ => panic!("expected NotFound"),
+        }
     }
 
     #[test]

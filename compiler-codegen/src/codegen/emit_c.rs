@@ -34164,150 +34164,51 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // by Monotonic.now() + Duration.
                     let type_name_sum_full = sty.trim_end_matches('*').to_string();
                     let type_name_sum = Self::debt_strip_nova_prefix_or_empty(&sty).trim_end_matches('*').to_string();
-                    // [M-generic-method-self-recursive-return] (Plan 186, recursive-mono):
-                    // the Plan 65 Ф.12 convention above (`Nova_<Type>_method_<op>`, WITH the
-                    // `Nova_` C-type prefix baked into the FUNCTION NAME) is correct for a
-                    // plain non-generic user type — but a MONO'D GENERIC instance's methods
-                    // are emitted WITHOUT that prefix on the function symbol
-                    // (`LinkedList____nova_int_method_plus`, not
-                    // `Nova_LinkedList____nova_int_method_plus` — mirrors every OTHER mono
-                    // method call site, e.g. `emit_monomorphized_method`'s `mono_name`).
-                    // `type_name_sum_full` blindly used the WITH-prefix form for BOTH cases
-                    // (Add/Mul/Div/Mod below never call `register_mono_method_instance` to
-                    // even establish which name is "real" — unlike the Sub/BitOr/BitAnd arms
-                    // further down, which do). Detected by the mono-name delimiter `____`
-                    // (same signal `debt_is_mono_nova_name` uses); a self-recursive `t + other`
-                    // inside a generic type's OWN `@plus` body (`LinkedList[T]@plus`) was the
-                    // concrete repro — linked against a symbol nothing ever emitted.
-                    let dispatch_type_name = if type_name_sum.contains("____") {
-                        &type_name_sum
-                    } else {
-                        &type_name_sum_full
-                    };
-                    // D46 operator overloading: Nova_T* + Nova_T* → Nova_T_method_plus(l, r).
-                    // GUARD ([M-153.5-flatten-nested-receiver]): `@plus` is binary
-                    // over two record/sum *values* — BOTH operands must be single
-                    // `Nova_X*` pointers. A `Nova_X* + int` is typed pointer
-                    // arithmetic over a `*mut Record` buffer (`data + n`, where
-                    // `data`'s element type `Record` lowers to a single `Nova_X*`),
-                    // NOT operator overload — fall through to the pointer-arithmetic
-                    // arm below. Without this, `@data + @len` over a `Vec[Record]`
-                    // buffer mis-dispatched to `Nova_X_method_plus(data, len)` with
-                    // an `int` second arg → segfault.
-                    if matches!(op, BinOp::Add)
-                        && is_single_nova_ptr(&lty)
-                        && is_single_nova_ptr(&rty)
+                    // [M-generic-method-self-recursive-return] (Plan 186, recursive-mono)
+                    // — was: a hand-picked `dispatch_type_name` (WITH-prefix for a plain
+                    // type, WITHOUT for a mono'd generic) worked around `+ * / %` never
+                    // calling `register_mono_method_instance` for a self-recursive
+                    // `t + other` inside a generic type's OWN `@plus` body, which linked
+                    // against a symbol nothing ever emitted. Plan opunify: EVERY table
+                    // operator (this included) now always registers its generic-mono
+                    // instance through `resolve_binop_dispatch`'s `GenericMono` arm below
+                    // — the self-recursive call resolves the SAME way, so the dedicated
+                    // workaround variable is no longer needed.
+                    // Plan opunify (BRIEF_opunify.md, D46 03-syntax.md): ONE
+                    // table-driven dispatch for ALL of `+ - * / % & | ^ << >>`
+                    // on a `Nova_T*` (record/sum value) receiver — was ten
+                    // separate copy-paste arms (plans 65/175/234/int128),
+                    // replaced by `operator_dispatch::BINOP_TABLE` +
+                    // `resolve_binop_dispatch`. Closes
+                    // [M-arith-binop-generic-receiver-no-mono-register]:
+                    // `+ * / %` previously had NO generic-mono branch at all
+                    // (only `- & | ^ << >>` did) — a generic receiver
+                    // (`Set[T]`-class) whose ONLY caller of `@plus`/`@times`/
+                    // `@div`/`@rem` was the operator form linked with an
+                    // undefined symbol (mono body never registered).
+                    if let Some(entry) = super::operator_dispatch::BINOP_TABLE
+                        .iter().find(|e| e.op == *op)
                     {
-                        return Ok(format!("{}_method_plus({}, {})", dispatch_type_name, l, r));
-                    }
-                    // D46: dispatch `*` to @times method when both operands are Nova_T*.
-                    // Same guard as @plus: both must be single Nova_T* pointers so we don't
-                    // mis-dispatch pointer arithmetic (e.g. buffer * int) to _method_times.
-                    if matches!(op, BinOp::Mul)
-                        && is_single_nova_ptr(&lty)
-                        && is_single_nova_ptr(&rty)
-                    {
-                        return Ok(format!("{}_method_times({}, {})", dispatch_type_name, l, r));
-                    }
-                    // D46: dispatch `/` to @div method when both operands are Nova_T*.
-                    if matches!(op, BinOp::Div)
-                        && is_single_nova_ptr(&lty)
-                        && is_single_nova_ptr(&rty)
-                    {
-                        return Ok(format!("{}_method_div({}, {})", dispatch_type_name, l, r));
-                    }
-                    // План 234 Ф.1 (codegen/operator_dispatch.rs): Bit* на плоском
-                    // record'е — та же схема, что @plus/@times (было: сырой C).
-                    // Гард `____` (приёмка 234): mono-имя генерика обязано пройти в
-                    // generic-ветку ниже (register_mono_method_instance) — здесь вызов
-                    // эмитился без тела (undefined symbol на `Set[int] | Set[int]`).
-                    if !type_name_sum.contains("____") && is_single_nova_ptr(&lty) && is_single_nova_ptr(&rty) {
-                        if let Some(op_method) = super::operator_dispatch::bitop_method_name(*op) {
-                            return Ok(format!("{}_method_{}({}, {})", dispatch_type_name, op_method, l, r));
-                        }
-                    }
-                    // D46: dispatch `%` to @rem method when both operands are Nova_T*.
-                    if matches!(op, BinOp::Mod)
-                        && is_single_nova_ptr(&lty)
-                        && is_single_nova_ptr(&rty)
-                    {
-                        return Ok(format!("{}_method_rem({}, {})", dispatch_type_name, l, r));
-                    }
-                    // Plan 65 Ф.12 / D124: dispatch `-` to the receiver's
-                    // _method_minus for record types (Duration, Timestamp,
-                    // Monotonic). Validate that the receiver has a registered
-                    // @minus overload for the operand type — without this
-                    // check, D124's "no cross-clock arithmetic" guarantee
-                    // would be silently bypassed (Timestamp - Monotonic
-                    // would dispatch to Timestamp.@minus(Duration)
-                    // because of struct-pointer compatibility in C).
-                    if matches!(op, BinOp::Sub) && lty.starts_with("Nova_") && lty.ends_with('*') {
-                        let recv_full = lty.trim_end_matches('*').to_string();
-                        let recv_short = Self::debt_strip_nova_trim_start_bare(&recv_full);
-                        // Look up registered @minus overloads on receiver.
-                        let key = (recv_short.clone(), "minus".to_string());
-                        let overloads = self.method_overloads.get(&key).cloned();
-                        if let Some(sigs) = overloads {
-                            // Find an overload whose only parameter type
-                            // matches rty exactly.
-                            let matching = sigs.iter().find(|s| {
-                                s.is_instance
-                                    && s.param_c_types.len() == 1
-                                    && s.param_c_types[0] == rty
-                            });
-                            if let Some(sig) = matching {
-                                return Ok(format!("{}({}, {})", sig.c_name, l, r));
-                            }
-                            // No overload matches the operand type — this is
-                            // a D124 type-system rejection point.
-                            return Err(format!(
-                                "binop `-`: no @minus overload on {} taking {} \
-                                 (Plan 65 / D124: prevents silent cross-clock \
-                                 arithmetic). Available overloads: {}",
-                                recv_short,
-                                rty,
-                                sigs.iter()
-                                    .filter(|s| s.is_instance && s.param_c_types.len() == 1)
-                                    .map(|s| s.param_c_types[0].clone())
-                                    .collect::<Vec<_>>()
-                                    .join(", ")
-                            ));
-                        }
-                        // D46: @minus for generic types (e.g. Set[T].minus) when method_overloads
-                        // has no concrete mono'd entry (erased key is base type, not mono'd).
-                        if let Some(idx) = recv_short.find("____") {
-                            let base_type = recv_short[..idx].to_string();
-                            let mono_args = &recv_short[idx + 4..];
-                            let mk = (base_type, "minus".to_string());
-                            if let Some(fn_decl) = self.self_method_decls.get(&mk).cloned() {
-                                let mono_parts: Vec<String> = mono_args.split("__").map(|s| s.to_string()).collect();
-                                let recv_generics: Vec<String> = fn_decl.receiver.as_ref()
-                                    .map(|r| r.generics.iter().filter_map(|tr| {
-                                        if let TypeRef::Named { path, .. } = tr { path.first().cloned() } else { None }
-                                    }).collect::<Vec<_>>())
-                                    .unwrap_or_default();
-                                if recv_generics.len() == mono_parts.len() {
-                                    let type_subst: Vec<(String, String)> = recv_generics.into_iter().zip(mono_parts).collect();
-                                    let mono_name = format!("{}_method_minus", recv_full);
-                                    self.register_mono_method_instance(&fn_decl, type_subst, &mono_name, &recv_short);
-                                    return Ok(format!("{}({}, {})", mono_name, l, r));
-                                }
-                            }
-                        }
-                        // No @minus registered — leave to fall-through (would
-                        // become invalid C, caught later).
-                    }
-                    // [M-shl-shr-user-type-no-dispatch]: `<<`/`>>` on a user
-                    // type (raw C over `Nova_T*` was a CC-FAIL). Mirrors
-                    // `@minus` above, not the Bit* fast-path below (`@shl`/
-                    // `@shr` take heterogeneous `n int`). Thin call-site —
-                    // algorithm in `operator_dispatch::resolve_shift_dispatch`.
-                    if matches!(op, BinOp::Shl | BinOp::Shr)
-                        && lty.starts_with("Nova_") && lty.ends_with('*')
-                    {
-                        if let Some(op_method) = super::operator_dispatch::shift_method_name(*op) {
-                            let recv_full = lty.trim_end_matches('*').to_string();
-                            let recv_short = Self::debt_strip_nova_trim_start_bare(&recv_full).to_string();
+                        // GUARD ([M-153.5-flatten-nested-receiver], mirrors
+                        // the historical per-op guards): Homogeneous ops
+                        // (`+ * / % & | ^`) are binary over two record/sum
+                        // *values* — BOTH operands must be single `Nova_X*`
+                        // pointers, else this is typed pointer arithmetic
+                        // over a `*mut Record` buffer (`data + n`), NOT
+                        // operator overload — fall through to the pointer-
+                        // arithmetic arm below. Heterogeneous ops (`- << >>`)
+                        // only require the LEFT operand be a receiver — the
+                        // RHS may legitimately differ (`Duration`, `int`).
+                        let shape_ok = match entry.shape {
+                            super::operator_dispatch::OperandShape::Homogeneous =>
+                                is_single_nova_ptr(&lty) && is_single_nova_ptr(&rty),
+                            super::operator_dispatch::OperandShape::Heterogeneous =>
+                                lty.starts_with("Nova_") && lty.ends_with('*'),
+                        };
+                        if shape_ok {
+                            let op_method = entry.method_name;
+                            let recv_full = type_name_sum_full.clone();
+                            let recv_short = type_name_sum.clone();
                             let overloads = self.method_overloads
                                 .get(&(recv_short.clone(), op_method.to_string())).cloned();
                             let mono_fn_decl = recv_short.find("____").and_then(|idx| {
@@ -34315,47 +34216,24 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     .get(&(recv_short[..idx].to_string(), op_method.to_string()))
                                     .cloned()
                             });
-                            match super::operator_dispatch::resolve_shift_dispatch(
+                            match super::operator_dispatch::resolve_binop_dispatch(
                                 *op, &rty, &recv_full, &recv_short,
                                 overloads.as_deref(), mono_fn_decl,
                             ) {
-                                super::operator_dispatch::ShiftResolution::Concrete(c_name) => {
+                                super::operator_dispatch::BinOpResolution::Concrete(c_name) => {
                                     return Ok(format!("{}({}, {})", c_name, l, r));
                                 }
-                                super::operator_dispatch::ShiftResolution::GenericMono {
+                                super::operator_dispatch::BinOpResolution::GenericMono {
                                     fn_decl, type_subst, mono_name,
                                 } => {
                                     self.register_mono_method_instance(
                                         &fn_decl, type_subst, &mono_name, &recv_short);
                                     return Ok(format!("{}({}, {})", mono_name, l, r));
                                 }
-                                super::operator_dispatch::ShiftResolution::NoMatchingOverload(msg) => {
+                                super::operator_dispatch::BinOpResolution::NoMatchingOverload(msg) => {
                                     return Err(msg);
                                 }
-                                super::operator_dispatch::ShiftResolution::NotFound => {}
-                            }
-                        }
-                    }
-                    // План 234 Ф.1 (codegen/operator_dispatch.rs): generic Bit*
-                    // dispatch (RETRACT @or/@and/@xor), `BitXor` — новый.
-                    if let Some(op_method) = super::operator_dispatch::bitop_method_name(*op) {
-                        if let Some(idx) = type_name_sum.find("____") {
-                            let base_type = type_name_sum[..idx].to_string();
-                            let mono_args = &type_name_sum[idx + 4..];
-                            let mk = (base_type, op_method.to_string());
-                            if let Some(fn_decl) = self.self_method_decls.get(&mk).cloned() {
-                                let mono_parts: Vec<String> = mono_args.split("__").map(|s| s.to_string()).collect();
-                                let recv_generics: Vec<String> = fn_decl.receiver.as_ref()
-                                    .map(|r| r.generics.iter().filter_map(|tr| {
-                                        if let TypeRef::Named { path, .. } = tr { path.first().cloned() } else { None }
-                                    }).collect::<Vec<_>>())
-                                    .unwrap_or_default();
-                                if recv_generics.len() == mono_parts.len() {
-                                    let type_subst: Vec<(String, String)> = recv_generics.into_iter().zip(mono_parts).collect();
-                                    let mono_name = format!("{}_method_{}", type_name_sum_full, op_method);
-                                    self.register_mono_method_instance(&fn_decl, type_subst, &mono_name, &type_name_sum);
-                                    return Ok(format!("{}({}, {})", mono_name, l, r));
-                                }
+                                super::operator_dispatch::BinOpResolution::NotFound => {}
                             }
                         }
                     }
@@ -34647,14 +34525,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // D46/D215: unary `-` → @neg, `!` → @not on custom types.
                 // План 234 Ф.2: `~` → @bitnot joins (сид "bitnot" — lints.rs).
                 // Dispatch by operand C-type: NovaTuple_T (value ABI) or Nova_T* (ref ABI).
-                if matches!(op, UnOp::Neg | UnOp::Not | UnOp::BitNot) {
+                if let Some(method_name) = super::operator_dispatch::unop_method_name(*op) {
                     let operand_ty = self.infer_expr_c_type(operand);
-                    let method_name = match op {
-                        UnOp::Neg => "neg",
-                        UnOp::Not => "not",
-                        UnOp::BitNot => "bitnot",
-                        _ => unreachable!(),
-                    };
                     // Plan 175 Ф.1b/Ф.3: value-record (`NovaValue_X`) unary `@neg`/
                     // `@not` — receiver ABI is `NovaValue_X*`, so route through a
                     // by-value wrapper (rvalue-safe), mirror of the binary case.

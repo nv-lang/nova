@@ -1,0 +1,38 @@
+// Plan opunify (BRIEF_opunify.md, owner decision 2026-08-01): closes
+// [M-arith-binop-generic-receiver-no-mono-register]. `+ * / %` on a
+// GENERIC receiver dispatched through the flat record fast-path (raw
+// `format!("{}_method_plus", ...)`), which emitted the call but NEVER
+// registered the mono instance — same class of bug plan 234 closed for
+// `&`/`|` (`m234_set_bitor_generic_mono.nv`) and int128-связка closed for
+// `<<`/`>>` (`m128_shl_shr_user_type_pos.nv`): `undefined symbol:
+// MOpuArithBox____nova_int_method_plus` at link when the operator form is
+// the ONLY caller of `@plus`/`@minus`/`@times`/`@div`/`@rem` for that
+// instantiation. `codegen/operator_dispatch.rs`'s `resolve_binop_dispatch`
+// now shares ONE generic-mono arm across every `BINOP_TABLE` entry, so
+// `+ * / %` get `register_mono_method_instance` for free — this fixture
+// pins the generic-receiver path end-to-end (compile, link, run, assert)
+// for all five arithmetic operators, mirroring the Bit*/shift fixtures.
+module spec_tests.conformance
+
+type MOpuArithBox[T] { m_opu_v T, m_opu_n int }
+
+export fn MOpuArithBox[T] @plus(m_opu_other MOpuArithBox[T]) -> MOpuArithBox[T] =>
+    { @m_opu_v, m_opu_n: @m_opu_n + m_opu_other.m_opu_n }
+export fn MOpuArithBox[T] @minus(m_opu_other MOpuArithBox[T]) -> MOpuArithBox[T] =>
+    { @m_opu_v, m_opu_n: @m_opu_n - m_opu_other.m_opu_n }
+export fn MOpuArithBox[T] @times(m_opu_other MOpuArithBox[T]) -> MOpuArithBox[T] =>
+    { @m_opu_v, m_opu_n: @m_opu_n * m_opu_other.m_opu_n }
+export fn MOpuArithBox[T] @div(m_opu_other MOpuArithBox[T]) -> MOpuArithBox[T] =>
+    { @m_opu_v, m_opu_n: @m_opu_n / m_opu_other.m_opu_n }
+export fn MOpuArithBox[T] @rem(m_opu_other MOpuArithBox[T]) -> MOpuArithBox[T] =>
+    { @m_opu_v, m_opu_n: @m_opu_n % m_opu_other.m_opu_n }
+
+test "opunify: + - * / % on a generic-mono receiver (MOpuArithBox[T]-class) — closes M-arith-binop-generic-receiver-no-mono-register" {
+    ro m_opu_a MOpuArithBox[int] = { m_opu_v: 0, m_opu_n: 20 }
+    ro m_opu_b MOpuArithBox[int] = { m_opu_v: 0, m_opu_n: 6 }
+    assert((m_opu_a + m_opu_b).m_opu_n == 26)
+    assert((m_opu_a - m_opu_b).m_opu_n == 14)
+    assert((m_opu_a * m_opu_b).m_opu_n == 120)
+    assert((m_opu_a / m_opu_b).m_opu_n == 3)
+    assert((m_opu_a % m_opu_b).m_opu_n == 2)
+}
