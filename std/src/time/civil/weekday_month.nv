@@ -9,7 +9,7 @@ module time.civil
 // Weekday — день недели (ISO 1..7, Mon=1)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// День недели, ISO-8601: Mon=1 .. Sun=7.
+/// A day of the week, ISO-8601: Mon=1 .. Sun=7.
 #stable(since = "0.1")
 export type Weekday enum
     | Mon
@@ -20,14 +20,14 @@ export type Weekday enum
     | Sat
     | Sun
 
-/// ISO-номер дня недели (Mon=1 .. Sun=7).
+/// The ISO weekday number (Mon=1 .. Sun=7).
 #stable(since = "0.1")
 export fn Weekday @number() -> int =>
     match @ {
         Mon => 1, Tue => 2, Wed => 3, Thu => 4, Fri => 5, Sat => 6, Sun => 7,
     }
 
-/// Weekday из ISO-номера 1..7 → `Err(InvalidField(Weekday, ...))` вне диапазона.
+/// A Weekday from an ISO number 1..7 → `Err(InvalidField(Weekday, ...))` outside the range.
 #stable(since = "0.1")
 export fn Weekday.from_number(n int) -> Result[Weekday, DateError] =>
     match n {
@@ -36,7 +36,7 @@ export fn Weekday.from_number(n int) -> Result[Weekday, DateError] =>
         _ => Err(InvalidField(FieldKind.Weekday, n as i64, 1, 7)),
     }
 
-/// Следующий день недели (циклично: Sun → Mon).
+/// The next weekday (cyclically: Sun → Mon).
 #stable(since = "0.1")
 export fn Weekday @next() -> Weekday =>
     match @ {
@@ -44,7 +44,7 @@ export fn Weekday @next() -> Weekday =>
         Fri => Sat, Sat => Sun, Sun => Mon,
     }
 
-/// Предыдущий день недели (циклично: Mon → Sun).
+/// The previous weekday (cyclically: Mon → Sun).
 #stable(since = "0.1")
 export fn Weekday @prev() -> Weekday =>
     match @ {
@@ -52,7 +52,7 @@ export fn Weekday @prev() -> Weekday =>
         Fri => Thu, Sat => Fri, Sun => Sat,
     }
 
-/// Английское трёхбуквенное имя ("Mon".."Sun") — ASCII, локаль вне scope (i18n followup).
+/// English three-letter name ("Mon".."Sun") — ASCII, locale out of scope (i18n followup).
 #stable(since = "0.1")
 export fn Weekday @to_str() -> str =>
     match @ {
@@ -60,7 +60,7 @@ export fn Weekday @to_str() -> str =>
         Fri => "Fri", Sat => "Sat", Sun => "Sun",
     }
 
-/// Compare по ISO-номеру (Mon < Sun).
+/// Compare by ISO number (Mon < Sun).
 #stable(since = "0.1")
 export fn Weekday @compare(other Weekday) -> int {
     ro a = @number()
@@ -72,7 +72,7 @@ export fn Weekday @compare(other Weekday) -> int {
 // Month — месяц (1..12, Jan=1)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Месяц григорианского календаря: Jan=1 .. Dec=12.
+/// A month of the Gregorian calendar: Jan=1 .. Dec=12.
 #stable(since = "0.1")
 export type Month enum
     | Jan
@@ -88,7 +88,7 @@ export type Month enum
     | Nov
     | Dec
 
-/// Номер месяца (Jan=1 .. Dec=12).
+/// The month number (Jan=1 .. Dec=12).
 #stable(since = "0.1")
 export fn Month @number() -> int =>
     match @ {
@@ -96,7 +96,7 @@ export fn Month @number() -> int =>
         Jul => 7,  Aug => 8,  Sep => 9,  Oct => 10, Nov => 11, Dec => 12,
     }
 
-/// Month из номера 1..12 → `Err(InvalidField(Month, ...))` вне диапазона.
+/// A Month from a number 1..12 → `Err(InvalidField(Month, ...))` outside the range.
 #stable(since = "0.1")
 export fn Month.from_number(n int) -> Result[Month, DateError] =>
     match n {
@@ -106,7 +106,7 @@ export fn Month.from_number(n int) -> Result[Month, DateError] =>
         _ => Err(InvalidField(FieldKind.Month, n as i64, 1, 12)),
     }
 
-/// Следующий месяц (циклично: Dec → Jan).
+/// The next month (cyclically: Dec → Jan).
 #stable(since = "0.1")
 export fn Month @next() -> Month =>
     match @ {
@@ -114,7 +114,7 @@ export fn Month @next() -> Month =>
         Jul => Aug, Aug => Sep, Sep => Oct, Oct => Nov, Nov => Dec, Dec => Jan,
     }
 
-/// Предыдущий месяц (циклично: Jan → Dec).
+/// The previous month (cyclically: Jan → Dec).
 #stable(since = "0.1")
 export fn Month @prev() -> Month =>
     match @ {
@@ -122,7 +122,7 @@ export fn Month @prev() -> Month =>
         Jul => Jun, Aug => Jul, Sep => Aug, Oct => Sep, Nov => Oct, Dec => Nov,
     }
 
-/// Длина месяца в днях; `leap` — високосный ли год (важно только для Feb).
+/// Length of the month in days; `leap` — whether the year is a leap year (relevant only for Feb).
 #stable(since = "0.1")
 export fn Month @length(leap bool) -> int =>
     match @ {
@@ -132,7 +132,7 @@ export fn Month @length(leap bool) -> int =>
         Oct => 31, Nov => 30, Dec => 31,
     }
 
-/// Английское трёхбуквенное имя ("Jan".."Dec") — ASCII, локаль вне scope.
+/// English three-letter name ("Jan".."Dec") — ASCII, locale out of scope.
 #stable(since = "0.1")
 export fn Month @to_str() -> str =>
     match @ {
@@ -141,7 +141,7 @@ export fn Month @to_str() -> str =>
         Sep => "Sep", Oct => "Oct", Nov => "Nov", Dec => "Dec",
     }
 
-/// Compare по номеру (Jan < Dec).
+/// Compare by number (Jan < Dec).
 #stable(since = "0.1")
 export fn Month @compare(other Month) -> int {
     ro a = @number()

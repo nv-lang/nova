@@ -147,7 +147,7 @@ fn expect_end(s str, pos int) -> Result[(), ParseDateTimeError] =>
 // Публичные str-конверсии (§1а)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `"2026-07-10".to_date()` — ISO-8601 календарная дата (strict).
+/// `"2026-07-10".to_date()` — ISO-8601 calendar date (strict).
 ///
 /// # Examples
 /// ```nova
@@ -160,7 +160,7 @@ export fn str @to_date() -> Result[Date, ParseDateTimeError] {
     Ok(d)
 }
 
-/// `"14:30:05.250".to_time_of_day()` — ISO-8601 время суток (strict;
+/// `"14:30:05.250".to_time_of_day()` — ISO-8601 time of day (strict;
 /// `:60` → clamp `:59`).
 #stable(since = "0.1")
 export fn str @to_time_of_day() -> Result[TimeOfDay, ParseDateTimeError] {
@@ -169,8 +169,8 @@ export fn str @to_time_of_day() -> Result[TimeOfDay, ParseDateTimeError] {
     Ok(t)
 }
 
-/// `"2026-07-10T14:30:00".to_datetime()` — plain ISO-8601 (strict, БЕЗ
-/// offset/zone: plain-тип не точка на оси, D319 R1).
+/// `"2026-07-10T14:30:00".to_datetime()` — plain ISO-8601 (strict, NO
+/// offset/zone: the plain type is not a point on the axis, D319 R1).
 #stable(since = "0.1")
 export fn str @to_datetime() -> Result[DateTime, ParseDateTimeError] {
     ro (d, p1) = date_at(@, 0)?
@@ -180,8 +180,8 @@ export fn str @to_datetime() -> Result[DateTime, ParseDateTimeError] {
     Ok(d.at(t))
 }
 
-/// `"2026-07-10T11:30:00Z".to_timestamp()` — RFC-3339 момент (strict).
-/// Вне окна ±292y → `InvalidValue(Year)`.
+/// `"2026-07-10T11:30:00Z".to_timestamp()` — an RFC-3339 instant (strict).
+/// Outside the ±292y window → `InvalidValue(Year)`.
 #stable(since = "0.1")
 export fn str @to_timestamp() -> Result[Timestamp, ParseDateTimeError] {
     ro (d, p1) = date_at(@, 0)?
@@ -200,14 +200,15 @@ export fn str @to_timestamp() -> Result[Timestamp, ParseDateTimeError] {
 }
 
 /// RFC-9557: `"...T14:30:00-04:00[America/New_York]".to_zoned_datetime()`.
-/// STRICT (Q9): offset И `[zone]`-bracket обязательны; рассогласование
-/// offset↔правила зоны → `Err` (default `RejectMismatch`). Политики
-/// Use/Prefer/Ignore — перегрузка с явным `OffsetConflict`.
+/// STRICT (Q9): the offset AND the `[zone]` bracket are required; a
+/// mismatch between offset↔zone rules → `Err` (default `RejectMismatch`).
+/// The Use/Prefer/Ignore policies — an overload with an explicit
+/// `OffsetConflict`.
 #stable(since = "0.1")
 export fn str @to_zoned_datetime() -> Result[ZonedDateTime, ParseDateTimeError] =>
     @to_zoned_datetime(RejectMismatch)
 
-/// Полная форма с политикой `OffsetConflict` (D321 R2).
+/// Full form with the `OffsetConflict` policy (D321 R2).
 #stable(since = "0.1")
 export fn str @to_zoned_datetime(conflict OffsetConflict) -> Result[ZonedDateTime, ParseDateTimeError] {
     ro (d, p1) = date_at(@, 0)?
@@ -268,8 +269,8 @@ export fn str @to_zoned_datetime(conflict OffsetConflict) -> Result[ZonedDateTim
     }
 }
 
-/// `"P1Y2M3D".to_period()` — ISO-8601 период (+ `PnW` недели; знак
-/// компонентов: `P-1M`).
+/// `"P1Y2M3D".to_period()` — ISO-8601 period (+ `PnW` weeks; the sign of
+/// components: `P-1M`).
 #stable(since = "0.1")
 export fn str @to_period() -> Result[Period, ParseDateTimeError] {
     mut pos = expect_at(@, 0, "P")?
@@ -309,8 +310,8 @@ export fn str @to_period() -> Result[Period, ParseDateTimeError] {
 // Timestamp: RFC-3339 display (закрывает зависимость 175 full-datetime)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// RFC-3339 каноническая форма (UTC): `2026-07-10T11:30:00Z` /
-/// с дробью `...T11:30:00.250Z`.
+/// RFC-3339 canonical form (UTC): `2026-07-10T11:30:00Z` /
+/// with a fraction `...T11:30:00.250Z`.
 #stable(since = "0.1")
 export fn Timestamp @to_rfc3339() -> str {
     ro z = @to_zoned(Utc)

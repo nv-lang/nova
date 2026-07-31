@@ -17,8 +17,8 @@
 
 module time.civil
 
-/// Версия embedded curated-таблицы (D321 §tzdb: expose tzdb-version).
-/// Реальный TZif-файл (load_timezone) актуален версии OS-tzdata.
+/// Version of the embedded curated table (D321 §tzdb: expose tzdb-version).
+/// A real TZif file (load_timezone) follows the OS-tzdata version.
 #stable(since = "0.1")
 export fn tzdb_version() -> str => "nova-curated-2026a"
 
@@ -126,14 +126,14 @@ fn parse_offset_str(s str) -> Option[int] {
     Some(sign * sec)
 }
 
-/// Конверсия строки в таймзону (§1а — метод на источнике, зеркально
+/// String-to-timezone conversion (§1а — a method on the source, mirroring
 /// `s.to_url()`/`s.to_cron()`):
 ///
 /// - `"UTC"` / `"Etc/UTC"` / `"Z"` → `Utc`;
 /// - `"+05:30"` / `"-08:00"` / `"+02:30:17"` → `Fixed`;
-/// - curated IANA-имена (`America/New_York`, `Europe/London`,
-///   `Europe/Moscow`, `Australia/Sydney`) → `Iana` с rule-based правилами;
-/// - иначе → `Err(UnknownZone)` (полный список зон — TZif на POSIX,
+/// - curated IANA names (`America/New_York`, `Europe/London`,
+///   `Europe/Moscow`, `Australia/Sydney`) → `Iana` with rule-based rules;
+/// - otherwise → `Err(UnknownZone)` (the full zone list — TZif on POSIX,
 ///   [`load_timezone`]; snapshot — [M-175.1-full-tzdb-embed]).
 ///
 /// # Examples

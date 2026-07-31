@@ -114,8 +114,8 @@ fn parse_tzif_block(b []u8, pos0 int, h TzifHeader, time_size int) -> Result[Zon
     Ok({ transitions, offsets })
 }
 
-/// Raw-TZif-bytes loader (RFC 8536 v1/v2/v3): `id` — идентичность зоны
-/// (round-trip RFC-9557), `bytes` — содержимое TZif-файла.
+/// Raw TZif-bytes loader (RFC 8536 v1/v2/v3): `id` — the zone identity
+/// (round-trip RFC-9557), `bytes` — the TZif file contents.
 #stable(since = "0.1")
 export fn TimeZone.from_tzif(id str, bytes []u8) -> Result[TimeZone, DateError] {
     ro h1 = parse_tzif_header(bytes, 0)?
@@ -138,11 +138,11 @@ export fn TimeZone.from_tzif(id str, bytes []u8) -> Result[TimeZone, DateError] 
 // OS-tzdata-first загрузчик
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Загрузка зоны по имени: `$ZONEINFO`-override → `/usr/share/zoneinfo`
-/// (POSIX) → embedded curated-таблица (`s.to_timezone()`). На Windows
-/// OS-каталога нет — работает embedded (D321 §tzdb).
+/// Load a zone by name: `$ZONEINFO` override → `/usr/share/zoneinfo`
+/// (POSIX) → embedded curated table (`s.to_timezone()`). On Windows there is
+/// no OS catalog — the embedded one is used (D321 §tzdb).
 ///
-/// Эффекты: `Fs` (чтение TZif) + `Os` (env `$ZONEINFO`) — мокабельны.
+/// Effects: `Fs` (TZif read) + `Os` (env `$ZONEINFO`) — mockable.
 #stable(since = "0.1")
 export fn load_timezone(name str) Fs Os -> Result[TimeZone, DateError] {
     // 1. $ZONEINFO override
