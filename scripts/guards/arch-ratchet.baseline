@@ -328,5 +328,10 @@
 # codegen/bitwise_ops.rs::resolve_shift_dispatch (вне метрики), в emit_c
 # только чтения self-таблиц. Чекер-часть волны (Unary receiver) — в
 # types/mod.rs, метрику не трогает; infer=349 без изменений.
-lines=63901
+# 2026-08-01 (унификация операторов, окно p-operator-unify): 63901 -> 63773
+# (МИНУС 128). Десять раздельных D46-арм + мёртвый dispatch_type_name-workaround
+# заменены одной таблицей BINOP_TABLE/UNOP_TABLE и общим резолвером в
+# codegen/operator_dispatch.rs (вне метрики); baseline ОПУЩЕН — выигрыш
+# зафиксирован храповиком.
+lines=63773
 infer=349
