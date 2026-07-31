@@ -89,7 +89,7 @@ pub fn lint_module(m: &Module) -> Vec<LintWarning> {
                         rule: "bench-empty-measure",
                         diag: crate::diag::Diagnostic::new(
                             format!("bench \"{}\": empty `measure` block — no work \
-                                     to measure, results will reflect только overhead",
+                                     to measure, results will reflect only overhead",
                                 b.name),
                             b.measure_body.span,
                         ),
@@ -390,7 +390,7 @@ fn walk_expr_for_cancel_unsafe(
                                  cancel-shield (e.g., closes/frees that complete bounded \
                                  time, does not acquire shared locks), add `#cancel_safe` \
                                  to its `external fn` declaration. Otherwise wrap the \
-                                 call в a separate fiber spawned before the consume \
+                                 call in a separate fiber spawned before the consume \
                                  scope.",
                                 name, name
                             ),
@@ -549,12 +549,12 @@ fn walk_typeref_for_a22(tr: &TypeRef, warnings: &mut Vec<LintWarning>) {
             rule: "W_OPTION_DOUBLE_NESTED",
             diag: Diagnostic::new(
                 "[W_OPTION_DOUBLE_NESTED] `Option[Option[*T|ptr]]` nested Option \
-                 ambiguous под NPO codegen (Plan 118 D216 §7). Inner Option benefits \
-                 from NPO (single-pointer layout); outer Option falls в tagged repr \
-                 (inner c_ty = struct, не pointer). Semantically `None` vs \
-                 `Some(None)` оба distinct legal states но difficult к distinguish. \
-                 Suggest: либо collapse к `Option[*T]` (если both-None semantics \
-                 не distinguishable), либо `Result[*T, E]` для distinct \
+                 ambiguous under NPO codegen (Plan 118 D216 §7). Inner Option benefits \
+                 from NPO (single-pointer layout); outer Option falls back to tagged repr \
+                 (inner c_ty = struct, not pointer). Semantically `None` vs \
+                 `Some(None)` are both distinct legal states but difficult to distinguish. \
+                 Suggest: either collapse to `Option[*T]` (if both-None semantics \
+                 are not distinguishable), or `Result[*T, E]` for distinct \
                  \"absent\" vs \"error\" cases.".to_string(),
                 span,
             ),
@@ -681,8 +681,30 @@ fn lint_unused_imports(m: &Module) -> Vec<LintWarning> {
         // Pre-resolution / single-file без populated peer_files — flat.
         check_imports_unused(&m.imports, &m.items, &mut warnings);
     } else {
-        // Per-peer (Plan 42.15 Rule C — импорты изолированы по peer'ам).
-        for pf in &m.peer_files {
+        // Per-peer (Plan 42.15 Rule C — импорты изолированы по peer'ам),
+        // но ТОЛЬКО ENTRY-модуля собственные co-equal peer'ы
+        // (`pf.is_entry_module`) — [M-lint-phantom-prelude-unused-import]
+        // (владелец 2026-07-31, репро nova-bigint/src/bigint.nv).
+        //
+        // `m.peer_files` после `resolve_imports_inline_ex` — это ПОЛНЫЙ
+        // транзитивный import-граф, инлайненный в один `Module` для
+        // cross-file type-check (каждый транзитивно затянутый модуль —
+        // включая `std.collections.vec`/`hashmap`/`set`/`raw_mem` через
+        // авто-prelude — пушит СВОИ peer-файлы в тот же плоский вектор,
+        // см. `imports.rs::resolve_imports_inline_ex`). Без фильтра этот
+        // цикл линтовал unused-import ЧУЖИХ модулей (их собственная
+        // импорт-гигиена — забота ИХ ЛИНТА, не файла, который их всего
+        // лишь транзитивно использует) и вешал находки на спаны entry-
+        // файла: имена вроде `Vec`/`HashMap`/`RawMem`/`VecIter`/`Set`
+        // (prelude-реэкспорт → `std/collections/vec/*.nv` и соседи), КОТОРЫХ
+        // проверяемый файл вообще не импортирует, репортились как «unused
+        // import» этого файла — 7 фантомов на `bigint.nv`, при этом файл
+        // не импортирует НИ ОДНО из них (см. маркер).
+        //
+        // `is_entry_module` уже ровно этот фильтр в соседних lint-проходах
+        // (`collect_prelude_visibility`-consumer выше, `escape_analyze.rs`)
+        // — тот же идиом, применяем его и здесь.
+        for pf in m.peer_files.iter().filter(|pf| pf.is_entry_module) {
             check_imports_unused(&pf.imports, &pf.items_here, &mut warnings);
         }
     }
@@ -1720,8 +1742,8 @@ fn check_bench_expr(e: &Expr, bench_name: &str, out: &mut Vec<LintWarning>) {
                         rule: "bench-sleep-in-measure",
                         diag: crate::diag::Diagnostic::new(
                             format!("bench \"{}\": `{}.{}(...)` inside `measure` block — \
-                                     sleep dominates timing noise; consider exempt в bench.toml \
-                                     или move в setup", bench_name, recv, method),
+                                     sleep dominates timing noise; consider exempt in bench.toml \
+                                     or move to setup", bench_name, recv, method),
                             e.span,
                         ),
                     });
@@ -1747,8 +1769,8 @@ fn check_bench_expr(e: &Expr, bench_name: &str, out: &mut Vec<LintWarning>) {
                             rule: "bench-opaque-literal",
                             diag: crate::diag::Diagnostic::new(
                                 format!("bench \"{}\": `bench.opaque(<literal>)` — \
-                                         barrier no-op на constant literals; opaque нужен только \
-                                         для derived values", bench_name),
+                                         barrier no-op on constant literals; opaque is only \
+                                         needed for derived values", bench_name),
                                 e.span,
                             ),
                         });
@@ -1774,8 +1796,8 @@ fn check_bench_expr(e: &Expr, bench_name: &str, out: &mut Vec<LintWarning>) {
                         rule: "bench-sleep-in-measure",
                         diag: crate::diag::Diagnostic::new(
                             format!("bench \"{}\": `{}` inside `measure` block — \
-                                     sleep dominates timing noise; move в setup или \
-                                     exempt в bench.toml", bench_name, n),
+                                     sleep dominates timing noise; move to setup or \
+                                     exempt in bench.toml", bench_name, n),
                             e.span,
                         ),
                     });
@@ -2366,11 +2388,11 @@ fn lint_cas_failure_stronger(call_expr: &Expr, func: &Expr, args: &[CallArg], ou
             diag: crate::diag::Diagnostic::new(
                 format!(
                     "W_CAS_FAILURE_STRONGER: `{method}` — failure-ordering \
-                     `MemOrdering.{failure}` строже success-ordering \
+                     `MemOrdering.{failure}` is stronger than success-ordering \
                      `MemOrdering.{success}` (Relaxed < Acquire≈Release < AcqRel < \
-                     SeqCst); валидно с C++17, но почти всегда ошибка намерения — \
-                     failure-путь (CAS не удался, значение не изменено) обычно не \
-                     должен требовать БОЛЬШЕ синхронизации, чем success-путь.",
+                     SeqCst); valid since C++17, but almost always an intent bug — \
+                     the failure path (CAS did not happen, value unchanged) usually \
+                     should not demand MORE synchronization than the success path.",
                     method = method_name, failure = failure, success = success,
                 ),
                 call_expr.span,
@@ -2811,12 +2833,12 @@ fn check_param_type_pos_mut(f: &FnDecl, out: &mut Vec<LintWarning>) {
             rule: "W_PARAM_TYPE_POS_MUT",
             diag: Diagnostic::new(
                 format!(
-                    "warning: параметр `{}` объявлен постфиксной формой `{} mut {}` \
-                     [W_PARAM_TYPE_POS_MUT] — канон mut-параметров (owner decision \
-                     2026-07-17): mut ПЕРЕД именем, `mut {} {}`. Позиция ПОСЛЕ имени \
-                     зарезервирована за view-слайсами (`[]u8` и родня, io-канон, \
-                     `buf mut []u8`); для прочих типов постфиксная форма — запрещённый \
-                     синоним префиксной (ведёт себя идентично, D6 legacy spelling).",
+                    "warning: parameter `{}` is declared in postfix form `{} mut {}` \
+                     [W_PARAM_TYPE_POS_MUT] — canon for mut-parameters (owner decision \
+                     2026-07-17): mut BEFORE the name, `mut {} {}`. The position AFTER \
+                     the name is reserved for view-slices (`[]u8` and kin, io-canon, \
+                     `buf mut []u8`); for other types the postfix form is a forbidden \
+                     synonym of the prefix form (behaves identically, D6 legacy spelling).",
                     p.name, p.name, ty_str, p.name, ty_str,
                 ),
                 p.span,
@@ -2845,11 +2867,11 @@ fn check_assume_trust(f: &FnDecl, out: &mut Vec<LintWarning>) {
             rule: "trust-introduced",
             diag: Diagnostic::new(
                 format!(
-                    "warning: `assume` в функции `{}` вводит непроверяемое \
-                     допущение [trust-introduced]: верификатор принимает его \
-                     без доказательства — ошибочное `assume` делает любой \
-                     контракт «доказуемым». Пометьте функцию `#trusted`, если \
-                     допущение намеренно (FFI / внешнее знание).",
+                    "warning: `assume` in function `{}` introduces an unverified \
+                     assumption [trust-introduced]: the verifier accepts it \
+                     without proof — a wrong `assume` makes any \
+                     contract \"provable\". Mark the function `#trusted` if \
+                     the assumption is intentional (FFI / external knowledge).",
                     f.name
                 ),
                 sp,
@@ -2877,12 +2899,12 @@ fn check_assert_static_unverified(f: &FnDecl, out: &mut Vec<LintWarning>) {
             rule: "assert-static-unverified",
             diag: Diagnostic::new(
                 format!(
-                    "warning: `assert_static` в функции `{}` НЕ верифицируется \
-                     статически в V1 [assert-static-unverified]: действует как \
-                     runtime-проверка (debug), в release стирается. Полная \
-                     compile-time верификация требует flow-sensitive анализа \
-                     (Plan 33.8 → V2). Для гарантированной проверки выразите \
-                     факт контрактом `ensures`.",
+                    "warning: `assert_static` in function `{}` is NOT verified \
+                     statically in V1 [assert-static-unverified]: it behaves as a \
+                     runtime check (debug), erased in release. Full \
+                     compile-time verification requires flow-sensitive analysis \
+                     (Plan 33.8 → V2). For a guaranteed check, express the fact \
+                     via an `ensures` contract.",
                     f.name
                 ),
                 sp,
@@ -3030,182 +3052,186 @@ pub struct ConvRule {
 pub const CONV_RULES: &[ConvRule] = &[
     ConvRule {
         id: "W_NONVARIADIC_OF",
-        summary: "static `of` без вариадик-параметра — `of` зарезервирован за \
-                  вариадик-коллекциями (nv-coding-style §21б)",
+        summary: "static `of` without a variadic parameter — `of` is reserved \
+                  for variadic collections (nv-coding-style §21b)",
         ast: Some(conv_nonvariadic_of),
         text: None,
     },
     ConvRule {
         id: "W_RETIRED_PREFIX",
-        summary: "префикс `as_` в имени функции/метода ретрактирован (D410): \
-                  вид = голое существительное",
+        summary: "the `as_` prefix in a function/method name is retracted \
+                  (D410): a view = a bare noun",
         ast: Some(conv_retired_prefix),
         text: None,
     },
     ConvRule {
         id: "W_ACCESSOR_PAIR",
-        summary: "пара `get_x`/`set_x` — канон: методы-свойства одним именем \
-                  по арности `@x()` / `mut @x(v) -> @` (D117 AMEND)",
+        summary: "a `get_x`/`set_x` pair — canon: single-name property methods \
+                  disambiguated by arity, `@x()` / `mut @x(v) -> @` (D117 AMEND)",
         ast: Some(conv_accessor_pair),
         text: None,
     },
     ConvRule {
         id: "W_WITH_MUTATOR",
-        summary: "`with_*` с mut-приёмником — `with_*` всегда возвращает НОВОЕ \
-                  значение; мутирующее свойство = `mut @x(v) -> @` (nv-coding-style §21)",
+        summary: "`with_*` with a `mut` receiver — `with_*` always returns a NEW \
+                  value; a mutating property is `mut @x(v) -> @` (nv-coding-style §21)",
         ast: Some(conv_with_mutator),
         text: None,
     },
     ConvRule {
         id: "W_STATIC_CONVERSION",
-        summary: "статик-конверсия `T.from(x)` / `T.parse(s)` — запрещённая пятая \
-                  дверь (§1а, ретракция 2026-07-09): канон `x.to_*()`",
+        summary: "static conversion `T.from(x)` / `T.parse(s)` — the forbidden \
+                  fifth door (§1a, retracted 2026-07-09): canon is `x.to_*()`",
         ast: Some(conv_static_conversion),
         text: None,
     },
     ConvRule {
         id: "W_CONSUME_NAKED_NAME",
-        summary: "`consume`-receiver + голое имя-вид, конвертирующее в ДРУГОЙ тип \
-                  — потребление обязано называться `@into_*()` (§1а, ось \
-                  владения; голое имя зарезервировано за zero-copy видом, \
-                  который receiver не потребляет)",
+        summary: "a `consume` receiver + a bare view-name that converts to a \
+                  DIFFERENT type — a consuming conversion must be named \
+                  `@into_*()` (§1a, ownership axis; a bare name is reserved \
+                  for a zero-copy view that does not consume the receiver)",
         ast: Some(conv_consume_naked_name),
         text: None,
     },
     ConvRule {
         id: "W_TRY_WITHOUT_SIBLING",
-        summary: "`try_*` без инфаллибельного сиблинга — префикс `try_` только \
-                  для пары infallible/fallible (R3 D325)",
+        summary: "`try_*` without an infallible sibling — the `try_` prefix is \
+                  only for an infallible/fallible pair (R3 D325)",
         ast: Some(conv_try_without_sibling),
         text: None,
     },
     ConvRule {
         id: "W_SETTER_NOT_FLUENT",
-        summary: "1-арный метод-свойство `mut @x(v)` не возвращает `@` — сеттер \
-                  обязан быть беглым `-> @` (D117 AMEND-2)",
+        summary: "a 1-arity property method `mut @x(v)` that does not return \
+                  `@` — a setter must be fluent, `-> @` (D117 AMEND-2)",
         ast: Some(conv_setter_not_fluent),
         text: None,
     },
     ConvRule {
         id: "W_FFI_BARE_HANDLE",
-        summary: "голый `int`/`*()` хендл в extern-семействе с new/open+free/close \
-                  — канон: newtype `type CFooHandle(int)` (module-conventions §4а)",
+        summary: "a bare `int`/`*()` handle in an extern family with \
+                  new/open+free/close — canon: a newtype `type CFooHandle(int)` \
+                  (module-conventions §4a)",
         ast: Some(conv_ffi_bare_handle),
         text: None,
     },
     ConvRule {
         id: "W_MANUAL_SLICE_COPY",
-        summary: "поэлементная копия `push(x[i])` в цикле — красный флаг: \
-                  `[]T`-вид среза даёт то же за O(1) (nv-coding-style §18а)",
+        summary: "an element-by-element copy `push(x[i])` in a loop — red flag: \
+                  a `[]T` slice view gives the same result in O(1) \
+                  (nv-coding-style §18a)",
         ast: Some(conv_manual_slice_copy),
         text: None,
     },
     ConvRule {
         id: "W_IMMUTABLE_REBUILD_SETTER",
-        summary: "не-mut метод пересобирает Self всеми полями (OpenOptions-класс) \
-                  — для кучевых записей канон `mut @x(v) -> @` (D117/D409)",
+        summary: "a non-`mut` method rebuilds Self from every field \
+                  (OpenOptions-class) — for heap records the canon is \
+                  `mut @x(v) -> @` (D117/D409)",
         ast: Some(conv_immutable_rebuild_setter),
         text: None,
     },
     ConvRule {
         id: "W_STR_CONCAT_LOOP",
-        summary: "`buf = buf + x` / `buf += \"...\"` в цикле — O(N²); канон \
-                  StringBuilder (perf-conventions)",
+        summary: "`buf = buf + x` / `buf += \"...\"` in a loop — O(N²); canon \
+                  is StringBuilder (perf-conventions)",
         ast: Some(conv_str_concat_loop),
         text: None,
     },
     ConvRule {
         id: "W_STR_CONCAT_METHOD",
-        summary: "`.concat(...)` вызов на str-выражении — канон строковая \
-                  интерполяция \"${a}${b}\" (владелец 2026-07-21, тот же \
-                  D-амендмент что и E_STR_CONCAT_PLUS, spec/decisions/02-types.md)",
+        summary: "a `.concat(...)` call on a str expression — canon is string \
+                  interpolation \"${a}${b}\" (owner 2026-07-21, same D-amendment \
+                  as E_STR_CONCAT_PLUS, spec/decisions/02-types.md)",
         ast: Some(conv_str_concat_method),
         text: None,
     },
     ConvRule {
         id: "W_RESULT_DISCARDED",
-        summary: "тихое глотание Result: `ro _ = fallible()` / swallow-match \
-                  `Err(_) => ()` (nv-coding-style §4)",
+        summary: "silently swallowing a Result: `ro _ = fallible()` / a \
+                  swallow-match `Err(_) => ()` (nv-coding-style §4)",
         ast: Some(conv_result_discarded),
         text: None,
     },
     ConvRule {
         id: "W_PARAM_NO_CONTRACT",
-        summary: "index/offset/len-параметр публичной std-fn без `requires` \
-                  (nv-coding-style §5, норма приёмки 2026-07-07)",
+        summary: "an index/offset/len parameter of a public std fn without \
+                  `requires` (nv-coding-style §5, acceptance norm 2026-07-07)",
         ast: Some(conv_param_no_contract),
         text: None,
     },
     ConvRule {
         id: "W_VEC_SPELLING",
-        summary: "`Vec[` вне std/collections/vec — канон `[]T` (D238/D239); \
-                  легальные исключения несут маркер `[M-...]` на строке",
+        summary: "`Vec[` outside std/collections/vec — canon is `[]T` \
+                  (D238/D239); legitimate exceptions carry an `[M-...]` marker \
+                  on the line",
         ast: None,
         text: Some(conv_vec_spelling),
     },
     ConvRule {
         id: "W_RETIRED_NAME",
-        summary: "ретрактированные вызовы: nth/to_bytes/to_chars/.into()/\
-                  with_capacity/from_raw_parts (греп-инварианты D-блоков)",
+        summary: "retracted calls: nth/to_bytes/to_chars/.into()/\
+                  with_capacity/from_raw_parts (grep invariants from D-blocks)",
         ast: None,
         text: Some(conv_retired_name),
     },
     ConvRule {
         id: "W_FAIL_PUBLIC_SIGNATURE",
-        summary: "`Fail[...]` в публичной std-сигнатуре собственных ошибок — \
-                  канон Result (R5 D325)",
+        summary: "`Fail[...]` in a public std signature for the module's own \
+                  errors — canon is Result (R5 D325)",
         ast: None,
         text: Some(conv_fail_public_signature),
     },
     ConvRule {
         id: "W_DESTRUCTURE_SNAPSHOT",
-        summary: "2+ соседних `ro`/`mut`-биндинга — полевые снапшоты одного \
-                  источника — канон D411 record-деструктуризация \
+        summary: "2+ adjacent `ro`/`mut` bindings that are field snapshots of \
+                  the same source — canon is D411 record destructuring \
                   (nv-coding-style §26)",
         ast: Some(conv_destructure_snapshot),
         text: None,
     },
     ConvRule {
         id: "W_LEADING_BINOP_CONTINUATION",
-        summary: "ведущий бинарный оператор (`||`/`&&`/`+`/…) в начале \
-                  продолжающей строки многострочного выражения — footgun: \
-                  ведущий `||` парсится как zero-arg closure-литерал \
-                  (D417-класс); канон — trailing-оператор в конце строки \
-                  (nv-coding-style §27)",
+        summary: "a leading binary operator (`||`/`&&`/`+`/…) at the start of \
+                  a continuation line of a multi-line expression — footgun: a \
+                  leading `||` parses as a zero-arg closure literal \
+                  (D417-class); canon is a trailing operator at the end of \
+                  the line (nv-coding-style §27)",
         ast: None,
         text: Some(conv_leading_binop_continuation),
     },
     ConvRule {
         id: "W_REDUNDANT_OF",
-        summary: "`Vec[T].of(...)` избыточен — литерал `[...]` дал бы ТОТ ЖЕ \
-                  тип (nv-coding-style §28)",
+        summary: "`Vec[T].of(...)` is redundant — the literal `[...]` would \
+                  give the SAME type (nv-coding-style §28)",
         ast: Some(conv_redundant_of),
         text: None,
     },
     ConvRule {
         id: "W_NON_COMPOUND_ASSIGN",
-        summary: "`x = x OP e` при существующем компаунде `x OP= e` \
+        summary: "`x = x OP e` when a compound form `x OP= e` exists \
                   (`+=`/`-=`/`*=`/`/=` — nv-coding-style §29)",
         ast: Some(conv_non_compound_assign),
         text: None,
     },
     ConvRule {
         id: "W_WHILE_COUNTER_FOR_RANGE",
-        summary: "счётчиковый `while i < end { ...; i += 1 }` — канон \
+        summary: "a counter-based `while i < end { ...; i += 1 }` — canon is \
                   `for i in start..end` (nv-coding-style §10)",
         ast: Some(conv_while_counter_for_range),
         text: None,
     },
     ConvRule {
         id: "W_COERCE_EXPLICIT_REDUNDANT",
-        summary: "явный `.bytes()`/`.into_str()`/`.into_bytes()`/… (реестро-\
-                  ориентированно, из видимых `#coerce fn`-деклараций) в позиции \
-                  с явным ожидаемым типом ИЛИ call-аргументом на синтаксически-\
-                  гарантированном значении (литерал/интерполяция/`.to_str()`-\
-                  чейн) — голое значение скоэрсировалось бы в ТО ЖЕ САМОЕ через \
-                  `#coerce` (D429 R6/R9, Plan 214; call-arg лейн + реестро-\
-                  ориентация — владелец 2026-07-21, поглотил бывший \
-                  W_REDUNDANT_BYTES_ON_LITERAL)",
+        summary: "an explicit `.bytes()`/`.into_str()`/`.into_bytes()`/… call \
+                  (registry-driven, from visible `#coerce fn` declarations) at \
+                  a position with an explicit expected type, OR as a \
+                  call-argument on a syntactically-guaranteed value \
+                  (literal/interpolation/`.to_str()` chain) — a bare value \
+                  would coerce to the SAME result via `#coerce` (D429 R6/R9, \
+                  Plan 214; call-arg lane + registry-driven scan — owner \
+                  2026-07-21, absorbed the former W_REDUNDANT_BYTES_ON_LITERAL)",
         ast: Some(conv_coerce_explicit_redundant),
         text: None,
     },
@@ -3215,69 +3241,83 @@ pub const CONV_RULES: &[ConvRule] = &[
     // см. блок-комментарий у `conv_manual_min_max`).
     ConvRule {
         id: "W_MANUAL_CLAMP",
-        summary: "ручной трёхветочный `if x < lo {lo} else if x > hi {hi} else {x}` \
-                  — канон `x.clamp(lo, hi)` (nv-coding-style §30, прецедент clippy \
-                  manual_clamp)",
+        summary: "a manual three-branch `if x < lo {lo} else if x > hi {hi} \
+                  else {x}` — canon is `x.clamp(lo, hi)` (nv-coding-style §30, \
+                  precedent: clippy manual_clamp)",
         ast: Some(conv_manual_clamp),
         text: None,
     },
     ConvRule {
         id: "W_MANUAL_MIN_MAX",
-        summary: "ручной `if a > b {a} else {b}` (и зеркала `</>=/<=`, statement-форма \
-                  `if x > hi {x = hi}`) — канон `a.max(b)`/`a.min(b)` (nv-coding-style \
-                  §30, прецедент clippy manual_min/manual_max)",
+        summary: "a manual `if a > b {a} else {b}` (and mirrors `</>=/<=`, \
+                  statement form `if x > hi {x = hi}`) — canon is \
+                  `a.max(b)`/`a.min(b)` (nv-coding-style §30, precedent: \
+                  clippy manual_min/manual_max)",
         ast: Some(conv_manual_min_max),
         text: None,
     },
     ConvRule {
         id: "W_REDUNDANT_CONSUME_REBIND",
-        summary: "`consume y = x` в теле match-арма, где `x` — уже `consume`-биндинг \
-                  ИЗ ПАТТЕРНА того же арма и больше нигде не используется — бинди сразу \
-                  в паттерне (владелец 2026-07-21)",
+        summary: "`consume y = x` in a match-arm body, where `x` is already a \
+                  `consume` binding FROM THE PATTERN of the same arm and is \
+                  never used again — bind it directly in the pattern (owner \
+                  2026-07-21)",
         ast: Some(conv_redundant_consume_rebind),
         text: None,
     },
     ConvRule {
         id: "W_MANUAL_CLOSE_AUTO_CLEANUP",
-        summary: "хвостовой ручной finalize-вызов на `consume`-биндинге типа с \
-                  `consume @cleanup` (D432) — авто-cleanup на выходе из скоупа делает \
-                  вызов избыточным (владелец 2026-07-21)",
+        summary: "a tail-position manual finalize call on a `consume` binding \
+                  of a type with `consume @cleanup` (D432) — auto-cleanup on \
+                  scope exit makes the call redundant (owner 2026-07-21)",
         ast: Some(conv_manual_close_auto_cleanup),
         text: None,
     },
     ConvRule {
         id: "W_REDUNDANT_CONST_TYPE_ANNOTATION",
-        summary: "аннотация типа у `const`, СОВПАДАЮЩАЯ с дефолтным типом литерала-\
-                  инициализатора (str/int/bool/char) — тип и так выводится (владелец \
-                  2026-07-21)",
+        summary: "a type annotation on a `const` that MATCHES the default \
+                  type of the literal initializer (str/int/bool/char) — the \
+                  type is inferred anyway (owner 2026-07-21)",
         ast: Some(conv_redundant_const_type_annotation),
         text: None,
     },
     ConvRule {
         id: "W_MANUAL_COALESCE",
-        summary: "ручной `match X { Ok(v) => v, Err(_) => D }` / `{ Some(v) => v, \
-                  None => D }` (identity-рука) — дрейф от канона `X ?? D` (D86 AMEND \
-                  2026-07-23, [M-manual-coalesce-lint-missing])",
+        summary: "a manual `match X { Ok(v) => v, Err(_) => D }` / \
+                  `{ Some(v) => v, None => D }` (identity arm) — drift from \
+                  the canon `X ?? D` (D86 AMEND 2026-07-23, \
+                  [M-manual-coalesce-lint-missing])",
         ast: Some(conv_manual_coalesce),
         text: None,
     },
     ConvRule {
         id: "W_MANUAL_COLLECT",
-        summary: "ручной collect `mut v = <пустой ctor>; for x in it { v.push(x) }` \
-                  — дрейф от канона `mut v = it.collect()` (nv-coding-style §33, \
-                  прецедент clippy manual_collect/needless_collect, \
+        summary: "a manual collect `mut v = <empty ctor>; for x in it { \
+                  v.push(x) }` — drift from the canon `mut v = it.collect()` \
+                  (nv-coding-style §33, precedent: clippy \
+                  manual_collect/needless_collect, \
                   [M-manual-collect-lint-missing])",
         ast: Some(conv_manual_collect),
         text: None,
     },
     ConvRule {
         id: "W_MANUAL_SLICE_TO_END",
-        summary: "избыточные границы диапазона среза `recv[a..recv.len()]` / \
-                  `recv[0..b]` / `recv[0..recv.len()]` — канон открытые диапазоны \
+        summary: "redundant slice range bounds `recv[a..recv.len()]` / \
+                  `recv[0..b]` / `recv[0..recv.len()]` — canon is open ranges \
                   `recv[a..]` / `recv[..b]` / `recv[..]` (nv-coding-style §34, \
-                  прецедент clippy redundant-slicing, \
+                  precedent: clippy redundant-slicing, \
                   [M-manual-slice-bounds-lint-missing])",
         ast: Some(conv_manual_slice_to_end),
+        text: None,
+    },
+    ConvRule {
+        id: "W_REDUNDANT_TO_STR_INTERP",
+        summary: "`.to_str()` as the tail of a bare `${x}` in interpolation — \
+                  interpolation already dispatches to_str/Display itself \
+                  (D410 instance fallback) — redundant explicit call \
+                  ([M-lint-redundant-to-str-in-interpolation], owner \
+                  2026-07-31, bigdecimal review)",
+        ast: Some(conv_redundant_to_str_interp),
         text: None,
     },
 ];
@@ -3416,9 +3456,9 @@ fn apply_nova_allow_suppressions(src: &str, out: &mut Vec<LintWarning>) {
                 rule: "E_LINT_ALLOW_NO_REASON",
                 diag: Diagnostic::new(
                     format!(
-                        "`nova:allow {}` без причины: канон — `// nova:allow {} -- \
-                         причина` (причина обязательна — единственный легальный \
-                         люк под `--deny`, грепаемый).",
+                        "`nova:allow {}` without a reason: canon is `// nova:allow {} -- \
+                         reason` (a reason is mandatory — the only legitimate \
+                         escape hatch under `--deny`, and it must be greppable).",
                         ids_disp, ids_disp
                     ),
                     Span::new(offset, offset),
@@ -3855,10 +3895,10 @@ fn conv_nonvariadic_of(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarni
             rule: "W_NONVARIADIC_OF",
             diag: Diagnostic::new(
                 format!(
-                    "static `{}.of(...)` без вариадик-параметра: имя `of` \
-                     зарезервировано за вариадик-коллекциями (`Vec[T].of(a, b, c)`). \
-                     Тривиальная установка полей — `{}.new(...)` с дефолт-параметрами \
-                     (nv-coding-style §21б).",
+                    "static `{}.of(...)` without a variadic parameter: the name `of` \
+                     is reserved for variadic collections (`Vec[T].of(a, b, c)`). \
+                     Plain field construction is `{}.new(...)` with default parameters \
+                     (nv-coding-style §21b).",
                     recv.type_name, recv.type_name
                 ),
                 f.span,
@@ -3881,9 +3921,9 @@ fn conv_retired_prefix(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarni
                 rule: "W_RETIRED_PREFIX",
                 diag: Diagnostic::new(
                     format!(
-                        "`{}`: префикс `as_` ретрактирован (D410). Вид/линза = голое \
-                         существительное (`bytes()`, `chars()`, `slice()`); копия — \
-                         явный `.clone()` на месте вызова; трансформация — `to_*`.",
+                        "`{}`: the `as_` prefix is retracted (D410). A view/lens = a bare \
+                         noun (`bytes()`, `chars()`, `slice()`); a copy is an \
+                         explicit `.clone()` at the call site; a transform is `to_*`.",
                         f.name
                     ),
                     f.span,
@@ -3929,9 +3969,9 @@ fn conv_accessor_pair(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarnin
             rule: "W_ACCESSOR_PAIR",
             diag: Diagnostic::new(
                 format!(
-                    "пара `get_{}`/`set_{}` на `{}`: канон — методы-свойства одним \
-                     именем по арности: чтение `@{}()`, запись `mut @{}(v) -> @` \
-                     (D117 AMEND, nv-coding-style «методы-свойства»).",
+                    "pair `get_{}`/`set_{}` on `{}`: canon is single-name property \
+                     methods disambiguated by arity: read `@{}()`, write \
+                     `mut @{}(v) -> @` (D117 AMEND, nv-coding-style \"property methods\").",
                     prop, prop, recv_disp, prop, prop
                 ),
                 *span,
@@ -3965,9 +4005,9 @@ fn conv_with_mutator(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarning
                 rule: "W_WITH_MUTATOR",
                 diag: Diagnostic::new(
                     format!(
-                        "`{}` объявлен с mut-приёмником: `with_*` НИКОГДА не мутирует \
-                         — всегда возвращает новое значение. Мутирующее беглое \
-                         свойство = `mut @{}(v) -> @` (nv-coding-style §21, D117 AMEND).",
+                        "`{}` is declared with a `mut` receiver: `with_*` NEVER mutates \
+                         — it always returns a new value. A mutating fluent \
+                         property is `mut @{}(v) -> @` (nv-coding-style §21, D117 AMEND).",
                         f.name,
                         f.name.trim_start_matches("with_")
                     ),
@@ -4033,11 +4073,11 @@ fn conv_static_conversion(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWa
                 rule: "W_STATIC_CONVERSION",
                 diag: Diagnostic::new(
                     format!(
-                        "статик-конверсия `{}.{}(...)` — запрещённая «пятая дверь» \
-                         (nv-coding-style §1а, ретракция 2026-07-09): дубль `to_*`, \
-                         ломает цепочки. Канон: метод на источнике `x.to_{}()` \
-                         (→ Result где fallible). `from` уместен только для \
-                         концепт-источника под содержательным именем (`from_polar`).",
+                        "static conversion `{}.{}(...)` — the forbidden \"fifth door\" \
+                         (nv-coding-style §1a, retracted 2026-07-09): duplicates `to_*`, \
+                         breaks chains. Canon: a method on the source `x.to_{}()` \
+                         (→ Result where fallible). `from` is only appropriate for \
+                         a concept-source under a meaningful name (`from_polar`).",
                         recv.type_name,
                         f.name,
                         conv_camel_to_snake(&recv.type_name)
@@ -4137,9 +4177,9 @@ fn conv_consume_naked_name(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintW
             rule: "W_CONSUME_NAKED_NAME",
             diag: Diagnostic::new(
                 format!(
-                    "`consume`-конверсия `{}.{}(...)` в другой тип обязана называться \
-                     `@into_{}()` (nv-coding-style §1а, ось владения): голое имя \
-                     зарезервировано за zero-copy видом, который НЕ потребляет receiver.",
+                    "a `consume` conversion `{}.{}(...)` into a different type must be \
+                     named `@into_{}()` (nv-coding-style §1a, ownership axis): a bare \
+                     name is reserved for a zero-copy view that does NOT consume the receiver.",
                     recv.type_name, f.name, f.name
                 ),
                 f.span,
@@ -4211,10 +4251,10 @@ fn conv_try_without_sibling(m: &Module, _o: &ConvLintOptions, out: &mut Vec<Lint
             rule: "W_TRY_WITHOUT_SIBLING",
             diag: Diagnostic::new(
                 format!(
-                    "`{}` без инфаллибельного сиблинга `{}`: префикс `try_` — ТОЛЬКО \
-                     чтобы отличить fallible-вариант одноимённого infallible \
-                     (`from`/`try_from`, D77). Одиночная fallible-операция — обычное \
-                     имя + `Result` (R3 D325, nv-coding-style §1).",
+                    "`{}` without an infallible sibling `{}`: the `try_` prefix is \
+                     ONLY for distinguishing the fallible variant of a same-named \
+                     infallible one (`from`/`try_from`, D77). A standalone fallible \
+                     operation is a plain name + `Result` (R3 D325, nv-coding-style §1).",
                     f.name, rest
                 ),
                 f.span,
@@ -4266,10 +4306,10 @@ fn conv_setter_not_fluent(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWa
                 rule: "W_SETTER_NOT_FLUENT",
                 diag: Diagnostic::new(
                     format!(
-                        "сеттер `mut @{}(v)` возвращает `()`: `-> @` у метода \
-                         установки свойства — умолчание, не опция (D117 AMEND-2). \
-                         Возврат приёмника автоматический (D409) и даёт цепочки \
-                         `r.{}(a).{}(b)`. `-> ()` — только с обоснованием на месте.",
+                        "setter `mut @{}(v)` returns `()`: `-> @` on a property-setting \
+                         method is the default, not an option (D117 AMEND-2). \
+                         Returning the receiver is automatic (D409) and enables chains \
+                         `r.{}(a).{}(b)`. `-> ()` needs justification at the site.",
                         f.name, f.name, f.name
                     ),
                     f.span,
@@ -4324,12 +4364,13 @@ fn conv_ffi_bare_handle(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarn
                     rule: "W_FFI_BARE_HANDLE",
                     diag: Diagnostic::new(
                         format!(
-                            "extern `{}` возвращает голый хендл (`int`/`ptr`/`*()`) при \
-                             парном `{}_<close/free>`: FFI-хендл никогда не ходит по \
-                             Nova-коду голым — объявите newtype `type C{}Handle(int)` \
-                             прямо в extern-сигнатурах (module-conventions §4а; эталон \
-                             std/encoding/compress/ffi.nv). Легальное исключение — \
-                             комментарий-маркер на месте.",
+                            "extern `{}` returns a bare handle (`int`/`ptr`/`*()`) while \
+                             a paired `{}_<close/free>` exists: an FFI handle never \
+                             travels through Nova code bare — declare a newtype \
+                             `type C{}Handle(int)` right in the extern signatures \
+                             (module-conventions §4a; reference: \
+                             std/encoding/compress/ffi.nv). A legitimate exception \
+                             needs a marker comment at the site.",
                             f.name, prefix, conv_camel(prefix)
                         ),
                         f.span,
@@ -4390,10 +4431,11 @@ fn conv_manual_slice_copy(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWa
                     out.push(LintWarning {
                         rule: "W_MANUAL_SLICE_COPY",
                         diag: Diagnostic::new(
-                            "поэлементная копия `push(x[i])` в счётном цикле — красный \
-                             флаг (§18а nv-coding-style): `[]T`-вид среза (D262) даёт \
-                             то же за O(1) без аллокации (`x[a..b]`). Нужно владение \
-                             отдельным буфером — явный `.clone()` на виде, не цикл."
+                            "an element-by-element copy `push(x[i])` in a counted loop \
+                             — red flag (§18a nv-coding-style): a `[]T` slice view \
+                             (D262) gives the same result in O(1) with no allocation \
+                             (`x[a..b]`). If a separate owned buffer is needed, use an \
+                             explicit `.clone()` on the view, not a loop."
                                 .to_string(),
                             e.span,
                         ),
@@ -4487,10 +4529,10 @@ fn conv_immutable_rebuild_setter(m: &Module, _o: &ConvLintOptions, out: &mut Vec
                 rule: "W_IMMUTABLE_REBUILD_SETTER",
                 diag: Diagnostic::new(
                     format!(
-                        "`@{}` без `mut` возвращает `{}` пересборкой полей \
-                         (OpenOptions-класс): для кучевой записи поверхностная копия \
-                         делит потроха со старым объектом — независимости нет, только \
-                         лишняя аллокация. Канон: мутирующее беглое свойство \
+                        "`@{}` without `mut` returns `{}` by rebuilding fields \
+                         (OpenOptions-class): for a heap record a shallow copy shares \
+                         its guts with the old object — no real independence, just an \
+                         extra allocation. Canon: a mutating fluent property \
                          `mut @x(v) -> @` (D117 AMEND / D409, nv-coding-style §21).",
                         f.name, recv.type_name
                     ),
@@ -4572,10 +4614,10 @@ fn conv_str_concat_loop(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarn
                         rule: "W_STR_CONCAT_LOOP",
                         diag: Diagnostic::new(
                             format!(
-                                "конкатенация `{} = {} + ...` в цикле — O(N²) \
-                                 (perf-conventions): каждая итерация копирует весь \
-                                 аккумулятор. Канон: `StringBuilder.new()` + \
-                                 `.append(...)` в цикле + `.into_str()` после.",
+                                "concatenation `{} = {} + ...` in a loop — O(N²) \
+                                 (perf-conventions): every iteration copies the whole \
+                                 accumulator. Canon: `StringBuilder.new()` + \
+                                 `.append(...)` in the loop + `.into_str()` after.",
                                 tname, tname
                             ),
                             *span,
@@ -4631,9 +4673,9 @@ fn conv_str_concat_method(m: &Module, o: &ConvLintOptions, out: &mut Vec<LintWar
                     out.push(LintWarning {
                         rule: "W_STR_CONCAT_METHOD",
                         diag: Diagnostic::new(
-                            "`.concat(...)` на str — используйте строковую \
-                             интерполяцию `\"${a}${b}\"` вместо метода \
-                             (perf-conventions); в цикле — см. W_STR_CONCAT_LOOP \
+                            "`.concat(...)` on a str — use string \
+                             interpolation `\"${a}${b}\"` instead of the method \
+                             (perf-conventions); in a loop see W_STR_CONCAT_LOOP \
                              (StringBuilder)."
                                 .to_string(),
                             e.span,
@@ -4722,9 +4764,10 @@ fn conv_non_compound_assign(m: &Module, _o: &ConvLintOptions, out: &mut Vec<Lint
                     rule: "W_NON_COMPOUND_ASSIGN",
                     diag: Diagnostic::new(
                         format!(
-                            "`{p} = {p} {sym} ...` повторяет LHS в RHS — Nova поддерживает \
-                             компаунд `{p} {cmp} ...`: короче и не рискует рассинхроном \
-                             LHS/RHS-аккумулятора при копипасте (nv-coding-style §29).",
+                            "`{p} = {p} {sym} ...` repeats the LHS in the RHS — Nova \
+                             supports the compound form `{p} {cmp} ...`: shorter and \
+                             does not risk an LHS/RHS accumulator desync on copy-paste \
+                             (nv-coding-style §29).",
                             p = target_key, sym = symbol, cmp = compound
                         ),
                         *span,
@@ -5006,16 +5049,18 @@ fn conv_check_while_counter(
         rule: "W_WHILE_COUNTER_FOR_RANGE",
         diag: Diagnostic::new(
             format!(
-                "счётчиковый `while {name} {cmp} {end_key}` (`mut {name}{ty_suffix} = ...` перед \
-                 циклом, `{name} += 1` последним statement'ом тела) — канон `for {name}{ty_suffix} \
-                 in <start>{range_op}{end_key} {{ ... }}` (nv-coding-style §10): исключает \
-                 off-by-one/забытый инкремент, `i` не переживает цикл.{ty_note}",
+                "counter-based `while {name} {cmp} {end_key}` (`mut {name}{ty_suffix} = ...` \
+                 before the loop, `{name} += 1` as the body's last statement) — canon is \
+                 `for {name}{ty_suffix} \
+                 in <start>{range_op}{end_key} {{ ... }}` (nv-coding-style §10): rules out \
+                 off-by-one/forgotten increment, `i` does not outlive the loop.{ty_note}",
                 ty_note = if ty_suffix.is_empty() {
                     ""
                 } else {
-                    " ВАЖНО: явная аннотация типа счётчика ОБЯЗАНА перейти на for-переменную \
-                     (Plan 87 `for x TYPE in iter`) — иначе for-range инферит тип из границ \
-                     диапазона, молча расширяя/сужая относительно исходного типа."
+                    " IMPORTANT: an explicit counter type annotation MUST carry over to the \
+                     for-variable (Plan 87 `for x TYPE in iter`) — otherwise for-range infers \
+                     the type from the range bounds, silently widening/narrowing relative to \
+                     the original type."
                 }
             ),
             while_expr.span,
@@ -5369,13 +5414,13 @@ fn conv_manual_min_max_check(e: &Expr) -> Option<LintWarning> {
                 rule: "W_MANUAL_MIN_MAX",
                 diag: Diagnostic::new(
                     format!(
-                        "ручной `if {l} {cmp} {r} {{ ... }} else {{ ... }}` вычисляет \
-                         {word} двух операндов — канон `{l}.{method}({r})` (nv-coding-style \
-                         §30, прецедент clippy manual_min/manual_max).",
+                        "manual `if {l} {cmp} {r} {{ ... }} else {{ ... }}` computes the \
+                         {word} of two operands — canon is `{l}.{method}({r})` (nv-coding-style \
+                         §30, precedent: clippy manual_min/manual_max).",
                         l = l_key,
                         cmp = conv_cmp_symbol(*op),
                         r = r_key,
-                        word = if method == "max" { "максимум" } else { "минимум" },
+                        word = if method == "max" { "maximum" } else { "minimum" },
                         method = method,
                     ),
                     e.span,
@@ -5403,8 +5448,8 @@ fn conv_manual_min_max_check(e: &Expr) -> Option<LintWarning> {
                 rule: "W_MANUAL_MIN_MAX",
                 diag: Diagnostic::new(
                     format!(
-                        "ручной `if {l} {cmp} {r} {{ {t} = ... }}` ограничивает `{t}` на \
-                         месте одной границей — канон `{t} = {t}.{method}({v})` \
+                        "manual `if {l} {cmp} {r} {{ {t} = ... }}` clamps `{t}` in place \
+                         against a single bound — canon is `{t} = {t}.{method}({v})` \
                          (nv-coding-style §30).",
                         l = l_key,
                         cmp = conv_cmp_symbol(*op),
@@ -5579,11 +5624,11 @@ fn conv_manual_clamp_check(e: &Expr) -> Option<(LintWarning, Span)> {
             rule: "W_MANUAL_CLAMP",
             diag: Diagnostic::new(
                 format!(
-                    "ручной трёхветочный if/else-if ограничивает `{x}` диапазоном \
-                     `[{lo}, {hi}]` — канон `{x}.clamp({lo}, {hi})` (nv-coding-style §30, \
-                     прецедент clippy manual_clamp). Направление границ у clamp'а легко \
-                     перепутать вручную — machine-applicable подсказка ловит именно этот \
-                     класс багов.",
+                    "a manual three-branch if/else-if clamps `{x}` to the range \
+                     `[{lo}, {hi}]` — canon is `{x}.clamp({lo}, {hi})` (nv-coding-style §30, \
+                     precedent: clippy manual_clamp). The bound direction of a clamp is \
+                     easy to get wrong by hand — this machine-applicable suggestion \
+                     catches exactly that class of bug.",
                     x = x_key,
                     lo = lo_key,
                     hi = hi_key,
@@ -5686,10 +5731,10 @@ fn conv_result_discarded(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWar
             for sp in stmt_hits {
                 found.push((
                     "discard",
-                    "`ro _ = <вызов>` — discard-биндинг глотает результат (в т.ч. \
-                     возможную ошибку Result) молча (nv-coding-style §4). Ошибку \
-                     обработайте (`?` / `!!` / match) или задокументируйте намеренный \
-                     дроп комментарием на месте."
+                    "`ro _ = <call>` — a discard binding silently swallows the result \
+                     (including a possible Result error) (nv-coding-style §4). Handle \
+                     the error (`?` / `!!` / match) or document the intentional drop \
+                     with a comment at the site."
                         .to_string(),
                     sp,
                 ));
@@ -5697,9 +5742,9 @@ fn conv_result_discarded(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWar
             for sp in arm_hits {
                 found.push((
                     "swallow",
-                    "swallow-match: арм `Err(_) => ()` глотает ошибку молча \
-                     (nv-coding-style §4). Обработайте (лог/проброс/`?`) или \
-                     задокументируйте намеренное игнорирование."
+                    "swallow-match: arm `Err(_) => ()` silently swallows the error \
+                     (nv-coding-style §4). Handle it (log/propagate/`?`) or \
+                     document the intentional ignore."
                         .to_string(),
                     sp,
                 ));
@@ -5914,8 +5959,8 @@ fn conv_manual_coalesce(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarn
             }
             let (note, suggestion) = match conv_coalesce_fb_shape(fb_arm) {
                 CoalesceFbShape::Value => (
-                    "значение-fallback (в т.ч. `panic`/`throw` — обычные выражения, \
-                     эту форму D86-ретракция не затрагивает) — канон `X ?? D`."
+                    "value-fallback (including `panic`/`throw` — plain expressions, \
+                     this form is not affected by the D86 retraction) — canon is `X ?? D`."
                         .to_string(),
                     None, // embed произвольного текста X/D — вне AST-only lint'а без source-map
                 ),
@@ -5958,9 +6003,9 @@ fn conv_manual_coalesce(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarn
             hits.push((
                 e.span,
                 format!(
-                    "ручной `match X {{ {ok}(v) => v, {err} => D }}` — дрейф от канона \
-                     `X ?? D` (D86; амендмент 2026-07-07 ретрактировал `unwrap_or`-\
-                     близнецов именно в пользу `?? v`). {note}",
+                    "manual `match X {{ {ok}(v) => v, {err} => D }}` — drift from the \
+                     canon `X ?? D` (D86; the 2026-07-07 amendment retracted the \
+                     `unwrap_or` twins in favor of `?? v`). {note}",
                     ok = if is_result { "Ok" } else { "Some" },
                     err = if is_result { "Err(_)" } else { "None" },
                     note = note,
@@ -6192,16 +6237,16 @@ fn conv_scan_block_for_collect(b: &Block, out: &mut Vec<LintWarning>) {
             rule: "W_MANUAL_COLLECT",
             diag: Diagnostic::new(
                 format!(
-                    "ручной collect: `mut {name} = <пустой ctor>` + \
+                    "manual collect: `mut {name} = <empty ctor>` + \
                      `for {loop_var} in <iter> {{ {name}.push({loop_var}) }}` — \
-                     дрейф от канона `{canon}` (nv-coding-style §33, прецедент \
+                     drift from the canon `{canon}` (nv-coding-style §33, precedent: \
                      clippy manual_collect/needless_collect). `.collect()` \
-                     материализует итератор одним выражением.",
+                     materializes the iterator in one expression.",
                 ),
                 region,
             )
             .with_suggestion(Suggestion {
-                message: format!("канон: `{canon}`"),
+                message: format!("canon: `{canon}`"),
                 span: region,
                 replacement: canon,
                 applicability,
@@ -6362,21 +6407,105 @@ fn conv_manual_slice_to_end(m: &Module, _o: &ConvLintOptions, out: &mut Vec<Lint
                 rule: "W_MANUAL_SLICE_TO_END",
                 diag: Diagnostic::new(
                     format!(
-                        "избыточная граница диапазона среза ({form}) — канон открытый \
-                         диапазон (spec 02-types.md, nv-coding-style §34, прецедент \
-                         clippy redundant-slicing). Голый `len()`/`byte_len()` как end \
-                         и литерал `0` как start подразумеваются автоматически.",
+                        "redundant slice range bound ({form}) — canon is an open \
+                         range (spec 02-types.md, nv-coding-style §34, precedent: \
+                         clippy redundant-slicing). A bare `len()`/`byte_len()` as end \
+                         and a literal `0` as start are implied automatically.",
                     ),
                     e.span,
                 )
                 .with_suggestion(Suggestion {
-                    message: "убрать избыточную границу диапазона".to_string(),
+                    message: "remove the redundant range bound".to_string(),
                     span: sugg_span,
                     replacement: sugg_repl,
                     applicability: Applicability::MachineApplicable,
                 }),
             });
         });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// W_REDUNDANT_TO_STR_INTERP ([M-lint-redundant-to-str-in-interpolation],
+// владелец 2026-07-31, ревью bigdecimal): `${x.to_str()}` — лишний явный
+// вызов. Интерполяция `${expr}` (`FormatSpec::None`) сама диспетчеризует
+// Display/Printable-конверсию значения — для типа без собственного `@display`
+// std-фоллбек ИМЕННО инстанс-`to_str` (D410, см. seed-list комментарий у
+// `ExprKind::InterpolatedStr` выше в этом файле: "instance `T.to_str`
+// (D410) fallbacks"). Явный `.to_str()` внутри `${...}` производит `str`,
+// который интерполяция затем форматирует КАК str (str-фоллбек, идентичность)
+// — тот же видимый результат, просто через лишний промежуточный вызов.
+// Проверено пробой на BigInt (владелец, ревью bigdecimal — источник записи).
+//
+// СОЗНАТЕЛЬНО УЗКО (owner brief 2026-07-31, буквально по примерам):
+//  - матчим ТОЛЬКО хвост выражения — `.to_str()` НЕПОСРЕДСТВЕННО внутри
+//    `${...}` (сам `InterpStrPart::Expr.expr`), НЕ произвольный вложенный
+//    вызов где-то глубже в выражении;
+//  - НОЛЬ аргументов (`.to_str()`, без trailing-блока) — `.to_str(16)`
+//    (radix-аргумент) МЕНЯЕТ представление, не редундантен;
+//  - `.to_str().pad(5)` НЕ матчит — `.to_str()` там НЕ хвост (хвост —
+//    `.pad(5)`), а результат `pad`-цепочки — уже не то же значение;
+//  - ТОЛЬКО `FormatSpec::None` (голый `${x}`) — `${x:?}` (Debug) и
+//    rich-spec (`${x:.2}`/`${x:>10}` и т.п., `FormatSpec::Spec(..)`) НЕ
+//    матчим: precision/align/kind на rich-spec трактуют результат СЕМАНТИ-
+//    ЧЕСКИ иначе для не-str типов (напр. `.precision` на float — число
+//    знаков после запятой, на str — обрезка длины) — досрочный `.to_str()`
+//    там МЕНЯЕТ поведение, а не просто дублирует его; риск ложного «фикса»
+//    перевешивает пользу, вне буквального объёма owner-примеров.
+//
+// Fix-it: убирает ровно `.to_str()` (span от конца receiver'а до конца
+// вызова), оставляя receiver внутри `${...}` как есть — `${x.to_str()}` →
+// `${x}`.
+// ---------------------------------------------------------------------------
+
+/// Если `e` — голый 0-арг вызов `.to_str()` (без trailing-блока), вернуть
+/// span receiver'а (для fix-it: конец receiver'а = начало удаляемого хвоста).
+fn conv_bare_to_str_call(e: &Expr) -> Option<Span> {
+    let ExprKind::Call { func, args, trailing } = &e.kind else { return None };
+    if !args.is_empty() || trailing.is_some() {
+        return None;
+    }
+    let ExprKind::Member { obj, name } = &func.kind else { return None };
+    if name != "to_str" {
+        return None;
+    }
+    Some(obj.span)
+}
+
+fn conv_redundant_to_str_interp(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
+    fn check(e: &Expr, out: &mut Vec<LintWarning>) {
+        let ExprKind::InterpolatedStr { parts } = &e.kind else { return };
+        for p in parts {
+            let crate::ast::InterpStrPart::Expr { expr, spec } = p else { continue };
+            // Только голый `${x}` — rich/Debug-spec семантически другой
+            // случай (см. блок-комментарий выше).
+            if !spec.is_none() {
+                continue;
+            }
+            let Some(recv_span) = conv_bare_to_str_call(expr) else { continue };
+            out.push(LintWarning {
+                rule: "W_REDUNDANT_TO_STR_INTERP",
+                diag: Diagnostic::new(
+                    "redundant `.to_str()` inside `${...}` — interpolation already \
+                     dispatches to_str/Display on the value (D410 instance fallback); \
+                     remove `.to_str()` — interpolation will do it itself."
+                        .to_string(),
+                    expr.span,
+                )
+                .with_suggestion(Suggestion {
+                    message: "remove the redundant `.to_str()`".to_string(),
+                    span: Span::with_file(recv_span.end, expr.span.end, expr.span.file_id),
+                    replacement: String::new(),
+                    applicability: Applicability::MachineApplicable,
+                }),
+            });
+        }
+    }
+    for f in conv_all_fns(m) {
+        conv_walk_fn(f, &mut |_, _| {}, &mut |e, _| check(e, out));
+    }
+    for tb in conv_all_test_bodies(m) {
+        conv_walk_block(tb, false, &mut |_, _| {}, &mut |e, _| check(e, out));
     }
 }
 
@@ -6555,9 +6684,9 @@ fn conv_coerce_explicit_redundant(m: &Module, _o: &ConvLintOptions, out: &mut Ve
             rule: "W_COERCE_EXPLICIT_REDUNDANT",
             diag: Diagnostic::new(
                 format!(
-                    "явный вызов `.{method}()` в позиции с явным ожидаемым типом — \
-                     голое значение скоэрсировалось бы в ТО ЖЕ САМОЕ через `#coerce` \
-                     (D429 R9). Уберите явный вызов — действует `#coerce`."
+                    "explicit call `.{method}()` at a position with an explicit expected \
+                     type — a bare value would coerce to the SAME result via `#coerce` \
+                     (D429 R9). Remove the explicit call — `#coerce` already applies."
                 ),
                 span,
             ),
@@ -6621,9 +6750,9 @@ fn conv_coerce_explicit_redundant(m: &Module, _o: &ConvLintOptions, out: &mut Ve
                 rule: "W_COERCE_EXPLICIT_REDUNDANT",
                 diag: Diagnostic::new(
                     format!(
-                        "явный вызов `.{name}()` call-аргументом на синтаксически-\
-                         гарантированном значении — голое значение скоэрсировалось бы \
-                         в ТО ЖЕ САМОЕ через `#coerce` (D429 R6/R9). Уберите явный вызов."
+                        "explicit call `.{name}()` as a call-argument on a syntactically-\
+                         guaranteed value — a bare value would coerce to the SAME result \
+                         via `#coerce` (D429 R6/R9). Remove the explicit call."
                     ),
                     arg_expr.span,
                 ),
@@ -6801,10 +6930,10 @@ fn conv_redundant_consume_rebind(m: &Module, _o: &ConvLintOptions, out: &mut Vec
                         rule: "W_REDUNDANT_CONSUME_REBIND",
                         diag: Diagnostic::new(
                             format!(
-                                "`consume {new_name} = {old_name}` избыточен — \
-                                 `{old_name}` уже `consume`-биндинг из паттерна \
-                                 арма (`{vname}(consume {old_name})`), нигде \
-                                 больше не используется. Бинди сразу: \
+                                "`consume {new_name} = {old_name}` is redundant — \
+                                 `{old_name}` is already a `consume` binding from the \
+                                 arm's own pattern (`{vname}(consume {old_name})`), and \
+                                 is never used again. Bind it directly: \
                                  `{vname}(consume {new_name})`."
                             ),
                             d.span,
@@ -6901,9 +7030,9 @@ fn conv_manual_close_auto_cleanup(m: &Module, _o: &ConvLintOptions, out: &mut Ve
             rule: "W_MANUAL_CLOSE_AUTO_CLEANUP",
             diag: Diagnostic::new(
                 format!(
-                    "`{recv}.{method}()` хвостовым вызовом скоупа избыточен: авто-\
-                     `@cleanup` (D432) уже закрывает `{recv}` на выходе из скоупа \
-                     (успех/throw/panic/cancel). Уберите вызов."
+                    "`{recv}.{method}()` as the scope's tail call is redundant: auto-\
+                     `@cleanup` (D432) already closes `{recv}` on scope exit \
+                     (success/throw/panic/cancel). Remove the call."
                 ),
                 tail.span,
             ),
@@ -7013,9 +7142,9 @@ fn conv_check_const_redundant_annotation(
         rule: "W_REDUNDANT_CONST_TYPE_ANNOTATION",
         diag: Diagnostic::new(
             format!(
-                "аннотация `{name} {t}` избыточна — тип `{t}` и так выводится из \
-                 литерала-инициализатора. Уберите аннотацию (оставляйте только когда \
-                 она направляет коэрсию/сужение — например `[]u8`/`u32`).",
+                "annotation `{name} {t}` is redundant — the type `{t}` is inferred \
+                 from the literal initializer anyway. Remove the annotation (keep it \
+                 only when it drives coercion/narrowing — e.g. `[]u8`/`u32`).",
                 name = d.name,
                 t = default_name
             ),
@@ -7105,11 +7234,11 @@ fn conv_param_no_contract(m: &Module, o: &ConvLintOptions, out: &mut Vec<LintWar
                     rule: "W_PARAM_NO_CONTRACT",
                     diag: Diagnostic::new(
                         format!(
-                            "index/offset/len-параметр `{}` публичной std-fn `{}` без \
-                             `requires`: каждый такой параметр обязан нести контракт \
-                             (nv-coding-style §5, норма приёмки 2026-07-07). Доказанный \
-                             `requires` — zero-cost (Z3 элидирует на литеральных \
-                             аргументах).",
+                            "index/offset/len parameter `{}` of public std fn `{}` without \
+                             `requires`: every such parameter must carry a contract \
+                             (nv-coding-style §5, acceptance norm 2026-07-07). A proven \
+                             `requires` is zero-cost (Z3 elides it on literal \
+                             arguments).",
                             p.name, f.name
                         ),
                         p.span,
@@ -7147,10 +7276,10 @@ fn conv_vec_spelling(src: &str, o: &ConvLintOptions, out: &mut Vec<LintWarning>)
                 out.push(LintWarning {
                     rule: "W_VEC_SPELLING",
                     diag: Diagnostic::new(
-                        "`Vec[...]` вне std/collections/vec — definition-site-only \
-                         спеллинг (D238/D239): за пределами vec-модуля пишите `[]T`. \
-                         Известные compiler-gap исключения — с комментарием-маркером \
-                         `[M-...]` на строке."
+                        "`Vec[...]` outside std/collections/vec — a definition-site-only \
+                         spelling (D238/D239): outside the vec module write `[]T`. \
+                         Known compiler-gap exceptions need a marker comment \
+                         `[M-...]` on the line."
                             .to_string(),
                         Span::new(off + at, off + at + 4),
                     ),
@@ -7168,12 +7297,12 @@ fn conv_vec_spelling(src: &str, o: &ConvLintOptions, out: &mut Vec<LintWarning>)
 // ---------------------------------------------------------------------------
 
 const CONV_RETIRED_PATTERNS: &[(&str, &str)] = &[
-    (".nth(", "`nth` ретрактирован — `.iter().skip(n)` / индекс `[n]`"),
-    (".to_bytes(", "`to_bytes` ретрактирован (D410) — `bytes().clone()`"),
-    (".to_chars(", "`to_chars` ретрактирован (D410) — `chars().collect()`"),
-    (".into()", "голый `.into()` ретрактирован (D73 retraction) — явный `to_*`/`into_*`"),
-    (".with_capacity(", "`with_capacity` ретрактирован (D372 amend + 200 П4) — `.new(cap: n)`"),
-    (".from_raw_parts(", "`from_raw_parts` ретрактирован — типизированные конструкторы"),
+    (".nth(", "`nth` is retracted — `.iter().skip(n)` / index `[n]`"),
+    (".to_bytes(", "`to_bytes` is retracted (D410) — `bytes().clone()`"),
+    (".to_chars(", "`to_chars` is retracted (D410) — `chars().collect()`"),
+    (".into()", "bare `.into()` is retracted (D73 retraction) — explicit `to_*`/`into_*`"),
+    (".with_capacity(", "`with_capacity` is retracted (D372 amend + 200 item 4) — `.new(cap: n)`"),
+    (".from_raw_parts(", "`from_raw_parts` is retracted — typed constructors"),
 ];
 
 fn conv_retired_name(src: &str, _o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
@@ -7185,7 +7314,7 @@ fn conv_retired_name(src: &str, _o: &ConvLintOptions, out: &mut Vec<LintWarning>
                 out.push(LintWarning {
                     rule: "W_RETIRED_NAME",
                     diag: Diagnostic::new(
-                        format!("ретрактированный вызов: {}.", note),
+                        format!("retracted call: {}.", note),
                         Span::new(off + at, off + at + pat.len()),
                     ),
                 });
@@ -7228,9 +7357,9 @@ fn conv_fail_public_signature(src: &str, o: &ConvLintOptions, out: &mut Vec<Lint
             out.push(LintWarning {
                 rule: "W_FAIL_PUBLIC_SIGNATURE",
                 diag: Diagnostic::new(
-                    "`Fail[...]` в публичной std-сигнатуре: собственные ошибки std \
-                     наружу — `Result[T, XError]` (R5 D325); `Fail`-эффект наружу не \
-                     отдаём (throw = `!!` на Result-форме)."
+                    "`Fail[...]` in a public std signature: std's own errors going \
+                     outward use `Result[T, XError]` (R5 D325); the `Fail` effect is \
+                     never handed outward (throw = `!!` on the Result form)."
                         .to_string(),
                     Span::new(off + i, off + i + 5),
                 ),
@@ -7299,10 +7428,10 @@ fn conv_scan_stmts_for_destructure(stmts: &[Stmt], out: &mut Vec<LintWarning>) {
                 rule: "W_DESTRUCTURE_SNAPSHOT",
                 diag: Diagnostic::new(
                     format!(
-                        "{} подряд идущих `{}`-биндинга снимают отдельные поля с \
-                         одного источника `{}` (`x = {}.x`) — стилевой дрейф \
-                         (nv-coding-style §26). Канон — D411 record-деструктуризация \
-                         одним биндингом: `{} {{ .., .. }} = {}`.",
+                        "{} adjacent `{}` bindings each pick off a separate field from \
+                         the same source `{}` (`x = {}.x`) — style drift \
+                         (nv-coding-style §26). Canon is D411 record destructuring \
+                         in a single binding: `{} {{ .., .. }} = {}`.",
                         run_len, kw, src0, src0, kw, src0
                     ),
                     Span::new(d0.span.start, last.end),
@@ -7737,13 +7866,13 @@ fn conv_leading_binop_continuation(src: &str, _o: &ConvLintOptions, out: &mut Ve
                                 rule: "W_LEADING_BINOP_CONTINUATION",
                                 diag: Diagnostic::new(
                                     format!(
-                                        "ведущий бинарный оператор `{op}` в начале continuation-строки: \
-                                         предыдущая строка сбалансирована по скобкам и похожа на \
-                                         завершённый statement — парсер, скорее всего, НЕ продолжит его \
-                                         этим оператором (ведущий `||` парсится как отдельный zero-arg \
-                                         closure-литерал → discarded statement → возможен always-true, \
-                                         D417-класс). Канон — TRAILING-форма: перенесите `{op}` в конец \
-                                         ПРЕДЫДУЩЕЙ строки (nv-coding-style §27)."
+                                        "leading binary operator `{op}` at the start of a continuation \
+                                         line: the previous line is bracket-balanced and looks like a \
+                                         completed statement — the parser most likely will NOT continue \
+                                         it with this operator (a leading `||` parses as a separate \
+                                         zero-arg closure literal → discarded statement → possible \
+                                         always-true, D417-class). Canon is the TRAILING form: move \
+                                         `{op}` to the end of the PREVIOUS line (nv-coding-style §27)."
                                     ),
                                     Span::new(start, start + op.len()),
                                 ),
@@ -7866,11 +7995,12 @@ fn conv_redundant_of(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarning
                     rule: "W_REDUNDANT_OF",
                     diag: Diagnostic::new(
                         format!(
-                            "`Vec[{t}].of(...)` избыточен: аргументы — голые `{t}`-литералы, \
-                             для которых литерал `[...]` дал бы ТОТ ЖЕ тип `Vec[{t}]` \
-                             (nv-coding-style §28). Канон — `[...]`. `.of` оправдан только \
-                             когда фиксирует тип, которого литерал не даёт (сужение ширины \
-                             `u32`/`i64`/…, `None`-элементы, пустая граница API).",
+                            "`Vec[{t}].of(...)` is redundant: the arguments are bare \
+                             `{t}` literals, for which the literal `[...]` would give \
+                             the SAME type `Vec[{t}]` (nv-coding-style §28). Canon is \
+                             `[...]`. `.of` is only justified when it fixes a type the \
+                             literal cannot give (narrowing to `u32`/`i64`/…, `None` \
+                             elements, an empty API boundary).",
                             t = default_name
                         ),
                         e.span,
@@ -8054,6 +8184,100 @@ mod tests {
         );
         let ws = lint_module(&m);
         assert!(!ws.iter().any(|w| w.rule == "unused-import"));
+    }
+
+    // [M-lint-phantom-prelude-unused-import] (владелец 2026-07-31, репро
+    // nova-bigint/src/bigint.nv): `lint_unused_imports` итерировал ВЕСЬ
+    // `m.peer_files` (после `resolve_imports_inline_ex` — это полный
+    // транзитивный import-граф, инлайненный в один `Module`), а не только
+    // entry-модуля собственные co-equal peer'ы (`pf.is_entry_module`) —
+    // unused-import ЧУЖОГО транзитивно затянутого модуля (auto-prelude →
+    // `std.collections.vec`/`hashmap`/`raw_mem`/…) вешался на проверяемый
+    // файл как «фантомная» находка об имени, которое файл вообще не
+    // импортирует.
+
+    #[test]
+    fn phantom_prelude_unused_import_not_flagged_on_foreign_peer() {
+        // Синтетический repro-shape: entry-модуль `foo` без своих импортов
+        // + "чужой" peer (module_name `std.collections.vec`, is_entry_module
+        // = false) с ЕГО СОБСТВЕННЫМ неиспользуемым импортом — как если бы
+        // резолвер инлайнил транзитивно затянутый `std/collections/vec/
+        // core.nv` (auto-prelude → Vec) в общий `peer_files`. Импорт-гигиена
+        // чужого модуля — не находка ЭТОГО файла.
+        let entry_m = parse("module foo\nfn run() -> int => 0\n");
+        let foreign_m = parse("module bar\nimport baz.{Unused}\nfn helper() -> int => 0\n");
+
+        let mut m = entry_m;
+        let entry_peer = crate::ast::PeerFile {
+            path: std::path::PathBuf::from("/synthetic/entry.nv"),
+            file_id: crate::diag::FileId::from(0_u32),
+            imports: m.imports.clone(),
+            items_here: m.items.clone(),
+            imported_item_names: HashSet::new(),
+            is_entry_module: true,
+            module_name: m.name.clone(),
+        };
+        let foreign_peer = crate::ast::PeerFile {
+            path: std::path::PathBuf::from("/synthetic/std/collections/vec/core.nv"),
+            file_id: crate::diag::FileId::from(7_u32),
+            imports: foreign_m.imports.clone(),
+            items_here: foreign_m.items.clone(),
+            imported_item_names: HashSet::new(),
+            is_entry_module: false,
+            module_name: vec!["std".to_string(), "collections".to_string(), "vec".to_string()],
+        };
+        m.peer_files = vec![entry_peer, foreign_peer];
+
+        let ws = lint_module(&m);
+        assert!(
+            !ws.iter().any(|w| w.rule == "unused-import"),
+            "foreign (non-entry) peer's own unused import must NOT surface as \
+             a phantom finding on the checked file, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn unused_import_still_fires_for_entry_own_peer_group() {
+        // Companion-негатив: фикс не должен ослепить линт к РЕАЛЬНОМУ
+        // unused-import в СОБСТВЕННОЙ peer-группе entry-модуля — исключаются
+        // только чужие (non-entry) peer'ы.
+        let entry_m = parse("module foo\nimport bar.{Unused}\nfn run() -> int => 0\n");
+        let foreign_m = parse("module baz\nimport qux.{AlsoUnused}\nfn helper() -> int => 0\n");
+
+        let mut m = entry_m;
+        let entry_peer = crate::ast::PeerFile {
+            path: std::path::PathBuf::from("/synthetic/entry.nv"),
+            file_id: crate::diag::FileId::from(0_u32),
+            imports: m.imports.clone(),
+            items_here: m.items.clone(),
+            imported_item_names: HashSet::new(),
+            is_entry_module: true,
+            module_name: m.name.clone(),
+        };
+        let foreign_peer = crate::ast::PeerFile {
+            path: std::path::PathBuf::from("/synthetic/std/somewhere.nv"),
+            file_id: crate::diag::FileId::from(9_u32),
+            imports: foreign_m.imports.clone(),
+            items_here: foreign_m.items.clone(),
+            imported_item_names: HashSet::new(),
+            is_entry_module: false,
+            module_name: vec!["std".to_string(), "somewhere".to_string()],
+        };
+        m.peer_files = vec![entry_peer, foreign_peer];
+
+        let ws = lint_module(&m);
+        let hits: Vec<&LintWarning> = ws.iter().filter(|w| w.rule == "unused-import").collect();
+        assert_eq!(
+            hits.len(), 1,
+            "exactly one unused-import (entry's own `Unused`), got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+        assert!(
+            hits[0].diag.message.contains("Unused") && !hits[0].diag.message.contains("AlsoUnused"),
+            "should name entry's own unused import, not the foreign peer's, got: {}",
+            hits[0].diag.message
+        );
     }
 
     // Plan 33.8 Ф.3.3: `assume` вне `#trusted` → lint `trust-introduced`.
@@ -8955,7 +9179,7 @@ mod tests {
             .find(|w| w.rule == "W_WHILE_COUNTER_FOR_RANGE")
             .expect("expected W_WHILE_COUNTER_FOR_RANGE");
         assert!(
-            !hit.diag.message.contains("ВАЖНО"),
+            !hit.diag.message.contains("IMPORTANT"),
             "must NOT emit the type-carry note when no explicit type was declared, got: {}",
             hit.diag.message
         );
@@ -10278,6 +10502,110 @@ mod tests {
         let m = parse(src);
         let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
         assert_eq!(slice_hits(&ws).len(), 0, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+    }
+
+    // ── [M-lint-redundant-to-str-in-interpolation]: W_REDUNDANT_TO_STR_INTERP
+
+    fn to_str_interp_hits(ws: &[LintWarning]) -> Vec<&LintWarning> {
+        coalesce_rule_hits(ws, "W_REDUNDANT_TO_STR_INTERP")
+    }
+
+    #[test]
+    fn to_str_interp_pos_bare_tail() {
+        // `${x.to_str()}` — хвост, ноль аргументов, голая интерполяция.
+        let src = "module foo\n\
+             fn run(x int) -> str => \"val: ${x.to_str()}\"\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        let hit = to_str_interp_hits(&ws);
+        assert_eq!(hit.len(), 1, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+        let s = hit[0].diag.suggestion.as_ref().expect("suggestion");
+        assert_eq!(s.replacement, "", "fix-it removes exactly the `.to_str()` tail");
+        assert_eq!(s.applicability, Applicability::MachineApplicable);
+    }
+
+    #[test]
+    fn to_str_interp_pos_member_receiver() {
+        // Ресивер — не голый ident, а поле/цепочка — правило матчит по
+        // ХВОСТУ вызова, receiver-форма не важна.
+        let src = "module foo\n\
+             type Rec { ro v int }\n\
+             fn run(r Rec) -> str => \"val: ${r.v.to_str()}\"\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert_eq!(
+            to_str_interp_hits(&ws).len(), 1,
+            "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn to_str_interp_neg_radix_arg() {
+        // `${x.to_str(16)}` — аргумент меняет представление, НЕ редундантен.
+        let src = "module foo\n\
+             fn run(x int) -> str => \"val: ${x.to_str(16)}\"\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert_eq!(
+            to_str_interp_hits(&ws).len(), 0,
+            "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn to_str_interp_neg_not_tail() {
+        // `${x.to_str().pad(5)}` — `.to_str()` НЕ хвост (хвост — `.pad(5)`).
+        let src = "module foo\n\
+             fn run(x int) -> str => \"val: ${x.to_str().pad(5)}\"\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert_eq!(
+            to_str_interp_hits(&ws).len(), 0,
+            "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn to_str_interp_neg_debug_spec() {
+        // `${x.to_str():?}` — Debug-spec дебажит РЕЗУЛЬТАТ `.to_str()` (str,
+        // в кавычках) — семантически ДРУГОЕ значение, чем `${x:?}` на
+        // исходном `x`; не матчим (см. block-comment у правила).
+        let src = "module foo\n\
+             fn run(x int) -> str => \"val: ${x.to_str():?}\"\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert_eq!(
+            to_str_interp_hits(&ws).len(), 0,
+            "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn to_str_interp_neg_rich_spec() {
+        // `${x.to_str():>10}` — rich-spec (width/align) на не-str типах
+        // трактуется по-другому до/после снятия `.to_str()` (напр. precision
+        // на float — знаки после запятой, на str — обрезка) — не матчим.
+        let src = "module foo\n\
+             fn run(x int) -> str => \"val: ${x.to_str():>10}\"\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert_eq!(
+            to_str_interp_hits(&ws).len(), 0,
+            "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn to_str_interp_neg_plain_interp() {
+        // `${x}` без `.to_str()` вовсе — ничего гасить не нужно.
+        let src = "module foo\n\
+             fn run(x int) -> str => \"val: ${x}\"\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert_eq!(
+            to_str_interp_hits(&ws).len(), 0,
+            "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
     }
 }
 
