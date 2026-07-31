@@ -1,0 +1,17 @@
+// Канон порядка атрибутов (владелец 2026-07-31): ВСЕ атрибуты — ПЕРЕД
+// `export`, своей строкой (как #stable). Контракт-атрибуты включительно.
+module spec_tests.conformance
+
+type MAttrRec value { n int }
+
+#unverified
+export fn m_attr_guarded(x MAttrRec) -> int
+    requires x.n >= 0
+{
+    x.n + 1
+}
+
+test "attr canon: #unverified precedes export fn" {
+    ro r = MAttrRec { n: 4 }
+    assert(m_attr_guarded(r) == 5)
+}

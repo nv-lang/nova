@@ -1359,6 +1359,14 @@ impl Parser {
         // mirrors `pre_cancel_safe`/`pre_coerce` exactly (attribute may be
         // written on its own line before `export`/`extern`).
         let pre_thread_affine = self.parse_thread_affine_attr();
+        // Канон владельца (2026-07-31): ВСЕ атрибуты — ПЕРЕД `export`.
+        // Contract-attrs (#verify/#unverified/#verify_timeout/#pure/#trusted)
+        // раньше парсились только ПОСЛЕ export — отсюда аномалия
+        // `export #unverified` (единственная случайно-принятая форма,
+        // найденная перебором окном 236). Теперь канонический порядок
+        // `#unverified ⏎ export fn` — парсится здесь; пост-export форма —
+        // честная ошибка (см. ниже).
+        let pre_contract_attrs = self.parse_contract_attrs()?;
 
         // Plan 170 (D307): `priv(file)` top-level visibility modifier — file-private.
         // Parsed BEFORE `export` (mutually exclusive). Forms:
@@ -1587,7 +1595,31 @@ impl Parser {
         // `#pure` — contract-related атрибуты перед `fn`. Парсятся
         // отдельно от `#realtime`, могут идти в любом порядке.
         // Не keyword'ы в лексере (контекстный разбор после `#`).
-        let mut contract_attrs = self.parse_contract_attrs()?;
+        let post_contract_attrs = self.parse_contract_attrs()?;
+        if !post_contract_attrs.is_empty() && is_export {
+            // Канон владельца (2026-07-31): атрибуты перед export. Аномальная
+            // форма `export #unverified ⏎ fn` (bigdecimal-прецедент) закрыта.
+            return Err(Diagnostic::new(
+                "[E_ATTR_AFTER_EXPORT] contract attributes (`#verify` / \
+                 `#unverified` / `#verify_timeout` / `#pure` / `#trusted`) must \
+                 precede `export`, on their own line:\n  #unverified\n  export fn ...\n\
+                 (all item attributes go BEFORE `export` — same as `#stable`)."
+                    .to_string(),
+                self.peek().span,
+            ));
+        }
+        let mut contract_attrs = if pre_contract_attrs.is_empty() {
+            post_contract_attrs
+        } else if post_contract_attrs.is_empty() {
+            pre_contract_attrs
+        } else {
+            return Err(Diagnostic::new(
+                "[E_ATTR_AFTER_EXPORT] contract attributes given both before and \
+                 after `export`/`extern` — put them all BEFORE, on their own lines."
+                    .to_string(),
+                self.peek().span,
+            ));
+        };
         // Plan 103.6 / Plan 113: merge pre-export sync-class attr (if any) into contract_attrs.
         // Pre-export attrs take precedence over any (invalid) post-export ones.
         // Plan 113: `#realtime` on any fn (external or not) also sets realtime_attr

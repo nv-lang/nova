@@ -1,0 +1,11 @@
+// EXPECT_COMPILE_ERROR E_ATTR_AFTER_EXPORT
+// Аномалия `export #unverified` (случайно принималась парсером до 2026-07-31,
+// bigdecimal-прецедент) — теперь честная ошибка: атрибуты перед export.
+module neg.m_attr_after_export_neg
+
+export #unverified
+fn m_attr_bad(x int) -> int
+    requires x >= 0
+{
+    x
+}
