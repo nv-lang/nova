@@ -1,0 +1,49 @@
+// int128-связка P1: [M-shl-shr-user-type-no-dispatch].
+//
+// `<<`/`>>` on a user type did not dispatch AT ALL (raw C `<<`/`>>` over
+// `Nova_T*` → CC-FAIL "invalid operands") — the same hole plan 234 Ф.1 closed
+// for `&`/`|`/`^` before this window; `@shl`/`@shr` were left out because
+// they take a HETEROGENEOUS second param (`n int`, not `Self`, D46
+// `03-syntax.md:2872`) — mirrors `@minus`'s dispatch shape, not the
+// homogeneous Bit* fast-path. Covers: a plain (non-generic) heap record
+// receiver, AND a generic-mono receiver (`Set[T]`-class, mirrors
+// `m234_set_bitor_generic_mono.nv`) — the generic-mono branch needs its own
+// `register_mono_method_instance` guard (same `____`-gard precedent as
+// Bit*'s "приёмка 234" fix) or the call emits with no body ever registered
+// (undefined symbol at link).
+module spec_tests.conformance
+
+// NB: `@shl`/`@shr` are the FIXED D46 operator-selector names (`a << b` →
+// `@shl`, `a >> b` → `@shr`, `03-syntax.md:2872`) — NOT renameable, so they
+// keep their bare spelling even though this fixture prefixes every OTHER
+// identifier (type/param/local) with `m128_`.
+type M128Mask { m128_bits int }
+
+export fn M128Mask @shl(m128_n int) -> M128Mask => { m128_bits: @m128_bits << m128_n }
+export fn M128Mask @shr(m128_n int) -> M128Mask => { m128_bits: @m128_bits >> m128_n }
+
+// `-> Self` return (not a bare scalar) — matches the real-world shape
+// (`i128 @shl`/`@shr`, `Set[T] @bitor` all return `Self`). A bare-scalar
+// return (`-> int`) hits an UNRELATED, pre-existing local-var type-inference
+// gap for `<<`/`>>` (found while authoring this fixture, reported separately
+// — not one of this window's markers, not fixed here).
+type M128GenBits[T] { m128_v T, m128_tag int }
+
+export fn M128GenBits[T] @shl(m128_n int) -> M128GenBits[T] =>
+    { @m128_v, m128_tag: @m128_tag << m128_n }
+export fn M128GenBits[T] @shr(m128_n int) -> M128GenBits[T] =>
+    { @m128_v, m128_tag: @m128_tag >> m128_n }
+
+test "234/int128-связка: << и >> на пользовательском record-типе" {
+    ro m128_a = M128Mask { m128_bits: 0b1100 }
+    ro m128_shifted_l = m128_a << 2
+    assert(m128_shifted_l.m128_bits == 0b110000)
+    ro m128_shifted_r = m128_a >> 1
+    assert(m128_shifted_r.m128_bits == 0b0110)
+}
+
+test "234/int128-связка: << и >> на generic-mono ресивере (Set[T]-класс)" {
+    ro m128_g M128GenBits[int] = { m128_v: 0, m128_tag: 5 }
+    assert((m128_g << 3).m128_tag == 40)
+    assert((m128_g >> 1).m128_tag == 2)
+}

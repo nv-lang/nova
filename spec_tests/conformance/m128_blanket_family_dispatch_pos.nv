@@ -1,0 +1,56 @@
+// int128-связка P1 (docs/plans/backlog-followups.md):
+// [M-int128-blanket-dispatch-first-by-name] + [M-neg-cast-receiver-blanket-dispatch].
+//
+// (1) `blanket_key_opt` (emit_c.rs, protocol-aware blanket dispatch) used to
+// take the FIRST bare-typevar blanket a HashMap iteration produced for a
+// method name and test ONLY that one against the receiver's bound
+// (`protocols_match`) — with two type-set-bounded blankets sharing a method
+// name (SignedInts/UnsignedInts, exactly `std/src/math/int128.nv`'s
+// `@to_i128()` shape), the first-found candidate could be the WRONG family,
+// and the actually-matching candidate was never tried. Pinned here on two
+// disjoint families in ONE compile unit.
+//
+// (2) Receiver written `(-N as i64).m()` — `Unary(Neg(Cast))` — used to be
+// invisible to the checker's lightweight receiver-type prober
+// (`BoundCtx::infer_arg_ty`), so NO `resolved_callees` entry was recorded for
+// the call and codegen's "concrete beats generic" channel-first dispatch had
+// nothing to read, falling through into the blanket path even when an EXACT
+// concrete overload exists. `(N as u64).m()` (no `Neg`) already worked
+// (`[M-inline-cast-receiver-method-resolution]`, plan 234 part B step 1).
+module spec_tests.conformance
+
+type M128Family set i8 | i16 | i32 | i64 | int
+type M128OtherFamily set u8 | u16 | u32 | u64 | uint
+
+// Blanket per family, same method name, DISTINCT typevar letters (same-letter
+// `T` for both collides at the checker's top-level dup-check — the receiver
+// key is the bare typevar spelling, not the bound).
+export fn[S M128Family] S @m128_mk() -> int => if @ < 0 { -100 } else { 100 }
+export fn[U M128OtherFamily] U @m128_mk() -> int => 200
+
+// Concrete overloads for the WIDE members — D84 "concrete beats generic"
+// must win over the blanket for these three receivers, in EVERY receiver
+// expression shape (bare cast AND `Unary(Neg(Cast))`).
+export fn i64 @m128_mk() -> int => if @ < 0 { -1 } else { 1 }
+export fn u64 @m128_mk() -> int => 2
+export fn int @m128_mk() -> int => if @ < 0 { -3 } else { 3 }
+
+test "234/int128-связка: blanket-диспетч выбирает семью ресивера, не первый-по-имени" {
+    // Narrow widths — no concrete overload, must route through the correct
+    // family's blanket.
+    assert((7 as i8).m128_mk() == 100)
+    assert((7 as u8).m128_mk() == 200)
+    assert((-7 as i16).m128_mk() == -100)
+}
+
+test "234/int128-связка: конкретная перегрузка побеждает blanket на bare-cast ресивере" {
+    assert((7 as i64).m128_mk() == 1)
+    assert((7 as u64).m128_mk() == 2)
+    assert((7 as int).m128_mk() == 3)
+}
+
+test "234/int128-связка: конкретная перегрузка побеждает blanket на Unary(Neg(Cast))-ресивере" {
+    // The exact receiver shape that used to mis-dispatch into the blanket.
+    assert((-7 as i64).m128_mk() == -1)
+    assert((-7 as int).m128_mk() == -3)
+}

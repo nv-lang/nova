@@ -1,0 +1,22 @@
+// EXPECT_COMPILE_ERROR no @shl overload
+//
+// int128-связка P1, [M-shl-shr-user-type-no-dispatch]: `<<`/`>>` dispatch on
+// a user type now goes through `bitwise_ops::resolve_shift_dispatch`
+// (mirrors `@minus`'s D124 rejection point) — a receiver type that HAS some
+// `@shl` overload(s) registered but none taking the actual RHS type is a
+// clean compile-time rejection, not a raw CC-FAIL from clang over invalid C.
+module neg.m128_shl_shr_no_overload_neg
+
+type M128ShiftOther { m128_v int }
+
+type M128ShiftHost { m128_v int }
+
+// Only ONE @shl overload, taking `M128ShiftOther` — NOT `int` — so shifting
+// by a plain int literal has no matching overload.
+export fn M128ShiftHost @shl(m128_n M128ShiftOther) -> M128ShiftHost => { @m128_v }
+
+fn main() {
+    ro m128_h = M128ShiftHost { m128_v: 1 }
+    ro m128_r = m128_h << 3
+    println("${m128_r.m128_v}")
+}

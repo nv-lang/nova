@@ -1181,6 +1181,16 @@ fn collect_expr(e: &Expr, out: &mut HashSet<String>) {
             out.insert("bitand".to_string());
             out.insert("bitor".to_string());
             out.insert("bitxor".to_string());
+            // [M-shl-shr-user-type-no-dispatch] (int128-связка, план 234 «фикс
+            // тем же паттерном»): `a << b` / `a >> b` on a user type now
+            // dispatch to `@shl`/`@shr` (emit_c.rs fast-path mirroring
+            // `@minus`'s heterogeneous-param pattern). Same AST-invisible
+            // magic-selector class as `bitand`/`bitor`/`bitxor` above — without
+            // seeding, reachability-DCE drops the `@shl`/`@shr` body whenever
+            // the operator form (not a literal `.shl(...)` call) is the only
+            // caller in the CU.
+            out.insert("shl".to_string());
+            out.insert("shr".to_string());
         }
         ExprKind::Unary { operand, op } => {
             collect_expr(operand, out);
@@ -1190,6 +1200,20 @@ fn collect_expr(e: &Expr, out: &mut HashSet<String>) {
             // body when `~` is its only caller.
             if matches!(op, crate::ast::UnOp::BitNot) {
                 out.insert("bitnot".to_string());
+            }
+            // [M-neg-not-selectors-dce-gap] (int128-связка, план 234 «попутно»):
+            // `-a` / `!a` on a user type dispatch to `@neg`/`@not` — the SAME
+            // reachability-DCE gap as `@bitnot` just above, pre-existing since
+            // BEFORE plan 234 (unlike bitand/bitor/bitxor/bitnot, `@neg`/`@not`
+            // were never added to this seed list at all). Without seeding, a
+            // custom type whose ONLY caller of `@neg`/`@not` is the operator
+            // form (`-x`, `!x`) has its method body dropped as dead by
+            // reachability-DCE → undefined-symbol link error.
+            if matches!(op, crate::ast::UnOp::Neg) {
+                out.insert("neg".to_string());
+            }
+            if matches!(op, crate::ast::UnOp::Not) {
+                out.insert("not".to_string());
             }
         }
         ExprKind::Try(i) | ExprKind::Bang(i) | ExprKind::RefArg(i) => collect_expr(i, out),
