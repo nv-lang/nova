@@ -29,10 +29,10 @@ module collections.range
 // Тип
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Диапазон целых чисел в half-open форме `[start, end)`.
+/// A range of integers in half-open form `[start, end)`.
 ///
-/// Создаётся литералами `a..b` (exclusive) и `a..=b` (inclusive, нормализуется в half-open).
-/// Immutable — все операции возвращают новый `Range`.
+/// Created by the `a..b` (exclusive) and `a..=b` (inclusive, normalized to half-open) literals.
+/// Immutable — all operations return a new `Range`.
 ///
 /// # Examples
 ///
@@ -49,8 +49,8 @@ module collections.range
 ///
 /// # See Also
 ///
-/// - `[Range.step_by]` — итерация с шагом
-/// - `[Range.reverse]` — обратная итерация
+/// - `[Range.step_by]` — iteration with a step
+/// - `[Range.reverse]` — reverse iteration
 // [M-138-range-value] Plan 138 Ф.0.3: перевести на value record после Ф.0.1 sweep.
 // Цель: export type Range { ro start int; ro end int }  — stack, 16 bytes.
 #stable(since = "0.1")
@@ -68,18 +68,18 @@ export type Range value {
 // Базовые операции
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Число элементов в диапазоне. Возвращает `0` если `start >= end`.
+/// Number of elements in the range. Returns `0` if `start >= end`.
 #stable(since = "0.1")
 export fn Range @len() -> int {
     ro n = @end - @start
     n.max(0)
 }
 
-/// Возвращает `true` если диапазон не содержит элементов.
+/// Returns `true` if the range contains no elements.
 #stable(since = "0.1")
 export fn Range @is_empty() -> bool => @len() == 0
 
-/// Проверить принадлежность значения диапазону (half-open: `start <= x < end`).
+/// Check whether a value belongs to the range (half-open: `start <= x < end`).
 #stable(since = "0.1")
 export fn Range @contains(x int) -> bool =>
     x >= @start && x < @end
@@ -95,7 +95,7 @@ export type RangeIter value {
     mut cur     int
 }
 
-/// Создать итератор по диапазону.
+/// Create an iterator over the range.
 #stable(since = "0.1")
 export fn Range @iter() -> RangeIter =>
     { @end, cur: @start }
@@ -126,7 +126,7 @@ export type StepRangeIter value {
     mut cur      int
 }
 
-/// Итератор с шагом `step`. Бросает `OverflowError` если `step <= 0`.
+/// An iterator over the range with step `step`. Throws `OverflowError` if `step <= 0`.
 ///
 /// # Examples
 ///
@@ -163,7 +163,7 @@ export type ReverseRangeIter value {
     mut done      bool                     // internal: флаг завершения (для start == int.MIN)
 }
 
-/// Итератор в обратном порядке: от `end-1` до `start`.
+/// An iterator in reverse order: from `end-1` down to `start`.
 ///
 /// # Examples
 ///

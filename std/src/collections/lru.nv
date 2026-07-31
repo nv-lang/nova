@@ -11,13 +11,13 @@ module collections.lru
 
 import std.collections.hashmap.{HashMap}
 
-/// LRU (Least Recently Used) кэш с фиксированной ёмкостью.
+/// An LRU (Least Recently Used) cache with a fixed capacity.
 ///
-/// При достижении `capacity` автоматически вытесняет наименее
-/// недавно использованный элемент. `get` обновляет recency.
+/// When `capacity` is reached it automatically evicts the least
+/// recently used element. `get` refreshes recency.
 ///
-/// Bootstrap-реализация: O(n) на `get`/`put` из-за array-based ordering.
-/// Production-stdlib использует doubly-linked list для O(1).
+/// Bootstrap implementation: O(n) on `get`/`put` due to array-based ordering.
+/// The production stdlib uses a doubly-linked list for O(1).
 ///
 /// # Examples
 ///
@@ -25,7 +25,7 @@ import std.collections.hashmap.{HashMap}
 /// let mut cache = Lru[str, int].new(2)
 /// cache.put("a", 1)
 /// cache.put("b", 2)
-/// cache.put("c", 3)   // вытесняет "a" (LRU)
+/// cache.put("c", 3)   // evicts "a" (LRU)
 /// assert(cache.get("a") == None)
 /// assert(cache.get("b") == Some(2))
 /// ```
@@ -36,7 +36,7 @@ export type Lru[K Hash, V] {
     mut store HashMap[K, V]     // internal storage
 }
 
-/// Создать пустой LRU кэш с заданной ёмкостью.
+/// Create an empty LRU cache with the given capacity.
 #stable(since = "0.1")
 export fn Lru[K, V].new(capacity int) -> Self =>
     {
@@ -45,19 +45,19 @@ export fn Lru[K, V].new(capacity int) -> Self =>
         store: HashMap[K, V].new(),
     }
 
-/// Число элементов в кэше.
+/// Number of elements in the cache.
 #stable(since = "0.1")
 export fn Lru[K, V] @len() -> int => @store.len()
 
-/// Возвращает `true` если кэш пуст.
+/// Returns `true` if the cache is empty.
 #stable(since = "0.1")
 export fn Lru[K, V] @is_empty() -> bool => @store.len() == 0
 
-/// Проверить наличие ключа без обновления recency.
+/// Check whether the key is present without refreshing recency.
 #stable(since = "0.1")
 export fn Lru[K, V] @contains(k K) -> bool => @store.contains(k)
 
-/// Получить значение по ключу и обновить recency (move-to-front).
+/// Get the value by key and refresh recency (move-to-front).
 #stable(since = "0.1")
 export fn Lru[K, V] mut @get(k K) -> Option[V] {
     match @store.get(k) {
@@ -70,7 +70,7 @@ export fn Lru[K, V] mut @get(k K) -> Option[V] {
     }
 }
 
-/// Вставить или обновить пару. Если кэш полон — вытесняет LRU элемент.
+/// Insert or update a pair. If the cache is full — evicts the LRU element.
 #stable(since = "0.1")
 export fn Lru[K, V] mut @put(k K, v V) -> () {
     if @store.contains(k) {

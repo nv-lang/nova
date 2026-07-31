@@ -15,29 +15,29 @@ import std.collections.hashmap.{HashMap}
 // Тип
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Множество уникальных элементов поверх `HashMap[T, ()]`.
+/// A set of unique elements on top of `HashMap[T, ()]`.
 ///
-/// Поддерживает операции объединения (`|`), пересечения (`&`) и разности (`-`)
-/// через operator overloading (D46).
+/// Supports the union (`|`), intersection (`&`) and difference (`-`)
+/// operations via operator overloading (D46).
 ///
 /// # Examples
 ///
 /// ```nova
 /// let mut s = Set[int].new()
 /// assert(s.insert(1) == true)
-/// assert(s.insert(1) == false)  // дубликат
+/// assert(s.insert(1) == false)  // duplicate
 /// assert(s.contains(1))
 ///
 /// let a = Set[int].new(cap: 4)
 /// let b = Set[int].new(cap: 4)
-/// // a | b — объединение
-/// // a & b — пересечение
-/// // a - b — разность
+/// // a | b — union
+/// // a & b — intersection
+/// // a - b — difference
 /// ```
 ///
 /// # See Also
 ///
-/// - `[HashMap]` — map с ключами и значениями
+/// - `[HashMap]` — a map with keys and values
 #stable(since = "0.1")
 export type Set[T] {
     use map HashMap[T, ()]
@@ -47,24 +47,24 @@ export type Set[T] {
 // Конструкторы
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Создать пустое множество.
+/// Create an empty set.
 #stable(since = "0.1")
 export fn Set[T].new(cap int = 16) -> Self
     requires cap >= 0
     => { map: HashMap[T, ()].new(cap: cap) }
 
-/// Построить множество из массива элементов.
+/// Build a set from an array of elements.
 ///
-/// Принимает конкретный `[]T` (зеркало `HashMap.from([](K,V))`): generic-протокол
-/// `Iterable[T]` в mono-контексте стирался в `void*`, и for-in не мог восстановить
-/// C-тип итератора на mono-инстансе ([M-91.1-set-from-iter-iterable-param]).
-/// Массив итерируется корректно для любого типа элемента.
+/// Takes a concrete `[]T` (a mirror of `HashMap.from([](K,V))`): a generic
+/// `Iterable[T]` protocol was erased to `void*` in a mono context, and for-in
+/// could not recover the C type of the iterator on the mono instance
+/// ([M-91.1-set-from-iter-iterable-param]). An array iterates correctly for any element type.
 ///
 /// # Examples
 ///
 /// ```nova
 /// mut s = Set[int].from_iter([1, 2, 3, 2])
-/// assert(s.len() == 3)   // дубликат 2 схлопнут
+/// assert(s.len() == 3)   // duplicate 2 collapsed
 /// assert(s.contains(2))
 /// ```
 #stable(since = "0.1")
@@ -80,24 +80,24 @@ export fn Set[T].from_iter(items []T) -> Self {
 // Базовые операции
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Число элементов в множестве.
+/// Number of elements in the set.
 #stable(since = "0.1")
 export fn Set[T] @len() -> int => @map.len()
 
-/// Возвращает `true` если множество пусто.
+/// Returns `true` if the set is empty.
 #stable(since = "0.1")
 export fn Set[T] @is_empty() -> bool => @map.is_empty()
 
-/// Проверить наличие элемента.
+/// Check whether an element is present.
 #stable(since = "0.1")
 export fn Set[T] @contains(item T) -> bool => @map.contains(item)
 
-/// Текущая ёмкость (bucket count внутреннего `HashMap`). D117 AMEND
+/// Current capacity (the bucket count of the internal `HashMap`). D117 AMEND
 /// accessor-pair — 0-arg getter half of `cap`/`cap(n)`.
 #stable(since = "0.1")
 export fn Set[T] @cap() -> int => @map.cap()
 
-/// Гарантировать ёмкость минимум под `n` элементов без rehash (delegates to
+/// Guarantee capacity for at least `n` elements without a rehash (delegates to
 /// `HashMap`'s own `mut @cap(n)` — same "grows only, entry-count → bucket-count"
 /// semantics). Replacement for the removed `Set[T].with_capacity` static
 /// constructor: `Set[T].new(cap: n)`.
@@ -112,7 +112,7 @@ export fn Set[T] mut @cap(n int) -> @
 // Мутирующие операции
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Вставить элемент. Возвращает `true` если элемент новый, `false` если уже был.
+/// Insert an element. Returns `true` if the element is new, `false` if it was already present.
 #stable(since = "0.1")
 export fn Set[T] mut @insert(item T) -> bool {
     if @map.contains(item) { return false }
@@ -120,7 +120,7 @@ export fn Set[T] mut @insert(item T) -> bool {
     true
 }
 
-/// Удалить элемент. Возвращает `true` если элемент был в множестве.
+/// Remove an element. Returns `true` if the element was in the set.
 #stable(since = "0.1")
 export fn Set[T] mut @remove(item T) -> bool =>
     match @map.remove(item) {
@@ -128,21 +128,21 @@ export fn Set[T] mut @remove(item T) -> bool =>
         None    => false
     }
 
-/// Очистить множество.
+/// Clear the set.
 #stable(since = "0.1")
 export fn Set[T] mut @clear() -> () => @map.clear()
 
-/// Создать независимую копию множества (deep — каждый элемент клонируется).
+/// Create an independent copy of the set (deep — every element is cloned).
 ///
-/// По D230 amend `Clone` — глубокий протокол: `clone()` клонирует каждый
-/// элемент через `T.@clone()`, под bound `[T Clone]`. Set делегирует
-/// backing-`HashMap` (`{ map: @map.clone() }`), поэтому deep-семантика
-/// наследуется от `HashMap.@clone` (per-element `k.clone()`).
+/// Per the D230 amend `Clone` is a deep protocol: `clone()` clones each
+/// element via `T.@clone()`, under the bound `[T Clone]`. Set delegates to the
+/// backing `HashMap` (`{ map: @map.clone() }`), so the deep semantics are
+/// inherited from `HashMap.@clone` (per-element `k.clone()`).
 ///
 /// Plan 138.4 Ф.1 (G-C, [M-138.3-clone-bound-unsupported] RESOLVED): per-element
-/// generic `T.@clone()` теперь диспатчится корректно (примитивный T → built-in
-/// identity, record T → `T.@clone()`), так что делегирование даёт полноценную
-/// глубокую копию.
+/// generic `T.@clone()` now dispatches correctly (primitive T → built-in
+/// identity, record T → `T.@clone()`), so delegation yields a full
+/// deep copy.
 #stable(since = "0.1")
 export fn Set[T Clone] @clone() -> Self =>
     { map: @map.clone() }
@@ -151,7 +151,7 @@ export fn Set[T Clone] @clone() -> Self =>
 // Set-операции — operator overloading (D46)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Объединение `a | b` — все элементы из обоих множеств.
+/// Union `a | b` — all elements from both sets.
 #stable(since = "0.1")
 export fn Set[T] @or(other Set[T]) -> Self {
     mut out = Self.new()
@@ -160,7 +160,7 @@ export fn Set[T] @or(other Set[T]) -> Self {
     out
 }
 
-/// Пересечение `a & b` — элементы присутствующие в обоих множествах.
+/// Intersection `a & b` — elements present in both sets.
 #stable(since = "0.1")
 export fn Set[T] @and(other Set[T]) -> Self {
     mut out = Self.new()
@@ -170,7 +170,7 @@ export fn Set[T] @and(other Set[T]) -> Self {
     out
 }
 
-/// Разность `a - b` — элементы `a`, которых нет в `b`.
+/// Difference `a - b` — elements of `a` not present in `b`.
 #stable(since = "0.1")
 export fn Set[T] @minus(other Set[T]) -> Self {
     mut out = Self.new()
@@ -184,6 +184,6 @@ export fn Set[T] @minus(other Set[T]) -> Self {
 // Итератор — прокси через embed
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Итератор по элементам множества в произвольном порядке.
+/// Iterator over the set's elements in an arbitrary order.
 #stable(since = "0.1")
 export fn Set[T] @iter() => @map.keys()

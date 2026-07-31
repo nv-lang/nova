@@ -61,14 +61,14 @@ type Slot[K, V] enum
     | Tombstone
     | Occupied { key K, value V }
 
-/// Hash map с открытой адресацией и линейным пробированием.
+/// Hash map with open addressing and linear probing.
 ///
-/// Требует `K: Hash` — структурный bound на `hash() -> u64`.
-/// Автоматически растёт при достижении 75% заполненности (load factor = 3/4).
+/// Requires `K: Hash` — a structural bound on `hash() -> u64`.
+/// Grows automatically at 75% fill (load factor = 3/4).
 ///
-/// `map-literal` синтаксис `[k: v, ...]` десугарируется в `HashMap` через
-/// атрибут `#from_pairs` (D108). Record-literal `{field: val}` коэрсируется
-/// в `HashMap[str, V]` через `#from_fields` (D55).
+/// The `map-literal` syntax `[k: v, ...]` desugars into `HashMap` via the
+/// `#from_pairs` attribute (D108). A record-literal `{field: val}` coerces
+/// into `HashMap[str, V]` via `#from_fields` (D55).
 ///
 /// # Examples
 ///
@@ -82,9 +82,9 @@ type Slot[K, V] enum
 ///
 /// # See Also
 ///
-/// - `HashMap.new(cap: n)` — создать с предварительной ёмкостью
-/// - `[HashMap.from]` — из массива пар
-/// - `[Set]` — множество поверх HashMap
+/// - `HashMap.new(cap: n)` — create with a preallocated capacity
+/// - `[HashMap.from]` — from an array of pairs
+/// - `[Set]` — a set built on top of HashMap
 #stable(since = "0.1")
 #from_fields
 #from_pairs
@@ -117,7 +117,7 @@ fn hashmap_bucket_count_for(min_capacity int) -> int {
     next_pow2(needed)
 }
 
-/// Создать пустой `HashMap` с начальной ёмкостью 16.
+/// Create an empty `HashMap` with an initial capacity of 16.
 ///
 /// # Examples
 ///
@@ -136,7 +136,7 @@ export fn HashMap[K, V].new(cap int = 16) -> HashMap[K, V]
     }
 }
 
-/// Построить `HashMap` из массива пар `(key, value)`.
+/// Build a `HashMap` from an array of `(key, value)` pairs.
 ///
 /// # Examples
 ///
@@ -158,19 +158,19 @@ export fn HashMap[K, V].from(pairs [](K, V)) -> Self { // [M-lint-findings-stati
 // Методы инстанса
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Число элементов в map (не считая tombstone-слотов).
+/// Number of elements in the map (tombstone slots not counted).
 #stable(since = "0.1")
 export fn HashMap[K, V] @len() -> int => @count
 
-/// Возвращает `true` если map пуст.
+/// Returns `true` if the map is empty.
 #stable(since = "0.1")
 export fn HashMap[K, V] @is_empty() -> bool => @count == 0
 
-/// Общая ёмкость внутреннего массива bucket'ов.
+/// Total capacity of the internal bucket array.
 ///
-/// [M-unwrap-twins-retraction] (2026-07-07): `@capacity()` alias
-/// РЕТРАКТИРОВАН (дублировал канонический `@cap()`, D9) — `@cap()` теперь
-/// единственный 0-arg getter половины `cap`/`cap(n)` property-пары.
+/// [M-unwrap-twins-retraction] (2026-07-07): the `@capacity()` alias was
+/// RETRACTED (it duplicated the canonical `@cap()`, D9) — `@cap()` is now
+/// the single 0-arg getter of the `cap`/`cap(n)` property pair.
 #stable(since = "0.1")
 export fn HashMap[K, V] @cap() -> int => @buckets.len()
 
@@ -198,7 +198,7 @@ export fn HashMap[K, V] mut @cap(n int) -> @
     }
 }
 
-/// Найти значение по ключу. Возвращает `Some(value)` или `None`.
+/// Find the value by key. Returns `Some(value)` or `None`.
 ///
 /// # Examples
 ///
@@ -217,15 +217,15 @@ export fn HashMap[K, V] @get(key K) -> Option[V] {
     }
 }
 
-/// Проверить наличие ключа без извлечения значения.
+/// Check whether the key is present without extracting its value.
 #stable(since = "0.1")
 export fn HashMap[K, V] @contains(key K) -> bool =>
     if Some(_) = @get(key) { true } else { false }
 
-/// Вставить пару `(key, value)`.
+/// Insert a `(key, value)` pair.
 ///
-/// Если ключ уже существует — перезаписывает и возвращает `Some(old_value)`.
-/// Иначе вставляет и возвращает `None`. Может вызвать rehash.
+/// If the key already exists — overwrites and returns `Some(old_value)`.
+/// Otherwise inserts and returns `None`. May trigger a rehash.
 ///
 /// # Examples
 ///
@@ -261,16 +261,16 @@ export fn HashMap[K, V] mut @insert(key K, value V) -> Option[V] {
     }
 }
 
-/// Fast-path вставка без проверки дубликатов — только для map-literal desugar.
+/// Fast-path insertion without a duplicate check — only for map-literal desugar.
 ///
-/// Используется компилятором при десугаринге `[k: v, ...]` (D108).
-/// Вызывать только на свежей мапе после `new().cap(n)` где `n ≥` итоговый count.
+/// Used by the compiler when desugaring `[k: v, ...]` (D108).
+/// Call only on a fresh map after `new().cap(n)` where `n >=` the final count.
 ///
 /// # Contracts
 ///
 /// ```nova,must_verify
-/// // requires: map создан через new().cap(n), n >= итоговый count
-/// // requires: key не присутствует в map
+/// // requires: the map was created via new().cap(n), n >= the final count
+/// // requires: the key is not present in the map
 /// // ensures: @len() == old(@len()) + 1
 /// ```
 #stable(since = "0.1")
@@ -280,19 +280,19 @@ export fn HashMap[K, V] mut @insert_new(key K, value V) {
     @count += 1
 }
 
-/// Создать независимую копию map (deep / рекурсивно поэлементно).
+/// Create an independent copy of the map (deep / recursively element-wise).
 ///
-/// По D230 amend `Clone` — **глубокий / рекурсивный** протокол: `clone()`
-/// клонирует поэлементно через `K.@clone()` / `V.@clone()`, под conditional
+/// Per the D230 amend `Clone` is a **deep / recursive** protocol: `clone()`
+/// clones element-wise via `K.@clone()` / `V.@clone()`, under the conditional
 /// bound `[K Clone, V Clone]` (Rust `impl<K: Clone, V: Clone> Clone for
 /// HashMap<K,V>`).
 ///
-/// Plan 138.4 Ф.1 (G-C, [M-138.3-clone-bound-unsupported] RESOLVED): поэлементный
-/// generic `k.clone()` / `v.clone()` теперь диспатчится корректно для любого
-/// K/V. Раньше примитивный K/V (нет `int.@clone()` / `str.@clone()`) мис-роутил
-/// unbound `.clone()` в произвольный неродственный `@clone` → CC-FAIL/crash.
-/// Codegen теперь резолвит примитивный `.clone()` в built-in identity-copy, а
-/// record K/V — в `K.@clone()` (либо identity, если у record нет `@clone`).
+/// Plan 138.4 Ф.1 (G-C, [M-138.3-clone-bound-unsupported] RESOLVED): element-wise
+/// generic `k.clone()` / `v.clone()` now dispatches correctly for any
+/// K/V. Previously a primitive K/V (no `int.@clone()` / `str.@clone()`) mis-routed
+/// the unbound `.clone()` into an unrelated foreign `@clone` → CC-FAIL/crash.
+/// Codegen now resolves a primitive `.clone()` to built-in identity-copy, and
+/// a record K/V — to `K.@clone()` (or identity if the record has no `@clone`).
 ///
 /// # Examples
 ///
@@ -310,16 +310,16 @@ export fn HashMap[K Clone, V Clone] @clone() -> HashMap[K, V] {
     copy
 }
 
-/// Order-independent структурное равенство — `true` iff обе мапы имеют одинаковую
-/// длину и каждая пара `(k, v)` из `self` присутствует в `other` с равным
-/// значением (`other.get(k) == Some(v)`). Это impl протокола `Equal` (D109/D237)
-/// для `HashMap[K, V]`, зеркало Rust `impl<K: Eq+Hash, V: Eq> PartialEq`.
+/// Order-independent structural equality — `true` iff both maps have the same
+/// length and every pair `(k, v)` from `self` is present in `other` with an equal
+/// value (`other.get(k) == Some(v)`). This implements the `Equal` protocol (D109/D237)
+/// for `HashMap[K, V]`, a mirror of Rust `impl<K: Eq+Hash, V: Eq> PartialEq`.
 ///
-/// [M-172.1-option-hashmap-eq-structural]: даёт element-wise eq, на которую
-/// маршрутизирует `emit_field_eq` для вложенного `HashMap` (Option/sum-поле),
-/// как для `Vec[T]`. Работает для любых `K`/`V` с определённым `==`; opaque-типы
-/// деградируют до identity. `K` уже несёт bound `Hash` от типа; `==` на `V`
-/// диспатчится структурно в codegen (явный `[V Equal]` не нужен — как у `Vec[T] @equal`).
+/// [M-172.1-option-hashmap-eq-structural]: provides the element-wise eq that
+/// `emit_field_eq` routes to for a nested `HashMap` (Option/sum field),
+/// as it does for `Vec[T]`. Works for any `K`/`V` with a defined `==`; opaque types
+/// degrade to identity. `K` already carries the `Hash` bound from the type; `==` on `V`
+/// dispatches structurally in codegen (no explicit `[V Equal]` needed — as with `Vec[T] @equal`).
 ///
 /// # Examples
 ///
@@ -346,7 +346,7 @@ export fn HashMap[K, V] @equal(other HashMap[K, V]) -> bool {
     true
 }
 
-/// Слить все пары из `other` в `self` (override semantics: existing keys перезаписываются).
+/// Merge all pairs from `other` into `self` (override semantics: existing keys are overwritten).
 ///
 /// # Examples
 ///
@@ -364,7 +364,7 @@ export fn HashMap[K, V] mut @merge_from(other HashMap[K, V]) {
     }
 }
 
-/// Вернуть новый `HashMap` из пар, для которых `pred(k, v)` возвращает `true`.
+/// Return a new `HashMap` of the pairs for which `pred(k, v)` returns `true`.
 ///
 /// # Examples
 ///
@@ -396,9 +396,9 @@ export fn HashMap[K, V] @filter(pred fn(K, V) -> bool) -> HashMap[K, V] {
 //       }
 //   }
 
-/// Удалить пару по ключу. Возвращает `Some(value)` если ключ был, иначе `None`.
+/// Remove the pair by key. Returns `Some(value)` if the key was present, otherwise `None`.
 ///
-/// Оставляет tombstone-слот — внутренний массив не уменьшается.
+/// Leaves a tombstone slot — the internal array does not shrink.
 ///
 /// # Examples
 ///
@@ -421,7 +421,7 @@ export fn HashMap[K, V] mut @remove(key K) -> Option[V] {
     }
 }
 
-/// Удалить все элементы. Не освобождает внутренний массив (capacity сохраняется).
+/// Remove all elements. Does not free the internal array (capacity is kept).
 #stable(since = "0.1")
 export fn HashMap[K, V] mut @clear() {
     for i in 0..@buckets.len() {
@@ -440,7 +440,7 @@ export fn HashMap[K, V] mut @clear() {
 // (Plan 55 spread-инфраструктура). Regression-покрытие:
 // nova_tests/map_literals/positive_clone_merge.nv + positive_spread.nv.
 
-/// Вернуть значение по ключу, или вставить `fallback()` и вернуть его.
+/// Return the value by key, or insert `fallback()` and return it.
 ///
 /// # Examples
 ///
@@ -471,7 +471,7 @@ type HashMapIter[K, V] {
     pos int
 }
 
-/// Итератор по парам `(key, value)` в произвольном порядке.
+/// Iterator over `(key, value)` pairs in an arbitrary order.
 ///
 /// # Examples
 ///
@@ -499,7 +499,7 @@ export fn HashMapIter[K, V] mut @next() -> Option[(K, V)] {
     None
 }
 
-/// Итератор только по ключам в произвольном порядке.
+/// Iterator over keys only, in an arbitrary order.
 #stable(since = "0.1")
 export fn HashMap[K, V] @keys() -> KeysIter[K, V] =>
     { inner: @iter() }
@@ -512,7 +512,7 @@ export fn KeysIter[K, V] mut @next() -> Option[K] =>
         None         => None
     }
 
-/// Итератор только по значениям в произвольном порядке.
+/// Iterator over values only, in an arbitrary order.
 #stable(since = "0.1")
 export fn HashMap[K, V] @values() -> ValuesIter[K, V] =>
     { inner: @iter() }

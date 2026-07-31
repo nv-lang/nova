@@ -17,13 +17,13 @@
 
 module collections.bloom_filter
 
-/// Вероятностная структура данных для проверки принадлежности к множеству.
+/// A probabilistic data structure for set-membership checks.
 ///
-/// Гарантирует отсутствие false negatives — если `contains` вернул `false`,
-/// элемент точно не был вставлен. False positives возможны с вероятностью
-/// зависящей от параметров `bits_size` и `num_hashes`.
+/// Guarantees the absence of false negatives — if `contains` returned `false`,
+/// the element was definitely never inserted. False positives are possible with
+/// a probability depending on the `bits_size` and `num_hashes` parameters.
 ///
-/// Используй `[BloomFilter.optimal]` для автоматического подбора параметров.
+/// Use `[BloomFilter.optimal]` for automatic parameter selection.
 ///
 /// # Examples
 ///
@@ -31,12 +31,12 @@ module collections.bloom_filter
 /// let mut bf = BloomFilter.new(1024, 3)
 /// bf.insert("hello")
 /// assert(bf.contains("hello"))
-/// assert(!bf.contains("world"))  // вероятно false, но не гарантировано
+/// assert(!bf.contains("world"))  // probably false, but not guaranteed
 /// ```
 ///
 /// # See Also
 ///
-/// - `[BloomFilter.optimal]` — создать с target false-positive rate
+/// - `[BloomFilter.optimal]` — create with a target false-positive rate
 #stable(since = "0.1")
 export type BloomFilter {
     ro bits_size int          // public config
@@ -44,10 +44,10 @@ export type BloomFilter {
     mut bits []u8                // internal: packed bit array (1 u8 = 8 bits)
 }
 
-/// Создать filter с явными параметрами.
+/// Create a filter with explicit parameters.
 ///
-/// - `bits_size` — количество битов (округляется вверх до байтов)
-/// - `num_hashes` — число hash-функций `k`
+/// - `bits_size` — the number of bits (rounded up to bytes)
+/// - `num_hashes` — the number of hash functions `k`
 ///
 /// # Examples
 ///
@@ -68,10 +68,10 @@ export fn BloomFilter.new(bits_size int, num_hashes int) -> Self {
     }
 }
 
-/// Создать filter с оптимальными параметрами для заданных `expected_n` элементов
-/// и целевого `false_pos_rate` (0.0–1.0).
+/// Create a filter with optimal parameters for the given `expected_n` elements
+/// and a target `false_pos_rate` (0.0–1.0).
 ///
-/// Автоматически вычисляет `bits_size` и `num_hashes` по формулам:
+/// Automatically computes `bits_size` and `num_hashes` via the formulas:
 /// - `m = -n·ln(p) / ln(2)²`
 /// - `k = (m/n)·ln(2)`
 ///
@@ -94,7 +94,7 @@ export fn BloomFilter.optimal(expected_n int, false_pos_rate f64) -> Self {
     Self.new(m, k_safe)
 }
 
-/// Добавить строку в filter. После этого `contains(s)` гарантированно вернёт `true`.
+/// Add a string to the filter. After this, `contains(s)` is guaranteed to return `true`.
 #stable(since = "0.1")
 export fn BloomFilter mut @insert(s str) -> () {
     ro h1 = hash1(s)
@@ -109,7 +109,7 @@ export fn BloomFilter mut @insert(s str) -> () {
     }
 }
 
-/// Проверить вероятное наличие строки. `false` — точно отсутствует. `true` — вероятно присутствует.
+/// Check the probable presence of a string. `false` — definitely absent. `true` — probably present.
 #stable(since = "0.1")
 export fn BloomFilter @contains(s str) -> bool {
     ro h1 = hash1(s)
