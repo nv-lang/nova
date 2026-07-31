@@ -77,16 +77,18 @@ test "дефолт (нет супервизора): тот же исход чт�
 test "пользовательская политика: (idx, err)-narrowing + mut-состояние" {
     ro n = 6
     mut done = AtomicInt.new(0)
-    mut stopped = 0
-    mut seen_int = 0
+    // №173: carve-out D416§2 отозван (сериализация on_child_fail опровергнута
+    // перезамером) — mut-состояние хендлера мигрировано на AtomicInt.
+    mut stopped = AtomicInt.new(0)
+    mut seen_int = AtomicInt.new(0)
     mut after_scope = 0
     with Supervisor = effect Supervisor {
         on_child_fail(idx, err) -> Decision {
             // idx — валидный retention-слот; err — typed payload (int).
             assert(idx >= 0)
             assert(idx < n)
-            if err is int { seen_int += 1 }
-            stopped += 1
+            if err is int { ro _ = seen_int.fetch_add(1) }
+            ro _ = stopped.fetch_add(1)
             return Decision.Stop
         }
     } {
@@ -103,15 +105,15 @@ test "пользовательская политика: (idx, err)-narrowing + 
         after_scope = 1
     }
     assert(after_scope == 1)
-    assert(stopped == 2)       // хендлер вызван по разу на каждое падение
-    assert(seen_int == 2)      // typed payload сужается `err is int`
+    assert(stopped.load() == 2)       // хендлер вызван по разу на каждое падение
+    assert(seen_int.load() == 2)      // typed payload сужается `err is int`
     assert(done.load() == n - 2)
 }
 
 test "Escalate-with-error: throw в хендлере становится primary-ошибкой scope'а" {
     // Plan 238 Ф.4 (D441 §3): `with Fail[T]` handler — AtomicBool/AtomicInt
-    // (E_HANDLER_MUT_CAPTURE_IN_FIBER). `Supervisor.on_child_fail` НЕ
-    // мигрирован — D416§2-carve-out, сериализован на drive-файбере.
+    // (E_HANDLER_MUT_CAPTURE_IN_FIBER). №173: carve-out D416§2 отозван,
+    // Supervisor-обработчики мигрированы так жее.
     mut caught = AtomicBool.new(false)
     mut got = AtomicInt.new(-1)
     mut after_scope = 0
