@@ -9972,6 +9972,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 let op_str = match op {
                     UnOp::Neg => "-",
                     UnOp::Not => "!",
+                    // Plan 234 Ф.2: `~` в const-выражении — integer-only, голый
+                    // C `~` (constexpr-литерал, ширино-таблица неприменима).
+                    UnOp::BitNot => "~",
                     // Plan 118 D216 §4-5: pointer ops not valid в const
                     // expressions (constexpr evaluation has no addressable
                     // storage / runtime pointer values).
@@ -31920,9 +31923,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // `Binary` Add node and re-emitting through the full binop
                 // dispatch (which already picks str-concat / Vec-plus / sum-plus).
                 // `a += b` on a `Vec[T]` therefore yields a NEW Vec (concat
-                // semantics) — to grow in place use `a.append(b)` (D263). Only
-                // `Add`/`Sub` are overloadable operators; `*=`/`/=` are not.
-                if matches!(op, AssignOp::Add | AssignOp::Sub) {
+                // semantics) — to grow in place use `a.append(b)` (D263).
+                // План 234 Ф.2а (D46 §C): `&=`/`|=`/`^=` — тот же route,
+                // desugar `a = a <op> b`. `<<=`/`>>=` НЕ включены — `@shl`/
+                // `@shr` без flat-record dispatch (пред-сущ. гэп, см. отчёт).
+                if matches!(op, AssignOp::Add | AssignOp::Sub
+                    | AssignOp::BitAnd | AssignOp::BitOr | AssignOp::BitXor)
+                {
                     let tgt_ty = self.infer_expr_c_type(target);
                     let is_overloaded_add_ty = tgt_ty == "nova_str"
                         || (tgt_ty.starts_with("Nova_Vec____")
@@ -31936,6 +31943,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         let bin_op = match op {
                             AssignOp::Add => BinOp::Add,
                             AssignOp::Sub => BinOp::Sub,
+                            AssignOp::BitAnd => BinOp::BitAnd,
+                            AssignOp::BitOr => BinOp::BitOr,
+                            AssignOp::BitXor => BinOp::BitXor,
                             _ => unreachable!(),
                         };
                         let synth = Expr::new(
@@ -32036,12 +32046,20 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                     }
                 }
+                // План 234 Ф.2а: raw C compound-assign — byte-identical к
+                // `x = x <op> y` под C-promotion на ЛЮБОЙ ширине (в отличие
+                // от `~`, таблица не нужна, D46 §C).
                 let op_str = match op {
                     AssignOp::Assign => "=",
                     AssignOp::Add    => "+=",
                     AssignOp::Sub    => "-=",
                     AssignOp::Mul    => "*=",
                     AssignOp::Div    => "/=",
+                    AssignOp::BitAnd => "&=",
+                    AssignOp::BitOr  => "|=",
+                    AssignOp::BitXor => "^=",
+                    AssignOp::Shl    => "<<=",
+                    AssignOp::Shr    => ">>=",
                 };
                 self.line(&format!("{} {} {};", tgt, op_str, val));
             }
@@ -34198,6 +34216,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     {
                         return Ok(format!("{}_method_div({}, {})", dispatch_type_name, l, r));
                     }
+                    // План 234 Ф.1 (codegen/bitwise_ops.rs): Bit* на плоском
+                    // record'е — та же схема, что @plus/@times (было: сырой C).
+                    if is_single_nova_ptr(&lty) && is_single_nova_ptr(&rty) {
+                        if let Some(op_method) = super::bitwise_ops::bitop_method_name(*op) {
+                            return Ok(format!("{}_method_{}({}, {})", dispatch_type_name, op_method, l, r));
+                        }
+                    }
                     // D46: dispatch `%` to @rem method when both operands are Nova_T*.
                     if matches!(op, BinOp::Mod)
                         && is_single_nova_ptr(&lty)
@@ -34269,9 +34294,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // No @minus registered — leave to fall-through (would
                         // become invalid C, caught later).
                     }
-                    // D46: BitOr/BitAnd → @or/@and method dispatch for generic types (e.g. Set[T]).
-                    if matches!(op, BinOp::BitOr | BinOp::BitAnd) {
-                        let op_method = if matches!(op, BinOp::BitOr) { "or" } else { "and" };
+                    // План 234 Ф.1 (codegen/bitwise_ops.rs): generic Bit*
+                    // dispatch (RETRACT @or/@and/@xor), `BitXor` — новый.
+                    if let Some(op_method) = super::bitwise_ops::bitop_method_name(*op) {
                         if let Some(idx) = type_name_sum.find("____") {
                             let base_type = type_name_sum[..idx].to_string();
                             let mono_args = &type_name_sum[idx + 4..];
@@ -34578,10 +34603,16 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                 }
                 // D46/D215: unary `-` → @neg, `!` → @not on custom types.
+                // План 234 Ф.2: `~` → @bitnot joins (сид "bitnot" — lints.rs).
                 // Dispatch by operand C-type: NovaTuple_T (value ABI) or Nova_T* (ref ABI).
-                if matches!(op, UnOp::Neg | UnOp::Not) {
+                if matches!(op, UnOp::Neg | UnOp::Not | UnOp::BitNot) {
                     let operand_ty = self.infer_expr_c_type(operand);
-                    let method_name = if matches!(op, UnOp::Neg) { "neg" } else { "not" };
+                    let method_name = match op {
+                        UnOp::Neg => "neg",
+                        UnOp::Not => "not",
+                        UnOp::BitNot => "bitnot",
+                        _ => unreachable!(),
+                    };
                     // Plan 175 Ф.1b/Ф.3: value-record (`NovaValue_X`) unary `@neg`/
                     // `@not` — receiver ABI is `NovaValue_X*`, so route through a
                     // by-value wrapper (rvalue-safe), mirror of the binary case.
@@ -34692,9 +34723,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                     }
                 }
+                // План 234 Ф.2: `~x` на примитиве — таблица эмиссии в
+                // codegen/bitwise_ops.rs (integer promotion, обоснование там).
+                if matches!(op, UnOp::BitNot) {
+                    let operand_ty = self.infer_expr_c_type(operand);
+                    return Ok(super::bitwise_ops::bitnot_primitive_emit(&v, &operand_ty));
+                }
                 let op_str = match op {
                     UnOp::Neg => "-",
                     UnOp::Not => "!",
+                    // Unreachable: `UnOp::BitNot` returns above unconditionally.
+                    UnOp::BitNot => unreachable!("BitNot handled above"),
                     // Plan 118 D216 §4-5: pointer ops emit C address-of/deref.
                     // V1 scaffolding: direct &(...) / *(...) emission.
                     // Ф.2.4 escape analysis с auto-promote — separate IR pass
@@ -60880,7 +60919,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // `-x` сохраняет тип operand'а.
                 ExprKind::Unary { op, operand } => match op {
                     UnOp::Not => "nova_bool".into(),
-                    UnOp::Neg => self.infer_expr_c_type(operand),
+                    // План 234 Ф.2: `~x` сохраняет тип operand'а (как `-x`).
+                    UnOp::Neg | UnOp::BitNot => self.infer_expr_c_type(operand),
                     // Plan 118 D216 §4-5: `&value` returns pointer-to-T;
                     // `*p` returns pointee-T. Inference best-effort: `&x` →
                     // `<x_type>*`; `*p` → strip trailing `*` если есть, иначе
@@ -61757,6 +61797,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 let op_str = match op {
                     UnOp::Neg => "-",
                     UnOp::Not => "!",
+                    // Plan 234 Ф.2 (D46-амендмент).
+                    UnOp::BitNot => "~",
                     UnOp::AddrOf => "&",
                     UnOp::RawAddrOf => "raw &",
                     UnOp::Deref => "*",

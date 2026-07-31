@@ -1,0 +1,11 @@
+// EXPECT_COMPILE_ERROR E_UNARY_OPERAND_TYPE
+//
+// План 234 Ф.2 (D46-амендмент §D): `~"str"` — побитовое дополнение не
+// определено для строк.
+module neg.m234_bitnot_str_neg
+
+fn main() {
+    ro m234_x = "abc"
+    ro m234_y = ~m234_x
+    println("${m234_y}")
+}

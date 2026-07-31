@@ -2239,6 +2239,14 @@ impl Interpreter {
             AssignOp::Sub => BinOp::Sub,
             AssignOp::Mul => BinOp::Mul,
             AssignOp::Div => BinOp::Div,
+            // Plan 234 Ф.2а (D46-амендмент §C). Интерпретатор — `nova run`
+            // не поддерживается (только C-codegen), но матч обязан быть
+            // исчерпывающим для компиляции.
+            AssignOp::BitAnd => BinOp::BitAnd,
+            AssignOp::BitOr => BinOp::BitOr,
+            AssignOp::BitXor => BinOp::BitXor,
+            AssignOp::Shl => BinOp::Shl,
+            AssignOp::Shr => BinOp::Shr,
         };
         self.binop(bin, lhs, rhs, span)
     }

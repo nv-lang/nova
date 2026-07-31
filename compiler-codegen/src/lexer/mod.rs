@@ -213,6 +213,10 @@ impl<'a> Lexer<'a> {
                     TokenKind::Bang
                 }
             },
+            // Plan 234 Ф.2 (D46-амендмент): `~` — побитовое дополнение,
+            // отдельный от `!` (логического) оператор/токен. Нет compound-
+            // формы (`~=` не существует — `~` унарный).
+            b'~' => self.single(TokenKind::Tilde),
             b'<' => match self.peek_at(1) {
                 Some(b'=') => {
                     // Plan 33.1 (D24): `<==>` — эквивалентность (4 байта),
@@ -226,8 +230,14 @@ impl<'a> Lexer<'a> {
                     }
                 }
                 Some(b'<') => {
-                    self.pos += 2;
-                    TokenKind::Shl
+                    // Plan 234 Ф.2а: `<<=` (3 байта) имеет приоритет над `<<` (2 байта).
+                    if self.peek_at(2) == Some(b'=') {
+                        self.pos += 3;
+                        TokenKind::ShlEq
+                    } else {
+                        self.pos += 2;
+                        TokenKind::Shl
+                    }
                 }
                 _ => {
                     self.pos += 1;
@@ -240,8 +250,14 @@ impl<'a> Lexer<'a> {
                     TokenKind::Ge
                 }
                 Some(b'>') => {
-                    self.pos += 2;
-                    TokenKind::Shr
+                    // Plan 234 Ф.2а: `>>=` (3 байта) имеет приоритет над `>>` (2 байта).
+                    if self.peek_at(2) == Some(b'=') {
+                        self.pos += 3;
+                        TokenKind::ShrEq
+                    } else {
+                        self.pos += 2;
+                        TokenKind::Shr
+                    }
                 }
                 _ => {
                     self.pos += 1;
@@ -253,6 +269,11 @@ impl<'a> Lexer<'a> {
                     self.pos += 2;
                     TokenKind::AmpAmp
                 }
+                // Plan 234 Ф.2а: `&=` compound bitwise-and-assign.
+                Some(b'=') => {
+                    self.pos += 2;
+                    TokenKind::AmpEq
+                }
                 _ => {
                     self.pos += 1;
                     TokenKind::Amp
@@ -263,12 +284,27 @@ impl<'a> Lexer<'a> {
                     self.pos += 2;
                     TokenKind::PipePipe
                 }
+                // Plan 234 Ф.2а: `|=` compound bitwise-or-assign.
+                Some(b'=') => {
+                    self.pos += 2;
+                    TokenKind::PipeEq
+                }
                 _ => {
                     self.pos += 1;
                     TokenKind::Pipe
                 }
             },
-            b'^' => self.single(TokenKind::Caret),
+            // Plan 234 Ф.2а: `^=` compound bitwise-xor-assign.
+            b'^' => match self.peek_at(1) {
+                Some(b'=') => {
+                    self.pos += 2;
+                    TokenKind::CaretEq
+                }
+                _ => {
+                    self.pos += 1;
+                    TokenKind::Caret
+                }
+            },
             other => {
                 return Err(Diagnostic::new(
                     format!("unexpected byte: {:?}", other as char),

@@ -2322,6 +2322,16 @@ pub enum AssignOp {
     Sub,
     Mul,
     Div,
+    /// `&=` — Plan 234 Ф.2а (D46-амендмент §C).
+    BitAnd,
+    /// `|=` — Plan 234 Ф.2а.
+    BitOr,
+    /// `^=` — Plan 234 Ф.2а.
+    BitXor,
+    /// `<<=` — Plan 234 Ф.2а (по симметрии со сдвигами).
+    Shl,
+    /// `>>=` — Plan 234 Ф.2а.
+    Shr,
 }
 
 /// Stable per-`Expr` identity (Plan 172.1 U.4.1 — TypedIR substrate).
@@ -3165,6 +3175,12 @@ pub enum BinOp {
 pub enum UnOp {
     Neg,
     Not,
+    /// Plan 234 Ф.2 (D46-амендмент 2026-07-27): `~a` — побитовое дополнение.
+    /// НЕ связан с `Not` (`!` остаётся ЛОГИЧЕСКИМ отрицанием) — отдельный
+    /// оператор, отдельный токен `~`, диспетч на примитивах в C `~`/XOR-маску
+    /// (integer promotion, план 234 таблица эмиссии), на пользовательских
+    /// типах — на `@bitnot()`.
+    BitNot,
     /// Plan 118 D216 §4: `&value` pointer creation — safe, без unsafe {}.
     /// Escape analysis + auto-promote: если указатель уходит за scope →
     /// x аллоцируется в heap. Результат всегда валиден.

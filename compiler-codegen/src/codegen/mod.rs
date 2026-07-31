@@ -1,4 +1,5 @@
 pub mod assoc_ro;
+pub mod bitwise_ops;
 pub mod emit_c;
 pub mod external_registry;
 pub mod gc_layout;

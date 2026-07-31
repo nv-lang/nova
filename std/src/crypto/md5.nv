@@ -192,14 +192,18 @@ fn Md5 mut @process_block(block []u8) -> () {
 
     // 64 rounds in 4 groups of 16.
     for k in 0..64 {
+        // План 234 Ф.3 (D46-амендмент): `~x` вместо `x ^ 0xFFFFFFFF` — автор
+        // уже писал в комментарии «~B»/«~D» ниже, теперь это буквально код,
+        // не ширино-зависимая маска (та же цена сейчас, но не портится
+        // молча при смене ширины типа).
         ro f u32 = if k < 16 {
-            (b & c) | ((b ^ 0xFFFFFFFF) & d)               // F: (B & C) | (~B & D)
+            (b & c) | (~b & d)                               // F: (B & C) | (~B & D)
         } else if k < 32 {
-            (d & b) | ((d ^ 0xFFFFFFFF) & c)               // G: (D & B) | (~D & C)
+            (d & b) | (~d & c)                               // G: (D & B) | (~D & C)
         } else if k < 48 {
             b ^ c ^ d                                        // H: B ^ C ^ D
         } else {
-            c ^ (b | (d ^ 0xFFFFFFFF))                       // I: C ^ (B | ~D)
+            c ^ (b | ~d)                                     // I: C ^ (B | ~D)
         }
 
         ro g int = if k < 16 {

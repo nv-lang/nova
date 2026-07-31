@@ -1,0 +1,12 @@
+// EXPECT_COMPILE_ERROR E_UNARY_OPERAND_TYPE
+//
+// План 234 (владелец 2026-07-27: "заодно закрыть ВСЁ семейство унарных") —
+// `-true` на `bool`: унарный `-` требует числовой тип, честная ошибка
+// чекера вместо CC-FAIL / молчаливо-неверного C.
+module neg.m234_neg_bool_neg
+
+fn main() {
+    ro m234_x = true
+    ro m234_y = -m234_x
+    println("${m234_y}")
+}

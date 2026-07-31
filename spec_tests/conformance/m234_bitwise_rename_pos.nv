@@ -1,0 +1,95 @@
+// План 234 Ф.1 (D46-амендмент 2026-07-27, spec/decisions/03-syntax.md D46):
+// `@and`/`@or`/`@xor` -> `@bitand`/`@bitor`/`@bitxor` (RETRACT прежних имён —
+// `&`/`|`/`^` чисто побитовые, `&&`/`||` не перегружаются вовсе). Покрывает:
+// примитивы всех ширин (знаковые и беззнаковые), пользовательский record-тип
+// (образец — @plus/@times семья, D46 таблица), named-tuple (@bitand вызван
+// ПО ИМЕНИ — операторная запись на named-tuple отдельно НЕ лоуэрится,
+// [M-named-tuple-operator-overload-incomplete], вне периметра плана 234).
+module spec_tests.conformance
+
+// Пользовательский record-тип с @bitand/@bitor/@bitxor — dispatch тем же
+// механизмом, что @plus/@times (is_single_nova_ptr fast-path, emit_c.rs).
+type M234Mask { bits int }
+
+fn M234Mask @bitand(other M234Mask) -> M234Mask => { bits: @bits & other.bits }
+fn M234Mask @bitor(other M234Mask) -> M234Mask => { bits: @bits | other.bits }
+fn M234Mask @bitxor(other M234Mask) -> M234Mask => { bits: @bits ^ other.bits }
+
+test "m234: @bitand/@bitor/@bitxor на record-типе через операторы" {
+    ro m234_a = M234Mask { bits: 0b1100 }
+    ro m234_b = M234Mask { bits: 0b1010 }
+    assert((m234_a & m234_b).bits == 0b1000)
+    assert((m234_a | m234_b).bits == 0b1110)
+    assert((m234_a ^ m234_b).bits == 0b0110)
+}
+
+// Named-tuple: операторная ЗАПИСЬ не лоуэрится (отдельный, не-234 маркер) —
+// метод зовётся ПО ИМЕНИ, как в std/src/math/int128.nv.
+type M234Pair(a int, b int)
+
+fn M234Pair @bitand(other M234Pair) -> M234Pair => M234Pair(@a & other.a, @b & other.b)
+fn M234Pair @bitor(other M234Pair) -> M234Pair => M234Pair(@a | other.a, @b | other.b)
+fn M234Pair @bitxor(other M234Pair) -> M234Pair => M234Pair(@a ^ other.a, @b ^ other.b)
+
+test "m234: @bitand/@bitor/@bitxor на named-tuple по ИМЕНИ" {
+    ro m234_x = M234Pair(0b1100, 0b0011)
+    ro m234_y = M234Pair(0b1010, 0b0101)
+    ro m234_and = m234_x.bitand(m234_y)
+    ro m234_or = m234_x.bitor(m234_y)
+    ro m234_xor = m234_x.bitxor(m234_y)
+    assert(m234_and.a == 0b1000)
+    assert(m234_and.b == 0b0001)
+    assert(m234_or.a == 0b1110)
+    assert(m234_or.b == 0b0111)
+    assert(m234_xor.a == 0b0110)
+    assert(m234_xor.b == 0b0110)
+}
+
+// Примитивы: все ширины, знаковые и беззнаковые.
+test "m234: & | ^ на всех примитивных ширинах" {
+    ro m234_i8a = 0x0F as i8
+    ro m234_i8b = 0x33 as i8
+    assert((m234_i8a & m234_i8b) == (0x03 as i8))
+    assert((m234_i8a | m234_i8b) == (0x3F as i8))
+    assert((m234_i8a ^ m234_i8b) == (0x3C as i8))
+
+    ro m234_u8a = 0xF0 as u8
+    ro m234_u8b = 0x3C as u8
+    assert((m234_u8a & m234_u8b) == (0x30 as u8))
+    assert((m234_u8a | m234_u8b) == (0xFC as u8))
+    assert((m234_u8a ^ m234_u8b) == (0xCC as u8))
+
+    ro m234_i16a = 0x0FF0 as i16
+    ro m234_i16b = 0x3333 as i16
+    assert((m234_i16a & m234_i16b) == (0x0330 as i16))
+
+    ro m234_u16a = 0xFF00 as u16
+    ro m234_u16b = 0x3C3C as u16
+    assert((m234_u16a | m234_u16b) == (0xFF3C as u16))
+
+    ro m234_i32a = 0x0FF0 as i32
+    ro m234_i32b = 0x3333 as i32
+    assert((m234_i32a ^ m234_i32b) == (0x3CC3 as i32))
+
+    ro m234_u32a = 0xFF00 as u32
+    ro m234_u32b = 0x3C3C as u32
+    assert((m234_u32a & m234_u32b) == (0x3C00 as u32))
+
+    ro m234_i64a = 0x0FF0 as i64
+    ro m234_i64b = 0x3333 as i64
+    assert((m234_i64a | m234_i64b) == (0x3FF3 as i64))
+
+    ro m234_u64a = 0xFF00 as u64
+    ro m234_u64b = 0x3C3C as u64
+    assert((m234_u64a ^ m234_u64b) == (0xC33C as u64))
+
+    ro m234_inta = 12
+    ro m234_intb = 10
+    assert((m234_inta & m234_intb) == 8)
+    assert((m234_inta | m234_intb) == 14)
+    assert((m234_inta ^ m234_intb) == 6)
+
+    ro m234_uinta = 12 as uint
+    ro m234_uintb = 10 as uint
+    assert((m234_uinta & m234_uintb) == (8 as uint))
+}
