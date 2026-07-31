@@ -290,7 +290,7 @@ export type CancelError {
 ///
 /// `deadline_ns` — the exceeded point on the monotonic clock (absolute
 /// nanoseconds, implementation epoch; only deltas matter). NB: the
-/// retracted `CleanupTimeoutError` (D192 retract, Plan 173 Ф.5 п.2) was
+/// retracted `CleanupTimeoutError` (D192 retract, Plan 173 Ф.5 item 2) was
 /// about a resource's cleanup budget and was REMOVED (exceeding = watchdog
 /// warning + overrun in the ResourceTrace exit event); this type is about
 /// the deadline of the WHOLE scope (bounded-shutdown) and stays. A real
