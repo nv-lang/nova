@@ -110,3 +110,28 @@ pub(crate) fn check_mono_method_decl_collision(
         new_span = new_span,
     ))
 }
+
+// ─── §№170 [M-generic-body-calls-generic-mono-placeholder] — обоснование ────
+//
+// `resolve_mono_recv_nova_name` (emit_c.rs): worklist-ключ mono-метода — это
+// НАМЕРЕННО голое имя typevar'а («T» для `fn[T Ints] T @m()`, маршрутизация
+// per-declaration: `register_mono_method_instance`, recv_type_key = tvname).
+// Но self-call диспетч (Plan 132.1 Ф.1) читает `current_receiver_type` как
+// ключ `method_overloads` ДОСЛОВНО — с сырым «T» он совпадал с ключом
+// немонообразованной базовой декларации callee (плейсхолдер `Nova_T_method_*`)
+// и срабатывал РАНЬШЕ protocol-aware blanket-диспетча, который подставил бы
+// T и зарегистрировал реальную инстанцию. Отсюда CC-FAIL класса
+// «initializing NovaValue_BigInt with int» (bigint/bigdecimal, D310 type-set
+// блокеты, int128) — и вынужденные 10 перегрузок вместо одной generic.
+//
+// СУЖЕНИЕ до примитивных скаляров (substituted C-тип без "Nova" и не `*`):
+// первая, широкая версия резолвила и protocol-bound blanket-ресиверы
+// (`fn[I Next[T]] I mut @fold()`, std vec_iter/SplitIter/адаптеры, D355) —
+// и мега-CU окна поймал ABI-регрессию: резолвленное имя («SplitIter»)
+// совпадало с ключом НЕЗАВИСИМО объявленного конкретного метода того же
+// имени с ДРУГИМ ABI (byref), а ранний self-call диспетч не делает
+// prepare_method_recv-конверсию — value уходил туда, где ждали указатель.
+// Откат на baseline-бинарь подтвердил: регрессия фикса, не корпуса.
+// Примитивные скаляры этого ABI-раскола не имеют (всегда by-value) —
+// сужение безопасно для класса бага и byte-identical для всех
+// struct/value-generic ресиверов.

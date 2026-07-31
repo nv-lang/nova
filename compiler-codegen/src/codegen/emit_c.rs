@@ -19249,44 +19249,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
     }
 
-    /// №170 [M-generic-body-calls-generic-mono-placeholder]: resolve a mono
-    /// worklist `recv_type` string to the Nova SOURCE type name a self-call
-    /// dispatch key needs. Most callers pass an already-concrete name
-    /// (`"Counter"`, `"str"`, …) and get it back unchanged. The ONE case that
-    /// needs resolving is a bounded-generic (blanket) method's OWN bare
-    /// typevar spelling (`"T"` for `fn[T Ints] T @method()`) — the worklist
-    /// key is deliberately the bare typevar (routing is per-declaration, not
-    /// per-instance; see `register_mono_method_instance`'s `recv_type_key =
-    /// tvname.clone()`), so `current_type_subst` (seeded by the caller from
-    /// this exact instantiation) is the only place the CONCRETE binding
-    /// lives. Mirrors the bare-typevar special case `receiver_c_type` already
-    /// has (below, "Plan 101.1") for the C-type side; this is the Nova-name
-    /// side, needed wherever a reader treats the receiver-type string as an
-    /// opaque dispatch key rather than lowering it through `receiver_c_type`.
-    ///
-    /// SCOPED to a PRIMITIVE-SCALAR substitution only (the target bug class:
-    /// `fn[T Ints] T @m()` — bigint/bigdecimal, D310 type-set blankets,
-    /// int128-style bounded scalars). Deliberately excludes anything that
-    /// substitutes to a struct/value/heap C type (`c_ty` containing "Nova" —
-    /// covers `Nova_`/`NovaValue_`/`NovaTuple_`/`NovaOpt_`/`NovaRes_`, or
-    /// ending in `*`): a PROTOCOL-bound blanket receiver (`fn[I Next[T]] I
-    /// mut @fold(...)`, std `vec_iter`/`SplitIter`/adapter chain, D355) also
-    /// matches the bare-short-uppercase-typevar shape, but resolving IT the
-    /// same way surfaced a regression — the resolved concrete name (e.g.
-    /// "SplitIter") can coincide with an UNRELATED, separately-declared
-    /// CONCRETE method of the SAME name+receiver (`SplitIter`'s own `@next()`)
-    /// whose ABI (byref/value form) differs from the generic mono's own
-    /// receiver storage; the early self-call dispatch this feeds (Plan 132.1
-    /// Ф.1, ~L38724) has no `prepare_method_recv` byref/value conversion, so
-    /// a newly-successful match there — one the bare-typevar key never
-    /// produced before — can pass a by-value receiver where the concrete
-    /// method expects a pointer (found via mega-CU gate: `NovaValue_
-    /// SplitIter` passed where `NovaValue_SplitIter *` expected). Primitive
-    /// scalars never hit that ABI split (always passed by plain value,
-    /// no `prepare_method_recv` byref path), so the narrower guard is safe
-    /// for the bug this fixes and byte-identical for every value/struct
-    /// generic receiver — no change to the existing (correct) dispatch for
-    /// those.
+    /// №170: bare-typevar `recv_type` ("T") -> конкретное Nova-имя из
+    /// `current_type_subst`, ТОЛЬКО для примитивно-скалярных подстановок.
+    /// Полное обоснование (включая пойманную и исключённую ABI-регрессию
+    /// SplitIter/VecIter для protocol-bound blanket'ов) — mono_method_registry.rs §№170.
     fn resolve_mono_recv_nova_name(&self, recv_type: &str) -> String {
         if recv_type.len() <= 2 && recv_type.chars().all(|c| c.is_ascii_uppercase()) {
             if let Some(c_ty) = self.subst_c(recv_type) {
@@ -25071,29 +25037,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // computing param_c_tys + ret_c, чтобы `Self` в param/return position
         // (e.g. `other Self`, `-> Self`) резолвилось в concrete mono'd type.
         // Раньше set только перед ret_c — params получали Nova_Self fallback.
-        // №170 fix [M-generic-body-calls-generic-mono-placeholder]: `recv_type`
-        // is frequently the BARE typevar spelling used for worklist routing
-        // (e.g. "T" for `fn[T Ints] T @method()` — see `register_mono_method_
-        // instance`'s `recv_type_key = tvname.clone()`, ~L43401), not the
-        // concrete Nova type name. `current_receiver_type` must hold the
-        // latter — the SelfAccess self-call dispatch (Plan 132.1 Ф.1,
-        // `emit_expr_inner`'s Call arm, ~L38685 doc: "holds the Nova type
-        // name exactly") uses it verbatim as a `method_overloads` lookup key
-        // for a bare `@other_generic_method()` call inside THIS body. Left
-        // un-resolved, that lookup shares the SAME bare-typevar key ("T",
-        // method) as the callee's own un-monomorphized BASE declaration
-        // (registered under the erased placeholder name `Nova_T_method_
-        // <name>`) — the self-call dispatch spuriously "hits" that
-        // placeholder instead of falling through to the protocol-aware
-        // blanket dispatch (~L43264) that would actually register + call the
-        // CONCRETE mono instance. Resolve via `current_type_subst` (already
-        // seeded above) before storing. `receiver_c_type` (used for recv_c
-        // just below, and for `Self` resolution at L4613) already accepts
-        // EITHER spelling and normalizes internally, so this substitution is
-        // safe for every existing reader — byte-identical whenever recv_type
-        // is not a bare short-uppercase typevar, or has no subst entry
-        // (the overwhelming majority of mono instances: concrete-receiver
-        // methods never hit this branch).
+        // №170: self-call диспетч читает current_receiver_type как ключ —
+        // сырой typevar попадал в плейсхолдер (mono_method_registry.rs §№170).
         let resolved_recv_name = self.resolve_mono_recv_nova_name(recv_type);
         let prev_recv_for_emit = self.current_receiver_type.replace(resolved_recv_name.clone());
         self.sync_receiver_rt();
@@ -25385,14 +25330,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             self.drain_generic_type_worklist()?;
         }
         // Set receiver type so @field and Self resolve correctly.
-        // №170 fix [M-generic-body-calls-generic-mono-placeholder]: use the
-        // SAME resolved (bare-typevar → concrete Nova name) value computed
-        // above, not the raw `recv_type` again — this assignment is the one
-        // actually in effect while the BODY statements (incl. any `@other_
-        // generic_method()` self-call) are emitted below, so leaving it as
-        // the bare typevar here silently undid the earlier fix (the self-call
-        // dispatch reads `current_receiver_type` at body-emission time, not
-        // at signature-computation time).
+        // №170: то же резолвленное имя — ЭТО присваивание действует при эмиссии тела.
         let saved_recv = std::mem::replace(&mut self.current_receiver_type, Some(resolved_recv_name));
         self.sync_receiver_rt();
         let saved_ret_ty = std::mem::replace(&mut self.current_fn_return_ty, Some(ret_c.clone()));
