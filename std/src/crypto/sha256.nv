@@ -201,7 +201,8 @@ fn Sha256 mut @process_block(block []u8) -> () {
     // 3. Main loop
     for i in 0..64 {
         ro s1 = rotr32(e, 6) ^ rotr32(e, 11) ^ rotr32(e, 25)
-        ro ch = (e & f) ^ ((e ^ 0xFFFFFFFF) & g)
+        // План 234 Ф.3 (D46-амендмент): `~e` вместо `e ^ 0xFFFFFFFF`.
+        ro ch = (e & f) ^ (~e & g)
         // Plan 206 Ф.2 (D423): SHA-256 compression — mod 2^32 по FIPS 180-4,
         // не баг -> `.wrapping_add`.
         ro temp1 = hh.wrapping_add(s1).wrapping_add(ch).wrapping_add(k_constant(i)).wrapping_add(w[i]) & 0xFFFFFFFF
