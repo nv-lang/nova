@@ -1,14 +1,14 @@
 // std.collections.vec_iter — ZERO-COST (generic-over-source) lazy iterator
 // adapters & terminators on `Vec[T]`.
 //
-// Plan 153.2 Ф.2 (D260, STAGE 2). The Rust-style `Map<I, F>` / `Filter<I, P>`
-// iterator design: each adapter is its OWN generic-over-source `value` record
-// that holds the upstream iterator INLINE (a field `src I`, not a boxed `step`
-// closure). `@next()` dispatches `(@src).next()` by STATIC, monomorphized call
-// — there is NO per-element function-pointer indirection and NO heap box of the
-// source. A chain `v.iter().map(f).filter(p)` monomorphizes to a single
-// NESTED concrete type `FilterIter[MapIter[VecIter[int], int, int], int]`, and
-// every `.next()` inlines down to the base `VecIter.next()`.
+// The Rust-style `Map<I, F>` / `Filter<I, P>` iterator design: each adapter
+// is its OWN generic-over-source `value` record that holds the upstream
+// iterator INLINE (a field `src I`, not a boxed `step` closure). `@next()`
+// dispatches `(@src).next()` by STATIC, monomorphized call — there is NO
+// per-element function-pointer indirection and NO heap box of the source. A
+// chain `v.iter().map(f).filter(p)` monomorphizes to a single NESTED concrete
+// type `FilterIter[MapIter[VecIter[int], int, int], int]`, and every
+// `.next()` inlines down to the base `VecIter.next()`.
 //
 // ── Relationship to the boxed-fluent `vec_lazy` (`BoxIter`)
 //
@@ -26,18 +26,18 @@
 // Same rationale as `vec_lazy` / `vec_seq`: a prelude-global generic-type
 // method whose body stores/forwards a CLOSURE (`f`/`pred`) leaks its method-
 // level generics and its callback params into every compilation unit's merged
-// body ([M-codegen-var-types-fn-scope] + D145). A unit with a top-level `fn f`
+// body ([M-codegen-var-types-fn-scope]). A unit with a top-level `fn f`
 // would collide. The adapters stay behind an opt-in
 // `import std.collections.vec_iter`.
 //
-// ── ZERO-COST measurement (Plan 153.2 Ф.2)
+// ── ZERO-COST measurement
 //
 // For `v.iter().map(|x| x*10).filter(|x| x>25).collect()`:
-//   * adapter-record allocations : 0  (by-value `NovaValue_<…>` mono, Stage 1)
+//   * adapter-record allocations : 0  (by-value `NovaValue_<…>` mono)
 //   * source-box (`_box_src`)     : 0  (source held inline as `src I`)
 //   * step-closure (`NovaClosBase`) for SOURCE threading : 0  (static dispatch)
 // The only residual heap is the user's `f`/`pred` closure env — a closure-as-
-// mono-type lift is out of scope for 153.2 ([M-153.2-closure-as-mono-type]).
+// mono-type lift is out of scope ([M-153.2-closure-as-mono-type]).
 //
 // ── Coverage / known limits
 //
@@ -48,7 +48,7 @@
 // terminators: collect / collect_into / fold / sum / count / any / all /
 //              find / for_each / reduce / min / max / nth / last / collect_set
 //
-// ── `SplitIter` / `RSplitIter` — lazy `str.split()` family (Plan 199)
+// ── `SplitIter` / `RSplitIter` — lazy `str.split()` family
 //
 // `str @split`/`@splitn`/`@split_terminator` (forward) and `@rsplit`/
 // `@rsplitn` (backward) live in `std/runtime/string/search.nv` (their
@@ -64,8 +64,8 @@
 // `runtime.string` blissfully unaware of `Next`/`vec_iter`, while
 // `search.nv` only references the `SplitIter`/`RSplitIter` NAMES (an
 // ordinary cross-module type reference — cycles between modules are
-// allowed by the resolver, D291/Plan 162, so this is a plain forward
-// reference, not a hazard). All fields are plain (not `priv`) so the
+// allowed by the resolver, so this is a plain forward reference, not a
+// hazard). All fields are plain (not `priv`) so the
 // constructor functions in the OTHER module can build the record literal
 // directly. `SplitIter` folds `split`/`splitn`/`split_terminator` into ONE
 // type via a `limit` (`-1` = unlimited, `0` = empty, `n` = Rust `splitn`
@@ -361,7 +361,7 @@ export fn EnumerateIter[I, T] @skip(n int) -> SkipIter[Self, (int, T)]
 export fn EnumerateIter[I, T] @enumerate() -> EnumerateIter[Self, (int, T)] => { src: @, i: 0 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// `SplitIter` / `RSplitIter` — lazy `str.split()` family (Plan 199).
+// `SplitIter` / `RSplitIter` — lazy `str.split()` family.
 // See the module-header note above for why these TYPES live here while the
 // `str @split`/`@splitn`/`@split_terminator`/`@rsplit`/`@rsplitn`
 // CONSTRUCTORS stay in `runtime.string` (search.nv).
@@ -431,10 +431,10 @@ export fn SplitIter mut @next() -> Option[str] {
 
 // ── adapters ON a `SplitIter` source (chain entry) ───────────────────────
 //
-// [M-splititer-filter-closure-ctx-gap] (found during Plan 199): an
-// UNANNOTATED closure-light literal (`|s| ...`) chained DIRECTLY on these
-// adapters (`"a,b".split(",").filter(|s| ...)`) currently loses its param-
-// type context in codegen and defaults the param to `nova_int` (CC-FAIL) —
+// [M-splititer-filter-closure-ctx-gap] обход: неаннотированный closure-light
+// литерал (`|s| ...`) chained DIRECTLY on these adapters
+// (`"a,b".split(",").filter(|s| ...)`) currently loses its param-type
+// context in codegen and defaults the param to `nova_int` (CC-FAIL) —
 // a gap in the fn-typed-param context threading for CONCRETE (non-generic)
 // instance methods specifically (the SAME receiver via a GENERIC adapter,
 // e.g. `VecIter[T] @filter`, is unaffected — its context flows through the
@@ -528,13 +528,13 @@ export fn RSplitIter @step_by(n int) -> StepByIter[RSplitIter, str]
 // ──────────────────────────────────────────────────────────────────────────
 // Terminators — drive the chain.
 //
-// Plan 161 Ф.3 refactor: terminators that return a type with NO unresolved
-// type-var in the return position (int, bool, (), Acc) are written once as
-// blanket methods `fn[I Next[T]] I mut @t…()`.
+// Terminators that return a type with NO unresolved type-var in the return
+// position (int, bool, (), Acc) are written once as blanket methods
+// `fn[I Next[T]] I mut @t…()`.
 //
-// Plan 161 V2 [M-161-parametric-return]: terminators whose return type or
-// parameter type contains the element type T (Vec[T], Option[T], T) are
-// ALSO blanket now — codegen correctly substitutes T at mono time.
+// Terminators whose return type or parameter type contains the element type T
+// (Vec[T], Option[T], T) are ALSO blanket — codegen correctly substitutes T
+// at mono time.
 //
 // Blanket (O(1) definitions, all adapter types supported):
 //   @fold[Acc]      — returns Acc (additional generic)
@@ -542,18 +542,17 @@ export fn RSplitIter @step_by(n int) -> StepByIter[RSplitIter, str]
 //   @for_each       — returns ()
 //   @any            — returns bool
 //   @all            — returns bool
-//   @collect        — returns Vec[T]   (Plan 161 V2)
-//   @collect_into   — param mut Vec[T] (Plan 161 V2)
-//   @sum            — param/return T   (Plan 161 V2)
-//   @find           — returns Option[T](Plan 161 V2)
+//   @collect        — returns Vec[T]
+//   @collect_into   — param mut Vec[T]
+//   @sum            — param/return T
+//   @find           — returns Option[T]
 // ──────────────────────────────────────────────────────────────────────────
 
-// ── blanket terminators (Plan 161 Ф.3) ───────────────────────────────────
+// ── blanket terminators ───────────────────────────────────────────────────
 
-// D246-амендмент ([M-ro-launder-via-mut-binding], Ф.2 миграция, 2026-07-23):
-// `init` — `mut` (in-out; D326-ревизия §Р3) — генерик `Acc` не может быть
-// статически доказан value-safe (случай G: генерик может нести кучевое
-// поле), а внутренний `mut acc = init` требует mut-content-view источника.
+// `init` — `mut` (in-out): генерик `Acc` не может быть статически доказан
+// value-safe (случай G: генерик может нести кучевое поле), а внутренний
+// `mut acc = init` требует mut-content-view источника.
 export fn[I Next[T]] I mut @fold[Acc](mut init Acc, f fn(Acc, T) -> Acc) -> Acc {
     mut acc = init
     while true {
@@ -605,7 +604,7 @@ export fn[I Next[T]] I mut @all(pred fn(T) -> bool) -> bool {
     true
 }
 
-// ── blanket parametric terminators (Plan 161 V2 [M-161-parametric-return]) ──
+// ── blanket parametric terminators ─────────────────────────────────────────
 // These cover MapIter, FilterIter, FilterMapIter (and any future adapter)
 // in a single definition. The codegen now substitutes T in Vec[T] / Option[T]
 // / T-params at monomorphization time.
@@ -622,8 +621,8 @@ export fn[I Next[T]] I mut @collect() -> Vec[T] {
     out
 }
 
-/// Drain the chain into a CALLER-PROVIDED, reusable buffer `out` (Stage 4,
-/// [M-153.2-collect-into]). APPENDS to `out` (does not clear it first).
+/// Drain the chain into a CALLER-PROVIDED, reusable buffer `out`. APPENDS
+/// to `out` (does not clear it first).
 /// Amortizes to ZERO `nova_alloc` when `out` is reused across calls.
 export fn[I Next[T]] I mut @collect_into(mut out Vec[T]) -> () {
     while true {
@@ -635,8 +634,7 @@ export fn[I Next[T]] I mut @collect_into(mut out Vec[T]) -> () {
 }
 
 /// Sum all elements starting from `zero`. Requires `T` to support `+`.
-// D246-амендмент ([M-ro-launder-via-mut-binding], Ф.2 миграция, 2026-07-23):
-// `zero` — `mut` (in-out; D326-ревизия §Р3) — `T` не статически value-safe.
+// `zero` — `mut` (in-out): `T` не статически value-safe.
 export fn[I Next[T]] I mut @sum(mut zero T) -> T {
     mut acc = zero
     while true {
@@ -675,15 +673,8 @@ export fn[I Next[T]] I mut @reduce(f fn(T, T) -> T) -> Option[T] {
 }
 
 /// Smallest element by `T`'s `Compare`, or `None` if empty.
-/// [M-202-ident-x-module-alias-collision] fix: match-arm bind was named
-/// bare `x` — a checker gap (`match_arm_bindings` can't resolve the
-/// generic `Option[T]` scrutinee of `@next()` inside THIS generic body, so
-/// `x` never lands in `scope`) let it fall through to the `imported_modules`
-/// module-call branch of `f1_check_call`'s `Member` dispatch whenever a
-/// USER program imported any module whose last path segment was literally
-/// `x` — false `[E7401] no function 'compare' in module 'x'`. Renamed to
-/// `cand` (checker gap itself is a separate, deeper latent issue — not
-/// fixed here, see backlog).
+/// Match-arm bind named `cand` (not bare `x`) to avoid colliding with a
+/// user-imported module whose last path segment is `x`.
 export fn[I Next[T], T Compare] I mut @min() -> Option[T] {
     mut best = match @next() {
         Some(first) => first,
@@ -699,8 +690,8 @@ export fn[I Next[T], T Compare] I mut @min() -> Option[T] {
 }
 
 /// Largest element by `T`'s `Compare`, or `None` if empty.
-/// [M-202-ident-x-module-alias-collision] fix: see `@min` above (same
-/// bare-`x` match-arm-bind collision with imported module aliases).
+/// Match-arm bind named `cand` (not bare `x`): see `@min` above (same
+/// module-alias collision avoidance).
 export fn[I Next[T], T Compare] I mut @max() -> Option[T] {
     mut best = match @next() {
         Some(first) => first,

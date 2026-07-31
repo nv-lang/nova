@@ -1,25 +1,23 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // std/time/civil/zoned.nv — TimeZone + ZoneRules + ZonedDateTime +
-// 4-way Disambiguation (D319/D321). Plan 175.1 Ф.3 (каркас зон) —
-// IANA-загрузка (TZif/embedded) в tz.nv (Ф.4).
+// 4-way Disambiguation. IANA-загрузка (TZif/embedded) — в tz.nv.
 //
-// Type-ladder (D319 R1): ZonedDateTime — точка на оси; `offset` хранит
-// резолвнутый сдвиг (round-trip-safe при смене правил), `zone` — идентичность
-// зоны для лосслесс round-trip (RFC-9557 [zone], Ф.5).
+// Type-ladder: ZonedDateTime — точка на оси; `offset` хранит резолвнутый
+// сдвиг (round-trip-safe при смене правил), `zone` — идентичность зоны для
+// лосслесс round-trip (RFC-9557 [zone]).
 //
-// `Utc`/`Fixed` — всегда unambiguous (DST нет, D321 R5); реальный gap/overlap
-// приносят IANA-зоны (Ф.4) — 4-way Disambiguation работает не вхолостую.
+// `Utc`/`Fixed` — всегда unambiguous (DST нет); реальный gap/overlap
+// приносят IANA-зоны — 4-way Disambiguation работает не вхолостую.
 
 module time.civil
 
 import std.time.duration
 
-// `panic` (overflow-trap primitive, D317-паттерн) is an always-available
-// compiler intrinsic ([panic-assert-intrinsic] 2026-07-11) — no
-// redeclaration needed.
+// `panic` (overflow-trap primitive) is an always-available compiler
+// intrinsic — no redeclaration needed.
 
 // ──────────────────────────────────────────────────────────────────────────
-// ZoneRules + IanaZone — transition-таблица (наполняется Ф.4)
+// ZoneRules + IanaZone — transition-таблица
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Правила зоны: моменты переходов (unix-секунды) + сдвиги.
@@ -58,11 +56,11 @@ fn rules_offset_at(rules ZoneRules, instant_sec i64) -> i32 {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// TimeZone — sum-type (D319 R7)
+// TimeZone — sum-type
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Таймзона: `Utc` | `Fixed(Offset)` — value-weight, без DST;
-/// `Iana(IanaZone)` — именованная зона с правилами (Ф.4).
+/// `Iana(IanaZone)` — именованная зона с правилами.
 /// Отдельного OffsetDateTime нет: `ZonedDateTime{zone: Fixed}` покрывает.
 #stable(since = "0.1")
 export type TimeZone enum
@@ -89,7 +87,7 @@ export fn TimeZone @offset_at(ts Timestamp) -> Offset =>
     }
 
 // ──────────────────────────────────────────────────────────────────────────
-// LocalResolution — ambiguity как ЗНАЧЕНИЕ (D321 R1; не exception,
+// LocalResolution — ambiguity как ЗНАЧЕНИЕ (не exception,
 // не chrono-None-путающий-gap-с-ошибкой)
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -201,11 +199,11 @@ export fn ZonedDateTime @date() -> Date => @dt.date()
 export fn ZonedDateTime @time() -> TimeOfDay => @dt.time()
 
 // ──────────────────────────────────────────────────────────────────────────
-// DateTime → ZonedDateTime (fallible, D319 R1: единственная дверь
-// Plain → точка на оси; Disambiguation — D321 R1)
+// DateTime → ZonedDateTime (fallible: единственная дверь
+// Plain → точка на оси; Disambiguation)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Прикрепить plain DateTime к зоне → `Result` (Q8: default `Compatible`).
+/// Прикрепить plain DateTime к зоне → `Result` (default `Compatible`).
 ///
 /// Gap: `Compatible`/`Later` — push-forward на длину gap (after-offset);
 /// `Earlier` — назад на длину gap (before-offset); `Reject` → `Err(Ambiguous)`.
@@ -223,7 +221,7 @@ export fn DateTime @to_zoned(tz TimeZone) -> Result[ZonedDateTime, DateError] =>
 
 /// Полная форма с явной политикой (arity-перегрузка: default-значение
 /// enum-варианта на call-site не эмитится — [M-175.1-enum-default-param];
-/// прецедент split'а — D324 `env(k)`/`env(k,v)`).
+/// прецедент split'а — `env(k)`/`env(k,v)`).
 #stable(since = "0.1")
 export fn DateTime @to_zoned(tz TimeZone, disamb Disambiguation) -> Result[ZonedDateTime, DateError] {
     match tz.resolve_local(@) {
@@ -266,13 +264,13 @@ export fn ZonedDateTime.now(tz TimeZone) Time -> ZonedDateTime =>
     Timestamp.now().to_zoned(tz)
 
 // ──────────────────────────────────────────────────────────────────────────
-// Timestamp ↔ ZonedDateTime (Q4: Err ТОЛЬКО civil→Timestamp;
+// Timestamp ↔ ZonedDateTime (Err ТОЛЬКО civil→Timestamp;
 // Timestamp→civil инфаллибельно — окно ±292y ⊂ civil-диапазона)
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Момент → календарное представление в зоне. Инфаллибельно: окно
 /// Timestamp (±292y от эпохи) с любым ±18h сдвигом лежит глубоко внутри
-/// civil-диапазона (±999999y) — Q4.
+/// civil-диапазона (±999999y).
 #stable(since = "0.1")
 export fn Timestamp @to_zoned(tz TimeZone) -> ZonedDateTime {
     ro off = tz.offset_at(@)
@@ -295,7 +293,7 @@ export fn Timestamp @to_zoned(tz TimeZone) -> ZonedDateTime {
     { dt: date.at(tod), offset: off, zone: tz }
 }
 
-/// Календарный момент → Timestamp. `Err(RangeOverflow)` вне окна ±292y (Q4).
+/// Календарный момент → Timestamp. `Err(RangeOverflow)` вне окна ±292y.
 /// Инстант определён самим значением (offset хранится) — резолв зоны не нужен.
 #stable(since = "0.1")
 export fn ZonedDateTime @to_timestamp() -> Result[Timestamp, DateError] {
@@ -318,7 +316,7 @@ export fn ZonedDateTime @with_zone(tz TimeZone) -> Result[ZonedDateTime, DateErr
     }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Арифметика (D320 R4, wall-vs-elapsed асимметрия):
+// Арифметика (wall-vs-elapsed асимметрия):
 //   @plus(Period)   — календарная: wall-time сохраняется, re-resolve в зоне
 //   @plus(Duration) — elapsed: точный сдвиг инстанта (wall может прыгнуть)
 // ──────────────────────────────────────────────────────────────────────────
@@ -345,7 +343,7 @@ export fn ZonedDateTime @minus(p Period) -> ZonedDateTime {
 }
 
 /// Elapsed-сдвиг: `zoned + Duration(24h)` — ровно 24h по оси (wall-time
-/// через DST сдвинется). **Trap** вне окна Timestamp (D317).
+/// через DST сдвинется). **Trap** вне окна Timestamp.
 #stable(since = "0.1")
 export fn ZonedDateTime @plus_duration(d Duration) -> ZonedDateTime =>
     match @to_timestamp() {
