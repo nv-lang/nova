@@ -17144,7 +17144,9 @@ impl<'a> TypeCheckCtx<'a> {
         // Passthrough type-param (the arg's OWN type is a generic param of the enclosing
         // fn, still erased at this call site) — undecidable, enforced at the eventual
         // concrete call site instead (mirrors `check_satisfaction`'s
-        // `current_fn_generic_names` skip in `BoundCtx`).
+        // `current_fn_gs` skip in `BoundCtx` — Plan 176 Ф.1 note: THIS skip is
+        // for the `Any`-typed-position channel, a different mechanism, and was
+        // left unchanged by that fix — out of its scope).
         if exp_gs.contains_key(&concrete_name) {
             return None;
         }
@@ -22860,17 +22862,28 @@ struct BoundCtx<'a> {
     /// independent `fn_newtype_sigs` pre-scan in `emit_c.rs` (same design,
     /// no shared state — checker and codegen run as separate passes).
     fn_type_names: HashMap<String, TypeRef>,
-    /// [M-property-testing-rot] (Plan 172.13 батч 3): generic-param NAMES of the
-    /// fn whose body is currently being walked. A nested call inside a bounded
-    /// generic body forwards the enclosing fn's typevar (`property[G Generator[T], T]`
-    /// body → `property_with(gen, ...)` binds callee `G := caller G`) — the
-    /// satisfaction check must recognize the PASSTHROUGH typevar and skip
-    /// (best-effort, mirroring the type-set branch's unknown-name skip): the
-    /// bound IS enforced at every top-level call site where a concrete type is
-    /// bound. Without this, `check_satisfaction` treats `G` as an unknown
-    /// concrete type with no methods → false-positive
-    /// "does not satisfy `Generator` bound".
-    current_fn_generic_names: std::cell::RefCell<std::collections::HashSet<String>>,
+    /// [M-property-testing-rot] (Plan 172.13 батч 3), upgraded Plan 176 Ф.1
+    /// ([M-176-io-forward-bounded-generic]): generic-scope (Plan 196 gs-bounds —
+    /// name → full `GenericParam`, bounds included) of the fn whose body is
+    /// currently being walked. A nested call inside a bounded generic body
+    /// forwards the enclosing fn's typevar (`property[G Generator[T], T]` body →
+    /// `property_with(gen, ...)` binds callee `G := caller G`; io-core's
+    /// `read_to_string[R Read]` forwarding into `read_to_end[R2 Read]`) — the
+    /// satisfaction check must recognize the PASSTHROUGH typevar. Was a bare
+    /// `HashSet<String>` (172.13): matched by NAME only, so it skipped
+    /// unconditionally whenever the concrete arg's name happened to be some
+    /// generic-param of the caller — even an UNBOUNDED one (`fn f[R](r R) {
+    /// read_to_end(r) }`, no bound on `R` at all), silently letting a genuinely
+    /// unsatisfied forward through instead of the honest "does not satisfy"
+    /// diagnostic (verified regression: `nova check` on that shape passed
+    /// clean pre-fix). Now the full `GenericScope` — `check_satisfaction` reads
+    /// the caller's OWN declared bound(s) for that name and only skips when one
+    /// of them actually satisfies the callee's required bound (exact-name match,
+    /// or a protocol-hierarchy superset via `protocol_specs`'s own DFS-flattened
+    /// method list — see `generic_bound_covers`); otherwise falls through to the
+    /// normal structural check, which correctly reports the gap (the typevar has
+    /// no `method_table` entry, so every required method is "missing").
+    current_fn_gs: std::cell::RefCell<GenericScope>,
 }
 
 impl<'a> BoundCtx<'a> {
@@ -23091,7 +23104,7 @@ impl<'a> BoundCtx<'a> {
             }
         }
 
-        BoundCtx { protocol_specs, effect_decls, sig, sum_variant_names, type_defining_modules, type_method_map, type_sets, impl_protocol_types, value_type_names, fn_type_names, current_fn_generic_names: std::cell::RefCell::new(std::collections::HashSet::new()) }
+        BoundCtx { protocol_specs, effect_decls, sig, sum_variant_names, type_defining_modules, type_method_map, type_sets, impl_protocol_types, value_type_names, fn_type_names, current_fn_gs: std::cell::RefCell::new(HashMap::new()) }
     }
 
     /// Plan 162 Ф.3: returns true iff method_name on type type_name is inherent
@@ -23124,12 +23137,13 @@ impl<'a> BoundCtx<'a> {
                     for p in &f.params {
                         scope.insert(p.name.clone(), p.ty.clone());
                     }
-                    // [M-property-testing-rot]: publish the fn's generic names so
-                    // check_satisfaction can recognize passthrough typevars.
-                    *self.current_fn_generic_names.borrow_mut() =
-                        f.generics.iter().map(|g| g.name.clone()).collect();
+                    // [M-property-testing-rot], upgraded Plan 176 Ф.1: publish the fn's
+                    // full generic-scope (Plan 196 `fn_generic_scope` — name + bounds) so
+                    // `check_satisfaction` can recognize a passthrough typevar AND verify
+                    // its declared bound actually covers the callee's required one.
+                    *self.current_fn_gs.borrow_mut() = fn_generic_scope(f);
                     self.walk_fn_body(f, &mut scope, errors);
-                    self.current_fn_generic_names.borrow_mut().clear();
+                    self.current_fn_gs.borrow_mut().clear();
                 }
                 Item::Test(t) => {
                     // Plan 15: тесты тоже могут содержать generic-вызовы
@@ -25027,6 +25041,33 @@ impl<'a> BoundCtx<'a> {
         }
     }
 
+    /// Plan 176 Ф.1 ([M-176-io-forward-bounded-generic]): does a CALLER's own
+    /// declared bound `have` already satisfy a callee's required bound `want`,
+    /// for a forwarded generic-typed argument (`fn f[R Read](r R) {
+    /// read_to_end(r) }` — `have`/`want` are both `"Read"` here; a genuinely
+    /// bounds-heterogeneous forward would have `have != want`)? Exact-name
+    /// match is trivial. Otherwise, if `have` names a registered protocol,
+    /// `have` is a superset of `want` when it structurally provides every
+    /// method `want` requires (name + arity, or a `default_body` fallback —
+    /// D183, the SAME rule `check_satisfaction_against_methods` itself uses for
+    /// a concrete type) — reusing `protocol_specs`, which is already the
+    /// DFS-flattened, `use`-embed-transitive method list per protocol name
+    /// (`BoundCtx::build`), so an embedded-protocol hierarchy is covered for
+    /// free; no NEW hierarchy notion is invented here. If either name is not a
+    /// registered protocol (an effect, a type-set, or simply unknown), only the
+    /// exact-name match above can succeed — no guessing at unregistered shapes.
+    fn generic_bound_covers(&self, have: &str, want: &str) -> bool {
+        if have == want {
+            return true;
+        }
+        let Some(want_spec) = self.protocol_specs.get(want) else { return false; };
+        let Some(have_spec) = self.protocol_specs.get(have) else { return false; };
+        want_spec.iter().all(|req| {
+            have_spec.iter().any(|m| m.name == req.name && m.params.len() == req.params.len())
+                || req.default_body.is_some()
+        })
+    }
+
     /// Plan 15 Ф.3: проверить, что concrete-тип удовлетворяет bound'у
     /// (protocol-типу). При несоответствии — R5.3 diagnostic.
     ///
@@ -25138,14 +25179,29 @@ impl<'a> BoundCtx<'a> {
             // Tuple/Func — пока пропускаем (не обрабатываем составные T).
             _ => return,
         };
-        // [M-property-testing-rot] (Plan 172.13 батч 3): PASSTHROUGH typevar —
-        // the "concrete" type is a generic param of the ENCLOSING fn
-        // (`property[G Generator[T], T]` body calling
-        // `property_with(gen, ...)`). Skip (best-effort, mirrors the type-set
-        // branch's unknown-name skip): the bound is enforced at every call
-        // site that binds a real concrete type.
-        if self.current_fn_generic_names.borrow().contains(&concrete_name) {
-            return;
+        // [M-property-testing-rot] (Plan 172.13 батч 3), upgraded Plan 176 Ф.1
+        // ([M-176-io-forward-bounded-generic]): PASSTHROUGH typevar — the
+        // "concrete" type is a generic param of the ENCLOSING (caller) fn
+        // (`property[G Generator[T], T]` body calling `property_with(gen, ...)`;
+        // io-core's `read_to_string[R Read]` forwarding into
+        // `read_to_end[R2 Read]`). Plan 196 gs carries the caller's OWN bounds
+        // now — only skip when one of them ACTUALLY covers the callee's
+        // required `bound_name` (exact match, or protocol-hierarchy superset via
+        // `generic_bound_covers`); an unbounded (or incompatibly-bounded) caller
+        // param falls through to the normal structural check below, which
+        // correctly reports it as unsatisfied (the typevar has no `method_table`
+        // entry, so every required method comes back "missing" — the honest
+        // diagnostic this fix restores for the genuinely-unsatisfied case; the
+        // pre-fix blanket by-name skip silently accepted THAT case too —
+        // verified regression via `nova check` on an unbounded forward).
+        if let Some(gp) = self.current_fn_gs.borrow().get(&concrete_name) {
+            let covered = gp.bounds.iter().any(|b| {
+                let TypeRef::Named { path: bpath, .. } = b else { return false };
+                bpath.len() == 1 && self.generic_bound_covers(&bpath[0], &bound_name)
+            });
+            if covered {
+                return;
+            }
         }
         // Built-in primitives автоматически удовлетворяют ничему — у нас
         // нет registry их методов в method_table. Skip (best-effort).

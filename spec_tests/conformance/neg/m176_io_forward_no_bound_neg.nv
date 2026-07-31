@@ -1,0 +1,45 @@
+// EXPECT_COMPILE_ERROR type `M176S` does not satisfy `M176Src` bound
+// [M-176-io-forward-bounded-generic] (Plan 176 Ф.2, checker) — negative guard:
+// forwarding an UNBOUNDED generic parameter into a bounded-generic function
+// (same shape as the pos fixture in `../m176_io_forward_a`/
+// `../m176_io_forward_test.nv`, but the caller's OWN type-param `M176S`
+// carries NO bound at all) must remain an honest compile error. Guards that
+// the Ф.1 fix (widening the passthrough-typevar skip to check the caller's
+// OWN declared bound via Plan 196 gs) did not OVER-widen into skipping
+// unconditionally again by name — the exact regression this fix found and
+// closed (`nova check` on this shape passed clean pre-fix: the [M-property-
+// testing-rot] skip matched `M176S` by NAME only, ignoring that it has no
+// bound whatsoever).
+module neg.m176_io_forward_no_bound_neg
+
+type M176Src protocol {
+    mut @m176_next() -> Option[int]
+}
+
+fn m176_drain[S M176Src](mut src S) -> []int {
+    mut m176_out []int = []int.new()
+    loop {
+        match src.m176_next() {
+            Some(m176_v) => m176_out.push(m176_v)
+            None => return m176_out
+        }
+    }
+}
+
+// M176S has NO bound — forwarding it into `m176_drain[S M176Src]` must fail.
+fn m176_forward_no_bound[M176S](mut m176_src M176S) -> []int {
+    m176_drain(m176_src)
+}
+
+type M176Counter {
+    mut n int
+    max int
+}
+fn M176Counter mut @m176_next() -> Option[int] {
+    if @n >= @max { None } else { ro m176_v = @n; @n += 1; Some(m176_v) }
+}
+
+test "m176 neg: forwarding an unbounded generic param must not satisfy the callee's bound" {
+    mut m176_c = M176Counter { n: 0, max: 3 }
+    m176_forward_no_bound(m176_c)
+}

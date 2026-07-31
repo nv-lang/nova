@@ -39,24 +39,18 @@ export type BufWriter[W Write] consume priv {
 #stable(since = "0.1")
 export fn BufWriter[W].new(inner W) -> Self => { inner, buf: []u8.new() }
 
-// Flush the internal buffer to the inner sink (non-consuming helper). Inlines a
-// `write_all` loop directly on `@inner` (§ forward-bound note in core.nv).
+// Flush the internal buffer to the inner sink (non-consuming helper). Forwards
+// to the shared `write_all` loop over `@inner` — was an inlined COPY of that
+// loop (`[M-176-io-forward-bounded-generic]`, checker gap: the bound-forward
+// `write_all(@inner, ...)` from a receiver-generic method into a free bounded-
+// generic fn with the SAME bound falsely failed "does not satisfy"); collapsed
+// now that Plan 176 Ф.1 fixed the checker (`types/mod.rs::check_satisfaction`).
 fn BufWriter[W Write] mut @drain() -> Result[(), IoError] {
-    ro total = @buf.len()
-    if total == 0 { return Ok(()) }
-    mut done = 0
-    while done < total {
-        match @inner.write(@buf[done..total]) {
-            Ok(0)  => return Err(IoError.new(ErrorKind.WriteZero, "flush"))
-            Ok(n)  => { done += n }
-            Err(e) => {
-                if e.is_interrupted() { continue }
-                return Err(e)
-            }
-        }
+    if @buf.len() == 0 { return Ok(()) }
+    match write_all(@inner, @buf) {
+        Ok(())  => { @buf.clear(); Ok(()) }
+        Err(e)  => Err(e)
     }
-    @buf.clear()
-    Ok(())
 }
 
 /// io.Write: buffer `data`, draining to the inner sink whenever the buffer
