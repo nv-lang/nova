@@ -26,33 +26,33 @@ module runtime.sync
 
 // ─── MemOrdering ─────────────────────────────────────────────────
 
-/// Memory ordering для atomic operations и fences. Контролирует
-/// happens-before отношения между операциями в разных fiber'ах.
+/// Memory ordering for atomic operations and fences. Controls the
+/// happens-before relationships between operations in different fibers.
 ///
-/// Default ordering для simple-overload методов — `SeqCst` (design decision M1):
-/// безопасно для всех use cases, может быть переопределено для
-/// perf-critical кода через `_ordered` overloads (Plan 103.2+).
+/// Default ordering for the simple-overload methods — `SeqCst` (design decision M1):
+/// safe for all use cases, can be overridden for perf-critical code via the
+/// `_ordered` overloads (Plan 103.2+).
 ///
-/// **Семантика** (D167):
+/// **Semantics** (D167):
 ///
-/// - `Relaxed`: только атомарность операции; нет happens-before.
-///   Use case: telemetry counters, statistics. Цена: dirty reads
-///   возможны cross-fiber, но не torn writes.
-/// - `Acquire`: для load; формирует happens-before с paired Release.
+/// - `Relaxed`: atomicity of the operation only; no happens-before.
+///   Use case: telemetry counters, statistics. Cost: dirty reads
+///   possible cross-fiber, but no torn writes.
+/// - `Acquire`: for loads; establishes happens-before with a paired Release.
 ///   Use case: load shared payload after seeing flag set.
-/// - `Release`: для store; формирует happens-before с paired Acquire.
+/// - `Release`: for stores; establishes happens-before with a paired Acquire.
 ///   Use case: publish payload before setting flag.
-/// - `AcqRel`: для RMW (swap, CAS, fetch_*); combination Acquire+Release.
+/// - `AcqRel`: for RMW (swap, CAS, fetch_*); combination Acquire+Release.
 ///   Use case: lock-free queue head/tail; one-shot ownership transfer.
-/// - `SeqCst`: sequentially consistent — total order на всех SeqCst
-///   операциях во всех fiber'ах. Use case: simple mental model,
-///   correctness без deep analysis. Default.
+/// - `SeqCst`: sequentially consistent — a total order over all SeqCst
+///   operations in all fibers. Use case: simple mental model,
+///   correctness without deep analysis. Default.
 ///
-/// **Примечание**: `MemOrdering` (memory ordering) отличается от
-/// `Ordering` (three-way comparison: Less|Equal|Greater) из prelude.
-/// Разные типы, разные применения.
+/// **Note**: `MemOrdering` (memory ordering) differs from
+/// `Ordering` (three-way comparison: Less|Equal|Greater) in prelude.
+/// Different types, different uses.
 ///
-/// **Variant tag values** (sync_primitives.h координация):
+/// **Variant tag values** (sync_primitives.h coordination):
 ///   Relaxed=0  Acquire=1  Release=2  AcqRel=3  SeqCst=4
 #stable(since = "0.1")
 export type MemOrdering enum
@@ -62,24 +62,24 @@ export type MemOrdering enum
     | AcqRel
     | SeqCst
 
-/// Memory fence — sequenced ordering point без atomic operation.
+/// Memory fence — a sequenced ordering point without an atomic operation.
 ///
-/// Используется для отделения unsynchronized reads/writes от synchronized
-/// (publish/subscribe pattern, refcount-drop с deferred-free).
+/// Used to separate unsynchronized reads/writes from synchronized
+/// (publish/subscribe pattern, refcount-drop with deferred-free).
 ///
-/// **Семантика** (D167):
+/// **Semantics** (D167):
 ///
-/// - `fence(MemOrdering.Relaxed)`: no-op. Валиден синтаксически для
-///   consistency, но не имеет ordering эффекта (Acquire/Release нужны).
-/// - `fence(MemOrdering.Acquire)`: все subsequent reads/writes
-///   happen-after все prior Release-stores (visible-to-this-fiber).
-/// - `fence(MemOrdering.Release)`: все prior reads/writes happen-before
-///   все subsequent Acquire-loads (visible-to-other-fibers).
+/// - `fence(MemOrdering.Relaxed)`: no-op. Syntactically valid for
+///   consistency, but has no ordering effect (Acquire/Release needed).
+/// - `fence(MemOrdering.Acquire)`: all subsequent reads/writes
+///   happen-after all prior Release-stores (visible-to-this-fiber).
+/// - `fence(MemOrdering.Release)`: all prior reads/writes happen-before
+///   all subsequent Acquire-loads (visible-to-other-fibers).
 /// - `fence(MemOrdering.AcqRel)`: combination Acquire+Release.
 /// - `fence(MemOrdering.SeqCst)`: total-order participation; sequenced
-///   относительно всех других SeqCst fences и SeqCst operations.
+///   relative to all other SeqCst fences and SeqCst operations.
 ///
-/// # Example: refcount-drop с deferred-free
+/// # Example: refcount-drop with deferred-free
 ///
 /// ```nova
 /// // worker fiber:
@@ -124,13 +124,13 @@ type CasRawBool(ok bool, witness bool)
 
 /// Lock-free 64-bit signed atomic integer.
 ///
-/// Wraparound: signed overflow в fetch_add/sub — modular arithmetic
-/// (consistent с Rust default, Java AtomicLong).
+/// Wraparound: signed overflow in fetch_add/sub — modular arithmetic
+/// (consistent with Rust default, Java AtomicLong).
 ///
 /// # Default ordering
 ///
-/// Methods без `MemOrdering` параметра используют `SeqCst` (M1) — safest.
-/// Для perf-critical использовать overloads с explicit [`MemOrdering`].
+/// Methods without a `MemOrdering` parameter use `SeqCst` (M1) — safest.
+/// For perf-critical code use the overloads with an explicit [`MemOrdering`].
 ///
 /// # See Also
 ///
@@ -170,9 +170,9 @@ export extern "nova" fn AtomicI64 mut @swap(v i64) -> i64
 #realtime
 extern "nova" fn AtomicI64 mut @cmpxchg(expected i64, desired i64, weak bool, success MemOrdering, failure MemOrdering) -> CasRawI64
 
-/// Compare-and-swap (Plan 207 [M-cas-return-witnessed-value]): `Ok(())` — успех
-/// (значение заменено на `desired`). `Err(actual)` — провал, `actual` = фактически
-/// прочитанное значение (witness), даром из C11 op — без повторного `load()` в CAS-цикле.
+/// Compare-and-swap (Plan 207 [M-cas-return-witnessed-value]): `Ok(())` — success
+/// (the value was replaced with `desired`). `Err(actual)` — failure, `actual` = the
+/// value actually read (witness), free from the C11 op — no extra `load()` in the CAS loop.
 #realtime
 #stable(since = "0.1")
 export fn AtomicI64 mut @compare_exchange(expected i64, desired i64, success MemOrdering = MemOrdering.SeqCst, failure MemOrdering = MemOrdering.SeqCst) -> Result[(), i64] {
@@ -180,9 +180,9 @@ export fn AtomicI64 mut @compare_exchange(expected i64, desired i64, success Mem
     if raw.ok { Ok(()) } else { Err(raw.witness) }
 }
 
-/// Compare-and-swap weak: может spuriously fail даже если текущее значение ==
-/// expected (ARM). Свидетель (`Err(actual)`) корректен и в spurious-failure
-/// случае — `actual == expected`, но своп не произошёл, нужен повторный виток цикла.
+/// Compare-and-swap weak: may spuriously fail even if the current value ==
+/// expected (ARM). The witness (`Err(actual)`) is correct in the spurious-failure
+/// case too — `actual == expected`, but the swap did not happen; retry the loop.
 #realtime
 #stable(since = "0.1")
 export fn AtomicI64 mut @compare_exchange_weak(expected i64, desired i64, success MemOrdering = MemOrdering.SeqCst, failure MemOrdering = MemOrdering.SeqCst) -> Result[(), i64] {
@@ -284,9 +284,9 @@ export extern "nova" fn AtomicI32 mut @swap(v i32) -> i32
 #realtime
 extern "nova" fn AtomicI32 mut @cmpxchg(expected i32, desired i32, weak bool, success MemOrdering, failure MemOrdering) -> CasRawI32
 
-/// Compare-and-swap (Plan 207 [M-cas-return-witnessed-value]): `Ok(())` — успех
-/// (значение заменено на `desired`). `Err(actual)` — провал, `actual` = фактически
-/// прочитанное значение (witness), даром из C11 op — без повторного `load()` в CAS-цикле.
+/// Compare-and-swap (Plan 207 [M-cas-return-witnessed-value]): `Ok(())` — success
+/// (the value was replaced with `desired`). `Err(actual)` — failure, `actual` = the
+/// value actually read (witness), free from the C11 op — no extra `load()` in the CAS loop.
 #realtime
 #stable(since = "0.1")
 export fn AtomicI32 mut @compare_exchange(expected i32, desired i32, success MemOrdering = MemOrdering.SeqCst, failure MemOrdering = MemOrdering.SeqCst) -> Result[(), i32] {
@@ -294,9 +294,9 @@ export fn AtomicI32 mut @compare_exchange(expected i32, desired i32, success Mem
     if raw.ok { Ok(()) } else { Err(raw.witness) }
 }
 
-/// Compare-and-swap weak: может spuriously fail даже если текущее значение ==
-/// expected (ARM). Свидетель (`Err(actual)`) корректен и в spurious-failure
-/// случае — `actual == expected`, но своп не произошёл, нужен повторный виток цикла.
+/// Compare-and-swap weak: may spuriously fail even if the current value ==
+/// expected (ARM). The witness (`Err(actual)`) is correct in the spurious-failure
+/// case too — `actual == expected`, but the swap did not happen; retry the loop.
 #realtime
 #stable(since = "0.1")
 export fn AtomicI32 mut @compare_exchange_weak(expected i32, desired i32, success MemOrdering = MemOrdering.SeqCst, failure MemOrdering = MemOrdering.SeqCst) -> Result[(), i32] {
@@ -398,9 +398,9 @@ export extern "nova" fn AtomicI16 mut @swap(v i16) -> i16
 #realtime
 extern "nova" fn AtomicI16 mut @cmpxchg(expected i16, desired i16, weak bool, success MemOrdering, failure MemOrdering) -> CasRawI16
 
-/// Compare-and-swap (Plan 207 [M-cas-return-witnessed-value]): `Ok(())` — успех
-/// (значение заменено на `desired`). `Err(actual)` — провал, `actual` = фактически
-/// прочитанное значение (witness), даром из C11 op — без повторного `load()` в CAS-цикле.
+/// Compare-and-swap (Plan 207 [M-cas-return-witnessed-value]): `Ok(())` — success
+/// (the value was replaced with `desired`). `Err(actual)` — failure, `actual` = the
+/// value actually read (witness), free from the C11 op — no extra `load()` in the CAS loop.
 #realtime
 #stable(since = "0.1")
 export fn AtomicI16 mut @compare_exchange(expected i16, desired i16, success MemOrdering = MemOrdering.SeqCst, failure MemOrdering = MemOrdering.SeqCst) -> Result[(), i16] {
@@ -408,9 +408,9 @@ export fn AtomicI16 mut @compare_exchange(expected i16, desired i16, success Mem
     if raw.ok { Ok(()) } else { Err(raw.witness) }
 }
 
-/// Compare-and-swap weak: может spuriously fail даже если текущее значение ==
-/// expected (ARM). Свидетель (`Err(actual)`) корректен и в spurious-failure
-/// случае — `actual == expected`, но своп не произошёл, нужен повторный виток цикла.
+/// Compare-and-swap weak: may spuriously fail even if the current value ==
+/// expected (ARM). The witness (`Err(actual)`) is correct in the spurious-failure
+/// case too — `actual == expected`, but the swap did not happen; retry the loop.
 #realtime
 #stable(since = "0.1")
 export fn AtomicI16 mut @compare_exchange_weak(expected i16, desired i16, success MemOrdering = MemOrdering.SeqCst, failure MemOrdering = MemOrdering.SeqCst) -> Result[(), i16] {
@@ -512,9 +512,9 @@ export extern "nova" fn AtomicI8 mut @swap(v i8) -> i8
 #realtime
 extern "nova" fn AtomicI8 mut @cmpxchg(expected i8, desired i8, weak bool, success MemOrdering, failure MemOrdering) -> CasRawI8
 
-/// Compare-and-swap (Plan 207 [M-cas-return-witnessed-value]): `Ok(())` — успех
-/// (значение заменено на `desired`). `Err(actual)` — провал, `actual` = фактически
-/// прочитанное значение (witness), даром из C11 op — без повторного `load()` в CAS-цикле.
+/// Compare-and-swap (Plan 207 [M-cas-return-witnessed-value]): `Ok(())` — success
+/// (the value was replaced with `desired`). `Err(actual)` — failure, `actual` = the
+/// value actually read (witness), free from the C11 op — no extra `load()` in the CAS loop.
 #realtime
 #stable(since = "0.1")
 export fn AtomicI8 mut @compare_exchange(expected i8, desired i8, success MemOrdering = MemOrdering.SeqCst, failure MemOrdering = MemOrdering.SeqCst) -> Result[(), i8] {
@@ -522,9 +522,9 @@ export fn AtomicI8 mut @compare_exchange(expected i8, desired i8, success MemOrd
     if raw.ok { Ok(()) } else { Err(raw.witness) }
 }
 
-/// Compare-and-swap weak: может spuriously fail даже если текущее значение ==
-/// expected (ARM). Свидетель (`Err(actual)`) корректен и в spurious-failure
-/// случае — `actual == expected`, но своп не произошёл, нужен повторный виток цикла.
+/// Compare-and-swap weak: may spuriously fail even if the current value ==
+/// expected (ARM). The witness (`Err(actual)`) is correct in the spurious-failure
+/// case too — `actual == expected`, but the swap did not happen; retry the loop.
 #realtime
 #stable(since = "0.1")
 export fn AtomicI8 mut @compare_exchange_weak(expected i8, desired i8, success MemOrdering = MemOrdering.SeqCst, failure MemOrdering = MemOrdering.SeqCst) -> Result[(), i8] {
@@ -626,9 +626,9 @@ export extern "nova" fn AtomicU64 mut @swap(v u64) -> u64
 #realtime
 extern "nova" fn AtomicU64 mut @cmpxchg(expected u64, desired u64, weak bool, success MemOrdering, failure MemOrdering) -> CasRawU64
 
-/// Compare-and-swap (Plan 207 [M-cas-return-witnessed-value]): `Ok(())` — успех
-/// (значение заменено на `desired`). `Err(actual)` — провал, `actual` = фактически
-/// прочитанное значение (witness), даром из C11 op — без повторного `load()` в CAS-цикле.
+/// Compare-and-swap (Plan 207 [M-cas-return-witnessed-value]): `Ok(())` — success
+/// (the value was replaced with `desired`). `Err(actual)` — failure, `actual` = the
+/// value actually read (witness), free from the C11 op — no extra `load()` in the CAS loop.
 #realtime
 #stable(since = "0.1")
 export fn AtomicU64 mut @compare_exchange(expected u64, desired u64, success MemOrdering = MemOrdering.SeqCst, failure MemOrdering = MemOrdering.SeqCst) -> Result[(), u64] {
@@ -636,9 +636,9 @@ export fn AtomicU64 mut @compare_exchange(expected u64, desired u64, success Mem
     if raw.ok { Ok(()) } else { Err(raw.witness) }
 }
 
-/// Compare-and-swap weak: может spuriously fail даже если текущее значение ==
-/// expected (ARM). Свидетель (`Err(actual)`) корректен и в spurious-failure
-/// случае — `actual == expected`, но своп не произошёл, нужен повторный виток цикла.
+/// Compare-and-swap weak: may spuriously fail even if the current value ==
+/// expected (ARM). The witness (`Err(actual)`) is correct in the spurious-failure
+/// case too — `actual == expected`, but the swap did not happen; retry the loop.
 #realtime
 #stable(since = "0.1")
 export fn AtomicU64 mut @compare_exchange_weak(expected u64, desired u64, success MemOrdering = MemOrdering.SeqCst, failure MemOrdering = MemOrdering.SeqCst) -> Result[(), u64] {
@@ -740,9 +740,9 @@ export extern "nova" fn AtomicU32 mut @swap(v u32) -> u32
 #realtime
 extern "nova" fn AtomicU32 mut @cmpxchg(expected u32, desired u32, weak bool, success MemOrdering, failure MemOrdering) -> CasRawU32
 
-/// Compare-and-swap (Plan 207 [M-cas-return-witnessed-value]): `Ok(())` — успех
-/// (значение заменено на `desired`). `Err(actual)` — провал, `actual` = фактически
-/// прочитанное значение (witness), даром из C11 op — без повторного `load()` в CAS-цикле.
+/// Compare-and-swap (Plan 207 [M-cas-return-witnessed-value]): `Ok(())` — success
+/// (the value was replaced with `desired`). `Err(actual)` — failure, `actual` = the
+/// value actually read (witness), free from the C11 op — no extra `load()` in the CAS loop.
 #realtime
 #stable(since = "0.1")
 export fn AtomicU32 mut @compare_exchange(expected u32, desired u32, success MemOrdering = MemOrdering.SeqCst, failure MemOrdering = MemOrdering.SeqCst) -> Result[(), u32] {
@@ -750,9 +750,9 @@ export fn AtomicU32 mut @compare_exchange(expected u32, desired u32, success Mem
     if raw.ok { Ok(()) } else { Err(raw.witness) }
 }
 
-/// Compare-and-swap weak: может spuriously fail даже если текущее значение ==
-/// expected (ARM). Свидетель (`Err(actual)`) корректен и в spurious-failure
-/// случае — `actual == expected`, но своп не произошёл, нужен повторный виток цикла.
+/// Compare-and-swap weak: may spuriously fail even if the current value ==
+/// expected (ARM). The witness (`Err(actual)`) is correct in the spurious-failure
+/// case too — `actual == expected`, but the swap did not happen; retry the loop.
 #realtime
 #stable(since = "0.1")
 export fn AtomicU32 mut @compare_exchange_weak(expected u32, desired u32, success MemOrdering = MemOrdering.SeqCst, failure MemOrdering = MemOrdering.SeqCst) -> Result[(), u32] {
@@ -854,9 +854,9 @@ export extern "nova" fn AtomicU16 mut @swap(v u16) -> u16
 #realtime
 extern "nova" fn AtomicU16 mut @cmpxchg(expected u16, desired u16, weak bool, success MemOrdering, failure MemOrdering) -> CasRawU16
 
-/// Compare-and-swap (Plan 207 [M-cas-return-witnessed-value]): `Ok(())` — успех
-/// (значение заменено на `desired`). `Err(actual)` — провал, `actual` = фактически
-/// прочитанное значение (witness), даром из C11 op — без повторного `load()` в CAS-цикле.
+/// Compare-and-swap (Plan 207 [M-cas-return-witnessed-value]): `Ok(())` — success
+/// (the value was replaced with `desired`). `Err(actual)` — failure, `actual` = the
+/// value actually read (witness), free from the C11 op — no extra `load()` in the CAS loop.
 #realtime
 #stable(since = "0.1")
 export fn AtomicU16 mut @compare_exchange(expected u16, desired u16, success MemOrdering = MemOrdering.SeqCst, failure MemOrdering = MemOrdering.SeqCst) -> Result[(), u16] {
@@ -864,9 +864,9 @@ export fn AtomicU16 mut @compare_exchange(expected u16, desired u16, success Mem
     if raw.ok { Ok(()) } else { Err(raw.witness) }
 }
 
-/// Compare-and-swap weak: может spuriously fail даже если текущее значение ==
-/// expected (ARM). Свидетель (`Err(actual)`) корректен и в spurious-failure
-/// случае — `actual == expected`, но своп не произошёл, нужен повторный виток цикла.
+/// Compare-and-swap weak: may spuriously fail even if the current value ==
+/// expected (ARM). The witness (`Err(actual)`) is correct in the spurious-failure
+/// case too — `actual == expected`, but the swap did not happen; retry the loop.
 #realtime
 #stable(since = "0.1")
 export fn AtomicU16 mut @compare_exchange_weak(expected u16, desired u16, success MemOrdering = MemOrdering.SeqCst, failure MemOrdering = MemOrdering.SeqCst) -> Result[(), u16] {
@@ -968,9 +968,9 @@ export extern "nova" fn AtomicU8 mut @swap(v u8) -> u8
 #realtime
 extern "nova" fn AtomicU8 mut @cmpxchg(expected u8, desired u8, weak bool, success MemOrdering, failure MemOrdering) -> CasRawU8
 
-/// Compare-and-swap (Plan 207 [M-cas-return-witnessed-value]): `Ok(())` — успех
-/// (значение заменено на `desired`). `Err(actual)` — провал, `actual` = фактически
-/// прочитанное значение (witness), даром из C11 op — без повторного `load()` в CAS-цикле.
+/// Compare-and-swap (Plan 207 [M-cas-return-witnessed-value]): `Ok(())` — success
+/// (the value was replaced with `desired`). `Err(actual)` — failure, `actual` = the
+/// value actually read (witness), free from the C11 op — no extra `load()` in the CAS loop.
 #realtime
 #stable(since = "0.1")
 export fn AtomicU8 mut @compare_exchange(expected u8, desired u8, success MemOrdering = MemOrdering.SeqCst, failure MemOrdering = MemOrdering.SeqCst) -> Result[(), u8] {
@@ -978,9 +978,9 @@ export fn AtomicU8 mut @compare_exchange(expected u8, desired u8, success MemOrd
     if raw.ok { Ok(()) } else { Err(raw.witness) }
 }
 
-/// Compare-and-swap weak: может spuriously fail даже если текущее значение ==
-/// expected (ARM). Свидетель (`Err(actual)`) корректен и в spurious-failure
-/// случае — `actual == expected`, но своп не произошёл, нужен повторный виток цикла.
+/// Compare-and-swap weak: may spuriously fail even if the current value ==
+/// expected (ARM). The witness (`Err(actual)`) is correct in the spurious-failure
+/// case too — `actual == expected`, but the swap did not happen; retry the loop.
 #realtime
 #stable(since = "0.1")
 export fn AtomicU8 mut @compare_exchange_weak(expected u8, desired u8, success MemOrdering = MemOrdering.SeqCst, failure MemOrdering = MemOrdering.SeqCst) -> Result[(), u8] {
@@ -1048,16 +1048,16 @@ export extern "nova" fn AtomicU8 mut @fetch_nand(v u8) -> u8
 
 /// Lock-free platform-word signed atomic integer.
 ///
-/// `int` = `nova_int` = `intptr_t` (address-sized, Plan 133; на x64
-/// совпадает по ширине с `int64_t`). Platform-word signed atomic.
+/// `int` = `nova_int` = `intptr_t` (address-sized, Plan 133; on x64
+/// it matches `int64_t` in width). Platform-word signed atomic.
 /// Useful for signed indexes and offsets.
 ///
-/// Plan 207 (2026-07-16 консолидация имён): раньше назывался `Atomic` +
-/// `Isize` — переименован в `AtomicInt`, поглотив место прежнего legacy
-/// `AtomicInt` (int32-backed урезанный API без `MemOrdering`-параметров,
-/// снят целиком; его вызовы (`new/load/store/fetch_add/fetch_sub/
-/// compare_exchange` без ordering) покрываются дефолтными
-/// SeqCst-перегрузками этого типа один-в-один).
+/// Plan 207 (2026-07-16 name consolidation): formerly called `Atomic` +
+/// `Isize` — renamed to `AtomicInt`, taking over the slot of the old legacy
+/// `AtomicInt` (an int32-backed stripped API without `MemOrdering` parameters,
+/// removed entirely; its calls (`new/load/store/fetch_add/fetch_sub/
+/// compare_exchange` without ordering) are covered one-to-one by the default
+/// SeqCst overloads of this type).
 #stable(since = "0.1")
 #share
 export type AtomicInt(*())
@@ -1090,9 +1090,9 @@ export extern "nova" fn AtomicInt mut @swap(v int) -> int
 #realtime
 extern "nova" fn AtomicInt mut @cmpxchg(expected int, desired int, weak bool, success MemOrdering, failure MemOrdering) -> CasRawInt
 
-/// Compare-and-swap (Plan 207 [M-cas-return-witnessed-value]): `Ok(())` — успех
-/// (значение заменено на `desired`). `Err(actual)` — провал, `actual` = фактически
-/// прочитанное значение (witness), даром из C11 op — без повторного `load()` в CAS-цикле.
+/// Compare-and-swap (Plan 207 [M-cas-return-witnessed-value]): `Ok(())` — success
+/// (the value was replaced with `desired`). `Err(actual)` — failure, `actual` = the
+/// value actually read (witness), free from the C11 op — no extra `load()` in the CAS loop.
 #realtime
 #stable(since = "0.1")
 export fn AtomicInt mut @compare_exchange(expected int, desired int, success MemOrdering = MemOrdering.SeqCst, failure MemOrdering = MemOrdering.SeqCst) -> Result[(), int] {
@@ -1100,9 +1100,9 @@ export fn AtomicInt mut @compare_exchange(expected int, desired int, success Mem
     if raw.ok { Ok(()) } else { Err(raw.witness) }
 }
 
-/// Compare-and-swap weak: может spuriously fail даже если текущее значение ==
-/// expected (ARM). Свидетель (`Err(actual)`) корректен и в spurious-failure
-/// случае — `actual == expected`, но своп не произошёл, нужен повторный виток цикла.
+/// Compare-and-swap weak: may spuriously fail even if the current value ==
+/// expected (ARM). The witness (`Err(actual)`) is correct in the spurious-failure
+/// case too — `actual == expected`, but the swap did not happen; retry the loop.
 #realtime
 #stable(since = "0.1")
 export fn AtomicInt mut @compare_exchange_weak(expected int, desired int, success MemOrdering = MemOrdering.SeqCst, failure MemOrdering = MemOrdering.SeqCst) -> Result[(), int] {
@@ -1170,12 +1170,12 @@ export extern "nova" fn AtomicInt mut @fetch_nand(v int) -> int
 
 /// Lock-free platform-word unsigned atomic integer.
 ///
-/// `uint` = `nova_uint` = `uintptr_t` (address-sized, Plan 133/70.5; на
-/// x64 совпадает по ширине с `uint64_t`). Platform-word unsigned atomic.
+/// `uint` = `nova_uint` = `uintptr_t` (address-sized, Plan 133/70.5; on
+/// x64 it matches `uint64_t` in width). Platform-word unsigned atomic.
 /// Useful for array indexes, buffer sizes.
 ///
-/// Plan 207 (2026-07-16 консолидация имён): раньше назывался `Atomic` +
-/// `Usize` — переименован в `AtomicUint`.
+/// Plan 207 (2026-07-16 name consolidation): formerly called `Atomic` +
+/// `Usize` — renamed to `AtomicUint`.
 #stable(since = "0.1")
 #share
 export type AtomicUint(*())
@@ -1208,9 +1208,9 @@ export extern "nova" fn AtomicUint mut @swap(v uint) -> uint
 #realtime
 extern "nova" fn AtomicUint mut @cmpxchg(expected uint, desired uint, weak bool, success MemOrdering, failure MemOrdering) -> CasRawUint
 
-/// Compare-and-swap (Plan 207 [M-cas-return-witnessed-value]): `Ok(())` — успех
-/// (значение заменено на `desired`). `Err(actual)` — провал, `actual` = фактически
-/// прочитанное значение (witness), даром из C11 op — без повторного `load()` в CAS-цикле.
+/// Compare-and-swap (Plan 207 [M-cas-return-witnessed-value]): `Ok(())` — success
+/// (the value was replaced with `desired`). `Err(actual)` — failure, `actual` = the
+/// value actually read (witness), free from the C11 op — no extra `load()` in the CAS loop.
 #realtime
 #stable(since = "0.1")
 export fn AtomicUint mut @compare_exchange(expected uint, desired uint, success MemOrdering = MemOrdering.SeqCst, failure MemOrdering = MemOrdering.SeqCst) -> Result[(), uint] {
@@ -1218,9 +1218,9 @@ export fn AtomicUint mut @compare_exchange(expected uint, desired uint, success 
     if raw.ok { Ok(()) } else { Err(raw.witness) }
 }
 
-/// Compare-and-swap weak: может spuriously fail даже если текущее значение ==
-/// expected (ARM). Свидетель (`Err(actual)`) корректен и в spurious-failure
-/// случае — `actual == expected`, но своп не произошёл, нужен повторный виток цикла.
+/// Compare-and-swap weak: may spuriously fail even if the current value ==
+/// expected (ARM). The witness (`Err(actual)`) is correct in the spurious-failure
+/// case too — `actual == expected`, but the swap did not happen; retry the loop.
 #realtime
 #stable(since = "0.1")
 export fn AtomicUint mut @compare_exchange_weak(expected uint, desired uint, success MemOrdering = MemOrdering.SeqCst, failure MemOrdering = MemOrdering.SeqCst) -> Result[(), uint] {
@@ -1286,19 +1286,19 @@ export extern "nova" fn AtomicUint mut @fetch_nand(v uint) -> uint
 
 // ─── AtomicBool ──────────────────────────────────────────────────
 
-/// Lock-free атомарный булев флаг.
+/// Lock-free atomic boolean flag.
 ///
-/// `swap()` полезен для one-shot ownership паттерна:
-/// `if !flag.swap(true) { /* только первый caller выполняет */ }`.
+/// `swap()` is useful for the one-shot ownership pattern:
+/// `if !flag.swap(true) { /* only the first caller executes */ }`.
 ///
-/// Ordering-aware overloads добавлены в Plan 103.2.
-/// Methods без `MemOrdering` используют `SeqCst` (M1) — safest default.
+/// Ordering-aware overloads added in Plan 103.2.
+/// Methods without a `MemOrdering` use `SeqCst` (M1) — safest default.
 ///
 /// # See Also
 ///
 /// - `[AtomicInt]` — address-sized integer atomic
 /// - `[AtomicI64]` — fixed 64-bit integer atomic
-/// - `[Once]` — barrier для exactly-once execution
+/// - `[Once]` — barrier for exactly-once execution
 /// - `[MemOrdering]` — ordering parameter enum
 #stable(since = "0.1")
 #share
@@ -1308,20 +1308,20 @@ export type AtomicBool(*())
 #stable(since = "0.1")
 export extern "nova" fn AtomicBool.new(v bool) -> Self
 
-/// Загрузить текущее значение с explicit ordering.
+/// Load the current value with an explicit ordering.
 #realtime
 #stable(since = "0.1")
 export extern "nova" fn AtomicBool @load(ord MemOrdering) -> bool
-/// Загрузить текущее значение (SeqCst ordering).
+/// Load the current value (SeqCst ordering).
 #realtime
 #stable(since = "0.1")
 export extern "nova" fn AtomicBool @load() -> bool
 
-/// Записать новое значение с explicit ordering.
+/// Store a new value with an explicit ordering.
 #realtime
 #stable(since = "0.1")
 export extern "nova" fn AtomicBool mut @store(v bool, ord MemOrdering)
-/// Записать новое значение (SeqCst ordering).
+/// Store a new value (SeqCst ordering).
 #realtime
 #stable(since = "0.1")
 export extern "nova" fn AtomicBool mut @store(v bool)
@@ -1329,9 +1329,9 @@ export extern "nova" fn AtomicBool mut @store(v bool)
 #realtime
 extern "nova" fn AtomicBool mut @cmpxchg(expected bool, desired bool, weak bool, success MemOrdering, failure MemOrdering) -> CasRawBool
 
-/// Compare-and-swap с explicit orderings (Plan 207 [M-cas-return-witnessed-value]).
-/// `Ok(())` — успех. `Err(actual)` — провал, `actual` = witness (фактически
-/// прочитанное значение, даром из C11 op).
+/// Compare-and-swap with explicit orderings (Plan 207 [M-cas-return-witnessed-value]).
+/// `Ok(())` — success. `Err(actual)` — failure, `actual` = the witness (the value
+/// actually read, free from the C11 op).
 #realtime
 #stable(since = "0.1")
 export fn AtomicBool mut @compare_exchange(expected bool, desired bool, success MemOrdering = MemOrdering.SeqCst, failure MemOrdering = MemOrdering.SeqCst) -> Result[(), bool] {
@@ -1339,8 +1339,8 @@ export fn AtomicBool mut @compare_exchange(expected bool, desired bool, success 
     if raw.ok { Ok(()) } else { Err(raw.witness) }
 }
 
-/// Compare-and-swap weak с explicit orderings. Может spuriously fail на ARM —
-/// свидетель (`Err(actual)`) корректен и в spurious-failure случае.
+/// Compare-and-swap weak with explicit orderings. May spuriously fail on ARM —
+/// the witness (`Err(actual)`) is correct in the spurious-failure case too.
 #realtime
 #stable(since = "0.1")
 export fn AtomicBool mut @compare_exchange_weak(expected bool, desired bool, success MemOrdering = MemOrdering.SeqCst, failure MemOrdering = MemOrdering.SeqCst) -> Result[(), bool] {
@@ -1348,40 +1348,40 @@ export fn AtomicBool mut @compare_exchange_weak(expected bool, desired bool, suc
     if raw.ok { Ok(()) } else { Err(raw.witness) }
 }
 
-/// Атомарно установить `v`, вернуть предыдущее значение с explicit ordering.
+/// Atomically set `v`, return the previous value with an explicit ordering.
 #realtime
 #stable(since = "0.1")
 export extern "nova" fn AtomicBool mut @swap(v bool, ord MemOrdering) -> bool
-/// Атомарно установить `v`, вернуть предыдущее значение (SeqCst ordering).
+/// Atomically set `v`, return the previous value (SeqCst ordering).
 ///
-/// Полезен для one-shot ownership: `if !flag.swap(true) { /* first */ }`.
+/// Useful for one-shot ownership: `if !flag.swap(true) { /* first */ }`.
 #realtime
 #stable(since = "0.1")
 export extern "nova" fn AtomicBool mut @swap(v bool) -> bool
 
-/// Атомарный bitwise-OR, returns previous value. With explicit ordering.
+/// Atomic bitwise-OR, returns previous value. With explicit ordering.
 #realtime
 #stable(since = "0.1")
 export extern "nova" fn AtomicBool mut @fetch_or(v bool, ord MemOrdering) -> bool
-/// Атомарный bitwise-OR, returns previous value (SeqCst ordering).
+/// Atomic bitwise-OR, returns previous value (SeqCst ordering).
 #realtime
 #stable(since = "0.1")
 export extern "nova" fn AtomicBool mut @fetch_or(v bool) -> bool
 
-/// Атомарный bitwise-AND, returns previous value. With explicit ordering.
+/// Atomic bitwise-AND, returns previous value. With explicit ordering.
 #realtime
 #stable(since = "0.1")
 export extern "nova" fn AtomicBool mut @fetch_and(v bool, ord MemOrdering) -> bool
-/// Атомарный bitwise-AND, returns previous value (SeqCst ordering).
+/// Atomic bitwise-AND, returns previous value (SeqCst ordering).
 #realtime
 #stable(since = "0.1")
 export extern "nova" fn AtomicBool mut @fetch_and(v bool) -> bool
 
-/// Атомарный bitwise-XOR, returns previous value. With explicit ordering.
+/// Atomic bitwise-XOR, returns previous value. With explicit ordering.
 #realtime
 #stable(since = "0.1")
 export extern "nova" fn AtomicBool mut @fetch_xor(v bool, ord MemOrdering) -> bool
-/// Атомарный bitwise-XOR, returns previous value (SeqCst ordering).
+/// Atomic bitwise-XOR, returns previous value (SeqCst ordering).
 #realtime
 #stable(since = "0.1")
 export extern "nova" fn AtomicBool mut @fetch_xor(v bool) -> bool
@@ -1540,8 +1540,8 @@ export extern "nova" fn OnceGuard consume @abort()
 
 /// Fair FIFO fiber-aware mutex.
 ///
-/// Park/wake через `nova_sched` — заблокированный fiber не потребляет CPU.
-/// NOT reentrant: повторный `lock()` из того же fiber'а приведёт к deadlock.
+/// Park/wake via `nova_sched` — a blocked fiber does not consume CPU.
+/// NOT reentrant: a repeated `lock()` from the same fiber deadlocks.
 ///
 /// # Examples
 ///
@@ -1554,7 +1554,7 @@ export extern "nova" fn OnceGuard consume @abort()
 ///
 /// # See Also
 ///
-/// - `[WaitGroup]` — ожидание завершения нескольких fiber'ов
+/// - `[WaitGroup]` — waiting for several fibers to finish
 /// - `[Once]` — exactly-once execution barrier
 ///
 /// **Plan 173.3 (D415 §2): `#share` audited vouch.** `Mutex` wraps a raw
@@ -1573,19 +1573,19 @@ export type Mutex(*())
 #stable(since = "0.1")
 export extern "nova" fn Mutex.new() -> Self
 
-/// Захватить mutex. Паркует вызывающий fiber до освобождения.
+/// Acquire the mutex. Parks the calling fiber until released.
 ///
-/// V2 (Plan 103.9, D174): returns `MutexGuard consume` — статически
-/// enforced release через consume-type system. Old callers that discard
+/// V2 (Plan 103.9, D174): returns `MutexGuard consume` — statically
+/// enforced release via the consume-type system. Old callers that discard
 /// the return value (`mu.lock()` as statement) continue to compile;
 /// only `consume g = mu.lock()` creates a consumption obligation.
 ///
-/// NOT reentrant — повторный вызов из того же fiber'а deadlock.
+/// NOT reentrant — a repeated call from the same fiber deadlocks.
 #parks
 #stable(since = "0.1")
 export extern "nova" fn Mutex mut @lock() -> MutexGuard consume
 
-/// (Deprecated) Освободить mutex без guard.
+/// (Deprecated) Release the mutex without a guard.
 ///
 /// V2 (Plan 103.9): Use `MutexGuard.unlock()` (returned by `lock()`) instead.
 /// Bare `unlock()` remains for V1 backward compat with `#deprecated` warning.
@@ -1594,37 +1594,37 @@ export extern "nova" fn Mutex mut @lock() -> MutexGuard consume
 #stable(since = "0.1")
 export extern "nova" fn Mutex mut @unlock()
 
-/// Попытаться захватить mutex без блокировки.
+/// Try to acquire the mutex without blocking.
 ///
-/// Возвращает `true` если lock успешно захвачен, `false` если занят.
+/// Returns `true` if the lock was acquired, `false` if it is held.
 #realtime
 #stable(since = "0.1")
 export extern "nova" fn Mutex mut @try_lock() -> bool
 
 // ─── Mutex extensions (Plan 103.3) ───────────────────────────────
 
-/// Создать mutex с LIFO (unfair) политикой освобождения.
+/// Create a mutex with a LIFO (unfair) release policy.
 ///
-/// Использовать только после бенчмарка — возможно starvation.
-/// Преимущество: меньше переключений контекста в high-contention сценариях
-/// с короткими критическими секциями.
+/// Use only after benchmarking — starvation is possible.
+/// Advantage: fewer context switches in high-contention scenarios
+/// with short critical sections.
 ///
-/// **PREFERRED PATTERN (M15):** используй `with_lock { }` вместо lock/unlock.
+/// **PREFERRED PATTERN (M15):** use `with_lock { }` instead of lock/unlock.
 #realtime
 #stable(since = "0.1")
 export extern "nova" fn Mutex.new_unfair() -> Self
 
-/// Попытаться захватить mutex в течение timeout.
+/// Try to acquire the mutex within a timeout.
 ///
-/// Возвращает `true` если lock захвачен, `false` если истёк timeout.
-/// timeout <= 0 — эквивалентно `try_lock()`.
+/// Returns `true` if the lock was acquired, `false` if the timeout expired.
+/// timeout <= 0 — equivalent to `try_lock()`.
 ///
-/// W_TRY_WITHOUT_SIBLING AMEND (2026-07-17, lint-разкраснение, владелец):
-/// переименован из `try_lock_for` — `try_`-префикс легален только как
-/// fallible-половина одноимённого infallible (`from`/`try_from`, D77);
-/// `lock_for` не имеет infallible-сиблинга с этим именем (`lock()` — другая
-/// арность/семантика, не тайм-аутный вариант) — соло-операция без Result
-/// берёт обычное имя (R3 D325, nv-coding-style §1). Возврат `bool` не менялся.
+/// W_TRY_WITHOUT_SIBLING AMEND (2026-07-17, lint went red, owner):
+/// renamed from `try_lock_for` — a `try_`-prefix is legal only as the
+/// fallible half of a same-named infallible (`from`/`try_from`, D77);
+/// `lock_for` has no infallible sibling with this name (`lock()` — a different
+/// arity/semantics, not the timeout variant) — a solo operation without a Result
+/// takes the plain name (R3 D325, nv-coding-style §1). The `bool` return is unchanged.
 ///
 /// # Examples
 ///
@@ -1648,19 +1648,19 @@ export extern "nova" fn Mutex.new_unfair() -> Self
 #stable(since = "0.1")
 export extern "nova" fn Mutex mut @lock_for(timeout Duration) -> bool
 
-/// Best-effort проверка состояния. НЕ для CAS-паттернов.
+/// Best-effort state check. NOT for CAS patterns.
 ///
-/// Состояние может измениться между вызовом и использованием результата.
-/// Используй для observability (debugging, metrics), не для синхронизации.
+/// The state can change between the call and the use of the result.
+/// Use for observability (debugging, metrics), not for synchronization.
 #realtime
 #stable(since = "0.1")
 export extern "nova" fn Mutex @is_locked() -> bool
 
-/// ПРЕДПОЧТИТЕЛЬНЫЙ ПАТТЕРН (M15). Захват + автоматическое освобождение
-/// через `defer` — unlock никогда не будет забыт даже при panic в body.
+/// PREFERRED PATTERN (M15). Acquire + automatic release via `defer` — the
+/// unlock will never be forgotten even on a panic in the body.
 ///
-/// V2 (Plan 103.9): thin wrapper над `MutexGuard consume`; user code
-/// не изменится.
+/// V2 (Plan 103.9): a thin wrapper over `MutexGuard consume`; user code
+/// is unchanged.
 ///
 /// # Examples
 ///
@@ -1673,8 +1673,8 @@ export extern "nova" fn Mutex @is_locked() -> bool
 ///
 /// # See Also
 ///
-/// - `[RwLock.with_read]` / `[RwLock.with_write]` — аналог для RwLock
-/// - `[ReentrantMutex.with_lock]` — аналог для ReentrantMutex
+/// - `[RwLock.with_read]` / `[RwLock.with_write]` — the RwLock analogue
+/// - `[ReentrantMutex.with_lock]` — the ReentrantMutex analogue
 #parks
 #stable(since = "0.1")
 export fn Mutex mut @with_lock[R](body fn() -> R) -> R {
@@ -1687,11 +1687,11 @@ export fn Mutex mut @with_lock[R](body fn() -> R) -> R {
 
 /// Fiber-aware reader-writer lock.
 ///
-/// По умолчанию: writer-priority (предотвращает starvation писателей).
-/// Несколько читателей могут держать lock одновременно.
-/// Только один писатель, без читателей.
+/// Default: writer-priority (prevents writer starvation).
+/// Multiple readers may hold the lock simultaneously.
+/// Only one writer, no readers.
 ///
-/// **PREFERRED PATTERN (M15):** используй `with_read { }` / `with_write { }`.
+/// **PREFERRED PATTERN (M15):** use `with_read { }` / `with_write { }`.
 ///
 /// # Examples
 ///
@@ -1708,8 +1708,8 @@ export fn Mutex mut @with_lock[R](body fn() -> R) -> R {
 ///
 /// # See Also
 ///
-/// - `[Mutex]` — эксклюзивный доступ (проще, меньше overhead)
-/// - `[ReentrantMutex]` — рекурсивный mutex
+/// - `[Mutex]` — exclusive access (simpler, less overhead)
+/// - `[ReentrantMutex]` — recursive mutex
 ///
 /// Plan 173.3 (D415 §2): `#share` audited vouch — same reasoning as `Mutex`.
 #stable(since = "0.1")
@@ -1720,15 +1720,15 @@ export type RwLock(*())
 #stable(since = "0.1")
 export extern "nova" fn RwLock.new() -> Self
 
-/// Reader-priority opt-in. Читатели не блокируются ожидающими писателями.
+/// Reader-priority opt-in. Readers are not blocked by waiting writers.
 ///
-/// **Внимание:** возможен starvation писателей при непрерывном потоке читателей.
-/// Используй только в read-heavy сценариях после бенчмарка.
+/// **Caution:** writer starvation is possible under a continuous stream of readers.
+/// Use only in read-heavy scenarios after benchmarking.
 #realtime
 #stable(since = "0.1")
 export extern "nova" fn RwLock.new_reader_priority() -> Self
 
-/// Захватить read lock. Паркует если активен или ожидает писатель (writer-priority).
+/// Acquire the read lock. Parks if a writer is active or waiting (writer-priority).
 ///
 /// V2 (Plan 103.9, D174): returns `ReadGuard consume`. Use `guard.unlock()` to release.
 /// Old callers that discard the return value still compile.
@@ -1736,7 +1736,7 @@ export extern "nova" fn RwLock.new_reader_priority() -> Self
 #stable(since = "0.1")
 export extern "nova" fn RwLock mut @read() -> ReadGuard consume
 
-/// (Deprecated) Освободить read lock без guard.
+/// (Deprecated) Release the read lock without a guard.
 ///
 /// V2: use `ReadGuard.unlock()` (returned by `read()`) instead.
 #deprecated(since = "0.2", note = "use consume g = rw.read(); defer g.unlock() instead (Plan 103.9 guard API)")
@@ -1744,22 +1744,22 @@ export extern "nova" fn RwLock mut @read() -> ReadGuard consume
 #stable(since = "0.1")
 export extern "nova" fn RwLock mut @read_unlock()
 
-/// Попытаться захватить read lock без блокировки.
+/// Try to acquire the read lock without blocking.
 #realtime
 #stable(since = "0.1")
 export extern "nova" fn RwLock mut @try_read() -> bool
 
-/// Попытаться захватить read lock в течение timeout.
+/// Try to acquire the read lock within a timeout.
 ///
-/// W_TRY_WITHOUT_SIBLING AMEND (2026-07-17, lint-разкраснение, владелец):
-/// переименован из `try_read_for` — `try_`-префикс легален только как
-/// fallible-половина одноимённого infallible (D77); `read_for` без
-/// infallible-сиблинга с этим именем — обычное имя, без `try_` (R3 D325).
+/// W_TRY_WITHOUT_SIBLING AMEND (2026-07-17, lint went red, owner):
+/// renamed from `try_read_for` — a `try_`-prefix is legal only as the
+/// fallible half of a same-named infallible (D77); `read_for` with no
+/// infallible sibling of this name — a plain name, without `try_` (R3 D325).
 #parks
 #stable(since = "0.1")
 export extern "nova" fn RwLock mut @read_for(timeout Duration) -> bool
 
-/// Захватить write lock. Ждёт завершения всех читателей и других писателей.
+/// Acquire the write lock. Waits for all readers and other writers to finish.
 ///
 /// V2 (Plan 103.9, D174): returns `WriteGuard consume`. Use `guard.unlock()` to release.
 /// Old callers that discard the return value still compile.
@@ -1767,7 +1767,7 @@ export extern "nova" fn RwLock mut @read_for(timeout Duration) -> bool
 #stable(since = "0.1")
 export extern "nova" fn RwLock mut @write() -> WriteGuard consume
 
-/// (Deprecated) Освободить write lock без guard.
+/// (Deprecated) Release the write lock without a guard.
 ///
 /// V2: use `WriteGuard.unlock()` (returned by `write()`) instead.
 #deprecated(since = "0.2", note = "use consume g = rw.write(); defer g.unlock() instead (Plan 103.9 guard API)")
@@ -1775,32 +1775,32 @@ export extern "nova" fn RwLock mut @write() -> WriteGuard consume
 #stable(since = "0.1")
 export extern "nova" fn RwLock mut @write_unlock()
 
-/// Попытаться захватить write lock без блокировки.
+/// Try to acquire the write lock without blocking.
 #realtime
 #stable(since = "0.1")
 export extern "nova" fn RwLock mut @try_write() -> bool
 
-/// Попытаться захватить write lock в течение timeout.
+/// Try to acquire the write lock within a timeout.
 ///
-/// W_TRY_WITHOUT_SIBLING AMEND (2026-07-17, lint-разкраснение, владелец):
-/// переименован из `try_write_for` — та же ретракция, что у `read_for` выше.
+/// W_TRY_WITHOUT_SIBLING AMEND (2026-07-17, lint went red, owner):
+/// renamed from `try_write_for` — the same retraction as `read_for` above.
 #parks
 #stable(since = "0.1")
 export extern "nova" fn RwLock mut @write_for(timeout Duration) -> bool
 
-/// Текущее количество активных читателей. Best-effort.
+/// Current number of active readers. Best-effort.
 #realtime
 #stable(since = "0.1")
 export extern "nova" fn RwLock @reader_count() -> int
 
-/// `true` если write lock активен. Best-effort.
+/// `true` if the write lock is active. Best-effort.
 #realtime
 #stable(since = "0.1")
 export extern "nova" fn RwLock @is_write_locked() -> bool
 
-/// Read-захват с автоматическим освобождением через defer.
+/// Read acquisition with automatic release via defer.
 ///
-/// **PREFERRED PATTERN (M15).** V2 (Plan 103.9): thin wrapper над `ReadGuard consume`.
+/// **PREFERRED PATTERN (M15).** V2 (Plan 103.9): a thin wrapper over `ReadGuard consume`.
 #parks
 #stable(since = "0.1")
 export fn RwLock mut @with_read[R](body fn() -> R) -> R {
@@ -1809,9 +1809,9 @@ export fn RwLock mut @with_read[R](body fn() -> R) -> R {
     body()
 }
 
-/// Write-захват с автоматическим освобождением через defer.
+/// Write acquisition with automatic release via defer.
 ///
-/// **PREFERRED PATTERN (M15).** V2 (Plan 103.9): thin wrapper над `WriteGuard consume`.
+/// **PREFERRED PATTERN (M15).** V2 (Plan 103.9): a thin wrapper over `WriteGuard consume`.
 #parks
 #stable(since = "0.1")
 export fn RwLock mut @with_write[R](body fn() -> R) -> R {
@@ -1822,19 +1822,19 @@ export fn RwLock mut @with_write[R](body fn() -> R) -> R {
 
 // ─── ReentrantMutex (Plan 103.3) ─────────────────────────────────
 
-/// Рекурсивный mutex: тот же fiber может lock() несколько раз без deadlock.
+/// Recursive mutex: the same fiber may lock() multiple times without deadlock.
 ///
-/// Отслеживает owner-fiber + глубину рекурсии. unlock() должен вызываться
-/// столько же раз, сколько lock().
+/// Tracks the owner-fiber + recursion depth. unlock() must be called as
+/// many times as lock().
 ///
-/// **Используй по умолчанию `[Mutex]`** — он обнаружит double-lock ошибку
-/// немедленно. ReentrantMutex — для миграции legacy кода.
+/// **Prefer `[Mutex]` by default** — it detects a double-lock error
+/// immediately. ReentrantMutex is for migrating legacy code.
 ///
-/// **Взаимодействие с Condvar (Plan 103.4):** `Condvar.wait()` освобождает
-/// ВЕСЬ lock (count → 0), wake повторно захватывает с count=1.
-/// AI-diagnostic `W_REENTRANT_CONDVAR_RECOMMEND` при смешивании.
+/// **Interaction with Condvar (Plan 103.4):** `Condvar.wait()` releases the
+/// ENTIRE lock (count → 0), a wake re-acquires with count=1.
+/// AI-diagnostic `W_REENTRANT_CONDVAR_RECOMMEND` on mixing.
 ///
-/// **PREFERRED PATTERN (M15):** используй `with_lock { }`.
+/// **PREFERRED PATTERN (M15):** use `with_lock { }`.
 ///
 /// # Examples
 ///
@@ -1855,37 +1855,37 @@ export type ReentrantMutex(*())
 #stable(since = "0.1")
 export extern "nova" fn ReentrantMutex.new() -> Self
 
-/// Захватить lock. Если тот же fiber — увеличить recursion count.
+/// Acquire the lock. If the same fiber — increment the recursion count.
 #parks
 #stable(since = "0.1")
 export extern "nova" fn ReentrantMutex mut @lock()
 
-/// Освободить lock. Уменьшить count; release когда count = 0.
+/// Release the lock. Decrement count; release when count = 0.
 ///
-/// Panic если вызван не из owner fiber или mutex не locked.
+/// Panics if called not from the owner fiber or if the mutex is not locked.
 #wakes
 #stable(since = "0.1")
 export extern "nova" fn ReentrantMutex mut @unlock()
 
-/// Попытаться захватить без блокировки.
+/// Try to acquire without blocking.
 #realtime
 #stable(since = "0.1")
 export extern "nova" fn ReentrantMutex mut @try_lock() -> bool
 
-/// Попытаться захватить в течение timeout.
+/// Try to acquire within a timeout.
 ///
-/// W_TRY_WITHOUT_SIBLING AMEND (2026-07-17, lint-разкраснение, владелец):
-/// переименован из `try_lock_for` — та же ретракция, что у `Mutex.lock_for`.
+/// W_TRY_WITHOUT_SIBLING AMEND (2026-07-17, lint went red, owner):
+/// renamed from `try_lock_for` — the same retraction as `Mutex.lock_for`.
 #parks
 #stable(since = "0.1")
 export extern "nova" fn ReentrantMutex mut @lock_for(timeout Duration) -> bool
 
-/// Recursion depth для текущего fiber. 0 если не owner.
+/// Recursion depth for the current fiber. 0 if not the owner.
 #realtime
 #stable(since = "0.1")
 export extern "nova" fn ReentrantMutex @lock_count() -> int
 
-/// Захват с автоматическим освобождением через defer.
+/// Acquisition with automatic release via defer.
 ///
 /// **PREFERRED PATTERN (M15 V1).**
 #parks
@@ -1898,10 +1898,10 @@ export fn ReentrantMutex mut @with_lock[R](body fn() -> R) -> R {
 
 // ─── WaitGroup ───────────────────────────────────────────────────
 
-/// Counter-based rendezvous — ожидание завершения группы fiber'ов.
+/// Counter-based rendezvous — waits for a group of fibers to finish.
 ///
-/// Паттерн использования: `add(n)` перед spawn, `done()` в каждом fiber'е,
-/// `wait()` в координирующем fiber'е.
+/// Usage pattern: `add(n)` before spawn, `done()` in each fiber,
+/// `wait()` in the coordinating fiber.
 ///
 /// # Examples
 ///
@@ -1916,7 +1916,7 @@ export fn ReentrantMutex mut @with_lock[R](body fn() -> R) -> R {
 ///
 /// # See Also
 ///
-/// - `[Mutex]` — взаимное исключение
+/// - `[Mutex]` — mutual exclusion
 /// - `[Once]` — exactly-once barrier
 ///
 /// Plan 173.3 (D415 §2): `#share` audited vouch — same reasoning as `Mutex`.
@@ -1931,19 +1931,19 @@ export type WaitGroup(*())
 #stable(since = "0.1")
 export extern "nova" fn WaitGroup.new() -> Self
 
-/// Увеличить счётчик на `delta`. Вызывать перед spawn'ом workers.
+/// Increment the counter by `delta`. Call before spawning workers.
 #realtime
 #stable(since = "0.1")
 export extern "nova" fn WaitGroup mut @add(delta int)
 
-/// Уменьшить счётчик на 1. Будит все `wait()` если счётчик достиг 0.
+/// Decrement the counter by 1. Wakes all `wait()` if the counter reached 0.
 ///
-/// Не должен вызываться больше раз, чем суммарно было передано в `add()`.
+/// Must not be called more times than were passed to `add()` in total.
 #wakes
 #stable(since = "0.1")
 export extern "nova" fn WaitGroup mut @done()
 
-/// Парковать вызывающий fiber до достижения счётчиком нуля.
+/// Park the calling fiber until the counter reaches zero.
 #parks
 #stable(since = "0.1")
 export extern "nova" fn WaitGroup @wait()
@@ -2040,9 +2040,9 @@ export extern "nova" fn Once mut @done()
 /// Same state machine as `run()`. Used by `start()` body to check
 /// whether to allocate an `OnceGuard`. Not for direct use — prefer `start()`.
 ///
-/// W_TRY_WITHOUT_SIBLING AMEND (2026-07-17, lint-разкраснение, владелец):
-/// переименован из `try_start_won` — соло racy-операция без infallible-
-/// сиблинга берёт обычное имя, без `try_`-префикса (R3 D325).
+/// W_TRY_WITHOUT_SIBLING AMEND (2026-07-17, lint went red, owner):
+/// renamed from `try_start_won` — a solo racy operation with no infallible
+/// sibling takes the plain name, without a `try_`-prefix (R3 D325).
 #parks
 #stable(since = "0.1")
 export extern "nova" fn Once mut @start_won() -> bool
@@ -2058,8 +2058,8 @@ export extern "nova" fn Once mut @make_guard() -> OnceGuard consume
 /// Attempt to start once initialization. Returns `Some(guard)` to the winning
 /// fiber; `None` to subsequent callers (who park until DONE or re-panic if POISONED).
 ///
-/// W_TRY_WITHOUT_SIBLING AMEND (2026-07-17, lint-разкраснение, владелец):
-/// переименован из `try_start` — та же ретракция, что у `start_won` выше.
+/// W_TRY_WITHOUT_SIBLING AMEND (2026-07-17, lint went red, owner):
+/// renamed from `try_start` — the same retraction as `start_won` above.
 ///
 /// # Examples
 ///
@@ -2479,10 +2479,10 @@ export extern "nova" fn CountDownLatch @try_await() -> bool
 /// `false` if the timeout expired first.
 /// timeout <= 0 is equivalent to `try_await()`.
 ///
-/// W_TRY_WITHOUT_SIBLING AMEND (2026-07-17, lint-разкраснение, владелец):
-/// переименован из `try_await_for` — `await_for` не имеет infallible-
-/// сиблинга с этим именем (`await()` — другая арность/семантика) — обычное
-/// имя, без `try_`-префикса (R3 D325).
+/// W_TRY_WITHOUT_SIBLING AMEND (2026-07-17, lint went red, owner):
+/// renamed from `try_await_for` — `await_for` has no infallible sibling with
+/// this name (`await()` — a different arity/semantics) — a plain name, without
+/// a `try_`-prefix (R3 D325).
 #parks
 #stable(since = "0.1")
 export extern "nova" fn CountDownLatch @await_for(timeout Duration) -> bool
@@ -2590,10 +2590,10 @@ export fn Semaphore mut @try_acquire() -> Option[Permit] {
 /// Returns `false` if the timeout expires before a permit becomes available.
 /// `timeout <= Duration.zero` behaves as the non-parking probe (`try_acquire`).
 ///
-/// W_TRY_WITHOUT_SIBLING AMEND (2026-07-17, lint-разкраснение, владелец):
-/// переименован из `try_acquire_for` — `acquire_for` не имеет infallible-
-/// сиблинга с этим именем (`acquire()` — другая арность/семантика) —
-/// обычное имя, без `try_`-префикса (R3 D325).
+/// W_TRY_WITHOUT_SIBLING AMEND (2026-07-17, lint went red, owner):
+/// renamed from `try_acquire_for` — `acquire_for` has no infallible sibling
+/// with this name (`acquire()` — a different arity/semantics) — a plain name,
+/// without a `try_`-prefix (R3 D325).
 ///
 /// # Realtime
 /// Forbidden inside `realtime { }` — may park the fiber.
