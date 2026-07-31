@@ -1,0 +1,106 @@
+// [M-generic-body-calls-generic-mono-placeholder] / реестр 221.1 №170
+// [M-generic-calling-generic-cross-module-mono] — repro/regression (два имени
+// одного дефекта, заведён параллельно 236-исполнителем и интегратором;
+// сведены в этом файле).
+//
+// Дефект: generic-функция, вызывающая ДРУГУЮ generic-функцию из СВОЕГО
+// generic-тела через `@method()` (self-call на bounded-typevar receiver'е —
+// например `fn[T Ints] T @outer() -> Wrap => @inner()`), не монообразуется:
+// codegen эмиттировал вызов НЕРАЗРЕШЁННОГО generic-плейсхолдера
+// (`Nova_T_method_inner`, буквальное имя typevar'а вместо конкретного типа)
+// вместо смонообразованной инстанции callee. Живой кейс — nova-bigint
+// `fn[T Ints] T @to_bigdecimal() => BigDecimal.new(@to_bigint(), 0)`
+// (bigint.nv/bigdecimal.nv, два МОДУЛЯ одного пакета).
+//
+// Root cause (найден окном p-genmono, sonnet): `emit_monomorphized_method_
+// scoped_inner` (emit_c.rs) получает `recv_type: &str` — часто ГОЛОЕ ИМЯ
+// типопараметра-получателя ("T" для `fn[T Ints] T @method()`, worklist-
+// маршрутизация умышленно ключуется по НЕПОДСТАВЛЕННОМУ typevar'у, см.
+// `register_mono_method_instance`'s `recv_type_key = tvname.clone()`), НЕ
+// конкретное имя Nova-типа. `current_receiver_type` (используется SelfAccess
+// self-call диспетчем, Plan 132.1 Ф.1, как ключ в `method_overloads` —
+// доккомент требует «holds the Nova type name exactly») ДВАЖДЫ
+// присваивался из этого сырого `recv_type` БЕЗ подстановки через уже
+// заполненный `current_type_subst` — один раз перед вычислением сигнатуры
+// (эффект отбрасывался), и (что фактически ломало диспетч) один раз
+// непосредственно перед эмиссией ТЕЛА метода («Set receiver type so @field
+// and Self resolve correctly»). Self-call `@inner()` внутри `outer`'а
+// смотрел в `method_overloads[("T", "inner")]` — тот же голый-typevar ключ,
+// под которым зарегистрирована НЕМОНООБРАЗОВАННАЯ базовая декларация
+// callee'я (плейсхолдер `Nova_T_method_inner`) — и попадал в неё раньше,
+// чем управление доходило до protocol-aware blanket dispatch (~L43264),
+// который бы корректно подставил T и зарегистрировал конкретную инстанцию.
+//
+// Fix: `resolve_mono_recv_nova_name` (emit_c.rs, рядом с `receiver_c_type`) —
+// для ГОЛОГО короткого uppercase-typevar'а с записью в `current_type_subst`
+// возвращает КОНКРЕТНОЕ Nova-имя (через `subst_c` + `debt_nova_type_name_
+// from_c`, тот же путь, которым уже пользуется `receiver_c_type` для C-типа);
+// иначе — recv_type без изменений (byte-identical для всех НЕ-blanket
+// receiver'ов — подавляющее большинство). Применено в ОБОИХ местах, где
+// `current_receiver_type` заводится из `recv_type` внутри `emit_
+// monomorphized_method_scoped_inner`.
+//
+// Репро-матрица (Ф.0, до фикса): free-fn (Ident-call, не SelfAccess) —
+// ВСЕГДА работал (локально и кросс-модульно) — эмитится через отдельный,
+// не завязанный на `current_receiver_type` путь. `@`-method self-call —
+// ВСЕГДА падал (локально и кросс-модульно, идентичный механизм/трейс) —
+// именно этот случай фиксируют тесты ниже.
+module spec_tests.conformance
+
+type M170Wrap(v i64 = 0)
+type M170Outer(inner M170Wrap = M170Wrap(), scale int = 0)
+
+// --- локальный (один модуль): bounded generic @-method вызывает ДРУГОЙ
+// bounded generic @-method через self-call `@inner()`. ---
+export fn[T Ints] T @m170_inner() -> M170Wrap => M170Wrap(@ as i64)
+export fn[T Ints] T @m170_outer() -> M170Wrap => @m170_inner()
+
+// --- цепочка из ТРЁХ: f -> g -> h, все `fn[T Ints]`. ---
+export fn[T Ints] T @m170_h() -> M170Wrap => M170Wrap(@ as i64)
+export fn[T Ints] T @m170_g() -> M170Wrap => @m170_h()
+export fn[T Ints] T @m170_f() -> M170Wrap => @m170_g()
+
+// --- pos-приёмка возврата долга: ровно форма bigdecimal — bounded generic
+// оборачивает результат ДРУГОГО generic-вызова в конструктор. ---
+export fn[T Ints] T @m170_to_outer() -> M170Outer => M170Outer(@m170_inner(), 0)
+
+// --- кросс-модульный: self-call в ДРУГОЙ, уже отдельно скомпилированный
+// модуль (std prelude's `fn[T Ints] T @clamp(lo T, hi T) -> T`,
+// std/src/prelude/protocols.nv) из НАШЕГО bounded generic self-call. ---
+export fn[T Ints] T @m170_double_clamp(lo T, hi T) -> T => @clamp(lo, hi)
+
+// --- регресс: КОНКРЕТНАЯ (не generic) функция вызывает bounded generic —
+// уже рабочий fallback-путь (то же, чем сегодня живёт bigdecimal.nv's 10
+// явных перегрузок) — обязан остаться δ0. ---
+export fn i8 @m170_concrete_to_generic() -> M170Wrap => @m170_inner()
+
+test "№170 pos: local single-module @-method generic-calling-generic, i8" {
+    ro w = (5 as i8).m170_outer()
+    assert(w.v == 5)
+}
+
+test "№170 pos: local single-module @-method generic-calling-generic, u64 (second T-instance, same CU)" {
+    ro w = (7 as u64).m170_outer()
+    assert(w.v == 7)
+}
+
+test "№170 pos: chain of three generic-calling-generic (f -> g -> h), all [T Ints]" {
+    ro w = (9 as i32).m170_f()
+    assert(w.v == 9)
+}
+
+test "№170 pos: cross-module self-call into an already-compiled-elsewhere bounded blanket (std prelude @clamp)" {
+    assert((120 as i8).m170_double_clamp(0 as i8, 100 as i8) == 100)
+    assert((5 as u64).m170_double_clamp(10 as u64, 20 as u64) == 10)
+}
+
+test "№170 pos-debt-payback: bigdecimal-class wrapper-constructor (fn[T Ints] T @m() => Ctor(@other_generic(), extra))" {
+    ro o = (3 as u32).m170_to_outer()
+    assert(o.inner.v == 3)
+    assert(o.scale == 0)
+}
+
+test "№170 regression δ0: concrete → generic self-call (pre-existing working fallback path)" {
+    ro w = (11 as i8).m170_concrete_to_generic()
+    assert(w.v == 11)
+}
