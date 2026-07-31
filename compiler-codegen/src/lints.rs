@@ -3302,6 +3302,16 @@ pub const CONV_RULES: &[ConvRule] = &[
         ast: Some(conv_manual_slice_to_end),
         text: None,
     },
+    ConvRule {
+        id: "W_REDUNDANT_TO_STR_INTERP",
+        summary: "`.to_str()` as the tail of a bare `${x}` in interpolation — \
+                  interpolation already dispatches to_str/Display itself \
+                  (D410 instance fallback) — redundant explicit call \
+                  ([M-lint-redundant-to-str-in-interpolation], owner \
+                  2026-07-31, bigdecimal review)",
+        ast: Some(conv_redundant_to_str_interp),
+        text: None,
+    },
 ];
 
 /// id всех правил реестра (для валидации `--rule` и `--list-rules`).
@@ -6399,6 +6409,90 @@ fn conv_manual_slice_to_end(m: &Module, _o: &ConvLintOptions, out: &mut Vec<Lint
                 }),
             });
         });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// W_REDUNDANT_TO_STR_INTERP ([M-lint-redundant-to-str-in-interpolation],
+// владелец 2026-07-31, ревью bigdecimal): `${x.to_str()}` — лишний явный
+// вызов. Интерполяция `${expr}` (`FormatSpec::None`) сама диспетчеризует
+// Display/Printable-конверсию значения — для типа без собственного `@display`
+// std-фоллбек ИМЕННО инстанс-`to_str` (D410, см. seed-list комментарий у
+// `ExprKind::InterpolatedStr` выше в этом файле: "instance `T.to_str`
+// (D410) fallbacks"). Явный `.to_str()` внутри `${...}` производит `str`,
+// который интерполяция затем форматирует КАК str (str-фоллбек, идентичность)
+// — тот же видимый результат, просто через лишний промежуточный вызов.
+// Проверено пробой на BigInt (владелец, ревью bigdecimal — источник записи).
+//
+// СОЗНАТЕЛЬНО УЗКО (owner brief 2026-07-31, буквально по примерам):
+//  - матчим ТОЛЬКО хвост выражения — `.to_str()` НЕПОСРЕДСТВЕННО внутри
+//    `${...}` (сам `InterpStrPart::Expr.expr`), НЕ произвольный вложенный
+//    вызов где-то глубже в выражении;
+//  - НОЛЬ аргументов (`.to_str()`, без trailing-блока) — `.to_str(16)`
+//    (radix-аргумент) МЕНЯЕТ представление, не редундантен;
+//  - `.to_str().pad(5)` НЕ матчит — `.to_str()` там НЕ хвост (хвост —
+//    `.pad(5)`), а результат `pad`-цепочки — уже не то же значение;
+//  - ТОЛЬКО `FormatSpec::None` (голый `${x}`) — `${x:?}` (Debug) и
+//    rich-spec (`${x:.2}`/`${x:>10}` и т.п., `FormatSpec::Spec(..)`) НЕ
+//    матчим: precision/align/kind на rich-spec трактуют результат СЕМАНТИ-
+//    ЧЕСКИ иначе для не-str типов (напр. `.precision` на float — число
+//    знаков после запятой, на str — обрезка длины) — досрочный `.to_str()`
+//    там МЕНЯЕТ поведение, а не просто дублирует его; риск ложного «фикса»
+//    перевешивает пользу, вне буквального объёма owner-примеров.
+//
+// Fix-it: убирает ровно `.to_str()` (span от конца receiver'а до конца
+// вызова), оставляя receiver внутри `${...}` как есть — `${x.to_str()}` →
+// `${x}`.
+// ---------------------------------------------------------------------------
+
+/// Если `e` — голый 0-арг вызов `.to_str()` (без trailing-блока), вернуть
+/// span receiver'а (для fix-it: конец receiver'а = начало удаляемого хвоста).
+fn conv_bare_to_str_call(e: &Expr) -> Option<Span> {
+    let ExprKind::Call { func, args, trailing } = &e.kind else { return None };
+    if !args.is_empty() || trailing.is_some() {
+        return None;
+    }
+    let ExprKind::Member { obj, name } = &func.kind else { return None };
+    if name != "to_str" {
+        return None;
+    }
+    Some(obj.span)
+}
+
+fn conv_redundant_to_str_interp(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
+    fn check(e: &Expr, out: &mut Vec<LintWarning>) {
+        let ExprKind::InterpolatedStr { parts } = &e.kind else { return };
+        for p in parts {
+            let crate::ast::InterpStrPart::Expr { expr, spec } = p else { continue };
+            // Только голый `${x}` — rich/Debug-spec семантически другой
+            // случай (см. блок-комментарий выше).
+            if !spec.is_none() {
+                continue;
+            }
+            let Some(recv_span) = conv_bare_to_str_call(expr) else { continue };
+            out.push(LintWarning {
+                rule: "W_REDUNDANT_TO_STR_INTERP",
+                diag: Diagnostic::new(
+                    "redundant `.to_str()` inside `${...}` — interpolation already \
+                     dispatches to_str/Display on the value (D410 instance fallback); \
+                     remove `.to_str()` — interpolation will do it itself."
+                        .to_string(),
+                    expr.span,
+                )
+                .with_suggestion(Suggestion {
+                    message: "remove the redundant `.to_str()`".to_string(),
+                    span: Span::with_file(recv_span.end, expr.span.end, expr.span.file_id),
+                    replacement: String::new(),
+                    applicability: Applicability::MachineApplicable,
+                }),
+            });
+        }
+    }
+    for f in conv_all_fns(m) {
+        conv_walk_fn(f, &mut |_, _| {}, &mut |e, _| check(e, out));
+    }
+    for tb in conv_all_test_bodies(m) {
+        conv_walk_block(tb, false, &mut |_, _| {}, &mut |e, _| check(e, out));
     }
 }
 
@@ -10394,6 +10488,110 @@ mod tests {
         let m = parse(src);
         let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
         assert_eq!(slice_hits(&ws).len(), 0, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+    }
+
+    // ── [M-lint-redundant-to-str-in-interpolation]: W_REDUNDANT_TO_STR_INTERP
+
+    fn to_str_interp_hits(ws: &[LintWarning]) -> Vec<&LintWarning> {
+        coalesce_rule_hits(ws, "W_REDUNDANT_TO_STR_INTERP")
+    }
+
+    #[test]
+    fn to_str_interp_pos_bare_tail() {
+        // `${x.to_str()}` — хвост, ноль аргументов, голая интерполяция.
+        let src = "module foo\n\
+             fn run(x int) -> str => \"val: ${x.to_str()}\"\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        let hit = to_str_interp_hits(&ws);
+        assert_eq!(hit.len(), 1, "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>());
+        let s = hit[0].diag.suggestion.as_ref().expect("suggestion");
+        assert_eq!(s.replacement, "", "fix-it removes exactly the `.to_str()` tail");
+        assert_eq!(s.applicability, Applicability::MachineApplicable);
+    }
+
+    #[test]
+    fn to_str_interp_pos_member_receiver() {
+        // Ресивер — не голый ident, а поле/цепочка — правило матчит по
+        // ХВОСТУ вызова, receiver-форма не важна.
+        let src = "module foo\n\
+             type Rec { ro v int }\n\
+             fn run(r Rec) -> str => \"val: ${r.v.to_str()}\"\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert_eq!(
+            to_str_interp_hits(&ws).len(), 1,
+            "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn to_str_interp_neg_radix_arg() {
+        // `${x.to_str(16)}` — аргумент меняет представление, НЕ редундантен.
+        let src = "module foo\n\
+             fn run(x int) -> str => \"val: ${x.to_str(16)}\"\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert_eq!(
+            to_str_interp_hits(&ws).len(), 0,
+            "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn to_str_interp_neg_not_tail() {
+        // `${x.to_str().pad(5)}` — `.to_str()` НЕ хвост (хвост — `.pad(5)`).
+        let src = "module foo\n\
+             fn run(x int) -> str => \"val: ${x.to_str().pad(5)}\"\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert_eq!(
+            to_str_interp_hits(&ws).len(), 0,
+            "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn to_str_interp_neg_debug_spec() {
+        // `${x.to_str():?}` — Debug-spec дебажит РЕЗУЛЬТАТ `.to_str()` (str,
+        // в кавычках) — семантически ДРУГОЕ значение, чем `${x:?}` на
+        // исходном `x`; не матчим (см. block-comment у правила).
+        let src = "module foo\n\
+             fn run(x int) -> str => \"val: ${x.to_str():?}\"\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert_eq!(
+            to_str_interp_hits(&ws).len(), 0,
+            "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn to_str_interp_neg_rich_spec() {
+        // `${x.to_str():>10}` — rich-spec (width/align) на не-str типах
+        // трактуется по-другому до/после снятия `.to_str()` (напр. precision
+        // на float — знаки после запятой, на str — обрезка) — не матчим.
+        let src = "module foo\n\
+             fn run(x int) -> str => \"val: ${x.to_str():>10}\"\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert_eq!(
+            to_str_interp_hits(&ws).len(), 0,
+            "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn to_str_interp_neg_plain_interp() {
+        // `${x}` без `.to_str()` вовсе — ничего гасить не нужно.
+        let src = "module foo\n\
+             fn run(x int) -> str => \"val: ${x}\"\n";
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert_eq!(
+            to_str_interp_hits(&ws).len(), 0,
+            "got: {:?}", ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
     }
 }
 
