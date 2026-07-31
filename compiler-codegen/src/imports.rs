@@ -694,16 +694,22 @@ fn attach_out_of_body_assoc_consts(items: &mut Vec<Item>) -> Result<()> {
                     value: cd.value,
                     span: cd.span,
                     is_export: cd.is_export,
+                    // Plan 157 (D200 amend): carry the `ro`-vs-`const` flavor
+                    // through unchanged — everything else about this entry
+                    // (namespace access, export, instance-access rejection)
+                    // is shared verbatim between the two.
+                    is_lazy_ro: cd.is_lazy_ro,
                 });
             }
             None => {
+                let kw = if cd.is_lazy_ro { "ro" } else { "const" };
                 return Err(anyhow!(
-                    "[E_CONST_UNKNOWN_TYPE] `const {}.{}` — unknown type `{}` \
-                     (D200 out-of-body associated const requires an already \
+                    "[E_CONST_UNKNOWN_TYPE] `{} {}.{}` — unknown type `{}` \
+                     (D200 out-of-body associated const/ro requires an already \
                      declared type in this compile unit; T-dependent generic \
                      receivers like `Box[int].SIZE` are not yet supported, \
                      [M-assoc-const-out-of-body-syntax] followup)",
-                    type_name, const_name, type_name,
+                    kw, type_name, const_name, type_name,
                 ));
             }
         }

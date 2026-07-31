@@ -1,0 +1,63 @@
+// Plan 157 (§157, 221.1 bug-sweep) — `ro Type.NAME [Type] = expr`: associated
+// **ro**-value on a type (out-of-body, qualifier `Type.`, mirrors D200's
+// `const Type.NAME`). Amend D200 (spec/decisions/02-types.md) documents the
+// full semantics; this fixture exercises the runtime-init path a `const`
+// cannot take (heap-allocated field — a Vec — in the initializer, exactly
+// the `ro BigInt.ZERO BigInt = { sign: Zero, limbs: []u32.new() }` shape the
+// owner asked for directly, reproduced locally without touching nova-bigint).
+//
+// Root cause fixed: `export ro Type.Z Type = { ... }` parsed successfully
+// (dotted `Pattern::Variant` binder) but reached codegen with NO recognition
+// anywhere in the pipeline — declaration silently dropped, use-site fell
+// through Path-codegen's final `parts.join("_")` fallback, emitting an
+// undeclared raw C identifier (CC-FAIL) — or, via a different call-shaped
+// use, the `[P67-LEGACY] Path call return type unknown` ICE the bug-sweep
+// entry recorded ([M-associated-ro-const-path-call-ice]).
+//
+// Constant deliberately NOT named `ZERO` here — pre-existing, unrelated
+// bug found while authoring this fixture: `emit_c.rs`'s `infer_expr_c_type`
+// final Path fallback (~line 61590, P67-LEGACY bucket) infers an unbound
+// local's C type via `var_types.get(<bare LAST segment only>)`, which is a
+// GLOBAL (non-type-qualified) map — a fresh `ro z = SomeType.ZERO` collides
+// with std's own bare top-level `export const ZERO Duration = {...}`
+// (`std/src/time/duration/core.nv:82`, transitively in every CU since Plan
+// 175 Ф.2-v3) and infers `z`'s C type as `NovaValue_Duration` instead of
+// `NovaValue_SomeType` — CC-FAIL. Confirmed NOT specific to `ro Type.NAME`:
+// reproduces identically for the already-shipped `const Type.NAME` (D200)
+// whenever the assoc name happens to collide with an unrelated bare
+// top-level const's name anywhere else in the same compile unit. Left
+// exactly as found (out of Plan 157's mandate) — see report for the
+// `[M-assoc-name-bare-lastseg-typeinfer-collision]` marker.
+module spec_tests.conformance
+
+type RoAssocFlag enum Off | On
+
+type RoAssocRec value { flag RoAssocFlag, limbs []u32 }
+
+export ro RoAssocRec.RO157SAMPLE RoAssocRec = { flag: Off, limbs: Vec[u32].new(0) }
+
+test "ro Type.NAME: namespace access резолвится к значению, поле читается (Plan 157)" {
+    ro z = RoAssocRec.RO157SAMPLE
+    assert(z.limbs.len() == 0)
+}
+
+test "ro Type.NAME: используется в выражении (арифметика над полем-результатом метода) (Plan 157)" {
+    ro z = RoAssocRec.RO157SAMPLE
+    ro doubled = z.limbs.len() * 2
+    assert(doubled == 0)
+}
+
+test "ro Type.NAME: используется в match (по биндингу) (Plan 157)" {
+    ro z = RoAssocRec.RO157SAMPLE
+    ro label = match z.flag {
+        Off => "off",
+        On => "on",
+    }
+    assert(label == "off")
+}
+
+test "ro Type.NAME: каждое обращение видит ОДНО и то же (eager once-init), не per-access копия (Plan 157)" {
+    ro a = RoAssocRec.RO157SAMPLE
+    ro b = RoAssocRec.RO157SAMPLE
+    assert(a.limbs.len() == b.limbs.len())
+}

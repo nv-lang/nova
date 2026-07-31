@@ -1,0 +1,19 @@
+// EXPECT_COMPILE_ERROR E_RO_FOR_CONSTEXPR_PREFER_CONST
+//
+// Plan 157 (§157, 221.1 bug-sweep, D200 amend): the strict `const`/`ro`
+// partition (Plan 114.4 / [M-114.4-strict-partition]) applies at the
+// associated level too, symmetric with the bare module-level rule
+// (`check_ro_module_partition`) — a constexpr-eligible `ro Type.NAME`
+// initialiser has a `const Type.NAME` equivalent and MUST use it. `ro
+// Type.NAME` is reserved for genuinely runtime values (constructor calls /
+// heap allocation / non-const references) — see the sibling pos fixture
+// `plan157_ro_assoc_value.nv` for the legitimate (non-constexpr) use.
+module neg.plan157_ro_assoc_prefer_const_neg
+
+type P157RecNeg2 value { n int }
+
+export ro P157RecNeg2.SEED P157RecNeg2 = { n: 0 }
+
+fn main() -> () {
+    ro _ = P157RecNeg2.SEED
+}
