@@ -61,13 +61,13 @@ module concurrency.cancellation
 //
 // V2: race[T](competitors []fn() -> T) — требует `[]fn() -> T` в
 // generic-context (Plan 48 Ф.4 + array-of-closures). Сейчас фиксированно 2.
-/// Race two competitors — return result от первого завершившегося. Loser отменяется.
+/// Race two competitors — return the result of the first to finish. Loser gets cancelled.
 ///
-/// Если оба user-throw'ят — first-USER пробрасывается (Plan 49 USER-precedence).
-/// Если оба завершились без result'а (rare) — throws "race2: both failed".
+/// If both user-throw — first-USER is propagated (Plan 49 USER-precedence).
+/// If both finish without a result (rare) — throws "race2: both failed".
 ///
-/// V2: `race[T](competitors []fn() -> T)` — отложено до array-of-closures
-/// support в generic context (Plan 48 Ф.4).
+/// V2: `race[T](competitors []fn() -> T)` — deferred until array-of-closures
+/// support in a generic context (Plan 48 Ф.4).
 #stable(since = "0.1")
 export fn race2[T](a fn() -> T, b fn() -> T) -> T {
     ro tok = CancelToken.new()

@@ -19,7 +19,7 @@ import std.time.duration
 
 /// Token bucket rate limiter. `capacity` = max burst, `refill_per_sec` = sustained rate.
 ///
-/// Использует Time effect → детерминирован в тестах под `th.fixed_ms(...)`.
+/// Uses the Time effect → deterministic in tests under `th.fixed_ms(...)`.
 #stable(since = "0.1")
 // [M-rate-limiter-monotonic] ЗАКРЫТ (Plan 175 Ф.3, 2026-07-11): refill-тайминг
 // переведён на `Monotonic` (D124, std/time/duration.nv) — immune к
@@ -38,7 +38,7 @@ export type TokenBucket {
     mut last_refill Monotonic // internal: последний refill момент (Monotonic.now())
 }
 
-/// Init TokenBucket. Стартует с full `capacity` tokens.
+/// Init TokenBucket. Starts with full `capacity` tokens.
 ///
 /// # Examples
 /// ```nova
@@ -72,7 +72,7 @@ fn TokenBucket mut @refill() Time -> () {
     @last_refill = now
 }
 
-/// Try acquire 1 token. `true` если получилось, `false` если bucket пуст.
+/// Try acquire 1 token. `true` if it succeeded, `false` if the bucket is empty.
 #stable(since = "0.1")
 export fn TokenBucket mut @acquire() Time -> bool =>
     @acquire_n(1)
@@ -91,7 +91,7 @@ export fn TokenBucket mut @acquire_n(n int) Time -> bool
     }
 }
 
-/// Current available tokens (refresh'нутый под current Time).
+/// Current available tokens (refreshed under the current Time).
 #stable(since = "0.1")
 export fn TokenBucket mut @available() Time -> f64 {
     @refill()

@@ -17,7 +17,7 @@ module std.text
 
 import std.runtime.string_builder.{StringBuilder}
 
-/// Concatenate `[]str` через `sep`. Empty array → пустая строка.
+/// Concatenate `[]str` with `sep`. Empty array → empty string.
 ///
 /// O(total_len) — single pass: pre-compute exact capacity, then one StringBuilder
 /// fill (no intermediate allocations). Fixes the O(n²) concat-loop from V1.
