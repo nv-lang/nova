@@ -1,4 +1,4 @@
-// EXPECT_COMPILE_ERROR [E_CONCURRENT_MUT_CAPTURE] created outside any fiber boundary, then passed BY VALUE into `install_and_run`'s parameter `h`
+// EXPECT_COMPILE_ERROR E_CONCURRENT_MUT_CAPTURE
 //
 // A-V10 (D441 §5 №168 closure — install-position transitivity): a
 // fn-typed parameter used as the HANDLER at an install site

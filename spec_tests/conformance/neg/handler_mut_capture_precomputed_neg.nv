@@ -1,4 +1,4 @@
-// EXPECT_COMPILE_ERROR [E_HANDLER_MUT_CAPTURE_IN_FIBER] captured by reference in a PRECOMPUTED `with`-handler
+// EXPECT_COMPILE_ERROR E_HANDLER_MUT_CAPTURE_IN_FIBER
 //
 // A-V10 (D441 §5 №168 closure — Plan 238 honest-gap #168, `docs/plans/
 // 221.1-bug-sweep.md`): Ф.3 (Plan 238) caught only a handler-LITERAL
