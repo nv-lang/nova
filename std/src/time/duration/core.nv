@@ -1,10 +1,10 @@
 // stdlib/duration.nv — Duration + Time effect + shared overflow-safe helpers.
 //
-// Plan 200 Step 3 (Пункт 13, D78 co-equal folder-module): `Timestamp` живёт
-// в timestamp.nv, `Monotonic` — в monotonic.nv (co-equal файлы ТОГО ЖЕ
-// модуля `time.duration` — папка = один модуль, import-путь не меняется).
-// Module-private overflow-safe хелперы (sat_add_i64/checked_neg_i64/
-// f64_nanos_or_trap/и т.п.) остаются здесь — общие для всех трёх типов.
+// `Timestamp` живёт в timestamp.nv, `Monotonic` — в monotonic.nv (co-equal
+// файлы ТОГО ЖЕ модуля `time.duration` — папка = один модуль, import-путь
+// не меняется). Module-private overflow-safe хелперы (sat_add_i64/
+// checked_neg_i64/f64_nanos_or_trap/и т.п.) остаются здесь — общие для всех
+// трёх типов.
 //
 // Идея:
 //   2.to_seconds()        → Duration { nanos: 2_000_000_000 }
@@ -15,13 +15,11 @@
 //   ts + 30.to_seconds()  → Timestamp (deadline)
 //
 // Нет magic, нет implicit conversion — обычные методы на примитивах
-// (D35: метод привязан к типу через `fn Type @method`).
+// (метод привязан к типу через `fn Type @method`).
 //
 // AI-first: Time effect позволяет в тестах подменить часы:
 //   with Time = th.fixed_ms(1700000000000) { ... детерминированный код ... }
 
-//! Plan 45 Ф.34.3 — Duration + Timestamp + Time effect.
-//!
 //! Time-related types: представление длительностей и моментов времени.
 //! Sensible defaults: nanosecond precision, signed Duration (поддерживает
 //! отрицательные интервалы), `Time` effect для дeterministic testing.
@@ -36,11 +34,9 @@
 
 module time.duration
 
-// `panic` (overflow-trap primitive, Plan 175 Ф.1c / D317) is an
-// always-available compiler intrinsic ([panic-assert-intrinsic]
-// 2026-07-11) — no redeclaration needed. Trap fires in debug AND release
-// (never a build-mode-dependent UB — Zig-antipattern; never a silent wrap —
-// Go-trap). See §3b/D317.
+// `panic` (overflow-trap primitive) is an always-available compiler
+// intrinsic — no redeclaration needed. Trap fires in debug AND release
+// (never a build-mode-dependent UB; never a silent wrap).
 
 // ──────────────────────────────────────────────────────────────────────────
 // Duration — длительность (signed, ±292 года)
@@ -49,8 +45,8 @@ module time.duration
 /// Duration — signed time interval с nanosecond precision.
 ///
 /// Range: ±292 years (i64::MAX nanoseconds). Used для timeouts, intervals,
-/// delays. Constructed через `to_*` fluent methods on int/f64 (Plan 200
-/// Step 2, D410/D317 amend) — one per unit: `T.to_seconds()`/`to_millis()`/etc.
+/// delays. Constructed через `to_*` fluent methods on int/f64 — one per
+/// unit: `T.to_seconds()`/`to_millis()`/etc.
 ///
 /// # Examples
 ///
@@ -59,19 +55,17 @@ module time.duration
 /// assert(d.millis() == 500)
 /// ```
 ///
-/// **Plan 175 Ф.1b (D316):** `value`-record — stack-allocated, zero-GC.
+/// `value`-record — stack-allocated, zero-GC.
 /// Single `i64 nanos` field → ABI-identical to a bare `int64_t` at the C
 /// boundary (sync-timeouts / channel-deadlines extract `.nanos`).
 ///
-/// **Plan 175.2 Ф.2-v4 (П5, D220 per-field):** `nanos` is `priv` (module-
-/// private, not just type-private — bare `priv` on a field flips to
-/// module-scope per D281) since this wave — was `ro` (publicly
-/// constructible `{ nanos: ... }` from ANY module, letting external code
-/// assemble an arbitrary/invalid `Duration` by hand). Construct via the
-/// `to_*` fluent constructors below (`T.to_nanos()`/`to_millis()`/etc.) —
-/// all of which live in THIS module and keep working unchanged (module-
-/// private access, 07-modules §393). Reading the raw value is still public
-/// via the `@nanos()` accessor (unaffected — a method, not field access).
+/// `nanos` is `priv` (module-private, not just type-private — bare `priv`
+/// on a field flips to module-scope): was `ro` (publicly constructible
+/// `{ nanos: ... }` from ANY module, letting external code assemble an
+/// arbitrary/invalid `Duration` by hand). Construct via the `to_*` fluent
+/// constructors below (`T.to_nanos()`/`to_millis()`/etc.) — all of which
+/// live in THIS module and keep working unchanged. Reading the raw value is
+/// still public via the `@nanos()` accessor (a method, not field access).
 #stable(since = "0.1")
 export type Duration value {
     priv nanos i64
@@ -97,24 +91,15 @@ export const HOUR   Duration = { nanos: 3_600_000_000_000 }
 // two's-complement `i64::MIN` = -2⁶³ is deliberately excluded so `@neg`/`@abs`
 // are total). The `saturating_*` methods clamp to these edges via the builtin
 // `i64.MAX`/`i64.MIN` associated consts below.
-//
-// **Deferred:** public consts `Duration.MAX`/`Duration.MIN` (Plan 178 wants
-// `@timeout(Duration.MAX)`) are NOT declared here yet — a user type-const named
-// `MAX`/`MIN` currently shadows the builtin numeric `.MAX`/`.MIN` in type-set-
-// bound generics (`fn[T Ints] f(x T) => x == T.MAX`, spec_tests d310), mis-
-// typing `T.MAX` as the record and CC-FAILing. Fix lives in the checker's
-// member-const resolution (172-zone, owner-gated). Follow-up
-// `[M-175-type-const-max-shadows-builtin]` (docs/plans/backlog-followups.md).
 
 // ──────────────────────────────────────────────────────────────────────────
-// Конструкторы — Plan 200 Step 2 (D410/D317 amend, 2026-07-16, владелец):
-// единый `to_*`-бланкет над `Ints` (i8..i64/u8..u64/int/uint) вместо
-// retracted `Duration.from_*` static-методов + per-width bare-fluent
+// Конструкторы — единый `to_*`-бланкет над `Ints` (i8..i64/u8..u64/int/uint)
+// вместо retracted `Duration.from_*` static-методов + per-width bare-fluent
 // (`int @seconds()` и т.п. — были ×8 почти-идентичных тел). Направление
-// задаёт форму (§1а): getter (`Duration → i64`, выше) = голое имя;
-// конструктор (`T → Duration`) = `to_*` (зеркалит Plan 206 `checked_*`-
-// бланкеты). Приёмник `@` явно widen'ится в `i64` ДО арифметики — без этого
-// `5i8.to_micros()` переполнил бы `i8` на `* 1_000` до приведения ширины.
+// задаёт форму: getter (`Duration → i64`, выше) = голое имя; конструктор
+// (`T → Duration`) = `to_*` (зеркалит `checked_*`-бланкеты). Приёмник `@`
+// явно widen'ится в `i64` ДО арифметики — без этого `5i8.to_micros()`
+// переполнил бы `i8` на `* 1_000` до приведения ширины.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// `T.to_nanos()` — construct Duration from nanoseconds (any `Ints` width).
@@ -163,30 +148,20 @@ export fn[T Ints] T @to_weeks() -> Duration => { nanos: (@ as i64) * 7 * 86_400 
 
 /// `f64.to_seconds()` — construct Duration from fractional seconds (e.g.
 /// `0.5.to_seconds()` → 500ms). `f64 ∉ Ints` — concrete method, NOT part of
-/// the blanket above; only seconds gets a float constructor (Plan 200 Step 2,
-/// владелец 2026-07-15 — "Только секунды").
+/// the blanket above; only seconds gets a float constructor.
 ///
 /// Useful для converting measurements (sensor data, sampling intervals)
 /// которые natively f64.
 ///
-/// **Plan 175 Ф.1c (D317):** traps on `NaN`/`±inf`/out-of-`i64`-range input
+/// Traps on `NaN`/`±inf`/out-of-`i64`-range input
 /// (Rust `Duration::from_secs_f64` panics; никогда silent мусор-cast). For a
 /// non-trapping variant use [`checked_to_seconds`].
 #stable(since = "0.1")
 export fn f64 @to_seconds() -> Duration =>
     { nanos: f64_nanos_or_trap(@ * 1_000_000_000.0) }
 
-// `Duration.try_from_secs_f64(s f64) -> Option[Duration]` (static ctor,
-// Plan 175 Ф.1c/D317) RETRACTED (2026-07-17, lint-разкраснение, владелец:
-// "мы убрали все Duration.from_*" — не exception к W_TRY_WITHOUT_SIBLING, а
-// снос статики целиком). Заменена ресиверной формой ниже — `f64
-// @checked_to_seconds()`, зеркалящая non-trapping half пары `@to_seconds()`/
-// `@checked_to_seconds()` (тот же паттерн, что `@times(f64)`/`@checked_mul_f64`
-// на Duration): конструктор строится НА ИСТОЧНИКЕ (`f64`), не статик-методом
-// на цели (`Duration`) — канон §1а, тот же, что уже снёс `Duration.from_*`.
-
 /// Non-trapping variant of [`to_seconds`] — `None` on `NaN`/`±inf`/out-of-
-/// `i64`-range fractional seconds instead of a trap (Plan 175 Ф.1c/D317).
+/// `i64`-range fractional seconds instead of a trap.
 /// Receiver form on the source (`f64`), matching `@checked_mul_f64`/
 /// `@checked_div_f64` on `Duration` — not a static constructor on the target.
 #stable(since = "0.1")
@@ -250,14 +225,13 @@ export fn Duration @millis_f64() => (@nanos as f64) / 1_000_000.0
 
 /// Sleep for this duration via the ambient `Time` effect.
 ///
-/// Plan 175 Ф.3 (D316 typed retype): `Time.sleep` now takes a typed
-/// `Duration` directly (no more int-ms wire at the `.nv` surface — the
-/// wire's ms-rounding, if any, is an internal handler-impl detail, e.g.
-/// the real-clock `#default_handler(Time)` in std/prelude/effects.nv
-/// ceils to whole milliseconds because the underlying scheduler primitive
-/// is ms-granular; a MOCK handler like `th.mut_clock` can honor full
-/// nanosecond precision if it wants to). Full ns precision now flows
-/// end-to-end through the effect call itself.
+/// `Time.sleep` takes a typed `Duration` directly (no int-ms wire at the
+/// `.nv` surface — the wire's ms-rounding, if any, is an internal
+/// handler-impl detail, e.g. the real-clock `#default_handler(Time)` in
+/// std/prelude/effects.nv ceils to whole milliseconds because the
+/// underlying scheduler primitive is ms-granular; a MOCK handler like
+/// `th.mut_clock` can honor full nanosecond precision if it wants to).
+/// Full ns precision flows end-to-end through the effect call itself.
 ///
 /// # Examples
 /// ```nova
@@ -266,11 +240,10 @@ export fn Duration @millis_f64() => (@nanos as f64) / 1_000_000.0
 #stable(since = "0.1")
 export fn Duration @sleep() Time -> () => Time.sleep(@)
 
-// Free `sleep(Duration)`/`sleep_until(Monotonic)` RETRACTED (Plan 175
-// Ф.2-v3, 2026-07-22, owner decision — П12-снос latch made permanent):
-// canonical form is METHOD-ONLY — `d.sleep()` (above) and
-// `deadline.sleep_until()` (std/time/duration/monotonic.nv
-// `Monotonic @sleep_until()`, pre-existing). No free-function alias.
+// Free `sleep(Duration)`/`sleep_until(Monotonic)` — canonical form is
+// METHOD-ONLY: `d.sleep()` (above) and `deadline.sleep_until()`
+// (std/time/duration/monotonic.nv `Monotonic @sleep_until()`). No free
+// function alias.
 
 // ──────────────────────────────────────────────────────────────────────────
 // Predicates
@@ -341,29 +314,21 @@ export fn Duration @parts() -> DurationParts {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Overflow-safe i64 primitives (Plan 175 Ф.1c / D317) — module-private.
+// Overflow-safe i64 primitives — module-private.
 //
 // 3-tier discipline (Rust/Swift-паритет; бьёт Go silent-wrap и Zig
 // build-mode-UB): operators trap; `checked_*` → Option; `saturating_*` → clamp.
 // Все helpers работают на raw i64 (bare `+`/`-`/`*` wrap by design — именно
 // поэтому overflow детектируется ЯВНО, а не полагается на trap примитива).
 // ──────────────────────────────────────────────────────────────────────────
-
-// Plan 200 Step 1 (Пункт 10): локальные `i64_max()`/`i64_min()`/`clamp_i64()`
-// удалены — встроенные `i64.MAX`/`i64.MIN`/`@clamp` (Plan 200 Step 0, D74
-// amend) покрывают тот же контракт байт-идентично.
 //
-// Plan 206 Ф.3 (D423): дедуп D317 — `checked_add/_sub/_mul` делегируют
-// Ints-бланкетам `@checked_*` (std/src/prelude/protocols.nv, поверх
-// компиляторного `@overflowing_*` = `__builtin_*_overflow`). Ручные
-// i64-range-проверки (add/sub) и wrap+divide-back (mul) удалены: под
-// sized-int trap-default (Ф.1b) старый `checked_mul_i64` ТРАПИЛ на голом
-// `a * b` (до divide-back-проверки), а ручные проверки дублировали overflow-
-// детект (нарушение «одно окно», 196). Поведение байт-идентично (None ⟺
-// overflow i64), но overflow-детект теперь один — аппаратный флаг. Plan 200
-// Step 1: сами wrapper-функции `checked_add_i64`/`checked_sub_i64`/
-// `checked_mul_i64` тоже удалены — call-сайты зовут `a.checked_add(b)` и т.д.
-// напрямую (тот же бланкет, на один слой обёртки меньше).
+// `checked_add/_sub/_mul` делегируют Ints-бланкетам `@checked_*`
+// (std/src/prelude/protocols.nv, поверх компиляторного `@overflowing_*` =
+// `__builtin_*_overflow`) — один overflow-детект, аппаратный флаг. Ручные
+// i64-range-проверки и wrap+divide-back (mul) удалены: под sized-int
+// trap-default старый `checked_mul_i64` ТРАПИЛ на голом `a * b` (до
+// divide-back-проверки). Call-сайты зовут `a.checked_add(b)` и т.д.
+// напрямую — без wrapper-слоя.
 
 fn checked_neg_i64(a i64) -> Option[i64] =>
     if a == i64.MIN { None } else { Some(-a) }
@@ -443,14 +408,14 @@ fn f64_nanos_or_trap(x f64) -> i64 =>
     }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Арифметика (D46) — overflow-safe (Plan 175 Ф.1c / D317).
+// Арифметика — overflow-safe.
 //
 // Операторы `+`/`-`/унарный `-`/`*`/`/` ТРАПАЮТ на overflow (в debug И release).
 // Non-trapping эскейпы: `checked_*` (→ Option) и `saturating_*` (→ clamp к
 // ±Duration.MAX). Границей Duration является ±(2⁶³−1) ns ≈ ±292 года.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Сложение durations (operator `+`). **Traps on overflow** (D317).
+/// Сложение durations (operator `+`). **Traps on overflow**.
 ///
 /// # Examples
 /// ```nova
@@ -461,25 +426,25 @@ export fn Duration @plus(other Duration) -> Duration =>
     add_or_trap(@nanos, other.nanos).to_nanos()
 
 /// Вычитание durations (operator `-`). Может дать negative result.
-/// **Traps on overflow** (D317).
+/// **Traps on overflow**.
 #stable(since = "0.1")
 export fn Duration @minus(other Duration) -> Duration =>
     sub_or_trap(@nanos, other.nanos).to_nanos()
 
 /// Унарный минус (operator `-`). Эквивалент `0 - self`.
-/// **Traps on `i64::MIN`** (two's-complement asymmetry, D317).
+/// **Traps on `i64::MIN`** (two's-complement asymmetry).
 #stable(since = "0.1")
 export fn Duration @neg() -> Duration =>
     neg_or_trap(@nanos).to_nanos()
 
-/// Scalar multiplication by integer (`Duration * i64`). **Traps on overflow** (D317).
+/// Scalar multiplication by integer (`Duration * i64`). **Traps on overflow**.
 #stable(since = "0.1")
 export fn Duration @times(n i64) -> Duration =>
     mul_or_trap(@nanos, n).to_nanos()
 
 /// Scalar multiplication by float (`Duration * f64`).
 ///
-/// **Traps on `NaN`/`±inf`/out-of-range** (D317) — никогда silent мусор-cast.
+/// **Traps on `NaN`/`±inf`/out-of-range** — никогда silent мусор-cast.
 /// Для non-trapping варианта — [`checked_mul_f64`]. Для финансовых расчётов считай
 /// в i64 nanoseconds вручную чтобы избежать FP-rounding.
 #stable(since = "0.1")
@@ -487,20 +452,20 @@ export fn Duration @times(n f64) -> Duration =>
     f64_nanos_or_trap((@nanos as f64) * n).to_nanos()
 
 /// Integer division (`Duration / i64`). Truncating.
-/// **Traps on `/0` и на `i64::MIN / -1`** (D317).
+/// **Traps on `/0` и на `i64::MIN / -1`**.
 #stable(since = "0.1")
 export fn Duration @div(n i64) -> Duration =>
     div_or_trap(@nanos, n).to_nanos()
 
 /// Float division (`Duration / f64`).
-/// **Traps on `NaN`/`±inf`/out-of-range** (в т.ч. `/0.0` → `±inf`, D317).
+/// **Traps on `NaN`/`±inf`/out-of-range** (в т.ч. `/0.0` → `±inf`).
 #stable(since = "0.1")
 export fn Duration @div(n f64) -> Duration =>
     f64_nanos_or_trap((@nanos as f64) / n).to_nanos()
 
 // ── checked_* → Option[Duration] (None on overflow) ──
 
-/// Checked add — `None` on overflow (D317).
+/// Checked add — `None` on overflow.
 #stable(since = "0.1")
 export fn Duration @checked_add(other Duration) -> Option[Duration] =>
     match @nanos.checked_add(other.nanos) {
@@ -508,7 +473,7 @@ export fn Duration @checked_add(other Duration) -> Option[Duration] =>
         None => None,
     }
 
-/// Checked sub — `None` on overflow (D317).
+/// Checked sub — `None` on overflow.
 #stable(since = "0.1")
 export fn Duration @checked_sub(other Duration) -> Option[Duration] =>
     match @nanos.checked_sub(other.nanos) {
@@ -516,7 +481,7 @@ export fn Duration @checked_sub(other Duration) -> Option[Duration] =>
         None => None,
     }
 
-/// Checked scalar multiply — `None` on overflow (D317).
+/// Checked scalar multiply — `None` on overflow.
 #stable(since = "0.1")
 export fn Duration @checked_mul(n i64) -> Option[Duration] =>
     match @nanos.checked_mul(n) {
@@ -524,7 +489,7 @@ export fn Duration @checked_mul(n i64) -> Option[Duration] =>
         None => None,
     }
 
-/// Checked integer divide — `None` on `/0` or `i64::MIN / -1` (D317).
+/// Checked integer divide — `None` on `/0` or `i64::MIN / -1`.
 #stable(since = "0.1")
 export fn Duration @checked_div(n i64) -> Option[Duration] =>
     match checked_div_i64(@nanos, n) {
@@ -532,7 +497,7 @@ export fn Duration @checked_div(n i64) -> Option[Duration] =>
         None => None,
     }
 
-/// Checked float multiply — `None` on `NaN`/`±inf`/out-of-range (D317).
+/// Checked float multiply — `None` on `NaN`/`±inf`/out-of-range.
 #stable(since = "0.1")
 export fn Duration @checked_mul_f64(n f64) -> Option[Duration] =>
     match f64_nanos_checked((@nanos as f64) * n) {
@@ -540,7 +505,7 @@ export fn Duration @checked_mul_f64(n f64) -> Option[Duration] =>
         None => None,
     }
 
-/// Checked float divide — `None` on `NaN`/`±inf`/out-of-range (D317).
+/// Checked float divide — `None` on `NaN`/`±inf`/out-of-range.
 #stable(since = "0.1")
 export fn Duration @checked_div_f64(n f64) -> Option[Duration] =>
     match f64_nanos_checked((@nanos as f64) / n) {
@@ -550,17 +515,17 @@ export fn Duration @checked_div_f64(n f64) -> Option[Duration] =>
 
 // ── saturating_* → Duration (clamp к ±Duration.MAX = ±(2⁶³−1)) ──
 
-/// Saturating add — clamps to `±Duration.MAX` (D317).
+/// Saturating add — clamps to `±Duration.MAX`.
 #stable(since = "0.1")
 export fn Duration @saturating_add(other Duration) -> Duration =>
     sat_add_i64(@nanos, other.nanos, -i64.MAX, i64.MAX).to_nanos()
 
-/// Saturating sub — clamps to `±Duration.MAX` (D317).
+/// Saturating sub — clamps to `±Duration.MAX`.
 #stable(since = "0.1")
 export fn Duration @saturating_sub(other Duration) -> Duration =>
     sat_sub_i64(@nanos, other.nanos, -i64.MAX, i64.MAX).to_nanos()
 
-/// Saturating scalar multiply — clamps to `±Duration.MAX` (D317).
+/// Saturating scalar multiply — clamps to `±Duration.MAX`.
 #stable(since = "0.1")
 export fn Duration @saturating_mul(n i64) -> Duration =>
     sat_mul_i64(@nanos, n, -i64.MAX, i64.MAX).to_nanos()
@@ -577,7 +542,7 @@ export fn Duration @ratio(other Duration) -> f64 =>
 
 /// Абсолютное значение duration (отбрасывает sign).
 ///
-/// **Plan 175 Ф.1c (D317):** `@abs(i64::MIN)` НЕ является UB/wrap — saturate к
+/// **`@abs(i64::MIN)`** НЕ является UB/wrap — saturate к
 /// `i64::MAX`; two's-complement asymmetry (`|i64::MIN| > i64::MAX`).
 #stable(since = "0.1")
 export fn Duration @abs() -> Duration =>
@@ -596,11 +561,11 @@ export fn Duration @max(other Duration) -> Duration =>
     if @nanos > other.nanos { @ } else { other }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Compare (D183 amendment, Plan 91.8a.2 part 3): @compare даёт ==/!=/<>/etc
-// через synthesis. Magic methods @eq/@lt/@le/@gt/@ge удалены.
+// Compare: @compare даёт ==/!=/<>/etc через synthesis. Magic methods
+// @eq/@lt/@le/@gt/@ge удалены.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Compare.compare — memcmp-style int return (D183).
+/// Compare.compare — memcmp-style int return.
 /// `==`, `!=`, `<`, `<=`, `>`, `>=` operators synthesized via @compare.
 #stable(since = "0.1")
 export fn Duration @compare(other Duration) -> int =>
@@ -609,7 +574,7 @@ export fn Duration @compare(other Duration) -> int =>
     else { 0 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Display (D410)
+// Display
 // ──────────────────────────────────────────────────────────────────────────
 
 /// `to_str()` — auto-scale короткая запись.
@@ -645,17 +610,13 @@ export fn Duration @to_str() -> str {
     }
 }
 
-/// Display (Plan 175 Ф.3(d)/Ф.4, D237; signature migrated to `Fmt` — Plan 208
-/// Ф.2/D422, [M-208-time-display-fmt-migration-gap]) — delegates to
-/// [`to_str`] (ASCII auto-scale short form, e.g. `"2s"`/`"500ns"`/`"150us"`).
-/// **Byte-exact ASCII** — no bytes > 0x7F (fixes the U+03BC "μs" regression,
-/// Q12; the underlying `to_str` already emits ASCII `"us"`, Ф.1c).
+/// Display — delegates to [`to_str`] (ASCII auto-scale short form, e.g.
+/// `"2s"`/`"500ns"`/`"150us"`). **Byte-exact ASCII** — no bytes > 0x7F.
 #stable(since = "0.1")
 export fn Duration @display(mut f Fmt) -> () { f.write(@to_str().bytes()) }
 
-/// Debug (D237; signature migrated to `Fmt` — Plan 208 Ф.2/D422) —
-/// diagnostic form showing the exact raw nanoseconds alongside the human
-/// short form (unambiguous for overflow/precision debugging, unlike the
+/// Debug — diagnostic form showing the exact raw nanoseconds alongside the
+/// human short form (unambiguous for overflow/precision debugging, unlike the
 /// auto-scaled `@display`).
 #stable(since = "0.1")
 export fn Duration @debug(mut f Fmt) -> () {
@@ -703,32 +664,22 @@ export fn Duration @to_human() -> str {
 // Time — ambient effect (как Random, не fail). В тестах подменяется
 // handler'ом → код становится детерминированным без mock-библиотек.
 //
-// Plan 175 Ф.1 (D316 — единый источник схемы): декларация `type Time effect`
-// живёт ТОЛЬКО в std/prelude/effects.nv (codegen читает её оттуда). Ранее
-// здесь дублировался закомментированный 5-й источник схемы — УДАЛЁН, чтобы
-// не плодить расходящиеся зеркала. int-провод (`now()->int`) сохраняется в
-// Ф.1; типизация (`timestamp()->Timestamp`, `(Duration).sleep()`) — Ф.2/Ф.3.
-
-// Plan 175 Ф.2-v3 (2026-07-22): `#default_handler(Time)` (`time_default`)
-// MOVED to std/prelude/effects.nv, сразу после декларации `type Time
-// effect {...}` — prelude auto-import'ится в КАЖДЫЙ CU, значит ambient
-// Time (работает без `with`/явного `import std.time`, как Random, не
-// Fail) больше не зависит от того, попал ли ЭТОТ модуль (time.duration)
-// транзитивно в конкретный compile-unit. Раньше (Ф.2-v2) фабрика жила
-// здесь и полагалась на hardcoded C-fallback (nova_rt/fibers.h
-// `Nova_Time_*`) для CU, что её не тянули — тот fallback снесён (Ф.2-v3
-// снос рукописного Time-диспатча), так что единственный источник
-// ambient-поведения теперь — always-present prelude default handler.
-
-// Plan 200 Step 2 (D410/D317 amend): int/f64 per-width fluent constructors
-// (`int @seconds()`, singular `@second()`/`@minute()`/etc., `f64 @nanos()`/
-// `@micros()`/`@millis()`/`@minutes()`/`@hours()`/`@days()`) RETRACTED —
+// Декларация `type Time effect` живёт ТОЛЬКО в std/prelude/effects.nv
+// (codegen читает её оттуда) — не плодить расходящиеся зеркала.
+//
+// `#default_handler(Time)` (`time_default`) живёт там же, сразу после
+// декларации — prelude auto-import'ится в КАЖДЫЙ CU, значит ambient Time
+// (работает без `with`/явного `import std.time`, как Random, не Fail) не
+// зависит от того, попал ли этот модуль транзитивно в конкретный
+// compile-unit.
+//
+// int/f64 per-width fluent constructors (`int @seconds()`, singular
+// `@second()`/`@minute()`/etc., `f64 @nanos()`/`@micros()`/…) RETRACTED —
 // заменены единым `to_*`-бланкетом над `Ints` (см. выше, рядом с
 // `f64 @checked_to_seconds()`) + `f64 @to_seconds()` (единственный float-
-// конструктор, владелец 2026-07-15 — "Только секунды"; f64-фракции для
-// остальных единиц не имели внешних потребителей — repo-wide grep пуст).
-// Singular-алиасы (`1.second()`, `1.hour()`, ...) убраны без замены (DRY —
-// `1.to_seconds()`, `1.to_hours()`).
+// конструктор; f64-фракции для остальных единиц не имели внешних
+// потребителей). Singular-алиасы (`1.second()`, `1.hour()`, ...) убраны без
+// замены (DRY — `1.to_seconds()`, `1.to_hours()`).
 
 // ──────────────────────────────────────────────────────────────────────────
 // Утилиты — структурные шаблоны
@@ -748,12 +699,11 @@ export fn Duration @to_human() -> str {
 ///     assert(elapsed == Duration.ZERO)
 /// }
 /// ```
-/// **Plan 175 Ф.5(d) (D318):** элапсед-измерение через `Monotonic`, НЕ
-/// `Timestamp` — стопвотч/бенчмарк-семантика иммунна к wall-clock skew
-/// (NTP/DST jump ВО ВРЕМЯ измерения раньше мог дать отрицательный или
-/// вздутый `elapsed` — ровно Go/Rust/Java-конвенция: `time.Since`/`Instant`
-/// для измерений всегда монотонные). Сигнатура не меняется (`Duration` —
-/// clock-agnostic результат).
+/// Элапсед-измерение через `Monotonic`, НЕ `Timestamp` — стопвотч/бенчмарк-
+/// семантика иммунна к wall-clock skew (NTP/DST jump ВО ВРЕМЯ измерения
+/// раньше мог дать отрицательный или вздутый `elapsed` — ровно
+/// Go/Rust/Java-конвенция: `time.Since`/`Instant` для измерений всегда
+/// монотонные). Сигнатура не меняется (`Duration` — clock-agnostic результат).
 #stable(since = "0.1")
 export fn measure[T](action fn() -> T) Time -> (T, Duration) {
     ro start = Monotonic.now()
@@ -766,12 +716,12 @@ export fn measure[T](action fn() -> T) Time -> (T, Duration) {
 ///
 /// Convenience-обёртка чтобы не писать `Timestamp.now() + 5.to_seconds()` каждый раз.
 ///
-/// **Plan 175 Ф.5(d) — намеренно ОСТАЁТСЯ `Timestamp`-based** (НЕ мигрирован
-/// на `Monotonic`, в отличие от [`measure`]): возвращаемый тип — `Timestamp`
+/// Намеренно ОСТАЁТСЯ `Timestamp`-based (НЕ мигрирован на `Monotonic`,
+/// в отличие от [`measure`]): возвращаемый тип — `Timestamp`
 /// (wall-clock), поэтому клок-источник обязан совпадать с типом контракта
-/// (D124 — нельзя молча подменить домен часов внутри функции с committed
+/// (нельзя молча подменить домен часов внутри функции с committed
 /// wall-clock return type). Для монотонных дедлайнов (timer/scope-deadline,
-/// 173 §3a `supervised(timeout:)`) используй `Monotonic.now() + d` напрямую —
+/// `supervised(timeout:)`) используй `Monotonic.now() + d` напрямую —
 /// именно ЭТОТ паттерн, а не `deadline_in`, канон для `deadline:`-параметров.
 #stable(since = "0.1")
 export fn deadline_in(d Duration) Time -> Timestamp =>

@@ -1,17 +1,15 @@
 // stdlib/timestamp.nv — Timestamp: момент во времени (Unix epoch wall-clock).
 //
-// Plan 200 Step 3 (Пункт 13, D78 co-equal folder-module): вынесен из
-// duration.nv в отдельный co-equal файл того же модуля `time.duration`
-// (папка = один модуль; import-путь `std.time.duration` не меняется).
-// `Duration` — в duration.nv, `Monotonic` — в monotonic.nv.
+// Вынесен из duration.nv в отдельный co-equal файл того же модуля
+// `time.duration` (папка = один модуль; import-путь `std.time.duration`
+// не меняется). `Duration` — в duration.nv, `Monotonic` — в monotonic.nv.
 
 module time.duration
 
 /// Timestamp — момент во времени в Unix epoch nanoseconds.
 ///
 /// Stored как signed `i64` относительно 1970-01-01 UTC. Range покрывает
-/// ±292 years (т.е. до ~2262 включительно). Для дат за пределами этого
-/// окна используй BigDate (Plan 45.C).
+/// ±292 years (т.е. до ~2262 включительно).
 ///
 /// # Examples
 /// ```nova
@@ -19,11 +17,10 @@ module time.duration
 /// assert(t.unix_seconds() == 1_700_000_000)
 /// ```
 ///
-/// **Plan 175 Ф.1b (D316):** `value`-record — stack-allocated, zero-GC.
-/// Окно i64-ns ≈ 1677-09-21 .. 2262-04-11 (±292 года от эпохи, Q16).
+/// `value`-record — stack-allocated, zero-GC.
+/// Окно i64-ns ≈ 1677-09-21 .. 2262-04-11 (±292 года от эпохи).
 ///
-/// **Plan 175.2 Ф.2-v4 (П5, D220 per-field):** `nanos` is `priv` (module-
-/// private per D281) since this wave — was `ro` (publicly constructible
+/// `nanos` is `priv` (module-private) — was `ro` (publicly constructible
 /// `{ nanos: ... }` from any module). Construct via `T.to_unix_seconds()`/
 /// `to_unix_millis()`/`to_unix_nanos()` below (module-private access,
 /// unaffected). `@unix_nanos()` accessor remains the public raw-value
@@ -37,8 +34,8 @@ export type Timestamp value {
 #stable(since = "0.1")
 export const EPOCH Timestamp = { nanos: 0 }
 
-// Plan 200 Step 2 (D410/D317 amend): `Timestamp.from_unix_*` retracted —
-// единый `to_unix_*`-бланкет над `Ints` (зеркалит Duration `to_*` выше).
+// `Timestamp.from_unix_*` retracted — единый `to_unix_*`-бланкет над `Ints`
+// (зеркалит Duration `to_*` выше).
 
 /// `T.to_unix_seconds()` — construct Timestamp from Unix epoch seconds.
 #stable(since = "0.1")
@@ -57,10 +54,9 @@ export fn[T Ints] T @to_unix_nanos() -> Timestamp =>
 
 /// Текущее wall-clock-время (Unix epoch).
 ///
-/// **Plan 175 Ф.3 (D316 typed retype):** тонкая ergonomic-обёртка над
-/// typed `Time.now()` (эффект `Time`, возвращает `Timestamp` напрямую —
-/// больше не int-wire + wrap). Мокабелен:
-/// `with Time = th.fixed_ms(...)` подменяет часы детерминированно.
+/// Тонкая ergonomic-обёртка над typed `Time.now()` (эффект `Time`,
+/// возвращает `Timestamp` напрямую — больше не int-wire + wrap).
+/// Мокабелен: `with Time = th.fixed_ms(...)` подменяет часы детерминированно.
 ///
 /// # Examples
 /// ```nova
@@ -91,19 +87,19 @@ export fn Timestamp @unix_nanos() => @nanos
 /// let deadline = start + 30.to_seconds()
 /// assert(deadline.unix_seconds() == 1030)
 /// ```
-/// **Plan 175 Ф.1c (D317):** saturates at the i64 boundary (окно 1677..2262 —
-/// mirror Go `addSec`-clamp). For explicit overflow-detection use [`checked_add`].
+/// **Saturates at the i64 boundary** (окно 1677..2262 — mirror Go
+/// `addSec`-clamp). For explicit overflow-detection use [`checked_add`].
 #stable(since = "0.1")
 export fn Timestamp @plus(d Duration) -> Timestamp =>
     sat_add_i64(@nanos, d.nanos, i64.MIN, i64.MAX).to_unix_nanos()
 
 /// `Timestamp - Duration → Timestamp` — сдвинуть момент назад.
-/// **Saturates at boundary** (D317).
+/// **Saturates at boundary.**
 #stable(since = "0.1")
 export fn Timestamp @minus(d Duration) -> Timestamp =>
     sat_sub_i64(@nanos, d.nanos, i64.MIN, i64.MAX).to_unix_nanos()
 
-/// Checked `Timestamp + Duration` — `None` если результат вне i64-окна (D317).
+/// Checked `Timestamp + Duration` — `None` если результат вне i64-окна.
 #stable(since = "0.1")
 export fn Timestamp @checked_add(d Duration) -> Option[Timestamp] =>
     match @nanos.checked_add(d.nanos) {
@@ -111,7 +107,7 @@ export fn Timestamp @checked_add(d Duration) -> Option[Timestamp] =>
         None => None,
     }
 
-/// Checked `Timestamp - Duration` — `None` если результат вне i64-окна (D317).
+/// Checked `Timestamp - Duration` — `None` если результат вне i64-окна.
 #stable(since = "0.1")
 export fn Timestamp @checked_sub(d Duration) -> Option[Timestamp] =>
     match @nanos.checked_sub(d.nanos) {
@@ -133,7 +129,7 @@ export fn Timestamp @checked_sub(d Duration) -> Option[Timestamp] =>
 export fn Timestamp @minus(other Timestamp) -> Duration =>
     sat_sub_i64(@nanos, other.nanos, i64.MIN, i64.MAX).to_nanos()
 
-/// Compare.compare — memcmp-style int return (D183 amendment, Plan 91.8a.2).
+/// Compare.compare — memcmp-style int return.
 /// `==`, `!=`, `<`, `<=`, `>`, `>=` operators synthesized via @compare.
 /// `self < other` означает `self` раньше чем `other`.
 #stable(since = "0.1")
@@ -142,12 +138,9 @@ export fn Timestamp @compare(other Timestamp) -> int =>
     else if @nanos > other.nanos { 1 }
     else { 0 }
 
-/// Debug (Plan 175 Ф.3(d)/Ф.4, D237). **NOTE:** `@display` (full RFC-3339
-/// datetime) live в `std/time/civil/format.nv` (Plan 175.1, вне scope этой
-/// волны — civil-time уже сделан, не трогаем). `@debug` здесь — raw-ns
-/// diagnostic form (не зависит от civil-слоя): `Timestamp(unix_ns=...)`.
-/// Signature migrated to `Fmt` — Plan 208 Ф.2/D422,
-/// [M-208-time-display-fmt-migration-gap].
+/// Debug. **NOTE:** `@display` (full RFC-3339 datetime) live в
+/// `std/time/civil/format.nv` — `@debug` здесь raw-ns diagnostic form
+/// (не зависит от civil-слоя): `Timestamp(unix_ns=...)`.
 #stable(since = "0.1")
 export fn Timestamp @debug(mut f Fmt) -> () {
     f.write("Timestamp(unix_ns=")

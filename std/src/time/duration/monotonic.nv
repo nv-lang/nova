@@ -1,9 +1,8 @@
-// stdlib/monotonic.nv — Monotonic clock (Plan 65 Ф.12 / D124).
+// stdlib/monotonic.nv — Monotonic clock.
 //
-// Plan 200 Step 3 (Пункт 13, D78 co-equal folder-module): вынесен из
-// duration.nv в отдельный co-equal файл того же модуля `time.duration`
-// (папка = один модуль; import-путь `std.time.duration` не меняется).
-// `Duration` — в duration.nv, `Timestamp` — в timestamp.nv.
+// Вынесен из duration.nv в отдельный co-equal файл того же модуля
+// `time.duration` (папка = один модуль; import-путь `std.time.duration`
+// не меняется). `Duration` — в duration.nv, `Timestamp` — в timestamp.nv.
 //
 // `Monotonic` — точка во времени относительно непрерывной монотонной
 // шкалы (CLOCK_MONOTONIC на Linux/macOS, QueryPerformanceCounter на Windows).
@@ -12,7 +11,7 @@
 // time changes. Используется для timer deadlines, profiling intervals,
 // retry budgets — везде где «прошло сколько-то времени» важнее даты.
 //
-// D124 (раздельные типы для wall-clock vs monotonic) — type-system запрещает
+// Раздельные типы для wall-clock vs monotonic — type-system запрещает
 // случайное использование Timestamp где нужен Monotonic (silent NTP-skew
 // bug) и наоборот. Compile-error на смешивание arithmetic operations.
 
@@ -34,12 +33,11 @@ module time.duration
 /// let elapsed = Monotonic.now() - start  // → Duration
 /// ```
 ///
-/// **Plan 175 Ф.1b (D316):** `value`-record — stack-allocated, zero-GC.
+/// `value`-record — stack-allocated, zero-GC.
 ///
-/// **Plan 175.2 Ф.2-v4 (П5, D220 per-field):** `nanos` is `priv` (module-
-/// private per D281) since this wave — was `ro` (publicly constructible
+/// `nanos` is `priv` (module-private) — was `ro` (publicly constructible
 /// `{ nanos: ... }` from any module, letting external code assemble an
-/// arbitrary `Monotonic` — nonsensical outside this process, D124). The
+/// arbitrary `Monotonic` — nonsensical outside this process). The
 /// real-clock path stays `Monotonic.now()` (via the ambient `Time`
 /// effect); a raw-nanoseconds escape hatch for mocks/FFI/benches is
 /// `T.to_monotonic_nanos()` below (paired with the pre-existing raw-read
@@ -49,11 +47,11 @@ export type Monotonic value {
     priv nanos i64
 }
 
-/// Текущий монотонный момент. **Plan 175 Ф.3 (D316 typed retype):** тонкая
-/// ergonomic-обёртка над typed `Time.now_monotonic()` (эффект `Time`,
-/// возвращает `Monotonic` напрямую — больше не int-wire + wrap).
+/// Текущий монотонный момент. Тонкая ergonomic-обёртка над typed
+/// `Time.now_monotonic()` (эффект `Time`, возвращает `Monotonic` напрямую —
+/// больше не int-wire + wrap).
 /// **Мокабелен:** `with Time = th.mut_clock(...)` подменяет монотонные
-/// часы детерминированно (закрывает `[M-monotonic-mock-support]`).
+/// часы детерминированно.
 ///
 /// # Examples
 /// ```nova
@@ -73,14 +71,14 @@ export fn Monotonic.now() Time -> Monotonic => Time.now_monotonic()
 export fn Monotonic @nanos() -> i64 => @nanos
 
 /// `T.to_monotonic_nanos()` — construct a `Monotonic` from a raw
-/// nanosecond count (any `Ints` width). Plan 175.2 Ф.2-v4 (П5): the
-/// write-direction escape hatch pairing `@nanos()` above — needed now that
-/// `nanos` is `priv` (D220), for mock `Time` handlers (`std.testing.
-/// handlers`) and any other code OUTSIDE `time.duration` that must build a
-/// `Monotonic` from a bare integer without going through `Time.
-/// now_monotonic()` (which would be circular inside a mock handler body).
-/// Cross-process comparison is still meaningless (D124) — this constructs
-/// a value for the SAME semantics `@nanos()` already reads back out.
+/// nanosecond count (any `Ints` width). Write-direction escape hatch
+/// pairing `@nanos()` above — needed now that `nanos` is `priv`, for mock
+/// `Time` handlers (`std.testing.handlers`) and any other code OUTSIDE
+/// `time.duration` that must build a `Monotonic` from a bare integer
+/// without going through `Time.now_monotonic()` (which would be circular
+/// inside a mock handler body). Cross-process comparison is still
+/// meaningless — this constructs a value for the SAME semantics `@nanos()`
+/// already reads back out.
 ///
 /// # Examples
 /// ```nova
@@ -90,16 +88,16 @@ export fn Monotonic @nanos() -> i64 => @nanos
 #stable(since = "0.6")
 export fn[T Ints] T @to_monotonic_nanos() -> Monotonic => { nanos: @ as i64 }
 
-// ── Monotonic arithmetic (D124 rule 3: NO cross-type ops with Timestamp) ──
+// ── Monotonic arithmetic (NO cross-type ops with Timestamp) ──
 
 /// `Monotonic + Duration → Monotonic` — сдвинуть монотонный момент вперёд
-/// (deadline в будущем). **Saturates at boundary** (D317).
+/// (deadline в будущем). **Saturates at boundary**.
 #stable(since = "0.6")
 export fn Monotonic @plus(d Duration) -> Monotonic =>
     { nanos: sat_add_i64(@nanos, d.nanos, i64.MIN, i64.MAX) }
 
 /// `Monotonic - Duration → Monotonic` — сдвинуть монотонный момент назад
-/// (deadline в прошлом или earlier-than-now). **Saturates at boundary** (D317).
+/// (deadline в прошлом или earlier-than-now). **Saturates at boundary**.
 ///
 /// NOTE: для `Monotonic - Monotonic → Duration` используй `elapsed_since`
 /// (named method). Operator overload отсутствует, чтобы не конфликтовать
@@ -110,11 +108,10 @@ export fn Monotonic @minus(d Duration) -> Monotonic =>
 
 /// Elapsed time between two Monotonic points.
 ///
-/// **Plan 175 Ф.1c (D318 — non-regression):** результат **saturate-to-zero**.
-/// Если `self < other` (кажущийся регресс часов — HW/VM/OS-баг, JDK-6458294),
-/// возвращает `Duration.ZERO`, НИКОГДА не negative и НИКОГДА не panic (без
-/// global-lock — урок Rust 1.60-saga). Для явного детекта регресса используй
-/// [`checked_duration_since`] (→ `None`).
+/// Результат **saturate-to-zero**. Если `self < other` (кажущийся регресс
+/// часов — HW/VM/OS-баг, JDK-6458294), возвращает `Duration.ZERO`, НИКОГДА
+/// не negative и НИКОГДА не panic (без global-lock — урок Rust 1.60-saga).
+/// Для явного детекта регресса используй [`checked_duration_since`] (→ `None`).
 ///
 /// # Examples
 /// ```nova
@@ -131,12 +128,11 @@ export fn Monotonic @elapsed_since(other Monotonic) -> Duration =>
         0.to_nanos()
     }
 
-/// Suspend until THIS **monotonic** deadline (П12-хвост 2026-07-21: метод
-/// вместо ретрактированной свободной `sleep_until(deadline)`; Plan 175
-/// Ф.3(b), D316 Q3 — MVP-обёртка `sleep(deadline - now)`; drift-free
-/// re-arm — future, Plan 66). Только `Monotonic` — не `Timestamp` (D124 §3:
-/// wall-дедлайн уязвим к NTP/DST; явная wall-форма — `ts.time_until().sleep()`).
-/// Прошедший дедлайн разрешается НЕМЕДЛЕННО (saturate-to-zero, D318).
+/// Suspend until THIS **monotonic** deadline (метод вместо ретрактированной
+/// свободной `sleep_until(deadline)`; MVP-обёртка `sleep(deadline - now)`;
+/// drift-free re-arm — future). Только `Monotonic` — не `Timestamp`
+/// (wall-дедлайн уязвим к NTP/DST; явная wall-форма — `ts.time_until().sleep()`).
+/// Прошедший дедлайн разрешается НЕМЕДЛЕННО (saturate-to-zero).
 ///
 /// # Examples
 /// ```nova
@@ -147,11 +143,11 @@ export fn Monotonic @elapsed_since(other Monotonic) -> Duration =>
 export fn Monotonic @sleep_until() Time -> () =>
     @elapsed_since(Monotonic.now()).sleep()
 
-/// `Monotonic - Monotonic → Duration` (Plan 175 Ф.3(c) / D318 Q4) —
-/// operator-overload alias for [`elapsed_since`], symmetric with
-/// `Timestamp @minus(Timestamp) -> Duration` above. `m2 - m1` dispatches
-/// HERE (not `@minus(Duration)`, the point-shift overload above) — same
-/// saturate-to-zero-on-regress contract as `elapsed_since`.
+/// `Monotonic - Monotonic → Duration` — operator-overload alias for
+/// [`elapsed_since`], symmetric with `Timestamp @minus(Timestamp) ->
+/// Duration` above. `m2 - m1` dispatches HERE (not `@minus(Duration)`, the
+/// point-shift overload above) — same saturate-to-zero-on-regress contract
+/// as `elapsed_since`.
 ///
 /// # Examples
 /// ```nova
@@ -163,7 +159,7 @@ export fn Monotonic @sleep_until() Time -> () =>
 export fn Monotonic @minus(other Monotonic) -> Duration => @elapsed_since(other)
 
 /// Checked elapsed time — `None` при регрессе (`self < other`), иначе
-/// `Some(self - other)` (Plan 175 Ф.1c / D318; Rust `checked_duration_since`).
+/// `Some(self - other)` (Rust `checked_duration_since`).
 #stable(since = "0.6")
 export fn Monotonic @checked_duration_since(other Monotonic) -> Option[Duration] =>
     if @nanos < other.nanos {
@@ -175,7 +171,7 @@ export fn Monotonic @checked_duration_since(other Monotonic) -> Option[Duration]
         }
     }
 
-// ── Compare (D183 amendment, Plan 91.8a.2 part 3) ──
+// ── Compare ──
 //
 // @compare single source — operators ==/!=/</<=/>/>= synthesized.
 // Magic methods @eq/@lt/@le/@gt/@ge удалены.
@@ -187,23 +183,21 @@ export fn Monotonic @compare(other Monotonic) -> int =>
     else if @nanos > other.nanos { 1 }
     else { 0 }
 
-// ── Display / Debug (Plan 175 Ф.3(d)/Ф.4, D237) ──
+// ── Display / Debug ──
 //
-// `Monotonic` — process-local offset, NOT a date (D124/D318). `@display`/
+// `Monotonic` — process-local offset, NOT a date. `@display`/
 // `@debug` show it as a **relative offset**, never as a calendar timestamp
 // (unlike `Timestamp`, whose `@display` is RFC-3339 — std/time/civil/format.nv)
 // — reading `Monotonic(+1.234s)` must never look like a wall-clock value.
 
-/// Offset form, ASCII (`"+1.234s"`) — never a date. Signature migrated to
-/// `Fmt` — Plan 208 Ф.2/D422, [M-208-time-display-fmt-migration-gap].
+/// Offset form, ASCII (`"+1.234s"`) — never a date.
 #stable(since = "0.1")
 export fn Monotonic @display(mut f Fmt) -> () {
     f.write("+")
     f.write(@nanos.to_nanos().to_str())
 }
 
-/// Diagnostic form: `Monotonic(+1.234s)` — explicitly NOT a date (D124/D318).
-/// Signature migrated to `Fmt` — Plan 208 Ф.2/D422.
+/// Diagnostic form: `Monotonic(+1.234s)` — explicitly NOT a date.
 #stable(since = "0.1")
 export fn Monotonic @debug(mut f Fmt) -> () {
     f.write("Monotonic(+")
@@ -212,5 +206,5 @@ export fn Monotonic @debug(mut f Fmt) -> () {
 }
 
 // Note: NO `Monotonic.unix_seconds()`, `Monotonic.from_unix_*()`,
-// `Monotonic + Timestamp`, `Monotonic - Timestamp` overloads. D124 правило 3:
-// смешивание clock-семantik — compile-error через absent overload.
+// `Monotonic + Timestamp`, `Monotonic - Timestamp` overloads. Смешивание
+// clock-семантики — compile-error через absent overload.
