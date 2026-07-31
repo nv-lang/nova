@@ -32,16 +32,32 @@ test "конверсии из i64/u64/int" {
     assert(big_inline == big)
 }
 
-// NB (реестр 221.1 №149): два blanket'а (`fn[T SignedInts] T @to_i128()` /
-// `fn[T UnsignedInts] T @to_i128()`) для узких ширин (i8/i16/i32/u8/u16/u32/
-// uint) НЕ добавлены — СТОП по этой части окна. Причина в доке
-// `int128.nv`'s `i64 @to_i128()`: две blanket-перегрузки с ОДНИМ именем
-// метода регистрируются codegen'ом в single-value `mono_method_decls`
-// (last-wins, не спасает даже разные имена typevar `S`/`U`) — измерено
-// молча-неверным результатом (`(-7 as i64).mk()` в минимальном репро дал
-// `hi=0` вместо `-1`), не CC-FAIL. До инлайн-каст-резолва (следующий блок)
-// узкие ширины остаются на обходе `(x as u64).to_i128()` / `(x as
-// i64).to_i128()`.
+test "конверсии из узких ширин через SignedInts/UnsignedInts blanket'ы" {
+    // Реестр 221.1 №149 / план 234 часть B: раньше эти ширины требовали обход
+    // `(x as u64).to_i128()`/`(x as i64).to_i128()` — оба блокера
+    // (`[M-int128-blanket-dispatch-first-by-name]`,
+    // `[M-neg-cast-receiver-blanket-dispatch]`) закрыты, blanket'ы введены,
+    // обход снят — узкие ширины конвертируются НАПРЯМУЮ.
+    assert((5 as i8).to_i128() == (5 as i64).to_i128())
+    assert((-5 as i8).to_i128().is_neg())
+    assert((-5 as i8).to_i128() == (-5 as i64).to_i128())
+    assert((5 as i16).to_i128() == (5 as i64).to_i128())
+    assert((5 as i32).to_i128() == (5 as i64).to_i128())
+    assert((-5 as i32).to_i128() == (-5 as i64).to_i128())
+    assert((5 as u8).to_i128() == (5 as i64).to_i128())
+    assert((5 as u16).to_i128() == (5 as i64).to_i128())
+    assert((5 as u32).to_i128() == (5 as i64).to_i128())
+    assert((5 as uint).to_i128() == (5 as i64).to_i128())
+    // `i64`/`int`/`u64` — конкретные перегрузки ВСЕГДА побеждают над
+    // blanket'ом (D84 «конкретное побеждает generic»), включая
+    // `Unary(Neg(Cast))`-форму ресивера (`(-5 as i64).to_i128()`, уже
+    // покрыта тестом «конверсии из i64/u64/int» выше), которая раньше
+    // уводила диспетч мимо конкретного метода в неверный blanket —
+    // проверяем ту же форму ещё и для `int`, симметрично.
+    assert((-5 as int).to_i128().is_neg())
+    assert((-5 as int).to_i128().to_str() == "-5")
+    assert((-5 as int).to_i128() == (-5 as i64).to_i128())
+}
 
 test "предикаты" {
     assert(ZERO.is_zero())
