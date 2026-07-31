@@ -321,5 +321,12 @@
 # register_mono_method_instance (было: вызов без тела, undefined symbol на
 # `Set[int] | Set[int]`, CC-FAIL a_q3). Условие живёт в самой emit-ветке —
 # вне emit_c его не выразить; +3 = 2 строки комментария + 1 строка условия.
-lines=63852
+# 2026-08-01 (int128-связка, окно p-int128): 63852 -> 63901 (+49). (1) blanket-
+# диспетч: .find() -> отсортированный перебор кандидатов по membership семьи
+# (детерминизм + правильная семья; сама проверка bound'ов — существующая
+# protocols_match); (2) тонкие call-сайты << / >> — АЛГОРИТМ вынесен в
+# codegen/bitwise_ops.rs::resolve_shift_dispatch (вне метрики), в emit_c
+# только чтения self-таблиц. Чекер-часть волны (Unary receiver) — в
+# types/mod.rs, метрику не трогает; infer=349 без изменений.
+lines=63901
 infer=349
