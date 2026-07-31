@@ -11,8 +11,8 @@ module time.civil
 
 import std.time.duration
 
-/// Время суток (wall-clock, без даты/зоны) — value-record, наносекунды
-/// от полуночи. Plain-тип D319: НЕ точка на оси.
+/// Time of day (wall-clock, no date/zone) — a value-record, nanoseconds
+/// from midnight. A D319 plain type: NOT a point on the axis.
 #stable(since = "0.1")
 export type TimeOfDay value {
     ro nanos_of_day i64
@@ -25,15 +25,15 @@ fn nanos_per_day() -> i64 => 86_400_000_000_000
 // Конструкторы
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Полночь (00:00:00.0). Const-форма `TimeOfDay.MIDNIGHT` —
-/// [M-175-value-record-const-ref] (обход §4а: static-фн).
+/// Midnight (00:00:00.0). Const form `TimeOfDay.MIDNIGHT` —
+/// [M-175-value-record-const-ref] (workaround §4а: static fn).
 #stable(since = "0.1")
 export fn TimeOfDay.midnight() -> TimeOfDay => { nanos_of_day: 0 }
 
-/// Построить время суток с валидацией → `Result` (Q6).
+/// Build a time of day with validation → `Result` (Q6).
 ///
-/// `h` 0..23, `m` 0..59, `s` 0..59 (leap-second `:60` — только clamp на
-/// parse, Q5), `ns` 0..999_999_999. Дефолты позволяют `TimeOfDay.new(14, 30)`.
+/// `h` 0..23, `m` 0..59, `s` 0..59 (leap-second `:60` — clamp only on
+/// parse, Q5), `ns` 0..999_999_999. Defaults allow `TimeOfDay.new(14, 30)`.
 ///
 /// # Examples
 /// ```nova
@@ -55,7 +55,7 @@ export fn TimeOfDay.new(h int, m int, s int = 0, ns int = 0) -> Result[TimeOfDay
     Ok({ nanos_of_day: total })
 }
 
-/// Из сырых наносекунд от полуночи → `Result` (вне [0, 86400s) — `Err`).
+/// From raw nanoseconds since midnight → `Result` (outside [0, 86400s) — `Err`).
 #stable(since = "0.1")
 export fn TimeOfDay.from_nanos_of_day(n i64) -> Result[TimeOfDay, DateError] =>
     if n < 0 || n >= nanos_per_day() {
@@ -68,25 +68,25 @@ export fn TimeOfDay.from_nanos_of_day(n i64) -> Result[TimeOfDay, DateError] =>
 // Компоненты
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Час (0..23).
+/// Hour (0..23).
 #stable(since = "0.1")
 export fn TimeOfDay @hour() -> int => (@nanos_of_day / 3_600_000_000_000) as int
 
-/// Минута (0..59).
+/// Minute (0..59).
 #stable(since = "0.1")
 export fn TimeOfDay @minute() -> int =>
     ((@nanos_of_day / 60_000_000_000) % 60) as int
 
-/// Секунда (0..59).
+/// Second (0..59).
 #stable(since = "0.1")
 export fn TimeOfDay @second() -> int =>
     ((@nanos_of_day / 1_000_000_000) % 60) as int
 
-/// Наносекунда внутри секунды (0..999_999_999).
+/// Nanosecond within the second (0..999_999_999).
 #stable(since = "0.1")
 export fn TimeOfDay @nano() -> int => (@nanos_of_day % 1_000_000_000) as int
 
-/// Сырые наносекунды от полуночи.
+/// Raw nanoseconds since midnight.
 #stable(since = "0.1")
 export fn TimeOfDay @to_nanos_of_day() -> i64 => @nanos_of_day
 
@@ -94,10 +94,10 @@ export fn TimeOfDay @to_nanos_of_day() -> i64 => @nanos_of_day
 // Арифметика (TimeBased ONLY — D320: Period здесь НЕ принимается)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Сдвиг на Duration с ЯВНЫМ day-carry: `(новое время, перенос дней)`.
+/// Shift by a Duration with EXPLICIT day-carry: `(new time, day overflow)`.
 ///
-/// Перенос никогда не теряется молча: `23:30 + 1h` → `(00:30, 1)`;
-/// `00:30 - 1h` (отрицательная Duration) → `(23:30, -1)`.
+/// The carry is never silently lost: `23:30 + 1h` → `(00:30, 1)`;
+/// `00:30 - 1h` (negative Duration) → `(23:30, -1)`.
 ///
 /// # Examples
 /// ```nova
@@ -116,12 +116,12 @@ export fn TimeOfDay @plus(d Duration) -> (TimeOfDay, i64) {
     (t, days)
 }
 
-/// Сдвиг назад — эквивалент `@plus(-d)`; тот же явный day-carry.
+/// Shift backward — equivalent to `@plus(-d)`; the same explicit day-carry.
 #stable(since = "0.1")
 export fn TimeOfDay @minus(d Duration) -> (TimeOfDay, i64) =>
     @plus(0.to_nanos() - d)
 
-/// Duration от `self` до `other` внутри суток (signed).
+/// Duration from `self` to `other` within the day (signed).
 #stable(since = "0.1")
 export fn TimeOfDay @duration_until(other TimeOfDay) -> Duration =>
     (other.nanos_of_day - @nanos_of_day).to_nanos()
@@ -130,7 +130,7 @@ export fn TimeOfDay @duration_until(other TimeOfDay) -> Duration =>
 // Compare + Display
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Compare по наносекундам от полуночи.
+/// Compare by nanoseconds since midnight.
 #stable(since = "0.1")
 export fn TimeOfDay @compare(other TimeOfDay) -> int =>
     if @nanos_of_day < other.nanos_of_day { -1 }
@@ -158,12 +158,12 @@ fn format_frac(ns i64) -> str {
     ".${s.pad_start(9, '0')}"
 }
 
-/// ISO-8601 форма `HH:MM:SS[.fff]` (наносекунды — 3/6/9 знаков по кратности).
+/// ISO-8601 form `HH:MM:SS[.fff]` (nanoseconds — 3/6/9 digits by magnitude).
 #stable(since = "0.1")
 export fn TimeOfDay @to_iso() -> str =>
     "${pad2_i64(@hour() as i64)}:${pad2_i64(@minute() as i64)}:${pad2_i64(@second() as i64)}${format_frac(@nano() as i64)}"
 
-/// Display = ISO-форма.
+/// Display = the ISO form.
 #stable(since = "0.1")
 export fn TimeOfDay @to_str() -> str => @to_iso()
 
@@ -174,8 +174,8 @@ export fn TimeOfDay @to_str() -> str => @to_iso()
 // [M-175.1-value-in-value-emit-order] (§4а-обход, codegen не трогаем).
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Календарные дата+время без зоны — value-record из двух value-полей.
-/// Plain-тип D319: НЕ точка на оси. Методы — datetime.nv.
+/// Calendar date+time without a zone — a value-record of two value fields.
+/// A D319 plain type: NOT a point on the axis. Methods — datetime.nv.
 #stable(since = "0.1")
 export type DateTime value {
     ro date Date
