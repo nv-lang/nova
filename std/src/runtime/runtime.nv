@@ -1,29 +1,24 @@
 // std/runtime/runtime.nv — M:N runtime control API.
 //
-// M:N-рантайм Nova — production-grade: work-stealing scheduler
-// (Plan 44.5), preemption (Plan 44.7), per-worker libuv loop (D98),
-// hardened channels (Plan 44.1), fiber arena (Plan 44.2 POSIX +
-// Plan 82 Windows). Сейчас он **opt-in**: параллелизм включается
-// вызовом `runtime.init`.
+// M:N-рантайм Nova — production-grade: work-stealing scheduler,
+// preemption, per-worker libuv loop, hardened channels, fiber arena.
+// Сейчас он **opt-in**: параллелизм включается вызовом `runtime.init`.
 //
-// **Plan 83.2 Ф.1 (2026-05-23) — инфраструктура для default-on M:N
-// подготовлена**, но не активирована: `nova_runtime_auto_arm()` API
-// + auto-arm в `nova_runtime_spawn_global` / `nova_runtime_spawn_into`.
-// Codegen-emit в main() пока не вызывает auto-arm — полный флип
-// упирается в pre-existing M:N баги в `supervised`-drain / D93
-// sleep-wake / per-fiber handlers, которые до Plan 83.2 проявлялись
-// только под explicit `runtime.init` и теперь требуют отдельной серии
-// фиксов (каждый ~1-2 dev-day). См. `83.2-artifacts/f0-readiness.md`
-// и followup-секцию `simplifications.md`.
+// Инфраструктура для default-on подготовлена (`nova_runtime_auto_arm()` API
+// + auto-arm в `nova_runtime_spawn_global` / `nova_runtime_spawn_into`),
+// но не активирована: codegen-emit в main() пока не вызывает auto-arm —
+// полный флип упирается в pre-existing M:N баги в supervised-drain /
+// sleep-wake / per-fiber handlers, которые до этого проявлялись
+// только под explicit `runtime.init` и требуют отдельной серии
+// фиксов. См. followup-секцию `simplifications.md`.
 //
 // **NOT auto-gen.** Hand-maintained namespace `runtime.*` — c-имя
 // (`nova_runtime_*` / `nova_fiber_yield` для `yield`) приходит через
 // `ExternalRegistry::NAMESPACE_OVERRIDES` (compiler-codegen/src/codegen/
 // external_registry.rs); этот файл — embedded builtin source, единственный
-// source of truth и для checker'а, и для codegen ([M-compiler-nv-porting-
-// wave] item B1, 2026-07-07 — ручная синхронизация с emit_c.rs снята).
+// source of truth и для checker'а, и для codegen.
 //
-// Число worker-потоков (Plan 83.1, порядок разрешения):
+// Число worker-потоков (порядок разрешения):
 //   explicit runtime.init(n>0)  >  ENV NOVA_MAXPROCS  >  auto-detect
 //   (uv_available_parallelism — cgroup+affinity-aware).
 // Клэмп [1, 1024]. `NOVA_MAXPROCS` — аналог `GOMAXPROCS`; невалидное
@@ -38,7 +33,7 @@
 //   runtime.current_worker_id() // id worker'а (-1 = main thread)
 //   runtime.yield()          // кооперативный yield
 //
-// **Lazy worker-пул (Plan 83.1 Ф.4, D137):** `runtime.init` НЕ создаёт
+// **Lazy worker-пул:** `runtime.init` НЕ создаёт
 // потоки сразу — лишь ARM'ит рантайм и фиксирует целевое число.
 // Worker-потоки + sysmon материализуются лениво на первом `spawn`.
 // Программа без `spawn` идёт на одном главном потоке. `runtime.init` —
@@ -55,7 +50,7 @@ module runtime.runtime
 ///
 /// `n = 0` → auto-detect (`NOVA_MAXPROCS` / `uv_available_parallelism()`).
 ///
-/// **Lazy (Plan 83.1 Ф.4, D137):** `init` НЕ создаёт worker-потоки — лишь
+/// **Lazy:** `init` НЕ создаёт worker-потоки — лишь
 /// фиксирует целевое число. Пул материализуется на первом `spawn`. До
 /// первого spawn повторный `init` валидно переопределяет цель; после
 /// материализации `init` — диагностируемый no-op на stderr.
@@ -63,7 +58,7 @@ module runtime.runtime
 /// Каждый worker (после материализации) имеет:
 /// - собственный libuv event loop;
 /// - собственный fiber scope (worker-local push queue);
-/// - собственную fiber arena (Plan 44.2 Linux/macOS — lazily init per thread).
+/// - собственную fiber arena (Linux/macOS — lazily init per thread).
 ///
 /// # Effects
 ///
@@ -82,7 +77,7 @@ export extern "nova" fn runtime.init(n int) -> ()
 /// Signal stop → join workers → free resources. После shutdown повторный
 /// `[runtime.init]` стартует новые workers.
 ///
-/// **Plan 83.1 Ф.4:** вызывается автоматически на выходе процесса
+/// Вызывается автоматически на выходе процесса
 /// (через `atexit` — нормальный return из main и `exit()`). Явный
 /// вызов опционален; идемпотентен.
 ///
@@ -148,9 +143,9 @@ export extern "nova" fn runtime.is_initialized() -> bool
 #stable(since = "0.1")
 export extern "nova" fn runtime.current_worker_id() -> int
 
-/// Plan 83.4.5.2 Ф.2 (2026-05-23): Drain orphan fiber pool synchronously.
+/// Drain orphan fiber pool synchronously.
 ///
-/// `detach { body }` под D50 — fire-and-forget primitive. Orphan fibers
+/// `detach { body }` — fire-and-forget primitive. Orphan fibers
 /// исполняются в global orphan-scope (bootstrap cooperative) либо worker
 /// pool (armed M:N). Drain forces synchronous completion всех pending
 /// orphan'ов — analog Go `sync.WaitGroup.Wait()` для anonymous-spawn'ов.
@@ -165,7 +160,7 @@ export extern "nova" fn runtime.current_worker_id() -> int
 ///
 /// # See Also
 ///
-/// - `detach { body }` — D50 fire-and-forget spawn primitive.
+/// - `detach { body }` — fire-and-forget spawn primitive.
 /// - `[supervised]` — structured-concurrency alternative с automatic join.
 #stable(since = "0.1")
 export extern "nova" fn runtime.drain_orphans() -> ()
