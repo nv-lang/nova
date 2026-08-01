@@ -49,13 +49,15 @@ test "transpose: None -> Ok(None)" {
 
 // ── сквозной движущий кейс: конфиг-политика «нет=дефолт / мусор=ошибка» ──
 
-// `ParseIntError` (a record error type) can't yet flow through
-// `Option[Result[..]]`'s own C-declaration registration — a SEPARATE,
-// pre-existing gap (confirmed independent of `transpose`/receiver-mono:
-// reproduces on a bare `Option[Result[int, ParseIntError]]` local with no
-// custom method involved at all). `.map_err(|_| "...")` coerces to a
-// scalar `str` error, sidestepping that unrelated gap while keeping the
-// driving case's shape (parse-failure surfaces as a hard `Err`).
+// [M-option-result-record-error-typedef-gap] (221.1 №251): CLOSED — was
+// the SAME root cause as №250 above (confirmed this window, not just
+// "suspected family"): a bare `Option[Result[int, ParseIntError]]` local
+// hit the identical early/late NovaOpt_/NovaRes_ splice-ordering gap, now
+// fixed by the same `debt_is_mono_nova_name` widening. `.map_err(|_|
+// "...")` below is kept as-is (design choice matching the driving case's
+// shape — parse-failure surfaces as a hard `Err` — not a workaround), but
+// is no longer LOAD-BEARING for compilation; see `m_tds_*` fixture for a
+// direct record-error-through-`Option[Result[..]]` regression test.
 fn plan200_transpose_port(config HashMap[str, str], key str, default_port int) -> Result[int, str] {
     ro port = config.get(key)
         .map(|s| s.to_int().map_err(|_| "invalid port"))
@@ -89,29 +91,32 @@ test "transpose: движущий кейс — порт задан, но мус�
 
 // ── второй инстанс типов в том же CU ──────────────────────────────────
 //
-// NOT INCLUDED (найдено этой же волной, отдельный маркер): `Option[Result[
-// str, int]]` (T/E — ЛЮБАЯ пара, отличная от буквально `(int, str)`) как
-// ВТОРОЙ инстанс `transpose` в одном CU CC-FAIL'ится — `NovaRes_nova_str_
-// nova_int` (или любая иная не-канон пара) остаётся недекларированным C-
-// typedef'ом, хотя (T,E)-подстановка внутри mono'd тела САМА корректна
-// (проверено чтением сгенерированного C — тело/сигнатура используют
-// правильные T=str, E=int). Корень: (nova_int,nova_str) — единственная
-// ЖЁСТКО прописанная в nova_rt/array.h пара (`NovaRes_nova_int_nova_str`);
-// ЛЮБАЯ другая пара нуждается в динамической регистрации через
-// `register_novares_decl`, чей typedef-буфер сплайсится ОДИН раз в маркер
-// `/*__NOVARES_TYPEDEFS__*/` — регистрация со стороны builtin Option/Result
-// `DeclaredBody`-диспетча (эта же волна проверила: и структурная RT-
-// подстановка, и принудительный вызов `resolved_type_to_c` на ПОЛНОМ RT
-// ресивера ДО диспетча — оба подтверждённо ПОПОЛНЯЮТ registry, ошибка
-// БАЙТ-В-БАЙТ идентична после обеих попыток) для НЕ-канонической пары не
-// доживает до сплайса — не ordering С-стороны splice (он один, "после
-// emit_module", т.е. в конце), похоже на отдельный pass/Emitter-инстанс
-// (probe vs real) чьи side-effects на `self` не переживают до финальной
-// сборки. НЕ входит в объём этого фикса ([M-nested-generic-receiver-
-// method-mono], реестр 221.1 №247) — маркер, суть которого «T/E-биндинг
-// внутри ОДНОГО mono», доказанно решён (см. фикстуры выше + repro-матрица
-// в отчёте окна). Новый маркер: `[M-nested-builtin-second-instance-
-// typedef-splice-gap]`, backlog-followups.md — заводится тем же коммитом.
+// [M-nested-builtin-second-instance-typedef-splice-gap] (221.1 №250):
+// CLOSED. A second `transpose` instance in one CU with (T,E) != the ONE
+// pair hardcoded in `nova_rt/array.h` (`nova_int, nova_str`) used to
+// CC-FAIL at the C-typedef level — `NovaOpt_<...>` (spliced early, at
+// `/*__NOVAOPT_TYPEDEFS__*/`) could pointer-wrap a non-canonical
+// `NovaRes_<ok>_<err>` (spliced LATER, at `/*__NOVARES_TYPEDEFS__*/`)
+// without ever forward-declaring it — `register_novaopt_decl`'s pointer
+// forward-typedef guard (`debt_is_mono_nova_name`) only recognized
+// user-mono `Nova_X____...` names, never the builtin `NovaRes_` class.
+// Fixed by widening that ONE shared guard (`emit_c.rs`) — no second
+// splice, no extra pass.
+test "transpose: second instance, non-canonical (bool, int) pair, same CU" {
+    ro a Option[Result[bool, int]] = Some(Ok(true))
+    match a.transpose() {
+        Ok(opt) => match opt { Some(v) => assert(v == true), None => assert(false, "expected Some(true)") },
+        Err(_) => assert(false, "expected Ok"),
+    }
+}
+
+test "transpose: non-canonical pair, None case (element type must not leak nova_int default)" {
+    ro a Option[Result[bool, int]] = None
+    match a.transpose() {
+        Ok(opt) => match opt { Some(_) => assert(false, "expected None"), None => assert(true) },
+        Err(_) => assert(false, "expected Ok(None)"),
+    }
+}
 
 test "transpose: повторная инстанциация той же (T,E) пары в отдельном call site того же CU" {
     ro second Option[Result[int, str]] = Some(Ok(11))

@@ -1,0 +1,143 @@
+// [221.1 №250/№251] `Option[Result[T,E]]` builtin nested-generic dispatch —
+// multiple NON-canonical (T,E) pairs in ONE compile unit + a record-error
+// payload. Regression for the closed
+// `[M-nested-builtin-second-instance-typedef-splice-gap]` (№250) and
+// `[M-option-result-record-error-typedef-gap]` (№251) markers.
+//
+// Root cause (both markers, confirmed the SAME): `register_novaopt_decl`'s
+// pointer forward-typedef guard (`debt_is_mono_nova_name`, `emit_c.rs`)
+// recognized only user-mono `Nova_X____...` names — never the builtin
+// `NovaRes_<ok>_<err>` class. A `NovaOpt_<sani>` typedef pointer-wrapping a
+// non-canonical `NovaRes_<ok>_<err>` is spliced EARLY (at
+// `/*__NOVAOPT_TYPEDEFS__*/`), textually BEFORE the `NovaRes_` struct body
+// itself (spliced LATER, at `/*__NOVARES_TYPEDEFS__*/`) — "unknown type
+// name" unless a forward `typedef struct NovaRes_X NovaRes_X;` precedes it.
+// The ONE hardcoded canonical pair (`nova_int, nova_str`, `nova_rt/array.h`)
+// never hit this because it is complete before either splice even runs.
+//
+// A second, previously-MASKED gap surfaced only once the typedef gap was
+// fixed: a bare `None` nested inside `Ok(None)`/`Err(None)` inside a
+// builtin Option/Result Nova-body method (`transpose`'s `None => Ok(None)`
+// arm) resolved its `NovaOpt_<T>` element type from the wrong source
+// (`current_fn_return_ty` names the OUTER `Result`, not the `Option`; the
+// checker-channel `resolved_types[expr.id]` is the GENERIC TEMPLATE's
+// one-time abstract result, reused verbatim across every (T,E) drain) and
+// fell back to a hardcoded `NovaOpt_nova_int` default — coincidentally
+// correct only when T happens to be `int`. Fixed via `expected_option_elem_
+// hint`, propagated the same way `expected_record_type`/`expected_sum_hint`
+// already are, narrowly gated to a DIRECT `Ok(None)`/`Err(None)` payload
+// (no leak into nested subtrees — same discipline as the sibling
+// `expected_sum_hint` precedent).
+module spec_tests.conformance
+
+type MTdsRecErr { code int, msg str }
+
+test "m_tds: Option[Result[bool, int]] Ok(true) transpose" {
+    ro m_tds_a Option[Result[bool, int]] = Some(Ok(true))
+    ro m_tds_b = m_tds_a.transpose()
+    match m_tds_b {
+        Ok(opt) => match opt {
+            Some(v) => assert(v == true),
+            None => assert(false, "expected Some(true)"),
+        },
+        Err(_) => assert(false, "expected Ok"),
+    }
+}
+
+test "m_tds: Option[Result[bool, int]] Err(7) transpose" {
+    ro m_tds_c Option[Result[bool, int]] = Some(Err(7))
+    ro m_tds_d = m_tds_c.transpose()
+    match m_tds_d {
+        Ok(_) => assert(false, "expected Err"),
+        Err(e) => assert(e == 7),
+    }
+}
+
+test "m_tds: Option[Result[bool, int]] None transpose (element type must not leak nova_int default)" {
+    ro m_tds_e Option[Result[bool, int]] = None
+    ro m_tds_f = m_tds_e.transpose()
+    match m_tds_f {
+        Ok(opt) => match opt {
+            Some(_) => assert(false, "expected None"),
+            None => assert(true),
+        },
+        Err(_) => assert(false, "expected Ok(None)"),
+    }
+}
+
+test "m_tds: Option[Result[str, int]] second distinct non-canonical pair, same CU" {
+    ro m_tds_g Option[Result[str, int]] = Some(Ok("hi"))
+    ro m_tds_h = m_tds_g.transpose()
+    match m_tds_h {
+        Ok(opt) => match opt {
+            Some(v) => assert(v == "hi"),
+            None => assert(false, "expected Some(\"hi\")"),
+        },
+        Err(_) => assert(false, "expected Ok"),
+    }
+}
+
+test "m_tds: Option[Result[str, int]] Err transpose" {
+    ro m_tds_i Option[Result[str, int]] = Some(Err(42))
+    ro m_tds_j = m_tds_i.transpose()
+    match m_tds_j {
+        Ok(_) => assert(false, "expected Err"),
+        Err(e) => assert(e == 42),
+    }
+}
+
+test "m_tds: Option[Result[str, int]] None transpose" {
+    ro m_tds_k Option[Result[str, int]] = None
+    ro m_tds_l = m_tds_k.transpose()
+    match m_tds_l {
+        Ok(opt) => match opt {
+            Some(_) => assert(false, "expected None"),
+            None => assert(true),
+        },
+        Err(_) => assert(false, "expected Ok(None)"),
+    }
+}
+
+test "m_tds: record-error form — Option[Result[int, MTdsRecErr]] bare local, no transpose" {
+    ro m_tds_m Option[Result[int, MTdsRecErr]] = Some(Err(MTdsRecErr { code: 404, msg: "not found" }))
+    match m_tds_m {
+        Some(r) => match r {
+            Ok(_) => assert(false, "expected Err"),
+            Err(e) => assert(e.code == 404),
+        },
+        None => assert(false, "expected Some"),
+    }
+}
+
+test "m_tds: record-error form — transpose Ok branch" {
+    ro m_tds_n Option[Result[int, MTdsRecErr]] = Some(Ok(42))
+    ro m_tds_o = m_tds_n.transpose()
+    match m_tds_o {
+        Ok(opt) => match opt {
+            Some(v) => assert(v == 42),
+            None => assert(false, "expected Some(42)"),
+        },
+        Err(_) => assert(false, "expected Ok"),
+    }
+}
+
+test "m_tds: record-error form — transpose Err branch" {
+    ro m_tds_p Option[Result[int, MTdsRecErr]] = Some(Err(MTdsRecErr { code: 500, msg: "boom" }))
+    ro m_tds_q = m_tds_p.transpose()
+    match m_tds_q {
+        Ok(_) => assert(false, "expected Err"),
+        Err(e) => assert(e.code == 500),
+    }
+}
+
+test "m_tds: record-error form — transpose None branch" {
+    ro m_tds_r Option[Result[int, MTdsRecErr]] = None
+    ro m_tds_s = m_tds_r.transpose()
+    match m_tds_s {
+        Ok(opt) => match opt {
+            Some(_) => assert(false, "expected None"),
+            None => assert(true),
+        },
+        Err(_) => assert(false, "expected Ok(None)"),
+    }
+}
