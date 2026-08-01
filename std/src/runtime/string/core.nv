@@ -38,10 +38,7 @@ export fn str.new() -> Self => ""
 // Ok-arm coercion (mirrors std/encoding/base64.nv encode_char). Invalid cp
 // cannot occur here — каждый cp получен из UTF-8 decode валидной строки.
 fn cp_to_char(cp int) -> char {
-    match cp.to_char() {
-        Ok(c)  => c,
-        Err(_) => '\u{FFFD}',
-    }
+    cp.to_char() ?? '\u{FFFD}'
 }
 
 // Magic-методы @eq/@lt/@le/@gt/@ge удалены; `str.@compare` даёт все 6

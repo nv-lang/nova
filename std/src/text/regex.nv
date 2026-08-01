@@ -177,10 +177,7 @@ fn Parser mut @parse_braced_quantifier(atom RegexNode) Fail[CompileError] -> Reg
     }
     ro min_str = n_str.into_str()
     if min_str.byte_len() == 0 { throw InvalidQuantifier { position: start } }
-    ro min = match int.try_from(min_str) {
-        Ok(n)  => n
-        Err(_) => throw InvalidQuantifier { position: start }
-    }
+    ro min = int.try_from(min_str) ?? throw InvalidQuantifier { position: start }
 
     ro max = if @peek() == Some(',') {
         @advance()
@@ -278,10 +275,7 @@ fn Parser mut @parse_char_class() Fail[CompileError] -> RegexNode {
                 @advance()
                 if @peek() == Some('-') && @chs.get(@pos + 1) != Some(']') {
                     @advance()
-                    ro to = match @advance() {
-                        Some(x) => x
-                        None    => throw UnclosedClass { position: start }
-                    }
+                    ro to = @advance() ?? throw UnclosedClass { position: start }
                     ranges.push((c, to))
                 } else {
                     chars.push(c)

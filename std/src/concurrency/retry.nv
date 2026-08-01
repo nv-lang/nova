@@ -126,12 +126,9 @@ export fn RetryPolicy @execute[T, E](body fn() Fail[E] -> T) Time Random Fail[E]
         }
     }
 
-    match result {
-        Some(v) => v
-        None    => match last_error {
-            Some(e) => throw e
-            None    => throw last_error!!      // unreachable
-        }
+    result ?? match last_error {
+        Some(e) => throw e
+        None    => throw last_error!!      // unreachable
     }
 }
 

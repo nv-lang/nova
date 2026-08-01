@@ -256,7 +256,7 @@ fn MemFs mut @mem_write_at(fd int, data []u8, offset int) -> int {
 // Overwrite/extend the node's bytes at `pos` IN PLACE (no fresh Vec per write —
 // keeps allocation churn low), returning the new end position.
 fn MemFs mut @write_common(key str, chunk []u8, pos int) -> int {
-    ro idx = match @find(key) { Some(i) => i, None => @add_node(key, KIND_FILE, 0o644) }
+    ro idx = @find(key) ?? @add_node(key, KIND_FILE, 0o644)
     while @datas[idx].len() < pos { @datas[idx].push(0 as u8) }
     mut j = 0
     while j < chunk.len() {
@@ -352,7 +352,7 @@ fn MemFs mut @mem_rename(src []u8, dst []u8) -> int {
         None    => 0 - EN_NOTFOUND
         Some(_) => {
             match @find(tkey) { Some(d) => @drop_node(d), None => {} }
-            ro fi = match @find(fkey) { Some(x) => x, None => 0 }
+            ro fi = @find(fkey) ?? 0
             @paths[fi] = tkey
             @mtimes[fi] = @tick()
             0
@@ -437,7 +437,7 @@ fn MemFs mut @mem_copy(src []u8, dst []u8) -> int {
         None    => 0 - EN_NOTFOUND
         Some(fi) => {
             ro data = @datas[fi]
-            ro ti = match @find(tkey) { Some(x) => x, None => @add_node(tkey, KIND_FILE, @modes[fi]) }
+            ro ti = @find(tkey) ?? @add_node(tkey, KIND_FILE, @modes[fi])
             mut dup []u8 = []u8.new()
             dup.append(data)
             @datas[ti] = dup

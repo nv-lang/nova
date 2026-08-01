@@ -192,10 +192,7 @@ export fn StrGen @generate() Random -> str {
         // Печатные ASCII: 32..126 — каждый valid 1-byte UTF-8 char.
         // Plan 34 Ф.5.2: `int as char` запрещён D54.
         ro code = 32 + ((Random.u64() as int).abs() % 95)
-        ro c = match code.to_char() {
-            Ok(ch) => ch
-            Err(_) => '?'
-        }
+        ro c = code.to_char() ?? '?'
         buf.append(c)
     }
     buf

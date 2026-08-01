@@ -51,10 +51,7 @@ fn digit(n u8, upper bool) -> char {
     } else {
         'a' as int + n as int - 10
     }
-    match code.to_char() {
-        Ok(c)  => c
-        Err(_) => ' '
-    }
+    code.to_char() ?? ' '
 }
 
 // ──────────────────────────────────────────────────────────────────────────

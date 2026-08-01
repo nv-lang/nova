@@ -185,10 +185,7 @@ export fn Date @year() -> i32 {
 #stable(since = "0.1")
 export fn Date @month() -> Month {
     ro (_, m, _) = civil_from_days(@epoch_day)
-    match Month.from_number(m as int) {
-        Ok(mm) => mm,
-        Err(_) => panic("Date @month: unreachable (Hinnant m in 1..12)"),
-    }
+    Month.from_number(m as int) ?? panic("Date @month: unreachable (Hinnant m in 1..12)")
 }
 
 /// День месяца (1..31).
@@ -206,10 +203,7 @@ export fn Date @to_epoch_day() -> i64 => @epoch_day
 #stable(since = "0.1")
 export fn Date @weekday() -> Weekday {
     ro iso = floor_mod(@epoch_day + 3, 7) + 1
-    match Weekday.from_number(iso as int) {
-        Ok(w) => w,
-        Err(_) => panic("Date @weekday: unreachable (mod 7 + 1 in 1..7)"),
-    }
+    Weekday.from_number(iso as int) ?? panic("Date @weekday: unreachable (mod 7 + 1 in 1..7)")
 }
 
 /// Порядковый день года (1..365/366).

@@ -168,10 +168,7 @@ fn date_plus_period(d Date, p Period) -> Result[Date, DateError] {
         }
         // 2) CLAMP дня к длине результирующего месяца (Jan31+1mo → Feb28/29).
         ro leap = y1 % 4 == 0 && (y1 % 100 != 0 || y1 % 400 == 0)
-        ro m1_month = match Month.from_number(m1 as int) {
-            Ok(mm) => mm,
-            Err(_) => Jan,   // unreachable: m1 в 1..12
-        }
+        ro m1_month = Month.from_number(m1 as int) ?? Jan   // unreachable: m1 в 1..12
         ro dim = m1_month.length(leap) as i64
         ro day1 = day0.min(dim)
         ro base = match Date.new(y1 as i32, m1_month, day1 as i32) {
@@ -268,16 +265,10 @@ export fn Period.between(start Date, end Date) -> Period {
     if (b.day() as i64) < (a.day() as i64) {
         // Неполный последний месяц — если даже clamped-якорь позже b, откат.
         // (a.day может не существовать в месяце b: clamp-семантика Q7.)
-        ro anchor = match date_plus_period(a, Period.of_months(months as i32)) {
-            Ok(d) => d,
-            Err(_) => b,   // за границей civil — недостижимо для валидных a/b
-        }
+        ro anchor = date_plus_period(a, Period.of_months(months as i32)) ?? b   // за границей civil — недостижимо для валидных a/b
         if anchor.compare(b) > 0 { months -= 1 }
     }
-    ro anchor2 = match date_plus_period(a, Period.of_months(months as i32)) {
-        Ok(d) => d,
-        Err(_) => b,   // unreachable
-    }
+    ro anchor2 = date_plus_period(a, Period.of_months(months as i32)) ?? b   // unreachable
     ro days = anchor2.days_until(b) as i64
     ro years = months / 12
     ro rem_months = months % 12

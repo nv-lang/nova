@@ -286,10 +286,7 @@ export fn Timestamp @to_zoned(tz TimeZone) -> ZonedDateTime {
     ro day = if remd < 0 { day0 - 1 } else { day0 }
     ro sod = if remd < 0 { remd + 86_400 } else { remd }
     ro date = Date.from_epoch_day(day)
-    ro tod = match TimeOfDay.from_nanos_of_day(sod * 1_000_000_000 + subnano) {
-        Ok(t) => t,
-        Err(_) => panic("Timestamp.to_zoned: unreachable (sod in 0..86400)"),
-    }
+    ro tod = TimeOfDay.from_nanos_of_day(sod * 1_000_000_000 + subnano) ?? panic("Timestamp.to_zoned: unreachable (sod in 0..86400)")
     { dt: date.at(tod), offset: off, zone: tz }
 }
 
@@ -326,20 +323,14 @@ export fn ZonedDateTime @with_zone(tz TimeZone) -> Result[ZonedDateTime, DateErr
 #stable(since = "0.1")
 export fn ZonedDateTime @plus(p Period) -> ZonedDateTime {
     ro moved = @dt + p
-    match moved.to_zoned(@zone, Compatible) {
-        Ok(z) => z,
-        Err(_) => panic("ZonedDateTime arithmetic: + Period out of range"),
-    }
+    moved.to_zoned(@zone, Compatible) ?? panic("ZonedDateTime arithmetic: + Period out of range")
 }
 
 /// Календарный сдвиг назад.
 #stable(since = "0.1")
 export fn ZonedDateTime @minus(p Period) -> ZonedDateTime {
     ro moved = @dt - p
-    match moved.to_zoned(@zone, Compatible) {
-        Ok(z) => z,
-        Err(_) => panic("ZonedDateTime arithmetic: - Period out of range"),
-    }
+    moved.to_zoned(@zone, Compatible) ?? panic("ZonedDateTime arithmetic: - Period out of range")
 }
 
 /// Elapsed-сдвиг: `zoned + Duration(24h)` — ровно 24h по оси (wall-time

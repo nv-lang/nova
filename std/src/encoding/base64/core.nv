@@ -60,10 +60,7 @@ fn encode_char_std(value u8) -> char {
     } else {
         '/' as int
     }
-    match code.to_char() {
-        Ok(c)  => c
-        Err(_) => '?'
-    }
+    code.to_char() ?? '?'
 }
 
 // RFC 4648 § 5 URL-safe alphabet (отличие: `-` вместо `+`, `_` вместо `/`)
@@ -79,10 +76,7 @@ fn encode_char_url(value u8) -> char {
     } else {
         '_' as int
     }
-    match code.to_char() {
-        Ok(c)  => c
-        Err(_) => '?'
-    }
+    code.to_char() ?? '?'
 }
 
 // Decode lookup. Возвращает Option[u8]: Some(0..63), None для невалидных.

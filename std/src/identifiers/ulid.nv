@@ -100,10 +100,7 @@ fn encode_char(value u8) -> char {
     } else {
         'Z' as int                                   // 31
     }
-    match code.to_char() {
-        Ok(c)  => c
-        Err(_) => '?'
-    }
+    code.to_char() ?? '?'
 }
 
 fn decode_char(c char) -> Option[u8] {
@@ -334,10 +331,7 @@ fn decode_char_or_throw(s str, pos int) Fail[ParseUlidError] -> u8 {
     match s.bytes().get(pos) {
         Some(b) => {
             ro c = (b as int).to_char() ?? ' '
-            match decode_char(c) {
-                Some(v) => v
-                None    => throw InvalidChar { position: pos, char: c }
-            }
+            decode_char(c) ?? throw InvalidChar { position: pos, char: c }
         }
         None => throw InvalidLength { actual: s.byte_len(), expected: 26 }
     }

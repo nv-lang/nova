@@ -251,10 +251,7 @@ fn hex_digit(n u8) -> char {
     } else {
         'a' as int + n as int - 10
     }
-    match code.to_char() {
-        Ok(c)  => c
-        Err(_) => '?'
-    }
+    code.to_char() ?? '?'
 }
 
 // ──────────────────────────────────────────────────────────────────────────

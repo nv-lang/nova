@@ -31,10 +31,7 @@ export fn YearMonth @year() -> i32 => @year
 /// Месяц.
 #stable(since = "0.1")
 export fn YearMonth @month() -> Month =>
-    match Month.from_number(@month as int) {
-        Ok(m) => m,
-        Err(_) => Month.Jan,   // unreachable: конструктор валидирует
-    }
+    Month.from_number(@month as int) ?? Month.Jan   // unreachable: конструктор валидирует
 
 /// Число дней в этом месяце (с учётом високосности года).
 #stable(since = "0.1")
@@ -46,19 +43,12 @@ export fn YearMonth @length() -> int {
 /// Первый день месяца как Date.
 #stable(since = "0.1")
 export fn YearMonth @first_day() -> Date =>
-    match Date.new(@year, @month(), 1) {
-        Ok(d) => d,
-        Err(_) => Date.from_epoch_day(0),   // unreachable: поля валидны
-    }
+    Date.new(@year, @month(), 1) ?? Date.from_epoch_day(0)   // unreachable: поля валидны
 
 /// Последний день месяца как Date.
 #stable(since = "0.1")
 export fn YearMonth @last_day() -> Date =>
-    match Date.new(@year, @month(), @length() as i32) {
-        Ok(d) => d,
-        Err(_) => Date.from_epoch_day(0),   // unreachable
-
-    }
+    Date.new(@year, @month(), @length() as i32) ?? Date.from_epoch_day(0)   // unreachable
 
 /// Конкретный день этого месяца → `Result` (валидация дня).
 #stable(since = "0.1")
@@ -121,10 +111,7 @@ export fn MonthDay.new(m Month, d i32) -> Result[MonthDay, DateError] {
 /// Месяц.
 #stable(since = "0.1")
 export fn MonthDay @month() -> Month =>
-    match Month.from_number(@month as int) {
-        Ok(m) => m,
-        Err(_) => Month.Jan,   // unreachable
-    }
+    Month.from_number(@month as int) ?? Month.Jan   // unreachable
 
 /// День.
 #stable(since = "0.1")

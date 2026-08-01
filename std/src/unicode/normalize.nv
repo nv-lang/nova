@@ -41,7 +41,7 @@ ro ccc_map HashMap[u32, int] = parse_cp_int_table(CCC_DATA)
 ro comp_map HashMap[int, u32] = parse_comp_table(COMP_DATA)
 
 fn ccc_of(cp u32) -> int {
-    match ccc_map.get(cp) { Some(c) => c, None => 0 }
+    ccc_map.get(cp) ?? 0
 }
 
 fn decomp_lookup(cp u32, compat bool) -> Option[str] {

@@ -97,7 +97,7 @@ export fn str.from_utf16(units []u16) -> Result[str, Utf16Error] {
     // Capacity *4: supplementary codepoints encode to 4 UTF-8 bytes.
     consume sb = StringBuilder.new(cap: cps.len() * 4)
     for cp in cps {
-        ro c = match cp.to_char() { Ok(c) => c, Err(_) => '\u{FFFD}' }
+        ro c = cp.to_char() ?? '\u{FFFD}'
         sb.append(c)
     }
     Ok(sb.into_str())

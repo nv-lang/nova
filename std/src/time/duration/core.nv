@@ -363,28 +363,16 @@ fn sat_mul_i64(a i64, b i64, lo i64, hi i64) -> i64 =>
 // ── trap-wrappers (operators route here) ──
 
 fn add_or_trap(a i64, b i64) -> i64 =>
-    match a.checked_add(b) {
-        Some(r) => r,
-        None => panic("Duration arithmetic overflow: add"),
-    }
+    a.checked_add(b) ?? panic("Duration arithmetic overflow: add")
 
 fn sub_or_trap(a i64, b i64) -> i64 =>
-    match a.checked_sub(b) {
-        Some(r) => r,
-        None => panic("Duration arithmetic overflow: sub"),
-    }
+    a.checked_sub(b) ?? panic("Duration arithmetic overflow: sub")
 
 fn neg_or_trap(a i64) -> i64 =>
-    match checked_neg_i64(a) {
-        Some(r) => r,
-        None => panic("Duration arithmetic overflow: neg(i64::MIN)"),
-    }
+    checked_neg_i64(a) ?? panic("Duration arithmetic overflow: neg(i64::MIN)")
 
 fn mul_or_trap(a i64, b i64) -> i64 =>
-    match a.checked_mul(b) {
-        Some(r) => r,
-        None => panic("Duration arithmetic overflow: mul"),
-    }
+    a.checked_mul(b) ?? panic("Duration arithmetic overflow: mul")
 
 fn div_or_trap(a i64, b i64) -> i64 {
     if b == 0 { panic("Duration arithmetic error: division by zero") }
@@ -402,10 +390,7 @@ fn f64_nanos_checked(x f64) -> Option[i64] {
 }
 
 fn f64_nanos_or_trap(x f64) -> i64 =>
-    match f64_nanos_checked(x) {
-        Some(r) => r,
-        None => panic("Duration arithmetic error: non-finite or out-of-range f64"),
-    }
+    f64_nanos_checked(x) ?? panic("Duration arithmetic error: non-finite or out-of-range f64")
 
 // ──────────────────────────────────────────────────────────────────────────
 // Арифметика — overflow-safe.

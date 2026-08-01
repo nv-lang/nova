@@ -82,13 +82,13 @@ export fn char @is_ascii_whitespace() -> bool =>
 // ASCII case mapping (a-z↔A-Z); прочие символы — без изменений.
 export fn char @to_ascii_uppercase() -> char {
     if @is_ascii_lowercase() {
-        match (@ as int - 32).to_char() { Ok(u) => u, Err(_) => @ }
+        (@ as int - 32).to_char() ?? @
     } else { @ }
 }
 
 export fn char @to_ascii_lowercase() -> char {
     if @is_ascii_uppercase() {
-        match (@ as int + 32).to_char() { Ok(l) => l, Err(_) => @ }
+        (@ as int + 32).to_char() ?? @
     } else { @ }
 }
 

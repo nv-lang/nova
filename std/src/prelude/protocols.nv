@@ -245,7 +245,7 @@ export fn FmtCtx.rich(sink Write, mark int,
     // Unicode scalar value (round-tripped from a real `char`), so the `Err`
     // arm is unreachable in practice; ' ' fallback only for the exhaustive
     // match (same pattern as `std/src/encoding/hex.nv`'s `digit()`).
-    ro fill_c = match fill_cp.to_char() { Ok(c) => c, Err(_) => ' ' }
+    ro fill_c = fill_cp.to_char() ?? ' '
     {
         sink, mark,
         width: if has_width { Some(width) } else { None },
