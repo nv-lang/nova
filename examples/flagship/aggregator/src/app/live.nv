@@ -53,7 +53,7 @@ fn live_fetch_tcp(host str) Net Time -> Result[SourceData, AggError] {
                 Err(AggError.Transport("resolve: no address for ${host}"))
             } else {
                 match TcpStream.connect(addrs[0]) {
-                    Ok(consume s)  => { consume st = s; st.close(); Ok(SourceData { id: host, payload: []u8.new() }) }
+                    Ok(consume st) => { st.close(); Ok(SourceData { id: host, payload: []u8.new() }) }
                     Err(e) => Err(AggError.Transport(e.to_str()))
                 }
             }
@@ -87,9 +87,8 @@ fn live_fetch_weather(id str, lat f64, lon f64) Net Time -> Result[SourceData, A
                     Err(e) => Err(AggError.Transport(e.to_str()))
                     Ok(consume tcp) => match TlsStream.connect(tcp, cfg) {
                         Err(e) => Err(AggError.Transport("tls handshake: ${e.to_str()}"))
-                        Ok(consume tls) => {
-                            consume stream = tls
-                            ro req = "GET /v1/forecast?latitude=${lat.to_str()}&longitude=${lon.to_str()}&daily=temperature_2m_max&forecast_days=1 HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n"
+                        Ok(consume stream) => {
+                            ro req ="GET /v1/forecast?latitude=${lat.to_str()}&longitude=${lon.to_str()}&daily=temperature_2m_max&forecast_days=1 HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n"
                             match stream.write_all(req.bytes()) {
                                 Err(e) => { stream.close(); Err(AggError.Transport("tls write: ${e.to_str()}")) }
                                 Ok(_) => match stream.read_to_vec(8192) {

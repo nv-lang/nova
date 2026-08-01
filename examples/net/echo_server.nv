@@ -32,8 +32,7 @@ fn main() {
                 println("Listening on 127.0.0.1:${lst.local_port()}")
                 // Accept one connection and echo data back.
                 match lst.accept() {
-                    Ok(consume stream) => {
-                        consume s = stream
+                    Ok(consume s) => {
                         println("Client connected from port ${s.peer_port()}")
                         match s.read_to_vec(4096) {
                             Ok(_data) => {
