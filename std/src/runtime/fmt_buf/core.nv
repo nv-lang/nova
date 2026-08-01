@@ -416,8 +416,7 @@ export fn str_debug_fmt(s str, buf *mut u8, cap int) -> int {
     mut pos = 0
     unsafe { if pos < cap { buf.write_at(pos, '"' as u8) } }
     pos += 1
-    mut i = 0
-    while i < blen {
+    for i in 0..blen {
         ro c = bytes[i]
         if c == ('"' as u8) { pos = write_esc2_at(buf, cap, pos, '"' as u8) }
         else if c == ('\\' as u8) { pos = write_esc2_at(buf, cap, pos, '\\' as u8) }
@@ -430,7 +429,6 @@ export fn str_debug_fmt(s str, buf *mut u8, cap int) -> int {
             unsafe { if pos < cap { buf.write_at(pos, c) } }
             pos += 1
         }
-        i += 1
     }
     unsafe { if pos < cap { buf.write_at(pos, '"' as u8) } }
     pos += 1

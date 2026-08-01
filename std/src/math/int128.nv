@@ -205,7 +205,7 @@ fn u_divmod(nh u64, nl u64, dh u64, dl u64) -> (u64, u64, u64, u64) {
                 ql = ql | ((1 as u64) << i)
             }
         }
-        i = i - 1
+        i -= 1
     }
     (qh, ql, rh, rl)
 }

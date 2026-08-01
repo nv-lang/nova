@@ -133,9 +133,7 @@ export fn StringBuilder mut @append(s str) -> @ { @buf.append(s.bytes()) }
 // Append codepoint как UTF-8 (1-4 байта). Fluent push chain.
 export fn StringBuilder mut @append(c char) -> @ {
     ro (b, n) = c.encode_utf8()
-    for i in 0..n {
-        @buf.push(b[i])
-    }
+    @buf.append(b[..n])
 }
 
 // Append raw []u8 bytes. Caller отвечает за UTF-8 validity.

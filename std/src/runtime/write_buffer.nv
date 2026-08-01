@@ -109,9 +109,7 @@ export fn WriteBuffer mut @write_zero(n int) -> @
 // Логика повторяет StringBuilder.@append(char).
 export fn WriteBuffer mut @write_char(c char) -> @ {
     ro (b, n) = c.encode_utf8()
-    for i in 0..n {
-        @buf.push(b[i])
-    }
+    @buf.append(b[..n])
 }
 
 // Append UTF-8 байты из str (bulk memmove через []u8.append + as_bytes).

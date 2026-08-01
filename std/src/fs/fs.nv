@@ -491,6 +491,7 @@ export fn symlink_metadata(path Path) Fs -> Result[Metadata, IoError] {
 /// `NotFound` over `try_exists`-then-open. (`exists`/`forall` are reserved
 /// quantifier keywords, so this cannot be named `exists`.)
 #stable(since = "0.1")
+// nova:allow W_TRY_WITHOUT_SIBLING -- `exists`/`forall` are reserved quantifier keywords, cannot name the infallible sibling `exists`
 export fn try_exists(path Path) Fs -> Result[bool, IoError] {
     mut img = stat_image()
     ro rc = Fs.stat(path.os_bytes(), img)
