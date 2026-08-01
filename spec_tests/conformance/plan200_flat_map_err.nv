@@ -1,4 +1,4 @@
-module conformance.plan200_flat_map_err
+module spec_tests.conformance
 
 // flat_map_err — bind по err-ветке (recovery с доступом к ошибке).
 // Решение владельца 2026-08-01; сиблинг map_err. Пары: plan200_14 (flat_map/filter).
