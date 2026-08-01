@@ -31,7 +31,7 @@ fn main() {
                         match stream.write_str(MESSAGE) {
                             Err(_) => { println("Write failed"); stream.close() }
                             Ok(_) => {
-                                match stream.read_to_vec(256) {
+                                match stream.read_bytes(256) {
                                     Err(_) => { println("Read failed"); stream.close() }
                                     Ok(echo_bytes) => {
                                         ro eb []u8 = echo_bytes

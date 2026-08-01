@@ -35,7 +35,7 @@ fn main() {
                     Ok(consume stream) => {
                         consume s = stream
                         println("Client connected from port ${s.peer_port()}")
-                        match s.read_to_vec(4096) {
+                        match s.read_bytes(4096) {
                             Ok(_data) => {
                                 match s.write_str("echo_ok\n") {
                                     Ok(_)  => println("Echo sent")

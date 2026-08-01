@@ -149,7 +149,7 @@ export fn TcpStream.connect(addr SocketAddr) Net -> Result[TcpStream, NetError] 
 /// `io.IoError` (best-effort projection of the transport `NetError` via
 /// `@to_error_kind()` — see std/net/error.nv), so `TcpStream` satisfies
 /// `io.Read` structurally. The `Net` effect op itself still carries `NetError`
-/// (`write_all`/`read_to_vec`/`read_text` and the split halves surface it
+/// (`write_all`/`read_bytes`/`read_text` and the split halves surface it
 /// directly, unchanged); only this method and `@write`/`@flush` are the
 /// io-conformance surface.
 #stable(since = "0.1")
@@ -191,7 +191,7 @@ export fn TcpStream mut @write_all(data []u8) Net -> Result[(), NetError] {
 /// Read up to `max` bytes, returning them as an owned `[]u8` (empty = EOF).
 /// Byte-first convenience over the buffer-fill `@read`.
 #stable(since = "0.1")
-export fn TcpStream mut @read_to_vec(max int) Net -> Result[[]u8, NetError] {
+export fn TcpStream mut @read_bytes(max int) Net -> Result[[]u8, NetError] {
     mut buf []u8 = []u8.new()
     buf.resize(max, 0 as u8)
     match Net.read(@, buf) {
@@ -206,7 +206,7 @@ export fn TcpStream mut @read_to_vec(max int) Net -> Result[[]u8, NetError] {
 /// invalid UTF-8 surfaces as `NetError.IoError`.
 #stable(since = "0.1")
 export fn TcpStream mut @read_text(max int) Net -> Result[str, NetError] {
-    match @read_to_vec(max) {
+    match @read_bytes(max) {
         Ok(bytes) => {
             match bytes.to_str() {
                 Ok(s)  => Ok(s)

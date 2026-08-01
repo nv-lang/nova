@@ -42,7 +42,7 @@ fn read_via_share(s mut TcpStream) Net -> int {
     ro (tx, rx) = Channel.new(1)
     supervised {
         spawn consume ws = s.share() {
-            match ws.read_to_vec(64) {
+            match ws.read_bytes(64) {
                 Ok(chunk) => { ro _ = tx.try_send(chunk.len()) }
                 Err(_)    => { ro _ = tx.try_send(-1) }
             }

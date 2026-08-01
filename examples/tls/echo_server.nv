@@ -53,11 +53,11 @@ fn main() {
                             Ok(consume session) => {
                                 // NB: don't name this binding `tls` — it would
                                 // shadow the imported package alias (`tls.*`)
-                                // and turn `stream.read_to_vec(...)` below into
+                                // and turn `stream.read_bytes(...)` below into
                                 // an (invalid) module-qualified call instead of
                                 // a method call (E7401).
                                 consume stream = session
-                                match stream.read_to_vec(4096) {
+                                match stream.read_bytes(4096) {
                                     Err(_) => println("Read failed")
                                     Ok(_data) => {
                                         match stream.write_all("echo_ok\n") {

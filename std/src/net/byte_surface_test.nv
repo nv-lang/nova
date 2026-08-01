@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Plan 182 Ф.1 (migrated from nova_tests/plan178/net_byte_surface_mock.nv) —
-// byte-first net surface over mock_net(). Exercises write/write_all/read_to_vec
+// byte-first net surface over mock_net(). Exercises write/write_all/read_bytes
 // on TcpStream + split halves, send_to/recv_from_vec on UdpSocket. The mock
 // does not echo, so this validates the wrapper contract (byte counts, []u8
 // materialisation incl. embedded NUL + non-UTF-8 lead byte) rather than a
@@ -27,14 +27,14 @@ test "TcpStream.write / write_all return byte count" {
     }
 }
 
-test "TcpStream.read_to_vec materialises []u8" {
+test "TcpStream.read_bytes materialises []u8" {
     with Net = mock_net() {
         supervised {
             spawn {
                 consume s = match TcpStream.connect(SocketAddr.loopback(0)) {
                     Ok(consume c) => c, Err(_) => panic("connect")
                 }
-                ro bytes = match s.read_to_vec(64) { Ok(b) => b, Err(_) => panic("read_to_vec") }
+                ro bytes = match s.read_bytes(64) { Ok(b) => b, Err(_) => panic("read_bytes") }
                 // mock read returns "mock-reply" (10 bytes).
                 assert(bytes.len() == 10)
                 assert(unsafe { bytes.to_str_unchecked() } == "mock-reply")

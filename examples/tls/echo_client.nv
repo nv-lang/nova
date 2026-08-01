@@ -56,7 +56,7 @@ fn main() {
                                 match stream.write_all(MESSAGE.bytes()) {
                                     Err(e) => { println("Write failed: ${e.to_str()}"); stream.close() }
                                     Ok(_) => {
-                                        match stream.read_to_vec(256) {
+                                        match stream.read_bytes(256) {
                                             Err(e) => { println("Read failed: ${e.to_str()}"); stream.close() }
                                             Ok(echo_bytes) => {
                                                 // explicit []u8 local (chain not needed).

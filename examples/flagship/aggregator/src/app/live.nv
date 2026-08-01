@@ -92,7 +92,7 @@ fn live_fetch_weather(id str, lat f64, lon f64) Net Time -> Result[SourceData, A
                             ro req = "GET /v1/forecast?latitude=${lat}&longitude=${lon}&daily=temperature_2m_max&forecast_days=1 HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n"
                             match stream.write_all(req.bytes()) {
                                 Err(e) => { stream.close(); Err(AggError.Transport("tls write: ${e}")) }
-                                Ok(_) => match stream.read_to_vec(8192) {
+                                Ok(_) => match stream.read_bytes(8192) {
                                     Err(e) => { stream.close(); Err(AggError.Transport("tls read: ${e}")) }
                                     Ok(bytes) => { stream.close(); Ok(SourceData { id, payload: bytes }) }
                                 }

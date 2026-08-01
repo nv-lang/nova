@@ -49,7 +49,7 @@ fn fetch_one(id str, latency_ms int, should_fail bool, idx int) Net Time -> Resu
     // No explicit `close()`: `TcpStream consume @cleanup` (D432 affine) closes
     // the stream on every scope exit, including the `?` early-return paths.
     consume stream = TcpStream.connect(addr).map_err(|e| AggError.Transport(e.to_str()))?
-    ro bytes = stream.read_to_vec(64).map_err(|e| AggError.Transport(e.to_str()))?
+    ro bytes = stream.read_bytes(64).map_err(|e| AggError.Transport(e.to_str()))?
     Ok(SourceData { id, payload: bytes })
 }
 

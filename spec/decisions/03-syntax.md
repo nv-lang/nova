@@ -8828,7 +8828,7 @@ cleanup-путях выхода (R2), cancel-shield (R3), LIFO-композиц�
 ```nova
 fn serve(consume stream TcpStream) Net Fail[NetError] -> () {
     consume stream {                          // re-consume owned-параметра
-        ro banner = stream.read_to_vec(64)?   // throw → cleanup(Failure) → закрыт
+        ro banner = stream.read_bytes(64)?   // throw → cleanup(Failure) → закрыт
         stream.write_all("hello".bytes())?
     }
     // stream consumed — использование после блока = compile error (D131)

@@ -6472,7 +6472,12 @@ user-visible эффект, высокий churn) — только задокум
 структурная конформность `io.Read`/`io.Write` (Plan 176 Ф.4(b), поверх byte-surface
 D407 Ф.2-Ф.4). `@flush()` — no-op (TCP не буферизован на стороне Nova, тот же
 контракт, что `File`, D322/D323). **Остальной `Net`-эффект не тронут**:
-`write_all`/`read_to_vec`/`read_text`/`write_str`, `TcpReadHalf`/`TcpWriteHalf`,
+`write_all`/`read_bytes`/`read_text`/`write_str`, `TcpReadHalf`/`TcpWriteHalf`,
+
+> **AMEND (2026-08-01, владелец):** `@read_to_vec` переименован в `@read_bytes` —
+> симметрия content-пары с `@read_text` (прецедент имени: `ReadBuffer.@read_bytes`);
+> свежие D-блоки (Plan 83.12, teardown-протокол D-раздела runtime) уже использовали имя `read_bytes` —
+> std приведён в соответствие. Жёсткое переименование без алиаса (до релиза).
 `UdpSocket`, `resolve` — все по-прежнему возвращают `NetError` напрямую.
 
 **Координация 178:** `HttpError.ErrSource.Net(NetError)` (`std/http/error.nv`)

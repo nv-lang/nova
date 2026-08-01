@@ -13,7 +13,7 @@
 //
 // Plan 176 Ф.4 (Q3): `TcpStream.@read`/`@write` now return `io.IoError`
 // (io.Read/io.Write conformance), while every other `Net`-effect op
-// (bind/connect/accept/write_all/read_to_vec/...) still returns `NetError` —
+// (bind/connect/accept/write_all/read_bytes/...) still returns `NetError` —
 // `must_io` is the `IoError` twin of `must`, used ONLY at direct `@read`/
 // `@write` call sites below.
 

@@ -139,7 +139,7 @@ export fn NetError @to_error_kind() -> ErrorKind {
 /// Build a shared `io.IoError` from this `NetError` (Q3 projection + `op` for
 /// diagnostics). Used to give `TcpStream` structural `io.Read`/`io.Write`
 /// conformance without changing the `Net` effect's own `NetError` surface
-/// (`write_all`/`read_to_vec`/`read_text`/the split halves keep returning
+/// (`write_all`/`read_bytes`/`read_text`/the split halves keep returning
 /// `NetError` directly).
 #stable(since = "0.1")
 export fn NetError @to_io_error(op str) -> IoError => IoError.new(@to_error_kind(), op)
