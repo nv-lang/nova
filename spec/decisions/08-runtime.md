@@ -15,7 +15,7 @@ static-состояния.
 | [D73](#d73-from--into-protocol-пара-с-авто-выводом) | `From` / `Into` protocol-пара с авто-выводом |
 | [D74](#d74-математические-операции-на-числовых-типах--instance-методы) | Математические операции на числовых типах — instance-методы |
 | [D77](#d77-tryfrom--tryinto-protocol-пара-расширение-d73-для-fallible-конверсий) | `TryFrom` / `TryInto` — расширение D73 для fallible-конверсий |
-| [D76](#d76-mem-эффект--runtime-introspection-для-leakgrowth-тестов) | `Mem` эффект — runtime introspection для leak/growth тестов |
+| [D76](#d76-mem--runtime-introspection-для-leakgrowth-тестов) | `Mem` — runtime introspection для leak/growth тестов (⚠️ AMEND 2026-08-01: понижен из эффекта в неймспейс) |
 | [D81](#d81-assertcond-vs-debug_assertcond--build-mode-семантика) | `assert(cond)` vs `debug_assert(cond)` — build-mode семантика |
 | [D141](#d141-примитивы-доступа-к-памяти--byte_at--bulk-slice-операции) | Примитивы доступа к памяти — `byte_at` / bulk slice-операции |
 | [D177](#d177-str-nova-body-dispatch--plan-54-ф2-extension) | `str` Nova-body dispatch — Plan 54 Ф.2 extension |
@@ -1270,27 +1270,35 @@ vtable-параметры — когда тип статичен.
 
 #### Instrumental effects — observability, ambient
 
-`Mem` ([D76](#d76)) и `Trace` — **не влияют** на результат программы,
-только на наблюдаемость. Программист **не декларирует** их в
-сигнатуре; компилятор не лифтит через D28-inference.
+`Trace` — **не влияет** на результат программы, только на
+наблюдаемость. Программист **не декларирует** его в сигнатуре;
+компилятор не лифтит через D28-inference.
+
+> **AMEND ([M-mem-effect-demote-to-namespace], owner decision
+> 2026-08-01):** `Mem` УБРАН из этой секции/таблицы — он больше не
+> эффект (см. [D76](#d76-mem--runtime-introspection-для-leakgrowth-тестов) AMEND). Ровно тот же аргумент,
+> которым эта секция обосновывала "instrumental, ambient" статус
+> `Mem` (не влияет на результат, не декларируется в сигнатуре),
+> оказался, при честной проверке (нет vtable/handler/mock), доводом,
+> что `Mem` — namespace, а не эффект вовсе.
 
 ```nova
 // Программист пишет:
 fn parse_data(s str) -> Data { ... }
 
-// Внутри может быть Trace.span("parse"), Mem.alloc_count() — это
-// implementation detail, в сигнатуру НЕ лифтится.
+// Внутри может быть Trace.span("parse") — это implementation detail,
+// в сигнатуру НЕ лифтится. (`Mem.alloc_count()` тоже implementation
+// detail, но уже НЕ как эффект — D76 AMEND, namespace-вызов.)
 ```
 
 **Ambient capability — прецедент `Async` (D14/D62).** Если в скоупе
 нет active handler для instrumental эффекта — runtime-panic
-(`RuntimeError.NoHandler("Mem")` через [D65](04-effects.md#d65)),
+(`RuntimeError.NoHandler("Trace")` через [D65](04-effects.md#d65)),
 **не compile error**.
 
 | Эффект | Категория |
 |---|---|
-| `Mem` | instrumental, ambient |
-| `Trace` | instrumental, ambient |
+| `Trace` | instrumental, ambient — **не реализован**; вопрос «эффект ради экспортёров vs неймспейс» (прецедент `Mem`/D76 AMEND) решается по факту реализации (owner decision 2026-08-01) |
 
 **Зачем разделять:**
 
@@ -2845,19 +2853,44 @@ Backward-compat: `try_parse` в существующих файлах (semver.nv
 
 ---
 
-## D76. `Mem` эффект — runtime introspection для leak/growth тестов
+## D76. `Mem` — runtime introspection для leak/growth тестов
 
 > **Status:** active. **Реализовано** в bootstrap'е (2026-05-06).
 > Тесты: `nova_tests/runtime/memory_growth.nv`.
+>
+> **AMEND ([M-mem-effect-demote-to-namespace], owner decision 2026-08-01,
+> окно p-eff-hygiene) — `Mem` ПОНИЖЕН из эффекта в неймспейс.** Вопрос
+> владельца: «зачем `Mem` эффект, почему не неймспейс?». Ответ:
+> декоративный статус — все три определяющих свойства эффекта
+> (vtable, handler, mock) у `Mem` ОТСУТСТВОВАЛИ с самого начала (см.
+> «Семантика» ниже — «Нет user-handler'а» было написано в этом же
+> D-block в момент заведения), а собственный original-rationale ниже
+> («vtable добавляет лишний indirect call который сам бы изменил
+> alloc-pattern») — это АРГУМЕНТ ПРОТИВ effect-hood, не за него: если
+> vtable-косвенность была бы недопустима ДАЖЕ ПРИ РЕАЛИЗАЦИИ, значит
+> `Mem` никогда не был эффектом в полном смысле — он был статик-
+> namespace'ом с effect-синтаксисом сверху. Понижен до прецедента
+> `RawMem` (`std/src/runtime/raw_mem.nv`) — plain `export type Mem`
+> (unit-тип) + `export fn Mem.<op>()` static-методы поверх `extern "C"`
+> (`nova_gc_alloc_count`/`nova_gc_free_count`/`nova_gc_live_count`/
+> `nova_gc_reset_stats`, напрямую, без промежуточного `Nova_Mem_*`-слоя).
+> **Синтаксис вызова у потребителей НЕ меняется** (`Mem.alloc_count()`
+> и т.д. — тот же текст). Детали — «Реализация (актуальная, после
+> амендмента)» ниже; исходный текст секции сохранён как «Реализация
+> (bootstrap, ДО амендмента)» для архива. `Trace` (упомянут в D26-
+> таблице по соседству) НЕ трогается этим амендментом — не реализован,
+> вопрос «эффект ради экспортёров или неймспейс» решается по факту
+> реализации (owner note, 2026-08-01).
 
 ### Что
 
-Built-in эффект `Mem` даёт Nova-коду доступ к runtime-счётчикам
-аллокаций. Цель — **regression detection**: тест запоминает
-`Mem.alloc_count()` до и после горячего кода и assert'ит, что прирост
-остался в разумном бюджете. Если codegen начнёт генерировать в N раз
-больше аллокаций (баг типа "alloc-per-iter увеличился на порядок"),
-тест поймает это сразу.
+`Mem` — namespace-тип (ДО амендмента: built-in эффект — см. AMEND выше),
+даёт Nova-коду доступ к runtime-счётчикам аллокаций. Цель —
+**regression detection**: тест запоминает `Mem.alloc_count()` до и
+после горячего кода и assert'ит, что прирост остался в разумном
+бюджете. Если codegen начнёт генерировать в N раз больше аллокаций
+(баг типа "alloc-per-iter увеличился на порядок"), тест поймает это
+сразу.
 
 ### Операции
 
@@ -2871,20 +2904,21 @@ Mem.reset()       -> ()    // zero stats counters (for per-test isolation)
 Числа — это **счётчики вызовов**, не байты. Этого достаточно для
 поимки регрессий "1 alloc на итерацию стало 10".
 
-### Семантика
+### Семантика (актуальная, после амендмента)
 
-- `Mem` pre-registered как built-in эффект (как `Time`, `Fail`).
-  Compiler не требует `Mem` в сигнатуре функции — это ambient
-  capability (D11 / D62-style).
-- **Нет user-handler'а:** в отличие от `Time` и `Fail`, операции
-  `Mem` не имеют vtable; они эмитируются прямо в `Nova_Mem_*`
-  inline-функции, которые ходят к runtime-counters.
-  *Причина:* эти операции должны быть **наблюдаемыми с очень
-  низкими накладными расходами** — vtable добавляет лишний indirect
-  call который сам бы изменил alloc-pattern. И смысла переопределять
-  их нет (это не business effect — это runtime-факт).
+- `Mem` — **не эффект**: `export type Mem` (unit-тип, namespace),
+  `std/prelude/effects.nv`. Compiler не требует `Mem` в сигнатуре
+  функции по той же причине, по которой не требует `RawMem` — это
+  обычный тип с static-методами, не capability.
+- **Нет и не было user-handler'а/vtable:** `Mem.alloc_count()`/etc.
+  компилируются как ordinary static-method C-функции
+  (`Nova_Mem_static_alloc_count` — генерируемая, не hand-written),
+  каждая — тонкая обёртка над `extern "C" fn nova_gc_alloc_count()`/
+  etc. (прямой FFI-вызов, нулевая косвенность — сильнее исходного
+  «vtable добавил бы indirect call» rationale: теперь НЕТ ДАЖЕ
+  effect-dispatch слоя).
 
-### Реализация
+### Реализация (актуальная, после амендмента)
 
 - **`compiler-codegen/nova_rt/alloc.h`** — runtime-функции
   `nova_gc_alloc_count`, `nova_gc_free_count`, `nova_gc_live_count`,
@@ -2892,11 +2926,26 @@ Mem.reset()       -> ()    // zero stats counters (for per-test isolation)
 - **`compiler-codegen/nova_rt/alloc.c`** (Phase-0 plain malloc) —
   считает `nova_alloc` calls; `free_count` всегда 0 (`release`
   no-op). Достаточно для growth-rate тестов.
+- **`std/src/prelude/effects.nv`** — `export type Mem` + `extern "C"
+  fn nova_gc_alloc_count()`/etc. (D282 literal-name binding) +
+  `export fn Mem.alloc_count()`/etc. (Nova-body wrapper, static-method
+  form — same shape as `RawMem.copy_n[T]` в `std/src/runtime/raw_mem.nv`).
+- **`compiler-codegen/nova_rt/effects.h`** — старые `Nova_Mem_*`
+  inline-обёртки УДАЛЕНЫ (мёртвый код после амендмента — генерируемый
+  `Nova_Mem_static_*` заменяет их).
+- **`compiler-codegen/src/codegen/emit_c.rs`** — pre-populated `Mem`
+  effect-schema, `RUNTIME_DEFINED_TYPES`/`BUILTIN_VTABLE_NAMES`
+  записи для `"Mem"` УДАЛЕНЫ; `Mem.*`-вызовы идут через ОБЫЧНЫЙ
+  static-method codegen путь (тот же, что `RawMem.*`), без
+  effect-специфичного кода.
+
+### Реализация (bootstrap, ДО амендмента — архив)
+
 - **`compiler-codegen/nova_rt/effects.h`** — `Nova_Mem_*` inline-
-  обёртки.
+  обёртки (удалены амендментом выше).
 - **`compiler-codegen/src/codegen/emit_c.rs`** — `effect_schemas`
   pre-populated с `Mem` schema; standard effect-call dispatch
-  работает (`Mem.live()` → `Nova_Mem_live()`).
+  работал (`Mem.live()` → `Nova_Mem_live()`).
 
 ### Bootstrap-ограничения
 

@@ -22,7 +22,9 @@ SWEEP="$ROOT/docs/plans/221.1-bug-sweep.md"
 tmpb="$(mktemp)"; tmps="$(mktemp)"
 grep -oE '\[M-[a-z0-9_.-]+\]' "$BACKLOG" | tr -d '[]' | sort -u > "$tmpb"
 grep -oE 'M-[a-z0-9_.-]+' "$SWEEP" | sort -u > "$tmps"
-missing=$(comm -23 "$tmpb" "$tmps" | comm -23 - <(sort -u "$BASELINE"))
+# tr -d '\r': git autocrlf может пересоздать baseline с CRLF на Windows-чекауте
+# (прецедент 2026-08-01: merge p-eff-hygiene → comm перестал матчить ВСЁ).
+missing=$(comm -23 "$tmpb" "$tmps" | comm -23 - <(tr -d '\r' < "$BASELINE" | sort -u))
 rm -f "$tmpb" "$tmps"
 fail=0
 [ -n "$missing" ] && fail=1

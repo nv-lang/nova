@@ -1,0 +1,33 @@
+// EXPECT_COMPILE_ERROR [E_DEFAULT_HANDLER_SUSPEND] calls suspend-op `Time.sleep` directly
+
+// №246 (D431 amend, [M-default-handler-factory-yield-point-ban],
+// 2026-08-01): a `#default_handler` factory's CONSTRUCTION-TIME code
+// (everything before it returns the `Effect[X]` literal) must not call a
+// suspend-op — `check_default_handlers` new `E_DEFAULT_HANDLER_SUSPEND`
+// diagnostic. Rationale: per-fiber effect snapshots (effects.h) run the
+// factory AT MOST ONCE per cold ambient-install line; suspending
+// mid-construction hands the OS thread to a second fiber, which can
+// re-enter the SAME still-NULL slot and construct the handler a SECOND
+// time (double-construction).
+//
+// `Time.sleep(...)` called DIRECTLY in the factory body BEFORE the
+// `effect D431Cache { ... }` literal — banned.
+module neg.d431_default_handler_suspend_neg
+
+import std.time.duration
+
+type D431Cache effect {
+    get() -> int
+}
+
+#default_handler
+fn bad_default() -> Effect[D431Cache] {
+    Time.sleep(1.to_millis())
+    effect D431Cache {
+        get() -> int => 42
+    }
+}
+
+test "probe" {
+    ro _x = D431Cache.get()
+}

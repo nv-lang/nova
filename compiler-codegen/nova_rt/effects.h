@@ -1693,30 +1693,14 @@ static inline void nova_effect_snapshot_restore(const NovaEffectSnapshot* snap) 
     }
 }
 
-/* ---- Built-in `Mem` effect — runtime introspection for leak/growth tests ----
- *
- * Operations:
- *   alloc_count() -> int : total nova_alloc since gc_init/reset_stats
- *   free_count()  -> int : total frees (plain malloc backend → 0)
- *   live()        -> int : alloc_count - free_count
- *   reset()       -> ()  : zero stats counters (per-test isolation)
- *
- * No handler vtable: these are direct runtime calls. Used by Nova test code
- * to assert that hot loops don't blow up allocation counters. Numbers are
- * counts (not bytes) — sufficient for catching regressions where one alloc
- * per iteration becomes ten. */
-static inline nova_int Nova_Mem_alloc_count(void) {
-    return (nova_int)nova_gc_alloc_count();
-}
-static inline nova_int Nova_Mem_free_count(void) {
-    return (nova_int)nova_gc_free_count();
-}
-static inline nova_int Nova_Mem_live(void) {
-    return (nova_int)nova_gc_live_count();
-}
-static inline nova_unit Nova_Mem_reset(void) {
-    nova_gc_reset_stats();
-    return NOVA_UNIT;
-}
+/* `Nova_Mem_alloc_count`/`_free_count`/`_live`/`_reset` REMOVED (D76 amend,
+ * [M-mem-effect-demote-to-namespace], 2026-08-01): `Mem` is no longer an
+ * effect (no vtable, no per-fiber handler-slot dispatch — it never had
+ * either), so these hand-written direct-C-dispatch wrappers are dead.
+ * `Mem.alloc_count()`/etc. (std/prelude/effects.nv) now compile to ordinary
+ * generated static-method C functions (`Nova_Mem_static_alloc_count` etc.)
+ * that call `nova_gc_alloc_count`/`nova_gc_free_count`/`nova_gc_live_count`/
+ * `nova_gc_reset_stats` (declared in `alloc.h`) directly — no runtime-header
+ * wrapper needed. */
 
 #endif /* NOVA_RT_EFFECTS_H */

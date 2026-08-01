@@ -323,7 +323,8 @@ impl SumSchemaRegistry {
     /// **NOT included** (per design doc §«Что не делаем»):
     /// - `Error` record schema — записывается в `record_schemas`, не sum.
     /// - `ChannelPair` — record-only.
-    /// - `Fail` / `Time` / `Mem` — effects, not sums.
+    /// - `Fail` / `Time` — effects, not sums. `Mem` is neither (D76 amend,
+    ///   [M-mem-effect-demote-to-namespace]: a plain namespace type now).
     pub fn init_hardcoded_baseline(&mut self) {
         // [M-172.1-U6-sumschema-baseline-nv] §3-долг: захардкоженные `variants`
         // ниже (Option {Some/None}, Result {Ok:nova_int, Err:nova_str},
