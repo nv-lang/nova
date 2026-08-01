@@ -1,0 +1,48 @@
+// ICE-пачка п.1 companion: [M-named-tuple-positional-defaults].
+//
+// docs/plans/221.1-bug-sweep.md flagged a spec-vs-impl discrepancy: D215
+// amend's own worked examples (02-types.md ~12928 "named tuple field
+// defaults") only ever show NAMED-arg constructor calls
+// (`Complex(re: 3.0)`, `Rect(x: 1.0, y: 1.0)`) for a type with defaulted
+// fields, and the backlog note reads this as "spec requires named syntax".
+// Empirically (this fixture, test-build verified, matching the shapes used
+// throughout `std/src/math/int128.nv`'s `i128(hi, lo)` positional
+// constructor calls): POSITIONAL constructor calls against a named tuple
+// with a defaulted SUFFIX already work correctly today — trailing omitted
+// positional args get the declared default injected in declaration order,
+// exactly per D215 amend's "Arity check" semantics (min_arity..max_arity),
+// independent of named vs positional call syntax. No compiler defect found;
+// this is a spec-example-coverage gap (the amend never SHOWED a positional
+// example), not a functional bug — recorded here as a verified-non-bug
+// regression pin (mirrors the `[M-negative-i64-to-uint-cast-clamps-zero]`
+// precedent: ЗАКРЫТ-НЕ-БАГ after spec/impl cross-check).
+module spec_tests.conformance
+
+type MIcePdComplex(m_ice_pd_re f64 = 0.0, m_ice_pd_im f64 = 0.0)
+type MIcePdRect(m_ice_pd_x f64, m_ice_pd_y f64, m_ice_pd_w f64 = 100.0, m_ice_pd_h f64 = 50.0)
+
+test "п.1 companion: all-positional ctor call on a fully-defaulted named tuple" {
+    ro z = MIcePdComplex(3.0, 4.0)
+    assert(z.m_ice_pd_re == 3.0, "positional re")
+    assert(z.m_ice_pd_im == 4.0, "positional im")
+}
+
+test "п.1 companion: partial-positional ctor call injects trailing defaults" {
+    ro z = MIcePdComplex(3.0)
+    assert(z.m_ice_pd_re == 3.0, "provided re")
+    assert(z.m_ice_pd_im == 0.0, "omitted im gets its default")
+}
+
+test "п.1 companion: mixed required+optional fields, partial positional call" {
+    ro r = MIcePdRect(1.0, 2.0)
+    assert(r.m_ice_pd_x == 1.0, "required x")
+    assert(r.m_ice_pd_y == 2.0, "required y")
+    assert(r.m_ice_pd_w == 100.0, "omitted optional w gets its default")
+    assert(r.m_ice_pd_h == 50.0, "omitted optional h gets its default")
+}
+
+test "п.1 companion: mixed required+optional fields, one optional overridden positionally" {
+    ro r = MIcePdRect(1.0, 2.0, 30.0)
+    assert(r.m_ice_pd_w == 30.0, "provided w overrides default")
+    assert(r.m_ice_pd_h == 50.0, "still-omitted h gets its default")
+}

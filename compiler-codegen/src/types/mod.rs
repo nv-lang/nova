@@ -19928,6 +19928,81 @@ impl<'a> TypeCheckCtx<'a> {
                 // выводится из closure-аргумента при известном carrier-subst.
                 self.resolve_method_return_with_closure_args(&recv_ty, name, call_args, scope, call_id)
             })
+            .or_else(|| {
+                // [M-named-tuple-field-accessor-on-call-ice] (ICE-пачка п.1): a
+                // zero-arg call-syntax field read (`obj.field()`) on a Record/
+                // NamedTuple receiver whose type has NO declared method named
+                // `field` (checked twice above: `resolve_instance_method_return_
+                // arity` and the closure-arg fallback both missed) previously
+                // fell all the way through to codegen's P67-LEGACY terminal
+                // panic — `f3_check_member_ctx`'s field-match arm (below, in
+                // this same impl) annotates the INNER Member sub-expr's
+                // `ExprId` unconditionally (no `is_call_func` gate on the
+                // plain-field branch, unlike the same-name-method branch a few
+                // lines above it, which explicitly documents why call-position
+                // must NEVER get the field annotation when a method exists) —
+                // but nothing annotated the OUTER Call's own `ExprId`, so
+                // `resolved_types`/`resolved_callees` had no entry for the call
+                // node itself and codegen's return-type cascade panicked
+                // (`obj_ty="NovaTuple_X"`/`"Nova_X*"`, `obj=Call`/`Ident(..)`).
+                // A bare `.field` (no parens) already worked (`f3_check_member_
+                // ctx`'s field arm covers it) — only the call-syntax form was
+                // unreachable. No spec sanction exists for `.field()` as a
+                // GENERAL field-read sugar (D117 reserves call-syntax for
+                // EXPLICITLY DECLARED accessor methods like `cap`/`len`), but
+                // the checker already silently accepted the call-syntax parse
+                // (no diagnostic) before this fix — turning it into a hard
+                // error now would be a new user-facing regression on a form
+                // that at least *parses*; annotating the channel here keeps
+                // the parse-accepted surface working, consistent with §4а
+                // (no ICE on any accepted input) and the brief's stated fix
+                // channel ("checker annotation").
+                if call_arity != 0 || explicit_type_args.is_some() {
+                    return None;
+                }
+                self.field_zero_arg_call_return(&recv_ty, name)
+            })
+    }
+
+    /// See the `[M-named-tuple-field-accessor-on-call-ice]` producer above:
+    /// resolves `obj.field()` (zero-arg call syntax) to `field`'s OWN type when
+    /// `recv_ty`'s underlying declared type is a Record or NamedTuple with a
+    /// field literally named `name` and no colliding same-named method (the
+    /// caller already tried real method resolution and missed). Mirrors the
+    /// substitution the bare-`.field` `f3_check_member_ctx` arm performs
+    /// (`subst_receiver_generics` over the type's own generics), so a generic
+    /// record/named-tuple field substitutes the SAME concrete type either way.
+    fn field_zero_arg_call_return(&self, recv_ty: &TypeRef, name: &str) -> Option<TypeRef> {
+        let mut peeled = recv_ty;
+        loop {
+            match peeled {
+                TypeRef::Readonly(i, _) | TypeRef::Mut(i, _) => peeled = i,
+                _ => break,
+            }
+        }
+        let TypeRef::Named { path, generics: args, .. } = peeled else { return None };
+        let type_name = path.last()?;
+        if self.t_provides_method(type_name, name) {
+            // A real method with this name exists — never shadow it with a
+            // field annotation from a call-position (mirrors the same-name
+            // guard in `f3_check_member_ctx`).
+            return None;
+        }
+        let td = self.types.get(type_name)?;
+        let field_ty: &TypeRef = match &td.kind {
+            TypeDeclKind::Record(fields) => &fields.iter().find(|f| f.name == name)?.ty,
+            TypeDeclKind::NamedTuple(fields) => &fields.iter().find(|f| f.name == name)?.ty,
+            _ => return None,
+        };
+        // Exclude a Func-typed field (a stored closure/fn-pointer field IS
+        // meant to be invoked with call syntax, args aside — codegen's own
+        // dispatch cascade may still have a legitimate route for that we must
+        // not shadow here; only a PLAIN-VALUE field masquerading as a call is
+        // this producer's target).
+        if matches!(field_ty, TypeRef::Func { .. }) {
+            return None;
+        }
+        Some(self.subst_receiver_generics(field_ty, &td.generics, args))
     }
 
     /// 172.1.2 C6(a): посев типов closure-параметров из СУБСТИТУИРОВАННОЙ

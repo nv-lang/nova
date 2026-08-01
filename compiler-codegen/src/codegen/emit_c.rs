@@ -43899,6 +43899,30 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Fallback: generic member call (field-function or unknown)
                 let accessor = if Self::is_value_type(&obj_ty) { "." } else { "->" };
                 let obj_c = self.emit_expr(obj)?;
+                // [M-named-tuple-field-accessor-on-call-ice] (ICE-пачка п.1): every
+                // OTHER branch above this terminal fallback already tried and
+                // failed to find a real declared method for (receiver-type,
+                // `method`) — this comment's own "field-function or unknown"
+                // wording concedes the ambiguity. The checker (types/mod.rs
+                // `field_zero_arg_call_return`, called from `infer_method_call_
+                // channel_type`'s LAST `.or_else`) resolves a zero-arg call-
+                // syntax field read (`obj.field()`, no method of that name, field
+                // NOT itself Func-typed) to the field's own type and channels it
+                // into `resolved_types[call_id]` — the ONLY producer that reaches
+                // that channel for a call whose callee has no method_overloads
+                // entry (every method-call producer either finds a real method,
+                // in which case codegen dispatches it via a branch ABOVE this
+                // one and never reaches here, or misses entirely and leaves
+                // `resolved_types[call_id]` unset). So an entry here, at this
+                // exact point, unambiguously means "plain-field zero-arg call
+                // sugar" — emit the bare member access, no trailing `(args)` (a
+                // stored Func-typed field is excluded by the checker producer
+                // itself, so a real callable field call is UNCHANGED — it never
+                // gets an entry here and falls through to the old wrapped-call
+                // string below, exactly as before this fix).
+                if args.is_empty() && self.resolved_types.contains_key(&call_id) {
+                    return Ok(format!("{obj}{acc}{method}", obj = obj_c, acc = accessor, method = method));
+                }
                 format!("{obj}{acc}{method}", obj = obj_c, acc = accessor, method = method)
             }
             ExprKind::Path(parts) => {
