@@ -114,7 +114,7 @@ export fn Sql @with_filter(predicate Sql) -> Sql =>
 //
 // Template получается соединением `parts` через `?`-плейсхолдер, args
 // проходят как параметры запроса.
-/// D48 tag function для `sql` template literal. Сегменты `parts` соединяются
+/// Tag function для `sql` template literal. Сегменты `parts` соединяются
 /// через `?`-placeholders. Args передаются как параметры запроса.
 #stable(since = "0.1")
 export fn sql(parts []str, args []SqlValue) -> Sql =>
