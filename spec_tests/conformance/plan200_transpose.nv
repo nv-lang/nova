@@ -1,0 +1,122 @@
+// Plan 200 (продолжение flat_map_err) — `transpose`: `Option[Result[T,E]] ->
+// Result[Option[T], E]`. Решение владельца 2026-08-01 (см. AMEND spec/decisions/
+// 08-runtime.md D26): второй кандидат того же захода, ОДОБРЕН, но был
+// ЗАБЛОКИРОВАН компилятором — `[M-nested-generic-receiver-method-mono]`
+// (метод на вложенно-generic приёмнике/возврате CC-FAIL'ился при mono).
+// Фикс: реестр 221.1 №247.
+//
+// Движущий кейс: строгая конфиг-политика различает «значения нет» (легитимный
+// дефолт) от «значение есть, но битое» (жёсткая ошибка) — `config.get(k)
+// .map(|s| s.to_int()).transpose()? ?? default` читает оба исхода раздельно,
+// то, что plain `??`/`match` на не-транспонированном `Option[Result]` не может
+// выразить без ручного дублирования None-vs-Err ветки.
+module spec_tests.conformance
+
+// ── три исхода напрямую ───────────────────────────────────────────────
+
+test "transpose: Some(Ok(v)) -> Ok(Some(v))" {
+    ro a Option[Result[int, str]] = Some(Ok(5))
+    ro b = a.transpose()
+    match b {
+        Ok(opt) => match opt {
+            Some(v) => assert(v == 5),
+            None => assert(false, "ожидался Some(5)"),
+        },
+        Err(_) => assert(false, "ожидался Ok"),
+    }
+}
+
+test "transpose: Some(Err(e)) -> Err(e)" {
+    ro a Option[Result[int, str]] = Some(Err("bad"))
+    ro b = a.transpose()
+    match b {
+        Ok(_) => assert(false, "ожидался Err"),
+        Err(e) => assert(e == "bad"),
+    }
+}
+
+test "transpose: None -> Ok(None)" {
+    ro a Option[Result[int, str]] = None
+    ro b = a.transpose()
+    match b {
+        Ok(opt) => match opt {
+            Some(_) => assert(false, "ожидался None"),
+            None => assert(true),
+        },
+        Err(_) => assert(false, "ожидался Ok(None)"),
+    }
+}
+
+// ── сквозной движущий кейс: конфиг-политика «нет=дефолт / мусор=ошибка» ──
+
+// `ParseIntError` (a record error type) can't yet flow through
+// `Option[Result[..]]`'s own C-declaration registration — a SEPARATE,
+// pre-existing gap (confirmed independent of `transpose`/receiver-mono:
+// reproduces on a bare `Option[Result[int, ParseIntError]]` local with no
+// custom method involved at all). `.map_err(|_| "...")` coerces to a
+// scalar `str` error, sidestepping that unrelated gap while keeping the
+// driving case's shape (parse-failure surfaces as a hard `Err`).
+fn plan200_transpose_port(config HashMap[str, str], key str, default_port int) -> Result[int, str] {
+    ro port = config.get(key)
+        .map(|s| s.to_int().map_err(|_| "invalid port"))
+        .transpose()? ?? default_port
+    Ok(port)
+}
+
+test "transpose: движущий кейс — порт не задан → дефолт (не ошибка)" {
+    ro config HashMap[str, str] = ["host": "localhost"]
+    match plan200_transpose_port(config, "port", 8080) {
+        Ok(p) => assert(p == 8080),
+        Err(_) => assert(false, "отсутствующий ключ — не ошибка, дефолт"),
+    }
+}
+
+test "transpose: движущий кейс — порт задан и валиден → парсится" {
+    ro config HashMap[str, str] = ["host": "localhost", "port": "9090"]
+    match plan200_transpose_port(config, "port", 8080) {
+        Ok(p) => assert(p == 9090),
+        Err(_) => assert(false, "валидный порт должен распарситься"),
+    }
+}
+
+test "transpose: движущий кейс — порт задан, но мусор → жёсткая ошибка" {
+    ro config HashMap[str, str] = ["host": "localhost", "port": "not-a-port"]
+    match plan200_transpose_port(config, "port", 8080) {
+        Ok(_) => assert(false, "битый порт обязан дать Err, не тихий дефолт"),
+        Err(_) => assert(true),
+    }
+}
+
+// ── второй инстанс типов в том же CU ──────────────────────────────────
+//
+// NOT INCLUDED (найдено этой же волной, отдельный маркер): `Option[Result[
+// str, int]]` (T/E — ЛЮБАЯ пара, отличная от буквально `(int, str)`) как
+// ВТОРОЙ инстанс `transpose` в одном CU CC-FAIL'ится — `NovaRes_nova_str_
+// nova_int` (или любая иная не-канон пара) остаётся недекларированным C-
+// typedef'ом, хотя (T,E)-подстановка внутри mono'd тела САМА корректна
+// (проверено чтением сгенерированного C — тело/сигнатура используют
+// правильные T=str, E=int). Корень: (nova_int,nova_str) — единственная
+// ЖЁСТКО прописанная в nova_rt/array.h пара (`NovaRes_nova_int_nova_str`);
+// ЛЮБАЯ другая пара нуждается в динамической регистрации через
+// `register_novares_decl`, чей typedef-буфер сплайсится ОДИН раз в маркер
+// `/*__NOVARES_TYPEDEFS__*/` — регистрация со стороны builtin Option/Result
+// `DeclaredBody`-диспетча (эта же волна проверила: и структурная RT-
+// подстановка, и принудительный вызов `resolved_type_to_c` на ПОЛНОМ RT
+// ресивера ДО диспетча — оба подтверждённо ПОПОЛНЯЮТ registry, ошибка
+// БАЙТ-В-БАЙТ идентична после обеих попыток) для НЕ-канонической пары не
+// доживает до сплайса — не ordering С-стороны splice (он один, "после
+// emit_module", т.е. в конце), похоже на отдельный pass/Emitter-инстанс
+// (probe vs real) чьи side-effects на `self` не переживают до финальной
+// сборки. НЕ входит в объём этого фикса ([M-nested-generic-receiver-
+// method-mono], реестр 221.1 №247) — маркер, суть которого «T/E-биндинг
+// внутри ОДНОГО mono», доказанно решён (см. фикстуры выше + repro-матрица
+// в отчёте окна). Новый маркер: `[M-nested-builtin-second-instance-
+// typedef-splice-gap]`, backlog-followups.md — заводится тем же коммитом.
+
+test "transpose: повторная инстанциация той же (T,E) пары в отдельном call site того же CU" {
+    ro second Option[Result[int, str]] = Some(Ok(11))
+    match second.transpose() {
+        Ok(opt) => match opt { Some(v) => assert(v == 11), None => assert(false) },
+        Err(_) => assert(false),
+    }
+}

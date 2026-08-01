@@ -229,6 +229,19 @@ fn Result[T, E] @flat_map[U](flat_map_fn fn(T) -> Result[U, E]) -> Result[U, E]
 fn Result[T, E] @flat_map_err[F](recover_fn fn(E) -> Result[T, F]) -> Result[T, F]
   => match @ { Ok(v) => Ok(v), Err(e) => recover_fn(e) }
 
+/// Swaps `Option[Result[T, E]]` for `Result[Option[T], E]` — the ONE
+/// combinator that distinguishes "no value" from "value present but
+/// broken" when both wrap the same slot. `Some(Ok(v)) -> Ok(Some(v))`,
+/// `Some(Err(e)) -> Err(e)`, `None -> Ok(None)`. Driving case: a strict
+/// config-lookup policy where "port not set" is a legitimate default and
+/// "port set to garbage" is a hard error — `config.get("port").map(|s|
+/// s.to_int()).transpose()? ?? default_port` reads the two failure modes
+/// apart, which plain `??`/`match` on the un-transposed `Option[Result]`
+/// cannot do without duplicating the None-vs-Err branch by hand.
+#stable(since = "0.1")
+fn Option[Result[T, E]] @transpose() -> Result[Option[T], E]
+  => match @ { Some(r) => match r { Ok(v) => Ok(Some(v)), Err(e) => Err(e) }, None => Ok(None) }
+
 /// `Ok(v) -> Some(v)`, `Err(_) -> None`. Discards error.
 #stable(since = "0.1")
 fn Result[T, E] @ok() -> Option[T] => match @ { Ok(v) => Some(v), Err(_) => None }
