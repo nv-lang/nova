@@ -25,7 +25,8 @@ structured-concurrency примитивы есть в языке, и как па
 | [D174](#d174-sync-primitives-consume-integration-plan-1039) | Consume guards V2 — `MutexGuard`, `ReadGuard`, `WriteGuard`, `Permit`, `OnceGuard` consume types; guard-returning API; D169–D171 cross-refs updated |
 | [D425](#d425-cas-возвращает-свидетеля-провала-compare_exchange-bool--resultt-plan-207) | CAS возвращает свидетеля провала: `compare_exchange`/`compare_exchange_weak` `bool` → `Result[(), T]` (amends D168 §1) |
 | [D426](#d426-atomic-семейство-консолидация-имён-atomicisizeatomicusize--atomicintatomicuint-легаси-atomicint-и-atomicptr-сняты-plan-207) | Atomic-семейство: консолидация имён — `AtomicIsize`/`AtomicUsize` → `AtomicInt`/`AtomicUint`, легаси `AtomicInt` и `AtomicPtr` сняты (amends D168, D425) |
-| [D439](#d439-supervised--прямая-блокирующая-операция-в-теле-без-spawn-plan-2211-162) | `supervised{}` — прямая блокирующая операция в теле без `spawn` парkуется штатно; не защищена дедлайном/токеном ЭТОГО scope (amends D14/D50/D71/D75) |
+| [D439](#d439-supervised--прямая-блокирующая-операция-в-теле-без-spawn-plan-2211-162) | `supervised{}` — прямая блокирующая операция в теле без `spawn` парkуется штатно (amends D14/D50/D71/D75); её "не защищена дедлайном/токеном ЭТОГО scope" boundary ОТМЕНЕНА амендментом D442 |
+| [D442](#d442) | `supervised(cancel:/timeout:/deadline:)` покрывает ВЕСЬ блок, включая прямую блокирующую операцию тела — retracts D439's boundary (amends D75/D408) |
 
 ---
 
@@ -7594,7 +7595,15 @@ address-sized, `intptr_t`/`uintptr_t` — Plan 133), а `AtomicPtr` был
 
 ## D439. `supervised{}` — прямая блокирующая операция в теле без `spawn` (Plan 221.1 №162)
 
-> **Статус:** ✅ landed (реестр 221.1 №162, P1, 2026-07-30). Amends
+> **Статус:** ✅ landed (реестр 221.1 №162, P1, 2026-07-30), **ограничение
+> «cancel:/timeout: не защищают прямую блокирующую операцию тела» (Правило,
+> третий пункт, и разбор в «Почему» ниже) ОТМЕНЕНО амендментом
+> [D442](#d442) (реестр 221.1 №165, 2026-08-01) — `cancel:`/`timeout:`
+> ОБЯЗАНЫ теперь покрывать и её. Текст этого D-блока ниже сохранён как
+> исторический разбор корневой причины D439-бага (`_nova_active_scope`/
+> `_nova_active_slot` не подменяются на время тела — это решение НЕ
+> отменяется, D442 его не трогает); НЕ читать раздел «Правило» ниже как
+> действующий — см. D442. Amends
 > [D14](#d14-fiber-runtime--невидимая-инфраструктура) (невидимая
 > приостановка — распространяет гарантию на `supervised`-тело без spawn),
 > [D50](#d50-concurrency-model-spawn-detach-blocking) (`spawn`-only
@@ -7783,12 +7792,172 @@ runtime TLS), а `spawn`'нутый ребёнок получает СВОЮ к�
   для зарегистрированных детей — без изменений, регресс-фикстуры D75/
   `supervised_drain_mn_guard`/`m107_supervised_spawn_option_fn_match_bind_call`
   проверены).
-- НЕ добавляет enforcement дедлайна/токена для НЕ-`spawn`'нутой прямой
-  блокирующей операции тела — см. Правило/Почему выше; сознательная,
-  явно задокументированная граница, не забытый случай.
+- ~~НЕ добавляет enforcement дедлайна/токена для НЕ-`spawn`'нутой прямой
+  блокирующей операции тела~~ — **ОТМЕНЕНО амендментом [D442](#d442)**
+  (реестр 221.1 №165, 2026-08-01): владелец классифицировал это как P1-баг
+  (не сознательную границу), «скобки не врут» — `cancel:`/`timeout:`
+  теперь покрывают ВЕСЬ блок, включая прямую блокирующую операцию тела.
 - НЕ трогает `parallel for` (`emit_parallel_for`) — его тело никогда не
   блокирует напрямую (всегда `for x in iter { spawn { body } }` +
   выделенный drain-fiber), эта форма бага структурно недостижима там.
+
+---
+
+## D442. `supervised(cancel:/timeout:/deadline:)` покрывает ВЕСЬ блок, включая прямую блокирующую операцию тела (Plan 221.1 №165)
+
+> **Статус:** ✅ landed (реестр 221.1 №165+№169, P1, 2026-08-01, окно
+> M:N/Vela). Retracts the "НЕ добавляет enforcement... для прямой
+> блокирующей операции тела" boundary of [D439](#d439-supervised--прямая-блокирующая-операция-в-теле-без-spawn-plan-2211-162)
+> (owner: «ДА», D439's own limitation classified as a bug, not a design
+> choice, once measured against the real serve()-shaped repro). Amends
+> [D75](#d75-supervisedcancel-tok--структурная-отмена-с-внешним-токеном)/
+> [D408](#d408-superviseddeadlinetimeout--областной-срок--отмена--timeouterror-plan-174)
+> (structural cancel / scope deadline — extends the covered surface).
+
+### Что
+
+Живое подтверждение (owner-verified, nova-polaris `src/net/serve.nv`'s own
+header comment, defect 3): `supervised(cancel: tok) { ... listener.accept()
+... }` with `accept()` called DIRECTLY in the block's own body (no inner
+`spawn`) never actually got interrupted by `tok.cancel(...)` — a 15s test
+timeout elapsed with the accept loop still parked. Wrapping the SAME call in
+an inner `spawn { ... }` worked. `timeout:`/`deadline:` had the identical gap
+(the join-loop's own deadline gate only starts AFTER every body statement,
+including a direct blocking one, has already returned).
+
+### Правило
+
+`cancel:`/`timeout:`/`deadline:` on `supervised` now cover the WHOLE block —
+a direct (non-`spawn`) blocking statement in the body is interrupted exactly
+like a registered `spawn`'d child would be, no `spawn` wrapper required.
+
+### Механика
+
+- `NovaFiberQueue` gains `owner_scope`/`owner_slot` — the OWNER coroutine's
+  REAL ambient `(_nova_active_scope, _nova_active_slot)`, snapshotted once
+  at `nova_scope_init` time (plain-value copy, no cleanup needed on any exit
+  path). D439's own finding stands unchanged: that TLS pair is deliberately
+  NOT repointed at the new scope during body execution — a direct blocking
+  op parks under the OWNER's real identity, not under the new scope. These
+  two fields are how the new scope's cancel/deadline machinery reaches it.
+- `nova_sched_cancel_pending_slot(scope, slot)` (`nova_sched.h`) — a
+  single-slot sibling of `nova_sched_cancel_all_pending`: invokes whatever
+  op is CURRENTLY, validly registered at `(scope, slot)` via the existing
+  D93 register/stop_cb protocol, exactly as if that op's OWN real scope had
+  been cancelled. Safe no-op if nothing (or something unrelated, later)
+  occupies the slot — same envelope as `nova_sched_wake`'s existing
+  `pco == NULL` guard (spurious-wake-tolerant by construction, not new
+  tolerance introduced for this).
+- `nova_scope_deliver_cancel` (the `cancel:` broadcast) additionally calls
+  `nova_sched_cancel_pending_slot(q->owner_scope, q->owner_slot)`.
+  `nova_cancel_token_cancel_reason`'s `bound_scope` branch — previously five
+  lines DUPLICATING `nova_scope_deliver_cancel`'s own body verbatim (a
+  maintenance hazard: the new targeted wake was almost added to only ONE of
+  the two copies) — is now a single call to `nova_scope_deliver_cancel`
+  itself (byte-identical behaviour, same five actions in the same order).
+- `timeout:`/`deadline:` additionally arm a **self-cleaning libuv timer at
+  scope ENTRY** (`nova_scope_arm_early_deadline`/`nova_scope_disarm_early_
+  deadline`), independent of `nova_supervised_run_impl`'s own (later,
+  join-loop) deadline gate. Its payload (`NovaEarlyDl`) is a plain
+  `(owner_scope, owner_slot)` VALUE copy on a **collectable** (`nova_alloc`,
+  not `nova_alloc_uncollectable`) heap block, freed by Boehm once
+  unreachable — never a pointer into the new scope's own stack frame, and
+  never manually freed (a first version manually freed it in the libuv
+  close_cb and crashed with a genuine use-after-free: `uv_close`'s close_cb
+  runs on a LATER loop iteration than the firing `timer_cb`, so the
+  unconditional disarm call right after the body could — and, reproducibly,
+  did — read already-freed memory).
+- The cancel-token BIND moved EARLIER — right after scope entry, before the
+  body runs, instead of right before `nova_supervised_run_cancel` (i.e.
+  strictly after every body statement, including the direct blocking one,
+  had already returned — which is exactly why `tok.cancel()` used to see
+  `bound_scope == NULL` mid-park and do nothing). The original delayed-bind
+  design existed to avoid a DIFFERENT hazard (a body that throws a genuine,
+  unrelated error directly would leave `tok` dangling-bound past
+  `nova_supervised_run_cancel`'s own unbind, which never runs). That hazard
+  is now covered by a narrow, LOCAL `NovaFailFrame` try/finally wrapped
+  around JUST the body-statement-execution window: unbind (if a cancel
+  token) + disarm the early-deadline timer + re-throw the same error
+  (`nova_rethrow_scope`, unchanged Plan 201 mechanism) on any escaping
+  throw. Gated on `cancel:` OR `timeout:/deadline:` being present — a plain
+  `supervised{}` emits neither the bind nor the guard, byte-identical to
+  before.
+- **№169 (nested deadline, same window):** `nova_scope_init`'s own deadline
+  inheritance reads the RUNTIME `_nova_active_scope` chain, which (per the
+  point above) does NOT see a directly (non-`spawn`) entered enclosing
+  `supervised{}` block — a LEXICALLY nested `supervised { supervised
+  (timeout:) { ... } }` therefore silently lost the outer block's tightened
+  deadline. Fixed by an ADDITIONAL, explicit `nova_deadline_combine` against
+  the LEXICALLY enclosing scope's own `deadline_ns`, known at codegen time
+  (`current_scope_queue`, still the outer value at that point) — a
+  compile-time channel, independent of the runtime TLS one. No-op (reads the
+  same already-correct value twice) for the pre-existing working case (a
+  `spawn`'d child's own nested `supervised{}`, where `_nova_active_scope`
+  already correctly equals the parent).
+
+### Гонко-анализ (STALE-slot-класс, mn-coding-conventions)
+
+- **Identity, not index (§5):** `nova_sched_cancel_pending_slot` acts on
+  WHATEVER is validly registered at `(owner_scope, owner_slot)` at the
+  moment it runs — it does not itself re-derive or cache an "expected"
+  fiber pointer. This is safe ONLY because it reuses the EXISTING D93
+  register/stop_cb protocol's own atomics (ACQUIRE-load of `pending_stop_cb`
+  paired with the RELEASE/SEQ_CST store in `nova_sched_register_pending`) —
+  no new state-machine, no new CAS point was introduced by this change; the
+  new caller is simply a second call-site into machinery `nova_sched_
+  cancel_all_pending` already exercises for every existing scope-cancel.
+- **Residual (documented, accepted) race:** if the OWNER coroutine's body
+  throws a genuine, unrelated error DIRECTLY (not via the guarded window —
+  impossible, since the guard now wraps exactly that) this class is closed;
+  the remaining, narrower residual is the early-deadline timer firing LATE
+  (its bounded, user-specified deadline) after the SAME coroutine has since
+  died and `owner_slot` was reused by an unrelated LATER fiber under
+  `owner_scope` — the stray `nova_sched_cancel_pending_slot` call then
+  targets that unrelated fiber's current op. Memory-safe (§5's own
+  wrong-fiber-but-safe envelope: the slot's OWN atomics gate any action),
+  the worst outcome is a spurious interrupt of unrelated, later work — a
+  functional (liveness) edge case, not memory corruption, and only reachable
+  through the disarm call already being skipped (guard's own catch-arm
+  disarms on every throw path it wraps).
+- **Verified NOT racy by construction:** the two new runtime functions
+  (`nova_sched_cancel_pending_slot`, `nova_scope_arm_early_deadline`/
+  `nova_scope_disarm_early_deadline`) never repoint `_nova_active_scope`/
+  `_nova_active_slot`, never allocate a scope slot, never touch `fibers[]`/
+  `parked[]` bookkeeping directly — the REJECTED "self-slot" approach
+  documented in D439 (double-registration → double-resume) is structurally
+  unreachable here; this design was chosen specifically to avoid
+  re-discovering that dead end.
+
+### Приёмка
+
+`std/src/net/supervised_cancel_accept_test.nv` — `cancel:`/`timeout:` each
+interrupt a direct-body `TcpListener.accept()` (no inner `spawn`), matching
+the serve()-shaped repro; ~~20 back-to-back runs, no flake~~ verified via a
+standalone harness outside `std/`'s own folder-module (see Границы below —
+`nova test std/src/net` is blocked by an UNRELATED pre-existing compiler bug,
+`[M-io-write-all-tcpstream-mono-cc-fail]`, that predates this window and is
+out of its scope). `std/src/concurrency/supervised_deadline_test.nv`
+(includes the №169 nested-deadline case) — 20/20 clean via `nova test`.
+
+### Границы
+
+- `Time.sleep()` specifically has a KNOWN, narrower remaining gap, NOT
+  closed by this amendment: `_nova_sleep_via_libuv`'s own park wakes early
+  correctly (its stage-based close is scope-agnostic, same as `net.c`'s
+  ops), but the post-wake check only consults `cancel_scope->cancel_
+  requested` (the OWNER's real scope — wrong one here) with no per-op
+  `cancelled` latch equivalent to `channels.h`'s `w->cancelled` (which THIS
+  window did add, closing the same gap for `Channel.recv`/`send`/`select`)
+  — so an interrupted direct-body `sleep` silently behaves as if it
+  completed normally, with no signal to the caller. `_nova_sleep_via_driver`
+  (the driver-armed path, active by default under this window's own
+  measurement) is not reached by `nova_sched_cancel_pending_slot` AT ALL —
+  it does not register through `nova_sched_register_pending`; it links into
+  `scope->armed_sleeps_head`, keyed by the SAME `owner_scope` mismatch, and
+  needs its own, separate fix (driver.c `armed_sleeps_head` walk keyed by
+  `owner_scope`/`owner_slot`, or routing the ARM_SLEEP job through the new
+  scope directly) — compiler/runtime queue, see backlog-followups.
+  `[M-supervised-direct-sleep-timeout-silent]` marker to add at close.
 
 ---
 
@@ -7861,6 +8030,32 @@ D415 §2 поставил capture-check РОВНО на синтаксическ
   рантаймом НЕ выполняется, ранним прогонам везло. Реестр №173 (P1, M:N-окно
   с №165/№169); репро запарковано в docs/plans/wip/d416-serialization-repro/.
   Урок: пин-гарантия должна перемеряться приёмкой, а не одним прогоном окна.
+  **Уточнение диагноза (M:N-окно №165/№169/№173, 2026-08-01):** первоначальный
+  диагноз («неатомарный счётчик теряет обновления» = конкурентный вызов
+  `on_child_fail`) ОПРОВЕРГНУТ прямым измерением — инструментированная проба
+  (`in_handler`-реентрантный счётчик на `AtomicInt`, busy-spin внутри
+  хендлера вместо запрещённого `sleep`, 10 изолированных прогонов ×
+  64 падения × 20 раундов) показала **`race_detected == 0` ВО ВСЕХ 10
+  прогонах, включая 4 «упавших»** — `nova_supervised_process_decisions`
+  (fibers.h) никогда не вызывается конкурентно для одного scope; это
+  подтверждает чтение кода (drive-thread-only `_deciding`-latch, `_h->
+  on_child_fail(...)` — обычный синхронный C-вызов, БЕЗ переключения
+  корутины). **Настоящий баг — другого класса: ПОТЕРЯННОЕ падение ребёнка**
+  (`total_calls` короче ожидаемых `n×rounds` на 1-2 в ~40% изолированных
+  прогонов) — какой-то `throw` ребёнка НИКОГДА не доходит до decision-loop
+  вовсе (не «два потока одновременно инкрементируют», а «одно падение
+  потеряно ДО хендлера») — по мн-conventions §1/§2 классу (occupancy/
+  `child_count`-видимость), НЕ по классу конкурентного вызова хендлера.
+  Корень НЕ локализован в рамках этого окна (не найдено безопасного способа
+  добавить трипваер в 173.0-субстрат — R1/R2-защищённый код — за оставшееся
+  время); **РЕШЕНИЕ ОКНА: STOP, аргументированный** — carve-out НЕ
+  возвращается (потерянное падение делает `on_child_fail` ненадёжным
+  НЕЗАВИСИМО от вопроса сериализации), но и «неатомарный счётчик»-формулировка
+  диагноза больше не верна — см. правку ниже. Пин-фикстура окна 238 (`docs/
+  plans/wip/d416-serialization-repro/`) БОЛЬШЕ НЕ КОМПИЛИРУЕТСЯ (энфорс D441
+  §3, ожидаемо — carve-out отозван) — репро для будущего окна:
+  `_tmp/probe173/main.nv`-форма этого окна (Atomic-only, checker-чистая,
+  не в реестре).
 
 ### §2. Правила (решение владельца, №150)
 
