@@ -21,7 +21,7 @@ export type DiffOp enum
 /// # Examples
 /// ```nova
 /// let ops = Diff.compute(["a", "c"], ["a", "b", "c"])
-/// // ops contains Insert("b") в середине
+/// // ops contains Insert("b") in the middle
 /// ```
 #stable(since = "0.1")
 export fn Diff.compute(a []str, b []str) -> []DiffOp {

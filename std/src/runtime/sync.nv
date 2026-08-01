@@ -1841,9 +1841,9 @@ export fn RwLock mut @with_write[R](body fn() -> R) -> R {
 /// ```nova
 /// let mut rm = ReentrantMutex.new()
 /// rm.lock()
-/// rm.lock()           // тот же fiber — no deadlock
+/// rm.lock()           // same fiber — no deadlock
 /// rm.unlock()
-/// rm.unlock()         // освобождён когда count = 0
+/// rm.unlock()         // released when count = 0
 /// ```
 ///
 /// Plan 173.3 (D415 §2): `#share` audited vouch — same reasoning as `Mutex`.

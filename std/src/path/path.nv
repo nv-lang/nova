@@ -12,9 +12,9 @@
 
 //! Plan 45 Ф.35.4 — Unix-style path manipulation (slash-separated).
 //!
-//! Treats `"/"` как separator. Не платформенно-зависим — для Windows-paths
-//! (backslash, drive letters) понадобится отдельный модуль. Все функции
-//! pure (no I/O); namespace `Path` группирует static methods.
+//! Treats `"/"` as the separator. Not platform-dependent — Windows paths
+//! (backslash, drive letters) would need a separate module. All functions
+//! are pure (no I/O); the `Path` namespace groups the static methods.
 //!
 //! # Examples
 //!

@@ -121,7 +121,7 @@ export fn Monotonic @minus(d Duration) -> Monotonic =>
 /// let t1 = Monotonic.now()
 /// // ... work ...
 /// let t2 = Monotonic.now()
-/// let elapsed = t2.elapsed_since(t1)  // Duration ≥ 0 (clock не идёт назад)
+/// let elapsed = t2.elapsed_since(t1)  // Duration ≥ 0 (clock does not go backward)
 /// ```
 #stable(since = "0.6")
 export fn Monotonic @elapsed_since(other Monotonic) -> Duration =>

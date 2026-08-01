@@ -22,9 +22,9 @@
 
 //! Plan 45 Ф.34.3 — Duration + Timestamp + Time effect.
 //!
-//! Time-related types: представление длительностей и моментов времени.
-//! Sensible defaults: nanosecond precision, signed Duration (поддерживает
-//! отрицательные интервалы), `Time` effect для дeterministic testing.
+//! Time-related types: representation of durations and moments in time.
+//! Sensible defaults: nanosecond precision, signed Duration (supports
+//! negative intervals), a `Time` effect for deterministic testing.
 //!
 //! # Examples
 //!

@@ -38,7 +38,7 @@ export type Period value {
 /// # Examples
 /// ```nova
 /// ro p = Period.new(years: 1, months: 2, days: 3)
-/// ro m = Period.new(months: 18)   // 18mo (не нормализуется автоматически)
+/// ro m = Period.new(months: 18)   // 18mo (not normalized automatically)
 /// ```
 #stable(since = "0.1")
 export fn Period.new(years i32 = 0, months i32 = 0, days i32 = 0) -> Period =>

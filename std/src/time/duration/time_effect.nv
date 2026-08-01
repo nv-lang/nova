@@ -72,7 +72,7 @@ module time.duration
 ///     now_monotonic() -> Monotonic => 0.to_monotonic_nanos()
 ///     local_offset() -> int => 0
 /// } {
-///     // время "замерло" — sleep noop, now() возвращает fixed value
+///     // time is "frozen" — sleep is a no-op, now() returns a fixed value
 ///     run_test_with_fixed_clock()
 /// }
 /// ```
