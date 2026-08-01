@@ -541,6 +541,20 @@ fn critical(...) -> Result =>
 > - `fn Result[T, E] @flat_map[U](flat_map_fn fn(T) -> Result[U, E]) -> Result[U, E]`
 > - `fn Option[T] @filter(pred fn(T) -> bool) -> Option[T]`
 >
+> **AMEND (2026-08-01, решение владельца):** добавлен четвёртый —
+> `fn Result[T, E] @flat_map_err[F](recover_fn fn(E) -> Result[T, F]) -> Result[T, F]`
+> — bind по ОШИБОЧНОЙ ветке (recovery с доступом к `e`): `Err(e) -> recover_fn(e)`,
+> `Ok` проходит мимо. Проходит тот же фильтр отбора: recovery, ЧИТАЮЩИЙ ошибку,
+> невыразим `??`/`.map_err`/композицией — только явным `match`. Завершает
+> 2×2-симметрию `map`/`map_err` ↔ `flat_map`/`flat_map_err`. НЕ рустовский
+> `or_else` (та семья ретрактирована). Движущий кейс — fallback-цепочки парсеров
+> (`strict(s).flat_map_err(|e| if e.recoverable() { lenient(s) } else { Err(e) })`).
+> Второй кандидат того же захода — `transpose` (`Option[Result[T,E]] ->
+> Result[Option[T], E]`, различение «нет значения» vs «значение сломано») —
+> ОДОБРЕН владельцем, но ЗАБЛОКИРОВАН компилятором:
+> `[M-nested-generic-receiver-method-mono]` (метод на вложенно-generic приёмнике
+> CC-FAIL'ится); добавить после фикса.
+>
 > Отбор — та же D86-философия, что и ретракт unwrap-twins выше, только в
 > обратную сторону: **добавляем** ТОЛЬКО то, что операторами (`??`/`!!`/`?`)
 > и `.map`/`match` **невыразимо**. `flat_map` — единственный канонический

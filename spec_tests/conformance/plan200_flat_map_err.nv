@@ -1,0 +1,26 @@
+module conformance.plan200_flat_map_err
+
+// flat_map_err — bind по err-ветке (recovery с доступом к ошибке).
+// Решение владельца 2026-08-01; сиблинг map_err. Пары: plan200_14 (flat_map/filter).
+
+test "flat_map_err: Ok проходит мимо recovery" {
+    ro ok Result[int, str] = Ok(1)
+    assert(ok.flat_map_err(|_| Ok(99)) == Ok(1))
+}
+
+test "flat_map_err: восстановление ГЛЯДЯ на ошибку" {
+    ro bad Result[int, str] = Err("xyz")
+    assert(bad.flat_map_err(|e| Ok(e.byte_len())) == Ok(3))
+}
+
+test "flat_map_err: recovery сам падает — смена типа ошибки" {
+    ro bad Result[int, str] = Err("x")
+    ro out Result[int, int] = bad.flat_map_err(|_| Err(42))
+    assert(out == Err(42))
+}
+
+test "flat_map_err: цепочка парсеров (движущий кейс)" {
+    ro strict = fn(s str) -> Result[int, str] => Err("strict: ${s}")
+    ro lenient = fn(s str) -> Result[int, str] => Ok(s.byte_len())
+    assert(strict("ab").flat_map_err(|_| lenient("ab")) == Ok(2))
+}
