@@ -1,0 +1,73 @@
+// ICE-пачка п.5: [M-generic-reflect-call-inside-sibling-struct-literal].
+//
+// `T.reflect()` (generic type-param, protocol-dispatched) written directly
+// inside a field of a SIBLING type's record literal, as the argument of an
+// instance method call on a generic-mono receiver whose OWN type parameter
+// is conventionally ALSO named "T" (`Vec[T].push`, `[]RouteInfo` = `Vec[T]`,
+// T=RouteInfo) — undefined symbol at link time:
+// `Nova_RouteInfo_static_reflect` (RouteInfo never declared such a method;
+// the OUTER method's own "T" was silently shadowed).
+//
+// Root cause: emit_c.rs's "5b" generic-type instance-method dispatch (and
+// two sibling call sites — the turbofish static-receiver path and the
+// `[]T @method` array-ext path) swaps `self.current_type_subst` to the
+// CALLEE's own receiver-generic binding (`Vec[T]`'s "T" → RouteInfo) BEFORE
+// emitting the call's ARGUMENTS — but `current_type_subst` is a single,
+// unscoped map keyed by bare generic-param name, with no notion of "whose
+// T". An enclosing GENERIC method's own type-param, if named identically
+// (the overwhelmingly common convention), was shadowed for the WHOLE
+// duration of argument emission — so `T.reflect()` nested inside the
+// argument (a record literal for the SIBLING type) mono-mangled against the
+// callee's shadowing "T" instead of the caller's own.
+//
+// Fix: at all three call sites, restore the CALLER's own `current_type_subst`
+// snapshot while emitting each non-closure argument expression (closures
+// legitimately need the callee's substitution, for their OWN param-type
+// inference) and the call's receiver expression.
+//
+// Repro shape mirrors nova-polaris' extract.nv `Router mut @post_typed_h`
+// (workaround there: hoist `T.reflect()` to a `ro shape = T.reflect()`
+// local BEFORE the literal — per the reporting comment, "not removed,
+// reported as removable" once this fixture lands).
+module spec_tests.conformance
+
+import std.reflect.{Reflect, TypeShape}
+
+type MIceGrslRouteInfo value {
+    ro path str
+    ro method str
+    ro req_shape Option[TypeShape]
+    ro resp_shape Option[TypeShape]
+}
+// Deliberately NO #impl(Reflect)/hand-written `.reflect()` on the sibling
+// type — the original bug's undefined-symbol shape only reproduces when the
+// literal's OWN type has no such method (otherwise a REAL, differently-
+// wrong symbol gets called instead of failing to link at all).
+
+type MIceGrslRouter { mut shapes []MIceGrslRouteInfo }
+
+fn MIceGrslRouter.new() -> MIceGrslRouter => { shapes: [] }
+
+fn MIceGrslRouter mut @post_typed_h[T Reflect](path str, h fn(T) -> str) -> Result[MIceGrslRouter, str] {
+    @shapes.push(MIceGrslRouteInfo {
+        path,
+        method: "POST",
+        req_shape: Some(T.reflect()),
+        resp_shape: None,
+    })
+    Ok(@)
+}
+
+test "ICE-пачка п.5: T.reflect() inline in a sibling type's record-literal field, generic-mono Vec[T] receiver" {
+    mut r = MIceGrslRouter.new()
+    match r.post_typed_h[int]("hi", |x| "${x}") {
+        Ok(consume rr) => { r = rr }
+        Err(e) => panic(e)
+    }
+    assert(r.shapes.len() == 1, "route recorded")
+    assert(r.shapes[0].path == "hi", "path field carried through untouched")
+    match r.shapes[0].req_shape {
+        Some(TypeShape.Int) => assert(true, "T=int correctly reflected, not the sibling literal's own (nonexistent) type")
+        _ => assert(false, "req_shape should be Some(TypeShape.Int) for T=int")
+    }
+}

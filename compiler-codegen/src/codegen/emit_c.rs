@@ -40692,7 +40692,37 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                 } else { None };
                                                 match target_c {
                                                     Some(tc) => arg_strs.push(self.emit_expr_with_target_type(arg_expr, &tc)?),
-                                                    None => arg_strs.push(self.emit_expr(arg_expr)?),
+                                                    None => {
+                                                        // [M-generic-reflect-call-inside-
+                                                        // sibling-struct-literal] (ICE-пачка
+                                                        // п.5): a non-ArrayLit arg is an
+                                                        // ordinary CALLER-scope expression —
+                                                        // it must NOT see THIS callee's own
+                                                        // receiver-generic substitution
+                                                        // (`type_subst`, e.g. `Vec[T].push`'s
+                                                        // "T" bound to the pushed ELEMENT
+                                                        // type). Restore the caller's own
+                                                        // substitution while emitting it — an
+                                                        // enclosing generic method with its
+                                                        // OWN identically-named type-param
+                                                        // ("T" by convention) had that
+                                                        // shadowed for the whole arg-emission
+                                                        // window otherwise (repro:
+                                                        // `@shapes.push(RouteInfo{ req_shape:
+                                                        // Some(T.reflect()) })` inside
+                                                        // `fn Router mut @m[T Reflect]`, on a
+                                                        // `[]RouteInfo` receiver — mono-
+                                                        // mangled `T.reflect()` to the
+                                                        // undefined `Nova_RouteInfo_static_
+                                                        // reflect` instead of the outer T's
+                                                        // own mono symbol).
+                                                        let restore = std::mem::replace(
+                                                            &mut self.current_type_subst,
+                                                            saved_subst.clone());
+                                                        let v = self.emit_expr(arg_expr);
+                                                        self.current_type_subst = restore;
+                                                        arg_strs.push(v?);
+                                                    }
                                                 }
                                             }
                                             self.current_type_subst = saved_subst;
@@ -42873,13 +42903,46 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                 }
                                             }
                                         }
-                                        let v = self.emit_expr(a.expr())?;
+                                        // [M-generic-reflect-call-inside-sibling-struct-
+                                        // literal] (ICE-пачка п.5): `a.expr()` is an
+                                        // ordinary CALLER-scope expression — restore
+                                        // the caller's own `current_type_subst`
+                                        // (`saved_subst`) while emitting it, same fix
+                                        // as the two sibling generic-mono call-arg
+                                        // loops above (турбофиш static receiver /
+                                        // array-ext `[]T @method`). `expected_record_
+                                        // type` (set just above, for the anon-literal
+                                        // sub-case) is a SEPARATE, already-resolved
+                                        // field — it does not depend on
+                                        // `current_type_subst` staying swapped during
+                                        // the recursive `emit_expr` call, only
+                                        // `type_ref_to_c(&param_decl.ty)` above needed
+                                        // it (already evaluated). Root repro: `fn
+                                        // Router mut @m[T Reflect](...) { @shapes.push
+                                        // (RouteInfo{ req_shape: Some(T.reflect()) })
+                                        // }` on a `[]RouteInfo` (`Vec[T]`, T=RouteInfo)
+                                        // receiver — the outer method's OWN "T" (int,
+                                        // say) got shadowed by `Vec[T].push`'s "T"
+                                        // (RouteInfo) for the whole arg-emission
+                                        // window, mono-mangling `T.reflect()` to the
+                                        // undefined `Nova_RouteInfo_static_reflect`.
+                                        let restore = std::mem::replace(
+                                            &mut self.current_type_subst, saved_subst.clone());
+                                        let v = self.emit_expr(a.expr());
+                                        self.current_type_subst = restore;
                                         self.expected_record_type = saved_er;
-                                        arg_strs.push(v);
+                                        arg_strs.push(v?);
                                     }
                                 }
+                                // Extra args beyond fn_decl.params length — same
+                                // caller-scope restore ([M-generic-reflect-call-inside-
+                                // sibling-struct-literal], ICE-пачка п.5).
                                 for a in args.iter().skip(fn_decl.params.len()) {
-                                    arg_strs.push(self.emit_expr(a.expr())?);
+                                    let restore = std::mem::replace(
+                                        &mut self.current_type_subst, saved_subst.clone());
+                                    let v = self.emit_expr(a.expr());
+                                    self.current_type_subst = restore;
+                                    arg_strs.push(v?);
                                 }
                                 self.current_type_subst = saved_subst;
                                 // Plan 153.2 gap A: eagerly register the return
@@ -43694,7 +43757,39 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 //    (inline `|x| ...` literal) → call emit_lambda
                                 //    directly с context_param_tys для proper
                                 //    type inference внутри body (Plan 48 pattern).
-                                let obj_c = self.emit_expr(obj)?;
+                                // [M-generic-reflect-call-inside-sibling-struct-literal]
+                                // (ICE-пачка п.5): `obj`/non-closure args are ordinary
+                                // CALLER-scope expressions — they must NOT see this
+                                // callee's OWN receiver-generic substitution
+                                // (`arrext_seeded`, e.g. `[]T @push`'s "T" bound to the
+                                // ELEMENT type). Only the CLOSURE-typed-param branch
+                                // below genuinely needs it (closure param types mention
+                                // the callee's own T, e.g. `element_c`). Without this,
+                                // an enclosing GENERIC method whose OWN type-param
+                                // happens to share the exact same conventional name
+                                // ("T") — e.g. `fn Router mut @m[T Reflect](...)` calling
+                                // `@shapes.push(RouteInfo{ req_shape: Some(T.reflect())
+                                // })` on a `[]RouteInfo` (`Vec[T]`, T=RouteInfo) receiver
+                                // — had ITS "T" (int, say) silently shadowed by THIS
+                                // call's "T" (RouteInfo) for the WHOLE duration of arg
+                                // emission (`current_type_subst` is a single, unscoped
+                                // map keyed by bare generic-param name — no notion of
+                                // "whose T"), so `T.reflect()` INSIDE the record-literal
+                                // argument mono-mangled to `Nova_RouteInfo_static_reflect`
+                                // (undefined at link time — RouteInfo never declared that
+                                // method) instead of the outer T's own mono symbol.
+                                // Restore the CALLER's own substitution (`saved_subst`)
+                                // just for `obj`/non-closure-arg emission; the swap stays
+                                // in effect for everything that legitimately needs it
+                                // (mono registration above, closure-arg type inference
+                                // below).
+                                let obj_c = {
+                                    let restore = std::mem::replace(
+                                        &mut self.current_type_subst, saved_subst.clone());
+                                    let r = self.emit_expr(obj);
+                                    self.current_type_subst = restore;
+                                    r?
+                                };
                                 let mut arg_strs = vec![obj_c];
                                 for (param_decl, a) in fn_decl.params.iter().zip(args.iter()) {
                                     if let crate::ast::TypeRef::Func { params: fp, return_type, .. } = &param_decl.ty {
@@ -43737,12 +43832,28 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                             arg_strs.push(v);
                                         }
                                     } else {
-                                        arg_strs.push(self.emit_expr(a.expr())?);
+                                        // [M-generic-reflect-call-inside-sibling-struct-
+                                        // literal] (ICE-пачка п.5): same caller-scope
+                                        // restore as `obj_c` above — a non-Func-typed
+                                        // arg (a plain expression, e.g. a record literal)
+                                        // is CALLER scope, not this callee's receiver-
+                                        // generic scope.
+                                        let restore = std::mem::replace(
+                                            &mut self.current_type_subst, saved_subst.clone());
+                                        let v = self.emit_expr(a.expr());
+                                        self.current_type_subst = restore;
+                                        arg_strs.push(v?);
                                     }
                                 }
-                                // Extra args beyond fn_decl.params length.
+                                // Extra args beyond fn_decl.params length — same
+                                // caller-scope restore ([M-generic-reflect-call-inside-
+                                // sibling-struct-literal], ICE-пачка п.5).
                                 for a in args.iter().skip(fn_decl.params.len()) {
-                                    arg_strs.push(self.emit_expr(a.expr())?);
+                                    let restore = std::mem::replace(
+                                        &mut self.current_type_subst, saved_subst.clone());
+                                    let v = self.emit_expr(a.expr());
+                                    self.current_type_subst = restore;
+                                    arg_strs.push(v?);
                                 }
                                 self.current_type_subst = saved_subst;
                                 let recv_elem = self.channel_array_elem_c(obj);
