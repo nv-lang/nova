@@ -1,0 +1,28 @@
+// d431_mem_namespace_smoke.nv — D76 amend, [M-mem-effect-demote-to-namespace]
+// (2026-08-01): `Mem` demoted from `effect` to a plain namespace type
+// (`export type Mem`, std/prelude/effects.nv), same shape as `RawMem`.
+// This standalone CU is a targeted runtime smoke-test for the new
+// static-method codegen path (`Mem.alloc_count()`/`free_count()`/`live()`/
+// `reset()` wrapping `extern "C" nova_gc_alloc_count`/etc. directly) —
+// `nova check` only type-checks; this exercises actual codegen + link + run.
+module standalone.d431_mem_namespace_smoke
+
+test "D76 amend: Mem namespace — reset/alloc_count/live wire through to the real GC counters" {
+    Mem.reset()
+    assert(Mem.alloc_count() == 0)
+    assert(Mem.free_count() >= 0)
+    assert(Mem.live() == 0)
+
+    // Force at least one heap allocation (Vec growth allocates).
+    mut v = Vec[int].new()
+    v.push(1)
+    v.push(2)
+    v.push(3)
+
+    assert(Mem.alloc_count() > 0)
+    assert(Mem.live() == Mem.alloc_count() - Mem.free_count())
+
+    Mem.reset()
+    assert(Mem.alloc_count() == 0)
+    assert(Mem.live() == 0)
+}

@@ -1,6 +1,14 @@
 // std/prelude/effects.nv — file-based declarations for prelude effects:
-// Fail[E], Mem, Detach (keyword). All are runtime-defined — declarations here
+// Fail[E], Detach (keyword). All are runtime-defined — declarations here
 // provide canonical API surface for `nova doc` and splittable prelude.
+//
+// `Mem` — NOT an effect (D76 amend, [M-mem-effect-demote-to-namespace],
+// owner decision 2026-08-01): demoted to a plain namespace (`export type
+// Mem`, unit type — same shape as `RawMem`, std/src/runtime/raw_mem.nv).
+// It never had a vtable/handler/mock — all three defining properties of an
+// effect were absent, and its own original D76 rationale ("a vtable would
+// distort the measurement") was already an argument AGAINST effect-hood.
+// Call syntax (`Mem.alloc_count()` etc.) is unchanged for consumers.
 
 module prelude.effects
 
@@ -47,7 +55,12 @@ export type Fail[E] effect {
 /// **TimerMetrics-effect** — read-only introspection timer-runtime counters.
 ///
 /// **Purpose:** observe the timer alloc/fire/cancel counters without
-/// turning `Time` into an inflated effect. Symmetric to `Mem`.
+/// turning `Time` into an inflated effect. `Mem` (below) is the namespace
+/// analogue for allocator counters — same read-only-introspection
+/// motivation, but demoted OUT of the effect system entirely (D76 amend,
+/// [M-mem-effect-demote-to-namespace]) since it never had a vtable/
+/// handler/mock to begin with. `TimerMetrics` itself stays an effect for
+/// now (out of scope for the D76 amend).
 ///
 /// **Operations (all `() -> int`, ns/ms counters):**
 ///   - `timer_alloc_total()` — total timers allocated.
@@ -66,7 +79,23 @@ export type TimerMetrics effect {
     timer_longest_pending_ms() -> int
 }
 
-/// **Mem effect** — runtime introspection effect for memory allocator stats.
+// ──────────────────────────────────────────────────────────────────────────
+// `Mem` namespace — runtime introspection for memory allocator stats
+// ──────────────────────────────────────────────────────────────────────────
+//
+// D76 amend, [M-mem-effect-demote-to-namespace] (owner decision
+// 2026-08-01): `Mem` used to be `export type Mem effect { ... }`, but it
+// never had a vtable, a handler, or a mock — every property that makes an
+// effect an effect was absent, and the ops were already thin inline
+// wrappers over runtime counters. `Mem`'s own original D76 rationale ("a
+// vtable would distort the measurement") was an argument AGAINST
+// effect-hood, not for it. Demoted to a plain namespace type, same shape
+// as `RawMem` (`std/src/runtime/raw_mem.nv`): a unit type carrying static
+// methods over `extern "C"` runtime counters. Call syntax for consumers
+// (`Mem.alloc_count()`, `Mem.reset()`, …) is UNCHANGED.
+
+/// `Mem` — a namespace for GC allocator-stats introspection (NOT an
+/// effect — see the D76 amend note above).
 ///
 /// **Purpose:** leak/growth tests can observe allocator counters
 /// without exposing GC internals.
@@ -78,17 +107,34 @@ export type TimerMetrics effect {
 ///   - `live() -> int` — `alloc_count() - free_count()`, a rough estimate
 ///     of live allocations.
 ///   - `reset() -> ()` — zero stats counters (per-test isolation).
-///
-/// **Default handler:** runtime hooks, read-only.
-///
-/// **Not user-overridable:** although `with Mem = handler {...}` is allowed,
-/// semantically the counters reflect the allocator's real state.
 #stable(since = "0.1")
-export type Mem effect {
-    alloc_count() -> int
-    free_count() -> int
-    live() -> int
-    reset() -> ()
+export type Mem
+
+/// `nova_rt/alloc.h` — GC allocator stat counters (literal-name `extern
+/// "C" fn`, D282). File-private: `Mem.*` below is the only public surface.
+extern "C" fn nova_gc_alloc_count() -> int
+extern "C" fn nova_gc_free_count() -> int
+extern "C" fn nova_gc_live_count() -> int
+extern "C" fn nova_gc_reset_stats() -> ()
+
+/// Total `nova_alloc` calls since `nova_gc_init` or the last `Mem.reset()`.
+export fn Mem.alloc_count() -> int {
+    nova_gc_alloc_count()
+}
+
+/// Total free/release calls (plain-malloc backend → `0`).
+export fn Mem.free_count() -> int {
+    nova_gc_free_count()
+}
+
+/// `alloc_count() - free_count()` — a rough estimate of live allocations.
+export fn Mem.live() -> int {
+    nova_gc_live_count()
+}
+
+/// Zero the allocator stats counters (per-test isolation).
+export fn Mem.reset() -> () {
+    nova_gc_reset_stats()
 }
 
 /// **Random-effect** — ambient PRNG.

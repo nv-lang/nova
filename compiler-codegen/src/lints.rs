@@ -2709,10 +2709,18 @@ fn human_key(desc: &Option<String>, pairs: &[(Expr, Expr)], idx: usize) -> Strin
 
 /// Собирает имена user-defined эффектов: `type X effect { ... }`.
 /// Также включает встроенные stdlib effects из prelude (D26 + D62).
+///
+/// "Mem" REMOVED (D76 amend, [M-mem-effect-demote-to-namespace],
+/// 2026-08-01): no longer an effect — a plain namespace type now
+/// (`export type Mem`, std/prelude/effects.nv). Correctly falling out of
+/// this list means `check_protocol_in_effect_position` (the lint that
+/// consults `collect_effect_names`) no longer treats `Mem` in an
+/// effect-row position as a legitimate effect name — which is now
+/// accurate: `Mem` never belongs in an effect row.
 fn collect_effect_names(m: &Module) -> HashSet<String> {
     let mut names: HashSet<String> = [
         "Fail", "Io", "Net", "Db", "Fs", "Time", "Random",
-        "Log", "Trace", "Ask", "Alloc", "Detach", "Blocking", "Mem",
+        "Log", "Trace", "Ask", "Alloc", "Detach", "Blocking",
     ].iter().map(|s| s.to_string()).collect();
     for item in &m.items {
         if let Item::Type(td) = item {

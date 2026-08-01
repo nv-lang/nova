@@ -1,6 +1,7 @@
 // registry_size.nv — Plan 174.4: effect-registry compile-time размер.
 //
-// Объявлены 40 user-эффектов; вместе с built-in Fail/Time/Mem per-thread
+// Объявлены 40 user-эффектов; вместе с built-in Fail/Time (+ прочие
+// prelude-эффекты; "Mem" БОЛЬШЕ НЕ эффект — D76 amend, не считается) per-thread
 // handler-storage registry (effects.h: NovaEffectRegistry/NovaEffectSnapshot)
 // держит >32 записей. До 174.4 таблица была хардкод-32 и МОЛЧА дропала
 // любой эффект, зарегистрированный за слотом 32 → его handler НЕ сохранялся/

@@ -29,8 +29,14 @@ pub(crate) const RUNTIME_DEFINED_TYPES: &[&str] = &[
     "Option", "Result", "Error", "RuntimeError",
     // effect vtables (nova_rt/effects.h)
     // Plan 175 Ф.1: TimerMetrics — read-only introspection effect split out
-    // of Time (Q1). Direct-C dispatch (Nova_TimerMetrics_timer_*, no vtable),
-    // like Mem. Schema built from its .nv decl (single source).
+    // of Time (Q1). Direct-C dispatch (Nova_TimerMetrics_timer_*, no
+    // vtable). Schema built from its .nv decl (single source).
+    //
+    // "Mem" REMOVED (D76 amend, [M-mem-effect-demote-to-namespace],
+    // 2026-08-01): no longer an effect — demoted to a plain namespace type
+    // (`export type Mem`, std/prelude/effects.nv), same RUNTIME_DEFINED_
+    // TYPES-exempt shape as any other ordinary user type (no special-case
+    // needed — a bare unit-type struct-body is fine to emit normally).
     //
     // Plan 175 Ф.2-v3 (снос рукописного `NovaVtable_Time`): "Time" REMOVED
     // from this list — Time теперь генерируется ЧЕРЕЗ ОБЩИЙ effect-codegen
@@ -47,7 +53,7 @@ pub(crate) const RUNTIME_DEFINED_TYPES: &[&str] = &[
     // registration — compile-unit-wide (см. `check_default_handlers`), не
     // требует prelude-резидентства. "Fail" остаётся (владелец: Fail —
     // сильно встроенный, хардкод намеренно НЕ трогается).
-    "Fail", "Mem", "TimerMetrics",
+    "Fail", "TimerMetrics",
     // sync (sync_primitives.h): MemOrdering + sized atomics.
     // Plan 207 (2026-07-16 consolidation): AtomicPtr removed (int-proxy
     // duplicate, no generic [T] yet — Plan 103.7); Isize/Usize spellings
@@ -6308,21 +6314,14 @@ impl CEmitter {
         // `Time` в отдельный `TimerMetrics`-эффект (тоже из .nv, direct-C
         // dispatch `Nova_TimerMetrics_timer_*` в nova_rt/channels.h).
 
-        // Pre-register Mem as a built-in effect for runtime introspection.
-        // Operations:
-        //   - alloc_count() -> int : total nova_alloc calls since gc_init/reset
-        //   - free_count()  -> int : total frees (plain malloc backend → 0)
-        //   - live()        -> int : alloc_count - free_count
-        //   - reset()       -> unit: zero stats counters (per-test isolation)
-        // Used by leak/growth tests (see nova_tests/runtime/memory_growth.nv).
-        {
-            let mut mem_schema: HashMap<String, (Vec<String>, String)> = HashMap::new();
-            mem_schema.insert("alloc_count".to_string(), (vec![], "nova_int".into()));
-            mem_schema.insert("free_count".to_string(),  (vec![], "nova_int".into()));
-            mem_schema.insert("live".to_string(),        (vec![], "nova_int".into()));
-            mem_schema.insert("reset".to_string(),       (vec![], "nova_unit".into()));
-            self.effect_schemas.insert("Mem".to_string(), mem_schema);
-        }
+        // Pre-registered `Mem` built-in effect schema REMOVED (D76 amend,
+        // [M-mem-effect-demote-to-namespace], 2026-08-01): `Mem` is no
+        // longer an effect — `export type Mem` (std/prelude/effects.nv) is
+        // now a plain namespace type, and `Mem.alloc_count()`/etc. are
+        // ordinary static-method fns (Nova-body wrappers over `extern "C"
+        // nova_gc_alloc_count`/etc.) that flow through the SAME generic
+        // static-method codegen path as any other user type (e.g.
+        // `RawMem.copy_n`) — no schema pre-registration needed.
 
         // Plan 04 Этап 6: Buffer удалён из языка (REMOVED). Заменён на
         // StringBuilder/WriteBuffer/ReadBuffer split. Старая Q-buffer
@@ -6590,15 +6589,15 @@ impl CEmitter {
                 }
             }
             // Built-in vtables defined in nova_rt/effects.h — skip.
-            // Plan 62.F.bis Ф.3 (2026-05-18): added "Mem" — formally
-            // declared в std/prelude/effects.nv, vtable handled через
-            // pre-registered effect_schemas + codegen helpers (no
-            // runtime/effects.h dedicated struct, but emit-skip required
-            // чтобы избежать conflict с declaration).
             // Plan 175 Ф.2-v3: "Time" removed — no longer a hand-written
             // vtable (см. RUNTIME_DEFINED_TYPES comment above); flows through
             // `local_effects` (declared in module.items via prelude) instead.
-            const BUILTIN_VTABLE_NAMES: &[&str] = &["Fail", "Mem", "TimerMetrics"];
+            // "Mem" REMOVED (D76 amend, [M-mem-effect-demote-to-namespace],
+            // 2026-08-01): no longer an effect, no vtable — a plain
+            // namespace type, forward-declared (if at all) through the
+            // ordinary `external_names`/`local_types` path above, not this
+            // vtable-specific allowlist.
+            const BUILTIN_VTABLE_NAMES: &[&str] = &["Fail", "TimerMetrics"];
             // [M-codegen-emission-nondeterminism] fix: same HashSet-order issue as
             // `external_names` above — sort before emitting.
             let mut vtable_names_sorted: Vec<String> = vtable_names.into_iter().collect();
@@ -8885,7 +8884,8 @@ static nova_int _nova_supervisor_decide_impl(void* _scope_v, nova_int _idx, cons
         self.out = self.out.replace("/*__TYPEID_DEFINES__*/", &tid_defines);
 
         // Plan 174.4: effect-registry compile-time размер marker. N = число
-        // distinct-эффектов в реестре (built-in Fail/Time/Mem + user-defined).
+        // distinct-эффектов в реестре (built-in Fail/Time + user-defined;
+        // "Mem" REMOVED from this count — D76 amend, no longer an effect).
         // Клампим к >=1 (C запрещает массив [0]; на практике built-in гарантируют
         // N>=3). Build-слой читает это число и прокидывает -DNOVA_MAX_EFFECT_STORAGES=N
         // во ВСЕ TU → silent-drop 33-го эффекта невозможен, snapshot = ровно N
@@ -9349,7 +9349,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // invocation), so NovaEffectRegistry/NovaEffectSnapshot have an identical
         // array size across TUs (ABI safety — a per-.c `#define` would size the
         // generated TU differently from runtime effects.c and corrupt the TLS
-        // registry). N = distinct effects (built-in Fail/Time/Mem + user) from the
+        // registry). N = distinct effects (built-in Fail/Time + user) from the
         // effect_schemas registry (§0/§3, not hardcoded). Spliced in finalize; if
         // absent (hand-written .c), effects.h `#ifndef` falls back to 32 uniformly.
         self.line("/*__EFFECT_COUNT_MARKER__*/");
@@ -16851,7 +16851,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // зеркало в emit_module. НЕ вызываем emit_effect_type (он бы
             // сгенерировал конфликтующий typedef + dispatcher'ы). Guard
             // `!contains_key` сохраняет ранее pre-registered эффекты
-            // (Fail/Mem — их хардкод остаётся источником в Ф.1).
+            // (Fail — его хардкод остаётся источником в Ф.1; "Mem" больше
+            // не эффект — D76 amend, не проходит через эту ветку вовсе).
             if let TypeDeclKind::Effect(methods) = &t.kind {
                 if !self.effect_schemas.contains_key(&t.name) {
                     // Param C-types per method (нужны для mangle_op — как в
@@ -28889,14 +28890,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// Register handler-storage TLS addresses for all user-defined effects
     /// so per-fiber snapshot mechanism (effects.h) can swap them.
     fn emit_user_effect_registrations(&mut self) {
-        // effect_schemas содержит и built-in (Fail, Time, Mem) и user-defined.
+        // effect_schemas содержит и built-in (Fail, Time) и user-defined.
         // Built-in уже регистрируются явно в emit_main_wrapper. Для user-defined
         // эмитим nova_register_effect_storage для каждого `_nova_handler_X`.
         let mut names: Vec<String> = self.effect_schemas.keys().cloned().collect();
         names.sort();  // deterministic order
         for name in names {
             // Skip built-ins (зарегистрированы явно ИЛИ direct-C без handler-slot'а).
-            // Plan 175 Ф.1: TimerMetrics — direct-C introspection (как Mem), нет
+            // Plan 175 Ф.1: TimerMetrics — direct-C introspection, нет
             // `_nova_handler_TimerMetrics`-слота → регистрировать нечего.
             // Plan 175 Ф.2-v3: "Time" REMOVED from skip-list — теперь generic
             // effect (emit_effect_type generates `_nova_handler_Time` same as
@@ -28905,7 +28906,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // fiber'ами на одном OS-thread — [M-83.10.1-per-fiber-handler-
             // tls-race] класс бага). "Fail" зарегистрирован явно отдельно
             // (см. `_nova_handler_Fail` в effects.h/emit_main_wrapper).
-            if name == "Fail" || name == "Mem" || name == "TimerMetrics" { continue; }
+            // "Mem" REMOVED (D76 amend, [M-mem-effect-demote-to-namespace],
+            // 2026-08-01): no longer an effect — never appears in
+            // `effect_schemas` at all now, so this skip-arm is unreachable
+            // for it (kept removed rather than dead, for clarity).
+            if name == "Fail" || name == "TimerMetrics" { continue; }
             self.line(&format!(
                 "nova_register_effect_storage((void**)&_nova_handler_{});", name));
         }

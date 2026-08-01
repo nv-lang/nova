@@ -1581,7 +1581,12 @@ static inline Nova_TimerStats nova_time_timer_stats(void) {
  * `Time` (Plan 175 Ф.1) — the compiler dispatches
  * `TimerMetrics.timer_alloc_total()` etc. to these via the
  * effect_schemas["TimerMetrics"] registration (built from the .nv decl in
- * std/prelude/effects.nv). Direct-C dispatch (no vtable), like Nova_Mem_*. */
+ * std/prelude/effects.nv). Direct-C dispatch (no vtable) — the `effect_
+ * schemas["EffectName"]`-keyed dispatch path in emit_c.rs (`Nova_{Effect}_
+ * {op}` C-name convention). `Mem` used to be a same-shaped example here
+ * (`Nova_Mem_*`) but is no longer an effect (D76 amend,
+ * [M-mem-effect-demote-to-namespace], 2026-08-01) — removed from
+ * effects.h entirely, see the note left in its place there. */
 static inline nova_int Nova_TimerMetrics_timer_alloc_total(void) {
     return (nova_int)_nova_timer_stats.alloc_total;
 }
