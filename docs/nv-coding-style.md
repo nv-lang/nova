@@ -1423,6 +1423,43 @@ ro all  = v[..]
 fix-it (удаление избыточной границы по точному span'у). Прецедент clippy
 redundant-slicing.
 
+## 35. Отступ продолжения цепочки: `.method` глубже базового объекта (· согласовано владельцем 2026-08-02)
+
+**Принцип.** Когда цепочный вызов переносится на следующую строку (`.method(...)`
+с точки), продолжение пишется с **дополнительным уровнем отступа** относительно
+строки, на которой начинается базовое выражение. Продолжение на одном уровне с
+базой визуально сливает «что строим» и «что навешиваем» — особенно в
+builder-цепочках с многострочными лямбда-аргументами.
+
+```nova
+// ПЛОХО: продолжение на уровне базы
+fn build_router() -> Router =>
+    Router.new()
+    .get("/hello/{name}", fn(req ServerRequest) -> ServerResponse {
+        ro name = req.param("name") ?? "world"
+        ServerResponse.text(StatusCode.OK, "hello, ${name}")
+    })!!
+
+// КАНОН: продолжение глубже базы на один уровень
+fn build_router() -> Router =>
+    Router.new()
+        .get("/hello/{name}", fn(req ServerRequest) -> ServerResponse {
+            ro name = req.param("name") ?? "world"
+            ServerResponse.text(StatusCode.OK, "hello, ${name}")
+        })!!
+        .get("/", fn(req ServerRequest) -> ServerResponse =>
+            ServerResponse.text(StatusCode.OK, "hello, world"))!!
+```
+
+Индустриальный паритет: rustfmt, Kotlin style guide, prettier — везде
+продолжение цепочки индентируется глубже первой строки выражения. Отступ —
+пробелы, один уровень (4), как всюду в Nova.
+
+**Линт.** W_CHAIN_CONTINUATION_INDENT (очередь: линт-волна после операторного
+196-окна): строка, начинающаяся с `.` (продолжение цепочки), обязана иметь
+отступ строго больше отступа первой строки выражения. Существующий код
+перекрашивается волной после появления линта.
+
 ## Известные расхождения для будущего sweep'а
 
 0. **`docs/idioms/size-accessors.md:41-42`** документирует `s.len()` как O(n) codepoint-count,
