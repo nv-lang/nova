@@ -1,0 +1,40 @@
+// №247 [M-named-tuple-compare-operators-no-dispatch]: named-tuple (D215,
+// `NovaTuple_X` ABI) ordering operators `<`/`<=`/`>`/`>=` were NOT dispatched
+// at all (emit_c.rs's named-tuple binary-op arm only covered
+// Eq/Neq/Add/Sub/Mul/Div; `<`/`>` fell through to raw C struct comparison —
+// CC-FAIL "invalid operands"), asymmetric with heap-record/value-record
+// receivers which already dispatched ordering through `@compare` (D183/
+// D363 `Comparable`). Fixed: same `@compare`-through-int-sign dispatch as
+// `d363_operator_dispatch_protocols.nv`, now also for the named-tuple ABI.
+// Part of the SINGLE `spec_tests.conformance` folder-module.
+module spec_tests.conformance
+
+export type M247Pt(x int = 0, y int = 0)
+
+fn M247Pt @compare(other M247Pt) -> int {
+    ro m247_self_mag = @x * @x + @y * @y
+    ro m247_other_mag = other.x * other.x + other.y * other.y
+    if m247_self_mag < m247_other_mag { -1 }
+    else if m247_self_mag > m247_other_mag { 1 }
+    else { 0 }
+}
+
+test "named-tuple < / > / <= / >= dispatch through @compare (№247)" {
+    ro m247_small = M247Pt(1, 1)
+    ro m247_big = M247Pt(3, 4)
+    assert(m247_small < m247_big)
+    assert(m247_big > m247_small)
+    assert(m247_small <= m247_big)
+    assert(m247_big >= m247_small)
+    assert(m247_small <= m247_small)
+    assert(m247_big >= m247_big)
+    assert(!(m247_big < m247_small))
+    assert(!(m247_small > m247_big))
+}
+
+test "named-tuple ordering: chained comparison through a plain expression (№247)" {
+    ro m247_a = M247Pt(0, 0)
+    ro m247_b = M247Pt(1, 0)
+    ro m247_c = M247Pt(2, 0)
+    assert(m247_a < m247_b && m247_b < m247_c)
+}

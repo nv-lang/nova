@@ -370,5 +370,27 @@
 # try_from-интринсик (Plan 08, arg_ty==nova_str хардкод) — ретракция D321-AMEND,
 # канон 174.1 (s.to_int()/to_u64()). Остаток той же фичи B12h_path_try_from
 # (~59346) — кандидат следующей уборки.
-lines=64286
+# Рост 64286->64311 (+25) осознан (реестр 221.1/backlog №247
+# [M-named-tuple-compare-operators-no-dispatch], окно p-op-channel, sonnet,
+# 2026-08-02) — ПУТЬ B, самостоятельная правка (интегратор ещё не смотрел этот
+# коммит). ПОЧЕМУ ЭТО EMIT-СЛОЙ, НЕ КАНАЛ: named-tuple (`NovaTuple_X`)
+# ordering-операторы (`<`/`<=`/`>`/`>=`) не диспетчились ВООБЩЕ (`_ => ""` в
+# method_name-match'е глотал Lt/Le/Gt/Ge, эмит падал в raw C struct-сравнение
+# — CC-FAIL) — асимметрия с heap-record (~34507) и value-record (~34294)
+# receivers, у которых `<`/`>` уже диспетчатся через `@compare` (D183) РОВНО
+# ТЕМ ЖЕ кодом-паттерном (`method_overloads`-lookup + `recv_tmp`
+# rvalue-материализация), какой уже живёт для ЭТИХ receiver-форм прямо в
+# emit_c.rs — новый блок = симметричное дополнение существующего семейства
+# hand-rolled ABI-веток (heap/value-record/named-tuple), НЕ обход канала:
+# канал (`resolved_callees`) операторы вообще не резолвит на этот момент
+# (окно исследовало core-канал-миграцию п.1-4 брифа `p-op-channel`, нашло её
+# генуинно рискованной для THIS волны — checker `ExprKind::Binary`-арм
+# (`types/mod.rs` ~9511-9707) плотно завязан на историю POISON-аудитов,
+# резолва оператор-overload'ов ТАМ пока нет вовсе; полная миграция — предмет
+# отдельной волны со спайком, см. `docs/plans/wip/196-op-channel-progress.md`).
+# Верификация: фикстура `spec_tests/conformance/m247_named_tuple_compare_ops.nv`
+# (standalone) PASS 1/0; D46/234 негативные контроли (`neg/m234_*`,
+# `neg/d46_not_custom_type_neg`) 7/7 PASS; `nova check std/src` не сдвинулся
+# (PASS:147 FAIL:26 WARN:60).
+lines=64311
 infer=349

@@ -63,7 +63,15 @@ pub(crate) const BINOP_TABLE: &[BinOpEntry] = &[
     BinOpEntry { op: BinOp::Shr,    method_name: "shr",    shape: OperandShape::Heterogeneous },
 ];
 
-/// One row of the D46 UNARY operator-dispatch table (`- ! ~`).
+/// One row of the D46 UNARY operator-dispatch table (`- ~`). `!` is NOT a
+/// member (D46-AMEND 2026-08-02, `spec/decisions/03-syntax.md`, owner
+/// decision, window p-op-channel): `@not` RETRACTED — `!` narrowed to
+/// STRICTLY `bool`, no longer a user-overloadable operator (mirrors `&&`/`||`
+/// never being overloadable, Rule 2/5a). The checker now hard-errors
+/// (`[E_UNARY_OPERAND_TYPE]`, `types/mod.rs`) on `!x` for any definitively-
+/// known non-`bool` operand instead of falling through to a `@not` dispatch
+/// attempt — so `UnOp::Not` deliberately has NO row here (and therefore no
+/// DCE seed via `lints.rs::collect_used_names`, which iterates this table).
 pub(crate) struct UnOpEntry {
     pub op: UnOp,
     pub method_name: &'static str,
@@ -71,7 +79,6 @@ pub(crate) struct UnOpEntry {
 
 pub(crate) const UNOP_TABLE: &[UnOpEntry] = &[
     UnOpEntry { op: UnOp::Neg,    method_name: "neg" },
-    UnOpEntry { op: UnOp::Not,    method_name: "not" },
     UnOpEntry { op: UnOp::BitNot, method_name: "bitnot" },
 ];
 
@@ -276,10 +283,11 @@ mod tests {
     }
 
     #[test]
-    fn unop_table_covers_neg_not_bitnot() {
+    fn unop_table_covers_neg_bitnot_not_not() {
         assert_eq!(unop_method_name(UnOp::Neg), Some("neg"));
-        assert_eq!(unop_method_name(UnOp::Not), Some("not"));
         assert_eq!(unop_method_name(UnOp::BitNot), Some("bitnot"));
+        // D46-AMEND 2026-08-02: `@not` retracted — `!` no longer dispatches.
+        assert_eq!(unop_method_name(UnOp::Not), None);
     }
 
     #[test]

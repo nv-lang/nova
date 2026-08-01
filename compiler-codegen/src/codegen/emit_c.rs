@@ -34188,6 +34188,31 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                     }
                 }
+                // №247 [M-named-tuple-compare-operators-no-dispatch]: NovaTuple
+                // `<`/`<=`/`>`/`>=` via `@compare`, mirrors heap/value-record arms
+                // (~34507/~34294); `recv_tmp` rvalue-receiver trick as the arm above.
+                if matches!(op, BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge)
+                    && (lty.starts_with("NovaTuple_") || rty.starts_with("NovaTuple_"))
+                {
+                    let tuple_ty = if lty.starts_with("NovaTuple_") { &lty } else { &rty };
+                    let type_name = tuple_ty.strip_prefix("NovaTuple_").unwrap_or("");
+                    let key = (type_name.to_string(), "compare".to_string());
+                    if let Some(c_name) = self.method_overloads.get(&key)
+                        .and_then(|sigs| sigs.iter().find(|s| s.is_instance && s.param_c_types.len() == 1))
+                        .map(|s| s.c_name.clone())
+                    {
+                        let recv_tmp = self.fresh_tmp();
+                        self.line(&format!("{} {} = {};", tuple_ty, recv_tmp, l));
+                        let call = format!("{}(&({}), {})", c_name, recv_tmp, r);
+                        return Ok(match op {
+                            BinOp::Lt => format!("(({}) < 0)", call),
+                            BinOp::Le => format!("(({}) <= 0)", call),
+                            BinOp::Gt => format!("(({}) > 0)", call),
+                            BinOp::Ge => format!("(({}) >= 0)", call),
+                            _ => unreachable!(),
+                        });
+                    }
+                }
                 // Plan 172.4 Ф.2 (D-block: value-record `==` STRUCTURAL): a value-record
                 // `NovaValue_<Name>` is a BY-VALUE struct — C has no struct `==`, so the raw
                 // `(p == p2)` is the §2 acceptance CC-FAIL ("invalid operands"). Route `==`/`!=`

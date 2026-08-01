@@ -1,0 +1,28 @@
+// EXPECT_COMPILE_ERROR E_UNARY_OPERAND_TYPE
+//
+// D46-AMEND 2026-08-02 (окно p-op-channel, владелец): `@not` RETRACTED — `!`
+// сужен до СТРОГО `bool`. Раньше `!x` на пользовательском record-типе с
+// объявленным `@not()` диспетчился на этот метод (permissive-ветка чекера
+// пропускала custom-типы намеренно ради этого dispatch); теперь `@not` как
+// цель диспетча убран из `UNOP_TABLE` (`operator_dispatch.rs`), и ЛЮБОЙ
+// не-`bool` операнд `!` — включая пользовательские типы — честная ошибка
+// чекера (было: `m128_neg_not_operator_only_pos.nv` / `D46BoolBox` в
+// `d46_operator_overload_at_methods.nv`, оба фикстуры-носителя `@not`
+// снесены этим же слиянием).
+module neg.d46_not_custom_type_neg
+
+type D46NotBox {
+    v bool
+}
+
+fn D46NotBox.mk(v bool) -> D46NotBox => { v }
+
+// A `@not()` method existing on the type must NOT rescue `!` — proves this is
+// a genuine RETRACTION (dispatch removed), not merely "no matching method".
+fn D46NotBox @not() -> D46NotBox => { v: !@v }
+
+fn main() {
+    ro m46_x = D46NotBox.mk(true)
+    ro m46_y = !m46_x
+    println("${m46_y}")
+}
