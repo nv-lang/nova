@@ -1,0 +1,73 @@
+// ICE-пачка п.1: [M-named-tuple-field-accessor-on-call-ice].
+//
+// `obj.field()` (call-syntax, zero args) on a Record/NamedTuple field with NO
+// declared same-named method used to panic codegen's P67-LEGACY terminal
+// fallback (`emit_c.rs` ~58893, "method call `.field` return type unknown")
+// — the checker's field-match branches (`f3_check_member_ctx`, both the
+// Record and NamedTuple arms) annotate the INNER Member sub-expression's type
+// unconditionally (no `is_call_func` gate on the plain-field branch), but
+// nothing annotated the OUTER Call node's own return type, so
+// `resolved_types`/`resolved_callees` had no entry for the call and codegen's
+// return-type cascade panicked. Reproduced independent of receiver shape
+// (bound `Ident` AND a chained `Call` receiver both crashed identically) and
+// independent of Record vs NamedTuple (both share the same gap). Bare
+// `.field` (no parens) always worked — only the call-syntax form was
+// unreachable.
+//
+// Fix: checker (`types/mod.rs`, `infer_method_call_channel_type`'s new
+// `field_zero_arg_call_return` producer) annotates the call's own `ExprId`
+// with the field's type when no real method exists AND the field itself is
+// NOT Func-typed (a stored closure/fn-pointer field is excluded — that class
+// is a REAL call and must keep the normal wrapped-call emission, verified
+// below by the `Handler`/`h` case). Codegen (`emit_c.rs`, the "generic member
+// call (field-function or unknown)" terminal fallback) reads
+// `resolved_types[call_id]`: when present for a zero-arg call whose callee
+// has no `method_overloads` entry, it emits the bare member access with NO
+// trailing `(args)` instead of the previous unconditional `(args)` wrap.
+//
+// Companion: [M-named-tuple-positional-defaults] lives in the sibling
+// fixture `m_ice_named_tuple_positional_defaults_pos.nv` (same зона, п.1).
+module spec_tests.conformance
+
+type MIceRecordPair { m_ice_a int, m_ice_b int }
+type MIceTuplePair(m_ice_a int, m_ice_b int)
+
+fn m_ice_make_record_pair() -> MIceRecordPair => { m_ice_a: 7, m_ice_b: 8 }
+fn m_ice_make_tuple_pair() -> MIceTuplePair => MIceTuplePair(7, 8)
+
+// Func-typed field: a REAL callable — must keep normal `(args)` call
+// semantics (guards against the fix over-firing on genuine method-shaped
+// calls).
+type MIceHandler { m_ice_h fn(int) -> int }
+
+test "ICE-пачка п.1: .field() call-syntax on a Call-expression receiver (Record)" {
+    ro v = m_ice_make_record_pair().m_ice_a()
+    assert(v == 7, "record field call-syntax on chained Call receiver")
+}
+
+test "ICE-пачка п.1: .field() call-syntax on a Call-expression receiver (NamedTuple)" {
+    ro v = m_ice_make_tuple_pair().m_ice_a()
+    assert(v == 7, "named-tuple field call-syntax on chained Call receiver")
+}
+
+test "ICE-пачка п.1: .field() call-syntax on a bound-Ident receiver (Record)" {
+    ro p = m_ice_make_record_pair()
+    assert(p.m_ice_a() == 7, "record field call-syntax on bound Ident receiver")
+    assert(p.m_ice_b() == 8, "second field too")
+}
+
+test "ICE-пачка п.1: .field() call-syntax on a bound-Ident receiver (NamedTuple)" {
+    ro p = m_ice_make_tuple_pair()
+    assert(p.m_ice_a() == 7, "named-tuple field call-syntax on bound Ident receiver")
+    assert(p.m_ice_b() == 8, "second field too")
+}
+
+test "ICE-пачка п.1: bare .field access (no parens) still works, both shapes" {
+    assert(m_ice_make_record_pair().m_ice_a == 7, "bare field on Call receiver, Record")
+    assert(m_ice_make_tuple_pair().m_ice_a == 7, "bare field on Call receiver, NamedTuple")
+}
+
+test "ICE-пачка п.1: Func-typed field call-syntax is UNCHANGED (real call, not field sugar)" {
+    ro obj = MIceHandler { m_ice_h: |x| x * 2 }
+    assert(obj.m_ice_h(21) == 42, "stored closure field still invoked as a real call")
+}

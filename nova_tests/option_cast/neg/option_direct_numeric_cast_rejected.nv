@@ -1,0 +1,25 @@
+// EXPECT_COMPILE_ERROR E_CAST_UNWRAP_REQUIRED
+
+// [M-option-int-cast-u64-cc-fail] (ICE-пачка п.7): `expr as <numeric>` never
+// validated that `expr`'s own type is actually scalar-cast-compatible — a
+// source expression typed `Option[T]`/`Result[T,E]` (a NovaOpt/NovaRes C
+// STRUCT, never a bare scalar) passed the checker unmolested and reached
+// codegen with a blind C cast, which clang rejected ("operand of type
+// 'NovaOpt_...' where arithmetic or pointer type is required" — a CC-FAIL,
+// not an ICE, but the checker gap is the same class: a real type error
+// silently waved through to codegen). Repro class: a CHECKED conversion
+// method (`.to_int() -> Option[int]`) cast directly `as u64` WITHOUT
+// unwrapping first. See the sibling positive fixture
+// spec_tests/conformance/m_ice_option_cast_unwrap_first_pos.nv for the two
+// correct spellings (`match`/`??`).
+
+module neg.option_direct_numeric_cast_rejected
+
+type Wrap { v int }
+fn Wrap @to_int() -> Option[int] => Some(@v)
+
+fn main() {
+    ro w = Wrap { v: 5 }
+    ro y = (w.to_int() as u64)
+    println("${y}")
+}

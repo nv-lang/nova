@@ -31145,6 +31145,34 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // For pointer types: the emitted tmp expression already carries the type.
                 // Just declare the binding with the right type.
                 self.var_types.insert(binding.clone(), ty_c.clone());
+                // [M-value-record-param-default-after-indirection] (ICE-пачка
+                // п.3): `ref_params` (Plan 184) is populated ONCE per enclosing
+                // fn from its OWN by-pointer params (value-record/big-struct,
+                // Plan 172.14) and is only saved/restored at FN boundaries —
+                // never at block scope. `callnorm.rs`'s default/named-arg
+                // desugar (Plan 46 D102) synthesizes a fresh `let <param_name> =
+                // <temp>` binding NAMED AFTER THE CALLEE'S OWN PARAMETER — when
+                // that name happens to COLLIDE with an enclosing by-pointer
+                // param of the SAME NAME (`fn callee(f Foo, stop Option[int] =
+                // None)` called as `callee(f)` inside `fn caller(f Foo) { ... }`
+                // — both params are literally `f`), this THIS declaration is a
+                // plain-value local (`ty_c`/`val` here never carry pointer-ness
+                // — `ref_params` reads are hidden behind an explicit `(*name)`
+                // deref at emission, never surfaced into `ty_c`), but the STALE
+                // `ref_params["f"]` entry from the OUTER fn scope survives
+                // untouched, so the call-argument emission for THIS shadowed
+                // `f` (a few lines later, in the SAME synthesized block) still
+                // treats it as needing a `(*f)` deref — "indirection requires
+                // pointer operand ('NovaValue_Foo' invalid)": the shadow's
+                // ACTUAL C storage is a plain value, not a pointer. A fresh
+                // `let`-declared local is NEVER itself a by-pointer parameter,
+                // regardless of what name it reuses — remove the shadowed name
+                // from `ref_params` here (`emit_block_expr` already snapshots/
+                // restores `var_types` around a `{ }` scope for the identical
+                // shadowing hazard; mirror that restore for `ref_params` there
+                // too, so code AFTER a callnorm block that did NOT hit this
+                // exact collision keeps seeing the outer ref-param correctly).
+                self.ref_params.remove(&binding);
                 // Plan 72 P0 (E7201): track protocol-typed bindings so method calls
                 // on erased protocol vars emit E7201 instead of silent NULL.
                 // Also propagates through plain assignment: `let xx = x` where x is protocol-typed.
@@ -36192,6 +36220,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         let arg_ty = self.infer_expr_c_type(arg);
                         let str_expr = if arg_ty == "nova_str" {
                             v
+                        } else if matches!(arg_ty.as_str(), "uint64_t" | "nova_uint") {
+                            // [M-u64-uint-to-str-prints-signed] (ICE-пачка
+                            // п.9): same fix as the main interpolation path
+                            // — a high-bit-set uint/u64 has no signed-int
+                            // equivalent.
+                            format!("nova_uint_to_str(({}))", v)
                         } else {
                             format!("nova_int_to_str((nova_int)({}))", v)
                         };
@@ -40780,7 +40814,37 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                 } else { None };
                                                 match target_c {
                                                     Some(tc) => arg_strs.push(self.emit_expr_with_target_type(arg_expr, &tc)?),
-                                                    None => arg_strs.push(self.emit_expr(arg_expr)?),
+                                                    None => {
+                                                        // [M-generic-reflect-call-inside-
+                                                        // sibling-struct-literal] (ICE-пачка
+                                                        // п.5): a non-ArrayLit arg is an
+                                                        // ordinary CALLER-scope expression —
+                                                        // it must NOT see THIS callee's own
+                                                        // receiver-generic substitution
+                                                        // (`type_subst`, e.g. `Vec[T].push`'s
+                                                        // "T" bound to the pushed ELEMENT
+                                                        // type). Restore the caller's own
+                                                        // substitution while emitting it — an
+                                                        // enclosing generic method with its
+                                                        // OWN identically-named type-param
+                                                        // ("T" by convention) had that
+                                                        // shadowed for the whole arg-emission
+                                                        // window otherwise (repro:
+                                                        // `@shapes.push(RouteInfo{ req_shape:
+                                                        // Some(T.reflect()) })` inside
+                                                        // `fn Router mut @m[T Reflect]`, on a
+                                                        // `[]RouteInfo` receiver — mono-
+                                                        // mangled `T.reflect()` to the
+                                                        // undefined `Nova_RouteInfo_static_
+                                                        // reflect` instead of the outer T's
+                                                        // own mono symbol).
+                                                        let restore = std::mem::replace(
+                                                            &mut self.current_type_subst,
+                                                            saved_subst.clone());
+                                                        let v = self.emit_expr(arg_expr);
+                                                        self.current_type_subst = restore;
+                                                        arg_strs.push(v?);
+                                                    }
                                                 }
                                             }
                                             self.current_type_subst = saved_subst;
@@ -42961,13 +43025,46 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                 }
                                             }
                                         }
-                                        let v = self.emit_expr(a.expr())?;
+                                        // [M-generic-reflect-call-inside-sibling-struct-
+                                        // literal] (ICE-пачка п.5): `a.expr()` is an
+                                        // ordinary CALLER-scope expression — restore
+                                        // the caller's own `current_type_subst`
+                                        // (`saved_subst`) while emitting it, same fix
+                                        // as the two sibling generic-mono call-arg
+                                        // loops above (турбофиш static receiver /
+                                        // array-ext `[]T @method`). `expected_record_
+                                        // type` (set just above, for the anon-literal
+                                        // sub-case) is a SEPARATE, already-resolved
+                                        // field — it does not depend on
+                                        // `current_type_subst` staying swapped during
+                                        // the recursive `emit_expr` call, only
+                                        // `type_ref_to_c(&param_decl.ty)` above needed
+                                        // it (already evaluated). Root repro: `fn
+                                        // Router mut @m[T Reflect](...) { @shapes.push
+                                        // (RouteInfo{ req_shape: Some(T.reflect()) })
+                                        // }` on a `[]RouteInfo` (`Vec[T]`, T=RouteInfo)
+                                        // receiver — the outer method's OWN "T" (int,
+                                        // say) got shadowed by `Vec[T].push`'s "T"
+                                        // (RouteInfo) for the whole arg-emission
+                                        // window, mono-mangling `T.reflect()` to the
+                                        // undefined `Nova_RouteInfo_static_reflect`.
+                                        let restore = std::mem::replace(
+                                            &mut self.current_type_subst, saved_subst.clone());
+                                        let v = self.emit_expr(a.expr());
+                                        self.current_type_subst = restore;
                                         self.expected_record_type = saved_er;
-                                        arg_strs.push(v);
+                                        arg_strs.push(v?);
                                     }
                                 }
+                                // Extra args beyond fn_decl.params length — same
+                                // caller-scope restore ([M-generic-reflect-call-inside-
+                                // sibling-struct-literal], ICE-пачка п.5).
                                 for a in args.iter().skip(fn_decl.params.len()) {
-                                    arg_strs.push(self.emit_expr(a.expr())?);
+                                    let restore = std::mem::replace(
+                                        &mut self.current_type_subst, saved_subst.clone());
+                                    let v = self.emit_expr(a.expr());
+                                    self.current_type_subst = restore;
+                                    arg_strs.push(v?);
                                 }
                                 self.current_type_subst = saved_subst;
                                 // Plan 153.2 gap A: eagerly register the return
@@ -43782,7 +43879,39 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 //    (inline `|x| ...` literal) → call emit_lambda
                                 //    directly с context_param_tys для proper
                                 //    type inference внутри body (Plan 48 pattern).
-                                let obj_c = self.emit_expr(obj)?;
+                                // [M-generic-reflect-call-inside-sibling-struct-literal]
+                                // (ICE-пачка п.5): `obj`/non-closure args are ordinary
+                                // CALLER-scope expressions — they must NOT see this
+                                // callee's OWN receiver-generic substitution
+                                // (`arrext_seeded`, e.g. `[]T @push`'s "T" bound to the
+                                // ELEMENT type). Only the CLOSURE-typed-param branch
+                                // below genuinely needs it (closure param types mention
+                                // the callee's own T, e.g. `element_c`). Without this,
+                                // an enclosing GENERIC method whose OWN type-param
+                                // happens to share the exact same conventional name
+                                // ("T") — e.g. `fn Router mut @m[T Reflect](...)` calling
+                                // `@shapes.push(RouteInfo{ req_shape: Some(T.reflect())
+                                // })` on a `[]RouteInfo` (`Vec[T]`, T=RouteInfo) receiver
+                                // — had ITS "T" (int, say) silently shadowed by THIS
+                                // call's "T" (RouteInfo) for the WHOLE duration of arg
+                                // emission (`current_type_subst` is a single, unscoped
+                                // map keyed by bare generic-param name — no notion of
+                                // "whose T"), so `T.reflect()` INSIDE the record-literal
+                                // argument mono-mangled to `Nova_RouteInfo_static_reflect`
+                                // (undefined at link time — RouteInfo never declared that
+                                // method) instead of the outer T's own mono symbol.
+                                // Restore the CALLER's own substitution (`saved_subst`)
+                                // just for `obj`/non-closure-arg emission; the swap stays
+                                // in effect for everything that legitimately needs it
+                                // (mono registration above, closure-arg type inference
+                                // below).
+                                let obj_c = {
+                                    let restore = std::mem::replace(
+                                        &mut self.current_type_subst, saved_subst.clone());
+                                    let r = self.emit_expr(obj);
+                                    self.current_type_subst = restore;
+                                    r?
+                                };
                                 let mut arg_strs = vec![obj_c];
                                 for (param_decl, a) in fn_decl.params.iter().zip(args.iter()) {
                                     if let crate::ast::TypeRef::Func { params: fp, return_type, .. } = &param_decl.ty {
@@ -43825,12 +43954,28 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                             arg_strs.push(v);
                                         }
                                     } else {
-                                        arg_strs.push(self.emit_expr(a.expr())?);
+                                        // [M-generic-reflect-call-inside-sibling-struct-
+                                        // literal] (ICE-пачка п.5): same caller-scope
+                                        // restore as `obj_c` above — a non-Func-typed
+                                        // arg (a plain expression, e.g. a record literal)
+                                        // is CALLER scope, not this callee's receiver-
+                                        // generic scope.
+                                        let restore = std::mem::replace(
+                                            &mut self.current_type_subst, saved_subst.clone());
+                                        let v = self.emit_expr(a.expr());
+                                        self.current_type_subst = restore;
+                                        arg_strs.push(v?);
                                     }
                                 }
-                                // Extra args beyond fn_decl.params length.
+                                // Extra args beyond fn_decl.params length — same
+                                // caller-scope restore ([M-generic-reflect-call-inside-
+                                // sibling-struct-literal], ICE-пачка п.5).
                                 for a in args.iter().skip(fn_decl.params.len()) {
-                                    arg_strs.push(self.emit_expr(a.expr())?);
+                                    let restore = std::mem::replace(
+                                        &mut self.current_type_subst, saved_subst.clone());
+                                    let v = self.emit_expr(a.expr());
+                                    self.current_type_subst = restore;
+                                    arg_strs.push(v?);
                                 }
                                 self.current_type_subst = saved_subst;
                                 let recv_elem = self.channel_array_elem_c(obj);
@@ -44015,6 +44160,30 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Fallback: generic member call (field-function or unknown)
                 let accessor = if Self::is_value_type(&obj_ty) { "." } else { "->" };
                 let obj_c = self.emit_expr(obj)?;
+                // [M-named-tuple-field-accessor-on-call-ice] (ICE-пачка п.1): every
+                // OTHER branch above this terminal fallback already tried and
+                // failed to find a real declared method for (receiver-type,
+                // `method`) — this comment's own "field-function or unknown"
+                // wording concedes the ambiguity. The checker (types/mod.rs
+                // `field_zero_arg_call_return`, called from `infer_method_call_
+                // channel_type`'s LAST `.or_else`) resolves a zero-arg call-
+                // syntax field read (`obj.field()`, no method of that name, field
+                // NOT itself Func-typed) to the field's own type and channels it
+                // into `resolved_types[call_id]` — the ONLY producer that reaches
+                // that channel for a call whose callee has no method_overloads
+                // entry (every method-call producer either finds a real method,
+                // in which case codegen dispatches it via a branch ABOVE this
+                // one and never reaches here, or misses entirely and leaves
+                // `resolved_types[call_id]` unset). So an entry here, at this
+                // exact point, unambiguously means "plain-field zero-arg call
+                // sugar" — emit the bare member access, no trailing `(args)` (a
+                // stored Func-typed field is excluded by the checker producer
+                // itself, so a real callable field call is UNCHANGED — it never
+                // gets an entry here and falls through to the old wrapped-call
+                // string below, exactly as before this fix).
+                if args.is_empty() && self.resolved_types.contains_key(&call_id) {
+                    return Ok(format!("{obj}{acc}{method}", obj = obj_c, acc = accessor, method = method));
+                }
                 format!("{obj}{acc}{method}", obj = obj_c, acc = accessor, method = method)
             }
             ExprKind::Path(parts) => {
@@ -45139,6 +45308,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // (3.14159f → "3.141590118408203" instead of "3.14159").
             "nova_f32"                                      => "nova_print_f32",
             "nova_f64"                                      => "nova_print_f64",
+            // [M-u64-uint-to-str-prints-signed] (ICE-пачка п.9): `uint`/`u64`
+            // are FULL-WIDTH (`uintptr_t`) — a value with the high bit set
+            // has no signed-int equivalent, so it must print via the
+            // dedicated unsigned helper (`%llu`), never `nova_print_int`
+            // (`%lld` on a bit-reinterpreted negative). The C type strings
+            // ACTUALLY produced for `uint`/`u64` are `"uint64_t"`/
+            // `"nova_uint"` (see `type_ref_to_c`) — the narrower unsigned
+            // widths (u8/u16/u32) stay on `nova_print_int` below: their max
+            // value fits well inside signed int64 range, no sign-bit
+            // collision possible.
+            "uint64_t" | "nova_uint"                         => "nova_print_uint",
             // Signed/unsigned integer widths — все cast'ятся в long long
             // через nova_print_int signature.
             "nova_int" | "nova_i8" | "nova_i16" | "nova_i32" | "nova_i64"
@@ -46436,6 +46616,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // (the receiver), same as the display/debug call site.
                             let recv_c = self.prepare_method_recv(&v, &arg_ty, false, Some(e));
                             format!("{}({})", c_name, recv_c)
+                        } else if matches!(arg_ty.as_str(), "uint64_t" | "nova_uint") {
+                            // [M-u64-uint-to-str-prints-signed] (ICE-пачка
+                            // п.9): `uint`/`u64` (full-width `uintptr_t`) has
+                            // no signed-int equivalent for a high-bit-set
+                            // value — the generic numeric-cast fallback below
+                            // (`(nova_int)(...)`) bit-reinterprets it as
+                            // negative, e.g. `(-6 as u64).to_str()` printed
+                            // "-6" instead of "18446744073709551610". Route
+                            // through the dedicated unsigned formatter
+                            // (`%llu`) instead — same reasoning as
+                            // `infer_print_helper`'s sibling fix a few
+                            // hundred lines up (println path).
+                            format!("nova_uint_to_str(({}))", v)
                         } else {
                             format!("nova_int_to_str((nova_int)({}))", v)
                         }
@@ -46970,6 +47163,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // gate). Standalone repro:
         // spec_tests/conformance/standalone/freefn_named_default_arg_shift.nv.
         let saved_var_types = self.var_types.clone();
+        // [M-value-record-param-default-after-indirection] (ICE-пачка п.3):
+        // `ref_params` shares the exact same block-scoped-shadow hazard as
+        // `var_types` above (see the `[M-callnorm-free-fn-name-collision]`
+        // doc a few lines up) — a `Stmt::Let` inside this block whose name
+        // collides with an outer by-pointer param removes it from
+        // `ref_params` for the DURATION of this block (see that removal's
+        // own doc comment, `Stmt::Let`'s common binding path) so the shadow's
+        // plain-value storage isn't mistaken for the outer pointer; restore
+        // it here so code AFTER this block (when this block is not the
+        // enclosing fn's entire body) still sees the outer ref-param.
+        let saved_ref_params = self.ref_params.clone();
         self.line("{");
         self.indent += 1;
         if block.is_unsafe { self.unsafe_depth += 1; }
@@ -47007,6 +47211,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.indent -= 1;
         self.line("}");
         self.var_types = saved_var_types;
+        self.ref_params = saved_ref_params;
         Ok(tmp)
     }
 
@@ -61016,6 +61221,80 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                         if rt_is_typed_int && lt == "nova_int" {
                             return rt;
+                        }
+                        // [M-shl-shr-non-self-return-local-infer-segfault]
+                        // (ICE-пачка п.8): the bare `lt` fallback below is
+                        // correct ONLY for a homogeneous, Self-returning
+                        // operator (`+ - & | ^` on a user type conventionally
+                        // return `Self`, i.e. `lt`) — `@shl`/`@shr` are
+                        // HETEROGENEOUS (D46 03-syntax.md ~2872, second
+                        // operand `n int`, not `Self`) and their return type
+                        // is whatever the user declares, NOT necessarily
+                        // `Self`. Falling to `lt` unconditionally made `ro x
+                        // = recv << n` on an `fn Type @shl(n int) -> int`
+                        // (bare-scalar, non-Self return) infer `x`'s C type
+                        // as the RECEIVER's own pointer type (`Nova_Type*`)
+                        // instead of `nova_int` — the emitted local
+                        // declaration (`Nova_Type* x = Nova_Type_method_shl(
+                        // ...)`, the call genuinely RETURNS nova_int) became
+                        // an implicit int-to-pointer C conversion; any
+                        // further use of `x` AS that fabricated pointer
+                        // (field read, chained method call) dereferenced a
+                        // wild address — SEGFAULT. Mirror the
+                        // `NovaValue_`-receiver `+ - * / %` return-type
+                        // lookup a few dozen lines above (same
+                        // `method_overloads` registry), but for `<< >>`
+                        // specifically and for BOTH heap (`Nova_T*`) and
+                        // value (`NovaValue_T`) receivers — the actual
+                        // declared return type of the dispatched `@shl`/
+                        // `@shr` method is authoritative, `lt` is only a
+                        // fallback guess.
+                        if matches!(op, BinOp::Shl | BinOp::Shr) {
+                            let bare = lt.trim_end_matches('*');
+                            let type_name = bare.strip_prefix("NovaValue_")
+                                .or_else(|| bare.strip_prefix("Nova_"))
+                                .unwrap_or(bare);
+                            if !type_name.is_empty() && type_name != "void" {
+                                let mname = if *op == BinOp::Shl { "shl" } else { "shr" };
+                                if let Some(sigs) = self.method_overloads
+                                    .get(&(type_name.to_string(), mname.to_string()))
+                                {
+                                    if let Some(sig) = sigs.iter().find(|s| {
+                                        s.is_instance && s.param_c_types.len() == 1
+                                    }) {
+                                        return sig.return_c_type.clone();
+                                    }
+                                }
+                                // Generic-mono receiver (`Set[T]`-class, "____"
+                                // marker): `method_overloads` only ever holds
+                                // CONCRETE (non-generic) signatures — a mono'd
+                                // receiver's `@shl`/`@shr` lives in
+                                // `self_method_decls`, keyed by the BASE
+                                // (un-mono'd) type name, per `resolve_binop_
+                                // dispatch`'s identical `mono_fn_decl` lookup
+                                // (operator_dispatch.rs). Read the declared
+                                // return TypeRef and lower it — best-effort
+                                // (a return type mentioning the receiver's OWN
+                                // generic param needs `current_type_subst`,
+                                // not generally available at this static
+                                // inference call site; the common non-Self
+                                // case this fix targets, e.g. `-> int`, is a
+                                // concrete Named type and lowers directly).
+                                if let Some(idx) = type_name.find("____") {
+                                    let base = &type_name[..idx];
+                                    if let Some(fn_decl) = self.self_method_decls
+                                        .get(&(base.to_string(), mname.to_string()))
+                                    {
+                                        if let Some(rt) = &fn_decl.return_type {
+                                            if let Ok(c) = self.type_ref_to_c(rt) {
+                                                if !c.is_empty() && c != "void*" {
+                                                    return c;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                         lt
                     }

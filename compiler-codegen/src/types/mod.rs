@@ -5619,7 +5619,77 @@ impl<'a> TypeCheckCtx<'a> {
 
     // --- Ф.2: walk сигнатур ---------------------------------------------
 
+    /// [M-channel-try-recv-ro-binding-p67-ice] (ICE-пачка п.6): `ty` (peeled
+    /// of `readonly`/`mut` wrappers) is exactly the bare `Channel[T]` type —
+    /// the constructor-only namespace, never a real instantiable value
+    /// (see `check_fn`'s call-site doc for the full rationale). `label` names
+    /// the position for the message (`p.name` for a param, `"<return>"` for
+    /// a return type).
+    fn channel_bare_type_diag(ty: &TypeRef, label: &str, span: Span) -> Option<Diagnostic> {
+        let mut t = ty;
+        loop {
+            match t {
+                TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) => t = inner,
+                _ => break,
+            }
+        }
+        let TypeRef::Named { path, generics, .. } = t else { return None };
+        if path.len() != 1 || path[0] != "Channel" {
+            return None;
+        }
+        let where_txt = if label == "<return>" {
+            "return type".to_string()
+        } else {
+            format!("param `{}`", label)
+        };
+        let generic_txt = if generics.is_empty() { "Channel" } else { "Channel[..]" };
+        Some(Diagnostic::new(
+            format!(
+                "[E_CHANNEL_TYPE_NOT_INSTANTIABLE] {} has type `{}` — `Channel[T]` \
+                 is a CONSTRUCTOR NAMESPACE only (`Channel.new(cap)` /  \
+                 `Channel.with_capacity(cap)`), never a real value type; the \
+                 runtime never materializes one (`Channel.new()` returns a \
+                 `(ChanWriter[T], ChanReader[T])` capability pair — there is no \
+                 `Channel` struct to receive method calls on). Use \
+                 `ChanReader[T]` (for `.recv()`/`.try_recv()`/...) or \
+                 `ChanWriter[T]` (for `.send()`/`.try_send()`/...) instead — \
+                 whichever capability this position actually needs.",
+                where_txt, generic_txt,
+            ),
+            span,
+        ))
+    }
+
     fn check_fn(&self, fd: &FnDecl, errors: &mut Vec<Diagnostic>) {
+        // [M-channel-try-recv-ro-binding-p67-ice] (ICE-пачка п.6): `Channel[T]`
+        // is declared `external type Channel[T]` purely as a NAMESPACE for the
+        // `Channel.new(cap)`/`Channel.with_capacity(cap)` static constructors
+        // (`is_channel_ctor`-style gates elsewhere in this file only ever
+        // recognize "Channel" for `new`/`with_capacity`) — the runtime never
+        // materializes a value of Nova-level type `Channel[T]` itself:
+        // `Channel.new()` returns a `(ChanWriter[T], ChanReader[T])` pair
+        // (D91 capability split, `nova_rt/channels.h`'s `Nova_ChannelPair` —
+        // `Nova_ChanWriter`/`Nova_ChanReader` each own struct, holding a
+        // `Nova_ChannelState*`; there is no `Nova_Channel` struct at all). A
+        // param/local explicitly ANNOTATED `Channel[T]` (instead of the real
+        // `ChanReader[T]`/`ChanWriter[T]` capability types) was silently
+        // ACCEPTED by the checker (no producer ever validated this type
+        // position) and reached codegen with C receiver type `Nova_Channel*`
+        // — a name nothing lowers or dispatches, so ANY method call on it
+        // (`.try_recv()`, `.recv()`, `.try_send()`, ...) panicked emit_c's
+        // P67-LEGACY terminal ("method call return type unknown"). Reject at
+        // the type-annotation site instead — clear compile-time diagnostic,
+        // no ICE, no risk of miscompiling through a nonexistent C layout.
+        for p in &fd.params {
+            if let Some(diag) = Self::channel_bare_type_diag(&p.ty, &p.name, p.span) {
+                errors.push(diag);
+            }
+        }
+        if let Some(rt) = &fd.return_type {
+            if let Some(diag) = Self::channel_bare_type_diag(rt, "<return>", fd.span) {
+                errors.push(diag);
+            }
+        }
         // Plan 173 Ф.1 (#3 / Plan 174.2): `?` строго return-only. Свободный `?`
         // осмыслен лишь в fn, возвращающей Result/Option (проброс значением);
         // в Fail-эффект-fn → `[E_TRY_IN_FAIL_FN]` (там `!!`/`throw`). Consume-init
@@ -9360,8 +9430,58 @@ impl<'a> TypeCheckCtx<'a> {
                 self.f1_expr(inner, gs, scope, errors);
                 self.check_ref_marker_mutability(inner, scope, errors);
             }
-            ExprKind::As(inner, _) => {
+            ExprKind::As(inner, cast_ty) => {
                 self.f1_expr(inner, gs, scope, errors);
+                // [M-option-int-cast-u64-cc-fail] (ICE-пачка п.7): `expr as
+                // <numeric>` never validated that `expr`'s OWN type is
+                // actually scalar-cast-compatible — a source expression whose
+                // type is `Option[T]`/`Result[T,E]` (a NovaOpt/NovaRes C
+                // STRUCT, never a bare scalar) passed straight through to
+                // codegen, which just emits a blind C cast — clang then
+                // rejects the struct operand ("operand of type 'NovaOpt_...'
+                // where arithmetic or pointer type is required" /
+                // "passing 'NovaOpt_...' to parameter of incompatible type").
+                // Repro class: `x.to_int()` (returns `Option[int]`, a CHECKED
+                // conversion) cast directly `as u64` WITHOUT unwrapping first
+                // — `(x.to_int() as u64)` — silently accepted by the checker,
+                // CC-FAIL at codegen. Catch it here: a numeric-scalar cast
+                // TARGET whose SOURCE resolves to `Option[..]`/`Result[..,..]`
+                // is never valid — the correct spelling requires an explicit
+                // unwrap (`match`/`??`/`!!`/`?`) before the numeric cast.
+                if let Some(src_ty) = self.infer_expr_type(inner, scope) {
+                    if let TypeRef::Named { path: src_path, .. } = src_ty.strip_modifiers() {
+                        if src_path.len() == 1
+                            && matches!(src_path[0].as_str(), "Option" | "Result")
+                        {
+                            if let TypeRef::Named { path: dst_path, generics: dst_gens, .. } =
+                                cast_ty.strip_modifiers()
+                            {
+                                if dst_path.len() == 1 && dst_gens.is_empty()
+                                    && matches!(dst_path[0].as_str(),
+                                        "int" | "uint" | "i8" | "i16" | "i32" | "i64"
+                                        | "u8" | "u16" | "u32" | "u64"
+                                        | "f32" | "f64" | "bool" | "char")
+                                {
+                                    errors.push(Diagnostic::new(
+                                        format!(
+                                            "[E_CAST_UNWRAP_REQUIRED] cannot cast \
+                                             `{}` directly `as {}` — the source is \
+                                             `{}`, not a scalar; the checked-\
+                                             conversion result must be unwrapped \
+                                             FIRST (`match`/`??`/`!!`/`?`), THEN \
+                                             cast. Example: `match x.to_int() {{ \
+                                             Some(v) => v as {t}, None => ... }}` \
+                                             or `(x.to_int() ?? 0) as {t}`.",
+                                            src_path[0], dst_path[0], src_path[0],
+                                            t = dst_path[0],
+                                        ),
+                                        e.span,
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
                 // Plan 172.1 §0a (As): materialize the cast target type into the channel.
                 // `infer_expr_type` already returns the `ty` for `As` — wire it into
                 // `resolved_types_buf` so codegen reads the CAST TYPE, not a re-derive.
@@ -19928,6 +20048,81 @@ impl<'a> TypeCheckCtx<'a> {
                 // выводится из closure-аргумента при известном carrier-subst.
                 self.resolve_method_return_with_closure_args(&recv_ty, name, call_args, scope, call_id)
             })
+            .or_else(|| {
+                // [M-named-tuple-field-accessor-on-call-ice] (ICE-пачка п.1): a
+                // zero-arg call-syntax field read (`obj.field()`) on a Record/
+                // NamedTuple receiver whose type has NO declared method named
+                // `field` (checked twice above: `resolve_instance_method_return_
+                // arity` and the closure-arg fallback both missed) previously
+                // fell all the way through to codegen's P67-LEGACY terminal
+                // panic — `f3_check_member_ctx`'s field-match arm (below, in
+                // this same impl) annotates the INNER Member sub-expr's
+                // `ExprId` unconditionally (no `is_call_func` gate on the
+                // plain-field branch, unlike the same-name-method branch a few
+                // lines above it, which explicitly documents why call-position
+                // must NEVER get the field annotation when a method exists) —
+                // but nothing annotated the OUTER Call's own `ExprId`, so
+                // `resolved_types`/`resolved_callees` had no entry for the call
+                // node itself and codegen's return-type cascade panicked
+                // (`obj_ty="NovaTuple_X"`/`"Nova_X*"`, `obj=Call`/`Ident(..)`).
+                // A bare `.field` (no parens) already worked (`f3_check_member_
+                // ctx`'s field arm covers it) — only the call-syntax form was
+                // unreachable. No spec sanction exists for `.field()` as a
+                // GENERAL field-read sugar (D117 reserves call-syntax for
+                // EXPLICITLY DECLARED accessor methods like `cap`/`len`), but
+                // the checker already silently accepted the call-syntax parse
+                // (no diagnostic) before this fix — turning it into a hard
+                // error now would be a new user-facing regression on a form
+                // that at least *parses*; annotating the channel here keeps
+                // the parse-accepted surface working, consistent with §4а
+                // (no ICE on any accepted input) and the brief's stated fix
+                // channel ("checker annotation").
+                if call_arity != 0 || explicit_type_args.is_some() {
+                    return None;
+                }
+                self.field_zero_arg_call_return(&recv_ty, name)
+            })
+    }
+
+    /// See the `[M-named-tuple-field-accessor-on-call-ice]` producer above:
+    /// resolves `obj.field()` (zero-arg call syntax) to `field`'s OWN type when
+    /// `recv_ty`'s underlying declared type is a Record or NamedTuple with a
+    /// field literally named `name` and no colliding same-named method (the
+    /// caller already tried real method resolution and missed). Mirrors the
+    /// substitution the bare-`.field` `f3_check_member_ctx` arm performs
+    /// (`subst_receiver_generics` over the type's own generics), so a generic
+    /// record/named-tuple field substitutes the SAME concrete type either way.
+    fn field_zero_arg_call_return(&self, recv_ty: &TypeRef, name: &str) -> Option<TypeRef> {
+        let mut peeled = recv_ty;
+        loop {
+            match peeled {
+                TypeRef::Readonly(i, _) | TypeRef::Mut(i, _) => peeled = i,
+                _ => break,
+            }
+        }
+        let TypeRef::Named { path, generics: args, .. } = peeled else { return None };
+        let type_name = path.last()?;
+        if self.t_provides_method(type_name, name) {
+            // A real method with this name exists — never shadow it with a
+            // field annotation from a call-position (mirrors the same-name
+            // guard in `f3_check_member_ctx`).
+            return None;
+        }
+        let td = self.types.get(type_name)?;
+        let field_ty: &TypeRef = match &td.kind {
+            TypeDeclKind::Record(fields) => &fields.iter().find(|f| f.name == name)?.ty,
+            TypeDeclKind::NamedTuple(fields) => &fields.iter().find(|f| f.name == name)?.ty,
+            _ => return None,
+        };
+        // Exclude a Func-typed field (a stored closure/fn-pointer field IS
+        // meant to be invoked with call syntax, args aside — codegen's own
+        // dispatch cascade may still have a legitimate route for that we must
+        // not shadow here; only a PLAIN-VALUE field masquerading as a call is
+        // this producer's target).
+        if matches!(field_ty, TypeRef::Func { .. }) {
+            return None;
+        }
+        Some(self.subst_receiver_generics(field_ty, &td.generics, args))
     }
 
     /// 172.1.2 C6(a): посев типов closure-параметров из СУБСТИТУИРОВАННОЙ
@@ -33505,6 +33700,42 @@ impl<'a> ConsumeCtx<'a> {
             }
             // Алиас `let y = x` — переносим известный тип `x`.
             ExprKind::Ident(n) => self.var_types.get(&self.canonical(n)).cloned(),
+            // [M-chained-consume-lock-d133-empty-type] (ICE-пачка п.4): bare
+            // FIELD READ (`@lock`, `registry.lock`, not a call) as a
+            // consume-RHS's receiver chain — `consume g = @lock.lock()`'s
+            // `func.kind` is `Member{obj: Member{SelfAccess,"lock"}, name:
+            // "lock"}`; the Call-arm's own `recv_ty` match above only knows
+            // `Ident`/`SelfAccess` obj-shapes directly, so a receiver that is
+            // ITSELF a plain field-access Member (not a call) fell through to
+            // `_ => self.infer_value_type(obj)` recursing into THIS match with
+            // no matching arm at all (every existing arm here is Call/Ident/
+            // RecordLit/Try/Bang/RefArg/Coalesce/Match/IfLet) — `None`, so
+            // `var_types["g"]` never got set and D133's obligation-check
+            // reported the empty-type `тип \`\`` diagnostic even though
+            // `MutexGuard`'s declared `@cleanup` should have made the missing
+            // explicit `.unlock()` a non-error (auto-cleanup, D432/Plan 217).
+            // Same gap for the intermediate bind (`ro m = @lock`) — bare
+            // `@lock` alone hit the identical missing-arm hole. Resolve the
+            // field the SAME way `record_field_types` (already populated,
+            // `[M-216-record-payload-consume]`) is consulted elsewhere in
+            // this file: obj's own type (self/local/recursive-Member), then
+            // `(type, field) -> field's declared type` lookup.
+            ExprKind::Member { obj, name } => {
+                let obj_ty: Option<String> = match &obj.kind {
+                    ExprKind::Ident(recv) if recv == "self" => self.self_type.clone(),
+                    ExprKind::Ident(recv) => {
+                        let canon = self.canonical(recv);
+                        self.var_types.get(&canon)
+                            .or_else(|| self.var_types.get(recv.as_str()))
+                            .cloned()
+                    }
+                    ExprKind::SelfAccess => self.self_type.clone(),
+                    _ => self.infer_value_type(obj),
+                };
+                obj_ty.and_then(|ty| {
+                    self.reg.record_field_types.get(&ty)?.get(name).cloned()
+                })
+            }
             // `User { ... }` record-литерал.
             ExprKind::RecordLit { type_name: Some(path), .. } if path.len() == 1 => {
                 Some(path[0].clone())
@@ -36249,11 +36480,54 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
         Stmt::ConsumeScope { init, body, re_consume, result, span, .. } => {
             consume_walk_expr(ctx, init, errors);
             if !*re_consume {
+                // [M-consume-param-spawn-defer-active] (ICE-пачка п.11,
+                // checker half): `spawn consume c { body }` desugars to
+                // THIS exact `re_consume=false` shape with `init =
+                // Ident(c)` referencing an ALREADY-OWNED outer binding
+                // (parser's own doc at `parse_spawn`: "`c` already bound
+                // in the OUTER (parent) scope; re-consuming it here
+                // transfers ownership into the child ... the desugar's
+                // ConsumeScope `init` is simply `Ident(c)`") — but this
+                // branch never marked the OUTER `c` Consumed, so ITS OWN
+                // enclosing scope-exit obligation check (D133) fired a
+                // false-positive even though ownership genuinely moved
+                // into the spawned child (mirrors the `re_consume=true`
+                // path a few dozen lines below, which correctly closes
+                // the obligation via `mark_consumed_bypass_guard` at the
+                // end of ITS OWN handling). Gated to a bare `Ident` INIT
+                // referencing an EXISTING owned obligation — the OTHER
+                // producer of this same `re_consume=false` shape (a fresh
+                // `consume x = Type.new() { body }`, D188 binding form)
+                // constructs a NEW value with no outer obligation to
+                // close, so it correctly falls through this check as a
+                // no-op (unaffected, byte-identical).
+                //
+                // Marked AFTER walking `body` (not before): `body` itself
+                // legitimately reads/consumes `c` under its OWN (same
+                // canonical) name — mirrors the `re_consume=true` path,
+                // which also only calls `mark_consumed_bypass_guard` at
+                // the very END, once the body's own uses are done.
+                let spawn_reuse_name: Option<String> = match &init.kind {
+                    ExprKind::Ident(n) => {
+                        let canon = ctx.canonical(n);
+                        if ctx.consume_obligations.contains(&canon)
+                            || ctx.consume_obligations.contains(n.as_str())
+                        {
+                            Some(n.clone())
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                };
                 for stmt in &body.stmts {
                     consume_walk_stmt(ctx, stmt, errors);
                 }
                 if let Some(t) = &body.trailing {
                     consume_walk_expr(ctx, t, errors);
+                }
+                if let Some(n) = &spawn_reuse_name {
+                    ctx.mark_consumed_bypass_guard(n, *span);
                 }
                 return;
             }
@@ -38263,7 +38537,39 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
             consume_walk_block(ctx, body, errors);
         }
         ExprKind::Detach(b) | ExprKind::Blocking(b) => consume_walk_isolated_block(ctx, &[], b, errors),
-        ExprKind::Spawn(inner) => consume_walk_isolated_expr(ctx, &[], inner, errors),
+        ExprKind::Spawn(inner) => {
+            consume_walk_isolated_expr(ctx, &[], inner, errors);
+            // [M-consume-param-spawn-defer-active] (ICE-пачка п.11): `spawn
+            // consume c { body }` desugars (parser's `parse_spawn`) to
+            // `Spawn(Block[ConsumeScope{re_consume:false, init:Ident(c),
+            // ...}])` — the `consume_walk_isolated_expr` call just above
+            // snapshots/restores `ctx.states` around the WHOLE spawn body
+            // (sound in general: a spawned child's mutations to captured
+            // `mut` vars must not appear "already applied" to the parent's
+            // own sequential view before the child has necessarily run) —
+            // but that restore ALSO silently undoes the `Stmt::ConsumeScope`
+            // `re_consume=false` arm's own `mark_consumed_bypass_guard` call
+            // for the reused `c`. Ownership-transfer is NOT like a mut-
+            // capture: `c` genuinely, unconditionally leaves the parent's
+            // scope AT the spawn statement itself (a synchronous move, not
+            // something the child fiber does later) — its Consumed state
+            // must survive the restore. Detect the exact desugar shape here
+            // (the isolated walk above already validated the body — this is
+            // purely re-applying the state change in the SURVIVING,
+            // non-isolated `ctx`) and mark the outer binding consumed.
+            if let ExprKind::Block(b) = &inner.kind {
+                if let [Stmt::ConsumeScope { init, re_consume: false, .. }] = b.stmts.as_slice() {
+                    if let ExprKind::Ident(n) = &init.kind {
+                        let canon = ctx.canonical(n);
+                        if ctx.consume_obligations.contains(&canon)
+                            || ctx.consume_obligations.contains(n.as_str())
+                        {
+                            ctx.mark_consumed_bypass_guard(n, inner.span);
+                        }
+                    }
+                }
+            }
+        }
 
         // ─── Литералы-агрегаты ───
         ExprKind::TupleLit(elems) => {

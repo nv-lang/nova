@@ -348,6 +348,18 @@ static inline nova_str nova_int_to_str(nova_int v) {
     return (nova_str){ buf, (size_t)(n < 0 ? 0 : n) };
 }
 
+/* [M-u64-uint-to-str-prints-signed] (ICE-пачка п.9): `uint`/`u64` are
+ * `uintptr_t` — a value with the high bit set (e.g. `(-6 as u64)` ==
+ * 18446744073709551610) has NO signed-int equivalent, so it must NEVER be
+ * formatted through `nova_int_to_str`/`nova_print_int` (`%lld` on a
+ * bit-reinterpreted negative — the exact bug: prints "-6" instead of
+ * "18446744073709551610"). `nova_uint` counterpart, `%llu`. */
+static inline nova_str nova_uint_to_str(nova_uint v) {
+    char* buf = (char*)nova_alloc(24);
+    int n = snprintf(buf, 24, "%llu", (unsigned long long)v);
+    return (nova_str){ buf, (size_t)(n < 0 ? 0 : n) };
+}
+
 /* ---- shortest round-trip float → decimal (Plan 180 [M-180-f64-shortest-roundtrip]) ----
  *
  * SINGLE SOURCE OF TRUTH for every float→str path in the language: `str.from`,
@@ -479,6 +491,9 @@ static inline nova_int nova_f32_fmt(nova_f32 v, uint8_t* buf, nova_int cap) {
  * with its own helper depending on type. */
 
 static inline void nova_print_int(nova_int v)  { printf("%lld", (long long)v); }
+/* [M-u64-uint-to-str-prints-signed] (ICE-пачка п.9): unsigned counterpart —
+ * see `nova_uint_to_str` above for the full rationale. */
+static inline void nova_print_uint(nova_uint v) { printf("%llu", (unsigned long long)v); }
 /* Plan 180: direct println(float) uses the same shortest-round-trip formatter
  * as str.from / interpolation — no more `%g` 6-sig divergence between
  * `println(x)` and `println("${x}")`. */

@@ -51,17 +51,23 @@ fn M_boxcap_Registry.new() -> M_boxcap_Registry => {
 // `priv` field reached through `@` inside the type's own method body work
 // on the SAME shared handle either way (heap-record content, D246 B), no
 // `mut` local ever needed for THAT part; only the Mutex receiver mattered.
+// [M-chained-consume-lock-d133-empty-type] fix (ICE-пачка п.4, 2026-08-01):
+// explicit `m_boxcap_g.unlock()` calls REMOVED — `consume g =
+// @lock.lock()`'s chained RHS (a bare field-access receiver, `@lock`, not a
+// bound Ident) now resolves its type through the checker (types/mod.rs
+// `ConsumeCtx::infer_value_type`'s new `ExprKind::Member` arm), so
+// `MutexGuard`'s declared `@cleanup` (D432/Plan 217 auto-cleanup) is visible
+// and the guard is released automatically at scope-exit — this is the
+// canonical owner-preferred form (no explicit unlock needed).
 fn M_boxcap_Registry @m_boxcap_record(m_boxcap_name str) {
     consume m_boxcap_g = @m_boxcap_lock.lock()
     ro m_boxcap_cur = @m_boxcap_counters.get(m_boxcap_name) ?? 0
     ro _ = @m_boxcap_counters.insert(m_boxcap_name, m_boxcap_cur + 1)
-    m_boxcap_g.unlock()
 }
 
 fn M_boxcap_Registry @m_boxcap_value(m_boxcap_name str) -> int {
     consume m_boxcap_g = @m_boxcap_lock.lock()
     ro m_boxcap_v = @m_boxcap_counters.get(m_boxcap_name) ?? 0
-    m_boxcap_g.unlock()
     m_boxcap_v
 }
 

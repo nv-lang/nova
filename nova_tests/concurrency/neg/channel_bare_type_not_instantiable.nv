@@ -1,0 +1,29 @@
+// EXPECT_COMPILE_ERROR E_CHANNEL_TYPE_NOT_INSTANTIABLE
+
+// [M-channel-try-recv-ro-binding-p67-ice] (ICE-пачка п.6): `Channel[T]` is a
+// CONSTRUCTOR NAMESPACE only (`Channel.new(cap)`) — the runtime never
+// materializes a value of Nova-level type `Channel[T]` itself (`Channel.
+// new()` returns a `(ChanWriter[T], ChanReader[T])` capability pair; there
+// is no `Channel` runtime struct at all, see `nova_rt/channels.h`). A param
+// explicitly annotated `Channel[T]` used to be silently ACCEPTED by the
+// checker and reach codegen with a C receiver type nothing lowers or
+// dispatches — ANY method call on it (`.try_recv()`, `.recv()`,
+// `.try_send()`, ...) panicked emit_c's P67-LEGACY terminal ("method call
+// return type unknown"). Now rejected here, at the type-annotation site,
+// with a clear diagnostic pointing to the real capability types
+// (`ChanReader[T]`/`ChanWriter[T]`) — see the sibling positive fixture
+// `spec_tests/conformance/m_ice_channel_reader_try_recv_binding_pos.nv` for
+// the correctly-typed form.
+
+module neg.channel_bare_type_not_instantiable
+
+fn probe(reader Channel[int]) {
+    ro x = reader.try_recv()
+    println("${x}")
+}
+
+fn main() Detach {
+    ro (tx, rx) = Channel.new(1)
+    tx.try_send(42)
+    probe(rx)
+}
