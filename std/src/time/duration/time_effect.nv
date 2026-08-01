@@ -22,8 +22,8 @@
 
 module time.duration
 
-// Retype `local_offset_sec() -> int` → `Offset` was ATTEMPTED + REVERTED
-// (same wave): making `Offset` (and any construction of it) reachable from
+// Retype `local_offset_sec() -> int` → `Offset` was ATTEMPTED + REVERTED:
+// making `Offset` (and any construction of it) reachable from
 // this file broke the authoritative `spec_tests/conformance` mega-CU — an
 // UNRELATED bare/erased-`Option` if-let started resolving its result type
 // as `NovaValue_Offset` instead of `nova_int` (CC-FAIL). Root cause not
@@ -82,9 +82,8 @@ module time.duration
 /// (`std/prelude/effects.nv`) — read-only introspection, не «время».
 ///
 /// **`local_offset_sec()->int`** — системный UTC-сдвиг ТЕКУЩЕЙ локальной
-/// зоны машины, в секундах. Retype to `Offset` was ATTEMPTED + REVERTED
-/// (same wave) — see file-header comment / `[M-offset-result-mono-bleed-if-
-/// let]` for the codegen blocker found. Даёт ТОЛЬКО числовой сдвиг — не
+/// зоны машины, в секундах. Retype to `Offset` is blocked by a codegen
+/// issue — see file-header comment. Даёт ТОЛЬКО числовой сдвиг — не
 /// implicit-зону: `ZonedDateTime`/civil-API по-прежнему требуют явный
 /// `TimeZone`/`Offset`. Остаётся plain `int` (не `Duration`) — оффсет, не
 /// длительность/момент.

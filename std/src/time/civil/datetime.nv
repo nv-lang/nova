@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// std/time/civil/datetime.nv — DateTime: plain дата+время (D319).
+// std/time/civil/datetime.nv — DateTime: plain дата+время.
 //
-// Plan 175.1 Ф.1. Plain-тип: НЕ точка на оси (нет зоны). В Timestamp —
-// только явно через Offset/TimeZone + Disambiguation (fallible, Ф.3).
+// Plain-тип: НЕ точка на оси (нет зоны). В Timestamp —
+// только явно через Offset/TimeZone + Disambiguation (fallible).
 // Принимает И Period (календарная семантика через Date), И Duration
-// (elapsed-семантика с day-carry) — D320 R2/R4, wall-vs-elapsed doc.
+// (elapsed-семантика с day-carry) — wall-vs-elapsed doc.
 
 module time.civil
 
@@ -14,7 +14,7 @@ import std.time.duration
 // TimeOfDay): codegen эмитит value-record структуры в порядке обработки
 // файлов (лексикографическом), а by-value поле требует complete-типа —
 // `datetime.nv` < `time_of_day.nv` дал бы incomplete NovaValue_TimeOfDay.
-// Обход по конвенции §4а, маркер [M-175.1-value-in-value-emit-order].
+// Обход: декларация DateTime перенесена сюда.
 
 // ──────────────────────────────────────────────────────────────────────────
 // Конструкторы
@@ -42,7 +42,7 @@ export fn Date @at_midnight() -> DateTime =>
 /// Композит-конструктор: дата + время-поля с default-полночью, одним
 /// вызовом (Python-эргономика: `datetime(y, m, d, h, min, s)` без
 /// вложенного `TimeOfDay.new` + `!!`). Арность-сиблинг `DateTime.new(date,
-/// time)` — Plan 200 П21.
+/// time)` — отложенный followup.
 ///
 /// `h`/`min`/`s`/`ns` — те же границы, что у `TimeOfDay.new` (0..23 /
 /// 0..59 / 0..59 / 0..999_999_999); `y`/`m`/`d` — границы `Date.new`.
@@ -60,10 +60,10 @@ export fn DateTime.new(y i32, m Month, d i32,
     Ok({ date, time })
 }
 
-// П21 «Date @at(h, m=0, ...)» ОТЛОЖЕН: инстанс-перегрузка по арности на
+// «Date @at(h, m=0, ...)» ОТЛОЖЕН: инстанс-перегрузка по арности на
 // КОНКРЕТНОМ типе коллидирует в C-мангле (один символ Nova_Date_method_at
-// на обе формы) — [M-concrete-instance-arity-overload-mangle], компилятор-
-// очередь; generic-типы манглятся полной сигнатурой (П5), конкретные — нет.
+// на обе формы) — компилятор-очередь; generic-типы манглятся полной
+// сигнатурой, конкретные — нет.
 // Вернуть перегрузку после фикса. Композит DateTime.new(y,m,d,h=0,...) —
 // статик-путь, манглится корректно, живёт ниже.
 
@@ -109,9 +109,9 @@ export fn DateTime @weekday() -> Weekday => @date.weekday()
 
 // ──────────────────────────────────────────────────────────────────────────
 // Арифметика: Duration (elapsed, инстант-семантика с day-carry).
-// Period-арифметика (календарная) — в period.nv (Ф.2).
+// Period-арифметика (календарная) — в period.nv.
 //
-// Wall-vs-elapsed (D320 R4): `dt.plus(24.to_hours())` — ровно
+// Wall-vs-elapsed: `dt.plus(24.to_hours())` — ровно
 // 24h elapsed; `dt.plus(Period.of_days(1))` — та же wall-time завтра
 // (различие проявляется на Zoned через DST; для plain DateTime обе
 // формы совпадают, но типовая дисциплина едина по ladder).
@@ -140,7 +140,7 @@ export fn DateTime @minus(d Duration) -> DateTime =>
 /// были на одной непрерывной шкале (день = 86400s, Q5).
 ///
 /// ⚠ Осмысленно только когда оба значения из одной зоны без DST-перехода
-/// между ними — plain-типы не знают offset-скачков (D319).
+/// между ними — plain-типы не знают offset-скачков.
 #stable(since = "0.1")
 export fn DateTime @duration_until(other DateTime) -> Duration {
     ro day_diff = other.date().to_epoch_day() - @date.to_epoch_day()

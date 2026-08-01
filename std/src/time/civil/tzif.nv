@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // std/time/civil/tzif.nv — бинарный TZif-парсер (RFC 8536, v1/v2/v3) +
-// OS-tzdata-first загрузчик. Plan 175.1 Ф.4 (D321 §tzdb).
+// OS-tzdata-first загрузчик.
 //
 // Слои: `TimeZone.from_tzif(id, bytes)` — чистый raw-bytes loader;
 // `load_timezone(name)` — $ZONEINFO override → /usr/share/zoneinfo →
 // embedded curated-таблица (tz.nv). На Windows OS-каталога нет —
-// работает embedded-fallback (D321 §tzdb).
+// работает embedded-fallback.
 //
 // Футер-строка POSIX-TZ (правило для дат за последним переходом) НЕ
 // интерпретируется: за пределами таблицы действует последний сдвиг
@@ -140,7 +140,7 @@ export fn TimeZone.from_tzif(id str, bytes []u8) -> Result[TimeZone, DateError] 
 
 /// Загрузка зоны по имени: `$ZONEINFO`-override → `/usr/share/zoneinfo`
 /// (POSIX) → embedded curated-таблица (`s.to_timezone()`). На Windows
-/// OS-каталога нет — работает embedded (D321 §tzdb).
+/// OS-каталога нет — работает embedded.
 ///
 /// Эффекты: `Fs` (чтение TZif) + `Os` (env `$ZONEINFO`) — мокабельны.
 #stable(since = "0.1")
@@ -150,7 +150,7 @@ export fn load_timezone(name str) Fs Os -> Result[TimeZone, DateError] {
         Some(dir) => {
             // `.ok()`: намеренно не разбираем причину сбоя чтения (файла
             // может просто не быть на этом слое) — переходим к следующему
-            // слою (nv-coding-style §4: явный Result→Option вместо
+            // слою (явный Result→Option вместо
             // swallow-match на `Err(_)`).
             match read("${dir}/${name}".to_path()).ok() {
                 Some(bytes) => return TimeZone.from_tzif(name, bytes),

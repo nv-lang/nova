@@ -1,17 +1,13 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// std/time/civil/offset.nv — Offset: фиксированный UTC-сдвиг (D319/D321).
+// std/time/civil/offset.nv — Offset: фиксированный UTC-сдвиг.
 //
-// Plan 175.1 Ф.3. Канон — СЕКУНДЫ (ISO ±HH:MM:SS + историч. под-минутные
+// Канон — СЕКУНДЫ (ISO ±HH:MM:SS + историч. под-минутные
 // зоны; java.time/Temporal — total seconds). Диапазон ±64800 (±18h).
 //
 // System-local offset — `Offset.local()` ниже, поверх эффект-опа
-// `Time.local_offset_sec()` (std/time/duration/time_effect.nv — Plan 175.2
-// Ф.2-v4 П6 moved `Time` out of prelude; retype to `local_offset()->Offset`
-// ATTEMPTED + REVERTED same wave, П11, D316 amend + D321, 2026-07-10 —
-// vtable-слот в NovaVtable_Time, closes [M-175.1-local-offset-effect-op]).
-// Даёт ТОЛЬКО числовой сдвиг — никакой implicit-зоны нигде в civil-API
-// (D319 R1 не меняется: `ZonedDateTime` всегда требует явный
-// `TimeZone`/`Offset`).
+// `Time.local_offset_sec()` (std/time/duration/time_effect.nv). Даёт
+// ТОЛЬКО числовой сдвиг — никакой implicit-зоны нигде в civil-API:
+// `ZonedDateTime` всегда требует явный `TimeZone`/`Offset`.
 
 module time.civil
 
@@ -57,12 +53,11 @@ export fn Offset.from_hm(h i32, m i32) -> Result[Offset, DateError] {
     Offset.from_seconds(total as i32)
 }
 
-/// Системный UTC-сдвиг ТЕКУЩЕЙ локальной зоны машины (D316 amend + D321,
-/// 2026-07-10) — closes [M-175.1-local-offset-effect-op]. DST уже учтён
+/// Системный UTC-сдвиг ТЕКУЩЕЙ локальной зоны машины. DST уже учтён
 /// (это сдвиг, который наблюдал бы свежий `Timestamp.now()` ПРЯМО СЕЙЧАС,
 /// не фиксированный standard-time сдвиг).
 ///
-/// **Явный запрос, не implicit-дефолт** (D319 R1): `ZonedDateTime`/остальной
+/// **Явный запрос, не implicit-дефолт**: `ZonedDateTime`/остальной
 /// civil-API по-прежнему требуют явный `TimeZone`/`Offset` на каждом
 /// call-site — тот же класс операции, что java.time `ZoneId.systemDefault()`
 /// / Temporal `Now.timeZoneId()` (explicit query, вызывающий сам решает,

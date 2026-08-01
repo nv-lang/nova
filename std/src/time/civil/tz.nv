@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // std/time/civil/tz.nv — IANA-зоны: embedded rule-based curated-таблица +
-// str-конверсия `s.to_timezone()` (§1а: конверсия — метод на источнике).
-// Plan 175.1 Ф.4 (D321 §tzdb).
+// str-конверсия `s.to_timezone()` (конверсия — метод на источнике).
 //
-// Слои загрузки (jiff layered-model, D321 §tzdb):
+// Слои загрузки (jiff layered-model):
 //   1. `s.to_timezone()` — чистая embedded curated-таблица (rule-based
 //      генерация транзишенов на 1996..2100) + "UTC"/"Z"/"±HH:MM[:SS]".
 //   2. `TimeZone.from_tzif(id, bytes)` — raw-TZif-bytes loader (tzif.nv).
@@ -17,7 +16,7 @@
 
 module time.civil
 
-/// Версия embedded curated-таблицы (D321 §tzdb: expose tzdb-version).
+/// Версия embedded curated-таблицы (expose tzdb-version).
 /// Реальный TZif-файл (load_timezone) актуален версии OS-tzdata.
 #stable(since = "0.1")
 export fn tzdb_version() -> str => "nova-curated-2026a"
@@ -103,7 +102,7 @@ fn rules_australia_sydney() -> ZoneRules {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// str @to_timezone — §1а-конверсия (embedded, чистая)
+// str @to_timezone — конверсия (embedded, чистая)
 // ──────────────────────────────────────────────────────────────────────────
 
 // Разбор "±HH:MM[:SS]" → секунды; None если не offset-форма.
@@ -126,7 +125,7 @@ fn parse_offset_str(s str) -> Option[int] {
     Some(sign * sec)
 }
 
-/// Конверсия строки в таймзону (§1а — метод на источнике, зеркально
+/// Конверсия строки в таймзону (метод на источнике, зеркально
 /// `s.to_url()`/`s.to_cron()`):
 ///
 /// - `"UTC"` / `"Etc/UTC"` / `"Z"` → `Utc`;
@@ -134,7 +133,7 @@ fn parse_offset_str(s str) -> Option[int] {
 /// - curated IANA-имена (`America/New_York`, `Europe/London`,
 ///   `Europe/Moscow`, `Australia/Sydney`) → `Iana` с rule-based правилами;
 /// - иначе → `Err(UnknownZone)` (полный список зон — TZif на POSIX,
-///   [`load_timezone`]; snapshot — [M-175.1-full-tzdb-embed]).
+///   [`load_timezone`]).
 ///
 /// # Examples
 /// ```nova

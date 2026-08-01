@@ -1,27 +1,26 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// std/time/civil/period.nv — Period: календарная величина (D320) +
-// calendar-арифметика Date/DateTime (CLAMP biggest-unit-first, Q7).
+// std/time/civil/period.nv — Period: календарная величина +
+// calendar-арифметика Date/DateTime (CLAMP biggest-unit-first).
 //
-// Plan 175.1 Ф.2. `Period` (y/m/d) ТИП-РАЗЛИЧНА с `Duration` (ns) — никакой
-// неявной коэрсии (D320 R1). Приём по типам (R2): `Date` берёт ТОЛЬКО
+// `Period` (y/m/d) ТИП-РАЗЛИЧНА с `Duration` (ns) — никакой
+// неявной коэрсии. Приём по типам: `Date` берёт ТОЛЬКО
 // `Period` (перегрузки `@plus(Duration)` НЕТ → «add hours to a Date» =
 // compile-error); `TimeOfDay` — только `Duration`; `DateTime` — оба.
 //
-// Арифметика (Q7): CLAMP к последнему валидному дню (Jan31+1mo → Feb28/29),
+// Арифметика: CLAMP к последнему валидному дню (Jan31+1mo → Feb28/29),
 // biggest-unit-first (years→months[clamp]→days[exact]). Операторы траппят
-// на range-overflow (D317); `try_*` → Result; `saturating_*` → clamp к
+// на range-overflow; `try_*` → Result; `saturating_*` → clamp к
 // Date.min/max. Non-invertible/non-associative: `d.plus(p).minus(p)` может
 // != d на clamp-границах (документировано + fixture).
 
 module time.civil
 
-// `panic` (overflow-trap primitive, D317-паттерн) is an always-available
-// compiler intrinsic ([panic-assert-intrinsic] 2026-07-11) — no
-// redeclaration needed.
+// `panic` (overflow-trap primitive) is an always-available
+// compiler intrinsic — no redeclaration needed.
 
 /// Календарная величина: годы/месяцы/дни. НЕ длительность: `Period.of_days(1)`
 /// через DST — та же wall-time (23/25h elapsed), `24.to_hours()` —
-/// ровно 24h (D320 R4).
+/// ровно 24h elapsed.
 #stable(since = "0.1")
 export type Period value {
     ro years i32
@@ -30,7 +29,7 @@ export type Period value {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Конструкторы (§21б: new + дефолт-параметры; of_* — удобные одиночные)
+// Конструкторы (new + дефолт-параметры; of_* — удобные одиночные)
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Период из компонент (любая может быть отрицательной).
@@ -145,8 +144,8 @@ export fn Period @to_iso() -> str {
 export fn Period @to_str() -> str => @to_iso()
 
 // ──────────────────────────────────────────────────────────────────────────
-// Date + Period: CLAMP biggest-unit-first (Q7). Внутренний движок → Result,
-// операторные формы траппят (D317), saturating — clamp к civil-границам.
+// Date + Period: CLAMP biggest-unit-first. Внутренний движок → Result,
+// операторные формы траппят, saturating — clamp к civil-границам.
 // ──────────────────────────────────────────────────────────────────────────
 
 // Ядро: сдвиг даты на период. years→months единым month-add (clamp к длине
@@ -189,8 +188,8 @@ fn date_plus_period(d Date, p Period) -> Result[Date, DateError] {
     Ok(Date.from_epoch_day(ed2))
 }
 
-/// `Date + Period` (оператор `+`). CLAMP biggest-unit-first (Q7);
-/// **trap на range-overflow** (D317). Non-invertible на clamp-границах:
+/// `Date + Period` (оператор `+`). CLAMP biggest-unit-first;
+/// **trap на range-overflow**. Non-invertible на clamp-границах:
 /// `Jan31 + 1mo - 1mo == Jan28/29`, НЕ Jan31 (документированное свойство
 /// календарной арифметики; fixture в civil_arith_test).
 ///
@@ -206,7 +205,7 @@ export fn Date @plus(p Period) -> Date =>
         Err(_) => panic("Date arithmetic overflow: + Period out of civil range"),
     }
 
-/// `Date - Period` (оператор `-`). Эквивалент `+ p.neg()`; **trap** (D317).
+/// `Date - Period` (оператор `-`). Эквивалент `+ p.neg()`; **trap**.
 #stable(since = "0.1")
 export fn Date @minus(p Period) -> Date =>
     match date_plus_period(@, p.neg()) {
@@ -214,7 +213,7 @@ export fn Date @minus(p Period) -> Date =>
         Err(_) => panic("Date arithmetic overflow: - Period out of civil range"),
     }
 
-/// Checked-вариант: `Err(RangeOverflow)` вместо trap (D317 3-tier).
+/// Checked-вариант: `Err(RangeOverflow)` вместо trap.
 #stable(since = "0.1")
 export fn Date @try_plus(p Period) -> Result[Date, DateError] =>
     date_plus_period(@, p)
@@ -245,8 +244,10 @@ export fn Date @saturating_minus(p Period) -> Date => @saturating_plus(p.neg())
 // NB: operator-форма `Date @minus(other Date) -> Period` НЕ введена:
 // перегрузка `@minus` по типу аргумента (Period vs Date) на одном ресивере
 // резолвится неверно (arg-тип не участвует в выборе → результат мис-
-// типизируется). Обход §4а [M-175.1-minus-overload-arg-type]: канонические
+// типизируется). Канонические
 // формы — `Period.between(start, end)` (calendar-diff) и `@days_until` (exact).
+// [M-175.1-minus-overload-arg-type] обход: operator-резолв слеп к типу
+// аргумента — метод-форма вместо оператора.
 
 /// Календарная разность `end - start` (biggest-unit-first).
 ///
@@ -289,7 +290,7 @@ export fn Period.between(start Date, end Date) -> Period {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// `DateTime + Period` — календарный сдвиг: дата двигается (clamp Q7),
-/// wall-time сохраняется. **Trap** на range-overflow (D317).
+/// wall-time сохраняется. **Trap** на range-overflow.
 #stable(since = "0.1")
 export fn DateTime @plus(p Period) -> DateTime =>
     { date: @date() + p, time: @time() }

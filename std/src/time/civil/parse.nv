@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// std/time/civil/parse.nv — ISO-8601/RFC-3339/RFC-9557 парсеры (§1а:
-// конверсия — метод на ИСТОЧНИКЕ: `s.to_date()`, НЕ `Date.parse`).
-// Plan 175.1 Ф.5 (D321 R3: STRICT by default).
+// std/time/civil/parse.nv — ISO-8601/RFC-3339/RFC-9557 парсеры (конверсия —
+// метод на ИСТОЧНИКЕ: `s.to_date()`, НЕ `Date.parse`). STRICT by default.
 //
-// Strict-модель (Q9): «parses» == «constructs» — Feb-30/out-of-range/
-// недостающие части → Err; leap-second `:60` → clamp к `:59` (Q5,
-// единственное послабление, jiff/Temporal-паритет); zoned-строка ОБЯЗАНА
+// Strict-модель: «parses» == «constructs» — Feb-30/out-of-range/
+// недостающие части → Err; leap-second `:60` → clamp к `:59`
+// (единственное послабление, jiff/Temporal-паритет); zoned-строка ОБЯЗАНА
 // нести и offset, и RFC-9557 `[zone]`-bracket.
 
 module time.civil
@@ -144,7 +143,7 @@ fn expect_end(s str, pos int) -> Result[(), ParseDateTimeError] =>
     else { Ok(()) }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Публичные str-конверсии (§1а)
+// Публичные str-конверсии
 // ──────────────────────────────────────────────────────────────────────────
 
 /// `"2026-07-10".to_date()` — ISO-8601 календарная дата (strict).
@@ -170,7 +169,7 @@ export fn str @to_time_of_day() -> Result[TimeOfDay, ParseDateTimeError] {
 }
 
 /// `"2026-07-10T14:30:00".to_datetime()` — plain ISO-8601 (strict, БЕЗ
-/// offset/zone: plain-тип не точка на оси, D319 R1).
+/// offset/zone: plain-тип не точка на оси).
 #stable(since = "0.1")
 export fn str @to_datetime() -> Result[DateTime, ParseDateTimeError] {
     ro (d, p1) = date_at(@, 0)?
@@ -207,7 +206,7 @@ export fn str @to_timestamp() -> Result[Timestamp, ParseDateTimeError] {
 export fn str @to_zoned_datetime() -> Result[ZonedDateTime, ParseDateTimeError] =>
     @to_zoned_datetime(RejectMismatch)
 
-/// Полная форма с политикой `OffsetConflict` (D321 R2).
+/// Полная форма с политикой `OffsetConflict`.
 #stable(since = "0.1")
 export fn str @to_zoned_datetime(conflict OffsetConflict) -> Result[ZonedDateTime, ParseDateTimeError] {
     ro (d, p1) = date_at(@, 0)?
