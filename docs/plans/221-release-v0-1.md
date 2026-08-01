@@ -262,6 +262,13 @@
   вместе с №151/№154 — общий корень: квалификация модуля в C-символах).
 Плюс **A-V8** (см. выше): никаких обходов в витрине.
 
+- [ ] **A-V13 (владелец 2026-08-02: «тлс для поляриса до релиза»):** HTTPS-сервер
+      в polaris — TLS-акцептор в accept-loop (`serve` поверх tls-handshake вместо
+      голого TcpStream; server-сторона nova-tls уже умеет — образец
+      `examples/tls/echo_server.nv`), конфиг сертификатов (cert/key), https-пример
+      в polaris/examples. Зависимость tls в nova-polaris/nova.toml — git+version
+      (см. A-E1-инвентарь выше). Окно — после влития p-use-keyword (общая зона
+      polaris serve/router).
 - [ ] **A-V11 🔴 БЛОКЕР ТЕГОВ (владелец 2026-07-31: «222 — весь закрыть до релиза»):**
       ВЕСЬ зонтик 222 закрывается ДО тега — включая слои 222.3 (extractors),
       222.5 (respond), 222.11 (multipart), 222.12 (batteries), 222.13 (auth),
