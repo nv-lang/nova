@@ -58,7 +58,11 @@ export fn EmbeddedDir.new(entries []EmbeddedEntry) -> Self {
         }
         i += 1
     }
-    mut own = entries.collect()        // защитная мелкая копия (алиас-защита)
+    // [M-try-on-next-generic-receiver-misresolve] (221.1 №254): `entries.collect()`
+    // on a Vec receiver inlines into a `next()` loop that codegen misresolves
+    // (single-key fallback → foreign RSplitIter) — manual copy until №254 lands.
+    mut own []EmbeddedEntry = []        // защитная мелкая копия (алиас-защита)
+    for e in entries { own.push(e) }
     Self { entries: own }
 }
 
