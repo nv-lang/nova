@@ -218,14 +218,13 @@ fn Result[T, E] @map_err[F](err_fn fn(E) -> F) -> Result[T, F]
 fn Result[T, E] @flat_map[U](flat_map_fn fn(T) -> Result[U, E]) -> Result[U, E]
   => match @ { Ok(v) => flat_map_fn(v), Err(e) => Err(e) }
 
-/// Bind/monadic chain по ОШИБОЧНОЙ ветке — recovery: `Err(e) -> recover_fn(e)`
-/// (с доступом к ошибке), `Ok(v)` passes through. Сиблинг `map_err`, как
-/// `flat_map` — сиблинг `map` (полная 2x2-симметрия map/map_err ↔
-/// flat_map/flat_map_err). Невыразим композицией существующих: recovery с
-/// чтением `e` давал только явный `match` (D86-философия отбора — добавлен по
-/// решению владельца 2026-08-01, первый спрос — fallback-цепочки парсеров).
-/// НЕ рустовский `or_else` — та семья ретрактирована ([M-unwrap-twins-retraction]).
-/// Param-name `recover_fn` — no shadowing.
+/// Bind/monadic chain on the ERROR branch — recovery: `Err(e) -> recover_fn(e)`
+/// (with access to the error), `Ok(v)` passes through. Sibling of `map_err`,
+/// as `flat_map` is to `map` (the full 2x2 symmetry). Inexpressible by
+/// composing existing combinators: recovery that READS the error only had an
+/// explicit `match` before. Not Rust's `or_else` — that family is retired
+/// here (value-fallback is the `??` operator). Driving case: parser fallback
+/// chains. Param-name `recover_fn` — no shadowing.
 #stable(since = "0.1")
 fn Result[T, E] @flat_map_err[F](recover_fn fn(E) -> Result[T, F]) -> Result[T, F]
   => match @ { Ok(v) => Ok(v), Err(e) => recover_fn(e) }
