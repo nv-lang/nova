@@ -36,6 +36,9 @@
 # принуждения). Повод-прецедент: реестр 221.1 №138.
 
 set -uo pipefail
+# LC_ALL=C — байтовый grep (msys2 grep в UTF-8-локали не матчит астральные
+# символы; класс пойман селфтестами 2026-08-01 — doc-hygiene, status-table)
+export LC_ALL=C
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Скрипт живёт в scripts/guards/ — корень репы на два уровня выше.
