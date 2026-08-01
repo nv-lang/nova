@@ -103,11 +103,11 @@ export type Mem effect {
 /// Handler-фабрика `seeded(seed u64) -> Effect[Random]` (xoshiro256++) —
 /// в `std/testing/handlers.nv`.
 ///
-/// **[M-random-u64-path-return-ice]:** декларация перенесена сюда из
-/// `std/testing/handlers.nv`. Когда декларация жила вне prelude, модули
-/// (uuid, ulid, retry) не имели `effect_schemas["Random"]`, и codegen падал
-/// ICE «Path call return type unknown». Prelude — единственный источник
-/// схемы. Эмитится как обычный user-effect (без RUNTIME_DEFINED_TYPES).
+/// Декларация перенесена сюда из `std/testing/handlers.nv`. Когда декларация
+/// жила вне prelude, модули (uuid, ulid, retry) не имели
+/// `effect_schemas["Random"]`, и codegen падал ICE «Path call return type
+/// unknown». Prelude — единственный источник схемы. Эмитится как обычный
+/// user-effect (без RUNTIME_DEFINED_TYPES).
 #stable(since = "0.1")
 export type Random effect {
     u64() -> u64                        // 64 случайных бита

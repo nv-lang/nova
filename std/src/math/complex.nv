@@ -135,7 +135,7 @@ export fn Complex @div(other Complex) -> Complex {
 // D46 разрешает overloading методов по типу аргумента (см. Vector @times):
 // `z * Complex(...)` и `z * 2.0` — оба валидны через одно имя `@times`.
 
-/// Scalar multiplication: `z * f64`. D46 overload по типу аргумента.
+/// Scalar multiplication: `z * f64`, resolved by argument-type overload.
 #stable(since = "0.1")
 export fn Complex @times(s f64) -> Complex =>
     Complex(re: @re * s, im: @im * s)
@@ -276,9 +276,9 @@ export type ParseComplexError enum InvalidFormat | NotANumber
 
 /// Parse `a+bi` / `bi` / `a` форматы. Round-trip с `@to_str`.
 ///
-/// Plan 174.1 (2026-07-08, канон владельца): конверсия — метод НА ИСТОЧНИКЕ
-/// (`s.to_complex()`, зеркально `s.to_int()`/`s.to_f64()`); статик
-/// `Complex.try_from(s)` РЕТРАКТИРОВАН (одно имя = одна дверь, §22).
+/// Конверсия — метод НА ИСТОЧНИКЕ (`s.to_complex()`, зеркально
+/// `s.to_int()`/`s.to_f64()`); статик `Complex.try_from(s)` РЕТРАКТИРОВАН
+/// (одно имя = одна дверь).
 ///
 /// # Examples
 /// ```nova

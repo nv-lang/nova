@@ -23,7 +23,7 @@ import std.text          // []str @join(sep) — используется в sql
 //
 // D55 literal coercion: `[42, "alice", true]` в позиции `[]SqlValue`
 // раскрывается в `[I(42), S("alice"), B(true)]` автоматически.
-/// SQL value variants: int, float, string, bool, bytes, null. D55 coercion:
+/// SQL value variants: int, float, string, bool, bytes, null. Literal coercion:
 /// `[42, "alice"]` → `[I(42), S("alice")]` автоматически в позиции `[]SqlValue`.
 #stable(since = "0.1")
 // Plan 221.1 (E_DEBUG_PRINTABLE_NOT_IMPLEMENTED audit): `@expect_*` methods

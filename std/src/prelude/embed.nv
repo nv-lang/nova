@@ -32,8 +32,8 @@ export type EmbeddedEntry {
 }
 
 /// Иммутабельная встроенная папка: карта путь→байты. Записи отсортированы по
-/// `path` (инвариант охраняет `EmbeddedDir.new` + priv-поле — D412-амендмент
-/// Plan 210). Нулевая копия payload'ов.
+/// `path` (инвариант охраняет `EmbeddedDir.new` + priv-поле). Нулевая копия
+/// payload'ов.
 #stable(since = "0.1")
 export type EmbeddedDir {
     priv entries []EmbeddedEntry   // ОТСОРТИРОВАНЫ по path (бинарный поиск); priv (D281) —
@@ -85,9 +85,8 @@ export fn EmbeddedDir @entries() -> ro []EmbeddedEntry => @entries
 /// Байты файла по пути, `None` если нет. Бинарный поиск по отсортированным
 /// entries (O(log N)); опирается на sorted-инвариант. Ключ — точная
 /// байтовая форма: без ведущего `./`, `..` не нормализуется — `get("./app.js")`
-/// честно даёт None. Данные — вид над .rodata: НЕ мутировать
-/// (см. [M-d412-blob-view-mut-write], унаследовано от D412); для мутации —
-/// `.clone()`.
+/// честно даёт None. Данные — вид над .rodata: НЕ мутировать (унаследованный
+/// инвариант хранения); для мутации — `.clone()`.
 export fn EmbeddedDir @get(path str) -> Option[[]u8] {
     mut lo = 0
     mut hi = @entries.len()

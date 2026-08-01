@@ -70,7 +70,7 @@ export fn Vec[T] @concat(other Vec[T]) -> Vec[T] {
     out
 }
 
-/// Operator `+`: `a + b == a.@plus(b)` → `@concat` (D46 / Q-vec-operator-plus).
+/// Operator `+`: `a + b == a.@plus(b)` → `@concat`, resolved by operator overloading.
 /// Produces a NEW `Vec[T]`; the operands are unchanged. `a += b` lowers to
 /// `a = a + b` (a fresh Vec) — to grow `a` in place use `a.append(b)`.
 ///

@@ -75,7 +75,7 @@ export type Version {
     ro build []str
 }
 
-/// Errors при парсинге semver-строки (D30 convention).
+/// Errors при парсинге semver-строки.
 #stable(since = "0.1")
 export type ParseVersionError enum
     | EmptyInput

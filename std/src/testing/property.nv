@@ -136,12 +136,11 @@ export fn IntGen @shrink(value int) -> []int {
 
 /// Bool generator: `p_percent`% true (default 50/50). Shrinks к false.
 ///
-/// [2026-07-08, батч 3 172.13]: было `type BoolGen { }` (без полей) — но
-/// ПУСТОЙ record-литерал (`{ }` / `BoolGen { }`) не поддержан грамматикой
-/// ни в одной позиции (парсится как пустой блок → unit); это был
-/// единственный пустой record во всём std. Поле `p_percent` — честная
-/// степень свободы по образцу соседей (IntGen min/max, StrGen max_len),
-/// аналог QuickCheck frequency.
+/// Было `type BoolGen { }` (без полей) — но ПУСТОЙ record-литерал
+/// (`{ }` / `BoolGen { }`) не поддержан грамматикой ни в одной позиции
+/// (парсится как пустой блок → unit); это был единственный пустой record
+/// во всём std. Поле `p_percent` — честная степень свободы по образцу
+/// соседей (IntGen min/max, StrGen max_len), аналог QuickCheck frequency.
 #stable(since = "0.1")
 export type BoolGen {
     ro p_percent int
@@ -218,11 +217,11 @@ export fn StrGen @shrink(value str) -> []str {
 /// Array generator — `[]T` длиной `[0, max_len]`. Каждый элемент через `elem` generator.
 /// Shrinks к пустому массиву / меньшим.
 ///
-/// [2026-07-08, батч 3 172.13]: было `ro elem Generator[T]` (протокол как
-/// ТИП ПОЛЯ/параметра) — но протоколы Nova compile-time-only (D53), у
-/// protocol-typed значений НЕТ runtime-диспетча: `@elem.generate()`
-/// эмитился как NULL. Канон — bounded generic (`G Generator[T]`, статический
-/// диспетч по конкретному типу генератора, как `Vec@extend[S Iter[T]]`).
+/// Было `ro elem Generator[T]` (протокол как ТИП ПОЛЯ/параметра) — но
+/// протоколы Nova compile-time-only, у protocol-typed значений НЕТ
+/// runtime-диспетча: `@elem.generate()` эмитился как NULL. Канон — bounded
+/// generic (`G Generator[T]`, статический диспетч по конкретному типу
+/// генератора, как `Vec@extend[S Iter[T]]`).
 #stable(since = "0.1")
 export type ArrayGen[G Generator[T], T] {
     ro elem G
