@@ -288,7 +288,7 @@
       <span class="path" id="codePath">examples/flagship/aggregator/backend/app/aggregate.nv · фрагмент</span>
       <span class="note2" id="codeNote">этот экран порождён вот этим кодом</span>
     </div>
-    <pre class="code" id="codeTab1"><span class="line"><span class="cm">// aggregate.nv — настоящий код примера (фрагмент; real-cancel supervised(deadline:) = деливерабл №1)</span></span><span class="line"></span><span class="line"><span class="kw">fn</span> fetch_guarded(source <span class="ty">Source</span>, budget_ms <span class="ty">int</span>, idx <span class="ty">int</span>) <span class="eff">Net Time Emit</span> <span class="pun">-&gt;</span> <span class="ty">TaskResult</span> {</span><span class="line">    <span class="kw">ro</span> t0 <span class="ty">Monotonic</span> = <span class="ty">Monotonic</span>.now()</span><span class="line">    <span class="eff">Emit</span>.lane_started(source.id, idx)</span><span class="line">    <span class="kw">ro</span> outcome    = fetch_one(source, idx)          <span class="cm">// реальный Net round-trip</span></span><span class="line">    <span class="kw">ro</span> elapsed_ms = deadline_elapsed_ms(t0)</span><span class="line">    <span class="kw">ro</span> status = <span class="kw">if</span> elapsed_ms &gt; budget_ms {</span><span class="line">        <span class="ty">TaskStatus</span>.Cancelled                        <span class="cm">// опоздал — за бюджетом</span></span><span class="line">    } <span class="kw">else</span> {</span><span class="line">        <span class="kw">match</span> outcome {</span><span class="line">            Ok(data) =&gt; <span class="ty">TaskStatus</span>.Done(data)</span><span class="line">            Err(e)   =&gt; <span class="ty">TaskStatus</span>.Failed(e.to_str())</span><span class="line">        }</span><span class="line">    }</span><span class="line">    <span class="cm">// + Emit.lane_done / lane_failed / lane_cancelled — см. полный файл</span></span><span class="line">    <span class="ty">TaskResult</span> { id: source.id, status, elapsed_ms }</span><span class="line">}</span><span class="line"></span><span class="line"><span class="kw">export fn</span> aggregate(sources <span class="pun">[]</span><span class="ty">Source</span>, budget <span class="ty">Duration</span>) <span class="eff">Net Time Emit</span> <span class="pun">-&gt;</span> <span class="ty">Report</span> {</span><span class="line">    <span class="kw">ro</span> t0 <span class="ty">Monotonic</span> = <span class="ty">Monotonic</span>.now()</span><span class="line">    <span class="kw">ro</span> budget_ms = budget.as_millis() <span class="kw">as</span> <span class="ty">int</span></span><span class="line">    <span class="kw">ro</span> results = <span class="kw">parallel for</span> idx <span class="ty">int</span> <span class="kw">in</span> 0..sources.len() {   <span class="cm">// fan-out</span></span><span class="line">        fetch_guarded(sources[idx], budget_ms, idx)</span><span class="line">    }</span><span class="line">    <span class="eff">Emit</span>.swarm_done(<span class="pun">…</span>)</span><span class="line">    <span class="ty">Report</span>.from(results, deadline_elapsed_ms(t0))</span><span class="line">}</span></pre>
+    <pre class="code" id="codeTab1"><span class="line"><span class="cm">// aggregate.nv — настоящий код примера (фрагмент; real-cancel supervised(deadline:) = деливерабл №1)</span></span><span class="line"></span><span class="line"><span class="kw">fn</span> fetch_guarded(source <span class="ty">Source</span>, budget_ms <span class="ty">int</span>, idx <span class="ty">int</span>) <span class="eff">Net Time Emit</span> <span class="pun">-&gt;</span> <span class="ty">TaskResult</span> {</span><span class="line">    <span class="kw">ro</span> t0 <span class="ty">Monotonic</span> = <span class="ty">Monotonic</span>.now()</span><span class="line" id="clStart">    <span class="eff">Emit</span>.lane_started(source.id, idx)</span><span class="line">    <span class="kw">ro</span> outcome    = fetch_one(source, idx)          <span class="cm">// реальный Net round-trip</span></span><span class="line">    <span class="kw">ro</span> elapsed_ms = deadline_elapsed_ms(t0)</span><span class="line">    <span class="kw">ro</span> status = <span class="kw">if</span> elapsed_ms &gt; budget_ms {</span><span class="line" id="clCancel">        <span class="ty">TaskStatus</span>.Cancelled                        <span class="cm">// опоздал — за бюджетом</span></span><span class="line">    } <span class="kw">else</span> {</span><span class="line">        <span class="kw">match</span> outcome {</span><span class="line" id="clDone">            Ok(data) =&gt; <span class="ty">TaskStatus</span>.Done(data)</span><span class="line" id="clFail">            Err(e)   =&gt; <span class="ty">TaskStatus</span>.Failed(e.to_str())</span><span class="line">        }</span><span class="line">    }</span><span class="line">    <span class="cm">// + Emit.lane_done / lane_failed / lane_cancelled — см. полный файл</span></span><span class="line">    <span class="ty">TaskResult</span> { id: source.id, status, elapsed_ms }</span><span class="line">}</span><span class="line"></span><span class="line"><span class="kw">export fn</span> aggregate(sources <span class="pun">[]</span><span class="ty">Source</span>, budget <span class="ty">Duration</span>) <span class="eff">Net Time Emit</span> <span class="pun">-&gt;</span> <span class="ty">Report</span> {</span><span class="line">    <span class="kw">ro</span> t0 <span class="ty">Monotonic</span> = <span class="ty">Monotonic</span>.now()</span><span class="line">    <span class="kw">ro</span> budget_ms = budget.as_millis() <span class="kw">as</span> <span class="ty">int</span></span><span class="line" id="clFan">    <span class="kw">ro</span> results = <span class="kw">parallel for</span> idx <span class="ty">int</span> <span class="kw">in</span> 0..sources.len() {   <span class="cm">// fan-out</span></span><span class="line">        fetch_guarded(sources[idx], budget_ms, idx)</span><span class="line">    }</span><span class="line">    <span class="eff">Emit</span>.swarm_done(<span class="pun">…</span>)</span><span class="line">    <span class="ty">Report</span>.from(results, deadline_elapsed_ms(t0))</span><span class="line">}</span></pre>
     <pre class="code" id="codeTab2" style="display:none"><span class="line"><span class="cm">// aggregate_test.nv — фрагмент: подменяем МИР, не код (ни одного мок-фреймворка)</span></span><span class="line"></span><span class="line"><span class="kw">test</span> <span class="st">"aggregate: done/failed/cancelled settle correctly on a mixed fan-out"</span> {</span><span class="line hl" id="hlNetLine">    <span class="kw">with</span> <span class="eff">Net</span> = mock_net(), <span class="eff">Emit</span> = null_emit() {   <span class="cm">// ← весь сетевой мир = хендлер</span></span><span class="line">        <span class="kw">ro</span> report = aggregate(tiny_sources(), <span class="ty">Duration</span>.from_millis(120))</span><span class="line">        assert(report.done == 2)</span><span class="line">        assert(report.failed == 1)</span><span class="line">        assert(report.cancelled == 1)</span><span class="line">        assert(report.wall_ms &lt; report.sequential_ms)    <span class="cm">// speedup</span></span><span class="line">    }</span><span class="line">}</span><span class="line"></span><span class="line"><span class="cm">// тот же aggregate под with Net = real_net() — Live; код не меняется</span></span></pre>
   </div>
 
@@ -486,6 +486,18 @@
     if(hl){ hl.classList.remove("flash"); void hl.offsetWidth; hl.classList.add("flash"); }
   }
 
+  /* П.5 (витрина, план 187 Ред.7): подсветка «код ↔ экран» — события прогона
+     подсвечивают СТРОКУ кода, которая их породила (clFan/clStart/clDone/clFail/
+     clCancel — якоря в codeTab1). Читатель ВИДИТ, что экран порождён этим кодом. */
+  function flashCode(id){
+    var el = document.getElementById(id);
+    if(!el) return;
+    el.classList.add("hl");
+    el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash");
+    clearTimeout(el._hlT);
+    el._hlT = setTimeout(function(){ el.classList.remove("hl","flash"); }, 1400);
+  }
+
   function applyScenario(){
     var S = SCENARIOS[scen];
     document.getElementById("sigLine").innerHTML = S.sig;
@@ -608,6 +620,7 @@
       ? "seed = 42 · воспроизводимый забег"
       : "seed = "+seedVal+" · эта ссылка воспроизводит забег байт-в-байт";
     laneObjs.forEach(function(o){ o.lane.dataset.state="live"; o.status.textContent="live"; });
+    flashCode("clFan"); setTimeout(function(){ flashCode("clStart"); }, 350);   /* П.5: fan-out стартовал */
     var seqTotal=list.reduce(function(a,p){return a+Math.min(p.total,DEADLINE);},0)
                 + bgObjs.reduce(function(a,b){return a+Math.min(b.total,DEADLINE);},0);
     var t0=performance.now(), SCALE=1500;
@@ -635,15 +648,15 @@
             o.cnt.textContent = Math.round(doneFrac*p.probes) + "/" + p.probes;
             if(p.outcome==="slow" && t>1.3 && t<p.total){ o.lane.dataset.state="slow"; o.status.textContent="⚠ slow"; }
 
-            if(p.outcome==="fail" && t>=p.failAt){ o.settled=true; o.lane.dataset.state="fail"; o.status.textContent="✖ error";
+            if(p.outcome==="fail" && t>=p.failAt){ o.settled=true; o.lane.dataset.state="fail"; o.status.textContent="✖ error"; flashCode("clFail");
               o.bar.classList.remove("pulsing");
               if(g){ var rr=o.lane.querySelector(".rail").getBoundingClientRect(), lr=lanesEl.getBoundingClientRect();
                 burst(xFor(p.failAt), rr.top-lr.top+8, css("--crit"), 14); }
               stats.fail++; set("s-fail",stats.fail);
-            } else if((p.outcome==="done"||p.outcome==="slow") && t>=p.total){ o.settled=true; o.lane.dataset.state="done";
+            } else if((p.outcome==="done"||p.outcome==="slow") && t>=p.total){ o.settled=true; o.lane.dataset.state="done"; flashCode("clDone");
               o.status.textContent=(p.winner?"🏆 ":"✔ ")+Math.round(p.total*1000)+"ms"; o.bar.classList.remove("pulsing");
               o.cnt.textContent=p.probes+"/"+p.probes; stats.done++; set("s-done",stats.done);
-            } else if(p.outcome==="cancel" && t>=p.cancelAt){ o.settled=true; o.lane.dataset.state="cancel";
+            } else if(p.outcome==="cancel" && t>=p.cancelAt){ o.settled=true; o.lane.dataset.state="cancel"; flashCode("clCancel");
               o.status.textContent=p.lost?"⟂ lost":"⟂ cancel";
               o.bar.classList.remove("pulsing");
               if(g){ var rr2=o.lane.querySelector(".rail").getBoundingClientRect(), lr2=lanesEl.getBoundingClientRect();
