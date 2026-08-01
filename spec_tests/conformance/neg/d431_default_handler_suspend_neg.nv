@@ -1,4 +1,4 @@
-// EXPECT_COMPILE_ERROR [E_DEFAULT_HANDLER_SUSPEND] calls suspend-op `Time.sleep` directly
+// EXPECT_COMPILE_ERROR E_DEFAULT_HANDLER_SUSPEND
 
 // №246 (D431 amend, [M-default-handler-factory-yield-point-ban],
 // 2026-08-01): a `#default_handler` factory's CONSTRUCTION-TIME code
