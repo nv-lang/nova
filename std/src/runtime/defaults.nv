@@ -1,11 +1,9 @@
-// Plan 91.7 (D180): canonical `.new()` constructors для типов
+// Canonical `.new()` constructors для типов
 // с единственным очевидным default-значением.
 //
 // stdlib предоставляет `.new()` только для канонических типов
 // (числовые, bool, str, []T, Option). Для своих типов разработчик
 // пишет `.new()` явно — compiler НЕ автогенерирует.
-//
-// См. spec/decisions/02-types.md §D180.
 
 module runtime.defaults
 
@@ -23,7 +21,7 @@ export fn u32.new() -> Self => 0
 
 export fn u64.new() -> Self => 0
 
-// Plan 70.5: uint = alias u64 (Nova-side); primitive type в codegen.
+// uint = alias u64 (Nova-side); primitive type в codegen.
 export fn uint.new() -> Self => 0
 
 // Signed integers.
@@ -45,7 +43,7 @@ export fn f64.new() -> Self => 0.0
 // `bool.new() => false` — логический нейтрал.
 export fn bool.new() -> Self => false
 
-// ─── Primitive @compare (Plan 91.8a.2 part 3, D183 amendment) ───
+// ─── Primitive @compare ───
 //
 // Primitives имеют native operators (< > == etc.). @compare добавлен для
 // [T Compare] bound satisfaction + synthesis chain.
@@ -56,11 +54,11 @@ export fn char @compare(other char) -> int =>
     else if @ > other { 1 }
     else { 0 }
 
-// ─── char ASCII-core API (Plan 152.3a, D252) ───
+// ─── char ASCII-core API ───
 // ASCII-классификация/case/digit через char-сравнения (codepoint order); ноль
 // Unicode-таблиц. Семантика == Rust `char::is_ascii_*`/`to_digit`. (В defaults.nv,
 // не embedded char.nv: Nova-body методы на builtin char эмитятся только из
-// disk-loaded prelude-модуля, как char @compare.) Unicode-aware — Phase B (152.3b/152.4).
+// disk-loaded prelude-модуля, как char @compare.) Unicode-aware — Phase B.
 
 export fn char @is_ascii() -> bool => @ <= '\u{7F}'
 
@@ -109,7 +107,7 @@ export fn char @to_digit(radix int) -> Option[int] {
 
 // UTF-8-кодировка codepoint'а в 4-байтный массив с длиной.
 // Возвращает кортеж ([4]u8, byte-length) — «слайс по значению»: данные,
-// потом длина (конвенция {ptr,len}/{data,len,cap}; владелец 2026-07-20).
+// потом длина (конвенция {ptr,len}/{data,len,cap}).
 // Rust `char::encode_utf8` (возвращает срез, здесь кортеж + хвостовые нули).
 export fn char @encode_utf8() -> ([4]u8, int) {
     mut out [4]u8 = [0, 0, 0, 0]
@@ -140,7 +138,7 @@ export fn char @encode_utf8() -> ([4]u8, int) {
 // Байт-длина UTF-8-кодировки codepoint'а (1-4). Rust `char::len_utf8`.
 export fn char @len_utf8() -> int => @encode_utf8().1
 
-// ASCII case-insensitive equality (Plan 152.5a, D254). Rust `char::eq_ignore_ascii_case`.
+// ASCII case-insensitive equality. Rust `char::eq_ignore_ascii_case`.
 export fn char @eq_ignore_ascii_case(other char) -> bool =>
     @to_ascii_lowercase() == other.to_ascii_lowercase()
 
@@ -181,7 +179,7 @@ export fn f64 @compare(other Self) -> int =>
 // bool ordering — false < true (canonical Boolean order).
 export fn bool @compare(other Self) -> int => (@ as int) - (other as int)
 
-// min / max — scalar value comparison ([M-153-scalar-min-max], D239 §2).
+// min / max — scalar value comparison.
 // Returns the smaller / larger of the two values.
 export fn int @min(other int) -> int => if @ < other { @ } else { other }
 
@@ -232,26 +230,24 @@ export fn f64 @min(other Self) -> Self => if @ < other { @ } else { other }
 export fn f64 @max(other Self) -> Self => if @ > other { @ } else { other }
 
 // clamp — restrict value to [lo, hi] range.
-// int @clamp retracted Plan 200 Step 0 (D74 amend): now covered by the
-// `fn[T Ints] T @clamp(lo T, hi T) -> T` blanket (std/prelude/protocols.nv).
+// int @clamp is covered by the `fn[T Ints] T @clamp(lo T, hi T) -> T` blanket
+// (std/prelude/protocols.nv).
 // f64/f32 @clamp stay concrete — float ∉ Ints (float clamp not part of the blanket).
 export fn f64 @clamp(lo f64, hi f64) -> f64 =>
     if @ < lo { lo } else if @ > hi { hi } else { @ }
 
-// [Числовой паритет, 2026-07-19] `f32 @clamp` — was missing entirely (only
-// `f64 @clamp` existed); mechanical mirror, byte-identical contract (same
-// lo>hi behavior as f64/Ints @clamp — `@ < lo` checked first, never returns
-// `@` on an inverted range).
+// `f32 @clamp` — mechanical mirror of `f64 @clamp`, byte-identical contract
+// (same lo>hi behavior as f64/Ints @clamp — `@ < lo` checked first, never
+// returns `@` on an inverted range).
 export fn f32 @clamp(lo f32, hi f32) -> f32 =>
     if @ < lo { lo } else if @ > hi { hi } else { @ }
 
-// D74 sign/predicate methods (where mathematically meaningful).
+// sign/predicate methods (where mathematically meaningful).
 // signum: -1 / 0 / +1 by sign. is_negative / is_positive: strict sign tests.
 // Pure if-expressions (same shape as @clamp) — resolved + lowered like any
 // `.nv`-declared method, no Rust hardcode (§3).
 //
-// [Числовой паритет, 2026-07-19] retracted: `int @signum`/`@is_negative`/
-// `@is_positive` concrete-on-int-only bodies were replaced by the
-// `fn[T SignedInt] ...` blanket (std/prelude/protocols.nv, рядом с
-// `@clamp`-бланкетом) — тот же Plan 200 Step 0 паттерн (D74 amend), теперь
-// покрывающий i8/i16/i32/i64/int одним телом вместо ×N конкретных методов.
+// `int @signum`/`@is_negative`/`@is_positive` concrete-on-int-only bodies are
+// covered by the `fn[T SignedInt] ...` blanket (std/prelude/protocols.nv,
+// рядом с `@clamp`-бланкетом) — one body for i8/i16/i32/i64/int instead of
+// ×N concrete methods.
