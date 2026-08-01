@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// Plan 183 Ф.2: std/net2/effect.nv — the single unified `Net` effect (D407 §2).
+// std/net/effect.nv — the single unified `Net` effect.
 //
 // One mockable dispatch point for all transport: TCP + UDP + DNS. Concrete
 // handlers: real_net() (tcp.nv) / mock_net() (mock.nv).
 //
-// BYTE SURFACE (D407 §2/§3): every transport operation carries `[]u8`, never
+// BYTE SURFACE: every transport operation carries `[]u8`, never
 // `str`. Reads follow the Go/Rust `read(buf) -> n` zero-copy shape — the caller
 // owns the buffer, the op fills it and returns the count. This also sidesteps
 // the effect-vtable Ok-payload erasure (a `Result[[]u8, _]` return erases to

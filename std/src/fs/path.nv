@@ -1,23 +1,23 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// std/fs/path.nv — byte-backed, platform-aware Path (Plan 176 Ф.2, D323, Q1).
+// std/fs/path.nv — byte-backed, platform-aware Path.
 //
-// `Path` is a **`value` record over `[]u8`** (Q1), NOT `str`: it carries the raw
+// `Path` is a **`value` record over `[]u8`**, NOT `str`: it carries the raw
 // OS bytes so non-UTF-8 Unix names and WTF-8 Windows names round-trip losslessly
 // (a name the JVM cannot even represent). Prior art: Rust `OsStr`/`Path`,
 // Swift-system `FilePath`, Zig `[]const u8`. All manipulation is **lexical**
 // (pure, no I/O, no effect): it never touches the filesystem — `normalize` is a
 // text operation that does NOT resolve symlinks (that needs `Fs.realpath`).
 //
-// **Platform awareness (Q1).** A `Path` carries a `PathStyle` (Posix | Windows).
+// **Platform awareness.** A `Path` carries a `PathStyle` (Posix | Windows).
 //   - Posix: `/` is the only separator; `\` is an ordinary filename byte.
 //   - Windows: both `/` and `\` separate; `C:` drive prefixes and `\\srv\share`
 //     UNC prefixes are recognised; `\` is the canonical separator on output.
 // `str @to_path()` uses the HOST style (`HOST_STYLE`, #cfg-константа); `Path.posix`
 // / `Path.windows` pin a style explicitly, so a single test run can exercise
-// BOTH platforms' semantics (the Ф.2 gate). Pinning the style — rather than a
-// compile-time `#cfg` split — is what makes cross-platform path logic testable.
+// BOTH platforms' semantics. Pinning the style — rather than a compile-time
+// `#cfg` split — is what makes cross-platform path logic testable.
 //
-// **Encoding across the FFI (§3c).** `os_bytes()` yields the raw bytes; the
+// **Encoding across the FFI.** `os_bytes()` yields the raw bytes; the
 // fs layer wraps them NUL-terminated (`CStr`) and hands them to libuv, which
 // converts UTF-8/WTF-8 → UTF-16 internally on Windows. That subsumes the planned
 // CWStr marshalling at THIS backend — CWStr is only needed for a direct
@@ -37,10 +37,10 @@ export type PathStyle enum
     | Posix
     | Windows
 
-// Host default style — компайл-таймовая константа бинаря через #cfg (D99),
-// чистый .nv без FFI-хука (решение владельца 2026-07-09). Платформа бинаря —
-// НЕ эффект: неизменна за время жизни процесса; тестовая вариативность —
-// pin-конструкторами Path.posix / Path.windows (module-conventions §0).
+// Host default style — компайл-таймовая константа бинаря через #cfg,
+// чистый .nv без FFI-хука. Платформа бинаря — НЕ эффект: неизменна за время
+// жизни процесса; тестовая вариативность — pin-конструкторами Path.posix /
+// Path.windows.
 #cfg(target_os = "windows")
 fn host_style() -> PathStyle => Windows
 
@@ -80,9 +80,8 @@ export type Path value {
 
 /// Path from a `str`, using the HOST platform's lexical style. Infallible —
 /// any `str` is a valid raw-byte path (validity is a filesystem-time concern,
-/// not a lexical one). Canon `x.to_*()` conversion from a `ro`-source (§1а,
-/// nv-coding-style; retracted static-door twin was `Path.from_str`, removed
-/// 2026-07-30, `[M-from-str-static-conversion-lint-gap]`).
+/// not a lexical one). Canon `x.to_*()` conversion from a `ro`-source (a
+/// static-door twin was considered and retracted).
 #stable(since = "0.1")
 export fn str @to_path() -> Path => { bytes: @bytes(), style: host_style() }
 
@@ -165,8 +164,8 @@ fn decompose(b []u8, style PathStyle) -> Decomp {
     match style {
         Windows => {
             if n >= 2 && byte_is_sep(b[0], Windows) && byte_is_sep(b[1], Windows) {
-                // UNC: consume `\\` server `\` share into the prefix. Срез-вид
-                // (§18а): найти границу сканом, затем один bulk `.append()`
+                // UNC: consume `\\` server `\` share into the prefix. Срез-вид:
+                // найти границу сканом, затем один bulk `.append()`
                 // вместо поэлементного push-цикла.
                 prefix.push(b[0]); prefix.push(b[1]); i = 2
                 mut server_end = i
@@ -187,7 +186,7 @@ fn decompose(b []u8, style PathStyle) -> Decomp {
     // Root: one-or-more leading separators after the prefix.
     mut root = false
     while i < n && byte_is_sep(b[i], style) { root = true; i += 1 }
-    // Components — срез-вид (§18а): границы находятся сканом (consecutive
+    // Components — срез-вид: границы находятся сканом (consecutive
     // separators collapse, как раньше), каждый компонент — один slice, без
     // поэлементного push-накопления.
     mut comps [][]u8 = []
@@ -402,7 +401,7 @@ export fn Path @with_extension(ext str) -> Path {
 
 /// Lexically normalise: collapse `.`, resolve `..` against prior components
 /// (never above a root), and use the canonical separator. Purely textual — for
-/// symlink-aware resolution use `Fs.realpath` (§3c TOCTOU note).
+/// symlink-aware resolution use `Fs.realpath` (TOCTOU note).
 #stable(since = "0.1")
 export fn Path @normalize() -> Path {
     ro d = decompose(@bytes, @style)

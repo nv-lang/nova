@@ -16,7 +16,7 @@
 // effect vtable (which would erase the value `IoError` to `nova_str`). The public
 // byte surface (`read`/`write`/`write_atomic`) inlines its own read/write loop
 // over `File` directly, so it never depends on the effectful-generic io-core
-// forwarding path ([M-176-io-forward-bounded-generic]).
+// forwarding path.
 
 module std.fs
 

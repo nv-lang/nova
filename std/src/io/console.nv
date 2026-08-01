@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// std/io/console.nv — stdin / stdout / stderr via the mockable `Io` effect
-// (Plan 176 Ф.1, D322 §3c).
+// std/io/console.nv — stdin / stdout / stderr via the mockable `Io` effect.
 //
 // Console byte I/O is a **plumbing effect** (`Io`, net-precedent): user code
 // goes through `stdin()`/`stdout()`/`stderr()` (which conform to `io.Read` /
 // `io.Write`), and those dispatch to the ambient `Io` handler. Production uses
 // `real_io()` (fd-based C hooks `io_read_fd`/`io_write_fd`); tests swap in
 // `mock_io(cap)` — capturing stdout/stderr and scripting stdin — with **zero**
-// change to the code under test (Nova's mockability differentiator, §1a).
+// change to the code under test (Nova's mockability differentiator).
 
 module std.io
 
@@ -39,10 +38,9 @@ export type Stdin { priv unit int }
 export fn stdin() -> Stdin => { unit: 0 }
 
 /// io.Read: pull up to `buf.len()` bytes from stdin. `Ok(0)` (non-empty buf) = EOF.
-/// Plan 221.1 №131 (D62 ENFORCED): `Io` now explicit — `io.Read` is
-/// effect-agnostic BY DESIGN (core.nv module doc, Q15/D122): the conformer
-/// carries its OWN plumbing effect. The raw `Io.read_in` op call below was
-/// previously invisible to every effect-check (D62/D28 raw-op hole, №131).
+/// `Io` is explicit — `io.Read` is effect-agnostic BY DESIGN (core.nv module
+/// doc): the conformer carries its OWN plumbing effect. The raw `Io.read_in` op
+/// call below is the explicit dispatch to it.
 #stable(since = "0.1")
 export fn Stdin mut @read(buf mut []u8) Io -> Result[int, IoError] => Io.read_in(buf)
 
@@ -55,7 +53,7 @@ export type Stdout { priv unit int }
 export fn stdout() -> Stdout => { unit: 0 }
 
 /// io.Write: write `data` to stdout.
-/// Plan 221.1 №131 (D62 ENFORCED): `Io` now explicit — see `Stdin @read` doc.
+/// `Io` is explicit — see `Stdin @read` doc.
 #stable(since = "0.1")
 export fn Stdout mut @write(data []u8) Io -> Result[int, IoError] => Io.write_out(data)
 
@@ -73,7 +71,7 @@ export type Stderr { priv unit int }
 export fn stderr() -> Stderr => { unit: 0 }
 
 /// io.Write: write `data` to stderr.
-/// Plan 221.1 №131 (D62 ENFORCED): `Io` now explicit — see `Stdin @read` doc.
+/// `Io` is explicit — see `Stdin @read` doc.
 #stable(since = "0.1")
 export fn Stderr mut @write(data []u8) Io -> Result[int, IoError] => Io.write_err(data)
 
@@ -114,7 +112,7 @@ export fn IoCapture @err_bytes() -> ro []u8 => @err
 export fn mock_io(mut cap IoCapture) -> Effect[Io] {
     // Explicit param types on the handler ops: the effect schema erases them to
     // `nova_int`, so `data.len()` would be typed on `int` without the annotation
-    // (Plan 65 Ф.1 handler-body codegen note, see std/testing/handlers.nv).
+    // (handler-body codegen note, see std/testing/handlers.nv).
     effect Io {
         read_in(buf mut []u8) -> Result[int, IoError] {
             ro want = buf.len()
@@ -151,9 +149,9 @@ extern "C" fn io_read_fd(fd int, buf *mut u8, len int) -> int
 /// `read_in` reads from stdin, via the fd hooks. A negative hook result maps to
 /// `IoError.from_os(-rc)`. Install with `with Io = real_io() { … }`.
 ///
-/// Plan 175.2 Ф.2-v4 (П9, D431 amend): `#default_handler` (bare form, П7) —
-/// `Io` now auto-constructs (lazily, once per thread) on first transitive
-/// use with no enclosing `with Io = …`, consistent with `Time`/`real_time()`.
+/// `#default_handler` (bare form) — `Io` auto-constructs (lazily, once per
+/// thread) on first transitive use with no enclosing `with Io = …`, consistent
+/// with `Time`/`real_time()`.
 #stable(since = "0.1")
 #default_handler
 export fn real_io() -> Effect[Io] {

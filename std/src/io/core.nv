@@ -1,27 +1,26 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// std/io/core.nv — byte I/O protocols + std loop helpers (Plan 176 Ф.1, D322).
+// std/io/core.nv — byte I/O protocols + std loop helpers.
 //
 // The three protocols are the byte-I/O abstraction (Rust `Read`/`Write`/`Seek`,
 // Go `io.Reader`/`io.Writer`, Zig `std.Io`). They are **effect-agnostic**: a
 // conformer carries its OWN plumbing effect (`File`→`Fs`, `TcpStream`→`TcpNet`,
-// console→`Io`) which surfaces transitively at monomorphisation (Q15, D122
-// amended). Generic calls through an io-bound are **mono-dispatch only** (no
-// vtable for effectful bounds).
+// console→`Io`) which surfaces transitively at monomorphisation. Generic calls
+// through an io-bound are **mono-dispatch only** (no vtable for effectful
+// bounds).
 //
 // The loop helpers (`read_exact`/`read_to_end`/`read_to_string`/`write_all`/
 // `write_str`/`copy`) are free generic functions over the protocol bounds
-// (mono-dispatch, Q15). The primitive loops live in `read_to_end`/`write_all`;
+// (mono-dispatch). The primitive loops live in `read_to_end`/`write_all`;
 // the rest FORWARD their bounded generic into them — the checker carries a
-// bound through such a forward since Plan 172.13 (passthrough-typevar fix,
-// batch 3; inline copies collapsed in batch 4 — [M-generic-bound-forwarding]).
+// bound through such a forward.
 // `Interrupted` (EINTR) is retried inside the two primitive loops.
 //
-// **Sibling of the prelude text-sink `Write`** (D258/D374, `mut @write(s str)`):
+// **Sibling of the prelude text-sink `Write`** (`mut @write(s str)`):
 // that one is the `@display`/`Debug` formatting sink; THIS `io.Write` is the byte
 // sink. Reference this one module-qualified as `io.Write` (`import std.io`); the
 // text→bytes bridge is the explicit `write_str`.
 //
-// EOF / partial / EINTR contract (§3c / Q9):
+// EOF / partial / EINTR contract:
 //   - `read` returns `Ok(0)` for EOF **only when the buffer is non-empty**;
 //     a short read (`0 < n < len`) is normal, not EOF.
 //   - `write` may write fewer bytes than asked (partial write is legal);
@@ -37,7 +36,7 @@ const DEFAULT_CHUNK = 8192
 // ─── Protocols ───
 
 /// Byte source. `@read(buf)` fills `buf[0..n]` and returns `n`. `Ok(0)` signals
-/// EOF **only** when `buf` is non-empty (Q9 — never the Go `(n>0, EOF)` footgun).
+/// EOF **only** when `buf` is non-empty — never the Go `(n>0, EOF)` footgun.
 /// The buffer must already have length (e.g. `buf.resize(cap, 0)`); `n <= buf.len()`.
 #stable(since = "0.1")
 export type Read protocol {
@@ -76,9 +75,8 @@ export type SeekFrom enum
 // `io.SeekFrom.start(5)` etc. Pattern-matching on the variants is unaffected.
 
 /// Seek to an absolute offset from the start. `Start(<0)` — легальное
-/// ЗНАЧЕНИЕ; ошибка отдаётся на seek: `InvalidInput` (D322,
-/// 04-effects.md «Start(<0) → InvalidInput») — НЕ requires-trap на
-/// конструировании (волна 185 добавила requires вопреки спеке — откачено).
+/// ЗНАЧЕНИЕ; ошибка отдаётся на seek: `InvalidInput` — НЕ requires-trap на
+/// конструировании.
 #stable(since = "0.1")
 export fn SeekFrom.start(n int) -> SeekFrom => Start(n) // [M-lint-findings-param-no-contract]
 
@@ -140,8 +138,8 @@ export fn read_to_end[R Read](mut r R) -> Result[[]u8, IoError] {
 }
 
 /// Read to EOF and decode as UTF-8. Invalid UTF-8 → `IoError{InvalidData}`
-/// (Q11 — fallible, no silent `U+FFFD` like Node). Uses `[]u8 @to_str()`
-/// (Plan 174.1). Forwards to `read_to_end` (bound carries).
+/// (fallible, no silent `U+FFFD` like Node). Uses `[]u8 @to_str()`.
+/// Forwards to `read_to_end` (bound carries).
 #stable(since = "0.1")
 export fn read_to_string[R Read](mut r R) -> Result[str, IoError] {
     match read_to_end(r) {
@@ -176,9 +174,8 @@ export fn write_all[W Write](mut w W, data []u8) -> Result[(), IoError] {
 }
 
 /// Write a `str` to a byte sink as UTF-8 — the explicit bridge from text to the
-/// byte world (Q6, no implicit coupling with the `@display` text-sink).
-/// Forwards to `write_all` — the bound is carried through the generic forward
-/// ([M-generic-bound-forwarding] closed, Plan 172.13 batch 3/4).
+/// byte world (no implicit coupling with the `@display` text-sink).
+/// Forwards to `write_all` — the bound is carried through the generic forward.
 #stable(since = "0.1")
 export fn write_str[W Write](mut w W, s str) -> Result[(), IoError] =>
     write_all(w, s.bytes())
@@ -212,12 +209,12 @@ export fn copy[R Read, W Write](mut r R, mut w W) -> Result[int, IoError] {
     }
 }
 
-// ─── Line splitting (Q7) ───
+// ─── Line splitting ───
 
 /// Read to EOF, decode as UTF-8, and split into lines (Rust `BufRead::lines`).
 /// Each line excludes its terminator; a trailing `\r` (of `\r\n`) is stripped; a
 /// final line without a newline is yielded; an embedded lone `\r` is NOT a
-/// separator (Q7 — delegates to `str.@lines`). Invalid UTF-8 →
+/// separator (delegates to `str.@lines`). Invalid UTF-8 →
 /// `IoError{InvalidData}`. Forwards to `read_to_end` (bound carries through).
 #stable(since = "0.1")
 export fn lines[R Read](mut r R) -> Result[[]str, IoError] {
@@ -231,14 +228,14 @@ export fn lines[R Read](mut r R) -> Result[[]str, IoError] {
 }
 
 /// Read to EOF and split the RAW bytes on `\n` (0x0A) — no UTF-8 decode, no `\r`
-/// stripping (Q7 `byte_lines`). The terminator is not included; a final segment
+/// stripping (`byte_lines`). The terminator is not included; a final segment
 /// without a trailing `\n` is yielded. Forwards to `read_to_end` (bound carries
 /// through).
 #stable(since = "0.1")
 export fn byte_lines[R Read](mut r R) -> Result[[][]u8, IoError] {
     match read_to_end(r) {
         Ok(data) => {
-            // Срез-вид (§18а): границы строк находятся сканом на `\n`, каждая
+            // Срез-вид: границы строк находятся сканом на `\n`, каждая
             // строка — один slice вместо поэлементного push-накопления.
             ro n = data.len()
             mut out [][]u8 = []

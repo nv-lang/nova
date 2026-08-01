@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// std/fs/mock.nv — mock_fs: in-memory Fs handler for deterministic tests
-// (Plan 176 Ф.2, D323). The §1a mockability differentiator.
+// std/fs/mock.nv — mock_fs: in-memory Fs handler for deterministic tests.
+// The mockability differentiator.
 //
 // `with Fs = mock_fs(fs) { … }` runs the SAME code under test against an
 // in-memory byte-Path tree — no disk, no DI, fully deterministic (prior art:
@@ -53,13 +53,13 @@ export type MemFs {
     mut fd_write []bool
     mut fd_live []bool
     mut next_fd int
-    // scandir iterator state ([M-fs-tls-mn-race]: instance fields the caller
+    // scandir iterator state (instance fields the caller
     // owns via `fs`, NOT a TLS/global cache — one open scan at a time per
     // MemFs instance, same ceiling as before the redesign, just explicit).
     mut scan_names []str
     mut scan_kinds []int
     mut scan_pos int
-    // Error injection (§7 close-error / torn-write tests).
+    // Error injection (close-error / torn-write tests).
     mut inject_write_err bool
     mut inject_close_err bool
     // Virtual monotonic mtime source.
@@ -139,7 +139,7 @@ fn MemFs @fd_index(fd int) -> Option[int] {
     None
 }
 
-// Fill the caller's stat image for node `i` — [M-fs-tls-mn-race]: built
+// Fill the caller's stat image for node `i` — built
 // straight into the SAME real_fs-compatible image via fs_stat_build_into (no
 // syscall), so a mocked stat is byte-for-byte substitutable with a real one at
 // the accessor level (fs_stat_size(img)/... in fs.nv), never an ambient cache.
@@ -262,7 +262,7 @@ fn MemFs mut @write_common(key str, chunk []u8, pos int) -> int {
     while j < chunk.len() {
         // Per-position overwrite-or-append split on current length — not a
         // contiguous-range copy (target alternates between two different
-        // destinations mid-loop), so no single slice-view applies (§18а);
+        // destinations mid-loop), so no single slice-view applies;
         // `cb` avoids the `push(x[i])` shape the lint heuristic flags.
         ro at = pos + j
         ro cb = chunk[j]
@@ -360,7 +360,7 @@ fn MemFs mut @mem_rename(src []u8, dst []u8) -> int {
     }
 }
 
-// [M-fs-tls-mn-race]: the "handle" returned is just a freshly-minted id (the
+// The "handle" returned is just a freshly-minted id (the
 // fd counter) — MemFs supports one open scan at a time via its own instance
 // fields (unchanged ceiling from before the redesign, now explicit rather than
 // a hidden TLS/global cache). next/name/kind/close ignore the handle value.
@@ -373,7 +373,7 @@ fn MemFs mut @mem_scandir_open(path []u8) -> int {
         if @alive[i] && is_child_of(@paths[i], dirkey) {
             names.push(child_name(@paths[i], dirkey))
             // Filtered gather (living children только) — не contiguous-range,
-            // срез-вид не подходит; `kind` избегает `push(x[i])`-формы (§18а).
+            // срез-вид не подходит; `kind` избегает `push(x[i])`-формы.
             ro kind = @kinds[i]
             kinds.push(kind)
         }

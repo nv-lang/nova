@@ -1,34 +1,29 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //
-// Plan 118.1 Ф.4 closeout (2026-06-05) — CStr newtype для C-string FFI.
-// Copy-based rewrite: Plan 199 Ф.2. `@to_cstr` API: Plan 199 Ф.3 (2026-07-11,
-// owner decision).
+// CStr — newtype для C-string FFI. Copy-based rewrite: conversions COPY;
+// `@to_cstr` — два overload'а.
 //
-// Per D418 (retracts D26 §«Nul-termination»): Nova `str` carries NO
-// trailing-NUL guarantee — `str` is a pure `{ptr,len}` UTF-8 view/buffer,
-// full stop, for literals AND runtime-built strings AND slices alike. There
-// is nothing to peek or reuse zero-copy: converting a `str` to a C-string is
-// ALWAYS an explicit copy into a NUL-terminated buffer, done through
-// `str.to_cstr()`.
+// Nova `str` carries NO trailing-NUL guarantee — `str` is a pure
+// `{ptr,len}` UTF-8 view/buffer, full stop, for literals AND runtime-built
+// strings AND slices alike. There is nothing to peek or reuse zero-copy:
+// converting a `str` to a C-string is ALWAYS an explicit copy into a
+// NUL-terminated buffer, done through `str.to_cstr()`.
 //
-// Two overloads (D84 arity overload; `to_` = copying conversion, matching the
+// Two overloads (arity overload; `to_` = copying conversion, matching the
 // `@to_char` / `@to_bytes` convention — `as_` was wrong for a copy):
 //   - `@to_cstr() -> CStr`               — GC-allocates a fresh len+1 buffer.
 //   - `@to_cstr(buf, buf_size) -> CStr`  — zero-alloc, copies into a
 //                                          caller-provided buffer (hot FFI paths).
-//
-// Marker closure: [M-118.1-cstr-literal] CLOSED 2026-06-05 — CStr API ships
-// как str method, не как lexer extension (unaffected by Plan 199).
 
 module ffi.cstr
 
 import std.runtime.raw_mem.{RawMem}
 
 /// Opaque C-string handle. Wraps raw `*u8` pointer; instances satisfy the
-/// null-terminator invariant `ptr[strlen(ptr)] == '\0'`. Under Plan 199
-/// (D418) `str` no longer carries a trailing NUL, so this invariant is
-/// established BY the `to_cstr` constructor (a fresh copy + terminator),
-/// never inherited from the source `str`'s storage.
+/// null-terminator invariant `ptr[strlen(ptr)] == '\0'`. `str` never carries
+/// a trailing NUL, so this invariant is established BY the `to_cstr`
+/// constructor (a fresh copy + terminator), never inherited from the source
+/// `str`'s storage.
 ///
 /// Created via `str.to_cstr()` / `str.to_cstr(buf, buf_size)`.
 /// ABI: FFI-marshalled to `const char*` (or `char*` for mutable C-string
@@ -44,15 +39,14 @@ import std.runtime.raw_mem.{RawMem}
 #stable(since = "0.1")
 export type CStr(*u8)
 
-// str → CStr conversions (Plan 199 Ф.3, D418). Both COPY — a `str` is a pure
-// `ptr[len]` view with no terminator, so there is no zero-copy path.
+// str → CStr conversions (both COPY — a `str` is a pure `ptr[len]` view with
+// no terminator, so there is no zero-copy path).
 
 /// GC-allocating copy: builds a fresh `byte_len()+1`-byte GC-managed buffer,
 /// copies the string's bytes, and appends a `\0` terminator. Scans for an
 /// embedded NUL first and panics if one is found — an interior 0x00 would
 /// silently truncate the C-string, a classic FFI footgun. `panic` is an
-/// always-available compiler intrinsic ([panic-assert-intrinsic]) — needs no
-/// import. [M-118.1-cstr-nul-check].
+/// always-available compiler intrinsic — needs no import.
 export fn str @to_cstr() -> CStr {
     ro bytes = @bytes()
     for b in bytes {

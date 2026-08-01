@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// Plan 183 Ф.2: std/net2/udp.nv — UDP public API (byte surface, D407).
+// std/net/udp.nv — UDP public API (byte surface).
 //
 // UdpSocket: bound async datagram socket. All operations carry `Net` and return
 // `Result[T, NetError]`; `send_to` sends straight from the caller's bytes,
 // `recv_from` writes the datagram straight into the caller's buffer and fills a
 // 20-byte sender image (no TLS `_net_recv_data`/`_net_recv_sender`). `close()`
-// consumes (use-after-close is a compile error, D133).
+// consumes (use-after-close is a compile error).
 
 module std.net
 
@@ -98,8 +98,8 @@ export fn UdpSocket @local_addr() Net -> SocketAddr {
 #stable(since = "0.1")
 export fn UdpSocket consume @close() Net { Net.close_socket(@) }
 
-/// D432/Plan 217.1 `Cleanup[never]`-имплементация: cleanup = `@close()`.
-/// Делает `UdpSocket` пригодным для авто-`@cleanup` (гибрид C, D432) —
+/// `Cleanup[never]`-имплементация: cleanup = `@close()`.
+/// Делает `UdpSocket` пригодным для авто-`@cleanup` (гибрид C) —
 /// непотреблённый к концу скоупа сокет закрывается автоматически (см.
 /// `TcpStream`/`TcpListener`, std/net/tcp.nv).
 #stable(since = "0.1")

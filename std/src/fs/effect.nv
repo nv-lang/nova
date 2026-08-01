@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// std/fs/effect.nv — the Fs plumbing effect + metadata types (Plan 176 Ф.2, D323).
+// std/fs/effect.nv — the Fs plumbing effect + metadata types.
 //
 // `Fs` is a **plumbing effect** (net/io precedent): user code never calls its
 // operations directly — it uses `File`/`OpenOptions` methods and the free
 // convenience functions (fs.nv), which dispatch to the ambient `Fs` handler.
 // Production installs `real_fs()` (libuv `uv_fs_*`, park/wake); tests install
 // `mock_fs()` (in-memory tree) — the same code under test, no disk, no DI. This
-// mockability is a §1a differentiator (Go needs afero, Zig has nothing).
+// mockability is a differentiator (Go needs afero, Zig has nothing).
 //
-// Q4: every blocking op is libuv-threadpool-backed and parks the calling fiber;
+// Every blocking op is libuv-threadpool-backed and parks the calling fiber;
 // cancel is honest best-effort (queued → uv_cancel; an in-flight syscall runs to
 // completion, then the result is discarded — a mid-syscall interrupt would be a
 // lie, exactly as Go/tokio/Java).
 //
-// D325: every fallible op returns `Result[T, IoError]` (the io-core `value`
-// `IoError`, reused whole — Q3 one error for io+fs+os).
+// Every fallible op returns `Result[T, IoError]` (the io-core `value`
+// `IoError`, reused whole — one error for io+fs+os).
 
 module std.fs
 
@@ -23,7 +23,7 @@ import std.time.duration.{Timestamp}
 
 // ─── Fs effect ──
 //
-// **Thin primitive layer (§3/§0).** Operations return raw `int`/`i64`/`str` codes,
+// **Thin primitive layer.** Operations return raw `int`/`i64`/`str` codes,
 // NOT `Result`/`Metadata`/`DirEntry`: an effect vtable erases a rich `Result[T,
 // IoError]` return to the canonical `nova_int`/`nova_str` pair (losing the value
 // `IoError` and any Ok record), so all `IoError`/`Metadata`/`DirEntry`
@@ -32,14 +32,14 @@ import std.time.duration.{Timestamp}
 // the "logic in .nv over a thin C hook" principle: the ops mirror the fs.c hook
 // shapes 1:1 (fd/byte-count/0 on success, NEGATIVE POSIX errno on failure).
 //
-// A path is a `[]u8` (NUL-wrapped to a CStr by the handler, §3c); a file is an OS
+// A path is a `[]u8` (NUL-wrapped to a CStr by the handler); a file is an OS
 // `int` fd. `read`/`read_at` fill a caller buffer and return the count.
 //
-// [M-fs-tls-mn-race] (2026-07-08): stat/realpath/scandir used to round-trip a
+// Design note (fs M:N race): stat/realpath/scandir used to round-trip a
 // result through a thread-local slot between two calls (`stat()` then
 // `stat_size()`/...). A fiber can migrate OS threads between any two calls
-// (Plan 44.7 preemption) and two fibers can interleave on one thread, so a
-// TLS slot is unsound — exactly the bug net.c's Д2 fix closed for sockets.
+// (preemption) and two fibers can interleave on one thread, so a
+// TLS slot is unsound — exactly the bug net.c's fix closed for sockets.
 // Redesigned on the same net-precedent (value image / handle, never TLS):
 //   - stat/lstat/fstat fill a caller-owned STAT_IMAGE_BYTES image (`img`); the
 //     stat_* accessors are now plain pointer-taking `fn`s in fs.nv (no I/O, so
@@ -113,7 +113,7 @@ export fn FileType @is_dir() -> bool => @k == KIND_DIR
 #stable(since = "0.1")
 export fn FileType @is_symlink() -> bool => @k == KIND_SYMLINK
 
-// ─── Permissions (Q8/Q12) ──
+// ─── Permissions ──
 
 /// Portable file permissions. Everywhere: a `readonly` bit. On Unix additionally
 /// the raw `mode` bits (`@mode()`); on Windows only `readonly` is meaningful.
@@ -149,8 +149,8 @@ export fn Permissions @with_readonly(ro_flag bool) -> Permissions {
 // ─── Metadata ──
 
 /// File metadata (`stat`). A heap record so it flows through the `Fs` vtable as a
-/// pointer. Timestamps are `Option[Timestamp]` (Plan 175) — `None` on platforms
-/// that do not record a given stamp (e.g. no birth time).
+/// pointer. Timestamps are `Option[Timestamp]` — `None` on platforms that do not
+/// record a given stamp (e.g. no birth time).
 #stable(since = "0.1")
 export type Metadata {
     ro kind FileType

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// std/os/ffi.nv — private C FFI layer for std/os (Plan 176 Ф.3, D324).
+// std/os/ffi.nv — private C FFI layer for std/os.
 //
 // The OS surface (env / args / cwd / well-known dirs / process) is a set of
 // **non-blocking native syscalls** — getenv/getcwd/setenv/getpid/… — so, exactly
@@ -7,11 +7,11 @@
 // C hooks (nova_rt/os_env.h, always included) rather than libuv-backed park/wake
 // ops (that pattern is for real blocking I/O — fs.c/net.c). No OS handle types
 // cross the boundary: keys/paths cross as a NUL-terminated `*u8` (a validated
-// C string, §3c(1) — the real_os handler NUL-terminates via `c_str`, mirroring
+// C string — the real_os handler NUL-terminates via `c_str`, mirroring
 // fs's `c_path`), values come back as a `str` carrying the raw bytes verbatim
 // (byte-transparent — non-UTF-8 Unix env bytes round-trip losslessly).
 //
-// C symbols are called by literal name (D282: `extern "C" fn`). C side:
+// C symbols are called by literal name (`extern "C" fn`). C side:
 // nova_rt/os_env.h (`os_*` hooks + `os_set_args`, called from `main`).
 
 module std.os

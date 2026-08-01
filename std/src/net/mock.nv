@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// Plan 183 Ф.2: std/net2/mock.nv — in-memory, deterministic `Net` handler.
+// std/net/mock.nv — in-memory, deterministic `Net` handler.
 //
 // Same module as tcp.nv/udp.nv/addr.nv, so it reuses the package-private
 // factories and Result helpers. Touches no real socket: constructors return stub
 // handles, read/recv fill the caller buffer with fixed content, addresses are
 // filled via the pure address FFI (no I/O). Deterministic net tests without a
-// live substrate (the mock deliverable, D407).
+// live substrate.
 
 module std.net
 
@@ -74,9 +74,9 @@ export fn mock_net() -> Effect[Net] => effect Net {
 // A single-element loopback "array" (a nova_alloc'd POD) for the mock DNS stub,
 // so `resolve`'s build_addrs copies one image out just like the real path.
 fn mock_lookup() -> Result[(int, int), NetError] {
-    // [M-174.6-rawptr-extern-unsafe-infer] (D424 rule 1): `net_addr_loopback`
-    // returns `*()` — inferred `unsafe fn`, call requires the wrap (mirrors
-    // the `net_addr_loopback_into` calls above in this same file).
+    // `net_addr_loopback` returns `*()` — inferred `unsafe fn`, so the call
+    // requires the explicit wrap (mirrors the `net_addr_loopback_into` calls
+    // above in this same file).
     ro base = unsafe { net_addr_loopback(0) }
     lookup_ok(base as int, 1)
 }

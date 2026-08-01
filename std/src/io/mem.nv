@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// std/io/mem.nv — in-memory io.Read / io.Write / io.Seek conformers
-// (Plan 176 Ф.1, D322).
+// std/io/mem.nv — in-memory io.Read / io.Write / io.Seek conformers.
 //
 // `BytesReader` is a cursor over a `[]u8` (Rust `io::Cursor`, Go
 // `bytes.Reader`); `BytesWriter` is a growable byte sink (Rust `Vec<u8>` as
 // `Write`). Together they let the whole io-core layer — the loop helpers,
 // `BufReader`/`BufWriter`, `copy` — be exercised deterministically without a
-// disk or a socket (the pure-Nova, effect-free conformers for Q15's `copy`
+// disk or a socket (the pure-Nova, effect-free conformers for `copy`
 // spec_test). They are also genuinely useful stdlib types.
 
 module std.io

@@ -1,25 +1,22 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// Plan 183 Ф.2: private C FFI layer for the reworked std/net (D407).
+// std/net/ffi.nv — private C FFI layer for std/net.
 //
-// ONE layer of FFI: literal-name `extern "C" fn` declarations (D282) against
+// ONE layer of FFI: literal-name `extern "C" fn` declarations against
 // nova_rt/net2.{h,c}. All C-ABI: scalars, pointer+length, out-parameters,
 // return codes. NO str in the transport; NO NovaRt_*_method_* mangling.
 //
-// Zero-copy contract (D407 §2а):
+// Zero-copy contract:
 //   - net_tcp_read(h, buf, cap) -> n : the network writes straight into
 //     the caller's []u8 buffer (alloc_cb hands libuv that very slice).
 //   - net_tcp_write(h, buf, len) -> n : sends straight from the caller's
 //     bytes (kept alive on the fiber stack across the parked call).
 //   Errors: negative UV codes (text via net_strerror on demand).
 //
-// SocketAddr rep (Ф.2): the Nova value owns a 20-byte NovaNetAddr image (see
+// SocketAddr rep: the Nova value owns a 20-byte NovaNetAddr image (see
 // addr.nv). The image is passed to/from C by pointer (`*()` into the []u8
 // backing); the C layer owns the struct layout so the .nv side never bakes
 // offsets or endianness. Cold-path constructors take an `out_err *mut int`
 // cell so the UV error code reaches the Nova NetError classifier (error.nv).
-//
-// This module lives ALONGSIDE std/net during the migration (Plan 183 Ф.1-Ф.3);
-// std/net is untouched until Ф.3 flips consumers and deletes the old layer.
 
 module std.net
 
@@ -32,9 +29,9 @@ extern "C" fn net_addr_loopback_into(port u16, out *mut u8) -> ()
 extern "C" fn net_addr_loopback(port u16) -> *()
 extern "C" fn net_addr_loopback_v6_into(port u16, out *mut u8) -> ()
 extern "C" fn net_addr_v4_into(a u8, b u8, c u8, d u8, port u16, out *mut u8) -> ()
-// [M-socket-addr-port-only-form]: IPv6 "any interface" wildcard [::]:port
-// (v4 wildcard reuses net_addr_v4_into(0,0,0,0,port,out) — no dedicated entry
-// point needed, see addr.nv SocketAddr.any).
+// IPv6 "any interface" wildcard [::]:port (v4 wildcard reuses
+// net_addr_v4_into(0,0,0,0,port,out) — no dedicated entry point needed, see
+// addr.nv SocketAddr.any).
 extern "C" fn net_addr_any_v6_into(port u16, out *mut u8) -> ()
 // Parse "host:port" (s,len) into the 20-byte caller image `out`.
 // Returns 0=OK, 1=invalid address, 2=invalid port.

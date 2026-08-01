@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// Plan 183 Ф.2: std/net2/dns.nv — hostname resolution (D407 §5, D295).
+// std/net/dns.nv — hostname resolution.
 //
 // DNS resolution (uv_getaddrinfo) is real network I/O + parking, so it stays in
 // the `Net` effect. ONE lookup call: the C layer allocates a GC array of exactly
-// `count` value-address images (the single named addrinfo→array OS-transfer,
-// D407 §2а — libuv already holds the whole addrinfo list, so there is no
+// `count` value-address images (the single named addrinfo→array OS-transfer —
+// libuv already holds the whole addrinfo list, so there is no
 // pre-guess and never a second network query, matching Rust/Go); `.nv` copies
 // each image out into an owned `[]SocketAddr`.
 
