@@ -141,10 +141,7 @@ fn BufReader[R Read] mut @refill() -> Result[int, IoError] {
 export fn BufReader[R Read] mut @read(buf mut []u8) -> Result[int, IoError] {
     ro want = buf.len()
     if want == 0 { return Ok(0) }
-    ro avail = match @refill() {
-        Ok(a)  => a
-        Err(e) => return Err(e)
-    }
+    ro avail = @refill()?
     if avail == 0 { return Ok(0) }
     ro n = want.min(avail)
     for i in 0..n {

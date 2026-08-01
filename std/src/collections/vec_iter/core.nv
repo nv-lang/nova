@@ -659,10 +659,7 @@ export fn[I Next[T]] I mut @find(pred fn(T) -> bool) -> Option[T] {
 
 /// Reduce without a seed: `None` when empty, else fold from the first element.
 export fn[I Next[T]] I mut @reduce(f fn(T, T) -> T) -> Option[T] {
-    mut acc = match @next() {
-        Some(first) => first,
-        None => return None,
-    }
+    mut acc = @next()?
     while true {
         match @next() {
             Some(x) => { acc = f(acc, x) },
@@ -676,10 +673,7 @@ export fn[I Next[T]] I mut @reduce(f fn(T, T) -> T) -> Option[T] {
 /// Match-arm bind named `cand` (not bare `x`) to avoid colliding with a
 /// user-imported module whose last path segment is `x`.
 export fn[I Next[T], T Compare] I mut @min() -> Option[T] {
-    mut best = match @next() {
-        Some(first) => first,
-        None => return None,
-    }
+    mut best = @next()?
     while true {
         match @next() {
             Some(cand) => { if cand.compare(best) < 0 { best = cand } },
@@ -693,10 +687,7 @@ export fn[I Next[T], T Compare] I mut @min() -> Option[T] {
 /// Match-arm bind named `cand` (not bare `x`): see `@min` above (same
 /// module-alias collision avoidance).
 export fn[I Next[T], T Compare] I mut @max() -> Option[T] {
-    mut best = match @next() {
-        Some(first) => first,
-        None => return None,
-    }
+    mut best = @next()?
     while true {
         match @next() {
             Some(cand) => { if cand.compare(best) > 0 { best = cand } },

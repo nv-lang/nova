@@ -145,10 +145,7 @@ export type ParseCharError enum Empty | TooManyChars
 #stable(since = "0.1")
 export fn str @to_char() -> Result[char, ParseCharError] {
     mut it = @chars()
-    ro c = match it.next() {
-        Some(c) => c
-        None => return Err(Empty)
-    }
+    ro c = it.next().ok_or(Empty)?
     match it.next() {
         None => Ok(c)
         Some(_) => Err(TooManyChars)
