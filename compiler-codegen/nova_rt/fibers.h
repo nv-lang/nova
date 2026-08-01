@@ -541,6 +541,34 @@ typedef struct NovaFiberQueue {
      * garbage deadline_ns from it. NULL for the top-level scope. */
     struct NovaFiberQueue* saved_active_scope;
 
+    /* Plan 221.1 №165: the OWNER coroutine's REAL (scope,slot) identity —
+     * `_nova_active_scope`/`_nova_active_slot` snapshotted at nova_scope_init
+     * time, BEFORE this scope's own body runs. The rejected-approach comment
+     * above nova_scope_pin_ctx (fibers.h ~1148, "Plan 221.1 №162") established
+     * that `_nova_active_scope`/`_nova_active_slot` are deliberately NOT
+     * repointed at this scope for the duration of body-statement execution —
+     * a direct (non-`spawn`) blocking op written in the body therefore parks
+     * under the OWNER's real ambient identity, not under this scope. These
+     * two fields capture exactly that identity (plain-value copy, constant
+     * for the whole body-execution window — nothing repoints the TLS in
+     * between, so no staleness within one scope's lifetime): this scope's
+     * own cancel/deadline machinery uses them to reach — and interrupt — a
+     * direct blocking op parked there, via nova_sched_cancel_pending_slot.
+     * See nova_scope_deliver_cancel / nova_scope_arm_early_deadline. NULL
+     * only if scope_init somehow ran with no ambient scope at all (not
+     * expected in user code, D92). */
+    struct NovaFiberQueue* owner_scope;
+    int                    owner_slot;
+    /* Plan 221.1 №165: opaque handle (NovaEarlyDl*) to a lazily-armed,
+     * self-cleaning libuv timer that fires this scope's `timeout:`/
+     * `deadline:` even while the OWNER is still executing body statements —
+     * i.e. BEFORE nova_supervised_run_impl's join loop (which owns the
+     * LATER, already-correct deadline gate for registered `spawn` children)
+     * has even started. NULL when no deadline is set, or once the timer has
+     * fired/been disarmed. See nova_scope_arm_early_deadline /
+     * nova_scope_disarm_early_deadline. */
+    void* early_deadline_timer;
+
     /* ─── Plan 173.0 Ф.2/Ф.3: per-child retention (see NovaChildError above) ───
      * Separate index space from fibers[]/fiber_error[]/count (Ф.1, frozen).
      * Populated ONLY by the M:N remote-spawn path (nova_runtime_spawn_into /
@@ -729,6 +757,9 @@ static inline NovaSchedState* nova_sched_find_state(NovaFiberQueue* scope) {
 static inline NovaSchedState* nova_sched_get_state(NovaFiberQueue* scope);
 static inline void nova_sched_drop_state(NovaFiberQueue* scope);
 static inline void nova_sched_cancel_all_pending(NovaFiberQueue* scope);
+/* Plan 221.1 №165: forward decl, definition in nova_sched.h — targeted
+ * single-slot sibling of nova_sched_cancel_all_pending above. */
+static inline void nova_sched_cancel_pending_slot(NovaFiberQueue* scope, int slot);
 /* Plan 83.4.5.1 (2026-05-23): forward decl, definition in nova_sched.h. */
 static inline void nova_scope_cancel_wake_all(NovaFiberQueue* scope);
 static inline int  nova_sched_count_alive(NovaFiberQueue* scope);
@@ -807,8 +838,10 @@ static inline void nova_scope_grow(NovaFiberQueue* q, int new_cap) {
  * is below (~line 1660); a matching earlier extern decl is legal C. */
 #ifdef _MSC_VER
 __declspec(thread) extern NovaFiberQueue* _nova_active_scope;
+__declspec(thread) extern int             _nova_active_slot;
 #else
 extern __thread NovaFiberQueue* _nova_active_scope;
+extern __thread int             _nova_active_slot;
 #endif
 
 static inline void nova_scope_init(NovaFiberQueue* q) {
@@ -861,6 +894,14 @@ static inline void nova_scope_init(NovaFiberQueue* q) {
      * restore in nova_supervised_run_impl (parent at init time; codegen sets
      * _nova_active_scope=&q only AFTER init). */
     q->saved_active_scope = _nova_active_scope;
+    /* Plan 221.1 №165: snapshot the OWNER's REAL (scope,slot) identity —
+     * see the field doc above `owner_scope`/`owner_slot`. Same timing as
+     * saved_active_scope (before codegen does anything else), same
+     * plain-value-copy safety (no cleanup needed on any exit path — dies
+     * with q's own stack frame). */
+    q->owner_scope = _nova_active_scope;
+    q->owner_slot  = _nova_active_slot;
+    q->early_deadline_timer = NULL;
     /* Plan 173.0 Ф.2/Ф.3: per-child retention — lazy-alloc'нутся в
      * nova_scope_alloc_child_slot (первый remote spawn). Idle scope
      * (никогда не spawn'ил remote-ребёнка) = нулевой overhead. */
@@ -1525,6 +1566,11 @@ static inline void nova_cancel_token_unregister_resource(NovaCancelToken* t, int
     t->cleanup_cbs[slot]     = NULL;
 }
 
+/* Forward decl — full definition further down (Plan 174/D349 section).
+ * Needed here because nova_cancel_token_cancel_reason (below) now calls it
+ * for its bound_scope branch (Plan 221.1 №165 dedup — see that call site). */
+static inline void nova_scope_deliver_cancel(NovaFiberQueue* q, void* reason_ptr);
+
 /* Запросить отмену с типизированной причиной (Plan 49 Ф.1). `reason_ptr` —
  * box'нутый T (caller-owned). NULL допустим (отмена без структурированной
  * причины). Idempotent: повторный cancel сохраняет ПЕРВУЮ причину
@@ -1550,44 +1596,22 @@ static inline void nova_cancel_token_cancel_reason(NovaCancelToken* t, void* rea
         }
     }
     if (t->bound_scope) {
-        nova_abool_store(&t->bound_scope->cancel_requested, true);
-        /* Plan 49 Ф.2: пропагируем reason в scope queue чтобы nova_fiber_yield
-         * увидел причину при throw'е CANCEL. */
-        t->bound_scope->cancel_reason_ptr = reason_ptr;
-        /* Plan 22 Ф.4 (D93): wake all parked fiber'ов через registered
-         * stop_cb's — immediate, не дожидаясь следующего yield-point'а.
-         *
-         * Plan 83.4.5.1 (2026-05-23): cancel_all_pending теперь зовёт
-         * nova_sched_wake (вместо просто parked=false) → SYNC slots тоже
-         * получают dispatch_ready re-queue. */
-        nova_sched_cancel_all_pending(t->bound_scope);
-        /* Plan 83.4.5.1 Ф.1: defense-in-depth wake_all — покрывает any
-         * parked slot ASYNC handle которого ещё не закрылся (close_cb
-         * запланирован, но fiber-side cancel-check может среагировать
-         * раньше через predicate park_until → cancel_requested =true
-         * заставит predicate exit'нуться). Идемпотентно: parked-флаги уже
-         * cleared cancel_all_pending'ом для SYNC+bare; ASYNC slot'ы
-         * остаются parked, на них wake_all сделает dispatch_ready —
-         * predicate re-check вернёт true → exit. */
-        nova_scope_cancel_wake_all(t->bound_scope);
-        /* Plan 83.10.2 (2026-05-26): under armed M:N, spawned fibers park in
-         * worker scopes (not the supervised scope). nova_sched_cancel_all_pending
-         * above found nothing. Route cancel to worker-parked fibers whose
-         * _nova_parent_scope == bound_scope. External non-inline — declared in
-         * runtime.h (included after fibers.h in nova_rt.h); forward-decl here
-         * to break include-order circular dependency. */
-        {
-            extern void nova_runtime_cancel_worker_fibers(
-                struct NovaFiberQueue* scope);
-            nova_runtime_cancel_worker_fibers(t->bound_scope);
-        }
-        /* Plan 83.11 Ф.3: also submit CANCEL_SCOPE job to driver. Driver walks
-         * scope.armed_sleeps_head list (single mutator) — closes any timers armed
-         * via _nova_sleep_via_driver. Idempotent с legacy cancel_worker_fibers
-         * (которое touches scoped fibers parked via _nova_sleep_via_libuv path):
-         * no-op для slots that аre driver-armed (legacy cb=NULL), no-op для
-         * slots that аre legacy-armed (driver list doesn't contain them). */
-        _nova_cancel_via_driver(t->bound_scope);
+        /* Plan 221.1 №165: this used to be five separate calls duplicating
+         * nova_scope_deliver_cancel's own body verbatim (cancel_requested
+         * store + reason + nova_sched_cancel_all_pending +
+         * nova_scope_cancel_wake_all + nova_runtime_cancel_worker_fibers +
+         * _nova_cancel_via_driver, same order) — a maintenance hazard that
+         * almost hid this window's fix: the targeted single-slot wake for a
+         * direct (non-`spawn`) body blocking op (owner_scope/owner_slot,
+         * nova_sched_cancel_pending_slot) was added to
+         * nova_scope_deliver_cancel ONLY, and `tok.cancel()` — the exact
+         * form of the confirmed live bug (`supervised(cancel: tok) { …
+         * accept() … }`) — went through THIS duplicate path, never
+         * reaching it. Collapsed to a single call: same five actions, same
+         * order, byte-identical behaviour, plus the new one now reached
+         * from every cancel-delivery site instead of just the scope-
+         * deadline one. */
+        nova_scope_deliver_cancel(t->bound_scope, reason_ptr);
     }
     /* Каскад: отменяем все linked-токены (kill-switch composition).
      * Plan 49 Ф.6 cross-type: если для link есть converter — применяем
@@ -2757,6 +2781,17 @@ static inline void nova_scope_deliver_cancel(NovaFiberQueue* q, void* reason_ptr
         nova_runtime_cancel_worker_fibers(q);
     }
     _nova_cancel_via_driver(q);
+    /* Plan 221.1 №165: a direct (non-`spawn`) blocking op written straight
+     * in q's OWN body is NOT one of q's registered children — it parks
+     * under the OWNER's real ambient (owner_scope,owner_slot), which the
+     * three broadcasts above never touch (they only walk q's OWN
+     * fibers[]/sched-state). Reach it explicitly: whatever op is currently,
+     * validly registered at that slot (if any — safe no-op otherwise) gets
+     * its stop_cb invoked exactly like it would if OWNER's own real scope
+     * had been cancelled. This is what makes `supervised(cancel: tok) { …
+     * accept() … }` (no inner `spawn`) actually interruptible — see D439
+     * amendment / [M-supervised-cancel-no-interrupt-parked-accept]. */
+    nova_sched_cancel_pending_slot(q->owner_scope, q->owner_slot);
 }
 
 /* Plan 174 (D349): typed `TimeoutError` throw hook. Assigned by codegen in
@@ -2805,6 +2840,126 @@ static inline void _nova_scope_deadline_run_once(int64_t deadline_ns) {
     uv_timer_stop(&w);
     uv_close((uv_handle_t*)&w, NULL);
     uv_run(loop, UV_RUN_NOWAIT);  /* release handle via NOWAIT pass */
+}
+
+/* ─── Plan 221.1 №165: early-armed scope-deadline timer ───────────────────
+ *
+ * nova_supervised_run_impl's OWN deadline gate (`_dl_ns`/`_dl_fired` above)
+ * only runs once the join loop starts — i.e. strictly AFTER every body
+ * statement has already executed. If the owner is itself parked in a direct
+ * (non-`spawn`) blocking op somewhere in the body (D439), that gate never
+ * gets a chance to run until the op returns on its own — the `timeout:`/
+ * `deadline:` is silently ignored for the whole body-execution window. This
+ * timer, armed at scope entry (mirrors the brief's "arm a libuv timer on
+ * scope entry" mechanic), closes that gap: it fires independently, on the
+ * scope's own worker loop, and delivers the SAME nova_scope_deliver_cancel
+ * a late-firing join-loop gate would — which (via owner_scope/owner_slot,
+ * see field doc + nova_sched_cancel_pending_slot above) now also reaches a
+ * direct body op.
+ *
+ * Lifetime / GC-safety (deliberately does NOT reference `q` — see the
+ * design note this replaces a chain-walking coroutine-local-state
+ * mechanism that would have needed touching the codegen-mirrored
+ * NovaSpawnCtxBase/SpawnCtx_N layout; this is a narrower, additive-only
+ * alternative): the timer's own payload is a SEPARATE, uncollectable heap
+ * block (`NovaEarlyDl`) holding only a plain (owner_scope,owner_slot) VALUE
+ * copy — never a pointer back into `q`'s stack frame. `owner_scope` is by
+ * construction something that outlives `q` (the scope that owns/resumes
+ * the coroutine currently running q's body), so referencing it after `q`
+ * itself is gone (e.g. `q`'s body threw a genuine, unrelated error and
+ * unwound past the normal disarm call below — this codebase has no C++-
+ * style unconditional destructors, and wrapping the ENTIRE body in a new
+ * try/finally purely to guarantee disarm was judged a materially higher-
+ * risk change to emit_supervised than accepting this narrow residual: see
+ * window report) is always memory-safe. The single behavioural residual in
+ * that narrow scenario is a late, spurious nova_sched_cancel_pending_slot
+ * call against whatever the SAME coroutine's owner_slot holds at the
+ * (bounded, ≤ the user's own deadline) time the orphaned timer eventually
+ * fires — self-correcting if it lands on a genuinely-parked, unrelated op
+ * (predicate re-check/re-park, same as any other spurious wake) and a
+ * memory-safe no-op if the slot is idle. Single-fire is CAS-guarded
+ * (`fired`) against a racing normal disarm; the timer always closes/frees
+ * itself exactly once, on whichever path (fire or disarm) wins the CAS. */
+typedef struct {
+    uv_timer_t       timer;        /* MUST stay the first member: uv_close's
+                                     * close_cb receives &timer and frees the
+                                     * whole block through that same address. */
+    NovaFiberQueue*  owner_scope;
+    int              owner_slot;
+    nova_atomic_int  fired;        /* 0=armed; CAS 0->1 claims the single
+                                     * fire-or-disarm action. */
+} NovaEarlyDl;
+
+/* Plan 221.1 №165 [fix, found via the "fiber stack overflow" crash this
+ * window's own testing produced]: this used to be `nova_free_uncollectable`
+ * on an `nova_alloc_uncollectable`-allocated `dl` — a genuine use-after-free.
+ * `uv_close`'s close_cb runs on a LATER loop iteration, not synchronously —
+ * by the time the NORMAL path (right after the body, unconditionally) calls
+ * nova_scope_disarm_early_deadline, the fire-path's own uv_close may ALREADY
+ * have run this callback on an earlier pump of the SAME loop, freeing `dl`
+ * out from under the disarm call's `&dl->fired` CAS. `dl` is now a plain
+ * `nova_alloc` (collectable, GC-scanned) block instead — no manual free at
+ * all; Boehm reclaims it once nothing (not `q->early_deadline_timer`, not
+ * any local) references it anymore, which is always AFTER both the fire
+ * path and the disarm path are done touching it (conservative GC cannot
+ * collect out from under a live read, unlike a hand-rolled free). The
+ * struct is tiny (~40 bytes) and one per `supervised(deadline:/timeout:)`
+ * scope — same accepted-tiny-leak-shape as ctx_pins/spawn-pool arrays
+ * elsewhere in this file, not a growing/unbounded leak. */
+static void _nova_early_dl_close_cb(uv_handle_t* h) {
+    (void)h;
+}
+
+static void _nova_early_dl_timer_cb(uv_timer_t* h) {
+    NovaEarlyDl* dl = (NovaEarlyDl*)h;
+    int32_t expect = 0;
+    if (__atomic_compare_exchange_n(&dl->fired, &expect, 1, 0,
+                                     __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        nova_sched_cancel_pending_slot(dl->owner_scope, dl->owner_slot);
+    }
+    uv_close((uv_handle_t*)&dl->timer, _nova_early_dl_close_cb);
+}
+
+/* Arms the early-deadline timer for `q` (no-op, returns NULL, when `q` has
+ * no deadline). Call once, at scope entry, AFTER `q->deadline_ns` has its
+ * final (inherited + locally combined) value. Returns the opaque handle to
+ * pass to nova_scope_disarm_early_deadline; also stored on `q` itself
+ * (`q->early_deadline_timer`) purely for callers that prefer reading it
+ * back off the scope. */
+static inline void* nova_scope_arm_early_deadline(NovaFiberQueue* q) {
+    if (!q || q->deadline_ns == 0) return NULL;
+    /* Plan 221.1 №165: collectable (nova_alloc), NOT nova_alloc_uncollectable
+     * — see _nova_early_dl_close_cb's doc comment for why manual free was a
+     * use-after-free here. */
+    NovaEarlyDl* dl = (NovaEarlyDl*)nova_alloc(sizeof(NovaEarlyDl));
+    dl->owner_scope = q->owner_scope;
+    dl->owner_slot  = q->owner_slot;
+    nova_aint_init(&dl->fired, 0);
+    uv_timer_init(nova_current_loop(), &dl->timer);
+    int64_t remaining_ns = q->deadline_ns - time_monotonic_ns();
+    uint64_t remaining_ms = remaining_ns > 0
+        ? (uint64_t)(remaining_ns / 1000000LL) : 0;
+    uv_timer_start(&dl->timer, _nova_early_dl_timer_cb, remaining_ms, 0);
+    q->early_deadline_timer = dl;
+    return dl;
+}
+
+/* Disarms a timer armed by nova_scope_arm_early_deadline (no-op on NULL, or
+ * if the timer already fired — its own callback already closed itself).
+ * Call right after the body finishes, BEFORE nova_supervised_run(_cancel):
+ * from that point on, nova_supervised_run_impl's own (already-correct,
+ * join-loop) deadline gate takes over for registered children, and the
+ * owner is no longer executing direct body statements this timer exists to
+ * protect. */
+static inline void nova_scope_disarm_early_deadline(void* handle) {
+    if (!handle) return;
+    NovaEarlyDl* dl = (NovaEarlyDl*)handle;
+    int32_t expect = 0;
+    if (__atomic_compare_exchange_n(&dl->fired, &expect, 1, 0,
+                                     __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        uv_timer_stop(&dl->timer);
+        uv_close((uv_handle_t*)&dl->timer, _nova_early_dl_close_cb);
+    }
 }
 
 /* Plan 173.0 Ф.3 (A3.5): internal decision hook — called once per retained

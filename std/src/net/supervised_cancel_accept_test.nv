@@ -1,0 +1,126 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Plan 221.1 №165 [M-supervised-timeout-covers-whole-block] +
+// [M-supervised-cancel-no-interrupt-parked-accept] — `timeout:`/`cancel:`
+// on `supervised` must cover the WHOLE block, including a DIRECT (no
+// intervening `spawn`) blocking call written straight in the body. Before
+// this fix, `nova_scope_deliver_cancel`/the join-loop's own deadline gate
+// only ever reached REGISTERED children (`spawn`'d fibers) — a direct body
+// statement like `listener.accept()` parks under the OWNER's real ambient
+// (scope,slot) (D439: `_nova_active_scope`/`_nova_active_slot` are
+// deliberately NOT repointed at the entered `supervised{}` scope for the
+// duration of body-statement execution), which neither the cancel broadcast
+// nor the deadline gate ever touched.
+//
+// Live confirmation of the bug (owner-verified, 2026-08-01): nova-polaris
+// `src/net/serve.nv`'s own header comment, defect 3 — `supervised(cancel:
+// tok) { ... listener.accept() ... }` with `accept()` called DIRECTLY in
+// the block's own body (no inner `spawn`) never actually got interrupted by
+// `tok.cancel(...)`; a 15s test timeout elapsed with the accept loop still
+// parked. Wrapping the SAME call in an inner `spawn { ... }` worked fine —
+// exactly the asymmetry this fixture pins shut for BOTH forms (`cancel:`
+// and `timeout:`), without requiring the `spawn` workaround.
+//
+// Mechanic (fibers.h / nova_sched.h): `NovaFiberQueue` now snapshots the
+// owner's real (scope,slot) at `nova_scope_init` time (`owner_scope`/
+// `owner_slot` — plain-value copy, no cleanup needed on any exit path).
+// `nova_scope_deliver_cancel` additionally targets that (scope,slot) via
+// the new `nova_sched_cancel_pending_slot` (single-slot sibling of
+// `nova_sched_cancel_all_pending`) — reaching whatever blocking op is
+// CURRENTLY, validly registered there (accept()'s own `_nn2_listener_
+// stop_cb`, in this fixture), exactly as if the OWNER's own real scope had
+// been cancelled. `timeout:`/`deadline:` gets an independent, self-cleaning
+// libuv timer armed at scope ENTRY (`nova_scope_arm_early_deadline`) so the
+// same interrupt fires even though `nova_supervised_run_impl`'s own
+// (later, join-loop) deadline gate cannot run until the direct body
+// statement itself returns.
+//
+// mn-coding-conventions §9 (stack-pointer-crossing-thread-boundary →
+// counter-based lifetime-wait): the early-deadline timer's own payload is a
+// plain (owner_scope,owner_slot) VALUE copy on a SEPARATE, GC-COLLECTABLE
+// heap block (`nova_alloc`, not `nova_alloc_uncollectable` — a first version
+// of this fix manually freed it in the libuv close_cb and crashed with a
+// genuine use-after-free: close_cb runs on a LATER loop iteration than the
+// firing timer_cb, so the unconditional disarm call right after the body
+// could — and, reproducibly, did — read already-freed memory; letting Boehm
+// reclaim it once truly unreachable removes the race entirely, at the cost
+// of a tiny bounded per-scope block that is not manually freed) — never a
+// pointer into `q`'s own stack frame — so it stays memory-safe even in the
+// (accepted, documented) residual case where the scope's body throws an
+// unrelated error before the normal disarm call runs (see the design note
+// above `nova_scope_arm_early_deadline`, fibers.h).
+//
+// ARMED (M:N, default worker count) — run each of these 20x back to back
+// (rt-фикстура requirement, race-class fix) to catch the "wake vs normal
+// completion" race the mechanic is inherently exposed to.
+
+module std.net
+
+import std.time.duration
+
+test "cancel: wakes a directly-parked accept() with no inner spawn (#165)" {
+    with Net = real_net() {
+        mut lst = must(TcpListener.bind(SocketAddr.loopback(0)))
+        ro tok = CancelToken.new()
+        ro t0 = Timestamp.now().unix_millis()
+        supervised(cancel: tok) {
+            spawn {
+                (50).to_millis().sleep()
+                tok.cancel()
+            }
+            match lst.accept() {
+                Ok(consume _s) => {
+                    panic("net2 test: unexpected successful accept — no client ever connects")
+                }
+                Err(e) => {
+                    match e {
+                        Cancelled => { }
+                        _ => panic("net2 test: expected NetError.Cancelled, got ${e.to_str()}")
+                    }
+                }
+            }
+        }
+        ro elapsed = Timestamp.now().unix_millis() - t0
+        // Cancel armed at ~50ms — generous ceiling for CI, но strictly far
+        // below "accept() never returns" (would hang the whole test run).
+        assert(elapsed < 2000)
+    }
+}
+
+test "timeout: wakes a directly-parked accept() with no spawn at all (#165)" {
+    with Net = real_net() {
+        mut lst = must(TcpListener.bind(SocketAddr.loopback(0)))
+        ro t0 = Timestamp.now().unix_millis()
+        // The scope's OWN deadline gate (nova_supervised_run_impl's join
+        // loop) independently notices the SAME deadline has passed once the
+        // (now-interrupted) accept() returns and the join loop runs with
+        // zero registered children — it throws its own typed TimeoutError
+        // on top of the body's already-handled `Err(Cancelled)`. Genuinely
+        // two independent, correct signals for the SAME timeout (the direct
+        // op AND the scope as a whole) — a real caller wraps `timeout:`
+        // in `with Fail[TimeoutError]` for exactly this reason (D349).
+        ro r = with Fail[TimeoutError] = |_e| { 0 } {
+            supervised(timeout: 100.to_millis()) {
+                match lst.accept() {
+                    Ok(consume _s) => {
+                        panic("net2 test: unexpected successful accept — no client ever connects")
+                    }
+                    Err(e) => {
+                        match e {
+                            Cancelled => { }
+                            _ => panic("net2 test: expected NetError.Cancelled, got ${e.to_str()}")
+                        }
+                    }
+                }
+            }
+            1
+        }
+        assert(r == 0)
+        ro elapsed = Timestamp.now().unix_millis() - t0
+        assert(elapsed < 2000)
+    }
+}
+
+// `must[T]` — folder-module peer of tcp_test.nv, which already declares it
+// (D-folder-module: `std/src/net/` is ONE combined module of co-equal
+// files) — visible here without an import, no redefinition needed.
