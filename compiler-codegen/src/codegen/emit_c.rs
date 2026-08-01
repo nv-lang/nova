@@ -23259,6 +23259,67 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
     }
 
+    /// [M-nested-generic-receiver-method-mono] (реестр 221.1 №247,
+    /// 2026-08-01): a NESTED receiver pattern (`Option[Result[T, E]]
+    /// @transpose`, the carrier's own generic slot filled by a COMPOUND
+    /// type rather than a bare typevar) has its method-introduced typevars
+    /// (`T`/`E`, extracted structurally from decomposing that compound —
+    /// checker-side, see the `E_DUPLICATE_GENERIC_DECL` avoidance for this
+    /// receiver shape) COLLIDE BY NAME with the receiver type's OWN
+    /// declared carrier param whenever the carrier is a BUILTIN sum type
+    /// (`Option`/`Result`'s prelude decl also spells its own slot "T"/"E").
+    /// The various call sites that seed `type_subst` for these builtin
+    /// carriers (`Nova_Option_method_*`/`Nova_Result_method_*` dispatch,
+    /// Plan 95/99.1) do a SHALLOW single-slot bind — Option's OWN "T" ↦ the
+    /// WHOLE compound element (e.g. the `Result[int,str]` mono's C name) —
+    /// correct only for a FLAT receiver (`Option[T] @flat_map`, where that
+    /// "T" genuinely IS the method's own). For a nested receiver this
+    /// leaves the method's REAL `T` bound to the wrong (compound) value and
+    /// its `E` unbound entirely — the return type (`Result[Option[T], E]`
+    /// for `transpose`) then mono's with a garbage/missing subst, dropping
+    /// the `Option` wrapper around the payload in the emitted C.
+    ///
+    /// Call this AFTER `recv_c` (the receiver's own C type) has been
+    /// computed from the shallow seed (so `@`'s own destructuring stays
+    /// correct — `recv_c` itself is not recomputed) but BEFORE the return
+    /// type / body are lowered — it REBINDS `current_type_subst` in place
+    /// for just the typevars the receiver pattern structurally carries,
+    /// via full unification of the DECLARED receiver TypeRef against the
+    /// now-final `recv_c` (reusing `infer_type_param_binding`, which
+    /// already natively decomposes `Option[T]`/`Result[T,E]` C-name shapes,
+    /// ~L23570/23584). Any OTHER already-bound slot (e.g. a method-level
+    /// generic like `map[U]`'s `U`, resolved earlier by
+    /// `resolve_method_level_subst` and already in `current_type_subst`) is
+    /// left untouched — only slots the structural walk itself resolves are
+    /// overridden. No-op for a flat receiver (`receiver_ty_is_nested`
+    /// false) — mirrors Plan 153.5 [M-153.5-flatten-nested-receiver]'s
+    /// structural receiver re-bind (applied at the CALL SITE for USER
+    /// generic types, ~L42810); this is the same primitive applied
+    /// centrally so it also covers BUILTIN Option/Result dispatch.
+    fn debt_rebind_nested_receiver_typevars(
+        &mut self,
+        fn_decl: &crate::ast::FnDecl,
+        recv_c: &str,
+    ) {
+        let recv_ty = match fn_decl.receiver.as_ref().and_then(|r| r.receiver_ty.as_ref()) {
+            Some(t) if Self::receiver_ty_is_nested(t) => t,
+            _ => return,
+        };
+        let mut tvars: Vec<String> = Vec::new();
+        Self::collect_receiver_typevars(recv_ty, &mut tvars);
+        if tvars.is_empty() {
+            return;
+        }
+        let mut pend: Vec<(String, Option<String>)> =
+            tvars.iter().map(|n| (n.clone(), None)).collect();
+        self.infer_type_param_binding(recv_ty, recv_c, &mut pend);
+        for (n, c) in pend {
+            if let Some(c) = c {
+                self.current_type_subst.insert(n, Self::lift_c_name(c));
+            }
+        }
+    }
+
     /// Plan 48 Ф.0 / Plan 98 Ф.1: match param_typeref against concrete_c,
     /// bind type params in subst.
     ///
@@ -24990,6 +25051,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Plan 128 Ф.1: thread recv.mutable from fn_decl AST (Ф.2 consumes).
         let recv_mutable = fn_decl.receiver.as_ref().map(|r| r.mutable).unwrap_or(false);
         let recv_c = self.receiver_c_type(recv_type, recv_mutable);
+        // [M-nested-generic-receiver-method-mono] (реестр 221.1 №247): see
+        // `debt_rebind_nested_receiver_typevars` doc — rebinds a builtin
+        // Option/Result carrier's colliding "T"/"E" to the method's OWN
+        // (deep) view for the fwd-decl's own return-type computation below.
+        self.debt_rebind_nested_receiver_typevars(fn_decl, &recv_c);
         // Plan 70 PhaseB1 (session 2): cascade-blocked site (register_mono_method_instance —
         // no return type). Strict mode: record E7001 в strict_errors.
         // [M-generic-static-method-value-arg-addr-mismatch] fix (221.1 Ф.2
@@ -25188,6 +25254,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Plan 128 Ф.1: thread recv.mutable from fn_decl AST (Ф.2 consumes).
         let recv_mutable = fn_decl.receiver.as_ref().map(|r| r.mutable).unwrap_or(false);
         let recv_c = self.receiver_c_type(recv_type, recv_mutable);
+        // [M-nested-generic-receiver-method-mono] (реестр 221.1 №247): see
+        // `debt_rebind_nested_receiver_typevars` doc — rebinds a builtin
+        // Option/Result carrier's colliding "T"/"E" to the method's OWN
+        // (deep) view for the param/return-type + body computed below.
+        self.debt_rebind_nested_receiver_typevars(fn_decl, &recv_c);
         // Plan 70 PhaseA3: strict — emit_monomorphized_method param/return.
         // [M-generic-static-method-value-arg-addr-mismatch] fix (221.1 Ф.2
         // #26): this signature computation used to be a bare `type_ref_to_c`
@@ -39628,6 +39699,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                             &mut self.current_type_subst,
                                             Self::subst_map_from_c_pairs(type_subst.iter().cloned()),
                                         );
+                                        // [M-nested-generic-receiver-method-mono]
+                                        // (реестр 221.1 №247): this PRE-registration
+                                        // pass queues the C typedefs the return type
+                                        // needs — for a NESTED receiver (`Option[
+                                        // Result[T, E]] @transpose`) it must see the
+                                        // METHOD's OWN (deep) T/E view (see
+                                        // `debt_rebind_nested_receiver_typevars` doc),
+                                        // not the shallow single-slot bind just above
+                                        // (`type_subst`, unchanged — still feeds
+                                        // `register_mono_method_instance` below,
+                                        // which corrects it internally post-recv_c).
+                                        self.debt_rebind_nested_receiver_typevars(
+                                            &fn_decl, &format!("NovaOpt_{}", elem_ty));
                                         if let Some(ret) = &fn_decl.return_type {
                                             self.ensure_novaopt_decls_for_typeref(ret);
                                         }
@@ -39901,6 +39985,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                             &mut self.current_type_subst,
                                             Self::subst_map_from_c_pairs(type_subst.iter().cloned()),
                                         );
+                                        // [M-nested-generic-receiver-method-mono]
+                                        // (реестр 221.1 №247): Result-carrier twin of
+                                        // the Option-branch fix above — see its
+                                        // comment / `debt_rebind_nested_receiver_
+                                        // typevars` doc.
+                                        self.debt_rebind_nested_receiver_typevars(
+                                            &fn_decl, &format!("NovaRes_{}_{}*", ok_c, err_c));
                                         if let Some(ret) = &fn_decl.return_type {
                                             self.ensure_novaopt_decls_for_typeref(ret);
                                         }
