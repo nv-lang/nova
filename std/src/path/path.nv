@@ -12,9 +12,9 @@
 
 //! Plan 45 Ф.35.4 — Unix-style path manipulation (slash-separated).
 //!
-//! Treats `"/"` как separator. Не платформенно-зависим — для Windows-paths
-//! (backslash, drive letters) понадобится отдельный модуль. Все функции
-//! pure (no I/O); namespace `Path` группирует static methods.
+//! Treats `"/"` as the separator. Not platform-dependent — Windows paths
+//! (backslash, drive letters) would need a separate module. All functions
+//! are pure (no I/O); the `Path` namespace groups the static methods.
 //!
 //! # Examples
 //!
@@ -27,13 +27,13 @@
 
 module path.path
 
-/// Join path components с `/`-separator. Variadic — принимает позиционные
-/// args либо spread `...arr`.
+/// Join path components with a `/` separator. Variadic — takes positional
+/// args or a spread `...arr`.
 ///
 /// Stripping logic:
 /// - empty parts skipped;
-/// - leading `/` на не-первой части drop'нется (избегает `a//b`);
-/// - всегда вставляется ровно один `/` между непустыми компонентами.
+/// - a leading `/` on a non-first part is dropped (avoids `a//b`);
+/// - exactly one `/` is always inserted between non-empty components.
 ///
 /// # Examples
 /// ```nova
@@ -63,9 +63,9 @@ export fn Path.join(...parts []str) -> str {
     buf
 }
 
-/// Parent directory компонент. `None` если path не имеет parent (`""`, `"/"`, bare basename).
+/// The parent directory component. `None` if the path has no parent (`""`, `"/"`, bare basename).
 ///
-/// Trailing `/` отбрасывается перед поиском (i.e. `"/dir/"` treated as `"/dir"`).
+/// A trailing `/` is dropped before the search (i.e. `"/dir/"` treated as `"/dir"`).
 ///
 /// # Examples
 /// ```nova
@@ -87,8 +87,8 @@ export fn Path.parent(p str) -> Option[str] {
 
 /// Last path component (final filename / directory name).
 ///
-/// Trailing `/` отбрасывается before extraction. Корневой path `/` возвращает
-/// пустую строку (rare case — usually `parent` используется first).
+/// A trailing `/` is dropped before extraction. The root path `/` returns
+/// an empty string (rare case — usually `parent` is used first).
 ///
 /// # Examples
 /// ```nova
@@ -109,15 +109,15 @@ export fn Path.basename(p str) -> str {
     }
 }
 
-/// File extension — substring после последней `.` в basename, без точки.
+/// File extension — the substring after the last `.` in the basename, without the dot.
 ///
-/// `None` если:
-/// - basename пустой;
-/// - basename `"."` или `".."`;
-/// - leading `.` (dotfile вроде `.bashrc` — рассматривается как имя без extension).
+/// `None` if:
+/// - the basename is empty;
+/// - the basename is `"."` or `".."`;
+/// - a leading `.` (dotfile like `.bashrc` — treated as a name without an extension).
 ///
-/// Multi-dot files (e.g. `archive.tar.gz`) возвращают только последнее
-/// расширение (`"gz"`).
+/// Multi-dot files (e.g. `archive.tar.gz`) return only the last
+/// extension (`"gz"`).
 ///
 /// # Examples
 /// ```nova
@@ -136,7 +136,7 @@ export fn Path.extension(p str) -> Option[str] {
     }
 }
 
-/// True если path начинается с `/` (absolute Unix path).
+/// True if the path starts with `/` (absolute Unix path).
 ///
 /// # Examples
 /// ```nova
@@ -147,16 +147,16 @@ export fn Path.extension(p str) -> Option[str] {
 export fn Path.is_absolute(p str) -> bool =>
     p.starts_with("/")
 
-/// Normalize path — collapse `.`, `..`, и multiple `/` separators.
+/// Normalize path — collapse `.`, `..`, and multiple `/` separators.
 ///
 /// Rules:
 /// - `.` segments dropped;
-/// - `..` segments pop предыдущий segment (если есть);
-/// - для absolute paths `..` at root игнорируется (нельзя выше `/`);
+/// - `..` segments pop the previous segment (if any);
+/// - for absolute paths `..` at root is ignored (cannot go above `/`);
 /// - empty result → `"."` (current directory convention).
 ///
-/// **Не** разрешает symlinks (это pure-text operation; для filesystem-resolution
-/// нужен `IO` effect).
+/// **Does not** resolve symlinks (this is a pure-text operation; for filesystem-resolution
+/// an `IO` effect is needed).
 ///
 /// # Examples
 /// ```nova

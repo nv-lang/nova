@@ -22,34 +22,34 @@
 
 module prelude.embed
 
-/// Одна встроенная запись: относительный POSIX-путь + байты файла (zero-copy
-/// вид над static rodata). Конструируется ТОЛЬКО компилятором (`embed_dir`) —
-/// сам по себе инвариантов не несёт, поле публично.
+/// One embedded record: a relative POSIX path + file bytes (a zero-copy
+/// view over static rodata). Constructed ONLY by the compiler
+/// (`embed_dir`) — carries no invariants by itself, the field is public.
 #stable(since = "0.1")
 export type EmbeddedEntry {
     path str      // относительный POSIX-путь от embed-корня, case-sensitive
     data []u8     // содержимое файла, нулевая копия (вид над .rodata)
 }
 
-/// Иммутабельная встроенная папка: карта путь→байты. Записи отсортированы по
-/// `path` (инвариант охраняет `EmbeddedDir.new` + priv-поле — D412-амендмент
-/// Plan 210). Нулевая копия payload'ов.
+/// Immutable embedded folder: a path→bytes map. Entries are sorted by
+/// `path` (the invariant is guarded by `EmbeddedDir.new` + the priv field —
+/// D412 amendment, Plan 210). Zero copy of the payloads.
 #stable(since = "0.1")
 export type EmbeddedDir {
     priv entries []EmbeddedEntry   // ОТСОРТИРОВАНЫ по path (бинарный поиск); priv (D281) —
                                    // извне только через EmbeddedDir.new → инвариант ненарушим
 }
 
-/// Единственный публичный конструктор (его же синтезирует `embed_dir`).
-/// Конвенция «конструкторы = Type.new» (прецедент `Vec.new`).
-/// Требует отсортированность по `path` (UTF-8 bytewise == порядок `str.compare`);
-/// verify за O(N), нарушение → panic (честная ошибка, не тихий None в get).
-/// Хранит ЗАЩИТНУЮ мелкую копию входа (loop-push тех же указателей на записи, НЕ
-/// `.clone()` — тот требует `T Clone`-bound, ненужный EmbeddedEntry) —
-/// пост-конструкционная мутация исходного вектора вызывающим не ломает инвариант
-/// (сами записи иммутабельны: поля EmbeddedEntry объявлены без `mut`).
-/// Публичность НАМЕРЕННА: легально строить СВОЙ (не встроенный) каталог в
-/// тестах/моках — инвариант всё равно охраняется verify.
+/// The only public constructor (the same one `embed_dir` synthesizes).
+/// Convention "constructors = Type.new" (precedent `Vec.new`).
+/// Requires sorting by `path` (UTF-8 bytewise == the order of `str.compare`);
+/// verify in O(N), violation → panic (an honest error, not a silent None in get).
+/// Stores a DEFENSIVE shallow copy of the input (loop-push of the same
+/// pointers to records, NOT `.clone()` — that needs a `T Clone` bound,
+/// unneeded for EmbeddedEntry) — post-construction mutation of the source
+/// vector cannot break the invariant (records are immutable; fields have no `mut`).
+/// Publicness is INTENTIONAL: building your OWN (non-embedded) catalog is
+/// legal in tests/mocks — the invariant is still guarded by verify.
 export fn EmbeddedDir.new(entries []EmbeddedEntry) -> Self {
     mut i = 1
     while i < entries.len() {
@@ -63,30 +63,30 @@ export fn EmbeddedDir.new(entries []EmbeddedEntry) -> Self {
     Self { entries: own }
 }
 
-/// Число встроенных файлов.
+/// Number of embedded files.
 export fn EmbeddedDir @len() -> int => @entries.len()
 
-/// Все встроенные пути (в детерминированном отсортированном порядке).
+/// All embedded paths (in deterministic sorted order).
 export fn EmbeddedDir @paths() -> []str {
     mut ps []str = []
     for e in @entries { ps.push(e.path) }
     ps
 }
 
-/// Есть ли файл по пути.
+/// Whether a file exists at the path.
 export fn EmbeddedDir @has(path str) -> bool => @get(path).is_some()
 
-/// Итерация пар (path, data) без двойного lookup — явный property-read
-/// priv-поля (прецедент `Vec @ptr()`). Возврат `ro` — read-only view (L2,
-/// прецедент `str @bytes() -> ro []u8`): мутация результата = compile
-/// error → инвариант не разъедается через выходной алиас.
+/// Iteration of (path, data) pairs without a double lookup — an explicit
+/// property-read of the priv field (precedent `Vec @ptr()`). Returns `ro`
+/// — a read-only view (L2, precedent `str @bytes() -> ro []u8`): mutating
+/// the result = compile error → the invariant cannot leak via the output alias.
 export fn EmbeddedDir @entries() -> ro []EmbeddedEntry => @entries
 
-/// Байты файла по пути, `None` если нет. Бинарный поиск по отсортированным
-/// entries (O(log N)); опирается на sorted-инвариант. Ключ — точная
-/// байтовая форма: без ведущего `./`, `..` не нормализуется — `get("./app.js")`
-/// честно даёт None. Данные — вид над .rodata: НЕ мутировать
-/// (см. [M-d412-blob-view-mut-write], унаследовано от D412); для мутации —
+/// File bytes at the path, `None` if absent. Binary search over the sorted
+/// entries (O(log N)); relies on the sorted invariant. The key is the exact
+/// byte form: no leading `./`, `..` is not normalized — `get("./app.js")`
+/// honestly gives None. The data is a view over .rodata: do NOT mutate
+/// (see [M-d412-blob-view-mut-write], inherited from D412); for mutation —
 /// `.clone()`.
 export fn EmbeddedDir @get(path str) -> Option[[]u8] {
     mut lo = 0
@@ -101,15 +101,15 @@ export fn EmbeddedDir @get(path str) -> Option[[]u8] {
     None
 }
 
-/// Plan 210 Ф.7.4 (Go-паритет+, 2026-07-17): слить `self` с `other` в один
-/// новый `EmbeddedDir` — отсортированная склейка двух уже отсортированных
-/// таблиц (O(N+M) merge, как шаг mergesort), НЕ конкатенация+пересорт.
-/// Совпадающий путь в ОБОИХ входах — `panic` (тот же контракт, что
-/// `EmbeddedDir.new` на несортированном/дублирующемся входе — конфликт двух
-/// встроенных деревьев с одинаковым относительным путём это программная
-/// ошибка автора, а не runtime-случай "взять любую из версий"). Типичный
-/// кейс: `embed_dir("frontend").merge(embed_dir("generated_assets"))` —
-/// собрать один `EmbeddedDir` из НЕСКОЛЬКИХ каталогов встраивания.
+/// Plan 210 Ф.7.4 (Go parity+, 2026-07-17): merge `self` with `other` into
+/// a new `EmbeddedDir` — a sorted splice of two already-sorted tables
+/// (O(N+M) merge, like a mergesort step), NOT concat + re-sort.
+/// A matching path in BOTH inputs — `panic` (the same contract as
+/// `EmbeddedDir.new` on an unsorted/duplicated input — a conflict of two
+/// embedded trees with the same relative path is a programmer error, not a
+/// runtime "take any version" case). Typical case:
+/// `embed_dir("frontend").merge(embed_dir("generated_assets"))` — assemble
+/// one `EmbeddedDir` from SEVERAL embedding directories.
 export fn EmbeddedDir @merge(other EmbeddedDir) -> EmbeddedDir {
     ro a = @entries
     ro b = other.entries()

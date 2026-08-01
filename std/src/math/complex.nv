@@ -37,8 +37,8 @@ module math.complex
 // Тип
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Complex number в декартовых координатах (a + bi). Immutable — все операции
-/// возвращают новый instance.
+/// Complex number in Cartesian coordinates (a + bi). Immutable — all operations
+/// return a new instance.
 ///
 /// # Examples
 /// ```nova
@@ -77,7 +77,7 @@ export const I    Complex = Complex(im: 1.0)
 // фикс сохранил решение владельца. `from_polar` (вычисление polar→cartesian)
 // и str-экстеншен `s.to_complex()` (парсинг, 174.1) ОСТАЮТСЯ — несут логику, не тривиальны.
 
-/// Из полярных координат: `r * (cos θ + i·sin θ)`. theta в радианах.
+/// From polar coordinates: `r * (cos θ + i·sin θ)`. theta in radians.
 #stable(since = "0.1")
 export fn Complex.from_polar(r f64, theta f64) -> Self =>
     Complex(re: r * theta.cos(), im: r * theta.sin())
@@ -86,11 +86,11 @@ export fn Complex.from_polar(r f64, theta f64) -> Self =>
 // Геттеры — типы очевидны, опускаем `-> T` (D45)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Real part (a в a+bi).
+/// Real part (the a in a+bi).
 #stable(since = "0.1")
 export fn Complex @real() => @re
 
-/// Imaginary part (b в a+bi).
+/// Imaginary part (the b in a+bi).
 #stable(since = "0.1")
 export fn Complex @imag() => @im
 
@@ -118,7 +118,7 @@ export fn Complex @times(other Complex) -> Complex =>
     )
 
 /// Division: `(a+bi)/(c+di) = ((ac+bd) + (bc-ad)i) / (c²+d²)`.
-/// IEEE 754 behavior на zero denominator (inf/nan).
+/// IEEE 754 behavior on zero denominator (inf/nan).
 #stable(since = "0.1")
 export fn Complex @div(other Complex) -> Complex {
     ro denom = other.re * other.re + other.im * other.im
@@ -135,7 +135,7 @@ export fn Complex @div(other Complex) -> Complex {
 // D46 разрешает overloading методов по типу аргумента (см. Vector @times):
 // `z * Complex(...)` и `z * 2.0` — оба валидны через одно имя `@times`.
 
-/// Scalar multiplication: `z * f64`. D46 overload по типу аргумента.
+/// Scalar multiplication: `z * f64`. D46 overload by argument type.
 #stable(since = "0.1")
 export fn Complex @times(s f64) -> Complex =>
     Complex(re: @re * s, im: @im * s)
@@ -154,22 +154,22 @@ export fn Complex @div(s f64) -> Complex =>
 export fn Complex @conj() -> Complex =>
     Complex(re: @re, im: -@im)
 
-/// Squared norm: `|z|² = a² + b²`. Cheaper than [`abs`] — для сравнения длин.
+/// Squared norm: `|z|² = a² + b²`. Cheaper than [`abs`] — for comparing lengths.
 #stable(since = "0.1")
 export fn Complex @norm_sqr() -> f64 =>
     @re * @re + @im * @im
 
-/// Absolute value (modulus): `|z| = √(a² + b²)`. Через hypot — numerically stable.
+/// Absolute value (modulus): `|z| = √(a² + b²)`. Via hypot — numerically stable.
 #stable(since = "0.1")
 export fn Complex @abs() -> f64 =>
     @re.hypot(@im)
 
-/// Argument (polar angle) в радианах. Диапазон (-π, π]. atan2(im, re).
+/// Argument (polar angle) in radians. Range (-π, π]. atan2(im, re).
 #stable(since = "0.1")
 export fn Complex @arg() -> f64 =>
     @im.atan2(@re)
 
-/// Square: `z²`. Чуть быстрее `z * z` (fused формула).
+/// Square: `z²`. Slightly faster than `z * z` (fused formula).
 #stable(since = "0.1")
 export fn Complex @sqr() -> Complex =>
     Complex(
@@ -188,23 +188,23 @@ export fn Complex @inv() -> Complex {
 // Предикаты
 // ──────────────────────────────────────────────────────────────────────────
 
-/// True если 0 + 0i.
+/// True if 0 + 0i.
 #stable(since = "0.1")
 export fn Complex @is_zero() => @re == 0.0 && @im == 0.0
 
-/// True если im == 0 (чисто real).
+/// True if im == 0 (purely real).
 #stable(since = "0.1")
 export fn Complex @is_real() => @im == 0.0
 
-/// True если re == 0 && im ≠ 0 (чисто imaginary, не zero).
+/// True if re == 0 && im ≠ 0 (purely imaginary, not zero).
 #stable(since = "0.1")
 export fn Complex @is_imag() => @re == 0.0 && @im != 0.0
 
-/// True если обе части finite (не NaN, не ±inf).
+/// True if both parts are finite (not NaN, not ±inf).
 #stable(since = "0.1")
 export fn Complex @is_finite() => @re.is_finite() && @im.is_finite()
 
-/// True если хоть одна часть NaN.
+/// True if at least one part is NaN.
 #stable(since = "0.1")
 export fn Complex @is_nan() => @re.is_nan() || @im.is_nan()
 
@@ -212,7 +212,7 @@ export fn Complex @is_nan() => @re.is_nan() || @im.is_nan()
 // Сравнение (D46)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Strict equality (`==`) — exact bit-equal обеих компонент. Для FP лучше [`approx_eq`].
+/// Strict equality (`==`) — exact bit-equality of both components. For FP prefer [`approx_eq`].
 #stable(since = "0.1")
 export fn Complex @equal(other Complex) -> bool =>
     @re == other.re && @im == other.im
@@ -240,8 +240,8 @@ export fn Complex @approx_eq(other Complex, tol f64) -> bool {
 // `@to_str()` — представление в строку (D410). Интерполяция `"${z}"`
 // использует его же через компиляторный fallback-путь.
 //
-/// `to_str()` — формат `a+bi` / `a-bi` / `a` / `bi` / `0.0`.
-/// Round-trip с `s.to_complex()`.
+/// `to_str()` — the format `a+bi` / `a-bi` / `a` / `bi` / `0.0`.
+/// Round-trips with `s.to_complex()`.
 #stable(since = "0.1")
 export fn Complex @to_str() -> str {
     if @im == 0.0 {
@@ -270,15 +270,15 @@ export fn Complex @to_str() -> str {
 //   "0.0"            → re=0,   im=0
 //
 // Возвращает Err(ParseComplexError) на невалидной строке (Result-форма, D325).
-/// Errors при парсинге Complex-строки.
+/// Errors when parsing a Complex string.
 #stable(since = "0.1")
 export type ParseComplexError enum InvalidFormat | NotANumber
 
-/// Parse `a+bi` / `bi` / `a` форматы. Round-trip с `@to_str`.
+/// Parse `a+bi` / `bi` / `a` formats. Round-trips with `@to_str`.
 ///
-/// Plan 174.1 (2026-07-08, канон владельца): конверсия — метод НА ИСТОЧНИКЕ
-/// (`s.to_complex()`, зеркально `s.to_int()`/`s.to_f64()`); статик
-/// `Complex.try_from(s)` РЕТРАКТИРОВАН (одно имя = одна дверь, §22).
+/// Plan 174.1 (2026-07-08, owner canon): the conversion is a method ON THE SOURCE
+/// (`s.to_complex()`, mirroring `s.to_int()`/`s.to_f64()`); the static
+/// `Complex.try_from(s)` is RETRACTED (one name = one door, §22).
 ///
 /// # Examples
 /// ```nova
@@ -357,8 +357,8 @@ fn parse_f64_or_err(s str) -> Result[f64, ParseComplexError] {
 // Extension-методы на f64 / int — sugar `2.0.j()`, `3.j()`
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Extension: `2.0.j()` → `Complex(im: 2.0)`. Доменный sugar
-/// (физика/электротехника, `j` = √(-1)). Для чисто-real используй `Complex(re: v)`.
+/// Extension: `2.0.j()` → `Complex(im: 2.0)`. Domain sugar
+/// (physics/electrical engineering, `j` = √(-1)). For purely real use `Complex(re: v)`.
 #stable(since = "0.1")
 export fn f64 @j() -> Complex => Complex(im: @)
 

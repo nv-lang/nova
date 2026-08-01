@@ -28,7 +28,7 @@
 
 module time.cron
 
-/// Errors при парсинге cron-выражения.
+/// Errors when parsing a cron expression.
 #stable(since = "0.1")
 export type ParseCronError enum
     | InvalidFieldCount { actual int }
@@ -50,7 +50,7 @@ export type CronExpr {
     day_week   CronField
 }
 
-/// Time-point для cron matching. Обычно decode'нутый из Timestamp.
+/// A time-point for cron matching. Usually decoded from a Timestamp.
 #stable(since = "0.1")
 export type CronTime {
     minute    int             // 0..59
@@ -64,13 +64,13 @@ export type CronTime {
 // Парсинг
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Parse cron expression в 5-field formate: `min hour dom month dow`.
+/// Parse a cron expression in 5-field format: `min hour dom month dow`.
 ///
-/// Поддержка: `*`, `1,5,10` (list), `1-5` (range), `*/15` (step), `10-30/5` (range+step).
+/// Supported: `*`, `1,5,10` (list), `1-5` (range), `*/15` (step), `10-30/5` (range+step).
 ///
-/// Plan 174.1 (2026-07-08, канон владельца): конверсия — метод НА ИСТОЧНИКЕ
-/// (`s.to_cron()`, зеркально `s.to_int()`/`s.to_url()`); статик
-/// `Cron.parse(expr)` РЕТРАКТИРОВАН (одно имя = одна дверь, §22).
+/// Plan 174.1 (2026-07-08, owner canon): the conversion — a method ON THE
+/// SOURCE (`s.to_cron()`, mirroring `s.to_int()`/`s.to_url()`); the static
+/// `Cron.parse(expr)` is RETRACTED (one name = one door, §22).
 ///
 /// # Examples
 /// ```nova
@@ -214,7 +214,7 @@ fn dedup_sort(xs []int) -> []int {
 // Matching
 // ──────────────────────────────────────────────────────────────────────────
 
-/// True если CronTime matches expression (все 5 fields совпадают).
+/// True if the CronTime matches the expression (all 5 fields match).
 #stable(since = "0.1")
 export fn CronExpr @matches(t CronTime) -> bool =>
     field_contains(@minute, t.minute)

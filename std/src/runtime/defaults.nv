@@ -50,7 +50,7 @@ export fn bool.new() -> Self => false
 // Primitives имеют native operators (< > == etc.). @compare добавлен для
 // [T Compare] bound satisfaction + synthesis chain.
 
-/// Compare.compare для char (codepoint-based ordering).
+/// Compare.compare for char (codepoint-based ordering).
 export fn char @compare(other char) -> int =>
     if @ < other { -1 }
     else if @ > other { 1 }
@@ -144,7 +144,7 @@ export fn char @len_utf8() -> int => @encode_utf8().1
 export fn char @eq_ignore_ascii_case(other char) -> bool =>
     @to_ascii_lowercase() == other.to_ascii_lowercase()
 
-/// Compare.compare для int (signum, overflow-safe).
+/// Compare.compare for int (signum, overflow-safe).
 export fn int @compare(other int) -> int =>
     if @ < other { -1 }
     else if @ > other { 1 }

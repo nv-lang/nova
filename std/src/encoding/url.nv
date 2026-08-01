@@ -34,8 +34,8 @@ module encoding.url
 // Тип
 // ──────────────────────────────────────────────────────────────────────────
 
-/// URL structural representation (RFC 3986). Все compoненты кроме `scheme` и
-/// `path` — `Option`.
+/// URL structural representation (RFC 3986). All components except `scheme` and
+/// `path` are `Option`.
 ///
 /// # Examples
 /// ```nova
@@ -55,7 +55,7 @@ export type Url {
     ro fragment  Option[str]
 }
 
-/// Errors при парсинге URL.
+/// Errors while parsing a URL.
 #stable(since = "0.1")
 export type ParseUrlError enum
     | EmptyInput
@@ -68,8 +68,8 @@ export type ParseUrlError enum
 // Парсинг
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Parse URL по RFC 3986 generic syntax.
-/// `Err(ParseUrlError)` на malformed input.
+/// Parse a URL per the RFC 3986 generic syntax.
+/// `Err(ParseUrlError)` on malformed input.
 #stable(since = "0.1")
 export fn Url.from(s str) -> Result[Url, ParseUrlError] { // [M-lint-findings-static-conversion]
     if s.byte_len() == 0 { return Err(EmptyInput) }
@@ -232,7 +232,7 @@ fn is_scheme_char(c char) -> bool =>
 // Сериализация (D410)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `to_str()` — serialize Url обратно в string. Round-trip с `Url.from`.
+/// `to_str()` — serialize a Url back into a string. Round-trip with `Url.from`.
 #stable(since = "0.1")
 export fn Url @to_str() -> str {
     consume buf = StringBuilder.new(cap: 64)
@@ -301,7 +301,7 @@ export fn Url @to_str() -> str {
 // Безопасные символы: ALPHA / DIGIT / "-" / "." / "_" / "~"
 // Всё остальное — `%XX` где XX — hex.
 /// Percent-encode query string value (RFC 3986 § 2.4). Alphanumeric + `-_.~` raw,
-/// остальное → `%XX`.
+/// everything else → `%XX`.
 ///
 /// # Examples
 /// ```nova
@@ -346,7 +346,7 @@ export fn Url.encode_query(s str) -> str {
 // На невалидный UTF-8 после decode'а — Err(InvalidPercentEncoding)
 // (consistent с тем что percent-encoding должен давать valid UTF-8;
 // иначе input был malformed).
-/// Percent-decode query string. `Err(InvalidPercentEncoding)` если `%XX` malformed.
+/// Percent-decode query string. `Err(InvalidPercentEncoding)` if `%XX` is malformed.
 #stable(since = "0.1")
 export fn Url.decode_query(s str) -> Result[str, ParseUrlError] {
     mut buf = WriteBuffer.new(cap: s.byte_len())

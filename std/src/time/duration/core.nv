@@ -22,9 +22,9 @@
 
 //! Plan 45 Ф.34.3 — Duration + Timestamp + Time effect.
 //!
-//! Time-related types: представление длительностей и моментов времени.
-//! Sensible defaults: nanosecond precision, signed Duration (поддерживает
-//! отрицательные интервалы), `Time` effect для дeterministic testing.
+//! Time-related types: representation of durations and moments in time.
+//! Sensible defaults: nanosecond precision, signed Duration (supports
+//! negative intervals), a `Time` effect for deterministic testing.
 //!
 //! # Examples
 //!
@@ -46,10 +46,10 @@ module time.duration
 // Duration — длительность (signed, ±292 года)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Duration — signed time interval с nanosecond precision.
+/// Duration — signed time interval with nanosecond precision.
 ///
-/// Range: ±292 years (i64::MAX nanoseconds). Used для timeouts, intervals,
-/// delays. Constructed через `to_*` fluent methods on int/f64 (Plan 200
+/// Range: ±292 years (i64::MAX nanoseconds). Used for timeouts, intervals,
+/// delays. Constructed via `to_*` fluent methods on int/f64 (Plan 200
 /// Step 2, D410/D317 amend) — one per unit: `T.to_seconds()`/`to_millis()`/etc.
 ///
 /// # Examples
@@ -77,7 +77,7 @@ export type Duration value {
     priv nanos i64
 }
 
-/// Zero duration — 0 nanoseconds. Useful как default / sentinel value.
+/// Zero duration — 0 nanoseconds. Useful as a default / sentinel value.
 ///
 /// Plan 157 (§157, 221.1 bug-sweep): migrated to the D200 out-of-body
 /// qualified form (`const Duration.NAME`) — the bare `export const ZERO
@@ -172,13 +172,13 @@ export fn[T Ints] T @to_weeks() -> Duration => { nanos: (@ as i64) * 7 * 86_400 
 /// `f64.to_seconds()` — construct Duration from fractional seconds (e.g.
 /// `0.5.to_seconds()` → 500ms). `f64 ∉ Ints` — concrete method, NOT part of
 /// the blanket above; only seconds gets a float constructor (Plan 200 Step 2,
-/// владелец 2026-07-15 — "Только секунды").
+/// owner 2026-07-15 — "Only seconds").
 ///
-/// Useful для converting measurements (sensor data, sampling intervals)
-/// которые natively f64.
+/// Useful for converting measurements (sensor data, sampling intervals)
+/// that are natively f64.
 ///
 /// **Plan 175 Ф.1c (D317):** traps on `NaN`/`±inf`/out-of-`i64`-range input
-/// (Rust `Duration::from_secs_f64` panics; никогда silent мусор-cast). For a
+/// (Rust `Duration::from_secs_f64` panics; never a silent junk cast). For a
 /// non-trapping variant use [`checked_to_seconds`].
 #stable(since = "0.1")
 export fn f64 @to_seconds() -> Duration =>
@@ -284,17 +284,17 @@ export fn Duration @sleep() Time -> () => Time.sleep(@)
 // Predicates
 // ──────────────────────────────────────────────────────────────────────────
 
-/// True если duration равна нулю (`nanos == 0`).
+/// True if the duration is zero (`nanos == 0`).
 #stable(since = "0.1")
 export fn Duration @is_zero() => @nanos == 0
 
-/// True если duration отрицательная (`nanos < 0`).
+/// True if the duration is negative (`nanos < 0`).
 ///
-/// Используется для проверки что `ts2 - ts1` дало "в прошлом" result.
+/// Used to check that `ts2 - ts1` produced an "in the past" result.
 #stable(since = "0.1")
 export fn Duration @is_negative() => @nanos < 0
 
-/// True если duration строго положительная (`nanos > 0`).
+/// True if the duration is strictly positive (`nanos > 0`).
 #stable(since = "0.1")
 export fn Duration @is_positive() => @nanos > 0
 
@@ -302,10 +302,10 @@ export fn Duration @is_positive() => @nanos > 0
 // Decomposition — разложение на компоненты (для display / форматирования)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Decomposed duration components — для форматирования "1h 30m 45s".
+/// Decomposed duration components — for formatting "1h 30m 45s".
 ///
-/// Always non-negative (для signed durations см. `Duration.is_negative()`
-/// + это разложение модуля).
+/// Always non-negative (for signed durations see `Duration.is_negative()`
+/// plus this decomposition of the magnitude).
 #stable(since = "0.1")
 export type DurationParts {
     ro days int
@@ -317,9 +317,9 @@ export type DurationParts {
     ro nanos int
 }
 
-/// Decompose Duration на компоненты (days, hours, ..., nanos).
+/// Decompose Duration into components (days, hours, ..., nanos).
 ///
-/// Sign discarded — все поля non-negative. Для signed display комбинируй с
+/// Sign discarded — all fields non-negative. For a signed display combine with
 /// [`is_negative`].
 ///
 /// # Examples
@@ -435,8 +435,8 @@ fn div_or_trap(a i64, b i64) -> i64 {
     a / b
 }
 
-/// f64 → i64 nanos с проверкой финитности и диапазона (`None` вне области).
-/// `2⁶³` = 9223372036854775808.0 (первое f64-значение вне i64) — граница.
+/// f64 → i64 nanos with finiteness and range checking (`None` outside the domain).
+/// `2⁶³` = 9223372036854775808.0 (the first f64 value outside i64) — the boundary.
 fn f64_nanos_checked(x f64) -> Option[i64] {
     if x.is_nan() || x.is_infinite() { return None }
     if x >= 9223372036854775808.0 { return None }
@@ -458,7 +458,7 @@ fn f64_nanos_or_trap(x f64) -> i64 =>
 // ±Duration.MAX). Границей Duration является ±(2⁶³−1) ns ≈ ±292 года.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Сложение durations (operator `+`). **Traps on overflow** (D317).
+/// Addition of durations (operator `+`). **Traps on overflow** (D317).
 ///
 /// # Examples
 /// ```nova
@@ -468,13 +468,13 @@ fn f64_nanos_or_trap(x f64) -> i64 =>
 export fn Duration @plus(other Duration) -> Duration =>
     add_or_trap(@nanos, other.nanos).to_nanos()
 
-/// Вычитание durations (operator `-`). Может дать negative result.
+/// Subtraction of durations (operator `-`). May yield a negative result.
 /// **Traps on overflow** (D317).
 #stable(since = "0.1")
 export fn Duration @minus(other Duration) -> Duration =>
     sub_or_trap(@nanos, other.nanos).to_nanos()
 
-/// Унарный минус (operator `-`). Эквивалент `0 - self`.
+/// Unary minus (operator `-`). Equivalent to `0 - self`.
 /// **Traps on `i64::MIN`** (two's-complement asymmetry, D317).
 #stable(since = "0.1")
 export fn Duration @neg() -> Duration =>
@@ -487,21 +487,21 @@ export fn Duration @times(n i64) -> Duration =>
 
 /// Scalar multiplication by float (`Duration * f64`).
 ///
-/// **Traps on `NaN`/`±inf`/out-of-range** (D317) — никогда silent мусор-cast.
-/// Для non-trapping варианта — [`checked_mul_f64`]. Для финансовых расчётов считай
-/// в i64 nanoseconds вручную чтобы избежать FP-rounding.
+/// **Traps on `NaN`/`±inf`/out-of-range** (D317) — never a silent junk cast.
+/// For a non-trapping variant — [`checked_mul_f64`]. For financial math compute
+/// in i64 nanoseconds manually to avoid FP rounding.
 #stable(since = "0.1")
 export fn Duration @times(n f64) -> Duration =>
     f64_nanos_or_trap((@nanos as f64) * n).to_nanos()
 
 /// Integer division (`Duration / i64`). Truncating.
-/// **Traps on `/0` и на `i64::MIN / -1`** (D317).
+/// **Traps on `/0` and on `i64::MIN / -1`** (D317).
 #stable(since = "0.1")
 export fn Duration @div(n i64) -> Duration =>
     div_or_trap(@nanos, n).to_nanos()
 
 /// Float division (`Duration / f64`).
-/// **Traps on `NaN`/`±inf`/out-of-range** (в т.ч. `/0.0` → `±inf`, D317).
+/// **Traps on `NaN`/`±inf`/out-of-range** (incl. `/0.0` → `±inf`, D317).
 #stable(since = "0.1")
 export fn Duration @div(n f64) -> Duration =>
     f64_nanos_or_trap((@nanos as f64) / n).to_nanos()
@@ -583,9 +583,9 @@ export fn Duration @saturating_mul(n i64) -> Duration =>
 export fn Duration @ratio(other Duration) -> f64 =>
     (@nanos as f64) / (other.nanos as f64)
 
-/// Абсолютное значение duration (отбрасывает sign).
+/// Absolute value of the duration (drops the sign).
 ///
-/// **Plan 175 Ф.1c (D317):** `@abs(i64::MIN)` НЕ является UB/wrap — saturate к
+/// **Plan 175 Ф.1c (D317):** `@abs(i64::MIN)` is NOT UB/wrap — saturates to
 /// `i64::MAX`; two's-complement asymmetry (`|i64::MIN| > i64::MAX`).
 #stable(since = "0.1")
 export fn Duration @abs() -> Duration =>
@@ -593,12 +593,12 @@ export fn Duration @abs() -> Duration =>
     else if @nanos < 0 { (-@nanos).to_nanos() }
     else { @ }
 
-/// Минимум двух durations.
+/// Minimum of two durations.
 #stable(since = "0.1")
 export fn Duration @min(other Duration) -> Duration =>
     if @nanos < other.nanos { @ } else { other }
 
-/// Максимум двух durations.
+/// Maximum of two durations.
 #stable(since = "0.1")
 export fn Duration @max(other Duration) -> Duration =>
     if @nanos > other.nanos { @ } else { other }
@@ -620,10 +620,10 @@ export fn Duration @compare(other Duration) -> int =>
 // Display (D410)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `to_str()` — auto-scale короткая запись.
+/// `to_str()` — auto-scale short form.
 ///
-/// Выбирает unit по величине: 500ns / 150μs / 42ms / 2.5s / 5min / 2h / 3d.
-/// Для развёрнутого формата используй [`to_human`].
+/// Picks the unit by magnitude: 500ns / 150μs / 42ms / 2.5s / 5min / 2h / 3d.
+/// For an expanded format use [`to_human`].
 ///
 /// # Examples
 /// ```nova
@@ -674,11 +674,11 @@ export fn Duration @debug(mut f Fmt) -> () {
     f.write("ns)".bytes())
 }
 
-/// Human-readable форматирование с декомпозицией на компоненты.
+/// Human-readable formatting with decomposition into components.
 ///
-/// Формат: `"1d 2h 30min 45s"`. Опускает leading zero-components
-/// (i.e. `"30min 45s"` не `"0d 0h 30min 45s"`), но trailing zeros
-/// сохраняет если хоть один старший компонент непустой.
+/// Format: `"1d 2h 30min 45s"`. Omits leading zero-components
+/// (i.e. `"30min 45s"`, not `"0d 0h 30min 45s"`), but keeps trailing zeros
+/// if at least one senior component is non-empty.
 ///
 /// # Examples
 /// ```nova
@@ -742,11 +742,11 @@ export fn Duration @to_human() -> str {
 // Утилиты — структурные шаблоны
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Измерить длительность исполнения `action` и вернуть `(результат, elapsed)`.
+/// Measure the execution duration of `action` and return `(result, elapsed)`.
 ///
-/// Использует ambient `Time` effect — в тестах под `fixed_ms` всегда вернёт
-/// elapsed = 0 (clock не движется). Для реальных бенчмарков используется
-/// в production где `Time` provided runtime'ом.
+/// Uses the ambient `Time` effect — under `fixed_ms` in tests it always
+/// returns elapsed = 0 (the clock does not move). For real benchmarks it is
+/// used in production where `Time` is provided by the runtime.
 ///
 /// # Examples
 /// ```nova
@@ -756,12 +756,12 @@ export fn Duration @to_human() -> str {
 ///     assert(elapsed == Duration.ZERO)
 /// }
 /// ```
-/// **Plan 175 Ф.5(d) (D318):** элапсед-измерение через `Monotonic`, НЕ
-/// `Timestamp` — стопвотч/бенчмарк-семантика иммунна к wall-clock skew
-/// (NTP/DST jump ВО ВРЕМЯ измерения раньше мог дать отрицательный или
-/// вздутый `elapsed` — ровно Go/Rust/Java-конвенция: `time.Since`/`Instant`
-/// для измерений всегда монотонные). Сигнатура не меняется (`Duration` —
-/// clock-agnostic результат).
+/// **Plan 175 Ф.5(d) (D318):** elapsed measurement via `Monotonic`, NOT
+/// `Timestamp` — stopwatch/benchmark semantics are immune to wall-clock skew
+/// (an NTP/DST jump DURING the measurement could previously give a negative or
+/// inflated `elapsed` — exactly the Go/Rust/Java convention: `time.Since`/`Instant`
+/// for measurements are always monotonic). The signature does not change
+/// (`Duration` — a clock-agnostic result).
 #stable(since = "0.1")
 export fn measure[T](action fn() -> T) Time -> (T, Duration) {
     ro start = Monotonic.now()
@@ -770,17 +770,17 @@ export fn measure[T](action fn() -> T) Time -> (T, Duration) {
     (result, elapsed)
 }
 
-/// Compute дедлайн `now() + d` с использованием ambient `Time`.
+/// Compute a deadline `now() + d` using the ambient `Time`.
 ///
-/// Convenience-обёртка чтобы не писать `Timestamp.now() + 5.to_seconds()` каждый раз.
+/// Convenience wrapper to avoid writing `Timestamp.now() + 5.to_seconds()` every time.
 ///
-/// **Plan 175 Ф.5(d) — намеренно ОСТАЁТСЯ `Timestamp`-based** (НЕ мигрирован
-/// на `Monotonic`, в отличие от [`measure`]): возвращаемый тип — `Timestamp`
-/// (wall-clock), поэтому клок-источник обязан совпадать с типом контракта
-/// (D124 — нельзя молча подменить домен часов внутри функции с committed
-/// wall-clock return type). Для монотонных дедлайнов (timer/scope-deadline,
-/// 173 §3a `supervised(timeout:)`) используй `Monotonic.now() + d` напрямую —
-/// именно ЭТОТ паттерн, а не `deadline_in`, канон для `deadline:`-параметров.
+/// **Plan 175 Ф.5(d) — deliberately stays `Timestamp`-based** (NOT migrated
+/// to `Monotonic`, unlike [`measure`]): the return type is `Timestamp`
+/// (wall-clock), so the clock source must match the contract type
+/// (D124 — you cannot silently swap the clock domain inside a function with a
+/// committed wall-clock return type). For monotonic deadlines (timer/scope-deadline,
+/// 173 §3a `supervised(timeout:)`) use `Monotonic.now() + d` directly —
+/// THIS pattern, not `deadline_in`, is the canon for `deadline:` parameters.
 #stable(since = "0.1")
 export fn deadline_in(d Duration) Time -> Timestamp =>
     Timestamp.now() + d

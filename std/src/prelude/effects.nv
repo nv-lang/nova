@@ -4,38 +4,38 @@
 
 module prelude.effects
 
-/// **Failable-эффект** — способ объявить ошибку в сигнатуре функции.
+/// **Failable effect** — a way to declare an error in a function signature.
 ///
-/// **Параметр `E`** — тип значения, передаваемого в `fail(e)`. Может быть
-/// любой Nova-тип (sum-type, record, str, int, etc.). Соглашение:
-/// доменные ошибки — sum-типы (см. `std.prelude.errors.RuntimeError`).
+/// **Parameter `E`** — the type of the value passed to `fail(e)`. Can be any
+/// Nova type (sum type, record, str, int, etc.). Convention:
+/// domain errors are sum types (see `std.prelude.errors.RuntimeError`).
 ///
-/// **Сигнатура `fail(e E) -> never`** — операция не возвращает управление.
-/// handler-body для never-операции обязан завершиться `interrupt v`,
-/// `throw err`, `panic(...)` или `exit(...)`.
+/// **Signature `fail(e E) -> never`** — the operation never returns control.
+/// A handler body for a never-operation must end with `interrupt v`,
+/// `throw err`, `panic(...)` or `exit(...)`.
 ///
 /// **Syntactic sugar:**
-///   - `throw expr` desugar'ится в `Fail[E].fail(expr)` где `E` infer'ится
-///     из expr type.
-///   - postfix `expr!!` на `Option[T]` / `Result[T, E]` тоже
-///     desugar'ится в `Fail` через unwrap-or-fail.
+///   - `throw expr` desugars to `Fail[E].fail(expr)` where `E` is inferred
+///     from the expr type.
+///   - postfix `expr!!` on `Option[T]` / `Result[T, E]` also desugars
+///     into `Fail` via unwrap-or-fail.
 ///
-/// **Handler-формы:**
+/// **Handler forms:**
 /// ```
-/// // Lambda-форма: inferred Fail[E] handler.
+/// // Lambda form: inferred Fail[E] handler.
 /// with Fail[E] = |e| { panic("got {}", e) } { body }
 ///
-/// // Explicit handler-форма: full Effect[Fail[E]] declaration.
+/// // Explicit handler form: full Effect[Fail[E]] declaration.
 /// with Fail[E] = effect Fail[E] { fail(e) -> never => panic("...") } { body }
 /// ```
 ///
-/// **Default handler:** runtime устанавливает обработчик, который вызывает
-/// `nova_throw` с longjmp к ближайшему fail-frame — бесшумная propagation
-/// в caller'а.
+/// **Default handler:** the runtime installs a handler that calls
+/// `nova_throw` with a longjmp to the nearest fail-frame — silent
+/// propagation to the caller.
 ///
-/// **Auto-inference:** если функция содержит `throw` и `Fail` отсутствует
-/// в effect-row, компилятор автоматически добавляет `Fail`. Применяется
-/// только к non-exported функциям; exported требуют явный `Fail[E]`.
+/// **Auto-inference:** if a function contains `throw` and `Fail` is absent
+/// from the effect row, the compiler automatically adds `Fail`. Applies
+/// only to non-exported functions; exported ones require explicit `Fail[E]`.
 #stable(since = "0.1")
 export type Fail[E] effect {
     fail(e E) -> never
@@ -46,17 +46,17 @@ export type Fail[E] effect {
 
 /// **TimerMetrics-effect** — read-only introspection timer-runtime counters.
 ///
-/// **Назначение:** наблюдать счётчики таймеров alloc/fire/cancel без
-/// превращения `Time` в раздутый эффект. Симметрично `Mem`.
+/// **Purpose:** observe the timer alloc/fire/cancel counters without
+/// turning `Time` into an inflated effect. Symmetric to `Mem`.
 ///
-/// **Operations (все `() -> int`, ns/ms-счётчики):**
-///   - `timer_alloc_total()` — суммарно аллоцировано таймеров.
-///   - `timer_alloc_active()` — активных сейчас (alloc − fired − cancelled).
-///   - `timer_fired()` — сработавших естественно.
-///   - `timer_cancelled()` — отменённых.
-///   - `timer_longest_pending_ms()` — rolling-max ожидания (ms).
+/// **Operations (all `() -> int`, ns/ms counters):**
+///   - `timer_alloc_total()` — total timers allocated.
+///   - `timer_alloc_active()` — currently active (alloc − fired − cancelled).
+///   - `timer_fired()` — fired naturally.
+///   - `timer_cancelled()` — cancelled.
+///   - `timer_longest_pending_ms()` — rolling-max wait (ms).
 ///
-/// **Default handler:** runtime hooks, read-only — не suspend-effect.
+/// **Default handler:** runtime hooks, read-only — not a suspend effect.
 #stable(since = "0.1")
 export type TimerMetrics effect {
     timer_alloc_total() -> int
@@ -66,23 +66,23 @@ export type TimerMetrics effect {
     timer_longest_pending_ms() -> int
 }
 
-/// **Mem-effect** — runtime introspection эффект для memory allocator stats.
+/// **Mem effect** — runtime introspection effect for memory allocator stats.
 ///
-/// **Назначение:** leak/growth тесты могут наблюдать allocator counters
-/// без exposing GC internals.
+/// **Purpose:** leak/growth tests can observe allocator counters
+/// without exposing GC internals.
 ///
 /// **Operations:**
-///   - `alloc_count() -> int` — total nova_alloc calls с момента gc_init
-///     или последнего `reset()`.
+///   - `alloc_count() -> int` — total nova_alloc calls since gc_init
+///     or the last `reset()`.
 ///   - `free_count() -> int` — total free calls.
-///   - `live() -> int` — `alloc_count() - free_count()`, грубая оценка
-///     live allocations.
+///   - `live() -> int` — `alloc_count() - free_count()`, a rough estimate
+///     of live allocations.
 ///   - `reset() -> ()` — zero stats counters (per-test isolation).
 ///
 /// **Default handler:** runtime hooks, read-only.
 ///
-/// **Не user-overridable:** хотя `with Mem = handler {...}` разрешён,
-/// semantically counters отражают реальное состояние аллокатора.
+/// **Not user-overridable:** although `with Mem = handler {...}` is allowed,
+/// semantically the counters reflect the allocator's real state.
 #stable(since = "0.1")
 export type Mem effect {
     alloc_count() -> int
@@ -93,21 +93,21 @@ export type Mem effect {
 
 /// **Random-effect** — ambient PRNG.
 ///
-/// **Назначение:** AI-first substitution случайности. Production-код
-/// (`Uuid.v4()`, `Ulid.new()`, retry-jitter) объявляет
-/// `Random` в effect-row; тесты подменяют handler детерминированным PRNG:
+/// **Purpose:** AI-first substitution of randomness. Production code
+/// (`Uuid.v4()`, `Ulid.new()`, retry-jitter) declares `Random` in the
+/// effect row; tests replace the handler with a deterministic PRNG:
 /// ```nova
 /// import std.testing.handlers as th
 /// with Random = th.seeded(42) { Uuid.v4() }   // deterministic
 /// ```
-/// Handler-фабрика `seeded(seed u64) -> Effect[Random]` (xoshiro256++) —
-/// в `std/testing/handlers.nv`.
+/// The `seeded(seed u64) -> Effect[Random]` handler factory (xoshiro256++)
+/// lives in `std/testing/handlers.nv`.
 ///
-/// **[M-random-u64-path-return-ice]:** декларация перенесена сюда из
-/// `std/testing/handlers.nv`. Когда декларация жила вне prelude, модули
-/// (uuid, ulid, retry) не имели `effect_schemas["Random"]`, и codegen падал
-/// ICE «Path call return type unknown». Prelude — единственный источник
-/// схемы. Эмитится как обычный user-effect (без RUNTIME_DEFINED_TYPES).
+/// **[M-random-u64-path-return-ice]:** the declaration moved here from
+/// `std/testing/handlers.nv`. While it lived outside the prelude, modules
+/// (uuid, ulid, retry) had no `effect_schemas["Random"]`, and codegen hit
+/// the «Path call return type unknown» ICE. The prelude is the single
+/// source of the schema; emitted as a regular user effect (no RUNTIME_DEFINED_TYPES).
 #stable(since = "0.1")
 export type Random effect {
     u64() -> u64                        // 64 случайных бита
@@ -118,20 +118,20 @@ export type Random effect {
 // ResourceTrace observability effect
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `ResourceTrace` effect — observability-only handler dispatch для tracing
-/// resource-scope entry/exit. Default handler — no-op, zero-overhead если не
-/// использован. Orthogonal к `Cleanup[E].@cleanup` — слой для metrics/tracing.
+/// `ResourceTrace` effect — observability-only handler dispatch for tracing
+/// resource-scope entry/exit. Default handler — no-op, zero overhead if not
+/// used. Orthogonal to `Cleanup[E].@cleanup` — a layer for metrics/tracing.
 ///
 /// **Operations:**
-///   - `on_resource_enter(label str)` — invoked при входе в
-///     `consume X = ... { body }` scope-block.
+///   - `on_resource_enter(label str)` — invoked on entering a
+///     `consume X = ... { body }` scope block.
 ///   - `on_resource_exit(label str, outcome ScopeOutcome, duration_ms int,
-///     overrun bool)` — invoked при выходе из scope с финальным outcome.
-///     Cleanup всегда добегает (force-прерывания не существует).
+///     overrun bool)` — invoked on scope exit with the final outcome.
+///     Cleanup always runs to completion (no force interrupts exist).
 ///
 /// **Handler restrictions:**
-///   - Handler не может `throw` (observability должна быть idempotent).
-///   - Handler не может `suspend` (sync-only).
+///   - A handler cannot `throw` (observability must be idempotent).
+///   - A handler cannot `suspend` (sync-only).
 ///   - Return type `()` (observability-only, not value-returning).
 #stable(since = "0.1")
 export type ResourceTrace effect {
@@ -143,32 +143,32 @@ export type ResourceTrace effect {
 // Supervisor effect (supervision-as-effect) + Decision
 // ──────────────────────────────────────────────────────────────────────────
 
-/// **Решение супервизора** на падение ребёнка scope'а.
-/// Возвращается хендлером `Supervisor.on_child_fail`.
+/// **Supervisor's decision** on a child scope failure.
+/// Returned by the `Supervisor.on_child_fail` handler.
 ///
-///   - `Escalate` — ошибка ребёнка становится primary-ошибкой scope'а,
-///     siblings кооперативно отменяются, scope перевыбрасывает наружу.
-///     Поведение дефолта (без супервизора).
-///   - `Stop` — ребёнок «выкинут»: его ошибка НЕ эскалируется, siblings
-///     НЕ отменяются, scope продолжает работу. Ошибка доступна диагностике.
+///   - `Escalate` — the child's error becomes the scope's primary error,
+///     siblings are cooperatively cancelled, the scope re-throws it outward.
+///     Default behavior (without a supervisor).
+///   - `Stop` — the child is "discarded": its error is NOT escalated,
+///     siblings are NOT cancelled, the scope keeps working. The error stays
+///     available for diagnostics.
 ///
-/// `Restart`-семейство ретрактировано: рестарт — идиома акторных систем,
-/// а `supervised` — структурная конкуренция. Повтор попытки живёт внутри
-/// тела ребёнка — `std/concurrency/retry`.
+/// The `Restart` family was retracted: restart is an actor-system idiom,
+/// while `supervised` is structured concurrency; retrying lives in the child body — `std/concurrency/retry`.
 #stable(since = "0.1")
 export type Decision enum Escalate | Stop
 
-/// **Supervisor-эффект** — подменяемая политика реакции на падение ребёнка
-/// `spawn`/`parallel for` внутри `supervised { ... }`.
+/// **Supervisor effect** — a swappable policy for reacting to a child
+/// failure of `spawn`/`parallel for` inside `supervised { ... }`.
 ///
-/// **Операция** `on_child_fail(idx int, err any) -> Decision`:
-///   - `idx` — retention-слот упавшего ребёнка (spawn-порядок remote-детей
-///     scope'а);
-///   - `err` — значение ошибки как `any`: typed-throw payload (сужается
-///     `err is T`), для string-throw / panic — `str`-сообщение.
+/// **Operation** `on_child_fail(idx int, err any) -> Decision`:
+///   - `idx` — the retention slot of the failed child (spawn order of the
+///     scope's remote children);
+///   - `err` — the error value as `any`: a typed-throw payload (narrowed
+///     with `err is T`), for string-throw / panic — a `str` message.
 ///
-/// **Стратегии = хендлеры:** отдельной сущности «имя стратегии» нет.
-/// Встроенные политики: `std.concurrency.supervisor` (`escalate()` / `stop()`).
+/// **Strategies = handlers:** there is no separate "strategy name" entity.
+/// Built-in policies: `std.concurrency.supervisor` (`escalate()` / `stop()`).
 ///
 /// ```nova
 /// import std.concurrency.supervisor as sup
@@ -179,15 +179,15 @@ export type Decision enum Escalate | Stop
 /// }
 /// ```
 ///
-/// **Дефолт (нет хендлера):** первая ошибка отменяет siblings и
-/// перевыбрасывается (байт-паритет со старым поведением).
+/// **Default (no handler):** the first error cancels siblings and is
+/// re-thrown (byte-parity with the old behavior).
 ///
-/// **Семантика вызова:** хендлер исполняется сериализованно, по одному
-/// падению. panic ребёнка тоже доходит до решения; индуцированные отмены
-/// siblings хендлеру не показываются.
+/// **Call semantics:** the handler runs serially, one failure at a time.
+/// A child panic also reaches the decision; induced sibling cancellations
+/// are not shown to the handler.
 ///
-/// **Ограничения хендлера:** `throw`/`Fail` разрешён (Escalate-with-error);
-/// `interrupt` и suspend-операции (`Time.sleep`) запрещены.
+/// **Handler restrictions:** `throw`/`Fail` allowed (Escalate-with-error);
+/// `interrupt` and suspend operations (`Time.sleep`) forbidden.
 #stable(since = "0.1")
 export type Supervisor effect {
     on_child_fail(idx int, err any) -> Decision
@@ -197,14 +197,14 @@ export type Supervisor effect {
 // Application effect для top-level lifecycle
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Application effect для top-level application lifecycle
-/// (finalizers + default exit_timeout для cleanup-scopes).
+/// Application effect for the top-level application lifecycle
+/// (finalizers + default exit_timeout for cleanup scopes).
 ///
 /// **Operations:**
-///   - `register_finalizer(f fn() -> ())` — register fn to run при
-///     exit из enclosing `with Application = handler { ... }` scope.
+///   - `register_finalizer(f fn() -> ())` — register a fn to run on
+///     exit from the enclosing `with Application = handler { ... }` scope.
 ///     Topo-order: reverse of registration (LIFO).
-///   - `default_exit_timeout_ms() -> int` — fallback для ConsumeScope
+///   - `default_exit_timeout_ms() -> int` — fallback for ConsumeScope
 ///     timeout resolution.
 ///
 /// **Use cases:**
@@ -217,8 +217,8 @@ export type Supervisor effect {
 ///   - Inner handler wins (effect-stack semantics).
 ///   - Finalizer registry NOT inherited (test isolation).
 ///   - Default exit_timeout NOT inherited.
-///   - Cross-fiber: spawn child видит parent's Application via effect snapshot.
-///   - abort/SIGKILL не fires finalizers (OS limitation).
+///   - Cross-fiber: a spawned child sees the parent's Application via the effect snapshot.
+///   - abort/SIGKILL do not fire finalizers (OS limitation).
 #stable(since = "0.1")
 export type Application effect {
     register_finalizer(f fn() -> ()) -> ()

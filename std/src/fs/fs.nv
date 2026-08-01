@@ -186,7 +186,7 @@ export fn OpenOptions @open(path Path) Fs -> Result[File, IoError] {
 /// that guard aside, silently swallowing the close error on an auto-inserted
 /// path would undo the exact differentiator this type exists for (Go/Rust/
 /// Java/Zig all swallow it on drop) — `File` stays must-consume regardless of
-/// any future fallible-`@cleanup` effect-propagation policy (Plan 217 §8 п.1).
+/// any future fallible-`@cleanup` effect-propagation policy (Plan 217 §8 item 1).
 /// Regression guard: std/src/fs/neg/d323_file_not_consumed_neg.nv.
 #stable(since = "0.1")
 export type File consume {

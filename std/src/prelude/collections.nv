@@ -93,10 +93,10 @@ import std.prelude.core.{Option}
 //
 // Заменяет Iterable[T] (удалён).
 
-/// Протокол итератора. Тип имеет `mut @next()` → является итератором.
+/// Iterator protocol. A type with `mut @next()` is an iterator.
 ///
-/// `Some(v)` — следующий элемент, `None` — исчерпан (idempotent).
-/// Итераторы также реализуют `Iter[Self]` через `@iter() -> Self => self`.
+/// `Some(v)` — the next element, `None` — exhausted (idempotent).
+/// Iterators also implement `Iter[Self]` via `@iter() -> Self => self`.
 ///
 /// # Examples
 ///
@@ -113,14 +113,14 @@ export type Next[T] protocol {
     mut @next() -> Option[T]
 }
 
-/// Протокол источника итератора. Тип имеет `@iter()` → можно передать в
-/// for-in или convert в итератор.
+/// Iterator source protocol. A type with `@iter()` can be passed to
+/// for-in or converted into an iterator.
 ///
-/// `I` — конкретный тип итератора (реализует `Next[T]` для некоторого T).
-/// Итераторы реализуют `Iter[Self]` (trivial `=> self`).
-/// Коллекции реализуют `Iter[SomeIter]` где `SomeIter` реализует `Next[T]`.
+/// `I` — the concrete iterator type (implements `Next[T]` for some T).
+/// Iterators implement `Iter[Self]` (trivial `=> self`); collections
+/// implement `Iter[SomeIter]` where `SomeIter` implements `Next[T]`.
 ///
-/// Generic bound для «принять любой iterable»:
+/// Generic bound for "accept any iterable":
 /// ```nova
 /// fn collect[C Iter[I], I Next[T], T](c C) -> []T
 /// ```

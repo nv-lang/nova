@@ -58,7 +58,7 @@ module data.semver
 /// SemVer version (semver.org 2.0.0). `MAJOR.MINOR.PATCH[-pre][+build]`.
 ///
 /// `pre` — pre-release identifiers (`alpha.1` → `["alpha", "1"]`).
-/// `build` — build metadata (не учитывается при precedence).
+/// `build` — build metadata (not considered for precedence).
 ///
 /// # Examples
 /// ```nova
@@ -75,7 +75,7 @@ export type Version {
     ro build []str
 }
 
-/// Errors при парсинге semver-строки (D30 convention).
+/// Errors when parsing a semver string (D30 convention).
 #stable(since = "0.1")
 export type ParseVersionError enum
     | EmptyInput
@@ -86,12 +86,12 @@ export type ParseVersionError enum
     | EmptyIdentifier { section str }
     | InvalidIdentifier { section str, value str }
 
-/// Simple constructor без pre/build. Самый частый случай.
+/// Simple constructor without pre/build. The most common case.
 #stable(since = "0.1")
 export fn Version.new(major u64, minor u64, patch u64) -> Self =>
     { major, minor, patch, pre: [], build: [] }
 
-/// Full constructor с pre-release и build metadata.
+/// Full constructor with pre-release and build metadata.
 #stable(since = "0.1")
 export fn Version.full(major u64, minor u64, patch u64, pre []str, build []str) -> Self =>
     { major, minor, patch, pre, build }
@@ -108,15 +108,15 @@ export fn Version @minor() => @minor
 #stable(since = "0.1")
 export fn Version @patch() => @patch
 
-/// True если version имеет pre-release identifier (e.g. "1.0.0-alpha.1").
+/// True if the version has a pre-release identifier (e.g. "1.0.0-alpha.1").
 #stable(since = "0.1")
 export fn Version @is_prerelease() -> bool => @pre.len() > 0
 
-/// True если version имеет build metadata (e.g. "1.0.0+sha1234").
+/// True if the version has build metadata (e.g. "1.0.0+sha1234").
 #stable(since = "0.1")
 export fn Version @has_build() -> bool => @build.len() > 0
 
-/// True если stable release: не pre-release, major > 0.
+/// True if a stable release: not pre-release, major > 0.
 #stable(since = "0.1")
 export fn Version @is_stable() -> bool => @pre.len() == 0 && @major > 0
 
@@ -136,7 +136,7 @@ export fn Version @is_stable() -> bool => @pre.len() == 0 && @major > 0
 //      leading-zero.
 //   3. Распарсить pre identifiers (split по ".", валидация alphanumeric).
 //   4. Распарсить build identifiers (split по ".", валидация).
-/// Parse semver.org §9-10 grammar. `Err(ParseVersionError)` на malformed input.
+/// Parse semver.org §9-10 grammar. `Err(ParseVersionError)` on malformed input.
 ///
 /// # Examples
 /// ```nova
@@ -298,8 +298,8 @@ fn is_ascii_ident_char(c char) -> bool {
 // Сериализация (D410)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `to_str()` — формат `MAJOR.MINOR.PATCH[-PRE][+BUILD]`.
-/// Round-trip: `v.to_str().to_version()== v` для валидной Version.
+/// `to_str()` — the `MAJOR.MINOR.PATCH[-PRE][+BUILD]` format.
+/// Round-trip: `v.to_str().to_version()== v` for a valid Version.
 #stable(since = "0.1")
 export fn Version @to_str() -> str {
     consume sb = StringBuilder.new()
@@ -328,8 +328,8 @@ fn join_dots(parts []str) -> str {
 // Сравнение (semver.org § 11)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Strict equality (`==`) — structural по всем полям (включая build).
-/// Для semver-precedence equality (без build) используй [`eq_precedence`].
+/// Strict equality (`==`) — structural over all fields (including build).
+/// For semver-precedence equality (without build) use [`eq_precedence`].
 #stable(since = "0.1")
 export fn Version @equal(other Version) -> bool =>
     @major == other.major
@@ -338,7 +338,7 @@ export fn Version @equal(other Version) -> bool =>
     && pre_eq(@pre, other.pre)
     && pre_eq(@build, other.build)
 
-/// Semver-precedence equality — build metadata игнорируется (semver.org § 10).
+/// Semver-precedence equality — build metadata is ignored (semver.org § 10).
 #stable(since = "0.1")
 export fn Version @eq_precedence(other Version) -> bool =>
     @major == other.major
@@ -348,8 +348,8 @@ export fn Version @eq_precedence(other Version) -> bool =>
 
 /// Compare per semver.org § 11 precedence. Returns <0, 0, >0.
 /// 1. major/minor/patch numeric compare;
-/// 2. не-pre > pre (1.0.0 > 1.0.0-anything);
-/// 3. покомпонентное сравнение pre (numeric < alphanumeric).
+/// 2. non-pre > pre (1.0.0 > 1.0.0-anything);
+/// 3. component-wise comparison of pre (numeric < alphanumeric).
 #stable(since = "0.1")
 export fn Version @compare(other Version) -> int {
     if @major != other.major { return if @major < other.major { -1 } else { 1 } }

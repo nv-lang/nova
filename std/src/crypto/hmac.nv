@@ -35,7 +35,7 @@ const SHA256_OUTPUT_SIZE = 32
 
 /// HMAC-SHA-256 (RFC 2104) — keyed message authentication. 32-byte tag.
 ///
-/// Используется для JWT HS256, API signatures, session cookie integrity.
+/// Used for JWT HS256, API signatures, session cookie integrity.
 ///
 /// # Examples
 /// ```nova
@@ -67,15 +67,15 @@ export fn HmacSha256.compute(key []u8, message []u8) -> [32]u8 {
     outer.finalize()
 }
 
-/// HMAC-SHA-256 в lowercase hex string (64 chars).
+/// HMAC-SHA-256 in a lowercase hex string (64 chars).
 #stable(since = "0.1")
 export fn HmacSha256.compute_str(key []u8, message []u8) -> str {
     ro mac = HmacSha256.compute(key, message)
     Hex.encode(mac[0..SHA256_OUTPUT_SIZE])
 }
 
-/// **Constant-time** MAC verification (security-critical). НЕ используй `==`
-/// для tag comparison — leak'ит timing.
+/// **Constant-time** MAC verification (security-critical). Do NOT use `==`
+/// for tag comparison — it leaks timing.
 #stable(since = "0.1")
 export fn HmacSha256.verify(key []u8, message []u8, expected [32]u8) -> bool {
     ro computed = HmacSha256.compute(key, message)

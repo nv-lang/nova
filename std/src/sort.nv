@@ -23,10 +23,10 @@
 
 module std.sort
 
-/// In-place insertion sort для `[]int` (stable, O(n²)).
+/// In-place insertion sort for `[]int` (stable, O(n²)).
 ///
-/// Подходит для arrays до ~1000 elements. Для крупных наборов
-/// дождитесь Plan 91 followup `[sort-pdq]` (pdq-sort) или
+/// Suitable for arrays up to ~1000 elements. For larger sets
+/// wait for Plan 91 followup `[sort-pdq]` (pdq-sort) or
 /// `[sort-generic-T]` (intro-sort).
 ///
 /// # Examples
@@ -49,12 +49,12 @@ export fn []int mut @sort() -> @ {
     }
 }
 
-/// In-place insertion sort с custom comparator `cmp(a, b) -> int`.
+/// In-place insertion sort with a custom comparator `cmp(a, b) -> int`.
 ///
-/// `cmp` возвращает negative если `a` должен идти раньше `b`, 0 если
-/// порядок не важен, positive если `a` после `b`. Sort стабилен —
-/// equal-pairs (`cmp == 0`) сохраняют исходный порядок. Совместимо с
-/// C `memcmp`/`strcmp` convention (см. D183).
+/// `cmp` returns negative if `a` should come before `b`, 0 if the
+/// order does not matter, positive if `a` comes after `b`. The sort is stable —
+/// equal-pairs (`cmp == 0`) keep their original order. Compatible with the
+/// C `memcmp`/`strcmp` convention (see D183).
 ///
 /// # Examples
 /// ```nova
@@ -101,7 +101,7 @@ export fn []int mut @sort_by(cmp fn(int, int) -> int) -> @ {
 // `[M-153.x-array-new-not-vec]` — full consolidation into the Vec family is
 // gated on that fix.
 
-/// Minimum value в `[]int`. `None` для empty.
+/// Minimum value in `[]int`. `None` for empty.
 ///
 /// # Examples
 /// ```nova
@@ -125,7 +125,7 @@ export fn []int @min() -> Option[int] {
     Some(m)
 }
 
-/// Maximum value в `[]int`. `None` для empty.
+/// Maximum value in `[]int`. `None` for empty.
 ///
 /// # Examples
 /// ```nova
@@ -157,7 +157,7 @@ export fn []int @max() -> Option[int] {
 // Concrete []int @min/@max выше остаются как fast-path для int (без mono overhead).
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Generic min для любого `[T Compare]`. `None` для empty.
+/// Generic min for any `[T Compare]`. `None` for empty.
 ///
 /// # Examples
 /// ```nova
@@ -176,7 +176,7 @@ export fn[T Compare] []T @min_of() -> Option[T] {
     Some(m)
 }
 
-/// Generic max для любого `[T Compare]`. `None` для empty.
+/// Generic max for any `[T Compare]`. `None` for empty.
 #stable(since = "0.1")
 export fn[T Compare] []T @max_of() -> Option[T] {
     ro n = @len()
@@ -189,7 +189,7 @@ export fn[T Compare] []T @max_of() -> Option[T] {
     Some(m)
 }
 
-/// Generic insertion sort для `[T Compare]` (stable, O(n²)).
+/// Generic insertion sort for `[T Compare]` (stable, O(n²)).
 ///
 /// # Examples
 /// ```nova
@@ -213,8 +213,8 @@ export fn[T Compare] []T mut @sort_of() -> @ {
     }
 }
 
-/// Generic min_by с custom comparator. T не обязан satisfying Compare.
-/// `None` для empty.
+/// Generic min_by with a custom comparator. T does not have to satisfy Compare.
+/// `None` for empty.
 ///
 /// # Examples
 /// ```nova
@@ -237,7 +237,7 @@ export fn[T] []T @min_by_of(cmp fn(T, T) -> int) -> Option[T] {
     Some(m)
 }
 
-/// Generic max_by с custom comparator.
+/// Generic max_by with a custom comparator.
 #stable(since = "0.1")
 export fn[T] []T @max_by_of(cmp fn(T, T) -> int) -> Option[T] {
     ro n = @len()
@@ -250,7 +250,7 @@ export fn[T] []T @max_by_of(cmp fn(T, T) -> int) -> Option[T] {
     Some(m)
 }
 
-/// Generic reverse in-place для любого `[T]`. Returns `@` для fluent chain.
+/// Generic in-place reverse for any `[T]`. Returns `@` for fluent chaining.
 ///
 /// # Examples
 /// ```nova
@@ -272,7 +272,7 @@ export fn[T] []T mut @reverse_of() -> @ {
     }
 }
 
-/// Sum для `[]int`. Returns 0 для empty.
+/// Sum for `[]int`. Returns 0 for empty.
 ///
 /// # Examples
 /// ```nova
@@ -290,7 +290,7 @@ export fn []int @sum() -> int {
     s
 }
 
-/// Product для `[]int`. Returns 1 для empty (multiplicative identity).
+/// Product for `[]int`. Returns 1 for empty (multiplicative identity).
 #stable(since = "0.1")
 export fn []int @product() -> int {
     ro n = @len()
@@ -301,8 +301,8 @@ export fn []int @product() -> int {
     p
 }
 
-/// Generic position_of — index первого элемента удовлетворяющего predicate.
-/// `None` если ни один не подходит.
+/// Generic position_of — index of the first element satisfying the predicate.
+/// `None` if none match.
 ///
 /// # Examples
 /// ```nova
@@ -320,7 +320,7 @@ export fn[T] []T @position_of(pred fn(T) -> bool) -> Option[int] {
     None
 }
 
-/// Generic count_of — сколько элементов удовлетворяют predicate.
+/// Generic count_of — how many elements satisfy the predicate.
 ///
 /// # Examples
 /// ```nova
@@ -338,7 +338,7 @@ export fn[T] []T @count_of(pred fn(T) -> bool) -> int {
     count
 }
 
-/// Generic find_of — первый элемент удовлетворяющий predicate. `None` если нет.
+/// Generic find_of — the first element satisfying the predicate. `None` if none.
 ///
 /// # Examples
 /// ```nova
@@ -355,8 +355,8 @@ export fn[T] []T @find_of(pred fn(T) -> bool) -> Option[T] {
     None
 }
 
-/// Generic sort_by с custom comparator. T не обязан satisfying Compare —
-/// порядок задаётся через `cmp(a, b) -> int` (negative/0/positive convention).
+/// Generic sort_by with a custom comparator. T does not have to satisfy Compare —
+/// the order is defined via `cmp(a, b) -> int` (negative/0/positive convention).
 ///
 /// # Examples
 /// ```nova
@@ -379,8 +379,8 @@ export fn[T] []T mut @sort_by_of(cmp fn(T, T) -> int) -> @ {
     }
 }
 
-/// Generic binary_search для отсортированного `[T Compare]`.
-/// Возвращает `Some(idx)` где `@[idx] == target` (через @compare == 0), или `None`.
+/// Generic binary_search for a sorted `[T Compare]`.
+/// Returns `Some(idx)` where `@[idx] == target` (via @compare == 0), or `None`.
 #stable(since = "0.1")
 export fn[T Compare] []T @binary_search_of(target T) -> Option[int] {
     mut lo = 0

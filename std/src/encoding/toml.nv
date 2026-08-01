@@ -39,7 +39,7 @@ export type TomlValue enum
     | TomlArray([]TomlValue)
     | TomlTable(HashMap[str, TomlValue])
 
-/// Errors при парсинге TOML.
+/// Errors while parsing TOML.
 #stable(since = "0.1")
 export type ParseTomlError enum
     | UnexpectedChar { line int, col int, char char }
@@ -87,9 +87,9 @@ fn TomlParser.new(s str) -> Self {
 // Public API
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Parse TOML document → `TomlValue.TomlTable(...)` root.
+/// Parse a TOML document → `TomlValue.TomlTable(...)` root.
 ///
-/// Поддержка: key=value, [section] / [a.b.c] tables, basic strings, ints,
+/// Supports: key=value, [section] / [a.b.c] tables, basic strings, ints,
 /// floats, booleans, arrays.
 #stable(since = "0.1")
 export fn Toml.parse(s str) Fail[ParseTomlError] -> TomlValue { // [M-lint-findings-static-conversion] [M-lint-findings-fail-public-signature]

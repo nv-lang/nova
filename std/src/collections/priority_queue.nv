@@ -10,10 +10,10 @@
 
 module collections.priority_queue
 
-/// Приоритетная очередь (binary min-heap). Всегда извлекает минимальный элемент.
+/// A priority queue (binary min-heap). Always pops the minimum element.
 ///
-/// Требует `T: Ord` — тип должен поддерживать оператор `<`.
-/// `push` и `pop` работают за O(log n).
+/// Requires `T: Ord` — the type must support the `<` operator.
+/// `push` and `pop` run in O(log n).
 ///
 /// # Examples
 ///
@@ -30,33 +30,33 @@ export type PriorityQueue[T Ord] {
     mut items []T              // internal: heap-ordered, _items[0] = min
 }
 
-/// Создать пустую `PriorityQueue`.
+/// Create an empty `PriorityQueue`.
 #stable(since = "0.1")
 export fn PriorityQueue[T].new() -> Self =>
     { items: [] }
 
-/// Число элементов в очереди.
+/// Number of elements in the queue.
 #stable(since = "0.1")
 export fn PriorityQueue[T] @len() -> int => @items.len()
 
-/// Возвращает `true` если очередь пуста.
+/// Returns `true` if the queue is empty.
 #stable(since = "0.1")
 export fn PriorityQueue[T] @is_empty() -> bool => @items.len() == 0
 
-/// Посмотреть минимальный элемент без удаления.
+/// Peek the minimum element without removing it.
 #stable(since = "0.1")
 export fn PriorityQueue[T] @peek() -> Option[T] {
     if @items.len() == 0 { None } else { Some(@items[0]) }
 }
 
-/// Добавить элемент в очередь. O(log n).
+/// Add an element to the queue. O(log n).
 #stable(since = "0.1")
 export fn PriorityQueue[T] mut @push(item T) -> () {
     @items.push(item)
     @sift_up(@items.len() - 1)
 }
 
-/// Удалить и вернуть минимальный элемент. O(log n). `None` если пусто.
+/// Remove and return the minimum element. O(log n). `None` if empty.
 #stable(since = "0.1")
 export fn PriorityQueue[T] mut @pop() -> Option[T] {
     if @items.len() == 0 { return None }

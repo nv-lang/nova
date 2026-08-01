@@ -45,35 +45,35 @@ module runtime.fibers
 
 // ─── fibers namespace ───────────────────────────────────────────────────
 
-/// Байты, зарезервированные через `mmap` для per-thread fiber arena (Linux/macOS).
+/// Bytes reserved via `mmap` for the per-thread fiber arena (Linux/macOS).
 ///
-/// Отражает общий virtual address space выделенный для fiber stacks.
-/// Под Windows всегда `0` — arena не активна, stacks идут через calloc-путь.
+/// Reflects the total virtual address space reserved for fiber stacks.
+/// On Windows always `0` — the arena is inactive, stacks go through the calloc path.
 ///
 /// # See Also
 ///
-/// - `[fibers.slot_count]` — число slot'ов
-/// - `[fibers.compact]` — принудительное возвращение physical pages
+/// - `[fibers.slot_count]` — number of slots
+/// - `[fibers.compact]` — force returning physical pages
 #stable(since = "0.1")
 export extern "nova" fn fibers.virtual_reserved() -> int
 
-/// Общее количество slot'ов в fiber arena (slot = 1 fiber stack).
+/// Total number of slots in the fiber arena (slot = 1 fiber stack).
 ///
-/// На Linux/macOS: 4096 × 2MB = 8GB virtual reserved per thread (lazily committed).
-/// Под Windows возвращает `0`.
+/// On Linux/macOS: 4096 × 2MB = 8GB virtual reserved per thread (lazily committed).
+/// Returns `0` on Windows.
 ///
 /// # See Also
 ///
-/// - `[fibers.slots_active]` — сколько из них сейчас занято
-/// - `[fibers.high_water]` — пиковое значение
+/// - `[fibers.slots_active]` — how many are currently in use
+/// - `[fibers.high_water]` — the peak value
 #stable(since = "0.1")
 export extern "nova" fn fibers.slot_count() -> int
 
-/// Количество currently-allocated slot'ов (активные fibers).
+/// The number of currently-allocated slots (active fibers).
 ///
-/// Slot'ы освобождаются после fiber termination и могут быть переиспользованы.
-/// Если `slots_active` близко к `slot_count` — workload приближается к лимиту арены.
-/// Под Windows возвращает `0`.
+/// Slots are released after fiber termination and can be reused.
+/// If `slots_active` is close to `slot_count` — the workload is approaching the arena limit.
+/// Returns `0` on Windows.
 ///
 /// # See Also
 ///
@@ -81,31 +81,31 @@ export extern "nova" fn fibers.slot_count() -> int
 #stable(since = "0.1")
 export extern "nova" fn fibers.slots_active() -> int
 
-/// Peak concurrent slot count с момента старта процесса.
+/// Peak concurrent slot count since process start.
 ///
-/// Полезно для capacity-planning: если `high_water` близок к `slot_count` —
-/// workload временно приближался к лимиту арены. Под Windows возвращает `0`.
+/// Useful for capacity planning: if `high_water` is close to `slot_count` —
+/// the workload briefly approached the arena limit. Returns `0` on Windows.
 ///
 /// # See Also
 ///
-/// - `[fibers.slot_count]` — общая ёмкость арены
-/// - `[fibers.slots_active]` — текущее значение
+/// - `[fibers.slot_count]` — total arena capacity
+/// - `[fibers.slots_active]` — current value
 #stable(since = "0.1")
 export extern "nova" fn fibers.high_water() -> int
 
-/// Принудительно вернуть physical pages всех свободных slot'ов ОС.
+/// Forcefully return the physical pages of all free slots to the OS.
 ///
-/// Выполняет `MADV_DONTNEED` на каждый contiguous run свободных slot'ов.
-/// Полезно для long-running workloads без natural idle window, где
-/// arena не достигает автоматического decay threshold.
+/// Executes `MADV_DONTNEED` on each contiguous run of free slots.
+/// Useful for long-running workloads without a natural idle window, where
+/// the arena does not reach the automatic decay threshold.
 ///
-/// Auto-decay: рантайм делает это автоматически при `slots_active == 0`.
-/// Вызывать вручную только если такого idle window нет.
+/// Auto-decay: the runtime does this automatically when `slots_active == 0`.
+/// Call manually only if there is no such idle window.
 ///
-/// Под Windows: no-op (arena отсутствует).
+/// On Windows: no-op (no arena).
 ///
 /// # Effects
 ///
-/// Системный вызов `madvise`/`MADV_DONTNEED` на Linux/macOS.
+/// A `madvise`/`MADV_DONTNEED` system call on Linux/macOS.
 #stable(since = "0.1")
 export extern "nova" fn fibers.compact() -> ()

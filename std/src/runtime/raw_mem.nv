@@ -24,17 +24,17 @@
 
 module runtime.raw_mem
 
-/// RawMem — namespace для low-level memory operations.
+/// RawMem — a namespace for low-level memory operations.
 ///
 /// Unit type (no fields). Used as static-method namespace per Nova
-/// convention (см. spec/02-types.md примеры `type Empty` / `type Sentinel`).
+/// convention (see spec/02-types.md examples `type Empty` / `type Sentinel`).
 export type RawMem
 
-/// memmove — copy `n` bytes from `src` к `dst`. Overlap-safe.
+/// memmove — copy `n` bytes from `src` to `dst`. Overlap-safe.
 ///
-/// Mirror semantic для `[]T.copy_from` (Plan 90 / D141): safe even when
-/// `src` и `dst` ranges overlap. ~2-5% slower than `copy_nonoverlapping`
-/// due to overlap check, но safe для arbitrary pointer pairs.
+/// Mirrors the semantics of `[]T.copy_from` (Plan 90 / D141): safe even when
+/// `src` and `dst` ranges overlap. ~2-5% slower than `copy_nonoverlapping`
+/// due to the overlap check, yet safe for arbitrary pointer pairs.
 ///
 /// Use cases: generic memory copy where overlap possible (slice
 /// rotation, buffer scrolling).
@@ -42,30 +42,30 @@ export type RawMem
 /// Caller wraps in `unsafe { }` block — raw pointer operation.
 export extern "nova" unsafe fn RawMem.copy(src *u8, dst *mut u8, n int) -> ()
 
-/// memcpy — copy `n` bytes from `src` к `dst`. UB при overlap.
+/// memcpy — copy `n` bytes from `src` to `dst`. UB on overlap.
 ///
 /// Faster than `copy` (no overlap check). Caller must ensure
-/// `[src, src+n)` и `[dst, dst+n)` ranges do NOT overlap.
+/// `[src, src+n)` and `[dst, dst+n)` ranges do NOT overlap.
 ///
 /// Use cases: known-distinct buffers (e.g., between two arrays,
-/// from FFI buffer к Nova buffer).
+/// from an FFI buffer to a Nova buffer).
 export extern "nova" unsafe fn RawMem.copy_nonoverlapping(src *u8, dst *mut u8, n int) -> ()
 
-/// memset — fill `n` bytes at `dst` с byte-pattern `val`.
+/// memset — fill `n` bytes at `dst` with byte-pattern `val`.
 ///
-/// Single-byte fill. For typed-element fill (e.g., u32 array filled с
+/// Single-byte fill. For typed-element fill (e.g., u32 array filled with
 /// specific i32 value), iterate manually. Mirrors both `@memset` (Zig) and
 /// `ptr::write_bytes` (Rust) — one canonical name (`fill`), no alias.
 export extern "nova" unsafe fn RawMem.fill(dst *mut u8, val u8, n int) -> ()
 
-/// memcmp — compare `n` bytes at `a` и `b`. Returns -1/0/+1.
+/// memcmp — compare `n` bytes at `a` and `b`. Returns -1/0/+1.
 ///
-/// Result normalized к -1/0/+1 (libc memcmp's non-zero result
-/// implementation-defined; Nova normalizes для consistency).
+/// Result normalized to -1/0/+1 (libc memcmp's non-zero result
+/// is implementation-defined; Nova normalizes for consistency).
 ///
-///   - Returns `0` если bytes equal
-///   - Returns `-1` если first differing byte в `a` is less than в `b`
-///   - Returns `+1` если first differing byte в `a` is greater than в `b`
+///   - Returns `0` if bytes equal
+///   - Returns `-1` if the first differing byte in `a` is less than in `b`
+///   - Returns `+1` if the first differing byte in `a` is greater than in `b`
 export extern "nova" unsafe fn RawMem.compare(a *u8, b *u8, n int) -> int
 
 /// Allocate `n` bytes of GC-tracked zeroed memory. Returns raw `*mut u8`.
@@ -99,7 +99,7 @@ export extern "nova" unsafe fn RawMem.alloc_uncollectable(n int) -> *mut u8
 /// Double-free is UB.
 export extern "nova" unsafe fn RawMem.free_uncollectable(ptr *mut u8) -> ()
 
-/// Typed memmove — copy `count` **elements** of `T` from `src` к `dst`.
+/// Typed memmove — copy `count` **elements** of `T` from `src` to `dst`.
 /// Overlap-safe (mirrors `RawMem.copy`, scaled by `size_of[T]()`).
 ///
 /// Rust precedent: `ptr::copy<T>`. Count is in *elements*, not bytes — the
@@ -113,7 +113,7 @@ export unsafe fn RawMem.copy_n[T](src *T, dst *mut T, count int) -> ()
     RawMem.copy(src as *u8, dst as *mut u8, count * size_of[T]())
 }
 
-/// Typed memcpy — copy `count` **elements** of `T` from `src` к `dst`. UB при
+/// Typed memcpy — copy `count` **elements** of `T` from `src` to `dst`. UB on
 /// overlap (mirrors `RawMem.copy_nonoverlapping`, scaled by `size_of[T]()`).
 ///
 /// Rust precedent: `ptr::copy_nonoverlapping<T>`. Count is in *elements*, not

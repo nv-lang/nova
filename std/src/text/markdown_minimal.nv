@@ -25,11 +25,11 @@ module text.markdown_minimal
 
 /// Convert minimal CommonMark subset → HTML.
 ///
-/// Поддерживает: headings (`#`), paragraphs, `*italic*`, `**bold**`,
-/// `` `code` ``, `[text](url)`, ``` ``` ``` блоки, `-` bullet lists.
+/// Supports: headings (`#`), paragraphs, `*italic*`, `**bold**`,
+/// `` `code` ``, `[text](url)`, ``` ``` ``` blocks, `-` bullet lists.
 ///
-/// Не поддерживает: numbered lists, tables, reference links, HTML passthrough,
-/// images, footnotes, blockquotes. Достаточно для README/changelogs.
+/// Does not support: numbered lists, tables, reference links, HTML passthrough,
+/// images, footnotes, blockquotes. Enough for README/changelogs.
 ///
 /// # Examples
 /// ```nova

@@ -108,14 +108,14 @@ export fn Vec[T].new(cap int = 0) -> Self
     requires cap >= 0
     => { data: alloc_buf[T](cap.max(1)), len: 0, cap }
 
-/// VIEW-форма (владелец 2026-07-17): zero-copy read-only вид над чужим
-/// буфером — `cap == len` (не растёт), возврат `ro Self` (L2: push/index-
-/// write = compile error). Арность-сиблинг `new(cap)` (0/1-арг) и
-/// `new(ptr,len,cap)` (3-арг owned). `unsafe fn` (D216 §8, Rust-парити
-/// `slice::from_raw_parts`): call-сайт несёт обязательство — источник
-/// ПЕРЕЖИВАЕТ view (для GC-буфера поле data держит его reachable), запись
-/// через view запрещена контрактом источника. Каст `*T → *mut T` спрятан в
-/// теле — ro-возврат не даёт им воспользоваться.
+/// VIEW-form (owner 2026-07-17): zero-copy read-only view over a foreign
+/// buffer — `cap == len` (does not grow), returns `ro Self` (L2: push/index-
+/// write = compile error). Arity-sibling of `new(cap)` (0/1-arg) and
+/// `new(ptr,len,cap)` (3-arg owned). `unsafe fn` (D216 §8, Rust-parity with
+/// `slice::from_raw_parts`): the call site bears the obligation — the source
+/// OUTLIVES the view (for a GC buffer the `data` field keeps it reachable), writes
+/// through the view are forbidden by the source's contract. The `*T → *mut T` cast is hidden
+/// in the body — the `ro` return gives no way to use it.
 export unsafe fn Vec[T].new(ptr *T, len int) -> ro Self
     requires len >= 0
     => { data: unsafe { ptr as *mut T }, len, cap: len }
@@ -208,7 +208,7 @@ export fn Vec[T].new(ptr *mut T, len int, cap int) -> Self
 /// **D259 AMEND (2026-07-20, Plan 200 П16, retract):** `Vec[T].from` — the
 /// conversion-of-an-existing-collection constructor `of` used to be contrasted
 /// with in this doc-comment — is **RETRACTED**: it was exactly `items.clone()`
-/// (owner: «это же просто items.clone()»). Converting an existing same-`T`
+/// (owner: "it's just items.clone()"). Converting an existing same-`T`
 /// collection is now spelled `existing.clone()` directly; a width/type-changing
 /// conversion (e.g. building a `Vec[u8]` from a `Vec[int]`) is an explicit
 /// per-element loop, not a one-call narrow. `of` remains the sole literal-list

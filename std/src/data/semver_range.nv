@@ -20,7 +20,7 @@ module data.semver_range
 // Plan 35 Ф.1: cross-file resolve. Version тип определён в semver.
 import std.data.semver
 
-/// Один comparator в version requirement (`>=1.2.3`, `<2.0.0`, `=1.0.0`).
+/// One comparator in a version requirement (`>=1.2.3`, `<2.0.0`, `=1.0.0`).
 #stable(since = "0.1")
 export type Comparator enum
     | Eq(Version)
@@ -29,13 +29,13 @@ export type Comparator enum
     | Lt(Version)
     | Le(Version)
 
-/// AND-группа comparator'ов: все должны matchить (e.g. `>1.0.0 <2.0.0`).
+/// An AND-group of comparators: all must match (e.g. `>1.0.0 <2.0.0`).
 #stable(since = "0.1")
 export type ComparatorSet {
     comparators []Comparator
 }
 
-/// Version requirement: OR-список AND-групп. Пустой sets + any_match=true → "*".
+/// Version requirement: an OR-list of AND-groups. Empty sets + any_match=true → "*".
 ///
 /// # Examples
 /// ```nova
@@ -48,7 +48,7 @@ export type VersionReq {
     any_match bool
 }
 
-/// Errors при парсинге version requirement string.
+/// Errors when parsing a version requirement string.
 #stable(since = "0.1")
 export type ParseRangeError enum
     | EmptyInput
@@ -61,9 +61,9 @@ export type ParseRangeError enum
 /// `>=1.0.0` (lower bound), `>1.0.0 <2.0.0` (AND), `1.0.0 || 2.0.0` (OR),
 /// `*` (any).
 ///
-/// Статик `VersionReq.parse(s)` ретрактирован (nv-coding-style §1а,
-/// «пятая дверь») — конверсия живёт на источнике (`s.to_version_req()`),
-/// как и `s.to_version()` в semver.nv.
+/// The static `VersionReq.parse(s)` was retracted (nv-coding-style §1а,
+/// "fifth door") — conversion lives on the source (`s.to_version_req()`),
+/// like `s.to_version()` in semver.nv.
 #stable(since = "0.1")
 export fn str @to_version_req() -> Result[VersionReq, ParseRangeError] {
     ro trimmed = @trim_ascii()
@@ -140,7 +140,7 @@ fn parse_version(s str) -> Result[Version, ParseRangeError] =>
 // Matching
 // ──────────────────────────────────────────────────────────────────────────
 
-/// True если `v` matchит requirement. Short-circuits на first matching OR-set.
+/// True if `v` matches the requirement. Short-circuits on the first matching OR-set.
 #stable(since = "0.1")
 export fn VersionReq @matches(v Version) -> bool {
     if @any_match { return true }

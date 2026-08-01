@@ -20,12 +20,12 @@ import std.time.duration
 // Конструкторы
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Собрать DateTime из уже-валидных частей (инфаллибельно: обе части
-/// валидны by construction).
+/// Build a DateTime from already-valid parts (infallibly: both parts are
+/// valid by construction).
 #stable(since = "0.1")
 export fn DateTime.new(date Date, time TimeOfDay) -> DateTime => { date, time }
 
-/// Сахар: `date.at(time)` → DateTime.
+/// Sugar: `date.at(time)` → DateTime.
 ///
 /// # Examples
 /// ```nova
@@ -34,18 +34,18 @@ export fn DateTime.new(date Date, time TimeOfDay) -> DateTime => { date, time }
 #stable(since = "0.1")
 export fn Date @at(time TimeOfDay) -> DateTime => { date: @, time }
 
-/// Полночь данной даты.
+/// Midnight of the given date.
 #stable(since = "0.1")
 export fn Date @at_midnight() -> DateTime =>
     { date: @, time: TimeOfDay.midnight() }
 
-/// Композит-конструктор: дата + время-поля с default-полночью, одним
-/// вызовом (Python-эргономика: `datetime(y, m, d, h, min, s)` без
-/// вложенного `TimeOfDay.new` + `!!`). Арность-сиблинг `DateTime.new(date,
-/// time)` — Plan 200 П21.
+/// Composite constructor: date + time fields with a midnight default, in one
+/// call (Python ergonomics: `datetime(y, m, d, h, min, s)` without a nested
+/// `TimeOfDay.new` + `!!`). Arity-sibling `DateTime.new(date, time)` —
+/// Plan 200 П21.
 ///
-/// `h`/`min`/`s`/`ns` — те же границы, что у `TimeOfDay.new` (0..23 /
-/// 0..59 / 0..59 / 0..999_999_999); `y`/`m`/`d` — границы `Date.new`.
+/// `h`/`min`/`s`/`ns` — the same bounds as `TimeOfDay.new` (0..23 /
+/// 0..59 / 0..59 / 0..999_999_999); `y`/`m`/`d` — the bounds of `Date.new`.
 ///
 /// # Examples
 /// ```nova
@@ -71,39 +71,39 @@ export fn DateTime.new(y i32, m Month, d i32,
 // Компоненты (property-методы по арности)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Дата-компонента.
+/// Date component.
 #stable(since = "0.1")
 export fn DateTime @date() -> Date => @date
 
-/// Время-компонента.
+/// Time component.
 #stable(since = "0.1")
 export fn DateTime @time() -> TimeOfDay => @time
 
-/// Год (делегат Date).
+/// Year (delegates to Date).
 #stable(since = "0.1")
 export fn DateTime @year() -> i32 => @date.year()
 
-/// Месяц (делегат Date).
+/// Month (delegates to Date).
 #stable(since = "0.1")
 export fn DateTime @month() -> Month => @date.month()
 
-/// День месяца (делегат Date).
+/// Day of month (delegates to Date).
 #stable(since = "0.1")
 export fn DateTime @day() -> i32 => @date.day()
 
-/// Час (делегат TimeOfDay).
+/// Hour (delegates to TimeOfDay).
 #stable(since = "0.1")
 export fn DateTime @hour() -> int => @time.hour()
 
-/// Минута (делегат TimeOfDay).
+/// Minute (delegates to TimeOfDay).
 #stable(since = "0.1")
 export fn DateTime @minute() -> int => @time.minute()
 
-/// Секунда (делегат TimeOfDay).
+/// Second (delegates to TimeOfDay).
 #stable(since = "0.1")
 export fn DateTime @second() -> int => @time.second()
 
-/// День недели (делегат Date).
+/// Weekday (delegates to Date).
 #stable(since = "0.1")
 export fn DateTime @weekday() -> Weekday => @date.weekday()
 
@@ -117,7 +117,7 @@ export fn DateTime @weekday() -> Weekday => @date.weekday()
 // формы совпадают, но типовая дисциплина едина по ladder).
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Сдвиг на точную Duration (elapsed). Day-carry поглощается датой.
+/// Shift by an exact Duration (elapsed). Day-carry is absorbed by the date.
 ///
 /// # Examples
 /// ```nova
@@ -131,16 +131,16 @@ export fn DateTime @plus(d Duration) -> DateTime {
     { date: Date.from_epoch_day(@date.to_epoch_day() + carry), time: t }
 }
 
-/// Сдвиг назад на Duration.
+/// Shift backward by a Duration.
 #stable(since = "0.1")
 export fn DateTime @minus(d Duration) -> DateTime =>
     @plus(0.to_nanos() - d)
 
-/// Elapsed-разность двух plain DateTime (`other - self`), как если бы оба
-/// были на одной непрерывной шкале (день = 86400s, Q5).
+/// Elapsed difference of two plain DateTimes (`other - self`), as if both
+/// were on a single continuous scale (day = 86400s, Q5).
 ///
-/// ⚠ Осмысленно только когда оба значения из одной зоны без DST-перехода
-/// между ними — plain-типы не знают offset-скачков (D319).
+/// ⚠ Meaningful only when both values are from the same zone with no DST
+/// transition between them — plain types know no offset jumps (D319).
 #stable(since = "0.1")
 export fn DateTime @duration_until(other DateTime) -> Duration {
     ro day_diff = other.date().to_epoch_day() - @date.to_epoch_day()
@@ -152,17 +152,17 @@ export fn DateTime @duration_until(other DateTime) -> Duration {
 // Compare + Display
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Compare: сначала дата, затем время.
+/// Compare: date first, then time.
 #stable(since = "0.1")
 export fn DateTime @compare(other DateTime) -> int {
     ro dc = @date.compare(other.date())
     if dc != 0 { dc } else { @time.compare(other.time()) }
 }
 
-/// ISO-8601 форма `YYYY-MM-DDTHH:MM:SS[.fff]`.
+/// ISO-8601 form `YYYY-MM-DDTHH:MM:SS[.fff]`.
 #stable(since = "0.1")
 export fn DateTime @to_iso() -> str => "${@date.to_iso()}T${@time.to_iso()}"
 
-/// Display = ISO-форма.
+/// Display = the ISO form.
 #stable(since = "0.1")
 export fn DateTime @to_str() -> str => @to_iso()

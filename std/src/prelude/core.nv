@@ -26,8 +26,8 @@ module prelude.core
 // Sum types
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Optional value — `Some(v)` либо `None`. Idiomatic путь для
-/// fallible операций без exceptions / null.
+/// Optional value — `Some(v)` or `None`. Idiomatic way for
+/// fallible operations without exceptions / null.
 #stable(since = "0.1")
 export type Option[T] enum Some(T) | None
 
@@ -41,8 +41,8 @@ export type Result[T, E] enum Ok(T) | Err(E)
 // Bottom-тип `never` — строчный встроенный примитив (как `int`/`bool`),
 // в prelude НЕ объявляется. Известен компилятору напрямую.
 
-/// Exit-outcome для `consume X = expr { body }` scope-block'а.
-/// `Cleanup.cleanup` получает это значение и решает что делать с ресурсом.
+/// Exit-outcome for a `consume X = expr { body }` scope block.
+/// `Cleanup.cleanup` receives this value and decides what to do with the resource.
 ///
 /// `Failure` carries the erased original error as `any`. Hooks narrow it
 /// with `if err is T` to recover the typed cause:
@@ -52,10 +52,10 @@ export type Result[T, E] enum Ok(T) | Err(E)
 /// - `interrupt` surfaces as `Failure(any=str="interrupt")`.
 ///
 /// **Variants:**
-/// - `Success` — body завершился нормально.
-/// - `Failure(err)` — body throw'нул / cancel / interrupt; `err: any`.
-/// - `Panic(msg)` — body panic'нул; resource НЕ должен throw в этом
-///   случае, но может выполнить emergency cleanup.
+/// - `Success` — the body completed normally.
+/// - `Failure(err)` — the body threw / was cancelled / interrupted; `err: any`.
+/// - `Panic(msg)` — the body panicked; the resource MUST NOT throw in this
+///   case, but may perform emergency cleanup.
 ///
 /// # Examples
 ///
@@ -77,9 +77,9 @@ export type ScopeOutcome enum Success | Failure(any) | Panic(str)
 // Record types
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Lightweight error record для quick-and-dirty failure cases.
-/// Поле `msg` — readonly UTF-8 string, описание ошибки. Для
-/// structured runtime errors см. `RuntimeError`.
+/// Lightweight error record for quick-and-dirty failure cases.
+/// The `msg` field is a readonly UTF-8 string describing the error. For
+/// structured runtime errors see `RuntimeError`.
 #stable(since = "0.1")
 export type Error {
     ro msg str
@@ -93,17 +93,17 @@ export type Error {
 
 /// UTF-8 string — immutable, value-typed view `{ ptr *u8, len int }`.
 ///
-/// `str` — полноценный Nova value-record. Объявление здесь делает `str`
-/// источником правды для:
-///   - **privacy** (`priv(type)` поля): `s.ptr` / `s.len` снаружи str-методов
-///     недоступны (через публичные методы `@len`, `@byte_at`, `@as_bytes`).
-///   - **field layout / sizeof** (16 байт на x64).
+/// `str` — a full Nova value-record; declaring it here makes it the source
+/// of truth for:
+///   - **privacy** (`priv(type)` fields): `s.ptr` / `s.len` are inaccessible
+///     outside str methods (public `@len`, `@byte_at`, `@as_bytes`).
+///   - **field layout / sizeof** (16 bytes on x64).
 ///
 /// **Field `ptr *u8`** — bare `*u8`: ro-pointee canon (`*T ≡ *ro T`),
-/// запись `s.ptr[i] = …` → `E_POINTER_RO_ASSIGN`.
+/// writing `s.ptr[i] = …` → `E_POINTER_RO_ASSIGN`.
 ///
-/// **ABI-bridge:** C-тип — `nova_str` (`{ const uint8_t* ptr; int64_t len; }`).
-/// Codegen не эмитит struct — `str` в RUNTIME_DEFINED_TYPES skip-list.
+/// **ABI-bridge:** C type — `nova_str` (`{ const uint8_t* ptr; int64_t len; }`).
+/// Codegen does not emit the struct — `str` is in the RUNTIME_DEFINED_TYPES skip-list.
 #stable(since = "0.1")
 // priv(type) — методы str живут в другом модуле (runtime.string),
 // field-priv сломал бы их. Перенос декларации в runtime.string невозможен
@@ -121,7 +121,7 @@ type str value priv(type) {
 // в codegen. Init копирует `method_routing` в DeclaredFromPrelude —
 // behavior-preserving migration.
 
-/// True если Option содержит значение.
+/// True if the Option contains a value.
 #stable(since = "0.1")
 fn Option[T] @is_some() -> bool => match @ { Some(_) => true, None => false }
 
@@ -129,7 +129,7 @@ fn Option[T] @is_some() -> bool => match @ { Some(_) => true, None => false }
 // методы на builtin sum-types (Option/Result). Workaround: use `None`
 // directly. [M-91.7-option-new-static]
 
-/// True если Option пустой (None).
+/// True if the Option is empty (None).
 #stable(since = "0.1")
 fn Option[T] @is_none() -> bool => match @ { Some(_) => false, None => true }
 
@@ -138,43 +138,43 @@ fn Option[T] @is_none() -> bool => match @ { Some(_) => false, None => true }
 // операторы `x!!` / `x ?? v` / `x ?? f()`. Все вызовы мигрированы на
 // операторную форму.
 
-/// Применяет `map_fn` к содержимому Some, возвращает Some(map_fn(v)). None пропускает.
-/// Param-name `map_fn` (не `f`) — избегаем shadowing user-функций с именем `f`.
+/// Applies `map_fn` to the Some payload, returning `Some(map_fn(v))`. None passes through.
+/// Param-name `map_fn` (not `f`) — avoids shadowing user functions named `f`.
 #stable(since = "0.1")
 fn Option[T] @map[U](map_fn fn(T) -> U) -> Option[U]
   => match @ { Some(v) => Some(map_fn(v)), None => None }
 
-/// `Some(v) -> Ok(v)`, `None -> Err(err)`. Полезно для conversion
-/// Option в Result-чейн.
+/// `Some(v) -> Ok(v)`, `None -> Err(err)`. Useful for converting an
+/// Option into a Result chain.
 #stable(since = "0.1")
 fn Option[T] @ok_or[E](err E) -> Result[T, E]
   => match @ { Some(v) => Ok(v), None => Err(err) }
 
-/// `Some(v) -> Some(v)`, `None -> other`. Возвращает другой Option если
-/// текущий пустой (fallback chain).
+/// `Some(v) -> Some(v)`, `None -> other`. Returns another Option if the
+/// current one is empty (fallback chain).
 #stable(since = "0.1")
 fn Option[T] @or(other Option[T]) -> Option[T] => match @ { Some(v) => Some(v), None => other }
 
-/// Bind/monadic chain: `Some(v) -> flat_map_fn(v)`, `None -> None`. В отличие
-/// от `@map`, `flat_map_fn` сам возвращает `Option[U]` — вложенность
-/// `Option[Option[U]]` не образуется.
+/// Bind/monadic chain: `Some(v) -> flat_map_fn(v)`, `None -> None`. Unlike
+/// `@map`, `flat_map_fn` itself returns `Option[U]` — no nested
+/// `Option[Option[U]]` is formed.
 ///
-/// Единственный из канонических комбинаторов, невыразимый через `??`/`!!`/
-/// `.map`/`match` — bind-цепочка fallible-шагов без ручного снятия вложенности
-/// требует отдельного метода. Имя `flat_map` (не `and_then`/`then`) — сиблинг
-/// к `map`, без булевого багажа `and`/`or` и без коллизии с `bool::then`.
-/// Param-name `flat_map_fn` (не `f`) — избегаем shadowing.
+/// The only canonical combinator inexpressible via `??`/`!!`/`.map`/`match`
+/// — binding a chain of fallible steps without manually unwrapping nesting
+/// requires a dedicated method. Named `flat_map` (not `and_then`/`then`) —
+/// sibling to `map`, with no boolean `and`/`or` baggage and no collision
+/// with `bool::then`. Param-name `flat_map_fn` (not `f`) — no shadowing.
 ///
-/// Fallible-шаг (замыкание возвращает `Result`): канон — явная `.ok()` на
-/// месте вызова, `opt.flat_map(|v| do_thing(v).ok())`.
+/// Fallible step (closure returning `Result`): the canon is an explicit
+/// `.ok()` at the call site, `opt.flat_map(|v| do_thing(v).ok())`.
 #stable(since = "0.1")
 fn Option[T] @flat_map[U](flat_map_fn fn(T) -> Option[U]) -> Option[U]
   => match @ { Some(v) => flat_map_fn(v), None => None }
 
-/// `Some(v) -> Some(v)` если `pred(v)`, иначе `None`. `None` остаётся `None`.
-/// `??`/`.map` не отбрасывают `Some` по предикату — единственный способ
-/// вернуть `None` из `Some` без явного `match`. Param-name `pred` —
-/// паритет с `Vec`/`Iter` `@filter`.
+/// `Some(v) -> Some(v)` if `pred(v)`, otherwise `None`. `None` stays `None`.
+/// `??`/`.map` cannot drop a `Some` by predicate — the only way to return
+/// `None` from a `Some` without an explicit `match`. Param-name `pred` —
+/// parity with `Vec`/`Iter` `@filter`.
 #stable(since = "0.1")
 fn Option[T] @filter(pred fn(T) -> bool) -> Option[T]
   => match @ { Some(v) => if pred(v) { Some(v) } else { None }, None => None }
@@ -183,11 +183,11 @@ fn Option[T] @filter(pred fn(T) -> bool) -> Option[T]
 // Result[T, E] methods
 // ──────────────────────────────────────────────────────────────────────────
 
-/// True если Result — Ok variant.
+/// True if the Result is the Ok variant.
 #stable(since = "0.1")
 fn Result[T, E] @is_ok() -> bool => match @ { Ok(_) => true, Err(_) => false }
 
-/// True если Result — Err variant.
+/// True if the Result is the Err variant.
 #stable(since = "0.1")
 fn Result[T, E] @is_err() -> bool => match @ { Ok(_) => false, Err(_) => true }
 
@@ -197,23 +197,23 @@ fn Result[T, E] @is_err() -> bool => match @ { Ok(_) => false, Err(_) => true }
 // давал доступ к error-значению в fallback — `??` его отбрасывает.
 // Все вызовы мигрированы на операторную форму.
 
-/// Применяет `map_fn` к Ok-значению: `Ok(v) -> Ok(map_fn(v))`, `Err(e)` пропускает.
-/// Param-name `map_fn` (не `f`) — см. Option.map.
+/// Applies `map_fn` to the Ok payload: `Ok(v) -> Ok(map_fn(v))`, `Err(e)` passes through.
+/// Param-name `map_fn` (not `f`) — see Option.map.
 #stable(since = "0.1")
 fn Result[T, E] @map[U](map_fn fn(T) -> U) -> Result[U, E]
   => match @ { Ok(v) => Ok(map_fn(v)), Err(e) => Err(e) }
 
-/// Применяет `err_fn` к Err-payload: `Err(e) -> Err(err_fn(e))`, `Ok(v)` пропускает.
-/// Param-name `err_fn` (не `f`) — см. Option.map.
+/// Applies `err_fn` to the Err payload: `Err(e) -> Err(err_fn(e))`, `Ok(v)` passes through.
+/// Param-name `err_fn` (not `f`) — see Option.map.
 #stable(since = "0.1")
 fn Result[T, E] @map_err[F](err_fn fn(E) -> F) -> Result[T, F]
   => match @ { Ok(v) => Ok(v), Err(e) => Err(err_fn(e)) }
 
-/// Bind/monadic chain: `Ok(v) -> flat_map_fn(v)`, `Err(e) -> Err(e)`. В
-/// отличие от `@map`, `flat_map_fn` сам возвращает `Result[U, E]` —
-/// вложенность `Result[Result[U,E], E]` не образуется.
-/// Зеркало `Option.flat_map` — та же мотивация.
-/// Param-name `flat_map_fn` — см. `Option.flat_map`.
+/// Bind/monadic chain: `Ok(v) -> flat_map_fn(v)`, `Err(e) -> Err(e)`. Unlike
+/// `@map`, `flat_map_fn` itself returns `Result[U, E]` — no nested
+/// `Result[Result[U,E], E]` is formed.
+/// Mirror of `Option.flat_map` — same motivation.
+/// Param-name `flat_map_fn` — see `Option.flat_map`.
 #stable(since = "0.1")
 fn Result[T, E] @flat_map[U](flat_map_fn fn(T) -> Result[U, E]) -> Result[U, E]
   => match @ { Ok(v) => flat_map_fn(v), Err(e) => Err(e) }
@@ -226,8 +226,8 @@ fn Result[T, E] @ok() -> Option[T] => match @ { Ok(v) => Some(v), Err(_) => None
 #stable(since = "0.1")
 fn Result[T, E] @err() -> Option[E] => match @ { Ok(_) => None, Err(e) => Some(e) }
 
-/// Fail-fast коллектор списка результатов. Первая `Err` обрывает и
-/// возвращается (short-circuit); иначе `Ok` со ВСЕМИ значениями в порядке.
+/// Fail-fast collector for a list of results. The first `Err` aborts and is
+/// returned (short-circuit); otherwise `Ok` with ALL values in order.
 ///
 /// ```nova
 /// assert(sequence([Ok(1), Ok(2), Ok(3)]) == Ok([1, 2, 3]))
@@ -245,8 +245,8 @@ export fn[T, E] sequence(items []Result[T, E]) -> Result[[]T, E] {
     Ok(out)
 }
 
-/// Разделяет список результатов на успехи и ошибки — ОБЕ стороны
-/// сохранены (в отличие от `sequence`, который обрывается на первой `Err`).
+/// Splits a list of results into successes and errors — BOTH sides are
+/// preserved (unlike `sequence`, which aborts on the first `Err`).
 ///
 /// ```nova
 /// ro (oks, errs) = partition([Ok(1), Err("a"), Ok(2), Err("b")])

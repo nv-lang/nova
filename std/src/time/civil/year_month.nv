@@ -8,14 +8,14 @@ module time.civil
 // YearMonth — месяц конкретного года (биллинг, отчётные периоды)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Год+месяц без дня (биллинг-периоды).
+/// Year+month without a day (billing periods).
 #stable(since = "0.1")
 export type YearMonth value {
     ro year i32
     ro month i32
 }
 
-/// Построить с валидацией (год в civil-диапазоне, месяц 1..12).
+/// Build with validation (year in the civil range, month 1..12).
 #stable(since = "0.1")
 export fn YearMonth.new(y i32, m Month) -> Result[YearMonth, DateError] {
     if (y as i64) < -999_999 || (y as i64) > 999_999 {
@@ -24,11 +24,11 @@ export fn YearMonth.new(y i32, m Month) -> Result[YearMonth, DateError] {
     Ok({ year: y, month: m.number() as i32 })
 }
 
-/// Год.
+/// Year.
 #stable(since = "0.1")
 export fn YearMonth @year() -> i32 => @year
 
-/// Месяц.
+/// Month.
 #stable(since = "0.1")
 export fn YearMonth @month() -> Month =>
     match Month.from_number(@month as int) {
@@ -36,14 +36,14 @@ export fn YearMonth @month() -> Month =>
         Err(_) => Month.Jan,   // unreachable: конструктор валидирует
     }
 
-/// Число дней в этом месяце (с учётом високосности года).
+/// Number of days in this month (accounting for the year's leap-ness).
 #stable(since = "0.1")
 export fn YearMonth @length() -> int {
     ro leap = @year % 4 == 0 && (@year % 100 != 0 || @year % 400 == 0)
     @month().length(leap)
 }
 
-/// Первый день месяца как Date.
+/// First day of the month as a Date.
 #stable(since = "0.1")
 export fn YearMonth @first_day() -> Date =>
     match Date.new(@year, @month(), 1) {
@@ -51,7 +51,7 @@ export fn YearMonth @first_day() -> Date =>
         Err(_) => Date.from_epoch_day(0),   // unreachable: поля валидны
     }
 
-/// Последний день месяца как Date.
+/// Last day of the month as a Date.
 #stable(since = "0.1")
 export fn YearMonth @last_day() -> Date =>
     match Date.new(@year, @month(), @length() as i32) {
@@ -60,24 +60,24 @@ export fn YearMonth @last_day() -> Date =>
 
     }
 
-/// Конкретный день этого месяца → `Result` (валидация дня).
+/// A specific day of this month → `Result` (day validation).
 #stable(since = "0.1")
 export fn YearMonth @at_day(d i32) -> Result[Date, DateError] =>
     Date.new(@year, @month(), d)
 
-/// Следующий месяц (Dec → Jan следующего года).
+/// Next month (Dec → Jan of the next year).
 #stable(since = "0.1")
 export fn YearMonth @next() -> YearMonth =>
     if @month == 12 { { year: @year + 1, month: 1 } }
     else { { @year, month: @month + 1 } }
 
-/// Предыдущий месяц (Jan → Dec предыдущего года).
+/// Previous month (Jan → Dec of the previous year).
 #stable(since = "0.1")
 export fn YearMonth @prev() -> YearMonth =>
     if @month == 1 { { year: @year - 1, month: 12 } }
     else { { @year, month: @month - 1 } }
 
-/// Compare: год, затем месяц.
+/// Compare: year, then month.
 #stable(since = "0.1")
 export fn YearMonth @compare(other YearMonth) -> int {
     if @year < other.year { return -1 }
@@ -85,12 +85,12 @@ export fn YearMonth @compare(other YearMonth) -> int {
     if @month < other.month { -1 } else if @month > other.month { 1 } else { 0 }
 }
 
-/// ISO-форма `YYYY-MM` (format_year/pad2 — module-private хелперы date.nv).
+/// ISO form `YYYY-MM` (format_year/pad2 — module-private helpers in date.nv).
 #stable(since = "0.1")
 export fn YearMonth @to_iso() -> str =>
     "${format_year(@year as i64)}-${pad2(@month as i64)}"
 
-/// Display = ISO-форма.
+/// Display = the ISO form.
 #stable(since = "0.1")
 export fn YearMonth @to_str() -> str => @to_iso()
 
@@ -98,17 +98,17 @@ export fn YearMonth @to_str() -> str => @to_iso()
 // MonthDay — месяц+день без года (годовщины, дни рождения)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Месяц+день без года. `Feb-29` ВАЛИДЕН (анниверсари существует,
-/// хотя дата есть не в каждом году) — java.time-семантика.
+/// Month+day without a year. `Feb-29` is VALID (the anniversary exists even
+/// though the date does not occur every year) — java.time semantics.
 #stable(since = "0.1")
 export type MonthDay value {
     ro month i32
     ro day i32
 }
 
-/// Построить с валидацией: день против МАКСИМАЛЬНОЙ длины месяца
-/// (Feb → 29: анниверсари-семантика, existence в конкретном году
-/// проверяет `@at_year`).
+/// Build with validation: the day against the MAXIMUM month length
+/// (Feb → 29: anniversary semantics; existence in a concrete year is
+/// checked by `@at_year`).
 #stable(since = "0.1")
 export fn MonthDay.new(m Month, d i32) -> Result[MonthDay, DateError] {
     ro max_len = m.length(true)   // leap=true → Feb=29
@@ -118,7 +118,7 @@ export fn MonthDay.new(m Month, d i32) -> Result[MonthDay, DateError] {
     Ok({ month: m.number() as i32, day: d })
 }
 
-/// Месяц.
+/// Month.
 #stable(since = "0.1")
 export fn MonthDay @month() -> Month =>
     match Month.from_number(@month as int) {
@@ -126,23 +126,23 @@ export fn MonthDay @month() -> Month =>
         Err(_) => Month.Jan,   // unreachable
     }
 
-/// День.
+/// Day.
 #stable(since = "0.1")
 export fn MonthDay @day() -> i32 => @day
 
-/// Валиден ли в данном году (`Feb-29` → только високосные).
+/// Whether valid in a given year (`Feb-29` → only leap years).
 #stable(since = "0.1")
 export fn MonthDay @is_valid_year(y i32) -> bool {
     ro leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0)
     (@day as int) <= @month().length(leap)
 }
 
-/// Конкретная дата в году → `Result` (`Feb-29` в невисокосном — `Err`).
+/// A concrete date in the year → `Result` (`Feb-29` in a non-leap year — `Err`).
 #stable(since = "0.1")
 export fn MonthDay @at_year(y i32) -> Result[Date, DateError] =>
     Date.new(y, @month(), @day)
 
-/// Compare: месяц, затем день.
+/// Compare: month, then day.
 #stable(since = "0.1")
 export fn MonthDay @compare(other MonthDay) -> int {
     if @month < other.month { return -1 }
@@ -150,11 +150,11 @@ export fn MonthDay @compare(other MonthDay) -> int {
     if @day < other.day { -1 } else if @day > other.day { 1 } else { 0 }
 }
 
-/// ISO-форма `--MM-DD` (ISO-8601 monthday).
+/// ISO form `--MM-DD` (ISO-8601 monthday).
 #stable(since = "0.1")
 export fn MonthDay @to_iso() -> str =>
     "--${pad2(@month as i64)}-${pad2(@day as i64)}"
 
-/// Display = ISO-форма.
+/// Display = the ISO form.
 #stable(since = "0.1")
 export fn MonthDay @to_str() -> str => @to_iso()

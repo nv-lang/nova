@@ -18,10 +18,10 @@ module collections.queue
 // Тип
 // ──────────────────────────────────────────────────────────────────────────
 
-/// FIFO-очередь через два массива с O(1) amortized push/pop.
+/// A FIFO queue over two arrays with O(1) amortized push/pop.
 ///
-/// Алгоритм: `push` кладёт в inbox, `pop` берёт из outbox.
-/// Когда outbox пуст — inbox переливается в outbox в обратном порядке (O(n), но O(1) amortized).
+/// Algorithm: `push` puts into the inbox, `pop` takes from the outbox.
+/// When the outbox is empty, the inbox is poured into the outbox in reverse order (O(n), but O(1) amortized).
 ///
 /// # Examples
 ///
@@ -36,7 +36,7 @@ module collections.queue
 ///
 /// # See Also
 ///
-/// - `[Deque]` — двусторонняя очередь
+/// - `[Deque]` — a double-ended queue
 #stable(since = "0.1")
 export type Queue[T] {
     mut inbox  []T   // internal: входная сторона FIFO
@@ -47,7 +47,7 @@ export type Queue[T] {
 // Конструкторы
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Создать пустую очередь.
+/// Create an empty queue.
 #stable(since = "0.1")
 export fn Queue[T].new(cap int = 0) -> Self
     requires cap >= 0
@@ -57,12 +57,12 @@ export fn Queue[T].new(cap int = 0) -> Self
 // Базовые операции
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Число элементов в очереди.
+/// Number of elements in the queue.
 #stable(since = "0.1")
 export fn Queue[T] @len() -> int =>
     @inbox.len() + @outbox.len()
 
-/// Возвращает `true` если очередь пуста.
+/// Returns `true` if the queue is empty.
 #stable(since = "0.1")
 export fn Queue[T] @is_empty() -> bool =>
     @inbox.is_empty() && @outbox.is_empty()
@@ -87,12 +87,12 @@ export fn Queue[T] mut @cap(n int) -> @
 // FIFO-операции
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Добавить элемент в конец очереди. O(1).
+/// Append an element to the end of the queue. O(1).
 #stable(since = "0.1")
 export fn Queue[T] mut @push(item T) -> () =>
     @inbox.push(item)
 
-/// Извлечь элемент из начала очереди (FIFO). O(1) amortized.
+/// Pop an element from the front of the queue (FIFO). O(1) amortized.
 ///
 /// # Examples
 ///
@@ -116,7 +116,7 @@ export fn Queue[T] mut @pop() -> Option[T] {
     @outbox.pop()
 }
 
-/// Посмотреть первый элемент без удаления. `None` если пусто.
+/// Peek the first element without removing it. `None` if empty.
 #stable(since = "0.1")
 export fn Queue[T] @peek() -> Option[T] {
     if !@outbox.is_empty() {
@@ -131,7 +131,7 @@ export fn Queue[T] @peek() -> Option[T] {
     }
 }
 
-/// Очистить очередь.
+/// Clear the queue.
 #stable(since = "0.1")
 export fn Queue[T] mut @clear() -> () {
     @inbox.clear()

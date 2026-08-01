@@ -13,7 +13,7 @@ module time.civil
 // FieldKind — какое поле нарушено (для InvalidField / InvalidValue)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Идентификатор компонента даты/времени в структурной ошибке.
+/// Identifier of the date/time component in a structural error.
 #stable(since = "0.1")
 export type FieldKind enum
     | Year
@@ -26,7 +26,7 @@ export type FieldKind enum
     | OffsetSec
     | Weekday
 
-/// Человекочитаемое имя поля (для сообщений).
+/// Human-readable field name (for messages).
 #stable(since = "0.1")
 export fn FieldKind @name() -> str =>
     match @ {
@@ -45,13 +45,13 @@ export fn FieldKind @name() -> str =>
 // DateError — ошибки построения/арифметики (D321)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Структурная ошибка построения/арифметики календарных величин.
+/// Structural error of building/arithmetic on calendar quantities.
 ///
 /// - `InvalidField(field, given, min, max)` — Feb 30, month 13, hour 25.
-/// - `RangeOverflow(kind)` — civil↔Timestamp вне ±292y окна (D317).
-/// - `Ambiguous(kind)` — `Reject` на DST gap/overlap.
-/// - `UnknownZone(name)` — имя зоны не найдено (Ф.4 tz-загрузка).
-/// - `BadTzData(what)` — повреждённые/неподдерживаемые TZif-байты (Ф.4).
+/// - `RangeOverflow(kind)` — civil↔Timestamp outside the ±292y window (D317).
+/// - `Ambiguous(kind)` — `Reject` on a DST gap/overlap.
+/// - `UnknownZone(name)` — zone name not found (Ф.4 tz loading).
+/// - `BadTzData(what)` — corrupt/unsupported TZif bytes (Ф.4).
 ///
 /// Shape — time-crate `ComponentRange` + java.time `getErrorIndex`.
 #stable(since = "0.1")
@@ -62,7 +62,7 @@ export type DateError enum
     | UnknownZone(str)
     | BadTzData(str)
 
-/// Диагностическое сообщение.
+/// Diagnostic message.
 #stable(since = "0.1")
 export fn DateError @to_str() -> str =>
     match @ {
@@ -79,16 +79,16 @@ export fn DateError @to_str() -> str =>
 // ParseDateTimeError — ошибки разбора текста (D321)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Ошибка разбора ISO-8601/RFC-3339/pattern-строки.
+/// Parse error of an ISO-8601/RFC-3339/pattern string.
 ///
-/// - `FormatMismatch(position, expected)` — структура не совпала.
-/// - `InvalidValue(position, field, given)` — значение вне диапазона.
+/// - `FormatMismatch(position, expected)` — the structure did not match.
+/// - `InvalidValue(position, field, given)` — a value outside the range.
 #stable(since = "0.1")
 export type ParseDateTimeError enum
     | FormatMismatch(int, str)
     | InvalidValue(int, FieldKind, i64)
 
-/// Диагностическое сообщение.
+/// Diagnostic message.
 #stable(since = "0.1")
 export fn ParseDateTimeError @to_str() -> str =>
     match @ {
@@ -111,13 +111,13 @@ export fn ParseDateTimeError @to_str() -> str =>
 // уникальны: конфликт-вариант назван `RejectMismatch` (не `Reject`, как в
 // jiff/Temporal) — спека D321 R2 амендирована.
 
-/// 4-way разрешение рассогласования сохранённого offset с текущими правилами
-/// зоны (post-tzdb-change drift). Только для explicit-offset строк.
+/// 4-way resolution of a mismatch between the stored offset and the current
+/// zone rules (post-tzdb-change drift). Only for explicit-offset strings.
 ///
-/// - `RejectMismatch` (default) — `Err` при расхождении.
-/// - `Use` — доверять сохранённому offset как есть.
-/// - `Prefer` — предпочесть сохранённый, если он валиден для зоны.
-/// - `Ignore` — игнорировать сохранённый, пересчитать по зоне.
+/// - `RejectMismatch` (default) — `Err` on a mismatch.
+/// - `Use` — trust the stored offset as-is.
+/// - `Prefer` — prefer the stored one if it is valid for the zone.
+/// - `Ignore` — ignore the stored one, recompute from the zone.
 #stable(since = "0.1")
 export type OffsetConflict enum
     | RejectMismatch
@@ -125,12 +125,12 @@ export type OffsetConflict enum
     | Prefer
     | Ignore
 
-/// 4-way разрешение неоднозначного локального времени при переходе DST.
+/// 4-way resolution of ambiguous local time during a DST transition.
 ///
-/// - `Compatible` (default) — gap → push-forward на длину gap (after-offset);
-///   overlap → earlier-offset. Совместимо с Temporal/jiff/RFC-5545.
-/// - `Earlier` / `Later` — явный выбор для overlap.
-/// - `Reject` — `Err(Ambiguous)` на любом gap/overlap.
+/// - `Compatible` (default) — gap → push-forward by the gap length (after-offset);
+///   overlap → earlier-offset. Compatible with Temporal/jiff/RFC-5545.
+/// - `Earlier` / `Later` — explicit choice for overlap.
+/// - `Reject` — `Err(Ambiguous)` on any gap/overlap.
 #stable(since = "0.1")
 export type Disambiguation enum
     | Compatible

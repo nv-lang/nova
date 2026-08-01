@@ -18,8 +18,8 @@ module encoding.utf16
 
 // ─── Ошибка декодирования UTF-16 ───
 
-/// Невалидная последовательность UTF-16 code units. Хранит проблемный code
-/// unit (0..0xFFFF) для диагностики.
+/// Invalid sequence of UTF-16 code units. Stores the offending code
+/// unit (0..0xFFFF) for diagnostics.
 export type Utf16Error enum
     | LoneHighSurrogate(int)        // high surrogate без следующего low
     | LoneLowSurrogate(int)         // low surrogate без предшествующего high
@@ -33,8 +33,8 @@ export fn is_high_surrogate(u int) -> bool => u >= 0xD800 && u <= 0xDBFF
 /// Low (trailing) surrogate: U+DC00..=U+DFFF.
 export fn is_low_surrogate(u int) -> bool => u >= 0xDC00 && u <= 0xDFFF
 
-/// Сборка supplementary-codepoint (U+10000..=U+10FFFF) из валидной surrogate-
-/// пары. Caller гарантирует `is_high_surrogate(hi) && is_low_surrogate(lo)`.
+/// Assemble a supplementary codepoint (U+10000..=U+10FFFF) from a valid surrogate
+/// pair. The caller guarantees `is_high_surrogate(hi) && is_low_surrogate(lo)`.
 export fn decode_surrogate_pair(hi int, lo int) -> int
     requires is_high_surrogate(hi)
     requires is_low_surrogate(lo)
@@ -43,9 +43,9 @@ export fn decode_surrogate_pair(hi int, lo int) -> int
 
 // ─── str → UTF-16 ───
 
-/// UTF-16 code units строки. BMP-codepoint → один u16; supplementary
-/// (cp > 0xFFFF) → surrogate-пара (два u16). Аналог Rust `str::encode_utf16`,
-/// JS-строкового представления. Roundtrip: `from_utf16(s.encode_utf16()) == Ok(s)`.
+/// UTF-16 code units of the string. BMP codepoint → one u16; supplementary
+/// (cp > 0xFFFF) → surrogate pair (two u16). Analogous to Rust `str::encode_utf16`
+/// and the JS string representation. Roundtrip: `from_utf16(s.encode_utf16()) == Ok(s)`.
 export fn str @encode_utf16() -> []u16 {
     // capacity hint: code units ≤ byte_len (ASCII=1 байт=1 unit; не-ASCII —
     // меньше units чем байт, кроме supplementary 4 байта→2 units; byte_len —
@@ -66,13 +66,13 @@ export fn str @encode_utf16() -> []u16 {
 
 // ─── UTF-16 → str (checked) ───
 
-/// Декодирование UTF-16 code units в `str`. Валидирует surrogate-пары:
-/// lone high/low или усечённая пара → `Err(Utf16Error)`. На выходе — валидный
-/// UTF-8 (R-UTF8). Аналог Rust `String::from_utf16`.
+/// Decode UTF-16 code units into a `str`. Validates surrogate pairs:
+/// a lone high/low or truncated pair → `Err(Utf16Error)`. The result is valid
+/// UTF-8 (R-UTF8). Analogous to Rust `String::from_utf16`.
 ///
-/// Двухпроходно: сначала валидация в `[]int` codepoint'ов (ранний `Err`
-/// безопасен — нет живого consume-типа), затем построение `str` из codepoint'ов
-/// через `StringBuilder` (потребляется один раз на единственном успешном пути).
+/// Two-pass: first validate into `[]int` codepoints (an early `Err` is safe —
+/// no live consume-typed value), then build the `str` from codepoints
+/// via `StringBuilder` (consumed once on the only successful path).
 export fn str.from_utf16(units []u16) -> Result[str, Utf16Error] {
     ro n = units.len()
     mut cps []int = []int.new(cap: n)

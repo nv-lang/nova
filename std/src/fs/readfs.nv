@@ -22,9 +22,9 @@ import std.io.{IoError, ErrorKind}
 
 // ─── Протокол ───
 
-/// Read-only виртуальная ФС: карта относительный-POSIX-путь → байты.
-/// Ключ — POSIX `/`, case-sensitive, без ведущего `./` (общая конвенция с
-/// `embed_dir`, D412-амендмент §2д).
+/// Read-only virtual FS: a map of relative POSIX path → bytes.
+/// The key — POSIX `/`, case-sensitive, no leading `./` (a shared convention
+/// with `embed_dir`, D412 amendment §2д).
 #stable(since = "0.1")
 export type ReadFs protocol {
     // Байты файла по пути. `Err(IoError{NotFound})` — файла нет; прочие
@@ -42,8 +42,8 @@ export type ReadFs protocol {
 // ─── EmbeddedDir conformance (extension-методы, D287) ───
 // EmbeddedDir/@get/@has приезжают из prelude (D286) — родной API не трогается.
 
-/// `ReadFs`: байты встроенного файла. Чистый (без эффекта) — `EmbeddedDir`
-/// конформит `ReadFs` как pure conformer (прецедент `BytesReader`/`io.Read`).
+/// `ReadFs`: bytes of an embedded file. Pure (no effect) — `EmbeddedDir`
+/// conforms `ReadFs` as a pure conformer (precedent `BytesReader`/`io.Read`).
 #stable(since = "0.1")
 export fn EmbeddedDir @read_file(path str) -> Result[[]u8, IoError] =>
     match @get(path) {
@@ -51,26 +51,27 @@ export fn EmbeddedDir @read_file(path str) -> Result[[]u8, IoError] =>
         None    => Err(IoError.new(ErrorKind.NotFound, "read_file"))
     }
 
-/// `ReadFs`: существование встроенного пути.
+/// `ReadFs`: whether an embedded path exists.
 #stable(since = "0.1")
 export fn EmbeddedDir @path_exists(path str) -> Result[bool, IoError] => Ok(@has(path))
 
 // ─── DirFs — обёртка над реальной ФС с корнем-префиксом ───
 
-/// Read-only вид на поддерево реальной ФС с корнем `root`. Все чтения
-/// ограничены поддеревом `root` (защита от escape — зеркалит решение
-/// `embed_dir` D412-амендмент §2и): лексический `..`-escape отвергается,
-/// симлинк-escape ловится `canonicalize`. `value`-тип (иммутабелен, дёшев в
-/// передаче). Главный кейс — dev-режим (live-reload с диска), тогда как prod
-/// = `EmbeddedDir` тем же кодом (§6б.4).
+/// Read-only view over a real-FS subtree rooted at `root`. All reads are
+/// confined to the `root` subtree (escape protection — mirrors the
+/// `embed_dir` D412 amendment §2и): a lexical `..`-escape is rejected, a
+/// symlink-escape is caught by `canonicalize`. A `value` type (immutable,
+/// cheap to pass). Primary use case — dev mode (live-reload from disk), while
+/// prod = `EmbeddedDir` with the same code (§6б.4).
 #stable(since = "0.1")
 export type DirFs value {
     priv root Path
 }
 
-/// Корень поддерева (обычно `"./frontend".to_path()`). Канонизацию НЕ
-/// делаем в кторе — это `Fs`-эффект, а ктор держим чистым; проверка escape —
-/// на каждом чтении (root мог не существовать в момент конструирования — dev).
+/// Subtree root (usually `"./frontend".to_path()`). Canonicalization is NOT
+/// done in the ctor — it is an `Fs` effect, and we keep the ctor pure; the
+/// escape check happens on every read (root may not have existed at
+/// construction time — dev).
 #stable(since = "0.1")
 export fn DirFs.new(root Path) -> DirFs => { root }
 
@@ -90,16 +91,16 @@ fn boundary_ok(root str, full str) -> bool {
     rest.starts_with("/") || rest.starts_with("\\")
 }
 
-/// Разрешить ключ запроса в ОГРАНИЧЕННЫЙ корнем абсолютный путь, или `Err`.
-/// Инвариант «результат всегда внутри `realpath(root)`»:
-///   1) лексически: `normalize` (схлопнуть `.`/`..`); отвергнуть абсолютный и
-///      сохранившийся ведущий `..` (относительный путь может унести `..`
-///      вверх — path.nv `@normalize`);
-///   2) симлинк-hard: `canonicalize(root)` и `canonicalize(join)` → требуем
-///      component-граничный префикс (симлинк внутри дерева, указывающий
-///      наружу, отсекается — realpath его резолвит).
-/// `canonicalize` `NotFound` на несуществующем пробрасывается как `NotFound`
-/// (→ 404 у потребителя).
+/// Resolve a request key to a ROOT-CONFINED absolute path, or `Err`.
+/// Invariant: the result is always inside `realpath(root)`:
+///   1) lexically: `normalize` (collapse `.`/`..`); reject an absolute path
+///      and a surviving leading `..` (a relative path can carry `..` upward —
+///      path.nv `@normalize`);
+///   2) symlink-hard: `canonicalize(root)` and `canonicalize(join)` → require
+///      a component-boundary prefix (a symlink inside the tree pointing
+///      outward is cut off — realpath resolves it).
+/// `canonicalize` `NotFound` on a nonexistent path is propagated as `NotFound`
+/// (→ 404 to the consumer).
 fn DirFs @resolve(path str) Fs -> Result[Path, IoError] {
     ro rel = Path.posix(path).normalize()
     if rel.is_absolute() {
@@ -120,14 +121,14 @@ fn DirFs @resolve(path str) Fs -> Result[Path, IoError] {
     }
 }
 
-/// `ReadFs`: байты файла (эффект `Fs` — всплывает при mono; протокол его НЕ
-/// объявляет).
+/// `ReadFs`: bytes of a file (effect `Fs` — surfaces at mono; the protocol
+/// does NOT declare it).
 #stable(since = "0.1")
 export fn DirFs @read_file(path str) Fs -> Result[[]u8, IoError] {
     match @resolve(path) { Ok(p) => read(p), Err(e) => Err(e) }
 }
 
-/// `ReadFs`: существование (NotFound-escape → `Ok(false)`, прочее — `Err`).
+/// `ReadFs`: existence (NotFound-escape → `Ok(false)`, anything else — `Err`).
 #stable(since = "0.1")
 export fn DirFs @path_exists(path str) Fs -> Result[bool, IoError] {
     match @resolve(path) {

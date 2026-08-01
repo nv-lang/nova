@@ -17,13 +17,13 @@ module collections.linkedlist
 // Тип
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Односвязный список через рекурсивный sum-type (ML-стиль).
+/// A singly-linked list via a recursive sum type (ML-style).
 ///
-/// Структурно: `Empty | Cons(head, tail)`. Память управляется GC — узлы
-/// освобождаются автоматически при недостижимости.
+/// Structurally: `Empty | Cons(head, tail)`. Memory is managed by the GC — nodes
+/// are freed automatically once unreachable.
 ///
-/// Для большинства задач `[]T` эффективнее. `LinkedList` — каноническая
-/// иллюстрация sum-recursion и pattern matching в Nova.
+/// For most tasks `[]T` is more efficient. `LinkedList` is the canonical
+/// illustration of sum-recursion and pattern matching in Nova.
 ///
 /// # Examples
 ///
@@ -37,8 +37,8 @@ module collections.linkedlist
 ///
 /// # See Also
 ///
-/// - `[Deque]` — двусторонняя очередь на массиве
-/// - `[Queue]` — FIFO очередь через два массива
+/// - `[Deque]` — an array-based double-ended queue
+/// - `[Queue]` — a two-array FIFO queue
 #stable(since = "0.1")
 export type LinkedList[T] enum
     | Empty
@@ -48,11 +48,11 @@ export type LinkedList[T] enum
 // Конструкторы
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Создать пустой список.
+/// Create an empty list.
 #stable(since = "0.1")
 export fn LinkedList[T].new() -> Self => Empty
 
-/// Построить список из массива. Порядок сохраняется.
+/// Build a list from an array. Order is preserved.
 ///
 /// # Examples
 ///
@@ -71,13 +71,13 @@ export fn LinkedList[T].from_array(xs []T) -> Self {
     acc
 }
 
-/// Построить список из массива-подобного источника. Порядок сохраняется.
+/// Build a list from an array-like source. Order is preserved.
 ///
-/// [M-91.1-set-from-iter-iterable-param] (зеркало `Set[T].from_iter` /
-/// `HashMap.from`): принимает конкретный `[]T`, не generic-протокол
-/// `Iter[T]` — последний стирается в `void*` в mono'd generic-теле, и
-/// `for-in` не мог восстановить C-тип итератора. Массив итерируется
-/// корректно для любого типа элемента.
+/// [M-91.1-set-from-iter-iterable-param] (a mirror of `Set[T].from_iter` /
+/// `HashMap.from`): takes a concrete `[]T`, not the generic `Iter[T]`
+/// protocol — the latter is erased to `void*` in a mono'd generic body, and
+/// `for-in` could not recover the iterator's C type. An array iterates
+/// correctly for any element type.
 #stable(since = "0.1")
 export fn LinkedList[T].from_iter(items []T) -> Self {
     // Prepend каждый элемент → получаем обратный список (O(1) на шаг).
@@ -93,7 +93,7 @@ export fn LinkedList[T].from_iter(items []T) -> Self {
 // Базовые операции
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Длина списка. O(n).
+/// Length of the list. O(n).
 #stable(since = "0.1")
 export fn LinkedList[T] @len() -> int =>
     match @ {
@@ -101,7 +101,7 @@ export fn LinkedList[T] @len() -> int =>
         Cons(_, t)  => 1 + t.len()
     }
 
-/// Возвращает `true` если список пуст.
+/// Returns `true` if the list is empty.
 #stable(since = "0.1")
 export fn LinkedList[T] @is_empty() -> bool =>
     match @ {
@@ -109,7 +109,7 @@ export fn LinkedList[T] @is_empty() -> bool =>
         Cons(..) => false                // partial: все поля игнорируются
     }
 
-/// Первый элемент или `None` для пустого списка.
+/// The first element, or `None` for an empty list.
 #stable(since = "0.1")
 export fn LinkedList[T] @head() -> Option[T] =>
     match @ {
@@ -117,7 +117,7 @@ export fn LinkedList[T] @head() -> Option[T] =>
         Cons(h, _)  => Some(h)
     }
 
-/// Список без первого элемента. Возвращает `Empty` для пустого списка.
+/// The list without its first element. Returns `Empty` for an empty list.
 #stable(since = "0.1")
 export fn LinkedList[T] @tail() -> Self =>
     match @ {
@@ -129,14 +129,14 @@ export fn LinkedList[T] @tail() -> Self =>
 // Конструкция
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Добавить элемент в начало списка. O(1).
+/// Prepend an element to the list. O(1).
 #stable(since = "0.1")
 export fn LinkedList[T] @prepend(x T) -> Self =>
     Cons(x, @)
 
-/// Добавить элемент в конец списка. O(n).
+/// Append an element to the end of the list. O(n).
 ///
-/// Для частых append предпочтительнее использовать `[]T`.
+/// For frequent appends, prefer `[]T`.
 #stable(since = "0.1")
 export fn LinkedList[T] @append(x T) -> Self =>
     match @ {
@@ -148,7 +148,7 @@ export fn LinkedList[T] @append(x T) -> Self =>
 // Операции трансформации
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Обратить порядок элементов. O(n) через accumulator без рекурсии.
+/// Reverse the element order. O(n) via an accumulator without recursion.
 #stable(since = "0.1")
 export fn LinkedList[T] @reversed() -> Self {
     mut acc = Empty
@@ -166,7 +166,7 @@ export fn LinkedList[T] @reversed() -> Self {
     acc
 }
 
-/// Применить функцию к каждому элементу, вернуть новый список. O(n).
+/// Apply a function to each element, returning a new list. O(n).
 #stable(since = "0.1")
 export fn LinkedList[T] @map[U](f fn(T) -> U) -> LinkedList[U] =>
     match @ {
@@ -174,7 +174,7 @@ export fn LinkedList[T] @map[U](f fn(T) -> U) -> LinkedList[U] =>
         Cons(h, t)  => Cons(f(h), t.map(f))
     }
 
-/// Вернуть список из элементов, для которых `pred` возвращает `true`. O(n).
+/// Return a list of the elements for which `pred` returns `true`. O(n).
 #stable(since = "0.1")
 export fn LinkedList[T] @filter(pred fn(T) -> bool) -> Self =>
     match @ {
@@ -183,7 +183,7 @@ export fn LinkedList[T] @filter(pred fn(T) -> bool) -> Self =>
                        else        { t.filter(pred) }
     }
 
-/// Свернуть список слева направо через `f(acc, elem)`. O(n).
+/// Fold the list left-to-right through `f(acc, elem)`. O(n).
 ///
 /// # Examples
 ///
@@ -202,7 +202,7 @@ export fn LinkedList[T] @fold[Acc](init Acc, f fn(Acc, T) -> Acc) -> Acc =>
 // Конкатенация — operator overloading (D46)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Конкатенация `a + b`. O(len(a)).
+/// Concatenation `a + b`. O(len(a)).
 #stable(since = "0.1")
 export fn LinkedList[T] @plus(other Self) -> Self =>
     match @ {

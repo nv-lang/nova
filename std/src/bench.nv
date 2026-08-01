@@ -58,52 +58,52 @@ module std.bench
 
 // ─── bench namespace ────────────────────────────────────────────────────
 
-/// Black-box barrier — предотвращает dead-code elimination в benchmarks.
-/// Аналог Criterion `hint::black_box`, Go `runtime.KeepAlive`. Zero runtime cost.
+/// Black-box barrier — prevents dead-code elimination in benchmarks.
+/// Analogue of Criterion `hint::black_box`, Go `runtime.KeepAlive`. Zero runtime cost.
 #stable(since = "0.1")
 export extern "nova" fn bench.opaque[T](v T) -> T
 
-/// Current iters_per_sample (adaptive sampling). Для manual batch-loops
-/// `for i in 0..bench.iterations()`. Вне measure-блока → 0.
+/// Current iters_per_sample (adaptive sampling). For manual batch-loops
+/// `for i in 0..bench.iterations()`. Outside a measure-block → 0.
 #stable(since = "0.1")
 export extern "nova" fn bench.iterations() -> int
 
-/// Reset sample timer к current. Для excludeить setup-код из timing window.
-/// Аналог Go `b.ResetTimer()`.
+/// Reset the sample timer to now. To exclude setup code from the timing window.
+/// Analogue of Go `b.ResetTimer()`.
 #stable(since = "0.1")
 export extern "nova" fn bench.reset_timer() -> ()
 
-/// Throughput annotation: bytes per iter. CLI вычисляет MB/s. Аналог Go `b.SetBytes`.
+/// Throughput annotation: bytes per iter. The CLI computes MB/s. Analogue of Go `b.SetBytes`.
 #stable(since = "0.1")
 export extern "nova" fn bench.bytes(n int) -> ()
 
-/// Throughput annotation: elements per iter. CLI вычисляет elem/s. Аналог
+/// Throughput annotation: elements per iter. The CLI computes elem/s. Analogue of
 /// Criterion `Throughput::Elements`.
 #stable(since = "0.1")
 export extern "nova" fn bench.elements(n int) -> ()
 
-/// Snapshot total allocs since program start. CLI считает per-iter
+/// Snapshot total allocs since program start. The CLI computes per-iter
 /// alloc count = (post - pre) / total_iters.
 #stable(since = "0.1")
 export extern "nova" fn bench.allocs() -> int
 
-/// High-resolution monotonic timer в ns. libuv `uv_hrtime` под NOVA_USE_LIBUV,
-/// иначе platform-native (QPC / mach_absolute_time / CLOCK_MONOTONIC_RAW).
+/// High-resolution monotonic timer in ns. libuv `uv_hrtime` under NOVA_USE_LIBUV,
+/// otherwise platform-native (QPC / mach_absolute_time / CLOCK_MONOTONIC_RAW).
 #stable(since = "0.1")
 export extern "nova" fn bench.now_ns() -> int
 
-/// Plan 57.G.5 — Custom metric value. Каждый вызов emits ONE sample;
-/// CLI aggregates все calls per-bench → JSON `custom_metrics[]` field
-/// с count/min/max/sum/median.
+/// Plan 57.G.5 — Custom metric value. Each call emits ONE sample;
+/// the CLI aggregates all calls per-bench → JSON `custom_metrics[]` field
+/// with count/min/max/sum/median.
 ///
-/// `name` — короткий identifier (e.g. "cache_hits", "lock_contention_ms"),
-/// `value` — int значение, `unit` — short text suffix для display.
-/// Use case: domain metrics не covered built-in (throughput/allocs/
-/// cpu_instr); closes biggest gap vs Go `b.ReportMetric`.
+/// `name` — a short identifier (e.g. "cache_hits", "lock_contention_ms"),
+/// `value` — an int value, `unit` — a short text suffix for display.
+/// Use case: domain metrics not covered built-in (throughput/allocs/
+/// cpu_instr); closes the biggest gap vs Go `b.ReportMetric`.
 ///
-/// Тонкость: вызывается inside `measure {}` body → один call на iteration.
-/// При iters_per_sample=100, samples_count=30 → 3000 metric samples total.
-/// Для per-sample-end metric: call после внутреннего loop:
+/// Subtlety: called inside the `measure {}` body → one call per iteration.
+/// With iters_per_sample=100, samples_count=30 → 3000 metric samples total.
+/// For a per-sample-end metric: call after the inner loop:
 ///   measure {
 ///       let n = bench.iterations()
 ///       let mut hits = 0

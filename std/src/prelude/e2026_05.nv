@@ -45,8 +45,8 @@ export import std.collections.range.{Range, RangeIter}
 export import std.prelude.protocols.{Hash, Equal, Compare, Display}
 export import std.prelude.effects.{Fail, Time, Mem}
 
-/// Edition pin marker для verification что resolver выбрал edition vs
-/// rolling facade. Snapshot version = 5 (matches rolling on
-/// 2026-05-18, post Plan 62.F.bis Ф.3 — Time/Mem added).
+/// Edition pin marker to verify that the resolver picked the edition
+/// facade instead of the rolling one. Snapshot version = 5 (matches
+/// rolling on 2026-05-18, post Plan 62.F.bis Ф.3 — Time/Mem added).
 #stable(since = "0.1")
 export const PRELUDE_EDITION_2026_05 = 5

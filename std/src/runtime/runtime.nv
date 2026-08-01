@@ -51,136 +51,136 @@ module runtime.runtime
 
 // ─── runtime namespace ──────────────────────────────────────────
 
-/// ARM M:N runtime с целевым числом `n` worker threads.
+/// An M:N runtime with a target number of `n` worker threads.
 ///
 /// `n = 0` → auto-detect (`NOVA_MAXPROCS` / `uv_available_parallelism()`).
 ///
-/// **Lazy (Plan 83.1 Ф.4, D137):** `init` НЕ создаёт worker-потоки — лишь
-/// фиксирует целевое число. Пул материализуется на первом `spawn`. До
-/// первого spawn повторный `init` валидно переопределяет цель; после
-/// материализации `init` — диагностируемый no-op на stderr.
+/// **Lazy (Plan 83.1 Ф.4, D137):** `init` does NOT create worker threads — it only
+/// fixes the target number. The pool materializes on the first `spawn`. Until
+/// the first spawn a repeated `init` validly redefines the target; after
+/// materialization `init` is a diagnosed no-op on stderr.
 ///
-/// Каждый worker (после материализации) имеет:
-/// - собственный libuv event loop;
-/// - собственный fiber scope (worker-local push queue);
-/// - собственную fiber arena (Plan 44.2 Linux/macOS — lazily init per thread).
+/// Each worker (after materialization) has:
+/// - its own libuv event loop;
+/// - its own fiber scope (worker-local push queue);
+/// - its own fiber arena (Plan 44.2 Linux/macOS — lazily init per thread).
 ///
 /// # Effects
 ///
-/// Сам по себе потоков не порождает — пул поднимается на первом `spawn`.
+/// By itself does not spawn threads — the pool comes up on the first `spawn`.
 ///
 /// # See Also
 ///
-/// - `[runtime.shutdown]` — остановить workers
-/// - `[runtime.maxprocs]` — целевое число workers
-/// - `[runtime.worker_count]` — фактически поднятые workers
+/// - `[runtime.shutdown]` — stop the workers
+/// - `[runtime.maxprocs]` — target number of workers
+/// - `[runtime.worker_count]` — workers actually raised
 #stable(since = "0.1")
 export extern "nova" fn runtime.init(n int) -> ()
 
 /// Graceful shutdown M:N runtime.
 ///
-/// Signal stop → join workers → free resources. После shutdown повторный
-/// `[runtime.init]` стартует новые workers.
+/// Signal stop → join workers → free resources. After shutdown a repeated
+/// `[runtime.init]` starts new workers.
 ///
-/// **Plan 83.1 Ф.4:** вызывается автоматически на выходе процесса
-/// (через `atexit` — нормальный return из main и `exit()`). Явный
-/// вызов опционален; идемпотентен.
+/// **Plan 83.1 Ф.4:** called automatically on process exit
+/// (via `atexit` — normal return from main and `exit()`). Explicit
+/// calls are optional; idempotent.
 ///
 /// # Effects
 ///
-/// Блокирует до завершения всех worker threads.
+/// Blocks until all worker threads have finished.
 ///
 /// # See Also
 ///
-/// - `[runtime.init]` — запустить runtime
-/// - `[runtime.is_initialized]` — проверить состояние
+/// - `[runtime.init]` — start the runtime
+/// - `[runtime.is_initialized]` — check the state
 #stable(since = "0.1")
 export extern "nova" fn runtime.shutdown() -> ()
 
-/// Число currently running worker threads.
+/// Number of currently running worker threads.
 ///
-/// Возвращает `0` если runtime не инициализирован.
+/// Returns `0` if the runtime is not initialized.
 ///
 /// # See Also
 ///
-/// - `[runtime.init]` — запустить runtime
-/// - `[runtime.maxprocs]` — целевое (а не фактическое) число worker'ов
-/// - `[runtime.is_initialized]` — bool-проверка
+/// - `[runtime.init]` — start the runtime
+/// - `[runtime.maxprocs]` — the target (not actual) number of workers
+/// - `[runtime.is_initialized]` — bool check
 #stable(since = "0.1")
 export extern "nova" fn runtime.worker_count() -> int
 
-/// Целевое число worker-потоков (аналог Go `runtime.GOMAXPROCS(-1)`).
+/// Target number of worker threads (analogous to Go `runtime.GOMAXPROCS(-1)`).
 ///
-/// Отличается от `[runtime.worker_count]`: `maxprocs()` — **цель**
-/// (резолвится из `NOVA_MAXPROCS` / auto-detect даже до `runtime.init`),
-/// `worker_count()` — фактически поднятые потоки.
+/// Differs from `[runtime.worker_count]`: `maxprocs()` — the **target**
+/// (resolved from `NOVA_MAXPROCS` / auto-detect even before `runtime.init`),
+/// `worker_count()` — the threads actually raised.
 ///
-/// Порядок разрешения: explicit `runtime.init(n)` > ENV `NOVA_MAXPROCS`
-/// > `uv_available_parallelism()`. Результат всегда в диапазоне [1, 1024].
+/// Resolution order: explicit `runtime.init(n)` > ENV `NOVA_MAXPROCS`
+/// > `uv_available_parallelism()`. The result is always in the range [1, 1024].
 ///
 /// # See Also
 ///
-/// - `[runtime.worker_count]` — фактически поднятые worker'ы
-/// - `[runtime.init]` — запустить runtime
+/// - `[runtime.worker_count]` — the workers actually raised
+/// - `[runtime.init]` — start the runtime
 #stable(since = "0.1")
 export extern "nova" fn runtime.maxprocs() -> int
 
-/// Проверить, активен ли M:N runtime.
+/// Check whether the M:N runtime is active.
 ///
-/// Используется для conditional code paths в тестах, branched на
+/// Used for conditional code paths in tests, branched on
 /// single-thread vs M:N behavior.
 ///
 /// # See Also
 ///
-/// - `[runtime.init]` — запустить runtime
-/// - `[runtime.worker_count]` — число workers
+/// - `[runtime.init]` — start the runtime
+/// - `[runtime.worker_count]` — number of workers
 #stable(since = "0.1")
 export extern "nova" fn runtime.is_initialized() -> bool
 
 /// Current worker ID (0..n_workers-1).
 ///
-/// Возвращает `-1` если вызвано из main thread (не из worker fiber).
-/// Полезно для diagnostic — на каком worker'е выполняется fiber.
+/// Returns `-1` if called from the main thread (not from a worker fiber).
+/// Useful for diagnostics — which worker the fiber is running on.
 ///
 /// # See Also
 ///
-/// - `[runtime.worker_count]` — общее число workers
+/// - `[runtime.worker_count]` — total number of workers
 #stable(since = "0.1")
 export extern "nova" fn runtime.current_worker_id() -> int
 
 /// Plan 83.4.5.2 Ф.2 (2026-05-23): Drain orphan fiber pool synchronously.
 ///
-/// `detach { body }` под D50 — fire-and-forget primitive. Orphan fibers
-/// исполняются в global orphan-scope (bootstrap cooperative) либо worker
-/// pool (armed M:N). Drain forces synchronous completion всех pending
-/// orphan'ов — analog Go `sync.WaitGroup.Wait()` для anonymous-spawn'ов.
+/// `detach { body }` under D50 — a fire-and-forget primitive. Orphan fibers
+/// run in the global orphan-scope (bootstrap cooperative) or the worker
+/// pool (armed M:N). Drain forces synchronous completion of all pending
+/// orphans — analogous to Go `sync.WaitGroup.Wait()` for anonymous spawns.
 ///
-/// Используется:
-/// - В test-suite для explicit-sync между `detach { side_effect }` и
-///   последующим assert. Альтернатива — channel-based sync.
-/// - На graceful shutdown (atexit регистрирует автоматический drain — но
-///   user может вызвать раньше, например после batch-detach'ей).
+/// Used:
+/// - In test suites for explicit sync between `detach { side_effect }` and
+///   a subsequent assert. Alternative — channel-based sync.
+/// - On graceful shutdown (atexit registers an automatic drain — but
+///   the user can call it earlier, e.g. after batch detaches).
 ///
-/// Idempotent: empty orphan pool — no-op (быстрый return).
+/// Idempotent: empty orphan pool — no-op (fast return).
 ///
 /// # See Also
 ///
 /// - `detach { body }` — D50 fire-and-forget spawn primitive.
-/// - `[supervised]` — structured-concurrency alternative с automatic join.
+/// - `[supervised]` — structured-concurrency alternative with automatic join.
 #stable(since = "0.1")
 export extern "nova" fn runtime.drain_orphans() -> ()
 
-/// Кооперативный yield — suspend текущего fiber, дать run другим.
+/// Cooperative yield — suspend the current fiber, let others run.
 ///
-/// В single-thread режиме: эквивалентен resume scheduler'а.
-/// В M:N режиме: fiber ставится в deque воркера; любой worker может
-/// подобрать его следующим (work-stealing).
+/// In single-thread mode: equivalent to resuming the scheduler.
+/// In M:N mode: the fiber is placed into the worker's deque; any worker can
+/// pick it up next (work-stealing).
 ///
-/// Outside fiber context: no-op. Проверяет `cancel_requested` перед yield.
-/// Полезно для CPU-bound циклов чтобы не starve другие fibers на том же worker'е.
+/// Outside fiber context: no-op. Checks `cancel_requested` before yield.
+/// Useful for CPU-bound loops so as not to starve other fibers on the same worker.
 ///
 /// # Effects
 ///
-/// Выполняет cooperative context switch.
+/// Performs a cooperative context switch.
 #stable(since = "0.1")
 export extern "nova" fn runtime.yield() -> ()

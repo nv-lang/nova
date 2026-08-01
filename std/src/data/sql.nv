@@ -24,7 +24,7 @@ import std.text          // []str @join(sep) — используется в sql
 // D55 literal coercion: `[42, "alice", true]` в позиции `[]SqlValue`
 // раскрывается в `[I(42), S("alice"), B(true)]` автоматически.
 /// SQL value variants: int, float, string, bool, bytes, null. D55 coercion:
-/// `[42, "alice"]` → `[I(42), S("alice")]` автоматически в позиции `[]SqlValue`.
+/// `[42, "alice"]` → `[I(42), S("alice")]` automatically in a `[]SqlValue` position.
 #stable(since = "0.1")
 // Plan 221.1 (E_DEBUG_PRINTABLE_NOT_IMPLEMENTED audit): `@expect_*` methods
 // below interpolate the receiver bare via `${@:?}` (Debug) in their error
@@ -40,8 +40,8 @@ export type SqlValue enum
     | Bytes([]u8)
     | Null
 
-/// SQL fragment: template + args. Параметры передаются драйверу отдельно
-/// от template — **SQL injection невозможен**.
+/// SQL fragment: template + args. Parameters are passed to the driver separately
+/// from the template — **SQL injection is impossible**.
 ///
 /// # Examples
 /// ```nova
@@ -63,7 +63,7 @@ export type Sql {
 //
 // Используется query-builder'ом для динамического WHERE/ORDER BY: каждый
 // предикат — отдельный Sql, в конце всё сшивается в один.
-/// Concat два Sql фрагмента (space-separated). Args сцепляются по порядку.
+/// Concat two Sql fragments (space-separated). Args are chained in order.
 #stable(since = "0.1")
 export fn Sql @concat(other Sql) -> Sql =>
     {
@@ -71,7 +71,7 @@ export fn Sql @concat(other Sql) -> Sql =>
         args:     [...@args, ...other.args],
     }
 
-/// Concat many Sql фрагментов через separator. AND-chains: `concat_many(preds, " AND ")`.
+/// Concat many Sql fragments with a separator. AND-chains: `concat_many(preds, " AND ")`.
 #stable(since = "0.1")
 export fn Sql.concat_many(parts []Sql, sep str) -> Sql {
     if parts.len() == 0 { return { template: "", args: [] } }
@@ -95,8 +95,8 @@ export fn Sql.concat_many(parts []Sql, sep str) -> Sql {
 // с уже существующим WHERE. Реальная stdlib-версия делала бы parsing,
 // чтобы корректно вставлять в любые позиции (включая UNION, подзапросы);
 // здесь — упрощённо ради читаемости.
-/// Append `AND (<predicate>)` к WHERE-секции. Используется handler-декораторами
-/// (soft-delete, multi-tenancy) для прозрачной фильтрации.
+/// Append `AND (<predicate>)` to the WHERE clause. Used by handler decorators
+/// (soft-delete, multi-tenancy) for transparent filtering.
 #stable(since = "0.1")
 export fn Sql @with_filter(predicate Sql) -> Sql =>
     {
@@ -114,8 +114,8 @@ export fn Sql @with_filter(predicate Sql) -> Sql =>
 //
 // Template получается соединением `parts` через `?`-плейсхолдер, args
 // проходят как параметры запроса.
-/// D48 tag function для `sql` template literal. Сегменты `parts` соединяются
-/// через `?`-placeholders. Args передаются как параметры запроса.
+/// D48 tag function for the `sql` template literal. The `parts` segments are joined
+/// with `?` placeholders. Args are passed as query parameters.
 #stable(since = "0.1")
 export fn sql(parts []str, args []SqlValue) -> Sql =>
     { template: parts.join("?"), args }
@@ -128,8 +128,8 @@ export fn sql(parts []str, args []SqlValue) -> Sql =>
 // конструирует Sql через тег (безопасно), Db исполняет.
 //
 // В тестах handler заменяется на in-memory; никаких mock-библиотек.
-/// `Db` effect — стандартный handler для database operations. В тестах
-/// заменяется на in-memory; никаких mock-библиотек.
+/// `Db` effect — the standard handler for database operations. In tests
+/// it is replaced with in-memory; no mock libraries.
 #stable(since = "0.1")
 export type Db effect {
     query(q Sql) Fail[DbError] -> []DbRow
@@ -137,7 +137,7 @@ export type Db effect {
     in_transaction[T, E](body fn() Db Fail[E] -> T) Db Fail[E] -> T
 }
 
-/// Errors при выполнении DB operations.
+/// Errors when running DB operations.
 #stable(since = "0.1")
 export type DbError enum Connection | Constraint(str) | Timeout | Other(str)
 
@@ -155,7 +155,7 @@ export type DbRow {
     ro values  []SqlValue
 }
 
-/// Get column value by name. `None` если column отсутствует.
+/// Get column value by name. `None` if the column is missing.
 #stable(since = "0.1")
 export fn DbRow @get(name str) -> Option[SqlValue] {
     mut i = 0
@@ -180,7 +180,7 @@ export fn DbRow @at(i int) -> Option[SqlValue] => @values.get(i)
 // Возврат `Result[_, DbError]`, чтобы ошибки парсинга поднимались как
 // DbError (Constraint), а не молча возвращали None.
 
-/// Extract i64 или `Err(Constraint)`. Используется from-row парсерами.
+/// Extract i64 or `Err(Constraint)`. Used by from-row parsers.
 #stable(since = "0.1")
 export fn SqlValue @expect_int() -> Result[i64, DbError] =>
     match @ {
@@ -194,7 +194,7 @@ export fn SqlValue @expect_int() -> Result[i64, DbError] =>
         _    => Err(DbError.Constraint("expected I, got ${@:?}"))
     }
 
-/// Extract str или `Err(Constraint)`.
+/// Extract str or `Err(Constraint)`.
 #stable(since = "0.1")
 export fn SqlValue @expect_str() -> Result[str, DbError] =>
     match @ {
@@ -202,7 +202,7 @@ export fn SqlValue @expect_str() -> Result[str, DbError] =>
         _    => Err(DbError.Constraint("expected S, got ${@:?}"))
     }
 
-/// Extract bool или `Err(Constraint)`.
+/// Extract bool or `Err(Constraint)`.
 #stable(since = "0.1")
 export fn SqlValue @expect_bool() -> Result[bool, DbError] =>
     match @ {
@@ -210,7 +210,7 @@ export fn SqlValue @expect_bool() -> Result[bool, DbError] =>
         _    => Err(DbError.Constraint("expected B, got ${@:?}"))
     }
 
-/// Extract f64 или `Err(Constraint)`. INT→FLOAT promotion разрешена.
+/// Extract f64 or `Err(Constraint)`. INT→FLOAT promotion is allowed.
 #stable(since = "0.1")
 export fn SqlValue @expect_f64() -> Result[f64, DbError] =>
     match @ {
@@ -219,7 +219,7 @@ export fn SqlValue @expect_f64() -> Result[f64, DbError] =>
         _    => Err(DbError.Constraint("expected F/I, got ${@:?}"))
     }
 
-/// Extract i64 в `Option` (NULL → None) — для NULL-able колонок.
+/// Extract i64 into an `Option` (NULL → None) — for NULL-able columns.
 #stable(since = "0.1")
 export fn SqlValue @as_int() -> Option[i64] => // [M-d410-as-to-migration]
     match @ {
@@ -227,7 +227,7 @@ export fn SqlValue @as_int() -> Option[i64] => // [M-d410-as-to-migration]
         _    => None
     }
 
-/// Extract str в `Option` (NULL → None).
+/// Extract str into an `Option` (NULL → None).
 #stable(since = "0.1")
 export fn SqlValue @str() -> Option[str] =>
     match @ {
@@ -235,7 +235,7 @@ export fn SqlValue @str() -> Option[str] =>
         _    => None
     }
 
-/// Get column by name + expect i64. `Err(Constraint)` если column missing/wrong type.
+/// Get column by name + expect i64. `Err(Constraint)` if column is missing/wrong type.
 #stable(since = "0.1")
 export fn DbRow @get_int(name str) -> Result[i64, DbError] =>
     match @get(name) {
@@ -269,7 +269,7 @@ export fn DbRow @get_bool(name str) -> Result[bool, DbError] =>
 //
 // Все методы — chainable: возвращают `SqlBuilder`. Финальный `.build()`
 // собирает Sql.
-/// Dynamic SQL builder через method chain. Альтернатива конкатенации строк.
+/// Dynamic SQL builder via method chain. An alternative to string concatenation.
 ///
 /// # Examples
 /// ```nova
@@ -285,7 +285,7 @@ export type SqlBuilder {
     suffix     Option[Sql]      // ORDER BY / LIMIT / OFFSET
 }
 
-/// Init SqlBuilder с базовым SELECT-фрагментом.
+/// Init SqlBuilder with a base SELECT fragment.
 #stable(since = "0.1")
 export fn Sql.builder(base Sql) -> SqlBuilder =>
     { base, predicates: [], suffix: None }
@@ -312,21 +312,21 @@ export fn SqlBuilder mut @where_in(col str, values []SqlValue) -> SqlBuilder {
     @
 }
 
-/// Escape hatch: вставить произвольный Sql-фрагмент как predicate. Chainable.
+/// Escape hatch: insert an arbitrary Sql fragment as a predicate. Chainable.
 #stable(since = "0.1")
 export fn SqlBuilder mut @where_raw(predicate Sql) -> SqlBuilder {
     @predicates.push(predicate)
     @
 }
 
-/// Set suffix — ORDER BY / LIMIT / OFFSET одним блоком. Chainable.
+/// Set suffix — ORDER BY / LIMIT / OFFSET in one block. Chainable.
 #stable(since = "0.1")
 export fn SqlBuilder mut @set_suffix(s Sql) -> SqlBuilder {
     @suffix = Some(s)
     @
 }
 
-/// Build finальный Sql. Соединяет base + AND-predicates + suffix.
+/// Build the final Sql. Joins base + AND-predicates + suffix.
 #stable(since = "0.1")
 export fn SqlBuilder @build() -> Sql {
     ro body = if @predicates.len() == 0 {

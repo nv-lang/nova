@@ -21,7 +21,7 @@ import std.collections.range.{Range}
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Zero-copy sub-range view — the slice `[r.start, r.end)` over the same
-/// backing buffer. Powers `v[a..b]` (Plan 194 Ф.3 vrange-роутинг, closes
+/// backing buffer. Powers `v[a..b]` (Plan 194 Ф.3 vrange-routing, closes
 /// [M-172.14-vrange-nv-route]): `emit_c.rs` synthesizes `v.index(range)` for
 /// `v[a..b]` and dispatches here through the normal method-call path — there
 /// is no more codegen range-slice intrinsic (`nova_vec_slice_chk`/`_nochk`

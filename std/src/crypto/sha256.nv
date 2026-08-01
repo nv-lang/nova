@@ -32,8 +32,8 @@ import std.encoding.hex.{Hex}
 // State
 // ──────────────────────────────────────────────────────────────────────────
 
-/// SHA-256 hash state (FIPS 180-4). **Secure** для cryptographic integrity,
-/// signatures, HMAC. Preferred over MD5/SHA-1 для new code.
+/// SHA-256 hash state (FIPS 180-4). **Secure** for cryptographic integrity,
+/// signatures, HMAC. Preferred over MD5/SHA-1 for new code.
 #stable(since = "0.1")
 export type Sha256 {
     mut h [8]u32                       // hash state H0..H7
@@ -81,7 +81,7 @@ fn k_constant(i int) -> u32 {
 // API
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Init SHA-256 state с FIPS 180-4 standard IVs.
+/// Init SHA-256 state with FIPS 180-4 standard IVs.
 #stable(since = "0.1")
 export fn Sha256.new() -> Self =>
     {
@@ -98,14 +98,14 @@ export fn Sha256.hash(data []u8) -> [32]u8 {
     state.finalize()
 }
 
-/// One-shot SHA-256 hash в lowercase hex string (64 chars).
+/// One-shot SHA-256 hash in a lowercase hex string (64 chars).
 #stable(since = "0.1")
 export fn Sha256.hash_str(data []u8) -> str {
     ro digest = Sha256.hash(data)
     Hex.encode(digest[0..32])
 }
 
-/// Incremental update — feed bytes в state.
+/// Incremental update — feed bytes into the state.
 #stable(since = "0.1")
 export fn Sha256 mut @update(data []u8) -> () {
     // Plan 206 Ф.2 (D423): FIPS 180-4 длина в битах mod 2^64 — модульная

@@ -59,38 +59,38 @@ module runtime.gc
 
 // ─── gc namespace ───────────────────────────────────────────────────────
 
-/// Размер heap в байтах.
+/// Heap size in bytes.
 ///
-/// Под malloc backend всегда возвращает `0` (honest sentinel «backend не
-/// поддерживает introspection»). Под Boehm возвращает `GC_get_heap_size()`.
+/// With the malloc backend always returns `0` (honest sentinel "backend does not
+/// support introspection"). With Boehm returns `GC_get_heap_size()`.
 ///
-/// Тесты могут использовать `if gc.heap_size() == 0 { ... skip ... }`
-/// для differential-behaviour по backend.
+/// Tests can use `if gc.heap_size() == 0 { ... skip ... }`
+/// for backend-dependent differential behaviour.
 ///
 /// # See Also
 ///
-/// - `[gc.live_count]` — приблизительное число live-объектов
-/// - `[gc.alloc_count]` — монотонный счётчик аллокаций
+/// - `[gc.live_count]` — approximate number of live objects
+/// - `[gc.alloc_count]` — monotonic allocation counter
 #stable(since = "0.1")
 export extern "nova" fn gc.heap_size() -> int
 
-/// Приблизительное число живых объектов.
+/// Approximate number of live objects.
 ///
-/// Под malloc: `alloc_count - free_count` (free_count всегда 0 → значение
-/// растёт монотонно). Под Boehm: upper bound через `alloc_count`
-/// (Boehm не экспонирует реальный live count).
+/// With malloc: `alloc_count - free_count` (free_count always 0 → the value
+/// grows monotonically). With Boehm: upper bound via `alloc_count`
+/// (Boehm does not expose the real live count).
 ///
 /// # See Also
 ///
-/// - `[gc.alloc_count]` — монотонный счётчик
-/// - `[gc.collect]` — принудительный сбор
+/// - `[gc.alloc_count]` — monotonic counter
+/// - `[gc.collect]` — forced collection
 #stable(since = "0.1")
 export extern "nova" fn gc.live_count() -> int
 
-/// Монотонный счётчик аллокаций с момента старта или `gc.reset_stats()`.
+/// Monotonic allocation counter since start or `gc.reset_stats()`.
 ///
-/// Полезен для smoke-тестов вида «heap не растёт за N итераций».
-/// Значение сбрасывается вызовом `[gc.reset_stats]`.
+/// Useful for smoke tests of the "heap does not grow over N iterations" kind.
+/// The value is reset by calling `[gc.reset_stats]`.
 ///
 /// # Examples
 ///
@@ -102,33 +102,33 @@ export extern "nova" fn gc.live_count() -> int
 #stable(since = "0.1")
 export extern "nova" fn gc.alloc_count() -> int
 
-/// Принудительный сбор мусора.
+/// Force a garbage collection.
 ///
-/// Под malloc — no-op. Под Boehm — синхронный full mark-sweep через
-/// `GC_gcollect()`. ВНИМАНИЕ: тяжёлая операция, не использовать в hot path.
-/// Назначение — manual diagnostic или явная разгрузка перед blocking I/O.
+/// With malloc — no-op. With Boehm — a synchronous full mark-sweep via
+/// `GC_gcollect()`. WARNING: a heavy operation, do not use in a hot path.
+/// Purpose — manual diagnostics or an explicit drain before blocking I/O.
 ///
 /// # Effects
 ///
-/// Под Boehm выполняет full mark-sweep GC-цикл.
+/// With Boehm runs a full mark-sweep GC cycle.
 #stable(since = "0.1")
 export extern "nova" fn gc.collect() -> ()
 
-/// Сбросить счётчики аллокаций (`alloc_count` → 0).
+/// Reset the allocation counters (`alloc_count` → 0).
 ///
-/// Используется для per-test isolation. GC stats самого Boehm не
-/// сбрасываются — Boehm не поддерживает reset на runtime-уровне.
+/// Used for per-test isolation. Boehm's own GC stats are not
+/// reset — Boehm does not support runtime-level reset.
 #stable(since = "0.1")
 export extern "nova" fn gc.reset_stats() -> ()
 
-/// Длительность последнего GC-цикла в наносекундах.
+/// Duration of the last GC cycle in nanoseconds.
 ///
-/// Под malloc backend всегда `0` (нет collect-cycle). Под Boehm —
-/// измеряется monotonic timer'ом вокруг `GC_gcollect()`.
-/// Полезно для `nova bench run --profile gc` и production observability.
+/// With the malloc backend always `0` (no collect cycle). With Boehm —
+/// measured with a monotonic timer around `GC_gcollect()`.
+/// Useful for `nova bench run --profile gc` and production observability.
 ///
 /// # See Also
 ///
-/// - `[gc.collect]` — принудительный сбор
+/// - `[gc.collect]` — forced collection
 #stable(since = "0.1")
 export extern "nova" fn gc.last_pause_ns() -> int

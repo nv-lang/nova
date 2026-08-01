@@ -24,8 +24,8 @@ module encoding.serde
 // текут по значению через Result-error-канал (тот же паттерн, что IoError).
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Категория ошибки сериализации (узкая — сериализация редко падает).
-/// OPEN kind → wildcard-arm обязателен на match.
+/// Category of a serialization error (narrow — serialization rarely fails).
+/// OPEN kind → a wildcard arm is required on `match`.
 #unstable
 export type SerErrorKind enum
     | NonFiniteFloat                 // NaN/Inf в JSON (Q19, RFC 8259)
@@ -34,15 +34,15 @@ export type SerErrorKind enum
     | SerCustom(str)
     | SerOther(str)
 
-/// Ошибка сериализации (D325 R5 — один структурный тип, OPEN kind).
+/// Serialization error (D325 R5 — a single structural type, OPEN kind).
 #unstable
 export type SerError value { ro kind SerErrorKind, ro path str }
 
-/// Конструктор; path опционален (по умолчанию "").
+/// Constructor; `path` is optional (defaults to "").
 #unstable
 export fn SerError.new(kind SerErrorKind, path str = "") -> SerError => { kind, path }
 
-/// Человекочитаемое описание.
+/// Human-readable description.
 #unstable
 export fn SerError @to_str() -> str {
     ro base = match @kind {
@@ -55,8 +55,8 @@ export fn SerError @to_str() -> str {
     if @path.is_empty() { base } else { "at ${@path}: ${base}" }
 }
 
-/// Категория ошибки десериализации (богатая — deser главный источник ошибок).
-/// OPEN kind → wildcard-arm обязателен.
+/// Category of a deserialization error (rich — deser is the main error source).
+/// OPEN kind → a wildcard arm is required.
 #unstable
 export type DeErrorKind enum
     | UnexpectedType { expected str, found str }   // ждали int, нашли string
@@ -71,21 +71,21 @@ export type DeErrorKind enum
     | Custom(str)
     | Other(str)
 
-/// Ошибка десериализации: `kind` + JSONPath-стиль `path` («$.users[2].email»).
-/// D325 R5 — один структурный тип; `value`-record (keystone).
+/// Deserialization error: `kind` + a JSONPath-style `path` («$.users[2].email»).
+/// D325 R5 — a single structural type; a `value`-record (keystone).
 #unstable
 export type DeError value { ro kind DeErrorKind, ro path str }
 
-/// Конструктор; path опционален (по умолчанию "").
+/// Constructor; `path` is optional (defaults to "").
 #unstable
 export fn DeError.new(kind DeErrorKind, path str = "") -> DeError => { kind, path }
 
-/// Type-mismatch хелпер.
+/// Type-mismatch helper.
 #unstable
 export fn DeError.unexpected(expected str, found str) -> DeError =>
     { kind: UnexpectedType { expected, found }, path: "" }
 
-/// Человекочитаемое описание с path/expected/found (serde+zod-class).
+/// Human-readable description with path/expected/found (serde+zod-class).
 #unstable
 export fn DeError @to_str() -> str {
     ro base = match @kind {
@@ -180,14 +180,14 @@ export type Deserializer protocol {
 // Serialize / Deserialize — контракт типа (§3.3). `deserialize` статический (D35).
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Зеркальный push-контракт. Компилятор синтезирует для `#impl(Serialize)` record'а.
+/// Mirror push-contract. The compiler synthesizes it for a `#impl(Serialize)` record.
 #unstable
 export type Serialize protocol {
     @serialize[S Serializer](mut s S) -> Result[(), SerError]
 }
 
-/// Конструкция значения из любого формата. Компилятор синтезирует для
-/// `#impl(Deserialize)` record'а.
+/// Construction of a value from any format. The compiler synthesizes it for
+/// a `#impl(Deserialize)` record.
 #unstable
 export type Deserialize protocol {
     .deserialize[D Deserializer](mut d D) -> Result[Self, DeError]
@@ -299,10 +299,11 @@ fn Option[T Deserialize].deserialize[D Deserializer](mut d D) -> Result[Option[T
     }
 }
 
-/// Option[T]-десериализация как FREE-функция. Built-in `Option` не диспатчит
-/// user-static-методы (`Option[str].deserialize` уходит в generic-fallback), а
-/// free-fn turbofish мономорфизируется — синтезатор record'а зовёт ЭТО для
-/// Option-полей: `deser_option[IT](sub)`. null -> None; иначе Some(IT).
+/// Option[T] deserialization as a FREE function. The built-in `Option` does
+/// not dispatch user static methods (`Option[str].deserialize` falls into the
+/// generic fallback), but a free-fn turbofish monomorphizes — the record
+/// synthesizer calls THIS for Option fields: `deser_option[IT](sub)`.
+/// null → None; otherwise Some(IT).
 #unstable
 export fn deser_option[T Deserialize, D Deserializer](mut d D) -> Result[Option[T], DeError] {
     if d.is_null()? {
@@ -313,7 +314,7 @@ export fn deser_option[T Deserialize, D Deserializer](mut d D) -> Result[Option[
     }
 }
 
-/// []T -> data-model Seq. Deser: длина + per-index под-cursor.
+/// []T → data-model Seq. Deser: length + a per-index sub-cursor.
 #unstable
 fn[T Serialize] []T @serialize[S Serializer](mut s S) -> Result[(), SerError] {
     s.begin_seq(@len())?
@@ -334,7 +335,7 @@ fn[T Deserialize] []T.deserialize[D Deserializer](mut d D) -> Result[[]T, DeErro
     Ok(out)
 }
 
-/// HashMap[str, V] -> data-model Map (ключи только str, Q16). Deser: keys + per-key.
+/// HashMap[str, V] → data-model Map (string-only keys, Q16). Deser: keys + per-key.
 #unstable
 fn HashMap[str, V Serialize] @serialize[S Serializer](mut s S) -> Result[(), SerError] {
     s.begin_map(@len())?

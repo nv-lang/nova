@@ -334,9 +334,9 @@ export fn char_fmt(v char, buf *mut u8, cap int) -> int {
 /// ONLY through `f64_fmt`.
 extern "C" fn nova_f64_fmt(v f64, buf *mut u8, cap int, kind int, prec int) -> int
 
-/// f32-собрат `nova_f64_fmt` (владелец 2026-07-20): shortest через
-/// `nova_f32_shortest` — тот же движок, что печать/`to_str` f32 (НЕ
-/// f64-расширение: без double-хвостов). Module-private — callers reach this
+/// f32 counterpart of `nova_f64_fmt` (owner 2026-07-20): shortest via
+/// `nova_f32_shortest` — the same engine as f32 printing/`to_str` (NOT
+/// an f64 extension: no double tails). Module-private — callers reach this
 /// ONLY through `f32_fmt` below.
 extern "C" fn nova_f32_fmt(v f32, buf *mut u8, cap int) -> int
 
@@ -410,7 +410,7 @@ fn write_hex_esc_at(buf *mut u8, cap int, pos int, c u8) -> int {
 /// UTF-8-encode `cp` into `buf[pos..)` at an ARBITRARY offset (bounds-checked
 /// truncate) — used by `char_debug_fmt`'s passthrough case. Deliberately a
 /// FRESH helper (not a refactor of `char_fmt` above, which stays untouched
-/// per Ш1's "нич­его существующего не менять"), same encode table, same
+/// per Ш1's "don't change anything existing"), same encode table, same
 /// truncate-defensively contract. Returns bytes conceptually needed (1..4).
 fn utf8_encode_at(cp int, buf *mut u8, cap int, pos int) -> int {
     mut need = 1

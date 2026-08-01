@@ -8,57 +8,57 @@ module prelude.runtime
 // Runtime functions
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Аварийное завершение fiber'а с сообщением. Внутри fiber'а маршрутизируется
-/// через ближайший обработчик, на main flow с test-frame'ом — в test-runner,
-/// без supervisor'а — abort process. `-> never` позволяет panic быть веткой
-/// без значения (например, `?? panic(...)`).
+/// Aborts the fiber with a message. Inside a fiber it is routed through
+/// the nearest handler, on the main flow with a test frame — to the
+/// test-runner, without a supervisor — aborts the process. `-> never`
+/// lets panic be a branch without a value (e.g., `?? panic(...)`).
 #stable(since = "0.1")
 extern "nova" fn panic(msg str) -> never
 
-/// Аварийное завершение всего процесса с exit-code и сообщением. Не
-/// перехватывается handler'ом. В тестах маршрутизируется через test-runner,
-/// чтобы один тест не убил всю прогонку.
+/// Aborts the whole process with an exit code and a message. Not
+/// caught by a handler. In tests it is routed through the test-runner
+/// so that one test does not kill the whole run.
 #stable(since = "0.1")
 extern "nova" fn exit(code int, msg str) -> never
 
-/// Marker для логически недостижимого кода. Срабатывает только если
-/// invariant нарушен — компилятор сам не может доказать недостижимость.
-/// Семантически идентичен `panic("unreachable: ${reason}")`, но выражает
-/// намерение: «эта точка не должна быть достигнута никогда».
+/// Marker for logically unreachable code. Fires only if an invariant is
+/// broken — the compiler cannot itself prove unreachability.
+/// Semantically identical to `panic("unreachable: ${reason}")`, but
+/// expresses the intent: "this point must never be reached".
 ///
-/// **Когда использовать:**
-/// - После `match` по полному перечислению (когда компилятор не выводит
-///   exhaustiveness — например при guards)
-/// - В default-branch для ветки, исключённой инвариантом выше
-/// - В качестве placeholder'а для невозможной комбинации параметров
+/// **When to use:**
+/// - After a `match` over a full enumeration (when the compiler does not
+///   infer exhaustiveness — e.g. with guards)
+/// - In a default branch for a case excluded by an invariant above
+/// - As a placeholder for an impossible parameter combination
 ///
-/// **Не использовать для:**
-/// - TODO-stub'а — это `panic("todo")`
-/// - Validation user input — это `Fail[E]` через `throw`
+/// **When not to use:**
+/// - A TODO stub — that is `panic("todo")`
+/// - Validation of user input — that is `Fail[E]` via `throw`
 ///
-/// Работает в expression-position в любом if/match, например
+/// Works in expression position in any if/match, e.g.
 /// `let x = if cond { compute() } else { unreachable("inv broken") }`.
 #stable(since = "0.1")
 // extern "nova" (not a Nova body) — lowers in codegen's special-case to
 // C concat helpers, avoiding StringBuilder dependency under #no_prelude.
 extern "nova" fn unreachable(reason str) -> never
 
-/// Runtime-проверка условия. Падает с auto-generated сообщением
-/// (текст условия через display) если `cond == false`. Always-on:
-/// в release-сборке тоже срабатывает.
+/// Runtime condition check. Fails with an auto-generated message
+/// (the condition text via display) if `cond == false`. Always-on:
+/// also fires in release builds.
 ///
-/// Формат: `<file>:<line>: assert failed: <expr>` (без msg) либо
-/// `<file>:<line>: assert failed: <msg> (<expr>)` (с msg).
+/// Format: `<file>:<line>: assert failed: <expr>` (without msg) or
+/// `<file>:<line>: assert failed: <msg> (<expr>)` (with msg).
 ///
-/// Обе формы через arity overload: `assert(cond)` — без сообщения,
-/// `assert(cond, msg)` — msg печатается перед выражением в скобках.
+/// Both forms via arity overload: `assert(cond)` — no message,
+/// `assert(cond, msg)` — msg is printed before the expression in parens.
 #stable(since = "0.1")
 extern "nova" fn assert(cond bool) -> ()
 #stable(since = "0.1")
 extern "nova" fn assert(cond bool, msg str) -> ()
 
-/// Печать всех аргументов в stdout без разделителя и без trailing newline.
-/// Принимает heterogeneous args (int / str / bool / f64 / mixed).
+/// Prints all arguments to stdout without a separator and without a
+/// trailing newline. Accepts heterogeneous args (int / str / bool / f64 / mixed).
 ///
 /// # Examples
 /// ```nova
@@ -69,8 +69,8 @@ extern "nova" fn assert(cond bool, msg str) -> ()
 #stable(since = "0.1")
 extern "nova" fn print(...items []any) -> ()
 
-/// Печать всех аргументов в stdout + trailing newline ('\n'). Идентично
-/// `print(...)`, плюс новый перевод строки в конце.
+/// Prints all arguments to stdout + a trailing newline ('\n'). Identical
+/// to `print(...)`, plus a line feed at the end.
 ///
 /// # Examples
 /// ```nova
@@ -81,23 +81,23 @@ extern "nova" fn print(...items []any) -> ()
 #stable(since = "0.1")
 extern "nova" fn println(...items []any) -> ()
 
-/// Подавленные ошибки, сопровождавшие последнюю пойманную ошибку.
-/// Cleanup-fail во время propagation НЕ подменяет primary — primary отдаётся
-/// ловящему как есть (типизированная ловля `with Fail[Primary]` работает,
-/// эффект НЕ становится `Fail[MultiError]`); подавленные лежат «в кармане»
-/// и достаются этим аксессором после ловли.
+/// Suppressed errors that accompanied the last caught error.
+/// A cleanup failure during propagation does NOT replace the primary —
+/// the primary is handed to the catcher as-is (typed catching via
+/// `with Fail[Primary]` works, the effect does NOT become `Fail[MultiError]`);
+/// the suppressed errors stay "in the pocket"; the accessor retrieves them after catching.
 ///
-/// Возвращает `[]any` в хронологическом порядке аварий (первая-упавшая
-/// первой); каждый элемент — `any`, сужается через `is T` / `.try_as[T]()`.
-/// Пустой массив = cleanup не падал (карман пуст). Карман сбрасывается на
-/// каждый свежий `throw` и заполняется в момент ловли, поэтому не течёт
-/// между несвязанными ловлями.
+/// Returns `[]any` in chronological order of failures (first-failed
+/// first); each element is `any`, narrowed via `is T` / `.try_as[T]()`.
+/// An empty array = cleanup did not fail (pocket empty). The pocket is
+/// reset on each fresh `throw` and filled at catching time, so it does
+/// not leak between unrelated catches.
 ///
 /// # Examples
 /// ```nova
 /// mut primary_code = 0
 /// with Fail[DbErr] = effect Fail[DbErr] { fail(e) -> never { primary_code = e.code } } {
-///     do_tx()            // тело кинуло DbErr; @cleanup кинул Cleanup2
+///     do_tx()            // the body threw DbErr; @cleanup threw Cleanup2
 /// }
 /// for s in suppressed() {          // == [Cleanup2]
 ///     if s is Cleanup2 { Log.warn("cleanup failed") }

@@ -59,12 +59,12 @@ module time.duration
 // for the full diagnosis and repro recipe. Schema stays `local_offset()->
 // int` (unchanged from before this wave) until that gap is closed.
 
-/// **Time-effect** — эффект доступа к часам и scheduler'у (D11 / D14 / D62,
-/// spec/decisions/04-effects.md).
+/// **Time-effect** — the effect for access to the clock and scheduler (D11 /
+/// D14 / D62, spec/decisions/04-effects.md).
 ///
-/// **Назначение:** AI-first hooks для unit-тестов. В production `Time.now()`
-/// / `Time.sleep(d)` дают monotonic clock и fiber-suspension через runtime.
-/// В тестах handler-override:
+/// **Purpose:** AI-first hooks for unit tests. In production `Time.now()`
+/// / `Time.sleep(d)` provide a monotonic clock and fiber-suspension through the
+/// runtime. In tests, a handler-override:
 /// ```nova
 /// with Time = effect Time {
 ///     sleep(d Duration) -> () => ()
@@ -72,55 +72,55 @@ module time.duration
 ///     now_monotonic() -> Monotonic => 0.to_monotonic_nanos()
 ///     local_offset() -> int => 0
 /// } {
-///     // время "замерло" — sleep noop, now() возвращает fixed value
+///     // time is "frozen" — sleep is a no-op, now() returns a fixed value
 ///     run_test_with_fixed_clock()
 /// }
 /// ```
 ///
-/// **Default handler** (без `with` block, `real_time()` ниже — Plan 175.2
-/// Ф.2-v4 П8 rename, симметрия `real_fs()`/`real_net()`/`real_os()`):
-///   - `sleep(d)` — yields fiber через `time_sleep_ms` (libuv timer или
-///     blocking sleep если в bootstrap mode).
-///   - `now()` — unix epoch wall-clock момент (`Timestamp`).
+/// **Default handler** (without a `with` block, `real_time()` below — Plan
+/// 175.2 Ф.2-v4 П8 rename, symmetry with `real_fs()`/`real_net()`/`real_os()`):
+///   - `sleep(d)` — yields the fiber via `time_sleep_ms` (a libuv timer or a
+///     blocking sleep in bootstrap mode).
+///   - `now()` — unix epoch wall-clock instant (`Timestamp`).
 ///
-/// **Realtime-context:** `Time` suspend-effect (D64), запрещён внутри
-/// `realtime { ... }` блоков. См. `realtime_suspend_effect` в types/mod.rs.
+/// **Realtime-context:** `Time` is a suspend-effect (D64), forbidden inside
+/// `realtime { ... }` blocks. See `realtime_suspend_effect` in types/mod.rs.
 ///
-/// **Что НЕ включено в декларацию** (intentional deferral):
-///   - `after(ms int) -> Chan[int]` — internal concurrency-runtime op,
-///     требует `Chan[T]` в scope. Pre-registered в codegen (emit_c.rs) и
-///     работает; formal declaration появится когда `Chan[T]` будет доступен
-///     как generic bound здесь.
+/// **What is NOT included in the declaration** (intentional deferral):
+///   - `after(ms int) -> Chan[int]` — an internal concurrency-runtime op,
+///     requires `Chan[T]` in scope. Pre-registered in codegen (emit_c.rs) and
+///     works; a formal declaration will appear once `Chan[T]` is usable as a
+///     generic bound here.
 ///
-/// **Единый источник схемы (Plan 175 Ф.1, D316; typed с Ф.2-v3; перенесён
-/// сюда Ф.2-v4/П6):** эта декларация — ЕДИНСТВЕННЫЙ источник
-/// `effect_schemas["Time"]`; codegen читает её из `.nv` (`emit_type_decl` →
-/// `emit_effect_type`, ТОТ ЖЕ generic путь что у user-эффектов).
-/// Dispatch-функции (`Nova_Time_sleep` и т.д.) генерируются ИЗ ЭТОЙ схемы —
-/// не hand-written в nova_rt/fibers.h. Узкое исключение (не архитектурная
-/// дыра): сам struct-тип `NovaVtable_Time` + TLS-слот `_nova_handler_Time`
-/// остаются hand-written в nova_rt/effects.h/.c (channels.h/runtime.c нужен
-/// единый стабильный C-тип) — их WIRE остаётся int64 nanoseconds; codegen
-/// маршалит typed-параметры/-результаты (`Duration`/`Timestamp`/
-/// `Monotonic`) в/из raw i64 на границе dispatch-функции и handler-literal
-/// install (emit_c.rs `emit_effect_type`/`emit_handler_lit`, Time-специфичная
-/// marshalling-ветка) — единственное место, где int-провод ещё виден, и оно
-/// generated/hand-written C, не `.nv`-схема.
+/// **Single source of schema truth (Plan 175 Ф.1, D316; typed since Ф.2-v3;
+/// moved here Ф.2-v4/П6):** this declaration is the ONLY source of
+/// `effect_schemas["Time"]`; codegen reads it from the `.nv` (`emit_type_decl`
+/// → `emit_effect_type`, THE SAME generic path as user effects).
+/// Dispatch functions (`Nova_Time_sleep` etc.) are generated FROM THIS schema —
+/// not hand-written in nova_rt/fibers.h. A narrow exception (not an architecture
+/// hole): the struct type `NovaVtable_Time` + the TLS slot `_nova_handler_Time`
+/// stay hand-written in nova_rt/effects.h/.c (channels.h/runtime.c needs a
+/// single stable C type) — their WIRE stays int64 nanoseconds; codegen
+/// marshals typed parameters/results (`Duration`/`Timestamp`/
+/// `Monotonic`) to/from raw i64 at the boundary of the dispatch function and
+/// the handler-literal install (emit_c.rs `emit_effect_type`/`emit_handler_lit`,
+/// the Time-specific marshalling branch) — the only place where the int-wire is
+/// still visible, and it is generated/hand-written C, not a `.nv` schema.
 ///
-/// **`now_monotonic()->Monotonic`** (Plan 65 Ф.12.3 / D124) — монотонные
-/// часы; `Monotonic` record.
-/// **5 timer-observability-счётчиков** живут в отдельном `TimerMetrics`
+/// **`now_monotonic()->Monotonic`** (Plan 65 Ф.12.3 / D124) — the monotonic
+/// clock; a `Monotonic` record.
+/// **5 timer-observability counters** live in a separate `TimerMetrics`
 /// (Plan 175 Ф.1 / Q1, `std/prelude/effects.nv`) — read-only introspection,
-/// не «время».
+/// not "time".
 ///
 /// **`local_offset_sec()->int`** (Plan 175.1, D316 amend + D321,
-/// 2026-07-10) — системный UTC-сдвиг ТЕКУЩЕЙ локальной зоны машины, в
-/// секундах. Retype to `Offset` was ATTEMPTED + REVERTED this same wave
-/// (Plan 175.2 Ф.2-v4 П11) — see file-header comment / `[M-offset-result-
-/// mono-bleed-if-let]` for the codegen blocker found. Даёт ТОЛЬКО числовой
-/// сдвиг — не implicit-зону: `ZonedDateTime`/civil-API по-прежнему
-/// требуют явный `TimeZone`/`Offset` (D319 R1). Остаётся plain `int` (не
-/// `Duration`) — оффсет, не длительность/момент.
+/// 2026-07-10) — the system UTC offset of the CURRENT local zone of the
+/// machine, in seconds. Retype to `Offset` was ATTEMPTED + REVERTED this same
+/// wave (Plan 175.2 Ф.2-v4 П11) — see file-header comment / `[M-offset-result-
+/// mono-bleed-if-let]` for the codegen blocker found. Gives ONLY the numeric
+/// offset — not an implicit zone: `ZonedDateTime`/civil-API still require an
+/// explicit `TimeZone`/`Offset` (D319 R1). Stays a plain `int` (not
+/// `Duration`) — an offset, not a duration/instant.
 #stable(since = "0.1")
 export type Time effect {
     sleep(d Duration) -> ()
@@ -151,16 +151,16 @@ extern "C" fn time_sleep_ms(ms int) -> ()
 /// `(Time)` argument) — the effect is inferred from this fn's own
 /// `-> Effect[Time]` return type (checker: `check_default_handlers`).
 ///
-/// Ambient-fallback: compiler lazily (по первому использованию, без
-/// `with`) конструирует и устанавливает ЭТОТ handler ровно один раз на
-/// поток (generic install-once check внутри `Nova_Time_<op>()`,
-/// `emit_effect_type`) — явный `with Time = ...` по-прежнему переопределяет.
+/// Ambient-fallback: the compiler lazily (on first use, without
+/// `with`) constructs and installs THIS handler exactly once per thread
+/// (generic install-once check inside `Nova_Time_<op>()`,
+/// `emit_effect_type`) — an explicit `with Time = ...` still overrides it.
 ///
 /// Plan 175.2 Ф.2-v4 (П4, D-амендмент): handler-ops fully typed
 /// (`-> Type` mandatory, matches the `Time` schema above exactly).
 ///
-/// Typed параметры/результаты (`Duration`/`Timestamp`/`Monotonic`)
-/// конструируются напрямую через record-literal (`{ nanos: ... }`) —
+/// Typed parameters/results (`Duration`/`Timestamp`/`Monotonic`)
+/// are constructed directly via record-literal (`{ nanos: ... }`) —
 /// legal here specifically BECAUSE this file lives in `time.duration`
 /// (module-private `nanos` access, see file header).
 #default_handler

@@ -32,8 +32,8 @@ import std.encoding.hex.{Hex}
 // MD5 state
 // ──────────────────────────────────────────────────────────────────────────
 
-/// MD5 hash state (RFC 1321). **Insecure** для cryptographic integrity —
-/// используй [`Sha256`] для security. MD5 OK для checksum / Bloom filter hash.
+/// MD5 hash state (RFC 1321). **Insecure** for cryptographic integrity —
+/// use [`Sha256`] for security. MD5 OK for checksum / Bloom filter hash.
 #stable(since = "0.1")
 export type Md5 {
     mut a u32                          // RFC 1321 state words
@@ -87,7 +87,7 @@ fn s_constant(i int) -> int {
 // API
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Init MD5 state с RFC 1321 standard IVs.
+/// Init MD5 state with RFC 1321 standard IVs.
 #stable(since = "0.1")
 export fn Md5.new() -> Self =>
     {
@@ -107,14 +107,14 @@ export fn Md5.hash(data []u8) -> [16]u8 {
     state.finalize()
 }
 
-/// One-shot MD5 hash в lowercase hex string.
+/// One-shot MD5 hash in a lowercase hex string.
 #stable(since = "0.1")
 export fn Md5.hash_str(data []u8) -> str {
     ro digest = Md5.hash(data)
     Hex.encode(digest[0..16])
 }
 
-/// Incremental update — feed bytes в state. Для streamed input.
+/// Incremental update — feed bytes into the state. For streamed input.
 #stable(since = "0.1")
 export fn Md5 mut @update(data []u8) -> () {
     @total_len = @total_len.wrapping_add(data.len() as u64)

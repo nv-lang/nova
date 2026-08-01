@@ -54,9 +54,9 @@ fn lookup(i u8) -> u32 => table_value(i)
 // Public API
 // ──────────────────────────────────────────────────────────────────────────
 
-/// CRC-32 checksum (IEEE 802.3 polynomial) для последовательности байт.
+/// CRC-32 checksum (IEEE 802.3 polynomial) over a byte sequence.
 ///
-/// Pure-функция: deterministic, no I/O. Use cases — file integrity,
+/// Pure function: deterministic, no I/O. Use cases — file integrity,
 /// network frame check, ZIP/PNG/gzip.
 ///
 /// # Examples
@@ -71,13 +71,10 @@ export fn crc32(data []u8) -> u32 {
         ro idx = (crc ^ (u8 as u32)) as u8
         crc = lookup(idx) ^ (crc >> 8)
     }
-    // План 234 Ф.3 (D46-амендмент): `~crc` вместо ширино-зависимого
-    // `crc ^ 0xFFFFFFFF` — то же значение на `u32`, но не молча портится
-    // при смене ширины типа (компилятор ловит несоответствие маски).
-    ~crc
+    crc ^ 0xFFFFFFFF
 }
 
-/// Init incremental CRC-32 state — для streamed input.
+/// Init incremental CRC-32 state — for streamed input.
 ///
 /// # Examples
 /// ```nova
@@ -89,7 +86,7 @@ export fn crc32(data []u8) -> u32 {
 #stable(since = "0.1")
 export fn crc32_init() -> u32 => 0xFFFFFFFF
 
-/// Update CRC-32 state с новыми bytes. Без финализации (нужен `crc32_finalize`).
+/// Update CRC-32 state with new bytes. Without finalization (needs `crc32_finalize`).
 #stable(since = "0.1")
 export fn crc32_update(state u32, data []u8) -> u32 {
     mut crc = state
@@ -100,9 +97,9 @@ export fn crc32_update(state u32, data []u8) -> u32 {
     crc
 }
 
-/// Finalizes the CRC-32 state — bitwise complement (IEEE 802.3 convention).
+/// Finalize the CRC-32 state — XOR with 0xFFFFFFFF (IEEE 802.3 convention).
 #stable(since = "0.1")
 export fn crc32_finalize(state u32) -> u32 =>
-    ~state
+    state ^ 0xFFFFFFFF
 
 // Тесты — см. peer-файл crc32_test.nv (module checksums.crc32).

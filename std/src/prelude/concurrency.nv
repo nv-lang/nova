@@ -50,66 +50,66 @@ import std.prelude.core.{Option}
 
 /// Caller-owned cancellation handle (D75 revised, Plan 47).
 ///
-/// Кооперативная отмена: `supervised(cancel: tok)` привязывает области
-/// исполнения к токену; `tok.cancel()` доставляет отмену всем привязанным
-/// областям (дети обрываются на ближайшем yield-point'е).
+/// Cooperative cancellation: `supervised(cancel: tok)` binds execution
+/// scopes to the token; `tok.cancel()` delivers cancellation to all bound
+/// scopes (children are aborted at the nearest yield point).
 ///
-/// Методы работают на readonly-ресивере (`ro tok = CancelToken.new()` —
-/// канонический паттерн): состояние — atomic runtime handle (interior
-/// mutability, аналог Go `context.CancelFunc`).
+/// The methods work on a readonly receiver (`ro tok = CancelToken.new()` —
+/// the canonical pattern): the state is an atomic runtime handle (interior
+/// mutability, akin to Go `context.CancelFunc`).
 ///
-/// `#share` (D415 §2): audited vouch — handle является настоящей
-/// синхронизацией (atomic flag + wake в C-runtime), безопасен для
-/// alias/capture через `spawn`-границу (тот же механизм, что `Mutex`).
+/// `#share` (D415 §2): audited vouch — the handle is real synchronization
+/// (atomic flag + wake in the C runtime), safe for alias/capture across
+/// the `spawn` boundary (same mechanism as `Mutex`).
 #stable(since = "0.1")
 #share
 export type CancelToken(*())
 
-/// Новый (неотменённый) токен.
+/// A new (not-cancelled) token.
 #realtime
 #stable(since = "0.1")
 export extern "nova" fn CancelToken.new() -> Self
 
-/// Отменить с default-причиной "cancelled" (T=str).
+/// Cancel with the default reason "cancelled" (T=str).
 ///
-/// Идемпотентно: повторный `cancel()` — no-op (первая причина сохраняется).
+/// Idempotent: a repeated `cancel()` is a no-op (the first reason sticks).
 #wakes
 #stable(since = "0.1")
 export extern "nova" fn CancelToken @cancel()
 
-/// Отменить с причиной (Plan 49 Ф.1/Ф.6 — typed reason).
+/// Cancel with a reason (Plan 49 Ф.1/Ф.6 — typed reason).
 ///
-/// Boxing причины по фактическому типу аргумента выполняет codegen
+/// Boxing the reason by the actual argument type is done by codegen
 /// (str → nova_cancel_box_str; pointer — as-is; value — box_copy_raw).
 #wakes
 #stable(since = "0.1")
 export extern "nova" fn CancelToken @cancel(reason any)
 
-/// Был ли токен отменён.
+/// Whether the token has been cancelled.
 #realtime
 #stable(since = "0.1")
 export extern "nova" fn CancelToken @is_cancelled() -> bool
 
-/// Причина отмены: `Some(reason)` после `cancel(reason)`, `None` иначе.
+/// Cancellation reason: `Some(reason)` after `cancel(reason)`, `None` otherwise.
 ///
-/// Default-форма T=str; для tracked `CancelToken[T]` codegen эмитит
+/// Default form is T=str; for tracked `CancelToken[T]` codegen emits a
 /// per-T un-box (Plan 49 Ф.6, `cancel_token_t_map`).
 #realtime
 #stable(since = "0.1")
 export extern "nova" fn CancelToken @reason() -> Option[str]
 
-/// Композиция (Plan 49 P3): новый токен, который отменяется когда
-/// отменён ЛЮБОЙ из источников. Same-T в V1.
+/// Composition (Plan 49 P3): a new token that is cancelled when ANY of
+/// the sources is cancelled. Same-T in V1.
 ///
-/// NB: возврат спеллится `-> CancelToken` (не `-> Self`) — D132-проверка
-/// «-> Self, но все пути возвращают @» не различает extern-декларации
-/// без тела и ложно требует fluent `-> @` (merge возвращает НОВЫЙ токен).
+/// NB: the return is spelled `-> CancelToken` (not `-> Self`) — the D132
+/// "-> Self but all paths return @" check cannot distinguish bodyless
+/// extern declarations and falsely demands a fluent `-> @` (merge returns a NEW token).
 #realtime
 #stable(since = "0.1")
 export extern "nova" fn CancelToken @merge(other CancelToken) -> CancelToken
 
-/// Направленный каскад: `child.cancelled_by(parent)` — `parent.cancel()`
-/// отменяет и child; `child.cancel()` НЕ трогает parent.
+/// Directed cascade: `child.cancelled_by(parent)` — `parent.cancel()`
+/// also cancels child; `child.cancel()` does NOT touch parent.
 #realtime
 #stable(since = "0.1")
 export extern "nova" fn CancelToken @cancelled_by(parent CancelToken) -> ()

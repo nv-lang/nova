@@ -15,25 +15,25 @@ module identifiers.snowflake
 // Можно настроить под проект, но для совместимости используем стандартный.
 const TWITTER_EPOCH_MS i64 = 1577836800000
 
-/// Ошибки генератора Snowflake ID.
+/// Errors of the Snowflake ID generator.
 ///
-/// - `InvalidMachineId` — `machine_id` вне диапазона `0..1023`
-/// - `ClockBackwards` — системное время откатилось назад
+/// - `InvalidMachineId` — `machine_id` outside the range `0..1023`
+/// - `ClockBackwards` — system clock moved backwards
 #stable(since = "0.1")
 export type SnowflakeError enum
     | InvalidMachineId { value int }
     | ClockBackwards { now i64, last i64 }
 
-/// Генератор Twitter Snowflake 64-bit ID.
+/// Twitter Snowflake 64-bit ID generator.
 ///
-/// Структура ID (64 бит):
-/// - 1 бит: всегда 0 (знаковый bit)
-/// - 41 бит: timestamp в ms с кастомной epoch (~69 лет)
-/// - 10 бит: machine_id (0..1023)
-/// - 12 бит: sequence в рамках одной ms (0..4095)
+/// ID layout (64 bits):
+/// - 1 bit: always 0 (sign bit)
+/// - 41 bits: timestamp in ms since a custom epoch (~69 years)
+/// - 10 bits: machine_id (0..1023)
+/// - 12 bits: sequence within one ms (0..4095)
 ///
-/// ID лексикографически упорядочены по времени.
-/// Использует `Time` effect — детерминизируется handler-подменой в тестах.
+/// IDs are lexicographically ordered by time.
+/// Uses the `Time` effect — determinized via handler substitution in tests.
 ///
 /// # Examples
 ///
@@ -46,8 +46,8 @@ export type SnowflakeError enum
 ///
 /// # See Also
 ///
-/// - `[Ulid]` — альтернативный sortable random ID
-/// - `[Uuid]` — случайный UUID
+/// - `[Ulid]` — alternative sortable random ID
+/// - `[Uuid]` — random UUID
 #stable(since = "0.1")
 export type SnowflakeGen {
     ro machine_id i64                  // public config: 0..1023
@@ -55,9 +55,9 @@ export type SnowflakeGen {
     mut sequence i64                        // internal: 0..4095
 }
 
-/// Создать генератор для заданного `machine_id` (0..1023).
+/// Create a generator for the given `machine_id` (0..1023).
 ///
-/// `Err(InvalidMachineId)` если `machine_id` вне диапазона.
+/// `Err(InvalidMachineId)` if `machine_id` is outside the range.
 #stable(since = "0.1")
 export fn SnowflakeGen.new(machine_id int) -> Result[Self, SnowflakeError] {
     if machine_id < 0 || machine_id > 1023 {
@@ -70,14 +70,14 @@ export fn SnowflakeGen.new(machine_id int) -> Result[Self, SnowflakeError] {
     })
 }
 
-/// Сгенерировать следующий уникальный ID.
+/// Generate the next unique ID.
 ///
-/// Монотонный в рамках одной ms через sequence. `Err(ClockBackwards)`
-/// если системное время отошло назад.
+/// Monotonic within one ms via the sequence. `Err(ClockBackwards)`
+/// if the system clock moved backwards.
 ///
 /// # Effects
 ///
-/// Использует `Time` effect для получения текущего времени.
+/// Uses the `Time` effect to get the current time.
 #stable(since = "0.1")
 export fn SnowflakeGen mut @next() Time -> Result[i64, SnowflakeError] {
     ro now = Timestamp.now().unix_millis() as i64
@@ -106,7 +106,7 @@ export fn SnowflakeGen mut @next() Time -> Result[i64, SnowflakeError] {
     Ok((ts_offset << 22) | (@machine_id << 12) | @sequence)
 }
 
-/// Компоненты Snowflake ID после декодирования.
+/// Components of a Snowflake ID after decoding.
 #stable(since = "0.1")
 export type SnowflakeParts {
     ro timestamp_ms i64           // Unix ms (с epoch)
@@ -114,10 +114,10 @@ export type SnowflakeParts {
     ro sequence int
 }
 
-/// Разобрать Snowflake ID на составляющие компоненты.
+/// Parse a Snowflake ID into its components.
 ///
-/// Обратная операция к `[SnowflakeGen.next]`. Возвращает timestamp в Unix ms,
-/// `machine_id` и `sequence` из битовой структуры ID.
+/// The reverse of `[SnowflakeGen.next]`. Returns the timestamp in Unix ms,
+/// `machine_id`, and `sequence` from the bit layout of the ID.
 ///
 /// # Examples
 ///
@@ -131,8 +131,8 @@ export type SnowflakeParts {
 ///
 /// # See Also
 ///
-/// - `[SnowflakeGen.next]` — генерация ID
-/// - `[SnowflakeParts]` — структура результата
+/// - `[SnowflakeGen.next]` — ID generation
+/// - `[SnowflakeParts]` — result structure
 #stable(since = "0.1")
 export fn Snowflake.parse(id i64) -> SnowflakeParts { // [M-lint-findings-static-conversion]
     ro sequence = (id & 0xFFF) as int

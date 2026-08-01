@@ -26,9 +26,9 @@ module checksums.adler32
 // Наибольший простой < 65536 (RFC 1950 §9).
 fn adler_base() -> u32 => 65521
 
-/// Adler-32 checksum (RFC 1950 §9) для последовательности байт.
+/// Adler-32 checksum (RFC 1950 §9) over a byte sequence.
 ///
-/// Pure-функция: deterministic, no I/O. Use case — zlib trailer.
+/// Pure function: deterministic, no I/O. Use case — zlib trailer.
 ///
 /// # Examples
 /// ```nova
@@ -39,8 +39,8 @@ fn adler_base() -> u32 => 65521
 export fn adler32(data []u8) -> u32 =>
     adler32_finalize(adler32_update(adler32_init(), data))
 
-/// Init incremental Adler-32 state (a=1, b=0, упаковано `(b<<16)|a` = 0x00000001)
-/// — для streamed input.
+/// Init incremental Adler-32 state (a=1, b=0, packed as `(b<<16)|a` = 0x00000001)
+/// — for streamed input.
 ///
 /// # Examples
 /// ```nova
@@ -52,8 +52,8 @@ export fn adler32(data []u8) -> u32 =>
 #stable(since = "0.1")
 export fn adler32_init() -> u32 => 1
 
-/// Update Adler-32 state с новыми bytes (packed `(b<<16)|a` in/out).
-/// Без финализации (финализация — identity, но метод есть для симметрии с `crc32`).
+/// Update Adler-32 state with new bytes (packed `(b<<16)|a` in/out).
+/// Without finalization (finalization is identity, but the method exists for symmetry with `crc32`).
 #stable(since = "0.1")
 export fn adler32_update(state u32, data []u8) -> u32 {
     ro m = adler_base()
@@ -66,7 +66,7 @@ export fn adler32_update(state u32, data []u8) -> u32 {
     (b << 16) | a
 }
 
-/// Финализирует Adler-32 state — identity (значение уже в финальной форме).
+/// Finalize the Adler-32 state — identity (the value is already in final form).
 #stable(since = "0.1")
 export fn adler32_finalize(state u32) -> u32 => state
 
