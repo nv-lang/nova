@@ -1,10 +1,10 @@
-// std.collections.vec (views) — eager zero-copy `[]T`-views (Plan 153.4, D262).
+// std.collections.vec (views) — eager zero-copy `[]T`-views.
 //
-// Every method here returns a `[]T` ≡ `Vec[T]` view of the SAME type (Plan 96
-// D-single-type — there is NO separate `Slice` type, D238) sharing the parent
-// element buffer: an interior pointer at `@data.offset(start)`, `len == cap` (D-cap-
-// len). The GC keeps the parent buffer alive while any view is reachable
-// (`GC_all_interior_pointers`, Plan 138 Ф.2).
+// Every method here returns a `[]T` ≡ `Vec[T]` view of the SAME type (single
+// `[]T` type — there is NO separate `Slice` type) sharing the parent
+// element buffer: an interior pointer at `@data.offset(start)`, `len == cap`.
+// The GC keeps the parent buffer alive while any view is reachable
+// (`GC_all_interior_pointers`).
 //
 // **Detach-on-resize (Go-model, GC-safe).** A view has `cap == len`, so the
 // first *reallocating* mutation on it (`push`/`reserve`/`insert` at `cap ==
@@ -13,10 +13,10 @@
 // shared-backing footgun is removed without a borrow-checker). Until that
 // detach point, a `mut`-bound view writes *through* to the parent buffer
 // (`v[i] = x` / `mut @as_slice`). The detach point is predictable because exact
-// capacity is honoured (`new().cap(n)`/`@cap(n)`, 153.1 — no pow2 rounding).
+// capacity is honoured (`new().cap(n)`/`@cap(n)` — no pow2 rounding).
 //
 // This is the same view model as `@index(Range)` (`v[a..b]`, slice.nv) and the
-// str linse `bytes() -> ro []u8` (Plan 152) — all same-type, zero-copy. An
+// str linse `bytes() -> ro []u8` — all same-type, zero-copy. An
 // owning copy is `clone()` / `to_vec()`, never a view.
 //
 // `@chunks`/`@chunks_exact`/`@rchunks`/`@windows` are LAZY iterators (Rust-like,
@@ -24,9 +24,9 @@
 // live in the explicitly-imported lazy module `std/collections/vec_lazy.nv`
 // (closure-dense bodies → generics-leak, like every adapter) rather than this
 // prelude `vec/` folder — see that file's "Slice-view iterators" section
-// (Plan 153.4-B, [M-153.4-chunks-windows-lazy], built on the Plan 153.2 lazy
-// infra). They are intentionally NOT eager here (an eager form would allocate a
-// `Vec`-of-views and diverge from the Q-iterator-laziness canon).
+// (built on the lazy infra). They are intentionally NOT eager here (an eager
+// form would allocate a `Vec`-of-views and diverge from the Q-iterator-laziness
+// canon).
 #prelude(core, runtime, collections, protocols)
 module collections.vec
 
@@ -43,7 +43,7 @@ module collections.vec
 /// copy; for an OWNING copy use `clone()`.
 ///
 /// The recv-mut companion `mut @slice() -> Self` (below) yields a
-/// write-through view when called on a `mut`-bound receiver (Plan 138.4 recv-mut
+/// write-through view when called on a `mut`-bound receiver (recv-mut
 /// overload dispatch — same shape as `@as_ptr` / `mut @as_ptr` in access.nv).
 ///
 /// ```nova
@@ -58,8 +58,8 @@ export fn Vec[T] @slice() -> Self =>
 /// of `@as_slice`. Selected when the receiver is `mut`-bound; element writes
 /// (`s[i] = x`, `for mut x in s`) go *through* to the parent buffer until a
 /// reallocating mutation detaches the view (Go-model, see file header). Named
-/// `mut @as_slice` (receiver-mut overload), NOT `as_mut_slice` (D247 / Plan 135
-/// accessor convention, mirroring `mut @as_ptr`).
+/// `mut @as_slice` (receiver-mut overload), NOT `as_mut_slice` (accessor
+/// convention, mirroring `mut @as_ptr`).
 ///
 /// ```nova
 /// mut v = Vec[int].of(1, 2, 3)

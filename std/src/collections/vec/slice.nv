@@ -1,16 +1,15 @@
 // std.collections.vec (slice) — zero-copy sub-range views, `Index[Range]`.
 //
-// `v[a..b]` returns a view of the SAME type `[]T` ≡ `Vec[T]` (Plan 96
-// D-single-type — NOT a separate `Slice` type) sharing the parent buffer
+// `v[a..b]` returns a view of the SAME type `[]T` ≡ `Vec[T]` (a single
+// `[]T` type — NOT a separate `Slice` type) sharing the parent buffer
 // (interior pointer at `data + start`, `cap == len`). The GC keeps the parent
-// buffer alive while the view is reachable (`GC_all_interior_pointers`, Plan
-// 138 Ф.2). A subsequent reallocating mutation on the view (`push` at
-// `cap == len`) detaches it into a fresh buffer, so it never mutates the parent
-// (Go-model detach, GC-safe).
+// buffer alive while the view is reachable (`GC_all_interior_pointers`). A
+// subsequent reallocating mutation on the view (`push` at `cap == len`)
+// detaches it into a fresh buffer, so it never mutates the parent (Go-model
+// detach, GC-safe).
 //
-// `slice()` (a copying view whose name lied) was REMOVED in Plan 138.1; an
-// owning copy is `clone()`. Plan 153.4 adds split_at/chunks/windows on this
-// same view model.
+// `slice()` (a copying view whose name lied) was REMOVED; an owning copy is
+// `clone()`. split_at/chunks/windows live on this same view model.
 #prelude(core, runtime, collections, protocols)
 module collections.vec
 
@@ -21,23 +20,21 @@ import std.collections.range.{Range}
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Zero-copy sub-range view — the slice `[r.start, r.end)` over the same
-/// backing buffer. Powers `v[a..b]` (Plan 194 Ф.3 vrange-роутинг, closes
-/// [M-172.14-vrange-nv-route]): `emit_c.rs` synthesizes `v.index(range)` for
-/// `v[a..b]` and dispatches here through the normal method-call path — there
-/// is no more codegen range-slice intrinsic (`nova_vec_slice_chk`/`_nochk`
-/// are retired). Overloads with `@index(i int)` (access.nv).
+/// backing buffer. Powers `v[a..b]`: the compiler synthesizes
+/// `v.index(range)` for `v[a..b]` and dispatches here through the normal
+/// method-call path — there is no codegen range-slice intrinsic
+/// (`nova_vec_slice_chk`/`_nochk` are retired). Overloads with
+/// `@index(i int)` (access.nv).
 ///
-/// Slice-bounds are a `requires` precondition (RESTORED per owner 2026-07-15,
-/// revising the earlier Plan-194-Ф.3 always-on-guard stance). Justification:
-/// with `off` AND `verified` modes BOTH removed, a `requires` is never
-/// unsafely elided — enforced at runtime under `checked`, and under
+/// Slice-bounds are a `requires` precondition. Justification: a `requires` is
+/// never unsafely elided — enforced at runtime under `checked`, and under
 /// `optimized` sound-elided ONLY when Z3 proves the range in-bounds (else
 /// enforced). So bounds get the ideal profile (zero-cost when provably safe,
 /// checked otherwise) through the SINGLE contract machinery — one window, not
 /// a hand-written guard plus a separate site-elision path. On violation → a
 /// contract panic. The perf goal (0-alloc view-descriptor placement) is met
-/// via the general sret `_out` call-site rewrite (Plan 172.14,
-/// `sret_maybe_rewrite_call`) — any Leaf-form Vec-returning mono method gets
+/// via the general sret `_out` call-site rewrite
+/// (`sret_maybe_rewrite_call`) — any Leaf-form Vec-returning mono method gets
 /// it automatically, so this body needs no special plumbing.
 export fn Vec[T] @index(r Range) -> Self
     requires r.start >= 0 && r.end >= r.start && r.end <= @len

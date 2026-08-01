@@ -1,4 +1,4 @@
-// std.collections.vec (restructure) — Plan 153.5 / D263 restructure-ops.
+// std.collections.vec (restructure) — restructure-ops.
 //
 // Operations that build a NEW vector from existing data, or reshape a vector
 // in place by moving whole runs of elements:
@@ -6,7 +6,7 @@
 //   @concat(other) -> Vec[T]   — non-mutating join `self ++ other` (new buffer).
 //   `+` operator    -> @plus    — `a + b` is a new Vec (≡ @concat); operands
 //                                 are unchanged. `a += b` lowers to `a = a + b`
-//                                 (a fresh concat Vec; D263).
+//                                 (a fresh concat Vec).
 //   [][]T.@flatten() -> []T     — concatenate every inner `Vec[T]` of a
 //                                 `Vec[Vec[T]]` into one flat `Vec[T]` (new
 //                                 buffer), in order. `T` = innermost element.
@@ -250,7 +250,7 @@ export fn Vec[T] mut @drain(range Range) -> Vec[T]
 /// (`v.insert_slice(i, v[a..b])`) is correct. O(len + sl.len()).
 ///
 /// This is the slice-flavoured bulk insert — the `[]T` counterpart of `@splice`
-/// (which takes a `Vec[T]`). Under D239 a `[]T` IS a `Vec[T]`, so this delegates
+/// (which takes a `Vec[T]`). A `[]T` IS a `Vec[T]`, so this delegates
 /// straight to `@splice`; the distinct name documents the slice-argument intent
 /// (Rust `Vec::splice` / Go `slices.Insert`). Returns `@` for chaining.
 ///

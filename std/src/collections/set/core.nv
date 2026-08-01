@@ -57,7 +57,7 @@ export fn Set[T].new(cap int = 16) -> Self
 ///
 /// Принимает конкретный `[]T` (зеркало `HashMap.from([](K,V))`): generic-протокол
 /// `Iterable[T]` в mono-контексте стирался в `void*`, и for-in не мог восстановить
-/// C-тип итератора на mono-инстансе ([M-91.1-set-from-iter-iterable-param]).
+/// C-тип итератора на mono-инстансе.
 /// Массив итерируется корректно для любого типа элемента.
 ///
 /// # Examples
@@ -92,7 +92,7 @@ export fn Set[T] @is_empty() -> bool => @map.is_empty()
 #stable(since = "0.1")
 export fn Set[T] @contains(item T) -> bool => @map.contains(item)
 
-/// Текущая ёмкость (bucket count внутреннего `HashMap`). D117 AMEND
+/// Текущая ёмкость (bucket count внутреннего `HashMap`). AMEND
 /// accessor-pair — 0-arg getter half of `cap`/`cap(n)`.
 #stable(since = "0.1")
 export fn Set[T] @cap() -> int => @map.cap()
@@ -134,15 +134,14 @@ export fn Set[T] mut @clear() -> () => @map.clear()
 
 /// Создать независимую копию множества (deep — каждый элемент клонируется).
 ///
-/// По D230 amend `Clone` — глубокий протокол: `clone()` клонирует каждый
+/// По `Clone`-протоколу `clone()` клонирует каждый
 /// элемент через `T.@clone()`, под bound `[T Clone]`. Set делегирует
 /// backing-`HashMap` (`{ map: @map.clone() }`), поэтому deep-семантика
 /// наследуется от `HashMap.@clone` (per-element `k.clone()`).
 ///
-/// Plan 138.4 Ф.1 (G-C, [M-138.3-clone-bound-unsupported] RESOLVED): per-element
-/// generic `T.@clone()` теперь диспатчится корректно (примитивный T → built-in
-/// identity, record T → `T.@clone()`), так что делегирование даёт полноценную
-/// глубокую копию.
+/// Per-element generic `T.@clone()` диспатчится корректно (примитивный T →
+/// built-in identity, record T → `T.@clone()`), так что делегирование даёт
+/// полноценную глубокую копию.
 #stable(since = "0.1")
 export fn Set[T Clone] @clone() -> Self =>
     { map: @map.clone() }

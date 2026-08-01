@@ -61,8 +61,7 @@ export fn Vec[T] @equal(other Vec[T]) -> bool {
 ///
 /// HISTORY: the prior impl was a byte-wise `RawMem.compare` (memcmp) — correct
 /// only for `Vec[u8]` (single-byte unsigned elements, where byte order == value
-/// order). A `u8`-specialised memcmp fast-path is a perf followup
-/// ([M-153-vec-compare-u8-memcmp-fastpath]).
+/// order). A `u8`-specialised memcmp fast-path is a perf followup.
 ///
 /// # Examples
 ///
