@@ -9740,6 +9740,40 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
             ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) => {
+                // №253 [M-ok-or-bare-variant-misresolve-try-ice]: `<opt>.ok_or(<bare
+                // variant>)?` — `ok_or`'s Err param `E` (`Option[T] @ok_or[E](err E)
+                // -> Result[T,E]`, prelude/core.nv) is a METHOD-level generic bound
+                // ONLY by this very argument (chicken-egg), so the general arg-
+                // narrowing loop (`check_instance_overload`, ~L13038) deliberately
+                // skips `materialize_literal_coercion` whenever `exp_ty` mentions the
+                // callee's own unbound generic (avoids stamping an erased/wrong type
+                // for the general case) — a bare enum-variant argument (`Empty`) never
+                // gets a context type and falls to `infer_expr_type`'s last-resort
+                // alphabetical-tie-break fallback (~L17737), picking whichever Sum
+                // type declaring that variant name sorts first, NOT the function's own
+                // error type. For the narrow `?`-immediately-after-`ok_or(..)` shape
+                // the missing context IS recoverable: `?` propagates the Err arm
+                // through THIS function's own declared return carrier
+                // (`current_fn_return_ty`, `Result[_, E]`) — bind the bare-variant
+                // argument against that concrete `E` before walking `inner`, so the
+                // normal materialize/Ident-cache-lookup machinery picks it up.
+                if matches!(e.kind, ExprKind::Try(_)) {
+                    if let ExprKind::Call { func, args, .. } = &inner.kind {
+                        if let ExprKind::Member { name: field, .. } = &func.kind {
+                            if field == "ok_or" && args.len() == 1 {
+                                if let Some(TypeRef::Named { path, generics, .. }) =
+                                    self.current_fn_return_ty.borrow().clone()
+                                {
+                                    if path.len() == 1 && path[0] == "Result" && generics.len() == 2
+                                        && !typeref_mentions_any(&generics[1], gs)
+                                    {
+                                        self.materialize_literal_coercion(args[0].expr(), &generics[1]);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 self.f1_expr(inner, gs, scope, errors);
                 // Plan 174.2 Ф.B: cross-carrier `?` diagnostics. Only for `?`
                 // (Try), not `!!` (Bang) — `!!` throws through Fail и не связан
@@ -19140,6 +19174,22 @@ impl<'a> TypeCheckCtx<'a> {
         let slice_key: Option<String> = match peeled {
             TypeRef::Named { path, .. } if path.len() == 1 && path[0].starts_with("[]") => {
                 Some(path[0].clone())
+            }
+            // №252 [M-bytes-to-str-chain-misresolves-universal-str-conv]: a
+            // `[]T`-typed scope value (e.g. `"hi".bytes()`'s result) is
+            // stored canonicalized as `Named{"Vec", [T]}` (D239 alias), not
+            // the raw `Array`/FixedArray` shape below — mirror
+            // `check_instance_overload`'s `array_elem_key` (~L12734-12736)
+            // so a chain call (`bytes.to_str().map_err(..)`) finds the SAME
+            // `[]u8`-spelled concrete facade method
+            // (`string/core.nv:274`) that `check_instance_overload` already
+            // resolves for a bare/match-scrutinee use of the same call —
+            // without this arm the retry below silently misses and falls
+            // through to the generic `fn[T] T @to_str() -> str` blanket.
+            TypeRef::Named { path, generics, .. }
+                if path.len() == 1 && path[0] == "Vec" && generics.len() == 1 =>
+            {
+                Some(format!("[]{}", render_type_ref(&generics[0])))
             }
             TypeRef::Array(inner, _) | TypeRef::FixedArray(_, inner, _) => {
                 let mut e: &TypeRef = inner;
