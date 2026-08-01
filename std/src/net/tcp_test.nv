@@ -25,7 +25,7 @@ import std.io.{IoError}
 fn must[T](r Result[T, NetError]) -> T {
     match r {
         Ok(v)  => v
-        Err(e) => panic("net2 test: unexpected Err: ${e.to_str()}")
+        Err(e) => panic("net2 test: unexpected Err: ${e}")
     }
 }
 
@@ -33,7 +33,7 @@ fn must[T](r Result[T, NetError]) -> T {
 fn must_io[T](r Result[T, IoError]) -> T {
     match r {
         Ok(v)  => v
-        Err(e) => panic("net2 test: unexpected Err: ${e.to_str()}")
+        Err(e) => panic("net2 test: unexpected Err: ${e}")
     }
 }
 

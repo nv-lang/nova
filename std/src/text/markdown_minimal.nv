@@ -85,9 +85,9 @@ export fn Markdown.to_html(md str) -> str {
                 level += 1
             }
             ro text = line[level..].trim_ascii()
-            buf.append("<h${level.to_str()}>")
+            buf.append("<h${level}>")
             buf.append(render_inline(text))
-            buf.append("</h${level.to_str()}>\n")
+            buf.append("</h${level}>\n")
             i += 1
             continue
         }

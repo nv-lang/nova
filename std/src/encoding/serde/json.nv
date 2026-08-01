@@ -339,7 +339,7 @@ fn JsonDeserializer mut @enter_key(key str) -> Result[JsonDeserializer, DeError]
 fn parse_err_msg(e ParseJsonError) -> str {
     match e {
         UnexpectedChar { line, col, found } =>
-            "unexpected character '${found.to_str()}' at line ${line}, col ${col}"
+            "unexpected character '${found}' at line ${line}, col ${col}"
         UnexpectedEof { line, col } =>
             "unexpected end of input at line ${line}, col ${col}"
         InvalidEscape { line, col, seq } =>

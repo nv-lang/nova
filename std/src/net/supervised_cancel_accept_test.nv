@@ -75,7 +75,7 @@ test "cancel: wakes a directly-parked accept() with no inner spawn (#165)" {
                 Err(e) => {
                     match e {
                         Cancelled => { }
-                        _ => panic("net2 test: expected NetError.Cancelled, got ${e.to_str()}")
+                        _ => panic("net2 test: expected NetError.Cancelled, got ${e}")
                     }
                 }
             }
@@ -108,7 +108,7 @@ test "timeout: wakes a directly-parked accept() with no spawn at all (#165)" {
                     Err(e) => {
                         match e {
                             Cancelled => { }
-                            _ => panic("net2 test: expected NetError.Cancelled, got ${e.to_str()}")
+                            _ => panic("net2 test: expected NetError.Cancelled, got ${e}")
                         }
                     }
                 }

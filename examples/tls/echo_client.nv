@@ -43,7 +43,7 @@ fn main() {
                     Ok(consume tcp) => {
                         println("TCP connected to ${PORT}, starting TLS handshake")
                         match TlsStream.connect(tcp, cfg) {
-                            Err(e) => println("TLS handshake failed: ${e.to_str()}")
+                            Err(e) => println("TLS handshake failed: ${e}")
                             Ok(consume stream) => {
                                 // NB: don't name this binding `tls` — it would
                                 // shadow the imported package alias (`tls.*`)
@@ -51,12 +51,12 @@ fn main() {
                                 // an (invalid) module-qualified call instead of
                                 // a method call (E7401).
                                 ro version = stream.protocol_version() ?? TlsVersion.Tls13
-                                println("TLS established (${version.to_str()})")
+                                println("TLS established (${version})")
                                 match stream.write_all(MESSAGE.bytes()) {
-                                    Err(e) => { println("Write failed: ${e.to_str()}"); stream.close() }
+                                    Err(e) => { println("Write failed: ${e}"); stream.close() }
                                     Ok(_) => {
                                         match stream.read_bytes(256) {
-                                            Err(e) => { println("Read failed: ${e.to_str()}"); stream.close() }
+                                            Err(e) => { println("Read failed: ${e}"); stream.close() }
                                             Ok(echo_bytes) => {
                                                 // explicit []u8 local (chain not needed).
                                                 ro eb []u8 = echo_bytes
