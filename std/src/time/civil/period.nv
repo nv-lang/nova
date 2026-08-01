@@ -194,18 +194,12 @@ fn date_plus_period(d Date, p Period) -> Result[Date, DateError] {
 /// ```
 #stable(since = "0.1")
 export fn Date @plus(p Period) -> Date =>
-    match date_plus_period(@, p) {
-        Ok(d) => d,
-        Err(_) => panic("Date arithmetic overflow: + Period out of civil range"),
-    }
+    date_plus_period(@, p) ?? panic("Date arithmetic overflow: + Period out of civil range")
 
 /// `Date - Period` (оператор `-`). Эквивалент `+ p.neg()`; **trap**.
 #stable(since = "0.1")
 export fn Date @minus(p Period) -> Date =>
-    match date_plus_period(@, p.neg()) {
-        Ok(d) => d,
-        Err(_) => panic("Date arithmetic overflow: - Period out of civil range"),
-    }
+    date_plus_period(@, p.neg()) ?? panic("Date arithmetic overflow: - Period out of civil range")
 
 /// Checked-вариант: `Err(RangeOverflow)` вместо trap.
 #stable(since = "0.1")
@@ -220,16 +214,14 @@ export fn Date @try_minus(p Period) -> Result[Date, DateError] =>
 /// Saturating: clamp к `Date.min_value()`/`max_value()` вместо trap.
 #stable(since = "0.1")
 export fn Date @saturating_plus(p Period) -> Date =>
-    match date_plus_period(@, p) {
-        Ok(d) => d,
-        Err(_) =>
-            // Направление сатурации — по знаку суммарного сдвига.
-            if (p.years as i64) * 366 + (p.months as i64) * 31 + (p.days as i64) >= 0 {
-                Date.max_value()
-            } else {
-                Date.min_value()
-            },
-    }
+    date_plus_period(@, p) ?? (
+        // Направление сатурации — по знаку суммарного сдвига.
+        if (p.years as i64) * 366 + (p.months as i64) * 31 + (p.days as i64) >= 0 {
+            Date.max_value()
+        } else {
+            Date.min_value()
+        }
+    )
 
 /// Saturating-вычитание.
 #stable(since = "0.1")
