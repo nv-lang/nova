@@ -110,8 +110,7 @@ export fn Stats.sum(xs []f64) -> f64 {
 }
 
 fn sort_copy(xs []f64) -> []f64 {
-    mut sorted []f64 = []
-    for x in xs { sorted.push(x) }
+    mut sorted = xs.collect()
     ro n = sorted.len()
     for i in 0..n {
         for j in 0..n - 1 - i {

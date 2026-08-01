@@ -193,10 +193,7 @@ export fn StrGen @generate() Random -> str {
         // Печатные ASCII: 32..126 — каждый valid 1-byte UTF-8 char.
         // Plan 34 Ф.5.2: `int as char` запрещён D54.
         ro code = 32 + ((Random.u64() as int).abs() % 95)
-        ro c = match code.to_char() {
-            Ok(ch) => ch
-            Err(_) => '?'
-        }
+        ro c = code.to_char() ?? '?'
         buf.append(c)
     }
     buf
@@ -209,8 +206,8 @@ export fn StrGen @shrink(value str) -> []str {
     ro len = value.byte_len()
     if len > 0 {
         steps.push("")                                  // пустая строка
-        if len > 1 { steps.push(value[0..len / 2]) }    // половина
-        if len > 1 { steps.push(value[0..len - 1]) }    // на 1 короче
+        if len > 1 { steps.push(value[..len / 2]) }    // половина
+        if len > 1 { steps.push(value[..len - 1]) }    // на 1 короче
     }
     steps
 }
@@ -261,13 +258,13 @@ export fn ArrayGen[G, T] @shrink(value []T) -> [][]T {
         // Половина (первая)
         if len > 1 {
             mut half []T = []
-            half.append(value[0..len / 2])
+            half.append(value[..len / 2])
             steps.push(half)
         }
         // Без последнего элемента
         if len > 1 {
             mut shorter []T = []
-            shorter.append(value[0..len - 1])
+            shorter.append(value[..len - 1])
             steps.push(shorter)
         }
     }

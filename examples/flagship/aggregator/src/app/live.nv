@@ -53,7 +53,7 @@ fn live_fetch_tcp(host str) Net Time -> Result[SourceData, AggError] {
                 Err(AggError.Transport("resolve: no address for ${host}"))
             } else {
                 match TcpStream.connect(addrs[0]) {
-                    Ok(consume s)  => { consume st = s; st.close(); Ok(SourceData { id: host, payload: []u8.new() }) }
+                    Ok(consume st) => { st.close(); Ok(SourceData { id: host, payload: []u8.new() }) }
                     Err(e) => Err(AggError.Transport(e.to_str()))
                 }
             }

@@ -1,49 +1,27 @@
-// Plan 109 (D179): StringBuilder реализован полностью на Nova.
-// Тип: consume record с полем `mut buf []u8`.
-// Ранее: external type + C runtime (Nova_StringBuilder / Rust String).
-// Теперь: Nova record; все методы на Nova-body.
+// StringBuilder: consume record с полем `mut buf []u8`; все методы на Nova-body.
 //
-// API-изменения (Plan 109 / D179):
-//   @byte_len() → bytes (O(1)), как str (D249-канон: строкоподобное — только
-//     byte_len(); [M-unwrap-twins-retraction] 2026-07-07 откатил прежнее
-//     «@byte_len удалён, используйте @len()» — D249 требует обратное)
-//   - @char_len() удалён (счёт codepoint — линза+терминатор через
-//     `.clone().into_str().chars().count()`, не выделенное свойство; 0
-//     usages в std/, [M-unwrap-twins-retraction] 2026-07-07)
-//   - @peek() удалён (unsound: pointer aliasing с realloc)
-//   @into() переименован → @as_str() (consume)
-//   @append_bytes(arr) удалён → @append(readonly arr []u8) overload
-//   @plus(s) / @plus(c) удалены — используйте @append напрямую
-//   type StringBuilder consume  — тип требует явного consume
+// API-каноны:
+//   - строкоподобная поверхность — только `@byte_len()` (как str, не len)
+//   - `@char_len()` нет: счёт codepoint — линза через
+//     `.clone().into_str().chars().count()`
+//   - `@peek()` нет (unsound: pointer aliasing с realloc)
+//   - финализация — consume `@into_str()`
+//   - добавление сырых байтов — `@append([]u8)` overload; `@plus` нет —
+//     используйте `@append` напрямую
+//   - тип consume — требует явного consume
 
 // #no_prelude — break import cycle (prelude → collections → string_builder).
 // Explicit imports cover only what we need.
 #no_prelude
 module runtime.string_builder
 
-// Plan 208 Ф.1 (D422/D179 amend) — additive imports for the new
-// @reserve/@advance/@pad_in_place/@write_padded/@into_str_checked methods
-// below. `Align` (runtime.fmt_buf, also `#no_prelude` — see its header note)
-// does not reopen the prelude cycle this file already breaks out of.
+// One-directional import of the fmt_buf buffer-primitives: this file imports
+// `runtime.fmt_buf`; `fmt_buf` does NOT import back — no cycle. `Align`
+// (runtime.fmt_buf, also `#no_prelude` — see its header note) does not
+// reopen the prelude cycle this file already breaks out of.
 //
-// Plan 208 Ф.4R Ш1 (owner 2026-07-20, architecture fix — see
-// `docs/plans/wip/208-f4r-notes.md`): `int_fmt`/`f64_fmt`/`FmtSpec`/
-// `FloatKind`/`bool_fmt`/`char_fmt`/`f32_fmt`/`str_debug_fmt`/
-// `char_debug_fmt` added to this SAME one-directional import (this file
-// already imports `fmt_buf` — `fmt_buf` does NOT import this file back,
-// no cycle) — backs the `*_display_spec` family further down. An earlier
-// attempt put `*_display_spec` IN `fmt_buf.nv` instead, requiring `fmt_buf`
-// to import `StringBuilder` FROM here — that closed an inter-module cycle
-// found to be order-dependently broken (a third file's own import order
-// of `fmt_buf` vs `string_builder` flips CODEGEN-FAIL/PASS for symbols
-// having nothing to do with either import) — a genuine compiler defect in
-// cyclic-import resolution, not something to route around. This file's
-// pre-existing one-way dependency avoids the whole class of bug.
-//
-// Plan 208 Ф.4R §10R-Д3 (owner 2026-07-21): `int_fmt_into`/
-// `f64_fmt_shortest_into`/`f32_fmt_shortest_into` bridges are RETIRED — the
-// `_into` suffix is gone repo-wide; `int_fmt`/`f64_fmt`/`f32_fmt` are now the
-// SOLE entry points (axis params default, `unsafe fn`), imported directly.
+// `int_fmt`/`f64_fmt`/`f32_fmt` are the sole entry points used by the
+// `*_display_spec` family further down (axis params default; `unsafe fn`).
 import std.runtime.fmt_buf.{Align, FloatKind, FmtSpec, int_fmt, f64_fmt, bool_fmt, char_fmt, f32_fmt, str_debug_fmt, char_debug_fmt}
 import std.runtime.raw_mem.{RawMem}
 import std.prelude.core.{Result}
@@ -60,16 +38,15 @@ export type StringBuilder consume {
 // Default capacity для StringBuilder.new() — 16 bytes (1-line string).
 const INITIAL_CAPACITY = 16
 
-// [M-vec-spelling-consume-block-body-untyped] (vec-sweep, 2026-07-06,
-// RESOLVED by workaround): giving `StringBuilder.new()`/`@clone()` a
-// multi-statement BLOCK body (`{ mut _buf ...; ...; { buf: _buf } }`) broke
-// D133 consume-tracking for every OTHER file's `consume sb = StringBuilder.new()`
-// call site in the same CU — `[D133-not-consumed] переменная sb (тип \`\`)`
-// (empty resolved type — the consume-checker's own type-resolution pass
+// `new()`/`@clone()` keep single-expression arrow bodies: a multi-statement
+// BLOCK body (`{ mut _buf ...; ...; { buf: _buf } }`) broke the consume
+// checker's type resolution for every OTHER file's `consume sb =
+// StringBuilder.new()` call site in the same CU (a `not-consumed` diagnostic
+// with an EMPTY resolved type: the consume-checker's own type-resolution pass
 // didn't see through the block body, unlike the main type-checker). Kept as
-// a private helper returning plain `[]u8` (no consume concerns there) so the
-// constructor itself stays the single-expression `=> { buf: … }` bare-literal
-// arrow-body shape the consume-checker expects.
+// private helpers returning plain `[]u8` (no consume concerns there) so the
+// constructors stay the single-expression bare-literal arrow-body shape the
+// consume checker expects.
 fn sb_init_buf(cap int) -> []u8 => []u8.new(cap: cap)
 
 // Deep-copy helper for `@clone`: fresh exact-capacity buffer + one bulk
@@ -80,7 +57,7 @@ fn sb_init_buf(cap int) -> []u8 => []u8.new(cap: cap)
 // `.append(@buf)` on a `{ buf: … }` record-literal receiver mis-dispatched to
 // StringBuilder's own `@append(s str)` overload (generated C passed a
 // `Nova_Vec____nova_byte*` where `nova_str` was expected) — this was the root
-// of the `vec_of_empty_panic` CC-FAIL ([M-vec-neg-panic-cascaded-cc-fail]).
+// of the `vec_of_empty_panic` CC-FAIL.
 fn sb_clone_buf(src []u8) -> []u8 {
     mut b []u8 = sb_init_buf(src.len())
     b.append(src)
@@ -94,33 +71,30 @@ export fn StringBuilder.new(cap int = INITIAL_CAPACITY) -> Self
 
 // StringBuilder из существующей строки (copy UTF-8 bytes).
 //
-// W_STATIC_CONVERSION AMEND (2026-07-17, lint-разкраснение, владелец):
-// static-конверсия `StringBuilder.from(s)` — запрещённая «пятая дверь»
-// (nv-coding-style §1а, ретракция 2026-07-09). Канон: метод на источнике.
+// static-конверсия `StringBuilder.from(s)` не предоставляется —
+// запрещённая «пятая дверь» (nv-coding-style §1а). Канон: метод на источнике.
 export fn str @to_stringbuilder() -> StringBuilder => StringBuilder.new().append(@)
 
 // StringBuilder из одного codepoint (UTF-8 encode).
-// Plan 73.1 D180: delegate to to_stringbuilder() (str) — старый pattern `let mut sb = StringBuilder.new()
-// + sb.append(c)` нарушал D180 (sb consume-obligation не satisfied при
-// implicit fluent-return). [M-91.11-from-char-direct] ✅ RESOLVED/verified:
-// `new().append(c)` fluent chain совместим с D180.
+// Fluent chain `StringBuilder.new().append(c)` (совместим с consume-каноном)
+// вместо `let mut sb = StringBuilder.new() + sb.append(c)` (sb consume-
+// obligation не satisfied при implicit fluent-return).
 //
-// W_STATIC_CONVERSION AMEND (2026-07-17, lint-разкраснение, владелец): та же
-// ретракция, что у `str @to_stringbuilder()` выше — метод на источнике `char`.
+// static-конверсия `StringBuilder.from(c)` не предоставляется — та же
+// ретракция, что у `str @to_stringbuilder()` выше. Канон: метод на источнике.
 export fn char @to_stringbuilder() -> StringBuilder => StringBuilder.new().append(@)
 
 // ─── Query methods ───
 
-// Длина буфера в байтах. O(1). D249-канон: строкоподобная поверхность
+// Длина буфера в байтах. O(1). Строкоподобная поверхность
 // (как str) — только byte_len(), не len().
 export fn StringBuilder @byte_len() -> int => @buf.len()
 
 // Allocated capacity в байтах.
 //
-// [M-unwrap-twins-retraction] (2026-07-07): `@capacity()` alias
-// РЕТРАКТИРОВАН (дублировал канонический `@cap()`, D9) — `@cap()` теперь
-// единственный 0-arg getter половины `cap`/`cap(n)` property-пары
-// (ex-`with_capacity`, D372 amend — with_capacity removed).
+// `@cap()` — единственный 0-arg getter половины `cap`/`cap(n)` property-пары
+// (алиас `@capacity()` ретрактирован; `with_capacity` удалён — вместо него
+// `StringBuilder.new(cap: n)`).
 export fn StringBuilder @cap() -> int => @buf.cap()
 
 // Set capacity to exactly `n` bytes (delegates to the underlying `[]u8`'s
@@ -140,7 +114,7 @@ export fn StringBuilder @clone() -> Self => { buf: sb_clone_buf(@buf) }
 export fn StringBuilder @starts_with(prefix str) -> bool {
     ro pbytes = prefix.bytes()
     ro plen = pbytes.len()
-    plen <= @buf.len() && @buf[0..plen].compare(pbytes) == 0
+    plen <= @buf.len() && @buf[..plen].compare(pbytes) == 0
 }
 
 // Проверить suffix буфера. Slice-view + memcmp (zero-copy).
@@ -156,60 +130,51 @@ export fn StringBuilder @ends_with(suffix str) -> bool {
 // Append UTF-8 bytes из str. Zero-copy view (as_bytes).
 export fn StringBuilder mut @append(s str) -> @ { @buf.append(s.bytes()) }
 
-// Append codepoint как UTF-8 (1-4 байта). Fluent push chain (D181)
-// + multi-line continuation (Plan 91 followup parser fix).
+// Append codepoint как UTF-8 (1-4 байта). Fluent push chain.
 export fn StringBuilder mut @append(c char) -> @ {
     ro (b, n) = c.encode_utf8()
-    for i in 0..n {
-        @buf.push(b[i])
-    }
+    @buf.append(b[..n])
 }
 
 // Append raw []u8 bytes. Caller отвечает за UTF-8 validity.
 export fn StringBuilder mut @append(arr []u8) -> @ { @buf.append(arr) }
 
-// Plan 154.1 (D269): typed scalar overloads so `sb.append(x)` dispatches on
-// the value's type uniformly — no `append_int`-style names, no caller-side
-// `str.from`. Used by the primitive Display impls in std/prelude/protocols.nv
+// Typed scalar overloads so `sb.append(x)` dispatches on the value's type
+// uniformly — no `append_int`-style names, no caller-side `str.from`. Used by
+// the primitive Display impls in std/prelude/protocols.nv
 // (`fn int @display(mut sb StringBuilder) { sb.append(@) }`), and convenient
 // for users directly. `bool` appends the literal "true"/"false" with no
 // intermediate; `int`/`f64` route through `@to_str()` (bare-T blanket,
 // `"${@}"` — same conv.h formatters the interp path uses), avoiding the temp
 // StringBuilder an interp-string body would otherwise allocate.
-// Параметр `x` (не `n`, 2026-07-17): это ЗНАЧЕНИЕ для форматирования,
-// не count/index/len — прежнее имя `n` ложно матчило W_PARAM_NO_CONTRACT
-// (линт по имени параметра, не по семантике); `requires n >= 0` было бы
-// НЕВЕРНО (запрещало бы append отрицательных чисел). Rename на `x` —
-// консистентно с f64/f32-сиблингами ниже — снимает false-positive.
-// Zero-alloc (владелец 2026-07-20): reserve→spare→advance через fmt_buf-мосты
-// — БЕЗ промежуточной str-аллокации. Капы — ЧЕСТНЫЕ максимумы рендера
-// (поправка владельца 2026-07-20: без разнобоя на глаз):
+// Параметр `x`: это ЗНАЧЕНИЕ для форматирования, не count/index/len —
+// имя `n` ложно матчило W_PARAM_NO_CONTRACT (линт по имени параметра,
+// не по семантике); `requires n >= 0` было бы НЕВЕРНО (запрещало бы append
+// отрицательных чисел).
+// Zero-alloc: reserve→spare→advance через fmt_buf-мосты — БЕЗ промежуточной
+// str-аллокации. Капы — честные максимумы рендера (без разнобоя на глаз):
 const INT_FMT_CAP = 20   // "-9223372036854775808" — ровно 20
 const F64_FMT_CAP = 24   // "-2.2250738585072014e-308" — ровно 24
 const F32_FMT_CAP = 16   // "-1.1754944e-38" = 14; +2 запас формата %g
 
-// Plan 208 Ф.4R §10R-Д3: `int_fmt(x, buf, cap)` — `spec` axis omitted,
-// defaults to plain decimal (`FmtSpec.new()`), same shape the retired
-// `int_fmt_into` bridge used to provide.
+// `int_fmt(x, buf, cap)` — `spec` axis omitted,
+// defaults to plain decimal (`FmtSpec.new()`).
 export fn StringBuilder mut @append(x int) -> @ {
     @reserve(INT_FMT_CAP)
     unsafe { @advance(int_fmt(x, @spare(), INT_FMT_CAP)) }
 }
 // `f64_fmt(x, buf, cap)` — `kind`/`prec` axes omitted, default to
-// Shortest/-1, same shape the retired `f64_fmt_shortest_into` bridge used
-// to provide.
+// Shortest/-1.
 export fn StringBuilder mut @append(x f64) -> @ {
     @reserve(F64_FMT_CAP)
     unsafe { @advance(f64_fmt(x, @spare(), F64_FMT_CAP)) }
 }
 
 export fn StringBuilder mut @append(b bool) -> @ { if b { @append("true") } else { @append("false") } }
-// Plan 154.1 [M-154.1-f32-display-debug] + Plan 180: f32 via `@to_str()` →
-// the f32-precise shortest-round-trip formatter (nova_f32_to_str). Widening to
-// f64 first would surface the f32→f64 mantissa tail now that f64's formatter is
-// faithful (0.1f → "0.10000000149011612"); the direct f32 path keeps "0.1".
-// Plan 208 Ф.4R §10R-Д3: `f32_fmt_shortest_into` bridge retired — `f32_fmt`
-// is the sole entry point now (same shape, no axis params to default).
+// f32 via `f32_fmt` — the f32-precise shortest-round-trip formatter
+// (`nova_f32_shortest`). Widening to f64 first would surface the f32→f64
+// mantissa tail now that f64's formatter is faithful (0.1f → "0.10000000149011612");
+// the direct f32 path keeps "0.1".
 export fn StringBuilder mut @append(x f32) -> @ {
     @reserve(F32_FMT_CAP)
     unsafe { @advance(f32_fmt(x, @spare(), F32_FMT_CAP)) }
@@ -234,10 +199,8 @@ export fn StringBuilder mut @truncate(len int) -> @
     requires len >= 0
 { @buf.truncate(len) }
 
-// Plan 152.7.1 (D374 AMEND, ex-D374) + Plan 208 Ф.2 (D422 §1, D374 AMEND
-// ×2) — Write protocol implementation. `@write` now takes `[]u8` directly
-// (was `str`) — delegates straight to `@buf.append`, one fewer indirection
-// than the old `s.bytes()` unwrap. Returns () — satisfies Write contract.
+// Write protocol implementation. `@write` takes `[]u8` directly —
+// delegates straight to `@buf.append`. Returns () — satisfies Write contract.
 export fn StringBuilder mut @write(bytes []u8) -> () { @buf.append(bytes) }
 
 // ─── Consume ───
@@ -246,46 +209,41 @@ export fn StringBuilder mut @write(bytes []u8) -> () { @buf.append(bytes) }
 // Zero-copy steal: reuse @buf data ptr напрямую (writes '\0' in-place
 // если cap > len, иначе alloc+copy fallback).
 // Infallible: UTF-8 invariant поддерживается append-методами.
-// Renamed as_str → into_str (Plan 91.18 Ф.2; D77: into_* = consuming).
-// [M-174.1-into-str-unchecked-legacy-array-codegen-gap]: the zero-copy steal
-// path (`@buf.into_str_unchecked()`) mis-codegens here — this file is
-// `#no_prelude` (breaks the prelude→collections→string_builder cycle) and so
-// `@buf` uses the LEGACY `NovaArray` representation (prelude.nv: "#no_prelude
-// units keep the legacy NovaArray path"), for which the new consume-method
-// dispatch doesn't wire correctly (generates a C body returning `int` instead
-// of `nova_str` — CC-FAIL "assigning to 'nova_str' from incompatible type
-// 'int'"). Falls back to the non-consuming copy path (`to_str_unchecked`)
-// until that gap is closed under its own plan (see backlog-followups.md
-// marker); correctness is unaffected, only the zero-copy-reuse optimization
-// is foregone for this legacy-array call site.
-// Plan 214 (D429): #coerce — declares the implicit finalize-lane pair
-// `StringBuilder → str` (owning zero-cost MOVE, receiver disarmed at the
-// insertion point; use-after is a compile error, D133 linearity).
+// `#coerce`: declares the implicit finalize-lane pair `StringBuilder → str`
+// (owning zero-cost MOVE, receiver disarmed at the insertion point; use-after
+// is a compile error — linearity).
+// [M-174.1-into-str-unchecked-legacy-array-codegen-gap] обход: the zero-copy
+// steal path (`@buf.into_str_unchecked()`) mis-codegens here — this file is
+// `#no_prelude` and so `@buf` uses the LEGACY `NovaArray` representation
+// (prelude.nv: "#no_prelude units keep the legacy NovaArray path"), for which
+// the new consume-method dispatch doesn't wire correctly (generates a C body
+// returning `int` instead of `nova_str` — CC-FAIL). Falls back to the
+// non-consuming copy path (`to_str_unchecked`) until that gap is closed (see
+// backlog-followups.md marker); correctness is unaffected, only the
+// zero-copy-reuse optimization is foregone for this legacy-array call site.
 #coerce
 export fn StringBuilder consume @into_str() -> str => unsafe { @buf.to_str_unchecked() }
 
-// Checked twin of `@into_str()` — validates UTF-8 instead of assuming it
-// (Plan 208 Ф.1, D422 §"into_str()"). Delegates to `[]u8 @to_str()`
-// (std/runtime/string/core.nv).
+// Checked twin of `@into_str()` — validates UTF-8 instead of assuming it.
+// Delegates to `[]u8 @to_str()` (std/runtime/string/core.nv).
 export fn StringBuilder consume @into_str_checked() -> Result[str, Utf8Error] => @buf.to_str()
 
-// ─── Plan 208 Ф.1 (D422/D179 amend) — buffer-primitive plumbing ───
+// ─── Buffer-primitive plumbing ───
 //
-// ADDITIVE: these five methods are new zero-copy/zero-alloc surface for the
-// Ф.2 compiler rewrite (`emit_interpolated_str`/`emit_format_spec_value` onto
-// `@display(mut f Fmt)`) to call into. Nothing existing above is touched or
+// ADDITIVE zero-copy/zero-alloc surface for the compiler's interpolation/
+// format-spec emit path to call into. Nothing existing above is touched or
 // re-routed through them yet.
 
 // Expose a pointer into (at least) `n` bytes of SPARE capacity beyond the
-// current live length — the compiler-path zero-COPY digit-loop target (D422
-// §1/§9: "top-level компилятор-путь... digit-loop прямо в sb.reserve()/
+// current live length — the compiler-path zero-COPY digit-loop target
+// ("top-level компилятор-путь... digit-loop прямо в sb.reserve()/
 // sb.advance()"). The bytes at `[@byte_len(), @byte_len()+n)` are NOT yet
 // live (`@byte_len()` unchanged) until a matching `@advance(n)` call — the
 // caller's contract is to write at most `n` bytes starting at the returned
 // pointer, then call `@advance` with the number actually written.
-// Разделение дверей (владелец 2026-07-18): reserve БОЛЬШЕ НЕ возвращает
-// указатель (ensure и expose — разные дела); `-> @` — fluent-канон мутаторов
-// (D131-таблица: push/reserve/truncate/fill), даёт `sb.reserve(n).spare()`.
+// Разделение дверей: reserve БОЛЬШЕ НЕ возвращает указатель (ensure и
+// expose — разные дела); `-> @` — fluent-канон мутаторов
+// (push/reserve/truncate/fill), даёт `sb.reserve(n).spare()`.
 // Сырой хвост — явная дверь `@spare()` ниже.
 export fn StringBuilder mut @reserve(n int) -> @
     requires n >= 0
@@ -300,18 +258,16 @@ export fn StringBuilder mut @reserve(n int) -> @
 export fn StringBuilder mut @spare() -> *mut u8 => @buf.ptr().offset(@buf.len())
 
 // Commit `n` bytes of previously-`@reserve`d spare capacity to the live
-// length — the second half of the zero-copy digit-loop protocol. Rebuilds
-// Тонкий делегат в `Vec[T] mut @advance` (in-place `len += n`; владелец
-// 2026-07-18) — прежний header-rebuild через 3-арг `[]u8.new(ptr,len,cap)`
-// плодил свежий GC-заголовок на каждый вызов. Обязательство инициализации
-// n байт — unsafe на сайте (см. контракт Vec @advance).
+// length — the second half of the zero-copy digit-loop protocol.
+// Тонкий делегат в `Vec[T] mut @advance` (in-place `len += n`).
+// Обязательство инициализации n байт — unsafe на сайте (см. контракт Vec @advance).
 export fn StringBuilder mut @advance(n int) -> @
     requires n >= 0 && n <= @buf.cap() - @buf.len()
 {
     unsafe { @buf.advance(n) }
 }
 
-// UTF-8 codepoint count of a byte run (D422 §"width = кодпоинты") — counts
+// UTF-8 codepoint count of a byte run ("width = кодпоинты") — counts
 // non-continuation bytes (top two bits != 0b10), mirroring `conv.h`'s
 // `nova_fmt_char_count`.
 fn utf8_char_count(bytes []u8) -> int {
@@ -323,7 +279,7 @@ fn utf8_char_count(bytes []u8) -> int {
 }
 
 // Known-length primitive/str write with width/align/fill padding, WITHOUT a
-// shift (D422 §4 "известная длина... write_padded... без сдвига"): `bytes`
+// shift ("известная длина... write_padded... без сдвига"): `bytes`
 // has not been written to the main buffer yet, so the fill run and the
 // content can just be appended in the right order directly.
 export fn StringBuilder mut @write_padded(bytes []u8, width int, fill char, align Align) -> ()
@@ -350,7 +306,7 @@ export fn StringBuilder mut @write_padded(bytes []u8, width int, fill char, alig
     }
 }
 
-// Streaming-composite width padding (D422 §4 "pad_in_place"): the body
+// Streaming-composite width padding ("pad_in_place"): the body
 // starting at byte offset `mark` has ALREADY been streamed into the main
 // buffer (its length was not known ahead of the render — record/tuple/Vec/
 // sum composites), so reaching `width` codepoints (when short) means
@@ -385,7 +341,7 @@ export fn StringBuilder mut @pad_in_place(mark int, width int, fill char, align 
             // memmove (overlap-safe) the existing tail right by `left_bytes`.
             RawMem.copy(@buf.ptr().offset(mark) as *u8, @buf.ptr().offset(mark + left_bytes) as *mut u8, content_len)
             // ASCII-fill (fill_len == 1 — пробел/'0'/… — типовой случай):
-            // весь двойной цикл = один memset (владелец 2026-07-20; RawMem.copy
+            // весь двойной цикл = один memset (RawMem.copy
             // из [4]u8 в лоб нельзя — у фикс-массива нет @ptr(), да и незачем:
             // внутренний цикл ≤4 байта, выигрыш — по ВНЕШНЕЙ оси width).
             if fill_len == 1 {
@@ -418,30 +374,25 @@ export fn StringBuilder mut @pad_in_place(mark int, width int, fill char, align 
     }
 }
 
-// ─── `*_display_spec` family (Plan 208 Ф.4R Ш1, owner 2026-07-20) ─────────
+// ─── `*_display_spec` family ─────────────────────────────────────────
 //
 // Flat-argument render-INTO-`StringBuilder` entry points — the SINGLE
-// rendering path both the compiler's interp fast-path (Ш3: devirtualized
-// direct call, resolved by declaration — compiler-conventions §3) and a
-// primitive's own `@display`/`@debug` body (Ш2, still open — see
-// `docs/plans/wip/208-f4r-notes.md`) are meant to converge on. "Плоские
-// аргументы" precedent: `FmtCtx.rich` (prelude/protocols.nv) — same shape,
-// primitive scalars only, no `Option[T]`/enum literals crossing a
-// hand-synthesized call boundary.
+// rendering path the compiler's interp fast-path (devirtualized direct call,
+// resolved by declaration) and a primitive's own `@display`/`@debug` body are
+// meant to converge on. "Плоские аргументы" precedent: `FmtCtx.rich`
+// (prelude/protocols.nv) — same shape, primitive scalars only, no
+// `Option[T]`/enum literals crossing a hand-synthesized call boundary.
 //
 // LIVES HERE (not `fmt_buf.nv`) specifically to avoid an inter-module cycle
 // — see the import-block comment above this file's `import
-// std.runtime.fmt_buf.{...}` line for the full story (a first attempt put
-// this family in `fmt_buf.nv`, requiring it to import `StringBuilder` back
-// from here; empirically that cycle broke third-file import resolution in
-// an order-dependent way). This file already has a clean one-way
+// std.runtime.fmt_buf.{...}` line. This file already has a clean one-way
 // dependency on `fmt_buf` for everything these functions need.
 //
 // Each function REPRODUCES `nova_rt/conv.h`'s existing `nova_fmt_*` chain
 // byte-for-byte (see `spec_tests/conformance/d422_f4r_baseline_*.nv`, the
-// Ш0 contract) — this is a CARRIER SWAP (Rust-emitted C chain → `.nv`
-// engine), not a behavior redesign. Two deliberate quirks are REPRODUCED,
-// not fixed (see the baseline fixtures' comments for why):
+// conformance contract) — this is a CARRIER SWAP (Rust-emitted C chain →
+// `.nv` engine), not a behavior redesign. Two deliberate quirks are
+// REPRODUCED, not fixed (see the baseline fixtures' comments for why):
 //   1. `f64_display_spec`'s precision branch computes the sign prefix and
 //      the magnitude body SEPARATELY (mirrors `nova_fmt_f64_prefix`/
 //      `nova_fmt_f64_body` exactly) — `-0.0` with an explicit precision
@@ -451,7 +402,7 @@ export fn StringBuilder mut @pad_in_place(mark int, width int, fill char, align 
 //   2. `f64_display_spec`'s precision is clamped to 64 (matching
 //      `nova_fmt_f64_body`'s own `if (prec > 64) prec = 64`) — DIFFERENT
 //      from `f64_fmt`'s own internal Fixed-kind clamp (340).
-//      Forwarding `prec` unclamped would diverge from the Ш0 baseline for
+//      Forwarding `prec` unclamped would diverge from the baseline for
 //      `.65`+.
 
 const DISPLAY_INT_CAP = 20        // decimal: "-9223372036854775808"
@@ -466,11 +417,11 @@ const DISPLAY_BOOL_CAP = 5
 /// value needs UP TO 64 BINARY digits (`radix: 2`), 22 OCTAL digits, or 16
 /// HEX digits, each plus a 2-byte alt-radix prefix (`0b`/`0o`/`0x`) when
 /// `alt` fires; DECIMAL needs at most 20 (`"-9223372036854775808"`, the
-/// ONLY radix with a sign). Found by direct testing (2026-07-20, Ш3 gate):
+/// ONLY radix with a sign). Found by direct testing:
 /// a first cut reused `DISPLAY_INT_CAP` (sized for decimal, 20) for EVERY
 /// radix — `int_fmt` "truncates defensively (never overruns buf)" per its
 /// own contract, so `${int.MIN:o}` (needs 22 octal digits) silently lost
-/// its last 2 digits instead of erroring, diverging from the Ш0 baseline.
+/// its last 2 digits instead of erroring, diverging from the baseline.
 fn int_display_natural_cap(radix int) -> int {
     if radix == 2 { 66 }
     else if radix == 8 { 24 }
@@ -493,7 +444,7 @@ export fn int_display_spec(mut sb StringBuilder, v int, width int, radix int, up
         ro cap = width.max(natural_cap)
         ro spec = FmtSpec { width, radix, upper, zero_pad: true, sign_plus, alt }
         sb.reserve(cap)
-        // D102: `spec` has a default now (§10R-Д3) — a supplied value must be
+        // `spec` has a default — a supplied value must be
         // passed BY NAME (keyword-only), not positionally.
         unsafe { sb.advance(int_fmt(v, sb.spare(), cap, spec: spec)) }
     } else {
@@ -515,10 +466,10 @@ export fn int_display_spec(mut sb StringBuilder, v int, width int, radix int, up
 /// `zero_pad` mirrors `nova_fmt_pad`'s own zero-pad branch (conv.h:469,
 /// checked BEFORE the align switch) — zeros insert BETWEEN the prefix
 /// (explicit `-`/`+`, if any) and the body, never before the sign. Found by
-/// direct testing (2026-07-20, Ш1 gate): a first cut used the generic
+/// direct testing: a first cut used the generic
 /// `@pad_in_place(mark, width, fill, align)` unconditionally, which — for
 /// `align: Right, fill: '0'` — inserts zeros BEFORE the whole prefix+body
-/// run (`${-12.345:010.2}` → wrong `"0000-12.35"` instead of the Ш0-pinned
+/// run (`${-12.345:010.2}` → wrong `"0000-12.35"` instead of the pinned
 /// `"-000012.35"`). `prefix_len` tracks how many bytes the (possibly empty)
 /// explicit prefix occupied; the zero-pad case re-anchors `@pad_in_place`
 /// at `mark + prefix_len` (right after the prefix) instead of `mark`,
@@ -527,8 +478,8 @@ export fn int_display_spec(mut sb StringBuilder, v int, width int, radix int, up
 /// the no-precision branch correctly: when `sign_plus` is false there is NO
 /// explicit prefix at all (`prefix_len == 0`) and the shortest-engine body
 /// carries its OWN embedded sign (e.g. `"-100000"`) — zero-padding then
-/// inserts BEFORE that embedded sign too (`${-1.0e5:012}` → confirmed
-/// against the pre-Ф.4R binary: `"00000-100000"`, NOT `"-00000100000"` —
+/// inserts BEFORE that embedded sign too (`${-1.0e5:012}` → confirmed:
+/// `"00000-100000"`, NOT `"-00000100000"` —
 /// pinned as-is, matches `nova_fmt_pad`'s prefix="" case exactly).
 export fn f64_display_spec(mut sb StringBuilder, v f64, width int, has_prec bool, prec int, zero_pad bool, sign_plus bool, align Align, fill char) -> () {
     ro mark = sb.byte_len()
@@ -536,9 +487,9 @@ export fn f64_display_spec(mut sb StringBuilder, v f64, width int, has_prec bool
     if has_prec {
         // Quirk #1 (see file-header note): TWO DIFFERENT negative tests,
         // mirroring `nova_fmt_f64_body`/`nova_fmt_f64_prefix` exactly —
-        // NOT the same test reused for both purposes (an earlier cut of
-        // this function made exactly that mistake and silently produced
-        // only ONE `-` for `-0.0`, not the pinned `--0.00`).
+        // NOT the same test reused for both purposes. Both fire
+        // independently for `-0.0`, concatenating into the pinned
+        // double-minus `--0.00`.
         //   - `mag_neg` (magnitude negation, `nova_fmt_f64_body`): plain
         //     `v < 0.0` — FALSE for `-0.0`, so `mag` stays `-0.0`
         //     (unchanged) and `fmt_f64`'s `%.*f` engine prints ITS OWN
@@ -555,7 +506,7 @@ export fn f64_display_spec(mut sb StringBuilder, v f64, width int, has_prec bool
         // own internal 340 clamp).
         ro clamped_prec = prec.max(0).min(64)
         sb.reserve(DISPLAY_F64_FIXED_CAP)
-        // D102: `kind`/`prec` have defaults now (§10R-Д3) — supplied values
+        // `kind`/`prec` have defaults — supplied values
         // must be passed BY NAME (keyword-only), not positionally.
         unsafe { sb.advance(f64_fmt(mag, sb.spare(), DISPLAY_F64_FIXED_CAP, kind: FloatKind.Fixed, prec: clamped_prec)) }
     } else {
@@ -564,11 +515,11 @@ export fn f64_display_spec(mut sb StringBuilder, v f64, width int, has_prec bool
         // prefix is empty unless `sign_plus` AND the value is
         // non-negative — mirrors the `dv >= 0.0` ternary in
         // `emit_format_spec_value` exactly (asymmetric vs the precision
-        // branch above by design — see Ш0 baseline notes: no double-sign
+        // branch above by design — no double-sign
         // on `-0.0` in THIS branch).
         if sign_plus && v >= 0.0 { sb.append("+"); prefix_len = 1 }
         sb.reserve(DISPLAY_F64_SHORTEST_CAP)
-        // Shortest/-1 ARE `f64_fmt`'s defaults (§10R-Д3) — omit both axes
+        // Shortest/-1 ARE `f64_fmt`'s defaults — omit both axes
         // entirely rather than spell out the default by name.
         unsafe { sb.advance(f64_fmt(v, sb.spare(), DISPLAY_F64_SHORTEST_CAP)) }
     }
@@ -583,9 +534,9 @@ export fn f64_display_spec(mut sb StringBuilder, v f64, width int, has_prec bool
 /// `f32` BARE display render — the f32-PRECISE shortest engine
 /// (`f32_fmt`/`nova_f32_shortest`), matching the bare `${f32val}`
 /// interp path (emit_c.rs `primitive_to_str_fn`'s `nova_f32_to_str`), NOT
-/// the widen-to-f64 path a RICH f32 spec currently takes (Ш3 decides which
-/// call site uses this vs `f64_display_spec(sb, v as f64, ...)` — both
-/// building blocks are provided here; this one is the f32-precise half).
+/// the widen-to-f64 path a RICH f32 spec currently takes
+/// (`f64_display_spec(sb, v as f64, ...)`) — both building blocks are
+/// provided here; this one is the f32-precise half.
 export fn f32_display_spec(mut sb StringBuilder, v f32, width int, align Align, fill char) -> () {
     ro mark = sb.byte_len()
     sb.reserve(DISPLAY_F32_CAP)
@@ -653,7 +604,7 @@ export fn str_display_spec(mut sb StringBuilder, v str, width int, has_prec bool
     ro vb = v.bytes()
     if has_prec {
         ro cut = display_spec_bytes_for_chars(vb, prec)
-        sb.write(vb[0..cut])
+        sb.write(vb[..cut])
     } else {
         sb.write(vb)
     }
@@ -667,7 +618,7 @@ export fn str_display_spec(mut sb StringBuilder, v str, width int, has_prec bool
 /// pad as Display above (mirrors the existing behavior:
 /// `emit_format_spec_value`'s `precision_consumed` is `false` for the
 /// primitive str/Debug arm too, so `.N` truncates the ESCAPED+QUOTED text,
-/// not the source — preserved as-is, not a Ф.4R design choice).
+/// not the source — preserved as-is).
 export fn str_debug_display_spec(mut sb StringBuilder, v str, width int, has_prec bool, prec int, align Align, fill char) -> () {
     ro cap = v.byte_len() * 4 + 2
     mut scratch []u8 = []u8.new(cap: cap)
@@ -676,7 +627,7 @@ export fn str_debug_display_spec(mut sb StringBuilder, v str, width int, has_pre
     ro mark = sb.byte_len()
     if has_prec {
         ro cut = display_spec_bytes_for_chars(scratch, prec)
-        sb.write(scratch[0..cut])
+        sb.write(scratch[..cut])
     } else {
         sb.write(scratch)
     }

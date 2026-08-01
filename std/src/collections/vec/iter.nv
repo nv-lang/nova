@@ -1,8 +1,8 @@
 // std.collections.vec (iter) — `VecIter[T]` index-cursor iterator.
 //
-// `@iter()` powers `for x in v` (Iter[T] protocol, D58) and is the source for
-// the eager combinators in `functional.nv`. Plan 153.2 builds the lazy adapter
-// family (map/filter/… → collect) on top of this `Next`/`Iter` foundation.
+// `@iter()` powers `for x in v` (Iter[T] protocol) and is the source for
+// the eager combinators in `functional.nv`. The lazy adapter family
+// (map/filter/… → collect) builds on this `Next`/`Iter` foundation.
 #prelude(core, runtime, collections, protocols)
 module collections.vec
 

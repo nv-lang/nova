@@ -38,8 +38,7 @@ test "adler32: incremental == монолитный" {
 test "adler32: чувствительность к 1-битной ошибке" {
     // Изменение одного бита должно полностью изменить checksum
     ro original = "hello".bytes()
-    mut modified []u8 = []
-    for b in original { modified.push(b) }
+    mut modified = original.collect()
     modified[0] = (modified[0] as u32 ^ 1) as u8    // flip младший бит первого байта
 
     assert(adler32(original) != adler32(modified))

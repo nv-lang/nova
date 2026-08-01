@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //
 // std.runtime.raw_mem — low-level byte-level memory intrinsics для
-// FFI / driver / embedded scenarios (Plan 118.1 D-block — see plan-doc).
+// FFI / driver / embedded scenarios.
 //
 // **RawMem namespace** (`type RawMem`) groups raw memory operations.
 // All methods operate on raw pointers — caller wraps calls in `unsafe { }` block.
@@ -11,8 +11,8 @@
 // variants (`RawMem.copy[T]`) — V2 follow-on, require `sizeof[T]()`
 // const fn intrinsic propagation.
 //
-// Pointer types: `*u8` (default ro per D216 §1) для src,
-// `*mut u8` (pointee-mut postfix per D216 final model, Plan 138.5) для dst.
+// Pointer types: `*u8` (default ro) для src,
+// `*mut u8` (pointee-mut postfix) для dst.
 // Rust precedents:
 //   - ptr::copy (memmove)              -> RawMem.copy
 //   - ptr::copy_nonoverlapping (memcpy) -> RawMem.copy_nonoverlapping

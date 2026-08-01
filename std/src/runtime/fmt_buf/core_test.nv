@@ -12,8 +12,7 @@ test "int_fmt: decimal positive/negative/zero" {
     mut buf = scratch(24)
     ro spec = FmtSpec.new()
 
-    // Plan 208 Ф.4R §10R-Д3: `int_fmt` is now `unsafe fn` (merged former
-    // `int_fmt_into` bridge's unsafe-status) — every call wraps.
+    // `int_fmt` is `unsafe fn` (raw `buf` write) — every call wraps.
     ro n1 = unsafe { int_fmt(42, buf.ptr(), 24, spec: spec) }
     assert(n1 == 2)
     unsafe {
@@ -34,8 +33,8 @@ test "int_fmt: decimal positive/negative/zero" {
 }
 
 test "int_fmt: default spec (§10R-Д3 — simple render = defaulted call)" {
-    // Omitting `spec` entirely renders plain decimal — the SAME behavior the
-    // retired `int_fmt_into` bridge used to provide, now via callnorm's
+    // Omitting `spec` entirely renders plain decimal — the simple render is
+    // the same function called with its axis arg omitted, resolved through
     // free-fn default-arg backfill (`spec FmtSpec = FmtSpec.new()`).
     mut buf = scratch(24)
     ro n = unsafe { int_fmt(42, buf.ptr(), 24) }
@@ -197,9 +196,8 @@ test "nova_f64_fmt (C-extern): Shortest/Fixed/Sci kinds" {
     mut buf = scratch(64)
 
     // kind 1 = Fixed
-    // Plan 208 Ф.4R §10R-Д3: renamed from `f64_fmt_into` (extern, D282
-    // literal name — now `nova_`-prefixed header-style, see nova_rt.h).
-    // [M-174.6-rawptr-extern-unsafe-infer] (D424 rule 1): inferred `unsafe fn`.
+    // Literal `nova_`-prefixed C symbol (see nova_rt.h); inferred `unsafe fn`
+    // (raw `buf` arg) — call wraps.
     ro nf = unsafe { nova_f64_fmt(3.14159, buf.ptr(), 64, 1, 2) }
     assert(nf == 4)
     unsafe {
@@ -226,8 +224,7 @@ test "nova_f64_fmt (C-extern): Shortest/Fixed/Sci kinds" {
 
 test "f64_fmt: FloatKind enum wrapper matches nova_f64_fmt" {
     mut buf = scratch(64)
-    // Plan 208 Ф.4R §10R-Д3: `f64_fmt` is now `unsafe fn` (merged former
-    // `f64_fmt_shortest_into` bridge's unsafe-status) — every call wraps.
+    // `f64_fmt` is `unsafe fn` (raw `buf` write) — every call wraps.
     ro n = unsafe { f64_fmt(3.14159, buf.ptr(), 64, kind: FloatKind.Fixed, prec: 2) }
     assert(n == 4)
     unsafe {
@@ -239,15 +236,14 @@ test "f64_fmt: FloatKind enum wrapper matches nova_f64_fmt" {
     ro n2 = unsafe { f64_fmt(2.5, buf.ptr(), 64, kind: FloatKind.Shortest, prec: 0) }
     assert(n2 == 3)
 
-    // Default-arg call shape (§10R-Д3 norm): omitting kind/prec renders
-    // shortest round-trip — the SAME behavior the retired
-    // `f64_fmt_shortest_into` bridge used to provide.
+    // Default-arg call shape: omitting kind/prec renders shortest round-trip
+    // (the simple render is the same function with its axis args omitted).
     ro n3 = unsafe { f64_fmt(2.5, buf.ptr(), 64) }
     assert(n3 == 3)
 }
 
-// Вынесено из core.nv (test-conventions §тесты-рядом-в-пир-файле, тот же
-// folder-module `runtime.fmt_buf` — str_debug_fmt/char_debug_fmt).
+// Peer sibling of core.nv (test-conventions §тесты-рядом-в-пир-файле — тот же
+// folder-module `runtime.fmt_buf`): covers str_debug_fmt/char_debug_fmt.
 
 test "str_debug_fmt: quotes, escapes (\\n \\t \\r \\0 \" \\\\), control \\xHH, passthrough" {
     mut buf = scratch(64)

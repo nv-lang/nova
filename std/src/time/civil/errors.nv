@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // std/time/civil/errors.nv — структурные ошибки + базовые sum-типы календаря.
 //
-// Plan 175.1 (D319/D320/D321). Co-equal файл модуля `time.civil`: все типы
-// видны остальным файлам модуля без импорта (как runtime.string).
+// Co-equal файл модуля `time.civil`: все типы видны остальным файлам модуля
+// без импорта (как runtime.string).
 //
-// Структурные ошибки (D321): конструкторы/parse возвращают `Result`, НЕТ
+// Структурные ошибки: конструкторы/parse возвращают `Result`, НЕТ
 // default-panicking конструктора (урок chrono `from_ymd` deprecated).
 
 module time.civil
@@ -42,7 +42,7 @@ export fn FieldKind @name() -> str =>
     }
 
 // ──────────────────────────────────────────────────────────────────────────
-// DateError — ошибки построения/арифметики (D321)
+// DateError — ошибки построения/арифметики
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Structural error of building/arithmetic on calendar quantities.
@@ -76,7 +76,7 @@ export fn DateError @to_str() -> str =>
     }
 
 // ──────────────────────────────────────────────────────────────────────────
-// ParseDateTimeError — ошибки разбора текста (D321)
+// ParseDateTimeError — ошибки разбора текста
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Parse error of an ISO-8601/RFC-3339/pattern string.
@@ -101,15 +101,15 @@ export fn ParseDateTimeError @to_str() -> str =>
     }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Disambiguation / OffsetConflict — DST-политики (D321)
+// Disambiguation / OffsetConflict — DST-политики
 // ──────────────────────────────────────────────────────────────────────────
 
-// NB [M-175.1-variant-name-collision]: пространство имён вариантов ФЛОСКОЕ
+// NB: пространство имён вариантов ФЛОСКОЕ
 // (голый вариант резолвится независимо от целевого типа), а qualified
-// `Enum.Variant` как ЗНАЧЕНИЕ — ICE [P67-LEGACY] Path call
-// ([M-175.1-qualified-variant-value]) → у D321-политик имена вариантов
+// `Enum.Variant` как ЗНАЧЕНИЕ — ICE (Path call
+// `[M-175.1-qualified-variant-value]`) → у DST-политик имена вариантов
 // уникальны: конфликт-вариант назван `RejectMismatch` (не `Reject`, как в
-// jiff/Temporal) — спека D321 R2 амендирована.
+// jiff/Temporal) — конвенция зафиксирована.
 
 /// 4-way resolution of a mismatch between the stored offset and the current
 /// zone rules (post-tzdb-change drift). Only for explicit-offset strings.

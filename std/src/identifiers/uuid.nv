@@ -27,7 +27,7 @@
 //   - `Random.u64() -> u64`
 //   - `Time.now_ms() -> u64` — Unix timestamp ms
 //   - `Buffer @add_byte`, `@add_str`, `@into_str_unchecked`
-//   - char-литералы (Q-char-literals закрыто 2026-05-07)
+//   - char-литералы
 
 module identifiers.uuid
 
@@ -251,10 +251,7 @@ fn hex_digit(n u8) -> char {
     } else {
         'a' as int + n as int - 10
     }
-    match code.to_char() {
-        Ok(c)  => c
-        Err(_) => '?'
-    }
+    code.to_char() ?? '?'
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -290,9 +287,8 @@ export fn Uuid.from(s str) Fail[ParseUuidError] -> Self { // [M-lint-findings-st
     { hi, lo }
 }
 
-// Canonical UUID text is pure ASCII (hex digits + dashes) — direct byte
-// access O(1) instead of the ретрактированный `chars().nth(pos)` O(n) scan
-// (D260-амендмент).
+// Canonical UUID text is pure ASCII — direct byte access O(1) instead
+// of O(n) char-by-char scan.
 fn check_dash(s str, pos int) Fail[ParseUuidError] -> () {
     ro dash = '-' as u8
     match s.bytes().get(pos) {

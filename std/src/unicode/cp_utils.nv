@@ -108,7 +108,7 @@ fn str_to_cps(s str) -> []u32 {
 fn cps_to_str(cps []u32) -> str {
     consume sb = StringBuilder.new(cap: cps.len() * 2)
     for cp in cps {
-        ro c = match (cp as int).to_char() { Ok(c) => c, Err(_) => '\u{FFFD}' }
+        ro c = (cp as int).to_char() ?? '\u{FFFD}'
         sb.append(c)
     }
     sb

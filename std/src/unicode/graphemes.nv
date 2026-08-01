@@ -16,19 +16,19 @@ module std.unicode
 import std.collections.vec.{Vec}
 
 // ─── GCB category codes (MUST match nova-codegen unicode `gcb_cat_code`) ───
-const GCB_CR int = 1
-const GCB_LF int = 2
-const GCB_CONTROL int = 3
-const GCB_EXTEND int = 4
-const GCB_ZWJ int = 5
-const GCB_RI int = 6
-const GCB_PREPEND int = 7
-const GCB_SPACINGMARK int = 8
-const GCB_L int = 9
-const GCB_V int = 10
-const GCB_T int = 11
-const GCB_LV int = 12
-const GCB_LVT int = 13
+const GCB_CR = 1
+const GCB_LF = 2
+const GCB_CONTROL = 3
+const GCB_EXTEND = 4
+const GCB_ZWJ = 5
+const GCB_RI = 6
+const GCB_PREPEND = 7
+const GCB_SPACINGMARK = 8
+const GCB_L = 9
+const GCB_V = 10
+const GCB_T = 11
+const GCB_LV = 12
+const GCB_LVT = 13
 
 // ─── lazy-static range tables (built once on first touch) ───
 // Flat int arrays: GCB stride 3 (lo,hi,cat), ExtPict stride 2 (lo,hi); both
@@ -42,9 +42,9 @@ fn gcb(cp u32) -> int => range_lookup3(gcb_flat, cp)
 fn is_ext_pict(cp u32) -> bool => in_ranges2(extpict_flat, cp)
 
 // GB9c (Indic Conjunct Break, Unicode 15.1+): Indic_Conjunct_Break property.
-const INCB_CONSONANT int = 1
-const INCB_EXTEND int = 2
-const INCB_LINKER int = 3
+const INCB_CONSONANT = 1
+const INCB_EXTEND = 2
+const INCB_LINKER = 3
 ro incb_flat []u32 = parse_flat(INCB_DATA)
 fn incb_of(cp u32) -> int => range_lookup3(incb_flat, cp)
 

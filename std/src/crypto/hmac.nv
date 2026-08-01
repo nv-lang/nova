@@ -63,7 +63,7 @@ export fn HmacSha256.compute(key []u8, message []u8) -> [32]u8 {
     // Step 4: outer hash = H(opad || inner_digest)
     mut outer = Sha256.new()
     outer.update(outer_pad)
-    outer.update(inner_digest[0..SHA256_OUTPUT_SIZE])
+    outer.update(inner_digest[..SHA256_OUTPUT_SIZE])
     outer.finalize()
 }
 
@@ -71,7 +71,7 @@ export fn HmacSha256.compute(key []u8, message []u8) -> [32]u8 {
 #stable(since = "0.1")
 export fn HmacSha256.compute_str(key []u8, message []u8) -> str {
     ro mac = HmacSha256.compute(key, message)
-    Hex.encode(mac[0..SHA256_OUTPUT_SIZE])
+    Hex.encode(mac[..SHA256_OUTPUT_SIZE])
 }
 
 /// **Constant-time** MAC verification (security-critical). Do NOT use `==`
@@ -104,7 +104,7 @@ fn normalize_key_sha256(key []u8) -> []u8 {
 
     if key.len() > SHA256_BLOCK_SIZE {
         ro hashed = Sha256.hash(key)
-        block.append(hashed[0..SHA256_OUTPUT_SIZE])
+        block.append(hashed[..SHA256_OUTPUT_SIZE])
     } else {
         block.append(key)
     }

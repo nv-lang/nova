@@ -1,77 +1,52 @@
-// Plan 35 sub-plan 35.A R27 (D26): prelude module — auto-imported в
-// каждый module через resolve_imports_inline.
+// Prelude — auto-imported в каждый module (через resolve_imports_inline).
 //
-// **Plan 62 migration:** prelude теперь splittable — types/methods/fns
-// живут в `std/prelude/<sub>.nv`, `std/prelude.nv` — facade re-export'ит
-// их. См. docs/plans/62-prelude-hardcode-migration.md.
+// Splittable: types/methods/fns живут в `std/prelude/<sub>.nv`,
+// `std/prelude.nv` — facade re-export'ит их.
 //
 // Текущий статус:
-//   - 62.A complete: core types (Option/Result/Some/None/Ok/Err/Error/
-//     Ordering) перенесены в std/prelude/core.nv. Bottom-тип `never` —
-//     строчный встроенный примитив (Plan 76), в prelude НЕ объявляется.
-//   - 62.B complete (partial): panic/exit/assert перенесены
-//     в std/prelude/runtime.nv (Plan 194 A4: `debug_assert` ретрактирован).
-//     print/println DEFERRED — variadic +
-//     type-polymorphic dispatch, см. std/prelude/runtime.nv DEFER comment.
-//   - 62.C complete: RuntimeError + ReadBufferError + RuntimeNoneError
-//     перенесены в std/prelude/errors.nv. RuntimeNoneError добавлен
-//     62.C.bis (2026-05-20) после P1-B bodyless-type support в parser.
-//   - 62.D complete (partial, non-opaque scope): Iter[T] protocol
-//     объявлен formally в std/prelude/collections.nv (раньше был только
-//     structural duck-typing per D58). Range / RangeIter re-export
-//     через facade ОТЛОЖЕН — exposes 4 latent codegen bugs
-//     (cancel_semantics_test / closure_rev / p48_closure_arg_inference /
-//     for_in_range_iter, см. std/prelude/collections.nv DEFER comment).
-//     DEFERRED (Plan 62.D.bis): StringBuilder / WriteBuffer / ReadBuffer —
-//     opaque runtime types, требуют `external type` D-block в spec.
-//   - 62.E complete (historical): 8 protocols (From/Into/TryFrom/TryInto/
-//     Hash/Equal/Compare/Display) в std/prelude/protocols.nv, re-export
-//     через facade. TryFrom/TryInto добавлены 62.E.bis (2026-05-20) после
-//     снятия effect-блокера (Plan 56 Ф.2.7-revert). **From/Into/TryFrom/
-//     TryInto ретрактированы (D73/D77, 2026-07-06)** — см. версию 15 в
-//     PRELUDE_VERSION doc-блоке; остаются Hash/Equal/Compare/Display.
-//   - 62.F complete: Fail[E] effect formally объявлен. См. версии
-//     5-8 в PRELUDE_VERSION doc-блоке ниже — canonical chronology.
+//   - core types (Option/Result/Some/None/Ok/Err/Error/Ordering)
+//     в std/prelude/core.nv. Bottom-тип `never` — строчный встроенный
+//     примитив, в prelude НЕ объявляется.
+//   - panic/exit/assert/print/println/suppressed в std/prelude/runtime.nv.
+//   - RuntimeError + ReadBufferError + RuntimeNoneError
+//     в std/prelude/errors.nv.
+//   - Iter[T] protocol формально объявлен в std/prelude/collections.nv.
+//   - Protocols (Hash/Equal/Compare/Display/Clone/Index/MutIndex)
+//     в std/prelude/protocols.nv.
+//   - Fail[E] effect формально объявлен в std/prelude/effects.nv.
 //
-// **Re-export syntax:** wildcard `export import X.*` rejected per Plan
-// 35 R25 — используем selective form `export import X.{A, B, ...}`.
-// Каждый re-export'ленный name становится auto-available в любом module
-// (через R27 auto-import + R26 re-export propagation).
+// **Re-export syntax:** wildcard `export import X.*` не поддерживается —
+// используем selective form `export import X.{A, B, ...}`.
+// Каждый re-export'ленный name становится auto-available в любом module.
 
 module std.prelude
 
-// Plan 62.A: re-export всех core prelude items из std.prelude.core.
+// Re-export всех core prelude items из std.prelude.core.
 // Type names + variant constructors + Error + Ordering — все
-// перечислены selectively, поскольку `.*` wildcard не поддерживается
-// (Plan 35 R25 rejected). Multi-line lists тоже не поддерживаются
-// (bootstrap parser `parse_import_inner` не skip'ает newlines внутри
-// `{ }`), поэтому всё на одной строке.
+// перечислены selectively, поскольку `.*` wildcard не поддерживается.
+// Multi-line lists тоже не поддерживаются (bootstrap parser
+// `parse_import_inner` не skip'ает newlines внутри `{ }`), поэтому всё
+// на одной строке.
 //
 // Bottom-тип `never` НЕ re-export'ится: это строчный встроенный
-// примитив (Plan 76), известен компилятору напрямую — как `int`/`bool`,
+// примитив, известен компилятору напрямую — как `int`/`bool`,
 // примитивы не объявляются и не re-export'ятся через prelude.
-// Plan 91.8a (D183): Ordering/Less/Equal/Greater удалены (Compare.compare -> int).
+// Ordering/Less/Equal/Greater удалены (Compare.compare -> int).
 export import std.prelude.core.{Option, Some, None, Result, Ok, Err, Error, sequence, partition}
 
-// Plan 62.B: re-export runtime functions из std.prelude.runtime.
-// panic / exit / assert / print / println — selective
-// list (см. 62.A note про wildcard и multi-line). Plan 62.B.bis
-// (2026-05-18): print / println добавлены — file-based D69 variadic +
-// `[]any` declarations в canonical D26 form. Codegen special-case
-// сохраняется как bootstrap implementation (см. std/prelude/runtime.nv).
-// Plan 173 Ф.4 #6 (D158 model B): `suppressed()` — free accessor for the
-// caught primary error's suppressed cleanup-failures (`[]any`).
-// Plan 194 A4: `debug_assert` ретрактирован (роль — `#debug assert`).
+// Re-export runtime functions из std.prelude.runtime:
+// panic / exit / assert / print / println / suppressed — selective list.
+// `suppressed()` — free accessor for the caught primary error's suppressed
+// cleanup-failures (`[]any`).
 export import std.prelude.runtime.{panic, exit, unreachable, assert, print, println, suppressed}
 
-// Plan 91.7 (D180): canonical .new() для primitive types.
+// Canonical .new() для primitive types.
 // `int.new() => 0`, `bool.new() => false`, `f64.new() => 0.0`, etc.
 // см. std/runtime/defaults.nv. Static methods на primitives — type-resolver
 // видит их через method_table; auto-import делает доступными без явного import.
 import std.runtime.defaults
 
-// Plan 172.1 U.1.3a (минимальный prelude — Rust std::prelude / Go universe, §3
-// conventions). `char` сюда: `char @to_str()` / `str.from_codepoint` эмитит САМ
+// `char` сюда: `char @to_str()` / `str.from_codepoint` эмитит САМ
 // компилятор (тест-харнесс, строковая интерполяция char-литералов) — пользователь
 // не может заимпортить за compiler-generated код → обязан быть неявным, как
 // Option/print. Прочие std-API (sync/net/cstr) — библиотечные, требуют ЯВНЫЙ
@@ -79,167 +54,117 @@ import std.runtime.defaults
 // в каждый модуль → единый реестр (из import-resolved модуля) их содержит.
 import std.runtime.char
 
-// Plan 196.3 (D109/D74 checker-visibility migration, [M-compiler-nv-porting-wave]
-// item A precedent): `f64`/`f32` math-intrinsics (sqrt/abs/trig/exp/log/...) +
-// `int.abs()` были known ТОЛЬКО через emit_c.rs-хардкод (`f64_method_to_c`/
-// `int_method_to_c`) — реальные `extern "nova"` декларации в этом файле никогда
-// не импортировались, поэтому чекер не видел их сигнатуры в `method_table`
-// (`method_overloads` возвращал `None`), и `.sqrt()`/`.abs()` резолвились только
-// через отдельный existence-whitelist (`primitive_instance_method_known`), без
-// arg-type проверки. Плейн import (как `char`/`defaults` выше) делает их
-// auto-available (без явного `import` пользователем — сохраняет прежнее
-// поведение) И инлайнит сигнатуры в `method_table`, так что чекер теперь
-// резолвит `.sqrt()`/`.abs()` через нормальный overload-канал. Codegen EMISSION
-// для f64/f32 math не меняется — `f64_method_to_c` (emit_c.rs) остаётся
-// единственным источником C-функции (`sqrt`/...). [Числовой паритет-2,
-// 2026-07-20] `int.abs()` — ИСКЛЮЧЕНИЕ из этого правила теперь: `int
-// @abs()` retracted из этого файла (был extern "nova" -> C `llabs`, UB на
-// `T.MIN`) и `int_method_to_c` (emit_c.rs) полностью удалён — `abs` для
-// `int` (и узких signed) теперь настоящий `.nv`-бланкет
+// `f64`/`f32` math-intrinsics (sqrt/abs/trig/exp/log/...) + `int.abs()`
+// были known ТОЛЬКО через codegen-хардкод — реальные `extern "nova"`
+// декларации не импортировались, поэтому чекер не видел сигнатуры в
+// `method_table`. Плейн import (как `char`/`defaults` выше) делает их
+// auto-available (без явного `import` пользователем) И инлайнит сигнатуры
+// в `method_table`, так что чекер теперь резолвит `.sqrt()`/`.abs()` через
+// нормальный overload-канал. Codegen EMISSION для f64/f32 math не меняется —
+// codegen-хардкод остаётся единственным источником C-функции (`sqrt`/...).
+// `int.abs()` — ИСКЛЮЧЕНИЕ из этого правила: `int @abs()` ретрактирован
+// (был extern "nova" -> C `llabs`, UB на `T.MIN`) — `abs` для `int`
+// (и узких signed) теперь настоящий `.nv`-бланкет
 // (std/prelude/protocols.nv, `fn[T SignedInt] T @abs()`), без
-// C-function-name хардкода вообще.
+// C-function-name хардкода.
 import std.runtime.math
 
-// Plan 62.C / 62.C.bis: re-export error types из std.prelude.errors.
+// Re-export error types из std.prelude.errors.
 // RuntimeError (6 variants) + ReadBufferError (1 variant) +
-// RuntimeNoneError (unit-type, D85 — ошибка `Option!!` на None). Type
-// name + variant constructors — все перечислены selectively (см. 62.A
-// note про wildcard и multi-line). RuntimeNoneError добавлен 62.C.bis
-// (2026-05-20) после P1-B bodyless-type support в parser.
+// RuntimeNoneError (unit-type — ошибка `Option!!` на None). Type
+// name + variant constructors — все перечислены selectively (см. выше
+// note про wildcard и multi-line).
 export import std.prelude.errors.{RuntimeError, DivByZero, Overflow, IndexOutOfBounds, TypeMismatch, AssertFailed, NoHandler, ReadBufferError, UnexpectedEnd, RuntimeNoneError, RangeError}
 
-// Plan 62.D non-opaque: re-export Iter[T] protocol formal declaration из
-// std.prelude.collections. До 62.D `Iter[T]` существовал ТОЛЬКО как
-// structural duck-typing per D58 — формальная декларация даёт `nova doc`
-// canonical API + eligible как bound (`T Iter`) per D72. Не ломает
-// existing structural for-in dispatch (codegen ищет метод `next`
+// Re-export Iter[T] protocol formal declaration из std.prelude.collections.
+// Раньше `Iter[T]` существовал ТОЛЬКО как structural duck-typing — формальная
+// декларация даёт `nova doc` canonical API + eligible как bound (`T Iter`).
+// Не ломает existing structural for-in dispatch (codegen ищет метод `next`
 // напрямую, protocol declaration не enforced на type annotations).
 //
-// Plan 62.D.bis (2026-05-18): re-export StringBuilder / WriteBuffer /
-// ReadBuffer — opaque types declared через D126 `external type` в
-// std/prelude/collections.nv. Раньше существовали как «known-by-name»
-// (D26 prose-only); теперь auto-available через prelude (no explicit
-// `import std.prelude.collections.{StringBuilder}` required). Methods
-// продолжают жить в `std/runtime/<name>.nv` (external fn, D82).
-// Plan 138 D241+D242: Iterable[T] → Next[T] + Iter[I]
+// StringBuilder / WriteBuffer / ReadBuffer — opaque types declared через
+// `external type` в std/prelude/collections.nv; auto-available через prelude.
+// Methods продолжают жить в `std/runtime/<name>.nv` (external fn).
+// Iterable[T] → Next[T] + Iter[I]
 export import std.prelude.collections.{Next, Iter, StringBuilder, WriteBuffer, ReadBuffer}
 
-// Plan 62.D non-opaque bis-1 (2026-05-18): re-export Range / RangeIter из
-// std.collections.range. Раньше (Plan 62.D non-opaque) эта строка
-// триггерила 4 регрессии (cancel_semantics_test, closure_rev,
-// p48_closure_arg_inference, for_in_range_iter) — auto-availability
-// Range через prelude exposed 4 latent codegen bugs. Все четыре закрыты
-// в Plan 62.D bis-1:
-//   1. Match inference (Nova_Range* vs nova_str) — pattern bindings
-//      installed в infer_expr_c_type(Match) через
-//      pattern_binding_overrides RefCell (emit_c.rs:18936+).
-//   2. Closure capture inner-shadowing — scope-aware
-//      collect_truly_free_idents (emit_c.rs:16621+) respects inner let-
-//      bindings и lambda params; используется в emit_lambda.
-//   3. Closure mono'd arg-name drop — закрыт тем же fix #2 (same root
-//      cause: misnamed `collect_free_idents` собирал ВСЕ идентификаторы,
-//      включая inner-bound).
-//   4. D29 user-shadow — duplicate top-level имена пришедшие через
-//      prelude теперь warning W_PRELUDE_SHADOW (types/mod.rs:117+),
-//      codegen skip'ает merged duplicates при наличии user-declaration
-//      (emit_c.rs:1300+).
+// Re-export Range / RangeIter из std.collections.range.
 //
 // Auto-import: user-modules видят `Range`/`RangeIter` без явного import.
 // Existing cross-file imports (`import std.collections.range.{Range}`) —
 // продолжают работать (selective re-export не блокирует direct import).
 export import std.collections.range.{Range, RangeIter}
 
-// Plan 138.2 Ф.0-final (D239 universal flip): re-export `Vec`/`VecIter` so
-// `[]T ≡ Vec[T]` holds universally — every prelude unit now has the `Vec`
-// template available, so value/type-position `[]T` lowers to the typed
-// `Nova_Vec____<elem>*` storage (not the legacy NovaArray int64-erasure).
+// Re-export `Vec`/`VecIter` so `[]T ≡ Vec[T]` holds universally — every
+// prelude unit now has the `Vec` template available, so value/type-position
+// `[]T` lowers to the typed `Nova_Vec____<elem>*` storage (not the legacy
+// NovaArray int64-erasure).
 // MUST come AFTER the Range re-export above: `vec_owned` depends on `Range`
 // (`Vec[T] @index(r Range)` range-slice view), and the prelude facade is
 // resolved top-to-bottom. `#no_prelude` units degrade gracefully (Vec
 // template absent → legacy NovaArray path, the contains_key("Vec") gates).
 export import std.collections.vec.{Vec, VecIter}
 
-// Plan 62.E / 62.E.bis: re-export equality / hashing / ordering / display
-// protocols из std.prelude.protocols.
+// Re-export equality / hashing / ordering / display protocols из
+// std.prelude.protocols.
 //
-// **[D73/D77 retraction 2026-07-06]:** From/Into/TryFrom/TryInto удалены
-// из std/prelude/protocols.nv (протоколы + auto-derive синтез в компиляторе
-// сняты целиком — см. spec/decisions/08-runtime.md#d73). Остаются
-// Hash/Equal/Compare/Display; bound clauses `[T Hash]` резолвятся через
-// cross-file resolve (Plan 15 generic-bounds infrastructure) как и раньше.
+// From/Into/TryFrom/TryInto РЕТРАКТИРОВАНЫ (протоколы + auto-derive синтез
+// в компиляторе сняты целиком). Остаются Hash/Equal/Compare/Display/Clone/
+// Index/MutIndex; bound clauses `[T Hash]` резолвятся через cross-file
+// resolve как и раньше.
 export import std.prelude.protocols.{Hash, Equal, Compare, Display, Clone, Index, MutIndex}
 
-// Plan 62.F: re-export Fail[E] effect из std.prelude.effects.
+// Re-export Fail[E] effect из std.prelude.effects.
 // Formal declaration matches hardcoded codegen pre-registration
 // (NovaVtable_Fail + Nova_Fail_fail в nova_rt/effects.h). Type-checker
 // и codegen матчат single-element path `["Fail"]` независимо. Декларация
 // здесь даёт canonical API surface для `nova doc`.
 //
-// Plan 62.F.bis Ф.3 (2026-05-18): added Time, Mem formal declarations.
 // Time — ambient clock effect (sleep/now/after — last one runtime-only).
 // Mem — runtime introspection (alloc_count/free_count/live/reset).
 // Skip codegen emit через RUNTIME_DEFINED_TYPES + BUILTIN_VTABLE_NAMES.
-// Pre-registered effect_schemas (emit_c.rs:1077-1098) — dispatch works
-// unchanged. Decl-only added: AI/doc surface + signature visibility.
 //
-// **Detach** НЕ re-export'ится — это keyword-construct (`detach { ... }`
-// D50), syntactic form а не declarable effect. См. std/prelude/effects.nv.
+// **Detach** НЕ re-export'ится — это keyword-construct (`detach { ... }`),
+// syntactic form а не declarable effect. См. std/prelude/effects.nv.
 export import std.prelude.effects.{Fail, Time, Mem}
 
-// [M-canceltoken-prelude-decl] (2026-07-13, Plan 173-хвост): re-export
-// CancelToken (D75 revised, Plan 47) из std.prelude.concurrency — перенос
-// из hardcoded type-checker builtins HashSet в формальные декларации
-// (образец Plan 62.D.bis / 62.B). Auto-available без explicit import —
-// паритет с прежним builtin-статусом (`supervised(cancel: tok)` — языковая
-// конструкция, токен обязан быть доступен везде). Dispatch остаётся в
-// emit_c.rs D75 special-cases (NovaCancelToken*, nova_cancel_token_* в
+// Re-export CancelToken из std.prelude.concurrency — auto-available без
+// explicit import, паритет с прежним builtin-статусом (`supervised(cancel: tok)`
+// — языковая конструкция, токен обязан быть доступен везде). Dispatch остаётся
+// в codegen special-cases (NovaCancelToken*, nova_cancel_token_* в
 // nova_rt/fibers.h) — см. заголовок std/prelude/concurrency.nv.
 export import std.prelude.concurrency.{CancelToken}
 
-// Plan 210 (D412-амендмент): re-export EmbeddedDir/EmbeddedEntry из
-// std.prelude.embed — обязаны быть prelude-видимы, т.к. `embed_dir("dir")`
-// резолвер (embed_resolve.rs, ДО type-check) синтезирует
+// Re-export EmbeddedDir/EmbeddedEntry из std.prelude.embed — обязаны быть
+// prelude-видимы, т.к. `embed_dir("dir")` резолвер (ДО type-check) синтезирует
 // `EmbeddedDir.new([EmbeddedEntry{...}, …])` внутри ПОЛЬЗОВАТЕЛЬСКОГО кода,
 // который ссылается на эти типы по имени без явного import.
 export import std.prelude.embed.{EmbeddedDir, EmbeddedEntry}
 
-// Plan 91 Ф.2.5 (D177) + Ф.2.6 (D178): str Nova-body methods auto-available без explicit import.
-// Nova bodies в std/runtime/string.nv; Plan 54 Ф.2 dispatch (!is_external filter).
-// D178: parse_int_radix → parse_int(radix=10); to_bytes/to_chars/compare added.
-// D410 (2026-07-06): to_bytes/to_chars close-copy twins RETRACTED (view+.clone()/.collect()
-// at call site instead); as_bytes renamed → bytes (bare noun view, as_ префикс упразднён).
-// Plan 174.1 (2026-07-08): `parse_int` RETRACTED from this list — the str-level
-// parse triad is gone. Owner amend same day: conversions are METHODS ON THE
-// SOURCE (`s.to_int()`, `s.to_i64()`, `s.to_u64()`, `s.to_u32()`, `s.to_u8()`,
-// `s.to_f64()` — std/runtime/string/parse.nv), not static constructors on the
-// target type. The digit-scan engines are private (non-exported) helpers in
-// that same file, not part of str's public API.
-// Plan 174.1 (2026-07-08), same wave: `str.from_bytes`/`from_bytes_lossy`/
-// `from_bytes_unchecked` (static constructors) RETRACTED → `[]u8 @to_str()`/
-// `@to_str_lossy()`/`@to_str_unchecked()`/`@into_str_unchecked()` (instance/
-// consume methods on the source `[]u8`). Unlike the retired STATIC form
-// (which needed no facade entry — static `Type.method(...)` calls resolve
-// without this bridge, see `f64.parse`/`Url.parse` precedent), INSTANCE
-// method-call syntax (`bytes.to_str()`) on a `#no_prelude`-homed method DOES
-// need this re-export to be visible without an explicit `import
-// std.runtime.string` — hence added here.
-// std.runtime.string имеет #no_prelude — cycle protection (prelude→string→prelude).
+// str Nova-body methods auto-available без explicit import.
+// Конверсии are METHODS ON THE SOURCE (`s.to_int()`, `s.to_i64()`, ...) —
+// не static constructors on the target type. Static-формы
+// `str.from_bytes`/`from_bytes_lossy`/`from_bytes_unchecked` заменены на
+// instance/consume методы на источнике `[]u8`: `@to_str()`/`@to_str_lossy()`/
+// `@to_str_unchecked()`/`@into_str_unchecked()`. INSTANCE method-call syntax
+// (`bytes.to_str()`) on a `#no_prelude`-homed method DOES need this re-export
+// to be visible without an explicit `import std.runtime.string` — hence added
+// here. std.runtime.string имеет #no_prelude — cycle protection
+// (prelude→string→prelude).
 export import std.runtime.string.{pad_left, pad_right, repeat, replace, compare, bytes, to_int, to_i64, to_u64, to_u32, to_u8, to_f64, to_str, to_str_lossy, to_str_unchecked, into_str_unchecked}
 
-// Plan 169.2.1 (D303): char Unicode-aware methods (`'a'.is_alphabetic()` etc.)
-// are NOT re-exported here. A bare `export import std.unicode.{is_alphabetic,…}`
-// would ALSO pull the same-named free functions (`is_alphabetic(cp int)`,
+// char Unicode-aware methods (`'a'.is_alphabetic()` etc.) are NOT re-exported
+// here. A bare `export import std.unicode.{is_alphabetic,…}` would ALSO pull
+// the same-named free functions (`is_alphabetic(cp int)`,
 // `general_category(cp int)`, `to_uppercase(s str)`) into the global prelude
-// namespace — breaking the opt-in boundary pinned by the negative test
-// `plan152_3/neg/n_char_unicode_opt_in.nv` (`general_category(0x41)` MUST stay
+// namespace — breaking the opt-in boundary (`general_category(0x41)` MUST stay
 // undefined without `import std.unicode`). Instead the char @methods are made
 // available without an explicit import by the resolver's auto-injection of
 // `std.unicode` into the USER entry group when it sees a char-Unicode
 // *method-call* selector (`expr.is_alphabetic()`, tagged `@method:` in
-// lints::collect_expr) — see imports.rs `CHAR_UNICODE_METHOD_SELECTORS` (Plan
-// 159 Ф.4, restored by 169.2.1). That path distinguishes method calls from the
-// opt-in free-function form and never enters the prelude→unicode→collections
-// cycle. `core` stays unicode-free → partial `#prelude(core,…)` is fixed.
+// lints::collect_expr). That path distinguishes method calls from the opt-in
+// free-function form and never enters the prelude→unicode→collections cycle.
+// `core` stays unicode-free → partial `#prelude(core,…)` is fixed.
 
 /// Prelude version marker — verified in tests to confirm auto-import works.
 /// Bumped on every Plan 62 migration phase.

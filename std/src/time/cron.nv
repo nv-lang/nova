@@ -136,15 +136,13 @@ fn parse_field(s str, name str, min int, max int) -> Result[CronField, ParseCron
     // Range: "1-5"
     if s.contains("-") {
         ro (lo, hi) = parse_range(s, name, min, max)?
-        mut values []int = []
-        for v in lo..=hi { values.push(v) }
+        mut values = (lo..=hi).collect()
         return Ok({ values })
     }
 
     // Wildcard: "*"
     if s == "*" {
-        mut values []int = []
-        for v in min..=max { values.push(v) }
+        mut values = (min..=max).collect()
         return Ok({ values })
     }
 
@@ -154,10 +152,7 @@ fn parse_field(s str, name str, min int, max int) -> Result[CronField, ParseCron
 }
 
 fn parse_int_in(s str, name str, min int, max int) -> Result[int, ParseCronError] {
-    ro n = match int.try_from(s) {
-        Ok(x)  => x
-        Err(_) => return Err(InvalidValue { field: name, value: s })
-    }
+    ro n = int.try_from(s).map_err(|_| InvalidValue { field: name, value: s })?
     if n < min || n > max {
         return Err(OutOfRange { field: name, value: n, min, max })
     }
@@ -178,15 +173,12 @@ fn parse_range(s str, name str, min int, max int) -> Result[(int, int), ParseCro
 }
 
 fn dedup_sort(xs []int) -> []int {
-    // D246-амендмент ([M-ro-launder-via-mut-binding], Ф.1б — return-позиция,
-    // 2026-07-23): `.clone()`, не голый `xs` — тот же read-only-view
-    // contract, что и ниже (см. коммент у `mut sorted`): нельзя вернуть
-    // caller's `xs` напрямую под mut-default return-типом (D184), даже в
-    // early-return ветке.
+    // `.clone()`, не голый `xs` — тот же read-only-view contract, что и ниже
+    // (см. коммент у `mut sorted`): нельзя вернуть caller's `xs` напрямую
+    // под mut-default return-типом, даже в early-return ветке.
     if xs.len() == 0 { return xs.clone() }
     // Простая сортировка bubble + dedup для bootstrap
-    // D246-амендмент ([M-ro-launder-via-mut-binding], Ф.2 миграция, 2026-07-23):
-    // `.clone()` (D230), НЕ mut-параметр — `dedup_sort` — read-only view
+    // `.clone()`, НЕ mut-параметр — `dedup_sort` — read-only view
     // contract (сортирует и возвращает НОВЫЙ массив, не трогая caller's `xs`
     // in-out); делать `xs` in-out изменило бы публичный контракт функции без
     // нужды.

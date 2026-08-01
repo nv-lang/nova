@@ -1,4 +1,4 @@
-// Plan 91.12 (D126 retract): WriteBuffer реализован полностью на Nova.
+// WriteBuffer реализован полностью на Nova.
 // Тип: consume record с полем `mut buf []u8`.
 // Ранее: external type + C runtime (Nova_WriteBuffer + 30 inline C функций).
 // Теперь: Nova record; все методы на Nova-body над []u8 primitives
@@ -15,20 +15,18 @@
 #no_prelude
 module runtime.write_buffer
 
-// [M-ptr-raw-access-contract-and-unaligned] item 3: f64/f32 `.to_bits()`
-// used below (write_f32_le/be, write_f64_le/be) is no longer a compiler
-// intrinsic — it's a plain Nova-body method in std/runtime/numeric.nv (like
-// char.from/u8.try_from in std/runtime/char.nv). `#no_prelude` files must
-// import it explicitly.
+// f64/f32 `.to_bits()` used below (write_f32_le/be, write_f64_le/be) is a
+// plain Nova-body method in std/runtime/numeric.nv, NOT a compiler
+// intrinsic. `#no_prelude` files must import it explicitly.
 import std.runtime.numeric
 
 // ─── Type ───
 //
-// **Design note (Plan 91.12):** WriteBuffer — НЕ consume type (в отличие
-// от StringBuilder). `consume @into()` метод даёт ownership transfer и
-// type-safe «no-reuse-after-into», но binding не требует `consume`
-// keyword (D180) — это сохраняет backward-compat с predecessor C runtime,
-// где `let mut wb = WriteBuffer.new()` был стандартным паттерном.
+// **Design note:** WriteBuffer — НЕ consume type (в отличие от StringBuilder).
+// `consume @into()` метод даёт ownership transfer и type-safe
+// «no-reuse-after-into», но binding не требует `consume` keyword — это
+// сохраняет backward-compat с predecessor C runtime, где
+// `let mut wb = WriteBuffer.new()` был стандартным паттерном.
 
 export type WriteBuffer {
     mut buf []u8
@@ -38,8 +36,7 @@ export type WriteBuffer {
 
 // Default initial capacity — 16 bytes, matches предыдущий C runtime
 // (NOVA_WRITE_BUFFER_INIT_CAP). Same name as in std/runtime/string_builder.nv —
-// module-private const, codegen mangles C-name через `Nova_const_<modpath>_*`
-// (Plan 91.12 D126 retract followup).
+// module-private const, codegen mangles C-name через `Nova_const_<modpath>_*`.
 const INITIAL_CAPACITY = 16
 
 // Пустой WriteBuffer с pre-allocated capacity 16.
@@ -48,15 +45,14 @@ export fn WriteBuffer.new(cap int = INITIAL_CAPACITY) -> Self
     => { buf: []u8.new(cap: cap) }
 
 // WriteBuffer из существующих байт (deep copy — append через memmove).
-// Param `b` is readonly by default (D176 amend, Plan 108.1).
+// Param `b` is readonly by default.
 //
-// [M-static-conv-array-record-mono-cc-fail] (2026-07-17, НЕ мигрирован):
-// та же ретракция, что у `ReadBuffer.from` (read_buffer.nv) — extension-
-// метод `[]u8 @to_writebuffer()`, строящий user-record тела, воспроизводимо
-// ломает mono-коллектор (см. read_buffer.nv коммент, идентичный класс бага:
-// `Nova_NovaArray_nova_int_method_to_X` undefined на линковке). Оставлено
-// как static `.from` до фикса; W_STATIC_CONVERSION находка сохранена
-// намеренно.
+// [M-static-conv-array-record-mono-cc-fail] обход: static `.from` оставлен
+// вместо extension-метода `[]u8 @to_writebuffer()` — строящий user-record
+// тела, тот extension воспроизводимо ломает mono-коллектор (см. read_buffer.nv
+// коммент, идентичный класс бага: `Nova_NovaArray_nova_int_method_to_X`
+// undefined на линковке). Оставлено как static `.from` до фикса;
+// W_STATIC_CONVERSION находка сохранена намеренно.
 // nova:allow W_STATIC_CONVERSION -- rename заблокирован [M-static-conv-array-record-mono-cc-fail] (mono-баг extension-на-[]u8-с-record-телом); вернуть to_* после фикса
 export fn WriteBuffer.from(b []u8) -> Self {
     mut wb WriteBuffer = { buf: []u8.new(cap: b.len()) }
@@ -71,10 +67,9 @@ export fn WriteBuffer @len() -> int => @buf.len()
 
 // Allocated capacity в байтах.
 //
-// [M-unwrap-twins-retraction] (2026-07-07): `@capacity()` alias
-// РЕТРАКТИРОВАН (дублировал канонический `@cap()`, D9) — `@cap()` теперь
-// единственный 0-arg getter половины `cap`/`cap(n)` property-пары
-// (ex-`with_capacity`, D372 amend — with_capacity removed).
+// `@capacity()` alias РЕТРАКТИРОВАН (дублировал канонический `@cap()`) —
+// `@cap()` теперь единственный 0-arg getter половины `cap`/`cap(n)`
+// property-пары (with_capacity удалён).
 export fn WriteBuffer @cap() -> int => @buf.cap()
 
 // Set capacity to exactly `n` bytes (delegates to the underlying `[]u8`'s
@@ -93,17 +88,16 @@ export fn WriteBuffer @clone() -> Self {
 
 // ─── Mutating writes (fluent -> @) ───
 
-// Append один byte. Returns self for chaining (D181).
+// Append один byte. Returns self for chaining.
 export fn WriteBuffer mut @write_byte(v u8) -> @ { @buf.push(v) }
 
 // Append массив байт (bulk memmove через []u8.append).
-// Param `src` is readonly by default (D176 amend).
+// Param `src` is readonly by default.
 export fn WriteBuffer mut @write_bytes(src []u8) -> @ { @buf.append(src) }
 
 // Append n нулевых байт. n <= 0 → no-op.
-// Plan 90 followup `[]T.append_zero(n)` — bulk memset extension; O(1)
-// growth amortized + single memset(0) для всего сегмента (vs наивный
-// push-loop с amortized realloc'ами).
+// Bulk memset extension (O(1) growth amortized + single memset(0) для всего
+// сегмента vs наивный push-loop с amortized realloc'ами).
 export fn WriteBuffer mut @write_zero(n int) -> @
     requires n >= 0
 {
@@ -112,12 +106,10 @@ export fn WriteBuffer mut @write_zero(n int) -> @
 }
 
 // UTF-8 encode codepoint (1-4 байта). Returns self.
-// Логика повторяет StringBuilder.@append(char) — Plan 109 / D179.
+// Логика повторяет StringBuilder.@append(char).
 export fn WriteBuffer mut @write_char(c char) -> @ {
     ro (b, n) = c.encode_utf8()
-    for i in 0..n {
-        @buf.push(b[i])
-    }
+    @buf.append(b[..n])
 }
 
 // Append UTF-8 байты из str (bulk memmove через []u8.append + as_bytes).
@@ -270,7 +262,7 @@ export fn WriteBuffer mut @write_f64_be(v f64) -> @ => @write_u64_be(v.to_bits()
 
 // Финализировать в []u8. После @into_bytes() WriteBuffer consumed.
 // Ownership transfer — возвращает внутренний buf напрямую (no copy).
-// Plan 214 (D429): #coerce — declares the implicit finalize-lane pair
-// `WriteBuffer → []u8` (owning zero-cost MOVE).
+// #coerce — declares the implicit finalize-lane pair `WriteBuffer → []u8`
+// (owning zero-cost MOVE).
 #coerce
 export fn WriteBuffer consume @into_bytes() -> []u8 => @buf

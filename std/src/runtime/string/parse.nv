@@ -1,9 +1,8 @@
-// AUTO-SPLIT from std/runtime/string.nv (Plan 152.0 Ф.2). Bodies byte-identical.
-// Co-equal file of module `runtime.string` (folder = one module, AMEND F4).
-// Role: primitive parse engines (private) + `str @to_*` conversion surface (D325/174.1).
+// Co-equal file of module `runtime.string` (folder = one module).
+// Role: primitive parse engines (private) + `str @to_*` conversion surface.
 //
-// Plan 91 Ф.2.5/2.6 (D177/D178): str Nova-body methods. #no_prelude breaks the
-// prelude->string->prelude import cycle.
+// `str` Nova-body methods. #no_prelude breaks the prelude->string->prelude
+// import cycle.
 
 #no_prelude
 module runtime.string
@@ -13,22 +12,19 @@ import std.prelude.core.{Option, Some, None, Result, Ok, Err}
 /// Error variants for the integer parse engines. Exported so callers can match on them.
 export type ParseIntError enum Empty | InvalidDigit | Overflow | InvalidRadix
 
-// Plan 174.1 (owner decision, 2026-07-08, superseding an earlier same-day
-// `T.parse(s)` static-constructor design): the str-level triad `parse_int`/
-// `try_parse_int`/`parse_int_opt` (D177/D178/D325) is RETRACTED as public
-// API — conversions live as METHODS ON THE SOURCE (`s.to_int()`, mirroring
+// Conversions live as METHODS ON THE SOURCE (`s.to_int()`, mirroring
 // `s.to_str()`/`to_str_lossy()` elsewhere), not static constructors on the
-// target type. The digit-scanning logic itself is kept as a PRIVATE engine
-// (no `export`) reused by every `to_*` wrapper below — one engine per
+// target type. The digit-scanning logic itself is a PRIVATE engine (no
+// `export`) reused by every `to_*` wrapper below — one engine per
 // signedness domain, not duplicated per width. Radix stays available as an
-// optional keyword arg (default 10) so hex/octal/binary parsing (`s.to_int
-// (radix: 16)`) keeps working without a second public name.
+// optional keyword arg (default 10) so hex/octal/binary parsing
+// (`s.to_int(radix: 16)`) keeps working without a second public name.
 
 /// Signed decimal/radix-N engine (`int`/i64 domain, two's-complement 64-bit
 /// range). `radix` valid range: 2..=36. Empty / `-`/`+` without digits →
 /// `Err(Empty)`. Invalid digit → `Err(InvalidDigit)`. i64 overflow →
 /// `Err(Overflow)`. radix out of range → `Err(InvalidRadix)`.
-/// PRIVATE — not part of the public surface (Plan 174.1 retraction); reused
+/// PRIVATE — not part of the public surface; reused
 /// by `@to_int`/`@to_i64` below.
 fn str @parse_int_core(radix int) -> Result[int, ParseIntError] {
     if radix < 2 || radix > 36 { return Err(InvalidRadix) }
@@ -61,7 +57,7 @@ fn str @parse_int_core(radix int) -> Result[int, ParseIntError] {
 /// range). Same contract as `@parse_int_core` except there is no sign: a
 /// leading `-` is not special-cased — it simply fails the digit scan at
 /// position 0 and falls out through the generic `Err(InvalidDigit)` path
-/// (D310 remark "'-' ⇒ InvalidDigit"; no dedicated branch needed). PRIVATE —
+/// ("`-` ⇒ InvalidDigit"; no dedicated branch needed). PRIVATE —
 /// reused by `@to_u64`/`@to_u32`/`@to_u8` below.
 fn str @parse_uint_core(radix int) -> Result[uint, ParseIntError] {
     if radix < 2 || radix > 36 { return Err(InvalidRadix) }
@@ -90,16 +86,10 @@ fn str @parse_uint_core(radix int) -> Result[uint, ParseIntError] {
 /// Error variants for `str.to_f64()`. Exported so callers can match on them.
 export type ParseFloatError enum Empty | Invalid
 
-// [M-f64-try-parse-to-parse-f64] (2026-07-07) + Plan 174.1 (2026-07-08,
-// second amend same day): float parsing was briefly a static constructor on
-// the target type (`f64.parse(s)`), then folded back into the
-// conversion-on-source canon alongside the integer family — `str @to_f64()`.
-//
-// Plain FFI, no compiler name-knowledge (§3): `str_parse_f64` is a
-// regular `extern "C" fn` (D282), out-param convention (bool ok + `*out`
-// value) mirroring std/net2's `out_err *mut int` cold-path constructors —
-// see `nova_str_to_f64`'s thin wrapper in nova_rt/conv.h. The compiler knows
-// NOTHING about float parsing; it just lowers an ordinary FFI call.
+// Plain FFI, no compiler name-knowledge: `str_parse_f64` is a
+// regular `extern "C" fn`, out-param convention (bool ok + `*out`
+// value). The compiler knows NOTHING about float parsing; it just lowers
+// an ordinary FFI call.
 extern "C" fn str_parse_f64(s str, out *mut f64) -> bool
 
 /// Strict parse — delegates to `str_parse_f64` (conv.h, `strtod`-based;
@@ -114,7 +104,7 @@ export fn str @to_f64() -> Result[f64, ParseFloatError] {
     if unsafe { str_parse_f64(@, &v) } { Ok(v) } else { Err(Invalid) }
 }
 
-// ── Plan 232.1 Т1 (2026-07-26, owner decision "добавить"): `str @to_bool()` ─
+// ── `str @to_bool()` ─
 //
 // Error variants for `str.to_bool()`. Exported so callers can match on them.
 export type ParseBoolError enum Empty | Invalid
@@ -133,21 +123,19 @@ export fn str @to_bool() -> Result[bool, ParseBoolError] {
     Err(Invalid)
 }
 
-// ── Plan 232.1 Т1 (2026-07-26): `str @to_char()` — exactly one codepoint ──
+// ── `str @to_char()` — exactly one codepoint ──
 //
 // Error variants for `str.to_char()`. Exported so callers can match on them.
 // Deliberately NOT `CharFromError` (std/runtime/char.nv, `(cp int).to_char()`
 // domain) — that error means "int value outside the Unicode scalar range /
 // surrogate", which cannot occur here (a `str`'s bytes are always valid
-// UTF-8 by construction, R-UTF8 — every decoded codepoint is already a
-// legal scalar value). The only failure modes for str→char are "no
-// codepoints" and "more than one" — a different domain, so a sibling type
-// (not a reused double) per D30-family precedent (`ParseIntError` vs
-// `RangeError` — "not reused, different domain", see D430). Variant split
-// mirrors Rust's `core::char::ParseCharError` (`EmptyString`/`TooManyChars`)
-// renamed to this module's `Empty`/`...` convention (`ParseIntError`/
-// `ParseFloatError` above both use `Empty` for the same "nothing there"
-// case).
+// UTF-8 by construction — every decoded codepoint is already a legal scalar
+// value). The only failure modes for str→char are "no codepoints" and "more
+// than one" — a different domain, so a sibling type (not a reused double;
+// error types are not reused across domains). Variant split mirrors Rust's
+// `core::char::ParseCharError` (`EmptyString`/`TooManyChars`) renamed to
+// this module's `Empty`/`...` convention (`ParseIntError`/`ParseFloatError`
+// above both use `Empty` for the same "nothing there" case).
 export type ParseCharError enum Empty | TooManyChars
 
 /// Parses exactly one Unicode codepoint — not byte (`"é".to_char()`
@@ -157,40 +145,24 @@ export type ParseCharError enum Empty | TooManyChars
 #stable(since = "0.1")
 export fn str @to_char() -> Result[char, ParseCharError] {
     mut it = @chars()
-    ro c = match it.next() {
-        Some(c) => c
-        None => return Err(Empty)
-    }
+    ro c = it.next().ok_or(Empty)?
     match it.next() {
         None => Ok(c)
         Some(_) => Err(TooManyChars)
     }
 }
 
-// ── Plan 174.1 (2026-07-08): `str @to_*` integer conversion surface ───────
-// Live set per actual consumers (owner decision) — originally NOT the full
-// SignedInts/UnsignedInts type-set: `to_int`, `to_i64`, `to_u64`, `to_u32`,
-// `to_u8`. [Числовой паритет-2, 2026-07-20] owner decision revisited
-// ("закрывать") — the remaining gaps (`to_i8`/`to_i16`/`to_i32`/`to_u16`/
-// `to_uint`) are filled below, completing the full SignedInts/UnsignedInts
-// set. Same per-method-overload-on-`str` form throughout (the type-set-
-// bounded generic path-call gap noted below still applies — unrelated to
-// which widths are live).
-// A type-set-bounded generic (`fn[T SignedInts] T.parse(...)`, tried first
-// per "используй механизм type-set-функций из 172.3, если есть") hit a live
-// codegen gap — a generic function whose RECEIVER is the type-set parameter
-// in a *path call* aborts with `[P67-LEGACY] Path call return type unknown`
-// — pre-existing, separately-tracked (out of scope here). Per-method
-// overloads on `str` are the interim form (as `f64.parse`/`to_f64` already
-// were before this file existed in its current shape).
+// `str @to_*` integer conversion surface — the full SignedInts/UnsignedInts
+// set: `to_int`, `to_i64`, `to_u64`, `to_u32`, `to_u8`, `to_i8`, `to_i16`,
+// `to_i32`, `to_u16`, `to_uint`. Per-method overloads on `str` (a
+// type-set-bounded generic whose receiver is the type-set parameter in a
+// path call hits a codegen gap, so the per-method form is used instead).
 //
-// `to_u32`/`to_u8`/`to_u16`/`to_i32`/`to_i16`/`to_i8` range-check the wide
-// engine result (`int`/`uint` domain) before narrowing — closes the
-// historical truncation bug (`i8.try_parse("999")` used to silently wrap
-// via a raw C-cast instead of erroring; см. Plan 174.1 §4). `to_int`/
-// `to_i64`/`to_u64`/`to_uint` need no post-check — the engine's own
-// overflow guard already covers their whole range (`uint` is the same
-// width as the `@parse_uint_core` engine itself, no narrowing at all).
+// The narrow-width wrappers range-check the wide engine result
+// (`int`/`uint` domain) before narrowing. `to_int`/`to_i64`/`to_u64`/
+// `to_uint` need no post-check — the engine's own overflow guard already
+// covers their whole range (`uint` is the same width as the
+// `@parse_uint_core` engine itself, no narrowing at all).
 
 /// Decimal (default) or radix-N (`radix: 2..=36`) parse into `int`.
 #stable(since = "0.1")
@@ -225,10 +197,9 @@ export fn str @to_u8(radix int = 10) -> Result[u8, ParseIntError] {
     Ok(v as u8)
 }
 
-// [Числовой паритет-2, 2026-07-20] Остаток SignedInts/UnsignedInts-набора,
-// добор по решению владельца ("закрывать") к живому подмножеству Plan
-// 174.1 выше. Тот же движок (`@parse_int_core`/`@parse_uint_core`), тот
-// же range-check-после-разбора паттерн, что `to_u32`/`to_u8`.
+// Остаток SignedInts/UnsignedInts-набора. Тот же движок
+// (`@parse_int_core`/`@parse_uint_core`), тот же range-check-после-разбора
+// паттерн, что `to_u32`/`to_u8`.
 
 /// Decimal (default) or radix-N parse into `i8`, range-checked.
 #stable(since = "0.1")

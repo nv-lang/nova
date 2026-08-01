@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// std/encoding/utf16.nv — UTF-16 / code-point interop (Plan 152.6, D255).
+// std/encoding/utf16.nv — UTF-16 / code-point interop.
 //
 // Дополняет байтовый слой (`str.from_bytes_*` / `@to_bytes` / `@as_bytes`) и
 // codepoint-линзу (`@as_chars`): даёт конверсии в/из UTF-16 (Windows API,
 // JS-interop, JSON `\uXXXX`) и доступ к сырым int-codepoint'ам для
 // низкоуровневых протоколов/таблиц.
 //
-// Инвариант R-UTF8 (D26 AMEND): любой `str` на выходе — валидный UTF-8.
+// Инвариант R-UTF8: любой `str` на выходе — валидный UTF-8.
 // `from_utf16` проверяет surrogate-пары; невалидный UTF-16 (lone/усечённый
 // surrogate) → `Err(Utf16Error)`, str НЕ конструируется.
 //
@@ -93,16 +93,16 @@ export fn str.from_utf16(units []u16) -> Result[str, Utf16Error] {
         }
     }
     // Все code units валидны → строим str. StringBuilder создаётся ПОСЛЕ всех
-    // ранних `return Err`, потребляется один раз через @as_str (D133-safe).
+    // ранних `return Err`, потребляется один раз через @as_str (consume-safe).
     // Capacity *4: supplementary codepoints encode to 4 UTF-8 bytes.
     consume sb = StringBuilder.new(cap: cps.len() * 4)
     for cp in cps {
-        ro c = match cp.to_char() { Ok(c) => c, Err(_) => '\u{FFFD}' }
+        ro c = cp.to_char() ?? '\u{FFFD}'
         sb.append(c)
     }
     Ok(sb.into_str())
 }
 
 // ─── str → raw code points ───
-// Moved to runtime.string chars.nv as @to_code_points() (Plan 91.18 Ф.2).
+// Moved to runtime.string chars.nv as @to_code_points().
 // Use `s.to_code_points()` — available without explicit import via runtime.string.

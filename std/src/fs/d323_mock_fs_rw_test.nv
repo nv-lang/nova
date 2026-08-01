@@ -42,8 +42,7 @@ test "mock_fs: File seek + read_at + write_at (positioned I/O)" {
     with Fs = mock_fs(fs) {
         match File.create(p) {
             Err(_) => assert(false)
-            Ok(consume f0) => {
-                consume f = f0
+            Ok(consume f) => {
                 ro _ = f.write("0123456789")
                 match f.seek(SeekFrom.start(0)) { Ok(pos) => assert(pos == 0), Err(_) => assert(false) }
                 mut buf []u8 = []u8.new()

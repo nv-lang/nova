@@ -2,8 +2,8 @@
 //
 // Single-element: push/pop/insert/remove/swap_remove/clear/truncate/reverse.
 // Bulk (RawMem memcpy/memmove/memset class): extend/append/retain/copy_from/
-// copy_within/fill/append_zero/compare — the `[]T` extend-family parity from
-// Plan 90.1 / D141, now RawMem-backed Nova bodies.
+// copy_within/fill/append_zero/compare — the `[]T` extend-family parity, now
+// RawMem-backed Nova bodies.
 #prelude(core, runtime, collections, protocols)
 module collections.vec
 
@@ -15,8 +15,7 @@ import std.runtime.raw_mem.{RawMem}
 
 /// Append `v` to the end, growing if necessary.
 ///
-/// Returns `@` (self) so calls chain fluently
-/// ([M-138.2-vec-fluent-push], precedent: `StringBuilder.append`):
+/// Returns `@` (self) so calls chain fluently (precedent: `StringBuilder.append`):
 /// `Vec[u8].new(cap: 3).push(1 as u8).push(2 as u8)`. A bare statement
 /// call `v.push(x)` still works — the returned `@` is simply ignored.
 export fn Vec[T] mut @push(v T) -> @ {
@@ -78,18 +77,19 @@ export fn Vec[T] mut @insert(i int, v T) -> @
 /// (`i == len` is a bulk append). Overlap-safe (memmove) so a self-splice
 /// (`v.splice(i, v)`) is correct.
 ///
-/// This is the `[]T` extend-family bulk-insert (Plan 90.1 / D141). Semantics
+/// This is the `[]T` extend-family bulk-insert. Semantics
 /// mirror the retired `nova_array_insert_*` C builtin exactly (prefix kept,
 /// hole opened, tail shifted, src copied — all overlap-safe). The
 /// single-element `@insert(i int, v T)` above is the complementary single
 /// insert.
 ///
-/// NAMING (Ф.0a Open-Question resolution, [M-138.2-bulk-insert-overload]): this
-/// is `@splice` rather than a second `@insert` overload because generic-method
-/// overloads currently COLLAPSE in monomorphization — `resolve_overload` cannot
-/// disambiguate `insert(i, T)` from `insert(i, Vec[T])` for a concrete
-/// `Vec[int]`. Distinct names route cleanly; folding `@splice` back into an
-/// `@insert` overload waits on [M-138.2-generic-method-overload-mono].
+/// NAMING: this is `@splice` rather than a second `@insert` overload because
+/// generic-method overloads currently COLLAPSE in monomorphization —
+/// `resolve_overload` cannot disambiguate `insert(i, T)` from
+/// `insert(i, Vec[T])` for a concrete `Vec[int]`. Distinct names route
+/// cleanly.
+// [M-138.2-bulk-insert-overload] обход: fold `@splice` обратно в
+// `@insert`-overload ждёт generic-method-overload-mono.
 export fn Vec[T] mut @splice(i int, other Vec[T]) -> @
     requires 0 <= i && i <= @len
 {
@@ -172,7 +172,7 @@ export fn Vec[T] mut @reverse() -> @ {
     // KEEP as while: two-pointer converge (lo++ / hi--), not a forward `0..@len` loop.
     while lo < hi {
         unsafe {
-            // Plan 174.5: `(a, b) = (b, a)` tuple-assign isn't expressible with
+            // `(a, b) = (b, a)` tuple-assign isn't expressible with
             // method-call targets (`.write_at` isn't an lvalue) — a temp-swap
             // via `.read_at`/`.write_at` is the direct equivalent.
             ro tmp = @data.read_at(lo)
@@ -245,22 +245,20 @@ export fn Vec[T] mut @resize_with(n int, f fn() -> T) -> @
 
 /// Append every element of any iterable source `S` that yields `T`.
 ///
-/// Plan 138.1 Ф.0.1: the source is a generic `Iter[T]`-bounded type parameter
-/// `S` (instance method-level generic) rather than a distinct built-in `[]T`.
-/// It accepts a built-in array literal, a `Vec[T]`, a `RangeIter`, or any other
-/// type that satisfies `Iter[T]` — and keeps compiling unchanged after the D239
-/// flip where `[]T` ≡ `Vec[T]`.
+/// The source is a generic `Iter[T]`-bounded type parameter `S` (instance
+/// method-level generic) rather than a distinct built-in `[]T`. It accepts a
+/// built-in array literal, a `Vec[T]`, a `RangeIter`, or any other type that
+/// satisfies `Iter[T]` — and keeps compiling unchanged where `[]T` ≡ `Vec[T]`.
 ///
 /// No `reserve` pre-pass: a generic `Iter[T]` has no `len()` in general, so
 /// each element is appended via `@push` (amortised ×2 growth).
 ///
-/// Returns `@` for fluent chaining ([M-138.2-vec-fluent-push]) — but NOTE
-/// ([M-138.2-vec-self-return]): because `@extend` is a *method-level generic*
-/// (`[S Iter[T]]`), the `@` return is not yet inferred through the
-/// generic-method emission path. A *chained* result (`v.extend(xs).push(y)`)
-/// currently mis-types the receiver to `void*`. Statement-form
-/// (`v.extend(xs)`, return discarded) works correctly; chained use is gated on
-/// the 153.1 Ф.0 codegen fix.
+/// Returns `@` for fluent chaining — but NOTE: because `@extend` is a
+/// *method-level generic* (`[S Iter[T]]`), the `@` return is not yet inferred
+/// through the generic-method emission path. A *chained* result
+/// (`v.extend(xs).push(y)`) currently mis-types the receiver to `void*`.
+/// Statement-form (`v.extend(xs)`, return discarded) works correctly; chained
+/// use is gated on a codegen fix.
 export fn Vec[T] mut @extend[S Iter[T]](items S) -> @ {
     for x in items {
         @push(x)
@@ -275,13 +273,13 @@ export fn Vec[T] mut @extend[S Iter[T]](items S) -> @ {
 // until the generic-method param-type substitution lands in codegen.
 
 /// Copy every element of `other` onto the end of `self`; `other` is left
-/// **unchanged**. Accepts any contiguous buffer implementing `AsSlice[T]`
-/// (D299) — `Vec[T]`, `[]T`, or any custom type with `@as_ptr`+`@len`.
+/// **unchanged**. Accepts any contiguous buffer implementing `AsSlice[T]` —
+/// `Vec[T]`, `[]T`, or any custom type with `@as_ptr`+`@len`.
 /// Uses `RawMem.copy` (memmove) for the bulk transfer; `@extend` is the
 /// generic `Iter` version for non-contiguous sources. Copy, **not** move —
 /// matches `StringBuilder.@append` and the cross-language `append`/`addAll`
 /// convention (Python/Swift/Java); a move-merge that empties `other` is
-/// intentionally not offered (footgun: silently destroys the argument). (D141, D299.)
+/// intentionally not offered (footgun: silently destroys the argument).
 export fn Vec[T] mut @append[S AsSlice[T]](other S) -> @ {
     ro m = other.len()
     if m > 0 {
@@ -298,9 +296,7 @@ export fn Vec[T] mut @append[S AsSlice[T]](other S) -> @ {
 /// Keep only the elements for which `pred(elem)` returns `true`, preserving
 /// relative order. O(n).
 ///
-/// Returns `@` (self) for fluent chaining (Plan 153.1 fluent convention;
-/// [M-138.2-vec-self-return] — generic-method `@`-return — is closed, so the
-/// `-> @` flip is live).
+/// Returns `@` (self) for fluent chaining.
 export fn Vec[T] mut @retain(pred fn(T) -> bool) -> @ {
     mut write = 0
     for read in 0..@len {
@@ -317,18 +313,18 @@ export fn Vec[T] mut @retain(pred fn(T) -> bool) -> @ {
     @len = write
 }
 
-// ─── []T extend-family parity (Plan 90.1 / D141; [M-138-vec-bulk-parity]) ──
+// ─── []T extend-family parity ──
 //
 // These mirror the bulk operations that were C-builtins on the retired
 // `NovaArray` runtime (memcpy/memmove/memset/memcmp in `NOVA_ARRAY_IMPL`).
-// At `[]T ≡ Vec[T]` (D239) the `[]T` API must still offer them — now as
+// At `[]T ≡ Vec[T]` the `[]T` API must still offer them — now as
 // RawMem-backed Nova-body methods. Semantics match the old `nova_array_*`
-// helpers exactly (see compiler-codegen/nova_rt/array.h).
+// helpers exactly.
 
 /// Overwrite every live element of `self` from `other`, which must have the
 /// **same length**. Overlap-safe (memmove). Panics on length mismatch.
 ///
-/// Mirrors the old `[]T @copy_from` (Plan 90.1): the strict equal-length
+/// Mirrors the old `[]T @copy_from`: the strict equal-length
 /// contract avoids silent truncation — use `self[..n].copy_from(other[..n])`
 /// for a partial copy.
 ///
@@ -353,7 +349,7 @@ export fn Vec[T] mut @copy_from(other Vec[T]) -> @
 /// Copy `len` elements within the same buffer from `src_from` to `dst_from`.
 /// Overlap-safe (memmove). Panics if either range falls outside `[0, len)`.
 ///
-/// Mirrors the old `[]T @copy_within` (Plan 90.1).
+/// Mirrors the old `[]T @copy_within`.
 ///
 /// # Examples
 ///
@@ -376,7 +372,7 @@ export fn Vec[T] mut @copy_within(src_from int, dst_from int, len int) -> @
 /// single-byte element types (`u8`/`i8`/`bool`) take a `RawMem.fill` (memset)
 /// fast-path since a 1-byte memset *is* an element fill.
 ///
-/// Mirrors the old `[]T @fill` (Plan 90.1; its `sizeof(T)==1 -> memset` path).
+/// Mirrors the old `[]T @fill` (its `sizeof(T)==1 -> memset` path).
 ///
 /// # Examples
 ///
@@ -419,7 +415,7 @@ export fn Vec[T] mut @fill_with(f fn() -> T) -> @ {
 /// tail). Polymorphic over `T` (zero bytes = `0`/`NULL`/`false`/`0.0`), unlike
 /// `fill` which is element-typed. Panics on negative `n`; `n == 0` is a no-op.
 ///
-/// Mirrors the old `[]T @append_zero` (Plan 90.1). Use-case: reserve a
+/// Mirrors the old `[]T @append_zero`. Use-case: reserve a
 /// write-window in encoders, padding, length-prefix patching.
 ///
 /// # Examples

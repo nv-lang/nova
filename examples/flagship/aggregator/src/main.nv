@@ -38,11 +38,11 @@ import std.collections.vec_seq.{map}
 // with no diagnostic. `int` + `requires` (`SocketAddr.loopback`/`.any`/etc.,
 // `std/net/addr.nv`) fails loudly, at the right place; for a literal port
 // the contract is proved statically (D24 TrivialBackend), zero runtime cost.
-const DEFAULT_PORT int = 8187
+const DEFAULT_PORT = 8187
 
 // [M-187-high-concurrency-connection-wedge] mitigation: max concurrent
 // connections. Over budget: closed immediately (admission control).
-const MAX_INFLIGHT_CONNS int = 16
+const MAX_INFLIGHT_CONNS = 16
 
 // Live legends use a wall-clock (not simulated) budget — generous enough for
 // a handful of real round-trips, still bounded (the real-cancel race,
@@ -98,7 +98,7 @@ fn main() Time Detach {
                     if inflight.load() >= MAX_INFLIGHT_CONNS {
                         // Over budget: close immediately (admission
                         // control shed), no read/response attempted.
-                        // nova:allow W_RESULT_DISCARDED
+                        // nova:allow W_RESULT_DISCARDED -- admission-control shed: close error is not actionable here
                         ro _ = stream.close()
                     } else {
                         ro _ = inflight.fetch_add(1)

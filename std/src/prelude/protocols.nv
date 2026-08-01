@@ -1,5 +1,5 @@
 // std/prelude/protocols.nv — file-based source of truth для prelude
-// conversion / equality / ordering / hashing / display protocols.
+// equality / ordering / hashing / display protocols.
 //
 // Декларации в этом файле, чтобы:
 //   1) `nova doc` показывал canonical API в одном месте,
@@ -32,13 +32,12 @@ import std.runtime.fmt_buf.{Align, Sign, FmtKind}
 // engine. `string_builder.nv` is `#no_prelude` and does not import back.
 import std.runtime.string_builder.{StringBuilder, int_display_spec, f64_display_spec, f32_display_spec, bool_display_spec, char_display_spec, char_debug_display_spec, str_debug_display_spec}
 
-// [M-numeric-try-narrowing]: `RangeError` — return type of
-// `try_to_<T>` checked-narrowing family further down.
-// `std.prelude.errors` has ZERO imports (no cycle risk).
+// `RangeError` — return type of the `try_to_<T>` checked-narrowing family
+// further down. `std.prelude.errors` has ZERO imports (no cycle risk).
 import std.prelude.errors.{RangeError}
 
 // ──────────────────────────────────────────────────────────────────────────
-// Equality / Hashing / Ordering protocols (D109)
+// Equality / Hashing / Ordering protocols
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Hashable types — for `HashMap[K, ...]` / `HashSet[K]`.
@@ -242,12 +241,11 @@ export fn FmtCtx.rich(sink Write, mark int,
     has_precision bool, precision int,
     align_code int, fill_cp int,
     sign_plus bool, alternate bool, is_debug bool) -> Self {
-    // D54: `int as char` is banned (unchecked) — `fill_cp` is always a valid
-    // Unicode scalar value (round-tripped from a real `char`, `spec.fill as
-    // u32 as i64` on the Rust side), so the `Err` arm is unreachable in
-    // practice; ' ' fallback only for the exhaustive match (same pattern as
-    // `std/src/encoding/hex.nv`'s `digit()`).
-    ro fill_c = match fill_cp.to_char() { Ok(c) => c, Err(_) => ' ' }
+    // `int as char` is banned (unchecked) — `fill_cp` is always a valid
+    // Unicode scalar value (round-tripped from a real `char`), so the `Err`
+    // arm is unreachable in practice; ' ' fallback only for the exhaustive
+    // match (same pattern as `std/src/encoding/hex.nv`'s `digit()`).
+    ro fill_c = fill_cp.to_char() ?? ' '
     {
         sink, mark,
         width: if has_width { Some(width) } else { None },
@@ -279,13 +277,13 @@ export fn FmtCtx @alternate() -> bool => @alternate
 
 export fn FmtCtx @kind() -> FmtKind => @kind
 
-/// Type-owned padding (D422 §2/§4): a type that wants to pad ITSELF (rather
+/// Type-owned padding: a type that wants to pad ITSELF (rather
 /// than let the compiler's auto-`@pad_in_place` run after the fact) writes
 /// through this instead of `@write`, then the compiler sees `pad_consumed`
 /// and does not double-pad. V1: delegates straight to the sink (no width-
 /// aware behavior yet beyond what the caller already computed into `bytes`)
 /// — full type-driven pad composition is a future refinement; today's
-/// primary auto-pad path is the compiler's own `@pad_in_place` (D179 amend).
+/// primary auto-pad path is the compiler's own `@pad_in_place`.
 export fn FmtCtx mut @pad(bytes []u8) -> () {
     @sink.write(bytes)
     @pad_consumed = true
@@ -489,9 +487,8 @@ export type AsSlice[T] protocol {
 // element-dispatch в generic контейнере резолвился правильно (не падал на
 // type-confused stub). Тела зовут `*_display_spec`-семейство из
 // `runtime.string_builder` — единый render engine.
-// Debug численных примитивов идентичен Display (D229 — числа не экранируются).
+// Debug численных примитивов идентичен Display (числа не экранируются).
 // `char`/`str` Debug добавляют кавычки и эскейпы.
-// [M-154.1-f32-display-debug]
 #impl(Display)
 fn int @display(mut f Fmt) -> () {
     consume sb = StringBuilder.new()
@@ -520,11 +517,10 @@ fn f64 @debug(mut f Fmt) -> () {
     f.write(sb.into_str().bytes())
 }
 
-// Plan 180: f32 display/debug — f32-PRECISE shortest-round-trip formatter
+// f32 display/debug — f32-PRECISE shortest-round-trip formatter
 // (`f32_fmt`/`nova_f32_shortest`, NOT widen-to-f64 first — widening surfaces
 // the f32→f64 mantissa tail, `0.1f` → `"0.10000000149011612"`); mirrors the
-// bare `${f32val}` interp path (emit_c.rs `primitive_to_str_fn`'s
-// `nova_f32_to_str`). Numeric debug == display (no escaping).
+// bare `${f32val}` interp path. Numeric debug == display (no escaping).
 #impl(Display)
 fn f32 @display(mut f Fmt) -> () {
     consume sb = StringBuilder.new()
@@ -580,9 +576,9 @@ fn str @debug(mut f Fmt) -> () {
 // ──────────────────────────────────────────────────────────────────────────
 // Option[T] / Result[T,E] — Debug + Display impl
 // ──────────────────────────────────────────────────────────────────────────
-// Moved here from `std/prelude/core.nv` because they reference `Debug`
-// and `Write` — declared in THIS module. Under partial `#prelude(core,
-// runtime)` (no `protocols`) they raised `E_IMPL_UNKNOWN_PROTOCOL`.
+// Declared in THIS module because they reference `Debug` and `Write` —
+// also declared here. Under partial `#prelude(core, runtime)` (no
+// `protocols`) they raised `E_IMPL_UNKNOWN_PROTOCOL`.
 // String literals below are passed bare, no `.bytes()` — str-literal→`[]u8`
 // coercion applies. Interpolated-string bodies still need explicit `.bytes()`.
 
@@ -1022,7 +1018,7 @@ export fn[T Ints] T @wrapping_pow(exp u32) -> T {
     acc
 }
 
-// [M-numeric-try-narrowing]: checked narrowing число→число, CHAINED form.
+// Checked narrowing число→число, CHAINED form.
 // `(300u32).try_to_u8() -> Result[u8, RangeError]` — method on source value.
 // `as` stays fast truncating cast. ONE blanket per target type `<T>` over
 // full `Ints` set.
@@ -1089,7 +1085,7 @@ export fn[S Ints] S @try_to_i64() -> Result[i64, RangeError] {
 }
 
 /// `try_to_int` — checked narrowing conversion into `int` (same width as
-/// `i64` on this platform, D129). Same contract as `@try_to_i64`, distinct
+/// `i64` on this platform). Same contract as `@try_to_i64`, distinct
 /// C type. `Err(RangeError)` if `@` does not fit; `Ok(@ as int)` otherwise.
 #stable(since = "0.1")
 export fn[S Ints] S @try_to_int() -> Result[int, RangeError] {

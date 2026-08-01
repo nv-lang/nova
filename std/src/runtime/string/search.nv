@@ -1,9 +1,8 @@
-// AUTO-SPLIT from std/runtime/string.nv (Plan 152.0 Ф.2). Bodies byte-identical.
-// Co-equal file of module `runtime.string` (folder = one module, AMEND F4).
+// Co-equal file of module `runtime.string` (folder = one module).
 // Role: search + split (byte-offset).
 //
-// Plan 91 Ф.2.5/2.6 (D177/D178): str Nova-body methods. #no_prelude breaks the
-// prelude->string->prelude import cycle.
+// `str` Nova-body methods. #no_prelude breaks the prelude->string->prelude
+// import cycle.
 
 #no_prelude
 module runtime.string
@@ -12,26 +11,26 @@ import std.prelude.core.{Option, Some, None}
 import std.collections.vec.{Vec}
 import std.runtime.raw_mem.{RawMem}
 
-// `SplitIter`/`RSplitIter` (Plan 199): the TYPES + `#impl(Next[str])` live in
+// `SplitIter`/`RSplitIter`: the TYPES + `#impl(Next[str])` live in
 // `std.collections.vec_iter` (a sibling opt-in module), NOT here — this
 // module is `#no_prelude` and links into every compiled program, so it must
 // not drag `Next`/the generic-over-source adapter family (with its closure-
 // carrying siblings `MapIter`/`FilterIter`/…) into every program's merged
-// compilation unit. Cross-module cycles are resolver-legal (D291/Plan 162);
-// this is a plain forward reference to a type name. See vec_iter.nv's header
-// for the full rationale.
+// compilation unit. Cross-module cycles are resolver-legal; this is a plain
+// forward reference to a type name. See vec_iter.nv's header for the full
+// rationale.
 import std.collections.vec_iter.{SplitIter, RSplitIter}
 
-// True если строка начинается с prefix. Plan 152.1: byte-compare через
-// RawMem.compare (memcmp) вместо byte-loop. `@ptr`/`prefix.ptr` — priv `*ro u8`
-// (type-method privacy; ptr — не size-accessor → D117 не трогает).
+// True если строка начинается с prefix. Byte-compare через RawMem.compare
+// (memcmp) вместо byte-loop. `@ptr`/`prefix.ptr` — priv `*ro u8`
+// (type-method privacy; ptr — не size-accessor).
 export fn str @starts_with(prefix str) -> bool {
     ro (sn, pn) = (@byte_len(), prefix.byte_len())
     if pn > sn { return false }
     unsafe { RawMem.compare(@ptr, prefix.ptr, pn) == 0 }
 }
 
-// True если строка заканчивается на suffix. Plan 152.1: RawMem.compare последних
+// True если строка заканчивается на suffix. RawMem.compare последних
 // `fn_len` байт (`@ptr.offset(base)`).
 export fn str @ends_with(suffix str) -> bool {
     ro (sn, fn_len) = (@byte_len(), suffix.byte_len())
@@ -39,7 +38,7 @@ export fn str @ends_with(suffix str) -> bool {
     unsafe { RawMem.compare(@ptr.offset((sn - fn_len)), suffix.ptr, fn_len) == 0 }
 }
 
-// True если needle встречается в строке. Plan 152.1: per-position RawMem.compare
+// True если needle встречается в строке. Per-position RawMem.compare
 // (memcmp) вместо вложенного byte-loop. Пустой needle → true.
 export fn str @contains(needle str) -> bool {
     ro nn = needle.byte_len()
@@ -54,11 +53,11 @@ export fn str @contains(needle str) -> bool {
     false
 }
 
-// БАЙТОВЫЙ offset первого вхождения needle. None если нет. Plan 152.1 Ф.2 (D249):
-// возвращает byte-offset (композируется с `s[k..]` за O(1) — cp-offset был
-// несоставим со slice; для ASCII byte-offset == прежний cp-offset). Haystack и
-// needle — валидный UTF-8 (R-UTF8), поэтому совпадение на byte-позиции i всегда
-// на codepoint-границе → byte-by-byte скан корректен.
+// БАЙТОВЫЙ offset первого вхождения needle. None если нет. Возвращает
+// byte-offset (композируется с `s[k..]` за O(1) — cp-offset был несоставим со
+// slice; для ASCII byte-offset == прежний cp-offset). Haystack и needle —
+// валидный UTF-8, поэтому совпадение на byte-позиции i всегда на
+// codepoint-границе → byte-by-byte скан корректен.
 export fn str @find(needle str) -> Option[int] {
     ro nn = needle.byte_len()
     if nn == 0 { return Some(0) }
@@ -72,8 +71,8 @@ export fn str @find(needle str) -> Option[int] {
     None
 }
 
-// БАЙТОВЫЙ offset последнего вхождения needle. Plan 152.1 Ф.2 (D249): byte-offset
-// (как @find). Пустой needle → byte-длина (Rust-parity `"abc".rfind("")==Some(3)`).
+// БАЙТОВЫЙ offset последнего вхождения needle. Byte-offset (как @find).
+// Пустой needle → byte-длина (Rust-parity `"abc".rfind("")==Some(3)`).
 // Backward scan: O(n) with early exit on first (rightmost) match.
 export fn str @rfind(needle str) -> Option[int] {
     ro (sn, nn) = (@byte_len(), needle.byte_len())
@@ -87,7 +86,7 @@ export fn str @rfind(needle str) -> Option[int] {
     None
 }
 
-// Split по separator — LAZY (Plan 199, Rust `str::split` parity). Returns a
+// Split по separator — LAZY (Rust `str::split` parity). Returns a
 // `SplitIter` (zero-copy, zero-heap value iterator; see vec_iter.nv) instead
 // of a materialized `Vec[str]` — drive it with `for`/`.next()`, or
 // `.collect()` for the old eager `Vec[str]`. Semantics unchanged from the
@@ -101,23 +100,21 @@ export fn str @split(sep str) -> SplitIter =>
 // so they never appear as UTF-8 continuation bytes — a byte-scan is codepoint-safe.
 fn is_ascii_ws(b int) -> bool => b == 32 || (b >= 9 && b <= 13)
 
-// Plan 152.2 Ф.1 (D251), lazy since Plan 199: split into AT MOST `n` parts;
-// the last part is the unsplit remainder (Rust `splitn`). `n == 0` → empty
-// iterator; `n == 1` / empty sep → whole string (one element). `n < 0` —
-// contract violation (W_PARAM_NO_CONTRACT AMEND, 2026-07-17, владелец):
-// negative part-count is a caller bug, not a graceful degenerate case.
+// Split into AT MOST `n` parts; the last part is the unsplit remainder (Rust
+// `splitn`). `n == 0` → empty iterator; `n == 1` / empty sep → whole string
+// (one element). `n < 0` — contract violation: negative part-count is a
+// caller bug, not a graceful degenerate case.
 export fn str @splitn(n int, sep str) -> SplitIter
     requires n >= 0
     => { src: @, sep, start: 0, done: false, limit: n.max(0), splits: 0, terminator: false }
 
-// Split from the RIGHT, parts in REVERSE order (Rust `rsplit`), lazy since
-// Plan 199. Empty sep → whole (one element).
+// Split from the RIGHT, parts in REVERSE order (Rust `rsplit`). Empty sep →
+// whole (one element).
 export fn str @rsplit(sep str) -> RSplitIter =>
     { src: @, sep, end: @byte_len(), done: false, limit: -1, splits: 0 }
 
-// `rsplit` into AT MOST `n` parts (reverse order), lazy since Plan 199.
-// `n == 0` → empty iterator; `n == 1` / empty sep → whole. `n < 0` —
-// contract violation (W_PARAM_NO_CONTRACT AMEND, 2026-07-17, владелец).
+// `rsplit` into AT MOST `n` parts (reverse order). `n == 0` → empty iterator;
+// `n == 1` / empty sep → whole. `n < 0` — contract violation.
 export fn str @rsplitn(n int, sep str) -> RSplitIter
     requires n >= 0
     => { src: @, sep, end: @byte_len(), done: false, limit: n.max(0), splits: 0 }
@@ -126,7 +123,7 @@ export fn str @rsplitn(n int, sep str) -> RSplitIter
 // not found. Byte-offsets, zero-copy views (Rust `split_once`).
 export fn str @split_once(sep str) -> Option[(str, str)] {
     match @find(sep) {
-        Some(k) => Some((@[0..k], @[k + sep.byte_len() .. @byte_len()])),
+        Some(k) => Some((@[..k], @[k + sep.byte_len() ..])),
         None    => None,
     }
 }
@@ -135,19 +132,19 @@ export fn str @split_once(sep str) -> Option[(str, str)] {
 // not found (Rust `rsplit_once`).
 export fn str @rsplit_once(sep str) -> Option[(str, str)] {
     match @rfind(sep) {
-        Some(k) => Some((@[0..k], @[k + sep.byte_len() .. @byte_len()])),
+        Some(k) => Some((@[..k], @[k + sep.byte_len() ..])),
         None    => None,
     }
 }
 
-// 196.5 Stage-D волна-3 п.2: substring BEFORE the first occurrence of `sep`
+// Substring BEFORE the first occurrence of `sep`
 // (whole string if not found). Convenience pair with `@after` — unlike
 // `@split_once` (which returns `None` on a miss), both stay TOTAL: a missing
 // separator means "no split happened", so `@until` returns the whole string
 // and `@after` returns `""`.
 export fn str @until(sep str) -> str {
     match @find(sep) {
-        Some(k) => @[0..k],
+        Some(k) => @[..k],
         None    => @,
     }
 }
@@ -155,21 +152,20 @@ export fn str @until(sep str) -> str {
 // Substring AFTER the first occurrence of `sep` (`""` if not found). See `@until`.
 export fn str @after(sep str) -> str {
     match @find(sep) {
-        Some(k) => @[k + sep.byte_len() .. @byte_len()],
+        Some(k) => @[k + sep.byte_len() ..],
         None    => "",
     }
 }
 
 // Like `split`, but a trailing empty segment (when the string ends with `sep`)
-// is omitted (Rust `split_terminator`), lazy since Plan 199.
+// is omitted (Rust `split_terminator`).
 // `"a,b,".split_terminator(",").collect() == ["a","b"]`.
 export fn str @split_terminator(sep str) -> SplitIter =>
     { src: @, sep, start: 0, done: false, limit: -1, splits: 0, terminator: true }
 
 // Split on runs of ASCII whitespace, skipping empty segments (leading/trailing WS
-// ignored). Rust/Go `Fields`/`split_ascii_whitespace`. Non-ASCII Unicode whitespace
-// — Phase B (`[M-152-ws-unicode]`, delegates to std/unicode in Plan 152.4).
-// Renamed split_whitespace → split_ascii_whitespace (Plan 91.18 Ф.2).
+// ignored). Rust/Go `Fields`/`split_ascii_whitespace`. Non-ASCII Unicode
+// whitespace — Phase B (delegates to std/unicode).
 export fn str @split_ascii_whitespace() -> ro []str {
     mut out = []str.new()
     ro (bytes, sn) = (@bytes(), @byte_len())
@@ -227,8 +223,8 @@ export fn str @match_indices(needle str) -> []int {
     out
 }
 
-// Plan 91.18 Ф.5: char overloads for @contains/@starts_with/@ends_with.
-// decode_utf8 — peer-fn from chars.nv (same runtime.string folder module, Ф.6).
+// Char overloads for @contains/@starts_with/@ends_with.
+// decode_utf8 — peer-fn from chars.nv (same runtime.string folder module).
 
 // True if string contains codepoint `c` — UTF-8 scan.
 export fn str @contains(c char) -> bool {

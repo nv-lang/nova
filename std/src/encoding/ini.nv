@@ -62,8 +62,8 @@ export fn Ini.parse(s str) Fail[ParseIniError] -> HashMap[str, HashMap[str, str]
         match line.find("=") {
             None => throw InvalidLine { line: line_num, content: line }
             Some(i) => {
-                ro key = line[0..i].trim_ascii()
-                ro value_raw = line[i + 1..line.len()].trim_ascii()
+                ro key = line[..i].trim_ascii()
+                ro value_raw = line[i + 1..].trim_ascii()
                 ro value = if value_raw.starts_with("\"") && value_raw.ends_with("\"") && value_raw.len() >= 2 {
                     value_raw[1..value_raw.len() - 1]
                 } else {

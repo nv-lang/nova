@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// std/fs/fs.nv — File (must-consume), OpenOptions, real_fs handler, convenience
-// (Plan 176 Ф.2, D323).
+// std/fs/fs.nv — File (must-consume), OpenOptions, real_fs handler, convenience.
 //
-// 🏆 `File` is **must-consume (D133)** — the §1a #1 differentiator: a `File` that
+// 🏆 `File` is **must-consume** — the #1 differentiator: a `File` that
 // is never `@close`d is a **compile error** (`D133-not-consumed`), and `@close`
 // returns the `Result` so a close error (ENOSPC/EIO/quota — often visible ONLY on
 // close) is **not ignorable** and cannot be silently dropped. Beats every peer:
@@ -10,14 +9,14 @@
 // `close()->void` has nowhere to put the error. `@close` is the single EXPLICIT
 // discharge; double-close is impossible (consume). File conforms to io.Read /
 // io.Write / io.Seek — its `@read`/`@write` carry the `Fs` effect, which surfaces
-// transitively when a generic io helper is monomorphised over it (Q15, D122).
+// transitively when a generic io helper is monomorphised over it.
 //
 // `IoError`/`Metadata`/`DirEntry` are all built HERE, in the pure-Nova wrapper
 // layer, from the `Fs` effect's primitive `int`/`str` codes — never across the
 // effect vtable (which would erase the value `IoError` to `nova_str`). The public
 // byte surface (`read`/`write`/`write_atomic`) inlines its own read/write loop
 // over `File` directly, so it never depends on the effectful-generic io-core
-// forwarding path (`[M-176-io-forward-bounded-generic]`).
+// forwarding path.
 
 module std.fs
 
@@ -38,10 +37,10 @@ fn wrap_int(rc int, op str) -> Result[int, IoError] {
 }
 
 // ─── stat image (value-record, mirrors std/net's ADDR_IMAGE_BYTES/addr_image)
-// [M-fs-tls-mn-race]: the C layer never caches a stat result in TLS — it fills
-// a caller-owned image the Nova side allocates, and the accessors below read
-// straight off that pointer (pure `fn`, no I/O — same rule that keeps
-// SocketAddr's `@port()`/... off the `Net` effect).
+// The C layer never caches a stat result in TLS — it fills a caller-owned image
+// the Nova side allocates, and the accessors below read straight off that
+// pointer (pure `fn`, no I/O — same rule that keeps SocketAddr's `@port()`/...
+// off the `Net` effect).
 
 // Byte size of the C `NovaFsStat` POD image the stat/lstat/fstat ops fill.
 ro STAT_IMAGE_BYTES int = fs_stat_image_bytes()
@@ -67,13 +66,13 @@ fn read_meta(img []u8) -> Metadata =>
     Metadata.new(img_kind(img), img_size(img), img_mode(img),
                 img_mtime_ns(img), img_atime_ns(img), img_ctime_ns(img))
 
-// ─── c_path: validate + NUL-terminate a path for the FFI (§3c(1)) ──
+// ─── c_path: validate + NUL-terminate a path for the FFI ──
 //
 // libuv takes a NUL-terminated UTF-8/WTF-8 `const char*` and converts to UTF-16
 // on Windows itself, so the whole path→CStr→wide story reduces to: reject an
 // interior NUL (a classic truncation bug → `InvalidInput`) and append a
 // terminator. Returns bytes whose `.ptr()` is a valid C string. (This is the
-// []u8-native shape of §3c's `CStr.from_bytes`; the str-buffer `CStr` in
+// []u8-native shape of `CStr.from_bytes`; the str-buffer `CStr` in
 // std/ffi/cstr is a different primitive — `[M-176-cstr-from-bytes-canonical]`.)
 fn c_path(path []u8) -> Result[[]u8, IoError] {
     mut i = 0
@@ -89,7 +88,7 @@ fn c_path(path []u8) -> Result[[]u8, IoError] {
     Ok(out)
 }
 
-// ─── OpenOptions (Q13 — full read/write/append/truncate/create/create_new) ──
+// ─── OpenOptions (full read/write/append/truncate/create/create_new) ──
 
 /// Builder for opening a `File` with a precise access/creation policy (Rust
 /// `OpenOptions`). A `value` — each setter returns a modified copy.
@@ -104,8 +103,8 @@ export type OpenOptions value {
     mut md int
 }
 
-/// Fresh options: nothing enabled, default create-mode `0o666` (`& ~umask` at the
-/// OS, Q12).
+/// Fresh options: nothing enabled, default create-mode `0o666` (`& ~umask` at
+/// the OS).
 #stable(since = "0.1")
 export fn OpenOptions.new() -> OpenOptions =>
     { rd: false, wr: false, ap: false, tr: false, cr: false, cn: false, md: 0o666 }
@@ -134,13 +133,13 @@ export fn OpenOptions mut @create(v bool) -> @ { @cr = v }
 #stable(since = "0.1")
 export fn OpenOptions mut @create_new(v bool) -> @ { @cn = v }
 
-/// Unix create-mode escape hatch (`0o600`, …); ignored on Windows (Q12).
+/// Unix create-mode escape hatch (`0o600`, …); ignored on Windows.
 #stable(since = "0.1")
 export fn OpenOptions mut @mode(v int) -> @ { @md = v }
 
 /// Open `path` under these options. Validates the combination, computes the
 /// portable flag set, and dispatches to the ambient `Fs`.
-///   - `append + truncate` → `InvalidInput` (Q13).
+///   - `append + truncate` → `InvalidInput`.
 ///   - `create`/`create_new` without any write access → `InvalidInput`.
 #stable(since = "0.1")
 export fn OpenOptions @open(path Path) Fs -> Result[File, IoError] {
@@ -173,11 +172,11 @@ export fn OpenOptions @open(path Path) Fs -> Result[File, IoError] {
     Ok(File._of(fd, readable, writable, start))
 }
 
-// ─── File (must-consume, D133) ──
+// ─── File (must-consume) ──
 
-/// An open file handle. **Must be `@close`d** (D133): a `File` that leaves scope
+/// An open file handle. **Must be `@close`d**: a `File` that leaves scope
 /// un-closed is a compile error. Conforms to io.Read / io.Write / io.Seek (its
-/// methods carry the `Fs` effect, surfaced transitively at monomorphisation, Q15).
+/// methods carry the `Fs` effect, surfaced transitively at monomorphisation).
 ///
 /// **Plan 217.1 (D432 rollout) — deliberately excluded from auto-`@cleanup`.**
 /// `@close()` is fallible (`Fs -> Result[(), IoError]`, see the 🏆 rationale
@@ -289,7 +288,7 @@ export fn File @metadata() Fs -> Result[Metadata, IoError] {
     if rc < 0 { Err(IoError.from_os(0 - rc, "fstat")) } else { Ok(read_meta(img)) }
 }
 
-/// Discharge (D133): close the fd and consume the handle — the **only** explicit
+/// Discharge: close the fd and consume the handle — the **only** explicit
 /// release. The close error is returned (never swallowed on drop). Double-close
 /// is a compile error.
 #stable(since = "0.1")
@@ -304,9 +303,9 @@ export fn File consume @close() Fs -> Result[(), IoError] => wrap_unit(Fs.close(
 /// Concrete `Fs` handler dispatching to libuv `uv_fs_*` (park/wake). Install at
 /// the root of an async program: `with Fs = real_fs() { … }`.
 ///
-/// Plan 175.2 Ф.2-v4 (П9, D431 amend): `#default_handler` (bare form, П7) —
-/// `Fs` now auto-constructs (lazily, once per thread) on first transitive
-/// use with no enclosing `with Fs = …`, consistent with `Time`/`real_time()`.
+/// `#default_handler` (bare form) — `Fs` now auto-constructs (lazily, once
+/// per thread) on first transitive use with no enclosing `with Fs = …`,
+/// consistent with `Time`/`real_time()`.
 #stable(since = "0.1")
 #default_handler
 export fn real_fs() -> Effect[Fs] {
@@ -377,7 +376,7 @@ export fn real_fs() -> Effect[Fs] {
         // Хендл scandir пересекает Fs-эффект как голый int НАМЕРЕННО: vtable
         // эффектов носит примитивы (прецедент realpath-кортежа), хендл приватен
         // и живёт только внутри read_dir. Типизированная обёртка — при
-        // выравнивании на net-канон ([M-ffi-handle-newtype], после лимитов).
+        // выравнивании на net-канон ([M-ffi-handle-newtype]).
         scandir_open(path []u8) -> int {
             match c_path(path) { Ok(cp) => unsafe { fs_scandir_open(cp.ptr()) }, Err(_) => 0 - 22 }
         }
@@ -413,7 +412,7 @@ export fn read(path Path) Fs -> Result[[]u8, IoError] {
     loop {
         match f.read(chunk) {
             Ok(0)  => break
-            Ok(n)  => out.append(chunk[0..n])
+            Ok(n)  => out.append(chunk[..n])
             Err(e) => {
                 if e.is_interrupted() { continue }
                 rerr = Some(e)
@@ -429,7 +428,7 @@ export fn read(path Path) Fs -> Result[[]u8, IoError] {
 }
 
 /// Read the whole file at `path` and decode as UTF-8. Invalid UTF-8 →
-/// `IoError{InvalidData}` (Q11 — fallible, no silent replacement).
+/// `IoError{InvalidData}` (fallible, no silent replacement).
 #stable(since = "0.1")
 export fn read_text(path Path) Fs -> Result[str, IoError] {
     match read(path) {
@@ -488,11 +487,12 @@ export fn symlink_metadata(path Path) Fs -> Result[Metadata, IoError] {
 }
 
 /// Whether `path` exists — `Ok(true)`/`Ok(false)`, or `Err` for a non-`NotFound`
-/// failure (Rust `try_exists`). **Racy** (§3c TOCTOU): prefer open-and-match-
+/// failure (Rust `try_exists`). **Racy** (TOCTOU): prefer open-and-match-
 /// `NotFound` over `try_exists`-then-open. (`exists`/`forall` are reserved
 /// quantifier keywords, so this cannot be named `exists`.)
 #stable(since = "0.1")
-export fn try_exists(path Path) Fs -> Result[bool, IoError] { // [M-lint-findings-try-without-sibling]
+// nova:allow W_TRY_WITHOUT_SIBLING -- `exists`/`forall` are reserved quantifier keywords, cannot name the infallible sibling `exists`
+export fn try_exists(path Path) Fs -> Result[bool, IoError] {
     mut img = stat_image()
     ro rc = Fs.stat(path.os_bytes(), img)
     if rc >= 0 { return Ok(true) }
@@ -573,12 +573,11 @@ export fn copy_file(src Path, dst Path) Fs -> Result[int, IoError] =>
 
 /// List the entries of a directory (`.`/`..` excluded).
 ///
-/// [M-fs-tls-mn-race]: `scandir` is handle-based (no ambient/TLS iterator
-/// state) — `h` is this call's own stream, released via `scandir_close`
-/// UNCONDITIONALLY after the loop (idempotent: a no-op if the loop already
-/// drained the stream to EOF). There is no public streaming iterator over
-/// `scandir` — `read_dir` always fully drains it, so there is no early-break
-/// path that could leak the handle.
+/// `scandir` is handle-based (no ambient/TLS iterator state) — `h` is this
+/// call's own stream, released via `scandir_close` UNCONDITIONALLY after the
+/// loop (idempotent: a no-op if the loop already drained the stream to EOF).
+/// There is no public streaming iterator over `scandir` — `read_dir` always
+/// fully drains it, so there is no early-break path that could leak the handle.
 #stable(since = "0.1")
 export fn read_dir(path Path) Fs -> Result[[]DirEntry, IoError] {
     ro h = Fs.scandir_open(path.os_bytes())
@@ -595,8 +594,8 @@ export fn read_dir(path Path) Fs -> Result[[]DirEntry, IoError] {
 
 /// Canonicalise `path` to an absolute, symlink-resolved path (`realpath`).
 ///
-/// [M-fs-tls-mn-race]: the canonical path is returned directly from this ONE
-/// call (no TLS, no follow-up accessor call to race against).
+/// The canonical path is returned directly from this ONE call (no TLS, no
+/// follow-up accessor call to race against).
 #stable(since = "0.1")
 export fn canonicalize(path Path) Fs -> Result[Path, IoError] {
     ro (rc, data) = Fs.realpath(path.os_bytes())
@@ -615,7 +614,7 @@ export fn symlink(target Path, link Path) Fs -> Result[(), IoError] =>
 export fn set_permissions(path Path, perms Permissions) Fs -> Result[(), IoError] =>
     wrap_unit(Fs.chmod(path.os_bytes(), perms.mode()), "chmod")
 
-// ─── write_atomic (durable, 5-step §3c) ──
+// ─── write_atomic (durable, 5-step) ──
 
 // Sibling temp path in the SAME directory as `path` (rename must stay
 // intra-directory to be atomic). Name derived from the target's file name.
@@ -631,7 +630,7 @@ fn temp_name(path Path) -> str {
     ".${base}.novatmp"
 }
 
-/// Atomically and **durably** replace `path` with `data` (§3c 5-step recipe):
+/// Atomically and **durably** replace `path` with `data` (5-step recipe):
 /// (1) create a temp file in the SAME directory (`O_EXCL`); (2) write all;
 /// (3) `fsync` the file; (4) atomic `rename` over `path`; (5) best-effort `fsync`
 /// of the parent directory. Unlike Swift `.atomic` / Zig `AtomicFile` (tmp+rename

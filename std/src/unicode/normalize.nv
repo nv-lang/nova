@@ -21,15 +21,15 @@ import std.collections.hashmap.{HashMap}
 import std.collections.vec.{Vec}
 
 // ---- Hangul constants (UAX #15) ----
-const SBASE int = 0xAC00
-const LBASE int = 0x1100
-const VBASE int = 0x1161
-const TBASE int = 0x11A7
-const LCOUNT int = 19
-const VCOUNT int = 21
-const TCOUNT int = 28
-const NCOUNT int = 588    // VCOUNT * TCOUNT
-const SCOUNT int = 11172  // LCOUNT * NCOUNT
+const SBASE = 0xAC00
+const LBASE = 0x1100
+const VBASE = 0x1161
+const TBASE = 0x11A7
+const LCOUNT = 19
+const VCOUNT = 21
+const TCOUNT = 28
+const NCOUNT = 588    // VCOUNT * TCOUNT
+const SCOUNT = 11172  // LCOUNT * NCOUNT
 
 // ---- lazy-static tables (built once on first normalization call) ----
 // hex / parse_cp_list / parse_cp_keyed_table / parse_cp_int_table /
@@ -41,7 +41,7 @@ ro ccc_map HashMap[u32, int] = parse_cp_int_table(CCC_DATA)
 ro comp_map HashMap[int, u32] = parse_comp_table(COMP_DATA)
 
 fn ccc_of(cp u32) -> int {
-    match ccc_map.get(cp) { Some(c) => c, None => 0 }
+    ccc_map.get(cp) ?? 0
 }
 
 fn decomp_lookup(cp u32, compat bool) -> Option[str] {

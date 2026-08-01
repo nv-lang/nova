@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// std/io/buffered.nv — BufReader / BufWriter (Plan 176 Ф.1, D322).
+// std/io/buffered.nv — BufReader / BufWriter.
 //
-// `BufWriter[W]` is **must-consume (D133, Q10)** — the §1a #1 differentiator:
-// a `BufWriter` that is never `@close`d is a **compile error**
-// (`D133-not-consumed`), and `@close` returns the flush `Result`, so the error
+// `BufWriter[W]` is **must-consume** — the #1 differentiator:
+// a `BufWriter` that is never `@close`d is a **compile error**,
+// and `@close` returns the flush `Result`, so the error
 // that so often only shows up on close (ENOSPC / EIO / quota) is **not
 // ignorable**. Beats every peer: Go `bufio.Flush` footgun, Rust `Drop`-swallow,
 // Zig's manual `flush()`. No silent flush-on-drop.
@@ -16,19 +16,19 @@ module std.io
 // 8 KiB — the classic stdio buffer size (Rust `BufReader`/`BufWriter`).
 const DEFAULT_BUF_CAP = 8192
 
-// ─── BufWriter[W] — must-consume buffering sink (D133) ───
+// ─── BufWriter[W] — must-consume buffering sink ───
 
-/// Buffering wrapper over an inner `io.Write`. **Must be `@close`d** (D133): an
+/// Buffering wrapper over an inner `io.Write`. **Must be `@close`d**: an
 /// un-closed `BufWriter` is a compile error, and `@close` surfaces the final
 /// flush error instead of swallowing it. Accumulates writes and flushes to the
 /// inner sink in `DEFAULT_BUF_CAP` chunks.
 ///
-/// **Plan 217.1 (D432 rollout) — deliberately excluded from auto-`@cleanup`,
-/// same rationale as `File`** (std/src/fs/fs.nv): `@close()` is fallible and
-/// its whole documented point is that the final-flush error is NOT swallowed
-/// on drop (the header comment above names this the #1 differentiator vs.
-/// Go/Rust/Zig) — an auto-inserted, error-discarding cleanup would reintroduce
-/// exactly that footgun. Regression guard: std/src/io/neg/d322_bufwriter_leak_neg.nv.
+/// **Deliberately excluded from auto-`@cleanup`, same rationale as `File`**
+/// (std/src/fs/fs.nv): `@close()` is fallible and its whole documented point is
+/// that the final-flush error is NOT swallowed on drop (the header comment above
+/// names this the #1 differentiator vs. Go/Rust/Zig) — an auto-inserted,
+/// error-discarding cleanup would reintroduce exactly that footgun. Regression
+/// guard: std/src/io/neg/d322_bufwriter_leak_neg.nv.
 #stable(since = "0.1")
 export type BufWriter[W Write] consume priv {
     mut inner W
@@ -71,8 +71,7 @@ export fn BufWriter[W Write] mut @write(data []u8) -> Result[int, IoError] {
 // collide, under coarse-by-name method dispatch, with the `write_str` selector
 // the auto-derived `@debug`/`@display` emit on the text-sink — it mis-routes a
 // StringBuilder into this method. Use the free `write_str(bw, s)` instead — since
-// `BufWriter` is an `io.Write`, that bridges text→bytes just the same. Followup
-// `[M-176-generic-wrapper-mono-inference]`.)
+// `BufWriter` is an `io.Write`, that bridges text→bytes just the same.)
 
 /// io.Write: flush the buffer, then flush the inner sink.
 #stable(since = "0.1")
@@ -83,7 +82,7 @@ export fn BufWriter[W Write] mut @flush() -> Result[(), IoError] {
     }
 }
 
-/// Discharge (D133): flush everything and consume the writer. The **only**
+/// Discharge: flush everything and consume the writer. The **only**
 /// explicit release; the flush error is returned in the happy path (not lost on
 /// drop). After `@close` the `BufWriter` cannot be used again (double-close is a
 /// compile error).
@@ -136,10 +135,7 @@ fn BufReader[R Read] mut @refill() -> Result[int, IoError] {
 export fn BufReader[R Read] mut @read(buf mut []u8) -> Result[int, IoError] {
     ro want = buf.len()
     if want == 0 { return Ok(0) }
-    ro avail = match @refill() {
-        Ok(a)  => a
-        Err(e) => return Err(e)
-    }
+    ro avail = @refill()?
     if avail == 0 { return Ok(0) }
     ro n = want.min(avail)
     for i in 0..n {

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// Plan 183 Ф.2: std/net2/error.nv — typed network error (D407 §4).
+// std/net/error.nv — typed network error.
 //
 // The C transport returns UV error codes (int, <0). The typed NetError is built
 // on the Nova side from that code via `NetError.from_code`: the code is turned
@@ -7,11 +7,11 @@
 // ECONNRESET), and that text is classified into a typed variant. No TLS, no
 // C-side error state — the honest error channel replacing the заход-1 null stub.
 //
-// Plan 176 Ф.4 (Q3): `NetError` → shared `io.ErrorKind` projection. Kept as an
+// `NetError` → shared `io.ErrorKind` projection. Kept as an
 // ADDITIVE best-effort mapping (`@to_error_kind`/`@to_io_error`), NOT a rename —
 // `NetError` and its `@to_str()` strings are UNCHANGED (smaller diff than
-// updating every net fixture that asserts on them; chosen per Q3 "sохранить
-// строки ИЛИ обновить фикстуры"). The projection backs `TcpStream.@read`/
+// updating every net fixture that asserts on them; chosen per the "sохранить
+// строки ИЛИ обновить фикстуры" option). The projection backs `TcpStream.@read`/
 // `@write`'s `io.Read`/`io.Write` conformance (tcp.nv) and
 // `HttpError.ErrSource.Net` (std/http/error.nv).
 
@@ -86,7 +86,7 @@ fn strerror_text(code int) -> str {
     // [M-174.1-vec-method-chain-elem-erasure]: explicit []u8 local; non-unsafe
     // decode + `??` fallback (uv_strerror text is ASCII) — same P67 gap as
     // SocketAddr @ip (addr.nv).
-    ro msg_bytes []u8 = buf[0..n]
+    ro msg_bytes []u8 = buf[..n]
     msg_bytes.to_str() ?? ""
 }
 
@@ -106,9 +106,9 @@ fn classify(msg str) -> NetError {
     else { NetError.IoError(msg) }
 }
 
-// ─── NetError → ErrorKind projection (Q3, Ф.4) ────────────────────────────────
+// ─── NetError → ErrorKind projection ──────────────────────────────────────────
 
-/// Best-effort projection onto the shared io/fs/os `ErrorKind` (Q3). Lossy where
+/// Best-effort projection onto the shared io/fs/os `ErrorKind`. Lossy where
 /// net has no exact counterpart (`Closed`→`NotConnected`, `Cancelled`→
 /// `Interrupted`, `IoError(msg)`/`InvalidAddr(msg)`/`InvalidPort`→`InvalidInput`/
 /// `Other` — text detail is NOT carried, only the coarse kind); `raw_os` on the
@@ -136,7 +136,7 @@ export fn NetError @to_error_kind() -> ErrorKind {
     }
 }
 
-/// Build a shared `io.IoError` from this `NetError` (Q3 projection + `op` for
+/// Build a shared `io.IoError` from this `NetError` (projection + `op` for
 /// diagnostics). Used to give `TcpStream` structural `io.Read`/`io.Write`
 /// conformance without changing the `Net` effect's own `NetError` surface
 /// (`write_all`/`read_bytes`/`read_text`/the split halves keep returning

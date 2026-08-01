@@ -1,23 +1,22 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// std/time/civil/date.nv — Date: календарная дата (proleptic Gregorian, D319).
+// std/time/civil/date.nv — Date: календарная дата (proleptic Gregorian).
 //
-// Plan 175.1 Ф.1. Репрезентация: epoch_day i64 — дни от 1970-01-01.
+// Репрезентация: epoch_day i64 — дни от 1970-01-01.
 // Алгоритмы Date↔(y,m,d) — Howard Hinnant `days_from_civil`/`civil_from_days`
 // (branch-light, overflow-safe; ровно как chrono). Leap: ÷4 кроме веков,
-// если не ÷400 (2000 — да, 1900 — нет). Год 0 = 1 BCE (proleptic, Q10).
+// если не ÷400 (2000 — да, 1900 — нет). Год 0 = 1 BCE (proleptic).
 //
-// Validate-by-default (Q6): `Date.new(2024, Feb, 30)` → `Err(InvalidField)`,
+// Validate-by-default: `Date.new(2024, Feb, 30)` → `Err(InvalidField)`,
 // НИКОГДА не нормализует молча. Явный opt-in — `Date.from_normalized`.
 //
-// Диапазон (Q4): year −999_999 .. 999_999 (java.time-парность). Окно
-// civil↔Timestamp (±292y, D317) проверяется на конверсии (`RangeOverflow`),
+// Диапазон: year −999_999 .. 999_999 (java.time-парность). Окно
+// civil↔Timestamp (±292y) проверяется на конверсии (`RangeOverflow`),
 // сам Date существует далеко за окном Timestamp.
 
 module time.civil
 
-// `panic` (overflow-trap primitive, D317-паттерн) is an always-available
-// compiler intrinsic ([panic-assert-intrinsic] 2026-07-11) — no
-// redeclaration needed.
+// `panic` (overflow-trap primitive) is an always-available
+// compiler intrinsic — no redeclaration needed.
 
 /// Calendar date (proleptic Gregorian) — a value-record, days since 1970-01-01.
 ///
@@ -29,10 +28,9 @@ export type Date value {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Границы (Q4). NB: имена не MIN/MAX-консты — известный чекер-гэп
-// [M-175-type-const-max-shadows-builtin] (user type-const MAX/MIN шэдоуит
-// builtin numeric .MAX/.MIN в type-set generics) + value-const-ref гэп
-// [M-175-value-record-const-ref]. Обход по конвенции §4а: static-фны.
+// Границы. NB: имена не MIN/MAX-консты — известный чекер-гэп
+// (user type-const MAX/MIN шэдоуит builtin numeric .MAX/.MIN в type-set
+// generics) + value-const-ref гэп. Обход: static-фны.
 // ──────────────────────────────────────────────────────────────────────────
 
 // −999999-01-01 (epoch_day) и 999999-12-31 — вычислены Hinnant-формулой.
@@ -112,7 +110,7 @@ fn civil_from_days(z0 i64) -> (i64, i64, i64) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Конструкторы (§21б: Type.new; validate-by-default → Result, Q6)
+// Конструкторы (Type.new; validate-by-default → Result)
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Build a date with full validation → `Result` (Q6, D319 R5).
@@ -169,7 +167,7 @@ export fn Date.from_normalized(y i32, m i32, d i32) -> Date {
     { epoch_day: ed }
 }
 
-// NB: `Date.today(tz TimeZone) Time -> Date` определяется в zoned.nv (Ф.3) —
+// NB: `Date.today(tz TimeZone) Time -> Date` определяется в zoned.nv —
 // зависит от TimeZone/ZonedDateTime; co-equal файлы модуля это допускают.
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -187,10 +185,7 @@ export fn Date @year() -> i32 {
 #stable(since = "0.1")
 export fn Date @month() -> Month {
     ro (_, m, _) = civil_from_days(@epoch_day)
-    match Month.from_number(m as int) {
-        Ok(mm) => mm,
-        Err(_) => panic("Date @month: unreachable (Hinnant m in 1..12)"),
-    }
+    Month.from_number(m as int) ?? panic("Date @month: unreachable (Hinnant m in 1..12)")
 }
 
 /// Day of month (1..31).
@@ -208,10 +203,7 @@ export fn Date @to_epoch_day() -> i64 => @epoch_day
 #stable(since = "0.1")
 export fn Date @weekday() -> Weekday {
     ro iso = floor_mod(@epoch_day + 3, 7) + 1
-    match Weekday.from_number(iso as int) {
-        Ok(w) => w,
-        Err(_) => panic("Date @weekday: unreachable (mod 7 + 1 in 1..7)"),
-    }
+    Weekday.from_number(iso as int) ?? panic("Date @weekday: unreachable (mod 7 + 1 in 1..7)")
 }
 
 /// Ordinal day of the year (1..365/366).
@@ -331,7 +323,7 @@ export fn Date @days_until(other Date) -> int =>
     (other.to_epoch_day() - @epoch_day) as int
 
 // ──────────────────────────────────────────────────────────────────────────
-// Compare (D183: операторы синтезируются из @compare)
+// Compare (операторы синтезируются из @compare)
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Compare on the dates' time axis (earlier < later).
@@ -342,7 +334,7 @@ export fn Date @compare(other Date) -> int =>
     else { 0 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Display (ISO-8601) — полный parse в format.nv (Ф.5)
+// Display (ISO-8601) — полный parse в format.nv
 // ──────────────────────────────────────────────────────────────────────────
 
 // 4+-значный год с нулями и знаком (ISO-8601: -0500, 0033, 2026, +10000

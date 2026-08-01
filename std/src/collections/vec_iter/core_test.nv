@@ -148,8 +148,7 @@ test "split: lazy .next() drive, byte-identical to the old eager array" {
 }
 
 test "split: for-in drives the SAME lazy iterator (no .collect() needed)" {
-    mut out = []str.new()
-    for x in "x,y,z".split(",") { out.push(x) }
+    mut out = "x,y,z".split(",").collect()
     assert(out == ["x", "y", "z"])
 }
 

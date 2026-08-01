@@ -1,25 +1,23 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // std/time/civil/zoned.nv — TimeZone + ZoneRules + ZonedDateTime +
-// 4-way Disambiguation (D319/D321). Plan 175.1 Ф.3 (каркас зон) —
-// IANA-загрузка (TZif/embedded) в tz.nv (Ф.4).
+// 4-way Disambiguation. IANA-загрузка (TZif/embedded) — в tz.nv.
 //
-// Type-ladder (D319 R1): ZonedDateTime — точка на оси; `offset` хранит
-// резолвнутый сдвиг (round-trip-safe при смене правил), `zone` — идентичность
-// зоны для лосслесс round-trip (RFC-9557 [zone], Ф.5).
+// Type-ladder: ZonedDateTime — точка на оси; `offset` хранит резолвнутый
+// сдвиг (round-trip-safe при смене правил), `zone` — идентичность зоны для
+// лосслесс round-trip (RFC-9557 [zone]).
 //
-// `Utc`/`Fixed` — всегда unambiguous (DST нет, D321 R5); реальный gap/overlap
-// приносят IANA-зоны (Ф.4) — 4-way Disambiguation работает не вхолостую.
+// `Utc`/`Fixed` — всегда unambiguous (DST нет); реальный gap/overlap
+// приносят IANA-зоны — 4-way Disambiguation работает не вхолостую.
 
 module time.civil
 
 import std.time.duration
 
-// `panic` (overflow-trap primitive, D317-паттерн) is an always-available
-// compiler intrinsic ([panic-assert-intrinsic] 2026-07-11) — no
-// redeclaration needed.
+// `panic` (overflow-trap primitive) is an always-available compiler
+// intrinsic — no redeclaration needed.
 
 // ──────────────────────────────────────────────────────────────────────────
-// ZoneRules + IanaZone — transition-таблица (наполняется Ф.4)
+// ZoneRules + IanaZone — transition-таблица
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Zone rules: transition instants (unix seconds) + offsets.
@@ -58,7 +56,7 @@ fn rules_offset_at(rules ZoneRules, instant_sec i64) -> i32 {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// TimeZone — sum-type (D319 R7)
+// TimeZone — sum-type
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Time zone: `Utc` | `Fixed(Offset)` — value-weight, no DST;
@@ -89,7 +87,7 @@ export fn TimeZone @offset_at(ts Timestamp) -> Offset =>
     }
 
 // ──────────────────────────────────────────────────────────────────────────
-// LocalResolution — ambiguity как ЗНАЧЕНИЕ (D321 R1; не exception,
+// LocalResolution — ambiguity как ЗНАЧЕНИЕ (не exception,
 // не chrono-None-путающий-gap-с-ошибкой)
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -201,8 +199,8 @@ export fn ZonedDateTime @date() -> Date => @dt.date()
 export fn ZonedDateTime @time() -> TimeOfDay => @dt.time()
 
 // ──────────────────────────────────────────────────────────────────────────
-// DateTime → ZonedDateTime (fallible, D319 R1: единственная дверь
-// Plain → точка на оси; Disambiguation — D321 R1)
+// DateTime → ZonedDateTime (fallible: единственная дверь
+// Plain → точка на оси; Disambiguation)
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Attach a plain DateTime to a zone → `Result` (Q8: default `Compatible`).
@@ -266,7 +264,7 @@ export fn ZonedDateTime.now(tz TimeZone) Time -> ZonedDateTime =>
     Timestamp.now().to_zoned(tz)
 
 // ──────────────────────────────────────────────────────────────────────────
-// Timestamp ↔ ZonedDateTime (Q4: Err ТОЛЬКО civil→Timestamp;
+// Timestamp ↔ ZonedDateTime (Err ТОЛЬКО civil→Timestamp;
 // Timestamp→civil инфаллибельно — окно ±292y ⊂ civil-диапазона)
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -288,10 +286,7 @@ export fn Timestamp @to_zoned(tz TimeZone) -> ZonedDateTime {
     ro day = if remd < 0 { day0 - 1 } else { day0 }
     ro sod = if remd < 0 { remd + 86_400 } else { remd }
     ro date = Date.from_epoch_day(day)
-    ro tod = match TimeOfDay.from_nanos_of_day(sod * 1_000_000_000 + subnano) {
-        Ok(t) => t,
-        Err(_) => panic("Timestamp.to_zoned: unreachable (sod in 0..86400)"),
-    }
+    ro tod = TimeOfDay.from_nanos_of_day(sod * 1_000_000_000 + subnano) ?? panic("Timestamp.to_zoned: unreachable (sod in 0..86400)")
     { dt: date.at(tod), offset: off, zone: tz }
 }
 
@@ -318,7 +313,7 @@ export fn ZonedDateTime @with_zone(tz TimeZone) -> Result[ZonedDateTime, DateErr
     }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Арифметика (D320 R4, wall-vs-elapsed асимметрия):
+// Арифметика (wall-vs-elapsed асимметрия):
 //   @plus(Period)   — календарная: wall-time сохраняется, re-resolve в зоне
 //   @plus(Duration) — elapsed: точный сдвиг инстанта (wall может прыгнуть)
 // ──────────────────────────────────────────────────────────────────────────
@@ -328,20 +323,14 @@ export fn ZonedDateTime @with_zone(tz TimeZone) -> Result[ZonedDateTime, DateErr
 #stable(since = "0.1")
 export fn ZonedDateTime @plus(p Period) -> ZonedDateTime {
     ro moved = @dt + p
-    match moved.to_zoned(@zone, Compatible) {
-        Ok(z) => z,
-        Err(_) => panic("ZonedDateTime arithmetic: + Period out of range"),
-    }
+    moved.to_zoned(@zone, Compatible) ?? panic("ZonedDateTime arithmetic: + Period out of range")
 }
 
 /// Calendar shift backward.
 #stable(since = "0.1")
 export fn ZonedDateTime @minus(p Period) -> ZonedDateTime {
     ro moved = @dt - p
-    match moved.to_zoned(@zone, Compatible) {
-        Ok(z) => z,
-        Err(_) => panic("ZonedDateTime arithmetic: - Period out of range"),
-    }
+    moved.to_zoned(@zone, Compatible) ?? panic("ZonedDateTime arithmetic: - Period out of range")
 }
 
 /// Elapsed shift: `zoned + Duration(24h)` — exactly 24h on the axis (the

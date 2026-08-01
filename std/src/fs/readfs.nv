@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // std/fs/readfs.nv — read-only VFS-протокол над реальной ФС и встроенной
-// папкой (Plan 210 Ф.6б, D323-амендмент).
+// папкой.
 //
 // `ReadFs` унифицирует «dev = с диска (live-reload), prod = вшито в бинарь»
 // под ОДНИМ протоколом (Go `embed.FS`+`fs.FS` эргономика). Эффект-АГНОСТИЧЕН
 // (модель io.Read, std/io/core.nv): методы протокола БЕЗ аннотации эффекта —
 // конформер несёт СВОЙ (`DirFs`→`Fs`, `EmbeddedDir`→чистый), всплывающий
-// транзитивно при mono (Q15/D122). Диспатч — mono-only (vtable для
-// effectful-bound'ов нет), поэтому dev/prod-выбор — ветка над двумя
-// mono-инстансами, а не dyn-значение (docs/plans/210-embed-dir.md §6б.1/6б.4).
+// транзитивно при mono. Диспатч — mono-only (vtable для effectful-bound'ов
+// нет), поэтому dev/prod-выбор — ветка над двумя mono-инстансами, а не
+// dyn-значение.
 //
-// EmbeddedDir конформит ЧЕРЕЗ EXTENSION-МЕТОДЫ (D286/D287): EmbeddedDir живёт
+// EmbeddedDir конформит ЧЕРЕЗ EXTENSION-МЕТОДЫ: EmbeddedDir живёт
 // в prelude.embed, ЭТИ методы — здесь, в std.fs. Родной Option-API
 // (@get/@has/@paths) не тронут. R1-риск (структурная conformance по
 // generic-bound видит extension-методы) доказан ЗЕЛЁНЫМ тестом в
@@ -35,12 +35,12 @@ export type ReadFs protocol {
     // Существует ли путь. `Ok(true/false)`; `Err` — не-`NotFound` сбой
     // (эффектные impl'ы). Имя `@path_exists` (не `@exists` — reserved-квантор):
     // соло-fallible-операция без инфаллибельного сиблинга — обычное имя +
-    // `Result`, без `try_`-префикса (R3 D325, W_TRY_WITHOUT_SIBLING).
+    // `Result`, без `try_`-префикса.
     @path_exists(path str) -> Result[bool, IoError]
 }
 
-// ─── EmbeddedDir conformance (extension-методы, D287) ───
-// EmbeddedDir/@get/@has приезжают из prelude (D286) — родной API не трогается.
+// ─── EmbeddedDir conformance (extension-методы) ───
+// EmbeddedDir/@get/@has приезжают из prelude — родной API не трогается.
 
 /// `ReadFs`: bytes of an embedded file. Pure (no effect) — `EmbeddedDir`
 /// conforms `ReadFs` as a pure conformer (precedent `BytesReader`/`io.Read`).
@@ -77,7 +77,7 @@ export fn DirFs.new(root Path) -> DirFs => { root }
 
 // Компонент-граничная prefix-проверка: `full` равен `root` ИЛИ начинается с
 // `root` + разделитель НА ГРАНИЦЕ КОМПОНЕНТА (не голый str-prefix: "/a/b" vs
-// "/a/bc" — §6б.3/§9.2 ревью-3). Проверяем ОБА возможных разделителя байтами
+// "/a/bc"). Проверяем ОБА возможных разделителя байтами
 // строки (не canonical_sep(style)): `canonicalize` под `mock_fs` всегда
 // возвращает POSIX-ключи независимо от host-style-тега на `Path`
 // (`Path.from_bytes` тегирует host-стилем байты как есть, mock.nv:98 —
@@ -87,7 +87,7 @@ export fn DirFs.new(root Path) -> DirFs => { root }
 fn boundary_ok(root str, full str) -> bool {
     if full == root { return true }
     if !full.starts_with(root) { return false }
-    ro rest = full[root.byte_len()..full.byte_len()]
+    ro rest = full[root.byte_len()..]
     rest.starts_with("/") || rest.starts_with("\\")
 }
 

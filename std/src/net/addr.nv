@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// Plan 183 Ф.2: std/net2/addr.nv — SocketAddr value-record (D407 §5).
+// std/net/addr.nv — SocketAddr value-record.
 //
 // SocketAddr is DATA, not a handle: the value owns a 20-byte []u8 image of the
 // C `NovaNetAddr` POD (bytes[16] + port u16 + family u8 + pad). Copies are cheap
@@ -33,7 +33,7 @@ export type SocketAddr value { priv raw []u8 }
 //   bytes[16] (IPv6, or IPv4 in the first 4) + port u16 + family u8 + pad u8.
 // The C layer owns this layout; the .nv side treats the image opaquely.
 // Size is queried from C (прецедент lazy-static глобалов: collate.nv);
-// при появлении size_of-API (174.5) станет типизированным описанием.
+// при появлении size_of-API станет типизированным описанием.
 ro ADDR_IMAGE_BYTES int = net_addr_size()
 
 // A fresh, zeroed NovaNetAddr image buffer.
@@ -52,8 +52,7 @@ fn SocketAddr @ptr() -> *() => @raw.ptr() as *()
 /// out-of-range value (e.g. from `env(...).to_int()`) truncate SILENTLY
 /// (`70000 as u16` == 4464 — the server comes up on the WRONG port with no
 /// diagnostic). `int` + `requires` fails loudly, at the right place; for a
-/// literal port the contract is proved statically (D24 TrivialBackend),
-/// zero runtime cost (owner decision 2026-07-30).
+/// literal port the contract is proved statically, zero runtime cost.
 #stable(since = "0.1")
 export fn SocketAddr.loopback(port int) -> SocketAddr
     requires port >= 0 && port <= 0xffff
@@ -117,9 +116,8 @@ export fn SocketAddr.any_v6(port int) -> SocketAddr
 /// the Go/nginx **"any interface"** convention — parses to `0.0.0.0:8080`,
 /// **NOT** loopback (see [`SocketAddr.any`] to build the same value without a
 /// string). Pure — parses a literal, no DNS / no I/O. Canon `x.to_*()`
-/// conversion from a `ro`-source (§1а, nv-coding-style; retracted static-door
-/// twin was `SocketAddr.from_str`, removed 2026-07-30,
-/// `[M-from-str-static-conversion-lint-gap]`).
+/// conversion from a `ro`-source (a static-door twin was considered and
+/// retracted).
 #stable(since = "0.1")
 export fn str @to_socket_addr() -> Result[SocketAddr, NetError] {
     mut b = addr_image()
@@ -151,7 +149,7 @@ export fn SocketAddr @ip() -> str {
     // the non-unsafe Result-form + `??` fallback (the FFI buffer is ASCII —
     // Err is unreachable). The unsafe `to_str_unchecked` spelling hit a P67
     // annotation gap in cross-package CUs (examples/net) — see marker.
-    ro ip_bytes []u8 = buf[0..n]
+    ro ip_bytes []u8 = buf[..n]
     ip_bytes.to_str() ?? ""
 }
 
@@ -163,6 +161,6 @@ export fn SocketAddr @to_str() -> str {
     ro n = unsafe { net_addr_to_str(@ptr(), buf.ptr(), 128) }
     // [M-174.1-vec-method-chain-elem-erasure]: explicit []u8 local; non-unsafe
     // decode + `??` fallback (ASCII FFI buffer), see @ip above.
-    ro addr_bytes []u8 = buf[0..n]
+    ro addr_bytes []u8 = buf[..n]
     addr_bytes.to_str() ?? ""
 }

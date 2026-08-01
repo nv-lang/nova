@@ -1,12 +1,12 @@
 // std.collections.vec (core) — `Vec[T]`, a fully Nova-implemented generic
-// growable array backed by a raw `*mut T` heap buffer (Plan 131 Ф.3).
+// growable array backed by a raw `*mut T` heap buffer.
 //
-// Контекст. `[]T` ([D27](../../../spec/decisions/03-syntax.md#d27)) is the
-// built-in slice/dynamic-array primitive; `[]T ≡ Vec[T]` (D239). `Vec[T]` is a
+// Контекст. `[]T` is the
+// built-in slice/dynamic-array primitive; `[]T ≡ Vec[T]`. `Vec[T]` is a
 // *library* type implemented entirely in Nova on top of
 // `std.runtime.raw_mem.RawMem` — a production growable collection needs no
-// compiler magic beyond typed pointers (D216), `size_of[T]()` (D199) and
-// pointer arithmetic (Plan 131 Ф.2).
+// compiler magic beyond typed pointers, `size_of[T]()` and
+// pointer arithmetic.
 //
 // Key property: elements are stored *typed* in a contiguous `*mut T` buffer.
 // `Vec[Option[int]]`, `Vec[MyRecord]`, `Vec[Vec[int]]` all work with their
@@ -20,25 +20,24 @@
 // themselves heap pointers (records / sum-types / arrays) are kept alive by
 // the conservative scan over the buffer.
 //
-// Unsafe model (D216 §8). Every raw-pointer operation (alloc, `data + i`,
+// Unsafe model. Every raw-pointer operation (alloc, `data + i`,
 // deref read/write) is wrapped in an `unsafe { }` block. The element-access
 // API is fully safe — no `unsafe` to *use*; in-place element mutation is the
-// safe `v[i] = val` (D240 `MutIndex` write). The lone deliberate escape is the
+// safe `v[i] = val` (`MutIndex` write). The lone deliberate escape is the
 // FFI accessor `@ptr()` (recv-mut overload: `*T` on a `ro` receiver,
 // `*mut T` on a `mut` receiver) — calling it is safe (a pointer-value copy,
 // not a deref), but *dereferencing* the returned pointer is the caller's
 // `unsafe` obligation.
 
-// Plan 153.0 (D239 universal flip): `Vec`/`VecIter` are re-exported by
+// `Vec`/`VecIter` are re-exported by
 // `std/prelude.nv`. A full auto-import of `std.prelude` here would create a
-// cycle (prelude → vec → prelude) and trip the R27 auto-import opt-out for
+// cycle (prelude → vec → prelude) and trip the auto-import opt-out for
 // every importer. Mirror `range.nv`'s precedent: opt into the minimal prelude
 // subset this module's API actually needs (see `_module.nv` for the
 // folder-wide directive) —
 //   core      → Option/Result/Ordering (return types, `@pop()->Option[T]`),
 //   runtime   → kept for other prelude.runtime API surface (`panic`/`assert`
-//               themselves are always-on compiler intrinsics, [panic-assert-
-//               intrinsic] 2026-07-11 — no longer why this subset is needed),
+//               themselves are always-on compiler intrinsics),
 //   collections→ Next/Iter protocols (VecIter) + StringBuilder (`@display`),
 //   protocols → Display/Clone/Index/MutIndex (`@clone`, `@display`, `v[i]`).
 // `Range` lives in the prelude facade (`std/collections/range.nv`), imported
@@ -69,8 +68,7 @@ export type Vec[T] priv {
     // Raw element buffer. `cap` elements wide; first `len` are live.
     // Never read/written outside `unsafe` blocks in this module.
     //
-    // Declared `mut data *mut T` under the THREE-AXIS pointer model
-    // (Plan 147 / D246; D245 flip-scan RETRACTED):
+    // Declared `mut data *mut T` under the THREE-AXIS pointer model:
     //   - L1 binding-mut (`mut` before the name) makes the *field* reassignable
     //     (`@data = dst` in @cap);
     //   - L3 postfix pointee-mut (`*mut T`) makes the *pointee* writable so
@@ -95,7 +93,7 @@ export type Vec[T] priv {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Create a `Vec[T]` — always a single allocation of `cap.max(1)` element
-/// slots (`len == 0`), no rounding (spec D372-amend2). `cap == 0` (default,
+/// slots (`len == 0`), no rounding. `cap == 0` (default,
 /// `Vec[T].new()`): logically empty (`@cap() == 0`) but backed by a 1-slot
 /// placeholder buffer — same non-null-pointer-always invariant the old
 /// placeholder (ex-null_buf) path gave, just folded into this one expression; the slot is
@@ -143,57 +141,35 @@ export unsafe fn Vec[T].new(ptr *T, len int) -> ro Self
 ///     owner must outlive the view, and the view must be treated read-only).
 ///
 /// The `ptr` param is already `*mut T` (writable pointee) — no
-/// reinterpret-cast needed in the body, unlike the retired `from_raw_parts`
-/// (which took a `*T` and re-labelled it `*mut T` under `unsafe`). Whether
+/// reinterpret-cast needed in the body. Whether
 /// the resulting buffer is *actually* writable remains the caller's
 /// invariant (a `ro` view must not be pushed/index-written; binding the
 /// result `ro` enforces this at L2) — passing a genuinely read-only `*T`
-/// through the `*mut T` param is itself the caller's `unsafe` obligation
-/// (D216 §8), same as before.
-///
-/// [M-vec-new-static-arity-overload] — folded 2026-07-12 (forced-fix
-/// session, plan 200 П5): `from_raw_parts` retired into this 3-arg `new`
-/// arity-overload (`Vec[T].new()`/`new(cap:)` 0/1-arg vs
-/// `Vec[T].new(ptr, len, cap)` 3-arg). Root cause was TWO co-located
-/// name-only (arity-blind) overload lookups that both collapsed onto the
-/// FIRST-declared `new` regardless of which overload a call site actually
-/// needed: `compiler-codegen/src/callnorm.rs` (`Sigs::static_methods`
-/// default-arg backfill — now carries every overload + `pick_static_params`
-/// disambiguates by `bind_call_args` arity/name compatibility) and
-/// `compiler-codegen/src/codegen/emit_c.rs` (the "1b" turbofish
-/// static-ctor call-emission branch, `Type[Args].method(...)` —
-/// `generic_type_methods[base].find(name)` — now mirrors the sibling 5b
-/// instance-method path's `[M-138.2-generic-method-overload-mono]`
-/// arity/param-C-type disambiguation + per-overload mono-name suffix).
+/// through the `*mut T` param is itself the caller's `unsafe` obligation,
+/// same as before.
 export fn Vec[T].new(ptr *mut T, len int, cap int) -> Self
     requires len >= 0 && cap >= len
 => { data: ptr, len, cap }
 
-// (`consume @into_raw()` ретрактирован 2026-07-16, владелец: передача
-// владения буфером выражается consume-ресивером ПОТРЕБИТЕЛЯ (напр. `[]u8
+// (consume-ресивер ПОТРЕБИТЕЛЯ (напр. `[]u8
 // consume @into_str_unchecked()`, runtime/string/core.nv), а указатель
 // берётся обычным `mut @ptr()` (access.nv) — отдельный consume-посредник
 // был лишней сущностью. Обратная операция осталась: `Vec[T].new(ptr, len,
 // cap)` — конструктор-поглотитель.)
 
-// `Vec[T].from(items []T)` — RETRACTED 2026-07-20 (Plan 200 П16, [D259 AMEND],
-// ../../../spec/decisions/02-types.md#d259-конструктор-конвенция-vect--of-для-литерала-from-для-конверсии-plan-1531).
-// It was exactly `items.clone()` (owner: «это же просто items.clone()») — a
-// same-T conversion is now spelled `existing.clone()` directly (Clone, D230,
+// `Vec[T].from(items []T)` — RETRACTED: это же просто `items.clone()`.
+// Same-T conversion is now spelled `existing.clone()` directly (Clone
 // is deep/recursive and element-wise, protocols.nv); a literal element list is
 // `of(...)` (below); a width/type-changing conversion (e.g. `Vec[u8]` from a
-// `Vec[int]`) is an explicit per-element loop, not a one-call narrow. All std/
-// spec_tests call sites migrated; see docs/plans/200-std-improvements.md П16.
+// `Vec[int]`) is an explicit per-element loop, not a one-call narrow.
 
 /// Ergonomic variadic constructor: `Vec[int].of(1, 2, 3)` — the **canonical**
-/// way to build a `Vec` from a literal element list (Plan 153.1 /
-/// [D259](../../../spec/decisions/02-types.md#d259-конструктор-конвенция-vect--of-для-литерала-from-для-конверсии-plan-1531)). The call-site variadic args
+/// way to build a `Vec` from a literal element list. The call-site variadic args
 /// are collected into a single `[]T` (= `Vec[T]`) value and returned **zero-copy**
-/// (one allocation): under D239 the literal `[1, 2, 3]` argument to `of` is
+/// (one allocation): the literal `[1, 2, 3]` argument to `of` is
 /// already a `Vec[int]`, and `of` takes its elements directly rather than
 /// copying them into a second buffer. `of` narrows exactly like a typed literal
-/// (`Vec[u8].of(1, 2, 3)`). `of()` with **no args is a contract violation**
-/// (D259 amend, 2026-07-06) — build the empty case with `Vec[T].new()`.
+/// (`Vec[u8].of(1, 2, 3)`).
 ///
 /// [M-153-vec-of-variadic-codegen] (resolved): user-defined generic-static
 /// variadic collection. The call-site packs `of(1,2,3)`'s args into a single
@@ -228,8 +204,8 @@ export fn Vec[T] @len() -> int => @len
 export fn Vec[T] @cap() -> int => @cap
 
 /// Set the capacity to **exactly** `n` slots (no ×2 rounding) — the precise,
-/// absolute capacity request (Plan 153.1 / D259). The accessor-convention
-/// write-setter (D117 AMEND): a same-name 1-arg overload of the 0-arg `@cap()`
+/// absolute capacity request. The accessor-convention
+/// write-setter: a same-name 1-arg overload of the 0-arg `@cap()`
 /// getter. Reallocates the buffer, preserving the live `len` elements; `n == 0`
 /// (only valid when `len == 0`) frees down to the null buffer.
 ///
@@ -242,11 +218,10 @@ export fn Vec[T] @cap() -> int => @cap
 ///   - shrink-to-fit  = `v.cap(v.len())`
 ///   - room-for-N     = `v.cap(v.len() + n)`
 /// Unlike `@reserve` (amortised ×2 growth), this honours `n` exactly, so it also
-/// gives a predictable realloc point for slice detach (153.4). Returns `@`.
+/// gives a predictable realloc point for slice detach. Returns `@`.
 ///
-/// The getter/setter overload monomorphizes correctly: the generic-method
-/// arity-overload-mono dispatch gap [M-138.2-generic-method-overload-mono] was
-/// closed (2026-07-12), so a mono'd `v.cap(10)` disambiguates to this 1-arg
+/// The getter/setter overload monomorphizes correctly: a mono'd
+/// `v.cap(10)` disambiguates to this 1-arg
 /// setter (not the 0-arg getter). This accessor-convention form replaced the
 /// distinct `@cap_to` helper that held the place during the gap.
 export fn Vec[T] mut @cap(n int) -> @
@@ -285,10 +260,10 @@ export fn Vec[T] @is_empty() -> bool => @len == 0
 /// current capacity does not suffice. No-op when `additional <= 0` or capacity
 /// already covers `len + additional`. This is the sole *amortised* growth method
 /// (rounds the buffer up to a ×2 capacity for O(1)-amortised push); the exact,
-/// un-rounded capacity setter is `@cap(n)` (Plan 153.1 / D259).
+/// un-rounded capacity setter is `@cap(n)`.
 ///
 /// Returns `@` (self) for fluent chaining — `v.reserve(10).append(xs).sort()`
-/// (Plan 153.1 fluent convention, precedent `StringBuilder.@append`).
+/// (fluent convention, precedent `StringBuilder.@append`).
 export fn Vec[T] mut @reserve(additional int) -> @ {
     ro needed = @len + additional
     if needed <= @cap {
@@ -313,7 +288,7 @@ fn alloc_buf[T](n int) -> *mut T {
     }
 }
 
-// (null_buf удалён 2026-07-16 — был дубль-близнец `alloc_buf(1)`; empty-cap
+// (empty-cap
 // placeholder = `alloc_buf[T](1)` напрямую: non-null, never-dereferenced,
 // `len`/`cap` гардят каждый доступ.)
 

@@ -3,34 +3,32 @@
 // зависят от случайности или времени.
 //
 // `mut_clock` (ниже) — STATEFUL handler (мутирует захваченный
-// `current_ms`, Plan 175 auto-idle-advance добавляет non-atomic
-// per-scope registry, nova_rt/fibers.h `NovaVClockEntry`) — под
-// конкурентным M:N (>1 worker-поток) это гонка данных (docs/time.md
-// "M:N-контракт"). `// ENV NOVA_MAXPROCS=1` (peer `core_test.nv` — Plan
-// 200 П17 folder-module split, директива обязана жить в файле, который
-// реально запускает `nova test`) форсирует single-thread для ВСЕХ
-// тестов модуля — они намеренно однопоточны относительно mut_clock
-// (нет реальной M:N-нагрузки поверх одного handler'а).
+// `current_ms`, auto-idle-advance добавляет non-atomic per-scope registry,
+// nova_rt/fibers.h `NovaVClockEntry`) — под конкурентным M:N (>1
+// worker-поток) это гонка данных (docs/time.md "M:N-контракт").
+// `// ENV NOVA_MAXPROCS=1` (peer `core_test.nv` — folder-module split,
+// директива обязана жить в файле, который реально запускает `nova test`)
+// форсирует single-thread для ВСЕХ тестов модуля — они намеренно
+// однопоточны относительно mut_clock (нет реальной M:N-нагрузки поверх
+// одного handler'а).
 //
-// `NOVA_AUTOARM=0` (Plan 175, owner TODO closure, 2026-07-10,
-// `[M-175-vclock-armed-mn-scope-identity]`): auto-idle-advance
-// (`nova_vclock_park_until`, nova_rt/fibers.h) anchors its per-scope
-// registry on `_nova_active_scope` as read from INSIDE the fiber body.
-// Under the DEFAULT armed M:N runtime (auto-armed on the first `spawn`),
-// that TLS var is the WORKER's own private home scope
+// `NOVA_AUTOARM=0` ([M-175-vclock-armed-mn-scope-identity] обход):
+// auto-idle-advance (`nova_vclock_park_until`, nova_rt/fibers.h) anchors
+// its per-scope registry on `_nova_active_scope` as read from INSIDE the
+// fiber body. Under the DEFAULT armed M:N runtime (auto-armed on the first
+// `spawn`), that TLS var is the WORKER's own private home scope
 // (`_worker_run_one_fiber`: `_nova_active_scope = &w->scope`) — NOT the
-// shared parent `supervised{}` scope object — so siblings spawned
-// together do NOT reliably share one registry (each may see only
-// itself as "alive", firing immediately in spawn order rather than
-// waiting for the deadline order). `NOVA_AUTOARM=0` routes `spawn`
-// through the cooperative/local path (`nova_fiber_spawn_into` —
-// `_nova_active_scope` stays the real shared scope for the whole
-// drain), where the deadline-order guarantee holds. Under the default
-// armed path the mechanism still degrades SAFELY (no hang/crash — each
-// virtual sleep still resolves, just without the ordering guarantee);
-// fixing the general M:N case needs a different anchor (e.g. resolving
-// back through `NovaSpawnCtxBase._nova_parent_scope`) — out of scope
-// for this pass, tracked by the marker above.
+// shared parent `supervised{}` scope object — so siblings spawned together
+// do NOT reliably share one registry (each may see only itself as "alive",
+// firing immediately in spawn order rather than waiting for the deadline
+// order). `NOVA_AUTOARM=0` routes `spawn` through the cooperative/local
+// path (`nova_fiber_spawn_into` — `_nova_active_scope` stays the real
+// shared scope for the whole drain), where the deadline-order guarantee
+// holds. Under the default armed path the mechanism still degrades SAFELY
+// (no hang/crash — each virtual sleep still resolves, just without the
+// ordering guarantee); fixing the general M:N case needs a different anchor
+// (e.g. resolving back through `NovaSpawnCtxBase._nova_parent_scope`) — out
+// of scope for this pass, tracked by the marker above.
 // AI-first идея: вместо mock-библиотек и monkey-patching — handler
 // substitution через `with` (D11/D61). Та же функция (например
 // `Uuid.v4()`) в production видит CSPRNG, в тестах — детерминированный
@@ -83,7 +81,7 @@
 module testing.handlers
 
 import std.runtime.vclock
-// [M-inline-cast-receiver-method-resolution] (реестр 221.1 №149): нужен ЯВНО —
+// [M-inline-cast-receiver-method-resolution] обход: нужен ЯВНО —
 // `now()` ниже зовёт бланкет `fn[T Ints] T @to_unix_millis()`, который живёт в
 // `time.duration`. Комментарий ниже («no explicit import needed») верен только
 // для ТИПОВ из сигнатуры эффект-опа; МЕТОД так не приезжает. До фикса резолва
@@ -93,30 +91,29 @@ import std.runtime.vclock
 // как известный FAIL. Теперь резолв честный, зависимость обязана быть явной.
 import std.time.duration
 
-// Plan 175 Ф.3 (D316 typed retype): `Time`'s schema is typed
+// `Time`'s schema is typed
 // (`sleep(Duration)`/`now()->Timestamp`/`now_monotonic()->Monotonic`) —
 // `fixed_ms`/`mut_clock` below construct these directly now.
-// Plan 175.2 Ф.2-v4 (П5, D220): `Monotonic.nanos` is now `priv` (module-
-// private to `time.duration`) — bare `{ nanos: ... }` record-literal
-// construction is no longer legal from this module. Use the public
-// `T.to_monotonic_nanos()` escape-hatch constructor (`std/time/duration/
-// monotonic.nv`) instead — added by this same wave specifically to serve
-// mock handlers like these two (`Monotonic.now()` itself would be
-// circular here).
+// `Monotonic.nanos` is `priv` (module-private to `time.duration`) — bare
+// `{ nanos: ... }` record-literal construction is no longer legal from this
+// module. Use the public `T.to_monotonic_nanos()` escape-hatch constructor
+// (`std/time/duration/monotonic.nv`) instead — added specifically to serve
+// mock handlers like these two (`Monotonic.now()` itself would be circular
+// here).
 // No explicit import of Duration/Timestamp/Monotonic needed — the op
 // signatures are resolved via `effect_schemas["Time"]` (already fully
-// typed at the `std/time/duration/time_effect.nv` declaration site — Plan
-// 175.2 Ф.2-v4 П6 moved `Time` out of prelude); this file only ever calls
-// METHODS on values of those types (`.nanos()`/`.to_unix_millis()`/
-// `.to_monotonic_nanos()`), never spells the bare type names.
+// typed at the `std/time/duration/time_effect.nv` declaration site); this
+// file only ever calls METHODS on values of those types (`.nanos()`/
+// `.to_unix_millis()`/`.to_monotonic_nanos()`), never spells the bare type
+// names.
 
-// Random — effect-тип для PRNG. [M-random-u64-path-return-ice]
-// (Plan 172.13 батч 3): декларация ПЕРЕЕХАЛА в std/prelude/effects.nv —
-// Random используется как ambient-эффект модулями, которые НЕ импортируют
-// testing.handlers (identifiers/uuid, identifiers/ulid, concurrency/retry);
-// когда декларация жила здесь, такой CU не имел effect_schemas["Random"]
-// и codegen падал ICE «Path call return type unknown» на `Random.u64()`.
-// Здесь остаются только handler-фабрики (`seeded`).
+// Random — effect-тип для PRNG. Декларация живёт в
+// std/prelude/effects.nv — Random используется как ambient-эффект модулями,
+// которые НЕ импортируют testing.handlers (identifiers/uuid, identifiers/
+// ulid, concurrency/retry); когда декларация жила здесь, такой CU не имел
+// effect_schemas["Random"] и codegen падал ICE «Path call return type
+// unknown» на `Random.u64()`. Здесь остаются только handler-фабрики
+// (`seeded`).
 
 // ──────────────────────────────────────────────────────────────────────────
 // Random — xoshiro256++ handler-фабрика
@@ -141,12 +138,12 @@ import std.time.duration
 //   return result
 
 // splitmix64 для seed init — гарантирует non-zero state даже при seed=0.
-// Note: `mut`-параметр не поддержан парсером (Plan 34 Ф.2), поэтому
+// Note: `mut`-параметр не поддержан парсером, поэтому
 // явная локальная mut переменная.
-// Plan 206 Ф.2 (D423): splitmix64/xoshiro256++ — модульная арифметика ПО
-// ЗАМЫСЛУ (mod 2^64 wraparound часть спецификации PRNG, не баг). После Ф.1b
-// (sized-int trap-default) голый `+`/`*` трапит на overflow -> явный
-// opt-out через `.wrapping_add`/`.wrapping_mul` (см. план §Философия 194).
+// splitmix64/xoshiro256++ — модульная арифметика ПО
+// ЗАМЫСЛУ (mod 2^64 wraparound часть спецификации PRNG, не баг). После
+// sized-int trap-default голый `+`/`*` трапит на overflow -> явный
+// opt-out через `.wrapping_add`/`.wrapping_mul`.
 fn splitmix64_step(seed u64) -> u64 {
     mut z = seed.wrapping_add(0x9E3779B97F4A7C15)
     z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9)
@@ -182,7 +179,7 @@ export fn seeded(seed u64) -> Effect[Random] {
     effect Random {
         u64() -> u64 {
             // xoshiro256++ step.
-            // Plan 206 Ф.2 (D423): модульная арифметика по замыслу — см. splitmix64_step выше.
+            // Модульная арифметика по замыслу — см. splitmix64_step выше.
             ro result = rotl64(s0.wrapping_add(s3), 23).wrapping_add(s0)
             ro t = s1 << 17
             s2 = s2 ^ s0
@@ -202,7 +199,7 @@ export fn seeded(seed u64) -> Effect[Random] {
             while i < n {
                 if buf_remaining == 0 {
                     // Direct xoshiro256++ step (inlined, без invalidate).
-                    // Plan 206 Ф.2 (D423): модульная арифметика по замыслу — см. splitmix64_step выше.
+                    // Модульная арифметика по замыслу — см. splitmix64_step выше.
                     ro result = rotl64(s0.wrapping_add(s3), 23).wrapping_add(s0)
                     ro t = s1 << 17
                     s2 = s2 ^ s0
@@ -233,23 +230,21 @@ export fn seeded(seed u64) -> Effect[Random] {
 #stable(since = "0.1")
 export fn fixed_ms(ms u64) -> Effect[Time] {
     effect Time {
-        // Plan 175 Ф.3 (D316 typed retype): `now()` returns `Timestamp`
-        // directly now (was int-wire `now_unix_ms()` + `.nv`-side wrap).
+        // `now()` returns `Timestamp`
+        // directly (was int-wire `now_unix_ms()` + `.nv`-side wrap).
         now() -> Timestamp => (ms as int).to_unix_millis()
         // `now_monotonic()` — мок monotonic часов, когерентный с wall (та
-        // же `ms`, в ns) — returns `Monotonic` directly (closes
-        // [M-monotonic-mock-support]). No public Monotonic constructor
-        // other than `.now()` itself — record-literal construction here
-        // is the sanctioned escape hatch (cross-module-legal, see import
-        // comment above).
+        // же `ms`, в ns) — returns `Monotonic` directly. No public
+        // Monotonic constructor other than `.now()` itself —
+        // record-literal construction here is the sanctioned escape hatch
+        // (cross-module-legal, see import comment above).
         now_monotonic() -> Monotonic => (ms * 1_000_000).to_monotonic_nanos()
-        // Plan 175.1 (D316 amend + D321, 2026-07-10): mock-coherence с
-        // now/now_monotonic выше — фиксированные часы означают
-        // фиксированную (UTC) зону, детерминизм важнее реалистичности.
-        // закрыл [M-175.1-local-offset-effect-op] (slot-coherence).
+        // mock-coherence с now/now_monotonic выше — фиксированные часы
+        // означают фиксированную (UTC) зону, детерминизм важнее
+        // реалистичности.
         local_offset_sec() -> int => 0
-        // Plan 175 Ф.3: `sleep(d)` — `d` — typed `Duration` now (was int
-        // ms wire). fixed_ms is a no-op clock — argument unused either way.
+        // `sleep(d)` — `d` — typed `Duration`. fixed_ms is a no-op
+        // clock — argument unused either way.
         sleep(d) -> () => ()
     }
 }
@@ -262,50 +257,47 @@ export fn fixed_ms(ms u64) -> Effect[Time] {
 export fn mut_clock(start_ms u64) -> Effect[Time] {
     mut current_ms = start_ms
     effect Time {
-        // Plan 175 Ф.3 (D316 typed retype): `now()` returns `Timestamp`
+        // `now()` returns `Timestamp`
         // directly (was int-wire `now_unix_ms()`).
         now() -> Timestamp => (current_ms as int).to_unix_millis()
-        // Plan 175 Ф.3/Ф.5(b) (D316) — mock-coherence (Ред. 2 / Swift TestClock-
-        // паритет): ОДИН handler двигает И wall (`now`), И monotonic
-        // (`now_monotonic`) когерентно — оба читают ИЗ ОДНОГО `current_ms`.
-        // `sleep` сдвигает оба чтения на одинаковую дельту. Returns
-        // `Monotonic` directly now (record-literal — sanctioned cross-module
-        // escape hatch, see import comment above).
+        // mock-coherence (Swift TestClock-паритет): ОДИН handler двигает
+        // И wall (`now`), И monotonic (`now_monotonic`) когерентно — оба
+        // читают ИЗ ОДНОГО `current_ms`. `sleep` сдвигает оба чтения на
+        // одинаковую дельту. Returns `Monotonic` directly (record-literal
+        // — sanctioned cross-module escape hatch, see import comment above).
         now_monotonic() -> Monotonic => (current_ms * 1_000_000).to_monotonic_nanos()
-        // Plan 175.1 (D316 amend + D321, 2026-07-10): mock-coherence,
-        // фиксированная (UTC) зона — закрыл [M-175.1-local-offset-effect-op]
-        // slot-coherence (симметрично fixed_ms выше).
+        // mock-coherence, фиксированная (UTC) зона (симметрично fixed_ms
+        // выше).
         local_offset_sec() -> int => 0
-        // Plan 175 Ф.3 (D316 typed retype): `sleep(d)` — `d` типизирован
-        // как `Duration` теперь (был int-wire `ms`). Округляем ВВЕРХ до
-        // целых миллисекунд (виртуальный часовой механизм этого mock'а —
-        // `current_ms` — целочисленный ms-счётчик; ceil, а не truncate —
-        // never advance LESS than requested, тот же контракт, что был у
-        // старого int-wire до Ф.3).
+        // `sleep(d)` — `d` типизирован как `Duration` (был int-wire `ms`).
+        // Округляем ВВЕРХ до целых миллисекунд (виртуальный часовой
+        // механизм этого mock'а — `current_ms` — целочисленный
+        // ms-счётчик; ceil, а не truncate — never advance LESS than
+        // requested, тот же контракт, что был у старого int-wire).
         //
-        // Plan 175 (owner TODO closure, 2026-07-10): auto-idle-advance —
-        // раньше эта строка была ОДНА (`current_ms += delta_ms`, синхронно,
-        // без приостановки фибра). Это ломало порядок дедлайнов между
-        // конкурентными `spawn`-фибрами: ничего не yield'ило внутри mock
-        // sleep, поэтому какой фибр планировщик резюмировал первым — тот и
-        // отрабатывал целиком (включая свой "sleep") до следующего,
-        // независимо от длины запрошенного сна (tokio/Kotlin
-        // TestCoroutineScheduler паритет требует обратного: короткий
-        // виртуальный сон должен наблюдаемо "проснуться" раньше длинного).
+        // auto-idle-advance — раньше эта строка была ОДНА
+        // (`current_ms += delta_ms`, синхронно, без приостановки фибра).
+        // Это ломало порядок дедлайнов между конкурентными `spawn`-
+        // фибрами: ничего не yield'ило внутри mock sleep, поэтому какой
+        // фибр планировщик резюмировал первым — тот и отрабатывал целиком
+        // (включая свой "sleep") до следующего, независимо от длины
+        // запрошенного сна (tokio/Kotlin TestCoroutineScheduler паритет
+        // требует обратного: короткий виртуальный сон должен наблюдаемо
+        // "проснуться" раньше длинного).
         //
         // Фикс: дедлайн — АБСОЛЮТНОЕ значение, вычисленное ДО парковки
         // (`current_ms` на момент вызова, не после); `vclock.park_until`
-        // (nova_rt/fibers.h `nova_vclock_park_until`) паркует текущий фибр
-        // (если он вообще фибр — для плоского sequential-потока это no-op,
-        // возвращается немедленно, ПОВЕДЕНИЕ НЕ МЕНЯЕТСЯ), пока ВСЕ живые
-        // фибры scope'а тоже не окажутся виртуально запаркованы (idle) —
-        // тогда просыпается ближайший по дедлайну (может быть другой
-        // фибр, не этот). Bump — `current_ms = deadline_ms` (МАКСИМУМ, не
-        // `+=`): конкурентный sibling с меньшим дедлайном мог уже продвинуть
-        // `current_ms` пока этот фибр был запаркован — абсолютный
-        // `deadline_ms`, посчитанный ДО парковки, остаётся корректной
-        // целью; наивный `+=` ПОСЛЕ пробуждения задвоил бы уже добавленное
-        // sibling'ом.
+        // (nova_rt/fibers.h `nova_vclock_park_until`) паркует текущий
+        // фибр (если он вообще фибр — для плоского sequential-потока это
+        // no-op, возвращается немедленно, ПОВЕДЕНИЕ НЕ МЕНЯЕТСЯ), пока
+        // ВСЕ живые фибры scope'а тоже не окажутся виртуально запаркованы
+        // (idle) — тогда просыпается ближайший по дедлайну (может быть
+        // другой фибр, не этот). Bump — `current_ms = deadline_ms`
+        // (МАКСИМУМ, не `+=`): конкурентный sibling с меньшим дедлайном
+        // мог уже продвинуть `current_ms` пока этот фибр был запаркован —
+        // абсолютный `deadline_ms`, посчитанный ДО парковки, остаётся
+        // корректной целью; наивный `+=` ПОСЛЕ пробуждения задвоил бы уже
+        // добавленное sibling'ом.
         sleep(d) -> () {
             ro dur_ms = (d.nanos() + 999_999) / 1_000_000
             ro delta_ms = if dur_ms > 0 { dur_ms as u64 } else { 0 as u64 }
@@ -317,7 +309,7 @@ export fn mut_clock(start_ms u64) -> Effect[Time] {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Tests: peer file `core_test.nv` (Plan 200 П17 folder-module split, same
+// Tests: peer file `core_test.nv` (folder-module split, same
 // module `testing.handlers` — sees `seeded`/`fixed_ms`/`mut_clock` and the
 // module-private helpers above without `import`).
 // ──────────────────────────────────────────────────────────────────────────

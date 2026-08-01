@@ -50,7 +50,7 @@ fn main() {
                         println("Client connected from port ${tcp.peer_port()}")
                         match TlsStream.accept(tcp, cfg) {
                             Err(e) => println("TLS handshake failed: ${e.to_str()}")
-                            Ok(consume session) => {
+                            Ok(consume stream) => {
                                 // NB: don't name this binding `tls` — it would
                                 // shadow the imported package alias (`tls.*`)
                                 // and turn `stream.read_bytes(...)` below into

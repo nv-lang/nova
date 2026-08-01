@@ -80,7 +80,7 @@ export fn Url.from(s str) -> Result[Url, ParseUrlError] { // [M-lint-findings-st
     // 2. Если "://" — есть authority (user/host/port), иначе path сразу.
     ro (user, password, host, port, after_authority) =
         if after_scheme.starts_with("//") {
-            parse_authority(after_scheme[2..after_scheme.byte_len()])?
+            parse_authority(after_scheme[2..])?
         } else {
             (None, None, None, None, after_scheme)
         }
@@ -90,9 +90,9 @@ export fn Url.from(s str) -> Result[Url, ParseUrlError] { // [M-lint-findings-st
 
     // 4. Query — после "?", до "#".
     ro (query, after_query) = if after_path.starts_with("?") {
-        ro rest = after_path[1..after_path.byte_len()]
+        ro rest = after_path[1..]
         match rest.find("#") {
-            Some(i) => (Some(rest[0..i]), rest[i..rest.byte_len()])
+            Some(i) => (Some(rest[..i]), rest[i..])
             None    => (Some(rest), "")
         }
     } else {
@@ -101,7 +101,7 @@ export fn Url.from(s str) -> Result[Url, ParseUrlError] { // [M-lint-findings-st
 
     // 5. Fragment — после "#".
     ro fragment = if after_query.starts_with("#") {
-        Some(after_query[1..after_query.byte_len()])
+        Some(after_query[1..])
     } else {
         None
     }
@@ -117,7 +117,7 @@ fn parse_scheme(s str) -> Result[(str, str), ParseUrlError] {
         None => Err(MissingScheme)
         Some(i) => {
             if i == 0 { return Err(MissingScheme) }
-            ro scheme = s[0..i]
+            ro scheme = s[..i]
             // Scheme (RFC 3986 § 3.1) — pure ASCII → прямой byte-доступ O(1)
             // вместо ретрактированного `chars().nth()` O(n) скана (D260-амендмент).
             ro sb = scheme.bytes()
@@ -135,7 +135,7 @@ fn parse_scheme(s str) -> Result[(str, str), ParseUrlError] {
                     _ => ()
                 }
             }
-            Ok((scheme.to_ascii_lower(), s[i + 1..s.byte_len()]))
+            Ok((scheme.to_ascii_lower(), s[i + 1..]))
         }
     }
 }
@@ -146,7 +146,7 @@ fn parse_authority(s str) -> Result[(Option[str], Option[str], Option[str], Opti
     // Найти конец authority — первый из /, ?, #.
     ro auth_end = find_first_of(s, "/?#")
     ro (auth, rest) = match auth_end {
-        Some(i) => (s[0..i], s[i..s.byte_len()])
+        Some(i) => (s[..i], s[i..])
         None    => (s, "")
     }
 
@@ -161,7 +161,7 @@ fn parse_authority(s str) -> Result[(Option[str], Option[str], Option[str], Opti
 
     // Userinfo — до "@", если есть
     ro (userinfo_opt, host_port) = match auth.find("@") {
-        Some(i) => (Some(auth[0..i]), auth[i + 1..auth.byte_len()])
+        Some(i) => (Some(auth[..i]), auth[i + 1..])
         None    => (None, auth)
     }
 
@@ -169,7 +169,7 @@ fn parse_authority(s str) -> Result[(Option[str], Option[str], Option[str], Opti
     ro (user, password) = match userinfo_opt {
         None => (None, None)
         Some(ui) => match ui.find(":") {
-            Some(i) => (Some(ui[0..i]), Some(ui[i + 1..ui.byte_len()]))
+            Some(i) => (Some(ui[..i]), Some(ui[i + 1..]))
             None    => (Some(ui), None)
         }
     }
@@ -177,12 +177,12 @@ fn parse_authority(s str) -> Result[(Option[str], Option[str], Option[str], Opti
     // host[:port]
     ro (host, port) = match host_port.find(":") {
         Some(i) => {
-            ro port_str = host_port[i + 1..host_port.byte_len()]
+            ro port_str = host_port[i + 1..]
             ro port_num = match int.try_from(port_str) {
                 Ok(n) if n >= 0 && n <= 65535 => n
                 _                              => return Err(InvalidPort { value: port_str })
             }
-            ro h = host_port[0..i]
+            ro h = host_port[..i]
             (Some(h), Some(port_num))
         }
         None => (Some(host_port), None)
@@ -195,7 +195,7 @@ fn parse_path(s str) -> (str, str) {
     // Path до "?" или "#" или EOF
     ro path_end = find_first_of(s, "?#")
     match path_end {
-        Some(i) => (s[0..i], s[i..s.byte_len()])
+        Some(i) => (s[..i], s[i..])
         None    => (s, "")
     }
 }

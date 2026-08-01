@@ -162,12 +162,12 @@ export fn str @to_version() -> Result[Version, ParseVersionError] {
     // trailing `-`/`+` как «нет pre/build». Обнаружено через `nova test
     // --full` ("пустой identifier в pre"), `nova check` этого не ловил.
     ro (left, build_str, has_build_marker) = match @find("+") {
-        Some(i) => (@[0..i], @[i + 1..@byte_len()], true)
+        Some(i) => (@[..i], @[i + 1..], true)
         None    => (@, "", false)
     }
 
     ro (core, pre_str, has_pre_marker) = match left.find("-") {
-        Some(i) => (left[0..i], left[i + 1..left.byte_len()], true)
+        Some(i) => (left[..i], left[i + 1..], true)
         None    => (left, "", false)
     }
 

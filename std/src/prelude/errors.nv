@@ -1,65 +1,47 @@
 // std/prelude/errors.nv — file-based source of truth для prelude error
-// types. Plan 62 phase 62.C.
+// types.
 //
-// Декларации перенесены из hardcoded type-checker builtins HashSet
-// (compiler-codegen/src/types/mod.rs:2027-2029) в этот файл, чтобы:
-//   1) `nova doc` показывал canonical API в одном месте (AI-readable),
-//   2) пользователь мог shadow'ить эти types в своём коде с warning'ом
-//      (Plan 62.F W_PRELUDE_SHADOW),
-//   3) splittable prelude работал (`#prelude(errors)` opt-in
-//      только errors без core/runtime).
-//
-// Архитектурные правила (Plan 62 §«Стратификация»):
+// Архитектурные правила:
 //   - **ZERO imports.** Все declarations self-contained на primitives
 //     (`int`, `str`). Никаких `use std.runtime.*` — иначе circular
 //     import через auto-imported prelude.
 //
-// **Bootstrap status (Plan 62.C):**
+// Bootstrap status:
 //
 // - `RuntimeError` declared here как plain `type` (не `external`) —
 //   variants visible для type-checker'а через cross-file resolve.
 //   Codegen НЕ doubly-emit'ит C struct: `emit_type_decl`
-//   (emit_c.rs:4871+) skip'ает RuntimeError через RUNTIME_DEFINED_TYPES
-//   список — implementation остаётся в `nova_rt/array.h`
+//   skip'ает RuntimeError через RUNTIME_DEFINED_TYPES список —
+//   implementation остаётся в `nova_rt/array.h`
 //   (`Nova_RuntimeError` + `nova_make_RuntimeError_<Variant>`
-//   constructors, lines ~565-610).
-// - `init_prelude_decls_from_items` (sum_schema_registry.rs:526+)
-//   распознаёт RuntimeError type decl, регистрирует Prelude entry
-//   с variants + abi + method_routing **inherited от HardcodedBaseline**
-//   (behavior-preserving migration — Plan 62.A.bis architecture).
-// - Pre-populated `sum_schemas["RuntimeError"]` (emit_c.rs:1029-1048)
-//   оставлен как ABI-compat fallback baseline per 62.A.bis design
-//   («HardcodedBaseline остаётся fallback; lookup precedence
-//   DeclaredFromPrelude > HardcodedBaseline»).
+//   constructors).
+// - `init_prelude_decls_from_items` распознаёт RuntimeError type decl,
+//   регистрирует Prelude entry с variants + abi + method_routing
+//   **inherited от HardcodedBaseline** (behavior-preserving migration).
+// - Pre-populated `sum_schemas["RuntimeError"]` оставлен как ABI-compat
+//   fallback baseline («HardcodedBaseline остаётся fallback; lookup
+//   precedence DeclaredFromPrelude > HardcodedBaseline»).
 // - `ReadBufferError` — нет HardcodedBaseline entry; codegen
 //   distinguish'ет sum-type через type-name только (runtime-level
-//   payload — string-based throw, см. nova_rt/read_buffer.h:62-77).
+//   payload — string-based throw, см. nova_rt/read_buffer.h).
 //   Variants регистрируются через registry для cross-file resolve.
 //
-// **62.C.bis (2026-05-20): `RuntimeNoneError` мигрирован.**
+// `RuntimeNoneError` (unit-type) задекларирован ниже. Декларация —
+// canonical type-name для type-checker'а; runtime throw остаётся
+// string-payload (`nova_rt/effects.h`), structured payload отложен
+// (тот же mechanism что у `ReadBufferError`).
+// Bottom-тип НЕ мигрируется сюда — это строчный встроенный примитив
+// `never`, не капитализированный prelude-тип.
 //
-// - **`type RuntimeNoneError`** (unit-type per D85) задекларирован ниже.
-//   Блокер снят: Plan 72 P1-B добавил bodyless-type support в parser
-//   (`type Name` без вариантов / полей теперь parsable). Декларация —
-//   canonical type-name для type-checker'а; runtime throw остаётся
-//   string-payload (`nova_rt/effects.h`), structured payload отложен
-//   (тот же mechanism что у `ReadBufferError`).
-//   Bottom-тип НЕ мигрируется сюда — это строчный встроенный примитив
-//   `never` (Plan 76, закрыт 2026-05-21), не капитализированный
-//   prelude-тип.
-//
-// **DEFER Plan 62.C → 62.B/F:**
-//
-// - **Throw-point conversion to structured `RuntimeError`-payload**
-//   (compiler:    a/b на 0, arr[i] out-of-bounds, etc.) остаётся отдельной
-//   задачей — требует расширения fail-frame mechanism с `nova_str` на
-//   `void*` payload. См. spec/decisions/08-runtime.md §«Bootstrap-
-//   ограничения» (~lines 370-376).
+// DEFER: throw-point conversion to structured `RuntimeError`-payload
+// (compiler: a/b на 0, arr[i] out-of-bounds, etc.) остаётся отдельной
+// задачей — требует расширения fail-frame mechanism с `nova_str` на
+// `void*` payload.
 
 module prelude.errors
 
 // ──────────────────────────────────────────────────────────────────────────
-// Runtime errors (D26 §«Bottom-уровневые runtime-ошибки»)
+// Runtime errors (bottom-level runtime errors)
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Bottom-level runtime errors. Thrown automatically by the compiler
@@ -90,7 +72,7 @@ export type RuntimeError enum
     | NoHandler(str)
 
 // ──────────────────────────────────────────────────────────────────────────
-// ReadBuffer errors (D26 §«Прочие prelude-типы»)
+// ReadBuffer errors
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Buffer read error: fewer bytes than expected. Thrown by the
@@ -114,7 +96,7 @@ export type ReadBufferError enum
     | UnexpectedEnd { wanted int, available int }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Option-unwrap error (D85)
+// Option-unwrap error
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Unwrap error of an empty `Option`. Thrown by the `expr!!` operator
@@ -143,7 +125,7 @@ export type ReadBufferError enum
 export type RuntimeNoneError
 
 // ──────────────────────────────────────────────────────────────────────────
-// Plan 100.4.1 (D158): MultiError — composite error для failable cleanup
+// MultiError — composite error для failable cleanup
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Composite error from a **failable defer body** (D158).
@@ -170,7 +152,7 @@ export type RuntimeNoneError
 /// (via `nova_failframe_suppressed_count` / `nova_failframe_suppressed_at`).
 ///
 /// Production-grade typed payload (`primary: E1`, `suppressed: []E2`) —
-/// Plan 100.4.4 + 100.4.5.
+/// deferred.
 ///
 /// # Examples
 ///
@@ -208,12 +190,12 @@ fn MultiError @primary() -> str => @primary
 fn MultiError @suppressed() -> []str => @suppressed
 
 /// Human-readable summary of composite — primary + numbered list of
-/// suppressed. Used by D7 diagnostic format.
+/// suppressed.
 #stable(since = "0.1")
 fn MultiError @fmt_chain() -> str => @primary
 
 // ──────────────────────────────────────────────────────────────────────────
-// Plan 110.4.1 (D193) — MultiError iteration + walk + panic detection
+// MultiError iteration + walk + panic detection
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Plan 110 D193: walk over all errors in the chain in LIFO order
@@ -246,7 +228,7 @@ fn MultiError @find_first_panic() -> Option[str] {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Plan 110 D193 / D90 §7 amend — typed cancel/timeout/truncation errors
+// Typed cancel/timeout/truncation errors
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Cancel-as-error payload (D90 §7 amend, Plan 110). On cancel/interrupt
@@ -330,7 +312,7 @@ export type MultiErrorTruncated {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Char conversion errors (D54/D77)
+// Char conversion errors
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Error of converting `int` → `char`. Thrown by `(cp int).to_char()`
@@ -339,9 +321,9 @@ export type MultiErrorTruncated {
 ///
 /// Unit type — the bare fact "invalid codepoint", no payload needed.
 ///
-/// [M-f64-try-parse-to-parse-f64] (2026-07-07): renamed from `CharTryFromError`
-/// — `char.try_from` renamed to `char.from` (R3: was the only static char
-/// conversion without an infallible sibling).
+/// Renamed from `CharTryFromError` — `char.try_from` renamed to
+/// `char.from` (was the only static char conversion without an infallible
+/// sibling).
 ///
 /// # Examples
 ///
@@ -371,7 +353,7 @@ export type CharFromError
 export type TryFromCharError
 
 // ──────────────────────────────────────────────────────────────────────────
-// Numeric narrowing error ([M-numeric-try-narrowing], 2026-07-20, D430)
+// Numeric narrowing error
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Error of a checked narrowing numeric conversion (number→number).

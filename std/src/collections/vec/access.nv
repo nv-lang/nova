@@ -1,7 +1,7 @@
 // std.collections.vec (access) — element access: index/get/first/last/as_ptr.
 //
 // `v[i]` (panic on OOB) and `v.get(i)` (safe `Option`) are the read pair.
-// In-place element mutation is `v[i] = val` (D240 `MutIndex`). There is NO
+// In-place element mutation is `v[i] = val` (`MutIndex`). There is NO
 // `first_mut`/`get_mut`: Nova's value model has no borrow to hand back —
 // mutate through `v[i] = x`, `mut @index`, or a `mut []T` view (slice.nv).
 #prelude(core, runtime, collections, protocols)
@@ -11,15 +11,14 @@ module collections.vec
 // Access
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Element at `i` by value — panics on OOB. Powers `v[i]` (D238 `@index` magic).
+/// Element at `i` by value — panics on OOB. Powers `v[i]` (`@index` magic).
 ///
-/// Plan 140.2 (D257): the bounds check is a `requires` contract — Z3-proven
-/// `v[i]` sites elide it (zero-cost), unproven sites keep a runtime check in
-/// debug AND release. This also covers DIRECT `v.index(i)` calls now that
-/// contract-enforcement IS emitted for generic-type monomorphized bodies (the
-/// Plan 140 mono-drop gap, [M-140-generic-method-contract-mono-drop], is fixed)
-/// — so the transitional hand-written `if…panic` guard is removed; the custom
-/// message keeps the panic text.
+/// The bounds check is a `requires` contract: Z3-proven `v[i]` sites elide it
+/// (zero-cost), unproven sites keep a runtime check in debug AND release. This
+/// also covers DIRECT `v.index(i)` calls now that contract-enforcement IS
+/// emitted for generic-type monomorphized bodies — so the transitional
+/// hand-written `if…panic` guard is removed; the custom message keeps the panic
+/// text.
 ///
 /// # Examples
 ///
@@ -42,17 +41,15 @@ export fn Vec[T] @get(i int) -> Option[T] {
     None
 }
 
-/// Write `v[i] = val` — panics on OOB. Powers `v[i] = val` (D240 `MutIndex`
-/// magic).
+/// Write `v[i] = val` — panics on OOB. Powers `v[i] = val` (`MutIndex` magic).
 ///
-/// NAMING ([M-138-mutindex-rename], Plan 138.4 Ф.2): this is the third `@index`
-/// overload — a `mut @index(key, val)` write that coexists with the scalar read
-/// `@index(i) -> T` and the range read `@index(r Range) -> Vec` (slice.nv).
-/// Full-signature overload mangling for generic-type methods gives each
-/// overload a distinct C symbol, so the prior collision is resolved. `v[i] =
-/// val` is still codegen-inlined (`Stmt::Assign` + `ExprKind::Index`) and does
-/// not dispatch through this method, but the name conforms to the D240
-/// `a.@index(key, val)` protocol contract.
+/// NAMING: this is the third `@index` overload — a `mut @index(key, val)` write
+/// that coexists with the scalar read `@index(i) -> T` and the range read
+/// `@index(r Range) -> Vec` (slice.nv). Full-signature overload mangling for
+/// generic-type methods gives each overload a distinct C symbol, so the prior
+/// collision is resolved. `v[i] = val` is still codegen-inlined
+/// (`Stmt::Assign` + `ExprKind::Index`) and does not dispatch through this
+/// method, but the name conforms to the `a.@index(key, val)` protocol contract.
 export fn Vec[T] mut @index(i int, val T) -> ()
     requires 0 <= i && i < @len
 {
@@ -70,7 +67,7 @@ export fn Vec[T] @last() -> Option[T] => @get(@len - 1)
 /// `true` if any element equals `v` — a linear O(n) scan via `==`. Works for any
 /// element type with `==` defined (all primitives + `Equal` types); opaque types
 /// degrade to reference identity, exactly like `@equal` (protocols.nv). A faster
-/// sorted `binary_search` lands in Plan 153.3.
+/// sorted `binary_search` is a future followup.
 ///
 /// ```nova
 /// let v = Vec[int].of(10, 20, 30)
@@ -89,7 +86,7 @@ export fn Vec[T] @contains(v T) -> bool {
     false
 }
 
-// ─── Plan 153.3 — search & query (read-only) ──────────────────────────
+// ─── Search & query (read-only) ───────────────────────────────────────
 
 /// First index whose element equals `v`, or `None`. Linear O(n) `==` scan
 /// (same dispatch rules as `@contains`). For sorted data prefer `@binary_search`.
@@ -152,7 +149,7 @@ export fn Vec[T Compare] @is_sorted() -> bool {
 }
 
 /// `true` if non-decreasing under `cmp` (`cmp(a, b) <= 0` for every adjacent
-/// pair). `cmp` returns `<0` / `0` / `>0` (no `Ordering` type — D183). O(n).
+/// pair). `cmp` returns `<0` / `0` / `>0` (no `Ordering` type). O(n).
 export fn Vec[T] @is_sorted_by(cmp fn(T, T) -> int) -> bool {
     if @len < 2 {
         return true
@@ -242,7 +239,7 @@ export fn Vec[T] @binary_search_by_key[K Compare](key fn(T) -> K, k K) -> Result
 
 /// Raw read-only pointer to the element buffer, for FFI / interop with C
 /// `(ptr, len)` APIs. The `ro` receiver yields a `*T` (canonical ro pointer,
-/// `*T ≡ *ro T` per Plan 147 / D246; ABI `const T*`).
+/// `*T ≡ *ro T`; ABI `const T*`).
 ///
 /// SAFE to call — extracting the pointer *value* is not a dereference.
 /// Dereferencing the returned pointer (`*p`, `p.read()`, `p + i`) needs an
@@ -254,9 +251,8 @@ export fn Vec[T] @binary_search_by_key[K Compare](key fn(T) -> K, k K) -> Result
 ///     non-null but a single never-live slot; do not dereference it.
 ///
 /// The recv-mut companion `mut @ptr() -> *mut T` (below) yields a writable
-/// `*mut T` when called on a `mut`-bound receiver (Plan 138.4 recv-mut
-/// overload dispatch).
-// Vec[T] implements AsSlice[T] (D299): exposes @ptr() + @len() pair for
+/// `*mut T` when called on a `mut`-bound receiver (recv-mut overload dispatch).
+// Vec[T] implements AsSlice[T]: exposes @ptr() + @len() pair for
 // bulk RawMem.copy operations (used by @append).
 #impl(AsSlice[T])
 export fn Vec[T] @ptr() -> *T => @data

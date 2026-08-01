@@ -409,10 +409,10 @@ fn compare_keys(a []u32, b []u32) -> int {
     result
 }
 
-/// Collate two strings under DUCET (Shifted variant). Returns -1 / 0 / +1 (D183
-/// int convention), matching `str @compare`. Analogous to JS `localeCompare`
+/// Collate two strings under DUCET (Shifted variant). Returns -1 / 0 / +1,
+/// matching `str @compare`. Analogous to JS `localeCompare`
 /// (root locale) / Java `Collator` (no tailoring). NOTE: this is opt-in — `str`'s
-/// default `<`/`compare` stays byte-lexicographic (D254).
+/// default `<`/`compare` stays byte-lexicographic.
 export fn collate_compare(a str, b str) -> int {
     compare_keys(collate_sort_key(a), collate_sort_key(b))
 }
@@ -435,7 +435,7 @@ export type Collator
 
 /// DUCET (non-tailored) collation. Method names are `order`/`key`/`same`
 /// (not the `@compare`/`@equal` protocol names) — collation is opt-in and must not
-/// be mistaken for `str`'s default byte Ord (D254).
+/// be mistaken for `str`'s default byte Ord.
 export fn Collator.order(a str, b str) -> int => collate_compare(a, b)
 
 export fn Collator.key(s str) -> []u32 => collate_sort_key(s)

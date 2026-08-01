@@ -44,13 +44,12 @@ fn main() {
                         println("TCP connected to ${PORT}, starting TLS handshake")
                         match TlsStream.connect(tcp, cfg) {
                             Err(e) => println("TLS handshake failed: ${e.to_str()}")
-                            Ok(consume session) => {
+                            Ok(consume stream) => {
                                 // NB: don't name this binding `tls` — it would
                                 // shadow the imported package alias (`tls.*`)
                                 // and turn `stream.write_all(...)` below into
                                 // an (invalid) module-qualified call instead of
                                 // a method call (E7401).
-                                consume stream = session
                                 ro version = stream.protocol_version() ?? TlsVersion.Tls13
                                 println("TLS established (${version.to_str()})")
                                 match stream.write_all(MESSAGE.bytes()) {

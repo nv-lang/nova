@@ -1,37 +1,36 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// std/io/error.nv — structural I/O error (Plan 176 Ф.1, D322).
+// std/io/error.nv — structural I/O error.
 //
-// One `IoError` for the whole io/fs/os(+process) family (Q3). Rust
+// One `IoError` for the whole io/fs/os(+process) family. Rust
 // `io::Error{ErrorKind}` precedent: an OPEN `ErrorKind` enum (wildcard-forced)
 // + a `raw_os` errno escape hatch + `op`/`path` context. Beats Go/Node
 // stringly-typed `err.code` and Java checked-exception noise; the Zig per-op
-// error-set alternative is considered/REJECTED (Q14) — one open `ErrorKind`
+// error-set alternative is considered/REJECTED — one open `ErrorKind`
 // composes instead of fragmenting handling per operation.
 //
-// D325 (Result-everywhere): io is a fallible domain → every fallible op returns
+// Result-everywhere: io is a fallible domain → every fallible op returns
 // `Result[T, IoError]`, never `Fail`/throw.
 //
-// **Ф.2 forward-notes (not io-core scope — added when fs lands):**
+// **Forward-notes (added when fs lands):**
 //   - `path Option[Path]` — path-bearing fs errors. Deferred with byte-backed
-//     `Path` (Q1) itself: `Path` is a `value { ro bytes []u8 }` named record that
+//     `Path` itself: `Path` is a `value { ro bytes []u8 }` named record that
 //     monomorphises cleanly as `Option[Path]`; console I/O (io-core) has no path,
 //     so the field carries nothing here and is added at the constructor funnel.
 //   - `source Option[*IoError]` — a boxed error chain (Rust `Box<dyn Error>`),
 //     added when fs error-wrapping needs it; io-core errors are leaves (console
-//     I/O never wraps a cause), so no chain is built in Ф.1.
+//     I/O never wraps a cause), so no chain is built yet.
 
 module std.io
 
 /// Category of an I/O failure. OPEN enum (Rust `ErrorKind` precedent) — a
 /// `match` over it MUST carry a wildcard arm (`Other(raw)` + future variants).
 /// Rare/obscure errnos (ENAMETOOLONG, …) map to `Other(raw_os)` — documented in
-/// the error-index. The connection-* variants exist for the net unification (Q3,
-/// Ф.4: `NetError` projects onto this enum).
+/// the error-index. The connection-* variants exist for the net unification
+/// (`NetError` projects onto this enum).
 ///
-/// Zig-style per-op error sets were considered and REJECTED (Q14): exact
+/// Zig-style per-op error sets were considered and REJECTED: exact
 /// per-operation error unions need error-union infrastructure and fragment
-/// handling; Nova takes the Rust model — one open kind + `raw_os` + (Ф.2)
-/// `source`.
+/// handling; Nova takes the Rust model — one open kind + `raw_os` + `source`.
 #stable(since = "0.1")
 export type ErrorKind enum
     | NotFound | PermissionDenied | AlreadyExists | NotADirectory | IsADirectory | DirectoryNotEmpty
@@ -40,14 +39,14 @@ export type ErrorKind enum
     | ConnectionRefused | ConnectionReset | ConnectionAborted | NotConnected | AddrInUse | AddrNotAvailable
     | Unsupported | Other(int)
 
-/// Structural I/O error (D322). Carries:
+/// Structural I/O error. Carries:
 ///   - `kind`   — the categorised `ErrorKind` (match with a wildcard arm).
 ///   - `raw_os` — the raw OS error code (errno / GetLastError), or `0` when the
 ///     error is synthesised by Nova (EOF, WriteZero, …). **Authoritative**: the
 ///     `kind` projection is best-effort, `raw_os` is exact.
 ///   - `op`     — the failed operation name for diagnostics (`"read"`, `"write"`).
 ///
-/// A **`value` record** (D322 §3b canon): a small, copyable structural error that
+/// A **`value` record**: a small, copyable structural error that
 /// flows by value through `Result[T, IoError]`, including the generic
 /// mono-dispatched loop helpers and protocol vtables. (The earlier heap-record
 /// form was a codegen workaround for the value-record-in-`Result`-error mono gap;
@@ -60,7 +59,7 @@ export type IoError value {
     ro op str
 }
 
-// ─── Constructors (funnel — Ф.2 adds path/source wiring here, not at call sites) ───
+// ─── Constructors (funnel — path/source wiring lands here, not at call sites) ───
 
 /// Leaf error with a categorised kind and an operation name. `raw_os = 0`
 /// (Nova-synthesised, no OS code).
@@ -77,7 +76,7 @@ export fn IoError.from_os(raw_os int, op str) -> IoError =>
 // ─── Predicates / accessors ───
 
 /// True when this error is `Interrupted` (EINTR) — the retry signal for the std
-/// loop helpers (`read_exact`/`write_all`/`read_to_end`, §3c/Q9).
+/// loop helpers (`read_exact`/`write_all`/`read_to_end`).
 #stable(since = "0.1")
 export fn IoError @is_interrupted() -> bool => match @kind { Interrupted => true, _ => false }
 
@@ -85,8 +84,8 @@ export fn IoError @is_interrupted() -> bool => match @kind { Interrupted => true
 
 /// Best-effort projection of a raw OS error code onto an `ErrorKind`. Maps the
 /// common POSIX errno values (which the Windows CRT also uses for the shared
-/// subset); anything unmapped falls to `Other(raw_os)` — exactly as §3b/Q14
-/// prescribe (ENAMETOOLONG & co. → `Other`). `raw_os` on the `IoError` stays
+/// subset); anything unmapped falls to `Other(raw_os)` — ENAMETOOLONG & co. →
+/// `Other`. `raw_os` on the `IoError` stays
 /// authoritative, so a platform-specific miss only coarsens `kind`, never loses
 /// information. Mirrors Rust `sys::decode_error_kind`.
 #stable(since = "0.1")

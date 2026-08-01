@@ -40,7 +40,7 @@ export fn Jwt.encode_hs256(secret []u8, claims JsonValue) -> str {
 
     ro signing_input = "${header_b64}.${payload_b64}"
     ro mac = HmacSha256.compute(secret, signing_input.bytes())
-    ro sig_b64 = Base64.encode_url(mac[0..32])
+    ro sig_b64 = Base64.encode_url(mac[..32])
 
     "${signing_input}.${sig_b64}"
 }
@@ -68,18 +68,12 @@ export fn Jwt.decode_hs256(secret []u8, token str) -> Result[JsonValue, JwtError
     ro sig_b64 = parts[2]
 
     // Парсим header чтобы проверить alg
-    ro header_bytes = match Base64.decode_url(header_b64) {
-        Ok(b)  => b
-        Err(_) => return Err(DecodingFailed)
-    }
+    ro header_bytes = Base64.decode_url(header_b64).map_err(|_| DecodingFailed)?
     ro header_json = match header_bytes.to_str() {
         Ok(s)  => s
         Err(_) => return Err(DecodingFailed)
     }
-    ro header = match Json.parse(header_json) {
-        Ok(v)  => v
-        Err(_) => return Err(DecodingFailed)
-    }
+    ro header = Json.parse(header_json).map_err(|_| DecodingFailed)?
     ro alg = match header.object() {
         Some(m) => match m.get("alg") {
             Some(JsonValue.Str(a)) => a
@@ -94,10 +88,7 @@ export fn Jwt.decode_hs256(secret []u8, token str) -> Result[JsonValue, JwtError
     // Verify signature
     ro signing_input = "${header_b64}.${payload_b64}"
     ro expected_mac = HmacSha256.compute(secret, signing_input.bytes())
-    ro actual_sig = match Base64.decode_url(sig_b64) {
-        Ok(b)  => b
-        Err(_) => return Err(InvalidSignature)
-    }
+    ro actual_sig = Base64.decode_url(sig_b64).map_err(|_| InvalidSignature)?
     if actual_sig.len() != 32 { return Err(InvalidSignature) }
 
     // Constant-time compare
@@ -108,10 +99,7 @@ export fn Jwt.decode_hs256(secret []u8, token str) -> Result[JsonValue, JwtError
     if diff != 0 { return Err(InvalidSignature) }
 
     // Parse payload
-    ro payload_bytes = match Base64.decode_url(payload_b64) {
-        Ok(b)  => b
-        Err(_) => return Err(DecodingFailed)
-    }
+    ro payload_bytes = Base64.decode_url(payload_b64).map_err(|_| DecodingFailed)?
     ro payload_json = match payload_bytes.to_str() {
         Ok(s)  => s
         Err(_) => return Err(DecodingFailed)

@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // std/os/os.nv — public os API (args / env / cwd / dirs / process) + real_os
-// handler (Plan 176 Ф.3, D324).
+// handler.
 //
 // The pure-Nova wrapper layer over the thin `Os` effect: it builds the rich
 // `Option`/`Result`/`Path` return types from the effect's primitive `int`/`str`
 // codes, OUTSIDE the effect boundary (which would erase them). Mirrors std/fs's
 // fs.nv split (effect = int-primitive plumbing, wrappers = rich types).
 //
-// **Concurrency contract (§3c).** `set_env`/`set_current_dir` mutate
+// **Concurrency contract.** `set_env`/`set_current_dir` mutate
 // process-global state and are inherently racy across threads/fibers (Rust made
 // `set_var` `unsafe` in 1.84 for exactly this). Nova does not make them unsafe,
 // but documents the single-threaded-mutation contract: mutate the environment /
@@ -19,7 +19,7 @@ module std.os
 import std.io.{IoError, ErrorKind}
 import std.fs.{Path}
 
-// ─── os_cstr: validate + NUL-terminate a key/path for the FFI (§3c(1)) ──
+// ─── os_cstr: validate + NUL-terminate a key/path for the FFI ──
 //
 // Env keys and paths cross to C as a NUL-terminated `*u8`. Reject an interior
 // NUL (a classic truncation bug → `InvalidInput`) and append a terminator; the
@@ -94,18 +94,18 @@ export fn env_bytes(key []u8) Os -> Option[[]u8] {
 export fn has_env(key str) Os -> bool => Os.env_has(key.bytes())
 
 /// Set environment variable `key` to `value` (creating or overwriting).
-/// **Racy** (§3c): mutate only during single-threaded setup.
+/// **Racy**: mutate only during single-threaded setup.
 #stable(since = "0.1")
 export fn env(key str, value str) Os -> Result[(), IoError] =>
     env_bytes(key.bytes(), value.bytes())
 
-/// Set `key` to raw `value` bytes (byte-correct). **Racy** (§3c).
+/// Set `key` to raw `value` bytes (byte-correct). **Racy**.
 #stable(since = "0.1")
 export fn env_bytes(key []u8, value []u8) Os -> Result[(), IoError] =>
     os_wrap_unit(Os.env_set(key, value), "env")
 
 /// Remove environment variable `key`. Removing an unset variable is not an error.
-/// **Racy** (§3c).
+/// **Racy**.
 #stable(since = "0.1")
 export fn remove_env(key str) Os -> Result[(), IoError] =>
     os_wrap_unit(Os.env_remove(key.bytes()), "remove_env")
@@ -130,12 +130,12 @@ export fn cwd() Os -> Result[Path, IoError] {
     ro s = Os.cwd()
     // Empty == the getcwd hook failed; the effect carries no errno, so surface a
     // raw-0 IoError (kind Other) built inside std.io — avoids the cross-module
-    // payload-variant ctor gap `[M-176-xmod-payload-variant-ctor]`.
+    // payload-variant ctor gap.
     if s.is_empty() { Err(IoError.from_os(0, "cwd")) }
     else { Ok(Path.from_bytes(s.bytes())) }
 }
 
-/// Change the current working directory to `path`. **Racy** (§3c): mutate only
+/// Change the current working directory to `path`. **Racy**: mutate only
 /// during single-threaded setup — a concurrent relative-path resolution races it.
 #stable(since = "0.1")
 export fn cwd(path Path) Os -> Result[(), IoError] =>
@@ -161,7 +161,7 @@ export fn home_dir() Os -> Option[Path] {
 /// codes 0..255 are portable). Does NOT run pending fibers / cleanup — an
 /// immediate exit (Go `os.Exit` / Rust `process::exit`). Under `real_os` this
 /// never returns. (Named `exit_process` — the bare `exit(code, msg)` is the
-/// D13 language builtin for a message-bearing abort.)
+/// language builtin for a message-bearing abort.)
 #stable(since = "0.1")
 export fn exit_process(code int) Os -> () {
     ro _ = Os.exit(code)
@@ -188,9 +188,9 @@ export fn hostname() Os -> Result[str, IoError] {
 /// (getenv/getcwd/setenv/getpid/…). Install at the root of a program:
 /// `with Os = real_os() { … }`.
 ///
-/// Plan 175.2 Ф.2-v4 (П9, D431 amend): `#default_handler` (bare form, П7) —
-/// `Os` now auto-constructs (lazily, once per thread) on first transitive
-/// use with no enclosing `with Os = …`, consistent with `Time`/`real_time()`.
+/// `#default_handler` (bare form) — `Os` auto-constructs (lazily, once per
+/// thread) on first transitive use with no enclosing `with Os = …`, consistent
+/// with `Time`/`real_time()`.
 #stable(since = "0.1")
 #default_handler
 export fn real_os() -> Effect[Os] {

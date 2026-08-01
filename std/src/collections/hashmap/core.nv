@@ -1,8 +1,7 @@
 // Реализация HashMap[K, V] в стиле Nova stdlib.
 //
-// Контекст. По [D26](../spec/decisions/08-runtime.md#d26), `HashMap[K, V]` живёт
-// в stdlib (`std.collections.HashMap`), не встроен в язык. Встроены
-// только массивы `[]T` и `[N]T` ([D27](../spec/decisions/03-syntax.md#d27)).
+// Контекст. `HashMap[K, V]` живёт в stdlib (`std.collections.HashMap`), не
+// встроен в язык. Встроены только массивы `[]T` и `[N]T`.
 //
 // Это *черновик реализации* — показывает как stdlib-тип выглядит на
 // Nova. Open addressing + linear probing + resize. Без advanced
@@ -10,44 +9,40 @@
 //
 // Допущения:
 //   - `K` имеет операции `hash() -> u64` и `eq(other K) -> bool`
-//     (структурно, [D15](../spec/decisions/02-types.md#d15)). В реальной stdlib —
-//     prelude-protocol `Hash` + `Eq` с auto-derive для примитивов
-//     (зависит от Q15).
-//   - Использует `[]T` и `[T; N]` из [D27](../spec/decisions/03-syntax.md#d27).
-//   - Методы инстанса через `@` ([D35](../spec/decisions/03-syntax.md#d35)).
-//   - Поля по правилам [D36](../spec/decisions/02-types.md#d36): `readonly` для
-//     invariants, без префикса для мутируемых.
+//     (структурно). В реальной stdlib — prelude-protocol `Hash` + `Eq`
+//     с auto-derive для примитивов.
+//   - Использует `[]T` и `[T; N]`.
+//   - Методы инстанса через `@`.
+//   - Поля по правилам: `readonly` для invariants, без префикса для
+//     мутируемых.
 
 module collections.hashmap
 
-// Plan 138.2 Ф.0b (D239 / D144): de-risk regression class #4 (map-literal
-// bucket arrays) BEFORE the universal `[]T ≡ Vec[T]` flip. Importing the Vec
-// template here registers `generic_type_templates["Vec"]`, so the `[]Slot[K,V]`
-// bucket fields below lower to a TYPED `Nova_Vec____Nova_Slot____*` backing
-// (not int64-erased `NovaArray_nova_int*`) — isolated to the HashMap CU.
-// vec_owned only imports raw_mem (no cycle with hashmap). Until Ф.0-final lands
-// Vec in the prelude, the rest of the `[]T` world keeps NovaArray-backing.
+// Importing the Vec template here registers `generic_type_templates["Vec"]`, so
+// the `[]Slot[K,V]` bucket fields below lower to a TYPED
+// `Nova_Vec____Nova_Slot____*` backing (not int64-erased `NovaArray_nova_int*`)
+// — isolated to the HashMap CU. vec only imports raw_mem (no cycle with
+// hashmap).
 import std.collections.vec.{Vec}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Типы
 // ──────────────────────────────────────────────────────────────────────────
 
-// Plan 62.E (2026-05-18): `Hash` мигрирован в `std/prelude/protocols.nv`
-// как canonical prelude protocol per D109 split policy (hash-only; equality
-// вынесена в отдельный `Equal`). Удалена local-декларация чтобы избежать
-// `duplicate top-level name Hash` при загрузке prelude (R27 auto-import
-// делает prelude `Hash` видимым в каждом module включая
-// `std.collections.hashmap`).
+// `Hash` мигрирован в `std/prelude/protocols.nv` как canonical prelude
+// protocol (hash-only; equality вынесена в отдельный `Equal`). Удалена
+// local-декларация чтобы избежать `duplicate top-level name Hash` при
+// загрузке prelude (auto-import делает prelude `Hash` видимым в каждом
+// module включая `std.collections.hashmap`).
 //
-// `HashMap[K Hash, V]` ниже теперь резолвит `Hash` через cross-file
-// resolve в prelude (`std.prelude.protocols.Hash`). Key collision check
-// использует `==` (BinOp::Eq → nova_str_eq / int ==), что требует
-// неявного Equal-контракта от K. D109 split-policy: `[K Hash + Equal]`
-// будет формальным когда multi-bound syntax появится в bootstrap parser (D72 ext).
+// `HashMap[K Hash, V]` ниже резолвит `Hash` через cross-file resolve в
+// prelude (`std.prelude.protocols.Hash`). Key collision check использует
+// `==` (BinOp::Eq → nova_str_eq / int ==), что требует неявного
+// Equal-контракта от K. `[K Hash + Equal]` будет формальным когда
+// multi-bound syntax появится в bootstrap parser.
 //
-// Документация моевого Hash осталась в `std/prelude/protocols.nv`
-// (single source of truth для `nova doc`).
+// Документация hash осталась в `std/prelude/protocols.nv` (single source
+// of truth для `nova doc`).
 
 // Slot — состояние ячейки в open-addressing-таблице.
 //
@@ -110,8 +105,7 @@ export type HashMap[K Hash, V] priv {
 
 // entry-count (сколько вставок без rehash) → требуемый минимум бакетов:
 // ceil(4 * min_capacity / 3), округлённый вверх до степени двойки. Общий
-// sizing-helper для `new()` и сеттера `mut @cap(n)` (ex-`with_capacity`,
-// D372 amend 2026-07-06 — with_capacity удалён, ёмкость = свойство `cap`).
+// sizing-helper для `new()` и сеттера `mut @cap(n)` (ex-`with_capacity`).
 fn hashmap_bucket_count_for(min_capacity int) -> int {
     ro needed = if min_capacity < 4 { 4 } else { (min_capacity * 4 + 2) / 3 }
     next_pow2(needed)
@@ -175,7 +169,7 @@ export fn HashMap[K, V] @is_empty() -> bool => @count == 0
 export fn HashMap[K, V] @cap() -> int => @buckets.len()
 
 /// Set the capacity to guarantee at least `n` entries fit without a further
-/// rehash (D117 AMEND setter: same-name 1-arg overload of `@cap()`) — the
+/// rehash — the same-name 1-arg overload of `@cap()` — the
 /// instance-method replacement for the removed `HashMap[K, V].with_capacity`
 /// static constructor: `HashMap[K, V].new(cap: n)` reproduces the OLD
 /// `with_capacity(n)`'s exact bucket count (entry-count → bucket-count sizing
@@ -382,10 +376,9 @@ export fn HashMap[K, V] @filter(pred fn(K, V) -> bool) -> HashMap[K, V] {
     out
 }
 
-// Plan 56 deferred: @map_values[U] / @map_keys[K2] требуют method-level
+// `@map_values[U]` / `@map_keys[K2]` не реализованы: требуют method-level
 // generic params на generic type (HashMap[K,V].@method[U] — два уровня
-// generic). Plan 48 mono pass partial — sentinel registered, но body emit
-// fails. Полное закрытие — в Plan 60 (method-level generic mono).
+// generic).
 //
 // Workaround: write inline:
 //   let mut out HashMap[K, U] = []
@@ -431,13 +424,8 @@ export fn HashMap[K, V] mut @clear() {
     @tombstones = 0
 }
 
-// Plan 52.x / 55 / 56 — closure: @clone() / @merge_from() (объявлены
-// выше) РАБОТАЮТ. mono-pass corruption, мешавшая generic helper-methods
-// с pattern-match, устранена Plan 55.4 (save/restore current_fn_return_ty
-// + protocol-method whitelist) + 55.5 (mono name-collision). Plan 56
-// разблокировал @clone codegen, Plan 59 Ф.7.2 переписал тело на
-// idiomatic `for (k, v)`. Map-spread `[...m, k: v]` тоже работает
-// (Plan 55 spread-инфраструктура). Regression-покрытие:
+// `@clone()` / `@merge_from()` (объявлены выше) работают; map-spread
+// `[...m, k: v]` тоже. Regression-покрытие:
 // nova_tests/map_literals/positive_clone_merge.nv + positive_spread.nv.
 
 /// Return the value by key, or insert `fallback()` and return it.
@@ -464,8 +452,8 @@ export fn HashMap[K, V] mut @get_or_insert(key K, fallback fn() -> V) -> V {
 // Итерация
 // ──────────────────────────────────────────────────────────────────────────
 
-// Iterator pattern — структурный тип для for-цикла ([D15](../spec/decisions/02-types.md#d15)).
-// GC keeps map alive via field reference (D43 — нет &T / borrow в Nova).
+// Iterator pattern — структурный тип для for-цикла. GC keeps map alive via
+// field reference (нет &T / borrow в Nova).
 type HashMapIter[K, V] {
     map HashMap[K, V]
     pos int
@@ -598,24 +586,22 @@ fn HashMap[K, V] mut @rehash(new_cap int) {
 // Не метод HashMap, а свободная функция: используется в new() и
 // rehash() до того, как HashMap собран.
 //
-// Plan 138.2 Ф.0b (D239 / D144): построение bucket-массива идёт через
-// ЯВНЫЙ `Vec[Slot[K, V]]` API (`Vec[...]​.with_capacity` + `.push`), а не
-// через `[]Slot[K, V]`-литерал-форму. Причина: до Ф.0-final флипа `[]T` в
-// ПОЗИЦИИ-ЗНАЧЕНИЯ (`[]T.with_capacity`, `arr.push`) ещё лоуэрится по
-// int64-erased NovaArray-пути (emit_c.rs D38 array-static-method, без
-// Vec-gate), тогда как `[]Slot[K,V]` в ТИПОВОЙ позиции (поле `_buckets`,
-// return type) уже резолвится в типизированный `Nova_Vec____Nova_Slot____*`
-// под gate `generic_type_templates["Vec"]`. Эта рассинхронизация давала
-// возврат int-erased буфера под типизированным Vec-указателем → битый rehash
-// (повреждённый readback после @maybe_grow). Явный `Vec[...]` строит
-// типизированное хранилище согласованно с типом поля/return — изолированно в
-// HashMap CU, до универсального флипа.
+// Построение bucket-массива идёт через ЯВНЫЙ `Vec[Slot[K, V]]` API
+// (`Vec[...]​.new(cap:)` + `.push`), а не через `[]Slot[K, V]`-литерал-форму.
+// Причина: до универсального `[]T`-флипа `[]T` в ПОЗИЦИИ-ЗНАЧЕНИЯ
+// (`[]T.with_capacity`, `arr.push`) лоуэрится по int64-erased NovaArray-пути,
+// тогда как `[]Slot[K,V]` в ТИПОВОЙ позиции (поле, return type) уже
+// резолвится в типизированный `Nova_Vec____Nova_Slot____*` под gate
+// `generic_type_templates["Vec"]`. Эта рассинхронизация давала возврат
+// int-erased буфера под типизированным Vec-указателем → битый rehash.
+// Явный `Vec[...]` строит типизированное хранилище согласованно с типом
+// поля/return — изолированно в HashMap CU.
 //
-// [M-vec-spelling-hashmap-buckets-array-gap] (vec-sweep, 2026-07-06): проверено
-// заново — замена на `-> []Slot[K, V]` + `[]Slot[K, V].with_capacity(cap)` даёт
-// RUN-FAIL (rehash on growth и др. ломаются на рантайме, не на компиляции); гэп
-// [M-153.x-array-new-not-vec] всё ещё жив. ИСКЛЮЧЕНИЕ из []T-канона до фикса
-// static-dispatch разрыва между `[]T`-значением и типизированным `Vec[T]`.
+// [M-vec-spelling-hashmap-buckets-array-gap] обход: замена на `-> []Slot[K, V]`
+// + `[]Slot[K, V].with_capacity(cap)` даёт RUN-FAIL (rehash on growth и др.
+// ломаются на рантайме); гэп [M-153.x-array-new-not-vec] всё ещё жив.
+// ИСКЛЮЧЕНИЕ из []T-канона до фикса static-dispatch разрыва между
+// `[]T`-значением и типизированным `Vec[T]`.
 fn new_buckets[K, V](cap int) -> Vec[Slot[K, V]] { // [M-153.x-array-new-not-vec]
     mut buckets = Vec[Slot[K, V]].new(cap: cap) // [M-153.x-array-new-not-vec]
     for _ in 0..cap {
@@ -644,18 +630,17 @@ fn next_pow2(n int) -> int {
 // ──────────────────────────────────────────────────────────────────────────
 //
 // 1. **HashMap — обычный stdlib-тип**, не встроен в язык. Все
-//    операции — методы Nova через `@` (D35). Никакой магии.
+//    операции — методы Nova через `@`. Никакой магии.
 //
 // 2. **Generic-параметры `[K, V]`** работают через мономорфизацию
 //    (как Rust/C++). Структурное требование «K имеет hash() и eq()»
-//    проверяется компилятором по [D15](../spec/decisions/02-types.md#d15).
+//    проверяется компилятором.
 //
 // 3. **Sum-type Slot[K, V]** — три состояния (Empty, Tombstone,
 //    Occupied) с exhaustive match. Каждый бранч проверяется
 //    компилятором.
 //
-// 4. **`readonly` поля** (load_factor, initial_capacity) показывают
-//    [D36](../spec/decisions/02-types.md#d36) — invariants нельзя случайно
+// 4. **`readonly` поля** показывают — invariants нельзя случайно
 //    перезаписать.
 //
 // 5. **`mut @method` vs `@method`** — `insert`/`remove`/`clear`

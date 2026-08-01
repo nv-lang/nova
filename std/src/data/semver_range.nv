@@ -100,30 +100,30 @@ fn parse_comparator_set(s str) -> Result[[]Comparator, ParseRangeError] {
 fn parse_one_comparator(s str) -> Result[[]Comparator, ParseRangeError] {
     if s.starts_with("^") {
         // ^1.2.3 → >=1.2.3 <2.0.0
-        ro v = parse_version(s[1..s.byte_len()])?
+        ro v = parse_version(s[1..])?
         ro upper = Version.new(v.major + 1, 0, 0)
         return Ok([Ge(v), Lt(upper)])
     }
     if s.starts_with("~") {
         // ~1.2.3 → >=1.2.3 <1.3.0
-        ro v = parse_version(s[1..s.byte_len()])?
+        ro v = parse_version(s[1..])?
         ro upper = Version.new(v.major, v.minor + 1, 0)
         return Ok([Ge(v), Lt(upper)])
     }
     if s.starts_with(">=") {
-        return Ok([Ge(parse_version(s[2..s.byte_len()])?)])
+        return Ok([Ge(parse_version(s[2..])?)])
     }
     if s.starts_with("<=") {
-        return Ok([Le(parse_version(s[2..s.byte_len()])?)])
+        return Ok([Le(parse_version(s[2..])?)])
     }
     if s.starts_with(">") {
-        return Ok([Gt(parse_version(s[1..s.byte_len()])?)])
+        return Ok([Gt(parse_version(s[1..])?)])
     }
     if s.starts_with("<") {
-        return Ok([Lt(parse_version(s[1..s.byte_len()])?)])
+        return Ok([Lt(parse_version(s[1..])?)])
     }
     if s.starts_with("=") {
-        return Ok([Eq(parse_version(s[1..s.byte_len()])?)])
+        return Ok([Eq(parse_version(s[1..])?)])
     }
     Ok([Eq(parse_version(s)?)])
 }

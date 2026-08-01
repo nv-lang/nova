@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// std/time/civil/time_of_day.nv — TimeOfDay: время суток (D319).
+// std/time/civil/time_of_day.nv — TimeOfDay: время суток.
 //
-// Plan 175.1 Ф.1. Репрезентация: nanos_of_day i64 ∈ [0, 86_399_999_999_999].
-// День = ровно 86400s (leap-seconds ignore, Q5). Принимает `Duration`
-// (TimeBased), отвергает `Period` — отсутствие перегрузки = compile-error
-// (D320 R2). Day-carry ЯВНЫЙ: `@plus(Duration)` возвращает
+// Репрезентация: nanos_of_day i64 ∈ [0, 86_399_999_999_999].
+// День = ровно 86400s (leap-seconds ignore). Принимает `Duration`
+// (TimeBased), отвергает `Period` — отсутствие перегрузки = compile-error.
+// Day-carry ЯВНЫЙ: `@plus(Duration)` возвращает
 // `(TimeOfDay, days_overflow i64)`, не молчит про перенос.
 
 module time.civil
@@ -91,7 +91,7 @@ export fn TimeOfDay @nano() -> int => (@nanos_of_day % 1_000_000_000) as int
 export fn TimeOfDay @to_nanos_of_day() -> i64 => @nanos_of_day
 
 // ──────────────────────────────────────────────────────────────────────────
-// Арифметика (TimeBased ONLY — D320: Period здесь НЕ принимается)
+// Арифметика (TimeBased ONLY — Period здесь НЕ принимается)
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Shift by a Duration with EXPLICIT day-carry: `(new time, day overflow)`.
@@ -171,7 +171,8 @@ export fn TimeOfDay @to_str() -> str => @to_iso()
 // DateTime — ДЕКЛАРАЦИЯ здесь (методы в datetime.nv): value-record с
 // by-value полями Date+TimeOfDay требует, чтобы оба типа были уже
 // эмитнуты (complete) — порядок эмиссии лексикографический по файлам.
-// [M-175.1-value-in-value-emit-order] (§4а-обход, codegen не трогаем).
+// [M-175.1-value-in-value-emit-order] обход: эмиссия структур по файлам —
+// декларация DateTime перенесена сюда (codegen не трогаем).
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Calendar date+time without a zone — a value-record of two value fields.
