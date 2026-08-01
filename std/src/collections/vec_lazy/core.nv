@@ -530,7 +530,14 @@ export fn BoxIter[T] mut @fold[Acc](mut init Acc, f fn(Acc, T) -> Acc) -> Acc {
 /// Reduce without an explicit seed: `None` when empty, else fold from the first
 /// element using `f`.
 export fn BoxIter[T] mut @reduce(f fn(T, T) -> T) -> Option[T] {
-    mut acc = @next()?
+    // [M-try-on-next-generic-receiver-misresolve] (221.1 №254): `@next()?`
+    // here makes codegen misresolve the receiver (single-key fallback →
+    // foreign RSplitIter, E_RECV_METHOD_MISMATCH) — manual match until
+    // №254 lands (same in @min/@max below).
+    mut acc = match @next() {
+        Some(first) => first,
+        None => return None,
+    }
     while true {
         match @next() {
             Some(x) => { acc = f(acc, x) },
@@ -617,7 +624,10 @@ export fn BoxIter[T] mut @for_each(f fn(T) -> ()) -> () {
 // edge case with generic `Option[T]` scrutinees colliding with imported
 // module aliases.
 export fn BoxIter[T Compare] mut @min() -> Option[T] {
-    mut best = @next()?
+    mut best = match @next() {
+        Some(first) => first,
+        None => return None,
+    }
     while true {
         match @next() {
             Some(cand) => { if cand.compare(best) < 0 { best = cand } },
@@ -630,7 +640,10 @@ export fn BoxIter[T Compare] mut @min() -> Option[T] {
 /// Largest remaining element by the element's own `Compare`, or `None`.
 // The match-arm bind is named `cand` — see `@min` above (same edge case).
 export fn BoxIter[T Compare] mut @max() -> Option[T] {
-    mut best = @next()?
+    mut best = match @next() {
+        Some(first) => first,
+        None => return None,
+    }
     while true {
         match @next() {
             Some(cand) => { if cand.compare(best) > 0 { best = cand } },
