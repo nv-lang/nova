@@ -477,6 +477,7 @@ M-checker-protocol-typed-arg-any-bypass
 M-checker-recursive-type-overflow
 M-checker-unknown-method-stackoverflow
 M-cli-build-source-file-name-unknown
+M-clone-value-return-no-extra-copies-verify
 M-closure-light-newtype-over-fn-param-misinfer
 M-closure-trailing-scalar-coercion-no-typecheck
 M-closurefull-let-empty-ty
