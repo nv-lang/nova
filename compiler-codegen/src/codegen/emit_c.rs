@@ -51796,8 +51796,33 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // чтобы writes из closure body обновляли original mut local в caller'е
         // (D32-spec mut-capture by-reference). Immutable captures — by value
         // (snapshot). Mutability detection: var_mutable set.
+        //
+        // [M-effect-handler-mutex-hashmap-value-capture] / срочный пакет
+        // звучности п.6 (2026-08-01): `var_mutable` only tracks plain `mut
+        // x = …` STACK LOCALS — it never covered a `mut`-value/primitive
+        // PARAMETER (`ref_params`, Plan 172.5 D326 R5: by-pointer in-out —
+        // `fn make_handler(mut reg MetricsRegistry) -> Handler`'s `reg` is
+        // ALREADY a raw `NovaValue_Reg*` C parameter, auto-deref'd to a
+        // value on every plain read). Capturing such a param through the
+        // OLD `var_mutable`-only check misclassified it as an IMMUTABLE
+        // value capture: env field declared BY VALUE (`NovaValue_Reg
+        // field;`, should be `NovaValue_Reg* field;`) while the populate
+        // line still copied the raw POINTER into it — `assigning to
+        // NovaValue_Reg from incompatible type NovaValue_Reg *` — and the
+        // body's plain-value unpack (`NovaValue_Reg reg = _env->field;`)
+        // then fed the method-call receiver's `&(*reg)` idiom a NON-pointer
+        // local — `indirection requires pointer operand`. Both are the
+        // EXACT diagnostics this repro/window's live C-mismatch reproduces.
+        // `ref_params` names need the SAME pointer-field/box-promote
+        // treatment as `var_mutable` names (see the populate loop below,
+        // `free_var_is_ref_param_src`, for the one remaining asymmetry: the
+        // box-copy SOURCE needs an extra deref since `name` is already a
+        // pointer here, unlike a plain `var_mutable` stack local).
         let free_var_is_mut: Vec<bool> = free_vars.iter()
-            .map(|(n, _)| self.var_mutable.contains(n))
+            .map(|(n, _)| self.var_mutable.contains(n) || self.ref_params.contains(n))
+            .collect();
+        let free_var_is_ref_param_src: Vec<bool> = free_vars.iter()
+            .map(|(n, _)| self.ref_params.contains(n))
             .collect();
 
         // Build env struct fields. Mut fields = pointer type. Field names are
@@ -51870,6 +51895,30 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let old_out = std::mem::take(&mut self.out);
         let old_indent = self.indent;
         let saved_var_boxed = std::mem::take(&mut self.var_boxed);
+        // [M-effect-handler-mutex-hashmap-value-capture] / срочный пакет
+        // звучности п.6 (2026-08-01): `ref_params` (Plan 172.5 D326 R5 —
+        // by-pointer in-out `mut` value/primitive params, auto-deref `name`
+        // → `(*name)`) is populated ONCE per ENCLOSING fn and — unlike
+        // `var_boxed` above — was never cleared/rescoped when emission
+        // descends into a NESTED lambda body. A capture with the SAME NAME
+        // as an outer `ref_params` entry (e.g. `fn make_handler(mut reg
+        // MetricsRegistry) -> Handler { fn(_) => ...reg... }`) leaked the
+        // stale outer registration into the lambda body's ExprKind::Ident
+        // dispatch (`compiler-codegen/src/codegen/emit_c.rs` Ident arm,
+        // `ref_params.contains(name)` checked BEFORE the `var_boxed` box-
+        // deref arm) — the lambda body's OWN unpacked local for `reg` (a
+        // plain value, or after the `is_mut` widening below, a `var_boxed`
+        // env-field alias) has NOTHING to do with the outer fn's raw C
+        // pointer parameter of the same name, so applying the outer auto-
+        // deref there emitted `(*reg)` against a variable with the WRONG
+        // shape (or, once `var_boxed` is populated, never even reached —
+        // `ref_params` is checked earlier in the match arm and pre-empted
+        // it). Scoped exactly like `var_boxed` above: the lambda body
+        // establishes its OWN by-pointer-param set (empty — a closure
+        // literal has no `mut`/`ref`-annotated params of its own in this
+        // codebase; its captures are unpacked via `var_boxed`/plain locals
+        // instead), restored on exit.
+        let saved_ref_params = std::mem::take(&mut self.ref_params);
         self.indent = 0;
 
         // Env struct declaration
@@ -51963,6 +52012,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.indent = old_indent;
         // Restore caller-scope var_boxed (lambda body used its own set of entries).
         self.var_boxed = saved_var_boxed;
+        // Restore caller-scope ref_params (see the `std::mem::take` above).
+        self.ref_params = saved_ref_params;
         self.lambda_impls.push_str(&impl_str);
 
         // Restore params and fn_param_sigs
@@ -51993,7 +52044,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let env_tmp = self.fresh_tmp();
         let clos_tmp = self.fresh_tmp();
         self.line(&format!("{}* {} = ({}*)nova_alloc(sizeof({}));", env_name, env_tmp, env_name, env_name));
-        for ((name, ty), is_mut) in free_vars.iter().zip(&free_var_is_mut) {
+        for (((name, ty), is_mut), is_ref_param_src) in free_vars.iter().zip(&free_var_is_mut).zip(&free_var_is_ref_param_src) {
             // LHS member-name uses the mangled field (see `mangled_field`
             // above) — this call-site code is emitted directly into the
             // CURRENT (possibly macro-active) output buffer, e.g. inside a
@@ -52013,7 +52064,22 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // Use the plain name here (before var_boxed is set) so the
                     // emit_expr for `name` still resolves to the stack variable.
                     self.line(&format!("{}* {} = ({}*)nova_alloc(sizeof({}));", ty, bv, ty, ty));
-                    self.line(&format!("*{} = {};", bv, name));
+                    // [M-effect-handler-mutex-hashmap-value-capture] п.6
+                    // (2026-08-01): for a plain `var_mutable` stack local,
+                    // `name` at THIS point is a by-VALUE C variable — a bare
+                    // copy is correct (`*bv = name;`). For a `ref_params`
+                    // source (a `mut`-value/primitive PARAMETER, already a
+                    // raw `ty*` C parameter, D326 R5 in-out ABI), `name` is
+                    // ALREADY a pointer — copying it bare into `*bv` (typed
+                    // `ty`, the POINTEE) is the exact `assigning to ty from
+                    // incompatible type ty *` mismatch this fix closes; the
+                    // copy source needs one extra deref.
+                    let copy_src = if *is_ref_param_src {
+                        format!("(*{})", name)
+                    } else {
+                        name.clone()
+                    };
+                    self.line(&format!("*{} = {};", bv, copy_src));
                     // Register in var_boxed: from this point on, ExprKind::Ident
                     // for `name` emits `(*_box_name)` instead of bare `name`,
                     // keeping caller reads/writes in sync with the closure's env ptr.
