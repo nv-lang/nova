@@ -154,7 +154,7 @@
                 },
                 {
                     "name": "keyword.declaration.nova",
-                    "match": "\\b(fn|type|alias|effect|protocol|const|module|import|export|as|use|test|external|extern|lemma)\\b"
+                    "match": "\\b(fn|type|alias|effect|protocol|const|module|import|export|as|use|test|bench|external|extern|lemma|value|enum)\\b"
                 },
                 {
                     "name": "storage.modifier.nova",
