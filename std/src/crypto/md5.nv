@@ -111,7 +111,7 @@ export fn Md5.hash(data []u8) -> [16]u8 {
 #stable(since = "0.1")
 export fn Md5.hash_str(data []u8) -> str {
     ro digest = Md5.hash(data)
-    Hex.encode(digest[0..16])
+    Hex.encode(digest[..16])
 }
 
 /// Incremental update — feed bytes в state. Для streamed input.

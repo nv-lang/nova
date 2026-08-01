@@ -56,7 +56,7 @@ export fn str @get(r Range) -> Option[str] {
 export fn str @split_at(idx int) -> (str, str)
     requires 0 <= idx && idx <= @byte_len()
 {
-    (@[0..idx], @[idx..@byte_len()])
+    (@[..idx], @[idx..])
 }
 
 // Checked split at byte offset `idx`. Returns None when idx is out of bounds
@@ -65,5 +65,5 @@ export fn str @split_at_checked(idx int) -> Option[(str, str)] {
     if idx < 0 || idx > @byte_len() || !@is_char_boundary(idx) {
         return None
     }
-    Some((@[0..idx], @[idx..@byte_len()]))
+    Some((@[..idx], @[idx..]))
 }

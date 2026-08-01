@@ -412,7 +412,7 @@ export fn read(path Path) Fs -> Result[[]u8, IoError] {
     loop {
         match f.read(chunk) {
             Ok(0)  => break
-            Ok(n)  => out.append(chunk[0..n])
+            Ok(n)  => out.append(chunk[..n])
             Err(e) => {
                 if e.is_interrupted() { continue }
                 rerr = Some(e)

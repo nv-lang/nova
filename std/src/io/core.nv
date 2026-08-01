@@ -128,7 +128,7 @@ export fn read_to_end[R Read](mut r R) -> Result[[]u8, IoError] {
     loop {
         match r.read(chunk) {
             Ok(0)  => return Ok(out)
-            Ok(n)  => out.append(chunk[0..n])
+            Ok(n)  => out.append(chunk[..n])
             Err(e) => {
                 if e.is_interrupted() { continue }
                 return Err(e)

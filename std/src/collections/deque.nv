@@ -74,7 +74,7 @@ export fn Deque[T] mut @pop_back() -> Option[T] => @items.pop()
 export fn Deque[T] mut @pop_front() -> Option[T] {
     if @items.len() == 0 { return None }
     ro value = @items[0]
-    @items = @items[1..@items.len()]
+    @items = @items[1..]
     Some(value)
 }
 

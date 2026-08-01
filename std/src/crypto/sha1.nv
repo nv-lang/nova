@@ -44,7 +44,7 @@ export fn Sha1.hash(data []u8) -> [20]u8 {
 #stable(since = "0.1")
 export fn Sha1.hash_str(data []u8) -> str {
     ro digest = Sha1.hash(data)
-    Hex.encode(digest[0..20])
+    Hex.encode(digest[..20])
 }
 
 /// Incremental update — feed bytes в state.

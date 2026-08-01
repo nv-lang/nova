@@ -179,7 +179,7 @@ export fn TcpStream mut @flush() -> Result[(), IoError] => Ok(())
 export fn TcpStream mut @write_all(data []u8) Net -> Result[(), NetError] {
     mut off = 0
     while off < data.len() {
-        match Net.write(@, data[off..data.len()]) {
+        match Net.write(@, data[off..]) {
             Ok(n)  => { if n <= 0 { return Err(NetError.BrokenPipe) } off += n }
             Err(e) => { return Err(e) }
         }

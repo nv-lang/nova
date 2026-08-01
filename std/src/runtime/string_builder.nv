@@ -114,7 +114,7 @@ export fn StringBuilder @clone() -> Self => { buf: sb_clone_buf(@buf) }
 export fn StringBuilder @starts_with(prefix str) -> bool {
     ro pbytes = prefix.bytes()
     ro plen = pbytes.len()
-    plen <= @buf.len() && @buf[0..plen].compare(pbytes) == 0
+    plen <= @buf.len() && @buf[..plen].compare(pbytes) == 0
 }
 
 // Проверить suffix буфера. Slice-view + memcmp (zero-copy).
@@ -606,7 +606,7 @@ export fn str_display_spec(mut sb StringBuilder, v str, width int, has_prec bool
     ro vb = v.bytes()
     if has_prec {
         ro cut = display_spec_bytes_for_chars(vb, prec)
-        sb.write(vb[0..cut])
+        sb.write(vb[..cut])
     } else {
         sb.write(vb)
     }
@@ -629,7 +629,7 @@ export fn str_debug_display_spec(mut sb StringBuilder, v str, width int, has_pre
     ro mark = sb.byte_len()
     if has_prec {
         ro cut = display_spec_bytes_for_chars(scratch, prec)
-        sb.write(scratch[0..cut])
+        sb.write(scratch[..cut])
     } else {
         sb.write(scratch)
     }

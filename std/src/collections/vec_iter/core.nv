@@ -407,7 +407,7 @@ export fn SplitIter mut @next() -> Option[str] {
     ro sep_len = @sep.byte_len()
     if sep_len == 0 {
         @done = true
-        return Some(@src[0..sn])
+        return Some(@src[..sn])
     }
     if @limit >= 0 && @splits >= @limit - 1 {
         @done = true
@@ -485,11 +485,11 @@ export fn RSplitIter mut @next() -> Option[str] {
     ro sep_len = @sep.byte_len()
     if sep_len == 0 {
         @done = true
-        return Some(@src[0..@end])
+        return Some(@src[..@end])
     }
     if @limit >= 0 && @splits >= @limit - 1 {
         @done = true
-        return Some(@src[0..@end])
+        return Some(@src[..@end])
     }
     mut i = @end - sep_len
     while i >= 0 {
@@ -502,7 +502,7 @@ export fn RSplitIter mut @next() -> Option[str] {
         i -= 1
     }
     @done = true
-    Some(@src[0..@end])
+    Some(@src[..@end])
 }
 
 // ── adapters ON an `RSplitIter` source (chain entry) ─────────────────────

@@ -84,7 +84,7 @@ export fn Markdown.to_html(md str) -> str {
                 if c != '#' { break }
                 level += 1
             }
-            ro text = line[level..line.byte_len()].trim_ascii()
+            ro text = line[level..].trim_ascii()
             buf.append("<h${level.to_str()}>")
             buf.append(render_inline(text))
             buf.append("</h${level.to_str()}>\n")
@@ -101,7 +101,7 @@ export fn Markdown.to_html(md str) -> str {
                 in_list = true
             }
             buf.append("<li>")
-            buf.append(render_inline(line[2..line.byte_len()]))
+            buf.append(render_inline(line[2..]))
             buf.append("</li>\n")
             i += 1
             continue

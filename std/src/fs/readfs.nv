@@ -86,7 +86,7 @@ export fn DirFs.new(root Path) -> DirFs => { root }
 fn boundary_ok(root str, full str) -> bool {
     if full == root { return true }
     if !full.starts_with(root) { return false }
-    ro rest = full[root.byte_len()..full.byte_len()]
+    ro rest = full[root.byte_len()..]
     rest.starts_with("/") || rest.starts_with("\\")
 }
 

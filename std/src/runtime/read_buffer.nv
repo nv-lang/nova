@@ -74,7 +74,7 @@ export fn ReadBuffer @remaining_bytes() -> []u8 {
     ro rem = @data.len() - @pos
     mut out []u8 = []u8.new(cap: rem.max(0))
     if rem > 0 {
-        out.append(@data[@pos..@data.len()])
+        out.append(@data[@pos..])
     }
     out
 }

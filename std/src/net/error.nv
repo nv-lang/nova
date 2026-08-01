@@ -86,7 +86,7 @@ fn strerror_text(code int) -> str {
     // [M-174.1-vec-method-chain-elem-erasure]: explicit []u8 local; non-unsafe
     // decode + `??` fallback (uv_strerror text is ASCII) — same P67 gap as
     // SocketAddr @ip (addr.nv).
-    ro msg_bytes []u8 = buf[0..n]
+    ro msg_bytes []u8 = buf[..n]
     msg_bytes.to_str() ?? ""
 }
 

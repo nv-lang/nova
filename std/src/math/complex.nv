@@ -336,8 +336,8 @@ fn split_re_im(body str) -> Option[(str, str)] {
             // Не часть экспоненты `1e-5`?
             ro prev = bb[i - 1]
             if prev != ('e' as u8) && prev != ('E' as u8) {
-                ro re_s = body[0..i]
-                ro im_s = body[i..body.byte_len()]
+                ro re_s = body[..i]
+                ro im_s = body[i..]
                 return Some((re_s, im_s))
             }
         }

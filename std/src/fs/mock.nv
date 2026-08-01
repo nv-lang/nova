@@ -452,13 +452,13 @@ fn is_child_of(childkey str, dirkey str) -> bool {
     ro prefix = if dirkey == "/" { "/" } else { "${dirkey}/" }
     if childkey == dirkey { return false }
     if !childkey.starts_with(prefix) { return false }
-    ro rest = childkey[prefix.byte_len()..childkey.byte_len()]
+    ro rest = childkey[prefix.byte_len()..]
     !rest.contains("/")
 }
 
 fn child_name(childkey str, dirkey str) -> str {
     ro prefix = if dirkey == "/" { "/" } else { "${dirkey}/" }
-    childkey[prefix.byte_len()..childkey.byte_len()]
+    childkey[prefix.byte_len()..]
 }
 
 // ─── mock_fs handler ──

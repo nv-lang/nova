@@ -35,7 +35,7 @@ export fn str @trim_ascii_end() -> str {
     ro (bytes, n) = (@bytes(), @byte_len())
     mut end = n
     while end > 0 && is_ascii_ws(bytes[end - 1] as int) { end -= 1 }
-    @[0..end]
+    @[..end]
 }
 
 // Убирает все ведущие вхождения codepoint'а `c` (zero-copy). Rust `trim_start_matches`
@@ -45,7 +45,7 @@ export fn str @trim_start_matches(c char) -> str {
     ro plen = pat.byte_len()
     if plen == 0 { return @ }
     mut s = @
-    while s.starts_with(pat) { s = s[plen..s.byte_len()] }
+    while s.starts_with(pat) { s = s[plen..] }
     s
 }
 
@@ -55,7 +55,7 @@ export fn str @trim_end_matches(c char) -> str {
     ro plen = pat.byte_len()
     if plen == 0 { return @ }
     mut s = @
-    while s.ends_with(pat) { s = s[0..s.byte_len() - plen] }
+    while s.ends_with(pat) { s = s[..s.byte_len() - plen] }
     s
 }
 
@@ -66,7 +66,7 @@ export fn str @trim_matches(c char) -> str => @trim_start_matches(c).trim_end_ma
 // `None` иначе. Rust `strip_prefix` / Kotlin `removePrefix`.
 export fn str @strip_prefix(prefix str) -> Option[str] {
     if @starts_with(prefix) {
-        Some(@[prefix.byte_len()..@byte_len()])
+        Some(@[prefix.byte_len()..])
     } else {
         None
     }
@@ -76,7 +76,7 @@ export fn str @strip_prefix(prefix str) -> Option[str] {
 // `None` иначе. Rust `strip_suffix` / Kotlin `removeSuffix`.
 export fn str @strip_suffix(suffix str) -> Option[str] {
     if @ends_with(suffix) {
-        Some(@[0..@byte_len() - suffix.byte_len()])
+        Some(@[..@byte_len() - suffix.byte_len()])
     } else {
         None
     }
@@ -185,8 +185,8 @@ export fn str @replace(from str, to str) -> str {
     while true {
         match rest.find(from) {
             Some(k) => {
-                sb.append(rest[0..k]).append(to)
-                rest = rest[k + fn_len .. rest.byte_len()]
+                sb.append(rest[..k]).append(to)
+                rest = rest[k + fn_len ..]
             }
             None => break
         }
@@ -208,8 +208,8 @@ export fn str @replacen(from str, to str, n int) -> str
     while count < n {
         match rest.find(from) {
             Some(k) => {
-                sb.append(rest[0..k]).append(to)
-                rest = rest[k + fn_len .. rest.byte_len()]
+                sb.append(rest[..k]).append(to)
+                rest = rest[k + fn_len ..]
                 count += 1
             }
             None => break

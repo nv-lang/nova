@@ -264,7 +264,7 @@ fn str @trim_unicode_end() -> str {
         if !is_whitespace(cp) { break }
         end = i
     }
-    @[0..end]
+    @[..end]
 }
 
 /// Trim Unicode whitespace from both ends (opt-in under `import std.unicode`).

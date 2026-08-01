@@ -140,10 +140,10 @@ export fn EmbeddedDir @merge(other EmbeddedDir) -> EmbeddedDir {
     // W_MANUAL_SLICE_COPY: `[]T`-вид среза (D262) + `.append`, не поэлементный
     // цикл (nv-coding-style §18а).
     if i < a.len() {
-        out.append(a[i..a.len()])
+        out.append(a[i..])
     }
     if j < b.len() {
-        out.append(b[j..b.len()])
+        out.append(b[j..])
     }
     EmbeddedDir.new(out)
 }
