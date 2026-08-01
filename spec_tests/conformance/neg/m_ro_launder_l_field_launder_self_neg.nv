@@ -1,0 +1,38 @@
+// [M-router-handler-mut-capture-escape-soundness] §2 probe L — срочный
+// пакет звучности mut/захватов, owner decision 2026-08-01: "ВТОРОЙ канал
+// той же дыры... ro-launder ПОЛЕЙ — `mut lock = @lock` / `mut gauges =
+// @gauges` из ro-метода легально вымогают mut на разделяемое состояние".
+//
+// Same shape as probe G (neg/m_ro_launder_g_value_record_heap_field_neg.nv)
+// — a value-record with a heap field (Vec) — but the launder happens via a
+// SELF-FIELD READ (`@items`) inside a RO-RECEIVER method, not a bare-Ident
+// re-binding. Live repro: nova-polaris/src/metrics.nv (`mut lock = @lock`,
+// `mut counters = @counters`), read-only reference — this fixture is a
+// standalone, dependency-free reproduction of the SAME class.
+//
+// EXPECT_COMPILE_ERROR E_READONLY_COERCE
+
+module neg.m_ro_launder_l_field_launder_self_neg
+
+import std.collections.vec.{Vec}
+
+type Basket value {
+    priv items Vec[int]
+}
+
+fn Basket.new() -> Basket => { items: Vec[int].of(1, 2, 3) }
+
+// RO-receiver method (no `mut @`) — `@items` is a self-field read off a
+// ro-bound receiver; laundering it into a `mut` local would let a write
+// through the copy alias the SAME Vec buffer the original receiver (and
+// therefore the caller's Basket) sees.
+fn Basket @peek_and_corrupt() -> int {
+    mut items = @items
+    items.push(99)
+    items.len()
+}
+
+fn main() -> () {
+    ro b = Basket.new()
+    print(b.peek_and_corrupt())
+}

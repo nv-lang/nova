@@ -1583,7 +1583,7 @@ export extern "nova" fn Mutex.new() -> Self
 /// NOT reentrant — a repeated call from the same fiber deadlocks.
 #parks
 #stable(since = "0.1")
-export extern "nova" fn Mutex mut @lock() -> MutexGuard consume
+export extern "nova" fn Mutex @lock() -> MutexGuard consume
 
 /// (Deprecated) Release the mutex without a guard.
 ///
@@ -1592,14 +1592,14 @@ export extern "nova" fn Mutex mut @lock() -> MutexGuard consume
 #deprecated(since = "0.2", note = "use consume g = mu.lock(); defer g.unlock() instead (Plan 103.9 guard API)")
 #wakes
 #stable(since = "0.1")
-export extern "nova" fn Mutex mut @unlock()
+export extern "nova" fn Mutex @unlock()
 
 /// Try to acquire the mutex without blocking.
 ///
 /// Returns `true` if the lock was acquired, `false` if it is held.
 #realtime
 #stable(since = "0.1")
-export extern "nova" fn Mutex mut @try_lock() -> bool
+export extern "nova" fn Mutex @try_lock() -> bool
 
 // ─── Mutex extensions (Plan 103.3) ───────────────────────────────
 
@@ -1646,7 +1646,7 @@ export extern "nova" fn Mutex.new_unfair() -> Self
 /// D-amendment; scope here is the method name only.)
 #realtime
 #stable(since = "0.1")
-export extern "nova" fn Mutex mut @lock_for(timeout Duration) -> bool
+export extern "nova" fn Mutex @lock_for(timeout Duration) -> bool
 
 /// Best-effort state check. NOT for CAS patterns.
 ///
@@ -1677,7 +1677,7 @@ export extern "nova" fn Mutex @is_locked() -> bool
 /// - `[ReentrantMutex.with_lock]` — the ReentrantMutex analogue
 #parks
 #stable(since = "0.1")
-export fn Mutex mut @with_lock[R](body fn() -> R) -> R {
+export fn Mutex @with_lock[R](body fn() -> R) -> R {
     consume guard = self.lock()
     defer guard.unlock()
     body()
@@ -1734,7 +1734,7 @@ export extern "nova" fn RwLock.new_reader_priority() -> Self
 /// Old callers that discard the return value still compile.
 #parks
 #stable(since = "0.1")
-export extern "nova" fn RwLock mut @read() -> ReadGuard consume
+export extern "nova" fn RwLock @read() -> ReadGuard consume
 
 /// (Deprecated) Release the read lock without a guard.
 ///
@@ -1742,12 +1742,12 @@ export extern "nova" fn RwLock mut @read() -> ReadGuard consume
 #deprecated(since = "0.2", note = "use consume g = rw.read(); defer g.unlock() instead (Plan 103.9 guard API)")
 #wakes
 #stable(since = "0.1")
-export extern "nova" fn RwLock mut @read_unlock()
+export extern "nova" fn RwLock @read_unlock()
 
 /// Try to acquire the read lock without blocking.
 #realtime
 #stable(since = "0.1")
-export extern "nova" fn RwLock mut @try_read() -> bool
+export extern "nova" fn RwLock @try_read() -> bool
 
 /// Try to acquire the read lock within a timeout.
 ///
@@ -1757,7 +1757,7 @@ export extern "nova" fn RwLock mut @try_read() -> bool
 /// infallible sibling of this name — a plain name, without `try_` (R3 D325).
 #parks
 #stable(since = "0.1")
-export extern "nova" fn RwLock mut @read_for(timeout Duration) -> bool
+export extern "nova" fn RwLock @read_for(timeout Duration) -> bool
 
 /// Acquire the write lock. Waits for all readers and other writers to finish.
 ///
@@ -1765,7 +1765,7 @@ export extern "nova" fn RwLock mut @read_for(timeout Duration) -> bool
 /// Old callers that discard the return value still compile.
 #parks
 #stable(since = "0.1")
-export extern "nova" fn RwLock mut @write() -> WriteGuard consume
+export extern "nova" fn RwLock @write() -> WriteGuard consume
 
 /// (Deprecated) Release the write lock without a guard.
 ///
@@ -1773,12 +1773,12 @@ export extern "nova" fn RwLock mut @write() -> WriteGuard consume
 #deprecated(since = "0.2", note = "use consume g = rw.write(); defer g.unlock() instead (Plan 103.9 guard API)")
 #wakes
 #stable(since = "0.1")
-export extern "nova" fn RwLock mut @write_unlock()
+export extern "nova" fn RwLock @write_unlock()
 
 /// Try to acquire the write lock without blocking.
 #realtime
 #stable(since = "0.1")
-export extern "nova" fn RwLock mut @try_write() -> bool
+export extern "nova" fn RwLock @try_write() -> bool
 
 /// Try to acquire the write lock within a timeout.
 ///
@@ -1786,7 +1786,7 @@ export extern "nova" fn RwLock mut @try_write() -> bool
 /// renamed from `try_write_for` — the same retraction as `read_for` above.
 #parks
 #stable(since = "0.1")
-export extern "nova" fn RwLock mut @write_for(timeout Duration) -> bool
+export extern "nova" fn RwLock @write_for(timeout Duration) -> bool
 
 /// Current number of active readers. Best-effort.
 #realtime
@@ -1803,7 +1803,7 @@ export extern "nova" fn RwLock @is_write_locked() -> bool
 /// **PREFERRED PATTERN (M15).** V2 (Plan 103.9): a thin wrapper over `ReadGuard consume`.
 #parks
 #stable(since = "0.1")
-export fn RwLock mut @with_read[R](body fn() -> R) -> R {
+export fn RwLock @with_read[R](body fn() -> R) -> R {
     consume guard = self.read()
     defer guard.unlock()
     body()
@@ -1814,7 +1814,7 @@ export fn RwLock mut @with_read[R](body fn() -> R) -> R {
 /// **PREFERRED PATTERN (M15).** V2 (Plan 103.9): a thin wrapper over `WriteGuard consume`.
 #parks
 #stable(since = "0.1")
-export fn RwLock mut @with_write[R](body fn() -> R) -> R {
+export fn RwLock @with_write[R](body fn() -> R) -> R {
     consume guard = self.write()
     defer guard.unlock()
     body()

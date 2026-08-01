@@ -381,7 +381,17 @@ fn ReadBuffer @decode_utf8_at(p int) -> Result[(int, int), ReadBufferError] {
     if b0 < 0x80 {
         return Ok((b0, 1))
     }
-    ro tup = if (b0 & 0xE0) == 0xC0 {
+    // [M-router-handler-mut-capture-escape-soundness] §2 field-launder
+    // энфорс (срочный пакет звучности, 2026-08-01) flagged `tup.0`/`tup.1`
+    // below: the if-expr tuple's element type doesn't resolve through
+    // `infer_expr_type` (no arm for tuple-typed if-branches), so the
+    // checker's stack-value predicate saw `None` and — combined with `tup`
+    // being `ro`-bound (L1) — conservatively rejected the read as
+    // "not provably fully-stack". The tuple genuinely IS `(int, int)`
+    // (fully-stack); `tup` binding itself is never reassigned, so `mut`
+    // here is a no-op besides opting `tup` out of the L1-ro-source check
+    // (mut-bound locals are never added to `ro_binding_names`).
+    mut tup = if (b0 & 0xE0) == 0xC0 {
         (2, b0 & 0x1F)
     } else if (b0 & 0xF0) == 0xE0 {
         (3, b0 & 0x0F)

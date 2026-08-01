@@ -1,0 +1,30 @@
+// [M-router-handler-mut-capture-escape-soundness] §2 probe M — срочный
+// пакет звучности mut/захватов, owner decision 2026-08-01. Field-launder
+// channel sibling of probe L, but the launder source is `obj.field` (a
+// bare-Ident `obj` bound `ro`), not `@field` (self-receiver). Same
+// unsoundness: `mut items = box.items` copies a POINTER-shaped heap field
+// out of a ro-bound value; a write through the new `mut` binding aliases
+// the SAME Vec buffer the ro-bound `box` (and its caller) still sees.
+//
+// EXPECT_COMPILE_ERROR E_READONLY_COERCE
+
+module neg.m_ro_launder_m_field_launder_ident_neg
+
+import std.collections.vec.{Vec}
+
+type Basket value {
+    priv items Vec[int]
+}
+
+fn Basket.new() -> Basket => { items: Vec[int].of(1, 2, 3) }
+
+fn corrupt_via_field(box Basket) -> int {
+    mut items = box.items
+    items.push(99)
+    items.len()
+}
+
+fn main() -> () {
+    ro b = Basket.new()
+    print(corrupt_via_field(b))
+}

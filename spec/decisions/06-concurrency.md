@@ -5787,6 +5787,33 @@ LLM-навигации (иерархические ветви с explicit mappin
 ## D174. Sync primitives consume integration (Plan 103.9)
 
 > **Статус:** ✅ final (Plan 103.9, 2026-05-27). V2 guard-returning API.
+> **AMENDED 2026-08-01** (owner decision, срочный пакет звучности
+> mut/захватов, [M-router-handler-mut-capture-escape-soundness] §4):
+> `Mutex`/`RwLock`'s lock-acquire/lock-release API (`@lock`, `@unlock`,
+> `@try_lock`, `@lock_for`, `@with_lock`, `@read`, `@read_unlock`,
+> `@try_read`, `@read_for`, `@write`, `@write_unlock`, `@try_write`,
+> `@write_for`, `@with_read`, `@with_write`) **DROPS the `mut` receiver →
+> ro receiver** (`fn Mutex mut @lock()` → `fn Mutex @lock()`). Rationale
+> (rustc-эталон, [feedback-rustc-as-reference]): real Rust's
+> `Mutex::lock(&self)` takes a SHARED reference — the whole point of
+> `Mutex`/`RwLock` is interior mutability THROUGH the opaque handle
+> (`Mutex(*())`, `#share`-vouched, D415 §2), not through the Nova
+> binding — mut-viral receiver was a category error the checker never
+> caught (`Mutex(*())`'s own field is a raw pointer, not a value —
+> "mutating" through it needs no `mut @` any more than mutating a
+> heap-record's CONTENT needs a `mut` receiver, D246 B). This
+> mut-virality was the ROOT CAUSE of every `mut lock = @lock`
+> field-launder workaround in `nova-polaris/src/metrics.nv`
+> (`[M-router-handler-mut-capture-escape-soundness]` §2 field-launder
+> canal, closed separately in `02-types.md` D246 §72-amendment) — an
+> `MetricsRegistry`-method declared `fn MetricsRegistry @method(...)`
+> (ro receiver, D176-default) could not call `self.lock.lock()` directly
+> while `@lock` required `mut`, forcing the launder. **Not migrated**
+> (out of this window's scope, no live launder-forcing repro found):
+> `Semaphore`/`Once`/`ReentrantMutex`/`Condvar` — same rustc-analogy
+> rationale would apply, but their `mut @`-receiver methods are NOT the
+> `metrics.nv` root cause and were left as a documented follow-up (do NOT
+> assume covered; audit before relying on ro-receiver there).
 
 ### Зачем
 
@@ -5810,10 +5837,10 @@ V2 (D174) применяет **Plan 100 consume-type mechanism (D131–D166)** �
 
 | Метод | Сигнатура | Примечание |
 |---|---|---|
-| `lock()` | `Mutex mut @lock() -> MutexGuard consume` | Parks; returns guard |
+| `lock()` | `Mutex @lock() -> MutexGuard consume` | Parks; returns guard (D174 amend 2026-08-01: ro receiver) |
 | `MutexGuard.unlock()` | `MutexGuard @unlock(consume self)` | Consumes guard; wakes next |
-| `unlock()` (bare) | `Mutex mut @unlock()` | Deprecated V1; `W_BARE_UNLOCK_DEPRECATED` |
-| `with_lock(fn)` | `Mutex mut @with_lock[R](body fn() -> R) -> R` | Thin wrapper; backward compat |
+| `unlock()` (bare) | `Mutex @unlock()` | Deprecated V1; `W_BARE_UNLOCK_DEPRECATED` (D174 amend: ro receiver) |
+| `with_lock(fn)` | `Mutex @with_lock[R](body fn() -> R) -> R` | Thin wrapper; backward compat (D174 amend: ro receiver) |
 
 C mangling (Plan 100.6 D164):
 - `MutexGuard.unlock(consume self)` → `Nova_MutexGuard_consume_unlock`
@@ -5823,14 +5850,14 @@ C mangling (Plan 100.6 D164):
 
 | Метод | Сигнатура | Примечание |
 |---|---|---|
-| `read()` | `RwLock mut @read() -> ReadGuard consume` | Parks; returns read guard |
-| `write()` | `RwLock mut @write() -> WriteGuard consume` | Parks; returns write guard |
+| `read()` | `RwLock @read() -> ReadGuard consume` | Parks; returns read guard (D174 amend: ro receiver) |
+| `write()` | `RwLock @write() -> WriteGuard consume` | Parks; returns write guard (D174 amend: ro receiver) |
 | `ReadGuard.unlock()` | `ReadGuard @unlock(consume self)` | Consumes guard; wakes if needed |
 | `WriteGuard.unlock()` | `WriteGuard @unlock(consume self)` | Consumes guard; wakes next |
-| `read_unlock()` (bare) | `RwLock mut @read_unlock()` | Deprecated V1 |
-| `write_unlock()` (bare) | `RwLock mut @write_unlock()` | Deprecated V1 |
-| `with_read(fn)` | `RwLock mut @with_read[R](...) -> R` | Thin wrapper; backward compat |
-| `with_write(fn)` | `RwLock mut @with_write[R](...) -> R` | Thin wrapper; backward compat |
+| `read_unlock()` (bare) | `RwLock @read_unlock()` | Deprecated V1 (D174 amend: ro receiver) |
+| `write_unlock()` (bare) | `RwLock @write_unlock()` | Deprecated V1 (D174 amend: ro receiver) |
+| `with_read(fn)` | `RwLock @with_read[R](...) -> R` | Thin wrapper; backward compat (D174 amend: ro receiver) |
+| `with_write(fn)` | `RwLock @with_write[R](...) -> R` | Thin wrapper; backward compat (D174 amend: ro receiver) |
 
 #### Semaphore V2
 

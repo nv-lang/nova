@@ -1,0 +1,34 @@
+// [M-router-handler-mut-capture-escape-soundness] §2 — field-launder
+// channel, POS companion of neg/m_ro_launder_l_field_launder_self_neg.nv
+// and neg/m_ro_launder_m_field_launder_ident_neg.nv (срочный пакет
+// звучности mut/захватов, owner decision 2026-08-01). Mirrors §72's probe-E
+// re-classification (D246 §72 `is_fully_stack_value`) one Member-hop
+// deeper: a field whose OWN type is fully-stack (no heap graph to leak)
+// stays legal to launder into `mut` — the field-launder check only fires
+// when the field itself fails `is_fully_stack_value`.
+
+module spec_tests.conformance
+
+type Counter value {
+    priv n int
+}
+
+fn Counter.new(n int) -> Counter => { n }
+
+fn Counter @doubled_via_self_field_launder() -> int {
+    mut n = @n // scalar field — fully-stack, exempt (same boundary as §72)
+    n = n * 2
+    n
+}
+
+fn doubled_via_ident_field_launder(c Counter) -> int {
+    mut n = c.n // scalar field via bare ro-bound Ident — exempt
+    n = n * 2
+    n
+}
+
+test "field-launder channel: fully-stack (scalar) field stays legal to launder into mut" {
+    ro c = Counter.new(21)
+    assert(c.doubled_via_self_field_launder() == 42)
+    assert(doubled_via_ident_field_launder(c) == 42)
+}

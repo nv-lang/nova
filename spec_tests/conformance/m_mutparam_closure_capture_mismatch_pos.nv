@@ -1,0 +1,60 @@
+// [M-effect-handler-mutex-hashmap-value-capture] reanimation — срочный
+// пакет звучности mut/захватов, п.6, owner decision 2026-08-01. Live-
+// reproducible C-mismatch (unlike the sibling `m_boxcap_*` fixture, which
+// found the ORIGINAL reported shape no longer reproduces): a factory fn
+// taking a `mut`-VALUE-RECORD PARAMETER (not a local), whose body's
+// returned closure calls a `mut`-receiver method on it.
+//
+// Was: CC-FAIL — "indirection requires pointer operand ('NovaValue_Reg'
+// invalid)" + "assigning to NovaValue_Reg from incompatible type
+// NovaValue_Reg *; dereference with *". Root cause (emit_c.rs
+// `emit_lambda`): the closure free-var mut-classification only checked
+// `var_mutable` (plain stack locals) — never `ref_params` (mut-value/
+// primitive PARAMETERS, D326 R5 by-pointer in-out ABI, already a raw
+// pointer at the C level) — env field declared by-value instead of
+// pointer, AND `ref_params` leaked un-scoped into the lambda body (unlike
+// `var_boxed`), corrupting Ident emission for the captured name. Fixed:
+// `is_mut` now also checks `ref_params`; the box-copy source gets an extra
+// deref for a `ref_params` origin; `ref_params` is now save/take/restored
+// around the lambda body exactly like `var_boxed`.
+
+module spec_tests.conformance
+
+import std.runtime.sync.{Mutex}
+import std.collections.hashmap.{HashMap}
+
+type M_mpcc_Reg value {
+    priv m_mpcc_lock     Mutex
+    priv m_mpcc_counters HashMap[str, int]
+}
+
+fn M_mpcc_Reg.new() -> M_mpcc_Reg => {
+    m_mpcc_lock: Mutex.new(),
+    m_mpcc_counters: HashMap[str, int].new(),
+}
+
+fn M_mpcc_Reg mut @m_mpcc_bump(m_mpcc_name str) {
+    consume m_mpcc_g = @m_mpcc_lock.lock()
+    ro m_mpcc_prev = @m_mpcc_counters.get(m_mpcc_name) ?? 0
+    @m_mpcc_counters.insert(m_mpcc_name, m_mpcc_prev + 1)
+    m_mpcc_g.unlock()
+}
+
+type M_mpcc_Handler fn(str) -> int
+
+// `mut m_mpcc_reg` — a MUT VALUE-RECORD PARAMETER (pointer-ABI in-out,
+// D326 R5), captured by the closure the factory returns. This is the
+// EXACT shape that reproduced the C-mismatch.
+fn m_mpcc_make_handler(mut m_mpcc_reg M_mpcc_Reg) -> M_mpcc_Handler {
+    fn(m_mpcc_name str) -> int {
+        m_mpcc_reg.m_mpcc_bump(m_mpcc_name)
+        0
+    }
+}
+
+test "mut-value-record PARAMETER captured by a factory's returned closure compiles and runs (п.6 C-mismatch reanimation)" {
+    mut m_mpcc_r = M_mpcc_Reg.new()
+    ro m_mpcc_h = m_mpcc_make_handler(m_mpcc_r)
+    ro m_mpcc_rc = m_mpcc_h("hits")
+    assert(m_mpcc_rc == 0)
+}

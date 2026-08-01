@@ -39,20 +39,28 @@ fn M_boxcap_Registry.new() -> M_boxcap_Registry => {
     m_boxcap_counters: HashMap[str, int].new(),
 }
 
+// [M-router-handler-mut-capture-escape-soundness] §2 field-launder fix
+// (срочный пакет звучности, 2026-08-01): the OLD `mut m_boxcap_lock =
+// @m_boxcap_lock` / `mut m_boxcap_counters = @m_boxcap_counters` launder
+// (needed only because `Mutex.@lock` USED to require a `mut` receiver,
+// D174 pre-amendment) now trips the field-launder E_READONLY_COERCE check
+// this fixture's own sibling window closed. Canonical replacement (D174
+// amend §4 of the same window — `Mutex.@lock`/`HashMap` methods called
+// through a RO receiver): read `@m_boxcap_lock`/`@m_boxcap_counters`
+// directly (no intermediate `mut` local) — `HashMap.insert`/`.get` on a
+// `priv` field reached through `@` inside the type's own method body work
+// on the SAME shared handle either way (heap-record content, D246 B), no
+// `mut` local ever needed for THAT part; only the Mutex receiver mattered.
 fn M_boxcap_Registry @m_boxcap_record(m_boxcap_name str) {
-    mut m_boxcap_lock = @m_boxcap_lock
-    consume m_boxcap_g = m_boxcap_lock.lock()
-    mut m_boxcap_counters = @m_boxcap_counters
-    ro m_boxcap_cur = m_boxcap_counters.get(m_boxcap_name) ?? 0
-    ro _ = m_boxcap_counters.insert(m_boxcap_name, m_boxcap_cur + 1)
+    consume m_boxcap_g = @m_boxcap_lock.lock()
+    ro m_boxcap_cur = @m_boxcap_counters.get(m_boxcap_name) ?? 0
+    ro _ = @m_boxcap_counters.insert(m_boxcap_name, m_boxcap_cur + 1)
     m_boxcap_g.unlock()
 }
 
 fn M_boxcap_Registry @m_boxcap_value(m_boxcap_name str) -> int {
-    mut m_boxcap_lock = @m_boxcap_lock
-    consume m_boxcap_g = m_boxcap_lock.lock()
-    mut m_boxcap_counters = @m_boxcap_counters
-    ro m_boxcap_v = m_boxcap_counters.get(m_boxcap_name) ?? 0
+    consume m_boxcap_g = @m_boxcap_lock.lock()
+    ro m_boxcap_v = @m_boxcap_counters.get(m_boxcap_name) ?? 0
     m_boxcap_g.unlock()
     m_boxcap_v
 }
