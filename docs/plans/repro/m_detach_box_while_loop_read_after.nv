@@ -1,0 +1,33 @@
+// KNOWN-BROKEN reference repro — NOT part of any test suite (would ICE
+// C-codegen if built). Do not add to spec_tests/conformance, nova_tests, or
+// any glob-discovered test path — kept here purely as an executable-by-hand
+// diagnostic artifact for [M-detach-box-while-loop-read-after].
+//
+// Diagnosed 2026-08-01 (window p-ice-pack, п.2, sonnet) — see
+// docs/plans/backlog-followups.md's entry for the full root-cause writeup
+// and why a real fix was out of this window's budget (needs either a
+// retroactive-insert-into-self.out hoisting mechanism or a full pre-scan of
+// "will this mut local ever be captured mutably later" ahead of its own
+// Stmt::Let emission — both are new infrastructure over emit_stmt's already
+// enormous Let-handling match, disproportionate to a single ICE-pack item).
+//
+// To reproduce: nova build docs/plans/repro/m_detach_box_while_loop_read_after.nv
+//   → error: use of undeclared identifier '_nova_detach_0_box_inflight'
+module nova_repro.detach_box_while_loop_read_after
+
+import std.runtime.sync.{Semaphore}
+
+fn probe() Detach {
+    mut inflight = Semaphore.new(4)
+    mut running = true
+    while running {
+        detach { ro _ = inflight.try_acquire() }
+        running = false
+    }
+    ro avail = inflight.available_permits()   // <- breaks C-codegen
+    println("avail=${avail}")
+}
+
+fn main() Detach {
+    probe()
+}
