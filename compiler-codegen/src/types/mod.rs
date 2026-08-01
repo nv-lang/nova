@@ -33580,6 +33580,42 @@ impl<'a> ConsumeCtx<'a> {
             }
             // Алиас `let y = x` — переносим известный тип `x`.
             ExprKind::Ident(n) => self.var_types.get(&self.canonical(n)).cloned(),
+            // [M-chained-consume-lock-d133-empty-type] (ICE-пачка п.4): bare
+            // FIELD READ (`@lock`, `registry.lock`, not a call) as a
+            // consume-RHS's receiver chain — `consume g = @lock.lock()`'s
+            // `func.kind` is `Member{obj: Member{SelfAccess,"lock"}, name:
+            // "lock"}`; the Call-arm's own `recv_ty` match above only knows
+            // `Ident`/`SelfAccess` obj-shapes directly, so a receiver that is
+            // ITSELF a plain field-access Member (not a call) fell through to
+            // `_ => self.infer_value_type(obj)` recursing into THIS match with
+            // no matching arm at all (every existing arm here is Call/Ident/
+            // RecordLit/Try/Bang/RefArg/Coalesce/Match/IfLet) — `None`, so
+            // `var_types["g"]` never got set and D133's obligation-check
+            // reported the empty-type `тип \`\`` diagnostic even though
+            // `MutexGuard`'s declared `@cleanup` should have made the missing
+            // explicit `.unlock()` a non-error (auto-cleanup, D432/Plan 217).
+            // Same gap for the intermediate bind (`ro m = @lock`) — bare
+            // `@lock` alone hit the identical missing-arm hole. Resolve the
+            // field the SAME way `record_field_types` (already populated,
+            // `[M-216-record-payload-consume]`) is consulted elsewhere in
+            // this file: obj's own type (self/local/recursive-Member), then
+            // `(type, field) -> field's declared type` lookup.
+            ExprKind::Member { obj, name } => {
+                let obj_ty: Option<String> = match &obj.kind {
+                    ExprKind::Ident(recv) if recv == "self" => self.self_type.clone(),
+                    ExprKind::Ident(recv) => {
+                        let canon = self.canonical(recv);
+                        self.var_types.get(&canon)
+                            .or_else(|| self.var_types.get(recv.as_str()))
+                            .cloned()
+                    }
+                    ExprKind::SelfAccess => self.self_type.clone(),
+                    _ => self.infer_value_type(obj),
+                };
+                obj_ty.and_then(|ty| {
+                    self.reg.record_field_types.get(&ty)?.get(name).cloned()
+                })
+            }
             // `User { ... }` record-литерал.
             ExprKind::RecordLit { type_name: Some(path), .. } if path.len() == 1 => {
                 Some(path[0].clone())

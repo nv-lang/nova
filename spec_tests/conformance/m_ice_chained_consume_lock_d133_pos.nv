@@ -1,0 +1,74 @@
+// ICE-пачка п.4: [M-chained-consume-lock-d133-empty-type].
+//
+// `consume g = @lock.lock()` — a CHAINED consume-RHS whose receiver is a
+// bare field-access expression (`@lock`, sugar for `self.lock`, itself a
+// `Member` node — not a bound `Ident`) — falsely reported
+// `[D133-not-consumed]` with an EMPTY type (`тип ``) when `.unlock()` was
+// not called explicitly, even though `MutexGuard`'s declared `@cleanup`
+// (D432/Plan 217) should have made the auto-cleanup path apply and the
+// missing explicit unlock a non-error.
+//
+// Root cause (types/mod.rs, ConsumeCtx::infer_value_type): the Call arm's
+// receiver-type resolution recognizes an `Ident`/`SelfAccess` obj directly,
+// falling back to a RECURSIVE `infer_value_type(obj)` call for anything
+// else (a chained method-call receiver) — but `infer_value_type` itself had
+// NO match arm for a bare `ExprKind::Member` (field read, not a call): every
+// existing arm was Call/Ident/RecordLit/Try/Bang/RefArg/Coalesce/Match/
+// IfLet. So `@lock` (and even a bound `ro m = @lock` — the SAME gap, one
+// level up) resolved to `None`, `var_types["g"]` never got the `MutexGuard`
+// type, and the D133 obligation-checker's `has_pure_cleanup` lookup on an
+// empty type string failed, forcing the (bogus) explicit-consume
+// requirement.
+//
+// Fix: infer_value_type gets a new ExprKind::Member arm resolving the
+// SAME way method-call receivers already do (self/local Ident, or
+// recursive Member) then consulting the existing
+// `ConsumeRegistry::record_field_types` map (already populated per
+// `[M-216-record-payload-consume]`, just never read from this exact path).
+//
+// The canonical fixture for the ORIGINAL discovery
+// (spec_tests/conformance/m_boxcap_effect_handler_mutex_hashmap_pos.nv) had
+// its explicit `.unlock()` calls removed by this same fix — this fixture
+// pins the class directly and independently of that one, with BOTH the
+// chained-field-receiver form AND the intermediate-bound-var form (the
+// second gap in the same function).
+module spec_tests.conformance
+
+import std.runtime.sync.{Mutex}
+
+type MIceLockRegistry value {
+    priv m_ice_lock    Mutex
+    priv m_ice_counter int
+}
+
+fn MIceLockRegistry.new() -> MIceLockRegistry => { m_ice_lock: Mutex.new(), m_ice_counter: 0 }
+
+// Chained form: `@lock.lock()` — receiver is a bare field-access `Member`,
+// not a bound Ident. No explicit `.unlock()` — auto-cleanup must apply.
+fn MIceLockRegistry @m_ice_bump_chained() -> int {
+    consume m_ice_g = @m_ice_lock.lock()
+    @m_ice_counter += 1
+    @m_ice_counter
+}
+
+// Intermediate-bound-var form: `ro m = @lock; consume g = m.lock()` — the
+// SECOND site the original gap hit (the `@lock` bare-Member arm feeds this
+// binding's own type resolution too). Still no explicit `.unlock()`.
+fn MIceLockRegistry @m_ice_bump_bound() -> int {
+    ro m_ice_m = @m_ice_lock
+    consume m_ice_g = m_ice_m.lock()
+    @m_ice_counter += 1
+    @m_ice_counter
+}
+
+test "ICE-пачка п.4: chained consume-lock (@lock.lock()), no explicit unlock" {
+    ro r = MIceLockRegistry.new()
+    assert(r.m_ice_bump_chained() == 1, "auto-cleanup releases the guard, counter still bumps")
+    assert(r.m_ice_bump_chained() == 2, "lock reusable on the next call (guard was actually released)")
+}
+
+test "ICE-пачка п.4: bound-var consume-lock (m.lock()), no explicit unlock" {
+    ro r = MIceLockRegistry.new()
+    assert(r.m_ice_bump_bound() == 1, "auto-cleanup releases the guard, counter still bumps")
+    assert(r.m_ice_bump_bound() == 2, "lock reusable on the next call (guard was actually released)")
+}
