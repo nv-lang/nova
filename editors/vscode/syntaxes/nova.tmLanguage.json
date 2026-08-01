@@ -158,7 +158,7 @@
                 },
                 {
                     "name": "storage.modifier.nova",
-                    "match": "\\b(ro|mut|consume|priv|pub|unsafe|safe|uninit|let|readonly|ref)\\b"
+                    "match": "\\b(ro|mut|consume|priv|pub|unsafe|safe|uninit|ref)\\b"
                 },
                 {
                     "name": "variable.language.self.nova",
