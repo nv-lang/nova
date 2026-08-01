@@ -5,6 +5,7 @@ pub mod gc_layout;
 pub mod may_gc;
 pub mod mono_method_registry;
 pub mod operator_dispatch;
+pub mod option_none_hint;
 pub mod overload_sig;
 pub mod preempt_keep;
 pub mod runtime_registry;

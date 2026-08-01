@@ -1208,6 +1208,12 @@ pub struct CEmitter {
     /// `debt_find_variant_ctx` only consults it among ≥2 already-ambiguous
     /// plain candidates for the SAME variant name.
     expected_sum_hint: Option<String>,
+    /// [221.1 №250/№251] `NovaOpt_<T>` C-type a bare `None` nested in
+    /// `Ok(None)`/`Err(None)` is expected to construct — same shape as
+    /// `expected_sum_hint` above, sibling gap; full rationale + the actual
+    /// priority-resolution logic live in `option_none_hint` (this module's
+    /// `None` is unset almost everywhere, byte-identical then).
+    expected_option_elem_hint: Option<String>,
     /// D73/D84: When emitting `ro x T = v.into()`, set to T before emitting
     /// the RHS so the .into() resolver can prefer `T.from(v)` over other
     /// targets that also accept v (e.g. StringBuilder.from(str)).
@@ -2431,6 +2437,7 @@ impl CEmitter {
             current_receiver_is_static: false,
             expected_record_type: None,
             expected_sum_hint: None,
+            expected_option_elem_hint: None,
             expected_into_target: None,
             current_array_elem_hint: None,
             current_array_protocol_box: None,
@@ -3895,8 +3902,16 @@ impl CEmitter {
     /// `register_novaopt_decl`/`register_novaopt_decl_forced` forward-typedef
     /// polluting-check: only mono'd (`____`-bearing) `Nova_`-prefixed names need
     /// the guard (nova_int/nova_str/runtime-defined structs are excluded).
+    ///
+    /// [221.1 №250/№251] `NovaRes_<ok>_<err>` also needs it: its full body
+    /// splices at `/*__NOVARES_TYPEDEFS__*/`, textually AFTER this buffer's own
+    /// `/*__NOVAOPT_TYPEDEFS__*/` — a `NovaOpt_` pointer-wrap of a non-canonical
+    /// pair (anything but the ONE `array.h`-hardcoded `(nova_int, nova_str)`)
+    /// referenced the struct before its declaration. Harmless for the canonical
+    /// pair too (redundant compatible C11 typedef redecl, 6.7p3).
     fn debt_is_mono_nova_name(inner_name: &str) -> bool {
-        Self::debt_contains_mono_sep(inner_name) && inner_name.starts_with("Nova_")
+        (Self::debt_contains_mono_sep(inner_name) && inner_name.starts_with("Nova_"))
+            || inner_name.starts_with("NovaRes_")
     }
 
     /// Plan 91.12 V2 / Plan 173.3 (D415 §2 detach-migration fix, 2026-07-11):
@@ -33506,25 +33521,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // Plan 14 Ф.1: `None` — typed compound literal по
                         // current_fn_return_ty. Иначе — legacy nova_make.
                         if name == "None" {
-                            // 172.1.2 (None-канал, 2026-07-03): КАНАЛ первым — чекер
-                            // аннотирует None expected-типом (literal-coercion) или
-                            // типом другого операнда сравнения; function-level
-                            // current_fn_return_ty — лишь фоллбек (врёт по позиции).
-                            let channel_opt: Option<String> = expr
-                                .id
-                                .is_set()
+                            // 172.1.2 (None-канал, 2026-07-03) + [221.1 №250/№251]
+                            // (`expected_option_elem_hint`, sibling gap for `None`
+                            // NESTED in `Ok(None)`/`Err(None)`): full priority
+                            // rationale in `option_none_hint`.
+                            let channel = expr.id.is_set()
                                 .then(|| self.resolved_types.get(&expr.id))
                                 .flatten()
-                                .and_then(|rt| self.resolved_type_to_c(rt).ok())
-                                .filter(|t| t.starts_with("NovaOpt_"));
-                            let opt_ty: String = channel_opt
-                                .or_else(|| {
-                                    self.current_fn_return_ty
-                                        .as_ref()
-                                        .filter(|t| t.starts_with("NovaOpt_"))
-                                        .cloned()
-                                })
-                                .unwrap_or_else(|| "NovaOpt_nova_int".into());
+                                .and_then(|rt| self.resolved_type_to_c(rt).ok());
+                            let opt_ty: String = super::option_none_hint::resolve_bare_none_novaopt_ty(
+                                self.expected_option_elem_hint.clone(),
+                                channel,
+                                self.current_fn_return_ty.as_ref(),
+                            );
                             // Plan 118 Ф.5: NPO-aware None constructor.
                             let sani = opt_ty.strip_prefix("NovaOpt_").unwrap_or(&opt_ty);
                             return Ok(self.option_none_expr(sani));
@@ -38054,6 +38063,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         let payload_c = if name == "Ok" { &ok_c } else { &err_c };
                         let saved_expected = self.expected_record_type.clone();
                         self.expected_record_type = Self::debt_struct_name_from_c_type(payload_c);
+                        // [221.1 №250/№251] `expected_option_elem_hint`, narrow-scoped
+                        // like the sibling `expected_sum_hint` revert-note just below
+                        // requires — see `option_none_hint` for the full rationale.
+                        let saved_option_hint = self.expected_option_elem_hint.clone();
+                        let arg0_is_bare_none = args.first().map_or(false, |a| matches!(
+                            &a.expr().kind, crate::ast::ExprKind::Ident(n) if n == "None"));
+                        self.expected_option_elem_hint = super::option_none_hint::payload_hint_for(
+                            payload_c, arg0_is_bare_none);
                         // [M-178-variant-ctor-target-sum] (tried + reverted): setting
                         // `expected_sum_hint` here too (mirroring
                         // `emit_record_field_value`) regressed the conformance corpus
@@ -38072,15 +38089,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         if name == "Ok" && args.len() == 1 {
                             let arg_v = self.emit_expr(args[0].expr())?;
                             self.expected_record_type = saved_expected;
+                            self.expected_option_elem_hint = saved_option_hint;
                             return Ok(format!(
                                 "nova_make_NovaRes_{}_Ok({})", suffix, arg_v));
                         } else if name == "Err" && args.len() == 1 {
                             let arg_v = self.emit_expr(args[0].expr())?;
                             self.expected_record_type = saved_expected;
+                            self.expected_option_elem_hint = saved_option_hint;
                             return Ok(format!(
                                 "nova_make_NovaRes_{}_Err({})", suffix, arg_v));
                         }
                         self.expected_record_type = saved_expected;
+                        self.expected_option_elem_hint = saved_option_hint;
                     }
                 }
             }
