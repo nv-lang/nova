@@ -1,0 +1,83 @@
+// D443 (Plan 239): `use` retracted from hard keyword (`TokenKind::KwUse`) to
+// contextual keyword — same mechanism as `bench`/`measure` (D121) and
+// `apply`/`null` (D278 §3): the lexer always yields `Ident("use")`; the
+// parser recognizes `use` positionally. POS-observable norm:
+//   (a) the three pre-existing `use` syntax positions still work unchanged —
+//       import-synonym, record-field embed (D39), protocol embed (D145);
+//   (b) outside those positions, `use` is now a valid identifier — record
+//       field, top-level function, parameter, local binding.
+// Part of the single `standalone` folder-module — file-scoped, no cross-file
+// collisions.
+module standalone.d443_use_contextual_ident_pos
+
+// (a) import-synonym: `use` accepted anywhere `import` is (bootstrap
+// behaviour, unchanged by the retraction — only the token kind changed).
+use std.collections.hashmap.{HashMap}
+
+// (a) record-field embed (D39): `use alias Type`.
+type D443Inner {
+    n int
+}
+
+fn D443Inner @doubled() -> int => @n * 2
+
+type D443Outer {
+    use inner D443Inner
+    label str
+}
+
+// (a) protocol embed (D145 §Protocol composition): `use ProtocolName` at the
+// start of a protocol body.
+type D443Base protocol {
+    @base_val() -> int
+}
+
+type D443Combined protocol {
+    use D443Base
+    @label() -> str
+}
+
+type D443Impl {
+    v int
+}
+
+fn D443Impl @base_val() -> int => @v
+fn D443Impl @label() -> str => "impl"
+
+// (b) `use` as an ordinary record-field name (a plain field, not an embed —
+// a single ident directly followed by the field-list terminator falls
+// through the embed lookahead, D443 §2).
+type D443HasUseField {
+    use str
+}
+
+// (b) `use` as a top-level function name.
+fn use() -> int => 42
+
+// (b) `use` as a parameter name.
+fn d443_takes_use(use int) -> int => use + 1
+
+test "D443: pre-existing use-positions unaffected (import/embed/protocol-embed)" {
+    mut m = HashMap[str, int].new()
+    m.insert("k", 1)
+    assert(m.get("k") == Some(1))
+
+    ro o = D443Outer { inner: D443Inner { n: 3 }, label: "x" }
+    assert(o.doubled() == 6)          // auto-proxy through embed
+    assert(o.inner.n == 3)            // whole embedded object reachable via alias
+
+    ro imp = D443Impl { v: 10 }
+    assert(imp.base_val() == 10)      // satisfies embedded D443Base requirement
+    assert(imp.label() == "impl")
+}
+
+test "D443: use is now a valid identifier outside the 3 syntactic positions" {
+    ro h = D443HasUseField { use: "hi" }
+    assert(h.use == "hi")
+
+    assert(use() == 42)
+    assert(d443_takes_use(5) == 6)
+
+    ro use = 7
+    assert(use == 7)
+}

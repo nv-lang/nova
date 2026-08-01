@@ -26,7 +26,7 @@ use std::path::PathBuf;
 /// Mirror of the `match` arms in `lex_ident_or_keyword` (verified by
 /// `active_keywords_are_lexed_as_keywords`).
 const ACTIVE: &[&str] = &[
-    "module", "import", "use", "export", "external", "extern",
+    "module", "import", "export", "external", "extern",
     "fn", "type", "effect", "alias", "protocol",
     "const", "mut", "consume", "ro", "priv", "pub", "unsafe", "uninit",
     "if", "else", "match", "for", "while", "loop", "in", "return", "break", "continue",
@@ -44,9 +44,13 @@ const RETIRED: &[&str] = &["let", "readonly", "safe"];
 /// Words that are NOT keywords at all (the lexer yields `Ident`) → must NEVER be
 /// highlighted as keywords. `handler` (D142) is now a plain identifier; Nova uses
 /// `&&`/`||`/`!` so `and`/`or`/`not` are not keywords; `race`/`with_timeout`/
-/// `cancel_scope`/`region` never were keywords.
+/// `cancel_scope`/`region` never were keywords. `use` (Plan 239/D443) was retracted
+/// from hard keyword `KwUse` to a contextual identifier — same family as
+/// `bench`/`measure`/`apply`/`null` (see D278 §3): the parser recognizes it
+/// positionally (import-synonym, D39 record-embed, protocol-embed) without a
+/// dedicated token kind.
 const NON_KEYWORDS: &[&str] = &[
-    "handler", "and", "or", "not", "race", "with_timeout", "cancel_scope", "region",
+    "handler", "and", "or", "not", "race", "with_timeout", "cancel_scope", "region", "use",
 ];
 
 /// Phantom set = words that must not appear as highlighted keywords.

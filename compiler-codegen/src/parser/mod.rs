@@ -512,7 +512,17 @@ impl Parser {
             } else {
                 Vec::new()
             };
-            if matches!(self.peek().kind, TokenKind::KwImport | TokenKind::KwUse) {
+            // Plan 239 (D443): `use` — контекстный import-synonym (был
+            // `KwUse`). Lookahead-1: `use` считается import-head только
+            // если следующий токен похож на начало пути (`Ident` или `.`/
+            // `..` relative-anchor) — тот же приём, что и у `bench`
+            // (peek-1 disambiguation), чтобы не съедать `use` в позиции,
+            // где он в будущем мог бы значить что-то ещё на top-level.
+            let is_use_import_head = |p: &Self| -> bool {
+                matches!(p.peek().kind, TokenKind::Ident(ref s) if s == "use")
+                    && matches!(p.peek_at(1).kind, TokenKind::Ident(_) | TokenKind::Dot | TokenKind::DotDot)
+            };
+            if matches!(self.peek().kind, TokenKind::KwImport) || is_use_import_head(self) {
                 imports.push(self.parse_import_with_attrs(import_doc_attrs)?);
                 continue;
             }
@@ -522,10 +532,13 @@ impl Parser {
             // дополнительный путь для парсинга import'а.
             if matches!(self.peek().kind, TokenKind::KwExport)
                 && self.pos + 1 < self.tokens.len()
-                && matches!(
-                    self.tokens[self.pos + 1].kind,
-                    TokenKind::KwImport | TokenKind::KwUse
-                )
+                && (matches!(self.tokens[self.pos + 1].kind, TokenKind::KwImport)
+                    || (matches!(self.tokens[self.pos + 1].kind, TokenKind::Ident(ref s) if s == "use")
+                        && self.pos + 2 < self.tokens.len()
+                        && matches!(
+                            self.tokens[self.pos + 2].kind,
+                            TokenKind::Ident(_) | TokenKind::Dot | TokenKind::DotDot
+                        )))
             {
                 imports.push(self.parse_import_with_attrs(import_doc_attrs)?);
                 continue;
@@ -5034,8 +5047,21 @@ impl Parser {
                 ));
             }
             // D39 / Plan 11 Ф.9: `use name Type` (named embed) или
-            // `use _ Type` (anonymous embed).
-            let is_embed = self.eat(&TokenKind::KwUse).is_some();
+            // `use _ Type` (anonymous embed). Plan 239 (D443): `use`
+            // контекстный (был `KwUse`) — embed распознаётся по 2-токенному
+            // lookahead: `use` + Ident (alias/`_`) + НЕ-terminator (значит
+            // дальше идёт Type). Без этого — обычное поле с именем `use`
+            // (`use <Type>`: один ident перед разделителем полей).
+            let is_embed = matches!(self.peek().kind, TokenKind::Ident(ref s) if s == "use")
+                && matches!(self.peek_at(1).kind, TokenKind::Ident(_))
+                && !matches!(
+                    self.peek_at(2).kind,
+                    TokenKind::Newline | TokenKind::Semicolon | TokenKind::Comma
+                        | TokenKind::RBrace | TokenKind::Eof
+                );
+            if is_embed {
+                self.bump(); // consume `use`
+            }
             let (name, name_span, anonymous) = if is_embed {
                 // После `use` ожидаем ident (alias name) или `_` для anonymous.
                 let (n, sp) = self.parse_ident()?;
@@ -5267,7 +5293,13 @@ impl Parser {
             // объявить embed после метода (в protocol-теле) или невалидно
             // в effect/handler контексте — в обоих случаях указываем на
             // позиционное ограничение для protocol composition.
-            if matches!(self.peek().kind, TokenKind::KwUse) {
+            // Plan 239 (D443): `use` контекстный (был `KwUse`) — та же
+            // disambiguation что и у leading embed items ниже: `use` +
+            // Ident (тип) → misplaced embed; `use(` → обычный bare-ident
+            // метод по имени `use` (легитимно в effect-режиме).
+            if matches!(self.peek().kind, TokenKind::Ident(ref s) if s == "use")
+                && matches!(self.peek_at(1).kind, TokenKind::Ident(_))
+            {
                 let sp = self.peek().span;
                 return Err(Diagnostic::new(
                     "[E_PROTOCOL_EMBED_AFTER_METHOD] `use TypeName` items must \
@@ -5540,14 +5572,15 @@ impl Parser {
     ) -> Result<(Vec<EffectMethod>, Vec<TypeRef>), Diagnostic> {
         let mut embeds = Vec::new();
         self.skip_newlines();
-        // Leading `use TypeName` items. `use` — keyword (TokenKind::KwUse).
-        // После `use` обязан идти Ident (имя типа). Distinguishing от
-        // top-level `use` импорта — здесь мы строго внутри `protocol { ... }`,
-        // поэтому семантика однозначна: embed-protocol.
+        // Leading `use TypeName` items. Plan 239 (D443): `use` — контекстный
+        // identifier (был `KwUse`), не hard keyword. После `use` обязан
+        // идти Ident (имя типа). Distinguishing от top-level `use` импорта —
+        // здесь мы строго внутри `protocol { ... }`, поэтому семантика
+        // однозначна: embed-protocol.
         // Поддерживается comma-separated: `use Reader, Writer` (D145 spec),
         // и линия-на-use: `use Reader\n  use Writer` (более читаемо).
         loop {
-            if matches!(self.peek().kind, TokenKind::KwUse)
+            if matches!(self.peek().kind, TokenKind::Ident(ref s) if s == "use")
                 && matches!(self.peek_at(1).kind, TokenKind::Ident(_))
             {
                 self.bump(); // consume `use`
@@ -5565,9 +5598,12 @@ impl Parser {
         // Plan 108.4 Ф.1: protocol methods require `@` / `mut @` / `consume @`
         // / `.` receiver syntax — pass is_protocol = true.
         let methods = self.parse_effect_methods(true)?;
-        // Forbid `use` after methods — for clarity.
+        // Forbid `use` after methods — for clarity. Plan 239 (D443): `use`
+        // контекстный — та же Ident+Ident lookahead disambiguation.
         self.skip_newlines();
-        if matches!(self.peek().kind, TokenKind::KwUse) {
+        if matches!(self.peek().kind, TokenKind::Ident(ref s) if s == "use")
+            && matches!(self.peek_at(1).kind, TokenKind::Ident(_))
+        {
             let sp = self.peek().span;
             return Err(Diagnostic::new(
                 "[E_PROTOCOL_EMBED_AFTER_METHOD] `use TypeName` items must \
@@ -9522,7 +9558,6 @@ impl Parser {
         let kw_text = match &tok.kind {
             TokenKind::KwModule => "module",
             TokenKind::KwImport => "import",
-            TokenKind::KwUse => "use",
             TokenKind::KwExport => "export",
             TokenKind::KwExternal => "external",
             TokenKind::KwFn => "fn",
