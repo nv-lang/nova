@@ -69,6 +69,9 @@ export fn Jwt.decode_hs256(secret []u8, token str) -> Result[JsonValue, JwtError
 
     // Парсим header чтобы проверить alg
     ro header_bytes = Base64.decode_url(header_b64).map_err(|_| DecodingFailed)?
+    // [M-bytes-to-str-chain-misresolves-universal-str-conv] (221.1 №252):
+    // `header_bytes.to_str().map_err(..)` misresolves to the universal str
+    // conversion — manual match here (and below) until №252 lands.
     ro header_json = match header_bytes.to_str() {
         Ok(s)  => s
         Err(_) => return Err(DecodingFailed)

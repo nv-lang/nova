@@ -145,7 +145,15 @@ export type ParseCharError enum Empty | TooManyChars
 #stable(since = "0.1")
 export fn str @to_char() -> Result[char, ParseCharError] {
     mut it = @chars()
-    ro c = it.next().ok_or(Empty)?
+    // [M-ok-or-bare-variant-misresolve-try-ice] (221.1 №253): the idiomatic
+    // `it.next().ok_or(Empty)?` is a codegen ICE — the checker resolves the
+    // bare `Empty` into a FOREIGN enum (ParseBoolError, not this function's
+    // ParseCharError) and leaves the Try without an Ok-type annotation.
+    // Manual match below is the interim form until №253 lands.
+    ro c = match it.next() {
+        Some(c) => c
+        None => return Err(Empty)
+    }
     match it.next() {
         None => Ok(c)
         Some(_) => Err(TooManyChars)
