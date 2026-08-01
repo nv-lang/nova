@@ -148,7 +148,10 @@ test "split: lazy .next() drive, byte-identical to the old eager array" {
 }
 
 test "split: for-in drives the SAME lazy iterator (no .collect() needed)" {
-    mut out = "x,y,z".split(",").collect()
+    // №254 [M-try-on-next-generic-receiver-misresolve]: iterator .collect()
+    // misresolves in codegen — manual loop until №254 lands.
+    mut out = []str.new()
+    for x in "x,y,z".split(",") { out.push(x) }
     assert(out == ["x", "y", "z"])
 }
 

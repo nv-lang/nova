@@ -186,7 +186,12 @@ test "reverse single element" {
 }
 
 test "reverse via for-loop" {
-    mut collected = (1..=3).reverse().collect()
+    // №254 [M-try-on-next-generic-receiver-misresolve]: iterator .collect()
+    // misresolves in codegen — manual loop until №254 lands.
+    mut collected []int = []
+    for i in (1..=3).reverse() {
+        collected.push(i)
+    }
     assert(collected == [3, 2, 1])
 }
 

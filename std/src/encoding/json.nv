@@ -192,7 +192,10 @@ export fn JsonValue.array(items []JsonValue) -> Self => Array(items)
 /// (`encoding.serde.json`).
 #stable(since = "0.1")
 export fn JsonValue.object(fields HashMap[str, JsonValue]) -> Self {
-    mut keys = fields.keys().collect()
+    // №254 [M-try-on-next-generic-receiver-misresolve]: KeysIter.collect()
+    // misresolves in codegen — manual loop until №254 lands.
+    mut keys []str = []
+    for k in fields.keys() { keys.push(k) }
     keys.sort()
     mut obj = JsonObject.new()
     for k in keys {

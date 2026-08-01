@@ -15,7 +15,10 @@ test "new(cap: n) / reserve" {
 }
 
 test "grow — 1000 pushes preserve order" {
-    mut v = (0..1000).collect()
+    // №254 [M-try-on-next-generic-receiver-misresolve]: iterator .collect()
+    // misresolves in codegen — manual loop until №254 lands.
+    mut v = Vec[int].new()
+    for i in 0..1000 { v.push(i) }
     assert(v.len() == 1000)
     assert(v.get(0) == Some(0))
     assert(v.get(500) == Some(500))
