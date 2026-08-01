@@ -1,0 +1,31 @@
+// EXPECT_COMPILE_ERROR E_UNKNOWN_STATIC_METHOD
+//
+// p-tryfrom retraction (2026-08-01, owner decision) — `T.try_from(s str)`
+// as a str-parse spelling is RETRACTED. Spec was internally contradictory:
+// 03-syntax.md's "Запрещённые as-cast'ы" table prescribed `T.try_from(s)?`
+// as the canonical `str as int/i32/f64/bool/char` replacement, while the
+// actual canon (Plan 174.1 + D77 R3) is "conversion = method on the SOURCE"
+// (`s.to_int()`/`s.to_u64()`/`s.to_f64()`/`s.to_bool()`/`s.to_char()`).
+// Precedent: `TimeZone.try_from` retracted the same way for the identical
+// reason (04-effects.md#d325, R6 — "конверсия на источнике").
+//
+// `int.try_from(s str)` was never a real `.nv`-declared function anywhere in
+// std — it was a hardcoded compiler intrinsic in emit_c.rs keyed off
+// `arg_ty == "nova_str"`. That intrinsic branch is removed; the call now
+// falls through to the pre-existing primitive-static-method fallback and
+// fails LOUDLY at compile time with `[E_UNKNOWN_STATIC_METHOD]` — not an
+// ICE/panic. Numeric/char narrowing `try_from` (`u8.try_from(c char)`,
+// `std/src/runtime/char.nv`) is UNCHANGED — it is a real `.nv` function, not
+// this retracted str-parse intrinsic.
+
+module neg.tryfrom_str_retraction_neg
+
+fn parse_it(s str) -> Result[int, str] {
+    // ✗ E_UNKNOWN_STATIC_METHOD — `int.try_from(str)` retracted; use `s.to_int()`.
+    ro n = int.try_from(s)?
+    Ok(n)
+}
+
+test "p-tryfrom: `int.try_from(str)` is rejected — use `s.to_int()`" {
+    ro _ = parse_it("123")
+}

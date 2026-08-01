@@ -3407,16 +3407,34 @@ ro code = NotFound as int    // 404
 #### Запрещённые `as`-cast'ы для char/u8/bool
 
 Prune `as`-cast'ов где seemingly-numeric mapping выражает unsafe
-семантику. Программист должен использовать `try_from` (с
-range-check'ом) или explicit comparison:
+семантику. Программист должен использовать `try_from`/конверсию на
+источнике (с range-check'ом/парсингом) или explicit comparison:
 
 | Запрещено через `as` | Альтернатива |
 |---|---|
 | `int as char`, `iN/uN as char` | `char.try_from(n)?` (range 0..0x10FFFF, не surrogate) |
 | `char as u8` | `u8.try_from(c)?` (fails если codepoint > 0xFF) |
 | `int/u8/f64/etc as bool` | `n != 0` (или `n != 0.0`) |
-| `str as int/i32/f64/bool/char` | `T.try_from(s)?` (parse) |
+| `str as int/i32/f64/bool/char` | `s.to_int()?`/`s.to_f64()?`/`s.to_bool()?`/`s.to_char()?` (parse, метод на источнике) |
 | `int/f64/bool/char as str` | `str.from(v)` (format) |
+
+> **AMEND (2026-08-01, owner decision, p-tryfrom) — `str as T` parse-строка
+> ретрактирована.** Прежняя форма `T.try_from(s)?` для `str as
+> int/i32/f64/bool/char` противоречила канону Plan 174.1 + D77 R3
+> («конверсия — метод на ИСТОЧНИКЕ», тот же принцип, что уже применён к
+> `TimeZone.try_from` → `s.to_timezone()`, [D321
+> R6](04-effects.md#d321)). Интегратор дважды спотыкался об это внутреннее
+> противоречие спеки (таблица предписывала `T.try_from(s)?`, а фактический
+> канон/реализация — `s.to_*()`). Канон: `s.to_int()`/`s.to_u64()`/
+> `s.to_f64()`/`s.to_bool()`/`s.to_char()` (`std/runtime/string/parse.nv`,
+> Plan 174.1) — каждый возвращает `Result[T, E]`, `?`/`.ok()`/`match`
+> работают идентично прежней `try_from`-форме. `T.try_from(s str)` для
+> примитивов (`int`/`i64`/`u64`/`f64`/`bool`/`char`) был чистым
+> compiler-интринзиком без единой `.nv`-декларации — эмит-ветка удалена
+> (`emit_c.rs`), вызов теперь честная ошибка компиляции
+> `[E_UNKNOWN_STATIC_METHOD]`. Числовые/char narrowing-конверсии
+> (`char.try_from(n int)`, `u8.try_from(c char)`) — **отдельная, легальная**
+> ветка `try_from`, НЕ затронута этим амендментом (см. блок ниже).
 
 **Исключение для char-литералов:** `'A' as int`, `'A' as u8`
 разрешены — программист видит codepoint буквально на

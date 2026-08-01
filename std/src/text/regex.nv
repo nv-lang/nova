@@ -177,7 +177,7 @@ fn Parser mut @parse_braced_quantifier(atom RegexNode) Fail[CompileError] -> Reg
     }
     ro min_str = n_str.into_str()
     if min_str.byte_len() == 0 { throw InvalidQuantifier { position: start } }
-    ro min = int.try_from(min_str) ?? throw InvalidQuantifier { position: start }
+    ro min = min_str.to_int() ?? throw InvalidQuantifier { position: start }
 
     ro max = if @peek() == Some(',') {
         @advance()
@@ -209,7 +209,7 @@ fn Parser mut @parse_quantifier_max(start int) Fail[CompileError] -> int {
     if m.byte_len() == 0 { return -1 }        // {n,} — unbounded
     // [M-d162-structural-throw-sibling] обход: естественная match-форма
     // вместо `if parsed.is_err() { throw ... }` + `parsed!!`
-    match int.try_from(m) {
+    match m.to_int() {
         Ok(v)  => v
         Err(_) => throw InvalidQuantifier { position: start }
     }

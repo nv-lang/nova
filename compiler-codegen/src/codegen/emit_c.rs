@@ -44525,88 +44525,24 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                     }
                 }
-                // Plan 08 Ф.2: D77 try_from / D73 from для numeric/char/bool ↔ str.
-                // T.try_from(v) → Result[T, ParseError]; здесь эмитим
-                // через runtime helper'ы из nova_rt/conv.h.
-                if parts.len() == 2 && parts[1] == "try_from" {
-                    if let Some(arg) = args.first() {
-                        let arg_ty = self.infer_expr_c_type(arg.expr());
-                        let v = self.emit_expr(arg.expr())?;
-                        // Plan 176 Ф.0.5: the `str.try_from([]u8)` byte-array
-                        // overload was RETIRED. Fallible byte→str decode is now
-                        // the canonical Nova-body `str.from_bytes(bytes) ->
-                        // Result[str, Utf8Error]` (typed byte-offset error,
-                        // D325). No dual API — callers migrated to `from_bytes`.
-                        // The `try_from` interception below stays ONLY for the
-                        // scalar parsers (`int.try_from(str)`, `bool.try_from`,…).
-                        // str → numeric / bool: используем парсеры.
-                        if arg_ty == "nova_str" {
-                            let target = parts[0].as_str();
-                            let helper_name = match target {
-                                "int" | "i64" => Some("nova_str_to_i64"),
-                                // Plan 70.5: uint alias u64 — same str parser.
-                                "u64" | "u32" | "u16" | "u8" | "uint" => Some("nova_str_to_u64"),
-                                "i32" | "i16" | "i8" => Some("nova_str_to_i64"),
-                                "f64" | "f32" => Some("nova_str_to_f64"),
-                                "bool" => Some("nova_str_to_bool"),
-                                "char" => Some("nova_str_to_char"),
-                                _ => None,
-                            };
-                            if let Some(helper) = helper_name {
-                                // Emit: parse → wrap в Result.
-                                // nova_<helper>(s) даёт {value, ok}; если ok=true,
-                                // возвращаем Ok(value), иначе Err(<msg>).
-                                let tmp = self.fresh_tmp();
-                                self.line(&format!("nova_str {} = {};", tmp, v));
-                                let res_var = self.fresh_tmp();
-                                let result_struct_ty = if helper == "nova_str_to_u64" {
-                                    "nova_parse_u64_result"
-                                } else if helper == "nova_str_to_f64" {
-                                    "nova_parse_f64_result"
-                                } else if helper == "nova_str_to_bool" {
-                                    "nova_parse_bool_result"
-                                } else if helper == "nova_str_to_char" {
-                                    "nova_char_decode_result"
-                                } else {
-                                    "nova_parse_int_result"
-                                };
-                                self.line(&format!("{} {} = {}({});",
-                                    result_struct_ty, res_var, helper, tmp));
-                                // Plan 174.1 §4: sub-width range-check before the
-                                // narrowing cast — out-of-range → Err (был silent
-                                // truncation `Ok(-25)` для `i8.try_from("999")`).
-                                self.emit_parse_range_check(target, &res_var);
-                                let out = self.fresh_tmp();
-                                // Plan 59 Ф.7.5 D1c: dual-mode producer.
-                                // Result-репрезентация + `Ok`/`Err`-имена
-                                // через helper'ы — флип D3 активирует mono.
-                                // Ok-payload `(nova_int)` cast корректен
-                                // для legacy `Nova_Result*`; mono-Ok-тип —
-                                // задача D3.
-                                let res_c_ty = self.result_repr_c_type(
-                                    "nova_int", "nova_str");
-                                let ok_ctor = self.result_ctor_name(&res_c_ty, "Ok");
-                                let err_ctor = self.result_ctor_name(&res_c_ty, "Err");
-                                self.line(&format!("{} {};", res_c_ty, out));
-                                self.line(&format!("if ({}.ok) {{", res_var));
-                                self.indent += 1;
-                                self.line(&format!(
-                                    "{} = {}((nova_int){}.value);",
-                                    out, ok_ctor, res_var));
-                                self.indent -= 1;
-                                self.line("} else {");
-                                self.indent += 1;
-                                let err_msg = format!("{}.try_from: parse error", target);
-                                self.line(&format!(
-                                    "{} = {}((nova_str){{.ptr=(const uint8_t*)\"{}\", .len={}}});",
-                                    out, err_ctor, err_msg, err_msg.len()));
-                                self.indent -= 1;
-                                self.line("}");
-                                return Ok(out);
-                            }
-                        }
-                    }
-                }
+                // [p-tryfrom retraction, 2026-08-01, owner decision] Plan 08 Ф.2's
+                // `T.try_from(s str) -> Result[T, ParseError]` scalar-parse
+                // intrinsic (int/i64/u64/../bool/char ↔ str) is RETRACTED — spec
+                // was internally contradictory: 03-syntax.md prescribed
+                // `T.try_from(s)?` as the canonical str-parse form while Plan
+                // 174.1/D77 R3 canon is "conversion = method on the SOURCE"
+                // (`s.to_int()`/`s.to_u64()`/`s.to_f64()`/`s.to_bool()`/
+                // `s.to_char()`). Precedent: `TimeZone.try_from` retracted the
+                // same way (04-effects.md#d325, R6). This block had NO
+                // corresponding `.nv` function declaration anywhere in std (it
+                // was a pure hardcoded compiler intrinsic keyed off `arg_ty ==
+                // "nova_str"`) — removing it makes `int.try_from("123")` fall
+                // through to the existing `[E_UNKNOWN_STATIC_METHOD]` primitive
+                // fallback below (honest compile error, not ICE). Numeric/char
+                // narrowing `try_from` (`u8.try_from(c char)`,
+                // `std/src/runtime/char.nv`) is a REAL `.nv`-declared function,
+                // routes through the normal static-method dispatch further
+                // down, and is UNAFFECTED by this removal.
                 // Plan 139.2 Ф.2: str.from_bytes_lossy / from_bytes_unchecked /
                 // from_bytes_unchecked_steal MIGRATED to Nova-body. The static C
                 // interception was removed here so the call routes through the

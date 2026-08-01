@@ -152,7 +152,7 @@ fn parse_field(s str, name str, min int, max int) -> Result[CronField, ParseCron
 }
 
 fn parse_int_in(s str, name str, min int, max int) -> Result[int, ParseCronError] {
-    ro n = int.try_from(s).map_err(|_| InvalidValue { field: name, value: s })?
+    ro n = s.to_int().map_err(|_| InvalidValue { field: name, value: s })?
     if n < min || n > max {
         return Err(OutOfRange { field: name, value: n, min, max })
     }
