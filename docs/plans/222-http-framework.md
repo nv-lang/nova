@@ -440,7 +440,13 @@ shutdown из 222.7). Мелкий.
 ### 222.18 — примеры-приложения Polaris ✅ = план [230](230-polaris-examples.md) (кросс-ссылка)
 То же: исполнен (10 примеров + run_smokes + разворот на прямой main/serve_router).
 
-### 222.19 — server-TLS (HTTPS) 🔴 = реестр 221.1 №121
+### 222.19 — server-TLS (HTTPS) 🔴 = реестр 221.1 №121 = A-V13
+
+**Этапность (решение владельца 2026-08-02 «ОК»):** этап 1 — упрощённый
+`serve_tls` (ветка p-polaris-tls: один запрос/соединение, Connection: close,
+без ServerPolicy; HTTPS живьём проверен curl'ом; мерж ждёт №152) — ПРИНЯТ;
+этап 2 ДО ТЕГА — Go-модель ниже (TlsListener/ConnStream/serve_router_tls,
+keep-alive через ServerPolicy).
 Клиент-https готов; серверная терминация не подключена к конвейеру. Эталоны решением
 владельца 2026-07-26: шаг 1 Go-модель (TlsListener-обёртка, ConnStream, serve_router_tls,
 wss из коробки), шаг 2 hyper-модель (конвейер generic over std.io Read/Write, после №105).
