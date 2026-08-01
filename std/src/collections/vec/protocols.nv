@@ -1,9 +1,9 @@
 // std.collections.vec (protocols) — Equal / Clone / Display / Debug.
 //
 // `Vec[T: Equal]` → Equal, `Vec[T: Compare]` → Compare (lexicographic,
-// element-wise), `Vec[T: Clone]` → Clone (deep/recursive, D230),
+// element-wise), `Vec[T: Clone]` → Clone (deep/recursive),
 // `Vec[T: Display]` → Display, `Vec[T: Debug]` → Debug. Bounds on `T` are
-// conditional (Rust `impl<T: Ord> Ord for Vec<T>`). Hash is added in Plan 153.6.
+// conditional (Rust `impl<T: Ord> Ord for Vec<T>`).
 #prelude(core, runtime, collections, protocols)
 module collections.vec
 
@@ -49,7 +49,7 @@ export fn Vec[T] @equal(other Vec[T]) -> bool {
 // ─── Compare ──────────────────────────────────────────────────────────
 
 /// Lexicographic comparison against `other`, returning `-1`/`0`/`+1` — the
-/// `Compare` protocol impl (D183). Compares element-wise via each element's own
+/// `Compare` protocol impl. Compares element-wise via each element's own
 /// `@compare`, like Rust `Vec<T: Ord>`: the first non-equal pair decides;
 /// otherwise the shorter vector is "less".
 ///
@@ -97,13 +97,13 @@ export fn Vec[T Compare] @compare(other Vec[T]) -> int {
 
 /// Copy — allocate a new `Vec[T]` and copy every element into a fresh buffer.
 ///
-/// Per D230 amend, `Clone` is a **deep / recursive** protocol — `clone()`
-/// recurses element-wise via each element's own `@clone()`, under a conditional
-/// bound `[T Clone]` (Rust `impl<T: Clone> Clone for Vec<T>`).
+/// `Clone` is a **deep / recursive** protocol — `clone()` recurses
+/// element-wise via each element's own `@clone()`, under a conditional bound
+/// `[T Clone]` (Rust `impl<T: Clone> Clone for Vec<T>`).
 ///
-/// Plan 138.4 Ф.1: the per-element generic `@data[i].clone()` dispatches
-/// correctly for **every** `T` — primitive `.clone()` resolves to a built-in
-/// identity copy, record/sum `T` recurses through `T.@clone()`.
+/// The per-element generic `@data[i].clone()` dispatches correctly for **every**
+/// `T` — primitive `.clone()` resolves to a built-in identity copy, record/sum
+/// `T` recurses through `T.@clone()`.
 ///
 /// # Examples
 ///
@@ -126,7 +126,7 @@ export fn Vec[T Clone] @clone() -> Self {
 
 /// Order- and length-sensitive content hash — folds the length and each
 /// element's own `@hash()` (bound `[T Hash]`) via FNV-1a (64-bit). This is what
-/// makes `Vec[T: Hash]` itself `Hash` (Plan 153.6 / D264), so a `Vec[int]` works
+/// makes `Vec[T: Hash]` itself `Hash`, so a `Vec[int]` works
 /// as a `HashMap` key or `HashSet` member.
 ///
 /// Consistent with `@equal` (the `Hash`+`Equal` table contract): equal vectors —
@@ -134,7 +134,7 @@ export fn Vec[T Clone] @clone() -> Self {
 /// the same length then the same per-element `@hash()` sequence.
 ///
 /// FNV mixing is MODULAR (mod 2^64 wraparound) BY DESIGN — that IS the hash
-/// step. Plan 206 Ф.2 (D423): after the sized-int trap-default, a bare `*`
+/// step. After the sized-int trap-default, a bare `*`
 /// on u64 traps on overflow, so the mixing multiply is expressed via the
 /// explicit `.wrapping_mul` opt-out (modular arithmetic). The offset basis is
 /// a hex literal because its decimal form exceeds `i64::MAX` (a bare decimal
@@ -149,7 +149,8 @@ export fn Vec[T Clone] @clone() -> Self {
 /// ```
 export fn Vec[T Hash] @hash() -> u64 {
     // FNV-1a (64-bit): offset basis, then `h = (h ^ x) * prime` per step.
-    // `.wrapping_mul` — модульное умножение по замыслу (Plan 206 Ф.2/D423).
+    // `.wrapping_mul` — модульное умножение по замыслу (sized-int trap-default
+    // не даёт голому `*` переполниться).
     ro prime = 0x100000001b3 as u64
     mut h = 0xcbf29ce484222325 as u64
     h = (h ^ (@len as u64)).wrapping_mul(prime)
@@ -165,29 +166,20 @@ export fn Vec[T Hash] @hash() -> u64 {
 
 // ─── Display / Debug ───────────────────────────────────────────
 //
-// Plan 208 Ф.3 (D422 §4): migrated from the pre-D422 `(mut w Write)`
-// signature to `(mut f Fmt)` — `Display`/`Debug` are REQUIRED protocols now
-// (D422 §3, no default body), so a stale `Write`-typed impl does not
-// structurally satisfy them at all (a bare `Write` is strictly poorer than
-// `Fmt`: no width/precision/align/fill/sign/alternate/kind/`@pad`, D422 §2).
-// This impl was left on the old signature by the Ф.2 (D422 keystone)
-// migration wave — that wave's repo-wide `display_fmt` grep did not catch a
-// hand-written `@display`/`@debug` naming its param `Write` (only the
-// retracted `@display_fmt` name), so it went unnoticed until Ф.3 (found by
-// grepping every `@display`/`@debug` impl in std for the OLD signature).
-// String LITERALS below are passed BARE to `f.write(...)` — D55 amend
-// (str-literal → `[]u8` coercion) landed as part of this same Ф.3 wave
-// (owner instruction 2026-07-16; `emit_c.rs::synthesize_write_str_lit_bytes_coercion`)
-// specifically for this shape (a literal argument to a call named `write`).
-// `[]T` is a syntactic alias for `Vec[T]` (reference-nova-slice-vec-alias)
-// so this single impl covers both.
+// `Display`/`Debug` are REQUIRED protocols with the `(mut f Fmt)` signature —
+// a bare `Write` is strictly poorer than `Fmt` (no width/precision/align/fill/
+// sign/alternate/kind/`@pad`), so `Vec` implements them against `Fmt` only.
+// String LITERALS below are passed BARE to `f.write(...)`: a str-literal →
+// `[]u8` coercion exists specifically for this shape (a literal argument to a
+// call named `write`). `[]T` is a syntactic alias for `Vec[T]`
+// (reference-nova-slice-vec-alias), so this single impl covers both.
 
 /// Append a human-readable representation of `self` to `f`.
 ///
 /// Format: `Vec[e0, e1, ..., eN-1]` where each element is formatted via
 /// `elem.display(f)` directly (no intermediate string allocation). Display
 /// and Debug share this exact shape — a `Vec[T]` has no field names to
-/// diverge over (D422 §4's compact-vs-named split applies to record/sum
+/// diverge over (the compact-vs-named split applies to record/sum
 /// derive, not to a container's own hand-written impl).
 ///
 /// # Examples
