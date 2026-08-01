@@ -178,7 +178,7 @@ fn parse_authority(s str) -> Result[(Option[str], Option[str], Option[str], Opti
     ro (host, port) = match host_port.find(":") {
         Some(i) => {
             ro port_str = host_port[i + 1..]
-            ro port_num = match int.try_from(port_str) {
+            ro port_num = match port_str.to_int() {
                 Ok(n) if n >= 0 && n <= 65535 => n
                 _                              => return Err(InvalidPort { value: port_str })
             }

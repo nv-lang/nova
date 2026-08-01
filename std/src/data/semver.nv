@@ -38,8 +38,8 @@
 //   - `str.contains(needle str) -> bool`
 //   - `str.find(needle str) -> Option[int]` — позиция или None
 //   - `str[from int..to int] -> str`
-//   - `u64.try_from(s str) -> Result[u64, ParseIntError]`
-//     Option получаем через `.ok()`: `u64.try_from(s).ok()`.
+//   - `s.to_u64() -> Result[u64, ParseIntError]` (конверсия на источнике,
+//     Plan 174.1). Option получаем через `.ok()`: `s.to_u64().ok()`.
 // Все они стандартные str/int операции, не нуждаются в char-литералах.
 
 module data.semver
@@ -226,7 +226,7 @@ fn parse_numeric_component(s str, name str) -> Result[u64, ParseVersionError] {
     if s.byte_len() > 1 && s.starts_with("0") {
         return Err(LeadingZero { component: name, value: s })
     }
-    match u64.try_from(s) {
+    match s.to_u64() {
         Ok(n)  => Ok(n)
         Err(_) => Err(InvalidComponent { component: name, value: s })
     }
@@ -390,9 +390,9 @@ fn compare_ident(a str, b str) -> int {
     if !a_num && b_num { return 1 }
     if a_num && b_num {
         // Оба numeric — парсим в u64 (валидация уже была в parse).
-        // try_from возвращает Result, .ok() → Option, .unwrap_or → u64.
-        ro an = u64.try_from(a).ok() ?? 0
-        ro bn = u64.try_from(b).ok() ?? 0
+        // to_u64 возвращает Result, .ok() → Option, .unwrap_or → u64.
+        ro an = a.to_u64().ok() ?? 0
+        ro bn = b.to_u64().ok() ?? 0
         if an < bn { return -1 }
         if an > bn { return 1 }
         return 0

@@ -112,7 +112,7 @@ export fn InsecureDemoKdf.verify(password str, hash_str str) -> bool {
     if parts.len() != 4 { return false }
     if parts[1] != FORMAT_TAG { return false }
 
-    ro cost = match int.try_from(parts[2]) {
+    ro cost = match parts[2].to_int() {
         Ok(c) if c >= MIN_COST && c <= MAX_COST => c
         _                                        => return false
     }
