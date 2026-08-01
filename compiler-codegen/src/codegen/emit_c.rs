@@ -61076,6 +61076,80 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         if rt_is_typed_int && lt == "nova_int" {
                             return rt;
                         }
+                        // [M-shl-shr-non-self-return-local-infer-segfault]
+                        // (ICE-пачка п.8): the bare `lt` fallback below is
+                        // correct ONLY for a homogeneous, Self-returning
+                        // operator (`+ - & | ^` on a user type conventionally
+                        // return `Self`, i.e. `lt`) — `@shl`/`@shr` are
+                        // HETEROGENEOUS (D46 03-syntax.md ~2872, second
+                        // operand `n int`, not `Self`) and their return type
+                        // is whatever the user declares, NOT necessarily
+                        // `Self`. Falling to `lt` unconditionally made `ro x
+                        // = recv << n` on an `fn Type @shl(n int) -> int`
+                        // (bare-scalar, non-Self return) infer `x`'s C type
+                        // as the RECEIVER's own pointer type (`Nova_Type*`)
+                        // instead of `nova_int` — the emitted local
+                        // declaration (`Nova_Type* x = Nova_Type_method_shl(
+                        // ...)`, the call genuinely RETURNS nova_int) became
+                        // an implicit int-to-pointer C conversion; any
+                        // further use of `x` AS that fabricated pointer
+                        // (field read, chained method call) dereferenced a
+                        // wild address — SEGFAULT. Mirror the
+                        // `NovaValue_`-receiver `+ - * / %` return-type
+                        // lookup a few dozen lines above (same
+                        // `method_overloads` registry), but for `<< >>`
+                        // specifically and for BOTH heap (`Nova_T*`) and
+                        // value (`NovaValue_T`) receivers — the actual
+                        // declared return type of the dispatched `@shl`/
+                        // `@shr` method is authoritative, `lt` is only a
+                        // fallback guess.
+                        if matches!(op, BinOp::Shl | BinOp::Shr) {
+                            let bare = lt.trim_end_matches('*');
+                            let type_name = bare.strip_prefix("NovaValue_")
+                                .or_else(|| bare.strip_prefix("Nova_"))
+                                .unwrap_or(bare);
+                            if !type_name.is_empty() && type_name != "void" {
+                                let mname = if *op == BinOp::Shl { "shl" } else { "shr" };
+                                if let Some(sigs) = self.method_overloads
+                                    .get(&(type_name.to_string(), mname.to_string()))
+                                {
+                                    if let Some(sig) = sigs.iter().find(|s| {
+                                        s.is_instance && s.param_c_types.len() == 1
+                                    }) {
+                                        return sig.return_c_type.clone();
+                                    }
+                                }
+                                // Generic-mono receiver (`Set[T]`-class, "____"
+                                // marker): `method_overloads` only ever holds
+                                // CONCRETE (non-generic) signatures — a mono'd
+                                // receiver's `@shl`/`@shr` lives in
+                                // `self_method_decls`, keyed by the BASE
+                                // (un-mono'd) type name, per `resolve_binop_
+                                // dispatch`'s identical `mono_fn_decl` lookup
+                                // (operator_dispatch.rs). Read the declared
+                                // return TypeRef and lower it — best-effort
+                                // (a return type mentioning the receiver's OWN
+                                // generic param needs `current_type_subst`,
+                                // not generally available at this static
+                                // inference call site; the common non-Self
+                                // case this fix targets, e.g. `-> int`, is a
+                                // concrete Named type and lowers directly).
+                                if let Some(idx) = type_name.find("____") {
+                                    let base = &type_name[..idx];
+                                    if let Some(fn_decl) = self.self_method_decls
+                                        .get(&(base.to_string(), mname.to_string()))
+                                    {
+                                        if let Some(rt) = &fn_decl.return_type {
+                                            if let Ok(c) = self.type_ref_to_c(rt) {
+                                                if !c.is_empty() && c != "void*" {
+                                                    return c;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         lt
                     }
                 },

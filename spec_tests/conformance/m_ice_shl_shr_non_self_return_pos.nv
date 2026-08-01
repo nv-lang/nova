@@ -1,0 +1,56 @@
+// ICE-пачка п.8: [M-shl-shr-non-self-return-local-infer-segfault].
+//
+// `@shl`/`@shr` are HETEROGENEOUS D46 operators (second operand `n int`,
+// not `Self`) — the return type is whatever the user declares, not
+// necessarily `Self`. `ro x = recv << n` on an `fn Type @shl(n int) -> int`
+// (bare-scalar, non-Self return) used to infer `x`'s C type as the
+// RECEIVER's own pointer type instead of `nova_int` — codegen's
+// `infer_expr_c_type` Binary-op fallback unconditionally returned the LEFT
+// operand's type (`lt`), correct only for the homogeneous, Self-returning
+// operator family (`+ - & | ^`). The emitted local declaration became an
+// implicit int-to-pointer C conversion (`Nova_Type* x =
+// Nova_Type_method_shl(...)`, the call genuinely returns `nova_int`); any
+// FURTHER use of `x` (arithmetic — C pointer-arithmetic scales by
+// `sizeof(Type)`, or a field read — dereferences a wild address) produced
+// silently WRONG numbers or a SEGFAULT. Reproduced (and fixed) for BOTH a
+// plain (non-generic) heap-record receiver AND a generic-mono receiver
+// (`Set[T]`-class) — the fix mirrors the pre-existing `NovaValue_`-receiver
+// `+ - * / %` return-type lookup (same `method_overloads` registry) for
+// `<< >>` specifically, plus a `self_method_decls` fallback for the
+// generic-mono ("____"-marker) case, mirroring `resolve_binop_dispatch`'s
+// own `mono_fn_decl` lookup.
+//
+// The pre-existing `m128_shl_shr_user_type_pos.nv` deliberately AVOIDED
+// this exact shape (its own doc-comment: "A bare-scalar return (-> int)
+// hits an UNRELATED, pre-existing local-var type-inference gap ... not
+// fixed here") — this fixture covers exactly that avoided shape, now
+// fixed. Per the brief: an EXECUTABLE assert, not just a successful build
+// (a build-only check would not have caught the wrong-VALUE class of this
+// bug — only the arithmetic-torture form below does, since the segfault
+// itself only manifests on the pointer-dereferencing sub-shape, while the
+// pointer-ARITHMETIC sub-shape silently computes a wrong number instead).
+module spec_tests.conformance
+
+type MIceShlPlain { m_ice_shl_bits int }
+
+export fn MIceShlPlain @shl(m_ice_shl_n int) -> int => @m_ice_shl_bits << m_ice_shl_n
+
+type MIceShlGeneric[T] { m_ice_shl_v T, m_ice_shl_tag int }
+
+export fn MIceShlGeneric[T] @shl(m_ice_shl_n int) -> int => @m_ice_shl_tag << m_ice_shl_n
+
+test "ICE-пачка п.8: non-Self @shl return, plain heap-record receiver, arithmetic torture" {
+    ro m_ice_a = MIceShlPlain { m_ice_shl_bits: 0b1100 }
+    ro m_ice_x = m_ice_a << 2
+    // If `m_ice_x`'s C type were wrongly `Nova_MIceShlPlain*` (the bug),
+    // `+ 100` would be C POINTER arithmetic (scaled by sizeof(struct)),
+    // not integer addition — this assert catches the WRONG-VALUE class,
+    // not just a crash.
+    assert(m_ice_x + 100 == 148, "non-Self @shl return infers as real int, not receiver pointer")
+}
+
+test "ICE-пачка п.8: non-Self @shl return, generic-mono receiver, arithmetic torture" {
+    ro m_ice_g MIceShlGeneric[int] = { m_ice_shl_v: 0, m_ice_shl_tag: 0b1100 }
+    ro m_ice_x = m_ice_g << 2
+    assert(m_ice_x + 100 == 148, "non-Self @shl return on generic-mono receiver infers as real int")
+}
