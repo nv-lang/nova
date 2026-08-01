@@ -10510,9 +10510,18 @@ impl<'a> TypeCheckCtx<'a> {
         // documented, sound false-negative (consistent with this
         // checker's existing scope caveats elsewhere), not fixed here.
         if let ExprKind::Member { obj, .. } = &value.kind {
-            let field_is_stack = self.infer_expr_type(value, scope)
-                .map_or(false, |t| is_fully_stack_value(&t, &self.types));
-            if !field_is_stack {
+            let field_ty = self.infer_expr_type(value, scope);
+            let field_is_stack = field_ty.as_ref()
+                .map_or(false, |t| is_fully_stack_value(t, &self.types));
+            // #share exemption (D415): a copy of a `#share` type (AtomicInt &
+            // co) is the SANCTIONED sharing form — mutation through the copy
+            // is the whole point (fetch_add on the shared cell), not a
+            // readonly-freeze escape. Mirrors the spawn-capture exemption.
+            let field_is_share = field_ty.as_ref().map_or(false, |t| {
+                crate::protocols::share_check::is_mut_alias_safe(
+                    &CapShareQuery(&self.types), t)
+            });
+            if !field_is_stack && !field_is_share {
                 let root_is_ro = match &obj.kind {
                     ExprKind::SelfAccess => !self.current_recv_is_mut.get(),
                     ExprKind::Ident(root_name) => {
