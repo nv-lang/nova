@@ -13,7 +13,7 @@
 ; Adding them here would fail query compilation until the grammar is bumped
 ; (github.com/nv-lang/tree-sitter-nova). Tracked as a follow-up.
 [
-  "module" "import" "use" "export" "external"
+  "module" "import" "export" "external"
   "fn" "type" "effect" "alias"
   ; Plan 114 (D184): ro/mut/consume binding triad; let/readonly retracted.
   "ro" "const" "mut" "consume"

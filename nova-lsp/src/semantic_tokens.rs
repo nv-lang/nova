@@ -1123,7 +1123,17 @@ fn import_line_set(tokens: &[Token], rope: &Rope) -> HashSet<u32> {
     for t in tokens {
         match &t.kind {
             TokenKind::Newline => line_start = true,
-            TokenKind::KwImport | TokenKind::KwUse | TokenKind::KwModule if line_start => {
+            TokenKind::KwImport | TokenKind::KwModule if line_start => {
+                let line = byte_offset_to_position(rope, t.span.start).line;
+                set.insert(line);
+                line_start = false;
+            }
+            // Plan 239 (D443): `use` — контекстный identifier (был `KwUse`).
+            // Сохраняет прежнее поведение: любой line-start `use` считается
+            // import/embed-header, как и раньше — `use` лексился как `KwUse`
+            // независимо от смысла (import-synonym / record-embed /
+            // protocol-embed), так что embed-строки и тогда попадали сюда.
+            TokenKind::Ident(s) if s == "use" && line_start => {
                 let line = byte_offset_to_position(rope, t.span.start).line;
                 set.insert(line);
                 line_start = false;
@@ -1139,7 +1149,7 @@ fn is_keyword(kind: &TokenKind) -> bool {
     use TokenKind::*;
     matches!(
         kind,
-        KwModule | KwImport | KwUse | KwExport | KwExternal | KwExtern | KwFn | KwType
+        KwModule | KwImport | KwExport | KwExternal | KwExtern | KwFn | KwType
             | KwProtocol | KwEffect | KwAlias | KwLet | KwConst | KwMut | KwConsume | KwRo
             | KwReadonly | KwUnsafe | KwUninit | KwSafe | KwPriv | KwPub | KwIf | KwElse | KwMatch | KwFor
             | KwWhile | KwLoop | KwIn | KwReturn | KwBreak | KwContinue | KwTest | KwTrue

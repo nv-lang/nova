@@ -645,7 +645,16 @@ impl<'a> Lexer<'a> {
         let kind = match text {
             "module" => TokenKind::KwModule,
             "import" => TokenKind::KwImport,
-            "use" => TokenKind::KwUse,
+            // Plan 239 (D443): `use` — контекстуальный keyword (был hard
+            // keyword `KwUse`). В lexer'е — обычный identifier (иначе
+            // ломает identifier'ы пользователя с таким именем — поле/
+            // переменная/функция `use`). Парсер distinguishes по контексту
+            // ровно так же, как `bench`/`measure`/`apply`: import-synonym
+            // (`use path.to.mod` на месте `import`), record-field embed
+            // (`use alias Type` внутри `type { ... }`, D39), protocol embed
+            // (`use TypeName` в начале `protocol { ... }` тела, D145 §
+            // Protocol composition) — все три позиции проверяют lookahead,
+            // иначе `use` падает через в обычный Ident.
             "export" => TokenKind::KwExport,
             "external" => TokenKind::KwExternal,
             // Plan 91.12 Ф.-1 (D282): `extern "nova" fn` / `extern "C" fn`.
@@ -1246,8 +1255,9 @@ pub fn lex_with_file_id(src: &str, file_id: FileId) -> Result<Vec<Token>, Diagno
 /// never drift with a stale hand-maintained keyword list.
 ///
 /// Contextual keywords that the lexer intentionally keeps as identifiers
-/// (`bench`, `measure`, `apply`, `raw`, `null`) are — correctly — reported as
-/// NOT reserved: they are valid identifiers and thus valid rename targets.
+/// (`bench`, `measure`, `apply`, `raw`, `null`, `use` — Plan 233/D443) are —
+/// correctly — reported as NOT reserved: they are valid identifiers and thus
+/// valid rename targets.
 ///
 /// Retracted-but-still-lexed lexemes (`let`, `readonly`) are reported as
 /// reserved: they tokenize to `KwLet` / `KwReadonly` (so the parser can emit a

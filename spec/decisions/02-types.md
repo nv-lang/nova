@@ -2849,6 +2849,108 @@ Bootstrap-ограничения:
 
 ---
 
+## D443. `use` — hard keyword → контекстный keyword (Plan 239, 2026-08-01)
+
+### Что
+
+`use` retracted из hard keyword (`TokenKind::KwUse`, безусловный, как `let`/
+`const`) в **контекстный** keyword — тем же механизмом, что `bench`/`measure`
+(D121) и `apply`/`null` (D278 §3): лексер выдаёт `Ident("use")` всегда, парсер
+распознаёт `use` позиционно в трёх местах, где у него уже была синтаксическая
+роль:
+
+1. **import-synonym** — `use path.to.mod` (alias `import`, с bootstrap).
+2. **record-field embed** ([D39](#d39-embed-и-delegation-use-name-type-alias-обязателен)) —
+   `use alias Type` внутри `type { ... }`.
+3. **protocol embed** (D145 §Protocol composition) — `use TypeName` в начале
+   `protocol { ... }` тела.
+
+Вне этих трёх позиций `use` — обычный идентификатор: имя поля, переменной,
+функции, параметра, namespace-сегмента.
+
+### Правило
+
+Disambiguation — lookahead на 1-2 токена вперёд от `Ident("use")`, зеркало
+`bench`-техники (D121 «parses как item только когда за `bench` идёт
+string-literal»):
+
+- **Top-level item position**: `Ident("use")` + следующий токен `Ident`/`.`/
+  `..` (похоже на начало dotted-path или relative-anchor) ⇒ import-synonym.
+  Иначе `use` не участвует в top-level item dispatch (падает в generic
+  «expected fn/type/…» путь, как любой другой стрей-идентификатор на этой
+  позиции).
+- **Record-field list** (внутри `type { ... }`): `Ident("use")` + `Ident`
+  (alias или `_`) + токен ПОСЛЕ него НЕ разделитель полей (`,`/newline/`;`/
+  `}`) ⇒ embed (`use alias Type`/`use _ Type`). Иначе — обычное поле с именем
+  `use` (`use SomeType` — 1 идентификатор перед типом, как у любого другого
+  поля). Единственный известный remaining edge-case: поле `use` с generic-
+  типом (`use Vec[T]`) синтаксически неотличимо от `use Vec [T]`-подобного
+  embed по этому 2-токенному lookahead — задокументировано как компромисс
+  (Plan 239 §2), не заблокировано отдельным механизмом (тот же класс trade-off,
+  что у `bench`/`apply`).
+- **Protocol body leading items**: `Ident("use")` + `Ident` (имя типа) ⇒
+  embed. `use(` (метод по имени `use`, bare-ident effect-syntax) НЕ embed —
+  проваливается в обычный method-parse путь. Раньше (hard keyword) метод с
+  именем `use` был НЕВОЗМОЖЕН даже bare-ident'ом в effect-теле — теперь
+  разрешено.
+
+### Почему
+
+Будучи hard keyword, `use` был **единственным** из этой группы контекстных
+слов, полностью недоступным как идентификатор — при том что у `bench`/
+`measure`/`apply`/`null` (D121, D278 §3) ровно такая многопозиционная
+семантика уже жила как `Ident` с parser-side disambiguation. Асимметрия не
+имела отдельного обоснования: все три существующие роли `use` синтаксически
+однозначно определяются позицией + 1-2 токенами lookahead, без коллизий с
+уже написанным кодом ( grep `std`/`examples` на `\buse\b`: 100% вхождений —
+`use TypeName`-embeds, комментарии/строки; ни одного идентификатора `use` не
+найдено — retraction расширяет допустимые программы, не сужает).
+
+### Что отвергнуто
+
+- **Оставить hard keyword** — статус-кво до этого плана; отклонено по
+  просьбе владельца (симметрия с `bench`).
+- **Диагностика `E_RESERVED_WORD` при misuse** (запасной вариант из брифа
+  на случай «резерв без формы невозможен») — не понадобилась: у `use`, в
+  отличие от гипотетического «зарезервировать под будущее», уже есть три
+  РЕАЛЬНЫЕ синтаксические формы; misuse просто не парсится как `use`-форма и
+  проваливается в generic diagnostic соответствующей позиции (тот же
+  silent-fallthrough, что у `bench`).
+- **Подсветка `use` в редакторах наравне с `bench`** (буквальная формулировка
+  исходного брифа: «добавить use рядом с bench» в tmLanguage) — ПРОТИВОПОЛОЖНО
+  верному направлению. D278 §3 нормативно требует ОБРАТНОГО: контекстные
+  keyword'ы (`apply`/`bench`/`measure`/`null`, теперь `+use`) **намеренно НЕ**
+  подсвечиваются — лексер держит их идентификаторами во избежание поломки
+  пользовательских имён, и живой conformance-тест
+  (`compiler-codegen/tests/syntax_highlight_conformance.rs`,
+  `vscode_grammar_has_no_phantom_keywords` и парные vim/zed) фейлится, если
+  контекстное слово остаётся в keyword-паттерне хайлайтера. `use` **снят** из
+  `editors/vscode/syntaxes/nova.tmLanguage.json`, `editors/vim/syntax/nova.vim`,
+  `editors/zed/languages/nova/highlights.scm` этим планом — брифовая
+  формулировка была основана на неверной посылке «`use` пока не
+  зарезервирован» (на деле был hard keyword).
+
+### Связь
+
+- [D39](#d39-embed-и-delegation-use-name-type-alias-обязателен) — record-field
+  embed; семантика embed НЕ меняется, меняется только классификация токена.
+- D145 §Protocol composition — protocol embed; аналогично, без изменений
+  семантики.
+- [D121](09-tooling.md#d121-benchmark-dsl-bench---measure----) — прецедент
+  техники (`bench`/`measure` contextual lexing).
+- [D278](09-tooling.md#d278-editor-syntax-highlighting-keyword-set-must-track-the-lexer) —
+  §3 governance-правило «контекстные keyword'ы не подсвечиваются»; `use`
+  добавлен в перечень.
+- [Q-embed-syntax](../open-questions.md#q-embed-syntax-embed-keyword--use-vs-альтернативы) —
+  вопрос выбора keyword'а (`use` vs `embed`) остаётся ОТКРЫТ; эта retraction
+  снимает один аргумент «за» пересмотр (`use` больше не занимает identifier-
+  пространство целиком), но не разрешает многопозиционную перегрузку
+  семантики самого слова.
+- [Plan 239](../../docs/plans/239-use-contextual-keyword.md) — план окна,
+  полный список затронутых файлов.
+
+---
+
 ## D32. Семантика передачи параметров
 
 > Status: revised для полей. [D36](#d36-поля-типа-дефолт-mutable-у-mut-bindinga-readonly-для-never-mut)

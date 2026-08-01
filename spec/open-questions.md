@@ -2588,6 +2588,16 @@ embed) для simple wrappers где явный alias бессмысленный
 открыт про выбор `use` vs `embed` keyword'а, но anonymous form
 закрыла главный pain-point обязательного alias'а в simple cases.
 
+**Update 2026-08-01 ([D443](decisions/02-types.md#d443-use--hard-keyword--контекстный-keyword-plan-239-2026-08-01),
+Plan 239):** `use` retracted из hard keyword в контекстный (как `bench`/
+`apply`) — снимает строку «`use` нужен для импортов? да, занят» из таблицы
+сравнения выше: `use` больше НЕ занимает identifier-пространство целиком,
+сосуществует с обычными идентификаторами `use` вне трёх известных позиций
+(import-synonym/record-embed/protocol-embed). Это **не решает** сам вопрос
+выбора keyword'а (A vs C всё ещё открыт) — многопозиционная перегрузка
+семантики слова `use` (импорт vs embed vs protocol-embed) остаётся, контекстная
+классификация лишь убирает побочный эффект «блокирует identifier».
+
 Реализация anonymous embed — Plan 11 Ф.9 (через override-precedence
 в общем overload-resolution, lazy mechanism).
 

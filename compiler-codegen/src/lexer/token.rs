@@ -61,7 +61,9 @@ pub enum TokenKind {
     // Ключевые слова
     KwModule,
     KwImport,
-    KwUse,
+    // Plan 239 (D443): `use` retracted from hard keyword to contextual
+    // (mirrors `bench`/`apply`) — lexes as `Ident("use")`, no `KwUse`
+    // variant anymore. Parser disambiguates positionally.
     KwExport,
     /// D82: external fn — runtime-implemented в nova_rt/*.h.
     /// Только в std.runtime.* whitelisted namespace.
@@ -274,7 +276,6 @@ impl TokenKind {
             TokenKind::DocComment { kind: DocCommentKind::Inner, .. } => "inner doc-comment `//!`",
             TokenKind::KwModule => "`module`",
             TokenKind::KwImport => "`import`",
-            TokenKind::KwUse => "`use`",
             TokenKind::KwExport => "`export`",
             TokenKind::KwExternal => "`external`",
             TokenKind::KwExtern => "`extern`",
