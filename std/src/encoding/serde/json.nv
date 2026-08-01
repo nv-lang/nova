@@ -31,20 +31,20 @@ import std.encoding.base64.{Base64}
 // готовое значение к текущему frame (obj с pending-key / arr / root).
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Frame стека сериализации: obj (с pending-ключом) или arr.
+/// Serialization stack frame: obj (with a pending key) or arr.
 ///
-/// `obj` — `JsonObject` (упорядоченная map), НЕ голый `HashMap`: struct-поля
-/// (`begin_struct`/`struct_field`) идут в порядке `serialize_field`-вызовов,
-/// т.е. в порядке ОБЪЯВЛЕНИЯ полей записи — это и есть детерминированный
-/// field-order fix (реестр 221.1 №148).
+/// `obj` — a `JsonObject` (ordered map), NOT a bare `HashMap`: struct fields
+/// (`begin_struct`/`struct_field`) follow the order of `serialize_field` calls,
+/// i.e. the DECLARATION order of the record's fields — this is the deterministic
+/// field-order fix (registry 221.1 №148).
 type SerFrame { is_obj bool, obj JsonObject, arr []JsonValue, pending str }
 fn SerFrame.obj_frame() -> SerFrame =>
     { is_obj: true, obj: JsonObject.new(), arr: [], pending: "" }
 fn SerFrame.arr_frame() -> SerFrame =>
     { is_obj: false, obj: JsonObject.new(), arr: [], pending: "" }
 
-/// Сериализатор: drive Serialize -> строит JsonValue -> @to_str() компактный JSON.
-/// Несёт depth-counter (Q14).
+/// Serializer: drive Serialize → build a JsonValue → @to_str() compact JSON.
+/// Carries a depth-counter (Q14).
 #unstable
 export type JsonSerializer {
     root JsonValue
@@ -58,7 +58,7 @@ export type JsonSerializer {
 export fn JsonSerializer.new() -> JsonSerializer =>
     { root: JsonValue.null(), has_root: false, stack: [], depth: 0, max_depth: 128 }
 
-/// Присоединить готовое значение к текущему контексту (top frame / root).
+/// Attach a finished value to the current context (top frame / root).
 fn JsonSerializer mut @put(v JsonValue) -> Result[(), SerError] {
     match @stack.pop() {
         None => {
@@ -181,7 +181,7 @@ fn JsonSerializer mut @end_seq() -> Result[(), SerError] {
 // depth-counter (Q14). numeric-fidelity (Q15).
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Десериализатор: Json.parse -> JsonValue -> drive Deserialize.
+/// Deserializer: Json.parse → JsonValue → drive Deserialize.
 #unstable
 export type JsonDeserializer { cur JsonValue, depth int, max_depth int }
 
@@ -189,7 +189,7 @@ export type JsonDeserializer { cur JsonValue, depth int, max_depth int }
 export fn JsonDeserializer.new(v JsonValue, depth int, max_depth int) -> JsonDeserializer =>
     { cur: v, depth, max_depth }
 
-/// Имя JSON-типа текущего значения (для сообщений об ошибке).
+/// Name of the current value's JSON type (for error messages).
 fn json_kind(v JsonValue) -> str {
     if v.is_null() { "null" }
     else if v.is_bool() { "bool" }
@@ -199,7 +199,7 @@ fn json_kind(v JsonValue) -> str {
     else { "object" }
 }
 
-/// f64 — точное целое в безопасном диапазоне [-2^53, 2^53]? (Q15)
+/// Is `f64` an exact integer in the safe range [-2^53, 2^53]? (Q15)
 fn is_exact_int(n f64) -> bool =>
     n.is_finite() && n == n.floor() && n.abs() < 9007199254740992.0
 
@@ -334,7 +334,7 @@ fn JsonDeserializer mut @enter_key(key str) -> Result[JsonDeserializer, DeError]
 
 // ── error-rendering (line/col из ParseJsonError сохраняются в тексте) ──
 
-/// ParseJsonError -> сообщение с line/col (source-chain в тексте, §8.0.3).
+/// ParseJsonError → a message with line/col (source-chain in the text, §8.0.3).
 fn parse_err_msg(e ParseJsonError) -> str {
     match e {
         UnexpectedChar { line, col, found } =>
@@ -365,7 +365,7 @@ fn parse_err_msg(e ParseJsonError) -> str {
 // `v.serialize`/`T.deserialize` (proven-working generic-dispatch), без
 // вложенных generic-обёрток. Followup `[M-180-namespace-static-generic-mono]`.
 
-/// T -> JsonValue (DOM, без строкования). #impl(Serialize)-derived.
+/// T → JsonValue (DOM, without stringification). #impl(Serialize)-derived.
 #unstable
 export fn json_to_value[T Serialize](v T) -> Result[JsonValue, SerError] {
     mut s = JsonSerializer.new()
@@ -373,7 +373,7 @@ export fn json_to_value[T Serialize](v T) -> Result[JsonValue, SerError] {
     if s.has_root { Ok(s.root) } else { Ok(JsonValue.null()) }
 }
 
-/// T -> компактный JSON. Result (R1/D325).
+/// T → compact JSON. Result (R1/D325).
 #unstable
 export fn json_encode[T Serialize](v T) -> Result[str, SerError] {
     mut s = JsonSerializer.new()
@@ -381,7 +381,7 @@ export fn json_encode[T Serialize](v T) -> Result[str, SerError] {
     if s.has_root { Ok(s.root.to_str()) } else { Ok(JsonValue.null().to_str()) }
 }
 
-/// T -> pretty JSON (2-space отступ).
+/// T → pretty JSON (2-space indentation).
 #unstable
 export fn json_encode_pretty[T Serialize](v T) -> Result[str, SerError] {
     mut s = JsonSerializer.new()
@@ -389,14 +389,14 @@ export fn json_encode_pretty[T Serialize](v T) -> Result[str, SerError] {
     if s.has_root { Ok(s.root.to_str_pretty()) } else { Ok(JsonValue.null().to_str_pretty()) }
 }
 
-/// JsonValue (уже распарсенный DOM) -> T.
+/// JsonValue (already-parsed DOM) → T.
 #unstable
 export fn json_from_value[T Deserialize](v JsonValue) -> Result[T, DeError] {
     mut d = JsonDeserializer.new(v, 0, 128)
     T.deserialize(d)
 }
 
-/// JSON-строка -> T. Json.parse + drive Deserialize. Path/location в DeError.
+/// JSON string → T. Json.parse + drive Deserialize. Path/location in DeError.
 #unstable
 export fn json_decode[T Deserialize](s str) -> Result[T, DeError] {
     match Json.parse(s) {
@@ -408,7 +408,7 @@ export fn json_decode[T Deserialize](s str) -> Result[T, DeError] {
     }
 }
 
-/// Конфигурируемый max-depth (Q14); default 128 в decode.
+/// Configurable max-depth (Q14); defaults to 128 in decode.
 #unstable
 export fn json_decode_with[T Deserialize](s str, max_depth int) -> Result[T, DeError] {
     match Json.parse(s) {
@@ -420,7 +420,7 @@ export fn json_decode_with[T Deserialize](s str, max_depth int) -> Result[T, DeE
     }
 }
 
-/// []u8 (UTF-8) -> T (байт-first вход; Plan 178 Body.@json).
+/// []u8 (UTF-8) → T (byte-first input; Plan 178 Body.@json).
 #unstable
 export fn json_decode_bytes[T Deserialize](b []u8) -> Result[T, DeError] {
     match b.to_str() {
