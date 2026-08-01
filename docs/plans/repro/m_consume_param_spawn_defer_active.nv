@@ -1,0 +1,69 @@
+// KNOWN-PARTIALLY-BROKEN reference repro — NOT part of any test suite
+// (does not reliably build — see below). Do not add to spec_tests/
+// conformance, nova_tests, or any glob-discovered test path — kept here
+// purely as an executable-by-hand diagnostic artifact for
+// [M-consume-param-spawn-defer-active].
+//
+// Diagnosed 2026-08-01 (window p-ice-pack, п.11, sonnet). STATUS: PARTIAL
+// FIX LANDED (see the commit touching compiler-codegen/src/types/mod.rs's
+// `Stmt::ConsumeScope`/`ExprKind::Spawn` arms) — a real, independently-
+// valuable CHECKER bug was found and fixed along the way: `spawn consume c
+// { body }` (D415 §4 "already-bound" form, `c` already owned in the outer
+// scope — a `consume` param or `consume x = expr` local) falsely reported
+// [D133-not-consumed] on the OUTER `c` at ITS OWN enclosing scope-exit,
+// even though ownership genuinely, synchronously transferred into the
+// spawned child at the `spawn` statement itself. Root cause was TWO
+// layers: (1) `Stmt::ConsumeScope`'s `re_consume=false` arm never marked
+// the reused outer binding Consumed at all; (2) `ExprKind::Spawn`'s own
+// `consume_walk_isolated_expr` wrapper snapshots/restores `ctx.states`
+// around the whole body walk (sound for mut-captures, WRONG for an
+// ownership move, which is synchronous at the spawn statement) — so even
+// fixing (1) got silently undone by (2)'s restore. Both fixed.
+//
+// The ORIGINALLY-REPORTED codegen bug (`use of undeclared identifier
+// '_defer_N_0_active'`) was NOT reached in a clean, isolated form this
+// window — the D133 fix above unblocks TYPE-CHECKING the pattern, but
+// actually BUILDING it hits, in order:
+//   1. Without a declared `consume @cleanup(outcome ScopeOutcome)` method
+//      on the moved type: `undefined symbol: Nova_<Type>_consume_cleanup`
+//      — codegen unconditionally emits a cleanup call for this desugar
+//      regardless of whether the checker validated one exists (itself a
+//      separate, real gap — likely the same PLAN 217 "cleanup disarm"
+//      machinery the original `_defer_N_0_active` report pointed at, but
+//      NOT confirmed as the SAME bug).
+//   2. WITH a declared `@cleanup`: a THIRD, differently-shaped bug —
+//      `use of undeclared identifier '_nv_tmp_N'` inside the emitted
+//      cleanup's ResourceTrace/error-path handling (a temp declared in one
+//      C block, referenced from a sibling block that does not dominate it
+//      — same STRUCTURAL class as [M-detach-box-while-loop-read-after]
+//      п.2's box-scope-leak, but a DIFFERENT specific site).
+//
+// Reaching the EXACT originally-reported symbol name needs a repro shaped
+// closer to the real TcpListener consume-param (which has its own,
+// presumably more complete, `@cleanup`/close machinery) — out of this
+// window's remaining budget after the checker-half fix + this triage.
+//
+// To reproduce the (now-fixed) checker false-positive:
+//   nova check docs/plans/repro/m_consume_param_spawn_defer_active.nv
+//   → BEFORE this window's fix: [D133-not-consumed] on `h`
+//   → AFTER: clean ("ok")
+// To reproduce the remaining codegen gap(s):
+//   nova build docs/plans/repro/m_consume_param_spawn_defer_active.nv
+//   → undefined symbol: Nova_MIceCpsHandle_consume_cleanup (no @cleanup declared here)
+module nova_repro.consume_param_spawn_defer_active
+
+type MIceCpsHandle consume { id int }
+fn MIceCpsHandle consume @close() { }
+
+fn use_handle(consume h MIceCpsHandle) Detach {
+    supervised {
+        spawn consume h {
+            println("${h.id}")
+            h.close()
+        }
+    }
+}
+
+fn main() Detach {
+    use_handle(MIceCpsHandle { id: 42 })
+}

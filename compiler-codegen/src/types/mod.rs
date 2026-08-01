@@ -36480,11 +36480,54 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
         Stmt::ConsumeScope { init, body, re_consume, result, span, .. } => {
             consume_walk_expr(ctx, init, errors);
             if !*re_consume {
+                // [M-consume-param-spawn-defer-active] (ICE-пачка п.11,
+                // checker half): `spawn consume c { body }` desugars to
+                // THIS exact `re_consume=false` shape with `init =
+                // Ident(c)` referencing an ALREADY-OWNED outer binding
+                // (parser's own doc at `parse_spawn`: "`c` already bound
+                // in the OUTER (parent) scope; re-consuming it here
+                // transfers ownership into the child ... the desugar's
+                // ConsumeScope `init` is simply `Ident(c)`") — but this
+                // branch never marked the OUTER `c` Consumed, so ITS OWN
+                // enclosing scope-exit obligation check (D133) fired a
+                // false-positive even though ownership genuinely moved
+                // into the spawned child (mirrors the `re_consume=true`
+                // path a few dozen lines below, which correctly closes
+                // the obligation via `mark_consumed_bypass_guard` at the
+                // end of ITS OWN handling). Gated to a bare `Ident` INIT
+                // referencing an EXISTING owned obligation — the OTHER
+                // producer of this same `re_consume=false` shape (a fresh
+                // `consume x = Type.new() { body }`, D188 binding form)
+                // constructs a NEW value with no outer obligation to
+                // close, so it correctly falls through this check as a
+                // no-op (unaffected, byte-identical).
+                //
+                // Marked AFTER walking `body` (not before): `body` itself
+                // legitimately reads/consumes `c` under its OWN (same
+                // canonical) name — mirrors the `re_consume=true` path,
+                // which also only calls `mark_consumed_bypass_guard` at
+                // the very END, once the body's own uses are done.
+                let spawn_reuse_name: Option<String> = match &init.kind {
+                    ExprKind::Ident(n) => {
+                        let canon = ctx.canonical(n);
+                        if ctx.consume_obligations.contains(&canon)
+                            || ctx.consume_obligations.contains(n.as_str())
+                        {
+                            Some(n.clone())
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                };
                 for stmt in &body.stmts {
                     consume_walk_stmt(ctx, stmt, errors);
                 }
                 if let Some(t) = &body.trailing {
                     consume_walk_expr(ctx, t, errors);
+                }
+                if let Some(n) = &spawn_reuse_name {
+                    ctx.mark_consumed_bypass_guard(n, *span);
                 }
                 return;
             }
@@ -38494,7 +38537,39 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
             consume_walk_block(ctx, body, errors);
         }
         ExprKind::Detach(b) | ExprKind::Blocking(b) => consume_walk_isolated_block(ctx, &[], b, errors),
-        ExprKind::Spawn(inner) => consume_walk_isolated_expr(ctx, &[], inner, errors),
+        ExprKind::Spawn(inner) => {
+            consume_walk_isolated_expr(ctx, &[], inner, errors);
+            // [M-consume-param-spawn-defer-active] (ICE-пачка п.11): `spawn
+            // consume c { body }` desugars (parser's `parse_spawn`) to
+            // `Spawn(Block[ConsumeScope{re_consume:false, init:Ident(c),
+            // ...}])` — the `consume_walk_isolated_expr` call just above
+            // snapshots/restores `ctx.states` around the WHOLE spawn body
+            // (sound in general: a spawned child's mutations to captured
+            // `mut` vars must not appear "already applied" to the parent's
+            // own sequential view before the child has necessarily run) —
+            // but that restore ALSO silently undoes the `Stmt::ConsumeScope`
+            // `re_consume=false` arm's own `mark_consumed_bypass_guard` call
+            // for the reused `c`. Ownership-transfer is NOT like a mut-
+            // capture: `c` genuinely, unconditionally leaves the parent's
+            // scope AT the spawn statement itself (a synchronous move, not
+            // something the child fiber does later) — its Consumed state
+            // must survive the restore. Detect the exact desugar shape here
+            // (the isolated walk above already validated the body — this is
+            // purely re-applying the state change in the SURVIVING,
+            // non-isolated `ctx`) and mark the outer binding consumed.
+            if let ExprKind::Block(b) = &inner.kind {
+                if let [Stmt::ConsumeScope { init, re_consume: false, .. }] = b.stmts.as_slice() {
+                    if let ExprKind::Ident(n) = &init.kind {
+                        let canon = ctx.canonical(n);
+                        if ctx.consume_obligations.contains(&canon)
+                            || ctx.consume_obligations.contains(n.as_str())
+                        {
+                            ctx.mark_consumed_bypass_guard(n, inner.span);
+                        }
+                    }
+                }
+            }
+        }
 
         // ─── Литералы-агрегаты ───
         ExprKind::TupleLit(elems) => {
