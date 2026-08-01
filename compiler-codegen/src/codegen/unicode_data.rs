@@ -216,13 +216,13 @@ pub fn render_norm_data_nv(tables: &NormTables, version: &str) -> String {
     out.push_str("module std.unicode\n");
     out.push('\n');
     out.push_str(&format!(
-        "/// Pinned Unicode version these tables were generated from.\nexport const UNICODE_VERSION str = \"{}\"\n\n",
+        "/// Pinned Unicode version these tables were generated from.\nexport const UNICODE_VERSION = \"{}\"\n\n",
         version
     ));
-    out.push_str(&format!("const NFD_DATA str = \"{}\"\n\n", emit_map_seq(&tables.nfd)));
-    out.push_str(&format!("const NFKD_DATA str = \"{}\"\n\n", emit_map_seq(&tables.nfkd)));
-    out.push_str(&format!("const CCC_DATA str = \"{}\"\n\n", emit_ccc(&tables.ccc)));
-    out.push_str(&format!("const COMP_DATA str = \"{}\"\n", emit_comp(&tables.comp)));
+    out.push_str(&format!("const NFD_DATA = \"{}\"\n\n", emit_map_seq(&tables.nfd)));
+    out.push_str(&format!("const NFKD_DATA = \"{}\"\n\n", emit_map_seq(&tables.nfkd)));
+    out.push_str(&format!("const CCC_DATA = \"{}\"\n\n", emit_ccc(&tables.ccc)));
+    out.push_str(&format!("const COMP_DATA = \"{}\"\n", emit_comp(&tables.comp)));
     out
 }
 

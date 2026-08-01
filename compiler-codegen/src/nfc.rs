@@ -110,11 +110,17 @@ fn parse_comp(data: &str) -> HashMap<(u32, u32), u32> {
     out
 }
 
-/// Извлечь значение `const NAME str = "..."` из текста `norm_data.nv`
+/// Извлечь значение `const NAME = "..."` (канон W_REDUNDANT_CONST_TYPE_ANNOTATION —
+/// без аннотации; старая форма `const NAME str = "..."` принимается для
+/// совместимости со старыми снимками) из текста `norm_data.nv`
 /// (генератор не эмитит экранирование внутри — формат см. заголовок файла).
 fn extract_const(src: &str, name: &str) -> Option<String> {
-    let needle = format!("const {} str = \"", name);
-    let start = src.find(&needle)? + needle.len();
+    let start = [
+        format!("const {} = \"", name),
+        format!("const {} str = \"", name),
+    ]
+    .iter()
+    .find_map(|needle| src.find(needle.as_str()).map(|i| i + needle.len()))?;
     let end = start + src[start..].find('"')?;
     Some(src[start..end].to_string())
 }
