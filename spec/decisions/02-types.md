@@ -10599,6 +10599,26 @@ pointer-mut в типе vs pointee-mut), особенно в return-позици
 > «`*T ≡ *ro T`». **Источник:** 2 design-workflow (critique `wkx3dytr1`,
 > value-side `wlqgc2nyk`, synthesis `w9nktq8x1`) + ~15 раундов ревью.
 > **Гейтит** Plan 139 `[M-139-f0-lang-item-decl]` (str-поля `ptr *u8`).
+> **AMENDED 2026-08-01 (решение владельца 2026-08-01, срочный пакет
+> звучности mut/захватов):** дословная норма владельца — «Присваивание ro в
+> mut возможно, ЕСЛИ все поля тоже значения на стеке РЕКУРСИВНО;
+> MetricsRegistry содержит типы на куче, и мы начинаем их менять после
+> присваивания — это неверно» — **ПОДТВЕРЖДАЕТ буквально** уже действующий
+> §72 (`is_fully_stack_value`, 2026-07-24) без изменения границы: `Mutex`/
+> `HashMap` — кучевые поля (не `AllocKind::Value`-record/scalar/`str`), так
+> `MetricsRegistry{lock Mutex, counters HashMap[...], gauges HashMap[...]}`
+> уже `❌` под §72 (проба-G-класс) на всех трёх энфорснутых каналах
+> (let-init / call-argument mut-параметр / return, `is_fully_stack_value`
+> at `compiler-codegen/src/types/mod.rs:10455,16179,35290`). **Живой разбор
+> находки владельца:** `nova-polaris/src/metrics.nv`'s методы (`mut lock =
+> @lock`, `mut counters = @counters`) сегодня компилируются НЕ потому, что
+> этот L1-Ident-канал имеет дыру — источник там `@field` (self-field
+> access), НЕ голый `Ident`, поэтому `check_readonly_source_coerce`'s
+> `if let ExprKind::Ident(name) = &value.kind` вообще не матчит. Это ВТОРОЙ,
+> независимый канал той же дыры — **field-launder** — закрыт отдельно ниже
+> (см. «§73. Field-launder канал (`mut x = @field`/`obj.field`)»,
+> `[M-router-handler-mut-capture-escape-soundness]` реестр, срочный пакет
+> звучности 2026-08-01).
 
 ### Что
 

@@ -3521,6 +3521,17 @@ struct TypeCheckCtx<'a> {
     /// access check: если field.priv_field И current_recv_type != obj's type
     /// → emit E_PRIV_FIELD_READ.
     current_recv_type: std::cell::RefCell<Option<String>>,
+    /// Field-launder channel ([M-router-handler-mut-capture-escape-soundness]
+    /// §2, срочный пакет звучности, owner decision 2026-08-01): is the
+    /// CURRENT method's receiver `mut` (`fn T mut @m`) or `ro`/default
+    /// (`fn T @m`)? Set alongside `current_recv_type` in `f1_check_fn` (same
+    /// `PrivRecvGuard` RAII, restored on exit) — a SEPARATE cell because L1
+    /// receiver-mutability is orthogonal to `current_recv_type`'s L2/name
+    /// tracking (D246: receiver `is_mut` is a `Receiver`-struct bool, never
+    /// baked into `scope["@"]`'s `TypeRef`). Consumed by
+    /// `check_readonly_source_coerce`'s NEW Member-arm (`@field` read) to
+    /// decide whether the self-field read is sourced from a ro receiver.
+    current_recv_is_mut: std::cell::Cell<bool>,
     /// Plan 174.2 Ф.B (cross-carrier `?` diagnostics): declared return type of
     /// the enclosing fn, set in `f1_check_fn`, cleared on exit. Lets the
     /// `ExprKind::Try` arm know the return CARRIER (`Result` vs `Option`) and
@@ -3729,10 +3740,17 @@ impl<'a, 'b> Drop for ConstFnFlagGuard<'a, 'b> {
 struct PrivRecvGuard<'a, 'b> {
     ctx: &'b TypeCheckCtx<'a>,
     prev: Option<String>,
+    /// Field-launder channel (§2, 2026-08-01): previous `current_recv_is_mut`
+    /// value, restored alongside `current_recv_type`. Defaults to `false`
+    /// (via `..Default` construction sites below being updated to pass it)
+    /// so pre-existing call sites keep compiling — see the two construction
+    /// sites in `f1_check_fn`.
+    prev_mut: bool,
 }
 impl<'a, 'b> Drop for PrivRecvGuard<'a, 'b> {
     fn drop(&mut self) {
         *self.ctx.current_recv_type.borrow_mut() = self.prev.take();
+        self.ctx.current_recv_is_mut.set(self.prev_mut);
     }
 }
 
@@ -4349,6 +4367,7 @@ impl<'a> TypeCheckCtx<'a> {
             const_fn_names,
             in_const_fn: std::cell::Cell::new(false),
             current_recv_type: std::cell::RefCell::new(None),
+            current_recv_is_mut: std::cell::Cell::new(false),
             current_fn_return_ty: std::cell::RefCell::new(None),
             current_fn_generics: std::cell::RefCell::new(Vec::new()),
             current_fn_test_access: std::cell::RefCell::new(Vec::new()),
@@ -5642,7 +5661,9 @@ impl<'a> TypeCheckCtx<'a> {
         let prev_recv = self.current_recv_type.borrow().clone();
         let new_recv = fd.receiver.as_ref().map(|r| r.type_name.clone());
         *self.current_recv_type.borrow_mut() = new_recv;
-        let _recv_guard = PrivRecvGuard { ctx: self, prev: prev_recv };
+        let prev_recv_mut = self.current_recv_is_mut.get();
+        self.current_recv_is_mut.set(fd.receiver.as_ref().map_or(false, |r| r.mutable));
+        let _recv_guard = PrivRecvGuard { ctx: self, prev: prev_recv, prev_mut: prev_recv_mut };
         // Plan 124.6 (D225): set current_fn_test_access — fn body gets priv
         // access к listed types (escape hatch для tests + helper fns).
         let prev_ta = std::mem::take(&mut *self.current_fn_test_access.borrow_mut());
@@ -7360,7 +7381,9 @@ impl<'a> TypeCheckCtx<'a> {
         let prev_recv = self.current_recv_type.borrow().clone();
         let new_recv = fd.receiver.as_ref().map(|r| r.type_name.clone());
         *self.current_recv_type.borrow_mut() = new_recv;
-        let _recv_guard = PrivRecvGuard { ctx: self, prev: prev_recv };
+        let prev_recv_mut = self.current_recv_is_mut.get();
+        self.current_recv_is_mut.set(fd.receiver.as_ref().map_or(false, |r| r.mutable));
+        let _recv_guard = PrivRecvGuard { ctx: self, prev: prev_recv, prev_mut: prev_recv_mut };
         // Plan 174.2 Ф.B: publish the enclosing fn's return type so the
         // `ExprKind::Try` arm can diagnose carrier-mismatched `?`. Restored on
         // exit via `FnReturnTyGuard` (RAII — covers early returns).
@@ -10472,6 +10495,63 @@ impl<'a> TypeCheckCtx<'a> {
                     ),
                     value.span,
                 ));
+            }
+        }
+        // Field-launder channel ([M-router-handler-mut-capture-escape-
+        // soundness] §2, срочный пакет звучности mut/захватов, owner
+        // decision 2026-08-01: "ВТОРОЙ канал той же дыры... ro-launder
+        // ПОЛЕЙ — `mut lock = @lock` / `mut gauges = @gauges` из
+        // ro-метода легально вымогают mut на разделяемое состояние").
+        // Same unsoundness as the L1-Ident axis above, one `Member`-hop
+        // deeper: `mut x = @field` (self-field read inside a RO-receiver
+        // method) or `mut x = obj.field` (bare-Ident `obj` bound `ro`,
+        // L1, or typed `ro T`, L2). Scoped to these two live forms —
+        // `metrics.nv`'s actual repro; a deeper chain (`a.b.field`) is a
+        // documented, sound false-negative (consistent with this
+        // checker's existing scope caveats elsewhere), not fixed here.
+        if let ExprKind::Member { obj, .. } = &value.kind {
+            let field_is_stack = self.infer_expr_type(value, scope)
+                .map_or(false, |t| is_fully_stack_value(&t, &self.types));
+            if !field_is_stack {
+                let root_is_ro = match &obj.kind {
+                    ExprKind::SelfAccess => !self.current_recv_is_mut.get(),
+                    ExprKind::Ident(root_name) => {
+                        self.ro_binding_names.borrow().contains(root_name)
+                            || self.infer_expr_type(obj, scope)
+                                .map_or(false, |t| t.is_readonly())
+                    }
+                    _ => false,
+                };
+                if root_is_ro {
+                    let root_desc = match &obj.kind {
+                        ExprKind::SelfAccess => "receiver `@` (ro — метод объявлен \
+                             без `mut @`, D176-дефолт)".to_string(),
+                        ExprKind::Ident(n) => format!(
+                            "`{n}` (ro — L1-binding или явный `ro T`, L2)"
+                        ),
+                        _ => "источник".to_string(),
+                    };
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_READONLY_COERCE] поле, прочитанное с {root_desc}, \
+                             присваивается в mutable content-view — поле не \
+                             полностью-стековое (D246-амендмент §72 \
+                             `is_fully_stack_value`), поэтому mut-binding над \
+                             копией разделял бы кучевой storage с оригиналом: \
+                             запись через новый mut-binding была бы видна \
+                             оригиналу/вызывающему точно так же, как в L1-Ident \
+                             канале ([M-router-handler-mut-capture-escape-\
+                             soundness] §2, срочный пакет звучности, owner \
+                             decision 2026-08-01). Решения: (a) сделай метод \
+                             `mut @method` (receiver уже mut — launder не \
+                             нужен, можно писать через поле напрямую); \
+                             (b) скопируй явно — `.clone()` (D230) — если нужна \
+                             НЕЗАВИСИМАЯ mutable-копия; (c) оставь цель тоже \
+                             `ro` (поле только читается)."
+                        ),
+                        value.span,
+                    ));
+                }
             }
         }
     }
