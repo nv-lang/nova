@@ -1000,7 +1000,7 @@ fn JsonValue @display(mut f Fmt) -> () {
     if f.alternate() {
         f.write(@to_str_pretty().bytes())
     } else {
-        f.write(@to_str().bytes())
+        f.write(@to_str())
     }
 }
 

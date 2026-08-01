@@ -598,18 +598,18 @@ export fn Duration @to_str() -> str {
 /// Display — delegates to [`to_str`] (ASCII auto-scale short form, e.g.
 /// `"2s"`/`"500ns"`/`"150us"`). **Byte-exact ASCII** — no bytes > 0x7F.
 #stable(since = "0.1")
-export fn Duration @display(mut f Fmt) -> () { f.write(@to_str().bytes()) }
+export fn Duration @display(mut f Fmt) -> () { f.write(@to_str()) }
 
 /// Debug — diagnostic form showing the exact raw nanoseconds alongside the
 /// human short form (unambiguous for overflow/precision debugging, unlike the
 /// auto-scaled `@display`).
 #stable(since = "0.1")
 export fn Duration @debug(mut f Fmt) -> () {
-    f.write("Duration(".bytes())
-    f.write(@to_str().bytes())
-    f.write(", ".bytes())
-    f.write(@nanos.to_str().bytes())
-    f.write("ns)".bytes())
+    f.write("Duration(")
+    f.write(@to_str())
+    f.write(", ")
+    f.write(@nanos.to_str())
+    f.write("ns)")
 }
 
 /// Human-readable форматирование с декомпозицией на компоненты.

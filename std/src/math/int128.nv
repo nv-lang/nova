@@ -505,6 +505,6 @@ export fn i128 @to_str() -> str {
     consume sb = StringBuilder.new()
     if @is_neg() { sb.append("-") }
     sb.append(digits)
-    sb.into_str()
+    sb
 }
 
