@@ -262,6 +262,7 @@ M-174.5-pointer-ops-methods
 M-174.6-ffi-abi
 M-174.6-ffi-struct-layout
 M-174.6-varargs
+M-175-handler-lit-boxed-var-c-scope-leak
 M-175-lazy-const-crossmodule-collision
 M-175-realtime-ban-method-call-blind
 M-175-type-const-max-shadows-builtin
@@ -460,6 +461,7 @@ M-bang-requires-fail-enforcement
 M-bigint-family-migrate-named-tuple
 M-bitwise-operator-method-naming
 M-blanket-crossmodule-scattered-peer-drop
+M-boehm-...
 M-c-keyword-ident-collision
 M-c-keyword-mangle-destructure-tail
 M-callnorm-free-fn-name-collision
@@ -543,6 +545,7 @@ M-fiber-arena-raise-cap
 M-fiber-arena-sigsegv-install-race
 M-fiber-stack-lazy-decommit
 M-fixed-array-value-semantics
+M-flagship-...
 M-flagship-monotonic-now-bare-binding-ice
 M-flagship-spawn-capture-value-struct-ptr-mismatch
 M-flagship-spawn-throw-segfault
@@ -615,6 +618,7 @@ M-maplit-folder-cu-insert-new-ice
 M-match-guard-trailing-paren-legacy-lambda
 M-match-tuple-option-value-deref
 M-md5-array-repeat-literal-parser
+M-mem-effect-demote-to-namespace
 M-method-resolution-registry-inconsistency
 M-method-value-arg-in-generic-combinator-infer
 M-missing-effect-handler-segfaults

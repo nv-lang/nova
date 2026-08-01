@@ -17,17 +17,15 @@ ROOT="${1:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 BASELINE="$SCRIPT_DIR/bug-number-sync.baseline"
 BACKLOG="$ROOT/docs/plans/backlog-followups.md"
 SWEEP="$ROOT/docs/plans/221.1-bug-sweep.md"
+# Один проход (не греп-на-маркер): все имена backlog минус имена, встречающиеся
+# в 221.1, минус baseline. comm требует сортировки.
+tmpb="$(mktemp)"; tmps="$(mktemp)"
+grep -oE '\[M-[a-z0-9_.-]+\]' "$BACKLOG" | tr -d '[]' | sort -u > "$tmpb"
+grep -oE 'M-[a-z0-9_.-]+' "$SWEEP" | sort -u > "$tmps"
+missing=$(comm -23 "$tmpb" "$tmps" | comm -23 - <(sort -u "$BASELINE"))
+rm -f "$tmpb" "$tmps"
 fail=0
-missing=""
-while IFS= read -r m; do
-    [ -n "$m" ] || continue
-    if ! grep -q "$m" "$SWEEP" 2>/dev/null; then
-        if ! grep -qx "$m" "$BASELINE" 2>/dev/null; then
-            missing="$missing $m"
-            fail=1
-        fi
-    fi
-done < <(grep -oE '\[M-[a-z0-9_.-]+\]' "$BACKLOG" | tr -d '[]' | sort -u)
+[ -n "$missing" ] && fail=1
 if [ "$fail" = "1" ]; then
     echo "BUG-NUMBER-SYNC FAIL: новые маркеры БЕЗ № в 221.1-bug-sweep.md (правило владельца 2026-08-01, №217):" >&2
     for m in $missing; do echo "  - $m" >&2; done
