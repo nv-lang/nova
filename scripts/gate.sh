@@ -36,6 +36,9 @@ bash "$ROOT/scripts/guards/check-no-runtime-copy.sh" || fail "копия ран�
 # Первый прогон стража нашёл 59 таких; ручные аудиты видели 8. Храповик: расти нельзя.
 echo "== gate: marker-registry-sync =="
 bash "$ROOT/scripts/guards/check-marker-registry-sync.sh" "$ROOT" || fail "маркеры в коде без записи в реестре (№155/№161)"
+echo "== gate: bug-number-sync (№217 — каждый новый маркер нумерован в 221.1) =="
+bash "$ROOT/scripts/guards/check-bug-number-sync.sh" "$ROOT" || fail "новый маркер без № в 221.1 (правило владельца №217)"
+
 
 echo "== gate: selftests стражей =="
 
