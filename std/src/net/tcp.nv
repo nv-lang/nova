@@ -97,6 +97,15 @@ export fn TcpListener.bind(addr SocketAddr) Net -> Result[TcpListener, NetError]
     Net.tcp_bind(addr)
 }
 
+/// Bind a TCP listener to a string address (Rust-parity `ToSocketAddrs`
+/// convenience). Parses `addr` via [`str @to_socket_addr`] then delegates to
+/// the `SocketAddr` form above; a malformed address surfaces as the same
+/// `NetError` the parser returns (`InvalidAddr`/`InvalidPort`).
+#stable(since = "0.1")
+export fn TcpListener.bind(addr str) Net -> Result[TcpListener, NetError] {
+    TcpListener.bind(addr.to_socket_addr()?)
+}
+
 /// Accept the next incoming connection (parks; cancel-safe).
 #stable(since = "0.1")
 export fn TcpListener mut @accept() Net -> Result[TcpStream, NetError] {
@@ -140,6 +149,15 @@ export fn TcpListener consume @cleanup(_outcome ScopeOutcome) -> () {
 #stable(since = "0.1")
 export fn TcpStream.connect(addr SocketAddr) Net -> Result[TcpStream, NetError] {
     Net.connect(addr)
+}
+
+/// Connect to a string address (Rust-parity `ToSocketAddrs` convenience).
+/// Parses `addr` via [`str @to_socket_addr`] then delegates to the
+/// `SocketAddr` form above; a malformed address surfaces as the same
+/// `NetError` the parser returns (`InvalidAddr`/`InvalidPort`).
+#stable(since = "0.1")
+export fn TcpStream.connect(addr str) Net -> Result[TcpStream, NetError] {
+    TcpStream.connect(addr.to_socket_addr()?)
 }
 
 /// Read up to `buf.len()` bytes into `buf`; returns `Ok(n)`. `Ok(0)` = clean EOF

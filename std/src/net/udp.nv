@@ -47,6 +47,15 @@ export fn UdpSocket.bind(addr SocketAddr) Net -> Result[UdpSocket, NetError] {
     Net.udp_bind(addr)
 }
 
+/// Bind a UDP socket to a string address (Rust-parity `ToSocketAddrs`
+/// convenience). Parses `addr` via [`str @to_socket_addr`] then delegates to
+/// the `SocketAddr` form above; a malformed address surfaces as the same
+/// `NetError` the parser returns (`InvalidAddr`/`InvalidPort`).
+#stable(since = "0.1")
+export fn UdpSocket.bind(addr str) Net -> Result[UdpSocket, NetError] {
+    UdpSocket.bind(addr.to_socket_addr()?)
+}
+
 /// Send a datagram to `addr`; returns `Ok(n)` bytes sent (straight from `data`).
 #stable(since = "0.1")
 export fn UdpSocket mut @send_to(data []u8, addr SocketAddr) Net -> Result[int, NetError] {
