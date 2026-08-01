@@ -1,13 +1,6 @@
 // stdlib/concurrency/cancellation.nv — `race2` над `supervised(cancel:)` +
 // `CancelToken`.
 //
-// Plan 47 Ф.5 + Plan 48 Ф.4 + Plan 49 Ф.0-Ф.6 — все три необходимы:
-//   - Plan 47: `supervised(cancel:)` + `CancelToken` (handle + bind).
-//   - Plan 48: closures-in-generics — без мономорфизации `fn race2[T]`
-//     с closure-параметрами валит codegen.
-//   - Plan 49: kinded throws — отмена `CANCEL` не убегает наружу, не
-//     перехватывается `with Fail`, USER-precedence не теряет real-error.
-//
 // API (этот файл):
 //   race2[T](a fn() -> T, b fn() -> T) -> T
 //     — два fiber'а соревнуются, возвращается первый завершившийся;
@@ -15,14 +8,12 @@
 //       двух операций. (`race[T](competitors []fn() -> T)` — V2,
 //       требует `[]fn()->T` поддержку в generic-context.)
 //
-// **RETRACTED (Plan 173 §3a п.4 / `[M-174-retract-with-timeout]`, Plan 175
-// закрыл гейт — Ф.3(a) мокабельный Monotonic + Ф.5(d) — 2026-07-10):**
 // `within[T](timeout_ms int, body fn() -> T) -> Option[T]` и
-// `with_timeout[T](timeout_ms int, body fn() -> T) -> T` УДАЛЕНЫ.
+// `with_timeout[T](timeout_ms int, body fn() -> T) -> T` РЕТРАКТИРОВАНЫ.
 // Субсумированы `supervised(timeout: Duration)`/`supervised(deadline:
-// Monotonic)` (D408, Plan 174) — структурная конструкция, а не fn-обёртка
-// над чистым `fn()->T` (эффекты тела текут наружу, не erased в closure-
-// сигнатуру). Миграция call-site:
+// Monotonic)` — структурная конструкция, а не fn-обёртка над чистым
+// `fn()->T` (эффекты тела текут наружу, не erased в closure-сигнатуру).
+// Миграция call-site:
 //   было:  match within(1000, || body()) { Some(v) => v, None => fallback }
 //   стало: with Fail[TimeoutError] = |_| fallback {
 //              supervised(timeout: 1.second()) { body() }
@@ -45,8 +36,8 @@ module concurrency.cancellation
 // NB: std.testing.handlers НЕ импортируется здесь — handlers.nv
 // `mut_clock(start)` обращается к `d.nanos` где d приходит как
 // `nova_int ms` из runtime Time effect signature (schema mismatch
-// между Duration в Nova-side и int ms в runtime). Это отдельный bug
-// `[M-time-effect-schema-mismatch-sleep]` — следующая итерация.
+// между Duration в Nova-side и int ms в runtime).
+// [M-time-effect-schema-mismatch-sleep] — следующая итерация.
 
 // ──────────────────────────────────────────────────────────────────────────
 // race2[T] — два fiber'а соревнуются, first-result-wins
@@ -57,22 +48,22 @@ module concurrency.cancellation
 // (cooperative — обрывается на ближайшем yield-point'е).
 //
 // Если ОБА fiber'а throw'нули USER-ошибку — пробрасывается first-USER
-// (Plan 49 USER-precedence: real-error wins над CANCEL).
+// (USER-precedence: real-error wins над CANCEL).
 //
 // V2: race[T](competitors []fn() -> T) — требует `[]fn() -> T` в
-// generic-context (Plan 48 Ф.4 + array-of-closures). Сейчас фиксированно 2.
+// generic-context (array-of-closures). Сейчас фиксированно 2.
 /// Race two competitors — return result от первого завершившегося. Loser отменяется.
 ///
-/// Если оба user-throw'ят — first-USER пробрасывается (Plan 49 USER-precedence).
+/// Если оба user-throw'ят — first-USER пробрасывается (USER-precedence).
 /// Если оба завершились без result'а (rare) — throws "race2: both failed".
 ///
 /// V2: `race[T](competitors []fn() -> T)` — отложено до array-of-closures
-/// support в generic context (Plan 48 Ф.4).
+/// support в generic context.
 #stable(since = "0.1")
 export fn race2[T](a fn() -> T, b fn() -> T) -> T {
     ro tok = CancelToken.new()
-    // Plan 173.3 (D415 §2): победитель — через канал, НЕ mut-захват.
-    // Старый код (`winner = Some(r)` из двух sibling-fiber'ов под
+    // Победитель — через канал, НЕ mut-захват. Старый код
+    // (`winner = Some(r)` из двух sibling-fiber'ов под
     // is_cancelled()-проверкой) был настоящим TOCTOU-race: оба могли
     // пройти проверку и писать одновременно. Канал cap 2 (оба могут
     // успеть try_send без блокировки); FIFO-порядок канала = first-wins.

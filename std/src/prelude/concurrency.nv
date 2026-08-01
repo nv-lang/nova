@@ -1,46 +1,36 @@
 // std/prelude/concurrency.nv — file-based source of truth для prelude
-// concurrency-типа `CancelToken` (D75 revised, Plan 47 / Plan 49).
-//
-// [M-canceltoken-prelude-decl] (2026-07-13, Plan 173-хвост): `CancelToken`
-// перенесён из hardcoded type-checker builtins HashSet
-// (compiler-codegen/src/types/mod.rs, `load_builtins`) в формальные
-// декларации — образец Plan 62.D.bis (StringBuilder/WriteBuffer/ReadBuffer)
-// и Plan 62.B (panic/println в std/prelude/runtime.nv: extern "nova"
-// декларации в prelude-файле + codegen name-keyed special-case dispatch).
+// concurrency-типа `CancelToken`. Формальная декларация: тип объявлен здесь,
+// методы — extern "nova" декларации в prelude-файле + codegen name-keyed
+// special-case dispatch.
 //
 // До переноса `CancelToken` жил ТОЛЬКО именем в bypass-HashSet: чекер
 // пропускал `CancelToken.new()` нерезолвленным (нет TypeDecl → static-ctor
-// армы не срабатывали; ни Channel-1 resolved_callees, ни Channel-2
-// resolved_types), и legacy `infer_call_ret_c` угадывал ПРОИЗВОЛЬНЫЙ чужой
+// армы не срабатывали), и legacy-инференс угадывал ПРОИЗВОЛЬНЫЙ чужой
 // `.new()` по arity — наблюдались `Nova_WriteBuffer*` / `Nova_StringBuilder*`
 // в зависимости от compile-unit контекста. Неверный C-тип binding'а протекал
-// в spawn-capture ctx struct → CC-FAIL «no member named 'cancel' in 'struct
-// Nova_WriteBuffer'» (std/src/concurrency/supervised_deadline_test.nv).
+// в spawn-capture ctx struct → CC-FAIL «no member named 'cancel' ...».
 // Формальные декларации дают чекеру TypeDecl + method-сигнатуры → штатная
-// материализация возврата конструктора в канал (`-> Self` субституция,
-// types/mod.rs f1_check_call), legacy-гадание становится недостижимым.
+// материализация возврата конструктора в канал, legacy-гадание становится
+// недостижимым.
 //
-// Архитектурные правила (Plan 62 §«Стратификация»):
+// Архитектурные правила:
 //   - **Один explicit import**: `std.prelude.core.{Option}` — нужен для
 //     `reason() -> Option[str]` (образец: prelude/collections.nv).
 //     Auto-import `std.prelude` отключён внутри `std.prelude.*`
-//     (cycle protection, `is_prelude_self_module`, manifest.rs).
+//     (cycle protection).
 //
-// **Bootstrap status:** dispatch остаётся в emit_c.rs D75 special-cases
-// (receiver `NovaCancelToken*`; C-runtime `nova_cancel_token_*` в
-// nova_rt/fibers.h) — эти декларации синхронизируют type-checker
-// signatures с фактическим API. Mangled-имена ExternalRegistry для этих
-// деклараций НЕ эмитятся: D75-диспатч перехватывает раньше и instance-
-// (emit_c.rs ~33078, до registry-instance ~33902, чей `Nova_`-префикс-гейт
-// `NovaCancelToken*` и так не матчит), и static-форму (Member ~34196 /
-// Path ~37401 — до registry-static ~34206 / ~37667). Лоуэринг типа —
-// хардкод `CancelToken → NovaCancelToken*` (emit_c.rs resolved_named_to_c)
-// — остаётся C-маппингом (не newtype-путь: match-арм имени стоит раньше).
+// **Bootstrap status:** dispatch остаётся в codegen special-cases (receiver
+// `NovaCancelToken*`; C-runtime `nova_cancel_token_*` в nova_rt/fibers.h) —
+// эти декларации синхронизируют type-checker signatures с фактическим API.
+// Mangled-имена ExternalRegistry для этих деклараций НЕ эмитятся:
+// special-case-диспатч перехватывает раньше, и instance-, и static-форму.
+// Лоуэринг типа — хардкод `CancelToken → NovaCancelToken*` — остаётся
+// C-маппингом (не newtype-путь: match-арм имени стоит раньше).
 //
-// Generic-форма `CancelToken[T]` (Plan 49 Ф.6, typed reason) осталась
-// codegen-side (`cancel_token_t_map`, TurboFish-армы) — здесь объявлена
-// НЕ-generic базовая форма; в корпусе живых `CancelToken[T]`-аннотаций нет
-// (проверено 2026-07-13), typed-reason проходит через `@cancel(reason any)`.
+// Generic-форма `CancelToken[T]` (typed reason) осталась codegen-side —
+// здесь объявлена НЕ-generic базовая форма; в корпусе живых
+// `CancelToken[T]`-аннотаций нет, typed-reason проходит через
+// `@cancel(reason any)`.
 
 module prelude.concurrency
 
@@ -48,7 +38,7 @@ import std.prelude.core.{Option}
 
 // ─── CancelToken ─────────────────────────────────────────────────
 
-/// Caller-owned cancellation handle (D75 revised, Plan 47).
+/// Caller-owned cancellation handle.
 ///
 /// Кооперативная отмена: `supervised(cancel: tok)` привязывает области
 /// исполнения к токену; `tok.cancel()` доставляет отмену всем привязанным
@@ -58,9 +48,9 @@ import std.prelude.core.{Option}
 /// канонический паттерн): состояние — atomic runtime handle (interior
 /// mutability, аналог Go `context.CancelFunc`).
 ///
-/// `#share` (D415 §2): audited vouch — handle является настоящей
-/// синхронизацией (atomic flag + wake в C-runtime), безопасен для
-/// alias/capture через `spawn`-границу (тот же механизм, что `Mutex`).
+/// `#share`: audited vouch — handle является настоящей синхронизацией
+/// (atomic flag + wake в C-runtime), безопасен для alias/capture через
+/// `spawn`-границу (тот же механизм, что `Mutex`).
 #stable(since = "0.1")
 #share
 export type CancelToken(*())
@@ -77,7 +67,7 @@ export extern "nova" fn CancelToken.new() -> Self
 #stable(since = "0.1")
 export extern "nova" fn CancelToken @cancel()
 
-/// Отменить с причиной (Plan 49 Ф.1/Ф.6 — typed reason).
+/// Отменить с причиной (typed reason).
 ///
 /// Boxing причины по фактическому типу аргумента выполняет codegen
 /// (str → nova_cancel_box_str; pointer — as-is; value — box_copy_raw).
@@ -93,15 +83,15 @@ export extern "nova" fn CancelToken @is_cancelled() -> bool
 /// Причина отмены: `Some(reason)` после `cancel(reason)`, `None` иначе.
 ///
 /// Default-форма T=str; для tracked `CancelToken[T]` codegen эмитит
-/// per-T un-box (Plan 49 Ф.6, `cancel_token_t_map`).
+/// per-T un-box.
 #realtime
 #stable(since = "0.1")
 export extern "nova" fn CancelToken @reason() -> Option[str]
 
-/// Композиция (Plan 49 P3): новый токен, который отменяется когда
-/// отменён ЛЮБОЙ из источников. Same-T в V1.
+/// Композиция: новый токен, который отменяется когда отменён ЛЮБОЙ из
+/// источников. Same-T в V1.
 ///
-/// NB: возврат спеллится `-> CancelToken` (не `-> Self`) — D132-проверка
+/// NB: возврат спеллится `-> CancelToken` (не `-> Self`) — проверка
 /// «-> Self, но все пути возвращают @» не различает extern-декларации
 /// без тела и ложно требует fluent `-> @` (merge возвращает НОВЫЙ токен).
 #realtime
