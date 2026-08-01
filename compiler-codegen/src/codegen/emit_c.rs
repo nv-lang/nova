@@ -1208,6 +1208,28 @@ pub struct CEmitter {
     /// `debt_find_variant_ctx` only consults it among ≥2 already-ambiguous
     /// plain candidates for the SAME variant name.
     expected_sum_hint: Option<String>,
+    /// [221.1 №250/№251] `NovaOpt_<T>` C-type a bare `None` sub-expression is
+    /// expected to construct — set from the Ok/Err payload's ALREADY-RESOLVED
+    /// concrete C type (`ok_c`/`err_c`, themselves derived from the CURRENT
+    /// mono instantiation's `current_fn_return_ty`, not from the generic
+    /// template's abstract type-param) while emitting that payload's value
+    /// (`Ok(None)`/`Err(None)`). Same rationale/shape as `expected_sum_hint`
+    /// just above, but for the sibling gap: `None`'s own "channel-first"
+    /// lookup (`resolved_types[expr.id]`) resolves against the STATIC,
+    /// per-template AST node — for a builtin Option/Result method body
+    /// drained per-(T,E) from `mono_worklist` (`Option[Result[T,E]]
+    /// @transpose`'s own `None => Ok(None)` arm), that node's checker-time
+    /// type is the ABSTRACT `Option[T]` (T unresolved), not this specific
+    /// instantiation's concrete `Option[bool]` — so the channel silently
+    /// misses and falls through to `current_fn_return_ty`, which for a
+    /// `None` NESTED inside `Ok(..)` names the WRONG (outer `Result`, not
+    /// `Option`) type entirely, bottoming out at the hardcoded
+    /// `NovaOpt_nova_int` default (coincidentally correct only when T
+    /// happens to be `int` — masked every non-`int` (T,E) pair). `None`
+    /// almost everywhere (only set around Ok/Err payload emission in
+    /// `emit_call`) — byte-identical when unset (falls through to the
+    /// pre-existing channel/fallback chain unchanged).
+    expected_option_elem_hint: Option<String>,
     /// D73/D84: When emitting `ro x T = v.into()`, set to T before emitting
     /// the RHS so the .into() resolver can prefer `T.from(v)` over other
     /// targets that also accept v (e.g. StringBuilder.from(str)).
@@ -2431,6 +2453,7 @@ impl CEmitter {
             current_receiver_is_static: false,
             expected_record_type: None,
             expected_sum_hint: None,
+            expected_option_elem_hint: None,
             expected_into_target: None,
             current_array_elem_hint: None,
             current_array_protocol_box: None,
@@ -3895,8 +3918,26 @@ impl CEmitter {
     /// `register_novaopt_decl`/`register_novaopt_decl_forced` forward-typedef
     /// polluting-check: only mono'd (`____`-bearing) `Nova_`-prefixed names need
     /// the guard (nova_int/nova_str/runtime-defined structs are excluded).
+    ///
+    /// [221.1 №250/№251] `NovaRes_<ok>_<err>` — the builtin Result mono-instance
+    /// name (`register_novares_decl`'s own class) — is ALSO in scope, for a
+    /// structural reason distinct from the user-mono `Nova_X____...` case above:
+    /// `register_novares_decl`'s full body is spliced at `/*__NOVARES_TYPEDEFS__*/`,
+    /// which sits textually AFTER `/*__NOVAOPT_TYPEDEFS__*/` (this buffer, see
+    /// `emit_module`'s splice-order block). A `NovaOpt_<sani>` typedef pointer-
+    /// wrapping a NON-canonical `NovaRes_<ok>_<err>` (any (T,E) pair besides the
+    /// ONE hardcoded `(nova_int, nova_str)` baked into `nova_rt/array.h`, e.g.
+    /// `Option[Result[bool, int]]` or `Option[Result[int, ParseIntError]]`) is
+    /// therefore emitted BEFORE the pointee struct it names — "unknown type name
+    /// 'NovaRes_...'" — even though the (T,E)-substitution feeding it is itself
+    /// correct (checked separately, see `debt_rebind_nested_receiver_typevars`).
+    /// The canonical pair's struct is already complete before this splice even
+    /// runs (pre-declared in `array.h`), so an extra forward-typedef for it is a
+    /// harmless, C11-legal redundant redeclaration (6.7p3 permits redefining a
+    /// typedef name to a compatible type) — no need to special-case it out.
     fn debt_is_mono_nova_name(inner_name: &str) -> bool {
-        Self::debt_contains_mono_sep(inner_name) && inner_name.starts_with("Nova_")
+        (Self::debt_contains_mono_sep(inner_name) && inner_name.starts_with("Nova_"))
+            || inner_name.starts_with("NovaRes_")
     }
 
     /// Plan 91.12 V2 / Plan 173.3 (D415 §2 detach-migration fix, 2026-07-11):
@@ -33510,13 +33551,33 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // аннотирует None expected-типом (literal-coercion) или
                             // типом другого операнда сравнения; function-level
                             // current_fn_return_ty — лишь фоллбек (врёт по позиции).
-                            let channel_opt: Option<String> = expr
-                                .id
-                                .is_set()
-                                .then(|| self.resolved_types.get(&expr.id))
-                                .flatten()
-                                .and_then(|rt| self.resolved_type_to_c(rt).ok())
-                                .filter(|t| t.starts_with("NovaOpt_"));
+                            //
+                            // [221.1 №250/№251] `expected_option_elem_hint` — set ONLY
+                            // around a DIRECT `Ok(None)`/`Err(None)` payload (see its
+                            // doc) — wins over BOTH: for a builtin Option/Result method
+                            // body drained per-(T,E) from `mono_worklist` (e.g.
+                            // `Option[Result[T,E]] @transpose`'s `None => Ok(None)`
+                            // arm), `resolved_types[expr.id]` is the GENERIC TEMPLATE's
+                            // one-time checker result (abstract `Option[T]`, T
+                            // unresolved) — same AST node id reused across every
+                            // instantiation — so the channel silently misses per-mono;
+                            // `current_fn_return_ty` here names the OUTER `Result`
+                            // (wrong type family entirely, `None` is nested inside
+                            // `Ok(..)`). The hint carries the ACTUAL resolved payload
+                            // C-type for THIS instantiation (derived from THIS mono's
+                            // own `current_fn_return_ty` one level up, at the `Ok`/`Err`
+                            // call site) — the only one of the three that is correct
+                            // for every (T,E) pair, not just the historically-hardcoded
+                            // `(nova_int, nova_str)`.
+                            let channel_opt: Option<String> = self.expected_option_elem_hint.clone()
+                                .or_else(|| {
+                                    expr.id
+                                        .is_set()
+                                        .then(|| self.resolved_types.get(&expr.id))
+                                        .flatten()
+                                        .and_then(|rt| self.resolved_type_to_c(rt).ok())
+                                        .filter(|t| t.starts_with("NovaOpt_"))
+                                });
                             let opt_ty: String = channel_opt
                                 .or_else(|| {
                                     self.current_fn_return_ty
@@ -38054,6 +38115,20 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         let payload_c = if name == "Ok" { &ok_c } else { &err_c };
                         let saved_expected = self.expected_record_type.clone();
                         self.expected_record_type = Self::debt_struct_name_from_c_type(payload_c);
+                        // [221.1 №250/№251] see `expected_option_elem_hint` doc: same
+                        // "narrower scoping" discipline the sibling `expected_sum_hint`
+                        // comment above calls for (that one was tried+reverted for
+                        // leaking into arbitrarily-nested subtrees) — gated to ONLY the
+                        // trivial `args[0]` DIRECTLY-bare-`None` case, never recursing,
+                        // so it cannot leak into an unrelated nested construction.
+                        let saved_option_hint = self.expected_option_elem_hint.clone();
+                        let arg0_is_bare_none = args.first().map_or(false, |a| matches!(
+                            &a.expr().kind, crate::ast::ExprKind::Ident(n) if n == "None"));
+                        self.expected_option_elem_hint = if arg0_is_bare_none && payload_c.starts_with("NovaOpt_") {
+                            Some(payload_c.clone())
+                        } else {
+                            None
+                        };
                         // [M-178-variant-ctor-target-sum] (tried + reverted): setting
                         // `expected_sum_hint` here too (mirroring
                         // `emit_record_field_value`) regressed the conformance corpus
@@ -38072,15 +38147,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         if name == "Ok" && args.len() == 1 {
                             let arg_v = self.emit_expr(args[0].expr())?;
                             self.expected_record_type = saved_expected;
+                            self.expected_option_elem_hint = saved_option_hint;
                             return Ok(format!(
                                 "nova_make_NovaRes_{}_Ok({})", suffix, arg_v));
                         } else if name == "Err" && args.len() == 1 {
                             let arg_v = self.emit_expr(args[0].expr())?;
                             self.expected_record_type = saved_expected;
+                            self.expected_option_elem_hint = saved_option_hint;
                             return Ok(format!(
                                 "nova_make_NovaRes_{}_Err({})", suffix, arg_v));
                         }
                         self.expected_record_type = saved_expected;
+                        self.expected_option_elem_hint = saved_option_hint;
                     }
                 }
             }
