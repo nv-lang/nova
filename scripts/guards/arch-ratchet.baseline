@@ -339,5 +339,11 @@
 # большая часть дельты — блок-комментарии анатомии бага (закрыл
 # [M-effect-handler-mutex-hashmap-value-capture]). Чекер-часть волны
 # (field-launder, D246/D174 амендменты) — в types/mod.rs, вне метрики.
-lines=63839
+# 2026-08-01 (M:N-кластер, окно p-mn-cancel): 63839 -> 63955 (+116). №169:
+# лексический deadline-combine в emit_supervised (compile-time канал против
+# runtime-TLS-цепочки, которую D439 намеренно не репойнтит) + №165: ранний
+# cancel-token bind до тела с узким NovaFailFrame try/finally; существенная
+# rt-механика — в nova_rt (fibers.h/nova_sched.h/channels.h), вне метрики;
+# заметная часть дельты — гонко-анализ в комментариях (D442).
+lines=63955
 infer=349
