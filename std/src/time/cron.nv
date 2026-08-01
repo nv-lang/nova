@@ -136,15 +136,13 @@ fn parse_field(s str, name str, min int, max int) -> Result[CronField, ParseCron
     // Range: "1-5"
     if s.contains("-") {
         ro (lo, hi) = parse_range(s, name, min, max)?
-        mut values []int = []
-        for v in lo..=hi { values.push(v) }
+        mut values = (lo..=hi).collect()
         return Ok({ values })
     }
 
     // Wildcard: "*"
     if s == "*" {
-        mut values []int = []
-        for v in min..=max { values.push(v) }
+        mut values = (min..=max).collect()
         return Ok({ values })
     }
 

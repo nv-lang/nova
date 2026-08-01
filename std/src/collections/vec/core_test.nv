@@ -15,8 +15,7 @@ test "new(cap: n) / reserve" {
 }
 
 test "grow — 1000 pushes preserve order" {
-    mut v = Vec[int].new()
-    for i in 0..1000 { v.push(i) }
+    mut v = (0..1000).collect()
     assert(v.len() == 1000)
     assert(v.get(0) == Some(0))
     assert(v.get(500) == Some(500))

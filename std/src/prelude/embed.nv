@@ -58,8 +58,7 @@ export fn EmbeddedDir.new(entries []EmbeddedEntry) -> Self {
         }
         i += 1
     }
-    mut own []EmbeddedEntry = []        // защитная мелкая копия (алиас-защита)
-    for e in entries { own.push(e) }
+    mut own = entries.collect()        // защитная мелкая копия (алиас-защита)
     Self { entries: own }
 }
 

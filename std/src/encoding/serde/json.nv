@@ -319,10 +319,7 @@ fn JsonDeserializer mut @map_keys() -> Result[[]str, DeError] {
     match @cur.object() {
         None => Err(DeError.unexpected("object", json_kind(@cur)))
         Some(m) => {
-            mut ks []str = []
-            for k in m.keys() {
-                ks.push(k)
-            }
+            mut ks = m.keys().collect()
             Ok(ks)
         }
     }
