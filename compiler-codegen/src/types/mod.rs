@@ -43360,6 +43360,13 @@ pub(crate) fn check_default_handlers(module: &crate::ast::Module, errors: &mut V
     }
     if registry.is_empty() { return; }
 
+    // №246 (D431 amend, [M-default-handler-factory-yield-point-ban]):
+    // CU-wide suspend-call closure over `all_fns` (mirrors
+    // `thread_affine_closure`'s fixed-point exactly — same algorithm,
+    // seeded from a different leaf predicate — see its doc comment).
+    // Computed once, consulted below for every registered factory.
+    let (suspend_leaves, suspend_transitive) = suspend_call_closure(&all_fns);
+
     for (eff, fns) in &registry {
         if !effect_names.contains(eff) {
             for f in fns {
@@ -43417,6 +43424,103 @@ pub(crate) fn check_default_handlers(module: &crate::ast::Module, errors: &mut V
                     ),
                     f.span,
                 ));
+            }
+            // №246 (D431 amend, [M-default-handler-factory-yield-point-ban]):
+            // E_DEFAULT_HANDLER_SUSPEND — the factory's own CONSTRUCTION-TIME
+            // code (i.e., everything except op bodies inside a nested
+            // `effect X { op => ... }` HandlerLit — those run at DISPATCH
+            // time, see `direct_suspend_call_in_expr`'s `HandlerLit` arm)
+            // must not directly or transitively call a suspend-op
+            // (`Time.sleep`, any `Net.*` op — `is_suspend_op_path`).
+            //
+            // Why: per-fiber effect snapshots (`nova_effect_snapshot_save`/
+            // `_restore`, effects.h) mean the ambient-install lazy path runs
+            // this factory AT MOST ONCE per cold fiber-line — ONE "is the
+            // slot still NULL? build it, store it" sequence, no retry. If
+            // construction suspends midway, the runtime hands the OS thread
+            // to a second fiber, which may re-enter the SAME lazy-install
+            // check, see the slot STILL NULL (the first fiber hasn't stored
+            // its result yet), and run the factory a SECOND time —
+            // double-construction (for a stateful default, this splits
+            // state across two independent instances).
+            //
+            // Known gap, inherited on purpose (do NOT fix here — tracked as
+            // its own numbered item, see the closure/inherited-blindness
+            // note on `direct_suspend_call_in_expr`): this scan is
+            // syntactic, same limitation as `check_capabilities_at`'s D64
+            // realtime-ban (types/mod.rs, `// (Только receiver-Path формы;
+            // instance-method через obj.method требует type-инференции,
+            // отложен.)`) — an instance-method suspend call on an
+            // expression receiver (`ch.recv()`, `tx.send(v)`) is NOT
+            // resolvable at this AST-only stage, so channel recv/send is
+            // NOT caught (only `Time.sleep`/`Net.*` Path-form calls are).
+            if let Some((op, span)) = direct_suspend_call_in_fn(f) {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_DEFAULT_HANDLER_SUSPEND] `#default_handler({eff})` fn `{name}` \
+                         calls suspend-op `{op}` directly in its own construction-time code \
+                         (D431 amend): a `#default_handler` factory's body — everything \
+                         BEFORE the `Effect[{eff}]` literal it builds and returns — must not \
+                         suspend the fiber. The per-fiber effect-snapshot mechanism \
+                         (effects.h) runs this factory AT MOST ONCE per cold ambient-install; \
+                         suspending mid-construction hands the thread to another fiber, which \
+                         can re-enter the same NULL slot and construct the handler a SECOND \
+                         time (double-construction). Fix: call `{op}` outside this factory \
+                         (before/after it, never inside), or move it into an OP BODY inside \
+                         the `effect {eff} {{ ... }}` literal — dispatch-time suspension is \
+                         fine, only construction-time suspension is banned.",
+                        eff = eff, name = f.name, op = op,
+                    ),
+                    span,
+                ));
+            } else {
+                let named = own_fiber_call_names_of_fn(f);
+                let mut sorted_named: Vec<&String> = named.iter().collect();
+                sorted_named.sort();
+                for callee in sorted_named {
+                    if let Some((op, leaf_span)) = suspend_leaves.get(callee) {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "[E_DEFAULT_HANDLER_SUSPEND] `#default_handler({eff})` fn \
+                                 `{name}` calls `{callee}`, which directly calls suspend-op \
+                                 `{op}` in its own construction-time code (chain: `{name}` → \
+                                 `{callee}` → `{op}`; D431 amend): a `#default_handler` \
+                                 factory's construction-time call graph must not suspend the \
+                                 fiber — see the direct-call diagnostic above for the full \
+                                 double-construction rationale. Fix: break the chain so \
+                                 `{callee}`'s suspend-op call happens outside the factory's \
+                                 construction path, or move it into an OP BODY.",
+                                eff = eff, name = f.name, callee = callee, op = op,
+                            ),
+                            f.span,
+                        ));
+                        let _ = leaf_span;
+                        break;
+                    } else if let Some((leaf, first_hop)) = suspend_transitive.get(callee) {
+                        let (op, _) = &suspend_leaves[leaf];
+                        let chain = if first_hop == leaf {
+                            format!("`{name}` → `{callee}` → `{leaf}`",
+                                name = f.name, callee = callee, leaf = leaf)
+                        } else {
+                            format!("`{name}` → `{callee}` → `{first_hop}` → … → `{leaf}`",
+                                name = f.name, callee = callee, first_hop = first_hop, leaf = leaf)
+                        };
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "[E_DEFAULT_HANDLER_SUSPEND] `#default_handler({eff})` fn \
+                                 `{name}` transitively reaches suspend-op `{op}` (chain: \
+                                 {chain}; D431 amend): a `#default_handler` factory's \
+                                 construction-time call graph must not suspend the fiber — \
+                                 see the direct-call diagnostic above for the full \
+                                 double-construction rationale. Fix: break the chain, or move \
+                                 the suspend-op call into an OP BODY.",
+                                eff = eff, name = f.name, op = op, chain = chain,
+                            ),
+                            f.span,
+                        ));
+                        break;
+                    }
+                }
             }
         }
     }
@@ -43496,6 +43600,285 @@ pub(crate) fn check_default_handlers(module: &crate::ast::Module, errors: &mut V
             }
         }
     }
+}
+
+// ============================================================================
+// №246 (D431 amend, [M-default-handler-factory-yield-point-ban]):
+// E_DEFAULT_HANDLER_SUSPEND scan mechanics.
+// ============================================================================
+//
+// Reuses the SAME two-part shape as the D64/A-V10 `#thread_affine` closure
+// (`thread_affine_closure`/`own_fiber_call_names_of_fn` above): (1) a
+// leaf predicate detecting a DIRECT hit inside one fn's own body, (2) a
+// fixed-point closure over the CU's named free-fn call graph
+// (`own_fiber_call_names_of_fn`, REUSED verbatim, zero changes) marking
+// every fn that transitively reaches a leaf. Part (2) is 100% reuse; part
+// (1) needs a NEW leaf-predicate because `own_fiber_call_names_expr` only
+// ever collects bare-`Ident` call names (by design, for the thread-affine
+// closure's purposes) — a raw `Time.sleep(...)`/`Net.foo(...)` call is a
+// `Path`/`Member` callee shape, invisible to that collector. The path-
+// extraction below is copied from `check_capabilities_at`'s (D63/D64,
+// ~line 26851) proven shape rather than reinvented, and the traversal
+// below mirrors `own_fiber_call_names_expr`'s exact node coverage and
+// fiber-boundary-skip conventions (`Spawn`/`Detach`/`Blocking` — a spawned
+// child is a fresh, independent fiber, decoupled from the factory's own
+// construction-time execution) — this is the disciplined "reuse the D64-
+// class mechanics" the D431 amend calls for, not a from-scratch third
+// walker.
+
+/// `Effect.op(...)`-shaped path segments known to SUSPEND the calling
+/// fiber (park until the runtime resumes it): `Time.sleep` and any
+/// `Net.*` op (every TCP/UDP op — accept/connect/read/write/etc. — parks).
+///
+/// **Deliberately NARROWER than `SUSPEND_EFFECT_NAMES`** (`Fs`/`Db`
+/// excluded) — the D431 amend text scopes this specific check to
+/// `Time.sleep`/`Net.*`/channel recv-send; widening it is a separate
+/// decision, not made here.
+///
+/// **Does NOT cover channel recv/send** — those are `obj.method()` calls
+/// on a value-typed receiver (`ch.recv()`, `tx.send(v)`), which this
+/// Path-extraction cannot resolve (same inherited blindness as
+/// `check_capabilities_at`'s D64 realtime-ban — see
+/// `direct_suspend_call_in_expr`'s doc comment and
+/// [M-175-realtime-ban-method-call-blind], №252 in 221.1-bug-sweep.md).
+fn is_suspend_op_path(path: &[String]) -> bool {
+    path.len() == 2 && ((path[0] == "Time" && path[1] == "sleep") || path[0] == "Net")
+}
+
+/// Path-extraction for a `Call`'s callee expression — mirrors
+/// `check_capabilities_at`'s extraction (D63/D64, ~line 26851)
+/// intentionally COPIED rather than shared: that extraction lives inside
+/// `CapabilityCtx`'s `&self` method (full module-wide `SigRegistry`
+/// dependency) and is exercised by the well-tested D63/D64 forbid/
+/// realtime gates — duplicating the small, stable snippet here keeps this
+/// standalone `check_default_handlers` pass (which runs independently,
+/// with no `CapabilityCtx`) decoupled from that gate's blast radius.
+fn extract_call_path(func: &Expr) -> Option<Vec<String>> {
+    match &func.kind {
+        ExprKind::Path(parts) => Some(parts.clone()),
+        ExprKind::Member { obj, name } => match &obj.kind {
+            ExprKind::Ident(n) => Some(vec![n.clone(), name.clone()]),
+            ExprKind::Path(parts) if parts.len() == 2 && parts[0] == "__array" => {
+                Some(vec![format!("[]{}", parts[1]), name.clone()])
+            }
+            ExprKind::Path(parts) => {
+                let mut v = parts.clone();
+                v.push(name.clone());
+                Some(v)
+            }
+            // dynamic member-call (arbitrary expression receiver) — not
+            // resolvable at this AST-only stage, same stance as
+            // `check_capabilities_at`'s `_ => return`.
+            _ => None,
+        },
+        ExprKind::Ident(n) => Some(vec![n.clone()]),
+        _ => None,
+    }
+}
+
+/// Does `fd`'s body directly call a suspend-op in its OWN-FIBER
+/// construction-time code? Returns `(op_path_joined, call_span)` on the
+/// FIRST hit found (deterministic AST-order walk).
+fn direct_suspend_call_in_fn(fd: &FnDecl) -> Option<(String, Span)> {
+    match &fd.body {
+        FnBody::Block(b) => direct_suspend_call_in_block(b),
+        FnBody::Expr(e) => direct_suspend_call_in_expr(e),
+        FnBody::External => None,
+    }
+}
+
+fn direct_suspend_call_in_block(b: &Block) -> Option<(String, Span)> {
+    for s in &b.stmts {
+        if let Some(hit) = direct_suspend_call_in_stmt(s) { return Some(hit); }
+    }
+    if let Some(t) = &b.trailing {
+        return direct_suspend_call_in_expr(t);
+    }
+    None
+}
+
+fn direct_suspend_call_in_stmt(s: &Stmt) -> Option<(String, Span)> {
+    match s {
+        Stmt::Expr(e) => direct_suspend_call_in_expr(e),
+        Stmt::Let(d) => direct_suspend_call_in_expr(&d.value),
+        Stmt::Assign { target, value, .. } => {
+            direct_suspend_call_in_expr(target).or_else(|| direct_suspend_call_in_expr(value))
+        }
+        Stmt::Return { value, .. } => value.as_ref().and_then(direct_suspend_call_in_expr),
+        Stmt::Throw { value, .. } => direct_suspend_call_in_expr(value),
+        Stmt::Defer { body, .. } => direct_suspend_call_in_expr(body),
+        Stmt::ConsumeScope { init, body, .. } => {
+            direct_suspend_call_in_expr(init).or_else(|| direct_suspend_call_in_block(body))
+        }
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            lhs.iter().find_map(direct_suspend_call_in_expr)
+                .or_else(|| rhs.iter().find_map(direct_suspend_call_in_expr))
+        }
+        Stmt::Const(_) | Stmt::Break(_) | Stmt::Continue(_) | Stmt::AssertStatic { .. }
+        | Stmt::Assume { .. } | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => None,
+    }
+}
+
+fn direct_suspend_call_in_expr(e: &Expr) -> Option<(String, Span)> {
+    match &e.kind {
+        ExprKind::Call { func, args, trailing } => {
+            if let Some(path) = extract_call_path(func) {
+                if is_suspend_op_path(&path) {
+                    return Some((path.join("."), e.span));
+                }
+            }
+            if let Some(hit) = args.iter().find_map(|a| direct_suspend_call_in_expr(a.expr())) {
+                return Some(hit);
+            }
+            match trailing {
+                Some(crate::ast::Trailing::Block(b)) => direct_suspend_call_in_block(b),
+                Some(crate::ast::Trailing::LegacyBlockWithParams(tb)) => {
+                    direct_suspend_call_in_block(&tb.body)
+                }
+                // Trailing closure-sugar — own scope, skip (mirrors
+                // `own_fiber_call_names_expr`'s identical stance).
+                Some(crate::ast::Trailing::Fn(_)) | None => None,
+            }
+        }
+        // Fresh, independent fiber — construction-time code doesn't
+        // suspend just because a spawned/detached child eventually does
+        // (mirrors `own_fiber_call_names_expr`'s identical stance —
+        // same fn-level doc comment rationale applies here verbatim).
+        ExprKind::Spawn(_) | ExprKind::Detach(_) | ExprKind::Blocking(_) => None,
+        // CRITICAL (D431 amend): a `HandlerLit`'s (`effect X { op => ... }`)
+        // method BODIES run at DISPATCH time (when the caller later
+        // invokes `X.op(...)`), NOT at CONSTRUCTION time (when this
+        // factory fn runs to build and return the handler value) — do NOT
+        // recurse into them. A `#default_handler` factory whose OP BODIES
+        // suspend is normal and expected (e.g. `real_time`'s `sleep` op
+        // calls `time_sleep_ms`); only suspending BEFORE returning the
+        // literal is the double-construction hazard this check exists for.
+        ExprKind::HandlerLit { .. } => None,
+        ExprKind::ParallelFor { iter, .. } => direct_suspend_call_in_expr(iter),
+        ExprKind::Block(b) => direct_suspend_call_in_block(b),
+        ExprKind::If { cond, then, else_ } => {
+            direct_suspend_call_in_expr(cond)
+                .or_else(|| direct_suspend_call_in_block(then))
+                .or_else(|| match else_ {
+                    Some(ElseBranch::Block(b)) => direct_suspend_call_in_block(b),
+                    Some(ElseBranch::If(e2)) => direct_suspend_call_in_expr(e2),
+                    None => None,
+                })
+        }
+        ExprKind::IfLet { scrutinee, guard, then, else_, .. } => {
+            direct_suspend_call_in_expr(scrutinee)
+                .or_else(|| guard.as_ref().and_then(|g| direct_suspend_call_in_expr(g)))
+                .or_else(|| direct_suspend_call_in_block(then))
+                .or_else(|| match else_ {
+                    Some(ElseBranch::Block(b)) => direct_suspend_call_in_block(b),
+                    Some(ElseBranch::If(e2)) => direct_suspend_call_in_expr(e2),
+                    None => None,
+                })
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            direct_suspend_call_in_expr(scrutinee).or_else(|| {
+                arms.iter().find_map(|a| {
+                    a.guard.as_ref().and_then(direct_suspend_call_in_expr)
+                        .or_else(|| match &a.body {
+                            MatchArmBody::Expr(be) => direct_suspend_call_in_expr(be),
+                            MatchArmBody::Block(bb) => direct_suspend_call_in_block(bb),
+                        })
+                })
+            })
+        }
+        ExprKind::For { iter, body, .. } => {
+            direct_suspend_call_in_expr(iter).or_else(|| direct_suspend_call_in_block(body))
+        }
+        ExprKind::While { cond, body, .. } => {
+            direct_suspend_call_in_expr(cond).or_else(|| direct_suspend_call_in_block(body))
+        }
+        ExprKind::WhileLet { scrutinee, guard, body, .. } => {
+            direct_suspend_call_in_expr(scrutinee)
+                .or_else(|| guard.as_ref().and_then(|g| direct_suspend_call_in_expr(g)))
+                .or_else(|| direct_suspend_call_in_block(body))
+        }
+        ExprKind::Loop { body, .. } => direct_suspend_call_in_block(body),
+        ExprKind::Supervised { body, cancel, deadline } => {
+            cancel.as_ref().and_then(|c| direct_suspend_call_in_expr(c))
+                .or_else(|| deadline.as_ref().and_then(|dl| direct_suspend_call_in_expr(&dl.expr)))
+                .or_else(|| direct_suspend_call_in_block(body))
+        }
+        ExprKind::With { body, .. } => direct_suspend_call_in_block(body),
+        ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
+            direct_suspend_call_in_block(body)
+        }
+        ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) => {
+            direct_suspend_call_in_expr(inner)
+        }
+        ExprKind::Coalesce(a, b) => {
+            direct_suspend_call_in_expr(a).or_else(|| direct_suspend_call_in_expr(b))
+        }
+        ExprKind::Binary { left, right, .. } => {
+            direct_suspend_call_in_expr(left).or_else(|| direct_suspend_call_in_expr(right))
+        }
+        ExprKind::Unary { operand, .. } => direct_suspend_call_in_expr(operand),
+        ExprKind::Member { obj, .. } => direct_suspend_call_in_expr(obj),
+        ExprKind::Index { obj, index } => {
+            direct_suspend_call_in_expr(obj).or_else(|| direct_suspend_call_in_expr(index))
+        }
+        _ => None,
+    }
+}
+
+/// CU-wide suspend-leaf/transitive closure over `all_fns`'s NAMED free-fn
+/// call graph. Mirrors `thread_affine_closure`'s fixed-point algorithm
+/// EXACTLY (same iterative dataflow, same termination argument — finite
+/// call graph, each fn marked at most once), seeded from
+/// `direct_suspend_call_in_fn` leaves instead of `#thread_affine`-tagged
+/// ones. `own_fiber_call_names_of_fn` (the adjacency-graph builder) is
+/// REUSED verbatim, zero changes — see the module-doc banner above this
+/// section for why that's genuine reuse and this is the minimal necessary
+/// new surface (a leaf-predicate over raw suspend-op calls, which
+/// `own_fiber_call_names_of_fn` cannot itself detect).
+///
+/// Returns `(leaves, transitive)`: `leaves[name] = (op, span)` for a fn
+/// whose OWN body directly calls a suspend-op; `transitive[name] = (leaf,
+/// first_hop)` for every OTHER fn whose own-fiber call graph reaches a
+/// leaf (same shape as `thread_affine_closure`'s second return value).
+fn suspend_call_closure(
+    all_fns: &[&crate::ast::FnDecl],
+) -> (HashMap<String, (String, Span)>, HashMap<String, (String, String)>) {
+    let mut leaves: HashMap<String, (String, Span)> = HashMap::new();
+    let mut adjacency: HashMap<String, HashSet<String>> = HashMap::new();
+    for f in all_fns {
+        if let Some(hit) = direct_suspend_call_in_fn(f) {
+            leaves.insert(f.name.clone(), hit);
+        }
+        adjacency.insert(f.name.clone(), own_fiber_call_names_of_fn(f));
+    }
+    let mut transitive: HashMap<String, (String, String)> = HashMap::new();
+    if leaves.is_empty() {
+        return (leaves, transitive);
+    }
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for (caller, callees) in &adjacency {
+            if leaves.contains_key(caller) || transitive.contains_key(caller) {
+                continue;
+            }
+            let mut sorted_callees: Vec<&String> = callees.iter().collect();
+            sorted_callees.sort();
+            for callee in sorted_callees {
+                if leaves.contains_key(callee) {
+                    transitive.insert(caller.clone(), (callee.clone(), callee.clone()));
+                    changed = true;
+                    break;
+                } else if let Some((leaf, _)) = transitive.get(callee) {
+                    let leaf = leaf.clone();
+                    transitive.insert(caller.clone(), (leaf, callee.clone()));
+                    changed = true;
+                    break;
+                }
+            }
+        }
+    }
+    (leaves, transitive)
 }
 
 /// Plan 175.2 Ф.2-v4 (П4, D-амендмент): handler-literal (`effect X {...}`)

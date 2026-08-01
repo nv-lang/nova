@@ -1,0 +1,34 @@
+// №246 (D431 amend, [M-default-handler-factory-yield-point-ban],
+// 2026-08-01) — pos-twin of `neg/d431_default_handler_suspend_neg.nv`:
+// a `#default_handler` factory whose CONSTRUCTION-TIME code is clean (no
+// suspend-op call before returning the `Effect[X]` literal), but whose OP
+// BODY (inside the `effect D431CacheOk { ... }` literal) DOES call a
+// suspend-op (`Time.sleep`) — MUST still compile. Op bodies run at
+// DISPATCH time (when the caller later invokes `D431CacheOk.get()`), not
+// at CONSTRUCTION time (when this factory runs to build the handler
+// value) — E_DEFAULT_HANDLER_SUSPEND must NOT fire here (the whole point
+// of excluding `HandlerLit` method bodies from the construction-time
+// scan, `direct_suspend_call_in_expr`'s `HandlerLit` arm).
+
+module spec_tests.conformance
+
+import std.time.duration
+
+type D431CacheOk effect {
+    get() -> int
+}
+
+#default_handler
+fn good_default_d431() -> Effect[D431CacheOk] {
+    effect D431CacheOk {
+        get() -> int {
+            Time.sleep(1.to_millis())
+            42
+        }
+    }
+}
+
+test "D431: default-handler factory with a suspend-op INSIDE an op body compiles (dispatch-time is fine)" {
+    ro x = D431CacheOk.get()
+    assert(x == 42)
+}
