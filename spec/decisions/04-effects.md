@@ -6960,8 +6960,9 @@ type ErrorKind | NotFound | PermissionDenied | AlreadyExists | ... | Unsupported
 - `raw_os` **authoritative**; `kind = kind_from_errno(raw_os)` — best-effort projection (общие POSIX errno;
   редкие → `Other(raw)`, §3b). **Per-op error sets (Zig) — considered/REJECTED (Q14):** один открытый `ErrorKind`
   + `raw_os` + (Ф.2) `source`-chain композируется, а не дробит обработку.
-- `Utf8Error{byte_offset}` + `str.from_bytes(bytes)->Result[str, Utf8Error]` — Ф.0.5 (D325-канон; ретайр
-  интринзика `str.try_from([]u8)`).
+- `Utf8Error{byte_offset}` + `bytes.to_str() -> Result[str, Utf8Error]` — конверсия на источнике
+  (канон 174.1; AMEND 2026-08-02: исторические формы `str.try_from([]u8)` — ретайр Ф.0.5 —
+  и `str.from_bytes(bytes)` заменены instance-методами `[]u8 @to_str()`/`@to_str_lossy()`).
 
 ### `BufReader` / `BufWriter` (Q10, D133)
 

@@ -1094,8 +1094,9 @@ fn str @bytes() -> []u8                    // copy (D73 []u8.from(s))
 - `str.from(b []u8) Fail[Utf8Error] -> str` — fallible-форма
   (D73 + Fail-effect). Валидирует UTF-8; на ошибке throw'ает.
   Auto-derived: `b.into()` тоже декларирует `Fail[Utf8Error]`.
-  Result-форма (`str.try_from(b)` → `Result[str, Utf8Error]`)
-  доступна через D77 как convenience sugar.
+  ~~Result-форма (`str.try_from(b)`) через D77~~ — AMEND 2026-08-02: строковый
+  `try_from` ретрактирован (D321-AMEND, канон 174.1); Result-форма = `b.to_str()`
+  (метод на источнике, `[]u8 @to_str() -> Result[str, Utf8Error]`).
 
 > **⚠ AMEND Plan 199 (2026-07-11): NUL-termination invariant RETRACTED →
 > [D418](#d418-new--str-без-nul-терминатора-c-ffi-через-copy-based-cstr-as_cstr-plan-199-retracts-d26-nul-termination).**
@@ -1160,8 +1161,9 @@ Former Nova str storage invariant — formal rules (RETRACTED, kept for archaeol
    ```nova
    type CStr(*u8)                   // tuple newtype, zero-overhead
    ```
-   Implements D73 From/Into для `str` (через `try_from` per D77 canonical
-   form). См. Plan 118.1 для полной API surface.
+   Implements D73 From/Into для `str` (историческая привязка к D77 `try_from`;
+   AMEND 2026-08-02: актуальный канон конверсий — метод на источнике, 174.1).
+   См. Plan 118.1 для полной API surface.
 
 См. [Plan 118.1](../../docs/plans/118.1-ffi-intrinsics-and-cstring.md) для
 implementation details + complete CStr/str conversion matrix.
