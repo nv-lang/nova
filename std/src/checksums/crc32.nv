@@ -71,7 +71,10 @@ export fn crc32(data []u8) -> u32 {
         ro idx = (crc ^ (u8 as u32)) as u8
         crc = lookup(idx) ^ (crc >> 8)
     }
-    crc ^ 0xFFFFFFFF
+    // План 234 Ф.3 (D46-амендмент): `~crc` вместо ширино-зависимого
+    // `crc ^ 0xFFFFFFFF` — то же значение на `u32`, но не молча портится
+    // при смене ширины типа (компилятор ловит несоответствие маски).
+    ~crc
 }
 
 /// Init incremental CRC-32 state — for streamed input.
@@ -86,7 +89,7 @@ export fn crc32(data []u8) -> u32 {
 #stable(since = "0.1")
 export fn crc32_init() -> u32 => 0xFFFFFFFF
 
-/// Update CRC-32 state with new bytes. Without finalization (needs `crc32_finalize`).
+/// Update CRC-32 state with new bytes. No finalization here (use `crc32_finalize`).
 #stable(since = "0.1")
 export fn crc32_update(state u32, data []u8) -> u32 {
     mut crc = state
@@ -97,9 +100,9 @@ export fn crc32_update(state u32, data []u8) -> u32 {
     crc
 }
 
-/// Finalize the CRC-32 state — XOR with 0xFFFFFFFF (IEEE 802.3 convention).
+/// Finalizes the CRC-32 state — bitwise complement (IEEE 802.3 convention).
 #stable(since = "0.1")
 export fn crc32_finalize(state u32) -> u32 =>
-    state ^ 0xFFFFFFFF
+    ~state
 
 // Тесты — см. peer-файл crc32_test.nv (module checksums.crc32).

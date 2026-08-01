@@ -15,10 +15,10 @@ import std.collections.hashmap.{HashMap}
 // Тип
 // ──────────────────────────────────────────────────────────────────────────
 
-/// A set of unique elements on top of `HashMap[T, ()]`.
+/// A set of unique elements over `HashMap[T, ()]`.
 ///
-/// Supports the union (`|`), intersection (`&`) and difference (`-`)
-/// operations via operator overloading (D46).
+/// Supports union (`|`), intersection (`&`) and difference (`-`)
+/// via operator overloading (D46).
 ///
 /// # Examples
 ///
@@ -55,10 +55,10 @@ export fn Set[T].new(cap int = 16) -> Self
 
 /// Build a set from an array of elements.
 ///
-/// Takes a concrete `[]T` (a mirror of `HashMap.from([](K,V))`): a generic
-/// `Iterable[T]` protocol was erased to `void*` in a mono context, and for-in
-/// could not recover the C type of the iterator on the mono instance
-/// ([M-91.1-set-from-iter-iterable-param]). An array iterates correctly for any element type.
+/// Takes a concrete `[]T` (mirror of `HashMap.from([](K,V))`): a generic
+/// `Iterable[T]` protocol erased to `void*` in mono context, and for-in could not recover
+/// not derive the iterator C type on a mono instance ([M-91.1-set-from-iter-iterable-param]).
+/// An array iterates correctly for any element type.
 ///
 /// # Examples
 ///
@@ -92,12 +92,12 @@ export fn Set[T] @is_empty() -> bool => @map.is_empty()
 #stable(since = "0.1")
 export fn Set[T] @contains(item T) -> bool => @map.contains(item)
 
-/// Current capacity (the bucket count of the internal `HashMap`). D117 AMEND
+/// Current capacity (bucket count of the backing `HashMap`). D117 AMEND
 /// accessor-pair — 0-arg getter half of `cap`/`cap(n)`.
 #stable(since = "0.1")
 export fn Set[T] @cap() -> int => @map.cap()
 
-/// Guarantee capacity for at least `n` elements without a rehash (delegates to
+/// Guarantee capacity for at least `n` elements without rehash (delegates to
 /// `HashMap`'s own `mut @cap(n)` — same "grows only, entry-count → bucket-count"
 /// semantics). Replacement for the removed `Set[T].with_capacity` static
 /// constructor: `Set[T].new(cap: n)`.
@@ -134,14 +134,14 @@ export fn Set[T] mut @clear() -> () => @map.clear()
 
 /// Create an independent copy of the set (deep — every element is cloned).
 ///
-/// Per the D230 amend `Clone` is a deep protocol: `clone()` clones each
-/// element via `T.@clone()`, under the bound `[T Clone]`. Set delegates to the
-/// backing `HashMap` (`{ map: @map.clone() }`), so the deep semantics are
+/// Per D230 amend `Clone` is a deep protocol: `clone()` clones every
+/// element via `T.@clone()`, under the `[T Clone]` bound. Set delegates to the
+/// backing `HashMap` (`{ map: @map.clone() }`), so the deep semantics is
 /// inherited from `HashMap.@clone` (per-element `k.clone()`).
 ///
-/// Plan 138.4 Ф.1 (G-C, [M-138.3-clone-bound-unsupported] RESOLVED): per-element
-/// generic `T.@clone()` now dispatches correctly (primitive T → built-in
-/// identity, record T → `T.@clone()`), so delegation yields a full
+/// Per-element
+/// generic `T.@clone()` now dispatches correctly (primitive T -> built-in
+/// identity, record T -> `T.@clone()`), so the delegation yields a fully
 /// deep copy.
 #stable(since = "0.1")
 export fn Set[T Clone] @clone() -> Self =>
@@ -152,8 +152,10 @@ export fn Set[T Clone] @clone() -> Self =>
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Union `a | b` — all elements from both sets.
+///
+/// Named `@bitor` (not `@or`): `|` is the bitwise/set-union operator selector.
 #stable(since = "0.1")
-export fn Set[T] @or(other Set[T]) -> Self {
+export fn Set[T] @bitor(other Set[T]) -> Self {
     mut out = Self.new()
     for x in @map.keys() { out.insert(x) }
     for x in other.map.keys() { out.insert(x) }
@@ -162,7 +164,7 @@ export fn Set[T] @or(other Set[T]) -> Self {
 
 /// Intersection `a & b` — elements present in both sets.
 #stable(since = "0.1")
-export fn Set[T] @and(other Set[T]) -> Self {
+export fn Set[T] @bitand(other Set[T]) -> Self {
     mut out = Self.new()
     for x in @map.keys() {
         if other.contains(x) { out.insert(x) }
@@ -184,6 +186,6 @@ export fn Set[T] @minus(other Set[T]) -> Self {
 // Итератор — прокси через embed
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Iterator over the set's elements in an arbitrary order.
+/// Iterator over the set elements in arbitrary order.
 #stable(since = "0.1")
 export fn Set[T] @iter() => @map.keys()
