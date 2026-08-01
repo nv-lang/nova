@@ -23801,10 +23801,17 @@ impl<'a> BoundCtx<'a> {
                 // комбинации — пройтись единообразно одной волной"). Conservative
                 // (как E_MIXED_WIDTH_ARITH/E_RELATIONAL_OPERAND_NOT_ORDERED выше):
                 // фиксируем ТОЛЬКО когда тип операнда достоверно известен (bool/
-                // str/f32/f64/int-family) — permissive на unknown/generic/custom
-                // (custom-типы без нужного @neg/@not/@bitnot ловятся ниже по
-                // конвейеру существующим codegen CC-FAIL, как и другие operator-
-                // overload промахи в этом языке).
+                // str/f32/f64/int-family/пользовательский) — permissive ТОЛЬКО на
+                // unknown/generic (custom-типы БЕЗ нужного @neg/@bitnot ловятся
+                // ниже по конвейеру существующим codegen CC-FAIL).
+                //
+                // D46-AMEND 2026-08-02 (окно p-op-channel, владелец): `@not`
+                // RETRACTED — `!` больше НЕ перегружаемый, единственный
+                // допустимый операнд-тип строго `bool` (было: permissive на
+                // custom-типах ради `@not()`-диспетча). `UnOp::Not` теперь
+                // помечает bad для ЛЮБОГО достоверно известного не-`bool` типа,
+                // включая пользовательские record/sum (раньше пропускались —
+                // ушли бы на `@not`-dispatch, которого больше нет).
                 if let Some(operand_ty) = Self::infer_arg_ty(operand, scope) {
                     use ResolvedType as R;
                     let rt = ResolvedType::from_type_ref(&operand_ty);
@@ -23817,8 +23824,9 @@ impl<'a> BoundCtx<'a> {
                             "-", "числовой (int/float-семейство) или пользовательский \
                              тип с `@neg()`",
                         )),
-                        UnOp::Not if is_numeric || is_str => Some((
-                            "!", "`bool` или пользовательский тип с `@not()`",
+                        UnOp::Not if !is_bool => Some((
+                            "!", "`bool` (D46-AMEND 2026-08-02: `@not` retracted — `!` \
+                             больше не перегружаемый)",
                         )),
                         UnOp::BitNot if is_bool || is_float || is_str => Some((
                             "~", "целочисленный (`i8`..`i64`/`u8`..`u64`/`int`/`uint`) \
