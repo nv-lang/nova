@@ -356,5 +356,11 @@
 # subst после shallow-bind (коллизия имён carrier/method-level typevar в
 # builtin Option/Result диспетче) + анатомия в комментариях. Компенсация —
 # 196-волнами (операторный канал, ret-слот).
-lines=64325
+# 2026-08-01 (окно p-typedef-splice, №250/№251): 64325 -> 64345 (+20).
+# NovaOpt_/NovaRes_ forward-decl guard (debt_is_mono_nova_name расширен на
+# NovaRes_-класс) + bare-None-в-Ok/Err контекст-хинт: существенная логика
+# вынесена в option_none_hint.rs (первая версия давала +78, ужато); остаток —
+# поле CEmitter + save/restore на 3 return-точках (не выносится). Компенсация —
+# 196-волнами (операторный канал, ret-слот).
+lines=64345
 infer=349
