@@ -171,10 +171,7 @@ fn date_plus_period(d Date, p Period) -> Result[Date, DateError] {
         ro m1_month = Month.from_number(m1 as int) ?? Jan   // unreachable: m1 в 1..12
         ro dim = m1_month.length(leap) as i64
         ro day1 = day0.min(dim)
-        ro base = match Date.new(y1 as i32, m1_month, day1 as i32) {
-            Ok(nd) => nd,
-            Err(_) => return Err(RangeOverflow("Date + Period: month-add out of range")),
-        }
+        ro base = Date.new(y1 as i32, m1_month, day1 as i32).map_err(|_| RangeOverflow("Date + Period: month-add out of range"))?
         ed = base.to_epoch_day()
     }
     // 3) days — exact, через epoch-day.

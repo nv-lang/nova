@@ -22,10 +22,7 @@ fn digits_at(s str, pos int, n int) -> Result[(i64, int), ParseDateTimeError] {
     mut i = pos
     while i < pos + n {
         ro c = s[i..i + 1]
-        ro d = match c.to_int() {
-            Ok(x) => x,
-            Err(_) => return Err(FormatMismatch(i, "digit")),
-        }
+        ro d = c.to_int().map_err(|_| FormatMismatch(i, "digit"))?
         v = v * 10 + (d as i64)
         i += 1
     }
@@ -68,14 +65,8 @@ fn date_at(s str, pos0 int) -> Result[(Date, int), ParseDateTimeError] {
     ro (mo, p2) = digits_at(s, pos, 2)?
     pos = expect_at(s, p2, "-")?
     ro (dd, p3) = digits_at(s, pos, 2)?
-    ro month = match Month.from_number(mo as int) {
-        Ok(m) => m,
-        Err(_) => return Err(InvalidValue(pos0, FieldKind.Month, mo)),
-    }
-    ro date = match Date.new((sign * year) as i32, month, dd as i32) {
-        Ok(d) => d,
-        Err(_) => return Err(InvalidValue(pos0, FieldKind.Day, dd)),
-    }
+    ro month = Month.from_number(mo as int).map_err(|_| InvalidValue(pos0, FieldKind.Month, mo))?
+    ro date = Date.new((sign * year) as i32, month, dd as i32).map_err(|_| InvalidValue(pos0, FieldKind.Day, dd))?
     Ok((date, p3))
 }
 
@@ -108,10 +99,7 @@ fn time_at(s str, pos0 int) -> Result[(TimeOfDay, int), ParseDateTimeError] {
             pos = fpos
         }
     }
-    ro t = match TimeOfDay.new(h as int, mi as int, s: sec as int, ns: nano as int) {
-        Ok(x) => x,
-        Err(_) => return Err(InvalidValue(pos0, FieldKind.Hour, h)),
-    }
+    ro t = TimeOfDay.new(h as int, mi as int, s: sec as int, ns: nano as int).map_err(|_| InvalidValue(pos0, FieldKind.Hour, h))?
     Ok((t, pos))
 }
 
@@ -221,15 +209,9 @@ export fn str @to_zoned_datetime(conflict OffsetConflict) -> Result[ZonedDateTim
     ro zone_name = @[p5..close]
     expect_end(@, close + 1)?
 
-    ro tz = match zone_name.to_timezone() {
-        Ok(z) => z,
-        Err(_) => return Err(FormatMismatch(p5, "known time zone")),
-    }
+    ro tz = zone_name.to_timezone().map_err(|_| FormatMismatch(p5, "known time zone"))?
     ro dt = d.at(t)
-    ro stored = match Offset.from_seconds(off_sec as i32) {
-        Ok(o) => o,
-        Err(_) => return Err(InvalidValue(p4, FieldKind.OffsetSec, off_sec as i64)),
-    }
+    ro stored = Offset.from_seconds(off_sec as i32).map_err(|_| InvalidValue(p4, FieldKind.OffsetSec, off_sec as i64))?
 
     // Валиден ли сохранённый offset для этой wall-time в зоне?
     ro res = tz.resolve_local(dt)
