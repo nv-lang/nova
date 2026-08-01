@@ -1,13 +1,13 @@
-// Plan 180.1 Ф.1 — field-attributes consumption: `rename`/`rename_all`/
-// `skip`/`skip_serializing_if`/`default`/`alias` on a record DTO, plus Ф.7
-// (owner-decided 2026-07-22 reversal) strict-by-default unknown-field policy
-// + its `#serde(allow_unknown)` opt-out. Lives beside the module per
-// test-conventions (std-module tests are peer files, not spec_tests).
+// Field-attributes consumption: `rename`/`rename_all`/`skip`/
+// `skip_serializing_if`/`default`/`alias` on a record DTO, plus the
+// strict-by-default unknown-field policy with its `#serde(allow_unknown)`
+// opt-out. Lives beside the module per test-conventions (std-module tests
+// are peer files, not spec_tests).
 module encoding.serde
 
 fn default_role() -> str => "guest"
 
-/// DTO exercising every landed Ф.1 attribute at once — camelCase wire
+/// DTO exercising every field attribute at once — camelCase wire
 /// (`rename_all`) with one field-level override (`rename`), an alias for
 /// schema migration, a `skip` field (never touches the wire, zero-value on
 /// read), a conditionally-omitted `Option` field (`skip_serializing_if`),

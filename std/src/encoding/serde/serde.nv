@@ -1,40 +1,40 @@
 // std/encoding/serde/serde.nv — format-agnostic Serialize/Deserialize ядро.
 //
-// Plan 180 (D340/D341/D342/D346). Typed serde-слой: record/скаляр/контейнер <->
-// wire-format через format-agnostic data-model. Компилятор синтезирует
-// `@serialize`/`.deserialize` для record'ов с `#impl(Serialize + Deserialize)`
-// (та же auto-derive-машина, что `Equal`/`Clone`/`Hash`/`Debug`) — тела здесь
+// Typed serde-слой: record/скаляр/контейнер <-> wire-format через
+// format-agnostic data-model. Компилятор синтезирует `@serialize`/
+// `.deserialize` для record'ов с `#impl(Serialize + Deserialize)` (та же
+// auto-derive-машина, что `Equal`/`Clone`/`Hash`/`Debug`) — тела здесь
 // НЕ пишутся руками для user-record'ов; это ФАЙЛ-ядро протоколов + скаляр/
 // контейнер-conformance (как Debug для Option/Result в protocols.nv).
 //
-// Backend (JSON) — в peer-файле json.nv. PURE codec: без I/O-эффекта (§9).
+// Backend (JSON) — в peer-файле json.nv. PURE codec: без I/O-эффекта.
 //
 // Decisions:
-//   - D340: data-model (12 кейсов) + протоколы Serialize/Deserialize/
-//     Serializer/Deserializer, generic-bound нотейшн `[S Serializer]` (Q12).
-//   - D341: record-auto-derive-контракт (компилерный синтез, opt-in `#impl`).
-//   - D342: data-model <-> синтез mapping (int=i64-wide widen/range-check).
-//   - D346: soundness — numeric точное-целое-check, depth-guard, str-map-keys.
-//   - D325 (Plan 177): Result-everywhere; SerError/DeError = `value`-record.
+//   - data-model (12 кейсов) + протоколы Serialize/Deserialize/
+//     Serializer/Deserializer, generic-bound нотейшн `[S Serializer]`.
+//   - record-auto-derive-контракт (компилерный синтез, opt-in `#impl`).
+//   - data-model <-> синтез mapping (int=i64-wide widen/range-check).
+//   - soundness — numeric точное-целое-check, depth-guard, str-map-keys.
+//   - Result-everywhere; SerError/DeError = `value`-record.
 
 module encoding.serde
 
 // ──────────────────────────────────────────────────────────────────────────
-// Ошибки (D325 R1/R5, §3.7). `value`-record — маленькие копируемые структуры,
-// текут по значению через Result-error-канал (тот же паттерн, что IoError).
+// Ошибки. `value`-record — маленькие копируемые структуры, текут по значению
+// через Result-error-канал (тот же паттерн, что IoError).
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Категория ошибки сериализации (узкая — сериализация редко падает).
 /// OPEN kind → wildcard-arm обязателен на match.
 #unstable
 export type SerErrorKind enum
-    | NonFiniteFloat                 // NaN/Inf в JSON (Q19, RFC 8259)
-    | SerDepthLimit                  // serialize-сторона depth-guard (Q14)
-    | SerLossyInteger(str)           // |v| > 2^53 — не lossless в f64-wire (Q15, D346); симметрично DeError.LossyInteger (уник. имя — избегает коллизии вариантов)
+    | NonFiniteFloat                 // NaN/Inf в JSON (RFC 8259)
+    | SerDepthLimit                  // serialize-сторона depth-guard
+    | SerLossyInteger(str)           // |v| > 2^53 — не lossless в f64-wire; симметрично DeError.LossyInteger (уник. имя — избегает коллизии вариантов)
     | SerCustom(str)
     | SerOther(str)
 
-/// Ошибка сериализации (D325 R5 — один структурный тип, OPEN kind).
+/// Serialization error (single structural type, OPEN kind).
 #unstable
 export type SerError value { ro kind SerErrorKind, ro path str }
 
@@ -60,19 +60,19 @@ export fn SerError @to_str() -> str {
 #unstable
 export type DeErrorKind enum
     | UnexpectedType { expected str, found str }   // ждали int, нашли string
-    | MissingField(str)                            // required-поле отсутствует (Q7)
-    | UnknownField(str)                            // strict-by-default (180.1 Ф.7); opt-out #serde(allow_unknown)
-    | UnknownVariant { name str, expected []str }  // enum tag не совпал (Q4, sum-deser)
-    | NoVariantMatched                             // untagged — ни один вариант (Q17)
-    | OutOfRange(str)                              // int не влез в i64/u64 (Q15)
-    | LossyInteger(str)                            // f64 не точное целое / |v|>=2^53 (Q15)
-    | DepthLimitExceeded                           // deser-сторона depth-guard (Q14)
+    | MissingField(str)                            // required-поле отсутствует
+    | UnknownField(str)                            // strict-by-default; opt-out #serde(allow_unknown)
+    | UnknownVariant { name str, expected []str }  // enum tag не совпал (sum-deser)
+    | NoVariantMatched                             // untagged — ни один вариант
+    | OutOfRange(str)                              // int не влез в i64/u64
+    | LossyInteger(str)                            // f64 не точное целое / |v|>=2^53
+    | DepthLimitExceeded                           // deser-сторона depth-guard
     | Syntax(str)                                  // обёртка ParseJsonError (line/col в тексте)
     | Custom(str)
     | Other(str)
 
-/// Ошибка десериализации: `kind` + JSONPath-стиль `path` («$.users[2].email»).
-/// D325 R5 — один структурный тип; `value`-record (keystone).
+/// Deserialization error: `kind` + JSONPath-style `path` («$.users[2].email»).
+/// Single structural type; `value`-record (keystone).
 #unstable
 export type DeError value { ro kind DeErrorKind, ro path str }
 
@@ -105,19 +105,19 @@ export fn DeError @to_str() -> str {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Data-model — format-agnostic ядро (12 кейсов, §3.1 / Q2). Абстрактный
+// Data-model — format-agnostic ядро (12 кейсов). Абстрактный
 // словарь Serialize/Serializer: `bool int uint float str bytes option unit
 // seq map struct enum`. Протоколы НЕ строят промежуточное data-model-дерево
-// (push прямо в Serializer, §3.1); контракт визит-методов фиксируют сигнатуры
+// (push прямо в Serializer); контракт визит-методов фиксируют сигнатуры
 // Serializer/Deserializer ниже. Отдельным enum data-model НЕ объявляется —
 // имена вариантов (`Option`/`Struct`/`Map`/`Enum`/…) столкнулись бы с
 // встроенными типами; словарь живёт в сигнатурах методов, не в enum.
 // ──────────────────────────────────────────────────────────────────────────
 
 // ──────────────────────────────────────────────────────────────────────────
-// Serializer — push-протокол (backend-точка расширения, §3.2). Единый
+// Serializer — push-протокол (backend-точка расширения). Единый
 // mutable stack-machine: составные обрамляются begin/key/end; backend владеет
-// стеком (format-agnostic). Каждый метод fallible (Q19 non-finite float).
+// стеком (format-agnostic). Каждый метод fallible (non-finite float).
 // ──────────────────────────────────────────────────────────────────────────
 
 #unstable
@@ -128,7 +128,7 @@ export type Serializer protocol {
     mut @serialize_uint(v u64)    -> Result[(), SerError]
     mut @serialize_float(v f64)   -> Result[(), SerError]
     mut @serialize_str(v str)     -> Result[(), SerError]
-    mut @serialize_bytes(v []u8)  -> Result[(), SerError]   // JSON: base64-строка (Q9)
+    mut @serialize_bytes(v []u8)  -> Result[(), SerError]   // JSON: base64-строка
     mut @serialize_unit()         -> Result[(), SerError]   // ()
     mut @serialize_none()         -> Result[(), SerError]   // Option::None -> null
     // ── составные (stack-framing) ──
@@ -138,12 +138,12 @@ export type Serializer protocol {
     mut @begin_seq(len int)              -> Result[(), SerError]
     mut @end_seq()                       -> Result[(), SerError]
     mut @begin_map(len int)              -> Result[(), SerError]
-    mut @map_key(key str)                -> Result[(), SerError]   // ключ только str (Q16)
+    mut @map_key(key str)                -> Result[(), SerError]   // ключ только str
     mut @end_map()                       -> Result[(), SerError]
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Deserializer — driven-pull (§3.3). Единый cursor; скаляры — прямой pull,
+// Deserializer — driven-pull. Единый cursor; скаляры — прямой pull,
 // составные — под-cursor через `enter_*` (возвращает Self, позиционированный
 // на дочернем значении). Sub-deserializer'ы только ЧИТАЮТ → нет write-back,
 // поэтому владение тривиально (keyed-access модель, Swift KeyedDecodingContainer).
@@ -153,31 +153,31 @@ export type Serializer protocol {
 export type Deserializer protocol {
     // ── скаляры (прямой pull) ──
     mut @deser_bool()  -> Result[bool, DeError]
-    mut @deser_int()   -> Result[int, DeError]      // Q15: точное-целое-check
-    mut @deser_uint()  -> Result[u64, DeError]      // Q15: negative/range-check
+    mut @deser_int()   -> Result[int, DeError]      // точное-целое-check
+    mut @deser_uint()  -> Result[u64, DeError]      // negative/range-check
     mut @deser_float() -> Result[f64, DeError]
     mut @deser_str()   -> Result[str, DeError]
-    mut @deser_bytes() -> Result[[]u8, DeError]     // JSON: base64-decode (Q9)
+    mut @deser_bytes() -> Result[[]u8, DeError]     // JSON: base64-decode
     mut @is_null()     -> Result[bool, DeError]
-    mut @is_str()      -> Result[bool, DeError]     // externally-tagged sum: unit-variant = bare string (Q4)
+    mut @is_str()      -> Result[bool, DeError]     // externally-tagged sum: unit-variant = bare string
     // ── struct-доступ (под-cursor по ключу) ──
     mut @enter_field(key str)         -> Result[Self, DeError]   // MissingField если нет
     mut @enter_field_or_null(key str) -> Result[Self, DeError]   // null-cursor если нет (Option-поля)
-    // Plan 180.1 Ф.1.5/Ф.1.6: точная presence-проверка (БЕЗ конфликта с
-    // JSON `null`, в отличие от `enter_field_or_null`) — используется
-    // синтезатором для `default`/`alias`-fallback-цепочки (has_field(name)?
-    // до enter_field(name), а не догадка по null-курсору).
+    // Точная presence-проверка (БЕЗ конфликта с JSON `null`, в отличие от
+    // `enter_field_or_null`) — используется синтезатором для `default`/`alias`
+    // -fallback-цепочки (has_field(name)? до enter_field(name), а не догадка
+    // по null-курсору).
     mut @has_field(key str) -> Result[bool, DeError]
     // ── seq-доступ ──
     mut @seq_len()          -> Result[int, DeError]
     mut @enter_index(i int) -> Result[Self, DeError]
-    // ── map-доступ (ключи только str, Q16) ──
+    // ── map-доступ (ключи только str) ──
     mut @map_keys()          -> Result[[]str, DeError]
     mut @enter_key(key str)  -> Result[Self, DeError]
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Serialize / Deserialize — контракт типа (§3.3). `deserialize` статический (D35).
+// Serialize / Deserialize — контракт типа. `deserialize` статический.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Зеркальный push-контракт. Компилятор синтезирует для `#impl(Serialize)` record'а.
@@ -194,9 +194,9 @@ export type Deserialize protocol {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Скаляр-conformance (Q13). Скаляры получают Serialize/Deserialize через
-// `.nv`-методы на примитивах (D35 v2 — методы на примитивах легальны); синтез
-// record'а зовёт их единообразно (`@field.serialize(s)` / `T.deserialize(d)`).
+// Скаляр-conformance. Скаляры получают Serialize/Deserialize через `.nv`-методы
+// на примитивах (методы на примитивах легальны); синтез record'а зовёт их
+// единообразно (`@field.serialize(s)` / `T.deserialize(d)`).
 // ──────────────────────────────────────────────────────────────────────────
 
 fn bool @serialize[S Serializer](mut s S) -> Result[(), SerError] => s.serialize_bool(@)
@@ -219,13 +219,13 @@ fn str @serialize[S Serializer](mut s S) -> Result[(), SerError] => s.serialize_
 
 fn str.deserialize[D Deserializer](mut d D) -> Result[str, DeError] => d.deser_str()
 
-// ── narrow numeric scalars (D342: int i64-wide widen on ser, range-check on
+// ── narrow numeric scalars (int i64-wide widen on ser, range-check on
 // deser). The record synthesizer emits the SER direction inline as a direct
 // `s.serialize_int/uint/float(@f as WIDE)?` (a primitive receiver does not
 // dispatch a user `@serialize`), and the DESER direction as a static
 // `T.deserialize(sub)?` with an explicit `ro f: T` annotation so the `?`
 // lowers to the narrow C type. deser_int/deser_uint already enforce the
-// exact-integer / non-negative wire invariants (D346, Q15); the per-type
+// exact-integer / non-negative wire invariants; the per-type
 // checks reject values that overflow the narrower target (`OutOfRange`) —
 // loss-free or typed, never silent.
 
@@ -275,9 +275,9 @@ fn f32.deserialize[D Deserializer](mut d D) -> Result[f32, DeError] {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Контейнер-conformance (Q13, §0-находка). Выразимо `.nv`-impl'ами (прецедент
-// Debug для Option/Result в protocols.nv), НЕ compiler-side mono: generic-
-// receiver + generic-static-dispatch `T.deserialize(d)` работают (Ф.0-verify).
+// Контейнер-conformance. Выразимо `.nv`-impl'ами (прецедент Debug для
+// Option/Result в protocols.nv), НЕ compiler-side mono: generic-receiver +
+// generic-static-dispatch `T.deserialize(d)` работают (проверено эмпирически).
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Option[T]: Some(v) -> v; None -> serialize_none (JSON null). Deser: null -> None.
@@ -334,7 +334,7 @@ fn[T Deserialize] []T.deserialize[D Deserializer](mut d D) -> Result[[]T, DeErro
     Ok(out)
 }
 
-/// HashMap[str, V] -> data-model Map (ключи только str, Q16). Deser: keys + per-key.
+/// HashMap[str, V] -> data-model Map (str keys only). Deser: keys + per-key.
 #unstable
 fn HashMap[str, V Serialize] @serialize[S Serializer](mut s S) -> Result[(), SerError] {
     s.begin_map(@len())?
@@ -342,7 +342,7 @@ fn HashMap[str, V Serialize] @serialize[S Serializer](mut s S) -> Result[(), Ser
     for k in @keys() {
         keys.push(k)
     }
-    keys.sort()                 // D344: детерминированный вывод (golden-тесты)
+    keys.sort()                 // детерминированный вывод (golden-тесты)
     for k in keys {
         s.map_key(k)?
         match @get(k) {

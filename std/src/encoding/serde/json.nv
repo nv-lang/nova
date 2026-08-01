@@ -1,24 +1,23 @@
-// std/encoding/serde/json.nv — JSON-backend для serde (Plan 180 Ф.4, D344).
+// std/encoding/serde/json.nv — JSON-backend для serde.
 //
 // JsonSerializer / JsonDeserializer реализуют Serializer / Deserializer
 // (serde.nv) ПОВЕРХ существующего std/encoding/json (JsonValue/Json.parse/
-// @to_str) — reuse RFC 8259-логики, escape, format_num, strict-DuplicateKey
-// (Q11). НЕ дублируем парсер. PURE codec (без I/O-эффекта).
+// @to_str) — reuse RFC 8259-логики, escape, format_num, strict-DuplicateKey.
+// НЕ дублируем парсер. PURE codec (без I/O-эффекта).
 //
-// Публичный API — то, что зовёт Plan 178 (typed .json[T]) для record-DTO:
+// Публичный API — то, что зовёт typed `.json[T]` для record-DTO:
 //   Serde.encode[T]/decode[T]/encode_pretty/to_value/from_value/
-//   decode_bytes/decode_with (§3.8).
+//   decode_bytes/decode_with.
 //
-// Soundness (D346): depth-guard (Q14 default 128), numeric точное-целое-check
-// (Q15 -> LossyInteger/OutOfRange, no silent-lossy). Детерминизм полей-порядка
-// (реестр 221.1 №148, [M-json-encode-record-field-order-nondeterministic]):
+// Soundness: depth-guard (default 128), numeric точное-целое-check
+// (LossyInteger/OutOfRange, no silent-lossy). Детерминизм полей-порядка:
 // struct/record-поля (begin_struct/struct_field) идут в ПОРЯДКЕ ОБЪЯВЛЕНИЯ —
 // `SerFrame.obj` — `JsonObject` (encoding.json), упорядоченная map, а не голый
 // `HashMap` (который порядок вставки не хранит, а его hash-итерация вдобавок
 // рандомизирована МЕЖДУ процессами — HashDoS-защита seed'а, трогать нельзя).
 // Отдельно: явный `HashMap[str, V]`-VALUE (не struct-поля, а map-тип в теле
-// записи) по-прежнему сортирует ключи (`serde.nv:345` `keys.sort()`) — это
-// не relates к порядку struct-полей, а к произвольной map-СОДЕРЖИМОЙ.
+// записи) по-прежнему сортирует ключи (`keys.sort()`) — это не относится
+// к порядку struct-полей, а к произвольной map-СОДЕРЖИМОЙ.
 
 module encoding.serde
 
@@ -26,25 +25,24 @@ import std.encoding.json.{JsonValue, JsonObject, Json, ParseJsonError, pretty}
 import std.encoding.base64.{Base64}
 
 // ──────────────────────────────────────────────────────────────────────────
-// JsonSerializer — единый mutable stack-machine (§3.2 realization). Собирает
+// JsonSerializer — единый mutable stack-machine. Собирает
 // JsonValue-дерево через begin/key/end; scalars — терминалы. `put` присоединяет
 // готовое значение к текущему frame (obj с pending-key / arr / root).
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Frame стека сериализации: obj (с pending-ключом) или arr.
+/// Serializer stack frame: an object (with a pending key) or an array.
 ///
-/// `obj` — `JsonObject` (упорядоченная map), НЕ голый `HashMap`: struct-поля
-/// (`begin_struct`/`struct_field`) идут в порядке `serialize_field`-вызовов,
-/// т.е. в порядке ОБЪЯВЛЕНИЯ полей записи — это и есть детерминированный
-/// field-order fix (реестр 221.1 №148).
+/// `obj` is a `JsonObject` (ordered map), NOT a raw `HashMap`: struct fields
+/// (`begin_struct`/`struct_field`) are emitted in `serialize_field`-call
+/// order, i.e. in declaration order — deterministic field order.
 type SerFrame { is_obj bool, obj JsonObject, arr []JsonValue, pending str }
 fn SerFrame.obj_frame() -> SerFrame =>
     { is_obj: true, obj: JsonObject.new(), arr: [], pending: "" }
 fn SerFrame.arr_frame() -> SerFrame =>
     { is_obj: false, obj: JsonObject.new(), arr: [], pending: "" }
 
-/// Сериализатор: drive Serialize -> строит JsonValue -> @to_str() компактный JSON.
-/// Несёт depth-counter (Q14).
+/// Serializer: drive Serialize -> builds JsonValue -> @to_str() compact JSON.
+/// Carries a depth counter.
 #unstable
 export type JsonSerializer {
     root JsonValue
@@ -106,7 +104,7 @@ fn JsonSerializer mut @finish_obj() -> Result[(), SerError] {
 fn JsonSerializer mut @serialize_bool(v bool) -> Result[(), SerError] => @put(JsonValue.bool(v))
 
 fn JsonSerializer mut @serialize_int(v int) -> Result[(), SerError] {
-    // Q15/D346: reject integers that would silently lose precision in the f64
+    // Reject integers that would silently lose precision in the f64
     // JSON number — SYMMETRIC with `is_exact_int` on the deser side (`|n| <
     // 2^53`, strict), so a value this encodes is one deser_int accepts back.
     // `json_encode(9007199254740993)` is `Err(SerLossyInteger)`, never ...992.
@@ -178,7 +176,7 @@ fn JsonSerializer mut @end_seq() -> Result[(), SerError] {
 // ──────────────────────────────────────────────────────────────────────────
 // JsonDeserializer — cursor по JsonValue-дереву. Скаляры — прямой pull; составные
 // — под-cursor через enter_* (sub-deserializer только читает, нет write-back).
-// depth-counter (Q14). numeric-fidelity (Q15).
+// depth counter. numeric fidelity.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Десериализатор: Json.parse -> JsonValue -> drive Deserialize.
@@ -199,7 +197,7 @@ fn json_kind(v JsonValue) -> str {
     else { "object" }
 }
 
-/// f64 — точное целое в безопасном диапазоне [-2^53, 2^53]? (Q15)
+/// Is `f64` an exact integer in the safe range [-2^53, 2^53]?
 fn is_exact_int(n f64) -> bool =>
     n.is_finite() && n == n.floor() && n.abs() < 9007199254740992.0
 
@@ -289,7 +287,7 @@ fn JsonDeserializer mut @enter_field_or_null(key str) -> Result[JsonDeserializer
         }
     }
 }
-// Plan 180.1 Ф.1.5/Ф.1.6: exact presence check — distinct from
+// Exact presence check — distinct from
 // `enter_field_or_null` (which conflates "absent key" with "present JSON
 // null"). Used by the record synthesizer's `default`/`alias`-fallback chain.
 fn JsonDeserializer mut @has_field(key str) -> Result[bool, DeError] {
@@ -334,7 +332,7 @@ fn JsonDeserializer mut @enter_key(key str) -> Result[JsonDeserializer, DeError]
 
 // ── error-rendering (line/col из ParseJsonError сохраняются в тексте) ──
 
-/// ParseJsonError -> сообщение с line/col (source-chain в тексте, §8.0.3).
+/// ParseJsonError -> сообщение с line/col (source-chain в тексте).
 fn parse_err_msg(e ParseJsonError) -> str {
     match e {
         UnexpectedChar { line, col, found } =>
@@ -355,15 +353,16 @@ fn parse_err_msg(e ParseJsonError) -> str {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Публичный API (§3.8) — record-DTO, разблокировка Plan 178 typed .json[T].
+// Публичный API — record-DTO, разблокировка typed `.json[T]`.
 // ──────────────────────────────────────────────────────────────────────────
 
-// NB (D344 realized-form): публичный API — FREE-функции, НЕ namespace-static
-// методы. Причина (Ф.0-verify-эмпирика): turbofish на namespace/type-static
-// generic-методе (`Ns.decode[T]`) НЕ мономорфизируется (erased-symbol);
-// free-fn turbofish — мономорфизируется. Каждая делает работу ИНЛАЙН через
-// `v.serialize`/`T.deserialize` (proven-working generic-dispatch), без
-// вложенных generic-обёрток. Followup `[M-180-namespace-static-generic-mono]`.
+// NB: публичный API — FREE-функции, НЕ namespace-static методы. Причина:
+// turbofish на namespace/type-static generic-методе (`Ns.decode[T]`) НЕ
+// мономорфизируется (erased-symbol); free-fn turbofish — мономорфизируется.
+// Каждая делает работу ИНЛАЙН через `v.serialize`/`T.deserialize`
+// (proven-working generic-dispatch), без вложенных generic-обёрток.
+// [M-180-namespace-static-generic-mono]: namespace/type-static generic-методы
+// (style `Serde.decode[T]`) не мономорфизируются, потому API — free-функции.
 
 /// T -> JsonValue (DOM, без строкования). #impl(Serialize)-derived.
 #unstable
@@ -373,7 +372,7 @@ export fn json_to_value[T Serialize](v T) -> Result[JsonValue, SerError] {
     if s.has_root { Ok(s.root) } else { Ok(JsonValue.null()) }
 }
 
-/// T -> компактный JSON. Result (R1/D325).
+/// T -> компактный JSON.
 #unstable
 export fn json_encode[T Serialize](v T) -> Result[str, SerError] {
     mut s = JsonSerializer.new()
@@ -408,7 +407,7 @@ export fn json_decode[T Deserialize](s str) -> Result[T, DeError] {
     }
 }
 
-/// Конфигурируемый max-depth (Q14); default 128 в decode.
+/// Configurable max-depth; default 128 in decode.
 #unstable
 export fn json_decode_with[T Deserialize](s str, max_depth int) -> Result[T, DeError] {
     match Json.parse(s) {
@@ -420,7 +419,7 @@ export fn json_decode_with[T Deserialize](s str, max_depth int) -> Result[T, DeE
     }
 }
 
-/// []u8 (UTF-8) -> T (байт-first вход; Plan 178 Body.@json).
+/// []u8 (UTF-8) -> T (byte-first input).
 #unstable
 export fn json_decode_bytes[T Deserialize](b []u8) -> Result[T, DeError] {
     match b.to_str() {
