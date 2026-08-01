@@ -333,5 +333,11 @@
 # заменены одной таблицей BINOP_TABLE/UNOP_TABLE и общим резолвером в
 # codegen/operator_dispatch.rs (вне метрики); baseline ОПУЩЕН — выигрыш
 # зафиксирован храповиком.
-lines=63773
+# 2026-08-01 (пакет звучности, окно p-soundness-pack): 63773 -> 63839 (+66).
+# П.6 C-mismatch: emit_lambda — классификация mut-захвата учитывает ref_params
+# (mut-value параметры на pointer-ABI) и ref_params scoped per-lambda-body;
+# большая часть дельты — блок-комментарии анатомии бага (закрыл
+# [M-effect-handler-mutex-hashmap-value-capture]). Чекер-часть волны
+# (field-launder, D246/D174 амендменты) — в types/mod.rs, вне метрики.
+lines=63839
 infer=349
