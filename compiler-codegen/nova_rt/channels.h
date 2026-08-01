@@ -436,8 +436,20 @@ static inline NovaOpt_nova_int nova_chan_reader_recv(Nova_ChanReader* rx) {
     /* If cancel_scope cancelled us, throw. cancelled flag was set by
      * stop_cb without acquiring the lock; we observe it now.
      * Plan 49 Ф.2: kind=CANCEL + reason из scope (если bound token дал её),
-     * чтобы supervised_run различил отмену от реальной ошибки. */
-    if (nova_abool_load(&sc->cancel_requested)) {
+     * чтобы supervised_run различил отмену от реальной ошибки.
+     * Plan 221.1 №165: `sc` is `_nova_active_scope` at park time — the
+     * OWNER's real ambient scope, not necessarily the `supervised(cancel:/
+     * timeout:)` scope that lexically wraps a DIRECT (no `spawn`) `recv()`
+     * call in its own body (D439: that scope is deliberately never made
+     * `_nova_active_scope` for body-statement execution). Such a scope's
+     * cancel/deadline reaches this waiter via a TARGETED single-slot wake
+     * (nova_sched_cancel_pending_slot, fibers.h) that invokes THIS SAME
+     * stop_cb — which already stamps `w->cancelled` (previously unread here:
+     * only `sc->cancel_requested`, the wrong scope's flag, was checked).
+     * Honoring `w->cancelled` too closes that gap without changing the
+     * same-scope case at all (there `w->cancelled` and `sc->cancel_requested`
+     * are always both true together — same stop_cb, same caller). */
+    if (nova_abool_load(&sc->cancel_requested) || nova_abool_load(&w->cancelled)) {
         if (w->channel) _nova_waiter_unlink_locked(w);
         nova_mutex_unlock(&st->mu);
         nova_throw_cancel_reason(
@@ -611,8 +623,10 @@ static inline nova_bool nova_chan_writer_send(Nova_ChanWriter* tx, nova_int v) {
     nova_mutex_lock(&st->mu);
 
     /* Plan 49 Ф.2: kind=CANCEL + reason — отмена не должна re-throw'иться
-     * как Fail в supervised_run. */
-    if (nova_abool_load(&sc->cancel_requested)) {
+     * как Fail в supervised_run.
+     * Plan 221.1 №165: also honor `w->cancelled` — see nova_chan_reader_recv's
+     * matching comment above (same rationale, `send()` twin). */
+    if (nova_abool_load(&sc->cancel_requested) || nova_abool_load(&w->cancelled)) {
         if (w->channel) _nova_waiter_unlink_locked(w);
         nova_mutex_unlock(&st->mu);
         nova_throw_cancel_reason(
@@ -1071,8 +1085,24 @@ static inline void nova_select_park(SelectCtx* ctx) {
         nova_mutex_unlock(&st->mu);
     }
 
-    /* Plan 49 Ф.2: kind=CANCEL (select-сайт). */
-    if (nova_abool_load(&scope->cancel_requested)) {
+    /* Plan 49 Ф.2: kind=CANCEL (select-сайт).
+     * Plan 221.1 №165: also honor any arm's `w->base.cancelled` — same
+     * rationale as nova_chan_reader_recv/send above (a directly, non-
+     * `spawn`'d nested `supervised(cancel:/timeout:)` reaches select's
+     * waiters via a targeted single-slot wake, which stamps `cancelled` on
+     * each registered SelectWaiter's base but is invisible to a check of
+     * `scope->cancel_requested` alone — `scope` here is the OWNER's real
+     * ambient scope, D439). */
+    nova_bool _nv_sel_cancelled = nova_abool_load(&scope->cancel_requested);
+    if (!_nv_sel_cancelled) {
+        for (i = 0; i < n; i++) {
+            if (nova_abool_load(&ctx->waiters[i].base.cancelled)) {
+                _nv_sel_cancelled = true;
+                break;
+            }
+        }
+    }
+    if (_nv_sel_cancelled) {
         nova_throw_cancel_reason(
             nova_str_from_cstr("scope cancelled"),
             scope->cancel_reason_ptr);

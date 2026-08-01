@@ -13844,6 +13844,35 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             None
         };
 
+        // Plan 221.1 №169: `nova_scope_init`'s own inheritance
+        // (`q->deadline_ns = _nova_active_scope ? ... : 0`, fibers.h) only
+        // sees a deadline through the RUNTIME `_nova_active_scope` TLS chain
+        // — which D439 (comment above, `prev_scope_var`) deliberately does
+        // NOT repoint at a directly (non-`spawn`) entered enclosing
+        // `supervised{}` block, since that block's own body statements
+        // execute BEFORE `_nova_active_scope` would ever be assigned to it.
+        // A LEXICALLY nested `supervised { supervised(timeout:) { … } }`
+        // (no intervening `spawn`) therefore silently loses the outer
+        // block's tightened deadline through that path — the inner block's
+        // OWN `nova_deadline_combine` call below only ever sees whatever
+        // ambient (usually 0, or an unrelated outer-outer) value
+        // `nova_scope_init` picked up. Fix: combine explicitly against the
+        // LEXICALLY enclosing queue variable's `deadline_ns`, known at
+        // compile time (`self.current_scope_queue`, still the OUTER value
+        // here — only replaced with our own `queue_var` further down).
+        // No-op (both operands read as the SAME already-inherited value)
+        // whenever the lexical parent is ALSO the runtime-ambient scope
+        // (e.g. a `spawn`'d child's own nested `supervised{}` — there
+        // `_nova_active_scope` already correctly equals the parent, per
+        // `nova_supervised_step`'s wrap) — this only changes behaviour for
+        // the genuinely-broken direct-nesting case.
+        if let Some(enclosing_q) = self.current_scope_queue.clone() {
+            self.line(&format!(
+                "{q}.deadline_ns = nova_deadline_combine({q}.deadline_ns, ({p}).deadline_ns);",
+                q = queue_var, p = enclosing_q
+            ));
+        }
+
         // Plan 174 (D349): scope deadline. `deadline:` = absolute Monotonic
         // point; `timeout:` = relative Duration (sugar for `Monotonic.now() +
         // d`). Both lower to an absolute monotonic-ns i64. Computed at scope
@@ -13884,6 +13913,57 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // this coroutine's real (scope,slot). fibers.h (nova_scope_free_slot) + D435.
         self.line(&format!("NovaFiberQueue* {} = _nova_active_scope;", prev_scope_var));
 
+        // Plan 221.1 №165: arm the early-deadline timer (fibers.h) NOW —
+        // `queue_var.deadline_ns` has its final value (inherited via
+        // nova_scope_init + the lexical combine above + this block's own
+        // local `deadline:`/`timeout:` combine). Unconditional call: the
+        // runtime function itself is a cheap guarded no-op whenever
+        // `deadline_ns == 0` (the overwhelming common case — plain/
+        // cancel-only `supervised{}`), so this does not need Rust-side
+        // gating. Closes the gap where `nova_supervised_run_impl`'s OWN
+        // (later, join-loop) deadline gate cannot fire because the owner is
+        // still executing body statements — see D439 amendment.
+        let early_dl_var = format!("_nova_early_dl_{}", id);
+        self.line(&format!(
+            "void* {} = nova_scope_arm_early_deadline(&{});",
+            early_dl_var, queue_var
+        ));
+
+        // Plan 221.1 №165: bind the cancel token EARLY — BEFORE body runs,
+        // not after. Binding used to happen right before
+        // `nova_supervised_run_cancel` (i.e. strictly AFTER every body
+        // statement had already executed) specifically so a body that
+        // throws directly wouldn't leave `tok` dangling-bound to a stack
+        // frame `nova_supervised_run_cancel` never got a chance to unbind
+        // from. But a DIRECT (non-`spawn`) blocking op in the body — D439's
+        // whole point — parks WHILE executing a body statement; `tok.cancel()`
+        // firing during that park read `t->bound_scope == NULL` (confirmed
+        // empirically: [M-supervised-cancel-no-interrupt-parked-accept]) and
+        // did nothing at all — cancel was structurally unreachable for the
+        // entire body-execution window, matching the live serve() repro
+        // byte for byte. Fix: bind here, and reinstate the original
+        // dangling-bound_scope protection with a narrow, LOCAL try/finally
+        // (below) around JUST the body-statement-execution window instead —
+        // a body that throws directly now unbinds THERE before
+        // propagating, so `tok` never outlives the frame it's bound to on
+        // ANY path. Gated on `cancel_tok_var`/`deadline` — a plain
+        // `supervised{}` (no cancel:, no deadline:) emits neither the bind
+        // nor the guard, byte-identical to before.
+        if let Some(tv) = &cancel_tok_var {
+            self.line(&format!("nova_cancel_token_bind({}, &{});", tv, queue_var));
+        }
+        let need_body_guard = cancel_tok_var.is_some() || deadline.is_some();
+        let guard_var = if need_body_guard {
+            let g = format!("_nova_sup_guard_{}", id);
+            self.line(&format!("NovaFailFrame {};", g));
+            self.line(&format!("nova_fail_push(&{});", g));
+            self.line(&format!("if (setjmp({}.jmp) == 0) {{", g));
+            self.indent += 1;
+            Some(g)
+        } else {
+            None
+        };
+
         // Activate scope: spawn inside body routes into queue.
         let prev = std::mem::replace(&mut self.current_scope_queue, Some(queue_var.clone()));
 
@@ -13909,14 +13989,50 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Restore scope state.
         self.current_scope_queue = prev;
 
+        // Plan 221.1 №165: close the body-execution guard opened above.
+        // Normal path: pop the fail-frame, fall through. Catch path: pop,
+        // then release EXACTLY what a direct-body-throw would otherwise
+        // leave dangling — the early-deadline timer (self-cleaning even
+        // without this, see its own doc — this is belt-and-suspenders) and
+        // the cancel-token bind (NOT self-cleaning — this IS the fix) —
+        // then re-throw the SAME error (kind/msg/payload/suppressed
+        // preserved via nova_rethrow_scope, the established Plan 201
+        // explicit-suppressed re-throw point) so this scope's own
+        // behaviour on a genuine body error is otherwise unchanged.
+        if let Some(g) = &guard_var {
+            self.line(&format!("nova_fail_pop();"));
+            self.indent -= 1;
+            self.line("} else {");
+            self.indent += 1;
+            self.line(&format!("nova_fail_pop();"));
+            self.line(&format!("nova_scope_disarm_early_deadline({});", early_dl_var));
+            if let Some(tv) = &cancel_tok_var {
+                self.line(&format!("nova_cancel_token_unbind({});", tv));
+            }
+            self.line(&format!(
+                "nova_rethrow_scope({g}.error_msg.ptr, {g}.error_kind, \
+                 {g}.error_user_payload, {g}.error_user_type_id, {g}.error_suppressed);",
+                g = g
+            ));
+            self.indent -= 1;
+            self.line("}");
+        }
+
+        // Plan 221.1 №165: disarm the early-deadline timer — body statements
+        // (the only thing it exists to protect) are done; from here on
+        // nova_supervised_run(_cancel)'s own join-loop deadline gate takes
+        // over for any registered `spawn` children. Safe no-op if the timer
+        // already fired (CAS-guarded in the runtime helper), was never
+        // armed (deadline_ns == 0), or was already disarmed by the guard's
+        // catch-arm above (normal path only reaches this line).
+        self.line(&format!("nova_scope_disarm_early_deadline({});", early_dl_var));
+
         // Run the scheduler: round-robin until all fibers in queue are dead.
-        // Plan 47: для cancel-формы — bind токена к scope-queue здесь (после
-        // тела: прямой throw в body-стейтменте не оставит dangling
-        // bound_scope), затем run-with-cancel; unbind делается внутри
-        // nova_supervised_run_cancel перед нормальным возвратом И перед
-        // любым re-throw.
+        // Plan 47/№165: cancel-token bind now happens EARLY (above, before
+        // body) — see that comment. `nova_supervised_run_cancel` still owns
+        // unbind for ITS OWN exit paths (normal return / re-throw /
+        // interrupt / timeout longjmp), unchanged.
         if let Some(tv) = &cancel_tok_var {
-            self.line(&format!("nova_cancel_token_bind({}, &{});", tv, queue_var));
             self.line(&format!("nova_supervised_run_cancel(&{}, {});", queue_var, tv));
         } else {
             self.line(&format!("nova_supervised_run(&{});", queue_var));

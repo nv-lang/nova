@@ -703,6 +703,44 @@ static inline void nova_sched_cancel_all_pending(NovaFiberQueue* scope) {
     }
 }
 
+/* Plan 221.1 №165: same per-slot protocol as the loop body of
+ * nova_sched_cancel_all_pending above, but targeting exactly ONE
+ * (scope, slot) instead of every slot of `scope`. Used when a DIFFERENT
+ * NovaFiberQueue's cancel/deadline needs to interrupt an op that a
+ * coroutine parked under `scope`'s bookkeeping while directly (no `spawn`)
+ * executing another, lexically nested/enclosing `supervised{}` block's body
+ * — see fibers.h `owner_scope`/`owner_slot` field doc and
+ * nova_scope_deliver_cancel / nova_scope_arm_early_deadline. Purely
+ * additive/read-then-act on WHATEVER is currently, validly registered at
+ * that slot — same safety envelope as nova_sched_cancel_all_pending itself
+ * (a slot with nothing genuinely parked, or a stale/reused slot belonging
+ * to an unrelated LATER fiber, is a safe no-op / at worst a spurious wake
+ * that the target op's own predicate re-check absorbs — nova_sched_wake's
+ * own pco==NULL guard). Does NOT touch `scope->cancel_requested` — the
+ * caller (a DIFFERENT scope) has its own cancellation state; this only
+ * delivers the stop_cb/wake side-effect. */
+static inline void nova_sched_cancel_pending_slot(NovaFiberQueue* scope, int slot) {
+    if (!scope || slot < 0) return;
+    NovaSchedState* st = nova_sched_find_state(scope);
+    if (!st) return;
+    int _cap = nova_sched_cap_acq(st);
+    int n = scope->count < _cap ? scope->count : _cap;
+    if (slot >= n) return;
+    NovaSchedStopCb _cb;
+    __atomic_load(nova_sched_pending_stop_cb_at(st, slot), &_cb, __ATOMIC_ACQUIRE);
+    void* _hdl = *nova_sched_pending_handle_at(st, slot);  /* visible after ACQUIRE on _cb */
+    if (_cb && _hdl) {
+        NovaStopMode mode = _cb(_hdl);
+        if (mode == NOVA_STOP_SYNC) {
+            nova_sched_wake(scope, slot);
+        }
+        /* ASYNC: backend (close_cb / waitlist-removal) wakes later, as usual. */
+    } else if (*nova_sched_parked_at(st, slot)) {
+        /* Bare park (no registered stop_cb) — unpark unconditional. */
+        nova_sched_wake(scope, slot);
+    }
+}
+
 /* ─── Introspection ──────────────────────────────────────────── */
 
 static inline int nova_sched_count_alive(NovaFiberQueue* scope) {
