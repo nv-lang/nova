@@ -1,0 +1,25 @@
+// ICE-пачка п.6: [M-channel-try-recv-ro-binding-p67-ice].
+//
+// Positive companion of the neg fixture
+// (nova_tests/concurrency/neg/channel_bare_type_not_instantiable.nv):
+// `ro x = reader.try_recv()` in an ORDINARY (non-test-block) function, with
+// `reader` correctly typed `ChanReader[T]` (the real receive capability
+// `Channel.new()` actually returns) — this already worked and stays
+// working; the fixture pins it as a regression guard for the SAME area
+// item 6 touched (checker now rejects the bare `Channel[T]` misuse that
+// used to reach this exact method-call shape and ICE).
+module spec_tests.conformance
+
+fn m_ice_ctr_probe(reader ChanReader[int]) -> int {
+    ro x = reader.try_recv()
+    match x {
+        Some(v) => v
+        None => -1
+    }
+}
+
+test "ICE-пачка п.6: ChanReader[T] param, ro-bound .try_recv() in a regular fn" {
+    ro (tx, rx) = Channel.new(1)
+    tx.try_send(42)
+    assert(m_ice_ctr_probe(rx) == 42, "try_recv value flows through a ro-binding in an ordinary fn")
+}

@@ -5619,7 +5619,77 @@ impl<'a> TypeCheckCtx<'a> {
 
     // --- Ф.2: walk сигнатур ---------------------------------------------
 
+    /// [M-channel-try-recv-ro-binding-p67-ice] (ICE-пачка п.6): `ty` (peeled
+    /// of `readonly`/`mut` wrappers) is exactly the bare `Channel[T]` type —
+    /// the constructor-only namespace, never a real instantiable value
+    /// (see `check_fn`'s call-site doc for the full rationale). `label` names
+    /// the position for the message (`p.name` for a param, `"<return>"` for
+    /// a return type).
+    fn channel_bare_type_diag(ty: &TypeRef, label: &str, span: Span) -> Option<Diagnostic> {
+        let mut t = ty;
+        loop {
+            match t {
+                TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) => t = inner,
+                _ => break,
+            }
+        }
+        let TypeRef::Named { path, generics, .. } = t else { return None };
+        if path.len() != 1 || path[0] != "Channel" {
+            return None;
+        }
+        let where_txt = if label == "<return>" {
+            "return type".to_string()
+        } else {
+            format!("param `{}`", label)
+        };
+        let generic_txt = if generics.is_empty() { "Channel" } else { "Channel[..]" };
+        Some(Diagnostic::new(
+            format!(
+                "[E_CHANNEL_TYPE_NOT_INSTANTIABLE] {} has type `{}` — `Channel[T]` \
+                 is a CONSTRUCTOR NAMESPACE only (`Channel.new(cap)` /  \
+                 `Channel.with_capacity(cap)`), never a real value type; the \
+                 runtime never materializes one (`Channel.new()` returns a \
+                 `(ChanWriter[T], ChanReader[T])` capability pair — there is no \
+                 `Channel` struct to receive method calls on). Use \
+                 `ChanReader[T]` (for `.recv()`/`.try_recv()`/...) or \
+                 `ChanWriter[T]` (for `.send()`/`.try_send()`/...) instead — \
+                 whichever capability this position actually needs.",
+                where_txt, generic_txt,
+            ),
+            span,
+        ))
+    }
+
     fn check_fn(&self, fd: &FnDecl, errors: &mut Vec<Diagnostic>) {
+        // [M-channel-try-recv-ro-binding-p67-ice] (ICE-пачка п.6): `Channel[T]`
+        // is declared `external type Channel[T]` purely as a NAMESPACE for the
+        // `Channel.new(cap)`/`Channel.with_capacity(cap)` static constructors
+        // (`is_channel_ctor`-style gates elsewhere in this file only ever
+        // recognize "Channel" for `new`/`with_capacity`) — the runtime never
+        // materializes a value of Nova-level type `Channel[T]` itself:
+        // `Channel.new()` returns a `(ChanWriter[T], ChanReader[T])` pair
+        // (D91 capability split, `nova_rt/channels.h`'s `Nova_ChannelPair` —
+        // `Nova_ChanWriter`/`Nova_ChanReader` each own struct, holding a
+        // `Nova_ChannelState*`; there is no `Nova_Channel` struct at all). A
+        // param/local explicitly ANNOTATED `Channel[T]` (instead of the real
+        // `ChanReader[T]`/`ChanWriter[T]` capability types) was silently
+        // ACCEPTED by the checker (no producer ever validated this type
+        // position) and reached codegen with C receiver type `Nova_Channel*`
+        // — a name nothing lowers or dispatches, so ANY method call on it
+        // (`.try_recv()`, `.recv()`, `.try_send()`, ...) panicked emit_c's
+        // P67-LEGACY terminal ("method call return type unknown"). Reject at
+        // the type-annotation site instead — clear compile-time diagnostic,
+        // no ICE, no risk of miscompiling through a nonexistent C layout.
+        for p in &fd.params {
+            if let Some(diag) = Self::channel_bare_type_diag(&p.ty, &p.name, p.span) {
+                errors.push(diag);
+            }
+        }
+        if let Some(rt) = &fd.return_type {
+            if let Some(diag) = Self::channel_bare_type_diag(rt, "<return>", fd.span) {
+                errors.push(diag);
+            }
+        }
         // Plan 173 Ф.1 (#3 / Plan 174.2): `?` строго return-only. Свободный `?`
         // осмыслен лишь в fn, возвращающей Result/Option (проброс значением);
         // в Fail-эффект-fn → `[E_TRY_IN_FAIL_FN]` (там `!!`/`throw`). Consume-init
