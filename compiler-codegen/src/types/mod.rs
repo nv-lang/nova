@@ -9740,6 +9740,40 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
             ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) => {
+                // №253 [M-ok-or-bare-variant-misresolve-try-ice]: `<opt>.ok_or(<bare
+                // variant>)?` — `ok_or`'s Err param `E` (`Option[T] @ok_or[E](err E)
+                // -> Result[T,E]`, prelude/core.nv) is a METHOD-level generic bound
+                // ONLY by this very argument (chicken-egg), so the general arg-
+                // narrowing loop (`check_instance_overload`, ~L13038) deliberately
+                // skips `materialize_literal_coercion` whenever `exp_ty` mentions the
+                // callee's own unbound generic (avoids stamping an erased/wrong type
+                // for the general case) — a bare enum-variant argument (`Empty`) never
+                // gets a context type and falls to `infer_expr_type`'s last-resort
+                // alphabetical-tie-break fallback (~L17737), picking whichever Sum
+                // type declaring that variant name sorts first, NOT the function's own
+                // error type. For the narrow `?`-immediately-after-`ok_or(..)` shape
+                // the missing context IS recoverable: `?` propagates the Err arm
+                // through THIS function's own declared return carrier
+                // (`current_fn_return_ty`, `Result[_, E]`) — bind the bare-variant
+                // argument against that concrete `E` before walking `inner`, so the
+                // normal materialize/Ident-cache-lookup machinery picks it up.
+                if matches!(e.kind, ExprKind::Try(_)) {
+                    if let ExprKind::Call { func, args, .. } = &inner.kind {
+                        if let ExprKind::Member { name: field, .. } = &func.kind {
+                            if field == "ok_or" && args.len() == 1 {
+                                if let Some(TypeRef::Named { path, generics, .. }) =
+                                    self.current_fn_return_ty.borrow().clone()
+                                {
+                                    if path.len() == 1 && path[0] == "Result" && generics.len() == 2
+                                        && !typeref_mentions_any(&generics[1], gs)
+                                    {
+                                        self.materialize_literal_coercion(args[0].expr(), &generics[1]);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 self.f1_expr(inner, gs, scope, errors);
                 // Plan 174.2 Ф.B: cross-carrier `?` diagnostics. Only for `?`
                 // (Try), not `!!` (Bang) — `!!` throws through Fail и не связан
