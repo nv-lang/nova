@@ -19141,6 +19141,22 @@ impl<'a> TypeCheckCtx<'a> {
             TypeRef::Named { path, .. } if path.len() == 1 && path[0].starts_with("[]") => {
                 Some(path[0].clone())
             }
+            // №252 [M-bytes-to-str-chain-misresolves-universal-str-conv]: a
+            // `[]T`-typed scope value (e.g. `"hi".bytes()`'s result) is
+            // stored canonicalized as `Named{"Vec", [T]}` (D239 alias), not
+            // the raw `Array`/FixedArray` shape below — mirror
+            // `check_instance_overload`'s `array_elem_key` (~L12734-12736)
+            // so a chain call (`bytes.to_str().map_err(..)`) finds the SAME
+            // `[]u8`-spelled concrete facade method
+            // (`string/core.nv:274`) that `check_instance_overload` already
+            // resolves for a bare/match-scrutinee use of the same call —
+            // without this arm the retry below silently misses and falls
+            // through to the generic `fn[T] T @to_str() -> str` blanket.
+            TypeRef::Named { path, generics, .. }
+                if path.len() == 1 && path[0] == "Vec" && generics.len() == 1 =>
+            {
+                Some(format!("[]{}", render_type_ref(&generics[0])))
+            }
             TypeRef::Array(inner, _) | TypeRef::FixedArray(_, inner, _) => {
                 let mut e: &TypeRef = inner;
                 loop {
