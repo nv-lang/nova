@@ -549,11 +549,24 @@ fn critical(...) -> Result =>
 > 2×2-симметрию `map`/`map_err` ↔ `flat_map`/`flat_map_err`. НЕ рустовский
 > `or_else` (та семья ретрактирована). Движущий кейс — fallback-цепочки парсеров
 > (`strict(s).flat_map_err(|e| if e.recoverable() { lenient(s) } else { Err(e) })`).
-> Второй кандидат того же захода — `transpose` (`Option[Result[T,E]] ->
-> Result[Option[T], E]`, различение «нет значения» vs «значение сломано») —
-> ОДОБРЕН владельцем, но ЗАБЛОКИРОВАН компилятором:
-> `[M-nested-generic-receiver-method-mono]` (метод на вложенно-generic приёмнике
-> CC-FAIL'ится); добавить после фикса.
+> Второй кандидат того же захода — `transpose` —
+> **ДОБАВЛЕН 2026-08-01** (окно p-nestmono, реестр 221.1 №247):
+> `fn Option[Result[T, E]] @transpose() -> Result[Option[T], E]`
+> — `Some(Ok(v)) -> Ok(Some(v))`, `Some(Err(e)) -> Err(e)`, `None -> Ok(None)`;
+> различает «значения нет» (легитимный дефолт) от «значение есть, но
+> сломано» (жёсткая ошибка) — `config.get(k).map(|s| s.to_int())
+> .transpose()? ?? default` читает оба исхода раздельно. Блокер
+> `[M-nested-generic-receiver-method-mono]` (метод на вложенно-generic
+> приёмнике `Option[Result[T,E]]` ронял `Option`-обёртку возврата при
+> mono — carrier-параметр `Option`'а по имени коллизировал с
+> method-level `T`/`E`, введёнными декомпозицией приёмника) — ЗАКРЫТ
+> той же волной (`debt_rebind_nested_receiver_typevars`, `emit_c.rs`).
+> Фикстура: `spec_tests/conformance/plan200_transpose.nv`. Побочно
+> найден (НЕ в объёме фикса) `[M-nested-builtin-second-instance-typedef-
+> splice-gap]` (реестр 221.1 №248) — второй `transpose`-инстанс с
+> (T,E) ≠ (int,str) в одном CU падает на уровне C-typedef-сплайса, не
+> subst; узкий обход — не смешивать разные (T,E)-пары одного nested
+> builtin-метода в CU.
 >
 > Отбор — та же D86-философия, что и ретракт unwrap-twins выше, только в
 > обратную сторону: **добавляем** ТОЛЬКО то, что операторами (`??`/`!!`/`?`)
