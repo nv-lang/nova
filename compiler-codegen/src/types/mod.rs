@@ -9430,8 +9430,58 @@ impl<'a> TypeCheckCtx<'a> {
                 self.f1_expr(inner, gs, scope, errors);
                 self.check_ref_marker_mutability(inner, scope, errors);
             }
-            ExprKind::As(inner, _) => {
+            ExprKind::As(inner, cast_ty) => {
                 self.f1_expr(inner, gs, scope, errors);
+                // [M-option-int-cast-u64-cc-fail] (ICE-пачка п.7): `expr as
+                // <numeric>` never validated that `expr`'s OWN type is
+                // actually scalar-cast-compatible — a source expression whose
+                // type is `Option[T]`/`Result[T,E]` (a NovaOpt/NovaRes C
+                // STRUCT, never a bare scalar) passed straight through to
+                // codegen, which just emits a blind C cast — clang then
+                // rejects the struct operand ("operand of type 'NovaOpt_...'
+                // where arithmetic or pointer type is required" /
+                // "passing 'NovaOpt_...' to parameter of incompatible type").
+                // Repro class: `x.to_int()` (returns `Option[int]`, a CHECKED
+                // conversion) cast directly `as u64` WITHOUT unwrapping first
+                // — `(x.to_int() as u64)` — silently accepted by the checker,
+                // CC-FAIL at codegen. Catch it here: a numeric-scalar cast
+                // TARGET whose SOURCE resolves to `Option[..]`/`Result[..,..]`
+                // is never valid — the correct spelling requires an explicit
+                // unwrap (`match`/`??`/`!!`/`?`) before the numeric cast.
+                if let Some(src_ty) = self.infer_expr_type(inner, scope) {
+                    if let TypeRef::Named { path: src_path, .. } = src_ty.strip_modifiers() {
+                        if src_path.len() == 1
+                            && matches!(src_path[0].as_str(), "Option" | "Result")
+                        {
+                            if let TypeRef::Named { path: dst_path, generics: dst_gens, .. } =
+                                cast_ty.strip_modifiers()
+                            {
+                                if dst_path.len() == 1 && dst_gens.is_empty()
+                                    && matches!(dst_path[0].as_str(),
+                                        "int" | "uint" | "i8" | "i16" | "i32" | "i64"
+                                        | "u8" | "u16" | "u32" | "u64"
+                                        | "f32" | "f64" | "bool" | "char")
+                                {
+                                    errors.push(Diagnostic::new(
+                                        format!(
+                                            "[E_CAST_UNWRAP_REQUIRED] cannot cast \
+                                             `{}` directly `as {}` — the source is \
+                                             `{}`, not a scalar; the checked-\
+                                             conversion result must be unwrapped \
+                                             FIRST (`match`/`??`/`!!`/`?`), THEN \
+                                             cast. Example: `match x.to_int() {{ \
+                                             Some(v) => v as {t}, None => ... }}` \
+                                             or `(x.to_int() ?? 0) as {t}`.",
+                                            src_path[0], dst_path[0], src_path[0],
+                                            t = dst_path[0],
+                                        ),
+                                        e.span,
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
                 // Plan 172.1 §0a (As): materialize the cast target type into the channel.
                 // `infer_expr_type` already returns the `ty` for `As` — wire it into
                 // `resolved_types_buf` so codegen reads the CAST TYPE, not a re-derive.

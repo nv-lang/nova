@@ -1,0 +1,24 @@
+// ICE-пачка п.7: [M-option-int-cast-u64-cc-fail].
+//
+// Positive companion of the neg fixture
+// (nova_tests/option_cast/neg/option_direct_numeric_cast_rejected.nv):
+// unwrapping an `Option[int]`-returning checked conversion BEFORE the
+// numeric cast (`match`/`??`) is the correct, canonical spelling and must
+// keep compiling and producing the right value — the fix only rejects the
+// UNWRAP-LESS direct cast, not numeric casts on the unwrapped payload.
+module spec_tests.conformance
+
+type MIceOcuWrap { v int }
+fn MIceOcuWrap @to_int() -> Option[int] => Some(@v)
+
+test "ICE-пачка п.7: match-unwrap before numeric cast still works" {
+    ro w = MIceOcuWrap { v: 5 }
+    ro y = match w.to_int() { Some(val) => val as u64, None => 0 as u64 }
+    assert(y == 5, "match-unwrapped cast")
+}
+
+test "ICE-пачка п.7: ?? -unwrap before numeric cast still works" {
+    ro w = MIceOcuWrap { v: 7 }
+    ro y = (w.to_int() ?? 0) as u64
+    assert(y == 7, "coalesce-unwrapped cast")
+}
