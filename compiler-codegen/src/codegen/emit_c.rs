@@ -36104,6 +36104,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         let arg_ty = self.infer_expr_c_type(arg);
                         let str_expr = if arg_ty == "nova_str" {
                             v
+                        } else if matches!(arg_ty.as_str(), "uint64_t" | "nova_uint") {
+                            // [M-u64-uint-to-str-prints-signed] (ICE-пачка
+                            // п.9): same fix as the main interpolation path
+                            // — a high-bit-set uint/u64 has no signed-int
+                            // equivalent.
+                            format!("nova_uint_to_str(({}))", v)
                         } else {
                             format!("nova_int_to_str((nova_int)({}))", v)
                         };
@@ -45186,6 +45192,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // (3.14159f → "3.141590118408203" instead of "3.14159").
             "nova_f32"                                      => "nova_print_f32",
             "nova_f64"                                      => "nova_print_f64",
+            // [M-u64-uint-to-str-prints-signed] (ICE-пачка п.9): `uint`/`u64`
+            // are FULL-WIDTH (`uintptr_t`) — a value with the high bit set
+            // has no signed-int equivalent, so it must print via the
+            // dedicated unsigned helper (`%llu`), never `nova_print_int`
+            // (`%lld` on a bit-reinterpreted negative). The C type strings
+            // ACTUALLY produced for `uint`/`u64` are `"uint64_t"`/
+            // `"nova_uint"` (see `type_ref_to_c`) — the narrower unsigned
+            // widths (u8/u16/u32) stay on `nova_print_int` below: their max
+            // value fits well inside signed int64 range, no sign-bit
+            // collision possible.
+            "uint64_t" | "nova_uint"                         => "nova_print_uint",
             // Signed/unsigned integer widths — все cast'ятся в long long
             // через nova_print_int signature.
             "nova_int" | "nova_i8" | "nova_i16" | "nova_i32" | "nova_i64"
@@ -46483,6 +46500,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // (the receiver), same as the display/debug call site.
                             let recv_c = self.prepare_method_recv(&v, &arg_ty, false, Some(e));
                             format!("{}({})", c_name, recv_c)
+                        } else if matches!(arg_ty.as_str(), "uint64_t" | "nova_uint") {
+                            // [M-u64-uint-to-str-prints-signed] (ICE-пачка
+                            // п.9): `uint`/`u64` (full-width `uintptr_t`) has
+                            // no signed-int equivalent for a high-bit-set
+                            // value — the generic numeric-cast fallback below
+                            // (`(nova_int)(...)`) bit-reinterprets it as
+                            // negative, e.g. `(-6 as u64).to_str()` printed
+                            // "-6" instead of "18446744073709551610". Route
+                            // through the dedicated unsigned formatter
+                            // (`%llu`) instead — same reasoning as
+                            // `infer_print_helper`'s sibling fix a few
+                            // hundred lines up (println path).
+                            format!("nova_uint_to_str(({}))", v)
                         } else {
                             format!("nova_int_to_str((nova_int)({}))", v)
                         }

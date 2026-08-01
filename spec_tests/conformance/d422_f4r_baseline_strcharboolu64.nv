@@ -41,17 +41,21 @@ test "Ф.4R baseline: bool" {
 }
 
 test "Ф.4R baseline: u64 MAX / i64 MIN bare interpolation" {
-    // Ш0 KNOWN QUIRK: bare `${u64_value}` interpolation has NO dedicated
-    // u64 entry in emit_c.rs's `primitive_to_str_fn` (only the "nova_int"
-    // C-type is covered there) — it falls through to the generic
-    // numeric-cast fallback `nova_int_to_str((nova_int)(v))`, which
-    // reinterprets the u64 bit pattern as SIGNED `nova_int`. `u64.MAX`
-    // (all-ones bit pattern) therefore prints "-1", NOT
-    // "18446744073709551615". Pinned AS-IS (byte-parity contract — Ф.4R
-    // does not fix this; a correctness fix, if ever undertaken, is a
-    // separate follow-up outside this plan's scope).
+    // [M-u64-uint-to-str-prints-signed] FIXED (ICE-пачка п.9, 2026-08-01):
+    // was pinned here as a KNOWN QUIRK — bare `${u64_value}` interpolation
+    // had no dedicated u64/uint entry in emit_c.rs's numeric-to-str
+    // dispatch (println's `infer_print_helper` and the interpolation
+    // user-type fallback both only recognized "nova_int"'s C type) — it
+    // fell through to the generic numeric-cast fallback
+    // `nova_int_to_str((nova_int)(v))`, which reinterpreted the u64 bit
+    // pattern as SIGNED `nova_int` (`u64.MAX` printed "-1"). Fixed with a
+    // dedicated `nova_uint_to_str`/`nova_print_uint` runtime pair (`%llu`)
+    // wired into both dispatch surfaces for the "uint64_t"/"nova_uint" C
+    // types. Byte-parity contract updated to the CORRECT unsigned value —
+    // see spec_tests/conformance/m_ice_u64_uint_to_str_unsigned_pos.nv for
+    // the full regression coverage of this class.
     ro u64max = u64.MAX
-    assert("${u64max}" == "-1")
+    assert("${u64max}" == "18446744073709551615")
     ro i64min = i64.MIN
     assert("${i64min}" == "-9223372036854775808")
 }

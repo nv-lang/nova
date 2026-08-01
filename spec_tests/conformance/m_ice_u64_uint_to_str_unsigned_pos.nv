@@ -1,0 +1,40 @@
+// ICE-пачка п.9: [M-u64-uint-to-str-prints-signed].
+//
+// `to_str()`/`println`/`${x}` interpolation for `u64`/`uint` with the high
+// bit set used to print SIGNED (`-6` instead of `18446744073709551610`) —
+// three independent codegen dispatch surfaces (println's helper-name
+// selection, the interpolation fast path, and the interpolation
+// user-type-fallback numeric cast) all defaulted an unrecognized-arg-type
+// integer to the SIGNED `nova_int_to_str`/`nova_print_int` (`%lld`), never
+// distinguishing `uint`/`u64`'s full-width `uintptr_t` representation (a
+// high-bit-set value there is negative when bit-reinterpreted as signed,
+// but has no signed 64-bit equivalent at all — it's simply a large
+// unsigned number). Fixed with a new runtime pair
+// (`nova_uint_to_str`/`nova_print_uint`, `%llu`) wired into both dispatch
+// surfaces for the `uint64_t`/`nova_uint` C types specifically (narrower
+// unsigned widths u8/u16/u32 are unaffected — their max value fits well
+// inside signed int64 range, no collision possible).
+module spec_tests.conformance
+
+test "ICE-пачка п.9: (-6 as u64).to_str() prints the unsigned decimal value" {
+    ro x = (-6 as u64)
+    assert(x.to_str() == "18446744073709551610", "u64 to_str is unsigned")
+}
+
+test "ICE-пачка п.9: (-1 as uint).to_str() prints u64::MAX" {
+    ro y = (-1 as uint)
+    assert(y.to_str() == "18446744073709551615", "uint to_str is unsigned (MAX)")
+}
+
+test "ICE-пачка п.9: string interpolation ${x} of high-bit u64/uint is unsigned" {
+    ro x = (-6 as u64)
+    ro y = (-1 as uint)
+    assert("${x}" == "18446744073709551610", "interpolation is unsigned for u64")
+    assert("${y}" == "18446744073709551615", "interpolation is unsigned for uint")
+}
+
+test "ICE-пачка п.9: positive u64/uint values are unaffected" {
+    ro p = (42 as u64)
+    assert(p.to_str() == "42", "positive u64 unaffected")
+    assert("${p}" == "42", "positive u64 interpolation unaffected")
+}
