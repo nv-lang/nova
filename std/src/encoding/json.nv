@@ -1,13 +1,13 @@
-//! Plan 45 Ф.35.3 — JSON parser/serializer по RFC 8259.
+//! Plan 45 Ф.35.3 — JSON parser/serializer per RFC 8259.
 //!
-//! Independent implementation — не порт. Покрывает все JSON-типы (null,
-//! bool, number, string, array, object), escape-sequences (включая
-//! surrogate pairs для emoji), любые number-форматы (integer/fraction/
-//! exponent). Не поддерживает (намеренно): comments, trailing commas,
-//! single quotes, NaN/Infinity, unquoted keys — это JSON5/JSONC, отдельные
-//! форматы.
+//! Independent implementation — not a port. Covers all JSON types (null,
+//! bool, number, string, array, object), escape sequences (including
+//! surrogate pairs for emoji), any number format (integer/fraction/
+//! exponent). Deliberately unsupported: comments, trailing commas,
+//! single quotes, NaN/Infinity, unquoted keys — those are JSON5/JSONC,
+//! separate formats.
 //!
-//! Round-trip property: `Json.parse(v.to_str())!! == v` для любого `v`.
+//! Round-trip property: `Json.parse(v.to_str())!! == v` for any `v`.
 //!
 //! # Examples
 //!
@@ -46,42 +46,42 @@ import std.collections.hashmap.{HashMap}
 // порядок полей хранится ОТДЕЛЬНО от хеш-таблицы, поэтому детерминирован
 // внутри и МЕЖДУ процессами. `JsonValue.Object` несёт `JsonObject` (не голый
 // HashMap) — см. ниже.
-/// Упорядоченная JSON-object map: вектор ключей в порядке вставки +
-/// `HashMap[str, JsonValue]` для O(1) поиска значений. Итерация (`@iter()`,
-/// `for (k, v) in obj`) всегда идёт в порядке вставки — НЕ в hash-порядке.
-/// Повторная вставка существующего ключа обновляет значение и НЕ двигает
-/// позицию ключа (как `HashMap.insert`).
+/// Ordered JSON-object map: a vector of keys in insertion order plus a
+/// `HashMap[str, JsonValue]` for O(1) value lookup. Iteration (`@iter()`,
+/// `for (k, v) in obj`) always follows insertion order — NOT hash order.
+/// Re-inserting an existing key updates the value and does NOT move the
+/// key's position (like `HashMap.insert`).
 #stable(since = "0.1")
 export type JsonObject priv {
     key_order []str
     map HashMap[str, JsonValue]
 }
 
-/// Создать пустой `JsonObject`.
+/// Create an empty `JsonObject`.
 #stable(since = "0.1")
 export fn JsonObject.new() -> Self =>
     { key_order: [], map: HashMap[str, JsonValue].new() }
 
-/// Число пар в объекте.
+/// Number of key/value pairs in the object.
 #stable(since = "0.1")
 export fn JsonObject @len() -> int => @map.len()
 
-/// `true` если объект пуст.
+/// `true` if the object is empty.
 #stable(since = "0.1")
 export fn JsonObject @is_empty() -> bool => @map.is_empty()
 
-/// Найти значение по ключу.
+/// Look up a value by key.
 #stable(since = "0.1")
 export fn JsonObject @get(key str) -> Option[JsonValue] => @map.get(key)
 
-/// Проверить наличие ключа.
+/// Check whether a key is present.
 #stable(since = "0.1")
 export fn JsonObject @contains(key str) -> bool => @map.contains(key)
 
-/// Вставить/обновить пару `(key, value)`. Возвращает `Some(old_value)` если
-/// ключ уже существовал (значение перезаписано, позиция в порядке вставки
-/// НЕ меняется — как `HashMap.insert`), иначе `None` (ключ добавлен в конец
-/// порядка вставки).
+/// Insert/update the `(key, value)` pair. Returns `Some(old_value)` if the
+/// key already existed (the value is overwritten and the insertion-order
+/// position is NOT changed — like `HashMap.insert`), otherwise `None` (the
+/// key is appended to the end of the insertion order).
 #stable(since = "0.1")
 export fn JsonObject mut @insert(key str, value JsonValue) -> Option[JsonValue] {
     ro old = @map.insert(key, value)
@@ -91,14 +91,14 @@ export fn JsonObject mut @insert(key str, value JsonValue) -> Option[JsonValue] 
     old
 }
 
-/// Ключи в порядке вставки.
+/// Keys in insertion order.
 #stable(since = "0.1")
 export fn JsonObject @keys() -> []str => @key_order
 
-/// Order-independent структурное равенство (D109/D237 `Equal`-impl) —
-/// зеркало `HashMap[K, V] @equal`. Семантическое равенство JSON-объектов не
-/// зависит от порядка полей (только порядок СЕРИАЛИЗАЦИИ детерминирован —
-/// это отдельное свойство).
+/// Order-independent structural equality (D109/D237 `Equal`-impl) —
+/// mirrors `HashMap[K, V] @equal`. Semantic equality of JSON objects does
+/// not depend on field order (only SERIALIZATION order is deterministic —
+/// a separate property).
 #stable(since = "0.1")
 export fn JsonObject @equal(other JsonObject) -> bool {
     if @len() != other.len() {
@@ -121,7 +121,7 @@ export fn JsonObject @equal(other JsonObject) -> bool {
 // идёт по `@key_order`, не по bucket-массиву — отсюда порядок вставки.
 type JsonObjectIter { obj JsonObject, pos int }
 
-/// Итератор по парам `(key, value)` В ПОРЯДКЕ ВСТАВКИ (не hash-порядок).
+/// Iterator over `(key, value)` pairs IN INSERTION ORDER (not hash order).
 #stable(since = "0.1")
 export fn JsonObject @iter() -> JsonObjectIter => { obj: @, pos: 0 }
 
@@ -135,11 +135,11 @@ export fn JsonObjectIter mut @next() -> Option[(str, JsonValue)] {
     }
 }
 
-/// JsonValue — рекурсивный sum-type для произвольного JSON-документа.
+/// JsonValue — a recursive sum type for an arbitrary JSON document.
 ///
-/// Поддерживает D55 record-coercion: literal `{ "k": v }` в позиции
-/// `JsonValue` подгоняется в `Object`. Поддерживает structural equality
-/// (тесты round-trip полагаются на `==`).
+/// Supports D55 record-coercion: a `{ "k": v }` literal in a `JsonValue`
+/// position is coerced into `Object`. Supports structural equality
+/// (round-trip tests rely on `==`).
 #stable(since = "0.1")
 export type JsonValue enum
     | Null
@@ -149,10 +149,10 @@ export type JsonValue enum
     | Array([]JsonValue)
     | Object(JsonObject)
 
-/// `ParseJsonError` — категории ошибок JSON-парсера с позицией для диагностики.
+/// `ParseJsonError` — categories of JSON-parser errors with position for diagnostics.
 ///
-/// Конвенция D30 (`Parse<TypeName>Error`). Все варианты содержат `line` и
-/// `col` (1-based) — для IDE squiggles или CLI error messages.
+/// D30 convention (`Parse<TypeName>Error`). Every variant carries `line` and
+/// `col` (1-based) — for IDE squiggles or CLI error messages.
 #stable(since = "0.1")
 export type ParseJsonError enum
     | UnexpectedChar { line int, col int, found char }
@@ -163,16 +163,16 @@ export type ParseJsonError enum
     | DuplicateKey { line int, col int, key str }
     | TrailingContent { line int, col int }
 
-/// Construct JSON null. Shortcut для `JsonValue.Null`.
+/// Construct JSON null. Shortcut for `JsonValue.Null`.
 #stable(since = "0.1")
 export fn JsonValue.null() -> Self => Null
 
-/// Construct JSON boolean. Shortcut для `JsonValue.Bool(b)`.
+/// Construct JSON boolean. Shortcut for `JsonValue.Bool(b)`.
 #stable(since = "0.1")
 export fn JsonValue.bool(b bool) -> Self => Bool(b)
 
-/// Construct JSON number (any f64). Использует full f64 range — для
-/// целых > 2^53 точность теряется.
+/// Construct JSON number (any f64). Uses the full f64 range — for
+/// integers > 2^53 precision is lost.
 #stable(since = "0.1")
 export fn JsonValue.num(n f64) -> Self => Num(n)
 
@@ -180,17 +180,17 @@ export fn JsonValue.num(n f64) -> Self => Num(n)
 #stable(since = "0.1")
 export fn JsonValue.str(s str) -> Self => Str(s)
 
-/// Construct JSON array из `[]JsonValue`.
+/// Construct JSON array from `[]JsonValue`.
 #stable(since = "0.1")
 export fn JsonValue.array(items []JsonValue) -> Self => Array(items)
 
-/// Construct JSON object из `HashMap[str, JsonValue]`.
+/// Construct a JSON object from `HashMap[str, JsonValue]`.
 ///
-/// `HashMap` не хранит порядок вставки, поэтому ключи берутся
-/// ОТСОРТИРОВАННЫМИ (детерминированно, в отличие от случайного
-/// hash-порядка). Для порядка ОБЪЯВЛЕНИЯ полей записи используйте
-/// `JsonObject` напрямую (`JsonValue.Object(obj)`) — так делает
-/// record-сериализатор (`encoding.serde.json`).
+/// `HashMap` does not preserve insertion order, so keys are taken
+/// SORTED (deterministically, unlike the random hash order). For the
+/// DECLARATION order of a record's fields use `JsonObject` directly
+/// (`JsonValue.Object(obj)`) — as the record serializer does
+/// (`encoding.serde.json`).
 #stable(since = "0.1")
 export fn JsonValue.object(fields HashMap[str, JsonValue]) -> Self {
     mut keys []str = []
@@ -207,31 +207,31 @@ export fn JsonValue.object(fields HashMap[str, JsonValue]) -> Self {
 // Геттеры / предикаты
 // ──────────────────────────────────────────────────────────────────────────
 
-/// True если value — JSON null.
+/// True if the value is a JSON null.
 #stable(since = "0.1")
 export fn JsonValue @is_null()   -> bool => match @ { Null => true, _ => false }
 
-/// True если value — JSON boolean.
+/// True if the value is a JSON boolean.
 #stable(since = "0.1")
 export fn JsonValue @is_bool()   -> bool => match @ { Bool(_) => true, _ => false }
 
-/// True если value — JSON number.
+/// True if the value is a JSON number.
 #stable(since = "0.1")
 export fn JsonValue @is_num()    -> bool => match @ { Num(_) => true, _ => false }
 
-/// True если value — JSON string.
+/// True if the value is a JSON string.
 #stable(since = "0.1")
 export fn JsonValue @is_str()    -> bool => match @ { Str(_) => true, _ => false }
 
-/// True если value — JSON array.
+/// True if the value is a JSON array.
 #stable(since = "0.1")
 export fn JsonValue @is_array()  -> bool => match @ { Array(_) => true, _ => false }
 
-/// True если value — JSON object.
+/// True if the value is a JSON object.
 #stable(since = "0.1")
 export fn JsonValue @is_object() -> bool => match @ { Object(_) => true, _ => false }
 
-/// Extract bool. `None` если тип не Bool — no panic, no throw.
+/// Extract a bool. `None` if the type is not Bool — no panic, no throw.
 ///
 /// # Examples
 /// ```nova
@@ -242,22 +242,22 @@ export fn JsonValue @is_object() -> bool => match @ { Object(_) => true, _ => fa
 export fn JsonValue @bool() -> Option[bool] =>
     match @ { Bool(b) => Some(b), _ => None }
 
-/// Extract `f64`. `None` если тип не Num.
+/// Extract `f64`. `None` if the type is not Num.
 #stable(since = "0.1")
 export fn JsonValue @num() -> Option[f64] =>
     match @ { Num(n) => Some(n), _ => None }
 
-/// Extract `str`. `None` если тип не Str.
+/// Extract `str`. `None` if the type is not Str.
 #stable(since = "0.1")
 export fn JsonValue @str() -> Option[str] =>
     match @ { Str(s) => Some(s), _ => None }
 
-/// Extract array slice. `None` если тип не Array.
+/// Extract an array slice. `None` if the type is not Array.
 #stable(since = "0.1")
 export fn JsonValue @array() -> Option[[]JsonValue] =>
     match @ { Array(xs) => Some(xs), _ => None }
 
-/// Extract object map. `None` если тип не Object.
+/// Extract an object map. `None` if the type is not Object.
 #stable(since = "0.1")
 export fn JsonValue @object() -> Option[JsonObject] =>
     match @ { Object(m) => Some(m), _ => None }
@@ -834,11 +834,11 @@ fn Parser mut @parse_member(mut fields JsonObject) -> Result[(), ParseJsonError]
 // Public API: парсинг
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Parse JSON-документ из строки. Главная точка входа.
+/// Parse a JSON document from a string. Main entry point.
 ///
-/// Возвращает `Result[JsonValue, ParseJsonError]` (D325 — Result-everywhere).
-/// На call-site: `Json.parse(s)?` (проброс) / `Json.parse(s)!!` (throw) /
-/// `match` (ветвление по ошибке).
+/// Returns `Result[JsonValue, ParseJsonError]` (D325 — Result-everywhere).
+/// At the call site: `Json.parse(s)?` (propagation) / `Json.parse(s)!!` (throw) /
+/// `match` (branching on the error).
 ///
 /// # Examples
 /// ```nova
@@ -857,8 +857,8 @@ export fn Json.parse(s str) -> Result[JsonValue, ParseJsonError] { // [M-lint-fi
     }
 }
 
-/// `try_from` — алиас [`Json.parse`] по конвенции имён конструктора-конверсии
-/// (D325 — fallible → Result). Поведение идентично `Json.parse`.
+/// `try_from` — an alias of [`Json.parse`] per the conversion-constructor
+/// naming convention (D325 — fallible → Result). Behavior is identical to `Json.parse`.
 #stable(since = "0.1")
 export fn JsonValue.try_from(s str) -> Result[JsonValue, ParseJsonError] => // [M-lint-findings-static-conversion]
     Json.parse(s)
@@ -867,10 +867,10 @@ export fn JsonValue.try_from(s str) -> Result[JsonValue, ParseJsonError] => // [
 // Сериализация: @to_str() -> str
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `to_str()` — сериализация в compact JSON (single line, без отступов, D410).
+/// `to_str()` — serialize into compact JSON (single line, no indentation, D410).
 ///
-/// Интерполяция (`"${v}"`) и `v.to_str()` используют этот же метод через
-/// компиляторный Display-fallback. Для multi-line форматирования используй
+/// Interpolation (`"${v}"`) and `v.to_str()` use this same method via the
+/// compiler Display-fallback. For multi-line formatting use
 /// [`pretty`].
 ///
 /// # Examples
