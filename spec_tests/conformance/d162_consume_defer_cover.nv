@@ -54,7 +54,7 @@ test "failable + defer-cover — обязательство покрыто на 
 fn d162_failable_match_throw(n int) Fail -> int {
     consume d162_tx = d162_begin(n)
     d162_tx.commit()
-    match int.try_from("42") {
+    match "42".to_int() {
         Ok(v)  => v
         Err(_) => throw "bad quantifier"
     }
