@@ -1,0 +1,58 @@
+// ICE-пачка п.3: [M-value-record-param-default-after-indirection].
+//
+// A value-record parameter (by-pointer C ABI, Plan 172.14) followed by a
+// keyword-only default parameter, called through a WRAPPER whose OWN
+// parameter happens to share the callee's parameter name — used to fail
+// C-codegen with `error: indirection requires pointer operand
+// ('NovaValue_<Type>' invalid)`, independent of whether the caller passes
+// the optional arg explicitly or omits it (so this was never about
+// default-injection itself; it was about a `= default` being DECLARED on
+// the callee's parameter list at all).
+//
+// Root cause (types/mod.rs untouched — pure codegen channel):
+// `callnorm.rs`'s Plan 46 D102 default/named-arg desugar Block synthesizes
+// `let <param_name> = <temp>` bindings NAMED after the CALLEE's own
+// parameters. When the callee's by-pointer value-record parameter name
+// (`f`) collides with the WRAPPER's own by-pointer parameter of the same
+// name, the synthesized `let f = ...` declares a fresh PLAIN-VALUE local —
+// but `self.ref_params` (emit_c.rs, populated once per enclosing fn from
+// its own by-pointer params, never un-set at block scope) still has the
+// OUTER `f` registered, so the call-argument emission for the SHADOWED `f`
+// (a few lines later, in the very same synthesized block) wrongly emits a
+// `(*f)` deref against what is now plain (non-pointer) storage.
+//
+// Fix: emit_c.rs's common Stmt::Let binding path removes the newly-declared
+// name from `ref_params` (a fresh local is never itself a by-pointer
+// parameter, whatever name it reuses); `emit_block_expr` snapshots/restores
+// `ref_params` around a block's `{ }` scope (mirrors the pre-existing
+// `var_types` snapshot/restore there, same shadowing-hygiene class as
+// `[M-callnorm-free-fn-name-collision]`), so code AFTER a callnorm block
+// still sees the outer ref-param correctly once the block ends.
+module spec_tests.conformance
+
+type MIceVrdFoo value { m_ice_vrd_a int, m_ice_vrd_b int, m_ice_vrd_c int }
+fn MIceVrdFoo.new() -> MIceVrdFoo => { m_ice_vrd_a: 1, m_ice_vrd_b: 2, m_ice_vrd_c: 3 }
+
+fn m_ice_vrd_callee(f MIceVrdFoo, stop Option[int] = None) -> int {
+    match stop { Some(v) => f.m_ice_vrd_a + v, None => f.m_ice_vrd_a }
+}
+
+// Same param name `f` as the callee — the exact collision that triggered
+// the shadow bug (a DIFFERENT name would never have exercised the gap).
+fn m_ice_vrd_caller_omit(f MIceVrdFoo) -> int { m_ice_vrd_callee(f) }
+fn m_ice_vrd_caller_explicit(f MIceVrdFoo) -> int { m_ice_vrd_callee(f, stop: Some(10)) }
+// No-collision control: a DIFFERENT wrapper-param name — must keep working
+// (guards the fix doesn't only handle the colliding case by accident).
+fn m_ice_vrd_caller_no_collision(g MIceVrdFoo) -> int { m_ice_vrd_callee(g) }
+
+test "ICE-пачка п.3: value-record param + trailing default, omitted, colliding wrapper-param name" {
+    assert(m_ice_vrd_caller_omit(MIceVrdFoo.new()) == 1, "omitted default, name collision")
+}
+
+test "ICE-пачка п.3: value-record param + trailing default, explicit named arg, colliding name" {
+    assert(m_ice_vrd_caller_explicit(MIceVrdFoo.new()) == 11, "explicit stop:, name collision")
+}
+
+test "ICE-пачка п.3: value-record param + trailing default, no wrapper-param collision (control)" {
+    assert(m_ice_vrd_caller_no_collision(MIceVrdFoo.new()) == 1, "no collision, still correct")
+}

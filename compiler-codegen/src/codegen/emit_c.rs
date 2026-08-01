@@ -31029,6 +31029,34 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // For pointer types: the emitted tmp expression already carries the type.
                 // Just declare the binding with the right type.
                 self.var_types.insert(binding.clone(), ty_c.clone());
+                // [M-value-record-param-default-after-indirection] (ICE-пачка
+                // п.3): `ref_params` (Plan 184) is populated ONCE per enclosing
+                // fn from its OWN by-pointer params (value-record/big-struct,
+                // Plan 172.14) and is only saved/restored at FN boundaries —
+                // never at block scope. `callnorm.rs`'s default/named-arg
+                // desugar (Plan 46 D102) synthesizes a fresh `let <param_name> =
+                // <temp>` binding NAMED AFTER THE CALLEE'S OWN PARAMETER — when
+                // that name happens to COLLIDE with an enclosing by-pointer
+                // param of the SAME NAME (`fn callee(f Foo, stop Option[int] =
+                // None)` called as `callee(f)` inside `fn caller(f Foo) { ... }`
+                // — both params are literally `f`), this THIS declaration is a
+                // plain-value local (`ty_c`/`val` here never carry pointer-ness
+                // — `ref_params` reads are hidden behind an explicit `(*name)`
+                // deref at emission, never surfaced into `ty_c`), but the STALE
+                // `ref_params["f"]` entry from the OUTER fn scope survives
+                // untouched, so the call-argument emission for THIS shadowed
+                // `f` (a few lines later, in the SAME synthesized block) still
+                // treats it as needing a `(*f)` deref — "indirection requires
+                // pointer operand ('NovaValue_Foo' invalid)": the shadow's
+                // ACTUAL C storage is a plain value, not a pointer. A fresh
+                // `let`-declared local is NEVER itself a by-pointer parameter,
+                // regardless of what name it reuses — remove the shadowed name
+                // from `ref_params` here (`emit_block_expr` already snapshots/
+                // restores `var_types` around a `{ }` scope for the identical
+                // shadowing hazard; mirror that restore for `ref_params` there
+                // too, so code AFTER a callnorm block that did NOT hit this
+                // exact collision keeps seeing the outer ref-param correctly).
+                self.ref_params.remove(&binding);
                 // Plan 72 P0 (E7201): track protocol-typed bindings so method calls
                 // on erased protocol vars emit E7201 instead of silent NULL.
                 // Also propagates through plain assignment: `let xx = x` where x is protocol-typed.
@@ -46878,6 +46906,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // gate). Standalone repro:
         // spec_tests/conformance/standalone/freefn_named_default_arg_shift.nv.
         let saved_var_types = self.var_types.clone();
+        // [M-value-record-param-default-after-indirection] (ICE-пачка п.3):
+        // `ref_params` shares the exact same block-scoped-shadow hazard as
+        // `var_types` above (see the `[M-callnorm-free-fn-name-collision]`
+        // doc a few lines up) — a `Stmt::Let` inside this block whose name
+        // collides with an outer by-pointer param removes it from
+        // `ref_params` for the DURATION of this block (see that removal's
+        // own doc comment, `Stmt::Let`'s common binding path) so the shadow's
+        // plain-value storage isn't mistaken for the outer pointer; restore
+        // it here so code AFTER this block (when this block is not the
+        // enclosing fn's entire body) still sees the outer ref-param.
+        let saved_ref_params = self.ref_params.clone();
         self.line("{");
         self.indent += 1;
         if block.is_unsafe { self.unsafe_depth += 1; }
@@ -46915,6 +46954,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.indent -= 1;
         self.line("}");
         self.var_types = saved_var_types;
+        self.ref_params = saved_ref_params;
         Ok(tmp)
     }
 
