@@ -149,3 +149,20 @@ what the token does, not a translation of the token.
 | стек-аллокация | stack allocation | "positional tuple — **stack** — value (copy on pass)" | docs/guide/value-vs-reference.md bracket-rule table |
 
 ---
+
+## 7. Concurrency — Vela runtime · Конкурентность — рантайм Vela
+
+| Русский | English | Example (en) | Note |
+|---|---|---|---|
+| файбер (fiber) | fiber | "Under the hood — **fiber-based scheduler** (like Go/OCaml 5)." | spec/effects.md "Async — невидимая инфраструктура"; ~4-8 KB stack, millions per machine |
+| structured concurrency | structured concurrency | "concurrency is structured, not a separate async dialect" | language-tour.md §8 |
+| supervision (супервизия) | supervision | "Supervision of failures is an ordinary effect `Supervisor`" (paraphrase, spec/overview.md D416) | Erlang/OTP-style child-failure policy: `escalate()` / `stop()` |
+| дедлайн скоупа | (scope) deadline | "`supervised(deadline:)` gives that block a shared deadline, and a spawn that misses it is genuinely cancelled" | language-tour.md §8 |
+| отмена (cancellation) | cancellation | "Cancellation — structured" (docs/guide comparison, spec/revolutionary.md R7 table row) | vs. manual cancellation in classic async runtimes |
+| capability-split (канал) | capability-split | "The model is **capability-split** (Rust mpsc-style): `Channel.new(cap)` returns a **pair**" | docs/guide/channels.md; separates send-only/receive-only capabilities |
+| select | `select` | "`select { ... }` is multiplexed channel operations: it waits on several recv/send operations at once" | docs/guide/channels.md |
+| gorутина-эквивалент (fan-out) | fan-out | "`parallel for` fans out homogeneous work and collects results into a `[]T` in order." | language-tour.md §8 |
+| data race freedom (свобода от гонок) | data race freedom | heading of spec/decisions/06-concurrency.md D415: "Data race freedom — `#share`-атрибут, capture-check, consume в spawn" | compiler-enforced boundary rules for `mut` captures crossing fiber boundaries |
+| планировщик work-stealing | work-stealing scheduler | listed in spec/decisions/README.md §06 topic summary: "…work-stealing scheduler, preemption" | M:N scheduler backing `spawn`/`supervised`/`detach` |
+
+---
