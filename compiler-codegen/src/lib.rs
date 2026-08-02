@@ -23,6 +23,7 @@ pub mod git_cache;
 pub mod imports;
 pub mod interp;
 pub mod lexer;
+pub mod link_prep;
 pub mod lints;
 pub mod lockfile;
 pub mod manifest;

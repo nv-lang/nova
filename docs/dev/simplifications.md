@@ -9180,3 +9180,43 @@ re-attempt sub-plan ПОСЛЕ Plan 139 Ф.2 (координация risk RG; в
   (ВСЕ 27 — pre-existing `neg/*.nv`-фикстуры, correctly-failing by design, ноль
   связи с `#coerce`) / 1040 WARN — байт-идентично baseline'у. Мега-CU conformance
   НЕ гонялась (CPU-дисциплина, интегратор).
+
+## Окно p-linkprep, Фаза 1 (2026-08-02, sonnet, worktree `nova-plinkprep`, ветка `p-linkprep`) — `[M-tls-vendor-autobuild-not-on-build-path]` (#268) ЗАКРЫТ
+
+- **Диагноз до кода:** пред-фикс №152 (`c137d2d9b`) уже добавил вызов `build_missing_vendor_ffi_libs`
+  в `nova-cli::cmd_build` как часть более раннего маркера `[M-nova-build-vendor-ffi-no-autobuild]`
+  (2026-07-15) — эмпирическая проверка (throwaway-пакет `tls` git-деп, чистый чекаут, `native/lib`
+  пуст) подтвердила: авто-сборка vendor mbedTLS на `nova build` уже РАБОТАЕТ на момент старта этого
+  окна. Реальный оставшийся разрыв — диагностика: `cmd_build` не звал `first_missing_ffi_lib` после
+  auto-build-попытки, поэтому genuine-failure (сборка не удалась / нет `vendor_src_dirs`) падал в
+  сырую ошибку линкера (`lld-link: could not open 'mbedtls.lib'`) без указания пакета/причины.
+- **Реализация:** новый модуль `compiler-codegen/src/link_prep.rs` — общий "link-preparation"
+  модуль, вынесены `ffi_lib_candidate_names`/`first_missing_ffi_lib`/`VENDOR_FFI_BUILD_LOCK`/
+  `build_missing_vendor_ffi_libs`/`build_vendor_ffi_lib` из `test_runner.rs` (были уже `pub`,
+  звались из обоих путей через `test_runner::` — теперь у механизма отдельный модуль, названный по
+  назначению; `test_runner.rs` ре-экспортирует `build_missing_vendor_ffi_libs` через `pub use` для
+  внутренних call sites). Новая функция `link_prep::diagnose_missing_vendor_ffi` — громкая
+  FATAL-диагностика на build-пути (называет пакет/либу/searched-пути/подсказку), вызывается из
+  `cmd_build` ПОСЛЕ auto-build-попытки, ДО реального линк-шага; `nova test`
+  (`test_runner.rs::run_one`) НЕ тронут по семантике — тот же `first_missing_ffi_lib` на merged
+  config → `SkipReason::FfiLibNotFound` (detect-and-degrade SKIP, как раньше).
+- **Верификация (throwaway-пакеты в scratchpad, вне репы):** `pkg268c` (git dep `tls` на ТОЧНОМ
+  коммите из `examples/nova.lock.toml`, `.bak`-репро с очисткой `native/lib`) — 1-й `nova build`
+  33.75s (auto-build), 2-й — 13.15s без сообщения о пересборке (cache-hit подтверждён); `native/lib`
+  восстановлен из `.bak` после теста. `pkg268b` (заведомо отсутствующая либа, без
+  `vendor_src_dirs`) — `nova build` завершается `exit 1` с громким `nova: FATAL missing native
+  [ffi] library ...` (пакет/либа/searched/подсказка) вместо сырой ошибки линкера.
+- **Гейты:** `cargo build --release` чисто. `nova-polaris` (master, свежий бинарь, env главной
+  репы) `./nova.sh test src --strict-effects` = **PASS: 37 FAIL: 0 SKIP: 19** — байт-в-байт канон
+  (включая brotli-провайдер, та самая #152-цепочка). `nova check std/src` = **PASS: 147 FAIL: 26
+  WARN: 60** — байт-в-байт канон. Чистый локальный клон (`git clone --recursive` из worktree,
+  БЕЗ env/vcpkg) + `cargo build --release` чисто + `hello.nv` build: libuv автособрался, дошло до
+  `FATAL Boehm GC` (единственный оставшийся блокер — `[M-gc-lib-not-bundled-clean-install]` #269,
+  вне объёма Фазы 1). Мега-CU conformance НЕ гонялась (у интегратора).
+- **Диагноз открытого вопроса про Docker (2026-07-20):** не установлен окончательно — гипотеза
+  (не подтверждена фактом): Docker-сборка либо предшествовала появлению #268-репро (специфично для
+  git-чекаута с изначально пустым `native/lib`), либо унаследовала уже собранный кэш из
+  промежуточного слоя образа.
+- **Открыт:** `[M-gc-lib-not-bundled-clean-install]` (#269, backlog-followups.md) — Фаза 2
+  (bdwgc-сабмодуль) этого же брифа, не начата в этом окне (осознанный честный стоп, санкционирован
+  брифом).
