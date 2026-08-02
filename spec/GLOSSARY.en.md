@@ -51,7 +51,13 @@
 > Open disagreements and gaps — including contested Russian forms the
 > owner should pick between (e.g. «файбер» vs «волокно») — are collected
 > in [Open questions for owner review](#open-questions-for-owner-review)
-> at the end of this file.
+> at the end of this file. A row marked **`[CONTESTED — см. Open
+> questions]`** instead of `[keep-en: …]` is a case where the current
+> Russian form is a transliteration that *does* need real-word
+> replacement per the norm, but the replacement itself is a substantive
+> naming decision (already in wide use across the codebase/docs) that
+> this glossary should not make unilaterally — it is listed with a
+> candidate replacement in Open questions instead.
 
 ---
 
