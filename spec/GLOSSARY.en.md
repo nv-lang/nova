@@ -24,23 +24,45 @@
 > and are listed separately with a Russian explanation of what the token
 > means, not a translation of the token itself.
 >
-> Open disagreements and gaps are collected in
-> [Open questions for owner review](#open-questions-for-owner-review) at
-> the end of this file.
+> **Minimal-English-words norm (owner, 2026-08-03; doc-conventions
+> `#language`).** Russian prose keeps anglicisms to a minimum: not
+> «роутер/хендлер/консюмить/капчурить», but «маршрутизатор/обработчик/
+> потреблять/захватывать». Every term row below carries a **Russian
+> prose form** fit for ru-translations of the guide under this norm —
+> not a transliterated calque. Where the Russian column below still
+> shows an untranslated or transliterated English word, it is tagged
+> **`[keep-en: reason]`** — one word for *why* it stays English: `код`
+> (it names an actual Nova keyword/identifier embedded in the phrase),
+> `аббревиатура` (an acronym with no Russian expansion in use — SMT, FFI,
+> SMT-solver-as-name), or `идиома` (a fixed English phrase the spec
+> itself borrows verbatim, e.g. "killer use-case"). Fully naturalized
+> Russian loanwords that read as ordinary Russian vocabulary today
+> («эффект», «протокол», «паника», «дисциплина», «кортеж») are **not**
+> tagged — they are the Russian form already, same as «эффект» in
+> «побочный эффект». A row with no `[keep-en]` tag means the Russian
+> column is already the norm-compliant prose form to use in
+> translations. Section 2
+> (code keywords) is `[keep-en: код]` for every row by definition — see
+> its own note instead of repeating the tag 14 times.
+>
+> Open disagreements and gaps — including contested Russian forms the
+> owner should pick between (e.g. «файбер» vs «волокно») — are collected
+> in [Open questions for owner review](#open-questions-for-owner-review)
+> at the end of this file.
 
 ---
 
 ## 1. Philosophy and effects paradigm · Философия и парадигма эффектов
 
-| Русский | English | Example (en) | Note |
+| Русский (норма #language) | English | Example (en) | Note |
 |---|---|---|---|
-| алгебраические эффекты | algebraic effects | "Algebraic effects + handlers (Koka, Effekt, Eff)" | central language idea; see spec/overview.md "Что заимствует у кого" |
-| эффект | effect | "Network, disk, the clock … in Nova these are all **effects**." | language-tour.md §6 |
-| хендлер / обработчик эффекта | handler | "Each effect has a **handler** that intercepts its operations" | language-tour.md §6; also the literal value produced by `effect X { ... }` |
-| AI-first дизайн / killer use-case | AI-first design / killer use-case | "Nova — first language explicitly optimized for the pair 'LLM writes, human reviews'" | spec/overview.md "Killer use-case" heading — "killer use-case" itself is a borrowed English term used as-is in the Russian original |
-| одна дверь (единственный канонический путь) | single canonical path / "no second door" `[proposed]` | "not a second door to `?`, but an independent niche" (paraphrase of the retraction rationale) | idiom used repeatedly in spec/decisions (e.g. D86 amend: "она была второй дверью к `?`") to reject a duplicate way of doing something already covered; no settled English phrase exists yet in guide/spec — owner to confirm wording |
-| скрутини (объект сопоставления в match) | scrutinee `[proposed]` | "the scrutinee of a `match` expression is the value being matched against its arms" | standard PL term (Rust/Haskell usage); not yet attested anywhere in Nova's own docs — guide/spec just say "the value being matched" |
-| эффект-строка | effect row | "`Fail[E]`, `Fail` — стандартный эффект — **в effect-row сигнатуры**" | spec/overview.md; English term is already borrowed as-is into the Russian original, no translation needed |
+| алгебраические эффекты | algebraic effects | "Algebraic effects + handlers (Koka, Effekt, Eff)" | central language idea; see spec/overview.md "Что заимствует у кого"; «алгебраические» — обычное русское прилагательное, не калька |
+| эффект | effect | "Network, disk, the clock … in Nova these are all **effects**." | language-tour.md §6; «эффект» — давно натурализованное русское слово (как в «побочный эффект»), не тег-калька и не жаргон — тег `[keep-en]` не нужен |
+| обработчик (эффекта) | handler | "Each effect has a **handler** that intercepts its operations" | language-tour.md §6; норма-форма — «обработчик», НЕ «хендлер» (жаргонная транслитерация, в прозу не пускать) |
+| проектирование с приоритетом ИИ `[keep-en: идиома]` (killer use-case) | AI-first design / killer use-case | "Nova — first language explicitly optimized for the pair 'LLM writes, human reviews'" | spec/overview.md "Killer use-case" heading; «AI-first» переведено («с приоритетом ИИ»), но «killer use-case» — устойчивая англ. идиома, спека сама заимствует её без перевода — keep-en |
+| одна дверь (единственный канонический путь) | single canonical path / "no second door" `[proposed]` | "not a second door to `?`, but an independent niche" (paraphrase of the retraction rationale) | idiom used repeatedly in spec/decisions (e.g. D86 amend: "она была второй дверью к `?`"); чисто русская метафора — образец нормы, английского эквивалента как раз и не хватает (см. Open questions) |
+| сопоставляемое значение (объект `match`) | scrutinee `[proposed]` | "the scrutinee of a `match` expression is the value being matched against its arms" | descriptive Russian phrase, no PL-jargon calque; «скрутини» — неприжившаяся транслитерация английского PL-термина, в прозу не пускать (см. Open questions — принимать ли «scrutinee» на английской стороне) |
+| эффект-строка | effect row | "`Fail[E]`, `Fail` — стандартный эффект — **в effect-row сигнатуры**" | spec/overview.md; составное «эффект»+«строка» — оба слова русские, калька смысла (не транслитерация), уже кодифицирована в норме spec — оставляем как есть |
 
 ---
 
