@@ -162,15 +162,15 @@ pending the owner's call in Open questions.
 
 ## 7. Concurrency — Vela runtime · Конкурентность — рантайм Vela
 
-| Русский | English | Example (en) | Note |
+| Русский (норма #language) | English | Example (en) | Note |
 |---|---|---|---|
-| файбер (fiber) | fiber | "Under the hood — **fiber-based scheduler** (like Go/OCaml 5)." | spec/effects.md "Async — невидимая инфраструктура"; ~4-8 KB stack, millions per machine |
-| structured concurrency | structured concurrency | "concurrency is structured, not a separate async dialect" | language-tour.md §8 |
-| supervision (супервизия) | supervision | "Supervision of failures is an ordinary effect `Supervisor`" (paraphrase, spec/overview.md D416) | Erlang/OTP-style child-failure policy: `escalate()` / `stop()` |
-| дедлайн скоупа / отмена | (scope) deadline / cancellation | "`supervised(deadline:)` gives that block a shared deadline, and a spawn that misses it is genuinely cancelled" | language-tour.md §8; structured cancellation, unlike manual cancellation in classic async runtimes |
-| capability-split (канал) | capability-split | "The model is **capability-split** (Rust mpsc-style): `Channel.new(cap)` returns a **pair**" | docs/guide/channels.md; separates send-only/receive-only capabilities |
-| select | `select` | "`select { ... }` is multiplexed channel operations: it waits on several recv/send operations at once" | docs/guide/channels.md |
-| data race freedom (свобода от гонок) | data race freedom | heading of spec/decisions/06-concurrency.md D415: "Data race freedom — `#share`-атрибут, capture-check, consume в spawn" | compiler-enforced boundary rules for `mut` captures crossing fiber boundaries |
+| файбер `[CONTESTED — см. Open questions]` | fiber | "Under the hood — **fiber-based scheduler** (like Go/OCaml 5)." | spec/effects.md "Async — невидимая инфраструктура"; ~4-8 KB stack, millions per machine; «файбер» — транслитерация, уже широко используется в коде/доках Nova — заменять единолично рискованно, решение владельца требуется (кандидат: «волокно») |
+| структурированная конкурентность | structured concurrency | "concurrency is structured, not a separate async dialect" | language-tour.md §8; в spec/overview.md встречается сырое англ. «Structured concurrency» в русском тексте — норма-форма переводит оба слова («конкурентность» уже натурализована), `[proposed]` |
+| супервизия | supervision | "Supervision of failures is an ordinary effect `Supervisor`" (paraphrase, spec/overview.md D416) | Erlang/OTP-style child-failure policy: `escalate()` / `stop()`; «супервизия» — натурализованный термин (используется вне IT, напр. в психотерапии/менеджменте), не жаргон |
+| дедлайн области видимости / отмена | (scope) deadline / cancellation | "`supervised(deadline:)` gives that block a shared deadline, and a spawn that misses it is genuinely cancelled" | language-tour.md §8; «дедлайн» — полностью натурализованное слово повседневного русского; «скоуп» заменён на «область видимости» |
+| канал с разделёнными правами (send/recv) | capability-split | "The model is **capability-split** (Rust mpsc-style): `Channel.new(cap)` returns a **pair**" | docs/guide/channels.md; описательный перевод вместо хайбридного «capability-split»; `send`/`recv` — имена методов, keep-en по коду |
+| выбор (`select`) `[keep-en: код]` | `select` | "`select { ... }` is multiplexed channel operations: it waits on several recv/send operations at once" | docs/guide/channels.md; `select` — ключевое слово Nova |
+| свобода от гонок (данных) | data race freedom | heading of spec/decisions/06-concurrency.md D415: "Data race freedom — `#share`-атрибут, capture-check, consume в spawn" | compiler-enforced boundary rules for `mut` captures crossing fiber boundaries; «гонка (данных)» — стандартный русский CS-термин |
 
 ---
 
