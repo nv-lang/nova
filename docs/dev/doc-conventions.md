@@ -60,6 +60,17 @@
 = правка источника в nova; сгенерированный контент в www руками не правится.
 `docs/dev/` не цитировать и не линковать с публичных страниц.
 
-enforcement: частично машинное — синк тянет только перечисленные зоны,
-`npm run build`/check-links падают на битых источниках; языковая политика и
-ru-пары — глазами в приёмке (site-conventions #acceptance).
+enforcement (обновлено Plan 242, 2026-08-02):
+`scripts/guards/check-doc-conventions.sh` (подключён в `scripts/gate.sh` +
+CI-job `docs-guard` в `.github/workflows/nova-gate.yml`, кросс-репный по
+построению — план [242](../plans/242-doc-conventions-guard.md) §2b) машинно
+держит: шапку+frontmatter `source_rev`/`source_date` у `spec/*.en.md`;
+парность `docs/guide/PUBLISHED.list` (красный на отсутствие стороны пары);
+best-effort same-commit pairing (правка одной стороны без другой в том же
+диапазоне коммитов); ratchet «не растёт» для ссылок на `docs/dev/` из
+guide/spec, для планов без строки `**Статус:**` и для расхождения
+код-блоков между сторонами пары. Плюс синк сайта тянет только перечисленные
+зоны, `npm run build`/check-links падают на битых источниках. Всё ещё
+глазами в приёмке (site-conventions #acceptance): норма «минимум
+английских слов» в ru-тексте (машинный словарь калек — кандидат в страж
+позже, план 242 п.3 «W-правило»), содержательное качество перевода.
