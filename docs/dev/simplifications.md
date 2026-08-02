@@ -9220,3 +9220,60 @@ re-attempt sub-plan ПОСЛЕ Plan 139 Ф.2 (координация risk RG; в
 - **Открыт:** `[M-gc-lib-not-bundled-clean-install]` (#269, backlog-followups.md) — Фаза 2
   (bdwgc-сабмодуль) этого же брифа, не начата в этом окне (осознанный честный стоп, санкционирован
   брифом).
+
+## Окно S1a (2026-08-02, sonnet, worktree `nova-s1a`, ветка `s1a`) — М:N-безопасность захватов целиком: №117 + №242§3 + №168 (личный контроль владельца)
+
+- **Состав (сверен брифом):** №117 `[M-shareness-blind-to-fn-values-across-spawn]`,
+  №242§3 `[M-router-handler-mut-capture-escape-soundness]` §3, №168
+  `[M-handler-coercion-gate-precomputed]`.
+- **№168 (Ф.1): реализация НЕ понадобилась** — уже закрыт волной A-V10
+  (2026-07-31, коммит `73e5c0a47`); реестровая строка `221.1-bug-sweep.md:145`
+  отстала (в тот день ✅ получил только №167, коммит `46d905177`) — исправлено
+  этим окном (три файла: `221.1-bug-sweep.md`, `221-release-v0-1.md`,
+  `238-fiber-memory-model.md`). Верифицировано пересборкой + прогоном
+  существующих A-V10-фикстур.
+- **№117 + №242§3 (Ф.2): реализовано** — единый механизм, БЕЗ нового
+  синтаксиса/аннотации типа `fn` (решение владельца по Send-маркеру, D441 §2
+  YAGNI, не пересмотрено). Пятая точка пересечения границы файбера D441 §3(г)
+  «замыкание как ПОЛЕ структуры» — симметрична уже существующим (а)
+  transitive-параметр/(б) канал/(в) precomputed-handler. Два новых пре-пасса
+  в `compiler-codegen/src/types/mod.rs` (`CapabilityCtx`, чекер-канал,
+  emit_c НЕ тронут): `spawn_tainted_fields_of_module` (поле, чьё значение
+  вызывается внутри spawn/detach/parallel-for/blocking где-то в методах
+  типа — прямой `@field()`, `for`/`parallel for`-петля по прямому
+  `@field`-чтению, ИЛИ `let`-биндинг того же поля) и
+  `spawn_tainted_method_params_of_module` (один хоп дальше — какой параметр
+  метод сам пишет в уже-тэйнтованное поле, закрывает буквальную форму
+  `bg.add(|| { log.push(...) } )` из вопроса владельца 2026-07-25). Write-сайт
+  гейт (assign/push-мутатор/record-lit) — та же `flag_boundary_captures`,
+  что и остальные точки. №242§3: та же машина покрывает Router-регистрацию
+  (write-сайт-класс); ответ на «убегающее vs локальное» — escaping ⇔
+  запись в тэйнтованное поле, map/filter/fold структурно никогда не пишут
+  в storage (не эвристика, а структурная невозможность ложняка).
+- **Находка (codegen, не чекер, НЕ фикшена — channel-first):**
+  `[M-spawn-self-field-call-nova-self-undeclared]` — прямой `@field()`-вызов
+  bare fn-поля ВНУТРИ `spawn{}`-тела метода — pre-existing emit_c CC-FAIL
+  (`undeclared identifier 'nova_self'`); родственный `Vec[fn()->()]`-поле
+  через for-петлю — linker-ошибка `undefined symbol: nova_fn_t` (родня
+  `[M-vec-iter-fn-newtype-next-option-mismatch]`). Обходной путь (`ro
+  handler = @field` перед `spawn`) — codegen-safe И подхватывается
+  пре-пассом (не костыль). Зарегистрировано в `backlog-followups.md`.
+- **Спек-амендмент:** `spec/decisions/06-concurrency.md`, «Amend D441 §5 —
+  S1a» (+ правка §3/§5 текста, статус-строка D441).
+- **Фикстуры:** `spec_tests/conformance/neg/field_sink_mut_capture_bare_
+  field_neg.nv`, `neg/field_sink_mut_capture_background_tasks_neg.nv`
+  (BackgroundTasks дословно), `field_sink_mut_capture_pos.nv` (#share-захват/
+  map-filter/Mutex-SharedLog — все легальны).
+- **Гейты:** `cargo build`/`--release` чисто, без новых warning на новых
+  символах. `nova check std/src` — 147/26/60 (байт-в-байт канон, без
+  сдвига). `nova-polaris` `nova test src --strict-effects` — 37/0/18
+  (байт-в-байт канон). `examples/flagship/aggregator --strict-effects` —
+  упёрся в ПРЕДСУЩЕСТВУЮЩИЙ (не от этого окна) cross-repo дрейф версий
+  (`TlsStream.read_bytes` не резолвится при свежей пересборке, хотя метод
+  РЕАЛЬНО существует в `nova-tls/src/stream.nv:293` — похоже на lock-файл/
+  pin-рассинхрон; на чистом main маскируется build-кэшем) — вне периметра
+  S1a, не тронуто, задокументировано в отчёте.
+- **Реестры закрыты:** `221.1-bug-sweep.md` №117 ✅, №242 ✅ (§1/§2/§3 все
+  закрыты), №168 ✅ (исправлена реестровая недоделка A-V10). Строка
+  `[M-router-handler-mut-capture-escape-soundness]` убрана из
+  `backlog-followups.md` (все §1-§3 закрыты).
