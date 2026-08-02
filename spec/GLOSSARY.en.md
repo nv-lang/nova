@@ -64,7 +64,8 @@
 | алгебраические эффекты | algebraic effects | "Algebraic effects + handlers (Koka, Effekt, Eff)" | central language idea; see spec/overview.md "Что заимствует у кого"; «алгебраические» — обычное русское прилагательное, не калька |
 | эффект | effect | "Network, disk, the clock … in Nova these are all **effects**." | language-tour.md §6; «эффект» — давно натурализованное русское слово (как в «побочный эффект»), не тег-калька и не жаргон — тег `[keep-en]` не нужен |
 | обработчик (эффекта) | handler | "Each effect has a **handler** that intercepts its operations" | language-tour.md §6; норма-форма — «обработчик», НЕ «хендлер» (жаргонная транслитерация, в прозу не пускать) |
-| проектирование с приоритетом ИИ `[keep-en: идиома]` (killer use-case) | AI-first design / killer use-case | "Nova — first language explicitly optimized for the pair 'LLM writes, human reviews'" | spec/overview.md "Killer use-case" heading; «AI-first» переведено («с приоритетом ИИ»), но «killer use-case» — устойчивая англ. идиома, спека сама заимствует её без перевода — keep-en |
+| проектирование с приоритетом ИИ | AI-first design | "Nova — first language explicitly optimized for the pair 'LLM writes, human reviews'" | spec/overview.md "Killer use-case"; «AI-first» переведено полностью («с приоритетом ИИ»), калек не осталось |
+| убойный сценарий использования `[keep-en: идиома]` (killer use-case) | killer use-case | "**Killer use-case.** AI-first programming." | spec/overview.md heading; «killer use-case» — устойчивая англ. идиома, спека сама заимствует её без перевода в норматив — keep-en; описательный русский вариант приведён для первого упоминания в прозе |
 | одна дверь (единственный канонический путь) | "no second door" | "not a second door to `?`, but an independent niche" (paraphrase of the retraction rationale) | idiom used repeatedly in spec/decisions (e.g. D86 amend: "она была второй дверью к `?`"); **утверждено владельцем 2026-08-03** — en-форма "no second door" (дверная метафора сохранена); описательное "single canonical path" допустимо как пояснение при первом упоминании |
 | сопоставляемое значение (объект `match`) | scrutinee | "the scrutinee of a `match` expression is the value being matched against its arms" | **утверждено владельцем 2026-08-03**: ru — «сопоставляемое значение» (транслит «скрутини» в новую прозу не пускать; существующие D-блоки не переписываем), en — scrutinee (стандартный PL-термин) |
 | эффект-строка | effect row | "`Fail[E]`, `Fail` — стандартный эффект — **в effect-row сигнатуры**" | spec/overview.md; составное «эффект»+«строка» — оба слова русские, калька смысла (не транслитерация), уже кодифицирована в норме spec — оставляем как есть |
@@ -96,7 +97,10 @@ pending the owner's call in Open questions.
 | `with` | "`with Db = postgres_handler { ... }`" | установка обработчика эффекта на область видимости |
 | `effect` (keyword) | "`type X effect { ... }`" (declaration) / "`ro console = effect Logger { ... }`" (literal) | и kind-токен объявления эффект-типа, и ключевое слово литерала-обработчика |
 | `protocol` | "`protocol` declares a structural interface" | структурный контракт для значений (в отличие от `effect` — контракт для операций) |
-| `requires` / `ensures` / `invariant` / `decreases` | "`requires amount > 0`", "`ensures result >= 0`" | контрактные клозы: предусловие / постусловие / инвариант цикла / метрика терминации |
+| `requires` | "`requires amount > 0`" | контрактный клоз-предусловие функции |
+| `ensures` | "`ensures result >= 0`" | контрактный клоз-постусловие функции |
+| `invariant` | "`invariant sum >= 0`" (inside a `while` loop) | контрактный клоз — инвариант цикла (условие, верное на каждом входе в тело) |
+| `decreases` | "`decreases n`" | контрактный клоз — метрика терминации (доказательство, что рекурсия/цикл завершится) |
 | `defer` | "`defer { ... }` runs at scope exit, LIFO" | отложенный вызов при выходе из области видимости |
 | `forbid` | "`forbid Net, Fs, Db { eval(code) }`" | режим полномочий: запрет вызова функций с перечисленными эффектами внутри блока |
 
