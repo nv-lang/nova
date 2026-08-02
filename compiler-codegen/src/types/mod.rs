@@ -25949,34 +25949,58 @@ fn blocking_body_forbidden_effect(name: &str) -> bool {
     matches!(name, "Net" | "Fs" | "Db" | "Time")
 }
 
-/// Plan 16: hardcoded whitelist callee-name'ов, которые **аллоцируют**
-/// в managed heap (и потому запрещены в `realtime nogc { ... }`).
-/// Рдентификация по mangled C-name pattern + по высокоуровневым
-/// `Type.method` (e.g. `[]int.new`, `StringBuilder.new`).
+/// Plan 16, extended by #273 (D172 amend): hardcoded whitelist of
+/// callee-names that **allocate** on the managed heap (and are therefore
+/// forbidden inside `#realtime nogc fn` — and, historically, inside the
+/// now-retracted `realtime nogc { ... }` block, D64). Identified by
+/// high-level `Type.method` shape (e.g. `[]int.new`, `StringBuilder.new`,
+/// `Vec[T].of`).
 ///
-/// **Не покрывается** этим whitelist'ом:
-/// - User-defined record-конструкторы `Foo.new()` если они alloc'ят
-///   через nova_alloc — codegen всегда heap-боксит record-литералы,
-///   так что фактически любой record-литерал «аллоцирующий». Но
-///   detection требует bigger inference. Conservative — флагуем
-///   только статические fabric-методы.
-/// - `str.from(non-str)` если требует concat'а — пока считаем
-///   все `str.from`-вызовы "alloc'ирующими".
+/// #273: originally written (Plan 16) for the old block-form; after the
+/// Plan 113 retraction of that block, this same function became the
+/// SOLE enforcement mechanism for the `#realtime nogc fn` attribute (see
+/// `CapState.realtime_nogc` / `RealtimeAttr::RealtimeNogc`) — NOT dead
+/// code, despite the age of the surrounding comments; a live (but
+/// incomplete) checker-channel gate. Finding #273: the list did not
+/// include `.of(...)` — the variadic constructor that became the
+/// **canonical** way to build a `Vec[T]` from a literal (D259 amend),
+/// so `Vec[int].of(1, 2, 3)` inside a `#realtime nogc fn` silently
+/// passed `nova check`. Added below.
+///
+/// **Not covered** by this whitelist:
+/// - User-defined record constructors `Foo.new()` if they allocate via
+///   `nova_alloc` — codegen always heap-boxes record literals, so
+///   effectively any record literal is "allocating". But detection
+///   requires bigger inference; conservatively we flag only static
+///   factory methods.
+/// - `str.from(non-str)` when it requires concatenation — for now we
+///   treat every `str.from` call as "allocating".
+/// - Transitive calls: if a user fn `f()` without a `#realtime`/
+///   `#realtime nogc` annotation itself calls one of these blacklisted
+///   callees, and a `#realtime nogc fn` calls `f()` — not caught (no
+///   transitive inference, same V1 limit as `#parks` propagation,
+///   D172 §4). The honest alternative is a call-graph may-GC analysis
+///   (Plan 144.0, `nova gc-effect-analyze`, `codegen/may_gc.rs`), but
+///   that one targets the post-mono codegen tier (`MayGcSet` over
+///   `mono_fn_decls`) — a different pipeline phase than this pre-mono
+///   checker walk; wiring it in here is a separate task, out of scope
+///   for #273.
 fn nogc_blacklisted_call(callee_path: &[String]) -> bool {
     if callee_path.len() != 2 { return false; }
     let ty = callee_path[0].as_str();
     let m = callee_path[1].as_str();
-    // Array constructors: `[]T.new` / `[]T.with_capacity`.
-    if ty.starts_with("[]") && matches!(m, "new" | "with_capacity") { return true; }
+    // Array constructors: `[]T.new` / `[]T.with_capacity` / `[]T.of`.
+    if ty.starts_with("[]") && matches!(m, "new" | "with_capacity" | "of") { return true; }
     // Builder/buffer constructors.
     if matches!(ty, "StringBuilder" | "WriteBuffer" | "ReadBuffer")
         && matches!(m, "new" | "with_capacity" | "from") { return true; }
     // D91 (Plan 21): Channel.new allocates Nova_ChannelState + Sender + Receiver + buf.
     if ty == "Channel" && matches!(m, "new" | "with_capacity") { return true; }
-    // Map/Set/Vec/Deque etc.
+    // Map/Set/Vec/Deque etc. `.of` -- variadic literal constructor (D259 amend):
+    // canonical `Vec[T].of(...)` allocates just like `.new`/`.with_capacity`.
     if matches!(ty, "HashMap" | "Set" | "Vec" | "Deque" | "LinkedList" | "Lru" | "BloomFilter")
-        && matches!(m, "new" | "with_capacity") { return true; }
-    // str.from: format/conversion может alloc'ать.
+        && matches!(m, "new" | "with_capacity" | "of") { return true; }
+    // str.from: format/conversion may allocate.
     if ty == "str" && m == "from" { return true; }
     false
 }
@@ -26974,7 +26998,21 @@ impl<'a> CapabilityCtx<'a> {
         let path: Vec<String> = match &func.kind {
             ExprKind::Path(parts) => parts.clone(),
             ExprKind::Member { obj, name } => {
-                match &obj.kind {
+                // #273: peel off an explicit generic-application (turbofish)
+                // wrapper on the receiver first. `Vec[int].new()` parses as
+                // `Member{obj: TurboFish{base: Ident("Vec"), ..}, name: "new"}`
+                // (D38) — before this fix, `TurboFish` fell straight into the
+                // `_ => return` catch-all below, so EVERY capability check in
+                // this function (nogc-alloc blacklist, `forbid`, effect-row)
+                // was silently skipped for any call whose receiver carries an
+                // explicit generic type argument: `Vec[int].*`, `HashMap[K,
+                // V].*`, `OnceCell[int].*`, etc. — not just the `#realtime
+                // nogc fn` gap this was found through (D172).
+                let obj_kind = match &obj.kind {
+                    ExprKind::TurboFish { base, .. } => &base.kind,
+                    other => other,
+                };
+                match obj_kind {
                     ExprKind::Ident(n) => vec![n.clone(), name.clone()],
                     // `[]T.method`: Path(["__array","T"]) → ["[]T", method].
                     ExprKind::Path(parts) if parts.len() == 2 && parts[0] == "__array" => {
@@ -27060,10 +27098,10 @@ impl<'a> CapabilityCtx<'a> {
             if state.blocking_body_active && !state.realtime_active {
                 errors.push(Diagnostic::new(
                     format!(
-                        "cannot allocate inside `blocking {{ ... }}` body (Plan 83.3 \
-                         V1 leaf-contract, D50 §4): `{}` allocates on the managed heap, \
-                         but the body runs on a libuv threadpool thread that is not \
-                         GC-registered. Hint: move the allocation outside the \
+                        "[E_BLOCKING_NOGC_ALLOC] cannot allocate inside `blocking {{ ... }}` \
+                         body (Plan 83.3 V1 leaf-contract, D50 §4): `{}` allocates on the \
+                         managed heap, but the body runs on a libuv threadpool thread that \
+                         is not GC-registered. Hint: move the allocation outside the \
                          `blocking` block.",
                         path.join(".")
                     ),
@@ -27072,9 +27110,11 @@ impl<'a> CapabilityCtx<'a> {
             } else {
                 errors.push(Diagnostic::new(
                     format!(
-                        "cannot allocate inside `realtime nogc` block (D64): `{}` allocates \
-                         on managed heap. Hint: use `region {{ ... }}` for arena-allocations, \
-                         or move the allocation outside the `realtime nogc` block.",
+                        "[E_REALTIME_NOGC_ALLOC] cannot allocate inside `#realtime nogc fn` \
+                         (D172 §nogc, historically D64): `{}` allocates on the managed \
+                         heap. Hint: move the allocation out of the `#realtime nogc` \
+                         function (call it from an ordinary caller and pass the result \
+                         in), or drop `nogc` if a GC pause is acceptable here.",
                         path.join(".")
                     ),
                     e.span,

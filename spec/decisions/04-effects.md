@@ -4075,6 +4075,14 @@ fn checksum(data []u8) -> int {
 
 ### Опционально — запрет аллокации
 
+> ⚠️ **Block-form ниже retracted Plan 113** (см. врезку в начале D64).
+> Живая форма — атрибут `#realtime nogc fn`; актуальная семантика,
+> enforcement-механизм и его известные пределы — [06-concurrency.md →
+> D172 §«Что» + §7](06-concurrency.md#d172-realtimeblocking-sync-class-annotation-system-plan-1036)
+> (амендмент №273, 2026-08-02). Текст ниже — исторический (принцип
+> «никаких аллокаций, кроме region» не изменился, но синтаксис и
+> error-код (`E_REALTIME_NOGC_ALLOC`) — новые).
+
 Для **жёсткого** real-time-mode'а можно запретить аллокацию в managed
 heap (GC pause-free):
 

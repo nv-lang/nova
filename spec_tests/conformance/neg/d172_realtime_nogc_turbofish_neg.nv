@@ -1,0 +1,21 @@
+// EXPECT_COMPILE_ERROR E_REALTIME_NOGC_ALLOC
+// №273: regression guard for the path-extraction gap found while fixing
+// the `Vec[T].of` case above (d172_realtime_nogc_alloc_neg.nv). A call
+// receiver carrying an EXPLICIT generic type argument — `Vec[int].new()`,
+// AST-wise `Member{obj: TurboFish{base: Ident("Vec"), ..}, name: "new"}`
+// (D38 turbofish) — used to fall into the capability-checker's
+// `_ => return` catch-all for unresolved receivers, silently skipping
+// EVERY capability check (not just nogc-alloc) for such a call. `.new()`
+// was already in the nogc-alloc blacklist by name; this fixture proves it
+// is actually reached now that the receiver is unwrapped.
+module neg.d172_realtime_nogc_turbofish_neg
+
+#realtime nogc
+fn hot_new(x int) -> int {
+    ro v = Vec[int].new()
+    v.len() + x
+}
+
+test "Vec[int].new() в #realtime nogc fn — E_REALTIME_NOGC_ALLOC" {
+    hot_new(1)
+}
