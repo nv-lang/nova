@@ -32172,7 +32172,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             && tgt_ty.ends_with('*')
                             && !tgt_ty.ends_with("**")
                             && tgt_ty != "nova_int"
-                            && !tgt_ty.starts_with("Nova_Vec____"));
+                            && !tgt_ty.starts_with("Nova_Vec____"))
+                        // №284: a VALUE-record (`NovaValue_X`, by-value, no
+                        // pointer) with an operator method fell through to raw
+                        // C `+=` on a struct operand (CC-FAIL) — same route as
+                        // the heap-record arm above.
+                        || (tgt_ty.starts_with("NovaValue_")
+                            && !tgt_ty.ends_with('*'));
                     if is_overloaded_add_ty {
                         let bin_op = match op {
                             AssignOp::Add => BinOp::Add,

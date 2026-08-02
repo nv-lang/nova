@@ -1,0 +1,39 @@
+// №284 (221.1): `+=`/`-=` на VALUE-record с операторным методом (`@plus`/
+// `@minus`) не десугарился в операторный вызов — эмитился сырой C `+=` на
+// структурных операндах (CC-FAIL `invalid operands to binary expression`).
+// Heap-record'ы и Vec/str шли верным маршрутом (D263, план 153.5; расширение
+// 234 Ф.2а) — value-record выпадал из предиката. Ловушка: линт
+// W_NON_COMPOUND_ASSIGN сам советует compound-форму. Носитель: nova-bigint
+// (`mant += BigInt.one()`), приёмка 2026-08-02.
+module spec_tests.conformance
+
+type M284Acc value {
+    lo int
+    hi int
+}
+
+fn M284Acc @plus(other M284Acc) -> M284Acc =>
+    { lo: @lo + other.lo, hi: @hi + other.hi }
+
+fn M284Acc @minus(other M284Acc) -> M284Acc =>
+    { lo: @lo - other.lo, hi: @hi - other.hi }
+
+test "m284: += / -= на value-record десугарится в @plus/@minus" {
+    mut m284_a = M284Acc { lo: 1, hi: 10 }
+    m284_a += M284Acc { lo: 2, hi: 20 }
+    assert(m284_a.lo == 3)
+    assert(m284_a.hi == 30)
+
+    m284_a -= M284Acc { lo: 1, hi: 10 }
+    assert(m284_a.lo == 2)
+    assert(m284_a.hi == 20)
+}
+
+test "m284: += в цикле — аккумулятор value-record" {
+    mut m284_sum = M284Acc { lo: 0, hi: 0 }
+    for m284_i in 1..4 {
+        m284_sum += M284Acc { lo: m284_i, hi: m284_i * 2 }
+    }
+    assert(m284_sum.lo == 6)
+    assert(m284_sum.hi == 12)
+}
