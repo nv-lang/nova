@@ -51,7 +51,7 @@ git worktree add -b plan-170-priv-file ../nova-p170 main
 - НЕ добавлять trailer `Co-Authored-By: Claude`.
 - Коммит по фазам (Ф.1–Ф.4 — отдельные коммиты).
 - После закрытия: обновить логи — `docs/project-creation.txt` (одна строка-итог),
-  `docs/plans/backlog-followups.md` (закрыть маркер), `docs/simplifications.md`
+  `docs/plans/backlog-followups.md` (закрыть маркер), `docs/dev/simplifications.md`
   (если есть упрощение синтаксиса).
 - Один раз `nova test` с capture summary + FAIL details (не гонять в цикле).
 

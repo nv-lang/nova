@@ -18,7 +18,7 @@
 # Выход: 0 — страж исправен; 1 — сломан.
 #
 # План: docs/plans/231-bug-cycle-exit.md §4в. Правило —
-# docs/conventions-governance.md, «Статус плана — только пофайлово».
+# docs/dev/conventions-governance.md, «Статус плана — только пофайлово».
 
 set -uo pipefail
 

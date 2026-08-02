@@ -293,7 +293,7 @@ Auto-derive **respects** priv: если поле `priv`, eq/hash/clone всё е
 ### Ф.7 — Spec + docs
 - D109 amend (auto-derive rules).
 - D230 NEW (Clone protocol).
-- `docs/auto-derive-guide.md` — user guide.
+- `docs/guide/auto-derive-guide.md` — user guide.
 - **Эстимат:** 0.3 dev-day.
 
 ### Ф.8 — Closure

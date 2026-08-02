@@ -3,7 +3,7 @@
 
 **Статус:** 🔄 ПОГЛОЩЁН [Plan 196](196-one-truth-closeout.md) («Умбрелла над: 172.1, 172.12, 172.13») — координируется, не дублируется отдельным треком.
 **Home:** этот файл — индекс под-планов переработки типовой системы компилятора.
-**Конвенции:** реализует [`compiler-conventions.md`](../compiler-conventions.md) §0 (единый источник
+**Конвенции:** реализует [`compiler-conventions.md`](../dev/compiler-conventions.md) §0 (единый источник
 истины типов), §1 (где живут проверки / материализуй резолв / нет авто-fallback), §3 (никакого
 хардкода Nova-типов/методов; std — пакет, prelude минимален), §2 (быстрый компилятор И код).
 
@@ -152,12 +152,12 @@ fluent `mut @` + `==` проходит).
 
 ## 5. Принципы выполнения
 
-Per [`compiler-conventions.md`](../compiler-conventions.md): этапами (не «большим взрывом»), каждый —
+Per [`compiler-conventions.md`](../dev/compiler-conventions.md): этапами (не «большим взрывом»), каждый —
 с регрессом против чистого бинаря (§6), blast-radius до правки (§6), без молчаливой ломки std.
 
 ### 5.1. Верификация через spec/D-conformance suite `spec_tests/` (соглашено владельцем 2026-06-28)
 
-**Принцип — в конвенции:** [`test-conventions.md` §«spec/D-conformance suite»](../test-conventions.md).
+**Принцип — в конвенции:** [`test-conventions.md` §«spec/D-conformance suite»](../dev/test-conventions.md).
 Кратко: `nova_tests/` наполовину сломан → НЕ чистый гейт; **чистый soundness-сигнал = `spec_tests/`**
 (отдельный пакет, по одному файлу на D-блок в пир-модуле по теме), цель — заменить `nova_tests/`.
 

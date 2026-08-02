@@ -511,7 +511,7 @@ codegen coarse-by-name (`method_receivers` last-wins) диспатчил на ч
 `plan183_f4/effect_op_int_result.nv` (pos) + `plan183_f4/neg/
 int_to_str_effect_collision_neg.nv` (neg, `EXPECT_COMPILE_ERROR E_UNKNOWN_METHOD`).
 `[M-183-int-to-str-module-method-collision]` — CLOSED (детали:
-`docs/simplifications.md`).
+`docs/dev/simplifications.md`).
 
 **P67-LEGACY ICE (plan83_12) на net2 — класса НЕТ.** Старый слой: `nova test
 nova_tests/plan83_12/tcp_bind_used_port_test.nv` → ICE `[P67-LEGACY] Path call

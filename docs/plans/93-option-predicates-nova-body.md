@@ -163,7 +163,7 @@ self-hosting (переписывание самого компилятора).
 
 ### Ф.4 — Spec / docs (~0.1 д)
 
-- **Ф.4.1** `docs/simplifications.md` — отметить, что `is_some`/
+- **Ф.4.1** `docs/dev/simplifications.md` — отметить, что `is_some`/
   `is_none` де-магифицированы; если был маркер — закрыть.
 - **Ф.4.2** Plan 78 — аменд: зафиксировать, что `is_some`/`is_none`
   выведены из C-реестра в Nova-тело (узкий пересмотр Ф.1, не отмена).
@@ -245,7 +245,7 @@ receiver»** — самостоятельная инфраструктурная
 масштаб ~2 dev-day, отдельный план). До неё Plan 93 **заблокирован**.
 
 Зафиксировано маркером `[M-option-methods-not-mono-able]` в
-`docs/simplifications.md`.
+`docs/dev/simplifications.md`.
 
 > **Status после Ф.0:** GATE-STOP. Ф.1–Ф.4 заблокированы до
 > инфраструктуры «Option в generic-method-mono». Это честный исход

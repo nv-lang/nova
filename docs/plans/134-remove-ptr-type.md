@@ -101,7 +101,7 @@ ro p *() = 0 as *()
   Добавить: «opaque pointer = `*()` (pointer to unit type → `void*` in C)».
 - **Ф.3.2** `docs/plans/115-ffi-foundational.md` — пометить `ptr` type как
   superseded by `*()`.
-- **Ф.3.3** `docs/simplifications.md` + project-creation.txt + discussion-log.
+- **Ф.3.3** `docs/dev/simplifications.md` + project-creation.txt + discussion-log.
 
 **Commit:** `docs(plan134 Ф.3): spec — ptr removed, *() documented as void* equivalent`
 

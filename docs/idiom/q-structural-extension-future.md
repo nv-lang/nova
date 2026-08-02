@@ -4,7 +4,7 @@
 > **Plan 110 Ф.14.2 Q-block (STUB).** Future direction: structural
 > extension pattern `value.with_retry()`, `value.with_logging()`,
 > `value.with_metrics()` via `T + Protocol` intersection types.
-> Cross-ref [Plan 110 §«Rejected designs»](../../docs/plans/110-scoped-resources-radical-simplification.md#d190).
+> Cross-ref [Plan 110 §«Rejected designs»](../plans/110-scoped-resources-radical-simplification.md#d190).
 
 ## Direction
 

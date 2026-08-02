@@ -223,7 +223,7 @@ manual audit каждого нового flip-сайта.
    D-block** — это amendment existing.
 2. `docs/plans/125-divergence-aware-inference.md` — final status,
    regression matrix, corpus stats
-3. `docs/simplifications.md` — запись «D25 implementation gap closed»
+3. `docs/dev/simplifications.md` — запись «D25 implementation gap closed»
 4. `nova-private/discussion-log.md` + project-creation.txt — record
 5. **Followup markers (5):**
    - `[M-125-loop-no-break-divergence]` — Loop currently over-approx
@@ -402,7 +402,7 @@ D25 (Plan 76 bottom-type contract). Amendments:
   - `regression-matrix.md` — таблица «24 файла → паттерн → фаза → fixture»
 - `docs/plans/91.13-json-conformance-smoke.md` — followup
   `[M-91.13-if-expr-divergence-aware-inference]` CLOSED → ref Plan 125
-- `docs/simplifications.md` — запись «D25 implementation gap closed»
+- `docs/dev/simplifications.md` — запись «D25 implementation gap closed»
 - `nova-private/project-creation.txt` + `discussion-log.md` — plan record
 - **5 followup markers зарегистрированы:**
   `[M-125-loop-no-break-divergence]`,
@@ -494,7 +494,7 @@ phased Ф.1 → full test → Ф.2 → ... через ~36-53h. Обоснова�
    - Sample run (5 fixtures): PASS 5/5
 
 4. **Docs:**
-   - `docs/simplifications.md` — `[M-91.13-if-expr-divergence-aware-inference]`
+   - `docs/dev/simplifications.md` — `[M-91.13-if-expr-divergence-aware-inference]`
      ✅ CLOSED + 7 followups зарегистрированы
    - `docs/project-creation.txt` — Plan 125 IMPLEMENTATION section
 

@@ -674,7 +674,7 @@ D-push-detach, D-iter-snap.
   `spec/open-questions.md`.
 - **Ф.7.6** `spec/decisions/README.md` — D-index с D144.
 - **Ф.7.7** `docs/plans/README.md` — Plan 96 → ЗАКРЫТ.
-- **Ф.7.8** `docs/simplifications.md`:
+- **Ф.7.8** `docs/dev/simplifications.md`:
   - Снять `[P-array-slice-deferred]` (если есть).
   - Записать `[P-str-slice-clamp-vs-panic]` — `str.slice` оставлен с
     clamp; align с panic semantics — Plan 94.

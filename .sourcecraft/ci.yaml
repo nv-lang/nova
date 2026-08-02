@@ -1,7 +1,7 @@
 # nova-gate для SourceCraft CI/CD
 # Адаптация .github/workflows/nova-gate.yml под SourceCraft.
 # Авторитетный merge-гейт: conformance + флагман-examples + anti-rot.
-# См. docs/test-conventions.md §«Авторитетный merge-гейт».
+# См. docs/dev/test-conventions.md §«Авторитетный merge-гейт».
 
 on:
   push:

@@ -10,7 +10,7 @@
 #
 # Existing (legitimate) sites:
 #   - Cat B (intentional erasure): inline-документированы с rationale,
-#     listed в docs/codegen-erasure-sites.md.
+#     listed в docs/dev/codegen-erasure-sites.md.
 #   - Cat C/D (categorical mappings / method dispatch wildcards):
 #     "_ => nova_int" в match по method-name на известный receiver type.
 #   - Cat B (erased_type_ref_c / erase_unk wrappers).
@@ -40,7 +40,7 @@ set -euo pipefail
 
 # Baseline count of legitimate sites — must be UPDATED when adding new
 # Cat B / Cat D sites with proper documentation. Bump baseline после
-# adding inline-doc + entry в docs/codegen-erasure-sites.md.
+# adding inline-doc + entry в docs/dev/codegen-erasure-sites.md.
 BASELINE_TYPE_REF_TO_C_UNWRAP_OR=7   # type_ref_to_c(...).unwrap_or_else(|_| "nova_int")
                                      # Cat B: B1 (2720), B4 (5934), B5 (5948),
                                      # B6 (6149), B7 (6152), B8 (8311), B9 (8314).
@@ -94,7 +94,7 @@ if [ "$count_a2" -gt "$BASELINE_WILDCARD_NOVA_INT" ]; then
     echo
     echo "If intentional (Cat B erasure or Cat D dispatch fallback):"
     echo "  1. Add inline comment: // Plan 70 Cat B/D: <rationale>"
-    echo "  2. Add entry to docs/codegen-erasure-sites.md"
+    echo "  2. Add entry to docs/dev/codegen-erasure-sites.md"
     echo "  3. Bump BASELINE_WILDCARD_NOVA_INT in this script"
     echo
     echo "If silent fallback for unknown type:"

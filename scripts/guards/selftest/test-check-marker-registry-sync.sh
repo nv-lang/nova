@@ -17,7 +17,7 @@ rm -rf "$TMP"; mkdir -p "$TMP/std/src" "$TMP/examples" "$TMP/spec_tests" "$TMP/d
 # Реестры (пустые, но существующие — как в настоящей репе).
 : > "$TMP/docs/plans/221.1-bug-sweep.md"
 : > "$TMP/docs/plans/backlog-followups.md"
-: > "$TMP/docs/simplifications.md"
+: > "$TMP/docs/dev/simplifications.md"
 echo "unregistered=0" > "$TMP/scripts/guards/marker-registry.baseline"
 
 # --- (1) НАРУШЕНИЕ: маркер в коде, в реестрах его нет ---

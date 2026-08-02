@@ -6,7 +6,7 @@
 // ПРИМЕЧАНИЕ: деструктуризация боксированного sum-элемента прямо в теле
 // for-in (`for o Option[int] in opts { if Some(v) = o { ... } }`)
 // упирается в отдельный pre-existing codegen-дефект value/pointer-модели
-// (см. docs/simplifications.md `[M-iflet-match-boxed-sum-ptr]`) — он не
+// (см. docs/dev/simplifications.md `[M-iflet-match-boxed-sum-ptr]`) — он не
 // связан с аннотацией типа и здесь не воспроизводится: тест проверяет
 // именно фичу Plan 87 (parse + type-check + итерация аннотированного
 // generic-элемента).

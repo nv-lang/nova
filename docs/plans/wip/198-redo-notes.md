@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Plan 198 Ф.2 REDO — карта батчей и чекпойнт (worktree nova-198, ветка triage-198)
 
-**Цель:** довести REDO до D307-канона: все мигрированные flat-файлы `spec_tests/conformance/*.nv` — пиры ОДНОГО folder-module `module spec_tests.conformance`; конфликты имён решены `priv(file)` (D307) либо ordinal-rename (типы с методами — ограничение D307 §3, см. docs/test-conventions.md §«Когда folder-module невозможен»); файлы с процессными EXPECT-маркерами — standalone (канонное исключение конвенции).
+**Цель:** довести REDO до D307-канона: все мигрированные flat-файлы `spec_tests/conformance/*.nv` — пиры ОДНОГО folder-module `module spec_tests.conformance`; конфликты имён решены `priv(file)` (D307) либо ordinal-rename (типы с методами — ограничение D307 §3, см. docs/dev/test-conventions.md §«Когда folder-module невозможен»); файлы с процессными EXPECT-маркерами — standalone (канонное исключение конвенции).
 
 **База:** HEAD `4394fec95` (шаг 1/N — revert module-деклараций сделан). Компилятор НЕ трогаем. Тесты НЕ ослабляем: правки = только module-строка, перемещение файла, `priv(file)`-префикс, механический word-boundary rename, `fn main` → `test`-блок. Содержимое assert'ов/логики НЕ меняется.
 
@@ -407,7 +407,7 @@ export NOVA_INCLUDE_DIR=/d/Sources/nv-lang/nova/compiler-codegen/vcpkg_installed
 > Далее в этом файле — «4 детерминированные жертвы» (priv(file)-fn bleed ×2, file-scoped
 > `#unchecked` ×2): priv(file)-fn bleed ЗАКРЫТ фиксом `7542e0013` (2026-07-14, до этой
 > волны); `#unchecked` MOOT — полностью ретрактирован Plan 194 (`#unchecked` больше не
-> парсится). Полная таблица вердиктов — `docs/simplifications.md` (запись 2026-07-17,
+> парсится). Полная таблица вердиктов — `docs/dev/simplifications.md` (запись 2026-07-17,
 > `[M-198-f4c-compiler-findings]`).
 
 8. **Merged CU ~1010 файлов / 2589 test-блоков: два runtime-блокера:**

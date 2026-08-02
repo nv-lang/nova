@@ -54,7 +54,7 @@
 > 6. **Update logs после каждой большой задачи** (отдельные commits):
 >    - `docs/project-creation.txt` — sprint section про Plan 115 progress
 >      (формат — см. tail файла, последние sprint sections как pattern)
->    - `docs/simplifications.md` — open/close `[M-115-*]` markers
+>    - `docs/dev/simplifications.md` — open/close `[M-115-*]` markers
 >    - `d:/Sources/nv-lang/nova-private/discussion-log.md` (**отдельный repo!**)
 >      — design decisions / lessons learned (Session 9 header,
 >      cd префикс в отдельный repo для git ops)
@@ -84,7 +84,7 @@
 >       leverage'ются Plan 115)
 >
 > 13. **Doc updates обязательны:**
->     - `docs/ffi-cookbook.md` — создать если не существует; libsqlite3 +
+>     - `docs/guide/ffi-cookbook.md` — создать если не существует; libsqlite3 +
 >       libpng + libcurl examples (~50 lines каждый)
 >     - `examples/ffi/` — создать если не существует; working sample
 >       (sqlite3 read/write test)
@@ -341,7 +341,7 @@ Plan 115 НЕ retracts D126. Both patterns valid:
 
 - **Ф.3.1** Spec D214 finalize — `type X(ptr)` pattern documented как
   canonical для FFI opaque handles.
-- **Ф.3.2** FFI cookbook в `docs/ffi-cookbook.md`:
+- **Ф.3.2** FFI cookbook в `docs/guide/ffi-cookbook.md`:
   - libsqlite3 binding example (~50 lines)
   - libpng binding example (~50 lines)
   - libcurl binding example (~50 lines)
@@ -355,7 +355,7 @@ Plan 115 НЕ retracts D126. Both patterns valid:
 - **Ф.4.1** Full `nova test` ≥ baseline.
 - **Ф.4.2** Cross-platform CI.
 - **Ф.4.3** `docs/project-creation.txt` sprint section.
-- **Ф.4.4** `docs/simplifications.md` — close `[M-115-*]`.
+- **Ф.4.4** `docs/dev/simplifications.md` — close `[M-115-*]`.
 - **Ф.4.5** Memory `project-plan115-status.md`.
 - **Ф.4.6** Status closure summary в этом файле.
 
@@ -456,7 +456,7 @@ Plan 115 НЕ retracts D126. Both patterns valid:
 | A6 | Type safety: distinct handle types prevent mix-ups | T3.3 |
 | A7 | End-to-end FFI sample (sqlite3 binding) — compiles + runs | T3.4 |
 | A8 | D214 promoted в active spec | spec diff |
-| A9 | FFI cookbook (`docs/ffi-cookbook.md`) created с 3 library examples | manual review |
+| A9 | FFI cookbook (`docs/guide/ffi-cookbook.md`) created с 3 library examples | manual review |
 | A10 | Full `nova test` ≥ baseline; cross-platform PASS | R1 + R2 |
 
 ---
@@ -575,7 +575,7 @@ ptr_lt_neg + null_non_ptr_neg + ptr_str_cast_neg (negative). Все PASS.
   int)` с C shim). Все PASS.
 
 **Ф.3 (cookbook + examples + T3).**
-- `docs/ffi-cookbook.md` (~320 lines): quick reference table, layered
+- `docs/guide/ffi-cookbook.md` (~320 lines): quick reference table, layered
   FFI pattern diagram, V1 setup notes, 3 worked examples (sqlite3
   full C shim + Nova wrapper, libpng read_image_dimensions, libcurl
   HTTP GET), ABI cheat sheet (Sys V AMD64 / Win x64 / macOS ARM64),
@@ -631,7 +631,7 @@ Cross-platform extensions:
 | A6 | Type safety distinct handle types | ✓ T3.3 (E7301) |
 | A7 | End-to-end FFI sample compiles + runs | ⚠ sqlite_mini code ready; real-library link gated на [M-115-ffi-build-pipeline] |
 | A8 | D214 promoted в active spec | ✓ 02-types.md |
-| A9 | FFI cookbook с 3 library examples | ✓ docs/ffi-cookbook.md |
+| A9 | FFI cookbook с 3 library examples | ✓ docs/guide/ffi-cookbook.md |
 | A10 | Full nova test ≥ baseline | running |
 
 ### Extracted to followups
@@ -662,6 +662,6 @@ Per safety hatch (Risk Register R-1) — items extracted from V1 scope:
 - Memory: `project-plan115-status.md` (in
   `C:/Users/Евгений/.claude/projects/d--Sources-nv-lang-nova/memory/`).
 - Sprint logs: `docs/project-creation.txt` Plan 115 section +
-  `docs/simplifications.md` markers updated +
+  `docs/dev/simplifications.md` markers updated +
   `d:/Sources/nv-lang/nova-private/discussion-log.md` Session 9 entry.
 

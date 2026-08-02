@@ -109,7 +109,7 @@
 | `defer { close }` (безусловный) | **остаётся** — плейн `defer` жив |
 
 Идиома cleanup'а ресурса — [consume-scope-cleanup.md](consume-scope-cleanup.md)
-(Plan 110 / D188). Стиль написания — [nv-coding-style.md](../nv-coding-style.md) §20.4.
+(Plan 110 / D188). Стиль написания — [nv-coding-style.md](../dev/nv-coding-style.md) §20.4.
 
 ## Источники (авторитет)
 

@@ -66,7 +66,7 @@ share-типы (D415), Atomic*, Mutex, концы каналов (Sender/Receive
 **Итого живых сайтов класса 3: 26 бесспорных + 2 спорных (Supervisor.on_child_fail) = 28.**
 Все 26 бесспорных — это ОДИН повторяющийся идиом: `mut <flag> = false; with Fail[T] =
 |_e| { <flag> = true } { supervised(...)/parallel-for { spawn {...} } }`. Он же —
-идиом, показанный в `docs/quickstart.md`/`docs/language-tour.md` и являющийся сутью
+идиом, показанный в `docs/guide/quickstart.md`/`docs/guide/language-tour.md` и являющийся сутью
 флагманской демки (`mini_aggregator.nv`'s own header).
 
 **Класс 1/2 (closure как параметр/поле/канал-элемент):** ни одного КОНКРЕТНОГО живого
@@ -156,5 +156,5 @@ handler-propagation (D80 snapshot) — миграция на Atomic тут пр�
   консервативного синтаксического чека, и потребуется та же оговорка, что и для
   Supervisor. Рекомендую перед включением энфорса померить это ОДНИМ репро (как §150 уже
   мерил для параметра-замыкания) именно для `with Fail[T] = |e| {mut=...} {supervised{spawn}}`.
-- Отдельно НЕ проверял `docs/quickstart.md`/`docs/language-tour.md` (прозу) на предмет
+- Отдельно НЕ проверял `docs/guide/quickstart.md`/`docs/guide/language-tour.md` (прозу) на предмет
   показанного там же идиома — упомянул по факту grep-совпадения, не читал сам текст доков.

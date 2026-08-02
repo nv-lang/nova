@@ -132,7 +132,7 @@ generic body emit). Должны:
   pass потом подставит, или body не использует тип конкретно)
 - Иметь **debug-assert** что caller — generic-fn body context, не
   user-facing concrete code
-- Записаться в audit-document `docs/codegen-erasure-sites.md` со списком
+- Записаться в audit-document `docs/dev/codegen-erasure-sites.md` со списком
   всех legitimate erasure points
 
 ### AD3. Lint правило — internal compiler dev guard
@@ -211,7 +211,7 @@ Error codes E7001-E7099 reserved для Plan 70.
 propagation. 0 silent fallbacks в category A после Plan 70 closure.
 
 **R2.** Category B sites (intentional erasure) — documented audit в
-`docs/codegen-erasure-sites.md`. Each site:
+`docs/dev/codegen-erasure-sites.md`. Each site:
 - Inline comment с rationale
 - `debug_assert!` что context legitimate (generic body, не concrete)
 - Listed в audit doc с file:line + reason
@@ -270,7 +270,7 @@ platforms.
 
 ### Audit / docs
 
-**R15.** `docs/codegen-erasure-sites.md` — full list Category B sites.
+**R15.** `docs/dev/codegen-erasure-sites.md` — full list Category B sites.
 
 **R16.** Spec new D-block: D126 «Strict type propagation в codegen».
 
@@ -347,14 +347,14 @@ applicable migration suggestions. Document в release notes (когда
 ### Ф.3 — Category B audit + docs (1 day)
 
 - [ ] Document каждый legitimate erasure site в
-      `docs/codegen-erasure-sites.md`
+      `docs/dev/codegen-erasure-sites.md`
 - [ ] Add `debug_assert!` на context legitimacy
 - [ ] Positive tests f31-f40 что generic body emit OK
 
 ### Ф.4 — Spec + project docs (½ day)
 
 - [ ] Spec D126 «Strict type propagation»
-- [ ] Update `docs/simplifications.md` — RESOLVE markers
+- [ ] Update `docs/dev/simplifications.md` — RESOLVE markers
 - [ ] Update `docs/project-creation.txt`
 - [ ] Update `docs/plans/README.md` Plan 70 row
 
@@ -371,7 +371,7 @@ applicable migration suggestions. Document в release notes (когда
 ## Acceptance criteria (production-grade)
 
 - [ ] `grep -rE 'unwrap_or.*"nova_int"|or_else.*"nova_int"' compiler-codegen/src/` → **0 matches** (категория A)
-- [ ] `docs/codegen-erasure-sites.md` — full list Category B (~20 sites) с rationale
+- [ ] `docs/dev/codegen-erasure-sites.md` — full list Category B (~20 sites) с rationale
 - [ ] Все existing `nova test` PASS (0 regressions) после full Plan 70
 - [ ] 30+ negative fixtures `nova_tests/plan70/f1-f30` PASS (each catches one Category A site)
 - [ ] Internal lint trips on `unwrap_or "nova_int"` в new PRs
@@ -485,7 +485,7 @@ inline-тестах до фикса). После Plan 70 Phase A2/A3 эти ме
     emit_monomorphized_fn ret_c, 3× emit_call closure-arg ret.
   - **Ф.2 internal lint guard:** `scripts/guards/lint-no-silent-int-fallback.sh`
     с baseline counts (Cat A1=8, Cat A2=24). CI gate против регресса.
-  - **Ф.3 Cat B audit:** `docs/codegen-erasure-sites.md` — 10 Cat B
+  - **Ф.3 Cat B audit:** `docs/dev/codegen-erasure-sites.md` — 10 Cat B
     documented (B1-B10) + 20 Cat D dispatch wildcards listed.
   - **Ф.4 Spec D126** «Strict type propagation в codegen» — добавлен
     в spec/decisions/02-types.md.
@@ -512,7 +512,7 @@ inline-тестах до фикса). После Plan 70 Phase A2/A3 эти ме
     — closure body inherits `self` via capture, но var_types scope inside
     closure отдельный.
 
-  All 3 reclassified как Cat B11/B12/B13 в [docs/codegen-erasure-sites.md](../../docs/codegen-erasure-sites.md);
+  All 3 reclassified как Cat B11/B12/B13 в [docs/dev/codegen-erasure-sites.md](../dev/codegen-erasure-sites.md);
   strict migration deferred — требует дополнительные scope (bidirectional
   inference / tuple decoder / closure-capture self-registration). Documented
   как future work, не silent miscompilation в test corpus.
@@ -543,5 +543,5 @@ inline-тестах до фикса). После Plan 70 Phase A2/A3 эти ме
   **Тест:** `nova_tests/modules/set_ops.nv` (3 теста: Set.or/and/minus) — **3/3 PASS**.
   **Регрессии:** 862 PASS / 2 pre-existing plan72 FAIL / 47 SKIP.
   **Simplification:** `[M-d46-multi-generic-arg-split]` (multi-arg nested generic
-  split edge case) задокументирован в `docs/simplifications.md`.
+  split edge case) задокументирован в `docs/dev/simplifications.md`.
   **Merged:** plan-70 → main 2026-05-20 (commit `5cf129ace28`).

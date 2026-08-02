@@ -176,7 +176,7 @@ struct Scope {
     /// hits a PRE-EXISTING checker stack-overflow (present on baseline d97c0dbe),
     /// so we leave it to lower cleanly to the legacy `redefinition` CC-error
     /// instead of a fresh codegen panic (zero-regression on failure mode).
-    /// See [M-181-pattern-var-rebind] (docs/simplifications.md). Plain-`let`
+    /// See [M-181-pattern-var-rebind] (docs/dev/simplifications.md). Plain-`let`
     /// destructure patterns are NOT marked (their rebind DOES uniquify — plan §5).
     pattern_origin: std::collections::HashSet<String>,
 }

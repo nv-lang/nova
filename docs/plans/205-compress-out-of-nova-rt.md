@@ -15,7 +15,7 @@ spec_tests-фикстуры — `d337_brotli_ffi.nv`, удалён вместе 
 + multi-TU) — generic `[ffi] vendor_src_dirs`/`build_missing_vendor_ffi_libs`
 (прецедент nova-tls/mbedTLS) полностью покрывает use-case, nova-compress уже
 на него переехал. `nova-test-regression.yml` — `libbrotli-dev` снят из
-apt-install (два джоба); `docs/linux-build.md` — brotli-строка снята из
+apt-install (два джоба); `docs/guide/linux-build.md` — brotli-строка снята из
 таблицы пакетов. Гейты: `cargo build --release` чист; `nova check std` —
 дельта ровно исчезнувший compress (18 pre-existing FAIL, все neg-фикстуры/
 известный single-file `prelude/protocols.nv` артефакт, ноль новых); `nova test

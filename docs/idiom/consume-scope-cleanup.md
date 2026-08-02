@@ -273,5 +273,5 @@ Compile error `E_CLEANUP_FORBIDDEN_OPERATION`. Используйте sequential
 - [D188](../../spec/decisions/03-syntax.md#d188) — Cleanup + consume scope-block.
 - [D194](../../spec/decisions/03-syntax.md#d194) — `Cleanup[never]` hot-path.
 - [Plan 110](../plans/110-scoped-resources-radical-simplification.md) — umbrella.
-- [cleanup-cookbook.md](../cleanup-cookbook.md) — production-recipe book.
+- [cleanup-cookbook.md](../guide/cleanup-cookbook.md) — production-recipe book.
 - [cleanup-on-failure.md](cleanup-on-failure.md) — pre-Plan 110 idioms (legacy).

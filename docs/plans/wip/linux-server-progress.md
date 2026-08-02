@@ -151,7 +151,7 @@ Files/Git/home/craft/x`) — всегда оборачивать в `bash -c '..
   ветка `fix-compress-dep` коммит `250f4ab` (тот же, что Dockerfile
   ожидает).
 - Cargo: `CARGO_TARGET_DIR=~/nova-target`, toolchain `~/.cargo/bin`
-  (rustup 1.85.0, per docs/linux-build.md — дистро-rustc ICE'ит).
+  (rustup 1.85.0, per docs/guide/linux-build.md — дистро-rustc ICE'ит).
 - Nova-бинарь: `~/nova-target/release/nova` (собран из МОЕГО
   worktree-кода, компилятор пересобирался дважды в этой волне после
   правок fiber_arena.c — линковка runtime.c C-объектов подхватывает

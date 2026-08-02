@@ -22,7 +22,7 @@ Error-only откат без Cleanup-ресурса — флаг-паттерн:
 
 - **Идиома cleanup'а** → [consume-scope-cleanup.md](consume-scope-cleanup.md) (Plan 110 / D188).
 - **Модель panic/fail/defer/@cleanup** → [error-and-cleanup-model.md](error-and-cleanup-model.md).
-- **Стиль написания** → [nv-coding-style.md](../nv-coding-style.md) §20.4.
+- **Стиль написания** → [nv-coding-style.md](../dev/nv-coding-style.md) §20.4.
 - Спека: [D189](../../spec/decisions/03-syntax.md#d189) (retraction) ·
   [D188](../../spec/decisions/03-syntax.md#d188) (Cleanup.@cleanup) ·
   [D90](../../spec/decisions/03-syntax.md#d90) (defer).

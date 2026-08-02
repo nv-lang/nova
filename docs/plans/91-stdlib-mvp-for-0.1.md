@@ -95,7 +95,7 @@ sort,json,time,math}` vs `std/net/`), разные worktrees, 0 пересече
   `git add -A` / `git add .`.
 - `feedback-commit-per-task` — commit после каждой фазы; не batchить Ф.1-Ф.4 в один commit.
 - `feedback-update-logs` — после **каждой** закрытой фазы обновлять
-  `docs/project-creation.txt` + `docs/simplifications.md` (main repo) +
+  `docs/project-creation.txt` + `docs/dev/simplifications.md` (main repo) +
   `nova-private/discussion-log.md` (отдельный репо, отдельный commit).
 - `feedback_nova_test_one_pass` — `nova test` за один запуск, capture summary + FAIL details одновременно.
 - `feedback_targeted_test_per_fix` — per-fix verify = только targeted fixture; full `nova test` только в конце фазы.

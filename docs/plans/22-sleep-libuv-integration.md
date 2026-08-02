@@ -28,7 +28,7 @@
 >    Все silent fails → abort() c FATAL message. Spec sync полный
 >    (D71 evolution + D75/D80 cross-refs).
 >
-> См. retro в `docs/project-creation.txt` / `docs/simplifications.md`.
+> См. retro в `docs/project-creation.txt` / `docs/dev/simplifications.md`.
 
 ---
 
@@ -1185,7 +1185,7 @@ bench для regression coverage.
 - `spec/syntax.md`: проверить весь раздел `Time.sleep` точен.
 - `docs/project-creation.txt`: retro секция Plan 22 (по политике
   [feedback_project_docs](../../memory/feedback_project_docs.md)).
-- `docs/simplifications.md`: retro секция Plan 22.
+- `docs/dev/simplifications.md`: retro секция Plan 22.
 
 **Bench:**
 

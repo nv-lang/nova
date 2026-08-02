@@ -18,7 +18,7 @@
 #       -t aggregator-demo:local .
 #   docker run --rm -p 8187:8187 aggregator-demo:local
 #
-# Рецепт верифицирован docs/linux-build.md (2026-07-16, WSL2 Ubuntu) +
+# Рецепт верифицирован docs/guide/linux-build.md (2026-07-16, WSL2 Ubuntu) +
 # .github/workflows/nova-gate.yml (приём "sibling clone" для path-зависимости
 # `http = { path = "../../nova-http" }`, examples/nova.toml — `tls`/
 # `compress` резолвятся АВТОМАТИЧЕСКИ по git самим компилятором Nova, sibling
@@ -41,7 +41,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         clang cmake make libgc-dev build-essential git ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Rust toolchain — rustup, пин на MSRV 1.85 (docs/linux-build.md: дистро-rustc
+# Rust toolchain — rustup, пин на MSRV 1.85 (docs/guide/linux-build.md: дистро-rustc
 # ICE'ит на emit_c.rs; тот же пин, что nova-gate.yml).
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
         sh -s -- -y --default-toolchain 1.85.0 --profile minimal
@@ -81,7 +81,7 @@ COPY --from=nova-http . /build/nova-http
 COPY nova.toml ./nova.toml
 COPY examples ./examples
 
-# `nova build` — на Linux system libgc (нет vcpkg, docs/linux-build.md
+# `nova build` — на Linux system libgc (нет vcpkg, docs/guide/linux-build.md
 # §Boehm GC) — NOVA_GC_*_DIR overrides не нужны для apt-стокового libgc-dev.
 # mbedTLS (nova-tls, [ffi] vendor) собирается сама (нужен только `cc`, уже
 # есть в build-essential/clang).

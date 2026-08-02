@@ -1,6 +1,6 @@
 > ❄️ **УСТАРЕВШИЙ РАБОЧИЙ ДОКУМЕНТ (2026-06-30)** — прежний roadmap (ФАЗЫ 1-6) заморожен.
 > Актуальный план: [172.1-p67-execution-plan.md](172.1-p67-execution-plan.md) §D-TRACK.
-> Конвенция реализации: [compiler-conventions.md](../compiler-conventions.md).
+> Конвенция реализации: [compiler-conventions.md](../dev/compiler-conventions.md).
 
 # Plan 172 — единый секвенированный roadmap закрытия (синтез 2026-06-28)
 

@@ -64,7 +64,7 @@ big-bang волной, не безопасными мелкими шагами (
 РАЗВЕДКА»). Заодно найден orthogonal, pre-existing gap: bare `${vec}`-интерполяция для generic-типов
 не дозванивается до их собственного `@display`/`@debug` (`[M-208-generic-interp-display-dispatch-gap]`,
 **✅ ПОЧИНЕНО 2026-07-17, ветка `p-interp-generic-dispatch`** — см.
-`docs/plans/208-impl-progress.md` §НАХОДКА и `docs/simplifications.md`; НЕ регрессия 208).
+`docs/plans/208-impl-progress.md` §НАХОДКА и `docs/dev/simplifications.md`; НЕ регрессия 208).
 Авторитетный полный `spec_tests/conformance`-гейт — за
 оркестратором/интегратором (не гонялся здесь, только таргетные изолированные фикстуры).
 **Приоритет:** ниже Plan 196. **Язык-меняющее** → D-амендменты в том же слиянии, что код.

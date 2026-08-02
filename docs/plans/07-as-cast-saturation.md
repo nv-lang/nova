@@ -336,7 +336,7 @@ explicit choice.
 
 ### Ф.5 — Запись в simplifications.md
 
-В `docs/simplifications.md` обновить запись `[P-as-cast-wraparound]`
+В `docs/dev/simplifications.md` обновить запись `[P-as-cast-wraparound]`
 или добавить новую `[P-as-cast-float-saturation]`:
 
 > [P-as-cast-float-saturation] (2026-05-08): float→int narrowing

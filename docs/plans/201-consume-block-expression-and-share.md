@@ -38,7 +38,7 @@
 - Компилятор: парсер (`consume IDENT {` без `=`), чекер (owned+Cleanup[E]; точная диагностика;
   tail/`return X`-дизарм в consume-анализе), desugar (существующий D188-механизм + значение блока).
 - std: `impl Cleanup` TcpStream + `TcpStream @share()` (nv-refcount); Channel-семейство
-  clone→share (emit-строка `nova_chan_writer_clone`, docs/channels.md(+.ru), call-sites).
+  clone→share (emit-строка `nova_chan_writer_clone`, docs/guide/channels.md(+.ru), call-sites).
 - nova-tls: `impl Cleanup` TlsStream; connect/accept на канон п.7 (раскладка `tls.tls` пока
   как есть — уплощение = отдельный вопрос D78, см. открытые).
 

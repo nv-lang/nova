@@ -81,4 +81,4 @@ while Some(item) = queue.pop() && item.valid { handle(item) }
 
 - [D34 §«Guard-выражение»](../../spec/decisions/03-syntax.md#d34) — формальная грамматика + примеры
 - [M-106-if-guard] ✅ CLOSED 2026-06-17
-- [docs/plans/backlog-followups.md](../plans/backlog-followups.md) — ссылка на Plan 106 секцию
+- [docs/plans/backlog-followups.md](backlog-followups.md) — ссылка на Plan 106 секцию

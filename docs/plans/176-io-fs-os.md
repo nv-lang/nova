@@ -33,7 +33,7 @@
 > **Codegen-находка (расширяет `[M-176-xmod-payload-variant-ctor]`):** `[P67-LEGACY] Path call return type
 > unknown` триггерится не только на cross-module payload-ctor, но и на ЛЮБОМ chained-method-call сразу после
 > свежесконструированного enum-значения (даже nullary, даже same-module) — обход тот же (`ro x = Variant`
-> перед `.method()`), уже był конвенцией в `error_test.nv`. **Ф.5:** новый `docs/io-fs.md` (модель + 7-язык.
+> перед `.method()`), уже był конвенцией в `error_test.nv`. **Ф.5:** новый `docs/guide/io-fs.md` (модель + 7-язык.
 > таблица §2 + differentiators §1a + `write_atomic` Swift/Zig антипример); `spec/open-questions.md` Q9 частично
 > закрыт (Time/Net/Fs/Os/Io/Http строки → D-ссылки, включая ранее не отмеченную Time-строку 175 Ф.6);
 > Q-stdlib-minimal-api `from_bytes`-форма уже была обновлена Ф.0.5 (verified, не regression). Гейты:
@@ -269,7 +269,7 @@ fn IoError @to_str() -> str
   DEP: **Ф.2, Ф.3** (rationale: byte-baseline-guarded миграции идут ПОСЛЕ основной работы — NetError-фикстуры
   не гоняются параллельно fs-коммитам); для (b) дополнительно byte-surface 178 Ф.0.5 — если 178 ещё не приземлил,
   (b) откладывается под `[M-176-tcp-io-conformance]` (conditional-маркер), НЕ блокируя Ф.5.
-- **Ф.5 — тесты + spec/docs + Q-sweep.** §7 pos+neg+rt+spec_tests; D322-324 финал; новый `docs/io-fs.md` (модель +
+- **Ф.5 — тесты + spec/docs + Q-sweep.** §7 pos+neg+rt+spec_tests; D322-324 финал; новый `docs/guide/io-fs.md` (модель +
   7-языковая таблица §2 + §1a + write_atomic-антипример Swift/Zig); **Q-sweep** (§5). DEP: all.
 
 **DEFERRABLE → под-план 176.1:** process (`Command`/`Child`/`Output`/`ExitStatus`/`Stdio`, `uv_spawn`, pipe-drain,
@@ -297,7 +297,7 @@ sendfile-специализация; `fs.copy` уже получает copy_file
   (Ф.4) → `d302_neterror_iokind.nv`. Все `module spec_tests.conformance`, локалы с префиксами d322_/d323_/d324_;
   прогон `nova test spec_tests`.
 - error-index: `IoError`/`ErrorKind`-варианты + E-коды must-consume (уже D133-семейство); ENAMETOOLONG→Other-нота.
-- `docs/io-fs.md` — новый guide (7-языковая таблица). **Q-sweep (Ред. 2, конкретизирован):** (1) open-questions
+- `docs/guide/io-fs.md` — новый guide (7-языковая таблица). **Q-sweep (Ред. 2, конкретизирован):** (1) open-questions
   **Q9** («стандартные эффекты не определены») — добавить/закрыть строки **Fs/Os/Io = D322-D324** (симметрично 175
   Ф.6 Time-строке); (2) **Q-stdlib-minimal-api:5551** — устаревшая форма `str.from_bytes Fail[Utf8Error]` → обновить
   на D325-канон `-> Result` тем же коммитом Ф.0.5. *(Q1-Q14 живут в этом плане — в open-questions их нет.)*
@@ -369,7 +369,7 @@ baseline §10); пересобрать `nova-cli` после `.nv` (`include_str
 7. **Гейт корректности:** spec_tests/conformance зелёный (d322/d323/d324 + amended d258/d302) + **nova_tests
    baseline-delta = 0** (baseline = parent-коммит, тот же бинарь, temp-worktree/commit+reset — §10); батчи <10мин
    с `--results-file`/`--rerun-failed`; big-tests = `_slow.nv` вне дефолт-прогона.
-8. spec: D322/323/324 + амендменты §5 + **spec_tests-файлы**; `docs/io-fs.md` (7-языковая таблица, антипример
+8. spec: D322/323/324 + амендменты §5 + **spec_tests-файлы**; `docs/guide/io-fs.md` (7-языковая таблица, антипример
    Swift/Zig atomic); §1a differentiators; Q-sweep выполнен; followup-маркеры зарегистрированы в OPEN-view;
    Plan 80 помечен superseded-by-D133 + статус-нота D133 амендирована (Ф.0g).
 

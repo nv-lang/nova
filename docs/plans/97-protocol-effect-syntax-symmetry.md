@@ -160,7 +160,7 @@ fn Lock.new() -> (Locker, Unlocker) {
     stale (запрет снят 2026-05-20 D122 amended).
   - Doc-comment `fn Celsius @from(...)` — противоречит D35.
 - **Записано как отложенное:**
-  - `docs/simplifications.md:3375` — Plan 15 trade-off
+  - `docs/dev/simplifications.md:3375` — Plan 15 trade-off
     (`[P-15-anon-protocol-bound]`).
   - `docs/plans/15-generic-bounds-enforcement.md:185-189` — explicit.
   - `spec/decisions/06-concurrency.md:2289-2290` — D79 cross-ref.
@@ -390,7 +390,7 @@ symmetry + Q-static-method-protocol закрыты со ссылками.
   mark closed, link → D143.
 - **Ф.6.3** `docs/plans/README.md` — Plan 97 → ЗАКРЫТ (с обновлённым
   заголовком).
-- **Ф.6.4** `docs/simplifications.md`:
+- **Ф.6.4** `docs/dev/simplifications.md`:
   - Снять `[P-15-anon-protocol-bound]`.
   - Если что-то отложили (`@method` явный instance) — маркер.
 - **Ф.6.5** `docs/plans/15-generic-bounds-enforcement.md` — обновить

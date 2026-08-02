@@ -394,4 +394,4 @@ signature`** для structural Iter[T] check. Возможно через сущ
 - `std/collections/hashmap.nv:218-265` — пример Iter[T] реализаций.
 - `std/collections/range.nv:80-180` — пример Iter[T] для Range вариаций.
 - `std/testing/property.nv` — Generator[T].@shrink использует Iter[T].
-- `docs/simplifications.md:51-54` — закрытие Array fast-path (раунд 1).
+- `docs/dev/simplifications.md:51-54` — закрытие Array fast-path (раунд 1).

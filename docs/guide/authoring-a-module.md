@@ -10,9 +10,9 @@
 > контекст (что было и почему убрано).
 >
 > Смежные документы (не дублируются здесь, а до-читываются по ссылке):
-> [module-conventions](../module-conventions.md) (дизайн модуля: эффект-плумбинг,
-> value/must-consume-типы, домен ошибок), [nv-coding-style](../nv-coding-style.md)
-> (стиль `.nv`-кода), [ffi-cookbook](../ffi-cookbook.md) (механика FFI:
+> [module-conventions](../dev/module-conventions.md) (дизайн модуля: эффект-плумбинг,
+> value/must-consume-типы, домен ошибок), [nv-coding-style](../dev/nv-coding-style.md)
+> (стиль `.nv`-кода), [ffi-cookbook](ffi-cookbook.md) (механика FFI:
 > `extern "C"`, указатели, `CStr`, `[ffi]`), [spec D78](../../spec/decisions/07-modules.md#d78-package-tooling-novatoml-novalock-registry-chain-workspace)
 > (нормативные правила `nova.toml` / module-path).
 
@@ -108,7 +108,7 @@ export fn hello(name str) -> str => "Привет, ${name}!"
 Тесты живут **рядом** с модулем — в файлах `*_test.nv` (исключаются из
 release-графа) либо `test "…" { }`-блоками внутри самого модуля. Не складывать
 тесты в отдельное дерево. Классификация pos/neg — по `EXPECT_*`-маркеру, не по
-папке ([test-conventions](../test-conventions.md)).
+папке ([test-conventions](../dev/test-conventions.md)).
 
 ```nova
 module greet
@@ -124,7 +124,7 @@ test "hello вставляет имя" {
 ## 6. Дизайн модуля (кратко; полное — module-conventions)
 
 Для I/O-, OS- и ресурсных подсистем канон Nova — **эффект-плумбинг + фасад на
-типах** ([module-conventions](../module-conventions.md)):
+типах** ([module-conventions](../dev/module-conventions.md)):
 
 - **Эффект** — внутренняя dispatch-точка (`type Fs effect { … }`); юзер его не
   зовёт напрямую → мокабельность (`with Fs = mem_fs() { … }`).
@@ -141,7 +141,7 @@ test "hello вставляет имя" {
 
 Модуль может стоять поверх C-библиотеки или Rust-крейта. Тонкий слой FFI
 (`extern "C" fn`, типы-хендлы, `CStr`, указатели, ABI) — целиком в
-[ffi-cookbook](../ffi-cookbook.md); здесь — только **как подключить артефакты
+[ffi-cookbook](ffi-cookbook.md); здесь — только **как подключить артефакты
 к сборке**, чтобы `import` модуля тянул их автоматически.
 
 Native-зависимость декларируется в `nova.toml` через единственную секцию:
@@ -176,7 +176,7 @@ mbedTLS ставится ЗАРАНЕЕ через `vcpkg install` (готова
 
 > **Эталон паттерна** (2026-07 актуальный) — `std/tls` в монорепо
 > (`nova_rt/tls_c_shim.c` + vcpkg mbedTLS, БЕЗ `[ffi.staticlib]`, БЕЗ
-> манифест-декларации вообще). Полная механика — [ffi-cookbook §retracted](../ffi-cookbook.md#ffistaticlib--retracted-plan-195).
+> манифест-декларации вообще). Полная механика — [ffi-cookbook §retracted](ffi-cookbook.md#ffistaticlib--retracted-plan-195).
 
 ## 8. Именование и публикация (внешний пакет)
 

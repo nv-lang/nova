@@ -580,7 +580,7 @@ source of truth.
 - [x] DRAFT удалён (2026-05-10), spec/decisions/03-syntax.md +
   04-effects.md — единственные source of truth.
 - [x] Запись в [docs/project-creation.txt](../project-creation.txt) и
-  [docs/simplifications.md](../simplifications.md) (2026-05-10).
+  [docs/dev/simplifications.md](../dev/simplifications.md) (2026-05-10).
 - [x] discussion-log в nova-lang-private обновлён (2026-05-10).
 
 ---

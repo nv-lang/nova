@@ -373,7 +373,7 @@ Vec[T] @[](i int) -> T     // panic on OOB (как Rust [])
 ### Ф.6 — Logs + final close (½ дня)
 
 - Обновить `docs/project-creation.txt`
-- Обновить `docs/simplifications.md`
+- Обновить `docs/dev/simplifications.md`
 - Обновить `d:/Sources/nv-lang/nova-private/discussion-log.md`
 - Обновить `docs/plans/README.md` — запись о Plan 131
 - Зафиксировать статус в этом файле (`### Status`)

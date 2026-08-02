@@ -101,7 +101,7 @@ fully synchronized with the driving thread's `nova_runtime_reset()`/next-test
 start) or a path not covered by this read-through. Needs either a debugger
 session or bracketed instrumentation on `_worker_run_one_fiber`'s own
 TLS save/restore plus the worker pool's idle/reuse path — see
-`docs/debugging-races.md` for the state-dump method used previously for this
+`docs/dev/debugging-races.md` for the state-dump method used previously for this
 class (`reference-mn-race-case-study` precedent).
 
 ## What's NOT the cause (ruled out empirically this session)

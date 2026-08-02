@@ -108,7 +108,7 @@
       (штатная поверхность). **SmokeTest PASSED: hello.exe собран+выполнен из изолированной
       папки вне монорепы** (sha256 b76550ac…065f; 4 реальных бага упаковки найдены и починены —
       wip/221-version-notes.md).
-- [x] **A-V3 ✅ 2026-07-21** docs/linux-build.md актуализирован (haiku + поправка интегратора:
+- [x] **A-V3 ✅ 2026-07-21** docs/guide/linux-build.md актуализирован (haiku + поправка интегратора:
       рецепт=CI, закрытые known-issues в историю, секция nova-lsp).
 - [x] **A-V4 ✅ 2026-07-21** THIRD_PARTY сверка (haiku): README.md + minicoro-LICENSE добавлены.
 - [x] **A-D1 ✅ 2026-07-21** docker/release/Dockerfile (two-stage, рецепт=CI) + README —
@@ -213,23 +213,23 @@
 
 ## Ф.3 — Документация внешнего пользователя (всё ▶СЕЙЧАС)
 
-- [x] **A-Q1 ✅ 2026-07-21** `docs/quickstart.md`: установка (Windows zip + setup-env.ps1;
-      Linux — ссылка на docs/linux-build.md) → hello world (реально собран+прогнан standalone-
+- [x] **A-Q1 ✅ 2026-07-21** `docs/guide/quickstart.md`: установка (Windows zip + setup-env.ps1;
+      Linux — ссылка на docs/guide/linux-build.md) → hello world (реально собран+прогнан standalone-
       проектом) → mini_aggregator.nv (эффекты Time + spawn/parallel for/supervised(deadline:),
       реально собран+прогнан) → ссылки (spec/overview.md, flagship/aggregator, spec/decisions/).
       Все команды прогнаны живым nova.exe из main-репы (read-only).
 - [x] **A-Q2 ✅ 2026-07-21** README.md — добавлен абзац-суть (compiles-to-C/эффекты-в-типах/
       consume+Boehm GC/M:N fiber-scheduler/батарейки std+net+tls+http+compress) сразу после
       тэглайна; секция Status переписана под v0.1.0 (компилятор+CLI+LSP+VSCode, что готово/что
-      на roadmap); новая секция Installation (ссылка на docs/quickstart.md) перед Building from
+      на roadmap); новая секция Installation (ссылка на docs/guide/quickstart.md) перед Building from
       source; quickstart-ссылка в шапке. Существующий контент (Show me the code/Memory/What's
       removed/License) сохранён без изменений.
-- [x] **A-Q3 ✅ 2026-07-21** docs/language-tour.md — 12 секций, 12/12 примеров прогнаны
+- [x] **A-Q3 ✅ 2026-07-21** docs/guide/language-tour.md — 12 секций, 12/12 примеров прогнаны
       (examples/tour/, strict-effects чист). Находки тура: println-Debug-record мусор
       (фикс-волна в полёте) + str.parse_int в идиомах-доке аспирационный (поправить в A-Q4).
 - [ ] **A-W1 ▶СЕЙЧАС** Страница релиза на сайте: версия/скачать/quickstart-ссылка `[репа www/site]`
       (sonnet — ПОЛНОСТЬЮ независимая репа). — ЗАПУЩЕН
-- [x] **A-Q4 draft ✅ 2026-07-21** docs/release-notes-v0.1.0.md — влит (highlights/distribution/
+- [x] **A-Q4 draft ✅ 2026-07-21** docs/dev/release-notes-v0.1.0.md — влит (highlights/distribution/
       known limitations честно, по источникам). Финал-ревизия ⛓Ф.0 (снять «tracked separately»
       у vsix — уже готов; актуализировать limitations по закрытым находкам).
 

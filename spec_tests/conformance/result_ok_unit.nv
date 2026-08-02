@@ -18,7 +18,7 @@
 // типизировался как `Option[E]`. Фикс — `()` ПРЕДСТАВИМ (`TypeRef::Unit`),
 // round-trip'им вместо дропа: `R::Unit => TypeRef::Unit(span)`.
 //
-// Пиннинг (docs/test-conventions.md «Пиннинг-тест для silent-wrong-value
+// Пиннинг (docs/dev/test-conventions.md «Пиннинг-тест для silent-wrong-value
 // багов»): assert проверяет КОНКРЕТНОЕ значение в точке бага (не только
 // round-trip) — под старым (баговым) кодом эти тесты падали бы CC-FAIL, не
 // просто неверным значением, но норма та же: явная проверка, не декорация.

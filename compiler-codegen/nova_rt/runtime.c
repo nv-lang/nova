@@ -2,7 +2,7 @@
 /* Plan 44 (M:N Этап 0, 2026-05-13) — multi-thread runtime impl.
  *
  * Vela — M:N-движок конкурентности Nova; этот файл — планировщик (worker-
- * потоки, per-worker libuv-loop). Бренд-имя рантайма — docs/naming-conventions.md
+ * потоки, per-worker libuv-loop). Бренд-имя рантайма — docs/dev/naming-conventions.md
  * §1.2, план 224 (идентификаторы/ABI не переименованы).
  *
  * Minimal proof of concept:
@@ -656,7 +656,7 @@ static __thread int _current_worker_id = -1;
 
 /* ── [M-mn-spawnctx-corruption-cancel-wake] R1-трипваер (2026-07-19) ──
  *
- * Плейбук docs/debugging-races.md + 173.0 §2 «Риск R1 (HIGHEST) — pool-recycle
+ * Плейбук docs/dev/debugging-races.md + 173.0 §2 «Риск R1 (HIGHEST) — pool-recycle
  * aliasing SpawnCtx»: poison + магик-канарейка + карантин GC-free-пути.
  * Opt-in через env NOVA_SPAWN_POOL_DIAG=1 — по умолчанию ВЫКЛ, ноль оверхеда
  * (один кешированный int-бранч). Диагностика, не Heisen-тест: все проверки —

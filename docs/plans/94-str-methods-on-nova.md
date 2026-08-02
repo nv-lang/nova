@@ -190,7 +190,7 @@ hand-written = алгоритмы).
   (single-source — зеркал нет).
 - spec: аменд D26/D141 — str-алгоритмы на Nova, перечень оставшихся
   C-примитивов.
-- `docs/plans/README.md`, `docs/simplifications.md` (если остались
+- `docs/plans/README.md`, `docs/dev/simplifications.md` (если остались
   perf-маркеры — напр. byte-at-a-time там, где Ф.0.2 решил не
   добавлять примитив), `docs/project-creation.txt`,
   `nova-private/discussion-log.md`.

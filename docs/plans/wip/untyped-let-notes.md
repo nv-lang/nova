@@ -91,5 +91,5 @@ Worktree: `d:/Sources/nv-lang/nova-untypedlet`, ветка `p-fix-untyped-let-ch
   module-renamed копию (spec_tests/conformance — ОДИН CU, любой файл внутри
   тянет весь каталог; приём уже задокументирован в M-208-generic-interp-
   display-dispatch-gap записи simplifications.md) — PASS 1/0.
-- Маркер закрыт: `docs/plans/backlog-followups.md` + `docs/simplifications.md`.
+- Маркер закрыт: `docs/plans/backlog-followups.md` + `docs/dev/simplifications.md`.
 - Коммиты: `7f397016f` (фикс + чекпоинт), `d13c24e0a` (пин-фикстура + docs).

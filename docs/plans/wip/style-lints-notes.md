@@ -145,7 +145,7 @@ W_NON_COMPOUND_ASSIGN,W_WHILE_COUNTER_FOR_RANGE std spec_tests examples`,
    тесты) — зелёные как до.
 8. Build флагмана (`examples/flagship/aggregator`) `--strict-effects` —
    зелёный.
-9. Доки: docs/nv-coding-style.md — новая §29 (компаунд-присваивание,
+9. Доки: docs/dev/nv-coding-style.md — новая §29 (компаунд-присваивание,
    рядом с §26-28 форматом) + трейлер «Проверка (185): W_WHILE_COUNTER_FOR_
    RANGE» в СУЩЕСТВУЮЩЕЙ §10 (уже описывает этот канон словами владельца,
    линт — машинная проверка того же). docs/plans/185-nova-lint.md — новая

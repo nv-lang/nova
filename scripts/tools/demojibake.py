@@ -35,7 +35,7 @@ SAFETY
     - It NEVER writes a result that contains U+FFFD or residual markers.
     - Pre-existing U+FFFD ("�") in a file means the original bytes are LOST
       and CANNOT be recovered by this tool (see docs/project-creation.txt,
-      docs/simplifications.md) - those need manual rewrite or git history.
+      docs/dev/simplifications.md) - those need manual rewrite or git history.
 
 USAGE
     # dry-run: report status per file (clean / would-fix / nochange / FAILED)

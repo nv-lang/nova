@@ -101,7 +101,7 @@ git config --unset core.hooksPath
 nova-cli/Cargo.toml`); без бинаря он не блокирует коммит (просто
 предупреждает). Обход для одного коммита: `git commit --no-verify`.
 Легальное исключение конкретной находки — маркер `[M-...]` на строке (см.
-[docs/compiler-conventions.md](docs/compiler-conventions.md) §4), а не
+[docs/dev/compiler-conventions.md](docs/dev/compiler-conventions.md) §4), а не
 `--no-verify` систематически.
 
 ## Soundness-regression-suite (Plan 33.8 Ф.7)

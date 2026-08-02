@@ -123,7 +123,7 @@
   (потенциально не совпадающему с фактическими байтами) style-тегу.
 - **Спека:** D323-амендмент дописан в конец секции D323 (`spec/decisions/04-effects.md`,
   перед D324) — протокол `ReadFs`, `DirFs`, extension-conformance `EmbeddedDir`, dev/prod-
-  выбор веткой на инстанциации. `docs/io-fs.md` — абзац «`ReadFs` — one VFS protocol over
+  выбор веткой на инстанциации. `docs/guide/io-fs.md` — абзац «`ReadFs` — one VFS protocol over
   the disk and an embedded directory» в разделе Protocols vs the text sink. Одна строка
   «См. также» в D412-амендменте (`spec/decisions/03-syntax.md`), ссылающаяся на D323-
   амендмент.

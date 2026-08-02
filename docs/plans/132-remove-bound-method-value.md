@@ -119,7 +119,7 @@ Unbound `Type.@method` не создаёт аналогичных проблем
   «`@name` без `()` в теле метода = всегда поле; `@name()` = вызов метода».
 - **Ф.4.4** Добавить в spec: field и метод с одним именем — легально.
   Пример с Vec-like паттерном.
-- **Ф.4.5** `docs/simplifications.md` + project-creation.txt + nova-private discussion-log.
+- **Ф.4.5** `docs/dev/simplifications.md` + project-creation.txt + nova-private discussion-log.
 
 **Commit:** `docs(plan132 Ф.4): spec — remove bound method value, document @name=field rule`
 
@@ -270,7 +270,7 @@ Plan 132 закрыт полностью (2026-06-09).
 - **Ф.1:** E_BOUND_METHOD_REMOVED добавлен в parser/checker. `Type.@method` (unbound) оставлен. Коллизия field/method снята на уровне checker.
 - **Ф.2:** Миграция: spec, nova_tests/syntax/method_values.nv, examples/ffi/sqlite_mini.nv — перемигрированы на лямбды/прямые вызовы.
 - **Ф.3:** POS fixtures: `pos_field_method_same_name.nv` + `pos_at_name_disambiguation.nv` — оба PASS.
-- **Ф.4:** Spec обновлён: D35 «Bound vs unbound» переписан, C-runtime раздел исправлен, D117 диагностика скорректирована. docs/simplifications.md, docs/project-creation.txt, nova-private/discussion-log.md, этот файл.
+- **Ф.4:** Spec обновлён: D35 «Bound vs unbound» переписан, C-runtime раздел исправлен, D117 диагностика скорректирована. docs/dev/simplifications.md, docs/project-creation.txt, nova-private/discussion-log.md, этот файл.
 
 Acceptance criteria:
 - A-132.a ✅ `obj.@method` (без args) → E_BOUND_METHOD_REMOVED

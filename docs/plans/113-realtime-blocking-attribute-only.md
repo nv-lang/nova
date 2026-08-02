@@ -148,7 +148,7 @@ fn read_file_sync(path str) Fail[IoError] -> []u8 =>
 - **Ф.5.2** Cross-platform CI: Windows + Linux × clang + MSVC.
 - **Ф.5.3** Spec finalize: D172 amend + D64 retract.
 - **Ф.5.4** `docs/project-creation.txt` — sprint section.
-- **Ф.5.5** `docs/simplifications.md` — close pre-existing block-form notes если есть.
+- **Ф.5.5** `docs/dev/simplifications.md` — close pre-existing block-form notes если есть.
 - **Ф.5.6** Memory `project-plan113-status.md`.
 - **Ф.5.7** Final merge в main.
 

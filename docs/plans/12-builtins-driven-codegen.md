@@ -490,7 +490,7 @@ test "StringBuilder unknown method" {
 
 1. `docs/project-creation.txt` — описать что builtins.nv теперь
    driver, hard-coded таблицы удалены.
-2. `docs/simplifications.md` — записать как simplification (1 source
+2. `docs/dev/simplifications.md` — записать как simplification (1 source
    вместо 2).
 3. `nova-lang-private/discussion-log.md` — резюме эволюции D82 →
    Plan 12.

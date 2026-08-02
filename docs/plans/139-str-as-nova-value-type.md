@@ -76,7 +76,7 @@ conv/fibers). Переписать всё — неподъёмно. **Решен
 
 ## Production mandate (NO simplifications)
 
-Every phase below is **production-grade**: full implementation, no stubs, no "MVP-then-fix-later". Anything that genuinely cannot land in a phase is **explicitly extracted** to a numbered followup in `docs/plans/backlog-followups.md` + `docs/simplifications.md` `[M-139-*]` marker вЂ” never silently dropped. Each phase = **one coherent change = one (or, for multi-task phases, several) commit(s)**. After EACH big task: update `docs/project-creation.txt` (sprint section), `docs/simplifications.md` ([M-139-*] open/close), `docs/plans/backlog-followups.md`, and `d:/Sources/nv-lang/nova-private/discussion-log.md` (separate repo вЂ” `cd` prefix for its git ops), then commit. Multiple tasks in a phase в†’ multiple commits. `git add` only specific files (parallel agents share repo); `git diff --cached --stat` before every commit. No `Co-Authored-By` trailer. Tests via RELEASE binary: `cargo build --release -p nova-cli` then `target/release/nova test` (NOT debug, NOT `cargo test`). Pos + neg fixtures mandatory per phase (`tN_*.nv` positive, `neg_tN_*.nv` negative). Per-fix targeted `--filter`; full `nova test` only at phase close.
+Every phase below is **production-grade**: full implementation, no stubs, no "MVP-then-fix-later". Anything that genuinely cannot land in a phase is **explicitly extracted** to a numbered followup in `docs/plans/backlog-followups.md` + `docs/dev/simplifications.md` `[M-139-*]` marker вЂ” never silently dropped. Each phase = **one coherent change = one (or, for multi-task phases, several) commit(s)**. After EACH big task: update `docs/project-creation.txt` (sprint section), `docs/dev/simplifications.md` ([M-139-*] open/close), `docs/plans/backlog-followups.md`, and `d:/Sources/nv-lang/nova-private/discussion-log.md` (separate repo вЂ” `cd` prefix for its git ops), then commit. Multiple tasks in a phase в†’ multiple commits. `git add` only specific files (parallel agents share repo); `git diff --cached --stat` before every commit. No `Co-Authored-By` trailer. Tests via RELEASE binary: `cargo build --release -p nova-cli` then `target/release/nova test` (NOT debug, NOT `cargo test`). Pos + neg fixtures mandatory per phase (`tN_*.nv` positive, `neg_tN_*.nv` negative). Per-fix targeted `--filter`; full `nova test` only at phase close.
 
 > **Coordination guard (live):** workflow 141 is concurrently editing `emit_c.rs` + rebuilding. Do NOT touch `emit_c.rs`/runtime C/`std/*.nv`/build until 141 lands and the tree is GREEN. This plan's Р¤.0 begins only after a confirmed clean baseline. Record the baseline FAIL count before starting.
 
@@ -274,7 +274,7 @@ Every phase below is **production-grade**: full implementation, no stubs, no "MV
 **STATUS: ✅ CLOSED.** Все 8 фаз приземлены на ветке `plan-138.1`. Достижимый
 scope реализован production-grade; всё, что не приземлилось по объективному
 блокеру (отсутствие lang-item checker-инфры), честно вынесено в `[M-139-*]`
-followups (`docs/plans/backlog-followups.md` + `docs/simplifications.md`),
+followups (`docs/plans/backlog-followups.md` + `docs/dev/simplifications.md`),
 никогда не silently dropped.
 
 ### Фазовый исход

@@ -302,7 +302,7 @@ cd ..
 ```
 ```
 
-#### Ф.4.2 — `docs/test-conventions.md`
+#### Ф.4.2 — `docs/dev/test-conventions.md`
 
 Уточнить что test-runner — теперь `nova-codegen test-all`, обёрнутый в `.ps1`/`.sh`. EXPECT-маркеры парсятся в Rust (не PowerShell regex).
 

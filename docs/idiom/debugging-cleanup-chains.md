@@ -143,4 +143,4 @@ Reports:
 - [D185 Cleanup effect](../../spec/decisions/04-effects.md#d185).
 - [Plan 110.4.1 MultiError API](../plans/110.4-multierror-cleanup-app-effects.md).
 - [Plan 100.8 nova consume-analyze](../plans/100.8-performance-ide-tooling.md).
-- [cleanup-cookbook.md §6 Debugging](../cleanup-cookbook.md).
+- [cleanup-cookbook.md §6 Debugging](../guide/cleanup-cookbook.md).

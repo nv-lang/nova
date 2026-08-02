@@ -61,7 +61,7 @@ nova.toml`'s `http = { path = "../../nova-http" }` — НЕ git-зависимо
 `nova-http` рядом с `nova` (шаг `Checkout nova-http sibling` в воркфлоу),
 иначе весь flagship-job падает на резолве манифеста `examples` (пакет один,
 резолвится целиком даже для `echo_server.nv`, который `http` не импортирует).
-`nova test std` (5 pre-existing Linux-red — `docs/linux-build.md` §«Known
+`nova test std` (5 pre-existing Linux-red — `docs/guide/linux-build.md` §«Known
 gap») сознательно НЕ в этом гейте (std-специфично, conformance/флагмана не
 касается).
 
@@ -72,7 +72,7 @@ gap») сознательно НЕ в этом гейте (std-специфич�
 [![nova-gate](https://github.com/nv-lang/nova/actions/workflows/nova-gate.yml/badge.svg)](https://github.com/nv-lang/nova/actions/workflows/nova-gate.yml)
 ```
 
-### Тир-гейты (черновик — переносится в `docs/test-conventions.md` при включении)
+### Тир-гейты (черновик — переносится в `docs/dev/test-conventions.md` при включении)
 
 Авторитетность гейта зависит от того, ЧТО меняет слияние — три тира:
 

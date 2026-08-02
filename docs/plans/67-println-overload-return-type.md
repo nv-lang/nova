@@ -287,7 +287,7 @@ pre-existing/unrelated → honest-defer; workaround audit clean.
 
 - [⚠️] Cross-toolchain Clang / MSVC / GCC: defer — Plan 58 `.github/workflows/cross-toolchain.yml` infrastructure отсутствует → [M-plan67-cross-toolchain-deferred]. Локально Windows/Clang full PASS.
 - [x] CI workflow `contracts-z3.yml` PASS на `06_contracts.nv` — verified `nova build` + binary run.
-- [x] `docs/simplifications.md` updated с 3 RESOLVED + 4 DEFER markers:
+- [x] `docs/dev/simplifications.md` updated с 3 RESOLVED + 4 DEFER markers:
    - `[M-println-overload-static-method]` ✅ RESOLVED
    - `[M-println-char-as-int]` ✅ RESOLVED
    - `[M-infer-print-helper-duplication]` ✅ RESOLVED

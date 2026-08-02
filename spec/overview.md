@@ -49,7 +49,7 @@
    **не реализуется**: `nova run file.nv` (tree-walking интерпретатор)
    ретрактирован — команда осталась в CLI только как заглушка,
    которая явно сообщает об этом и направляет на `nova build`/`nova
-   test` (см. [`docs/promts/read-project.md`](../docs/promts/read-project.md)).
+   test` (см. [`docs/dev/promts/read-project.md`](../docs/dev/promts/read-project.md)).
    Тестируется и шипится код тоже только через C-codegen — нет
    отдельного «интерпретируемого» пути с другой семантикой.
 2. **Память: managed по умолчанию (current: Boehm conservative GC; v1.0+:
@@ -103,7 +103,7 @@
    обеспечивается (опровергнуто измерением 2026-07-31, реестр №173) —
    mut-захваты в таком обработчике проверяются энфорсом D441 как у любого
    другого, исключения нет. Naming-конвенции для этого слоя —
-   [`docs/mn-coding-conventions.md`](../docs/mn-coding-conventions.md).
+   [`docs/dev/mn-coding-conventions.md`](../docs/dev/mn-coding-conventions.md).
    **Модель памяти между файберами** ([D415](decisions/06-concurrency.md#d415-data-race-freedom--share-атрибут-capture-check-consume-в-spawn-plan-1733),
    [D441](decisions/06-concurrency.md#d441), 2026-07-31): `mut`-захват — линейный ресурс одного файбера, пересекать
    границу (`spawn`/`detach`/`parallel for`/канал/`with`-обработчик вокруг
@@ -164,7 +164,7 @@
   без него) — Plan 219
 - **LSP** (`nova-lsp/`) — completion/hover/diagnostics/goto/rename,
   выполнен целиком (Plan 104.10, «V2 production», ЗАКРЫТ 2026-07-04);
-  конвенции разработки — [`docs/lsp-conventions.md`](../docs/lsp-conventions.md)
+  конвенции разработки — [`docs/dev/lsp-conventions.md`](../docs/dev/lsp-conventions.md)
 - `nova run file.nv` — **НЕ поддерживается**: команда осталась в CLI
   только как понятная ошибка («используйте `nova build`/`nova test`»),
   сам интерпретатор (treewalk) не обслуживается

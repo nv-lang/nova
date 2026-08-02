@@ -16,7 +16,7 @@
 // This fixture pins the CORRECT interpolation behavior (the derive/dispatch
 // logic itself) under the `nova test` pipeline — it cannot exercise
 // `cmd_build`'s own wiring (spec_tests/conformance always runs via `nova
-// test`, never `nova build` — see docs/promts/read-project.md's gate
+// test`, never `nova build` — see docs/dev/promts/read-project.md's gate
 // command). The `cmd_build`-specific wiring gap is covered separately by
 // building `examples/basics/debug_derive_println.nv` with plain `nova build`
 // + running the binary (see that file + backlog-followups.md entry for this

@@ -7,7 +7,7 @@
 // `mut_clock` (core.nv) — STATEFUL handler (мутирует захваченный
 // `current_ms`, Plan 175 auto-idle-advance добавляет non-atomic
 // per-scope registry, nova_rt/fibers.h `NovaVClockEntry`) — под
-// конкурентным M:N (>1 worker-поток) это гонка данных (docs/time.md
+// конкурентным M:N (>1 worker-поток) это гонка данных (docs/guide/time.md
 // "M:N-контракт"). `NOVA_MAXPROCS=1` форсирует single-thread для ВСЕГО
 // файла — тесты этого модуля намеренно однопоточны относительно
 // mut_clock (нет реальной M:N-нагрузки поверх одного handler'а).
@@ -242,7 +242,7 @@ test "seeded + mut_clock композируются" {
 
 // ── mut_clock: auto-idle-advance (Plan 175, owner TODO closure, 2026-07-10) ──
 // tokio `time::pause()` / Kotlin `TestCoroutineScheduler.advanceUntilIdle()`
-// parity — см. docs/time.md "Мокабельность" + nova_vclock_park_until
+// parity — см. docs/guide/time.md "Мокабельность" + nova_vclock_park_until
 // (nova_rt/fibers.h). Единственный явный `Time.sleep`/`sleep()`-вызов больше
 // не требуется на КАЖДЫЙ шаг — конкурентные виртуальные сны сами будятся в
 // порядке дедлайна, когда весь scope идёт idle.

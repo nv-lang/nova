@@ -1,6 +1,6 @@
 // Plan 221.1 №144 (D79/D91-амендмент): `send`/`try_send` теперь consume-
 // параметр — намеренное разделение остаётся возможным через явный
-// `ChanWriter.share()` (D91, docs/channels.md §"share — multi-writer"),
+// `ChanWriter.share()` (D91, docs/guide/channels.md §"share — multi-writer"),
 // НЕ через повторное использование уже отправленного значения. Каждый
 // writer шлёт СВОИ (свежие) значения — сама отправка по-прежнему move,
 // расщепление происходит на уровне канала (доп. writer-handle), не значения.

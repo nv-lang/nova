@@ -275,7 +275,7 @@ typedef struct {
  * Deliberately NOT reusing `nova_sched_park`/`nova_sched_wake` (the real-
  * timer/driver-facing primitive, with its own atomics and hard-won race
  * fixes documented all over this file) — virtual-clock coordination is
- * single-threaded BY CONTRACT (docs/time.md "M:N-контракт": mut_clock
+ * single-threaded BY CONTRACT (docs/guide/time.md "M:N-контракт": mut_clock
  * already needs `NOVA_MAXPROCS=1`, which is `nova test`'s default —
  * runq.h:67 "ALL of them land on a single [worker thread]"). A separate,
  * deliberately-simple, non-atomic registry avoids any risk to the real
@@ -609,7 +609,7 @@ typedef struct NovaFiberQueue {
      * big comment block above `NovaVClockEntry` (near `nova_scope_init`)
      * for the full design. Lazy-alloc'd (NULL until the first virtual
      * sleep in this scope); deliberately NOT atomic/thread-safe — virtual-
-     * clock coordination is single-threaded BY CONTRACT (docs/time.md
+     * clock coordination is single-threaded BY CONTRACT (docs/guide/time.md
      * "M:N-контракт": mut_clock already requires NOVA_MAXPROCS=1, which is
      * `nova test`'s default, runq.h:67). A scope that never uses a mock
      * `Time` handler never touches these fields (zero overhead). */

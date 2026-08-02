@@ -116,6 +116,6 @@ nova check std/ 2>&1 | grep "E_PARAM_NOT_MUT" | awk -F: '{print $1}' | sort -u
 ## Ссылки
 
 - `spec/decisions/02-types.md` D176 (amended Plan 108.1).
-- `docs/parameters.md` — user guide.
+- `docs/guide/parameters.md` — user guide.
 - `docs/plans/108.1-params-readonly-default.md` — plan status.
 - Plan 108 — initial D175 + D176 (Plan 108.1 amends).

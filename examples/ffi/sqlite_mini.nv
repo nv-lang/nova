@@ -5,7 +5,7 @@
 // + typed handle wrap + error mapping.
 //
 // Pattern:
-//   1. extern "nova" fn declarations match C shim (см. docs/ffi-cookbook.md).
+//   1. extern "nova" fn declarations match C shim (см. docs/guide/ffi-cookbook.md).
 //   2. Wrap raw *() returns в typed record handles.
 //   3. Multi-value return через tuple-by-value ABI.
 //   4. consume close() для resource ownership.

@@ -140,7 +140,7 @@ an *owning* copy is `clone()`/`to_vec()`. The lazy slice-view iterators
 `chunks`/`chunks_exact`/`rchunks`/`windows` live in the explicitly-imported lazy
 module (`import std.collections.vec_lazy`) — they yield `[]T` views one at a time
 with **no outer `Vec` allocation** (Rust `slice::chunks`/`windows`). See
-[`vec-internals.md` → Slices & views](../vec-internals.md#slices--views-plan-1534--d262).
+[`vec-internals.md` → Slices & views](../dev/vec-internals.md#slices--views-plan-1534--d262).
 
 | Method | Signature | Description |
 |--------|-----------|-------------|

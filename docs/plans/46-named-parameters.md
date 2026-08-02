@@ -148,7 +148,7 @@ default-выражений для опущенных параметров (left-
 ### Ф.5 — Spec sync + docs
 
 - D102 — уже в `03-syntax.md` (готово).
-- Обновить `docs/project-creation.txt` и `docs/simplifications.md`
+- Обновить `docs/project-creation.txt` и `docs/dev/simplifications.md`
   (любые bootstrap-ограничения реализации фиксировать как `[M*]`).
 - Запись в discussion-log private-репы.
 

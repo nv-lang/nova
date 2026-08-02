@@ -5,7 +5,7 @@
 // `mut_clock` (ниже) — STATEFUL handler (мутирует захваченный
 // `current_ms`, auto-idle-advance добавляет non-atomic per-scope registry,
 // nova_rt/fibers.h `NovaVClockEntry`) — под конкурентным M:N (>1
-// worker-поток) это гонка данных (docs/time.md "M:N-контракт").
+// worker-поток) это гонка данных (docs/guide/time.md "M:N-контракт").
 // `// ENV NOVA_MAXPROCS=1` (peer `core_test.nv` — folder-module split,
 // директива обязана жить в файле, который реально запускает `nova test`)
 // форсирует single-thread для ВСЕХ тестов модуля — они намеренно

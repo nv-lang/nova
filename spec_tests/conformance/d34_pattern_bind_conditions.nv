@@ -72,7 +72,7 @@ test "if Some(u) = cache.get(k) — связывает и использует u
 // lookup — новая переменная того же имени (не мутация, не `:=`-сахар).
 // NB: rebind САМОГО pattern-bound имени внутри ветки (`if Some(u)={ ro u=... }`)
 // — вне scope: pre-existing checker-overflow на такой форме (есть и на baseline
-// d97c0dbe), см. [M-181-pattern-var-rebind] в docs/simplifications.md.
+// d97c0dbe), см. [M-181-pattern-var-rebind] в docs/dev/simplifications.md.
 test "D347: явный same-scope rebind перед pattern-bind lookup (D34×D347)" {
     ro key = 1
     ro key = key + 1

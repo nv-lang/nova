@@ -157,7 +157,7 @@ snapshot ~:7877-8039, 8698. Зонт-исключение: 174.4 НЕ завис
   uninit-терминах): parser (`uninit` = contextual keyword в type-position + blast-radius grep
   идентификаторов), AST `Unsafe(T)`→`Uninit(T)`, sweep ~97 вхождений в 5 spec-файлах (02-types.md ~90,
   04-effects.md 4, 03-syntax.md, README.md, open-questions.md — финальный объём по grep `unsafe T`) +
-  D246 §V3.2 flip-таблица + D218-retraction кросс-рефы + docs/typed-pointers.md + E-сообщения; амендмент §V2.3
+  D246 §V3.2 flip-таблица + D218-retraction кросс-рефы + docs/guide/typed-pointers.md + E-сообщения; амендмент §V2.3
   (flow-sensitive read после definite-assignment — меняет «read requires unsafe always»).
 - **wrapping_offset — противоречие закрыто (Ред. 2): deferred** (`[M-174.5-wrapping-offset-deferred]`
   остаётся) — вычистить из Ф.2-acceptance и §8-тестов.

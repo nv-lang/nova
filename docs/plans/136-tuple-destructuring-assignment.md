@@ -380,7 +380,7 @@ ro tmp = @data[lo]
 
 ### Ф.6 — Docs + close (~30 min)
 
-- `docs/simplifications.md` — запись о tuple-assign.
+- `docs/dev/simplifications.md` — запись о tuple-assign.
 - `nova-private/discussion-log.md` + `project-creation.txt`.
 - Обновить README.md.
 

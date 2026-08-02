@@ -1355,7 +1355,7 @@ nova-lang/
 
 Native-backed пакет декларирует свои C-артефакты через `[ffi]`
 (`c_shims` → компилируются clang'ом из тулчейна, `include_dirs`, `libs` →
-линкуются; см. [ffi-cookbook](../../docs/ffi-cookbook.md) и
+линкуются; см. [ffi-cookbook](../../docs/guide/ffi-cookbook.md) и
 [authoring-a-module](../../docs/guide/authoring-a-module.md)); при импорте
 модуля билд-система компилирует/линкует их автоматически — без правок
 компилятора под каждый пакет. Подключение внешней репы — существующим

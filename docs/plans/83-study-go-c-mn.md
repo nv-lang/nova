@@ -313,11 +313,11 @@ validation (no STALE / no lost-cancel impossible-state signatures).
   **D246** (Ф.6 per-worker 4-ary timer heap + cancel-during-fire exactly-once, amends D228),
   **AMEND D103** (Ф.7 sysmon tick-edge + observe/recover),
   **D247** (Ф.8 conditional: netpoll-in-scheduler + IOCP, или deferral decision).
-- `docs/debugging-races.md`: §3 Tooling + §4 Lessons — RELAXED-atomic ring-buffer counters;
+- `docs/dev/debugging-races.md`: §3 Tooling + §4 Lessons — RELAXED-atomic ring-buffer counters;
   lesson о валидации fixed-ring cut-over с WATCHDOG_DUMP UNSET.
 - Q-memory-model: happens-before fixed-ring publish (slot store → store-release tail; consumer
   load-acquire tail → slot read) + goready/gopark wait-lock HB, supersedes deque.h PPoPP-2013 note.
-- `docs/project-creation.txt` + `docs/simplifications.md` + `nova-private/discussion-log.md`:
+- `docs/project-creation.txt` + `docs/dev/simplifications.md` + `nova-private/discussion-log.md`:
   closure entries per phase + формальное закрытие обоих маркеров с verification scope.
 
 ## 8. Риски (из gap-анализа)

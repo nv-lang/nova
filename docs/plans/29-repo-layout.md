@@ -133,7 +133,7 @@ std/           — без изменений (package name = "std")
 - `compiler/build_c.ps1`, `compiler/build_c.sh` (внутри): пути к `nova_rt` не меняются (они относительны)
 - `nova.toml`: комментарии
 - `README.md`, `compiler-codegen/README.md` → теперь `compiler/README.md`
-- `docs/test-conventions.md`: ссылки на `compiler-codegen/`
+- `docs/dev/test-conventions.md`: ссылки на `compiler-codegen/`
 - `docs/plans/*.md`: упоминания пути
 - `nova-cli/src/main.rs`: `resolve_paths` — `repo.join("compiler-codegen")` → `repo.join("compiler")`
 - `compiler/src/main.rs`: default path для `cg_include` и `rt_dir`

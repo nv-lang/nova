@@ -201,7 +201,7 @@ impl std::fmt::Display for FormatSpec {
 /// type        := '?' | 'x' | 'X' | 'b' | 'o'
 /// ```
 ///
-/// Notes / deviations from Rust documented in docs/strings.md and D258:
+/// Notes / deviations from Rust documented in docs/guide/strings.md and D258:
 /// - Width by `*` argument and precision by `.*` argument (Rust positional
 ///   args) are NOT supported — Nova interpolation has no arg-index model.
 /// - `e`/`E` (scientific) deferred — `[M-152.7-format-exp]`.

@@ -4,9 +4,9 @@
 > Think of this as a README for agents. Human contributors: see [README.md](README.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 >
 > **New here?** How development actually works — plan-driven dev, the worktree model, the daily loop, and the
-> hard operational rules — is in [docs/dev-workflow.md](docs/dev-workflow.md) (Russian). Read it before picking up work.
+> hard operational rules — is in [docs/dev/dev-workflow.md](docs/dev/dev-workflow.md) (Russian). Read it before picking up work.
 > Full onboarding path (project state, architecture, gates, where to go next):
-> [docs/promts/read-project.md](docs/promts/read-project.md). Claude Code sessions get the same pointers
+> [docs/dev/promts/read-project.md](docs/dev/promts/read-project.md). Claude Code sessions get the same pointers
 > automatically via the root [CLAUDE.md](CLAUDE.md).
 
 ## What is Nova
@@ -56,7 +56,7 @@ Common flags for `nova test`:
 | `--rerun-failed` | Re-run only previously failed tests |
 | `--format json\|junit` | Machine-readable output |
 
-Full test guide: [docs/test-conventions.md](docs/test-conventions.md).
+Full test guide: [docs/dev/test-conventions.md](docs/dev/test-conventions.md).
 
 ## Repository structure
 
@@ -102,11 +102,11 @@ Error tests declare the expected failure with an `EXPECT_*` marker, matched as a
 // EXPECT_COMPILE_ERROR: type mismatch
 ```
 
-Other markers: `EXPECT_RUNTIME_PANIC`, `EXPECT_EXIT` / `EXPECT_EXIT_CODE`, `EXPECT_STDOUT`, `EXPECT_STDERR`, `EXPECT_TIMEOUT`, `EXPECT_LINT_WARNING`. The runner classifies a test by its marker (not by folder or filename suffix), so `neg/` and `_neg` are human signals only. Full list: [docs/test-conventions.md](docs/test-conventions.md).
+Other markers: `EXPECT_RUNTIME_PANIC`, `EXPECT_EXIT` / `EXPECT_EXIT_CODE`, `EXPECT_STDOUT`, `EXPECT_STDERR`, `EXPECT_TIMEOUT`, `EXPECT_LINT_WARNING`. The runner classifies a test by its marker (not by folder or filename suffix), so `neg/` and `_neg` are human signals only. Full list: [docs/dev/test-conventions.md](docs/dev/test-conventions.md).
 
 A test file for a new feature `X` goes in `nova_tests/<category>/X.nv`. For a soundness regression, add `// SOUNDNESS_REGRESSION` in the first lines.
 
-Full marker reference: [docs/test-conventions.md](docs/test-conventions.md).
+Full marker reference: [docs/dev/test-conventions.md](docs/dev/test-conventions.md).
 
 ## Followup markers (`[M-…]`)
 
@@ -114,7 +114,7 @@ Deferred work is tracked with `[M-<kebab-name>]` markers in docs and code commen
 
 - **Plan-bound** markers (followups of a specific plan) live in that plan's **Followups** section in `docs/plans/<plan>.md`.
 - **Floating** markers (cross-cutting, not owned by any plan) — the *open* ones are listed in [docs/plans/backlog-followups.md](docs/plans/backlog-followups.md), the curated **OPEN-view** (what is still live and actionable).
-- [docs/simplifications.md](docs/simplifications.md) is the append-only **history log** of all markers/simplifications — *not* a status view. It records that a marker existed; it does not tell you whether it is still open.
+- [docs/dev/simplifications.md](docs/dev/simplifications.md) is the append-only **history log** of all markers/simplifications — *not* a status view. It records that a marker existed; it does not tell you whether it is still open.
 
 **Lifecycle:**
 
@@ -132,19 +132,19 @@ Deferred work is tracked with `[M-<kebab-name>]` markers in docs and code commen
 - **`git add` specific files only** — never `git add .` or `git add -A`. Multiple agents may work in parallel worktrees.
 - **One commit per logical task.** Multiple tasks → multiple commits.
 - **No `Co-Authored-By: <AI tool>` trailers** in commit messages. A repo hook strips them automatically — do **not** add the trailer by hand (and no need to check for it manually; the hook removes it on commit).
-- **Language convention.** Commit *subjects* use English conventional-commits (`fix(...)`, `docs(...)`). Commit *bodies* and the project's internal dev logs (`docs/project-creation.txt`, `docs/simplifications.md`, and the team's discussion log) are written in **Russian** with English technical terms inline — the house style; match the surrounding entries rather than switching to all-English prose. Public-facing docs (`README.md`, `AGENTS.md`, `CONTRIBUTING.md`) stay in English.
+- **Language convention.** Commit *subjects* use English conventional-commits (`fix(...)`, `docs(...)`). Commit *bodies* and the project's internal dev logs (`docs/project-creation.txt`, `docs/dev/simplifications.md`, and the team's discussion log) are written in **Russian** with English technical terms inline — the house style; match the surrounding entries rather than switching to all-English prose. Public-facing docs (`README.md`, `AGENTS.md`, `CONTRIBUTING.md`) stay in English.
 - **License:** code is `MIT OR Apache-2.0`; docs are `CC-BY-4.0`. See [LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE).
 
 ## Key reference files
 
 | File | What it covers |
 |---|---|
-| [docs/dev-workflow.md](docs/dev-workflow.md) | **How development works** — sources of truth, plan-driven dev, worktrees, the daily loop, operational rules |
+| [docs/dev/dev-workflow.md](docs/dev/dev-workflow.md) | **How development works** — sources of truth, plan-driven dev, worktrees, the daily loop, operational rules |
 | [spec/decisions/README.md](spec/decisions/README.md) | Index of all D-blocks |
 | [docs/plans/README.md](docs/plans/README.md) | Index of all plans |
 | [docs/plans/backlog-followups.md](docs/plans/backlog-followups.md) | Registry of floating `[M-…]` followup markers **not** tied to a plan (codegen / perf / debug-info backlog). Plan-bound markers live in their plan's Followups section. |
-| [docs/test-conventions.md](docs/test-conventions.md) | EXPECT markers, test runner flags |
-| [docs/module-conventions.md](docs/module-conventions.md) | **Designing any Nova module (std/app/third-party) + C integration** — effect-family architecture (mockable plumbing + type-method facade), value/must-consume types, structured `Result` errors, byte-first, the `extern "C"` `ffi.nv` layer (CStr vs `(*u8,len)`, errno, value-records), `#cfg` platform-split. (`extern "nova"`/runtime park-wake/`#stable` are std-runtime-only — marked in §Применимость.) Complements [ffi-cookbook.md](docs/ffi-cookbook.md) (FFI mechanics) and [nv-coding-style.md](docs/nv-coding-style.md) (`.nv` style). |
-| [docs/simplifications.md](docs/simplifications.md) | History of removed complexity |
+| [docs/dev/test-conventions.md](docs/dev/test-conventions.md) | EXPECT markers, test runner flags |
+| [docs/dev/module-conventions.md](docs/dev/module-conventions.md) | **Designing any Nova module (std/app/third-party) + C integration** — effect-family architecture (mockable plumbing + type-method facade), value/must-consume types, structured `Result` errors, byte-first, the `extern "C"` `ffi.nv` layer (CStr vs `(*u8,len)`, errno, value-records), `#cfg` platform-split. (`extern "nova"`/runtime park-wake/`#stable` are std-runtime-only — marked in §Применимость.) Complements [ffi-cookbook.md](docs/guide/ffi-cookbook.md) (FFI mechanics) and [nv-coding-style.md](docs/dev/nv-coding-style.md) (`.nv` style). |
+| [docs/dev/simplifications.md](docs/dev/simplifications.md) | History of removed complexity |
 | [compiler-codegen/README.md](compiler-codegen/README.md) | Compiler internals, build options |
-| [docs/nova-cli.md](docs/nova-cli.md) | CLI command reference |
+| [docs/guide/nova-cli.md](docs/guide/nova-cli.md) | CLI command reference |

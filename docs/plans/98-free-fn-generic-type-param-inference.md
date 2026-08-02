@@ -154,7 +154,7 @@ User-generic case (`Box[T]`, `HashMap[K,V]`) — отдельный вход в 
 - **Ф.3.1** D-блок: явно зафиксировать contract «type-param inference
   recurses через generic-параметризованные типы (Option/Result/user-
   generics); turbofish — fallback для неразрешимых case'ов».
-- **Ф.3.2** `docs/simplifications.md` — отметить устранение skill-floor
+- **Ф.3.2** `docs/dev/simplifications.md` — отметить устранение skill-floor
   для generic-helper'ов; обновить tutorial-фрагменты.
 - **Ф.3.3** Plan 88 lineage-note: дописать, что P98 закрыл свободно-
   функциональный аналог его static-method-on-typevar fix.

@@ -59,7 +59,7 @@ Worktree: `d:/Sources/nv-lang/nova-lintzero` (branch `fix-lint-zero`).
 `compiler-codegen/src/lints.rs::conv_with_mutator` теперь молчит, если у `with_*`
 mut-метода есть параметр fn-типа (замыкание, `body fn() -> R`), peeled через
 `conv_type_is_closure` (снимает `*T`/`ro T`/`mut T`/`uninit T`/`ref T`-обёртки).
-Обоснование и прецедент (Kotlin `withLock`) — `docs/nv-coding-style.md`, абзац
+Обоснование и прецедент (Kotlin `withLock`) — `docs/dev/nv-coding-style.md`, абзац
 рядом с существующим `with_`-разделом (2026-07-06).
 
 Юнит-тесты: `lints::tests::no_warning_on_with_mutator_closure_param` (позитив —

@@ -42,7 +42,7 @@ Negative: `supervised_cancel_double_bind` (runtime panic),
 (миграция синтаксиса отмены). `within` (= `with_timeout`) тривиально
 строится поверх `supervised(cancel:)` как только этот codegen-пробел
 закрыт. Зафиксировано как `[M-race-closure-array]` +
-`[M-within-error-conflation]` в docs/simplifications.md.
+`[M-within-error-conflation]` в docs/dev/simplifications.md.
 
 **Побочный codegen-фикс (в рамках Ф.5-разведки):** `emit_generic_fn_erased`
 / `emit_generic_method_erased` не буферизовали тело и не флашили
@@ -244,7 +244,7 @@ keyword-специфичен, но синтаксис консистентен �
 - Q-cancel_scope-lambda-syntax — закрыт (готово).
 - Перенести старый текст D75 в `spec/decisions/history/` (упомянуто в
   REVISED-блоке D75).
-- Обновить `docs/project-creation.txt` + `docs/simplifications.md`
+- Обновить `docs/project-creation.txt` + `docs/dev/simplifications.md`
   (bootstrap-ограничения как `[M*]` — в частности наследуемое
   cancel-throw-routing ограничение).
 - Запись в discussion-log private-репы.

@@ -747,7 +747,7 @@ panic'ов есть специализированный `EXPECT_RUNTIME_PANIC`.
   `EXPECT_EXIT_CODE`.
 - [D24](#d24) — другой test-related D-блок (SMT-проверка контрактов);
   D89 — общий тестовый tooling.
-- `docs/test-conventions.md` — практический guide для авторов тестов
+- `docs/dev/test-conventions.md` — практический guide для авторов тестов
   (как писать каждый тип маркера, типичные паттерны).
 - `run_tests.ps1` — Windows wrapper над `nova-codegen test-all`.
   Был заведён в Plan 16 Ф.7 для capability-enforcement, расширен до
@@ -2269,7 +2269,7 @@ ENOSYS → kernel CONFIG_PERF_EVENTS missing).
 - Plan 32 (`gc.*` introspection) — alloc tracking bridge.
 - Plan 22 (libuv integration) — `uv_hrtime()` для measurement primitive.
 - Plan 57 (полный 10-layer design + MVP / 57.A / 57.B phasing).
-- [docs/perf-conventions.md](../../docs/perf-conventions.md) — pragmatic guide.
+- [docs/dev/perf-conventions.md](../../docs/dev/perf-conventions.md) — pragmatic guide.
 
 ---
 
@@ -2899,7 +2899,7 @@ slow-gate-прогоном (CI merge/nightly), а не наличием файл
   peer-config.
 - [docs/plans/156-test-runner-slow-lane.md](../../docs/plans/156-test-runner-slow-lane.md)
   — реализация slow-lane (`is_slow_file_stem`, `SlowLane`, `walk_nv_filtered`).
-- [docs/test-conventions.md](../../docs/test-conventions.md) — практический guide.
+- [docs/dev/test-conventions.md](../../docs/dev/test-conventions.md) — практический guide.
 - `compiler-codegen/src/test_runner.rs` — каноническая реализация (`is_fixture_dir`,
   `is_slow_file_stem`, `walk_nv_filtered`, `SlowLane`).
 - `[M-test-runner-large-test-lane]` — маркер slow-lane; `[M-156-slow-subtree-dir]`
@@ -3659,7 +3659,7 @@ module-имени → **0 ложных red** на prelude/peer-символах.
 
 - `nova-lsp/src/*` (все хендлеры + capabilities в `server.rs`)
 - D378 (provenance), D379 (expr_types), D296 (rename atomicity), D303 (hover items_start)
-- [Plan 104.10](../../docs/plans/104.10-lsp-v2-production.md), [lsp-conventions.md](../../docs/lsp-conventions.md)
+- [Plan 104.10](../../docs/plans/104.10-lsp-v2-production.md), [lsp-conventions.md](../../docs/dev/lsp-conventions.md)
 
 ---
 

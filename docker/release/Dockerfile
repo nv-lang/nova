@@ -6,7 +6,7 @@
 # Two-stage:
 #   1. builder — Ubuntu 22.04 + rustup (pinned 1.85, MSRV nova-cli/Cargo.toml
 #      + compiler-codegen/Cargo.toml) + системные пакеты по верифицированному
-#      рецепту docs/linux-build.md / .github/workflows/nova-gate.yml (clang
+#      рецепту docs/guide/linux-build.md / .github/workflows/nova-gate.yml (clang
 #      cmake make libgc-dev build-essential) — собирает nova-cli release из
 #      исходников build context'а (COPY, НЕ git clone — build context = корень
 #      репозитория, см. docker build snippet в README.md рядом).
@@ -21,7 +21,7 @@
 #      package-release.ps1) — плюс системные Boehm GC headers/lib уже в
 #      /usr/include, /usr/lib (libgc-dev), поэтому NOVA_GC_LIB_DIR/
 #      NOVA_GC_INCLUDE_DIR тут указывают на системные пути (см.
-#      docs/linux-build.md §Boehm GC: apt libgc-dev не требует override —
+#      docs/guide/linux-build.md §Boehm GC: apt libgc-dev не требует override —
 #      но выставляем явно для детерминизма и параллели с setup-env.ps1).
 #
 # Env vars (см. scripts/package-release.ps1 setup-env.ps1 — те же 5 путей,
@@ -60,7 +60,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # rustup, pinned to MSRV 1.85 (nova-cli/Cargo.toml, compiler-codegen/Cargo.toml
 # rust-version) — тот же идиом, что nova-gate.yml (dtolnay/rust-toolchain).
-# НЕ используем дистрибутивный rustc (см. docs/linux-build.md §Known issue:
+# НЕ используем дистрибутивный rustc (см. docs/guide/linux-build.md §Known issue:
 # distro-packaged rustc can ICE on compiler-codegen).
 ENV RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo \
@@ -75,7 +75,7 @@ COPY . .
 
 # libuv — git submodule; build context COPY переносит .git-состояние
 # каталога, но не гарантирует, что субмодуль инициализирован в чекауте,
-# из которого собирается образ (та же оговорка, что docs/linux-build.md
+# из которого собирается образ (та же оговорка, что docs/guide/linux-build.md
 # п.3 "git submodule update --init"). Если submodule уже присутствует
 # (обычный чекаут разработчика) — команда ниже no-op.
 RUN if [ -f .gitmodules ] && [ -d .git ]; then \
@@ -117,7 +117,7 @@ COPY --from=builder /src/compiler-codegen/nova_rt /opt/nova/nova_rt
 
 # Env vars — как setup-env.ps1 (scripts/package-release.ps1), юникс-пути.
 # Системный libgc-dev кладёт заголовки/lib в стандартные multiarch-пути
-# (docs/linux-build.md §Boehm GC) — override здесь не строго обязателен,
+# (docs/guide/linux-build.md §Boehm GC) — override здесь не строго обязателен,
 # но выставлен явно для детерминизма контейнерного окружения.
 ENV NOVA_STD_PATH=/opt/nova/std \
     NOVA_CG_INCLUDE=/opt/nova \

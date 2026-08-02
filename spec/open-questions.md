@@ -2750,7 +2750,7 @@ record), [D52](decisions/02-types.md#d52) (sum-варианты), [D19](decision
 > AST хранит `is_static: bool`. Type-checker строгое сопоставление
 > static↔instance при satisfaction-проверке — **deferred** (Plan 15
 > Ф.5+ или отдельный follow-up). См.
-> `docs/simplifications.md#m-protocol-static-enforcement-deferred`.
+> `docs/dev/simplifications.md#m-protocol-static-enforcement-deferred`.
 >
 > Историческое DEFER (предыдущее) — снято: Plan 15 закрыт, Plan 59
 > мономорфизировал Result, что покрывает основные use-case'ы
@@ -4320,7 +4320,7 @@ copy-based конверсии.
 
 **Связь:** [D26 §«Nul-termination»](decisions/08-runtime.md#d26)
 (rules 1-3 retracted 2026-07-11 → [D418](decisions/08-runtime.md#d418-new--str-без-nul-терминатора-c-ffi-через-copy-based-cstr-as_cstr-plan-199-retracts-d26-nul-termination)),
-Plan 118.1 ([project-plan118-status](../../README.md)),
+Plan 118.1 ([project-plan118-status](../README.md)),
 [D214](decisions/D214-ptr-and-tuple-ffi.md) (Plan 115 ptr),
 [D216](decisions/D216-typed-pointers.md) (Plan 118 typed pointers),
 Q-ffi §22 «CStr / nul-terminated views».
@@ -4521,7 +4521,7 @@ Q-clone-semantics (`@clone()` deep vs shallow), Q-readonly-types
 
 ## Q-string-builder. `StringBuilder` — UTF-8 string accumulator ✅ ЗАКРЫТО (2026-05-08)
 
-> **Обновление 2026-05-28 (D179, [Plan 91.6](../../docs/plans/91.6-stringbuilder-nova-type.md)):**
+> **Обновление 2026-05-28 (D179, [Plan 91.6](../docs/plans/91.6-stringbuilder-nova-type.md)):**
 > `StringBuilder` переведён с `external type` на чистый Nova consume-тип
 > `type StringBuilder consume { mut buf []u8 }`. Все методы Nova-body
 > (кроме `buf.push(u8)` — builtin array op). API изменения:
@@ -6012,7 +6012,7 @@ core rendering +15-25%). Это **самая большая** «бесплатн
   prerequisite.
 - [Plan 10](../docs/plans/10-pgo-integration.md) — stub для PGO
   работы. Полный план будет написан после плана 09.
-- [docs/simplifications.md] → `[P-no-pgo-integration]` — пометка
+- [docs/dev/simplifications.md] → `[P-no-pgo-integration]` — пометка
   про текущее отсутствие.
 
 **Когда закроется:** после реализации Plan 10 (PGO integration)
@@ -7089,7 +7089,7 @@ followup**.
 
 ### Связь
 
-- [Plan 91.8a.2 part 3](../../docs/plans/91.8a.2-default-body-codegen-and-from-blanket.md) — char @compare добавлен.
+- [Plan 91.8a.2 part 3](../docs/plans/91.8a.2-default-body-codegen-and-from-blanket.md) — char @compare добавлен.
 - [D183 amendment](decisions/02-types.md#d183-canonical-comparison-protocols--default-method-bodies-plan-918a) — Comparable + synthesis chain.
 
 ---
@@ -8116,7 +8116,7 @@ Part A+B `[M-opt-preempt-strided-loop]` (D270, merge `7c047a1b`) и `[M-opt-leaf
    (2026-06-14): handlers больше не конструируют `interp::Interpreter`, а громко ошибаются
    (exit ≠ 0) с указанием на C-codegen; clap doc-строки помечены `[UNSUPPORTED]`. Регресс:
    `compiler-codegen/tests/interp_tool_unsupported.rs` (neg run/test-interp + pos compile).
-3. **`docs/nova-codegen.md`/`.ru.md`** — ✅ выверены: `run`/`test-interp` помечены
+3. **`docs/dev/nova-codegen.md`/`.ru.md`** — ✅ выверены: `run`/`test-interp` помечены
    `[UNSUPPORTED]`, `interp/` в дереве описан как «kept for reference, не подключён».
 
 **Residual (не блокирует закрытие):** возможное полное удаление модуля `interp/` ЛИБО его

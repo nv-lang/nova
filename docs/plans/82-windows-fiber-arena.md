@@ -655,7 +655,7 @@ single-thread форме:
 > «что отвергнуто» дополнены. Plan 44.3 → шапка **SUPERSEDED BY Plan
 > 82**, битая ссылка `82-windows-fiber-tib-unblock.md` исправлена.
 > `docs/plans/README.md` (Plan 82 ✅, 44.3 superseded, строка Plan 44),
-> `docs/project-creation.txt`, `docs/simplifications.md`
+> `docs/project-creation.txt`, `docs/dev/simplifications.md`
 > (`[M-82-msvc-novatest]`, `[M-82-bench-c-harness]`),
 > `nova-private/discussion-log.md` — обновлены. **Опциональная
 > Linux-унификация — honest-defer отдельной задачей** (требует полного
@@ -665,7 +665,7 @@ single-thread форме:
   «lazy-commit large-reserve»; зафиксировать registry+push GC-модель.
 - 44.3 → шапка «superseded by Plan 82»; починить битую ссылку в 44.3
   (`82-windows-fiber-tib-unblock.md` → `82-windows-fiber-arena.md`).
-- `docs/simplifications.md`, `docs/project-creation.txt`, README,
+- `docs/dev/simplifications.md`, `docs/project-creation.txt`, README,
   `docs/plans/README.md`.
 - **Опционально (gated «0 регрессий на Linux»):** перевести Linux 44.2 на
   ту же registry+push-модель + `GC_set_stackbottom` per-switch — снимает

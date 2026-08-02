@@ -7,7 +7,7 @@
 //
 // Real libsqlite3 link — followup `[M-115-examples-ffi-real-build]`:
 // CI step с vcpkg sqlite3 install + replace `sqlite_mini_ffi.h` →
-// `sqlite3_ffi.h` per docs/ffi-cookbook.md §«Example 1».
+// `sqlite3_ffi.h` per docs/guide/ffi-cookbook.md §«Example 1».
 
 module standalone.t4_sqlite_e2e_ok
 // ─── Typed handles via D52 tuple newtype (Plan 115 D214) ──────────
