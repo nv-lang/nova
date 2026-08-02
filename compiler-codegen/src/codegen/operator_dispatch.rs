@@ -134,6 +134,16 @@ pub(crate) enum BinOpResolution {
 ///   (only consulted for `Heterogeneous` shape — see `OperandShape`).
 /// - `mono_fn_decl`: `self.self_method_decls.get(&(base_type, op_method))`
 ///   when `recv_short` carries a `____` mono marker, `None` otherwise.
+///
+/// `channel_callee`: the checker's already-resolved callee span for THIS
+/// binary-expr node (`resolved_callees.get(&expr.id)`, p-op-w1b spike,
+/// `docs/plans/wip/196-op-channel-progress.md` рекомендация 1) — populated
+/// ONLY for a Heterogeneous op (`- << >>`) on a CONCRETE (non-generic,
+/// non-mono) `Nova_T*` receiver (types/mod.rs Binary-arm). When present AND
+/// it matches one of `overloads` by `fn_span`, it is consulted FIRST — skips
+/// the `rty`-string re-derivation below entirely (strangler-fig: absent for
+/// every other case — Homogeneous ops, GenericMono receivers, comparisons,
+/// or any producer gap — falls straight through to the unchanged scan).
 pub(crate) fn resolve_binop_dispatch(
     op: BinOp,
     rty: &str,
@@ -141,11 +151,17 @@ pub(crate) fn resolve_binop_dispatch(
     recv_short: &str,
     overloads: Option<&[MethodSig]>,
     mono_fn_decl: Option<FnDecl>,
+    channel_callee: Option<crate::diag::Span>,
 ) -> BinOpResolution {
     let Some(entry) = BINOP_TABLE.iter().find(|e| e.op == op) else {
         return BinOpResolution::NotFound;
     };
     let op_method = entry.method_name;
+    if let Some(chosen_span) = channel_callee {
+        if let Some(sig) = overloads.unwrap_or(&[]).iter().find(|s| s.fn_span == Some(chosen_span)) {
+            return BinOpResolution::Concrete(sig.c_name.clone());
+        }
+    }
     if entry.shape == OperandShape::Heterogeneous {
         if let Some(sigs) = overloads {
             let matching = sigs.iter().find(|s| {
@@ -261,11 +277,11 @@ mod tests {
         // guaranteed the flat receiver has the overload) — Homogeneous ops
         // (`+ * / % & | ^`) resolve to a direct call, mirroring the
         // pre-unification blind emission exactly.
-        match resolve_binop_dispatch(BinOp::Add, "Nova_Duration", "Nova_Duration", "Duration", None, None) {
+        match resolve_binop_dispatch(BinOp::Add, "Nova_Duration", "Nova_Duration", "Duration", None, None, None) {
             BinOpResolution::Concrete(c) => assert_eq!(c, "Nova_Duration_method_plus"),
             _ => panic!("expected Concrete"),
         }
-        match resolve_binop_dispatch(BinOp::BitOr, "Nova_SetX", "Nova_SetX", "SetX", None, None) {
+        match resolve_binop_dispatch(BinOp::BitOr, "Nova_SetX", "Nova_SetX", "SetX", None, None, None) {
             BinOpResolution::Concrete(c) => assert_eq!(c, "Nova_SetX_method_bitor"),
             _ => panic!("expected Concrete"),
         }
@@ -276,9 +292,46 @@ mod tests {
         // Mirrors the pre-unification `@minus`/shift behavior: no
         // registered overload SET at all (not even a mismatched one) and no
         // `____` marker => NotFound, left for the caller's fall-through.
-        match resolve_binop_dispatch(BinOp::Sub, "nova_int", "Nova_Timestamp", "Timestamp", None, None) {
+        match resolve_binop_dispatch(BinOp::Sub, "nova_int", "Nova_Timestamp", "Timestamp", None, None, None) {
             BinOpResolution::NotFound => {}
             _ => panic!("expected NotFound"),
+        }
+    }
+
+    #[test]
+    fn resolve_heterogeneous_channel_callee_wins_over_rty_mismatch() {
+        // p-op-w1b spike: the checker-resolved `channel_callee` (fn_span) is
+        // consulted FIRST — it picks the matching overload by SPAN identity
+        // even when `rty` (the C-type string the legacy scan below would
+        // match on) would otherwise miss. Proves the channel path is live
+        // and takes priority over the fallback scan, not just a no-op.
+        let hit_span = crate::diag::Span::new(10, 20);
+        let other_span = crate::diag::Span::new(30, 40);
+        let sigs = vec![
+            MethodSig {
+                is_instance: true,
+                param_c_types: vec!["Nova_Duration*".to_string()],
+                c_name: "Nova_Timestamp_method_minus_duration".to_string(),
+                fn_span: Some(other_span),
+                ..Default::default()
+            },
+            MethodSig {
+                is_instance: true,
+                param_c_types: vec!["Nova_Monotonic*".to_string()],
+                c_name: "Nova_Timestamp_method_minus_monotonic".to_string(),
+                fn_span: Some(hit_span),
+                ..Default::default()
+            },
+        ];
+        // `rty` deliberately matches NEITHER overload's `param_c_types` — a
+        // legacy-only scan would return `NoMatchingOverload`; the channel
+        // hit must short-circuit before that scan ever runs.
+        match resolve_binop_dispatch(
+            BinOp::Sub, "nova_int", "Nova_Timestamp", "Timestamp",
+            Some(&sigs), None, Some(hit_span),
+        ) {
+            BinOpResolution::Concrete(c) => assert_eq!(c, "Nova_Timestamp_method_minus_monotonic"),
+            _ => panic!("expected Concrete via channel, got a different resolution"),
         }
     }
 

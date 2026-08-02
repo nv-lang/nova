@@ -9703,6 +9703,71 @@ impl<'a> TypeCheckCtx<'a> {
                     if let Some(rt) = res_rt {
                         self.resolved_types_buf.borrow_mut().insert(e.id, rt);
                     }
+                    // p-op-w1b spike (owner decision 2026-08-02,
+                    // docs/plans/wip/196-op-channel-progress.md рекомендация 1):
+                    // resolve the operator-overload CALLEE (WHICH FnDecl) for a
+                    // Heterogeneous binop (`- << >>`, D46/03-syntax.md,
+                    // operator_dispatch::OperandShape::Heterogeneous) on a
+                    // CONCRETE (non-generic, non-mono) `Nova_T*` receiver — the
+                    // narrowest, least-risky slice of the core channel
+                    // migration. Writes ONLY `resolved_callees` (which FnDecl
+                    // codegen should call) — the `res_rt` result-type inference
+                    // above is COMPLETELY untouched (audit POISON 6875 / D263
+                    // guard: no shared state, no reordering, purely additive).
+                    // Homogeneous ops (`+ * / % & | ^`) are NOT covered — the
+                    // checker already guarantees a single Self-overload exists
+                    // for those (карта: канал там пустая формальность).
+                    // Comparisons (`== != < <= > >=`) are a SEPARATE protocol
+                    // chain (`@equal`/`@compare`) — deliberately out of scope
+                    // here (шаг 2).
+                    if matches!(op, BinOp::Sub | BinOp::Shl | BinOp::Shr) {
+                        if let Some(op_method) =
+                            crate::codegen::operator_dispatch::binop_method_name(*op)
+                        {
+                            if let Some(l_tr) = self.infer_expr_type(left, scope) {
+                                if let TypeRef::Named { path, generics, .. } = &l_tr {
+                                    if path.len() == 1 && generics.is_empty() {
+                                        let type_name = path[0].as_str();
+                                        if !is_primitive_recv_name(type_name) {
+                                            if let Some(overloads) =
+                                                self.method_overloads(type_name, op_method)
+                                            {
+                                                let compat: Vec<&FnDecl> = overloads
+                                                    .iter()
+                                                    .copied()
+                                                    .filter(|f| {
+                                                        matches!(
+                                                            f.receiver.as_ref(),
+                                                            Some(r)
+                                                                if r.kind == ReceiverKind::Instance
+                                                                    && r.generics.is_empty()
+                                                        ) && f.generics.is_empty()
+                                                            && f.params.len() == 1
+                                                            && !f.params[0].is_variadic
+                                                            && !matches!(
+                                                                self.assignable(
+                                                                    right,
+                                                                    &f.params[0].ty,
+                                                                    gs,
+                                                                    &fn_generic_scope(f),
+                                                                    scope,
+                                                                ),
+                                                                Compat::Bad { .. }
+                                                            )
+                                                    })
+                                                    .collect();
+                                                if let [single] = compat.as_slice() {
+                                                    self.resolved_callees
+                                                        .borrow_mut()
+                                                        .insert(e.id, single.span);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
             ExprKind::Unary { operand, .. } => {

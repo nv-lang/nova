@@ -34470,9 +34470,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     .get(&(recv_short[..idx].to_string(), op_method.to_string()))
                                     .cloned()
                             });
-                            match super::operator_dispatch::resolve_binop_dispatch(
+                            match super::operator_dispatch::resolve_binop_dispatch( // p-op-w1b: channel-first (see doc)
                                 *op, &rty, &recv_full, &recv_short,
-                                overloads.as_deref(), mono_fn_decl,
+                                overloads.as_deref(), mono_fn_decl, self.resolved_callees.get(&expr.id).copied(),
                             ) {
                                 super::operator_dispatch::BinOpResolution::Concrete(c_name) => {
                                     return Ok(format!("{}({}, {})", c_name, l, r));
