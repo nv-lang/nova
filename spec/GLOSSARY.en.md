@@ -205,3 +205,17 @@ what the token does, not a translation of the token.
 | doc-тест | doc-test | "`nova doc file.nv [--format markdown\|json\|html]` — doc-tests (`--test`)" | spec/overview.md "Tooling из коробки" |
 
 ---
+
+## 11. Conversions and overloading · Конверсии и перегрузка
+
+| Русский | English | Example (en) | Note |
+|---|---|---|---|
+| приведение as | `as` cast | "`as` — infallible numeric/newtype/sum cast, compile-time, no runtime code" (paraphrase of spec/conversions.md "Три механизма") | spec/conversions.md |
+| расширение (widening) | widening | "Widening (no precision loss)" | spec/conversions.md "Numeric ↔ numeric" |
+| сужение (narrowing) | narrowing | "Narrowing (potential precision loss)" | spec/conversions.md "Numeric ↔ numeric" |
+| проверяемое сужение | checked narrowing | "Checked narrowing — `try_to_*` (D430, 2026-07-20)" | spec/conversions.md heading |
+| неявная конверсия #coerce | `#coerce` (zero-cost implicit conversion) | "`#coerce` on a **unary** function declares an **implicit** conversion `I → O`, inserted by the compiler in a position with a known expected type" (paraphrase of spec/conversions.md) | spec/conversions.md "Zero-cost неявные конверсии" (D429) |
+| конвенция имени (from/try_from) | naming convention (`from`/`try_from`) | "these are three independent naming conventions, each an ordinary Nova function with no protocol behind it" (paraphrase of spec/conversions.md) | spec/conversions.md "Именование from/try_from — конвенция, не протокол"; `From`/`Into`/`TryFrom`/`TryInto` protocols retracted 2026-07-06 |
+| потребляющая передача владения | consuming ownership transfer (`consume @into_*`) | "`consume @into_ЦЕЛЬ()` — a consuming transfer of ownership (a concrete name on the source)" (paraphrase of spec/conversions.md "Три механизма" table) | spec/conversions.md |
+
+---
