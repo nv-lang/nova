@@ -72,3 +72,25 @@ what the token does, not a translation of the token.
 | `forbid` | "`forbid Net, Fs, Db { eval(code) }`" | capability-режим: запрет вызова функций с перечисленными эффектами внутри блока |
 
 ---
+
+## 3. Types and data · Типы и данные
+
+| Русский | English | Example (en) | Note |
+|---|---|---|---|
+| record | record | "`type X { ... }` declares a **record** — a heap-allocated, GC-managed reference type." | language-tour.md §2; `{}` braces, reference semantics |
+| sum-тип | sum type | "A **sum type** requires the `enum` marker (`type X enum A \| B \| C`)" | language-tour.md §2; D406 |
+| enum-маркер | `enum` marker | "the `enum` marker is mandatory (D406); leading `\|` alone is not valid syntax anymore" | language-tour.md §2 |
+| позиционный кортеж | positional tuple | "`type X(T1, T2)` — positional tuple — stack — value (copy on pass)" | docs/guide/value-vs-reference.md bracket-rule table |
+| именованный кортеж | named tuple | "`type Vec3(x f64, y f64, z f64)` — .x / .y / .z access" | docs/guide/value-vs-reference.md |
+| value-запись | value record | "iterator value-records: `VecIter[T] value`" | spec/decisions/02-types.md D228/D290; `type X value { ... }` — stack-allocated record, structural `==` |
+| value-семантика | value semantics | "Geometric primitives (Point, Rect, AABB) — named tuple — value semantics" | docs/guide/value-vs-reference.md "When to use which" |
+| newtype | newtype | "Newtype (`type X Y`, without `alias`) is a **separate** type from the source" | spec/conversions.md "Newtype ↔ underlying" |
+| alias | alias | "`type X alias Y` — там `X` и `Y` взаимозаменяемы без всякого cast'а" | spec/conversions.md; alias = same type, not a distinct one |
+| protocol | protocol | "`protocol` declares a structural interface; `#impl(...)` opts a type into one explicitly" | language-tour.md §3; structural by default, nominal on demand |
+| дженерик / параметр типа | generic type parameter | "`[T]` on a function introduces a generic type parameter." | language-tour.md §2 |
+| generic bound | generic bound | "`fn dedup[T Hash](xs []T) -> []T`" | spec/syntax.md "Generic bounds — `[T Protocol]` или `[T TypeSet]`" |
+| type-set | type-set | "**Type-set** — a named set of concrete types, listed explicitly" (paraphrase of spec/syntax.md D310) | closed membership-list bound, opposite of a structural `protocol` bound |
+| мономорфизация | monomorphization | "Performance, traits, мономорфизация" — spec/overview.md "Что заимствует у кого" (source: Rust) | default dispatch strategy; zero-cost, opposite of `dyn` |
+| dyn-диспатч | dynamic dispatch (`dyn`) | "`dyn` — only when explicit runtime polymorphism is needed" (paraphrase of spec/paradigm.md "vtable-вызов") | vtable call, opt-in via `dyn Trait`/`dyn Protocol` |
+
+---
