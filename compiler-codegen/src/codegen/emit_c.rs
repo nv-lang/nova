@@ -52216,11 +52216,60 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // `free_var_is_ref_param_src`, for the one remaining asymmetry: the
         // box-copy SOURCE needs an extra deref since `name` is already a
         // pointer here, unlike a plain `var_mutable` stack local).
+        // [M-p109-escaping-value-struct-ptr-capture] (2026-08-02, p109fix): a
+        // free var whose RECORDED C type is ALREADY a value-struct pointer
+        // (`NovaValue_X*`/`NovaTuple_X*`, `is_value_struct_ptr`) — e.g. a
+        // plain `ro c = cfg` alias of a value-record PARAMETER — is, at the C
+        // level, a pointer to the PARAMETER's own storage slot (pointer-to-
+        // caller-stack-temporary, the standard value-struct call ABI; see
+        // `is_value_struct_ptr`'s doc, D226). For a NON-generic fn this class
+        // is caught by `ref_params`/`free_fn_byref_flag` (Plan 172.14), whose
+        // OWN doc explicitly records generic free-fns as un-flagged ("mono-
+        // mangled names aren't in `value_struct_field_tys` at pre-pass time
+        // → flag false naturally") — `static_handler[F ReadFs]`'s `cfg
+        // Static` falls exactly in that documented gap. The OLD `!is_mut`
+        // ("immutable: snapshot value") capture path then bare-copies the
+        // POINTER's bits into the env — safe for a genuinely heap-owned
+        // pointer (`Nova_EmbeddedDir*`, a Vec, …) but NOT for a value-struct
+        // slot: once the declaring fn returns, the pointee is a dead stack
+        // frame: the closure escapes with it (returned as `Handler`,
+        // registered into a `Router`, invoked much later at request-dispatch
+        // time) → dereferencing at call time reads WHATEVER now occupies
+        // that reused stack slot — observed as a `nova: out of memory` abort
+        // from a ~1.8-2.8 TiB `nova_alloc`/`GC_malloc` request (a stray
+        // pointer/garbage bit-pattern misread as a Vec/str length deep in
+        // `file_response`/header building), non-deterministic run to run
+        // (ASLR/stack-garbage dependent) — polaris `static_handler()` on a
+        // real `EmbeddedDir`, bug-sweep №109. Detecting this INDEPENDENTLY
+        // of `ref_params` (a name-pattern check on the free var's own C
+        // type, not on fn-level pre-pass metadata) sidesteps the documented
+        // generic-fn timing gap entirely and needs no change to
+        // `build_free_fn_byref_map`. Value-records have no owned identity of
+        // their own (D-spec: copied like a scalar) — treating ANY escaping
+        // capture of one as needing the SAME deref-and-heap-box treatment
+        // already used for `ref_params` sources (below) is therefore sound
+        // unconditionally, not merely a narrow patch for this one call site.
         let free_var_is_mut: Vec<bool> = free_vars.iter()
-            .map(|(n, _)| self.var_mutable.contains(n) || self.ref_params.contains(n))
+            .map(|(n, ty)| self.var_mutable.contains(n) || self.ref_params.contains(n)
+                || Self::is_value_struct_ptr(ty))
             .collect();
         let free_var_is_ref_param_src: Vec<bool> = free_vars.iter()
-            .map(|(n, _)| self.ref_params.contains(n))
+            .map(|(n, ty)| self.ref_params.contains(n) || Self::is_value_struct_ptr(ty))
+            .collect();
+        // Box-allocation type: `ref_params` sources record the DEREFERENCED
+        // value type in `var_types` (Plan 172.5's auto-deref convention), so
+        // `ty` is already bare there — but a plain value-struct-ptr alias
+        // (this fix's new case) records the POINTER type itself; box sizing/
+        // declaration below must use the POINTEE, or the box becomes a
+        // wrongly-sized pointer-to-pointer instead of a value-struct slot.
+        let free_var_box_ty: Vec<String> = free_vars.iter()
+            .map(|(n, ty)| {
+                if !self.ref_params.contains(n) && Self::is_value_struct_ptr(ty) {
+                    ty[..ty.len() - 1].to_string()
+                } else {
+                    ty.clone()
+                }
+            })
             .collect();
 
         // Build env struct fields. Mut fields = pointer type. Field names are
@@ -52229,11 +52278,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let env_fields: String = if free_vars.is_empty() {
             "int _dummy;".to_string() // avoid empty struct (UB in C)
         } else {
-            free_vars.iter().zip(&free_var_is_mut)
-                .map(|((n, ty), is_mut)| {
+            free_vars.iter().zip(&free_var_is_mut).zip(&free_var_box_ty)
+                .map(|(((n, ty), is_mut), box_ty)| {
                     let field = mangled_field(n);
                     if *is_mut {
-                        format!("{}* {};", ty, field)        // pointer for mut
+                        format!("{}* {};", box_ty, field)    // pointer for mut / boxed value-struct
                     } else {
                         format!("{} {};", ty, field)         // value for immutable
                     }
@@ -52256,9 +52305,28 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.lambda_forward_decls.push('\n');
 
         // Save current var_types for params, emit body into lambda_impls
-        let saved: Vec<(String, Option<String>)> = params.iter().zip(&param_c_tys)
+        let mut saved: Vec<(String, Option<String>)> = params.iter().zip(&param_c_tys)
             .map(|(p, ty)| (p.name.clone(), self.var_types.insert(p.name.clone(), ty.clone())))
             .collect();
+        // [M-p109-escaping-value-struct-ptr-capture]: an `is_mut` free var is
+        // read INSIDE the body via `var_boxed`'s `(*_env->field)` deref (see
+        // the unpack loop below) — a VALUE expression. The OUTER scope's
+        // `var_types` entry for that name may still say the POINTER type
+        // (this fix's new value-struct-ptr case: `ty` itself is `NovaValue_
+        // X*`, unlike a `ref_params` source, whose `var_types` already holds
+        // the dereferenced value type by convention). Left stale, downstream
+        // call-argument materialization (which trusts `var_types` to decide
+        // whether an argument already IS a pointer) mismatches the actual
+        // (now-dereferenced) expression — `assigning to 'T*' from
+        // incompatible type 'T'`. Override to `box_ty` (the pointee) for the
+        // body's duration, restored after — a no-op for `var_mutable`/
+        // `ref_params` sources, whose `box_ty` already equals the existing
+        // (bare/value) `ty`.
+        for (((n, _ty), is_mut), box_ty) in free_vars.iter().zip(&free_var_is_mut).zip(&free_var_box_ty) {
+            if *is_mut {
+                saved.push((n.clone(), self.var_types.insert(n.clone(), box_ty.clone())));
+            }
+        }
         // Register function-typed lambda params in fn_param_sigs so f(x) calls work inside body
         // Plan 70 PhaseA2: strict — lambda fn-typed param sig (для f(x) inside body).
         let saved_fn_sigs: Vec<(String, Option<(Vec<String>, String)>)> = params.iter().filter_map(|p| {
@@ -52442,7 +52510,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let env_tmp = self.fresh_tmp();
         let clos_tmp = self.fresh_tmp();
         self.line(&format!("{}* {} = ({}*)nova_alloc(sizeof({}));", env_name, env_tmp, env_name, env_name));
-        for (((name, ty), is_mut), is_ref_param_src) in free_vars.iter().zip(&free_var_is_mut).zip(&free_var_is_ref_param_src) {
+        for ((((name, _ty), is_mut), is_ref_param_src), box_ty) in free_vars.iter()
+            .zip(&free_var_is_mut).zip(&free_var_is_ref_param_src).zip(&free_var_box_ty) {
             // LHS member-name uses the mangled field (see `mangled_field`
             // above) — this call-site code is emitted directly into the
             // CURRENT (possibly macro-active) output buffer, e.g. inside a
@@ -52461,7 +52530,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // Allocate box and copy current stack value into it.
                     // Use the plain name here (before var_boxed is set) so the
                     // emit_expr for `name` still resolves to the stack variable.
-                    self.line(&format!("{}* {} = ({}*)nova_alloc(sizeof({}));", ty, bv, ty, ty));
+                    // `box_ty` (not `ty`): for a plain value-struct-ptr alias
+                    // (`ty` already `NovaValue_X*`), the box must be sized/
+                    // typed for the POINTEE — `ty` itself would double the
+                    // indirection (see `free_var_box_ty` above).
+                    self.line(&format!("{}* {} = ({}*)nova_alloc(sizeof({}));", box_ty, bv, box_ty, box_ty));
                     // [M-effect-handler-mutex-hashmap-value-capture] п.6
                     // (2026-08-01): for a plain `var_mutable` stack local,
                     // `name` at THIS point is a by-VALUE C variable — a bare
