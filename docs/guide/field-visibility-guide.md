@@ -263,5 +263,5 @@ export fn Session @authorize(target_op str) -> bool =>
 - `spec/decisions/02-types.md` — D220 / D221 / D222 (semantics)
 - `spec/decisions/07-modules.md` — D47 (module-level pub vs per-field priv)
 - `docs/plans/124-priv-field-visibility.md` — umbrella plan
-- `docs/research/06-field-visibility-go-kubernetes.md` — empirical
+- `docs/dev/research/06-field-visibility-go-kubernetes.md` — empirical
   default-visibility study (kubernetes 11099 structs / 35239 fields).

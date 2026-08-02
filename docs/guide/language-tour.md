@@ -199,7 +199,7 @@ total=4 missing=1
 
 ## 5. Errors: Result + `?`, panic
 
-Nova's error-handling rule ([docs/idioms/error-handling.md](../idioms/error-handling.md)):
+Nova's error-handling rule ([docs/dev/idioms/error-handling.md](../dev/idioms/error-handling.md)):
 **panic** is for a broken caller contract (a programmer bug — out-of-bounds
 access, a violated `requires`) and is never recoverable; **`Result[T, E]`**
 is for recoverable failure with an inspectable cause, and `?` propagates an
@@ -659,7 +659,7 @@ nothing as int = 0
 - [examples/flagship/aggregator](../../examples/flagship/aggregator) — the
   full-sized version of the concurrency example: a real HTTP server, a web
   UI, and the same effect-checked signature under `--strict-effects`.
-- [docs/idioms/error-handling.md](../idioms/error-handling.md),
+- [docs/dev/idioms/error-handling.md](../dev/idioms/error-handling.md),
   [docs/guide/channels.md](channels.md), [docs/guide/ffi-cookbook.md](ffi-cookbook.md),
   [docs/guide/cleanup-cookbook.md](cleanup-cookbook.md) — deeper dives on
   errors, channels/`select`, FFI, and consume/cleanup respectively.

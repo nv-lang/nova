@@ -51,7 +51,7 @@
 > но **запускаемого веб-приложения ещё НЕТ** — добор = Ф.MVP-2, см. **§9** (честный статус,
 > решения владельца 2026-07-13: запуск обязателен локально И под Docker, декомпозиция для
 > исполнителя, контракт данных snapshot↔мокап). Родитель-research:
-> [docs/research/15-flagship-concurrency-showcase.md](../research/15-flagship-concurrency-showcase.md)
+> [docs/dev/research/15-flagship-concurrency-showcase.md](../dev/research/15-flagship-concurrency-showcase.md)
 > — там полный дизайн бека, легенды, история решений по визуалу, мокап.
 > **Спека:** нового D-блока, вероятно, НЕ требует (демо на существующих
 > примитивах); при вскрытии дыры — завести D в срок.
@@ -76,7 +76,7 @@
 > 7. Ollama-стриминг → **НЕ в MVP** (в будущем да).
 >
 > **ФРОНТЕНД = МОКАП ВЕРБАТИМ (владелец 2026-07-12, жёстко):** UI берётся ТОЧЬ-В-ТОЧЬ из
-> `docs/research/assets/15-showcase-mockup.html` — это уже готовый, утверждённый UI (дизайн + механика:
+> `docs/dev/research/assets/15-showcase-mockup.html` — это уже готовый, утверждённый UI (дизайн + механика:
 > waterfall hero-lanes, sequential-ghost, swarm-wall, Demo/Chaos, deadline/cancel, light/dark). UI заново НЕ
 > проектировать. Работа 187 = (а) **Nova-backend** — агрегатор с fan-out (плоский) + deadline + каскад-отмена +
 > `Emit`-эффект событий; (б) **проводка** Emit-событий в data-модель мокапа (заменить synthetic/demo-данные
@@ -97,7 +97,7 @@ Killer-нарратив: одна строка `fn aggregate(...) Net Time Fail 
 
 - **Дизайн бека** — research §6 (слои, сигнатура, тесты без моков, обход gap 6.2).
 - **Визуальная модель** — waterfall (полоса=время); утверждена владельцем.
-- **Мокап фронта** — `docs/research/assets/15-showcase-mockup.html` (v8): обе темы,
+- **Мокап фронта** — `docs/dev/research/assets/15-showcase-mockup.html` (v8): обе темы,
   две легенды (Погода/Health), Demo/Chaos/Live, дедлайн, отмена, sequential-ghost.
 - **Две легенды** — Погода (open-meteo, без ключа) и Health-check реальных доменов.
 

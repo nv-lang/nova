@@ -124,4 +124,4 @@ All diagnostics carry machine-applicable suggestions (Plan 50 D102).
 - `spec/decisions/05-memory.md` — D131 (affine semantics), D180 (binding
   syntax)
 - `docs/plans/73.1-consume-binding-syntax.md` — Plan 73.1 status
-- `docs/migration/d180-binding-syntax.md` — migration guide
+- `docs/dev/migration/d180-binding-syntax.md` — migration guide

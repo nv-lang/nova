@@ -5,7 +5,7 @@
 > **Владеет:** `[M-import-glob-forbid]` (CLOSED).
 > **Часть модульной концепции:** [Plan 42 — folder-modules](42-folder-modules.md) ([D29](../../spec/decisions/07-modules.md#d29-модули-и-импорты)) — уточняет **Rule C** «per-file imports remain per-file scope» и [42.09 re-export](42.09-re-export.md) / [42.04 per-file imports scope](42.04-per-file-imports-scope.md): запрещает «всё-подряд»-формы импорта/реэкспорта.
 > **Координируется с:** [Plan 162](162-rust-model-module-resolution.md) (Rust-модель резолва — опция «бэр `import m` → qualified» из Ф.2 ниже согласуется с резолвером 162).
-> **Research:** [docs/research/11-stdlib-method-resolution-reachability.md](../research/11-stdlib-method-resolution-reachability.md) (раздел про barrel/`pub use`).
+> **Research:** [docs/dev/research/11-stdlib-method-resolution-reachability.md](../dev/research/11-stdlib-method-resolution-reachability.md) (раздел про barrel/`pub use`).
 
 ## Проблема (по коду)
 

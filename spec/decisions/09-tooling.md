@@ -2341,7 +2341,7 @@ Boolean. Любое не-`true` значение трактуется как `fa
   `#experimental` атрибутов.
 - Plan 45 Ф.23.12 §11.5 №7 — определение lint `public-missing-stability`.
 - Plan 71 — implementation.
-- [docs/idioms/stability-tiers.md](../../docs/idioms/stability-tiers.md)
+- [docs/dev/idioms/stability-tiers.md](../../docs/dev/idioms/stability-tiers.md)
   — pragmatic guide.
 
 ---
@@ -2517,7 +2517,7 @@ JSON variant — D107 schema extension.
 - Type-decl badge: `[consume]` next to type name.
 - Methods: `[consume]` annotation на consume-methods.
 - Section "Resource lifecycle" — open/use/close pattern.
-- Links to `docs/idiom/<type>-resource.md`.
+- Links to `docs/dev/idioms/<type>-resource.md`.
 
 ### Сравнение
 
@@ -2870,7 +2870,7 @@ on-demand** детерминированным генератором (`nova-cod
 **только** fast-сэмпл `*_conformance.nv` (~1500 case'ов). Пустой кэш → `--slow-only` находит
 0 тестов = **skip-never-fail** (не ошибка; offline/без-UCD прогон зелёный). Обоснование
 (модель Go `-long`/CPython `open_urlresource`; cross-eco research
-[docs/research/10-unicode-test-data-storage.md](../../docs/research/10-unicode-test-data-storage.md)):
+[docs/dev/research/10-unicode-test-data-storage.md](../../docs/dev/research/10-unicode-test-data-storage.md)):
 у Nova есть байт-идентичный генератор, поэтому коммит ~23 MB регенерируемого build-output
 не даёт ничего сверх него, но навсегда утяжеляет историю. git-lfs / submodule / отдельная
 тест-репа отвергнуты для этого профиля. Полнота (G0 «без упрощений») доказывается
@@ -2937,7 +2937,7 @@ p90 47.5s на _тест_ (compile-dominated: 96% времени — компи�
 2. Имя содержит `stress`, `bench`, `perf` → `_slow.nv`
 3. Иначе → оставить в дефолте
 
-Актуальный профиль: `docs/research/12-test-suite-profile-2026.md`.
+Актуальный профиль: `docs/dev/research/12-test-suite-profile-2026.md`.
 
 ### Fast-variant конвенция
 
@@ -3044,7 +3044,7 @@ vim syntax, Zed/Helix/Neovim tree-sitter queries, кастомный хайла�
 > внутри тела. Cross-ref [D371](07-modules.md#d371-prelude-control-attributes) (const-shadow gate
 > `should_skip_const` — смежный const-эмиссионный путь),
 > [docs/plans/159-reachability-codegen.md](../../docs/plans/159-reachability-codegen.md),
-> research [docs/research/11-stdlib-method-resolution-reachability.md](../../docs/research/11-stdlib-method-resolution-reachability.md).
+> research [docs/dev/research/11-stdlib-method-resolution-reachability.md](../../docs/dev/research/11-stdlib-method-resolution-reachability.md).
 
 ### Что
 
@@ -3119,7 +3119,7 @@ desugar-селекторов + `@method:`-тег (Ф.4). Все гейты **no-
 ### Связь
 
 - [docs/plans/159-reachability-codegen.md](../../docs/plans/159-reachability-codegen.md) — план + замеры + критерии A1-A5/G0.
-- [docs/research/11-stdlib-method-resolution-reachability.md](../../docs/research/11-stdlib-method-resolution-reachability.md) — кросс-языковой research (import ⊥ unused-elimination; вариант A vs B).
+- [docs/dev/research/11-stdlib-method-resolution-reachability.md](../../docs/dev/research/11-stdlib-method-resolution-reachability.md) — кросс-языковой research (import ⊥ unused-elimination; вариант A vs B).
 - [D371](07-modules.md#d371-prelude-control-attributes) — const-shadow gate (`should_skip_const`), смежный const-эмиссионный путь.
 - `[M-reachability-codegen-dce]` (Ф.1 core ✅ DONE), `[M-159-method-pruning]` (P3, coarse-by-name per-kind аудит), `[M-159-lazy-module-resolution]` (P3), `[M-152.3b-char-methods-no-import]` (✅ CLOSED через Ф.4).
 

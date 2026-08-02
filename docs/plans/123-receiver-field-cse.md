@@ -797,7 +797,7 @@ Open questions проверить + закрыть через D217-D219:
 - `docs/guide/field-cache-optimization.md` (V5 → 123.5) — user guide:
   что делает feature, как читать LSP code-lens, escape hatch
   usage, performance expectations.
-- `docs/migration/123-receiver-field-cache.md` (V6 → 123.6) —
+- `docs/dev/migration/123-receiver-field-cache.md` (V6 → 123.6) —
   migration guide если выявится regression: edition pinning,
   threshold tuning, debugging.
 

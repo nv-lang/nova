@@ -57,7 +57,7 @@ sentences 512, collation 227800). Размер коммит-фикстуры р�
   --ucd-dir <UCD>` → `nova test --slow-only`; пустой кэш → 0 тестов = skip-never-fail). В git —
   только малый fast-сэмпл `*_conformance.nv`. Причина: коммит регенерируемого build-output зря
   раздувает историю навсегда (модель Go `-long`/CPython; обоснование —
-  [docs/research/10-unicode-test-data-storage.md](../research/10-unicode-test-data-storage.md)).
+  [docs/dev/research/10-unicode-test-data-storage.md](research/10-unicode-test-data-storage.md)).
 - **Нерегенерируемый** (ручной большой/медленный тест, генератора нет): **коммитить** как
   `*_slow.nv` — это и есть «хранить в репо, но вне дефолт-регресса».
 - ❌ git-lfs / отдельная тест-репа / submodule — НЕ используем (хуже на exFAT/Windows,
@@ -82,7 +82,7 @@ sentences 512, collation 227800). Размер коммит-фикстуры р�
 > --emit-conformance --conformance-full --ucd-dir <UCD>`), затем `nova test --slow-only`.
 > Коммитится только fast-сэмпл `*_conformance.nv`. Если кэш пуст — `--slow-only` находит 0
 > тестов (skip-never-fail). Модель Go/CPython; обоснование —
-> [docs/research/10-unicode-test-data-storage.md](../research/10-unicode-test-data-storage.md).
+> [docs/dev/research/10-unicode-test-data-storage.md](research/10-unicode-test-data-storage.md).
 > Отложен (`[M-156-slow-subtree-dir]`) лишь каталог-вариант `slow/` + сентинел `_slow.toml`
 > для медленных folder-module — добавится аддитивно, когда появится первый такой тест.
 

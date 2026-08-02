@@ -9099,7 +9099,7 @@ re-attempt sub-plan ПОСЛЕ Plan 139 Ф.2 (координация risk RG; в
   `spec_tests/conformance/standalone/m2211_38_sequential_supervised_accept_stale_deadline.nv`
   RED(до-фикс)→GREEN(фикс); m2217_15/15b δ0 (2/2 PASS); std/src/concurrency δ0 (4/4 PASS);
   4-way нагрузка фикстуры 32/32 чисто. Кейс-стади:
-  `docs/cases/sequential-serve-scope-leak-2026-07-23.md` (раздел Resolution).
+  `docs/dev/cases/sequential-serve-scope-leak-2026-07-23.md` (раздел Resolution).
 
 ## [M-coalesce-return-fallback-unparsed] CLOSED (2026-07-24, sonnet, worktree `nova-coalesce`, ветка `p-coalesce`)
 

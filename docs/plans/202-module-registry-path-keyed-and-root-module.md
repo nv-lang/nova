@@ -5,7 +5,7 @@
 > миграция nova-tls; `[M-d78-duplicate-decl-module-swallow]` снят). Ф.4 (опциональная ретракция
 > rev-3.1 `internal/`) НЕ выполнена — см. backlog `[M-d78-duplicate-decl-module-swallow]` (rev-3.1
 > отмечена как отдельный followup, не блокирует закрытие).
-> Источник: [research 2026-07-13 module-naming](../research/2026-07-13-module-naming-two-segment-review.md)
+> Источник: [research 2026-07-13 module-naming](../dev/research/2026-07-13-module-naming-two-segment-review.md)
 > (эксперимент §2а + кейс `tls.tls` §7) и решения владельца в той же сессии.
 > Маркер-дом: `[M-d78-duplicate-decl-module-swallow]` (P1, backlog) — закрывается Ф.1.
 > **Спека: язык-меняющее** — D78-амендмент ОБЯЗАН ехать в том же слиянии, что и код

@@ -149,7 +149,7 @@ ro (mut a, mut b) = pair          // оба mutable
 
 - `spec/decisions/02-types.md` D176 — formal spec params.
 - `spec/decisions/02-types.md` D36 + amend Plan 108.2/108.3 — formal spec locals + loop-var + pattern.
-- `docs/migration/d176-param-readonly-default.md` — params migration guide.
-- `docs/migration/d36-let-mut-enforcement.md` — locals migration guide.
+- `docs/dev/migration/d176-param-readonly-default.md` — params migration guide.
+- `docs/dev/migration/d36-let-mut-enforcement.md` — locals migration guide.
 - D131 (Plan 73) — consume affine semantics.
 - D157 (Plan 100.3) — view-borrow для consume-типов.

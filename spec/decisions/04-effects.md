@@ -4874,7 +4874,7 @@ Nova `!!` ≠ Kotlin `!!`: у нас **recoverable typed throw** через
 > adversarial-оценка альтернатив (`expr!` / `expr?!` / `try expr` /
 > `.unwrap_throw()` / «только `?? throw`») — все строго хуже или
 > не-замена; `!!` оптимален. См.
-> [docs/research/2026-06-29-bang-bang-operator-review.md](../../docs/research/2026-06-29-bang-bang-operator-review.md).
+> [docs/dev/research/2026-06-29-bang-bang-operator-review.md](../../docs/dev/research/2026-06-29-bang-bang-operator-review.md).
 
 #### Почему `?` работает только на Option/Result, не на Fail
 
@@ -5005,7 +5005,7 @@ D85 ломает текущий идиоматический Nova-стиль:
 > тот же класс, что unwrap-twins выше (выразимы `?? v` / `?? f()` /
 > `.map(f) ?? d`). См. полный каталог и разбор —
 > [08-runtime.md → D26 AMEND 2026-07-16](08-runtime.md#d26-базовая-stdlib-и-prelude),
-> research `docs/research/2026-07-16-option-result-combinators.md`.
+> research `docs/dev/research/2026-07-16-option-result-combinators.md`.
 
 > **AMEND (2026-07-23, решение владельца): форма `X ?? return R` (fallback
 > «`return ...` для раннего выхода из enclosing fn») РЕТРАКТИРОВАНА.**

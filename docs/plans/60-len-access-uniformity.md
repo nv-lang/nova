@@ -201,8 +201,8 @@ LLM-сгенерированный код регулярно перемешив�
 - [ ] D38 amend (remove built-in sugar wording).
 - [ ] D32 amend (поля array не exposed).
 - [ ] D26 amend (prelude API methods list).
-- [ ] `docs/idioms/size-accessors.md` (new): convention, when to use method-value, examples.
-- [ ] `docs/migration/plan-60.md`: для пользователей внешних проектов (когда они появятся) — что изменилось, fix-it snippet.
+- [ ] `docs/dev/idioms/size-accessors.md` (new): convention, when to use method-value, examples.
+- [ ] `docs/dev/migration/plan-60.md`: для пользователей внешних проектов (когда они появятся) — что изменилось, fix-it snippet.
 
 ### Ф.6 — Cross-reference cleanup (½ day)
 
@@ -251,7 +251,7 @@ LLM-сгенерированный код регулярно перемешив�
 - [x] D38 amended (built-in sugar wording removed).
 - [x] D32 amended (array fields non-exposed).
 - [x] D26 amended (prelude API).
-- [x] `docs/migration/plan-60.md` опубликован.
+- [x] `docs/dev/migration/plan-60.md` опубликован.
 
 ---
 

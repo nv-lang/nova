@@ -1,0 +1,31 @@
+# Research Nova
+
+Справочные материалы: сравнения языков, бенчмарки, findings, заметки
+под решения. Это **не планы** (что делать) и **не источники истины**
+(те живут в `spec/decisions/`/`syntax.md`/etc), а **research-артефакты**.
+
+## Схема нумерации
+
+- `01-…`, `02-…` — research-документы по порядку создания.
+
+## Текущие материалы
+
+| # | Файл | О чём |
+|---|---|---|
+| 03 | [03-language-comparison-matrix.md](03-language-comparison-matrix.md) | Матрица: Nova vs 9 языков по 10 болям и 10 возможностям |
+| 04 | [04-gc-comparison.md](04-gc-comparison.md) | GC: размер кода и runtime overhead (ZGC, Go, .NET, Erlang, OCaml...) |
+| 05 | [05-go-mistakes-audit.md](05-go-mistakes-audit.md) | Аудит дизайна Nova по «100 Go Mistakes»: что закрыто, что воспроизводится |
+| 06 | [06-field-visibility-go-kubernetes.md](06-field-visibility-go-kubernetes.md) | Field visibility в Go production code: kubernetes statistical audit (35239 fields, 11099 structs; 59% public / 41% private; layer-dependent distribution) — validates Nova D47 public-default |
+| 07 | [07-unified-record-tuple-syntax.md](07-unified-record-tuple-syntax.md) | Unified record/tuple syntax: `{}` для обоих, аллокация как модификатор |
+| 08 | [08-int-width-and-literal-inference.md](08-int-width-and-literal-inference.md) | Int-ширина (i32 vs i64), signed vs unsigned для len/cap/index, literal inference (Rust narrow-fallback vs Zig comptime_int), pointer interactions gap — research foundation для D226 + D227; industry baseline 10 языков; Stroustrup/Rust regrets cited; pointer-aware amendments pending |
+| 09 | [09-precise-gc-decision-2026.md](09-precise-gc-decision-2026.md) | Precise GC decision 2026: стратегия замены Boehm (рекомендация Option B — Hybrid); родитель Plan 83.13 |
+| 10 | [10-unicode-test-data-storage.md](10-unicode-test-data-storage.md) | Как хранят тяжёлые Unicode-тест-данные (Go/Rust/TS/Kotlin-Java/ICU/CPython) → рекомендация regenerate-on-demand; родитель Plan 156 |
+| 11 | [11-stdlib-method-resolution-reachability.md](11-stdlib-method-resolution-reachability.md) | Stdlib-методы на примитивах + достижимость (Rust/Swift/Zig/Go): import-vs-no-import ⊥ ленивый-анализ-vs-линкер-срез; наши замеры (отсева в codegen НЕТ) → рекомендация reachability-codegen; родитель Plan 159 |
+| 15 | [15-flagship-concurrency-showcase.md](15-flagship-concurrency-showcase.md) | Флагманское демо: живая визуализация конкурентных запросов (агрегатор). Отбор идеи из 5; SSE-транспорт; визуал swimlanes+waterfall (A+C); **дизайн и архитектура бека** на реальных примитивах (эффекты/supervised-spawn/handler-подмена/D28); gap'ы 91-Ф.6 и зависимости 173/178; родитель будущего Plan 187 |
+
+> Нумерация начинается с 03, потому что 01 и 02 переехали в отдельную
+> репу с черновиками публикаций.
+
+## Связанные директории
+
+- [docs/plans/](../../plans/) — планы (что и когда делаем)

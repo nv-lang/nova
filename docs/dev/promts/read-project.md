@@ -64,7 +64,7 @@ D48 tag-шаблоны). **Не выдумывай синтаксис** — св
   `.new().cap()` ✅; в очереди П6 `Vec.data→ptr`; П3 As*-протоколы — в Q).
 - **Plan 187** — флагман-агрегатор: MVP ✅ (`examples/flagship/aggregator/`); остаток: SSE-мост,
   typed-serde, real-cancel (за 173), Live-источники. Фронт = мокап
-  `docs/research/assets/15-showcase-mockup.html` ВЕРБАТИМ.
+  `docs/dev/research/assets/15-showcase-mockup.html` ВЕРБАТИМ.
 - **Plan 173** — runtime-хвосты: `[M-parfor-record-result-miscompile]` и `supervised(deadline:)`
   (включая гонку «sleep не прерывается») — в работе, срочные.
 - **Plan 193** — ✅ закрыт (nova-tls = внешний dep); хвост: vendored-сборка mbedTLS (195-паттерн по
@@ -137,4 +137,4 @@ nova-http, которой не было — заголовки копии был
 
 - `compiler-codegen/src/` — только файлы, релевантные задаче (emit_c.rs — 50k+ строк).
 - `docs/project-creation.txt`, `docs/dev/simplifications.md` — исторические логи.
-- `docs/research/` — справочные материалы, не планы.
+- `docs/dev/research/` — справочные материалы, не планы.

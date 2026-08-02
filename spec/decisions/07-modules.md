@@ -853,7 +853,7 @@ ModuleSigTable   { modules: HashMap<Vec<String>, ModuleSignatures> }
 > полей **отменена**. Заменена на compile-time `priv` field modifier
 > (Plan 124 / D220). Empirical validation: kubernetes production code
 > 59% public / 41% private fields (см.
-> [docs/research/06-field-visibility-go-kubernetes.md](../../docs/research/06-field-visibility-go-kubernetes.md)).
+> [docs/dev/research/06-field-visibility-go-kubernetes.md](../../docs/dev/research/06-field-visibility-go-kubernetes.md)).
 > Public-default подтверждён данными для API surface (92% public);
 > `priv` keyword добавляет compile-time enforcement для ~10% полей
 > требующих encapsulation.
@@ -1023,7 +1023,7 @@ import std.internal_helpers             // только внутри my_lib
 Nova для top-level ближе всего к **Rust** (private-default, opt-in
 public). Для field-level — публичные default + `priv` opt-in
 (industry data-driven choice, см.
-[docs/research/06-field-visibility-go-kubernetes.md](../../docs/research/06-field-visibility-go-kubernetes.md)).
+[docs/dev/research/06-field-visibility-go-kubernetes.md](../../docs/dev/research/06-field-visibility-go-kubernetes.md)).
 
 ### Связь
 

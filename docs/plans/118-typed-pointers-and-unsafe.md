@@ -1239,7 +1239,7 @@ OptionPtrType ::= 'Option' '[' PointerType ']'   // существующий Opt
 **Doc updates:**
 - `docs/guide/typed-pointers.md` §«Option[*T] + NPO».
 - `docs/guide/ffi-cookbook.md` migrated к `Option[*T]` / tuple newtype patterns.
-- `docs/migration/118-null-ptr-to-option.md` (NEW) — migration guide.
+- `docs/dev/migration/118-null-ptr-to-option.md` (NEW) — migration guide.
 
 **Verification:**
 - Targeted fixtures: `tests/fixtures/plan118/t5_*` (20+ files)
@@ -2133,7 +2133,7 @@ issue → extract в followup (`[M-118-perf-*]`).
 | `docs/guide/typed-pointers.md` | NEW | Ф.1-Ф.7 | overview docs (incremental per phase) |
 | `docs/unsafe-block-pattern.md` | NEW | Ф.3 | when to use unsafe block, examples |
 | `docs/guide/ffi-cookbook.md` | UPDATE | Ф.5, Ф.9 | migration к Option[*T] / tuple newtype |
-| `docs/migration/118-null-ptr-to-option.md` | NEW | Ф.5 | migration guide для `null ptr` retraction |
+| `docs/dev/migration/118-null-ptr-to-option.md` | NEW | Ф.5 | migration guide для `null ptr` retraction |
 | `examples/typed_pointers/01-06_*.nv` | NEW | Ф.9.5 | minimal working samples |
 | `spec/decisions/02-types.md` (D216, D52 cross-ref, D214 amend, D32 amend) | UPDATE | Ф.0 drafts, Ф.9 promote | spec D-blocks |
 | `spec/decisions/04-effects.md` (D2 amend) | UPDATE | Ф.0 draft, Ф.3 commit, Ф.9 promote | D2 amend |

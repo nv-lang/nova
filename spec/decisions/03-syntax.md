@@ -6279,7 +6279,7 @@ Nova-body (Plan 139.2 Ф.1): `@len() => @len` (O(1) byte-len, бывший
 > (2026-06-01). Replace `external type X` with `type X(ptr)` (tuple-newtype
 > opaque-handle pattern, Plan 115 D214). C runtime backing preserved через
 > `external fn` методы — ABI unchanged.
-> Migration guide: docs/migration/d126-to-tuple-newtype.md.
+> Migration guide: docs/dev/migration/d126-to-tuple-newtype.md.
 > For FFI opaque consume-types оставайся на `external type X consume` (D163,
 > supported).
 > ```
@@ -11612,7 +11612,7 @@ sink-протокол `Write`, сигнатуры Display/Debug переломл
 > (completes-by-default, D192-ретракт) + §3b (no-restart-default). **Амендит:** [D90](#d90-defer-и-errdefer--scope-level-cleanup-statement),
 > [D188](#d188-cleanupe-protocol--consume-x--expr-body-scope-block), [D189](#d189-прямое-удаление-okdefer--errdefer--defer-result),
 > [D194](#d194-consumablenever--infallible-cleanup--hot-path-elision), [D185](../04-effects.md#d185)
-> (эффект `Cleanup`→`ResourceTrace`). **Хаб:** docs/idiom/error-and-cleanup-model.md (rewrite Ф.2.E).
+> (эффект `Cleanup`→`ResourceTrace`). **Хаб:** docs/dev/idioms/error-and-cleanup-model.md (rewrite Ф.2.E).
 
 ### Что
 
@@ -11927,7 +11927,7 @@ Go (`//go:embed`), Zig (`@embedFile`).
 
 **Статус: ПРИНЯТО** (владелец 2026-07-15, вариант A; материализация Option R′). Расширяет
 п.2 (`embed`) на целую директорию. Маркер [M-embed-dir]. Дизайн/survey:
-[research 2026-07-15](../../docs/research/2026-07-15-embed-dir-proposal.md),
+[research 2026-07-15](../../docs/dev/research/2026-07-15-embed-dir-proposal.md),
 [план 210](../../docs/plans/210-embed-dir.md).
 
 3. **`embed_dir("relative/dir")`** — компайл-тайм интринсик: содержимое ВСЕЙ папки

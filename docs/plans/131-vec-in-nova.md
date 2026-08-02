@@ -356,7 +356,7 @@ Vec[T] @[](i int) -> T     // panic on OOB (как Rust [])
 
 #### Документы
 
-- `docs/collections/vec-owned.md` — user guide для `Vec[T]`
+- `docs/guide/vec-owned.md` — user guide для `Vec[T]`
 - Обновить `docs/plans/91-stdlib-mvp-for-0.1.md` — `[M-91.1-value-struct-array-elem]`
   закрыт через Plan 131
 
@@ -365,7 +365,7 @@ Vec[T] @[](i int) -> T     // panic on OOB (как Rust [])
 - [ ] D216 amend с pointer arithmetic подтверждён
 - [ ] D-блок для `Vec[T]` добавлен
 - [ ] Q-vec-vs-slice написан
-- [ ] `docs/collections/vec-owned.md` готов
+- [ ] `docs/guide/vec-owned.md` готов
 - [ ] Коммит: `docs(plan131 Ф.5): Vec[T] spec D-blocks + Q + user guide`
 
 ---

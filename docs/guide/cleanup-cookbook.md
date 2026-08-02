@@ -551,6 +551,6 @@ parent.default_exit_timeout_ms())`.
 - [Plan 110](../plans/110-scoped-resources-radical-simplification.md) — umbrella.
 - [Plan 100.5](../plans/100.5-ffi-external-integration.md) — FFI bridge.
 - [Plan 100.8](../plans/100.8-performance-ide-tooling.md) — perf + tooling.
-- [idiom/consume-scope-cleanup.md](../idiom/consume-scope-cleanup.md) — Q-blocks
+- [idiom/consume-scope-cleanup.md](../dev/idioms/consume-scope-cleanup.md) — Q-blocks
   (semantics overview).
 - [D188](../../spec/decisions/03-syntax.md#d188)–[D198](../../spec/decisions/03-syntax.md#d198) — spec.

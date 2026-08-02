@@ -447,7 +447,7 @@ module-private-функций, видимых межфайлово в том ж�
 ## Пункт 14 — комбинаторы `Option`/`Result`: `flat_map` (обе стороны) + `filter` (Option)
 
 **Статус:** ✅ РЕАЛИЗОВАНО этим заходом 2026-07-16 [sonnet, worktree `nova-200p14`]. Research-основание —
-`docs/research/2026-07-16-option-result-combinators.md` (владелец, коммиты `f74cea01c` + `c24c5cae4`).
+`docs/dev/research/2026-07-16-option-result-combinators.md` (владелец, коммиты `f74cea01c` + `c24c5cae4`).
 
 **Что:** три Nova-body метода в `std/src/prelude/core.nv` (рядом с `map`/`ok_or`/`or`/`map_err`):
 - `fn Option[T] @flat_map[U](flat_map_fn fn(T) -> Option[U]) -> Option[U]`
@@ -532,7 +532,7 @@ Vec.from-часть закрыта (маркер остаётся открыт �
 
 **Спека тем же слиянием:** `spec/decisions/02-types.md` (D259 AMEND-блок + `README.md` индекс-строка + D232
 construction-таблица + D230 shallow-copy таблица + NovaArray-блокер item 5 помечен MOOT), `docs/dev/nv-coding-style.md`
-§1а item 4, `docs/collections/vec-owned.md` (Construction-таблица + секция `of` vs `.clone()` переписана),
+§1а item 4, `docs/guide/vec-owned.md` (Construction-таблица + секция `of` vs `.clone()` переписана),
 `docs/guide/vec-lazy.md` (пример кода).
 
 **Побочная находка (зафиксирована и исправлена в этой же волне):** при standalone-верификации

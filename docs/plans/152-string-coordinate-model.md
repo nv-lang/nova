@@ -509,7 +509,7 @@ Unicode-data pipeline) → 152.3b (char Unicode) → 152.5b (locale-collation/UC
   `runtime/string/`, роль internal `_buffer` на RawMem, конвенция internal-видимости.
 - `docs/formatting.md` (NEW, 152.7) — интерполяция `${...}`, формат-спеки
   (Rust-style mini-language), `Display`/`Debug`, `Write`-sink.
-- `docs/migration/d249-string-lenses.md` (NEW) — миграция `str[i]`/`len()`/
+- `docs/dev/migration/d249-string-lenses.md` (NEW) — миграция `str[i]`/`len()`/
   `char_at`/`find`-семантики.
 - `nova doc` бейджи стоимости (O(1)/O(n)) на str/CharsIter-методах (если поддержано).
 
@@ -644,7 +644,7 @@ index-lowering в `emit_c.rs` руками. Общий `.git`: без `git stash
 1. Реализация по scope файла `152.N`.
 2. Spec: D-блок(и) + амендменты в `spec/decisions/`; Q — записи-решения в
    `spec/open-questions.md`.
-3. Доки: `docs/guide/strings.md` / `docs/dev/strings-internals.md` / `docs/migration/*` (как
+3. Доки: `docs/guide/strings.md` / `docs/dev/strings-internals.md` / `docs/dev/migration/*` (как
    указано в §4).
 4. Тесты: pos **и** neg фикстуры в `nova_tests/plan152_N/`, прогон через **релизные**
    `nova` + компилятор.
