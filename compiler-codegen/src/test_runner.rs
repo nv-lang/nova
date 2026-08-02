@@ -1297,7 +1297,15 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                     c.arg("-I").arg(&vcpkg_include);
                     c.arg("-L").arg(&vcpkg_lib);
                     c.arg("-lgc");
-                    c.arg("-latomic_ops");
+                    // #269 Ф.2: conditional on existing — see the matching
+                    // MSVC-branch comment (`atomic_ops_lib.is_file()`
+                    // above) for the full rationale: the vcpkg-built
+                    // `bdwgc` port links a separate `atomic_ops.lib`, the
+                    // #269 Ф.2 fallback build doesn't produce/need one
+                    // (header-only atomics on x86_64 MSVC).
+                    if vcpkg_lib.join("atomic_ops.lib").is_file() {
+                        c.arg("-latomic_ops");
+                    }
                 }
                 #[cfg(not(target_os = "windows"))]
                 {
@@ -1898,8 +1906,15 @@ pub fn compile_multi_tu_to_exe(
     let effect_arg = common_h.lines().next().and_then(|l| effect_count_define_arg_from_line(l, "-D"));
 
     let march = march_flag();
+    // #269 Ф.2: same fallback-aware resolution as `build_command`/
+    // `detect_or_build_rt_archive` (see those call sites' comments) — this
+    // function has its OWN independent `boehm_cfg` derivation (Plan 209
+    // Ф.2 multi-TU path), so it needs the same fix.
     let boehm_cfg = if opts.gc_kind == GcKind::Boehm {
-        detect_boehm(opts.cg_include)
+        detect_boehm(opts.cg_include).or_else(|| {
+            opts.rt_dir.parent().and_then(|p| p.parent())
+                .and_then(|repo_root| detect_or_build_boehm_fallback(opts.rt_dir, repo_root, tc.vcvars_path()))
+        })
     } else {
         None
     };
@@ -2124,7 +2139,11 @@ pub fn compile_multi_tu_to_exe(
         {
             link.arg("-L").arg(&vcpkg_lib);
             link.arg("-lgc");
-            link.arg("-latomic_ops");
+            // #269 Ф.2: conditional on existing — see build_command's
+            // matching comment for the full rationale.
+            if vcpkg_lib.join("atomic_ops.lib").is_file() {
+                link.arg("-latomic_ops");
+            }
         }
         #[cfg(not(target_os = "windows"))]
         {
@@ -4757,6 +4776,46 @@ pub fn detect_boehm(cg_include: &Path) -> Option<BoehmConfig> {
     None
 }
 
+/// #269 Ф.2: `nova_rt` sources use BOTH the flat upstream include convention
+/// (`#include <gc.h>` — alloc_boehm.c, runtime.c, driver.c, ...) AND a
+/// `gc/`-namespaced one (`#include <gc/gc.h>`, `<gc/gc_mark.h>` —
+/// fiber_arena.c/fiber_arena_win.c only). vcpkg's `bdwgc` port happens to
+/// install headers BOTH ways (`vcpkg_installed/.../include/gc.h` AND
+/// `.../include/gc/gc.h`, confirmed by directory listing — bdwgc's own
+/// `CMakeLists.txt` has no `install()` rule at all, so this is a vcpkg-side
+/// convention, not upstream's), which is why the existing vcpkg/env path
+/// never hit this gap. The raw bdwgc submodule tree only has the flat form
+/// (`gc_dir/include/gc.h`, no nested `gc/` folder) — copy the handful of
+/// headers `nova_rt` actually needs into `cache_dir/include/` (flat, for
+/// `<gc.h>`) AND `cache_dir/include/gc/` (nested, for `<gc/gc.h>`) so a
+/// single `-I cache_dir/include` satisfies both forms, matching vcpkg's
+/// observed layout — found by running the actual clean-clone acceptance
+/// gate (`fiber_arena_win.c(55): fatal error C1083: ... gc/gc.h: No such
+/// file or directory`), not by reading the vcpkg port source ahead of time.
+/// Copies into the submodule's OWN `include/` dir are deliberately avoided
+/// (never write into a vendored git submodule's working tree — would show
+/// up as an unexpected dirty submodule / risk being committed by accident).
+fn populate_boehm_include_dir(gc_include: &Path, cache_include: &Path) -> Result<()> {
+    let nested = cache_include.join("gc");
+    std::fs::create_dir_all(&nested)
+        .map_err(|e| anyhow!("create {}: {}", nested.display(), e))?;
+    for entry in std::fs::read_dir(gc_include)
+        .map_err(|e| anyhow!("read {}: {}", gc_include.display(), e))?
+    {
+        let entry = entry?;
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("h") {
+            continue;
+        }
+        let name = path.file_name().unwrap();
+        std::fs::copy(&path, cache_include.join(name))
+            .map_err(|e| anyhow!("copy {} (flat): {}", path.display(), e))?;
+        std::fs::copy(&path, nested.join(name))
+            .map_err(|e| anyhow!("copy {} (nested gc/): {}", path.display(), e))?;
+    }
+    Ok(())
+}
+
 /// #269 Ф.2 [M-gc-lib-not-bundled-clean-install]: one-time fallback build of
 /// Boehm GC from the vendored `bdwgc` submodule (`rt_dir/gc`) — mirrors
 /// `detect_or_build_libuv` 1:1. Called ONLY when `detect_boehm` (env var /
@@ -4816,20 +4875,27 @@ pub fn detect_or_build_boehm_fallback(
         }
         let cache_dir = repo_root.join("target").join("gc-cache");
         let gc_lib = cache_dir.join("gc.lib");
-        if gc_lib.is_file() {
-            return Some(BoehmConfig { include_dir: Some(gc_include), lib_dir: Some(cache_dir) });
+        let cache_include = cache_dir.join("include");
+        if gc_lib.is_file() && cache_include.join("gc.h").is_file()
+            && cache_include.join("gc").join("gc.h").is_file()
+        {
+            return Some(BoehmConfig { include_dir: Some(cache_include), lib_dir: Some(cache_dir) });
         }
         eprintln!(
             "nova: Boehm GC (gc.lib) not found via $NOVA_GC_LIB_DIR/vcpkg — \
              building from vendored bdwgc submodule (one-time, ~10 sec)..."
         );
+        if let Err(e) = populate_boehm_include_dir(&gc_include, &cache_include) {
+            eprintln!("nova: warning: bdwgc fallback build failed: copy headers: {}", e);
+            return None;
+        }
         if let Err(e) = build_boehm_lib(&gc_dir, &ao_dir, &cache_dir, vcvars) {
             eprintln!("nova: warning: bdwgc fallback build failed: {}", e);
             return None;
         }
         if gc_lib.is_file() {
             eprintln!("nova: gc.lib built from vendored bdwgc source ({})", gc_lib.display());
-            return Some(BoehmConfig { include_dir: Some(gc_include), lib_dir: Some(cache_dir) });
+            return Some(BoehmConfig { include_dir: Some(cache_include), lib_dir: Some(cache_dir) });
         }
         eprintln!("nova: FATAL bdwgc fallback build succeeded but {} not found", gc_lib.display());
         return None;
@@ -5547,7 +5613,21 @@ pub fn detect_or_build_rt_archive(
         }
 
         let sources = rt_archive_sources(rt_dir, opts.gc_kind, opts.libuv);
-        let boehm_cfg = if opts.gc_kind == GcKind::Boehm { detect_boehm(opts.cg_include) } else { None };
+        // #269 Ф.2: same fallback-aware resolution as `build_command`'s own
+        // `boehm_cfg` (see that call site's comment) — this builder has its
+        // OWN independent GC include/lib derivation (Plan 218 prebuilt
+        // `libnova_rt` archive), so it needs the SAME fix, not just the
+        // early honest-exit check in `resolve_gc_or_exit`. Found by running
+        // the actual clean-clone acceptance gate: without this, the rt_*.c
+        // sources (which `#include <gc.h>` unconditionally under
+        // `GcKind::Boehm`) failed with "gc.h file not found" even though
+        // the fallback `gc.lib` had already been built successfully one
+        // step earlier — `boehm_cfg` here was silently `None`.
+        let boehm_cfg = if opts.gc_kind == GcKind::Boehm {
+            detect_boehm(opts.cg_include).or_else(|| detect_or_build_boehm_fallback(rt_dir, repo_root, tc.vcvars_path()))
+        } else {
+            None
+        };
         eprintln!("nova: libnova_rt archive not built for this config, building (one-time, ~5-7 sec)...");
         let build_result = build_rt_archive_lib(
             &sources, &cache_dir, &lib_file, rt_dir, opts.cg_include, opts.mode,

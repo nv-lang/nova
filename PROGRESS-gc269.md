@@ -99,4 +99,121 @@ malloc-backend) + СИМЭТРИЧНО `compiler-codegen/nova_rt/alloc_boehm.c` 
 `alloc_boehm.c` расширен по собственной инициативе (тот же класс бага,
 тот же файл-сосед, тривиальный риск) — раскрыто явно, не тихая правка.
 
-## Приёмка (гейты из брифа) — см. финальный отчёт для дословных вердиктов
+## Ф.3 — реальная сборка выявила 2 доп. разрыва (найдены прогоном, не чтением)
+
+Ручная амальгама-компиляция была необходимым, но НЕ достаточным условием —
+реальный `nova build hello.nv` end-to-end вскрыл ДВА мест, где обвязка
+не была fallback-aware:
+
+1. `boehm_cfg` вычислялся `detect_boehm`-ONLY (без `.or_else(fallback)`) ЕЩЁ
+   в ДВУХ местах помимо раннего `resolve_gc_or_exit`-чека:
+   `build_command`'s собственный `boehm_cfg` (реальные `/I`/`/link` флаги),
+   `compile_multi_tu_to_exe`'s собственный `boehm_cfg` (Plan 209 Ф.2
+   multi-TU путь), И `detect_or_build_rt_archive`'s собственный `boehm_cfg`
+   (Plan 218 prebuilt `libnova_rt.lib`). Без синхронизации ВСЕХ четырёх —
+   fallback-сборка отработала бы в раннем чеке, но реальные флаги
+   компиляции тихо падали бы обратно на несуществующий vcpkg-путь. Все
+   четыре теперь используют identical `detect_boehm(...).or_else(||
+   detect_or_build_boehm_fallback(...))`.
+2. `atomic_ops.lib` линковался БЕЗУСЛОВНО в ТРЁХ местах (MSVC `/link`-фаза
+   `build_command`, Clang Windows-ветка `build_command`, Clang Windows-ветка
+   `compile_multi_tu_to_exe`) — фикс: `.is_file()`-guard на каждом (vcpkg-
+   путь не меняется, fallback больше не падает «cannot open atomic_ops.lib»
+   за файл, который ему не нужен).
+3. `nova_rt` использует ОБЕ конвенции инклюда — `<gc.h>` (большинство
+   файлов) И `<gc/gc.h>`/`<gc/gc_mark.h>` (fiber_arena.c/fiber_arena_win.c
+   only) — vcpkg-порт кладёт заголовки ОБОИМИ способами (подтверждено
+   листингом `vcpkg_installed/.../include/gc/gc.h`), сырое дерево
+   сабмодуля bdwgc — только плоско. Фикс: `populate_boehm_include_dir`
+   копирует нужные `.h` в `cache_dir/include/` (плоско) И
+   `cache_dir/include/gc/` (namespaced) — НЕ в сам сабмодуль (чтобы не
+   грязнить его working tree).
+
+Оба класса разрывов найдены ТОЛЬКО прогоном реального `nova build
+hello.nv` в чистом клоне (не код-ревью, не чтением кода заранее) —
+итеративно: compile → link-error → fix → recompile → следующая ошибка,
+3 раунда до первого чистого PASS.
+
+## Приёмка (гейты из брифа)
+
+**Гейт 1 — чистая установка (главный):** реальный `git clone --recursive`
+(из этого worktree, ASCII-путь `D:\Sources\nv-lang\_gc269_clean_test\` —
+Temp-путь с кириллицей в имени пользователя вскрыл НЕСВЯЗАННЫЙ
+pre-existing баг в `build_libuv_lib`'s rsp-файле, нет BOM, вне scope этого
+окна, задокументирован ниже отдельно) → `cargo build --release`
+(nova-cli, 2m19s-3m05s по прогонам) → `nova build hello.nv -o hello.exe`
+БЕЗ `NOVA_GC_LIB_DIR`/`NOVA_GC_INCLUDE_DIR`/`VCPKG_ROOT` в env — дословный
+хвост финального зелёного прогона:
+
+```
+nova: Boehm GC (gc.lib) not found via $NOVA_GC_LIB_DIR/vcpkg — building from vendored bdwgc submodule (one-time, ~10 sec)...
+nova: gc.lib built (bdwgc extra/gc.c amalgamation)
+nova: gc.lib built from vendored bdwgc source (D:\Sources\nv-lang\_gc269_clean_test\target\gc-cache\gc.lib)
+nova: libnova_rt archive not built for this config, building (one-time, ~5-7 sec)...
+nova: libnova_rt.lib built (13 files)
+nova: libnova_rt archive built (D:\Sources\nv-lang\_gc269_clean_test\target\rt-archive-cache\cf22875f5521d114\libnova_rt.lib)
+built: hello.exe (17.05s)
+BUILD_EXIT=0
+=== running hello.exe ===
+Hello, Nova!
+RUN_EXIT=0
+```
+
+Повторный прогон (cache-hit, без пересборки GC): `build cache hit —
+reusing generated C`, `built: hello2.exe (3.40s)`, вывод `Hello, Nova!`
+байт-в-байт. ВЕРДИКТ: **PASS**.
+
+**Гейт 2 — vcpkg-путь не сломан:** worktree `nova-gc269` (без своего
+`vcpkg_installed`) с `NOVA_GC_LIB_DIR`/`NOVA_GC_INCLUDE_DIR`, указывающими
+на РЕАЛЬНЫЙ vcpkg главной репы (`d:/Sources/nv-lang/nova/compiler-codegen/
+vcpkg_installed/x64-windows-static/{lib,include}`) → `nova build hello.nv`
+— fallback НЕ триггерится (env-приоритет №1 не тронут), собирается,
+печатает «Hello, Nova!». `nova test spec_tests/conformance/append_self.nv
+spec_tests/conformance/slice_gc_alive.nv` (тот же vcpkg env) — дословный
+хвост:
+
+```
+Toolchain: clang, mode=Dev, jobs=16, paths=[...append_self.nv, ...slice_gc_alive.nv]
+PASS           spec_tests/conformance/append_self
+PASS           spec_tests/conformance/slice_gc_alive
+===== SUMMARY =====
+PASS: 2  FAIL: 0
+```
+
+ВЕРДИКТ: **PASS**.
+
+**Гейт 3 — ratchet/чекер:** этим окном НЕ трогается ни один checker-канал
+файл (`types/mod.rs` и т.п.) — только `test_runner.rs` (build-driver),
+`alloc.c`/`alloc_boehm.c` (rt), `.gitmodules`/новые сабмодули, README.md.
+Ratchet структурно не может вырасти. ВЕРДИКТ: **PASS (by construction)**.
+
+**Гейт 4 — cargo чистый:** `cargo build --release` (`compiler-codegen` +
+`nova-cli`) — 0 ошибок, ТОЛЬКО pre-existing warnings (dead-code и т.п. в
+файлах, которых это окно не трогало — `field_cache.rs`, `types/mod.rs`,
+`crosscheck.rs`, `main.rs`); grep подтвердил 0 warnings, указывающих на
+`test_runner.rs`. Отдельно проверено: `cargo test --release --lib
+test_runner` падает stack-overflow на `doc::test_runner::tests::
+compile_fail_passes_when_fails` — ПОДТВЕРЖДЕНО pre-existing (идентичный
+краш байт-в-байт на НЕМОДИФИЦИРОВАННОМ `main`, тот же тест, тот же
+STATUS_STACK_OVERFLOW) — НЕ регрессия этого окна.
+
+**Мега-CU/флагман (--strict-effects):** по брифу — работа интегратора при
+приёмке, этим окном не прогонялся.
+
+## Побочные находки (НЕ в scope этого окна, задокументированы, не тронуты)
+
+- `build_libuv_lib`'s rsp-writer (test_runner.rs) не имеет UTF-8 BOM —
+  ломается на путях с кириллицей (тот класс бага, что `link_prep.rs`'s
+  `build_vendor_ffi_lib` уже чинил себе BOM'ом, но `build_libuv_lib` не
+  получил тот же фикс). Проявляется ТОЛЬКО когда фактический путь резолва
+  содержит не-ASCII байты (напр. `C:\Users\<кириллица>\...`) — этот
+  worktree/сессия сама под таким профилем, поэтому обнаружено. НЕ чинится
+  этим окном (rt/build, но другая функция/другой баг-класс, вне brief'а
+  269/278) — оставлено как находка для отдельного номера/окна.
+- `test_mt*.c`/`do_*.bat` синтетические скретч-тесты (сегфолт на
+  ЛЮБОМ `CreateThread`/`_beginthreadex`-построенном потоке ПОСЛЕ
+  `GC_unregister_my_thread`, воспроизводится байт-в-байт И на
+  production vcpkg `gc.lib`) — баг МОЕГО тест-харнесса, не бага в
+  амальгама-сборке ни в проде; не отслеживается отдельным номером
+  (не воспроизводится в реальном `nova_rt`, который уже использует
+  корректный протокол потоков).
