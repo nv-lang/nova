@@ -118,3 +118,22 @@ what the token does, not a translation of the token.
 | делегирование | delegation | "`use Account` is **delegation**, not inheritance: the compiler generates proxy methods" (paraphrase of spec/paradigm.md) | spec/paradigm.md "Вместо наследования — embed + delegate" |
 
 ---
+
+## 5. Effects and error handling · Эффекты и обработка ошибок
+
+| Русский | English | Example (en) | Note |
+|---|---|---|---|
+| подмена handler'а (через with) | handler substitution | "Each effect has a **handler** that intercepts its operations, substituted via `with Handler = ...`" | language-tour.md §6 |
+| прямой эффект | direct effect | "A function declares in its signature exactly which effects **it itself** performs" (paraphrase, language-tour.md §6) | spec/effects.md "Прямые эффекты, не транзитивные" (D28) |
+| транзитивный эффект | transitive effect | "calling another function does not pull that function's effects up into the caller's signature" | language-tour.md §6; warning by default, hard error under `--strict-effects` |
+| строгий режим эффектов | `--strict-effects` (strict-effects mode) | "programs (`examples/**`) build under `--strict-effects` … an experimental flag that promotes undeclared-transitive-effect … warnings to hard errors" | language-tour.md §6; Plan 197 |
+| стандартный эффект | standard effect | "`Io`, `Net`, `Db`, `Fs`, `Time`, `Random`, `Log`, `Trace` … — стандартные эффекты" | spec/overview.md "Зарезервированные identifier'ы" table |
+| эффект Fail | `Fail` effect | "`Fail[E]` — эффект-контракт для перехвата и обработки ошибки" | spec/effects.md "Роли — throw / Fail[E] / handler" |
+| бросить ошибку (throw) | throw | "`throw err` — language syntax, raises an error" (paraphrase of spec/effects.md "Роли") | never resumes at the throw point; `never` operation type |
+| паника | panic | "**panic** is for a broken caller contract … and is never recoverable" | language-tour.md §5 |
+| return-стиль (`?`) | return-style (`?`) | "`expr?` — return-style: 'didn't work — wrap it upward as a value'" (paraphrase of spec/effects.md) | spec/effects.md "Операторы `?` и `!!`" |
+| throw-стиль (`!!`) | throw-style (`!!`) | "`expr!!` — throw-style: 'didn't work — throw via `Fail`'" (paraphrase of spec/effects.md) | spec/effects.md "Операторы `?` и `!!`" |
+| capability-режим | capability mode | "Capability-режим для безопасной композиции" → `forbid Net, Fs, Db { ... }` | spec/revolutionary.md R6 heading |
+| дефолтный handler | default handler | "Some effects (`Time` is the canonical example) work **without an explicit `with`**" (paraphrase, D431) | spec/effects.md "Дефолтный handler без with" |
+
+---
