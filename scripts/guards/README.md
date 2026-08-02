@@ -15,6 +15,7 @@
 | [`check-guard-wiring.sh`](check-guard-wiring.sh) | **Мета-страж**: проверяет, что каждый `check-*.sh` в этой папке документирован (содержательная шапка + ссылка на план), подключён (вызывается `gate.sh` напрямую или через цикл самотестов) и покрыт самотестом. Страж, который проверяет остальных стражей — правило владельца «в скрипте нет толку, если не подключён к автопроверке». |
 | [`arch-ratchet.sh`](arch-ratchet.sh) + [`arch-ratchet.baseline`](arch-ratchet.baseline) | Храповик: строки `compiler-codegen/src/codegen/emit_c.rs` и число вызовов `infer_expr_c_type` не растут относительно baseline; рост без письменного обоснования В ТОМ ЖЕ коммите — красный. Baseline-файл co-located, переехал вместе со скриптом. |
 | [`check-no-runtime-copy.sh`](check-no-runtime-copy.sh) | Не даёт копии `compiler-codegen/nova_rt` появиться в пакетной репе/worktree — копия не под git, шадовит настоящий рантайм (реестр 221.1 №138). |
+| [`check-doc-conventions.sh`](check-doc-conventions.sh) + [`doc-conventions.baseline`](doc-conventions.baseline) | Enforcement [docs/dev/doc-conventions.md](../../docs/dev/doc-conventions.md) (Plan 242): шапка+frontmatter `spec/*.en.md`, парность `docs/guide/PUBLISHED.list`, same-commit pairing (best-effort, требует diff-base), ratchet `plan_missing_status`/`dev_links`/`code_block_mismatch_pairs`. Кросс-репный по построению — принимает корень любой репы аргументом (план §2b). |
 | [`check-no-manual-status-table.sh`](check-no-manual-status-table.sh) | Греплет `docs/plans/README.md` на сигнатуру ручной сводной статус-таблицы (норма — `docs/dev/conventions-governance.md`). |
 | [`install-guards.sh`](install-guards.sh) | Установщик всех механизмов: `core.hooksPath` во всех репах семьи, права на исполнение, проверка объявления хуков Claude Code, финальный прогон мета-стража и всех самотестов. `--check` — только проверить, ничего не менять. |
 | [`lint-no-silent-int-fallback.sh`](lint-no-silent-int-fallback.sh) | Ratchet против тихого `nova_int`-fallback в кодогене (Plan 70). |
@@ -30,7 +31,8 @@
 «Подкл», но вот что это значит конкретно на уровне вызовов:
 
 - **Вызываются `scripts/gate.sh`:** `arch-ratchet.sh`, `check-no-runtime-copy.sh`,
-  весь цикл `selftest/test-*.sh` (значит — транзитивно и
+  `check-doc-hygiene.sh`, `check-doc-conventions.sh` (Plan 242, добавлен
+  2026-08-02), весь цикл `selftest/test-*.sh` (значит — транзитивно и
   `check-guard-wiring.sh`/`check-no-manual-status-table.sh`/
   `check-no-runtime-copy.sh`, у которых есть самотесты).
 - **НЕ вызываются НИ `gate.sh`, НИ CI** (`.github/workflows/nova-gate.yml`

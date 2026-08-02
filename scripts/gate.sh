@@ -45,6 +45,10 @@ echo "== gate: selftests стражей =="
 echo "== gate: doc-hygiene (язык/чистота публичной доки, правило владельца 2026-07-31) =="
 bash "$ROOT/scripts/guards/check-doc-hygiene.sh" "$ROOT" || fail "doc-hygiene (кириллица/внутренние ссылки в /// или линте — рост запрещён)"
 bash "$ROOT/scripts/guards/selftest/test-check-doc-hygiene.sh" || fail "doc-hygiene selftest"
+
+echo "== gate: doc-conventions (docs/dev/doc-conventions.md enforcement, Plan 242) =="
+bash "$ROOT/scripts/guards/check-doc-conventions.sh" "$ROOT" || fail "doc-conventions (шапка/frontmatter spec en, guide-парность, статус-строка плана, dev-ссылки, код-блоки пар — см. вывод выше)"
+bash "$ROOT/scripts/guards/selftest/test-check-doc-conventions.sh" || fail "doc-conventions selftest"
 for st in "$ROOT"/scripts/guards/selftest/test-*.sh; do
     [ -e "$st" ] || continue
     bash "$st" || fail "самотест стража: $(basename "$st")"
