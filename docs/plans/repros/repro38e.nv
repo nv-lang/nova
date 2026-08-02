@@ -1,7 +1,7 @@
 // EXPECT_TIMEOUT_MS 20000
 // [221.1 #38] repro38e: real TcpListener.bind()+accept() (a real accepted
 // TcpStream sitting around), but the INNER supervised(deadline:) races a
-// plain Time-only spawn (no `.share()`/`.read_to_vec()` at all) — isolates
+// plain Time-only spawn (no `.share()`/`.read_bytes()` at all) — isolates
 // whether merely having done a real accept() in a PRIOR test is enough to
 // break the SECOND test's supervised(deadline:), independent of
 // TcpStream.share()/read.

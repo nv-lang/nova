@@ -43,7 +43,7 @@ test "serve-instance A: trivial connect gets HELLO-A" {
                     match TcpStream.connect(SocketAddr.loopback(port)) {
                         Ok(consume conn) => {
                             consume cli = conn
-                            match cli.read_to_vec(64) {
+                            match cli.read_bytes(64) {
                                 Ok(chunk) => { ro _ = got_tx.try_send(chunk) }
                                 Err(_) => ()
                             }
@@ -94,7 +94,7 @@ test "serve-instance B: trivial connect gets HELLO-B (SEQUENTIAL, same process)"
                     match TcpStream.connect(SocketAddr.loopback(port)) {
                         Ok(consume conn) => {
                             consume cli = conn
-                            match cli.read_to_vec(64) {
+                            match cli.read_bytes(64) {
                                 Ok(chunk) => { ro _ = got_tx.try_send(chunk) }
                                 Err(_) => ()
                             }

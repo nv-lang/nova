@@ -19,7 +19,7 @@ fn read_attempt(s mut TcpStream, deadline Monotonic) Net Time -> ReadAttempt {
     with Fail[TimeoutError] = |_e| { timed_out = true } {
         supervised(deadline: deadline) {
             spawn consume ws = s.share() {
-                match ws.read_to_vec(4096) {
+                match ws.read_bytes(4096) {
                     Ok(chunk) => { ro _ = tx.try_send(chunk) }
                     Err(_)    => ()
                 }
@@ -74,7 +74,7 @@ test "instance A: single-shot accept, plain supervised{}" {
                     Ok(consume conn) => {
                         consume cli = conn
                         ro _ = cli.write_str("hi")
-                        match cli.read_to_vec(4096) {
+                        match cli.read_bytes(4096) {
                             Ok(chunk) => { ro _ = got_tx.try_send(chunk) }
                             Err(_) => ()
                         }
@@ -116,7 +116,7 @@ test "instance C: single-shot accept, plain supervised{} (SECOND test)" {
                     Ok(consume conn) => {
                         consume cli = conn
                         ro _ = cli.write_str("hi")
-                        match cli.read_to_vec(4096) {
+                        match cli.read_bytes(4096) {
                             Ok(chunk) => { ro _ = got_tx.try_send(chunk) }
                             Err(_) => ()
                         }

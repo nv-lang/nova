@@ -6,7 +6,7 @@
 // `read_attempt` (a SEPARATE fn, mirrors nova-http's `servernet/policy.nv`
 // `read_attempt`), which runs a SECOND, INNER `supervised(deadline:
 // Monotonic.now() + idle)` racing a `spawn consume ws = s.share() {
-// ws.read_to_vec(...) }` against that deadline. Two IDENTICAL such server
+// ws.read_bytes(...) }` against that deadline. Two IDENTICAL such server
 // instances run SEQUENTIALLY in one process: instance A's inner deadline-
 // guarded read succeeds; instance B's fails (see task report for elapsed_ms
 // evidence gathered against the real package before this file existed).
@@ -26,7 +26,7 @@ fn read_attempt(s mut TcpStream, deadline Monotonic) Net Time -> ReadAttempt {
     with Fail[TimeoutError] = |_e| { timed_out = true } {
         supervised(deadline: deadline) {
             spawn consume ws = s.share() {
-                match ws.read_to_vec(4096) {
+                match ws.read_bytes(4096) {
                     Ok(chunk) => { ro _ = tx.try_send(chunk) }
                     Err(_)    => ()
                 }
@@ -90,7 +90,7 @@ test "instance A: nested supervised(deadline:) read succeeds" {
                         Ok(consume conn) => {
                             consume cli = conn
                             ro _ = cli.write_str("GET / HTTP/1.1\r\nHost: x\r\n\r\n")
-                            match cli.read_to_vec(4096) {
+                            match cli.read_bytes(4096) {
                                 Ok(chunk) => { ro _ = got_tx.try_send(chunk) }
                                 Err(_) => ()
                             }
@@ -134,7 +134,7 @@ test "instance C: single-shot accept (NO loop, NO outer cancellation ever) — c
                     Ok(consume conn) => {
                         consume cli = conn
                         ro _ = cli.write_str("GET / HTTP/1.1\r\nHost: x\r\n\r\n")
-                        match cli.read_to_vec(4096) {
+                        match cli.read_bytes(4096) {
                             Ok(chunk) => { ro _ = got_tx.try_send(chunk) }
                             Err(_) => ()
                         }
@@ -184,7 +184,7 @@ test "instance B: SAME shape, sequential in one process — expected to fail bef
                         Ok(consume conn) => {
                             consume cli = conn
                             ro _ = cli.write_str("GET / HTTP/1.1\r\nHost: x\r\n\r\n")
-                            match cli.read_to_vec(4096) {
+                            match cli.read_bytes(4096) {
                                 Ok(chunk) => { ro _ = got_tx.try_send(chunk) }
                                 Err(_) => ()
                             }

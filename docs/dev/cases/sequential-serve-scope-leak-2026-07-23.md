@@ -19,7 +19,7 @@ processes, both are fine.
 
 ## Minimal standalone repro (no nova-http needed)
 
-`scratch38/repro38g2.nv` in this worktree (NOT committed to
+`docs/plans/repros/repro38g2.nv` in this worktree (NOT committed to
 `spec_tests/conformance` — it is RED and conformance must stay green).
 Two sequential top-level tests, pure `std.net` + `std.time`:
 
@@ -124,7 +124,7 @@ class (`reference-mn-race-case-study` precedent).
 
 ## Next steps for whoever picks this up
 
-1. Reproduce with `scratch38/repro38g2.nv` (or regenerate from this file's
+1. Reproduce with `docs/plans/repros/repro38g2.nv` (or regenerate from this file's
    description — 2 tests, ~90 lines, no nova-http needed).
 2. Bracket `_worker_run_one_fiber` (runtime.c ~2174-2260)'s own
    save/restore of `_nova_active_scope` with per-worker-thread-id

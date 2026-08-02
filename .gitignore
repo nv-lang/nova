@@ -75,3 +75,4 @@ test_out.txt
 # spec_tests: codegen-артефакты рядом с .nv (пробел закрыт 2026-07-14 — spec_tests не было в списке)
 spec_tests/**/*.c
 *.ilk
+scratch38/

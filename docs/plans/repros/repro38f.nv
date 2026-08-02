@@ -1,6 +1,6 @@
 // EXPECT_TIMEOUT_MS 20000
 // [221.1 #38] repro38f: like repro38e, but the inner spawn now DOES
-// `stream.share()` + `.read_to_vec()` (a real Net-effect op) racing the
+// `stream.share()` + `.read_bytes()` (a real Net-effect op) racing the
 // `supervised(deadline:)` — isolates whether `TcpStream.share()`+read
 // specifically (not just "having accepted a connection before") is the
 // trigger for the second-invocation-times-out-instantly bug.
@@ -17,7 +17,7 @@ fn try_once(tag str, s mut TcpStream) Net Time {
     with Fail[TimeoutError] = |_e| { timed_out = true } {
         supervised(deadline: dl) {
             spawn consume ws = s.share() {
-                match ws.read_to_vec(4096) {
+                match ws.read_bytes(4096) {
                     Ok(chunk) => { ro _ = tx.try_send(chunk) }
                     Err(_)    => ()
                 }
@@ -73,7 +73,7 @@ fn run_test(tag str) Net Time Detach {
     }
 }
 
-test "run A: real accept()+share()+read_to_vec racing supervised(deadline:)" {
+test "run A: real accept()+share()+read_bytes racing supervised(deadline:)" {
     run_test("A")
 }
 
