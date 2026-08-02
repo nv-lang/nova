@@ -1,0 +1,58 @@
+// Plan 221.1 №286/№143 (окно p-chan, real Channel[T] monomorphization).
+// Positive coverage: `Channel[T]` where `T` is a record, a sum, and a
+// `HashMap[K,V]` — `send`/`recv` round-trip and the received value's own
+// fields/methods resolve CORRECTLY (by real type, via the checker channel),
+// not through the legacy name-only `method_receivers` fallback that used to
+// pick an ARBITRARY same-named method across the whole compile-unit
+// (measured on `.len()` — bug-sweep №286: `Vec.len` vs `EmbeddedDir.len`).
+
+module spec_tests.conformance
+
+type M286Point {
+    ro x int
+    ro y int
+}
+
+type M286Shape enum
+    | M286Circle(int)
+    | M286Square(int)
+
+test "channel[record]: send/recv preserves field access, no CC-FAIL" {
+    ro (tx, rx) = Channel[M286Point].new(2)
+    tx.send(M286Point { x: 3, y: 4 })
+    ro got = rx.recv()
+    match got {
+        Some(p) => {
+            assert(p.x == 3)
+            assert(p.y == 4)
+        }
+        None => { assert(false) }
+    }
+    tx.close()
+}
+
+test "channel[sum]: send/recv preserves variant match, no CC-FAIL" {
+    ro (tx, rx) = Channel[M286Shape].new(2)
+    tx.send(M286Circle(5))
+    ro got = rx.recv()
+    match got {
+        Some(M286Circle(r)) => { assert(r == 5) }
+        Some(M286Square(_)) => { assert(false) }
+        None => { assert(false) }
+    }
+    tx.close()
+}
+
+test "channel[HashMap]: send/recv preserves method access (.len()), no CC-FAIL" {
+    ro (tx, rx) = Channel[HashMap[str, int]].new(2)
+    mut m = HashMap[str, int].new()
+    m.insert("a", 1)
+    m.insert("b", 2)
+    tx.send(m)
+    ro got = rx.recv()
+    match got {
+        Some(mm) => { assert(mm.len() == 2) }
+        None => { assert(false) }
+    }
+    tx.close()
+}

@@ -1,0 +1,18 @@
+// Plan 221.1 №286/№143 (окно p-chan, real Channel[T] monomorphization).
+// Measured hole (bug-sweep №286, confirmed by reading the checker code): a
+// `Channel[int]` used to accept `send("string")` WITHOUT any checker error —
+// only the codegen slot-SIZE guard (`E_CHANNEL_UNSOUND_ELEM_TYPE`) fired,
+// and only because `str` happens to not be word-safe, not because it
+// mismatches the declared `int`. This fixture pins the NEW checker-level
+// diagnostic: the element type `T` is now tracked end-to-end from
+// `Channel[T].new` through `ChanWriter[T]`, so a wrong-typed `send` is a
+// real TYPE error, caught by the checker before codegen ever runs.
+//
+// EXPECT_COMPILE_ERROR E_CHANNEL_ELEM_TYPE_MISMATCH
+
+module neg.channel_elem_type_mismatch_str_neg
+
+test "channel[int].send(str) is a checker type error, not a slot-size guard" {
+    ro (tx, rx) = Channel[int].new(4)
+    tx.send("hello")
+}

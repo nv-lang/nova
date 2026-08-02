@@ -1,0 +1,20 @@
+// Plan 221.1 №286/№143 (окно p-chan). Measured hole (bug-sweep №286, probe
+// 2): `Channel[Meters]` used to accept a `Seconds` payload of the SAME word
+// size silently — the codegen slot-size guard cannot see the difference (it
+// only compares C representation width, not the Nova-level nominal type), so
+// this class of bug was COMPLETELY unguarded before this window. Both
+// `Meters` and `Seconds` are named-tuple newtypes over a single `int` field
+// — identical C layout, distinct Nova types — the checker must reject this
+// on TYPE IDENTITY, not on size.
+//
+// EXPECT_COMPILE_ERROR E_CHANNEL_ELEM_TYPE_MISMATCH
+
+module neg.channel_elem_type_mismatch_same_size_newtype_neg
+
+type Meters(v int)
+type Seconds(v int)
+
+test "channel[Meters].send(Seconds) — same C size, different Nova type — is a checker error" {
+    ro (tx, rx) = Channel[Meters].new(4)
+    tx.send(Seconds(5))
+}
