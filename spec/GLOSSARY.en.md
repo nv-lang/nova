@@ -204,14 +204,14 @@ pending the owner's call in Open questions.
 
 ## 10. Tooling and contracts · Тулинг и контракты
 
-| Русский | English | Example (en) | Note |
+| Русский (норма #language) | English | Example (en) | Note |
 |---|---|---|---|
-| контракт (+ SMT-солвер) | contract (+ SMT solver) | "Nova's contract system lets you state what a function **requires** and **ensures**, then verifies those claims at compile time via an SMT solver." | docs/guide/contracts.md intro |
-| enforce-с-elision (доказано → вырезано) | enforce-with-elision | "Nova uses **enforce-with-elision** (D24 / Plan 140), *not* debug-only asserts" | docs/guide/contracts.md intro |
-| доказанный / недоказанный контракт | proven / unproven (contract) | "a **proven** contract is elided (zero runtime cost, even in debug); an **unproven** one is enforced at runtime in **both debug and release**" | docs/guide/contracts.md intro |
-| лемма | lemma | "A **lemma** is a `#verify` function whose purpose is to establish a mathematical fact" | docs/guide/contracts.md "Lemmas and apply" |
-| постусловие/предусловие | postcondition / precondition | "`requires` — A precondition." / "`ensures` and `result` — A postcondition." | docs/guide/contracts.md |
-| клоз decreases (доказательство терминации) | `decreases` clause | "`decreases` — Proves termination of recursive functions." | docs/guide/contracts.md "decreases" |
+| контракт (+ SMT-решатель) `[keep-en: аббревиатура]` | contract (+ SMT solver) | "Nova's contract system lets you state what a function **requires** and **ensures**, then verifies those claims at compile time via an SMT solver." | docs/guide/contracts.md intro; норма-форма «решатель» вместо транслитерации «солвер»; SMT — аббревиатура без русской расшифровки в обиходе |
+| принудительная проверка с устранением (доказано → вырезано) | enforce-with-elision | "Nova uses **enforce-with-elision** (D24 / Plan 140), *not* debug-only asserts" | docs/guide/contracts.md intro; описательный перевод вместо англ.-рус. гибрида «enforce-с-elision», `[proposed]` — авторский Nova-термин (D24/Plan 140), устоявшегося перевода ещё нет |
+| доказанный / недоказанный контракт | proven / unproven (contract) | "a **proven** contract is elided (zero runtime cost, even in debug); an **unproven** one is enforced at runtime in **both debug and release**" | docs/guide/contracts.md intro; полностью по-русски |
+| лемма | lemma | "A **lemma** is a `#verify` function whose purpose is to establish a mathematical fact" | docs/guide/contracts.md "Lemmas and apply"; натурализованный матем. термин |
+| постусловие / предусловие | postcondition / precondition | "`requires` — A precondition." / "`ensures` and `result` — A postcondition." | docs/guide/contracts.md; стандартные русские матем./CS-термины |
+| условие `decreases` (доказательство терминации) `[keep-en: код]` | `decreases` clause | "`decreases` — Proves termination of recursive functions." | docs/guide/contracts.md "decreases"; норма-форма «условие» вместо транслитерации «клоз»; `decreases` — ключевое слово |
 
 ---
 
