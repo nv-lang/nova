@@ -190,3 +190,18 @@ what the token does, not a translation of the token.
 | модель мутабельности указателя | pointer-mutability model | "Pointer-mutability model: 'arrow → box'" | docs/guide/typed-pointers.md heading (Plan 138.5) |
 
 ---
+
+## 10. Tooling and contracts · Тулинг и контракты
+
+| Русский | English | Example (en) | Note |
+|---|---|---|---|
+| контракт | contract | "Nova's contract system lets you state what a function **requires** and **ensures**" | docs/guide/contracts.md intro |
+| enforce-с-elision (доказано → вырезано) | enforce-with-elision | "Nova uses **enforce-with-elision** (D24 / Plan 140), *not* debug-only asserts" | docs/guide/contracts.md intro |
+| доказанный / недоказанный контракт | proven / unproven (contract) | "a **proven** contract is elided (zero runtime cost, even in debug); an **unproven** one is enforced at runtime in **both debug and release**" | docs/guide/contracts.md intro |
+| SMT-солвер | SMT solver | "then verifies those claims at compile time via an SMT solver" | docs/guide/contracts.md intro |
+| лемма | lemma | "A **lemma** is a `#verify` function whose purpose is to establish a mathematical fact" | docs/guide/contracts.md "Lemmas and apply" |
+| постусловие/предусловие | postcondition / precondition | "`requires` — A precondition." / "`ensures` and `result` — A postcondition." | docs/guide/contracts.md |
+| клоз decreases (доказательство терминации) | `decreases` clause | "`decreases` — Proves termination of recursive functions." | docs/guide/contracts.md "decreases" |
+| doc-тест | doc-test | "`nova doc file.nv [--format markdown\|json\|html]` — doc-tests (`--test`)" | spec/overview.md "Tooling из коробки" |
+
+---
