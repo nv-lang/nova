@@ -137,3 +137,15 @@ what the token does, not a translation of the token.
 | дефолтный handler | default handler | "Some effects (`Time` is the canonical example) work **without an explicit `with`**" (paraphrase, D431) | spec/effects.md "Дефолтный handler без with" |
 
 ---
+
+## 6. Memory and performance · Память и производительность
+
+| Русский | English | Example (en) | Note |
+|---|---|---|---|
+| managed heap (управляемая куча) | managed heap | "`o is a pointer to managed heap; GC-tracked`" (paraphrase, docs/guide/value-vs-reference.md) | GC-tracked reference-type storage, default for records/sum types |
+| escape-анализ | escape analysis | "Go — escape analysis decides" (docs/guide/value-vs-reference.md comparison table); "не утекающие значения остаются на стеке" (spec/overview.md) | compiler decides stack vs heap automatically, no programmer annotation |
+| регион (arena) | region | "Arena-allocations через `region { }` — проектируемая форма (D6), ⚠ в текущем компиляторе не реализована" | spec/syntax.md "Производительность"; opt-in real-time memory, **not yet implemented** |
+| real-time зона / `#realtime nogc` | real-time zone / `#realtime nogc` | "For real-time зон (звук, торговля, embedded) — атрибут `#realtime nogc fn`" (spec/overview.md, paraphrased) | marks a function as GC-forbidden for hard real-time code paths |
+| стек-аллокация | stack allocation | "positional tuple — **stack** — value (copy on pass)" | docs/guide/value-vs-reference.md bracket-rule table |
+
+---
