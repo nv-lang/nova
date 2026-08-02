@@ -209,7 +209,8 @@ pending the owner's call in Open questions.
 | непрозрачный указатель | opaque pointer | "Nova's opaque-pointer type is `*()` (pointer to unit — `void*` in C)" | language-tour.md §12; полностью русская форма, без калек |
 | типизированный дескриптор | typed handle | "Wrap a raw `*()` in a record for a **typed handle** so distinct native resources … aren't interchangeable at compile time" | language-tour.md §12; норма-форма «дескриптор» (стандартный русский CS-термин, как «дескриптор файла») вместо транслитерации «хэндл» |
 | внешняя функция (`external fn`) `[keep-en: код]` | `external fn` | "`external fn name(args) -> ret` (D82) declares a binding to a C symbol" | language-tour.md §12; `external fn` — буквальная конструкция Nova |
-| блок `unsafe` `[keep-en: код]` / модель мутабельности указателя | `unsafe` block / pointer-mutability model | heading of docs/guide/typed-pointers.md: "Typed pointers (`*T` family) + `unsafe` model", "Pointer-mutability model: 'arrow → box'" | `unsafe` is a scoped escape hatch for raw-pointer operations (Plan 138.5); `unsafe` — ключевое слово, «мутабельность» — натурализованный CS-термин |
+| блок `unsafe` `[keep-en: код]` | `unsafe` block | heading of docs/guide/typed-pointers.md: "Typed pointers (`*T` family) + `unsafe` model" | `unsafe` is a scoped escape hatch for raw-pointer operations (Plan 138.5); `unsafe` — ключевое слово |
+| модель мутабельности указателя | pointer-mutability model | "Pointer-mutability model: 'arrow → box'" | docs/guide/typed-pointers.md heading (Plan 138.5); «мутабельность» — натурализованный CS-термин |
 
 ---
 
