@@ -29,7 +29,9 @@ design-rationale, «для контрибьюторов»/«для авторо�
 ## `docs/dev/` — внутреннее
 
 Конвенции разработки (нормативные — под управлением
-[`docs/dev/conventions-governance.md`](dev/conventions-governance.md)),
+[`docs/dev/conventions-governance.md`](dev/conventions-governance.md);
+ведение самой документации — язык, нормативность, переводы/дрейф, публикация —
+[`docs/dev/doc-conventions.md`](dev/doc-conventions.md)),
 процесс (`dev-workflow.md`, `test-conventions.md`, `mn-coding-conventions.md`,
 `naming-conventions.md`, ...), промпты для агентов —
 [`docs/dev/promts/`](dev/promts/) (онбординг: `read-project.md`,
