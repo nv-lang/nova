@@ -35258,11 +35258,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Plan 08 Ф.4: strict bool-check.
                 let cond_ty = self.infer_expr_c_type(cond);
                 self.check_bool_condition_at(&cond_ty, "while", cond.span)?;
-                let cond_val = self.emit_expr(cond)?;
                 let tmp = self.fresh_tmp_named("while");
                 self.line(&format!("nova_unit {};", tmp));
-                self.line(&format!("while ({}) {{", cond_val));
-                self.indent += 1;
+                // №281 [M-while-condition-chain-not-recomputed]: re-run cond EVERY iter (mirror WhileLet) — a chained-call cond's hoisted temp used to freeze at its pre-loop value forever.
+                self.line("while (1) {"); self.indent += 1;
+                let cond_val = self.emit_expr(cond)?;
+                self.line(&format!("if (!({})) break;", cond_val));
                 // Plan 20 Ф.4/Ф.8: defer/errdefer внутри loop body
                 // регистрируется на каждой итерации (is_loop_body=true).
                 self.emit_loop_body_inline(body)?;
