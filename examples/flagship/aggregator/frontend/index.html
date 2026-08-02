@@ -1,4 +1,4 @@
-<title>Nova · Concurrent Aggregator — мокап v9</title>
+<title>Nova · Concurrent Aggregator</title>
 <style>
   :root {
     --paper: #F5F7FA; --panel: #FFFFFF; --panel-2: #EDF1F6; --line: #D3DBE6;
@@ -223,10 +223,11 @@
       <button class="seg" data-mode="chaos" aria-pressed="false" title="Источники случайно падают и тормозят — дедлайн отдаёт частичный результат вместо зависшей страницы; меняется только seed у mock_net(...)"><span class="dot"></span>Chaos</button>
       <button class="seg" id="liveBtn" data-mode="live" disabled title="Тот же aggregate под with Net = real_net() — включится с живым Nova-беком (Ф.MVP-2)">Live 🔒</button>
     </div>
-    <button class="iconbtn" id="theme" title="Тема" aria-label="Переключить тему">◐</button>
+    <button class="iconbtn" id="langBtn" title="Language" aria-label="Switch language">EN</button>
+    <button class="iconbtn" id="theme" title="Theme" aria-label="Toggle theme">◐</button>
   </div>
 
-  <div class="hero">Это <b>один процесс Nova</b>: кнопка ▶ опрашивает 6 источников одновременно и укладывает ответ в общий бюджет; кто не успел — <b>честно отменён</b>, а не брошен доживать в фоне. Ниже — судьба каждого источника (успел · упал · отменён) и настоящий код, которым это сделано.</div>
+  <div class="hero" id="hero">Это <b>один процесс Nova</b>: кнопка ▶ опрашивает 6 источников одновременно и укладывает ответ в общий бюджет; кто не успел — <b>честно отменён</b>, а не брошен доживать в фоне. Ниже — судьба каждого источника (успел · упал · отменён) и настоящий код, которым это сделано.</div>
 
   <div class="thesis">
     <div class="sig" id="sigLine"></div>
@@ -248,7 +249,7 @@
     </div>
 
     <div class="swarm" id="swarm" style="margin:0 16px 10px; display:none;">
-      <div class="swarm-label">background fan-out — ещё <b id="swarmCount">90</b> реальных запросов той же пачки · наведи на квадрат</div>
+      <div class="swarm-label" id="swarmLabel">background fan-out — <b id="swarmCount">90</b> more · hover a square</div>
       <div class="swarm-grid" id="swarmGrid"></div>
     </div>
     <div id="tip"></div>
@@ -280,16 +281,16 @@
   <!-- v9 (Ред.6 №8, Ред.7 п.1/п.2): панель «Код» — этот экран порождён вот этим кодом -->
   <div class="codewrap">
     <div class="codehead">
-      <span class="title">код за экраном</span>
+      <span class="title" id="codeTitle">the code behind this screen</span>
       <div class="segmented" role="group" aria-label="Code tabs" id="codeTabs">
         <button class="seg" data-tab="1" aria-pressed="true">aggregate.nv</button>
         <button class="seg" data-tab="2" aria-pressed="false">aggregate_test.nv</button>
       </div>
-      <span class="path" id="codePath">examples/flagship/aggregator/backend/app/aggregate.nv · фрагмент</span>
+      <span class="path" id="codePath">examples/flagship/aggregator/src/app/aggregate.nv · excerpt</span>
       <span class="note2" id="codeNote">этот экран порождён вот этим кодом</span>
     </div>
-    <pre class="code" id="codeTab1"><span class="line"><span class="cm">// aggregate.nv — настоящий код примера (фрагмент; real-cancel supervised(deadline:) = деливерабл №1)</span></span><span class="line"></span><span class="line"><span class="kw">fn</span> fetch_guarded(source <span class="ty">Source</span>, budget_ms <span class="ty">int</span>, idx <span class="ty">int</span>) <span class="eff">Net Time Emit</span> <span class="pun">-&gt;</span> <span class="ty">TaskResult</span> {</span><span class="line">    <span class="kw">ro</span> t0 <span class="ty">Monotonic</span> = <span class="ty">Monotonic</span>.now()</span><span class="line" id="clStart">    <span class="eff">Emit</span>.lane_started(source.id, idx)</span><span class="line">    <span class="kw">ro</span> outcome    = fetch_one(source, idx)          <span class="cm">// реальный Net round-trip</span></span><span class="line">    <span class="kw">ro</span> elapsed_ms = deadline_elapsed_ms(t0)</span><span class="line">    <span class="kw">ro</span> status = <span class="kw">if</span> elapsed_ms &gt; budget_ms {</span><span class="line" id="clCancel">        <span class="ty">TaskStatus</span>.Cancelled                        <span class="cm">// опоздал — за бюджетом</span></span><span class="line">    } <span class="kw">else</span> {</span><span class="line">        <span class="kw">match</span> outcome {</span><span class="line" id="clDone">            Ok(data) =&gt; <span class="ty">TaskStatus</span>.Done(data)</span><span class="line" id="clFail">            Err(e)   =&gt; <span class="ty">TaskStatus</span>.Failed(e.to_str())</span><span class="line">        }</span><span class="line">    }</span><span class="line">    <span class="cm">// + Emit.lane_done / lane_failed / lane_cancelled — см. полный файл</span></span><span class="line">    <span class="ty">TaskResult</span> { id: source.id, status, elapsed_ms }</span><span class="line">}</span><span class="line"></span><span class="line"><span class="kw">export fn</span> aggregate(sources <span class="pun">[]</span><span class="ty">Source</span>, budget <span class="ty">Duration</span>) <span class="eff">Net Time Emit</span> <span class="pun">-&gt;</span> <span class="ty">Report</span> {</span><span class="line">    <span class="kw">ro</span> t0 <span class="ty">Monotonic</span> = <span class="ty">Monotonic</span>.now()</span><span class="line">    <span class="kw">ro</span> budget_ms = budget.as_millis() <span class="kw">as</span> <span class="ty">int</span></span><span class="line" id="clFan">    <span class="kw">ro</span> results = <span class="kw">parallel for</span> idx <span class="ty">int</span> <span class="kw">in</span> 0..sources.len() {   <span class="cm">// fan-out</span></span><span class="line">        fetch_guarded(sources[idx], budget_ms, idx)</span><span class="line">    }</span><span class="line">    <span class="eff">Emit</span>.swarm_done(<span class="pun">…</span>)</span><span class="line">    <span class="ty">Report</span>.from(results, deadline_elapsed_ms(t0))</span><span class="line">}</span></pre>
-    <pre class="code" id="codeTab2" style="display:none"><span class="line"><span class="cm">// aggregate_test.nv — фрагмент: подменяем МИР, не код (ни одного мок-фреймворка)</span></span><span class="line"></span><span class="line"><span class="kw">test</span> <span class="st">"aggregate: done/failed/cancelled settle correctly on a mixed fan-out"</span> {</span><span class="line hl" id="hlNetLine">    <span class="kw">with</span> <span class="eff">Net</span> = mock_net(), <span class="eff">Emit</span> = null_emit() {   <span class="cm">// ← весь сетевой мир = хендлер</span></span><span class="line">        <span class="kw">ro</span> report = aggregate(tiny_sources(), <span class="ty">Duration</span>.from_millis(120))</span><span class="line">        assert(report.done == 2)</span><span class="line">        assert(report.failed == 1)</span><span class="line">        assert(report.cancelled == 1)</span><span class="line">        assert(report.wall_ms &lt; report.sequential_ms)    <span class="cm">// speedup</span></span><span class="line">    }</span><span class="line">}</span><span class="line"></span><span class="line"><span class="cm">// тот же aggregate под with Net = real_net() — Live; код не меняется</span></span></pre>
+    <pre class="code" id="codeTab1"><span class="line"><span class="cm">// aggregate.nv — the example&#39;s real code (excerpt; real-cancel supervised(deadline:))</span></span><span class="line"></span><span class="line"><span class="kw">fn</span> fetch_guarded(source <span class="ty">Source</span>, budget_ms <span class="ty">int</span>, idx <span class="ty">int</span>) <span class="eff">Net Time Emit</span> <span class="pun">-&gt;</span> <span class="ty">TaskResult</span> {</span><span class="line">    <span class="kw">ro</span> t0 <span class="ty">Monotonic</span> = <span class="ty">Monotonic</span>.now()</span><span class="line" id="clStart">    <span class="eff">Emit</span>.lane_started(source.id, idx)</span><span class="line">    <span class="kw">ro</span> outcome    = fetch_one(source, idx)          <span class="cm">// a real Net round-trip</span></span><span class="line">    <span class="kw">ro</span> elapsed_ms = deadline_elapsed_ms(t0)</span><span class="line">    <span class="kw">ro</span> status = <span class="kw">if</span> elapsed_ms &gt; budget_ms {</span><span class="line" id="clCancel">        <span class="ty">TaskStatus</span>.Cancelled                        <span class="cm">// too late — over budget</span></span><span class="line">    } <span class="kw">else</span> {</span><span class="line">        <span class="kw">match</span> outcome {</span><span class="line" id="clDone">            Ok(data) =&gt; <span class="ty">TaskStatus</span>.Done(data)</span><span class="line" id="clFail">            Err(e)   =&gt; <span class="ty">TaskStatus</span>.Failed(e.to_str())</span><span class="line">        }</span><span class="line">    }</span><span class="line">    <span class="cm">// + Emit.lane_done / lane_failed / lane_cancelled — see the full file</span></span><span class="line">    <span class="ty">TaskResult</span> { id: source.id, status, elapsed_ms }</span><span class="line">}</span><span class="line"></span><span class="line"><span class="kw">export fn</span> aggregate(sources <span class="pun">[]</span><span class="ty">Source</span>, budget <span class="ty">Duration</span>) <span class="eff">Net Time Emit</span> <span class="pun">-&gt;</span> <span class="ty">Report</span> {</span><span class="line">    <span class="kw">ro</span> t0 <span class="ty">Monotonic</span> = <span class="ty">Monotonic</span>.now()</span><span class="line">    <span class="kw">ro</span> budget_ms = budget.as_millis() <span class="kw">as</span> <span class="ty">int</span></span><span class="line" id="clFan">    <span class="kw">ro</span> results = <span class="kw">parallel for</span> idx <span class="ty">int</span> <span class="kw">in</span> 0..sources.len() {   <span class="cm">// fan-out</span></span><span class="line">        fetch_guarded(sources[idx], budget_ms, idx)</span><span class="line">    }</span><span class="line">    <span class="eff">Emit</span>.swarm_done(<span class="pun">…</span>)</span><span class="line">    <span class="ty">Report</span>.from(results, deadline_elapsed_ms(t0))</span><span class="line">}</span></pre>
+    <pre class="code" id="codeTab2" style="display:none"><span class="line"><span class="cm">// aggregate_test.nv — excerpt: we swap the WORLD, not the code (zero mocking frameworks)</span></span><span class="line"></span><span class="line"><span class="kw">test</span> <span class="st">"aggregate: done/failed/cancelled settle correctly on a mixed fan-out"</span> {</span><span class="line hl" id="hlNetLine">    <span class="kw">with</span> <span class="eff">Net</span> = mock_net(), <span class="eff">Emit</span> = null_emit() {   <span class="cm">// ← the whole network world = one handler</span></span><span class="line">        <span class="kw">ro</span> report = aggregate(tiny_sources(), <span class="ty">Duration</span>.from_millis(120))</span><span class="line">        assert(report.done == 2)</span><span class="line">        assert(report.failed == 1)</span><span class="line">        assert(report.cancelled == 1)</span><span class="line">        assert(report.wall_ms &lt; report.sequential_ms)    <span class="cm">// speedup</span></span><span class="line">    }</span><span class="line">}</span><span class="line"></span><span class="line"><span class="cm">// the same aggregate under with Net = real_net() — Live; the code does not change</span></span></pre>
   </div>
 
   <div class="langfacts" id="langfacts">
@@ -302,9 +303,9 @@
   </div>
 
   <div class="foot">
-    Nova v0.1-dev <span class="sep">·</span> <code>github.com/nv-lang</code> <span class="sep">·</span>
+    <span id="footLine">Nova v0.1-dev <span class="sep">·</span> <code>github.com/nv-lang</code> <span class="sep">·</span>
     <code>nova build</code> → C → нативный бинарь, без VM
-    <span class="sep">·</span> мокап v9 по плану 187 (Ред.6-8): данные синтетические; цифры сборки в подвале появятся из <code>docker build</code> (волна 2)
+    <span class="sep">·</span> demo data is synthetic in Demo/Chaos; Live hits real APIs</span>
   </div>
 </div>
 
@@ -395,7 +396,7 @@
     weather: {
       unit: "cities", subUnit: "days", bg: 90,
       sig: '<span class="kw">fn</span> aggregate<span class="pun">(</span>cities <span class="ty">[]City</span><span class="pun">,</span> budget <span class="ty">Duration</span><span class="pun">)</span> <span class="eff">Net Time Fail</span> <span class="pun">-&gt;</span> <span class="ty">WeatherReport</span>',
-      note: 'Сводка погоды по городам — fan-out к <code>open-meteo</code> (без ключа). Каждый город параллельно тянет несколько дней. Дедлайн <b>2с</b>: дальний сервер не успел → под-запросы <b>каскадно</b> отменяются, <code>0 leaks</code>.',
+      note: { ru: 'Сводка погоды по городам — fan-out к <code>open-meteo</code> (без ключа). Каждый город параллельно тянет несколько дней. Дедлайн <b>2с</b>: дальний сервер не успел → под-запросы <b>каскадно</b> отменяются, <code>0 leaks</code>.', en: 'A weather digest across cities — fan-out to <code>open-meteo</code> (no key). Each city pulls several days in parallel. Deadline <b>2s</b>: a distant server missed it → its sub-requests are <b>cascade-cancelled</b>, <code>0 leaks</code>.' },
       defs: [
         {id:"Москва",      kind:"7 days",  probes:7,  outcome:"done"},
         {id:"С-Петербург", kind:"7 days",  probes:7,  outcome:"done"},
@@ -408,7 +409,7 @@
     health: {
       unit: "services", subUnit: "checks", bg: 90,
       sig: '<span class="kw">fn</span> aggregate<span class="pun">(</span>svc <span class="ty">[]Service</span><span class="pun">,</span> budget <span class="ty">Duration</span><span class="pun">)</span> <span class="eff">Net Time Fail</span> <span class="pun">-&gt;</span> <span class="ty">HealthReport</span>',
-      note: 'Health-check сервисов — параллельный пинг реальных доменов + замер латентности. Дедлайн <b>2с</b> = SLA-таймаут: зависший сервис <b>каскадно</b> отменяется, <code>0 leaks</code>.',
+      note: { ru: 'Health-check сервисов — параллельный пинг реальных доменов + замер латентности. Дедлайн <b>2с</b> = SLA-таймаут: зависший сервис <b>каскадно</b> отменяется, <code>0 leaks</code>.', en: 'A service health-check — parallel pings of real domains + latency measurement. Deadline <b>2s</b> = the SLA timeout: a hung service is <b>cascade-cancelled</b>, <code>0 leaks</code>.' },
       defs: [
         {id:"github.com",    kind:"3 checks", probes:3, outcome:"done"},
         {id:"cloudflare",    kind:"3 checks", probes:3, outcome:"done"},
@@ -421,7 +422,7 @@
     llm: {
       unit: "models", subUnit: "tokens", race: true, bg: 0,
       sig: '<span class="kw">fn</span> ask<span class="pun">(</span>prompt <span class="ty">str</span><span class="pun">,</span> models <span class="ty">[]Model</span><span class="pun">,</span> budget <span class="ty">Duration</span><span class="pun">)</span> <span class="eff">Net Time Fail</span> <span class="pun">-&gt;</span> <span class="ty">Answer</span>',
-      note: '<b>race / first-wins</b>: промпт уходит всем локальным моделям (Ollama, без ключей) разом — первый пригодный ответ 🏆 побеждает, остальные <b>отменяются в тот же миг</b> (GPU освобождён, <code>0 leaks</code>). Прогресс = реальные токены.',
+      note: { ru: '<b>race / first-wins</b>: промпт уходит всем локальным моделям (Ollama, без ключей) разом — первый пригодный ответ 🏆 побеждает, остальные <b>отменяются в тот же миг</b> (GPU освобождён, <code>0 leaks</code>). Прогресс = реальные токены.', en: '<b>race / first-wins</b>: the prompt goes to every local model (Ollama, no keys) at once — the first usable answer 🏆 wins, the rest are <b>cancelled that very instant</b> (GPU freed, <code>0 leaks</code>). Progress = real tokens.' },
       defs: [
         {id:"llama-8b",   kind:"≈70 tok",  probes:70,  outcome:"done"},
         {id:"qwen-14b",   kind:"≈90 tok",  probes:90,  outcome:"lost"},
@@ -435,6 +436,7 @@
   if(!SCENARIOS[scen]) scen = "weather";
 
   // real names for the swarm wall (tooltip makes each square a real request)
+  SCENARIOS.weather.bgNamesEn = ("Oslo Berlin Paris Madrid Rome Prague Vienna Warsaw Helsinki Stockholm Copenhagen Amsterdam Brussels Lisbon Athens Dublin Zurich Geneva Milan Munich Hamburg Barcelona Valencia Porto Krakow Gdansk Riga Vilnius Tallinn Minsk Belgrade Sofia Bucharest Budapest Istanbul Ankara Tbilisi Yerevan Baku Almaty Astana Tashkent Bishkek Dubai Doha Riyadh Tel-Aviv Cairo Casablanca Nairobi Cape-Town Lagos Delhi Mumbai Bangalore Chennai Beijing Shanghai Guangzhou Shenzhen Hong-Kong Taipei Seoul Busan Osaka Kyoto Nagoya Singapore Jakarta Bangkok Hanoi Manila Kuala-Lumpur Sydney Melbourne Auckland Toronto Vancouver Montreal Chicago Boston Seattle Austin Denver Miami Houston Mexico-City Bogota Lima Santiago Buenos-Aires Sao-Paulo Rio Kazan Yekaterinburg Samara Omsk").split(" ");
   SCENARIOS.weather.bgNames = ("Осло Берлин Париж Мадрид Рим Прага Вена Варшава Хельсинки Стокгольм Копенгаген Амстердам Брюссель Лиссабон Афины Дублин Цюрих Женева Милан Мюнхен Гамбург Барселона Валенсия Порту Краков Гданьск Рига Вильнюс Таллин Минск Белград София Бухарест Будапешт Стамбул Анкара Тбилиси Ереван Баку Алматы Астана Ташкент Бишкек Дубай Доха Эр-Рияд Тель-Авив Каир Касабланка Найроби Кейптаун Лагос Дели Мумбаи Бангалор Ченнаи Пекин Шанхай Гуанчжоу Шэньчжэнь Гонконг Тайбэй Сеул Пусан Осака Киото Нагоя Сингапур Джакарта Бангкок Ханой Манила Куала-Лумпур Сидней Мельбурн Окленд Торонто Ванкувер Монреаль Чикаго Бостон Сиэтл Остин Денвер Майами Хьюстон Мехико Богота Лима Сантьяго Буэнос-Айрес Сан-Паулу Рио Казань Екатеринбург Самара Омск").split(" ");
   SCENARIOS.health.bgNames = ("google.com youtube.com wikipedia.org reddit.com amazon.com bing.com linkedin.com netflix.com pinterest.com zoom.us discord.com twitch.tv spotify.com apple.com microsoft.com adobe.com salesforce.com oracle.com ibm.com intel.com nvidia.com amd.com dell.com hp.com samsung.com sony.com xiaomi.com stackoverflow.com gitlab.com bitbucket.org docker.com kubernetes.io python.org rust-lang.org golang.org nodejs.org npmjs.org pypi.org crates.io maven.org jetbrains.com vscode.dev mozilla.org opera.com brave.com duckduckgo.com yandex.ru mail.ru vk.com ok.ru avito.ru ozon.ru wildberries.ru sber.ru tinkoff.ru rzd.ru gosuslugi.ru habr.com 2gis.ru kinopoisk.ru ivi.ru rutube.ru dzen.ru lenta.ru rbc.ru tass.ru interfax.ru cloudflare.net fastly.com akamai.com vercel.app netlify.app herokuapp.com digitalocean.com linode.com vultr.com ovh.com hetzner.com telegram.org whatsapp.com signal.org proton.me figma.com notion.so slack.com trello.com asana.com atlassian.com dropbox.com box.com wetransfer.com").split(" ");
 
@@ -501,7 +503,7 @@
   function applyScenario(){
     var S = SCENARIOS[scen];
     document.getElementById("sigLine").innerHTML = S.sig;
-    document.getElementById("noteLine").innerHTML = S.note;
+    document.getElementById("noteLine").innerHTML = S.note[LANG] || S.note.en;
     document.getElementById("unitLabel").textContent = S.unit;
     document.getElementById("s-fanoutK").textContent = S.unit;
     document.getElementById("s-pagesK").textContent = S.subUnit+" ok";
@@ -542,7 +544,7 @@
       var notchN=Math.min(p.probes, 24), notchHtml="";
       for(var k=1;k<notchN;k++){ notchHtml+='<i style="left:'+(k/notchN*100)+'%"></i>'; }
       lane.innerHTML =
-        '<div class="name"><span class="id">'+p.id+'</span>'+
+        '<div class="name"><span class="id">'+dispName(p.id)+'</span>'+
           '<span class="kind">'+p.kind+' · <span class="cnt">0/'+p.probes+'</span></span></div>'+
         '<div class="rail"><div class="seq-ghost"></div><div class="bar"></div><div class="notches">'+notchHtml+'</div></div>'+
         '<div class="status">queued</div>';
@@ -558,7 +560,7 @@
     if(S.bg){
       sw.style.display="";
       document.getElementById("swarmCount").textContent=S.bg;
-      var names=S.bgNames||[];
+      var names=(LANG==="en" && S.bgNamesEn) || S.bgNames || [];
       for(var b=0;b<S.bg;b++){
         var el=document.createElement("div"); el.className="sq"; el.dataset.i=b; sg.appendChild(el);
         var r=rand(), total=0.35+rand()*2.0;
@@ -616,9 +618,7 @@
 
   function startRun(list){
     build(list); resetStats(list);
-    document.getElementById("hint").textContent = mode==="demo"
-      ? "seed = 42 · воспроизводимый забег"
-      : "seed = "+seedVal+" · эта ссылка воспроизводит забег байт-в-байт";
+    document.getElementById("hint").textContent = mode==="demo" ? T().hintDemo : T().hintSeed(seedVal);
     laneObjs.forEach(function(o){ o.lane.dataset.state="live"; o.status.textContent="live"; });
     flashCode("clFan"); setTimeout(function(){ flashCode("clStart"); }, 350);   /* П.5: fan-out стартовал */
     var seqTotal=list.reduce(function(a,p){return a+Math.min(p.total,DEADLINE);},0)
@@ -711,7 +711,7 @@
         es.onerror = function(){ es.close(); };
       }catch(e){}
     }).catch(function(){
-      document.getElementById("hint").textContent = "live недоступен (сеть/бек) — см. консоль";
+      document.getElementById("hint").textContent = T().hintLiveFail;
       setDeadline(2.0); startRun(providers("demo"));
     });
   }
@@ -739,9 +739,7 @@
     var enabled = SERVER_AVAILABLE && scen!=="llm";
     b.disabled = !enabled;
     b.textContent = enabled ? "Live ●" : "Live 🔒";
-    b.title = enabled
-      ? "Тот же aggregate под with Net = real_net() — реальный Nova-бек"
-      : (scen==="llm" ? "LLM — вне MVP, всегда клиентская синтетика" : "Тот же aggregate под with Net = real_net() — включится с живым Nova-беком (Ф.MVP-2)");
+    b.title = enabled ? T().tipLiveOn : (scen==="llm" ? T().tipLiveLlm : T().tipLiveOff);
   }
 
   // scenario switch (weather / health / llm) — own group
@@ -751,13 +749,92 @@
       b.setAttribute("aria-pressed","true"); scen=b.dataset.scen; applyScenario(); refreshLiveBtn(); run(); }); });
 
   // data-mode switch (demo / chaos / live) — own group
-  /* v10: история режима — что читатель сейчас смотрит, человеческим языком */
-  var MODE_STORY = {
-    demo:  "Демо: офлайн и детерминированно — seed 42, каждый запуск повторим байт-в-байт (сид можно поменять в URL).",
-    chaos: "Хаос: источники случайно падают и тормозят — дедлайн спасает ответ: частичный результат вместо зависшей страницы.",
-    live:  "Live: настоящие HTTPS-запросы тем же кодом — подменён только обработчик эффекта: with Net = real_net()."
+
+  /* i18n (owner 2026-08-02): default EN, autodetect ru, ?lang= + localStorage */
+  var I18N = {
+    en: {
+      hero: 'This is <b>one Nova process</b>: the ▶ button queries 6 sources concurrently and fits the answer into one shared budget; whoever misses it is <b>honestly cancelled</b>, not left running in the background. Below — each source&#39;s fate (done · failed · cancelled) and the actual code that does it.',
+      modeStory: { demo: 'Demo: offline and deterministic — seed 42, every run replays byte-for-byte (change the seed in the URL).',
+                   chaos: 'Chaos: sources randomly fail and stall — the deadline saves the response: a partial result instead of a hung page.',
+                   live: 'Live: real HTTPS requests through the same code — only the effect handler changes: with Net = real_net().' },
+      langfacts: '<b>What the language does here, not a framework:</b> effects are visible in the signature — <code>fn aggregate(…) Net Time Emit -&gt; Report</code> · a test swaps the world in one line — <code>with Net = mock_net()</code>, zero mocking frameworks · cancellation is real — a late fiber is cut at the deadline, not left running · &laquo;0 leaks&raquo; is a checkable fact: <code>/api/snapshot</code> reports <code>fibers_spawned/closed = 12/12</code> · one native binary — <code>nova build</code> → C, no VM.',
+      swarmPre: 'background fan-out — ', swarmPost: ' more real requests of the same batch · hover a square',
+      codeTitle: 'the code behind this screen', excerpt: ' · excerpt',
+      codeNote1: 'this screen is produced by this exact code',
+      codeNote2: 'we swapped the world, not the code — zero mocking frameworks',
+      hintDemo: 'seed = 42 · reproducible run',
+      hintSeed: function(sd){ return 'seed = ' + sd + ' · this link replays the run byte-for-byte'; },
+      hintLiveFail: 'live unavailable (network/backend) — see console',
+      scenW: '☀ Weather', scenH: '◉ Health', scenL: '🤖 LLM',
+      tipDemo: 'Offline and deterministic: seed 42, byte-for-byte reproducible — the same aggregate under with Net = mock_net(seed = 42)',
+      tipChaos: 'Sources randomly fail and stall — the deadline returns a partial result instead of a hung page; only the mock_net(...) seed changes',
+      tipLiveOn: 'The same aggregate under with Net = real_net() — a real Nova backend',
+      tipLiveLlm: 'LLM — out of MVP scope, always client-side synthetic',
+      tipLiveOff: 'The same aggregate under with Net = real_net() — comes alive with a running Nova backend',
+      tipBadge: 'The run&#39;s effect handler: the code is one — the world is swapped',
+      foot: 'Nova v0.1-dev <span class="sep">·</span> <code>github.com/nv-lang</code> <span class="sep">·</span> <code>nova build</code> → C → one native binary, no VM <span class="sep">·</span> Demo/Chaos data is synthetic; Live hits real APIs'
+    },
+    ru: {
+      hero: 'Это <b>один процесс Nova</b>: кнопка ▶ опрашивает 6 источников одновременно и укладывает ответ в общий бюджет; кто не успел — <b>честно отменён</b>, а не брошен доживать в фоне. Ниже — судьба каждого источника (успел · упал · отменён) и настоящий код, которым это сделано.',
+      modeStory: { demo: 'Демо: офлайн и детерминированно — seed 42, каждый запуск повторим байт-в-байт (сид можно поменять в URL).',
+                   chaos: 'Хаос: источники случайно падают и тормозят — дедлайн спасает ответ: частичный результат вместо зависшей страницы.',
+                   live: 'Live: настоящие HTTPS-запросы тем же кодом — подменён только обработчик эффекта: with Net = real_net().' },
+      langfacts: '<b>Что здесь делает язык, а не фреймворк:</b> эффекты видны в сигнатуре — <code>fn aggregate(…) Net Time Emit -&gt; Report</code> · тест подменяет мир одной строкой — <code>with Net = mock_net()</code>, ни одного мок-фреймворка · отмена настоящая — опоздавший файбер обрывается по дедлайну, а не доживает в фоне · «0 leaks» — не лозунг: <code>/api/snapshot</code> отвечает <code>fibers_spawned/closed = 12/12</code> · один нативный бинарь — <code>nova build</code> → C, без VM.',
+      swarmPre: 'background fan-out — ещё ', swarmPost: ' реальных запросов той же пачки · наведи на квадрат',
+      codeTitle: 'код за экраном', excerpt: ' · фрагмент',
+      codeNote1: 'этот экран порождён вот этим кодом',
+      codeNote2: 'подменили мир, не код — ни одного мок-фреймворка',
+      hintDemo: 'seed = 42 · воспроизводимый забег',
+      hintSeed: function(sd){ return 'seed = ' + sd + ' · эта ссылка воспроизводит забег байт-в-байт'; },
+      hintLiveFail: 'live недоступен (сеть/бек) — см. консоль',
+      scenW: '☀ Погода', scenH: '◉ Health', scenL: '🤖 LLM',
+      tipDemo: 'Офлайн и детерминированно: seed 42, запуск повторим байт-в-байт — тот же aggregate под with Net = mock_net(seed = 42)',
+      tipChaos: 'Источники случайно падают и тормозят — дедлайн отдаёт частичный результат вместо зависшей страницы; меняется только seed у mock_net(...)',
+      tipLiveOn: 'Тот же aggregate под with Net = real_net() — реальный Nova-бек',
+      tipLiveLlm: 'LLM — вне MVP, всегда клиентская синтетика',
+      tipLiveOff: 'Тот же aggregate под with Net = real_net() — включится с живым Nova-беком',
+      tipBadge: 'Эффект-хендлер прогона: код один — мир подменяется',
+      foot: 'Nova v0.1-dev <span class="sep">·</span> <code>github.com/nv-lang</code> <span class="sep">·</span> <code>nova build</code> → C → один нативный бинарь, без VM <span class="sep">·</span> данные Demo/Chaos синтетические; Live ходит в реальные API'
+    }
   };
-  function refreshModeStory(){ var el=document.getElementById("modeStory"); if(el) el.textContent = MODE_STORY[mode] || ""; }
+  var LANG = (function(){
+    try {
+      var q = new URLSearchParams(location.search).get("lang");
+      if (q === "ru" || q === "en") { localStorage.setItem("agg_lang", q); return q; }
+      var st = localStorage.getItem("agg_lang");
+      if (st === "ru" || st === "en") return st;
+    } catch(e) {}
+    return (navigator.language || "").toLowerCase().indexOf("ru") === 0 ? "ru" : "en";
+  })();
+  function T(){ return I18N[LANG]; }
+  function applyLang(){
+    var t = T();
+    document.getElementById("hero").innerHTML = t.hero;
+    document.getElementById("langfacts").innerHTML = t.langfacts;
+    document.getElementById("footLine").innerHTML = t.foot;
+    document.getElementById("codeTitle").textContent = t.codeTitle;
+    var sc = document.getElementById("swarmCount"); var n = sc ? sc.textContent : "90";
+    document.getElementById("swarmLabel").innerHTML = t.swarmPre + '<b id="swarmCount">' + n + '</b>' + t.swarmPost;
+    var bs = document.querySelectorAll("#scenSwitch .seg");
+    if (bs[0]) bs[0].textContent = t.scenW; if (bs[1]) bs[1].textContent = t.scenH; if (bs[2]) bs[2].textContent = t.scenL;
+    var bd = document.querySelector('.segmented[aria-label="Data mode"] [data-mode="demo"]');
+    var bc = document.querySelector('.segmented[aria-label="Data mode"] [data-mode="chaos"]');
+    if (bd) bd.title = t.tipDemo; if (bc) bc.title = t.tipChaos;
+    var fx = document.getElementById("fxNet"); if (fx) fx.title = t.tipBadge;
+    var lb = document.getElementById("langBtn"); if (lb) lb.textContent = LANG.toUpperCase();
+    var tab1 = document.querySelector('#codeTabs .seg[aria-pressed="true"]');
+    var isT1 = !tab1 || tab1.dataset.tab === "1";
+    document.getElementById("codePath").textContent = (isT1
+      ? "examples/flagship/aggregator/src/app/aggregate.nv"
+      : "examples/flagship/aggregator/src/app/aggregate_test.nv") + t.excerpt;
+    document.getElementById("codeNote").textContent = isT1 ? t.codeNote1 : t.codeNote2;
+    document.documentElement.setAttribute("lang", LANG);
+  }
+  /* Имена городов demo-лейнов и swarm-фона: RU-канон + EN-зеркало */
+  var CITY_EN = { "Москва":"Moscow", "С-Петербург":"St. Petersburg", "Новосибирск":"Novosibirsk",
+                  "Лондон":"London", "Нью-Йорк":"New York", "Токио":"Tokyo" };
+  function dispName(nm){ return LANG === "en" ? (CITY_EN[nm] || nm) : nm; }
+  function refreshModeStory(){ var el=document.getElementById("modeStory"); if(el) el.textContent = T().modeStory[mode] || ""; }
   Array.prototype.slice.call(document.querySelectorAll('.segmented[aria-label="Data mode"] .seg')).forEach(function(b){
     b.addEventListener("click", function(){ if(b.disabled) return;
       document.querySelectorAll('.segmented[aria-label="Data mode"] .seg').forEach(function(x){ x.setAttribute("aria-pressed","false"); });
@@ -774,12 +851,10 @@
       var t1 = b.dataset.tab === "1";
       document.getElementById("codeTab1").style.display = t1 ? "" : "none";
       document.getElementById("codeTab2").style.display = t1 ? "none" : "";
-      document.getElementById("codePath").textContent = t1
-        ? "examples/flagship/aggregator/backend/app/aggregate.nv · фрагмент"
-        : "examples/flagship/aggregator/backend/app/aggregate_test.nv · фрагмент";
-      document.getElementById("codeNote").textContent = t1
-        ? "этот экран порождён вот этим кодом"
-        : "подменили мир, не код — ни одного мок-фреймворка";
+      document.getElementById("codePath").textContent = (t1
+        ? "examples/flagship/aggregator/src/app/aggregate.nv"
+        : "examples/flagship/aggregator/src/app/aggregate_test.nv") + T().excerpt;
+      document.getElementById("codeNote").textContent = t1 ? T().codeNote1 : T().codeNote2;
     }); });
 
   // swarm tooltip: hover a square → source name + status + latency
@@ -806,6 +881,13 @@
   document.querySelectorAll('.segmented[aria-label="Data mode"] .seg').forEach(function(b){
     if(!b.disabled) b.setAttribute("aria-pressed", b.dataset.mode===mode ? "true" : "false"); });
 
+  document.getElementById("langBtn").addEventListener("click", function(){
+    LANG = (LANG === "en") ? "ru" : "en";
+    try { localStorage.setItem("agg_lang", LANG); } catch(e) {}
+    applyLang(); applyScenario(); refreshModeStory(); refreshLiveBtn(); run();
+  });
+  applyLang();
+  refreshModeStory();
   applyScenario();
   refreshBadge();
   refreshLiveBtn();
