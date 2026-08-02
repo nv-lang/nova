@@ -71,24 +71,29 @@
 These are language tokens, not prose — every translation keeps them verbatim
 (same spelling in the en and ru text) and, where useful, glosses the meaning
 in the surrounding sentence. The "Note" column below is the Russian gloss of
-what the token does, not a translation of the token.
+what the token does, not a translation of the token. **Every row in this
+section is `[keep-en: код]` by definition** — a code keyword is not prose
+and is never translated; the tag is not repeated per row. The Russian
+glosses themselves also follow the `#language` norm (обработчик, не
+хендлер; область видимости, не скоуп) except for «файбер», left as-is
+pending the owner's call in Open questions.
 
 | Token (code, unchanged in both languages) | Example (en) | Note (что значит по-русски) |
 |---|---|---|
-| `consume` | "A `consume`-typed binding is ownership-tracked." | параметр/binding, привязка владения ресурсом; исчерпывается ровно один раз (или через `@cleanup`, D432) |
-| `ro` | "`ro` declares a read-only binding (never reassigned)" | read-only связывание/параметр; синоним `readonly` для параметров |
-| `mut` | "`mut` declares a reassignable one [binding]" | разрешает мутацию/переприсваивание — на binding, параметре или поле |
+| `consume` | "A `consume`-typed binding is ownership-tracked." | параметр/связывание, привязка владения ресурсом; исчерпывается ровно один раз (или через `@cleanup`, D432) |
+| `ro` | "`ro` declares a read-only binding (never reassigned)" | связывание/параметр только для чтения; синоним `readonly` для параметров |
+| `mut` | "`mut` declares a reassignable one [binding]" | разрешает мутацию/переприсваивание — на связывании, параметре или поле |
 | `use` (embed) | "`use account Account` — embed: field + auto-proxy methods" | встраивание типа как поля с автопрокси методов (композиция, не наследование) |
-| `spawn` | "`spawn` inside a `supervised` block starts a fire-and-forget fiber" | запуск нового fiber'а внутри structured-concurrency скоупа |
-| `supervised` | "`supervised(deadline:)` gives that block a shared deadline" | скоуп, собирающий свои `spawn`-файберы и их падения/дедлайн |
-| `detach` | "`detach { body }` — fire-and-forget task surviving the caller" | файбер, переживающий вызывающий скоуп (вне structured-дисциплины) |
-| `parallel for` | "`parallel for` fans out homogeneous work and collects results into a `[]T`" | параллельный fan-out цикла с ожиданием всех и отменой хвоста при ошибке |
-| `with` | "`with Db = postgres_handler { ... }`" | установка handler'а эффекта на скоуп |
-| `effect` (keyword) | "`type X effect { ... }`" (declaration) / "`ro console = effect Logger { ... }`" (literal) | и kind-токен объявления эффект-типа, и ключевое слово handler-литерала |
+| `spawn` | "`spawn` inside a `supervised` block starts a fire-and-forget fiber" | запуск нового файбера внутри области видимости structured concurrency |
+| `supervised` | "`supervised(deadline:)` gives that block a shared deadline" | область видимости, собирающая свои `spawn`-файберы и их падения/дедлайн |
+| `detach` | "`detach { body }` — fire-and-forget task surviving the caller" | файбер, переживающий вызывающую область видимости (вне дисциплины structured concurrency) |
+| `parallel for` | "`parallel for` fans out homogeneous work and collects results into a `[]T`" | параллельный разлёт (fan-out) цикла с ожиданием всех и отменой хвоста при ошибке |
+| `with` | "`with Db = postgres_handler { ... }`" | установка обработчика эффекта на область видимости |
+| `effect` (keyword) | "`type X effect { ... }`" (declaration) / "`ro console = effect Logger { ... }`" (literal) | и kind-токен объявления эффект-типа, и ключевое слово литерала-обработчика |
 | `protocol` | "`protocol` declares a structural interface" | структурный контракт для значений (в отличие от `effect` — контракт для операций) |
 | `requires` / `ensures` / `invariant` / `decreases` | "`requires amount > 0`", "`ensures result >= 0`" | контрактные клозы: предусловие / постусловие / инвариант цикла / метрика терминации |
-| `defer` | "`defer { ... }` runs at scope exit, LIFO" | отложенный вызов при выходе из скоупа |
-| `forbid` | "`forbid Net, Fs, Db { eval(code) }`" | capability-режим: запрет вызова функций с перечисленными эффектами внутри блока |
+| `defer` | "`defer { ... }` runs at scope exit, LIFO" | отложенный вызов при выходе из области видимости |
+| `forbid` | "`forbid Net, Fs, Db { eval(code) }`" | режим полномочий: запрет вызова функций с перечисленными эффектами внутри блока |
 
 ---
 
