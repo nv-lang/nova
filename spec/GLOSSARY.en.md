@@ -152,12 +152,14 @@ pending the owner's call in Open questions.
 | Русский (норма #language) | English | Example (en) | Note |
 |---|---|---|---|
 | подмена обработчика (через `with`) `[keep-en: код]` | handler substitution | "Each effect has a **handler** that intercepts its operations, substituted via `with Handler = ...`" | language-tour.md §6; «обработчик», не «хендлер»; `with` — ключевое слово (см. §2) |
-| прямой / транзитивный эффект | direct / transitive effect | "A function declares in its signature exactly which effects **it itself** performs; calling another function does not pull that function's effects up" | language-tour.md §6; spec/effects.md "Прямые эффекты, не транзитивные" (D28) — transitive is a warning by default, a hard error under `--strict-effects` |
+| прямой эффект | direct effect | "A function declares in its signature exactly which effects **it itself** performs" | language-tour.md §6; spec/effects.md "Прямые эффекты, не транзитивные" (D28) — эффект операций, вызванных САМОЙ функцией; необъявленный — всегда compile error |
+| транзитивный эффект | transitive effect | "calling another function does not pull that function's effects up into the caller's signature" | spec/effects.md (D28) — эффект вложенного вызова; необъявленный — warning по умолчанию, hard error под `--strict-effects` |
 | строгий режим эффектов (`--strict-effects`) `[keep-en: код]` | `--strict-effects` (strict-effects mode) | "programs (`examples/**`) build under `--strict-effects` … an experimental flag that promotes undeclared-transitive-effect … warnings to hard errors" | language-tour.md §6; Plan 197; `--strict-effects` — буквальный CLI-флаг |
 | эффект `Fail` `[keep-en: код]` | `Fail` effect | "`Fail[E]` — эффект-контракт для перехвата и обработки ошибки" | spec/effects.md "Роли — throw / Fail[E] / handler"; `Fail` — имя типа-эффекта в prelude |
 | выбросить ошибку (`throw`) `[keep-en: код]` | throw | "`throw err` — language syntax, raises an error" (paraphrase of spec/effects.md "Роли") | never resumes at the throw point; `never` operation type; `throw` — ключевое слово |
 | паника | panic | "**panic** is for a broken caller contract … and is never recoverable" | language-tour.md §5; натурализованный термин, стандартен в переводной PL-литературе |
-| постфиксные операторы `?` / `!!` | postfix operators `?` / `!!` | "`expr?` — return-style … `expr!!` — throw-style: 'didn't work — throw via `Fail`'" (paraphrase of spec/effects.md) | spec/effects.md "Операторы `?` и `!!`" — programmer picks the handling style at the use site; символьные операторы, не слова |
+| оператор `?` (return-стиль) | postfix operator `?` (return-style) | "`expr?` — return-style: 'didn't work — wrap it upward as a value'" (paraphrase of spec/effects.md) | spec/effects.md "Операторы `?` и `!!`"; ранний return обёртки — нужен `-> Option`/`-> Result` |
+| оператор `!!` (throw-стиль) | postfix operator `!!` (throw-style) | "`expr!!` — throw-style: 'didn't work — throw via `Fail`'" (paraphrase of spec/effects.md) | spec/effects.md "Операторы `?` и `!!`"; throw через `Fail[E]` — нужен `Fail[E]` в сигнатуре; программист выбирает стиль на месте использования |
 
 ---
 
