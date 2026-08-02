@@ -182,12 +182,12 @@ pending the owner's call in Open questions.
 
 ## 8. Modules and packages · Модули и пакеты
 
-| Русский | English | Example (en) | Note |
+| Русский (норма #language) | English | Example (en) | Note |
 |---|---|---|---|
-| модуль | module | "A **module** is either a single file `X.nv` or a **folder** `X/`" | language-tour.md §11 |
-| папка-модуль / peer-файлы | folder-module / peer files | "A **module** is either a single file `X.nv` or a **folder** `X/` whose **peer files** all declare the same `module` path and share one namespace" | language-tour.md §11 |
-| пакет | package | "Every import path is fully qualified from the **package** root (the directory with `nova.toml`)" | language-tour.md §11 |
-| workspace (воркспейс) | workspace | "Workspaces (`[workspace] members = [...]`) group several packages in a monorepo" | language-tour.md §11 |
+| модуль | module | "A **module** is either a single file `X.nv` or a **folder** `X/`" | language-tour.md §11; натурализованный термин |
+| папка-модуль / равноправные файлы | folder-module / peer files | "A **module** is either a single file `X.nv` or a **folder** `X/` whose **peer files** all declare the same `module` path and share one namespace" | language-tour.md §11; норма-форма «равноправные файлы» вместо хайбридного «peer-файлы» — файлы одного namespace без взаимного импорта, `[proposed]` |
+| пакет | package | "Every import path is fully qualified from the **package** root (the directory with `nova.toml`)" | language-tour.md §11; натурализованный термин |
+| рабочее пространство (`[workspace]`) `[keep-en: код]` | workspace | "Workspaces (`[workspace] members = [...]`) group several packages in a monorepo" | language-tour.md §11; норма-форма «рабочее пространство» вместо транслитерации «воркспейс»; `[workspace]` — буквальное имя секции в `nova.toml` |
 
 ---
 
