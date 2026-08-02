@@ -36,7 +36,7 @@ SendMessage-реанимация; модель вязнет → эскалаци
 ## Шесть реп + сайт
 `nova` (компилятор+std, remote **`github`**, ветка `main`) · `nova-http` · `nova-tls` ·
 `nova-polaris` (HTTP-фреймворк) · `nova-compress` · `nova-bigint` — у пакетных remote
-**`origin`**, дефолт-ветка **`master`** (не main!). Плюс `www` (сайт; релиз-страница в
+**`origin`**, дефолт-ветка **`main`** (унификация владельца 2026-08-02: все репы на main; на gitverse/sourcecraft дефолт до ручной смены в их UI может числиться master — сам ref main везде запушен). Плюс `www` (сайт; релиз-страница в
 ветке `release-v0-1-page`, публикация ТОЛЬКО по команде), `nova-private` (журнал; запись =
 немедленный пуш). **Три зеркала nova: github/gitverse/sourcecraft — пушить на все три и
 СВЕРЯТЬ `git ls-remote` (прецедент 2026-08-02: sourcecraft ответил «Everything
@@ -114,7 +114,7 @@ vcpkg_installed/x64-windows-static/lib` (INCLUDE_DIR НЕ задавать — �
   фикстурами — важен FAIL 0).
 - `nova check std/src`: **PASS 147 / FAIL 26 / WARN 60** — байт-канон, FAIL 26 не двигается.
 - arch-ratchet: `lines=64311 / infer=348` (только вниз; бамп — с летописью в baseline).
-- `nova-polaris` (master): `./nova.sh test src --strict-effects` — **37/0/19**.
+- `nova-polaris` (main): `./nova.sh test src --strict-effects` — **37/0/19**.
 - `nova-tls`: 1/0/3 (тег v0.1.5 — актуальный) · `nova-http`: 4/0/3 · `nova-bigint`:
   test 5/0/2, check 7/0.
 - Флагман — строка `built:` под `--strict-effects`. Гейт целиком: `bash scripts/gate.sh`.
@@ -169,7 +169,7 @@ v0.1.5 выпущен по команде · сайт: подготовку вы
 - **p-docs-extractors** — docs/extractors.md для polaris (typed-маршруты без доков — дыра
   Ф.3).
 - **Сдана и ЖДЁТ №152:** ветка `p-polaris-tls` (worktree nova-polaris-tls) — HTTPS
-  живьём проверен curl'ом; мерж в polaris master после зелёного гейта с №152-фиксом.
+  живьём проверен curl'ом; мерж в polaris main после зелёного гейта с №152-фиксом.
 
 **Очередь дорожки А после W1b:** S1a🔒 → S1b🔒 → W2 (№254) → W2a (№259 sentinel-конфляция,
 ТОП-1 аудита) → W3 (bare-варианты) → W4 (P67 ICE-пачка; разблокирует A-V9) → W5
@@ -181,7 +181,7 @@ v0.1.5 выпущен по команде · сайт: подготовку вы
 ## Как продолжить работу (алгоритм холодного старта)
 1. Онбординг (read-project → dev-workflow → plans/README → AGENTS) + пересоздай
    cron-будильник надзора.
-2. `git log --oneline -15` в nova + пакетных репах (master!); `git worktree list` —
+2. `git log --oneline -15` в nova + пакетных репах (main); `git worktree list` —
    живые окна; для каждого — есть ли отчёт (ветка с диффом без влития = незакрытое окно).
 3. `bash scripts/guards/install-guards.sh --check`.
 4. Открой «★ ЕДИНЫЙ ПЛАН» в 221-release-v0-1.md — там порядок; 221.1 🔴-строки — очередь.

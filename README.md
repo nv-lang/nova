@@ -125,6 +125,18 @@ the same error-handling mechanism as in synchronous code. The same
 `Http.get` works in a regular loop and in `parallel for` — without
 changing the signature.
 
+Here is that pattern live — the flagship demo
+([examples/flagship/aggregator](examples/flagship/aggregator)): a
+fan-out over 6 sources under one shared deadline; latecomers are
+genuinely **cancelled**, not abandoned, and the server reports
+`fibers_spawned/closed: 12/12` — zero leaks as a checkable fact:
+
+![Nova flagship aggregator — parallel fan-out with real cancellation](docs/assets/aggregator-demo.gif)
+
+Run it yourself: `docker run --rm -p 8187:8187` (image — see the
+[demo README](examples/flagship/aggregator/README.md)), or a 30-line
+distilled version: [examples/mini_aggregator.nv](examples/mini_aggregator.nv).
+
 ### 3. Deterministic random in tests
 
 ```nova

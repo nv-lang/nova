@@ -5429,7 +5429,7 @@ fn cmd_build(
     // compile .c → .exe
     // Plan 149/115: [runtime]+[ffi] resolved from package nova.toml (find_manifest), mirrors test_runner. env still overrides at runtime.
     let manifest = nova_codegen::manifest::find_manifest(&path);
-    let mut resolved_ffi: Option<test_runner::ResolvedFfiConfig> =
+    let own_ffi: Option<test_runner::ResolvedFfiConfig> =
         manifest.as_ref().and_then(test_runner::ResolvedFfiConfig::from_manifest);
     // Plan 03.1 (ext-dep native/FFI propagation), M-187 diamond-fix
     // follow-up (2026-07-15): `nova build` only merged the ENTRY package's
@@ -5445,15 +5445,27 @@ fn cmd_build(
     // fixture), so it's closed here too. Mirrors test_runner.rs's
     // dependency-ffi merge loop exactly (own package's `[ffi]` first, see
     // `ResolvedFfiConfig::merge`).
+    //
+    // [M-vendor-ffi-build-race-in-git-dep-cache] (backlog #152): collect
+    // each provider's `ResolvedFfiConfig` UNMERGED into `all_ffi` first —
+    // merge() happens only AFTER `build_missing_vendor_ffi_libs` has run
+    // per-provider below. Mirrors the test_runner.rs `build_and_run_one`
+    // fix 1:1 — see that call site's #152 comment for the full
+    // cross-provider object-collision explanation (merging BEFORE the
+    // vendor build let two different providers' `.c` files with the same
+    // basename, e.g. mbedTLS's `library/platform.c` vs brotli's
+    // `common/platform.c`, silently clobber each other's `.obj` in one
+    // shared build).
+    let mut all_ffi: Vec<test_runner::ResolvedFfiConfig> = Vec::new();
+    if let Some(f) = own_ffi {
+        all_ffi.push(f);
+    }
     if let Some(m) = &manifest {
         for dep_root in nova_codegen::imports::resolved_dependency_roots(&m.manifest_dir) {
             let dep_toml = dep_root.join("nova.toml");
             if let Some(dep_manifest) = nova_codegen::manifest::parse_manifest(&dep_toml, &dep_root) {
                 if let Some(dep_ffi) = test_runner::ResolvedFfiConfig::from_manifest(&dep_manifest) {
-                    match &mut resolved_ffi {
-                        Some(base) => base.merge(dep_ffi),
-                        None => resolved_ffi = Some(dep_ffi),
-                    }
+                    all_ffi.push(dep_ffi);
                 }
             }
         }
@@ -5469,9 +5481,16 @@ fn cmd_build(
     // no-op when `vendor_src_dirs`/`lib_dirs`/`libs` is empty or already
     // cached, never fatal (falls through to the real link step, which
     // fails with its own honest error if the lib is genuinely still
-    // missing).
-    if let Some(ffi) = &resolved_ffi {
+    // missing). Called ONCE PER PROVIDER, still unmerged (#152 above).
+    for ffi in &all_ffi {
         test_runner::build_missing_vendor_ffi_libs(ffi, tc.vcvars_path());
+    }
+    let mut resolved_ffi: Option<test_runner::ResolvedFfiConfig> = None;
+    for ffi in all_ffi {
+        match &mut resolved_ffi {
+            Some(base) => base.merge(ffi),
+            None => resolved_ffi = Some(ffi),
+        }
     }
     let resolved_runtime: Option<nova_codegen::manifest::RuntimeConfig> =
         manifest.as_ref().and_then(|m| m.runtime.clone());
