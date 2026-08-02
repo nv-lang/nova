@@ -1,0 +1,48 @@
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
+# Nova terminology glossary (RU ↔ EN)
+
+> **Purpose.** This is a **working dictionary for translators**, not a
+> specification page — it is **informative**, not normative. It exists so
+> that the parallel translation batches of Plan 241 (`spec/*.en.md`
+> ru→en, `docs/guide/*.ru.md` en→ru) use **one consistent vocabulary**
+> instead of each batch inventing its own English or Russian phrasing for
+> the same Nova concept.
+>
+> **Sourcing rule.** Russian terms come from the normative spec pages
+> (`spec/overview.md`, `spec/paradigm.md`, `spec/syntax.md`,
+> `spec/effects.md`, `spec/conversions.md`, `spec/revolutionary.md`) and
+> from `spec/decisions/README.md` section headings. English equivalents
+> come **first** from actual usage in `docs/guide/*.md` (the English
+> guide files already have settled vocabulary — *fiber*, *effect row*,
+> *record*, *protocol*, and so on) — the glossary must match how the
+> guide already talks, not invent new phrasing. Where no English
+> precedent exists anywhere in the repo, a term is proposed and marked
+> **`[proposed]`** for the owner to confirm or correct.
+>
+> Nova keyword/identifier tokens (`consume`, `ro`, `use`, `spawn`,
+> `requires`, …) are **never translated** — they are code, not prose —
+> and are listed separately with a Russian explanation of what the token
+> means, not a translation of the token itself.
+>
+> Open disagreements and gaps are collected in
+> [Open questions for owner review](#open-questions-for-owner-review) at
+> the end of this file.
+
+---
+
+## 1. Philosophy and effects paradigm · Философия и парадигма эффектов
+
+| Русский | English | Example (en) | Note |
+|---|---|---|---|
+| алгебраические эффекты | algebraic effects | "Algebraic effects + handlers (Koka, Effekt, Eff)" | central language idea; see spec/overview.md "Что заимствует у кого" |
+| эффект | effect | "Network, disk, the clock … in Nova these are all **effects**." | language-tour.md §6 |
+| хендлер / обработчик эффекта | handler | "Each effect has a **handler** that intercepts its operations" | language-tour.md §6; also the literal value produced by `effect X { ... }` |
+| AI-first дизайн | AI-first design | "Nova — first language explicitly optimized for the pair 'LLM writes, human reviews'" | spec/overview.md "Killer use-case" |
+| killer use-case | killer use-case | "**Killer use-case.** AI-first programming." | spec/overview.md heading, borrowed English term used as-is in the Russian original |
+| одна дверь (единственный канонический путь) | single canonical path / "no second door" `[proposed]` | "not a second door to `?`, but an independent niche" (paraphrase of the retraction rationale) | idiom used repeatedly in spec/decisions (e.g. D86 amend: "она была второй дверью к `?`") to reject a duplicate way of doing something already covered; no settled English phrase exists yet in guide/spec — owner to confirm wording |
+| скрутини (объект сопоставления в match) | scrutinee `[proposed]` | "the scrutinee of a `match` expression is the value being matched against its arms" | standard PL term (Rust/Haskell usage); not yet attested anywhere in Nova's own docs — guide/spec just say "the value being matched" |
+| эффект-строка | effect row | "`Fail[E]`, `Fail` — стандартный эффект — **в effect-row сигнатуры**" | spec/overview.md; English term is already borrowed as-is into the Russian original, no translation needed |
+| структурная типизация | structural typing | "структурная типизация + вывод типов везде" (spec/overview.md, поддерживающие решения) | contrasted with nominal typing throughout `protocol` discussion |
+| capability security | capability security | "Capability security" — spec/overview.md "Что заимствует у кого" table (source: E, Pony) | borrowed English term, used as-is |
+
+---
