@@ -220,9 +220,11 @@ pending the owner's call in Open questions.
 |---|---|---|---|
 | контракт (+ SMT-решатель) `[keep-en: аббревиатура]` | contract (+ SMT solver) | "Nova's contract system lets you state what a function **requires** and **ensures**, then verifies those claims at compile time via an SMT solver." | docs/guide/contracts.md intro; норма-форма «решатель» вместо транслитерации «солвер»; SMT — аббревиатура без русской расшифровки в обиходе |
 | enforce-with-elision `[keep-en: термин]` | enforce-with-elision | "Nova uses **enforce-with-elision** (D24 / Plan 140), *not* debug-only asserts" | docs/guide/contracts.md intro; **утверждено владельцем 2026-08-03** — keep-en как имя собственное механизма (D24/Plan 140, аналогично CI/REST); при первом упоминании — русское пояснение: «контракты проверяются всегда, компилятор вырезает лишь доказанные проверки» |
-| доказанный / недоказанный контракт | proven / unproven (contract) | "a **proven** contract is elided (zero runtime cost, even in debug); an **unproven** one is enforced at runtime in **both debug and release**" | docs/guide/contracts.md intro; полностью по-русски |
+| доказанный контракт | proven contract | "a **proven** contract is elided (zero runtime cost, even in debug)" | docs/guide/contracts.md intro; полностью по-русски |
+| недоказанный контракт | unproven contract | "an **unproven** one is enforced at runtime in **both debug and release**" | docs/guide/contracts.md intro; полностью по-русски |
 | лемма | lemma | "A **lemma** is a `#verify` function whose purpose is to establish a mathematical fact" | docs/guide/contracts.md "Lemmas and apply"; натурализованный матем. термин |
-| постусловие / предусловие | postcondition / precondition | "`requires` — A precondition." / "`ensures` and `result` — A postcondition." | docs/guide/contracts.md; стандартные русские матем./CS-термины |
+| предусловие | precondition | "`requires` — A precondition." | docs/guide/contracts.md; стандартный русский матем./CS-термин |
+| постусловие | postcondition | "`ensures` and `result` — A postcondition." | docs/guide/contracts.md; стандартный русский матем./CS-термин |
 | условие `decreases` (доказательство терминации) `[keep-en: код]` | `decreases` clause | "`decreases` — Proves termination of recursive functions." | docs/guide/contracts.md "decreases"; норма-форма «условие» вместо транслитерации «клоз»; `decreases` — ключевое слово |
 
 ---
