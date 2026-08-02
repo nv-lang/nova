@@ -271,7 +271,7 @@ sanity-check'а.
 Добавить subcommand: `nova-codegen emit-runtime-stubs`.
 
 **Рабочий промпт для агента/разработчика** —
-[`docs/promts/regen-runtime.md`](../promts/regen-runtime.md). Это
+[`docs/dev/promts/regen-runtime.md`](../dev/promts/regen-runtime.md). Это
 повторно используемая инструкция: входы, шаги, acceptance, ограничения,
 троблшутинг. Она версионируется вместе с кодом — при изменении
 формата `RuntimeFn` или процедуры регенерации промпт обновляется
@@ -374,7 +374,7 @@ D26 (08-runtime.md) сейчас описывает str API частично (е
 
 1. `docs/project-creation.txt` — описать Plan 13 outcome: расширение
    runtime-projection до str+math, auto-gen workflow.
-2. `docs/simplifications.md` — записать «special-case emit для str/math
+2. `docs/dev/simplifications.md` — записать «special-case emit для str/math
    удалён, единый path через registry».
 3. `nova-lang-private/discussion-log.md` — резюме решения о scope
    (только f64/f32 для math; auto-gen vs ручной режим).
@@ -583,7 +583,7 @@ RuntimeFn { module: "std.runtime.string_builder",
       `read_buffer.nv`, `char.nv`. Все с AUTO-GENERATED header'ом.
 - [ ] `std/runtime/builtins.nv` **удалён** (нет в git).
 - [ ] Все тесты (78 nova_tests, codegen) проходят.
-- [ ] Промпт `docs/promts/regen-runtime.md` обновлён: упоминает 6
+- [ ] Промпт `docs/dev/promts/regen-runtime.md` обновлён: упоминает 6
       файлов, не 3.
 - [ ] **Sanity:** добавить `f32.@sinh` тремя правками
       (registry-запись + C-trampoline + regen) — работает в user-коде.

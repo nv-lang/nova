@@ -1,7 +1,7 @@
 # Встраивание файлов и папок в бинарь: `embed` / `embed_dir`
 
 > Пользовательский гайд по компайл-тайм интринсикам `embed("file")`
-> ([D412](../spec/decisions/03-syntax.md#d412), План 186) и `embed_dir("dir")`
+> ([D412](../../spec/decisions/03-syntax.md#d412), План 186) и `embed_dir("dir")`
 > (D412-амендмент в том же файле, `spec/decisions/03-syntax.md` — ищи
 > «D412-амендмент», План 210). Оба — интринсики класса C (файловый ввод на
 > этапе компиляции, прецеденты — Rust `include_bytes!`, Go `//go:embed`,
@@ -263,7 +263,7 @@ ro d = embed_dir("d412d_dir_nfc_collision")   // два файла, одна NFC
 
 **Реализация — zero новых Cargo-зависимостей.** Nova уже генерирует полные
 таблицы Unicode 16.0 для `std.unicode.normalize_nfc`/`str @to_nfc()`
-([План 152.4](plans/152.4-std-unicode.md), файл `std/src/unicode/norm_data.nv`,
+([План 152.4](../plans/152.4-std-unicode.md), файл `std/src/unicode/norm_data.nv`,
 ~113 КБ). Компилятор (Rust) не может вызвать эту Nova-функцию напрямую — она
 исполняется В скомпилированной программе, а `embed_resolve` работает ДО
 type-check, интерпретатора Nova в компиляторе нет. Вместо новой
@@ -335,7 +335,7 @@ Future-выход из текстового рендеринга — C23 `#embed
 
 Частый кейс: раздавать статику веб-сервера — с диска в dev-режиме (живой
 reload при правке файла) и вшитой в бинарь в prod. `ReadFs`
-([D323-амендмент](../spec/decisions/04-effects.md#d323), `std.fs`, План 210
+([D323-амендмент](../../spec/decisions/04-effects.md#d323), `std.fs`, План 210
 Ф.6б) — read-only VFS-протокол, конформируемый **обоими** источниками:
 
 ```nova
@@ -376,8 +376,8 @@ fn main() {
 поддерживает effectful-vtable dispatch, поэтому dev/prod-выбор — ветка
 `if` НАД двумя mono-инстансами (в точке вызова), а не рантайм-переменная
 одного `dyn`-типа. Подробности и почему `list`/directory-index сознательно
-не входит в протокол — [`docs/io-fs.md`](io-fs.md#readfs--one-vfs-protocol-over-the-disk-and-an-embedded-directory)
-и [План 210 §6б](plans/210-embed-dir.md).
+не входит в протокол — [`docs/guide/io-fs.md`](io-fs.md#readfs--one-vfs-protocol-over-the-disk-and-an-embedded-directory)
+и [План 210 §6б](../plans/210-embed-dir.md).
 
 ## Кросс-языковое сравнение
 
@@ -395,7 +395,7 @@ fn main() {
 **Nova берёт:** у Go — рекурсию, сортировку, бинарный поиск, dot-skip,
 POSIX-пути, case-sensitive. У Rust `rust-embed` — `.get(path) -> Option`.
 **Nova НЕ берёт:** dev-режим (чтение с диска в debug) — явный отказ (см.
-[План 210 §2л](plans/210-embed-dir.md)): вводит эффект в чистый по
+[План 210 §2л](../plans/210-embed-dir.md)): вводит эффект в чистый по
 конструкции тип и противоречит цели «один самодостаточный бинарь»; вместо
 этого — явный `DirFs`/`ReadFs` opt-in (см. выше). **Nova идёт дальше обоих
 эталонов** в NFC-нормализации: ни Go, ни Rust не решают NFD/NFC-ловушку
@@ -403,18 +403,18 @@ POSIX-пути, case-sensitive. У Rust `rust-embed` — `.get(path) -> Option`.
 
 ## См. также
 
-- [D412](../spec/decisions/03-syntax.md#d412) —
+- [D412](../../spec/decisions/03-syntax.md#d412) —
   hex-блоб литерал `x"…"` + `embed("path")` (исходное решение, План 186).
 - D412-амендмент (`spec/decisions/03-syntax.md`, ищи «D412-амендмент») —
   `embed_dir`, `EmbeddedDir`, коды диагностик, включая AMEND Ф.6а (NFC).
-- [D323-амендмент](../spec/decisions/04-effects.md#d323) — `ReadFs` (План 210 Ф.6б).
-- [План 210](plans/210-embed-dir.md) — полная карта дизайна/решений/рисков
+- [D323-амендмент](../../spec/decisions/04-effects.md#d323) — `ReadFs` (План 210 Ф.6б).
+- [План 210](../plans/210-embed-dir.md) — полная карта дизайна/решений/рисков
   (разведка, материализация Option R′, ревью-1/2/3, Ф.6а/Ф.6б).
-- [`docs/io-fs.md`](io-fs.md) — `std.io`/`std.fs`/`std.os` в целом, включая
+- [`docs/guide/io-fs.md`](io-fs.md) — `std.io`/`std.fs`/`std.os` в целом, включая
   `ReadFs`.
-- [`std/src/prelude/embed.nv`](../std/src/prelude/embed.nv) — исходник
+- [`std/src/prelude/embed.nv`](../../std/src/prelude/embed.nv) — исходник
   `EmbeddedDir`/`EmbeddedEntry`.
-- [`std/src/fs/readfs.nv`](../std/src/fs/readfs.nv) — исходник `ReadFs`/`DirFs`.
-- [`spec_tests/conformance/d412_hex_blob_embed.nv`](../spec_tests/conformance/d412_hex_blob_embed.nv),
-  [`d412d_embed_dir.nv`](../spec_tests/conformance/d412d_embed_dir.nv) — референсные
+- [`std/src/fs/readfs.nv`](../../std/src/fs/readfs.nv) — исходник `ReadFs`/`DirFs`.
+- [`spec_tests/conformance/d412_hex_blob_embed.nv`](../../spec_tests/conformance/d412_hex_blob_embed.nv),
+  [`d412d_embed_dir.nv`](../../spec_tests/conformance/d412d_embed_dir.nv) — референсные
   фикстуры для обоих интринсиков.

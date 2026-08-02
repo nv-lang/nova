@@ -1,5 +1,5 @@
 // ffi_tour.nv — FFI basics: opaque pointer `*()`, typed handles, `external fn`.
-// Full cookbook: docs/ffi-cookbook.md. `*()` (pointer to unit = `void*` in C)
+// Full cookbook: docs/guide/ffi-cookbook.md. `*()` (pointer to unit = `void*` in C)
 // is used everywhere.
 module tour.ffi_tour
 

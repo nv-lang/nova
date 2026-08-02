@@ -1,6 +1,6 @@
 # Plan 169.2 — исправления компилятора (nova_tests fix-sweep)
 
-Багфиксы компилятора, найденные в ходе [Plan 169.2](plans/169.2-nova-tests-fix-sweep.md)
+Багфиксы компилятора, найденные в ходе [Plan 169.2](../plans/169.2-nova-tests-fix-sweep.md)
 (свип падающих `nova_tests/`). Все изменения — исправления багов, **не** смена
 спеки. Начато 2026-06-18. Объяснение каждого фикса ниже.
 
@@ -564,7 +564,7 @@ plan138_2: PASS 1/0. Маркер `[M-169.2-ptr-index-ro-binding]`.
 **Симптом:** `nova_tests/plan55/f1_closure_array_gc_stress` RUN-FAIL (детерминированно 3/3) —
 SEGV. Изначально выглядело как GC heap-bound/closure-collect баг (предмет Plan 55 Ф.1).
 
-**Диагностика (по [docs/debugging-races.md](debugging-races.md) §2.1.1 + §3.1):**
+**Диагностика (по [docs/dev/debugging-races.md](debugging-races.md) §2.1.1 + §3.1):**
 - Дискриминатор #1 `GC_DONT_GC=1` **НЕ чинит** → это НЕ GC premature-collect.
 - `NOVA_DIAG_SEGV=1` → frame[1]=`nova_fn_main_impl` (probe.c:1206), READ@0x0,
   RIP в `NOVA_CLOS_CALL_vi(f)` с `f == null`.

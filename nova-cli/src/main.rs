@@ -1048,7 +1048,7 @@ enum BenchCmd {
         branch: String,
     },
     /// Plan 57.C.6: squash older history entries по retention policy.
-    /// Yearly squash recommended (см. docs/perf-conventions.md).
+    /// Yearly squash recommended (см. docs/dev/perf-conventions.md).
     #[command(name = "history-squash")]
     HistorySquash {
         /// Squash entries older than this date (YYYY-MM-DD UTC).

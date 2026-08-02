@@ -7,7 +7,7 @@
 > **Зависимости:** Plan 59 (mono Result/sum-репрезентация) ✅;
 > Plan 70.x (primitive distinction в array element types) ✅
 > **Источник:** Plan 87 Ф.4.2 — маркер `[M-iflet-match-boxed-sum-ptr]`
-> в `docs/simplifications.md` (обнаружено при тестировании
+> в `docs/dev/simplifications.md` (обнаружено при тестировании
 > `for o Option[int] in opts`)
 
 ## Зачем
@@ -173,7 +173,7 @@ sum'ов. Сейчас единственный обход — `.iter()` / ин�
 
 ### Ф.3 — Spec / docs (~0.1 д)
 
-- **Ф.3.1** `docs/simplifications.md` — `[M-iflet-match-boxed-sum-ptr]`
+- **Ф.3.1** `docs/dev/simplifications.md` — `[M-iflet-match-boxed-sum-ptr]`
   → ✅ ЗАКРЫТО.
 - **Ф.3.2** Spec — изменений семантики нет (for-in + if-let по sum уже
   обещаны); правки spec **ожидаемо не требуются**. Если где-то

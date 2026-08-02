@@ -2014,7 +2014,7 @@ doc-writing в Plan 45 = делать его неуказуемо-закрыва
 
 ### Ф.20 — Docs [MVP + Plan 45.A — фазированно]
 
-- Update `docs/promts/read-project.md`: упомянуть `nova doc` workflow.
+- Update `docs/dev/promts/read-project.md`: упомянуть `nova doc` workflow.
 - `docs/user-guide/doc-writing.md` (new): guide для авторов
   (как писать doc-comments, sections, links, doc-tests).
 - `docs/schema-v1.md` — schema reference для AI tooling.

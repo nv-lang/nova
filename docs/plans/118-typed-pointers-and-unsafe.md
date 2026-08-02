@@ -90,7 +90,7 @@
 >     с conventional message `feat(plan118 Ф.N): <summary>`.
 >   - **Update logs after each big task:**
 >     - `docs/project-creation.txt` — sprint section про Plan 118 progress
->     - `docs/simplifications.md` — open/close `[M-118-*]` markers (+ closes
+>     - `docs/dev/simplifications.md` — open/close `[M-118-*]` markers (+ closes
 >       `[M-115-null-ptr-to-option-after-npo]` в Ф.5)
 >     - `nova-private/discussion-log.md` (отд. репо) — design decisions
 >       (binding-mut rule, escape/auto-promote semantics, unsafe model,
@@ -1078,7 +1078,7 @@ OptionPtrType ::= 'Option' '[' PointerType ']'   // существующий Opt
 - D52 cross-ref «*T family integration».
 
 **Doc updates:**
-- `docs/typed-pointers.md` (NEW) — overview document, §1-3 sections.
+- `docs/guide/typed-pointers.md` (NEW) — overview document, §1-3 sections.
 
 **Verification:**
 - Targeted fixtures: `tests/fixtures/plan118/t1_*` (12+ files)
@@ -1124,7 +1124,7 @@ OptionPtrType ::= 'Option' '[' PointerType ']'   // существующий Opt
 - D32 amend committed.
 
 **Doc updates:**
-- `docs/typed-pointers.md` §4 (escape + auto-promote).
+- `docs/guide/typed-pointers.md` §4 (escape + auto-promote).
 
 **Verification:**
 - Targeted fixtures: `tests/fixtures/plan118/t2_*` (15+ files)
@@ -1157,7 +1157,7 @@ OptionPtrType ::= 'Option' '[' PointerType ']'   // существующий Opt
 - D2 amend committed.
 
 **Doc updates:**
-- `docs/typed-pointers.md` §«unsafe model».
+- `docs/guide/typed-pointers.md` §«unsafe model».
 - `docs/unsafe-block-pattern.md` (NEW) — when to use unsafe block, examples.
 
 **Verification:**
@@ -1195,7 +1195,7 @@ OptionPtrType ::= 'Option' '[' PointerType ']'   // существующий Opt
 - D216 §5-6, §12-15 promoted к active.
 
 **Doc updates:**
-- `docs/typed-pointers.md` §«auto-deref» + §«cast table».
+- `docs/guide/typed-pointers.md` §«auto-deref» + §«cast table».
 
 **Verification:**
 - Targeted fixtures: `tests/fixtures/plan118/t4_*` (25+ files)
@@ -1237,8 +1237,8 @@ OptionPtrType ::= 'Option' '[' PointerType ']'   // существующий Opt
 - D214 amend committed («`null ptr` retracted»).
 
 **Doc updates:**
-- `docs/typed-pointers.md` §«Option[*T] + NPO».
-- `docs/ffi-cookbook.md` migrated к `Option[*T]` / tuple newtype patterns.
+- `docs/guide/typed-pointers.md` §«Option[*T] + NPO».
+- `docs/guide/ffi-cookbook.md` migrated к `Option[*T]` / tuple newtype patterns.
 - `docs/migration/118-null-ptr-to-option.md` (NEW) — migration guide.
 
 **Verification:**
@@ -1275,8 +1275,8 @@ closes [M-115-null-ptr-to-option-after-npo]`
 - D216 §10 + §20 promoted к active.
 
 **Doc updates:**
-- `docs/typed-pointers.md` §«*fn function pointers».
-- `docs/ffi-cookbook.md` — callback registration example added.
+- `docs/guide/typed-pointers.md` §«*fn function pointers».
+- `docs/guide/ffi-cookbook.md` — callback registration example added.
 
 **Verification:**
 - Targeted fixtures: `tests/fixtures/plan118/t6_*` (12+ files)
@@ -1309,7 +1309,7 @@ closes [M-115-null-ptr-to-option-after-npo]`
 - D216 §16-17 promoted к active.
 
 **Doc updates:**
-- `docs/typed-pointers.md` §«GC honor-system» + §«Debug fmt».
+- `docs/guide/typed-pointers.md` §«GC honor-system» + §«Debug fmt».
 
 **Verification:**
 - Targeted fixtures: `tests/fixtures/plan118/t7_*` (10+ files).
@@ -1368,7 +1368,7 @@ closes [M-115-null-ptr-to-option-after-npo]`
   - D215 (Plan 120) ← tuple stack values + & escape semantics
   - D172 (Plan 113) ← pointer ops в `#realtime` context (E_REALTIME_POINTER_OP)
 - **Ф.9.3** `nova doc` regen — typed pointer family documentation page.
-- **Ф.9.4** `docs/ffi-cookbook.md` update:
+- **Ф.9.4** `docs/guide/ffi-cookbook.md` update:
   - Migration к `Option[*T]` / tuple newtype patterns
   - Typed buffer examples:
     - libpng image data copy preview (full impl в Plan 118.1/118.2)
@@ -1383,7 +1383,7 @@ closes [M-115-null-ptr-to-option-after-npo]`
   - `05_unsafe_block.nv` — unsafe model demonstrating
   - `06_ffi_handle_tuple.nv` — `type Handle(*T)` canonical FFI pattern
 - **Ф.9.6** `docs/project-creation.txt` — sprint section update.
-- **Ф.9.7** `docs/simplifications.md`:
+- **Ф.9.7** `docs/dev/simplifications.md`:
   - Close `[M-115-null-ptr-to-option-after-npo]` ✅
   - Open `[M-118-*]` markers per Risk register / followups
   - Open `[M-118.1-*]` / `[M-118.2-*]` / `[M-118.3-*]` sub-plan markers
@@ -2130,15 +2130,15 @@ issue → extract в followup (`[M-118-perf-*]`).
 | `docs/plans/118.2-slice-fat-pointer-and-uninit.md` | NEW stub | Ф.0.9 | Plan 118.2 sub-plan |
 | `docs/plans/118.3-pointer-concurrency-safety.md` | NEW stub | Ф.0.9 | Plan 118.3 sub-plan |
 | `docs/plans/README.md` | UPDATE | Ф.0.10 | index Plan 118 + 118.1-3 |
-| `docs/typed-pointers.md` | NEW | Ф.1-Ф.7 | overview docs (incremental per phase) |
+| `docs/guide/typed-pointers.md` | NEW | Ф.1-Ф.7 | overview docs (incremental per phase) |
 | `docs/unsafe-block-pattern.md` | NEW | Ф.3 | when to use unsafe block, examples |
-| `docs/ffi-cookbook.md` | UPDATE | Ф.5, Ф.9 | migration к Option[*T] / tuple newtype |
+| `docs/guide/ffi-cookbook.md` | UPDATE | Ф.5, Ф.9 | migration к Option[*T] / tuple newtype |
 | `docs/migration/118-null-ptr-to-option.md` | NEW | Ф.5 | migration guide для `null ptr` retraction |
 | `examples/typed_pointers/01-06_*.nv` | NEW | Ф.9.5 | minimal working samples |
 | `spec/decisions/02-types.md` (D216, D52 cross-ref, D214 amend, D32 amend) | UPDATE | Ф.0 drafts, Ф.9 promote | spec D-blocks |
 | `spec/decisions/04-effects.md` (D2 amend) | UPDATE | Ф.0 draft, Ф.3 commit, Ф.9 promote | D2 amend |
 | `docs/project-creation.txt` | UPDATE | per phase + Ф.9 | sprint section |
-| `docs/simplifications.md` | UPDATE | per phase + Ф.9 | [M-118-*] markers + close [M-115-null-ptr-to-option-after-npo] |
+| `docs/dev/simplifications.md` | UPDATE | per phase + Ф.9 | [M-118-*] markers + close [M-115-null-ptr-to-option-after-npo] |
 | `nova-private/discussion-log.md` (отд. репо) | UPDATE | per phase | design decisions log |
 
 ---
@@ -2351,14 +2351,14 @@ Plus nova-private `9e5aa5d6cf` — Session 2 evening-2 design discussion log
 - A29 (D214 backward compat) ✅ regression 11/0 plan115
 - A30 (D-blocks promoted) — Ф.9 follow-on
 - A33 (#realtime pointer ban) — Ф.7 followup
-- A34 (tuple newtype canonical) ✅ documented в docs/typed-pointers.md + ffi-cookbook
+- A34 (tuple newtype canonical) ✅ documented в docs/guide/typed-pointers.md + ffi-cookbook
 - A35 (examples PASS) ✅ 3/3 examples/typed_pointers
 
 Remaining acceptance criteria (A2, A5-A7, A11-A18, A19-A28 partial, A31-A33)
 landing с full Ф.4-Ф.9 implementation work.
 
 **Phases: Ф.0 + Ф.1 + Ф.2 scaffold + Ф.3 + Ф.3.2 + Ф.4 partial + Ф.5
-partial + Ф.6 partial + Ф.9 partial (examples + docs/typed-pointers.md
+partial + Ф.6 partial + Ф.9 partial (examples + docs/guide/typed-pointers.md
 + worktree setup script).**
 
 **Test status:**
@@ -2392,7 +2392,7 @@ partial + Ф.6 partial + Ф.9 partial (examples + docs/typed-pointers.md
 | Compiler scaffold | AST + lexer + parser + checker + codegen (8 src files modified, 17 exhaustive-match sites + 5 new pieces) | ✅ |
 | Test fixtures | 9 plan118 fixtures in nova_tests/plan118/ | ✅ all PASS |
 | Examples | 3 examples in examples/typed_pointers/ | ✅ all PASS |
-| Docs overview | docs/typed-pointers.md (~340 lines) | ✅ |
+| Docs overview | docs/guide/typed-pointers.md (~340 lines) | ✅ |
 | Logs (simplifications + project-creation) | Updated per task | ✅ |
 | Nova-private discussion-log | Session 1 + Session 2 entries | ✅ |
 | Worktree setup script | scripts/tools/setup_worktree_p118.sh | ✅ |
@@ -2418,7 +2418,7 @@ partial + Ф.6 partial + Ф.9 partial (examples + docs/typed-pointers.md
 17. `7c55e0564fa` — Session 2 closure summary
 18. `08db63baeb0` — tool: worktree setup script
 19. `a403d96f310` — Ф.9 partial: examples/typed_pointers/ (3 PASS)
-20. `969cf42fc3e` — Ф.9 partial: docs/typed-pointers.md (~340 lines)
+20. `969cf42fc3e` — Ф.9 partial: docs/guide/typed-pointers.md (~340 lines)
 21. (this commit) — Session 2 grand closure
 
 Plus nova-private (separate repo):
@@ -2771,7 +2771,7 @@ introduced by Plan 118 Ф.0-Ф.3 scaffolding.
   sugar); D214 amend prepended (ptr redefine + null ptr retraction);
   D32 amend prepended (`&value` is typed ptr construction, NOT Rust borrow).
   Audit 47 `null ptr` occurrences + 4 `external fn ptr` files + 6 compiler
-  src files. Logs: docs/simplifications.md + docs/project-creation.txt.
+  src files. Logs: docs/dev/simplifications.md + docs/project-creation.txt.
 - `2a1c425cc4` (nova-private separate repo) — discussion-log.md с 4-round
   design discussion + derived decisions + lessons learned.
 

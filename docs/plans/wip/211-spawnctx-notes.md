@@ -224,7 +224,7 @@ spawn'ов тут же берёт новые SpawnCtx — правдоподоб
 size-class collision `child_ctx[]`) НЕ озеленили фикстуру — частота осталась
 на уровне бейслайна (100%→80-100%, шум). Согласно протоколу задания («Если
 фикс требует архитектурной правки — СТОП + доклад с доказанным механизмом»)
-и `docs/debugging-races.md` §5.1 («if your first 2 attempts don't work, STOP
+и `docs/dev/debugging-races.md` §5.1 («if your first 2 attempts don't work, STOP
 iterating») — дальнейшая тактическая итерация ПРЕКРАЩЕНА в этой волне.
 Обе правки СОХРАНЕНЫ (реальные, доказанные микро-фиксы, не откачены), гонка
 [M-mn-spawnctx-corruption-cancel-wake] остаётся ОТКРЫТОЙ — требует

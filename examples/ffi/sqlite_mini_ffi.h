@@ -14,7 +14,7 @@
  *     semantics) end-to-end без external dependency.
  *   - Real libsqlite3 integration — followup `[M-115-examples-ffi-real-build]`:
  *     отдельный CI step с vcpkg sqlite3 install + replace `sqlite_mini_ffi.h` →
- *     `sqlite3_ffi.h` per docs/ffi-cookbook.md §«Example 1».
+ *     `sqlite3_ffi.h` per docs/guide/ffi-cookbook.md §«Example 1».
  *
  * API semantics (sqlite-compatible subset):
  *   - mini_sqlite_open(path) → (db_handle, rc). rc=0 on success.

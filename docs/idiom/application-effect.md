@@ -266,4 +266,4 @@ finalizer body errors don't compose — best to be infallible.
 - [D188 R1 partial construction](../../spec/decisions/03-syntax.md#d188).
 - [Q-cleanup-semantics](consume-scope-cleanup.md).
 - [Q-cancel-and-cleanup](cancel-and-cleanup.md).
-- [cleanup-cookbook.md](../cleanup-cookbook.md).
+- [cleanup-cookbook.md](../guide/cleanup-cookbook.md).

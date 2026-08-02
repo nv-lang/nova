@@ -1,7 +1,7 @@
 ﻿# Auto-derive Guide (Plan 126, D109 amend + D230)
 
 > **Status:** ✅ landed 2026-06-05.
-> **D-blocks:** [D109 amend](../spec/decisions/08-runtime.md#d109-amend-plan-126-2026-06-05---auto-derive-для-пользовательских-типов) + [D230 NEW](../spec/decisions/02-types.md#d230-new--Clone-protocol-plan-126-ф1).
+> **D-blocks:** [D109 amend](../../spec/decisions/08-runtime.md#d109-amend-plan-126-2026-06-05---auto-derive-для-пользовательских-типов) + [D230 NEW](../../spec/decisions/02-types.md#d230-new--Clone-protocol-plan-126-ф1).
 
 Nova поддерживает **auto-derive** для пяти built-in протоколов через
 `#impl(P)` annotation на пользовательском типе. Аналог Rust `#[derive(...)]`
@@ -34,7 +34,7 @@ ro cmp = a.compare(b)      // auto-derived @compare
 |--------------|--------------------------------|---------------------------------------------|
 | `Equal`  | `@equal(other) -> bool`       | memberwise `&&` chain                       |
 | `Hash`   | `@hash() -> u64`               | XOR + rotate FxHash-style combine           |
-| `Clone`  | `@clone() -> Self` ([D230](../spec/decisions/02-types.md#d230-new--Clone-protocol-plan-126-ф1)) | record literal с `.clone()` per field |
+| `Clone`  | `@clone() -> Self` ([D230](../../spec/decisions/02-types.md#d230-new--Clone-protocol-plan-126-ф1)) | record literal с `.clone()` per field |
 | `Compare` | `@compare(other) -> int`       | lexicographic if-chain (memcmp-style)       |
 | `Display`  | `@display(sb) -> ()`               | `sb.append("TypeName { f: v, ... }")` chain |
 
@@ -236,15 +236,15 @@ fn A @clone() -> A => A { b: @b }   // ← manual; синтезатор для B
 
 Auto-derive **совместим** с:
 
-- **`priv` field modifier** ([Plan 124.1/D220 §3.3.1](../spec/decisions/02-types.md#d220)):
+- **`priv` field modifier** ([Plan 124.1/D220 §3.3.1](../../spec/decisions/02-types.md#d220)):
   synthesizer работает в type-method scope — имеет доступ к priv-полям.
-- **`mut` field modifier** ([D33](../spec/decisions/02-types.md#d33)):
+- **`mut` field modifier** ([D33](../../spec/decisions/02-types.md#d33)):
   `mut`-fields копируются как обычные fields, mutability preserve'ится в new value.
-- **`ro` binding** ([D33](../spec/decisions/02-types.md#d33), [D175](../spec/decisions/02-types.md#d175)):
+- **`ro` binding** ([D33](../../spec/decisions/02-types.md#d33), [D175](../../spec/decisions/02-types.md#d175)):
   synthesized methods receive `ro Self` receiver — only-read access.
-- **Value-record `type X value { ... }`** ([Plan 124.8 D228](../spec/decisions/02-types.md#d228)):
+- **Value-record `type X value { ... }`** ([Plan 124.8 D228](../../spec/decisions/02-types.md#d228)):
   full support, synthesis работает идентично heap-record.
-- **Named tuple `type X(a int, b str)`** ([Plan 120 D215](../spec/decisions/02-types.md#d215)):
+- **Named tuple `type X(a int, b str)`** ([Plan 120 D215](../../spec/decisions/02-types.md#d215)):
   fields обрабатываются через `NamedTupleField` ровно как `RecordField`.
 
 ## Sum-type rich synthesis (Plan 180 Ф.1, D345 — ✅ landed)
@@ -303,20 +303,20 @@ fn int @display(mut sb StringBuilder) -> () { sb.append(@) }
   конкретные `#impl(Display)` + `#impl(Debug)` в [protocols.nv](../std/prelude/protocols.nv) —
   это чинит мис-диспатч `Vec[T].debug(sb)` на примитивном элементе (Plan 154.1 / D269).
 
-Подробности — [D268](../spec/decisions/10-overloading.md#d268-opt-in-конформность-протоколов-impl-на-метод-декларации)
-и [Plan 154.1](plans/154.1-impl-conformance-primitive-format.md).
+Подробности — [D268](../../spec/decisions/10-overloading.md#d268-opt-in-конформность-протоколов-impl-на-метод-декларации)
+и [Plan 154.1](../plans/154.1-impl-conformance-primitive-format.md).
 
 ## См. также
 
-- [Plan 126 — Auto-derive протоколов](plans/126-auto-derive-protocols.md) —
+- [Plan 126 — Auto-derive протоколов](../plans/126-auto-derive-protocols.md) —
   весь roadmap, design rationale, AC list.
-- [D268 / D269 — метод-уровень `#impl` + конкретные Display/Debug примитивов](../spec/decisions/10-overloading.md#d268-opt-in-конформность-протоколов-impl-на-метод-декларации)
+- [D268 / D269 — метод-уровень `#impl` + конкретные Display/Debug примитивов](../../spec/decisions/10-overloading.md#d268-opt-in-конформность-протоколов-impl-на-метод-декларации)
   (Plan 154.1).
-- [D109 amend](../spec/decisions/08-runtime.md#d109-amend-plan-126-2026-06-05---auto-derive-для-пользовательских-типов)
+- [D109 amend](../../spec/decisions/08-runtime.md#d109-amend-plan-126-2026-06-05---auto-derive-для-пользовательских-типов)
   — auto-derive rules.
-- [D230 NEW](../spec/decisions/02-types.md#d230-new--Clone-protocol-plan-126-ф1) —
+- [D230 NEW](../../spec/decisions/02-types.md#d230-new--Clone-protocol-plan-126-ф1) —
   Clone protocol semantics.
-- [D186 — `#impl(P)` annotation](../spec/decisions/02-types.md#d186) —
+- [D186 — `#impl(P)` annotation](../../spec/decisions/02-types.md#d186) —
   foundation infrastructure.
 - [std/prelude/protocols.nv](../std/prelude/protocols.nv) — protocol
   declarations source-of-truth.

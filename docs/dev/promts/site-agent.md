@@ -42,7 +42,7 @@ build — ретрай.
 (строковая перегрузка есть); polaris: `r.use(...)` (не `.layer`), `session(cfg)` (не
 `session_layer`); `!` только на bool; `${x}` в интерполяции (не `${x.to_str()}`);
 цепочки с отступом глубже базы (§35 nv-coding-style); `ro app = build_router()` (§36).
-Полная истина — `nova/spec/decisions/` + `nova/docs/nv-coding-style.md`. Синтаксис
+Полная истина — `nova/spec/decisions/` + `nova/docs/dev/nv-coding-style.md`. Синтаксис
 НЕ выдумывать; сомневаешься — собери сниппет реальным компилятором
 (`d:/Sources/nv-lang/nova/nova-cli/target/release/nova.exe build <файл>`).
 

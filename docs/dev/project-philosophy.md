@@ -15,7 +15,7 @@ syntax changes, переписывание тестов, ломка bootstrap-с
 
 - лучшими возможностями языка,
 - лучшим user experience,
-- движением к революционным целям из [`spec/revolutionary.md`](../spec/revolutionary.md) и [`spec/decisions/01-philosophy.md`](../spec/decisions/01-philosophy.md).
+- движением к революционным целям из [`spec/revolutionary.md`](../../spec/revolutionary.md) и [`spec/decisions/01-philosophy.md`](../../spec/decisions/01-philosophy.md).
 
 ### Когда **минимальный** vs **правильный** вариант
 
@@ -48,7 +48,7 @@ type-erasure, builtin вместо handler-vtable, legacy code path для со�
 
 Если задача всё-таки **отложена** (нет ресурса сделать правильно сейчас):
 
-- Записать в `docs/simplifications.md` с чётким **rationale** (почему отложено) и
+- Записать в `docs/dev/simplifications.md` с чётким **rationale** (почему отложено) и
   **roadmap** (порядок шагов к правильной реализации).
 - Не использовать «отложено» как тихое разрешение оставить tech-debt без плана.
 
@@ -80,7 +80,7 @@ no-magic-handlers, AI-first syntax. Любая работа должна **пр�
 исходниках. Обёртки и расширения — только в **наших** runtime-файлах.
 
 **Что относится к третьесторонним:**
-- [`minicoro.h`](../compiler-codegen/nova_rt/minicoro.h) — stackful coroutines
+- [`minicoro.h`](../../compiler-codegen/nova_rt/minicoro.h) — stackful coroutines
   (assembly + C, single-header, [edubart/minicoro](https://github.com/edubart/minicoro)).
 - Boehm GC, если/когда подключим (`alloc_boehm.c` использует public API).
 - Любые third-party headers или sources, добавленные в `nova_rt/`.

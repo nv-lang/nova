@@ -303,7 +303,7 @@ nova test --include-stdlib               # включить std/* помимо n
 ```
 
 Подробный гайд флагов test-runner, EXPECT-маркеры, troubleshooting:
-[docs/test-conventions.md](docs/test-conventions.md).
+[docs/dev/test-conventions.md](docs/dev/test-conventions.md).
 
 ## Документация (`nova doc`)
 

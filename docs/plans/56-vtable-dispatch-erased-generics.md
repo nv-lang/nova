@@ -577,7 +577,7 @@ test "clone stress — no leak" {
 
 ### Ф.4.2 — Performance documentation
 
-`docs/perf-conventions.md` (создать или дополнить):
+`docs/dev/perf-conventions.md` (создать или дополнить):
 
 > **Bound method dispatch:**
 > - Concrete K (e.g. `HashMap[str, int]`) → direct call, 0 overhead.
@@ -588,7 +588,7 @@ test "clone stress — no leak" {
 
 ### Ф.4.3 — Migration guide для stdlib authors
 
-`docs/stdlib-bound-dispatch.md` (новый):
+`docs/dev/stdlib-bound-dispatch.md` (новый):
 - Когда добавлять bound в protocol vs free function.
 - Performance implications.
 - ABI stability notes.
@@ -596,8 +596,8 @@ test "clone stress — no leak" {
 ### Ф.4 Acceptance
 
 - [ ] D72 extension committed в `spec/decisions/02-types.md`.
-- [ ] `docs/perf-conventions.md` — dispatch cost table.
-- [ ] `docs/stdlib-bound-dispatch.md` — migration guide.
+- [ ] `docs/dev/perf-conventions.md` — dispatch cost table.
+- [ ] `docs/dev/stdlib-bound-dispatch.md` — migration guide.
 
 ---
 
@@ -614,7 +614,7 @@ test "clone stress — no leak" {
 - [ ] **24+ новых тестов** в `nova_tests/plan56/`.
 - [ ] **Perf bench** (Plan 57 infra если готова) — vtable overhead
       ±5% от mono baseline.
-- [ ] `docs/simplifications.md` — `[M-erased-generic-method-dispatch]`
+- [ ] `docs/dev/simplifications.md` — `[M-erased-generic-method-dispatch]`
       ✅ ЗАКРЫТО.
 - [ ] `docs/project-creation.txt` — секция Plan 56 EOD.
 - [ ] `docs/plans/README.md` — статус Plan 56 → ✅ ЗАКРЫТ.
@@ -732,8 +732,8 @@ test "clone stress — no leak" {
 - ⏸️ GC stress test (10k clones, no leak via gc.heap_size).
 
 **Ф.4 extensions:**
-- ⏸️ docs/perf-conventions.md (dispatch cost table).
-- ⏸️ docs/stdlib-bound-dispatch.md (migration guide).
+- ⏸️ docs/dev/perf-conventions.md (dispatch cost table).
+- ⏸️ docs/dev/stdlib-bound-dispatch.md (migration guide).
 
 **Test count:** 4 из 24 запланированных. Remaining: 20.
 
@@ -751,10 +751,10 @@ work begins autonomously per items above.
 
 - ✅ Ф.3 GC stress test (`f4_clone_gc_stress.nv`) — 100 clones × 100
   entries, heap bounded; chain clones independence verified.
-- ✅ Ф.4 `docs/perf-conventions.md` — generic dispatch cost table
+- ✅ Ф.4 `docs/dev/perf-conventions.md` — generic dispatch cost table
   (mono ~0ns vs vtable ~1-2ns), allocation patterns, GC pause
   expectations, performance-sensitive guidelines.
-- ✅ Ф.4 `docs/stdlib-bound-dispatch.md` — migration guide для stdlib
+- ✅ Ф.4 `docs/dev/stdlib-bound-dispatch.md` — migration guide для stdlib
   authors (when to use bound, anti-patterns, bootstrap limitations,
   examples).
 - ✅ Ф.2.7 **effect-free enforcement** в bound (protocol) methods —

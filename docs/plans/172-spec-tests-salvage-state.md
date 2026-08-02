@@ -1,6 +1,6 @@
 > ❄️ **УСТАРЕВШИЙ РАБОЧИЙ ДОКУМЕНТ (2026-06-30)** — snapshot прошлой сессии.
 > Актуальный план: [172.1-p67-execution-plan.md](172.1-p67-execution-plan.md) §D-TRACK.
-> Конвенция реализации: [compiler-conventions.md](../compiler-conventions.md).
+> Конвенция реализации: [compiler-conventions.md](../dev/compiler-conventions.md).
 
 # spec_tests salvage-state — batch-workflow w8w3huvrz (2026-06-29)
 

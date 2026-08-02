@@ -794,7 +794,7 @@ Open questions проверить + закрыть через D217-D219:
 
 ### 11.1 User-facing docs
 
-- `docs/field-cache-optimization.md` (V5 → 123.5) — user guide:
+- `docs/guide/field-cache-optimization.md` (V5 → 123.5) — user guide:
   что делает feature, как читать LSP code-lens, escape hatch
   usage, performance expectations.
 - `docs/migration/123-receiver-field-cache.md` (V6 → 123.6) —
@@ -915,7 +915,7 @@ able) ИЛИ stop здесь (V1 уже shippable).
    `08-runtime.md` если codegen) + amend cross-refs + README spec
    entry. Commit `docs(plan 123.N Ф.5): D2XX NEW + cross-refs`.
 7. **Ф.6 Closure:** обновить **3 лога**:
-   - `docs/simplifications.md` — closure section (CLOSED markers +
+   - `docs/dev/simplifications.md` — closure section (CLOSED markers +
      acceptance summary + design lessons).
    - `docs/project-creation.txt` — chronological entry (full
      rationale + closes/unblocks).

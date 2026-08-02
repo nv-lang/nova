@@ -10,7 +10,7 @@
 > `wip/210-impl-progress.md`). **В main НЕ вливалось** — авторитетный гейт
 > (мега-CU conformance + флагман-examples под `--strict-effects`) делает
 > оркестратор при вливании. Прогресс/детали — [210-impl-progress.md](wip/210-impl-progress.md).
-> **Ф.5 (остаток, владелец 2026-07-16): user-facing дока** — `docs/embed.md`
+> **Ф.5 (остаток, владелец 2026-07-16): user-facing дока** — `docs/guide/embed.md`
 > (гайд по обоим интринсикам: `embed("file")` D412 + `embed_dir("dir")`): как
 > использовать, API `EmbeddedDir` (`get/has/paths/len/entries`), детерминизм,
 > dot/symlink-skip, коды E_/W_ (§4.3), NFC/NFD-ловушка non-ASCII имён
@@ -38,7 +38,7 @@
 > (9 тестов: R1×2, sanity, hit/miss/escape/абсолютный-путь/try_exists,
 > dev/prod-унификация §6б.4) — все PASS таргетно (`nova check`/`nova test`,
 > включая `--strict-effects`). D323-амендмент в `spec/decisions/04-effects.md`
-> + `docs/io-fs.md` абзац + строка в D412-амендменте (`03-syntax.md`).
+> + `docs/guide/io-fs.md` абзац + строка в D412-амендменте (`03-syntax.md`).
 > **Одно отклонение от дизайн-черновика** (задокументировано в коде и §6б.3-примечании
 > здесь): `DirFs @resolve`'ская prefix-проверка — component-граничная строковая
 > проверка по ОБОИМ разделителям (`/` и `\`), а не `f.starts_with(r + "/")` —
@@ -619,7 +619,7 @@ interned static-строки. Таблица `entries` строится один
 | **Чистый conformer** `BytesReader` (курсор над `[]u8`, in-memory, `mut @read(...)->Result[int,IoError]` без эффекта) конформит `io.Read` рядом с эффектным `File`. | `std/src/io/mem.nv:5,42`; `File @read ... Fs -> Result[int,IoError]` — `std/src/fs/fs.nv:207` | Прямой прецедент: `EmbeddedDir` (чистый) и `DirFs` (Fs) под ОДНИМ `ReadFs`. Чистый impl эффект-агностичного протокола — доказанно легален. |
 | **Effectful vtable dispatch НЕ поддержан**: «true-vtable dispatch (Plan 03) не пробрасывает effect-handlers через vtable-ABI — в truly-erased контексте effectful-protocol bounds ОБЯЗАНЫ mono-dispatch'иться». | `spec/decisions/02-types.md:4047-4056` (D122-амендмент) | **dyn-значение `ReadFs` для эффектной (DirFs) ветки невозможно в V1** → dev/prod-выбор = ветка на СТАРТЕ над двумя mono-инстансами, не одна runtime-переменная (6б.4). |
 | **Nova structural, orphan rule НЕТ**; «методы едут с типом» (D286); extension-метод на ЧУЖОМ типе легален, требует explicit `import` (D287); «Nova не ограничивает добавление методов на тип из любого модуля». | `spec/decisions/02-types.md:3865, 9957`; `spec/decisions/07-modules.md:723-740` | `@read_file`/`@try_exists` на `EmbeddedDir` можно объявить **в `std.fs` рядом с протоколом** (extension-методы) → prelude НЕ зависит от std.fs (6б.3). Прецедент размещения conformance-surface у типа-конформера — `TcpStream @read` в `std/src/net/tcp.nv:138`. |
-| **Одна ошибка** `IoError { ro kind ErrorKind, ro raw_os int, ro op str }` для io/fs/os; `ErrorKind` enum с `NotFound`/`PermissionDenied`/… ; ктор `IoError.new(kind, op)` / `IoError.from_os(raw_os, op)`. **Типа `FsError` НЕ существует** — рабочее имя из задания = `IoError`. | `std/src/io/error.nv:57,68,74`; `docs/io-fs.md:44-52` | Протокол возвращает `Result[[]u8, IoError]` (НЕ выдуманный `FsError`). |
+| **Одна ошибка** `IoError { ro kind ErrorKind, ro raw_os int, ro op str }` для io/fs/os; `ErrorKind` enum с `NotFound`/`PermissionDenied`/… ; ктор `IoError.new(kind, op)` / `IoError.from_os(raw_os, op)`. **Типа `FsError` НЕ существует** — рабочее имя из задания = `IoError`. | `std/src/io/error.nv:57,68,74`; `docs/guide/io-fs.md:44-52` | Протокол возвращает `Result[[]u8, IoError]` (НЕ выдуманный `FsError`). |
 | **fs-API чтения**: `fn read(path Path) Fs -> Result[[]u8, IoError]` (открыть→до EOF→всегда close); `canonicalize(path) Fs -> Result[Path, IoError]` (realpath, резолвит симлинки); `try_exists(path) Fs -> Result[bool, IoError]`. Имя `exists` — **зарезервированный квантор**, поэтому free-fn зовётся `try_exists`. | `std/src/fs/fs.nv:380,574,468` (+ коммент про reserved `exists` `fs.nv:463-467`) | Протокол-метод НЕ может зваться `@exists` (reserved) → `@try_exists` (паритет free-fn). DirFs переиспользует `read`/`canonicalize`/`try_exists` как есть. |
 | **Path-API (чистый, без I/O)**: `Path.from_str`/`.posix`/`.from_bytes`; `@join_path`; `@normalize()` (лексически схлопывает `.`, резолвит `..`, никогда выше корня; относительный путь МОЖЕТ сохранить ведущий `..`); `@is_absolute`; `@components() -> []str`; `@os_bytes`; `@to_str`. Симлинк-резолв — только `Fs.realpath`/`canonicalize`. `str.starts_with` есть. | `std/src/fs/path.nv:85,364,404,235,346,107,116`; `str.starts_with` — `std/src/prelude/errors.nv:242` | DirFs escape-защита = лексический `normalize` + symlink-hard `canonicalize`+prefix (6б.3). |
 
@@ -883,7 +883,7 @@ fn main() {
   future отдельный `ListFs`.
 ```
 
-2. **`docs/io-fs.md`** — в разделе «Protocols vs the text sink» дописать абзац про `ReadFs`
+2. **`docs/guide/io-fs.md`** — в разделе «Protocols vs the text sink» дописать абзац про `ReadFs`
    (read-only VFS, dev/prod-кейс, кросс-ссылка на D412-амендмент этого плана).
 3. **D412-амендмент (§9 этого плана)** — одна строка «см. D323-амендмент ReadFs: `EmbeddedDir`
    конформит read-only `ReadFs` (VFS-унификация dev/prod)».
@@ -909,7 +909,7 @@ fn main() {
 `read_file("a.txt")` hit (через `mock_fs()`/`mem_fs()` — детерминизм, без диска). **Гейт:** тест
 зелёный; при провале (2) — fallback-wrapper (R1). Объём ≈ 60-90 строк.
 
-**Ф.6б.3 — спек+дока (sonnet).** D323-амендмент (6б.5.1) + `docs/io-fs.md` абзац + строка в
+**Ф.6б.3 — спек+дока (sonnet).** D323-амендмент (6б.5.1) + `docs/guide/io-fs.md` абзац + строка в
 D412-амендменте. **Гейт:** owner-review не требуется (аддитивно); едет вместе с Ф.6б.1.
 
 **Ф.6б.4 — флагман-потребитель (sonnet, опц., НЕ блокер).** Карта в 6б.4: `aggregator` main.nv

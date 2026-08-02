@@ -121,7 +121,7 @@ are both written postfix.
 
 | Need | Canonical FINAL form | Spec |
 |---|---|---|
-| Typed pointer (default ro target) | `*T` ≡ `*ro T` | [D216 §1](../spec/decisions/02-types.md#d216-typed-pointer-family--unsafe-model--null-safety-через-npo) |
+| Typed pointer (default ro target) | `*T` ≡ `*ro T` | [D216 §1](../../spec/decisions/02-types.md#d216-typed-pointer-family--unsafe-model--null-safety-через-npo) |
 | Pointer to writable target | `*mut T` | D216 §1 |
 | Pointer to possibly-uninit target | `*unsafe T` | D216 §1 + V2 §V2.3 |
 | Re-pointable pointer variable | `mut p *T` (binding) | D216 §2 + D36 |
@@ -518,20 +518,20 @@ mut p *mut u8 = undefined        // ❌ E_UNDEFINED_USE_NONE_INIT_PATTERN
 
 ## See also
 
-- [`docs/plans/118-typed-pointers-and-unsafe.md`](plans/118-typed-pointers-and-unsafe.md) — Plan 118 core implementation roadmap
-- [`docs/plans/118.1-ffi-intrinsics-and-cstring.md`](plans/118.1-ffi-intrinsics-and-cstring.md) — Plan 118.1 sub-plan (FFI intrinsics)
-- [`docs/plans/118.2-slice-fat-pointer-and-uninit.md`](plans/118.2-slice-fat-pointer-and-uninit.md) — Plan 118.2 sub-plan (slice + uninit)
-- [`docs/plans/118.3-pointer-concurrency-safety.md`](plans/118.3-pointer-concurrency-safety.md) — Plan 118.3 sub-plan (concurrency)
-- [`docs/ffi-cookbook.md`](ffi-cookbook.md) — FFI patterns с ptr + tuple FFI (Plan 115 V1)
-- [D216 V1](../spec/decisions/02-types.md#d216-typed-pointer-family--unsafe-model--null-safety-через-npo) — spec foundation (typed-pointer family + unsafe model + NPO)
-- [D216 FINAL pointer model (Plan 138.5)](../spec/decisions/02-types.md#d216-typed-pointer-family--unsafe-model--null-safety-через-npo) — pointer type = pointee-mut postfix only; re-pointability = binding (D36); prefix modifiers ⇒ `E_POINTER_PREFIX_MODIFIER`; nullable = `Option[*T]` only; `safe` + `Unsafe(Pointer)` retired
-- [D216 V2 amend](../spec/decisions/02-types.md#d216-v2-amend-2026-06-04--universal-right-binding-rule-для-type-level-modifiers--unsafe-t-first-class) — historical right-binding rule (§V2.1, RETRACTED) + first-class `unsafe T` value-wrapper (§V2.3, KEPT) + NPO recalc (§V2.4)
-- [D216 V3 amend](../spec/decisions/02-types.md#d216-v3-amend-plan-1185-v3-2026-06-04--4-modifier-composition-rules) — value-T modifier-composition rules (V3.3/V3.4 superseded by Plan 138.5):
+- [`docs/plans/118-typed-pointers-and-unsafe.md`](../plans/118-typed-pointers-and-unsafe.md) — Plan 118 core implementation roadmap
+- [`docs/plans/118.1-ffi-intrinsics-and-cstring.md`](../plans/118.1-ffi-intrinsics-and-cstring.md) — Plan 118.1 sub-plan (FFI intrinsics)
+- [`docs/plans/118.2-slice-fat-pointer-and-uninit.md`](../plans/118.2-slice-fat-pointer-and-uninit.md) — Plan 118.2 sub-plan (slice + uninit)
+- [`docs/plans/118.3-pointer-concurrency-safety.md`](../plans/118.3-pointer-concurrency-safety.md) — Plan 118.3 sub-plan (concurrency)
+- [`docs/guide/ffi-cookbook.md`](ffi-cookbook.md) — FFI patterns с ptr + tuple FFI (Plan 115 V1)
+- [D216 V1](../../spec/decisions/02-types.md#d216-typed-pointer-family--unsafe-model--null-safety-через-npo) — spec foundation (typed-pointer family + unsafe model + NPO)
+- [D216 FINAL pointer model (Plan 138.5)](../../spec/decisions/02-types.md#d216-typed-pointer-family--unsafe-model--null-safety-через-npo) — pointer type = pointee-mut postfix only; re-pointability = binding (D36); prefix modifiers ⇒ `E_POINTER_PREFIX_MODIFIER`; nullable = `Option[*T]` only; `safe` + `Unsafe(Pointer)` retired
+- [D216 V2 amend](../../spec/decisions/02-types.md#d216-v2-amend-2026-06-04--universal-right-binding-rule-для-type-level-modifiers--unsafe-t-first-class) — historical right-binding rule (§V2.1, RETRACTED) + first-class `unsafe T` value-wrapper (§V2.3, KEPT) + NPO recalc (§V2.4)
+- [D216 V3 amend](../../spec/decisions/02-types.md#d216-v3-amend-plan-1185-v3-2026-06-04--4-modifier-composition-rules) — value-T modifier-composition rules (V3.3/V3.4 superseded by Plan 138.5):
   - §V3.1 — storage-class-aware `ro+mut` adjacency ban (`E_MUTABILITY_CONFLICT_VALUE_TYPE`) — KEPT
   - §V3.2 — modifier ordering safety-inner / mutability-outer (`ro unsafe T`; `E_MODIFIER_ORDER`) — FLIPPED, KEPT
   - §V3.3 — right-binding propagation — SUPERSEDED (no prefix propagation)
   - §V3.4 — `safe` keyword stopper — RETIRED; `E_REDUNDANT_TYPE_MODIFIER` kept at binding/postfix-pointee level
-- [D2 amend](../spec/decisions/04-effects.md#d2) — unsafe keyword restoration (effect-handler sugar)
-- [D214 amend](../spec/decisions/02-types.md#d214-ptr-opaque-pointer-type--tuple-ffi-returns--opaque-handle-pattern) — ptr redefine
-- [D32 amend](../spec/decisions/02-types.md#d32-семантика-передачи-параметров) — `&value` not Rust borrow
-- [`examples/typed_pointers/`](../examples/typed_pointers/) — minimal working samples
+- [D2 amend](../../spec/decisions/04-effects.md#d2) — unsafe keyword restoration (effect-handler sugar)
+- [D214 amend](../../spec/decisions/02-types.md#d214-ptr-opaque-pointer-type--tuple-ffi-returns--opaque-handle-pattern) — ptr redefine
+- [D32 amend](../../spec/decisions/02-types.md#d32-семантика-передачи-параметров) — `&value` not Rust borrow
+- [`examples/typed_pointers/`](../../examples/typed_pointers/) — minimal working samples

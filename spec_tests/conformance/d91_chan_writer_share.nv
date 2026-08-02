@@ -4,7 +4,7 @@
 // Clone-протокол = независимая глубокая копия — имя clone для alias
 // запрещено. Канон многофиберного доступа: share-копия per-fiber.
 // Spec: spec/decisions/03-syntax.md D188 §«Re-consume форма» п.5;
-// docs/channels.md §«share — multi-writer».
+// docs/guide/channels.md §«share — multi-writer».
 // Part of the SINGLE `spec_tests.conformance` folder-module.
 module spec_tests.conformance
 

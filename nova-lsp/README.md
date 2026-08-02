@@ -10,7 +10,7 @@ It powers IDE features — diagnostics, hover, go-to-definition, completion, doc
 > rust-analyzer / gopls / tsserver / IntelliJ) is proposed / in progress.
 >
 > ⚠ **Conventions:** the server reuses `compiler-codegen` as a library and must follow
-> [docs/compiler-conventions.md](../docs/compiler-conventions.md) — no hardcoded type/method/keyword lists (§3: "LSP обязан резолвить
+> [docs/dev/compiler-conventions.md](../docs/dev/compiler-conventions.md) — no hardcoded type/method/keyword lists (§3: "LSP обязан резолвить
 > методы из `.nv`"), single source of truth for types (§0/`ResolvedType`), no silent holes (§4). Known gaps are tracked as `[M-104.10-*]`
 > markers and in Plan 104.10.
 

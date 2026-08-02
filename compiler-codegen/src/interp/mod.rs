@@ -971,7 +971,7 @@ impl Interpreter {
                 // `cancel:` токен игнорируется (нет реального scheduler'а).
                 // Codegen реализует D75 полноценно через NovaCancelToken +
                 // nova_supervised_run_cancel. Это bootstrap-ограничение
-                // [M-interp-cancel] — см. docs/simplifications.md.
+                // [M-interp-cancel] — см. docs/dev/simplifications.md.
                 self.exec_block_flow(body, env)
             }
             ExprKind::Detach(body) => {

@@ -10288,7 +10288,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// `recv_val`, `nova_rt/channels.h`)? `Channel[T]` is NOT actually
     /// generic at the runtime OR checker layer today — every element is
     /// stored as a bare `nova_int`, and `Channel.new(n)`'s documented
-    /// "T inferred from first send/recv" (docs/channels.md) does not hold:
+    /// "T inferred from first send/recv" (docs/guide/channels.md) does not hold:
     /// `T` is never tracked past the point of the call, `rx.recv()` is
     /// always typed `Option[int]` (see `infer_call_ret_c`'s
     /// `"recv" | "try_recv" => "NovaOpt_nova_int"`, wave-1 region — not
@@ -10313,7 +10313,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// (`nova_str`, tuples, value-records — `is_struct_c_type` true and
     /// not erased to a pointer) can never fit a single word — genuinely
     /// out of scope for this channel implementation (would need the
-    /// runtime to box non-word payloads, `docs/channels.md`
+    /// runtime to box non-word payloads, `docs/guide/channels.md`
     /// [M-channel-generic-elem-type]).
     fn channel_payload_c_type_ok(ty: &str) -> bool {
         ty == "nova_int"
@@ -27497,7 +27497,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// access violation (the Plan 198 floating-AV blocker; full localization
     /// in docs/plans/196-race-state-dump-notes.md). Same defect class as the
     /// documented Plan 139.2 `var_types`-not-per-fn-scoped case
-    /// (docs/debugging-races.md §6.4) — closed HERE as a CLASS (playbook
+    /// (docs/dev/debugging-races.md §6.4) — closed HERE as a CLASS (playbook
     /// precedent), not by hunting the single unbalanced insert/remove site
     /// (~30 candidate pairs, and a new one could regress tomorrow).
     ///
@@ -40188,7 +40188,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                              word-safe for the current channel implementation (payload C type \
                                              `{}`) — the runtime stores every element in a single `nova_int`-\
                                              sized slot (`nova_rt/channels.h`), and Channel[T]'s element type \
-                                             is NOT actually tracked past `Channel.new` (docs/channels.md's \
+                                             is NOT actually tracked past `Channel.new` (docs/guide/channels.md's \
                                              \"T inferred from first send/recv\" does not hold end-to-end today \
                                              — see [M-channel-generic-elem-type]). Supported today: `int`, \
                                              `bool`, `char`, fixed-width int types, and any pointer-sized type \
@@ -40212,7 +40212,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                              word-safe for the current channel implementation (payload C type \
                                              `{}`) — the runtime stores every element in a single `nova_int`-\
                                              sized slot (`nova_rt/channels.h`), and Channel[T]'s element type \
-                                             is NOT actually tracked past `Channel.new` (docs/channels.md's \
+                                             is NOT actually tracked past `Channel.new` (docs/guide/channels.md's \
                                              \"T inferred from first send/recv\" does not hold end-to-end today \
                                              — see [M-channel-generic-elem-type]). Supported today: `int`, \
                                              `bool`, `char`, fixed-width int types, and any pointer-sized type \
@@ -40462,7 +40462,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // registry-driven путь выше (Plan 12 Ф.3).
                 }
                 // [M-channel-generic-elem-type] (b): `Channel[T].new(cap)` —
-                // the documented turbofish escape hatch (docs/channels.md
+                // the documented turbofish escape hatch (docs/guide/channels.md
                 // §Channel.new) parses `obj` as `TurboFish{base: Ident
                 // ("Channel"), type_args: [T]}`, NOT the bare `Ident
                 // ("Channel")` the check below matches. `Channel` is a
@@ -60910,7 +60910,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // переходный долг замещения чекер-каналами). legacy_inner — паника.
         {
             // [P67-LEGACY] Этот путь должен быть удалён. Достижение = checker аннотирует ВСЁ.
-            // Нарушение docs/compiler-conventions.md §0. Внутренние panic идентифицируют конкретные
+            // Нарушение docs/dev/compiler-conventions.md §0. Внутренние panic идентифицируют конкретные
             // пробелы (Ident not in var_types, Index element unknown и т.д.). Entry-point guard
             // убран: Path/Call/Member используются как sub-exprs при рекурсии из fn_field_call_sig,
             // legacy их обрабатывает корректно — entry panic только ломала рекурсию.

@@ -471,7 +471,7 @@ protocol infrastructure ✅.
 - Ф.2 LSP autocomplete filter + hover badge.
 - Ф.3 Quick-fix suggestion (Plan 50 D102 format).
 - Ф.4 Tests (LSP integration suite).
-- Ф.5 Doc — `docs/field-visibility-guide.md`.
+- Ф.5 Doc — `docs/guide/field-visibility-guide.md`.
 - Ф.6 Closure.
 
 **Эстимат:** ~1.5 dev-day.
@@ -678,7 +678,7 @@ umbrella + sub-plans. Каждый sub-plan:
 - **A5.4** LSP hover показывает visibility badge.
 - **A5.5** Quick-fix «add public getter» suggestion срабатывает.
 - **A5.6** plan124_5 fixtures (LSP suite) PASS.
-- **A5.7** Doc `docs/field-visibility-guide.md` написан.
+- **A5.7** Doc `docs/guide/field-visibility-guide.md` написан.
 - **A5.8** Regression — 0 new FAIL.
 
 ### 6.6 Plan 124.6 acceptance (A6.1-A6.8)
@@ -869,7 +869,7 @@ if ship — automated migration tool:
 ### 8.7 Documentation
 
 - D220-D222 spec — formal semantics.
-- `docs/field-visibility-guide.md` (V5) — user guide: examples,
+- `docs/guide/field-visibility-guide.md` (V5) — user guide: examples,
   comparison с Go/Rust/TS/Kotlin/Java, design rationale, escape
   hatches.
 - `docs/migration/124-priv-fields.md` (V7) — migration guide.
@@ -986,7 +986,7 @@ Check open-questions.md для существующих Q'ов:
 
 ### 11.1 User-facing
 
-- `docs/field-visibility-guide.md` (V5 → 124.5) — user guide:
+- `docs/guide/field-visibility-guide.md` (V5 → 124.5) — user guide:
   what is `priv`, when use, comparison Go/Rust/TS/Kotlin/Java,
   escape hatches, common patterns.
 - `docs/migration/124-priv-fields.md` (V7 → 124.7) — migration
@@ -1031,7 +1031,7 @@ Check open-questions.md для существующих Q'ов:
 | 124.2 Pattern + literal init | 🟢 **CLOSED 2026-06-02** — Match/IfLet/WhileLet/For/ParallelFor sites + nested + spread (D221 NEW); 14/14 plan124_2 PASS |
 | 124.3 Generics | 🟢 **CLOSED 2026-06-02** — uniform enforcement on Generic[T] types verified (10/10 plan124_3); D220 §G1 amend |
 | 124.4 Tuple + protocol | 🟢 **CLOSED 2026-06-02** — NamedTupleField priv parsing + 3 checker hooks + protocol impl boundary §3 (D222 NEW); 10/10 plan124_4 PASS |
-| 124.5 nova doc + LSP | 🟢 **CLOSED 2026-06-02** — nova doc strip_private filter per-field + render priv keyword + JSON priv_field emit + docs/field-visibility-guide.md; LSP hover/completion forward-ref Plan 104.2/104.3 |
+| 124.5 nova doc + LSP | 🟢 **CLOSED 2026-06-02** — nova doc strip_private filter per-field + render priv keyword + JSON priv_field emit + docs/guide/field-visibility-guide.md; LSP hover/completion forward-ref Plan 104.2/104.3 |
 | 124.6 Test access + pub_to | 🟢 **AMENDED+CLOSED 2026-06-16** — design changed from fn-level `#test_access` + field-level `#visible_to` → (1) implicit same-module test access (test block in same folder), (2) `#[test_access(T)]` before `test "…" {}` block for cross-module opt-in, (3) `#[pub_to(Y,Z)]` on TypeDecl for type-level friend access; `TestBlockGuard` RAII + `type_pub_to` map in checker; 15 fixtures (9 pos + 6 neg); 7 pre-existing fixtures migrated to `priv(type)`; A6.1-A6.8 all ✅; 15/15 PASS |
 | 124.7 Type-level priv flip (named tuples) | 🟢 **CLOSED 2026-06-02** — `type X priv (...)` symmetric extension D220 §3.3.1 на named tuple form (D225 NEW; **renumbered from D224 → D225 after collision с Plan 123 IPA D223**); parser shim parse_named_tuple_fields_with_default; 8/8 plan124_7 PASS |
 | **Umbrella** | ✅ **FULLY CLOSED 2026-06-02** — все 7 sub-plans 124.1-124.7 ✅; D220+D221+D222+D224+D225 spec corpus complete (D223 = Plan 123 IPA, not Plan 124); production-grade per-field privacy in Nova match-or-exceeds Go/Rust/TS/Java/Swift/C# на 14 capabilities + 3 Nova-only superior axes |
@@ -1078,7 +1078,7 @@ Start с **Plan 124.1 (Core record)** — gate для всех остальны�
    (или 07-modules.md если visibility-related). Commit
    `docs(plan 124.N Ф.5): D2XX NEW + cross-refs`.
 7. **Ф.6 Closure:** 3 логов:
-   - `docs/simplifications.md`
+   - `docs/dev/simplifications.md`
    - `docs/project-creation.txt`
    - `d:/Sources/nv-lang/nova-private/discussion-log.md`
    - Plan doc status flip `🆕 PLANNED → ✅ CLOSED <date>`.

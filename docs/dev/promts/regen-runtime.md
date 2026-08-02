@@ -1,7 +1,7 @@
 # Промпт: регенерировать `std/src/runtime/*.nv`
 
-**Связь:** [Plan 13](../plans/13-runtime-stdlib-and-autogen.md),
-[D82](../../spec/decisions/08-runtime.md#d82).
+**Связь:** [Plan 13](../../plans/13-runtime-stdlib-and-autogen.md),
+[D82](../../../spec/decisions/08-runtime.md#d82).
 
 ## Цель
 

@@ -237,8 +237,8 @@ Compile .nv → .c → native binary:
 - `CONTRIBUTING.md` — секция сборки и тестирования
 - `docs/plans/README.md` — строка Plan 28 (уже добавлена)
 - `docs/project-creation.txt` — запись о nova CLI
-- `docs/simplifications.md` — убрать упоминания ps1 если есть
-- `docs/test-conventions.md` — обновить Quick start: `nova test` вместо
+- `docs/dev/simplifications.md` — убрать упоминания ps1 если есть
+- `docs/dev/test-conventions.md` — обновить Quick start: `nova test` вместо
   `.\run_tests.ps1` / `./run_tests.sh`
 
 ---
@@ -340,10 +340,10 @@ fn find_repo_root() -> Result<PathBuf> {
 | `regen_runtime.ps1` | удалить |
 | `README.md` | обновить (run_tests → nova test, single-test debugging) |
 | `CONTRIBUTING.md` | обновить |
-| `docs/test-conventions.md` | обновить Quick start |
+| `docs/dev/test-conventions.md` | обновить Quick start |
 | `docs/plans/README.md` | строка Plan 28 (уже добавлена) |
 | `docs/project-creation.txt` | добавить запись |
-| `docs/simplifications.md` | проверить/обновить |
+| `docs/dev/simplifications.md` | проверить/обновить |
 
 ---
 

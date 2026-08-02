@@ -97,7 +97,7 @@ production'ах Rust/Go/Chrome.
 - [Plan 02](02-codegen-c-backend.md) — C backend архитектура.
 - `spec/open-questions.md` → `Q-build-pgo` — соответствующий
   open-question (зафиксирован 2026-05-08).
-- `docs/simplifications.md` → `[P-no-pgo-integration]` — пометка
+- `docs/dev/simplifications.md` → `[P-no-pgo-integration]` — пометка
   про текущее отсутствие.
 
 ---

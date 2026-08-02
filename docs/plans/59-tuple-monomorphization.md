@@ -420,7 +420,7 @@ _NovaTuple_<arity>_<L1>_<T1>_<L2>_<T2>_..._<LN>_<TN>
       (pointer elements, diverse types, 5-level nesting, out-of-bounds neg).
 - [x] Full regression `nova test` — 594 PASS / 0 FAIL после Phase 5
       (vs 568 pre-Plan-59 baseline).
-- [x] `docs/simplifications.md` — `[M-tuple-mangle-nested-collision]`
+- [x] `docs/dev/simplifications.md` — `[M-tuple-mangle-nested-collision]`
       ✅ ЗАКРЫТО + Plan 59 fix d73a892f27b запись.
 
 ### Estimate

@@ -25,7 +25,7 @@ Nova-файлы, добавлять тесты, работать с nova CLI**. 
    Результаты пишутся в `target/last-test-results.json` автоматически.
    Rerun после фикса: `nova-cli/target/debug/nova test --rerun-failed`.
 
-3. **Как добавить тест** (`docs/test-conventions.md`):
+3. **Как добавить тест** (`docs/dev/test-conventions.md`):
    - Создать `.nv` файл в `nova_tests/<group>/`.
    - Первая строка — `module nova_tests.<group>.<name>`.
    - D89 EXPECT-маркер в первых 30 строках (если негативный тест):

@@ -12,7 +12,7 @@ C backend + cross-file resolver + SMT contract verifier.
 > runnable command — compile to C and run that instead.
 
 > **Internal component.** For day-to-day use, prefer the `nova` CLI
-> ([docs/nova-cli.md](nova-cli.md)). `nova-codegen` remains the entry
+> ([docs/guide/nova-cli.md](../guide/nova-cli.md)). `nova-codegen` remains the entry
 > point for IDE integration, CI, direct codegen debugging, and is
 > consumed by `nova-cli` as a path dependency.
 
@@ -78,7 +78,7 @@ with an empty lockfile on any stable Rust 1.85+.
 | `0` | Success |
 | `1` | Failure (parse fail, type-check fail, codegen fail, runtime fail, tests failed) |
 
-Unlike [`nova`](nova-cli.md), `nova-codegen` uses **binary** exit
+Unlike [`nova`](../guide/nova-cli.md), `nova-codegen` uses **binary** exit
 codes (0/1) — no separation between usage error and diagnostic failure.
 
 ---
@@ -278,7 +278,7 @@ EXPECT markers (D89):
 |---|---|
 | `NOVA_CACHE=0` | Disable caches: SMT contracts (Plan 33.3 Ф.12) + build `.c` cache (Plan 81 Ф.9). `off`/`false` also accepted |
 | `NOVA_PERF_TIMER=1` | Enable `__PERF__` markers in the compiler (per-pass timing) |
-| `NOVA_MONO_DEPTH=N` | Monomorphization-instantiation depth limit (default 500, [Plan 48](plans/48-closures-in-generics.md) Ф.7.6) |
+| `NOVA_MONO_DEPTH=N` | Monomorphization-instantiation depth limit (default 500, [Plan 48](../plans/48-closures-in-generics.md) Ф.7.6) |
 | `NOVA_DEBUG_MONO=1` | Verbose debug print of mono instances (codegen diagnostics) |
 | `NOVA_SMT_BACKEND=trivial\|z3` | Override the SMT backend for contracts |
 | `NOVA_CACHE_DIR=PATH` | Override the SMT proof cache directory (default `<cwd>/target/`) |
@@ -291,7 +291,7 @@ EXPECT markers (D89):
 | `VCPKG_ROOT=PATH` | vcpkg root (for libuv / libz3 auto-resolve) |
 | `CC=name` | Fallback C compiler (POSIX) |
 | `NOVA_VERSION=N.M.K` | Current version for deprecation diagnostics (Plan 45 Ф.21) |
-| `NOVA_FEATURES=f1,f2` | Cfg feature set ([Plan 42.12](plans/42.12-cfg-conditional-compilation.md)) |
+| `NOVA_FEATURES=f1,f2` | Cfg feature set ([Plan 42.12](../plans/42.12-cfg-conditional-compilation.md)) |
 | `NOVA_TARGET_OS=name` | Override `target_os` for cfg resolve |
 | `TEMP` (Windows) | Tmp directory |
 | `TMPDIR` (Unix) | Tmp directory |
@@ -305,7 +305,7 @@ EXPECT markers (D89):
 | Feature | Description |
 |---|---|
 | (default) | TrivialBackend SMT (reflexive `ensures`), no external dependencies |
-| `z3-backend` | Links libz3 via vcpkg ([Plan 33.1](plans/33.1-contracts-core.md)). FFI bindings are in-tree in `src/verify/backend/z3_ffi.rs` (no `z3`/`z3-sys` crates — feedback: wrappers only in our files). Linkage controlled by `build.rs` + `vcpkg.json` |
+| `z3-backend` | Links libz3 via vcpkg ([Plan 33.1](../plans/33.1-contracts-core.md)). FFI bindings are in-tree in `src/verify/backend/z3_ffi.rs` (no `z3`/`z3-sys` crates — feedback: wrappers only in our files). Linkage controlled by `build.rs` + `vcpkg.json` |
 
 **Building with Z3:**
 ```bash
@@ -323,7 +323,7 @@ library API directly (no subprocess). Public modules from `lib.rs`:
 
 | Module | What |
 |---|---|
-| `argbind` | Named/positional arg binding ([Plan 46](plans/46-named-parameters.md) / D102) |
+| `argbind` | Named/positional arg binding ([Plan 46](../plans/46-named-parameters.md) / D102) |
 | `ast` | AST types: `Module`, `Item`, `Expr`, `Stmt`, `Pattern`, ... |
 | `callnorm` | Call-site normalization for named params |
 | `codegen` | C backend: `CEmitter::emit_module`, `runtime_registry::all`, ... |
@@ -384,7 +384,7 @@ src/
 - `export import X.{A}` re-export
 - Auto-import of `std/prelude.nv` (R27)
 
-### Folder-modules ([Plan 42](plans/42-folder-modules.md))
+### Folder-modules ([Plan 42](../plans/42-folder-modules.md))
 
 Module = single-file `X.nv` OR folder `X/` with peers (Go-style):
 
@@ -425,9 +425,9 @@ always linked:
 
 | File | What |
 |---|---|
-| `alloc.c` (or `alloc_boehm.c`, `alloc_rc.c`) | Allocator (Boehm GC default since [Plan 27](plans/27-gc-switch.md)) |
-| `effects.c` | Handler stack (D61), `nova_interrupt` / `nova_interrupt_ptr` ([Plan 39](plans/39-range-stdlib-fixes.md) Issue A) |
-| `fibers.c` | Shim over `minicoro.h` + structured concurrency ([Plan 44.5](plans/44.5-work-stealing-scheduler.md)) |
+| `alloc.c` (or `alloc_boehm.c`, `alloc_rc.c`) | Allocator (Boehm GC default since [Plan 27](../plans/27-gc-switch.md)) |
+| `effects.c` | Handler stack (D61), `nova_interrupt` / `nova_interrupt_ptr` ([Plan 39](../plans/39-range-stdlib-fixes.md) Issue A) |
+| `fibers.c` | Shim over `minicoro.h` + structured concurrency ([Plan 44.5](../plans/44.5-work-stealing-scheduler.md)) |
 
 **Header-only:**
 
@@ -437,7 +437,7 @@ always linked:
 | `cast.h` | D54 narrow casts (saturation, wrap-around semantics) |
 | `effects.h` | `NovaThrowKind`, `nova_throw_cancel`, `Handler[E, IRT]` API |
 | `fibers.h` | `nova_spawn`, `nova_supervised`, `nova_cancel_*`, M:N runtime |
-| `channels.h` | `Channel[T]` mpsc ([Plan 44.1](plans/44.1-channel-hardening.md)), `select` waiter |
+| `channels.h` | `Channel[T]` mpsc ([Plan 44.1](../plans/44.1-channel-hardening.md)), `select` waiter |
 | `sync.h` | C11 atomics + mutex for channel hardening |
 | `minicoro.h` | Vendored stackful coroutines (do not patch, version-pinned) |
 | `nova_rt.h` | Single include — `nova_str_cmp`/`lt`/`le`/`gt`/`ge` byte-wise compare, etc. |
@@ -451,28 +451,28 @@ always linked:
 
 ## Related documents
 
-- [`docs/nova-cli.md`](nova-cli.md) — `nova` CLI (recommended
+- [`docs/guide/nova-cli.md`](../guide/nova-cli.md) — `nova` CLI (recommended
   user-facing entry point)
-- [`compiler-codegen/README.md`](../compiler-codegen/README.md) —
+- [`compiler-codegen/README.md`](../../compiler-codegen/README.md) —
   original README with detailed architecture (Russian)
-- [`spec/`](../spec/) — language specification
-- [`spec/decisions/`](../spec/decisions/) — D-blocks
-- [`docs/test-conventions.md`](test-conventions.md) — EXPECT markers
-- [`docs/plans/13-runtime-stdlib-and-autogen.md`](plans/13-runtime-stdlib-and-autogen.md)
+- [`spec/`](../../spec/) — language specification
+- [`spec/decisions/`](../../spec/decisions/) — D-blocks
+- [`docs/dev/test-conventions.md`](test-conventions.md) — EXPECT markers
+- [`docs/plans/13-runtime-stdlib-and-autogen.md`](../plans/13-runtime-stdlib-and-autogen.md)
   — runtime registry + auto-gen
-- [`docs/plans/24-cross-platform-test-runner.md`](plans/24-cross-platform-test-runner.md)
+- [`docs/plans/24-cross-platform-test-runner.md`](../plans/24-cross-platform-test-runner.md)
   — `test-build` (per-file; `test-all` removed in Plan 36.D.1, use `nova test`)
-- [`docs/plans/26-test-runner-hardening.md`](plans/26-test-runner-hardening.md)
+- [`docs/plans/26-test-runner-hardening.md`](../plans/26-test-runner-hardening.md)
   — timeout / parallel / format / rerun-failed
-- [`docs/plans/27-gc-switch.md`](plans/27-gc-switch.md) —
+- [`docs/plans/27-gc-switch.md`](../plans/27-gc-switch.md) —
   `--gc boehm|malloc`
-- [`docs/plans/35-cross-file-resolve.md`](plans/35-cross-file-resolve.md)
+- [`docs/plans/35-cross-file-resolve.md`](../plans/35-cross-file-resolve.md)
   — cross-file resolver
-- [`docs/plans/42-folder-modules.md`](plans/42-folder-modules.md) —
+- [`docs/plans/42-folder-modules.md`](../plans/42-folder-modules.md) —
   folder-modules
-- [`docs/plans/33.1-contracts-core.md`](plans/33.1-contracts-core.md)
+- [`docs/plans/33.1-contracts-core.md`](../plans/33.1-contracts-core.md)
   — contracts + Z3 backend
-- [`docs/plans/45-nova-doc.md`](plans/45-nova-doc.md) — `nova doc`
+- [`docs/plans/45-nova-doc.md`](../plans/45-nova-doc.md) — `nova doc`
   (`nova_codegen::doc`)
-- [`docs/plans/48-closures-in-generics.md`](plans/48-closures-in-generics.md)
+- [`docs/plans/48-closures-in-generics.md`](../plans/48-closures-in-generics.md)
   — monomorphization (`NOVA_MONO_DEPTH`)

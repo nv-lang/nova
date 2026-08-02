@@ -466,7 +466,7 @@ Rename NOVA_ARRAY_DECL → NOVA_VEC_DECL в Ф.7+.
 ### Ф.7 — Docs + close (~30min)
 
 - D144 AMEND — пометить migration как выполненную
-- `docs/simplifications.md`, `nova-private/`
+- `docs/dev/simplifications.md`, `nova-private/`
 - README.md
 
 **Commit:** `docs(plan138 Ф.7): close — []T sugar migration complete`

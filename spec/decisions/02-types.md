@@ -5084,7 +5084,7 @@ compile error на любом unresolved type в codegen. Nova до Plan 70 бы
 
 **Только Cat A** даёт silent miscompilation. После Plan 70 closure все
 Cat A sites мигрированы к strict error path. Cat B/C/D documented
-в [docs/codegen-erasure-sites.md](../../docs/codegen-erasure-sites.md).
+в [docs/dev/codegen-erasure-sites.md](../../docs/dev/codegen-erasure-sites.md).
 
 **Strict-error architecture.** Две helper-функции в `emit_c.rs`:
 
@@ -5125,9 +5125,9 @@ ensure generic is monomorphized, или register type в external_registry.
 
 **Internal lint guard (CI).** `scripts/guards/lint-no-silent-int-fallback.sh`
 greps `compiler-codegen/src/` против baseline counts из
-`docs/codegen-erasure-sites.md`. Bumping baseline требует:
+`docs/dev/codegen-erasure-sites.md`. Bumping baseline требует:
 1. Inline comment с rationale «почему erasure безопасна»
-2. Entry в `docs/codegen-erasure-sites.md` со file:line + причина
+2. Entry в `docs/dev/codegen-erasure-sites.md` со file:line + причина
 3. PR review
 
 CI gate fails если added counts превышают baseline без updates.
@@ -5149,7 +5149,7 @@ CI gate fails если added counts превышают baseline без updates.
 - Plan 67 — println overload fix (sibling: один из видимых частных случаев)
 - Plan 48 — monomorphization (упрощает Cat B → меньше erasure)
 - Plan 36 — diagnostic infra (R7 structured format)
-- [docs/codegen-erasure-sites.md](../../docs/codegen-erasure-sites.md) — Cat B/D inventory
+- [docs/dev/codegen-erasure-sites.md](../../docs/dev/codegen-erasure-sites.md) — Cat B/D inventory
 
 ---
 
@@ -6955,7 +6955,7 @@ Codepoint-indexed (как существующий `nova_str_slice` метод).
 
 Старый `s.slice(a, b)` метод — **сохраняется** с clamp-семантикой
 для backwards-compat; align на panic откладывается в Plan 94
-(см. `[P-str-slice-clamp-vs-panic]` в `docs/simplifications.md`).
+(см. `[P-str-slice-clamp-vs-panic]` в `docs/dev/simplifications.md`).
 
 ### Verified против
 
@@ -8756,7 +8756,7 @@ SomeRecord` — `E_NULL_LITERAL_REQUIRES_PTR`.
 > **После Plan 118 landed: `null ptr` полностью удаляется** —
 > retract из spec, parser emit'ит `E_NULL_LITERAL_REPLACED_BY_OPTION`
 > с migration hint к `Option[ptr] / None`. См. marker
-> `[M-115-null-ptr-to-option-after-npo]` в `docs/simplifications.md`
+> `[M-115-null-ptr-to-option-after-npo]` в `docs/dev/simplifications.md`
 > для migration tracking.
 
 #### Type-checker rules
@@ -11565,7 +11565,7 @@ ALL closed 2026-06-02:
   code-lens decoration.
 
 **User-facing documentation:**
-- `docs/field-visibility-guide.md` — comprehensive guide:
+- `docs/guide/field-visibility-guide.md` — comprehensive guide:
   use cases, syntax, composition, diagnostics, tooling, comparison
   vs Go/Rust/TS/Java/Swift/C#, migration, common patterns.
 
@@ -11582,7 +11582,7 @@ ALL closed 2026-06-02:
   format hints уже в error messages).
 - A5.6 ✅ plan124_5 fixtures 3/3 PASS (parser + smoke; doc behavior
   e2e verified manually).
-- A5.7 ✅ `docs/field-visibility-guide.md` created (~330 lines).
+- A5.7 ✅ `docs/guide/field-visibility-guide.md` created (~330 lines).
 - A5.8 ✅ Regression: existing nova doc fixtures unchanged.
 
 ---
@@ -14280,7 +14280,7 @@ v[1] = 99  // → v.@index(1, 99)   write-overload через MutIndex (D240)
 > [M-153-vec-combinators-prelude-global]). `[]T ≡ Vec[T]` подтверждён для
 > инферированных значений; ОСТАЁТСЯ residual: ЯВНАЯ аннотация `v Vec[int]` не
 > коэрсится в `[]int`-параметр (`E7301`, [M-153-d239-explicit-vec-to-slice-param]).
-> См. [docs/vec-internals.md](../../docs/vec-internals.md).
+> См. [docs/dev/vec-internals.md](../../docs/dev/vec-internals.md).
 
 ### NovaArray retirement — частичный (BLOCKED на Plan 139 Ф.2)
 
@@ -15510,7 +15510,7 @@ Codegen fix: при вызове `@[j].compare(key)` внутри generic `fn[T 
 
 ## D315. `ResolvedType` — единый канонический носитель типа (Plan 172.1, 2026-06-21)
 
-**Статус:** ACTIVE. *Single source of type truth.* Реализует [`compiler-conventions.md`](../../docs/compiler-conventions.md) §0. Supersedes
+**Статус:** ACTIVE. *Single source of type truth.* Реализует [`compiler-conventions.md`](../../docs/dev/compiler-conventions.md) §0. Supersedes
 врезку M2 Plan 172.1 («`ResolvedType` достаточен как носитель» — спайк 2026-06-21 доказал обратное).
 
 ### Что
@@ -15569,7 +15569,7 @@ Codegen fix: при вызове `@[j].compare(key)` внутри generic `fn[T 
 
 ### Связь
 
-- [`compiler-conventions.md`](../../docs/compiler-conventions.md) §0 — D315 это его конкретная
+- [`compiler-conventions.md`](../../docs/dev/compiler-conventions.md) §0 — D315 это его конкретная
   формулировка про носитель типа (§10 анти-паттерн «два окна правды»).
 - [D246](#d246-три-оси-мутабельности-l1-binding--l2-view--l3-pointee) — три оси мутабельности;
   `ResolvedType` обязан нести все три.
@@ -15888,7 +15888,7 @@ D181/D184 (режим `@`), D246 (L3 / RETURN-оракул / P10 no-exclusivity)
 
 **Source:** Plan 172.2 (scalar narrowing через method-arg), 2026-06-26. Миграция std.unicode под narrowing-чек (D54) вскрыла int↔u32-импеданс: кодпоинты типизированы `int`, но хранятся `Vec[u32]` — каждый push был неявным сужением. Owner предложил хранить кодпоинт как `u32`; обсуждение выявило, что [D226 «Signed indexing convention»](#d226) к кодпоинтам неприменим.
 **Status:** ✅ ADOPTED (sign-off владельца 2026-06-26).
-**Amends:** [nv-coding-style.md](../../docs/nv-coding-style.md) §числовые-ширины (новый пункт «Codepoint = u32»). Снимает аномалию `is_alphabetic(cp int)` (был `int`-кодпоинт по инерции signed-правила).
+**Amends:** [nv-coding-style.md](../../docs/dev/nv-coding-style.md) §числовые-ширины (новый пункт «Codepoint = u32»). Снимает аномалию `is_alphabetic(cp int)` (был `int`-кодпоинт по инерции signed-правила).
 **Cross-ref:** [D128](#d128) (`char` = `nova_char` = `uint32_t`), [D226](#d226) (signed indexing — ОТДЕЛЬНАЯ категория), [D54](#d54) (implicit narrowing — мотивация), D77 (fallible → `Option`).
 
 ### Что
@@ -17176,7 +17176,7 @@ single-wrapper вкл. переменные, int→i64 widening «невидим
 `str → []u8` (вид) и `StringBuilder → str` (финализация) в эту доктрину входят по стоимости,
 но не имели механизма: реализованный компромисс (str-литерал в методе, названном `write`) был
 name-keyed хардкодом — нарушение
-[compiler-conventions §3](../../docs/compiler-conventions.md). D429 вводит ОБЩИЙ
+[compiler-conventions §3](../../docs/dev/compiler-conventions.md). D429 вводит ОБЩИЙ
 декларативный механизм: пара объявляется атрибутом в `.nv`-исходнике; в Rust-компиляторе нет
 ни одной захардкоженной пары.
 
@@ -17480,7 +17480,7 @@ generic-ветка после конкретной). Один и тот же `co
 - [D176](#d176-ro-t--тип-модификатор) — `ro`-возврат = носитель view-полосы.
 - D133 (01-basics.md) — линейность consume; finalize-полоса разряжает ресивер в точке вставки.
 - [D372](#d372-canonical-new-constructors-convention) — форма-приёмник живёт на `.new`-перегрузке.
-- [compiler-conventions §3](../../docs/compiler-conventions.md) — механизм декларативен,
+- [compiler-conventions §3](../../docs/dev/compiler-conventions.md) — механизм декларативен,
   пары в Rust не хардкодятся.
 
 **Статус: спека нормативна с 2026-07-18 (прод-решение, без V1-упрощений — решение владельца).

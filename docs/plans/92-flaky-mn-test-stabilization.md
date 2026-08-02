@@ -103,9 +103,9 @@ Plan 92 обязан **различить эти два случая** преж�
 
 ### Ф.3 — Spec / docs (~0.1 д)
 
-- **Ф.3.1** `docs/simplifications.md` — `[M-flaky-mn-actual-workload]`
+- **Ф.3.1** `docs/dev/simplifications.md` — `[M-flaky-mn-actual-workload]`
   → ✅ ЗАКРЫТО (или, при исходе B, обновить на ссылку escalation).
-- **Ф.3.2** `docs/test-conventions.md` — короткий раздел «флаки-тесты»:
+- **Ф.3.2** `docs/dev/test-conventions.md` — короткий раздел «флаки-тесты»:
   как помечать, политика quarantine (с tracking, не молча).
 - **Ф.3.3** `docs/plans/README.md` — Plan 92 статус-апдейт.
 - **Ф.3.4** `docs/project-creation.txt` +

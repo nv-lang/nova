@@ -47,7 +47,7 @@ are the two commands you'll use.
 ### Install (Linux)
 
 There is no prebuilt Linux archive for v0.1.0 yet — build from source.
-See [docs/linux-build.md](linux-build.md) for the full recipe (Debian/Ubuntu
+See [docs/guide/linux-build.md](linux-build.md) for the full recipe (Debian/Ubuntu
 packages, Rust toolchain, `git submodule update`, build, smoke test);
 it's a five-minute `TL;DR` at the top of that page.
 
@@ -183,16 +183,16 @@ structured concurrency without a separate "async" dialect of the language.
 
 ## Where to go next
 
-- [spec/overview.md](../spec/overview.md) — main ideas, what's borrowed
+- [spec/overview.md](../../spec/overview.md) — main ideas, what's borrowed
   from where, tooling overview.
-- [examples/flagship/aggregator](../examples/flagship/aggregator) — the
+- [examples/flagship/aggregator](../../examples/flagship/aggregator) — the
   full-sized version of the example above: a real HTTP server (via the
   `http` package), a web UI with a waterfall visualization, and the same
   `Net Time Emit` effect signature checked by the compiler
   (`--strict-effects`). Comes with its own Dockerfile.
-- [spec/decisions/](../spec/decisions/) — the design decision log (D-numbers),
+- [spec/decisions/](../../spec/decisions/) — the design decision log (D-numbers),
   the authoritative source for Nova syntax and semantics — every language
   feature traces back to a decision here.
-- [docs/test-conventions.md](test-conventions.md) — how `nova test` works,
+- [docs/dev/test-conventions.md](../dev/test-conventions.md) — how `nova test` works,
   `EXPECT_*` markers, CLI flags.
-- [docs/linux-build.md](linux-build.md) — building from source on Linux/WSL2.
+- [docs/guide/linux-build.md](linux-build.md) — building from source on Linux/WSL2.

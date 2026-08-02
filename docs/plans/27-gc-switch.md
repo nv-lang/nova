@@ -395,7 +395,7 @@ pub enum GcKind {
 
 4. README.md: обновить секцию "Building" — упомянуть что default GC = Boehm.
 
-5. `docs/project-creation.txt` и `docs/simplifications.md` — обновить.
+5. `docs/project-creation.txt` и `docs/dev/simplifications.md` — обновить.
 
 **Acceptance Ф.4:**
 - `nova test` (без `--gc`) — все тесты PASS на Boehm, включая `deep_gc.nv`.
@@ -564,7 +564,7 @@ SKIP-ALLOC     gc/some_boehm_only_test  # requires boehm, running with malloc
 - `spec/decisions/09-tooling.md` D89 — добавить пункты 6 и 7:
   - D89.6: `ALLOC_REQUIRES <backend>` — run only on specified GC backend.
   - D89.7: `ALLOC_EXCLUDES <backend>` — skip on specified backend.
-- `docs/test-conventions.md` — примеры маркеров.
+- `docs/dev/test-conventions.md` — примеры маркеров.
 
 **Acceptance Ф.6:**
 - `nova test --gc malloc` — boehm-only тесты: `SKIP-ALLOC`.
@@ -820,7 +820,7 @@ Wire в `nova-cli/src/main.rs` после реализации в test_runner:
 | `nova_tests/gc/stress_100k_ints.nv` | Ф.2: pure int loop — no alloc regression |
 | `compiler-codegen/src/test_runner.rs` | Ф.6: AllocConstraint, parse_alloc_constraint, Outcome::Skipped, SkipReason |
 | `spec/decisions/09-tooling.md` | Ф.6: D89.6 + D89.7 |
-| `docs/test-conventions.md` | Ф.6: ALLOC_REQUIRES примеры |
+| `docs/dev/test-conventions.md` | Ф.6: ALLOC_REQUIRES примеры |
 | `spec/overview.md` | Ф.3: GC pause числа (measured, не placeholder) |
 | `compiler-codegen/Cargo.toml` | Б.1: добавить sha2 dep |
 

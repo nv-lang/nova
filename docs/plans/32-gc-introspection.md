@@ -133,7 +133,7 @@ external declarations. Получится автоматически из regist
 ### Ф.5 — Docs
 
 - `docs/project-creation.txt` — запись об API.
-- `docs/simplifications.md` — отметить что `heap_size==0` под malloc это
+- `docs/dev/simplifications.md` — отметить что `heap_size==0` под malloc это
   intentional sentinel.
 - `spec/decisions/08-runtime.md` D26 prelude — добавить упоминание
   `std.runtime.gc` namespace.

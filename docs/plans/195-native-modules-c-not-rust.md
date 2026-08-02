@@ -7,7 +7,7 @@
 (уже эталонная инстанция паттерна). Общий native-модуль-паттерн (.nv+.c+.lib) — в доках.
 **Зависит:** [03.1](03.1-path-git-dependencies.md) (резолвер внешних зависимостей — путь A) для внешне-репового этапа.
 **Общий native-модуль-паттерн** (.nv+.c+.lib, `[ffi]`, `nova-<пакет>`-нейминг D78) —
-живёт в доках: [ffi-cookbook](../ffi-cookbook.md) · [module-conventions](../module-conventions.md) ·
+живёт в доках: [ffi-cookbook](../guide/ffi-cookbook.md) · [module-conventions](../dev/module-conventions.md) ·
 [authoring-a-module](../guide/authoring-a-module.md). Этот план теперь фокусируется на
 **`src/`-раскладке std-миграции** (остаток; паттерн доказан mbedTLS-волной T40).
 

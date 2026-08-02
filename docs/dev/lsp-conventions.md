@@ -8,7 +8,7 @@ goto, rename, …) поверх базовых конвенций компиля
 
 - Базовые принципы компилятора → [`compiler-conventions.md`](compiler-conventions.md) (**обязательны и здесь**).
 - Язык Nova → [`nv-coding-style.md`](nv-coding-style.md). Дизайн-решения → [`project-philosophy.md`](project-philosophy.md).
-- План LSP V2 → [`plans/104.10-lsp-v2-production.md`](plans/104.10-lsp-v2-production.md).
+- План LSP V2 → [`plans/104.10-lsp-v2-production.md`](../plans/104.10-lsp-v2-production.md).
 
 ---
 

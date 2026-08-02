@@ -70,7 +70,7 @@
 >      Ф.N): <summary>`. Несколько задач в одной фазе → несколько коммитов.
 >   3. **Update logs после каждой большой задачи:**
 >      - `docs/project-creation.txt` — sprint section (per feedback-update-logs)
->      - `docs/simplifications.md` — закрытые/открытые `[M-114-*]` маркеры
+>      - `docs/dev/simplifications.md` — закрытые/открытые `[M-114-*]` маркеры
 >      - `d:\Sources\nv-lang\nova-private\discussion-log.md` — design decisions, лессоны
 >   4. **Tests через release nova & компилятор:** все T1-T10 series тесты
 >      запускать через `cargo build --release -p nova-cli` + `target/release/nova test`
@@ -977,7 +977,7 @@ errors достаточны.
 - **Ф.8.4** Full `nova test` ≥ baseline 1559/74 (текущий после Plan 113).
 - **Ф.8.5** Cross-platform CI: Windows + Linux × clang + MSVC.
 - **Ф.8.6** `docs/project-creation.txt` — sprint section для Plan 114.
-- **Ф.8.7** `docs/simplifications.md` — close `[M-114-*]` (если открытых нет —
+- **Ф.8.7** `docs/dev/simplifications.md` — close `[M-114-*]` (если открытых нет —
   единственный entry «explicitly deferred» если что-то выпало).
 - **Ф.8.8** Memory `project-plan114-status.md`.
 - **Ф.8.9** Final merge в `main`.

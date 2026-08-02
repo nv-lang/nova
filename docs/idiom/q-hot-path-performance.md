@@ -217,4 +217,4 @@ overhead unconditionally.
 - [D194 Cleanup[never] + hot-path](../../spec/decisions/03-syntax.md#d194).
 - [Plan 110.1.7 hot-path elision codegen](../plans/decomposition.md).
 - [Q-perf-considerations](q-perf-considerations.md).
-- [cleanup-cookbook.md §7 Performance](../cleanup-cookbook.md).
+- [cleanup-cookbook.md §7 Performance](../guide/cleanup-cookbook.md).

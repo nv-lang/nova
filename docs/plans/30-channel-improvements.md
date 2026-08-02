@@ -140,7 +140,7 @@ ro tx2 = tx.clone()   // новый ChanWriter на тот же буфер
 
 ### Ф.3: Spec uplift + retro
 - [x] D91 Bootstrap-status: пометить Improvement 1+2 ✅
-- [x] docs/project-creation.txt + docs/simplifications.md retro
+- [x] docs/project-creation.txt + docs/dev/simplifications.md retro
 - [x] commit
 
 ---

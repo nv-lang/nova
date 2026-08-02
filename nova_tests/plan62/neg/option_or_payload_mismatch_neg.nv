@@ -8,7 +8,7 @@
 // одинаковый `T` у receiver'а и аргумента.
 //
 // Bootstrap type-checker не ловит это на Nova-уровне (best-effort
-// inference — см. [C2] в docs/simplifications.md), но C-backstop
+// inference — см. [C2] в docs/dev/simplifications.md), но C-backstop
 // отвергает: per-T trampoline `Nova_Option_method_or_nova_int`
 // принимает `NovaOpt_nova_int`, а переданный `NovaOpt_nova_str` —
 // несовместимый тип → clang «incompatible type». Тест фиксирует, что

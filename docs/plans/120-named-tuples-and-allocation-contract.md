@@ -48,7 +48,7 @@
 > 6. **Update logs после каждой большой задачи** (отдельные commits):
 >    - `docs/project-creation.txt` — sprint section про Plan 120 progress
 >      (формат — см. tail файла, последние sprint sections как pattern)
->    - `docs/simplifications.md` — open/close `[M-120-*]` markers
+>    - `docs/dev/simplifications.md` — open/close `[M-120-*]` markers
 >    - `d:/Sources/nv-lang/nova-private/discussion-log.md` (**отдельный repo!**)
 >      — design decisions / lessons learned (Session header с date,
 >      cd префикс в отдельный repo для git ops)
@@ -82,7 +82,7 @@
 >     - Q-block (если applicable — список deferred questions с justification)
 >
 > 13. **Doc updates обязательны:**
->     - `docs/value-vs-reference.md` (или интегрировать в существующий
+>     - `docs/guide/value-vs-reference.md` (или интегрировать в существующий
 >       primer) — explicit stack/heap allocation guide с examples
 >     - `nova doc` regen для named tuple syntax (если auto-generated)
 >     - Update existing tuple examples где named form clarifies intent
@@ -443,7 +443,7 @@ type. Positional tuple `(int, int)` has no IDENT prefix.
 - **Ф.5.3** Update `docs/types-guide.md` (если есть, create если нет) с
   value/reference type guide.
 - **Ф.5.4** `docs/project-creation.txt` — sprint section.
-- **Ф.5.5** `docs/simplifications.md` — close `[M-120-*]`.
+- **Ф.5.5** `docs/dev/simplifications.md` — close `[M-120-*]`.
 - **Ф.5.6** `nova-private/discussion-log.md` — design decisions.
 - **Ф.5.7** Memory `project-plan120-status.md`.
 - **Ф.5.8** Status closure summary.
@@ -737,7 +737,7 @@ differentiates: named tuple symbol includes field names.
 | A9 | D-blocks amended; D215 NEW active | ✅ |
 | A10 | Plan 59 Ф.7.4 rejection withdrawn | ✅ |
 | A11 | Full nova test ≥ baseline | ✅ 8/8 PASS in main |
-| A12 | docs/value-vs-reference.md explicit stack/heap | ✅ |
+| A12 | docs/guide/value-vs-reference.md explicit stack/heap | ✅ |
 
 ### Stdlib migrations
 

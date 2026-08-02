@@ -1,10 +1,10 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Lazy iterators over `Vec[T]` / `[]T`
 
-> **Audience:** Nova users. **Spec:** [D260](../spec/decisions/02-types.md#d260-ленивый-итератор-vect--boxed-fluent-адаптеры-plan-1532)
-> (lazy iterator model), [D277](../spec/decisions/02-types.md#d277-by-value-мономорфизация-generic-value-records--generic-over-source-zero-cost-адаптеры-plan-1532-ф2)
-> (by-value `BoxIter` + zero-cost `vec_iter_zc`), [D239](../spec/decisions/02-types.md#d239-t--синтаксический-псевдоним-vect)
-> (`[]T ≡ Vec[T]`). **Internals:** [`vec-internals.md`](vec-internals.md). Plan 153.2.
+> **Audience:** Nova users. **Spec:** [D260](../../spec/decisions/02-types.md#d260-ленивый-итератор-vect--boxed-fluent-адаптеры-plan-1532)
+> (lazy iterator model), [D277](../../spec/decisions/02-types.md#d277-by-value-мономорфизация-generic-value-records--generic-over-source-zero-cost-адаптеры-plan-1532-ф2)
+> (by-value `BoxIter` + zero-cost `vec_iter_zc`), [D239](../../spec/decisions/02-types.md#d239-t--синтаксический-псевдоним-vect)
+> (`[]T ≡ Vec[T]`). **Internals:** [`vec-internals.md`](../dev/vec-internals.md). Plan 153.2.
 
 A lazy iterator processes a vector **one element at a time, on demand**, with **no
 intermediate allocations**. Building a pipeline does no work; only a *terminator*
@@ -28,7 +28,7 @@ import std.collections.vec_lazy
 
 (It is *not* in the prelude: lazy adapters take closures, and a prelude-global
 closure-carrying method would leak its generics/params into every unit — see
-[`vec-internals.md`](vec-internals.md). The eager `collections.vec_seq`
+[`vec-internals.md`](../dev/vec-internals.md). The eager `collections.vec_seq`
 combinators are confined the same way.)
 
 Every pipeline starts with `v.lazy()`, which turns a `Vec[T]` (or any `[]T`, since
@@ -49,7 +49,7 @@ v.lazy()  →  BoxIter[T]   →  .map(..) .filter(..) ...   →  terminator
 | Result | a `Vec` after each adapter | a value/`Vec` only at the terminator |
 
 Lazy is the **canonical, allocation-free** path
-([Q-iterator-laziness](../spec/open-questions.md)). The eager `vec_seq`
+([Q-iterator-laziness](../../spec/open-questions.md)). The eager `vec_seq`
 combinators are retained as a transitional surface; reach for `lazy()` when you
 chain more than one step or want short-circuiting.
 
@@ -258,7 +258,7 @@ The adapter-on-adapter methods write their return type with **`Self`** as a
 receiver-type in the re-nesting position; semantics are identical to spelling the
 receiver type in full. Compiler support for `Self` as a nested generic type-arg
 (return **and** param) on a value-generic mono landed 2026-06-15 — see
-[D66 → AMEND «Self как вложенный generic type-arg»](../spec/decisions/02-types.md#d66-self-universal--ссылка-на-обобщающий-тип-в-методах-effects-protocols).
+[D66 → AMEND «Self как вложенный generic type-arg»](../../spec/decisions/02-types.md#d66-self-universal--ссылка-на-обобщающий-тип-в-методах-effects-protocols).
 (Chain-ENTRY `VecIter[T] @zmap -> MapIter[Self,T,U]` is **not** yet covered — the
 single-param `VecIter[T]` source stays explicit; `[M-138.2-self-in-param]`.)
 
@@ -314,12 +314,12 @@ for batch in batches {
 
 ## See also
 
-- [`vec-internals.md`](vec-internals.md) — module layout, the boxed-fluent shape,
+- [`vec-internals.md`](../dev/vec-internals.md) — module layout, the boxed-fluent shape,
   the zero-cost generic-over-source sibling, Compare/Equal.
-- [D260](../spec/decisions/02-types.md#d260-ленивый-итератор-vect--boxed-fluent-адаптеры-plan-1532) — boxed-fluent decision record.
-- [D264](../spec/decisions/02-types.md#d264-vec-протоколы-hash--fromiterator--collect-target-plan-1536) — Hash + FromIterator / collect-target.
-- [D277](../spec/decisions/02-types.md#d277-by-value-мономорфизация-generic-value-records--generic-over-source-zero-cost-адаптеры-plan-1532-ф2) — by-value `BoxIter` monomorphization + the zero-cost `vec_iter_zc` sibling.
+- [D260](../../spec/decisions/02-types.md#d260-ленивый-итератор-vect--boxed-fluent-адаптеры-plan-1532) — boxed-fluent decision record.
+- [D264](../../spec/decisions/02-types.md#d264-vec-протоколы-hash--fromiterator--collect-target-plan-1536) — Hash + FromIterator / collect-target.
+- [D277](../../spec/decisions/02-types.md#d277-by-value-мономорфизация-generic-value-records--generic-over-source-zero-cost-адаптеры-plan-1532-ф2) — by-value `BoxIter` monomorphization + the zero-cost `vec_iter_zc` sibling.
 - [D58]: ../spec/decisions/03-syntax.md — `Iter`/`Next` structural iteration.
-- [Q-iterator-laziness](../spec/open-questions.md) — why lazy is the canon.
+- [Q-iterator-laziness](../../spec/open-questions.md) — why lazy is the canon.
 
 [D58]: ../spec/decisions/03-syntax.md

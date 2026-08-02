@@ -58,7 +58,7 @@ dev-инструмент `nova-codegen run`/`test-interp` НЕ застабле�
 
 ## 5. Остаток
 [Q-interpreter-future](../../spec/open-questions.md): полная вырезка vs сохранение `interp/`;
-застабить ли внутренний `nova-codegen run`/`test-interp`; нестыковка `docs/nova-codegen.md`
+застабить ли внутренний `nova-codegen run`/`test-interp`; нестыковка `docs/dev/nova-codegen.md`
 (сайт уже помечен unsupported). Маркер `[M-interp-unsupported]` в backlog.
 
 ### 5.1. Residual закрыт (2026-06-14) — Q-interpreter-future ✅ RESOLVED
@@ -67,7 +67,7 @@ user-facing `nova run`:
 - **`nova-codegen run` / `test-interp` застаблены** (`0d7116f4`): handlers больше не
   конструируют `interp::Interpreter`, а громко ошибаются (exit ≠ 0) с указанием на C-codegen;
   clap doc-строки помечены `[UNSUPPORTED]`. `compile`/`check`/`test-build`/прочее работают.
-- **`docs/nova-codegen.md`/`.ru.md`** выверены (тот же `0d7116f4`): `run`/`test-interp`
+- **`docs/dev/nova-codegen.md`/`.ru.md`** выверены (тот же `0d7116f4`): `run`/`test-interp`
   помечены `[UNSUPPORTED]`, `interp/` описан как «kept for reference, не подключён».
 - **Регресс-тест** `compiler-codegen/tests/interp_tool_unsupported.rs` (`a4e26525`): negative
   (`run` + `test-interp` ошибаются) + positive (`compile` работает) — 3/3 PASS через релизный

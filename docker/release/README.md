@@ -8,7 +8,7 @@
 Отличается от старого `docker/` (Plan 40, 2026-05-12): тот каталог валидирует
 M:N-рантайм под sanitizer'ами (TSan/ASan/UBSan) для разработки самого
 компилятора; этот — тонкий образ для КОНЕЧНОГО пользователя языка,
-собранный по верифицированному рецепту `docs/linux-build.md` /
+собранный по верифицированному рецепту `docs/guide/linux-build.md` /
 `.github/workflows/nova-gate.yml` (Ubuntu 22.04, clang + cmake + make +
 libgc-dev + build-essential, rustup 1.85 только в build-стадии).
 

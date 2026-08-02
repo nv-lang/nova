@@ -81,5 +81,5 @@ followup `[M-treesitter-grammar-keyword-bump]`.
   через тот же nova-lsp binary.
 - **nvim-lspconfig upstream PR** — `editors/neovim/UPSTREAM_PR_DRAFT.md` готов.
 - **Marketplace публикация** — VSCode marketplace и Zed marketplace deferred
-  (упоминаются в `docs/simplifications.md`).
+  (упоминаются в `docs/dev/simplifications.md`).
 - **Tree-sitter для Neovim / Emacs** — через tree-sitter-nova (Plan 104.7 ✅).

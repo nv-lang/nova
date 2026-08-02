@@ -10,7 +10,7 @@
 > or debugging stochastic SEGV/hang/deadlock in the M:N runtime.
 >
 > Source material:
-> - [`docs/plans/83.11-centralized-io-driver.md`](plans/83.11-centralized-io-driver.md) §§10.4, 12.16, 12.24, 12.27-29, 12.31
+> - [`docs/plans/83.11-centralized-io-driver.md`](../plans/83.11-centralized-io-driver.md) §§10.4, 12.16, 12.24, 12.27-29, 12.31
 > - [`nova-private/docs/articles/mn-race-stale-slot.md`](../../../nova-private/docs/articles/mn-race-stale-slot.md) — full case study (both parts)
 > - Memory `reference-mn-race-case-study.md` — distilled template
 >
@@ -205,7 +205,7 @@ Once root cause is identified:
 
 5. **Update logs** (3 files):
    - `docs/project-creation.txt` — formal closure entry
-   - `docs/simplifications.md` — closure if relevant
+   - `docs/dev/simplifications.md` — closure if relevant
    - `nova-private/discussion-log.md` — narrative entry
 
 6. **Update memory** (`project-<plan>-status.md`) for next session.
@@ -361,7 +361,7 @@ native APIs.
 
 ### 3.1 In-process VEH + dbghelp crash localizer
 
-**File:** [`compiler-codegen/nova_rt/segv_diag.c`](../compiler-codegen/nova_rt/segv_diag.c) (~165 LOC)
+**File:** [`compiler-codegen/nova_rt/segv_diag.c`](../../compiler-codegen/nova_rt/segv_diag.c) (~165 LOC)
 
 **Replaces:** cdb / WinDbg / external symbolizer. Windows-only.
 
@@ -783,7 +783,7 @@ pointing at alloc_slot bug.
 **Full article:** [`nova-private/docs/articles/mn-race-stale-slot.md`](../../../nova-private/docs/articles/mn-race-stale-slot.md)
 Часть I (~666 lines).
 
-**Plan doc:** [`docs/plans/83.11-centralized-io-driver.md`](plans/83.11-centralized-io-driver.md) §10 (post-mortem).
+**Plan doc:** [`docs/plans/83.11-centralized-io-driver.md`](../plans/83.11-centralized-io-driver.md) §10 (post-mortem).
 
 ### 6.2 Plan 83.11 §12.31 — use-after-free stack scope (10h prior + 30min fix, 2026-06-01)
 
@@ -797,9 +797,9 @@ before returning from `supervised_run_impl`.
 **Full article:** [`nova-private/docs/articles/mn-race-stale-slot.md`](../../../nova-private/docs/articles/mn-race-stale-slot.md)
 Часть II (~605 lines).
 
-**Plan doc:** [`docs/plans/83.11-centralized-io-driver.md`](plans/83.11-centralized-io-driver.md) §12.31.
+**Plan doc:** [`docs/plans/83.11-centralized-io-driver.md`](../plans/83.11-centralized-io-driver.md) §12.31.
 
-**Spec canonical pattern:** [`spec/decisions/06-concurrency.md`](../spec/decisions/06-concurrency.md) D228 §6.
+**Spec canonical pattern:** [`spec/decisions/06-concurrency.md`](../../spec/decisions/06-concurrency.md) D228 §6.
 
 ### 6.3 Plan 83.11 §11.6 — GC structural aliasing (10min fix, was 4-day-old design, 2026-06-01)
 
@@ -810,7 +810,7 @@ remains GC-reachable through scope's stack frame.
 **Diagnostic:** pre-designed in §11.4 Option A four days before
 implementation. Simply applied.
 
-**Spec canonical pattern:** [`spec/decisions/06-concurrency.md`](../spec/decisions/06-concurrency.md) D228 §7.
+**Spec canonical pattern:** [`spec/decisions/06-concurrency.md`](../../spec/decisions/06-concurrency.md) D228 §7.
 
 **Lesson reinforced:** when fix is documented in plan doc, **try it
 first** before iterating new hypotheses.
@@ -872,14 +872,14 @@ doc closure → playbook update → logs entries.
 
 ## §9. Related documents
 
-- **Plan 83.11 plan-doc:** [docs/plans/83.11-centralized-io-driver.md](plans/83.11-centralized-io-driver.md)
+- **Plan 83.11 plan-doc:** [docs/plans/83.11-centralized-io-driver.md](../plans/83.11-centralized-io-driver.md)
 - **Cancellation case-study article:** [nova-private/docs/articles/mn-race-stale-slot.md](../../../nova-private/docs/articles/mn-race-stale-slot.md)
-- **Spec D228 (canonical patterns):** [spec/decisions/06-concurrency.md](../spec/decisions/06-concurrency.md) §D228
+- **Spec D228 (canonical patterns):** [spec/decisions/06-concurrency.md](../../spec/decisions/06-concurrency.md) §D228
 - **Tools:**
-  - [scripts/tools/stress_bisect.sh](../scripts/tools/stress_bisect.sh) — stress + bisect harness
-  - [scripts/tools/cdb_session.sh](../scripts/tools/cdb_session.sh) — optional cdb wrapper
-  - [compiler-codegen/nova_rt/segv_diag.c](../compiler-codegen/nova_rt/segv_diag.c) — VEH crash localizer
-  - `nova_runtime_dump_state` in [compiler-codegen/nova_rt/runtime.c](../compiler-codegen/nova_rt/runtime.c) — state-dump
+  - [scripts/tools/stress_bisect.sh](../../scripts/tools/stress_bisect.sh) — stress + bisect harness
+  - [scripts/tools/cdb_session.sh](../../scripts/tools/cdb_session.sh) — optional cdb wrapper
+  - [compiler-codegen/nova_rt/segv_diag.c](../../compiler-codegen/nova_rt/segv_diag.c) — VEH crash localizer
+  - `nova_runtime_dump_state` in [compiler-codegen/nova_rt/runtime.c](../../compiler-codegen/nova_rt/runtime.c) — state-dump
 
 ### 6.4 Plan 139.2 — block-expr value-type mis-inference (deterministic SEGV, ~15 min, 2026-06-12)
 

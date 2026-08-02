@@ -8,10 +8,10 @@
 > **влит** (Plan 118/138.5/174.x; секции ниже — уже не «preview»).
 >
 > **Как сделать МОДУЛЬ** (layout пакета, `nova.toml`, стабильность, тесты) —
-> общий гайд [authoring-a-module](guide/authoring-a-module.md) (native-backed —
+> общий гайд [authoring-a-module](authoring-a-module.md) (native-backed —
 > его §7). Дизайн-конвенции модуля (эффект-плумбинг, типы, ошибки) —
-> [module-conventions](module-conventions.md). Именование внешних пакетов
-> (`nova-<пакет>`) — [D78-амендмент Plan 195](../spec/decisions/07-modules.md#именование-внешних-пакетов-репозиториев-амендмент-plan-192-2026-07-10).
+> [module-conventions](../dev/module-conventions.md). Именование внешних пакетов
+> (`nova-<пакет>`) — [D78-амендмент Plan 195](../../spec/decisions/07-modules.md#именование-внешних-пакетов-репозиториев-амендмент-plan-192-2026-07-10).
 >
 > ⚠️ **Plan 134 (2026-06-09): `ptr` built-in type removed.** Use `*()` (pointer
 > to unit type = `void*` in C) everywhere `ptr` appeared. Compiler emits
@@ -25,12 +25,12 @@ introduced in Plan 115.
 
 | Need | Tool | Spec |
 |---|---|---|
-| Opaque pointer | `*()` (pointer to unit = `void*`) | [D214](../spec/decisions/02-types.md#d214) / [Plan 134](plans/134-remove-ptr-type.md) |
+| Opaque pointer | `*()` (pointer to unit = `void*`) | [D214](../../spec/decisions/02-types.md#d214) / [Plan 134](../plans/134-remove-ptr-type.md) |
 | NULL literal | `0 as *()` | D214 amend Plan 134 |
 | Typed handle | `type X { ro value *() }` record | D214 §3 |
 | Multi-value return | `(T1, T2)` tuple-by-value | D214 §2 |
-| External fn declaration | `external fn name(args) -> ret` | [D82](../spec/decisions/03-syntax.md#d82) |
-| Resource cleanup | `consume close()` method + `defer` | [D90 / D131](../spec/decisions/03-syntax.md#d90) |
+| External fn declaration | `external fn name(args) -> ret` | [D82](../../spec/decisions/03-syntax.md#d82) |
+| Resource cleanup | `consume close()` method + `defer` | [D90 / D131](../../spec/decisions/03-syntax.md#d90) |
 
 ## Pointer modifier rules (FINAL — Plan 138.5)
 
@@ -46,7 +46,7 @@ introduced in Plan 115.
 - `*mut *ro Acc` — postfix chain (writable-target ptr к read-only-target ptr к Acc)
 - `mut p *mut T` — binding mut (p re-pointable) + pointee mut; `let q *ro T` — fixed binding + ro pointee
 
-Полные правила (arrow→box model, value-T composition §V3.1/§V3.2) — см. [`docs/typed-pointers.md`](typed-pointers.md). Spec — [D216 §1 FINAL](../spec/decisions/02-types.md#d216-typed-pointer-family--unsafe-model--null-safety-через-npo) + [Plan 138.5](plans/138.5-d216-v2-v3-simplification.md).
+Полные правила (arrow→box model, value-T composition §V3.1/§V3.2) — см. [`docs/guide/typed-pointers.md`](typed-pointers.md). Spec — [D216 §1 FINAL](../../spec/decisions/02-types.md#d216-typed-pointer-family--unsafe-model--null-safety-через-npo) + [Plan 138.5](../plans/138.5-d216-v2-v3-simplification.md).
 
 ## Layered FFI pattern
 
@@ -362,8 +362,8 @@ guard ensures single definition).
 ## Typed pointers + unsafe model (Plan 118 — влито)
 
 > **Status:** влито (Plan 118 → 138.5 FINAL D216; unsafe fn keyword — 118.1.7;
-> C-ABI checker — 174.6). Reference doc: [`docs/typed-pointers.md`](typed-pointers.md).
-> Plan: [`docs/plans/118-typed-pointers-and-unsafe.md`](plans/118-typed-pointers-and-unsafe.md).
+> C-ABI checker — 174.6). Reference doc: [`docs/guide/typed-pointers.md`](typed-pointers.md).
+> Plan: [`docs/plans/118-typed-pointers-and-unsafe.md`](../plans/118-typed-pointers-and-unsafe.md).
 > Ниже — эволюция FFI-паттернов от opaque `*()` к typed `*T`; оба варианта
 > компилируются сегодня (opaque — legacy-совместимый, typed — предпочтительный).
 
@@ -407,8 +407,8 @@ unsafe {
 - Record handle wrappers `type X { ro value *() }` → tuple
   newtype `type X(*)()` или `type X(*T)` для zero-overhead ABI
 
-See [`docs/typed-pointers.md`](typed-pointers.md) для полной reference
-documentation и [`examples/typed_pointers/`](../examples/typed_pointers/)
+See [`docs/guide/typed-pointers.md`](typed-pointers.md) для полной reference
+documentation и [`examples/typed_pointers/`](../../examples/typed_pointers/)
 для minimal working samples.
 
 ## Plan 118.1 — FFI intrinsics (foundation)
@@ -561,7 +561,7 @@ unsafe { fn_ptr(some_ptr) }
 > **Status:** Plan 174.6 M1/M2 (2026-07-04). The checker validates every
 > `extern "C" fn` signature (params **and** return) against a recursive C-ABI
 > type-list; non-C-ABI types → `E_FFI_NON_C_ABI_TYPE`. Spec:
-> [D282 rule 2](../spec/decisions/08-runtime.md#d282) + [D353](../spec/decisions/08-runtime.md#d353).
+> [D282 rule 2](../../spec/decisions/08-runtime.md#d282) + [D353](../../spec/decisions/08-runtime.md#d353).
 
 ### What may cross an `extern "C" fn` boundary
 
@@ -677,7 +677,7 @@ rule (D294): the pointer is valid only while the `str` is live.
 Всё выше — как *написать* границу `.nv` ↔ native. Этот раздел — как *подключить*
 native-артефакты к сборке, чтобы `import` модуля тянул их **автоматически**, без
 правок компилятора. Декларация — в `nova.toml` пакета. Полное «как сделать
-модуль» — [authoring-a-module §7](guide/authoring-a-module.md#7-native-backed-модуль-частный-случай).
+модуль» — [authoring-a-module §7](authoring-a-module.md#7-native-backed-модуль-частный-случай).
 
 ### `[ffi]` — готовые `.c`-шимы и системные `.lib` (Plan 115 D214)
 

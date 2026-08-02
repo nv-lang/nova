@@ -6,7 +6,7 @@
 # Disable again:
 #   git config --unset core.hooksPath
 #
-# See docs/nv-coding-style.md / docs/compiler-conventions.md for the W_*
+# See docs/dev/nv-coding-style.md / docs/dev/compiler-conventions.md for the W_*
 # conventional-rule registry this runs (compiler-codegen/src/lints.rs).
 #
 # Bypass for a single commit (e.g. WIP / known pre-existing finding you are
@@ -48,7 +48,7 @@ if ! "$nova_bin" lint $staged_nv; then
     echo "pre-commit (nova lint): findings above on staged .nv file(s) (W_* conventional rules,"
     echo "  compiler-codegen/src/lints.rs::CONV_RULES). Fix them, or if this is a known/accepted"
     echo "  case, suppress with an inline [M-...]-marker comment on the flagged line (see"
-    echo "  docs/compiler-conventions.md §4 for the marker convention)."
+    echo "  docs/dev/compiler-conventions.md §4 for the marker convention)."
     echo "  To commit anyway: git commit --no-verify"
     exit 1
 fi

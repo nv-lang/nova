@@ -1,4 +1,4 @@
-_(grounded in: `spec/decisions/04-effects.md` D85 §«Почему `!!`, не `!`» [L4681-4698], §«Что отвергнуто» [L4739-4748], D86 coalesce; `docs/nv-coding-style.md` §20.3; синтез семи языковых разборов + self-consistency + adversarial)_
+_(grounded in: `spec/decisions/04-effects.md` D85 §«Почему `!!`, не `!`» [L4681-4698], §«Что отвергнуто» [L4739-4748], D86 coalesce; `docs/dev/nv-coding-style.md` §20.3; синтез семи языковых разборов + self-consistency + adversarial)_
 
 # Вердикт (коротко)
 

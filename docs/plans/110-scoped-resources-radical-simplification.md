@@ -83,7 +83,7 @@
 >      несколько commit'ов.
 >   3. **Update logs после каждой большой задачи:**
 >      - `docs/project-creation.txt` — sprint section
->      - `docs/simplifications.md` — закрытые/открытые `[M-110-*]` маркеры
+>      - `docs/dev/simplifications.md` — закрытые/открытые `[M-110-*]` маркеры
 >      - `d:\Sources\nv-lang\nova-private\discussion-log.md` — design decisions
 >   4. **Tests через release nova & компилятор:** все test series запускать
 >      через `cargo build --release -p nova-cli` + `target/release/nova test`
@@ -944,11 +944,11 @@ Cancel/interrupt в body приходит как `Failure(CancelError)` в outco
 - **Ф.14.1** Spec finalize: D188–D198 + amends/retracts.
 - **Ф.14.2** Q-blocks (см. §«Q-blocks») — 10 шт.
 - **Ф.14.3** `docs/project-creation.txt` — sprint section.
-- **Ф.14.4** `docs/simplifications.md` — close [M-100.4.*]; record 4 формы → 1.
+- **Ф.14.4** `docs/dev/simplifications.md` — close [M-100.4.*]; record 4 формы → 1.
 - **Ф.14.5** `d:\Sources\nv-lang\nova-private\discussion-log.md` — design rationale.
 - **Ф.14.6** Memory `project-plan110-status.md`.
 - **Ф.14.7** Tutorial section (`docs/tutorial.md` cleanup chapter если экзистент).
-- **Ф.14.8** **`docs/cleanup-cookbook.md` (NEW)** — production-recipe book:
+- **Ф.14.8** **`docs/guide/cleanup-cookbook.md` (NEW)** — production-recipe book:
   - Migration patterns (Rust Drop → consume; Go defer → consume; Java try-with-resources → consume)
   - FFI wrappers (SQLite, libcurl, OpenSSL examples)
   - Common patterns: connection pools, file handles, transactions, locks
@@ -1191,7 +1191,7 @@ Cancel/interrupt в body приходит как `Failure(CancelError)` в outco
 | A22 | Spec amends: D158/D161/D162/D90 §7; retracts: D160 | review checklist (D184/D185/D186/D187 references obsolete — never landed; см. Historical note в Header + body) |
 | A23 | Q-blocks (11 шт) written | files exist |
 | A24 | `docs/project-creation.txt` updated | sprint section |
-| A25 | `docs/simplifications.md` updated | M-markers reclassified |
+| A25 | `docs/dev/simplifications.md` updated | M-markers reclassified |
 | A26 | `discussion-log.md` (nova-private) updated | design rationale |
 | A27 | Memory `project-plan110-status.md` created | MEMORY.md updated |
 | A28 | `nova consume-analyze` CLI tool updated | Plan 100.8 cross-ref |
@@ -1203,7 +1203,7 @@ Cancel/interrupt в body приходит как `Failure(CancelError)` в outco
 | A34 | Realtime + Application interaction (D198): timeout enforced zero | T3.11 |
 | A35 | Typed error dispatch через `if err is T` (D85 auto-narrowing) — без отдельного helper'а | T2.11 |
 | A36 | OpenTelemetry wire format для Cleanup effect | T7.4, T7.5 |
-| A37 | `docs/cleanup-cookbook.md` написан (migration patterns, FFI wrappers, common recipes) | file exists |
+| A37 | `docs/guide/cleanup-cookbook.md` написан (migration patterns, FFI wrappers, common recipes) | file exists |
 | A38 | Nested Application semantics (D195): isolation, cross-fiber propagation | T8.6, T8.7, T8.8 |
 
 ---
@@ -1471,7 +1471,7 @@ Single-session sequential implementation не реалистична (plan-own e
 
 #### ✅ Plan 110.8 Ф.14.8 — cleanup-cookbook.md (commit `<see next>`)
 
-- `docs/cleanup-cookbook.md` (556 LOC) — production recipe book:
+- `docs/guide/cleanup-cookbook.md` (556 LOC) — production recipe book:
   - Migration patterns Rust/Go/Java/TS/Kotlin (5 переходов).
   - Resource patterns: Transaction / File / Mutex hot-path / TCP /
     Connection pool / StringBuilder builder.

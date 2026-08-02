@@ -144,6 +144,6 @@ mut (a, b) = pair             // ✗ E_PATTERN_GROUP_MUT
 ## Ссылки
 
 - `spec/decisions/02-types.md` D36 (amended Plan 108.2 + 108.3).
-- `docs/parameters.md` — обновлено: локалы тоже default readonly.
+- `docs/guide/parameters.md` — обновлено: локалы тоже default readonly.
 - `docs/plans/108.2-locals-readonly-default.md` — plan status.
 - Plan 108.1 — symmetric для params.

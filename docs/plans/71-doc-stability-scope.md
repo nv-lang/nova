@@ -300,7 +300,7 @@ opt-in `error` (для production library crates).
 
 - [D105 doc-атрибуты](../../spec/decisions/09-tooling.md#d105-doc-атрибуты)
 - [D127 stability-tier scope](../../spec/decisions/09-tooling.md#d127-stability-tier-enforcement-scope)
-- [Plan 45 nova doc](../plans/45-nova-doc.md)
+- [Plan 45 nova doc](45-nova-doc.md)
 ```
 
 **Acceptance:**

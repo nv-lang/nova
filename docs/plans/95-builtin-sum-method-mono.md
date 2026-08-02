@@ -325,7 +325,7 @@ Mono-имя выбрано как форма существующего трам
   (`Option`/`Result`) участвует в method-mono через канал `DeclaredBody`;
   представление остаётся `NovaOpt_<T>`/`NovaRes_<…>`». Уточнить
   существующий D-блок про `method_routing` (Plan 62.A.bis / Plan 78).
-- **Ф.7.2** `docs/simplifications.md` — закрыть маркер
+- **Ф.7.2** `docs/dev/simplifications.md` — закрыть маркер
   `[M-option-methods-not-mono-able]` (инфра-разрыв устранён).
 - **Ф.7.3** Plan 78 — аменд: `is_some`/`is_none`/`is_ok`/`is_err`
   выведены из C-реестра в Nova-тело (узкий пересмотр, не отмена реестра).

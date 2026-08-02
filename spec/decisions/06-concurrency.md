@@ -2181,7 +2181,7 @@ TLS-globals **без** per-fiber изоляции — handler одного fiber
 > **Plan 59.1 amend (2026-06-01):** signature `fn Channel[T].new(cap int)
 > -> (ChanWriter[T], ChanReader[T])` теперь **буквально implementable** —
 > generic anonymous tuple monomorphization работает для произвольных
-> user fns после Plan 59.1 (см. [D354](../decisions/02-types.md#d354-generic-anonymous-tuple-monomorphization)).
+> user fns после Plan 59.1 (см. [D354](02-types.md#d354-generic-anonymous-tuple-monomorphization)).
 > Текущая реализация bootstrap-периода продолжает использовать runtime
 > struct `Nova_ChannelPair` через 3 ad-hoc codegen branches (emit_c.rs
 > 18435/20159/22694) — это implementation detail, не противоречит
@@ -4958,8 +4958,8 @@ pointers).
 замыкание `body` в `supervised{spawn{ ro r = body() }}`) оставались уязвимы — при ≥4
 worker'ах GC во время `_materialize_pool` (до создания ленивой main-арены) не видел
 main-стек → premature collect → `closure->fn = 0` → worker зовёт NULL → RIP=0
-(маскируется под «fiber stack overflow in slot 0»; диагностика — [docs/debugging-races.md
-§2.1.1](../../docs/debugging-races.md)). **Фикс (`nova_rt/fiber_arena_win.c`):** main-thread
+(маскируется под «fiber stack overflow in slot 0»; диагностика — [docs/dev/debugging-races.md
+§2.1.1](../../docs/dev/debugging-races.md)). **Фикс (`nova_rt/fiber_arena_win.c`):** main-thread
 `NT_TIB.StackBase` фиксируется ДО создания worker-пула (`nova_fiber_arena_set_main_stack`,
 зовётся из `_materialize_pool`); его **committed-only** регион (`MEM_COMMIT && !PAGE_GUARD
 && !PAGE_NOACCESS`) пушится в GC `push_other_roots`-колбэк. Обобщает решение на ВСЕ

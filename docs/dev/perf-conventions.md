@@ -79,13 +79,13 @@
 
 ## Related plans
 
-- [Plan 09](plans/09-clang-migration.md) — Clang default (10-15% perf
+- [Plan 09](../plans/09-clang-migration.md) — Clang default (10-15% perf
   vs MSVC).
-- [Plan 10](plans/10-pgo-integration.md) — PGO future (15-30% perf).
-- [Plan 27](plans/27-gc-switch.md) — Boehm GC default.
-- [Plan 32](plans/32-gc-introspection.md) — GC introspection API.
-- [Plan 44.4](plans/44.4-mn-runtime-stage0.md) — M:N runtime.
-- [Plan 56](plans/56-vtable-dispatch-erased-generics.md) — hybrid
+- [Plan 10](../plans/10-pgo-integration.md) — PGO future (15-30% perf).
+- [Plan 27](../plans/27-gc-switch.md) — Boehm GC default.
+- [Plan 32](../plans/32-gc-introspection.md) — GC introspection API.
+- [Plan 44.4](../plans/44.4-mn-runtime-stage0.md) — M:N runtime.
+- [Plan 56](../plans/56-vtable-dispatch-erased-generics.md) — hybrid
   dispatch (mono + vtable).
-- [Plan 57](plans/57-perf-benchmark-infrastructure.md) — bench infra
+- [Plan 57](../plans/57-perf-benchmark-infrastructure.md) — bench infra
   (future).

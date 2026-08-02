@@ -32,7 +32,7 @@
 > **Ф.2 (typed-effect-ops / retire int-wire) — SUPERSEDED (4-й net-zero, 2026-07-10, откачен чисто):**
 > prelude⟷std.time coupling решаем, но упёрлось в НОВЫЙ барьер (mock-handler должен конструировать opaque
 > `Monotonic`, а codegen не поддерживает anonymous record literal в handler-теле) — см. D316-amend §Ф.2-находка
-> + docs/time.md. **Рекомендация зафиксирована:** option C (int-wire + typed-сахар) = корректная итоговая
+> + docs/guide/time.md. **Рекомендация зафиксирована:** option C (int-wire + typed-сахар) = корректная итоговая
 > архитектура, не временный обход. `[M-time-now-schema-mismatch]` закрыт частично **по конструкции**.
 > **with_timeout retraction ✅ SHIPPED (2026-07-10):** `within[T]`/`with_timeout[T]` удалены из
 > `std/concurrency/cancellation.nv` (Plan 173 §3a п.4, `[M-174-retract-with-timeout]` CLOSED).
@@ -62,7 +62,7 @@
 > [175.1 civil-time](175.1-civil-time.md) (D319-D321; добавит 4-й эффект-оп `Time.local_offset()` в схему — §3-нота).
 > **Поглощает** `[M-time-now-schema-mismatch]`, `[M-monotonic-mock-support]`, `[M-monotonic-migration-deferred]`;
 > финализирует `[M-handler-duration-schema-mismatch]`, `[M-monotonic-per-os-isolated-tests]` (home всех пяти —
-> docs/simplifications.md, секция Plan 65; NB: секция там задублирована байт-в-байт ~10372 и ~23886 — дедуп
+> docs/dev/simplifications.md, секция Plan 65; NB: секция там задублирована байт-в-байт ~10372 и ~23886 — дедуп
 > отдельным коммитом при закрытии маркеров).
 > **Фоновые агенты:** см. §10 (НЕ `git stash`; temp-worktree/commit-reset; идемпотентность под rate-limit).
 > **Очередность (граф 173-176 — [README планов §Очередность](README.md), 2026-07-03):** Волна 0 = Ф.0;
@@ -126,7 +126,7 @@ wall-clock и monotonic **на уровне типов** — сильнее Go/J
 - **Compile-time wall-vs-monotonic separation (D124)** бьёт Go (один `Time` со скрытым mode-bit), TS/JS-legacy (голый
   `number`; Temporal.Instant чинит wall, но monotonic-типа в языке нет), Java (`nanoTime` — типонезависимый `long`), **Zig** (wall = голые `i64`/`i128` без типа). Наравне с
   Rust/Kotlin. **Swift здесь сильнее всех** (разделяет на уровне типов даже два monotonic-инстанта:
-  `ContinuousClock.Instant` ≠ `SuspendingClock.Instant`) — честно отразить в таблице docs/time.md.
+  `ContinuousClock.Instant` ≠ `SuspendingClock.Instant`) — честно отразить в таблице docs/guide/time.md.
 - **Единый `Time`-эффект на wall+monotonic+sleep** решает то, что Kotlin **не может** (ТРИ несвязанных clock-авторитета:
   `Clock`/`TimeSource`/`TestCoroutineScheduler`) и что у Swift разнесено по трём объектам часов. У Nova — один handler
   двигает wall И monotonic И sleep когерентно (тест §7 mock-coherence).
@@ -462,7 +462,7 @@ D318) + `checked_duration_since(other)->Option[Duration]` (None на регре�
     codegen handler-литералов не поддерживает anonymous record-literal (`codegen error: anonymous record
     literal without spread not supported in codegen`). Ни `from_*`-эскейп (подрывает opacity), ни codegen-фикс
     (реальная инженерия, не эта волна) не сделаны — заход ОТКАЧЕН чисто (без diff в дереве). D316-amend (§Ф.2)
-    + `docs/time.md` фиксируют находку и рекомендацию: **option C — корректная итоговая архитектура**, а не
+    + `docs/guide/time.md` фиксируют находку и рекомендацию: **option C — корректная итоговая архитектура**, а не
     временный обход.
   - **Ф.3(a-d) SHIPPED.** (a) `Monotonic.now()` builtin→`.nv`-сахар — все 4 emit_c.rs-сайта убраны (норматив
     подтверждён: `grep nova_monotonic_now_record` = 0), реальный недостающий кусок был C-vtable-слот
@@ -470,7 +470,7 @@ D318) + `checked_duration_since(other)->Option[Duration]` (None на регре�
     (b) free `sleep(Duration)`/`sleep_until(Monotonic)`. (c) `@minus(Monotonic)` overload (`elapsed_since`
     сохранён). (d) `@display`/`@debug` (D237) на Duration/Timestamp/Monotonic + побочный codegen-фикс
     value-record `${x}`/`${x:?}`-интерполяции (не time-специфичный, полезен для любого будущего value-record).
-  - **Ф.4 (sleep-семантика)** задокументирована в `docs/time.md` (d≤0→немедленно, granularity, tolerance-заметка,
+  - **Ф.4 (sleep-семантика)** задокументирована в `docs/guide/time.md` (d≤0→немедленно, granularity, tolerance-заметка,
     Q7) — decl НЕ typed (Ф.2 superseded), но семантика верна на реальном runtime уровне (`_nova_time_default_sleep`
     уже трактует `ms<=0` как немедленный yield, было ДО этой волны).
   - **Ф.5:** (a)/(b) handlers — closed через Ф.3a (fixed_ms/mut_clock реализуют `now_monotonic_ns`, mock-coherence).
@@ -479,7 +479,7 @@ D318) + `checked_duration_since(other)->Option[Duration]` (None на регре�
     `Monotonic` — closes `[M-monotonic-migration-deferred]` **для elapsed-measurement сайтов**; `deadline_in`
     намеренно НЕ мигрирован (return-type committed к `Timestamp`, D124); `is_past`/`time_until`/`@elapsed`
     корректно остаются `Timestamp`-based (старый §6 line-list устарел — эти три НЕ должны мигрировать). (e)
-    M:N-контракт задокументирован (`docs/time.md`), не verified тестом под реальной concurrent-нагрузкой.
+    M:N-контракт задокументирован (`docs/guide/time.md`), не verified тестом под реальной concurrent-нагрузкой.
   - **`within[T]`/`with_timeout[T]` retraction SHIPPED** (Plan 173 §3a п.4, `[M-174-retract-with-timeout]` CLOSED).
 
 - **Ф.2 — типизированный провод (retire int-wire). 🚩 OWNER-GATED design-fork (НЕ реализован; 3 net-zero).** Замена
@@ -538,7 +538,7 @@ D318) + `checked_duration_since(other)->Option[Duration]` (None на регре�
   (`[M-monotonic-per-os-isolated-tests]`, опц. dedicated nova_rt/time.c); **верифицировать отсутствие serialize-пути
   Monotonic (Q13) — если есть, заблокировать + neg**; **верифицировать** даёт ли `Time.sleep` в `realtime{}` диагностику
   (реальный код = `E_REALTIME_SYNC_PARK`, [emit_c.rs:25305+](../../compiler-codegen/src/codegen/emit_c.rs#L25305) — снимок) — если
-  нет, добавить check; amend D-блоки; **`docs/time.md`** (модель + «было→стало» + таблица «Nova vs
+  нет, добавить check; amend D-блоки; **`docs/guide/time.md`** (модель + «было→стало» + таблица «Nova vs
   Go/Rust/TS/Kotlin/Java/**Zig/Swift**» со строками: clock-abstraction / fallibility now() / suspend-семантика monotonic /
   ширина представления (Zig i128 / Swift Int128-atto / Nova i64±292y) / tolerance (Swift-only) / overflow-policy +
   differentiators §1a + паритет Swift `.measure{}` ↔ `Duration.measure[T]`); **Q-sweep в spec/open-questions.md**:
@@ -576,7 +576,7 @@ multi-field 172.4 (узкий bridge субсумируется); граждан
   **обновить существующий `d237_protocol_method_naming.nv` В ТОМ ЖЕ изменении** (правило: amend D ⇒ существующие
   d-файлы обновляются вместе) либо peer `d237_time_display_debug.nv`. Все — `module spec_tests.conformance`, локалы с
   префиксом d316_/d317_/d318_ (name-leak); прогон `nova test spec_tests`.
-- **docs/** — новый `docs/time.md` (по образцу strings-internals.md); таблица «было→стало»; 7-языковая таблица +
+- **docs/** — новый `docs/guide/time.md` (по образцу strings-internals.md); таблица «было→стало»; 7-языковая таблица +
   differentiators §1a; Q-sweep (Ф.6). Убрать упоминания int-провода как «текущего».
 
 ## 6. Миграция (§7 compiler-conventions) — blast-radius + точные команды
@@ -652,7 +652,7 @@ trailing-fractional-zeros обрезаются; **Monotonic `@debug` = offset, �
    `checked_*`/`saturating_*`; Timestamp/Monotonic±Duration saturate at boundary; `@abs(i64::MIN)`/`@div(0)`/f64-NaN/inf
    обработаны; ±292y и **Timestamp-окно 1677..2262** задокументированы (+2262-horizon pos-фикстура).
 4a. **sleep-контракт задокументирован (Ф.4):** `d<=0` → немедленно; гарантия «≥ d»; granularity (~1ms uv-timer);
-   сигнатура future-proof под `tolerance`; days/weeks-нота Q7 — всё в D316/docs/time.md.
+   сигнатура future-proof под `tolerance`; days/weeks-нота Q7 — всё в D316/docs/guide/time.md.
 5. **Monotonic (D318):** `@minus`/`elapsed` saturate-to-zero; `checked_duration_since`→None на регрессе; без global-lock;
    non-serializable (верифицировано Ф.6); **per-OS clock-source задокументирован, suspend-семантика оговорена (Q14)**.
 6. **`@display` byte-exact ASCII** (нет байтов >0x7F; U+03BC из `@into()` устранён); machine-форма round-trip'ит.
@@ -666,7 +666,7 @@ trailing-fractional-zeros обрезаются; **Monotonic `@debug` = offset, �
     baseline-delta = 0** (baseline = parent-коммит через temp-worktree/commit+reset — §10; nova_tests НЕ гейт корректности
     сам по себе, [[feedback-nova-tests-not-correctness-gate]]); 755+ call-сайтов компилируются = тот же baseline-delta
     прогон (батчами <10мин); realtime{}-бан сохранён (верифицированным кодом).
-11. spec: D316/317/318 написаны + amend D124/D237/prelude-decl + **spec_tests-файлы §5**; `docs/time.md` с 7-языковой
+11. spec: D316/317/318 написаны + amend D124/D237/prelude-decl + **spec_tests-файлы §5**; `docs/guide/time.md` с 7-языковой
     таблицей; differentiators §1a; Q-sweep выполнен (Q9-строка/Q-with-deadline-vs-within/Q-cancel-token-with-timeout);
     followup-маркеры `[M-sleep-tolerance]`/`[M-monotonic-boottime]` зарегистрированы в OPEN-view беклога.
 

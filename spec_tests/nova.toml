@@ -2,7 +2,7 @@
 #
 # SEPARATE from `nova_tests/` (the legacy corpus, half-broken + duplicated) so the corpus
 # can eventually be deleted. Each touched D-block gets a per-D test file inside a per-topic
-# folder-module. See docs/test-conventions.md §"spec/D-conformance suite".
+# folder-module. See docs/dev/test-conventions.md §"spec/D-conformance suite".
 [package]
 name = "spec_tests"
 version = "0.1.0"

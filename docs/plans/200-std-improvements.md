@@ -84,7 +84,7 @@ std/collections/vec` — PASS (`access`, тот самый repro-кейс); `nov
 
 ## Пункт 2 — `priv(type)` → `priv` для итераторов
 
-**Статус:** ✅ СДЕЛАНО 2026-07-12 (в main `c81d28419`). **Спека/конвенция:** `docs/nv-coding-style.md:221`.
+**Статус:** ✅ СДЕЛАНО 2026-07-12 (в main `c81d28419`). **Спека/конвенция:** `docs/dev/nv-coding-style.md:221`.
 `str` (`std/prelude/core.nv:211`) сознательно НЕ тронут — lang-item (ABI-мост к `nova_str`, bootstrap
 pre-method, Plan 139.1). **Хвост ЗАКРЫТ владельцем 2026-07-20 (`61c43b564`): `priv(type)` НАВСЕГДА** —
 методы str живут в другом модуле (runtime.string) + 38 полевых чтений: field-`priv` их сломал бы;
@@ -96,7 +96,7 @@ module-boundary). Мотивация `priv(type)` для полей итерат
 (module). Коллекционные итераторы (`VecIter` и др.) уже на field-`priv` — эталон.
 
 **Правки:**
-- `docs/nv-coding-style.md:221` — исправить правило (итераторы → `priv`, не `priv(type)`).
+- `docs/dev/nv-coding-style.md:221` — исправить правило (итераторы → `priv`, не `priv(type)`).
 - 5 `*Iter`-типов на field-level `priv`:
   - `CharsIter` (`std/runtime/string/chars.nv:58`)
   - `CharIndicesIter` (`std/runtime/string/chars.nv:155`)
@@ -362,7 +362,7 @@ gap, уже описан в protocols.nv рядом с `@checked_div`/`@checked_
 отчёт вовсе (не PASS/не FAIL/не SKIP — тихо отсутствует) — та же судьба у
 `std/src/time/rt/*.nv` и `std/src/time/civil/rt/*.nv`/`civil/neg/*.nv` (легаси
 `EXPECT_RUNTIME_PANIC`/`EXPECT_COMPILE_ERROR` фикстуры, отдельная конвенция запуска — см.
-`docs/test-conventions.md` §rt/neg). Не относится к Пункту 10 (`sat_add_i64` живёт в
+`docs/dev/test-conventions.md` §rt/neg). Не относится к Пункту 10 (`sat_add_i64` живёт в
 `duration/core.nv`, не в `overflow_safe_test.nv`) — отдельная P67-LEGACY заметка, не
 добираю в этой волне (не numeric-parity scope).
 
@@ -372,7 +372,7 @@ gap, уже описан в protocols.nv рядом с `@checked_div`/`@checked_
 
 **Статус:** ✅ СДЕЛАНО 2026-07-16 — вобрано в Пункт 12 (см. ниже), делалось одним проходом.
 
-**Почему:** D410 упразднил префикс `as_` ([nv-coding-style.md:33](../nv-coding-style.md)), но 11 методов в
+**Почему:** D410 упразднил префикс `as_` ([nv-coding-style.md:33](../dev/nv-coding-style.md)), но 11 методов в
 `duration.nv` остались — пропущенный хвост миграции `[M-d410-as-to-migration]`.
 
 **Какое имя (§1а «четыре направления»):** голое существительное (категория «вид/линза», O(1) i64, без аллокации,
@@ -531,9 +531,9 @@ doc-комментария `of`, который ссылался на `from` д�
 Vec.from-часть закрыта (маркер остаётся открыт для остальных 20 сайтов — `docs/plans/backlog-followups.md`).
 
 **Спека тем же слиянием:** `spec/decisions/02-types.md` (D259 AMEND-блок + `README.md` индекс-строка + D232
-construction-таблица + D230 shallow-copy таблица + NovaArray-блокер item 5 помечен MOOT), `docs/nv-coding-style.md`
+construction-таблица + D230 shallow-copy таблица + NovaArray-блокер item 5 помечен MOOT), `docs/dev/nv-coding-style.md`
 §1а item 4, `docs/collections/vec-owned.md` (Construction-таблица + секция `of` vs `.clone()` переписана),
-`docs/vec-lazy.md` (пример кода).
+`docs/guide/vec-lazy.md` (пример кода).
 
 **Побочная находка (зафиксирована и исправлена в этой же волне):** при standalone-верификации
 `vec_f32_chained_debug.nv` обнаружен НЕ связанный с Vec.from, самостоятельный pre-existing баг — вызовы
@@ -567,7 +567,7 @@ std/src/checksums` δ0 (3 PASS / 3 SKIP, без изменений); все 7 м
 range(21), set(5), vec_iter(16), vec_lazy(5), vec_seq(5), base64(9), handlers(20), fmt_buf(8)** = 99 тестов
 в пирах, 0 в имплементации, каждый модуль зелёный.
 
-**Нарушение** [test-conventions.md:125](../test-conventions.md): позитив-тесты std-модуля живут
+**Нарушение** [test-conventions.md:125](../dev/test-conventions.md): позитив-тесты std-модуля живут
 ПИР-файлом `<имя>_test.nv` (тот же module-декларатор), НЕ инлайном в имплементации.
 
 **Инвентарь (греп `^test "` вне `*_test.nv`, std/src): 16 файлов имплементации.**

@@ -4,7 +4,7 @@
 
 `nova` is the single entry point to the Nova language toolchain. It
 replaces `run_tests.ps1` / `run_tests.sh` / `regen_runtime.ps1`
-(see [Plan 28](plans/28-nova-cli.md)).
+(see [Plan 28](../plans/28-nova-cli.md)).
 
 Version: `0.1.0` (bootstrap). The binary ships as `nova` (Cargo
 package `nova`, crate `nova-cli`).
@@ -75,7 +75,7 @@ nova contracts verify foo.nv     # SMT-verify contracts
 ## Installation and build
 
 `nova-cli` lives in `nova-cli/` next to `compiler-codegen/`. No
-workspace is used (see [Plan 28](plans/28-nova-cli.md) — both crates
+workspace is used (see [Plan 28](../plans/28-nova-cli.md) — both crates
 are standalone).
 
 ```bash
@@ -105,7 +105,7 @@ Apply to every subcommand:
 
 | Flag | Values | Description |
 |---|---|---|
-| `--color` | `auto` (default), `always`, `never` | ANSI color control. See [Plan 36](plans/36-cli-production-hardening.md) R10. |
+| `--color` | `auto` (default), `always`, `never` | ANSI color control. See [Plan 36](../plans/36-cli-production-hardening.md) R10. |
 
 **Color auto-detection** (priority high → low):
 
@@ -119,7 +119,7 @@ Apply to every subcommand:
 
 ### Field-cache tuning (advanced)
 
-Every subcommand also accepts the [Plan 123](plans/123.1-core-cse.md)
+Every subcommand also accepts the [Plan 123](../plans/123.1-core-cse.md)
 field-caching knobs. These are forensic / escape-hatch flags — the
 defaults are correct for normal use; you only touch them when
 investigating a codegen-cache regression.
@@ -152,7 +152,7 @@ keep them readable; assume every command accepts the whole family.
 
 ## Exit codes
 
-Cargo convention ([Plan 36](plans/36-cli-production-hardening.md) R7):
+Cargo convention ([Plan 36](../plans/36-cli-production-hardening.md) R7):
 
 | Code | Meaning |
 |---|---|
@@ -179,7 +179,7 @@ lives in `nova_codegen::test_runner::find_repo_root_from`:
 5. Return the `[workspace]`-marked root if found, else the topmost
    `nova.toml` directory
 
-This is **workspace-aware** behavior (D78 AD6, [Plan 35](plans/35-cross-file-resolve.md))
+This is **workspace-aware** behavior (D78 AD6, [Plan 35](../plans/35-cross-file-resolve.md))
 — prevents a nested `nova_tests/nova.toml` from shadowing the real root.
 
 If no `nova.toml` is found — exit `2`:
@@ -288,7 +288,7 @@ compile and run tests, use [`nova test`](#nova-test) /
 ### `nova add`
 
 Add a dependency to `[dependencies]` of the current package's
-`nova.toml` and update `nova.lock.toml` ([Plan 03.1](plans/03.1-path-git-dependencies.md)).
+`nova.toml` and update `nova.lock.toml` ([Plan 03.1](../plans/03.1-path-git-dependencies.md)).
 
 ```
 nova add NAME (--path DIR | --git URL [--tag T | --branch B | --rev R | --version REQ])
@@ -302,7 +302,7 @@ nova add NAME (--path DIR | --git URL [--tag T | --branch B | --rev R | --versio
 | `--tag T` | Git pin: tag (only with `--git`) |
 | `--branch B` | Git pin: branch (only with `--git`) |
 | `--rev R` | Git pin: commit / rev (only with `--git`) |
-| `--version REQ` | Git pin: semver range, e.g. `^1.2` (only with `--git`, [Plan 03.2](plans/03.2-version-resolution.md)) |
+| `--version REQ` | Git pin: semver range, e.g. `^1.2` (only with `--git`, [Plan 03.2](../plans/03.2-version-resolution.md)) |
 
 - `--path` and `--git` are mutually exclusive; exactly one is required.
 - `--tag` / `--branch` / `--rev` / `--version` are mutually exclusive;
@@ -328,8 +328,8 @@ nova add libfoo  --git https://example.org/libfoo.nv --version "^1.2"
 ### `nova update`
 
 Re-resolve git dependencies and refresh `nova.lock.toml`
-([Plan 03.1](plans/03.1-path-git-dependencies.md) /
-[03.2](plans/03.2-version-resolution.md)).
+([Plan 03.1](../plans/03.1-path-git-dependencies.md) /
+[03.2](../plans/03.2-version-resolution.md)).
 
 ```
 nova update [NAME] [--precise NAME@VERSION]
@@ -353,7 +353,7 @@ nova update [NAME] [--precise NAME@VERSION]
 ### `nova info`
 
 Show the **effect-surface** of a package — the aggregated effects of
-its public API ([Plan 03.4](plans/03.4-effect-aware-tooling.md) / D140).
+its public API ([Plan 03.4](../plans/03.4-effect-aware-tooling.md) / D140).
 Nova-unique: in Cargo/npm you cannot tell that a dependency reaches the
 network without auditing its code.
 
@@ -421,7 +421,7 @@ use `import` from the entry point.
 | `--clang` | auto detect | Path to `clang.exe` |
 | `--timeout` | `120` | Compile timeout (seconds) |
 | `--keep-artifacts` | off | Keep `.c`/`.exe`/`.obj` in tmp |
-| `--mono-depth N` | `500` (or `NOVA_MONO_DEPTH`) | Monomorphization-instantiation depth limit ([Plan 48](plans/48-closures-in-generics.md) Ф.7.6) |
+| `--mono-depth N` | `500` (or `NOVA_MONO_DEPTH`) | Monomorphization-instantiation depth limit ([Plan 48](../plans/48-closures-in-generics.md) Ф.7.6) |
 
 **Tmp directory:** `$TEMP/nova_tests/build/<path-hash>/` on Windows or
 `$TMPDIR/nova_tests/build/<path-hash>/` on Unix. The hash uses
@@ -443,8 +443,8 @@ crypto dependency.
 ### `nova test`
 
 Run tests from a directory or a file. Plan 28 (together with
-[Plan 26](plans/26-test-runner-hardening.md), [Plan 27](plans/27-gc-switch.md),
-[Plan 34](plans/34-stdlib-typecheck-and-compile-fix.md)).
+[Plan 26](../plans/26-test-runner-hardening.md), [Plan 27](../plans/27-gc-switch.md),
+[Plan 34](../plans/34-stdlib-typecheck-and-compile-fix.md)).
 
 ```
 nova test [PATH]... [--filter SUBSTR] [--jobs N] [--format text|json|tap|junit]
@@ -520,7 +520,7 @@ nova test nova_tests/plan118     # specific subdirectory
 `status != "pass"`, filters the suite, runs only those.
 
 **EXPECT markers** in test files (see
-[docs/test-conventions.md](test-conventions.md)):
+[docs/dev/test-conventions.md](../dev/test-conventions.md)):
 - `// EXPECT: <stdout-line>` — exact line match
 - `// EXPECT_STDERR: <line>` — for stderr
 - `// EXPECT_COMPILE_ERROR: <substring>` — must fail to compile
@@ -570,7 +570,7 @@ nova regen-runtime [--check]
 | `--check` | off | Compare only — exit `1` if stubs diverge from the registry (CI guard) |
 
 Backed by `nova_codegen::codegen::runtime_registry::all()` + module
-render. See [Plan 13](plans/13-runtime-stdlib-and-autogen.md).
+render. See [Plan 13](../plans/13-runtime-stdlib-and-autogen.md).
 
 ---
 
@@ -629,7 +629,7 @@ Default — text-based heuristic (~1ms/mutant). With `--real-exec` —
 runs mutated doc-tests through `test_runner` (~100ms/mutant, true
 positive guarantee).
 
-**Supported `///` doc formats** — see [Plan 45](plans/45-nova-doc.md)
+**Supported `///` doc formats** — see [Plan 45](../plans/45-nova-doc.md)
 (D107).
 
 ---
@@ -729,7 +729,7 @@ nova contracts verify FILE [--backend BACKEND]
 | `--backend BACKEND` | env `NOVA_SMT_BACKEND` | Override SMT backend (`trivial`, `z3`) |
 
 **Z3 backend:** requires a build with `--features z3-backend`. See
-[Plan 33.1](plans/33.1-contracts-core.md).
+[Plan 33.1](../plans/33.1-contracts-core.md).
 
 #### `nova contracts suggest`
 
@@ -759,7 +759,7 @@ nova contracts counterexample FILE FN_NAME [--contract-id N]
 Benchmark infrastructure (Plan 57 — `MVP+A+B+C+D+E+F+G+H` shipped).
 Outperforms Criterion (Rust) / `testing.B`+benchstat (Go) /
 tinybench (TS) on several axes. See
-[docs/bench-conventions.md](bench-conventions.md).
+[docs/dev/bench-conventions.md](../dev/bench-conventions.md).
 
 ```
 nova bench <SUBCOMMAND>
@@ -1114,7 +1114,7 @@ Generates `index.html` + `bench-<safe>.html` per bench + `data.json`.
 
 ### `nova consume-analyze`
 
-Consume-type coverage analyzer ([Plan 100.8](plans/100.8-performance-ide-tooling.md) / D7).
+Consume-type coverage analyzer ([Plan 100.8](../plans/100.8-performance-ide-tooling.md) / D7).
 Scans a file or directory, collects all consume-typed bindings, and
 reports how many are covered via consume-methods (`Cleanup.@cleanup`, D188)
 or `defer`. Useful as a CI hygiene check.
@@ -1145,7 +1145,7 @@ nova consume-analyze PATH [--format human|json] [--fail-on-uncovered]
 |---|---|---|
 | `NOVA_CODEGEN` | (reserved) | Override path to `nova-codegen` binary |
 | `NOVA_MONO_DEPTH` | `build`, `test`, `test-build`, `bench` | Monomorphization-instantiation depth limit (default 500) |
-| `NOVA_REACH_DCE` | `build`, `test`, `test-build` | Reachability-codegen DCE ([Plan 159](plans/159-reachability-codegen.md), [D283](decisions/09-tooling.md#d283)). Unset / `≠0` → **ON** (default): emit to C only declarations reachable from `main`. `=0` → **OFF**: byte-identical pre-159 behavior (emit everything) — escape hatch for over-prune diagnosis |
+| `NOVA_REACH_DCE` | `build`, `test`, `test-build` | Reachability-codegen DCE ([Plan 159](../plans/159-reachability-codegen.md), [D283](decisions/09-tooling.md#d283)). Unset / `≠0` → **ON** (default): emit to C only declarations reachable from `main`. `=0` → **OFF**: byte-identical pre-159 behavior (emit everything) — escape hatch for over-prune diagnosis |
 | `NOVA_HOME` | `add`, `build` (git deps) | Root for the git dependency cache; default `~/.nova` (cache under `<NOVA_HOME>/git`, global proxy config at `<NOVA_HOME>/config.toml`) |
 | `NOVA_OFFLINE` | `add`, `build` (git deps) | `=1` → forbid network (clone/fetch); build only from the existing cache |
 | `NOVA_PKG_PROXY` | `add`, `build` (git deps) | HTTP(S) proxy for package downloads (Plan 233 §1). Layered, first existing wins: (1) `NOVA_PKG_PROXY` env, or standard `HTTPS_PROXY`/`HTTP_PROXY` env (git honors those natively); (2) `[net] proxy = "..."` in the uncommitted `nova.override.toml` next to `nova.toml`; (3) `[net] proxy = "..."` in the global `~/.nova/config.toml` (or `<NOVA_HOME>/config.toml`). NOT supported in the committed `nova.toml` — proxy is a dev-machine/CI concern, not a package property |
@@ -1183,7 +1183,7 @@ repository as a reference for future atomic API-rename plans.
 ### `migrate_plan60`
 
 Lexer-based migration of field-style size-accessors to method-form
-(D117 / [Plan 60](plans/60-len-access-uniformity.md)):
+(D117 / [Plan 60](../plans/60-len-access-uniformity.md)):
 
 ```
 expr.len      → expr.len()
@@ -1213,7 +1213,7 @@ Token-level rewrite — comments / whitespace / formatting preserved 1:1.
 
 Lexer-based migration of `Time.after(<lit>)` →
 `ChanReader.close_after(Duration.from_*(<lit>))`
-([Plan 65](plans/65-chanreader-close-after.md) AD11):
+([Plan 65](../plans/65-chanreader-close-after.md) AD11):
 
 ```
 Time.after(<INT>)    → ChanReader.close_after(Duration.from_millis(<INT>))
@@ -1240,18 +1240,18 @@ naturally skipped.
 
 ## Related documents
 
-- [`spec/`](../spec/) — language specification
-- [`spec/decisions/09-tooling.md`](../spec/decisions/09-tooling.md) —
+- [`spec/`](../../spec/) — language specification
+- [`spec/decisions/09-tooling.md`](../../spec/decisions/09-tooling.md) —
   tooling D-blocks (D89, D107, D121, ...)
-- [`docs/test-conventions.md`](test-conventions.md) — EXPECT markers,
+- [`docs/dev/test-conventions.md`](../dev/test-conventions.md) — EXPECT markers,
   test directives
-- [`docs/bench-conventions.md`](bench-conventions.md) — bench-file
+- [`docs/dev/bench-conventions.md`](../dev/bench-conventions.md) — bench-file
   conventions
-- [`docs/plans/28-nova-cli.md`](plans/28-nova-cli.md) — CLI scaffold plan
-- [`docs/plans/36-cli-production-hardening.md`](plans/36-cli-production-hardening.md)
+- [`docs/plans/28-nova-cli.md`](../plans/28-nova-cli.md) — CLI scaffold plan
+- [`docs/plans/36-cli-production-hardening.md`](../plans/36-cli-production-hardening.md)
   — exit codes, `--color`, parallel walk
-- [`docs/plans/45-nova-doc.md`](plans/45-nova-doc.md) — `nova doc` / `doc-query` / `doc-mcp`
-- [`docs/plans/57-perf-benchmark-infrastructure.md`](plans/57-perf-benchmark-infrastructure.md)
+- [`docs/plans/45-nova-doc.md`](../plans/45-nova-doc.md) — `nova doc` / `doc-query` / `doc-mcp`
+- [`docs/plans/57-perf-benchmark-infrastructure.md`](../plans/57-perf-benchmark-infrastructure.md)
   — `nova bench` family
-- [`docs/plans/33.3-contracts-advanced.md`](plans/33.3-contracts-advanced.md)
+- [`docs/plans/33.3-contracts-advanced.md`](../plans/33.3-contracts-advanced.md)
   — `nova contracts`

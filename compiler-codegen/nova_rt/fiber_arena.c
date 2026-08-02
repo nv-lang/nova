@@ -638,7 +638,7 @@ static void _nova_mark_tail_used(struct NovaFiberArena* a, size_t from) {
 /* ── Plan [M-187-docker-linux-runtime-hang] Ф.1: vm.max_map_count
  * auto-detect + arena slot-count clamp ──────────────────────────
  *
- * Root cause (Docker-волна 2026-07-17, docs/simplifications.md
+ * Root cause (Docker-волна 2026-07-17, docs/dev/simplifications.md
  * [M-187-docker-linux-runtime-hang]): the guard-page loop below calls
  * mprotect() PER SLOT to punch a PROT_NONE hole at the bottom of an
  * otherwise-uniform mmap() region. Each such call SPLITS the kernel's
@@ -785,7 +785,7 @@ void nova_fiber_arena_init(void) {
                 "vm.max_map_count=%ld limits concurrent VMAs (guard pages cost "
                 "2 VMAs/slot x N arenas). Raise the limit "
                 "(sysctl -w vm.max_map_count=1048576) or lower NOVA_MAX_FIBERS "
-                "to silence this notice. See docs/linux-build.md.\n",
+                "to silence this notice. See docs/guide/linux-build.md.\n",
                 slot_count, clamped, _nova_cached_max_map_count());
         }
         slot_count = clamped;
@@ -836,7 +836,7 @@ void nova_fiber_arena_init(void) {
                     "nova: fiber_arena guard page mprotect failed at slot %zu/%zu "
                     "(errno=%d) — degrading this worker's arena to %zu slots "
                     "instead of aborting. Raise vm.max_map_count (see "
-                    "docs/linux-build.md) to recover full capacity.\n",
+                    "docs/guide/linux-build.md) to recover full capacity.\n",
                     i, slot_count, mprotect_errno, i);
             }
             slot_count = i;

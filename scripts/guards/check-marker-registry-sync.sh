@@ -33,7 +33,7 @@ ROOT="${1:-$(pwd)}"
 cd "$ROOT" || exit 2
 
 BASELINE_FILE="scripts/guards/marker-registry.baseline"
-REGISTRIES="docs/plans/221.1-bug-sweep.md docs/plans/backlog-followups.md docs/simplifications.md"
+REGISTRIES="docs/plans/221.1-bug-sweep.md docs/plans/backlog-followups.md docs/dev/simplifications.md"
 
 markers=$(grep -rhoE "\[M-[A-Za-z0-9._-]+\]" std/src examples spec_tests --include=*.nv 2>/dev/null \
           | sed -e 's/^\[//' -e 's/\]$//' | sort -u)

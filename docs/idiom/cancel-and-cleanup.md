@@ -199,4 +199,4 @@ fn HttpRequest consume @cleanup(outcome ScopeOutcome) -> () {
 - [D192 timeout taxonomy](../../spec/decisions/03-syntax.md#d192).
 - [D193 MultiError](../../spec/decisions/03-syntax.md#d193).
 - [D198 realtime + cleanup](../../spec/decisions/03-syntax.md#d198).
-- [cleanup-cookbook.md](../cleanup-cookbook.md) — production recipes.
+- [cleanup-cookbook.md](../guide/cleanup-cookbook.md) — production recipes.

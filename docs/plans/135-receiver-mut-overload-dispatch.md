@@ -150,7 +150,7 @@ let chosen = overloads.iter()
   пример с `as_ptr()` ro/mut overload.
 - **Ф.4.2** `docs/plans/128-mut-receiver-abi.md` — пометить
   «Dispatch по recv-mut — Plan 135».
-- **Ф.4.3** `docs/simplifications.md` + project-creation.txt + discussion-log.
+- **Ф.4.3** `docs/dev/simplifications.md` + project-creation.txt + discussion-log.
 
 **Commit:** `docs(plan135 Ф.4): spec — recv-mut overload dispatch documented`
 

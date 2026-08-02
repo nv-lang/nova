@@ -565,7 +565,7 @@ Acceptance: все cross-ref'ы D55↔D108↔Plan 52 согласованы.
 - D108 / D55 — проверить, что все изменения Ф.0 в файлах.
 - `docs/project-creation.txt` — запись о реализации (фазы, файлы,
   регрессия).
-- `docs/simplifications.md` — bootstrap-ограничения как `[M*]`:
+- `docs/dev/simplifications.md` — bootstrap-ограничения как `[M*]`:
   - `FromFields` marker honored только для `std.collections.HashMap`;
   - `FromPairs[K,V]` для `[k:v]` под другие map-типы — не реализован;
   - D55 `[]T` element positions — ещё ⛔;

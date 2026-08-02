@@ -16,7 +16,7 @@
 > Отложен только каталог-вариант `[M-156-slow-subtree-dir]`. P2.
 > **Владеет:** `[M-test-runner-large-test-lane]`. **Зависит от:** Plan 24/26 (test-runner).
 > **Триггер:** ТРЕБОВАНИЕ — дефолтный `nova test`/CI быстрый по компиляции И выполнению
-> (см. [docs/test-conventions.md](../test-conventions.md) §«регресс должен быть быстрым»).
+> (см. [docs/dev/test-conventions.md](../dev/test-conventions.md) §«регресс должен быть быстрым»).
 
 ## Проблема
 Полные conformance-наборы огромны (collation 227800 пар, normalization 19965, …).
@@ -46,7 +46,7 @@
   (`is_slow_file_stem`-классификация + `walk_nv_filtered` по каждому `SlowLane`).
 - **Ф.5 — спека + доки:** [D376](../../spec/decisions/09-tooling.md#d376-test-discovery-skiproute-конвенции--fixtures-os-суффикс-_slownv)
   нормирует все discovery-конвенции (`fixtures/`/`_fixture.toml`, OS-суффикс,
-  `_module.nv`, `_slow.nv` + порядок снятия); `docs/test-conventions.md` флипнут на
+  `_module.nv`, `_slow.nv` + порядок снятия); `docs/dev/test-conventions.md` флипнут на
   IMPLEMENTED.
 
 Отложено: каталог-вариант `slow/` + `_slow.toml` (`[M-156-slow-subtree-dir]`,
@@ -98,7 +98,7 @@
    `walk_nv_filtered(..,false)`, либо отдельный обход с `keep = is_slow_file`).
 5. `main.rs` clap `TestAll` (`:142`): `--include-slow`/`--slow-only`; протянуть через
    `cmd_test_all` (хардкод-блок `:1063-1092` сейчас не wired — там прецедент).
-6. `docs/test-conventions.md`: флипнуть `[M-…]` note на done, описать суффикс `_slow.nv` +
+6. `docs/dev/test-conventions.md`: флипнуть `[M-…]` note на done, описать суффикс `_slow.nv` +
    флаги.
 
 ### Генератор conformance — два lane (rev-3: slow НЕ коммитится)
@@ -216,7 +216,7 @@ Go `-short`/build-tags; Rust `#[ignore]`+`--ignored`, двухуровневый
 - **Ф.4 unit-тесты discovery:** `plan156_slow_lane_tests` в `test_runner.rs`
   (`is_slow_file_stem`-классификация + `walk_nv_filtered` по каждому `SlowLane`).
 - **Ф.5 спека + доки:** [D376](../../spec/decisions/09-tooling.md#d376-test-discovery-skiproute-конвенции--fixtures-os-суффикс-_slownv)
-  нормирует все discovery-конвенции; `docs/test-conventions.md` флипнут на IMPLEMENTED.
+  нормирует все discovery-конвенции; `docs/dev/test-conventions.md` флипнут на IMPLEMENTED.
 - **Генератор:** `nova-codegen unicode --conformance-full` пишет `*_conformance_slow.nv`
   (limit=usize::MAX → весь корпус, renderers чанкуют по 500). Файлы **gitignored** (rev-3).
 - **Фикстуры:** `nova_tests/plan156/` (slow-lane end-to-end, committed). Полные corpora

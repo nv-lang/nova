@@ -2710,7 +2710,7 @@ ${expr}`), [D238](#d238) (`Index[K,V]` — `a[key]` → `a.@index(key)`),
 после `:` — не затронут этим амендментом). Позитивные фикстуры —
 `spec_tests/conformance/interp_nested_strings.nv`; негативная —
 `spec_tests/conformance/neg/interp_unterminated_neg.nv`.
-См. также [docs/strings.md](../../docs/strings.md#nested-strings-inside--plan-102-d44-amendment).
+См. также [docs/guide/strings.md](../../docs/guide/strings.md#nested-strings-inside--plan-102-d44-amendment).
 
 ---
 
@@ -6763,7 +6763,7 @@ protocol-method := [ "#pure" ] [ "." | "@" ]? ident generics? "(" params? ")" ef
 satisfy P: method `foo` declared `.foo` (static) but T provides
 instance `@foo`» (либо обратное). Это hardening аналогичный Plan 79;
 вводится постепенно — на момент Plan 97 Ф.1 matching остаётся
-структурно ленивым (см. [`[M-protocol-static-enforcement-deferred]`](../../docs/simplifications.md)).
+структурно ленивым (см. [`[M-protocol-static-enforcement-deferred]`](../../docs/dev/simplifications.md)).
 
 #### Backwards-compat
 
@@ -8312,7 +8312,7 @@ shipped (Nova не имеет внешних пользователей yet). Al
 **Implementation:** Single-token rename в parser/types/eval/trampoline
 recognition tables. Fixture files renamed `sizeof_*.nv` → `size_of_*.nv`.
 
-**User-facing docs:** см. [docs/size-of-align-of.md](../../docs/size-of-align-of.md) —
+**User-facing docs:** см. [docs/guide/size-of-align-of.md](../../docs/guide/size-of-align-of.md) —
 concept doc с детальным explanation: что возвращает, зачем нужно
 (CPU memory alignment), layout semantics composite types, padding
 edge cases, Rust comparison, V4.4 limitations.

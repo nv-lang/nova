@@ -269,7 +269,7 @@ Plan 50 делает named args **обязательными** для дефол
 - D102 ревизия — уже в `03-syntax.md` (готово).
 - `docs/project-creation.txt` — запись о реализации (фазы, файлы,
   регрессия).
-- `docs/simplifications.md` — снять [M-interp-named] (RESOLVED, Ф.2);
+- `docs/dev/simplifications.md` — снять [M-interp-named] (RESOLVED, Ф.2);
   любые новые bootstrap-ограничения — как `[M*]`.
 - Запись в discussion-log private-репы.
 
@@ -363,4 +363,4 @@ Plan 50 делает named args **обязательными** для дефол
 - AI-first выгода: LLM может авто-исправить опечатки.
 - Тест: `nova_tests/named_params/p50_typo_suggestion.nv` (positive,
   EXPECT_COMPILE_ERROR + EXPECT_STDOUT с suggestion-текстом).
-- `docs/simplifications.md` [M-interp-named] — закрывается в Ф.2.
+- `docs/dev/simplifications.md` [M-interp-named] — закрывается в Ф.2.

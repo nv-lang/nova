@@ -227,7 +227,7 @@ NovaFailFrame integration).
 - Обновить D90 Bootstrap-status: 🟡 → ✅.
 - Добавить cross-refs в `effects.md`, `syntax.md` где упоминаются
   cleanup-pattern'ы.
-- `docs/test-conventions.md` — добавить пример defer-теста.
+- `docs/dev/test-conventions.md` — добавить пример defer-теста.
 
 **Объём:** ~50 строк правок.
 
@@ -307,7 +307,7 @@ NovaFailFrame integration).
 - [ ] 7 positive pilot-тестов проходят.
 - [ ] 6 negative-тестов через `EXPECT_COMPILE_ERROR` проходят.
 - [ ] D90 Bootstrap-status обновлён до ✅.
-- [ ] Запись в `docs/project-creation.txt` + `docs/simplifications.md`.
+- [ ] Запись в `docs/project-creation.txt` + `docs/dev/simplifications.md`.
 - [ ] discussion-log в nova-lang-private обновлён.
 
 ---

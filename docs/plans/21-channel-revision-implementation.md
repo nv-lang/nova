@@ -643,7 +643,7 @@ test "Channel[T] as value is forbidden" {
 - [ ] Concurrent тесты (producer-consumer, cancel-during-recv) PASS.
 - [ ] R7 Plan 22 «no busy-loops» — channels.h не содержит `while ... nova_fiber_yield()`.
 - [ ] D91 Bootstrap-status ✅.
-- [ ] Retro в `docs/project-creation.txt` + `docs/simplifications.md`.
+- [ ] Retro в `docs/project-creation.txt` + `docs/dev/simplifications.md`.
 
 ---
 

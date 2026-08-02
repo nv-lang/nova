@@ -12,17 +12,17 @@
 
 | Файл | Что мигрировал / для чего | Волна |
 |---|---|---|
-| [`gen-plan-status.sh`](gen-plan-status.sh) | НЕ миграция — генератор `docs/plans/STATUS.md` из пофайловых `**Статус:**`-строк. Единственный не-разовый файл здесь (используется постоянно, но это генератор, не страж — поэтому не в `guards/`). | план 231 §0а / `docs/conventions-governance.md` |
+| [`gen-plan-status.sh`](gen-plan-status.sh) | НЕ миграция — генератор `docs/plans/STATUS.md` из пофайловых `**Статус:**`-строк. Единственный не-разовый файл здесь (используется постоянно, но это генератор, не страж — поэтому не в `guards/`). | план 231 §0а / `docs/dev/conventions-governance.md` |
 | [`catb_convert.py`](catb_convert.py) | Конвертация `nova_tests/` на folder-module модель: переименование конфликтующих top-level имён внутри файла, `module X.stem` → `module nova_tests.X`, перенос `EXPECT_COMPILE_ERROR`-файлов в `neg/`. | Cat-B (Plan 169.1 — folder-module для 75 директорий с конфликтующими именами) |
 | [`d78_audit_migrate.py`](d78_audit_migrate.py) | Аудит + миграция module-деклараций на форму rev-3 (`module = parent.target`, `internal/`-спецкейс `owner.internal.target`). | «D78 rev-3» (module-declaration rule, см. spec/decisions/07-modules.md) |
 | [`migrate_modules_rev3.ps1`](migrate_modules_rev3.ps1) | PowerShell-миграция module-деклараций rev-1 → rev-3 для workspace-members `std`/`nova_tests` (более ранняя волна той же темы, что `d78_audit_migrate.py`; пути хардкожены — bootstrap-скрипт). | Plan 42 Sub-plan 42.6 (ЗАКРЫТ 2026-05-13) |
-| [`demojibake.py`](demojibake.py) | Разовый/переисполняемый чинитель двойного mojibake (UTF-8 прочитан как cp1251) в русскоязычных комментариях/строках компилятора. | Повод — GitHub issue #1 (см. `docs/project-creation.txt`, `docs/simplifications.md`) |
+| [`demojibake.py`](demojibake.py) | Разовый/переисполняемый чинитель двойного mojibake (UTF-8 прочитан как cp1251) в русскоязычных комментариях/строках компилятора. | Повод — GitHub issue #1 (см. `docs/project-creation.txt`, `docs/dev/simplifications.md`) |
 | [`plan114_rewrite.py`](plan114_rewrite.py) | Массовый regex-рерайт `.nv`-корпуса, правила R1–R12 (`let`→`ro`/`mut`, `if let`/`while let` → без `let`, `readonly`→`ro`). | Plan 114 (keyword refresh ro/mut/no-let) |
 | [`plan114_apply_md.py`](plan114_apply_md.py) | Применяет `plan114_rewrite.py` к `docs/**/*.md` + `spec/**/*.md`, исключая `history/`. | Plan 114 |
 | [`plan114_rust_nova_body.py`](plan114_rust_nova_body.py) | Переписывает встроенные Nova-строки внутри `nova_body: Some("...")` в Rust-исходниках на новый синтаксис ключевых слов. | Plan 114 Ф.2 / D184 |
 | [`plan114_4_stmt_const_arms.py`](plan114_4_stmt_const_arms.py) | Добавляет соседние `Stmt::Const(_)` match-руки рядом с `Stmt::Let(...)` в `compiler-codegen/src/types/mod.rs` по указанным номерам строк. | Plan 114.4 Ф.2 |
 | [`cdb_session.sh`](cdb_session.sh) | Сессия Windows kernel debugger (`cdb.exe`) для локализации кадра-виновника стохастического crash в M:N-рантайме. | Plan 83.11 §12.30, `[M-83.11-supervised-spawn-cancel-memcpy-segv]` |
-| [`stress_bisect.sh`](stress_bisect.sh) | `git bisect run`-совместимый stress-harness для стохастических SEGV/hang concurrency-тестов; переиспользуемый (не только для бага, на котором родился). | Plan 83.11 §12.27, ссылается `docs/debugging-races.md` |
+| [`stress_bisect.sh`](stress_bisect.sh) | `git bisect run`-совместимый stress-harness для стохастических SEGV/hang concurrency-тестов; переиспользуемый (не только для бага, на котором родился). | Plan 83.11 §12.27, ссылается `docs/dev/debugging-races.md` |
 | [`setup_worktree_p118.sh`](setup_worktree_p118.sh) | Копирует уже инициализированный `libuv`-submodule + prebuilt `libuv.lib` из главной репы в `nova-pNN`-worktree той же репы (экономит ~30с submodule-init на каждый worktree) + печатает `NOVA_GC_*`-env-переменные. | Plan 118 (typed pointers / unsafe) |
 
 ## Замечено при переносе (2026-07-27), не исправлялось (логику не менять)

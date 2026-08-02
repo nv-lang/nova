@@ -1167,7 +1167,7 @@ with Net = real_net() { … }                                   // один hand
 - **`@cleanup` vs `@close` — НЕ дубль, а два слоя** (Rust `Drop::drop` авто vs explicit `.close()` ручной): `@cleanup(o)` берёт `ScopeOutcome` (нужно для commit-on-success / rollback-on-failure) и зовётся **компилятором**; `@close()` — no-arg, зовёшь **сам**. Разные имена сигналят разную роль — фича, не баг; `@cleanup(o)` обычно делегирует в `@close()`.
 - **`@drain`/`@finish` — осмысленно ≠ `@close`:** `@drain` дочитывает тело → возвращает conn в пул (Go-идиома drain-for-keep-alive-reuse); у `@close` этого нет (может оборвать). `@finish` пишет chunked-terminator = «завершить запись», не «закрыть». Схлопывать в `@close` = потерять семантику.
 - **`@discard` убран:** Body.`@discard` («дренаж+release без материализации») ≡ `@drain` на смежном слое → синоним. → Body.`@drain`.
-- **Правка конвенции** → внесено в [nv-coding-style.md §20.4](../nv-coding-style.md) (`· согласовано 2026-06-27`).
+- **Правка конвенции** → внесено в [nv-coding-style.md §20.4](../dev/nv-coding-style.md) (`· согласовано 2026-06-27`).
 
 ### 13.4. Упрощение common-path: default-install root `real_http` + verb/json one-shots (owner 2026-06-27)
 

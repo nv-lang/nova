@@ -105,7 +105,7 @@ mut work = work                   \ «разморозка» (Rust: let mut x = 
 ### Ф.5 — Спека + доки + закрытие — small
 1. **D347** в `spec/decisions/03-syntax.md` (шаблон D-блока: Что/Правило/Почему/Отвергнуто/Связь): R1–R7, отличие от `:=`, таблица проб как примеры. **D-блок самодостаточен:** «Почему/Отвергнуто» несёт компактную выжимку уроков 13 языков (Rust guard-футган → R2; Haskell нерекурсивность → R3; Go `:=` → отличие; Erlang/Elixir pin/rebind — спектр) — спека не может нормативно ссылаться на research.
 2. Amend-врезки: **D184-binding** (03-syntax.md:6958, НЕ operator-dispatch-D184), D90 §3 (defer при rebind), D131/D133 (R2), D22 (R4) + резолв дубля D184 в индексе.
-3. `docs/nv-coding-style.md`: раздел «re-binding» — когда идиоматичен (pipeline/unwrap/`mut x = x`), когда нет (unrelated).
+3. `docs/dev/nv-coding-style.md`: раздел «re-binding» — когда идиоматичен (pipeline/unwrap/`mut x = x`), когда нет (unrelated).
 4. Обновить `spec/open-questions.md` (rebind-Q не заведён — grep пуст; если появится к моменту исполнения — закрыть) + README планов + simplifications.md.
 
 ## §4 Тесты (Ред.2-раскладка)

@@ -14,7 +14,7 @@
 //!    conservatively keep a genuinely-unused import whose binding name coincides
 //!    with an unrelated identifier used elsewhere. It never removes a *used*
 //!    import (removal requires a total absence of the token). Tracked as
-//!    `[M-104.10-organize-imports-namescan]` in `docs/simplifications.md` /
+//!    `[M-104.10-organize-imports-namescan]` in `docs/dev/simplifications.md` /
 //!    `docs/backlog-followups.md` (P3, IDE-quality follow-up).
 //! 2. **Selective imports are pruned per-item.** `import a.b.{Foo, Bar}` with
 //!    only `Foo` used becomes `import a.b.{Foo}`; if *no* item is used the whole

@@ -187,14 +187,14 @@ AC10 (D233 + docs + marker + self-ref) — ✅. AC6 (per-worker × MAXPROCS) —
 1. **#3 — 32-bit dead DEFAULT/comment.** `NOVA_FIBER_SLOT_COUNT_DEFAULT` исправлен
    `16`→`64` (round-UP-to-×64 + `MIN`=64 уже форсили 64; старый `16` и его «64MB»
    comment были мёртвыми) + `_Static_assert` на инвариант ×64 ∧ ≥MIN. Zero
-   runtime-behavior change (64-bit/Windows = 16384). D233 §8 + docs/runtime-tuning.md
+   runtime-behavior change (64-bit/Windows = 16384). D233 §8 + docs/guide/runtime-tuning.md
    обновлены.
 2. **#2 — `nova build` / `nova bench` теперь honor `[runtime]`+`[ffi]`.** Manifest
    резолвится через `find_manifest` на 3 BuildOpts call-site'ах (cmd_build,
    bench `run`, bench `compile_for_profile`), зеркаля test_runner. Precedence
    `env > nova.toml(-D) > builtin` НЕ изменён. Verified: `[ffi]` bogus-lib доходит
    до линкера, `[runtime]` резолвится в обоих front-end'ах. D233 §2 +
-   docs/runtime-tuning.md обновлены.
+   docs/guide/runtime-tuning.md обновлены.
 3. **#1 — `cancellation_test` suite-green.** Файл перенесён в
    `nova_tests/concurrency/cancellation_quarantine/` под `_fixture.toml` sentinel
    (walk_nv skip; module → `cancellation_quarantine.cancellation_test` для D78).

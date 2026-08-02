@@ -219,7 +219,7 @@ consume g = mu.lock()   // ✓ correct
 
 - `spec/decisions/05-memory.md` — D131 (affine semantics), D180
   (binding syntax)
-- `docs/consume-types.md` — user guide
+- `docs/guide/consume-types.md` — user guide
 - `docs/plans/73.1-consume-binding-syntax.md` — Plan 73.1 status
 - `docs/plans/100.7-stdlib-migration-playbook.md` — D165 migration
   playbook

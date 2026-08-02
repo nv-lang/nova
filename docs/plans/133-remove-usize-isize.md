@@ -154,7 +154,7 @@ sed -i 's/ as usize//g; s/: usize/: int/g; s/ usize)/) /g; ...'
 
 ### Ф.5 — Logs (~15 min)
 
-- **Ф.5.1** `docs/simplifications.md` — добавить запись о Plan 133.
+- **Ф.5.1** `docs/dev/simplifications.md` — добавить запись о Plan 133.
 - **Ф.5.2** `project-creation.txt` + nova-private `discussion-log.md`.
 
 **Commit:** `docs(plan133 Ф.5): logs — plan133 usize removal`

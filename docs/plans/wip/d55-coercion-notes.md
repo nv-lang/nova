@@ -140,7 +140,7 @@ Safety-gate «приёмник с зарегистрированным write» �
 
 ## Статус — ЗАКРЫТО (2026-07-18)
 
-Все 5 пунктов приёмки зелёные (подробный вердикт + числа — `docs/simplifications.md`
+Все 5 пунктов приёмки зелёные (подробный вердикт + числа — `docs/dev/simplifications.md`
 запись `[M-d55-str-literal-coercion-name-gated] ЗАКРЫТ`). Изолированный scratch
 доведён до PASS (2 доп. бага найдены и исправлены по пути — return-position
 target-typed-гейт не знал про `[]u8`, `[][]u8`-array-literal elem_c type-punning),

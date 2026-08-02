@@ -225,7 +225,7 @@ Nova advantages:
   implementation details.
 - Read [Q-application-effect](idiom/application-effect.md) для
   app-wide lifecycle.
-- Read [cleanup-cookbook.md](cleanup-cookbook.md) для production recipes.
+- Read [cleanup-cookbook.md](guide/cleanup-cookbook.md) для production recipes.
 
 ## See also
 

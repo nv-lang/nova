@@ -205,7 +205,7 @@ TS — полноценный язык **без сырых указателей*
 ### Ф.5 — Spec sync + docs (~0.2 д)
 
 - `docs/plans/README.md` — статус Plan 90.
-- `docs/simplifications.md` — маркеры отложенного (напр. bounds-check
+- `docs/dev/simplifications.md` — маркеры отложенного (напр. bounds-check
   elimination), если аудит Ф.0.2 их породил.
 - `docs/project-creation.txt` + `nova-private/discussion-log.md` — записи.
 

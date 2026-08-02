@@ -250,8 +250,8 @@ record-literal в handler-теле — **снято** (единый канал �
 ## Связанные документы
 
 - [`datetime.md`](datetime.md) — гражданское (календарное) время (Plan 175.1).
-- [D316](../spec/decisions/04-effects.md#d316) — `Time`-эффект + amend'ы.
-- [D317](../spec/decisions/04-effects.md#d317) — overflow-policy.
-- [D318](../spec/decisions/04-effects.md#d318) — Monotonic non-regression.
-- [D124](../spec/decisions/06-concurrency.md#d124-monotonic-vs-timestamp--раздельные-типы-для-wall-clock-и-монотонных-часов) — wall/monotonic separation + amend.
-- [D237](../spec/decisions/02-types.md#d237-protocol-naming-convention-method-name-capitalized-plan-137-2026-06-09) — Display/Debug naming + amend.
+- [D316](../../spec/decisions/04-effects.md#d316) — `Time`-эффект + amend'ы.
+- [D317](../../spec/decisions/04-effects.md#d317) — overflow-policy.
+- [D318](../../spec/decisions/04-effects.md#d318) — Monotonic non-regression.
+- [D124](../../spec/decisions/06-concurrency.md#d124-monotonic-vs-timestamp--раздельные-типы-для-wall-clock-и-монотонных-часов) — wall/monotonic separation + amend.
+- [D237](../../spec/decisions/02-types.md#d237-protocol-naming-convention-method-name-capitalized-plan-137-2026-06-09) — Display/Debug naming + amend.

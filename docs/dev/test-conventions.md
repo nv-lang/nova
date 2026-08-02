@@ -4,9 +4,9 @@
 
 Практический guide для авторов и пользователей тестов Nova.
 Нормативная спецификация D89 EXPECT-маркеров —
-[spec/decisions/09-tooling.md](../spec/decisions/09-tooling.md#d89).
-Test-runner — [Plan 24](plans/24-cross-platform-test-runner.md) +
-[Plan 26](plans/26-test-runner-hardening.md).
+[spec/decisions/09-tooling.md](../../spec/decisions/09-tooling.md#d89).
+Test-runner — [Plan 24](../plans/24-cross-platform-test-runner.md) +
+[Plan 26](../plans/26-test-runner-hardening.md).
 
 ---
 
@@ -48,7 +48,7 @@ sentences 512, collation 227800). Размер коммит-фикстуры р�
 ### Развилка: коммитить большой набор или регенерить? (для авторов/агентов)
 
 Любой большой/медленный тест помечается суффиксом **`_slow.nv`** (default `nova test`
-его пропускает; прогон `--include-slow`/`--slow-only`; нормировано [D376](../spec/decisions/09-tooling.md#d376-test-discovery-skiproute-конвенции--fixtures-os-суффикс-_slownv)).
+его пропускает; прогон `--include-slow`/`--slow-only`; нормировано [D376](../../spec/decisions/09-tooling.md#d376-test-discovery-skiproute-конвенции--fixtures-os-суффикс-_slownv)).
 А вот **хранить полный набор в git или нет** — зависит от того, регенерируем ли он:
 
 - **Регенерируемый** детерминированным генератором (напр. Unicode conformance из UCD):
@@ -57,15 +57,15 @@ sentences 512, collation 227800). Размер коммит-фикстуры р�
   --ucd-dir <UCD>` → `nova test --slow-only`; пустой кэш → 0 тестов = skip-never-fail). В git —
   только малый fast-сэмпл `*_conformance.nv`. Причина: коммит регенерируемого build-output зря
   раздувает историю навсегда (модель Go `-long`/CPython; обоснование —
-  [docs/research/10-unicode-test-data-storage.md](research/10-unicode-test-data-storage.md)).
+  [docs/research/10-unicode-test-data-storage.md](../research/10-unicode-test-data-storage.md)).
 - **Нерегенерируемый** (ручной большой/медленный тест, генератора нет): **коммитить** как
   `*_slow.nv` — это и есть «хранить в репо, но вне дефолт-регресса».
 - ❌ git-lfs / отдельная тест-репа / submodule — НЕ используем (хуже на exFAT/Windows,
   непрецедентно для текстовых фикстур; см. research/10).
 
 > **Механизм** (lane для больших тестов вне дефолт-прогона) — **РЕАЛИЗОВАН**
-> ([Plan 156](plans/156-test-runner-slow-lane.md), `[M-test-runner-large-test-lane]`;
-> нормирован [D376](../spec/decisions/09-tooling.md#d376-test-discovery-skiproute-конвенции--fixtures-os-суффикс-_slownv)).
+> ([Plan 156](../plans/156-test-runner-slow-lane.md), `[M-test-runner-large-test-lane]`;
+> нормирован [D376](../../spec/decisions/09-tooling.md#d376-test-discovery-skiproute-конвенции--fixtures-os-суффикс-_slownv)).
 > Конвенция (rev-2 suffix-only) — **per-file суффикс `_slow.nv`** (зеркало семейства
 > `_windows.nv`/`_test`; skip на этапе discovery в `walk_nv` → файл-корпус **не
 > читается**, нулевой per-file I/O). **Дефолтный `nova test`
@@ -82,13 +82,13 @@ sentences 512, collation 227800). Размер коммит-фикстуры р�
 > --emit-conformance --conformance-full --ucd-dir <UCD>`), затем `nova test --slow-only`.
 > Коммитится только fast-сэмпл `*_conformance.nv`. Если кэш пуст — `--slow-only` находит 0
 > тестов (skip-never-fail). Модель Go/CPython; обоснование —
-> [docs/research/10-unicode-test-data-storage.md](research/10-unicode-test-data-storage.md).
+> [docs/research/10-unicode-test-data-storage.md](../research/10-unicode-test-data-storage.md).
 > Отложен (`[M-156-slow-subtree-dir]`) лишь каталог-вариант `slow/` + сентинел `_slow.toml`
 > для медленных folder-module — добавится аддитивно, когда появится первый такой тест.
 
 ### Когда переносить тест в `_slow`
 
-Критерии — **единая точка правды**: [D298](../spec/decisions/09-tooling.md#d298--test-suite-time-budget).
+Критерии — **единая точка правды**: [D298](../../spec/decisions/09-tooling.md#d298--test-suite-time-budget).
 
 Кратко: intentional sleep/stress/bench → `_slow.nv`; медленный только из-за compile time → оставить. Агенты используют алгоритм: `elapsed ≥ 60 с` ИЛИ имя содержит `stress`/`bench`/`perf` → `_slow.nv`.
 
@@ -348,7 +348,7 @@ Folder-module не применяется если:
   folder-module (маркер относится к целому TU; в общем бинаре они бы повесили/уронили
   остальные). Остаются standalone. **Runtime-panic тесты сливаются в folder-module через
   `panics`-клаузулу** (`test "имя" panics "паттерн" { … }` — Plan 173 Ф.6 /
-  [D348](../spec/decisions/09-tooling.md#d348--panics-клаузула-тест-блока-инверсия-passfail-для-runtime-panic-тестов-plan-173-ф6), РЕАЛИЗОВАНО);
+  [D348](../../spec/decisions/09-tooling.md#d348--panics-клаузула-тест-блока-инверсия-passfail-для-runtime-panic-тестов-plan-173-ф6), РЕАЛИЗОВАНО);
   timeout — всегда standalone. · согласовано (sign-off Ф.6)
 - **Валидация — передавать папки напрямую:** `nova test nova_tests/<тема>` (можно
   несколько папок одной командой: `nova test nova_tests/atomics nova_tests/sync`).
@@ -557,7 +557,7 @@ python scripts/tools/catb_convert.py nova_tests/plan_foo
 ### Runtime-panic тесты: `panics`-клаузула (канон) и legacy EXPECT_RUNTIME_PANIC · согласовано (Plan 173 Ф.6, D348)
 
 **Канон для новых runtime-panic тестов** — `panics`-клаузула тест-блока
-([D348](../spec/decisions/09-tooling.md#d348--panics-клаузула-тест-блока-инверсия-passfail-для-runtime-panic-тестов-plan-173-ф6)):
+([D348](../../spec/decisions/09-tooling.md#d348--panics-клаузула-тест-блока-инверсия-passfail-для-runtime-panic-тестов-plan-173-ф6)):
 peer-файл обычного folder-module, никакого standalone CU:
 
 ```nova
@@ -637,7 +637,7 @@ SKIP-строками, а НЕ голым «PASS: 0 FAIL: 0» (неотличи�
 2. **Выбери директорию — СНАЧАЛА ищи существующий folder-module темы** (приоритет: минимум CU). Новая папка/модуль — только если folder-module невозможен (исключения выше).
 3. **Добавляй ПИР-ФАЙЛОМ в существующий folder-module** (тот же `module nova_tests.<тема>`); НЕ создавай standalone-модуль на задачу. Конфликт имён → `priv(file)`/префикс, НЕ новый модуль. Имя файла — **описательное** `<ссылка>_<что_тестирует>.nv` (не только код-ссылка).
 4. **Негативные → `neg/`**: EXPECT_COMPILE_ERROR → `neg/<name>.nv`, `module neg.<name>` (суффикс `_neg` обязателен только ВНЕ `neg/`; контейнер `test`/`fn` — любой, не исполняется).
-5. **Медленные → `_slow.nv`**: по бюджету [D298](../spec/decisions/09-tooling.md#d298-test-suite-time-budget) (единственная точка правды; локальный порог «run > 2s» ретирован · согласовано); создай fast-variant.
+5. **Медленные → `_slow.nv`**: по бюджету [D298](../../spec/decisions/09-tooling.md#d298-test-suite-time-budget) (единственная точка правды; локальный порог «run > 2s» ретирован · согласовано); создай fast-variant.
 6. **Проверь полноту**: happy path + edge cases + взаимодействие фич.
 7. **Проверь детерминизм**: `assert` проверяет гарантированный контракт, не эвристику планировщика.
 8. **Запусти**: `nova test nova_tests/<dir>/` — все PASS перед коммитом.
@@ -658,7 +658,7 @@ nova-cli/target/debug/nova test
 
 Логика runner'а (детект toolchain'а, EXPECT-маркеры, parallel scheduler,
 per-test timeout, JSON output) живёт в Rust в
-[compiler-codegen/src/test_runner.rs](../compiler-codegen/src/test_runner.rs).
+[compiler-codegen/src/test_runner.rs](../../compiler-codegen/src/test_runner.rs).
 
 ### Параметры
 
@@ -811,7 +811,7 @@ linkать. Workarounds:
 получат KILL по `--timeout`. Summary показывает что было выполнено
 до cancel'а.
 
-См. [Plan 26 retro](plans/26-test-runner-hardening.md) для деталей.
+См. [Plan 26 retro](../plans/26-test-runner-hardening.md) для деталей.
 
 ---
 
@@ -832,7 +832,7 @@ runner его читает, **переворачивает** обычную ло
 
 ## Стандартные маркеры (D89) и `panics`-клаузула (D348) · согласовано
 
-> Нормативный список маркеров — [D89](../spec/decisions/09-tooling.md#d89-test-tooling-конвенции--expect_-маркеры-для-negative-тестов)
+> Нормативный список маркеров — [D89](../../spec/decisions/09-tooling.md#d89-test-tooling-конвенции--expect_-маркеры-для-negative-тестов)
 > (+ расширения D304: `EXPECT_TIMEOUT`/`EXPECT_TIMEOUT_MS`, lint-эксперименты).
 > Прежние заголовки «4/5 стандартных» разъехались с фактом — счёт больше не
 > нормируется здесь; ориентируйся на D89/D348. Runtime-panic канон — НЕ маркер,
@@ -1118,10 +1118,10 @@ Backward-compat: `--include-slow` = `--slow`; `--slow-only` deprecated (use `--f
 
 ## Ссылки
 
-- [D89 в spec/decisions/09-tooling.md](../spec/decisions/09-tooling.md#d89) — нормативная спецификация.
-- [nova-cli/src/main.rs](../nova-cli/src/main.rs) — `nova test` CLI entry point.
-- [compiler-codegen/src/test_runner.rs](../compiler-codegen/src/test_runner.rs) — runner implementation.
-- [nova_tests/negative_capability/](../nova_tests/negative_capability/) — примеры `EXPECT_COMPILE_ERROR`.
+- [D89 в spec/decisions/09-tooling.md](../../spec/decisions/09-tooling.md#d89) — нормативная спецификация.
+- [nova-cli/src/main.rs](../../nova-cli/src/main.rs) — `nova test` CLI entry point.
+- [compiler-codegen/src/test_runner.rs](../../compiler-codegen/src/test_runner.rs) — runner implementation.
+- [nova_tests/negative_capability/](../../nova_tests/negative_capability/) — примеры `EXPECT_COMPILE_ERROR`.
 - [nova_tests/expected_runtime/](../nova_tests/expected_runtime/) — примеры остальных трёх маркеров.
 
 
@@ -1130,7 +1130,7 @@ Backward-compat: `--include-slow` = `--slow`; `--slow-only` deprecated (use `--f
 ## Fixture directories (Plan 55 Ф.8, 2026-05-16)
 
 > Нормативная спецификация discovery-конвенций (skip-каталоги + per-file суффиксы) —
-> [D376 в spec/decisions/09-tooling.md](../spec/decisions/09-tooling.md#d376-test-discovery-skiproute-конвенции--fixtures-os-суффикс-_slownv).
+> [D376 в spec/decisions/09-tooling.md](../../spec/decisions/09-tooling.md#d376-test-discovery-skiproute-конвенции--fixtures-os-суффикс-_slownv).
 
 Не каждый `.nv` файл в `nova_tests/` — это runnable test. Иногда нужны
 **input fixtures** для tooling (Plan 45 `nova doc` ingestion samples,

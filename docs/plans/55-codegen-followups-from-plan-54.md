@@ -66,7 +66,7 @@
    `// SKIP_INTERP: <reason>` маркер + TODO в interp.rs.
 4. **Regression sweep** — после fix запустить **полный** `nova test`
    release; **0 регрессий**. Документировать diff в commit message.
-5. **`docs/simplifications.md`** — закрывающая запись `[M-<marker>] ✅
+5. **`docs/dev/simplifications.md`** — закрывающая запись `[M-<marker>] ✅
    ЗАКРЫТО (Plan 55 Ф.X, <date>)` с `Где / Было / Закрыто / Test`.
 6. **`docs/project-creation.txt`** — секция «Plan 55 Ф.X (<date>)» с
    что/почему/как/measurement.
@@ -181,7 +181,7 @@ as-is. В процессе вылезли 3 orthogonal codegen issues, кото�
 2. `Ф.5b match-arm pattern_inner_type` — match-инференция через scrutinee.
 3. `Nova_Duration_method_into` — stdlib Duration.into() invalid C.
 
-Каждый зафиксирован [M-*] / Ф.* маркером в `docs/simplifications.md`,
+Каждый зафиксирован [M-*] / Ф.* маркером в `docs/dev/simplifications.md`,
 но нужен дедикатеный план чтобы closed как-таковые.
 
 ---
@@ -766,14 +766,14 @@ commit.
 - [x] Полный `nova test` (release) — **558 PASS / 0 FAIL / 40 SKIP**
       (+49 PASS / −26 FAIL vs pre-session baseline).
 - [x] **19+ новых тестов** в `nova_tests/plan55/`.
-- [x] **`docs/simplifications.md`** — 10+ закрывающих записей.
+- [x] **`docs/dev/simplifications.md`** — 10+ закрывающих записей.
 - [x] **`docs/project-creation.txt`** — секция Plan 55 EOD с summary.
 - [x] **`docs/plans/README.md`** — статус Plan 55 → ✅ ЗАКРЫТ.
 - [x] **Spec sync** — D45 + D108 обновлены с реализацией + mono
       invariants (spec/decisions/03-syntax.md).
 - [x] **Save/restore audit** — `current_fn_return_ty` /
       `current_type_subst` grep audit: все save'ы паирные, 0 leak'ов
-      (см. docs/simplifications.md).
+      (см. docs/dev/simplifications.md).
 - [x] **`map_literals/positive_str_int`** workaround removed — inferred
       (без annotation) works (regression guard test added).
 
@@ -895,7 +895,7 @@ instance** проблем:
       обновлён с rationale в commit message.
 - [ ] Spec sync если diagnostic меняется в codegen.
 - [ ] Regression: full `nova test` без новых FAIL.
-- [ ] `docs/simplifications.md` — закрывающие записи.
+- [ ] `docs/dev/simplifications.md` — закрывающие записи.
 
 ### Estimate
 
@@ -950,7 +950,7 @@ D explicit override.
 - [ ] 14 doc/fixtures tests skipped (не FAIL).
 - [ ] Plan 45 doc-pipeline всё ещё может load эти fixtures как
       doc-input (не tests).
-- [ ] `docs/test-conventions.md` обновлён.
+- [ ] `docs/dev/test-conventions.md` обновлён.
 
 ### Estimate
 

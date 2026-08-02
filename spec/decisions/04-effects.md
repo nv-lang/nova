@@ -2770,7 +2770,7 @@ fn handle_request(req Request) Net Db -> Response {
 
 `spawn body` сам по себе **возвращает unit** — не результат body.
 Результат — только через прямой вызов (async прозрачный), `parallel
-for` (массив) или mut-захваты (см. [D50 п. 2](../decisions/06-concurrency.md#d50)).
+for` (массив) или mut-захваты (см. [D50 п. 2](06-concurrency.md#d50)).
 
 #### Почему так
 
@@ -6501,8 +6501,8 @@ Conformance: `spec_tests/conformance/d302_neterror_iokind.nv`.
 Ф.5-хвост, НЕ этот D-блок:** физическое удаление старого `std/net`/`net.c` + namespace-ренейм
 `net2`→`net`, гейтовано на санацию `nova_tests` — `[M-183-old-net-removal-after-182]`
 (`docs/plans/backlog-followups.md`); до этого старый слой живёт с `// DEPRECATED`-баннером.
-**Амендит:** [D173](../decisions/08-runtime.md#d173-stdnet--async-tcpudp-socket-stdlib-via-libuv)
-(байтовый транспорт вместо `str`), [D282](../decisions/08-runtime.md#d282-new--extern-nova-fn--extern-c-fn--двух-abi-синтаксис-для-ffi-plan-9112-ф-1)
+**Амендит:** [D173](08-runtime.md#d173-stdnet--async-tcpudp-socket-stdlib-via-libuv)
+(байтовый транспорт вместо `str`), [D282](08-runtime.md#d282-new--extern-nova-fn--extern-c-fn--двух-abi-синтаксис-для-ffi-plan-9112-ф-1)
 (один слой FFI, без `NovaRt_*_method_*`), [D301](#d301)/[D302](#d302) (split без
 дублирующего C-API; EOF/ошибки — коды). **Связь:** [D357](#d357) (Http-транспорт
 поверх байтового `Net`), [D322](#d322)/[D323](#d323) (byte-surface соседи).
@@ -6524,7 +6524,7 @@ Conformance: `spec_tests/conformance/d302_neterror_iokind.nv`.
 ### Решение
 
 1. **Один слой FFI.** Публичные C-функции — `nova_net_*` с C-ABI-сигнатурами
-   ([D282 rule 2](../decisions/08-runtime.md#d282): скаляры / указатель+длина /
+   ([D282 rule 2](08-runtime.md#d282): скаляры / указатель+длина /
    out-параметры / код-возврата). НИКАКИХ `nova_str`/`NovaRt_*_method_*` в транспорте.
    Nova-типы (`TcpStream`, `SocketAddr`, …) и вся логика — в `.nv` поверх `extern "C"`.
 2. **Байтовый транспорт.** Транспортные опы: вход `(const uint8_t* buf, int64_t len)`,
@@ -7636,7 +7636,7 @@ Amends [D316](#d316) (typed-schema retype — теперь LANDED) · [D431](#d4
 
 ## Amend D316/D431 Ф.2-v3 — extern-нейминг: `_nova_*` → доменный `time_*` (владелец code-review, 2026-07-22)
 
-**Статус:** закрывает несоответствие §5а (`docs/compiler-conventions.md` — «Имена C-символов на FFI-границе», согласовано 2026-07-08). Ф.2-v3 (амендмент выше, та же дата) ввела в `std/prelude/effects.nv` четыре `extern "C" fn` с vendor-префиксом `_nova_` (`_nova_wall_unix_ms`/`_nova_monotonic_ns`/`_nova_local_offset_sec`/`_nova_time_default_sleep`) — нарушение уже зафиксированного правила «модульные C-шимы — `<модуль>_<имя>` БЕЗ vendor-префикса», прецедент `fs_open`/`fs_close`/`fs_chmod` (`std/fs/ffi.nv` ↔ `nova_rt/fs.c`), `net_addr_loopback_into`, `os_env_get`.
+**Статус:** закрывает несоответствие §5а (`docs/dev/compiler-conventions.md` — «Имена C-символов на FFI-границе», согласовано 2026-07-08). Ф.2-v3 (амендмент выше, та же дата) ввела в `std/prelude/effects.nv` четыре `extern "C" fn` с vendor-префиксом `_nova_` (`_nova_wall_unix_ms`/`_nova_monotonic_ns`/`_nova_local_offset_sec`/`_nova_time_default_sleep`) — нарушение уже зафиксированного правила «модульные C-шимы — `<модуль>_<имя>` БЕЗ vendor-префикса», прецедент `fs_open`/`fs_close`/`fs_chmod` (`std/fs/ffi.nv` ↔ `nova_rt/fs.c`), `net_addr_loopback_into`, `os_env_get`.
 
 **Фикс:** переименованы в `time_wall_unix_ms`/`time_monotonic_ns`/`time_local_offset_sec`/`time_default_sleep` — синхронно на обеих сторонах FFI-границы:
 - `.nv`: `extern "C" fn`-декларации, `std/prelude/effects.nv` (`time_default` default-handler body).
@@ -7653,7 +7653,7 @@ Amends [D316](#d316) (typed-schema retype — теперь LANDED) · [D431](#d4
 
 ### Связь
 
-§5а (`docs/compiler-conventions.md`, 2026-07-08, C-symbol naming) · Amends [D316](#d316)/[D431](#d431-default_handlerx--ambient-lazy-default-handler-factory-для-эффектов-plan-175-ф2-v2-2026-07-2122) Ф.2-v3 (описание ДО этого переименования, историческая точность сохранена, не переписана) · [D40](03-syntax.md#d40) (handler-method `=> expr`/`{ block }`, параметры опциональны по типу).
+§5а (`docs/dev/compiler-conventions.md`, 2026-07-08, C-symbol naming) · Amends [D316](#d316)/[D431](#d431-default_handlerx--ambient-lazy-default-handler-factory-для-эффектов-plan-175-ф2-v2-2026-07-2122) Ф.2-v3 (описание ДО этого переименования, историческая точность сохранена, не переписана) · [D40](03-syntax.md#d40) (handler-method `=> expr`/`{ block }`, параметры опциональны по типу).
 
 ## Amend D316/D431 Ф.2-v4 — эффект-API-полировка (owner code-review, 2026-07-22)
 

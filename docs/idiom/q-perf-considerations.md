@@ -224,4 +224,4 @@ Measured against Plan 100.4 cleanup baseline (defer-family pre-Plan
 - [D185 Cleanup effect cost](../../spec/decisions/04-effects.md#d185).
 - [Q-hot-path-performance](q-hot-path-performance.md).
 - [Q-debugging-cleanup-chains](debugging-cleanup-chains.md).
-- [cleanup-cookbook.md §7 Performance](../cleanup-cookbook.md).
+- [cleanup-cookbook.md §7 Performance](../guide/cleanup-cookbook.md).

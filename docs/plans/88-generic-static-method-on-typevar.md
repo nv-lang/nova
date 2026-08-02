@@ -8,7 +8,7 @@
 > (mono followups) ✅ — Plan 88 продолжает эту линию; Plan 15 (D72
 > bound enforcement) ✅
 > **Источник:** Plan 85.3 — маркер `[M-generic-static-method-on-typevar]`
-> в `docs/simplifications.md`
+> в `docs/dev/simplifications.md`
 
 ## Зачем
 
@@ -156,7 +156,7 @@ Static-метод на typevar — почти наверняка не единс
 
 ### Ф.4 — Spec / docs (~0.1 д)
 
-- **Ф.4.1** `docs/simplifications.md` —
+- **Ф.4.1** `docs/dev/simplifications.md` —
   `[M-generic-static-method-on-typevar]` → ✅ ЗАКРЫТО; родственные
   маркеры, найденные в Ф.0, — обновить.
 - **Ф.4.2** D72/D73 — аменд **только** если меняется наблюдаемая

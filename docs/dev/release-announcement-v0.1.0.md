@@ -34,8 +34,8 @@ compilation unit) is green on Windows and Linux, and the flagship demo app
 (concurrent aggregator with HTTP/TLS) builds and survives load testing.
 
 Get started: download the Windows build, or build from source on Linux —
-the [quickstart](docs/quickstart.md) takes you from install to a running
-concurrent program in a few minutes. The [language tour](docs/language-tour.md)
+the [quickstart](docs/guide/quickstart.md) takes you from install to a running
+concurrent program in a few minutes. The [language tour](docs/guide/language-tour.md)
 covers the surface in 12 short sections, every example verified.
 
 Feedback, bug reports, and hard questions are welcome — this is day one.

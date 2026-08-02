@@ -1442,7 +1442,7 @@ static inline Nova_ChanReader* Nova_Time_after(nova_int ms) {
  * in this revision. NovaAfterState ownership is identical to Nova_Time_after
  * (raw malloc, freed by libuv close callback). True GC-driven cleanup
  * requires project-wide Boehm GC_REGISTER_FINALIZER which is not yet in
- * place — tracked as [M-chanreader-gc-finalizer] in docs/simplifications.md.
+ * place — tracked as [M-chanreader-gc-finalizer] in docs/dev/simplifications.md.
  */
 static inline Nova_ChanReader* nova_chan_reader_close_after_ns(int64_t nanos) {
     if (nanos < 0) {

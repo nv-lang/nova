@@ -101,7 +101,7 @@ test "Set[T].new() / .new(cap: n) / positional .new(n) + from_iter's internal Se
 test "StringBuilder.new() / .new(cap: n) / positional .new(n) (D372 amend 2)" {
     // StringBuilder — consume-тип (D180, std/runtime/string_builder.nv:28) —
     // требует явного `consume`-биндинга (consume имплицирует mut, включая
-    // право мутировать через `@append`, docs/simplifications.md:27930), и
+    // право мутировать через `@append`, docs/dev/simplifications.md:27930), и
     // обязательство закрывается ЕДИНСТВЕННЫМ consuming-методом типа —
     // `consume @into_str()` (string_builder.nv:208) — на каждом биндинге.
     consume sb1 = StringBuilder.new()

@@ -144,7 +144,7 @@ pub fn collect_module_signatures_from_items(
 /// nodes returned by [`compute_prelude_imports`] flow through the exact same
 /// resolver as a user-written `import`. There is no "prelude path" — only this
 /// single named description of *which* package is implicit. Per
-/// `docs/compiler-conventions.md` §2, the *location* of the package (the std
+/// `docs/dev/compiler-conventions.md` §2, the *location* of the package (the std
 /// search-path) is configurable (Plan 172.1 U.1.1), but *what is implicit* is
 /// described here in one place.
 const PRELUDE_PACKAGE: [&str; 2] = ["std", "prelude"];

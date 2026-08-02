@@ -2,16 +2,16 @@
 # `Vec[T]` / `[]T` — internals & module layout
 
 > **Audience:** Nova stdlib contributors. For the user-facing guide see
-> [`vec.md`](vec.md) (Plan 153.1+). **Spec:** [D239](../spec/decisions/02-types.md#d239-t--синтаксический-псевдоним-vect)
-> (`[]T ≡ Vec[T]`), [D232](../spec/decisions/02-types.md#d232-vect--nova-native-generic-growable-array)
-> (`Vec[T]` on RawMem), [D238](../spec/decisions/03-syntax.md)/[D240](../spec/decisions/03-syntax.md)
+> [`vec.md`](vec.md) (Plan 153.1+). **Spec:** [D239](../../spec/decisions/02-types.md#d239-t--синтаксический-псевдоним-vect)
+> (`[]T ≡ Vec[T]`), [D232](../../spec/decisions/02-types.md#d232-vect--nova-native-generic-growable-array)
+> (`Vec[T]` on RawMem), [D238](../../spec/decisions/03-syntax.md)/[D240](../../spec/decisions/03-syntax.md)
 > (`Index`/`MutIndex`).
 
 ## What `Vec[T]` is
 
 `Vec[T]` is a fully **Nova-implemented** generic growable array — no compiler
-magic beyond typed pointers ([D216](../spec/decisions/02-types.md)),
-`size_of[T]()` ([D199](../spec/decisions/02-types.md)) and pointer arithmetic
+magic beyond typed pointers ([D216](../../spec/decisions/02-types.md)),
+`size_of[T]()` ([D199](../../spec/decisions/02-types.md)) and pointer arithmetic
 (Plan 131). `[]T` is a **pure syntactic alias** of `Vec[T]` (D239): the compiler
 expands `[]T → Vec[T]` at type-resolution, an array literal `[1, 2, 3]` *builds*
 a `Vec[int]`, and a slice `v[a..b]` is a zero-copy `[]T`-view of the same type
@@ -89,8 +89,8 @@ pre-153.0 `collections.vec` module did.
 Plan 153.2 added the **lazy** iterator layer
 [`std/collections/vec_lazy.nv`](../std/collections/vec_lazy.nv)
 (`collections.vec_lazy`, `v.lazy().map().filter().collect()`, no intermediate
-allocations — see the user guide [`vec-lazy.md`](vec-lazy.md) and
-[D260](../spec/decisions/02-types.md#d260-ленивый-итератор-vect--boxed-fluent-адаптеры-plan-1532)).
+allocations — see the user guide [`vec-lazy.md`](../guide/vec-lazy.md) and
+[D260](../../spec/decisions/02-types.md#d260-ленивый-итератор-vect--boxed-fluent-адаптеры-plan-1532)).
 It is a **sibling FILE-module**, NOT a peer inside `vec/`, for the very same
 scope-leak reason: every lazy adapter takes a closure (`f`/`pred`) and has
 method-level generics (`[U]`/`[Acc]`), so it must stay behind an explicit
@@ -241,7 +241,7 @@ Both read `self` and the other operand **raw** (`unsafe { @data[i] }` /
 
 ## Restructure ops — concat / operator `+` / rotate / drain / insert_slice
 
-`restructure.nv` (Plan 153.5, [D263](../spec/decisions/10-overloading.md#d263-vec-restructure-ops--оператор---plus--concat))
+`restructure.nv` (Plan 153.5, [D263](../../spec/decisions/10-overloading.md#d263-vec-restructure-ops--оператор---plus--concat))
 holds the ops that **build a new vector** from existing data or **move whole runs**
 of elements. All are Nova-body over bulk `RawMem.copy`.
 
@@ -326,7 +326,7 @@ same spelling the rest of the stdlib uses.
 `flatten` is the first stdlib method with a **nested generic receiver**. A correct
 `.flatten()` must name the *innermost* element `T` so the result is `Vec[T]`, not
 `Vec[Vec[int]]`. This needed structural typevar unification at **arbitrary nesting depth**
-([D145 AMEND](../spec/decisions/02-types.md#d145-fnt-префикс--receiver-generic-decl--bounds-plan-101)),
+([D145 AMEND](../../spec/decisions/02-types.md#d145-fnt-префикс--receiver-generic-decl--bounds-plan-101)),
 fixed in both the parser and the monomorphizer (Plan 153.5, commit `1c323d0e`):
 
 - Both spellings are accepted and equivalent under D239: `fn[T] Vec[Vec[T]] @m` ≡
@@ -342,4 +342,4 @@ fixed in both the parser and the monomorphizer (Plan 153.5, commit `1c323d0e`):
 Before this fix the parser rejected the carrier form (`Vec[Vec[T]]` → "expected `]`") and
 collapsed the slice form (`[][]T` → `"[]T"`), while the monomorphizer bound `T` to the
 *immediate* element (`Vec[int]`), producing the wrong return type and a segfault. See
-[D263 AMEND](../spec/decisions/10-overloading.md#d263-vec-restructure-ops--оператор---plus--concat).
+[D263 AMEND](../../spec/decisions/10-overloading.md#d263-vec-restructure-ops--оператор---plus--concat).

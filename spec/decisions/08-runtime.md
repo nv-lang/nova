@@ -3692,7 +3692,7 @@ home plan; [D183](02-types.md#d183) / [D237](02-types.md#d237) — `Equal`/`@equ
 - [D230 — Clone protocol](02-types.md#d230) — NEW (Plan 126 Ф.1).
 - [Plan 126 Ф.3](../../docs/plans/126-auto-derive-protocols.md) —
   per-protocol synthesizer bodies.
-- [docs/auto-derive-guide.md](../../docs/auto-derive-guide.md) — user guide.
+- [docs/guide/auto-derive-guide.md](../../docs/guide/auto-derive-guide.md) — user guide.
 
 ### Связь
 
@@ -5508,7 +5508,7 @@ straightforward when prioritized.
 
 ### 4. User-facing doc
 
-`docs/field-cache-optimization.md` — user guide explaining 4 layers,
+`docs/guide/field-cache-optimization.md` — user guide explaining 4 layers,
 escape hatches, semantic equivalence, performance expectations.
 
 ### 5. Cross-references

@@ -66,7 +66,7 @@ Rust) имеют публичные authorial regrets.
 
 В Nova первые два **частично** закрываются:
 - (1) → `requires len >= 0` через [D24](../../spec/decisions/09-tooling.md#d24)
-  + Z3 ([Plan 33.x](../../docs/plans/33-contracts-implementation.md)) даёт
+  + Z3 ([Plan 33.x](../plans/33-contracts-implementation.md)) даёт
   compile-time гарантию.
 - (2) → escape analysis + range-VC в верификаторе теоретически
   выводят то же.
@@ -79,7 +79,7 @@ Rust) имеют публичные authorial regrets.
 2. **Future-arch путь.** Если Nova станет multi-arch, `int` мигрирует
    к platform-pointer-width **signed** (= Rust `isize`). Это **не**
    аргумент за unsigned, это аргумент за «оставить signed».
-3. **Overflow семантика ([Plan 33.8](../../docs/plans/33.8-verifier-soundness.md) Ф.1).**
+3. **Overflow семантика ([Plan 33.8](../plans/33.8-verifier-soundness.md) Ф.1).**
    `int` overflow → `nv_panic`. Если ввести `uint` для len, заменим
    один trap (overflow) на другой (underflow on `0 - 1`) — без
    выигрыша.
@@ -305,6 +305,6 @@ cleanup, **не** в scope D226/D227 amend.
 - [D226](../../spec/decisions/02-types.md#d226) — signed indexing convention.
 - [D227](../../spec/decisions/03-syntax.md#d227) — numeric literal inference policy.
 - [D24](../../spec/decisions/09-tooling.md#d24) — `requires`/`ensures` contracts.
-- [Plan 33.8](../../docs/plans/33.8-verifier-soundness.md) — int overflow → panic.
+- [Plan 33.8](../plans/33.8-verifier-soundness.md) — int overflow → panic.
 - [Plan 115](../../docs/plans/115-bootstrap-ffi-v1.md) — bootstrap FFI V1.
 - [Plan 118](../../docs/plans/118-typed-pointers.md) — typed pointers + NPO + unsafe model.

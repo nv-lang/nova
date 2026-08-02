@@ -2,7 +2,7 @@
 # План 224 — Vela: имя M:N-рантайма в коде и доках
 
 **Статус:** 📋 ДИЗАЙН, СОГЛАСОВАН (владелец выбрал имя **Vela** 2026-07-23; объём — этот план).
-**Основа:** [naming-conventions.md](../naming-conventions.md) (критерий 6: бренд-первым, переименование
+**Основа:** [naming-conventions.md](../dev/naming-conventions.md) (критерий 6: бренд-первым, переименование
 путей — отдельная механическая волна «если вообще нужно»; прецедент Polaris).
 **Родитель:** — (самостоятельный). **Тема:** именование, не поведение.
 
@@ -60,11 +60,11 @@ C-символы **остаются `nova_*`**. Это не компромисс
 
 | Файл | Правка |
 |---|---|
-| [docs/mn-coding-conventions.md](../mn-coding-conventions.md) | заголовок и текст: «Конвенция кодирования **Vela** (M:N-рантайм Nova)»; «M:N-ядро» → «ядро Vela», сохранив пояснение «M:N» при первом упоминании как термин модели |
-| [docs/debugging-races.md](../debugging-races.md) | реактивный плейбук — «гонки в Vela»; та же связка «проактив (mn-conventions) ↔ реактив» |
-| [docs/naming-conventions.md](../naming-conventions.md) | ✅ УЖЕ СДЕЛАНО (§0а, это Ф.0): строка **Vela** в §1.2 + очистка §1.4 |
+| [docs/dev/mn-coding-conventions.md](../dev/mn-coding-conventions.md) | заголовок и текст: «Конвенция кодирования **Vela** (M:N-рантайм Nova)»; «M:N-ядро» → «ядро Vela», сохранив пояснение «M:N» при первом упоминании как термин модели |
+| [docs/dev/debugging-races.md](../dev/debugging-races.md) | реактивный плейбук — «гонки в Vela»; та же связка «проактив (mn-conventions) ↔ реактив» |
+| [docs/dev/naming-conventions.md](../dev/naming-conventions.md) | ✅ УЖЕ СДЕЛАНО (§0а, это Ф.0): строка **Vela** в §1.2 + очистка §1.4 |
 | [CLAUDE.md](../../CLAUDE.md) | ✅ УЖЕ СДЕЛАНО (§0а). AGENTS.md — НЕ трогать (§0а) |
-| [docs/runtime-tuning.md](../runtime-tuning.md), [docs/channels.md](../channels.md) **+ [channels.ru.md](../channels.ru.md)** | где текст называет «the runtime»/«планировщик» как продукт — «Vela»; технические имена символов не трогать. channels.md и channels.ru.md править согласованно |
+| [docs/guide/runtime-tuning.md](../guide/runtime-tuning.md), [docs/guide/channels.md](../guide/channels.md) **+ [channels.ru.md](../guide/channels.ru.md)** | где текст называет «the runtime»/«планировщик» как продукт — «Vela»; технические имена символов не трогать. channels.md и channels.ru.md править согласованно |
 
 **Принцип правок Tier 0 (ОБЯЗАТЕЛЕН для механического исполнителя):**
 1. Меняется **проза о концепции**, НЕ идентификаторы. Везде, где в тексте стоит имя

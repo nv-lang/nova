@@ -1,8 +1,8 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 # Гражданское (календарное) время в Nova — `std/time/civil`
 
-> Plan [175.1](plans/175.1-civil-time.md); нормативные решения — D319/D320/D321
-> ([spec/decisions/04-effects.md](../spec/decisions/04-effects.md)).
+> Plan [175.1](../plans/175.1-civil-time.md); нормативные решения — D319/D320/D321
+> ([spec/decisions/04-effects.md](../../spec/decisions/04-effects.md)).
 > Instant/interval-слой (`Timestamp`/`Duration`/`Monotonic`) — Plan 175, D316-D318.
 
 ## Модель: type-ladder (D319)
@@ -151,7 +151,7 @@ with Time = th.fixed_ms(1_700_000_000_000) {
 
 `Offset.local()` (D316 amend + D321, 2026-07-10 — closes
 `[M-175.1-local-offset-effect-op]`) даёт системный UTC-сдвиг машины поверх
-эффект-опа `Time.local_offset_sec()` (мокабелен, см. `docs/time.md`). Это
+эффект-опа `Time.local_offset_sec()` (мокабелен, см. `docs/guide/time.md`). Это
 ТОЛЬКО числовой сдвиг — зона в `ZonedDateTime` остаётся явной (D319 R1):
 `dt.to_zoned(TimeZone.Fixed(Offset.local()))`, никакого implicit-fallback.
 

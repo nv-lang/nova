@@ -22,7 +22,7 @@
 >   собранного `nova`-бинаря: без-deny/exit-0, bare-deny/exit-1,
 >   selective-deny match/no-match, clean-file). ВНЕ периметра этой волны
 >   (решение владельца, не трогать без него): `.githooks/pre-commit` и
->   `docs/dev-workflow.md`/CI (`.github/workflows/nova-lint.yml`) сейчас
+>   `docs/dev/dev-workflow.md`/CI (`.github/workflows/nova-lint.yml`) сейчас
 >   вызывают голый `nova lint` и полагались на старую семантику exit 1 на
 >   любой находке — начиная с этого фикса это уже НЕ хард-гейт без
 >   явного `--deny`; синхронизация — отдельным решением владельца.
@@ -241,7 +241,7 @@ dev-workflow: агентская поставка обязана прогоня�
 модулям; conventions-governance уже требует «вид проверки» при приёмке нового правила.
 
 > Механизм `--deny` готов (см. Ф.1). Само вписывание в
-> `docs/dev-workflow.md`/`.githooks/pre-commit`/CI (`.github/workflows/nova-lint.yml`,
+> `docs/dev/dev-workflow.md`/`.githooks/pre-commit`/CI (`.github/workflows/nova-lint.yml`,
 > сейчас зовут голый `nova lint` и полагаются на старую семантику «любая находка =
 > exit 1») — ВОПРОС владельцу, не сделано в этой волне намеренно (узкий периметр
 > задачи 2026-07-16: только флаг+тест+этот документ).

@@ -244,7 +244,7 @@ decl (`core.nv`) и методы (`string.nv`) — 2 модуля работаю
 резолв метода из любого. Если резолвер ограничивает — fallback: один `methods.nv` +
 internal `_buffer` (дробление слабее, но цель «RawMem + без копипаста» достигнута).
 
-**Deliverables:** `docs/strings-internals.md` (структура папки, роль `_buffer`,
+**Deliverables:** `docs/dev/strings-internals.md` (структура папки, роль `_buffer`,
 конвенция internal); опц. **Q-module-internal-visibility** (нужен ли языку `internal`).
 **Тесты:** facade + подмодули компилируются, существующие импорты не сломаны; нет
 prelude-цикла; **golden байт-эквивалентность** `trim`/case/`concat` до/после;
@@ -392,7 +392,7 @@ Rust/Go, без скрытого O(n); полный `nova test` зелёный; 
 
 **Phase B — обязательна для полной цели, но не блокирует A.** Пока B не сделана,
 `str` Unicode-неполна (ASCII case, нет нормализации/graphemes) — это честно
-помечается `[M-152-unicode-*]`-маркерами и в `docs/strings.md` («ASCII-complete;
+помечается `[M-152-unicode-*]`-маркерами и в `docs/guide/strings.md` («ASCII-complete;
 полный Unicode — Phase B»). Без B Nova **хуже** Java/JS/Kotlin по Unicode → B
 обязательна к закрытию, просто позже.
 
@@ -502,10 +502,10 @@ Unicode-data pipeline) → 152.3b (char Unicode) → 152.5b (locale-collation/UC
   `StringBuilder`) — решение B2, может быть отложено за breaking-ценой.
 
 **Документация (`docs/`):**
-- `docs/strings.md` (NEW) — гайд: модель линз, байт vs codepoint vs grapheme, когда
+- `docs/guide/strings.md` (NEW) — гайд: модель линз, байт vs codepoint vs grapheme, когда
   что, рецепты (find+slice, обход символов, Unicode-корректное сравнение), таблица
   «откуда метод».
-- `docs/strings-internals.md` (NEW, 152.0) — внутренняя структура модуля
+- `docs/dev/strings-internals.md` (NEW, 152.0) — внутренняя структура модуля
   `runtime/string/`, роль internal `_buffer` на RawMem, конвенция internal-видимости.
 - `docs/formatting.md` (NEW, 152.7) — интерполяция `${...}`, формат-спеки
   (Rust-style mini-language), `Display`/`Debug`, `Write`-sink.
@@ -587,7 +587,7 @@ Unicode-data pipeline) → 152.3b (char Unicode) → 152.5b (locale-collation/UC
 - **G5.** Spec обновлён: D249–D255 + **D258** + амендменты D26(MAJOR)/D238/D58/D44/
   D183/D229; все **6** Q-вопросов **закрыты** записями-решениями (§4): Q-string-
   indexing (заново), Q-string-len, Q-unicode-data, Q-string-collation, Q-module-
-  internal-visibility, Q-format-spec; `docs/strings.md` + `docs/strings-internals.md`
+  internal-visibility, Q-format-spec; `docs/guide/strings.md` + `docs/dev/strings-internals.md`
   + `docs/formatting.md` + migration-гайд написаны.
 - **G6.** Реализация структурирована: модуль `runtime/string/` разбит по слоям,
   buffer-building живёт в одном internal `_buffer` на `RawMem` (ноль push-loop-
@@ -644,7 +644,7 @@ index-lowering в `emit_c.rs` руками. Общий `.git`: без `git stash
 1. Реализация по scope файла `152.N`.
 2. Spec: D-блок(и) + амендменты в `spec/decisions/`; Q — записи-решения в
    `spec/open-questions.md`.
-3. Доки: `docs/strings.md` / `docs/strings-internals.md` / `docs/migration/*` (как
+3. Доки: `docs/guide/strings.md` / `docs/dev/strings-internals.md` / `docs/migration/*` (как
    указано в §4).
 4. Тесты: pos **и** neg фикстуры в `nova_tests/plan152_N/`, прогон через **релизные**
    `nova` + компилятор.

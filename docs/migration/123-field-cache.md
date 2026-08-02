@@ -150,6 +150,6 @@ require edition opt-in for breaking changes.
 
 ## See also
 
-- `docs/field-cache-optimization.md` — user-level overview.
+- `docs/guide/field-cache-optimization.md` — user-level overview.
 - `spec/decisions/08-runtime.md` D217/D218/D219 — formal semantics.
 - `docs/plans/123-receiver-field-cse.md` — umbrella plan.

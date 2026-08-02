@@ -7,7 +7,7 @@
 
   <p>
     <a href="https://nv-lang.org">Website</a> |
-    <a href="docs/quickstart.md">Quickstart</a> |
+    <a href="docs/guide/quickstart.md">Quickstart</a> |
     <a href="spec/overview.md">Documentation</a> |
     <a href="CONTRIBUTING.md">Contributing</a>
   </p>
@@ -220,7 +220,7 @@ programmer writes nothing special.
 - [spec/effects.md](spec/effects.md) — effect system (introduction)
 - [spec/open-questions.md](spec/open-questions.md) — unresolved questions
 - [spec/decisions/](spec/decisions/) — design decision log with rationale
-- [docs/typed-pointers.md](docs/typed-pointers.md) — `*T` family canonical syntax (V2/V3 right-binding rule, `safe` keyword, modifier composition rules)
+- [docs/guide/typed-pointers.md](docs/guide/typed-pointers.md) — `*T` family canonical syntax (V2/V3 right-binding rule, `safe` keyword, modifier composition rules)
 - [compiler-codegen/](compiler-codegen/) — Nova compiler (Rust): parser, type-checker, C-backend codegen, native runtime
 
 ## Ecosystem
@@ -303,7 +303,7 @@ archive (`nova.exe` + `nova-lsp.exe` + standard library + C runtime, no
 Rust toolchain needed — just a C compiler): download it from
 [GitHub Releases](https://github.com/nv-lang/nova/releases), unzip, and
 `. .\setup-env.ps1`. Full walkthrough, including the from-source path on
-Linux, and a first "Hello, Nova!" program: **[docs/quickstart.md](docs/quickstart.md)**.
+Linux, and a first "Hello, Nova!" program: **[docs/guide/quickstart.md](docs/guide/quickstart.md)**.
 
 ## Building from source
 
@@ -411,7 +411,7 @@ Override with `--toolchain clang|msvc|gcc` or via env-vars
 (`NOVA_CLANG`, `NOVA_GCC`, `NOVA_VCVARS`).
 
 Full reference of test-runner flags, EXPECT-markers, troubleshooting:
-[docs/test-conventions.md](docs/test-conventions.md).
+[docs/dev/test-conventions.md](docs/dev/test-conventions.md).
 
 ## Documentation (`nova doc`)
 

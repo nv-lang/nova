@@ -749,9 +749,9 @@ effect-set (Fail=Escalate-with-error; suspend в хендлере), `Supervisor[
 ## 8. Источники для исполнителя (контекст)
 
 **Хаб:** [docs/idiom/error-and-cleanup-model.md](../idiom/error-and-cleanup-model.md).
-**Конвенции (нормативные для исполнения):** [test-conventions.md](../test-conventions.md),
-[dev-workflow.md](../dev-workflow.md), [conventions-governance.md](../conventions-governance.md),
-[compiler-conventions.md](../compiler-conventions.md).
+**Конвенции (нормативные для исполнения):** [test-conventions.md](../dev/test-conventions.md),
+[dev-workflow.md](../dev/dev-workflow.md), [conventions-governance.md](../dev/conventions-governance.md),
+[compiler-conventions.md](../dev/compiler-conventions.md).
 **Беклоги (ДВА файла):** OPEN-view индекс [docs/plans/backlog-followups.md](backlog-followups.md);
 детальные маркеры [docs/plans/backlog-followups.md](backlog-followups.md) (`[M-172-with-fail-swallows-panic]`
 :185, `[M-172-errdefer-okdefer-dead-surface]` :169 — file:line внутри них stale, актуальные в §1).

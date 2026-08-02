@@ -321,7 +321,7 @@ ESCALATION
 совпадает > 3 попыток) — НЕ ломай дальше, НЕ удаляй tests как
 "limitation". Вместо этого:
 1. Зафиксируй blocker в commit-marker (отдельная ветка).
-2. Запиши marker в docs/simplifications.md с [M-100.X-impl-<topic>] + P-приоритет.
+2. Запиши marker в docs/dev/simplifications.md с [M-100.X-impl-<topic>] + P-приоритет.
 3. Опиши в discussion-log; приостанови. User escalate на Opus 4.7.
 
 ═══════════════════════════════════════════════════════════════════════

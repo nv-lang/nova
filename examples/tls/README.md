@@ -64,7 +64,7 @@ import tls.{TlsStream, ClientConfig, ServerConfig, VerificationMode}
 `nova-tls` ships zero Rust/cargo: a `.nv` facade over a thin C shim
 (`native/tls_c_shim.c`) linked against a prebuilt mbedTLS static library,
 wired entirely through the standard `[ffi]` build pipeline (see
-`docs/ffi-cookbook.md` and `examples/ffi/README.md`) — no compiler-internal
+`docs/guide/ffi-cookbook.md` and `examples/ffi/README.md`) — no compiler-internal
 special case. If mbedTLS isn't installed on your machine, `nova test`
 degrades this package's tests to a clean `SKIP` (`[ffi] lib not found in
 lib_dirs`) instead of a hard link failure — see `nova-tls/nova.toml`'s

@@ -468,7 +468,7 @@ API не trogается.
 
 **R31.** D94 amendment с «Эволюция» note + new examples.
 
-**R32.** `docs/simplifications.md`:
+**R32.** `docs/dev/simplifications.md`:
    - mark `[M-time-after-bare-int]` RESOLVED
    - add `[M-libuv-ms-granularity]` honest-note
    - add `[M-timer-wheel-deferred]` roadmap → Plan 66
@@ -707,7 +707,7 @@ backend-level folding produces same runtime cost.
 
 - [x] `docs/project-creation.txt`: 2026-05-18 entry Plan 65 MVP closed
       added — phase-by-phase summary + commits + regression count.
-- [x] `docs/simplifications.md`:
+- [x] `docs/dev/simplifications.md`:
    - `[M-time-after-bare-int]` ✅ RESOLVED (Plan 65 Ф.5).
    - `[M-libuv-ms-granularity]` honest-defer note (Plan 66 wheel).
    - `[M-timer-wheel-deferred]` → Plan 66 roadmap.

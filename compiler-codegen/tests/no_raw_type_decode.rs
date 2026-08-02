@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! Plan 196 Ф.1a — CI-guard for `docs/compiler-conventions.md` §0/§9/§10:
+//! Plan 196 Ф.1a — CI-guard for `docs/dev/compiler-conventions.md` §0/§9/§10:
 //! raw `Nova_`/`____` mangled-C-type-string DECODE (extracting semantic
 //! identity — base type name via `Nova_`-prefix strip, generic type-args via
 //! the `____` mono-mangle separator) is confined to functions named
@@ -226,7 +226,7 @@ fn no_raw_type_decode_outside_debt_helpers() {
 
     assert!(
         new_violations.is_empty(),
-        "docs/compiler-conventions.md §0/§9/§10 [M-196-raw-decode-allowlist]: raw \
+        "docs/dev/compiler-conventions.md §0/§9/§10 [M-196-raw-decode-allowlist]: raw \
          Nova_/____ type-decode found OUTSIDE debt_* helpers, beyond the frozen \
          baseline — this is a NEW second-window-of-truth site. Wrap the decode in \
          a dedicated `debt_*`-prefixed helper (existing pattern, ~50 examples in \
@@ -236,7 +236,7 @@ fn no_raw_type_decode_outside_debt_helpers() {
     );
     assert!(
         shrink_needed.is_empty(),
-        "[M-196-raw-decode-allowlist] is stale (docs/compiler-conventions.md §9 — \
+        "[M-196-raw-decode-allowlist] is stale (docs/dev/compiler-conventions.md §9 — \
          each Plan 196 phase SHRINKS the allowlist as arms are removed/lifted into \
          debt_* helpers): update baseline_allowlist() in \
          compiler-codegen/tests/no_raw_type_decode.rs to match reality:\n{}",

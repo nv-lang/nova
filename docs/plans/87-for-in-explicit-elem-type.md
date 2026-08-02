@@ -7,7 +7,7 @@
 > **Зависимости:** Plan 79 (typecheck hardening — assignability-проверки
 > E73xx; переиспользуются в Ф.3) ✅
 > **Источник:** Plan 85.5 — маркер `[M-for-in-explicit-elem-type]` в
-> `docs/simplifications.md`
+> `docs/dev/simplifications.md`
 
 ## Зачем
 
@@ -140,7 +140,7 @@ Bootstrap-парсер этого **не поддерживает** — посл
 - **Ф.5.1** `spec/syntax.md` — сверить/уточнить примеры
   `for id u64 in ids` / `for x int in nums`; добавить явное
   предложение «аннотация проверяется компилятором».
-- **Ф.5.2** `docs/simplifications.md` —
+- **Ф.5.2** `docs/dev/simplifications.md` —
   `[M-for-in-explicit-elem-type]` → ✅ ЗАКРЫТО.
 - **Ф.5.3** `docs/plans/README.md` — Plan 87 → ✅ ЗАКРЫТ.
 - **Ф.5.4** `docs/project-creation.txt` +

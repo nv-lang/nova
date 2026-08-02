@@ -139,4 +139,4 @@ Resource has typical cleanup duration?
 - [async-cleanup.md](async-cleanup.md) — pre-Plan 110 defer-family reference.
 - [Q-cancel-and-cleanup](cancel-and-cleanup.md).
 - [Q-application-effect](application-effect.md).
-- [cleanup-cookbook.md §2.4 TCP grace close](../cleanup-cookbook.md).
+- [cleanup-cookbook.md §2.4 TCP grace close](../guide/cleanup-cookbook.md).

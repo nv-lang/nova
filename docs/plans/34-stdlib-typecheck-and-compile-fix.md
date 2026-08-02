@@ -137,7 +137,7 @@ fn fixed_ms(ms int) -> TimeHandler
   std/testing/handlers.nv).
 - ✅ `nova test` → **191/191 PASS** (нет регрессий после правок).
 - ✅ Обновлены [docs/project-creation.txt](../project-creation.txt) и
-  [docs/simplifications.md](../simplifications.md).
+  [docs/dev/simplifications.md](../dev/simplifications.md).
 - ✅ [Plan 14](14-stdlib-codegen-gaps.md) baseline помечен как
   расширенный через Plan 34.
 
@@ -369,7 +369,7 @@ retrospective.
 - `docs/plans/14, 18, 23, README.md` (status updates)
 - `docs/plans/35-cross-file-resolve.md` (new, расширен Ф.1)
 - `docs/plans/37-typecheck-semantic-parity.md` (new, от агента)
-- `docs/project-creation.txt`, `docs/simplifications.md`
+- `docs/project-creation.txt`, `docs/dev/simplifications.md`
 - `std/testing/handlers.nv` (new)
 - 9 std-файлов с `import as th`
 - 4 .nv файла с `int as char` refactor (base64, hex, ulid, uuid, property)
@@ -584,7 +584,7 @@ spec'd behavior) — sync в `spec/decisions/*.md` обязателен синх
 
 - `5d71e0843d` — Plan 34 followup #2: spec sync + 8 focused tests.
 - (в `e7d19dac92` агентский) — docs/project-creation.txt +
-  docs/simplifications.md (захвачены параллельным агентом в его commit;
+  docs/dev/simplifications.md (захвачены параллельным агентом в его commit;
   subject inaccurate но содержание сохранено).
 - Private discussion-log Этап 92 — commit `21f7926`.
 
@@ -593,7 +593,7 @@ spec'd behavior) — sync в `spec/decisions/*.md` обязателен синх
 - `spec/decisions/04-effects.md` (table + matrix + footnote)
 - `spec/decisions/08-runtime.md` (D26 signatures)
 - `nova_tests/plan34/*.nv` (8 файлов: 4 positive + 4 negative)
-- `docs/project-creation.txt`, `docs/simplifications.md` (записи)
+- `docs/project-creation.txt`, `docs/dev/simplifications.md` (записи)
 - `docs/plans/34-stdlib-typecheck-and-compile-fix.md` (эта Ф.8 секция)
 - `.claude/.../memory/feedback_project_docs.md` (auto-memory updated)
 

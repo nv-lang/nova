@@ -632,7 +632,7 @@ entry-folder-module») полностью достигнута resolver-side'о�
   known-limitation → Ф.2.
 - [Plan 71](71-doc-stability-scope.md) — паттерн warn + opt-in-error
   (для Ф.4 unused imports).
-- `docs/simplifications.md` — маркеры FileId / AD3 / `[M-entry-folder-module]`.
+- `docs/dev/simplifications.md` — маркеры FileId / AD3 / `[M-entry-folder-module]`.
 - `spec/decisions/07-modules.md` — D5 (видимость), D29 (модули,
   циклы), D47 (поля record).
 - `spec/decisions/02-types.md` — D72/D53 (структурные bound'ы).

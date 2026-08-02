@@ -1,6 +1,6 @@
 // №172 / A-V13 (реестр 221.1): `requires`/`ensures` с вызовом метода/free-fn
 // в условии на `#unverified` fn молча НЕ enforce'ился в рантайме (нарушение
-// enforce-with-elision, docs/contracts.ru.md — `#unverified` отключает только
+// enforce-with-elision, docs/guide/contracts.ru.md — `#unverified` отключает только
 // SMT-*верификацию*, НЕ runtime-check).
 //
 // Root cause (Ф.0, до фикса): `compiler-codegen/src/codegen/emit_c.rs`,

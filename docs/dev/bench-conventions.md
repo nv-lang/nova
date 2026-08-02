@@ -204,7 +204,7 @@ Add-MpPreference -ExclusionPath D:\Sources\nova-lang-p57\bench
 - **Plan 57.G** (audit-driven small batch, closed 2026-05-17): JSON drift slope+R² fields, defensive idioms, errno decoder для perf_event_open paths, ASCII histogram terminal output, `bench.metric(name, value, unit)` custom metrics DSL.
 - **Plan 57.H** (cross-binary + cross-platform, closed 2026-05-17): multi-group geomean (benchstat-style per-group lines), `nova bench hyperfine` cross-binary timing, `nova bench callgrind` cross-platform CPU instructions via valgrind subprocess.
 
-См. [docs/plans/57-perf-benchmark-infrastructure.md](plans/57-perf-benchmark-infrastructure.md) для полной архитектуры (10-layer design, risk register, perf budget).
+См. [docs/plans/57-perf-benchmark-infrastructure.md](../plans/57-perf-benchmark-infrastructure.md) для полной архитектуры (10-layer design, risk register, perf budget).
 
 ## Phase G/H quick reference (2026-05-17)
 

@@ -244,7 +244,7 @@ sort/search/dedup** (153.3), **(в) slice-surface** split_at/chunks/windows (153
 > - ✅ Golden существующих Vec-тестов: строгий base(main)-vs-post diff по blast-radius
 >   (plan13* 191/5, plan90_1/140_2/128/99, plan91, basics/generics/plan62, plan61) — **0 регрессий**.
 > - ✅ G4 (без новых FAIL по blast-radius), G6 (структурировано по слоям, координация с 140.2 соблюдена).
-> - ✅ Spec D239 CONFIRM (02-types.md) + Q-vec-alias-completeness (open-questions.md) + `docs/vec-internals.md`.
+> - ✅ Spec D239 CONFIRM (02-types.md) + Q-vec-alias-completeness (open-questions.md) + `docs/dev/vec-internals.md`.
 > - ✅ pos+neg фикстуры `nova_tests/plan153_0/` (3/3: folder-module + alias POS, compare POS, E7301 NEG).
 >
 > **Открытые маркеры:** `[M-153-vec-of-variadic-codegen]`, `[M-153-d239-explicit-vec-to-slice-param]`,
@@ -809,8 +809,8 @@ str `@plus`; Q-vec-operator-plus), `[][]T.flatten()`, `@rotate_left(n)`/
 > **Spec / Q.** D263 (restructure-ops + оператор `+`) записан в [10-overloading.md](../../spec/decisions/10-overloading.md)
 > + **D263 AMEND** (flatten реализован) + **D145 AMEND** (02-types: вложенные generic-ресиверы
 > произвольной глубины, фундамент flatten); Q-vec-operator-plus → ✅ ЗАКРЫТО в
-> [open-questions.md](../../spec/open-questions.md). Гайд — `docs/strings.md`-аналог: раздел
-> concat/+/restructure/flatten + заметка о вложенных ресиверах в [vec-internals.md](../vec-internals.md).
+> [open-questions.md](../../spec/open-questions.md). Гайд — `docs/guide/strings.md`-аналог: раздел
+> concat/+/restructure/flatten + заметка о вложенных ресиверах в [vec-internals.md](../dev/vec-internals.md).
 >
 > **Открытые маркеры:** нет (все 153.5-маркеры закрыты;
 > `[M-153.5-flatten-nested-receiver]` ✅ РАЗРЕШЁН followup'ом 2026-06-14 — вложенные
@@ -934,7 +934,7 @@ flat_map/…), 153.4-B (chunks/windows/mut-view), 153.5 (concat/rotate/drain).
 **Документация (`docs/`):**
 - `docs/vec.md` (NEW) — гайд: Vec/[]T, ленивые итераторы (vs eager), слайсы-views,
   sort/search, рецепты, таблица «откуда метод».
-- `docs/vec-internals.md` (NEW, 153.0) — структура `collections/vec/`, RawMem-слой,
+- `docs/dev/vec-internals.md` (NEW, 153.0) — структура `collections/vec/`, RawMem-слой,
   layout `{data,len,cap}`.
 - `docs/vec.md` раздел «слайсы» — модель `[]T`-view (cap==len, detach), split_at/chunks/windows (миграция не нужна — модель уже приземлена Plan 96).
 

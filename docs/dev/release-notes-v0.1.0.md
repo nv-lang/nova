@@ -143,16 +143,16 @@ Networking, TLS, HTTP, and compression are separately versioned packages
   this bundle from any working directory, `README-INSTALL.md`, and the
   license files. A C compiler (MSVC via `vcvars64.bat`, or Clang/GCC)
   must be installed separately — Nova compiles to C, not directly to
-  machine code. See [docs/quickstart.md](quickstart.md).
+  machine code. See [docs/guide/quickstart.md](../guide/quickstart.md).
 - **Linux**: built from source; there is no prebuilt Linux archive for
-  v0.1.0 yet. Follow [docs/linux-build.md](linux-build.md) (Debian/Ubuntu
+  v0.1.0 yet. Follow [docs/guide/linux-build.md](../guide/linux-build.md) (Debian/Ubuntu
   packages, Rust toolchain, `git submodule update` for the libuv
   submodule, build, smoke test). This is the same recipe the CI gate
   runs, and it is green.
 - **Docker**: `docker/release/Dockerfile`, a two-stage build (Ubuntu
   22.04 builder with the Rust toolchain, then a slim runtime image with
   the compiled `nova` binary, `std/`, and the C runtime). Build context
-  must be the repository root. See [docker/release/README.md](../docker/release/README.md).
+  must be the repository root. See [docker/release/README.md](../../docker/release/README.md).
 
 ## Known limitations
 
@@ -208,7 +208,7 @@ This is an early release; treat it accordingly.
 - The VSCode extension (syntax highlighting + LSP client) ships as a
   packaged `nova-lang-0.1.0.vsix` attached to this release.
 - Some standard-library corners and example programs carry documented,
-  narrow-scope simplifications (see `docs/simplifications.md` in the
+  narrow-scope simplifications (see `docs/dev/simplifications.md` in the
   repository) — these are tracked, not silent.
 - **`serde`'s `flatten` attribute isn't implemented yet** — using it is
   a compile error, not silently-ignored behaviour; every other field
@@ -228,12 +228,12 @@ This is an early release; treat it accordingly.
 
 ## Links
 
-- [Quickstart](quickstart.md) — install, build, and run your first Nova
+- [Quickstart](../guide/quickstart.md) — install, build, and run your first Nova
   program, including the effects/concurrency example.
-- [Language tour](language-tour.md) — a 12-section, example-by-example
+- [Language tour](../guide/language-tour.md) — a 12-section, example-by-example
   tour of the language, every snippet a real compiling/running file.
-- [spec/decisions/](../spec/decisions/) — the D-numbered design decision
+- [spec/decisions/](../../spec/decisions/) — the D-numbered design decision
   log; the authoritative source for Nova syntax and semantics.
 - [Repository](https://github.com/nv-lang/nova)
-- [docs/linux-build.md](linux-build.md) — building from source on
+- [docs/guide/linux-build.md](../guide/linux-build.md) — building from source on
   Linux/WSL2.

@@ -6,12 +6,12 @@
 
 ---
 
-> **СНАЧАЛА (онбординг + жёсткие правила):** [`docs/dev-workflow.md`](../dev-workflow.md) — как устроена
+> **СНАЧАЛА (онбординг + жёсткие правила):** [`docs/dev/dev-workflow.md`](../dev-workflow.md) — как устроена
 > разработка (план-ориентированный процесс, worktree-модель, daily loop) и **жёсткие операционные правила**
 > (никакого `git stash` — baseline через temp-worktree/commit-reset; `git add` только по именам файлов;
 > греп конфликт-маркеров ОДНОЙ командой с коммитом; коммит на задачу; без AI co-author trailer'ов;
 > язык-меняющее слияние не пушится без спек-амендмента в том же слиянии). Точка входа для агентов —
-> [`AGENTS.md`](../../AGENTS.md). **Прочитай ДО того, как брать задачу** — эти правила перекрывают любой
+> [`AGENTS.md`](../../../AGENTS.md). **Прочитай ДО того, как брать задачу** — эти правила перекрывают любой
 > устаревший текст в других доках.
 
 ---
@@ -42,15 +42,15 @@ D48 tag-шаблоны). **Не выдумывай синтаксис** — св
 
 ## 2. Текущее состояние и куда двигаться (2026-07-13)
 
-Статусы планов — **только** [`docs/plans/README.md`](../plans/README.md) + сами планы. Главное сейчас:
+Статусы планов — **только** [`docs/plans/README.md`](../../plans/README.md) + сами планы. Главное сейчас:
 
 - **Plan 196 «одно окно правды» — ВЫСШИЙ приоритет.** Чекер резолвит ОДИН раз → каналы
   (`resolved_types: ExprId→ResolvedType`, `resolved_callees`) → codegen ЧИТАЕТ (`resolved_type_to_c`),
-  а не перевыводит. Две встречные волны: [196.2](../plans/196.2-class-c-relocation.md) (волна-1: снятие
+  а не перевыводит. Две встречные волны: [196.2](../../plans/196.2-class-c-relocation.md) (волна-1: снятие
   веток `infer_call_ret_c`, emit_c.rs 46293-48883 — 26/114 снято, остался carrier-chain/финал) и
-  [196.3](../plans/196.3-wave2-d-driven.md) (волна-2: миграция сиблинг-функций по D — 12/12 инвентаря
+  [196.3](../../plans/196.3-wave2-d-driven.md) (волна-2: миграция сиблинг-функций по D — 12/12 инвентаря
   обработаны, трекер с колонками «Закрыто в / Одно окно ✔ / Доказательство»). Фундамент —
-  [196.4](../plans/196.4-call-resolvedtype-channel.md): Stage-1a+1b ✅ (канал материализует
+  [196.4](../../plans/196.4-call-resolvedtype-channel.md): Stage-1a+1b ✅ (канал материализует
   method-generic и static-generic возвраты, гейт propose-then-verify). **Следующий keystone =
   node_substs-канал (Stage-1c)** — разблокирует Tier-2 (d119/d122/d30/d85) и финальный коллапс
   `infer_call_ret_c`. Приёмка любого закрытия — ПО КОДУ, с доказательством в трекере 196.3.
@@ -66,10 +66,10 @@ D48 tag-шаблоны). **Не выдумывай синтаксис** — св
 - **Plan 198** — nova_tests-триаж: DELETE ✅; MIGRATE (в std/**/*_test.nv рядом с модулем /
   spec_tests/conformance / spec_tests/soundness) — финиширует. **nova_tests заморожен** — новые
   тесты туда не пишутся.
-- Открытые `[M-…]`-маркеры — [backlog-followups.md](../plans/backlog-followups.md) (в т.ч. свежий
+- Открытые `[M-…]`-маркеры — [backlog-followups.md](../../plans/backlog-followups.md) (в т.ч. свежий
   кластер `[M-flagship-*]` и P67-LEGACY-класс).
 
-## 3. Инструменты (`docs/promts/read-toolchain.md`)
+## 3. Инструменты (`docs/dev/promts/read-toolchain.md`)
 
 ```sh
 # собрать (release ОБЯЗАТЕЛЬНО — debug на порядок медленнее из-за vcvars)
@@ -130,5 +130,5 @@ nova-http, которой не было — заголовки копии был
 ## Что НЕ читать сразу
 
 - `compiler-codegen/src/` — только файлы, релевантные задаче (emit_c.rs — 50k+ строк).
-- `docs/project-creation.txt`, `docs/simplifications.md` — исторические логи.
+- `docs/project-creation.txt`, `docs/dev/simplifications.md` — исторические логи.
 - `docs/research/` — справочные материалы, не планы.

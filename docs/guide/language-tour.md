@@ -5,7 +5,7 @@ A working tour of Nova for a reader who has never seen the language —
 not the full specification. Every example on this page is a real,
 compiling, running `.nv` file (`nova build` + running the binary, or
 `nova test` where noted); none of it is aspirational. The source files
-live under [`examples/tour/`](../examples/tour) in the Nova repository if
+live under [`examples/tour/`](../../examples/tour) in the Nova repository if
 you want to build them yourself.
 
 Nova compiles to C, then to a native binary — there is no interpreter.
@@ -40,7 +40,7 @@ Hello, Nova! count=1, add(2,3)=5
 
 `type X { ... }` declares a **record** — a heap-allocated, GC-managed
 reference type. A **sum type** requires the `enum` marker
-(`type X enum A | B | C`, [D406](../spec/decisions/02-types.md#d406-sum-type-синтаксис-через-enum-маркер-2026-07-01)) —
+(`type X enum A | B | C`, [D406](../../spec/decisions/02-types.md#d406-sum-type-синтаксис-через-enum-маркер-2026-07-01)) —
 the older bare leading-`|` form is retired. `Option[T]`/`Result[T, E]` are
 ordinary sum types from the prelude. `[T]` on a function introduces a
 generic type parameter.
@@ -199,7 +199,7 @@ total=4 missing=1
 
 ## 5. Errors: Result + `?`, panic
 
-Nova's error-handling rule ([docs/idioms/error-handling.md](idioms/error-handling.md)):
+Nova's error-handling rule ([docs/idioms/error-handling.md](../idioms/error-handling.md)):
 **panic** is for a broken caller contract (a programmer bug — out-of-bounds
 access, a violated `requires`) and is never recoverable; **`Result[T, E]`**
 is for recoverable failure with an inspectable cause, and `?` propagates an
@@ -385,9 +385,9 @@ genuinely cancelled, not left running with its result discarded.
 `parallel for` fans out homogeneous work and collects results into a
 `[]T` in order. `Channel.new(cap)` returns a capability-split
 `{ tx, rx }` pair. This is the same shape as
-[`examples/mini_aggregator.nv`](../examples/mini_aggregator.nv) (see
+[`examples/mini_aggregator.nv`](../../examples/mini_aggregator.nv) (see
 [quickstart.md](quickstart.md)) and the flagship
-[`examples/flagship/aggregator`](../examples/flagship/aggregator) demo.
+[`examples/flagship/aggregator`](../../examples/flagship/aggregator) demo.
 
 ```nova
 // concurrency.nv — spawn, parallel for, supervised(deadline:), channels.
@@ -535,7 +535,7 @@ debug(some)=Some(7) debug(none)=None
 
 A type can also opt into `#impl(Debug)` to get a compiler-derived
 memberwise `TypeName { field: value }` rendering (see
-[D229](../spec/decisions/02-types.md) and
+[D229](../../spec/decisions/02-types.md) and
 `spec_tests/conformance/d229_debug_format_spec.nv`) — verified there via
 `nova test` and `assert`.
 
@@ -609,11 +609,11 @@ handle) aren't interchangeable at compile time, even though both are
 `void*` on the C side. `external fn name(args) -> ret` (D82) declares a
 binding to a C symbol; the full cookbook — layered wrapping, tuple-by-value
 returns, linking a static/shared library via `[ffi]`/`[ffi.staticlib]` in
-`nova.toml` — is in [docs/ffi-cookbook.md](ffi-cookbook.md).
+`nova.toml` — is in [docs/guide/ffi-cookbook.md](ffi-cookbook.md).
 
 ```nova
 // ffi_tour.nv — FFI basics: opaque pointer `*()`, typed handles, `external fn`.
-// Full cookbook: docs/ffi-cookbook.md. `ptr` as a built-in type was removed
+// Full cookbook: docs/guide/ffi-cookbook.md. `ptr` as a built-in type was removed
 // (Plan 134) — `*()` (pointer to unit = `void*` in C) is used everywhere.
 module tour.ffi_tour
 
@@ -649,19 +649,19 @@ nothing as int = 0
 
 ## Where to go next
 
-- [spec/overview.md](../spec/overview.md) — the central idea (effects),
+- [spec/overview.md](../../spec/overview.md) — the central idea (effects),
   the killer use-case, and the supporting design decisions in one page.
-- [spec/decisions/](../spec/decisions/) — the D-numbered decision log,
+- [spec/decisions/](../../spec/decisions/) — the D-numbered decision log,
   the authoritative source for every piece of Nova syntax and semantics;
   every construct in this tour traces back to a decision there.
-- [docs/quickstart.md](quickstart.md) — install, build, and run
+- [docs/guide/quickstart.md](quickstart.md) — install, build, and run
   `examples/mini_aggregator.nv` end to end.
-- [examples/flagship/aggregator](../examples/flagship/aggregator) — the
+- [examples/flagship/aggregator](../../examples/flagship/aggregator) — the
   full-sized version of the concurrency example: a real HTTP server, a web
   UI, and the same effect-checked signature under `--strict-effects`.
-- [docs/idioms/error-handling.md](idioms/error-handling.md),
-  [docs/channels.md](channels.md), [docs/ffi-cookbook.md](ffi-cookbook.md),
-  [docs/cleanup-cookbook.md](cleanup-cookbook.md) — deeper dives on
+- [docs/idioms/error-handling.md](../idioms/error-handling.md),
+  [docs/guide/channels.md](channels.md), [docs/guide/ffi-cookbook.md](ffi-cookbook.md),
+  [docs/guide/cleanup-cookbook.md](cleanup-cookbook.md) — deeper dives on
   errors, channels/`select`, FFI, and consume/cleanup respectively.
-- [docs/test-conventions.md](test-conventions.md) — how `nova test` and
+- [docs/dev/test-conventions.md](../dev/test-conventions.md) — how `nova test` and
   `EXPECT_*` markers work.

@@ -151,7 +151,7 @@ structural conformance through a generic `[F ReadFs]` bound sees it exactly
 like an inherent one (`std/src/fs/readfs_test.nv`). `list`/directory-index is
 deliberately **not** in the protocol (a real-FS scan is effectful, expensive,
 and non-deterministic where the embedded side is free and stable) — see
-[`docs/plans/210-embed-dir.md`](plans/210-embed-dir.md) §6б for the full design.
+[`docs/plans/210-embed-dir.md`](../plans/210-embed-dir.md) §6б for the full design.
 
 ## Cross-language comparison (7 languages)
 
@@ -211,9 +211,9 @@ atomic-without-fsync; Zig's `close()->void`.
 
 ## See also
 
-- [`spec/decisions/04-effects.md`](../spec/decisions/04-effects.md) — D322 (io-core),
+- [`spec/decisions/04-effects.md`](../../spec/decisions/04-effects.md) — D322 (io-core),
   D323 (fs), D324 (os), D302 amendment (net projection).
-- [`docs/consume-types.md`](consume-types.md) — must-consume mechanics (D133/D180)
+- [`docs/guide/consume-types.md`](consume-types.md) — must-consume mechanics (D133/D180)
   underlying `File`/`BufWriter`.
-- [`docs/plans/176-io-fs-os.md`](plans/176-io-fs-os.md) — the umbrella plan (Q1-Q15
+- [`docs/plans/176-io-fs-os.md`](../plans/176-io-fs-os.md) — the umbrella plan (Q1-Q15
   decision table, phase history).

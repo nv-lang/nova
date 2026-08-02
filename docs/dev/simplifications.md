@@ -11,10 +11,10 @@
 
 **Что сюда НЕ пишется** (чистка 2026-07-18, заказ владельца — файл превратился
 в свалку всего подряд): закрытые/снятые упрощения переносятся в
-[`docs/history/simplifications-closed.md`](history/simplifications-closed.md)
+[`docs/history/simplifications-closed.md`](../history/simplifications-closed.md)
 **в момент закрытия**, а не копятся здесь под пометкой «ЗАКРЫТО»; диагнозы
 багов и хроники фиксов сюда не пишутся вовсе — открытый хвост (если есть)
-фиксируется маркером в [`docs/plans/backlog-followups.md`](plans/backlog-followups.md),
+фиксируется маркером в [`docs/plans/backlog-followups.md`](../plans/backlog-followups.md),
 сама хроника — в план-заметках/nova-private; отчёты о проделанной работе
 (что сделано, гейты, коммиты) сюда тоже не пишутся — это дело плана/discussion-log,
 не живого списка упрощений. Здесь остаются только ДЕЙСТВУЮЩИЕ осознанные
@@ -832,7 +832,7 @@ cross-file resolution для bare-name функций не работает. П�
 **Приоритет:** P3 — workaround через alias работает и читается.
 
 **Обновление (Plan 81 Ф.11, 2026-05-21):** запись устарела.
-- **Wildcard `import X.*`** — **spec-rejected** (R25, [D29](../spec/decisions/07-modules.md#d29)/[D5](../spec/decisions/07-modules.md#d5)): `import` всегда явный — либо весь модуль, либо selective `.{A, B}`. Не недоработка, а решение.
+- **Wildcard `import X.*`** — **spec-rejected** (R25, [D29](../../spec/decisions/07-modules.md#d29)/[D5](../../spec/decisions/07-modules.md#d5)): `import` всегда явный — либо весь модуль, либо selective `.{A, B}`. Не недоработка, а решение.
 - **Bare-name visibility** — уже работает: `import X` (whole-module, без `.{...}`) делает bare-имена `export`-сущностей видимыми через Plan 35 merge. Префикс нужен только для `import X as alias`. Возврат bare-name в 9 stdlib-файлах — cosmetic, не блокер.
 
 
@@ -967,7 +967,7 @@ ide-integrations, которые гоняют `nova check` для feedback'а,
 
 **Как починить:** Plan 37 — перенести (или продублировать через shared
 module) проверки в type-checker. Detail в
-[docs/plans/37-typecheck-semantic-parity.md](plans/37-typecheck-semantic-parity.md).
+[docs/plans/37-typecheck-semantic-parity.md](../plans/37-typecheck-semantic-parity.md).
 Защита defense-in-depth (codegen всё равно держит свой check) на случай
 прямого `nova-codegen build` без `check` шага.
 
@@ -1122,7 +1122,7 @@ module) проверки в type-checker. Detail в
 - **Что реализовано:** CI matrix с двумя jobs: TrivialBackend (default) и Z3
   (`--features z3-backend` + `NOVA_SMT_BACKEND=z3`). Тесты `REQUIRES_SMT_BACKEND z3`
   прогоняются в z3-job, пропускаются в trivial-job.
-  `docs/promts/read-toolchain.md` обновлён с Z3 build инструкцией.
+  `docs/dev/promts/read-toolchain.md` обновлён с Z3 build инструкцией.
 - **Дата закрытия:** 2026-05-16
 
 ### [V19] ✅ Exhaustive encode_expr — ЗАКРЫТО Plan 33.6 Ф.6.1 (2026-05-16)
@@ -1891,7 +1891,7 @@ free при resume.
 arena подхода concurrent GC невозможен (нет общего scheduler tick'а
 для disable).
 
-Detail: [docs/plans/44.2-fiber-arena-posix.md](plans/44.2-fiber-arena-posix.md).
+Detail: [docs/plans/44.2-fiber-arena-posix.md](../plans/44.2-fiber-arena-posix.md).
 
 
 ---
@@ -2481,7 +2481,7 @@ historical context, не canonical API reference.
   anonymous record-literal. Заход откачен чисто. **Вывод: option C (int-wire + typed-сахар) — корректная
   ИТОГОВАЯ архитектура**, не временный компромисс — typed-сахар живёт в родном модуле типа (anon-literal
   там — обычный function body, не handler-литерал), opacity и codegen-ограничение там не конфликтуют.
-  См. spec D316-amend (§Ф.2-находка) + `docs/time.md`. Партиальность закрытия ТЕПЕРЬ by design, не TODO.
+  См. spec D316-amend (§Ф.2-находка) + `docs/guide/time.md`. Партиальность закрытия ТЕПЕРЬ by design, не TODO.
 - **UPDATE 2026-07-04 (Plan 175 Ф.1b/Ф.3, option C — SHIPPED):** user-facing surface БОЛЬШЕ не ломается. Схема эффекта
   `Time` осталась int-wire (`now()->int` ms), НО `Duration`/`Timestamp`/`Monotonic` мигрированы в `value`-records и
   typed API доставлен на `.nv`-обёртках поверх int-провода: `Timestamp.now()` = `from_unix_millis(Time.now())`;
@@ -2765,13 +2765,13 @@ historical context, не canonical API reference.
   (`let x int = true`), wrong type-arity (`Result[int]`) компилировались
   **тихо** (silent miscompilation); type-as-value (`let c = Foo`) и
   non-existent field (`f.nonexistent`) ловились только C-компилятором.
-- **Закрыто:** [Plan 79](plans/79-typecheck-hardening-no-silent-fallback.md)
+- **Закрыто:** [Plan 79](../plans/79-typecheck-hardening-no-silent-fallback.md)
   — проход `TypeCheckCtx` в `types/mod.rs` (серия E73xx):
   - Ф.1 assignability arg↔param + annotation↔RHS → **E7301**;
   - Ф.2 арность type-аргументов → **E7310**;
   - Ф.3 существование поля/метода → **E7320**;
   - Ф.4 type-vs-value → **E7330**.
-  Спека — [D135](../spec/decisions/02-types.md#d135). Negative-тесты
+  Спека — [D135](../../spec/decisions/02-types.md#d135). Negative-тесты
   для Plan 72 p1b/p2a дописаны (`nova_tests/plan72/p1b_empty_sum_type_neg.nv`,
   `p2a_try_from_into_neg.nv`) — оговорка «p1b/p2a без negative-покрытия»
   снята.
@@ -3233,7 +3233,7 @@ flip всплыли дополнительные edge cases (supervised drain de
 cancel_stress, parallel_for ordering под 1-worker M:N ≠ cooperative,
 detach inline-vs-async, sleep precision wall-clock jitter, handler
 corner cases, main_yield interaction с armed runtime). Активация
-закомментирована, открыт [Plan 83.4.5](plans/83.4.5-mn-drain-edge-cases.md)
+закомментирована, открыт [Plan 83.4.5](../plans/83.4.5-mn-drain-edge-cases.md)
 «M:N drain edge-case sweep» для closure (~5-7 dev-day).
 
 **Полный clang `nova test`** (без flip): **1111 PASS / 0 FAIL / 56 SKIP**.
@@ -3277,7 +3277,7 @@ cooperative-only tests где multi-worker race blocks validation.
 
 ### Что
 
-[Plan 83.2](plans/83.2-mn-default-flip.md) — «M:N вкл по умолчанию для
+[Plan 83.2](../plans/83.2-mn-default-flip.md) — «M:N вкл по умолчанию для
 compiled-бинарей» (паритет Go `GOMAXPROCS=NumCPU` / tokio multi-thread):
 программа без явного `runtime.init()` должна автоматически использовать
 все ядра при fiber-нагрузке. Ф.0 readiness gate был зелёным
@@ -4219,7 +4219,7 @@ emission в emit_c.rs).
   ```
   Парсер падает: `expected fn / type / let / const / test, got '|'` на `|` после `u8`/`i32`.
   Только дефолтная форма (`type X | A = 0 | B = 1`, implicit `int`) работает.
-  → [Plan 105](plans/105-sum-type-explicit-base.md) (proposed, P2, ~1.5 dev-day).
+  → [Plan 105](../plans/105-sum-type-explicit-base.md) (proposed, P2, ~1.5 dev-day).
 
 - [M-if-let-chain-parser-gap] **2026-05-27** — Spec ↔ impl drift:
   [spec/decisions/03-syntax.md:1163-1182](decisions/03-syntax.md#L1163-L1182) задокументировал
@@ -4232,7 +4232,7 @@ emission в emit_c.rs).
   Парсер падает: `expected '{', got ','` на запятой после первого cond'а.
   Грамматика в spec'е (`if-expr := "if" if-cond ("," if-cond)* block`) реализована
   только без `("," if-cond)*` хвоста. Workaround — вложенные `if`'ы.
-  → [Plan 106](plans/106-if-let-chains.md) (proposed, P2, ~2 dev-day, AST-унификация
+  → [Plan 106](../plans/106-if-let-chains.md) (proposed, P2, ~2 dev-day, AST-унификация
   `IfLet`/`WhileLet` → `If`/`While` с `Vec<IfCond>`).
 
 ## Codegen (emit_c.rs)
@@ -4662,7 +4662,7 @@ cross-file resolution для bare-name функций не работает. П�
 **Приоритет:** P3 — workaround через alias работает и читается.
 
 **Обновление (Plan 81 Ф.11, 2026-05-21):** запись устарела.
-- **Wildcard `import X.*`** — **spec-rejected** (R25, [D29](../spec/decisions/07-modules.md#d29)/[D5](../spec/decisions/07-modules.md#d5)): `import` всегда явный — либо весь модуль, либо selective `.{A, B}`. Не недоработка, а решение.
+- **Wildcard `import X.*`** — **spec-rejected** (R25, [D29](../../spec/decisions/07-modules.md#d29)/[D5](../../spec/decisions/07-modules.md#d5)): `import` всегда явный — либо весь модуль, либо selective `.{A, B}`. Не недоработка, а решение.
 - **Bare-name visibility** — уже работает: `import X` (whole-module, без `.{...}`) делает bare-имена `export`-сущностей видимыми через Plan 35 merge. Префикс нужен только для `import X as alias`. Возврат bare-name в 9 stdlib-файлах — cosmetic, не блокер.
 
 
@@ -4797,7 +4797,7 @@ ide-integrations, которые гоняют `nova check` для feedback'а,
 
 **Как починить:** Plan 37 — перенести (или продублировать через shared
 module) проверки в type-checker. Detail в
-[docs/plans/37-typecheck-semantic-parity.md](plans/37-typecheck-semantic-parity.md).
+[docs/plans/37-typecheck-semantic-parity.md](../plans/37-typecheck-semantic-parity.md).
 Защита defense-in-depth (codegen всё равно держит свой check) на случай
 прямого `nova-codegen build` без `check` шага.
 
@@ -4952,7 +4952,7 @@ module) проверки в type-checker. Detail в
 - **Что реализовано:** CI matrix с двумя jobs: TrivialBackend (default) и Z3
   (`--features z3-backend` + `NOVA_SMT_BACKEND=z3`). Тесты `REQUIRES_SMT_BACKEND z3`
   прогоняются в z3-job, пропускаются в trivial-job.
-  `docs/promts/read-toolchain.md` обновлён с Z3 build инструкцией.
+  `docs/dev/promts/read-toolchain.md` обновлён с Z3 build инструкцией.
 - **Дата закрытия:** 2026-05-16
 
 ### [V19] ✅ Exhaustive encode_expr — ЗАКРЫТО Plan 33.6 Ф.6.1 (2026-05-16)
@@ -5721,7 +5721,7 @@ free при resume.
 arena подхода concurrent GC невозможен (нет общего scheduler tick'а
 для disable).
 
-Detail: [docs/plans/44.2-fiber-arena-posix.md](plans/44.2-fiber-arena-posix.md).
+Detail: [docs/plans/44.2-fiber-arena-posix.md](../plans/44.2-fiber-arena-posix.md).
 
 
 ---
@@ -6236,13 +6236,13 @@ historical context, не canonical API reference.
   (`let x int = true`), wrong type-arity (`Result[int]`) компилировались
   **тихо** (silent miscompilation); type-as-value (`let c = Foo`) и
   non-existent field (`f.nonexistent`) ловились только C-компилятором.
-- **Закрыто:** [Plan 79](plans/79-typecheck-hardening-no-silent-fallback.md)
+- **Закрыто:** [Plan 79](../plans/79-typecheck-hardening-no-silent-fallback.md)
   — проход `TypeCheckCtx` в `types/mod.rs` (серия E73xx):
   - Ф.1 assignability arg↔param + annotation↔RHS → **E7301**;
   - Ф.2 арность type-аргументов → **E7310**;
   - Ф.3 существование поля/метода → **E7320**;
   - Ф.4 type-vs-value → **E7330**.
-  Спека — [D135](../spec/decisions/02-types.md#d135). Negative-тесты
+  Спека — [D135](../../spec/decisions/02-types.md#d135). Negative-тесты
   для Plan 72 p1b/p2a дописаны (`nova_tests/plan72/p1b_empty_sum_type_neg.nv`,
   `p2a_try_from_into_neg.nv`) — оговорка «p1b/p2a без negative-покрытия»
   снята.
@@ -6704,7 +6704,7 @@ flip всплыли дополнительные edge cases (supervised drain de
 cancel_stress, parallel_for ordering под 1-worker M:N ≠ cooperative,
 detach inline-vs-async, sleep precision wall-clock jitter, handler
 corner cases, main_yield interaction с armed runtime). Активация
-закомментирована, открыт [Plan 83.4.5](plans/83.4.5-mn-drain-edge-cases.md)
+закомментирована, открыт [Plan 83.4.5](../plans/83.4.5-mn-drain-edge-cases.md)
 «M:N drain edge-case sweep» для closure (~5-7 dev-day).
 
 **Полный clang `nova test`** (без flip): **1111 PASS / 0 FAIL / 56 SKIP**.
@@ -6748,7 +6748,7 @@ cooperative-only tests где multi-worker race blocks validation.
 
 ### Что
 
-[Plan 83.2](plans/83.2-mn-default-flip.md) — «M:N вкл по умолчанию для
+[Plan 83.2](../plans/83.2-mn-default-flip.md) — «M:N вкл по умолчанию для
 compiled-бинарей» (паритет Go `GOMAXPROCS=NumCPU` / tokio multi-thread):
 программа без явного `runtime.init()` должна автоматически использовать
 все ядра при fiber-нагрузке. Ф.0 readiness gate был зелёным
@@ -7690,7 +7690,7 @@ emission в emit_c.rs).
   ```
   Парсер падает: `expected fn / type / let / const / test, got '|'` на `|` после `u8`/`i32`.
   Только дефолтная форма (`type X | A = 0 | B = 1`, implicit `int`) работает.
-  → [Plan 105](plans/105-sum-type-explicit-base.md) (proposed, P2, ~1.5 dev-day).
+  → [Plan 105](../plans/105-sum-type-explicit-base.md) (proposed, P2, ~1.5 dev-day).
 
 - [M-if-let-chain-parser-gap] **2026-05-27** — Spec ↔ impl drift:
   [spec/decisions/03-syntax.md:1163-1182](decisions/03-syntax.md#L1163-L1182) задокументировал
@@ -7703,7 +7703,7 @@ emission в emit_c.rs).
   Парсер падает: `expected '{', got ','` на запятой после первого cond'а.
   Грамматика в spec'е (`if-expr := "if" if-cond ("," if-cond)* block`) реализована
   только без `("," if-cond)*` хвоста. Workaround — вложенные `if`'ы.
-  → [Plan 106](plans/106-if-let-chains.md) (proposed, P2, ~2 dev-day, AST-унификация
+  → [Plan 106](../plans/106-if-let-chains.md) (proposed, P2, ~2 dev-day, AST-унификация
   `IfLet`/`WhileLet` → `If`/`While` с `Vec<IfCond>`).
 
 ## 2026-05-27 (continued) — Plan 91 Ф.4 closure (sort module)
@@ -7786,8 +7786,8 @@ emission в emit_c.rs).
 - ✅ D199 + D200 spec block drafts.
 
 **OPEN markers carried to Plan 114.4.1:**
-- ✅ `[M-114.4-assoc-const]` — extracted в [Plan 114.4.1](plans/114.4.1-associated-constants.md) (~½ day; Plan 70.5 mono integration; safety hatch на Ф.3 generic per-mono).
-- ✅ `[M-114.4-const-fn]` — extracted в [Plan 114.4.2](plans/114.4.2-const-fn.md) (~1 day; comptime evaluator subsystem; safety hatch на Ф.2 evaluator).
+- ✅ `[M-114.4-assoc-const]` — extracted в [Plan 114.4.1](../plans/114.4.1-associated-constants.md) (~½ day; Plan 70.5 mono integration; safety hatch на Ф.3 generic per-mono).
+- ✅ `[M-114.4-const-fn]` — extracted в [Plan 114.4.2](../plans/114.4.2-const-fn.md) (~1 day; comptime evaluator subsystem; safety hatch на Ф.2 evaluator).
 - 🟡 `[M-114.4-scope-const-chain]` — scope-locals referencing other scope-locals.
 - 🟡 `[M-114.4-cross-module-const-ref]` — Path expr cross-module.
 - 🟡 `[M-114.4-ro-module-lazy-init]` — top-level ro X = compute() codegen.
@@ -8557,7 +8557,7 @@ re-attempt sub-plan ПОСЛЕ Plan 139 Ф.2 (координация risk RG; в
   `nova_tests/plan115/nova.toml` (`name="plan115"` сохраняет D78 module-identity:
   `module plan115.X` == package+src; как mathlib→`mathlib.calc`). Реальный потребитель —
   только `plan115/t4_sqlite_e2e_ok`. clang plan115 11/0 PASS, sqlite ушёл из MSVC-компайла.
-- **GNU stmt-expr C2059 — заведено [Plan 145](plans/145-msvc-codegen-portability.md)**
+- **GNU stmt-expr C2059 — заведено [Plan 145](../plans/145-msvc-codegen-portability.md)**
   (`[M-msvc-bounds-check-stmt-expr]`). Вскрылось после sqlite-фикса. Codegen эмитит
   `(*({ __typeof__(arr) _a=arr; ... &_a->data[_i]; }))` (GNU statement-expression + `__typeof__`)
   для bounds-checked индексации (emit_c.rs ~9700/9720/15783/18571) → cl.exe C2059 (не

@@ -10,8 +10,8 @@
 `select { ... }` — multiplexed channel operations: ожидает несколько
 recv/send одновременно, просыпается по первому готовому arm'у.
 
-Spec: [D91](../spec/decisions/06-concurrency.md#d91) (channel revision)
-+ [D94](../spec/decisions/06-concurrency.md#d94) (select).
+Spec: [D91](../../spec/decisions/06-concurrency.md#d91) (channel revision)
++ [D94](../../spec/decisions/06-concurrency.md#d94) (select).
 
 ---
 
@@ -110,7 +110,7 @@ ro rx = ch.rx
 ```
 
 **Capacity ≥ 1.** `Channel.new(0)` сейчас панкует с
-`"capacity must be >= 1"` ([Plan 44.1](plans/44.1-channel-hardening.md)
+`"capacity must be >= 1"` ([Plan 44.1](../plans/44.1-channel-hardening.md)
 Ф.3) — zero-capacity rendezvous каналы пока не реализованы.
 
 **Тип передачи (`T`)** выводится из первого `send`/`recv`:
@@ -137,7 +137,7 @@ value-records — отвергается на этапе компиляции
 
 | Метод | Сигнатура | Семантика |
 |---|---|---|
-| `send` | `(v T) -> bool` | Blocking send. Возвращает `true` если отправил; `false` если канал закрыт (не panic — [Plan 30](plans/30-channel-improvements.md)) |
+| `send` | `(v T) -> bool` | Blocking send. Возвращает `true` если отправил; `false` если канал закрыт (не panic — [Plan 30](../plans/30-channel-improvements.md)) |
 | `try_send` | `(v T) -> bool` | Non-blocking. `true` если поместилось; `false` если буфер полон или канал закрыт |
 | `close` | `() -> ()` | Закрывает writer-capability. Idempotent. С multi-writer (`share`) — ref-counted: канал реально закрывается только когда все writers закрылись |
 | `share` | `() -> ChanWriter[T]` | Создаёт дополнительный writer на тот же буфер. `writer_count++` |
@@ -453,7 +453,7 @@ arm-body     = block | stmt
 > `.recv()`. Spec упоминает также `pattern = rx.recv()` форму; в
 > текущем компиляторе работает только bare-форма.
 
-**Семантика** ([D94](../spec/decisions/06-concurrency.md#d94)):
+**Семантика** ([D94](../../spec/decisions/06-concurrency.md#d94)):
 
 1. **Guard evaluation** — `if <expr>` перед стрелкой делает arm
    disabled когда false.
@@ -653,7 +653,7 @@ compiler-builtin (под капотом `nova_chan_reader_close_after_ns(d.nanos
 `Time.after(int ms)` — bare int (мс/мкс/сек?). Теперь — типизированный
 `Duration`. Migration: `cargo run --bin migrate_plan65 -- --apply` —
 переписывает literal-аргументы автоматически
-(см. [docs/nova-cli.ru.md](nova-cli.ru.md#migrate_plan65)).
+(см. [docs/guide/nova-cli.ru.md](nova-cli.ru.md#migrate_plan65)).
 
 **Edge-cases:**
 - `Duration.ZERO` или `Duration.from_*(0)` — канал создаётся
@@ -666,7 +666,7 @@ compiler-builtin (под капотом `nova_chan_reader_close_after_ns(d.nanos
 **Performance:** сейчас каждый вызов аллоцирует свежий `uv_timer_t`
 (~120 байт + syscall). Адекватно для idiomatic 10-100 concurrent
 timers. Custom timer-wheel для high-throughput (10k+ HTTP timeouts)
-— [Plan 66](plans/66-timer-wheel-and-tick-every.md).
+— [Plan 66](../plans/66-timer-wheel-and-tick-every.md).
 
 ### Multi-arm fairness
 
@@ -754,7 +754,7 @@ test "select: data wins supervised(cancel:) race" {
 `tok.cancel()` отменяет **все** pending waiters в любом `select`-блоке
 внутри `supervised(cancel: tok)`. Fiber просыпается, проверяет
 `cancel_requested`, и выходит из supervised-блока через структурную
-отмену (D75 / [Plan 49](plans/49-cancel-throw-routing.md)).
+отмену (D75 / [Plan 49](../plans/49-cancel-throw-routing.md)).
 
 Cancellation **не ошибка** — она не превращается в `throw`, не
 вызывает Fail-handler. Поведение симметрично Go `context.Done()`, но
@@ -802,7 +802,7 @@ fn run_pipeline() Net -> () {
 ### Auto-close на drop — нет
 
 В отличие от Rust mpsc, Nova не имеет deterministic destructor'ов
-(managed heap, [D6](../spec/decisions/05-memory.md#d6)). GC соберёт
+(managed heap, [D6](../../spec/decisions/05-memory.md#d6)). GC соберёт
 sender «когда-нибудь» — это **недетерминированно** и сделало бы тесты
 flaky. Поэтому `close()` всегда explicit.
 
@@ -843,39 +843,39 @@ test "channel: close idempotent" {
 |---|---|
 | `None = rx` отдельный arm (только `_ = rx` wildcard) | Plan 31 followup |
 | `Channel.new(0)` zero-capacity rendezvous | Plan 44.2+ |
-| `defer tx.close()` + tuple/record destructure | [Plan 25](plans/25-production-readiness-roadmap.md) G8 |
+| `defer tx.close()` + tuple/record destructure | [Plan 25](../plans/25-production-readiness-roadmap.md) G8 |
 | `pattern = rx.recv()` (с `.recv()`) форма в select | работает только bare `pattern = rx` |
 | `oneshot::channel<T>` / `watch::channel<T>` / `broadcast::channel<T>` (Tokio variants) | Plan 44.2 |
 | `recv_many` batch API | Plan 44.1 Ф.4 follow-up |
 | Lock-free SPSC flavor | Plan 50+ (Loom-verified) |
-| `tick_every(Duration)` periodic ticker | [Plan 66](plans/66-timer-wheel-and-tick-every.md) |
-| `close_at(Monotonic)` absolute deadline | [Plan 65](plans/65-chanreader-close-after.md) Ф.13 (✅ реализовано) |
-| Time-effect mock для deterministic timer-тестов | [Plan 65](plans/65-chanreader-close-after.md) Ф.10 (✅ реализовано) |
+| `tick_every(Duration)` periodic ticker | [Plan 66](../plans/66-timer-wheel-and-tick-every.md) |
+| `close_at(Monotonic)` absolute deadline | [Plan 65](../plans/65-chanreader-close-after.md) Ф.13 (✅ реализовано) |
+| Time-effect mock для deterministic timer-тестов | [Plan 65](../plans/65-chanreader-close-after.md) Ф.10 (✅ реализовано) |
 
 ---
 
 ## Связанные документы
 
-- [`spec/decisions/06-concurrency.md`](../spec/decisions/06-concurrency.md) —
+- [`spec/decisions/06-concurrency.md`](../../spec/decisions/06-concurrency.md) —
   D79 / D91 / D94 / D75 / D97 (channels, select, cancel, fiber stacks)
-- [`docs/plans/21-channel-revision-implementation.md`](plans/21-channel-revision-implementation.md)
+- [`docs/plans/21-channel-revision-implementation.md`](../plans/21-channel-revision-implementation.md)
   — D91 implementation (capability-split)
-- [`docs/plans/30-channel-improvements.md`](plans/30-channel-improvements.md)
+- [`docs/plans/30-channel-improvements.md`](../plans/30-channel-improvements.md)
   — `send → bool` + `tx.share()`
-- [`docs/plans/31-channel-select.md`](plans/31-channel-select.md) —
+- [`docs/plans/31-channel-select.md`](../plans/31-channel-select.md) —
   `select { ... }` (D94)
-- [`docs/plans/44.1-channel-hardening.md`](plans/44.1-channel-hardening.md)
+- [`docs/plans/44.1-channel-hardening.md`](../plans/44.1-channel-hardening.md)
   — production-grade M:N safety (atomics, doubly-linked, cache padding)
-- [`docs/plans/49-cancel-throw-routing.md`](plans/49-cancel-throw-routing.md)
+- [`docs/plans/49-cancel-throw-routing.md`](../plans/49-cancel-throw-routing.md)
   — cancel semantics (typed `CancelToken[T]`)
-- [`docs/plans/65-chanreader-close-after.md`](plans/65-chanreader-close-after.md)
+- [`docs/plans/65-chanreader-close-after.md`](../plans/65-chanreader-close-after.md)
   — `ChanReader.close_after(Duration)` (rename от `Time.after`)
-- [`docs/plans/66-timer-wheel-and-tick-every.md`](plans/66-timer-wheel-and-tick-every.md)
+- [`docs/plans/66-timer-wheel-and-tick-every.md`](../plans/66-timer-wheel-and-tick-every.md)
   — periodic ticker + custom timer-wheel (P2)
 - [`std/concurrency/timer.nv`](../std/concurrency/timer.nv) —
   `ChanReader.close_after` doc-surface
 - [`std/time/duration.nv`](../std/time/duration.nv) — `Duration` type
 - [`nova_tests/runtime/channels.nv`](../nova_tests/runtime/channels.nv)
   — 22 теста channel API
-- [`nova_tests/concurrency/`](../nova_tests/concurrency/) —
+- [`nova_tests/concurrency/`](../../nova_tests/concurrency/) —
   `select_*.nv` тесты (7 файлов)

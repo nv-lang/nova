@@ -2,28 +2,28 @@
 # Как устроена разработка Nova и как подхватить работу
 
 > **Кому:** новому агенту или человеку, который должен быстро понять, **что это за проект**
-> и **как продолжать над ним работать**. Это не дубль [README.md](../README.md) (язык) и не
-> [AGENTS.md](../AGENTS.md) (build/test для агентов) — это **связующий документ о процессе**:
+> и **как продолжать над ним работать**. Это не дубль [README.md](../../README.md) (язык) и не
+> [AGENTS.md](../../AGENTS.md) (build/test для агентов) — это **связующий документ о процессе**:
 > источники истины, план-ориентированная разработка, модель worktree, жёсткие правила, dev-логи.
 > Подробности всегда в специализированных доках — здесь ссылки, не копии.
 
 ## TL;DR за 60 секунд
 
 - **Nova** — системный язык с алгебраическими эффектами, структурной конкурентностью и опц. контрактами;
-  компилятор на Rust, кодоген в C, рантайм на C (Boehm GC). См. [README.md](../README.md).
+  компилятор на Rust, кодоген в C, рантайм на C (Boehm GC). См. [README.md](../../README.md).
 - **Три источника истины:** `spec/decisions/` (D-блоки = *почему*/семантика, нормативны) →
   `docs/plans/` (*что*/роадмап) → код (*как*/текущее поведение). **Spec-first:** семантику решаем в D-блоке
   **до** кода. При расхождении спека↔код — код = текущее поведение, спека = намерение; **не доверять одному
   слепо, проверять**.
 - **Работа = планы.** Всё ведётся нумерованными самодостаточными планами в `docs/plans/`. Запуск: «**выполни
-  план NNN**». Индекс — [docs/plans/README.md](plans/README.md).
+  план NNN**». Индекс — [docs/plans/README.md](../plans/README.md).
 - **Worktree на план.** Главный репо `d:/Sources/nv-lang/nova` — точка интеграции; каждый активный план
   живёт в соседнем worktree `../nova-pNN`. Сейчас их ~11.
 - **Жёсткие правила:** никакого `git stash`; `git add` только по именам файлов; `git commit -s` (DCO),
   без `Co-Authored-By`; пересобрать `nova-cli` после правок `.rs`; тесты только через C-codegen.
-- **После большой задачи:** обновить `docs/project-creation.txt`, `docs/simplifications.md` и discussion-log
+- **После большой задачи:** обновить `docs/project-creation.txt`, `docs/dev/simplifications.md` и discussion-log
   в **отдельном** репо `nova-private`. В `simplifications.md` — только ДЕЙСТВУЮЩЕЕ упрощение (rationale + условие
-  снятия); закрытое сразу переносится в [docs/history/simplifications-closed.md](history/simplifications-closed.md),
+  снятия); закрытое сразу переносится в [docs/history/simplifications-closed.md](../history/simplifications-closed.md),
   диагнозы/хроники фиксов туда не пишутся вовсе (см. шапку файла).
 
 ---
@@ -36,8 +36,8 @@ Nova — системный ЯП «для эпохи ИИ»: побочные э
 Сейчас это **bootstrap-компилятор**, не дизайн-документ: парсер + чек + кодоген в C + нативный рантайм.
 Один пайплайн (`nova build`/`nova test`) — **интерпретатора нет** (`nova run` не поддержан намеренно).
 
-Глубже: [README.md](../README.md) (обзор + примеры), [spec/overview.md](../spec/overview.md),
-[spec/effects.md](../spec/effects.md), [examples/getting_started.nv](../examples/getting_started.nv).
+Глубже: [README.md](../../README.md) (обзор + примеры), [spec/overview.md](../../spec/overview.md),
+[spec/effects.md](../../spec/effects.md), [examples/getting_started.nv](../../examples/getting_started.nv).
 
 ## 2. Карта репозитория (что важно для разработки)
 
@@ -60,7 +60,7 @@ Nova — системный ЯП «для эпохи ИИ»: побочные э
 - `nova-private` — **отдельный** репозиторий: discussion-log, приватные заметки. Не в main-репо.
 
 Сборочная модель: два независимых Cargo-крейта (`compiler-codegen`, `nova-cli` + `nova-lsp`) и
-Nova-workspace `nova.toml` (members: `std`, `examples`, `nova_tests`). Подробнее: [docs/nova-cli.md](nova-cli.md).
+Nova-workspace `nova.toml` (members: `std`, `examples`, `nova_tests`). Подробнее: [docs/guide/nova-cli.md](../guide/nova-cli.md).
 
 ## 3. Три источника истины (главная ментальная модель)
 
@@ -88,14 +88,14 @@ Nova-workspace `nova.toml` (members: `std`, `examples`, `nova_tests`). Подр�
 - **План = самодостаточный файл** `docs/plans/NNN-<slug>.md` со всем контекстом для исполнения. Запуск
   одной фразой: «**выполни план NNN**». Внутри: фазы (`Ф.0`/`Ф.1`/…), критерии приёмки, источники, тесты.
 - **Под-планы** наследуют номер: `169.1.2` — под-план `169.1`. Крупный план дробится на под-планы.
-- **Индекс** всех планов — [docs/plans/README.md](plans/README.md) (большой файл, читать
+- **Индекс** всех планов — [docs/plans/README.md](../plans/README.md) (большой файл, читать
   страницами через offset/limit). **Статус** — только пофайлово: строка `**Статус:**` внутри
-  самого `docs/plans/NNN-*.md`; сводный обзор — сгенерированный [docs/plans/STATUS.md](plans/STATUS.md)
+  самого `docs/plans/NNN-*.md`; сводный обзор — сгенерированный [docs/plans/STATUS.md](../plans/STATUS.md)
   (регенерация: `bash scripts/tools/gen-plan-status.sh`). Ручная сводная таблица статусов — запрещена
   (см. [conventions-governance.md](conventions-governance.md)).
 - **Корень `docs/plans/` — только планы** (`NNN[.x]-<slug>.md`) + `README.md`/`STATUS.md`/
   `backlog-followups.md`. Рабочие файлы агентов (чекпоинты/progress/notes/карты/verification
-  живых волн) — в [docs/plans/wip/](plans/wip/), не в корне. При закрытии волны (план ЗАКРЫТ/влит
+  живых волн) — в [docs/plans/wip/](../plans/wip/), не в корне. При закрытии волны (план ЗАКРЫТ/влит
   в main) её чекпоинт из `wip/` **удаляется** (история — в git, ссылки на удалённый файл
   заменяются текстом «чекпоинт волны удалён при закрытии, см. git-историю»); если волна ещё
   активна, чекпоинт остаётся в `wip/` до закрытия (схема 2026-07-17).
@@ -103,9 +103,9 @@ Nova-workspace `nova.toml` (members: `std`, `examples`, `nova_tests`). Подр�
   закрывается заглушкой/TODO; фазирование — это порядок, не урезание объёма.
 - **Followup-маркеры `[M-…]`** — отложенная работа:
   - привязанные к плану → секция *Followups* того плана;
-  - «плавающие» → [docs/plans/backlog-followups.md](plans/backlog-followups.md) (**только живые/открытые**) + запись
-    в [docs/simplifications.md](simplifications.md) (**история**, append-only).
-  - Жизненный цикл маркера описан в [AGENTS.md](../AGENTS.md#followup-markers-m).
+  - «плавающие» → [docs/plans/backlog-followups.md](../plans/backlog-followups.md) (**только живые/открытые**) + запись
+    в [docs/dev/simplifications.md](simplifications.md) (**история**, append-only).
+  - Жизненный цикл маркера описан в [AGENTS.md](../../AGENTS.md#followup-markers-m).
 
 ## 5. Рабочий цикл (как подхватить и вести работу)
 
@@ -132,7 +132,7 @@ Nova-workspace `nova.toml` (members: `std`, `examples`, `nova_tests`). Подр�
    ```
    Per-fix — таргетная фикстура; полный `nova test` — в конце фазы. Полный регресс ~60-90 мин →
    **дробить на батчи < 10 мин** (потолок таймаута Bash/PS — 10 мин). Детали флагов и EXPECT-маркеров:
-   [docs/test-conventions.md](test-conventions.md).
+   [docs/dev/test-conventions.md](test-conventions.md).
 6. **Коммит по задаче** (одна задача → один коммит; несколько → несколько коммитов):
    ```sh
    git add <конкретные файлы>           # НИКОГДА -A / .
@@ -162,7 +162,7 @@ Nova-workspace `nova.toml` (members: `std`, `examples`, `nova_tests`). Подр�
 - 📐 **Не выдумывать синтаксис** — `spec/decisions/` + `examples/`.
 - 🤝 **Конвенции нормативны.** Любое изменение конвенции-дока **или** отклонение в коде — только по
   согласованию с владельцем + маркер `[M-*]` + запись в `backlog-followups.md`. Без самоправок и молчаливых
-  отклонений (`docs/conventions-governance.md`).
+  отклонений (`docs/dev/conventions-governance.md`).
 - 🔕 **Фоновые агенты** (`run_in_background`/workflow) — спрашивать подтверждение перед запуском; ловят
   серверный rate-limit и падают → скрипты `.filter(Boolean)`, идемпотентность, чекпоинт-коммиты.
 
@@ -170,8 +170,8 @@ Nova-workspace `nova.toml` (members: `std`, `examples`, `nova_tests`). Подр�
 
 | Файл | Репо | Что |
 |---|---|---|
-| [docs/project-creation.txt](project-creation.txt) | main | Строка-итог по задаче (хронология создания проекта). |
-| [docs/simplifications.md](simplifications.md) | main | История маркеров/упрощений (append-only). |
+| [docs/project-creation.txt](../project-creation.txt) | main | Строка-итог по задаче (хронология создания проекта). |
+| [docs/dev/simplifications.md](simplifications.md) | main | История маркеров/упрощений (append-only). |
 | `discussion-log.md` | **nova-private** (отдельный репо) | Развёрнутый лог обсуждений/решений. |
 
 Стиль: тела коммитов и внутренние dev-логи — по-русски с английскими техническими терминами (house-style);
@@ -180,12 +180,12 @@ Nova-workspace `nova.toml` (members: `std`, `examples`, `nova_tests`). Подр�
 ## 8. Где сейчас идёт работа / как сориентироваться
 
 - Текущие статусы — **только** пофайлово (`**Статус:**` в `docs/plans/NNN-*.md`) + сгенерированный
-  [docs/plans/STATUS.md](plans/STATUS.md); приоритеты — [docs/plans/README.md](plans/README.md) (снапшот-хайлайты),
-  [docs/simplifications.md](simplifications.md), `nova-private/`. Внешним заметкам про статус не доверять.
+  [docs/plans/STATUS.md](../plans/STATUS.md); приоритеты — [docs/plans/README.md](../plans/README.md) (снапшот-хайлайты),
+  [docs/dev/simplifications.md](simplifications.md), `nova-private/`. Внешним заметкам про статус не доверять.
 - Активные направления видно по worktree (`git worktree list`) и по индексу планов. На момент написания
   крупные узлы: унификация системы ошибок/cleanup (план 173 + 174/175/176), единый type-engine 172.x
   (D315 ResolvedType), консолидация тестов 169.1.x.
-- Открытые «плавающие» долги — [docs/plans/backlog-followups.md](plans/backlog-followups.md).
+- Открытые «плавающие» долги — [docs/plans/backlog-followups.md](../plans/backlog-followups.md).
 
 ## 9. Частые грабли
 
@@ -202,16 +202,16 @@ Nova-workspace `nova.toml` (members: `std`, `examples`, `nova_tests`). Подр�
 
 | Тема | Документ |
 |---|---|
-| Онбординг агента (build/test/правила) | [AGENTS.md](../AGENTS.md) |
-| Обзор языка + примеры | [README.md](../README.md), [spec/overview.md](../spec/overview.md) |
-| Вклад, DCO, лицензии | [CONTRIBUTING.md](../CONTRIBUTING.md) |
-| Решения/семантика | [spec/decisions/README.md](../spec/decisions/README.md) |
-| Все планы (индекс/навигация) | [docs/plans/README.md](plans/README.md) |
-| Статусы планов (сгенерировано, пофайловый источник) | [docs/plans/STATUS.md](plans/STATUS.md) |
-| Тесты (маркеры, folder-модули, флаги) | [docs/test-conventions.md](test-conventions.md) |
-| Правила разработки компилятора | [docs/compiler-conventions.md](compiler-conventions.md) |
-| Конвенция кодирования M:N-рантайма (проактив) / отладка гонок (реактив) | [docs/mn-coding-conventions.md](mn-coding-conventions.md) / [docs/debugging-races.md](debugging-races.md) |
-| Управление конвенциями (мета) | [docs/conventions-governance.md](conventions-governance.md) |
-| CLI-справка | [docs/nova-cli.md](nova-cli.md) |
-| Открытые долги `[M-*]` | [docs/plans/backlog-followups.md](plans/backlog-followups.md) |
-| Модель ошибок/cleanup | [docs/idiom/error-and-cleanup-model.md](idiom/error-and-cleanup-model.md) |
+| Онбординг агента (build/test/правила) | [AGENTS.md](../../AGENTS.md) |
+| Обзор языка + примеры | [README.md](../../README.md), [spec/overview.md](../../spec/overview.md) |
+| Вклад, DCO, лицензии | [CONTRIBUTING.md](../../CONTRIBUTING.md) |
+| Решения/семантика | [spec/decisions/README.md](../../spec/decisions/README.md) |
+| Все планы (индекс/навигация) | [docs/plans/README.md](../plans/README.md) |
+| Статусы планов (сгенерировано, пофайловый источник) | [docs/plans/STATUS.md](../plans/STATUS.md) |
+| Тесты (маркеры, folder-модули, флаги) | [docs/dev/test-conventions.md](test-conventions.md) |
+| Правила разработки компилятора | [docs/dev/compiler-conventions.md](compiler-conventions.md) |
+| Конвенция кодирования M:N-рантайма (проактив) / отладка гонок (реактив) | [docs/dev/mn-coding-conventions.md](mn-coding-conventions.md) / [docs/dev/debugging-races.md](debugging-races.md) |
+| Управление конвенциями (мета) | [docs/dev/conventions-governance.md](conventions-governance.md) |
+| CLI-справка | [docs/guide/nova-cli.md](../guide/nova-cli.md) |
+| Открытые долги `[M-*]` | [docs/plans/backlog-followups.md](../plans/backlog-followups.md) |
+| Модель ошибок/cleanup | [docs/idiom/error-and-cleanup-model.md](../idiom/error-and-cleanup-model.md) |

@@ -4,7 +4,7 @@
 > **Нормативный документ.** Как ПИСАТЬ код `compiler-codegen/nova_rt/`
 > (spawn / cancel / scope / driver / scheduler / GC-интеграция), чтобы гонок
 > и порчи памяти НЕ ВОЗНИКАЛО. Это проактивная пара к реактивному плейбуку
-> [`docs/debugging-races.md`](debugging-races.md) (как ЛОВИТЬ гонку постфактум).
+> [`docs/dev/debugging-races.md`](debugging-races.md) (как ЛОВИТЬ гонку постфактум).
 > Конвенция предотвращает — плейбук ловит остаток.
 >
 > Аудитория: любой, кто трогает M:N-ядро (`fibers.h`, `runtime.c`, `driver.c`,
@@ -575,8 +575,8 @@ retention ИСКЛЮЧИТЕЛЬНО через отдельный канал (`
 поймал плейбук, становится тем, что предотвращает конвенция.
 
 ## Родственные документы
-- [`docs/debugging-races.md`](debugging-races.md) — реактивный плейбук (20 уроков, tooling).
-- [`docs/plans/173.0-concurrency-runtime-substrate.md`](plans/173.0-concurrency-runtime-substrate.md) §EXEC — R1/R2/R3 first-hand.
+- [`docs/dev/debugging-races.md`](debugging-races.md) — реактивный плейбук (20 уроков, tooling).
+- [`docs/plans/173.0-concurrency-runtime-substrate.md`](../plans/173.0-concurrency-runtime-substrate.md) §EXEC — R1/R2/R3 first-hand.
 - `spec/decisions/06-concurrency.md` D228 §6/§7 — канонические паттерны (lifetime-counter, ctx-pin).
 - Код-эталоны: `fibers.h` (`nova_scope_alloc_slot`, `nova_scope_grow_children`,
   `nova_scope_sweep_dead_child`), `runtime.c` (cancel-delivery ACQUIRE, `_worker_run_one_fiber`),

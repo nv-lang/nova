@@ -10,8 +10,8 @@
 >
 > Правила выведены из паттернов, уже действующих в `std/runtime/string/` и `std/unicode/`.
 > Каждое правило заземлено в реальном `file:line`. Правила 1, 2, 8 (специфичные для
-> строк/Unicode) живут также в [strings.md](strings.md); правила 3–7, 9 — общеязыковые.
-> Кросс-ссылки: правило 5 → [contracts.md](contracts.md); правило 6 → [parameters.md](parameters.md).
+> строк/Unicode) живут также в [strings.md](../guide/strings.md); правила 3–7, 9 — общеязыковые.
+> Кросс-ссылки: правило 5 → [contracts.md](../guide/contracts.md); правило 6 → [parameters.md](../guide/parameters.md).
 >
 > §§11–22 (общеязыковые: эффекты/конкурентность 11–14, типы/композиция 15–17,
 > мутабельность/владение 18–19, control-flow/ошибки/cleanup 20, именование 21,
@@ -561,7 +561,7 @@ fn Locale @to_lower() -> str => "custom"
 - **`fn f(x Hash)` = экзистенциальный** → динамический vtable-dispatch (реализовано,
   Plan 72 P3-B; тест `nova_tests/plan72/p3b_vtable_dispatch_pos.nv`). Различие только в
   позиции параметра (D72, `02-types.md:3460-3467`). Гетерогенный `[]Protocol` стоит heap-box
-  (~16 байт) на элемент (`docs/simplifications.md:28027`) — бери ТОЛЬКО при реальной
+  (~16 байт) на элемент (`docs/dev/simplifications.md:28027`) — бери ТОЛЬКО при реальной
   разнородности runtime-значений.
 - **Bounds без двоеточия** (`[T Hash + Equal]`, multi-bound `+` — Plan 101.3); параметры
   объявляй слева-направо, **forward-ссылки запрещены** (`02-types.md:3354-3360,3423-3441`).
@@ -821,12 +821,12 @@ ro v = opt ?? panic("expected Some")   // краш ТОЛЬКО явно — for
 - **Discharge-глаголы ресурса — единая таксономия · согласовано 2026-06-27.** Не плодить
   синонимы для «освободить ресурс»: `@cleanup(o ScopeOutcome)` — **АВТО**-хук протокола
   `Cleanup[E]` (зовёт компилятор в конце `consume X = e {}`, outcome-aware; после
-  [173](plans/173-error-system-unify-harden.md) sign-off — бывш. `Consumable.@on_exit`);
+  [173](../plans/173-error-system-unify-harden.md) sign-off — бывш. `Consumable.@on_exit`);
   `@close()` — **РУЧНОЙ** no-arg teardown (net/channels/File/простой ресурс); `@drain()` —
   дочитать остаток → release (reusable, напр. HTTP-conn в пул); `@finish()` — завершить
   **ПИСАТЕЛЬ** (напр. chunked-terminator). `@cleanup` обычно делегирует в `@close()`. Глагол
   `@discard` и прочие синонимы release — НЕ вводить (= `@close`/`@drain` по семантике).
-  Обоснование выбора — [Plan 178 §13.3](plans/178-std-http.md).
+  Обоснование выбора — [Plan 178 §13.3](../plans/178-std-http.md).
 
 ```nv
 // 1) defer — безусловное освобождение, LIFO, любой exit-путь (D90):
@@ -1008,17 +1008,17 @@ fn use_it(src *u8, dst *mut u8, n int) -> () {
 - **Codepoint = `u32`, НЕ `int`** · согласовано 2026-06-26. Кодпоинт — character-data интринсик-ширины 32 бит (применение правила выше,
   ср. UTF-16 code units → u16), ОТДЕЛЬНО от правила «index/len/offset → int»: кодпоинт — *значение-идентификатор*, не мера. Хранилище
   последовательностей — `Vec[u32]` (4 байта, как Rust `Vec<char>` / Go `[]rune`=`[]int32`); поток и арифметика внутри unicode-движков — `u32`.
-  `char` (= `u32`, [D128](../spec/decisions/02-types.md#d128)) — на границе `str` (`as_chars()`→`char`, `char.try_from(u32)`) и в char-методах
+  `char` (= `u32`, [D128](../../spec/decisions/02-types.md#d128)) — на границе `str` (`as_chars()`→`char`, `char.try_from(u32)`) и в char-методах
   (`'a'.is_alphabetic()`). **Публичные cp-функции принимают `u32`** (`general_category(cp u32)`); целочисленные литералы адаптируются к
-  u32-контексту, поэтому `general_category(0x41)` остаётся валидным. **Fallible-функции, выдающие кодпоинт, → `Option[u32]`** ([D77](../spec/decisions/02-types.md), а не `-1`-сентинел).
+  u32-контексту, поэтому `general_category(0x41)` остаётся валидным. **Fallible-функции, выдающие кодпоинт, → `Option[u32]`** ([D77](../../spec/decisions/02-types.md), а не `-1`-сентинел).
   **Bit-packing** нескольких кодпоинтов в один ключ (`(a<<21)|b`, > 32 бит) → явный `as int` (packed key — не кодпоинт). Обоснование:
-  [D327](../spec/decisions/02-types.md#d327).
+  [D327](../../spec/decisions/02-types.md#d327).
 - **Анти-паттерн:** `u64`/`usize` для offset/len «чтобы было ≥0» + россыпь `as u64`-кастов (литералы Nova — `int`). Знак не кодируем
   типом — отрицательный индекс/offset → доменная ошибка (`InvalidInput` / контракт `requires i >= 0`), как `SeekFrom.Start(int)` (Start < 0 → ошибка).
 - **Почему signed, а не unsigned (обоснование/research):**
-  [research/08-int-width-and-literal-inference.md §1](research/08-int-width-and-literal-inference.md) (3 раунда обсуждения, 2026-06-03)
-  → формализовано в [D226 «Signed indexing convention»](../spec/decisions/02-types.md#d226) (§Почему); `usize`/`isize` удалены
-  [Plan 133](plans/133-remove-usize-isize.md). Ключевое: **industry 7:3 за signed** (Go/Swift/Java/Kotlin/C#/Python/TS signed;
+  [research/08-int-width-and-literal-inference.md §1](../research/08-int-width-and-literal-inference.md) (3 раунда обсуждения, 2026-06-03)
+  → формализовано в [D226 «Signed indexing convention»](../../spec/decisions/02-types.md#d226) (§Почему); `usize`/`isize` удалены
+  [Plan 133](../plans/133-remove-usize-isize.md). Ключевое: **industry 7:3 за signed** (Go/Swift/Java/Kotlin/C#/Python/TS signed;
   Rust `usize`/C++ `size_t`/Zig — unsigned, причём **Stroustrup: «I regret using unsigned for size in STL»** + vocal Rust-regrets);
   **нет underflow-trap** (`xs.len() - 1` на пустом vec даёт `-1`, не паника как Rust `0usize-1`); sentinel `-1` для find; разности/diff
   естественно signed; mixed-arith без `as`-ceremony (**AI-first**: LLM пишет signed-индексацию вернее); bit-width-аргумент мёртв на
@@ -1310,7 +1310,7 @@ spec_tests examples` = 0.
 > 4. **двойные+ пустые строки запрещены** («ровно одна», не «хотя бы одна»);
 > 5. внутри длинных тел — рекомендация (не машинная норма): пустая строка между логическими
 >    шагами-абзацами.
-> Исполнение по всем репам — план [225.1](plans/225.1-blank-line-full-sweep.md); машинный
+> Исполнение по всем репам — план [225.1](../plans/225.1-blank-line-full-sweep.md); машинный
 > страж от дрейфа — линт W_DECL_SPACING (линт-волна №70).
 
 **Правило.** Соседние top-level декларации (`fn`, `type`, `const`, `module`-item) разделяются
@@ -1353,7 +1353,7 @@ export fn Part @filename() -> Option[str] => @filename
   `#attr`, они разделяются пустой строкой (становятся отдельными блоками).
 
 **Проверка/правка** — чисто пробельная, codegen байт-идентичен (гейт sweep'а). План
-[225](plans/225-blank-line-between-decls.md) — механический проход по 28 файлам.
+[225](../plans/225-blank-line-between-decls.md) — механический проход по 28 файлам.
 
 ## 33. `.collect()` вместо ручного for-push (· согласовано 2026-07-24)
 

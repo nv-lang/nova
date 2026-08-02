@@ -7,7 +7,7 @@
 > **Маркер:** `[M-182-test-sanation]`.
 > **Запуск:** «выполни план 182».
 > **Мотив (владелец, 2026-07-06):** «`nova_tests` наполовину сломан, хотели удалить; много CU
-> не по конвенциям [test-conventions.md](../test-conventions.md), много дубликатов». Источник истины
+> не по конвенциям [test-conventions.md](../dev/test-conventions.md), много дубликатов». Источник истины
 > о звучности — `spec_tests/conformance` (язык+прелюдия) + `std/<модуль>/*_test.nv` (std-модули) —
 > конвенция ред. 2026-07-06; `nova_tests/` — НЕ гейт корректности
 > ([feedback-nova-tests-not-correctness-gate]), только baseline-DELTA, и **ЗАМОРОЖЕН** для новых

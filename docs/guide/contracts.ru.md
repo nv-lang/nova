@@ -23,13 +23,13 @@ runtime-значения** через `${...}` — `requires x > 0, "got ${x}"` 
 `got -5` на провалившемся вызове (сообщение строится только при нарушении, не на
 успешном пути; Plan 140.3).
 
-Spec: [D24](../spec/decisions/09-tooling.md#d24-стратегия-smt-проверки-контрактов)
+Spec: [D24](../../spec/decisions/09-tooling.md#d24-стратегия-smt-проверки-контрактов)
 (SMT-стратегия) ·
-[D111](../spec/decisions/09-tooling.md#d111-assume--assert_static--trusted-external)
+[D111](../../spec/decisions/09-tooling.md#d111-assume--assert_static--trusted-external)
 (`assume` / `assert_static` / `#trusted`) ·
-[D112](../spec/decisions/09-tooling.md#d112-bounded-quantifiers-forallexists-по-коллекции)
+[D112](../../spec/decisions/09-tooling.md#d112-bounded-quantifiers-forallexists-по-коллекции)
 (bounded quantifiers) ·
-[D116](../spec/decisions/09-tooling.md#d116-z3-backend-через-собственные-ffi-биндинги)
+[D116](../../spec/decisions/09-tooling.md#d116-z3-backend-через-собственные-ffi-биндинги)
 (Z3 backend).
 
 ---
@@ -977,12 +977,12 @@ result-ref       = 'result'                  // только в ensures
 
 | Что не работает / отложено | План |
 |---|---|
-| `#must_verify_module` — strict mode для всего модуля | [D113](../spec/decisions/09-tooling.md#d113) (Plan 33.3 Ф.13, V2) |
-| SMT cache + инкрементальная верификация | [D114](../spec/decisions/09-tooling.md#d114) (V2) |
-| Параллельная верификация через `rayon` | [D114](../spec/decisions/09-tooling.md#d114) (V2) |
+| `#must_verify_module` — strict mode для всего модуля | [D113](../../spec/decisions/09-tooling.md#d113) (Plan 33.3 Ф.13, V2) |
+| SMT cache + инкрементальная верификация | [D114](../../spec/decisions/09-tooling.md#d114) (V2) |
+| Параллельная верификация через `rayon` | [D114](../../spec/decisions/09-tooling.md#d114) (V2) |
 | Loop invariants с Z3 — полное индуктивное рассуждение | Plan 33.x V2 |
 | `forall`/`exists` в loop invariants | Plan 33.x V2 |
-| Effect-aware контракты (`ensures Db.balance(...) == ...`) | [D24](../spec/decisions/09-tooling.md#d24) / [D120](../spec/decisions/04-effects.md#d120) (частично в V1) |
+| Effect-aware контракты (`ensures Db.balance(...) == ...`) | [D24](../../spec/decisions/09-tooling.md#d24) / [D120](../../spec/decisions/04-effects.md#d120) (частично в V1) |
 | Рекурсивные `lemma`-тела (структурная индукция) | Research / V3 |
 | Нелинейная арифметика в контрактах | Z3 иногда справляется; статической гарантии нет |
 | Рассуждения о floating-point | Не планируется |
@@ -993,15 +993,15 @@ result-ref       = 'result'                  // только в ensures
 
 ## Связанные документы
 
-- [`spec/decisions/09-tooling.md`](../spec/decisions/09-tooling.md) —
+- [`spec/decisions/09-tooling.md`](../../spec/decisions/09-tooling.md) —
   D24 / D89 / D111 / D112 / D113 / D114 / D116 (контракты, SMT, test tooling)
-- [`spec/decisions/04-effects.md`](../spec/decisions/04-effects.md) —
+- [`spec/decisions/04-effects.md`](../../spec/decisions/04-effects.md) —
   D120 (`#pure` views + axioms), D115 (axiom binders)
-- [`docs/plans/33.9-opaque-reveal-fuel.md`](plans/33.9-opaque-reveal-fuel.md) —
+- [`docs/plans/33.9-opaque-reveal-fuel.md`](../plans/33.9-opaque-reveal-fuel.md) —
   реализация `#opaque` / `reveal` / `#fuel(n)` (Plan 33.9)
-- [`docs/plans/33.14-z3-cvc5-crosscheck.md`](plans/33.14-z3-cvc5-crosscheck.md) —
+- [`docs/plans/33.14-z3-cvc5-crosscheck.md`](../plans/33.14-z3-cvc5-crosscheck.md) —
   реализация Z3 ↔ CVC5 cross-check (Plan 33.14)
-- [`nova_tests/contracts/`](../nova_tests/contracts/) —
+- [`nova_tests/contracts/`](../../nova_tests/contracts/) —
   ~280 тестов верификации контрактов
 - [`nova_tests/doc/f23_contracts_positive.nv`](../nova_tests/doc/f23_contracts_positive.nv) —
   базовый doc-пример контрактов

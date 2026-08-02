@@ -12,7 +12,7 @@
 //     type (`[]T`, records, `HashMap`, sums, …) — still compile exactly as
 //     before (backward compat, this file).
 // (b) `Channel[T].new(cap)` turbofish — the documented escape hatch
-//     (docs/channels.md §Channel.new) used to ICE (`[P67-LEGACY] Ident
+//     (docs/guide/channels.md §Channel.new) used to ICE (`[P67-LEGACY] Ident
 //     'Channel' not in var_types`) because `Channel` carries no `.nv` type
 //     decl and is absent from every generic-dispatch registry. Now emits
 //     identically to the bare/Path forms (`T` is erased at the runtime

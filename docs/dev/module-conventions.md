@@ -3,7 +3,7 @@
 
 > **Нормативно.** Изменения/отклонения — только по согласованию с владельцем (см.
 > [conventions-governance.md](conventions-governance.md)). Это **дизайн-конвенция** (как устроен модуль и его граница с C),
-> дополняет: [nv-coding-style.md](nv-coding-style.md) (стиль `.nv`-кода), [ffi-cookbook.md](ffi-cookbook.md) (механика FFI:
+> дополняет: [nv-coding-style.md](nv-coding-style.md) (стиль `.nv`-кода), [ffi-cookbook.md](../guide/ffi-cookbook.md) (механика FFI:
 > CStr/указатели/`unsafe`/примеры libsqlite3 и т.п.), [compiler-conventions.md](compiler-conventions.md) (§3 «не хардкодить
 > stdlib», §5 spec-first). **Канонический пример** — `std/src/net/` (TcpNet-семейство; Plan 195 — std на `src/`); **референс-планы** —
 > [179](plans/179-time-system-rework.md)/[179.1](plans/179.1-civil-time.md)/[180](plans/180-io-fs-os.md).
@@ -11,14 +11,14 @@
 ## Применимость (scope)
 
 Про **любой** Nova-модуль, не только stdlib: app-код, third-party-библиотеки, **биндинги C-библиотек** (ровно как
-`my_app/sqlite3.nv` в [ffi-cookbook](ffi-cookbook.md)).
+`my_app/sqlite3.nv` в [ffi-cookbook](../guide/ffi-cookbook.md)).
 
 - **Универсально (любой модуль):** §0–§1 эффект-семейство (мокабельный плумбинг + фасад), §2 value/must-consume-типы +
   byte-first, §3 структурный `Result`-домен ошибок, §4.2–§4.5 `extern "C"`-маппинг (`CStr`/`(*u8,len)`/value-records/errno),
   `#cfg`-platform-split, §5 нейминг, §6 тесты/docs, §7 чек-лист.
 - **Только std / собственный рантайм Nova** (помечено по тексту): `extern "nova" fn` (§4.1) — функции рантайма Nova; **user/
   third-party код в рантайм не добавляет → использует только `extern "C"`**. Async park/wake (`nova_sched_park`, §4.6) —
-  runtime-внутреннее; **user-FFI обычно синхронный или через `blocking { }`** ([Plan 83.3](plans/83.3-blocking-effect-threadpool.md)/D50),
+  runtime-внутреннее; **user-FFI обычно синхронный или через `blocking { }`** ([Plan 83.3](../plans/83.3-blocking-effect-threadpool.md)/D50),
   а не своя park/wake. `#stable(since)` (§6) — маркер стабильности публичного std-API.
 
 ---
@@ -28,7 +28,7 @@
 I/O-, OS- и ресурсные подсистемы строятся как **семейство эффектов**:
 
 - **Эффект — внутренний dispatch-точка**, юзер его **не вызывает напрямую** (как `TcpNet`/`AddrNet`,
-  [net/effect.nv §21-40](../std/src/net/effect.nv#L21)). Это даёт **мокабельность**: тест подменяет реальную подсистему
+  [net/effect.nv §21-40](../../std/src/net/effect.nv#L21)). Это даёт **мокабельность**: тест подменяет реальную подсистему
   handler'ом (`with Fs = mem_fs() { … }`) → детерминизм без диска/сети/часов и **без DI-плумбинга**. Это сильнее Go (нужен
   `afero`/интерфейс вручную), Rust (trait-abstraction), Java/Node (global monkey-patch).
 - **User-facing API — методы на типах + free-fns** (фасад). `Timestamp.now()` => `Time.timestamp()`; `File.open(path)` =>
@@ -76,7 +76,7 @@ export fn read_to_string(path Path) Fs -> Result[str, IoError] => …
 - **Мелкие неизменяемые значения** (`Duration`/`Timestamp`/`Offset`/`IoError`/`Metadata`) — **value-record** `type X value { ro f T }`
   (D215: stack, zero-GC, copy, структурное `==`). См. [nv-coding-style §15](nv-coding-style.md). Не делать heap-record для
   single-/few-field-скаляров.
-- **Ресурсы** (`File`, dir-handle, lock, subprocess `Child`) — **must-consume линейные** ([Plan 80](plans/80-must-consume-linear.md),
+- **Ресурсы** (`File`, dir-handle, lock, subprocess `Child`) — **must-consume линейные** ([Plan 80](../plans/80-must-consume-linear.md),
   D133): `@close(self) -> Result[…]` — единственный способ разрядить обязательство; незакрытый = **compile-error**; double-close/
   use-after невозможны. `@close()`/`@wait()` **возвращает `Result`** (ошибка close/flush — например `ENOSPC` — видна, не глотается).
   Это строго лучше Go (`defer Close()` глотает), Rust (`Drop` глотает), Java/Kotlin (suppressed). Если Plan 80 ещё не готов —
@@ -92,7 +92,7 @@ export fn read_to_string(path Path) Fs -> Result[str, IoError] => …
   flat sum без контекста: `type IoError value { ro kind ErrorKind, ro raw_os int, ro op str, ro path Option[Path], ro source Option[*IoError] }`.
 - **`ErrorKind` — OPEN sum-type** (последний вариант `Other(int)` → wildcard-arm обязателен) с доменными вариантами
   (`NotFound`/`PermissionDenied`/`AlreadyExists`/…). `@to_str()` для сообщений (platform-stable строки на C-стороне,
-  [net.c:45-55](../compiler-codegen/nova_rt/net.c#L45)).
+  [net.c:45-55](../../compiler-codegen/nova_rt/net.c#L45)).
 - Не плодить дублирующие error-типы для родственных доменов — переиспользовать/проецировать (напр. net `NetError` → проекция на `IoError`-kinds).
 - Конструкторы/parse **fallible**, без default-panicking. **Все fallible-операции → `Result[T, XError]`** (R1, D325); эффект `Fail` наружу не отдаём (throw = `!!`, Option = `.ok()`). Префикс `try_` — только для пары infallible/fallible. Канон — [nv-coding-style §4](nv-coding-style.md) (выжимка — §5).
 
@@ -102,9 +102,9 @@ export fn read_to_string(path Path) Fs -> Result[str, IoError] => …
 > границе. **Примеры и рецепты** (полные биндинги libsqlite3/libpng, C-ABI-
 > шпаргалка, указатели/`CStr`, а также **как подключить native-артефакты к сборке**
 > через `[ffi]` — единственный канон, `[ffi.staticlib]` retracted, Plan 195) —
-> [ffi-cookbook](ffi-cookbook.md) (единый
+> [ffi-cookbook](../guide/ffi-cookbook.md) (единый
 > источник, не дублируется здесь). Пошаговый туториал «сделать модуль с нуля» —
-> [authoring-a-module](guide/authoring-a-module.md).
+> [authoring-a-module](../guide/authoring-a-module.md).
 
 ### 4.1. Две формы extern (D282) — что когда
 
@@ -118,15 +118,15 @@ export fn read_to_string(path Path) Fs -> Result[str, IoError] => …
 
 ### 4.2. Именование extern и расположение
 
-- `extern "C"`-функции — **module-private** (без `export`), в выделенном `ffi.nv`-слое (как [std/net/ffi.nv](../std/src/net/ffi.nv)).
-- Имя: **`<resource>_<action>`** snake_case, **без Nova-префикса** (как `tcp_listener_bind`/`socket_addr_loopback`; D282/[02-types.md §FFI](../spec/decisions/02-types.md)).
+- `extern "C"`-функции — **module-private** (без `export`), в выделенном `ffi.nv`-слое (как [std/net/ffi.nv](../../std/src/net/ffi.nv)).
+- Имя: **`<resource>_<action>`** snake_case, **без Nova-префикса** (как `tcp_listener_bind`/`socket_addr_loopback`; D282/[02-types.md §FFI](../../spec/decisions/02-types.md)).
   Лидирующий `_` у глобального C-символа **нельзя** (зарезервирован C-стандартом).
 
 ### 4.3. Маппинг типов на границе (самое важное)
 
 | Что | Как передавать | Почему |
 |---|---|---|
-| **Путь / C-строка / env-ключ** | **`CStr`** (NUL-terminated; [std/ffi/cstr.nv](../std/src/ffi/cstr.nv)). Строить из байт через `CStr.from_bytes(...) -> Result` с **reject interior-NUL → ошибка** | OS-API (`open`/`getenv`/`uv_fs_open`) берут `const char*` **без длины**; `str` НЕ годится (UTF-8-only). Ровно `CString::new` (Rust)/`BytePtrFromString` (Go) — NUL-терминация и проверка **в языке**, не в C |
+| **Путь / C-строка / env-ключ** | **`CStr`** (NUL-terminated; [std/ffi/cstr.nv](../../std/src/ffi/cstr.nv)). Строить из байт через `CStr.from_bytes(...) -> Result` с **reject interior-NUL → ошибка** | OS-API (`open`/`getenv`/`uv_fs_open`) берут `const char*` **без длины**; `str` НЕ годится (UTF-8-only). Ровно `CString::new` (Rust)/`BytePtrFromString` (Go) — NUL-терминация и проверка **в языке**, не в C |
 | **Байт-данные (read/write payload)** | **`(*u8, int len)`** | Совпадает с syscall `read(fd, buf, count)`/`uv_buf_t{base,len}` (НЕ NUL-terminated, длина явная, NUL внутри допустим) |
 | **`str`** | **НЕ передавать** через границу (кроме genuinely-text, что на syscall-границе ~не бывает) | `str` UTF-8-only; пути/данные — произвольные байты |
 | **Результат-агрегат** (stat, exit-status) | **C-ABI value-record** by-value ([Plan 178](plans/178-ffi-abi-types.md)): `fs_stat(path CStr, follow bool) -> CStatBuf` | value-records/туплы C-ABI-совместимы |
@@ -138,24 +138,24 @@ export fn read_to_string(path Path) Fs -> Result[str, IoError] => …
 непортируемые примитивы** (syscall-обёртки, libuv-park). Вся типизация, парсинг, **кодировки/конверсии — в Nova**:
 
 - `read_to_string` = `read([]u8)` (C) + `str.from_utf8` (Nova), не C-декод.
-- **WTF-8 ↔ UTF-16** (Windows-пути) — в Nova через [std/encoding/utf16.nv](../std/src/encoding/utf16.nv) (Plan 152.6: `is_high/low_surrogate`/
+- **WTF-8 ↔ UTF-16** (Windows-пути) — в Nova через [std/encoding/utf16.nv](../../std/src/encoding/utf16.nv) (Plan 152.6: `is_high/low_surrogate`/
   `decode_surrogate_pair`/`@encode_utf16`), **не** в C-шиме; C получает уже `[]u16`/wide-`CStr`.
 - Календарь, форматирование, нормализация — `.nv`.
 
 ### 4.5. Платформенные различия — через `#cfg`/суффикс, не `#ifdef` в C
 
-Разные ОС → разные extern/реализации через **conditional compilation** ([Plan 42.12](plans/42.12-cfg-conditional-compilation.md)/D99):
+Разные ОС → разные extern/реализации через **conditional compilation** ([Plan 42.12](../plans/42.12-cfg-conditional-compilation.md)/D99):
 **filename-suffix** `_posix.nv`/`_unix.nv`/`_windows.nv`/`_linux.nv`/`_macos.nv` **или** `#cfg(target_os = "…")`. Пример: POSIX
 `fs_open(path CStr, …)` (байты verbatim — `pathname` на POSIX это **байты без кодировки**) живёт в `*_posix.nv`; Windows
 `fs_open_w(path *u16, …)` — в `*_windows.nv`. Платформенный `#ifdef` оставлять в C **только** для самих syscall-обёрток.
 
 ### 4.6. Async + cancel (по net-паттерну)
 
-Блокирующие/I/O-хуки **паркуют фибру** через libuv (как [net.c:1-24](../compiler-codegen/nova_rt/net.c#L1): GC-heap state →
+Блокирующие/I/O-хуки **паркуют фибру** через libuv (как [net.c:1-24](../../compiler-codegen/nova_rt/net.c#L1): GC-heap state →
 `stop_cb` register → `nova_sched_park()` → libuv-callback + `nova_sched_wake()` → resume). User-API выглядит блокирующим
 (`file.read(buf) -> Result`), но не блокирует OS-поток. **Cancel — честно best-effort:** queued-операция отменяется чисто
 (`uv_cancel`); уже-летящий syscall на threadpool **не прерывается** (как Go/tokio/Java) — abandon-result + well-defined состояние
-ресурса. **Не врать** про mid-syscall-cancel. `Blocking`-эффект ([Plan 83.3](plans/83.3-blocking-effect-threadpool.md)/D50) —
+ресурса. **Не врать** про mid-syscall-cancel. `Blocking`-эффект ([Plan 83.3](../plans/83.3-blocking-effect-threadpool.md)/D50) —
 только для CPU-bound-обёрток, не дефолтный I/O-путь. **Лайфтайм:** буферы/`CStr`, переданные в async libuv-вызов, должны
 пережить park — GC-root на стеке припаркованной фибры это обеспечивает.
 

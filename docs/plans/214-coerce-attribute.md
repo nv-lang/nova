@@ -13,7 +13,7 @@
 Nova уже прячет безопасные zero-cost конверсии (single-wrapper D55: newtype/sum, переменные
 включительно, int→i64 widening «невидимо для автора») — но str→[]u8 требует `.bytes()`, а
 компромисс-костыль (str-литерал в `write`) захардкожен по ИМЕНИ метода — нарушение
-[compiler-conventions §3](../compiler-conventions.md). Нужен ОБЩИЙ декларативный механизм:
+[compiler-conventions §3](../dev/compiler-conventions.md). Нужен ОБЩИЙ декларативный механизм:
 объявление в `.nv`, никакого хардкода пар в Rust.
 
 ## 1. Дизайн (converged, финал)
@@ -175,7 +175,7 @@ Nova уже прячет безопасные zero-cost конверсии (sing
   → `[]u8` теперь работает в 4 позициях (call-arg, let/const, return, element) через
   `emit_expr_with_target_type`. **Открыт под-маркер:** `[M-d55-const-bytes-lit-not-constexpr]`
   (P3) — const-инициализатор `const c []u8 = "hi"` идёт мимо choke-point через
-  `emit_const_expr_typed`; закрывается Ф.1. Подробности — см. `docs/simplifications.md`.
+  `emit_const_expr_typed`; закрывается Ф.1. Подробности — см. `docs/dev/simplifications.md`.
   accept-гейт = `assignable_direct` (закрывает call-arg + let/const + element одним армом);
   ловушки — 4 отдельных trailing-return-гейта в emit_c (contracts/non-contracts/handler-op),
   type-punning `[][]u8`-литерала (elem-тип с первого str-элемента → `Vec[str]` под `Vec[[]u8]`),

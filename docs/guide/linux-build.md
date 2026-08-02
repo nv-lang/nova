@@ -3,12 +3,12 @@
 
 Last updated 2026-07-21. Verified 2026-07-20 directly on WSL2 Ubuntu 26.04 (kernel
 `6.6.87.2-microsoft-standard-WSL2`), outside Docker. See also
-[`docker/README.md`](../docker/README.md) for the earlier (2026-05-12)
+[`docker/README.md`](../../docker/README.md) for the earlier (2026-05-12)
 Docker-based validation (Plan 40) — this document complements it with a
 bare-metal/WSL recipe and a few gotchas Docker's isolation hides.
 
 Closes `[M-nova-linux-build]` (see `docs/plans/backlog-followups.md`
-history / `docs/simplifications.md`).
+history / `docs/dev/simplifications.md`).
 
 ## TL;DR
 

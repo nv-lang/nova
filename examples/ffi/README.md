@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Nova FFI Examples
 
-> **Plan 115 D214 (foundational FFI).** See `docs/ffi-cookbook.md` for
+> **Plan 115 D214 (foundational FFI).** See `docs/guide/ffi-cookbook.md` for
 > complete tutorial.
 
 ## Files
@@ -50,7 +50,7 @@ Pending followups:
 
 ## See also
 
-- `docs/ffi-cookbook.md` — complete tutorial with three library examples
+- `docs/guide/ffi-cookbook.md` — complete tutorial with three library examples
 - `spec/decisions/02-types.md#d214` — FFI opaque-pointer spec (`*()`; Plan 134)
 - `nova_tests/plan115/` — fixture tests exercising the FFI primitives
 - `compiler-codegen/nova_rt/plan115_ffi_test.h` — Plan 115 Ф.2 test shim

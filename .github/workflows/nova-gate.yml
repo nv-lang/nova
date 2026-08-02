@@ -5,7 +5,7 @@ name: nova-gate
 # Plan 197 Ф.5 (docs/plans/197-examples-revision.md), расширено под
 # test-conventions.md §«Авторитетный merge-гейт» (2026-07-16).
 #
-# Состав (см. docs/test-conventions.md):
+# Состав (см. docs/dev/test-conventions.md):
 #   1. spec_tests/conformance — ЧИСТЫЙ языковой сигнал (один CU, pos+neg).
 #      Не ловит app-регрессии (прецедент Plan 206: trap-default D423 прошёл
 #      conformance 470/0, но уронил examples/flagship/aggregator — splitmix64
@@ -16,11 +16,11 @@ name: nova-gate
 #      эффекты/линковка), которые conformance не видит.
 #
 # ЧТО НЕ ВХОДИТ (сознательно): `nova test std` — 5 std-тестов на Linux
-# документированы КРАСНЫМИ (docs/linux-build.md §«Known gap»,
+# документированы КРАСНЫМИ (docs/guide/linux-build.md §«Known gap»,
 # pre-existing, не по этому гейту) — они std-специфичны, conformance/
 # флагмана не касаются; вешать их сюда значило бы гейтить заведомо-красным.
 #
-# Сборка — по верифицированному рецепту docs/linux-build.md (2026-07-16,
+# Сборка — по верифицированному рецепту docs/guide/linux-build.md (2026-07-16,
 # WSL2 Ubuntu 26.04): пакеты apt (clang cmake make libgc-dev build-essential)
 # + rustup-toolchain 1.85 (MSRV обеих Rust-crate — nova-cli/Cargo.toml,
 # compiler-codegen/Cargo.toml). В репозитории НЕТ rust-toolchain.toml
@@ -62,7 +62,7 @@ name: nova-gate
 # compiler-codegen/src/test_runner.rs:942, вызывается из cmd_build И из
 # test-раннера одинаково — nova-cli/src/main.rs:4997) — нужен только
 # компилятор C (clang, уже ставится). Поэтому апт-набор здесь — РОВНО
-# как в docs/linux-build.md, без доп. TLS/brotli пакетов (в отличие от
+# как в docs/guide/linux-build.md, без доп. TLS/brotli пакетов (в отличие от
 # nova-test-regression.yml, где они нужны СТАРОМУ std/tls + std/encoding/
 # compress/brotli, не затронутым этим гейтом).
 #
@@ -101,7 +101,7 @@ jobs:
         with:
           toolchain: "1.85"
 
-      - name: Install system deps (docs/linux-build.md recipe)
+      - name: Install system deps (docs/guide/linux-build.md recipe)
         run: sudo apt-get update && sudo apt-get install -y clang cmake make libgc-dev build-essential
 
       - name: Cache cargo registry + nova-cli target

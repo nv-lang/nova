@@ -3,7 +3,7 @@
 [English](nova-cli.md) | **Русский**
 
 `nova` — единая точка входа в инструментарий языка Nova. Заменяет
-`run_tests.ps1` / `run_tests.sh` / `regen_runtime.ps1` (см. [Plan 28](plans/28-nova-cli.md)).
+`run_tests.ps1` / `run_tests.sh` / `regen_runtime.ps1` (см. [Plan 28](../plans/28-nova-cli.md)).
 
 Версия: `0.1.0` (bootstrap). Бинарник публикуется как `nova` (Cargo
 package `nova`, crate `nova-cli`).
@@ -75,7 +75,7 @@ nova contracts verify foo.nv     # SMT-верификация контракто
 ## Установка и сборка
 
 `nova-cli` живёт в `nova-cli/` рядом с `compiler-codegen/`. Workspace
-не используется (см. [Plan 28](plans/28-nova-cli.md) — оба crate
+не используется (см. [Plan 28](../plans/28-nova-cli.md) — оба crate
 самостоятельные).
 
 ```bash
@@ -105,7 +105,7 @@ cargo build --release --manifest-path nova-cli/Cargo.toml --features z3-backend
 
 | Флаг | Значения | Описание |
 |---|---|---|
-| `--color` | `auto` (default), `always`, `never` | Управление ANSI-цветами. См. [Plan 36](plans/36-cli-production-hardening.md) R10. |
+| `--color` | `auto` (default), `always`, `never` | Управление ANSI-цветами. См. [Plan 36](../plans/36-cli-production-hardening.md) R10. |
 
 **Авто-детект цвета** (priority high → low):
 
@@ -120,7 +120,7 @@ cargo build --release --manifest-path nova-cli/Cargo.toml --features z3-backend
 ### Тюнинг field-cache (advanced)
 
 Каждая субкоманда также принимает «ручки» field-caching из
-[Plan 123](plans/123.1-core-cse.md). Это forensic / escape-hatch флаги
+[Plan 123](../plans/123.1-core-cse.md). Это forensic / escape-hatch флаги
 — дефолты корректны для обычного использования; трогать их нужно только
 при расследовании регрессии codegen-кэша.
 
@@ -152,7 +152,7 @@ Field-cache флаги опущены в per-command таблицах ниже �
 
 ## Коды выхода
 
-Cargo-конвенция ([Plan 36](plans/36-cli-production-hardening.md) R7):
+Cargo-конвенция ([Plan 36](../plans/36-cli-production-hardening.md) R7):
 
 | Код | Значение |
 |---|---|
@@ -179,7 +179,7 @@ change (см. [`nova doc`](#nova-doc)).
 5. Если найден корень с `[workspace]` — возвращаем его, иначе —
    самый верхний `nova.toml`
 
-Это **workspace-aware** поведение (D78 AD6, [Plan 35](plans/35-cross-file-resolve.md))
+Это **workspace-aware** поведение (D78 AD6, [Plan 35](../plans/35-cross-file-resolve.md))
 — защищает от ситуации «вложенный `nova_tests/nova.toml` затмил
 основной».
 
@@ -289,7 +289,7 @@ Nova компилируется в C; поддерживаемого интер�
 ### `nova add`
 
 Добавить зависимость в `[dependencies]` `nova.toml` текущего пакета и
-обновить `nova.lock.toml` ([Plan 03.1](plans/03.1-path-git-dependencies.md)).
+обновить `nova.lock.toml` ([Plan 03.1](../plans/03.1-path-git-dependencies.md)).
 
 ```
 nova add NAME (--path DIR | --git URL [--tag T | --branch B | --rev R | --version REQ])
@@ -303,7 +303,7 @@ nova add NAME (--path DIR | --git URL [--tag T | --branch B | --rev R | --versio
 | `--tag T` | Git-пин: тег (только с `--git`) |
 | `--branch B` | Git-пин: ветка (только с `--git`) |
 | `--rev R` | Git-пин: commit / rev (только с `--git`) |
-| `--version REQ` | Git-пин: semver-диапазон, напр. `^1.2` (только с `--git`, [Plan 03.2](plans/03.2-version-resolution.md)) |
+| `--version REQ` | Git-пин: semver-диапазон, напр. `^1.2` (только с `--git`, [Plan 03.2](../plans/03.2-version-resolution.md)) |
 
 - `--path` и `--git` взаимоисключающие; ровно один обязателен.
 - `--tag` / `--branch` / `--rev` / `--version` взаимоисключающие;
@@ -329,8 +329,8 @@ nova add libfoo  --git https://example.org/libfoo.nv --version "^1.2"
 ### `nova update`
 
 Пере-резолвить git-зависимости и обновить `nova.lock.toml`
-([Plan 03.1](plans/03.1-path-git-dependencies.md) /
-[03.2](plans/03.2-version-resolution.md)).
+([Plan 03.1](../plans/03.1-path-git-dependencies.md) /
+[03.2](../plans/03.2-version-resolution.md)).
 
 ```
 nova update [NAME] [--precise NAME@VERSION]
@@ -354,7 +354,7 @@ nova update [NAME] [--precise NAME@VERSION]
 ### `nova info`
 
 Показать **effect-surface** пакета — агрегированные эффекты его
-публичного API ([Plan 03.4](plans/03.4-effect-aware-tooling.md) / D140).
+публичного API ([Plan 03.4](../plans/03.4-effect-aware-tooling.md) / D140).
 Nova-уникальное: в Cargo/npm узнать, что зависимость ходит в сеть, без
 аудита кода невозможно.
 
@@ -421,7 +421,7 @@ nova build FILE [-o OUTPUT] [--mode dev|release] [--toolchain auto|clang|msvc|gc
 | `--clang` | auto detect | Путь к `clang.exe` |
 | `--timeout` | `120` | Таймаут компиляции в секундах |
 | `--keep-artifacts` | off | Не удалять `.c`/`.exe`/`.obj` в tmp |
-| `--mono-depth N` | `500` (или `NOVA_MONO_DEPTH`) | Лимит monomorphization-инстанциаций ([Plan 48](plans/48-closures-in-generics.md) Ф.7.6) |
+| `--mono-depth N` | `500` (или `NOVA_MONO_DEPTH`) | Лимит monomorphization-инстанциаций ([Plan 48](../plans/48-closures-in-generics.md) Ф.7.6) |
 
 **Tmp-директория:** `$TEMP/nova_tests/build/<path-hash>/` (Windows) или
 `$TMPDIR/nova_tests/build/<path-hash>/` (Unix). Hash через
@@ -443,8 +443,8 @@ nova build FILE [-o OUTPUT] [--mode dev|release] [--toolchain auto|clang|msvc|gc
 ### `nova test`
 
 Запуск тестов из директории или файла. Plan 28 (вместе с
-[Plan 26](plans/26-test-runner-hardening.md), [Plan 27](plans/27-gc-switch.md),
-[Plan 34](plans/34-stdlib-typecheck-and-compile-fix.md)).
+[Plan 26](../plans/26-test-runner-hardening.md), [Plan 27](../plans/27-gc-switch.md),
+[Plan 34](../plans/34-stdlib-typecheck-and-compile-fix.md)).
 
 ```
 nova test [PATH]... [--filter SUBSTR] [--jobs N] [--format text|json|tap|junit]
@@ -520,7 +520,7 @@ nova test nova_tests/plan118     # конкретная поддиректори
 `status != "pass"`, фильтрует suite, запускает только их.
 
 **EXPECT-маркеры** в тестовых файлах (см.
-[docs/test-conventions.md](test-conventions.md)):
+[docs/dev/test-conventions.md](../dev/test-conventions.md)):
 - `// EXPECT: <stdout-line>` — точное совпадение строки
 - `// EXPECT_STDERR: <line>` — для stderr
 - `// EXPECT_COMPILE_ERROR: <substring>` — должно упасть при компиляции
@@ -571,7 +571,7 @@ nova regen-runtime [--check]
 | `--check` | off | Только сравнить — exit `1` если файлы расходятся с реестром (CI guard) |
 
 Под капотом — `nova_codegen::codegen::runtime_registry::all()` +
-render каждого модуля. См. [Plan 13](plans/13-runtime-stdlib-and-autogen.md).
+render каждого модуля. См. [Plan 13](../plans/13-runtime-stdlib-and-autogen.md).
 
 ---
 
@@ -631,7 +631,7 @@ Default — text-based heuristic (~1ms/мутант). С `--real-exec` —
 true positive guarantee).
 
 **Поддерживаемые форматы документации в `///`** см.
-[Plan 45](plans/45-nova-doc.md) (D107).
+[Plan 45](../plans/45-nova-doc.md) (D107).
 
 ---
 
@@ -728,7 +728,7 @@ nova contracts verify FILE [--backend BACKEND]
 | `--backend BACKEND` | env `NOVA_SMT_BACKEND` | Override SMT-backend (`trivial`, `z3`) |
 
 **Z3-бэкенд:** требует build с `--features z3-backend`. См.
-[Plan 33.1](plans/33.1-contracts-core.md).
+[Plan 33.1](../plans/33.1-contracts-core.md).
 
 #### `nova contracts suggest`
 
@@ -757,7 +757,7 @@ nova contracts counterexample FILE FN_NAME [--contract-id N]
 
 Бенчмарк-инфраструктура (Plan 57 — `MVP+A+B+C+D+E+F+G+H` закрыты).
 Лучше Criterion (Rust) / `testing.B`+benchstat (Go) / tinybench (TS)
-по ряду параметров. См. [docs/bench-conventions.md](bench-conventions.md).
+по ряду параметров. См. [docs/dev/bench-conventions.md](../dev/bench-conventions.md).
 
 ```
 nova bench <SUBCOMMAND>
@@ -1112,7 +1112,7 @@ nova bench dashboard [--history-branch BRANCH] [--out DIR] [--max-entries N] [--
 
 ### `nova consume-analyze`
 
-Анализатор покрытия consume-типов ([Plan 100.8](plans/100.8-performance-ide-tooling.md) / D7).
+Анализатор покрытия consume-типов ([Plan 100.8](../plans/100.8-performance-ide-tooling.md) / D7).
 Сканирует файл или директорию, собирает все consume-типизированные
 биндинги и сообщает, сколько из них покрыто через consume-методы
 (`Cleanup.@cleanup`, D188) или `defer`. Полезно как CI-проверка гигиены.
@@ -1143,7 +1143,7 @@ nova consume-analyze PATH [--format human|json] [--fail-on-uncovered]
 |---|---|---|
 | `NOVA_CODEGEN` | (зарезервировано) | Override пути к `nova-codegen` binary |
 | `NOVA_MONO_DEPTH` | `build`, `test`, `test-build`, `bench` | Лимит monomorphization-инстанциаций (default 500) |
-| `NOVA_REACH_DCE` | `build`, `test`, `test-build` | Reachability-codegen DCE ([Plan 159](plans/159-reachability-codegen.md), [D283](decisions/09-tooling.md#d283)). Не задана / `≠0` → **ON** (default): в C эмитится только достижимое от `main`. `=0` → **OFF**: байт-идентичное до-159 поведение (эмитить всё) — escape hatch для диагностики over-prune |
+| `NOVA_REACH_DCE` | `build`, `test`, `test-build` | Reachability-codegen DCE ([Plan 159](../plans/159-reachability-codegen.md), [D283](decisions/09-tooling.md#d283)). Не задана / `≠0` → **ON** (default): в C эмитится только достижимое от `main`. `=0` → **OFF**: байт-идентичное до-159 поведение (эмитить всё) — escape hatch для диагностики over-prune |
 | `NOVA_HOME` | `add`, `build` (git-deps) | Корень кэша git-зависимостей; default `~/.nova` (кэш в `<NOVA_HOME>/git`, глобальный proxy-конфиг в `<NOVA_HOME>/config.toml`) |
 | `NOVA_OFFLINE` | `add`, `build` (git-deps) | `=1` → запрет сети (clone/fetch); сборка только из готового кэша |
 | `NOVA_PKG_PROXY` | `add`, `build` (git-deps) | HTTP(S)-прокси для скачивания пакетов (План 233 §1). Слоями, первый существующий выигрывает: (1) env `NOVA_PKG_PROXY`, либо стандартные `HTTPS_PROXY`/`HTTP_PROXY` (git уважает их сам); (2) `[net] proxy = "..."` в НЕкоммитимом `nova.override.toml` рядом с `nova.toml`; (3) `[net] proxy = "..."` в глобальном `~/.nova/config.toml` (либо `<NOVA_HOME>/config.toml`). В коммитимом `nova.toml` НЕ поддержан — прокси это свойство машины/CI, не пакета |
@@ -1181,7 +1181,7 @@ nova consume-analyze PATH [--format human|json] [--fail-on-uncovered]
 ### `migrate_plan60`
 
 Lexer-based миграция field-style size-accessors в method-form
-(D117 / [Plan 60](plans/60-len-access-uniformity.md)):
+(D117 / [Plan 60](../plans/60-len-access-uniformity.md)):
 
 ```
 expr.len      → expr.len()
@@ -1210,7 +1210,7 @@ Token-level rewrite — комментарии / whitespace / formatting сох�
 ### `migrate_plan65`
 
 Lexer-based миграция `Time.after(<lit>)` →
-`ChanReader.close_after(Duration.from_*(<lit>))` ([Plan 65](plans/65-chanreader-close-after.md)
+`ChanReader.close_after(Duration.from_*(<lit>))` ([Plan 65](../plans/65-chanreader-close-after.md)
 AD11):
 
 ```
@@ -1238,18 +1238,18 @@ Token-aware через `nova_codegen::lexer` — пропускает строк
 
 ## Связанные документы
 
-- [`spec/`](../spec/) — спецификация языка
-- [`spec/decisions/09-tooling.md`](../spec/decisions/09-tooling.md) —
+- [`spec/`](../../spec/) — спецификация языка
+- [`spec/decisions/09-tooling.md`](../../spec/decisions/09-tooling.md) —
   D-блоки про тулинг (D89, D107, D121, ...)
-- [`docs/test-conventions.md`](test-conventions.md) — EXPECT-маркеры,
+- [`docs/dev/test-conventions.md`](../dev/test-conventions.md) — EXPECT-маркеры,
   директивы тестов
-- [`docs/bench-conventions.md`](bench-conventions.md) — convention для
+- [`docs/dev/bench-conventions.md`](../dev/bench-conventions.md) — convention для
   bench-файлов
-- [`docs/plans/28-nova-cli.md`](plans/28-nova-cli.md) — план каркаса CLI
-- [`docs/plans/36-cli-production-hardening.md`](plans/36-cli-production-hardening.md)
+- [`docs/plans/28-nova-cli.md`](../plans/28-nova-cli.md) — план каркаса CLI
+- [`docs/plans/36-cli-production-hardening.md`](../plans/36-cli-production-hardening.md)
   — exit codes, `--color`, parallel walk
-- [`docs/plans/45-nova-doc.md`](plans/45-nova-doc.md) — `nova doc` / `doc-query` / `doc-mcp`
-- [`docs/plans/57-perf-benchmark-infrastructure.md`](plans/57-perf-benchmark-infrastructure.md)
+- [`docs/plans/45-nova-doc.md`](../plans/45-nova-doc.md) — `nova doc` / `doc-query` / `doc-mcp`
+- [`docs/plans/57-perf-benchmark-infrastructure.md`](../plans/57-perf-benchmark-infrastructure.md)
   — `nova bench` family
-- [`docs/plans/33.3-contracts-advanced.md`](plans/33.3-contracts-advanced.md)
+- [`docs/plans/33.3-contracts-advanced.md`](../plans/33.3-contracts-advanced.md)
   — `nova contracts`

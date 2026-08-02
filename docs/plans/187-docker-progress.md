@@ -42,7 +42,7 @@ fast-forward на актуальный `main` (`git merge --ff-only main`,
    обращение); sibling-клон нужен ТОЛЬКО для `http` (path-зависимость).
    mbedTLS-vendor собирается плоским `cc`+`ar` (не cmake/make — но
    `cmake make` оставлены в apt-списке, как в проверенном
-   `docs/linux-build.md`-рецепте, лишними не мешают).
+   `docs/guide/linux-build.md`-рецепте, лишними не мешают).
 3. **`examples/flagship/aggregator/README.md`** — новый раздел «Docker»
    (build+run в 2 команды, тег `ghcr.io/nv-lang/aggregator-demo:0.1.0` как
    цель публикации владельцем, объяснение bind 0.0.0.0/портов,

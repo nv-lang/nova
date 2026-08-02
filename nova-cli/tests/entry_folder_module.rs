@@ -4,7 +4,7 @@
 //! (`resolve_imports_inline_ex`) обязан собрать sibling peers и
 //! проверить группу как один модуль. До Ф.10 caller парсил entry как
 //! один файл (`MAIN_FILE_ID`) и sibling peers не собирались вовсе —
-//! `[M-entry-folder-module]` в docs/simplifications.md.
+//! `[M-entry-folder-module]` в docs/dev/simplifications.md.
 //!
 //! Тест запускает реальный `nova` binary (`CARGO_BIN_EXE_nova`) в
 //! режиме `check` на peer'е `app.nv` folder-модуля
