@@ -57,9 +57,6 @@
 ```nova
 module std.concurrency.channel
 
-/// Общий буфер канала. Внутренний: в файбер не уходит, ручательство не нужно.
-type ChanBuf(*())
-
 /// Сторона записи. #share — ручательство D415: тип уходит в файбер.
 #share
 type ChanTx(*())
@@ -69,7 +66,15 @@ type ChanTx(*())
 type ChanRx(*())
 ```
 
-## Сырой слой — `extern "C"`, каждая функция возвращает ОДНО значение
+Отдельного типа для буфера НЕТ (правка владельца 2026-08-02): буфер целиком
+внутри рантайма, наружу видны только две стороны, которые на него ссылаются.
+
+## Сырой слой — `extern "C"`, создание через out-параметры
+
+Форма владельца (2026-08-02): **один** вызов вместо трёх, обе стороны
+возвращаются через out-параметры. Это штатная сишная идиома для нескольких
+результатов, и она уже используется в нашей же std —
+`fs_realpath_into(path *u8, out_err *mut int) -> str`.
 
 ```nova
 // Создание. elem_size — размер элемента; буфер выделяется как cap*elem_size,
@@ -77,10 +82,7 @@ type ChanRx(*())
 // ограждением E_CHANNEL_UNSOUND_ELEM_TYPE.
 // align_of НЕ передаём: sizeof(T) всегда кратен alignof(T), а база выделения
 // выровнена под любой тип (см. §Риски п.1).
-extern "C" fn chan_buf_new(cap int, elem_size int) -> *()
-
-extern "C" fn chan_buf_writer(buf *()) -> *()
-extern "C" fn chan_buf_reader(buf *()) -> *()
+extern "C" fn chan_new(cap int, elem_size int, out_tx *mut ChanTx, out_rx *mut ChanRx) -> ()
 
 // Передача элемента — по указателю на значение (src/dst), длина известна
 // буферу. Копирование делает рантайм.
@@ -95,8 +97,8 @@ extern "C" fn chan_tx_is_closed(tx *()) -> bool
 extern "C" fn chan_rx_is_closed(rx *()) -> bool
 extern "C" fn chan_rx_close_after(rx *(), millis i64) -> ()
 extern "C" fn chan_tx_share(tx *()) -> *()                // ref-счёт +1
-extern "C" fn chan_len(buf *()) -> int
-extern "C" fn chan_cap(buf *()) -> int
+extern "C" fn chan_len(rx *()) -> int
+extern "C" fn chan_cap(rx *()) -> int
 ```
 
 ## Публичный слой — обычный Nova
@@ -108,38 +110,39 @@ export type ChanReader[T](ChanRx)
 /// Пара собирается ЗДЕСЬ, обычным кортежом Nova — кортеж границу C не пересекает.
 #stable(since = "0.1")
 export fn Channel[T].new(cap int) -> (ChanWriter[T], ChanReader[T]) {
-    ro buf = ChanBuf(chan_buf_new(cap, size_of[T]()))
-    (ChanWriter[T](ChanTx(chan_buf_writer(buf.0))),
-     ChanReader[T](ChanRx(chan_buf_reader(buf.0))))
+    mut tx = ChanTx.null()          // см. §Открытые вопросы п.2 — та же форма, что для recv
+    mut rx = ChanRx.null()
+    unsafe { chan_new(cap, size_of[T](), &mut tx, &mut rx) }
+    (ChanWriter[T](tx), ChanReader[T](rx))       // пара собирается ЗДЕСЬ, обычным кортежом
 }
 
 // --- сторона записи ---
 export fn ChanWriter[T] @send(consume v T) -> bool =>
-    chan_send(@0.0, addr_of(v) as *u8)          // consume — владение уходит (D131/№144)
+    chan_send(@0, addr_of(v) as *u8)          // consume — владение уходит (D131/№144)
 
 export fn ChanWriter[T] @try_send(consume v T) -> bool =>
-    chan_try_send(@0.0, addr_of(v) as *u8)
+    chan_try_send(@0, addr_of(v) as *u8)
 
-export fn ChanWriter[T] @close() -> ()        => chan_tx_close(@0.0)
-export fn ChanWriter[T] @is_closed() -> bool  => chan_tx_is_closed(@0.0)
+export fn ChanWriter[T] @close() -> ()        => chan_tx_close(@0)
+export fn ChanWriter[T] @is_closed() -> bool  => chan_tx_is_closed(@0)
 export fn ChanWriter[T] @share() -> ChanWriter[T] =>
-    ChanWriter[T](ChanTx(chan_tx_share(@0.0)))
+    ChanWriter[T](ChanTx(chan_tx_share(@0)))
 
 // --- сторона чтения ---
 export fn ChanReader[T] @recv() -> Option[T] {
     mut slot = T.uninit()                             // см. §Открытые вопросы п.2
-    if chan_recv(@0.0, addr_of_mut(slot) as *mut u8) { Some(slot) } else { None }
+    if chan_recv(@0, addr_of_mut(slot) as *mut u8) { Some(slot) } else { None }
 }
 
 export fn ChanReader[T] @try_recv() -> Option[T] {
     mut slot = T.uninit()
-    if chan_try_recv(@0.0, addr_of_mut(slot) as *mut u8) { Some(slot) } else { None }
+    if chan_try_recv(@0, addr_of_mut(slot) as *mut u8) { Some(slot) } else { None }
 }
 
-export fn ChanReader[T] @close() -> ()        => chan_rx_close(@0.0)
-export fn ChanReader[T] @is_closed() -> bool  => chan_rx_is_closed(@0.0)
+export fn ChanReader[T] @close() -> ()        => chan_rx_close(@0)
+export fn ChanReader[T] @is_closed() -> bool  => chan_rx_is_closed(@0)
 export fn ChanReader[T] @close_after(d Duration) -> () =>
-    chan_rx_close_after(@0.0, d.as_millis())
+    chan_rx_close_after(@0, d.as_millis())
 ```
 
 Разделение типов даёт безопасность как следствие системы типов, а не как
