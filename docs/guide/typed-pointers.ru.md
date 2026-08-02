@@ -21,18 +21,17 @@ Pointer Optimization (NPO) для zero-cost null-safety через `Option[*T]`.
 ## Модель мутабельности указателей: «стрелка → коробка» (План 138.5 FINAL)
 
 > **План 138.5 (2026-06-11) FINAL model — заменяет V2 (right-binding) и
-> V3 (propagation/safe-stopper):** ТИП указателя несёт мутабельность
-> pointee **ТОЛЬКО**, записываемую **ПОСТФИКСНО** (модификатор стоит *после*
-> `*`). Старые префиксные формы `ro * T` / `mut * T` / `unsafe * T`,
-> стоппер `safe` и форма `Unsafe(Pointer)` (`unsafe * T` = nullable-raw)
-> **ВЫВЕДЕНЫ** — см. [выведенные формы](#выведенные-формы-план-1385).
+> V3 (propagation/safe-stopper):** ТИП указателя несёт мутабельность pointee
+> **ТОЛЬКО**, записываемую **ПОСТФИКСНО** (модификатор стоит *после* `*`).
+> Старые префиксные формы `ro * T` / `mut * T` / `unsafe * T`, стоппер `safe`
+> и форма `Unsafe(Pointer)` (`unsafe * T` = nullable-raw) **ВЫВЕДЕНЫ** — см.
+> [выведенные формы](#выведенные-формы-план-1385).
 
 Думайте об указателе как о **стрелке**, указывающей на **коробку** (pointee):
 
 - **Цель стрелки — в ТИПЕ, постфиксно на `*`** — говорит, *что можно делать с
-  коробкой*: `*mut T` (в коробку можно писать), `*ro T` ≡ `*T`
-  (коробка только для чтения), `*unsafe T` (коробка может быть
-  неинициализированной).
+  коробкой*: `*mut T` (в коробку можно писать), `*ro T` ≡ `*T` (коробка
+  только для чтения), `*unsafe T` (коробка может быть неинициализированной).
 - **Сама стрелка — биндинг (`let` / `mut`, D36)** — говорит, *можно ли
   перенацелить стрелку на другую коробку*: `let p` = стрелка зафиксирована,
   `mut p` = стрелку можно перенацеливать.
@@ -41,27 +40,27 @@ Pointer Optimization (NPO) для zero-cost null-safety через `Option[*T]`.
 **типе** (постфиксно на `*`), а другая — на **биндинге** (перед именем):
 
 ```nova
-mut p *mut T        // стрелка перенацеливаемая (mut биндинг) + коробка доступна для записи (*mut pointee)
-let q *ro T         // стрелка зафиксирована (let биндинг)    + коробка только для чтения (*ro pointee)
-mut p *ro T         // стрелка перенацеливаемая               + коробка только для чтения
-let p *mut T        // стрелка зафиксирована                  + коробка доступна для записи
+mut p *mut T        // arrow re-pointable (mut binding) + box writable (*mut pointee)
+let q *ro T         // arrow fixed (let binding)        + box read-only (*ro pointee)
+mut p *ro T         // arrow re-pointable               + box read-only
+let p *mut T        // arrow fixed                      + box writable
 ```
 
 > **НЕ существует префикса `mut *` / `ro *` / `unsafe *`.** Модификатор перед
 > `*` — жёсткая ошибка `E_POINTER_PREFIX_MODIFIER` (прецедент: в Rust
-> `*mut T` / `*const T` = мутабельность pointee; `let mut p` =
+> `*mut T` / `*const T` = мутабельность pointee; `let mut p` —
 > перенацеливаемость).
 
 ### Канонические формы (постфиксный модификатор pointee)
 
 ```nova
-*T                  // указатель на read-only T (канонический по умолчанию; ≡ *ro T)
-*ro T               // указатель на read-only T (явный; идентичен *T)
-*mut T              // указатель на mutable T (deref-store `*p = v` разрешён)
-*unsafe T           // указатель на possibly-uninit T (pointee MaybeUninit)
-Option[*T]          // NULLABLE указатель (NPO: None = null, 8 байт)
+*T                  // pointer to read-only T (default canonical; ≡ *ro T)
+*ro T               // pointer to read-only T (explicit; identical to *T)
+*mut T              // pointer to mutable T (deref-store `*p = v` allowed)
+*unsafe T           // pointer to possibly-uninit T (MaybeUninit pointee)
+Option[*T]          // NULLABLE pointer (NPO: None = null, 8 bytes)
 Option[*unsafe T]   // FFI nullable-uninit ptr (None = null, Some = non-null
-                    //   указатель на possibly-uninit pointee)
+                    //   ptr к possibly-uninit pointee)
 ```
 
 Модификатор **всегда постфиксный** — он крепится к pointee того `*`, за
@@ -71,8 +70,8 @@ Option[*unsafe T]   // FFI nullable-uninit ptr (None = null, Some = non-null
 ### Перенацеливаемость — это биндинг (D36), а не тип
 
 ```nova
-mut p *T = &acc     // mut биндинг → p может быть переназначен позже (p = &other)
-let q *T = &acc     // let биндинг → q зафиксирован (q = &other ⇒ E_REBIND)
+mut p *T = &acc     // mut binding → p may be reassigned later (p = &other)
+let q *T = &acc     // let binding → q is fixed (q = &other ⇒ E_REBIND)
 ```
 
 Переменная-указатель подчиняется **тем же** правилам `let` / `mut`, что и
@@ -81,13 +80,13 @@ let q *T = &acc     // let биндинг → q зафиксирован (q = &o
 ### Цепочки указателей (несколько уровней) — постфиксно на каждом `*`
 
 ```nova
-*mut *ro Node       // указатель с доступной для записи целью → (указатель с read-only целью → Node)
-                    //   *p   = other_ptr   OK   (внешний pointee mut)
-                    //   **p  = new_value   ERR  (внутренний pointee ro)
+*mut *ro Node       // writable-target pointer  →  (read-only-target pointer → Node)
+                    //   *p   = other_ptr   OK   (outer pointee mut)
+                    //   **p  = new_value   ERR  (inner pointee ro)
 
-*ro *mut Node       // указатель с read-only целью → (указатель с доступной для записи целью → Node)
-                    //   *p   = other_ptr   ERR  (внешний pointee ro)
-                    //   **p  = new_value   OK   (внутренний pointee mut)
+*ro *mut Node       // read-only-target pointer →  (writable-target pointer → Node)
+                    //   *p   = other_ptr   ERR  (outer pointee ro)
+                    //   **p  = new_value   OK   (inner pointee mut)
 ```
 
 Каждый модификатор стоит постфиксно, сразу после своего `*`, и описывает цель
@@ -99,16 +98,16 @@ D184 (мутабельность возвращаемого типа по умо
 для возвращаемых указателей:
 
 ```nova
-fn alloc_cell() -> *T       // ≡ -> *ro T : возвращает указатель на read-only T
-fn alloc_mut()  -> *mut T   // возвращает указатель на ЗАПИСЫВАЕМЫЙ T
+fn alloc_cell() -> *T       // ≡ -> *ro T : returns a ptr to read-only T
+fn alloc_mut()  -> *mut T   // returns a ptr to WRITABLE T
 ```
 
 Перенацеливаемость **результата** решается в точке биндинга, а не в типе
 возврата:
 
 ```nova
-ro p = alloc_mut()          // p зафиксирован (ro биндинг); *p = v всё ещё OK (pointee mut)
-mut q = alloc_mut()         // q перенацеливаемый + *q = v OK
+ro p = alloc_mut()          // p fixed (ro binding); *p = v still OK (pointee mut)
+mut q = alloc_mut()         // q re-pointable + *q = v OK
 ```
 
 Это устраняет старую неоднозначность «двух mut в позиции возврата» (внешнего
@@ -119,8 +118,8 @@ pointer-mut больше не из чего выбирать).
 ```nova
 external fn os_read(fd int, buf *mut unsafe u8, n usize) -> int
 //                              ^^^^^^^^^^^^^^^
-//                       pointee доступен для записи (*mut) + possibly-uninit (unsafe);
-//                       перенацеливаемость стрелки — дело биндинга
+//                       pointee writable (*mut) + possibly-uninit (unsafe);
+//                       arrow re-pointability is the binding's concern
 ```
 
 Оси pointee (`mut` / `ro` и `unsafe`) коммутируют на value-поintee и обе
@@ -169,13 +168,13 @@ pointee — сам *указатель* всё ещё non-null; null — это 
 > типе постфиксно; перенацеливаемость принадлежит биндингу).
 
 ```nova
-// ВЫВЕДЕННАЯ форма:      FINAL канонический эквивалент:
-ro * T                  // *ro T            (постфиксный модификатор pointee)
+// RETIRED form:           FINAL canonical equivalent:
+ro * T                  // *ro T            (postfix pointee modifier)
 mut * T                 // *mut T
-unsafe * T              // *unsafe T  — для UNINIT pointee;
-                        //   для NULLABLE указателя используйте Option[*T]
-mut * ro * Acc          // *mut *ro Acc     (постфиксная цепочка)
-unsafe * safe T         // *T              (стоппер `safe` удалён)
+unsafe * T              // *unsafe T  — for a UNINIT pointee;
+                        //   for a NULLABLE pointer use Option[*T]
+mut * ro * Acc          // *mut *ro Acc     (postfix chain)
+unsafe * safe T         // *T              (`safe` stopper removed)
 ```
 
 - Модификатор **перед** `*` ⇒ `E_POINTER_PREFIX_MODIFIER`.
@@ -189,13 +188,13 @@ unsafe * safe T         // *T              (стоппер `safe` удалён)
 Он ортогонален постфиксному модификатору pointee:
 
 ```nova
-ro p *Acc                   // ro биндинг (зафиксированная стрелка); pointee ro
-mut p *Acc                  // mut биндинг (перенацеливаемый); pointee mut по умолчанию
-mut p *Acc  ≡  mut p *mut Acc   // mut биндинг по умолчанию делает pointee mut
-ro p *mut Acc               // допустимая грань: стрелка зафиксирована, pointee записываемый
+ro p *Acc                   // ro binding (fixed arrow); pointee ro
+mut p *Acc                  // mut binding (re-pointable); pointee mut by default
+mut p *Acc  ≡  mut p *mut Acc   // mut binding defaults pointee to mut
+ro p *mut Acc               // valid edge: arrow fixed, pointee writable
 
-mut q = &acc                // mut биндинг; pointee mut автоматически (без &mut acc)
-ro p = &acc                 // ro биндинг; pointee ro автоматически
+mut q = &acc                // mut binding; pointee mut auto (no &mut acc needed)
+ro p = &acc                 // ro binding; pointee ro auto
 ```
 
 `mut`-биндинг по умолчанию делает pointee `mut` (`mut p *Acc` ≡
@@ -208,13 +207,13 @@ ro p = &acc                 // ro биндинг; pointee ro автоматич�
 применяется к **цели** этого уровня `*`; читается слева направо:
 
 ```nova
-*mut *ro Acc        // указатель с записываемой целью → (указатель с read-only целью → Acc)
-                    // *p  = другой_pointer OK   (внешний pointee mut)
-                    // **p = новое_значение ERR  (внутренний pointee ro)
+*mut *ro Acc        // writable-target pointer → (read-only-target pointer → Acc)
+                    // *p  = другой_pointer OK   (outer pointee mut)
+                    // **p = новое_значение ERR  (inner pointee ro)
 
-*ro *mut Acc        // указатель с read-only целью → (указатель с записываемой целью → Acc)
-                    // *p  = ...            ERR  (внешний pointee ro)
-                    // **p = ...            OK   (внутренний pointee mut)
+*ro *mut Acc        // read-only-target pointer → (writable-target pointer → Acc)
+                    // *p  = ...            ERR  (outer pointee ro)
+                    // **p = ...            OK   (inner pointee mut)
 ```
 
 Перенацеливаемость переменной, держащей цепочку, — как всегда, дело биндинга
@@ -224,10 +223,10 @@ ro p = &acc                 // ro биндинг; pointee ro автоматич�
 
 ```nova
 ro acc = Account { name: "Piter" }    // acc — heap reference
-ro p = &acc                            // ro биндинг, тип *ro Account; GC отслеживает acc
+ro p = &acc                            // ro binding, type *ro Account; GC tracks acc
 
 ro x = 42                              // x — stack primitive
-ro p = &x                              // x автоматически повышен до heap; тип *ro i64
+ro p = &x                              // x auto-promoted to heap; type *ro i64
 ```
 
 **Критично:** `&value` — это **НЕ borrow из Rust** (D32 амендмент). Нет
@@ -241,11 +240,11 @@ lifetime-чекера, нет параметров `'a`, нет XOR-алиаси
 
 ```nova
 unsafe {
-    p.field                 // ✓ авто-deref на один уровень (чтение)
-    p.method()              // ✓ авто-deref при вызове метода
-    p.field = v             // ✓ авто-deref при присваивании (требует *mut T)
-    *p                      // ✓ явный deref
-    (*p).field              // ✓ многоуровневая цепочка через явный *
+    p.field                 // ✓ auto-deref one level (read)
+    p.method()              // ✓ auto-deref method call
+    p.field = v             // ✓ auto-deref assignment (requires *mut T)
+    *p                      // ✓ explicit deref
+    (*p).field              // ✓ multi-level chain через explicit *
 }
 ```
 
@@ -263,9 +262,9 @@ unsafe {
 
 ```nova
 unsafe {
-    ro p1 = some_ptr + 1            // *unsafe T (деградация — выравнивание/границы пропали)
-    ro diff = p2 - p1               // isize (число элементов)
-    *p1                              // deref деградировавшего pointee *unsafe T
+    ro p1 = some_ptr + 1            // *unsafe T (degrades — alignment/bounds gone)
+    ro diff = p2 - p1               // isize (element count)
+    *p1                              // deref of a degraded *unsafe T pointee
 }
 ```
 
@@ -278,11 +277,11 @@ unsafe {
 
 ```nova
 external fn malloc(sz usize) -> Option[*u8]
-// C codegen: uint8_t* malloc(size_t sz);   // один указатель, NULL = None
+// C codegen: uint8_t* malloc(size_t sz);   // single pointer, NULL = None
 
 unsafe {
     match malloc(1024) {
-        Some(buf) => use(buf),               // buf: *u8 non-null гарантирован
+        Some(buf) => use(buf),               // buf: *u8 non-null guaranteed
         None      => Fail.throw(OutOfMemory),
     }
 }
@@ -301,9 +300,9 @@ fn safe_user_code() {
     // ro v = buf[2]                ← ERROR E_UNSAFE_REQUIRED (ptr[i] ≡ *(ptr+i))
 
     unsafe {
-        ro x = *p                    // ✓ deref указателя
-        ro v = buf[2]                // ✓ индекс указателя (синтаксис ptr[i], [M-118-ptr-index-unsafe])
-        ro y = malloc(1024)          // ✓ external fn, возвращающая указатель
+        ro x = *p                    // ✓ pointer deref
+        ro v = buf[2]                // ✓ pointer index (ptr[i] syntax, [M-118-ptr-index-unsafe])
+        ro y = malloc(1024)          // ✓ external fn returning pointer
     }
 }
 ```
@@ -324,14 +323,13 @@ fn safe_user_code() {
 валиден. Требует `unsafe { }` или тела `unsafe fn`.
 
 ```nova
-unsafe fn read_at(p *u8, i int) -> u8 { p[i] }   // ✓ внутри unsafe fn
+unsafe fn read_at(p *u8, i int) -> u8 { p[i] }   // ✓ inside unsafe fn
 
-// Вне unsafe — ошибка компиляции:
+// Outside unsafe — compile error:
 // ro v = buf[0]                 ← E_UNSAFE_REQUIRED
 ```
 
-**Реализация:** сахар над встроенным обработчиком эффекта
-`unsafe_handler`.
+**Реализация:** сахар над встроенным обработчиком эффекта `unsafe_handler`.
 
 ```nova
 unsafe { expr }
@@ -348,7 +346,7 @@ with unsafe_handler { perform UnsafeOps.<op>(expr) }
 ```nova
 #unsafe
 fn ffi_wrapper(p *T) -> T {
-    *p                              // ✓ тело имплицитно в unsafe-контексте
+    *p                              // ✓ body implicitly unsafe context
 }
 
 fn safe_caller() {
@@ -369,7 +367,7 @@ fn safe_caller() {
 ```nova
 external fn libuv_set_timer_cb(cb *fn(i64) -> ()) -> i64
 
-fn my_callback(timeout i64) -> () { ... }       // без Fail
+fn my_callback(timeout i64) -> () { ... }       // no Fail
 
 unsafe {
     libuv_set_timer_cb(my_callback as *fn(i64) -> ())
@@ -389,7 +387,7 @@ C ABI текущей платформы (System V на Unix, MS x64 на Windows
 **Канон для opaque-хендлов — tuple-newtype** (zero-overhead):
 
 ```nova
-type Sqlite3Handle(*sqlite3)               // stack, ABI одного указателя
+type Sqlite3Handle(*sqlite3)               // stack, single pointer ABI
 external fn open(path str) -> (Option[Sqlite3Handle], i64)
 ```
 
@@ -400,7 +398,7 @@ type DbSession {
     ro handle Sqlite3Handle
     ro path str
     ro opened_at Time
-}                                           // record — для хендлов с extra state
+}                                           // record — для handles с extra state
 ```
 
 Миграция примеров из cookbook Плана 115 V1 (форма record) → tuple newtype
@@ -434,9 +432,8 @@ unsafe {
 
 - `${p:?}` debug-format интерполяция — канонический рендер указателя внутри
   `unsafe { ... }` (План 91.14 D229).
-- `(*T).to_debug_str() -> str` — легаси built-in алиас, оставлен для
-  обратной совместимости; та же семантика, что `${p:?}`, разрешён только в
-  unsafe.
+- `(*T).to_debug_str() -> str` — легаси built-in алиас, оставлен для обратной
+  совместимости; та же семантика, что `${p:?}`, разрешён только в unsafe.
 - Прямая интерполяция `"${p}"` (Display) → `E_PTR_NO_DISPLAY_USE_DEBUG_STR`;
   хинт диагностики указывает на `${p:?}` (обновлено в Ф.5.3).
 - Адреса указателей недетерминированы, утекают ASLR-информацию — явное
@@ -451,7 +448,7 @@ unsafe {
                                   //   (array may realloc / GC compaction)
 }
 
-ro p Option[*u8] = null          // ❌ E_NULL_LITERAL_USE_NONE; используйте None
+ro p Option[*u8] = null          // ❌ E_NULL_LITERAL_USE_NONE; use None
 mut p *mut u8 = undefined        // ❌ E_UNDEFINED_USE_NONE_INIT_PATTERN
 ```
 
