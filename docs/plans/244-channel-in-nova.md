@@ -118,10 +118,10 @@ export type ChanReader[T](ChanRx)
 /// Пара собирается ЗДЕСЬ, обычным кортежом Nova — кортеж границу C не пересекает.
 #stable(since = "0.1")
 export fn Channel[T].new(cap int) -> (ChanWriter[T], ChanReader[T]) {
-    mut tx = ChanTx.null()          // см. §Открытые вопросы п.2 — та же форма, что для recv
-    mut rx = ChanRx.null()
-    unsafe { chan_new(cap, size_of[T](), &mut tx, &mut rx) }
-    (ChanWriter[T](tx), ChanReader[T](rx))       // пара собирается ЗДЕСЬ, обычным кортежом
+    mut tx uninit ChanTx
+    mut rx uninit ChanRx
+    unsafe { chan_new(cap, size_of[T](), &tx as *mut ChanTx, &rx as *mut ChanRx) }
+    unsafe { (ChanWriter[T](tx as ChanTx), ChanReader[T](rx as ChanRx)) }
 }
 
 // --- сторона записи ---
