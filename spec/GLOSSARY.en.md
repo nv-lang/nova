@@ -166,3 +166,15 @@ what the token does, not a translation of the token.
 | планировщик work-stealing | work-stealing scheduler | listed in spec/decisions/README.md §06 topic summary: "…work-stealing scheduler, preemption" | M:N scheduler backing `spawn`/`supervised`/`detach` |
 
 ---
+
+## 8. Modules and packages · Модули и пакеты
+
+| Русский | English | Example (en) | Note |
+|---|---|---|---|
+| модуль | module | "A **module** is either a single file `X.nv` or a **folder** `X/`" | language-tour.md §11 |
+| папка-модуль | folder-module | "A **module** is either a single file `X.nv` or a **folder** `X/` whose peer files all declare the same `module` path" | language-tour.md §11 |
+| peer-файлы (сорасположенные файлы модуля) | peer files | "whose peer files all declare the *same* `module` path and share one namespace" | language-tour.md §11 |
+| пакет | package | "Every import path is fully qualified from the **package** root (the directory with `nova.toml`)" | language-tour.md §11 |
+| workspace (воркспейс) | workspace | "Workspaces (`[workspace] members = [...]`) group several packages in a monorepo" | language-tour.md §11 |
+
+---
