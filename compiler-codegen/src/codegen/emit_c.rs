@@ -6604,15 +6604,15 @@ impl CEmitter {
                 }
             }
             // Built-in vtables defined in nova_rt/effects.h — skip.
-            // Plan 175 Ф.2-v3: "Time" removed — no longer a hand-written
-            // vtable (см. RUNTIME_DEFINED_TYPES comment above); flows through
-            // `local_effects` (declared in module.items via prelude) instead.
+            // №277: "Time" RESTORED — unconditional (unlike `local_effects`,
+            // which needs module.items presence); mirrors emit_effect_type's
+            // own unconditional name=="Time" skip.
             // "Mem" REMOVED (D76 amend, [M-mem-effect-demote-to-namespace],
             // 2026-08-01): no longer an effect, no vtable — a plain
             // namespace type, forward-declared (if at all) through the
             // ordinary `external_names`/`local_types` path above, not this
             // vtable-specific allowlist.
-            const BUILTIN_VTABLE_NAMES: &[&str] = &["Fail", "TimerMetrics"];
+            const BUILTIN_VTABLE_NAMES: &[&str] = &["Fail", "TimerMetrics", "Time"];
             // [M-codegen-emission-nondeterminism] fix: same HashSet-order issue as
             // `external_names` above — sort before emitting.
             let mut vtable_names_sorted: Vec<String> = vtable_names.into_iter().collect();
