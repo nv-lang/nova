@@ -270,7 +270,7 @@ pending the owner's call in Open questions.
    owner wants them split into two distinct glossary rows since they are
    technically two different keywords with overlapping meaning.
 
-### Русские формы — спорные, решает владелец (добор 2026-08-0x, норма #language)
+### Русские формы — спорные, решает владелец (добор 2026-08-02, норма #language)
 
 6. **«Файбер» vs «волокно» (§7, помечено `[CONTESTED]`).** «Файбер» —
    транслитерация английского «fiber», НЕ норма-форма по правилу
