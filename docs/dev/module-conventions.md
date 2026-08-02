@@ -6,7 +6,7 @@
 > дополняет: [nv-coding-style.md](nv-coding-style.md) (стиль `.nv`-кода), [ffi-cookbook.md](../guide/ffi-cookbook.md) (механика FFI:
 > CStr/указатели/`unsafe`/примеры libsqlite3 и т.п.), [compiler-conventions.md](compiler-conventions.md) (§3 «не хардкодить
 > stdlib», §5 spec-first). **Канонический пример** — `std/src/net/` (TcpNet-семейство; Plan 195 — std на `src/`); **референс-планы** —
-> [179](plans/179-time-system-rework.md)/[179.1](plans/179.1-civil-time.md)/[180](plans/180-io-fs-os.md).
+> [175](../plans/175-time-system-rework.md)/[175.1](../plans/175.1-civil-time.md)/[176](../plans/176-io-fs-os.md).
 
 ## Применимость (scope)
 

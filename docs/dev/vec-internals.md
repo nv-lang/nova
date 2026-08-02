@@ -1,8 +1,8 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # `Vec[T]` / `[]T` — internals & module layout
 
-> **Audience:** Nova stdlib contributors. For the user-facing guide see
-> [`vec.md`](vec.md) (Plan 153.1+). **Spec:** [D239](../../spec/decisions/02-types.md#d239-t--синтаксический-псевдоним-vect)
+> **Audience:** Nova stdlib contributors. For the user-facing side see
+> [`vec-lazy.md`](../guide/vec-lazy.md) (lazy adapters; a full user vec guide is still TODO). **Spec:** [D239](../../spec/decisions/02-types.md#d239-t--синтаксический-псевдоним-vect)
 > (`[]T ≡ Vec[T]`), [D232](../../spec/decisions/02-types.md#d232-vect--nova-native-generic-growable-array)
 > (`Vec[T]` on RawMem), [D238](../../spec/decisions/03-syntax.md)/[D240](../../spec/decisions/03-syntax.md)
 > (`Index`/`MutIndex`).
