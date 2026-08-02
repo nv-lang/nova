@@ -113,23 +113,53 @@ ro rx = ch.rx
 `"capacity must be >= 1"` ([Plan 44.1](../plans/44.1-channel-hardening.md)
 Ф.3) — zero-capacity rendezvous channels are not yet implemented.
 
-**The element type (`T`)** is inferred from the first `send`/`recv`:
+**The element type (`T`) is tracked when declared explicitly** — either via
+turbofish on `Channel.new`, or by annotating the capability types directly
+(D91, `docs/guide/channels.md` §"Passing to functions"):
 
 ```nova
-ro { tx, rx } = Channel.new(8)
-tx.send(42)         // T = int
-ro v = rx.recv()   // Option[int]
+ro (tx, rx) = Channel[int].new(8)
+tx.send(42)          // checked: `int` is assignable to `int`
+ro v = rx.recv()     // Option[int] — the real, checker-tracked T
 ```
 
-Explicit annotation via turbofish: `Channel[int].new(8)`.
+```nova
+fn drain(rx ChanReader[int]) -> int {
+    mut sum = 0
+    while Some(v) = rx.recv() { sum = sum + v }   // v: int, real type
+    sum
+}
+```
 
-**Word-safe `T` only ([M-channel-generic-elem-type]).** Vela (M:N runtime) stores
-every element in a single word-sized slot, so `T` must round-trip losslessly
-through it: `int`, `bool`, `char`, fixed-width int types, and any
-pointer-sized type (`[]T`, records, `HashMap`, sums, …) all work. A `T` that
-does not fit a word — `str`, `f32`/`f64`, tuples, value-records — is
-rejected at compile time (`E_CHANNEL_UNSOUND_ELEM_TYPE`) rather than
-silently truncated or reinterpreted.
+When `T` is declared this way, it is tracked **end-to-end** by the checker
+(Plan 221.1 №143/№286): `send`/`try_send` reject a value of the wrong type
+at compile time (`E_CHANNEL_ELEM_TYPE_MISMATCH`) — including two distinct
+newtypes of the same size (`Channel[Meters]` refusing a `Seconds` payload)
+— and `recv`/`try_recv` return a properly typed `Option[T]`, so a field/
+method access on the received value (`got.len()`, `got.x`, a `match` on a
+sum variant, …) resolves against the REAL type instead of an eroded
+`Option[int]`.
+
+**A bare `Channel.new(cap)` with no turbofish/annotation leaves `T`
+untracked** — this is *not* inferred from the first `send`/`recv` (that
+promise never actually held end-to-end; fixed by this window's honest
+documentation, not by making the inference real). An untyped channel keeps
+the old, permissive behavior: no compile-time type guarantee between `send`
+and `recv` — the author is trusted, exactly as before Plan 221.1 №143/№286.
+Prefer the turbofish/annotated form for any channel whose element type
+matters (essentially always).
+
+**Word-safe `T` only ([M-channel-generic-elem-type]).** Regardless of
+whether `T` is tracked, Vela (M:N runtime) stores every element in a single
+word-sized slot, so `T` must round-trip losslessly through it: `int`,
+`bool`, `char`, fixed-width int types, and any pointer-sized type (`[]T`,
+records, `HashMap`, sums, …) all work. A `T` that does not fit a word —
+`str`, `f32`/`f64`, tuples, value-records — is rejected at compile time
+(`E_CHANNEL_UNSOUND_ELEM_TYPE`) rather than silently truncated or
+reinterpreted. This is a runtime-representation limit on `T` itself,
+independent of the type-mismatch check above (a correctly `Channel[str]`-
+typed `str` payload still hits this gate — `str` simply cannot fit the
+current single-word runtime slot at all).
 
 ---
 
