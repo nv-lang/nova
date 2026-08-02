@@ -1,0 +1,58 @@
+// №274 [M-binop-stub-ignores-auto-byref-abi]: operator desugar stubs
+// (`nova_vr_binop_*`/`nova_vr_ueq_*`) must mirror the Plan 172.14 auto-by-ref
+// ABI convention. A value-record whose C-ABI size exceeds 16Б passes its
+// `ro`/instance-method params by pointer (`param_is_auto_byref`,
+// emit_c.rs); the stubs previously ALWAYS forwarded the RHS operand by
+// value, regardless of that flag — CC-FAIL for any operator/`==` use on a
+// >16Б value-record. Diagnosed via BigRat (nova-bigint-p240/REPORT-p240.md);
+// this is the minimal, self-contained repro (two i64-pair fields => 32Б).
+
+module spec_tests.conformance
+
+type D274Pt value { x i64, y i64 }
+
+fn D274Pt.new(x i64, y i64) -> D274Pt => { x, y }
+
+type D274Rt value { a D274Pt, b D274Pt }          // C-size 32Б => auto-byref
+
+fn D274Rt.new(a D274Pt, b D274Pt) -> D274Rt {
+    { a, b }
+}
+
+fn D274Rt @plus(other D274Rt) -> D274Rt {
+    D274Rt.new(
+        D274Pt.new(@a.x + other.a.x, @a.y + other.a.y),
+        D274Pt.new(@b.x + other.b.x, @b.y + other.b.y),
+    )
+}
+
+fn D274Rt @minus(other D274Rt) -> D274Rt {
+    D274Rt.new(
+        D274Pt.new(@a.x - other.a.x, @a.y - other.a.y),
+        D274Pt.new(@b.x - other.b.x, @b.y - other.b.y),
+    )
+}
+
+fn D274Rt @equal(other D274Rt) -> bool {
+    @a.x == other.a.x && @a.y == other.a.y && @b.x == other.b.x && @b.y == other.b.y
+}
+
+test "value-record over 16Б: operator desugar stubs mirror auto-by-ref ABI" {
+    ro p1 = D274Pt.new(1, 2)
+    ro p2 = D274Pt.new(3, 4)
+    ro r1 = D274Rt.new(p1, p2)
+    ro r2 = D274Rt.new(p1, p2)
+
+    ro s = r1 + r2
+    assert(s.a.x == 2)
+    assert(s.a.y == 4)
+    assert(s.b.x == 6)
+    assert(s.b.y == 8)
+
+    ro d = r1 - r2
+    assert(d.a.x == 0)
+    assert(d.b.y == 0)
+
+    assert(r1 == r2)
+    assert(s != r1)
+}
