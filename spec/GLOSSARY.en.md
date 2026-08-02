@@ -217,14 +217,14 @@ pending the owner's call in Open questions.
 
 ## 11. Conversions and overloading · Конверсии и перегрузка
 
-| Русский | English | Example (en) | Note |
+| Русский (норма #language) | English | Example (en) | Note |
 |---|---|---|---|
-| приведение as | `as` cast | "`as` — infallible numeric/newtype/sum cast, compile-time, no runtime code" (paraphrase of spec/conversions.md "Три механизма") | spec/conversions.md |
-| расширение / сужение (widening / narrowing) | widening / narrowing | "Widening (no precision loss)" / "Narrowing (potential precision loss)" | spec/conversions.md "Numeric ↔ numeric" |
-| проверяемое сужение | checked narrowing | "Checked narrowing — `try_to_*` (D430, 2026-07-20)" | spec/conversions.md heading |
-| неявная конверсия #coerce | `#coerce` (zero-cost implicit conversion) | "`#coerce` on a **unary** function declares an **implicit** conversion `I → O`, inserted by the compiler in a position with a known expected type" (paraphrase of spec/conversions.md) | spec/conversions.md "Zero-cost неявные конверсии" (D429) |
-| конвенция имени (from/try_from) | naming convention (`from`/`try_from`) | "these are three independent naming conventions, each an ordinary Nova function with no protocol behind it" (paraphrase of spec/conversions.md) | spec/conversions.md "Именование from/try_from — конвенция, не протокол"; `From`/`Into`/`TryFrom`/`TryInto` protocols retracted 2026-07-06 |
-| потребляющая передача владения | consuming ownership transfer (`consume @into_*`) | "`consume @into_ЦЕЛЬ()` — a consuming transfer of ownership (a concrete name on the source)" (paraphrase of spec/conversions.md "Три механизма" table) | spec/conversions.md |
+| приведение (`as`) `[keep-en: код]` | `as` cast | "`as` — infallible numeric/newtype/sum cast, compile-time, no runtime code" (paraphrase of spec/conversions.md "Три механизма") | spec/conversions.md; «приведение» — стандартный русский термин («приведение типа»), `as` — ключевое слово |
+| расширение / сужение | widening / narrowing | "Widening (no precision loss)" / "Narrowing (potential precision loss)" | spec/conversions.md "Numeric ↔ numeric"; полностью по-русски |
+| проверяемое сужение | checked narrowing | "Checked narrowing — `try_to_*` (D430, 2026-07-20)" | spec/conversions.md heading; полностью по-русски |
+| неявная конверсия (`#coerce`) `[keep-en: код]` | `#coerce` (zero-cost implicit conversion) | "`#coerce` on a **unary** function declares an **implicit** conversion `I → O`, inserted by the compiler in a position with a known expected type" (paraphrase of spec/conversions.md) | spec/conversions.md "Zero-cost неявные конверсии" (D429); «конверсия» — натурализованный термин, `#coerce` — буквальный атрибут |
+| конвенция имени (`from`/`try_from`) `[keep-en: код]` | naming convention (`from`/`try_from`) | "these are three independent naming conventions, each an ordinary Nova function with no protocol behind it" (paraphrase of spec/conversions.md) | spec/conversions.md "Именование from/try_from — конвенция, не протокол"; `From`/`Into`/`TryFrom`/`TryInto` protocols retracted 2026-07-06; `from`/`try_from` — буквальные имена методов |
+| потребляющая передача владения (`consume @into_*`) `[keep-en: код]` | consuming ownership transfer (`consume @into_*`) | "`consume @into_ЦЕЛЬ()` — a consuming transfer of ownership (a concrete name on the source)" (paraphrase of spec/conversions.md "Три механизма" table) | spec/conversions.md; уже норма-форма («потребляющая» от глагола «потреблять»), `consume @into_*` — буквальный код-паттерн |
 
 ---
 
