@@ -34,8 +34,13 @@ mediant; pow.
 
 ## 2. Дизайн (V1)
 
-- **Представление:** `type BigRat value { num BigInt, den BigInt }` — value-record над
-  heap-BigInt, тот же приём, что BigDecimal (`{ mant BigInt, scale int }`); прецедент
+- **Представление:** ЦЕЛЕВОЕ (решение владельца о ВСЕЙ семье, D215) — named tuple
+  `type BigRat(num BigInt, den BigInt)`, как Complex. ВРЕМЕННО V1 реализуется
+  value-record'ом `type BigRat value { num BigInt, den BigInt }` — кортежная форма
+  заблокирована компиляторными №271 (mangle статик+instance) и №272 (interp-каст
+  кортежа мимо @to_str); миграция record→tuple — ОБЯЗАТЕЛЬНАЯ фаза добора семьи
+  ([243](243-bigint-family-complete.md) Ф.T) сразу после снятия блокеров, вместе
+  с BigInt/BigDecimal/BigFloat. Приём «value-record над heap-BigInt» — как BigDecimal (`{ mant BigInt, scale int }`); прецедент
   «value-record с BigInt-полем» доказан 236-м, с ДВУМЯ BigInt-полями — пин Ф.0.
 - **Нормальная форма (инвариант КАЖДОЙ операции):** `den > 0` (знак живёт в num);
   `gcd(|num|, den) == 1`; канонический ноль = `0/1`. Следствие: `@equal` = покомпонентное
