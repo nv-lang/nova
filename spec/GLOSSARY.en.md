@@ -178,3 +178,15 @@ what the token does, not a translation of the token.
 | workspace (воркспейс) | workspace | "Workspaces (`[workspace] members = [...]`) group several packages in a monorepo" | language-tour.md §11 |
 
 ---
+
+## 9. Runtime, FFI and unsafe · Рантайм, FFI и unsafe
+
+| Русский | English | Example (en) | Note |
+|---|---|---|---|
+| непрозрачный указатель | opaque pointer | "Nova's opaque-pointer type is `*()` (pointer to unit — `void*` in C)" | language-tour.md §12 |
+| типизированный хэндл | typed handle | "Wrap a raw `*()` in a record for a **typed handle** so distinct native resources … aren't interchangeable at compile time" | language-tour.md §12 |
+| внешняя функция | `external fn` | "`external fn name(args) -> ret` (D82) declares a binding to a C symbol" | language-tour.md §12 |
+| unsafe-блок | `unsafe` block | heading of docs/guide/typed-pointers.md: "Typed pointers (`*T` family) + `unsafe` model" | scoped escape hatch for raw-pointer operations |
+| модель мутабельности указателя | pointer-mutability model | "Pointer-mutability model: 'arrow → box'" | docs/guide/typed-pointers.md heading (Plan 138.5) |
+
+---
