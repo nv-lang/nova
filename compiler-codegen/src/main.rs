@@ -548,6 +548,8 @@ fn cmd_compile(path: &PathBuf, output: Option<&std::path::Path>, annotate_source
     emitter.set_proven_index_sites_contract(&module_env.proven_index_sites_contract);
     // Plan 172.1 U.4.1: feed per-Expr resolved-type annotations to the emitter.
     emitter.set_resolved_types(&module_env.resolved_types);
+    // №279: feed the per-pattern resolved-sum-name channel to the emitter.
+    emitter.set_pattern_variant_types(&module_env.pattern_variant_types);
     // Plan 172.1 U.4.3: feed the resolved-callee channel (ExprId → chosen callee
     // FnDecl.span) the checker populated (U.3.4-prep) so codegen can read its OWN view
     // of the chosen callee instead of re-resolving the overload (§0).

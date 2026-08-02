@@ -1,0 +1,71 @@
+// №279 [M-nested-err-pattern-shared-variant-wrong-enum-tag]: a NESTED
+// `Err(Variant)` match-arm pattern — the variant sub-pattern sits INSIDE
+// `Result`'s `Err` payload, not at the top level — used to resolve a bare
+// (single-segment) variant name by NAME ONLY, via
+// `sum_schema_registry.find_variant_compat`'s first-registered-wins
+// heuristic, ignoring the SCRUTINEE's own `E` type. Two DIFFERENT enums
+// sharing a variant name (`M279ErrA`/`M279ErrB` both declare `OnlySign`,
+// `M279ErrA` registered FIRST) then both matched a bare `OnlySign`
+// sub-pattern regardless of which enum the enclosing `Err(..)` scrutinee's
+// `E` actually was — silent wrong-branch dispatch (no compile error).
+// Fixed checker-side: `resolve_pattern_variant_types` (types/mod.rs)
+// resolves each nested bare-variant sub-pattern against the STRUCTURAL
+// scrutinee type (descending through Option[T]/Result[T,E]/general-sum
+// tuple-variant payload positions) and annotates a per-pattern-span
+// resolved-sum-name channel; `pattern_cond` (emit_c.rs) consults it BEFORE
+// falling back to `find_variant_compat`. Part of the SINGLE
+// `spec_tests.conformance` folder-module.
+module spec_tests.conformance
+
+export type M279ErrA enum
+    | OnlySign
+    | M279OtherA
+
+export type M279ErrB enum
+    | M279OtherB
+    | OnlySign
+
+fn m279_make_err_a(bad bool) -> M279ErrA {
+    if bad { OnlySign } else { M279OtherA }
+}
+
+fn m279_make_err_b(bad bool) -> M279ErrB {
+    if bad { OnlySign } else { M279OtherB }
+}
+
+fn m279_parse_a(bad bool) -> Result[int, M279ErrA] {
+    if bad { Err(m279_make_err_a(bad)) } else { Ok(1) }
+}
+
+fn m279_parse_b(bad bool) -> Result[int, M279ErrB] {
+    if bad { Err(m279_make_err_b(bad)) } else { Ok(2) }
+}
+
+test "№279: nested Err(OnlySign) on Result[_, M279ErrB] matches M279ErrB, not the first-registered M279ErrA" {
+    match m279_parse_b(true) {
+        Err(OnlySign) => assert(true)
+        _ => assert(false)
+    }
+}
+
+test "№279: nested Err(OnlySign) on Result[_, M279ErrA] still matches its own enum" {
+    match m279_parse_a(true) {
+        Err(OnlySign) => assert(true)
+        _ => assert(false)
+    }
+}
+
+test "№279: sibling nested arm (Err(M279OtherB)) does not false-match the shared-name arm" {
+    match m279_parse_b(true) {
+        Err(M279OtherB) => assert(false)
+        Err(OnlySign) => assert(true)
+        _ => assert(false)
+    }
+}
+
+test "№279: Ok path unaffected by the pattern-variant channel" {
+    match m279_parse_b(false) {
+        Ok(v) => assert(v == 2)
+        Err(_) => assert(false)
+    }
+}

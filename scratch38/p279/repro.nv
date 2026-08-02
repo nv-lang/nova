@@ -1,0 +1,73 @@
+// [221.1 #279] [M-nested-err-pattern-shared-variant-wrong-enum-tag]
+// Minimal repro (local enums only, no bigint dependency): TWO different
+// enums (`ErrA` declared first, `ErrB` second — registration order
+// matters for the first-wins bug) each declare a variant with the SAME
+// name (`OnlySign`). A NESTED `Err(OnlySign)` match-arm pattern (the
+// variant sub-pattern sits INSIDE `Result`'s `Err` payload, not at the
+// top level) must resolve `OnlySign` against the SCRUTINEE's own E type
+// (`ErrB` for `parse_b`, `ErrA` for `parse_a`), not against whichever
+// same-named-variant enum happened to register first.
+//
+// Error VALUES are constructed via plain single-bare-variant return
+// (`fn ... -> ErrX { Variant }`) — a DIFFERENT, already-solid
+// materialization channel (ordinary fn tail-expr vs declared return
+// type) — then threaded into `Err(..)` via an ALREADY-TYPED argument
+// (`Err(make_err_a())`), never a bare variant directly inside `Err(..)`.
+// This deliberately avoids a SEPARATE, unrelated gap (bare variant
+// literal directly as `Err(..)`'s own generic argument, an if/else tail
+// position — NOT covered by the narrow #253 `ok_or(..)?` fix) so this
+// repro isolates ONLY the #279 pattern-position bug.
+module scratch38.p279
+
+export type ErrA enum
+    | OnlySign
+    | OtherA
+
+export type ErrB enum
+    | OtherB
+    | OnlySign
+
+fn make_err_a(bad bool) -> ErrA {
+    if bad { OnlySign } else { OtherA }
+}
+
+fn make_err_b(bad bool) -> ErrB {
+    if bad { OnlySign } else { OtherB }
+}
+
+fn parse_a(bad bool) -> Result[int, ErrA] {
+    if bad { Err(make_err_a(bad)) } else { Ok(1) }
+}
+
+fn parse_b(bad bool) -> Result[int, ErrB] {
+    if bad { Err(make_err_b(bad)) } else { Ok(2) }
+}
+
+test "nested Err(OnlySign) on Result[_, ErrB] matches ErrB, not ErrA" {
+    match parse_b(true) {
+        Err(OnlySign) => assert(true)
+        _ => assert(false)
+    }
+}
+
+test "nested Err(OnlySign) on Result[_, ErrA] still matches ErrA" {
+    match parse_a(true) {
+        Err(OnlySign) => assert(true)
+        _ => assert(false)
+    }
+}
+
+test "nested Err(OtherB) arm does not false-match the OnlySign arm" {
+    match parse_b(true) {
+        Err(OtherB) => assert(false)
+        Err(OnlySign) => assert(true)
+        _ => assert(false)
+    }
+}
+
+test "Ok path unaffected" {
+    match parse_b(false) {
+        Ok(v) => assert(v == 2)
+        Err(_) => assert(false)
+    }
+}
