@@ -1511,6 +1511,24 @@ Server-followups (за CORE, честные маркеры):
     generic Path-call return-type dispatch; сам файл не использует Channel вообще). Pre-existing,
     независимый баг — не заведён отдельным маркером в рамках этой волны (не моя зона), но стоит
     завести при следующем заходе в эту область.
+- **[M-channel-real-elem-type-inference]** (P2, см. выше) — ЭСКАЛАЦИЯ найдена окном s1b (реестр
+  221.1 №286, 2026-08-02): пункт (1) этого маркера («реальная T-inference НЕ реализована») больше
+  не просто типовая дыра — прогон `pos_channel_send_consume_share.nv` (Plan 221.1 №144's собственная
+  pos-фикстура: `Channel[Vec[int]]`, `.share()`, `while Some(got) = rx.recv() { total += got.len() }`)
+  в 98-файловом sample-CU (весь `spec_tests/conformance`, кроме embed-фикстур без companion-ассетов)
+  дал `RUN-FAIL: assert total == 2`. Причина: `got` типизирован erased `nova_int` (recv не отслеживает
+  `T` — п.(1) выше), и `got.len()` резолвится НЕ по типу, а через legacy emit_c name-only fallback
+  (`method_receivers`, `emit_c.rs` ~43455 «route by method NAME») — при нескольких кандидатах с
+  методом `len` (`Vec`, `EmbeddedDir`, …) выбор зависит от порядка регистрации типов В КОНКРЕТНОМ
+  compile-unit; в sample-CU молча выбран `Nova_EmbeddedDir_method_len` вместо
+  `Nova_Vec____nova_int_method_len`. **Подтверждено на `nova.exe`, собранном main-репой (829bd25dbd)
+  БЕЗ каких-либо правок окна s1b** — НЕ регрессия №281 (той же волны, другой файл `emit_c.rs`-функции,
+  не пересекается с While-фиксом); canon мега-CU (626/0/68), по всей видимости, эту комбинацию типов
+  не ловит (F-set-зависимо — не значит «безопасно», значит «повезло с порядком»). Заведено как №286
+  (см. `221.1-bug-sweep.md`) — требует либо полноценной генерик-монофикации `Channel[T]` до `recv`
+  (сам этот P2-объём), либо минимум сделать name-only fallback громким при неоднозначности вместо
+  угадывания (отдельный, тоже нетривиальный риск-объём — блэкбокс для всего проекта, не только
+  каналов). НЕ почато окном s1b — вне риск-бюджета одного окна.
 
 **NEW codegen-баги (обнаружены при Ф.2-enh + Ф.3, кандидаты на fix, вне .nv):**
 - ~~**[M-codegen-nominal-type-name-collision]**~~ ✅ **CLOSED 2026-07-06 (D381).** Collision-aware module-qualified mangling приземлён (см. `[M-sync-crossmodule-samename-type-collision]` выше). Одноимённые cross-module типы (`ErrorKind` × io/http/compress) сосуществуют в одном CU: `Nova_<modpath>_<Name>` для коллидирующих, byte-identical для прочих. Разблокирует auto-decompress co-presence (http+compress `ErrorKind` в одном CU компилятся/линкуются — conformance PASS 1/0) + `ErrSource.Compress`.

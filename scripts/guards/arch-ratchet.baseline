@@ -470,5 +470,25 @@
 # операторный диспатч (чекер-канал); нового механизма в emit_c нет.
 # lines 64389 -> 64395 (+6, комментарий+рука); infer затянут 349 -> 348
 # (факт после S1a). Фикстура m284_value_record_compound_assign_pos.nv.
-lines=64395
+# Рост 64395->64396 (+1) осознан (реестр 221.1 №281
+# [M-while-condition-chain-not-recomputed], окно s1b, sonnet, 2026-08-02) — ПУТЬ B,
+# самостоятельная правка (интегратор ещё не смотрел этот коммит).
+# ПОЧЕМУ ЭТО МИНИМАЛЬНО-НЕИЗБЕЖНЫЙ EMIT-СЛОЙ: `ExprKind::While` — чистая
+# C-эмиссия control-flow (нет чекер-семантики для перенести); фикс mirror'ит
+# уже принятую форму `ExprKind::WhileLet` (тот же файл, тот же паттерн
+# `while (1) { <cond ВНУТРИ>; if (!(cond)) break; }`). Единственная РЕАЛЬНО
+# новая строка — `if (!(cond_val)) break;`: C `while (cond_val) {}` не может
+# переоценивать побочные statement'ы, которые `emit_expr(cond)` эмитит ДЛЯ
+# цепочки вызовов (addressable temp под by-ref value-record промежуточный
+# результат) — раньше эти statement'ы эмитились ОДИН раз до цикла, замерзая
+# навсегда (тихий бесконечный цикл на корректном коде, измерено:
+# nova-bigint REPORT-p240.md, BigRat `1/3`). Ужато с исходных +10 (полный
+# doc-comment) до +1 однострочным комментарием + необходимым if-break.
+# Верификация: изолированный value-record `.times().compare()`-repro
+# (mirror BigRat) RED (TIMEOUT) -> GREEN; `spec_tests/conformance/
+# m281_while_chain_condition_recompute_pos.nv` PASS 1/0; 98-файловый sample
+# всех `while`-conformance-фикстур (весь spec_tests/conformance минус
+# embed-фикстуры без companion-ассетов) одним CU — PASS, без регрессий.
+# infer не тронут (control-flow эмиссия, не новая точка type-inference).
+lines=64396
 infer=348

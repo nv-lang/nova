@@ -1,0 +1,40 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 221.1 №281 [M-while-condition-chain-not-recomputed] (окно s1b,
+// 2026-08-02): `while` condition built from a method-chain (value-record
+// intermediate needing an addressable temp) used to be materialized ONCE
+// before the C `while (...)` and never recomputed on later iterations —
+// silent infinite loop on correct code. Repro mirrors the measured
+// production case (nova-bigint REPORT-p240.md: `while
+// num.times(p10).compare(den) < 0`, BigRat `1/3` growth loop) with a local
+// `value` record standing in for `BigInt`, so this fixture is
+// self-contained (no external package dependency).
+//
+// Root cause: `emit_c.rs`'s `ExprKind::While` called `self.emit_expr(cond)`
+// (which can emit side-effecting temp-assignment statements for a chained
+// call's by-ref value-record intermediate) exactly once BEFORE emitting
+// `while (cond_val) { body }` — the C loop only re-checked the frozen
+// final boolean, never re-ran the hoisted statements. Fixed by mirroring
+// the already-correct `ExprKind::WhileLet` idiom: `while (1) { <cond
+// stmts + value HERE>; if (!(cond)) break; body }`.
+module spec_tests.conformance
+
+type M281Counter value {
+    n int
+}
+
+fn M281Counter @times(other M281Counter) -> M281Counter => { n: @n * other.n }
+fn M281Counter @compare(other M281Counter) -> int => @n - other.n
+
+fn m281_count_up(num M281Counter, den M281Counter) -> int {
+    mut p10 = M281Counter { n: 1 }
+    mut j = 0
+    while num.times(p10).compare(den) < 0 {
+        p10 = M281Counter { n: p10.n * 10 }
+        j += 1
+    }
+    -j
+}
+
+test "№281: while method-chain condition recomputes each iteration (terminates, not hangs)" {
+    assert(m281_count_up(M281Counter { n: 1 }, M281Counter { n: 3 }) == -1)
+}
