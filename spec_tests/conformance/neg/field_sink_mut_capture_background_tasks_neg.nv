@@ -1,0 +1,54 @@
+// EXPECT_COMPILE_ERROR [E_CONCURRENT_MUT_CAPTURE]
+//
+// Plan S1a (D441 §5 "class «замыкание как ПОЛЕ структуры»" — реестр 221.1
+// №117/№242§3): the exact `BackgroundTasks` shape the spec names verbatim
+// (§0/№150 record; D441 §5's own honest-gap bullet). Owner's original
+// question (2026-07-25, wave that opened №117): "каким образом log
+// доступен вне файбера?" for exactly `bg.add(|| log.push(...))`.
+//
+// Container-of-fn field (`Vec[fn()->()]`) driving the boundary through a
+// `for`-loop's OWN pattern variable (`for t in @tasks { spawn { t() } }` —
+// the `.drain()` shape): `spawn_tainted_fields_of_module` recognizes the
+// loop-var-called-inside-nested-spawn form and taints `(FieldSinkBgTasks,
+// tasks)`; `spawn_tainted_method_params_of_module` then finds `add`'s own
+// parameter `f` written into that field (`@tasks.push(f)`) and taints
+// `(FieldSinkBgTasks, add) -> {f}`; the call site `bg.add(|| { log.push(1)
+// })` passes a closure literal into that tainted parameter.
+//
+// NEG fixture — rejected at the CHECKER phase (E_CONCURRENT_MUT_CAPTURE),
+// before codegen ever runs. Deliberately kept in THIS exact shape (`for t
+// in @tasks { spawn { t() } }` — the real BackgroundTasks idiom) even
+// though it was empirically confirmed (S1a window, isolated `nova build`)
+// to ALSO hit an unrelated pre-existing codegen gap if it ever reached
+// codegen (`undefined symbol: nova_fn_t` at link time — same family as
+// `[M-vec-iter-fn-newtype-next-option-mismatch]`, VecIter mono for
+// T=fn/closure): irrelevant here, compile-error tests never reach codegen.
+// The POS twin (`field_sink_mut_capture_pos.nv`) uses the codegen-SAFE
+// `let`-binding form instead, precisely because it must actually build.
+
+module neg.field_sink_mut_capture_background_tasks_neg
+
+type FieldSinkBgTasks { mut tasks Vec[fn() -> ()] }
+
+fn FieldSinkBgTasks.new() -> FieldSinkBgTasks => { tasks: [] }
+
+fn FieldSinkBgTasks mut @add(f fn() -> ()) -> () {
+    @tasks.push(f)
+}
+
+fn FieldSinkBgTasks @drain() -> () {
+    supervised {
+        for t in @tasks {
+            spawn {
+                t()
+            }
+        }
+    }
+}
+
+fn main() {
+    mut log = Vec[int].new()
+    mut bg = FieldSinkBgTasks.new()
+    bg.add(|| { log.push(1) })
+    bg.drain()
+}

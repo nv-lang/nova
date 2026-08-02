@@ -26234,6 +26234,30 @@ struct CapabilityCtx<'a> {
     /// starts the chain to `leaf` — at least one intermediate frame for the
     /// diagnostic (D441 §5 №167 wording).
     thread_affine_transitive: HashMap<String, (String, String)>,
+    /// Plan S1a (D441 §5 "closure-as-field" class — №117/№242§3): pre-pass,
+    /// computed once in `build` — `(TypeName, field)` pairs whose value is
+    /// INVOKED somewhere inside a `spawn`/`detach`/`parallel for`/`blocking`
+    /// body within one of `TypeName`'s OWN methods (any nesting depth,
+    /// through a `for`/`parallel for` loop driving the boundary from a
+    /// direct field-read `@field`). Consulted at each WRITE site into such a
+    /// field (`.push`/`.append`/… mutator call, plain assignment, record
+    /// literal) so a closure value stored there gets the same share-safety
+    /// check as a direct capture — closes the honest gap D441 §5 names
+    /// verbatim ("Класс «замыкание как ПОЛЕ структуры»… НЕ проверяется").
+    /// See `spawn_tainted_fields_of_module` for the (documented,
+    /// conservative-UNDER-approximation) AST coverage.
+    spawn_tainted_fields: HashSet<(String, String)>,
+    /// Plan S1a (D441 §5 "closure-as-field" — №117 wrapper-method shape,
+    /// the owner's original report `bg.add(|| { log.push(..) })`): one hop
+    /// further than `spawn_tainted_fields` — per `(TypeName, method_name)`,
+    /// which of THAT method's OWN parameter names its body WRITES into an
+    /// already-tainted field (`fn BackgroundTasks mut @add(f fn()->()) {
+    /// @tasks.push(f) }` — `f` is tainted for `(BackgroundTasks, "add")`).
+    /// Consulted at method CALL sites (`obj.method(arg)`) the same way
+    /// `spawn_tainted_params` is consulted for free-fn calls — one
+    /// documented hop, not a fixed-point closure (matches the existing
+    /// honest depth limit D441 §5 already accepts for §3(а)/(в)).
+    spawn_tainted_method_params: HashMap<(String, String), HashSet<String>>,
 }
 
 /// Plan 173.3 (D415 §2): adapter — `CapabilityCtx.type_decls` as a
@@ -26356,6 +26380,13 @@ struct CapState {
     /// named-fn transitive class. Left `false` (default) for `Item::Test`/
     /// `Item::Let`/`Item::Const` roots — never export, never hard-gated.
     is_export: bool,
+    /// Plan S1a (D441 §5 "closure-as-field" — №117/№242§3): the receiver
+    /// TYPE NAME of the enclosing method (`fd.receiver.type_name`), `None`
+    /// for a free fn/test/module-level initializer. Lets a WRITE into
+    /// `@field` resolve which type's `spawn_tainted_fields` entry to check
+    /// without re-deriving it from `state.scopes` (self has no scope
+    /// binding — `SelfAccess` is a distinct AST node, not an `Ident`).
+    current_receiver_type: Option<String>,
 }
 
 impl CapState {
@@ -26409,9 +26440,18 @@ impl<'a> CapabilityCtx<'a> {
         // pre-pass, same "computed once over module.items before any
         // call-site is checked" timing as `spawn_tainted_params` above.
         let (thread_affine_leaves, thread_affine_transitive) = thread_affine_closure(module);
+        // Plan S1a (D441 §5 "closure-as-field" — №117/№242§3): same
+        // once-before-any-call-site timing as the two pre-passes above.
+        let spawn_tainted_fields = spawn_tainted_fields_of_module(module);
+        // Plan S1a (D441 §5 "closure-as-field" — №117 wrapper-method shape):
+        // one hop further, DEPENDS on `spawn_tainted_fields` above (computed
+        // first, sequentially — not a fixed point, one documented hop).
+        let spawn_tainted_method_params =
+            spawn_tainted_method_params_of_module(module, &spawn_tainted_fields);
         CapabilityCtx {
             sig, effect_decls, type_decls, spawn_tainted_params,
-            thread_affine_leaves, thread_affine_transitive,
+            thread_affine_leaves, thread_affine_transitive, spawn_tainted_fields,
+            spawn_tainted_method_params,
         }
     }
 
@@ -26526,6 +26566,11 @@ impl<'a> CapabilityCtx<'a> {
                 }
             }
         }
+        // Plan S1a (D441 §5 "closure-as-field"): record this method's own
+        // receiver type name (`None` for a free fn) — write-site checks
+        // resolve `@field`'s owner from this, `state.scopes` has no entry
+        // for `self` (`SelfAccess` is its own AST node, not an `Ident`).
+        state.current_receiver_type = f.receiver.as_ref().map(|r| r.type_name.clone());
         // Plan 173.3 (D415 §2): fn-params scope frame — outermost frame a
         // spawn/parallel-for capture-check can see a captured name bound in.
         let mut frame: HashMap<String, ScopeBinding> = HashMap::new();
@@ -26606,6 +26651,17 @@ impl<'a> CapabilityCtx<'a> {
             Stmt::Assign { target, value, .. } => {
                 self.walk_expr(target, state, errors);
                 self.walk_expr(value, state, errors);
+                // Plan S1a (D441 §5 "closure-as-field", №117/№242§3): plain
+                // assignment into a spawn-tainted field (`@field = v` /
+                // `obj.field = v`) — same crossing-point machine as the
+                // mutator-call and record-lit write sites below.
+                if let ExprKind::Member { obj, name: field } = &target.kind {
+                    if let Some(owner) = self.resolve_field_owner_type(obj, state) {
+                        if self.spawn_tainted_fields.contains(&(owner.clone(), field.clone())) {
+                            self.check_field_sink_write(value, &owner, field, state, errors);
+                        }
+                    }
+                }
             }
             Stmt::Return { value, .. } => {
                 if let Some(v) = value { self.walk_expr(v, state, errors); }
@@ -26797,6 +26853,39 @@ impl<'a> CapabilityCtx<'a> {
                         }
                     }
                 }
+                // Plan S1a (D441 §5 "closure-as-field" — №117 wrapper-method
+                // shape, owner's original report `bg.add(|| { log.push(..)
+                // })`): method-call twin of the free-fn check above — a
+                // METHOD call `obj.method(arg)` parses as `Call{func:
+                // Member{obj, name: method}, ..}`, invisible to the
+                // `Ident(callee_name)` arm above (which only matches
+                // free-fn-call syntax). `method`'s OWN parameter may be
+                // WRITTEN (not called) into an already-tainted field inside
+                // `method`'s body — `spawn_tainted_method_params` records
+                // that one hop.
+                if let ExprKind::Member { obj, name: method } = &func.kind {
+                    if let Some(owner) = self.resolve_field_owner_type(obj, state) {
+                        if let Some(tainted) =
+                            self.spawn_tainted_method_params.get(&(owner.clone(), method.clone()))
+                        {
+                            if let Some(overloads) = self.sig.method_overloads(&owner, method) {
+                                // D84 overloads: V1 does not disambiguate — match
+                                // by arity, same conservative stance as the
+                                // free-fn arm above.
+                                if let Some(fd) = overloads.iter().find(|f| f.params.len() == args.len()) {
+                                    for (i, p) in fd.params.iter().enumerate() {
+                                        if !tainted.contains(&p.name) { continue; }
+                                        if let Some(arg) = args.get(i) {
+                                            self.check_field_write_via_method_param(
+                                                arg.expr(), &owner, method, &p.name, state, errors,
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 // Plan 238 Ф.1(б) (D441 §1-2): channel-send of a closure —
                 // `chan.send(value)` name-heuristic (same approximation
                 // `state.const_init` already uses above for `send`/`recv`:
@@ -26832,6 +26921,30 @@ impl<'a> CapabilityCtx<'a> {
                                     "E_CONCURRENT_MUT_CAPTURE",
                                     errors,
                                 );
+                            }
+                        }
+                    }
+                }
+                // Plan S1a (D441 §5 "closure-as-field", №117/№242§3): write
+                // into a spawn-tainted field's CONTAINER via a known
+                // mutator method name — `@tasks.push(f)` /
+                // `@routes.insert(path, handler)` etc. Same name-heuristic
+                // approximation the `chan.send` check above already uses
+                // (no static container-type proof — matches project
+                // convention, D441 §3(б) doc comment).
+                if let ExprKind::Member { obj: recv_expr, name: method } = &func.kind {
+                    const FIELD_SINK_MUTATORS: &[&str] =
+                        &["push", "append", "add", "insert", "push_back", "push_front", "set"];
+                    if FIELD_SINK_MUTATORS.contains(&method.as_str()) {
+                        if let ExprKind::Member { obj, name: field } = &recv_expr.kind {
+                            if let Some(owner) = self.resolve_field_owner_type(obj, state) {
+                                if self.spawn_tainted_fields.contains(&(owner.clone(), field.clone())) {
+                                    if let Some(value_arg) = args.last() {
+                                        self.check_field_sink_write(
+                                            value_arg.expr(), &owner, field, state, errors,
+                                        );
+                                    }
+                                }
                             }
                         }
                     }
@@ -26946,9 +27059,23 @@ impl<'a> CapabilityCtx<'a> {
             ExprKind::TupleLit(elems) => {
                 for e in elems { self.walk_expr(e, state, errors); }
             }
-            ExprKind::RecordLit { fields, .. } => {
+            ExprKind::RecordLit { fields, type_name, .. } => {
+                // Plan S1a (D441 §5 "closure-as-field", №117/№242§3): a
+                // constructor literal writing directly into a spawn-tainted
+                // field (`BackgroundTasks { tasks: [f], .. }`) is the same
+                // write-site class as the mutator-call/assignment checks
+                // above — `type_name` is resolved statically here (record
+                // literal, no scope lookup needed).
+                let owner = type_name.as_ref().and_then(|p| p.last());
                 for f in fields {
-                    if let Some(v) = &f.value { self.walk_expr(v, state, errors); }
+                    if let Some(v) = &f.value {
+                        if let Some(owner) = owner {
+                            if self.spawn_tainted_fields.contains(&(owner.clone(), f.name.clone())) {
+                                self.check_field_sink_write(v, owner, &f.name, state, errors);
+                            }
+                        }
+                        self.walk_expr(v, state, errors);
+                    }
                 }
             }
             ExprKind::TaggedTemplate { tag, args, .. } => {
@@ -27823,6 +27950,121 @@ impl<'a> CapabilityCtx<'a> {
     /// captures still resolve, since Nova has no closure re-entry that
     /// would rebind them differently).
     ///
+    /// Plan S1a (D441 §5 "closure-as-field", №117/№242§3): resolve the
+    /// static TYPE NAME a field-access receiver `obj` belongs to — `@field`
+    /// (`SelfAccess`) resolves to the enclosing method's OWN receiver type
+    /// (`state.current_receiver_type`); a bare `Ident` resolves through its
+    /// `ScopeBinding.ty` IF annotated/syntactically inferred (mirrors the
+    /// same `TypeCheckCtx::typeref_named_base` unwrap `flag_boundary_
+    /// captures` already uses for the mut-capture type lookup). Anything
+    /// else (a call result, an unannotated bare-Ident receiver, `obj.field.
+    /// field2` chains) is a documented conservative no-op — under-
+    /// approximation, same honesty stance as `check_transitive_closure_
+    /// arg`'s own opaque-expression case below.
+    fn resolve_field_owner_type(&self, obj: &Expr, state: &CapState) -> Option<String> {
+        match &obj.kind {
+            ExprKind::SelfAccess => state.current_receiver_type.clone(),
+            ExprKind::Ident(name) => state.scopes.iter().rev()
+                .find_map(|f| f.get(name))
+                .and_then(|b| b.ty.as_ref())
+                .and_then(TypeCheckCtx::typeref_named_base)
+                .map(|s| s.to_string()),
+            _ => None,
+        }
+    }
+
+    /// Plan S1a (D441 §5 "closure-as-field", №117/№242§3): the write-site
+    /// half of the field-sink taint check — `value` is being stored into a
+    /// field already proven `spawn_tainted_fields`-tainted (its value gets
+    /// INVOKED inside a `spawn`/`detach`/`parallel for`/`blocking` body
+    /// SOMEWHERE in `owner`'s own methods). Resolve `value` to a closure
+    /// EXACTLY the way `check_transitive_closure_arg`/the `chan.send` check
+    /// already do (literal, or a `let`/`ro`-time `closure_free_vars`
+    /// snapshot) and run it through the SAME `flag_boundary_captures` core
+    /// as every other crossing point — one machine, one diagnostic family.
+    fn check_field_sink_write(
+        &self,
+        value: &Expr,
+        owner: &str,
+        field: &str,
+        state: &CapState,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        let mut shadow = HashSet::new();
+        let mut free = HashSet::new();
+        let free_opt = match &value.kind {
+            ExprKind::Lambda { .. } | ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_) => {
+                capture_scan_expr(value, &mut shadow, &mut free);
+                Some(free)
+            }
+            ExprKind::Ident(vname) => state.scopes.iter().rev()
+                .find_map(|f| f.get(vname))
+                .and_then(|b| b.closure_free_vars.as_ref())
+                .map(|v| v.iter().cloned().collect()),
+            _ => None,
+        };
+        if let Some(free) = free_opt {
+            let crossing = format!(
+                "created outside any fiber boundary, then written into `{owner}.{field}` \
+                 — this field's value is INVOKED inside a `spawn`/`detach`/`parallel for`/\
+                 `blocking` body elsewhere in `{owner}`'s own methods (D441 §5 \"замыкание \
+                 как ПОЛЕ структуры\" class, Plan S1a №117/№242§3: the value carries its \
+                 captured environment across the fiber boundary just like a direct capture \
+                 would, only through storage — a field/container write — instead of a \
+                 direct call)",
+                owner = owner, field = field,
+            );
+            self.flag_boundary_captures(
+                free, value.span, state, &crossing, "E_CONCURRENT_MUT_CAPTURE", errors,
+            );
+        }
+    }
+
+    /// Plan S1a (D441 §5 "closure-as-field" — №117 wrapper-method shape):
+    /// call-site half of `spawn_tainted_method_params` — `arg` is passed
+    /// into a method whose OWN body writes its parameter `param` into a
+    /// tainted field (`fn BackgroundTasks mut @add(f fn()->()) { @tasks.
+    /// push(f) }`). Resolution is IDENTICAL to `check_transitive_closure_
+    /// arg`'s (literal, or `let`/`ro`-time snapshot) — only the crossing
+    /// description differs (names the two-hop wrapper shape explicitly).
+    fn check_field_write_via_method_param(
+        &self,
+        arg: &Expr,
+        owner: &str,
+        method: &str,
+        param: &str,
+        state: &CapState,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        let free_vars: Option<HashSet<String>> = match &arg.kind {
+            ExprKind::Lambda { .. } | ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_) => {
+                let mut shadow = HashSet::new();
+                let mut free = HashSet::new();
+                capture_scan_expr(arg, &mut shadow, &mut free);
+                Some(free)
+            }
+            ExprKind::Ident(name) => state.scopes.iter().rev()
+                .find_map(|f| f.get(name))
+                .and_then(|b| b.closure_free_vars.as_ref())
+                .map(|v| v.iter().cloned().collect()),
+            _ => None,
+        };
+        if let Some(free) = free_vars {
+            let crossing = format!(
+                "created outside any fiber boundary, then passed BY VALUE into \
+                 `{owner}.{method}`'s parameter `{param}` — `{method}` WRITES `{param}` \
+                 into a field of `{owner}` whose value is invoked inside a `spawn`/`detach`/\
+                 `parallel for`/`blocking` body elsewhere in `{owner}`'s own methods (D441 §5 \
+                 \"замыкание как ПОЛЕ структуры\" class, Plan S1a №117/№242§3 — the \
+                 `BackgroundTasks.add(f) {{ @tasks.push(f) }}` shape: the value carries its \
+                 captured environment across the fiber boundary two hops away — through a \
+                 wrapper method's parameter, then through field storage)",
+                owner = owner, method = method, param = param,
+            );
+            self.flag_boundary_captures(free, arg.span, state, &crossing, "E_CONCURRENT_MUT_CAPTURE", errors);
+        }
+    }
+
     /// Anything else (an opaque expression we cannot trace to a literal or
     /// a recorded snapshot — e.g. a further fn-parameter passed through
     /// unchanged, a field read, a call returning a closure) is a
@@ -28897,6 +29139,492 @@ fn collect_fiber_boundary_frees_expr(e: &Expr, out: &mut Vec<HashSet<String>>) {
                     },
                 }
             }
+        }
+        _ => {}
+    }
+}
+
+/// Plan S1a (D441 §5 "class «замыкание как ПОЛЕ структуры»" — №117/№242§3):
+/// pre-pass, computed once in `CapabilityCtx::build` (same timing as
+/// `spawn_tainted_params`/`thread_affine_closure`) — which `(TypeName,
+/// field)` pairs have their value INVOKED somewhere inside a `spawn`/
+/// `detach`/`parallel for`/`blocking` body within one of `TypeName`'s OWN
+/// methods (`Item::Fn` with `receiver: Some(_)` — Nova has no separate
+/// `Item::Impl`, methods ARE `Item::Fn`). Two shapes recognized:
+///
+/// - **bare fn-typed field, called directly**: `spawn { @on_error() }` —
+///   `@field()`/`self.field()` called while inside the boundary;
+/// - **container-of-fn field, driving the boundary through a loop
+///   variable**: `for t in @tasks { spawn { t() } }` (the `BackgroundTasks.
+///   drain()` shape — measured live pattern, D441 §5) or the one-construct
+///   collapse `parallel for t in @tasks { t() }`. The loop must iterate a
+///   DIRECT `@field` read (no intermediate `let`); the boundary must call
+///   the loop's OWN pattern variable by its bare name.
+///
+/// Consulted at every WRITE site into such a field (assignment / `.push`-
+/// class mutator call / record literal) so a closure stored there gets the
+/// same share-safety check `flag_boundary_captures` already runs for every
+/// other crossing point (a/б/в) — see `check_field_sink_write`.
+///
+/// **Documented V1 limits (honest, not silent — companion D441 §5 entry
+/// required before landing):** no cross-method transitivity (a field tainted
+/// via a boundary in method B is NOT inherited by method A calling B); no
+/// 2+-hop container indirection (`let ts = @tasks; for t in ts {..}` is
+/// invisible — the iterable must be the direct `@field` read, mirrors the
+/// same snapshot-only depth limit §3(а)/(в) already accept); receiver of
+/// unknown static type — no-op.
+fn spawn_tainted_fields_of_module(module: &Module) -> HashSet<(String, String)> {
+    let mut out: HashSet<(String, String)> = HashSet::new();
+    for item in &module.items {
+        if let Item::Fn(fd) = item {
+            if let Some(recv) = &fd.receiver {
+                match &fd.body {
+                    FnBody::Block(b) => field_taint_block(b, &recv.type_name, false, None, &mut out),
+                    FnBody::Expr(e) => field_taint_expr(e, &recv.type_name, false, None, &mut out),
+                    FnBody::External => {}
+                }
+            }
+        }
+    }
+    out
+}
+
+/// `loop_var` — `Some((field, varname))` while walking the body of a `for`/
+/// `parallel for` loop whose iterable is a direct `@field` read: a call to
+/// `varname` found while `in_boundary` is true taints `(self_ty, field)`.
+fn field_taint_block<'a>(
+    b: &'a Block,
+    self_ty: &str,
+    in_boundary: bool,
+    mut loop_var: Option<(&'a str, &'a str)>,
+    out: &mut HashSet<(String, String)>,
+) {
+    for s in &b.stmts {
+        field_taint_stmt(s, self_ty, in_boundary, loop_var, out);
+        // Plan S1a: `ro/mut x = @field` — a plain `let` reading a field
+        // directly INTO A LOCAL, called later in a NESTED boundary within
+        // the same block, is the SAME crossing shape as the for-loop
+        // pattern-variable form above — one `let` instead of one loop
+        // iteration (and, per the codegen investigation behind this
+        // fixture set, the ONLY currently-buildable way to invoke a
+        // bare fn-typed field from inside `spawn`: calling `@field()`
+        // DIRECTLY inside `spawn` hits a pre-existing, unrelated emit_c
+        // gap — undeclared `nova_self` in the spawned closure — filed
+        // separately, not fixed here per channel-first convention).
+        // Shadows any prior `loop_var` for the REST of this block only —
+        // one level of tracking, matching this pre-pass's other
+        // conservative depth limits.
+        if let Stmt::Let(d) = s {
+            if let (Some(field), Some(name)) =
+                (self_field_read(&d.value), simple_ident_pattern(&d.pattern))
+            {
+                loop_var = Some((field, name));
+            }
+        }
+    }
+    if let Some(t) = &b.trailing {
+        field_taint_expr(t, self_ty, in_boundary, loop_var, out);
+    }
+}
+
+fn field_taint_stmt<'a>(
+    s: &'a Stmt,
+    self_ty: &str,
+    in_boundary: bool,
+    loop_var: Option<(&'a str, &'a str)>,
+    out: &mut HashSet<(String, String)>,
+) {
+    match s {
+        Stmt::Expr(e) => field_taint_expr(e, self_ty, in_boundary, loop_var, out),
+        Stmt::Let(d) => field_taint_expr(&d.value, self_ty, in_boundary, loop_var, out),
+        Stmt::Assign { target, value, .. } => {
+            field_taint_expr(target, self_ty, in_boundary, loop_var, out);
+            field_taint_expr(value, self_ty, in_boundary, loop_var, out);
+        }
+        Stmt::Return { value, .. } => {
+            if let Some(v) = value { field_taint_expr(v, self_ty, in_boundary, loop_var, out); }
+        }
+        Stmt::Throw { value, .. } => field_taint_expr(value, self_ty, in_boundary, loop_var, out),
+        Stmt::Defer { body, .. } => field_taint_expr(body, self_ty, in_boundary, loop_var, out),
+        Stmt::ConsumeScope { init, body, .. } => {
+            field_taint_expr(init, self_ty, in_boundary, loop_var, out);
+            field_taint_block(body, self_ty, in_boundary, loop_var, out);
+        }
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            for e in lhs { field_taint_expr(e, self_ty, in_boundary, loop_var, out); }
+            for e in rhs { field_taint_expr(e, self_ty, in_boundary, loop_var, out); }
+        }
+        _ => {}
+    }
+}
+
+fn field_taint_expr<'a>(
+    e: &'a Expr,
+    self_ty: &str,
+    in_boundary: bool,
+    loop_var: Option<(&'a str, &'a str)>,
+    out: &mut HashSet<(String, String)>,
+) {
+    match &e.kind {
+        ExprKind::Call { func, args, trailing } => {
+            if in_boundary {
+                if let ExprKind::Ident(name) = &func.kind {
+                    if let Some((field, var)) = loop_var {
+                        if name == var {
+                            out.insert((self_ty.to_string(), field.to_string()));
+                        }
+                    }
+                }
+                // Bare fn-field direct call: `@field()`.
+                if let ExprKind::Member { obj, name: field } = &func.kind {
+                    if matches!(obj.kind, ExprKind::SelfAccess) {
+                        out.insert((self_ty.to_string(), field.clone()));
+                    }
+                }
+            }
+            field_taint_expr(func, self_ty, in_boundary, loop_var, out);
+            for a in args { field_taint_expr(a.expr(), self_ty, in_boundary, loop_var, out); }
+            if let Some(t) = trailing {
+                match t {
+                    crate::ast::Trailing::Block(b) => field_taint_block(b, self_ty, in_boundary, loop_var, out),
+                    crate::ast::Trailing::LegacyBlockWithParams(tb) => {
+                        field_taint_block(&tb.body, self_ty, in_boundary, loop_var, out)
+                    }
+                    crate::ast::Trailing::Fn(_) => {}
+                }
+            }
+        }
+        ExprKind::Spawn(inner) => field_taint_expr(inner, self_ty, true, loop_var, out),
+        ExprKind::Detach(b) | ExprKind::Blocking(b) => field_taint_block(b, self_ty, true, loop_var, out),
+        ExprKind::ParallelFor { pattern, iter, body, .. } => {
+            field_taint_expr(iter, self_ty, in_boundary, loop_var, out);
+            let lv = self_field_read(iter).zip(simple_ident_pattern(pattern));
+            // `body` IS the per-element boundary (D441 §0 `ParallelFor`
+            // desugar doc: `supervised { for x in iter { spawn { body } } }`).
+            field_taint_block(body, self_ty, true, lv, out);
+        }
+        ExprKind::For { pattern, iter, body, .. } => {
+            field_taint_expr(iter, self_ty, in_boundary, loop_var, out);
+            let lv = self_field_read(iter).zip(simple_ident_pattern(pattern));
+            // NOT itself a boundary — `in_boundary` unchanged; a nested
+            // `spawn`/`detach`/`blocking` further down flips it to true
+            // (the `BackgroundTasks.drain()` shape: `for t in @tasks {
+            // spawn { t() } }`).
+            field_taint_block(body, self_ty, in_boundary, lv, out);
+        }
+        ExprKind::Block(b) => field_taint_block(b, self_ty, in_boundary, loop_var, out),
+        ExprKind::If { cond, then, else_ } => {
+            field_taint_expr(cond, self_ty, in_boundary, loop_var, out);
+            field_taint_block(then, self_ty, in_boundary, loop_var, out);
+            match else_ {
+                Some(ElseBranch::Block(b)) => field_taint_block(b, self_ty, in_boundary, loop_var, out),
+                Some(ElseBranch::If(e2)) => field_taint_expr(e2, self_ty, in_boundary, loop_var, out),
+                None => {}
+            }
+        }
+        ExprKind::IfLet { scrutinee, guard, then, else_, .. } => {
+            field_taint_expr(scrutinee, self_ty, in_boundary, loop_var, out);
+            if let Some(g) = guard { field_taint_expr(g, self_ty, in_boundary, loop_var, out); }
+            field_taint_block(then, self_ty, in_boundary, loop_var, out);
+            match else_ {
+                Some(ElseBranch::Block(b)) => field_taint_block(b, self_ty, in_boundary, loop_var, out),
+                Some(ElseBranch::If(e2)) => field_taint_expr(e2, self_ty, in_boundary, loop_var, out),
+                None => {}
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            field_taint_expr(scrutinee, self_ty, in_boundary, loop_var, out);
+            for a in arms {
+                if let Some(g) = &a.guard { field_taint_expr(g, self_ty, in_boundary, loop_var, out); }
+                match &a.body {
+                    MatchArmBody::Expr(be) => field_taint_expr(be, self_ty, in_boundary, loop_var, out),
+                    MatchArmBody::Block(bb) => field_taint_block(bb, self_ty, in_boundary, loop_var, out),
+                }
+            }
+        }
+        ExprKind::While { cond, body, .. } => {
+            field_taint_expr(cond, self_ty, in_boundary, loop_var, out);
+            field_taint_block(body, self_ty, in_boundary, loop_var, out);
+        }
+        ExprKind::WhileLet { scrutinee, guard, body, .. } => {
+            field_taint_expr(scrutinee, self_ty, in_boundary, loop_var, out);
+            if let Some(g) = guard { field_taint_expr(g, self_ty, in_boundary, loop_var, out); }
+            field_taint_block(body, self_ty, in_boundary, loop_var, out);
+        }
+        ExprKind::Loop { body, .. } => field_taint_block(body, self_ty, in_boundary, loop_var, out),
+        ExprKind::Supervised { body, cancel, deadline } => {
+            if let Some(c) = cancel { field_taint_expr(c, self_ty, in_boundary, loop_var, out); }
+            if let Some(dl) = deadline { field_taint_expr(&dl.expr, self_ty, in_boundary, loop_var, out); }
+            field_taint_block(body, self_ty, in_boundary, loop_var, out);
+        }
+        ExprKind::With { bindings, body } => {
+            for b in bindings { field_taint_expr(&b.handler, self_ty, in_boundary, loop_var, out); }
+            field_taint_block(body, self_ty, in_boundary, loop_var, out);
+        }
+        ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
+            field_taint_block(body, self_ty, in_boundary, loop_var, out)
+        }
+        ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) => {
+            field_taint_expr(inner, self_ty, in_boundary, loop_var, out)
+        }
+        ExprKind::Coalesce(a, b) => {
+            field_taint_expr(a, self_ty, in_boundary, loop_var, out);
+            field_taint_expr(b, self_ty, in_boundary, loop_var, out);
+        }
+        ExprKind::Binary { left, right, .. } => {
+            field_taint_expr(left, self_ty, in_boundary, loop_var, out);
+            field_taint_expr(right, self_ty, in_boundary, loop_var, out);
+        }
+        ExprKind::Unary { operand, .. } => field_taint_expr(operand, self_ty, in_boundary, loop_var, out),
+        ExprKind::Member { obj, .. } => field_taint_expr(obj, self_ty, in_boundary, loop_var, out),
+        ExprKind::Index { obj, index } => {
+            field_taint_expr(obj, self_ty, in_boundary, loop_var, out);
+            field_taint_expr(index, self_ty, in_boundary, loop_var, out);
+        }
+        _ => {}
+    }
+}
+
+/// `@field`-shaped (`SelfAccess`) direct field read — the ONLY iterable
+/// shape the loop-driven taint form recognizes (V1, documented limit: `let
+/// ts = @tasks; for t in ts {..}` is one hop deeper, invisible).
+fn self_field_read(e: &Expr) -> Option<&str> {
+    if let ExprKind::Member { obj, name } = &e.kind {
+        if matches!(obj.kind, ExprKind::SelfAccess) {
+            return Some(name.as_str());
+        }
+    }
+    None
+}
+
+/// A `for`/`parallel for`/`let` pattern that binds exactly one bare name
+/// (the common `for t in ..` / `ro t = ..` case) — zero-copy match on
+/// `Pattern::Ident` directly (narrower than `pattern_capture_names`, which
+/// also unpacks a single-element tuple/record destructure to one name;
+/// restricting to the literal bare-ident shape is the common case and
+/// keeps this borrowed rather than allocating).
+fn simple_ident_pattern(p: &Pattern) -> Option<&str> {
+    if let Pattern::Ident { name, .. } = p { Some(name.as_str()) } else { None }
+}
+
+/// Plan S1a (D441 §5 "closure-as-field" — №117 wrapper-method shape, the
+/// owner's original report `bg.add(|| { log.push(..) })`): one hop further
+/// than `spawn_tainted_fields_of_module` — per `(TypeName, method_name)`,
+/// which of that method's OWN parameter names its body writes into an
+/// already-tainted field. DEPENDS on `tainted_fields` (computed first,
+/// sequentially — one documented hop, not a fixed-point closure).
+fn spawn_tainted_method_params_of_module(
+    module: &Module,
+    tainted_fields: &HashSet<(String, String)>,
+) -> HashMap<(String, String), HashSet<String>> {
+    let mut out: HashMap<(String, String), HashSet<String>> = HashMap::new();
+    for item in &module.items {
+        if let Item::Fn(fd) = item {
+            if let Some(recv) = &fd.receiver {
+                let mut written: HashSet<String> = HashSet::new();
+                match &fd.body {
+                    FnBody::Block(b) => field_write_param_scan_block(b, &recv.type_name, tainted_fields, &mut written),
+                    FnBody::Expr(e) => field_write_param_scan_expr(e, &recv.type_name, tainted_fields, &mut written),
+                    FnBody::External => {}
+                }
+                // Keep only names that are actually THIS fn's own params —
+                // `field_write_param_scan_*` collects any bare-Ident value
+                // written to a tainted field, some of which may be a local
+                // `let`, not a parameter (those are handled by the DIRECT
+                // write-site check already, no need to double-report here).
+                let param_names: HashSet<&str> = fd.params.iter().map(|p| p.name.as_str()).collect();
+                let tainted: HashSet<String> =
+                    written.into_iter().filter(|n| param_names.contains(n.as_str())).collect();
+                if !tainted.is_empty() {
+                    out.entry((recv.type_name.clone(), fd.name.clone()))
+                        .or_insert_with(HashSet::new)
+                        .extend(tainted);
+                }
+            }
+        }
+    }
+    out
+}
+
+fn field_write_param_scan_block(
+    b: &Block,
+    self_ty: &str,
+    tainted: &HashSet<(String, String)>,
+    out: &mut HashSet<String>,
+) {
+    for s in &b.stmts {
+        field_write_param_scan_stmt(s, self_ty, tainted, out);
+    }
+    if let Some(t) = &b.trailing {
+        field_write_param_scan_expr(t, self_ty, tainted, out);
+    }
+}
+
+fn field_write_param_scan_stmt(
+    s: &Stmt,
+    self_ty: &str,
+    tainted: &HashSet<(String, String)>,
+    out: &mut HashSet<String>,
+) {
+    match s {
+        Stmt::Expr(e) => field_write_param_scan_expr(e, self_ty, tainted, out),
+        Stmt::Let(d) => field_write_param_scan_expr(&d.value, self_ty, tainted, out),
+        Stmt::Assign { target, value, .. } => {
+            field_write_param_scan_expr(target, self_ty, tainted, out);
+            field_write_param_scan_expr(value, self_ty, tainted, out);
+            if let ExprKind::Member { obj, name: field } = &target.kind {
+                if matches!(obj.kind, ExprKind::SelfAccess)
+                    && tainted.contains(&(self_ty.to_string(), field.clone()))
+                {
+                    if let ExprKind::Ident(vname) = &value.kind { out.insert(vname.clone()); }
+                }
+            }
+        }
+        Stmt::Return { value, .. } => {
+            if let Some(v) = value { field_write_param_scan_expr(v, self_ty, tainted, out); }
+        }
+        Stmt::Throw { value, .. } => field_write_param_scan_expr(value, self_ty, tainted, out),
+        Stmt::Defer { body, .. } => field_write_param_scan_expr(body, self_ty, tainted, out),
+        Stmt::ConsumeScope { init, body, .. } => {
+            field_write_param_scan_expr(init, self_ty, tainted, out);
+            field_write_param_scan_block(body, self_ty, tainted, out);
+        }
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            for e in lhs { field_write_param_scan_expr(e, self_ty, tainted, out); }
+            for e in rhs { field_write_param_scan_expr(e, self_ty, tainted, out); }
+        }
+        _ => {}
+    }
+}
+
+fn field_write_param_scan_expr(
+    e: &Expr,
+    self_ty: &str,
+    tainted: &HashSet<(String, String)>,
+    out: &mut HashSet<String>,
+) {
+    match &e.kind {
+        ExprKind::Call { func, args, trailing } => {
+            const FIELD_SINK_MUTATORS: &[&str] =
+                &["push", "append", "add", "insert", "push_back", "push_front", "set"];
+            if let ExprKind::Member { obj: recv_expr, name: method } = &func.kind {
+                if FIELD_SINK_MUTATORS.contains(&method.as_str()) {
+                    if let ExprKind::Member { obj, name: field } = &recv_expr.kind {
+                        if matches!(obj.kind, ExprKind::SelfAccess)
+                            && tainted.contains(&(self_ty.to_string(), field.clone()))
+                        {
+                            if let Some(last) = args.last() {
+                                if let ExprKind::Ident(vname) = &last.expr().kind {
+                                    out.insert(vname.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            field_write_param_scan_expr(func, self_ty, tainted, out);
+            for a in args { field_write_param_scan_expr(a.expr(), self_ty, tainted, out); }
+            if let Some(t) = trailing {
+                match t {
+                    crate::ast::Trailing::Block(b) => field_write_param_scan_block(b, self_ty, tainted, out),
+                    crate::ast::Trailing::LegacyBlockWithParams(tb) => {
+                        field_write_param_scan_block(&tb.body, self_ty, tainted, out)
+                    }
+                    crate::ast::Trailing::Fn(_) => {}
+                }
+            }
+        }
+        ExprKind::RecordLit { fields, type_name, .. } => {
+            let owner = type_name.as_ref().and_then(|p| p.last());
+            for f in fields {
+                if let Some(v) = &f.value {
+                    if let Some(owner) = owner {
+                        if tainted.contains(&(owner.clone(), f.name.clone())) {
+                            if let ExprKind::Ident(vname) = &v.kind { out.insert(vname.clone()); }
+                        }
+                    }
+                    field_write_param_scan_expr(v, self_ty, tainted, out);
+                }
+            }
+        }
+        ExprKind::Spawn(inner) => field_write_param_scan_expr(inner, self_ty, tainted, out),
+        ExprKind::Detach(b) | ExprKind::Blocking(b) => field_write_param_scan_block(b, self_ty, tainted, out),
+        ExprKind::ParallelFor { iter, body, .. } => {
+            field_write_param_scan_expr(iter, self_ty, tainted, out);
+            field_write_param_scan_block(body, self_ty, tainted, out);
+        }
+        ExprKind::For { iter, body, .. } => {
+            field_write_param_scan_expr(iter, self_ty, tainted, out);
+            field_write_param_scan_block(body, self_ty, tainted, out);
+        }
+        ExprKind::Block(b) => field_write_param_scan_block(b, self_ty, tainted, out),
+        ExprKind::If { cond, then, else_ } => {
+            field_write_param_scan_expr(cond, self_ty, tainted, out);
+            field_write_param_scan_block(then, self_ty, tainted, out);
+            match else_ {
+                Some(ElseBranch::Block(b)) => field_write_param_scan_block(b, self_ty, tainted, out),
+                Some(ElseBranch::If(e2)) => field_write_param_scan_expr(e2, self_ty, tainted, out),
+                None => {}
+            }
+        }
+        ExprKind::IfLet { scrutinee, guard, then, else_, .. } => {
+            field_write_param_scan_expr(scrutinee, self_ty, tainted, out);
+            if let Some(g) = guard { field_write_param_scan_expr(g, self_ty, tainted, out); }
+            field_write_param_scan_block(then, self_ty, tainted, out);
+            match else_ {
+                Some(ElseBranch::Block(b)) => field_write_param_scan_block(b, self_ty, tainted, out),
+                Some(ElseBranch::If(e2)) => field_write_param_scan_expr(e2, self_ty, tainted, out),
+                None => {}
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            field_write_param_scan_expr(scrutinee, self_ty, tainted, out);
+            for a in arms {
+                if let Some(g) = &a.guard { field_write_param_scan_expr(g, self_ty, tainted, out); }
+                match &a.body {
+                    MatchArmBody::Expr(be) => field_write_param_scan_expr(be, self_ty, tainted, out),
+                    MatchArmBody::Block(bb) => field_write_param_scan_block(bb, self_ty, tainted, out),
+                }
+            }
+        }
+        ExprKind::While { cond, body, .. } => {
+            field_write_param_scan_expr(cond, self_ty, tainted, out);
+            field_write_param_scan_block(body, self_ty, tainted, out);
+        }
+        ExprKind::WhileLet { scrutinee, guard, body, .. } => {
+            field_write_param_scan_expr(scrutinee, self_ty, tainted, out);
+            if let Some(g) = guard { field_write_param_scan_expr(g, self_ty, tainted, out); }
+            field_write_param_scan_block(body, self_ty, tainted, out);
+        }
+        ExprKind::Loop { body, .. } => field_write_param_scan_block(body, self_ty, tainted, out),
+        ExprKind::Supervised { body, cancel, deadline } => {
+            if let Some(c) = cancel { field_write_param_scan_expr(c, self_ty, tainted, out); }
+            if let Some(dl) = deadline { field_write_param_scan_expr(&dl.expr, self_ty, tainted, out); }
+            field_write_param_scan_block(body, self_ty, tainted, out);
+        }
+        ExprKind::With { bindings, body } => {
+            for b in bindings { field_write_param_scan_expr(&b.handler, self_ty, tainted, out); }
+            field_write_param_scan_block(body, self_ty, tainted, out);
+        }
+        ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
+            field_write_param_scan_block(body, self_ty, tainted, out)
+        }
+        ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) => {
+            field_write_param_scan_expr(inner, self_ty, tainted, out)
+        }
+        ExprKind::Coalesce(a, b) => {
+            field_write_param_scan_expr(a, self_ty, tainted, out);
+            field_write_param_scan_expr(b, self_ty, tainted, out);
+        }
+        ExprKind::Binary { left, right, .. } => {
+            field_write_param_scan_expr(left, self_ty, tainted, out);
+            field_write_param_scan_expr(right, self_ty, tainted, out);
+        }
+        ExprKind::Unary { operand, .. } => field_write_param_scan_expr(operand, self_ty, tainted, out),
+        ExprKind::Member { obj, .. } => field_write_param_scan_expr(obj, self_ty, tainted, out),
+        ExprKind::Index { obj, index } => {
+            field_write_param_scan_expr(obj, self_ty, tainted, out);
+            field_write_param_scan_expr(index, self_ty, tainted, out);
         }
         _ => {}
     }

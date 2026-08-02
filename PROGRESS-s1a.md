@@ -170,4 +170,137 @@ boundary. Возврат замыкания как РЕЗУЛЬТАТА функ
 
 ## Ф.1 — вердикт: №168 уже закрыт (A-V10), реестр исправлен
 
-(заполняется по факту верификации сборкой — см. следующий раздел лога)
+Пересобрал `nova-cli` в свежем worktree (`cargo build --release`, чисто,
+2м34с). Прогнал через свежий `nova check`:
+- `spec_tests/conformance/neg/handler_mut_capture_precomputed_neg.nv` →
+  FAIL с `E_HANDLER_MUT_CAPTURE_IN_FIBER` (верный код, верное объяснение
+  "PRECOMPUTED `with`-handler").
+- `spec_tests/conformance/neg/handler_mut_capture_precomputed_install_transitive_neg.nv`
+  → FAIL с `E_CONCURRENT_MUT_CAPTURE` (транзитивная install-позиция).
+- `spec_tests/conformance/handler_mut_capture_precomputed_pos.nv` → ok.
+
+Вердикт: №168 закрыт кодом ПОЛНОСТЬЮ, только реестр отставал (документная
+недоделка A-V10, не код-гэп). Исправлены три файла (коммит `d152659be`):
+`docs/plans/221.1-bug-sweep.md:145`, `docs/plans/221-release-v0-1.md:24`,
+`docs/plans/238-fiber-memory-model.md` (заголовок + V2 п.2/3).
+
+**Реализация Ф.1 не нужна** — переход сразу к Ф.2.
+
+## Ф.2 — ядро (№117 + №242§3): РЕАЛИЗОВАНО
+
+### Механизм (единый, расширяет D441 §3 существующими "точками пересечения")
+
+Новая пятая точка (г) — "closure-as-field": замыкание, записанное в
+spawn-тэйнтованное ПОЛЕ структуры/контейнера, вместо прямого захвата.
+Реализация — `compiler-codegen/src/types/mod.rs`, всё в чекер-канале
+(`CapabilityCtx`), emit_c НЕ тронут:
+
+1. **`spawn_tainted_fields_of_module`** (пре-пасс, вычисляется в `build()`
+   ОДИН раз, тот же тайминг, что `spawn_tainted_params`/`thread_affine_
+   closure`) — по всем методам (`Item::Fn` с `receiver: Some(_)`, у Nova
+   нет отдельного `Item::Impl`) ищет `(TypeName, field)`-пары, чьё значение
+   ВЫЗЫВАЕТСЯ внутри `spawn`/`detach`/`parallel for`/`blocking`-тела.
+   Две формы: (i) прямой `@field()` внутри границы; (ii) `for`/`parallel
+   for`-петля по прямому `@field`-чтению, где ТЕЛО петли зовёт свою
+   pattern-переменную внутри вложенной границы (`BackgroundTasks.drain()`
+   форма) — И симметричный `let`-вариант (`ro x = @field` → `x()` внутри
+   границы дальше в том же блоке, добавлено ПОСЛЕ находки codegen-гэпа,
+   см. ниже) — обе формы делят один и тот же `loop_var`-трекинг
+   (`field_taint_block/_stmt/_expr`, borrowed `&str` без аллокаций).
+2. **`spawn_tainted_method_params_of_module`** (второй пре-пасс, зависит от
+   первого, тот же файл) — по всем методам ищет, какие ИЗ СОБСТВЕННЫХ
+   параметров метод ЗАПИСЫВАЕТ в уже-тэйнтованное поле (`fn X mut @add(f
+   fn()->()) { @tasks.push(f) }` → параметр `f` тэйнтован для
+   `(X, "add")`). Один хоп, НЕ fixed-point (честная граница, см. ниже).
+3. **Гейт на write-сайтах** (три формы, везде вызывает ОДНУ и ту же
+   `flag_boundary_captures` — тот же движок, что (а)/(б)/(в)):
+   - `.push`/`.append`/`.add`/`.insert`/`.push_back`/`.push_front`/`.set`
+     на тэйнтованном поле (в `ExprKind::Call`-ветке `walk_expr`);
+   - прямое присваивание `@field = v` / `obj.field = v` (`Stmt::Assign`);
+   - конструктор `Type { field: v, .. }` (`ExprKind::RecordLit`).
+   Резолюция `v` — литерал ИЛИ `ScopeBinding.closure_free_vars`-снэпшот,
+   ИДЕНТИЧНО (а)/(в). Владелец поля резолвится через НОВОЕ поле
+   `CapState.current_receiver_type` (`@field`/`SelfAccess`) ИЛИ
+   `ScopeBinding.ty` (bare `Ident`-ресивер) — новый хелпер
+   `resolve_field_owner_type`.
+4. **Метод-call-сайт для (2)** — новая ветка в `ExprKind::Call` (аналог уже
+   существующей для free-fn `Ident`-вызовов): `obj.method(arg)` резолвит
+   `obj`'s тип, смотрит `spawn_tainted_method_params[(type,method)]`, матчит
+   `self.sig.method_overloads` по арности (D84-конвенция), гоняет `arg`
+   через ту же резолюцию (`check_field_write_via_method_param`).
+
+Диагностика — существующий `E_CONCURRENT_MUT_CAPTURE` (текст объясняет
+двух-хоповую цепочку: параметр → запись в поле → вызов в границе где-то ещё).
+
+### №242§3 (escaping вообще)
+
+Router-регистрация (`router.get(path, handler)` ≡ `@routes.push((path,
+handler))`) покрывается ТЕМ ЖЕ механизмом (класс (1) write-сайтов). Ответ на
+"как отличить убегающее от локального": escaping ⇔ значение ЗАПИСАНО в
+тэйнтованное поле; локальное (map/filter) ⇔ никогда не пишется в
+storage — течёт прямо в синхронный вызов. Возврат замыкания как РЕЗУЛЬТАТА
+функции — честно ВНЕ периметра V1 (не встречено в фикстурах брифа, не
+измерено как живой сайт).
+
+### НАХОДКА (codegen, НЕ чекер, НЕ трогать в этом окне)
+
+При верификации pos-фикстуры мега-CU (`a_q3_println_debug_record` —
+известный label-misattribution артефакт единого combined-CU entry, см.
+221.1-bug-sweep.md §"Перепроверка 2026-07-29") давал CC-FAIL с текстом,
+упоминающим МОЁ новое поле `on_error` — расследовано изолированным `nova
+build` минимального репро: **`@field()` — прямой вызов bare fn-типизиро-
+ванного ПОЛЯ receiver'а внутри `spawn{}`-тела метода — CC-FAIL `undeclared
+identifier 'nova_self'`** (emit_c не захватывает `nova_self` в контекст
+спавненного closure для этого пути). Родственный: `Vec[fn()->()]`-поле,
+вызываемое через `for t in @tasks { spawn { t() } }` — линкер-ошибка
+`undefined symbol: nova_fn_t` (родня уже известного
+`[M-vec-iter-fn-newtype-next-option-mismatch]`). ОБА — pre-existing emit_c
+гэпы, впервые вскрытые этим окном (видимо, шаблон "self-field вызван внутри
+spawn метода" ранее не встречался в корпусе). Зарегистрирован
+`[M-spawn-self-field-call-nova-self-undeclared]` в backlog-followups.md;
+НЕ фикшу (channel-first, легаси emit_c не наращивать). Обходной путь
+(`ro handler = @field; spawn { handler() }`) — добавлен КАК ПРОДУКТИВНОЕ
+расширение пре-пасса (см. п.1 выше, `let`-форма), не просто костыль:
+подтверждено, что ЭТО и есть идиоматичный/уже-проверенный-корпусом способ
+звать fn-значение внутри spawn. Все живые NEG/POS-фикстуры переписаны на
+эту форму; BackgroundTasks-neg сознательно ОСТАВЛЕН на прямой `for`-форме
+(codegen туда не доходит — negative-тест, безопасно, и это ДОСЛОВНАЯ форма
+из бага владельца).
+
+### Гейты Ф.2
+
+- `cargo build`/`cargo build --release` (compiler-codegen + nova-cli) —
+  чисто, без новых warning'ов на новых символах.
+- 3 новые фикстуры: `spec_tests/conformance/neg/
+  field_sink_mut_capture_bare_field_neg.nv` (EXPECT_COMPILE_ERROR
+  E_CONCURRENT_MUT_CAPTURE, двух-хоповая цепочка через bare fn-поле),
+  `neg/field_sink_mut_capture_background_tasks_neg.nv` (BackgroundTasks
+  дословно, Vec[fn]-поле), `field_sink_mut_capture_pos.nv` (3 test-блока:
+  #share-захват AtomicInt легален, map/filter НЕ ложнякует, Mutex-
+  SharedLog #share-vouch легален) — все зелёные (`nova check` индивидуально
+  + `--filter a_q3`/эквивалент mega-CU root-entry: PASS:1 включая все 3
+  assert'а pos-теста).
+- Существующие A-V10-фикстуры (№168) — не тронуты, по-прежнему PASS/FAIL
+  как задокументировано в Ф.1.
+- `a_q3_println_debug_record` (известный label-misattribution CU-entry) —
+  ЗЕЛЁНЫЙ на модифицированном чекауте (было временно CC-FAIL из-за
+  ПЕРВОЙ версии pos-фикстуры, до `let`-переписывания — см. НАХОДКУ выше).
+
+### Честные границы V1 (зафиксировать в спек-амендменте Ф.4)
+
+- Один хоп для метод-параметра (2-hop: write→call); параметр, переданный
+  ДАЛЬШЕ в третий метод — не отслеживается (тот же класс лимита, что уже
+  принят для §3(а)/(в)).
+- `loop_var`/`let`-трекинг — ОДИН активный биндинг на блок (не граф
+  датафлоу); переприсвоение/несколько разных `let` для одного поля в
+  разных ветках может не подхватиться идеально консервативно (недо-
+  апроксимация, не ложный+).
+- Ресивер неизвестного статического типа (generic/unresolved) — no-op.
+- Возврат замыкания как значения функции — вне периметра.
+- НЕ транзитивно между МЕТОДАМИ одного типа (поле, тэйнтованное вызовом
+  ЧЕРЕЗ другой метод того же типа, — не подхватывается; симметрично тому,
+  что `spawn_tainted_params_of_fn` тоже не транзитивен через цепочку вызовов).
+
+Следующий шаг: Ф.3 (std/polaris/examples --strict-effects — искать
+вскрытые нарушения), Ф.4 (спек-амендмент D441 §5 новая точка), Ф.5
+(закрыть реестры 117/242§3).

@@ -1,0 +1,97 @@
+// Plan S1a (D441 §5 "class «замыкание как ПОЛЕ структуры»" — реестр 221.1
+// №117/№242§3): pos-twins of `neg/field_sink_mut_capture_bare_field_neg.nv`
+// / `neg/field_sink_mut_capture_background_tasks_neg.nv` — the new
+// field-sink write-site check (`spawn_tainted_fields_of_module` +
+// `spawn_tainted_method_params_of_module`) must NOT false-positive on the
+// three legal shapes the brief requires: (г) the same escaping-storage
+// shape but the captured state is a `#share` type; (д) a synchronous
+// map/filter/fold HOF-lambda (never written into ANY field — no crossing
+// point at all); (е) the Mutex-wrapped value-record pattern
+// (SharedLog-alike — the record's `#share` vouch is the author's audit
+// that every mutation path goes through its own internal `Mutex`).
+//
+// `run()`'s fiber-boundary body reads the field into a LOCAL first (`ro
+// handler = @field`) rather than calling `@field()` DIRECTLY inside
+// `spawn`: the direct form was empirically confirmed (S1a window, isolated
+// `nova build`) to hit an unrelated, pre-existing emit_c gap — undeclared
+// `nova_self` in the spawned closure when it dereferences a bare fn-typed
+// struct field through the receiver — filed as
+// `[M-spawn-self-field-call-nova-self-undeclared]` (backlog-followups.md),
+// NOT this window's concern (channel-first: checker-only, emit_c untouched).
+// The `let`-binding form is both the codegen-SAFE idiom AND is tracked by
+// `spawn_tainted_fields_of_module` the same way a for-loop's own pattern
+// variable already is (see the module doc comment on that pre-pass).
+
+module spec_tests.conformance
+
+type S1aFieldSinkHandlerShare { mut on_error fn() -> () }
+
+fn S1aFieldSinkHandlerShare.new() -> S1aFieldSinkHandlerShare => { on_error: || {} }
+
+fn S1aFieldSinkHandlerShare mut @set(f fn() -> ()) -> () {
+    @on_error = f
+}
+
+fn S1aFieldSinkHandlerShare @run() -> () {
+    ro handler = @on_error
+    supervised {
+        spawn {
+            handler()
+        }
+    }
+}
+
+// (е) SharedLog-паттерн: value-record оборачивает `Mutex` + данные;
+// `#share`-vouch — авторское ручательство, что ЛЮБАЯ мутация `buf` идёт
+// через `lock` (структурно auto-derive этого доказать не может — `buf`
+// сам по себе не `#share`-тип).
+#share
+type S1aFieldSinkLog { mut lock Mutex, mut buf Vec[str] }
+
+fn S1aFieldSinkLog.new() -> S1aFieldSinkLog => { lock: Mutex.new(), buf: [] }
+
+fn S1aFieldSinkLog mut @append(msg str) -> () {
+    consume g = @lock.lock()
+    @buf.push(msg)
+    g.unlock()
+}
+
+type S1aFieldSinkHandlerLog { mut on_done fn() -> () }
+
+fn S1aFieldSinkHandlerLog.new() -> S1aFieldSinkHandlerLog => { on_done: || {} }
+
+fn S1aFieldSinkHandlerLog mut @set(f fn() -> ()) -> () {
+    @on_done = f
+}
+
+fn S1aFieldSinkHandlerLog @run() -> () {
+    ro handler = @on_done
+    supervised {
+        spawn {
+            handler()
+        }
+    }
+}
+
+test "field-sink write, #share-захват (AtomicInt) в bare fn-поле — легально" {
+    mut counter = AtomicInt.new(0)
+    mut h = S1aFieldSinkHandlerShare.new()
+    h.set(|| { counter.fetch_add(1) })
+    h.run()
+    assert(counter.load() == 1)
+}
+
+test "map/filter/fold HOF-лямбда с mut-захватом — НЕ escaping (никогда не пишется в поле), легально" {
+    mut sum = 0
+    ro nums = [1, 2, 3, 4]
+    ro doubled = nums.iter().map(|x| { sum = sum + x; x * 2 }).collect()
+    assert(sum == 10)
+    assert(doubled.len() == 4)
+}
+
+test "field-sink write, Mutex-защищённый SharedLog (#share value-record) — легально" {
+    mut log = S1aFieldSinkLog.new()
+    mut h = S1aFieldSinkHandlerLog.new()
+    h.set(|| { log.append("done") })
+    h.run()
+}
