@@ -22,6 +22,16 @@
   `npm run sync:decisions` (`site/scripts/sync-decisions.mjs`) из
   `github.com/nv-lang/nova` ветки `main` при каждой сборке; руками НЕ править —
   правки уйдут. Если спека на сайте «устарела» — сначала проверь, запушен ли main nova.
+- **Источник doc-гайдов (2026-08-02, docs-split) — ТОЛЬКО `docs/guide/` репы nova.**
+  `docs/guide/<slug>.md` (+ `<slug>.ru.md`) = пользовательский гайд, кандидат на
+  публикацию (whitelist `DOC_SLUGS` в `sync-decisions.mjs`, должен совпадать с
+  `DOC_GUIDES` в `src/data/docs.ts`). **Всё из `docs/dev/` репы nova на сайт НЕ
+  попадает НИКОГДА** — это внутренние конвенции/процесс/промпты для агентов
+  Nova, не для читателей сайта; ни при каком расширении `DOC_SLUGS` файл из
+  `docs/dev/` в этот список не добавляется. Карта разделения — `nova/docs/README.md`.
+  До 2026-08-02 весь `docs/` nova был плоским (`docs/<slug>.md` без `guide/`/`dev/`)
+  — если видишь старые пути `docs/channels.md` и т.п. без `guide/`, это устаревшая
+  ссылка, актуальный путь — `docs/guide/channels.md`.
 - Подсветка Nova-кода: `site/public/js/nova-highlight.js` + контроль-скрипт
   `site/scripts/check-highlight-keywords.mjs` (`npm run check:highlight`).
   **Правило D278 §3: контекстные ключевые слова НЕ подсвечиваются** (use/bench/apply/
@@ -86,4 +96,6 @@ ru-зеркало обязательно). Три конкретные прав�
 ## Приёмочный критерий любой сдачи
 `npm run build` + `npm run check` + `npm run check:highlight` — все зелёные; en/ru
 синхронны; релиз-нейтральность (никаких «released/download binary» до команды);
-сгенерированный контент руками не правлен.
+сгенерированный контент руками не правлен; **синк doc-гайдов тянет ТОЛЬКО из
+`docs/guide/` nova** — `DOC_SLUGS`/`DOC_FILES` в `sync-decisions.mjs` не содержат
+путей `docs/dev/...` (и не содержат старых плоских `docs/<slug>.md`).
