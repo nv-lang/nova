@@ -1,0 +1,32 @@
+# Канон публикации docs/guide на сайт (план 241 Ф.1b, 2026-08-03).
+# Один slug в строке = страница публикуется В ОБЕИХ языковых версиях
+# (X.md + X.ru.md). Страж 242 краснеет, если у файла из списка нет пары.
+# www-синк читает ЭТОТ файл (никаких зеркал-констант в репе сайта).
+# Исключение = строка, закомментированная '#' с причиной.
+# Стартовый состав — все guide-файлы (полная публикация, слово владельца).
+authoring-a-module
+auto-derive-guide
+channels
+cleanup-cookbook
+consume-types
+contracts
+datetime
+embed
+ffi-cookbook
+field-cache-optimization
+field-visibility-guide
+io-fs
+language-tour
+linux-build
+nova-cli
+parameters
+quickstart
+runtime-tuning
+size-of-align-of
+strings
+time
+tutorial-cleanup
+typed-pointers
+value-vs-reference
+vec-lazy
+vec-owned
