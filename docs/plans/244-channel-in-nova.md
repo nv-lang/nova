@@ -126,10 +126,10 @@ export fn Channel[T].new(cap int) -> (ChanWriter[T], ChanReader[T]) {
 
 // --- сторона записи ---
 export fn ChanWriter[T] @send(consume v T) -> bool =>
-    chan_tx_send(@0, addr_of(v) as *u8)          // consume — владение уходит (D131/№144)
+    unsafe { chan_tx_send(@0, &v as *u8) }          // consume — владение уходит (D131/№144)
 
 export fn ChanWriter[T] @try_send(consume v T) -> bool =>
-    chan_tx_try_send(@0, addr_of(v) as *u8)
+    unsafe { chan_tx_try_send(@0, &v as *u8) }
 
 export fn ChanWriter[T] @close() -> ()        => chan_tx_close(@0)
 export fn ChanWriter[T] @is_closed() -> bool  => chan_tx_is_closed(@0)
@@ -139,12 +139,12 @@ export fn ChanWriter[T] @share() -> ChanWriter[T] =>
 // --- сторона чтения ---
 export fn ChanReader[T] @recv() -> Option[T] {
     mut slot = T.uninit()                             // см. §Открытые вопросы п.2
-    if chan_rx_recv(@0, addr_of_mut(slot) as *mut u8) { Some(slot) } else { None }
+    unsafe { if chan_rx_recv(@0, &slot as *mut u8) { Some(slot as T) } else { None } }
 }
 
 export fn ChanReader[T] @try_recv() -> Option[T] {
     mut slot = T.uninit()
-    if chan_rx_try_recv(@0, addr_of_mut(slot) as *mut u8) { Some(slot) } else { None }
+    unsafe { if chan_rx_try_recv(@0, &slot as *mut u8) { Some(slot as T) } else { None } }
 }
 
 export fn ChanReader[T] @close() -> ()        => chan_rx_close(@0)
@@ -191,6 +191,14 @@ export fn ChanReader[T] @close_after(d Duration) -> () =>
 
 Для канала это ничего не меняет: сырой слой обходится указателями,
 целыми и `bool`, пару собирает Nova.
+
+## Форма взятия адреса
+
+Канон — только `&x` (D9, «одна дверь»). `addr_of(x)`/`addr_of_mut(x)`
+существовали как Zig-стиль алиасы (план 118.1) и **ретрактированы** планом
+118.6 — сегодня дают `E_ADDR_OF_REMOVED`. Отдельного `_mut`-варианта не
+нужно: `&x` сама выбирает `*T` или `*mut T` по связывающей стороне
+(`ro p = &x` → `*T`; `mut p = &x` при `mut x` → `*mut T`).
 
 ## Риски и что проверить прямым тестом (не рассуждением)
 
