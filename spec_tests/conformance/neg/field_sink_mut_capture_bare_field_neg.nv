@@ -1,0 +1,58 @@
+// EXPECT_COMPILE_ERROR [E_CONCURRENT_MUT_CAPTURE]
+//
+// Plan S1a (D441 §5 "class «замыкание как ПОЛЕ структуры»" — реестр 221.1
+// №117/№242§3): honest gap the spec names verbatim — "BackgroundTasks.tasks
+// []fn()->()... запись значения в поле записи/коллекции и последующее
+// извлечение — на 2+ хопа глубже call-site-механизма §3(а)" — was NOT
+// checked at all before this window.
+//
+// Bare fn-typed FIELD shape (simplest form of the class): a mut-capturing
+// closure is handed to a wrapper method (`set`), which WRITES it into a
+// field (`@on_error = f`) — `f` is the method's own PARAMETER, opaque at
+// `set`'s definition site the same way any fn-parameter is (D441 §3(а)'s
+// existing limit). A DIFFERENT method (`run`) later reads that field into a
+// LOCAL (`ro handler = @on_error`) and CALLS it inside `spawn` — the
+// idiomatic, codegen-safe way to invoke a fn-typed field from a fiber body
+// (calling `@field()` DIRECTLY inside `spawn` hits a separate, pre-existing,
+// unrelated emit_c gap — undeclared `nova_self` in the spawned closure —
+// filed as [M-spawn-self-field-call-nova-self-undeclared], NOT this
+// window's concern per channel-first convention: this is a checker-only
+// window, emit_c is not touched).
+//
+// Two-hop machine (Plan S1a, `spawn_tainted_fields_of_module` +
+// `spawn_tainted_method_params_of_module`): (1) `run`'s body reads `@on_
+// error` into a local (`ro handler = @on_error`, tracked the SAME way a
+// for-loop's own pattern variable already is) and calls it inside `spawn`
+// → `(FieldSinkHandler, on_error)` tainted; (2) `set`'s body writes ITS OWN
+// parameter `f` into that tainted field → `(FieldSinkHandler, set)` →
+// param `f` tainted; (3) the call site `h.set(|| { count = count + 1 })`
+// passes a closure LITERAL into that tainted parameter → same share/
+// linearity resolution as every other crossing point (D441 §3 а/б/в) —
+// `count` is a bare `mut int`, no audited synchronization →
+// E_CONCURRENT_MUT_CAPTURE.
+
+module neg.field_sink_mut_capture_bare_field_neg
+
+type FieldSinkHandler { mut on_error fn() -> () }
+
+fn FieldSinkHandler.new() -> FieldSinkHandler => { on_error: || {} }
+
+fn FieldSinkHandler mut @set(f fn() -> ()) -> () {
+    @on_error = f
+}
+
+fn FieldSinkHandler @run() -> () {
+    ro handler = @on_error
+    supervised {
+        spawn {
+            handler()
+        }
+    }
+}
+
+fn main() {
+    mut count = 0
+    mut h = FieldSinkHandler.new()
+    h.set(|| { count = count + 1 })
+    h.run()
+}
