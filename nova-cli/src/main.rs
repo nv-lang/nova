@@ -5456,37 +5456,58 @@ fn cmd_build(
     // basename, e.g. mbedTLS's `library/platform.c` vs brotli's
     // `common/platform.c`, silently clobber each other's `.obj` in one
     // shared build).
-    let mut all_ffi: Vec<test_runner::ResolvedFfiConfig> = Vec::new();
+    // Ф.1 (#268 [M-tls-vendor-autobuild-not-on-build-path], 2026-08-02):
+    // `(package_name, ResolvedFfiConfig)` pairs instead of a bare Vec —
+    // `link_prep::diagnose_missing_vendor_ffi` (below) needs the owning
+    // package name to name the actual offending package in its FATAL
+    // message, not an anonymous merged `[ffi]` blob.
+    let mut all_ffi: Vec<(String, test_runner::ResolvedFfiConfig)> = Vec::new();
     if let Some(f) = own_ffi {
-        all_ffi.push(f);
+        let name = manifest.as_ref().map(|m| m.package_name.clone())
+            .unwrap_or_else(|| "<root>".to_string());
+        all_ffi.push((name, f));
     }
     if let Some(m) = &manifest {
         for dep_root in nova_codegen::imports::resolved_dependency_roots(&m.manifest_dir) {
             let dep_toml = dep_root.join("nova.toml");
             if let Some(dep_manifest) = nova_codegen::manifest::parse_manifest(&dep_toml, &dep_root) {
                 if let Some(dep_ffi) = test_runner::ResolvedFfiConfig::from_manifest(&dep_manifest) {
-                    all_ffi.push(dep_ffi);
+                    all_ffi.push((dep_manifest.package_name.clone(), dep_ffi));
                 }
             }
         }
     }
     // [M-nova-build-vendor-ffi-no-autobuild] (2026-07-15): `nova test`
-    // (test_runner.rs's `build_and_run_one`) build-and-caches any
-    // `[ffi] vendor_src_dirs` native dep (e.g. nova-tls's vendored mbedTLS)
-    // from source BEFORE linking, but `nova build` never called that step —
-    // it only merged `[ffi] libs`/`lib_dirs` and went straight to the link,
+    // (test_runner.rs's `run_one`) build-and-caches any `[ffi]
+    // vendor_src_dirs` native dep (e.g. nova-tls's vendored mbedTLS) from
+    // source BEFORE linking, but `nova build` never called that step — it
+    // only merged `[ffi] libs`/`lib_dirs` and went straight to the link,
     // so a clean checkout with no pre-built vendor archive failed to link
     // under `nova build` (had to be worked around by manually copying
     // pre-built libs into place). Mirrors test_runner's call site exactly:
     // no-op when `vendor_src_dirs`/`lib_dirs`/`libs` is empty or already
-    // cached, never fatal (falls through to the real link step, which
-    // fails with its own honest error if the lib is genuinely still
-    // missing). Called ONCE PER PROVIDER, still unmerged (#152 above).
-    for ffi in &all_ffi {
-        test_runner::build_missing_vendor_ffi_libs(ffi, tc.vcvars_path());
+    // cached, never fatal (falls through to the diagnostic/link step
+    // below). Called ONCE PER PROVIDER, still unmerged (#152 above).
+    for (_, ffi) in &all_ffi {
+        nova_codegen::link_prep::build_missing_vendor_ffi_libs(ffi, tc.vcvars_path());
+    }
+    // Ф.1 (#268, 2026-08-02): loud, actionable diagnostic — checked on the
+    // NAMED, still-unmerged provider list right after the auto-build
+    // attempt above, BEFORE the real link step. A `[ffi] libs` entry still
+    // missing here means the auto-build either didn't apply (no
+    // `vendor_src_dirs`) or genuinely failed (its own `nova: warning: ...`
+    // is already on stderr) — either way `nova build` aborts here, naming
+    // the offending package/lib, instead of falling through to the
+    // toolchain's own cryptic linker error (`lld-link: could not open
+    // 'mbedtls.lib'`). `nova test` does NOT do this — see
+    // `link_prep::diagnose_missing_vendor_ffi` doc for why (SKIP, not
+    // abort, is the right degrade there).
+    if let Some(msg) = nova_codegen::link_prep::diagnose_missing_vendor_ffi(&all_ffi) {
+        eprintln!("{}", msg);
+        std::process::exit(1);
     }
     let mut resolved_ffi: Option<test_runner::ResolvedFfiConfig> = None;
-    for ffi in all_ffi {
+    for (_, ffi) in all_ffi {
         match &mut resolved_ffi {
             Some(base) => base.merge(ffi),
             None => resolved_ffi = Some(ffi),
