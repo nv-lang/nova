@@ -10250,6 +10250,58 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// callsite'ы — codegen-bug-via-extension, но fixed targeted-fixes
     /// на конкретных сайтах (tuple-field, array_push) безопаснее
     /// blanket-guard'а. Здесь оставляем `(T)(v)` как было.
+    /// Plan 221.1 №286/№143 (окно p-chan): the checker's `resolved_types`
+    /// channel now carries `Option[T]` for a `.recv()`/`.try_recv()` call
+    /// whose channel declares a CONCRETE `T` (turbofish `Channel[T].new` or
+    /// a `ChanReader[T]`/`ChanWriter[T]`-annotated param/local —
+    /// `channel_elem_type`, types/mod.rs). Returns the C type of `T` when
+    /// it is known AND genuinely non-`nova_int` (an explicit `Channel[int]`
+    /// needs no reinterpret — the runtime's raw slot already IS the right
+    /// shape). `None` — untracked channel (bare `Channel.new`, same
+    /// permissive legacy path) or `T` is literally `int` — the caller falls
+    /// back to the untouched byte-identical pre-window emission.
+    fn channel_recv_target_c(&self, call_id: crate::ast::ExprId) -> Option<String> {
+        if !call_id.is_set() { return None; }
+        let rt = self.resolved_types.get(&call_id)?;
+        let crate::types::ResolvedType::Named { name, args, .. } = rt else { return None };
+        if name != "Option" || args.len() != 1 { return None; }
+        let c = self.resolved_type_to_c(&args[0]).ok()?;
+        if c.is_empty() || c == "nova_int" { return None; }
+        Some(c)
+    }
+
+    /// Plan 221.1 №286/№143 (окно p-chan): builds the ternary that
+    /// reinterprets a raw `NovaOpt_nova_int`-shaped `{some_cond, raw_value}`
+    /// pair (`some_cond` — a bool C expr, true on `Some`; `raw_value` — the
+    /// `nova_int` slot) into the CONCRETE `opt_c` (`NovaOpt_<target_ty>`)
+    /// shape `resolved_type_to_c` promised the checker. Two DIFFERENT
+    /// `NovaOpt_*` layouts exist (`register_novaopt_decl`'s own NPO
+    /// decision) and must be built differently — a pointer-sized `T` gets
+    /// the null-pointer-optimized single-field `{ value }` struct (NO
+    /// `.tag` member at all: `field designator 'tag' does not refer to any
+    /// field`, measured CC-FAIL this fn fixes), while every scalar `T`
+    /// (`nova_bool`, `nova_char`, sized ints, …) keeps the explicit
+    /// `{ tag, value }` pair `NovaOpt_nova_int` itself already uses.
+    fn channel_reinterpret_novaopt(
+        some_cond: &str,
+        raw_value: &str,
+        opt_c: &str,
+        target_ty: &str,
+    ) -> String {
+        let some_val = Self::cast_from_nova_int(raw_value, target_ty);
+        let none_val = Self::cast_from_nova_int("0", target_ty);
+        if target_ty.ends_with('*') {
+            format!(
+                "({some_cond} ? ({opt_c}){{.value={some_val}}} : ({opt_c}){{.value={none_val}}})"
+            )
+        } else {
+            format!(
+                "({some_cond} ? ({opt_c}){{.tag=NOVA_TAG_Option_Some,.value={some_val}}} : \
+                 ({opt_c}){{.tag=NOVA_TAG_Option_None,.value={none_val}}})"
+            )
+        }
+    }
+
     fn cast_from_nova_int(value: &str, target_ty: &str) -> String {
         if target_ty == "nova_int" { return value.to_string(); }
         if target_ty == "nova_f64" {
@@ -10288,14 +10340,22 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// [M-channel-generic-elem-type] (a, honest-CC-FAIL fallback): can a
     /// value of C type `ty` be losslessly round-tripped through the
     /// channel runtime's single-word `nova_int` storage slot (`send_val`/
-    /// `recv_val`, `nova_rt/channels.h`)? `Channel[T]` is NOT actually
-    /// generic at the runtime OR checker layer today — every element is
-    /// stored as a bare `nova_int`, and `Channel.new(n)`'s documented
-    /// "T inferred from first send/recv" (docs/guide/channels.md) does not hold:
-    /// `T` is never tracked past the point of the call, `rx.recv()` is
-    /// always typed `Option[int]` (see `infer_call_ret_c`'s
-    /// `"recv" | "try_recv" => "NovaOpt_nova_int"`, wave-1 region — not
-    /// touched by this fix). `.send(v)`/`.try_send(v)` used to cast `v` to
+    /// `recv_val`, `nova_rt/channels.h`)? The RUNTIME is not generic — every
+    /// element is still stored as a bare `nova_int`-sized slot regardless of
+    /// `T` (this gate is unchanged by Plan 221.1 №286/№143's window). What
+    /// DID change (окно p-chan): `T` IS now tracked end-to-end by the
+    /// CHECKER for a turbofish-declared (`Channel[T].new`) or param-
+    /// annotated (`ChanReader[T]`/`ChanWriter[T]`) channel — a real per-`T`
+    /// type mismatch (`Channel[int].send("s")`, or same-C-size-different-
+    /// Nova-type like `Meters`/`Seconds`) is now caught EARLIER, as an
+    /// honest `[E_CHANNEL_ELEM_TYPE_MISMATCH]` checker error, before this
+    /// codegen gate is ever reached (`types/mod.rs`'s `channel_elem_type` +
+    /// the `send`/`try_send` arg-assignability check). This gate therefore
+    /// now only fires for (a) a channel the checker could NOT track (bare,
+    /// un-annotated `Channel.new` — `T` genuinely unknown) sending a
+    /// word-unsafe value, or (b) a CORRECTLY `T`-matched but word-unsafe `T`
+    /// itself (`Channel[str]` — `str` fits `T` exactly, but still can't fit
+    /// the single-word runtime slot). `.send(v)`/`.try_send(v)` used to cast `v` to
     /// `nova_int` UNCONDITIONALLY (`(nova_int)(v)`) regardless of `v`'s
     /// real type: a 2-word struct like `nova_str` happens to CC-FAIL (C
     /// forbids struct→int casts — loud, if cryptic), but a pointer-sized
@@ -40195,16 +40255,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     let arg_c_ty = self.infer_expr_c_type(arg.expr());
                                     if !arg_c_ty.is_empty() && !Self::channel_payload_c_type_ok(&arg_c_ty) {
                                         return Err(format!(
-                                            "[E_CHANNEL_UNSOUND_ELEM_TYPE] `Channel[T].send(v)`: `T` is not \
-                                             word-safe for the current channel implementation (payload C type \
-                                             `{}`) — the runtime stores every element in a single `nova_int`-\
-                                             sized slot (`nova_rt/channels.h`), and Channel[T]'s element type \
-                                             is NOT actually tracked past `Channel.new` (docs/guide/channels.md's \
-                                             \"T inferred from first send/recv\" does not hold end-to-end today \
-                                             — see [M-channel-generic-elem-type]). Supported today: `int`, \
-                                             `bool`, `char`, fixed-width int types, and any pointer-sized type \
-                                             (`[]T`, records, `HashMap`, sums, …). NOT supported: `str`, \
-                                             `f32`/`f64`, tuples, value-records, or any other multi-word type.",
+                                            "[E_CHANNEL_UNSOUND_ELEM_TYPE] `Channel[T].send(v)`: the \
+                                             channel's declared element type `T` (C representation `{}`) \
+                                             is not word-safe for the current channel implementation — the \
+                                             runtime stores every element in a single `nova_int`-sized slot \
+                                             (`nova_rt/channels.h`) regardless of `T` (Plan 221.1 №286/№143: \
+                                             `T` IS tracked end-to-end by the checker now — a value of the \
+                                             WRONG type is caught earlier as `[E_CHANNEL_ELEM_TYPE_MISMATCH]`; \
+                                             this is a residual RUNTIME REPRESENTATION limit on `T` itself, \
+                                             not a type mismatch). Supported today: `int`, `bool`, `char`, \
+                                             fixed-width int types, and any pointer-sized type (`[]T`, \
+                                             records, `HashMap`, sums, …). NOT supported: `str`, `f32`/`f64`, \
+                                             tuples, value-records, or any other multi-word type.",
                                             arg_c_ty));
                                     }
                                     let v = self.emit_expr(arg.expr())?;
@@ -40219,16 +40281,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     let arg_c_ty = self.infer_expr_c_type(arg.expr());
                                     if !arg_c_ty.is_empty() && !Self::channel_payload_c_type_ok(&arg_c_ty) {
                                         return Err(format!(
-                                            "[E_CHANNEL_UNSOUND_ELEM_TYPE] `Channel[T].try_send(v)`: `T` is not \
-                                             word-safe for the current channel implementation (payload C type \
-                                             `{}`) — the runtime stores every element in a single `nova_int`-\
-                                             sized slot (`nova_rt/channels.h`), and Channel[T]'s element type \
-                                             is NOT actually tracked past `Channel.new` (docs/guide/channels.md's \
-                                             \"T inferred from first send/recv\" does not hold end-to-end today \
-                                             — see [M-channel-generic-elem-type]). Supported today: `int`, \
-                                             `bool`, `char`, fixed-width int types, and any pointer-sized type \
-                                             (`[]T`, records, `HashMap`, sums, …). NOT supported: `str`, \
-                                             `f32`/`f64`, tuples, value-records, or any other multi-word type.",
+                                            "[E_CHANNEL_UNSOUND_ELEM_TYPE] `Channel[T].try_send(v)`: the \
+                                             channel's declared element type `T` (C representation `{}`) \
+                                             is not word-safe for the current channel implementation — the \
+                                             runtime stores every element in a single `nova_int`-sized slot \
+                                             (`nova_rt/channels.h`) regardless of `T` (Plan 221.1 №286/№143: \
+                                             `T` IS tracked end-to-end by the checker now — a value of the \
+                                             WRONG type is caught earlier as `[E_CHANNEL_ELEM_TYPE_MISMATCH]`; \
+                                             this is a residual RUNTIME REPRESENTATION limit on `T` itself, \
+                                             not a type mismatch). Supported today: `int`, `bool`, `char`, \
+                                             fixed-width int types, and any pointer-sized type (`[]T`, \
+                                             records, `HashMap`, sums, …). NOT supported: `str`, `f32`/`f64`, \
+                                             tuples, value-records, or any other multi-word type.",
                                             arg_c_ty));
                                     }
                                     let v = self.emit_expr(arg.expr())?;
@@ -40257,11 +40321,56 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     if obj_ty == "Nova_ChanReader*" {
                         let obj_c = self.emit_expr(obj)?;
                         match method.as_str() {
-                            "recv"      => return Ok(format!("nova_chan_reader_recv({})", obj_c)),
+                            "recv"      => {
+                                // Plan 221.1 №286/№143 (окно p-chan): the RUNTIME call
+                                // ALWAYS returns the erased `NovaOpt_nova_int` (the
+                                // buffer slot is a bare word regardless of `T` —
+                                // unchanged by this window, see `channel_payload_c_
+                                // type_ok`'s doc). The CHECKER, however, now tracks a
+                                // turbofish/annotated channel's real `T` end-to-end
+                                // (`channel_elem_type`, types/mod.rs) and types THIS
+                                // call's declared C type as `NovaOpt_<T>` accordingly
+                                // — so when `T` is concretely known and not bare
+                                // `int`, the raw runtime value must be reinterpreted
+                                // into the CONCRETE `NovaOpt_<T>` shape the checker
+                                // promised, or the surrounding C (a `let`
+                                // declaration, a `match` scrutinee, …) sees a
+                                // `NovaOpt_nova_int` where it expects `NovaOpt_<T>` —
+                                // a CC-FAIL (measured: `channel_elem_type_word_safe
+                                // .nv`'s `Channel[bool].new` turbofish test regresses
+                                // without this). `.tag` is bit-for-bit identical
+                                // across every `NovaOpt_*` monomorph (same enum); only
+                                // `.value` needs the reinterpret, mirroring the EXACT
+                                // `cast_from_nova_int` bit-pun already used for
+                                // `Result`'s Ok payload above.
+                                if let Some(target_c) = self.channel_recv_target_c(call_id) {
+                                    let tmp = self.fresh_tmp();
+                                    self.line(&format!(
+                                        "NovaOpt_nova_int {} = nova_chan_reader_recv({});",
+                                        tmp, obj_c));
+                                    return Ok(Self::channel_reinterpret_novaopt(
+                                        &format!("{tmp}.tag == NOVA_TAG_Option_Some"),
+                                        &format!("{tmp}.value"),
+                                        &self.opt_repr_c_type(&target_c),
+                                        &target_c,
+                                    ));
+                                }
+                                return Ok(format!("nova_chan_reader_recv({})", obj_c));
+                            }
                             "try_recv"  => {
                                 // NovaChanTryResult → NovaOpt_nova_int: OK→Some, EMPTY/CLOSED→None
                                 let tmp = self.fresh_tmp();
                                 self.line(&format!("NovaChanTryResult {} = nova_chan_reader_try_recv({});", tmp, obj_c));
+                                // Plan 221.1 №286/№143: same reinterpret as `recv`
+                                // above — see that arm's doc.
+                                if let Some(target_c) = self.channel_recv_target_c(call_id) {
+                                    return Ok(Self::channel_reinterpret_novaopt(
+                                        &format!("{tmp}.tag == NOVA_CHAN_TRY_OK"),
+                                        &format!("{tmp}.value"),
+                                        &self.opt_repr_c_type(&target_c),
+                                        &target_c,
+                                    ));
+                                }
                                 return Ok(format!(
                                     "({}.tag == NOVA_CHAN_TRY_OK ? (NovaOpt_nova_int){{.tag=NOVA_TAG_Option_Some,.value={}.value}} : (NovaOpt_nova_int){{.tag=NOVA_TAG_Option_None,.value=0}})",
                                     tmp, tmp));

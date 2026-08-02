@@ -490,5 +490,29 @@
 # всех `while`-conformance-фикстур (весь spec_tests/conformance минус
 # embed-фикстуры без companion-ассетов) одним CU — PASS, без регрессий.
 # infer не тронут (control-flow эмиссия, не новая точка type-inference).
-lines=64396
+# Рост 64396→64505 осознан (Plan 221.1 №286/№143, окно p-chan, real
+# Channel[T] monomorphization). Корень фикса — В ЧЕКЕРЕ (types/mod.rs):
+# `channel_elem_type`/producer-ветки материализуют `resolved_types[recv-
+# call.id] = Option[T]` для ЛЮБОГО T, когда канал объявлен турбофишем/
+# аннотацией — обычная генерик-инфраструктура (`resolved_type_to_c`)
+# лоуэрит ЭТО без единой новой строки в emit_c.rs. НО: рантайм-функция
+# `nova_chan_reader_recv`/`_try_recv` ФИЗИЧЕСКИ всегда возвращает erased
+# `NovaOpt_nova_int` (единственная word-sized ячейка буфера, независимая
+# правка/объём этого окна не трогает) — emit ОБЯЗАН реинтерпретировать
+# сырое значение в КОНКРЕТНУЮ `NovaOpt_<T>`-форму, которую чекер теперь
+# честно обещает (иначе CC-FAIL: измерено на `channel_elem_type_word_safe
+# .nv`'s `Channel[bool].new`-турбофиш тесте — РЕГРЕССИЯ без этой правки).
+# Это НЕ типовая инференция (не infer_expr_c_type — infer=348 не сдвинут),
+# а неизбежный value-representation glue НА ГРАНИЦЕ checker-канал/runtime-
+# ABI — ровно то, для чего вообще существует emit-слой. `channel_recv_
+# target_c` (~20 строк) + `channel_reinterpret_novaopt` (~28 строк,
+# NPO-aware: pointer-`T` → `{value}`-only NPO-структура БЕЗ `.tag`,
+# scalar-`T` → `{tag,value}`, две РАЗНЫЕ существующие `NovaOpt_*`-раскладки
+# `register_novaopt_decl`, не выдумка) + правка двух match-арм (`recv`/
+# `try_recv`) + doc-комментарии = ~109 строк. Снос 3 ad-hoc `Channel.new`-
+# веток (`[M-59.1-channel-new-cleanup]`) этим окном НЕ сделан (см.
+# PROGRESS-pchan.md/D91-амендмент 2026-08-02 — Plan 115 всё ещё PLANNED),
+# так что lines НЕ уменьшился — честно зафиксировано, следующему окну
+# снижать отсюда.
+lines=64505
 infer=348
