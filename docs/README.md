@@ -35,6 +35,14 @@ design-rationale, «для контрибьюторов»/«для авторо�
 [`docs/dev/promts/`](dev/promts/) (онбординг: `read-project.md`,
 `read-toolchain.md`, `site-agent.md` и др.).
 
+Внутренние подпапки:
+
+- [`docs/dev/cases/`](dev/cases/) — разборы конкретных багов (case studies).
+- [`docs/dev/idioms/`](dev/idioms/) — идиомы/паттерны и Q-блоки (design-Q&A);
+  часть файлов — кандидаты на promotion в `docs/guide/`.
+- [`docs/dev/migration/`](dev/migration/) — миграционные заметки волн.
+- [`docs/dev/research/`](dev/research/) — исследования, сравнения, findings.
+
 **Правило:** `docs/dev/` на сайт nv-lang.org не попадает НИКОГДА — это не
 whitelist-фильтр, это структурное разделение (сайт синкает только
 `docs/guide/`, см. выше).
@@ -46,9 +54,7 @@ whitelist-фильтр, это структурное разделение (са
 Навигация/очередь — [`docs/plans/README.md`](plans/README.md). Структура и
 имена файлов этого раздела не меняются разделением `guide/`/`dev/`.
 
-## Прочее (не переносилось этой правкой)
+## Летопись (не переносится)
 
-`docs/cases/`, `docs/collections/`, `docs/idiom/`, `docs/idioms/`,
-`docs/migration/`, `docs/research/`, `docs/history/`, `docs/project-creation.txt` —
-справочные/исторические материалы вне этой реструктуризации; не
-публикуются, кандидаты на будущую ревизию отдельным решением.
+`docs/history/` (`simplifications-closed.md`) и `docs/project-creation.txt` —
+исторические логи; не публикуются и не правятся в этой реструктуризации.

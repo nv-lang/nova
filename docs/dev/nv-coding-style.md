@@ -1016,7 +1016,7 @@ fn use_it(src *u8, dst *mut u8, n int) -> () {
 - **Анти-паттерн:** `u64`/`usize` для offset/len «чтобы было ≥0» + россыпь `as u64`-кастов (литералы Nova — `int`). Знак не кодируем
   типом — отрицательный индекс/offset → доменная ошибка (`InvalidInput` / контракт `requires i >= 0`), как `SeekFrom.Start(int)` (Start < 0 → ошибка).
 - **Почему signed, а не unsigned (обоснование/research):**
-  [research/08-int-width-and-literal-inference.md §1](../research/08-int-width-and-literal-inference.md) (3 раунда обсуждения, 2026-06-03)
+  [research/08-int-width-and-literal-inference.md §1](research/08-int-width-and-literal-inference.md) (3 раунда обсуждения, 2026-06-03)
   → формализовано в [D226 «Signed indexing convention»](../../spec/decisions/02-types.md#d226) (§Почему); `usize`/`isize` удалены
   [Plan 133](../plans/133-remove-usize-isize.md). Ключевое: **industry 7:3 за signed** (Go/Swift/Java/Kotlin/C#/Python/TS signed;
   Rust `usize`/C++ `size_t`/Zig — unsigned, причём **Stroustrup: «I regret using unsigned for size in STL»** + vocal Rust-regrets);
@@ -1483,7 +1483,7 @@ fn build_router() -> Router =>
 
 ## Известные расхождения для будущего sweep'а
 
-0. **`docs/idioms/size-accessors.md:41-42`** документирует `s.len()` как O(n) codepoint-count,
+0. **`docs/dev/idioms/size-accessors.md:41-42`** документирует `s.len()` как O(n) codepoint-count,
    но `strings.md:71` / `core.nv:22` — это compile-error `E_STR_NO_LEN` (Plan 152.1/D249).
    Idiom-doc устарел; `strings.md` авторитетен.
 1. **Стиль-дрейф:** часть строкового кода ещё пишет `i = i + 1` вместо `i += 1` (`search.nv`,

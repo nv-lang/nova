@@ -957,7 +957,7 @@ h2 framing/HPACK = **Nova-логика (.nv) над byte-транспортом*
 - **NEW D362** — HTTP-over-TLS + HTTP/2: ALPN→`Version` (Q7); Tls-инкапсуляция (Q30); h2 frame/HPACK/**stream=fiber** (Q8)/HPACK-serialized-on-conn (Q31)/flow-control/SETTINGS/GOAWAY/anti-DoS(rapid-reset/CONTINUATION)/push-OFF/PRIORITY-drop; version-transparency-инвариант.
 - **Q9 closure** — RESOLVED §3.0/Q1: HTTP-логика core .nv; byte-транспорт C-routed; compress (Plan 179): inflate/gzip/zlib pure-Nova + brotli C-FFI.
 - **spec_tests/conformance:** файлы §7 (d357–d362 + amend d292 / NEW d301) — ОБЯЗАТЕЛЬНОЕ D-покрытие.
-- **docs/* (новые):** `docs/http.md`, `docs/idioms/http-client.md`, `docs/idioms/http-server.md`.
+- **docs/* (новые):** `docs/http.md`, `docs/dev/idioms/http-client.md`, `docs/dev/idioms/http-server.md`.
 
 ---
 
@@ -1090,7 +1090,7 @@ h2 framing/HPACK = **Nova-логика (.nv) над byte-транспортом*
 
 ## 12. API-ревью (2026-06-27, multi-agent vs 7 языков)
 
-> Источник: 11-агентный workflow (gather → 7 языковых экспертов Rust/Go/TS/Kotlin/Java/Zig/Swift + self-consistency → synth). **Полный документ:** [docs/research/2026-06-27-http-net-api-review.md](../research/2026-06-27-http-net-api-review.md).
+> Источник: 11-агентный workflow (gather → 7 языковых экспертов Rust/Go/TS/Kotlin/Java/Zig/Swift + self-consistency → synth). **Полный документ:** [docs/dev/research/2026-06-27-http-net-api-review.md](../dev/research/2026-06-27-http-net-api-review.md).
 
 **Вердикт:** http (Plan 178) — **самый удобный high-level стек среди 7 пиров** по сумме (must-consume body = compile-time no-leak, mock-триад, secure-by-default, Go-1.22-server+graceful, verb-builder reqwest 1:1). Структура корректна, имена в основном = смыслу+практике. Остаются **2 HIGH-долга** + пара naming-footgun'ов — закрыть, чтобы «без упрощений» (§8.0) держалось.
 

@@ -534,7 +534,7 @@ fn critical(...) -> Result =>
 > `x!!` / `x ?? v`.
 
 > **AMEND (2026-07-16, Plan 200 Пункт 14, research
-> `docs/research/2026-07-16-option-result-combinators.md`):** добавлены
+> `docs/dev/research/2026-07-16-option-result-combinators.md`):** добавлены
 > **три** Nova-body метода — closes «Q-monadic-api» (§Открытые вопросы
 > ниже) для этой части поверхности:
 > - `fn Option[T] @flat_map[U](flat_map_fn fn(T) -> Option[U]) -> Option[U]`
@@ -5600,7 +5600,7 @@ Two output formats:
 
 ### 2. Production rollout strategy
 
-`docs/migration/123-field-cache.md` provides production team
+`docs/dev/migration/123-field-cache.md` provides production team
 guide:
 
 1. **Baseline differential:** run tests under both `NOVA_FIELD_CACHE=0`

@@ -3,7 +3,7 @@
 
 > **Создан:** 2026-06-15. **Реализован:** 2026-06-15. **Статус:** ✅ IMPLEMENTED (Ф.1–Ф.4 green; см. «Статус по завершении»). P2.
 > **Владеет:** `[M-reachability-codegen-dce]` (Ф.1 core ✅). **Зависит от:** codegen (`emit_c.rs`), резолвер импортов.
-> **Research:** [docs/research/11-stdlib-method-resolution-reachability.md](../research/11-stdlib-method-resolution-reachability.md).
+> **Research:** [docs/dev/research/11-stdlib-method-resolution-reachability.md](../dev/research/11-stdlib-method-resolution-reachability.md).
 > **Spec:** [D283](../../spec/decisions/09-tooling.md#d283) (reachability-codegen policy).
 > **Разблокирует:** `[M-152.3b-char-methods-no-import]` ✅ CLOSED (no-import char-методы, Ф.4), снятие цикла prelude↔std.unicode, opt-in-стоимость Unicode-таблиц.
 

@@ -8351,7 +8351,7 @@ if Some(x) = get_x() && Some(y) = get_y(x) && x + y > 10 { }
 - [D34](decisions/03-syntax.md#d34) — grammar `if-cond`
 - [Plan 106](../docs/plans/106-if-let-chains.md) — реализованный `&&` guard
 - Rust [RFC 2497 let-chains](https://rust-lang.github.io/rfcs/2497-if-let-chains.html) — stable 1.64
-- [Cross-language syntax-gap survey 2026-07-02](../docs/research/2026-07-02-cross-language-syntax-gap-survey.md) — подтверждён как единственный `consider`-кандидат в этой зоне; выигрыш над nested-`if` мал.
+- [Cross-language syntax-gap survey 2026-07-02](../docs/dev/research/2026-07-02-cross-language-syntax-gap-survey.md) — подтверждён как единственный `consider`-кандидат в этой зоне; выигрыш над nested-`if` мал.
 
 ## Q-labeled-loops — метки циклов + адресный `break`/`continue` — 🟡 OPEN (2026-07-02)
 
@@ -8388,7 +8388,7 @@ for outer in grid {
 2. **Приоритет:** низкий. Ниша — hot grid/matrix-сканы, где function boundary мешает `mut`-capture / нельзя `continue` внешний.
 
 ### Связь
-- [Cross-language syntax-gap survey 2026-07-02](../docs/research/2026-07-02-cross-language-syntax-gap-survey.md)
+- [Cross-language syntax-gap survey 2026-07-02](../docs/dev/research/2026-07-02-cross-language-syntax-gap-survey.md)
 - Прецедент отказа: Go-mistakes audit #34 «Меток циклов нет» — пересматривается этой записью.
 
 ## Q-nested-or-patterns — `|`-альтернативы внутри варианта/позиции — 🟡 OPEN (2026-07-02)
@@ -8421,7 +8421,7 @@ match pair {
 - **Граница:** только вложенный `|`. **Range-in-arm** (`'a'..='z' =>`) — НЕ добавляем (полностью покрыт guard `c if c >= 'a' && c <= 'z'`; настоящий feature-creep).
 
 ### Связь
-- [Cross-language syntax-gap survey 2026-07-02](../docs/research/2026-07-02-cross-language-syntax-gap-survey.md)
+- [Cross-language syntax-gap survey 2026-07-02](../docs/dev/research/2026-07-02-cross-language-syntax-gap-survey.md)
 - [D34](decisions/03-syntax.md#d34) — pattern-bind grammar; существующий `Pattern::Or` инвариант.
 
 ## Q-extensible-sum-types — `#extensible`: sum-тип может расти без breaking change — 🟡 OPEN (2026-07-03)

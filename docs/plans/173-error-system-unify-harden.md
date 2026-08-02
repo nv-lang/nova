@@ -15,7 +15,7 @@
 > **Завершает** [174.2](174.2-question-mark-return-only.md) (`?`-return-only), баги
 > `[M-172-with-fail-swallows-panic]`, `[M-172-errdefer-okdefer-dead-surface]`.
 > **Источник:** deep-analysis workflow 2026-06-20 (4 агента) + аудит-workflow 2026-07-03 (5 агентов).
-> **Хаб:** [docs/idiom/error-and-cleanup-model.md](../idiom/error-and-cleanup-model.md).
+> **Хаб:** [docs/dev/idioms/error-and-cleanup-model.md](../dev/idioms/error-and-cleanup-model.md).
 >
 > **Очередность (граф 173-176 — [README планов §Очередность](README.md), 2026-07-03):** Волна 0 = Ф.0R;
 > Волна 1 трек B = Ф.1 → Ф.2 (параллельно трекам 174.3/175/176-io-core). **Входящие гейты:** Ф.3-семейство —
@@ -408,7 +408,7 @@ Model 1 зафиксирована; синтаксис `defer(o ScopeOutcome)`; 
 5. **`with_timeout` удаление** (§3a п.4) — после Plan 175 + deadline-параметров.
 - **spec/D/Q/docs:** D-блок «structured error propagation» (номер — следующий свободный ПОСЛЕ D348:
   **D348 зарезервирован за Ф.6**, т.е. D349+ по high-water на момент реализации); amend 06-concurrency.md
-  (D14/D75/D50/D94; 08-runtime.md:168 stale-стратегии); docs/idiom/*.
+  (D14/D75/D50/D94; 08-runtime.md:168 stale-стратегии); docs/dev/idioms/*.
 - **Тесты:** по под-планам + остаток: pos «3 ребёнка падают → primary + 2 в suppressed (НЕ first-wins-only;
   строго лучше Swift TaskGroup)» (после Ф.4 — MultiError-форма); precedence PANIC>USER>CANCEL; detach-policy;
   select None-arm различает closed. neg: `[E_PARFOR_RESULT_UNSUPPORTED]` до 173.1-фикса; detach без
@@ -748,7 +748,7 @@ effect-set (Fail=Escalate-with-error; suspend в хендлере), `Supervisor[
 
 ## 8. Источники для исполнителя (контекст)
 
-**Хаб:** [docs/idiom/error-and-cleanup-model.md](../idiom/error-and-cleanup-model.md).
+**Хаб:** [docs/dev/idioms/error-and-cleanup-model.md](../dev/idioms/error-and-cleanup-model.md).
 **Конвенции (нормативные для исполнения):** [test-conventions.md](../dev/test-conventions.md),
 [dev-workflow.md](../dev/dev-workflow.md), [conventions-governance.md](../dev/conventions-governance.md),
 [compiler-conventions.md](../dev/compiler-conventions.md).

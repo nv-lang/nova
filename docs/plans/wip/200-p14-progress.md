@@ -26,7 +26,7 @@
      сторону от ретракта unwrap-twins).
 
 3. **Пункт 14** заведён в `docs/plans/200-std-improvements.md` (перед «Кандидаты на будущее»),
-   статус ✅ РЕАЛИЗОВАНО, ссылка на research (`docs/research/2026-07-16-option-result-combinators.md`,
+   статус ✅ РЕАЛИЗОВАНО, ссылка на research (`docs/dev/research/2026-07-16-option-result-combinators.md`,
    коммиты `f74cea01c` + `c24c5cae4`).
 
 4. **Тест** — `spec_tests/conformance/plan200_14_option_result_flat_map_filter.nv`, 13 test-блоков:

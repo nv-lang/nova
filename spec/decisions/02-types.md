@@ -11115,7 +11115,7 @@ retracted, pointer-таблица + str переписаны; A6 — 0 регр�
 
 ## D220. Per-field visibility — `priv` keyword + type-level default flip
 
-> **Status:** V1 ACTIVE (spec + parser/AST infrastructure landed, 2026-06-02). **AMENDED by [D281](#d281-module-level-field-privacy--type-x-priv---plan-160)** (2026-06-15): type-level `priv` теперь = module-private (не type-private); type-private type-level default = `priv(type)`. Field-level explicit `priv` остаётся type-private (без изменений). Реализация — [Plan 124](../../docs/plans/124-priv-field-visibility.md). Empirical validation — [docs/research/06-field-visibility-go-kubernetes.md](../../docs/research/06-field-visibility-go-kubernetes.md). Amends [D47](07-modules.md#d47) (replaces deprecated `_prefix` convention с compile-time enforcement).
+> **Status:** V1 ACTIVE (spec + parser/AST infrastructure landed, 2026-06-02). **AMENDED by [D281](#d281-module-level-field-privacy--type-x-priv---plan-160)** (2026-06-15): type-level `priv` теперь = module-private (не type-private); type-private type-level default = `priv(type)`. Field-level explicit `priv` остаётся type-private (без изменений). Реализация — [Plan 124](../../docs/plans/124-priv-field-visibility.md). Empirical validation — [docs/dev/research/06-field-visibility-go-kubernetes.md](../../docs/dev/research/06-field-visibility-go-kubernetes.md). Amends [D47](07-modules.md#d47) (replaces deprecated `_prefix` convention с compile-time enforcement).
 
 ### Что
 
@@ -11186,7 +11186,7 @@ Nova не ограничивает добавление методов на ти
 fn Test @id() -> int => @id   // в любом модуле — легально
 ```
 
-Это не считается «вскрытием» — это осознанный выбор пользователя. Nova — «публичное по умолчанию» (D47, validated в docs/research/06-field-visibility-go-kubernetes.md), и `priv(type)` означает «используй методы типа», а не «запрещено».
+Это не считается «вскрытием» — это осознанный выбор пользователя. Nova — «публичное по умолчанию» (D47, validated в docs/dev/research/06-field-visibility-go-kubernetes.md), и `priv(type)` означает «используй методы типа», а не «запрещено».
 
 Настоящая граница инкапсуляции — **модуль** (`priv` = module-private, D281): другой модуль не может случайно прочитать поле — только намеренно добавив метод.
 
@@ -12024,7 +12024,7 @@ ALL closed 2026-06-02:
 - **2026-06-03** (D226 amend, pointer-aware): §5 расширен для
   `usize` ABI bridge + pointer-integer casts; §7 «Pointer interactions»
   с numeric matrix для всех ptr ops; cross-refs на [D214](#d214) +
-  [D216](#d216). Закрывает gap research'а §3 ([docs/research/08](../../docs/research/08-int-width-and-literal-inference.md)).
+  [D216](#d216). Закрывает gap research'а §3 ([docs/dev/research/08](../../docs/dev/research/08-int-width-and-literal-inference.md)).
 - **2026-06-09** (Plan 133): `usize`/`isize` удалены из Nova. `int` = address-sized
   signed integer (`intptr_t` на 64-bit). FFI-сигнатуры используют `int`, codegen кастит
   `intptr_t`→`size_t` внутри. D226 RETIRED в части `usize`/`isize` alias-semantics.
@@ -14456,7 +14456,7 @@ C-макросы `fmin`/`fmax` (нет специальной NaN-семанти
 > `param_is_inout_ptr`=false в `emit_c.rs`; запись идёт через shared handle,
 > переприсваивание биндинга локально/невидимо), НЕ «sink можно подменить» —
 > см. также исследование 2026-07-16 (ветка `research-mut-canon`,
-> `docs/research/2026-07-16-mut-param-sink-canon.md`) для полного разбора
+> `docs/dev/research/2026-07-16-mut-param-sink-canon.md`) для полного разбора
 > R2-split-vs-канон trade-off'а и латентной лености чекера на protocol-typed
 > handle-параметрах (закрыта тем же owner-decision: `[M-checker-protocol-param-mut-lenient]`
 > + `[M-conformance-param-mode-check]`, `types/mod.rs`). Полный текст канона

@@ -113,7 +113,7 @@ nova_tests/doc/fixtures/    ← unchanged (test exemption auto-skip'ает)
 
 spec/decisions/09-tooling.md ← D127 (new)
 docs/plans/45-nova-doc.md   ← обновить §11.5 №7 reference на D127
-docs/idioms/stability-tiers.md ← новый: когда нужны, когда не нужны
+docs/dev/idioms/stability-tiers.md ← новый: когда нужны, когда не нужны
 
 std/nova.toml               ← добавить enforce-stability = true
 ```
@@ -258,7 +258,7 @@ opt-in `error` (для production library crates).
 ### Ф.4 — Docs idiom page
 
 **Файлы:**
-- `docs/idioms/stability-tiers.md` (новый).
+- `docs/dev/idioms/stability-tiers.md` (новый).
 
 **Содержание (skeleton):**
 
@@ -364,7 +364,7 @@ opt-in `error` (для production library crates).
    error для file под `[lib].src/`, но НЕ для путей под fixture-dirs.
 3. Default behavior — warning (учит), не error (не блокирует).
 4. D127 в spec, cross-link с D105 и Plan 45 §11.5 №7.
-5. `docs/idioms/stability-tiers.md` объясняет когда / какой tier.
+5. `docs/dev/idioms/stability-tiers.md` объясняет когда / какой tier.
 6. 6 интеграционных тестов в `compiler-codegen/tests/doc_lints_scope.rs`.
 
 ---
@@ -417,7 +417,7 @@ opt-in `error` (для production library crates).
 **Pre-implemented (commit `db76aaf8386` 2026-05-19 morning):**
 - Plan 71 doc itself (this file)
 - D127 в `spec/decisions/09-tooling.md` (+73 LOC)
-- `docs/idioms/stability-tiers.md` (new, 118 LOC)
+- `docs/dev/idioms/stability-tiers.md` (new, 118 LOC)
 - `docs/plans/README.md` entry
 - `docs/plans/45-nova-doc.md` §11.5 №7 cross-link к D127
 

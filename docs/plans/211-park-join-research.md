@@ -15,7 +15,7 @@ drive-фибера под steal) остаётся отдельной, неисс
 (**НЕ МЁРЖИТЬ** — вносит memory corruption ~17% под sustained-нагрузкой).
 **Хронология расследования:** `docs/plans/park-join-progress.md` (в ветке; честная, шаги 1-13).
 **Методология:** [docs/dev/debugging-races.md](../dev/debugging-races.md) — playbook M:N-race-инвестигаций
-(20 уроков Plan 83.11); прецедент-кейс `docs/cases/mn-race-stale-slot-2026-05.md`.
+(20 уроков Plan 83.11); прецедент-кейс `docs/dev/cases/mn-race-stale-slot-2026-05.md`.
 
 ## 1. Проблема
 

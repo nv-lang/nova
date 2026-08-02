@@ -126,7 +126,7 @@ Worktree: `d:/Sources/nv-lang/nova-identx`, ветка `p-fix-ident-x`. Моде
   **Это ЕЩЁ ГИПОТЕЗА, не подтверждено реальным прогоном** — cargo build
   nova-cli --release в фоне (worktree, ~10 мин), после сборки нужно:
   1. Собрать repro-пакет (образец из research-заметки
-     `docs/research/2026-07-13-module-naming-two-segment-review.md` §2а:
+     `docs/dev/research/2026-07-13-module-naming-two-segment-review.md` §2а:
      `src/a/neg/x.nv` с `module neg.x`, экспорт `who`).
   2. `nova build` на пакете, ТОЛЬКО импорт `a.neg.x.{who}`, БЕЗ явного
      использования `.min()`/`.max()`/derive — если E7401 воспроизводится

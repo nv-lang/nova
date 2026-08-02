@@ -220,7 +220,7 @@ export type Stack[T] {
 ### 3.3 Default visibility — public (validated empirically)
 
 **Public by default + opt-in `priv` per field.** Confirmed by
-**kubernetes statistical audit** ([06-field-visibility-go-kubernetes.md](../research/06-field-visibility-go-kubernetes.md)):
+**kubernetes statistical audit** ([06-field-visibility-go-kubernetes.md](../dev/research/06-field-visibility-go-kubernetes.md)):
 
 | Layer | Public fields | Private fields |
 |---|---|---|
@@ -872,7 +872,7 @@ if ship — automated migration tool:
 - `docs/guide/field-visibility-guide.md` (V5) — user guide: examples,
   comparison с Go/Rust/TS/Kotlin/Java, design rationale, escape
   hatches.
-- `docs/migration/124-priv-fields.md` (V7) — migration guide.
+- `docs/dev/migration/124-priv-fields.md` (V7) — migration guide.
 - `nova doc` integration — priv badge, hide-by-default.
 - Code comments в checker / parser — inline explanation each rule.
 
@@ -989,7 +989,7 @@ Check open-questions.md для существующих Q'ов:
 - `docs/guide/field-visibility-guide.md` (V5 → 124.5) — user guide:
   what is `priv`, when use, comparison Go/Rust/TS/Kotlin/Java,
   escape hatches, common patterns.
-- `docs/migration/124-priv-fields.md` (V7 → 124.7) — migration
+- `docs/dev/migration/124-priv-fields.md` (V7 → 124.7) — migration
   guide for edition flip.
 
 ### 11.2 Developer-facing

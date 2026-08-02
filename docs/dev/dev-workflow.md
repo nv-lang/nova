@@ -214,4 +214,4 @@ Nova-workspace `nova.toml` (members: `std`, `examples`, `nova_tests`). Подр�
 | Управление конвенциями (мета) | [docs/dev/conventions-governance.md](conventions-governance.md) |
 | CLI-справка | [docs/guide/nova-cli.md](../guide/nova-cli.md) |
 | Открытые долги `[M-*]` | [docs/plans/backlog-followups.md](../plans/backlog-followups.md) |
-| Модель ошибок/cleanup | [docs/idiom/error-and-cleanup-model.md](../idiom/error-and-cleanup-model.md) |
+| Модель ошибок/cleanup | [docs/dev/idioms/error-and-cleanup-model.md](idioms/error-and-cleanup-model.md) |

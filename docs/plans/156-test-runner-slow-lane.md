@@ -7,7 +7,7 @@
 > `[M-156-slow-subtree-dir]` до появления первого медленного folder-module, YAGNI).
 > **rev-3 (2026-06-15):** полные `*_conformance_slow.nv` корпуса **НЕ коммитятся** —
 > **регенерируются on-demand** из pinned UCD в gitignored-кэш (модель Go/CPython; cross-eco
-> research → [docs/research/10-unicode-test-data-storage.md](../research/10-unicode-test-data-storage.md)).
+> research → [docs/dev/research/10-unicode-test-data-storage.md](../dev/research/10-unicode-test-data-storage.md)).
 > Коммитится только fast-сэмпл `*_conformance.nv`. Причина: у Nova есть байт-идентичный
 > генератор → коммит ~23 МБ не даёт ничего сверх него, но навсегда утяжеляет историю
 > (collation 15.5 МБ + ~16 МБ/Unicode-bump); решение пользователя.
@@ -128,7 +128,7 @@ Unicode-bump (227k переставленных строк git не дельти
 него (воспроизводимость уже гарантирована) — поэтому slow-корпуса **gitignored** и
 **регенерируются on-demand** из pinned UCD в кэш (= модель Go `-long`/`UNICODE_DIR` +
 CPython `open_urlresource` skip-never-fail). Кросс-эко обоснование:
-[docs/research/10-unicode-test-data-storage.md](../research/10-unicode-test-data-storage.md).
+[docs/dev/research/10-unicode-test-data-storage.md](../dev/research/10-unicode-test-data-storage.md).
 
 ### Миграция (выполнено rev-3)
 Populate-фаза (workflow) сгенерила и закоммитила 6 `*_conformance_slow.nv` (~23 MB) на
@@ -232,7 +232,7 @@ Go `-short`/build-tags; Rust `#[ignore]`+`--ignored`, двухуровневый
 
 **Хранение (rev-3, решение пользователя):** полные corpora НЕ коммитятся —
 регенерируются on-demand из pinned UCD (модель Go/CPython; см.
-[research 10](../research/10-unicode-test-data-storage.md)). Это НЕ упрощение механизма и
+[research 10](../dev/research/10-unicode-test-data-storage.md)). Это НЕ упрощение механизма и
 НЕ data-gate (данные доступны через генератор), а осознанный выбор хранения ради чистой
 истории. `[M-152-collation-full-conformance]` теперь = «прогнать регген + slow-gate в CI»,
 не «закоммитить».

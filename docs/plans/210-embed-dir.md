@@ -75,7 +75,7 @@
 > (`mut`-алиас view из `get()`/переменной → запись в rodata → SEGV) — строка в §9 + floating-маркер
 > `[M-d412-blob-view-mut-write]` (backlog, P3, home D412); (4) §1-таблица синхронизирована с Call-синтезом;
 > (5) dot-skip не касается ЯВНО названного корня (`embed_dir(".assets")` — встраивается).
-> Источник дизайна: [research 2026-07-15 embed-dir](../research/2026-07-15-embed-dir-proposal.md)
+> Источник дизайна: [research 2026-07-15 embed-dir](../dev/research/2026-07-15-embed-dir-proposal.md)
 > (§3 вариант A + cross-language survey). Маркер: `[M-embed-dir]` (backlog, APPROVED/queued).
 > Родитель: [D412](../../spec/decisions/03-syntax.md#d412) (`embed("file")`, single-file, Plan 186).
 > **Приоритет P3** (удобство, не блокер: single-embed + самодостаточный html покрывают MVP флагмана 187).

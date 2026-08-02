@@ -277,7 +277,7 @@ Post-Ф.4 — переписать 15+ workaround мест на idiomatic D65 fo
 - [ ] `std/concurrency/retry.nv:113` — same pattern.
 - [ ] `std/concurrency/http.nv:36,54`, `oxsar_port.nv:51`, `orm_demo.nv:663,691`, `audit.nv:307` — `interrupt to_http_error(e)` → `throw to_http_error(e)`. Эта transformation требует, чтобы `to_http_error` accepted типизированный `e: SourceErr`, не `nova_str`.
 - [ ] **NOT migrating:** `interrupt Some(e)` / `interrupt None` cases — это другой паттерн (early-return через handler, не error-rewrite). Оставляем как есть.
-- [ ] Add `docs/idioms/error-handling.md` (new) — canonical patterns: typed throw, catch-all, cross-effect rewrite, `expr!!`, when to use each.
+- [ ] Add `docs/dev/idioms/error-handling.md` (new) — canonical patterns: typed throw, catch-all, cross-effect rewrite, `expr!!`, when to use each.
 
 ### Ф.8 — Performance + cross-toolchain (½ day)
 

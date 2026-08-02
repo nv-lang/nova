@@ -8,7 +8,7 @@
 > **D-блок (NEW):** **D347**. **D-карта (Ред.2 2026-07-03):** committed high-water 3xx = D355 (D354/D355 в спеке);
 > резервы: 178=D357–D362 · 179=D333–D337 (+D338–D339 буфер) · 180=D340–D346 · **181=D347** · 173=D348–D349 ·
 > 174=D350–D353+D356 · 172.1=D400+. D347 свободен (grep=0; cross-подтверждён 173:232) — verify в Ф.0.
-> **Источник:** [research 2026-07-02](../research/2026-07-02-same-scope-rebinding.md) — эмпирика (11 проб) + 13 языков + 9 точек взаимодействия по коду. Сводка прецедента: **Rust/OCaml/F#/Elixir = да; Erlang/Swift/Kotlin/Java/C#/TS/Zig = нет**; уроки №1-5 (Rust guard-футган → R2; Haskell `<<loop>>` → R3; Go `:=` → отличие D34) — research §2.
+> **Источник:** [research 2026-07-02](../dev/research/2026-07-02-same-scope-rebinding.md) — эмпирика (11 проб) + 13 языков + 9 точек взаимодействия по коду. Сводка прецедента: **Rust/OCaml/F#/Elixir = да; Erlang/Swift/Kotlin/Java/C#/TS/Zig = нет**; уроки №1-5 (Rust guard-футган → R2; Haskell `<<loop>>` → R3; Go `:=` → отличие D34) — research §2.
 > **Носитель:** main (компиляторная фича; координация с [172.1](172.1-unified-type-engine.md) — alpha-pass не трогает канал resolved_types, работает ДО него; §9).
 > **Очередность (граф 173-181 — [README планов §Очередность](README.md), 2026-07-03):** Волна 0 = Ф.0-остаток
 > (verify + пины; **sign-off R1–R7 ✅ 2026-07-03** — fallback `E_DUPLICATE_LOCAL` не понадобился). Реализация — Волна 2+, **вне

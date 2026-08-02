@@ -1461,7 +1461,7 @@ Single-session sequential implementation не реалистична (plan-own e
 
 #### ✅ Plan 110.8 Ф.14.2 — Q-blocks (commit `<see next>`)
 
-- `docs/idiom/consume-scope-cleanup.md` (277 LOC) — 4 из 11 Q-blocks:
+- `docs/dev/idioms/consume-scope-cleanup.md` (277 LOC) — 4 из 11 Q-blocks:
   Q-cleanup-semantics, Q-consumable-protocol, Q-when-which-cleanup,
   Q-migration-from-okdefer; comparison table; anti-patterns.
 - 7 остальных Q-blocks (Q-cancel-and-cleanup, Q-async-cleanup,

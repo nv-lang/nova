@@ -81,7 +81,7 @@ fn combined_output(out: &std::process::Output) -> String {
 /// Isolated two-module package: `src/a/neg/x.nv` (`module neg.x`, exports
 /// `who`) + `src/main.nv` (`module identx_repro`, `import a.neg.x.{who}`).
 /// Mirrors the marker's own repro (`import a.neg.x.{who}`, D78 rev-3 path
-/// research note `docs/research/2026-07-13-module-naming-two-segment-
+/// research note `docs/dev/research/2026-07-13-module-naming-two-segment-
 /// review.md` §2а — the same `a/neg/x.nv` shape).
 fn write_fixture(dir: &Path) {
     write_file(
