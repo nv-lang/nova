@@ -905,6 +905,13 @@ pub struct ModuleEnv {
     /// (`infer_expr_c_type`, §0/§1). Part 2 seeds LITERALS via `number_exprs`; the
     /// checker annotates the rest in U.4.2+.
     pub resolved_types: HashMap<crate::ast::ExprId, ResolvedType>,
+    /// №279 [M-nested-err-pattern-shared-variant-wrong-enum-tag]: per-pattern
+    /// resolved-SUM-NAME channel (bare `Pattern::Variant`'s own `span` → the
+    /// Nova sum type's simple name resolved structurally against the
+    /// scrutinee). See `TypeCheckCtx::pattern_variant_types_buf` for the full
+    /// rationale. Lifted from that buffer after the check pass (mirrors
+    /// `resolved_types`).
+    pub pattern_variant_types: HashMap<Span, String>,
     /// Plan 172.1 U.3.4: per-call resolved-CALLEE channel (call-site `ExprId` → chosen
     /// callee `FnDecl` declaration `Span`). The checker resolves each call's overload
     /// ONCE (it already does, for arg-checking) and records WHICH `FnDecl` it picked;
@@ -1954,6 +1961,8 @@ fn check_module_impl(
     // Plan 172.1 U.4.4(b): lift the checker-side resolved-type channel; the pipeline merges
     // it OVER the number_exprs seed (main.rs / test_runner).
     env.resolved_types = type_check_ctx.resolved_types_buf.take();
+    // №279: lift the pattern-variant resolved-sum-name channel (mirrors resolved_types).
+    env.pattern_variant_types = type_check_ctx.pattern_variant_types_buf.take();
     // Plan 104.10 Ф.2 (D379): lift the opt-in IDE per-expression type map. Empty unless
     // `record_expr_types` was set (i.e. via check_module_with_expr_types) — zero-overhead
     // guarantee for the normal compile path.
@@ -3676,6 +3685,27 @@ struct TypeCheckCtx<'a> {
     /// `infer_expr_c_type` `_=>nova_int` fallback bugs (§0/§1; e.g. a `bool` var legacy typed
     /// as `nova_int`). Verified by full regress (the divergence set is bounded — U.4.4-prep.b audit).
     resolved_types_buf: std::cell::RefCell<HashMap<crate::ast::ExprId, ResolvedType>>,
+    /// №279 [M-nested-err-pattern-shared-variant-wrong-enum-tag]: per-pattern
+    /// resolved-SUM-NAME channel (bare `Pattern::Variant`'s OWN `span` → the
+    /// Nova sum type's simple name it was resolved against, e.g.
+    /// `Err(OnlySign)`'s inner `OnlySign` span → `"ParseBigRatError"`).
+    /// `resolve_pattern_variant_types` walks a match/if-let/while-let/for
+    /// pattern against the STRUCTURAL scrutinee type (descending through
+    /// Option[T]/Result[T,E]/general-sum tuple-variant payload positions,
+    /// recursively) and writes here whenever a bare (single-segment) variant
+    /// name unambiguously names a declared variant of the scrutinee's own
+    /// sum type at that position. Consumed by codegen's `pattern_cond`
+    /// BEFORE it falls back to `sum_schema_registry.find_variant_compat`'s
+    /// first-registered-wins heuristic — the bug this closes: two DIFFERENT
+    /// enums sharing a variant name (`ParseBigIntError::OnlySign` /
+    /// `ParseBigRatError::OnlySign`) both match a bare `OnlySign`
+    /// sub-pattern regardless of which enum the enclosing `Err(..)`
+    /// scrutinee's `E` actually is. Defensive: only written on genuine,
+    /// unambiguous structural resolution — every case the old heuristic
+    /// already handled correctly stays untouched (the channel is consulted
+    /// FIRST, not exclusively; `find_variant_compat` remains the fallback
+    /// for spans this pass didn't reach/resolve).
+    pattern_variant_types_buf: std::cell::RefCell<HashMap<Span, String>>,
     /// [M-crossmodule-samename-typecheck-bleed] (221.1 Ф.2 №28, 2026-07-23):
     /// `ResolvedType::Named` carries no span/file identity (`{name, module,
     /// args}` only) — reconstructing a `TypeRef` from it for the checker's
@@ -4390,6 +4420,9 @@ impl<'a> TypeCheckCtx<'a> {
             node_substs: std::cell::RefCell::new(HashMap::new()),
             // Plan 172.1 U.4.4(b): empty checker-side resolved-type channel.
             resolved_types_buf: std::cell::RefCell::new(HashMap::new()),
+            // №279: empty pattern-variant resolved-sum-name channel; filled
+            // during the check walk.
+            pattern_variant_types_buf: std::cell::RefCell::new(HashMap::new()),
             // [M-crossmodule-samename-typecheck-bleed] (221.1 №28): empty
             // call-return decl-span side channel; filled during the check walk.
             call_return_decl_span: std::cell::RefCell::new(HashMap::new()),
@@ -10086,6 +10119,9 @@ impl<'a> TypeCheckCtx<'a> {
                 // Plan 124.2 (D221): pattern destructure priv-field check.
                 let scrut_ty = self.infer_expr_type(scrutinee, scope);
                 self.check_priv_pattern_recursive(pattern, scrut_ty.as_ref(), errors);
+                // №279: resolve nested bare-variant sub-patterns against the
+                // scrutinee's structural type (see fn doc).
+                self.resolve_pattern_variant_types(pattern, scrut_ty.as_ref());
                 // [M-ro-launder-pattern-bind-not-enforced] (реестр 221.1
                 // №106, D34): extend `scope`/`ro_binding_names` with the
                 // `if let` pattern's OWN binding (`if Some(x) = ...`) before
@@ -10152,6 +10188,13 @@ impl<'a> TypeCheckCtx<'a> {
                 });
                 for arm in arms {
                     self.check_priv_pattern_recursive(&arm.pattern, scrut_ty.as_ref(), errors);
+                    // №279 [M-nested-err-pattern-shared-variant-wrong-enum-tag]:
+                    // resolve each nested bare-variant sub-pattern (e.g.
+                    // `Err(OnlySign)`'s `OnlySign`) against the scrutinee's
+                    // OWN structural type (`scrut_ty`, not the general
+                    // widened `binds_scrut_ty` used below for scope-only
+                    // purposes) — see `resolve_pattern_variant_types` doc.
+                    self.resolve_pattern_variant_types(&arm.pattern, scrut_ty.as_ref());
                     if let Some(g) = &arm.guard {
                         self.f1_expr(g, gs, scope, errors);
                     }
@@ -10504,6 +10547,8 @@ impl<'a> TypeCheckCtx<'a> {
                 let elem_ty = elem_type.clone()
                     .or_else(|| self.infer_iter_elem_type(iter, scope));
                 self.check_priv_pattern_recursive(pattern, elem_ty.as_ref(), errors);
+                // №279: resolve nested bare-variant sub-patterns (see fn doc).
+                self.resolve_pattern_variant_types(pattern, elem_ty.as_ref());
                 // 172.1.2 (for-var в scope, 2026-07-03): loop-переменная типизируется
                 // и БЕЗ явной аннотации — inferred elem_ty (тот же источник, что
                 // D221-проверка выше). Закрывает Index:i:<v> кластер (v[i] в теле).
@@ -10520,6 +10565,8 @@ impl<'a> TypeCheckCtx<'a> {
                 let elem_ty = elem_type.clone()
                     .or_else(|| self.infer_iter_elem_type(iter, scope));
                 self.check_priv_pattern_recursive(pattern, elem_ty.as_ref(), errors);
+                // №279: resolve nested bare-variant sub-patterns (see fn doc).
+                self.resolve_pattern_variant_types(pattern, elem_ty.as_ref());
                 // 172.1.2 (for-var в scope, 2026-07-03): loop-переменная типизируется
                 // и БЕЗ явной аннотации — inferred elem_ty (тот же источник, что
                 // D221-проверка выше). Закрывает Index:i:<v> кластер (v[i] в теле).
@@ -10534,6 +10581,8 @@ impl<'a> TypeCheckCtx<'a> {
                 // Plan 124.2 (D221): destructure pattern in while-let.
                 let scrut_ty = self.infer_expr_type(scrutinee, scope);
                 self.check_priv_pattern_recursive(pattern, scrut_ty.as_ref(), errors);
+                // №279: resolve nested bare-variant sub-patterns (see fn doc).
+                self.resolve_pattern_variant_types(pattern, scrut_ty.as_ref());
                 self.f1_block(body, gs, scope, errors);
             }
             ExprKind::Loop { body, .. } => {
@@ -12128,6 +12177,135 @@ impl<'a> TypeCheckCtx<'a> {
             _ => {}
         }
         out
+    }
+
+    /// №279 [M-nested-err-pattern-shared-variant-wrong-enum-tag]: recursively
+    /// resolves each BARE (single-segment) `Pattern::Variant` in `pattern`
+    /// against the STRUCTURAL scrutinee type reached by descending through
+    /// enclosing tuple-variant payload positions — generalizes
+    /// `match_arm_bindings`'s single-level Option[T]/Result[T,E]/general-sum
+    /// payload derivation to (a) recurse into FURTHER nested
+    /// `Pattern::Variant` sub-patterns (not just a terminal `Ident` bind) and
+    /// (b) multi-field tuple variants. Writes each resolved pattern's OWN
+    /// `span` → the sum type's simple name into `pattern_variant_types_buf`.
+    ///
+    /// Only writes when `scrutinee_ty` genuinely and unambiguously names a
+    /// declared variant at that position (arity match for the multi-field
+    /// case, declared-variant-name match for the unit case) — any
+    /// uncertainty leaves the span unwritten, so codegen's existing
+    /// `find_variant_compat` fallback chain is UNCHANGED for those cases
+    /// (this pass only ADDS a higher-priority source of truth, never removes
+    /// the fallback).
+    fn resolve_pattern_variant_types(&self, pattern: &Pattern, scrutinee_ty: Option<&TypeRef>) {
+        match pattern {
+            Pattern::Variant { path, kind, span } => {
+                // This pattern's OWN sum type — bare single-segment name
+                // only; an explicit `Sum.Variant` path is already
+                // unambiguous (codegen's `path.len() > 1` branch handles it
+                // without this channel).
+                // Option/Result variants deliberately EXCLUDED here: codegen
+                // already has dedicated, well-exercised Option/Result tag
+                // derivation (`is_opt`/`novares_ok_err`-driven) — this
+                // channel targets USER sum types only (the actual bug class:
+                // two different user enums sharing a variant name), so it
+                // stays out of the way of the builtin paths entirely.
+                if path.len() == 1 {
+                    if let Some(TypeRef::Named { path: sp, generics, .. }) = scrutinee_ty {
+                        let sum_name = sp.last().map(|s| s.as_str()).unwrap_or("");
+                        let variant = path[0].as_str();
+                        let resolved: Option<String> = if generics.is_empty()
+                            && sum_name != "Option"
+                            && sum_name != "Result"
+                        {
+                            self.types.get(sum_name).and_then(|td| {
+                                if let TypeDeclKind::Sum(variants) = &td.kind {
+                                    variants.iter().any(|v| v.name == variant)
+                                        .then(|| sum_name.to_string())
+                                } else {
+                                    None
+                                }
+                            })
+                        } else {
+                            None
+                        };
+                        if let Some(sn) = resolved {
+                            self.pattern_variant_types_buf.borrow_mut().insert(*span, sn);
+                        }
+                    }
+                }
+                // Recurse into sub-patterns with each field's STRUCTURAL
+                // payload type (same derivation, per-position).
+                if let VariantPatternKind::Tuple { patterns, rest } = kind {
+                    if !*rest {
+                        let variant = path.last().map(|s| s.as_str()).unwrap_or("");
+                        let field_tys: Vec<Option<TypeRef>> = match scrutinee_ty {
+                            Some(TypeRef::Named { path: sp, generics, .. }) => {
+                                let sum_name = sp.last().map(|s| s.as_str()).unwrap_or("");
+                                match (sum_name, variant) {
+                                    ("Option", "Some")
+                                        if generics.len() == 1 && patterns.len() == 1 =>
+                                    {
+                                        vec![Some(generics[0].clone())]
+                                    }
+                                    ("Result", "Ok")
+                                        if generics.len() == 2 && patterns.len() == 1 =>
+                                    {
+                                        vec![Some(generics[0].clone())]
+                                    }
+                                    ("Result", "Err")
+                                        if generics.len() == 2 && patterns.len() == 1 =>
+                                    {
+                                        vec![Some(generics[1].clone())]
+                                    }
+                                    _ if generics.is_empty() => self
+                                        .types
+                                        .get(sum_name)
+                                        .and_then(|td| {
+                                            if !td.generics.is_empty() {
+                                                return None;
+                                            }
+                                            if let TypeDeclKind::Sum(variants) = &td.kind {
+                                                variants.iter().find(|v| v.name == variant).and_then(
+                                                    |v| match &v.kind {
+                                                        SumVariantKind::Tuple(tys)
+                                                            if tys.len() == patterns.len() =>
+                                                        {
+                                                            Some(
+                                                                tys.iter()
+                                                                    .map(|t| Some(t.clone()))
+                                                                    .collect::<Vec<_>>(),
+                                                            )
+                                                        }
+                                                        _ => None,
+                                                    },
+                                                )
+                                            } else {
+                                                None
+                                            }
+                                        })
+                                        .unwrap_or_else(|| vec![None; patterns.len()]),
+                                    _ => vec![None; patterns.len()],
+                                }
+                            }
+                            _ => vec![None; patterns.len()],
+                        };
+                        for (i, p) in patterns.iter().enumerate() {
+                            let fty = field_tys.get(i).cloned().flatten();
+                            self.resolve_pattern_variant_types(p, fty.as_ref());
+                        }
+                    }
+                }
+            }
+            Pattern::Or { alternatives, .. } => {
+                for alt in alternatives {
+                    self.resolve_pattern_variant_types(alt, scrutinee_ty);
+                }
+            }
+            Pattern::Binding { inner, .. } => {
+                self.resolve_pattern_variant_types(inner, scrutinee_ty);
+            }
+            _ => {}
+        }
     }
 
     /// [M-match-arm-mixed-int-width-sentinel-coerce] amend (found by the mega-CU

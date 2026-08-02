@@ -428,5 +428,33 @@
 # прогонами); polaris `./nova.sh test src --strict-effects` 37/0/18 (новый
 # регресс-тест в `static_test.nv` включён и зелёный); `nova check std/src`
 # 147/26/60 байт-в-байт, без сдвига.
-lines=64384
+# Рост 64384->64389 (+5) осознан (реестр 221.1 №279
+# [M-nested-err-pattern-shared-variant-wrong-enum-tag] +
+# [M-178-variant-ctor-target-sum], окно p279, sonnet, 2026-08-02) — ПУТЬ B,
+# самостоятельная правка (интегратор ещё не смотрел этот коммит).
+# ПОЧЕМУ ЭТО МИНИМАЛЬНО-НЕИЗБЕЖНЫЙ EMIT-СЛОЙ: оба фикса — ЧИСТО checker-
+# channel (types/mod.rs: новая `resolve_pattern_variant_types`, полностью вне
+# этой метрики) — но КОНСУМАЦИЯ канала физически обязана жить в emit_c.rs
+# (кто-то должен ПРОЧИТАТЬ resolved_types/pattern_variant_types на C-эмиссии).
+# +5 строк = минимум, до которого ужато (было +71, сжато до предела читаемости
+# однострочными выражениями): поле `pattern_variant_types` (1), его init (1),
+# сеттер (1, слит в одну строку), чтение в `pattern_cond` перед
+# `find_variant_compat`-фоллбэком (1, слито) и чтение в bare-unit-variant
+# ctor-ветке `Ident`-эмиссии перед `debt_find_variant_ctx` (1, слито).
+# №279: `Err(<Variant>)` в ПАТТЕРН-позиции матчил тег ПЕРВОГО
+# зарегистрированного enum с таким именем варианта (find_variant_compat
+# first-wins), не тег скрутини (`ParseBigIntError`/`RuntimeError` вместо
+# `ParseBigRatError`/`ParseIntError`). [M-178-variant-ctor-target-sum] —
+# смежный, ранее задокументированный-но-незакрытый гэп в КОНСТРУКТОР-позиции
+# (`return Err(Variant)`): вскрыт САМИМ фиксом №279 (мега-CU тест
+# `neg/parse_int_overflow_err` держался на ДВУХ независимых bare-variant-
+# багах, взаимно маскировавших друг друга через ОБЩИЙ first-wins фоллбэк —
+# фикс одной стороны раскрыл другую). infer не вырос (348<=349).
+# Верификация: изолированный репро (scratch38/p279, RED без фикса → GREEN),
+# носитель nova-bigint-p240 (repro_parse_test.nv 1/0; bigrat_test.nv —
+# симптом №279 строка 308 стал зелёным, остаётся 1 НЕСВЯЗАННЫЙ pre-existing
+# FAIL @to_str roundtrip, воспроизведён и на baseline-компиляторе без фикса);
+# мега-CU spec_tests/conformance 624/0/68 (включая новую m279_nested_err_
+# shared_variant_pos.nv); `nova check std/src` 147/26/60 байт-в-байт.
+lines=64389
 infer=349

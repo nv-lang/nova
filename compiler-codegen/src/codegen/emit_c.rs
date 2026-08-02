@@ -1078,6 +1078,7 @@ pub struct CEmitter {
     /// authoritative type source; release-`dead_code` allowed in the interim.)
     #[cfg_attr(not(debug_assertions), allow(dead_code))]
     resolved_types: std::collections::HashMap<crate::ast::ExprId, crate::types::ResolvedType>,
+    pattern_variant_types: std::collections::HashMap<Span, String>, // №279: pattern span → sum name
     /// Plan 172.1 U.4.3: the resolved-callee channel (call-site `ExprId` → chosen
     /// callee `FnDecl` declaration `Span`) the checker populated in `f1_check_call`
     /// (`ModuleEnv.resolved_callees`, U.3.4-prep). The `FnDecl.span` is the stable
@@ -2422,6 +2423,7 @@ impl CEmitter {
             proven_index_sites: std::collections::HashSet::new(),
             proven_index_sites_contract: std::collections::HashSet::new(),
             resolved_types: std::collections::HashMap::new(),
+            pattern_variant_types: std::collections::HashMap::new(),
             resolved_callees: std::collections::HashMap::new(),
             node_substs: std::collections::HashMap::new(),
             fn_ret_by_span: std::collections::HashMap::new(),
@@ -3029,6 +3031,7 @@ impl CEmitter {
         self.resolved_types = m.clone();
     }
 
+    pub fn set_pattern_variant_types(&mut self, m: &std::collections::HashMap<Span, String>) { self.pattern_variant_types = m.clone(); }
     /// Plan 172.1 U.4.3: feed the resolved-callee channel (`ExprId` → chosen callee
     /// `FnDecl.span`) the checker populated. Mirrors `set_resolved_types`. Codegen reads
     /// it via the U.4.3 equivalence-assert (stage a: free-fn); later stages make it the
@@ -33517,6 +33520,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Plan 62.A.bis Ф.2.2: variant lookup via registry.
                 // [M-sync-crossmodule…] (D381): context-disambiguated for a variant
                 // shared across colliding sums (byte-identical for unique variants).
+                if let Some(sn) = expr.id.is_set().then(|| self.resolved_types.get(&expr.id)).flatten().and_then(|rt| match rt { crate::types::ResolvedType::Named { name: n, args, .. } if args.is_empty() => Some(n.clone()), _ => None }).filter(|n| n != "Option" && self.sum_schema_registry.lookup_sum_schema(n).map_or(false, |e| e.variants.iter().any(|v| v.variant_name == *name && v.field_c_types.is_empty()))) { return Ok(format!("nova_make_{}_{}()", sn, name)); } // №279-adjacent [M-178-variant-ctor-target-sum]: checker channel first
                 if let Some((type_name, fields)) = self.debt_find_variant_ctx(name, Some(0)) {
                     if fields.is_empty() {
                         // Plan 14 Ф.1: `None` — typed compound literal по
@@ -50636,7 +50640,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     Literal::Unit => Ok("true".into()),
                 }
             }
-            Pattern::Variant { path, kind, .. } => {
+            Pattern::Variant { path, kind, span } => {
                 let variant_name = path.last().cloned().unwrap_or_default();
                 // Determine the sum type name: explicit path or look up in schemas
                 let scr_ty = self.var_types.get(scr).cloned().unwrap_or_default();
@@ -50676,6 +50680,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         .unwrap_or(false);
                     if scr_has_variant {
                         scr_sum
+                    } else if let Some(checker_sum) = self.pattern_variant_types.get(span) { checker_sum.clone() // №279: scr_ty heuristic missed
                     } else {
                         // Plan 62.A.bis Ф.2.1: registry-driven lookup. Fallback when
                         // the scrutinee type is unknown / not a sum declaring this
