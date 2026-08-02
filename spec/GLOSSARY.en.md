@@ -99,19 +99,19 @@ pending the owner's call in Open questions.
 
 ## 3. Types and data · Типы и данные
 
-| Русский | English | Example (en) | Note |
+| Русский (норма #language) | English | Example (en) | Note |
 |---|---|---|---|
-| record | record | "`type X { ... }` declares a **record** — a heap-allocated, GC-managed reference type." | language-tour.md §2; `{}` braces, reference semantics |
-| sum-тип | sum type | "A **sum type** requires the `enum` marker (`type X enum A \| B \| C`)" | language-tour.md §2; D406 |
-| enum-маркер | `enum` marker | "the `enum` marker is mandatory (D406); leading `\|` alone is not valid syntax anymore" | language-tour.md §2 |
-| кортеж (позиционный / именованный) | tuple (positional / named) | "`type X(T1, T2)` — positional tuple" / "`type Vec3(x f64, y f64, z f64)` — named tuple, .x/.y/.z access" | docs/guide/value-vs-reference.md bracket-rule table; both stack-allocated, value semantics |
-| value-запись | value record | "iterator value-records: `VecIter[T] value`" | spec/decisions/02-types.md D228/D290; `type X value { ... }` — stack-allocated record with structural `==`, value semantics |
-| newtype | newtype | "Newtype (`type X Y`, without `alias`) is a **separate** type from the source" | spec/conversions.md "Newtype ↔ underlying" |
-| alias | alias | "`type X alias Y` — там `X` и `Y` взаимозаменяемы без всякого cast'а" | spec/conversions.md; alias = same type, not a distinct one |
-| protocol | protocol | "`protocol` declares a structural interface; `#impl(...)` opts a type into one explicitly" | language-tour.md §3; structural by default, nominal on demand |
-| дженерик / параметр типа | generic type parameter | "`[T]` on a function introduces a generic type parameter." | language-tour.md §2 |
-| generic bound (protocol / type-set) | generic bound | "`fn dedup[T Hash](xs []T) -> []T`" | spec/syntax.md "Generic bounds — `[T Protocol]` или `[T TypeSet]`"; a `type-set` bound is a closed list of concrete types (membership), not structural |
-| мономорфизация / dyn-диспатч | monomorphization / dynamic dispatch (`dyn`) | "Performance, traits, мономорфизация" (spec/overview.md, source: Rust); "`dyn` — only when explicit runtime polymorphism is needed" (paraphrase of spec/paradigm.md "vtable-вызов") | monomorphization is the zero-cost default; `dyn Trait`/`dyn Protocol` opts into a vtable call |
+| запись | record | "`type X { ... }` declares a **record** — a heap-allocated, GC-managed reference type." | language-tour.md §2; `{}` braces, reference semantics; «запись» — стандартный русский CS-термин (как Pascal `record` = «запись»), не калька |
+| тип-сумма (sum-тип) | sum type | "A **sum type** requires the `enum` marker (`type X enum A \| B \| C`)" | language-tour.md §2; D406; в spec принято хайбридное «sum-тип» — норма-форма для прозы «тип-сумма» (по аналогии с «тип-произведение» в ФП-литературе), `[proposed]` |
+| маркер `enum` `[keep-en: код]` | `enum` marker | "the `enum` marker is mandatory (D406); leading `\|` alone is not valid syntax anymore" | language-tour.md §2; `enum` — буквальное ключевое слово Nova внутри фразы |
+| кортеж (позиционный / именованный) | tuple (positional / named) | "`type X(T1, T2)` — positional tuple" / "`type Vec3(x f64, y f64, z f64)` — named tuple, .x/.y/.z access" | docs/guide/value-vs-reference.md bracket-rule table; both stack-allocated, value semantics; «кортеж» — стандартный русский матем./CS-термин |
+| value-запись `[keep-en: код]` | value record | "iterator value-records: `VecIter[T] value`" | spec/decisions/02-types.md D228/D290; `value` — буквальное ключевое слово Nova (`type X value { ... }`), «запись» уже по-русски |
+| тип-обёртка (newtype) | newtype | "Newtype (`type X Y`, without `alias`) is a **separate** type from the source" | spec/conversions.md "Newtype ↔ underlying"; норма-форма «тип-обёртка» (описательно, без англ. жаргона), `[proposed]` — «newtype» без перевода нигде в spec/guide не встречается как отдельное слово |
+| псевдоним (alias) | alias | "`type X alias Y` — там `X` и `Y` взаимозаменяемы без всякого cast'а" | spec/conversions.md; «псевдоним» — стандартный русский перевод (используется, напр., для `alias` в других языках), не калька |
+| протокол | protocol | "`protocol` declares a structural interface; `#impl(...)` opts a type into one explicitly" | language-tour.md §3; structural by default, nominal on demand; «протокол» — натурализованное русское слово |
+| параметр типа (обобщённый) | generic type parameter | "`[T]` on a function introduces a generic type parameter." | language-tour.md §2; норма-форма «обобщённый» вместо жаргонного «дженерик» |
+| ограничение типового параметра (через `protocol`/`type-set`) `[keep-en: код]` | generic bound | "`fn dedup[T Hash](xs []T) -> []T`" | spec/syntax.md "Generic bounds — `[T Protocol]` или `[T TypeSet]`"; `protocol`/`type-set` — конкретные Nova-конструкции, оставлены как код-имена; `type-set` = закрытый список конкретных типов (членство), не структурный |
+| мономорфизация / диспетчеризация `dyn` `[keep-en: код]` | monomorphization / dynamic dispatch (`dyn`) | "Performance, traits, мономорфизация" (spec/overview.md, source: Rust); "`dyn` — only when explicit runtime polymorphism is needed" (paraphrase of spec/paradigm.md "vtable-вызов") | «мономорфизация» — натурализованный CS-термин; норма-форма «диспетчеризация» вместо жаргонного «диспатч», `dyn` — ключевое слово Nova (`dyn Trait`/`dyn Protocol`) |
 
 ---
 
