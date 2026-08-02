@@ -226,17 +226,22 @@ export fn ChanReader[T] @close_after(d Duration) -> () =>
 
    Закрывает ОБА места разом: out-параметры `chan_new` и слот под `recv`.
 
+   Зануление — РЕШЕНО (владелец 2026-08-02): `uninit` зануляет память,
+   цена — один `memset` на слот, поведение детерминированное и GC-чистое.
+
+   Форма вызова (владелец 2026-08-02):
+
    ```nova
    export fn Channel[T].new(cap int) -> (ChanWriter[T], ChanReader[T]) {
        mut tx uninit ChanTx
        mut rx uninit ChanRx
-       chan_new(cap, size_of[T](), &mut tx, &mut rx)
-       (ChanWriter[T](tx), ChanReader[T](rx))
+       unsafe { chan_new(cap, size_of[T](), &tx as *mut ChanTx, &rx as *mut ChanRx) }
+       (ChanWriter[T](tx as ChanTx), ChanReader[T](rx as ChanRx))
    }
 
    export fn ChanReader[T] @recv() -> Option[T] {
        mut slot uninit T
-       if chan_rx_recv(@0, &mut slot) { Some(slot) } else { None }
+       if unsafe { chan_rx_recv(@0, &slot as *mut u8) } { Some(slot as T) } else { None }
    }
    ```
 
@@ -253,7 +258,8 @@ export fn ChanReader[T] @close_after(d Duration) -> () =>
    стейтменте и до этого не читаться — проверяется синтаксически, без
    полного потокового анализа.
 
-   б) **Мусор в слоте и сборщик.** Консервативный Boehm сканирует стек: в
+   б) **Мусор в слоте и сборщик — РЕШЕНО: занулять** (см. выше).
+   Исходный разбор: Консервативный Boehm сканирует стек: в
    неинициализированной ячейке лежат старые байты, которые он может принять
    за указатели. Порчи не будет (консервативный сборщик к ложным
    срабатываниям устойчив), но возможно удержание мусора. Предлагаю
