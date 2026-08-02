@@ -71,6 +71,14 @@ type ChanRx(*())
 
 ## Сырой слой — `extern "C"`, создание через out-параметры
 
+**Канал — первый образец типизированных FFI-ручек (№288).** Проба интегратора
+2026-08-02: newtype над `*()` уходит в C как `typedef void* Nova_ChanTx` и
+передаётся напрямую; `unsafe` для такого вызова НЕ требуется. Поэтому сырой
+слой принимает `ChanTx`/`ChanRx`, а не голые `*()` — писателя нельзя передать
+туда, где ждут читателя. В std этого приёма пока нет ни разу (все `extern "C"`
+на примитивах и сырых указателях) — канон устанавливается здесь, миграция
+остальных сайтов идёт после тега (см. №288).
+
 Форма владельца (2026-08-02): **один** вызов вместо трёх, обе стороны
 возвращаются через out-параметры. Это штатная сишная идиома для нескольких
 результатов, и она уже используется в нашей же std —
@@ -86,19 +94,19 @@ extern "C" fn chan_new(cap int, elem_size int, out_tx *mut ChanTx, out_rx *mut C
 
 // Передача элемента — по указателю на значение (src/dst), длина известна
 // буферу. Копирование делает рантайм.
-extern "C" fn chan_send(tx *(), src *u8) -> bool
-extern "C" fn chan_try_send(tx *(), src *u8) -> bool
-extern "C" fn chan_recv(rx *(), dst *mut u8) -> bool      // false = закрыт и пуст
-extern "C" fn chan_try_recv(rx *(), dst *mut u8) -> bool
+extern "C" fn chan_tx_send(tx ChanTx, src *u8) -> bool
+extern "C" fn chan_tx_try_send(tx ChanTx, src *u8) -> bool
+extern "C" fn chan_rx_recv(rx ChanRx, dst *mut u8) -> bool      // false = закрыт и пуст
+extern "C" fn chan_rx_try_recv(rx ChanRx, dst *mut u8) -> bool
 
-extern "C" fn chan_tx_close(tx *()) -> ()
-extern "C" fn chan_rx_close(rx *()) -> ()
-extern "C" fn chan_tx_is_closed(tx *()) -> bool
-extern "C" fn chan_rx_is_closed(rx *()) -> bool
-extern "C" fn chan_rx_close_after(rx *(), millis i64) -> ()
-extern "C" fn chan_tx_share(tx *()) -> *()                // ref-счёт +1
-extern "C" fn chan_len(rx *()) -> int
-extern "C" fn chan_cap(rx *()) -> int
+extern "C" fn chan_tx_close(tx ChanTx) -> ()
+extern "C" fn chan_rx_close(rx ChanRx) -> ()
+extern "C" fn chan_tx_is_closed(tx ChanTx) -> bool
+extern "C" fn chan_rx_is_closed(rx ChanRx) -> bool
+extern "C" fn chan_rx_close_after(rx ChanRx, millis i64) -> ()
+extern "C" fn chan_tx_share(tx ChanTx) -> ChanTx                // ref-счёт +1
+extern "C" fn chan_len(rx ChanRx) -> int
+extern "C" fn chan_cap(rx ChanRx) -> int
 ```
 
 ## Публичный слой — обычный Nova
@@ -118,25 +126,25 @@ export fn Channel[T].new(cap int) -> (ChanWriter[T], ChanReader[T]) {
 
 // --- сторона записи ---
 export fn ChanWriter[T] @send(consume v T) -> bool =>
-    chan_send(@0, addr_of(v) as *u8)          // consume — владение уходит (D131/№144)
+    chan_tx_send(@0, addr_of(v) as *u8)          // consume — владение уходит (D131/№144)
 
 export fn ChanWriter[T] @try_send(consume v T) -> bool =>
-    chan_try_send(@0, addr_of(v) as *u8)
+    chan_tx_try_send(@0, addr_of(v) as *u8)
 
 export fn ChanWriter[T] @close() -> ()        => chan_tx_close(@0)
 export fn ChanWriter[T] @is_closed() -> bool  => chan_tx_is_closed(@0)
 export fn ChanWriter[T] @share() -> ChanWriter[T] =>
-    ChanWriter[T](ChanTx(chan_tx_share(@0)))
+    ChanWriter[T](chan_tx_share(@0))
 
 // --- сторона чтения ---
 export fn ChanReader[T] @recv() -> Option[T] {
     mut slot = T.uninit()                             // см. §Открытые вопросы п.2
-    if chan_recv(@0, addr_of_mut(slot) as *mut u8) { Some(slot) } else { None }
+    if chan_rx_recv(@0, addr_of_mut(slot) as *mut u8) { Some(slot) } else { None }
 }
 
 export fn ChanReader[T] @try_recv() -> Option[T] {
     mut slot = T.uninit()
-    if chan_try_recv(@0, addr_of_mut(slot) as *mut u8) { Some(slot) } else { None }
+    if chan_rx_try_recv(@0, addr_of_mut(slot) as *mut u8) { Some(slot) } else { None }
 }
 
 export fn ChanReader[T] @close() -> ()        => chan_rx_close(@0)
