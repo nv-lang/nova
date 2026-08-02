@@ -16,8 +16,9 @@
 > guide files already have settled vocabulary — *fiber*, *effect row*,
 > *record*, *protocol*, and so on) — the glossary must match how the
 > guide already talks, not invent new phrasing. Where no English
-> precedent exists anywhere in the repo, a term is proposed and marked
-> **`[proposed]`** for the owner to confirm or correct.
+> precedent existed anywhere in the repo, the term was proposed and
+> decided by the owner on 2026-08-03 — all such rows now carry the
+> decision in their Note column; no `[proposed]` rows remain.
 >
 > Nova keyword/identifier tokens (`consume`, `ro`, `use`, `spawn`,
 > `requires`, …) are **never translated** — they are code, not prose —
@@ -48,16 +49,11 @@
 > (code keywords) is `[keep-en: код]` for every row by definition — see
 > its own note instead of repeating the tag 14 times.
 >
-> Open disagreements and gaps — including contested Russian forms the
-> owner should pick between (e.g. «файбер» vs «волокно») — are collected
-> in [Open questions for owner review](#open-questions-for-owner-review)
-> at the end of this file. A row marked **`[CONTESTED — см. Open
-> questions]`** instead of `[keep-en: …]` is a case where the current
-> Russian form is a transliteration that *does* need real-word
-> replacement per the norm, but the replacement itself is a substantive
-> naming decision (already in wide use across the codebase/docs) that
-> this glossary should not make unilaterally — it is listed with a
-> candidate replacement in Open questions instead.
+> **Status (2026-08-03): all owner questions are closed.** The section
+> [Open questions for owner review](#open-questions-for-owner-review) is
+> kept as the decision log — every entry records what the owner decided
+> and why, so later translators do not reopen a settled term. New
+> disagreements found during translation batches are appended there.
 
 ---
 
@@ -90,7 +86,7 @@ pending the owner's call in Open questions.
 | Token (code, unchanged in both languages) | Example (en) | Note (что значит по-русски) |
 |---|---|---|
 | `consume` | "A `consume`-typed binding is ownership-tracked." | параметр/связывание, привязка владения ресурсом; исчерпывается ровно один раз (или через `@cleanup`, D432) |
-| `ro` | "`ro` declares a read-only binding (never reassigned)" | связывание/параметр только для чтения; синоним `readonly` для параметров |
+| `ro` | "`ro` declares a read-only binding (never reassigned)" | связывание/параметр только для чтения; **утверждено владельцем 2026-08-03: использовать `ro`** — это сокращение от `readonly` (полная форма остаётся синонимом для параметров); в прозе при первом упоминании: «`ro` (сокращение от readonly)» |
 | `mut` | "`mut` declares a reassignable one [binding]" | разрешает мутацию/переприсваивание — на связывании, параметре или поле |
 | `use` (embed) | "`use account Account` — embed: field + auto-proxy methods" | встраивание типа как поля с автопрокси методов (композиция, не наследование) |
 | `spawn` | "`spawn` inside a `supervised` block starts a fire-and-forget fiber" | запуск нового файбера внутри области видимости structured concurrency |
@@ -111,11 +107,11 @@ pending the owner's call in Open questions.
 | Русский (норма #language) | English | Example (en) | Note |
 |---|---|---|---|
 | запись | record | "`type X { ... }` declares a **record** — a heap-allocated, GC-managed reference type." | language-tour.md §2; `{}` braces, reference semantics; «запись» — стандартный русский CS-термин (как Pascal `record` = «запись»), не калька |
-| тип-сумма (sum-тип) | sum type | "A **sum type** requires the `enum` marker (`type X enum A \| B \| C`)" | language-tour.md §2; D406; в spec принято хайбридное «sum-тип» — норма-форма для прозы «тип-сумма» (по аналогии с «тип-произведение» в ФП-литературе), `[proposed]` |
+| тип-сумма (sum-тип) | sum type | "A **sum type** requires the `enum` marker (`type X enum A \| B \| C`)" | language-tour.md §2; D406; **утверждено владельцем 2026-08-03** — в новой ru-прозе «тип-сумма»; гибрид «sum-тип» в существующей спеке не переписывается (прецедент «скрутини») |
 | маркер `enum` `[keep-en: код]` | `enum` marker | "the `enum` marker is mandatory (D406); leading `\|` alone is not valid syntax anymore" | language-tour.md §2; `enum` — буквальное ключевое слово Nova внутри фразы |
 | кортеж (позиционный / именованный) | tuple (positional / named) | "`type X(T1, T2)` — positional tuple" / "`type Vec3(x f64, y f64, z f64)` — named tuple, .x/.y/.z access" | docs/guide/value-vs-reference.md bracket-rule table; both stack-allocated, value semantics; «кортеж» — стандартный русский матем./CS-термин |
 | value-запись `[keep-en: код]` | value record | "iterator value-records: `VecIter[T] value`" | spec/decisions/02-types.md D228/D290; `value` — буквальное ключевое слово Nova (`type X value { ... }`), «запись» уже по-русски |
-| тип-обёртка (newtype) | newtype | "Newtype (`type X Y`, without `alias`) is a **separate** type from the source" | spec/conversions.md "Newtype ↔ underlying"; норма-форма «тип-обёртка» (описательно, без англ. жаргона), `[proposed]` — «newtype» без перевода нигде в spec/guide не встречается как отдельное слово |
+| тип-обёртка (newtype) | newtype | "Newtype (`type X Y`, without `alias`) is a **separate** type from the source" | spec/conversions.md "Newtype ↔ underlying"; **утверждено владельцем 2026-08-03** — «тип-обёртка», при первом упоминании на странице «тип-обёртка (newtype)»; в русских переводах Rust/Haskell термин обычно не переводят — Nova вводит русскую форму по норме #language |
 | псевдоним (alias) | alias | "`type X alias Y` — там `X` и `Y` взаимозаменяемы без всякого cast'а" | spec/conversions.md; «псевдоним» — стандартный русский перевод (используется, напр., для `alias` в других языках), не калька |
 | протокол | protocol | "`protocol` declares a structural interface; `#impl(...)` opts a type into one explicitly" | language-tour.md §3; structural by default, nominal on demand; «протокол» — натурализованное русское слово |
 | параметр типа (обобщённый) | generic type parameter | "`[T]` on a function introduces a generic type parameter." | language-tour.md §2; норма-форма «обобщённый» вместо жаргонного «дженерик» |
@@ -171,7 +167,7 @@ pending the owner's call in Open questions.
 | Русский (норма #language) | English | Example (en) | Note |
 |---|---|---|---|
 | файбер | fiber | "Under the hood — **fiber-based scheduler** (like Go/OCaml 5)." | spec/effects.md "Async — невидимая инфраструктура"; ~4-8 KB stack, millions per machine; **утверждено владельцем 2026-08-03** — «файбер» остаётся русской формой (не «волокно»), употребление по всей базе доков не меняется |
-| структурированная конкурентность | structured concurrency | "concurrency is structured, not a separate async dialect" | language-tour.md §8; в spec/overview.md встречается сырое англ. «Structured concurrency» в русском тексте — норма-форма переводит оба слова («конкурентность» уже натурализована), `[proposed]` |
+| структурированная конкурентность | structured concurrency | "concurrency is structured, not a separate async dialect" | language-tour.md §8; **утверждено владельцем 2026-08-03**; сырое англ. «Structured concurrency» в русском тексте spec/overview.md — кандидат микро-правки норматива (заведено интегратору отдельно) |
 | супервизия | supervision | "Supervision of failures is an ordinary effect `Supervisor`" (paraphrase, spec/overview.md D416) | Erlang/OTP-style child-failure policy: `escalate()` / `stop()`; «супервизия» — натурализованный термин (используется вне IT, напр. в психотерапии/менеджменте), не жаргон |
 | дедлайн области видимости / отмена | (scope) deadline / cancellation | "`supervised(deadline:)` gives that block a shared deadline, and a spawn that misses it is genuinely cancelled" | language-tour.md §8; «дедлайн» — полностью натурализованное слово повседневного русского; «скоуп» заменён на «область видимости» |
 | канал с разделёнными правами (send/recv) | capability-split | "The model is **capability-split** (Rust mpsc-style): `Channel.new(cap)` returns a **pair**" | docs/guide/channels.md; описательный перевод вместо хайбридного «capability-split»; `send`/`recv` — имена методов, keep-en по коду |
@@ -185,7 +181,7 @@ pending the owner's call in Open questions.
 | Русский (норма #language) | English | Example (en) | Note |
 |---|---|---|---|
 | модуль | module | "A **module** is either a single file `X.nv` or a **folder** `X/`" | language-tour.md §11; натурализованный термин |
-| папка-модуль / равноправные файлы | folder-module / peer files | "A **module** is either a single file `X.nv` or a **folder** `X/` whose **peer files** all declare the same `module` path and share one namespace" | language-tour.md §11; норма-форма «равноправные файлы» вместо хайбридного «peer-файлы» — файлы одного namespace без взаимного импорта, `[proposed]` |
+| папка-модуль / равноправные файлы | folder-module / peer files | "A **module** is either a single file `X.nv` or a **folder** `X/` whose **peer files** all declare the same `module` path and share one namespace" | language-tour.md §11; **утверждено владельцем 2026-08-03** — «равноправные файлы» (файлы одного пространства имён без взаимного импорта; ближайший аналог в литературе — Go-шное «файлы одного пакета») |
 | пакет | package | "Every import path is fully qualified from the **package** root (the directory with `nova.toml`)" | language-tour.md §11; натурализованный термин |
 | рабочее пространство (`[workspace]`) `[keep-en: код]` | workspace | "Workspaces (`[workspace] members = [...]`) group several packages in a monorepo" | language-tour.md §11; норма-форма «рабочее пространство» вместо транслитерации «воркспейс»; `[workspace]` — буквальное имя секции в `nova.toml` |
 
@@ -207,7 +203,7 @@ pending the owner's call in Open questions.
 | Русский (норма #language) | English | Example (en) | Note |
 |---|---|---|---|
 | контракт (+ SMT-решатель) `[keep-en: аббревиатура]` | contract (+ SMT solver) | "Nova's contract system lets you state what a function **requires** and **ensures**, then verifies those claims at compile time via an SMT solver." | docs/guide/contracts.md intro; норма-форма «решатель» вместо транслитерации «солвер»; SMT — аббревиатура без русской расшифровки в обиходе |
-| принудительная проверка с устранением (доказано → вырезано) | enforce-with-elision | "Nova uses **enforce-with-elision** (D24 / Plan 140), *not* debug-only asserts" | docs/guide/contracts.md intro; описательный перевод вместо англ.-рус. гибрида «enforce-с-elision», `[proposed]` — авторский Nova-термин (D24/Plan 140), устоявшегося перевода ещё нет |
+| enforce-with-elision `[keep-en: термин]` | enforce-with-elision | "Nova uses **enforce-with-elision** (D24 / Plan 140), *not* debug-only asserts" | docs/guide/contracts.md intro; **утверждено владельцем 2026-08-03** — keep-en как имя собственное механизма (D24/Plan 140, аналогично CI/REST); при первом упоминании — русское пояснение: «контракты проверяются всегда, компилятор вырезает лишь доказанные проверки» |
 | доказанный / недоказанный контракт | proven / unproven (contract) | "a **proven** contract is elided (zero runtime cost, even in debug); an **unproven** one is enforced at runtime in **both debug and release**" | docs/guide/contracts.md intro; полностью по-русски |
 | лемма | lemma | "A **lemma** is a `#verify` function whose purpose is to establish a mathematical fact" | docs/guide/contracts.md "Lemmas and apply"; натурализованный матем. термин |
 | постусловие / предусловие | postcondition / precondition | "`requires` — A precondition." / "`ensures` and `result` — A postcondition." | docs/guide/contracts.md; стандартные русские матем./CS-термины |
@@ -238,30 +234,18 @@ pending the owner's call in Open questions.
    **«сопоставляемое значение»**, транслит «скрутини» в новую прозу не
    пускать (существующие D-блоки не переписываем); en — **scrutinee**
    принят как термин. Строка §1 обновлена.
-3. **`spec/paradigm.md` is stale.** Its own header (added 2026-xx) flags
-   it as describing a pre-D18/D24/D31/D33-D42/D52/D53/D61-D66/D70/D73
-   version of the language — it still talks about `trait`/`impl`,
-   which are retired in favor of `protocol` + effect-via-kind-token.
-   This glossary does **not** carry `trait`/`impl` forward as current
-   terminology; if a translator hits `paradigm.md` directly (out of
-   scope for Ф.1 per the plan's normative-file list, but flagging just
-   in case), the file needs a rewrite pass before translation, not just
-   a translation of stale content.
-4. **Term count vs. plan target.** The plan asks for "~50-80 pairs";
-   this glossary lands at exactly **80** table rows across 11 sections
-   (including the 14-row keyword table, §2). Several closely related
-   concepts were deliberately merged into one row (e.g. positional/named
-   tuple, widening/narrowing, deadline/cancellation) to stay inside the
-   range while still naming every concept from the plan's starter list
-   plus the additional spec/guide sourcing pass. If the owner wants any
-   of these split back into separate rows for clarity, that's a
-   low-cost follow-up edit, not a re-sourcing effort.
-5. **`ro` vs `readonly`.** `docs/guide/parameters.md` documents `readonly`
-   as an explicit synonym for the default (no-modifier) parameter mode,
-   while `ro` is the binding-declaration keyword (`ro x = ...`). Both
-   ended up in §2's `ro` row's note as one explanation; flag if the
-   owner wants them split into two distinct glossary rows since they are
-   technically two different keywords with overlapping meaning.
+3. **`spec/paradigm.md` устарел. ✅ РЕШЕНО (владелец 2026-08-03):**
+   сначала **актуализировать** русский текст (снять `trait`/`impl` →
+   `protocol` + эффект-через-kind-токен, сверить с действующими D-блоками),
+   затем переводить. Порядок в Ф.1: 5 актуальных файлов переводятся сразу,
+   `paradigm.md` — после ревизии норматива (отдельная микро-задача, не
+   переводческая).
+4. **Счёт терминов (80 строк) — ✅ решено:** оставить как есть, слитые
+   строки не разбивать; разбиение — по факту надобности переводчиков
+   (дешёвая правка в любой момент).
+5. **`ro` vs `readonly`. ✅ РЕШЕНО (владелец 2026-08-03):** использовать
+   **`ro`**, указывая, что это сокращение от `readonly`. Отдельной строки
+   для `readonly` не заводим — примечание в строке `ro` (§2) обновлено.
 
 ### Русские формы — спорные, решает владелец (добор 2026-08-02, норма #language)
 
@@ -270,34 +254,18 @@ pending the owner's call in Open questions.
    транслитерация — термин насквозь пронизывает доки, спеку и
    dev-конвенции; массовая замена не производится). Строка §7 обновлена,
    пометка `[CONTESTED]` снята.
-7. **«Тип-сумма» vs «sum-тип» (§3).** Spec нормативно использует
-   гибрид «sum-тип» (английское `sum` + русское `тип`). Предложенная
-   норма-форма «тип-сумма» — калька по образцу «тип-произведение» из
-   переводной ФП-литературы, но не засвидетельствована нигде в
-   репозитории — `[proposed]`, решает владелец, стоит ли вводить в
-   ru-guide-переводах или оставить «sum-тип» как уже привычную форму.
-8. **«Тип-обёртка» для newtype (§3).** Ни spec, ни guide не называют
-   «newtype» отдельным словом на русском — термин используется только
-   как английское `newtype` в примерах/decisions. Предложено описательно
-   «тип-обёртка»; альтернатива — оставить «newtype» транслитерацией как
-   устоявшийся Rust/Haskell-жаргон (`[keep-en: термин]` вместо перевода).
-   Решает владелец.
-9. **«Структурированная конкурентность» (§7).** `spec/overview.md`
-   вставляет необработанное английское «Structured concurrency» прямо в
-   русский текст (пункт 6 «Поддерживающих решений»). Норма-форма
-   «структурированная конкурентность» — прямой перевод, `[proposed]`,
-   не засвидетельствован в spec буквально. Если владелец согласен — это
-   заодно кандидат на амендмент самого `spec/overview.md` (отдельно от
-   Ф.0, но глоссарий фиксирует расхождение).
-10. **«Принудительная проверка с устранением» для enforce-with-elision
-    (§10).** Авторский Nova-термин (D24/Plan 140) без прецедента перевода
-    нигде в репозитории; предложенный описательный перевод длинный и
-    громоздкий — альтернатива — оставить «enforce-with-elision»
-    транслитерацией/`[keep-en: термин]` как имя собственное механизма
-    (аналогично тому, как «CI» или «REST» не переводятся). Решает
-    владелец.
-11. **«Равноправные файлы» для peer files (§8).** Описательный перевод,
-    не засвидетельствован в spec/guide как отдельный русский термин —
-    `[proposed]`. Альтернативы: «сорасположенные файлы»,
-    «файлы-соседи», оставить «peer-файлы» как устоявшийся англицизм
-    (`[keep-en: термин]`).
+7. **«Тип-сумма» vs «sum-тип» (§3). ✅ РЕШЕНО (владелец 2026-08-03):**
+   в новой ru-прозе — **«тип-сумма»**; гибрид «sum-тип» в существующей
+   спеке не переписываем (прецедент «скрутини»).
+8. **newtype по-русски (§3). ✅ РЕШЕНО (владелец 2026-08-03):**
+   **«тип-обёртка»**, при первом упоминании на странице — «тип-обёртка
+   (newtype)»; в коде и сигнатурах остаётся `newtype`.
+9. **«Структурированная конкурентность» (§7). ✅ РЕШЕНО (владелец
+   2026-08-03):** принято. Отдельно заведена микро-правка норматива:
+   в `spec/overview.md` сырое англ. «Structured concurrency» посреди
+   русской фразы → русская форма (правка языковая, смысл не меняется).
+10. **enforce-with-elision (§10). ✅ РЕШЕНО (владелец 2026-08-03):**
+    **keep-en** — имя собственное механизма (D24/Plan 140), как CI/REST;
+    при первом упоминании — краткое русское пояснение рядом.
+11. **peer files (§8). ✅ РЕШЕНО (владелец 2026-08-03):**
+    **«равноправные файлы»** (не «peer-файлы», не «файлы-соседи»).
