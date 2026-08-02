@@ -193,12 +193,12 @@ pending the owner's call in Open questions.
 
 ## 9. Runtime, FFI and unsafe · Рантайм, FFI и unsafe
 
-| Русский | English | Example (en) | Note |
+| Русский (норма #language) | English | Example (en) | Note |
 |---|---|---|---|
-| непрозрачный указатель | opaque pointer | "Nova's opaque-pointer type is `*()` (pointer to unit — `void*` in C)" | language-tour.md §12 |
-| типизированный хэндл | typed handle | "Wrap a raw `*()` in a record for a **typed handle** so distinct native resources … aren't interchangeable at compile time" | language-tour.md §12 |
-| внешняя функция | `external fn` | "`external fn name(args) -> ret` (D82) declares a binding to a C symbol" | language-tour.md §12 |
-| unsafe-блок / модель мутабельности указателя | `unsafe` block / pointer-mutability model | heading of docs/guide/typed-pointers.md: "Typed pointers (`*T` family) + `unsafe` model", "Pointer-mutability model: 'arrow → box'" | `unsafe` is a scoped escape hatch for raw-pointer operations (Plan 138.5) |
+| непрозрачный указатель | opaque pointer | "Nova's opaque-pointer type is `*()` (pointer to unit — `void*` in C)" | language-tour.md §12; полностью русская форма, без калек |
+| типизированный дескриптор | typed handle | "Wrap a raw `*()` in a record for a **typed handle** so distinct native resources … aren't interchangeable at compile time" | language-tour.md §12; норма-форма «дескриптор» (стандартный русский CS-термин, как «дескриптор файла») вместо транслитерации «хэндл» |
+| внешняя функция (`external fn`) `[keep-en: код]` | `external fn` | "`external fn name(args) -> ret` (D82) declares a binding to a C symbol" | language-tour.md §12; `external fn` — буквальная конструкция Nova |
+| блок `unsafe` `[keep-en: код]` / модель мутабельности указателя | `unsafe` block / pointer-mutability model | heading of docs/guide/typed-pointers.md: "Typed pointers (`*T` family) + `unsafe` model", "Pointer-mutability model: 'arrow → box'" | `unsafe` is a scoped escape hatch for raw-pointer operations (Plan 138.5); `unsafe` — ключевое слово, «мутабельность» — натурализованный CS-термин |
 
 ---
 
