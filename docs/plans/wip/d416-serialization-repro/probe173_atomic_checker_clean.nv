@@ -1,0 +1,52 @@
+// probe173_atomic.nv — окно p-vela: atomic-only измерительная проба для
+// №173/№243 (D416§2 event-loss). Пин-фикстура 238
+// (docs/plans/wip/d416-serialization-repro/supervisor_on_child_fail_serialized_pin_test.nv)
+// БОЛЬШЕ НЕ КОМПИЛИРУЕТСЯ: carve-out Supervisor в энфорсе D441 §3 отозван
+// прошлым окном (мутный mut-счётчик в on_child_fail = E_HANDLER_MUT_CAPTURE_IN_FIBER).
+// Эта проба — чекер-чистая (AtomicInt, D441-совместимая), измеряет:
+//   (a) race_detected — реентрантность вызова хендлера (реплика опровергнутой
+//       гипотезы прошлого окна: STOP-отчёт 2026-08-01 показал race_detected==0
+//       во всех 10 прогонах, включая 4 «упавших» по числу вызовов);
+//   (b) total_calls vs n*rounds — событие-потеря (№243).
+// Не в реестре / не conformance — рабочая проба окна p-vela.
+
+module standalone.probe173_atomic
+
+test "probe173: on_child_fail atomic total_calls vs n*rounds (event-loss measurement)" {
+    ro n = 64
+    ro rounds = 20
+    mut total_calls = AtomicInt.new(0)
+    mut race_detected = AtomicInt.new(0)
+    mut children_started = AtomicInt.new(0)
+    mut lost_rounds = 0
+    for run in 0..rounds {
+        mut cnt = AtomicInt.new(0)
+        mut reentrant = AtomicInt.new(0)
+        with Supervisor = effect Supervisor {
+            on_child_fail(idx int, err any) -> Decision {
+                ro _ = idx
+                ro _ = err
+                ro depth = reentrant.fetch_add(1)
+                if depth != 0 { ro _ = race_detected.fetch_add(1) }
+                ro _ = cnt.fetch_add(1)
+                ro _ = total_calls.fetch_add(1)
+                ro _ = reentrant.fetch_sub(1)
+                return Decision.Stop
+            }
+        } {
+            supervised {
+                for i in 0..n {
+                    spawn {
+                        ro _ = children_started.fetch_add(1)
+                        throw i
+                    }
+                }
+            }
+        }
+        if cnt.load() != n { lost_rounds = lost_rounds + 1 }
+    }
+    println("total_calls=${total_calls.load()} expected=${n * rounds} children_started=${children_started.load()} lost_rounds=${lost_rounds} race_detected=${race_detected.load()}")
+    assert(race_detected.load() == 0)
+    assert(children_started.load() == n * rounds)
+    assert(total_calls.load() == n * rounds)
+}
