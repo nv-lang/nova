@@ -5067,7 +5067,12 @@ fn build_libuv_lib(libuv_dir: &Path, cache_dir: &Path,
         for s in &srcs {
             lines.push(format!("\"{}\"", s.display()));
         }
-        std::fs::write(&rsp, lines.join("\n"))
+        // №287: UTF-8 BOM — cl.exe decodes a BOM-less response file under the
+        // process ANSI codepage, so a non-ASCII path (a Cyrillic user
+        // directory, say) is mangled and every source after it fails with a
+        // spurious `C1083: file not found`. Same fix `link_prep.rs` already
+        // carries; this sibling never got it.
+        std::fs::write(&rsp, format!("\u{FEFF}{}", lines.join("\n")))
             .map_err(|e| anyhow!("write rsp: {}", e))?;
         let inner = format!(
             "\"call \"{}\" >nul 2>&1 && cl.exe @\"{}\"\"",
@@ -5103,7 +5108,9 @@ fn build_libuv_lib(libuv_dir: &Path, cache_dir: &Path,
         for o in &obj_files {
             lib_lines.push(format!("\"{}\"", o.display()));
         }
-        std::fs::write(&lib_rsp, lib_lines.join("\n"))
+        // №287: BOM — see the compile.rsp comment above (same non-ASCII-path
+        // mangling applies to lib.exe response files).
+        std::fs::write(&lib_rsp, format!("\u{FEFF}{}", lib_lines.join("\n")))
             .map_err(|e| anyhow!("write lib.rsp: {}", e))?;
         let lib_inner = format!(
             "\"call \"{}\" >nul 2>&1 && lib.exe @\"{}\"\"",
@@ -5768,7 +5775,9 @@ fn build_rt_archive_lib(
             lines.push(format!("\"{}\"", s.display()));
         }
         let rsp = obj_dir.join("compile.rsp");
-        std::fs::write(&rsp, lines.join("\n")).map_err(|e| anyhow!("write rsp: {}", e))?;
+        // №287: BOM against ANSI-codepage mangling of non-ASCII paths.
+        std::fs::write(&rsp, format!("\u{FEFF}{}", lines.join("\n")))
+            .map_err(|e| anyhow!("write rsp: {}", e))?;
         let inner = format!(
             "\"call \"{}\" >nul 2>&1 && cl.exe @\"{}\"\"",
             vcv.display(), rsp.display()
@@ -5800,7 +5809,9 @@ fn build_rt_archive_lib(
         for o in &obj_files {
             lib_lines.push(format!("\"{}\"", o.display()));
         }
-        std::fs::write(&lib_rsp, lib_lines.join("\n")).map_err(|e| anyhow!("write lib.rsp: {}", e))?;
+        // №287: BOM against ANSI-codepage mangling of non-ASCII paths.
+        std::fs::write(&lib_rsp, format!("\u{FEFF}{}", lib_lines.join("\n")))
+            .map_err(|e| anyhow!("write lib.rsp: {}", e))?;
         let lib_inner = format!(
             "\"call \"{}\" >nul 2>&1 && lib.exe @\"{}\"\"",
             vcv.display(), lib_rsp.display()
