@@ -1,0 +1,14 @@
+module scratch38.p279b
+import std.runtime.string.{ParseIntError}
+
+fn assert_overflow(s str) {
+    match s.to_int() {
+        Ok(_)          => assert(false, "expected Err(Overflow)")
+        Err(Overflow)  => {}
+        Err(_)         => assert(false, "expected Overflow variant")
+    }
+}
+
+test "overflow repro" {
+    assert_overflow("99999999999999999999")
+}
