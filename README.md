@@ -478,6 +478,14 @@ vcpkg install --triplet x64-osx --x-manifest-root=.
 `vcpkg.json` уже содержит `z3` и `bdwgc` — обе зависимости устанавливаются
 одной командой. Результат: `vcpkg_installed/<triplet>/lib/libz3.a`.
 
+> Этот шаг нужен ТОЛЬКО для Z3. Boehm GC (`bdwgc`) он тоже устанавливает —
+> если vcpkg уже настроен, `nova build`/`nova test` предпочтут vcpkg-сборку
+> (быстрее, без пересборки), — но с #269 Ф.2 это больше не обязательно:
+> без vcpkg/`NOVA_GC_LIB_DIR` компилятор одноразово собирает Boehm GC сам
+> из вендорённого сабмодуля (`compiler-codegen/nova_rt/gc` +
+> `compiler-codegen/nova_rt/libatomic_ops`, тянутся `git clone --recursive`
+> или `git submodule update --init`) — см. «Building from source» выше.
+
 **Шаг 2: собрать с feature `z3-backend`**
 
 ```bash
