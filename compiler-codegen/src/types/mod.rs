@@ -7839,6 +7839,37 @@ impl<'a> TypeCheckCtx<'a> {
                         None => { scope.remove(&name); }
                     }
                 } else if let Pattern::Tuple(pats, _) = &d.pattern {
+                    // Plan 221.1 №286/№143 (окно p-chan): `ro (tx, rx) =
+                    // Channel[T].new(n)` is a two-name tuple-destructure whose
+                    // RHS is NEVER a real `TypeRef::Tuple` (`Channel.new` has
+                    // no registered `FnDecl` at all — it is a pure compiler
+                    // intrinsic, no `.nv` declaration anywhere, see PROGRESS-
+                    // pchan.md) — the generic tuple-typing branch below can
+                    // therefore never fire for it (falls to its own `else`,
+                    // which used to just `scope.remove` tx/rx — the ROOT of
+                    // №143: `tx`/`rx` NEVER got a typed scope entry in the
+                    // main checker pass at all). Bind them POSITIONALLY here
+                    // instead: `ChanWriter[T]`/`ChanReader[T]`, `T` from the
+                    // explicit turbofish when present (`channel_new_turbofish_
+                    // elem`), else `generics: vec![]` (T left untracked — same
+                    // permissive pre-existing behavior for the bare
+                    // `Channel.new(cap)` form; every NEW check this window adds
+                    // — `channel_elem_type` — is gated on `generics.len()==1`,
+                    // so an empty-generics ChanWriter/ChanReader silently falls
+                    // back to legacy, byte-identical to before this window).
+                    if pats.len() == 2 && is_channel_new_call(&d.value) {
+                        let elem_t = channel_new_turbofish_elem(&d.value);
+                        for (i, pp) in pats.iter().enumerate() {
+                            if let Pattern::Ident { name: pn, .. } = pp {
+                                let base = if i == 0 { "ChanWriter" } else { "ChanReader" };
+                                scope.insert(pn.clone(), TypeRef::Named {
+                                    path: vec![base.to_string()],
+                                    generics: elem_t.clone().into_iter().collect(),
+                                    span: d.value.span,
+                                });
+                            }
+                        }
+                    } else {
                     // 172.1.2 (tuple-let регистрация, 2026-07-04): `let (a, b) = rhs`
                     // — элементы регистрируются из Tuple-типа RHS (аннотация /
                     // infer / канал); несопоставимое — remove (не наследовать тень).
@@ -7863,6 +7894,43 @@ impl<'a> TypeCheckCtx<'a> {
                         for pp in pats {
                             if let Pattern::Ident { name: pn, .. } = pp {
                                 scope.remove(pn);
+                            }
+                        }
+                    }
+                    }
+                } else if let Pattern::Record { fields, .. } = &d.pattern {
+                    // Plan 221.1 №286/№143 (окно p-chan): the RECORD-destructure
+                    // spelling of the SAME `Channel.new` binding — `ro { tx, rx }
+                    // = Channel[T].new(n)` / renamed `{ tx: sender, rx: receiver }`
+                    // — is actually the MORE common form in this repo's existing
+                    // Channel fixtures (`channel_elem_type_word_safe.nv`,
+                    // `neg/channel_elem_str_payload_neg.nv`). The main checker
+                    // pass has NO general `Pattern::Record` destructure-typing
+                    // branch at all (a wider, pre-existing gap, not Channel-
+                    // specific) — mirror the Tuple-branch fix above, keyed by
+                    // FIELD NAME ("tx"/"rx") rather than position so a renamed
+                    // destructure (`{ tx: sender, rx: receiver }`) still binds
+                    // the RIGHT capability type to the RIGHT local name.
+                    if is_channel_new_call(&d.value) {
+                        let elem_t = channel_new_turbofish_elem(&d.value);
+                        for f in fields {
+                            let base = match f.name.as_str() {
+                                "tx" => Some("ChanWriter"),
+                                "rx" => Some("ChanReader"),
+                                _ => None,
+                            };
+                            let Some(base) = base else { continue };
+                            let bound_name = match &f.pattern {
+                                Some(Pattern::Ident { name: pn, .. }) => Some(pn.clone()),
+                                None => Some(f.name.clone()),
+                                _ => None,
+                            };
+                            if let Some(bn) = bound_name {
+                                scope.insert(bn, TypeRef::Named {
+                                    path: vec![base.to_string()],
+                                    generics: elem_t.clone().into_iter().collect(),
+                                    span: d.value.span,
+                                });
                             }
                         }
                     }
@@ -8748,6 +8816,71 @@ impl<'a> TypeCheckCtx<'a> {
                         }
                     }
                 }
+                // Plan 221.1 №286/№143 (окно p-chan, real Channel[T] mono):
+                // `ChanWriter[T].send(v)`/`.try_send(v)` — when `T` is
+                // STATICALLY known (`channel_elem_type` — turbofish-declared
+                // `Channel[T].new` or a `ChanWriter[T]`-annotated param/local;
+                // `None` for an untracked bare `Channel.new`, a no-op exactly
+                // like every other check this window adds), the argument must
+                // be assignable to `T`. Before this window `Channel[int].new`
+                // silently accepted `send("string")` — only the codegen SLOT-
+                // SIZE guard (`E_CHANNEL_UNSOUND_ELEM_TYPE`) caught same-word-
+                // size mismatches (e.g. `Meters`/`Seconds`), never a real
+                // per-`T` check; that measured hole is №143/№286. Same
+                // diagnostic shape/style as the pointer-writability gate just
+                // above and the general arg-assignability check (~13451).
+                if let ExprKind::Member { obj, name } = &func.kind {
+                    if matches!(name.as_str(), "send" | "try_send") {
+                        if let Some(elem_t) = self.channel_elem_type(obj, scope) {
+                            if let Some(arg) = args.first() {
+                                match self.assignable(arg.expr(), &elem_t, gs, gs, scope) {
+                                    Compat::Bad { found } => {
+                                        errors.push(Diagnostic::new(
+                                            format!(
+                                                "[E_CHANNEL_ELEM_TYPE_MISMATCH] cannot send a \
+                                                 value of type `{}` into a channel declared \
+                                                 `Channel[{}]` — the element type `{}` is now \
+                                                 tracked end-to-end from `Channel[T].new` \
+                                                 through `ChanWriter[T]`/`ChanReader[T]` (Plan \
+                                                 221.1 №143/№286); use a value of type `{}` or \
+                                                 declare the channel with the actual payload \
+                                                 type.",
+                                                found,
+                                                typeref_display(&elem_t),
+                                                typeref_display(&elem_t),
+                                                typeref_display(&elem_t),
+                                            ),
+                                            arg.expr().span,
+                                        ));
+                                    }
+                                    Compat::OutOfRange { msg } => {
+                                        errors.push(Diagnostic::new(
+                                            format!("[E_LIT_OUT_OF_RANGE] {msg}"),
+                                            arg.expr().span,
+                                        ));
+                                    }
+                                    Compat::Narrowing { from, to } => {
+                                        errors.push(Diagnostic::new(
+                                            format!(
+                                                "[E_IMPLICIT_NARROWING] cannot send value of \
+                                                 type `{}` into a channel of narrower \
+                                                 declared element type `{}` — implicit int \
+                                                 narrowing loses range; use an explicit \
+                                                 `... as {}` cast (D54)",
+                                                from, to, to,
+                                            ),
+                                            arg.expr().span,
+                                        ));
+                                    }
+                                    Compat::CoerceConflict { msg } => {
+                                        errors.push(Diagnostic::new(msg, arg.expr().span));
+                                    }
+                                    Compat::Ok | Compat::Unknown => {}
+                                }
+                            }
+                        }
+                    }
+                }
                 // 172.1.2 C6(a): closure-параметры типизируются сигнатурой callee
                 // ДО рекурсии в args — тела замыканий (`x*2`) f1-обходятся с
                 // типизированными параметрами → дети аннотируются каналом.
@@ -8865,6 +8998,41 @@ impl<'a> TypeCheckCtx<'a> {
                             ResolvedType::from_type_ref(&tr), gs);
                         self.resolved_types_buf.borrow_mut().insert(e.id, rt);
                     } else if let ExprKind::Member { obj: mo, name: method } = &func.kind {
+                        // Plan 221.1 №286/№143 (окно p-chan, real Channel[T] mono):
+                        // `rx.recv()`/`rx.try_recv()`/`tx.share()` — same producer
+                        // logic as `infer_expr_type`'s dedicated Call-arm above
+                        // (kept independent rather than merged: this fn feeds the
+                        // CODEGEN `resolved_types` CHANNEL — Channel 2 — the other
+                        // feeds inline checker inference; `Some(x)`-ctor producer
+                        // just below is the byte-pattern this mirrors). `None` from
+                        // `channel_elem_type` (untracked bare `Channel.new`) is a
+                        // silent no-op — falls through to every OTHER arm in this
+                        // chain unchanged, then to legacy `infer_call_ret_c` exactly
+                        // as before this window.
+                        if matches!(method.as_str(), "recv" | "try_recv") && args.is_empty() {
+                            if let Some(elem_t) = self.channel_elem_type(mo, scope) {
+                                let opt = TypeRef::Named {
+                                    path: vec!["Option".to_string()],
+                                    generics: vec![elem_t],
+                                    span: e.span,
+                                };
+                                if !typeref_mentions_any(&opt, gs) {
+                                    let rt = ResolvedType::from_type_ref(&opt);
+                                    self.resolved_types_buf.borrow_mut().insert(e.id, rt);
+                                }
+                            }
+                        } else if method == "share" && args.is_empty() {
+                            if let Some(obj_ty) = self.infer_expr_type(mo, scope) {
+                                if matches!(&obj_ty, TypeRef::Named { path, generics, .. }
+                                    if generics.len() == 1
+                                        && path.last().map(String::as_str) == Some("ChanWriter"))
+                                    && !typeref_mentions_any(&obj_ty, gs)
+                                {
+                                    let rt = ResolvedType::from_type_ref(&obj_ty);
+                                    self.resolved_types_buf.borrow_mut().insert(e.id, rt);
+                                }
+                            }
+                        }
                         // 172.1.2 (static-ctor канал, 2026-07-03): TurboFish-статик
                         // (`Vec[u8].of(...)`) исключён из method-resolve producer'а,
                         // а infer_expr_type его резолвит (ctor-армы +
@@ -16761,6 +16929,32 @@ impl<'a> TypeCheckCtx<'a> {
     /// generic-scope, в котором объявлен `expected` (для arg↔param это
     /// разные scope: caller vs callee). Числовые литералы полиморфны
     /// (D44): целый литерал совместим с любым числовым типом.
+    /// Plan 221.1 №286/№143 (окно p-chan): if `obj`'s statically-known type
+    /// is a CONCRETE `ChanReader[T]`/`ChanWriter[T]` (turbofish-declared via
+    /// `Channel[T].new` — see `channel_new_turbofish_elem` — OR a plain
+    /// function-parameter/local annotated `ChanReader[T]`/`ChanWriter[T]`
+    /// directly, which `scope` already carries for free, D91 capability
+    /// types, `docs/guide/channels.md` §"Passing to functions"), returns
+    /// `T`. `None` for anything else — most importantly a bare, untracked
+    /// `Channel.new(cap)` (`generics` empty) — callers MUST treat `None` as
+    /// "fall through to pre-existing legacy/erased behavior", never as an
+    /// error: this whole window is a STRICTLY ADDITIVE extension of the
+    /// checker channel (§0/196) — it only narrows what used to be silently
+    /// erased to `nova_int` (№286/№143), it never rejects code that
+    /// compiled before this window.
+    fn channel_elem_type(&self, obj: &Expr, scope: &HashMap<String, TypeRef>) -> Option<TypeRef> {
+        let rt = self.infer_expr_type(obj, scope)?;
+        match rt {
+            TypeRef::Named { path, mut generics, .. } if generics.len() == 1 => {
+                match path.last().map(String::as_str) {
+                    Some("ChanReader") | Some("ChanWriter") => Some(generics.remove(0)),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
     /// Plan 200 (sql-autoconv) D55 amend entry-point: `assignable_direct`
     /// (the structural EXACT check, unchanged) PLUS — when direct fails —
     /// the "obvious single-wrapper coercion" fallback (D55 §Sum/newtype
@@ -18431,6 +18625,37 @@ impl<'a> TypeCheckCtx<'a> {
                                 ) {
                                     return Some(rt);
                                 }
+                            }
+                        }
+                    }
+                }
+                // Plan 221.1 №286/№143 (окно p-chan, real Channel[T] mono):
+                // `.recv()`/`.try_recv()` on a receiver with a STATICALLY
+                // known element `T` (`channel_elem_type` — `None` for an
+                // untracked bare `Channel.new`, falls through unchanged) →
+                // `Option[T]`, same `TypeRef::Named{path:["Option"],
+                // generics:[T]}` shape used by every other Option-producing
+                // site in this fn (e.g. `closure_if_ctor_peek`). `.share()`
+                // (ChanWriter only, D91/Plan 201) returns the SAME
+                // `ChanWriter[T]` as its receiver — needed so a chained
+                // `tx2 = tx.share()` also gets a typed element (`tx2.send(v)`
+                // must be checked exactly like `tx.send(v)`).
+                if let ExprKind::Member { obj, name } = &func.kind {
+                    if matches!(name.as_str(), "recv" | "try_recv") && outer_call_args.is_empty() {
+                        if let Some(elem_t) = self.channel_elem_type(obj, scope) {
+                            return Some(TypeRef::Named {
+                                path: vec!["Option".to_string()],
+                                generics: vec![elem_t],
+                                span: expr.span,
+                            });
+                        }
+                    } else if name == "share" && outer_call_args.is_empty() {
+                        if let Some(obj_ty) = self.infer_expr_type(obj, scope) {
+                            if matches!(&obj_ty, TypeRef::Named { path, generics, .. }
+                                if generics.len() == 1
+                                    && path.last().map(String::as_str) == Some("ChanWriter"))
+                            {
+                                return Some(obj_ty);
                             }
                         }
                     }
@@ -37087,6 +37312,42 @@ fn is_channel_new_call(value: &Expr) -> bool {
         ExprKind::Path(parts) => parts.len() == 2 && parts[0] == "Channel" && parts[1] == "new",
         _ => false,
     }
+}
+
+/// Plan 221.1 №286/№143 (окно p-chan, real `Channel[T]` monomorphization):
+/// extracts the EXPLICIT element type `T` from a `Channel[T].new(...)` /
+/// `Channel.new[T](...)` call, mirroring `is_channel_new_call`'s own
+/// AST-shape match one level deeper (that fn only answers "is this a
+/// Channel.new call", never what `T` is). Bare `Channel.new(cap)` (no
+/// turbofish anywhere) → `None` — `T` stays untracked, IDENTICAL to the
+/// pre-window behavior (this fn only ADDS coverage for the explicitly
+/// annotated forms actually used by every existing Channel fixture in this
+/// repo — see `docs/guide/channels.md` §Channel.new — never narrows what
+/// already compiled). The `Path` shape (`Channel.new` with no `Member`, no
+/// turbofish anywhere in the AST) can never carry an explicit `T` by
+/// construction — `None` unconditionally, no separate arm needed.
+fn channel_new_turbofish_elem(value: &Expr) -> Option<TypeRef> {
+    let ExprKind::Call { func, .. } = &value.kind else { return None };
+    // Method-level turbofish: `Channel.new[T](...)`.
+    if let ExprKind::TurboFish { base, type_args } = &func.kind {
+        if let ExprKind::Member { obj, name } = &base.kind {
+            if name == "new" && matches!(&obj.kind, ExprKind::Ident(n) if n == "Channel") {
+                return type_args.first().cloned();
+            }
+        }
+    }
+    // Receiver-level turbofish: `Channel[T].new(...)` — the documented,
+    // idiomatic spelling (channels.md, every existing fixture).
+    if let ExprKind::Member { obj, name } = &func.kind {
+        if name == "new" {
+            if let ExprKind::TurboFish { base, type_args } = &obj.kind {
+                if matches!(&base.kind, ExprKind::Ident(n) if n == "Channel") {
+                    return type_args.first().cloned();
+                }
+            }
+        }
+    }
+    None
 }
 
 fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic>) {

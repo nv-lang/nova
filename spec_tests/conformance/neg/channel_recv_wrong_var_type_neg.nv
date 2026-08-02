@@ -1,0 +1,33 @@
+// Plan 221.1 №286/№143 (окно p-chan). Measured hole (bug-sweep №286, probe
+// 3): `recv()` used to statically type as `Option[int]` REGARDLESS of the
+// channel's declared `T` (`NovaOpt_nova_int`, `infer_call_ret_c`'s
+// hardcoded `"recv" | "try_recv" => "NovaOpt_nova_int"`), so binding the
+// received value into a variable of the WRONG type went unnoticed by the
+// checker — only a heap-record receiver produced a downstream CC-FAIL
+// (`no member named 'v' in NovaOpt_nova_int`), never an honest Nova-level
+// diagnostic at the actual mistake site. `recv()` now resolves to the real
+// `Option[T]` (T tracked from `Channel[T].new`), so annotating the received
+// binding with an incompatible type is a normal, early checker error.
+//
+// EXPECT_COMPILE_ERROR E7301
+
+module neg.channel_recv_wrong_var_type_neg
+
+type M286Point {
+    ro x int
+    ro y int
+}
+
+test "channel[record].recv() bound into an incompatible annotated type is a checker error" {
+    // Before this window `rx.recv()` had NO return-type inference in the
+    // checker at all for ANY channel (annotated or not) — `assignable`
+    // fell through to `Compat::Unknown` (undecidable → skip, not an error),
+    // so this exact mistake (forgetting the `Option` wrapper entirely)
+    // silently compiled and only surfaced as a raw C struct-init CC-FAIL
+    // deep in codegen. `recv()` now resolves to the real, checker-tracked
+    // `Option[M286Point]` (Plan 221.1 №143/№286), so the top-level
+    // Option-vs-`int` category mismatch is caught right here, honestly.
+    ro (tx, rx) = Channel[M286Point].new(4)
+    tx.send(M286Point { x: 1, y: 2 })
+    ro bad int = rx.recv()
+}
