@@ -66,8 +66,8 @@ type Chan[T] {
     waiters   []SelectWaiter   // регистрации select-ветвей, см. ниже
 }
 
-export type ChanWriter[T](Chan[T])
-export type ChanReader[T](Chan[T])
+export type ChanWriter[T] value { priv ch Chan[T] }
+export type ChanReader[T] value { priv ch Chan[T] }
 ```
 
 Разделение типов даёт безопасность следствием системы типов, а не особым
@@ -88,7 +88,7 @@ export fn Channel[T].new(cap int) -> (ChanWriter[T], ChanReader[T]) {
         tx_refs: AtomicInt.new(1),
         waiters: []SelectWaiter.new(),
     }
-    (ChanWriter[T](ch), ChanReader[T](ch))
+    (ChanWriter[T] { ch }, ChanReader[T] { ch })
 }
 ```
 
@@ -99,29 +99,29 @@ export fn Channel[T].new(cap int) -> (ChanWriter[T], ChanReader[T]) {
 
 ```nova
 export fn ChanWriter[T] @send(consume v T) -> bool {   // consume: владение уходит (D131/№144)
-    mut g = @lock.lock()
-    while @count == @buf.cap() && !@closed {
-        @not_full.wait(@lock)
+    mut g = @ch.lock.lock()
+    while @ch.count == @ch.buf.cap() && !@ch.closed {
+        @ch.not_full.wait(@ch.lock)
     }
-    if @closed { return false }
-    @buf_put(@head + @count, v)
-    @count += 1
-    @not_empty.notify_one()
-    @wake_select_waiters()        // см. раздел select
+    if @ch.closed { return false }
+    @ch.buf_put(@ch.head + @ch.count, v)
+    @ch.count += 1
+    @ch.not_empty.notify_one()
+    @ch.wake_select_waiters()        // см. раздел select
     true
 }
 
 export fn ChanReader[T] @recv() -> Option[T] {
-    mut g = @lock.lock()
-    while @count == 0 && !@closed {
-        @not_empty.wait(@lock)
+    mut g = @ch.lock.lock()
+    while @ch.count == 0 && !@ch.closed {
+        @ch.not_empty.wait(@ch.lock)
     }
-    if @count == 0 { return None }     // закрыт и пуст
-    ro v = @buf_take(@head)
-    @head = (@head + 1) % @buf.cap()
-    @count -= 1
-    @not_full.notify_one()
-    @wake_select_waiters()
+    if @ch.count == 0 { return None }     // закрыт и пуст
+    ro v = @ch.buf_take(@ch.head)
+    @ch.head = (@ch.head + 1) % @ch.buf.cap()
+    @ch.count -= 1
+    @ch.not_full.notify_one()
+    @ch.wake_select_waiters()
     Some(v)
 }
 ```
@@ -280,8 +280,8 @@ send(v):
 ```nova
 select {
     Some(v) = rx     => handle(v)
-    tx <- payload    => sent()
-    default          => busy()
+    tx.send(payload) => sent()
+    _                => busy()          // ветвь по умолчанию
 }
 ```
 
@@ -328,7 +328,7 @@ if which == 0 {
 
 ### Тонкости, которые обязаны быть реализованы именно так
 
-1. **Отказ по `default` — тоже через обмен.** Если просто уйти в `busy()`,
+1. **Отказ по ветви `_` — тоже через обмен.** Если просто уйти в `busy()`,
    опоздавший отправитель успеет выиграть обмен и положить значение в
    `w0.slot`, который никто не прочитает — потеря значения. Поэтому уход по
    `default` закрывает арбитра значением `ABANDONED`; если обмен не удался,
