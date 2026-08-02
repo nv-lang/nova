@@ -195,7 +195,8 @@ pending the owner's call in Open questions.
 | Русский (норма #language) | English | Example (en) | Note |
 |---|---|---|---|
 | модуль | module | "A **module** is either a single file `X.nv` or a **folder** `X/`" | language-tour.md §11; натурализованный термин |
-| папка-модуль / равноправные файлы | folder-module / peer files | "A **module** is either a single file `X.nv` or a **folder** `X/` whose **peer files** all declare the same `module` path and share one namespace" | language-tour.md §11; **утверждено владельцем 2026-08-03** — «равноправные файлы» (файлы одного пространства имён без взаимного импорта; ближайший аналог в литературе — Go-шное «файлы одного пакета») |
+| папка-модуль | folder-module | "A **module** is either a single file `X.nv` or a **folder** `X/`" | language-tour.md §11; модуль как папка — альтернатива модулю-одному-файлу |
+| файлы одного модуля (равноправные файлы) | peer files | "whose **peer files** all declare the same `module` path and share one namespace" | language-tour.md §11; **утверждено владельцем 2026-08-03**, форма уточнена по его же замечанию (не видно связи с модулем) — русская форма явно называет связь с модулем: папка = ОДИН модуль, файлы внутри неё равноправны (ни один не «главнее»), у них общее пространство имён (объявленное в одном файле видно в другом без импорта), и друг друга по import они НЕ подключают; ближайший аналог в литературе — Go-шное «файлы одного пакета» |
 | пакет | package | "Every import path is fully qualified from the **package** root (the directory with `nova.toml`)" | language-tour.md §11; натурализованный термин |
 | рабочее пространство (`[workspace]`) `[keep-en: код]` | workspace | "Workspaces (`[workspace] members = [...]`) group several packages in a monorepo" | language-tour.md §11; норма-форма «рабочее пространство» вместо транслитерации «воркспейс»; `[workspace]` — буквальное имя секции в `nova.toml` |
 
@@ -281,5 +282,11 @@ pending the owner's call in Open questions.
 10. **enforce-with-elision (§10). ✅ РЕШЕНО (владелец 2026-08-03):**
     **keep-en** — имя собственное механизма (D24/Plan 140), как CI/REST;
     при первом упоминании — краткое русское пояснение рядом.
-11. **peer files (§8). ✅ РЕШЕНО (владелец 2026-08-03):**
-    **«равноправные файлы»** (не «peer-файлы», не «файлы-соседи»).
+11. **peer files (§8). ✅ РЕШЕНО (владелец 2026-08-03), форма уточнена:**
+    **«файлы одного модуля (равноправные файлы)»** (не «peer-файлы», не
+    «файлы-соседи») — владелец принял «равноправные файлы», но заметил,
+    что из исходной формы не видно связи с модулем; строка §8
+    переформулирована так, чтобы связь была явной: папка = ОДИН модуль,
+    файлы внутри него равноправны, общее пространство имён, друг друга
+    по import не подключают. `folder-module` (контейнер) и `peer files`
+    (свойство файлов внутри него) — теперь отдельные строки §8.
