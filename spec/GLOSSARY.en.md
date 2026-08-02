@@ -117,18 +117,18 @@ pending the owner's call in Open questions.
 
 ## 4. Bindings, ownership and pattern matching · Связывания, владение, сопоставление с образцом
 
-| Русский | English | Example (en) | Note |
+| Русский (норма #language) | English | Example (en) | Note |
 |---|---|---|---|
-| consume-тип | consume-type | "A *consume-type* is a type whose values represent ownership of a non-shareable resource" | docs/guide/consume-types.md; the owner must explicitly consume the value, no implicit drop |
-| линейная дисциплина | linear (discipline) | "it had to be consumed **exactly once**, or the compiler rejected the program — strictly linear" | language-tour.md §7, D133 |
-| аффинная дисциплина | affine (discipline) | "**D432** lets a `consume` type opt into an **affine** discipline instead" | language-tour.md §7; may-forget instead of must-consume |
-| view-заём | view-borrow | "Function parameters of consume-type without the `consume` keyword are *views* — bounded by the callee's scope" | docs/guide/consume-types.md Rule 4 |
-| перемещение (move) | move | "`consume b = a` — move — a dead, b owns; using `a` afterward triggers a `use-after-consume` diagnostic" | docs/guide/consume-types.md Rule 3 |
-| fluent-цепочка / ресивер | fluent chain / receiver | "Fluent chains compose mutators: `sb.append(\"a\").append(\"b\").as_str()`" | docs/guide/consume-types.md "Fluent-return chains"; receiver = the `self`-like first argument a method is called on |
-| property-по-арности | property by arity | "**Properties by arity** (D84/D409) let one name serve as both getter and setter" | language-tour.md §3 |
-| pattern matching / сопоставление с образцом (+ guard) | pattern matching (+ guard) | "`match` supports literal patterns, guards (`n if n > 0`), and sum-variant destructuring." | language-tour.md §4; a guard is an extra boolean condition on a match arm; exhaustiveness is checked for sum types and `bool` |
-| if-let форма | if-let form | "`if <Pattern> = expr { } else { }` is Nova's if-let form" | language-tour.md §4; no separate `if let` keyword, same `if pattern = …` shape |
-| встраивание (embed) / делегирование | embed / delegation | "embed: имя поля обязательно (D39)" → "`use` — это **поле + автопрокси методов**" (spec/syntax.md) | composition via `use Type`, not inheritance — the compiler generates proxy methods (delegation), no virtual dispatch |
+| потребляемый тип `[keep-en: код]` (consume-тип) | consume-type | "A *consume-type* is a type whose values represent ownership of a non-shareable resource" | docs/guide/consume-types.md; норма-глагол «потреблять» (не «консьюмить») даёт «потребляемый тип»; `consume` оставлен в скобках как код-имя declaration-модификатора |
+| линейная дисциплина | linear (discipline) | "it had to be consumed **exactly once**, or the compiler rejected the program — strictly linear" | language-tour.md §7, D133; натурализованный термин теории типов, не калька |
+| аффинная дисциплина | affine (discipline) | "**D432** lets a `consume` type opt into an **affine** discipline instead" | language-tour.md §7; may-forget instead of must-consume; натурализованный термин теории типов |
+| заём-представление | view-borrow | "Function parameters of consume-type without the `consume` keyword are *views* — bounded by the callee's scope" | docs/guide/consume-types.md Rule 4; «заём» — устоявшийся русский перевод Rust-термина «borrow», «представление» — для «view»; составное — не калька, оба слова русские |
+| перемещение | move | "`consume b = a` — move — a dead, b owns; using `a` afterward triggers a `use-after-consume` diagnostic" | docs/guide/consume-types.md Rule 3; «перемещение» — устоявшийся русский перевод move-семантики (Rust-литература) |
+| цепочка вызовов / получатель | fluent chain / receiver | "Fluent chains compose mutators: `sb.append(\"a\").append(\"b\").as_str()`" | docs/guide/consume-types.md "Fluent-return chains"; «получатель» вместо жаргонного «ресивер» — получатель вызова метода (аналог `self`) |
+| свойство по арности | property by arity | "**Properties by arity** (D84/D409) let one name serve as both getter and setter" | language-tour.md §3; «арность» — стандартный русский матем./CS-термин, не калька |
+| сопоставление с образцом (+ охранное условие) | pattern matching (+ guard) | "`match` supports literal patterns, guards (`n if n > 0`), and sum-variant destructuring." | language-tour.md §4; «сопоставление с образцом» — устоявшийся русский перевод в переводной ФП-литературе (Haskell/OCaml); «охранное условие» вместо непереведённого «guard» |
+| условная форма сопоставления | if-let form | "`if <Pattern> = expr { } else { }` is Nova's if-let form" | language-tour.md §4; описательная замена англ. идиомы «if-let» (в Nova нет отдельного ключевого слова `if let` — это форма обычного `if <паттерн> = выражение`) |
+| встраивание / делегирование | embed / delegation | "embed: имя поля обязательно (D39)" → "`use` — это **поле + автопрокси методов**" (spec/syntax.md) | composition via `use Type` (см. `use` в §2), not inheritance — компилятор генерирует прокси-методы (делегирование), без виртуального диспетчера; оба слова натурализованы в русской OOP-литературе |
 
 ---
 
