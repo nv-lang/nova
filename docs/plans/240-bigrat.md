@@ -27,9 +27,11 @@ Python `fractions.Fraction`, Ruby `Rational`, Haskell `Rational`.
 
 Представление + нормальная форма; конверсии (int-веер, str, BigDecimal↔BigRat);
 `@plus/@minus/@times/@div/@recip/@neg/@abs`; `@compare/@equal/@hash`; `@to_str/@to_int/
-@to_i128`; предикаты. **НЕ входит:** continued fractions/Stern-Brocot; `@to_f64`;
-литералы/неявные коэрсии (аллокация вне полос D429); D310 type-sets; ускорения gcd
-(binary-gcd, Lehmer); mediant; pow.
+@to_i128`; предикаты. **НЕ входит:** continued fractions/Stern-Brocot (единственный
+именованный V2-кандидат из этой области — `limit_denominator`, см. вопрос 6); `@to_f64`
+(путь через `@to_bigdecimal`/`@to_bigrat`-связки); `BigRat @to_bigfloat` (вопрос 5);
+литералы/неявные коэрсии (аллокация вне полос D429); ускорения gcd (binary-gcd, Lehmer);
+mediant; pow.
 
 ## 2. Дизайн (V1)
 
@@ -51,14 +53,27 @@ Python `fractions.Fraction`, Ruby `Rational`, Haskell `Rational`.
   реальным bigdecimal.nv):
   - `BigRat.new(num BigInt, den BigInt) -> Result[BigRat, DivError]` — нормализует
     (знак/НОД); `BigRat.zero()/one()`;
-  - генерик-веер `i8|i16|i32|i64|int|u8|u16|u32|u64|uint|i128 @to_bigrat() -> BigRat`
-    (n/1; по образцу веера `@to_bigdecimal`);
+  - **ОДИН генерик-бланкет** `fn[T Ints] T @to_bigrat() -> BigRat` (n/1) + отдельная
+    перегрузка `i128 @to_bigrat()` (i128 ∉ `Ints`) — по образцу `@to_bigint`
+    (bigint.nv:408/423), НЕ по веерам 236/237: те 10-перегрузочные веера были обходом
+    `[M-generic-body-calls-generic-mono-placeholder]`, дефект ЗАКРЫТ №170 (2026-07-31),
+    generic-из-generic пробой подтверждён 2026-08-02. **Попутная заметка (вне объёма
+    240):** свёртка вееров `@to_bigdecimal`/`@to_bigfloat` 10→1 разблокирована тем же
+    фиксом — отдельная мелкая задача;
   - `str @to_bigrat() -> Result[BigRat, ParseBigRatError]` — формы V1: `"p/q"` и целое
-    `"n"` (знак у p); `ParseBigRatError enum Empty | BadDigit | ZeroDenominator`
-    (по образцу ParseBigDecimalError);
-  - **связка семьи:** `BigDecimal @to_bigrat() -> BigRat` — ТОЧНАЯ (mant/10^scale, затем
-    нормализация); `BigRat @to_bigdecimal(mc MathContext) -> BigDecimal` — деление
-    num/den с округлением mc (первый носитель «BigRat как эталон» в тестах 236);
+    `"n"` (знак у p); реализация — ДЕЛЕГАЦИЕЙ: split по `/`, части парсит существующий
+    `str @to_bigint()`, его ошибки маппятся; `ParseBigRatError enum Empty | OnlySign |
+    InvalidCharacter | ZeroDenominator` — имена вариантов строго как у
+    `ParseBigIntError`/`ParseBigDecimalError` (паритет семьи; НЕ `BadDigit`);
+  - **связка семьи — ОБЕ сестры (мотив «точный эталон» требует обеих):**
+    `BigDecimal @to_bigrat() -> BigRat` — ТОЧНАЯ (mant/10^scale, затем нормализация);
+    `BigRat @to_bigdecimal(mc MathContext) -> BigDecimal` — деление num/den с
+    округлением mc (первый носитель «BigRat как эталон» в тестах 236);
+    `BigFloat @to_bigrat() -> BigRat` — ТОЧНАЯ (mant×2^exp: exp≥0 → `num = mant.shl(exp)`,
+    exp<0 → `den = BigInt.one().shl(-exp)`; `@shl`/`@bit_length` уже в bigint.nv:702/714
+    с волны 237). Обратная `BigRat @to_bigfloat(ctx)` — НЕ в V1 (округление деления в
+    двоичной мантиссе — своя аккуратность; появится с первым носителем — открытый
+    вопрос 5);
   - `@num()/@den()` — property-геттеры (D84/D409, образец `BigDecimal @scale()`);
   - `@plus/@minus/@times` (операторы `+ - *` через desugar — прецедент семьи);
     `@div(other) -> Result[BigRat, DivError]` и `@recip() -> Result[BigRat, DivError]`
@@ -83,7 +98,10 @@ Python `fractions.Fraction`, Ruby `Rational`, Haskell `Rational`.
 - **Ф.0 Пины (внутри той же волны, ДО ядра):** (а) value-record с двумя BigInt-полями —
   мини-фикстура компилябельности; (б) операторный desugar `+ - *` на новом типе (дёшево,
   прецедент семьи); (в) `DivError` из `bigint` виден в `bigint.bigrat` (кросс-модульный
-  импорт внутри пакета).
+  импорт внутри пакета); (г) бланкет `fn[T Ints] T @to_bigrat()`, зовущий бланкет
+  `@to_bigint()` из своего generic-тела, — В ПАКЕТНОМ контексте (№170 закрыт, проба
+  2026-08-02 в репе nova зелёная; пакетный CU подтвердить дёшево; красный → откат на
+  веер 236-го образца с маркером, НЕ блокер волны).
 - **Ф.1 gcd в bigint.nv:** `@gcd` (Евклид/@rem) + тесты (пары с известным НОД, 0-кейсы,
   большие взаимно-простые) — отдельный коммит.
 - **Ф.2 Ядро bigrat:** представление, normalize (знак+НОД), new/zero/one, веер
@@ -91,13 +109,16 @@ Python `fractions.Fraction`, Ruby `Rational`, Haskell `Rational`.
 - **Ф.3 Арифметика:** `@plus` (a/b + c/d = (ad+cb)/bd → normalize; оптимизация НОД-ов
   Кнута — вне V1), `@minus/@times/@div/@recip`.
 - **Ф.4 Строки и связка семьи:** `str @to_bigrat`/`@to_str`;
-  `BigDecimal @to_bigrat`/`BigRat @to_bigdecimal(mc)`.
+  `BigDecimal @to_bigrat`/`BigRat @to_bigdecimal(mc)`; `BigFloat @to_bigrat` (точная).
 - **Ф.5 Тесты (рядом с модулем):** identities на малых значениях против int-эталона
   (seeded splitmix64 `.wrapping_*`): a+b-b==a, (a/b)*b==a (b≠0), compare-транзитивность;
   нормальная форма после каждой op (den>0, gcd==1 — прямой assert через @gcd);
   канонические вектора: 1/3+1/6==1/2, суммы гармонического ряда H_10 (точное значение),
   BigDecimal-roundtrip (1.25 ↔ 5/4); большие num/den (100! / 99! == 100). Большие
-  вектора — в репо, не в дефолт-прогон.
+  вектора — в репо, не в дефолт-прогон. **Плюс первый эталон-кейс мотива (тест-синергия
+  семьи):** `BigDecimal @div(mc)` под HalfEven против точного `BigRat`-частного с ручным
+  округлением — расхождение = баг одного из двух; зеркальный кейс для `BigFloat @div`
+  через точный `@to_bigrat` обеих сторон.
 - **Ф.6 Закрытие:** doc-комменты (англ.), STATUS/README пакета — строка о четвёртом
   типе; приёмка интегратора: `nova check`/`nova test` пакета, пуш на 3 ремоута.
 
@@ -127,6 +148,12 @@ Python `fractions.Fraction`, Ruby `Rational`, Haskell `Rational`.
    Рекомендация: нет (появятся с первым носителем).
 4. **Имя типа:** `BigRat` (семья Big*, Go-паритет) или `Rational` (Ruby/Haskell)?
    Рекомендация: `BigRat` — единообразие пакета.
+5. **`BigRat @to_bigfloat(ctx)` (обратная связка):** в V1 или с первым носителем?
+   Рекомендация: НЕ в V1 (двоичное округление деления — своя аккуратность; прямая
+   точная `BigFloat @to_bigrat` уже даёт эталон-тесты 237-му без обратной).
+6. **`limit_denominator` (Python `Fraction.limit_denominator`, «лучшая дробь с den ≤ N»):**
+   зафиксировать как ЕДИНСТВЕННОГО кандидата V2 из исключённых continued fractions?
+   Рекомендация: да, строкой в §1 — чтобы V2-заявки не размывали объём.
 
 ## Связи
 
