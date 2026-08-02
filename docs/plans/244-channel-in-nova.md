@@ -39,20 +39,34 @@
 объекты `Nova_ChanWriter` и `Nova_ChanReader` поверх общего буфера, и `close`
 у них разный по смыслу.
 
+**Не экспортируются** (правка владельца 2026-08-02): `ChanBuf`/`ChanTx`/
+`ChanRx` — детали реализации, наружу видны только `Channel`, `ChanWriter[T]`,
+`ChanReader[T]`.
+
+**`#share` — только на сторонах, что пересекают границу файбера** (правка
+владельца + обоснование D415): тип, оборачивающий сырой указатель, «отравлен»
+(poison base), и захват его в `spawn` отклоняется энфорсом S1a — снять запрет
+может ТОЛЬКО собственное ручательство `#share` содержащего типа. Стороны
+канала захватываются в файберы по своему назначению, поэтому ручательство
+обязательно; `ChanBuf` в файбер не уходит (живёт только внутри `Channel.new`)
+— ему `#share` не нужен. Где именно ставить ручательство — на внутреннем
+`ChanTx`/`ChanRx` или на публичных `ChanWriter[T]`/`ChanReader[T]` — решается
+ПРОБОЙ в Ф.2 (распространяется ли отравление через поле вouched-типа), а не
+рассуждением.
+
 ```nova
 module std.concurrency.channel
 
-/// Общий буфер канала (владеет памятью элементов, счётчиками, замком).
-#share
-export type ChanBuf(*())
+/// Общий буфер канала. Внутренний: в файбер не уходит, ручательство не нужно.
+type ChanBuf(*())
 
-/// Сторона записи (рантайм-объект, ref-счёт при multi-writer).
+/// Сторона записи. #share — ручательство D415: тип уходит в файбер.
 #share
-export type ChanTx(*())
+type ChanTx(*())
 
 /// Сторона чтения.
 #share
-export type ChanRx(*())
+type ChanRx(*())
 ```
 
 ## Сырой слой — `extern "C"`, каждая функция возвращает ОДНО значение
@@ -63,26 +77,26 @@ export type ChanRx(*())
 // ограждением E_CHANNEL_UNSOUND_ELEM_TYPE.
 // align_of НЕ передаём: sizeof(T) всегда кратен alignof(T), а база выделения
 // выровнена под любой тип (см. §Риски п.1).
-extern "C" fn nova_chan_buf_new(cap int, elem_size int) -> *()
+extern "C" fn chan_buf_new(cap int, elem_size int) -> *()
 
-extern "C" fn nova_chan_buf_writer(buf *()) -> *()
-extern "C" fn nova_chan_buf_reader(buf *()) -> *()
+extern "C" fn chan_buf_writer(buf *()) -> *()
+extern "C" fn chan_buf_reader(buf *()) -> *()
 
 // Передача элемента — по указателю на значение (src/dst), длина известна
 // буферу. Копирование делает рантайм.
-extern "C" fn nova_chan_send(tx *(), src *u8) -> bool
-extern "C" fn nova_chan_try_send(tx *(), src *u8) -> bool
-extern "C" fn nova_chan_recv(rx *(), dst *mut u8) -> bool      // false = закрыт и пуст
-extern "C" fn nova_chan_try_recv(rx *(), dst *mut u8) -> bool
+extern "C" fn chan_send(tx *(), src *u8) -> bool
+extern "C" fn chan_try_send(tx *(), src *u8) -> bool
+extern "C" fn chan_recv(rx *(), dst *mut u8) -> bool      // false = закрыт и пуст
+extern "C" fn chan_try_recv(rx *(), dst *mut u8) -> bool
 
-extern "C" fn nova_chan_tx_close(tx *()) -> ()
-extern "C" fn nova_chan_rx_close(rx *()) -> ()
-extern "C" fn nova_chan_tx_is_closed(tx *()) -> bool
-extern "C" fn nova_chan_rx_is_closed(rx *()) -> bool
-extern "C" fn nova_chan_rx_close_after(rx *(), millis i64) -> ()
-extern "C" fn nova_chan_tx_share(tx *()) -> *()                // ref-счёт +1
-extern "C" fn nova_chan_len(buf *()) -> int
-extern "C" fn nova_chan_cap(buf *()) -> int
+extern "C" fn chan_tx_close(tx *()) -> ()
+extern "C" fn chan_rx_close(rx *()) -> ()
+extern "C" fn chan_tx_is_closed(tx *()) -> bool
+extern "C" fn chan_rx_is_closed(rx *()) -> bool
+extern "C" fn chan_rx_close_after(rx *(), millis i64) -> ()
+extern "C" fn chan_tx_share(tx *()) -> *()                // ref-счёт +1
+extern "C" fn chan_len(buf *()) -> int
+extern "C" fn chan_cap(buf *()) -> int
 ```
 
 ## Публичный слой — обычный Nova
@@ -94,38 +108,38 @@ export type ChanReader[T](ChanRx)
 /// Пара собирается ЗДЕСЬ, обычным кортежом Nova — кортеж границу C не пересекает.
 #stable(since = "0.1")
 export fn Channel[T].new(cap int) -> (ChanWriter[T], ChanReader[T]) {
-    ro buf = ChanBuf(nova_chan_buf_new(cap, size_of[T]()))
-    (ChanWriter[T](ChanTx(nova_chan_buf_writer(buf.0))),
-     ChanReader[T](ChanRx(nova_chan_buf_reader(buf.0))))
+    ro buf = ChanBuf(chan_buf_new(cap, size_of[T]()))
+    (ChanWriter[T](ChanTx(chan_buf_writer(buf.0))),
+     ChanReader[T](ChanRx(chan_buf_reader(buf.0))))
 }
 
 // --- сторона записи ---
 export fn ChanWriter[T] @send(consume v T) -> bool =>
-    nova_chan_send(@0.0, addr_of(v) as *u8)          // consume — владение уходит (D131/№144)
+    chan_send(@0.0, addr_of(v) as *u8)          // consume — владение уходит (D131/№144)
 
 export fn ChanWriter[T] @try_send(consume v T) -> bool =>
-    nova_chan_try_send(@0.0, addr_of(v) as *u8)
+    chan_try_send(@0.0, addr_of(v) as *u8)
 
-export fn ChanWriter[T] @close() -> ()        => nova_chan_tx_close(@0.0)
-export fn ChanWriter[T] @is_closed() -> bool  => nova_chan_tx_is_closed(@0.0)
+export fn ChanWriter[T] @close() -> ()        => chan_tx_close(@0.0)
+export fn ChanWriter[T] @is_closed() -> bool  => chan_tx_is_closed(@0.0)
 export fn ChanWriter[T] @share() -> ChanWriter[T] =>
-    ChanWriter[T](ChanTx(nova_chan_tx_share(@0.0)))
+    ChanWriter[T](ChanTx(chan_tx_share(@0.0)))
 
 // --- сторона чтения ---
 export fn ChanReader[T] @recv() -> Option[T] {
     mut slot = T.uninit()                             // см. §Открытые вопросы п.2
-    if nova_chan_recv(@0.0, addr_of_mut(slot) as *mut u8) { Some(slot) } else { None }
+    if chan_recv(@0.0, addr_of_mut(slot) as *mut u8) { Some(slot) } else { None }
 }
 
 export fn ChanReader[T] @try_recv() -> Option[T] {
     mut slot = T.uninit()
-    if nova_chan_try_recv(@0.0, addr_of_mut(slot) as *mut u8) { Some(slot) } else { None }
+    if chan_try_recv(@0.0, addr_of_mut(slot) as *mut u8) { Some(slot) } else { None }
 }
 
-export fn ChanReader[T] @close() -> ()        => nova_chan_rx_close(@0.0)
-export fn ChanReader[T] @is_closed() -> bool  => nova_chan_rx_is_closed(@0.0)
+export fn ChanReader[T] @close() -> ()        => chan_rx_close(@0.0)
+export fn ChanReader[T] @is_closed() -> bool  => chan_rx_is_closed(@0.0)
 export fn ChanReader[T] @close_after(d Duration) -> () =>
-    nova_chan_rx_close_after(@0.0, d.as_millis())
+    chan_rx_close_after(@0.0, d.as_millis())
 ```
 
 Разделение типов даёт безопасность как следствие системы типов, а не как
@@ -134,7 +148,7 @@ export fn ChanReader[T] @close_after(d Duration) -> () =>
 
 ## Фазы
 
-- **Ф.1 — сырой слой.** Экспортировать перечисленные `nova_chan_*` символы из
+- **Ф.1 — сырой слой.** Экспортировать перечисленные `chan_*` символы из
   `nova_rt/channels.h` (сегодня часть — `static inline`), добавить в буфер
   поле `elem_size` и байтовое хранение вместо словного слота. Прогон:
   существующие channel-фикстуры зелёные на СТАРОМ пути (сырой слой ещё не
@@ -148,6 +162,24 @@ export fn ChanReader[T] @close_after(d Duration) -> () =>
   многополевую значимую запись — то, что ограждение запрещало.
 - **Ф.5 — дока и спека:** `docs/guide/channels.md` (сейчас описывает
   ограничение word-safe), D79/D91-соседство — тем же слиянием.
+
+## Что МОЖНО передавать через `extern "C"` (вопрос владельца про `str`)
+
+`extern "C" fn fs_realpath_into(...) -> str` — **легально**, это не дыра.
+`str` в C-мире — обычная структура из двух слов, объявленная в заголовке
+рантайма: `typedef struct { const uint8_t* ptr; int64_t len; } nova_str;`
+(`nova_rt/nova_rt.h`). Сишная сторона включает этот заголовок и возвращает
+структуру по значению (`nova_str fs_realpath_into(...)` в `nova_rt/fs.c`).
+Таких объявлений в std десять.
+
+Правило, которое отсюда следует: через границу проходит любой тип с
+**фиксированным, объявленным в заголовке представлением**. Кортеж таким
+представлением не обладает — у него нет сишного typedef, ABI возврата
+кортежа не зафиксирован; ровно поэтому кортежный FFI и вынесен в отдельный
+план [115](115-ptr-type-and-tuple-ffi.md), а `str` работает без него.
+
+Для канала это ничего не меняет: сырой слой обходится указателями,
+целыми и `bool`, пару собирает Nova.
 
 ## Риски и что проверить прямым тестом (не рассуждением)
 
