@@ -126,31 +126,31 @@ export fn Channel[T].new(cap int) -> (ChanWriter[T], ChanReader[T]) {
 
 // --- сторона записи ---
 export fn ChanWriter[T] @send(consume v T) -> bool =>
-    unsafe { chan_tx_send(@0, &v as *u8) }          // consume — владение уходит (D131/№144)
+    unsafe { chan_tx_send(@, &v as *u8) }          // consume — владение уходит (D131/№144)
 
 export fn ChanWriter[T] @try_send(consume v T) -> bool =>
-    unsafe { chan_tx_try_send(@0, &v as *u8) }
+    unsafe { chan_tx_try_send(@, &v as *u8) }
 
-export fn ChanWriter[T] @close() -> ()        => chan_tx_close(@0)
-export fn ChanWriter[T] @is_closed() -> bool  => chan_tx_is_closed(@0)
+export fn ChanWriter[T] @close() -> ()        => chan_tx_close(@)
+export fn ChanWriter[T] @is_closed() -> bool  => chan_tx_is_closed(@)
 export fn ChanWriter[T] @share() -> ChanWriter[T] =>
-    ChanWriter[T](chan_tx_share(@0))
+    ChanWriter[T](chan_tx_share(@))
 
 // --- сторона чтения ---
 export fn ChanReader[T] @recv() -> Option[T] {
     mut slot = T.uninit()                             // см. §Открытые вопросы п.2
-    unsafe { if chan_rx_recv(@0, &slot as *mut u8) { Some(slot as T) } else { None } }
+    unsafe { if chan_rx_recv(@, &slot as *mut u8) { Some(slot as T) } else { None } }
 }
 
 export fn ChanReader[T] @try_recv() -> Option[T] {
     mut slot = T.uninit()
-    unsafe { if chan_rx_try_recv(@0, &slot as *mut u8) { Some(slot as T) } else { None } }
+    unsafe { if chan_rx_try_recv(@, &slot as *mut u8) { Some(slot as T) } else { None } }
 }
 
-export fn ChanReader[T] @close() -> ()        => chan_rx_close(@0)
-export fn ChanReader[T] @is_closed() -> bool  => chan_rx_is_closed(@0)
+export fn ChanReader[T] @close() -> ()        => chan_rx_close(@)
+export fn ChanReader[T] @is_closed() -> bool  => chan_rx_is_closed(@)
 export fn ChanReader[T] @close_after(d Duration) -> () =>
-    chan_rx_close_after(@0, d.as_millis())
+    chan_rx_close_after(@, d.as_millis())
 ```
 
 Разделение типов даёт безопасность как следствие системы типов, а не как
@@ -250,7 +250,7 @@ export fn ChanReader[T] @close_after(d Duration) -> () =>
    export fn ChanReader[T] @recv() -> Option[T] {
        mut slot uninit T
        unsafe {
-           if chan_rx_recv(@0, &slot as *mut u8) { Some(slot as T) } else { None }
+           if chan_rx_recv(@, &slot as *mut u8) { Some(slot as T) } else { None }
        }
    }
    ```
