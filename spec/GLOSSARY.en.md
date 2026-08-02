@@ -24,7 +24,7 @@
 > and are listed separately with a Russian explanation of what the token
 > means, not a translation of the token itself.
 >
-> **Minimal-English-words norm (owner, 2026-08-03; doc-conventions
+> **Minimal-English-words norm (owner, 2026-08-02; doc-conventions
 > `#language`).** Russian prose keeps anglicisms to a minimum: not
 > «роутер/хендлер/консюмить/капчурить», but «маршрутизатор/обработчик/
 > потреблять/захватывать». Every term row below carries a **Russian
