@@ -19,6 +19,15 @@ void* nova_alloc(size_t size) {
     void* p = calloc(1, size);
     if (!p) {
         fprintf(stderr, "nova: out of memory\n");
+        /* #278 [M-nova-alloc-abort-no-fflush]: flush BOTH streams before
+         * abort() — stdout is buffered (fully-buffered when redirected to a
+         * file/pipe, the common case for test-runner children), so any
+         * println() output the program already produced is still sitting
+         * in libc's buffer when abort() tears the process down; without an
+         * explicit fflush it's lost, hiding the last lines printed before
+         * the crash and costing extra repro runs to diagnose (see #109). */
+        fflush(stdout);
+        fflush(stderr);
         abort();
     }
     _alloc_count++;
@@ -31,6 +40,9 @@ void* nova_alloc_uncollectable(size_t size) {
     void* p = calloc(1, size);
     if (!p) {
         fprintf(stderr, "nova: out of memory (uncollectable)\n");
+        /* #278: see nova_alloc's matching comment above. */
+        fflush(stdout);
+        fflush(stderr);
         abort();
     }
     _alloc_count++;

@@ -1088,13 +1088,26 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
         .and_then(|repo_root| detect_or_build_rt_archive(opts.rt_dir, repo_root, tc, opts));
     let use_rt_archive = rt_archive.is_some();
 
-    // Plan 27 Ф.1+Ф.D: Boehm paths resolved via detect_boehm (env overrides
-    // + local vcpkg + global vcpkg). На Linux/macOS Some(BoehmConfig) с
-    // include_dir=Some из system path, lib_dir=None — линкер через -lgc.
-    // Под Windows detect_boehm всегда даёт both Some(...).
-    // Если backend = Malloc → cfg = None, paths не используются.
+    // Plan 27 Ф.1+Ф.D + #269 Ф.2: Boehm paths resolved via detect_boehm (env
+    // overrides + local vcpkg + global vcpkg), falling back — #269 Ф.2 — to
+    // the vendored bdwgc submodule build when neither is present (mirrors
+    // `resolve_gc_or_exit`'s own fallback exactly; MUST be consulted here
+    // too, not just at the early honest-exit check above, otherwise a
+    // successful fallback build there is invisible to the ACTUAL compile
+    // flags computed below — `vcpkg_include`/`vcpkg_lib` would silently
+    // fall through to their `unwrap_or_else` legacy vcpkg-path default,
+    // which doesn't exist on a fallback-built clean clone). Idempotent —
+    // the fallback fn's own cache check makes this a cheap disk stat on the
+    // (overwhelmingly common) case where `resolve_gc_or_exit` already ran.
+    // На Linux/macOS Some(BoehmConfig) с include_dir=Some из system path,
+    // lib_dir=None — линкер через -lgc. Под Windows detect_boehm/fallback
+    // всегда даёт both Some(...). Если backend = Malloc → cfg = None, paths
+    // не используются.
     let boehm_cfg = if opts.gc_kind == GcKind::Boehm {
-        detect_boehm(opts.cg_include)
+        detect_boehm(opts.cg_include).or_else(|| {
+            opts.rt_dir.parent().and_then(|p| p.parent())
+                .and_then(|repo_root| detect_or_build_boehm_fallback(opts.rt_dir, repo_root, tc.vcvars_path()))
+        })
     } else {
         None
     };
@@ -1539,7 +1552,22 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                     // PathBuf-аргумент — Command экранирует сам; ручные кавычки
                     // не нужны (и вредны, см. комментарий к /Fo выше).
                     c.arg(vcpkg_lib.join("gc.lib"));
-                    c.arg(vcpkg_lib.join("atomic_ops.lib"));
+                    // #269 Ф.2: conditional on existing — vcpkg's bdwgc port
+                    // links a separate `atomic_ops.lib` (its own port
+                    // dependency), but the #269 Ф.2 fallback build (vendored
+                    // bdwgc amalgamation) doesn't produce one: the needed
+                    // atomics are header-only on x86_64 MSVC (confirmed
+                    // empirically — see `detect_or_build_boehm_fallback`
+                    // doc), so there is nothing to link there. Guarding on
+                    // `.is_file()` keeps the vcpkg path byte-identical
+                    // (file always present there) while making the
+                    // fallback path not fail with a "cannot open
+                    // atomic_ops.lib" linker error over a file that was
+                    // never needed.
+                    let atomic_ops_lib = vcpkg_lib.join("atomic_ops.lib");
+                    if atomic_ops_lib.is_file() {
+                        c.arg(atomic_ops_lib);
+                    }
                 }
                 if let Some(ffi) = opts.ffi {
                     // Plan 193 Ф.2 gap-1: /LIBPATH: BEFORE bare <name>.lib
@@ -1719,8 +1747,9 @@ pub fn compile_c_to_exe(
     opts: &BuildOpts,
     timeout: Duration,
 ) -> anyhow::Result<PathBuf> {
-    // Plan 27 Ф.D: graceful exit если backend = Boehm и libgc не найден.
-    let _ = resolve_gc_or_exit(opts.gc_kind, opts.cg_include);
+    // Plan 27 Ф.D + #269 Ф.2: graceful exit (or vendored fallback build) если
+    // backend = Boehm и libgc не найден.
+    let _ = resolve_gc_or_exit(opts.gc_kind, opts.cg_include, opts.rt_dir, tc.vcvars_path());
     let cmd = build_command(tc, opts);
     let out = run_with_timeout(cmd, timeout)
         .map_err(|e| anyhow!("spawn compiler: {}", e))?;
@@ -1841,7 +1870,7 @@ pub fn compile_multi_tu_to_exe(
             ));
         }
     };
-    let _ = resolve_gc_or_exit(opts.gc_kind, opts.cg_include);
+    let _ = resolve_gc_or_exit(opts.gc_kind, opts.cg_include, opts.rt_dir, tc.vcvars_path());
 
     let stem = opts
         .c_file
@@ -4728,16 +4757,117 @@ pub fn detect_boehm(cg_include: &Path) -> Option<BoehmConfig> {
     None
 }
 
-/// Plan 27 Ф.D: если backend = Boehm, проверяет наличие через detect_boehm.
-/// На fail печатает platform-specific install hint и завершает процесс.
-/// Возвращает Some(BoehmConfig) если backend = Boehm и detection OK,
-/// None если backend = Malloc (Boehm не нужен).
-pub fn resolve_gc_or_exit(gc: GcKind, cg_include: &Path) -> Option<BoehmConfig> {
+/// #269 Ф.2 [M-gc-lib-not-bundled-clean-install]: one-time fallback build of
+/// Boehm GC from the vendored `bdwgc` submodule (`rt_dir/gc`) — mirrors
+/// `detect_or_build_libuv` 1:1. Called ONLY when `detect_boehm` (env var /
+/// vcpkg lookup, unchanged priority) returns `None` — a clean clone with no
+/// vcpkg installed no longer dead-ends on a FATAL, it self-builds instead,
+/// exactly like libuv already does.
+///
+/// **Windows only** in this window (Ф.2 scope decision, see PROGRESS-gc269.md):
+/// bdwgc's official single-file amalgamation (`extra/gc.c`, includes every
+/// other `.c` in the tree via relative `"../foo.c"` quote-includes — no
+/// cmake needed, just compile this ONE file) needs a real atomics backend
+/// on MSVC (`cl.exe` has no `__atomic_*` GCC/clang builtins), which bdwgc's
+/// own `include/private/gc_atomic_ops.h` falls back to only via the
+/// external `libatomic_ops` project's `atomic_ops.h` (confirmed against
+/// bdwgc's own `CMakeLists.txt`: `if (... OR MSVC ...) include_directories
+/// (libatomic_ops/src)`, and against the vcpkg `bdwgc` port, which pulls in
+/// vcpkg's separate `libatomic-ops` port for exactly this reason) — hence
+/// the SECOND submodule `rt_dir/libatomic_ops` (pinned v7.8.2, matching the
+/// version found in this repo's own vcpkg cache). On x86_64 the needed
+/// primitives are header-only (MSVC `_Interlocked*` intrinsics inline in
+/// `atomic_ops.h` — confirmed empirically: linking against a `gc.lib` built
+/// this way pulls in ZERO unresolved externals without any separately
+/// compiled `atomic_ops.lib`; bdwgc's own CMakeLists agrees, leaving
+/// `ATOMIC_OPS_LIBS` empty with a "assume library not needed" comment), so
+/// only the header directory is needed — no second archive to build/link.
+/// Linux/macOS already has a working zero-vcpkg path (`apt install
+/// libgc-dev` / `brew install bdw-gc`, existing `detect_boehm` branches
+/// below) and gcc/clang provide `__atomic_*` builtins directly
+/// (`GC_BUILTIN_ATOMIC`), so a from-source fallback isn't the blocking gap
+/// there — left for a follow-up window if a vcpkg-equivalent gap ever shows
+/// up on those platforms (not verified end-to-end on this window's
+/// Windows-only dev machine; explicitly NOT claimed done here).
+///
+/// Cache: `repo_root/target/gc-cache/gc.lib` (+ obj scratch dir, cleaned up
+/// after build) — same `target/`-rooted convention as `libuv-cache`.
+/// Idempotent/cheap on repeat calls (disk `is_file()` check short-circuits
+/// before ever touching the compiler), safe to call from both the early
+/// honest-exit check (`resolve_gc_or_exit`) and `build_command`'s own
+/// flag-derivation block — see call sites.
+pub fn detect_or_build_boehm_fallback(
+    rt_dir: &Path,
+    repo_root: &Path,
+    vcvars: Option<&Path>,
+) -> Option<BoehmConfig> {
+    #[cfg(target_os = "windows")]
+    {
+        let gc_dir = rt_dir.join("gc");
+        let ao_dir = rt_dir.join("libatomic_ops");
+        let gc_include = gc_dir.join("include");
+        let gc_amalgam = gc_dir.join("extra").join("gc.c");
+        let ao_header = ao_dir.join("src").join("atomic_ops.h");
+        if !gc_include.join("gc.h").is_file() || !gc_amalgam.is_file() || !ao_header.is_file() {
+            // Submodule(s) not initialized — not fatal here; the caller's
+            // combined FATAL message (resolve_gc_or_exit) names both the
+            // vcpkg AND the submodule-init remedy.
+            return None;
+        }
+        let cache_dir = repo_root.join("target").join("gc-cache");
+        let gc_lib = cache_dir.join("gc.lib");
+        if gc_lib.is_file() {
+            return Some(BoehmConfig { include_dir: Some(gc_include), lib_dir: Some(cache_dir) });
+        }
+        eprintln!(
+            "nova: Boehm GC (gc.lib) not found via $NOVA_GC_LIB_DIR/vcpkg — \
+             building from vendored bdwgc submodule (one-time, ~10 sec)..."
+        );
+        if let Err(e) = build_boehm_lib(&gc_dir, &ao_dir, &cache_dir, vcvars) {
+            eprintln!("nova: warning: bdwgc fallback build failed: {}", e);
+            return None;
+        }
+        if gc_lib.is_file() {
+            eprintln!("nova: gc.lib built from vendored bdwgc source ({})", gc_lib.display());
+            return Some(BoehmConfig { include_dir: Some(gc_include), lib_dir: Some(cache_dir) });
+        }
+        eprintln!("nova: FATAL bdwgc fallback build succeeded but {} not found", gc_lib.display());
+        return None;
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        // Ф.2 scope decision: Linux/macOS keep the existing apt/brew-based
+        // `detect_boehm` path unchanged — see fn doc above for why this
+        // isn't the blocking gap on those platforms in this window.
+        let _ = (rt_dir, repo_root, vcvars);
+        None
+    }
+}
+
+/// Plan 27 Ф.D + #269 Ф.2: если backend = Boehm, проверяет наличие через
+/// `detect_boehm` (env var / vcpkg — unchanged priority), затем — #269 Ф.2 —
+/// пытается one-time fallback build из вендорённого bdwgc-сабмодуля
+/// (`detect_or_build_boehm_fallback`) ПЕРЕД honest fatal. На fail печатает
+/// platform-specific install hint и завершает процесс. Возвращает
+/// Some(BoehmConfig) если backend = Boehm и detection (или fallback build)
+/// OK, None если backend = Malloc (Boehm не нужен).
+///
+/// `rt_dir`: `compiler-codegen/nova_rt` — anchors the `gc`/`libatomic_ops`
+/// submodule lookup AND (via `.parent().parent()`) `repo_root` for the
+/// `target/gc-cache` build cache, mirrors `detect_or_build_libuv`'s own
+/// `rt_dir`/`repo_root` pair. `vcvars`: passed straight through to the
+/// fallback builder's `cl.exe`/`lib.exe` invocations (Windows only).
+pub fn resolve_gc_or_exit(gc: GcKind, cg_include: &Path, rt_dir: &Path, vcvars: Option<&Path>) -> Option<BoehmConfig> {
     if gc != GcKind::Boehm {
         return None;
     }
     if let Some(cfg) = detect_boehm(cg_include) {
         return Some(cfg);
+    }
+    if let Some(repo_root) = rt_dir.parent().and_then(|p| p.parent()) {
+        if let Some(cfg) = detect_or_build_boehm_fallback(rt_dir, repo_root, vcvars) {
+            return Some(cfg);
+        }
     }
     // Honest fatal с platform-specific hint.
     #[cfg(target_os = "windows")]
@@ -4748,13 +4878,16 @@ pub fn resolve_gc_or_exit(gc: GcKind, cg_include: &Path) -> Option<BoehmConfig> 
            1. $NOVA_GC_LIB_DIR env var\n\
            2. {}\\vcpkg_installed\\x64-windows-static\\lib\\gc.lib\n\
            3. $VCPKG_ROOT\\installed\\x64-windows-static\\lib\\gc.lib\n\
+           4. vendored bdwgc submodule fallback build ({}\\gc\\extra\\gc.c)\n\
          \n\
-         To fix:\n\
-           cd compiler-codegen\n\
-           vcpkg install bdwgc:x64-windows-static\n\
+         To fix (pick one):\n\
+           cd compiler-codegen && vcpkg install bdwgc:x64-windows-static\n\
+           git submodule update --init compiler-codegen/nova_rt/gc \\\n\
+                                        compiler-codegen/nova_rt/libatomic_ops\n\
          \n\
          Or use --gc malloc for benchmarks (no GC, leaks).",
-        cg_include.display()
+        cg_include.display(),
+        rt_dir.display()
     );
     #[cfg(target_os = "linux")]
     eprintln!(
@@ -4966,6 +5099,120 @@ fn build_libuv_lib(libuv_dir: &Path, cache_dir: &Path,
     {
         let _ = (libuv_dir, cache_dir, vcvars);
         Err(anyhow!("unsupported platform for libuv build"))
+    }
+}
+
+/// #269 Ф.2: compile bdwgc's official single-file amalgamation
+/// (`gc_dir/extra/gc.c` — includes every other `.c` in `gc_dir` via
+/// relative `"../foo.c"` quote-includes, so compiling this ONE file is the
+/// entire build, no cmake needed) into `gc.lib`. Mirrors `build_libuv_lib`'s
+/// shape (rsp file, `cl.exe` under vcvars, `lib.exe` archive) — Windows
+/// only, see `detect_or_build_boehm_fallback`'s doc for why Linux/macOS
+/// aren't wired to this in this window.
+///
+/// Defines mirror EXACTLY what this repo's own vcpkg cache used to build
+/// the `bdwgc` port for `x64-windows-static` (extracted from
+/// `vcpkg_installed/.../blds/bdwgc/config-x64-windows-static-rel-ninja.log`
+/// `DEFINES = ...` line) — proven byte-compatible by direct empirical
+/// comparison: a `gc.lib` built here and one built by vcpkg both link a
+/// throwaway `GC_INIT`/`GC_MALLOC`/`GC_gcollect` C program with ZERO
+/// unresolved externals and both produce identical runtime behavior
+/// (single- and multi-threaded `GC_register_my_thread`/`GC_MALLOC`
+/// smoke test, verified in this window's PROGRESS-gc269.md). `/I
+/// ao_dir/src` supplies bdwgc's own `include/private/gc_atomic_ops.h`
+/// fallback-branch dependency (`#include "atomic_ops.h"`, needed on real
+/// MSVC — `cl.exe` has no GCC/clang `__atomic_*` builtins for
+/// `GC_BUILTIN_ATOMIC`) — header-only on x86_64, no separate
+/// `atomic_ops.lib` to build (see caller's doc).
+fn build_boehm_lib(gc_dir: &Path, ao_dir: &Path, cache_dir: &Path,
+                    vcvars: Option<&Path>) -> Result<()> {
+    std::fs::create_dir_all(cache_dir)
+        .map_err(|e| anyhow!("create cache_dir: {}", e))?;
+    let obj_dir = cache_dir.join("obj");
+    if obj_dir.is_dir() {
+        let _ = std::fs::remove_dir_all(&obj_dir);
+    }
+    std::fs::create_dir_all(&obj_dir)
+        .map_err(|e| anyhow!("create obj_dir: {}", e))?;
+
+    let gc_amalgam = gc_dir.join("extra").join("gc.c");
+    let gc_include = gc_dir.join("include");
+    let ao_include = ao_dir.join("src");
+
+    #[cfg(target_os = "windows")]
+    {
+        let vcv = vcvars.ok_or_else(|| anyhow!("vcvars required for bdwgc fallback build on Windows"))?;
+        let rsp = obj_dir.join("compile.rsp");
+        let defines = "/DDONT_USE_USER32_DLL /DEMPTY_GETENV_RESULTS /DENABLE_DISCLAIM \
+                        /DGC_ATOMIC_UNCOLLECTABLE /DGC_ENABLE_SUSPEND_THREAD /DGC_GCJ_SUPPORT \
+                        /DGC_MISSING_EXECINFO_H /DGC_NOT_DLL /DGC_NO_SIGSETJMP /DGC_THREADS \
+                        /DJAVA_FINALIZATION /DNO_GETCONTEXT /DPARALLEL_MARK /DTHREAD_LOCAL_ALLOC \
+                        /D_CRT_SECURE_NO_DEPRECATE";
+        let mut lines: Vec<String> = Vec::new();
+        lines.push(format!("/c /nologo /W0 /MT /O2 {}", defines));
+        lines.push(format!("/I \"{}\"", strip_verbatim_prefix(&gc_include).display()));
+        lines.push(format!("/I \"{}\"", strip_verbatim_prefix(&ao_include).display()));
+        lines.push(format!("/Fo\"{}\\\\\"", strip_verbatim_prefix(&obj_dir).display()));
+        lines.push(format!("\"{}\"", strip_verbatim_prefix(&gc_amalgam).display()));
+        // BOM — same non-ASCII-path codepage-misdecode risk as
+        // `link_prep.rs`'s rsp files (see that module's matching comment);
+        // this repo's own user profile path can contain Cyrillic.
+        std::fs::write(&rsp, format!("\u{FEFF}{}", lines.join("\n")))
+            .map_err(|e| anyhow!("write rsp: {}", e))?;
+        let inner = format!(
+            "\"call \"{}\" >nul 2>&1 && cl.exe @\"{}\"\"",
+            vcv.display(), rsp.display()
+        );
+        let mut cmd = Command::new("cmd");
+        cmd.raw_arg("/c").raw_arg(&inner);
+        let out = cmd.output()
+            .map_err(|e| anyhow!("spawn cl.exe: {}", e))?;
+        if !out.status.success() {
+            let combined = format!("{}{}",
+                bytes_to_string(&out.stdout),
+                bytes_to_string(&out.stderr));
+            return Err(anyhow!("bdwgc amalgamation compile failed: {}",
+                combined.lines().take(15).collect::<Vec<_>>().join("\n")));
+        }
+        let mut obj_files: Vec<PathBuf> = Vec::new();
+        for entry in std::fs::read_dir(&obj_dir)? {
+            let p = entry?.path();
+            if p.extension().and_then(|s| s.to_str()) == Some("obj") {
+                obj_files.push(p);
+            }
+        }
+        if obj_files.is_empty() {
+            return Err(anyhow!("bdwgc amalgamation compile produced no .obj files"));
+        }
+        let lib_file = cache_dir.join("gc.lib");
+        let lib_rsp = obj_dir.join("lib.rsp");
+        let mut lib_lines: Vec<String> = Vec::new();
+        lib_lines.push("/nologo".to_string());
+        lib_lines.push(format!("/OUT:\"{}\"", strip_verbatim_prefix(&lib_file).display()));
+        for o in &obj_files {
+            lib_lines.push(format!("\"{}\"", strip_verbatim_prefix(o).display()));
+        }
+        std::fs::write(&lib_rsp, format!("\u{FEFF}{}", lib_lines.join("\n")))
+            .map_err(|e| anyhow!("write lib.rsp: {}", e))?;
+        let lib_inner = format!(
+            "\"call \"{}\" >nul 2>&1 && lib.exe @\"{}\"\"",
+            vcv.display(), lib_rsp.display()
+        );
+        let mut lib_cmd = Command::new("cmd");
+        lib_cmd.raw_arg("/c").raw_arg(&lib_inner);
+        let lib_out = lib_cmd.output()
+            .map_err(|e| anyhow!("spawn lib.exe: {}", e))?;
+        if !lib_out.status.success() {
+            return Err(anyhow!("lib.exe failed: {}", bytes_to_string(&lib_out.stderr)));
+        }
+        eprintln!("nova: gc.lib built (bdwgc extra/gc.c amalgamation)");
+        let _ = std::fs::remove_dir_all(&obj_dir);
+        return Ok(());
+    }
+    #[allow(unreachable_code)]
+    {
+        let _ = (gc_amalgam, gc_include, ao_include, cache_dir, vcvars, &obj_dir);
+        Err(anyhow!("unsupported platform for bdwgc fallback build"))
     }
 }
 
@@ -6376,10 +6623,11 @@ pub fn run_all(opts: TestAllOpts) -> Result<Summary> {
     // addition to the entry-itself-is-`_slow` check.
     set_test_run_include_slow(opts.selection.include_slow);
 
-    // Plan 27 Ф.D (audit 2026-05-12): early Boehm detection с graceful exit
-    // если backend = Boehm и gc.lib/libgc не найден. Без этого юзер получает
-    // cryptic linker error для каждого теста.
-    let _ = resolve_gc_or_exit(opts.gc_kind, opts.cg_include);
+    // Plan 27 Ф.D (audit 2026-05-12) + #269 Ф.2: early Boehm detection (or
+    // vendored fallback build) с graceful exit если backend = Boehm и
+    // gc.lib/libgc не найден. Без этого юзер получает cryptic linker error
+    // для каждого теста.
+    let _ = resolve_gc_or_exit(opts.gc_kind, opts.cg_include, opts.rt_dir, opts.toolchain.vcvars_path());
 
     // [36.D.1] Collect .nv files from all input_dirs (or fallback to tests_dir).
     let cwd = std::env::current_dir().unwrap_or_else(|_| opts.tests_dir.to_path_buf());
