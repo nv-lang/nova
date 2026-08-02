@@ -252,6 +252,39 @@ pub(crate) fn bitnot_primitive_emit(operand_c: &str, operand_c_ty: &str) -> Stri
     }
 }
 
+/// №274 [M-binop-stub-ignores-auto-byref-abi]: late-emitted BY-VALUE operator
+/// wrapper for a value-record `==`/`+ - * / %`/`< <= > >=` desugar
+/// (`nova_vr_ueq_*`/`nova_vr_binop_*`, emit_c.rs). The wrapper's OWN two
+/// params (`a`,`b`) stay by-value — call-sites remain rvalue-safe
+/// (`Timestamp.now() + d`) because `&a` inside the wrapper body is always a
+/// legal lvalue (a local parameter). The REAL method's second-parameter ABI
+/// may be `T*` when Plan 172.14 auto-by-ref applies (value-struct >16Б) —
+/// `is_byref` (caller: `param_c_types` pointer-suffix OR `method_byref_flag`,
+/// the latter needed because `param_c_types` predates the auto-by-ref pass
+/// and never carries the `*` for it) decides whether the wrapper forwards
+/// `&b` or `b` to the real method. Returns `(prototype, definition)`.
+pub(crate) fn emit_vr_wrapper(
+    storage: &str,
+    ret_c: &str,
+    wrap_name: &str,
+    recv_c: &str,
+    arg_c: &str,
+    real_c_name: &str,
+    is_byref: bool,
+) -> (String, String) {
+    let arg_expr = if is_byref { "&b" } else { "b" };
+    let proto = format!(
+        "{s}{ret} {w}({recv} a, {arg} b);\n",
+        s = storage, ret = ret_c, w = wrap_name, recv = recv_c, arg = arg_c,
+    );
+    let def = format!(
+        "{s}{ret} {w}({recv} a, {arg} b) {{ return {c}(&a, {argexpr}); }}\n",
+        s = storage, ret = ret_c, w = wrap_name, recv = recv_c, arg = arg_c,
+        c = real_c_name, argexpr = arg_expr,
+    );
+    (proto, def)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -347,6 +380,28 @@ mod tests {
     fn bitnot_narrow_unsigned_uses_mask() {
         assert_eq!(bitnot_primitive_emit("x", "nova_byte"), "(x ^ 0xFFU)");
         assert_eq!(bitnot_primitive_emit("x", "uint16_t"), "(x ^ 0xFFFFU)");
+    }
+
+    #[test]
+    fn vr_wrapper_byref_forwards_address_of_b() {
+        let (proto, def) = emit_vr_wrapper(
+            "static ", "nova_bool", "nova_vr_ueq_BigRat", "NovaValue_BigRat",
+            "NovaValue_BigRat", "Nova_BigRat_method_equal", true,
+        );
+        assert_eq!(proto, "static nova_bool nova_vr_ueq_BigRat(NovaValue_BigRat a, NovaValue_BigRat b);\n");
+        assert_eq!(
+            def,
+            "static nova_bool nova_vr_ueq_BigRat(NovaValue_BigRat a, NovaValue_BigRat b) { return Nova_BigRat_method_equal(&a, &b); }\n"
+        );
+    }
+
+    #[test]
+    fn vr_wrapper_by_value_forwards_b_unchanged() {
+        let (_, def) = emit_vr_wrapper(
+            "static ", "NovaValue_Duration", "nova_vr_binop_Nova_Duration_method_plus",
+            "NovaValue_Duration", "nova_int", "Nova_Duration_method_plus", false,
+        );
+        assert!(def.ends_with("{ return Nova_Duration_method_plus(&a, b); }\n"));
     }
 
     #[test]

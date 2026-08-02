@@ -6604,15 +6604,15 @@ impl CEmitter {
                 }
             }
             // Built-in vtables defined in nova_rt/effects.h — skip.
-            // Plan 175 Ф.2-v3: "Time" removed — no longer a hand-written
-            // vtable (см. RUNTIME_DEFINED_TYPES comment above); flows through
-            // `local_effects` (declared in module.items via prelude) instead.
+            // №277: "Time" RESTORED — unconditional (unlike `local_effects`,
+            // which needs module.items presence); mirrors emit_effect_type's
+            // own unconditional name=="Time" skip.
             // "Mem" REMOVED (D76 amend, [M-mem-effect-demote-to-namespace],
             // 2026-08-01): no longer an effect, no vtable — a plain
             // namespace type, forward-declared (if at all) through the
             // ordinary `external_names`/`local_types` path above, not this
             // vtable-specific allowlist.
-            const BUILTIN_VTABLE_NAMES: &[&str] = &["Fail", "TimerMetrics"];
+            const BUILTIN_VTABLE_NAMES: &[&str] = &["Fail", "TimerMetrics", "Time"];
             // [M-codegen-emission-nondeterminism] fix: same HashSet-order issue as
             // `external_names` above — sort before emitting.
             let mut vtable_names_sorted: Vec<String> = vtable_names.into_iter().collect();
@@ -20934,27 +20934,23 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // напрямую нельзя). Per-type обёртка by-value → & (единый
                         // источник §0; late-emission через novaopt_eq_fns_buf,
                         // тот же механизм, что nova_opt_eq_*).
-                        let arg_is_ptr = sig
+                        let arg_is_ptr = sig // №274: also consult method_byref_flag
                             .param_c_types
                             .first()
                             .map(|p| p.ends_with('*'))
-                            .unwrap_or(false);
+                            .unwrap_or(false)
+                            || self.method_byref_flag(type_name, "equal", 0);
                         let wrap = format!("nova_vr_ueq_{}", type_name);
                         {
                             let mut buf = self.novaopt_eq_fns_buf.borrow_mut();
                             let probe = format!("{}(", wrap);
                             if !buf.contains(&probe) {
-                                self.vr_ueq_protos_buf.borrow_mut().push_str(&format!(
-                                    "{s}nova_bool {w}({t} a, {t} b);
-", s = self.top_level_storage(), w = wrap, t = cty));
-                                buf.push_str(&format!(
-                                    "{s}nova_bool {w}({t} a, {t} b) {{ return {c}(&a, {arg}); }}\n",
-                                    s = self.top_level_storage(),
-                                    w = wrap,
-                                    t = cty,
-                                    c = sig.c_name,
-                                    arg = if arg_is_ptr { "&b" } else { "b" },
-                                ));
+                                let (proto, def) = super::operator_dispatch::emit_vr_wrapper(
+                                    self.top_level_storage(), "nova_bool", &wrap, cty, cty,
+                                    &sig.c_name, arg_is_ptr,
+                                );
+                                self.vr_ueq_protos_buf.borrow_mut().push_str(&proto);
+                                buf.push_str(&def);
                             }
                         }
                         return format!("{}({}, {})", wrap, l, r);
@@ -34291,17 +34287,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             let ret = sig.return_c_type.clone();
                             let c_name = sig.c_name.clone();
                             let arg_ty = sig.param_c_types[0].clone();
-                            let wrap = format!("nova_vr_binop_{}", c_name);
+                            let wrap = format!("nova_vr_binop_{}", c_name); // №274
+                            let arg_is_byref = arg_ty.ends_with('*')
+                                || self.method_byref_flag(&type_name, method_name, 0);
                             {
                                 let mut buf = self.novaopt_eq_fns_buf.borrow_mut();
                                 let probe = format!("{}(", wrap);
                                 if !buf.contains(&probe) {
-                                    self.vr_ueq_protos_buf.borrow_mut().push_str(&format!(
-                                        "{s}{ret} {w}({recv} a, {arg} b);\n",
-                                        s = self.top_level_storage(), ret = ret, w = wrap, recv = lty, arg = arg_ty));
-                                    buf.push_str(&format!(
-                                        "{s}{ret} {w}({recv} a, {arg} b) {{ return {c}(&a, b); }}\n",
-                                        s = self.top_level_storage(), ret = ret, w = wrap, recv = lty, arg = arg_ty, c = c_name));
+                                    let (proto, def) = super::operator_dispatch::emit_vr_wrapper(
+                                        self.top_level_storage(), &ret, &wrap, &lty, &arg_ty,
+                                        &c_name, arg_is_byref,
+                                    );
+                                    self.vr_ueq_protos_buf.borrow_mut().push_str(&proto);
+                                    buf.push_str(&def);
                                 }
                             }
                             return Ok(format!("{}({}, {})", wrap, l, r));
@@ -34331,17 +34329,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         let c_name = sig.c_name.clone();
                         let arg_ty = sig.param_c_types[0].clone();
                         let ret = sig.return_c_type.clone();
-                        let wrap = format!("nova_vr_binop_{}", c_name);
+                        let wrap = format!("nova_vr_binop_{}", c_name); // №274
+                        let arg_is_byref = arg_ty.ends_with('*')
+                            || self.method_byref_flag(&type_name, "compare", 0);
                         {
                             let mut buf = self.novaopt_eq_fns_buf.borrow_mut();
                             let probe = format!("{}(", wrap);
                             if !buf.contains(&probe) {
-                                self.vr_ueq_protos_buf.borrow_mut().push_str(&format!(
-                                    "{s}{ret} {w}({recv} a, {arg} b);\n",
-                                    s = self.top_level_storage(), ret = ret, w = wrap, recv = lty, arg = arg_ty));
-                                buf.push_str(&format!(
-                                    "{s}{ret} {w}({recv} a, {arg} b) {{ return {c}(&a, b); }}\n",
-                                    s = self.top_level_storage(), ret = ret, w = wrap, recv = lty, arg = arg_ty, c = c_name));
+                                let (proto, def) = super::operator_dispatch::emit_vr_wrapper(
+                                    self.top_level_storage(), &ret, &wrap, &lty, &arg_ty,
+                                    &c_name, arg_is_byref,
+                                );
+                                self.vr_ueq_protos_buf.borrow_mut().push_str(&proto);
+                                buf.push_str(&def);
                             }
                         }
                         let call = format!("{}({}, {})", wrap, l, r);

@@ -1,0 +1,17 @@
+// №277 [M-time-vtable-typedef-redefinition-standalone-cu]: a standalone-CU
+// (own `fn main`, not the merged folder CU) with `Time` in an effect-row
+// triggers C "typedef redefinition NovaVtable_Time" — `NovaVtable_Time` is
+// the ONE hand-written exception (nova_rt/effects.h; D431 Ф.2-v3,
+// 04-effects.md, `emit_effect_type` skips the struct+slot emission for
+// "Time") but a SECOND emission path (standalone-CU class) missed the skip.
+// Repro per BRIEF_cu_fixpack.md П.1 (6-line form, minimally adapted to this
+// fixture's module/naming conventions).
+
+module standalone.d277_time_vtable_typedef_standalone
+
+fn d277_build() Time -> int => 1
+
+fn main() Time -> () {
+    ro v = d277_build()
+    assert(v == 1)
+}
