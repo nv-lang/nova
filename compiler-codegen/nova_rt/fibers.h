@@ -579,6 +579,37 @@ typedef struct NovaFiberQueue {
                                        * (ctx already recycled to the pool normally) */
     int             child_count;     /* next free index == number of remote children ever spawned */
     int             child_capacity;  /* allocated length of child_error[]/child_ctx[] */
+    /* [p-vela2 fix, №173/№243, 2026-08-02] — root cause found by state-dump
+     * (docs/plans/wip/d416-serialization-repro/README.md, "p-vela2" section):
+     * nova_scope_grow_children (owner thread, called from
+     * nova_scope_alloc_child_slot while the owner is STILL spawning later
+     * children) reallocates child_error[]/child_ctx[] and swaps the pointer
+     * with a PLAIN, unsynchronized store — while nova_fiber_report_child_
+     * kinded (worker threads, for children spawned EARLIER that already
+     * finished) concurrently reads `parent->child_error` and writes into
+     * `parent->child_error[slot]`. If a worker's plain load of the pointer
+     * happens to read the OLD array a moment before the owner's copy+swap,
+     * the worker's write lands in the about-to-be-orphaned old array — the
+     * grow's copy already ran (or runs after, either way slot's true state
+     * loses the race) and the owner's later reads (via the swapped-in NEW
+     * array) never see it. Net effect: exactly one child's failure
+     * permanently vanishes from child_error[] even though pending_remote/
+     * pending_sweeps both correctly count all N real completions (those
+     * counters live directly on this struct, not on the reallocated
+     * arrays) — matches every symptom in the README (63/64 published,
+     * SEQ_CST+sleep doesn't help, ACQ_REL decrement doesn't help: it was
+     * never an ordering/visibility bug, the write physically happened
+     * into memory nobody reads anymore). Same spinlock shape as
+     * `slot_lock` above (Plan 83.11 Ф.3.B precedent for exactly this
+     * class: "two threads touching a scope-owned array without
+     * serialization"). Guards: nova_scope_grow_children's copy+swap, and
+     * nova_fiber_report_child_kinded's read-pointer-then-write-slot
+     * section — NOT nova_scope_alloc_child_slot's post-grow field-init
+     * (that touches only the BRAND NEW slot, which no worker can reference
+     * yet — its ctx/ `_nova_parent_slot` are only handed to a child after
+     * this call returns) nor any post-drain reader (grows are proven
+     * impossible once `_drain_started`, R2 tripwire above). */
+    nova_atomic_int child_lock;
     /* R2 tripwire (§EXEC risk R2): set true at the top of
      * nova_supervised_run_impl's drain loop; nova_scope_grow_children asserts
      * this is still false — proves grow-during-drain never happens (see
@@ -909,6 +940,7 @@ static inline void nova_scope_init(NovaFiberQueue* q) {
     q->child_ctx      = NULL;
     q->child_count    = 0;
     q->child_capacity = 0;
+    nova_aint_init(&q->child_lock, 0);  /* [p-vela2 fix, №173/№243] */
     q->_drain_started = false;
     /* Plan 173.2: default = no supervisor (byte-parity path). Codegen stamps
      * has_supervisor right after this call when a Supervisor handler is
@@ -1301,6 +1333,26 @@ static inline void nova_scope_grow_children(NovaFiberQueue* scope, int new_cap) 
     assert(!scope->_drain_started &&
            "[M-173.0-R2] child_error[] grow-during-drain — torn-base risk, "
            "see §EXEC risk R2 in docs/plans/173.0-concurrency-runtime-substrate.md");
+    /* [p-vela2 fix, №173/№243, 2026-08-02]: `child_lock` — same spinlock
+     * shape as `slot_lock` (nova_scope_alloc_slot above, Plan 83.11 Ф.3.B).
+     * The copy-then-swap below races against nova_fiber_report_child_
+     * kinded (worker threads, for children spawned EARLIER whose bodies
+     * already finished while THIS thread is still spawning later ones):
+     * without this lock a worker's plain read of `parent->child_error`
+     * can fetch the about-to-be-orphaned old pointer a moment before this
+     * function's copy+swap, and its write into `old[slot]` is then never
+     * seen again by anyone reading the (now current) new array — see the
+     * NovaFiberQueue.child_lock field doc for the full mechanism (this was
+     * root-caused via state-dump as the actual #173/#243 event-loss bug;
+     * the R2 tripwire assert just above only proves grow-during-DRAIN is
+     * unreachable — it says nothing about grow-during-SPAWN racing a
+     * concurrent completion, which is the real hazard closed here). */
+    int _cl_exp = 0;
+    while (!__atomic_compare_exchange_n(
+                &scope->child_lock, &_cl_exp, 1,
+                false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        _cl_exp = 0;
+    }
     int cap = scope->child_capacity > 0 ? scope->child_capacity : NOVA_SCOPE_INITIAL_CAP;
     while (cap < new_cap) cap *= 2;
     NovaChildError* new_err = (NovaChildError*)nova_alloc(sizeof(NovaChildError) * (size_t)cap);
@@ -1327,6 +1379,7 @@ static inline void nova_scope_grow_children(NovaFiberQueue* scope, int new_cap) 
     scope->child_error    = new_err;
     scope->child_ctx      = new_ctx;
     scope->child_capacity = cap;
+    __atomic_store_n(&scope->child_lock, 0, __ATOMIC_RELEASE);
 }
 
 /* Plan 173.0 Ф.2/A2.2: allocate a fresh per-child retention slot for a
@@ -2430,6 +2483,24 @@ static inline void nova_fiber_report_child_kinded(NovaSpawnCtxBase* base,
      * Fallback to the default path below when no slot is available (slot<0
      * can only mean the bootstrap/local path, which never calls this fn) —
      * an error must never be dropped silently. */
+    /* [p-vela2 fix, №173/№243, 2026-08-02]: `child_lock` — pairs with
+     * nova_scope_grow_children's copy+swap (see NovaFiberQueue.child_lock
+     * field doc for the full race this closes: this thread's read of
+     * `parent->child_error`/`child_capacity` must not straddle a
+     * concurrent grow's pointer swap, or the write below lands in the
+     * about-to-be-orphaned old array and is never seen again). Held only
+     * across THIS function's read-then-write of one slot — cheap relative
+     * to a child fiber's own throw/unwind cost, and grows are rare
+     * (O(log2 n) per scope) so contention with nova_scope_grow_children is
+     * brief and infrequent; siblings writing DIFFERENT slots still fully
+     * serialize against each other here (they didn't before), which is a
+     * new but small cost, not a correctness concession. */
+    int _cl_exp = 0;
+    while (!__atomic_compare_exchange_n(
+                &parent->child_lock, &_cl_exp, 1,
+                false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        _cl_exp = 0;
+    }
     if (parent->has_supervisor
         && slot >= 0 && parent->child_error && slot < parent->child_capacity) {
         parent->child_error[slot].msg     = msg;
@@ -2438,10 +2509,18 @@ static inline void nova_fiber_report_child_kinded(NovaSpawnCtxBase* base,
         parent->child_error[slot].payload = payload;
         parent->child_error[slot].tid     = tid;
         nova_abool_store(&parent->child_error[slot].published, true);
+        __atomic_store_n(&parent->child_lock, 0, __ATOMIC_RELEASE);
         return;
     }
+    __atomic_store_n(&parent->child_lock, 0, __ATOMIC_RELEASE);
     /* Default path — byte-parity with pre-173.2 behaviour. */
     nova_fiber_report_atomic_kinded(parent, msg, kind, reason_ptr, payload, tid);
+    _cl_exp = 0;
+    while (!__atomic_compare_exchange_n(
+                &parent->child_lock, &_cl_exp, 1,
+                false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        _cl_exp = 0;
+    }
     if (slot >= 0 && parent->child_error && slot < parent->child_capacity) {
         parent->child_error[slot].msg     = msg;
         parent->child_error[slot].kind    = kind;
@@ -2450,6 +2529,7 @@ static inline void nova_fiber_report_child_kinded(NovaSpawnCtxBase* base,
         parent->child_error[slot].tid     = tid;
         nova_abool_store(&parent->child_error[slot].published, true);
     }
+    __atomic_store_n(&parent->child_lock, 0, __ATOMIC_RELEASE);
 }
 
 /* Plan 173.0 Ф.3 (A3.2/A3.3 — R1-guard): called by the worker loop right
