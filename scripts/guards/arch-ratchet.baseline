@@ -456,5 +456,10 @@
 # FAIL @to_str roundtrip, воспроизведён и на baseline-компиляторе без фикса);
 # мега-CU spec_tests/conformance 624/0/68 (включая новую m279_nested_err_
 # shared_variant_pos.nv); `nova check std/src` 147/26/60 байт-в-байт.
+# 2026-08-02 S1a merge (M:N capture safety, №117+№242§3+№168, D441 §3(г)
+# «замыкание как поле структуры» — пятая точка границы файбера): мега-CU
+# 624/0/68 -> 626/0/68 (+2 PASS: новые pos-фикстуры семейства а-е; neg
+# отклоняются E_CONCURRENT_MUT_CAPTURE); std 147/26/60 и polaris 37/0/18
+# байт-в-байт; emit_c не тронут (чекер-волна): lines/infer без изменений.
 lines=64389
 infer=349
