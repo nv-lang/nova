@@ -94,3 +94,27 @@ what the token does, not a translation of the token.
 | dyn-диспатч | dynamic dispatch (`dyn`) | "`dyn` — only when explicit runtime polymorphism is needed" (paraphrase of spec/paradigm.md "vtable-вызов") | vtable call, opt-in via `dyn Trait`/`dyn Protocol` |
 
 ---
+
+## 4. Bindings, ownership and pattern matching · Связывания, владение, сопоставление с образцом
+
+| Русский | English | Example (en) | Note |
+|---|---|---|---|
+| consume-тип | consume-type | "A *consume-type* is a type whose values represent ownership of a non-shareable resource" | docs/guide/consume-types.md |
+| owner (владелец ресурса) | owner | "the owner must explicitly consume them [values]" | docs/guide/consume-types.md |
+| линейная дисциплина | linear (discipline) | "it had to be consumed **exactly once**, or the compiler rejected the program — strictly linear" | language-tour.md §7, D133 |
+| аффинная дисциплина | affine (discipline) | "**D432** lets a `consume` type opt into an **affine** discipline instead" | language-tour.md §7; may-forget instead of must-consume |
+| view-заём | view-borrow | "Function parameters of consume-type without the `consume` keyword are *views* — bounded by the callee's scope" | docs/guide/consume-types.md Rule 4 |
+| перемещение (move) | move | "`consume b = a` — move — a dead, b owns" | docs/guide/consume-types.md Rule 3 |
+| use-after-consume | use-after-consume | "using it [a consumed binding] triggers a `use-after-consume` diagnostic" | docs/guide/consume-types.md |
+| fluent-цепочка | fluent chain | "Fluent chains compose mutators: `sb.append(\"a\").append(\"b\").as_str()`" | docs/guide/consume-types.md "Fluent-return chains" |
+| ресивер | receiver | "a method call (`obj.method()` …), receiver as the first argument" | docs/guide/contracts.md "Pure function composition" |
+| property-по-арности | property by arity | "**Properties by arity** (D84/D409) let one name serve as both getter and setter" | language-tour.md §3 |
+| pattern matching / сопоставление с образцом | pattern matching | "`match` supports literal patterns, guards, and sum-variant destructuring." | language-tour.md §4 |
+| guard | guard | "guards (`n if n > 0`)" | language-tour.md §4; extra boolean condition on a match arm |
+| ветвь (match arm) | match arm | "Each arm has the form `pattern => result`" (paraphrase of spec/syntax.md "Каждая arm имеет форму") | spec/syntax.md "Pattern matching" |
+| исчерпывающая проверка | exhaustiveness check | "**Exhaustiveness check.** The compiler checks that `match` covers all possible cases." (paraphrase of spec/syntax.md) | spec/syntax.md "Pattern matching" |
+| if-let форма | if-let form | "`if <Pattern> = expr { } else { }` is Nova's if-let form" | language-tour.md §4; no separate `if let` keyword, same `if pattern = …` shape |
+| встраивание (embed) | embed | "embed: имя поля обязательно (D39)" → "`use` — это **поле + автопрокси методов**" (spec/syntax.md) | composition via `use Type`, not inheritance |
+| делегирование | delegation | "`use Account` is **delegation**, not inheritance: the compiler generates proxy methods" (paraphrase of spec/paradigm.md) | spec/paradigm.md "Вместо наследования — embed + delegate" |
+
+---
