@@ -1089,8 +1089,9 @@ type Color { r, g, b u8 }
 Для perf-критичного кода компилятор использует **escape analysis**:
 не утекающие значения остаются на стеке, без аллокаций в managed
 heap. Программист не пишет ничего особого. Для real-time — атрибут
-`#realtime nogc` на функции ([D64](decisions/04-effects.md#d64));
-блочной формы нет. Arena-allocations через `region { }` —
+`#realtime nogc` на функции ([D172 §7](decisions/06-concurrency.md#d172-realtimeblocking-sync-class-annotation-system-plan-1036);
+исторически [D64](decisions/04-effects.md#d64)); блочной формы нет.
+Arena-allocations через `region { }` —
 проектируемая форма ([D6](decisions/05-memory.md#d6)),
 ⚠ в текущем компиляторе не реализована.
 
@@ -1307,7 +1308,8 @@ fn hot_loop(data []f64) -> f64 =>
 вручную.
 
 Для real-time hot path — атрибут `#realtime nogc` на функции
-([D64](decisions/04-effects.md#d64)); блочной формы нет. В теле такой
+([D172 §7](decisions/06-concurrency.md#d172-realtimeblocking-sync-class-annotation-system-plan-1036);
+исторически [D64](decisions/04-effects.md#d64)); блочной формы нет. В теле такой
 функции запрещены suspend-операции и аллокации в managed heap.
 Arena-allocations через `region { ... }` — проектируемая форма
 ([D6](decisions/05-memory.md#d6)), ⚠ в текущем компиляторе не

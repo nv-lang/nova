@@ -71,9 +71,11 @@
    [Plan 25 G3b](../docs/plans/25-production-readiness-roadmap.md#g3-memory-management--главное-упрощение-runtimeа)).
 
    Escape analysis оставляет на стеке всё, что не утекает (без GC overhead).
-   Для real-time зон (звук, торговля, embedded) — блок `realtime nogc { }`
-   ([D64](decisions/04-effects.md#d64)), внутри `region { }` для arena-
-   allocations.
+   Для real-time зон (звук, торговля, embedded) — атрибут `#realtime nogc fn`
+   ([D172 §7](decisions/06-concurrency.md#d172-realtimeblocking-sync-class-annotation-system-plan-1036);
+   исторически блок `realtime nogc { }`, [D64](decisions/04-effects.md#d64),
+   retracted Plan 113), сочетаемый с `region { }` для arena-allocations
+   (⚠ `region` в текущем компиляторе не реализован).
 
    **Introspection API** ([Plan 32](../docs/plans/32-gc-introspection.md)):
    `gc.heap_size()`, `gc.collect()`, `gc.live_count()` доступны без import.

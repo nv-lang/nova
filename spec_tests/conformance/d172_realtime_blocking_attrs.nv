@@ -74,3 +74,17 @@ test "#blocking: Mutex.unlock (#wakes) разрешён (D172)" {
     assert(d172_acq == true)
     d172_lm.unlock()
 }
+
+// ── #realtime nogc: как #realtime, плюс запрет managed-heap-аллокаций ──
+// №273 (D172 nogc amend): scalar-only body — никаких alloc-вызовов, поэтому
+// `#realtime nogc fn` компилируется и работает как обычный `#realtime fn`.
+// Negative-стороны (Vec[int].of / Vec[int].new внутри #realtime nogc fn) —
+// neg/d172_realtime_nogc_alloc_neg.nv, neg/d172_realtime_nogc_turbofish_neg.nv.
+
+#realtime nogc fn d172_rt_nogc_scalar(a int, b int) -> int {
+    a + b * 2
+}
+
+test "#realtime nogc: scalar-only body без аллокаций разрешён (D172)" {
+    assert(d172_rt_nogc_scalar(3, 4) == 11)
+}

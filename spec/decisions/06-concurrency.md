@@ -5260,6 +5260,21 @@ N-party rendezvous (Barrier/CountDownLatch), wait-until-predicate (Condvar) —
   `#realtime` fns/primitives. GC-pause-free, scheduler-interaction-free.
   Caller unrestricted — любая fn свободно вызывает `#realtime` fn.
   _До Plan 113: `realtime { }` block (D64 — retracted) и `#realtime_safe` SyncClass._
+- **`#realtime nogc fn`** — амендмент №273 (2026-08-02): опциональный
+  `nogc`-модификатор на `#realtime fn`, жёсткий режим. Всё из `#realtime`
+  (suspend-ban) **плюс** запрет вызовов, аллоцирующих на managed heap
+  (`Vec[T].new`/`.of`/`.with_capacity`, `HashMap.new`, `StringBuilder.new`,
+  `str.from`, ...) — см. §7 ниже. Синтаксис и намерение — прямое
+  продолжение retracted-блока `realtime nogc { }` (D64: «никаких аллокаций,
+  кроме как в region'е»); D172 (Plan 103.7 final, Plan 113 amend) описывал
+  только `#realtime`/`#blocking`/`#thread_affine` — атрибут `nogc` парсился
+  и частично enforced'ился (Plan 16 `nogc_blacklisted_call`), но не был
+  задокументирован в этом D-блоке. №273 закрывает и документационный
+  разрыв, и найденную дыру enforcement'а (см. §7).
+  _До Plan 113: `realtime nogc { }` block (D64 §«Опционально — запрет
+  аллокации»)._ `region { ... }` (D6) исключение из запрета — в текущем
+  компиляторе **не реализовано** (`region` не парсится как block-конструкция),
+  поэтому исключений из nogc-запрета сейчас нет никаких.
 - **`#blocking fn`** — runtime threadpool offload: вся fn выполняется на
   libuv threadpool worker, fiber паркуется до завершения.
   _До Plan 113: `blocking { }` block (D50 §4, Plan 83.3)._
@@ -5371,6 +5386,8 @@ export external fn Mutex mut @unlock()
 | `E_REALTIME_SYNC_WAKE` | error | `#wakes`-метод вызван внутри `realtime { }` |
 | `E_REALTIME_NESTED_SYNC_VIA_FN` | error | user-fn с `#parks`-аннотацией вызвана из `realtime { }` |
 | `E_BLOCKING_SYNC_PARK` | error | `#parks`-метод вызван внутри `blocking { }` |
+| `E_REALTIME_NOGC_ALLOC` | error | allocating-вызов (blacklist, §7) внутри `#realtime nogc fn` (амендмент №273) |
+| `E_BLOCKING_NOGC_ALLOC` | error | allocating-вызов внутри `blocking { }` body (V1 leaf-contract, Plan 83.3) — код зарезервирован, ветка сейчас недостижима: block-form `blocking { }` retracted Plan 113, `#blocking fn` не заводит этот флаг (см. §7) |
 | `W_REALTIME_TRY_LOCK_FOR_TIMER` | warning | `Mutex.lock_for` в `realtime { }` |
 | `W_BLOCKING_NOTIFY_RISK` | warning | `#wakes`-метод в `blocking { }` |
 
@@ -5422,6 +5439,54 @@ Add #parks / #realtime annotation to declare intent.
 - `nova_fn_fence` / атомарные операции — безусловно safe (нет park/wake).
 - `#blocking fn` — codegen wrap'ает вызов в `uv_queue_work` (Plan 113, Ф.3).
 
+#### §7. `#realtime nogc fn` — no-alloc restriction (amend №273, 2026-08-02)
+
+**Механизм — hardcoded call-name blacklist**, НЕ call-graph анализ:
+`nogc_blacklisted_call` (`compiler-codegen/src/types/mod.rs`, checker-канал,
+`CapabilityCtx::check_capabilities_at`) matches'ит `Type.method` пары
+известных allocating-конструкторов (`[]T.new/.with_capacity/.of`,
+`HashMap/Set/Vec/Deque/LinkedList/Lru/BloomFilter.new/.with_capacity/.of`,
+`StringBuilder/WriteBuffer/ReadBuffer.new/.with_capacity/.from`,
+`Channel.new/.with_capacity`, `str.from`). Внутри `#realtime nogc fn` вызов
+одного из них → `[E_REALTIME_NOGC_ALLOC]`.
+
+**Находка №273 (2026-08-02):** до этого амендмента список matches'ил
+`.new`/`.with_capacity`, но **не** `.of` — вариадик-литерал-конструктор,
+ставший каноническим способом строить `Vec[T]` из литерала (D259 amend);
+`Vec[int].of(1, 2, 3)` внутри `#realtime nogc fn` проходил `nova check`
+молча. Хуже: сама проверка вообще не доходила ни до какого имени, если
+receiver вызова нёс **explicit generic type argument** — `Vec[int].new()`
+парсится как `Member{obj: TurboFish{base: Ident("Vec"), ..}, name: "new"}`
+(D38 turbofish), а path-extraction в `check_capabilities_at` не разворачивал
+`TurboFish`, попадая в defensive `_ => return` — silently skip'ая **все**
+capability-проверки этой функции (не только nogc-alloc, но и `forbid`/
+effect-checks) для любого вызова с explicit generic-типизированным
+receiver'ом. Оба дефекта закрыты в одном слиянии — детали в
+`nogc_blacklisted_call`'s doc-comment (types/mod.rs) и `check_capabilities_at`.
+
+**Известные пределы (documented risk, аналогично `blocking { }` V1
+leaf-контракту §выше):**
+- **Не call-graph.** Если `fn f()` без `#realtime`/`#realtime nogc`
+  annotation сама вызывает allocating-конструктор, а `#realtime nogc fn`
+  вызывает `f()` — не ловится: нет transitive inference, тот же V1-предел,
+  что и `#parks`-propagation (§4). Честная альтернатива — call-graph
+  may-GC-анализ (Plan 144.0, `nova gc-effect-analyze`,
+  `codegen/may_gc.rs`, `MayGcSet`), но он рассчитан на пост-mono
+  codegen-tier, другую фазу пайплайна, чем pre-mono checker-walk;
+  интеграция — отдельная задача, вне периметра №273.
+- **User-defined record-конструкторы** (`Foo.new()`) не покрыты: codegen
+  всегда heap-боксит record-литералы, так что фактически любой
+  record-литерал «аллоцирующий», но detection требует bigger inference —
+  сейчас флагуются только статические factory-методы известных типов.
+- **`Vec.of` allocates via variadic arg packing**, не через тело `of`
+  (`export fn Vec[T].of(...args []T) -> Self => args` — тело тривиально);
+  блэклист матчит по имени call-сайта, поэтому это не проблема, но
+  подчёркивает: список — по callee-имени, не по анализу тела callee.
+- **`region { ... }`-исключение (D6) не реализовано** — `region` не
+  парсится как block-конструкция в текущем компиляторе (см. `#realtime
+  nogc fn` в «Что» выше), поэтому сейчас у `nogc` нет способа явно
+  разрешить arena-аллокацию внутри своего тела.
+
 ### Правило
 
 1. **Annotate все external fn** в `.nv` stdlib с `#parks`/`#wakes`/`#realtime`.
@@ -5467,6 +5532,18 @@ D172 введён как draft (Plan 103.6, 2026-05-27). Финализиров�
 - Автоматический inference: если `fn A` вызывает `#parks`-fn, A также помечается `#parks`.
 - LSP integration: hover shows sync-class; quick-fix добавляет `#parks` annotation.
 - Полный propagation-граф: транзитивное закрытие через call graph.
+
+**Amended №273 (2026-08-02, [M-realtime-nogc-silent-no-enforce]):** `#realtime
+nogc fn` документирован явно (§«Что» + §7) — раньше D172 описывал только
+`#realtime`/`#blocking`/`#thread_affine`, хотя `nogc`-модификатор парсился
+и частично enforced'ился со времён Plan 16 (пробел документации, унаследованный
+от retracted-блока D64). Закрыты два enforcement-дефекта одновременно: (1)
+`nogc_blacklisted_call` не matches'ил `.of` (D259 amend variadic-конструктор);
+(2) path-extraction в `check_capabilities_at` не разворачивал `TurboFish`
+(explicit generic type argument на receiver'е, D38), из-за чего **любая**
+capability-проверка (не только nogc) silently skip'алась для вызовов вида
+`Vec[int].method()`. Новый код `E_REALTIME_NOGC_ALLOC` (+ зарезервированный,
+сейчас недостижимый `E_BLOCKING_NOGC_ALLOC`).
 
 ---
 

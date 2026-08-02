@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR E_REALTIME_NOGC_ALLOC
+// №273: `#realtime nogc fn` additionally bans managed-heap allocation on
+// top of the base `#realtime` suspend-ban (D172 nogc modifier, historically
+// D64 `realtime nogc { }` block-form, retracted by Plan 113 and carried
+// forward onto the attribute). `Vec[T].of(...)` is the canonical variadic
+// literal constructor (D259 amend) — it allocates just like `.new()` /
+// `.with_capacity()` and must be caught the same way.
+module neg.d172_realtime_nogc_alloc_neg
+
+#realtime nogc
+fn hot(x int) -> int {
+    ro v = Vec[int].of(1, 2, 3)
+    v.len() + x
+}
+
+test "Vec[int].of в #realtime nogc fn — E_REALTIME_NOGC_ALLOC" {
+    hot(1)
+}
