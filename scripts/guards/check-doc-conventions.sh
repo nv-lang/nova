@@ -173,7 +173,7 @@ fi
 # ---------------------------------------------------------------------
 # 2b. same-commit pairing (best-effort, требует diff-base).
 # ---------------------------------------------------------------------
-if [ -n "$DIFF_BASE" ] && git -C "$ROOT" rev-parse --verify "$DIFF_BASE" >/dev/null 2>&1; then
+if [ -n "$DIFF_BASE" ] && git -C "$ROOT" cat-file -e "$DIFF_BASE^{commit}" >/dev/null 2>&1; then
     changed="$(git -C "$ROOT" diff --name-only "$DIFF_BASE" -- docs/guide spec 2>/dev/null)"
     same_commit_violations=0
     check_pair_same_commit() {  # en_rel ru_rel label
