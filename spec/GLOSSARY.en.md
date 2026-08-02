@@ -34,8 +34,11 @@
 > **`[keep-en: reason]`** — one word for *why* it stays English: `код`
 > (it names an actual Nova keyword/identifier embedded in the phrase),
 > `аббревиатура` (an acronym with no Russian expansion in use — SMT, FFI,
-> SMT-solver-as-name), or `идиома` (a fixed English phrase the spec
-> itself borrows verbatim, e.g. "killer use-case"). Fully naturalized
+> SMT-solver-as-name), `идиома` (a fixed English phrase the spec itself
+> borrows verbatim, e.g. "killer use-case"), or `термин` (a specialized
+> PL/CS phrase with no established, concise Russian translation in the
+> field — e.g. "escape analysis" — distinct from an already-naturalized
+> single loanword like «эффект», which needs no tag at all). Fully naturalized
 > Russian loanwords that read as ordinary Russian vocabulary today
 > («эффект», «протокол», «паника», «дисциплина», «кортеж») are **not**
 > tagged — they are the Russian form already, same as «эффект» in
@@ -148,12 +151,12 @@ pending the owner's call in Open questions.
 
 ## 6. Memory and performance · Память и производительность
 
-| Русский | English | Example (en) | Note |
+| Русский (норма #language) | English | Example (en) | Note |
 |---|---|---|---|
-| managed heap (управляемая куча) | managed heap | "`o is a pointer to managed heap; GC-tracked`" (paraphrase, docs/guide/value-vs-reference.md) | GC-tracked reference-type storage, default for records/sum types |
-| escape-анализ | escape analysis | "Go — escape analysis decides" (docs/guide/value-vs-reference.md comparison table); "не утекающие значения остаются на стеке" (spec/overview.md) | compiler decides stack vs heap automatically, no programmer annotation |
-| регион (arena) / real-time зона (`#realtime nogc`) | region / real-time zone (`#realtime nogc`) | "Arena-allocations через `region { }` — проектируемая форма (D6), ⚠ в текущем компиляторе не реализована"; "For real-time зон (звук, торговля, embedded) — атрибут `#realtime nogc fn`" | spec/syntax.md "Производительность"; `region` is opt-in arena memory, **not yet implemented**; `#realtime nogc` marks a function as GC-forbidden for hard real-time code paths |
-| стек-аллокация | stack allocation | "positional tuple — **stack** — value (copy on pass)" | docs/guide/value-vs-reference.md bracket-rule table |
+| управляемая куча | managed heap | "`o is a pointer to managed heap; GC-tracked`" (paraphrase, docs/guide/value-vs-reference.md) | GC-tracked reference-type storage, default for records/sum types; уже полностью переведено, «managed heap» — только в англ. колонке |
+| анализ выхода за пределы области видимости (escape-анализ) `[keep-en: термин]` | escape analysis | "Go — escape analysis decides" (docs/guide/value-vs-reference.md comparison table); "не утекающие значения остаются на стеке" (spec/overview.md) | compiler decides stack vs heap automatically, no programmer annotation; устоявшегося краткого русского термина нет — «escape-анализ» встречается в компиляторной литературе как есть |
+| регион `[keep-en: код]` / зона реального времени (`#realtime nogc`) `[keep-en: код]` | region / real-time zone (`#realtime nogc`) | "Arena-allocations через `region { }` — проектируемая форма (D6), ⚠ в текущем компиляторе не реализована"; "For real-time зон (звук, торговля, embedded) — атрибут `#realtime nogc fn`" | spec/syntax.md "Производительность"; `region`/`#realtime nogc` — буквальные Nova-конструкции (ключевое слово и атрибут); `region` — **пока не реализован в компиляторе** |
+| стек-аллокация | stack allocation | "positional tuple — **stack** — value (copy on pass)" | docs/guide/value-vs-reference.md bracket-rule table; «стек» и «аллокация» — натурализованные CS-термины, не жаргон |
 
 ---
 
