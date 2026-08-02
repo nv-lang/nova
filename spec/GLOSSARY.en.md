@@ -69,8 +69,8 @@
 | эффект | effect | "Network, disk, the clock … in Nova these are all **effects**." | language-tour.md §6; «эффект» — давно натурализованное русское слово (как в «побочный эффект»), не тег-калька и не жаргон — тег `[keep-en]` не нужен |
 | обработчик (эффекта) | handler | "Each effect has a **handler** that intercepts its operations" | language-tour.md §6; норма-форма — «обработчик», НЕ «хендлер» (жаргонная транслитерация, в прозу не пускать) |
 | проектирование с приоритетом ИИ `[keep-en: идиома]` (killer use-case) | AI-first design / killer use-case | "Nova — first language explicitly optimized for the pair 'LLM writes, human reviews'" | spec/overview.md "Killer use-case" heading; «AI-first» переведено («с приоритетом ИИ»), но «killer use-case» — устойчивая англ. идиома, спека сама заимствует её без перевода — keep-en |
-| одна дверь (единственный канонический путь) | single canonical path / "no second door" `[proposed]` | "not a second door to `?`, but an independent niche" (paraphrase of the retraction rationale) | idiom used repeatedly in spec/decisions (e.g. D86 amend: "она была второй дверью к `?`"); чисто русская метафора — образец нормы, английского эквивалента как раз и не хватает (см. Open questions) |
-| сопоставляемое значение (объект `match`) | scrutinee `[proposed]` | "the scrutinee of a `match` expression is the value being matched against its arms" | descriptive Russian phrase, no PL-jargon calque; «скрутини» — неприжившаяся транслитерация английского PL-термина, в прозу не пускать (см. Open questions — принимать ли «scrutinee» на английской стороне) |
+| одна дверь (единственный канонический путь) | "no second door" | "not a second door to `?`, but an independent niche" (paraphrase of the retraction rationale) | idiom used repeatedly in spec/decisions (e.g. D86 amend: "она была второй дверью к `?`"); **утверждено владельцем 2026-08-03** — en-форма "no second door" (дверная метафора сохранена); описательное "single canonical path" допустимо как пояснение при первом упоминании |
+| сопоставляемое значение (объект `match`) | scrutinee | "the scrutinee of a `match` expression is the value being matched against its arms" | **утверждено владельцем 2026-08-03**: ru — «сопоставляемое значение» (транслит «скрутини» в новую прозу не пускать; существующие D-блоки не переписываем), en — scrutinee (стандартный PL-термин) |
 | эффект-строка | effect row | "`Fail[E]`, `Fail` — стандартный эффект — **в effect-row сигнатуры**" | spec/overview.md; составное «эффект»+«строка» — оба слова русские, калька смысла (не транслитерация), уже кодифицирована в норме spec — оставляем как есть |
 
 ---
@@ -170,7 +170,7 @@ pending the owner's call in Open questions.
 
 | Русский (норма #language) | English | Example (en) | Note |
 |---|---|---|---|
-| файбер `[CONTESTED — см. Open questions]` | fiber | "Under the hood — **fiber-based scheduler** (like Go/OCaml 5)." | spec/effects.md "Async — невидимая инфраструктура"; ~4-8 KB stack, millions per machine; «файбер» — транслитерация, уже широко используется в коде/доках Nova — заменять единолично рискованно, решение владельца требуется (кандидат: «волокно») |
+| файбер | fiber | "Under the hood — **fiber-based scheduler** (like Go/OCaml 5)." | spec/effects.md "Async — невидимая инфраструктура"; ~4-8 KB stack, millions per machine; **утверждено владельцем 2026-08-03** — «файбер» остаётся русской формой (не «волокно»), употребление по всей базе доков не меняется |
 | структурированная конкурентность | structured concurrency | "concurrency is structured, not a separate async dialect" | language-tour.md §8; в spec/overview.md встречается сырое англ. «Structured concurrency» в русском тексте — норма-форма переводит оба слова («конкурентность» уже натурализована), `[proposed]` |
 | супервизия | supervision | "Supervision of failures is an ordinary effect `Supervisor`" (paraphrase, spec/overview.md D416) | Erlang/OTP-style child-failure policy: `escalate()` / `stop()`; «супервизия» — натурализованный термин (используется вне IT, напр. в психотерапии/менеджменте), не жаргон |
 | дедлайн области видимости / отмена | (scope) deadline / cancellation | "`supervised(deadline:)` gives that block a shared deadline, and a spawn that misses it is genuinely cancelled" | language-tour.md §8; «дедлайн» — полностью натурализованное слово повседневного русского; «скоуп» заменён на «область видимости» |
@@ -230,21 +230,14 @@ pending the owner's call in Open questions.
 
 ## Open questions for owner review
 
-1. **«Одна дверь» (§1).** No settled English phrase exists anywhere in
-   `docs/guide/*.md` or `spec/*.md` for this recurring design idiom
-   ("don't add a second way to do something the language already covers
-   one way"). Proposed: **"single canonical path"** or, closer to the
-   Russian door-metaphor, **"no second door"**. Needs owner sign-off
-   before `spec/*.en.md` translators start using it — it will recur
-   often (D86 amend, D429 §"третья дверь", nv-coding-style "запрещённая
-   пятая дверь", etc.).
-2. **«Скрутини» (§1).** Not attested anywhere in Nova's own docs — the
-   guide and spec both just say "the value being matched" / "паттерн
-   совпал". Proposed **"scrutinee"** is standard Rust/Haskell PL jargon,
-   which may be *more* precise than Nova's own house style wants for an
-   AI-first, plain-language project. Owner should decide: adopt
-   "scrutinee" as the technical term, or keep the descriptive phrasing
-   and drop this glossary entry as unnecessary.
+1. **«Одна дверь» (§1). ✅ РЕШЕНО (владелец 2026-08-03):** en-форма —
+   **"no second door"** (дверная метафора сохранена); "single canonical
+   path" — допустимое пояснение при первом упоминании. Строка §1
+   обновлена.
+2. **«Скрутини» (§1). ✅ РЕШЕНО (владелец 2026-08-03):** ru —
+   **«сопоставляемое значение»**, транслит «скрутини» в новую прозу не
+   пускать (существующие D-блоки не переписываем); en — **scrutinee**
+   принят как термин. Строка §1 обновлена.
 3. **`spec/paradigm.md` is stale.** Its own header (added 2026-xx) flags
    it as describing a pre-D18/D24/D31/D33-D42/D52/D53/D61-D66/D70/D73
    version of the language — it still talks about `trait`/`impl`,
@@ -272,19 +265,11 @@ pending the owner's call in Open questions.
 
 ### Русские формы — спорные, решает владелец (добор 2026-08-02, норма #language)
 
-6. **«Файбер» vs «волокно» (§7, помечено `[CONTESTED]`).** «Файбер» —
-   транслитерация английского «fiber», НЕ норма-форма по правилу
-   «минимум английских слов» — но термин уже насквозь пронизывает
-   существующие доки, спеку, dev-конвенции и, вероятно, диагностики
-   компилятора (`docs/dev/mn-coding-conventions.md`, весь `nova_rt/`).
-   Кандидат на замену — **«волокно»** (буквальный русский перевод
-   «fiber», уже встречается в русскоязычной литературе про
-   green-threads/stackful-корутины). Массовая замена — самостоятельное
-   терминологическое решение с широким blast radius (переименование по
-   всей кодовой базе доки, не только в guide), а не точечная калька-
-   правка, поэтому глоссарий её не делает единолично и выносит на
-   решение владельца. Если владелец выбирает «волокно» — это отдельная
-   волна правок (не в объёме Ф.0), а глоссарий обновляется первым.
+6. **«Файбер» vs «волокно» (§7). ✅ РЕШЕНО (владелец 2026-08-03):**
+   **«файбер» остаётся** русской формой (сознательно сохранённая
+   транслитерация — термин насквозь пронизывает доки, спеку и
+   dev-конвенции; массовая замена не производится). Строка §7 обновлена,
+   пометка `[CONTESTED]` снята.
 7. **«Тип-сумма» vs «sum-тип» (§3).** Spec нормативно использует
    гибрид «sum-тип» (английское `sum` + русское `тип`). Предложенная
    норма-форма «тип-сумма» — калька по образцу «тип-произведение» из
