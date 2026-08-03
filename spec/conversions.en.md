@@ -84,3 +84,80 @@ ro neg = (-1 as i32).try_to_u8()       // Err(RangeError) — negative → unsig
 `RangeError` — a unit type ("didn't fit", no payload — the fact itself is
 exhaustive). `as` remains the fast truncating cast, unchanged — `try_to_*`
 does not replace it, but adds a checked alternative alongside.
+
+---
+
+## Numeric ↔ str
+
+### str → numeric (parse, fallible) — a method ON THE SOURCE, not a static on the target
+
+**Canon (Plan 174.1, 2026-07-08, owner decision — superseded the early
+static-constructor design `T.parse(s)`/`T.try_from(s)`):** converting a string
+to a number is a method **on `str`** (`s.to_int()`), not a static constructor
+on the target type. Mirrors the `s.to_str()` family in reverse.
+
+| From → To | Via | Failure |
+|---|---|---|
+| `str → int` | `s.to_int(radix: int = 10)` | non-digit / overflow / (custom radix) invalid radix |
+| `str → i64/u64` | `s.to_i64()` / `s.to_u64()` | no extra range-check (same width as the engine) |
+| `str → i8/i16/i32/u8/u16/u32` | `s.to_i8()` / `s.to_i16()` / `s.to_i32()` / `s.to_u8()` / `s.to_u16()` / `s.to_u32()` | + range-check into the target width |
+| `str → f64` | `s.to_f64()` | invalid number format |
+
+```nova
+fn parse_decimal(s str) -> Result[int, ParseIntError] =>
+    Ok(s.to_int()?)             // radix 10 по умолчанию, Ok(42)
+
+fn parse_hex(s str) -> Result[u32, ParseIntError] =>
+    Ok(s.to_u32(radix: 16)?)    // hex-парсинг
+
+fn parse_decimal_f64(s str) -> Result[f64, ParseFloatError] =>
+    Ok(s.to_f64()?)             // Ok(3.14)
+```
+
+Errors — structural enums: `type ParseIntError enum Empty | InvalidDigit
+| Overflow | InvalidRadix` and `type ParseFloatError enum Empty | Invalid`
+(`std/runtime/string/parse.nv`).
+
+### str → bool (parse, fallible)
+
+**Canon (Plan 232.1 Т1, owner decision "add", 2026-07-26):**
+`s.to_bool()` — strictly `"true"`/`"false"`, lowercase-only (the Rust
+`str::parse::<bool>` canon; no case-insensitive/`"1"`/`"0"`/`"yes"` aliases).
+
+| From → To | Via | Failure |
+|---|---|---|
+| `str → bool` | `s.to_bool()` | empty → `Err(Empty)`; anything other than exactly `"true"`/`"false"` → `Err(Invalid)` |
+
+```nova
+fn parse_flag(s str) -> Result[bool, ParseBoolError] => s.to_bool()
+
+assert("true".to_bool() == Ok(true))
+assert("TRUE".to_bool().is_err())      // регистр не lowercase → Err(Invalid)
+```
+
+`type ParseBoolError enum Empty | Invalid` (`std/runtime/string/parse.nv`)
+— the same two-variant pattern as `ParseFloatError`.
+
+### numeric → str (format, infallible) — a single entry point `.to_str()`
+
+**Canon (Plan 174.2, 2026-07-14):** `str.from(scalar)` was **retracted**.
+The only public entry point "value → string" is the bare-`T` blanket
+`fn[T] T @to_str() -> str => "${@}"` ([D410](decisions/03-syntax.md#d410)
+amend), specialized by concrete overloads where a different
+arity/semantics is needed (e.g. decode for `[]u8`, see below).
+
+| From → To | Via |
+|---|---|
+| `int/iN/uN → str` | `n.to_str()` |
+| `f64/f32 → str` | `f.to_str()` |
+| `bool → str` | `b.to_str()` |
+| `char → str` | `c.to_str()` |
+
+```nova
+ro s = 42.to_str()             // "42"
+ro f = 3.14.to_str()           // "3.14"
+```
+
+Interpolation (`"${n}"`) lowers into the same path directly (for primitives —
+into a Display helper at the C level, without re-calling `.to_str()` — no
+recursion).
