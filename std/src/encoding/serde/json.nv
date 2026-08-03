@@ -320,12 +320,7 @@ fn JsonDeserializer mut @map_keys() -> Result[[]str, DeError] {
     match @cur.object() {
         None => Err(DeError.unexpected("object", json_kind(@cur)))
         Some(m) => {
-            // №254 [M-try-on-next-generic-receiver-misresolve]: KeysIter
-            // .collect() misresolves in codegen — manual loop until №254 lands.
-            mut ks []str = []
-            for k in m.keys() {
-                ks.push(k)
-            }
+            mut ks = m.keys().collect()
             Ok(ks)
         }
     }

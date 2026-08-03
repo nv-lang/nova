@@ -49,10 +49,7 @@ test "crc32: incremental == монолитный" {
 test "crc32: чувствительность к 1-битной ошибке" {
     // Изменение одного бита должно полностью изменить checksum
     ro original = "hello".bytes()
-    // №254 [M-try-on-next-generic-receiver-misresolve]: .collect() on a Vec
-    // receiver misresolves in codegen — manual copy until №254 lands.
-    mut modified []u8 = []
-    for b in original { modified.push(b) }
+    mut modified = original.collect()
     modified[0] = (modified[0] as u32 ^ 1) as u8    // flip младший бит первого байта
 
     assert(crc32(original) != crc32(modified))

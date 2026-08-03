@@ -1,0 +1,59 @@
+// Plan 221.1 №295 [M-blanket-overload-same-name-mono-registry-collision]:
+// two generic blankets sharing ONE method name under DIFFERENT
+// receiver-typevar keys (`("I", "collect")` — the direct `Next[T]` blanket —
+// alongside `("C", "collect")` — the `Iter[I]`-delegate from §254 point 4)
+// must NOT collapse into "whichever one a `HashMap` happens to iterate
+// first" when a call site's return type is inferred (`infer_call_ret_c`,
+// `compiler-codegen/src/codegen/emit_c.rs` B08 blanket-protocol-receiver
+// fallback). Before the fix, a hash-order-dependent `.find()` could pick
+// the WRONG blanket's generics for T-binding purposes, silently erasing an
+// unresolved `T` to its `nova_int` default — CC-FAIL "passing nova_int to
+// nova_str" downstream (measured live on nova-polaris `HashMap[str,V].
+// keys().collect()`, canon 37/0/18 -> 17/20/18; conformance mega-CU 634/0/68
+// -> 633/1/68). `m254_iter_protocol_bound_dispatch_pos.nv`'s own specificity
+// case (c) did NOT catch this because its element type is `int`, which is
+// ALSO the erasure default — a wrong-blanket pick there was invisible.
+// This fixture uses `str` elements throughout so a wrong pick is observable.
+module spec_tests.conformance
+
+import std.prelude.collections.{Next, Iter}
+import std.collections.vec_iter
+
+// (a) M295Letters satisfies Next[str] directly and does NOT implement
+// Iter — importing vec_iter still registers BOTH `("I","collect")` (this
+// direct blanket's key) and `("C","collect")` (the Iter[I] delegate) in
+// mono_method_decls. The direct blanket must win; T must bind to `str`,
+// not silently erase to the `nova_int` default.
+export type M295Letters value { mut cur int, letters []str }
+
+#impl(Next[str])
+export fn M295Letters mut @next() -> Option[str] {
+    if @cur >= @letters.len() { return None }
+    ro v = @letters[@cur]
+    @cur += 1
+    Some(v)
+}
+
+test "(295-a) direct Next[str] blanket wins over the co-present Iter[I] delegate — T binds to str" {
+    ro l = M295Letters { cur: 0, letters: ["a", "b", "c"] }
+    ro collected = l.collect()
+    assert(collected == ["a", "b", "c"])
+}
+
+// (b) M295Words has NO `@next()` of its own — it can only reach `collect()`
+// through the `Iter[I]`-delegate blanket (§254 pt.4), whose element type is
+// ALSO `str` (via M295Letters). A naive "always prefer the direct blanket's
+// key" fix (sort order alone, no protocol check) would wrongly route this
+// receiver through the direct `Next[T]` blanket it does NOT satisfy and
+// erase T to `nova_int` again — this case only passes when the candidate
+// selection actually verifies protocol satisfaction against the receiver.
+export type M295Words value { letters []str }
+
+#impl(Iter[M295Letters])
+export fn M295Words @iter() -> M295Letters => { cur: 0, @letters }
+
+test "(295-b) Iter[I]-delegate resolves the same method name to str, not the int default, for a receiver with no Next[T] of its own" {
+    ro w = M295Words { letters: ["x", "y", "z"] }
+    ro collected = w.collect()
+    assert(collected == ["x", "y", "z"])
+}
