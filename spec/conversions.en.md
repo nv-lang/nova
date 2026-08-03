@@ -376,3 +376,64 @@ Plan 214.1, 2026-07-24).
 `as` does **not** engage `#coerce` (D429 R10) — `as` remains a closed,
 documented-in-spec set of conversions; `#coerce` is an open user registry;
 mixing the two would give a third door to one pair.
+
+---
+
+## `from`/`try_from` naming — a convention, not a protocol (⛔ retraction 2026-07-06)
+
+**Until 2026-07-06** `From[T]`/`Into[U]`/`TryFrom[T,E]`/`TryInto[U,E]` were
+generic protocols with auto-derivation of the reverse form ("4-way auto-derive"):
+you wrote `T.from(v)` — the compiler synthesized `v.into()` itself. **By the
+owner's decision all four protocols are abolished entirely:**
+
+1. In Rust, conversion bounds are a crutch for the lack of overloading; in
+   Nova overloading exists ([D84](decisions/10-overloading.md#d84)), and
+   `From`/`Into` as a generic bound was never used in live std, NOT ONCE.
+2. `?` does not do auto-`From` error conversion ([D325](decisions/04-effects.md#d325):
+   one `XError` per domain, conversion is an explicit `.map_err(...)`).
+3. All real `.into()` calls in the tree played the role of "value to string" —
+   that is the `to_str()` axis, not ownership transfer.
+4. The compiler magic of synthesis goes away (§3 compiler-conventions):
+   the blanket identity `From`, auto-derive `From→Into`, 4-step resolution.
+
+**What remains** (three independent naming conventions, each an ordinary
+Nova function with no protocol behind it):
+
+- **(a) `.from(x)` / `.try_from(x)`** — concrete static methods,
+  constructor-conversion by naming convention (not generic-bound-able).
+  `try_` — **only** when there is an infallible sibling with the same name
+  without the prefix (R3, [D325](decisions/04-effects.md#d325)); a lone
+  fallible operation without a sibling — a bare name without `try_`
+  (example — `s.to_int()`, not `s.try_int()`).
+- **(b) `consume @into_ЦЕЛЬ()`** — a concrete name for a consuming
+  ownership transfer (`into_str`, `into_raw`, `into_bytes`,
+  `into_str_unchecked`). Not the general `.into()` operation — a generic
+  version no longer exists; each name is declared on its own type explicitly.
+- **(c) `.to_str()` / the `to_*` family** — representation and transformation
+  (see [D410](decisions/03-syntax.md#d410)).
+
+**The compiler synthesizes NOTHING between these three** — neither the reverse
+form nor a chain. If a type wants both directions — the programmer writes both
+explicitly, under different names.
+
+```nova
+type Celsius f64
+type Fahrenheit f64
+
+fn Fahrenheit.from(c Celsius) -> Self =>
+    Self((c as f64) * 9.0 / 5.0 + 32.0)
+
+// Компилятор НЕ синтезирует c.into() — Into больше нет. Если нужна
+// обратная форма — пишем отдельную функцию явно:
+fn Celsius.from(f Fahrenheit) -> Self =>
+    Self(((f as f64) - 32.0) * 5.0 / 9.0)
+```
+
+The fallible version is the same, but the static returns a `Result`:
+
+```nova
+fn Port.try_from(n u16) -> Result[Self, str] =>
+    if n == 0 { Err("port 0 reserved") } else { Ok(Port(n)) }
+
+ro p = Port.try_from(8080)?
+```
