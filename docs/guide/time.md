@@ -13,7 +13,7 @@ user code does NOT call it directly — it goes through types and free functions
 ```nova
 import std.time.duration
 
-with Time = th.mut_clock(0 as u64) {   // подмена часов в тестах (D11/D61)
+with Time = th.mut_clock(0 as u64) {   // swapping the clock in tests (D11/D61)
     ro start = Monotonic.now()
     sleep(500.millis())
     ro elapsed = Monotonic.now().elapsed_since(start)
@@ -82,9 +82,9 @@ bare `@plus`/`@minus` saturates (never wraps back to 1677).
 
 ```nova
 ro d = Duration.from_nanos(i64_max())
-d.checked_add(1.nanos())     // → None (не паника, explicit escape hatch)
-d.saturating_add(1.seconds()) // → clamp к i64_max()
-d + 1.nanos()                 // → trap (оператор — default-safe)
+d.checked_add(1.nanos())     // → None (not a panic, an explicit escape hatch)
+d.saturating_add(1.seconds()) // → clamp to i64_max()
+d + 1.nanos()                 // → trap (the operator is default-safe)
 ```
 
 ## Monotonic: non-regression + clock source (D318)
@@ -138,9 +138,9 @@ import std.testing.handlers as th
 test "rate limiter refills after 1s" {
     with Time = th.mut_clock(0 as u64) {
         ro m0 = Monotonic.now()
-        sleep(1.second())               // виртуальные часы, не реальное ожидание
+        sleep(1.second())               // a virtual clock, not a real wait
         assert(Monotonic.now().elapsed_since(m0) == 1.second())
-        assert(Timestamp.now().as_unix_millis() == 1000)  // ОДИН источник, оба сдвинулись
+        assert(Timestamp.now().as_unix_millis() == 1000)  // ONE source, both shifted
     }
 }
 ```
@@ -166,12 +166,12 @@ lengths wake in deadline order, not spawn order; the final clock is the max, not
 the sum).
 
 ```nova
-test "конкурентные sleep будятся в порядке дедлайна" {
+test "concurrent sleeps wake in deadline order" {
     with Time = th.mut_clock(0 as u64) {
         supervised {
-            spawn { Time.sleep(100); /* ... */ }   // проснётся ТРЕТЬИМ
-            spawn { Time.sleep(10);  /* ... */ }   // проснётся ПЕРВЫМ
-            spawn { Time.sleep(50);  /* ... */ }   // проснётся ВТОРЫМ
+            spawn { Time.sleep(100); /* ... */ }   // wakes THIRD
+            spawn { Time.sleep(10);  /* ... */ }   // wakes FIRST
+            spawn { Time.sleep(50);  /* ... */ }   // wakes SECOND
         }
     }
 }
