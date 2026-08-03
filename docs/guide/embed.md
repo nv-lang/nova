@@ -1,12 +1,12 @@
 **English** | [Русский](embed.ru.md)
 
-# Встраивание файлов и папок в бинарь: `embed` / `embed_dir`
+# Embedding files and directories into the binary: `embed` / `embed_dir`
 
-> Пользовательский гайд по компайл-тайм интринсикам `embed("file")`
-> ([D412](../../spec/decisions/03-syntax.md#d412), План 186) и `embed_dir("dir")`
-> (D412-амендмент в том же файле, `spec/decisions/03-syntax.md` — ищи
-> «D412-амендмент», План 210). Оба — интринсики класса C (файловый ввод на
-> этапе компиляции, прецеденты — Rust `include_bytes!`, Go `//go:embed`,
+> A user guide to the compile-time intrinsics `embed("file")`
+> ([D412](../../spec/decisions/03-syntax.md#d412), Plan 186) and `embed_dir("dir")`
+> (D412 amendment in the same file, `spec/decisions/03-syntax.md` — search for
+> "D412-амендмент", Plan 210). Both are class-C intrinsics (file input at
+> compile time, with precedent in Rust `include_bytes!`, Go `//go:embed`,
 > Zig `@embedFile`, C23 `#embed`).
 
 ## TL;DR
@@ -20,35 +20,36 @@ assert(site.has("index.html"))
 ro index = site.get("index.html")       // Option[[]u8]
 ```
 
-- Аргумент — **только строковый литерал** (путь известен на компиляции);
-  резолвится относительно `.nv`-файла вызова, граница — package-root вызова.
-- Содержимое становится частью `.rodata` бинаря: **нулевая копия** payload'ов
-  (`ro`-биндинг = вид над статикой, не куча).
-- Встроенные файлы — зависимости сборки: изменение/добавление/удаление
-  любого из них инвалидирует кэш инкрементальной сборки.
-- `embed` → `[]u8`. `embed_dir` → иммутабельный `EmbeddedDir` (карта
-  путь→байты, отсортирована, бинарный поиск).
+- The argument is **a string literal only** (the path must be known at
+  compile time); it resolves relative to the calling `.nv` file, bounded by
+  the caller's package root.
+- The content becomes part of the binary's `.rodata`: payloads are
+  **zero-copy** (a `ro`-binding is a view over static data, not the heap).
+- Embedded files are build dependencies: changing/adding/removing any of
+  them invalidates the incremental build cache.
+- `embed` → `[]u8`. `embed_dir` → an immutable `EmbeddedDir` (a path→bytes
+  map, sorted, binary search).
 
-## Содержание
+## Contents
 
-- [`embed("path")` — один файл](#embedpath--один-файл)
-- [`embed_dir("dir")` — вся папка рекурсивно](#embed_dirdir--вся-папка-рекурсивно)
-- [API `EmbeddedDir`](#api-embeddeddir)
-- [Материализация: нулевая копия](#материализация-нулевая-копия)
-- [Детерминизм и сортировка](#детерминизм-и-сортировка)
-- [dot-skip и symlink-skip](#dot-skip-и-symlink-skip)
-- [Коды диагностик](#коды-диагностик)
-- [NFC-нормализация путей](#nfc-нормализация-путей)
-- [rodata-мина: не мутировать `data`](#rodata-мина-не-мутировать-data)
-- [Взаимодействие с многофайловым codegen (План 209)](#взаимодействие-с-многофайловым-codegen-план-209)
-- [CRLF и `.gitattributes`](#crlf-и-gitattributes)
-- [`ReadFs` — один код для dev (диск) и prod (embedded)](#readfs--один-код-для-dev-диск-и-prod-embedded)
-- [Кросс-языковое сравнение](#кросс-языковое-сравнение)
-- [См. также](#см-также)
+- [`embed("path")` — a single file](#embedpath--a-single-file)
+- [`embed_dir("dir")` — a whole directory, recursively](#embed_dirdir--a-whole-directory-recursively)
+- [`EmbeddedDir` API](#embeddeddir-api)
+- [Materialization: zero-copy](#materialization-zero-copy)
+- [Determinism and sorting](#determinism-and-sorting)
+- [dot-skip and symlink-skip](#dot-skip-and-symlink-skip)
+- [Diagnostic codes](#diagnostic-codes)
+- [NFC path normalization](#nfc-path-normalization)
+- [rodata mine: don't mutate `data`](#rodata-mine-dont-mutate-data)
+- [Interaction with multi-file codegen (Plan 209)](#interaction-with-multi-file-codegen-plan-209)
+- [CRLF and `.gitattributes`](#crlf-and-gitattributes)
+- [`ReadFs` — one code path for dev (disk) and prod (embedded)](#readfs--one-code-path-for-dev-disk-and-prod-embedded)
+- [Cross-language comparison](#cross-language-comparison)
+- [See also](#see-also)
 
 ---
 
-## `embed("path")` — один файл
+## `embed("path")` — a single file
 
 ```nova
 test "embed(\"path\") round-trips the fixture bytes exactly" {
@@ -58,19 +59,20 @@ test "embed(\"path\") round-trips the fixture bytes exactly" {
 }
 ```
 
-(из `spec_tests/conformance/d412_hex_blob_embed.nv`).
+(from `spec_tests/conformance/d412_hex_blob_embed.nv`).
 
-- Путь резолвится относительно файла-исходника, где стоит вызов — модель
-  Rust `include_bytes!`. Выход за пределы package-root вызова (`..` выше
-  корня) — ошибка компиляции, не рантайм.
-- Указан путь на директорию вместо файла → `E_EMBED_IS_A_DIR` («используй
-  `embed_dir(...)`») — симметрично `embed_dir`'s `E_EMBED_NOT_A_DIR`.
-- Сосед по D412 — hex-блоб литерал `x"48 69 00 FF"` (та же материализация;
-  ведущие нули значимы, разделители `_`/пробел/перенос строки игнорируются,
-  нечётное число цифр — `E_HEX_BLOB_ODD`). `embed(...)` — по сути «прочитать
-  файл и подставить его байты как `x"…"`» на этапе компиляции.
+- The path resolves relative to the source file where the call sits — the
+  same model as Rust's `include_bytes!`. Escaping the caller's package root
+  (`..` past the root) is a compile error, not a runtime one.
+- Pointing at a directory instead of a file gives `E_EMBED_IS_A_DIR` ("use
+  `embed_dir(...)`") — symmetric to `embed_dir`'s `E_EMBED_NOT_A_DIR`.
+- `embed`'s neighbor in D412 is the hex-blob literal `x"48 69 00 FF"` (same
+  materialization; leading zeros are significant, `_`/space/newline
+  separators are ignored, an odd digit count is `E_HEX_BLOB_ODD`).
+  `embed(...)` is, in essence, "read a file and substitute its bytes as
+  `x"…"`" at compile time.
 
-## `embed_dir("dir")` — вся папка рекурсивно
+## `embed_dir("dir")` — a whole directory, recursively
 
 ```nova
 ro assets = embed_dir("d412d_dir")     // рекурсивно: alpha.txt, beta.txt, nested/gamma.txt
@@ -84,46 +86,51 @@ ro alpha = assets.get("alpha.txt").unwrap()                  // байты "ABC"
 assert(assets.get("./alpha.txt") == None)                    // ключ БЕЗ ведущего `./` — точная байтовая форма
 ```
 
-(адаптировано из `spec_tests/conformance/d412d_embed_dir.nv` — фикстура
-`d412d_dir/` содержит `alpha.txt`("ABC")/`beta.txt`("XY")/
-`nested/gamma.txt`("WXYZ")/`.hidden`).
+(adapted from `spec_tests/conformance/d412d_embed_dir.nv` — the fixture
+`d412d_dir/` contains `alpha.txt` ("ABC") / `beta.txt` ("XY") /
+`nested/gamma.txt` ("WXYZ") / `.hidden`).
 
-- Тот же контракт аргумента, что у `embed`: строковый литерал, путь
-  относительно `.nv`-файла вызова, package-root — граница; выход наружу
-  (сама папка ИЛИ любой обойдённый внутри файл) — `E_EMBED_OUTSIDE_PROJECT`.
-- **Рекурсивен по умолчанию.** Glob/фильтр — вне объёма (future); встраивается
-  вся поддерево.
-- Путь ведёт на файл, не папку → `E_EMBED_NOT_A_DIR` («используй `embed(...)`»).
-  Папки не существует → `E_EMBED_DIR_NOT_FOUND`.
-- **Ключ** записи = путь относительно embed-корня, разделитель POSIX `/`
-  (Windows `\` при обходе диска конвертируется в `/`), **case-sensitive**,
-  без ведущего `./`. `get`/`has` не нормализуют аргумент лексически: `..` не
-  упрощается, `get("./x")` при существующем `x` честно даёт `None`.
-- `\` (обратный слэш) в САМОМ строковом литерале аргумента (у `embed` И
-  `embed_dir`) — `E_EMBED_PATH_BACKSLASH`: путь пишется POSIX-стилем `/`
-  независимо от ОС компиляции (непортируемый исходник иначе).
-- Пустая папка легальна → пустой `EmbeddedDir` (`len() == 0`).
+- The same argument contract as `embed`: a string literal, resolved
+  relative to the calling `.nv` file, bounded by the package root; escaping
+  it (the directory itself OR any file walked inside it) gives
+  `E_EMBED_OUTSIDE_PROJECT`.
+- **Recursive by default.** A glob/filter is out of scope (future); the
+  whole subtree gets embedded.
+- A path that points at a file, not a directory, gives `E_EMBED_NOT_A_DIR`
+  ("use `embed(...)`"). A directory that doesn't exist gives
+  `E_EMBED_DIR_NOT_FOUND`.
+- **The entry key** is the path relative to the embed root, with a POSIX
+  `/` separator (Windows `\` is converted to `/` while walking the disk),
+  **case-sensitive**, without a leading `./`. `get`/`has` do not lexically
+  normalize the argument: `..` is not simplified, `get("./x")` on an
+  existing `x` genuinely returns `None`.
+- A `\` (backslash) inside the argument's string literal itself (for both
+  `embed` and `embed_dir`) gives `E_EMBED_PATH_BACKSLASH`: paths are
+  written POSIX-style (`/`) regardless of the compiling OS (otherwise the
+  source wouldn't be portable).
+- An empty directory is legal → an empty `EmbeddedDir` (`len() == 0`).
 
-## API `EmbeddedDir`
+## `EmbeddedDir` API
 
-| Метод | Сигнатура | Семантика |
+| Method | Signature | Semantics |
 |---|---|---|
-| `get` | `(path str) -> Option[[]u8]` | Байты файла по точному ключу. Бинарный поиск O(log N) по отсортированным записям. `None`, если пути нет — **не паника** |
-| `has` | `(path str) -> bool` | Есть ли файл по пути (`get(path).is_some()`) |
-| `paths` | `() -> []str` | Все встроенные пути, в отсортированном детерминированном порядке |
-| `len` | `() -> int` | Число встроенных файлов |
-| `entries` | `() -> ro []EmbeddedEntry` | Пары `(path, data)` без двойного lookup — `ro`-возврат (L2, read-only view, прецедент `str @bytes()`): мутация результата — ошибка компиляции |
+| `get` | `(path str) -> Option[[]u8]` | The file's bytes by exact key. O(log N) binary search over the sorted entries. `None` if the path doesn't exist — **not a panic** |
+| `has` | `(path str) -> bool` | Whether a file exists at the path (`get(path).is_some()`) |
+| `paths` | `() -> []str` | All embedded paths, in sorted deterministic order |
+| `len` | `() -> int` | Number of embedded files |
+| `entries` | `() -> ro []EmbeddedEntry` | `(path, data)` pairs without a double lookup — a `ro`-return (L2, read-only view, precedent `str @bytes()`): mutating the result is a compile error |
 
-`EmbeddedEntry { path str, data []u8 }` — одна запись; публично
-конструируем (сам по себе инвариантов не несёт — используется и в ручных
-тестах/моках).
+`EmbeddedEntry { path str, data []u8 }` — a single entry; publicly
+constructible (carries no invariant of its own — also used in hand-written
+tests/mocks).
 
-**`EmbeddedDir` целиком иммутабелен** — нет мутирующих методов. Единственный
-публичный конструктор — `EmbeddedDir.new(entries)` (тот же, что синтезирует
-компилятор для `embed_dir(...)`): требует отсортированность+уникальность по
-`path` (UTF-8 байтовый порядок == `str.compare`), нарушение — `panic`, не
-тихий промах в `get`. Легально построить СВОЙ (не встроенный) каталог в
-тестах — инвариант всё равно охраняется verify:
+**`EmbeddedDir` is fully immutable** — there are no mutating methods. The
+only public constructor is `EmbeddedDir.new(entries)` (the same one the
+compiler synthesizes for `embed_dir(...)`): it requires the entries to be
+sorted and unique by `path` (UTF-8 byte order, same as `str.compare`);
+violating this is a `panic`, not a silent miss in `get`. It's legal to
+construct your own (non-embedded) directory in tests — the invariant is
+still guarded by `verify`:
 
 ```nova
 ro d = EmbeddedDir.new([
@@ -132,25 +139,26 @@ ro d = EmbeddedDir.new([
 ])
 ```
 
-(`std/src/prelude/embed_test.nv` — конструирует вручную ДО того, как
-резолвер умеет синтезировать `embed_dir`; доказывает контракт типа
-независимо от компилятора.)
+(`std/src/prelude/embed_test.nv` — constructs it by hand from before the
+resolver could synthesize `embed_dir`; proves the type's contract
+independently of the compiler.)
 
-## Материализация: нулевая копия
+## Materialization: zero-copy
 
-Оба интринсика эмитятся в C как `static const uint8_t nova_blob_<hash>[]` в
-`.rodata` — то же место, что str-литералы (интернирование по содержимому:
-два одинаковых файла → один static, hash-коллизия → суффикс `_seq`).
+Both intrinsics are emitted in C as `static const uint8_t nova_blob_<hash>[]`
+in `.rodata` — the same place as string literals (interned by content: two
+identical files → one static, a hash collision → a `_seq` suffix).
 
-- **`ro`-биндинг** (`ro img = embed("logo.png")`) — **нулевая копия**: `[]u8`
-  с `data`, указывающим прямо на статику, `len == cap == N`.
-- **`mut`-биндинг / consume в мутацию** — копия в GC-кучу в точке биндинга
-  (обычный `Vec`-буфер дальше, `push` растёт как всегда).
-- Boehm-сборщик мусора игнорирует указатели вне своей кучи — статический
-  блоб никогда не собирается и не двигается.
+- A **`ro`-binding** (`ro img = embed("logo.png")`) is **zero-copy**: `[]u8`
+  with `data` pointing straight at the static, `len == cap == N`.
+- A **`mut`-binding / consume into a mutation** copies into the GC heap at
+  the point of binding (an ordinary `Vec` buffer from then on, `push` grows
+  it as usual).
+- The Boehm garbage collector ignores pointers outside its own heap — the
+  static blob is never collected or moved.
 
-`embed_dir("dir")` компилятор переписывает (пасс `embed_resolve`, ДО
-type-check) в обычный вызов Nova:
+`embed_dir("dir")` is rewritten by the compiler (the `embed_resolve` pass,
+BEFORE type-check) into an ordinary Nova call:
 
 ```
 EmbeddedDir.new([
@@ -159,79 +167,79 @@ EmbeddedDir.new([
 ])
 ```
 
-— каждый `data` идёт через ТУ ЖЕ `HexBlobLit`-материализацию, что и
-одиночный `embed`: **ноль правок в `emit_c.rs`**, только обход папки +
-синтез AST в `embed_resolve.rs`. «Нулевая копия» в контракте — про
-**payload'ы файлов**; сама таблица `entries` (заголовки + указатели) —
-маленький one-time GC-alloc при вычислении выражения, O(N), пренебрежим
-против байтов файлов.
+— each `data` goes through the SAME `HexBlobLit` materialization as a
+standalone `embed`: **zero changes in `emit_c.rs`**, only a directory walk +
+AST synthesis in `embed_resolve.rs`. "Zero-copy" in the contract is about
+**file payloads**; the `entries` table itself (headers + pointers) is a
+small one-time GC allocation when the expression is evaluated, O(N),
+negligible next to the file bytes.
 
-**Совет:** биндить `embed_dir(...)` **один раз** (в `main()`, не на уровне
-модуля — до закрытия `[M-codegen-emission-nondeterminism]`(c) static-init
-topological order — и не в горячем пути): повторный вызов пересобирает
-таблицу с нуля. Тот же нюанс есть у одиночного `embed` в теле функции
-(дешёвый пересоздаваемый вид, но всё же пересоздаваемый).
+**Tip:** bind `embed_dir(...)` **once** (in `main()`, not at module level —
+until `[M-codegen-emission-nondeterminism]`(c) static-init topological
+order is closed — and not on a hot path): calling it again rebuilds the
+table from scratch. The same caveat applies to a standalone `embed` inside
+a function body (a cheap re-creatable view, but still re-created).
 
-## Детерминизм и сортировка
+## Determinism and sorting
 
-Записи `EmbeddedDir` **отсортированы по ключу** — UTF-8 байтовый порядок,
-эквивалентный `str.compare` (D178, предпосылка корректности бинарного
-поиска). Обход файловой системы сам по себе НЕ детерминирован между ОС —
-резолвер сортирует результат явно, поэтому два билда (и билды на разных
-ОС) дают идентичный порядок записей в сгенерированном `.c`.
+`EmbeddedDir` entries are **sorted by key** — UTF-8 byte order, equivalent
+to `str.compare` (D178, the precondition for binary search correctness).
+Walking the filesystem is itself NOT deterministic across OSes — the
+resolver sorts the result explicitly, so two builds (and builds on
+different OSes) produce an identical entry order in the generated `.c`.
 
-## dot-skip и symlink-skip
+## dot-skip and symlink-skip
 
-- **Скрытые записи** (имя начинается с `.`) — пропускаются при обходе.
-  Правило касается записей ВНУТРИ обхода, не самого аргумента:
-  `embed_dir(".assets")` (корень назван явно) — встраивается целиком.
-- **Символические ссылки** (файлы и папки) — НЕ следуются, пропускаются с
-  `W_EMBED_DIR_SYMLINK_SKIPPED` (защита от escape через линк и от циклов
-  обхода).
-- Папка существует, но после dot/symlink-скипа встраивать нечего →
-  `W_EMBED_DIR_EMPTY` — типичный симптом «навёлся не на ту папку», а не
-  жёсткая ошибка (пустой `EmbeddedDir` легален).
+- **Hidden entries** (name starting with `.`) are skipped while walking.
+  The rule applies to entries INSIDE the walk, not to the argument itself:
+  `embed_dir(".assets")` (the root named explicitly) is embedded whole.
+- **Symbolic links** (files and directories) are NOT followed, and are
+  skipped with `W_EMBED_DIR_SYMLINK_SKIPPED` (protection against escaping
+  through a link and against walk cycles).
+- The directory exists, but there's nothing left to embed after the
+  dot/symlink skip → `W_EMBED_DIR_EMPTY` — the typical symptom of
+  "pointed at the wrong directory," not a hard error (an empty
+  `EmbeddedDir` is legal).
 
-## Коды диагностик
+## Diagnostic codes
 
-| Код | Класс | Когда |
+| Code | Class | When |
 |---|---|---|
-| `E_EMBED_ARG_NOT_STR_LITERAL` | error | аргумент не строковый литерал / spread / named / арность ≠ 1 |
-| `E_EMBED_NOT_FOUND` | error | (`embed`) файл не найден / не читается |
-| `E_EMBED_IS_A_DIR` | error | (`embed`) путь ведёт на директорию — используй `embed_dir` |
-| `E_EMBED_DIR_NOT_FOUND` | error | (`embed_dir`) папка не найдена |
-| `E_EMBED_NOT_A_DIR` | error | (`embed_dir`) путь ведёт на файл — используй `embed` |
-| `E_EMBED_OUTSIDE_PROJECT` | error | папка/файл выходит за package-root вызова |
-| `E_EMBED_PATH_BACKSLASH` | error | `\` в строковом литерале пути (непортируемый исходник) |
-| `E_EMBED_DIR_NFC_COLLISION` | error | два разных исходных имени нормализуются в один NFC-ключ (см. ниже) |
-| `W_EMBED_DIR_SYMLINK_SKIPPED` | warning | симлинк пропущен при обходе |
-| `W_EMBED_DIR_LARGE` | warning | суммарно > 16 MiB или > 4096 файлов |
-| `W_EMBED_DIR_EMPTY` | warning | папка пуста после dot/symlink-скипа |
-| `W_EMBED_DIR_NON_ASCII_PATH` | warning | не-ASCII имя файла (нормализовано в NFC — см. ниже) |
+| `E_EMBED_ARG_NOT_STR_LITERAL` | error | argument isn't a string literal / spread / named / arity ≠ 1 |
+| `E_EMBED_NOT_FOUND` | error | (`embed`) file not found / not readable |
+| `E_EMBED_IS_A_DIR` | error | (`embed`) path points at a directory — use `embed_dir` |
+| `E_EMBED_DIR_NOT_FOUND` | error | (`embed_dir`) directory not found |
+| `E_EMBED_NOT_A_DIR` | error | (`embed_dir`) path points at a file — use `embed` |
+| `E_EMBED_OUTSIDE_PROJECT` | error | directory/file escapes the caller's package root |
+| `E_EMBED_PATH_BACKSLASH` | error | `\` in the path's string literal (non-portable source) |
+| `E_EMBED_DIR_NFC_COLLISION` | error | two distinct source names normalize to the same NFC key (see below) |
+| `W_EMBED_DIR_SYMLINK_SKIPPED` | warning | a symlink was skipped while walking |
+| `W_EMBED_DIR_LARGE` | warning | total size > 16 MiB or > 4096 files |
+| `W_EMBED_DIR_EMPTY` | warning | directory is empty after the dot/symlink skip |
+| `W_EMBED_DIR_NON_ASCII_PATH` | warning | non-ASCII file name (normalized to NFC — see below) |
 
-Большинство кодов проверено отдельной neg/standalone-фикстурой в
-`spec_tests/conformance/{neg,standalone}/d412d_*` (конвенция §116: каждый
-файл — свой compile-unit с `EXPECT_COMPILE_ERROR`/`EXPECT_COMPILE_WARNING`).
-Исключение — `W_EMBED_DIR_SYMLINK_SKIPPED`: создание симлинков в
-кросс-платформенной фикстуре само по себе непортируемо (на Windows требует
-привилегий), поэтому этот код пока без выделенного теста — путь
-`walk_embed_dir_rec` в `compiler-codegen/src/embed_resolve.rs` покрыт
-только кодом, не фикстурой.
+Most codes are covered by a dedicated neg/standalone fixture in
+`spec_tests/conformance/{neg,standalone}/d412d_*` (convention §116: each
+file is its own compile unit with `EXPECT_COMPILE_ERROR`/`EXPECT_COMPILE_WARNING`).
+The exception is `W_EMBED_DIR_SYMLINK_SKIPPED`: creating symlinks in a
+cross-platform fixture is itself non-portable (requires privileges on
+Windows), so this code doesn't yet have a dedicated test — the
+`walk_embed_dir_rec` path in `compiler-codegen/src/embed_resolve.rs` is
+covered only by code review, not by a fixture.
 
-## NFC-нормализация путей
+## NFC path normalization
 
-**Проблема:** macOS обычно хранит имена файлов в NFD (разложенная форма —
-например, `é` как `e` + отдельный кодпоинт COMBINING ACUTE ACCENT U+0301),
-тогда как Windows/Linux обычно дают NFC (предкомпонованная форма — `é` как
-один кодпоинт U+00E9). Один и тот же git-чекаут на разных ОС мог раньше
-давать РАЗНЫЕ байтовые ключи таблицы `embed_dir` — и, соответственно, разный
-сгенерированный `.c` для идентичного содержимого репозитория.
+**The problem:** macOS usually stores file names in NFD (decomposed form —
+e.g. `é` as `e` plus a separate COMBINING ACUTE ACCENT U+0301 code point),
+while Windows/Linux usually give NFC (precomposed form — `é` as a single
+U+00E9 code point). The same git checkout on different OSes used to
+produce DIFFERENT byte keys in the `embed_dir` table — and, correspondingly,
+different generated `.c` for identical repository content.
 
-**Решение (D412-амендмент, Ф.6а):** каждый относительный путь записи
-нормализуется в **NFC** при обходе. `get("café.txt")` с обычным
-(предкомпонованным) строковым литералом в исходнике теперь находит файл
-независимо от того, в какой форме файловая система физически хранила имя на
-диске:
+**The fix (D412 amendment, Ф.6а):** every relative entry path is
+normalized to **NFC** while walking. `get("café.txt")` with an ordinary
+(precomposed) string literal in the source now finds the file regardless
+of which form the filesystem physically stored the name in on disk:
 
 ```nova
 // Фикстура: d412d_dir_nfc_normalize/ содержит ОДИН файл, чьё имя на диске —
@@ -244,12 +252,12 @@ test "embed_dir NFC-normalizes an on-disk NFD file name" {
 
 (`spec_tests/conformance/standalone/d412d_embed_dir_nfc_normalize.nv`.)
 
-**Коллизия форм** — если папка содержит ДВА РАЗНЫХ файла на уровне ФС
-(разные байты имени — легально сосуществуют в одной директории), чьи
-NFC-формы совпадают (например, предкомпонованный `café.txt` рядом с
-разложенным `café.txt`) — это **жёсткая ошибка компиляции**
-`E_EMBED_DIR_NFC_COLLISION`, а не тихая перезапись одной записи другой в
-отсортированной таблице:
+**A form collision** — if a directory contains TWO DISTINCT files at the
+filesystem level (different name bytes — legal to coexist in the same
+directory) whose NFC forms coincide (e.g. a precomposed `café.txt`
+alongside a decomposed `café.txt`) — this is a **hard compile error**,
+`E_EMBED_DIR_NFC_COLLISION`, not a silent overwrite of one entry by another
+in the sorted table:
 
 ```nova
 // EXPECT_COMPILE_ERROR E_EMBED_DIR_NFC_COLLISION
@@ -258,87 +266,90 @@ ro d = embed_dir("d412d_dir_nfc_collision")   // два файла, одна NFC
 
 (`spec_tests/conformance/neg/d412d_dir_nfc_collision_neg.nv`.)
 
-`W_EMBED_DIR_NON_ASCII_PATH` (не-ASCII имя файла) остаётся — не-ASCII имя
-всё ещё стоит внимания автора репозитория, но текст предупреждения теперь
-говорит о том, что файл встраивается под НОРМАЛИЗОВАННЫМ NFC-ключом, а не
-«как есть»; форм-коллизию ловит отдельная жёсткая ошибка выше.
+`W_EMBED_DIR_NON_ASCII_PATH` (non-ASCII file name) remains — a non-ASCII
+name is still worth the repository author's attention, but the warning
+text now says the file is embedded under a NORMALIZED NFC key, not "as
+is"; the form collision above is caught by a separate hard error.
 
-**Реализация — zero новых Cargo-зависимостей.** Nova уже генерирует полные
-таблицы Unicode 16.0 для `std.unicode.normalize_nfc`/`str @to_nfc()`
-([План 152.4](../plans/152.4-std-unicode.md), файл `std/src/unicode/norm_data.nv`,
-~113 КБ). Компилятор (Rust) не может вызвать эту Nova-функцию напрямую — она
-исполняется В скомпилированной программе, а `embed_resolve` работает ДО
-type-check, интерпретатора Nova в компиляторе нет. Вместо новой
-Cargo-зависимости (`unicode-normalization` добавил бы ~762 КБ исходников
-/ ~128 КБ сжатый `.crate` для NFD+NFKD+CCC+quick-check+stream-safe данных —
-на порядок больше нужного) — `compiler-codegen/src/nfc.rs` парсит те же
-`NFD_DATA`/`CCC_DATA`/`COMP_DATA` (NFKD не нужен для NFC — это ~45 КБ из
-113 КБ файла) и повторяет ТОТ ЖЕ алгоритм canonical-decompose →
-canonical-order → canonical-compose (UAX #15, включая алгоритмическую
-Hangul-композицию), что `std/src/unicode/normalize.nv`. Одна каноническая
-версия UCD на весь репозиторий, ноль добавленного веса в бинарь
-компилятора.
+**The implementation adds zero new Cargo dependencies.** Nova already
+generates full Unicode 16.0 tables for `std.unicode.normalize_nfc`/
+`str @to_nfc()` ([Plan 152.4](../plans/152.4-std-unicode.md), file
+`std/src/unicode/norm_data.nv`, ~113 KB). The (Rust) compiler cannot call
+this Nova function directly — it runs INSIDE the compiled program, and
+`embed_resolve` runs BEFORE type-check, and there's no Nova interpreter in
+the compiler. Instead of a new Cargo dependency (`unicode-normalization`
+would add ~762 KB of source / ~128 KB of compressed `.crate` for
+NFD+NFKD+CCC+quick-check+stream-safe data — an order of magnitude more than
+needed) — `compiler-codegen/src/nfc.rs` parses the same
+`NFD_DATA`/`CCC_DATA`/`COMP_DATA` (NFKD isn't needed for NFC — that's ~45 KB
+of the 113 KB file) and repeats the SAME canonical-decompose →
+canonical-order → canonical-compose algorithm (UAX #15, including the
+algorithmic Hangul composition) as `std/src/unicode/normalize.nv`. One
+canonical UCD version for the whole repository, zero added weight in the
+compiler binary.
 
-Байты СОДЕРЖИМОГО файла (`data`) нормализация не затрагивает — она касается
-только КЛЮЧА (пути) таблицы `embed_dir`; одиночный `embed(...)` не имеет
-таблицы путей и потому не затронут вовсе.
+The bytes of a file's CONTENT (`data`) are untouched by normalization — it
+only affects the `embed_dir` table's KEY (path); a standalone `embed(...)`
+has no path table and so is unaffected altogether.
 
-## rodata-мина: не мутировать `data`
+## rodata mine: don't mutate `data`
 
-`data`/результат `get(...)` — **вид над `.rodata`**, не копия. `mut`-биндинг
-результата с последующей записью НА МЕСТЕ (`d[0] = 5`) — неопределённое
-поведение уровня чекера/рантайма (запись в read-only страницу памяти = SEGV
-на большинстве платформ). Существующая защита D412 (копия при `mut`-биндинге)
-ловит биндинг блоб-**литерала** напрямую (`mut x = x"01 02"`), но НЕ
-значение, вернувшееся ИЗ функции/метода (`mut d = dir.get(p).unwrap()`) —
-это унаследованный от одиночного `embed` хазард, отслеживаемый как
-`[M-d412-blob-view-mut-write]` (backlog, P2, home D412; вне объёма Плана 210).
+`data`/the result of `get(...)` is a **view over `.rodata`**, not a copy.
+A `mut`-binding of the result followed by an in-place write (`d[0] = 5`) is
+checker/runtime-level undefined behavior (writing to a read-only memory
+page = SEGV on most platforms). D412's existing protection (copy on a
+`mut`-binding) catches binding a blob **literal** directly
+(`mut x = x"01 02"`), but NOT a value returned FROM a function/method
+(`mut d = dir.get(p).unwrap()`) — this is a hazard inherited from
+standalone `embed`, tracked as `[M-d412-blob-view-mut-write]` (backlog, P2,
+home D412; out of scope for Plan 210).
 
-**Для мутации содержимого — явная копия:**
+**For mutating the content — an explicit copy:**
 
 ```nova
 mut d = dir.get("config.json").unwrap().clone()   // теперь обычный GC-буфер
 d[0] = 0x7B                                        // легально — не .rodata
 ```
 
-## Взаимодействие с многофайловым codegen (План 209)
+## Interaction with multi-file codegen (Plan 209)
 
-Блоб рендерится в `.c` текстом — `0x%02X,` на байт
-(`render_interned_blob_literals`, `emit_c.rs`) — то есть **≈×5.3 расширение**
-относительно исходного размера байт (текстовое представление байта длиннее
-самого байта). Из этого следуют два практических правила:
+The blob is rendered into `.c` as text — `0x%02X,` per byte
+(`render_interned_blob_literals`, `emit_c.rs`) — meaning **≈×5.3 expansion**
+relative to the original byte size (the textual representation of a byte is
+longer than the byte itself). Two practical rules follow from this:
 
-- **Порог `W_EMBED_DIR_LARGE`** — 16 MiB суммарного размера или 4096 файлов,
-  а не изначально обсуждавшиеся 64 MiB: 64 MiB payload дал бы ~340 МБ
-  `.c`-файла, с которым `clang` не совладает раньше, чем сборка станет
-  практически неудобной.
-- **Multi-TU (`NOVA_MULTI_TU=1`, План 209):** блоб-статики эмитятся в
-  пролог — в multi-TU это означает `_common.h`, и КАЖДЫЙ `part` заново
-  компилировал бы весь массив (прямо противоположно цели Плана 209 —
-  снизить дублирование компиляции между `part`-ами). Определения блобов
-  должны идти в ОДИН `part`, в `common` — только `extern`-декларация; блоб —
-  неделимый юнит для `split_tu` (не режется между частями).
+- **The `W_EMBED_DIR_LARGE` threshold** is 16 MiB total size or 4096 files,
+  not the originally discussed 64 MiB: a 64 MiB payload would produce a
+  ~340 MB `.c` file, which `clang` chokes on well before the build becomes
+  merely inconvenient.
+- **Multi-TU (`NOVA_MULTI_TU=1`, Plan 209):** blob statics are emitted into
+  the prologue — in multi-TU that means `_common.h`, and EVERY `part` would
+  recompile the whole array (the exact opposite of Plan 209's goal — cut
+  duplicate compilation across `part`s). Blob definitions must go into ONE
+  `part`, with only an `extern` declaration in `common`; a blob is an
+  indivisible unit for `split_tu` (never cut across parts).
 
-Future-выход из текстового рендеринга — C23 `#embed` (Option E, вне объёма
-Плана 210): `.c` крошечный, компиляция почти мгновенная; требует `clang ≥19`
-(доступен через WSL-clang; нативный windows-clang/MSVC — hex-fallback
-остаётся).
+The future way out of text rendering is C23 `#embed` (Option E, out of
+scope for Plan 210): a tiny `.c`, near-instant compilation; requires
+`clang ≥19` (available via WSL-clang; native windows-clang/MSVC keeps the
+hex fallback).
 
-## CRLF и `.gitattributes`
+## CRLF and `.gitattributes`
 
-Байты встраиваются КАК ЕСТЬ из рабочей копии на диске, без нормализации
-переносов строк. На Windows-чекауте с `autocrlf=true` текстовые ассеты
-(`.html`/`.css`/`.js`) байтово ОТЛИЧАЮТСЯ от Linux-чекаута того же коммита →
-разный `.c` / разный fingerprint между ОС для идентичного содержимого
-репозитория. Для кросс-ОС воспроизводимости — явный `-text` (или `eol=lf`)
-в `.gitattributes` на asset-папки, встраиваемые через `embed`/`embed_dir`.
+Bytes are embedded AS-IS from the working copy on disk, with no line-ending
+normalization. On a Windows checkout with `autocrlf=true`, text assets
+(`.html`/`.css`/`.js`) byte-DIFFER from a Linux checkout of the same
+commit → a different `.c` / a different fingerprint between OSes for
+identical repository content. For cross-OS reproducibility — an explicit
+`-text` (or `eol=lf`) in `.gitattributes` on the asset directories embedded
+via `embed`/`embed_dir`.
 
-## `ReadFs` — один код для dev (диск) и prod (embedded)
+## `ReadFs` — one code path for dev (disk) and prod (embedded)
 
-Частый кейс: раздавать статику веб-сервера — с диска в dev-режиме (живой
-reload при правке файла) и вшитой в бинарь в prod. `ReadFs`
-([D323-амендмент](../../spec/decisions/04-effects.md#d323), `std.fs`, План 210
-Ф.6б) — read-only VFS-протокол, конформируемый **обоими** источниками:
+A common case: serving a web server's static assets — from disk in dev mode
+(live reload on file edits) and baked into the binary in prod. `ReadFs`
+([D323 amendment](../../spec/decisions/04-effects.md#d323), `std.fs`, Plan 210
+Ф.6б) is a read-only VFS protocol, conformed to by **both** sources:
 
 ```nova
 import std.fs.{ReadFs, DirFs}
@@ -369,54 +380,56 @@ fn main() {
 }
 ```
 
-`EmbeddedDir` конформит `ReadFs` через **extension-методы** (`std.fs`, не
-трогая родной `prelude.embed`-API `@get`/`@has`/`@paths`); `DirFs` — обёртка
-над реальной ФС с корнем-префиксом (та же escape-защита, что у `embed_dir`:
-лексический `..`-фильтр + symlink-hard `canonicalize`). Протокол
-**эффект-агностичен** (модель `io.Read`): `EmbeddedDir`-конформер — чистый,
-`DirFs`-конформер несёт `Fs`, эффект всплывает транзитивно при mono. Nova не
-поддерживает effectful-vtable dispatch, поэтому dev/prod-выбор — ветка
-`if` НАД двумя mono-инстансами (в точке вызова), а не рантайм-переменная
-одного `dyn`-типа. Подробности и почему `list`/directory-index сознательно
-не входит в протокол — [`docs/guide/io-fs.md`](io-fs.md#readfs--one-vfs-protocol-over-the-disk-and-an-embedded-directory)
-и [План 210 §6б](../plans/210-embed-dir.md).
+`EmbeddedDir` conforms to `ReadFs` via **extension methods** (`std.fs`,
+without touching the native `prelude.embed` API `@get`/`@has`/`@paths`);
+`DirFs` is a wrapper over the real filesystem with a root prefix (the same
+escape protection as `embed_dir`: a lexical `..` filter + a symlink-hard
+`canonicalize`). The protocol is **effect-agnostic** (the `io.Read` model):
+the `EmbeddedDir` conformer is pure, the `DirFs` conformer carries `Fs`, and
+the effect propagates transitively at mono time. Nova doesn't support
+effectful vtable dispatch, so the dev/prod choice is an `if` branch OVER
+two mono instances (at the call site), not a runtime variable of one
+`dyn`-type. Details, and why `list`/directory-index deliberately isn't part
+of the protocol — [`docs/guide/io-fs.md`](io-fs.md#readfs--one-vfs-protocol-over-the-disk-and-an-embedded-directory)
+and [Plan 210 §6б](../plans/210-embed-dir.md).
 
-## Кросс-языковое сравнение
+## Cross-language comparison
 
-| Аспект | Nova | Go `//go:embed` | Rust `include_bytes!`/`include_dir!` | Zig `@embedFile` | C23 `#embed` |
+| Aspect | Nova | Go `//go:embed` | Rust `include_bytes!`/`include_dir!` | Zig `@embedFile` | C23 `#embed` |
 |---|---|---|---|---|---|
-| Один файл | `embed("f")` → `[]u8` | `embed.FS` + `ReadFile` | `include_bytes!` → `&[u8]` | `@embedFile` → `[N]u8` | `#embed` → список int |
-| Вся папка | `embed_dir("d")` → `EmbeddedDir` | `//go:embed dir` + `embed.FS` | `include_dir!` (крейт) | нет встроенного | нет |
-| Рекурсия | да, по умолчанию | да | да (крейт) | — | — |
-| Сортировка/бинарный поиск | да, сорт + O(log N) `get` | да (`embed.FS`) | линейный (крейт) | — | — |
-| Скрытые файлы | скип (`.`-префикс) | скип (`.`/`_`-префикс) | конфигурируемо (крейт) | — | — |
-| dev-режим (чтение с диска) | НЕТ intrinsic-подмены — явный `DirFs` через `ReadFs` | нет | `rust-embed` debug=disk (опция крейта) | — | — |
-| NFC-нормализация путей | да (Ф.6а) + `E_EMBED_DIR_NFC_COLLISION` | нет (молчит) | нет (молчит) | — | — |
-| Материализация | `.rodata`, zero-copy view | `.rodata`-подобно (Go binary) | `.rodata`, zero-copy | `.rodata` | `.rodata`, без hex-текст-раздутия |
+| Single file | `embed("f")` → `[]u8` | `embed.FS` + `ReadFile` | `include_bytes!` → `&[u8]` | `@embedFile` → `[N]u8` | `#embed` → list of int |
+| Whole directory | `embed_dir("d")` → `EmbeddedDir` | `//go:embed dir` + `embed.FS` | `include_dir!` (crate) | none built in | none |
+| Recursion | yes, by default | yes | yes (crate) | — | — |
+| Sorting/binary search | yes, sorted + O(log N) `get` | yes (`embed.FS`) | linear (crate) | — | — |
+| Hidden files | skipped (`.`-prefix) | skipped (`.`/`_`-prefix) | configurable (crate) | — | — |
+| Dev mode (reading from disk) | NO intrinsic substitution — explicit `DirFs` via `ReadFs` | no | `rust-embed` debug=disk (crate option) | — | — |
+| NFC path normalization | yes (Ф.6а) + `E_EMBED_DIR_NFC_COLLISION` | no (silent) | no (silent) | — | — |
+| Materialization | `.rodata`, zero-copy view | `.rodata`-like (Go binary) | `.rodata`, zero-copy | `.rodata` | `.rodata`, no hex-text bloat |
 
-**Nova берёт:** у Go — рекурсию, сортировку, бинарный поиск, dot-skip,
-POSIX-пути, case-sensitive. У Rust `rust-embed` — `.get(path) -> Option`.
-**Nova НЕ берёт:** dev-режим (чтение с диска в debug) — явный отказ (см.
-[План 210 §2л](../plans/210-embed-dir.md)): вводит эффект в чистый по
-конструкции тип и противоречит цели «один самодостаточный бинарь»; вместо
-этого — явный `DirFs`/`ReadFs` opt-in (см. выше). **Nova идёт дальше обоих
-эталонов** в NFC-нормализации: ни Go, ни Rust не решают NFD/NFC-ловушку
-кросс-платформенной воспроизводимости имён файлов вообще.
+**What Nova takes:** from Go — recursion, sorting, binary search, dot-skip,
+POSIX paths, case-sensitivity. From Rust's `rust-embed` — `.get(path) ->
+Option`. **What Nova doesn't take:** dev mode (reading from disk in debug)
+— a deliberate rejection (see [Plan 210 §2л](../plans/210-embed-dir.md)):
+it would introduce an effect into a type that's pure by construction and
+contradict the "one self-contained binary" goal; instead there's an
+explicit `DirFs`/`ReadFs` opt-in (see above). **Nova goes further than
+either reference** on NFC normalization: neither Go nor Rust addresses the
+NFD/NFC cross-platform file-name-reproducibility trap at all.
 
-## См. также
+## See also
 
 - [D412](../../spec/decisions/03-syntax.md#d412) —
-  hex-блоб литерал `x"…"` + `embed("path")` (исходное решение, План 186).
-- D412-амендмент (`spec/decisions/03-syntax.md`, ищи «D412-амендмент») —
-  `embed_dir`, `EmbeddedDir`, коды диагностик, включая AMEND Ф.6а (NFC).
-- [D323-амендмент](../../spec/decisions/04-effects.md#d323) — `ReadFs` (План 210 Ф.6б).
-- [План 210](../plans/210-embed-dir.md) — полная карта дизайна/решений/рисков
-  (разведка, материализация Option R′, ревью-1/2/3, Ф.6а/Ф.6б).
-- [`docs/guide/io-fs.md`](io-fs.md) — `std.io`/`std.fs`/`std.os` в целом, включая
+  the hex-blob literal `x"…"` + `embed("path")` (original decision, Plan 186).
+- D412 amendment (`spec/decisions/03-syntax.md`, search for "D412-амендмент") —
+  `embed_dir`, `EmbeddedDir`, diagnostic codes, including AMEND Ф.6а (NFC).
+- [D323 amendment](../../spec/decisions/04-effects.md#d323) — `ReadFs` (Plan 210 Ф.6б).
+- [Plan 210](../plans/210-embed-dir.md) — the full design/decision/risk map
+  (exploration, materialization Option R′, review 1/2/3, Ф.6а/Ф.6б).
+- [`docs/guide/io-fs.md`](io-fs.md) — `std.io`/`std.fs`/`std.os` overall, including
   `ReadFs`.
-- [`std/src/prelude/embed.nv`](../../std/src/prelude/embed.nv) — исходник
+- [`std/src/prelude/embed.nv`](../../std/src/prelude/embed.nv) — the source of
   `EmbeddedDir`/`EmbeddedEntry`.
-- [`std/src/fs/readfs.nv`](../../std/src/fs/readfs.nv) — исходник `ReadFs`/`DirFs`.
+- [`std/src/fs/readfs.nv`](../../std/src/fs/readfs.nv) — the source of `ReadFs`/`DirFs`.
 - [`spec_tests/conformance/d412_hex_blob_embed.nv`](../../spec_tests/conformance/d412_hex_blob_embed.nv),
-  [`d412d_embed_dir.nv`](../../spec_tests/conformance/d412d_embed_dir.nv) — референсные
-  фикстуры для обоих интринсиков.
+  [`d412d_embed_dir.nv`](../../spec_tests/conformance/d412d_embed_dir.nv) — reference
+  fixtures for both intrinsics.
