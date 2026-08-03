@@ -115,19 +115,21 @@ fn log_all(xs []Printable) {
 ## Вместо наследования — embed + delegate
 
 ```nova
-type AuditedAccount = {
-    use Account            // встраивание: все поля + методы Account доступны напрямую
-    audit_log: [AuditEntry]
+type AuditedAccount {
+    use account Account    // встраивание: все поля + методы Account доступны напрямую
+    audit_log []AuditEntry
 }
 
 // Переопределяем только то, что нужно
-fn AuditedAccount.deposit(mut self, amount: money) throws -> () =
-    self.Account.deposit(amount)?       // явный вызов «родителя»
-    self.audit_log.push(AuditEntry.deposit(amount))
+fn AuditedAccount mut @deposit(amount money) Fail -> () {
+    @account.deposit(amount)?       // явный вызов «родителя» через имя поля
+    @audit_log.push(AuditEntry.deposit(amount))
+}
 ```
 
-`use Account` — это **delegation**, а не наследование: компилятор генерирует
-прокси-методы. Никакого виртуального диспатча, никакого diamond problem.
+`use account Account` — это **delegation**, а не наследование: компилятор
+генерирует прокси-методы. Никакого виртуального диспатча, никакого diamond
+problem.
 
 ## Sum-types вместо иерархии классов
 
