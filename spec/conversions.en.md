@@ -437,3 +437,55 @@ fn Port.try_from(n u16) -> Result[Self, str] =>
 
 ro p = Port.try_from(8080)?
 ```
+
+---
+
+## Precedents by language
+
+| Language | Where close to Nova |
+|---|---|
+| Rust | `as` semantics, `from`/`try_from` naming, char::from_u32 |
+| Swift | strict bool, no implicit coerce, Int(throwing:) |
+| Kotlin | strict if-cond:bool, .toInt()/.toIntOrNull() |
+| Go | `_ = strconv.ParseInt(s)` ≈ try_from |
+| Python | `str(x)`/`int(s)` ≈ from/try_from but not type-safe |
+| C/C++ | `(int)x` without checks — UB-class, Nova does not repeat it |
+
+---
+
+## Current status (updated after the 2026-07-26 revision)
+
+Implemented and stable:
+
+- ✅ `as`-cast (numeric/newtype/sum), narrowing wraparound, float→int saturation
+- ✅ `str @to_*` parse family (`to_int`/`to_i64`/`to_u64`/`to_i8`/`to_i16`/`to_i32`/
+  `to_u8`/`to_u16`/`to_u32`/`to_f64`) — Plan 174.1, the full `SignedInts`/`UnsignedInts` set
+- ✅ `str @to_bool()`/`str @to_char()` — Plan 232.1 Т1 (2026-07-26)
+- ✅ bare-`T @to_str()` blanket + specializations (`char`, `[]u8`) — Plan 174.2
+- ✅ `[]u8 @to_str()`/`@to_str_lossy()`/`@to_str_unchecked()`/`@into_str_unchecked()` — D325
+- ✅ `(cp int).to_char()`, `u8.try_from(c char)` — D54/D77-naming
+- ✅ Checked narrowing `@try_to_i8()`..`@try_to_uint()` — D430 (2026-07-20)
+- ✅ `#coerce` (view/finalize) — D429/214.1, three std pairs + generic patterns
+
+Retracted (do not resurrect without a new sign-off):
+
+- ⛔ The `From`/`Into`/`TryFrom`/`TryInto` protocols and their auto-derive synthesis — 2026-07-06
+- ⛔ The `str.from(scalar)` static constructor — 2026-07-14 (replaced by `.to_str()`)
+- ⛔ `str.try_from([]u8)` / `str.from_bytes(...)` — replaced by the `[]u8 @to_str()` family
+- ⛔ The `.unwrap()`/`.unwrap_or()`/`.unwrap_or_else()` methods on `Option`/`Result` — 2026-07-07
+- ⛔ The old sum syntax without the `enum` marker — D406 (2026-07-01)
+
+---
+
+## References
+
+- [03-syntax.md → D54](decisions/03-syntax.md#d54) — the `as` operator
+- [03-syntax.md → D44](decisions/03-syntax.md#d44) — numeric literals
+- [03-syntax.md → D410](decisions/03-syntax.md#d410) — the `to_str`/`bytes`/`into_*` name family
+- [02-types.md → D52](decisions/02-types.md#d52) — newtype/alias/sum declarations
+- [02-types.md → D406](decisions/02-types.md#d406) — the `enum` marker of a sum type
+- [02-types.md → D429](decisions/02-types.md#d429) — `#coerce` (zero-cost implicit view/finalize)
+- [04-effects.md → D430](decisions/04-effects.md#d430) — checked narrowing `try_to_*`
+- [04-effects.md → D325](decisions/04-effects.md#d325) — the unified fallible std contract (Result-everywhere)
+- [08-runtime.md → D73](decisions/08-runtime.md#d73) — `From`/`Into` (⛔ protocol retracted 2026-07-06)
+- [08-runtime.md → D77](decisions/08-runtime.md#d77) — `TryFrom`/`TryInto` (⛔ protocol retracted 2026-07-06)
