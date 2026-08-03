@@ -242,3 +242,46 @@ fn helper(name str) -> () {
   (including adding `Fail[E]` if a private function uses `!!`/`throw`
   somewhere). In `export fn` direct effects must be explicit — that is
   the public contract.
+
+## Async — invisible infrastructure (D62)
+
+Suspension in Nova is **not an effect** but ambient runtime infrastructure.
+**No `Future<T>` in the type.** No `await`. There is no function color.
+The programmer does not see "can this function suspend" in its signature.
+
+```nova
+fn fetch(url str) Net -> Response => ...
+fn handler(req Request) Net Db -> Response {
+    ro user = fetch_user(req.id)        // никаких .await
+    ro posts = fetch_posts(user.id)
+    Response.json(posts)
+}
+```
+
+Under the hood — a fiber-based scheduler (like Go/OCaml 5). The cost —
+kilobytes of memory per fiber; a million fibers per machine — normal.
+
+If you need the guarantee "no suspension allowed here" — use the
+[`realtime { ... }`](decisions/04-effects.md#d64) block as an
+inverse marker.
+
+Details — [decisions/06-concurrency.md#d14](decisions/06-concurrency.md#d14),
+[decisions/04-effects.md#d62](decisions/04-effects.md#d62).
+
+## Default handler without `with` ([D431](decisions/04-effects.md#d431))
+
+Some effects (`Time` — the canonical example) work **without an explicit
+`with`**, if the programmer did not install their own handler:
+
+```nova
+fn log_uptime() Time Io -> () =>
+    println("${Time.now()}")   // handler не установлен — используется дефолтный (real-clock)
+```
+
+This is not "an effect without a handler" — the compiler synthesizes a
+**lazy, once-per-thread** default constructor via the
+`#default_handler(EffectName)` attribute on an ordinary handler-literal
+factory in `.nv` source (not a hardcode in Rust). `with Effect = ...`
+still fully overrides the default — the mechanism does not lose
+mockability, it just removes the need to write `with` for the typical
+bootstrap case.
