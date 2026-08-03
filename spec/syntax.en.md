@@ -531,3 +531,265 @@ but that is an anti-pattern (the linter warns).
 - `str`, `bool`, `char` (a byte is `u8`, there is no separate `byte` type)
 
 Details — [D30](decisions/03-syntax.md#d30), [D46](decisions/03-syntax.md#d46), [D47](decisions/07-modules.md#d47).
+
+## Visibility: `export` for public declarations
+
+`export` before a declaration = public (visible outside the module).
+Without `export` = private (visible only inside the module).
+
+Applied uniformly to **types**, **functions**, **methods**,
+**constants**, and **protocols**:
+
+```nova
+module account
+
+export type Account {                    // публичный тип
+    ro owner str
+    balance money
+    priv internal_id u64                 // field-level priv (D220):
+}                                          // поле недоступно снаружи
+
+export type Job priv {                   // priv на типе — поля module-private
+    mut name str                          // by default (D281)
+}
+
+type InternalState { ... }               // приватный тип
+
+export const ACCOUNT_MIN_BALANCE money = 0
+const INTERNAL_TIMEOUT_MS int = 5_000    // без export уже module-private (D47);
+                                           // `_`-префикс не нужен, тут не поле
+
+export fn Account.new(owner str) -> Account => ...      // публичный конструктор
+export fn Account @balance() => @balance                // публичный метод
+fn Account @validate(amount money) => amount > 0       // приватный helper
+
+export type Hash protocol {
+    @hash() -> u64
+}
+```
+
+**Record fields:** without `priv`, fields of an `export` type are public by
+default (D47). Privacy — the `priv` modifier (`priv`/`priv(type)`/`priv(file)`,
+D220 + D281) on a **field** (`priv internal_id u64`) or on a **type**, setting
+the default for all fields (`type Job priv { ... }`) — a field is physically
+unavailable outside, the compiler checks it. The `_`-prefix as
+"privacy by contract" is not used in Nova — privacy
+only compile-time, via `priv`.
+
+**Canonical field access — same-name property methods via
+arity-based overloading** (D84 + D117):
+read `@x() -> T` (0 arguments), write `mut @x(v T) -> @`
+(1 argument, fluent — receiver return automatic, D409, no need to write
+`return @`/`=> @` in the body):
+
+```nova
+// Job — тот же priv-тип, что выше. Код ниже — внутри module account:
+// снаружи модуля record-литерал `Job { name: ... }` — E_PRIV_FIELD_INIT
+// (module-private поле нельзя инициализировать литералом извне), нужен
+// export fn Job.new(...).
+
+fn Job @name() -> str => @name           // getter — 0 аргументов
+fn Job mut @name(v str) -> @ { @name = v }    // setter — 1 аргумент, возврат @ автоматический
+
+mut j = Job { name: "build" }
+j.name()            // getter — "build"
+j.name("deploy")    // setter — переприсваивает и возвращает @
+    .name("test")    // fluent-chain: сеттер можно вызывать цепочкой
+```
+
+`get_x`/`set_x` pairs — **not the canon** (there are 0 of them in std).
+`with_x(v)` — a different operation (a copy with a replaced field, not
+mutating the original). All new std code is written in the
+accessor-convention paradigm.
+
+Details — [D47](decisions/07-modules.md#d47), [D29](decisions/07-modules.md#d29) (modules).
+
+## Type declarations
+
+| After `type Name` comes | What it is |
+|---|---|
+| `enum` | sum-type (D406; `enum` is a contextual identifier marker, not a lexer keyword) |
+| `set` | type-set — a generic bound by membership in an explicit list of types (D310; also contextual) |
+| `(` | tuple structure |
+| `{` | record structure |
+| `alias` | alias |
+| identifier/type | newtype |
+| nothing | unit type |
+
+```nova
+// newtype — type X Y, новый тип, типизированно отличный от Y
+type UserId u64
+type Email str
+
+// alias — type X alias Y, для длинных дженериков
+type StringMap[V] alias HashMap[str, V]
+
+// record (форма сразу после имени, без `=`)
+type User { id u64, name str }
+
+// позиционная структура
+type Point(f64, f64)
+
+// unit-тип
+type Marker
+
+// sum-type — обязательный маркер enum (D406)
+// inline — | разделяет варианты, перед первым не нужен:
+type Color enum Red | Green | Blue
+
+// многострочный — | обязателен у КАЖДОГО варианта, включая первый:
+type Shape enum
+    | Circle { radius f64 }
+    | Square { side f64 }
+    | Triangle { a f64, b f64, c f64 }
+
+type Result[T, E] enum Ok(T) | Err(E)
+type Option[T] enum Some(T) | None
+```
+
+`enum` — a marker in the type grammar, valid in any type position, not
+only in `type X enum ...`: a parameter (`fn job(a enum A | B)`), a return
+(`fn parse() -> enum Ok(int) | Err(str)`), a field, a binding. The named form
+(`type Foo enum A | B`) — just declaring a name for the inline
+type expression `enum A | B`, one grammar.
+
+Sum variants can have numeric discriminants with auto-increment:
+
+```nova
+type ExitStatus enum Ok | Failure | Critical              // 0, 1, 2 (auto)
+type ErrorCode enum
+    | NotFound       = 404
+    | Unauthorized   = 401
+    | InternalError  = 500
+type Bit u8 enum Off = 0 | On = 1                          // явный базовый тип
+```
+
+> ⚠ **`type X <base> enum …` (explicit base type) not yet implemented** —
+> parser drift, see [Plan 105](../docs/plans/105-sum-type-explicit-base.md).
+> Only the forms without a base type work (implicit `int`).
+
+Details — [decisions/02-types.md → D406](decisions/02-types.md#d406-sum-type-синтаксис-enum-маркер),
+revision [D52](decisions/02-types.md#d52).
+
+### Sum-type variants — the same three forms as a top-level type
+
+Each sum-type variant is declared by the same rules as a top-level
+declaration:
+
+| After the variant name | What it is | Example |
+|---|---|---|
+| `( ... )` | positional variant | `Some(T)`, `Ok(T)`, `Point(f64, f64)` |
+| `{ ... }` | record variant | `Circle { radius f64 }` |
+| nothing | unit variant | `None`, `Red`, `Origin` |
+
+```nova
+type Option[T] enum
+    | Some(T)                 // позиционный — несёт значение T
+    | None                    // unit — без полей, само по себе значение
+
+type Shape enum
+    | Circle { radius f64 }   // record-вариант
+    | Point(f64, f64)         // позиционный
+    | Origin                  // unit
+```
+
+`None` is a value of type `Option[T]`, **not a function and not a constructor**.
+Used without parentheses:
+
+```nova
+ro x = Some(42)              // позиционный — нужен аргумент
+ro y = None                  // unit — без скобок
+```
+
+Details — [D17](decisions/02-types.md#d17).
+
+## Creating values and pattern matching
+
+```nova
+ro p = Point(1.0, 2.0)
+ro u = User { id: 1, name: "alice" }
+ro c = Circle { radius: 5.0 }
+ro s = Active
+
+// доступ к полям (D37)
+println(u.name)              // record — по имени
+println(p.0, p.1)            // позиционная — по индексу
+ro pair = (1, "alice")
+println(pair.0, pair.1)      // кортеж — то же
+
+// создание массивов (D38)
+ro xs []int = []                          // пустой, тип из annotation
+ro ys = []int.new()                       // через static-метод
+mut buf = []u8.new(cap: 1024)             // pre-allocation, ровно 1024 слота (D372-amend2)
+
+// turbofish для дженериков (D38)
+ro n = parse[int]("42")?                  // явный T = int
+ro m = HashMap[str, int].new()            // явные K, V
+
+// Set[T] — множество, обёртка над HashMap[T, ()] (использует use-embed, D39)
+mut s = Set[int].new()
+s.insert(1)                               // -> bool, false если дубликат
+s.contains(1)                             // -> bool
+
+mut t = Set[int].new()
+t.insert(2)
+ro union = s | t                          // union/intersect/difference — через
+ro inter = s & t                          // operator overloading (D46), не методы
+ro diff  = s - t
+
+match shape {
+    Circle { radius }    => 3.14159 * radius * radius
+    Square { side }      => side * side
+    Triangle { a, b, c } => heron(a, b, c)
+}
+
+match result {
+    Ok(value)  => value
+    Err(error) => default
+}
+```
+
+## Pattern matching
+
+```nova
+fn classify(x) => match x {
+    0          => "zero"
+    n if n >= 1 && n <= 9 => "digit"
+    n if n < 0 => "negative"
+    _          => "big"
+}
+```
+
+Each arm has the form `pattern => result`, optionally with a **guard**
+`pattern if condition => result`. The compiler tries arms top-down,
+takes the first one where the pattern matched AND the guard is true.
+
+**Kinds of patterns:**
+
+| Form | Example | What it does |
+|---|---|---|
+| Literal | `0`, `"hello"`, `true` | comparison by value |
+| Name (binding) | `n`, `x` | catches any value, binds it to a name |
+| Wildcard | `_` | catches any value, binds nothing |
+| Constructor | `Some(v)`, `Ok(value)`, `None` | destructures a sum-type variant |
+| Record | `User { id, name }` | destructures record fields |
+| Tuple | `(a, b)`, `(_, value)` | destructures a tuple |
+| Guard | `n if n < 0` | a pattern + an extra condition |
+
+**Exhaustiveness check.** The compiler checks that the match covers all
+possible cases. If not — an error naming the uncovered variant. This works
+for sum types and bool. For general types (`int`, `str`) you need either a
+`_`-wildcard or an explicit check of all considered values.
+
+```nova
+type Color enum Red | Green | Blue
+
+fn name(c Color) -> str => match c {
+    Red   => "red"
+    Green => "green"
+    // ОШИБКА: missing variant `Blue`
+}
+```
+
+`match` is an **expression**, returns a value. All arms must have
+a compatible type (or a common supertype, or wrapped in a sum type).
