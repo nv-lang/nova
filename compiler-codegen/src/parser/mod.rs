@@ -5247,11 +5247,17 @@ impl Parser {
             }
             _ => SumVariantKind::Unit,
         };
-        // Discriminant `= N`
+        // Discriminant `= N` / `= -N` (№296: spec/decisions/02-types.md
+        // "Sum-варианты с числовыми discriminants" гласит пример со знаком
+        // `type Sign enum Negative = -1 | Zero = 0 | Positive = 1`; лексер
+        // токенизирует `-1` как `Minus` + `Int(1)` — отдельного
+        // отрицательного int-литерала нет (см. `parse_unary`), значит
+        // discriminant обязан явно съесть optional leading `-`).
         let discriminant = if self.eat(&TokenKind::Eq).is_some() {
+            let negative = self.eat(&TokenKind::Minus).is_some();
             if let TokenKind::Int(n) = self.peek().kind {
                 self.bump();
-                Some(n)
+                Some(if negative { -n } else { n })
             } else {
                 return Err(Diagnostic::new(
                     "expected integer discriminant",
@@ -7358,31 +7364,27 @@ impl Parser {
                 });
             }
 
-            // Plan 100.2 (D156): `[T consume]` — consume-bound marker.
-            // Consumes the `consume` keyword token; mutually exclusive with
-            // protocol bounds (combined `[T consume + Clone]` — deferred).
+            // Plan 100.2 (D156) + №300 (221.1, owner form 2026-08-03):
+            // `[T consume]` — consume-bound marker, optionally followed
+            // DIRECTLY by a protocol-bound chain: `[T consume Hash + Equal]`.
+            // Modifier always comes first, then the `+`-chain of what the
+            // type IMPLEMENTS — linearity itself never joins that chain
+            // (it isn't implemented, it's declared), so there is no `+`
+            // between `consume` and the first bound.
             let mut consume_bound = false;
             if matches!(self.peek().kind, TokenKind::KwConsume) {
                 consume_bound = true;
-                let consume_span = self.bump().span;
-                // `[T consume + Bound]` combined — deferred in Plan 100.2.
-                if matches!(self.peek().kind, TokenKind::Plus) {
-                    return Err(Diagnostic::new(
-                        "`[T consume + Bound]` combined bound is not yet supported \
-                         (Plan 100.2 §Границы). Use either `[T consume]` or \
-                         `[T Bound]` separately.".to_string(),
-                        consume_span,
-                    ));
-                }
+                self.bump();
             }
 
             // Bound(s): если следующий токен — не `,`, `]`, `=`, парсим
             // первый bound. Plan 101.3 (D145 Ред. 5): далее цепочка
             // `+ Type` для multi-bound `[T A + B + C]` — conjunction
             // (T satisfies каждый bound). Семантически equivalent
-            // `protocol { use A  use B  use C }`.
+            // `protocol { use A  use B  use C }`. №300: то же самое
+            // после `consume` — `[T consume Hash + Equal]`.
             let mut bounds: Vec<TypeRef> = Vec::new();
-            if !consume_bound && !matches!(
+            if !matches!(
                 self.peek().kind,
                 TokenKind::Comma | TokenKind::RBracket | TokenKind::Eq
             ) {

@@ -1,0 +1,9 @@
+// EXPECT_COMPILE_ERROR expected integer discriminant
+//
+// №296 (221.1) companion negative: the parser fix teaches `= N` to accept
+// an optional leading `-` (`= -1`), but `-` MUST still be followed by an
+// integer literal — `= -x` (identifier, not a literal) stays a hard error.
+// Guards against over-widening the fix to "swallow any `-` token".
+module neg.sum_discriminant_non_numeric_after_minus
+
+type P296NegBad enum A = -x | B = 1

@@ -1,0 +1,57 @@
+// №296 (221.1) — числовые discriminants у sum-типов: два независимых дефекта
+// одного механизма. Spec: spec/decisions/02-types.md §«Sum-варианты с
+// числовыми discriminants» (D52), правило 3 «Отрицательные значения —
+// разрешены» + правило 4 «Decreasing/non-monotonic — разрешены».
+//
+// (1) Парсер отвергал ведущий `-` в `= -N` («expected integer discriminant»)
+//     даже на ДОСЛОВНОМ примере из спеки (`Negative = -1 | Zero = 0 |
+//     Positive = 1`). Лексер токенизирует `-1` как `Minus` + `Int(1)`
+//     (нет отдельного отрицательного int-литерала) — парсер варианта
+//     обязан явно поглотить optional leading `-` перед discriminant.
+// (2) Приведение варианта к числу (`v as int`) давало CC-FAIL «member
+//     reference type 'nova_int' is not a pointer» даже на неотрицательных
+//     discriminants — codegen не прокидывал явный `= N` в C-tag enum,
+//     полагаясь на auto-increment C (совпадало только для дефолтной
+//     последовательности 0,1,2,…).
+// Оба фикса — один слой (парсер + 3 сайта emit_c: non-generic sum,
+// generic-instance mono, receiver-carrier sum).
+module spec_tests.conformance
+
+// Дословный пример из спеки.
+type P296Sign enum Negative = -1 | Zero = 0 | Positive = 1
+
+// Смешанные auto-increment + отрицательные + non-monotonic (правило 4).
+type P296Mixed enum
+    | A = -5
+    | B          // auto-increment от предыдущего: -4
+    | C = 10
+    | D          // auto-increment: 11
+    | E = -100
+
+test "№296 отрицательный discriminant объявляется и матчится" {
+    ro s = P296Sign.Negative
+    match s {
+        Negative => assert(true)
+        Zero => assert(false)
+        Positive => assert(false)
+    }
+}
+
+test "№296 приведение варианта к int — отрицательное значение" {
+    ro s = P296Sign.Negative
+    ro n = s as int
+    assert(n == -1)
+}
+
+test "№296 приведение варианта к int — ноль и положительное" {
+    assert((P296Sign.Zero as int) == 0)
+    assert((P296Sign.Positive as int) == 1)
+}
+
+test "№296 auto-increment от отрицательного продолжает по +1 (правило 4)" {
+    assert((P296Mixed.A as int) == -5)
+    assert((P296Mixed.B as int) == -4)
+    assert((P296Mixed.C as int) == 10)
+    assert((P296Mixed.D as int) == 11)
+    assert((P296Mixed.E as int) == -100)
+}

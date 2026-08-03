@@ -17065,7 +17065,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 self.line("typedef enum {");
                 self.indent += 1;
                 for v in variants {
-                    self.line(&format!("NOVA_TAG_{}_{},", t.name, v.name));
+                    // №296: explicit discriminants (`= N`, incl. negative)
+                    // must reach the C tag enum — C auto-increments an
+                    // entry with no `= N` from the PREVIOUS listed value
+                    // (spec 02-types.md rule 2), same rule Nova specifies,
+                    // so omitting `=` for `None` variants is correct as-is.
+                    match v.discriminant {
+                        Some(d) => self.line(&format!("NOVA_TAG_{}_{} = {},", t.name, v.name, d)),
+                        None => self.line(&format!("NOVA_TAG_{}_{},", t.name, v.name)),
+                    }
                 }
                 self.indent -= 1;
                 self.line(&format!("}} Nova_{}_Tag;", t.name));
@@ -18315,7 +18323,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.line("typedef enum {");
         self.indent += 1;
         for v in variants {
-            self.line(&format!("NOVA_TAG_{}_{},", name, v.name));
+            // №296: thread explicit discriminant (`= N`) into the C tag
+            // enum; C auto-increments from the previous listed value for
+            // entries with no `= N`, matching spec 02-types.md rule 2.
+            match v.discriminant {
+                Some(d) => self.line(&format!("NOVA_TAG_{}_{} = {},", name, v.name, d)),
+                None => self.line(&format!("NOVA_TAG_{}_{},", name, v.name)),
+            }
         }
         self.indent -= 1;
         self.line(&format!("}} Nova_{}_Tag;", name));
@@ -26470,7 +26484,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 self.line("typedef enum {");
                 self.indent += 1;
                 for v in &variants {
-                    self.line(&format!("NOVA_TAG_{}_{},", mangled, v.name));
+                    // №296: thread explicit discriminant into the mono/
+                    // generic-instance tag enum too — same rule as the
+                    // non-generic emit_sum_type path above.
+                    match v.discriminant {
+                        Some(d) => self.line(&format!("NOVA_TAG_{}_{} = {},", mangled, v.name, d)),
+                        None => self.line(&format!("NOVA_TAG_{}_{},", mangled, v.name)),
+                    }
                 }
                 self.indent -= 1;
                 self.line(&format!("}} {}_Tag;", mangled));
