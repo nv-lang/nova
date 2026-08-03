@@ -1,0 +1,219 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 244 Ф.1 — public-contract tests for the Nova-side `ChanV2`/
+// `ChanWriterV2`/`ChanReaderV2` reimplementation. Mirrors the V1 contract
+// tests in `docs/guide/channels.md` / `nova_tests/runtime/channels.nv`
+// wherever the API is 1:1 (send/recv/try_*/close/share/len/capacity), plus
+// two fixtures the plan calls out explicitly:
+//   - risk 4 (fairness): N senders on a cap=1 buffer, every one must get
+//     through (Condvar.notify_one FIFO-ness, or an explicit queue if not).
+//   - risk 5 (S1a enforcement, №289): `Chan[T]` stores no waiter closures
+//     in Ф.1 (no `select` yet) — the risk doesn't materialize until Ф.2's
+//     `RecvWaiter[T]`/`SendWaiter[T]` registries, but this file's
+//     multi-fiber `supervised`/`spawn` tests confirm the `#share` vouch on
+//     `ChanV2[T]` itself is accepted and works under real concurrent use.
+//
+// **№290 — MUST run with `--no-field-cache` (Plan 123 field-cache
+// unsoundness, found this window, NOT fixed here — compiler-codegen out of
+// reach).** Every test in this file that calls `.recv()` deadlocks under
+// `nova test`'s default (field-cache ON) build — confirmed on a minimal,
+// channel-independent repro (a bare `#share` generic record + two `value`
+// wrapper types + hand-written `send`/`recv`-shaped methods, zero
+// dependency on this module) — while the IDENTICAL logic passes 30+/30+
+// runs via plain `nova build` + direct execution. Root cause (isolated via
+// `--no-field-cache`, which alone fixes it): Plan 123's field-caching
+// treats a `@field` read inside a `while cond { cv.wait(mutex) }` loop
+// guarding a `#share` record's mutable field as safely cacheable/hoistable
+// across the `Mutex.lock()`/`Condvar.wait()` boundary, even though the
+// field is mutated by the very code the mutex/condvar exist to guard —
+// the loop spins forever on a stale cached read. This is a GENERAL
+// std-wide risk (any future `while … .wait(mutex) …` pattern on a
+// `#share` field is exposed, not just this module), reported to the
+// integrator, not fixed here. `PROGRESS-pchan244.md` has the full
+// minimal repro. Every `nova test`/`nova check` invocation of THIS file
+// in CI/gates MUST pass `--no-field-cache` until №290 is fixed at the
+// compiler level.
+module concurrency.channel_v2_test
+
+import std.concurrency.channel_v2.{ChannelV2}
+
+test "send + recv FIFO (single fiber)" {
+    ro ch = ChannelV2[int].new(4)
+    ro tx = ch.tx
+    ro rx = ch.rx
+    tx.send(10)
+    tx.send(20)
+    tx.send(30)
+    ro a = rx.recv()
+    ro b = rx.recv()
+    ro c = rx.recv()
+    assert(a ?? -1 == 10)
+    assert(b ?? -1 == 20)
+    assert(c ?? -1 == 30)
+    tx.close()
+}
+
+test "send after close returns false, not a panic" {
+    ro ch = ChannelV2[int].new(2)
+    ro tx = ch.tx
+    assert(tx.send(1))
+    tx.close()
+    assert(!tx.send(99))
+}
+
+test "try_send: full buffer rejects, frees a slot after recv" {
+    ro ch = ChannelV2[int].new(2)
+    ro tx = ch.tx
+    ro rx = ch.rx
+    assert(tx.try_send(10))
+    assert(tx.try_send(20))
+    assert(!tx.try_send(30))
+    assert(rx.recv() ?? -1 == 10)
+    assert(tx.try_send(30))
+    tx.close()
+}
+
+test "try_recv: empty-open vs empty-closed both None, distinguished via is_closed" {
+    ro ch = ChannelV2[int].new(4)
+    ro tx = ch.tx
+    ro rx = ch.rx
+    assert(rx.try_recv().is_none())
+    assert(!rx.is_closed())
+    tx.close()
+    assert(rx.try_recv().is_none())
+    assert(rx.is_closed())
+}
+
+test "close + recv drain: buffer drains before None" {
+    ro ch = ChannelV2[int].new(4)
+    ro tx = ch.tx
+    ro rx = ch.rx
+    tx.send(1)
+    tx.send(2)
+    tx.close()
+    assert(rx.recv() ?? -1 == 1)
+    assert(rx.recv() ?? -1 == 2)
+    assert(rx.recv().is_none())
+    assert(rx.recv().is_none())
+}
+
+test "len and capacity" {
+    ro ch = ChannelV2[int].new(8)
+    ro tx = ch.tx
+    ro rx = ch.rx
+    assert(rx.capacity() == 8)
+    assert(rx.len() == 0)
+    tx.send(1)
+    tx.send(2)
+    assert(rx.len() == 2)
+    ro _ = rx.recv()
+    assert(rx.len() == 1)
+    tx.close()
+}
+
+test "close is idempotent" {
+    ro ch = ChannelV2[int].new(2)
+    ro tx = ch.tx
+    ro rx = ch.rx
+    tx.close()
+    tx.close()
+    assert(rx.is_closed())
+}
+
+test "share(): fan-in, channel closes only when ALL writers close" {
+    ro ch = ChannelV2[int].new(8)
+    ro tx = ch.tx
+    ro rx = ch.rx
+    ro tx2 = tx.share()
+    assert(tx.send(1))
+    assert(tx2.send(2))
+    tx.close()
+    assert(!rx.is_closed())          // tx2 still open
+    assert(tx2.send(3))
+    tx2.close()
+    assert(rx.is_closed())
+    ro got1 = rx.recv() ?? -1
+    ro got2 = rx.recv() ?? -1
+    ro got3 = rx.recv() ?? -1
+    assert(got1 + got2 + got3 == 6)
+}
+
+test "ring buffer wraps correctly past one full lap" {
+    ro ch = ChannelV2[int].new(3)
+    ro tx = ch.tx
+    ro rx = ch.rx
+    tx.send(1)
+    tx.send(2)
+    tx.send(3)
+    assert(rx.recv() ?? -1 == 1)          // head advances, buf.len() still 3
+    assert(rx.recv() ?? -1 == 2)
+    tx.send(4)                             // overwrites the slot vacated by `1`
+    tx.send(5)                             // overwrites the slot vacated by `2`
+    assert(rx.recv() ?? -1 == 3)
+    assert(rx.recv() ?? -1 == 4)
+    assert(rx.recv() ?? -1 == 5)
+    tx.close()
+    assert(rx.recv().is_none())
+}
+
+test "producer/consumer across two fibers (#share ChanV2 under real concurrency)" {
+    ro ch = ChannelV2[int].new(4)
+    ro tx = ch.tx
+    ro rx = ch.rx
+    mut sum = AtomicInt.new(0)
+    supervised {
+        spawn {
+            mut i = 0
+            while i < 100 {
+                tx.send(i)
+                i = i + 1
+            }
+            tx.close()
+        }
+        spawn {
+            while Some(v) = rx.recv() {
+                sum.fetch_add(v)
+            }
+        }
+    }
+    assert(sum.load() == 4950)          // sum(0..99)
+}
+
+// ─── risk 4 (plan §"Риски" п.4): fairness on a cap=1 buffer ───────────────
+//
+// N senders all blocked on the SAME cap=1 buffer; each one must eventually
+// get its value through. If `Condvar.notify_one` were not FIFO (or if this
+// module relied on it without an explicit queue where needed), a sender
+// could starve forever behind repeatedly-re-notified siblings. Every
+// sender increments a distinct bit in an `AtomicInt` bitmask before
+// sending; the reader drains exactly N values and the test asserts ALL N
+// bits got set — nobody starved.
+test "risk 4: N senders on cap=1 buffer, every one gets through (fairness)" {
+    ro n = 12
+    ro ch = ChannelV2[int].new(1)
+    ro tx = ch.tx
+    ro rx = ch.rx
+    mut seen_mask = AtomicInt.new(0)
+    supervised {
+        mut i = 0
+        while i < n {
+            ro my_bit = 1 << i
+            ro my_tx = tx.share()
+            spawn {
+                my_tx.send(my_bit)
+                my_tx.close()
+            }
+            i = i + 1
+        }
+        tx.close()                          // root writer's own share
+        spawn {
+            mut got = 0
+            while Some(bit) = rx.recv() {
+                seen_mask.fetch_or(bit)
+                got = got + 1
+                if got == n { break }
+            }
+        }
+    }
+    ro expected = (1 << n) - 1
+    assert(seen_mask.load() == expected)    // every sender's bit is set — none starved
+}

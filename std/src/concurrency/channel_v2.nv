@@ -1,0 +1,345 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 244 Ф.1 — `Channel[T]`/`ChanWriter[T]`/`ChanReader[T]` reimplemented
+// ON Nova (bounded ring buffer over `Mutex` + `Condvar` + `[]T`), instead
+// of being a compiler-intrinsic wired to three hand-written codegen
+// branches over the C runtime (`channels.h`, `[M-59.1-channel-new-cleanup]`).
+//
+// **Coexistence, not replacement (Ф.1 scope).** `Channel`/`ChanWriter`/
+// `ChanReader` are hardcoded STRING matches in
+// `compiler-codegen/src/codegen/emit_c.rs` (confirmed by grep: literal
+// `"Channel"`/`"ChanReader"`/`"ChanWriter"` comparisons at several call
+// sites — `Channel.new`/`.send`/`.recv`/`ChanReader.close_after` are
+// intercepted by NAME, not resolved through the normal user-type method
+// table). Declaring a NEW `.nv` type under those exact names would either
+// collide with or be silently shadowed by that hardcoded interception —
+// there is no way to safely validate/benchmark an independent
+// implementation under identical names while the old ad-hoc branches are
+// still live. Per the plan's "живёт РЯДОМ со старой реализацией, не
+// вместо неё": this module uses a `V2` suffix for the whole Ф.1/Ф.2/Ф.3
+// window. Ф.5 (снос) removes the three C-intrinsic branches AND performs
+// the rename to the bare `Channel`/`ChanWriter`/`ChanReader` names the
+// plan's design section shows — at that point (and ONLY at that point)
+// the public surface becomes name-identical to today's, matching
+// "Публичная поверхность не меняется" / "миграции пользовательского кода
+// нет".
+//
+// **Every Nova primitive the channel needs already exists** (plan's
+// "Ключевое наблюдение"): `Mutex`/`Condvar` (std.runtime.sync) for the
+// blocking side, `AtomicInt` for the writer refcount, `[]T` (`Vec[T]`) for
+// the ring buffer. No `unsafe`, no raw pointers, no `elem_size`/`size_of`,
+// no FFI-typed-handle dependency — the buffer is a normal, GC-tracked
+// generic `[]T`.
+//
+// **Deviation from the plan's literal pseudocode** (spec/D171 "как читать
+// этот план" — the plan itself warns its snippets carry earlier-revision
+// artifacts): `Mutex.lock()` returns `MutexGuard consume` (Plan 103.9/D174),
+// NOT a plain re-lockable value — `mu.lock()` assigned to a bare `mut`
+// binding (as the plan's pseudocode shows) discards the guard silently
+// (legal V1-compat form, but leaves nothing to unlock explicitly). This
+// module uses the V2 guard API throughout (`consume g = @mutex.lock()`,
+// explicit `g.unlock()` on every exit path — several methods below have
+// more than one exit, so an explicit call per path was chosen over
+// `defer` for readability) — the guard is a linear capability token; the
+// ACTUAL lock state lives in the runtime `Mutex` struct that
+// `Condvar.wait(m Mutex)` manipulates directly by handle, so waiting under
+// a held guard and unlocking the guard afterwards is exactly the
+// documented pattern (see `nova_tests`/`spec_tests` precedent:
+// `Condvar.wait(mut m Mutex)` takes the raw handle, never a guard —
+// confirmed against
+// `nova_tests/sync/neg/plan103_4_condvar_wait_without_lock_neg.nv`).
+//
+// **№290 — build/test THIS module with `--no-field-cache` (Plan 123
+// field-cache unsoundness, found this window, reported not fixed —
+// compiler-codegen out of reach).** Every `while @ch.count == 0 && …`-
+// style loop below (`send`/`try_send`/`recv`/`try_recv`) deadlocks under
+// the DEFAULT (field-cache ON) build even in the simplest single-fiber
+// case (`tx.send(1); rx.recv()`, no `spawn` at all) — root-caused to a
+// stale cached `@field` read across the `Mutex.lock()`/`Condvar.wait()`
+// boundary; `--no-field-cache` alone fixes it, confirmed on a minimal
+// channel-independent repro. Full writeup + repro:
+// `PROGRESS-pchan244.md` (Ф.1 section) and the header comment of
+// `channel_v2_test.nv`.
+//
+// **Ring buffer representation** (plan asks to justify the choice in the
+// report): plain `% cap()` indexing at the call site, NOT a private
+// `buf_put`/`buf_take` helper pair. `[]T.new().cap(n)` (D372 amend,
+// ex-`with_capacity` — another stale-pseudocode deviation, `with_capacity`
+// was retracted 2026-07-06) only RESERVES capacity; `.len()` stays 0 until
+// `.push()`. So the buffer must grow via `.push()` during its very first
+// lap (index == current `.len()`, always true on first pass since `head`
+// starts at 0) and switch to in-place `@buf[idx] = v` overwrite once it
+// has reached `cap` once — a tiny `if idx < @buf.len() { @buf[idx] = v }
+// else { @buf.push(v) }` inlined in `send`/`try_send`. This is the
+// "plain indexing" option the plan offers, not a Vec extension — kept
+// inline rather than factored into a named `@buf_put` method to avoid
+// adding to `Chan[T]`'s already-large private surface for a two-line body.
+//
+// **Record-literal construction syntax gap (found + worked around this
+// window, NOT a compiler fix).** `ChanWriterV2[T]`/`ChanReaderV2[T]` wrap
+// `ChanV2[T]` — a generic type nested inside another generic type applied
+// to the SAME open `T`. Writing this nesting's record literal INLINE —
+// `ro w = ChanWriterV2[T] { ch: shared_ch }` — hits a codegen error
+// (`anonymous record literal without spread not supported in codegen`)
+// regardless of shorthand/explicit field form; verified with several
+// minimal isolated repros this window, including plain (non-generic,
+// non-`#share`, non-nested) two-field generic value-records, so the
+// trigger is specifically the `TypeName[Args] { ... }` INLINE literal
+// expression form, not this module's `#share`/nesting/consume usage.
+// The WORKING form is the **annotated-binding** shape instead — type
+// annotation on the `ro`/`mut` binding, bare literal on the RHS:
+// `ro w ChanWriterV2[T] = { ch: shared_ch }` (same shape already used by
+// `spec_tests/conformance/d277_generic_value_record_mono.nv`'s
+// `D277Pair[int]`, which is why THAT conformance file passes while a naive
+// inline-literal port of this module's original draft did not). Used
+// throughout below (`ChannelV2[T].new`, `ChanWriterV2[T] @share`).
+module concurrency.channel_v2
+
+/// Shared channel state. `#share` (D415 §2): audited vouch — every field
+/// is either itself an internally-synchronized `#share` primitive
+/// (`Mutex`/`Condvar`/`AtomicInt`) or is ONLY ever read/written while
+/// `mutex` is held (`buf`/`head`/`count`/`closed`) — the same "Mutex-
+/// wrapped record" pattern as `S1aFieldSinkLog` in
+/// `spec_tests/conformance/field_sink_mut_capture_pos.nv` (D441 §5(е)).
+#share
+type ChanV2[T] {
+    mut mutex     Mutex
+    mut not_empty Condvar   // signaled when the buffer becomes non-empty (or closes)
+    mut not_full  Condvar   // signaled when the buffer becomes non-full (or closes)
+    mut buf       []T       // ring buffer, capacity == `cap`, grows to `cap` once then stays
+    mut head      int       // index of the oldest element
+    mut count     int       // number of live elements currently in `buf`
+    ro  cap       int       // fixed capacity, set once at construction
+    mut closed    bool
+    mut tx_refs   AtomicInt // writer refcount: channel actually closes when it hits 0
+}
+
+/// Pure static-call namespace — hosts `ChannelV2[T].new(cap)` the same way
+/// the old compiler-intrinsic `Channel` hosts `Channel.new(cap)` without
+/// itself ever being a real value. Never instantiated
+/// (codegen requires an actual registered type behind a generic
+/// `TypeName[T].method(...)` associated-call — a bare `fn
+/// ChannelV2[T].new(...)` with no backing `type ChannelV2[T]` at all hits
+/// `[P67-LEGACY] Ident "ChannelV2" not in var_types` at codegen time even
+/// though `nova check` accepts it; verified empirically this window).
+type ChannelV2[T](*())
+
+/// Send-only capability over a shared [ChanV2]. Physically has no `recv` —
+/// capability split by construction (mirrors the V1 `ChanWriter`/`ChanReader`
+/// split, D91).
+#stable(since = "0.1")
+export type ChanWriterV2[T] value { priv ch ChanV2[T] }
+
+/// Receive-only capability over a shared [ChanV2].
+#stable(since = "0.1")
+export type ChanReaderV2[T] value { priv ch ChanV2[T] }
+
+/// `ChannelV2[T].new`'s return value — matches V1's ACTUAL documented shape
+/// (`docs/guide/channels.md` §"Channel.new": "Returns a pair — a record
+/// with fields `tx`/`rx`"), not a tuple.
+///
+/// **Also works around a second codegen gap found this window:** a tuple
+/// return type `(ChanWriterV2[T], ChanReaderV2[T])` from a generic
+/// function emits TWO tuple typedefs — one for the real concrete
+/// instantiation (`..._nova_int`) and one for an "unspecialized template"
+/// (`..._Nova_T_p`) that references a struct never actually generated for
+/// `value`-tagged generic records (D277: value-generics only emit
+/// CONCRETE per-instantiation structs, no generic template) — `unknown
+/// type name 'NovaValue_ChanWriterV2____Nova_T_p'` at the C-compile stage.
+/// A plain named-field RECORD return (this type) does not hit that path;
+/// verified with an isolated minimal repro this window. Reported, not
+/// fixed (compiler-codegen out of reach this window).
+#stable(since = "0.1")
+export type ChannelPairV2[T] { tx ChanWriterV2[T], rx ChanReaderV2[T] }
+
+/// Construct a bounded channel: `cap >= 1`.
+#stable(since = "0.1")
+export fn ChannelV2[T].new(cap int) -> ChannelPairV2[T]
+    requires cap >= 1
+{
+    ro shared_ch ChanV2[T] = {
+        mutex: Mutex.new(),
+        not_empty: Condvar.new(),
+        not_full: Condvar.new(),
+        buf: []T.new().cap(cap),
+        head: 0,
+        count: 0,
+        cap,
+        closed: false,
+        tx_refs: AtomicInt.new(1),
+    }
+    ro w ChanWriterV2[T] = { ch: shared_ch }
+    ro r ChanReaderV2[T] = { ch: shared_ch }
+    ro pair ChannelPairV2[T] = { tx: w, rx: r }
+    pair
+}
+
+// ─── writer side ─────────────────────────────────────────────────────────
+
+/// Blocking send. `true` — accepted; `false` — channel closed (not a panic,
+/// V1 parity — Plan 30).
+///
+/// **Ф.1 gap, reported not fixed (out of `std/**`'s reach alone):** the
+/// plan's design calls for `consume v T` (D131/№144 parity — ownership
+/// moves into the channel, reuse after `send` is a linear-checker error).
+/// Empirically verified this window (`nova check` on a minimal isolated
+/// repro): storing a bare generic `consume v T` into ANY stdlib container
+/// slot — `Vec[T].push(v)`, index-assignment, even wrapped in
+/// `Some(v)` — has NO discharge path recognized by the current D133
+/// checker for an unconstrained `T` (`Vec[T] mut @push(v T)` and
+/// `HashMap[K, V] mut @insert(key K, value V)` both take a PLAIN,
+/// non-`consume` param — there is no `push`/`insert` sibling that accepts
+/// `consume T` anywhere in std collections today). Spec's 5 discharge
+/// mechanisms (`spec/decisions/02-types.md` §"Когда consume binding
+/// считается удовлетворённым") cover method-call/return/consume-param-
+/// transfer/escaping-record-field/defer — none of them matches "moved into
+/// a dynamically-indexed array slot". This is a pre-existing, general gap
+/// in generic consume-value storage (not channel-specific — the same
+/// experiment fails identically for `HashMap`/`Queue`/`Deque`), and fixing
+/// it needs either a compiler-side allowance (recognizing container-owned
+/// storage as a 6th discharge mechanism) or a new consume-aware
+/// `push`/`insert` sibling across std collections — both bigger than this
+/// `std/concurrency/**`-only window and neither is a compiler-codegen
+/// change this window is allowed to make anyway. `v` is therefore a plain
+/// (view) parameter here for Ф.1; true `consume` parity is left to a
+/// follow-up decision (flagged for the integrator).
+#stable(since = "0.1")
+export fn ChanWriterV2[T] @send(v T) -> bool {
+    consume g = @ch.mutex.lock()
+    while @ch.count == @ch.cap && !@ch.closed {
+        @ch.not_full.wait(@ch.mutex)
+    }
+    if @ch.closed {
+        g.unlock()
+        return false
+    }
+    ro idx = (@ch.head + @ch.count) % @ch.cap
+    if idx < @ch.buf.len() {
+        @ch.buf[idx] = v
+    } else {
+        @ch.buf.push(v)
+    }
+    @ch.count += 1
+    @ch.not_empty.notify_one()
+    g.unlock()
+    true
+}
+
+/// Non-blocking send. `false` — buffer full or channel closed.
+///
+/// Same Ф.1 `consume`-parity gap as `@send` above — `v` is a plain (view)
+/// param, see the doc comment on `@send`.
+#stable(since = "0.1")
+export fn ChanWriterV2[T] @try_send(v T) -> bool {
+    consume g = @ch.mutex.lock()
+    if @ch.closed || @ch.count == @ch.cap {
+        g.unlock()
+        return false
+    }
+    ro idx = (@ch.head + @ch.count) % @ch.cap
+    if idx < @ch.buf.len() {
+        @ch.buf[idx] = v
+    } else {
+        @ch.buf.push(v)
+    }
+    @ch.count += 1
+    @ch.not_empty.notify_one()
+    g.unlock()
+    true
+}
+
+/// Close THIS writer capability. Idempotent; with multiple writers
+/// (`share()`) the channel only actually closes when the LAST one closes
+/// (ref-counted via `tx_refs`, mirrors V1).
+#stable(since = "0.1")
+export fn ChanWriterV2[T] @close() -> () {
+    ro prev = @ch.tx_refs.fetch_sub(1)
+    if prev == 1 {
+        consume g = @ch.mutex.lock()
+        @ch.closed = true
+        @ch.not_empty.notify_all()
+        @ch.not_full.notify_all()
+        g.unlock()
+    }
+}
+
+/// `true` once the channel is actually closed (all writers closed).
+#stable(since = "0.1")
+export fn ChanWriterV2[T] @is_closed() -> bool {
+    consume g = @ch.mutex.lock()
+    ro c = @ch.closed
+    g.unlock()
+    c
+}
+
+/// Additional writer capability over the SAME buffer; `writer_count++`.
+#stable(since = "0.1")
+export fn ChanWriterV2[T] @share() -> ChanWriterV2[T] {
+    @ch.tx_refs.fetch_add(1)
+    ro shared_ch = @ch
+    ro w ChanWriterV2[T] = { ch: shared_ch }
+    w
+}
+
+// ─── reader side ─────────────────────────────────────────────────────────
+
+/// Blocking recv. `None` only once the channel is closed AND the buffer
+/// is drained (closed-but-non-empty still yields `Some` — buffer drains
+/// first, V1 parity).
+#stable(since = "0.1")
+export fn ChanReaderV2[T] @recv() -> Option[T] {
+    consume g = @ch.mutex.lock()
+    while @ch.count == 0 && !@ch.closed {
+        @ch.not_empty.wait(@ch.mutex)
+    }
+    if @ch.count == 0 {
+        g.unlock()
+        return None
+    }
+    ro v = @ch.buf[@ch.head]
+    @ch.head = (@ch.head + 1) % @ch.cap
+    @ch.count -= 1
+    @ch.not_full.notify_one()
+    g.unlock()
+    Some(v)
+}
+
+/// Non-blocking recv. `None` — buffer empty (does NOT imply closed — check
+/// `is_closed()` separately, same distinction as V1).
+#stable(since = "0.1")
+export fn ChanReaderV2[T] @try_recv() -> Option[T] {
+    consume g = @ch.mutex.lock()
+    if @ch.count == 0 {
+        g.unlock()
+        return None
+    }
+    ro v = @ch.buf[@ch.head]
+    @ch.head = (@ch.head + 1) % @ch.cap
+    @ch.count -= 1
+    @ch.not_full.notify_one()
+    g.unlock()
+    Some(v)
+}
+
+/// Number of items currently buffered.
+#stable(since = "0.1")
+export fn ChanReaderV2[T] @len() -> int {
+    consume g = @ch.mutex.lock()
+    ro n = @ch.count
+    g.unlock()
+    n
+}
+
+/// Fixed capacity set at construction.
+#stable(since = "0.1")
+export fn ChanReaderV2[T] @capacity() -> int {
+    @ch.cap
+}
+
+/// `true` once all writers have closed.
+#stable(since = "0.1")
+export fn ChanReaderV2[T] @is_closed() -> bool {
+    consume g = @ch.mutex.lock()
+    ro c = @ch.closed
+    g.unlock()
+    c
+}
