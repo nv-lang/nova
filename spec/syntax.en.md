@@ -793,3 +793,253 @@ fn name(c Color) -> str => match c {
 
 `match` is an **expression**, returns a value. All arms must have
 a compatible type (or a common supertype, or wrapped in a sum type).
+
+### Record literals and patterns
+
+**Shorthand** — when the field name matches a variable name in scope:
+
+```nova
+ro key = "alice"
+ro value = 42
+
+ro entry = Entry { key, value }                 // shorthand обязателен (D52)
+ro entry = Entry { key, value, extra: "data" }  // можно смешивать
+// `Entry { key: key }` — ОШИБКА: используйте shorthand `{ key }`.
+```
+
+**Partial pattern matching** — specifying only the needed fields:
+
+```nova
+match @buckets[idx] {
+    Occupied { value }     => Some(value)        // partial: key игнорируется
+    Occupied { value, .. } => Some(value)        // явный .. — то же самое
+    _                      => None
+}
+```
+
+Both forms are valid (`..` or without) — a choice by context. `..` —
+a signal "the type has more fields". Without — shorter.
+
+**Renaming on destructuring:**
+
+```nova
+Occupied { key: k, value }      // key переименовано в k, value совпадает
+```
+
+Details — [D17](decisions/02-types.md#d17).
+
+### `for` / `while` / `loop` loops
+
+```nova
+for x in list { ... }            // x — immutable binding на каждой итерации
+for mut x in list { ... }         // x можно мутировать в теле
+for x int in nums { ... }         // явный тип элемента
+for mut id u64 in ids { ... }     // mut + явный тип элемента
+for (i, x) in list.iter().enumerate() { ... }   // индекс через iterator-адаптер
+
+while cond { ... }                // условный цикл
+loop { ... }                      // бесконечный, выход через break/return
+```
+
+**An explicit element type — `for x TYPE in iter`** — is optional and
+follows the universal "name type" rule (like `ro x int`, `fn(x int)`,
+`[T Bound]`). The annotation is **checked by the compiler**: if `TYPE` does
+not match the iterator's actual element type — a compile error. That makes it
+a *checked assertion* (pins the expectation; a change of the source type →
+a loud error), not a silent documenting sugar. Go/Rust/TS
+do not give a loop-variable annotation at all — Nova has it as a strict,
+checkable superset.
+
+A variable in `for x in iter` — an **immutable binding** (like `ro`, no
+`mut`), receiving a **new value** on each iteration. It cannot be
+reassigned in the block body:
+
+```nova
+for x in list {
+    x = 5                         // ОШИБКА: x immutable
+}
+
+for mut x in list {
+    x = transform(x)              // ок
+}
+```
+
+This is consistent with the D32 + D33 rule — all bindings are immutable by
+default, mutation explicitly via `mut`. There is no `const` or `final`
+marker in Nova — immutability is already the default.
+
+`break` / `continue` — standard.
+
+### A pattern in a condition — `if pattern = …` / `while pattern = …`
+
+A pattern match right in the condition — a short alternative to `match` for
+a single variant:
+
+```nova
+// если в кеше есть — вернуть
+if Some(data) = cache.get(key) {
+    return data
+}
+
+// извлечение из Result
+if Ok(user) = Db.find(id) {
+    process(user)
+} else {
+    Log.warn("user not found")
+}
+
+// while с паттерном — итерация пока паттерн совпадает
+while Some(line) = reader.read_line()? {
+    process(line)
+}
+
+// guard-условие через && (Plan 106)
+if Some(user) = lookup(id) && user.is_active {
+    process(user)
+}
+```
+
+> The guard condition works for `while` too: `while pattern = expr &&
+> bool_guard { ... }`. ⚠ Several pattern conditions in one `if`
+> (`if Some(x) = a && Some(y) = b`) are not yet implemented — one pattern
+> plus a bool-guard.
+
+Local bindings (`data`, `user`, `line`) are available **only in the block
+body**. After the closing `}` — unavailable.
+
+Details — [D34](decisions/03-syntax.md#d34).
+
+## Instance methods and static functions
+
+Nova has **two kinds of functions associated with a type**, distinguishable
+by the declaration syntax:
+
+```nova
+// конструктор / static — через точку, без @
+fn Account.new(owner str) -> Account =>
+    Account { _balance: 0, owner }
+
+// метод инстанса — через пробел и @, неявный self
+fn Account @balance() -> money => @_balance
+
+fn Account @is_solvent() -> bool => @_balance > 0
+
+// мутирующий метод — mut перед @name
+fn Account mut @deposit(amount money) {
+    @_balance += amount
+}
+```
+
+**Usage:**
+
+```nova
+ro acc = Account.new("alice")    // вызов constructor через точку
+acc.deposit(100)                   // вызов метода — точка + скобки
+ro bal = acc.balance()            // getter, обязательные скобки
+```
+
+### `@field` for field access
+
+Inside a method (`@method` or `mut @method`), self's fields are accessible
+via **`@field`** — the only form:
+
+```nova
+fn Account @summary() -> str =>
+    "${@owner}: ${@_balance}"      // = self.owner, self._balance
+```
+
+`@.field` is **invalid** — a dot is not used. `@field` — the only
+correct form.
+
+`@` without a field — the **value of the current instance**:
+
+```nova
+fn Account @copy() -> Account => @
+fn Account @send_to(tx ChanWriter[Account]) => tx.send(@)
+```
+
+### Parentheses are mandatory for calls
+
+```nova
+acc.balance()              // вызов метода
+// acc.@balance            // НЕвалидно — bound method value в Nova нет
+Account.@balance           // unbound method value, тип: fn(Account) -> money
+|| acc.balance()           // lambda (замена bound): тип fn() -> money
+Account.new                // static-функция как значение, тип: fn(str) -> Account
+```
+
+The programmer and the LLM instantly distinguish: a call = with
+parentheses, a value = without. No properties with side effects.
+
+### Generics
+
+```nova
+fn HashMap[K, V].new() -> HashMap[K, V] => ...        // generic на типе
+fn HashMap[K, V] @get(key K) -> Option[V] => ...      // тоже
+fn[T] []T @map[U](f fn(T) -> U) -> []U => ...         // generic на методе [U]
+```
+
+Details — [D35](decisions/03-syntax.md#d35).
+
+## Embed and delegation: `use Type` and `use name Type`
+
+Composition instead of inheritance. `use` is a **field + auto-proxy of
+methods**:
+
+```nova
+type Account {
+    owner str
+    balance money
+}
+
+fn Account mut @deposit(amount money) => @balance += amount
+
+// embed: имя поля обязательно (D39 — alias всегда явный)
+type AuditedAccount {
+    use account Account
+    audit_log []AuditEntry
+}
+
+fn AuditedAccount mut @withdraw(amount money) Fail[AuditError] {
+    @account.deposit(-amount)               // явный вызов "родителя" через имя поля
+    @audit_log.push(AuditEntry.new(amount))
+}
+
+ro aa = AuditedAccount { ... }
+aa.deposit(100)                              // авто-прокси: account.deposit
+aa.balance                                   // авто-прокси: account.balance
+```
+
+The field name is **mandatory** with `use` ([D39](decisions/02-types.md#d39))
+— consistent with [D30](decisions/03-syntax.md#d30) (fields snake_case):
+
+```nova
+type Wrapper[K, V] {
+    use w HashMapIter[K, V]      // имя поля = "w"
+    extra int
+}
+
+fn Wrapper[K, V] @next() -> Option[Pair[K, V]] => @w.next()
+
+// конфликт двух embed — псевдонимы обязательны
+type Composite {
+    use a TimerA
+    use b TimerB                  // оба определяют tick() — нужны имена
+}
+```
+
+**Override.** A method of the same name on the outer type shadows the proxy.
+Access to the "parent" — via the field name:
+
+```nova
+fn AuditedAccount mut @deposit(amount money) {
+    @account.deposit(amount)                // вызов оригинала через имя поля
+    @audit_log.push(AuditEntry.new(amount))
+}
+```
+
+**`use` is not inheritance.** `AuditedAccount` is not a subtype of `Account`.
+Functions `fn(Account)` take `Account`, not `AuditedAccount`. Structural
+interfaces are a separate mechanism (see below).
+
+Details — [D39](decisions/02-types.md#d39).
