@@ -39,7 +39,7 @@ fn append_world(mut sb StringBuilder) { sb.append(" world") }
 
 ro sb = StringBuilder.from("hello")
 append_world(sb)
-ro s = sb.as_str()                  // "hello world" — мутация видна
+ro s = sb.as_str()                  // "hello world" — the mutation is visible
 ```
 
 ### default or `ro` — just read (while producing a result)
@@ -137,10 +137,10 @@ for mut x in arrs { x.push(1) }   // ✓
 During destructuring, `mut` is placed **on each name separately** (Rust-style):
 
 ```nova
-ro (a, b) = pair                  // оба immutable
+ro (a, b) = pair                  // both immutable
 ro (mut a, b) = pair              // a mutable, b immutable
 ro (a, mut b) = pair              // a immutable, b mutable
-ro (mut a, mut b) = pair          // оба mutable
+ro (mut a, mut b) = pair          // both mutable
 ```
 
 **Group-mut is forbidden** — `let mut (a, b) = ...` is rejected at the
