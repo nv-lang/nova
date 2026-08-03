@@ -68,8 +68,6 @@ detect172/**/*.c
 # from pinned UCD into the slow-lane, NOT committed (only the fast *_conformance.nv
 # sample is committed). See docs/dev/research/10-unicode-test-data-storage.md.
 nova_tests/**/*_conformance_slow.nv
-docs/dev/research/170-str-unicode-api-improvements.md
-docs/dev/research/13-str-unicode-api-audit.md
 test_out.txt
 
 # spec_tests: codegen-артефакты рядом с .nv (пробел закрыт 2026-07-14 — spec_tests не было в списке)
