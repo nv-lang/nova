@@ -36106,7 +36106,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     if self.sum_schemas.contains_key(sum_name) && matches!(target_c.as_str(),
                         "nova_int" | "int64_t" | "int32_t" | "int16_t" | "int8_t"
                         | "nova_uint" | "uint64_t" | "uint32_t" | "uint16_t" | "nova_byte" | "uint8_t") {
-                        return Ok(format!("(({})(({})->tag))", target_c, v));
+                        // Re-cast the operand to the C type inference reports for it
+                        // before reading `->tag`: a fieldless variant referenced as a
+                        // path (`Sign.Zero as int`) is emitted by the Path arm as
+                        // `(nova_int)(intptr_t)nova_make_X_Zero()` — already coerced to
+                        // an integer — so a bare `->tag` lands on `nova_int` and clang
+                        // rejects it. The cast is a no-op when the operand already has
+                        // the pointer type (`s as int` over a binding); `nova_int` is
+                        // `intptr_t`, so the integer→pointer direction is size-exact.
+                        return Ok(format!("(({})((({})({}))->tag))", target_c, inner_c_ty, v));
                     }
                 }
                 // Все остальные cast'ы — прямой C-cast (план 05).
