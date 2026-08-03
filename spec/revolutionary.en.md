@@ -821,3 +821,135 @@ fn traced(real Effect[Db]) -> Effect[Db] => effect Db {
     }
 }
 ```
+
+### Composition via `with`
+
+Distributed properties **compose as a stack** of handlers:
+
+```nova
+with Db = traced(idempotent_by(tx_id, retry(replicated(nodes, 2, real_db)))) {
+    transfer(alice, bob, 100)
+}
+```
+
+Read inside-out: `real_db` → replicated → retried → made idempotent → traced.
+**The programmer does not write distributed logic — they configure it.** The
+same `transfer` works with any set of handlers.
+
+Replace `real_db` with `in_memory()` for a test — distributed properties are
+not needed, the test handler gives a deterministic DB. Replace `replicated`
+with `single_node()` for dev mode — no replication, but retry and tracing
+remain. **Each property is independently disableable.**
+
+### Comparison with an ordinary stack
+
+| Property | Go + K8s + Istio + Temporal | Nova |
+|---|---|---|
+| Replication | StatefulSet + Raft library + YAML config | `replicated(nodes, 2, ...)` |
+| Idempotency | Temporal workflow with idempotent activities | `idempotent_by(tx_id, ...)` |
+| Retry with backoff | Istio retry policy + envoy config | `retry(max_attempts, ...)` |
+| Distributed tracing | OpenTelemetry SDK + Jaeger sidecar + sampling config | `Trace` handler |
+| Circuit breaker | Hystrix library + config | handler with `Fail[Tripped]` |
+| Canary deployment | Istio VirtualService + traffic split YAML | handler routing by `Random` |
+| Exactly-once | Kafka transactional producer + Temporal | composition of `idempotent` + `persistent_log` |
+| Testing without a DB | testcontainers / mocks | `with Db = in_memory() { ... }` |
+
+In an ordinary stack, distributed-systems concerns live **outside the code** —
+in YAML, sidecars, CI/CD configs. Business logic is tied to infrastructure
+through thin implicit contracts (call order, headers, request IDs). An LLM
+reading a function **does not see** which properties are guaranteed. A
+programmer reading YAML does not see which code it governs.
+
+In Nova, distributed-systems concerns are a **`with`-block**, visible in the
+code. An LLM reading the `transfer` signature sees `Db Fail` — ordinary
+effects. Reading the calling code, it sees the handler stack — all the
+distributed guarantees. The boundary between business logic and infrastructure
+runs **along the handler**, not along a YAML file.
+
+### What this gives for the AI-first thesis
+
+An LLM writes `transfer` without knowing in which environment it will run.
+The same code works in:
+
+- **Test** — `with Db = in_memory() { transfer(...)? }`
+- **Local development** — `with Db = postgres(local) { transfer(...)? }`
+- **Staging** — `with Db = retry(traced(postgres(staging))) { transfer(...)? }`
+- **Production** — the full stack
+
+Business logic does **not depend** on the environment. This is the opposite
+of what Spring/FastAPI/Temporal require — there the business function is
+annotated with the environment via decorators and containers, and
+LLM-generated code can accidentally "fall into a production handler" because
+of an invisible association.
+
+### Limits of the abstraction
+
+Not all distributed-systems concerns are trivially a handler. Open
+difficulties:
+
+- **Distributed consensus (Raft/Paxos).** The `replicated` handler above is
+  shown simplified — real consensus requires a state machine,
+  logs, elections. This is the **stdlib level**, not the language. A handler
+  gives an **injection point**, not the implementation itself.
+- **Cross-handler state.** `idempotent_by` stores a cache — where does it
+  live? That is question Q12 (the concurrency and shared-state model). Without
+  solving it, handlers can be described at the level of semantics, but not
+  implemented on top of a multithreaded runtime.
+- **Transactions across handler boundaries.** If `Db` is wrapped in
+  replication, and around it there is also `with Fail[NetError] = retry`, the
+  correct interaction of the transaction and retry is nontrivial. This is a
+  known issue in Erlang/OTP supervision and in Temporal — not a problem unique
+  to Nova.
+
+See also [Q12 in open-questions.md](open-questions.md) — the concurrency
+model affects the completeness of implementing these handlers.
+
+### Relationship to other decisions
+
+- **Develops [D10](decisions/01-philosophy.md#d10)** — this is an illustration of the central
+  thesis, not a new feature.
+- **Uses the [R1](revolutionary.md) handler mechanism** — without it
+  none of this is possible.
+- **Relies on the [R2](revolutionary.md) standard effects** — `Db`,
+  `Net`, `Trace` — all already defined.
+- **Supports [R5](revolutionary.md) AI-first** — visibility of
+  distributed properties in code, not in YAML.
+
+---
+
+## What together makes Nova revolutionary
+
+Each individual idea exists in some language. Unique:
+
+1. **All of them follow from one central abstraction** — algebraic
+   effects with handlers. Not a "collection of features", but **one idea
+   with its unfolding**.
+2. **A claim on the killer use-case** — AI-first programming with
+   verifiable code from an LLM. Nobody does this deliberately.
+3. **Effects make LLM-generated code safe**, because
+   side effects are visible in the type, and capability mode gives a
+   compile-time sandbox.
+4. **One language covers the spectrum** from a script to verified code
+   through the contract gradient.
+5. **Time-travel debugging, supervision, mock-free tests, async without
+   the virus** — consequences, not separate frameworks.
+
+The main thesis, replacing the previous one:
+
+> **Nova is a language in which an LLM can write code that a human can trust,
+> because effects make everything visible, contracts make everything
+> checkable, and handlers make everything testable.**
+
+---
+
+## Main risks (repeated from [decisions/01-philosophy.md → D10](decisions/01-philosophy.md#d10))
+
+1. Algebraic effects — a frontier PL problem. The implementation is complex.
+2. Compiler messages about effects must be understandable to a Java
+   programmer within a day, otherwise the language is dead.
+3. The performance overhead of effects must be killed with aggressive optimization.
+4. The bet on AI coding as the dominant trend — statistically likely,
+   but not guaranteed.
+5. The fiber runtime pays in memory — billions of tasks don't work, a million
+   does.
+6. 9 out of 10 such projects fail.
