@@ -237,7 +237,7 @@ const SQLITE_DONE int = 101
 
 type DbError | OpenFailed(int) | ExecFailed(int) | PrepareFailed(int)
 
-// Open database, wrap raw ptr в typed Db handle.
+// Open database, wrap raw ptr in a typed Db handle.
 fn Db.open(path str) Fail[DbError] -> Db {
     ro (raw, rc) = nova_fn_sqlite3_open(path)
     if rc != SQLITE_OK { Fail.throw(DbError.OpenFailed(rc)) }
@@ -250,7 +250,7 @@ fn Db @exec(sql str) Fail[DbError] -> () {
     if rc != SQLITE_OK { Fail.throw(DbError.ExecFailed(rc)) }
 }
 
-// Close. consume — после @close handle invalid (D131).
+// Close. consume — after @close, the handle is invalid (D131).
 fn Db consume @close() -> () {
     nova_fn_sqlite3_close(self.value)
 }
@@ -433,7 +433,7 @@ for minimal working samples.
 ```nova
 import std.ffi.cstr.{CStr}
 
-// External fn principal pattern — typed handle вместо bare *u8
+// External fn principal pattern — a typed handle instead of a bare *u8
 external fn c_strlen(s CStr) -> i64
 external fn c_printf(fmt CStr) -> i32
 ```
@@ -451,7 +451,7 @@ ro c = s.to_cstr()              // GC-allocs a fresh byte_len()+1 NUL-terminated
 ro buf = unsafe { RawMem.alloc(64) }
 ro c2 = s.to_cstr(buf, 64)      // copies ≤63 bytes + '\0'; TRUNCATES if longer, no scan
 
-// Direct usage в FFI call:
+// Direct usage in an FFI call:
 ro n = c_strlen(s.to_cstr())
 ```
 
@@ -469,7 +469,7 @@ are RETIRED, `to_` names the copy correctly).
 ```nova
 unsafe {
     ro x = 42
-    ro p = addr_of(x)         // *T pointer к local
+    ro p = addr_of(x)         // *T pointer to a local
     assert(p.read() == 42)
 }
 
@@ -504,7 +504,7 @@ unsafe {
 unsafe {
     ro p = addr_of(some_int)
     ro v = p.read()                  // typed primitive read
-    p.write(100)                     // typed write (на *mut T)
+    p.write(100)                     // typed write (on *mut T)
     ro v_vol = p.read_volatile()     // MMIO read
     p.write_volatile(0xDEAD)         // MMIO write
 }
@@ -701,7 +701,7 @@ For a thin C shim and linking an already-built system library:
 
 ```toml
 [ffi]
-c_shims      = ["native/sqlite3_shim.c"]            # компилируются и линкуются
+c_shims      = ["native/sqlite3_shim.c"]            # compiled and linked
 include_dirs = ["native/", "third_party/sqlite3/"]  # → clang -I
 libs         = ["sqlite3"]                          # → clang -lsqlite3 / sqlite3.lib
 ```
