@@ -1,12 +1,12 @@
-# Параметры функций в Nova
+# Function parameters in Nova
 
 **English** | [Русский](parameters.ru.md)
 
-> User-facing guide по модификаторам параметров и их семантике.
+> User-facing guide to parameter modifiers and their semantics.
 
 ## TL;DR
 
-Параметры функций — **read-only по умолчанию**.  Хочешь менять — пиши `mut`.
+Function parameters are **read-only by default**. Want to mutate — write `mut`.
 
 ```nova
 fn append(mut b []int, v int) { b.push(v) }   // ✓ mutates
@@ -15,24 +15,24 @@ fn count(ro b []int) -> int => b.len()  // ✓ ro (synonym default)
 fn drain(consume b []int) { ... }             // ✓ ownership transfer
 ```
 
-## Модификаторы
+## Modifiers
 
-| Модификатор | Что разрешено в callee | Передача в caller'е |
+| Modifier | What's allowed in the callee | Passing at the call site |
 |---|---|---|
-| (нет) — default | чтение, итерация, non-mut методы | borrow (caller owns) |
-| `mut` | + mut-методы (`.push`, `.append`, и т.п.), index-assign | borrow (caller owns) |
-| `readonly` | то же что и default — synonym | borrow (caller owns) |
-| `consume` | всё (owned), включая mut-методы | move (caller-binding мёртв) |
+| (none) — default | reading, iteration, non-mut methods | borrow (caller owns) |
+| `mut` | + mut methods (`.push`, `.append`, etc.), index-assign | borrow (caller owns) |
+| `readonly` | same as default — synonym | borrow (caller owns) |
+| `consume` | everything (owned), including mut methods | move (caller's binding is dead) |
 
-## Правила сочетания
+## Combination rules
 
-- `mut` + `consume` — ✗ `E_PARAM_MOD_CONFLICT` (consume уже подразумевает mut)
-- `mut` + `readonly` — ✗ `E_PARAM_MOD_CONFLICT` (взаимоисключают)
-- `readonly` + `consume` — ✗ `E_PARAM_MOD_CONFLICT` (readonly запрещает мутацию, consume требует владения)
+- `mut` + `consume` — ✗ `E_PARAM_MOD_CONFLICT` (consume already implies mut)
+- `mut` + `readonly` — ✗ `E_PARAM_MOD_CONFLICT` (mutually exclusive)
+- `readonly` + `consume` — ✗ `E_PARAM_MOD_CONFLICT` (readonly forbids mutation, consume requires ownership)
 
-## Когда использовать что
+## When to use what
 
-### `mut` — нужно изменить и вернуть caller'у изменённое
+### `mut` — need to change it and hand the caller the changed value
 
 ```nova
 fn append_world(mut sb StringBuilder) { sb.append(" world") }
@@ -42,7 +42,7 @@ append_world(sb)
 ro s = sb.as_str()                  // "hello world" — мутация видна
 ```
 
-### default или `readonly` — только читать (с производством результата)
+### default or `readonly` — just read (while producing a result)
 
 ```nova
 fn sum(b []int) -> int {
@@ -52,14 +52,14 @@ fn sum(b []int) -> int {
 }
 ```
 
-Используй `readonly` явно, когда хочешь подчеркнуть гарантию в API
-(особенно для FFI/документации):
+Use `readonly` explicitly when you want to underscore the guarantee in the
+API (especially for FFI/documentation):
 
 ```nova
 export fn hash(ro bytes []u8) -> u64 => ...
 ```
 
-### `consume` — забираешь ownership
+### `consume` — you take ownership
 
 ```nova
 fn finalize(consume sb StringBuilder) -> str => sb.as_str()
@@ -68,36 +68,36 @@ consume sb = StringBuilder.from("x")
 ro s = finalize(sb)                  // sb dead after this
 ```
 
-## Диагностики
+## Diagnostics
 
-| Код | Когда |
+| Code | When |
 |---|---|
-| `E_PARAM_NOT_MUT` | вызов mut-метода на параметре без `mut` |
-| `E_PARAM_MOD_CONFLICT` | взаимоисключающие модификаторы |
-| `E_READONLY_COERCE` | передача `readonly T` в `T` параметр (где `T` ожидает не-readonly) |
+| `E_PARAM_NOT_MUT` | calling a mut method on a parameter without `mut` |
+| `E_PARAM_MOD_CONFLICT` | mutually exclusive modifiers |
+| `E_READONLY_COERCE` | passing `readonly T` into a `T` parameter (where `T` expects non-readonly) |
 
-Все с machine-applicable suggestions.
+All come with machine-applicable suggestions.
 
-## Coercion (subtyping) для параметров
+## Coercion (subtyping) for parameters
 
-Поскольку `T` в позиции параметра **уже readonly** (Plan 108.1 default),
-большинство комбинаций — тождество.  Единственное нарушение:
+Since `T` in parameter position is **already readonly** (Plan 108.1
+default), most combinations are the identity. The one exception:
 `readonly → mut`.
 
 | caller-type → callee-param | OK? |
 |---|---|
-| `T` → `T` (param default readonly) | ✓ (сужение) |
+| `T` → `T` (param default readonly) | ✓ (narrowing) |
 | `T` → `readonly T` (param explicit readonly) | ✓ (synonym default) |
-| `T` → `mut T` (param explicit mut) | ✓ (caller разрешает mut) |
-| `readonly T` → `T` (param default readonly) | ✓ — оба readonly |
+| `T` → `mut T` (param explicit mut) | ✓ (caller allows mut) |
+| `readonly T` → `T` (param default readonly) | ✓ — both readonly |
 | `readonly T` → `readonly T` | ✓ |
 | `readonly T` → `mut T` (param explicit mut) | ✗ `E_READONLY_COERCE` |
-| `mut T` → `T` (param default readonly) | ✓ (сужение) |
+| `mut T` → `T` (param default readonly) | ✓ (narrowing) |
 | `mut T` → `mut T` | ✓ |
 
-## Receiver methods (методы)
+## Receiver methods
 
-Receiver mutability задаётся отдельно от обычных параметров:
+Receiver mutability is set separately from ordinary parameters:
 
 ```nova
 fn StringBuilder @len() -> int               // read-only receiver
@@ -105,10 +105,10 @@ fn StringBuilder mut @append(s str) -> @     // mut receiver
 fn StringBuilder consume @as_str() -> str    // consume receiver
 ```
 
-## Локальные let-bindings (Plan 108.2)
+## Local let-bindings (Plan 108.2)
 
-Внутри тела функции локальные binding'и подчиняются тому же правилу,
-что и параметры: **без `mut` — read-only**.
+Inside a function body, local bindings follow the same rule as
+parameters: **no `mut` — read-only**.
 
 ```nova
 ro arr = []
@@ -117,13 +117,13 @@ mut arr = []
 arr.push(1)                       // ✓
 ```
 
-`consume X = ...` неявно подразумевает `mut` (как `consume` param).
+`consume X = ...` implicitly implies `mut` (like a `consume` param).
 
-## Loop-var и pattern (Plan 108.3)
+## Loop-var and pattern (Plan 108.3)
 
 ### `for mut x in iter`
 
-Переменная цикла по умолчанию read-only.  Opt-in `mut`:
+The loop variable is read-only by default. Opt in with `mut`:
 
 ```nova
 for x in arrs { x.push(1) }       // ✗ E_LOCAL_NOT_MUT
@@ -134,7 +134,7 @@ for mut x in arrs { x.push(1) }   // ✓
 
 ### Pattern per-name mut
 
-При destructure `mut` ставится **на каждое имя отдельно** (Rust-style):
+During destructuring, `mut` is placed **on each name separately** (Rust-style):
 
 ```nova
 ro (a, b) = pair                  // оба immutable
@@ -143,15 +143,15 @@ ro (a, mut b) = pair              // a immutable, b mutable
 ro (mut a, mut b) = pair          // оба mutable
 ```
 
-**Запрет group-mut** — `let mut (a, b) = ...` parser-level отвергается
-(`E_PATTERN_GROUP_MUT`): `mut` keyword относится к одному имени,
-не к pattern целиком.
+**Group-mut is forbidden** — `let mut (a, b) = ...` is rejected at the
+parser level (`E_PATTERN_GROUP_MUT`): the `mut` keyword applies to one
+name, not to the whole pattern.
 
-## Ссылки
+## See also
 
 - `spec/decisions/02-types.md` D176 — formal spec params.
 - `spec/decisions/02-types.md` D36 + amend Plan 108.2/108.3 — formal spec locals + loop-var + pattern.
 - `docs/dev/migration/d176-param-readonly-default.md` — params migration guide.
 - `docs/dev/migration/d36-let-mut-enforcement.md` — locals migration guide.
 - D131 (Plan 73) — consume affine semantics.
-- D157 (Plan 100.3) — view-borrow для consume-типов.
+- D157 (Plan 100.3) — view-borrow for consume-types.
