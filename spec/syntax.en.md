@@ -1289,3 +1289,262 @@ special construct (D62). The return type is `[]User`, not
 
 `parallel for` — structured concurrency: waits for all, cancels the tail
 on error.
+
+## Capability mode
+
+```nova
+fn run_user_script(code str) Fail -> Result =>
+    forbid Net, Fs, Db {
+        eval(code)
+    }
+```
+
+Inside `forbid` the compiler will not let a call to a function with forbidden
+effects through. A sandbox in types, not in the runtime.
+
+## Performance — escape analysis and regions
+
+The programmer writes ordinary code:
+
+```nova
+fn hot_loop(data []f64) -> f64 =>
+    data.iter().sum()  // SIMD-авто, zero-alloc через escape analysis
+```
+
+The compiler decides itself: primitives — in registers, non-escaping
+objects — on the stack, everything else — in the managed heap. No manual
+references.
+
+For a real-time hot path — the attribute `#realtime nogc` on a function
+([D172 §7](decisions/06-concurrency.md#d172-realtimeblocking-sync-class-annotation-system-plan-1036);
+historically [D64](decisions/04-effects.md#d64)); no block form. In the body of such a
+function suspend operations and managed-heap allocations are forbidden.
+Arena allocations via `region { ... }` — a designed form
+([D6](decisions/05-memory.md#d6)), ⚠ not implemented in the current
+compiler.
+
+## Structural "interfaces" — `protocol`
+
+No `interface`/`trait`. A structural contract — a separate keyword
+**`protocol`**:
+
+```nova
+// именованный
+type Printable protocol {
+    show() -> str
+}
+
+fn log_one(x Printable) Log -> () => Log.info(x.show())
+
+// или прямо в сигнатуре, без имени — анонимный структурный тип
+fn log_one(x { show() -> str }) Log -> () => Log.info(x.show())
+```
+
+Compatibility is **automatic by structure** — any type with suitable methods
+automatically satisfies the protocol, no `impl`-blocks needed. `Self` is
+valid in any type-context (protocol-block, effect-block, instance-method,
+static-method, sum-variant) per [D66](decisions/02-types.md#d66):
+
+```nova
+type Hash protocol {
+    @hash() -> u64
+}
+
+type Next[T] protocol {
+    mut @next() -> Option[T]
+}
+```
+
+`type` — for **data** (record, sum-type, alias). `protocol` — for
+**behavior** (methods as a contract). Details — [D42](decisions/02-types.md#d42),
+[D9](decisions/01-philosophy.md#d9) / [D15](decisions/02-types.md#d15).
+
+## Generics
+
+```nova
+fn map[T, U](xs []T, f T -> U) -> []U =>
+    [f(x) for x in xs]
+
+// дженерик по эффектам — функция наследует эффекты `f`
+fn map_eff[T, U, E](xs []T, f (T) E -> U) E -> []U =>
+    [f(x) for x in xs]
+```
+
+Type parameters — after the name in square brackets `Name[T]`, not `<T>`.
+Details — [D16](decisions/03-syntax.md#d16).
+Arrays — `[]T` (dynamic), `[N]T` (fixed), [D27](decisions/03-syntax.md#d27).
+
+## Generic bounds — `[T Protocol]` or `[T TypeSet]`
+
+A type parameter is bounded via the unified "name type" rule (no colon) —
+two ways: **protocol** (structural, any type with suitable methods) or
+**type-set** (D310, below — a closed list of concrete types, a membership
+predicate, not structural):
+
+```nova
+fn dedup[T Hash](xs []T) -> []T => ...
+fn map[K Hash, V](m HashMap[K, V]) -> ...
+fn fold[T, Acc](xs Iter[T], init Acc, f fn(Acc, T) -> Acc) -> Acc
+```
+
+A bound is a **protocol-type** ([D53](decisions/02-types.md#d53)). The same
+`Hash` stands both in a value type position (existential) and in a bound
+(universal via monomorphization):
+
+```nova
+fn dump(x Hash) -> u64 => x.hash()        // existential, dynamic dispatch
+fn dump2[T Hash](x T) -> u64 => x.hash()  // universal, mono dispatch
+```
+
+**Parameter order — left to right.** A name in a bound must be
+declared earlier:
+
+```nova
+fn get[K, V, C Index[K, V]](c C, k K) -> V => c[k]   // ok: K, V объявлены первыми
+fn get[C Index[K, V], K, V](c C, k K) -> V           // ОШИБКА: K, V используются до объявления
+```
+
+**Multiple bounds** — via an anonymous protocol:
+
+```nova
+fn min[T protocol { @compare(other Self) -> int, @equal(other Self) -> bool }](xs []T) -> T
+```
+
+If the pattern repeats — extracted into a named protocol (`type Ord
+protocol { ... }`).
+
+### Type-set — a bound by membership, not by structure
+
+**Type-set** — the fourth kind-form of `type` (along with newtype/alias/
+record-tuple/`enum`, D310): a named set of **concrete** types listed
+explicitly. Unlike a protocol (any type with suitable methods satisfies
+structurally), a type-set is a closed list — only the explicitly listed
+members pass:
+
+```nova
+// inline — | разделяет члены, перед первым не нужен
+type Num set int | f64
+
+// многострочный — | обязателен у каждого члена, включая первый
+type AnyNumber set
+    | i8 | i16 | i32 | i64 | int
+    | u8 | u16 | u32 | u64 | uint
+
+fn[T Num] sum_two(a T, b T) -> T => a + b
+```
+
+Dispatch by the first token after `type Name` (like `enum`/`alias`) — `set`
+is contextual, not a global keyword. A bound from a type-set behaves like a
+protocol-bound: `[T Num]`. Composition with protocols — via `+`: `[T
+SignedInt + Hash]` (T ∈ set AND implements Hash). **No more than one
+type-set** in the bounds list (`E_MULTIPLE_TYPE_SETS`) — protocols
+are allowed in any amount.
+
+**Members — only concrete types**, listed by identity:
+a newtype `type MyI8 i8` does not enter `{i8}` automatically — an explicit
+listing is needed (`E_TYPE_SET_MEMBER_NOT_CONCRETE` for protocol/effect/another
+type-set as a member). **One set does not mix signed/unsigned integers**
+(`E_TYPE_SET_MIXED_SIGNEDNESS`) — the ready-made `SignedInt`/`UnsignedInt`
+in the prelude (`std/prelude/protocols.nv`) are split along this axis.
+
+Details — [D72](decisions/02-types.md#d72), [D310](decisions/02-types.md#d310-type-set-bounds-plan-1723).
+
+## Conversions: `as` and `T.from(v)`
+
+Two conversion ways for different scenarios. `from` — the name-convention
+of a conversion-constructor (not a protocol-bound); a universal `v.into()`
+(Rust-style, target type from context) does not exist in Nova:
+
+```nova
+// 1. as — compile-time, тривиальные cast'ы (D54)
+ro n = 100 as u32                          // numeric
+ro u = 42 as UserId                         // newtype ↔ underlying
+ro code = NotFound as int                   // sum → int
+
+// 2. T.from(v) — конвенция конструктора-конверсии, нетривиальная
+//    конверсия с runtime-логикой (D73)
+type Celsius f64
+type Fahrenheit f64
+
+fn Fahrenheit.from(c Celsius) -> Self =>
+    Self((c as f64) * 9.0 / 5.0 + 32.0)
+
+ro f1 = Fahrenheit.from(Celsius(100.0))    // static, единственная форма вызова
+
+// Конверсия в строку — частный случай, тот же `from`:
+ro s = str.from(42)                         // "42"
+ro msg = "id=${user_id}"                    // sugar над str.from(user_id) —
+                                              // для пользовательских типов
+                                              // через Display/@display
+```
+
+**Which form when:**
+
+- **`T.from(v)`** — the target type at the start, reads "build a Fahrenheit
+  from this Celsius". The only call form of a conversion — a parallel
+  instance form (`v.into()`) does not exist.
+- For method-chains — specific named methods `to_X()`/`into_X()`
+  (see "Contract conventions" above), not a generic conversion by the
+  target type.
+
+**The `as` vs `T.from` boundary:**
+
+- `as` — bit/tag-level, without runtime code: `100 as u32`, `id as u64`.
+- `T.from` — arithmetic, parsing, validation: `Fahrenheit.from(c)`,
+  `User.from(json)`.
+
+**The D73 vs D55 boundary:** D55 — automatic coercion for record/sum-literals
+in a position with a known type (`ro u User = { id: 1, name: "x" }`).
+`T.from(v)` — an explicit method call for arbitrary types.
+
+Details: [D54](decisions/03-syntax.md#d54), [D73](decisions/08-runtime.md#d73).
+
+## spawn / supervised / parallel for / detach
+
+See [D14](decisions/06-concurrency.md#d14), [D50](decisions/06-concurrency.md#d50),
+[D71](decisions/06-concurrency.md#d71).
+
+### `spawn expr`
+
+`spawn` is a keyword construct (not a function). Per the D50 spec — allowed
+only inside a structured-scope (`supervised`, incl. `supervised(cancel:)`,
+`parallel for`, `select`; and the stdlib `race`/`with_timeout` inside their
+bodies); outside a scope — a compile error.
+
+Inside a scope `spawn` puts a fiber into a queue and returns unit; the
+result of the work — via captured `mut`-variables or channels. `spawn() { body }`
+with empty parentheses is **forbidden** (no point; `spawn` is not a function).
+
+```nova
+supervised {
+    spawn fetch_users()           // spawn + вызов функции
+    spawn { compute(x) }          // spawn + inline-блок
+}
+```
+
+#### Result type
+
+**`spawn body` returns unit, always** (D50 + D71).
+The body's result is not available to the caller. To get a value from a
+concurrent execution:
+
+```nova
+// (1) прямой вызов — async прозрачный, suspension сама
+ro users = fetch_users()
+
+// (2) гомогенный fan-out — массив результатов
+ro responses = parallel for url in urls { fetch(url) }
+
+// (3) гетерогенная параллельность — mut-захваты
+mut a = 0; mut b = 0
+supervised {
+    spawn { a = compute_a() }
+    spawn { b = compute_b() }
+}
+```
+
+**`spawn` outside a scope = compile error**: a bare `spawn` outside a
+structured-scope does not compile. (Additionally: `spawn` always
+returns unit, so `ro r = spawn { ... }` is pointless.)
+
+### `supervised { body }`
