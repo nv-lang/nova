@@ -1,14 +1,14 @@
-# Система времени в Nova — `Time`-эффект, `Duration`/`Timestamp`/`Monotonic`
+# Nova's time system — the `Time` effect, `Duration`/`Timestamp`/`Monotonic`
 
 **English** | [Русский](time.ru.md)
 
-> Plan 175 (time-system-rework). Гражданское (календарное) время — отдельный
-> документ [`datetime.md`](datetime.md) (Plan 175.1, `std/time/civil`).
+> Plan 175 (time-system-rework). Civil (calendar) time is a separate
+> document — [`datetime.md`](datetime.md) (Plan 175.1, `std/time/civil`).
 
-## Модель
+## Model
 
-`Time` — **внутренний плумбинг-эффект** (как `TcpNet`/`AddrNet`, `std/net/effect.nv`):
-пользовательский код НЕ вызывает его напрямую, а ходит через типы и свободные функции:
+`Time` is an **internal plumbing effect** (like `TcpNet`/`AddrNet`, `std/net/effect.nv`):
+user code does NOT call it directly — it goes through types and free functions instead:
 
 ```nova
 import std.time.duration
@@ -21,16 +21,16 @@ with Time = th.mut_clock(0 as u64) {   // подмена часов в тест�
 }
 ```
 
-Три типа, три роли (не смешиваются — D124 разделяет их на уровне типов):
+Three types, three roles (never mixed — D124 separates them at the type level):
 
-| Тип | Роль | Источник | Идёт назад? | Сериализуется? |
+| Type | Role | Source | Can go backward? | Serializable? |
 |---|---|---|---|---|
-| `Timestamp` | wall-clock, Unix epoch ns | `gettimeofday`/`GetSystemTimeAsFileTime` | да (NTP/DST) | да |
-| `Monotonic` | процесс-локальный монотонный момент | `CLOCK_MONOTONIC`/QPC (`uv_hrtime`) | никогда (saturate-to-zero при кажущемся регрессе) | **нет** (opaque, process-local) |
-| `Duration` | длительность, знаковая, ±292 года | — (чистая арифметика) | — | да |
+| `Timestamp` | wall-clock, Unix epoch ns | `gettimeofday`/`GetSystemTimeAsFileTime` | yes (NTP/DST) | yes |
+| `Monotonic` | process-local monotonic instant | `CLOCK_MONOTONIC`/QPC (`uv_hrtime`) | never (saturates to zero on an apparent regression) | **no** (opaque, process-local) |
+| `Duration` | duration, signed, ±292 years | — (pure arithmetic) | — | yes |
 
-Схема эффекта (внутренняя, `std/prelude/effects.nv` — единый источник, codegen читает
-из `.nv`, не хардкодит):
+The effect's schema (internal, `std/prelude/effects.nv` is the single source — codegen
+reads it from the `.nv` file, it doesn't hardcode it):
 
 ```nova
 export type Time effect {
@@ -41,44 +41,44 @@ export type Time effect {
 }
 ```
 
-`local_offset_sec()` (Plan 175.1, D316 amend + D321, 2026-07-10) — системный
-UTC-сдвиг ТЕКУЩЕЙ локальной зоны машины, в секундах (owner decision: системная
-зона ДОЛЖНА быть доступна). Nova-сахар: `Offset.local()`
+`local_offset_sec()` (Plan 175.1, D316 amend + D321, 2026-07-10) — the system
+UTC offset of the machine's CURRENT local zone, in seconds (owner decision: the
+system zone MUST be available). Nova sugar: `Offset.local()`
 (`std/time/civil/offset.nv`) — closes `[M-175.1-local-offset-effect-op]`.
-Только числовой сдвиг — зона в `ZonedDateTime` остаётся ЯВНОЙ (D319 R1),
-никакого implicit-fallback на «локальную зону».
+Only a numeric offset — the zone in `ZonedDateTime` stays EXPLICIT (D319 R1),
+no implicit fallback to "the local zone".
 
-**Wire остаётся int** (см. «Ф.2 — почему typed-wire не отгружен» ниже) — весь
-user-facing surface, тем не менее, **полностью typed** и **полностью мокабелен**,
-включая `Monotonic` (Plan 175 Ф.3a).
+**The wire stays int** (see "Ф.2 — why the typed effect wire wasn't shipped" below) —
+the entire user-facing surface is, nonetheless, **fully typed** and **fully
+mockable**, including `Monotonic` (Plan 175 Ф.3a).
 
-## Было → стало
+## Before → after
 
-| Операция | Было (до Plan 175) | Стало |
+| Operation | Before (pre–Plan 175) | After |
 |---|---|---|
-| wall-clock read | `Time.now() -> int` (schema/runtime mismatch — `[M-time-now-schema-mismatch]`) | `Timestamp.now()` (typed сахар над int-wire `Time.now_unix_ms()`) |
-| monotonic read | compiler-builtin, 4 хардкод-сайта в `emit_c.rs`, немокабелен | `Monotonic.now()` — обычная `.nv`-функция, мокабельна через `with Time = handler {...}` |
-| sleep | `Time.sleep(ms int)` голый ms | эффект (int-wire) + free `sleep(d Duration)`/`sleep_until(deadline Monotonic)` |
-| `now_ms`/`now_ns` | vtable+handler-only рудимент | не существуют (были только int-wire артефактом) |
-| 5 timer-счётчиков | внутри `Time` | вынесены в отдельный read-only `TimerMetrics` |
-| единица | ms/ns дрейф между источниками | ns канон (storage); имена опов несут единицу (`now_unix_ms`/`now_monotonic_ns`) |
-| overflow | молчаливый two's-complement wrap на ±292 годах | trap-on-overflow (debug И release) + `checked_*`/`saturating_*` (D317) |
-| `m2 - m1` | не было typed API | `@minus(Monotonic)`/`elapsed_since` — saturate-to-zero (D318) |
-| `@display` | `"μs"` (U+03BC, не ASCII) в `@into()` | ASCII `"us"`; byte-exact `@display`/`@debug` (D237) на всех трёх типах |
-| elapsed-measurement | `measure[T]` мерил через `Timestamp.now()` (wall-clock — NTP/DST skew уязвимость) | `Monotonic.now()` (иммунно к wall-clock skew) |
+| wall-clock read | `Time.now() -> int` (schema/runtime mismatch — `[M-time-now-schema-mismatch]`) | `Timestamp.now()` (typed sugar over the int wire `Time.now_unix_ms()`) |
+| monotonic read | compiler-builtin, 4 hardcoded sites in `emit_c.rs`, not mockable | `Monotonic.now()` — an ordinary `.nv` function, mockable via `with Time = handler {...}` |
+| sleep | `Time.sleep(ms int)`, bare ms | effect (int wire) + free `sleep(d Duration)`/`sleep_until(deadline Monotonic)` |
+| `now_ms`/`now_ns` | vtable+handler-only leftover | don't exist (were only an int-wire artifact) |
+| 5 timer counters | inside `Time` | moved out into a separate read-only `TimerMetrics` |
+| unit | ms/ns drift between sources | ns is canon (storage); op names carry the unit (`now_unix_ms`/`now_monotonic_ns`) |
+| overflow | silent two's-complement wrap at ±292 years | trap-on-overflow (debug AND release) + `checked_*`/`saturating_*` (D317) |
+| `m2 - m1` | no typed API | `@minus(Monotonic)`/`elapsed_since` — saturates to zero (D318) |
+| `@display` | `"μs"` (U+03BC, non-ASCII) in `@into()` | ASCII `"us"`; byte-exact `@display`/`@debug` (D237) across all three types |
+| elapsed measurement | `measure[T]` measured via `Timestamp.now()` (wall-clock — vulnerable to NTP/DST skew) | `Monotonic.now()` (immune to wall-clock skew) |
 
-## Overflow-политика (D317) — 3-tier дисциплина
+## Overflow policy (D317) — a 3-tier discipline
 
-1. **Операторы траппят.** `+`/`-`/унарный `-`/`*`/`/` на `Duration` — panic на overflow,
-   **в debug И release** (никогда silent wrap — Go-ловушка; никогда build-mode-
-   зависимость — Zig `ReleaseFast`-UB антипример).
+1. **Operators trap.** `+`/`-`/unary `-`/`*`/`/` on `Duration` — panic on overflow,
+   **in debug AND release** (never a silent wrap — the Go trap; never a build-mode
+   dependency — the Zig `ReleaseFast`-UB anti-example).
 2. **`checked_*` → `Option[T]`.** `checked_add`/`checked_sub`/`checked_mul`/`checked_div`
    (Duration); `checked_add`/`checked_sub` (Timestamp); `checked_duration_since` (Monotonic).
-3. **`saturating_*` → clamp** к ±(2⁶³−1) ns (≈±292 года).
+3. **`saturating_*` → clamp** to ±(2⁶³−1) ns (≈±292 years).
 
-`Timestamp` дополнительно ограничена **окном 1677-09-21 .. 2262-04-11** (i64 ns вокруг
-Unix epoch) — `checked_add`/`checked_sub` возвращают `None` за пределами, голый
-`@plus`/`@minus` — saturate (никогда wrap обратно в 1677).
+`Timestamp` is additionally bounded to a **window of 1677-09-21 .. 2262-04-11** (i64 ns
+around the Unix epoch) — `checked_add`/`checked_sub` return `None` outside it, while the
+bare `@plus`/`@minus` saturates (never wraps back to 1677).
 
 ```nova
 ro d = Duration.from_nanos(i64_max())
@@ -87,46 +87,50 @@ d.saturating_add(1.seconds()) // → clamp к i64_max()
 d + 1.nanos()                 // → trap (оператор — default-safe)
 ```
 
-## Monotonic: non-regression + clock-source (D318)
+## Monotonic: non-regression + clock source (D318)
 
-- **Non-regression:** `@minus(Monotonic)`/`elapsed_since` **saturate-to-zero** при
-  кажущемся регрессе (HW/VM/OS-баг, ср. JDK-6458294) — никогда negative, никогда
-  panic, **без global-lock** (урок Rust 1.60-saga — Rust один раз запаниковал на
-  таком регрессе, потом откатил на saturate; Nova фиксирует saturate сразу и
-  навсегда, не флип-флопит).
-- **Clock-source (per-OS):** Linux `CLOCK_MONOTONIC` / macOS `mach_absolute_time` /
-  Windows QueryPerformanceCounter (через `uv_hrtime()`). Гарантия — **только**
-  монотонность + non-regression; **suspend-inclusion НЕ гарантируется** (сон
-  устройства — unspecified-but-monotonic). `ContinuousClock`-аналог (BOOTTIME)
-  не введён — `[M-monotonic-boottime]`, при появлении use-case.
-- **Opaque by contract** — нет `Monotonic.from_*` (как Rust `Instant`): единственный
-  способ получить `Monotonic` — `Monotonic.now()` или арифметика над существующим
-  значением. Это защищает от фабрикации фейковых монотонных моментов и — важное
-  архитектурное следствие — является причиной, почему typed-эффект-wire (см. ниже)
-  архитектурно дороже, чем кажется на первый взгляд.
-- **Non-serializable** — `Monotonic` НЕ имеет `#impl(Serialize)` (verified,
-  `spec_tests/conformance/neg/d316_monotonic_non_serializable_neg.nv`): process-local
-  значение, бессмысленное вне процесса (антипаттерн Go, где `Time.String()` может
-  утечь `m=…` monotonic-компонент в лог).
+- **Non-regression:** `@minus(Monotonic)`/`elapsed_since` **saturate to zero** on an
+  apparent regression (an HW/VM/OS bug, cf. JDK-6458294) — never negative, never
+  a panic, **with no global lock** (the lesson of the Rust 1.60 saga — Rust once
+  panicked on such a regression, then rolled back to saturate; Nova commits to
+  saturate immediately and permanently, no flip-flopping).
+- **Clock source (per OS):** Linux `CLOCK_MONOTONIC` / macOS `mach_absolute_time` /
+  Windows QueryPerformanceCounter (via `uv_hrtime()`). The guarantee is **only**
+  monotonicity + non-regression; **suspend-inclusion is NOT guaranteed** (device
+  sleep is unspecified-but-monotonic). A `ContinuousClock` analog (BOOTTIME)
+  hasn't been introduced — `[M-monotonic-boottime]`, pending a use case.
+- **Opaque by contract** — there is no `Monotonic.from_*` (like Rust's `Instant`):
+  the only way to obtain a `Monotonic` is `Monotonic.now()` or arithmetic over an
+  existing value. This guards against fabricating fake monotonic instants and — an
+  important architectural consequence — is the reason the typed effect wire (see
+  below) is architecturally more expensive than it looks at first glance.
+- **Non-serializable** — `Monotonic` has NO `#impl(Serialize)` (verified,
+  `spec_tests/conformance/neg/d316_monotonic_non_serializable_neg.nv`): it's a
+  process-local value, meaningless outside the process (the Go anti-pattern, where
+  `Time.String()` can leak an `m=…` monotonic component into a log).
 
-## Sleep-семантика (Ф.4)
+## Sleep semantics (Ф.4)
 
-- `sleep(d)`/`Duration.@sleep()` — `d <= 0` резолвится **немедленно** (Go/tokio
-  parity), никогда не паникует на нулевой/отрицательной длительности.
-- Гарантия — **«спит НЕ МЕНЬШЕ `d`»**, granularity — libuv timer wheel (~1ms).
-- `sleep_until(deadline Monotonic)` — MVP-обёртка `sleep(deadline.elapsed_since(now))`;
-  дедлайн уже в прошлом → saturate-to-zero → немедленно. Drift-free true re-arm
-  timer — future work (Plan 66).
-- Сигнатура future-proof под опциональный `tolerance` (Swift `sleep(until:tolerance:)`
-  паритет — энергоэффективность/coalescing) — `[M-sleep-tolerance]`, не введён.
-- `sleep_until` принимает **только** `Monotonic` — `sleep_until(Timestamp)` не
-  вводится (wall-clock дедлайн иммунен к NTP только через monotonic; явная
-  wall-alternative — `sleep(ts.time_until())`, footgun виден на call-site).
+- `sleep(d)`/`Duration.@sleep()` — `d <= 0` resolves **immediately** (Go/tokio
+  parity), never panics on a zero/negative duration.
+- The guarantee is **"sleeps NO LESS than `d`"**, granularity is the libuv timer
+  wheel (~1ms).
+- `sleep_until(deadline Monotonic)` — an MVP wrapper over
+  `sleep(deadline.elapsed_since(now))`; a deadline already in the past → saturate
+  to zero → immediate. A drift-free true re-arm timer is future work (Plan 66).
+- The signature is future-proofed for an optional `tolerance` (Swift
+  `sleep(until:tolerance:)` parity — energy efficiency/coalescing) —
+  `[M-sleep-tolerance]`, not introduced yet.
+- `sleep_until` accepts **only** `Monotonic` — `sleep_until(Timestamp)` is not
+  introduced (a wall-clock deadline is immune to NTP only via monotonic; the
+  explicit wall alternative is `sleep(ts.time_until())`, the footgun is visible at
+  the call site).
 
-## Мокабельность (AI-first testing)
+## Mockability (AI-first testing)
 
-Один handler двигает **и** wall, **и** monotonic **и** sleep когерентно (Ред.2 Q14 —
-Swift `TestClock`-паритет, но БЕЗ вирального generic-параметра на каждой сигнатуре):
+One handler moves **both** the wall clock, the monotonic clock, **and** sleep
+coherently (Rev.2 Q14 — Swift `TestClock` parity, but WITHOUT a viral generic
+parameter on every signature):
 
 ```nova
 import std.testing.handlers as th
@@ -141,24 +145,25 @@ test "rate limiter refills after 1s" {
 }
 ```
 
-`fixed_ms(ms)` — часы замерли (детерминированные timestamps, `sleep` — no-op).
-`mut_clock(start_ms)` — виртуальные часы, `sleep`/`Time.sleep` продвигают их без
-реального ожидания.
+`fixed_ms(ms)` — the clock is frozen (deterministic timestamps, `sleep` is a
+no-op). `mut_clock(start_ms)` — a virtual clock; `sleep`/`Time.sleep` advance it
+without any real waiting.
 
 **Auto-idle-advance (Plan 175, owner TODO closure, 2026-07-10):** tokio
-`time::pause()` / Kotlin `TestCoroutineScheduler.advanceUntilIdle()`-паритет —
-конкурентные `spawn`-фибры под ОДНИМ `mut_clock` больше не требуют явного
-`sleep()`-вызова на каждый шаг. Каждый `sleep(ms)` вычисляет свой АБСОЛЮТНЫЙ
-дедлайн (`current_ms + ms`, до парковки) и паркует вызывающий фибр
-(`vclock.park_until`, `nova_vclock_park_until` в nova_rt/fibers.h) в per-scope
-registry; когда ВСЕ живые фибры scope'а виртуально запаркованы (idle — реальной
-работы не осталось), просыпается ближайший по дедлайну (может быть другой
-фибр) — часы продвигаются `current_ms = max(current_ms, deadline)` (не `+=`,
-чтобы не задвоить вклад уже сработавших siblings). Плоский sequential-поток
-(нет фибра вообще) резолвится немедленно — ПОВЕДЕНИЕ НЕ ИЗМЕНИЛОСЬ для
-overwhelmingly common случая. Тесты — `std/testing/handlers.nv` (tokio-style
-`sleep(10_000)` мгновенно; три конкурентных `sleep` с разной длиной будятся
-в порядке дедлайна, не spawn-порядка; финальные часы = max, не сумма).
+`time::pause()` / Kotlin `TestCoroutineScheduler.advanceUntilIdle()` parity —
+concurrent `spawn` fibers under ONE `mut_clock` no longer need an explicit
+`sleep()` call at every step. Each `sleep(ms)` computes its own ABSOLUTE deadline
+(`current_ms + ms`, before parking) and parks the calling fiber
+(`vclock.park_until`, `nova_vclock_park_until` in nova_rt/fibers.h) in a per-scope
+registry; once ALL live fibers of the scope are virtually parked (idle — no real
+work left), the one with the nearest deadline wakes up (it can be a different
+fiber) — the clock advances by `current_ms = max(current_ms, deadline)` (not
+`+=`, so the contribution of already-fired siblings isn't double-counted). A flat
+sequential flow (no fiber at all) still resolves immediately — BEHAVIOR IS
+UNCHANGED for the overwhelmingly common case. Tests — `std/testing/handlers.nv`
+(tokio-style `sleep(10_000)` is instant; three concurrent `sleep`s of different
+lengths wake in deadline order, not spawn order; the final clock is the max, not
+the sum).
 
 ```nova
 test "конкурентные sleep будятся в порядке дедлайна" {
@@ -172,88 +177,92 @@ test "конкурентные sleep будятся в порядке дедла
 }
 ```
 
-**M:N-контракт:** default (real-clock) handler stateless/thread-safe. `mut_clock`
-**stateful** (мутирует захваченную `current_ms`; auto-idle-advance добавляет
-non-atomic per-scope registry поверх) — под concurrent `spawn`/`parallel for`
-нужен `NOVA_MAXPROCS=1` (детерминизм гонки записи в handler-state — см.
-[[reference-mn-race-case-study]]).
+**M:N contract:** the default (real-clock) handler is stateless/thread-safe.
+`mut_clock` is **stateful** (it mutates a captured `current_ms`; auto-idle-advance
+adds a non-atomic per-scope registry on top) — under concurrent
+`spawn`/`parallel for` it needs `NOVA_MAXPROCS=1` (determinism for the
+handler-state write race — see [[reference-mn-race-case-study]]).
 
-**`[M-175-vclock-armed-mn-scope-identity]` (задокументированное сужение):**
-deadline-order гарантия auto-idle-advance проверена и держит под кооперативным
-spawn-путём (`NOVA_MAXPROCS=1` + `NOVA_AUTOARM=0` — cooperative/local
-`nova_fiber_spawn_into`, где `_nova_active_scope` внутри фибра — ОБЩИЙ scope
-всего `supervised{}`-блока). Под ДЕФОЛТНЫМ armed M:N runtime (auto-arm на
-первом `spawn`) `_nova_active_scope` внутри фибра — это WORKER'а СОБСТВЕННЫЙ
-`w->scope` (`_worker_run_one_fiber`), не общий scope siblings — registry не
-шарится корректно между siblings, механизм деградирует БЕЗОПАСНО (каждый
-virtual sleep всё равно резолвится, без hang/crash), но БЕЗ гарантии порядка
-по дедлайну (вместо этого — spawn-порядок, старое поведение). Починка общего
-M:N-случая требует другого якоря (например резолв через
-`NovaSpawnCtxBase._nova_parent_scope`) — вне периметра этого захода.
+**`[M-175-vclock-armed-mn-scope-identity]` (documented narrowing):** the
+deadline-order guarantee of auto-idle-advance is verified and holds under the
+cooperative spawn path (`NOVA_MAXPROCS=1` + `NOVA_AUTOARM=0` — cooperative/local
+`nova_fiber_spawn_into`, where `_nova_active_scope` inside a fiber is the SHARED
+scope of the whole `supervised{}` block). Under the DEFAULT armed M:N runtime
+(auto-arm on the first `spawn`), `_nova_active_scope` inside a fiber is the
+WORKER's OWN `w->scope` (`_worker_run_one_fiber`), not the siblings' shared scope
+— the registry isn't shared correctly across siblings, so the mechanism degrades
+SAFELY (every virtual sleep still resolves, no hang/crash) but WITHOUT the
+deadline-order guarantee (spawn order instead — the old behavior). Fixing the
+general M:N case needs a different anchor (e.g. resolving via
+`NovaSpawnCtxBase._nova_parent_scope`) — out of scope for this pass.
 
-## Ф.2 — почему typed effect-wire не отгружен (архитектурная находка)
+## Ф.2 — why the typed effect wire wasn't shipped (an architectural finding)
 
-Исходный план предполагал ретаксацию int-wire на полностью typed схему
-(`timestamp() -> Timestamp`/`monotonic() -> Monotonic`/`sleep(d Duration)` — прямо
-в декларации эффекта). Четыре захода (включая этот) показали: prelude⟷std.time
-coupling решаем (перенос декларации `Time` в `std.time`, рядом с типами), но
-упирается в **более глубокий** барьер — mock-handler обязан **сконструировать**
-typed `Monotonic`-значение внутри тела handler'а, а (a) `Monotonic` намеренно
-opaque (нет публичного конструктора) и (b) codegen handler-литералов не
-поддерживает anonymous record-literal. Экспонировать internal-конструктор
-специально для test-handler'ов подрывает opacity-контракт (тот же конструктор
-виден и обычному юзер-коду).
+The original plan called for re-taxing the int wire onto a fully typed scheme
+(`timestamp() -> Timestamp`/`monotonic() -> Monotonic`/`sleep(d Duration)` —
+directly in the effect declaration). Four attempts (including this one) showed:
+the prelude⟷std.time coupling is solvable (moving the `Time` declaration into
+`std.time`, next to the types), but it runs into a **deeper** barrier — a mock
+handler must **construct** a typed `Monotonic` value inside the handler body, and
+(a) `Monotonic` is deliberately opaque (no public constructor) and (b)
+handler-literal codegen doesn't support an anonymous record literal. Exposing an
+internal constructor specifically for test handlers would undermine the opacity
+contract (the same constructor would be visible to ordinary user code too).
 
-**Вывод:** отгруженная архитектура — typed `.nv`-сахар ПОВЕРХ int-wire эффекта
-(`Timestamp.now()`/`Monotonic.now()`/free `sleep`/`sleep_until`) — не временный
-compromise, а корректное итоговое решение при текущих возможностях компилятора:
-typed-обёртка живёт в родном модуле типа (где anonymous record-literal —
-обычный function body, не handler-литерал), поэтому opacity и codegen-ограничение
-не конфликтуют. `[M-time-now-schema-mismatch]` закрыт **частично по конструкции**
-(user-surface полностью typed и мокабелен; wire — int).
+**Conclusion:** the shipped architecture — typed `.nv` sugar ON TOP of the
+int-wire effect (`Timestamp.now()`/`Monotonic.now()`/free `sleep`/`sleep_until`)
+— is not a temporary compromise but the correct final answer given the
+compiler's current capabilities: the typed wrapper lives in the type's own
+module (where an anonymous record literal is an ordinary function body, not a
+handler literal), so opacity and the codegen limitation don't conflict.
+`[M-time-now-schema-mismatch]` is closed **partially by construction** (the
+user-facing surface is fully typed and mockable; the wire is int).
 
-**UPD 2026-07-10 (волна handler-annot):** codegen-ограничение (b) — anonymous
-record-literal в handler-теле — **снято** (единый канал типовой разметки подведён
-к эмиссии оп-тел; см. D316-amend UPD в `spec/decisions/04-effects.md` и матрицу
-`nova_tests/plan175_handler_annot/repro_matrix.nv`). На архитектуру `Time` это
-НЕ влияет: барьер (a) — намеренная opacity `Monotonic` — самодостаточен, option C
-(int-wire + typed-сахар) остаётся итоговым решением владельца; провод `Time`
-не менялся.
+**UPD 2026-07-10 (handler-annot wave):** codegen limitation (b) — an anonymous
+record literal in a handler body — has been **lifted** (a single typing channel
+now feeds op-body emission; see the D316-amend UPD in
+`spec/decisions/04-effects.md` and the matrix
+`nova_tests/plan175_handler_annot/repro_matrix.nv`). This does NOT affect
+`Time`'s architecture: barrier (a) — `Monotonic`'s deliberate opacity — is
+self-sufficient on its own; option C (int wire + typed sugar) remains the
+owner's final decision; the `Time` wire was not changed.
 
-## Nova vs 7 языков
+## Nova vs. 7 languages
 
 | | Go | Rust | TypeScript/JS | Kotlin | Java | Zig | Swift | **Nova** |
 |---|---|---|---|---|---|---|---|---|
-| wall vs monotonic — раздельные типы | нет (один `Time`, mode-bit) | да (`SystemTime`/`Instant`) | нет (`Date`/`performance.now()` — оба голые числа) | нет (`Clock`/`TimeSource`/`TestCoroutineScheduler` — ТРИ несвязанных) | частично (`Instant`/`nanoTime()` — `long`, не тип) | нет (голые `i64`/`i128`) | да (сильнее всех — ДВА разных monotonic: `ContinuousClock`/`SuspendingClock`) | да (D124) |
-| clock injection / mock | monkey-patch/`synctest`-bubble | нет std (crates) | `@sinonjs/fake-timers` (monkey-patch) | `Clock`-DI виральна, молча падает на real-clock если забыли пробросить | DI виральна | **нет вообще** | `Clock`-протокол, `TestClock`, но виральна (`<C: Clock>` через все сигнатуры) | **handler лексически скоупнут, ambient, не вирусит сигнатуры** (D11/D61) |
-| `now()` fallibility | infallible | infallible | infallible | infallible | infallible | **error-union** (честно про платформы без monotonic) | infallible | infallible-by-contract (tier-1 libuv; Q15) |
-| overflow policy | **silent wrap** (антипаттерн) | trap (panic) | float precision loss | JVM `long` wrap | JVM `long` wrap | **UB в ReleaseFast** (build-mode-зависимо) | trap (integer-арифметика трапает всегда) | trap (debug И release) + `checked_*`/`saturating_*` |
-| instant width | `int64` ns (монотонный компонент) | `i64`+`u32` (сек+наносек) | `f64` ms (float!) | `Long` ns | `long` ns | **`i128`** (нет 2262-горизонта) | `Int128`-подобная (atto-эпоха, широкая) | `i64` ns, **±292y, документированная граница** (Q11/Q16) |
-| `sleep`/`sleep_until` typed | голый `time.Duration`(int64) | typed (`Duration`) | голый ms (`number`) | typed | typed | голый `u64 ns` (footgun) | typed, **+`tolerance`** (уникально) | typed, `tolerance` — future (`[M-sleep-tolerance]`) |
-| `sleep_until` clock | wall (`time.Time`) | оба (`Instant`/`SystemTime`) | нет прямого аналога | оба | wall (`parkUntil`, JDK-8146730 — баг!) | нет | оба (`Clock.sleep(until:)`) | **только Monotonic** (запрещает wall-based sleep_until типобезопасно) |
+| wall vs. monotonic — separate types | no (one `Time`, a mode bit) | yes (`SystemTime`/`Instant`) | no (`Date`/`performance.now()` — both bare numbers) | no (`Clock`/`TimeSource`/`TestCoroutineScheduler` — THREE unrelated ones) | partial (`Instant`/`nanoTime()` — a `long`, not a type) | no (bare `i64`/`i128`) | yes (strongest of all — TWO distinct monotonic clocks: `ContinuousClock`/`SuspendingClock`) | yes (D124) |
+| clock injection / mock | monkey-patch/`synctest`-bubble | no std (crates) | `@sinonjs/fake-timers` (monkey-patch) | `Clock` DI is viral, silently falls back to the real clock if you forget to thread it through | DI is viral | **none at all** | a `Clock` protocol, `TestClock`, but viral (`<C: Clock>` through every signature) | **the handler is lexically scoped, ambient, doesn't infect signatures** (D11/D61) |
+| `now()` fallibility | infallible | infallible | infallible | infallible | infallible | **error-union** (honest about platforms with no monotonic clock) | infallible | infallible-by-contract (tier-1 libuv; Q15) |
+| overflow policy | **silent wrap** (anti-pattern) | trap (panic) | float precision loss | JVM `long` wrap | JVM `long` wrap | **UB in ReleaseFast** (build-mode dependent) | trap (integer arithmetic always traps) | trap (debug AND release) + `checked_*`/`saturating_*` |
+| instant width | `int64` ns (monotonic component) | `i64`+`u32` (sec+nanosec) | `f64` ms (float!) | `Long` ns | `long` ns | **`i128`** (no 2262 horizon) | `Int128`-like (atto-epoch, wide) | `i64` ns, **±292y, a documented boundary** (Q11/Q16) |
+| `sleep`/`sleep_until` typed | bare `time.Duration` (int64) | typed (`Duration`) | bare ms (`number`) | typed | typed | bare `u64 ns` (footgun) | typed, **+`tolerance`** (unique) | typed, `tolerance` — future (`[M-sleep-tolerance]`) |
+| `sleep_until` clock | wall (`time.Time`) | both (`Instant`/`SystemTime`) | no direct analog | both | wall (`parkUntil`, JDK-8146730 — a bug!) | none | both (`Clock.sleep(until:)`) | **Monotonic only** (type-safely forbids a wall-based sleep_until) |
 
-## Footguns, задокументированные явно
+## Footguns, explicitly documented
 
-- **`sleep(100)` — компиляция ошибка** (нет implicit int→Duration): анти-Zig-footgun
-  (`sleep_bare_int_neg`).
-- **`sleep_until(Timestamp)` — компиляция ошибка** (E7301 type-mismatch): дедлайн
-  через wall-clock иммунен к NTP только явно (`sleep(ts.time_until())`).
-- **`Monotonic ± Timestamp` — компиляция ошибка** (нет overload): смешивание
-  доменов часов невыразимо на уровне типов (D124).
-- **`Monotonic.as_unix_*`/`.from_*` — нет метода**: opaque-контракт.
-- **`d.sleep()` (метод-форма) — ДОСТУПНА** (owner side-task, `Duration.@sleep()`,
-  2026-07-06) — свободная `sleep(d)` остаётся каноном (Q6/Q8: юзер не трогает
-  `Time` напрямую), но метод-форма НЕ запрещена (это отличается от исходного
-  §3.0-Q6 замысла плана — амендмент фактом).
-- **`Time.sleep` внутри `#realtime fn`** — компиляция ошибка (D64 suspend-effect
-  ban), но диагностика — plain-message, НЕ именованный `E_REALTIME_SYNC_PARK`
-  (тот код специфичен `#parks`-аннотированным sync-примитивам).
+- **`sleep(100)` — a compile error** (no implicit int→Duration): the anti-Zig
+  footgun (`sleep_bare_int_neg`).
+- **`sleep_until(Timestamp)` — a compile error** (E7301 type mismatch): a
+  wall-clock deadline is immune to NTP only explicitly (`sleep(ts.time_until())`).
+- **`Monotonic ± Timestamp` — a compile error** (no overload): mixing clock
+  domains is inexpressible at the type level (D124).
+- **`Monotonic.as_unix_*`/`.from_*` — no such method**: the opaque contract.
+- **`d.sleep()` (method form) — AVAILABLE** (owner side-task,
+  `Duration.@sleep()`, 2026-07-06) — the free `sleep(d)` remains the canon
+  (Q6/Q8: the user doesn't touch `Time` directly), but the method form is NOT
+  forbidden (this differs from the original §3.0-Q6 plan intent — an amendment
+  by fact).
+- **`Time.sleep` inside `#realtime fn`** — a compile error (D64 suspend-effect
+  ban), but the diagnostic is a plain message, NOT the named
+  `E_REALTIME_SYNC_PARK` (that code is specific to `#parks`-annotated sync
+  primitives).
 
-## Связанные документы
+## Related documents
 
-- [`datetime.md`](datetime.md) — гражданское (календарное) время (Plan 175.1).
-- [D316](../../spec/decisions/04-effects.md#d316) — `Time`-эффект + amend'ы.
-- [D317](../../spec/decisions/04-effects.md#d317) — overflow-policy.
+- [`datetime.md`](datetime.md) — civil (calendar) time (Plan 175.1).
+- [D316](../../spec/decisions/04-effects.md#d316) — the `Time` effect + amendments.
+- [D317](../../spec/decisions/04-effects.md#d317) — overflow policy.
 - [D318](../../spec/decisions/04-effects.md#d318) — Monotonic non-regression.
 - [D124](../../spec/decisions/06-concurrency.md#d124-monotonic-vs-timestamp--раздельные-типы-для-wall-clock-и-монотонных-часов) — wall/monotonic separation + amend.
 - [D237](../../spec/decisions/02-types.md#d237-protocol-naming-convention-method-name-capitalized-plan-137-2026-06-09) — Display/Debug naming + amend.
