@@ -82,7 +82,7 @@ code
 rm -rf "$TMP"
     mkdir -p "$TMP/spec" "$TMP/docs/guide" "$TMP/docs/plans" "$TMP/scripts/guards"
     cp "$GUARD_SRC" "$TMP/scripts/guards/check-doc-conventions.sh"
-    printf 'plan_missing_status=0\ndev_links=0\ncode_block_mismatch_pairs=0\nmixed_language_files=99\n' > "$TMP/scripts/guards/doc-conventions.baseline"
+    printf 'plan_missing_status=0\ndev_links=0\ncode_block_mismatch_pairs=0\nmixed_language_files=99\ncode_comment_ru_files=99\n' > "$TMP/scripts/guards/doc-conventions.baseline"
 }
 run_guard() { sh "$TMP/scripts/guards/check-doc-conventions.sh" "$TMP" 2>"$TMP/.stderr"; }
 
@@ -127,7 +127,7 @@ run_guard || note_fail "2d: ложняк на полной паре bar.md/bar.r
 printf '# Plan 01\nno status line\n' > "$TMP/docs/plans/01-foo.md"
 run_guard && note_fail "3a: не поймал рост plan_missing_status (0 -> 1, baseline=0)"
 
-printf 'plan_missing_status=1\ndev_links=0\ncode_block_mismatch_pairs=0\nmixed_language_files=99\n' > "$TMP/scripts/guards/doc-conventions.baseline"
+printf 'plan_missing_status=1\ndev_links=0\ncode_block_mismatch_pairs=0\nmixed_language_files=99\ncode_comment_ru_files=99\n' > "$TMP/scripts/guards/doc-conventions.baseline"
 run_guard || note_fail "3b: храповик не пропустил долг в пределах baseline=1"
 
 printf '# Plan 02\n**Статус:** DONE\n' > "$TMP/docs/plans/02-bar.md"
@@ -136,7 +136,7 @@ run_guard || note_fail "3c: ложняк — 02-bar.md со статусом н�
 printf '# Plan 03\nno status either\n' > "$TMP/docs/plans/03-baz.md"
 run_guard && note_fail "3d: не поймал рост plan_missing_status (1 -> 2, baseline=1)"
 
-printf 'plan_missing_status=2\ndev_links=0\ncode_block_mismatch_pairs=0\nmixed_language_files=99\n' > "$TMP/scripts/guards/doc-conventions.baseline"
+printf 'plan_missing_status=2\ndev_links=0\ncode_block_mismatch_pairs=0\nmixed_language_files=99\ncode_comment_ru_files=99\n' > "$TMP/scripts/guards/doc-conventions.baseline"
 run_guard || note_fail "3e: храповик не пропустил после легитимного повышения baseline до 2"
 
 # ============================================================
@@ -145,13 +145,13 @@ run_guard || note_fail "3e: храповик не пропустил после 
 printf 'See [dev](../dev/x.md).\n' > "$TMP/docs/guide/refs1.md"
 run_guard && note_fail "4a: не поймал рост dev_links (0 -> 1, baseline=0)"
 
-printf 'plan_missing_status=2\ndev_links=1\ncode_block_mismatch_pairs=0\nmixed_language_files=99\n' > "$TMP/scripts/guards/doc-conventions.baseline"
+printf 'plan_missing_status=2\ndev_links=1\ncode_block_mismatch_pairs=0\nmixed_language_files=99\ncode_comment_ru_files=99\n' > "$TMP/scripts/guards/doc-conventions.baseline"
 run_guard || note_fail "4b: храповик не пропустил dev_links=1 в пределах baseline=1"
 
 printf 'Another link docs/dev/y.md here.\n' >> "$TMP/docs/guide/refs1.md"
 run_guard && note_fail "4c: не поймал рост dev_links (1 -> 2, baseline=1)"
 
-printf 'plan_missing_status=2\ndev_links=2\ncode_block_mismatch_pairs=0\nmixed_language_files=99\n' > "$TMP/scripts/guards/doc-conventions.baseline"
+printf 'plan_missing_status=2\ndev_links=2\ncode_block_mismatch_pairs=0\nmixed_language_files=99\ncode_comment_ru_files=99\n' > "$TMP/scripts/guards/doc-conventions.baseline"
 run_guard || note_fail "4d: храповик не пропустил после легитимного повышения baseline до 2"
 
 # ============================================================
@@ -185,7 +185,7 @@ code_here()
 EOF
 run_guard && note_fail "5b: не поймал расхождение код-блоков (0 -> 1, baseline=0)"
 
-printf 'plan_missing_status=2\ndev_links=2\ncode_block_mismatch_pairs=1\nmixed_language_files=99\n' > "$TMP/scripts/guards/doc-conventions.baseline"
+printf 'plan_missing_status=2\ndev_links=2\ncode_block_mismatch_pairs=1\nmixed_language_files=99\ncode_comment_ru_files=99\n' > "$TMP/scripts/guards/doc-conventions.baseline"
 run_guard || note_fail "5c: храповик не пропустил долг code_block_mismatch_pairs=1 в пределах baseline=1"
 
 # ============================================================
@@ -194,7 +194,7 @@ run_guard || note_fail "5c: храповик не пропустил долг co
 GTMP="${TMPDIR:-/tmp}/dc_selftest_git_$$"
 rm -rf "$GTMP"; mkdir -p "$GTMP/docs/guide" "$GTMP/scripts/guards"
 cp "$GUARD_SRC" "$GTMP/scripts/guards/check-doc-conventions.sh"
-printf 'plan_missing_status=0\ndev_links=0\ncode_block_mismatch_pairs=0\nmixed_language_files=99\n' > "$GTMP/scripts/guards/doc-conventions.baseline"
+printf 'plan_missing_status=0\ndev_links=0\ncode_block_mismatch_pairs=0\nmixed_language_files=99\ncode_comment_ru_files=99\n' > "$GTMP/scripts/guards/doc-conventions.baseline"
 (
     cd "$GTMP" || exit 1
     git init -q .
