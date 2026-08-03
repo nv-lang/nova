@@ -214,3 +214,72 @@ This gives a **gradient**: you write like in Go (no contracts); you want
 stronger — you add `requires`; you want full verification —
 you add `ensures` and `invariant`. One and the same language covers the
 spectrum from a script to correctness-critical code.
+
+---
+
+## R5. AI-first design as an explicit goal
+
+### R5.1. Context locality
+
+Not a single feature that requires reading several files to understand one
+function:
+
+- **No implicit imports** — every identifier shows where it came from
+- **No DI via reflection** — dependencies in parameters or effects
+- **No invisible hook annotations** (like `@Autowired`, `@Inject`)
+- **No global mutable state** — mutable state only via `mut`
+  fields/parameters (locally) or via specialized effects (`Counter`, `Cache` —
+  names visible in the signature). The generic `Mut` effect was removed in
+  [D62](decisions/04-effects.md#d62).
+- **No operator overloading on arbitrary types** — only
+  for standard traits
+- **No macro rewriting of syntax** — comptime only over types
+  and values, not over the AST
+
+An LLM given one function **sees everything it needs to understand it**.
+
+### R5.2. Signature = direct effects + the full throw picture
+
+Refined in [D62](decisions/04-effects.md#d62): the signature shows the
+**direct** effects of the function (the ones it uses itself) and the **full
+throw picture** via the transitivity of `Fail`. Transitive side effects
+through nested calls — highlighted by a warning, not mandatory to declare.
+
+```nova
+type TransferError | InsufficientFunds | InvalidAccount
+
+fn transfer(from AccountId, to AccountId, amount money)
+    Fail[TransferError]
+    Db Time Log
+    requires amount > 0
+    ensures from != to
+    -> TransferReceipt
+```
+
+(Several error types — a sum type or multi-Fail in the row
+`Fail[A] Fail[B]`, [D65](decisions/04-effects.md#d65). Multi-parameters
+`Fail[A, B]` rejected by [D25](decisions/04-effects.md#d25).)
+
+From this signature the LLM (and a human) knows:
+- what it takes and returns
+- what errors it throws (`Fail` is transitive — this is the **full**
+  throw picture, including through nested calls)
+- what effects the function uses **directly** (DB, time, log)
+- what input constraints
+- what output guarantees
+
+What is **not** in the signature:
+- Effects the function gets only through nested calls
+  (a compiler warning on detection; can be suppressed via
+  `@allow_transit` or Nova.toml).
+- `Async` — invisible infrastructure, never in the signature.
+
+This is a **compromise** made by D62: full transitivity of all effects
+makes real backend signatures unreadable (8-10 effects
+accumulate across 5 call levels). Direct + Fail-strict — a balance
+between "the signature tells the truth" and "the signature is readable".
+
+In Java/Python/Go this information is **not in the signature** — it is in
+the code, or not there at all. The LLM has to read the body and guess. Nova
+stays **ahead of the mainstream** in throw visibility + direct effects, it
+just does not go all the way to full transitive visibility of side effects.
