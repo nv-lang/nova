@@ -771,10 +771,6 @@ pub struct CEmitter {
     /// Names of variables declared as `let mut` (mutable) — used by spawn-capture
     /// to decide between copy-by-value (immutable scalar) and capture-by-pointer.
     var_mutable: HashSet<String>,
-    /// №309 (221.1): names of `consume x = expr` bindings (`LetDecl.consume`).
-    /// Feeds `narrow_by_param_mode`'s consume-mode eligibility («временное ИЛИ
-    /// забирающее — перемещается»). Scoped like `var_mutable` (same sites).
-    var_consume: HashSet<String>,
     /// Plan 100.8 (D166) C-codegen fix: variables that were pre-declared
     /// (hoisted) before a setjmp handler in `enter_defer_scope` because they
     /// are referenced in an errdefer/defer body. When `emit_stmt` encounters the
@@ -2378,7 +2374,6 @@ impl CEmitter {
             type_subst_overrides: RefCell::new(HashMap::new()),
             pattern_binding_overrides: RefCell::new(HashMap::new()),
             var_mutable: HashSet::new(),
-            var_consume: HashSet::new(),
             hoisted_let_vars: HashSet::new(),
             protocol_vars: HashMap::new(),
             result_type_params: HashMap::new(),
@@ -9067,7 +9062,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let saved_indent = self.indent;
         let saved_var_types = self.var_types.clone();
         let saved_var_mutable = self.var_mutable.clone();
-        let saved_var_consume = self.var_consume.clone(); // №309 — mirrors var_mutable scoping
         let saved_cancel_token_t_map = self.cancel_token_t_map.clone();
         let saved_protocol_vars = self.protocol_vars.clone(); // Plan 72 P0
         let saved_result_type_params = self.result_type_params.clone(); // Plan 72 P1-C
@@ -9267,7 +9261,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
 
         self.var_types = saved_var_types;
         self.var_mutable = saved_var_mutable;
-        self.var_consume = saved_var_consume; // №309
         self.cancel_token_t_map = saved_cancel_token_t_map;
         self.protocol_vars = saved_protocol_vars; // Plan 72 P0
         self.result_type_params = saved_result_type_params; // Plan 72 P1-C
@@ -9307,7 +9300,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Same scope-cleanup для var_mutable + cancel_token_t_map.
         let saved_var_types = self.var_types.clone();
         let saved_var_mutable = self.var_mutable.clone();
-        let saved_var_consume = self.var_consume.clone(); // №309 — mirrors var_mutable scoping
         let saved_cancel_token_t_map = self.cancel_token_t_map.clone();
         let saved_protocol_vars = self.protocol_vars.clone();
         let saved_result_type_params_test = self.result_type_params.clone(); // Plan 72 P1-C
@@ -9346,7 +9338,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Restore scope-state — fixes leak (Plan 54 Ф.1).
         self.var_types = saved_var_types;
         self.var_mutable = saved_var_mutable;
-        self.var_consume = saved_var_consume; // №309
         self.cancel_token_t_map = saved_cancel_token_t_map;
         self.protocol_vars = saved_protocol_vars;
         self.result_type_params = saved_result_type_params_test; // Plan 72 P1-C
@@ -10939,7 +10930,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             let saved_indent = self.indent;
             let saved_var_types = self.var_types.clone();
             let saved_var_mutable = self.var_mutable.clone();
-            let saved_var_consume = self.var_consume.clone(); // №309 — mirrors var_mutable scoping
             let saved_recv = self.current_receiver_type.clone();
             let saved_subst = self.current_type_subst.clone();
             let saved_expected_record = self.expected_record_type.clone();
@@ -11002,7 +10992,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 self.indent = saved_indent;
                 self.var_types = saved_var_types;
                 self.var_mutable = saved_var_mutable;
-                self.var_consume = saved_var_consume; // №309
                 self.current_receiver_type = saved_recv;
                 self.sync_receiver_rt();
                 self.current_type_subst = saved_subst;
@@ -11048,7 +11037,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     self.indent = saved_indent;
                     self.var_types = saved_var_types;
                     self.var_mutable = saved_var_mutable;
-                    self.var_consume = saved_var_consume; // №309
                     self.current_receiver_type = saved_recv;
                     self.sync_receiver_rt();
                     self.current_type_subst = saved_subst;
@@ -11100,7 +11088,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     self.indent = saved_indent;
                     self.var_types = saved_var_types;
                     self.var_mutable = saved_var_mutable;
-                    self.var_consume = saved_var_consume; // №309
                     self.current_receiver_type = saved_recv;
                     self.sync_receiver_rt();
                     self.current_type_subst = saved_subst;
@@ -18674,26 +18661,20 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         )
     }
 
-    /// №309 (221.1, owner rule 2026-08-03): is `e` eligible to bind a
-    /// `consume`-mode overload param? Rule verbatim: «временное ИЛИ
-    /// забирающее — перемещается, остальное копируется». `is_rvalue_temp`
-    /// alone only covers the "temporary" half — a bare `Ident` naming a
-    /// `consume x = expr` local (`b.put(x)`) is a `place`, not a temporary,
-    /// and was wrongly disqualified. `var_consume` closes that gap.
-    fn is_consume_eligible_arg(&self, e: &Expr) -> bool {
-        if Self::is_rvalue_temp(e) {
-            return true;
-        }
-        matches!(&e.kind, ExprKind::Ident(name) if self.var_consume.contains(name.as_str()))
-    }
-
-    /// Plan 184 (Р13/Р14) + №309 (221.1): narrow overload candidates by the
-    /// parameter MODE axis {ro,mut,consume} against each arg's binding
-    /// capability. `ro` accepts any arg (0); `mut` needs a mutable place (2);
-    /// `consume` needs a temporary OR a named `consume`-bound place (3) —
-    /// owner rule «временное ИЛИ забирающее — перемещается, остальное
-    /// копируется». Most-specific eligible candidate wins; `mut`/`consume`
-    /// are mutually exclusive by argument class, so the winner is unique.
+    /// Plan 184 (Р13/Р14): among overload candidates already matched by param
+    /// C-types (or arity), narrow by the parameter MODE axis {ro,mut,consume}
+    /// against each argument's binding capability. Selection rule (D84 amendment):
+    ///   - `ro` param — accepts any argument (specificity 0);
+    ///   - `mut` param — eligible only when the argument is a mutable place
+    ///     (specificity 2, preferred over `ro` — mirror of the receiver-mut rule);
+    ///   - `consume` param — eligible only when the argument is an owned rvalue /
+    ///     last-use temporary (specificity 3, most specific).
+    /// The most-specific eligible candidate wins. `mut` and `consume` eligibility
+    /// are mutually exclusive by argument class (a place is not a temporary), so a
+    /// unique winner exists by construction (the axes are orthogonal — no
+    /// ambiguity). Returns the input unchanged when the candidates do NOT form a
+    /// mode-overload set (identical modes) or when none is eligible (fall through
+    /// to the pre-184 selection).
     fn narrow_by_param_mode(&self, pool: Vec<MethodSig>, args: &[CallArg]) -> Vec<MethodSig> {
         if pool.len() < 2 {
             return pool;
@@ -18719,8 +18700,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         if self.is_place_mutable(arg) { score += 2; } else { continue 'cand; }
                     }
                     2 => {
-                        // №309: temporary OR named consume-bound place.
-                        if self.is_consume_eligible_arg(arg) { score += 3; } else { continue 'cand; }
+                        if Self::is_rvalue_temp(arg) { score += 3; } else { continue 'cand; }
                     }
                     _ => {}
                 }
@@ -27898,11 +27878,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // by-ref captures like the map's `mut src` still classify correctly),
         // restore the caller's set at exit. Symmetric with test-body/spawn.
         let saved_var_mutable_fn = std::mem::take(&mut self.var_mutable);
-        // №309 (221.1): `var_consume` follows the exact same per-fn scoping
-        // rationale as `var_mutable` above — a `consume x = expr` local in one
-        // fn must not leak its move-eligibility into a sibling/later fn's
-        // same-named (but non-consume) binding.
-        let saved_var_consume_fn = std::mem::take(&mut self.var_consume);
         // Plan 172.5 (D326 R5): register this fn's `ro ref`/`mut ref` params so
         // body uses of their names auto-deref (`name` → `(*name)`). Scoped per
         // fn body (restored at exit) so a nested/sibling fn is unaffected.
@@ -28332,8 +28307,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // [M-176-conformance-cu-map-closure]: restore caller's mut-binding set
         // (this fn's own `mut` locals must not leak to sibling fns).
         self.var_mutable = saved_var_mutable_fn;
-        // №309: restore caller's consume-binding set (mirrors var_mutable).
-        self.var_consume = saved_var_consume_fn;
         // Plan 172.5 (D326 R5): restore caller's ref-param set.
         self.ref_params = saved_ref_params_fn;
         // Undef any heap-promoted mut-captures so macros don't leak to sibling fns.
@@ -31475,16 +31448,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     self.var_mutable.insert(binding.clone());
                 } else {
                     self.var_mutable.remove(&binding);
-                }
-                // №309 (221.1): track `consume x = expr` bindings so
-                // `narrow_by_param_mode` can treat a named consume-bound place
-                // as move-eligible, same as an rvalue temporary (owner rule:
-                // «временное ИЛИ забирающее — перемещается, остальное
-                // копируется»).
-                if decl.consume {
-                    self.var_consume.insert(binding.clone());
-                } else {
-                    self.var_consume.remove(&binding);
                 }
                 // Propagate tuple element types so pair.0 can be correctly typed.
                 // Mirror the result_ok_inner_types pattern: always update (insert or remove)
@@ -47583,10 +47546,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // user shouldn't mutate it) — fits by-value capture.
             let prev_ty = self.var_types.insert(binding.clone(), "nova_int".to_string());
             let was_mut = self.var_mutable.remove(&binding);
-            // №309: range loop-var is a plain scalar int — never consume —
-            // but an outer same-named consume binding it shadows must still
-            // be restored after the loop (mirrors `was_mut` immediately above).
-            let was_consume = self.var_consume.remove(&binding);
             // Plan 20 Ф.4: defer/errdefer внутри loop body должен выполняться
             // на каждой итерации (LIFO, fail-frame throw-path).
             self.emit_loop_body_inline_ex(body, skip_preempt)?;
@@ -47595,7 +47554,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 Some(t) => { self.var_types.insert(binding.clone(), t); }
                 None => { self.var_types.remove(&binding); }
             }
-            if was_consume { self.var_consume.insert(binding.clone()); } // №309
             if was_mut { self.var_mutable.insert(binding); }
             self.indent -= 1;
             self.line("}");
@@ -50666,16 +50624,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         Self::collect_pattern_bind_names(&decl.pattern, &mut bound_names);
         for name in bound_names {
             if decl.mutable {
-                self.var_mutable.insert(name.clone());
+                self.var_mutable.insert(name);
             } else {
                 self.var_mutable.remove(&name);
-            }
-            // №309 (221.1): same propagation for `consume { x, y } = p` —
-            // mirrors decl.mutable immediately above.
-            if decl.consume {
-                self.var_consume.insert(name);
-            } else {
-                self.var_consume.remove(&name);
             }
         }
         Ok(())
