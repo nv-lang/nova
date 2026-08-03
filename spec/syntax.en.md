@@ -232,3 +232,131 @@ Effects in closure-light are **not written** — they are inherited from the
 ambient effect set (= the enclosing function's effects ∪ active
 `with`-blocks). If a closure body uses an effect unavailable in the parent —
 compile error. closure-full declares effects explicitly, like a named fn.
+
+## Trailing — a block/function argument after the call parentheses
+
+If the last parameter of a function is of functional type, the argument can
+be moved out of the call's `()` into one of two forms:
+
+**trailing-block** — for callbacks **without parameters** (DSL):
+```nova
+with_timeout(2.seconds()) {
+    Db.exec(sql`UPDATE counters SET v = v + 1`)
+}
+
+retry(3) {
+    Net.get(url)
+}
+```
+
+**trailing-fn** — for callbacks **with parameters**, syntax
+identical to closure-full without a name:
+```nova
+list.filter() fn(x) => x > 0
+list.fold(0) fn(acc, x) { acc + x }
+list.map() fn(s str) -> Result[int, ParseError] { parse(s)? }
+```
+
+**Rules:**
+- `{` (for trailing-block) or `fn` (for trailing-fn) on the same
+  line as `)`. A line break is forbidden.
+- `()` are mandatory (even empty).
+- The last parameter's type is functional.
+- One trailing per call.
+- `|...|` (closure-light) **in a trailing position is forbidden** —
+  pass it via args (`f(|x| body)`) or use `fn(...)`.
+
+`spawn` is a keyword construct, not a function, so it does not obey
+the D43 rule. Its syntax is described separately below.
+
+**When trailing-fn vs closure-light in args:**
+- `f(|x| body)` — more compact for one-liners.
+- `f(args) fn(x) { ... }` — better for long bodies with bindings;
+  visually marks "this is a block argument to the call".
+
+Details — [D22](decisions/03-syntax.md#d22-closure-light--и-full-fn),
+[D43](decisions/03-syntax.md#d43-trailing-block--без-params-fnp-body-с-params).
+
+## Function body: `=>` for an expression, `{}` for a block
+
+Two **mutually exclusive** ways:
+
+```nova
+// expression-body — ровно одно выражение
+fn double(x int) => x * 2                    // -> int выведен (D45)
+fn classify(n int) -> str => match n {       // -> str для ясности
+    0 => "zero",
+    n if n > 0 => "positive",
+    _ => "negative",
+}
+
+// block-body — несколько шагов; последнее выражение = значение блока
+fn next_pow2(n int) -> int {                 // -> int обязателен
+    if n <= 1 { return 1 }
+    mut p = 1
+    while p < n { p *= 2 }
+    p
+}
+```
+
+**The `-> T` rule — two different levels, don't confuse:**
+
+1. **Grammar (a compile error if violated).** In a **block-body**
+   (`{ ... }`) `-> T` is **mandatory**, if the type is not `()` — the compiler
+   does not infer the type from the block (`return_type_c` does inference only
+   for an Expr body; for a Block body without an annotation — `()`, see "What
+   was rejected" in [D45](decisions/03-syntax.md#d45)). In an
+   **expression-body** (`=> expr`) `-> T` is **always optional** — the type
+   is inferred from the body. `-> T` mandatory everywhere — a consciously
+   rejected option (noise for trivial one-liners).
+2. **Style-guide (a linter warning, not a compile error).** For
+   **`export` functions** (public API) it is recommended to write `-> T`
+   explicitly, even in an expression-body — the linter warns if omitted. That
+   is documentation and contract stability, not a grammar
+   requirement: `export fn f(x int) => x * 2` without `-> int`
+   **compiles**, but gets a lint warning.
+   For private functions and tiny helpers (getters, predicates,
+   constructors) — omitting is fine, no warning is emitted.
+
+**Indentation is not significant.** `fn f() => stmt1; stmt2` or a multiline
+without `{}` — an error. If there is more than one step — `{}` is mandatory.
+
+**If the `=>` body is a record literal, the type is named exactly once** —
+not TIMTOWTDI (two equivalent ways), but the only correct spelling
+for each of the two states of the signature (Plan 51 Ф.2, "removes
+the only live TIMTOWTDI in the spelling of record literals"):
+
+```nova
+// -> T опущен → тип обязан быть в литерале
+fn Duration @plus(other Duration) => Duration { nanos: @nanos + other.nanos }
+
+// -> T присутствует → в литерале имени типа быть НЕ должно
+fn Duration @plus(other Duration) -> Duration => { nanos: @nanos + other.nanos }
+```
+
+Both variants write the same function, but are not interchangeable — each
+signature state (with or without `-> T`) has exactly one
+allowed literal form. Mixing is forbidden by the compiler in both
+directions:
+
+- `-> Duration => Duration { ... }` (the type in the signature AND in the
+  literal) — a compile error:
+
+  ```
+  error: redundant type prefix on record literal — the return type
+  `-> Duration` already declares it; write `=> { ... }`
+  ```
+
+- `=> Duration { ... }` without `-> Duration` in the signature, if the type
+  is needed also outside (`export`, non-obvious inference) — the linter
+  requires an explicit `-> T` (see the style-guide rule above); there is no
+  grammar-level error here, but there is no ambiguity either — the type is
+  always the single source of truth.
+
+`-> Self` resolves to the receiver's type — the same rule: `-> Self =>
+Counter { ... }` in a `Counter` method is also redundant (redundant type
+prefix). Sum-coercion (`-> Shape => Circle { ... }`, a literal of a different
+name than the return type) is not affected by this rule — there the literal's
+name must remain, because `Circle ≠ Shape`.
+
+Details — [D40](decisions/03-syntax.md#d40), [D45](decisions/03-syntax.md#d45).
