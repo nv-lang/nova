@@ -1,17 +1,23 @@
+---
+source_rev: 07df7d2c9
+source_date: 2026-08-02
+---
+
 # Каналы и `select` в Nova
 
 [English](channels.md) | **Русский**
 
 `Channel[T]` — основной примитив межфибровой коммуникации. Модель —
-**capability-split** (Rust mpsc-style): `Channel.new(cap)` возвращает
+**разделение прав** (Rust mpsc-style): `Channel.new(cap)` возвращает
 **пару** объектов с разделёнными правами — `ChanWriter[T]` («только
 слать») и `ChanReader[T]` («только получать»).
 
-`select { ... }` — multiplexed channel operations: ожидает несколько
-recv/send одновременно, просыпается по первому готовому arm'у.
+`select { ... }` — мультиплексированные операции канала: ожидает
+несколько `recv`/`send` одновременно, просыпается по первой готовой
+ветви.
 
-Spec: [D91](../../spec/decisions/06-concurrency.md#d91) (channel revision)
-+ [D94](../../spec/decisions/06-concurrency.md#d94) (select).
+Спецификация: [D91](../../spec/decisions/06-concurrency.md#d91) (ревизия
+каналов) + [D94](../../spec/decisions/06-concurrency.md#d94) (select).
 
 ---
 
@@ -90,28 +96,28 @@ test "select: data wins over timeout" {
 fn Channel[T].new(capacity int) -> { tx ChanWriter[T], rx ChanReader[T] }
 ```
 
-Возвращает **пару** — record с полями `tx` (writer-capability) и `rx`
-(reader-capability). Поддерживает три формы извлечения:
+Возвращает **пару** — запись с полями `tx` (право отправки) и `rx`
+(право получения). Поддерживает три формы извлечения:
 
 ```nova
-// 1. Record-destructure (Plan 53, наиболее идиоматично)
+// 1. Record destructure (Plan 53, most idiomatic)
 ro { tx, rx } = Channel.new(4)
 
-// 2. Record-destructure с переименованием
+// 2. Record destructure with renaming
 ro { tx: sender, rx: receiver } = Channel.new(4)
 
-// 3. Tuple destructure (compat с D91 spec примерами)
+// 3. Tuple destructure (compat with D91 spec examples)
 ro (tx, rx) = Channel.new(4)
 
-// 4. Record-access (когда нужны разные lifetimes)
+// 4. Record access (when distinct lifetimes are needed)
 ro ch = Channel.new(4)
 ro tx = ch.tx
 ro rx = ch.rx
 ```
 
-**Capacity ≥ 1.** `Channel.new(0)` сейчас панкует с
+**Ёмкость ≥ 1.** `Channel.new(0)` сейчас паникует с
 `"capacity must be >= 1"` ([Plan 44.1](../plans/44.1-channel-hardening.md)
-Ф.3) — zero-capacity rendezvous каналы пока не реализованы.
+Ф.3) — каналы rendezvous с нулевой ёмкостью пока не реализованы.
 
 **Тип передачи (`T`)** выводится из первого `send`/`recv`:
 
@@ -123,13 +129,14 @@ ro v = rx.recv()   // Option[int]
 
 Явная аннотация — turbofish: `Channel[int].new(8)`.
 
-**`T` обязан быть word-safe ([M-channel-generic-elem-type]).** Vela (M:N-рантайм)
-хранит каждый элемент в одном слоте размером со слово, поэтому `T` должен
-без потерь укладываться в него: `int`, `bool`, `char`, целые фиксированной
-ширины и любой pointer-sized тип (`[]T`, records, `HashMap`, суммы, …) —
-работают. `T`, не влезающий в слово — `str`, `f32`/`f64`, кортежи,
-value-records — отвергается на этапе компиляции
-(`E_CHANNEL_UNSOUND_ELEM_TYPE`), а не тихо усекается/переинтерпретируется.
+**`T` должен помещаться в слово ([M-channel-generic-elem-type]).** Vela
+(M:N-рантайм) хранит каждый элемент в одном слоте размером со слово,
+поэтому `T` должен без потерь укладываться в него: `int`, `bool`, `char`,
+целые фиксированной ширины и любой тип размером с указатель (`[]T`,
+записи, `HashMap`, суммы, …) — работают. `T`, не влезающий в слово —
+`str`, `f32`/`f64`, кортежи, value-записи — отвергается на этапе
+компиляции (`E_CHANNEL_UNSOUND_ELEM_TYPE`), а не тихо
+усекается/переинтерпретируется.
 
 ---
 
@@ -137,31 +144,31 @@ value-records — отвергается на этапе компиляции
 
 | Метод | Сигнатура | Семантика |
 |---|---|---|
-| `send` | `(v T) -> bool` | Blocking send. Возвращает `true` если отправил; `false` если канал закрыт (не panic — [Plan 30](../plans/30-channel-improvements.md)) |
-| `try_send` | `(v T) -> bool` | Non-blocking. `true` если поместилось; `false` если буфер полон или канал закрыт |
-| `close` | `() -> ()` | Закрывает writer-capability. Idempotent. С multi-writer (`share`) — ref-counted: канал реально закрывается только когда все writers закрылись |
-| `share` | `() -> ChanWriter[T]` | Создаёт дополнительный writer на тот же буфер. `writer_count++` |
-| `is_closed` | `() -> bool` | `true` если буфер закрыт *и* у этого writer'а нет capability слать |
+| `send` | `(v T) -> bool` | Блокирующий `send`. Возвращает `true`, если отправил; `false`, если канал закрыт (не паника — [Plan 30](../plans/30-channel-improvements.md)) |
+| `try_send` | `(v T) -> bool` | Неблокирующий `try_send`. `true`, если поместилось; `false`, если буфер полон или канал закрыт |
+| `close` | `() -> ()` | Закрывает право записи. Идемпотентный. С несколькими отправителями (`share`) — со счётчиком ссылок: канал реально закрывается только когда закрылись все отправители |
+| `share` | `() -> ChanWriter[T]` | Создаёт дополнительного отправителя поверх того же буфера. `writer_count++` |
+| `is_closed` | `() -> bool` | `true`, если буфер закрыт *и* у этого отправителя нет права отправлять |
 
 ### `send` возвращает `bool`
 
 ```nova
-test "channel: send после close возвращает false, не паникует" {
+test "channel: send after close returns false, does not panic" {
     ro { tx, rx: _rx } = Channel.new(2)
     assert(tx.send(1))
     tx.close()
-    assert(!tx.send(99))    // false: канал закрыт
+    assert(!tx.send(99))    // false: channel closed
 }
 ```
 
-Полезно для graceful shutdown без обёртки в `try/catch`:
+Полезно для корректного завершения без обёртки в `try/catch`:
 
 ```nova
 fn produce(tx ChanWriter[Job], jobs []Job) {
     mut i = 0
     while i < jobs.len() {
         if !tx.send(jobs[i]) {
-            break               // consumer закрылся — выходим тихо
+            break               // consumer closed — exit silently
         }
         i = i + 1
     }
@@ -175,9 +182,9 @@ test "channel: try_send full buffer" {
     ro { tx, rx } = Channel.new(2)
     assert(tx.try_send(10))
     assert(tx.try_send(20))
-    assert(!tx.try_send(30))            // буфер полон
+    assert(!tx.try_send(30))            // buffer full
     assert(rx.recv() ?? -1 == 10)
-    assert(tx.try_send(30))             // место освободилось
+    assert(tx.try_send(30))             // slot freed
     tx.close()
 }
 ```
@@ -185,14 +192,14 @@ test "channel: try_send full buffer" {
 ### `share` — multi-writer
 
 > **Именование (Plan 201, 2026-07-13):** метод называется `share()`, НЕ
-> `clone()` — Clone-протокол в Nova означает независимую глубокую копию,
-> а здесь **alias** того же канала (вторая capability над тем же буфером;
-> канал закрывается, только когда закроется последний writer). То же
-> правило именует `TcpStream.share()`. Alias-семантика = `share`,
-> глубокая копия = `clone` — везде в std.
+> `clone()` — протокол `Clone` в Nova означает независимую глубокую копию,
+> а здесь **псевдоним (alias)** того же канала (второе право поверх того
+> же буфера; канал закрывается, только когда закроется последний
+> отправитель). То же правило именует `TcpStream.share()`. Семантика
+> псевдонима = `share`, глубокая копия = `clone` — везде в std.
 
 ```nova
-test "channel: fan-in — два writer'а, один reader" {
+test "channel: fan-in — two writers, one reader" {
     ro { tx, rx } = Channel.new(8)
     ro tx2 = tx.share()                // writer_count = 2
     mut sum = 0
@@ -207,10 +214,10 @@ test "channel: fan-in — два writer'а, один reader" {
 }
 ```
 
-Канал закрывается **только когда все writers вызвали `close()`**.
-Внутри — ref-count (`writer_count`): `Channel.new` инициализирует в 1,
-`share()` инкрементирует, `close()` декрементирует. Когда достигает 0
-— канал реально закрывается, `rx.recv()` начинает возвращать `None`.
+Канал закрывается **только когда все отправители вызвали `close()`**.
+Внутри — счётчик ссылок (`writer_count`): `Channel.new` инициализирует
+в 1, `share()` инкрементирует, `close()` декрементирует. Когда достигает
+0 — канал реально закрывается, `rx.recv()` начинает возвращать `None`.
 
 ---
 
@@ -218,17 +225,17 @@ test "channel: fan-in — два writer'а, один reader" {
 
 | Метод | Сигнатура | Семантика |
 |---|---|---|
-| `recv` | `() -> Option[T]` | Blocking recv. `Some(v)` пока есть данные или канал открыт; `None` когда канал closed *и* буфер пуст |
-| `try_recv` | `() -> Option[T]` | Non-blocking. `None` если буфер пуст (НЕ означает что канал закрыт — проверяй `is_closed()` отдельно) |
+| `recv` | `() -> Option[T]` | Блокирующий `recv`. `Some(v)`, пока есть данные или канал открыт; `None`, когда канал закрыт *и* буфер пуст |
+| `try_recv` | `() -> Option[T]` | Неблокирующий `try_recv`. `None`, если буфер пуст (НЕ означает, что канал закрыт — проверяй `is_closed()` отдельно) |
 | `len` | `() -> int` | Количество элементов в буфере *сейчас* |
-| `capacity` | `() -> int` | Capacity, заданная в `Channel.new` |
-| `is_closed` | `() -> bool` | `true` если все writers закрылись |
+| `capacity` | `() -> int` | Ёмкость, заданная в `Channel.new` |
+| `is_closed` | `() -> bool` | `true`, если все отправители закрылись |
 
 ### `recv` → `Option[T]`
 
-Closed-channel — **не ошибка**, валидный исход «источник закончился».
-`Option[T]` композируется с `match`, `?`, `??`, и идиоматичным
-`while let`-loop'ом.
+Закрытый канал — **не ошибка**, валидный исход «источник закончился».
+`Option[T]` композируется с `match`, `?`, `??` и идиоматичным циклом
+`while let`.
 
 ```nova
 test "channel: close + recv drain" {
@@ -238,28 +245,28 @@ test "channel: close + recv drain" {
     tx.close()
     assert(rx.recv() ?? -1 == 1)
     assert(rx.recv() ?? -1 == 2)
-    assert(rx.recv().is_none())             // drain'нули — None
-    assert(rx.recv().is_none())             // повторно — тоже None
+    assert(rx.recv().is_none())             // drained — None
+    assert(rx.recv().is_none())             // repeated — still None
 }
 ```
 
 ### `try_recv` различает empty-open vs empty-closed
 
 ```nova
-test "channel: try_recv различает empty-open от empty-closed через is_closed" {
+test "channel: try_recv distinguishes empty-open from empty-closed via is_closed" {
     ro { tx, rx } = Channel.new(4)
-    assert(rx.try_recv().is_none())     // пустой открытый
+    assert(rx.try_recv().is_none())     // empty, open
     assert(!rx.is_closed())
     tx.close()
-    assert(rx.try_recv().is_none())     // пустой закрытый — то же None
-    assert(rx.is_closed())              // отличает через is_closed
+    assert(rx.try_recv().is_none())     // empty, closed — same None
+    assert(rx.is_closed())              // distinguish via is_closed
 }
 ```
 
 ### `len` / `capacity`
 
 ```nova
-test "channel: len и capacity" {
+test "channel: len and capacity" {
     ro { tx, rx } = Channel.new(8)
     assert(rx.capacity() == 8)
     assert(rx.len() == 0)
@@ -293,7 +300,7 @@ test "channel: while-let drain pattern" {
 }
 ```
 
-Это **самый идиоматичный** receiver-pattern. Цикл завершается
+Это **самый идиоматичный** шаблон получателя. Цикл завершается
 автоматически, когда канал закрылся и буфер пуст — `recv()` вернёт
 `None`.
 
@@ -310,7 +317,7 @@ test "channel: producer-consumer pipeline" {
             tx.send(3)
             tx.send(4)
             tx.send(5)
-            tx.close()                  // важно: producer закрывает после finish
+            tx.close()                  // important: producer closes after finishing
         }
         spawn {
             while Some(v) = rx.recv() {
@@ -348,19 +355,19 @@ test "channel: ping-pong" {
 
 ### Fan-in (multi-writer)
 
-Несколько spawn'ов производят, один потребляет.
+Несколько файберов производят, один потребляет.
 
 ```nova
 ro { tx, rx } = Channel.new(8)
 supervised {
     for item in work_items {
-        ro worker_tx = tx.share()      // каждому spawn'у — свой capability
+        ro worker_tx = tx.share()      // each spawn gets its own capability
         spawn {
             worker_tx.send(process(item))
             worker_tx.close()
         }
     }
-    tx.close()                          // close корневого writer'а
+    tx.close()                          // close the root writer
     spawn {
         while Some(v) = rx.recv() {
             collect(v)
@@ -369,11 +376,11 @@ supervised {
 }
 ```
 
-**Почему `share()` обязателен:** без него все spawn'ы захватили бы один
-`tx` через managed reference; `close()` первого закрыл бы канал для
-всех. С `share()` каждый spawn держит свою capability и закрывает её
+**Почему `share()` обязателен:** без него все файберы захватили бы один
+`tx` через управляемую ссылку; `close()` первого закрыл бы канал для
+всех. С `share()` каждый файбер держит своё право и закрывает его
 независимо — канал закрывается только когда все `worker_count + 1`
-writers вызвали `close()`.
+отправителей вызвали `close()`.
 
 ### Relay (cross-channel pipeline)
 
@@ -385,7 +392,7 @@ fn relay(rx ChanReader[int], tx ChanWriter[int]) {
     tx.close()
 }
 
-test "channel: relay — Receiver → Sender pipeline через функцию" {
+test "channel: relay — Receiver → Sender pipeline through a function" {
     ro { tx: tx1, rx: rx1 } = Channel.new(4)
     ro { tx: tx2, rx: rx2 } = Channel.new(4)
     tx1.send(1)
@@ -401,7 +408,7 @@ test "channel: relay — Receiver → Sender pipeline через функцию"
 
 ### Передача в функции
 
-Capability-types в сигнатурах делают API явным.
+Права в сигнатурах делают API явным.
 
 ```nova
 fn fill_channel(tx ChanWriter[int], values []int) {
@@ -421,7 +428,7 @@ fn drain_channel(rx ChanReader[int]) -> int {
     sum
 }
 
-test "channel: Sender и Receiver передаются независимо" {
+test "channel: Sender and Receiver passed independently" {
     ro { tx, rx } = Channel.new(8)
     fill_channel(tx, [100, 200, 300])
     ro s = drain_channel(rx)
@@ -429,8 +436,8 @@ test "channel: Sender и Receiver передаются независимо" {
 }
 ```
 
-Передать `tx` куда не нужно `recv` — type system гарантирует, что
-получатель не сможет прочитать (и наоборот).
+Передать `tx` в функцию, которая не должна уметь `recv` — система типов
+гарантирует, что вызываемая сторона не сможет прочитать (и наоборот).
 
 ---
 
@@ -449,28 +456,30 @@ default-arm  = '_' '=>' arm-body NL*
 arm-body     = block | stmt
 ```
 
-> **Bootstrap-форма recv**: `Some(v) = rx => { ... }` — bare `rx` без
-> `.recv()`. Spec упоминает также `pattern = rx.recv()` форму; в
-> текущем компиляторе работает только bare-форма.
+> **Bootstrap-форма recv**: `Some(v) = rx => { ... }` — `rx` напрямую,
+> без `.recv()`. Спецификация описывает также форму `pattern = rx.recv()`;
+> текущий компилятор принимает только форму без `.recv()`.
 
 **Семантика** ([D94](../../spec/decisions/06-concurrency.md#d94)):
 
-1. **Guard evaluation** — `if <expr>` перед стрелкой делает arm
-   disabled когда false.
-2. **Immediate check** — все enabled arms проверяются в
-   псевдослучайном порядке (Fisher-Yates). Если ≥1 готов — выполняется
-   без park'а.
-3. **Park** — если ни один не готов и нет default: регистрирует waiter
-   на каждый arm, паркует fiber.
-4. **Wake** — первый готовый arm будит fiber; остальные waiters
-   unlinked. `done`-флаг предотвращает double-wake.
-5. **Fairness** — Fisher-Yates shuffle на каждой итерации (нет
-   starvation).
-6. **`_ => ...` (default)** — если присутствует: шаг 2 всегда
-   succeeds, fiber не паркуется.
-7. **Все каналы закрыты + нет default** → panic `"select: all channels closed"`.
-8. **Cancel** (`tok.cancel()` от `supervised(cancel:)`) — отменяет все
-   pending waiters; fiber просыпается, проверяет `cancel_requested`.
+1. **Вычисление охранного условия** — `if <expr>` перед стрелкой
+   отключает ветвь, когда false.
+2. **Немедленная проверка** — все включённые ветви проверяются в
+   псевдослучайном порядке (Fisher-Yates). Если готова хотя бы одна —
+   ветвь выполняется без приостановки.
+3. **Приостановка** — если ни одна не готова и нет default:
+   зарегистрировать ожидающего на каждой ветви, приостановить файбер.
+4. **Пробуждение** — первая готовая ветвь будит файбер; остальные
+   ожидающие отвязываются. Флаг `done` предотвращает двойное
+   пробуждение.
+5. **Справедливость** — перемешивание Fisher-Yates на каждой итерации
+   (нет голодания).
+6. **`_ => ...` (default)** — если присутствует: шаг 2 всегда успешен;
+   файбер никогда не приостанавливается.
+7. **Все каналы закрыты + нет default** → паника
+   `"select: all channels closed"`.
+8. **Отмена** (`tok.cancel()` из `supervised(cancel:)`) — отменяет всех
+   ожидающих; файбер просыпается, проверяет `cancel_requested`.
 
 ### Recv arm
 
@@ -518,7 +527,7 @@ test "select send arm: sends to channel with space" {
 ### Guard arms
 
 ```nova
-test "select guard: disabled arm skips to default" {
+test "select guard: disabled arm falls through to default" {
     ro ch = Channel.new(1)
     ch.tx.send(10)
     ro rx = ch.rx
@@ -528,18 +537,18 @@ test "select guard: disabled arm skips to default" {
         Some(v) = rx if enabled => { branch = v }
         _                       => { branch = -1 }
     }
-    assert(branch == -1)         // arm disabled — default сработал
+    assert(branch == -1)         // arm disabled — default ran
 }
 ```
 
-Guard — pre-condition. Если `false`, arm выключен ещё до проверки
-ready-state канала. Аналог `if` в Tokio `select!`. Go guard'ы не
-поддерживает.
+Охранное условие — предусловие. Если `false`, ветвь выключена ещё до
+проверки готовности канала. Аналог `if` в Tokio `select!`. Go охранные
+условия не поддерживает.
 
 ### Default arm
 
-`_ => { ... }` — выполняется если ни один channel-arm не готов
-*сейчас*. Превращает `select` в non-blocking.
+`_ => { ... }` — выполняется, если ни одна ветвь канала не готова
+*сейчас*. Превращает `select` в неблокирующий зонд.
 
 ```nova
 test "select recv with default: default when channel empty" {
@@ -556,9 +565,9 @@ test "select recv with default: default when channel empty" {
 
 ### Wildcard `_ = rx`
 
-Wildcard в recv-target срабатывает на **оба** состояния: `Some(v)` и
-`None` (closed). `Some(v) = rx` срабатывает только на реальное
-значение.
+Подстановочный знак в цели приёма срабатывает на **оба** состояния:
+`Some(v)` и `None` (закрытый канал). `Some(v) = rx` срабатывает только на
+реальное значение.
 
 ```nova
 test "Some arm skips closed+empty, picks open channel with data" {
@@ -574,8 +583,8 @@ test "Some arm skips closed+empty, picks open channel with data" {
 
     mut result = 0
     select {
-        Some(v) = rx1 => { result = -1 }     // Some НЕ срабатывает на closed
-        Some(v) = rx2 => { result = v  }     // ← выполнится
+        Some(v) = rx1 => { result = -1 }     // Some does NOT fire on closed
+        Some(v) = rx2 => { result = v  }     // ← runs
     }
     assert(result == 42)
 }
@@ -588,7 +597,7 @@ test "wildcard fires immediately on closed+empty channel" {
 
     mut fired = false
     select {
-        _ = rx => { fired = true }           // ← wildcard ловит closed
+        _ = rx => { fired = true }           // ← wildcard catches closed
     }
     assert(fired)
 }
@@ -596,16 +605,16 @@ test "wildcard fires immediately on closed+empty channel" {
 
 **Правило:**
 - `Some(v) = rx` — нужно реальное значение из канала
-- `_ = rx` — нужен **любой** ready-state (значение или closed)
+- `_ = rx` — нужно **любое** готовое состояние (значение или закрытие)
 
-`None = rx` отдельным arm пока не реализован (Plan 31 §«Отличия от
-spec»); для дифференциации используйте `_ = rx` + `match` внутри тела
-arm'а или `rx.is_closed()` после `recv`-а.
+`None = rx` отдельной ветвью пока не реализован (Plan 31 §«Отличия от
+спецификации»); для дифференциации используйте `_ = rx` + `match` внутри
+тела ветви или `rx.is_closed()` после `recv`.
 
 ### Timeout через `ChanReader.close_after`
 
-Специального `timeout =>` arm'а нет — timeout это обычный
-recv-канал, создаваемый `ChanReader.close_after(Duration)`.
+Специальной ветви `timeout =>` нет — таймаут это обычный канал приёма,
+создаваемый `ChanReader.close_after(Duration)`.
 
 ```nova
 import std.time.duration
@@ -644,29 +653,31 @@ test "select timeout: data wins over timeout" {
 ```
 
 `ChanReader.close_after(d Duration) -> ChanReader[()]` — реализован в
-[`std/concurrency/timer.nv`](../std/concurrency/timer.nv) как
-compiler-builtin (под капотом `nova_chan_reader_close_after_ns(d.nanos)`).
-Канал закрывается через `d`; первый `recv()` возвращает `Some(())`
-после firing'а, потом `None`.
+[`std/concurrency/timer.nv`](../std/concurrency/timer.nv) как встроенная
+функция компилятора (под капотом — `nova_chan_reader_close_after_ns(d.nanos)`).
+Канал закрывается через `d`; первый `recv()` возвращает `Some(())` после
+срабатывания, потом `None`.
 
-**Type safety** (Plan 65 revision 2026-05-18): ранее API назывался
-`Time.after(int ms)` — bare int (мс/мкс/сек?). Теперь — типизированный
-`Duration`. Migration: `cargo run --bin migrate_plan65 -- --apply` —
-переписывает literal-аргументы автоматически
+**Типобезопасность** (Plan 65 revision 2026-05-18): ранее API назывался
+`Time.after(int ms)` — голый `int` (мс/мкс/сек?). Теперь — типизированный
+`Duration`. Миграция: `cargo run --bin migrate_plan65 -- --apply` —
+переписывает литеральные аргументы автоматически
 (см. [docs/guide/nova-cli.ru.md](nova-cli.ru.md#migrate_plan65)).
 
-**Edge-cases:**
+**Крайние случаи:**
 - `Duration.ZERO` или `Duration.from_*(0)` — канал создаётся
-  *уже* закрытым; первый `recv()` вернёт `None` без yield (fast path,
-  без libuv timer)
-- Sub-millisecond `Duration` (`from_nanos(500_000)`) — округляется
-  **вверх** до 1 ms (libuv granularity)
-- Негативный `Duration` — runtime panic с nanosecond-значением
+  *уже* закрытым; первый `recv()` вернёт `None` без приостановки (быстрый
+  путь, без таймера libuv)
+- `Duration` короче миллисекунды (`from_nanos(500_000)`) — округляется
+  **вверх** до 1 мс (гранулярность libuv)
+- Отрицательный `Duration` — паника во время выполнения со значением
+  в наносекундах
 
-**Performance:** сейчас каждый вызов аллоцирует свежий `uv_timer_t`
-(~120 байт + syscall). Адекватно для idiomatic 10-100 concurrent
-timers. Custom timer-wheel для high-throughput (10k+ HTTP timeouts)
-— [Plan 66](../plans/66-timer-wheel-and-tick-every.md).
+**Производительность:** сейчас каждый вызов выделяет свежий `uv_timer_t`
+(~120 байт + системный вызов). Адекватно для идиоматичного использования
+с 10–100 параллельными таймерами. Своё таймерное колесо для высокой
+пропускной способности (10k+ HTTP-таймаутов) —
+[Plan 66](../plans/66-timer-wheel-and-tick-every.md).
 
 ### Multi-arm fairness
 
@@ -709,7 +720,7 @@ test "select multi-arm: fairness — both channels get served" {
 }
 ```
 
-Fisher-Yates shuffle на каждой итерации обеспечивает, что оба канала
+Перемешивание Fisher-Yates на каждой итерации обеспечивает, что оба канала
 получают свою долю (Go использует тот же подход — `select` в Nova
 семантически совместим).
 
@@ -751,14 +762,14 @@ test "select: data wins supervised(cancel:) race" {
 }
 ```
 
-`tok.cancel()` отменяет **все** pending waiters в любом `select`-блоке
-внутри `supervised(cancel: tok)`. Fiber просыпается, проверяет
-`cancel_requested`, и выходит из supervised-блока через структурную
-отмену (D75 / [Plan 49](../plans/49-cancel-throw-routing.md)).
+`tok.cancel()` отменяет **всех** ожидающих в любом блоке `select` внутри
+`supervised(cancel: tok)`. Файбер просыпается, проверяет `cancel_requested`
+и выходит из блока `supervised` через структурную отмену
+(D75 / [Plan 49](../plans/49-cancel-throw-routing.md)).
 
-Cancellation **не ошибка** — она не превращается в `throw`, не
-вызывает Fail-handler. Поведение симметрично Go `context.Done()`, но
-с типизированным `CancelToken` (D75) вместо `error`-канала.
+Отмена **не ошибка** — она не превращается в `throw` и не вызывает
+обработчик `Fail`. Поведение симметрично Go `context.Done()`, но с
+типизированным `CancelToken` (D75) вместо канала ошибок.
 
 ---
 
@@ -766,7 +777,8 @@ Cancellation **не ошибка** — она не превращается в `
 
 ### Идиома: `defer tx.close()`
 
-**Spec preference** — `defer` гарантирует close при выходе из scope:
+**Предпочтение спецификации** — `defer` гарантирует `close` при выходе из
+области видимости:
 
 ```nova
 fn run_pipeline() Net -> () {
@@ -777,34 +789,34 @@ fn run_pipeline() Net -> () {
         spawn { for j in jobs { tx.send(j) } }
         spawn { while Some(j) = rx.recv() { process(j) } }
     }
-}   // <-- tx.close() сработает гарантированно; rx.recv() в spawn'е получит None и завершится
+}   // <-- tx.close() always runs; rx.recv() in the spawn gets None and terminates
 ```
 
 ### Bootstrap-ограничение: `defer` + tuple-destructure
 
 > ⚠️ **Известная проблема:** `defer tx.close()` **не** работает в
 > сочетании с `let (tx, rx) = Channel.new(N)` или
-> `let { tx, rx } = Channel.new(N)` — `defer` эмитит setjmp-frame
-> *до* объявления переменных, что ломает scope (Plan 25 G8, будет
-> устранено когда внедрят open-coded defer).
+> `let { tx, rx } = Channel.new(N)` — `defer` порождает фрейм setjmp *до*
+> объявления переменных, что ломает область видимости (Plan 25 G8, будет
+> устранено после внедрения встроенного `defer`).
 >
-> **Workaround:** explicit `tx.close()` в конце функции, либо
-> разделить destructure:
+> **Обход:** явный `tx.close()` в конце функции, либо разделить
+> деструктуризацию:
 >
 > ```nova
 > let ch = Channel.new(N)
 > let tx = ch.tx
 > let rx = ch.rx
-> defer tx.close()    // OK — tx объявлен напрямую
+> defer tx.close()    // OK — tx is declared directly
 > // ...
 > ```
 
 ### Auto-close на drop — нет
 
-В отличие от Rust mpsc, Nova не имеет deterministic destructor'ов
-(managed heap, [D6](../../spec/decisions/05-memory.md#d6)). GC соберёт
-sender «когда-нибудь» — это **недетерминированно** и сделало бы тесты
-flaky. Поэтому `close()` всегда explicit.
+В отличие от Rust mpsc, Nova не имеет детерминированных деструкторов
+(управляемая куча, [D6](../../spec/decisions/05-memory.md#d6)). GC соберёт
+отправителя «когда-нибудь» — это **недетерминированно** и сделало бы тесты
+нестабильными. Поэтому `close()` всегда явный.
 
 ### Idempotent
 
@@ -812,13 +824,14 @@ flaky. Поэтому `close()` всегда explicit.
 test "channel: close idempotent" {
     ro { tx, rx } = Channel.new(2)
     tx.close()
-    tx.close()                  // не error
+    tx.close()                  // not an error
     assert(rx.is_closed())
 }
 ```
 
-С multi-writer (`share`) повторный `close()` *одного* writer'а не
-декрементирует `writer_count` повторно (idempotent per-instance).
+С несколькими отправителями (`share`) повторный `close()` *одного*
+отправителя не декрементирует `writer_count` повторно (идемпотентно для
+экземпляра).
 
 ---
 
@@ -827,12 +840,12 @@ test "channel: close idempotent" {
 | Условие | Сообщение |
 |---|---|
 | `Channel.new(0)` | `"capacity must be >= 1"` (Plan 44.1 Ф.3) |
-| `select` со всеми каналами closed + без default | `"select: all channels closed"` (Plan 31 Ф.6) |
-| `ChanReader.close_after(<negative Duration>)` | panic с nanosecond-значением |
-| `select` с `arm_count > stack` | overflow ловится до allocate'а — explicit panic |
+| `select` со всеми закрытыми каналами и без default | `"select: all channels closed"` (Plan 31 Ф.6) |
+| `ChanReader.close_after(<negative Duration>)` | паника со значением в наносекундах |
+| `select` с `arm_count > stack` | переполнение ловится до выделения памяти — явная паника |
 
-`tx.send` на closed-канал — **не panic**, возвращает `false`
-(Plan 30). `rx.recv` на closed+drained — **не panic**, возвращает
+`tx.send` на закрытый канал — **не паника**, возвращает `false`
+(Plan 30). `rx.recv` на закрытый и опустошённый — **не паника**, возвращает
 `None`.
 
 ---
@@ -841,41 +854,42 @@ test "channel: close idempotent" {
 
 | Что не работает / отложено | План |
 |---|---|
-| `None = rx` отдельный arm (только `_ = rx` wildcard) | Plan 31 followup |
+| Отдельная ветвь `None = rx` (только подстановочный знак `_ = rx`) | Plan 31 followup |
 | `Channel.new(0)` zero-capacity rendezvous | Plan 44.2+ |
 | `defer tx.close()` + tuple/record destructure | [Plan 25](../plans/25-production-readiness-roadmap.md) G8 |
 | `pattern = rx.recv()` (с `.recv()`) форма в select | работает только bare `pattern = rx` |
 | `oneshot::channel<T>` / `watch::channel<T>` / `broadcast::channel<T>` (Tokio variants) | Plan 44.2 |
 | `recv_many` batch API | Plan 44.1 Ф.4 follow-up |
-| Lock-free SPSC flavor | Plan 50+ (Loom-verified) |
-| `tick_every(Duration)` periodic ticker | [Plan 66](../plans/66-timer-wheel-and-tick-every.md) |
-| `close_at(Monotonic)` absolute deadline | [Plan 65](../plans/65-chanreader-close-after.md) Ф.13 (✅ реализовано) |
-| Time-effect mock для deterministic timer-тестов | [Plan 65](../plans/65-chanreader-close-after.md) Ф.10 (✅ реализовано) |
+| Разновидность SPSC без блокировок | Plan 50+ (Loom-verified) |
+| `tick_every(Duration)` периодический тикер | [Plan 66](../plans/66-timer-wheel-and-tick-every.md) |
+| `close_at(Monotonic)` абсолютный дедлайн | [Plan 65](../plans/65-chanreader-close-after.md) Ф.13 (✅ реализовано) |
+| Имитация эффекта времени для детерминированных тестов таймеров | [Plan 65](../plans/65-chanreader-close-after.md) Ф.10 (✅ реализовано) |
 
 ---
 
 ## Связанные документы
 
 - [`spec/decisions/06-concurrency.md`](../../spec/decisions/06-concurrency.md) —
-  D79 / D91 / D94 / D75 / D97 (channels, select, cancel, fiber stacks)
+  D79 / D91 / D94 / D75 / D97 (каналы, `select`, отмена, стеки файберов)
 - [`docs/plans/21-channel-revision-implementation.md`](../plans/21-channel-revision-implementation.md)
-  — D91 implementation (capability-split)
+  — реализация D91 (разделение прав)
 - [`docs/plans/30-channel-improvements.md`](../plans/30-channel-improvements.md)
   — `send → bool` + `tx.share()`
 - [`docs/plans/31-channel-select.md`](../plans/31-channel-select.md) —
   `select { ... }` (D94)
 - [`docs/plans/44.1-channel-hardening.md`](../plans/44.1-channel-hardening.md)
-  — production-grade M:N safety (atomics, doubly-linked, cache padding)
+  — промышленная безопасность M:N (атомарные операции, двусвязный список,
+  выравнивание кэша)
 - [`docs/plans/49-cancel-throw-routing.md`](../plans/49-cancel-throw-routing.md)
-  — cancel semantics (typed `CancelToken[T]`)
+  — семантика отмены (типизированный `CancelToken[T]`)
 - [`docs/plans/65-chanreader-close-after.md`](../plans/65-chanreader-close-after.md)
-  — `ChanReader.close_after(Duration)` (rename от `Time.after`)
+  — `ChanReader.close_after(Duration)` (переименование `Time.after`)
 - [`docs/plans/66-timer-wheel-and-tick-every.md`](../plans/66-timer-wheel-and-tick-every.md)
-  — periodic ticker + custom timer-wheel (P2)
+  — периодический тикер + собственное таймерное колесо (P2)
 - [`std/concurrency/timer.nv`](../std/concurrency/timer.nv) —
   `ChanReader.close_after` doc-surface
-- [`std/time/duration.nv`](../std/time/duration.nv) — `Duration` type
+- [`std/time/duration.nv`](../std/time/duration.nv) — тип `Duration`
 - [`nova_tests/runtime/channels.nv`](../nova_tests/runtime/channels.nv)
-  — 22 теста channel API
+  — 22 теста API каналов
 - [`nova_tests/concurrency/`](../../nova_tests/concurrency/) —
   `select_*.nv` тесты (7 файлов)
