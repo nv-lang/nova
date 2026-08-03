@@ -14,8 +14,8 @@ source_date: 2026-08-02
 ## Что они возвращают
 
 ```nova
-const SIZE_INT  = size_of[int]()    // 8 — байт в памяти
-const ALIGN_INT = align_of[int]()   // 8 — выравнивание (адрес кратен 8)
+const SIZE_INT  = size_of[int]()    // 8 — bytes in memory
+const ALIGN_INT = align_of[int]()   // 8 — alignment (address is a multiple of 8)
 ```
 
 Оба возвращают `int` (i64). Оценка происходит **на этапе компиляции** —
@@ -56,14 +56,14 @@ CPU читает память не побайтно, а блоками. Если
 ### Пример 1: `(i8, i32)` — нужен padding посередине
 
 ```
-size_of[(i8, i32)]() == 8   // не 5! (1 + 4)
+size_of[(i8, i32)]() == 8   // not 5! (1 + 4)
 align_of[(i8, i32)]() == 4
 
-Layout в памяти:
-байты:   [0][1][2][3][4][5][6][7]
-поле:    [i8][--padding--][i32        ]
+Memory layout:
+bytes:   [0][1][2][3][4][5][6][7]
+field:   [i8][--padding--][i32        ]
          ^                ^
-         offset 0         offset 4 (выровнен на 4)
+         offset 0         offset 4 (aligned to 4)
 ```
 
 i32 требует align 4 — после i8 (1 байт) нужно ещё 3 байта padding,
@@ -72,12 +72,12 @@ i32 требует align 4 — после i8 (1 байт) нужно ещё 3 б
 ### Пример 2: `(i32, i8)` — порядок меняет тривиальную часть
 
 ```
-size_of[(i32, i8)]() == 8   // tail-pad до align 4
+size_of[(i32, i8)]() == 8   // tail-pad up to align 4
 align_of[(i32, i8)]() == 4
 
 Layout:
-байты:   [0][1][2][3][4][5][6][7]
-поле:    [i32        ][i8][tail-pad]
+bytes:   [0][1][2][3][4][5][6][7]
+field:   [i32        ][i8][tail-pad]
 ```
 
 i32 ложится с offset 0, потом i8 на offset 4, и tail-padding 3 байта
@@ -90,8 +90,8 @@ size_of[(bool, int)]() == 16
 align_of[(bool, int)]() == 8
 
 Layout:
-байты:   [0][1][2][3][4][5][6][7][8][9]...[15]
-поле:    [bool][----7 байт padding----][int          ]
+bytes:   [0][1][2][3][4][5][6][7][8][9]...[15]
+field:   [bool][----7 bytes padding-----][int          ]
 ```
 
 int требует align 8 — после bool (1 байт) нужно 7 байт padding.
@@ -99,7 +99,7 @@ int требует align 8 — после bool (1 байт) нужно 7 бай�
 ### Пример 4: `(i8, i8, i8)` — нет padding
 
 ```
-size_of[(i8, i8, i8)]() == 3   // ровно 3
+size_of[(i8, i8, i8)]() == 3   // exactly 3
 align_of[(i8, i8, i8)]() == 1
 ```
 
