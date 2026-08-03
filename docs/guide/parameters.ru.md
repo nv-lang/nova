@@ -26,14 +26,14 @@ fn drain(consume b []int) { ... }             // ✓ ownership transfer
 |---|---|---|
 | (нет) — default | чтение, итерация, non-mut-методы | заимствование (владеет caller) |
 | `mut` | + mut-методы (`.push`, `.append` и т.п.), присваивание по индексу | заимствование (владеет caller) |
-| `readonly` | то же, что и default — синоним | заимствование (владеет caller) |
+| `ro` | то же, что и default — синоним | заимствование (владеет caller) |
 | `consume` | всё (owned), включая mut-методы | перемещение (связывание caller'а мёртво) |
 
 ## Правила сочетания
 
 - `mut` + `consume` — ✗ `E_PARAM_MOD_CONFLICT` (consume уже подразумевает mut)
-- `mut` + `readonly` — ✗ `E_PARAM_MOD_CONFLICT` (взаимоисключают)
-- `readonly` + `consume` — ✗ `E_PARAM_MOD_CONFLICT` (readonly запрещает мутацию, consume требует владения)
+- `mut` + `ro` — ✗ `E_PARAM_MOD_CONFLICT` (взаимоисключают)
+- `ro` + `consume` — ✗ `E_PARAM_MOD_CONFLICT` (`ro` запрещает мутацию, consume требует владения)
 
 ## Когда использовать что
 
@@ -47,7 +47,7 @@ append_world(sb)
 ro s = sb.as_str()                  // "hello world" — мутация видна
 ```
 
-### default или `readonly` — только читать (с производством результата)
+### default или `ro` — только читать (с производством результата)
 
 ```nova
 fn sum(b []int) -> int {
@@ -57,7 +57,7 @@ fn sum(b []int) -> int {
 }
 ```
 
-Используй `readonly` явно, когда хочешь подчеркнуть гарантию в API
+Используй `ro` явно, когда хочешь подчеркнуть гарантию в API
 (особенно для FFI/документации):
 
 ```nova
@@ -79,25 +79,25 @@ ro s = finalize(sb)                  // sb dead after this
 |---|---|
 | `E_PARAM_NOT_MUT` | вызов mut-метода на параметре без `mut` |
 | `E_PARAM_MOD_CONFLICT` | взаимоисключающие модификаторы |
-| `E_READONLY_COERCE` | передача `readonly T` в `T` параметр (где `T` ожидает не-readonly) |
+| `E_READONLY_COERCE` | передача `ro T` в `T` параметр (где `T` ожидает изменяемый) |
 
 Все — с машинно-применимыми предложениями.
 
 ## Приведение (coercion / subtyping) для параметров
 
-Поскольку `T` в позиции параметра **уже readonly** (Plan 108.1 default),
+Поскольку `T` в позиции параметра **уже только для чтения** (Plan 108.1 default),
 большинство комбинаций — тождество.  Единственное нарушение:
-`readonly → mut`.
+`ro → mut`.
 
 | Тип у caller'а → параметр callee | OK? |
 |---|---|
-| `T` → `T` (param default readonly) | ✓ (сужение) |
-| `T` → `readonly T` (param explicit readonly) | ✓ (синоним default) |
+| `T` → `T` (параметр по умолчанию только для чтения) | ✓ (сужение) |
+| `T` → `ro T` (параметр с явным `ro`) | ✓ (синоним default) |
 | `T` → `mut T` (param explicit mut) | ✓ (caller разрешает mut) |
-| `readonly T` → `T` (param default readonly) | ✓ — оба readonly |
-| `readonly T` → `readonly T` | ✓ |
-| `readonly T` → `mut T` (param explicit mut) | ✗ `E_READONLY_COERCE` |
-| `mut T` → `T` (param default readonly) | ✓ (сужение) |
+| `ro T` → `T` (параметр по умолчанию только для чтения) | ✓ — оба только для чтения |
+| `ro T` → `ro T` | ✓ |
+| `ro T` → `mut T` (param explicit mut) | ✗ `E_READONLY_COERCE` |
+| `mut T` → `T` (параметр по умолчанию только для чтения) | ✓ (сужение) |
 | `mut T` → `mut T` | ✓ |
 
 ## Мутабельность receiver в методах

@@ -21,14 +21,14 @@ fn drain(consume b []int) { ... }             // ✓ ownership transfer
 |---|---|---|
 | (none) — default | reading, iteration, non-mut methods | borrow (caller owns) |
 | `mut` | + mut methods (`.push`, `.append`, etc.), index-assign | borrow (caller owns) |
-| `readonly` | same as default — synonym | borrow (caller owns) |
+| `ro` | same as default — synonym | borrow (caller owns) |
 | `consume` | everything (owned), including mut methods | move (caller's binding is dead) |
 
 ## Combination rules
 
 - `mut` + `consume` — ✗ `E_PARAM_MOD_CONFLICT` (consume already implies mut)
-- `mut` + `readonly` — ✗ `E_PARAM_MOD_CONFLICT` (mutually exclusive)
-- `readonly` + `consume` — ✗ `E_PARAM_MOD_CONFLICT` (readonly forbids mutation, consume requires ownership)
+- `mut` + `ro` — ✗ `E_PARAM_MOD_CONFLICT` (mutually exclusive)
+- `ro` + `consume` — ✗ `E_PARAM_MOD_CONFLICT` (`ro` forbids mutation, consume requires ownership)
 
 ## When to use what
 
@@ -42,7 +42,7 @@ append_world(sb)
 ro s = sb.as_str()                  // "hello world" — мутация видна
 ```
 
-### default or `readonly` — just read (while producing a result)
+### default or `ro` — just read (while producing a result)
 
 ```nova
 fn sum(b []int) -> int {
@@ -52,7 +52,7 @@ fn sum(b []int) -> int {
 }
 ```
 
-Use `readonly` explicitly when you want to underscore the guarantee in the
+Use `ro` explicitly when you want to underscore the guarantee in the
 API (especially for FFI/documentation):
 
 ```nova
@@ -74,25 +74,25 @@ ro s = finalize(sb)                  // sb dead after this
 |---|---|
 | `E_PARAM_NOT_MUT` | calling a mut method on a parameter without `mut` |
 | `E_PARAM_MOD_CONFLICT` | mutually exclusive modifiers |
-| `E_READONLY_COERCE` | passing `readonly T` into a `T` parameter (where `T` expects non-readonly) |
+| `E_READONLY_COERCE` | passing `ro T` into a `T` parameter (where `T` expects non-read-only) |
 
 All come with machine-applicable suggestions.
 
 ## Coercion (subtyping) for parameters
 
-Since `T` in parameter position is **already readonly** (Plan 108.1
+Since `T` in parameter position is **already read-only** (Plan 108.1
 default), most combinations are the identity. The one exception:
-`readonly → mut`.
+``ro` → `mut``.
 
 | caller-type → callee-param | OK? |
 |---|---|
-| `T` → `T` (param default readonly) | ✓ (narrowing) |
-| `T` → `readonly T` (param explicit readonly) | ✓ (synonym default) |
+| `T` → `T` (param default read-only) | ✓ (narrowing) |
+| `T` → `ro T` (param explicit `ro`) | ✓ (synonym default) |
 | `T` → `mut T` (param explicit mut) | ✓ (caller allows mut) |
-| `readonly T` → `T` (param default readonly) | ✓ — both readonly |
-| `readonly T` → `readonly T` | ✓ |
-| `readonly T` → `mut T` (param explicit mut) | ✗ `E_READONLY_COERCE` |
-| `mut T` → `T` (param default readonly) | ✓ (narrowing) |
+| `ro T` → `T` (param default read-only) | ✓ — both read-only |
+| `ro T` → `ro T` | ✓ |
+| `ro T` → `mut T` (param explicit mut) | ✗ `E_READONLY_COERCE` |
+| `mut T` → `T` (param default read-only) | ✓ (narrowing) |
 | `mut T` → `mut T` | ✓ |
 
 ## Receiver methods
