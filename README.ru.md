@@ -242,7 +242,7 @@ fn map_audio(samples []f32, gain f32) -> []f32 =>
 | [nova-http](https://github.com/nv-lang/nova-http) | HTTP/1.1-клиент + сервер — запрос/ответ, заголовки, URL, транспорт | `v0.1.1` |
 | [nova-compress](https://github.com/nv-lang/nova-compress) | Кодеки `deflate` / `gzip` / `zlib` / `brotli` | `v0.1.1` |
 | [nova-polaris](https://github.com/nv-lang/nova-polaris) | Polaris ⭐ — веб-фреймворк поверх HTTP-ядра: маршрутизатор, экстракторы, middleware, аутентификация, websocket'ы | тега пока нет |
-| [nova-bigint](https://github.com/nv-lang/nova-bigint) | Числа произвольной точности на чистом Nova, без C-зависимостей | в работе |
+| [nova-bignum](https://github.com/nv-lang/nova-bignum) | Числа произвольной точности на чистом Nova, без C-зависимостей | в работе |
 | [tree-sitter-nova](https://github.com/nv-lang/tree-sitter-nova) | Грамматика tree-sitter для языка | `v0.1.0` |
 
 ## Статус
