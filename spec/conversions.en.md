@@ -161,3 +161,92 @@ ro f = 3.14.to_str()           // "3.14"
 Interpolation (`"${n}"`) lowers into the same path directly (for primitives —
 into a Display helper at the C level, without re-calling `.to_str()` — no
 recursion).
+
+---
+
+## Char / Byte / []byte / str
+
+### char → str (UTF-8 encode)
+
+| Via | Semantics |
+|---|---|
+| `c.to_str()` | infallible UTF-8 encode (1-4 bytes) — a specialization of the `to_str()` blanket, byte-identical to the former `str.from(char)` |
+
+### str → char (single codepoint, fallible)
+
+**Canon (Plan 232.1 Т1, owner decision "add", 2026-07-26):**
+`s.to_char()` parses EXACTLY one Unicode codepoint (not a byte — `"é".to_char()`
+succeeds, even though `é` is 2 UTF-8 bytes). A receiver form on the source,
+the same principle as `str @to_int()`.
+
+| Via | Failure |
+|---|---|
+| `s.to_char() -> Result[char, ParseCharError]` | empty → `Err(Empty)`; >1 codepoint → `Err(TooManyChars)` |
+
+```nova
+assert("a".to_char() == Ok('a'))
+assert("ab".to_char() == Err(TooManyChars))    // строгий отказ, не first-char silently
+```
+
+`type ParseCharError enum Empty | TooManyChars` (`std/runtime/string/parse.nv`)
+— does **NOT** reuse `CharFromError` (see the "int → char" section below): that
+domain is a codepoint outside the Unicode scalar value range/surrogates,
+unreachable for str→char (the bytes of a `str` are already valid UTF-8, R-UTF8).
+
+### int → char (codepoint range-check, fallible)
+
+**Canon (owner, 2026-07-09):** a receiver form on the **source**
+(`(cp int).to_char()`), not a static `char.try_from(n)` — the same chaining
+principle as `str @to_int()`: `(32 + off).to_char()?`.
+
+| Via | Failure |
+|---|---|
+| `(cp int).to_char() -> Result[char, CharFromError]` | `cp < 0` / `cp > 0x10FFFF` / surrogate `[0xD800, 0xDFFF]` |
+
+```nova
+fn describe(cp int) -> str =>
+    match cp.to_char() {
+        Ok(c)              => "codepoint ${cp} = '${c}'"
+        Err(CharFromError) => "codepoint ${cp} вне диапазона"
+    }
+```
+
+### char → byte (only if codepoint < 256, fallible)
+
+This pair **stayed a static form** (did not migrate to a receiver) — the only
+case where `try_` remained on the target type:
+
+| Via | Failure |
+|---|---|
+| `u8.try_from(c char) -> Result[u8, TryFromCharError]` | codepoint > 0xFF (not Latin-1) |
+
+**Exception:** `'A' as byte`, `'A' as int`, `'A' as u8` — allowed
+for char literals (compile-time-known codepoint), see D54.
+
+### []byte ↔ str — the unified `to_str` family (D325/174.1)
+
+**Canon:** `[]u8` decode also goes through `to_str()` — a concrete
+overload (arity/semantics of decode, not format) beats the bare-`T` blanket
+by the "concrete beats generic" rule ([D84](decisions/10-overloading.md#d84)).
+`str.try_from([]u8)` / the separate `str.from_bytes(...)` — historical
+names, **withdrawn**, only the forms below are current:
+
+| Form | Type | Semantics |
+|---|---|---|
+| `bs.to_str()` | `-> Result[str, Utf8Error]` | checked decode; `Utf8Error{byte_offset}` points at the first invalid byte |
+| `bs.to_str_lossy()` | `-> str` | infallible, invalid sequences are replaced with a replacement character |
+| `unsafe { bs.to_str_unchecked() }` | `-> str` | unchecked, the caller guarantees valid UTF-8 |
+| `unsafe { bs.consume.into_str_unchecked() }` | `-> str` | as above, but a consuming zero-copy move of the buffer |
+
+```nova
+fn decode(bytes []u8) -> str =>
+    match bytes.to_str() {
+        Ok(s)                        => s
+        Err(Utf8Error{byte_offset})  => "invalid UTF-8 at ${byte_offset}"
+    }
+```
+
+**str → []byte** (view, infallible, zero-copy) — a bare view, not a
+transformation: `s.bytes() -> ro []u8` ([D410](decisions/03-syntax.md#d410) —
+`as_bytes` was renamed to `bytes`; this same name is the first declared
+`#coerce` pair, see the "Zero-cost implicit conversions" section below).
