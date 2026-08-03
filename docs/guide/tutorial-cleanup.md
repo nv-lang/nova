@@ -214,10 +214,10 @@ consume f = File.open(path)? {
 ```
 
 Nova advantages:
-- **Visible**: cleanup explicit, не magic Drop.
+- **Visible**: cleanup is explicit, not a magic Drop.
 - **Cancel-shield**: cleanup protected from cancel storm (D188 R3).
 - **Outcome-aware**: resource discriminates success/failure/panic.
-- **Async-capable**: can `await` в `@cleanup` (D191).
+- **Async-capable**: you can `await` inside `@cleanup` (D191).
 
 ## What's Next
 

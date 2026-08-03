@@ -7,14 +7,14 @@
 
 ## What it does
 
-Nova compiler automatically caches `@field` reads и `@<pure_method>()`
+Nova compiler automatically caches `@field` reads and `@<pure_method>()`
 calls in method bodies, eliminating redundant `self->X` pointer
-dereferences в generated `.c` output. Hot-path methods (ReadBuffer,
-StringBuilder, HashMap iterators) typically see 15-30% reduction в
+dereferences in the generated `.c` output. Hot-path methods (ReadBuffer,
+StringBuilder, HashMap iterators) typically see a 15-30% reduction in
 pointer derefs under `-O0` debug builds.
 
 The optimization is **transparent** — semantic equivalence guaranteed.
-You can disable it any time с environment variables (see Escape
+You can disable it any time with environment variables (see Escape
 hatches below).
 
 ## What gets cached
@@ -116,7 +116,7 @@ NOVA_FIELD_CACHE_MAX=12   # default 8 — total across all 4 layers
 - `-O0` builds: 15-30% reduction in pointer derefs on hot paths.
 - `-O2` builds: smaller gain (C compiler already does NoAlias-based
   CSE). Still measurable due to Nova's deterministic emission.
-- Cross-platform: identical AST output на Windows MSVC / Linux clang
+- Cross-platform: identical AST output on Windows MSVC / Linux clang
   / macOS clang.
 - Stack-frame impact: ≤ 8 cache locals per fn × 8 bytes ≈ 64 bytes.
 
@@ -130,7 +130,7 @@ layer (or all layers) produces identical observable behavior:
 - GC behavior identical.
 
 Verified via differential testing (umbrella nova_tests/plan123_*
-fixtures all PASS identically под enabled и disabled).
+fixtures all PASS identically with the optimization enabled and disabled).
 
 ## Spec references
 
@@ -143,5 +143,5 @@ fixtures all PASS identically под enabled и disabled).
 
 - V5 (Plan 123.5, this) — LSP code-lens (deferred) + CLI flag.
 - V6 (Plan 123.6) — telemetry + production rollout + full CLI flags.
-- V7 (Plan 123.7) — inter-procedural analysis (IPA) для precise
+- V7 (Plan 123.7) — inter-procedural analysis (IPA) for precise
   invalidation.

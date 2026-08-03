@@ -35,7 +35,7 @@ acc.balance = 100.0         // ❌ E_PRIV_FIELD_WRITE
 ```
 
 Default visibility is **public** (consistent with Go's exported-by-
-case-style fields and Kotlin/Swift defaults в 92.4% of API surface,
+case-style fields and Kotlin/Swift defaults in 92.4% of API surface,
 as measured on kubernetes API types). Opt-in `priv` per field when
 you need invariant protection.
 
@@ -79,7 +79,7 @@ priv pub x f64    // ❌ E_PRIV_PUB_CONFLICT
 pub priv x f64    // ❌ E_PRIV_PUB_CONFLICT (detected at parser)
 ```
 
-`pub` is reserved для explicit-public-override of a type-level
+`pub` is reserved for an explicit public override of a type-level
 `priv` default (Plan 124.7 — type-level flip syntax `type X priv {}`).
 
 ### 3.3 Named tuples (Plan 124.4 / D222)
@@ -117,9 +117,9 @@ s.len = 0    // ❌ E_PRIV_FIELD_WRITE — uniform для всех T
 
 | Code | Site | When |
 |---|---|---|
-| `E_PRIV_FIELD_READ` | Member access на priv field outside scope | `acc.balance` |
+| `E_PRIV_FIELD_READ` | Member access to a priv field outside its scope | `acc.balance` |
 | `E_PRIV_FIELD_WRITE` | Mutating assignment outside scope | `acc.balance = 0` |
-| `E_PRIV_FIELD_INIT` | Record literal или named-tuple ctor outside scope | `Account { balance: 0 }` или `Vec3(x: 1.0)` |
+| `E_PRIV_FIELD_INIT` | Record literal or named-tuple ctor outside scope | `Account { balance: 0 }` or `Vec3(x: 1.0)` |
 | `E_PRIV_FIELD_PATTERN` | Pattern destructure outside scope | `Account { balance } = acc` |
 | `E_PRIV_FIELD_INIT_SPREAD` | Record literal spread outside scope | `Account { ...other }` |
 | `E_PRIV_PUB_CONFLICT` | Both `priv` and `pub` on same field | `priv pub x f64` |
@@ -188,8 +188,8 @@ stricter than any of them.
 | Forced factory for priv-init | ❌ | ✅ `pub(...)` | ✅ | ✅ | ✅ | ✅ | ✅ **outside-scope blocked** |
 | Tuple field privacy | ❌ | ✅ `struct(pub T)` | ❌ | ❌ | ❌ | ❌ | ✅ **named tuple priv** |
 
-Nova matches or exceeds на 6/6 capabilities + 3 Nova-only superior
-guarantees (strictest scope, no reflection, integrated с effect
+Nova matches or exceeds on 6/6 capabilities + 3 Nova-only superior
+guarantees (strictest scope, no reflection, integrated with the effect
 system D2).
 
 ---

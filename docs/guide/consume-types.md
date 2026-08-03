@@ -2,7 +2,7 @@
 
 **English** | [Русский](consume-types.ru.md)
 
-> User-facing guide для work with consume-types: bindings, ownership
+> User-facing guide to working with consume-types: bindings, ownership
 > transfer, view-borrow, lifecycle.
 
 ## TL;DR
@@ -14,10 +14,10 @@ consume y = x               // ✓ move (x dead, y owns)
 ro v = x.release()         // ✓ consume via method
 ```
 
-- **Ownership** перемещается через `consume X = …`.
-- **Алиас-binding** запрещён внутри тела функции (`let Y = X`).
-- **View-borrow** разрешён ТОЛЬКО как function-параметр.
-- Каждый consume-binding обязан быть consumed до scope-exit.
+- **Ownership** moves via `consume X = …`.
+- **Alias binding** is forbidden inside a function body (`let Y = X`).
+- **View-borrow** is allowed ONLY as a function parameter.
+- Every consume-binding must be consumed before scope exit.
 
 ## What is a consume-type?
 
