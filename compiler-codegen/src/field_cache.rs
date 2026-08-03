@@ -1610,8 +1610,24 @@ fn collect_writes_stmt(
 ) {
     match s {
         Stmt::Assign { target, value, .. } => {
-            if let Some(fname) = match_self_field(target) {
-                writes.insert(fname.to_string());
+            // №291 fix: `match_self_field` only recognizes a SINGLE-level
+            // self field (`@F = ...`). A nested chain target (`@a.b = ...`
+            // / `@a.b op= ...`, depth >= 2 — e.g. a `#share` sub-object's
+            // field reached through a `ro` receiver field) fell through to
+            // a plain expression walk that records NO write at all, so the
+            // IPA write-set registry (`build_write_set_registry`) believed
+            // a method mutating such a chain wrote NOTHING — the root
+            // cause of №291 (a caller caching `@a` or `@a.b` across a call
+            // to this method never saw the field invalidated). Record
+            // EVERY segment of a self-rooted chain target as written —
+            // consistent with the `@field.method()` handling below this
+            // function, which already does the same for method-call
+            // mutation and documents the identical silent-no-op /
+            // infinite-loop risk.
+            if let Some(path) = extract_chain_path(target) {
+                for seg in &path {
+                    writes.insert(seg.clone());
+                }
             } else {
                 collect_writes_expr(target, recv_type, writes, callees);
             }
@@ -1636,9 +1652,19 @@ fn collect_writes_stmt(
         }
         Stmt::Break(_) | Stmt::Continue(_)
         | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
-        // Plan 136: tuple destructuring assignment.
+        // Plan 136: tuple destructuring assignment. №291 fix: same
+        // chain-write recording as `Stmt::Assign` above — `lhs` targets
+        // can also be self-rooted chains.
         Stmt::TupleAssign { lhs, rhs, .. } => {
-            for e in lhs { collect_writes_expr(e, recv_type, writes, callees); }
+            for e in lhs {
+                if let Some(path) = extract_chain_path(e) {
+                    for seg in &path {
+                        writes.insert(seg.clone());
+                    }
+                } else {
+                    collect_writes_expr(e, recv_type, writes, callees);
+                }
+            }
             for e in rhs { collect_writes_expr(e, recv_type, writes, callees); }
         }
     }
@@ -1669,8 +1695,21 @@ fn collect_writes_expr(
             // `@field.method(args)` — method called on a self-field.
             // Conservatively mark `field` as written so the field cache
             // treats this call as a barrier for any `@field` cache.
-            if let Some(field_name) = match_self_field(obj) {
-                writes.insert(field_name.to_string());
+            //
+            // №291 fix: `match_self_field` only matched a SINGLE-level
+            // receiver (`@field.method()`). A call through a deeper chain
+            // (`@a.b.method()` — e.g. `@ch.not_empty.wait(@ch.mutex)`,
+            // reaching a `#share` sub-object's own `Mutex`/`Condvar`
+            // fields) recorded no write at all. Any segment of the
+            // receiver chain is now conservatively marked written — the
+            // method may mutate state reachable through that path; this is
+            // exactly №291's risk (a blocking `Condvar.wait` call is the
+            // very boundary across which another fiber mutates the field a
+            // `while` loop is testing).
+            if let Some(path) = extract_chain_path(obj) {
+                for seg in &path {
+                    writes.insert(seg.clone());
+                }
             }
         }
         // Continue recurse.
@@ -7691,8 +7730,18 @@ fn collect_body_writes_block(b: &Block, out: &mut HashSet<String>) {
 fn collect_body_writes_stmt(s: &Stmt, out: &mut HashSet<String>) {
     match s {
         Stmt::Assign { target, value, .. } => {
-            if let Some(fname) = match_self_field(target) {
-                out.insert(fname.to_string());
+            // №291 fix: see the matching comment on `collect_writes_stmt`
+            // above — `match_self_field` only recognized a single-level
+            // `@F = ...` target; a nested chain target (`@a.b = ...` /
+            // `@a.b op= ...`) recorded no write at all, so chain-cache's
+            // own eligibility gate (`chain_cache_fn_impl`'s `body_writes`
+            // check) never disqualified a chain that IS mutated later in
+            // the same function body via a nested assignment (exactly
+            // `ChanReaderV2.recv`'s `@ch.count -= 1` / `@ch.head = ...`).
+            if let Some(path) = extract_chain_path(target) {
+                for seg in &path {
+                    out.insert(seg.clone());
+                }
             } else {
                 collect_body_writes_expr(target, out);
             }
@@ -7717,9 +7766,18 @@ fn collect_body_writes_stmt(s: &Stmt, out: &mut HashSet<String>) {
         }
         Stmt::Break(_) | Stmt::Continue(_)
         | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
-        // Plan 136: tuple destructuring assignment.
+        // Plan 136: tuple destructuring assignment. №291 fix: same
+        // chain-write recording as `Stmt::Assign` above.
         Stmt::TupleAssign { lhs, rhs, .. } => {
-            for e in lhs { collect_body_writes_expr(e, out); }
+            for e in lhs {
+                if let Some(path) = extract_chain_path(e) {
+                    for seg in &path {
+                        out.insert(seg.clone());
+                    }
+                } else {
+                    collect_body_writes_expr(e, out);
+                }
+            }
             for e in rhs { collect_body_writes_expr(e, out); }
         }
     }
@@ -7798,6 +7856,22 @@ fn collect_body_writes_expr(e: &Expr, out: &mut HashSet<String>) {
             collect_body_writes_expr(index, out);
         }
         ExprKind::Call { func, args, trailing } => {
+            // №291 fix: `@<chain>.method(args)` — calling ANY method
+            // through a self-rooted chain receiver (single field
+            // `@field.method()`, e.g. `@src.next()`, OR a deeper chain
+            // `@a.b.method()`, e.g. `@ch.not_empty.wait(@ch.mutex)`) can
+            // mutate state reachable through that path — mark every
+            // segment as written so chain-cache's eligibility gate treats
+            // it as a barrier, same as `collect_writes_expr` already does
+            // for the write-set registry (see its comment for the
+            // `SkipIter.next()` precedent this mirrors).
+            if let ExprKind::Member { obj, .. } = &func.kind {
+                if let Some(path) = extract_chain_path(obj) {
+                    for seg in &path {
+                        out.insert(seg.clone());
+                    }
+                }
+            }
             collect_body_writes_expr(func, out);
             for a in args { collect_body_writes_expr(a.expr(), out); }
             if let Some(t) = trailing {
@@ -11405,6 +11479,169 @@ fn C mut @do() -> int {
         let self_only = Expr { kind: ExprKind::SelfAccess, span, id: crate::ast::ExprId::UNSET, debug_only: false };
         assert!(call_recv_self_chain(&self_only).is_none(),
             "plain SelfAccess must return None (not a chain)");
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // №291 (found by window p-chan244, fixed by window p-fc291,
+    // 2026-08-03): chain-cache (V4/V4.1) write-detection blind spot.
+    //
+    // Root cause: `collect_body_writes`/`collect_writes_expr` detected
+    // an assignment TARGET as "written" only via `match_self_field`,
+    // which matches a SINGLE-level self field (`@F = ...`) only. A
+    // nested chain target (`@a.b = ...` / `@a.b op= ...`, depth >= 2 —
+    // e.g. a `#share` sub-object's field reached through a `ro`
+    // receiver field, exactly `ChanReaderV2.recv`'s `@ch.count -= 1`)
+    // fell through to a plain read-context expression walk that
+    // recorded NO write at all. Chain-cache's eligibility gate
+    // (`chain_cache_fn_impl`'s `body_writes` check) therefore believed
+    // the chain was never written anywhere in the function body, cached
+    // it ONCE as a `let` at the function's prefix (before ANY other
+    // statement, including a guarding `Mutex.lock()`), and the
+    // rewrite step then ALSO blindly substituted the assignment TARGET
+    // itself with the same cached local — so the compound-assign
+    // mutated only the throwaway local, never the real struct field.
+    // Net effect: a `while @chain == 0 { cv.wait(mutex) }`-shaped loop
+    // spins forever on the one stale snapshot taken at function entry,
+    // and the field's real mutation (e.g. `send()`'s `@ch.count += 1`)
+    // never reaches the shared struct at all — reproduced even in a
+    // single-fiber, no-`spawn` `tx.send(1); rx.recv()` sequence, since
+    // the loss of the write means the field never changes no matter who
+    // calls the method next.
+    //
+    // Same call-site risk applies to a method called THROUGH a chain
+    // receiver (`@a.b.method()` — e.g. `@ch.not_empty.wait(@ch.mutex)`,
+    // exactly the boundary across which another fiber's write becomes
+    // visible) — `collect_writes_expr`/`collect_body_writes_expr`
+    // already special-cased this for a SINGLE-level `@field.method()`
+    // (the `SkipIter.next()` precedent, see comment above), but never
+    // extended it to a deeper chain receiver.
+    //
+    // Fix: both write-detection walkers now record EVERY segment of a
+    // self-rooted chain (`extract_chain_path`) for (a) an assignment
+    // target of any depth and (b) a method-call receiver of any depth —
+    // not just the depth-1 case `match_self_field` covered. This makes
+    // chain-cache's "is this chain ever written" gate — and, via the
+    // shared write-set registry, LICM/IPA's per-call invalidation —
+    // correctly conservative for `#share`/mutable sub-object chains.
+
+    /// №291 regression: a chain mutated via a NESTED compound-assign
+    /// (`@a.b -= 1`) inside the SAME function must NOT be cached —
+    /// caching it would (as it did before the fix) redirect the write
+    /// into the cache local, silently discarding the real mutation, and
+    /// freeze every later read of the chain at the function-entry value.
+    #[test]
+    fn v291_chain_write_via_nested_compound_assign_not_cached() {
+        let src = r#"
+module testmod.v291_compound_assign
+type Inner { mut count int, mut head int }
+type Outer { ro inner Inner }
+fn Outer @drain() -> int {
+    while @inner.count == 0 {
+        nop()
+    }
+    ro v = @inner.head
+    @inner.head = @inner.head + 1
+    @inner.count -= 1
+    v
+}
+"#;
+        let m = run_pass(src, FieldCacheConfig::default());
+        let f = find_fn(&m, "drain");
+        let names = all_at_let_names_recursive(f);
+        assert!(
+            !names.iter().any(|n| n.contains("count")),
+            "chain `@inner.count` is mutated in this function (`@inner.count -= 1`) — \
+             must NOT be chain-cached; found cache locals: {:?}", names
+        );
+        assert!(
+            !names.iter().any(|n| n.contains("head")),
+            "chain `@inner.head` is mutated in this function (`@inner.head = ...`) — \
+             must NOT be chain-cached; found cache locals: {:?}", names
+        );
+    }
+
+    /// №291 regression: a chain mutated via a plain `=` assign (not just
+    /// compound `-=`/`+=`) must also be excluded from caching — the
+    /// original bug's `match_self_field` blind spot applied identically
+    /// to `Stmt::Assign` regardless of the specific operator.
+    #[test]
+    fn v291_chain_write_via_plain_assign_not_cached() {
+        let src = r#"
+module testmod.v291_plain_assign
+type Inner { mut flag bool }
+type Outer { ro inner Inner }
+fn Outer @toggle_twice() -> bool {
+    ro a = @inner.flag
+    @inner.flag = true
+    ro b = @inner.flag
+    a == b
+}
+"#;
+        let m = run_pass(src, FieldCacheConfig::default());
+        let f = find_fn(&m, "toggle_twice");
+        let names = all_at_let_names_recursive(f);
+        assert!(
+            !names.iter().any(|n| n.contains("flag")),
+            "chain `@inner.flag` is mutated (`@inner.flag = true`) — must NOT be \
+             chain-cached; found cache locals: {:?}", names
+        );
+    }
+
+    /// №291 regression: calling a method THROUGH a chain receiver
+    /// (`@a.b.method()`, mirroring `@ch.not_empty.wait(@ch.mutex)`) must
+    /// bar caching of that chain — the method may mutate state reachable
+    /// through it (exactly a blocking `Condvar.wait` releasing/
+    /// re-acquiring the guarding mutex around another fiber's write).
+    #[test]
+    fn v291_chain_write_via_method_call_on_chain_receiver_not_cached() {
+        let src = r#"
+module testmod.v291_chain_method_call
+type Cond { mut n int }
+type Inner { mut cond Cond }
+type Outer { ro inner Inner }
+fn Outer @wait_loop() -> int {
+    ro a = @inner.cond.n
+    @inner.cond.bump()
+    ro b = @inner.cond.n
+    a + b
+}
+"#;
+        let m = run_pass(src, FieldCacheConfig::default());
+        let f = find_fn(&m, "wait_loop");
+        let names = all_at_let_names_recursive(f);
+        assert!(
+            !names.iter().any(|n| n.contains("cond_n") || n.contains("_n_chain")),
+            "chain `@inner.cond.n` is reachable through `@inner.cond.bump()` — \
+             must NOT be chain-cached; found cache locals: {:?}", names
+        );
+    }
+
+    /// №291 positive control: a chain that is genuinely READ-ONLY
+    /// (never written, never reached through any method call in the
+    /// function body) must STILL be cached — the fix must not regress
+    /// Plan 123.4's actual optimization into a blanket no-op.
+    #[test]
+    fn v291_readonly_chain_still_cached_no_regression() {
+        let src = r#"
+module testmod.v291_readonly_chain
+type Inner { ro val int }
+type Outer { ro inner Inner }
+fn Outer @sum_three_reads() -> int {
+    ro a = @inner.val
+    ro b = @inner.val
+    ro c = @inner.val
+    a + b + c
+}
+"#;
+        let m = run_pass(src, FieldCacheConfig::default());
+        let f = find_fn(&m, "sum_three_reads");
+        let names = all_at_let_names_recursive(f);
+        assert!(
+            names.iter().any(|n| n.contains("val")),
+            "genuinely read-only chain `@inner.val` (3 reads, no write anywhere \
+             in body) must still be chain-cached — got no `_at_*val*` local at \
+             all; found cache locals: {:?}", names
+        );
     }
 
     // ─────────────────────────────────────────────────────────────────
