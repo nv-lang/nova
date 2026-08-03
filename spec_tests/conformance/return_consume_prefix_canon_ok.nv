@@ -14,12 +14,15 @@ type P301Guard consume {
     id int,
 }
 
-fn P301Guard consume @close() -> int => @id
+// nv-coding-style §1a (D410): consuming finalizer converting to a
+// DIFFERENT value (not `()`/release-style) must be named `into_*`,
+// not a bare verb (`W_CONSUME_NAKED_NAME`).
+fn P301Guard consume @into_id() -> int => @id
 
 fn p301_make(n int) -> consume P301Guard => { id: n }
 
 test "№301 `-> consume T` — префиксная форма парсится и работает" {
     consume g = p301_make(7)
-    ro id = g.close()
+    ro id = g.into_id()
     assert(id == 7)
 }
