@@ -1,16 +1,16 @@
 **English** | [Русский](cleanup-cookbook.ru.md)
 
 // SPDX-License-Identifier: MIT OR Apache-2.0
-# Cleanup Cookbook — production recipes для `consume X = expr { body }`
+# Cleanup Cookbook — production recipes for `consume X = expr { body }`
 
-> **Plan 110 Ф.14.8.** Production-recipe book для cleanup-семейства
-> Nova V3 — migration patterns из Go/Rust/TS/Java/Kotlin, common
-> resource patterns (connection pools, file handles, transactions,
+> **Plan 110 Ф.14.8.** A production-recipe book for the Nova V3
+> cleanup family — migration patterns from Go/Rust/TS/Java/Kotlin,
+> common resource patterns (connection pools, file handles, transactions,
 > locks), anti-patterns + debugging, performance tips.
 
-## Раздел 1 — Migration patterns
+## Section 1 — Migration patterns
 
-### 1.1 Из Rust `Drop` trait
+### 1.1 From the Rust `Drop` trait
 
 ```rust
 // Rust:
@@ -39,10 +39,10 @@ fn read(path str) Fail[IoError] -> str {
 ```
 
 **Difference**: Nova `consume {}` makes cleanup **visible** at call-site
-(no implicit drop magic). Async cleanup via `suspend` в `@cleanup` (D191)
-работает «из коробки» — Rust async-Drop unresolved.
+(no implicit drop magic). Async cleanup via `suspend` inside `@cleanup`
+(D191) works out of the box — Rust's async-Drop remains unresolved.
 
-### 1.2 Из Go `defer`
+### 1.2 From Go `defer`
 
 ```go
 // Go:
@@ -81,10 +81,10 @@ fn process(db Db) Fail[DbError] -> () {
 }
 ```
 
-**Difference**: Go programmer вручную distinguishes success/error пути,
-повторяя rollback логику. Nova auto-routes через `outcome`.
+**Difference**: the Go programmer manually distinguishes the success/error
+paths, repeating the rollback logic. Nova auto-routes via `outcome`.
 
-### 1.3 Из Java try-with-resources
+### 1.3 From Java try-with-resources
 
 ```java
 // Java:
@@ -101,10 +101,11 @@ consume tx = db.begin()? {
 // outcome routing встроено в Cleanup.@cleanup
 ```
 
-**Difference**: Java `AutoCloseable.close()` не distinguishes success vs
-error (programmer must encode в close() body). Nova outcome — first-class.
+**Difference**: Java's `AutoCloseable.close()` does not distinguish success
+from error (the programmer must encode that inside the close() body). In
+Nova, outcome is first-class.
 
-### 1.4 Из TypeScript `using`
+### 1.4 From TypeScript `using`
 
 ```typescript
 // TS (ES2024):
@@ -122,10 +123,10 @@ consume tx = await db.begin()? {
 }
 ```
 
-**Difference**: TS `using` не имеет cancel-shield-by-default; cancel
-доставка во время `Symbol.asyncDispose` может разломать cleanup.
+**Difference**: TS `using` has no cancel-shield-by-default; cancel
+delivery during `Symbol.asyncDispose` can break cleanup.
 
-### 1.5 Из Kotlin `.use{}`
+### 1.5 From Kotlin `.use{}`
 
 ```kotlin
 // Kotlin:
@@ -141,10 +142,10 @@ consume f = file {
 }
 ```
 
-**Difference**: Kotlin `.use{}` — extension function на `Closeable`. Nova
-— первоклассная language feature с typed error dispatch.
+**Difference**: Kotlin's `.use{}` is an extension function on `Closeable`.
+Nova's is a first-class language feature with typed error dispatch.
 
-## Раздел 2 — Resource patterns
+## Section 2 — Resource patterns
 
 ### 2.1 Database Transaction
 
@@ -208,12 +209,12 @@ fn increment_counter(state State) -> () {        // no Fail[E]!
 }
 ```
 
-**Hot-path optimization** (D194 §perf): codegen elidet'ит shield/timeout/
-outcome для `Cleanup[never]` без `WithExitTimeout` — компилируется в
-`state.value += 1; state.mutex.release()`. Zero overhead vs raw lock+
-release pair.
+**Hot-path optimization** (D194 §perf): codegen elides the shield/timeout/
+outcome machinery for `Cleanup[never]` with no `WithExitTimeout` — it
+compiles down to `state.value += 1; state.mutex.release()`. Zero overhead
+vs. a raw lock+release pair.
 
-### 2.4 TCP socket с grace close
+### 2.4 TCP socket with a grace close
 
 ```nova
 type TcpStream { /* opaque */ }
@@ -258,7 +259,7 @@ fn query(pool ConnPool, sql str) Fail[DbError] -> Rows {
 
 `Cleanup[never]` — release in pool never fails (atomic pool op).
 
-### 2.6 Builder pattern (raw `consume`, не scope-block)
+### 2.6 Builder pattern (raw `consume`, not a scope-block)
 
 ```nova
 type StringBuilder consume {
@@ -276,9 +277,9 @@ fn build_url(parts []str) -> str {
 }
 ```
 
-Не используйте `consume X = ... { }` для transfer patterns — нет cleanup'а.
+Don't use `consume X = ... { }` for transfer patterns — there is no cleanup.
 
-## Раздел 3 — Application lifecycle pattern
+## Section 3 — Application lifecycle pattern
 
 ```nova
 fn main() Io -> () {
@@ -295,9 +296,9 @@ fn main() Io -> () {
 }
 ```
 
-`default_exit_timeout_ms: 10_000` поднимает default для **всех** `consume{}`
-блоков (которые не имеют свой `WithExitTimeout` impl) до 10 секунд.
-Уровень-2 в D192 3-level resolution.
+`default_exit_timeout_ms: 10_000` raises the default for **all** `consume{}`
+blocks (that don't have their own `WithExitTimeout` impl) to 10 seconds.
+Level 2 in D192's 3-level resolution.
 
 ### Test isolation
 
@@ -311,10 +312,10 @@ fn test_user_creation() Io -> () {
 }
 ```
 
-D195 R2/R3: nested Application имеет свой пустой registry + свой default
-timeout (5s hardcoded если не задан).
+D195 R2/R3: a nested Application has its own empty registry + its own
+default timeout (5s hardcoded if none is given).
 
-## Раздел 4 — FFI cleanup wrappers
+## Section 4 — FFI cleanup wrappers
 
 ### 4.1 SQLite Connection (Plan 100.5 cross-ref)
 
@@ -335,7 +336,7 @@ fn query_users(db_path str) Fail[IoError] -> []User {
 }
 ```
 
-`cancellation-safety` attestation для C-side: см. Plan 100.5 + Plan 110.7.
+`cancellation-safety` attestation for the C-side: see Plan 100.5 + Plan 110.7.
 
 ### 4.2 libcurl handle
 
@@ -355,9 +356,9 @@ fn fetch(url str) Fail[NetError] -> []byte {
 }
 ```
 
-## Раздел 5 — Anti-patterns
+## Section 5 — Anti-patterns
 
-### 5.1 Forgetting `Cleanup` impl на новом resource type
+### 5.1 Forgetting a `Cleanup` impl on a new resource type
 
 ```nova
 type MyResource { handle int }
@@ -368,10 +369,10 @@ fn use_it() -> () {
 }
 ```
 
-Suggestion: implement `Cleanup[E]` для resource type. Quick-fix
-LSP code-action «implement Cleanup» (Plan 110.6 Ф.10.6).
+Suggestion: implement `Cleanup[E]` for the resource type. Quick-fix
+LSP code-action "implement Cleanup" (Plan 110.6 Ф.10.6).
 
-### 5.2 Wrapped init без unwrap
+### 5.2 Wrapped init without unwrap
 
 ```nova
 // ❌ DON'T:
@@ -379,9 +380,9 @@ consume tx = db.maybe_begin() { ... }    // maybe_begin() : Option[Tx]
                                           // → D196-wrapped-init-needs-unwrap
 ```
 
-Suggestion: `consume tx = db.maybe_begin()!! { ... }` или check first.
+Suggestion: `consume tx = db.maybe_begin()!! { ... }`, or check first.
 
-### 5.3 Divergent Cleanup types в conditional
+### 5.3 Divergent Cleanup types in a conditional
 
 ```nova
 // ❌ DON'T:
@@ -391,9 +392,9 @@ consume r = if cond { File.open(path)? } else { TcpStream.connect(addr)? } {
 // → D196-divergent-consumable
 ```
 
-Suggestion: extract в polymorphic wrapper type или use `Box[Cleanup[E]]`.
+Suggestion: extract into a polymorphic wrapper type, or use `Box[Cleanup[E]]`.
 
-### 5.4 spawn / parallel / supervised в `@cleanup`
+### 5.4 spawn / parallel / supervised inside `@cleanup`
 
 ```nova
 // ❌ DON'T:
@@ -402,18 +403,18 @@ fn Resource consume @cleanup(_o ScopeOutcome) -> () {
 }
 ```
 
-D159/D191 rule. Используйте sequential `await @async_flush()?` или
-off-thread queue с persistent worker fiber.
+D159/D191 rule. Use a sequential `await @async_flush()?` or an
+off-thread queue with a persistent worker fiber.
 
 ### 5.5 Cancel-shield opt-out attempts
 
-Cancel-shield always on в `@cleanup` body. Невозможно отключить — это
-deliberate (Rust scopeguard / C++23 lessons показывают: opt-in shield
-большинство забывает).
+The cancel-shield is always on inside the `@cleanup` body. It cannot be
+disabled — this is deliberate (Rust scopeguard / C++23 lessons show that
+an opt-in shield gets forgotten most of the time).
 
-## Раздел 6 — Debugging cleanup chains
+## Section 6 — Debugging cleanup chains
 
-### 6.1 Reading MultiError
+### 6.1 Reading a MultiError
 
 ```nova
 match process() {
@@ -447,7 +448,7 @@ fn main() Io -> () {
 }
 ```
 
-Each `consume {}` enter/exit генерирует OTel span:
+Each `consume {}` enter/exit generates an OTel span:
 - attributes: `cleanup.label`, `cleanup.timeout_ms`, `cleanup.start_time_ns`.
 - status: OK / ERROR_failed / ERROR_panic.
 - Parent-child spans LIFO-stacked correctly.
@@ -458,26 +459,26 @@ Each `consume {}` enter/exit генерирует OTel span:
 nova consume-analyze src/db.nv
 ```
 
-Показывает:
-- Какие типы implement Cleanup[E];
-- Coverage (всё ли cleanup path covered);
-- Hot-path opt применён ли (Cleanup[never] + no WithExitTimeout);
+Shows:
+- Which types implement Cleanup[E];
+- Coverage (is the whole cleanup path covered);
+- Whether the hot-path opt applied (Cleanup[never] + no WithExitTimeout);
 - Potential `D198-realtime-application-override` warnings.
 
-## Раздел 7 — Performance considerations
+## Section 7 — Performance considerations
 
-### 7.1 Когда использовать `Cleanup[never]`
+### 7.1 When to use `Cleanup[never]`
 
-Use when cleanup действительно cannot fail:
+Use it when cleanup genuinely cannot fail:
 - Lock release (no I/O).
 - Permit return (atomic op).
 - Pool return (atomic op).
 - Cancel-scope cancel (in-memory state change).
 
-**Не** используйте для:
-- File close — может fail (disk full, EBADF).
-- TCP socket close — может fail (broken pipe).
-- DB commit — может fail.
+**Don't** use it for:
+- File close — can fail (disk full, EBADF).
+- TCP socket close — can fail (broken pipe).
+- DB commit — can fail.
 
 ### 7.2 Hot-path elision verification
 
@@ -485,18 +486,18 @@ Use when cleanup действительно cannot fail:
 nova build --release --asm-dump src/lock_path.nv
 ```
 
-Грепни `nv_consume_enter` / `nv_resolve_exit_timeout` — для `Cleanup[never]`
-+ no `WithExitTimeout` они должны быть **отсутствующими** в hot-path asm.
+Grep for `nv_consume_enter` / `nv_resolve_exit_timeout` — for `Cleanup[never]`
++ no `WithExitTimeout` they should be **absent** from the hot-path asm.
 
 ### 7.3 Cancel-shield overhead
 
 Per benchmark (Plan 110.6 Ф.11.5 target): cancel-shield + 3-level resolution
-overhead ≤ Plan 100.4 baseline + 5%. Typical: < 100ns на cleanup entry.
+overhead ≤ Plan 100.4 baseline + 5%. Typical: < 100ns per cleanup entry.
 
-Если профиль показывает cleanup overhead > 5%:
-- Check `Cleanup[never]` opportunity (hot-path elision).
-- Hoist `consume{}` outside hot loop (acquire lock once vs per-iteration).
-- Profile actual bottleneck — cleanup rarely dominates.
+If a profile shows cleanup overhead > 5%:
+- Check the `Cleanup[never]` opportunity (hot-path elision).
+- Hoist `consume{}` outside the hot loop (acquire the lock once vs. per iteration).
+- Profile the actual bottleneck — cleanup rarely dominates.
 
 ### 7.4 MultiError composition cost
 
@@ -505,10 +506,10 @@ Depth 10: ~ 200 ns (allocation + chain link).
 Depth 100: ~ 2 µs.
 Depth 256: capped — sentinel `MultiErrorTruncated` (D193).
 
-Если cleanup-cascade glubьje 256 — обычно сигнал бага (recursion в
-cleanup-path).
+If a cleanup cascade goes deeper than 256, that's usually a sign of a bug
+(recursion in the cleanup path).
 
-## Раздел 8 — Common pitfalls
+## Section 8 — Common pitfalls
 
 ### 8.1 Boot order
 
@@ -520,18 +521,18 @@ fn Application.handler(...) -> ApplicationHandler {
 }
 ```
 
-Constructor должен полностью завершиться до входа в `with`-блок.
-Регистрация finalizers — только из body.
+The constructor must fully complete before entering the `with` block.
+Registering finalizers — only from the body.
 
-### 8.2 abort/SIGKILL не fires finalizers
+### 8.2 abort/SIGKILL does not fire finalizers
 
-Документировано в D195 R8 как ограничение всех языков (Java/Go/Rust/etc).
-Cleanup на `panic()` — fires. На `exit(code)` — fires. На abort/SIGKILL/
-SIGSEGV — НЕТ (OS kills process directly).
+Documented in D195 R8 as a limitation shared by all languages (Java/Go/Rust/etc).
+Cleanup on `panic()` — fires. On `exit(code)` — fires. On abort/SIGKILL/
+SIGSEGV — NOT (the OS kills the process directly).
 
-Для critical state на abort:
-- Use OS-level mechanism (file flush, transactional DB);
-- Или Plan 110.4 Ф.8.9 `#[run_on_abort]` attribute (follow-up
+For critical state on abort:
+- Use an OS-level mechanism (file flush, transactional DB);
+- Or the Plan 110.4 Ф.8.9 `#[run_on_abort]` attribute (follow-up
   `[M-110-run-on-abort]`).
 
 ### 8.3 Nested Application semantics surprise
@@ -544,8 +545,8 @@ with Application = Application.handler(default_exit_timeout_ms: 30_000) {
 }
 ```
 
-D195 R3: deliberate non-inheritance для test isolation. Если хотите
-inheritance — pass explicitly: `Application.handler(default_exit_timeout_ms:
+D195 R3: deliberate non-inheritance for test isolation. If you want
+inheritance — pass it explicitly: `Application.handler(default_exit_timeout_ms:
 parent.default_exit_timeout_ms())`.
 
 ## See also
