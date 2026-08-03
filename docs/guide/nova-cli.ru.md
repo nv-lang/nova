@@ -1,3 +1,8 @@
+---
+source_rev: 07df7d2c9
+source_date: 2026-08-02
+---
+
 # Nova CLI
 
 [English](nova-cli.md) | **Русский**
@@ -18,20 +23,20 @@ package `nova`, crate `nova-cli`).
 - [Коды выхода](#коды-выхода)
 - [Поиск корня проекта](#поиск-корня-проекта)
 - [Команды](#команды)
-  - [`nova check`](#nova-check) — type-check
+  - [`nova check`](#nova-check) — проверка типов
   - [`nova run`](#nova-run) — интерпретатор (сейчас **НЕ поддерживается**)
   - [`nova add`](#nova-add) — добавить зависимость
-  - [`nova update`](#nova-update) — пере-резолвить git-пины
+  - [`nova update`](#nova-update) — переразрешить git-пины
   - [`nova info`](#nova-info) — effect-surface пакета
-  - [`nova build`](#nova-build) — компиляция в native
+  - [`nova build`](#nova-build) — компиляция в нативный бинарник
   - [`nova test`](#nova-test) — запуск тестов
-  - [`nova test-build`](#nova-test-build) — единичный тест-build
-  - [`nova regen-runtime`](#nova-regen-runtime) — регенерация runtime stubs
+  - [`nova test-build`](#nova-test-build) — сборка + запуск одного теста
+  - [`nova regen-runtime`](#nova-regen-runtime) — регенерация стабов рантайма
   - [`nova doc`](#nova-doc) — документация (Plan 45)
   - [`nova doc-query`](#nova-doc-query) — DSL-запросы к JSON-выводу
   - [`nova doc-mcp`](#nova-doc-mcp) — MCP-сервер
   - [`nova contracts`](#nova-contracts) — инспекция контрактов (Plan 33.3)
-  - [`nova bench`](#nova-bench) — бенчмарк-инфраструктура (Plan 57)
+  - [`nova bench`](#nova-bench) — инфраструктура бенчмарков (Plan 57)
   - [`nova consume-analyze`](#nova-consume-analyze) — покрытие consume-типов (Plan 100.8)
 - [Переменные окружения](#переменные-окружения)
 - [Migration-бинарники](#migration-бинарники)
@@ -42,27 +47,27 @@ package `nova`, crate `nova-cli`).
 ## Quickstart
 
 ```bash
-# Внутри Nova-проекта (рядом есть nova.toml). Модули лежат в корне
-# пакета — директории `src/` нет (D78).
-nova check                       # type-check всего workspace
-nova check encoding/             # рекурсивно по директории
-nova check lib.nv                # одиночный файл
+# Inside a Nova project (sibling nova.toml present). Modules live at the
+# package root — there is no `src/` directory (D78).
+nova check                       # type-check whole workspace
+nova check encoding/             # walk a directory recursively
+nova check lib.nv                # single file
 
-nova build app.nv -o app         # скомпилировать в native binary (так и запускают код)
-./app                            # затем выполнить его
-nova add mathlib --path ../mathlib   # добавить зависимость, обновить nova.lock.toml
-nova info mathlib                # effect-surface зависимости
-nova test nova_tests             # компиляция + запуск всех nova_tests/
-nova test nova_tests/plan118     # один поддиректорий
-nova test std nova_tests         # несколько путей: std/ + nova_tests/
-nova test --filter basics        # подмножество по подстроке
+nova build app.nv -o app         # compile to a native binary (the way to run code)
+./app                            # then execute it
+nova add mathlib --path ../mathlib   # add a dependency, update nova.lock.toml
+nova info mathlib                # a dependency's effect-surface
+nova test nova_tests             # compile + run all nova_tests/
+nova test nova_tests/plan118     # a single subdirectory
+nova test std nova_tests         # multiple paths: std/ + nova_tests/
+nova test --filter basics        # substring subset
 
-nova doc lib.nv                  # markdown в stdout
-nova doc . --format json         # JSON-схема D107
-nova doc . --check --strict      # CI-валидация документации
+nova doc lib.nv                  # markdown to stdout
+nova doc . --format json         # D107 JSON schema
+nova doc . --check --strict      # CI doc validation
 
-nova bench run bench.nv          # запустить бенчмарки
-nova contracts verify foo.nv     # SMT-верификация контрактов
+nova bench run bench.nv          # run benchmarks
+nova contracts verify foo.nv     # SMT-verify contracts
 ```
 
 > **Интерпретатора нет.** Nova компилируется в C — команды `nova run`
@@ -74,18 +79,18 @@ nova contracts verify foo.nv     # SMT-верификация контракто
 
 ## Установка и сборка
 
-`nova-cli` живёт в `nova-cli/` рядом с `compiler-codegen/`. Workspace
-не используется (см. [Plan 28](../plans/28-nova-cli.md) — оба crate
+`nova-cli` живёт в `nova-cli/` рядом с `compiler-codegen/`. Рабочее
+пространство не используется (см. [Plan 28](../plans/28-nova-cli.md) — оба крейта
 самостоятельные).
 
 ```bash
-# Debug-сборка (default, opt-level=0)
+# Debug build (default, opt-level=0)
 cargo build --manifest-path nova-cli/Cargo.toml
 
 # Release (opt-level=2, LTO thin)
 cargo build --release --manifest-path nova-cli/Cargo.toml
 
-# С Z3-бэкендом для контрактов (Plan 33.1)
+# With the Z3 backend for contracts (Plan 33.1)
 cargo build --release --manifest-path nova-cli/Cargo.toml --features z3-backend
 ```
 
@@ -94,20 +99,20 @@ cargo build --release --manifest-path nova-cli/Cargo.toml --features z3-backend
 - `nova-cli/target/{debug,release}/migrate_plan60[.exe]`
 - `nova-cli/target/{debug,release}/migrate_plan65[.exe]`
 
-`nova` имеет path-зависимость на `nova_codegen` (`../compiler-codegen`)
-— rebuild compiler автоматически перекомпилирует CLI.
+`nova` имеет зависимость по пути на `nova_codegen` (`../compiler-codegen`)
+— пересборка компилятора автоматически перекомпилирует CLI.
 
 ---
 
 ## Глобальные флаги
 
-Применяются ко всем субкомандам:
+Применяются ко всем подкомандам:
 
 | Флаг | Значения | Описание |
 |---|---|---|
-| `--color` | `auto` (default), `always`, `never` | Управление ANSI-цветами. См. [Plan 36](../plans/36-cli-production-hardening.md) R10. |
+| `--color` | `auto` (по умолчанию), `always`, `never` | Управление ANSI-цветами. См. [Plan 36](../plans/36-cli-production-hardening.md) R10. |
 
-**Авто-детект цвета** (priority high → low):
+**Автоопределение цвета** (приоритет от высокого к низкому):
 
 1. CLI `--color always|never` — принудительно
 2. `CLICOLOR_FORCE=1` → always
@@ -119,9 +124,10 @@ cargo build --release --manifest-path nova-cli/Cargo.toml --features z3-backend
 
 ### Тюнинг field-cache (advanced)
 
-Каждая субкоманда также принимает «ручки» field-caching из
-[Plan 123](../plans/123.1-core-cse.md). Это forensic / escape-hatch флаги
-— дефолты корректны для обычного использования; трогать их нужно только
+Каждая подкоманда также принимает «ручки» field-caching из
+[Plan 123](../plans/123.1-core-cse.md). Это флаги для диагностики (forensic)
+и запасного выхода (escape hatch)
+— значения по умолчанию корректны для обычного использования; трогать их нужно только
 при расследовании регрессии codegen-кэша.
 
 | Флаг | Эффект |
@@ -131,21 +137,21 @@ cargo build --release --manifest-path nova-cli/Cargo.toml --features z3-backend
 | `--no-field-cache-pure` | Выключить фазу pure-call cache (D219) |
 | `--no-field-cache-chain` | Выключить фазу chain cache (D217 V4) |
 | `--no-field-cache-ipa` | Выключить IPA-refinements (D223 V7.1) |
-| `--field-cache-threshold N` | Мин. чтений `@field` для кэша (default 2) |
-| `--field-cache-licm-threshold N` | Мин. чтений внутри цикла (default 2) |
-| `--field-cache-pure-threshold N` | Мин. вызовов `@method()` (default 2) |
-| `--field-cache-chain-threshold N` | Мин. вхождений цепочки (default 2) |
-| `--field-cache-max N` | Cap на функцию по всем слоям (default 8) |
-| `--field-cache-licm-max N` | Cap на цикл для LICM (default 4) |
-| `--field-cache-chain-depth N` | Макс. глубина цепочки (default 4, min 2) |
-| `--field-cache-ipa-iter N` | Cap итеративного замыкания IPA (default 10) |
+| `--field-cache-threshold N` | Мин. чтений `@field` для кэша (по умолчанию 2) |
+| `--field-cache-licm-threshold N` | Мин. чтений внутри цикла (по умолчанию 2) |
+| `--field-cache-pure-threshold N` | Мин. вызовов `@method()` (по умолчанию 2) |
+| `--field-cache-chain-threshold N` | Мин. вхождений цепочки (по умолчанию 2) |
+| `--field-cache-max N` | Лимит на функцию по всем слоям (по умолчанию 8) |
+| `--field-cache-licm-max N` | Лимит на цикл для LICM (по умолчанию 4) |
+| `--field-cache-chain-depth N` | Макс. глубина цепочки (по умолчанию 4, мин. 2) |
+| `--field-cache-ipa-iter N` | Лимит итеративного замыкания IPA (по умолчанию 10) |
 
 `nova check` дополнительно открывает `--explain-cache`,
 `--telemetry-cache`, `--telemetry-json`, `--telemetry-baseline FILE`,
 `--telemetry-gate-affected-drop F` и `--telemetry-gate-caches-drop F`
-для отчётов по кэш-анализу и CI-gate против регрессий.
+для отчётов по анализу кэша и CI-проверок на регрессии.
 
-Field-cache флаги опущены в per-command таблицах ниже ради читаемости;
+Флаги field-cache опущены в таблицах ниже (по командам) ради читаемости;
 считай, что их полное семейство принимает каждая команда.
 
 ---
@@ -157,12 +163,12 @@ Cargo-конвенция ([Plan 36](../plans/36-cli-production-hardening.md) R7)
 | Код | Значение |
 |---|---|
 | `0` | Успех |
-| `1` | Диагностическая ошибка (тип-чек fail, тест fail, contract violation, etc.) |
-| `2` | Usage error (неверный флаг, файл не найден, не `.nv`, нет `nova.toml`) |
-| `101` | Internal panic (через `std::panic::set_hook` для cross-platform consistency) |
+| `1` | Диагностическая ошибка (ошибка типизации, упавший тест, нарушение контракта и т.п.) |
+| `2` | Ошибка использования (неверный флаг, файл не найден, не `.nv`, нет `nova.toml`) |
+| `101` | Внутренняя паника (через `std::panic::set_hook` для единообразия на разных платформах) |
 
-`nova doc --diff` дополнительно использует **3** = patch-level breaking
-change (см. [`nova doc`](#nova-doc)).
+`nova doc --diff` дополнительно использует **3** = критическое изменение
+уровня патча (см. [`nova doc`](#nova-doc)).
 
 ---
 
@@ -171,24 +177,24 @@ change (см. [`nova doc`](#nova-doc)).
 Большинство команд ищут `nova.toml` снизу вверх от CWD. Логика
 вынесена в `nova_codegen::test_runner::find_repo_root_from`:
 
-1. Идём от CWD вверх до filesystem root
+1. Идём от CWD вверх до корня файловой системы
 2. На каждом уровне читаем `nova.toml` если есть
-3. Если в нём есть `[workspace]` — это и есть корень (workspace
-   root), останавливаемся
+3. Если в нём есть `[workspace]` — это и есть корень (корень
+   рабочего пространства), останавливаемся
 4. Иначе запоминаем последний найденный `nova.toml` и идём дальше
 5. Если найден корень с `[workspace]` — возвращаем его, иначе —
    самый верхний `nova.toml`
 
-Это **workspace-aware** поведение (D78 AD6, [Plan 35](../plans/35-cross-file-resolve.md))
-— защищает от ситуации «вложенный `nova_tests/nova.toml` затмил
-основной».
+Это поведение **с учётом рабочего пространства** (workspace-aware; D78 AD6,
+[Plan 35](../plans/35-cross-file-resolve.md)) — защищает от ситуации, когда
+вложенный `nova_tests/nova.toml` затмил настоящий корень.
 
-Если `nova.toml` не найден — exit `2`:
+Если `nova.toml` не найден — код выхода `2`:
 ```
 error: nova.toml not found — are you inside a Nova project?
 ```
 
-Под workspace root резолвятся:
+Пути, разрешаемые от корня рабочего пространства:
 - `<root>/nova_tests/` — корпус тестов
 - `<root>/std/` — стандартная библиотека
 - `<root>/compiler-codegen/` — include-пути C-runtime
@@ -201,7 +207,7 @@ error: nova.toml not found — are you inside a Nova project?
 
 ### `nova check`
 
-Type-check одного или нескольких `.nv` файлов / директорий. Plan 36
+Проверка типов одного или нескольких `.nv` файлов / директорий. Plan 36
 MVP — заменяет `nova-codegen check`.
 
 ```
@@ -211,36 +217,36 @@ nova check [PATHS...] [--jobs N] [-q|-v] [--list] [--format human|short]
 
 **Позиционные аргументы:**
 
-- `PATHS` — список файлов или директорий. Если пусто — workspace root
-  (рекурсивно). Файл должен иметь расширение `.nv`, иначе exit `2`.
+- `PATHS` — список файлов или директорий. Если пусто — корень рабочего пространства
+  (рекурсивно). Файл должен иметь расширение `.nv`, иначе код выхода `2`.
 
 **Флаги:**
 
 | Флаг | По умолчанию | Описание |
 |---|---|---|
 | `--jobs N` | `0` (= num_cpus) | Параллельных воркеров |
-| `-q`, `--quiet` | off | Только FAIL-строки и summary |
-| `-v`, `--verbose` | off | Дополнительная информация (timing) |
+| `-q`, `--quiet` | off | Только FAIL-строки и сводку |
+| `-v`, `--verbose` | off | Дополнительная информация (время выполнения) |
 | `--list` | off | Показать список файлов, не проверяя |
 | `--format` | `human` | `human` (цветной) или `short` (`file:line:col: msg` для grep) |
-| `--include-runtime` | off | Включить `std/runtime/` (auto-gen, по умолчанию пропускается) |
-| `--skip PATTERN` | `[]` | Пропустить файлы по substring (repeatable) |
+| `--include-runtime` | off | Включить `std/runtime/` (автосгенерированный, по умолчанию пропускается) |
+| `--skip PATTERN` | `[]` | Пропустить файлы по подстроке (повторяемый) |
 
-**Hard-coded skip** (всегда исключаются):
+**Жёстко зашитый пропуск** (всегда исключаются):
 
 - `target/`, `node_modules/`, `vendor/`
 - `.git/`, `.hg/`, `.svn/`
 - директории, начинающиеся с `_` или `.`
-- `std/runtime/` (override через `--include-runtime`)
+- `std/runtime/` (переопределяется через `--include-runtime`)
 
 **Поведение:**
 
-- Дедуп через `canonicalize`
+- Дедупликация через `canonicalize`
 - Сортировка для детерминизма
-- Параллельный walk через `thread::scope` + mpsc-channel
-- Per-file warnings (`yellow: warning:`) после `ok:`-строки
-- Summary: `pass=N fail=N warnings=N (X.YYs)`
-- Exit `1` если есть FAIL, `2` если usage-ошибка
+- Параллельный обход через `thread::scope` + mpsc-канал
+- Пофайловые предупреждения (`yellow: warning:`) после `ok:`-строки
+- Сводка: `pass=N fail=N warnings=N (X.YYs)`
+- Код выхода `1` при любом FAIL, `2` при ошибке использования
 
 `--format short`:
 ```
@@ -248,23 +254,23 @@ lib.nv: ok
 parser.nv:42:5: error: type mismatch
 ```
 
-`--format human` (default):
+`--format human` (по умолчанию):
 ```
 ok: lib.nv
 FAIL: parser.nv
   parser.nv:42:5: type mismatch
 ```
 
-**JSON / SARIF / JUnit** форматы зарезервированы под sub-plan 36.A,
+**JSON / SARIF / JUnit** форматы зарезервированы под подплан 36.A,
 сейчас не реализованы.
 
 ---
 
 ### `nova run`
 
-> **Сейчас НЕ поддерживается.** Tree-walking интерпретатор отключён.
+> **Сейчас НЕ поддерживается.** Интерпретатор с обходом дерева отключён.
 
-`nova run` остаётся видимой субкомандой, но при вызове падает с ошибкой
+`nova run` остаётся видимой подкомандой, но при вызове падает с ошибкой
 и направляет на путь C-codegen:
 
 ```
@@ -277,7 +283,7 @@ Use `nova build <file>` to compile to an executable, or `nova test` to
 compile and run tests (both via C codegen).
 ```
 
-(exit `1`).
+(код выхода `1`).
 
 Nova компилируется в C; поддерживаемого интерпретатора нет. Чтобы
 выполнить программу — [`nova build`](#nova-build) и запусти полученный
@@ -298,23 +304,23 @@ nova add NAME (--path DIR | --git URL [--tag T | --branch B | --rev R | --versio
 | Флаг | Описание |
 |---|---|
 | `NAME` | Имя зависимости — должно совпадать с `[package].name` пакета-зависимости |
-| `--path DIR` | Локальная path-зависимость (другой пакет на диске) |
+| `--path DIR` | Локальная зависимость по пути (другой пакет на диске) |
 | `--git URL` | Git-зависимость (URL репозитория) |
 | `--tag T` | Git-пин: тег (только с `--git`) |
 | `--branch B` | Git-пин: ветка (только с `--git`) |
-| `--rev R` | Git-пин: commit / rev (только с `--git`) |
+| `--rev R` | Git-пин: коммит / ревизия (только с `--git`) |
 | `--version REQ` | Git-пин: semver-диапазон, напр. `^1.2` (только с `--git`, [Plan 03.2](../plans/03.2-version-resolution.md)) |
 
 - `--path` и `--git` взаимоисключающие; ровно один обязателен.
 - `--tag` / `--branch` / `--rev` / `--version` взаимоисключающие;
   опциональны (без пина — ветка по умолчанию, в lock всё равно пишется
-  точный commit).
+  точный коммит).
 - `--version` выбирает наибольший подходящий semver-тег репозитория и
-  пишет в `nova.lock.toml` и версию, и commit.
+  пишет в `nova.lock.toml` и версию, и коммит.
 - Правит секцию `[dependencies]` (создаёт при отсутствии). Дубль имени
-  → exit `2`.
-- После правки запускает lock-sync: материализует git-зависимость в
-  кэше и пишет резолвнутый commit в `nova.lock.toml`.
+  → код выхода `2`.
+- После правки запускает синхронизацию lock: материализует git-зависимость в
+  кэше и пишет разрешённый коммит в `nova.lock.toml`.
 - Работает только внутри пакета (`nova.toml` с `[package]`), не на
   голом `[workspace]`-манифесте.
 
@@ -328,7 +334,7 @@ nova add libfoo  --git https://example.org/libfoo.nv --version "^1.2"
 
 ### `nova update`
 
-Пере-резолвить git-зависимости и обновить `nova.lock.toml`
+Переразрешить git-зависимости и обновить `nova.lock.toml`
 ([Plan 03.1](../plans/03.1-path-git-dependencies.md) /
 [03.2](../plans/03.2-version-resolution.md)).
 
@@ -338,9 +344,9 @@ nova update [NAME] [--precise NAME@VERSION]
 
 - `NAME` — конкретная git-зависимость для обновления. Без аргумента —
   все git-зависимости.
-- Снимает целевые git-записи из `nova.lock.toml`, затем пере-резолвит:
-  branch/tag-пины берут текущий commit, `version`-диапазоны — наибольший
-  подходящий тег. Остальные остаются зафиксированными
+- Снимает целевые git-записи из `nova.lock.toml`, затем переразрешает:
+  пины по ветке и тегу берут текущий коммит, `version`-диапазоны —
+  наибольший подходящий тег. Остальные остаются зафиксированными
   (воспроизводимость).
 - `--precise NAME@VERSION` — зафиксировать `version`-диапазонную
   git-зависимость на точной версии (напр. `nova update --precise
@@ -365,24 +371,24 @@ nova info TARGET [--format human|json] [--diff BASE [--fail-on-new]]
 | Флаг | Описание |
 |---|---|
 | `TARGET` | Путь к пакету (`.nv`-файл / каталог) либо имя зависимости из `[dependencies]` текущего пакета |
-| `--format` | `human` (default) или `json` |
+| `--format` | `human` (по умолчанию) или `json` |
 | `--diff BASE` | Сравнить effect-surface TARGET с BASE (путь либо зависимость) — добавленные/убранные эффекты |
-| `--fail-on-new` | С `--diff`: ненулевой exit-код при появлении новых эффектов (CI-gate против supply-chain) |
+| `--fail-on-new` | С `--diff`: ненулевой код выхода при появлении новых эффектов (CI-проверка против дрейфа цепочки поставок) |
 
 - Effect-surface = объединение эффектов всех `export`-функций (D28 —
   публичные функции объявляют эффекты явно → surface точна без
   межпроцедурного анализа). Приватные функции не входят.
-- `--diff` — supply-chain сигнал: `Net`/`Fs` в patch/minor-релизе ранее
-  «чистого» API — красный флаг.
+- `--diff` — сигнал цепочки поставок: `Net`/`Fs`, появившиеся в
+  patch/minor-релизе ранее «чистого» API, — красный флаг.
 
 ```bash
-nova info ./mylib                    # effect-surface локального пакета
-nova info somedep                    # объявленной зависимости
+nova info ./mylib                    # effect-surface of a local package
+nova info somedep                    # of a declared dependency
 nova info somedep --format json
-nova info ./v2 --diff ./v1 --fail-on-new   # CI: падение, если v2 добавил эффекты
+nova info ./v2 --diff ./v1 --fail-on-new   # CI: fail if v2 added effects
 ```
 
-**Capability-confined зависимости.** Зависимость можно ограничить через
+**Ограниченные по правам зависимости.** Зависимость можно ограничить через
 `forbid` в `nova.toml`:
 
 ```toml
@@ -390,15 +396,15 @@ nova info ./v2 --diff ./v1 --fail-on-new   # CI: падение, если v2 д�
 parser = { git = "https://example.org/parser.nv", forbid = ["Net", "Fs"] }
 ```
 
-`nova build` вычисляет effect-surface зависимости и **валит сборку**,
+`nova build` вычисляет effect-surface зависимости и **проваливает сборку**,
 если она использует запрещённый эффект — песочница на уровне типов
-(сильнее рантаймовых permission-моделей). См. D63 / D140.
+(сильнее моделей разрешений в рантайме). См. D63 / D140.
 
 ---
 
 ### `nova build`
 
-Скомпилировать **один** `.nv`-файл в native binary (через C-backend).
+Скомпилировать **один** `.nv`-файл в нативный бинарник (через C-бэкенд).
 
 ```
 nova build FILE [-o OUTPUT] [--mode dev|release] [--toolchain auto|clang|msvc|gcc]
@@ -406,33 +412,33 @@ nova build FILE [-o OUTPUT] [--mode dev|release] [--toolchain auto|clang|msvc|gc
            [--mono-depth N]
 ```
 
-**Только один файл за раз** — `-o` принимает один путь. Для multi-file
-проектов используй `import` внутри entry-point.
+**Только один файл за раз** — `-o` принимает один путь. Для многофайловых
+проектов используй `import` внутри точки входа.
 
 **Аргументы:**
 
 | Флаг | По умолчанию | Описание |
 |---|---|---|
-| `FILE` | — | Entry-point `.nv` с `fn main` |
+| `FILE` | — | Точка входа `.nv` с `fn main` |
 | `-o OUTPUT` | `<name>[.exe]` в CWD | Путь к выходному бинарнику |
-| `--mode` | `dev` | `dev` (unoptimized) или `release` (`-O2` + LTO) |
+| `--mode` | `dev` | `dev` (без оптимизации) или `release` (`-O2` + LTO) |
 | `--toolchain` | `auto` | `auto` (Clang → MSVC → GCC), `clang`, `msvc`, `gcc` |
 | `--vcvars` | auto через vswhere | Путь к `vcvars64.bat` (Windows) |
-| `--clang` | auto detect | Путь к `clang.exe` |
+| `--clang` | автоопределение | Путь к `clang.exe` |
 | `--timeout` | `120` | Таймаут компиляции в секундах |
 | `--keep-artifacts` | off | Не удалять `.c`/`.exe`/`.obj` в tmp |
-| `--mono-depth N` | `500` (или `NOVA_MONO_DEPTH`) | Лимит monomorphization-инстанциаций ([Plan 48](../plans/48-closures-in-generics.md) Ф.7.6) |
+| `--mono-depth N` | `500` (или `NOVA_MONO_DEPTH`) | Лимит глубины инстанциации при мономорфизации ([Plan 48](../plans/48-closures-in-generics.md) Ф.7.6) |
 
-**Tmp-директория:** `$TEMP/nova_tests/build/<path-hash>/` (Windows) или
-`$TMPDIR/nova_tests/build/<path-hash>/` (Unix). Hash через
+**Временная директория:** `$TEMP/nova_tests/build/<path-hash>/` (Windows) или
+`$TMPDIR/nova_tests/build/<path-hash>/` (Unix). Хеш через
 `DefaultHasher` от абсолютного пути файла — обеспечивает
-уникальность без crypto-зависимости.
+уникальность без криптозависимости.
 
 **Pipeline:**
 
 1. parse + typecheck + `infer_effects`
 2. `CEmitter::emit_module` → C-код
-3. `detect_toolchain()` (с авто-детектом vcvars)
+3. `detect_toolchain()` (с автоопределением vcvars)
 4. `detect_or_build_libuv()` — runtime может зависеть от libuv
 5. `compile_c_to_exe(&tc, &build_opts, timeout)`
 6. Копирование exe → `-o` или CWD
@@ -463,27 +469,27 @@ nova test [PATH]... [--filter SUBSTR] [--jobs N] [--format text|json|tap|junit]
 | Флаг | По умолчанию | Описание |
 |---|---|---|
 | `PATH...` | — (обязательный) | Файлы и/или директории с тестами (минимум один) |
-| `--filter SUBSTR` | — | Фильтр по display-name (substring) |
+| `--filter SUBSTR` | — | Фильтр по отображаемому имени (подстрока) |
 | `--jobs N` | `0` (= num_cpus) | Параллельные воркеры |
 | `--format` | `text` | `text`, `json`, `tap`, `junit` |
 | `--mode` | `dev` | `dev` или `release` |
 | `--toolchain` | `auto` | `auto`, `clang`, `msvc`, `gcc` |
 | `--vcvars` | auto | Путь к `vcvars64.bat` |
 | `--clang` | auto | Путь к `clang.exe` |
-| `--timeout` | `60` | Per-test timeout (секунды) |
+| `--timeout` | `60` | Таймаут на тест (секунды) |
 | `-v`, `--verbose` | off | Вывод проходящих тестов |
-| `-q`, `--quiet` | off | Только FAIL + summary |
+| `-q`, `--quiet` | off | Только FAIL-строки и сводку |
 | `--results-file PATH` | `<root>/target/last-test-results.json` | Куда писать результаты |
-| `--rerun-failed` | off | Перезапустить только failed/timed-out из последнего прогона |
-| `--retries N` | `0` | Повторов на transient-фейлах (AV-races и т.п.) |
+| `--rerun-failed` | off | Перезапустить только проваленные/по таймауту из последнего прогона |
+| `--retries N` | `0` | Повторов на временных сбоях (гонки AV и т.п.) |
 | `--keep-artifacts` | off | Не удалять `.c`/`.exe`/`.obj` |
-| `--gc` | `boehm` | `boehm` (default) или `malloc` (internal only) |
+| `--gc` | `boehm` | `boehm` (по умолчанию) или `malloc` (только для внутреннего использования) |
 | `--list` | off | Список тестов без запуска |
-| `--filter-from PATH` | — | Файл с именами тестов (по одному на строку, exact match) |
-| `--shuffle [SEED]` | off | Случайный порядок; опц. seed для воспроизводимости |
-| `--skip PATTERN` | `[]` | Пропустить тесты по substring имени или пути (repeatable) |
-| `--mono-depth N` | `500` (или env) | Лимит mono-instantiation |
-| `--positive` | on (default) | Выбрать позитивные тесты (без `EXPECT_*`-маркера). По умолчанию, когда не задан ни один category-флаг. |
+| `--filter-from PATH` | — | Файл с именами тестов (по одному на строку, точное совпадение) |
+| `--shuffle [SEED]` | off | Случайный порядок; опциональный seed для воспроизводимости |
+| `--skip PATTERN` | `[]` | Пропустить тесты по подстроке имени или пути (повторяемый) |
+| `--mono-depth N` | `500` (или env) | Лимит глубины инстанциации при мономорфизации |
+| `--positive` | on (по умолчанию) | Выбрать позитивные тесты (без `EXPECT_*`-маркера). По умолчанию, когда не задан ни один флаг категории. |
 | `--compile-error` | off | Выбрать тесты `EXPECT_COMPILE_ERROR`. |
 | `--panic` | off | Выбрать тесты `EXPECT_RUNTIME_PANIC`. |
 | `--timeout-type` | off | Выбрать тесты `EXPECT_TIMEOUT`. |
@@ -491,22 +497,22 @@ nova test [PATH]... [--filter SUBSTR] [--jobs N] [--format text|json|tap|junit]
 | `--slow` | off | Дополнительно включить `*_slow.nv` (любого типа). Алиас: `--include-slow`. |
 | `--full` | off | Все типы + slow (`--positive --compile-error --panic --timeout-type --exit --slow`). |
 
-**Category-флаги** (Plan 169.1.1, D304) аддитивны — несколько флагов объединяют
-свои наборы тестов (OR). Без category-флага по умолчанию выбираются только
-позитивные тесты, быстрые (non-slow). Тип теста определяется по первому
+**Флаги категорий** (Plan 169.1.1, D304) аддитивны — несколько флагов объединяют
+свои наборы тестов (OR). Без флага категории по умолчанию выбираются только
+позитивные, быстрые (не медленные) тесты. Тип теста определяется по первому
 `EXPECT_*`-маркеру в заголовке файла (первые 30 строк), а не по папке —
 поэтому негативные тесты находятся даже вне `neg/`.
 
-**Multi-path** (Plan 36.D.1): передавать любое количество путей — директорий и/или файлов.
+**Несколько путей** (Plan 36.D.1): передавать любое количество путей — директорий и/или файлов.
 Минимум один путь обязателен (Plan 172.6). Чтобы добавить `std/`:
 
 ```bash
-nova test nova_tests             # только nova_tests/
-nova test std nova_tests         # std/ + nova_tests/ одновременно
-nova test nova_tests/plan118     # конкретная поддиректория
+nova test nova_tests             # nova_tests/ only
+nova test std nova_tests         # std/ + nova_tests/ together
+nova test nova_tests/plan118     # specific subdirectory
 ```
 
-**Display name** формируется как путь от текущего рабочего каталога (cwd):
+**Отображаемое имя** формируется как путь от текущего рабочего каталога (cwd):
 `nova_tests/plan118/t1_parse_ok` вместо абсолютного пути.
 
 **Форматы вывода:**
@@ -516,8 +522,8 @@ nova test nova_tests/plan118     # конкретная поддиректори
 - `tap` — Test Anything Protocol v13
 - `junit` — JUnit XML (для CI-агрегаторов)
 
-**`--rerun-failed`:** читает `--results-file`, выбирает имена с
-`status != "pass"`, фильтрует suite, запускает только их.
+**`--rerun-failed`:** читает `--results-file`, выбирает записи с
+`status != "pass"`, фильтрует набор, запускает только их.
 
 **EXPECT-маркеры** в тестовых файлах (см.
 [docs/dev/test-conventions.md](../dev/test-conventions.md)):
@@ -531,7 +537,7 @@ nova test nova_tests/plan118     # конкретная поддиректори
 
 ### `nova test-build`
 
-Build + run **одного** тестового файла. Используется IDE / CI для
+Сборка + запуск **одного** тестового файла. Используется IDE / CI для
 точечной отладки.
 
 ```
@@ -552,14 +558,14 @@ nova test-build FILE [--mode dev|release] [--toolchain auto|clang|msvc|gcc]
 | `--gc` | `boehm` | |
 | `--mono-depth N` | `500` | |
 
-Эквивалентно `nova test <FILE>`, но без machinery для bulk-runner'а
-(одиночный exe, single test-block в файле).
+Эквивалентно `nova test <FILE>`, но без механизмов массового запуска
+(одиночный exe, один тест-блок в файле).
 
 ---
 
 ### `nova regen-runtime`
 
-Регенерация `std/runtime/*.nv` стабов из compiler-runtime реестра.
+Регенерация `std/runtime/*.nv` стабов из реестра рантайма компилятора.
 Заменяет `regen_runtime.ps1`.
 
 ```
@@ -568,7 +574,7 @@ nova regen-runtime [--check]
 
 | Флаг | По умолчанию | Описание |
 |---|---|---|
-| `--check` | off | Только сравнить — exit `1` если файлы расходятся с реестром (CI guard) |
+| `--check` | off | Только сравнить — код выхода `1`, если файлы расходятся с реестром (CI-проверка) |
 
 Под капотом — `nova_codegen::codegen::runtime_registry::all()` +
 render каждого модуля. См. [Plan 13](../plans/13-runtime-stdlib-and-autogen.md).
@@ -577,8 +583,8 @@ render каждого модуля. См. [Plan 13](../plans/13-runtime-stdlib-a
 
 ### `nova doc`
 
-Production-grade документация (Plan 45 / D107). Markdown / JSON / HTML
-+ doc-tests + coverage + mutation testing + watch + workspace-mode.
+Документация уровня production (Plan 45 / D107). Markdown / JSON / HTML
++ doc-tests + покрытие + мутационное тестирование + watch + режим рабочего пространства.
 
 ```
 nova doc [FILE] [--format markdown|json|html] [--json-schema]
@@ -596,28 +602,28 @@ nova doc [FILE] [--format markdown|json|html] [--json-schema]
 | `FILE` | — (обязателен кроме `--json-schema`) | `.nv` файл или директория |
 | `--format` | `markdown` | `markdown`, `json` (D107 schema), `html` |
 | `--json-schema` | off | Вывести встроенную JSON Schema 2020-12 и выйти |
-| `--include-private` | off | Включить non-exported items |
+| `--include-private` | off | Включить неэкспортируемые элементы |
 | `--test` | off | Запустить doc-tests (Plan 45 Ф.7) |
-| `--check` | off | Валидировать без рендера (broken links, missing summaries) |
-| `--watch` | off | Re-render по mtime-poll (500ms); Ctrl-C для выхода |
-| `--coverage` | off | Метрики coverage (% items with summary) |
-| `--coverage-threshold N` | — | CI-gate: exit `1` если coverage% < N |
-| `--jobs N` | `0` (= num_cpus) | Параллельных parse-jobs для workspace |
-| `--diff OLD NEW` | — | Сравнить два JSON-вывода (semver detection) |
-| `--scrape-examples WORKSPACE` | — | Привязать top-3 usage examples к каждой fn |
-| `--strict` | off | Warnings → errors (CI) |
-| `--mutate-contracts` | off | Mutation testing для contracts (Nova-unique) |
-| `--real-exec` | off | Реально исполнять mutants (требует `--mutate-contracts`) |
-| `--output-dir DIR` | — | Multi-page HTML; только с `--format html` |
+| `--check` | off | Проверить без рендера (битые ссылки, отсутствующие сводки) |
+| `--watch` | off | Повторный рендер по опросу mtime (500 мс); Ctrl-C для выхода |
+| `--coverage` | off | Метрики покрытия (% элементов со сводкой) |
+| `--coverage-threshold N` | — | CI-проверка: код выхода `1`, если coverage% < N |
+| `--jobs N` | `0` (= num_cpus) | Параллельных задач разбора для рабочего пространства |
+| `--diff OLD NEW` | — | Сравнить два JSON-вывода (определение semver-изменений) |
+| `--scrape-examples WORKSPACE` | — | Привязать 3 самых частых примера использования к каждой функции |
+| `--strict` | off | Предупреждения → ошибки (CI) |
+| `--mutate-contracts` | off | Мутационное тестирование для контрактов (уникальная фича Nova) |
+| `--real-exec` | off | Реально исполнять мутантов (требует `--mutate-contracts`) |
+| `--output-dir DIR` | — | Многостраничный HTML; только с `--format html` |
 
 **Exit-коды для `--diff OLD NEW`:**
 
 | Код | Значение |
 |---|---|
-| `0` | Нет breaking changes |
-| `1` | Major change (breaking) |
-| `2` | Minor change (additive) |
-| `3` | Patch change (cosmetic) |
+| `0` | Нет ломающих изменений |
+| `1` | Мажорное изменение (ломающее) |
+| `2` | Минорное изменение (аддитивное) |
+| `3` | Патч-изменение (косметическое) |
 
 **Mutation testing (`--mutate-contracts`):**
 
@@ -626,9 +632,9 @@ nova doc [FILE] [--format markdown|json|html] [--json-schema]
 - `==` ↔ `!=`
 - Дроп `requires`/`ensures`
 
-Default — text-based heuristic (~1ms/мутант). С `--real-exec` —
-запускает мутированные doc-tests через test_runner (~100ms/мутант,
-true positive guarantee).
+По умолчанию — текстовая эвристика (~1 мс/мутант). С `--real-exec` —
+запускает мутированные doc-tests через test_runner (~100 мс/мутант,
+гарантия реального срабатывания).
 
 **Поддерживаемые форматы документации в `///`** см.
 [Plan 45](../plans/45-nova-doc.md) (D107).
@@ -650,7 +656,7 @@ nova doc-query JSON_FILE [QUERY]
 |---|---|
 | `kind` | `fn`, `type`, `effect`, `protocol`, `module`, ... |
 | `name` | substring |
-| `module` | exact module path |
+| `module` | точный путь модуля |
 | `module-prefix` | префикс пути |
 | `capability` | capability-name |
 | `effect` | effect-name |
@@ -668,13 +674,13 @@ nova doc-query out.json "name=add,has-contracts=true"
 nova doc-query out.json "module-prefix=std,effect=Fs"
 ```
 
-Пустой query → весь файл as-is.
+Пустой запрос → весь файл как есть.
 
 ---
 
 ### `nova doc-mcp`
 
-MCP-сервер (Model Context Protocol) — JSON-RPC over stdio или HTTP
+MCP-сервер (Model Context Protocol) — JSON-RPC через stdio или HTTP
 (Plan 45 Ф.32.3 / Ф.34.1). Совместим с MCP-клиентами (Claude Code,
 MCP Inspector).
 
@@ -684,22 +690,22 @@ nova doc-mcp FILE [--port PORT]
 
 | Флаг | По умолчанию | Описание |
 |---|---|---|
-| `FILE` | — | `.nv`-исходник или pre-generated `.json` |
+| `FILE` | — | `.nv`-исходник или заранее сгенерированный `.json` |
 | `--port PORT` | — (stdio) | HTTP-режим на `127.0.0.1:PORT`, POST `/mcp` |
 
-**Tools (экспортируется через `tools/list`):**
+**Инструменты (экспортируются через `tools/list`):**
 
 - `query_items(query)` — поиск через DSL ([`nova doc-query`](#nova-doc-query))
-- `list_modules()` — список module-путей
-- `get_item(item_id)` — полный JSON одного item
+- `list_modules()` — список путей модулей
+- `get_item(item_id)` — полный JSON одного элемента
 
-**Protocol:** MCP-клиент шлёт `initialize` → `tools/list` → `tools/call`.
+**Протокол:** MCP-клиент шлёт `initialize` → `tools/list` → `tools/call`.
 
 ---
 
 ### `nova contracts`
 
-Инспекция и верификация контрактов (Plan 33 / D24). Output — JSON
+Инспекция и верификация контрактов (Plan 33 / D24). Вывод — JSON
 (AI-friendly schema, см. `docs/contracts-diag-schema.json`).
 
 ```
@@ -716,7 +722,7 @@ nova contracts list FILE
 
 #### `nova contracts verify`
 
-SMT-верификация контрактов. Output — JSON.
+SMT-верификация контрактов. Вывод — JSON.
 
 ```
 nova contracts verify FILE [--backend BACKEND]
@@ -725,14 +731,14 @@ nova contracts verify FILE [--backend BACKEND]
 | Флаг | По умолчанию | Описание |
 |---|---|---|
 | `FILE` | — | `.nv` файл |
-| `--backend BACKEND` | env `NOVA_SMT_BACKEND` | Override SMT-backend (`trivial`, `z3`) |
+| `--backend BACKEND` | env `NOVA_SMT_BACKEND` | Переопределяет SMT-бэкенд (`trivial`, `z3`) |
 
 **Z3-бэкенд:** требует build с `--features z3-backend`. См.
 [Plan 33.1](../plans/33.1-contracts-core.md).
 
 #### `nova contracts suggest`
 
-AI-assisted предложения для контрактов (стабы).
+Предложения для контрактов с помощью AI (стабы).
 
 ```
 nova contracts suggest FILE FN_NAME
@@ -755,7 +761,7 @@ nova contracts counterexample FILE FN_NAME [--contract-id N]
 
 ### `nova bench`
 
-Бенчмарк-инфраструктура (Plan 57 — `MVP+A+B+C+D+E+F+G+H` закрыты).
+Инфраструктура бенчмарков (Plan 57 — `MVP+A+B+C+D+E+F+G+H` закрыты).
 Лучше Criterion (Rust) / `testing.B`+benchstat (Go) / tinybench (TS)
 по ряду параметров. См. [docs/dev/bench-conventions.md](../dev/bench-conventions.md).
 
@@ -763,7 +769,7 @@ nova contracts counterexample FILE FN_NAME [--contract-id N]
 nova bench <SUBCOMMAND>
 ```
 
-**Субкоманды:** [`run`](#nova-bench-run), [`diff`](#nova-bench-diff),
+**Подкоманды:** [`run`](#nova-bench-run), [`diff`](#nova-bench-diff),
 [`gate`](#nova-bench-gate), [`calibrate`](#nova-bench-calibrate),
 [`cpu-instr-check`](#nova-bench-cpu-instr-check),
 [`membw-check`](#nova-bench-membw-check),
@@ -795,10 +801,10 @@ nova bench run FILE [--filter PATTERN] [--samples N] [--warmup-ms MS]
 | Флаг | По умолчанию | Описание |
 |---|---|---|
 | `FILE` | — | `.nv` файл с `bench "..."` блоками |
-| `--filter PATTERN` | — | Comma-separated bench-name fragments |
-| `--samples N` | `100` | Override sample count |
-| `--warmup-ms` | `500` | Warmup duration в мс |
-| `--time-budget` | `10` | Per-bench бюджет в секундах |
+| `--filter PATTERN` | — | Части имён бенчмарков через запятую |
+| `--samples N` | `100` | Переопределяет число замеров |
+| `--warmup-ms` | `500` | Длительность прогрева в мс |
+| `--time-budget` | `10` | Бюджет на каждый bench в секундах |
 | `--gc` | `boehm` | См. [`nova test`](#nova-test) |
 | `--mode` | `release` | `release` (рекомендуется) или `dev` |
 | `--toolchain` | `auto` | См. [`nova build`](#nova-build) |
@@ -806,18 +812,18 @@ nova bench run FILE [--filter PATTERN] [--samples N] [--warmup-ms MS]
 | `--run-timeout` | `600` | Таймаут запуска bench-процесса |
 | `--out PATH` | — | Записать JSON v1 |
 | `--out-csv PATH` | — | Записать CSV |
-| `--out-md PATH` | — | Markdown (для PR comment) |
-| `--out-criterion DIR` | — | Criterion-compatible JSON layout |
-| `--profile MODE OUT` | — | `cpu`/`heap`/`gc` profile, требует `samply` для cpu |
+| `--out-md PATH` | — | Markdown (для комментария в PR) |
+| `--out-criterion DIR` | — | JSON-layout, совместимый с Criterion |
+| `--profile MODE OUT` | — | профиль `cpu`/`heap`/`gc`, требует `samply` для cpu |
 | `--histogram` | off | ASCII-гистограмма на каждый bench |
 
-**Output-форматы:**
+**Форматы вывода:**
 
-- `--out` (JSON v1): полная схема с metadata (git SHA, toolchain, CPU model)
+- `--out` (JSON v1): полная схема с метаданными (git SHA, toolchain, модель CPU)
 - `--out-criterion`: `<dir>/<safe-name>/new/{estimates,sample,benchmark}.json`,
   совместимо с `cargo-criterion --message-format=criterion`
 - `--out-md`: markdown-таблица для PR
-- `--histogram`: 40 buckets, Unicode block chars, медиана и Tukey fences
+- `--histogram`: 40 корзин, Unicode-блоки, медиана и границы Тьюки
 
 **Profile-режимы:**
 
@@ -827,8 +833,8 @@ nova bench run FILE [--filter PATTERN] [--samples N] [--warmup-ms MS]
 
 #### `nova bench diff`
 
-Сравнение двух bench-результатов. Welch's t-test, geomean delta,
-reproducibility check.
+Сравнение двух bench-результатов. t-критерий Уэлча, геометрическое
+среднее (geomean delta), проверка воспроизводимости.
 
 ```
 nova bench diff BASELINE NEW [--format terminal|markdown|json]
@@ -841,18 +847,19 @@ nova bench diff BASELINE NEW [--format terminal|markdown|json]
 |---|---|---|
 | `BASELINE`, `NEW` | — | JSON-файлы (`nova bench run --out`) |
 | `--format` | `terminal` | `terminal`, `markdown`, `json` |
-| `--explain` | off | AI-интерпретация regressions (Plan 57.F.2, opt-in) |
-| `--ai-config PATH` | `~/.nova-ai.toml` | Путь к AI-конфигу |
-| `--ai-max-tokens` | `4000` | Override max tokens |
-| `--ai-dry-run` | off | Печатает request body без API call |
-| `--baseline-sha`, `--new-sha` | auto из JSON | Git SHA для context |
+| `--explain` | off | AI-интерпретация регрессий (Plan 57.F.2, по желанию) |
+| `--ai-config PATH` | `~/.nova-ai.toml` | Путь к конфигу AI |
+| `--ai-max-tokens` | `4000` | Переопределяет максимум токенов |
+| `--ai-dry-run` | off | Печатает тело запроса без вызова API |
+| `--baseline-sha`, `--new-sha` | auto из JSON | Git SHA для контекста |
 
 `--explain` использует `system curl` (без RustCrypto-стека) и
-требует `NOVA_AI_API_KEY` или конфиг.
+требует `NOVA_AI_API_KEY` или конфигурацию.
 
 #### `nova bench gate`
 
-CI-gate: применяет пороги из `bench.toml`. Exit `0` = pass, `1` = regress.
+CI-проверка: применяет пороги из `bench.toml`. Код выхода `0` = проход,
+`1` = регрессия.
 
 ```
 nova bench gate BASELINE NEW [--config PATH] [--noise PATH]
@@ -861,11 +868,11 @@ nova bench gate BASELINE NEW [--config PATH] [--noise PATH]
 | Флаг | По умолчанию | Описание |
 |---|---|---|
 | `--config` | `./bench.toml` | Путь к bench.toml |
-| `--noise` | `./.nova-bench-noise.json` если есть | Auto-calibrated noise-floor (см. `calibrate`) |
+| `--noise` | `./.nova-bench-noise.json` если есть | Автокалибруемый уровень шума (см. `calibrate`) |
 
 #### `nova bench calibrate`
 
-Авто-калибровка noise-floor из ≥2 повторных прогонов того же
+Автокалибровка уровня шума из ≥2 повторных прогонов того же
 baseline (Plan 57.A.3).
 
 ```
@@ -875,36 +882,36 @@ nova bench calibrate RUNS... [--out PATH]
 | Флаг | По умолчанию | Описание |
 |---|---|---|
 | `RUNS...` | — | ≥2 JSON-результата одного и того же source |
-| `--out` | `.nova-bench-noise.json` | Куда записать noise-floor |
+| `--out` | `.nova-bench-noise.json` | Куда записать уровень шума |
 
-Файл machine-specific; в git добавлять не нужно.
+Файл привязан к машине; в git добавлять не нужно.
 
 #### `nova bench cpu-instr-check`
 
-Диагностика доступности CPU-instruction-counter (Plan 57.B.4).
+Диагностика доступности счётчика инструкций CPU (Plan 57.B.4).
 
 ```
 nova bench cpu-instr-check
 ```
 
-Linux: проверяет `perf_event_open` + measures known loop. Other OS:
-печатает stub-сообщение.
+Linux: проверяет `perf_event_open` + измеряет известный цикл. Прочие ОС:
+печатает заглушку.
 
 #### `nova bench membw-check`
 
-Диагностика memory-bandwidth measurement (Plan 57.F.3).
+Диагностика измерения пропускной способности памяти (Plan 57.F.3).
 
 ```
 nova bench membw-check
 ```
 
-Linux: probes `/sys/devices/uncore_imc_*` + LLC-miss perf counter.
-Other OS: stub.
+Linux: опрашивает `/sys/devices/uncore_imc_*` + счётчик промахов LLC.
+Прочие ОС: заглушка.
 
 #### `nova bench hyperfine`
 
-Hyperfine-style cross-binary timing — wall-clock измерение
-произвольных команд (Plan 57.H.2). Output совместим с
+Замер времени по типу Hyperfine для нескольких бинарников — измерение
+по настенным часам произвольных команд (Plan 57.H.2). Вывод совместим с
 `nova bench diff`.
 
 ```
@@ -915,11 +922,11 @@ nova bench hyperfine SPECS... [--warmup N] [--samples N]
 | Флаг | По умолчанию | Описание |
 |---|---|---|
 | `SPECS...` | ≥1 | `"name=binary args..."` или просто `"binary args..."` |
-| `--warmup` | `3` | Warmup runs (отбрасываются) |
-| `--samples` | `10` | Sample runs |
-| `--timeout` | `300` | Per-command timeout |
+| `--warmup` | `3` | Прогревочные запуски (отбрасываются) |
+| `--samples` | `10` | Замеряемые запуски |
+| `--timeout` | `300` | Таймаут на команду |
 | `--workdir PATH` | — | CWD для команд |
-| `--out PATH` | stdout | JSON output |
+| `--out PATH` | stdout | JSON-вывод |
 
 **Пример:**
 ```bash
@@ -931,8 +938,9 @@ nova bench hyperfine \
 
 #### `nova bench callgrind`
 
-Запуск под Valgrind Callgrind — deterministic CPU-instructions count
-(Plan 57.H.3). Cross-platform fallback к `perf_event_open` (Linux-only).
+Запуск под Valgrind Callgrind — детерминированный подсчёт инструкций
+CPU (Plan 57.H.3). Кроссплатформенный запасной путь к
+`perf_event_open` (только Linux).
 Работает на macOS + Linux при наличии `valgrind`.
 
 ```
@@ -941,9 +949,9 @@ nova bench callgrind BINARY [ARGS...] [--cache-sim] [--workdir PATH] [--out PATH
 
 | Флаг | По умолчанию | Описание |
 |---|---|---|
-| `BINARY` | — | Путь к executable |
-| `ARGS...` | — | Аргументы executable |
-| `--cache-sim` | off | I1/D1/LL miss counts (медленнее) |
+| `BINARY` | — | Путь к исполняемому файлу |
+| `ARGS...` | — | Аргументы исполняемого файла |
+| `--cache-sim` | off | Счётчики промахов I1/D1/LL (медленнее) |
 | `--workdir PATH` | — | CWD для команды |
 | `--out PATH` | — | JSON `CallgrindResult` |
 
@@ -957,20 +965,21 @@ nova bench callgrind-check
 
 #### `nova bench runner-branch`
 
-Печатает рекомендованное имя history-branch на основе env
-`NOVA_BENCH_RUNNER_ID` (Plan 57.D.4 — multi-runner CI matrix).
+Печатает рекомендованное имя ветки истории на основе переменной окружения
+`NOVA_BENCH_RUNNER_ID` (Plan 57.D.4 — CI-матрица из нескольких раннеров).
 
 ```
 nova bench runner-branch
 ```
 
-Возвращает `bench-history` если env не задан, иначе
+Возвращает `bench-history`, если переменная окружения не задана, иначе
 `bench-history-<id>`.
 
 #### `nova bench history-anomalies`
 
-Детекция changepoints в historical median time-series через PELT
-algorithm (Plan 57.E.5). Идентифицирует regimes с ≥5% delta.
+Обнаружение точек изменения (changepoints) в рядах медианных значений
+за историю через алгоритм PELT (Plan 57.E.5). Идентифицирует режимы с
+отклонением ≥5%.
 
 ```
 nova bench history-anomalies [--branch BRANCH] [--format text|json]
@@ -978,12 +987,12 @@ nova bench history-anomalies [--branch BRANCH] [--format text|json]
 
 | Флаг | По умолчанию | Описание |
 |---|---|---|
-| `--branch` | `auto` (NOVA_BENCH_RUNNER_ID-aware) | History branch |
+| `--branch` | `auto` (с учётом NOVA_BENCH_RUNNER_ID) | Ветка истории |
 | `--format` | `text` | `text` или `json` |
 
 #### `nova bench remote`
 
-SSH-distributed bench coordination (Plan 57.F.1).
+Распределённая координация бенчмарков по SSH (Plan 57.F.1).
 
 ```
 nova bench remote <SUBCOMMAND>
@@ -997,11 +1006,11 @@ nova bench remote <SUBCOMMAND>
 nova bench remote list [--config PATH]
 ```
 
-`--config` override через `NOVA_BENCH_REMOTES` env.
+`--config` переопределяется через env `NOVA_BENCH_REMOTES`.
 
 ##### `nova bench remote ping`
 
-SSH health-check одного remote.
+SSH-проверка доступности одного remote.
 
 ```
 nova bench remote ping NAME [--config PATH]
@@ -1009,7 +1018,7 @@ nova bench remote ping NAME [--config PATH]
 
 ##### `nova bench remote run`
 
-Параллельный bench на N remotes; gathering results.
+Параллельный bench на N remotes; сбор результатов.
 
 ```
 nova bench remote run BENCH [--remotes LIST] [--gather-into DIR] [--sha SHA] [--config PATH]
@@ -1017,16 +1026,16 @@ nova bench remote run BENCH [--remotes LIST] [--gather-into DIR] [--sha SHA] [--
 
 | Флаг | По умолчанию | Описание |
 |---|---|---|
-| `BENCH` | — | `.nv` file path (relative to repo root на remote) |
-| `--remotes` | `all` | Comma-separated имена или `all` |
-| `--gather-into` | `remote-results` | Куда складывать per-remote JSON |
-| `--sha SHA` | — | Опц. git SHA для checkout перед bench |
+| `BENCH` | — | Путь к `.nv` файлу (относительно корня репозитория на remote) |
+| `--remotes` | `all` | Имена через запятую или `all` |
+| `--gather-into` | `remote-results` | Куда складывать JSON от каждого remote |
+| `--sha SHA` | — | Опциональный git SHA для checkout перед bench |
 
 #### `nova bench corpus`
 
-Измерение per-pass compile time для corpus файла(ов) — Plan 57.C.8.
-Заворачивает `nova build` с `NOVA_PERF_TIMER=1`, парсит `__PERF__`
-маркеры.
+Измерение времени компиляции по проходам для файла(ов) корпуса —
+Plan 57.C.8. Заворачивает `nova build` с `NOVA_PERF_TIMER=1`, парсит
+`__PERF__` маркеры.
 
 ```
 nova bench corpus PATH [--json] [--html PATH] [--echarts-url URL]
@@ -1037,16 +1046,16 @@ nova bench corpus PATH [--json] [--html PATH] [--echarts-url URL]
 | Флаг | По умолчанию | Описание |
 |---|---|---|
 | `PATH` | — | `.nv` файл или директория |
-| `--json` | off | JSON output (вместо таблицы) |
+| `--json` | off | JSON-вывод (вместо таблицы) |
 | `--html PATH` | — | HTML compiler-perf dashboard (Plan 57.D.5) |
-| `--echarts-url` | `https://cdn.jsdelivr.net/...` | Custom echarts URL (offline) |
+| `--echarts-url` | `https://cdn.jsdelivr.net/...` | Свой URL echarts (offline) |
 | `--mode` | `release` | |
 | `--toolchain` | `auto` | |
 | `--gc` | `boehm` | |
 
 #### `nova bench history-add`
 
-Дописать result JSON в orphan history-branch (Plan 57.A.1).
+Дописать JSON результата в orphan-ветку истории (Plan 57.A.1).
 
 ```
 nova bench history-add RESULT [--branch BRANCH] [--push] [--remote NAME] [--dry-run]
@@ -1055,14 +1064,14 @@ nova bench history-add RESULT [--branch BRANCH] [--push] [--remote NAME] [--dry-
 | Флаг | По умолчанию | Описание |
 |---|---|---|
 | `RESULT` | — | JSON из `nova bench run --out` |
-| `--branch` | `auto` | Orphan branch (`bench-history` по умолчанию) |
-| `--push` | off | Push после commit |
-| `--remote` | `origin` | Remote name при `--push` |
-| `--dry-run` | off | Показать что было бы, без commit |
+| `--branch` | `auto` | Orphan-ветка (`bench-history` по умолчанию) |
+| `--push` | off | Отправить (push) после коммита |
+| `--remote` | `origin` | Имя remote при `--push` |
+| `--dry-run` | off | Показать, что было бы, без коммита |
 
 #### `nova bench history-list`
 
-Список entries в history-branch (newest first).
+Список записей в ветке истории (сначала новые).
 
 ```
 nova bench history-list [--branch BRANCH]
@@ -1070,8 +1079,8 @@ nova bench history-list [--branch BRANCH]
 
 #### `nova bench history-squash`
 
-Squash старых entries по retention policy (Plan 57.C.6 — рекомендуется
-yearly squash).
+Сжатие старых записей по политике хранения (Plan 57.C.6 — рекомендуется
+ежегодное сжатие).
 
 ```
 nova bench history-squash --before-date YYYY-MM-DD [--branch BRANCH]
@@ -1080,7 +1089,7 @@ nova bench history-squash --before-date YYYY-MM-DD [--branch BRANCH]
 
 | Флаг | По умолчанию | Описание |
 |---|---|---|
-| `--before-date` | — (обязательный) | Squash всё старше этой даты UTC |
+| `--before-date` | — (обязательный) | Сжать всё старше этой даты UTC |
 | `--branch` | `auto` | |
 | `--push` | off | |
 | `--remote` | `origin` | |
@@ -1088,7 +1097,7 @@ nova bench history-squash --before-date YYYY-MM-DD [--branch BRANCH]
 
 #### `nova bench dashboard`
 
-Статический HTML dashboard из history (Plan 57.A.2).
+Статический HTML-дашборд из истории (Plan 57.A.2).
 
 ```
 nova bench dashboard [--history-branch BRANCH] [--out DIR] [--max-entries N] [--echarts-url URL]
@@ -1096,15 +1105,15 @@ nova bench dashboard [--history-branch BRANCH] [--out DIR] [--max-entries N] [--
 
 | Флаг | По умолчанию | Описание |
 |---|---|---|
-| `--history-branch` | `auto` | History branch |
-| `--out` | `dashboard` | Output directory |
-| `--max-entries` | `200` | Max entries (newest first) |
-| `--echarts-url` | jsdelivr URL | Custom echarts URL (offline = local) |
+| `--history-branch` | `auto` | Ветка истории |
+| `--out` | `dashboard` | Каталог вывода |
+| `--max-entries` | `200` | Максимум записей (сначала новые) |
+| `--echarts-url` | jsdelivr URL | Свой URL echarts (offline = локально) |
 
-Генерирует `index.html` + `bench-<safe>.html` per bench + `data.json`.
+Генерирует `index.html` + `bench-<safe>.html` на каждый bench + `data.json`.
 
-> Семейство `nova bench` также открывает диагностические субкоманды
-> `field-cache` (реальное wall-clock измерение влияния field-cache из
+> Семейство `nova bench` также открывает диагностические подкоманды
+> `field-cache` (реальное измерение по настенным часам влияния field-cache из
 > Plan 123), `cpu-instr-check`, `membw-check` и `callgrind-check`.
 > Флаги — через `nova bench <sub> --help`.
 
@@ -1125,7 +1134,7 @@ nova consume-analyze PATH [--format human|json] [--fail-on-uncovered]
 |---|---|---|
 | `PATH` | — | `.nv` файл или директория для анализа |
 | `--format` | `human` | `human` или `json` |
-| `--fail-on-uncovered` | off | Ненулевой exit при наличии непокрытого consume-биндинга (CI-gate) |
+| `--fail-on-uncovered` | off | Ненулевой код выхода при наличии непокрытого consume-биндинга (CI-проверка) |
 
 **Коды выхода:**
 
@@ -1133,7 +1142,7 @@ nova consume-analyze PATH [--format human|json] [--fail-on-uncovered]
 |---|---|
 | `0` | Все consume-биндинги покрыты |
 | `1` | Найдены непокрытые биндинги |
-| `2` | Usage error |
+| `2` | Ошибка использования |
 
 ---
 
@@ -1141,46 +1150,46 @@ nova consume-analyze PATH [--format human|json] [--fail-on-uncovered]
 
 | Var | Используется в | Эффект |
 |---|---|---|
-| `NOVA_CODEGEN` | (зарезервировано) | Override пути к `nova-codegen` binary |
-| `NOVA_MONO_DEPTH` | `build`, `test`, `test-build`, `bench` | Лимит monomorphization-инстанциаций (default 500) |
-| `NOVA_REACH_DCE` | `build`, `test`, `test-build` | Reachability-codegen DCE ([Plan 159](../plans/159-reachability-codegen.md), [D283](decisions/09-tooling.md#d283)). Не задана / `≠0` → **ON** (default): в C эмитится только достижимое от `main`. `=0` → **OFF**: байт-идентичное до-159 поведение (эмитить всё) — escape hatch для диагностики over-prune |
-| `NOVA_HOME` | `add`, `build` (git-deps) | Корень кэша git-зависимостей; default `~/.nova` (кэш в `<NOVA_HOME>/git`, глобальный proxy-конфиг в `<NOVA_HOME>/config.toml`) |
+| `NOVA_CODEGEN` | (зарезервировано) | Переопределяет путь к бинарнику `nova-codegen` |
+| `NOVA_MONO_DEPTH` | `build`, `test`, `test-build`, `bench` | Лимит мономорфизационных инстанциаций (по умолчанию 500) |
+| `NOVA_REACH_DCE` | `build`, `test`, `test-build` | Reachability-codegen DCE ([Plan 159](../plans/159-reachability-codegen.md), [D283](decisions/09-tooling.md#d283)). Не задана / `≠0` → **ON** (по умолчанию): в C эмитится только достижимое от `main`. `=0` → **OFF**: байт-идентичное до-159 поведение (эмитить всё) — запасной вариант для диагностики чрезмерного вырезания |
+| `NOVA_HOME` | `add`, `build` (git-deps) | Корень кэша git-зависимостей; по умолчанию `~/.nova` (кэш в `<NOVA_HOME>/git`, глобальный конфиг прокси в `<NOVA_HOME>/config.toml`) |
 | `NOVA_OFFLINE` | `add`, `build` (git-deps) | `=1` → запрет сети (clone/fetch); сборка только из готового кэша |
 | `NOVA_PKG_PROXY` | `add`, `build` (git-deps) | HTTP(S)-прокси для скачивания пакетов (План 233 §1). Слоями, первый существующий выигрывает: (1) env `NOVA_PKG_PROXY`, либо стандартные `HTTPS_PROXY`/`HTTP_PROXY` (git уважает их сам); (2) `[net] proxy = "..."` в НЕкоммитимом `nova.override.toml` рядом с `nova.toml`; (3) `[net] proxy = "..."` в глобальном `~/.nova/config.toml` (либо `<NOVA_HOME>/config.toml`). В коммитимом `nova.toml` НЕ поддержан — прокси это свойство машины/CI, не пакета |
-| `NOVA_SMT_BACKEND` | `contracts` | SMT-backend (`trivial`, `z3`) |
+| `NOVA_SMT_BACKEND` | `contracts` | SMT-бэкенд (`trivial`, `z3`) |
 | `NOVA_PERF_TIMER` | `bench corpus` (auto-set) | Включает `__PERF__` маркеры в компиляторе |
-| `NOVA_PERF_TIMER_AGGREGATE` | `bench corpus` | Aggregate `__PERF__` по проходам |
-| `NOVA_BENCH_RUNNER_ID` | `bench history-*`, `runner-branch` | Multi-runner CI matrix; используется в branch name |
-| `NOVA_BENCH_REMOTES` | `bench remote` | Override пути к `.nova-bench-remotes.toml` |
-| `NOVA_BENCH_FILTER` | `bench run` (auto-set) | Forwarded в bench-процесс |
-| `NOVA_BENCH_SAMPLES` | `bench run` (auto-set) | Override sample count |
-| `NOVA_BENCH_WARMUP_NS` | `bench run` (auto-set) | Warmup в наносекундах |
-| `NOVA_BENCH_TIME_BUDGET_NS` | `bench run` (auto-set) | Time budget в наносекундах |
-| `NOVA_BENCH_HEAP_SAMPLE_MS` | `bench run --profile heap` | Sample interval в мс |
-| `NOVA_BENCH_GC_TRACE` | `bench run --profile gc` | Включает GC tracing |
-| `NOVA_AI_PROVIDER` | `bench diff --explain` | AI-provider (anthropic, openai, ...) |
-| `NOVA_AI_MODEL` | `bench diff --explain` | Модель override |
-| `NOVA_AI_API_KEY` | `bench diff --explain` | API key (или `~/.nova-ai.toml`) |
-| `NOVA_C_COMPILER` | `bench repro` | Реальный path к компилятору (фиксируется в metadata) |
+| `NOVA_PERF_TIMER_AGGREGATE` | `bench corpus` | Агрегирует `__PERF__` по проходам |
+| `NOVA_BENCH_RUNNER_ID` | `bench history-*`, `runner-branch` | CI-матрица из нескольких раннеров; используется в имени ветки |
+| `NOVA_BENCH_REMOTES` | `bench remote` | Переопределяет путь к `.nova-bench-remotes.toml` |
+| `NOVA_BENCH_FILTER` | `bench run` (auto-set) | Пробрасывается в bench-процесс |
+| `NOVA_BENCH_SAMPLES` | `bench run` (auto-set) | Переопределяет число замеров |
+| `NOVA_BENCH_WARMUP_NS` | `bench run` (auto-set) | Прогрев в наносекундах |
+| `NOVA_BENCH_TIME_BUDGET_NS` | `bench run` (auto-set) | Бюджет времени в наносекундах |
+| `NOVA_BENCH_HEAP_SAMPLE_MS` | `bench run --profile heap` | Интервал замеров в мс |
+| `NOVA_BENCH_GC_TRACE` | `bench run --profile gc` | Включает трассировку GC |
+| `NOVA_AI_PROVIDER` | `bench diff --explain` | AI-провайдер (anthropic, openai, ...) |
+| `NOVA_AI_MODEL` | `bench diff --explain` | Переопределяет модель |
+| `NOVA_AI_API_KEY` | `bench diff --explain` | API-ключ (или `~/.nova-ai.toml`) |
+| `NOVA_C_COMPILER` | `bench repro` | Реальный путь к компилятору (фиксируется в метаданных) |
 | `NOVA_SHA` | `bench repro` (compile-time `option_env!`) | Git SHA `nova` бинарника |
 | `NO_COLOR` | global | Отключить ANSI цвета |
 | `CLICOLOR` | global | `=0` → отключить |
 | `CLICOLOR_FORCE` | global | `=1` → принудительно включить |
 | `CI` | global | `=true` → отключить цвета |
 | `TERM` | global | `=dumb` → отключить цвета |
-| `TEMP` | Windows | Tmp-директория для `build`/`test` artifacts |
+| `TEMP` | Windows | Временная директория для артефактов `build`/`test` |
 | `TMPDIR` | Unix | То же |
 
 ---
 
 ## Migration-бинарники
 
-Отдельные one-shot инструменты в `nova-cli/src/bin/`. Сохраняются
-в репозитории как reference для будущих атомарных API-rename планов.
+Отдельные разовые инструменты в `nova-cli/src/bin/`. Сохраняются
+в репозитории как справочник для будущих планов атомарного API-rename.
 
 ### `migrate_plan60`
 
-Lexer-based миграция field-style size-accessors в method-form
+Лексерная миграция size-аксессоров в стиле полей в форму методов
 (D117 / [Plan 60](../plans/60-len-access-uniformity.md)):
 
 ```
@@ -1191,8 +1200,8 @@ expr.cap      → expr.capacity()
 expr.capacity → expr.capacity()
 ```
 
-**Skip conditions:** предыдущий значимый token == `=`
-(method-value assignment: `let f = arr.len`).
+**Условия пропуска:** предыдущий значимый токен == `=`
+(присваивание значения метода: `let f = arr.len`).
 
 ```
 migrate_plan60 [--apply] [--dry-run] [--md] [--paths DIR...]
@@ -1200,23 +1209,24 @@ migrate_plan60 [--apply] [--dry-run] [--md] [--paths DIR...]
 
 | Флаг | По умолчанию | Описание |
 |---|---|---|
-| `--dry-run` | (default) | Только показать diff |
+| `--dry-run` | (по умолчанию) | Только показать diff |
 | `--apply` | off | Реально записать |
-| `--md` | off | Включить `.md` файлы (rewrite внутри ` ```nova ` / ` ```nv ` блоков) |
+| `--md` | off | Включить `.md` файлы (переписывание внутри ` ```nova ` / ` ```nv ` блоков) |
 | `--paths DIR...` | `std/`, `nova_tests/`, `examples/` | Список директорий |
 
-Token-level rewrite — комментарии / whitespace / formatting сохраняются 1:1.
+Переписывание на уровне токенов — комментарии / пробелы / форматирование
+сохраняются 1:1.
 
 ### `migrate_plan65`
 
-Lexer-based миграция `Time.after(<lit>)` →
+Лексерная миграция `Time.after(<lit>)` →
 `ChanReader.close_after(Duration.from_*(<lit>))` ([Plan 65](../plans/65-chanreader-close-after.md)
 AD11):
 
 ```
 Time.after(<INT>)    → ChanReader.close_after(Duration.from_millis(<INT>))
 Time.after(<FLOAT>)  → ChanReader.close_after(Duration.from_secs_f64(<FLOAT>))
-Time.after(<expr>)   → как есть + // MIGRATE_MANUAL: Plan 65 — non-literal arg
+Time.after(<expr>)   → left as-is + // MIGRATE_MANUAL: Plan 65 — non-literal arg
 ```
 
 ```
@@ -1228,10 +1238,10 @@ migrate_plan65 [--apply] [--dry-run] [--md] [--paths DIR...]
 | Код | Значение |
 |---|---|
 | `0` | Изменений не требуется (idempotent) |
-| `1` | Emitted manual markers — CI gate fails |
+| `1` | Эмитированы ручные маркеры — CI-проверка провалена |
 | `2` | Изменения применены (или были бы применены в dry-run) |
 
-Token-aware через `nova_codegen::lexer` — пропускает строки и
+С учётом токенов через `nova_codegen::lexer` — пропускает строки и
 комментарии естественным образом.
 
 ---
@@ -1243,11 +1253,11 @@ Token-aware через `nova_codegen::lexer` — пропускает строк
   D-блоки про тулинг (D89, D107, D121, ...)
 - [`docs/dev/test-conventions.md`](../dev/test-conventions.md) — EXPECT-маркеры,
   директивы тестов
-- [`docs/dev/bench-conventions.md`](../dev/bench-conventions.md) — convention для
+- [`docs/dev/bench-conventions.md`](../dev/bench-conventions.md) — конвенция для
   bench-файлов
 - [`docs/plans/28-nova-cli.md`](../plans/28-nova-cli.md) — план каркаса CLI
 - [`docs/plans/36-cli-production-hardening.md`](../plans/36-cli-production-hardening.md)
-  — exit codes, `--color`, parallel walk
+  — коды выхода, `--color`, параллельный обход
 - [`docs/plans/45-nova-doc.md`](../plans/45-nova-doc.md) — `nova doc` / `doc-query` / `doc-mcp`
 - [`docs/plans/57-perf-benchmark-infrastructure.md`](../plans/57-perf-benchmark-infrastructure.md)
   — `nova bench` family
