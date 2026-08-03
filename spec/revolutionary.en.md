@@ -442,3 +442,85 @@ What the language needs for this workflow to work — **already exists**:
   typechecks without the whole project (`nova check --fragment`)
 - Effects in the signature ([R5.2](revolutionary.md)) — the LLM knows which
   side effects are allowed
+
+#### What this changes in economics
+
+Today, in industry, writing a function **with invariants** costs more than
+**without**. Contracts are written only for critical code. R5.7 flips the
+economics: **a contract is written faster than the body**, because the human
+describes "what must be true", and the LLM does the boring part.
+
+This shifts programming from "writing code" to "describing invariants".
+Close to Dafny / F* / TLA+, but without a special specification language —
+the same Nova.
+
+#### Where this works and where it doesn't
+
+**Works well:**
+- Pure functions with a clear contract (parsing, validation,
+  arithmetic)
+- Functions with effects, where the contract is described in terms of inputs/outputs
+- Small functions (< 50 lines)
+- Functions with a known pattern (CRUD, routing, formatting)
+
+**Works poorly:**
+- Large stateful functions with subtle invariants over several
+  types
+- Functions with distributed effects, where the contract requires
+  global reasoning (see [R12](revolutionary.md))
+- Functions for which the SMT check of the contract does not converge in a
+  reasonable time (see the SMT limitations in [decisions/09-tooling.md#d24](decisions/09-tooling.md#d24))
+
+#### Limitations
+
+1. **A quality LSP integration is needed.** Not every editor provides it;
+   standardization is outside the language.
+2. **A contract can be incomplete.** The LLM will generate a body that
+   passes the contract but does something other than what the programmer
+   wanted. The protection — human code review, as usual.
+3. **Contract semantics through handler-state — an open question.**
+   `ensures Db.balance(acc) == ...` — can the SMT solver check that?
+   See [decisions/09-tooling.md#d24](decisions/09-tooling.md#d24).
+
+#### Relationship to other decisions
+
+- **Develops [R4](revolutionary.md)** — contracts become a utilitarian
+  tool, not a theoretical superstructure.
+- **Uses [R5.3](revolutionary.md)** — structured errors as a
+  learning signal for the LLM.
+- **Relies on [decisions/09-tooling.md#d24](decisions/09-tooling.md#d24)** — the strategy
+  of SMT contract checking.
+
+---
+
+## R6. Capability mode for safe composition
+
+A function can **forbid** certain effects in its scope:
+
+```nova
+fn run_user_script(code str) Fail -> Result =>
+    forbid Net, Fs, Db {
+        // внутри этого блока компилятор не позволит
+        // вызвать ни одну функцию с эффектами Net, Fs, Db
+        eval(code)
+    }
+```
+
+The compile-time check works on the **direct** effects of the called
+functions. If a function declares `Net` — its call inside `forbid Net`
+is forbidden. Transitive effects are caught non-strictly ([D62](decisions/04-effects.md#d62)) —
+a function without `Net` in its signature, but calling `helper()` with `Net`,
+is not blocked at compile time. The full capability-sandbox guarantee
+is achieved through **closure boundaries** with an explicit declaration of
+allowed effects and through a project-level whitelist in `Nova.toml`.
+
+Useful for:
+- Plugins (with closure parameters of a fixed capability)
+- User scripts (via the project whitelist)
+- LLM-generated code (pin effects at a closure boundary)
+- Deterministic computations (forbid `Time`, `Random`, `Io`)
+
+`Async` is not forbiddable — it is an ambient capability, not part of the
+type system ([D62](decisions/04-effects.md#d62)). If you need the
+guarantee "the function does not suspend" — that is a runtime flag of the
+fiber runtime, not a type-check.
