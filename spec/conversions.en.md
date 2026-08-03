@@ -250,3 +250,42 @@ fn decode(bytes []u8) -> str =>
 transformation: `s.bytes() -> ro []u8` ([D410](decisions/03-syntax.md#d410) —
 `as_bytes` was renamed to `bytes`; this same name is the first declared
 `#coerce` pair, see the "Zero-cost implicit conversions" section below).
+
+---
+
+## Bool ↔ everything
+
+| From → To | Via | Semantics |
+|---|---|---|
+| `bool → int` | `as` | `true=1`, `false=0` |
+| `bool → byte` / `bool → f64` | `as` | the same |
+| `bool → str` | `b.to_str()` | `"true"` / `"false"` |
+| **`int/byte/f64/etc → bool`** | **forbidden** | use `n != 0` |
+
+```nova
+ro s = true.to_str()           // "true"
+ro n = 5
+ro ok = if n != 0 { true } else { false }   // explicit != 0, не truthy-int
+```
+
+str → bool — see the TODO above (not found in std as of this revision).
+
+---
+
+## Newtype ↔ underlying
+
+A newtype (`type X Y`, without `alias`, [D52](decisions/02-types.md#d52)) —
+a type **separate** from the source; conversion is an explicit `as` (identity,
+same C-repr). This differs from `alias` (`type X alias Y`) — there `X` and `Y`
+are interchangeable **without any cast** (not a separate type).
+
+| Via | Semantics |
+|---|---|
+| `n as MyNewtype` | identity (same C representation) |
+| `nt as int` | identity |
+
+```nova
+type UserId int
+ro u UserId = 42 as UserId
+ro n int = u as int            // 42
+```
