@@ -1,6 +1,8 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Runtime tuning — fiber arena (Plan 149 / D233)
 
+**English** | [Русский](runtime-tuning.ru.md)
+
 Nova programs run user code on lightweight **fibers** scheduled over worker
 threads by **Vela** (M:N runtime). Each worker owns a **fiber arena**: a reserved (lazily-committed)
 virtual region carved into fixed-size **slots**, one per concurrent fiber. Two

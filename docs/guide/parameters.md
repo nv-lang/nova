@@ -1,5 +1,7 @@
 # Параметры функций в Nova
 
+**English** | [Русский](parameters.ru.md)
+
 > User-facing guide по модификаторам параметров и их семантике.
 
 ## TL;DR
