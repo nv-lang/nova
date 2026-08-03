@@ -10,7 +10,7 @@
 ## Model: the type ladder (D319)
 
 ```
-Plain (не точка на оси)      Offset (точка, фикс. сдвиг)     Zoned (точка, rule-aware)
+Plain (not a point on the axis)      Offset (a point, fixed shift)     Zoned (a point, rule-aware)
 Date / TimeOfDay / DateTime → ZonedDateTime{zone: Fixed/Utc} → ZonedDateTime{zone: Iana}
 ```
 
@@ -37,13 +37,13 @@ clamped to `:59` (Q5).
 ```nova
 import std.time.civil
 
-ro d = Date.new(2026, Jul, 10)!!                 // Result: Feb-30 -> Err, не normalize
-ro t = TimeOfDay.new(14, 30)!!                   // дефолты: s = 0, ns = 0
+ro d = Date.new(2026, Jul, 10)!!                 // Result: Feb-30 -> Err, not normalize
+ro t = TimeOfDay.new(14, 30)!!                   // defaults: s = 0, ns = 0
 ro dt = d.at(t)                                  // DateTime (plain)
 
-ro ny = "America/New_York".to_timezone()!!       // §1а: конверсия на источнике
-ro z = dt.to_zoned(ny)!!                         // Compatible-политика DST
-ro ts = z.to_timestamp()!!                       // Err вне окна ±292y
+ro ny = "America/New_York".to_timezone()!!       // §1a: conversion at the source
+ro z = dt.to_zoned(ny)!!                         // the Compatible DST policy
+ro ts = z.to_timestamp()!!                       // Err outside the ±292y window
 
 ro back = "2026-07-10T14:30:00-04:00[America/New_York]".to_zoned_datetime()!!
 assert(back.compare(z) == 0)                     // RFC-9557 round-trip
@@ -65,8 +65,8 @@ runtime `RangeError`) and Go's lack of a `Period`.
 
 ```nova
 ro before = Date.new(2026, Mar, 7)!!.at(TimeOfDay.new(12, 0)!!).to_zoned(ny)!!
-ro wall = before + Period.of_days(1)         // завтра 12:00 wall; elapsed = 23h (spring-forward)
-ro exact = before.plus_duration(24.hours())  // ровно 24h; wall станет 13:00
+ro wall = before + Period.of_days(1)         // tomorrow 12:00 wall; elapsed = 23h (spring-forward)
+ro exact = before.plus_duration(24.hours())  // exactly 24h; wall becomes 13:00
 ```
 
 ### Clamp arithmetic (Q7) — non-invertible by design
@@ -87,8 +87,8 @@ When attaching a plain time to a zone, the wall time may not exist
 (spring-forward gap) or may exist twice (fall-back overlap):
 
 ```nova
-ro in_gap = Date.new(2026, Mar, 8)!!.at(TimeOfDay.new(2, 30)!!)  // NY: 02:00-03:00 съедены
-ny.resolve_local(in_gap).is_gap()               // ambiguity как ЗНАЧЕНИЕ
+ro in_gap = Date.new(2026, Mar, 8)!!.at(TimeOfDay.new(2, 30)!!)  // NY: 02:00-03:00 is eaten
+ny.resolve_local(in_gap).is_gap()               // ambiguity as a VALUE
 in_gap.to_zoned(ny)!!                           // Compatible: push -> 03:30 EDT
 in_gap.to_zoned(ny, Earlier)!!                  // 01:30 EST
 in_gap.to_zoned(ny, Reject)                     // Err(Ambiguous)
@@ -127,7 +127,7 @@ Back the other way: `@to_iso()` on every type (round-trip guaranteed),
 ```nova
 ro f = DateTimeFormat.new().day2().lit(".").month2().lit(".").year4()
 f.format(dt)                     // "10.07.2026"
-"10.07.2026".to_date_with(f)!!   // обратно; опечатка в директиве = ошибка компиляции
+"10.07.2026".to_date_with(f)!!   // back; a typo in the directive = a compile error
 ```
 
 Directives: `year4/month2/day2/hour2/minute2/second2/frac3/month_name/
@@ -151,8 +151,8 @@ constructors.
 
 ```nova
 with Time = th.fixed_ms(1_700_000_000_000) {
-    ro z = ZonedDateTime.now(Utc)          // детерминированно
-    ro today = Date.today(ny)              // тоже
+    ro z = ZonedDateTime.now(Utc)          // deterministic
+    ro today = Date.today(ny)              // also
 }
 ```
 
