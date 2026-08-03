@@ -86,10 +86,10 @@ export fn Channel[T].new(cap int) -> (ChanWriter[T], ChanReader[T]) {
         mutex: Mutex.new(),
         not_empty: Condvar.new(),
         not_full: Condvar.new(),
-        buf: []T.with_capacity(cap),
+        buf: Vec[T].new(cap: cap),
         head: 0, count: 0, closed: false,
         tx_refs: AtomicInt.new(1),
-        waiters: []SelectWaiter.new(),
+        waiters: Vec[SelectWaiter].new(),
     }
     (ChanWriter[T] { ch }, ChanReader[T] { ch })
 }
