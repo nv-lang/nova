@@ -60,7 +60,7 @@ let p *mut T        // arrow fixed                      + box writable
 *unsafe T           // pointer to possibly-uninit T (MaybeUninit pointee)
 Option[*T]          // NULLABLE pointer (NPO: None = null, 8 bytes)
 Option[*unsafe T]   // FFI nullable-uninit ptr (None = null, Some = non-null
-                    //   ptr к possibly-uninit pointee)
+                    //   ptr to a possibly-uninit pointee)
 ```
 
 Модификатор **всегда постфиксный** — он крепится к pointee того `*`, за
@@ -208,8 +208,8 @@ ro p = &acc                 // ro binding; pointee ro auto
 
 ```nova
 *mut *ro Acc        // writable-target pointer → (read-only-target pointer → Acc)
-                    // *p  = другой_pointer OK   (outer pointee mut)
-                    // **p = новое_значение ERR  (inner pointee ro)
+                    // *p  = another_pointer OK   (outer pointee mut)
+                    // **p = a_new_value ERR  (inner pointee ro)
 
 *ro *mut Acc        // read-only-target pointer → (writable-target pointer → Acc)
                     // *p  = ...            ERR  (outer pointee ro)
@@ -244,7 +244,7 @@ unsafe {
     p.method()              // ✓ auto-deref method call
     p.field = v             // ✓ auto-deref assignment (requires *mut T)
     *p                      // ✓ explicit deref
-    (*p).field              // ✓ multi-level chain через explicit *
+    (*p).field              // ✓ multi-level chain through an explicit *
 }
 ```
 
@@ -398,7 +398,7 @@ type DbSession {
     ro handle Sqlite3Handle
     ro path str
     ro opened_at Time
-}                                           // record — для handles с extra state
+}                                           // record — for handles with extra state
 ```
 
 Миграция примеров из cookbook Плана 115 V1 (форма record) → tuple newtype
