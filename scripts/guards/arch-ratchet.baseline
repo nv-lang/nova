@@ -534,5 +534,25 @@
 # polaris, ~630 файлов conformance). Мега-CU 635/0/68 -> 637/0/68 (+2 neg-
 # фикстуры m303, pos в общем модуле). Попутно: BoundCtx не сеял `@` в scope,
 # из-за чего `Self` внутри типа параметра доходил до сверки буквально.
-lines=64504
+# 2026-08-04 окно p-lang (№296+№309, emit_c 64504 -> 64573, +69): (1) №296
+# отрицательные discriminants у sum-enum — codegen threading `= N` (incl.
+# negative) в C tag enum на всех трёх сайтах (non-generic sum, generic-
+# instance mono, receiver-carrier sum) — ЧИСТО lowering-деталь (какое
+# integer-литерал-значение писать в C `enum{...}`), не типовое решение,
+# канала не существует; +20 строк. (2) №309 «форма привязки не влияет на
+# выбор перегрузки» — спека 10-overloading.md дословно требует сужение по
+# способности АРГУМЕНТА-БИНДИНГА, реализация (`narrow_by_param_mode`,
+# Plan 184, emit_c.rs) смотрела только на временность значения. Фикс —
+# новое поле `var_consume` (зеркало существующего `var_mutable`: тот же
+# набор save/restore пар по всем scope-границам — bench/test/effect-default/
+# per-fn/for-range-loop-var/pattern-destructure, чтобы не потекло между
+# сиблинг-телами, ровно как `var_mutable`) + `is_consume_eligible_arg`
+# (temporary OR named consume-bound place — «временное ИЛИ забирающее —
+# перемещается»). Строго codegen/runtime-scoping glue поверх УЖЕ
+# существующего в emit_c.rs `narrow_by_param_mode`-механизма (не новый
+# чекер-проход) — перенос в чекер-канал means переносить и весь механизм
+# specificity-сужения перегрузок по режиму (Plan 184 целиком), это за
+# рамками точечного дефект-фикса; см. docs/plans/221.1-bug-sweep.md №309.
+# `nova check std/src` 147/26/60 и polaris 37/0/18 байт-в-байт неизменны.
+lines=64573
 infer=348
