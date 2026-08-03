@@ -241,7 +241,7 @@ assert('ﬁ'.to_uppercase() == "FI")   // ligature ﬁ → "FI"
 Они делегируют в codepoint-таблицы `std/unicode` (`category_data.nv`:
 General_Category + Alphabetic + White_Space из UCD 16.0) и в case-карты
 (`case_data.nv`). Как и линзы выше, они **опт-ин** — без `import std.unicode`
-Unicode-классификация вне скоупа (ASCII-core методы `char` остаются доступны
+Unicode-классификация вне области видимости (ASCII-core методы `char` остаются доступны
 из prelude).
 
 > **Резолюция методов:** `s.to_upper()` и `s.to_lower()` определены только под
@@ -318,7 +318,7 @@ ro r = Collator.order("a", "b")                  // Collator.order/key/same (DUC
   Мульти-уровневый (primary/secondary/tertiary + quaternary) **Shifted**
   variable-weighting; сначала NFD-нормализует; обрабатывает контракции (вкл.
   discontiguous UCA S2.1) и implicit-веса (CJK и т.д.).
-- Скоуп: **DUCET (root, non-tailored)**. CLDR locale-tailoring + `eq_ignore_case`
+- Область видимости: **DUCET (root, non-tailored)**. CLDR locale-tailoring + `eq_ignore_case`
   — в роадмапе (Plan 152.5b, `[M-152-collation-tailoring]`) — как DUCET-режим
   `unicode-collation` в Rust / root-коллятор ICU.
 
