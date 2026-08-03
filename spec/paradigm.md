@@ -134,30 +134,36 @@ problem.
 ## Sum-types вместо иерархии классов
 
 ```nova
-type Shape =
-    | Circle    { radius: f64 }
-    | Square    { side: f64 }
-    | Triangle  { a: f64, b: f64, c: f64 }
+type Shape enum
+    | Circle    { radius f64 }
+    | Square    { side f64 }
+    | Triangle  { a f64, b f64, c f64 }
 
-fn Shape.area(self) = match self {
-    Circle { radius }     -> 3.14159 * radius * radius
-    Square { side }       -> side * side
-    Triangle { a, b, c }  -> heron(a, b, c)
+fn Shape @area() => match @ {
+    Circle { radius }     => 3.14159 * radius * radius
+    Square { side }       => side * side
+    Triangle { a, b, c }  => heron(a, b, c)
 }
 ```
 
 Добавил новый вариант — компилятор показывает все `match`, где не хватает
 ветки.
 
-## Динамический диспатч — через `dyn Trait`
+## Динамический диспатч — protocol-тип в обычной позиции (existential)
 
+<!-- TODO(paradigm-actualize): пример ниже зависит от того же
+     заблокированного случая, что и «Printable для int» выше (42,
+     "hello" должны удовлетворять Printable, а extension-методы на
+     чужих/примитивных типах запрещены, D46) — оставлен как есть до
+     решения владельца. -->
 ```nova
-ro items: [dyn Printable] = [acc, 42, "hello"]
+ro items []Printable = [acc, 42, "hello"]
 for x in items { print(x.show()) }  // vtable-вызов
 ```
 
-По умолчанию — мономорфизация (нулевая стоимость). `dyn` — только когда
-явно нужен runtime-полиморфизм.
+По умолчанию — мономорфизация (нулевая стоимость): `fn f[T Printable](x T)`.
+Protocol-тип в обычной (не generic) позиции значения — это и есть
+runtime-полиморфизм (existential, vtable-вызов), без отдельного keyword'а.
 
 ## Инкапсуляция — на уровне модуля
 
