@@ -1,37 +1,40 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
-# Как создать модуль Nova
+# How to author a Nova module
 
 **English** | [Русский](authoring-a-module.ru.md)
 
-> Общий гайд: от пустого каталога до публикуемого пакета. Native-backed модуль
-> (обёртка над `.c`/готовой `.lib`) — **частный случай** в конце (§7).
-> **`[ffi.staticlib]` (собираемый cargo/make-staticlib) RETRACTED владельцем
-> (Plan 195, 2026-07-10)** — native-модуль обязан собираться БЕЗ Rust/cargo,
-> только `.nv` + опционально `.c` (компилит clang) + опционально готовая
-> `.lib`/`.a` (линкуется, не собирается). §7.2 ниже оставлен как исторический
-> контекст (что было и почему убрано).
+> A general guide: from an empty directory to a publishable package. A
+> native-backed module (a wrapper over `.c`/a prebuilt `.lib`) is a **special
+> case** at the end (§7). **`[ffi.staticlib]` (a cargo/make-staticlib built as
+> part of the build) was RETRACTED by the owner (Plan 195, 2026-07-10)** — a
+> native module must build WITHOUT Rust/cargo: only `.nv` + optionally `.c`
+> (compiled by clang) + optionally a prebuilt `.lib`/`.a` (linked, not built).
+> §7.2 below is kept as historical context (what existed and why it was
+> removed).
 >
-> Смежные документы (не дублируются здесь, а до-читываются по ссылке):
-> [module-conventions](../dev/module-conventions.md) (дизайн модуля: эффект-плумбинг,
-> value/must-consume-типы, домен ошибок), [nv-coding-style](../dev/nv-coding-style.md)
-> (стиль `.nv`-кода), [ffi-cookbook](ffi-cookbook.md) (механика FFI:
-> `extern "C"`, указатели, `CStr`, `[ffi]`), [spec D78](../../spec/decisions/07-modules.md#d78-package-tooling-novatoml-novalock-registry-chain-workspace)
-> (нормативные правила `nova.toml` / module-path).
+> Related documents (not duplicated here — follow the link to read further):
+> [module-conventions](../dev/module-conventions.md) (module design: effect
+> plumbing, value/must-consume types, error domain),
+> [nv-coding-style](../dev/nv-coding-style.md) (`.nv` code style),
+> [ffi-cookbook](ffi-cookbook.md) (FFI mechanics: `extern "C"`, pointers,
+> `CStr`, `[ffi]`), [spec D78](../../spec/decisions/07-modules.md#d78-package-tooling-novatoml-novalock-registry-chain-workspace)
+> (normative rules for `nova.toml` / module-path).
 
 ## 0. TL;DR
 
-1. Создай каталог; положи в корень `nova.toml` с `[package] name`.
-2. Пиши `.nv`-файлы — **путь файла = путь модуля** (`foo/bar.nv` ⇒ `module foo.bar`).
-3. Тесты — рядом, в файлах `*_test.nv` (или `test "…" { }`-блоки внутри модуля).
-4. Публичную поверхность помечай `export` + `#stable(since = "X")`.
-5. Нужны C-артефакты — задекларируй их в `[ffi]` (готовый `.c`-шим + опционально
-   готовая `.lib`/`.a`); при импорте модуля они соберутся и слинкуются
-   автоматически (§7).
+1. Create a directory; put `nova.toml` with `[package] name` at its root.
+2. Write `.nv` files — **file path = module path** (`foo/bar.nv` ⇒ `module foo.bar`).
+3. Tests go alongside, in `*_test.nv` files (or `test "…" { }` blocks inside the module).
+4. Mark the public surface with `export` + `#stable(since = "X")`.
+5. Need C artifacts — declare them in `[ffi]` (a prebuilt `.c` shim +
+   optionally a prebuilt `.lib`/`.a`); they'll be built and linked
+   automatically when the module is imported (§7).
 
-## 1. Layout пакета
+## 1. Package layout
 
-Пакет — это каталог с `nova.toml` в корне. **Source root = корень пакета**
-(отдельного `src/` нет — D78, 2026-05-22). Модули лежат прямо в подкаталогах:
+A package is a directory with `nova.toml` at its root. **Source root =
+package root** (there's no separate `src/` — D78, 2026-05-22). Modules live
+directly in subdirectories:
 
 ```
 nova-greet/                 репозиторий: nova-<пакет> (§8)
@@ -45,12 +48,14 @@ nova-greet/                 репозиторий: nova-<пакет> (§8)
     └── ascii_test.nv       тесты рядом
 ```
 
-Служебные каталоги (`target/`, `.git/`, скрытые `.`-префикс) резолвер
-пропускает. Не-`.nv` каталоги (`assets/`, `docs/`) модулями не считаются.
+Service directories (`target/`, `.git/`, hidden `.`-prefixed ones) are
+skipped by the resolver. Non-`.nv` directories (`assets/`, `docs/`) are not
+treated as modules.
 
-## 2. `nova.toml` — манифест
+## 2. `nova.toml` — the manifest
 
-Минимум — `[package] name`; `version` желателен. Полная схема — [D78](../../spec/decisions/07-modules.md#d78-package-tooling-novatoml-novalock-registry-chain-workspace).
+The minimum is `[package] name`; `version` is desirable. The full schema —
+[D78](../../spec/decisions/07-modules.md#d78-package-tooling-novatoml-novalock-registry-chain-workspace).
 
 ```toml
 [package]
@@ -71,32 +76,35 @@ internal = { path = "../internal" }                     # локальный
 remote   = { git = "https://github.com/…", tag = "v1" } # git (Plan 03.1/03.2)
 ```
 
-Пакет **по умолчанию — библиотека**: его `export`-декларации импортируемы
-другими пакетами без какой-либо `[lib]`-секции. `[[bin]]` добавляет бинарные
-точки входа (пакет может быть и библиотекой, и набором бинарей).
+A package **is a library by default**: its `export` declarations are
+importable by other packages with no `[lib]` section at all. `[[bin]]` adds
+binary entry points (a package can be both a library and a set of binaries).
 
 ## 3. Module path = file path (D78)
 
-Компилятор **обязательно** сверяет объявление `module …` с путём файла;
-несоответствие — `E_D78_MODULE_PATH_MISMATCH` с подсказкой. Правило (rev-3):
+The compiler **always** checks the `module …` declaration against the file
+path; a mismatch gives `E_D78_MODULE_PATH_MISMATCH` with a hint. The rule
+(rev-3):
 
-| Файл (от корня пакета `greet`) | Объявление | Импорт |
+| File (from package `greet`'s root) | Declaration | Import |
 |---|---|---|
 | `greet.nv` | `module greet` | `import greet.{hello}` |
 | `format/ascii.nv` | `module format.ascii` | `import format.ascii.{…}` |
-| `format/ascii/upper.nv` (peer папки) | `module format.ascii` | — |
+| `format/ascii/upper.nv` (a folder peer) | `module format.ascii` | — |
 
-Папка = ОДИН модуль из co-equal файлов (peer-файлы делят одно объявление
-`parent.folder`). Файл и папка одного имени в одном каталоге запрещены.
+A folder = ONE module made of co-equal files (peer files share one
+`parent.folder` declaration). A file and a folder of the same name in one
+directory are forbidden.
 
-## 4. Публичная поверхность и стабильность
+## 4. Public surface and stability
 
-- `export` — то, что видно снаружи модуля/пакета; без `export` элемент
-  module-private. Межпакетный импорт — только через `export` (D216-ecosystem).
-- `#stable(since = "X")` на каждом публичном элементе — semver-контракт. Для
-  библиотек это можно сделать **обязательным**: `[lib] enforce-stability = true`
-  превращает отсутствие маркера в ошибку `nova doc --check` (D127).
-- Незрелый API — `#unstable` / `#experimental` вместо `#stable`.
+- `export` — what's visible outside the module/package; without `export` an
+  item is module-private. Cross-package import goes only through `export`
+  (D216-ecosystem).
+- `#stable(since = "X")` on every public item — a semver contract. For
+  libraries this can be made **mandatory**: `[lib] enforce-stability = true`
+  turns a missing marker into an `nova doc --check` error (D127).
+- An immature API — `#unstable` / `#experimental` instead of `#stable`.
 
 ```nova
 module greet
@@ -105,12 +113,12 @@ module greet
 export fn hello(name str) -> str => "Привет, ${name}!"
 ```
 
-## 5. Тесты рядом с модулем
+## 5. Tests alongside the module
 
-Тесты живут **рядом** с модулем — в файлах `*_test.nv` (исключаются из
-release-графа) либо `test "…" { }`-блоками внутри самого модуля. Не складывать
-тесты в отдельное дерево. Классификация pos/neg — по `EXPECT_*`-маркеру, не по
-папке ([test-conventions](../dev/test-conventions.md)).
+Tests live **alongside** the module — in `*_test.nv` files (excluded from
+the release graph) or as `test "…" { }` blocks inside the module itself.
+Don't put tests in a separate tree. Pos/neg classification goes by the
+`EXPECT_*` marker, not by directory ([test-conventions](../dev/test-conventions.md)).
 
 ```nova
 module greet
@@ -120,35 +128,35 @@ test "hello вставляет имя" {
 }
 ```
 
-Для эффект-модулей (§6) обязателен **mock-handler-тест** — детерминизм без
-реального ресурса.
+For effect modules (§6) a **mock-handler test** is mandatory — determinism
+without a real resource.
 
-## 6. Дизайн модуля (кратко; полное — module-conventions)
+## 6. Module design (brief; the full picture — module-conventions)
 
-Для I/O-, OS- и ресурсных подсистем канон Nova — **эффект-плумбинг + фасад на
-типах** ([module-conventions](../dev/module-conventions.md)):
+For I/O, OS, and resource subsystems, Nova's canon is **effect plumbing + a
+type-level facade** ([module-conventions](../dev/module-conventions.md)):
 
-- **Эффект** — внутренняя dispatch-точка (`type Fs effect { … }`); юзер его не
-  зовёт напрямую → мокабельность (`with Fs = mem_fs() { … }`).
-- **User-API** — методы на типах + free-fns (`File.open(path)`), эффект виден в
-  effect-row сигнатуры, а не в имени опа.
-- Мелкие значения — `value`-record; ресурсы — must-consume `@close() -> Result`.
-- Ошибки — один структурный `XError { kind, … }` + OPEN `ErrorKind`.
-- byte-first: сырой I/O — `[]u8`; `str` только через `from_utf8 -> Result`.
+- **The effect** is the internal dispatch point (`type Fs effect { … }`); the
+  user doesn't call it directly → mockability (`with Fs = mem_fs() { … }`).
+- **The user API** — methods on types + free functions (`File.open(path)`),
+  the effect is visible in the signature's effect row, not in an op's name.
+- Small values — `value` records; resources — must-consume `@close() -> Result`.
+- Errors — one structural `XError { kind, … }` + an OPEN `ErrorKind`.
+- byte-first: raw I/O is `[]u8`; `str` only via `from_utf8 -> Result`.
 
-Чистая алгоритмика (парсинг, кодировки, календарь) — обычные `.nv`-функции без
-эффекта.
+Pure algorithmics (parsing, encodings, calendar) — ordinary `.nv` functions
+with no effect.
 
-## 7. Native-backed модуль (частный случай)
+## 7. Native-backed module (a special case)
 
-Модуль может стоять поверх C-библиотеки или Rust-крейта. Тонкий слой FFI
-(`extern "C" fn`, типы-хендлы, `CStr`, указатели, ABI) — целиком в
-[ffi-cookbook](ffi-cookbook.md); здесь — только **как подключить артефакты
-к сборке**, чтобы `import` модуля тянул их автоматически.
+A module can sit on top of a C library or a Rust crate. The thin FFI layer
+(`extern "C" fn`, handle types, `CStr`, pointers, ABI) is covered entirely in
+[ffi-cookbook](ffi-cookbook.md); here — only **how to wire artifacts into the
+build** so that `import`ing the module pulls them in automatically.
 
-Native-зависимость декларируется в `nova.toml` через единственную секцию:
+A native dependency is declared in `nova.toml` through a single section:
 
-### 7.1. Готовые `.c`-шимы и системные `.lib` — `[ffi]`
+### 7.1. Prebuilt `.c` shims and system `.lib`s — `[ffi]`
 
 ```toml
 [ffi]
@@ -157,52 +165,59 @@ include_dirs = ["native/", "third_party/sqlite3/"]  # clang -I
 libs         = ["sqlite3"]                 # системные: clang -lsqlite3 / sqlite3.lib
 ```
 
-Если системная `.lib` не в стандартном search-path (vcpkg-триплет, vendored
-копия) — линковка резолвится и подключается прямо в build-пайплайне
-(`test_runner.rs::build_command`), тем же условным-по-факту-использования
-паттерном D337, что у brotli/`net.c`; см. `std/tls` ниже.
+If a system `.lib` isn't on the standard search path (a vcpkg triplet, a
+vendored copy) — the link is resolved and wired directly into the build
+pipeline (`test_runner.rs::build_command`), the same used-if-referenced D337
+pattern as brotli/`net.c`; see `std/tls` below.
 
-### 7.2. `[ffi.staticlib]` (собираемый cargo/make-staticlib) — RETRACTED (Plan 195)
+### 7.2. `[ffi.staticlib]` (a cargo/make-built staticlib) — RETRACTED (Plan 195)
 
-**Существовало (Plan 195), ретрактировано владельцем 2026-07-10.** Позволяло
-модулю требовать **построить** native-артефакт (`cargo build`, `make`) как
-часть своей сборки — единственным пользователем был `compiler-codegen/
-tls_shim/` (Rust-staticlib поверх `rustls`). Противоречит канону тулчейна
-(компилятор Nova + clang, БЕЗ Rust/cargo) — снято целиком
-(`FfiStaticlibConfig`/`resolve_ffi_staticlib`/парсинг секции убраны из
-`manifest.rs`/`test_runner.rs`). `tls_shim/` заменён на `nova_rt/tls_c_shim.c`
-(mbedTLS) — обычный `[ffi]`-путь (§7.1), без cargo/build-скрипта вообще:
-mbedTLS ставится ЗАРАНЕЕ через `vcpkg install` (готовая `.lib`, не собираемая
-на лету), `tls_c_shim.c` компилируется/линкуется условно как ЛЮБОЙ другой
-рантайм-модуль (`net.c`/`brotli_shim.c`), безо всякой манифест-декларации.
+**Existed (Plan 195), retracted by the owner on 2026-07-10.** It let a
+module require **building** a native artifact (`cargo build`, `make`) as
+part of its own build — the only user was `compiler-codegen/tls_shim/` (a
+Rust staticlib over `rustls`). It contradicts the toolchain canon (the Nova
+compiler + clang, WITHOUT Rust/cargo) — removed entirely
+(`FfiStaticlibConfig`/`resolve_ffi_staticlib`/the section parsing were
+removed from `manifest.rs`/`test_runner.rs`). `tls_shim/` was replaced by
+`nova_rt/tls_c_shim.c` (mbedTLS) — the ordinary `[ffi]` path (§7.1), with no
+cargo/build script at all: mbedTLS is installed AHEAD OF TIME via
+`vcpkg install` (a prebuilt `.lib`, not built on the fly), `tls_c_shim.c` is
+compiled/linked conditionally like ANY other runtime module
+(`net.c`/`brotli_shim.c`), with no manifest declaration whatsoever.
 
-> **Эталон паттерна** (2026-07 актуальный) — `std/tls` в монорепо
-> (`nova_rt/tls_c_shim.c` + vcpkg mbedTLS, БЕЗ `[ffi.staticlib]`, БЕЗ
-> манифест-декларации вообще). Полная механика — [ffi-cookbook §retracted](ffi-cookbook.md#ffistaticlib--retracted-plan-195).
+> **The reference pattern** (current as of 2026-07) — `std/tls` in the
+> monorepo (`nova_rt/tls_c_shim.c` + vcpkg mbedTLS, WITHOUT `[ffi.staticlib]`,
+> WITHOUT any manifest declaration at all). Full mechanics —
+> [ffi-cookbook §retracted](ffi-cookbook.md#ffistaticlib--retracted-plan-195).
 
-## 8. Именование и публикация (внешний пакет)
+## 8. Naming and publishing (an external package)
 
-Конвенция для внешних (в т.ч. native-backed) пакетов — [D78-амендмент, Plan 195](../../spec/decisions/07-modules.md#именование-внешних-пакетов-репозиториев-амендмент-plan-192-2026-07-10):
+The convention for external (including native-backed) packages —
+[D78 amendment, Plan 195](../../spec/decisions/07-modules.md#именование-внешних-пакетов-репозиториев-амендмент-plan-192-2026-07-10):
 
-| Сущность | Конвенция | Пример |
+| Entity | Convention | Example |
 |---|---|---|
-| Репозиторий | `nova-<пакет>` | `nova-tls` |
-| Имя пакета (`[package] name`) | `<пакет>` | `tls` |
-| Корень модуля | `<пакет>.*` | `import tls.{TlsStream}` |
-| Native-артефакты | `native/` | `native/tls_shim/` |
+| Repository | `nova-<package>` | `nova-tls` |
+| Package name (`[package] name`) | `<package>` | `tls` |
+| Module root | `<package>.*` | `import tls.{TlsStream}` |
+| Native artifacts | `native/` | `native/tls_shim/` |
 
-Публикация: закоммить пакет в репозиторий `nova-<пакет>`; потребитель
-подключает его как git-зависимость —
-`[dependencies] tls = { git = "https://…/nova-tls", tag = "v0.1.0" }`. Реестр
-(named `<пакет> = "1.2"`) — Plan 03.3, отдельно.
+Publishing: commit the package into the `nova-<package>` repository; a
+consumer wires it in as a git dependency —
+`[dependencies] tls = { git = "https://…/nova-tls", tag = "v0.1.0" }`. The
+registry (named `<package> = "1.2"`) is Plan 03.3, separately.
 
-## 9. Чек-лист нового модуля
+## 9. New-module checklist
 
-1. `nova.toml` с `[package] name` в корне.
-2. `.nv`-файлы: `module path = file path`; папка = один модуль.
-3. Публичное — `export` + `#stable(since)`; для либы — `enforce-stability = true`.
-4. Тесты рядом (`*_test.nv` / `test`-блоки); эффект-модуль → mock-тест.
-5. Дизайн по module-conventions (эффект-плумбинг + фасад; value/must-consume; один `XError`).
-6. Native — `[ffi]` (готовые `.c`-шимы + готовая `.lib`/`.a`; `[ffi.staticlib]`
-   собираемый-cargo/make — RETRACTED, Plan 195).
-7. Внешний пакет — репо `nova-<пакет>`, native в `native/`, git-зависимость.
+1. `nova.toml` with `[package] name` at the root.
+2. `.nv` files: `module path = file path`; a folder = one module.
+3. Public surface — `export` + `#stable(since)`; for a library —
+   `enforce-stability = true`.
+4. Tests alongside (`*_test.nv` / `test` blocks); an effect module → a mock
+   test.
+5. Design per module-conventions (effect plumbing + facade; value/must-consume;
+   one `XError`).
+6. Native — `[ffi]` (prebuilt `.c` shims + a prebuilt `.lib`/`.a`;
+   `[ffi.staticlib]` (cargo/make-built) — RETRACTED, Plan 195).
+7. An external package — repo `nova-<package>`, native in `native/`, a git
+   dependency.
