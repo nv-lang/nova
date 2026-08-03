@@ -80,29 +80,37 @@ print(acc.balance)  // 70
 `mut` перед `@name` в сигнатуре — единственный способ мутировать поля.
 Если метод не пишет — `@name` без `mut`, и компилятор это проверяет.
 
-## Полиморфизм через trait
+## Полиморфизм через protocol
 
 ```nova
-trait Printable {
-    fn show(self) -> str
+type Printable protocol {
+    show() -> str
 }
 
-impl Printable for Account {
-    fn show(self) = "Account(${self.owner}, ${self.balance})"
-}
+fn Account @show() -> str => "Account(${@owner}, ${@balance})"
 
+<!-- TODO(paradigm-actualize): пример «Printable для int» не имеет
+     прямого эквивалента в действующем языке — extension-методы на
+     чужом/примитивном типе запрещены (03-syntax.md#d35, раздел
+     «Receiver — любой тип, включая примитивы»: методы на встроенных
+     типах определяются только в stdlib-модулях, пользовательский код
+     не может добавить методы на чужих типах). `int` — foreign type
+     для пользовательского кода, `int @show()` пользователь объявить
+     не может. Ниже — исходный (устаревший, `impl`/`self`) фрагмент,
+     оставлен как есть до решения владельца, чем заменить иллюстрацию. -->
 impl Printable for int {
     fn show(self) = self.to_str()
 }
 
-fn log_all(xs: [impl Printable]) =
+fn log_all(xs []Printable) {
     for x in xs { print(x.show()) }
+}
 ```
 
-Структурный bonus: если `Account` уже имеет метод `show(self) -> str`,
-его не обязательно объявлять `impl Printable` явно — компилятор видит
-совпадение по форме. Но если хочется номинальной строгости, пишешь
-`impl` явно.
+Структурная совместимость — единственный механизм: если `Account` уже
+имеет метод `show() -> str`, он автоматически удовлетворяет
+`Printable`. Отдельного шага «реализации» нет, `impl`-блоков в языке не
+существует; номинальной формы тоже нет.
 
 ## Вместо наследования — embed + delegate
 
