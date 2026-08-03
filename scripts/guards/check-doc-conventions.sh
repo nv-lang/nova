@@ -407,7 +407,17 @@ code_comment_ru_files=0
 ccru_names=""
 check_ccru() {  # file
     [ -f "$1" ] || return 0
-    n=$(awk '/^```/{f=!f; next} f && /[\xd0-\xd1]/{c++} END{print c+0}' "$1")
+    # Пометки фаз планов («Ф.4», «Ф.6а») — идентификаторы-адреса, а не проза:
+    # законны и внутри примеров, как и в тексте вне блоков.
+    n=$(awk '
+        /^```/{f=!f; next}
+        !f {next}
+        {
+            line=$0
+            gsub(/Ф\.[0-9]+[^ ,)\]]*/, "", line)
+            if (line ~ /[\xd0-\xd1]/) c++
+        }
+        END{print c+0}' "$1")
     if [ "$n" -gt 0 ]; then
         code_comment_ru_files=$((code_comment_ru_files + 1))
         ccru_names="$ccru_names $(basename "$1")($n)"
