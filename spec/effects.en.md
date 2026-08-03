@@ -285,3 +285,142 @@ factory in `.nv` source (not a hardcode in Rust). `with Effect = ...`
 still fully overrides the default — the mechanism does not lose
 mockability, it just removes the need to write `with` for the typical
 bootstrap case.
+
+## What is NOT an effect — Panic
+
+Not every interruption is an effect. **Hardware/mathematical faults**
+are not stated in the signature:
+
+- Division by zero
+- Integer overflow
+- Out-of-bounds array access
+- Stack overflow
+- Out-of-memory
+
+They form the `Panic` category. The programmer does **not catch panic in
+code** — it is the death of the current fiber, the runtime handles it at
+the boundary:
+
+```nova
+import std.concurrency.supervisor as sup
+
+fn handle_request(id int) -> int =>
+    id / id                // если panic (напр. id == 0 → div/0) — fiber умирает
+
+fn server(ids []int) -> () =>
+    with Supervisor = sup.stop() {           // упавший ребёнок НЕ отменяет siblings
+        supervised {
+            for id in ids { spawn { handle_request(id) } }
+        }
+    }
+```
+
+The supervision strategy is an ordinary **effect-handler** (`Supervisor`,
+[D416](decisions/06-concurrency.md#d416)), not a named parameter:
+ready-made policies — `sup.stop()` (the failed one is "dropped", the others
+continue, its error is not lost — retained) and `sup.escalate()` (equivalent
+to the default: the error becomes primary, siblings are cancelled
+cooperatively). A custom policy — an ordinary handler literal:
+`on_child_fail(idx int, err any) -> Decision`,
+where `Decision` is `Escalate` or `Stop`. **The `Restart` family is absent
+from the vocabulary** (retracted 2026-07-10) — the restart idiom is foreign
+to structured concurrency for fibers; retry lives inside the child's body
+(`std.concurrency.retry`), not in the supervisor.
+
+`panic` is the death of a **fiber**, not the process. In a server only the
+current request falls, everything else keeps working. If you need to
+guaranteed-kill the process — a separate `exit(code, msg)` function ([D13](decisions/08-runtime.md#d13)).
+
+Otherwise `Fail[DivByZero]` would be in every other signature — the
+informativeness of effects would disappear. A conscious compromise,
+in detail — [decisions/08-runtime.md#d13](decisions/08-runtime.md#d13).
+
+## Roles — `throw` / `Fail[E]` / handler
+
+To avoid confusing the layers, three participants in error handling:
+
+- **`throw err`** — language syntax, raises an error. After `throw`
+  control never returns to that point (the operation type is `never`).
+- **`Fail[E]`** — the effect contract for catching and handling an error.
+- **a `Fail[E]` handler** — what catches the error. A handler has
+  exactly two outcomes:
+  - complete the `with`-block with a value via `interrupt v`,
+  - rethrow the error further via `throw`.
+
+  Resuming the call at the `throw` point is impossible — the operation
+  type is `never`, there is nothing to return to that point.
+
+## The `?` and `!!` operators
+
+The programmer chooses the handling style at the usage site
+([D85](decisions/04-effects.md#d85)):
+
+- **`expr?`** — return-style: "didn't work — wrap it upward as a
+  value". The enclosing function must return `Option`/`Result`.
+- **`expr!!`** — throw-style: "didn't work — throw via `Fail`".
+  The enclosing function must have `Fail[E]` in its signature.
+
+```nova
+fn pipeline_return(s str) -> Result[int, ParseError] {
+    ro n = parse(s)?            // на Err: return Err(e)
+    validate(n)?
+    Ok(n)
+}
+
+fn pipeline_throw(s str) Fail[ParseError] -> int {
+    ro n = parse(s)!!           // на Err: throw e
+    validate(n)!!
+    n
+}
+```
+
+Both operators work for `Option[T]` and `Result[T, E]` alike. For
+`Option!!`, `RuntimeNoneError` is thrown (a prelude unit type). The twin
+methods `.unwrap()` / `.unwrap_or(v)` / `.unwrap_or_else(f)` were
+**retracted** (2026-07-07) — the only canonical path is the operator one
+(`!!`, `??`); there are no methods on `Option`/`Result` with the same
+meaning in the prelude.
+
+**Enforcement at the export boundary ([№113](decisions/04-effects.md#d85),
+2026-07-25).** `expr!!` in an `export fn` whose signature carries no
+compatible `Fail[E]` (and the throw is not caught by a local
+`with Fail = ... {}`) — compile error `E_BANG_REQUIRES_FAIL`. For
+**private** functions this does not apply — D28 auto-inference works there
+(see above): `Fail` is silently inserted into the effect row if the body
+uses `throw`/`!!`. If `!!` guards a program invariant rather than real
+fallibility (typical example — a setter over a compile-time-known literal),
+the way out is `?? panic("...")` instead of dragging `Fail` into the public
+signature.
+
+In parallel, **`??`** remains — coalesce / custom fallback:
+
+```nova
+ro port = config.get("port") ?? 8080                   // default
+ro port = config.get("port") ?? throw MyError          // custom throw
+ro port = config.get("port") ?? panic("no port")       // panic (D13)
+```
+
+The **`?? return ...`** form (early exit from the enclosing function) is
+**retracted** ([D86](decisions/04-effects.md#d86) amend, 2026-07-23,
+`E_COALESCE_RETURN_FALLBACK`): it was a second door to `?`, not an
+independent niche. The canon instead — `X?` (the same wrapper outward),
+`.ok()?` (Result → the function returns Option),
+`.map_err(...)?` (the error type changes),
+`.ok_or(err)?` (Option → the function returns Result), or an explicit
+`match`, if there is no wrapper to propagate at all.
+
+## Alternative: explicit Result
+
+```nova
+fn parse(s str) -> Result[int, ParseError] => ...
+```
+
+Two styles of the same thing. `Fail` — sugar over `Result`.
+The default for application code is `Fail` (more readable); for libraries
+with an important error type — explicit `Result`.
+
+## The main point
+
+Effects are a **promise in the signature** + a **catch point**. One
+mechanism for what other languages spread across `try/catch`,
+`async/await`, dependency injection, mocks, and `unsafe`.
