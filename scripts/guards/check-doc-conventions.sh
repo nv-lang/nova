@@ -335,4 +335,41 @@ else
     info "doc-conventions ok (вакуумно): README в корне нет — проверять нечего"
 fi
 
+# ---------------------------------------------------------------------
+# 7. mixed_language (ratchet): кириллица в файлах, которые ОБЯЗАНЫ быть
+#    английскими (docs/guide/X.md без .ru, spec/X.en.md, README.md).
+#    Грубая эвристика по совету консультанта: считаем файлы, где ВНЕ
+#    ```-блоков больше 1 строки с кириллицей (одна допустима — строка
+#    переключателя языка со словом «Русский»). Ловит именно смешение
+#    языков внутри файла (прецедент: 60 строк русского раздела про Z3
+#    в титульном английском README), в отличие от словаря калек,
+#    который тонет в именах кода.
+# ---------------------------------------------------------------------
+mixed_language_files=0
+mixed_names=""
+check_mixed() {  # file
+    [ -f "$1" ] || return 0
+    n=$(awk '/^```/{f=!f; next} !f && /[Ð-Ñ]/{c++} END{print c+0}' "$1")
+    if [ "$n" -gt 1 ]; then
+        mixed_language_files=$((mixed_language_files + 1))
+        mixed_names="$mixed_names $(basename "$1")($n)"
+    fi
+}
+check_mixed "$ROOT/README.md"
+if [ -d "$guide_dir" ]; then
+    for f in "$guide_dir"/*.md; do
+        case "$f" in *.ru.md) continue ;; esac
+        check_mixed "$f"
+    done
+fi
+if [ -d "$spec_dir" ]; then
+    for f in "$spec_dir"/*.en.md; do
+        # GLOSSARY.en.md — двуязычный словарь по назначению, не перевод
+        case "$f" in */GLOSSARY.en.md) continue ;; esac
+        check_mixed "$f"
+    done
+fi
+[ -n "$mixed_names" ] && info "doc-conventions: кириллица в английских файлах:$mixed_names (строк вне код-блоков)"
+ratchet_check mixed_language_files "$mixed_language_files" "английские файлы (README.md, docs/guide/*.md, spec/*.en.md) с кириллицей вне код-блоков"
+
 exit $fail
