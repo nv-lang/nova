@@ -289,3 +289,35 @@ type UserId int
 ro u UserId = 42 as UserId
 ro n int = u as int            // 42
 ```
+
+---
+
+## Sum-variant ↔ int (discriminant)
+
+A sum type requires the `enum` marker after the name ([D406](decisions/02-types.md#d406),
+2026-07-01 — the old syntax with a leading `|` without `enum` is revoked):
+
+```nova
+type ErrorCode enum NotFound = 404 | InternalError = 500
+ro code = NotFound as int      // 404
+```
+
+`int → Sum` via `as` is **forbidden** (a number may not hit any variant).
+Use pattern matching.
+
+---
+
+## Strict if cond:bool / while cond:bool
+
+`if cond`, `while cond`, `cond1 && cond2`, `cond1 || cond2` —
+**cond must be `bool`**. Truthy-int (`if a` where `a: int`)
+is forbidden.
+
+```nova
+ro n int = 5
+if n { ... }                    // ❌ compile error
+if n != 0 { ... }               // ✅
+```
+
+**Precedents:** Rust, Swift, Kotlin — all require bool. Python/C/JS —
+truthy, a known bug-class.
