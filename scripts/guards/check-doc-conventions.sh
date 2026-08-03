@@ -349,7 +349,10 @@ mixed_language_files=0
 mixed_names=""
 check_mixed() {  # file
     [ -f "$1" ] || return 0
-    n=$(awk '/^```/{f=!f; next} !f && /[Ð-Ñ]/{c++} END{print c+0}' "$1")
+    # Считаем только СОДЕРЖАТЕЛЬНУЮ кириллицу: пропускаем строку переключателя
+    # языка и строки со ссылками (там кириллица — это якоря русских планов и
+    # D-блоков, они законны, см. план 247).
+    n=$(awk '/^```/{f=!f; next} f {next} /\]\(/ {next} /Русский/ {next} /[\xd0-\xd1]/{c++} END{print c+0}' "$1")
     if [ "$n" -gt 1 ]; then
         mixed_language_files=$((mixed_language_files + 1))
         mixed_names="$mixed_names $(basename "$1")($n)"
