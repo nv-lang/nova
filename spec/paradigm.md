@@ -41,29 +41,31 @@
 
 ```nova
 // === ДАННЫЕ ===
-type Account = {
-    id: u64
-    owner: str
-    balance: money
-    mut closed: bool   // mut — единственный способ мутации поля
+type Account {
+    id u64
+    owner str
+    balance money
+    mut closed bool   // mut — единственный способ мутации поля
 }
 
 // === КОНСТРУКТОР — это просто функция ===
-fn Account.new(owner: str) -> Account =
+fn Account.new(owner str) -> Account =>
     Account { id: ids.next(), owner, balance: money.zero, closed: false }
 
 // === МЕТОДЫ ===
-fn Account.deposit(mut self, amount: money) throws -> () =
-    if self.closed { throw ClosedAccount }
+fn Account mut @deposit(amount money) Fail -> () {
+    if @closed { throw ClosedAccount }
     if amount <= 0 { throw InvalidAmount }
-    self.balance += amount
+    @balance += amount
+}
 
-fn Account.withdraw(mut self, amount: money) throws -> () =
-    if amount > self.balance { throw Overdraft }
-    self.balance -= amount
+fn Account mut @withdraw(amount money) Fail -> () {
+    if amount > @balance { throw Overdraft }
+    @balance -= amount
+}
 
 // Чистый геттер — выводится как pure, без побочных эффектов
-fn Account.is_solvent(self) = self.balance > 0
+fn Account @is_solvent() => @balance > 0
 ```
 
 Использование:
@@ -75,8 +77,8 @@ acc.withdraw(30)?
 print(acc.balance)  // 70
 ```
 
-`mut self` в сигнатуре — единственный способ мутировать. Если метод не
-пишет — `self` без `mut`, и компилятор это проверяет.
+`mut` перед `@name` в сигнатуре — единственный способ мутировать поля.
+Если метод не пишет — `@name` без `mut`, и компилятор это проверяет.
 
 ## Полиморфизм через trait
 
