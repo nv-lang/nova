@@ -50,7 +50,7 @@ test "(295-a) direct Next[str] blanket wins over the co-present Iter[I] delegate
 export type M295Words value { letters []str }
 
 #impl(Iter[M295Letters])
-export fn M295Words @iter() -> M295Letters => M295Letters { cur: 0, letters: @letters }
+export fn M295Words @iter() -> M295Letters => { cur: 0, @letters }
 
 test "(295-b) Iter[I]-delegate resolves the same method name to str, not the int default, for a receiver with no Next[T] of its own" {
     ro w = M295Words { letters: ["x", "y", "z"] }
