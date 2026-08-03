@@ -128,3 +128,89 @@ fn untrusted_plugin(input str) Logger -> str {
 If the plugin tries to use `Net.get`, the **compiler will not let it
 through** — the `Net` effect is absent from the signature. This is capability
 security in types, not in the runtime.
+
+---
+
+## R2. The standard effect set
+
+Unlike Koka, Nova ships with a **ready-made set of effects
+for application programming**. You don't have to invent them in every project.
+
+| Effect | What it describes | Example handler |
+|---|---|---|
+| `Fail[E]` | Contract for catching and handling an error of type E | catch, retry, log-and-continue |
+| `Io` | stdin/stdout/stderr | capture-stdout, mock-stdin |
+| `Fs` | File system | virtual filesystem |
+| `Net` | Network requests | record/replay, fault injection |
+| `Db` | Database | transaction, in-memory storage |
+| `Time` | Clock, timers, delays | virtual clock, fast-forward |
+| `Random` | RNG | seeded RNG for tests |
+| `Log` | Structured logging | JSON, human-readable, capture |
+| `Trace` | Distributed tracing | OpenTelemetry, off |
+| `Ask[T]` | Reading from context (like Reader) | config substitution |
+| `Alloc[R]` | Allocation in region R | arena, GC, pool |
+
+**Async, Mut, Par are not in** the standard effect set
+([D62](decisions/04-effects.md#d62)):
+
+- `Async` — an ambient capability, not part of the type system. The
+  programmer never writes it in signatures. The fiber runtime is under the
+  hood (see R7).
+- `Mut` — real state-machine scenarios are covered by specialized effects
+  with clear names (Counter, Cache, IdGen, etc.); a generic
+  `Mut[T]` would provoke the "unnamed shared state" anti-pattern.
+- `Par` — the runtime keyword `parallel for` / `spawn`, not an effect.
+
+The function color is **absent** — there is no "sync" vs "async" split, there
+is "what effects does the function have". Async never appears in types.
+
+---
+
+## R3. Deterministic testing mode
+
+It follows automatically from effects: **any program can be run completely
+deterministically**, if all effects are replaced with
+deterministic handlers.
+
+```nova
+test "complex flow is deterministic" {
+    with Time = fixed(2026-04-28T10:00:00),
+         Random = seed(42),
+         Net = record_or_replay("testdata/flow.json"),
+         Db = in_memory() {
+        ro result = run_complex_flow()
+        assert(result.snapshot() == expected_snapshot)
+    }
+}
+```
+
+This requires no mock libraries — **effect substitution is part of the
+language**. Snapshot tests, property-based, time-travel — everything is built
+from this.
+
+---
+
+## R4. Contracts in the signature (requires/ensures/invariant)
+
+Effects give visibility into **what** a function does. Contracts — visibility
+into **under what conditions it works**:
+
+```nova
+fn withdraw(mut acc Account, amount money) Fail -> ()
+    requires amount > 0
+    requires acc.balance >= amount
+    ensures acc.balance == old(acc.balance) - amount
+    ensures result.is_ok || acc.balance == old(acc.balance)
+=
+    acc.balance -= amount
+```
+
+Contracts are **optional**. Without them the code works as usual.
+With them the compiler tries to prove them statically (like F* / Dafny),
+and what it cannot prove — turns into a runtime check in debug mode
+and removes it in release.
+
+This gives a **gradient**: you write like in Go (no contracts); you want
+stronger — you add `requires`; you want full verification —
+you add `ensures` and `invariant`. One and the same language covers the
+spectrum from a script to correctness-critical code.
