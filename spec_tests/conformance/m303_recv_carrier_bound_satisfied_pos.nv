@@ -1,0 +1,20 @@
+// [M-receiver-carrier-bound-not-enforced] (Plan 221.1 №303) — positive guard:
+// a receiver carrier bound that IS satisfied by the concrete instantiation
+// must keep compiling and running exactly as before the enforcement fix.
+// Guards that `check_receiver_carrier_bounds` (types/mod.rs) does not
+// false-positive on the legitimate case.
+module spec_tests.conformance
+
+type M303Named value { label str }
+
+#impl(Display)
+export fn M303Named @display(mut f Fmt) -> () => f.write(@label)
+
+type Holder303[T] value { v T }
+
+export fn Holder303[T Display] @show() -> str => "${@v}"
+
+test "(303-pos) receiver carrier bound Display satisfied by M303Named — call must pass" {
+    ro h Holder303[M303Named] = { v: M303Named { label: "ok" } }
+    assert(h.show() == "ok")
+}

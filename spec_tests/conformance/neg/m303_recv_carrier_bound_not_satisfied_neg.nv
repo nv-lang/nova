@@ -1,0 +1,28 @@
+// EXPECT_COMPILE_ERROR does not satisfy `Display` bound
+// [M-receiver-carrier-bound-not-enforced] (Plan 221.1 №303) — negative guard:
+// a receiver carrier bound (`fn Holder[T Display] @show()`) was declared but
+// NEVER checked at the call site — only the METHOD BODY's own generic-scope
+// saw the bound (a C++-templates model: the error only surfaced if the body
+// happened to actually call the protocol method). Verified pre-fix probe:
+// `h.show()` where `h : Holder[Plain]` and `Plain` does NOT implement
+// `Display` type-checked CLEAN and printed nothing wrong at runtime — the
+// bound was decorative. This fixture is the exact repro from the bug-sweep
+// entry (№303), spelled with the type-annotated anonymous-literal form (D221
+// §G1 bootstrap parser limitation: `Holder[Plain] { v: .. }` explicit-generic
+// literal syntax does not parse as a generic instantiation at all — it lexes
+// as an INDEX expression `Holder[Plain]` followed by a separate, unrelated
+// bare-record statement; `ro h Holder[Plain] = { v: .. }` is the canonical,
+// documented spelling).
+module neg.m303_recv_carrier_bound_not_satisfied_neg
+
+type Plain value { x int }
+type Holder[T] value { v T }
+
+fn Holder[T Display] @show() -> str => "ok"
+
+test "receiver carrier bound Display not satisfied by Plain — must be a compile error" {
+    ro h Holder[Plain] = { v: Plain { x: 1 } }
+    // Plain does not implement Display — must fail with a bound-not-satisfied
+    // diagnostic at the call site, not silently pass.
+    assert(h.show() == "ok")
+}
