@@ -4,6 +4,8 @@ source_date: 2026-07-26
 ---
 
 > **Informative translation; the Russian text is normative.**
+>
+> Russian original (normative): [effects.md](effects.md)
 
 # Nova — the effect system
 

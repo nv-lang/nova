@@ -4,6 +4,8 @@ source_date: 2026-05-31
 ---
 
 > **Informative translation; the Russian text is normative.**
+>
+> Russian original (normative): [revolutionary.md](revolutionary.md)
 
 # Nova — revolutionary features
 

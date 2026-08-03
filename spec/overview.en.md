@@ -4,6 +4,8 @@ source_date: 2026-08-02
 ---
 
 > **Informative translation; the Russian text is normative.**
+>
+> Russian original (normative): [overview.md](overview.md)
 
 # Nova — overview
 
