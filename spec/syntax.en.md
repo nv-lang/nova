@@ -1548,3 +1548,254 @@ structured-scope does not compile. (Additionally: `spawn` always
 returns unit, so `ro r = spawn { ... }` is pointless.)
 
 ### `supervised { body }`
+
+A structured-concurrency scope. All `spawn`s inside wait for scope-exit before
+launch; the scheduler resumes them in round-robin until all finish. See
+D71 for the bootstrap semantics.
+
+**Value-expression (Plan 173.1 Ф.1; D414 §4).** Returns its
+trailing-expression, evaluated **after joining all children** (post-join —
+children's mutations are visible). The void form (no trailing) — unit. The old
+bootstrap stub "returns unit, trailing discarded" is lifted.
+
+```nova
+supervised {
+    spawn handle_requests()
+    spawn periodic_cleanup()
+}                                  // ← ждёт пока обе fiber'ы не завершатся; unit
+
+mut hits = 0
+ro total = supervised {
+    spawn { hits += fetch_a() }
+    spawn { hits += fetch_b() }
+    hits                           // ← значение ПОСЛЕ завершения всех детей
+}
+```
+
+`Time.sleep(0)` inside the `supervised` body (at the main level) yields the
+main-flow to queued fibers — one full pass of the scheduler queue.
+
+### `parallel for x in iter { body }`
+
+A fan-out parallel map: for each element of `iter` a fiber with `body` is
+launched, results are collected into an array **in completion order
+(Plan 173.1 Ф.2 / D414 §4 — dense, no holes; iteration order NOT
+guaranteed; need order — `xs.sort()`)**. The return type — `[]T`, where `T`
+is the `body` type (ANY type: primitive, record, value-record, tuple, sum,
+nested `[]T`), the iterator — any (Iter-protocol, without `len()`). Collection —
+via an internal channel (Sender-clone at spawn → send from the child → close at
+exit; a drain-fiber inside the scope; a buffer `K = min(len, 16)` back-pressure).
+Desugars into a supervised-scope with channel-drain.
+The loop variable is captured **by value** (a snapshot at the moment of spawn).
+
+```nova
+// Семантически: параллельный map.
+ro responses []Response = parallel for url in urls { fetch(url) }
+
+// Или с inferred return type:
+fn fetch_all(urls []str) Net Fail -> []Response =>
+    parallel for url in urls {
+        fetch(url)
+    }
+```
+
+**Do not confuse with an ordinary `for`!** `for x in iter { body }` is a
+**statement** (type `unit`), a body for side-effects:
+
+```nova
+for url in urls {
+    Log.info(url)         // только side effect, ничего не возвращается
+}
+```
+
+For a **sequential map** (collect a result array sequentially) —
+use `.map()`, not `for`:
+
+```nova
+ro names []str = users.map(|u| u.name)
+ro names []str = users.map() fn(u) => u.name      // trailing-fn
+```
+
+Summary:
+
+| Form | Type | Semantics |
+|---|---|---|
+| `for x in iter { body }` | `unit` | statement, side-effects |
+| `iter.map(\|x\| body)` | `[]T` | sequential map |
+| `parallel for x in iter { body }` (body has trailing) | `[]T` | parallel map (fan-out) |
+| `parallel for x in iter { body }` (no trailing) | `unit` | parallel side-effect loop |
+
+⚠ Bootstrap limitation: array-mode works for T ∈ {int, bool,
+f64, str} and iterators `a..b`, `a..=b`, array literal. Without a trailing —
+the old semantics (statement, unit). See D71 in decisions/06-concurrency.md.
+
+### `detach { body }`
+
+Fire-and-forget: the body is pushed onto an orphan-fiber (a global supervisor,
+not a local scope) and runs asynchronously — the caller returns
+immediately, the body outlives the calling function. Requires the `Detach`
+effect in the signature (D50; otherwise `[E_DETACH_REQUIRES_EFFECT]`).
+Without a declaration `detach` is legal in a `test`-block body (effect-root)
+and under an ambient-handler `with Detach = …` (mocking in tests).
+
+An error/panic in a detached body — **LogAndDrop**: a log to stderr, the fiber
+dies cleanly, the process and the other fibers continue (an orphan has no
+call-site — nobody to return a `Result` to).
+
+```nova
+fn handle_request(req Request) Net Db Detach -> Response {
+    ro resp = process(req)
+    detach { write_audit(req, resp) }
+    resp
+}
+```
+
+### `supervised(cancel: tok) { body }`
+
+Structured cancellation with an external token. An ordinary `supervised`-scope
+with a named argument `cancel:` ([D102](decisions/03-syntax.md#d102-именованные-аргументы-и-значения-параметров-по-умолчанию)).
+`tok` — a **caller-owned** value of type `CancelToken`: created by the calling
+code, outlives the scope, can be captured/passed.
+`tok.cancel()` from outside brings down all the scope's fibers — at the next
+yield-point they throw `"scope cancelled"`.
+
+```nova
+ro tok = CancelToken.new()
+supervised(cancel: tok) {
+    spawn { do_thing() }
+    spawn { do_other() }
+}
+
+// внешний kill-switch:
+ro tok = CancelToken.new()
+spawn { Time.sleep(5_000); tok.cancel() }
+fetch_with_kill(urls, tok)
+```
+
+Token capabilities: `tok.cancel()`, `tok.is_cancelled()`,
+`tok.bind(other)` for cascade cancellation. One token — one live scope
+(bind-check). Details — [D75](decisions/06-concurrency.md#d75-supervisedcancel-tok--структурная-отмена-с-внешним-токеном).
+
+### `Channel[T]` and `select`
+
+Coordination between fibers via message-passing. `Channel[T]` — a
+typed bounded channel with blocking semantics. **The only safe way** to share
+data between fibers in the production-runtime
+(an alternative — a shared `mut` — is UB under preemption).
+
+```nova
+ro (tx, rx) = Channel[T].new(10)     // -> (ChanWriter[T], ChanReader[T]); cap 10 (0 = unbuffered)
+tx.send(value)                       // ЗАБИРАЕТ владение `value` (consume, D79/D91-амендмент);
+                                      // блокирует если буфер полон; -> bool (false = закрыт)
+ro v = rx.recv()                     // Option[T]; None = closed + drained
+tx.close()                            // idempotent
+
+// drain pattern:
+while Some(msg) = rx.recv() {
+    process(msg)
+}
+```
+
+`send`/`try_send` **take ownership** of the sent value — after
+`tx.send(value)` the variable `value` is unavailable (usage = a compile
+error, the existing linearity check D131). Reason: the channel does not copy or
+isolate the buffer — a shared pointer to the heap without ownership transfer
+would be a data race under M:N by construction (two fibers on different
+OS-threads mutating one object). Deliberate sharing of access to the channel
+(not the value!) — via `tx.share()` (an extra writer-handle to the same
+buffer, D91), not via reuse of an already-sent value.
+
+`select { ... }` — multiplexing recv operations with an optional
+`timeout` case:
+
+```nova
+select {
+    Some(msg) = rx_a => process_a(msg)
+    Some(msg) = rx_b => process_b(msg)
+    Some(_) = ChanReader.close_after(Duration.from_secs(5)) => default_action()
+}
+```
+
+If several arms are ready at once — the choice is pseudo-random
+(Fisher-Yates shuffle, D94). A select-arm is an Option-pattern on a reader:
+`Some(v) = rx => …` (ready on a value) / `None = rx => …` (ready on a
+closed channel). There is no separate `<-` operator.
+
+The full semantics (closed-channel, owner-actor pattern, rejection of
+Mutex/Atomic) — [D79](decisions/06-concurrency.md#d79); `select` —
+[D94](decisions/06-concurrency.md#d94).
+
+### `Time.sleep(ms)`
+
+A yield-point. Per D62 — an ordinary function, callable from anywhere (Async ambient).
+Semantics: blocks the current fiber for no less than `ms` milliseconds.
+
+**Implementation (Plan 22 Ф.4):** under the hood — a libuv `uv_timer_t`. The fiber
+is parked via the park/wake API ([D93](decisions/06-concurrency.md#d93))
+until the timer-callback fires. The scheduler meanwhile resumes other
+fibers or goes into `uv_run UV_RUN_ONCE` (kernel-wait, CPU idle).
+
+| Context | Implementation |
+|---|---|
+| Inside a fiber-body (spawn) inside supervised | park-on-`uv_timer_t` (D93) — CPU idle, real time |
+| Outside a fiber, inside the `supervised` body | drain the queue until the deadline passes (Plan 22 Ф.5 → libuv-driven main) |
+| Completely outside a scope | native OS sleep (Plan 22 Ф.5 → implicit main-scope, libuv) |
+
+Cancel ([D75](decisions/06-concurrency.md#d75-supervisedcancel-tok--структурная-отмена-с-внешним-токеном)) interrupts a sleep
+**immediately** via a generic `stop_cb` mechanism (D93): a cancel-token
+closes the timer and wakes the parked fiber, which throws `"scope
+cancelled"`. No need to wait for the timer to fire.
+
+`Time.sleep(0)` — a fast yield (one scheduler pass, ~µs).
+
+## Testing without mocks
+
+`test "name" { body }` — a top-level test block. The name — a string
+literal (any characters, usually a human description of behavior).
+The body — an ordinary block of expressions; `assert(cond)` — a prelude function
+([D26](decisions/08-runtime.md#d26)), necessarily with parentheses like any
+fn-call.
+
+```nova
+test "withdraw decreases balance" {
+    with Db = in_memory_db([acc1, acc2]) {
+        ro acc = Account.new("alice")
+        acc.deposit(100)?
+        acc.withdraw(30)?
+        assert(acc.balance == 70)
+    }
+}
+
+test "insert and get" {
+    mut m = HashMap[str, int].new()
+    m.insert("a", 1)
+    assert(m.get("a") == Some(1))
+    assert(m.get("b") == None)
+}
+```
+
+Tests are collected and run only under `nova test`. In an ordinary build
+the body is skipped — no `#[cfg(test)]` wrappers. Effects are substituted
+with the same `with`-blocks as in production, no mock framework.
+
+## Panic — not an effect, caught only by the runtime
+
+Division by zero, array out of bounds, overflow — these are
+**not an effect**, it is `Panic`. The programmer **does not catch panics in
+code** — a panic means the death of the current fiber, the runtime handles it
+at the boundary:
+
+```nova
+fn mean(xs []int) -> int =>
+    xs.sum() / xs.len()                  // никакого Fail[DivByZero]
+
+fn handle(r Request) Db Log -> Response =>
+    process(r)             // если panic — fiber умирает, runtime вернёт 500
+```
+
+`panic` is the death of a **fiber**, not the process. In a server only the
+current request falls, everything else works. If you need to kill the
+process for sure — a separate function `exit(code int, msg str) -> never`
+([D13](decisions/08-runtime.md#d13)).
+
+Details — [revolutionary.md R11](revolutionary.md), [D13](decisions/08-runtime.md#d13).
