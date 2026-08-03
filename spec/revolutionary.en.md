@@ -632,3 +632,70 @@ fn server() Net Fail -> () =>
 ```
 
 Erlang/OTP supervision — built into the language, without a separate framework.
+
+---
+
+## R10. Effects at boundaries: typing, erasure, dynamics
+
+Static typing of effects **propagates** into queues, channels, and
+schedulers. That is good for typed pipelines and bad for
+heterogeneous tasks. The solution — **three levels**, the programmer chooses:
+
+**Level 1 — a typed scheduler** (default):
+```nova
+ro order_queue Queue[fn(OrderId) Db Log Fail -> ()]
+```
+
+**Level 2 — explicit erasure** (when heterogeneity is needed):
+```nova
+fn erase[E](task fn() E -> ()) E -> fn() -> () {
+    ro captured = capture_handlers[E]()
+    || with captured { task() }
+}
+
+universal_queue.enqueue(erase(send_email_task))
+universal_queue.enqueue(erase(cleanup_db_task))
+```
+
+**Level 3 — dynamic effects** (plugins, serialization):
+a runtime `EffectSet` structure, the `DynFn` type. Used rarely.
+
+Details — [decisions/04-effects.md#d12](decisions/04-effects.md#d12).
+
+---
+
+## R11. Panic — what is NOT an effect
+
+Not every interruption of a computation is an effect. **Hardware/mathematical
+faults** (division by zero, overflow, out-of-bounds array access, OOM,
+stack overflow) are **not stated in the signature**:
+
+```nova
+// никакого Fail[DivByZero]
+fn mean(xs []int) -> int =>
+    xs.sum() / xs.len()
+```
+
+They form the `Panic` category. The programmer does **not catch panic in
+code** — panic means the death of the current fiber, the runtime handles it at
+the boundary:
+
+```nova
+fn handle_request(r Request) Db Log -> Response =>
+    process(r)             // panic → fiber умирает, runtime вернёт 500
+
+fn server() Net Fail -> () =>
+    supervised {
+        spawn handle_requests()
+    } strategy = one_for_one
+    // supervisor рестартует упавшие fiber'ы
+```
+
+Otherwise `Fail[DivByZero]` would be in every other signature — the
+informativeness would disappear. This is a **conscious compromise**; the
+boundary is drawn explicitly: "there is no way to handle it, it must die" → Panic;
+"it can and should be handled" → Fail.
+
+The optional `@strict_total` — for critical code, turns the function into a
+total one (the compiler requires handling all possible
+panic sources). Details — [decisions/08-runtime.md#d13](decisions/08-runtime.md#d13).
