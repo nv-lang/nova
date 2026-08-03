@@ -23905,6 +23905,19 @@ struct BoundCtx<'a> {
     /// normal structural check, which correctly reports the gap (the typevar has
     /// no `method_table` entry, so every required method is "missing").
     current_fn_gs: std::cell::RefCell<GenericScope>,
+    /// №303 (221.1) [M-receiver-carrier-bound-self-passthrough]: the SYMBOLIC
+    /// receiver type (`Named{type_name, generics: r.generics}`, e.g.
+    /// `MapItP[I, T, U]` with bare typevar generics) of the fn currently
+    /// being walked, `None` for a static fn / free fn / test block. Mirrors
+    /// `current_fn_gs` (same set/clear discipline, same "current fn" scope).
+    /// Needed because THIS walker (unlike `TypeCheckCtx`, `types/mod.rs`
+    /// ~7594) never seeds a `"@"` scope entry — a nested, unresolved `Self`
+    /// inside a param's declared type (`g FiltItP[Self, U]`,
+    /// `repro_param.nv`) would otherwise reach `check_satisfaction` as a
+    /// literal type NAMED "Self" (never found in `method_table`), producing
+    /// a false bound-violation diagnostic — found verifying
+    /// `check_receiver_carrier_bounds` against the real corpus.
+    current_recv_ty: std::cell::RefCell<Option<TypeRef>>,
 }
 
 impl<'a> BoundCtx<'a> {
@@ -24125,7 +24138,7 @@ impl<'a> BoundCtx<'a> {
             }
         }
 
-        BoundCtx { protocol_specs, effect_decls, sig, sum_variant_names, type_defining_modules, type_method_map, type_sets, impl_protocol_types, value_type_names, fn_type_names, current_fn_gs: std::cell::RefCell::new(HashMap::new()) }
+        BoundCtx { protocol_specs, effect_decls, sig, sum_variant_names, type_defining_modules, type_method_map, type_sets, impl_protocol_types, value_type_names, fn_type_names, current_fn_gs: std::cell::RefCell::new(HashMap::new()), current_recv_ty: std::cell::RefCell::new(None) }
     }
 
     /// Plan 162 Ф.3: returns true iff method_name on type type_name is inherent
@@ -24163,8 +24176,16 @@ impl<'a> BoundCtx<'a> {
                     // `check_satisfaction` can recognize a passthrough typevar AND verify
                     // its declared bound actually covers the callee's required one.
                     *self.current_fn_gs.borrow_mut() = fn_generic_scope(f);
+                    // №303: symbolic receiver type for "Self" passthrough
+                    // resolution (see `current_recv_ty`'s own doc).
+                    *self.current_recv_ty.borrow_mut() = f.receiver.as_ref().map(|r| TypeRef::Named {
+                        path: vec![r.type_name.clone()],
+                        generics: r.generics.clone(),
+                        span: r.span,
+                    });
                     self.walk_fn_body(f, &mut scope, errors);
                     self.current_fn_gs.borrow_mut().clear();
+                    *self.current_recv_ty.borrow_mut() = None;
                 }
                 Item::Test(t) => {
                     // Plan 15: тесты тоже могут содержать generic-вызовы
@@ -24289,6 +24310,12 @@ impl<'a> BoundCtx<'a> {
         if let ExprKind::Call { func, .. } = &e.kind {
             if let ExprKind::Member { obj, name: method_name } = &func.kind {
                 self.check_receiver_shape_match(obj, method_name, e.span, scope, errors);
+                // №303 (221.1): receiver carrier-bound enforcement
+                // (`Holder[Plain].show()` where `show` needs `T Display`) —
+                // own hook, same independence rationale as the shape-match
+                // hook right above (bound-checking and shape-checking are
+                // separate concerns, both best-effort).
+                self.check_receiver_carrier_bounds(obj, method_name, e.span, scope, errors);
             }
         }
         // Plan 46 (D102): argument binding diagnostics.
@@ -25174,6 +25201,156 @@ impl<'a> BoundCtx<'a> {
                 ),
                 span,
             ));
+        }
+    }
+
+    /// №303 (221.1) [M-receiver-carrier-bound-not-enforced]: call-site
+    /// enforcement of a RECEIVER CARRIER BOUND — `fn Holder[T Display]
+    /// @show()`, `fn Vec[T Compare] @is_sorted()`, `fn Vec[T Clone]
+    /// @clone()` — the bound written in the receiver's carrier brackets
+    /// (`Receiver.carrier_bounds`, `ast/mod.rs`). Verified pre-fix probe:
+    /// `Holder[Plain] { .. }.show()` where `Plain` does NOT implement
+    /// `Display` type-checks CLEAN — the bound is parsed
+    /// (`parser/mod.rs:3336`) and even fed into the METHOD BODY's own
+    /// generic-scope (`fn_generic_scope`/the receiver-generics loop in
+    /// `check_fn_decl`, ~5775-5808 / ~22908-22946 — so code INSIDE `@show`
+    /// may assume `T: Display`), but nothing at the CALL SITE ever checked
+    /// that the concrete receiver instantiation actually satisfies it —
+    /// "Stored for future enforcement; currently informational only"
+    /// (the field's own doc comment) was accurate until this fix. Cost:
+    /// every conditional-method promise in std (`Vec[T Compare]`,
+    /// `Vec[T Clone]`, `HashMap[K Clone, V Clone]`, `Set[T Clone]`, …) was
+    /// decorative — a C++-templates model (bound only bites if the BODY
+    /// happens to call the protocol method), not a boundary check.
+    ///
+    /// **Reuses, does not reinvent:** the SAME structural unifier
+    /// (`const_fn_trampoline::unify_type` + `canonicalize_array_to_vec`)
+    /// `check_receiver_shape_match` right above already uses to bind the
+    /// receiver's carrier typevars (`decl_ty` `Holder[T]` vs the call-site's
+    /// concrete `Holder[Plain]` → `subst = {T: Plain}`), and the SAME
+    /// `check_satisfaction` engine `check_call_bounds`/
+    /// `check_method_call_bounds` already use for free-fn / prefix-generic
+    /// bound enforcement (Plan 15 Ф.3 / Plan 101.2) — one satisfaction
+    /// predicate, reused a third time, not a new diagnostic vocabulary.
+    ///
+    /// **Multi-overload candidate selection** (mirrors registry №295's
+    /// `infer_call_ret_c` B08 fix in emit_c.rs, AS AN ALGORITHM — no code
+    /// shared, different layer): when ≥2 overloads share (receiver-base,
+    /// method-name) — e.g. two carrier-bounded siblings differing only in
+    /// their bound — every candidate whose declared receiver shape
+    /// structurally unifies with the call-site receiver is tried; the call
+    /// is legitimate the moment ONE such candidate's bound is satisfied.
+    /// An error fires only when EVERY shape-matching candidate's bound is
+    /// unsatisfied (the first violation's diagnostics are reported — same
+    /// permissive "single obvious cause" posture as the sibling checks in
+    /// this file).
+    ///
+    /// **Best-effort**, same posture as `check_receiver_shape_match`/
+    /// `check_method_call_bounds`: unresolvable obj-type, non-`Named`
+    /// receiver, or no candidate with a structured `receiver_ty` → skip
+    /// silently (this gate only ever ADDS a bound diagnostic on top of an
+    /// otherwise-resolved call; it never second-guesses existence/shape,
+    /// which the other checks above already own).
+    fn check_receiver_carrier_bounds(
+        &self,
+        obj: &Expr,
+        method_name: &str,
+        span: Span,
+        scope: &HashMap<String, TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        let Some(obj_ty) = Self::infer_arg_ty(obj, scope) else { return; };
+        // [M-receiver-carrier-bound-self-passthrough] (found verifying this
+        // very fix against `repro_param.nv`, Plan 138.2 self-in-param): a
+        // receiver's declared type can carry a NESTED, unresolved `Self`
+        // typevar (`g FiltItP[Self, U]` — `Self` here is the ENCLOSING
+        // method's OWN receiver, `MapItP[I,T,U]`), not just a top-level bare
+        // `self`/`@` expression. This walker (unlike `TypeCheckCtx`, ~line
+        // 7594) never seeds a `"@"` scope entry, so `scope.get("@")` is
+        // always empty here — `current_recv_ty` (set per-fn in
+        // `check_module`) is the substitute source. Left unresolved,
+        // `check_satisfaction` below would look up a type literally named
+        // `"Self"` in `method_table` — never found — and report a FALSE
+        // bound violation (verified: this exact corpus file regressed with
+        // the raw obj_ty, disappeared once `Self` is substituted here).
+        // Mirrors the `subst.insert("Self", ...)` convention used
+        // throughout this file for the same purpose.
+        let obj_ty = match &*self.current_recv_ty.borrow() {
+            Some(self_ty) => {
+                let mut m: HashMap<String, TypeRef> = HashMap::new();
+                m.insert("Self".to_string(), self_ty.clone());
+                crate::const_fn_trampoline::subst_type_ref_pub(&obj_ty, &m)
+            }
+            None => obj_ty,
+        };
+        let mut peeled = &obj_ty;
+        loop {
+            match peeled {
+                TypeRef::Readonly(i, _) | TypeRef::Mut(i, _) | TypeRef::Uninit(i, _) => peeled = i,
+                _ => break,
+            }
+        }
+        let TypeRef::Named { path, .. } = peeled else { return; };
+        let Some(base) = path.last() else { return; };
+        let Some(methods_for_recv) = self.sig.method_table.get(base) else { return; };
+        let Some(overloads) = methods_for_recv.get(method_name) else { return; };
+        // Only Instance-receiver overloads that actually carry a carrier
+        // bound are in scope — a plain nominal method (no bound) has
+        // nothing for this check to enforce.
+        let candidates: Vec<&FnDecl> = overloads.iter()
+            .map(|f| *f)
+            .filter(|f| f.receiver.as_ref().map_or(false, |r| {
+                matches!(r.kind, ReceiverKind::Instance) && !r.carrier_bounds.is_empty()
+            }))
+            .collect();
+        if candidates.is_empty() { return; }
+        let peeled_canon = crate::const_fn_trampoline::canonicalize_array_to_vec(peeled);
+        let mut any_shape_matched = false;
+        let mut satisfied_any = false;
+        let mut first_violation: Vec<Diagnostic> = Vec::new();
+        for f in &candidates {
+            let recv = f.receiver.as_ref().expect("filtered above");
+            // No structured shape (Plan 153.5) — cannot bind carrier
+            // typevars via structural unify; skip this candidate (best-
+            // effort, mirrors `check_receiver_shape_match`'s own bail).
+            let Some(decl_ty) = &recv.receiver_ty else { continue; };
+            let mut generic_names: HashSet<String> = HashSet::new();
+            for g in &recv.generics {
+                if let TypeRef::Named { path, generics, .. } = g {
+                    if path.len() == 1 && generics.is_empty() {
+                        generic_names.insert(path[0].clone());
+                    }
+                }
+            }
+            for g in &f.generics {
+                generic_names.insert(g.name.clone());
+            }
+            let decl_ty_canon = crate::const_fn_trampoline::canonicalize_array_to_vec(decl_ty);
+            let mut subst: HashMap<String, TypeRef> = HashMap::new();
+            if crate::const_fn_trampoline::unify_type(&decl_ty_canon, &peeled_canon, &generic_names, &mut subst).is_err() {
+                // Shape doesn't match THIS candidate — not the overload this
+                // call site targets (`check_receiver_shape_match` owns
+                // reporting a shape mismatch when there is only one
+                // candidate at all).
+                continue;
+            }
+            any_shape_matched = true;
+            let mut cand_errors: Vec<Diagnostic> = Vec::new();
+            for cb in &recv.carrier_bounds {
+                let Some(concrete) = subst.get(&cb.name) else { continue; };
+                for bound in &cb.bounds {
+                    self.check_satisfaction(concrete, bound, &cb.name, method_name, span, &mut cand_errors);
+                }
+            }
+            if cand_errors.is_empty() {
+                satisfied_any = true;
+                break;
+            } else if first_violation.is_empty() {
+                first_violation = cand_errors;
+            }
+        }
+        if any_shape_matched && !satisfied_any {
+            errors.extend(first_violation);
         }
     }
 

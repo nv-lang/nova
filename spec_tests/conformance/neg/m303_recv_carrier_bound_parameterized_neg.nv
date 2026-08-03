@@ -1,0 +1,23 @@
+// EXPECT_COMPILE_ERROR does not satisfy `Iter` bound
+// [M-receiver-carrier-bound-not-enforced] (Plan 221.1 №303) — negative guard,
+// PARAMETERIZED carrier bound form (`[S Iter[T]]`, not a bare single-name
+// bound like `[T Display]`). `check_satisfaction` already extracts the bound
+// NAME from a `TypeRef::Named` regardless of its own generic args (`Iter[T]`
+// path.len()==1 == "Iter"), so this ought to fall through the SAME
+// enforcement path as the bare-bound case — this fixture is the guard that
+// it actually does, not a hypothesis.
+module neg.m303_recv_carrier_bound_parameterized_neg
+
+import std.prelude.collections.{Iter}
+
+type Basket[T, S] value { items S }
+
+fn Basket[T, S Iter[T]] @first_via_iter() -> str => "ok"
+
+// NotIter has no `@iter()` method — does not satisfy `Iter[T]`.
+type NotIter value { x int }
+
+test "parameterized receiver carrier bound Iter[T] not satisfied — must be a compile error" {
+    ro b Basket[int, NotIter] = { items: NotIter { x: 1 } }
+    assert(b.first_via_iter() == "ok")
+}
