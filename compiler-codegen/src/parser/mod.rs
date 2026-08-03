@@ -247,6 +247,23 @@ fn redundant_return_mut_error(span: Span) -> Diagnostic {
     )
 }
 
+/// №301 (221.1, owner decision 2026-08-03): the postfix return form
+/// `-> T consume` is RETRACTED. Canon is the prefix form `-> consume T`,
+/// matching `-> ro T` / `-> mut T` — the modifier ALWAYS precedes what it
+/// describes (a binding name, a receiver, a return type, a type body).
+/// There is no postfix modifier position left anywhere in the grammar.
+fn postfix_return_consume_retracted_error(span: Span) -> Diagnostic {
+    Diagnostic::new(
+        "[E_RETURN_CONSUME_POSTFIX_RETRACTED] postfix `-> T consume` is \
+         retracted (№301, 2026-08-03 owner decision) — the canon is the \
+         prefix form `-> consume T`, symmetric with `-> ro T` / `-> mut T`. \
+         The modifier always stands before what it describes. Fix: move \
+         `consume` before the type (`-> consume T`)."
+            .to_string(),
+        span,
+    )
+}
+
 /// **Plan 150 / D248:** comparison operators cannot be chained (`a < b < c`,
 /// `0 <= i < n`, `a == b == c`). Nova does NOT support Python-style chaining;
 /// the canonical range form is `a OP1 b && b OP2 c`. Hard error with a fix-it
@@ -3477,6 +3494,14 @@ impl Parser {
                     span: at_span,
                 })
             } else {
+                // №301 (221.1, owner canon 2026-08-03): `-> consume T` —
+                // PREFIX consume-typed return, symmetric with `-> ro T` /
+                // `-> mut T` above. Eat the modifier the same way the
+                // Plan 103.9 (D174) postfix form used to: the information
+                // (that the return is consume-typed) is already carried by
+                // the type name itself — consume-ness is a property of the
+                // type decl, not stored separately on the return type.
+                self.eat(&TokenKind::KwConsume);
                 let rt = self.parse_type()?;
                 // [M-redundant-param-ro-diagnostic] (Plan 172.13 batch 4,
                 // D246 amendment): `-> mut T` — redundant `mut` in return
@@ -3486,13 +3511,14 @@ impl Parser {
                 if rt.is_mut() {
                     return Err(redundant_return_mut_error(rt.span()));
                 }
-                // Plan 103.9 (D174): `-> T consume` — consume-typed return.
-                // The `consume` keyword is a suffix qualifier on the type
-                // (e.g. `-> MutexGuard consume`). Eat it so it doesn't
-                // confuse the contracts/body parser. The information (that
-                // the return is consume-typed) is already carried by the type
-                // name itself — consume-ness is a property of the type decl.
-                self.eat(&TokenKind::KwConsume);
+                // №301: postfix `-> T consume` is RETRACTED — canon moved to
+                // the prefix form eaten above. A trailing `consume` here is
+                // the old spelling; point at the new one instead of silently
+                // accepting it.
+                if matches!(self.peek().kind, TokenKind::KwConsume) {
+                    let consume_span = self.peek().span;
+                    return Err(postfix_return_consume_retracted_error(consume_span));
+                }
                 Some(rt)
             }
         } else {
@@ -5247,11 +5273,17 @@ impl Parser {
             }
             _ => SumVariantKind::Unit,
         };
-        // Discriminant `= N`
+        // Discriminant `= N` / `= -N` (№296: spec/decisions/02-types.md
+        // "Sum-варианты с числовыми discriminants" гласит пример со знаком
+        // `type Sign enum Negative = -1 | Zero = 0 | Positive = 1`; лексер
+        // токенизирует `-1` как `Minus` + `Int(1)` — отдельного
+        // отрицательного int-литерала нет (см. `parse_unary`), значит
+        // discriminant обязан явно съесть optional leading `-`).
         let discriminant = if self.eat(&TokenKind::Eq).is_some() {
+            let negative = self.eat(&TokenKind::Minus).is_some();
             if let TokenKind::Int(n) = self.peek().kind {
                 self.bump();
-                Some(n)
+                Some(if negative { -n } else { n })
             } else {
                 return Err(Diagnostic::new(
                     "expected integer discriminant",
@@ -7358,31 +7390,27 @@ impl Parser {
                 });
             }
 
-            // Plan 100.2 (D156): `[T consume]` — consume-bound marker.
-            // Consumes the `consume` keyword token; mutually exclusive with
-            // protocol bounds (combined `[T consume + Clone]` — deferred).
+            // Plan 100.2 (D156) + №300 (221.1, owner form 2026-08-03):
+            // `[T consume]` — consume-bound marker, optionally followed
+            // DIRECTLY by a protocol-bound chain: `[T consume Hash + Equal]`.
+            // Modifier always comes first, then the `+`-chain of what the
+            // type IMPLEMENTS — linearity itself never joins that chain
+            // (it isn't implemented, it's declared), so there is no `+`
+            // between `consume` and the first bound.
             let mut consume_bound = false;
             if matches!(self.peek().kind, TokenKind::KwConsume) {
                 consume_bound = true;
-                let consume_span = self.bump().span;
-                // `[T consume + Bound]` combined — deferred in Plan 100.2.
-                if matches!(self.peek().kind, TokenKind::Plus) {
-                    return Err(Diagnostic::new(
-                        "`[T consume + Bound]` combined bound is not yet supported \
-                         (Plan 100.2 §Границы). Use either `[T consume]` or \
-                         `[T Bound]` separately.".to_string(),
-                        consume_span,
-                    ));
-                }
+                self.bump();
             }
 
             // Bound(s): если следующий токен — не `,`, `]`, `=`, парсим
             // первый bound. Plan 101.3 (D145 Ред. 5): далее цепочка
             // `+ Type` для multi-bound `[T A + B + C]` — conjunction
             // (T satisfies каждый bound). Семантически equivalent
-            // `protocol { use A  use B  use C }`.
+            // `protocol { use A  use B  use C }`. №300: то же самое
+            // после `consume` — `[T consume Hash + Equal]`.
             let mut bounds: Vec<TypeRef> = Vec::new();
-            if !consume_bound && !matches!(
+            if !matches!(
                 self.peek().kind,
                 TokenKind::Comma | TokenKind::RBracket | TokenKind::Eq
             ) {

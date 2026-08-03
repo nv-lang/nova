@@ -1,0 +1,20 @@
+// EXPECT_COMPILE_ERROR does not satisfy
+//
+// №300 (221.1) companion negative: `[T consume Hash + Equal]` parses now,
+// but the protocol half of the bound must still be ENFORCED at the call
+// site — a type missing `@hash()`/`@equal()` is rejected, not silently
+// accepted just because the bound-list parses.
+module neg.generic_consume_protocol_bound_missing_impl_neg
+
+type P300Plain {
+    z int,
+}
+
+fn p300_id[T consume Hash + Equal](consume v T) -> T {
+    v
+}
+
+fn main() -> () {
+    ro p1 = P300Plain { z: 1 }
+    ro _p2 = p300_id(p1)
+}

@@ -1,0 +1,45 @@
+// №300 (221.1) — `consume` bound теперь сочетается с протокольными
+// бáундами. Было: `[T consume]` работал, `[T A + B]` работал, но
+// `[T consume Display + Equal]` → «expected `]`, got identifier», обратный
+// порядок `[T Display + Equal consume]` → «expected `]`, got consume» —
+// автор был вынужден выбирать ЛИБО линейность, ЛИБО протоколы.
+// Форма владельца (2026-08-03): `[T consume Hash + Equal]` — модификатор
+// ПЕРВЫМ, затем цепочка через `+`. `consume` в цепочку не входит — она
+// перечисляет то, что тип РЕАЛИЗУЕТ, а линейность не реализуется.
+// D-амендмент: spec/decisions/02-types.md (D156 доп.) / D300.
+module spec_tests.conformance
+
+type P300Point {
+    x int,
+    y int,
+}
+
+fn P300Point @hash() -> u64 => (@x * 31 + @y) as u64
+fn P300Point @equal(other P300Point) -> bool => @x == other.x && @y == other.y
+
+// Бáунд-комбинация в generic-параметре: consume-обязательство (D156
+// strict-forget через trailing-return) + структурный Hash+Equal-бáунд,
+// проверяемый на месте вызова.
+fn p300_id[T consume Hash + Equal](consume v T) -> T {
+    v
+}
+
+test "№300 [T consume Hash + Equal] — тело потребляет через trailing-return" {
+    ro p1 = P300Point { x: 1, y: 2 }
+    ro p2 = p300_id(p1)
+    assert(p2.x == 1)
+    assert(p2.y == 2)
+}
+
+test "№300 бáунд реально проверяется — Hash доступен внутри generic-тела" {
+    ro p1 = P300Point { x: 3, y: 5 }
+    ro p2 = p300_id(p1)
+    assert(p2.hash() == 98)  // 3*31 + 5
+}
+
+test "№300 бáунд реально проверяется — Equal доступен внутри generic-тела" {
+    ro p1 = P300Point { x: 7, y: 9 }
+    ro p2 = p300_id(p1)
+    ro p3 = P300Point { x: 7, y: 9 }
+    assert(p2.equal(p3))
+}

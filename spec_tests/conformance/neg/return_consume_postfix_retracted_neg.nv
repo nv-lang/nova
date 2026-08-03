@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR E_RETURN_CONSUME_POSTFIX_RETRACTED
+//
+// №301 (221.1) companion negative: the old postfix return form
+// `-> T consume` is retracted (owner decision 2026-08-03) — the canon is
+// the prefix `-> consume T`. This spelling used to work (5 sites in std,
+// migrated in the same window); it must now hard-error with a fix-it
+// pointing at the new spelling, not silently keep working.
+module neg.return_consume_postfix_retracted
+
+type P301Guard consume {
+    id int,
+}
+
+fn p301_make(n int) -> P301Guard consume => { id: n }
+
+fn main() -> () {}

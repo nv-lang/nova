@@ -1581,7 +1581,7 @@ export extern "nova" fn Mutex.new() -> Self
 /// NOT reentrant — a repeated call from the same fiber deadlocks.
 #parks
 #stable(since = "0.1")
-export extern "nova" fn Mutex @lock() -> MutexGuard consume
+export extern "nova" fn Mutex @lock() -> consume MutexGuard
 
 /// (Deprecated) Release the mutex without a guard.
 ///
@@ -1731,7 +1731,7 @@ export extern "nova" fn RwLock.new_reader_priority() -> Self
 /// Old callers that discard the return value still compile.
 #parks
 #stable(since = "0.1")
-export extern "nova" fn RwLock @read() -> ReadGuard consume
+export extern "nova" fn RwLock @read() -> consume ReadGuard
 
 /// (Deprecated) Release the read lock without a guard.
 ///
@@ -1762,7 +1762,7 @@ export extern "nova" fn RwLock @read_for(timeout Duration) -> bool
 /// Old callers that discard the return value still compile.
 #parks
 #stable(since = "0.1")
-export extern "nova" fn RwLock @write() -> WriteGuard consume
+export extern "nova" fn RwLock @write() -> consume WriteGuard
 
 /// (Deprecated) Release the write lock without a guard.
 ///
@@ -2050,7 +2050,7 @@ export extern "nova" fn Once mut @start_won() -> bool
 /// Not for direct use — the guard is opaque; call `.commit()` or `.abort()`.
 #realtime
 #stable(since = "0.1")
-export extern "nova" fn Once mut @make_guard() -> OnceGuard consume
+export extern "nova" fn Once mut @make_guard() -> consume OnceGuard
 
 /// Attempt to start once initialization. Returns `Some(guard)` to the winning
 /// fiber; `None` to subsequent callers (who park until DONE or re-panic if POISONED).
@@ -2534,7 +2534,7 @@ export extern "nova" fn Semaphore.new(permits int) -> Self
 /// Forbidden inside `realtime { }` — may park the fiber.
 #parks
 #stable(since = "0.1")
-export extern "nova" fn Semaphore mut @acquire() -> Permit consume
+export extern "nova" fn Semaphore mut @acquire() -> consume Permit
 
 /// (Deprecated) Release 1 permit without guard.
 ///
