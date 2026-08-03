@@ -112,7 +112,7 @@ export fn Stack[T] @push(x T) {
 
 // External:
 mut s = Stack[int].new(10)
-s.len = 0    // ❌ E_PRIV_FIELD_WRITE — uniform для всех T
+s.len = 0    // ❌ E_PRIV_FIELD_WRITE — uniform for every T
 ```
 
 ---

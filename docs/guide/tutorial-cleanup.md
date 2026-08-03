@@ -221,13 +221,13 @@ Nova advantages:
 
 ## What's Next
 
-- Read [Q-cleanup-semantics](../dev/idioms/consume-scope-cleanup.md) для
+- Read [Q-cleanup-semantics](../dev/idioms/consume-scope-cleanup.md) for
   decision trees.
-- Read [Q-consumable-protocol](../dev/idioms/consume-scope-cleanup.md) для
+- Read [Q-consumable-protocol](../dev/idioms/consume-scope-cleanup.md) for
   implementation details.
-- Read [Q-application-effect](../dev/idioms/application-effect.md) для
+- Read [Q-application-effect](../dev/idioms/application-effect.md) for
   app-wide lifecycle.
-- Read [cleanup-cookbook.md](cleanup-cookbook.md) для production recipes.
+- Read [cleanup-cookbook.md](cleanup-cookbook.md) for production recipes.
 
 ## See also
 
