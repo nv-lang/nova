@@ -1043,3 +1043,249 @@ Functions `fn(Account)` take `Account`, not `AuditedAccount`. Structural
 interfaces are a separate mechanism (see below).
 
 Details — [D39](decisions/02-types.md#d39).
+
+## Parameter passing
+
+Objects (record, sum-type, arrays) are passed **by reference** into the managed
+heap. Primitives (`int`, `bool`, `f64`, ...) — **by value**.
+
+The `mut` prefix allows mutation.
+
+```nova
+type Account { balance money }    // обычное поле — мутируется у mut binding'а
+
+// без mut — иммутабельный view, мутация запрещена
+fn show(acc Account) Io => println("${acc.balance}")
+
+// с mut — мутации видны вызывающему
+fn deposit(mut acc Account, amount money) {
+    acc.balance += amount
+}
+
+mut my_acc = Account { balance: 100 }
+deposit(my_acc, 50)
+// my_acc.balance == 150  ← мутация видна
+
+show(my_acc)
+// показывает 150, my_acc не изменён
+```
+
+### Field kinds: `ro` for never-mut, `mut` for cache
+
+```nova
+type Account {
+    ro id u64                // никогда не меняется (D36)
+    ro owner str             // тоже
+    balance money                  // мутируется у mut-binding
+    closed bool                    // тоже
+    mut last_cached_total money    // мутируется ВСЕГДА (для cache/lazy)
+}
+
+// group-syntax — несколько полей одного типа через запятую
+type Point { x, y, z f64 }
+type Color { r, g, b u8 }
+```
+
+Details about field mutation rules — [D36](decisions/02-types.md#d36).
+
+| Form | Passing | External mutation |
+|---|---|---|
+| `x int` | by value | no |
+| `o Order` | managed reference | no (immutable) |
+| `mut o Order` | managed reference | yes |
+
+For perf-critical code the compiler uses **escape analysis**:
+non-escaping values stay on the stack, without managed-heap allocations.
+The programmer writes nothing special. For real-time — the attribute
+`#realtime nogc` on a function ([D172 §7](decisions/06-concurrency.md#d172-realtimeblocking-sync-class-annotation-system-plan-1036);
+historically [D64](decisions/04-effects.md#d64)); no block form. Arena
+allocations via `region { }` — a
+designed form ([D6](decisions/05-memory.md#d6)),
+⚠ not implemented in the current compiler.
+
+Details — [D32](decisions/02-types.md#d32).
+
+## Optional parameters — via record + spread, not defaults
+
+Functions in Nova have **no default parameter values** (deliberately — see
+[history/rejected.md](decisions/history/rejected.md)). When a function has
+many parameters with reasonable defaults, the **options-record + spread**
+pattern is used: a combination of a record type with a default constant
+([D52](decisions/02-types.md#d52)), record-coercion in a position with a
+known type ([D55](decisions/02-types.md#d55)) and spread `...obj`
+to override individual fields ([D60](decisions/03-syntax.md#d60)).
+
+```nova
+type ServerOpts {
+    port     int
+    host     str
+    max_conn int
+    timeout  Duration
+}
+
+const SERVER_DEFAULTS ServerOpts = {
+    port:     8080,
+    host:     "0.0.0.0",
+    max_conn: 1024,
+    timeout:  30.seconds(),
+}
+
+fn serve(opts ServerOpts) Net -> () => ...
+
+// Все дефолты:
+serve({ ...SERVER_DEFAULTS })
+
+// Override одного-двух полей:
+serve({ ...SERVER_DEFAULTS, port: 9000 })
+serve({ ...SERVER_DEFAULTS, port: 9000, max_conn: 4096 })
+
+// Совсем кастом:
+serve({ port: 9000, host: "127.0.0.1", max_conn: 16, timeout: 5.seconds() })
+```
+
+**Advantages over default values:**
+
+1. **All options are visible at the call site** — the programmer and the
+   LLM do not guess what "the rest of the defaults" means. `...SERVER_DEFAULTS`
+   explicitly says "take everything else from there".
+2. **Defaults are reused** — `SERVER_DEFAULTS`, `TEST_DEFAULTS`,
+   `DEV_DEFAULTS` for different environments.
+3. **Refactoring is safe** — added a field to the record, spread calls
+   pick up the new field; calls without spread — a compile error "missing
+   field", the programmer sees every place.
+4. **Composition** — several spreads: `{ ...BASE, ...OVERRIDES, port: 9000 }`.
+5. **No new grammar** — works via existing D52 + D55 + D60.
+
+**When such a pattern is redundant:**
+
+- A function has **2–3 parameters** without defaults — written directly:
+  `fn move(x int, y int)`.
+- The defaults are semantically different ("modes") — better separate
+  functions or a sum-type: `fn parse_strict(s str)`, `fn parse_lenient(s str)`.
+
+Details: [D52 record](decisions/02-types.md#d52),
+[D55 coercion](decisions/02-types.md#d55),
+[D60 spread](decisions/03-syntax.md#d60).
+
+## Effects in the signature
+
+Any interaction with the outside world is an effect, declared between `)` and `->`:
+
+```nova
+fn double(x int) -> int                          // чистая
+fn parse(s str) Fail -> int                    // может бросить
+fn save(u User) Fail Db Log -> ()              // три эффекта
+fn fetch(url str) Net Fail -> Response          // сеть + ошибки (async — ambient, не пишется)
+```
+
+**`?` and `!!`** — two postfix operators for `Option`/`Result`
+([D85](decisions/04-effects.md#d85)):
+
+- `expr?` — an early return of the wrapper (needs `-> Option/Result`).
+- `expr!!` — throw via `Fail[E]` (needs `Fail[E]` in the signature).
+
+```nova
+// throw-стиль через !!
+fn pipeline(s str) Fail[ParseError] -> int {
+    ro n = parse(s)!!
+    ro doubled = n * 2
+    validate(doubled)!!
+    doubled
+}
+
+// return-стиль через ?
+fn pipeline_r(s str) -> Result[int, ParseError] {
+    ro n = parse(s)?
+    ro doubled = n * 2
+    validate(doubled)?
+    Ok(doubled)
+}
+```
+
+Details — [effects.md](effects.md), [revolutionary.md](revolutionary.md).
+
+## Contracts (optional)
+
+```nova
+fn withdraw(mut acc Account, amount money) Fail -> ()
+    requires amount > 0
+    requires acc.balance >= amount
+    ensures acc.balance == old(acc.balance) - amount
+=>
+    acc.balance -= amount
+```
+
+Without contracts the code works as usual. With them the compiler tries
+to prove statically; what it cannot — turns into a runtime check in
+debug mode.
+
+## Handlers — literals for `protocol`-effects
+
+```nova
+type Logger effect {
+    log(msg str) -> ()
+}
+
+fn process(x int) Logger -> int {
+    Logger.log("processing ${x}")
+    x * 2
+}
+
+// handler — обычное значение через keyword `effect` (D61)
+ro console = effect Logger {
+    log(msg) => println("[LOG] ${msg}")
+}
+
+// применение через with
+fn main() Io -> () {
+    with Logger = console {
+        process(42)
+    }
+}
+```
+
+`return value` or the final expression in a handler-method continues
+the computation with the returned value. For an early exit from the whole
+with-block — `interrupt v` (D61). `resume` does not exist in Nova.
+
+## The effect name in code — three positions
+
+```nova
+fn process() Db -> ()                // 1. позиция типа
+Db.query(sql`...`)                   // 2. операция активного handler'а
+ro captured = Db                    // 3. сам активный handler как значение
+```
+
+The parser distinguishes by position.
+
+## With-block — several substitutions in one
+
+```nova
+test "complex flow" {
+    with Logger = collect_into(buf),
+         Db = in_memory,
+         Time = fixed(t0) {
+        process_order(o)
+    }
+    assert(buf.contains("processed"))
+}
+```
+
+After `with` — a comma-separated list of "effect = handler-expression",
+then **one** body block.
+
+## Concurrency — without `async/await`
+
+```nova
+fn fetch_all(ids []u64) Net Fail -> []User =>
+    parallel for id in ids {
+        fetch_user(id)
+    }
+```
+
+Suspension in Nova is ambient runtime infrastructure, not an effect and not a
+special construct (D62). The return type is `[]User`, not
+`Future<[]User>`. Details — [revolutionary.md R7](revolutionary.md).
+
+`parallel for` — structured concurrency: waits for all, cancels the tail
+on error.
