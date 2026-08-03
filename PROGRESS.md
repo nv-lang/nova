@@ -12,7 +12,7 @@
 - [x] `spec/overview.md` → `spec/overview.en.md` (257 строк) — 1 коммит
 - [x] `spec/conversions.md` → `spec/conversions.en.md` (481 строк) — по H2-секциям
 - [x] `spec/effects.md` → `spec/effects.en.md` (413 строк) — по H2-секциям
-- [ ] `spec/revolutionary.md` → `spec/revolutionary.en.md` (945 строк) — по H2-секциям
+- [x] `spec/revolutionary.md` → `spec/revolutionary.en.md` (945 строк) — по H2-секциям
 - [ ] `spec/syntax.md` → `spec/syntax.en.md` (1792 строк) — по H2-секциям (~15 коммитов)
 
 Пометки о сделанном — ниже, по мере продвижения.
@@ -37,3 +37,10 @@ effects), `c9b03faae` (Why needed + Direct effects), `48e638347` (Async +
 Default handler), `8bb87da95` (Panic + Roles + Operators + Result + Main
 point). Source_rev `337ec42af` (2026-07-26). Далее: revolutionary (по
 H2-секциям).
+
+**revolutionary.en.md — ГОТОВО.** Коммиты: `79b5fb554` (§R1), `a7bf71596`
+(§R2–R4), `10b2f3bd8` (§R5.1–R5.2), `3ee1d9b43` (§R5.3–R5.6), `03dc2aaf5`
+(§R5.7), `7e06d8612` (§R5.7 rest + §R6), `301e63035` (§R7–R9), `b888c8234`
+(§R10–R11), `8836f4a8f` (§R12 part 1), `c7ab52634` (§R12 rest + final).
+Source_rev `dcdf639fa` (2026-05-31). Далее: syntax (по H2-секциям, ~15
+коммитов).
