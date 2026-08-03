@@ -1,6 +1,8 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Lazy iterators over `Vec[T]` / `[]T`
 
+**English** | [Русский](vec-lazy.ru.md)
+
 > **Audience:** Nova users. **Spec:** [D260](../../spec/decisions/02-types.md#d260-ленивый-итератор-vect--boxed-fluent-адаптеры-plan-1532)
 > (lazy iterator model), [D277](../../spec/decisions/02-types.md#d277-by-value-мономорфизация-generic-value-records--generic-over-source-zero-cost-адаптеры-plan-1532-ф2)
 > (by-value `BoxIter` + zero-cost `vec_iter_zc`), [D239](../../spec/decisions/02-types.md#d239-t--синтаксический-псевдоним-vect)
