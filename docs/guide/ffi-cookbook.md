@@ -1,3 +1,5 @@
+**English** | [Русский](ffi-cookbook.ru.md)
+
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Nova FFI Cookbook
 

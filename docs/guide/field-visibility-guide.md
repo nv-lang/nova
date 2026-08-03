@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 # Field visibility guide (`priv` modifier)
 
+**English** | [Русский](field-visibility-guide.ru.md)
+
 > **Status:** ACTIVE since 2026-06-02 (Plan 124.1-124.5).
 > **Spec:** D220 / D221 / D222 (see `spec/decisions/02-types.md`).
 

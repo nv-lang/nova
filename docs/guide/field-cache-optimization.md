@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 # Field-cache optimization — user guide
 
+**English** | [Русский](field-cache-optimization.ru.md)
+
 > Plan 123 umbrella (V1-V5 active). Last updated 2026-06-02.
 
 ## What it does

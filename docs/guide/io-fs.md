@@ -1,5 +1,7 @@
 # I/O, filesystem, and OS in Nova
 
+**English** | [Русский](io-fs.ru.md)
+
 > User-facing guide for `std.io`/`std.fs`/`std.os` (Plan 176). Model, cross-language
 > comparison (7 languages), and the `write_atomic` durability recipe.
 
