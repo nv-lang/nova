@@ -1,0 +1,107 @@
+// Plan 244 Ф.0 — baseline `select` throughput bench for the CURRENT
+// (C-runtime, `nova_select_try_immediate`) implementation, taken BEFORE
+// any Nova-side rewrite.
+//
+// Scenario 3 из docs/plans/244-channel-in-nova.md: 2, 4, 8 ветвей, одна
+// готова — итераций в секунду. Single fiber, no parking: every iteration
+// re-fills channel 0 right before `select` so exactly one arm is ready
+// (Fisher-Yates immediate-check fast path, D94 step 2) — the other arms
+// exist purely to add scan overhead, matching the scenario's "N branches,
+// one ready" shape.
+module m_n.chan244_select
+
+bench "chan244 select: 2 arms, one ready" {
+    ro ch0 = Channel.new(1)
+    ro ch1 = Channel.new(1)
+    ro tx0 = ch0.tx
+    ro rx0 = ch0.rx
+    ro rx1 = ch1.rx
+
+    measure {
+        ro n = bench.iterations()
+        mut sum = 0
+        mut i = 0
+        while i < n {
+            tx0.send(i)
+            select {
+                Some(v) = rx0 => { sum = sum + v }
+                Some(v) = rx1 => { sum = sum + v }
+            }
+            i = i + 1
+        }
+        bench.elements(n)
+        ro _r = bench.opaque(sum)
+    }
+}
+
+bench "chan244 select: 4 arms, one ready" {
+    ro ch0 = Channel.new(1)
+    ro ch1 = Channel.new(1)
+    ro ch2 = Channel.new(1)
+    ro ch3 = Channel.new(1)
+    ro tx0 = ch0.tx
+    ro rx0 = ch0.rx
+    ro rx1 = ch1.rx
+    ro rx2 = ch2.rx
+    ro rx3 = ch3.rx
+
+    measure {
+        ro n = bench.iterations()
+        mut sum = 0
+        mut i = 0
+        while i < n {
+            tx0.send(i)
+            select {
+                Some(v) = rx0 => { sum = sum + v }
+                Some(v) = rx1 => { sum = sum + v }
+                Some(v) = rx2 => { sum = sum + v }
+                Some(v) = rx3 => { sum = sum + v }
+            }
+            i = i + 1
+        }
+        bench.elements(n)
+        ro _r = bench.opaque(sum)
+    }
+}
+
+bench "chan244 select: 8 arms, one ready" {
+    ro ch0 = Channel.new(1)
+    ro ch1 = Channel.new(1)
+    ro ch2 = Channel.new(1)
+    ro ch3 = Channel.new(1)
+    ro ch4 = Channel.new(1)
+    ro ch5 = Channel.new(1)
+    ro ch6 = Channel.new(1)
+    ro ch7 = Channel.new(1)
+    ro tx0 = ch0.tx
+    ro rx0 = ch0.rx
+    ro rx1 = ch1.rx
+    ro rx2 = ch2.rx
+    ro rx3 = ch3.rx
+    ro rx4 = ch4.rx
+    ro rx5 = ch5.rx
+    ro rx6 = ch6.rx
+    ro rx7 = ch7.rx
+
+    measure {
+        ro n = bench.iterations()
+        mut sum = 0
+        mut i = 0
+        while i < n {
+            tx0.send(i)
+            select {
+                Some(v) = rx0 => { sum = sum + v }
+                Some(v) = rx1 => { sum = sum + v }
+                Some(v) = rx2 => { sum = sum + v }
+                Some(v) = rx3 => { sum = sum + v }
+                Some(v) = rx4 => { sum = sum + v }
+                Some(v) = rx5 => { sum = sum + v }
+                Some(v) = rx6 => { sum = sum + v }
+                Some(v) = rx7 => { sum = sum + v }
+            }
+            i = i + 1
+        }
+        bench.elements(n)
+        ro _r = bench.opaque(sum)
+    }
+}

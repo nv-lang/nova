@@ -1,0 +1,94 @@
+// Plan 244 Ф.0 — baseline throughput bench for the CURRENT (C-runtime)
+// Channel/select implementation, taken BEFORE any Nova-side rewrite.
+//
+// Scenario 1 из docs/plans/244-channel-in-nova.md: один отправитель, один
+// получатель, буфер ёмкости 1 / 16 / 1024 — элементов в секунду. Числа —
+// эталон Ф.0 в PROGRESS-pchan244.md; Ф.3 обязана прогнать ЭТОТ ЖЕ файл на
+// новой (`.nv`) реализации и сравнить.
+//
+// Идиома — та же, что `bench/m_n/handler_chain_pingpong.nv` (producer/
+// consumer через supervised { spawn ... spawn ... }), только с variable
+// capacity и throughput-аннотацией (`bench.elements`) вместо голого
+// wall-time.
+module m_n.chan244_throughput
+
+bench "chan244 throughput: producer/consumer, cap=1" {
+    measure {
+        ro n = 10_000
+        ro ch = Channel.new(1)
+        mut received = 0
+        supervised {
+            spawn {
+                mut i = 0
+                while i < n {
+                    ro _v = ch.rx.recv()
+                    received = received + 1
+                    i = i + 1
+                }
+            }
+            spawn {
+                mut i = 0
+                while i < n {
+                    ch.tx.send(i)
+                    i = i + 1
+                }
+            }
+        }
+        bench.elements(n)
+        ro _r = bench.opaque(received)
+    }
+}
+
+bench "chan244 throughput: producer/consumer, cap=16" {
+    measure {
+        ro n = 10_000
+        ro ch = Channel.new(16)
+        mut received = 0
+        supervised {
+            spawn {
+                mut i = 0
+                while i < n {
+                    ro _v = ch.rx.recv()
+                    received = received + 1
+                    i = i + 1
+                }
+            }
+            spawn {
+                mut i = 0
+                while i < n {
+                    ch.tx.send(i)
+                    i = i + 1
+                }
+            }
+        }
+        bench.elements(n)
+        ro _r = bench.opaque(received)
+    }
+}
+
+bench "chan244 throughput: producer/consumer, cap=1024" {
+    measure {
+        ro n = 10_000
+        ro ch = Channel.new(1024)
+        mut received = 0
+        supervised {
+            spawn {
+                mut i = 0
+                while i < n {
+                    ro _v = ch.rx.recv()
+                    received = received + 1
+                    i = i + 1
+                }
+            }
+            spawn {
+                mut i = 0
+                while i < n {
+                    ch.tx.send(i)
+                    i = i + 1
+                }
+            }
+        }
+        bench.elements(n)
+        ro _r = bench.opaque(received)
+    }
+}

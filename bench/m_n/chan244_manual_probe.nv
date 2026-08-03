@@ -1,0 +1,238 @@
+// Plan 244 Ф.0 — manual measurement harness for the CURRENT (C-runtime)
+// Channel/select implementation.
+//
+// WHY THIS EXISTS (not just bench/m_n/chan244_*.nv): `nova bench run`
+// currently ICEs on EVERY `.nv` file that contains a `bench "..." { }`
+// block — reproduced even on pre-existing, unmodified precedent files
+// (bench/micro/hello.nv, bench/m_n/handler_chain_pingpong.nv) with a
+// freshly built release compiler, so it is a pre-existing infrastructure
+// defect, not something introduced by this window, and out of scope to
+// fix here (compiler-codegen window is occupied by another wave; this
+// window touches std/**, not compiler-codegen/**). See PROGRESS-pchan244.md
+// for the exact repro and error text.
+//
+// This program measures the same three Plan 244 Ф.0 scenarios directly
+// (`bench.now_ns()` works standalone, outside any `measure` block) and
+// prints raw nanosecond samples to stdout; PROGRESS-pchan244.md's numbers
+// are derived from this program's output (several repeats, warmup discarded).
+//
+// Note on `AtomicInt` for cross-fiber counters/timestamps: a plain `mut
+// int` captured by a `spawn` body is rejected by [E_CONCURRENT_MUT_CAPTURE]
+// (Plan 173.3, D415 §2) even for this single-writer-then-join shape — the
+// checker is capture-based, not race-based. `AtomicInt` is the sanctioned
+// escape hatch and is what this probe uses throughout.
+module m_n.chan244_manual_probe
+
+import std.time.duration
+
+fn throughput_once(cap int, n int) -> int {
+    ro ch = Channel.new(cap)
+    mut received = AtomicInt.new(0)
+    ro t0 = bench.now_ns()
+    supervised {
+        spawn {
+            mut i = 0
+            while i < n {
+                ro _v = ch.rx.recv()
+                received.fetch_add(1)
+                i = i + 1
+            }
+        }
+        spawn {
+            mut i = 0
+            while i < n {
+                ch.tx.send(i)
+                i = i + 1
+            }
+        }
+    }
+    ro t1 = bench.now_ns()
+    ro _got = received.load()
+    t1 - t0
+}
+
+fn latency_once() -> int {
+    ro ch = Channel.new(1)
+    mut t_send = AtomicInt.new(0)
+    mut t_wake = AtomicInt.new(0)
+    supervised {
+        spawn {
+            ro _v = ch.rx.recv()
+            t_wake.store(bench.now_ns())
+        }
+        spawn {
+            Time.sleep(2.to_millis())   // let the receiver park first
+            t_send.store(bench.now_ns())
+            ch.tx.send(1)
+        }
+    }
+    t_wake.load() - t_send.load()
+}
+
+fn select2_once(n int) -> int {
+    ro ch0 = Channel.new(1)
+    ro ch1 = Channel.new(1)
+    ro tx0 = ch0.tx
+    ro rx0 = ch0.rx
+    ro rx1 = ch1.rx
+    mut sum = AtomicInt.new(0)
+    ro t0 = bench.now_ns()
+    mut i = 0
+    while i < n {
+        tx0.send(i)
+        select {
+            Some(v) = rx0 => { sum.fetch_add(v) }
+            Some(v) = rx1 => { sum.fetch_add(v) }
+        }
+        i = i + 1
+    }
+    ro t1 = bench.now_ns()
+    ro _s = sum.load()
+    t1 - t0
+}
+
+fn select4_once(n int) -> int {
+    ro ch0 = Channel.new(1)
+    ro ch1 = Channel.new(1)
+    ro ch2 = Channel.new(1)
+    ro ch3 = Channel.new(1)
+    ro tx0 = ch0.tx
+    ro rx0 = ch0.rx
+    ro rx1 = ch1.rx
+    ro rx2 = ch2.rx
+    ro rx3 = ch3.rx
+    mut sum = AtomicInt.new(0)
+    ro t0 = bench.now_ns()
+    mut i = 0
+    while i < n {
+        tx0.send(i)
+        select {
+            Some(v) = rx0 => { sum.fetch_add(v) }
+            Some(v) = rx1 => { sum.fetch_add(v) }
+            Some(v) = rx2 => { sum.fetch_add(v) }
+            Some(v) = rx3 => { sum.fetch_add(v) }
+        }
+        i = i + 1
+    }
+    ro t1 = bench.now_ns()
+    ro _s = sum.load()
+    t1 - t0
+}
+
+fn select8_once(n int) -> int {
+    ro ch0 = Channel.new(1)
+    ro ch1 = Channel.new(1)
+    ro ch2 = Channel.new(1)
+    ro ch3 = Channel.new(1)
+    ro ch4 = Channel.new(1)
+    ro ch5 = Channel.new(1)
+    ro ch6 = Channel.new(1)
+    ro ch7 = Channel.new(1)
+    ro tx0 = ch0.tx
+    ro rx0 = ch0.rx
+    ro rx1 = ch1.rx
+    ro rx2 = ch2.rx
+    ro rx3 = ch3.rx
+    ro rx4 = ch4.rx
+    ro rx5 = ch5.rx
+    ro rx6 = ch6.rx
+    ro rx7 = ch7.rx
+    mut sum = AtomicInt.new(0)
+    ro t0 = bench.now_ns()
+    mut i = 0
+    while i < n {
+        tx0.send(i)
+        select {
+            Some(v) = rx0 => { sum.fetch_add(v) }
+            Some(v) = rx1 => { sum.fetch_add(v) }
+            Some(v) = rx2 => { sum.fetch_add(v) }
+            Some(v) = rx3 => { sum.fetch_add(v) }
+            Some(v) = rx4 => { sum.fetch_add(v) }
+            Some(v) = rx5 => { sum.fetch_add(v) }
+            Some(v) = rx6 => { sum.fetch_add(v) }
+            Some(v) = rx7 => { sum.fetch_add(v) }
+        }
+        i = i + 1
+    }
+    ro t1 = bench.now_ns()
+    ro _s = sum.load()
+    t1 - t0
+}
+
+fn main() Io -> () {
+    ro reps = 7
+    ro warmup = 2
+    ro n_throughput = 50_000
+    ro n_select = 200_000
+
+    // Scenario 1: throughput, cap 1 / 16 / 1024.
+    mut ci = 0
+    ro caps = [1, 16, 1024]
+    while ci < caps.len() {
+        ro cap = caps[ci]
+        mut r = 0
+        while r < warmup {
+            ro _w = throughput_once(cap, n_throughput)
+            r = r + 1
+        }
+        mut r2 = 0
+        while r2 < reps {
+            ro dt = throughput_once(cap, n_throughput)
+            println("THROUGHPUT cap=${cap} n=${n_throughput} elapsed_ns=${dt}")
+            r2 = r2 + 1
+        }
+        ci = ci + 1
+    }
+
+    // Scenario 2: latency, recv already parked.
+    mut rw = 0
+    while rw < warmup {
+        ro _w = latency_once()
+        rw = rw + 1
+    }
+    mut rl = 0
+    while rl < reps * 2 {
+        ro dl = latency_once()
+        println("LATENCY delta_ns=${dl}")
+        rl = rl + 1
+    }
+
+    // Scenario 3: select, 2 / 4 / 8 arms, one ready.
+    mut sw2 = 0
+    while sw2 < warmup {
+        ro _w = select2_once(n_select)
+        sw2 = sw2 + 1
+    }
+    mut s2 = 0
+    while s2 < reps {
+        ro dt2 = select2_once(n_select)
+        println("SELECT arms=2 n=${n_select} elapsed_ns=${dt2}")
+        s2 = s2 + 1
+    }
+
+    mut sw4 = 0
+    while sw4 < warmup {
+        ro _w = select4_once(n_select)
+        sw4 = sw4 + 1
+    }
+    mut s4 = 0
+    while s4 < reps {
+        ro dt4 = select4_once(n_select)
+        println("SELECT arms=4 n=${n_select} elapsed_ns=${dt4}")
+        s4 = s4 + 1
+    }
+
+    mut sw8 = 0
+    while sw8 < warmup {
+        ro _w = select8_once(n_select)
+        sw8 = sw8 + 1
+    }
+    mut s8 = 0
+    while s8 < reps {
+        ro dt8 = select8_once(n_select)
+        println("SELECT arms=8 n=${n_select} elapsed_ns=${dt8}")
+        s8 = s8 + 1
+    }
+
+    println("DONE")
+}

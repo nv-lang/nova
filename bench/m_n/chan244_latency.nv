@@ -1,0 +1,44 @@
+// Plan 244 Ф.0 — baseline "empty-channel wake" latency bench for the
+// CURRENT (C-runtime) Channel implementation, taken BEFORE any Nova-side
+// rewrite.
+//
+// Scenario 2 из docs/plans/244-channel-in-nova.md: получатель уже
+// припаркован, отправитель приходит — время от отправки до пробуждения.
+// This is exactly the "recv_val direct-write" fast path (channels.h) that
+// Plan 244's "Как достичь паритета" section calls out as the #1 source of
+// speed — a regression here is the most likely place a naive Mutex+Condvar
+// rewrite loses.
+//
+// Measuring a cross-fiber wake requires a real park: the receiver fiber
+// MUST call recv() and block before the sender fiber calls send(). A short
+// `Time.sleep` before the send is deliberate setup noise (bench-conventions
+// §"Avoiding common pitfalls" warns against `Time.sleep` inside `measure`
+// as a general rule for CPU-only benches; here the sleep is not a stand-in
+// for real work, it's the ONLY way to guarantee the "already parked"
+// precondition the scenario asks for) — it is excluded from the reported
+// metric because we timestamp `send()` and the receiver's wakeup directly
+// with `bench.now_ns()` and report the DELTA via `bench.metric`, not the
+// overall measure-block wall time.
+module m_n.chan244_latency
+
+bench "chan244 latency: recv already parked, cap=1" {
+    measure {
+        ro ch = Channel.new(1)
+        mut t_send = 0
+        mut t_wake = 0
+        supervised {
+            spawn {
+                ro _v = ch.rx.recv()
+                t_wake = bench.now_ns()
+            }
+            spawn {
+                Time.sleep(2.to_millis())   // let the receiver park first
+                t_send = bench.now_ns()
+                ch.tx.send(1)
+            }
+        }
+        ro delta = t_wake - t_send
+        bench.metric("wake_latency_ns", delta, "ns")
+        ro _r = bench.opaque(delta)
+    }
+}
