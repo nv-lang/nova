@@ -17,8 +17,8 @@ source_date: 2026-08-02
 ## TL;DR
 
 ```nova
-ro logo  = embed("assets/logo.png")     // []u8 — содержимое ОДНОГО файла
-ro site  = embed_dir("../frontend")     // EmbeddedDir — ВСЯ папка, рекурсивно
+ro logo  = embed("assets/logo.png")     // []u8 — the content of ONE file
+ro site  = embed_dir("../frontend")     // EmbeddedDir — the WHOLE directory, recursively
 
 assert(site.len() == 3)
 assert(site.has("index.html"))
@@ -57,8 +57,8 @@ ro index = site.get("index.html")       // Option[[]u8]
 
 ```nova
 test "embed(\"path\") round-trips the fixture bytes exactly" {
-    ro data = embed("d412_embed_fixture.bin")   // путь — относительно ЭТОГО .nv-файла
-    ro want = x"48 69 00 FF 7F"                 // хранит NUL и байт > 0x7F — это сырые байты
+    ro data = embed("d412_embed_fixture.bin")   // path — relative to THIS .nv file
+    ro want = x"48 69 00 FF 7F"                 // holds a NUL and a byte > 0x7F — these are raw bytes
     assert(data.len() == want.len())
 }
 ```
@@ -78,15 +78,15 @@ test "embed(\"path\") round-trips the fixture bytes exactly" {
 ## `embed_dir("dir")` — вся папка рекурсивно
 
 ```nova
-ro assets = embed_dir("d412d_dir")     // рекурсивно: alpha.txt, beta.txt, nested/gamma.txt
+ro assets = embed_dir("d412d_dir")     // recursively: alpha.txt, beta.txt, nested/gamma.txt
 
-assert(assets.len() == 3)                                   // .hidden не считается (dot-skip)
-assert(assets.paths() == ["alpha.txt", "beta.txt", "nested/gamma.txt"])   // отсортированы
-assert(assets.has("nested/gamma.txt"))                       // рекурсия — вложенные пути тоже POSIX-ключ
+assert(assets.len() == 3)                                   // .hidden doesn't count (dot-skip)
+assert(assets.paths() == ["alpha.txt", "beta.txt", "nested/gamma.txt"])   // sorted
+assert(assets.has("nested/gamma.txt"))                       // recursion — nested paths are also a POSIX key
 assert(!assets.has(".hidden"))
 
-ro alpha = assets.get("alpha.txt").unwrap()                  // байты "ABC", zero-copy вид
-assert(assets.get("./alpha.txt") == None)                    // ключ БЕЗ ведущего `./` — точная байтовая форма
+ro alpha = assets.get("alpha.txt").unwrap()                  // bytes "ABC", a zero-copy view
+assert(assets.get("./alpha.txt") == None)                    // key WITHOUT a leading `./` — exact byte form
 ```
 
 (адаптировано из `spec_tests/conformance/d412d_embed_dir.nv` — фикстура
@@ -159,7 +159,7 @@ type-check) в обычный вызов Nova:
 
 ```
 EmbeddedDir.new([
-    EmbeddedEntry { path: "app.js",     data: x"…" },   // отсортировано по path
+    EmbeddedEntry { path: "app.js",     data: x"…" },   // sorted by path
     EmbeddedEntry { path: "index.html", data: x"…" },
 ])
 ```
@@ -239,11 +239,11 @@ topological order — и не в горячем пути): повторный в
 диске:
 
 ```nova
-// Фикстура: d412d_dir_nfc_normalize/ содержит ОДИН файл, чьё имя на диске —
+// Fixture: d412d_dir_nfc_normalize/ contains ONE file whose name on disk is
 // NFD ("cafe" + U+0301 COMBINING ACUTE ACCENT + ".txt").
 test "embed_dir NFC-normalizes an on-disk NFD file name" {
     ro d = embed_dir("d412d_dir_nfc_normalize")
-    assert(d.has("café.txt"))     // литерал здесь — NFC ("é" = U+00E9, один кодпоинт)
+    assert(d.has("café.txt"))     // the literal here is NFC ("é" = U+00E9, one code point)
 }
 ```
 
@@ -258,7 +258,7 @@ NFC-формы совпадают (например, предкомпонова�
 
 ```nova
 // EXPECT_COMPILE_ERROR E_EMBED_DIR_NFC_COLLISION
-ro d = embed_dir("d412d_dir_nfc_collision")   // два файла, одна NFC-форма
+ro d = embed_dir("d412d_dir_nfc_collision")   // two files, one NFC form
 ```
 
 (`spec_tests/conformance/neg/d412d_dir_nfc_collision_neg.nv`.)
@@ -302,8 +302,8 @@ Hangul-композицию), что `std/src/unicode/normalize.nv`. Одна к
 **Для мутации содержимого — явная копия:**
 
 ```nova
-mut d = dir.get("config.json").unwrap().clone()   // теперь обычный GC-буфер
-d[0] = 0x7B                                        // легально — не .rodata
+mut d = dir.get("config.json").unwrap().clone()   // now an ordinary GC buffer
+d[0] = 0x7B                                        // legal — not .rodata
 ```
 
 ## Взаимодействие с многофайловым codegen (План 209)
@@ -365,9 +365,9 @@ fn main() {
     with Net = real_net(), Fs = real_fs() {
         mut mux = ServeMux.new()
         if dev_mode() {
-            serve_assets(mut mux, DirFs.new("./frontend".to_path()))   // диск, live-reload
+            serve_assets(mut mux, DirFs.new("./frontend".to_path()))   // disk, live-reload
         } else {
-            serve_assets(mut mux, embed_dir("../frontend"))                // вшито в бинарь
+            serve_assets(mut mux, embed_dir("../frontend"))                // baked into the binary
         }
         serve(mux, ":8080")
     }
