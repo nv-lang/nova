@@ -92,4 +92,13 @@ code_block_mismatch_pairs=0
 # символами и завышал счёт втрое). Остаток долга: cleanup-cookbook 76,
 # ffi-cookbook 73, typed-pointers 49, size-of-align-of 48, parameters 46
 # и мелочь по 2-7 строк — гасится батчами плана 247.
-mixed_language_files=15
+# 2026-08-04 (интегратор, план 247 батчи 1-2 + дочистка):
+# mixed_language_files 15 -> 7. Переведены cleanup-cookbook, ffi-cookbook,
+# typed-pointers, size-of-align-of, parameters; дочищены полупереведённые
+# фразы (consume-types, field-cache-optimization, field-visibility-guide,
+# tutorial-cleanup) — у них остаток 0. У оставшихся 7 файлов кириллица —
+# ТОЛЬКО пометки фаз планов вида «Ф.6а»/«Ф.32.1» и поисковая строка
+# «D412-амендмент»: это адреса русских документов, а не проза. Дальнейшее
+# опускание базы возможно, если метрика научится их пропускать (кандидат —
+# исключить /Ф\.[0-9]/ и кавычки-цитаты русских якорей).
+mixed_language_files=7
