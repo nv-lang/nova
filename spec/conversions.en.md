@@ -77,8 +77,8 @@ widths (`i8`/`i16`/`i32`/`i64`/`int`/`u8`/`u16`/`u32`/`u64`/`uint`):
 
 ```nova
 ro ok = (100 as u32).try_to_u8()       // Ok(100 as u8)
-ro err = (300 as u32).try_to_u8()      // Err(RangeError) — didn't fit
-ro neg = (-1 as i32).try_to_u8()       // Err(RangeError) — negative → unsigned
+ro err = (300 as u32).try_to_u8()      // Err(RangeError) — не влезло
+ro neg = (-1 as i32).try_to_u8()       // Err(RangeError) — отрицательное → unsigned
 ```
 
 `RangeError` — a unit type ("didn't fit", no payload — the fact itself is
