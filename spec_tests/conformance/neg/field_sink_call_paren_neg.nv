@@ -1,0 +1,46 @@
+// EXPECT_COMPILE_ERROR [E_CONCURRENT_MUT_CAPTURE]
+//
+// p-s1a2 (№289 — adversarial-pass hole in S1a, form 1 "parenthesized
+// call"): the OWNER'S OWN repro, verbatim. S1a's `spawn_tainted_fields_of_
+// module` only walked `Item::Fn` bodies WITH a `self`/`@` receiver, and
+// only recognized `@field()` (a direct `SelfAccess` member-call) as "the
+// field's value gets called inside a fiber boundary" — a bare test-level
+// local (`ro h = Holder.new(..)`), called with NO enclosing method at all,
+// slipped through entirely. `(h.f)()` is NOT a distinct AST shape from
+// `h.f()` — this grammar has no `Paren` node, parens are dropped at parse
+// time — so the actual gap was SCOPE (methods-only, self-only), not the
+// parenthesized spelling; this fixture keeps the owner's exact spelling as
+// the regression anchor regardless.
+//
+// Two compiler gaps closed together to make this fixture red (both filed
+// under №289, both structurally required — neither alone was enough):
+// (1) the taint pre-pass (`spawn_tainted_fields_of_module` /
+//     `field_taint_expr`) now scans EVERY function-shaped body (methods,
+//     free fns, `Item::Test`) and resolves the general `obj.field()` call
+//     shape (self / local var of known type / nested field / `Vec` index),
+//     not just `@field()`;
+// (2) the write-site call-site resolver (`walk_expr`'s `ExprKind::Call`
+//     handling of `spawn_tainted_method_params`) now also recognizes
+//     `ExprKind::Path(["Type", "method"])` — the AST shape a STATIC-
+//     receiver call (`Holder.new(..)`, no bound instance) actually parses
+//     to (NOT `Member{obj, name}` — that arm alone never fired for any
+//     `.new()`/`.of()` ctor call in the entire corpus); and a bare `{ f }`
+//     ctor-body record literal (`type_name: None`, the idiomatic style —
+//     grep any `.new()` in this repo) now falls back to the enclosing
+//     method's own receiver type when resolving which field is written.
+
+module neg.field_sink_call_paren_neg
+
+type FieldSinkCallHolder1 { f fn() -> () }
+
+fn FieldSinkCallHolder1.new(f fn() -> ()) -> FieldSinkCallHolder1 => { f }
+
+fn main() {
+    mut counter = 0
+    ro h = FieldSinkCallHolder1.new(|| { counter += 1 })
+    supervised {
+        spawn {
+            (h.f)()
+        }
+    }
+}

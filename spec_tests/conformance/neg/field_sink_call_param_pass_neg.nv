@@ -1,0 +1,34 @@
+// EXPECT_COMPILE_ERROR [E_CONCURRENT_MUT_CAPTURE]
+//
+// p-s1a2 (№289, form 3 "passed as a call argument"): `call_it`'s OWN body
+// calls its parameter directly (`fn call_it(g fn()->()) => g()`) — no
+// nested `spawn` inside `call_it` itself. The boundary is at `call_it`'s
+// OWN call site (`spawn { call_it(h.f) }`): `h.f` crosses as a plain call
+// ARGUMENT, not via field/container storage — a different crossing shape
+// from forms 1/2/4/5 (all "the field's value is called SOMEWHERE inside a
+// boundary"; this one is "a field-read is handed, by value, into a fn that
+// calls its own parameter, and THAT call happens inside a boundary").
+// Closed by `directly_called_param_positions_of_module`: a whole-module
+// pre-pass over every RECEIVER-LESS free fn recording which parameter
+// POSITIONS get referenced by name anywhere in the fn's own body (reusing
+// the project's existing free-variable scanner, `capture_scan_expr`/
+// `capture_scan_block` — a fn's own params are never locally shadowed by
+// anything inside its own body, so a reference IS a call-candidate).
+
+module neg.field_sink_call_param_pass_neg
+
+type FieldSinkCallHolder3 { f fn() -> () }
+
+fn FieldSinkCallHolder3.new(f fn() -> ()) -> FieldSinkCallHolder3 => { f }
+
+fn call_it(g fn() -> ()) => g()
+
+fn main() {
+    mut counter = 0
+    ro h = FieldSinkCallHolder3.new(|| { counter += 1 })
+    supervised {
+        spawn {
+            call_it(h.f)
+        }
+    }
+}

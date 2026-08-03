@@ -1,0 +1,31 @@
+// EXPECT_COMPILE_ERROR [E_CONCURRENT_MUT_CAPTURE]
+//
+// p-s1a2 (№289, form 5 "nested field"): the field-typed value sits one
+// level deeper (`o.inner.f` — `inner` is itself a field of record type
+// `FieldSinkCallHolder5`, `.f` is the tainted fn-field on THAT record).
+// Closed by `resolve_owner_typeref`'s `Member` arm recursing through
+// `field_type_of` (declared field-type lookup against `type_decls`,
+// `Record`/`NamedTuple` kinds) — one level of nested-field resolution, the
+// same documented depth this whole pre-pass keeps everywhere else (D441
+// §5's "one hop" stance).
+
+module neg.field_sink_call_nested_field_neg
+
+type FieldSinkCallHolder5 { f fn() -> () }
+
+fn FieldSinkCallHolder5.new(f fn() -> ()) -> FieldSinkCallHolder5 => { f }
+
+type FieldSinkCallOuter5 { inner FieldSinkCallHolder5 }
+
+fn FieldSinkCallOuter5.new(inner FieldSinkCallHolder5) -> FieldSinkCallOuter5 => { inner }
+
+fn main() {
+    mut counter = 0
+    ro h = FieldSinkCallHolder5.new(|| { counter += 1 })
+    ro o = FieldSinkCallOuter5.new(h)
+    supervised {
+        spawn {
+            (o.inner.f)()
+        }
+    }
+}

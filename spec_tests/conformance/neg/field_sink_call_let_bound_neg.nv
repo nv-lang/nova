@@ -1,0 +1,27 @@
+// EXPECT_COMPILE_ERROR [E_CONCURRENT_MUT_CAPTURE]
+//
+// p-s1a2 (№289, form 2 "let-bound intermediate"): the field's value is
+// read into a LOCAL first (`let g = h.f`), then the LOCAL is called inside
+// the fiber boundary — one binding away from the direct `(h.f)()` call
+// covered by `field_sink_call_paren_neg.nv`. Generalizes S1a's for-loop-
+// pattern-variable tracking (`field_taint_block`'s old single-slot
+// `loop_var`) into a full `field_bindings` map keyed by binding name,
+// resolved for ANY known-type `obj` (not just `self` — S1a's version only
+// tracked `let x = @field`).
+
+module neg.field_sink_call_let_bound_neg
+
+type FieldSinkCallHolder2 { f fn() -> () }
+
+fn FieldSinkCallHolder2.new(f fn() -> ()) -> FieldSinkCallHolder2 => { f }
+
+fn main() {
+    mut counter = 0
+    ro h = FieldSinkCallHolder2.new(|| { counter += 1 })
+    supervised {
+        spawn {
+            ro g = h.f
+            g()
+        }
+    }
+}

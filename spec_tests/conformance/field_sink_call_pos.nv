@@ -1,0 +1,75 @@
+// p-s1a2 (№289): pos-twins of the `neg/field_sink_call_*_neg.nv` forms —
+// the generalized taint pre-pass (whole-module scan, general `obj.field()`
+// call resolution, `ExprKind::Path` static-ctor call-site, bare-`{ f }`
+// ctor-body owner fallback) must NOT false-positive on the forms the brief
+// explicitly names: a `#share`-captured value crossing the SAME field-call
+// shapes (D415: `AtomicInt` and family), and a local closure with a `mut`
+// capture that never leaves the current fiber (never written into ANY
+// field — no crossing point at all, same "structural impossibility, not a
+// heuristic" argument as the existing `field_sink_mut_capture_pos.nv`
+// map/filter case).
+
+module spec_tests.conformance
+
+type FieldSinkCallHolderShare { f fn() -> () }
+
+fn FieldSinkCallHolderShare.new(f fn() -> ()) -> FieldSinkCallHolderShare => { f }
+
+type FieldSinkCallOuterShare { inner FieldSinkCallHolderShare }
+
+fn FieldSinkCallOuterShare.new(inner FieldSinkCallHolderShare) -> FieldSinkCallOuterShare => { inner }
+
+fn call_it_share(g fn() -> ()) => g()
+
+test "field-sink call, #share-захват (AtomicInt) во всех формах вызова поля-замыкания — легально" {
+    mut counter = AtomicInt.new(0)
+    ro h = FieldSinkCallHolderShare.new(|| { counter.fetch_add(1) })
+
+    // Форма 1: скобочный вызов.
+    supervised {
+        spawn {
+            (h.f)()
+        }
+    }
+
+    // Форма 2: вызов через промежуточную привязку.
+    supervised {
+        spawn {
+            ro g = h.f
+            g()
+        }
+    }
+
+    // Форма 3: поле, переданное параметром в функцию, которая сама вызывает свой параметр.
+    supervised {
+        spawn {
+            call_it_share(h.f)
+        }
+    }
+
+    // Форма 4: поле в элементе коллекции.
+    ro v = Vec[FieldSinkCallHolderShare].of(h)
+    supervised {
+        spawn {
+            (v[0].f)()
+        }
+    }
+
+    // Форма 5: вложенное поле.
+    ro o = FieldSinkCallOuterShare.new(h)
+    supervised {
+        spawn {
+            (o.inner.f)()
+        }
+    }
+
+    assert(counter.load() == 5)
+}
+
+test "локальная лямбда с mut-захватом, никогда не уходящая в файбер — легально (map, не escaping)" {
+    mut sum = 0
+    ro nums = [1, 2, 3, 4]
+    ro doubled = nums.iter().map(|x| { sum = sum + x; x * 2 }).collect()
+    assert(sum == 10)
+    assert(doubled.len() == 4)
+}

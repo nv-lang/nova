@@ -1,0 +1,27 @@
+// EXPECT_COMPILE_ERROR [E_CONCURRENT_MUT_CAPTURE]
+//
+// p-s1a2 (№289, form 4 "collection element"): the field-typed value sits
+// on an element reached through a `Vec[T]` INDEX (`v[0].f`), not a bare
+// local. Closed by `resolve_owner_typeref`'s `Index` arm (`typeref_
+// element_type` — the `Vec[T]`/`[]T` element-type extractor) combined with
+// `syntactic_ctor_typeref` (a richer, generics-PRESERVING sketch for an
+// unannotated `let`'s ctor-call init — `capture_syntactic_init_type`
+// alone collapses `Vec[FieldSinkCallHolder4].of(h)` to a bare
+// `Named("Vec")`, losing the element type entirely).
+
+module neg.field_sink_call_vec_index_neg
+
+type FieldSinkCallHolder4 { f fn() -> () }
+
+fn FieldSinkCallHolder4.new(f fn() -> ()) -> FieldSinkCallHolder4 => { f }
+
+fn main() {
+    mut counter = 0
+    ro h = FieldSinkCallHolder4.new(|| { counter += 1 })
+    ro v = Vec[FieldSinkCallHolder4].of(h)
+    supervised {
+        spawn {
+            (v[0].f)()
+        }
+    }
+}
