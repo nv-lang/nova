@@ -283,3 +283,85 @@ In Java/Python/Go this information is **not in the signature** — it is in
 the code, or not there at all. The LLM has to read the body and guess. Nova
 stays **ahead of the mainstream** in throw visibility + direct effects, it
 just does not go all the way to full transitive visibility of side effects.
+
+### R5.3. Compiler errors as a learning signal
+
+Every error message has a structure optimized for an LLM:
+
+```
+error E0142: missing effect `Net`
+
+  in function `fetch_user` at src/users.nv:34
+  ┌─ src/users.nv:34:5
+  │
+  34 │     http.get(url)
+  │     ^^^^^^^^^^^^^ this call requires effect `Net`
+  │
+  function signature is:
+    fn fetch_user(id u64) -> User
+
+  function should be:
+    fn fetch_user(id u64) Net -> User
+                          ^^^
+
+  why: `http.get` performs network I/O. Functions that perform I/O
+       must declare it in their signature so callers can decide
+       whether to allow it.
+
+  fix-suggestion: add `Net` to the effect list before `->`
+
+  see also: docs/effects/Net.md
+```
+
+Format: location → reason → how to fix → **ready-made patch** →
+a documentation link. The LLM applies the patch in one iteration.
+
+### R5.4. Syntax stability
+
+An explicit design commitment: **no breaking syntax changes
+after v1.0**. New features — only additively. This is a guarantee for LLMs
+trained on old data that their code stays valid.
+
+The price — design mistakes cannot be fixed later. Therefore v1.0 ships
+late, after a long preview period.
+
+### R5.5. Fragment checkability
+
+The ability to typecheck **one function** without the whole project:
+
+```bash
+nova check --fragment 'fn double(x int) -> int = x * 2'
+# → ok
+
+nova check --fragment 'fn double(x) = x * 2' --infer
+# → fn double[T Mul[T, int]](x T) -> T  (выведенная сигнатура)
+```
+
+An LLM can generate functions and check them one by one, without the
+whole project's context. This changes the feedback loop radically.
+
+### R5.6. Self-describing API
+
+The standard library is written so that each function describes
+itself through the signature + a structured doc comment. Per
+[D62](decisions/04-effects.md#d62) the signature contains direct effects
++ the full throw picture; transitive side effects are additionally
+stated in the doc comment for clarity.
+
+```nova
+/// Sends an HTTP GET request.
+///
+/// effect.Net: makes an outgoing request
+/// effect.Time: waits up to `timeout` ms
+/// effect.Fail[NetError]: on connection failure, timeout, non-2xx
+///
+/// example:
+///     let body = http.get("https://api.example.com/users/1")
+///
+/// see also: http.post, http.client
+fn http.get(url str, timeout ms = 30000) Net Time Fail[NetError] -> Response
+```
+
+The doc comment has a **structure**, is parsed by the compiler,
+and is checked for consistency with the signature. The LLM uses it
+as context — structured, not free-form text.
