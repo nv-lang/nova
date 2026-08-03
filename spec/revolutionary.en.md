@@ -524,3 +524,111 @@ Useful for:
 type system ([D62](decisions/04-effects.md#d62)). If you need the
 guarantee "the function does not suspend" — that is a runtime flag of the
 fiber runtime, not a type-check.
+
+---
+
+## R7. Async — invisible infrastructure
+
+In Nova functions can suspend (network roundtrip, sleep,
+channel.recv, async-Db) — but this is **not expressed in types at all**.
+There is no function color; no "sync" vs "async" split. There is no `await`
+keyword either.
+
+```nova
+fn fetch(url str) Net -> Response => ...
+
+fn handler(req Request) Net Db -> Response {
+    ro user = fetch_user(req.id)        // suspendable, но не в типах
+    ro posts = fetch_posts(user.id)
+    Response.json(posts)
+}
+```
+
+The return type is `Response`, not `Future<Response>`. The signature has only
+the effects the programmer **sees** as accesses to the outside world
+(`Net`, `Db`); suspension — an implementation detail.
+
+Under the hood — a **fiber-based scheduler** (like Go/Erlang/OCaml 5).
+When an effect operation suspends, the fiber is put into a waiting
+queue, and the scheduler picks another fiber. The programmer writes neither
+`async` nor `await` nor an `Async` effect in signatures.
+
+### D62 decision — Async ambient capability
+
+[D62](decisions/04-effects.md#d62) explicitly fixes: `Async` is **not an
+effect** in Nova. Not part of the type system. This keeps
+backend code compact — in a real backend almost every
+function "can suspend", and an explicit `Async` effect would be noise
+without informativeness.
+
+### Comparison with other languages
+
+|  | Rust async | Nova |
+|---|---|---|
+| Function color | yes (`async fn`) | no |
+| `await` needed | yes | no |
+| Return type changes | `Future<T>` | no |
+| Async in signature | yes | **never** |
+| Task cost | ~64 bytes | ~4–8 KB (fiber stack) |
+| Cancellation | manual | structured |
+| C-interop blocking | no problems | requires `detach to OS thread` |
+
+Nova is closer to **Erlang/Go** in runtime: goroutines/fibers can
+be preempted at any point; the programmer does not write `async`. It pays
+with **memory** (fiber stacks) for **code simplicity**.
+
+### Structured concurrency — separate language primitives
+
+`spawn`, `supervised` (+ optional `cancel:`), `select`, `parallel for`,
+`detach`, `blocking` — **runtime keywords**; `race`, `with_timeout`
+— **library functions** on top of them. Not effects:
+
+```nova
+fn fetch_all(urls []str) Net -> []Response =>
+    parallel for url in urls {
+        fetch(url)
+    }  // ждёт всех, отменяет хвост при ошибке
+
+fn with_timeout[T](dur Duration, body fn() -> T) Fail -> T =>
+    race {
+        body(),
+        sleep(dur).then { throw Timeout }
+    }
+```
+
+Details — [decisions/06-concurrency.md#d14](decisions/06-concurrency.md#d14).
+
+---
+
+## R8. Time-travel debugging out of the box
+
+Since all effects pass through handlers, **recording and replaying any run**
+is a standard feature:
+
+```bash
+nova run --record trace.nrec ./server
+# ... ловим баг
+
+nova replay trace.nrec --step
+# пошаговый repro с возможностью вернуться назад
+```
+
+This gives Erlang-level observability in any application, without
+special code instrumentation.
+
+---
+
+## R9. Compile-time supervision (Erlang-style)
+
+Effects imply built-in structured concurrency with supervision:
+
+```nova
+fn server() Net Fail -> () =>
+    supervised {
+        spawn handle_requests()      // если упадёт — рестарт
+        spawn periodic_cleanup()     // если упадёт — рестарт
+        spawn metrics_reporter()     // если упадёт — рестарт стратегии one_for_one
+    } strategy = one_for_one, max_restarts = 3
+```
+
+Erlang/OTP supervision — built into the language, without a separate framework.
