@@ -84,7 +84,7 @@
    контракты через `protocol` (см. [decisions/01-philosophy.md#d1](decisions/01-philosophy.md#d1), [decisions/02-types.md#d42](decisions/02-types.md#d42)).
 5. **Контракты в сигнатуре.** `requires`/`ensures`/`invariant` —
    опциональны, но проверяются статически где можно.
-6. **Structured concurrency поверх M:N-планировщика (кодовое имя рантайма —
+6. **Структурированная конкурентность поверх M:N-планировщика (кодовое имя рантайма —
    Vela).** `spawn`/`supervised`/`detach`/cancel-token'ы — те же fiber'ы
    (mco-coroutines), что несут async/await-инфраструктуру из раздела выше.
    **`main()` сам исполняется как файбер** ([D92](decisions/06-concurrency.md#d92),
@@ -131,7 +131,7 @@
 | Concurrent GC, простота памяти для backend | Go, Java ZGC |
 | Pattern matching, ADT, sum-types | OCaml/Rust |
 | Регионы памяти | Zig, Odin |
-| Structured concurrency, supervision | Erlang/OTP, Swift |
+| Структурированная конкурентность, супервизия | Erlang/OTP, Swift |
 | Контракты, refinement-types | Eiffel, Dafny, F* |
 | Capability security | E, Pony |
 
