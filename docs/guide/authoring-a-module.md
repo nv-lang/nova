@@ -37,15 +37,15 @@ package root** (there's no separate `src/` — D78, 2026-05-22). Modules live
 directly in subdirectories:
 
 ```
-nova-greet/                 репозиторий: nova-<пакет> (§8)
-├── nova.toml               манифест (обязателен)
+nova-greet/                 repository: nova-<package> (§8)
+├── nova.toml               manifest (required)
 ├── LICENSE
 ├── README.md
-├── greet.nv                module greet          (корневой модуль пакета)
-├── greet_test.nv           тесты рядом с модулем
+├── greet.nv                module greet          (the package's root module)
+├── greet_test.nv           tests alongside the module
 └── format/
     ├── ascii.nv            module format.ascii
-    └── ascii_test.nv       тесты рядом
+    └── ascii_test.nv       tests alongside
 ```
 
 Service directories (`target/`, `.git/`, hidden `.`-prefixed ones) are
@@ -59,20 +59,20 @@ The minimum is `[package] name`; `version` is desirable. The full schema —
 
 ```toml
 [package]
-name = "greet"                     # snake_case (D30); имя пакета = префикс модулей
+name = "greet"                     # snake_case (D30); the package name = the modules' prefix
 version = "0.1.0"                  # semver
-nova-version = "0.5"               # минимальная версия Nova
-description = "Приветствия на разных языках"
+nova-version = "0.5"               # minimum Nova version
+description = "Greetings in different languages"
 license = "MIT OR Apache-2.0"      # SPDX
 repository = "https://github.com/you/nova-greet"
 
-[[bin]]                            # опц.: бинарная точка входа
+[[bin]]                            # optional: a binary entry point
 name = "greet"
 path = "bin/greet.nv"
 
-[dependencies]                     # опц.: внешние пакеты
-some-lib = "1.2"                                        # из реестра
-internal = { path = "../internal" }                     # локальный
+[dependencies]                     # optional: external packages
+some-lib = "1.2"                                        # from the registry
+internal = { path = "../internal" }                     # local
 remote   = { git = "https://github.com/…", tag = "v1" } # git (Plan 03.1/03.2)
 ```
 
@@ -110,7 +110,7 @@ directory are forbidden.
 module greet
 
 #stable(since = "0.1")
-export fn hello(name str) -> str => "Привет, ${name}!"
+export fn hello(name str) -> str => "Hello, ${name}!"
 ```
 
 ## 5. Tests alongside the module
@@ -123,8 +123,8 @@ Don't put tests in a separate tree. Pos/neg classification goes by the
 ```nova
 module greet
 
-test "hello вставляет имя" {
-    assert(hello("Ada") == "Привет, Ada!")
+test "hello inserts the name" {
+    assert(hello("Ada") == "Hello, Ada!")
 }
 ```
 
@@ -160,9 +160,9 @@ A native dependency is declared in `nova.toml` through a single section:
 
 ```toml
 [ffi]
-c_shims      = ["native/sqlite3_shim.c"]   # компилируются и линкуются
+c_shims      = ["native/sqlite3_shim.c"]   # compiled and linked
 include_dirs = ["native/", "third_party/sqlite3/"]  # clang -I
-libs         = ["sqlite3"]                 # системные: clang -lsqlite3 / sqlite3.lib
+libs         = ["sqlite3"]                 # system: clang -lsqlite3 / sqlite3.lib
 ```
 
 If a system `.lib` isn't on the standard search path (a vcpkg triplet, a
