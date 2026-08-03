@@ -121,11 +121,11 @@ s.len = 0    // ❌ E_PRIV_FIELD_WRITE — uniform для всех T
 
 | Код | Место | Когда |
 |---|---|---|
-| `E_PRIV_FIELD_READ` | Обращение к члену на priv-поле вне скоупа | `acc.balance` |
-| `E_PRIV_FIELD_WRITE` | Мутирующее присваивание вне скоупа | `acc.balance = 0` |
-| `E_PRIV_FIELD_INIT` | Record-литерал или named-tuple ctor вне скоупа | `Account { balance: 0 }` или `Vec3(x: 1.0)` |
-| `E_PRIV_FIELD_PATTERN` | Паттерн-деструктуризация вне скоупа | `Account { balance } = acc` |
-| `E_PRIV_FIELD_INIT_SPREAD` | Spread record-литерала вне скоупа | `Account { ...other }` |
+| `E_PRIV_FIELD_READ` | Обращение к члену на priv-поле вне области видимости | `acc.balance` |
+| `E_PRIV_FIELD_WRITE` | Мутирующее присваивание вне области видимости | `acc.balance = 0` |
+| `E_PRIV_FIELD_INIT` | Record-литерал или named-tuple ctor вне области видимости | `Account { balance: 0 }` или `Vec3(x: 1.0)` |
+| `E_PRIV_FIELD_PATTERN` | Паттерн-деструктуризация вне области видимости | `Account { balance } = acc` |
+| `E_PRIV_FIELD_INIT_SPREAD` | Spread record-литерала вне области видимости | `Account { ...other }` |
 | `E_PRIV_PUB_CONFLICT` | `priv` и `pub` на одном поле | `priv pub x f64` |
 
 Каждая диагностика включает:
@@ -160,7 +160,7 @@ JSON-вывод (`--format json`) эмитит `"priv_field": true` для ка�
 ### 5.2 LSP (forward-ref)
 
 Когда выйдут Plan 104.2 (hover) и Plan 104.3 (completion), они будут:
-- Скрывать priv-поля из автокомплита вне скоупа type-методов.
+- Скрывать priv-поля из автокомплита вне области видимости методов типа.
 - Показывать бейдж `🔒 priv` в hover-попапах.
 - Показывать code-lens декорации priv-полей.
 
@@ -184,13 +184,13 @@ LSP-интеграция следует после релиза Plan 104.2/104.3
 |---|---|---|---|---|---|---|---|
 | Пофайловая приватность | ❌ (по регистру) | ✅ `pub` | ✅ `private` | ✅ `private` | ✅ `private` | ✅ `private` | ✅ **`priv`** |
 | Видимость по умолчанию | pkg-priv если lowercase | mod-priv | public | package | internal | private | **public, opt-in priv** |
-| Строгий type-only скоуп | ❌ (pkg-wide) | ❌ (mod-wide) | ✅ (класс) | ✅ (класс) | ❌ (файл/мод) | ✅ (класс) | ✅ **type-method-only** |
+| Строгая область видимости только для типа | ❌ (pkg-wide) | ❌ (mod-wide) | ✅ (класс) | ✅ (класс) | ❌ (файл/мод) | ✅ (класс) | ✅ **type-method-only** |
 | Reflection-бэкдор | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ | ❌ **compile-time принуждается** |
-| Принудительная фабрика для priv-init | ❌ | ✅ `pub(...)` | ✅ | ✅ | ✅ | ✅ | ✅ **вне-скоуп заблокирован** |
+| Принудительная фабрика для priv-init | ❌ | ✅ `pub(...)` | ✅ | ✅ | ✅ | ✅ | ✅ **доступ вне области видимости заблокирован** |
 | Приватность полей кортежа | ❌ | ✅ `struct(pub T)` | ❌ | ❌ | ❌ | ❌ | ✅ **priv именованного кортежа** |
 
 Nova совпадает или превосходит на 6/6 возможностей + 3 Nova-only превосходящих
-гарантии (строжайший скоуп, без рефлексии, интегрирован с эффектной системой D2).
+гарантии (строжайшая область видимости, без рефлексии, интегрирован с эффектной системой D2).
 
 ---
 
