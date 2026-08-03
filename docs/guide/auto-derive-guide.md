@@ -124,7 +124,7 @@ type CaseInsensitive {
     text str
 }
 
-// User implements @equal — wins над auto-derive.
+// User implements @equal — wins over auto-derive.
 fn CaseInsensitive @equal(other CaseInsensitive) -> bool =>
     @text.to_lower() == other.text.to_lower()
 
@@ -151,16 +151,16 @@ Before Plan 126, on a heap record `a == b` was **identity-eq** (pointer
 comparison). After Plan 126:
 
 ```nova
-// Без #impl(Equal) — identity-eq preserved (backward compat).
+// Without #impl(Equal) — identity-eq preserved (backward compat).
 type Account {
     id int
     balance f64
 }
 ro a = Account { id: 1, balance: 100.0 }
 ro b = Account { id: 1, balance: 100.0 }
-assert(a != b)  // ← разные allocation'ы, identity не совпадает
+assert(a != b)  // ← different allocations, identity doesn't match
 
-// С #impl(Equal) — structural eq.
+// With #impl(Equal) — structural eq.
 #impl(Equal)
 type AccountStruct {
     id int
@@ -189,12 +189,12 @@ type Plain {
 
 #impl(Equal)
 type Wrapper {
-    inner Plain    // ← Plain не #impl(Equal)
+    inner Plain    // ← Plain doesn't #impl(Equal)
 }
 // ❌ E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL:
 //   type `Wrapper` claims `#impl(Equal)` but field `inner`
 //   (type `Plain`) does not implement `Equal`.
-//   Either add `#impl(Equal)` to `Plain`, или provide explicit
+//   Either add `#impl(Equal)` to `Plain`, or provide explicit
 //   `fn Wrapper @equal(...)`.
 ```
 
@@ -224,7 +224,7 @@ type A { b B }
 
 #impl(Clone)
 type B { a A }
-// ❌ E_AUTO_DERIVE_CYCLE: cyclic recursion через fields не терминируется.
+// ❌ E_AUTO_DERIVE_CYCLE: cyclic recursion through fields doesn't terminate.
 //    Provide explicit `fn A @clone(...)` or `fn B @clone(...)`.
 ```
 
@@ -234,7 +234,7 @@ type B { a A }
 #impl(Clone)
 type A { b B }
 
-fn A @clone() -> A => A { b: @b }   // ← manual; синтезатор для B продолжит работать
+fn A @clone() -> A => A { b: @b }   // ← manual; the synthesizer for B will keep working
 ```
 
 ## Composition with Plan 124.x semantics
