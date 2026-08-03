@@ -3901,7 +3901,7 @@ Plan 65 Ф.12.3 aligns schema с реальным usage.
 
 ### Файлы (затронуты при реализации Plan 65 Ф.12)
 
-- `std/time/duration.nv` — добавить `type Monotonic { readonly nanos i64 }`
+- `std/time/duration.nv` — добавить `type Monotonic { ro nanos i64 }`
   + конструкторы только через `Monotonic.now()` / `Monotonic.@as_nanos()`.
 - `compiler-codegen/src/codegen/emit_c.rs:1042-1046` — обновить
   `time_schema`: `now() -> Timestamp`, добавить `now_monotonic() -> Monotonic`.

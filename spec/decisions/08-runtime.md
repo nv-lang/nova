@@ -701,8 +701,8 @@ ro port int = env.get("PORT").flat_map(|s| s.parse_int_opt()) ?? 8080
 - Zero-arg closure для `unwrap_or_else` — `|| expr` (closure-light)
   или `fn() -> T => expr` (closure-full). Парсер различает
   `||`-closure-start от `||`-binary OR по позиции.
-- `Error` имеет поле `msg`. По D26 spec'у должно быть `readonly msg`,
-  но bootstrap не enforce'ит readonly — поле модифицируется как
+- `Error` имеет поле `msg`. По D26 spec'у должно быть `ro msg`,
+  но bootstrap не enforce'ит ro — поле модифицируется как
   обычное (bootstrap-grade compromise).
 - `RuntimeError` варианты создаются и matchаются user-кодом, но
   **встроенные операции** (`a/b` на 0, `arr[i]` out-of-bounds,
@@ -1086,7 +1086,7 @@ fn str @bytes() -> []u8                    // copy (D73 []u8.from(s))
   `str` гарантированно валидный UTF-8). **Копирует**
   `s.ptr..s.ptr+s.len` в свежий `[]u8`. D73 авто-синтезирует
   `s.into()` для `let b []u8 = s.into()`.
-- Копирует, не view: Nova не имеет readonly-меток (D6 — managed
+- Копирует, не view: Nova не имеет ro-меток (D6 — managed
   heap без borrow-checker), а `[]u8` mutable — без копии mutate
   испортил бы immutability `str`. Стоимость O(n) — приемлемо для
   границы str↔bytes; для in-place аккумуляции использовать `Buffer`
@@ -4386,7 +4386,7 @@ static inline nova_str Nova_StringBuilder_consume_into(Nova_StringBuilder* b) {
 
 - [D26](#d26-базовая-stdlib-и-prelude) — prelude auto-availability.
 - [D82](08-runtime.md#d82) — external fn декларации (str external методы).
-- [D176](02-types.md#d176-readonly-t--тип-модификатор) — `str.as_bytes() -> readonly []u8`
+- [D176](02-types.md#d176-ro-t--тип-модификатор) — `str.as_bytes() -> ro []u8`
   используется в `parse_int_radix` body.
 - [Plan 91.4](../../docs/plans/91.4-str-nova-body-dispatch.md) — sub-plan Ф.2.5 D177.
 - [Plan 54](../../docs/plans/54-nova-body-methods.md) — Ф.2 dispatch mechanism.
@@ -4407,9 +4407,9 @@ static inline nova_str Nova_StringBuilder_consume_into(Nova_StringBuilder* b) {
 Ф.2.6:
 
 1. **`@bytes()` → `@to_bytes()`** — allocating copy; `@as_bytes()` (D176,
-   zero-copy `readonly []u8`) остаётся без изменений.
+   zero-copy `ro []u8`) остаётся без изменений.
 2. **`@chars()` → `@to_chars()`** — allocating codepoint slice.
-3. **`@split(sep str) -> []str` → `-> readonly []str`** — возвращает
+3. **`@split(sep str) -> []str` → `-> ro []str`** — возвращает
    zero-copy views в оригинальный буфер; тип сигнализирует об этом.
 4. **`@parse_int_radix(radix int)` + `@parse_int()` → `@parse_int(radix int = 10)`**
    — одна Nova-body функция с keyword-only default-параметром (D102).
@@ -4419,8 +4419,8 @@ static inline nova_str Nova_StringBuilder_consume_into(Nova_StringBuilder* b) {
 5. **`@compare(other str) -> int`** — новый C-примитив; возвращает
    отрицательное/ноль/положительное, как C `strcmp`. Реализован как
    `nova_str_compare` через `__builtin_memcmp`.
-6. **`readonly bytes` parameter syntax** — параметр `from_bytes_lossy` и
-   `from_bytes_unchecked` переписан в форму `readonly bytes []u8` (modifier
+6. **`ro bytes` parameter syntax** — параметр `from_bytes_lossy` и
+   `from_bytes_unchecked` переписан в форму `ro bytes []u8` (modifier
    перед именем параметра, а не перед типом). Оба варианта теперь
    поддерживаются парсером.
 
@@ -4434,7 +4434,7 @@ export external fn str @to_chars() -> []char            // allocating codepoints
 export external fn str @split(sep str) -> ro []str
 export external fn str @compare(other str) -> int       // <0 / 0 / >0
 
-// from_bytes: `readonly` перед именем параметра (новая форма, D178)
+// from_bytes: `ro` перед именем параметра (новая форма, D178)
 export external fn str.from_bytes_lossy(ro bytes []u8) -> str
 export external fn str.from_bytes_unchecked(ro bytes []u8) -> str
 
@@ -4454,15 +4454,15 @@ export import std.runtime.string.{
 }
 ```
 
-**Эквивалентность типов `readonly []u8`:**
+**Эквивалентность типов `ro []u8`:**
 
 ```nova
 ro []u8  ≡  ro [] ro u8
 ```
 
-Оба варианта стриппируют recursive `readonly` до `NovaArray_nova_byte*` в
-C codegen. Различие семантическое — первый «readonly array of u8», второй
-«readonly array of readonly u8» — но в bootstrap-реализации оба ведут
+Оба варианта стриппируют recursive `ro` до `NovaArray_nova_byte*` в
+C codegen. Различие семантическое — первый «ro array of u8», второй
+«ro array of ro u8» — но в bootstrap-реализации оба ведут
 себя идентично (нет изменяющих операций на байтах).
 
 **Default-параметры и keyword-only вызов (D102):**
@@ -4491,7 +4491,7 @@ codegen заполняет пропущенные trailing аргументы и
   аналогичны Rust `to_vec()` / `to_string()`: allocating copy. Без `to_`-prefix
   неясно, zero-copy или нет. `as_bytes()` остаётся как zero-copy аналог Rust
   `as_bytes()`.
-- **`readonly []str` из `split`** — zero-copy views в оригинальный буфер;
+- **`ro []str` из `split`** — zero-copy views в оригинальный буфер;
   тип это выражает явно. Изменять элементы результата нельзя.
 - **Единый `parse_int`** — вместо двух методов (`parse_int()` и
   `parse_int_radix(r)`) один с default-параметром. Упрощает API; radix=10
@@ -4515,7 +4515,7 @@ Legacy C aliases сохранены для совместимости кода, 
 ### Связь
 
 - [D102](02-types.md#d102-keyword-only-default-параметры) — keyword-only default params.
-- [D176](02-types.md#d176-readonly-t--тип-модификатор) — `readonly` type modifier; `as_bytes()`.
+- [D176](02-types.md#d176-ro-t--тип-модификатор) — `ro` type modifier; `as_bytes()`.
 - [D177](#d177-str-nova-body-dispatch--plan-54-ф2-extension) — Nova-body dispatch механизм.
 - [Plan 91.5](../../docs/plans/91.5-str-api-cleanup.md) — sub-plan Ф.2.6 D178.
 
@@ -4609,7 +4609,7 @@ StringBuilder.from(c char)       -> Self   // UTF-8 encode одного codepoin
 | `@byte_len() -> int` | удалён (дублировал `@len()`) |
 | `@peek() -> str` | удалён (unsound: pointer aliasing с realloc) |
 | `@into() -> str` | `@into_str() -> str` (consume) |
-| `@append_bytes(arr []u8)` | `@append_bytes(readonly arr []u8)` |
+| `@append_bytes(arr []u8)` | `@append_bytes(ro arr []u8)` |
 | внешняя реализация C/Rust | чистый Nova-код |
 
 ### Инфраструктура
@@ -4628,7 +4628,7 @@ StringBuilder.from(c char)       -> Self   // UTF-8 encode одного codepoin
 
 - [D131](03-syntax.md#d131-consume-types-и-fluent-api) — consume types и `-> @` fluent API.
 - [D133](02-types.md#d133-consume-static-analysis) — consume static analysis.
-- [D176](02-types.md#d176-readonly-t--тип-модификатор) — `readonly` parameter modifier.
+- [D176](02-types.md#d176-ro-t--тип-модификатор) — `ro` parameter modifier.
 - [D178](#d178-str-api-cleanup-и-расширения--plan-91-ф26) — `str.from_bytes_*` helpers.
 - [Plan 91.6](../../docs/plans/91.6-stringbuilder-nova-type.md) — sub-plan Ф.2.6 sub-phase D179.
 
@@ -4966,9 +4966,9 @@ specific runtime references).
   для Plan 123.3 pure-call caching V3 future.
 - **D131** (consume types) — linearity hints; consume fields skipped
   в V1, могут быть aggressive-cached в V2.
-- **D175** (readonly field freeze) — ro field invariant — единственный
+- **D175** (ro field freeze) — ro field invariant — единственный
   unconditional-cache eligibility источник.
-- **D176** (`readonly T` modifier) — orthogonal к D217 (parameter-
+- **D176** (`ro T` modifier) — orthogonal к D217 (parameter-
   level), но D175 + D176 вместе формируют immutability semantics.
 - **D215** (named tuple) — `NamedTuple` fields treated как ro.
 
@@ -5147,7 +5147,7 @@ position inside loop body.
   bodies that contain these.
 - **D131** (consume types) — consume fields skipped (D217 §3.4
   inherits).
-- **D175** (readonly field freeze) — ro semantics; aliasing-safe
+- **D175** (ro field freeze) — ro semantics; aliasing-safe
   invariance.
 
 ### 10. Implementation milestones

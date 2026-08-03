@@ -17,9 +17,9 @@
 | [D15](#d15-структурные-интерфейсы) | Структурные интерфейсы | revised → D42 → D53 |
 | [D39](#d39-embed-и-delegation-use-name-type-alias-обязателен) | Embed и delegation: `use name Type` (alias обязателен) | active |
 | [D32](#d32-семантика-передачи-параметров) | Семантика передачи параметров | revised для полей → D36 |
-| [D36](#d36-поля-типа-дефолт-mutable-у-mut-bindinga-readonly-для-never-mut) | Поля типа: дефолт mutable у mut-binding'а, `readonly` для never-mut | active |
-| [D175](#d175-readonly-field--полный-freeze-амендмент-d36) | `readonly field` — полный freeze, транзитивность (амендмент D36) | active |
-| [D176](#d176-readonly-t--тип-модификатор) | `readonly T` — тип-модификатор, coercion rules, zero overhead | active |
+| [D36](#d36-поля-типа-дефолт-mutable-у-mut-bindingа-ro-для-never-mut) | Поля типа: дефолт mutable у mut-binding'а, `ro` для never-mut | active |
+| [D175](#d175-ro-field--полный-freeze-амендмент-d36) | `ro field` — полный freeze, транзитивность (амендмент D36) | active |
+| [D176](#d176-ro-t--тип-модификатор) | `ro T` — тип-модификатор, coercion rules, zero overhead | active |
 | [D66](#d66-self-universal--ссылка-на-обобщающий-тип-в-методах-effects-protocols) | `Self` universal: ссылка на обобщающий тип в методах, effects, protocols | active |
 | [D72](#d72-generic-bounds-через-t-protocol--protocol-как-тип) | Generic bounds через `[T Protocol]` — protocol как тип | active |
 | [D110](#d110-ghost-state--spec-only-bindings) | Ghost state — spec-only bindings | active |
@@ -179,8 +179,8 @@ Construction всегда требует все обязательные пол�
   для параметризованных типов.
 - [02-types.md → D42](#d42-protocol-keyword-для-структурных-интерфейсов)
   — почему `protocol` отдельный keyword, а не `type X = { методы }`.
-- [02-types.md → D36](#d36-поля-типа-дефолт-mutable-у-mut-bindinga-readonly-для-never-mut)
-  — префиксы полей (`readonly`, `mut`) и group-syntax внутри record.
+- [02-types.md → D36](#d36-поля-типа-дефолт-mutable-у-mut-bindingа-ro-для-never-mut)
+  — префиксы полей (`ro`, `mut`) и group-syntax внутри record.
 
 ---
 
@@ -603,8 +603,8 @@ match @buckets[idx] {
   помечена revised → D52.
 - [D42](#d42-protocol-keyword-для-структурных-интерфейсов) —
   `protocol` остаётся отдельным keyword'ом для поведения.
-- [D36](#d36-поля-типа-дефолт-mutable-у-mut-bindinga-readonly-для-never-mut)
-  — префиксы полей (`readonly`, `mut`) и group-syntax внутри record.
+- [D36](#d36-поля-типа-дефолт-mutable-у-mut-bindingа-ro-для-never-mut)
+  — префиксы полей (`ro`, `mut`) и group-syntax внутри record.
 - [D39](#d39-embed-и-delegation-use-type-и-use-name-type) —
   delegation через `use Type`. Newtype с embed (`type X { use Y }`)
   — альтернатива alias для случаев, когда нужна обёртка с
@@ -2953,7 +2953,7 @@ string-literal»):
 
 ## D32. Семантика передачи параметров
 
-> Status: revised для полей. [D36](#d36-поля-типа-дефолт-mutable-у-mut-bindinga-readonly-для-never-mut)
+> Status: revised для полей. [D36](#d36-поля-типа-дефолт-mutable-у-mut-bindingа-ro-для-never-mut)
 > переписал семантику `mut` **на поле типа**. Семантика `mut` **на
 > параметре** (этот D32) — без изменений.
 >
@@ -3085,7 +3085,7 @@ add_item(my_order, item1)
 
 **Иммутабельный binding.** Без `mut` параметр нельзя мутировать ни
 одно поле (кроме помеченных `mut` per-field — см.
-[D36](#d36-поля-типа-дефолт-mutable-у-mut-bindinga-readonly-для-never-mut)):
+[D36](#d36-поля-типа-дефолт-mutable-у-mut-bindingа-ro-для-never-mut)):
 
 ```nova
 type Account { balance money }
@@ -3134,7 +3134,7 @@ fn process_audio(samples []f32) Realtime -> []f32 =>
    mutable references по умолчанию, программист помнит наизусть.
 3. **`mut` — единый префикс для разных случаев** (let, поле,
    параметр). Везде «mut = разрешена мутация» — одно понятие, не
-   разные. Согласовано с [D36](#d36-поля-типа-дефолт-mutable-у-mut-bindinga-readonly-для-never-mut)
+   разные. Согласовано с [D36](#d36-поля-типа-дефолт-mutable-у-mut-bindingа-ro-для-never-mut)
    и [03-syntax.md → D33](03-syntax.md#d33).
 
 ### Что отвергнуто
@@ -3154,7 +3154,7 @@ fn process_audio(samples []f32) Realtime -> []f32 =>
   показывает: без borrow инфраструктура интернета работает.
 
 ### Связь
-- [02-types.md → D36](#d36-поля-типа-дефолт-mutable-у-mut-bindinga-readonly-для-never-mut)
+- [02-types.md → D36](#d36-поля-типа-дефолт-mutable-у-mut-bindingа-ro-для-never-mut)
   — пересмотр семантики `mut` для полей типа. Параметры — без
   изменений.
 - [05-memory.md → D6](05-memory.md#d6) — managed heap делает
@@ -3171,7 +3171,7 @@ fn process_audio(samples []f32) Realtime -> []f32 =>
 В D32 поле типа `mut field` мутировалось только у `mut`-binding'а.
 Для аккумуляторов (все поля mutable) приходилось писать `mut` 18 раз —
 шум без пользы. D36 переписал это: дефолт mutable у `mut`-binding'а,
-`readonly` для never-mut, `mut` per-field — только для cache/lazy.
+`ro` для never-mut, `mut` per-field — только для cache/lazy.
 Семантика параметров не менялась.
 
 ---
@@ -3183,7 +3183,7 @@ fn process_audio(samples []f32) Realtime -> []f32 =>
 > stable API. Семантика per-field freeze не меняется.
 
 ### Что
-Поле без префикса мутируется, **если binding mutable**. `readonly`
+Поле без префикса мутируется, **если binding mutable**. `ro`
 запрещает мутацию даже у mutable binding'а (для id, foreign keys,
 invariants). `mut` per-field разрешает мутацию даже у immutable
 binding'а (для cache, lazy init, atomic counters — аналог C++
@@ -3205,7 +3205,7 @@ type RunAcc {
 mut acc = RunAcc { att_wins: 0, def_wins: 0, ... }
 acc.att_wins += 1                   // ок — binding mut, поле без ro
 
-// Структура с invariant'ами — readonly для read-only полей
+// Структура с invariant'ами — ro для read-only полей
 type Account {
     ro id u64                 // никогда не меняется
     ro owner str              // тоже
@@ -3261,7 +3261,7 @@ type Account {
 | Объявление поля | Mutable у `let acc` | Mutable у `let mut acc` | Use case |
 |---|---|---|---|
 | `field T` (без префикса) | нет | **да** | большинство полей |
-| `readonly field T` | **никогда** | **никогда** | id, immutable invariants |
+| `ro field T` | **никогда** | **никогда** | id, immutable invariants |
 | `mut field T` | **да** | **да** | cache, lazy init, atomic counters |
 
 ### Почему
@@ -3270,11 +3270,11 @@ type Account {
    полями писать без префиксов — все поля «обычные», никаких
    акцентов. Раньше 18 раз `mut` — визуальный мусор.
 2. **Сигнатура показывает только важное.** Префикс ставится **только
-   на исключения** (`readonly` для invariants, `mut` для cache).
-   LLM, читая тип, видит: `readonly id` — «не трогай», обычное поле
+   на исключения** (`ro` для invariants, `mut` для cache).
+   LLM, читая тип, видит: `ro id` — «не трогай», обычное поле
    — «можно мутировать с mut-binding'ом».
 3. **Прецедент Rust/Go/C++** — поля без префикса мутируются у
-   mut-binding'а; `readonly` для never-mut близко к C++ `const`
+   mut-binding'а; `ro` для never-mut близко к C++ `const`
    member.
 
 ### Что отвергнуто
@@ -3291,12 +3291,12 @@ type Account {
   defaults + явная мутация» из Swift/Rust.
 - **`final` (Java-стиль)** для never-mut полей. Короче, прецедент
   Java/Dart/Kotlin, но семантически перегружен (`final method`,
-  `final class`, `final var`). `readonly` прямо говорит «только для
+  `final class`, `final var`). `ro` прямо говорит «только для
   чтения».
 - **`let` для never-mut полей.** Короче (3 символа), прецедент Swift,
   но `let` уже значит «binding имени со значением»
   ([03-syntax.md → D33](03-syntax.md#d33)). На поле без `=`
-  необычно, не самообъясняемо. `readonly` прямо говорит цель.
+  необычно, не самообъясняемо. `ro` прямо говорит цель.
 - **`const` (C++-стиль).** Конфликт с
   [03-syntax.md → D33](03-syntax.md#d33) — там `const` =
   compile-time константа. Здесь — runtime-immutable. Перегрузка
@@ -3310,7 +3310,7 @@ type Account {
 - [02-types.md → D17](#d17-объявление-типов-единый-синтаксис-без-)
   — group-syntax для полей одного типа внутри record.
 - [03-syntax.md → D33](03-syntax.md#d33) — `let` это immutable
-  binding; на поле — аналогия в роли `readonly`.
+  binding; на поле — аналогия в роли `ro`.
 - [03-syntax.md → D35](03-syntax.md#d35) — `fn Type mut @method`
   даёт mutable-binding self, поля затем по правилам D36.
 
@@ -3318,7 +3318,7 @@ type Account {
 До D36 поле помечалось `mut field T`, мутируемое только у
 `mut`-binding'а (D32). Для аккумуляторов это требовало 18 раз
 повторить `mut` — шум без пользы. D36 инвертировал дефолт: «обычное
-поле — мутируется у mut-binding'а», `readonly` — для исключений.
+поле — мутируется у mut-binding'а», `ro` — для исключений.
 Семантика параметров (D32) не менялась. Подробно — в
 `history/evolution.md`.
 
@@ -3356,7 +3356,7 @@ amend Plan 108.1) — ownership transfer → владелец может мут�
 
 **Symmetry с D176 (Plan 108.1):**
 
-| Контекст | Default = readonly? | Opt-in mut |
+| Контекст | Default = ro? | Opt-in mut |
 |---|---|---|
 | Param | ✓ (Plan 108.1) | `mut name T` |
 | Local binding | ✓ (Plan 108.2) | `let mut x = ...` |
@@ -3415,8 +3415,8 @@ p = &w                     // ✗ existing E_REBIND — p ro binding
 (`mut * T`) запрещён ([D216 §1](#d216-typed-pointer-family--unsafe-model--null-safety-через-npo) `E_POINTER_PREFIX_MODIFIER`).
 
 ### Связь
-- [02-types.md → D175](#d175-readonly-field--полный-freeze-амендмент-d36) — readonly field полный freeze.
-- [02-types.md → D176](#d176-readonly-t--тип-модификатор) — readonly T modifier + Plan 108.1 param default flip.
+- [02-types.md → D175](#d175-ro-field--полный-freeze-амендмент-d36) — ro field полный freeze.
+- [02-types.md → D176](#d176-ro-t--тип-модификатор) — ro T modifier + Plan 108.1 param default flip.
 - [02-types.md → D216 §1/§V2.6](#d216-typed-pointer-family--unsafe-model--null-safety-через-npo) — указатель: pointee-mut в типе (postfix), reassignability = binding (Plan 138.5).
 - [03-syntax.md → D33](03-syntax.md#d33) — `let` это immutable binding.
 
@@ -3443,7 +3443,7 @@ p = &w                     // ✗ existing E_REBIND — p ro binding
 | `ro field T` | ❌ никогда | ❌ никогда | id, invariants, frozen state |
 | `field ro T` | у `mut` binding | ❌ никогда | mutable ref, immutable content |
 | `mut field T` | ✅ всегда | у `mut` binding | cache, lazy init |
-| `mut field ro T` | ✅ всегда | ❌ никогда | swappable readonly view |
+| `mut field ro T` | ✅ всегда | ❌ никогда | swappable ro view |
 
 **Транзитивность:** если поле объявлено `ro`, доступ через него
 также запрещает мутацию вложенных полей и вызов `mut`-методов:
@@ -3461,8 +3461,8 @@ acc.tags.items.push("x")      // E_READONLY_FIELD (транзитивно)
 ```
 
 ### Связь
-- [D36](#d36-поля-типа-дефолт-mutable-у-mut-bindinga-readonly-для-never-mut) — расширяется
-- [D176](#d176-ro-t-тип-модификатор) — `ro` как тип-позиция
+- [D36](#d36-поля-типа-дефолт-mutable-у-mut-bindingа-ro-для-never-mut) — расширяется
+- [D176](#d176-ro-t--тип-модификатор) — `ro` как тип-позиция
 - [D184](03-syntax.md#d184) — keyword refresh (readonly → ro rename)
 
 ---
@@ -3547,7 +3547,7 @@ mut q *u8 = peek_head(buf)                  // binding mut: q reassignable; targ
 ```
 
 Реассайнабельность результата (`p = other_ptr`) задаётся **bind-site**
-(`ro`/`mut`, [D36](#d36-поля-типа-дефолт-mutable-у-mut-bindinga-readonly-для-never-mut)),
+(`ro`/`mut`, [D36](#d36-поля-типа-дефолт-mutable-у-mut-bindingа-ro-для-never-mut)),
 не возвращаемым типом. Это устраняет прежнюю двусмысленность «двух mut» в
 return-позиции (pointee-mut в типе vs reassignability указателя).
 
@@ -3592,24 +3592,24 @@ receiver — его access-mutability не может быть строже, ч�
 
 ### Escape hatch
 
-Снять `readonly` в Nova-коде нельзя. Кому нужен mutable доступ —
+Снять `ro` в Nova-коде нельзя. Кому нужен mutable доступ —
 явно копирует: `let copy []u8 = view.to_owned()`. Если необходим
 обход через FFI, это делается в `external fn` на C-стороне.
 
 ### Рантайм
 
-Zero overhead — `readonly` только compile-time проверка, не влияет
-на codegen. ABI `readonly []u8` = `NovaArray_uint8_t*` (идентично `[]u8`).
+Zero overhead — `ro` только compile-time проверка, не влияет
+на codegen. ABI `ro []u8` = `NovaArray_uint8_t*` (идентично `[]u8`).
 
 ### Применение
 
-`str.as_bytes() -> readonly []u8` — zero-copy view в UTF-8 буфер строки
+`str.as_bytes() -> ro []u8` — zero-copy view в UTF-8 буфер строки
 без memcpy. UTF-8 invariant защищён: записать в буфер нельзя.
 
 ### Параметры функций (Plan 108.1)
 
 **Default = read-only.** Параметр без явного модификатора эквивалентен
-`readonly param T` — callee может только читать, не вызывать `mut`-методы,
+`ro param T` — callee может только читать, не вызывать `mut`-методы,
 не присваивать через индекс.
 
 ```nova
@@ -3623,30 +3623,30 @@ fn f(consume b []int) { ... }     // ✓ owned move — mut по умолчан�
 
 | Сочетание | Результат |
 |---|---|
-| `param T` | readonly (default) |
+| `param T` | ro (default) |
 | `mut param T` | mutable view |
-| `readonly param T` | readonly (явно) — synonym default |
+| `ro param T` | ro (явно) — synonym default |
 | `consume param T` | owned move, mut by default |
 | `mut consume param T` | ✗ parser-level `E_PARAM_MOD_CONFLICT` |
 | `consume mut param T` | ✗ parser-level `E_PARAM_MOD_CONFLICT` |
-| `mut readonly param T` | ✗ parser-level `E_PARAM_MOD_CONFLICT` |
-| `readonly mut param T` | ✗ parser-level `E_PARAM_MOD_CONFLICT` |
+| `mut ro param T` | ✗ parser-level `E_PARAM_MOD_CONFLICT` |
+| `ro mut param T` | ✗ parser-level `E_PARAM_MOD_CONFLICT` |
 
 **Coercion (передача аргумента в параметр).**
 
-После Plan 108.1 `T` в позиции параметра **уже readonly по умолчанию**.
-Поэтому `readonly T → T (param)` — это `readonly → readonly` (тождество),
-а единственное реальное нарушение это `readonly → mut`:
+После Plan 108.1 `T` в позиции параметра **уже ro по умолчанию**.
+Поэтому `ro T → T (param)` — это `ro → ro` (тождество),
+а единственное реальное нарушение это `ro → mut`:
 
 | caller-type → callee-param-type | OK? |
 |---|---|
-| `T → T` (param default readonly) | ✓ (caller-T → callee-readonly = сужение) |
-| `T → readonly T` (param explicit readonly) | ✓ (synonym default) |
+| `T → T` (param default ro) | ✓ (caller-T → callee-ro = сужение) |
+| `T → ro T` (param explicit ro) | ✓ (synonym default) |
 | `T → mut T` (param explicit mut) | ✓ (caller разрешает mut доступ) |
-| `readonly T → T` (param default readonly) | ✓ — оба readonly |
-| `readonly T → readonly T` | ✓ |
-| `readonly T → mut T` (param explicit mut) | ✗ `E_READONLY_COERCE` — единственное нарушение |
-| `mut T → T` (param default readonly) | ✓ (сужение, mutable можно показать как readonly) |
+| `ro T → T` (param default ro) | ✓ — оба ro |
+| `ro T → ro T` | ✓ |
+| `ro T → mut T` (param explicit mut) | ✗ `E_READONLY_COERCE` — единственное нарушение |
+| `mut T → T` (param default ro) | ✓ (сужение, mutable можно показать как ro) |
 | `mut T → mut T` | ✓ |
 
 **Closure-параметры** — аналогично функциональным.
@@ -3657,19 +3657,19 @@ fn f(consume b []int) { ... }     // ✓ owned move — mut по умолчан�
   параметре без `mut` теперь даёт `E_PARAM_NOT_MUT`.
 - ✅ `[M-108-readonly-coerce-on-param]` — closed **дефакто**:
   старая формулировка маркера предполагала, что param `T` mutable;
-  после Plan 108.1 param `T` уже readonly, поэтому coerce `readonly T →
-  T (param)` — это `readonly → readonly` (no violation).  Единственный
-  остаточный case — `readonly T → mut T (param explicit)` — отдельный
+  после Plan 108.1 param `T` уже ro, поэтому coerce `ro T →
+  T (param)` — это `ro → ro` (no violation).  Единственный
+  остаточный case — `ro T → mut T (param explicit)` — отдельный
   followup `[M-108.1-readonly-to-explicit-mut-coerce]` (узкий нишевый
   сценарий, не блокирует).
 
 ### Связь
-- [D36](#d36-поля-типа-дефолт-mutable-у-mut-bindinga-readonly-для-never-mut) — `readonly field` предшественник
-- [D175](#d175-readonly-field--полный-freeze-амендмент-d36) — readonly field enforcement
+- [D36](#d36-поля-типа-дефолт-mutable-у-mut-bindingа-ro-для-never-mut) — `ro field` предшественник
+- [D175](#d175-ro-field--полный-freeze-амендмент-d36) — ro field enforcement
 - [D144](#d144-sub-slice-views-для-t-и-str--arra-b--sa-b) — слайсы `arr[a..b]`
 - [D157](#d157) — view-borrow для consume-типов (Plan 108.1 распространяет принцип на не-consume)
 - Plan 108 — реализация D175/D176
-- Plan 108.1 — params readonly by default + закрытие 2 markers
+- Plan 108.1 — params ro by default + закрытие 2 markers
 
 ---
 
@@ -7758,9 +7758,9 @@ fn User.guest() -> Self => { name: "guest", email: "", is_admin: false }
 | `@reserve(extra int)` | `-> @` |
 | `@truncate(n int)` | `-> @` |
 | `@fill(v T)` | `-> @` |
-| `@copy_from(src readonly []T)` | `-> @` |
-| `@extend_from(src readonly []T)` | `-> @` |
-| `@insert_from(i int, src readonly []T)` | `-> @` |
+| `@copy_from(src ro []T)` | `-> @` |
+| `@extend_from(src ro []T)` | `-> @` |
+| `@insert_from(i int, src ro []T)` | `-> @` |
 | `@copy_within(src_from, dst_from, len)` | `-> @` |
 | `@sort()` (Nova-side) | `-> @` |
 | `@sort_by(cmp)` | `-> @` |
@@ -8691,7 +8691,7 @@ Box.SIZE                                    // ✗ E_GENERIC_CONST_REQUIRES_INST
 
 ### Cross-ref
 
-- [D36](#d36-поля-типа-дефолт-mutable-у-mut-bindinga-readonly-для-never-mut) — field-decl extended.
+- [D36](#d36-поля-типа-дефолт-mutable-у-mut-bindingа-ro-для-never-mut) — field-decl extended.
 - [D184](03-syntax.md#d184) — Plan 114 master keyword refresh.
 - [D199](03-syntax.md#d199-const-fn--comptime-evaluable-functions) — `const fn` (могут использоваться для assoc const RHS).
 - [D27](03-syntax.md#d27-синтаксис-массивов-t-префикс-nt-фиксированные) — `[N]T` arrays.
@@ -9393,7 +9393,7 @@ Reassignability указателя — L1 binding (`ro`/`mut`, D36), незав�
 (б) явный `mut` в позиции **возврата** избыточен (возвращённое значение —
 собственность вызывающего, мутабельность решает его биндинг) → hard error
 `E_REDUNDANT_RETURN_MUT` (fix-it: `-> T`); НЕ задевает `-> *mut T`
-(L3 pointee-capability) и `-> ro T` (осмысленный readonly-view, oracle row D).
+(L3 pointee-capability) и `-> ro T` (осмысленный ro-view, oracle row D).
 Тесты: conformance/neg/d246_redundant_param_ro_{prefix,type}_neg,
 d246_redundant_return_mut_neg; позитив-граница d246_param_ro_mut_view.
 
@@ -10652,7 +10652,7 @@ deref в `unsafe {}`). Это единственная nullable-форма; от
    - Retire `Unsafe(Pointer)` (`unsafe * T`): → `Option[*T]` / `Option[*unsafe T]`.
 
 6. **Spec amends downstream:**
-   - D36 (binding readonly default) — reassignability указателя = binding cross-ref.
+   - D36 (binding ro default) — reassignability указателя = binding cross-ref.
    - D184 (return mut default) — pointer-return = **pointee**-mut.
    - D216 §1-3 — postfix pointee canonical (выполнено).
    - D217 (FFI intrinsics) — RawMem signatures postfix (Plan 138.5 Ф.2).
@@ -10720,7 +10720,7 @@ deref в `unsafe {}`). Это единственная nullable-форма; от
 - **D33** (binding propagation) — extend rule к value-T `mut` / `unsafe` / `consume`
 - **D216 §1-3** — pointer modifier syntax = **postfix pointee canonical**
   (Plan 138.5; prefix перед `*` запрещён)
-- **D36** (binding readonly default) — reassignability указателя = binding (не тип)
+- **D36** (binding ro default) — reassignability указателя = binding (не тип)
 - **D184** (return mut default) — pointer-return ставит **pointee**-mut
 - **D217** (FFI intrinsics) — RawMem signatures postfix pointee
 - **D218** (slice + MaybeUninit) — MaybeUninit subsumed `unsafe T` (см. D218 RETRACTED)
@@ -11156,7 +11156,7 @@ a[1] = 99                  // ❌ E_READONLY_CONTENT (ro binding P7)
 
 - **D216 §V2.6** — «`*T ≡ *ro T`» (always-ro pointee) **RESTORED** (flip-scan-draft retract).
 - **D33** (binding propagation) — L1 ось; не propagates в L3 (стоп на `*`, P4).
-- **D36** (binding readonly default) — L1 binding = reassignability, **только**;
+- **D36** (binding ro default) — L1 binding = reassignability, **только**;
   НЕ задаёт pointee-capability (L3 из типа).
 - **D175 §V2** (binding dominates / access-time) = **L2 view-семантика — KEEP**;
   добавлено «freeze STOPS at every `*`» (P4) + пример vr-с-`*mut`-полем.
@@ -12226,7 +12226,7 @@ obligation** — semantic D-блоки D131 (linearity), D133 (consume types),
 D162 (consume types implementation), D164 (D-block consume types).
 
 Examples of the asymmetry:
-- `ro T` value — readonly view; multiple readonly aliases allowed.
+- `ro T` value — ro view; multiple ro aliases allowed.
 - `mut T` value — mutable; subject к binding-dominates rule (D175 amend).
 - `unsafe T` value — MaybeUninit; read requires assertion (D216 V2 §V2.3).
 - `consume T` value — **owned uniquely**; passing transfers ownership,
@@ -12287,8 +12287,8 @@ passing» Ф.2 §rvalue receiver).
 | `b.v.set_x()` | `mut b`, `mut v` field | OK |
 | `make_body().v.set_x()` | rvalue base | OK (no-op semantically — temp) |
 
-**Symmetry с D175 (readonly field freeze):** projection-chain root check
-независимая ось от per-field readonly enforcement. `mut b; b.v.set_x()`
+**Symmetry с D175 (ro field freeze):** projection-chain root check
+независимая ось от per-field ro enforcement. `mut b; b.v.set_x()`
 с `ro v` field остаётся `E_FIELD_NOT_MUT` (D175 invariant); orthogonal
 к D33 root walk.
 
@@ -13064,7 +13064,7 @@ mut c Acc = make_ro_acc()    // ❌ E_READONLY_COERCE
 - D33 amend (binding propagation) — [02-types.md:8927](#d33-amend-binding-propagation-plan-1248-ф2)
 - D36 / Plan 108.2 enforcement — [02-types.md:2684](#enforcement-plan-1082-2026-05-30)
 - D175 V1 amend (this section, just above)
-- D176 (readonly T modifier + Plan 108.1 param default flip) — [02-types.md:2763](#d176-readonly-t--тип-модификатор)
+- D176 (ro T modifier + Plan 108.1 param default flip) — [02-types.md:2763](#d176-ro-t--тип-модификатор)
 - D184 (Plan 114 — `let` keyword retracted) — [03-syntax.md#d184](03-syntax.md#d184)
 - D216 V2 (right-binding rule + universal type modifiers) — [02-types.md:7790](#d216-v2-amend-2026-06-04--universal-right-binding-rule-для-type-level-modifiers--unsafe-t-first-class)
 
@@ -13417,7 +13417,7 @@ attention; lint бы создавал noise. Suppression channel прописа�
   как обычно.
 - `priv` field: на promoted value-record (`Nova_X*`) field privacy
   preserved (Nova_X имеет те же priv markers, что и NovaValue_X).
-- `readonly` binding: `ro` binding propagates через promote — `Nova_X*
+- `ro` binding: `ro` binding propagates через promote — `Nova_X*
   const` в C output для ro path.
 
 #### Method receiver compatibility
@@ -15635,7 +15635,7 @@ Codegen fix: при вызове `@[j].compare(key)` внутри generic `fn[T 
   u32). Одно каноническое окно убивает класс дрейфа в корне.
 - **Спайк (2026-06-21)** доказал: текущий `ResolvedType` лосси для C — берёт `path.last()` (теряет
   модуль), схлопывает `*mut T` (форма `Pointer(Mut)`) в `TypedPtr(Ro,…)`, разворачивает L2
-  `readonly`. Значит прежнее допущение плана (M2: «носитель достаточен») неверно; D315 ставит целью
+  `ro`. Значит прежнее допущение плана (M2: «носитель достаточен») неверно; D315 ставит целью
   **обогащение до lossless-canonical** + ретайр `type_ref_to_c`.
 
 ### Что отвергнуто
@@ -15671,7 +15671,7 @@ Codegen fix: при вызове `@[j].compare(key)` внутри generic `fn[T 
   компилятора»**; спайк нашёл текущий носитель лосси → обогащение-до-lossless + ретайр
   `type_ref_to_c` поставлены целью. Supersedes врезку M2 Plan 172.1.
 - **2026-06-21 (Plan 172.1 U.4.6→U.4.8):** цель реализована. U.5.5(a) сделал `ResolvedType`
-  lossless для C (модуль-путь / `*mut` / L2 readonly); U.4.6 построил единый `resolved_type_to_c`
+  lossless для C (модуль-путь / `*mut` / L2 ro); U.4.6 построил единый `resolved_type_to_c`
   (ABI-лоуэринг ЧТЕНИЕМ полей `ResolvedType`, без повторного резолва) до byte-identical паритета;
   U.4.7 флипнул `type_ref_to_c` на делегирование; **U.4.8 (`e1f1d96a`) удалил дублирующий
   `type_ref_to_c_impl`** — `resolved_type_to_c` стал `Result<String,String>` (несёт причину отказа
@@ -16708,7 +16708,7 @@ walk-семейство, зеркалящее reachable-позиции суще�
 принадлежит другому execution-context) — если значение является closure-
 литералом (`ExprKind::Lambda`/`ClosureLight`/`ClosureFull`) И объявленный
 return-тип резолвится (`ResolvedType::from_type_ref`, сквозь
-`readonly`/`mut`/`unsafe`-модификаторы) в `Bool`/`Scalar`/`Float`/голый
+`ro`/`mut`/`unsafe`-модификаторы) в `Bool`/`Scalar`/`Float`/голый
 `char` — ошибка. Возврат closure против **fn-типа** (`TypeRef::Func` —
 легитимный HOF-возврат) НЕ флагуется — это единственный legal target для
 closure-значения.
