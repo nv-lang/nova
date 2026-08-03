@@ -90,3 +90,86 @@ functions — each of them declares the effect in its signature, but `with` is
 not repeated. This solves the problem of "the implementation has to be passed
 as a parameter through every intermediate function": you set `with` once —
 it is visible everywhere below on the stack.
+
+## Syntax
+
+Effects go **between the parameter list and `->`**:
+
+```nova
+fn double(x int) -> int                       // чистая
+fn parse(s str) Fail -> int                 // может бросить
+fn save(u User) Fail Db Log -> ()           // три эффекта
+fn fetch(url str) Net Fail -> Response
+```
+
+The boundary is given by structure: everything between `)` and `->` — effects.
+
+## Names — ordinary named types
+
+Effects are **named `effect`-types** (per [D61](decisions/04-effects.md#d61)),
+in PascalCase. Declared via the `effect` kind-token, distinguished from
+structural contracts (`protocol`) by the semantics of `with`-substitution
+and continuation-capture.
+
+```nova
+type Logger effect {
+    log(msg str) -> ()
+}
+
+ro console = effect Logger {
+    log(msg) -> () => println(msg)
+}
+```
+
+`effect Logger { ... }` — a handler literal: the same `effect` keyword
+as in the type declaration ([D61](decisions/04-effects.md#d61)/[D142](decisions/02-types.md#d142)
+— symmetry between declaration and literal for `effect`/`protocol`).
+**The old `handler` keyword for the literal is retracted without a
+deprecated alias** (2026-05-23, clean break) — the compiler, on meeting
+`handler X { ... }`, emits a diagnostic "`handler` keyword removed; use
+`effect` (D142)". Unambiguity with a record literal (`User { id: 1 }`)
+is provided by the `effect`/`protocol` keyword itself, not a separate prefix.
+
+**Every operation of a handler literal must state `-> Type` explicitly**
+([D434](decisions/04-effects.md#d434), 2026-07-22) — the only place in the
+language where the return type used to be syntactically optional. Omitting
+it gives `E_INCOMPLETE_HANDLER_OP_DECL`; a mismatch with the operation's
+type in the effect declaration gives `E_HANDLER_OP_RETURN_TYPE_MISMATCH`.
+Parameter types still don't have to be repeated (`log(msg) ->
+() => ...`) — only the return is mandatory.
+
+## The effect name in code — three positions
+
+```nova
+fn process() Db -> ()                  // 1. позиция типа
+Db.query(sql`...`)                     // 2. позиция операции
+ro captured = Db                      // 3. позиция выражения = активный handler
+```
+
+The parser distinguishes by position.
+
+## Standard effects
+
+| Effect | What it describes |
+|---|---|
+| `Fail[E]` | Contract for catching and handling an error of type E |
+| `Io` | stdin/stdout/stderr |
+| `Fs` | File system |
+| `Net` | Network requests |
+| `Db` | Database |
+| `Time` | Clock, timers, delays |
+| `Random` | RNG |
+| `Log` | Structured logging |
+| `Trace` | Distributed tracing |
+| `Ask[T]` | Reading from context (like Reader) |
+| `Alloc[R]` | Allocation in region R |
+| `Detach` | A fire-and-forget task outliving the caller ([D50](decisions/06-concurrency.md#d50)) |
+| `Blocking` | A synchronous C call on a blocking-pool thread ([D50](decisions/06-concurrency.md#d50)) |
+
+`Async`, `Mut`, `Par` are **not** in the standard set per
+[D62](decisions/04-effects.md#d62): `Async` — ambient capability
+(not part of the type system), `Mut` — replaced by specialized
+effects, `Par` — the runtime keyword `parallel for` / `spawn`.
+
+A programmer can declare custom effects — that is an ordinary
+type declaration via `effect`.
