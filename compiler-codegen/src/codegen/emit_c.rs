@@ -57810,37 +57810,36 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     }
                                 }
                             }
-                            // Plan 161: blanket protocol-receiver fallback.
-                            // `fn[I Next[T]] I @m()` is registered in mono_method_decls
-                            // under key ("I", "m"), not under the concrete type
-                            // ("VecIter____nova_int", "m"). When the method_overloads and
-                            // generic_type_instance_info lookups above both miss for the
-                            // concrete receiver type, scan mono_method_decls for a bare
-                            // typevar (1-2 uppercase letters) entry matching the method
-                            // name, and use type_ref_to_c on its return type (with T
-                            // unresolved → erased to NovaOpt_nova_int via existing erasure
-                            // path — consistent with the actual forward-decl signature).
-                            // Fires for generic-mono receiver types (containing "____") OR a
-                            // CONCRETE type directly registered in `type_impl_protocols`
-                            // (`SplitIter`/`RSplitIter`/`CharsIter` and friends — a plain
-                            // `value` record with a fixed, non-generic `#impl(Next[<elem>])`,
-                            // no `____` mono args to key off). Primitive/erased receivers
-                            // have neither, so they still fall through to the existing paths.
+                            // Plan 161: blanket fallback (`fn[I Next[T]] I @m()` registered
+                            // under ("I","m"), not the concrete type). Fires for generic-mono
+                            // receivers ("____") or a concrete `#impl`-registered type.
                             if Self::debt_contains_mono_sep(&rt)
                                 || self.type_impl_protocols.get(&rt).is_some()
                             {
                                 let mn_ref: &str = &mn;
-                                let blanket_fd = self.mono_method_decls.iter()
-                                    .find(|((tvname, mname), fd)| {
-                                        mname == mn_ref
-                                        && tvname.len() <= 2
-                                        && tvname.chars().all(|c| c.is_ascii_uppercase())
-                                        && !fd.generics.is_empty()
-                                        && fd.generics.iter().any(|g| !g.bounds.is_empty())
-                                    })
-                                    // Plan 164 fix: capture tvname alongside fd so we can
-                                    // look up the RECEIVER generic by name (not by position).
-                                    .map(|((tvname, _), fd)| (tvname.clone(), fd.clone()));
+                                // №295 [M-blanket-overload-same-name-mono-registry-collision]:
+                                // two blankets can share a method name under different typevar
+                                // keys (`("I","collect")` Next[T] vs `("C","collect")` Iter[I]
+                                // delegate, §254 pt.4); a blind `.find()` (hash order, CU-dep)
+                                // could grab the wrong one, erasing T (CC-FAIL nova_int→nova_str,
+                                // polaris 37/0/18→17/20/18). Rank Next-like first (mirrors
+                                // dispatch protocols_match/specificity, ~43733) and pick the
+                                // first candidate whose bound the receiver satisfies; else
+                                // first-match (byte-identical pre-#254 / no registry entry).
+                                let rt_base: &str = rt.find("____").map(|i| &rt[..i]).unwrap_or(&rt);
+                                let proto_name = |b: &TypeRef| if let TypeRef::Named { path, .. } = b { path.last().cloned() } else { None };
+                                let recv_protos = self.type_impl_protocols.get(rt_base);
+                                let sat = |g: &GenericParam| g.bounds.is_empty() || g.bounds.iter().all(|b| proto_name(b)
+                                    .map(|p| recv_protos.map(|s| s.iter().any(|x| impl_spec_base_name(x) == p)).unwrap_or(false)).unwrap_or(false));
+                                let mut cands: Vec<(String, FnDecl)> = self.mono_method_decls.iter()
+                                    .filter(|((tv, mname), fd)| mname == mn_ref && tv.len() <= 2 && tv.chars().all(|c| c.is_ascii_uppercase())
+                                        && !fd.generics.is_empty() && fd.generics.iter().any(|g| !g.bounds.is_empty()))
+                                    .map(|((tv, _), fd)| (tv.clone(), fd.clone())).collect();
+                                cands.sort_by_key(|(tv, fd)| (fd.generics.iter().find(|g| &g.name == tv)
+                                    .map_or(false, |g| g.bounds.iter().any(|b| proto_name(b).as_deref() == Some("Iter"))), tv.clone()));
+                                let blanket_fd = cands.iter()
+                                    .find(|(tv, fd)| fd.generics.iter().find(|g| &g.name == tv).map(sat).unwrap_or(false))
+                                    .cloned().or_else(|| cands.first().cloned());
                                 if let Some((blanket_tvname, fd)) = blanket_fd {
                                     self.icr_trace("B08_blanket_protocol_receiver");
                                     if let Some(ret_ty) = &fd.return_type {
