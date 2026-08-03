@@ -216,11 +216,18 @@ fi
 # ---------------------------------------------------------------------
 ratchet_check() {  # key current_value description
     local key="$1" cur="$2" desc="$3" base
-    base=$(grep -E "^$key=" "$BASELINE" 2>/dev/null | cut -d= -f2)
+    # Только СТРОКИ-ЗНАЧЕНИЯ: ключ=целое до конца строки. Комментарий,
+    # потерявший ведущую '#', больше не может быть принят за значение
+    # (№290: именно так страж молча уходил в ветку «ok» на любом числе).
+    base=$(grep -E "^$key=[0-9]+[[:space:]]*$" "$BASELINE" 2>/dev/null | tail -1 | cut -d= -f2 | tr -d '[:space:]')
     if [ -z "$base" ]; then
-        red "$key: нет '$key=' в $BASELINE (страж не может ratchet-ить без базы)"
+        red "$key: в $BASELINE нет строки '$key=<целое>' (страж не может ratchet-ить без базы)"
         return
     fi
+    case "$cur" in ''|*[!0-9]*)
+        red "$key: текущее значение '$cur' не целое — страж сломан, чинить скрипт"
+        return ;;
+    esac
     if [ "$cur" -gt "$base" ]; then
         red "$key=$cur > baseline=$base ($desc; рост запрещён без письменной правки baseline в этом же коммите)"
     else

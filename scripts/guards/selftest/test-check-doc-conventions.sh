@@ -11,7 +11,31 @@ fails=0
 note_fail() { echo "SELFTEST FAIL: $1" >&2; fails=$((fails + 1)); }
 
 setup_tree() {  # корень, куда кладём guard+baseline co-located (как в реальной репе)
-    rm -rf "$TMP"
+    # ---------------------------------------------------------------------
+# 7 (№290). РЕАЛЬНЫЙ файл базы, не синтетический: (а) каждый ключ обязан
+# разбираться в ЦЕЛОЕ; (б) комментарий, потерявший ведущую '#', НЕ должен
+# приниматься за значение. Прежний селфтест строил свою базу и потому не
+# видел, что настоящая сломана — страж молча уходил в ветку «ok».
+# ---------------------------------------------------------------------
+(
+    real_base="$(dirname "$0")/../doc-conventions.baseline"
+    for k in plan_missing_status dev_links code_block_mismatch_pairs; do
+        v=$(grep -E "^$k=[0-9]+[[:space:]]*$" "$real_base" | tail -1 | cut -d= -f2 | tr -d '[:space:]')
+        case "$v" in
+            ''|*[!0-9]*)
+                echo "SELFTEST FAIL: 7 — ключ '$k' в РЕАЛЬНОЙ базе не разбирается в целое (получено: '$v')" >&2
+                exit 1 ;;
+        esac
+    done
+    # комментарий без решётки не должен проходить как значение
+    if printf 'dev_links=7: пояснение
+' | grep -qE "^dev_links=[0-9]+[[:space:]]*$"; then
+        echo "SELFTEST FAIL: 7 — строка-комментарий без '#' принята за значение" >&2
+        exit 1
+    fi
+) || fails=$((fails + 1))
+
+rm -rf "$TMP"
     mkdir -p "$TMP/spec" "$TMP/docs/guide" "$TMP/docs/plans" "$TMP/scripts/guards"
     cp "$GUARD_SRC" "$TMP/scripts/guards/check-doc-conventions.sh"
     printf 'plan_missing_status=0\ndev_links=0\ncode_block_mismatch_pairs=0\n' > "$TMP/scripts/guards/doc-conventions.baseline"
@@ -157,4 +181,4 @@ if [ "$fails" -ne 0 ]; then
     echo "selftest check-doc-conventions: FAIL ($fails провал(ов))" >&2
     exit 1
 fi
-echo "selftest check-doc-conventions: OK (все 6 проверок: ловят нарушение / не ложнят / храповики пропускают долг в пределах baseline)"
+echo "selftest check-doc-conventions: OK (все 7 проверок (7 — разбор РЕАЛЬНОЙ базы, №290): ловят нарушение / не ложнят / храповики пропускают долг в пределах baseline)"
