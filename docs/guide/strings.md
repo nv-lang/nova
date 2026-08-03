@@ -1,6 +1,8 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Strings in Nova — the lens model
 
+**English** | [Русский](strings.ru.md)
+
 > Plan 152.1 (D249/D250). `str` is a thin "piece of text"; you work through
 > **representation lenses**, and coordinates are **byte-based**. Cost is always
 > visible — there is no hidden O(n) under `[i]` or `len`.

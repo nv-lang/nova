@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 # Tutorial — Resource Cleanup with `consume{}` (Plan 110)
 
+**English** | [Русский](tutorial-cleanup.ru.md)
+
 > **Plan 110.8.2.** Tutorial chapter introducing `consume X = ... { body }`
 > scope-block pattern for resource cleanup.
 

@@ -1,5 +1,7 @@
 # `size_of[T]()` / `align_of[T]()` — compile-time type layout intrinsics
 
+**English** | [Русский](size-of-align-of.ru.md)
+
 > **Plan 114.4.4 Ф.5 V4 + V4.4 Ф.1.** Comptime built-in identifiers,
 > заменяются литералом `int` в rewriter pass. Только в `const`
 > context (RHS of `const` decl или const fn body).

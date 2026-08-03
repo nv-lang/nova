@@ -1,5 +1,7 @@
 # Система времени в Nova — `Time`-эффект, `Duration`/`Timestamp`/`Monotonic`
 
+**English** | [Русский](time.ru.md)
+
 > Plan 175 (time-system-rework). Гражданское (календарное) время — отдельный
 > документ [`datetime.md`](datetime.md) (Plan 175.1, `std/time/civil`).
 
