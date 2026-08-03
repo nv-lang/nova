@@ -1,3 +1,5 @@
+**English** | [Русский](cleanup-cookbook.ru.md)
+
 // SPDX-License-Identifier: MIT OR Apache-2.0
 # Cleanup Cookbook — production recipes для `consume X = expr { body }`
 

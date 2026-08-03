@@ -1,5 +1,7 @@
 # Consume-types in Nova
 
+**English** | [Русский](consume-types.ru.md)
+
 > User-facing guide для work with consume-types: bindings, ownership
 > transfer, view-borrow, lifecycle.
 

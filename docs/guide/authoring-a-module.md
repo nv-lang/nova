@@ -1,6 +1,8 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 # Как создать модуль Nova
 
+**English** | [Русский](authoring-a-module.ru.md)
+
 > Общий гайд: от пустого каталога до публикуемого пакета. Native-backed модуль
 > (обёртка над `.c`/готовой `.lib`) — **частный случай** в конце (§7).
 > **`[ffi.staticlib]` (собираемый cargo/make-staticlib) RETRACTED владельцем

@@ -1,6 +1,8 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 # Гражданское (календарное) время в Nova — `std/time/civil`
 
+**English** | [Русский](datetime.ru.md)
+
 > Plan [175.1](../plans/175.1-civil-time.md); нормативные решения — D319/D320/D321
 > ([spec/decisions/04-effects.md](../../spec/decisions/04-effects.md)).
 > Instant/interval-слой (`Timestamp`/`Duration`/`Monotonic`) — Plan 175, D316-D318.

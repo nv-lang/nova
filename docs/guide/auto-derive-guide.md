@@ -1,5 +1,7 @@
 ﻿# Auto-derive Guide (Plan 126, D109 amend + D230)
 
+**English** | [Русский](auto-derive-guide.ru.md)
+
 > **Status:** ✅ landed 2026-06-05.
 > **D-blocks:** [D109 amend](../../spec/decisions/08-runtime.md#d109-amend-plan-126-2026-06-05---auto-derive-для-пользовательских-типов) + [D230 NEW](../../spec/decisions/02-types.md#d230-new--Clone-protocol-plan-126-ф1).
 
