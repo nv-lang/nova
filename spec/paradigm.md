@@ -88,8 +88,9 @@ type Printable protocol {
 }
 
 fn Account @show() -> str => "Account(${@owner}, ${@balance})"
+```
 
-<!-- TODO(paradigm-actualize): пример «Printable для int» не имеет
+<!-- TODO(paradigm-actualize): пример «Printable для int» ниже не имеет
      прямого эквивалента в действующем языке — extension-методы на
      чужом/примитивном типе запрещены (03-syntax.md#d35, раздел
      «Receiver — любой тип, включая примитивы»: методы на встроенных
@@ -98,10 +99,14 @@ fn Account @show() -> str => "Account(${@owner}, ${@balance})"
      для пользовательского кода, `int @show()` пользователь объявить
      не может. Ниже — исходный (устаревший, `impl`/`self`) фрагмент,
      оставлен как есть до решения владельца, чем заменить иллюстрацию. -->
+
+```nova
 impl Printable for int {
     fn show(self) = self.to_str()
 }
+```
 
+```nova
 fn log_all(xs []Printable) {
     for x in xs { print(x.show()) }
 }
