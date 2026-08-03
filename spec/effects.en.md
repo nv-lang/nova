@@ -173,3 +173,72 @@ effects, `Par` — the runtime keyword `parallel for` / `spawn`.
 
 A programmer can declare custom effects — that is an ordinary
 type declaration via `effect`.
+
+## Why this is needed
+
+### 1. The type shows what a call does
+
+```nova
+ro x = double(5)            // не делает ничего
+ro y = parse(s)?            // может упасть — обязан обработать
+ro r = http.get(url)?       // ходит в сеть — видно в сигнатуре
+```
+
+An LLM (and a human) reading a signature **knows all the side effects**.
+In Python/Java/Go this information is absent from the type.
+
+### 2. Pure functions are separated from impure ones
+
+If a signature has no effects — the compiler knows: it can be
+memoized, called on any thread, replaced by a constant
+on equal inputs.
+
+### 3. It is impossible to "accidentally" add a side effect
+
+Someone added `Log.info(...)` to a formatting utility — the build of
+the callers **breaks**, because the `Log` effect appeared. It cannot be
+smuggled in silently. **This is a feature.**
+
+## Direct effects, not transitive ([D28](decisions/04-effects.md#d28))
+
+A signature declares only the effects whose operations the function calls
+**itself** — not the effects of nested calls:
+
+```nova
+type Db effect {
+    exec(stmt str) -> ()
+}
+
+fn save(name str) Db -> () {
+    Db.exec(name)              // прямое использование — Db в сигнатуре обязателен
+}
+
+fn helper(name str) -> () {
+    save(name)                  // транзитивное Db — по умолчанию только warning
+}
+```
+
+- **A direct** effect undeclared → **compile error**, always — including a
+  RAW operation call (`Db.exec(...)` without an intermediate named fn):
+  until [№131](decisions/04-effects.md#d62) this call-shape was an
+  enforce-hole (`E_RAW_EFFECT_OP_UNDECLARED` now closes it at the export
+  boundary — the same boundary as `!!`/[№113](decisions/04-effects.md#d85)
+  below; private code gets D28 inference).
+- **A transitive** effect undeclared → **warning**, suppressible via
+  `#allow_transit(Db, Log)` on a function or `transit_effects = "off"` in
+  `Nova.toml`.
+- **The `--strict-effects` flag** (`nova check`/`build`/`test`, Plan 197) turns
+  this warning into a hard error `E_UNDECLARED_TRANSITIVE_EFFECT` —
+  the project convention requires building `std/**` and `examples/**` with
+  exactly this flag (see `CLAUDE.md`). The same flag catches
+  `E_EFFECT_ERASED_IN_FN_TYPE` — assigning/passing a function into a
+  `fn(...) Row -> T` narrower in effects.
+- **`Fail[E]`** — the exception to "direct": throw stays **strictly
+  transitive** and is mandatory in the signature everywhere it can occur
+  (see "The `?` and `!!` operators" below) — the compiler does not weaken
+  the check with any flag here.
+- A private (non-`export`) function can **not write** direct effects
+  by hand at all — the compiler infers them from the body automatically
+  (including adding `Fail[E]` if a private function uses `!!`/`throw`
+  somewhere). In `export fn` direct effects must be explicit — that is
+  the public contract.
