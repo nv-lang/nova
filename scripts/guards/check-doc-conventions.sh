@@ -258,9 +258,13 @@ scan_dirs=""
 [ -d "$guide_dir" ] && scan_dirs="$scan_dirs $guide_dir"
 [ -d "$spec_dir" ] && scan_dirs="$scan_dirs $spec_dir"
 if [ -n "$scan_dirs" ]; then
-    dev_links=$(grep -rhoE "$dev_link_pattern" $scan_dirs 2>/dev/null | wc -l)
+    # Периметр СУЖЕН (решение владельца 2026-08-03): spec/decisions/** НЕ
+    # считается — D-блоки по смыслу внутренние, их ссылки на docs/dev/ не
+    # долг публикуемой поверхности. Считаем только реально публикуемое:
+    # docs/guide/** и читательские файлы spec/*.md.
+    dev_links=$(grep -rhoE "$dev_link_pattern" $scan_dirs 2>/dev/null         --exclude-dir=decisions | wc -l)
 fi
-ratchet_check dev_links "$dev_links" "ссылки на docs/dev/ из docs/guide/** + spec/** (никогда не публикуется — #publishing)"
+ratchet_check dev_links "$dev_links" "ссылки на docs/dev/ из docs/guide/** + spec/*.md без decisions/ (никогда не публикуется — #publishing)"
 
 # ---------------------------------------------------------------------
 # 5. code_block_identity (ratchet): байт-идентичность ```-фенсов пар.
