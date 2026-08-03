@@ -360,3 +360,174 @@ name than the return type) is not affected by this rule — there the literal's
 name must remain, because `Circle ≠ Shape`.
 
 Details — [D40](decisions/03-syntax.md#d40), [D45](decisions/03-syntax.md#d45).
+
+## Operator overloading
+
+Standard operators automatically call methods with fixed names:
+
+```nova
+fn Duration @plus(other Duration) => Duration { nanos: @nanos + other.nanos }
+fn Duration @times(n i64) => Duration { nanos: @nanos * n }
+
+ro total = 1.hour() + 30.minutes()       // вызывает @plus
+ro triple = 5.seconds() * 3              // вызывает @times
+if elapsed > 1.second() { ... }           // вызывает @compare
+```
+
+| Operator | Method | | Operator | Method |
+|---|---|---|---|
+| `+` | `@plus(o)` | | `==` | `@equal(o) -> bool` |
+| `-` (binary) | `@minus(o)` | | `<` | `@compare(o) -> int` |
+| `-` (unary) | `@neg()` | | `<=` | `@compare(o) -> int` |
+| `*` | `@times(o)` | | `>` | `@compare(o) -> int` |
+| `/` | `@div(o)` | | `>=` | `@compare(o) -> int` |
+| `%` | `@rem(o)` | | `!` | НЕ перегружается (строго `bool`) |
+| `\|` | `@bitor(o)` | | `<<` | `@shl(n)` |
+| `&` | `@bitand(o)` | | `>>` | `@shr(n)` |
+| `^` | `@bitxor(o)` | | `~` | `@bitnot()` |
+| `a[i]` | `@index(i)` | | `a[i]=v` | `mut @index(i, v)` |
+| `a[x..y]` | `@index(r Range)` | | | |
+
+`==`/`!=` — via `@equal` (the `Equal` protocol, `!=` is derived by negation); `<`/`<=`/`>`/`>=` — via the single `@compare(o) -> int` (the `Compare` protocol, memcmp-style: `< 0` / `0` / `> 0`). Indexing `a[i]` / `a[i] = v` — `@index` / `mut @index` (the `Index[K, V]` / `MutIndex[K, V]` protocols, D240); slice indexing `a[x..y]` — the same `@index`, overloaded by parameter type: `x..y` (half-open, does not include `y`) is lowered by the compiler into `Range { start: x, end: y }`, and `a.index(r Range)` is called — on `[]T`/`str` it returns a view without copying (`std/collections/vec/slice.nv`, `std/runtime/string/slice.nv`). `&&`/`||` are **not overloadable** (short-circuit
+semantics). **The bitwise family — a `bit` prefix, and `~` separate from `!`** (D46-amendment 2026-07-27, plan [234](../docs/plans/234-bitwise-operator-family.md)): `&`/`|`/`^` → `@bitand`/`@bitor`/`@bitxor` (the former `@and`/`@or`/`@xor` are retracted — they read as LOGICAL, though the logical `&&`/`||` are not overloadable at all); `~a` → `@bitnot()` — bitwise complement, overloadable by user types (`~x == -(x+1)` on signed), whereas `!a` stays LOGICAL and (D46-AMEND 2026-08-02) is not overloadable at all — only `bool`, `@not()` is retracted. Compound assignments: `+=`/`-=`/`*=`/`/=` and (D46-amendment (C), plan 234 Ф.2а) `&=`/`|=`/`^=`/`<<=`/`>>=` — desugar into `a = a <op> b`, no separate operator methods. Custom operators (`:+`, `<>`) are not allowed. Details —
+[D46](decisions/03-syntax.md#d46).
+
+## Mathematical operations on numeric types
+
+Standard mathematical functions on `f64` / `f32` / `int` are declared
+as **instance methods** via `@`, not as static `Math.sin(...)`.
+This is consistent with D35 (methods are the main mechanism for type-bound
+functions) and gives chain-friendly formulas:
+
+```nova
+ro r = (x * x + y * y).sqrt()
+ro phi = im.atan2(re)
+ro dist = a.hypot(b)
+ro s = (theta + offset).sin()
+```
+
+**The standard set on `f64` (prelude):**
+
+| Category | Methods |
+|---|---|
+| Roots and powers | `@sqrt()`, `@cbrt()`, `@pow(exp f64)` |
+| Trigonometry | `@sin()`, `@cos()`, `@tan()`, `@asin()`, `@acos()`, `@atan()` |
+| `atan2` (two-arg) | `@atan2(x f64) -> f64` (`y.atan2(x)`) |
+| Hyperbolic | `@sinh()`, `@cosh()`, `@tanh()` |
+| Exponential / log | `@exp()`, `@exp2()`, `@ln()`, `@log10()`, `@log2()` |
+| Norm / distance | `@abs()`, `@hypot(other f64)` |
+| Rounding | `@floor()`, `@ceil()`, `@round()`, `@trunc()` |
+| Min / clamp | `@min(other f64)`, `@max(other f64)`, `@clamp(lo f64, hi f64)` |
+| Predicates | `@is_finite()`, `@is_nan()`, `@is_infinite()` |
+
+On `int` the set is limited: `@min`, `@max`, `@clamp`, `@compare`.
+
+**Names worth noting:**
+
+- **`@hypot(other)`** / **`@atan2(x)`** — two-argument functions;
+  the second argument comes as a parameter; the receiver is the first
+  argument by mathematical convention (`y.atan2(x)`, `a.hypot(b)`).
+
+**Static functions on the type** for cases with no natural receiver:
+
+```nova
+f64.PI                   // константа
+f64.E                    // константа
+f64.NAN                  // константа
+f64.INFINITY             // константа
+f64.try_parse(s str) -> Option[f64]
+```
+
+## Naming conventions
+
+| What | Style | Example |
+|---|---|---|
+| Types, effects, protocols, sum variants | **PascalCase** | `User`, `HashMap`, `Db`, `Hash`, `Some` |
+| Generic parameters | **PascalCase, single-character** | `T`, `K`, `V`, `E` |
+| Functions, methods (`@name`), parameters, fields | **snake_case** | `parse_url`, `@deposit`, `user_id`, `created_at` |
+| Constants (`const`) | **SCREAMING_SNAKE_CASE** | `MAX_PAYLOAD`, `DEFAULT_TIMEOUT` |
+| Modules | **snake_case** via dots | `module admin.audit`, `module std.duration` |
+
+**Acronyms — PascalCase, not UPPERCASE.** `Db`, not `DB`. `Http`, not `HTTP`.
+`Json`, not `JSON`. `Url`, not `URL`. Rule: an acronym is an ordinary word.
+
+**Reserved method names** (operator overloading, [D46](decisions/03-syntax.md#d46)):
+`@plus`, `@minus`, `@times`, `@div`, `@rem`, `@neg`, `@bitand`, `@bitor`,
+`@bitxor`, `@bitnot`, `@shl`, `@shr`, `@equal`, `@compare`, `@index`.
+(`@not` RETRACTED 2026-08-02 — `!` is no longer overloadable.)
+Do not use them for other purposes.
+
+**Contract conventions:**
+- `T.new(...)` — the standard constructor; `T.from(v X)` — the name
+  convention of the constructor-conversion ([D73](decisions/08-runtime.md#d73); this is exactly a
+  naming convention, no protocol mechanics behind it);
+  `T.from_X(...)` — a domain constructor when `from(v)` does not convey
+  the meaning (`from_secs`, `from_polar`, `from_imag`).
+- `@to_X()` — transformation into a new owning value, when a view
+  (zero-copy) does not exist in principle (`to_str()`, `to_upper()`,
+  D410). `consume @into_X()` — a consuming ownership transfer
+  (`into_str()`, `into_raw()`, D131). A universal `v.into()`
+  (Rust-style, target type from context) does **not** exist in Nova — only
+  concrete named methods.
+- `Display`/`@display(mut w Write)` — string representation for
+  `${expr}` interpolation and `str.from(v)` on a user type
+  ([D73](decisions/08-runtime.md#d73)).
+- `@hash()` — hash, `@clone()` — copy, `@iter()`/`@next()` — iterator.
+- **Error names** ([D30](decisions/03-syntax.md#d30)) — with a type / domain:
+  `ParseComplexError`, `ParseIntError`, `DbError`, `OverflowError`.
+  Do not use generic `ParseError`, `ValueError`, `Exception` —
+  import collisions, ambiguity for AI.
+
+The `@as_X()`, `@is_X()` convention is **not introduced** — it duplicates
+existing mechanisms:
+- `@as_X()` duplicates the `as` keyword (D54) for cheap casts or
+  `X.from` for nontrivial ones.
+- `@is_X()` duplicates `v is X` (D54): for sum types and `any`
+  the `is` operator works directly (`shape is Circle`,
+  `arg is int` for `arg any`). To extract the variant value
+  with a binding — `if X(n) = v` (D34).
+- Field privacy — the `priv` modifier; the `_`-prefix for "privacy by
+  contract" is not used in Nova (details —
+  ["Visibility: export"](#видимость-export-для-публичных-деклараций) below).
+- Test names — natural-language strings: `test "insert and get"`,
+  not `"test_insert_and_get"`.
+
+### Reserved identifiers
+
+Besides the grammar keywords, Nova has identifiers with special
+semantics known to the compiler. They can be locally overridden,
+but that is an anti-pattern (the linter warns).
+
+**Special types:**
+- `Self` — referential type, refers to the receiver type of a method or the
+  type satisfying a protocol ([D66](decisions/02-types.md#d66)).
+  Valid in any type context.
+- `any` — the top type for runtime type-check ([D54](decisions/03-syntax.md#d54)).
+- `never` — the bottom type for non-returning functions.
+
+**Prelude types:**
+- `Option[T]`, `Some(v)`, `None` — sum type
+- `Result[T, E]`, `Ok(v)`, `Err(e)` — sum type
+- `Error` — the record `{ msg str }` for `throw err`
+- `RuntimeError` — sum of bottom-level runtime errors
+- `RuntimeNoneError` — unit type, thrown via `expr!!` on `Option` ([D85](decisions/04-effects.md#d85))
+- `Effect[E]` — first-class type of an effect handler
+- `Display` — protocol with the instance method `@display(mut w Write)`,
+  string representation ([D73](decisions/08-runtime.md#d73))
+
+**Standard effects:**
+- `Fail[E]`, `Fail` — the failable effect
+- `Io`, `Net`, `Db`, `Fs`, `Time`, `Random`, `Log`, `Trace` — the main ones
+- `Ask[T]` — Reader-style context
+- `Alloc[R]` — allocation in a region
+- `Detach` — the marker of fire-and-forget tasks ([D50](decisions/06-concurrency.md#d50)).
+  Blocking calls and real-time — **not effects**, but function attributes:
+  `#blocking` (offload to a threadpool) and `#realtime` (forbid
+  parking/alloc in the body) — D172.
+
+**Primitive types (lowercase, an exception to the PascalCase rule):**
+- `int`, `uint`, `i8`, `i16`, `i32`, `i64`, `u8`, `u16`, `u32`, `u64`
+- `f32`, `f64`
+- `str`, `bool`, `char` (a byte is `u8`, there is no separate `byte` type)
+
+Details — [D30](decisions/03-syntax.md#d30), [D46](decisions/03-syntax.md#d46), [D47](decisions/07-modules.md#d47).
