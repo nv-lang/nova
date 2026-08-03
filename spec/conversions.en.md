@@ -321,3 +321,58 @@ if n != 0 { ... }               // ✅
 
 **Precedents:** Rust, Swift, Kotlin — all require bool. Python/C/JS —
 truthy, a known bug-class.
+
+---
+
+## Zero-cost implicit conversions — `#coerce` ([D429](decisions/02-types.md#d429), Plan 214/214.1)
+
+Separately from the explicit mechanisms above — the declarative `#coerce`
+attribute on a **unary** function declares an **implicit** conversion `I → O`,
+inserted by the compiler in positions with a known expected type (call-arg,
+`ro`/`mut` with an annotation, return, collection element) — WITHOUT an
+explicit call on site:
+
+The form is shown on a fresh example (`str @bytes()`/`StringBuilder @into_str()` —
+pairs already declared in std; showing them again here would mean a
+declaration conflict):
+
+```nova
+type Meters { ro raw f64 }
+type Boxed consume { ro payload int }
+
+#coerce
+fn Meters @value() -> ro f64 => @raw            // view — Meters → ro f64
+
+#coerce
+fn Boxed consume @unbox() -> int => @payload    // finalize — потребляющий move
+```
+
+The call-site canon is a **bare value**, not an explicit call. The real std
+pair `str @bytes() -> ro []u8` kicks in automatically where the position
+expects `[]u8` and a `str` is on hand:
+
+```nova
+import std.runtime.write_buffer.{WriteBuffer}
+
+fn write_greeting(wb mut WriteBuffer, s str) -> () =>
+    wb.write_bytes(s)   // s неявно .bytes() — не пишем это руками
+```
+
+Two "lanes", both guaranteed zero-cost:
+- **view** — a non-`consume` method with a `ro` return (a borrow, no allocation);
+- **finalize** — a `consume` method with an owning return (a move; the receiver
+  is discharged at the insertion point; use-after — an ordinary linearity
+  compile error).
+
+Rules (see D429 in full): exactly one declaration per pair `(I, O)`;
+one level (chains are NOT unfolded, coercions do not compose with each other
+or with a single-wrapper — a conflict is an error, not a silent choice);
+exact-match always beats coercion; a `#coerce` function must be effect-free.
+The first declarations in std: `str @bytes() -> ro []u8`, `StringBuilder consume
+@into_str() -> str`, `WriteBuffer consume @into_bytes() -> []u8`. The mechanism
+also works for generic patterns (`Json[T] @data() -> T`, bound removal in
+Plan 214.1, 2026-07-24).
+
+`as` does **not** engage `#coerce` (D429 R10) — `as` remains a closed,
+documented-in-spec set of conversions; `#coerce` is an open user registry;
+mixing the two would give a third door to one pair.
