@@ -35,6 +35,50 @@ setup_tree() {  # корень, куда кладём guard+baseline co-located 
     fi
 ) || fails=$((fails + 1))
 
+# ---------------------------------------------------------------------
+# 8. readme_pair: README пакета обязан быть парой en+ru (решение владельца
+#    2026-08-03). Проверяем: одиночный README.md ловится; пара проходит;
+#    репа без README вакуумно-зелёная.
+# ---------------------------------------------------------------------
+(
+    RT=$(mktemp -d)
+    printf '# Pkg
+
+```
+code
+```
+' > "$RT/README.md"
+    sh "$(dirname "$0")/../check-doc-conventions.sh" "$RT" >/tmp/dc_8a_$$ 2>&1
+    grep -q "readme_pair: есть README.md, нет README.ru.md" /tmp/dc_8a_$$ || {
+        echo "SELFTEST FAIL: 8a — одиночный README.md не пойман" >&2; rm -rf "$RT"; exit 1; }
+
+    printf '# Пакет
+
+```
+code
+```
+' > "$RT/README.ru.md"
+    sh "$(dirname "$0")/../check-doc-conventions.sh" "$RT" >/tmp/dc_8b_$$ 2>&1
+    grep -q "readme_pair — README.md + README.ru.md" /tmp/dc_8b_$$ || {
+        echo "SELFTEST FAIL: 8b — корректная пара README не принята" >&2; rm -rf "$RT"; exit 1; }
+
+    printf '# Пакет
+
+```
+другой-код
+```
+' > "$RT/README.ru.md"
+    sh "$(dirname "$0")/../check-doc-conventions.sh" "$RT" >/tmp/dc_8c_$$ 2>&1
+    grep -q "код-блоки README.md и README.ru.md расходятся" /tmp/dc_8c_$$ || {
+        echo "SELFTEST FAIL: 8c — расхождение код-блоков README не поймано" >&2; rm -rf "$RT"; exit 1; }
+
+    rm -f "$RT/README.md" "$RT/README.ru.md"
+    sh "$(dirname "$0")/../check-doc-conventions.sh" "$RT" >/tmp/dc_8d_$$ 2>&1
+    grep -q "README в корне нет" /tmp/dc_8d_$$ || {
+        echo "SELFTEST FAIL: 8d — репа без README не вакуумно-зелёная" >&2; rm -rf "$RT"; exit 1; }
+    rm -rf "$RT" /tmp/dc_8a_$$ /tmp/dc_8b_$$ /tmp/dc_8c_$$ /tmp/dc_8d_$$
+) || fails=$((fails + 1))
+
 rm -rf "$TMP"
     mkdir -p "$TMP/spec" "$TMP/docs/guide" "$TMP/docs/plans" "$TMP/scripts/guards"
     cp "$GUARD_SRC" "$TMP/scripts/guards/check-doc-conventions.sh"
@@ -181,4 +225,4 @@ if [ "$fails" -ne 0 ]; then
     echo "selftest check-doc-conventions: FAIL ($fails провал(ов))" >&2
     exit 1
 fi
-echo "selftest check-doc-conventions: OK (все 7 проверок (7 — разбор РЕАЛЬНОЙ базы, №290): ловят нарушение / не ложнят / храповики пропускают долг в пределах baseline)"
+echo "selftest check-doc-conventions: OK (все 8 проверок (7 — разбор РЕАЛЬНОЙ базы, №290): ловят нарушение / не ложнят / храповики пропускают долг в пределах baseline)"

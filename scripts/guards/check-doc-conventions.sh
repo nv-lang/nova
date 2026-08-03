@@ -304,4 +304,35 @@ fi
 [ -n "$mismatch_names" ] && info "doc-conventions: код-блоки расходятся у пар:$mismatch_names (долг, см. baseline)"
 ratchet_check code_block_mismatch_pairs "$code_block_mismatch_pairs" "пары X.md/X.ru.md(.en.md) с несовпадающими code-fence блоками"
 
+# ---------------------------------------------------------------------
+# 6. readme_pair: README пакета/модуля — ВСЕГДА пара en+ru.
+#    Решение владельца 2026-08-03: «ридми для пакетов, модулей всегда
+#    на анг + рус». Проверка безусловная (не храповик): есть README.md —
+#    обязан быть README.ru.md, и наоборот. Репа без README вовсе —
+#    вакуумно-зелёная (проверять нечего). Работает и для nova, и для
+#    пакетных реп (§2b): скрипт принимает корень репы аргументом.
+# ---------------------------------------------------------------------
+readme_en="$ROOT/README.md"
+readme_ru="$ROOT/README.ru.md"
+if [ -f "$readme_en" ] || [ -f "$readme_ru" ]; then
+    if [ ! -f "$readme_ru" ]; then
+        red "readme_pair: есть README.md, нет README.ru.md (пара обязательна — решение владельца 2026-08-03)"
+    elif [ ! -f "$readme_en" ]; then
+        red "readme_pair: есть README.ru.md, нет README.md (пара обязательна — решение владельца 2026-08-03)"
+    else
+        # код-блоки README-пары — по общему правилу байт-в-байт
+        ra=$(mktemp); rb=$(mktemp)
+        awk '/^```/{f=!f; next} f' "$readme_en" > "$ra"
+        awk '/^```/{f=!f; next} f' "$readme_ru" > "$rb"
+        if diff -q "$ra" "$rb" >/dev/null 2>&1; then
+            info "doc-conventions ok: readme_pair — README.md + README.ru.md, код-блоки идентичны"
+        else
+            red "readme_pair: код-блоки README.md и README.ru.md расходятся (#translation-drift)"
+        fi
+        rm -f "$ra" "$rb"
+    fi
+else
+    info "doc-conventions ok (вакуумно): README в корне нет — проверять нечего"
+fi
+
 exit $fail
