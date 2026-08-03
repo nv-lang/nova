@@ -699,3 +699,125 @@ boundary is drawn explicitly: "there is no way to handle it, it must die" → Pa
 The optional `@strict_total` — for critical code, turns the function into a
 total one (the compiler requires handling all possible
 panic sources). Details — [decisions/08-runtime.md#d13](decisions/08-runtime.md#d13).
+
+---
+
+## R12. Distributed systems as handler composition
+
+This is **not a new language feature**. It is an illustration that the
+central thesis [D10](decisions/01-philosophy.md#d10) ("everything is a handler") scales up to
+distributed systems — without new syntax constructs. Retry, idempotency,
+replication, exactly-once, distributed tracing — everything emerges as a
+**stack of handlers** over the `Db`, `Net`, `Fail` effects.
+
+### Business logic knows nothing about distributed systems
+
+The programmer writes an ordinary function with effects:
+
+```nova
+type TransferError | AccountNotFound(AccountId) | InsufficientFunds
+
+fn transfer(from AccountId, to AccountId, amount money)
+    Db Fail[TransferError] -> Receipt
+{
+    ro src = Db.find(from) ?? throw AccountNotFound(from)
+    ro dst = Db.find(to)   ?? throw AccountNotFound(to)
+    if src.balance < amount { throw InsufficientFunds }
+    Db.exec(sql`UPDATE accounts SET balance = balance - ${amount} WHERE id = ${from}`)
+    Db.exec(sql`UPDATE accounts SET balance = balance + ${amount} WHERE id = ${to}`)
+    Receipt { from, to, amount, ts: Time.now() }
+}
+```
+
+In the signature — `Db` and `Fail`. **No** `@Idempotent`, `@Replicated`,
+`@Retry`, `@Trace`. This is a business function, and it stays one.
+
+### Distributed properties are added by handlers
+
+Each distributed property — a `Db`/`Net` handler that intercepts the
+operations and decides what to do with them:
+
+**1. Replication.** A `Db` handler that fans a write out to N nodes and
+reads locally:
+
+```nova
+fn replicated(nodes [Node], quorum int, real Effect[Db]) -> Effect[Db] => effect Db {
+    query(q) => return real.query(q)    // чтения локальны
+    exec(q) {                             // записи на все узлы
+        ro acks = parallel for node in nodes {
+            node.exec(q)
+        }
+        if acks.count(Ok) < quorum { throw QuorumLost }
+        return ()
+    }
+}
+```
+
+**2. Idempotency.** A handler that caches the result by key:
+
+```nova
+fn idempotent_by(tx_id str, real Effect[Db]) -> Effect[Db] => effect Db {
+    query(q) => return real.query(q)
+    exec(q)  => match Cache.get(tx_id) {
+        Some(cached) => return cached         // повтор — вернуть кеш
+        None => {
+            ro result = real.exec(q)
+            Cache.put(tx_id, result)
+            return result
+        }
+    }
+}
+```
+
+A second call with the same `tx_id` will not execute SQL — it returns the
+cache.
+
+**3. Retry with backoff.** A `Net` handler that intercepts `Fail[NetError]`
+and repeats the call:
+
+```nova
+fn retry(max_attempts int, real Effect[Net]) -> Effect[Net, Response] => effect Net {
+    get(url) {
+        mut attempt = 0
+        loop {
+            match try_fail[NetError] { real.get(url) } {
+                Ok(resp) => interrupt resp           // IRT = Response
+                Err(_) if attempt < max_attempts => {
+                    Time.sleep(backoff(attempt))
+                    attempt += 1
+                }
+                Err(e) => throw e
+            }
+        }
+    }
+    post(url, body) => /* аналогично */
+}
+```
+
+**4. Exactly-once = idempotent + persistent log.** A composition of two
+handlers:
+
+```nova
+fn exactly_once(tx_id str, log PersistentLog, real Effect[Db]) -> Effect[Db] {
+    ro logged = with_log(log, real)              // пишет в WAL до Db
+    idempotent_by(tx_id, logged)                  // и кеширует результат
+}
+```
+
+The WAL guarantees the operation is not lost on a crash; idempotent
+guarantees a retry does not execute it twice. **Composition**, not a
+monolithic feature.
+
+**5. Distributed tracing.** A `Trace` handler (already in the [R2](revolutionary.md)
+standard set), wrapping every operation in a span:
+
+```nova
+fn traced(real Effect[Db]) -> Effect[Db] => effect Db {
+    query(sql, args) => Trace.span("db.query", { "sql": sql }) {
+        return real.query(sql, args)
+    }
+    exec(sql, args)  => Trace.span("db.exec", { "sql": sql }) {
+        return real.exec(sql, args)
+    }
+}
+```
