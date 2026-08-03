@@ -29,6 +29,7 @@ export type VecIter[T] value {
 /// let v = Vec[int].of(10, 20, 30)
 /// for x in v { println(x) }  // 10, 20, 30
 /// ```
+#impl(Iter[VecIter[T]])
 export fn Vec[T] @iter() -> VecIter[T] =>
     { @data, idx: 0, @len }
 

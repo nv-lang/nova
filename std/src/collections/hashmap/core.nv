@@ -470,12 +470,14 @@ type HashMapIter[K, V] {
 /// }
 /// ```
 #stable(since = "0.1")
+#impl(Iter[HashMapIter[K, V]])
 export fn HashMap[K, V] @iter() -> HashMapIter[K, V] =>
     { map: @, pos: 0 }
 
 // HashMapIter mut @next() — стандартная операция для for-loop.
 //
 // Структурно совместима с любым итератором: { next() -> Option[T] }.
+#impl(Next[(K, V)])
 export fn HashMapIter[K, V] mut @next() -> Option[(K, V)] {
     while @pos < @map.buckets.len() {
         ro slot = @map.buckets[@pos]
@@ -494,6 +496,7 @@ export fn HashMap[K, V] @keys() -> KeysIter[K, V] =>
 
 type KeysIter[K, V] { inner HashMapIter[K, V] }
 
+#impl(Next[K])
 export fn KeysIter[K, V] mut @next() -> Option[K] =>
     match @inner.next() {
         Some((k, _)) => Some(k)
@@ -507,6 +510,7 @@ export fn HashMap[K, V] @values() -> ValuesIter[K, V] =>
 
 type ValuesIter[K, V] { inner HashMapIter[K, V] }
 
+#impl(Next[V])
 export fn ValuesIter[K, V] mut @next() -> Option[V] =>
     match @inner.next() {
         Some((_, v)) => Some(v)

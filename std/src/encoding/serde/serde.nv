@@ -339,12 +339,7 @@ fn[T Deserialize] []T.deserialize[D Deserializer](mut d D) -> Result[[]T, DeErro
 #unstable
 fn HashMap[str, V Serialize] @serialize[S Serializer](mut s S) -> Result[(), SerError] {
     s.begin_map(@len())?
-    // №254 [M-try-on-next-generic-receiver-misresolve]: KeysIter.collect()
-    // misresolves in codegen — manual loop until №254 lands.
-    mut keys []str = []
-    for k in @keys() {
-        keys.push(k)
-    }
+    mut keys = @keys().collect()
     keys.sort()                 // детерминированный вывод (golden-тесты)
     for k in keys {
         s.map_key(k)?

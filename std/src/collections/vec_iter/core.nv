@@ -88,7 +88,7 @@ module collections.vec_iter
 
 import std.collections.vec.{Vec, VecIter}
 import std.collections.set.{Set}
-import std.prelude.collections.{Next}
+import std.prelude.collections.{Next, Iter}
 import std.runtime.raw_mem.{RawMem}
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -659,14 +659,7 @@ export fn[I Next[T]] I mut @find(pred fn(T) -> bool) -> Option[T] {
 
 /// Reduce without a seed: `None` when empty, else fold from the first element.
 export fn[I Next[T]] I mut @reduce(f fn(T, T) -> T) -> Option[T] {
-    // [M-try-on-next-generic-receiver-misresolve] (221.1 №254): `@next()?`
-    // here makes codegen misresolve the receiver (single-key fallback →
-    // foreign RSplitIter, E_RECV_METHOD_MISMATCH) — manual match until
-    // №254 lands (same in @min/@max below).
-    mut acc = match @next() {
-        Some(first) => first,
-        None => return None,
-    }
+    mut acc = @next()?
     while true {
         match @next() {
             Some(x) => { acc = f(acc, x) },
@@ -680,10 +673,7 @@ export fn[I Next[T]] I mut @reduce(f fn(T, T) -> T) -> Option[T] {
 /// Match-arm bind named `cand` (not bare `x`) to avoid colliding with a
 /// user-imported module whose last path segment is `x`.
 export fn[I Next[T], T Compare] I mut @min() -> Option[T] {
-    mut best = match @next() {
-        Some(first) => first,
-        None => return None,
-    }
+    mut best = @next()?
     while true {
         match @next() {
             Some(cand) => { if cand.compare(best) < 0 { best = cand } },
@@ -697,10 +687,7 @@ export fn[I Next[T], T Compare] I mut @min() -> Option[T] {
 /// Match-arm bind named `cand` (not bare `x`): see `@min` above (same
 /// module-alias collision avoidance).
 export fn[I Next[T], T Compare] I mut @max() -> Option[T] {
-    mut best = match @next() {
-        Some(first) => first,
-        None => return None,
-    }
+    mut best = @next()?
     while true {
         match @next() {
             Some(cand) => { if cand.compare(best) > 0 { best = cand } },
@@ -748,5 +735,80 @@ export fn[I Next[T], T Hash] I mut @collect_set() -> Set[T] {
     }
     out
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// №254 (221.1) — `Iter[I]`-DELEGATE overloads (Kotlin path: `Iterable[T]`'s
+// extension functions delegate through `iterator()`).
+//
+// The terminators above are blanket over `I Next[T]` — a type that IS
+// an iterator (owns `@next()` directly: `VecIter`/`MapIter`/`SplitIter`/…).
+// A CONTAINER (`Vec[T]`, `Range`) is not itself an iterator (no `@next()`)
+// — only its `@iter()` result is. Before this window, the checker's
+// bare-typevar-receiver bind (`resolve_prefix_generic_method_return`)
+// accepted a container receiver against the `I Next[T]` bound WITHOUT
+// verifying the bound (`entries.collect()`, `entries: Vec[u8]`, type-
+// checked as if `Vec` implemented `Next[T]`) — codegen's OWN protocol-aware
+// dispatch correctly refused (`Vec` genuinely has no `next()`) and fell
+// into the single-key `method_receivers` last-wins fallback, producing
+// `E_RECV_METHOD_MISMATCH` (root cause 1 of №254's diagnosis). The checker
+// now REJECTS that bind (bound-check, types/mod.rs), so a container needs
+// its OWN candidate: bounded by `Iter[I]` instead, delegating to the
+// carrier's `.iter()` and re-dispatching to the SAME-named terminator on
+// the resulting `I` — which resolves to the direct `Next[T]` blanket above
+// (an iterator returned by `@iter()` never also satisfies `Iter[I]` in this
+// module family — none of `VecIter`/`MapIter`/`FilterIter`/… declare their
+// own trivial `@iter() -> Self`, so no ambiguity arises for THEM; a
+// concrete iterator that DOES declare the trivial `@iter() -> Self`
+// (`RangeIter`, `StepRangeIter`, `ReverseRangeIter` — `collections.range`)
+// satisfies BOTH bounds, and specificity (own-carrier `Next[T]` beats
+// delegate `Iter[I]`, codegen `emit_c.rs` blanket-candidate ranking) picks
+// the direct one, never actually recursing through `.iter()` on itself).
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Collect a container's elements into a `Vec[T]` without an explicit
+/// `.iter()` call — `xs.collect()` on `xs: Vec[T]`/`Range`/anything with
+/// `@iter() -> I Next[T]`.
+export fn[C Iter[I], I Next[T]] C @collect() -> Vec[T] {
+    mut it = @iter()
+    it.collect()
+}
+
+/// Reduce a container's elements without an explicit `.iter()` call.
+export fn[C Iter[I], I Next[T]] C @reduce(f fn(T, T) -> T) -> Option[T] {
+    mut it = @iter()
+    it.reduce(f)
+}
+
+/// Smallest element of a container by `T`'s `Compare`, without an explicit
+/// `.iter()` call.
+export fn[C Iter[I], I Next[T], T Compare] C @min() -> Option[T] {
+    mut it = @iter()
+    it.min()
+}
+
+/// Largest element of a container by `T`'s `Compare`, without an explicit
+/// `.iter()` call.
+export fn[C Iter[I], I Next[T], T Compare] C @max() -> Option[T] {
+    mut it = @iter()
+    it.max()
+}
+
+// №254 (221.1): a `C @collect_set() -> Set[T]` delegate (mirroring the four
+// above) was ATTEMPTED and DROPPED — confirmed broken standalone (not a
+// mega-CU artifact): the mono'd return type comes out as the literal,
+// unsubstituted `Set____Nova_T_p` (a CC-FAIL — "unknown type name") instead
+// of e.g. `Set____nova_int`, while the IDENTICAL delegate shape for
+// `collect`/`reduce`/`min`/`max` (returning `Vec[T]`/`Option[T]`) binds `T`
+// correctly. Root cause not found within this window's budget (likely: the
+// codegen elem/T-binding fallback for a blanket's OWN inner protocol bound
+// — `compiler-codegen/src/codegen/emit_c.rs`, the `Next[T]`-elem lookup
+// around the `register_mono_method_instance` call for this dispatch path —
+// has explicit `Nova_Vec____`/`NovaArray_` prefix handling but nothing for
+// `Set`, so the substitution that keeps `Vec[T]`/`Option[T]` correct likely
+// never fires for `Set[T]`). None of the 16 reverted №254 sites call
+// `.collect_set()` on a container directly (only on an already-obtained
+// `Next[T]`-iterator, which uses the DIRECT blanket a few dozen lines above
+// — unaffected). Left OUT of std rather than shipped broken; see backlog
+// №290 / PROGRESS-pw2.md for the full diagnosis.
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -97,9 +97,11 @@ export type RangeIter value {
 
 /// Create an iterator over the range.
 #stable(since = "0.1")
+#impl(Iter[RangeIter])
 export fn Range @iter() -> RangeIter =>
     { @end, cur: @start }
 
+#impl(Next[int])
 export fn RangeIter mut @next() -> Option[int] {
     if @cur >= @end { return None }
     ro v = @cur
@@ -140,6 +142,7 @@ export fn Range @step_by(step int) -> StepRangeIter
     requires step > 0
     => { @end, step, cur: @start }
 
+#impl(Next[int])
 export fn StepRangeIter mut @next() -> Option[int] {
     if @cur >= @end { return None }
     ro v = @cur
@@ -179,6 +182,7 @@ export fn Range @reverse() -> ReverseRangeIter {
 
 export fn ReverseRangeIter @iter() -> ReverseRangeIter => @
 
+#impl(Next[int])
 export fn ReverseRangeIter mut @next() -> Option[int] {
     if @done { return None }
     ro v = @cur

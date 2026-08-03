@@ -1,0 +1,76 @@
+// Plan 221.1 №254: protocol-bound dispatch for Next[T]/Iter[I] generic
+// blankets (bound-check + specificity + Iter[I]-delegate overloads,
+// design decided by the owner 2026-08-02).
+//
+// pos (a): a concrete Next[T] implementor with NO generic type-args
+// (`ReverseRangeIter` — root cause 2 of №254's diagnosis: its `#impl`
+// carries the element type explicitly now, `collections/range/core.nv`)
+// correctly binds `T` for the blanket `@collect()`/`@reduce()` — this used
+// to CC-FAIL ("anonymous record literal: expected struct 'Vec____Nova_T_p'
+// not in record_schemas") before the T-binding fix.
+//
+// pos (b): a CONTAINER with no `@next()` of its own (`Vec[T]`, `Range`) now
+// supports `.collect()`/`.reduce()`/`.min()`/`.max()` directly via the new
+// `Iter[I]`-delegate blanket (`vec_iter/core.nv`, design point 4 — Kotlin's
+// `Iterable` extension-function path) — used to E_RECV_METHOD_MISMATCH
+// before the bound-check fix (the checker let a bare-typevar `I Next[T]`
+// bind unconditionally to `Vec`, which codegen then correctly refused,
+// falling to the single-key last-wins fallback). NOTE: `@collect_set()` was
+// ALSO attempted as a delegate but dropped (confirmed-broken T-binding for
+// a `Set[T]` return specifically — see `vec_iter/core.nv`'s own note next
+// to where it would have been, and backlog №290) — not exercised here.
+//
+// pos (c): a user type implementing BOTH `Next[T]` directly (owns `@next`)
+// AND the trivial `Iter[Self]` (`@iter() -> Self => @`, the natural
+// Rust/Kotlin idiom for "an iterator is its own iterable") dispatches
+// `.collect()` through the DIRECT `Next[T]` blanket, not the `Iter[I]`
+// delegate — specificity (own-carrier beats delegate). Without this, the
+// delegate calls `@iter()` (== self) and re-enters the SAME ambiguity,
+// recursing to a fiber-stack-overflow (confirmed empirically before the
+// specificity fix in both the checker's candidate-ordering AND codegen's
+// `emit_c.rs` blanket-dispatch candidate ranking — TWO independent copies
+// of the same "own carrier first" rule, checker feeds `resolved_types`,
+// codegen owns the actual C dispatch).
+module spec_tests.conformance
+
+import std.prelude.collections.{Next, Iter}
+import std.collections.vec_iter
+
+test "(a) T-binding: concrete Next[T] implementor with no generics — ReverseRangeIter" {
+    ro collected = (1..=3).reverse().collect()
+    assert(collected == [3, 2, 1])
+    ro reduced = (1..=4).reverse().reduce(fn(a int, b int) -> int => a + b)
+    assert(reduced == Some(10))
+}
+
+test "(b) Iter[I]-delegate: containers gain collect/reduce/min/max without an explicit .iter()" {
+    ro xs = []int.of(3, 1, 2)
+    assert(xs.collect() == [3, 1, 2])
+    assert(xs.reduce(fn(a int, b int) -> int => a + b) == Some(6))
+    assert(xs.min() == Some(1))
+    assert(xs.max() == Some(3))
+    ro range_collected = (0..4).collect()
+    assert(range_collected == [0, 1, 2, 3])
+}
+
+export type M254Counter value { mut cur int, end int }
+
+#impl(Next[int])
+export fn M254Counter mut @next() -> Option[int] {
+    if @cur >= @end { return None }
+    ro v = @cur
+    @cur += 1
+    Some(v)
+}
+
+// Trivial self-iterator (Rust `IntoIterator<IntoIter = Self>` / Kotlin
+// idiom): `M254Counter` ALSO satisfies the `Iter[I]`-delegate's bound. Own
+// carrier must win — see module header note (c).
+#impl(Iter[M254Counter])
+export fn M254Counter @iter() -> M254Counter => @
+
+test "(c) specificity: own Next[T] carrier wins over the trivial Iter[Self] delegate (no infinite recursion)" {
+    ro c = M254Counter { cur: 0, end: 5 }
+    ro collected = c.collect()
+    assert(collected == [0, 1, 2, 3, 4])
+}

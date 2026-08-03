@@ -43741,7 +43741,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             })
                             .cloned()
                             .collect();
-                        blanket_keys.sort();
+                        blanket_keys.sort_by_key(|(tv, _)| (self.mono_method_decls.get(&(tv.clone(), method.to_string())).and_then(|fd| fd.generics.iter().find(|g| &g.name == tv)).map_or(false, |g| g.bounds.iter().any(|b| matches!(b, crate::ast::TypeRef::Named { path, .. } if path.last().map(|s| s.as_str()) == Some("Iter")))), tv.clone()));
                         for blanket_key in blanket_keys {
                             if let Some(fn_decl) = self.mono_method_decls.get(&blanket_key).cloned() {
                                 // Check: does the receiver's protocol set satisfy the

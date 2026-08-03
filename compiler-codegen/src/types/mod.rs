@@ -5893,6 +5893,21 @@ impl<'a> TypeCheckCtx<'a> {
                 for e in &fd.effects {
                     Self::collect_named_idents(e, &mut referenced);
                 }
+                // №254 (221.1, Iter-delegate blankets): a prefix typevar used
+                // ONLY inside a SIBLING prefix generic's protocol bound
+                // (`fn[C Iter[I], I Next[T]] C @collect() -> Vec[T]` — `I`
+                // never appears literally in receiver/params/return, only
+                // inside `C`'s bound `Iter[I]`) is genuinely constrained, not
+                // orphaned — `I` fixes WHICH iterator `@iter()` must return
+                // for `C`'s bound to typecheck at a call site. Scan every
+                // prefix generic's OWN bounds for nested typevar references
+                // before the unused-check below (mirrors the effects-clause
+                // carve-out above — same D145 "legitimate usage" spirit).
+                for g in &fd.generics {
+                    for b in &g.bounds {
+                        Self::collect_named_idents(b, &mut referenced);
+                    }
+                }
                 // Check each fd.generics — must be referenced.
                 for g in &fd.generics {
                     if !referenced.contains(&g.name) {
@@ -12990,6 +13005,37 @@ impl<'a> TypeCheckCtx<'a> {
                 // Bare typevar receiver (`fn[T] T @m` / blanket `fn[I Bound] I @m`):
                 // recv_key IS a method-level generic param name → matches any receiver.
                 if f.generics.iter().any(|g| &g.name == recv_key) {
+                    // №254 (221.1): mirror `resolve_prefix_generic_method_return`'s
+                    // bound-check (same scope: `Next`/`Iter` only, same "protocol
+                    // name lowercased = required method" convention). Without this,
+                    // a receiver that structurally fails a `Next`/`Iter` bound was
+                    // still treated as "has the method" — the call type-checked
+                    // clean, then crashed downstream as a codegen ICE
+                    // (`[P67-LEGACY] method call return type unknown`) instead of
+                    // an honest checker diagnostic (`bound_violation_message`
+                    // below fires the real, specific message for this case).
+                    if let Some(recv_g) = f.generics.iter().find(|g| &g.name == recv_key) {
+                        let concrete_name: Option<&str> = match peeled {
+                            TypeRef::Named { path, .. } => path.last().map(|s| s.as_str()),
+                            TypeRef::Array(_, _) => Some("Vec"),
+                            _ => None,
+                        };
+                        let bound_ok = recv_g.bounds.iter().all(|b| {
+                            let TypeRef::Named { path: bpath, .. } = b else { return true; };
+                            let Some(proto_name) = bpath.last() else { return true; };
+                            if !matches!(proto_name.as_str(), "Next" | "Iter") {
+                                return true;
+                            }
+                            let required_method = proto_name.to_lowercase();
+                            concrete_name
+                                .and_then(|cn| self.sig.method_table.get(cn))
+                                .map(|m| m.contains_key(&required_method))
+                                .unwrap_or(false)
+                        });
+                        if !bound_ok {
+                            continue;
+                        }
+                    }
                     return true;
                 }
                 // Single-level slice typevar (`fn[T] []T @m`): matches only an array
@@ -13003,6 +13049,58 @@ impl<'a> TypeCheckCtx<'a> {
             }
         }
         false
+    }
+
+    /// №254 (221.1): when `prefix_generic_method_exists` above declines a
+    /// `method` call SPECIFICALLY because the receiver fails a `Next`/`Iter`
+    /// bound (not because no blanket by that name exists at all), produce a
+    /// clear, dedicated diagnostic instead of falling through to the generic
+    /// `[E7320] no field or method` — the owner's decision requires an honest
+    /// bound-failure message here, not "method not found" (that phrasing
+    /// would be actively misleading: the method name IS declared, just not
+    /// for this receiver).
+    fn bound_violation_message(&self, peeled: &TypeRef, method: &str) -> Option<String> {
+        let concrete_name: Option<&str> = match peeled {
+            TypeRef::Named { path, .. } => path.last().map(|s| s.as_str()),
+            TypeRef::Array(_, _) => Some("Vec"),
+            _ => None,
+        };
+        let concrete_name = concrete_name?;
+        for (recv_key, methods) in self.sig.method_table.iter() {
+            let Some(overloads) = methods.get(method) else { continue; };
+            for f in overloads {
+                let Some(recv) = f.receiver.as_ref() else { continue; };
+                if !matches!(recv.kind, ReceiverKind::Instance) {
+                    continue;
+                }
+                if !f.generics.iter().any(|g| &g.name == recv_key) {
+                    continue;
+                }
+                let Some(recv_g) = f.generics.iter().find(|g| &g.name == recv_key) else { continue };
+                for b in &recv_g.bounds {
+                    let TypeRef::Named { path: bpath, .. } = b else { continue };
+                    let Some(proto_name) = bpath.last() else { continue };
+                    if !matches!(proto_name.as_str(), "Next" | "Iter") {
+                        continue;
+                    }
+                    let required_method = proto_name.to_lowercase();
+                    let satisfied = self.sig.method_table.get(concrete_name)
+                        .map(|m| m.contains_key(&required_method))
+                        .unwrap_or(false);
+                    if !satisfied {
+                        return Some(format!(
+                            "[E_PROTOCOL_BOUND_NOT_SATISFIED] `{cn}.{m}(...)` — `{m}` \
+                             requires `{cn}` to implement `{proto}` (needs a `{req}()` \
+                             method), but `{cn}` has none. Hint: implement `#impl({proto}[..]) \
+                             fn {cn} @{req}(...) -> ..` (or, for `Next`, call `.iter()` first \
+                             if `{cn}` is a container with an `Iter`-satisfying `@iter()`).",
+                            cn = concrete_name, m = method, proto = proto_name, req = required_method,
+                        ));
+                    }
+                }
+            }
+        }
+        None
     }
 
     fn check_instance_overload(
@@ -14908,6 +15006,17 @@ impl<'a> TypeCheckCtx<'a> {
                 // is satisfied → accept the bare call; codegen general synthesizer
                 // emits the concrete Nova_<T>_method_<name> on first use.
                 if self.protocol_method_satisfiable_for(tname, name) {
+                    return;
+                }
+                // №254 (221.1): `name` exists as SOME blanket declared under this
+                // name (that's why we got this far without an earlier `has_method`
+                // accept) but the receiver fails its `Next`/`Iter` bound — surface
+                // the specific bound-failure instead of falling to generic E7320.
+                if let Some(msg) = self.bound_violation_message(
+                    &TypeRef::Named { path: vec![tname.to_string()], generics: vec![], span },
+                    name,
+                ) {
+                    errors.push(Diagnostic::new(msg, span));
                     return;
                 }
                 // Plan 114.4.1 (D200): assoc const detection — если `name` matches
@@ -20297,7 +20406,41 @@ impl<'a> TypeCheckCtx<'a> {
         if !peeled_ok {
             return None;
         }
-        for (recv_key, methods) in self.sig.method_table.iter() {
+        // №254 (221.1) specificity: when a concrete receiver satisfies BOTH a
+        // direct `Next[T]`-bound blanket (it owns `@next` itself) AND the
+        // `Iter[I]`-delegate blanket (design point 4 — it also has `@iter()`,
+        // e.g. a user type mirroring Rust's `impl Iterator + IntoIterator<IntoIter
+        // = Self>`), the delegate must NOT win: dispatching through it calls
+        // `@iter()` (== self) then re-resolves the SAME ambiguity on the
+        // "new" receiver — an infinite loop (confirmed empirically: a type
+        // implementing both directly recurses to fiber-stack-overflow before
+        // this fix). HashMap iteration order over `sig.method_table` is
+        // unspecified, so the loop below USED TO pick whichever candidate a
+        // given hash-seed visited first — silently non-deterministic even
+        // when it didn't outright recurse. Fix: visit candidates in a STABLE
+        // order that always tries a non-`Iter`-bound candidate (the direct
+        // `Next[T]` carrier, or anything else) before an `Iter`-bound one —
+        // "own carrier beats delegate". A genuine tie (two candidates both
+        // NOT bound by `Iter`, or both bound by `Iter`) still resolves by
+        // incidental HashMap order — full `E_AMBIGUOUS` diagnostics for that
+        // residual case is the broader #260/#262 class, out of scope here.
+        let mut ordered: Vec<(&String, &HashMap<String, Vec<&FnDecl>>)> =
+            self.sig.method_table.iter().collect();
+        ordered.sort_by_key(|(recv_key, methods)| {
+            let is_iter_delegate = methods.get(method)
+                .and_then(|overloads| match overloads.as_slice() {
+                    [f] => Some(f),
+                    _ => None,
+                })
+                .and_then(|f| f.generics.iter().find(|g| &g.name == *recv_key))
+                .map(|recv_g| recv_g.bounds.iter().any(|b| {
+                    matches!(b, TypeRef::Named { path, .. }
+                        if path.last().map(|s| s.as_str()) == Some("Iter"))
+                }))
+                .unwrap_or(false);
+            is_iter_delegate as u8
+        });
+        for (recv_key, methods) in ordered {
             let Some(overloads) = methods.get(method) else { continue; };
             let [f] = overloads.as_slice() else { continue; };
             let Some(recv) = f.receiver.as_ref() else { continue; };
@@ -20331,6 +20474,56 @@ impl<'a> TypeCheckCtx<'a> {
                 } else {
                     continue;
                 };
+            // №254 (221.1) bound-check: a bare-typevar receiver blanket
+            // (`fn[I Bound] I @m`) used to bind `I := peeled` UNCONDITIONALLY
+            // — no check that `peeled` actually satisfies `Bound`. Codegen's
+            // OWN protocol-aware blanket dispatch (Plan 164 Ф.3, emit_c.rs
+            // `protocols_match`) already refuses a receiver lacking the bound
+            // protocol and falls into the single-key `method_receivers`
+            // last-wins fallback — the checker/codegen disagreement is
+            // exactly backlog #262 ("checker-codegen mutual permissive
+            // ring"). Concretely: `entries.collect()` (entries: `Vec[u8]`)
+            // let the checker accept `I := Vec[u8]` against `collect`'s
+            // `I Next[T]` bound though `Vec` has no `next()` method at all —
+            // codegen then rejected it, producing E_RECV_METHOD_MISMATCH
+            // instead of an honest bound-failure (or, once a genuine
+            // alternate candidate exists — the `Iter[I]`-delegate blanket —
+            // silently picking whichever candidate a HashMap iteration
+            // happened to visit first).
+            //
+            // Reject a candidate whose receiver typevar carries a `Next`/
+            // `Iter` protocol bound the concrete receiver does not
+            // structurally satisfy. Scoped to these two protocols ONLY:
+            // both are documented (prelude/collections.nv) to use the exact
+            // "protocol name, lowercased, is the required method name"
+            // convention (`Next[T]` → `next`, `Iter[I]` → `iter`) — reusing
+            // that convention here is precise, not a heuristic guess.
+            // Widening this to protocol-bounds in general is the broader
+            // backlog #260/#262 class, out of scope for this window.
+            if typevar_name == *recv_key {
+                if let Some(recv_g) = f.generics.iter().find(|g| &g.name == recv_key) {
+                    let concrete_name: Option<&str> = match &t_binding {
+                        TypeRef::Named { path, .. } => path.last().map(|s| s.as_str()),
+                        TypeRef::Array(_, _) => Some("Vec"),
+                        _ => None,
+                    };
+                    let bound_ok = recv_g.bounds.iter().all(|b| {
+                        let TypeRef::Named { path: bpath, .. } = b else { return true; };
+                        let Some(proto_name) = bpath.last() else { return true; };
+                        if !matches!(proto_name.as_str(), "Next" | "Iter") {
+                            return true; // out of scope — permissive (unchanged behavior)
+                        }
+                        let required_method = proto_name.to_lowercase();
+                        concrete_name
+                            .and_then(|cn| self.sig.method_table.get(cn))
+                            .map(|m| m.contains_key(&required_method))
+                            .unwrap_or(false)
+                    });
+                    if !bound_ok {
+                        continue;
+                    }
+                }
+            }
             let Some(ret) = f.return_type.as_ref() else { continue; };
             let mut subst: HashMap<String, TypeRef> = HashMap::new();
             subst.insert(typevar_name.clone(), t_binding);
