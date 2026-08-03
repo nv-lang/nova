@@ -4,6 +4,6 @@
 // an optional leading `-` (`= -1`), but `-` MUST still be followed by an
 // integer literal — `= -x` (identifier, not a literal) stays a hard error.
 // Guards against over-widening the fix to "swallow any `-` token".
-module neg.sum_discriminant_non_numeric_after_minus
+module neg.sum_discriminant_non_numeric_after_minus_neg
 
 type P296NegBad enum A = -x | B = 1

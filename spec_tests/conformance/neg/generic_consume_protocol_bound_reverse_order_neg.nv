@@ -1,0 +1,13 @@
+// EXPECT_COMPILE_ERROR expected `]`
+//
+// №300 (221.1) companion negative: the owner picked ONE canonical order —
+// `[T consume Hash + Equal]` (modifier first, then the `+`-chain). The
+// reverse order `[T Hash + Equal consume]` stays rejected; there is no
+// second accepted spelling.
+module neg.generic_consume_protocol_bound_reverse_order_neg
+
+fn p300_id[T Hash + Equal consume](consume v T) -> T {
+    v
+}
+
+fn main() -> () {}
