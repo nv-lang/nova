@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
-# План 236 — `bigdecimal` (пакет nova-bigint): десятичная произвольной точности поверх BigInt
+# План 236 — `bigdecimal` (пакет nova-bignum): десятичная произвольной точности поверх BigInt
 
 **Статус:** ✅ ЗАКРЫТ 2026-07-31 — V1 сдан (окно sonnet, приёмка интегратора: check 5/0, test 4/0/1, запушено на 3 ремоута). Три пина Ф.0 проверены фактом; 3 дефекта компилятора заведены (№170-№172), порядок атрибутов — backlog.
 
@@ -200,9 +200,9 @@ loop:
 
 Никакого неявного `int → BigDecimal` (аллокация ≠ zero-cost — вне полос D429 #coerce). Только явные `to_bigdecimal`-вызовы. Литеральная форма `12.345bd`-стиля — не в V1.
 
-### 2.8. Дом — в репе `nova-bigint`
+### 2.8. Дом — в репе `nova-bignum`
 
-BigDecimal НЕ отдельная репа — живёт в той же репе `nova-bigint` (решение владельца: BigInt, BigDecimal, BigRat, BigFloat — все в одном внешнем пакете, как Go `math/big`). Подпакет `bigdecimal` рядом с `bigint`/`bigrat`/`bigfloat`. Тесты — `bigdecimal_test.nv` рядом.
+BigDecimal НЕ отдельная репа — живёт в той же репе `nova-bignum` (решение владельца: BigInt, BigDecimal, BigRat, BigFloat — все в одном внешнем пакете, как Go `math/big`). Подпакет `bigdecimal` рядом с `bigint`/`bigrat`/`bigfloat`. Тесты — `bigdecimal_test.nv` рядом.
 
 ### 2.9. Формат строки для `str @to_bigdecimal`
 
@@ -259,7 +259,7 @@ digit          := '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9'
 
 ## 4. Гейты
 
-Таргетно: `nova test` репы `nova-bigint` зелёный; `--strict-effects`; линт чистый. Авторитетный (интегратор): conformance-CU не задет (внешняя репа).
+Таргетно: `nova test` репы `nova-bignum` зелёный; `--strict-effects`; линт чистый. Авторитетный (интегратор): conformance-CU не задет (внешняя репа).
 
 ## 5. Риски
 

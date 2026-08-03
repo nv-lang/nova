@@ -69,7 +69,7 @@ fn run_slope(buf_bytes int) -> f64 {
                         Err(_) => {}
                         Ok(consume tcp) => {
                             consume stream = tcp
-                            match stream.read_to_vec(buf_bytes) {
+                            match stream.read_bytes(buf_bytes) {
                                 Ok(_)  => { ro _wrote = stream.write_all(make_buf(buf_bytes)) }
                                 Err(_) => {}
                             }
@@ -85,7 +85,7 @@ fn run_slope(buf_bytes int) -> f64 {
                         Ok(consume tcp) => {
                             consume stream = tcp
                             ro _wrote = stream.write_all(make_buf(buf_bytes))
-                            ro _echo = stream.read_to_vec(buf_bytes)
+                            ro _echo = stream.read_bytes(buf_bytes)
                             stream.close()
                         }
                     }

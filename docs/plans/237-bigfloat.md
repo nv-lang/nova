@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
-# План 237 — `bigfloat` (пакет nova-bigint): двоичная произвольной точности поверх BigInt
+# План 237 — `bigfloat` (пакет nova-bignum): двоичная произвольной точности поверх BigInt
 
-**Статус:** ЗАКРЫТ (2026-08-01) — BigFloat V1 влит в nova-bigint master (1ef06b1): mantissa/exp, нормализация, конверсии f64 (включая субнормали), sqrt; тесты 5/0, strict-effects 7/0. Попутный компилятор-дефект — [M-option-int-cast-u64-cc-fail] в реестре.
+**Статус:** ЗАКРЫТ (2026-08-01) — BigFloat V1 влит в nova-bignum master (1ef06b1): mantissa/exp, нормализация, конверсии f64 (включая субнормали), sqrt; тесты 5/0, strict-effects 7/0. Попутный компилятор-дефект — [M-option-int-cast-u64-cc-fail] в реестре.
 
 **Зависимость:** блокирован планами 235 (BigInt — мантисса) и 236 (BigDecimal — конверсии туда/обратно). Вся арифметика BigFloat сводится к BigInt; конверсии в десятичную строку оптимальнее через BigDecimal, чем напрямую.
 
@@ -78,7 +78,7 @@ V1 **не** включает: трансцендентные функции (`ex
 ```nova
 // RoundingMode — тот же enum, что в BigDecimal (236), чтобы был один канон.
 // Если BigDecimal ещё не реализован к моменту Ф.1 — определить локально
-// (при слиянии обоих — вынести в общий модуль РЕПЫ nova-bigint, напр. src/rounding.nv;
+// (при слиянии обоих — вынести в общий модуль РЕПЫ nova-bignum, напр. src/rounding.nv;
 //  НЕ «std math» — дом пакета §2.8, std не трогаем).
 type RoundingMode enum HalfEven | HalfUp | HalfDown | Down | Up | Ceiling | Floor
 // Семантика — идентична IEEE 754-2019 §4.3:
@@ -424,9 +424,9 @@ a.@sqrt(ctx)
 
 Никакого `12.345bf`-синтаксиса или неявного `int → BigFloat`. Только явные `@to_bigfloat(ctx)`. Обоснование: то же, что в BigDecimal (D429 — аллокация вне zero-cost-полосы).
 
-### 2.8. Дом — в репе `nova-bigint`
+### 2.8. Дом — в репе `nova-bignum`
 
-BigFloat — в той же репе `nova-bigint` (решение владельца: BigInt, BigDecimal, BigRat, BigFloat вместе, как Go `math/big`). Подпакет `bigfloat` рядом с `bigint`/`bigdecimal`/`bigrat`. Тесты — `bigfloat_test.nv` рядом.
+BigFloat — в той же репе `nova-bignum` (решение владельца: BigInt, BigDecimal, BigRat, BigFloat вместе, как Go `math/big`). Подпакет `bigfloat` рядом с `bigint`/`bigdecimal`/`bigrat`. Тесты — `bigfloat_test.nv` рядом.
 
 ### 2.9. Формат строки для `str @to_bigfloat`
 
@@ -476,7 +476,7 @@ bigfloat-binary := [sign] '0b' bin-digits ['.' bin-frac] 'p' [sign] digits
 
 ## 4. Гейты
 
-Таргетно: `nova test` репы `nova-bigint` зелёный; `--strict-effects`; линт чистый. Авторитетный (интегратор): conformance-CU не задет (внешняя репа). BigDecimal-зависимость: если BigDecimal ещё не влит в nova-bigint к моменту Ф.1 — временно замокать `BigDecimal` как стуб (только str-конверсии без round-trip, реализовать тупой `str↔BigFloat` напрямую через `5^{k}` BigInt-умножение без BigDecimal-посредника).
+Таргетно: `nova test` репы `nova-bignum` зелёный; `--strict-effects`; линт чистый. Авторитетный (интегратор): conformance-CU не задет (внешняя репа). BigDecimal-зависимость: если BigDecimal ещё не влит в nova-bignum к моменту Ф.1 — временно замокать `BigDecimal` как стуб (только str-конверсии без round-trip, реализовать тупой `str↔BigFloat` напрямую через `5^{k}` BigInt-умножение без BigDecimal-посредника).
 
 ## 5. Риски
 

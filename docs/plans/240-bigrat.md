@@ -1,10 +1,10 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
-# План 240 — `bigrat` (пакет nova-bigint): точные рациональные числа поверх BigInt
+# План 240 — `bigrat` (пакет nova-bignum): точные рациональные числа поверх BigInt
 
-**Статус:** ✅ ЗАКРЫТ 2026-08-02 — Ф.1–Ф.6 влиты в nova-bigint main (e5ef51f): gcd, ядро BigRat, арифметика, строки/мосты, тесты+эталоны (slow-lane), README; приёмка интегратора: test 9/0 SKIP4, check 13/0/38 --strict-effects, lint 0 (9 находок починено, вскрыт и закрыт №284 компилятора). Хвосты ВНЕ плана: кортеж-миграция = 243-Ф.T (после №271/№272), №281-разворот обхода loop/break = 243-Ф.A.
+**Статус:** ✅ ЗАКРЫТ 2026-08-02 — Ф.1–Ф.6 влиты в nova-bignum main (e5ef51f): gcd, ядро BigRat, арифметика, строки/мосты, тесты+эталоны (slow-lane), README; приёмка интегратора: test 9/0 SKIP4, check 13/0/38 --strict-effects, lint 0 (9 находок починено, вскрыт и закрыт №284 компилятора). Хвосты ВНЕ плана: кортеж-миграция = 243-Ф.T (после №271/№272), №281-разворот обхода loop/break = 243-Ф.A.
 **Приоритет:** P3 (ниша; по слову владельца, не самозапуск).
 
-**Зависимость:** BigInt V1 ✅ реализован (Plan 235, `nova-bigint` master), НО в
+**Зависимость:** BigInt V1 ✅ реализован (Plan 235, `nova-bignum` master), НО в
 `src/bigint.nv` НЕТ `gcd` (проверено грепом 2026-08-02: только `@div_rem/@div/@rem`) —
 нормализация BigRat без НОД невозможна → **Ф.1 этого плана добавляет `BigInt @gcd` в
 `bigint.nv`** (дом по смыслу — bigint, не bigrat). Семья: 235 ✅ / 236 BigDecimal ✅
@@ -94,7 +94,7 @@ mediant; pow.
 - **Ф.1-предусловие в bigint.nv:** `export fn BigInt @gcd(other BigInt) -> BigInt` —
   Евклид через готовый `@rem` (V1; binary-gcd — вне объёма), результат неотрицателен,
   `gcd(0,0)=0`; + тесты рядом.
-- **Дом:** пакет `nova-bigint`, файлы `src/bigrat.nv` (`module bigint.bigrat` — по
+- **Дом:** пакет `nova-bignum`, файлы `src/bigrat.nv` (`module bigint.bigrat` — по
   образцу `bigint.bigdecimal`) + `src/bigrat_test.nv`. НЕ std, НЕ новая репа.
 
 ## 3. Фазы (одна sonnet-волна с внутренним порядком; приёмка интегратора)
@@ -132,7 +132,7 @@ mediant; pow.
 
 ## 4. Гейты
 
-Таргетно (агент): `nova check` + `nova test` пакета nova-bigint зелёные (все 4 модуля —
+Таргетно (агент): `nova check` + `nova test` пакета nova-bignum зелёные (все 4 модуля —
 регресс 235/236/237 обязателен: gcd-коммит трогает bigint.nv); линт чистый. Приёмка
 (интегратор): повтор гейтов + пуш. Мега-CU не касается (пакет вне conformance).
 
