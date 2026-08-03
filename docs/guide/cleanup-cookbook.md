@@ -56,7 +56,7 @@ func process(db *DB) error {
         }
     }()
     if err := doWork(tx); err != nil {
-        tx.Rollback()  // manual rollback на error
+        tx.Rollback()  // manual rollback on error
         return err
     }
     return tx.Commit()
@@ -77,7 +77,7 @@ fn process(db Db) Fail[DbError] -> () {
     consume tx = db.begin()? {
         do_work()?
     }
-    // commit/rollback по outcome — автоматически.
+    // commit/rollback based on outcome — automatic.
 }
 ```
 
@@ -90,7 +90,7 @@ paths, repeating the rollback logic. Nova auto-routes via `outcome`.
 // Java:
 try (Transaction tx = db.begin()) {
     doWork();
-}  // tx.close() called; commit/rollback в close() impl manually
+}  // tx.close() called; commit/rollback in the close() impl manually
 ```
 
 ```nova
@@ -98,7 +98,7 @@ try (Transaction tx = db.begin()) {
 consume tx = db.begin()? {
     do_work()?
 }
-// outcome routing встроено в Cleanup.@cleanup
+// outcome routing is built into Cleanup.@cleanup
 ```
 
 **Difference**: Java's `AutoCloseable.close()` does not distinguish success
@@ -231,7 +231,7 @@ fn TcpStream consume @cleanup(outcome ScopeOutcome) Fail[IoError] -> () {
     }
 }
 
-fn TcpStream @exit_timeout_ms() -> int => 5000   // grace close может занять время
+fn TcpStream @exit_timeout_ms() -> int => 5000   // a grace close can take time
 
 fn handle_request(addr str) Fail[IoError] Net -> () {
     consume sock = TcpStream.connect(addr)? {
@@ -247,7 +247,7 @@ fn handle_request(addr str) Fail[IoError] Net -> () {
 type PooledConn { pool ConnPool, conn Conn }
 
 fn PooledConn consume @cleanup(_outcome ScopeOutcome) -> () => {
-    @pool.release(@conn)             // return to pool, не close
+    @pool.release(@conn)             // return to pool, not close
 }
 
 fn query(pool ConnPool, sql str) Fail[DbError] -> Rows {
@@ -273,7 +273,7 @@ fn build_url(parts []str) -> str {
     for p in parts {
         sb.append(p)
     }
-    sb.as_str()    // consume — финальное преобразование, не cleanup
+    sb.as_str()    // consume — a final conversion, not cleanup
 }
 ```
 
@@ -287,12 +287,12 @@ fn main() Io -> () {
         // setup phase
         ro server = HttpServer.bind(":8080")?
 
-        // deep в каком-то конструкторе:
+        // deep inside some constructor:
         // Application.register_finalizer(|| metrics.flush())
 
         server.serve()?
     }
-    // handler.on_exit fires finalizers в reverse-order (LIFO topo)
+    // handler.on_exit fires finalizers in reverse-order (LIFO topo)
 }
 ```
 
@@ -308,7 +308,7 @@ fn test_user_creation() Io -> () {
         Application.register_finalizer(|| reset_test_db())
         run_test_scenario()
     }
-    // finalizers fire здесь, не shareятся с другими tests
+    // finalizers fire here, not shared with other tests
 }
 ```
 
@@ -325,7 +325,7 @@ external type SqliteConn
 external fn sqlite_open(path str) -> SqliteConn
 external fn sqlite_close(conn SqliteConn) Fail[IoError] -> ()
 
-// Wrap external resource в Cleanup:
+// Wrap external resource in Cleanup:
 fn SqliteConn consume @cleanup(_outcome ScopeOutcome) Fail[IoError] -> () =>
     sqlite_close(@)?
 
@@ -516,7 +516,7 @@ If a cleanup cascade goes deeper than 256, that's usually a sign of a bug
 ```nova
 // ❌ DON'T:
 fn Application.handler(...) -> ApplicationHandler {
-    register_finalizer(|| cleanup())   // can't — handler ещё не активен (D195 R7)
+    register_finalizer(|| cleanup())   // can't — handler isn't active yet (D195 R7)
     ApplicationHandler { ... }
 }
 ```
@@ -539,8 +539,8 @@ For critical state on abort:
 
 ```nova
 with Application = Application.handler(default_exit_timeout_ms: 30_000) {
-    with Application = Application.handler() {   // inherits ничего!
-        // default_exit_timeout_ms == 5_000 (hardcoded), НЕ 30_000
+    with Application = Application.handler() {   // inherits nothing!
+        // default_exit_timeout_ms == 5_000 (hardcoded), NOT 30_000
     }
 }
 ```
