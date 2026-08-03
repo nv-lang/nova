@@ -1,0 +1,36 @@
+// РЕГРЕСС на дефект, найденный работой над BigRat (план 240, СТОП-отчёт).
+// Дефект ПОЧИНЕН, но фикстурой закреплён не был — воспроизведение жило
+// файлом в исходниках пакета nova-bignum, где ему не место (регресс на
+// компилятор, а не функциональность пакета). Перенесено интегратором
+// 2026-08-03 по вопросу владельца «что это?».
+//
+module spec_tests.conformance
+
+type M240bPt value { x i64, y i64 }
+
+fn M240bPt.new(x i64, y i64) -> M240bPt => { x, y }
+
+type M240bRt value { a M240bPt, b M240bPt }
+
+fn M240bRt.new(a M240bPt, b M240bPt) -> M240bRt {
+    { a, b }
+}
+
+fn M240bRt @plus(other M240bRt) -> M240bRt {
+    M240bRt.new(M240bPt.new(@a.x + other.a.x, @a.y + other.a.y), M240bPt.new(@b.x + other.b.x, @b.y + other.b.y))
+}
+
+fn M240bRt @equal(other M240bRt) -> bool {
+    @a == other.a && @b == other.b
+}
+
+test "direct method call on 32B value-record" {
+    ro p1 = M240bPt.new(1, 2)
+    ro p2 = M240bPt.new(3, 4)
+    ro r1 = M240bRt.new(p1, p2)
+    ro r2 = M240bRt.new(p1, p2)
+    ro s = r1.plus(r2)
+    assert(s.a.x == 2)
+    assert(s.b.y == 8)
+    assert(r1.equal(r2))
+}
