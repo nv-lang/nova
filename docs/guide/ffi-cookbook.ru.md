@@ -41,17 +41,17 @@ sqlite3, libpng, libcurl — с помощью фундаментальных FF
 
 ## Правила модификаторов указателей (FINAL — Plan 138.5)
 
-При записи FFI-сигнатур с pointer/typed wrappers модификатор pointee пишется **постфиксом**, сразу после `*` (`*mut T` / `*ro T` / `*unsafe T`). **Prefix перед `*` запрещён** (`mut * T` / `ro * T` / `unsafe * T` → `E_POINTER_PREFIX_MODIFIER`). Перепривязываемость указателя — это **binding** (`ro` / `mut`), не тип.
+При записи FFI-сигнатур с pointer/typed wrappers модификатор pointee пишется **постфиксом**, сразу после `*` (`*mut T` / `*uninit T`; у read-only нет модификатора — голый `*T` уже означает read-only, явное `*ro T` избыточно и отвергается, `E_REDUNDANT_POINTER_RO`). **Prefix перед `*` запрещён** (`mut * T` / `ro * T` / `uninit * T` → `E_POINTER_PREFIX_MODIFIER`). Перепривязываемость указателя — это **binding** (`ro` / `mut`), не тип.
 
 Краткая шпаргалка:
 
-- `*T` ≡ `*ro T` — pointer к read-only T (default)
+- `*T` — pointer к read-only T (default; единственное read-only написание)
 - `*mut T` — pointer к writable T (caller может изменить pointee)
-- `*unsafe T` — pointer к possibly-uninit T (MaybeUninit analog); сам указатель non-null
+- `*uninit T` — pointer к possibly-uninit T (MaybeUninit analog); сам указатель non-null
 - `Option[*T]` — **nullable** pointer (NPO, 8 байт); это замена старому `unsafe * T`
-- `Option[*unsafe T]` — FFI nullable-uninit pointer (None = null, Some = non-null ptr к uninit)
-- `*mut *ro Acc` — postfix chain (writable-target ptr к read-only-target ptr к Acc)
-- `mut p *mut T` — binding mut (p re-pointable) + pointee mut; `ro q *ro T` — fixed binding + ro pointee
+- `Option[*uninit T]` — FFI nullable-uninit pointer (None = null, Some = non-null ptr к uninit)
+- `*mut *Acc` — postfix chain (writable-target ptr к read-only-target ptr к Acc)
+- `mut p *mut T` — binding mut (p re-pointable) + pointee mut; `ro q *T` — fixed binding + ro pointee
 
 Полные правила (arrow→box model, value-T composition §V3.1/§V3.2) — см. [`docs/guide/typed-pointers.md`](typed-pointers.md). Spec — [D216 §1 FINAL](../../spec/decisions/02-types.md#d216-typed-pointer-family--unsafe-model--null-safety-через-npo) + [Plan 138.5](../plans/138.5-d216-v2-v3-simplification.md).
 
@@ -404,9 +404,9 @@ unsafe {
 | | Plan 115 V1 / Plan 134 (`*()`) | Plan 118 V2 (*T family) |
 |---|---|---|
 | Type safety | ❌ opaque `*()` cast вручную | ✓ compile-time pointee check |
-| Mutability | ❌ нет различия | ✓ `*ro T` / `*mut T` |
+| Mutability | ❌ нет различия | ✓ `*T` / `*mut T` |
 | Null safety | ❌ `0 as *()` runtime check | ✓ `Option[*T]` + NPO zero-cost |
-| FFI buffer | ❌ untyped `*()` + manual offset | ✓ `*ro u8` / `*mut u8` typed |
+| FFI buffer | ❌ untyped `*()` + manual offset | ✓ `*u8` / `*mut u8` typed |
 | Callback registration | ❌ N/A | ✓ `*fn(Args) -> Ret` |
 
 **Путь миграции:**
