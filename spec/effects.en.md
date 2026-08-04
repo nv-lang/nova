@@ -1,6 +1,6 @@
 ---
-source_rev: 337ec42af
-source_date: 2026-07-26
+source_rev: 7a17f3d2e
+source_date: 2026-08-04
 ---
 
 > **Informative translation; the Russian text is normative.**
@@ -239,6 +239,12 @@ fn helper(name str) -> () {
   transitive** and is mandatory in the signature everywhere it can occur
   (see "The `?` and `!!` operators" below) — the compiler does not weaken
   the check with any flag here.
+- **Auto-cleanup (`@cleanup`, [D432](decisions/02-types.md#d432)) counts as a
+  DIRECT effect** of the function in whose scope the compiler inserted the
+  call: the call is physically generated in its body. Hold a `File` — `Fs`
+  appears in the signature; the cleanup may fail — `Fail[E]` appears too.
+  Without this clarification the rule would read as "transitive", i.e. it
+  would degrade into a warning (D432 amendment, 2026-08-04).
 - A private (non-`export`) function can **not write** direct effects
   by hand at all — the compiler infers them from the body automatically
   (including adding `Fail[E]` if a private function uses `!!`/`throw`
