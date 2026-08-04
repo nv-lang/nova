@@ -48,9 +48,9 @@ system zone MUST be available). Nova sugar: `Offset.local()`
 Only a numeric offset — the zone in `ZonedDateTime` stays EXPLICIT (D319 R1),
 no implicit fallback to "the local zone".
 
-**The wire stays int** (see "Ф.2 — why the typed effect wire wasn't shipped" below) —
+**The wire stays int** (see "Why the typed effect wire wasn't shipped" below) —
 the entire user-facing surface is, nonetheless, **fully typed** and **fully
-mockable**, including `Monotonic` (Plan 175 Ф.3a).
+mockable**, including `Monotonic` (Plan 175).
 
 ## Before → after
 
@@ -109,7 +109,7 @@ d + 1.nanos()                 // → trap (the operator is default-safe)
   process-local value, meaningless outside the process (the Go anti-pattern, where
   `Time.String()` can leak an `m=…` monotonic component into a log).
 
-## Sleep semantics (Ф.4)
+## Sleep semantics
 
 - `sleep(d)`/`Duration.@sleep()` — `d <= 0` resolves **immediately** (Go/tokio
   parity), never panics on a zero/negative duration.
@@ -196,7 +196,7 @@ deadline-order guarantee (spawn order instead — the old behavior). Fixing the
 general M:N case needs a different anchor (e.g. resolving via
 `NovaSpawnCtxBase._nova_parent_scope`) — out of scope for this pass.
 
-## Ф.2 — why the typed effect wire wasn't shipped (an architectural finding)
+## Why the typed effect wire wasn't shipped (an architectural finding)
 
 The original plan called for re-taxing the int wire onto a fully typed scheme
 (`timestamp() -> Timestamp`/`monotonic() -> Monotonic`/`sleep(d Duration)` —
