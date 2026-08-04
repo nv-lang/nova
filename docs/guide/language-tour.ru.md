@@ -619,9 +619,8 @@ monorepo, как это делает корневой `nova.toml` этого р�
 против сокетного) не были взаимозаменяемы на этапе компиляции, хотя на C-стороне
 оба — `void*`. `external fn name(args) -> ret` (D82) объявляет привязку к
 C-символу; полный cookbook — послойные обёртки, кортежные возвраты по
-значению, линковка статической/разделяемой библиотеки через
-`[ffi]`/`[ffi.staticlib]` в `nova.toml` — в
-[docs/guide/ffi-cookbook.md](ffi-cookbook.md).
+значению, линковка статической/разделяемой библиотеки через `[ffi]` в
+`nova.toml` — в [docs/guide/ffi-cookbook.md](ffi-cookbook.md).
 
 ```nova
 // ffi_tour.nv — FFI basics: opaque pointer `*()`, typed handles, `external fn`.
