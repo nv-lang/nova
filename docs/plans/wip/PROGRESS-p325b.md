@@ -105,4 +105,66 @@ through (уже общие).
 
 ## Статус
 
-См. финальный отчёт для вердиктов прогонов (заполняется по ходу).
+Реализовано и проверено. Ключевые точки:
+
+- `ConsumeCtx` получил поле `module: &'a Module` (2 call-сайта `new`).
+- `ConsumeCtx::infer_let_type_ref` + free fn `turbofish_ctor_type_ref` —
+  генерик-aware резолв RHS-типа для D180.
+- `rhs_yields_consume_type` = старая проверка ИЛИ
+  `type_is_consume(infer_let_type_ref(decl))`.
+- Диагностика `E_CONSUME_KEYWORD_MISSING` получила приличное имя типа в
+  сообщении (`inferred_ty_d180_display`) вместо `` `?` `` — раньше RHS
+  TurboFish-конструктора не резолвился вовсе.
+- Заслон Ш.0 снят целиком (`check_consume_in_std_collections` +
+  4 хелпера + `CONSUME_UNSAFE_STD_COLLECTIONS` + call-сайт).
+  `turbofish_base_name` остался (реиспользован).
+
+### Находка №1 (чинена той же волной): `for consume` пессимизировал уже
+консьюмленную переменную
+
+`consume_walk_consume_for` (D156, существовал ДО этого окна) вычислял
+`outer_consumed` только по ПОСТ-pass-1 состоянию, без сравнения с `pre` —
+переменная, полностью потреблённая ДО входа в `for consume`-цикл (напр.
+передана в consume-param прямо перед циклом), даунгрейдилась обратно до
+`MaybeConsumed`, потому что тело цикла её просто не трогало (состояние
+оставалось Consumed и до, и после prob-прохода — фильтр `matches!(post,
+Consumed|MaybeConsumed)` этого не различал). Ложный `D133-not-consumed`
+(«consumed только на части путей») на однозначно потреблённой переменной.
+Найдено собственной pos-фикстурой этого окна (передача контейнера в
+consume-param, затем `for consume` над возвращённым результатом) — НЕ
+специфично для контейнеров, баг общего for-consume-механизма D156. Fix:
+`outer_consumed` включает `k` только если `pre.get(k)` НЕ было уже
+Consumed/MaybeConsumed (т.е. переход произошёл ВНУТРИ тела, а не раньше).
+
+### Что найдено в корпусе после снятия жёсткого списка
+
+`nova check std/src` (канон 148/26/61, БЕЗ сдвига) и polaris
+`./nova.sh test src --strict-effects` (канон 37/0/18, БЕЗ сдвига) —
+ОБА зелёные без единого нового FAIL/PASS-сдвига: новое правило нигде в
+std/polaris не срабатывает — согласуется с аудитом самого заслона Ш.0
+(«корпус на дыру не опирался»). Целевая grep-разведка (Explore-агент) по
+std/examples/nova-http/nova-polaris/nova-tls/nova-bignum/www на TurboFish-
+конструкторы (`Type[Args].new/with_capacity/from/default/filled/of`) и на
+explicit-annotation `let`-формы с consume-типом внутри `[...]` дала НОЛЬ
+находок во всех шести репах: везде generic-аргумент — обычный тип
+(`int`/`str`/`DbRow`/`EmitRecord`/`JsonValue`/...), НИ РАЗУ — один из
+известных must-consume типов (`File`, `TcpStream`/`TcpListener`/
+`TcpReadHalf`/`TcpWriteHalf`, `UdpSocket`, `MutexGuard`/`ReadGuard`/
+`WriteGuard`, `Permit`, `OnceGuard`, `StringBuilder`, `BufWriter[W]` —
+std; `Body`/`Request`/`Response` — nova-http; `WebSocket` — nova-polaris;
+`TlsStream` — nova-tls). Единственные места, где эти типы встречаются
+внутри `[...]`, — сигнатуры возврата (`Result[File, IoError]`,
+`Option[Permit]`, `Result[TlsStream, TlsError]`) — вне периметра
+изменённой проверки (она смотрит только на RHS TurboFish-конструктора и
+на type-annotation `let`-биндинга, не на fn-сигнатуры). `BufWriter[W]`
+уже И ДО этого окна корректно требовал `consume` (сам `BufWriter`
+объявлен `consume`, это база из D133, не новая generic-заразность) —
+`d322_buffered_test.nv`/`d322_io_mock_test.nv`/`d322_bufwriter_*_neg.nv`
+уже пишут `consume bw = BufWriter[...].new(...)`, найдено и подтверждено
+не regression. nova-tls и nova-bignum — вообще ноль TurboFish-конструкторов
+в исходниках. www — .nv-исходников нет вовсе (сайт).
+
+**Итог риска: блэст-радиус по факту НУЛЕВОЙ** — ни один существующий файл
+не спотыкается о новое правило; оно начинает действовать только для БУДУЩЕГО
+кода, кладущего must-consume тип в generic-контейнер через TurboFish/
+явную аннотацию.
