@@ -5,12 +5,9 @@
 
 > A general guide: from an empty directory to a publishable package. A
 > native-backed module (a wrapper over `.c`/a prebuilt `.lib`) is a **special
-> case** at the end (§7). **`[ffi.staticlib]` (a cargo/make-staticlib built as
-> part of the build) was RETRACTED by the owner (Plan 195, 2026-07-10)** — a
-> native module must build WITHOUT Rust/cargo: only `.nv` + optionally `.c`
-> (compiled by clang) + optionally a prebuilt `.lib`/`.a` (linked, not built).
-> §7.2 below is kept as historical context (what existed and why it was
-> removed).
+> case** at the end (§7): a native module must build WITHOUT Rust/cargo —
+> only `.nv` + optionally `.c` (compiled by clang) + optionally a prebuilt
+> `.lib`/`.a` (linked, not built).
 >
 > Related documents (not duplicated here — follow the link to read further):
 > [module-conventions](../dev/module-conventions.md) (module design: effect
@@ -168,27 +165,12 @@ libs         = ["sqlite3"]                 # system: clang -lsqlite3 / sqlite3.l
 If a system `.lib` isn't on the standard search path (a vcpkg triplet, a
 vendored copy) — the link is resolved and wired directly into the build
 pipeline (`test_runner.rs::build_command`), the same used-if-referenced D337
-pattern as brotli/`net.c`; see `std/tls` below.
-
-### 7.2. `[ffi.staticlib]` (a cargo/make-built staticlib) — RETRACTED (Plan 195)
-
-**Existed (Plan 195), retracted by the owner on 2026-07-10.** It let a
-module require **building** a native artifact (`cargo build`, `make`) as
-part of its own build — the only user was `compiler-codegen/tls_shim/` (a
-Rust staticlib over `rustls`). It contradicts the toolchain canon (the Nova
-compiler + clang, WITHOUT Rust/cargo) — removed entirely
-(`FfiStaticlibConfig`/`resolve_ffi_staticlib`/the section parsing were
-removed from `manifest.rs`/`test_runner.rs`). `tls_shim/` was replaced by
-`nova_rt/tls_c_shim.c` (mbedTLS) — the ordinary `[ffi]` path (§7.1), with no
-cargo/build script at all: mbedTLS is installed AHEAD OF TIME via
-`vcpkg install` (a prebuilt `.lib`, not built on the fly), `tls_c_shim.c` is
-compiled/linked conditionally like ANY other runtime module
-(`net.c`/`brotli_shim.c`), with no manifest declaration whatsoever.
-
-> **The reference pattern** (current as of 2026-07) — `std/tls` in the
-> monorepo (`nova_rt/tls_c_shim.c` + vcpkg mbedTLS, WITHOUT `[ffi.staticlib]`,
-> WITHOUT any manifest declaration at all). Full mechanics —
-> [ffi-cookbook §retracted](ffi-cookbook.md#ffistaticlib--retracted-plan-195).
+pattern as brotli/`net.c`. A native module never requires **building** a
+native artifact (`cargo build`, `make`) as part of its own build — only
+linking a prebuilt one; the reference pattern is `std/tls` in the monorepo
+(`nova_rt/tls_c_shim.c` + vcpkg mbedTLS, mbedTLS installed AHEAD OF TIME via
+`vcpkg install`, with no manifest declaration whatsoever). Full mechanics —
+[ffi-cookbook §Build pipeline](ffi-cookbook.md#build-pipeline--ffi-manifest).
 
 ## 8. Naming and publishing (an external package)
 
@@ -217,7 +199,7 @@ registry (named `<package> = "1.2"`) is Plan 03.3, separately.
    test.
 5. Design per module-conventions (effect plumbing + facade; value/must-consume;
    one `XError`).
-6. Native — `[ffi]` (prebuilt `.c` shims + a prebuilt `.lib`/`.a`;
-   `[ffi.staticlib]` (cargo/make-built) — RETRACTED, Plan 195).
+6. Native — `[ffi]` (prebuilt `.c` shims + a prebuilt `.lib`/`.a`); no
+   Rust/cargo build step as part of the module's own build.
 7. An external package — repo `nova-<package>`, native in `native/`, a git
    dependency.
