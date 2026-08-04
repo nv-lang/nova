@@ -1,12 +1,16 @@
-// EXPECT_COMPILE_ERROR E_CONSUME_IN_STD_COLLECTION
+// EXPECT_COMPILE_ERROR E_CONSUME_KEYWORD_MISSING
 //
-// Plan 221 item 9 (Ш.0 barrier, defect №325): pushing a must-consume rvalue
-// straight into a `Vec` previously compiled clean even though the element's
-// consume-obligation vanished together with the container (`v` dies at
-// scope-exit, nothing ever calls `finish`). The barrier bans the
-// `Vec[Res]` instantiation itself (hard error at the TurboFish site),
-// closing the hole above `push` until Ш.1/Ш.2 (plan 246) land real
-// per-element ownership tracking.
+// №325 Ш.2 (D156-амендмент 2026-08-04, plan 246 step B): the Ш.0 barrier
+// that used to fire here (`E_CONSUME_IN_STD_COLLECTION`, a hardcoded
+// 8-name std-collection list) is REMOVED — replaced by the general rule
+// "a generic container inherits linearity from its element" (works for
+// std AND user containers alike, not a name list). `Vec[P325ForgottenRes]`
+// is must-consume because `P325ForgottenRes` is, so the `mut v = …`
+// binding itself is now the error: D180 requires `consume v = …` for any
+// must-consume RHS, container or not. Had the keyword been present, `v`
+// would then need explicit consumption (`for consume`/pass-through/return)
+// before scope-exit — same D133 obligation-flow that already catches an
+// unconsumed `File`.
 
 module neg.consume_collection_vec_push_forgotten_neg
 
@@ -14,7 +18,7 @@ type P325ForgottenRes consume { x int }
 
 fn P325ForgottenRes consume @into_finish() -> int { self.x }
 
-test "Vec[consume T] instantiation is a hard error (forgotten-element repro)" {
+test "container of a must-consume element requires `consume` on its own binding" {
     mut v = Vec[P325ForgottenRes].new()
     v.push(P325ForgottenRes { x: 1 })
 }

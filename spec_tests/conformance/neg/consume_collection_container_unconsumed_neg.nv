@@ -1,0 +1,22 @@
+// EXPECT_COMPILE_ERROR D133-not-consumed
+//
+// №325 Ш.2 (D156-амендмент 2026-08-04, plan 246 step B): once a container
+// binding correctly carries the `consume` keyword (D180, see the sibling
+// `consume_collection_vec_push_forgotten_neg.nv`), it is subject to the
+// SAME scope-exit obligation check that already catches an unconsumed
+// `File` (D133) — no new diagnostic code needed. Leaving a non-empty
+// must-consume `Vec` unconsumed (no `for consume`, no pass-through, no
+// return) at scope-exit is the error below; the message points at the `v`
+// binding.
+
+module neg.consume_collection_container_unconsumed_neg
+
+type P325UnconsumedRes consume { x int }
+
+fn P325UnconsumedRes consume @into_finish() -> int { self.x }
+
+test "must-consume container binding left unconsumed at scope-exit" {
+    consume v = Vec[P325UnconsumedRes].new()
+    v.push(P325UnconsumedRes { x: 1 })
+    // v never consumed (no `for consume`/pass-through/return) — error here.
+}

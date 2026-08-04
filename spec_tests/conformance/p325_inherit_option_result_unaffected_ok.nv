@@ -1,0 +1,34 @@
+// №325 Ш.2 (D156-амендмент 2026-08-04, plan 246 step B) — pos-control:
+// `Option[T]`/`Result[T,E]`/sum types with a must-consume payload are NOT
+// newly gated by this window's fix. They were already, correctly, subject
+// to D133 D6 generic-заразность (`Option[Transaction]`/`Result[Tx,E]` are
+// must-consume — an EXISTING, pre-325 rule, spec/decisions/02-types.md
+// D133 §"Generic-заразность"), via the established D157-амендмент payload-
+// propagation path (`Ok(consume x)`/`Some(consume x)` pattern-binding),
+// which this window did not touch. What this window's fix does NOT do:
+// it never fires for a plain (non-TurboFish, non-explicitly-annotated)
+// function-call RHS like `File.open(path)` — exactly the shape
+// `std/src/fs/fs.nv`'s `Result[File, IoError]` callers use everywhere.
+// Guards the real regression risk named in the brief.
+
+module spec_tests.conformance
+
+type P325InheritCtrlRes consume { x int }
+
+fn P325InheritCtrlRes consume @into_finish() -> int { self.x }
+
+fn p325_inherit_make_result(ok bool) -> Result[P325InheritCtrlRes, str] {
+    if ok {
+        Ok(P325InheritCtrlRes { x: 1 })
+    } else {
+        Err("nope")
+    }
+}
+
+test "Result[T,E] of a must-consume T — plain call-RHS, unaffected by the container fix" {
+    mut r = p325_inherit_make_result(true)
+    match r {
+        Ok(consume x) => { x.into_finish() }
+        Err(_e) => {}
+    }
+}

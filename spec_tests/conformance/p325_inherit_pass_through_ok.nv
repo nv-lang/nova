@@ -1,0 +1,40 @@
+// №325 Ш.2 (D156-амендмент 2026-08-04, plan 246 step B): a `consume`-bound
+// container can also be discharged by passing it whole into a consume-
+// param function, or by being returned — both are pre-existing, type-
+// agnostic mechanisms (`mark_consumed` by name), not container-specific.
+// pos-control: this must compile clean.
+
+module spec_tests.conformance
+
+type P325InheritPassRes consume { x int }
+
+fn P325InheritPassRes consume @into_finish() -> int { self.x }
+
+fn p325_inherit_drain(consume v Vec[P325InheritPassRes]) -> () {
+    for consume item in v {
+        item.into_finish()
+    }
+}
+
+fn p325_inherit_passthrough(consume v Vec[P325InheritPassRes]) -> Vec[P325InheritPassRes] => v
+
+test "container passed whole into a consume-param function" {
+    consume v = Vec[P325InheritPassRes].new()
+    v.push(P325InheritPassRes { x: 1 })
+    p325_inherit_drain(v)
+}
+
+test "container returned whole from a function" {
+    consume v = Vec[P325InheritPassRes].new()
+    v.push(P325InheritPassRes { x: 2 })
+    // Explicit annotation (rather than relying on RHS inference through a
+    // free-function call) — `infer_let_type_ref`'s explicit-annotation
+    // branch preserves generics regardless of `fn_return_types`' bare-name
+    // (generics-discarding) resolution of the callee's declared return
+    // type; see PROGRESS-p325b.md "что найдено" for the RHS-inference gap
+    // this sidesteps (pre-existing, out of this window's scope).
+    consume v2 Vec[P325InheritPassRes] = p325_inherit_passthrough(v)
+    for consume item in v2 {
+        item.into_finish()
+    }
+}
