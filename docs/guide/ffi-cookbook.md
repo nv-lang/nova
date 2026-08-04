@@ -5,7 +5,7 @@
 
 > **Scope.** The mechanics of the `.nv` ↔ native boundary: `extern "C"`,
 > opaque/typed pointers, `CStr`, tuple-by-value, C-ABI checking, and **how
-> to plug native artifacts into the build** (`[ffi]` / `[ffi.staticlib]`).
+> to plug native artifacts into the build** (`[ffi]`).
 > Foundational FFI — Plan 115 D214; the typed-pointer family (`*T`, `*mut
 > T`, `Option[*T]`-NPO) is **merged** (Plan 118/138.5/174.x; the sections
 > below are no longer "preview").
@@ -39,26 +39,28 @@ introduced in Plan 115.
 ## Pointer modifier rules (FINAL — Plan 138.5)
 
 When writing FFI signatures with pointer/typed wrappers, the pointee
-modifier is written **postfix**, right after `*` (`*mut T` / `*ro T` /
-`*unsafe T`). **A prefix before `*` is forbidden** (`mut * T` / `ro * T` /
-`unsafe * T` → `E_POINTER_PREFIX_MODIFIER`). Whether a pointer can be
-re-pointed is a property of the **binding** (`let` / `mut`), not of the
+modifier is written **postfix**, right after `*` (`*mut T` / `*uninit T`;
+read-only has no modifier — a bare `*T` already means read-only, writing it
+out as `*ro T` is redundant and rejected, `E_REDUNDANT_POINTER_RO`). **A
+prefix before `*` is forbidden** (`mut * T` / `ro * T` /
+`uninit * T` → `E_POINTER_PREFIX_MODIFIER`). Whether a pointer can be
+re-pointed is a property of the **binding** (`ro` / `mut`), not of the
 type.
 
 Quick cheat sheet:
 
-- `*T` ≡ `*ro T` — pointer to read-only T (default)
+- `*T` — pointer to read-only T (default; the only read-only spelling)
 - `*mut T` — pointer to writable T (the caller may change the pointee)
-- `*unsafe T` — pointer to possibly-uninit T (MaybeUninit analog); the
+- `*uninit T` — pointer to possibly-uninit T (MaybeUninit analog); the
   pointer itself is non-null
 - `Option[*T]` — a **nullable** pointer (NPO, 8 bytes); this replaces the
   old `unsafe * T`
-- `Option[*unsafe T]` — FFI nullable-uninit pointer (None = null, Some =
+- `Option[*uninit T]` — FFI nullable-uninit pointer (None = null, Some =
   non-null ptr to uninit)
-- `*mut *ro Acc` — postfix chain (writable-target ptr to read-only-target
+- `*mut *Acc` — postfix chain (writable-target ptr to read-only-target
   ptr to Acc)
-- `mut p *mut T` — mut binding (p is re-pointable) + mut pointee; `let q
-  *ro T` — fixed binding + ro pointee
+- `mut p *mut T` — mut binding (p is re-pointable) + mut pointee; `ro q
+  *T` — fixed binding + ro pointee
 
 Full rules (arrow→box model, value-T composition §V3.1/§V3.2) — see [`docs/guide/typed-pointers.md`](typed-pointers.md). Spec — [D216 §1 FINAL](../../spec/decisions/02-types.md#d216-typed-pointer-family--unsafe-model--null-safety-через-npo) + [Plan 138.5](../plans/138.5-d216-v2-v3-simplification.md).
 
@@ -111,10 +113,9 @@ Shipped since V1 (not "future" — already merged):
   — the canonical form; a single-field record is no longer needed.
 - **User-shim build pipeline** ✅ — configured not via a CLI flag but
   declaratively in `nova.toml`: `[ffi]` (ready-made `.c` shims + system
-  `libs`) and `[ffi.staticlib]` (a staticlib built on the fly, Plan 195).
-  When the module is `import`ed, the artifacts are compiled/linked
+  `libs`). When the module is `import`ed, the artifacts are compiled/linked
   automatically — no need to recompile the Nova compiler. See
-  ["Build pipeline"](#build-pipeline--ffi-and-ffistaticlib-manifest) below.
+  ["Build pipeline"](#build-pipeline--ffi-manifest) below.
 - **Typed-pointer family** ✅ (`*T`/`*mut T`/`Option[*T]`-NPO/`CStr`) — Plan
   118/138.5; see the sections below.
 
@@ -410,15 +411,15 @@ unsafe {
 | | Plan 115 V1 / Plan 134 (`*()`) | Plan 118 V2 (*T family) |
 |---|---|---|
 | Type safety | ❌ opaque `*()` cast by hand | ✓ compile-time pointee check |
-| Mutability | ❌ no distinction | ✓ `*ro T` / `*mut T` |
+| Mutability | ❌ no distinction | ✓ `*T` / `*mut T` |
 | Null safety | ❌ `0 as *()` runtime check | ✓ `Option[*T]` + NPO zero-cost |
-| FFI buffer | ❌ untyped `*()` + manual offset | ✓ `*ro u8` / `*mut u8` typed |
+| FFI buffer | ❌ untyped `*()` + manual offset | ✓ `*u8` / `*mut u8` typed |
 | Callback registration | ❌ N/A | ✓ `*fn(Args) -> Ret` |
 
 **Migration path:**
 - `ptr` → `*()` (Plan 134 — compiler error on bare `ptr` in type position)
 - `0 as ptr` → `0 as *()`
-- `null ptr` literals (already retracted Plan 118 A23) → `0 as *()`
+- `null ptr` literals → `0 as *()`
 - Record handle wrappers `type X { ro value *() }` → tuple
   newtype `type X(*)()` or `type X(*T)` for a zero-overhead ABI
 
@@ -687,7 +688,7 @@ rule (D294): the pointer is valid only while the `str` is live.
 
 ---
 
-## Build pipeline — `[ffi]` and `[ffi.staticlib]` manifest
+## Build pipeline — `[ffi]` manifest
 
 Everything above is about *writing* the `.nv` ↔ native boundary. This
 section is about *plugging* native artifacts into the build so that
@@ -711,26 +712,14 @@ before invoking clang. `.h`-only inline shims are pulled in via
 force-include (`-include`), `.c` files as a compilation unit. The `[ffi]`
 section may be empty (an `FFI-aware` marker).
 
-### `[ffi.staticlib]` — RETRACTED (Plan 195)
-
-**Retracted by the owner on 2026-07-10 (Plan 195).** The section existed
-(Plan 195) as a generalization of the `detect_tls`/`tls-cache`/`-lbcrypt
--lntdll` hardcoding into a manifest mechanism that built a native artifact
-via cargo/make on the fly. It let a user native module require Rust/cargo
-as part of its own build — which contradicts the toolchain canon
-(**Nova compiler + clang**, `.nv → .c → binary`, NO Rust/cargo).
-`compiler-codegen/tls_shim/` (a Rust staticlib, rustls) — the mechanism's
-only user — was replaced with `compiler-codegen/nova_rt/tls_c_shim.c`
-(mbedTLS, the ordinary `[ffi]` path). `FfiStaticlibConfig`/
-`resolve_ffi_staticlib`/`[ffi.staticlib]` parsing has been removed
-entirely from `manifest.rs`/`test_runner.rs`.
-
-**The native-module canon is now `[ffi]` above, and only that**: a `.c`
-shim (compiled by clang, which is in the toolchain) + optionally a
-ready-made `.lib`/`.a` (linked, not built — vcpkg/system package/vendored
-copy; see `detect_brotli`/`detect_boehm`/`detect_mbedtls` in
-`test_runner.rs` for the pattern of conditionally linking a library that
-is ALREADY built, rather than one built by a build script).
+**The native-module canon is `[ffi]` above, and only that**: a `.c` shim
+(compiled by clang, which is in the toolchain) + optionally a ready-made
+`.lib`/`.a` (linked, not built — vcpkg/system package/vendored copy; see
+`detect_brotli`/`detect_boehm`/`detect_mbedtls` in `test_runner.rs` for the
+pattern of conditionally linking a library that is ALREADY built, rather
+than one built by a build script). A native module never builds via
+Rust/cargo as part of its own build — only `.nv` + optionally `.c`
+(compiled by clang) + optionally a prebuilt `.lib`/`.a`.
 
 **Reference example.** `std/tls` (`nova_rt/tls_c_shim.c` + vcpkg mbedTLS)
 — a real example: mbedTLS is installed via `vcpkg install` (see
@@ -747,7 +736,7 @@ in `std/nova.toml` at all — the linking lives entirely in
 | Marker | What | Status |
 |---|---|---|
 | `[M-115-newtype-constructor]` | tuple newtype `type X(ptr)` constructor + `.0` access | ✅ CLOSED 2026-06-01 (canonical syntax shipped) |
-| `[M-115-ffi-build-pipeline]` | user-shim build/link pipeline | ✅ CLOSED — implemented declaratively via `nova.toml` `[ffi]` (ready-made shims/libs, Plan 115). `[ffi.staticlib]` (a staticlib built on the fly, Plan 195) RETRACTED by the owner (Plan 195) — a native module must build WITHOUT Rust/cargo. See ["Build pipeline"](#build-pipeline--ffi-and-ffistaticlib-manifest) |
+| `[M-115-ffi-build-pipeline]` | user-shim build/link pipeline | ✅ CLOSED — implemented declaratively via `nova.toml` `[ffi]` (ready-made shims/libs, Plan 115); a native module builds WITHOUT Rust/cargo. See ["Build pipeline"](#build-pipeline--ffi-manifest) |
 | `[M-115-bindgen-tool]` | `nova bindgen header.h` auto-generated bindings | 🟡 deferred (major tooling, separate plan) |
 | `[M-115-d126-deprecation]` | `external type X` D126 migration audit | ✅ CLOSED: Plan 91.12 V2 hard retract — `external type X` is now a hard error E_EXTERNAL_TYPE_RETRACTED (sequence: newtype-constructor ✓ → Plan 91.12 Pattern B → D126 retract done) |
 | `[M-115-tuple-gc-types]` | tuple elements GC-tracked types in external fn returns | 🟢 CLOSED as by-design (extern "C" boundary correctly excludes Nova-typed containers) |

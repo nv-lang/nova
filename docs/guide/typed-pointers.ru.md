@@ -30,10 +30,12 @@ Pointer Optimization (NPO) для zero-cost null-safety через `Option[*T]`.
 Думайте об указателе как о **стрелке**, указывающей на **коробку** (pointee):
 
 - **Цель стрелки — в ТИПЕ, постфиксно на `*`** — говорит, *что можно делать с
-  коробкой*: `*mut T` (в коробку можно писать), `*ro T` ≡ `*T` (коробка
-  только для чтения), `*unsafe T` (коробка может быть неинициализированной).
-- **Сама стрелка — биндинг (`let` / `mut`, D36)** — говорит, *можно ли
-  перенацелить стрелку на другую коробку*: `let p` = стрелка зафиксирована,
+  коробкой*: `*mut T` (в коробку можно писать), голый `*T` (коробка только
+  для чтения — по умолчанию; явное `*ro T` избыточно и отвергается,
+  `E_REDUNDANT_POINTER_RO`), `*uninit T` (коробка может быть
+  неинициализированной).
+- **Сама стрелка — биндинг (`ro` / `mut`, D36)** — говорит, *можно ли
+  перенацелить стрелку на другую коробку*: `ro p` = стрелка зафиксирована,
   `mut p` = стрелку можно перенацеливать.
 
 Это две независимые оси. Они никогда не пересекаются, потому что одна живёт в
@@ -41,12 +43,12 @@ Pointer Optimization (NPO) для zero-cost null-safety через `Option[*T]`.
 
 ```nova
 mut p *mut T        // arrow re-pointable (mut binding) + box writable (*mut pointee)
-let q *ro T         // arrow fixed (let binding)        + box read-only (*ro pointee)
-mut p *ro T         // arrow re-pointable               + box read-only
-let p *mut T        // arrow fixed                      + box writable
+ro q *T             // arrow fixed (ro binding)         + box read-only (*T pointee)
+mut p *T            // arrow re-pointable               + box read-only
+ro p *mut T         // arrow fixed                      + box writable
 ```
 
-> **НЕ существует префикса `mut *` / `ro *` / `unsafe *`.** Модификатор перед
+> **НЕ существует префикса `mut *` / `ro *` / `uninit *`.** Модификатор перед
 > `*` — жёсткая ошибка `E_POINTER_PREFIX_MODIFIER` (прецедент: в Rust
 > `*mut T` / `*const T` = мутабельность pointee; `let mut p` —
 > перенацеливаемость).
@@ -54,37 +56,38 @@ let p *mut T        // arrow fixed                      + box writable
 ### Канонические формы (постфиксный модификатор pointee)
 
 ```nova
-*T                  // pointer to read-only T (default canonical; ≡ *ro T)
-*ro T               // pointer to read-only T (explicit; identical to *T)
+*T                  // pointer to read-only T (the ONLY read-only form —
+                    //   `*ro T` is redundant, E_REDUNDANT_POINTER_RO)
 *mut T              // pointer to mutable T (deref-store `*p = v` allowed)
-*unsafe T           // pointer to possibly-uninit T (MaybeUninit pointee)
+*uninit T           // pointer to possibly-uninit T (MaybeUninit pointee)
 Option[*T]          // NULLABLE pointer (NPO: None = null, 8 bytes)
-Option[*unsafe T]   // FFI nullable-uninit ptr (None = null, Some = non-null
+Option[*uninit T]   // FFI nullable-uninit ptr (None = null, Some = non-null
                     //   ptr to a possibly-uninit pointee)
 ```
 
 Модификатор **всегда постфиксный** — он крепится к pointee того `*`, за
-которым следует. Само значение указателя **всегда non-null**; для nullable
-используйте `Option[*T]` (zero-cost через NPO).
+которым следует, а «только для чтения» — это дефолт pointee (для него
+модификатор не пишется). Само значение указателя **всегда non-null**; для
+nullable используйте `Option[*T]` (zero-cost через NPO).
 
 ### Перенацеливаемость — это биндинг (D36), а не тип
 
 ```nova
 mut p *T = &acc     // mut binding → p may be reassigned later (p = &other)
-let q *T = &acc     // let binding → q is fixed (q = &other ⇒ E_REBIND)
+ro q *T = &acc      // ro binding → q is fixed (q = &other ⇒ E_REBIND)
 ```
 
-Переменная-указатель подчиняется **тем же** правилам `let` / `mut`, что и
+Переменная-указатель подчиняется **тем же** правилам `ro` / `mut`, что и
 любая другая переменная (D36). Тип никогда не кодирует перенацеливаемость.
 
 ### Цепочки указателей (несколько уровней) — постфиксно на каждом `*`
 
 ```nova
-*mut *ro Node       // writable-target pointer  →  (read-only-target pointer → Node)
+*mut *Node          // writable-target pointer  →  (read-only-target pointer → Node)
                     //   *p   = other_ptr   OK   (outer pointee mut)
                     //   **p  = new_value   ERR  (inner pointee ro)
 
-*ro *mut Node       // read-only-target pointer →  (writable-target pointer → Node)
+**mut Node          // read-only-target pointer →  (writable-target pointer → Node)
                     //   *p   = other_ptr   ERR  (outer pointee ro)
                     //   **p  = new_value   OK   (inner pointee mut)
 ```
@@ -98,7 +101,7 @@ D184 (мутабельность возвращаемого типа по умо
 для возвращаемых указателей:
 
 ```nova
-fn alloc_cell() -> *T       // ≡ -> *ro T : returns a ptr to read-only T
+fn alloc_cell() -> *T       // returns a ptr to read-only T (the pointee L3 default)
 fn alloc_mut()  -> *mut T   // returns a ptr to WRITABLE T
 ```
 
@@ -116,46 +119,47 @@ pointer-mut больше не из чего выбирать).
 ### FFI out-param / неинициализированный pointee
 
 ```nova
-external fn os_read(fd int, buf *mut unsafe u8, n usize) -> int
+external fn os_read(fd int, buf *mut uninit u8, n usize) -> int
 //                              ^^^^^^^^^^^^^^^
-//                       pointee writable (*mut) + possibly-uninit (unsafe);
+//                       pointee writable (*mut) + possibly-uninit (uninit);
 //                       arrow re-pointability is the binding's concern
 ```
 
-Оси pointee (`mut` / `ro` и `unsafe`) коммутируют на value-поintee и обе
-записываются постфиксно.
+Оси pointee (`mut` и `uninit`) коммутируют на value-pointee и обе
+записываются постфиксно; у «только для чтения» нет явного токена — это то,
+что остаётся, если не написано ни одно из двух.
 
 ## Краткий справочник
 
 | Потребность | Каноническая FINAL-форма | Spec |
 |---|---|---|
-| Типизированный указатель (цель ro по умолчанию) | `*T` ≡ `*ro T` | [D216 §1](../../spec/decisions/02-types.md#d216-typed-pointer-family--unsafe-model--null-safety-через-npo) |
+| Типизированный указатель (цель ro по умолчанию) | `*T` (`*ro T` избыточен — `E_REDUNDANT_POINTER_RO`) | [D216 §1](../../spec/decisions/02-types.md#d216-typed-pointer-family--unsafe-model--null-safety-через-npo) |
 | Указатель на записываемую цель | `*mut T` | D216 §1 |
-| Указатель на possibly-uninit цель | `*unsafe T` | D216 §1 + V2 §V2.3 |
+| Указатель на possibly-uninit цель | `*uninit T` | D216 §1 + V2 §V2.3 |
 | Перенацеливаемая переменная-указатель | `mut p *T` (биндинг) | D216 §2 + D36 |
-| Зафиксированная переменная-указатель | `let p *T` / `ro p *T` (биндинг) | D216 §2 + D36 |
+| Зафиксированная переменная-указатель | `ro p *T` (биндинг) | D216 §2 + D36 |
 | Nullable типизированный указатель | `Option[*T]` (NPO) | D216 §7 + V2 §V2.4 |
-| FFI nullable-uninit указатель | `Option[*unsafe T]` | D216 §1 + V2 §V2.4 |
+| FFI nullable-uninit указатель | `Option[*uninit T]` | D216 §1 + V2 §V2.4 |
 | Возврат указателя (записываемая цель) | `-> *mut T` | D184 амендмент (План 138.5) |
 | Создание указателя | `&value` | D216 §4 |
 | Явный deref | `*p` | D216 §5 |
 | Авто-deref поле/метод | `p.field` / `p.method()` | D216 §5 |
-| Арифметика указателей | `unsafe { p + n }` → `*unsafe T` | D216 §6 |
+| Арифметика указателей | `unsafe { p + n }` → `*uninit T` | D216 §6 |
 | Граница unsafe | `unsafe { ... }` блок / `#unsafe fn` | D216 §8-9 |
 | Указатель на функцию для FFI | `*fn(Args) -> Ret` | D216 §10 |
-| Opaque-нетипизированный (legacy) | `ptr` (D214 амендмент → newtype `Option[*unsafe ()]`) | D214 амендмент |
+| Opaque-нетипизированный (legacy) | `ptr` (D214 амендмент → newtype `Option[*uninit ()]`) | D214 амендмент |
 
 ## Семейство типов `*T`
 
 **ABI:** все варианты — шириной в один указатель (8 байт на 64-bit; bootstrap
-цель — только 64-bit). C-type emission: `*ro T` → `const T*` (помогает
-оптимизатору clang/MSVC), `*mut T` / `*unsafe T` → `T*`.
+цель — только 64-bit). C-type emission: `*T` → `const T*` (помогает
+оптимизатору clang/MSVC), `*mut T` / `*uninit T` → `T*`.
 
-**Действительность (validity):** каждое значение указателя (`*T` / `*ro T` /
-`*mut T` / `*unsafe T`) **всегда non-null** (инвариант на этапе компиляции).
+**Действительность (validity):** каждое значение указателя (`*T` /
+`*mut T` / `*uninit T`) **всегда non-null** (инвариант на этапе компиляции).
 Nullable-вариант — `Option[*T]` через NPO (один указатель, NULL = None;
-см. §V2.4 в spec). `*unsafe T` описывает possibly-**неинициализированный**
-pointee — сам *указатель* всё ещё non-null; null — это `Option[*unsafe T]`
+см. §V2.4 в spec). `*uninit T` описывает possibly-**неинициализированный**
+pointee — сам *указатель* всё ещё non-null; null — это `Option[*uninit T]`
 (`None`).
 
 ### Выведенные формы (План 138.5)
@@ -169,37 +173,40 @@ pointee — сам *указатель* всё ещё non-null; null — это 
 
 ```nova
 // RETIRED form:           FINAL canonical equivalent:
-ro * T                  // *ro T            (postfix pointee modifier)
+ro * T                  // *T               (postfix pointee modifier;
+                        //   bare = ro, `*ro T` itself is E_REDUNDANT_POINTER_RO)
 mut * T                 // *mut T
-unsafe * T              // *unsafe T  — for a UNINIT pointee;
-                        //   for a NULLABLE pointer use Option[*T]
-mut * ro * Acc          // *mut *ro Acc     (postfix chain)
+unsafe * T              // *uninit T  — for a UNINIT pointee (§10a rename,
+                        //   was `*unsafe T`); for a NULLABLE pointer use Option[*T]
+mut * ro * Acc          // *mut *Acc        (postfix chain)
 unsafe * safe T         // *T              (`safe` stopper removed)
 ```
 
 - Модификатор **перед** `*` ⇒ `E_POINTER_PREFIX_MODIFIER`.
 - Типовой модификатор `safe` ⇒ `E_SAFE_RETIRED` (останавливать нечего —
   префиксного распространения модификаторов больше нет).
-- Перенацеливаемость выражается биндингом (`let` / `mut`), никогда `mut *`.
+- Перенацеливаемость выражается биндингом (`ro` / `mut`), никогда `mut *`.
 
 ## Правило биндинга (D216 §2)
 
-Ведущий `mut` / `ro` перед именем — это **биндинг** (перенацеливаемость, D36).
-Он ортогонален постфиксному модификатору pointee:
+Ведущий `mut` / `ro` перед именем — это **связывание** (перенацеливаемость, D36).
+Оно НЕЗАВИСИМО от постфиксного модификатора: `mut`-связывание НЕ делает
+содержимое за указателем изменяемым:
 
 ```nova
-ro p *Acc                   // ro binding (fixed arrow); pointee ro
-mut p *Acc                  // mut binding (re-pointable); pointee mut by default
-mut p *Acc  ≡  mut p *mut Acc   // mut binding defaults pointee to mut
+ro p *Acc                   // ro-binding: arrow fixed, pointee read-only
+mut p *Acc                  // mut-binding: arrow re-pointable, pointee STILL read-only
+mut p *mut Acc              // writable pointee — the ONLY way: explicit *mut
 ro p *mut Acc               // valid edge: arrow fixed, pointee writable
 
-mut q = &acc                // mut binding; pointee mut auto (no &mut acc needed)
-ro p = &acc                 // ro binding; pointee ro auto
+p = other_ptr               // allowed only with a mut binding (L1)
+p.field = 1                 // allowed only with a *mut pointee (L3)
 ```
 
-`mut`-биндинг по умолчанию делает pointee `mut` (`mut p *Acc` ≡
-`mut p *mut Acc`); это снижает шум в hot-path FFI-коде. Перенацеливаемость
-по-прежнему приходит только от биндинга — префикса `mut *` в типе нет.
+Связывание ничего не говорит о содержимом: `mut p *Acc` позволяет перенацелить
+стрелку, но запись за ней (`p.field = …`) по-прежнему требует явного
+`*mut Acc` (D246: `*T ≡ *ro T` универсально, оси L1/L2/L3 независимы).
+Перенацеливаемость приходит только от связывания — префикса `mut *` в типе нет.
 
 ## Порядок в цепочке (D216 §3)
 
@@ -207,26 +214,26 @@ ro p = &acc                 // ro binding; pointee ro auto
 применяется к **цели** этого уровня `*`; читается слева направо:
 
 ```nova
-*mut *ro Acc        // writable-target pointer → (read-only-target pointer → Acc)
+*mut *Acc           // writable-target pointer → (read-only-target pointer → Acc)
                     // *p  = another_pointer OK   (outer pointee mut)
                     // **p = a_new_value ERR  (inner pointee ro)
 
-*ro *mut Acc        // read-only-target pointer → (writable-target pointer → Acc)
+**mut Acc           // read-only-target pointer → (writable-target pointer → Acc)
                     // *p  = ...            ERR  (outer pointee ro)
                     // **p = ...            OK   (inner pointee mut)
 ```
 
 Перенацеливаемость переменной, держащей цепочку, — как всегда, дело биндинга
-(`let` / `mut`).
+(`ro` / `mut`).
 
 ## `&value` + escape-анализ (D216 §4)
 
 ```nova
 ro acc = Account { name: "Piter" }    // acc — heap reference
-ro p = &acc                            // ro binding, type *ro Account; GC tracks acc
+ro p = &acc                            // ro binding, type *Account; GC tracks acc
 
 ro x = 42                              // x — stack primitive
-ro p = &x                              // x auto-promoted to heap; type *ro i64
+ro p = &x                              // x auto-promoted to heap; type *i64
 ```
 
 **Критично:** `&value` — это **НЕ borrow из Rust** (D32 амендмент). Нет
@@ -248,7 +255,7 @@ unsafe {
 }
 ```
 
-| Оп | `*ro T` | `*mut T` |
+| Оп | `*T` | `*mut T` |
 |---|---|---|
 | `p.field` (чтение) | ✓ | ✓ |
 | `p.field = v` (присваивание) | ❌ E_POINTER_RO_ASSIGN | ✓ |
@@ -262,13 +269,13 @@ unsafe {
 
 ```nova
 unsafe {
-    ro p1 = some_ptr + 1            // *unsafe T (degrades — alignment/bounds gone)
+    ro p1 = some_ptr + 1            // *uninit T (degrades — alignment/bounds gone)
     ro diff = p2 - p1               // isize (element count)
-    *p1                              // deref of a degraded *unsafe T pointee
+    *p1                              // deref of a degraded *uninit T pointee
 }
 ```
 
-- `+`/`-` только внутри `unsafe { }`, результат `*unsafe T` для `ptr ± int`,
+- `+`/`-` только внутри `unsafe { }`, результат `*uninit T` для `ptr ± int`,
   `isize` для `ptr - ptr`
 - Единицы: в масштабе sizeof(T) (конвенция C/Rust)
 - `*`/`/`/`%` — `E_PTR_ARITHMETIC_INVALID`
@@ -424,7 +431,7 @@ V1 GC = Boehm conservative → не двигает объекты → в V1 бе
 
 ```nova
 unsafe {
-    ro p *ro Account = &acc
+    ro p *Account = &acc
     ro s = "ptr=${&value:?}"                  // V3 canonical (Plan 91.14)
     println("pointer: ${p:?}")                // → "pointer: 0x7f... -> Account"
 }
@@ -458,12 +465,12 @@ mut p *mut u8 = undefined        // ❌ E_UNDEFINED_USE_NONE_INIT_PATTERN
 
 - `E_UNSAFE_REQUIRED` — операция с указателем вне unsafe-контекста (`*p`, `p[i]`, `&v`, order-compare)
 - `E_UNSAFE_CALL_REQUIRES_WRAP` — вызов `#unsafe` fn без unsafe-обёртки
-- `E_UNSAFE_T_READ_REQUIRES_WRAP` — чтение значения `unsafe T` без блока `unsafe { }` (V2 §V2.3)
-- `E_UNSAFE_ARG_REQUIRES_WRAP` — передача аргумента `unsafe T` без unsafe-обёртки (V2 §V2.3b)
-- `E_UNSAFE_T_NARROW_REQUIRES_UNSAFE` — сужающий каст `unsafe T → T` без unsafe (V2 §V2.3b)
+- `E_UNSAFE_T_READ_REQUIRES_WRAP` — чтение значения `uninit T` без блока `unsafe { }` (V2 §V2.3; имя кода сохранило `UNSAFE` даже после переименования type-модификатора `unsafe T` → `uninit T`, §10a)
+- `E_UNSAFE_ARG_REQUIRES_WRAP` — передача аргумента `uninit T` без unsafe-обёртки (V2 §V2.3b)
+- `E_UNSAFE_T_NARROW_REQUIRES_UNSAFE` — сужающий каст `uninit T → T` без unsafe (V2 §V2.3b)
 - `E_ARRAY_INDEX_PTR_BANNED` — `&arr[i]`
 - `E_NULL_LITERAL_USE_NONE` — использован литерал `null` (общий); используйте `None`
-- `E_NULL_PTR_RETRACTED_USE_OPTION` — `null ptr` отозван; используйте `Option[ptr] = None`
+- `E_NULL_PTR_RETRACTED_USE_OPTION` — использован `null ptr`; используйте `Option[ptr] = None`
 - `E_UNDEFINED_USE_NONE_INIT_PATTERN` — использован `undefined`
 - `E_CLOSURE_HAS_ENV` — каст fn → *fn с closure-env
 - `E_CALLBACK_THROWS_OVER_C_ABI` — каст Fn-с-Fail → *fn
@@ -474,8 +481,17 @@ mut p *mut u8 = undefined        // ❌ E_UNDEFINED_USE_NONE_INIT_PATTERN
 - `E_PTR_CAST_INVALID_TARGET` — `p as bool / f64 / ...`
 - `E_INVALID_POINTER_MODIFIER` — `*const T` и др.
 - `E_POINTER_PREFIX_MODIFIER` — модификатор **перед** `*` (`mut * T` / `ro * T` /
-  `unsafe * T`); используйте постфиксный pointee `*mut T` / `*ro T` / `*unsafe T`
+  `uninit * T`); используйте постфиксный pointee `*mut T` / `*T` / `*uninit T`
   или биндинг `mut x *T` (План 138.5, расширяет `E_INVALID_POINTER_MODIFIER`)
+- `E_REDUNDANT_POINTER_RO` — явно написан `*ro T`; голый `*T` уже readonly
+  (дефолт pointee на уровне L3, D246 / План 147: `*T ≡ *ro T` универсально) —
+  fix-it убирает `ro` (`*T`)
+- `E_UNSAFE_TYPE_MODIFIER_RENAMED` — `unsafe` использован как **типовой**
+  модификатор на не-`Func` payload (старое написание для data-uninit);
+  переименован в `uninit` (§10a, План 174.5) — используйте `uninit T` /
+  `*uninit T`. Только `*unsafe fn(...)` (композиция unsafe-**указателя на
+  функцию**, D216 §10) сохраняет написание `unsafe` — это отдельное понятие,
+  не «данные могут быть не инициализированы».
 - `E_SAFE_RETIRED` — использован типовой модификатор `safe`; стоппер
   распространения `safe` выведен (останавливать префиксное распространение
   нечего) (План 138.5)
@@ -495,17 +511,20 @@ mut p *mut u8 = undefined        // ❌ E_UNDEFINED_USE_NONE_INIT_PATTERN
   на **value-типе T** (примитивы / value-записи / именованные кортежи /
   анонимные кортежи / Unit). Биндинг-форма `ro x mut T` остаётся разрешённой
   (ортогональные биндинг-модификаторы). Spec §V3.1.
-- `E_MODIFIER_ORDER` — модификатор безопасности (`unsafe`) оборачивает
+- `E_MODIFIER_ORDER` — модификатор безопасности (`uninit`) оборачивает
   модификатор мутабельности (`ro` / `mut`); требуется обратный порядок —
-  **safety-inner / mutability-outer** (`ro unsafe T` ✅ / `unsafe ro T` ❌),
+  **safety-inner / mutability-outer** (`ro uninit T` ✅ / `uninit ro T` ❌),
   согласовано с `external unsafe fn`. Применяется к value-T и к постфиксному
-  содержимому **pointee** (`*ro unsafe T` ✅ / `*unsafe ro T` ❌). Spec §V3.2
+  содержимому **pointee** (`*mut uninit T` ✅ / `*uninit mut T` ❌ — pointee
+  `*ro …` больше вообще не токен, см. `E_REDUNDANT_POINTER_RO`). Spec §V3.2
   (ПЕРЕВЁРНУТ в Плане 138.5).
 - `E_REDUNDANT_TYPE_MODIFIER` — повторение модификатора одного класса.
   **Биндинг-уровень** (`ro x ro T`) и **постфиксная цепочка pointee**
-  (`*ro ro T`) сохраняются; старые V3-случаи префиксных цепочек на уровне
+  (`*mut mut T`) сохраняются; старые V3-случаи префиксных цепочек на уровне
   типа (`ro * ro T`, `unsafe * unsafe T`) — неактуальны: префикс перед `*` —
-  уже `E_POINTER_PREFIX_MODIFIER` (План 138.5). Запасной выход `safe` выведен.
+  уже `E_POINTER_PREFIX_MODIFIER` (План 138.5), а повторённый pointee `ro`
+  теперь перехватывается раньше через `E_REDUNDANT_POINTER_RO` (ошибка уже
+  на первом `*ro`, до повторения не доходит). Запасной выход `safe` выведен.
   Spec §V3.4.
 
 > **Примечание:** стоппер распространения `safe` и форма `Unsafe(Pointer)`
@@ -530,7 +549,7 @@ mut p *mut u8 = undefined        // ❌ E_UNDEFINED_USE_NONE_INIT_PATTERN
 | Go | `*T` (managed) / `unsafe.Pointer` | пакет `unsafe` | Nil в рантайме | `p.field` авто | только `unsafe.Pointer` |
 | **Nova V1** (План 115) | только `ptr` | (нет) | `null ptr` | (нет) | запрещено |
 | **Nova V2** (План 118) | **семейство `*T`** + `unsafe` | `unsafe { }` + `#unsafe` (D2 амендмент) | `Option[*T]` + NPO | `p.field`/`p.method()` один уровень | gated unsafe → `*unsafe T` |
-| **Nova FINAL** (План 138.5) | **постфиксный pointee** `*ro T` / `*mut T` / `*unsafe T`; перенацеливаемость = биндинг (`let`/`mut`) | (как V2) + правила композиции value-T (§V3.1-V3.2) | `Option[*T]` (только) + NPO | (как V2) | (как V2) → `*unsafe T` |
+| **Nova FINAL** (План 138.5 + §10a rename) | **постфиксный pointee** `*T` / `*mut T` / `*uninit T`; перенацеливаемость = биндинг (`ro`/`mut`) | (как V2) + правила композиции value-T (§V3.1-V3.2) | `Option[*T]` (только) + NPO | (как V2) | (как V2) → `*uninit T` |
 
 ## См. также
 
@@ -541,12 +560,13 @@ mut p *mut u8 = undefined        // ❌ E_UNDEFINED_USE_NONE_INIT_PATTERN
 - [`docs/guide/ffi-cookbook.md`](ffi-cookbook.md) — паттерны FFI с ptr + tuple FFI (План 115 V1)
 - [D216 V1](../../spec/decisions/02-types.md#d216-typed-pointer-family--unsafe-model--null-safety-через-npo) — фундамент spec (семейство типизированных указателей + модель unsafe + NPO)
 - [D216 FINAL pointer model (План 138.5)](../../spec/decisions/02-types.md#d216-typed-pointer-family--unsafe-model--null-safety-через-npo) — тип указателя = только постфиксный pointee-mut; перенацеливаемость = биндинг (D36); префиксные модификаторы ⇒ `E_POINTER_PREFIX_MODIFIER`; nullable = только `Option[*T]`; `safe` и `Unsafe(Pointer)` выведены
-- [D216 V2 амендмент](../../spec/decisions/02-types.md#d216-v2-amend-2026-06-04--universal-right-binding-rule-для-type-level-modifiers--unsafe-t-first-class) — историческое правило right-binding (§V2.1, ОТОЗВАНО) + first-class value-обёртка `unsafe T` (§V2.3, СОХРАНЕНО) + пересчёт NPO (§V2.4)
+- [D216 V2 амендмент](../../spec/decisions/02-types.md#d216-v2-amend-2026-06-04--universal-right-binding-rule-для-type-level-modifiers--unsafe-t-first-class) — историческое правило right-binding (§V2.1, ОТОЗВАНО) + first-class value-обёртка `uninit T` (§V2.3, СОХРАНЕНО; переименована из `unsafe T` §10a, План 174.5) + пересчёт NPO (§V2.4)
 - [D216 V3 амендмент](../../spec/decisions/02-types.md#d216-v3-amend-plan-1185-v3-2026-06-04--4-modifier-composition-rules) — правила композиции модификаторов value-T (V3.3/V3.4 заменены Планом 138.5):
   - §V3.1 — запрет смежности `ro+mut` с учётом storage-class (`E_MUTABILITY_CONFLICT_VALUE_TYPE`) — СОХРАНЕНО
-  - §V3.2 — порядок модификаторов safety-inner / mutability-outer (`ro unsafe T`; `E_MODIFIER_ORDER`) — ПЕРЕВЁРНУТ, СОХРАНЁН
+  - §V3.2 — порядок модификаторов safety-inner / mutability-outer (`ro uninit T`; `E_MODIFIER_ORDER`) — ПЕРЕВЁРНУТ, СОХРАНЁН
   - §V3.3 — right-binding распространение — ЗАМЕНЁН (префиксного распространения нет)
   - §V3.4 — стоппер `safe` — ВЫВЕДЕН; `E_REDUNDANT_TYPE_MODIFIER` сохраняется на уровне биндинга/постфиксного pointee
+- [D216 §10a rename](../../spec/decisions/02-types.md#d216-typed-pointer-family--unsafe-model--null-safety-через-npo) — переименование type-модификатора `unsafe` → `uninit` (План 174.5, 2026-07-11): `*unsafe T` → `*uninit T`, голая value-обёртка `unsafe T` → `uninit T`; блок `unsafe { }`, атрибут `unsafe fn`/`#unsafe fn` и композиция указателя-на-функцию `*unsafe fn(...)` сохраняют написание `unsafe` (другое понятие)
 - [D2 амендмент](../../spec/decisions/04-effects.md#d2) — восстановление ключевого слова unsafe (сахар обработчика эффекта)
 - [D214 амендмент](../../spec/decisions/02-types.md#d214-ptr-opaque-pointer-type--tuple-ffi-returns--opaque-handle-pattern) — переопределение `ptr`
 - [D32 амендмент](../../spec/decisions/02-types.md#d32-семантика-передачи-параметров) — `&value` — не borrow из Rust

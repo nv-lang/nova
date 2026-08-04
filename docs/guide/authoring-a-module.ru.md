@@ -9,12 +9,10 @@ source_date: 2026-08-02
 [English](authoring-a-module.md) | **Русский**
 
 > Общий гайд: от пустого каталога до публикуемого пакета. Native-backed модуль
-> (обёртка над `.c`/готовой `.lib`) — **частный случай** в конце (§7).
-> **`[ffi.staticlib]` (собираемый cargo/make-staticlib) RETRACTED владельцем
-> (Plan 195, 2026-07-10)** — native-модуль обязан собираться БЕЗ Rust/cargo,
-> только `.nv` + опционально `.c` (компилит clang) + опционально готовая
-> `.lib`/`.a` (линкуется, не собирается). §7.2 ниже оставлен как исторический
-> контекст (что было и почему убрано).
+> (обёртка над `.c`/готовой `.lib`) — **частный случай** в конце (§7):
+> native-модуль обязан собираться БЕЗ Rust/cargo — только `.nv` + опционально
+> `.c` (компилит clang) + опционально готовая `.lib`/`.a` (линкуется, не
+> собирается).
 >
 > Смежные документы (не дублируются здесь, а до-читываются по ссылке):
 > [module-conventions](../dev/module-conventions.md) (дизайн модуля: эффект-плумбинг,
@@ -166,25 +164,12 @@ libs         = ["sqlite3"]                 # system: clang -lsqlite3 / sqlite3.l
 Если системная `.lib` не в стандартном search-path (vcpkg-триплет, vendored
 копия) — линковка резолвится и подключается прямо в build-пайплайне
 (`test_runner.rs::build_command`), тем же условным-по-факту-использования
-паттерном D337, что у brotli/`net.c`; см. `std/tls` ниже.
-
-### 7.2. `[ffi.staticlib]` (собираемый cargo/make-staticlib) — RETRACTED (Plan 195)
-
-**Существовало (Plan 195), ретрактировано владельцем 2026-07-10.** Позволяло
-модулю требовать **построить** native-артефакт (`cargo build`, `make`) как
-часть своей сборки — единственным пользователем был `compiler-codegen/
-tls_shim/` (Rust-staticlib поверх `rustls`). Противоречит канону тулчейна
-(компилятор Nova + clang, БЕЗ Rust/cargo) — снято целиком
-(`FfiStaticlibConfig`/`resolve_ffi_staticlib`/парсинг секции убраны из
-`manifest.rs`/`test_runner.rs`). `tls_shim/` заменён на `nova_rt/tls_c_shim.c`
-(mbedTLS) — обычный `[ffi]`-путь (§7.1), без cargo/build-скрипта вообще:
-mbedTLS ставится ЗАРАНЕЕ через `vcpkg install` (готовая `.lib`, не собираемая
-на лету), `tls_c_shim.c` компилируется/линкуется условно как ЛЮБОЙ другой
-рантайм-модуль (`net.c`/`brotli_shim.c`), безо всякой манифест-декларации.
-
-> **Эталон паттерна** (2026-07 актуальный) — `std/tls` в монорепо
-> (`nova_rt/tls_c_shim.c` + vcpkg mbedTLS, БЕЗ `[ffi.staticlib]`, БЕЗ
-> манифест-декларации вообще). Полная механика — [ffi-cookbook §retracted](ffi-cookbook.md#ffistaticlib--retracted-plan-195).
+паттерном D337, что у brotli/`net.c`. Native-модуль никогда не требует
+**построить** native-артефакт (`cargo build`, `make`) как часть своей
+сборки — только слинковать готовый; эталон паттерна — `std/tls` в монорепо
+(`nova_rt/tls_c_shim.c` + vcpkg mbedTLS, mbedTLS ставится ЗАРАНЕЕ через
+`vcpkg install`, безо всякой манифест-декларации). Полная механика —
+[ffi-cookbook §Build pipeline](ffi-cookbook.md#build-pipeline--ffi-манифест).
 
 ## 8. Именование и публикация (внешний пакет)
 
@@ -209,6 +194,6 @@ mbedTLS ставится ЗАРАНЕЕ через `vcpkg install` (готова
 3. Публичное — `export` + `#stable(since)`; для либы — `enforce-stability = true`.
 4. Тесты рядом (`*_test.nv` / `test`-блоки); эффект-модуль → mock-тест.
 5. Дизайн по module-conventions (эффект-плумбинг + фасад; value/must-consume; один `XError`).
-6. Native — `[ffi]` (готовые `.c`-шимы + готовая `.lib`/`.a`; `[ffi.staticlib]`
-   собираемый-cargo/make — RETRACTED, Plan 195).
+6. Native — `[ffi]` (готовые `.c`-шимы + готовая `.lib`/`.a`); шага сборки
+   через Rust/cargo как части сборки модуля нет.
 7. Внешний пакет — репо `nova-<пакет>`, native в `native/`, git-зависимость.
