@@ -41,7 +41,7 @@ Rule: the address of an object of type `T` must be divisible by `align_of[T]()`.
 | `(T1, T2, ..)` Tuple | sum + padding | max(elem aligns) | C struct layout |
 | `[N]T` FixedArray | `N * size_of(T)` | `align_of(T)` | |
 | `[]T` Array (slice) | 16 | 8 | pointer + length |
-| `readonly T` | `size_of(T)` | `align_of(T)` | transparent wrapper |
+| `ro T` | `size_of(T)` | `align_of(T)` | transparent wrapper |
 
 ## Padding in composite types
 

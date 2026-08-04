@@ -210,10 +210,10 @@ assert(v.as_slice() == [2, 4, 6])
 ### Slices & views (zero-copy)
 
 ```nova
-let v = Vec[int].of(1, 2, 3, 4, 5)
+ro v = Vec[int].of(1, 2, 3, 4, 5)
 
 // split_at: two views of the same buffer (contract 0 <= i <= len)
-let (l, r) = v.split_at(2)
+ro (l, r) = v.split_at(2)
 assert(l.len() == 2 && r.len() == 3 && l[0] == 1 && r[0] == 3)
 
 // first_n / last_n clamp ("take up to N")
@@ -258,8 +258,8 @@ assert(v.cap() == 50)
 ### Clone and equality
 
 ```nova
-let a = Vec[int].of(1, 2, 3)
-let mut b = a.clone()
+ro a = Vec[int].of(1, 2, 3)
+mut b = a.clone()
 b.push(4)
 assert(a.len() == 3)          // original unchanged
 assert(b.len() == 4)
@@ -272,7 +272,7 @@ assert(a.equals(Vec[int].of(1, 2, 3)))
 
 ```nova
 mut v = Vec[int].of(10, 20, 30)
-if let Some(p) = v.get_mut(1) {
+if Some(p) = v.get_mut(1) {
     unsafe { *p = 99 }
 }
 assert(v.get(1) == Some(99))

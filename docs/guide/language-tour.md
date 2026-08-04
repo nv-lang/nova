@@ -21,7 +21,7 @@ explicitly only where it helps a reader (a function signature, or a `mut`
 binding whose initial value doesn't make the type obvious).
 
 ```nova
-// hello.nv — functions, let/mut, type inference.
+// hello.nv — functions, ro/mut, type inference.
 module tour.hello
 
 fn add(a int, b int) -> int => a + b

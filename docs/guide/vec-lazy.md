@@ -15,8 +15,8 @@ pulls elements through it, and it pulls only as many as it needs.
 ```nova
 import std.collections.vec_lazy
 
-let v = Vec[int].of(1, 2, 3, 4, 5, 6)
-let got = v.lazy().map(|x| x * 10).filter(|x| x > 25).collect()
+ro v = Vec[int].of(1, 2, 3, 4, 5, 6)
+ro got = v.lazy().map(|x| x * 10).filter(|x| x > 25).collect()
 assert(got == [30, 40, 50, 60])
 ```
 
@@ -61,16 +61,16 @@ Nothing runs until a terminator drives the chain, and only the pulled elements
 are touched:
 
 ```nova
-let v = Vec[int].of(1, 2, 3, 4, 5)
+ro v = Vec[int].of(1, 2, 3, 4, 5)
 
 // No terminator → no work. `map` never runs.
-let _pipeline = v.lazy().map(|x| x * 2).filter(|x| x > 0)
+ro _pipeline = v.lazy().map(|x| x * 2).filter(|x| x > 0)
 
 // `take(3)` pulls exactly 3 source elements — `map` runs 3 times, not 5.
-let first3 = v.lazy().map(|x| x * 10).take(3).collect()   // [10, 20, 30]
+ro first3 = v.lazy().map(|x| x * 10).take(3).collect()   // [10, 20, 30]
 
 // `find` short-circuits at the first match.
-let hit = v.lazy().map(|x| x).find(|x| x == 3)            // Some(3), map ran 3×
+ro hit = v.lazy().map(|x| x).find(|x| x == 3)            // Some(3), map ran 3×
 ```
 
 ## API — Phase A
@@ -111,12 +111,12 @@ demand, `v.windows(n).map(|w| …)` / `.fold` / `.count` never allocate the oute
 | `windows` | `@windows(n int) -> BoxIter[[]T]` | overlapping width-`n` views (`n-1` shared); `n > len` → empty |
 
 ```nova
-let v = Vec[int].of(1, 2, 3, 4, 5)
+ro v = Vec[int].of(1, 2, 3, 4, 5)
 assert(v.chunks(2).collect().len() == 3)             // [1,2] [3,4] [5]
 assert(v.chunks_exact(2).collect().len() == 2)       // [1,2] [3,4] (drops [5])
 assert(v.windows(2).collect().len() == 4)            // [1,2] [2,3] [3,4] [4,5]
 // lazy — no Vec[Vec[int]] ever allocated:
-let pair_sums = v.windows(2).map(|w| w[0] + w[1]).collect()
+ro pair_sums = v.windows(2).map(|w| w[0] + w[1]).collect()
 assert(pair_sums == [3, 5, 7, 9])
 ```
 
@@ -149,30 +149,30 @@ result unambiguous.
 import std.collections.vec_lazy
 
 // Transform then collect
-let doubled = v.lazy().map(|x| x * 2).collect()
+ro doubled = v.lazy().map(|x| x * 2).collect()
 
 // Filter then sum
-let total = v.lazy().filter(|x| x % 2 == 0).sum(0)
+ro total = v.lazy().filter(|x| x % 2 == 0).sum(0)
 
 // Sum of squares of the odd elements
-let s = v.lazy().map(|x| x * x).filter(|x| x % 2 == 1).fold(0, |acc, x| acc + x)
+ro s = v.lazy().map(|x| x * x).filter(|x| x % 2 == 1).fold(0, |acc, x| acc + x)
 
 // Window the middle: drop 2, keep 3
-let mid = v.lazy().skip(2).take(3).collect()
+ro mid = v.lazy().skip(2).take(3).collect()
 
 // filter_map: keep + transform in one pass
-let tripled3 = v.lazy()
+ro tripled3 = v.lazy()
     .filter_map(|x| if x % 3 == 0 { Some(x * 10) } else { None })
     .collect()
 
 // enumerate: project index + value in the SAME stage (collapse the tuple with map)
-let projected = v.lazy().enumerate().map(|p| p.0 * 100 + p.1).collect()
+ro projected = v.lazy().enumerate().map(|p| p.0 * 100 + p.1).collect()
 
 // Short-circuiting search — stops at the first match
-let found = v.lazy().find(|x| x > 100)
+ro found = v.lazy().find(|x| x > 100)
 
 // Bounded scan — only the first 3 are ever touched
-let early = v.lazy().map(|x| x + 1).take(3).any(|x| x == 3)
+ro early = v.lazy().map(|x| x + 1).take(3).any(|x| x == 3)
 ```
 
 ## FromIterator / collect-target (Plan 153.6, D264)
@@ -185,20 +185,20 @@ import std.collections.set.{Set}
 import std.collections.hashmap.{HashMap}
 
 // Default target — Vec
-let v = src.lazy().map(|x| x * 2).collect()
+ro v = src.lazy().map(|x| x * 2).collect()
 
 // Set target — dedup (Rust `iter.collect::<HashSet<_>>()`)
-let s = src.lazy().filter(|x| x > 0).collect_set()
+ro s = src.lazy().filter(|x| x > 0).collect_set()
 
 // HashMap target — collect pairs, then `from`
-let m = HashMap[int, int].from(src.lazy().map(|x| (x, x * x)).collect())
+ro m = HashMap[int, int].from(src.lazy().map(|x| (x, x * x)).collect())
 
 // Set target (alternative) — collect a Vec, then `from_iter`
-let s2 = Set[int].from_iter(src.lazy().collect())
+ro s2 = Set[int].from_iter(src.lazy().collect())
 
 // Build a Vec from ANY Iter source directly (no lazy stage) — `@extend`
-let from_range = Vec[int].new().extend(0..5)        // [0, 1, 2, 3, 4]
-let from_vec   = Vec[int].new().extend(other_vec)   // copy
+ro from_range = Vec[int].new().extend(0..5)        // [0, 1, 2, 3, 4]
+ro from_vec   = Vec[int].new().extend(other_vec)   // copy
 ```
 
 Nova types iterators **structurally** ([D58]): any `mut @next() -> Option[T]` is
@@ -240,8 +240,8 @@ For hot paths there is an **allocation-free, indirection-free** sibling module:
 ```nova
 import std.collections.vec_iter_zc
 
-let v = Vec[int].of(1, 2, 3, 4, 5, 6)
-let got = v.ziter().zmap(|x| x * 10).zfilter(|x| x > 25).zcollect()
+ro v = Vec[int].of(1, 2, 3, 4, 5, 6)
+ro got = v.ziter().zmap(|x| x * 10).zfilter(|x| x > 25).zcollect()
 assert(got == [30, 40, 50, 60])
 ```
 
