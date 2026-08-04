@@ -29,7 +29,7 @@ details in the "`from`/`try_from` naming" section below.
 | `as` | infallible numeric/newtype/sum cast, compile-time, no runtime code | `42 as f64`, `n as i16` |
 | `.to_str()` | universal conversion of a value **to a string** (bare-`T` blanket + specializations) | `42.to_str()`, `bs.to_str()` |
 | `T.from(v)` / `T.try_from(v)` | a concrete static constructor — a **naming convention**, NOT a protocol/auto-derive | `Fahrenheit.from(c)`, `u32.try_from(port_str)` |
-| `consume @into_ЦЕЛЬ()` | consuming ownership transfer (a concrete name on the source) | `sb.into_str()`, `wb.into_bytes()` |
+| `consume @into_TARGET()` | consuming ownership transfer (a concrete name on the source) | `sb.into_str()`, `wb.into_bytes()` |
 | `#coerce` | declarative **implicit** zero-cost conversion in a position with a known expected type (view/finalize) | `w.write(s)` — `str` implicitly `.bytes()` |
 
 **Important (2026-07-06 retraction, see below):** `.from(v)` / `.try_from(v)` —
@@ -122,7 +122,7 @@ Errors — structural enums: `type ParseIntError enum Empty | InvalidDigit
 
 ### str → bool (parse, fallible)
 
-**Canon (Plan 232.1 Т1, owner decision "add", 2026-07-26):**
+**Canon (Plan 232.1 T1, owner decision "add", 2026-07-26):**
 `s.to_bool()` — strictly `"true"`/`"false"`, lowercase-only (the Rust
 `str::parse::<bool>` canon; no case-insensitive/`"1"`/`"0"`/`"yes"` aliases).
 
@@ -176,7 +176,7 @@ recursion).
 
 ### str → char (single codepoint, fallible)
 
-**Canon (Plan 232.1 Т1, owner decision "add", 2026-07-26):**
+**Canon (Plan 232.1 T1, owner decision "add", 2026-07-26):**
 `s.to_char()` parses EXACTLY one Unicode codepoint (not a byte — `"é".to_char()`
 succeeds, even though `é` is 2 UTF-8 bytes). A receiver form on the source,
 the same principle as `str @to_int()`.
@@ -407,7 +407,7 @@ Nova function with no protocol behind it):
   without the prefix (R3, [D325](decisions/04-effects.md#d325)); a lone
   fallible operation without a sibling — a bare name without `try_`
   (example — `s.to_int()`, not `s.try_int()`).
-- **(b) `consume @into_ЦЕЛЬ()`** — a concrete name for a consuming
+- **(b) `consume @into_TARGET()`** — a concrete name for a consuming
   ownership transfer (`into_str`, `into_raw`, `into_bytes`,
   `into_str_unchecked`). Not the general `.into()` operation — a generic
   version no longer exists; each name is declared on its own type explicitly.
@@ -462,7 +462,7 @@ Implemented and stable:
 - ✅ `as`-cast (numeric/newtype/sum), narrowing wraparound, float→int saturation
 - ✅ `str @to_*` parse family (`to_int`/`to_i64`/`to_u64`/`to_i8`/`to_i16`/`to_i32`/
   `to_u8`/`to_u16`/`to_u32`/`to_f64`) — Plan 174.1, the full `SignedInts`/`UnsignedInts` set
-- ✅ `str @to_bool()`/`str @to_char()` — Plan 232.1 Т1 (2026-07-26)
+- ✅ `str @to_bool()`/`str @to_char()` — Plan 232.1 T1 (2026-07-26)
 - ✅ bare-`T @to_str()` blanket + specializations (`char`, `[]u8`) — Plan 174.2
 - ✅ `[]u8 @to_str()`/`@to_str_lossy()`/`@to_str_unchecked()`/`@into_str_unchecked()` — D325
 - ✅ `(cp int).to_char()`, `u8.try_from(c char)` — D54/D77-naming

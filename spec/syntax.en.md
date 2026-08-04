@@ -86,7 +86,7 @@ hooks in by implementing `Display` (`@display(mut w Write)`,
 [D73](decisions/08-runtime.md#d73)). A literal `${` in a string — via
 escape: `"\${name}"`.
 
-Details — [D44 → "Строковые литералы и интерполяция"](decisions/03-syntax.md#d44).
+Details — [D44 — string literals and interpolation](decisions/03-syntax.md#d44).
 
 ## Statement separator: newline or `;`
 
@@ -383,7 +383,7 @@ if elapsed > 1.second() { ... }           // вызывает @compare
 | `-` (unary) | `@neg()` | | `<=` | `@compare(o) -> int` |
 | `*` | `@times(o)` | | `>` | `@compare(o) -> int` |
 | `/` | `@div(o)` | | `>=` | `@compare(o) -> int` |
-| `%` | `@rem(o)` | | `!` | НЕ перегружается (строго `bool`) |
+| `%` | `@rem(o)` | | `!` | not overloadable (strictly `bool`) |
 | `\|` | `@bitor(o)` | | `<<` | `@shl(n)` |
 | `&` | `@bitand(o)` | | `>>` | `@shr(n)` |
 | `^` | `@bitxor(o)` | | `~` | `@bitnot()` |
