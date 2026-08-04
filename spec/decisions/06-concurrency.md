@@ -3415,7 +3415,7 @@ gated «0 регрессий на Linux»).
 
 ### Introspection — `std.runtime.fibers`
 
-Плакируется ([std/runtime/fibers.nv](../../std/runtime/fibers.nv)):
+Плакируется ([std/src/runtime/fibers.nv](../../std/src/runtime/fibers.nv)):
 
 ```nova
 import std.runtime.fibers
