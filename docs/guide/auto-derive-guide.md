@@ -171,7 +171,7 @@ ro y = AccountStruct { id: 1, balance: 100.0 }
 assert(x == y)  // ← memberwise structural eq
 ```
 
-## Diagnostics (Plan 126 Ф.4)
+## Diagnostics (Plan 126)
 
 | Code                                  | When it triggers                                                              |
 |---------------------------------------|--------------------------------------------------------------------------------|
@@ -253,7 +253,7 @@ Auto-derive is **compatible** with:
 - **Named tuple `type X(a int, b str)`** ([Plan 120 D215](../../spec/decisions/02-types.md#d215)):
   fields are processed through `NamedTupleField` exactly like `RecordField`.
 
-## Sum-type rich synthesis (Plan 180 Ф.1, D345 — ✅ landed)
+## Sum-type rich synthesis ([Plan 180, D345](../../spec/decisions/02-types.md#d345) — ✅ landed)
 
 All six built-in protocols are synthesized for sum types via
 `match @ { … }` with one arm per variant (`SumVariantKind::Unit`/`Tuple`/`Record`).
@@ -273,7 +273,7 @@ record fields.
 > `ro n Colour = Nought` (the same bidirectional-inference boundary as for
 > `Empty` collisions, D141).
 
-**Serialize/Deserialize (Plan 180 Ф.2-sum, externally-tagged — ✅ landed).**
+**Serialize/Deserialize (Plan 180, externally-tagged — ✅ landed).**
 `#impl(Serialize + Deserialize)` on a sum → an externally-tagged wire (Q4):
 unit → `"V"`; single-payload → `{"V": x}`; tuple → `{"V": [a, b]}`; record →
 `{"V": {fields}}`. Deser reads the tag (`is_str` → bare string / single
