@@ -46,7 +46,7 @@ CPU читает память не побайтно, а блоками. Если
 | `(T1, T2, ..)` Tuple | sum + padding | max(elem aligns) | раскладка C struct |
 | `[N]T` FixedArray | `N * size_of(T)` | `align_of(T)` | |
 | `[]T` Array (slice) | 16 | 8 | указатель + длина |
-| `readonly T` | `size_of(T)` | `align_of(T)` | прозрачная обёртка |
+| `ro T` | `size_of(T)` | `align_of(T)` | прозрачная обёртка |
 
 ## Заполнение (padding) в составных типах
 
