@@ -472,7 +472,7 @@ unsafe {
 unsafe {
     mut buf = 0
     ro p = addr_of_mut(buf)   // *T (mut binding required)
-    p.write(100)               // codegen TBD per Ф.4
+    p.write(100)               // codegen TBD
 }
 ```
 
