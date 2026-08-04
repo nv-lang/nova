@@ -38903,7 +38903,20 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     let key = ("".to_string(), name.clone());
                     let overloads = self.method_overloads.get(&key).cloned();
                     if let Some(overloads) = overloads {
-                        if overloads.len() > 1 {
+                        // №309/№317 (§0 channel-first): the checker may already have
+                        // resolved this call — INCLUDING a mode-only-differing overload
+                        // set (`f(x T)` vs `f(consume x T)`, IDENTICAL `param_c_types`
+                        // for every candidate, so the arg-C-type match below can never
+                        // disambiguate them on its own — see `mode_axis_tiebreak` /
+                        // free-fn `chosen_opt` extension, types/mod.rs). Consult
+                        // `resolved_callees` BEFORE the legacy type-match /
+                        // `narrow_by_param_mode` pool — mirrors the instance-method
+                        // call site's `channel_choice` priority (~c2.2, U.4.3).
+                        let channel_hit: Option<&MethodSig> = self.resolved_callees.get(&call_id)
+                            .and_then(|sp| overloads.iter().find(|s| s.fn_span == Some(*sp)));
+                        if let Some(sig) = channel_hit {
+                            sig.c_name.clone()
+                        } else if overloads.len() > 1 {
                             // Соберём C-типы аргументов через infer_expr_c_type.
                             let arg_c_types: Vec<String> = args.iter()
                                 .map(|a| self.infer_expr_c_type(a.expr()))
