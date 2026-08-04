@@ -1,0 +1,38 @@
+// Plan 221 item 9 (Ш.0 barrier, defect №325) — positive controls: the
+// barrier must NOT touch `Option[T]`/`Result[T,E]` (single-slot sum
+// wrappers, already tracked correctly by D133's own obligation-flow — not
+// collections, they never hold more than one live payload) or an ordinary
+// non-consume element type in a std collection. All three shapes below
+// must keep compiling clean after neg/consume_collection_vec_push_*_neg.nv
+// start failing.
+
+module spec_tests.conformance
+
+type P325CtrlRes consume { x int }
+
+fn P325CtrlRes consume @into_finish() -> int { self.x }
+
+fn p325_ctrl_opt_dial(v int) -> Option[P325CtrlRes] => Some(P325CtrlRes { x: v })
+
+fn p325_ctrl_res_dial(v int) -> Result[P325CtrlRes, str] => Ok(P325CtrlRes { x: v })
+
+test "Ш.0 barrier control — Option[consume T] unaffected" {
+    match p325_ctrl_opt_dial(1) {
+        Some(consume r) => { assert(r.into_finish() == 1) },
+        None => { assert(false) },
+    }
+}
+
+test "Ш.0 barrier control — Result[consume T, E] unaffected" {
+    match p325_ctrl_res_dial(1) {
+        Ok(consume r) => { assert(r.into_finish() == 1) },
+        Err(_e) => { assert(false) },
+    }
+}
+
+test "Ш.0 barrier control — Vec[int] (non-consume element) unaffected" {
+    mut v = Vec[int].new()
+    v.push(1)
+    v.push(2)
+    assert(v.len() == 2)
+}

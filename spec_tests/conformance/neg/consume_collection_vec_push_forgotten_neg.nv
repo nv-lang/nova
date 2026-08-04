@@ -1,0 +1,20 @@
+// EXPECT_COMPILE_ERROR E_CONSUME_IN_STD_COLLECTION
+//
+// Plan 221 item 9 (Ш.0 barrier, defect №325): pushing a must-consume rvalue
+// straight into a `Vec` previously compiled clean even though the element's
+// consume-obligation vanished together with the container (`v` dies at
+// scope-exit, nothing ever calls `finish`). The barrier bans the
+// `Vec[Res]` instantiation itself (hard error at the TurboFish site),
+// closing the hole above `push` until Ш.1/Ш.2 (plan 246) land real
+// per-element ownership tracking.
+
+module neg.consume_collection_vec_push_forgotten_neg
+
+type P325ForgottenRes consume { x int }
+
+fn P325ForgottenRes consume @into_finish() -> int { self.x }
+
+test "Vec[consume T] instantiation is a hard error (forgotten-element repro)" {
+    mut v = Vec[P325ForgottenRes].new()
+    v.push(P325ForgottenRes { x: 1 })
+}

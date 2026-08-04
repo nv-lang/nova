@@ -1673,6 +1673,13 @@ fn check_module_impl(
     // consume и maybe-consumed (consume на части веток) → compile error.
     check_consume(module, &mut errors);
 
+    // Plan 221 item 9 (Ш.0 barrier, defect №325): std collections (Vec/
+    // HashMap/Set/Deque/Queue/LinkedList/PriorityQueue/Lru) silently drop
+    // linearity — push/insert take a non-consuming param but keep the value.
+    // Temporary hard error until Ш.1/Ш.2 (plan 246) land real per-element
+    // ownership tracking. Option[T]/Result[T,E] are untouched.
+    check_consume_in_std_collections(module, &mut errors);
+
     // Plan 127 Ф.4 (D228 amend): E_VALUE_RECORD_ESCAPE_AFTER_CONSUME —
     // hard error для `&v` после consume value-record local. Detects
     // syntactic pattern: a `consume v = ...` LetDecl (or method-call
@@ -37163,6 +37170,397 @@ impl RefEscapeCtx {
         }
         if let Some(t) = &b.trailing {
             self.walk(t, escaping, errors);
+        }
+    }
+}
+
+/// Plan 221 item 9 (Ш.0 barrier, defect №325): FIXED list of std container
+/// types whose current `push`/`insert`/… take a non-consuming `T` parameter
+/// but silently KEEP the argument. Confirmed by probe (2026-08-04): a
+/// must-consume value passed to any of these ends up with two live owners
+/// (source binding stays Live) OR its consume-obligation vanishes silently
+/// when the container goes out of scope — `nova check` was green on both.
+/// Real per-parameter-mode enforcement (a consuming/non-consuming pair of
+/// insert methods) is Ш.1/Ш.2 (plan 246); until that lands, instantiating
+/// any of these with a must-consume element type is a hard compile error
+/// instead of a silent soundness hole. `Option[T]`/`Result[T,E]`/user sum
+/// types are deliberately NOT on this list — they carry at most one live
+/// payload and are already tracked correctly by the existing D133
+/// obligation-flow (this is a container-only hole, not a generic-wrapper
+/// hole). Corpus swept 2026-08-04 (std, examples, spec_tests, nova-http,
+/// nova-polaris, nova-tls, nova-bignum, www): zero existing uses of a
+/// must-consume type as a std-collection element — nothing relies on the
+/// leaky behavior this barrier closes.
+const CONSUME_UNSAFE_STD_COLLECTIONS: &[&str] =
+    &["Vec", "HashMap", "Set", "Deque", "Queue", "LinkedList", "PriorityQueue", "Lru"];
+
+fn consume_collection_diagnostic(collection: &str, elem_ty: &TypeRef, span: Span) -> Diagnostic {
+    let elem_name = typeref_display(elem_ty);
+    Diagnostic::new(
+        format!(
+            "[E_CONSUME_IN_STD_COLLECTION] `{collection}[...]` cannot hold a must-consume \
+             element type (`{elem_name}`) — `{collection}`'s insert methods (push/insert/…) \
+             take a non-consuming parameter but keep the argument, so a linear value stored \
+             here could end up with two live owners, or its consume-obligation could vanish \
+             silently when the container goes out of scope (plan 221 item 9, defect №325). \
+             This is a TEMPORARY compiler restriction, not a property of the language — full \
+             per-element ownership tracking (a consuming/non-consuming pair of insert methods) \
+             is plan 246 (Ш.1/Ш.2). `Option[T]`/`Result[T,E]` are unaffected."
+        ),
+        span,
+    )
+}
+
+/// Ш.0 barrier (№325): recurses into every nested `TypeRef` position (record
+/// field, fn param/return, tuple/func slot, `ro`/`mut`/pointer wrapper, the
+/// `[]T` D239 sugar for `Vec[T]`, …) and flags any occurrence of a
+/// `CONSUME_UNSAFE_STD_COLLECTIONS` name instantiated with a must-consume
+/// generic argument.
+fn check_typeref_consume_collection_barrier(
+    ty: &TypeRef,
+    lin_reg: &LinearityRegistry,
+    module: &Module,
+    errors: &mut Vec<Diagnostic>,
+) {
+    match ty {
+        TypeRef::Named { path, generics, span } => {
+            let name = path.last().map(|s| s.as_str()).unwrap_or("");
+            if CONSUME_UNSAFE_STD_COLLECTIONS.contains(&name) {
+                if let Some(elem) = generics.iter().find(|g| lin_reg.type_is_consume(g, module)) {
+                    errors.push(consume_collection_diagnostic(name, elem, *span));
+                }
+            }
+            for g in generics {
+                check_typeref_consume_collection_barrier(g, lin_reg, module, errors);
+            }
+        }
+        TypeRef::Array(inner, span) => {
+            // D239: `[]T` ≡ `Vec[T]` — same hole under the alias spelling.
+            if lin_reg.type_is_consume(inner, module) {
+                errors.push(consume_collection_diagnostic("Vec", inner, *span));
+            }
+            check_typeref_consume_collection_barrier(inner, lin_reg, module, errors);
+        }
+        TypeRef::FixedArray(_, inner, _)
+        | TypeRef::Readonly(inner, _)
+        | TypeRef::Mut(inner, _)
+        | TypeRef::Uninit(inner, _)
+        | TypeRef::Pointer(inner, _)
+        | TypeRef::Ref(inner, _) => {
+            check_typeref_consume_collection_barrier(inner, lin_reg, module, errors);
+        }
+        TypeRef::Tuple(elems, _) => {
+            for e in elems {
+                check_typeref_consume_collection_barrier(e, lin_reg, module, errors);
+            }
+        }
+        TypeRef::Func { params, return_type, .. } => {
+            for p in params {
+                check_typeref_consume_collection_barrier(p, lin_reg, module, errors);
+            }
+            if let Some(r) = return_type {
+                check_typeref_consume_collection_barrier(r, lin_reg, module, errors);
+            }
+        }
+        TypeRef::Protocol { .. } | TypeRef::Unit(_) => {}
+    }
+}
+
+/// TurboFish base (`Vec` in `Vec[Res].new()`) — either a bare `Ident` or the
+/// last segment of a `Path` (`std.collections.Vec[Res]`, if ever spelled
+/// out).
+fn turbofish_base_name(base: &Expr) -> Option<String> {
+    match &base.kind {
+        ExprKind::Ident(name) => Some(name.clone()),
+        ExprKind::Path(segs) => segs.last().cloned(),
+        _ => None,
+    }
+}
+
+fn walk_block_for_consume_collection_barrier(
+    b: &Block,
+    lin_reg: &LinearityRegistry,
+    module: &Module,
+    errors: &mut Vec<Diagnostic>,
+) {
+    for s in &b.stmts {
+        match s {
+            Stmt::Let(decl) => {
+                if let Some(ty) = &decl.ty {
+                    check_typeref_consume_collection_barrier(ty, lin_reg, module, errors);
+                }
+                walk_expr_for_consume_collection_barrier(&decl.value, lin_reg, module, errors);
+            }
+            Stmt::Const(decl) => {
+                if let Some(ty) = &decl.ty {
+                    check_typeref_consume_collection_barrier(ty, lin_reg, module, errors);
+                }
+                walk_expr_for_consume_collection_barrier(&decl.value, lin_reg, module, errors);
+            }
+            Stmt::Expr(e) => walk_expr_for_consume_collection_barrier(e, lin_reg, module, errors),
+            Stmt::Assign { target, value, .. } => {
+                walk_expr_for_consume_collection_barrier(target, lin_reg, module, errors);
+                walk_expr_for_consume_collection_barrier(value, lin_reg, module, errors);
+            }
+            Stmt::TupleAssign { lhs, rhs, .. } => {
+                for e in lhs { walk_expr_for_consume_collection_barrier(e, lin_reg, module, errors); }
+                for e in rhs { walk_expr_for_consume_collection_barrier(e, lin_reg, module, errors); }
+            }
+            Stmt::Return { value, .. } => {
+                if let Some(v) = value { walk_expr_for_consume_collection_barrier(v, lin_reg, module, errors); }
+            }
+            Stmt::Throw { value, .. } => walk_expr_for_consume_collection_barrier(value, lin_reg, module, errors),
+            Stmt::Defer { body, .. } => walk_expr_for_consume_collection_barrier(body, lin_reg, module, errors),
+            Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } =>
+                walk_expr_for_consume_collection_barrier(expr, lin_reg, module, errors),
+            Stmt::Break(_) | Stmt::Continue(_) => {}
+            Stmt::Apply { args, .. } => {
+                for a in args { walk_expr_for_consume_collection_barrier(a, lin_reg, module, errors); }
+            }
+            Stmt::Calc { steps, .. } => {
+                for step in steps { walk_expr_for_consume_collection_barrier(&step.expr, lin_reg, module, errors); }
+            }
+            Stmt::ConsumeScope { init, body, .. } => {
+                walk_expr_for_consume_collection_barrier(init, lin_reg, module, errors);
+                walk_block_for_consume_collection_barrier(body, lin_reg, module, errors);
+            }
+            Stmt::Reveal { .. } => {}
+        }
+    }
+    if let Some(t) = &b.trailing {
+        walk_expr_for_consume_collection_barrier(t, lin_reg, module, errors);
+    }
+}
+
+fn walk_expr_for_consume_collection_barrier(
+    e: &Expr,
+    lin_reg: &LinearityRegistry,
+    module: &Module,
+    errors: &mut Vec<Diagnostic>,
+) {
+    match &e.kind {
+        ExprKind::TurboFish { base, type_args } => {
+            if let Some(name) = turbofish_base_name(base) {
+                if CONSUME_UNSAFE_STD_COLLECTIONS.contains(&name.as_str()) {
+                    if let Some(elem) = type_args.iter().find(|g| lin_reg.type_is_consume(g, module)) {
+                        errors.push(consume_collection_diagnostic(&name, elem, e.span));
+                    }
+                }
+            }
+            for g in type_args {
+                check_typeref_consume_collection_barrier(g, lin_reg, module, errors);
+            }
+            walk_expr_for_consume_collection_barrier(base, lin_reg, module, errors);
+        }
+        ExprKind::Block(b) => walk_block_for_consume_collection_barrier(b, lin_reg, module, errors),
+        ExprKind::If { cond, then, else_ } => {
+            walk_expr_for_consume_collection_barrier(cond, lin_reg, module, errors);
+            walk_block_for_consume_collection_barrier(then, lin_reg, module, errors);
+            if let Some(ElseBranch::Block(b)) = else_ { walk_block_for_consume_collection_barrier(b, lin_reg, module, errors); }
+            if let Some(ElseBranch::If(e2)) = else_ { walk_expr_for_consume_collection_barrier(e2, lin_reg, module, errors); }
+        }
+        ExprKind::IfLet { scrutinee, then, else_, .. } => {
+            walk_expr_for_consume_collection_barrier(scrutinee, lin_reg, module, errors);
+            walk_block_for_consume_collection_barrier(then, lin_reg, module, errors);
+            if let Some(ElseBranch::Block(b)) = else_ { walk_block_for_consume_collection_barrier(b, lin_reg, module, errors); }
+            if let Some(ElseBranch::If(e2)) = else_ { walk_expr_for_consume_collection_barrier(e2, lin_reg, module, errors); }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            walk_expr_for_consume_collection_barrier(scrutinee, lin_reg, module, errors);
+            for a in arms {
+                match &a.body {
+                    MatchArmBody::Expr(e2) => walk_expr_for_consume_collection_barrier(e2, lin_reg, module, errors),
+                    MatchArmBody::Block(b) => walk_block_for_consume_collection_barrier(b, lin_reg, module, errors),
+                }
+                if let Some(g) = &a.guard { walk_expr_for_consume_collection_barrier(g, lin_reg, module, errors); }
+            }
+        }
+        ExprKind::For { iter, body, .. } | ExprKind::ParallelFor { iter, body, .. } => {
+            walk_expr_for_consume_collection_barrier(iter, lin_reg, module, errors);
+            walk_block_for_consume_collection_barrier(body, lin_reg, module, errors);
+        }
+        ExprKind::While { cond, body, .. } => {
+            walk_expr_for_consume_collection_barrier(cond, lin_reg, module, errors);
+            walk_block_for_consume_collection_barrier(body, lin_reg, module, errors);
+        }
+        ExprKind::WhileLet { scrutinee, body, .. } => {
+            walk_expr_for_consume_collection_barrier(scrutinee, lin_reg, module, errors);
+            walk_block_for_consume_collection_barrier(body, lin_reg, module, errors);
+        }
+        ExprKind::Loop { body, .. } => walk_block_for_consume_collection_barrier(body, lin_reg, module, errors),
+        ExprKind::Select { arms } => {
+            for arm in arms {
+                match &arm.op {
+                    SelectOp::Recv { chan, .. } => walk_expr_for_consume_collection_barrier(chan, lin_reg, module, errors),
+                    SelectOp::Send { chan, value } => {
+                        walk_expr_for_consume_collection_barrier(chan, lin_reg, module, errors);
+                        walk_expr_for_consume_collection_barrier(value, lin_reg, module, errors);
+                    }
+                    SelectOp::Default => {}
+                }
+                if let Some(g) = &arm.guard { walk_expr_for_consume_collection_barrier(g, lin_reg, module, errors); }
+                walk_block_for_consume_collection_barrier(&arm.body, lin_reg, module, errors);
+            }
+        }
+        ExprKind::With { body, .. } | ExprKind::Forbid { body, .. }
+        | ExprKind::Realtime { body, .. }
+        | ExprKind::Detach(body) | ExprKind::Blocking(body) => {
+            walk_block_for_consume_collection_barrier(body, lin_reg, module, errors);
+        }
+        ExprKind::Supervised { body, cancel, deadline } => {
+            if let Some(c) = cancel { walk_expr_for_consume_collection_barrier(c, lin_reg, module, errors); }
+            if let Some(dl) = deadline { walk_expr_for_consume_collection_barrier(&dl.expr, lin_reg, module, errors); }
+            walk_block_for_consume_collection_barrier(body, lin_reg, module, errors);
+        }
+        ExprKind::Call { func, args, trailing } => {
+            walk_expr_for_consume_collection_barrier(func, lin_reg, module, errors);
+            for a in args {
+                walk_expr_for_consume_collection_barrier(a.expr(), lin_reg, module, errors);
+            }
+            if let Some(tr) = trailing {
+                match tr {
+                    Trailing::Block(b) => walk_block_for_consume_collection_barrier(b, lin_reg, module, errors),
+                    Trailing::Fn(fsb) => {
+                        if let FnBody::Block(b) = &fsb.body { walk_block_for_consume_collection_barrier(b, lin_reg, module, errors); }
+                        else if let FnBody::Expr(e2) = &fsb.body { walk_expr_for_consume_collection_barrier(e2, lin_reg, module, errors); }
+                    }
+                    Trailing::LegacyBlockWithParams(tb) => {
+                        walk_block_for_consume_collection_barrier(&tb.body, lin_reg, module, errors);
+                    }
+                }
+            }
+        }
+        ExprKind::Spawn(body) => walk_expr_for_consume_collection_barrier(body, lin_reg, module, errors),
+        ExprKind::Binary { left, right, .. } => {
+            walk_expr_for_consume_collection_barrier(left, lin_reg, module, errors);
+            walk_expr_for_consume_collection_barrier(right, lin_reg, module, errors);
+        }
+        ExprKind::Unary { operand, .. } => walk_expr_for_consume_collection_barrier(operand, lin_reg, module, errors),
+        ExprKind::Try(e2) | ExprKind::Bang(e2) | ExprKind::RefArg(e2) | ExprKind::Throw(e2) => {
+            walk_expr_for_consume_collection_barrier(e2, lin_reg, module, errors);
+        }
+        ExprKind::Coalesce(a, b) => {
+            walk_expr_for_consume_collection_barrier(a, lin_reg, module, errors);
+            walk_expr_for_consume_collection_barrier(b, lin_reg, module, errors);
+        }
+        ExprKind::As(e2, ty) | ExprKind::Is(e2, ty) => {
+            walk_expr_for_consume_collection_barrier(e2, lin_reg, module, errors);
+            check_typeref_consume_collection_barrier(ty, lin_reg, module, errors);
+        }
+        ExprKind::Member { obj, .. } | ExprKind::Index { obj, .. } => walk_expr_for_consume_collection_barrier(obj, lin_reg, module, errors),
+        ExprKind::Lambda { body, .. } | ExprKind::Interrupt(Some(body)) => walk_expr_for_consume_collection_barrier(body, lin_reg, module, errors),
+        ExprKind::Range { start, end, .. } => {
+            if let Some(s) = start { walk_expr_for_consume_collection_barrier(s, lin_reg, module, errors); }
+            if let Some(en) = end { walk_expr_for_consume_collection_barrier(en, lin_reg, module, errors); }
+        }
+        ExprKind::ArrayLit(elems) => {
+            for el in elems {
+                match el {
+                    ArrayElem::Item(e2) | ArrayElem::Spread(e2) => walk_expr_for_consume_collection_barrier(e2, lin_reg, module, errors),
+                }
+            }
+        }
+        ExprKind::TupleLit(elems) => {
+            for el in elems { walk_expr_for_consume_collection_barrier(el, lin_reg, module, errors); }
+        }
+        ExprKind::RecordLit { fields, .. } => {
+            for f in fields {
+                if let Some(v) = &f.value { walk_expr_for_consume_collection_barrier(v, lin_reg, module, errors); }
+            }
+        }
+        ExprKind::MapLit { elems, .. } => {
+            for el in elems {
+                match el {
+                    MapElem::Pair(k, v) => {
+                        walk_expr_for_consume_collection_barrier(k, lin_reg, module, errors);
+                        walk_expr_for_consume_collection_barrier(v, lin_reg, module, errors);
+                    }
+                    MapElem::Spread(e2) => walk_expr_for_consume_collection_barrier(e2, lin_reg, module, errors),
+                }
+            }
+        }
+        ExprKind::ClosureFull(fsb) => {
+            if let FnBody::Block(b) = &fsb.body { walk_block_for_consume_collection_barrier(b, lin_reg, module, errors); }
+            else if let FnBody::Expr(e2) = &fsb.body { walk_expr_for_consume_collection_barrier(e2, lin_reg, module, errors); }
+        }
+        ExprKind::ClosureLight { body, .. } => {
+            match body {
+                ClosureBody::Expr(e2) => walk_expr_for_consume_collection_barrier(e2, lin_reg, module, errors),
+                ClosureBody::Block(b) => walk_block_for_consume_collection_barrier(b, lin_reg, module, errors),
+            }
+        }
+        // Простые узлы без вложенных TypeRef/блоков (literals, Ident, Path, SelfAccess, …).
+        _ => {}
+    }
+}
+
+/// Ш.0 barrier (№325): module-wide sweep — every TypeRef position (fn
+/// params/return, record/sum-variant field, top-level let/const annotation)
+/// plus every TurboFish instantiation site (`Vec[Res].new()`) inside fn/test
+/// bodies. See `CONSUME_UNSAFE_STD_COLLECTIONS` doc for scope/rationale.
+fn check_consume_in_std_collections(module: &Module, errors: &mut Vec<Diagnostic>) {
+    let mut lin_reg = LinearityRegistry::build(module);
+    for bm in crate::codegen::external_registry::ExternalRegistry::builtin_modules() {
+        lin_reg.absorb_external(bm);
+    }
+    for item in &module.items {
+        match item {
+            Item::Fn(f) => {
+                for p in &f.params {
+                    check_typeref_consume_collection_barrier(&p.ty, &lin_reg, module, errors);
+                }
+                if let Some(rt) = &f.return_type {
+                    check_typeref_consume_collection_barrier(rt, &lin_reg, module, errors);
+                }
+                match &f.body {
+                    FnBody::Block(b) => walk_block_for_consume_collection_barrier(b, &lin_reg, module, errors),
+                    FnBody::Expr(e) => walk_expr_for_consume_collection_barrier(e, &lin_reg, module, errors),
+                    FnBody::External => {}
+                }
+            }
+            Item::Type(t) => match &t.kind {
+                TypeDeclKind::Record(fields) => {
+                    for f in fields {
+                        check_typeref_consume_collection_barrier(&f.ty, &lin_reg, module, errors);
+                    }
+                }
+                TypeDeclKind::Sum(variants) => {
+                    for v in variants {
+                        match &v.kind {
+                            SumVariantKind::Tuple(tys) => {
+                                for ty in tys { check_typeref_consume_collection_barrier(ty, &lin_reg, module, errors); }
+                            }
+                            SumVariantKind::Record(fields) => {
+                                for f in fields { check_typeref_consume_collection_barrier(&f.ty, &lin_reg, module, errors); }
+                            }
+                            SumVariantKind::Unit => {}
+                        }
+                    }
+                }
+                TypeDeclKind::NamedTuple(fields) => {
+                    for f in fields { check_typeref_consume_collection_barrier(&f.ty, &lin_reg, module, errors); }
+                }
+                TypeDeclKind::Alias(ty) => {
+                    check_typeref_consume_collection_barrier(ty, &lin_reg, module, errors);
+                }
+                _ => {}
+            },
+            Item::Let(d) => {
+                if let Some(ty) = &d.ty {
+                    check_typeref_consume_collection_barrier(ty, &lin_reg, module, errors);
+                }
+                walk_expr_for_consume_collection_barrier(&d.value, &lin_reg, module, errors);
+            }
+            Item::Const(d) => {
+                if let Some(ty) = &d.ty {
+                    check_typeref_consume_collection_barrier(ty, &lin_reg, module, errors);
+                }
+                walk_expr_for_consume_collection_barrier(&d.value, &lin_reg, module, errors);
+            }
+            Item::Test(t) => {
+                walk_block_for_consume_collection_barrier(&t.body, &lin_reg, module, errors);
+            }
+            Item::Bench(_) | Item::Lemma(_) => {}
         }
     }
 }
