@@ -1,0 +1,21 @@
+// Plan 221.1 №286 residual gap (window p286, follow-up to window p-chan's
+// №143/№286 core fix). p-chan's `E_CHANNEL_ELEM_TYPE_MISMATCH` only fired
+// when `T` was declared explicitly (turbofish/annotation) — a BARE
+// `Channel.new(cap)` was fully permissive, including mixing types on the
+// SAME writer within the same block, because `T` was never tracked at
+// all. This window infers `T` from the writer's first `.send` call in the
+// same block (see `pos_channel_bare_first_send_infer.nv`); this fixture
+// pins that inference now also protects a SECOND, mismatched `send` on
+// the same writer — the same soundness guarantee the turbofish-declared
+// form already had, extended to the common undeclared-but-consistently-
+// typed-in-practice shape.
+//
+// EXPECT_COMPILE_ERROR E_CHANNEL_ELEM_TYPE_MISMATCH
+
+module neg.channel_bare_first_send_mismatch_neg
+
+test "bare channel.new: T inferred from first send rejects a mismatched second send" {
+    ro (tx, rx) = Channel.new(2)
+    tx.send(10)
+    tx.send("oops")
+}

@@ -3731,6 +3731,26 @@ struct TypeCheckCtx<'a> {
     /// FIRST, not exclusively; `find_variant_compat` remains the fallback
     /// for spans this pass didn't reach/resolve).
     pattern_variant_types_buf: std::cell::RefCell<HashMap<Span, String>>,
+    /// Plan 221.1 №286 residual gap (window p286, 2026-08-04): a BARE
+    /// `Channel.new(cap)` (no turbofish, no `ChanWriter[T]`/`ChanReader[T]`
+    /// annotation) left `T` permanently untracked (window p-chan, №143/№286
+    /// core fix) — `docs/guide/channels.md` explicitly documented this as
+    /// accepted, undocumented-inference-never-held permissiveness. Measured
+    /// this window (`docs/plans/repros/p286-bare-channel-erased/
+    /// bare_len_probe.nv`, RED without this fix): that permissiveness is
+    /// exploitable, not just "no compile-time guarantee" — an untyped
+    /// channel's erased `recv()` result still routes `.method()` calls
+    /// through legacy name-only `method_receivers` codegen dispatch, so a
+    /// co-present unrelated type sharing a method name (`.len()`) can
+    /// SILENTLY win over the real element type. Fix: honor the channels.md
+    /// promise for real — infer `T` from the first `.send`/`.try_send` call
+    /// on the writer, textually later in the SAME block (lookahead only, no
+    /// nested-block recursion — conservative). Keyed by the `Channel.new`
+    /// call expr's own `ExprId` (computed once per enclosing `f1_block`
+    /// pre-pass, consumed by the existing Tuple/Record destructure arms in
+    /// `f1_stmt` as a fallback AFTER `channel_new_turbofish_elem`). Strictly
+    /// additive: absent entry ⇒ unchanged pre-p286 behavior.
+    channel_bare_send_elem_hint: std::cell::RefCell<HashMap<crate::ast::ExprId, TypeRef>>,
     /// [M-crossmodule-samename-typecheck-bleed] (221.1 Ф.2 №28, 2026-07-23):
     /// `ResolvedType::Named` carries no span/file identity (`{name, module,
     /// args}` only) — reconstructing a `TypeRef` from it for the checker's
@@ -4449,6 +4469,9 @@ impl<'a> TypeCheckCtx<'a> {
             // №279: empty pattern-variant resolved-sum-name channel; filled
             // during the check walk.
             pattern_variant_types_buf: std::cell::RefCell::new(HashMap::new()),
+            // Plan 221.1 №286 residual gap (window p286): empty first-send
+            // T-inference hint channel; filled per-block during the check walk.
+            channel_bare_send_elem_hint: std::cell::RefCell::new(HashMap::new()),
             // [M-crossmodule-samename-typecheck-bleed] (221.1 №28): empty
             // call-return decl-span side channel; filled during the check walk.
             call_return_decl_span: std::cell::RefCell::new(HashMap::new()),
@@ -7809,6 +7832,10 @@ impl<'a> TypeCheckCtx<'a> {
         // №309/№317: same block-scope snapshot/restore for consume_binding_names.
         let consume_snapshot: std::collections::HashSet<String> =
             self.consume_binding_names.borrow().clone();
+        // Plan 221.1 №286 residual gap (window p286): seed first-send T-
+        // inference hints for bare `Channel.new` bindings in THIS block
+        // BEFORE walking its statements — see `seed_channel_bare_send_hints`.
+        self.seed_channel_bare_send_hints(b, scope);
         for s in &b.stmts {
             self.f1_stmt(s, gs, scope, errors);
         }
@@ -7967,7 +7994,14 @@ impl<'a> TypeCheckCtx<'a> {
                     // so an empty-generics ChanWriter/ChanReader silently falls
                     // back to legacy, byte-identical to before this window).
                     if pats.len() == 2 && is_channel_new_call(&d.value) {
-                        let elem_t = channel_new_turbofish_elem(&d.value);
+                        // №286 residual-gap fallback (window p286): explicit
+                        // turbofish wins; else consult the first-send hint
+                        // seeded by `seed_channel_bare_send_hints` above.
+                        let elem_t = channel_new_turbofish_elem(&d.value).or_else(|| {
+                            d.value.id.is_set()
+                                .then(|| self.channel_bare_send_elem_hint.borrow().get(&d.value.id).cloned())
+                                .flatten()
+                        });
                         for (i, pp) in pats.iter().enumerate() {
                             if let Pattern::Ident { name: pn, .. } = pp {
                                 let base = if i == 0 { "ChanWriter" } else { "ChanReader" };
@@ -8021,7 +8055,14 @@ impl<'a> TypeCheckCtx<'a> {
                     // destructure (`{ tx: sender, rx: receiver }`) still binds
                     // the RIGHT capability type to the RIGHT local name.
                     if is_channel_new_call(&d.value) {
-                        let elem_t = channel_new_turbofish_elem(&d.value);
+                        // №286 residual-gap fallback (window p286): explicit
+                        // turbofish wins; else consult the first-send hint
+                        // seeded by `seed_channel_bare_send_hints` above.
+                        let elem_t = channel_new_turbofish_elem(&d.value).or_else(|| {
+                            d.value.id.is_set()
+                                .then(|| self.channel_bare_send_elem_hint.borrow().get(&d.value.id).cloned())
+                                .flatten()
+                        });
                         for f in fields {
                             let base = match f.name.as_str() {
                                 "tx" => Some("ChanWriter"),
@@ -17292,6 +17333,110 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
             _ => None,
+        }
+    }
+
+    /// Plan 221.1 №286 residual gap (window p286): honor the
+    /// `docs/guide/channels.md` promise that `T` is "inferred from the
+    /// first `send`/`recv`" for a BARE `Channel.new(cap)` binding (no
+    /// turbofish, no `ChanWriter[T]`/`ChanReader[T]` annotation) — a
+    /// promise window p-chan (№143/№286's core fix) had explicitly and
+    /// honestly documented as never having held, rather than implement it.
+    /// Measured this window that the gap is not benign: an untyped
+    /// channel's erased `recv()` result still lets `.method()` calls
+    /// through to the legacy name-only codegen fallback, so a co-present
+    /// unrelated type sharing a method name can silently win (repro:
+    /// `docs/plans/repros/p286-bare-channel-erased/bare_len_probe.nv`,
+    /// RED without this pass — `EmbeddedDir.len()` silently picked over
+    /// `Vec.len()`).
+    ///
+    /// Single forward walk of `b`'s TOP-LEVEL statements (no recursion into
+    /// nested blocks/branches — deliberately conservative, matches the
+    /// common linear-code shape the docs promise is written for). Maintains
+    /// its own `sim_scope`, seeded from the real `scope` at block entry and
+    /// advanced for each simple `let`/`ro`/`mut` binding walked so a `send`
+    /// argument declared EARLIER IN THIS SAME BLOCK (`mut v []int = ...;
+    /// v.push(...); tx.send(v)` — the ordinary shape) resolves correctly,
+    /// rather than missing because the real `f1_stmt` walk (which runs
+    /// AFTER this pre-pass) hasn't reached that `let` yet. For every
+    /// untracked `Channel.new` destructure found, tracks its writer name as
+    /// "pending" until either its first `.send`/`.try_send` call is found
+    /// (writes the inferred `T` into `channel_bare_send_elem_hint`, keyed
+    /// by the `Channel.new` call's own `ExprId`) or the block ends (stays
+    /// untracked — identical to pre-p286 behavior, fully additive).
+    fn seed_channel_bare_send_hints(&self, b: &Block, scope: &HashMap<String, TypeRef>) {
+        let mut sim_scope = scope.clone();
+        let mut pending: Vec<(String, ExprId)> = Vec::new();
+        for s in &b.stmts {
+            if let Stmt::Let(d) = s {
+                if is_channel_new_call(&d.value)
+                    && d.value.id.is_set()
+                    && channel_new_turbofish_elem(&d.value).is_none()
+                {
+                    let tx_name = match &d.pattern {
+                        Pattern::Tuple(pats, _) if pats.len() == 2 => match pats.first() {
+                            Some(Pattern::Ident { name, .. }) => Some(name.clone()),
+                            _ => None,
+                        },
+                        Pattern::Record { fields, .. } => fields.iter().find_map(|f| {
+                            if f.name != "tx" {
+                                return None;
+                            }
+                            match &f.pattern {
+                                Some(Pattern::Ident { name, .. }) => Some(name.clone()),
+                                None => Some(f.name.clone()),
+                                _ => None,
+                            }
+                        }),
+                        _ => None,
+                    };
+                    if let Some(tx_name) = tx_name {
+                        pending.push((tx_name, d.value.id));
+                    }
+                }
+            }
+            if !pending.is_empty() {
+                let call_expr = match s {
+                    Stmt::Expr(e) => Some(e),
+                    Stmt::Let(d2) => Some(&d2.value),
+                    _ => None,
+                };
+                if let Some(e) = call_expr {
+                    if let ExprKind::Call { func, args, .. } = &e.kind {
+                        if let ExprKind::Member { obj, name } = &func.kind {
+                            if matches!(name.as_str(), "send" | "try_send") {
+                                if let ExprKind::Ident(recv_name) = &obj.kind {
+                                    if let Some(pos) =
+                                        pending.iter().position(|(n, _)| n == recv_name)
+                                    {
+                                        if let Some(arg) = args.first() {
+                                            if let Some(t) =
+                                                self.infer_expr_type(arg.expr(), &sim_scope)
+                                            {
+                                                let (_, eid) = pending.remove(pos);
+                                                self.channel_bare_send_elem_hint
+                                                    .borrow_mut()
+                                                    .insert(eid, t);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // Best-effort sim_scope advance — only what's needed to resolve
+            // typical `send` arguments, NOT a full scope walk (the real
+            // walk is `f1_stmt`, run right after this pre-pass returns).
+            if let Stmt::Let(d) = s {
+                if let Pattern::Ident { name, .. } = &d.pattern {
+                    match d.ty.clone().or_else(|| self.infer_expr_type(&d.value, &sim_scope)) {
+                        Some(t) => { sim_scope.insert(name.clone(), t); }
+                        None => { sim_scope.remove(name); }
+                    }
+                }
+            }
         }
     }
 
