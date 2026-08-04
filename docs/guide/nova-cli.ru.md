@@ -427,7 +427,7 @@ nova build FILE [-o OUTPUT] [--mode dev|release] [--toolchain auto|clang|msvc|gc
 | `--clang` | автоопределение | Путь к `clang.exe` |
 | `--timeout` | `120` | Таймаут компиляции в секундах |
 | `--keep-artifacts` | off | Не удалять `.c`/`.exe`/`.obj` в tmp |
-| `--mono-depth N` | `500` (или `NOVA_MONO_DEPTH`) | Лимит глубины инстанциации при мономорфизации ([Plan 48](../plans/48-closures-in-generics.md) Ф.7.6) |
+| `--mono-depth N` | `500` (или `NOVA_MONO_DEPTH`) | Лимит глубины инстанциации при мономорфизации ([Plan 48](../plans/48-closures-in-generics.md)) |
 
 **Временная директория:** `$TEMP/nova_tests/build/<path-hash>/` (Windows) или
 `$TMPDIR/nova_tests/build/<path-hash>/` (Unix). Хеш через
@@ -603,7 +603,7 @@ nova doc [FILE] [--format markdown|json|html] [--json-schema]
 | `--format` | `markdown` | `markdown`, `json` (D107 schema), `html` |
 | `--json-schema` | off | Вывести встроенную JSON Schema 2020-12 и выйти |
 | `--include-private` | off | Включить неэкспортируемые элементы |
-| `--test` | off | Запустить doc-tests (Plan 45 Ф.7) |
+| `--test` | off | Запустить doc-tests (Plan 45) |
 | `--check` | off | Проверить без рендера (битые ссылки, отсутствующие сводки) |
 | `--watch` | off | Повторный рендер по опросу mtime (500 мс); Ctrl-C для выхода |
 | `--coverage` | off | Метрики покрытия (% элементов со сводкой) |
@@ -643,7 +643,7 @@ nova doc [FILE] [--format markdown|json|html] [--json-schema]
 
 ### `nova doc-query`
 
-DSL-запросы к JSON-выводу `nova doc --format json` (Plan 45 Ф.32.1).
+DSL-запросы к JSON-выводу `nova doc --format json` (Plan 45).
 Фундамент для MCP-сервера ([`nova doc-mcp`](#nova-doc-mcp)).
 
 ```
@@ -681,7 +681,7 @@ nova doc-query out.json "module-prefix=std,effect=Fs"
 ### `nova doc-mcp`
 
 MCP-сервер (Model Context Protocol) — JSON-RPC через stdio или HTTP
-(Plan 45 Ф.32.3 / Ф.34.1). Совместим с MCP-клиентами (Claude Code,
+(Plan 45). Совместим с MCP-клиентами (Claude Code,
 MCP Inspector).
 
 ```

@@ -421,7 +421,7 @@ use `import` from the entry point.
 | `--clang` | auto detect | Path to `clang.exe` |
 | `--timeout` | `120` | Compile timeout (seconds) |
 | `--keep-artifacts` | off | Keep `.c`/`.exe`/`.obj` in tmp |
-| `--mono-depth N` | `500` (or `NOVA_MONO_DEPTH`) | Monomorphization-instantiation depth limit ([Plan 48](../plans/48-closures-in-generics.md) Ф.7.6) |
+| `--mono-depth N` | `500` (or `NOVA_MONO_DEPTH`) | Monomorphization-instantiation depth limit ([Plan 48](../plans/48-closures-in-generics.md)) |
 
 **Tmp directory:** `$TEMP/nova_tests/build/<path-hash>/` on Windows or
 `$TMPDIR/nova_tests/build/<path-hash>/` on Unix. The hash uses
@@ -596,7 +596,7 @@ nova doc [FILE] [--format markdown|json|html] [--json-schema]
 | `--format` | `markdown` | `markdown`, `json` (D107 schema), `html` |
 | `--json-schema` | off | Print the embedded JSON Schema 2020-12 and exit |
 | `--include-private` | off | Include non-exported items |
-| `--test` | off | Run doc-tests (Plan 45 Ф.7) |
+| `--test` | off | Run doc-tests (Plan 45) |
 | `--check` | off | Validate without rendering (broken links, missing summaries) |
 | `--watch` | off | Re-render on mtime poll (500ms); Ctrl-C to exit |
 | `--coverage` | off | Coverage metrics (% items with summary) |
@@ -637,7 +637,7 @@ positive guarantee).
 ### `nova doc-query`
 
 DSL queries against the `nova doc --format json` output
-(Plan 45 Ф.32.1). Foundation for the MCP server
+(Plan 45). Foundation for the MCP server
 ([`nova doc-mcp`](#nova-doc-mcp)).
 
 ```
@@ -675,7 +675,7 @@ Empty query → returns the whole file as-is.
 ### `nova doc-mcp`
 
 MCP server (Model Context Protocol) — JSON-RPC over stdio or HTTP
-(Plan 45 Ф.32.3 / Ф.34.1). Compatible with MCP clients (Claude Code,
+(Plan 45). Compatible with MCP clients (Claude Code,
 MCP Inspector).
 
 ```
