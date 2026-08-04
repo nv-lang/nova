@@ -164,6 +164,33 @@ export fn JsonObjectIter mut @next() -> Option[(str, JsonValue)] {
 /// Supports D55 record-coercion: a `{ "k": v }` literal in a `JsonValue`
 /// position is coerced into `Object`. Supports structural equality
 /// (round-trip tests rely on `==`).
+///
+/// Plan p320 Фаза 4 (реестр 221.1 №319, confirmed 2026-08-04, once the
+/// generic sum-lift fix landed — реестр №320): a BARE `IndexMap[str,
+/// JsonValue]` value at a `JsonValue`-expected RETURN or CALL-ARG position
+/// now auto-wraps into `Object(...)` WITHOUT calling `.object()` at all —
+/// `Object` is `JsonValue`'s only unary variant whose payload's `WrapKind`
+/// is `Named("IndexMap")`, unambiguous among the other unary variants
+/// (`Bool`/`Num`/`Str`/`Array` are `Bool`/`Float`/`Str`/`Array(..)` kinds).
+/// `.object()` is KEPT as an explicit, readable, `#stable` name (not
+/// retracted) — the auto-wrap is an ergonomic ADDITION, not a replacement:
+///
+/// ```nova
+/// fn wrap(m IndexMap[str, JsonValue]) -> ro JsonValue => m  // auto-wraps into Object(m)
+/// ro v2 = JsonValue.object(m)                               // still valid, still #stable
+/// ```
+///
+/// **Known gaps (Фаза 4, NOT fixed — reported, not attempted, out of №320's
+/// scope):** (1) LET-INIT position (`ro v JsonValue = m`) does NOT work —
+/// broken at the codegen level for ANY generic-sum bare-ctor result assigned
+/// into a let-binding, even hand-written, not specific to sum-lift or to
+/// `JsonValue`. (2) CALL-ARG auto-wrap does not fire (silently — wrong
+/// runtime result, not a compile error) when the source is an UNANNOTATED
+/// `let` built via a turbofish static constructor (`mut m = IndexMap[str,
+/// JsonValue].new()`) — give the `let` an explicit type annotation to work
+/// around it. See `spec_tests/conformance/standalone/
+/// p320_phase4_jsonvalue_sumlift_pos.nv` for the full repro/diagnosis of
+/// both gaps.
 #stable(since = "0.1")
 export type JsonValue enum
     | Null

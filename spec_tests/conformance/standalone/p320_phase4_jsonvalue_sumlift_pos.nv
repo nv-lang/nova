@@ -1,0 +1,73 @@
+// №320/№319 (реестр 221.1, окно p320-indexmap Фаза 4): confirms the D55
+// generic sum-lift fix (№320, Фаза 1) lets a BARE `IndexMap[str, JsonValue]`
+// value auto-wrap into `JsonValue.Object(...)` WITHOUT calling `.object()`
+// — at RETURN position and at CALL-ARG position (for a source whose type is
+// statically known — see the caveat below). `.object()` stays a valid,
+// explicit alternative (`#stable`, not retracted) — see the doc comment on
+// `JsonValue`'s `Object` variant (std/src/encoding/json.nv).
+//
+// TWO gaps found while building this fixture, confirmed via hand-written
+// (non-lifted) repros to isolate root cause, NOT fixed here (out of №320's
+// scope — reported to the owner as separate findings, no marker/number
+// assigned per this window's instructions):
+//
+//   1. LET-INIT position (`ro n Node[K,V] = w`) is BROKEN regardless of
+//      sum-lift — even a fully hand-written, fully-type-annotated bare
+//      variant-ctor call (`ro n Node[str,int] = Leaf(w)`) fails the SAME
+//      way (`CC-FAIL: initializing 'void *' with an expression of
+//      incompatible type ...`). This is a codegen limitation in emitting a
+//      generic-sum bare-ctor-call result into a let-binding, orthogonal to
+//      the candidate-detection fix Фаза 1 made — NOT attempted here. No
+//      LET-INIT positive test below (would assert something that doesn't
+//      hold).
+//   2. CALL-ARG position sum-lift silently DOES NOT FIRE (no error, no
+//      panic at the wrap site — just a raw, un-wrapped pointer handed to
+//      the callee, producing a WRONG runtime result, not a compile error)
+//      when the source is an UNANNOTATED `let` built via an explicit
+//      turbofish static constructor (`mut m = IndexMap[str, JsonValue]
+//      .new()`) — `simple_expr_type` (the helper that seeds `var_types` for
+//      unannotated bindings, compiler-codegen/src/types/mod.rs) recognizes
+//      a bare `Type.new()` call (2-segment `Path`) and a record literal,
+//      but NOT a turbofish-qualified `Type[Args].new()` call — so `m` never
+//      gets an entry in `var_types`, and `try_wrap_leaf`'s `Ident` branch
+//      silently bails (`let Some(ty) = self.var_types.get(name) else {
+//      return }`). Confirmed the fix: adding an explicit type annotation to
+//      the `let` (`mut m IndexMap[str, JsonValue] = IndexMap[str,
+//      JsonValue].new()`) makes call-arg sum-lift fire correctly — the test
+//      below uses that annotated form deliberately, not as a workaround
+//      hiding a bug, but because it is the form that this fixture can
+//      HONESTLY assert works today.
+module standalone.p320_phase4_jsonvalue_sumlift_pos
+
+import std.encoding.json.{JsonValue}
+import std.collections.index_map.{IndexMap}
+
+fn make_via_return(m IndexMap[str, JsonValue]) -> ro JsonValue => m
+
+fn takes_json(v JsonValue) -> bool => match v { Object(_) => true, _ => false }
+
+test "bare IndexMap[str, JsonValue] auto-wraps into Object at RETURN position (Фаза 4)" {
+    mut m = IndexMap[str, JsonValue].new()
+    m.insert("a", JsonValue.num(1.0))
+    ro v = make_via_return(m)
+    match v {
+        Object(obj) => assert(obj.len() == 1 && obj.get("a") == Some(JsonValue.num(1.0)))
+        _ => assert(false)
+    }
+}
+
+test "bare IndexMap[str, JsonValue] auto-wraps into Object at CALL-ARG position, source type statically known (Фаза 4)" {
+    mut m IndexMap[str, JsonValue] = IndexMap[str, JsonValue].new()
+    m.insert("c", JsonValue.str("x"))
+    assert(takes_json(m))
+}
+
+test "explicit .object() still works (Фаза 4 — auto-wrap is additive, not a replacement)" {
+    mut m = IndexMap[str, JsonValue].new()
+    m.insert("d", JsonValue.num(4.0))
+    ro v = JsonValue.object(m)
+    match v {
+        Object(obj) => assert(obj.len() == 1)
+        _ => assert(false)
+    }
+}
