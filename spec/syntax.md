@@ -1489,6 +1489,15 @@ ro msg = "id=${user_id}"                    // sugar над str.from(user_id) �
 в позиции с известным типом (`ro u User = { id: 1, name: "x" }`).
 `T.from(v)` — explicit method call для произвольных типов.
 
+**Граница применимости sum-lift (уточнена 2026-08-04).** Авто-обёртка в
+единственный подходящий unary-вариант работает для конкретных типов и для
+**generic-инстанциированного** именованного payload'а (`Node[K,V] enum
+Empty | Leaf(Wrap[K,V])`). Она НЕ работает, когда payload — **голый типовой
+параметр самой суммы** (`Wrapper[T] enum W(T) | Empty`): вид payload'а не
+сопоставляется с видом значения без подстановки `T`, а такой подстановки
+пока нет. Подробности и статус — в [амендменте
+D55](decisions/02-types.md#d55).
+
 Подробно: [D54](decisions/03-syntax.md#d54), [D73](decisions/08-runtime.md#d73).
 
 ## spawn / supervised / parallel for / detach

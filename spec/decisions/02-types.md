@@ -1483,14 +1483,36 @@ ro id2 UserId = n                             // n as UserId — ПЕРЕМЕН�
 `MapLitAnnotator::try_wrap_leaf` (тот же expected-type-propagated walker,
 что и map-литерал coercion — без отдельного нового прохода).
 
-**Генерики:**
+**Генерики (амендмент, реестр 221.1 №320, окно p320, 2026-08-04):**
+[M-generic-sumlift-mono-missing-variant-wrap] закрыт для варианта, чей
+payload — ИМЕНОВАННЫЙ тип, зависящий от generic-параметров `expected`
+(`type Node[K, V] enum Empty | Leaf(Wrap[K, V])`, `Wrap[K, V]` — своя
+`value`-декларация): `w Wrap[K, V]` в `ro`-return-позиции с ожидаемым
+`Node[K, V]` авто-оборачивается в `Node.Leaf(w)` — было ICE (`return w;` без
+обёртки → C-типовая несовместимость на границе функции) до Plan p320.
+До фикса `single_wrap_candidates` безусловно бейлилась на ЛЮБОЙ generic
+`expected` (гейт `!generics.is_empty()`); теперь Sum-плечо этот гейт не
+проверяет — `WrapKind`-дизамбигуация уже была name-only для `Named`-рода, так
+что собственные generics `expected` ей были не нужны. Материализация ТАКЖЕ
+сменила форму для generic-цели: голый `Leaf(w)` (как `Some(x)`/`Ok(x)` для
+`Option`/`Result`), а не квалифицированный `Node.Leaf(w)` (как для
+не-generic `SqlValue.I(1)`) — `emit_c.rs`'s `try_emit_explicit_variant_ctor`
+намеренно отклоняет квалифицированный вызов на generic-сумме (её ctor
+дорога — mono-aware bare-`Ident`-путь).
 
-```nova
-type Wrapper[T] enum W(T) | Empty
-
-ro w Wrapper[int] = 42                      // W(42)
-ro w Wrapper[str] = "test"                   // W("test")
-```
+**НЕ закрыто** (пример ниже — ИСТОРИЧЕСКИЙ, был добавлен как желаемое
+поведение и НЕ РАБОТАЛ уже на момент этого амендмента, независимо от
+Plan p320's фикса выше): payload = ГОЛЫЙ generic-параметр сáмого sum'а
+(`type Wrapper[T] enum W(T) | Empty`, `W(T)` — `T` тут не именованный тип, а
+буквальное имя типового параметра). `wrap_kind_of` для такого payload'а даёт
+`WrapKind::Named("T")` (T не резолвится ни в один известный тип), что
+никогда не совпадёт с `WrapKind::IntFamily`/`Str`/etc. литерала/переменной
+без подстановки `T` → конкретный тип из `expected.generics` — эта
+подстановка НЕ реализована ни до, ни после Plan p320. `ro w Wrapper[int] =
+42` сегодня даёт `[E7301] cannot assign value of type int to w declared as
+Wrapper[int]`. Закрытие этого случая — отдельная, более инвазивная работа
+(генерик-aware `WrapKind`-подстановка в `single_wrap_candidates`/
+`wrap_kind_of`), не начатая.
 
 ##### Str-литерал → `[]u8` coercion (D55 amend, Plan 208 Ф.0, 2026-07-15)
 

@@ -1,0 +1,270 @@
+// std.collections.index_map — `IndexMap[K, V]`, an insertion-order-preserving
+// map (Rust `indexmap::IndexMap` analogue).
+//
+// Motivation (реестр 221.1 №319/№320, окно p320-indexmap Фаза 2): `JsonObject`
+// (std/src/encoding/json.nv) hand-rolled the SAME "ordered map" shape —
+// `key_order []str` + `HashMap[str, JsonValue]` — with `JsonValue` stored
+// TWICE (once in `key_order`'s sibling `HashMap`, effectively once per key
+// via the map, no second value copy actually — see the honest boundary note
+// below for the PRECISE claim). `IndexMap[K, V]` generalizes that shape into
+// a reusable stdlib type so `JsonObject` (Фаза 3) and any future ordered-map
+// consumer share ONE implementation instead of hand-rolling it per call site.
+//
+// ─── Honest scope boundary (do not overclaim) ───────────────────────────────
+//
+// TODAY's achievable version — a dense `Vec[(K, V)]` (insertion order) +
+// `HashMap[K, int]` (key → index into `entries`, O(1) lookup). This removes
+// duplication of **values** `V` (a consumer that used to keep `V` in BOTH a
+// `key_order`-adjacent structure and a `HashMap[K, V]` now keeps it ONLY in
+// `entries`). It does **NOT** remove duplication of **keys** `K` — the
+// `HashMap[K, int]` index still holds its OWN copy of every key internally
+// (today's `HashMap[K, V]` is a value-STORING open-addressing table, not an
+// index-only one — see `std/src/collections/hashmap/core.nv`: `Slot.Occupied
+// { key K, value V }` stores the key IN the bucket). Full key-dedup needs an
+// index-only backing hash table (Rust `indexmap`'s `RawTable<usize>`, storing
+// ONLY the bucket→entries-index mapping, no key copy) — that is
+// `[M-hashmap-index-style-backing]`, a SEPARATE, more invasive change (new
+// runtime primitive or an internal `HashMap` representation change) NOT
+// attempted here. This type is a REAL improvement (value dedup + a reusable
+// generic type), not the full solution — see the plan window's report for
+// the same claim made to the owner.
+//
+// Insertion/iteration semantics mirror `JsonObject`'s pre-Фаза-3 behavior
+// exactly (json.nv:80-95): re-inserting an existing key updates the value
+// WITHOUT moving its position; iteration always follows insertion order
+// (never hash order).
+
+module collections.index_map
+
+import std.collections.hashmap.{HashMap}
+import std.collections.vec.{Vec}
+
+/// Insertion-order-preserving map: a dense `Vec[(K, V)]` (iteration/insertion
+/// order) plus a `HashMap[K, int]` index (key → position in `entries`) for
+/// O(1) lookup. See the module doc comment for the precise
+/// "values deduped, keys not yet" boundary this type draws today.
+///
+/// # Examples
+///
+/// ```nova
+/// let mut m = IndexMap[str, int].new()
+/// m.insert("b", 2)
+/// m.insert("a", 1)
+/// assert(m.keys() == ["b", "a"])   // insertion order, NOT sorted/hash order
+/// ```
+#stable(since = "0.1")
+export type IndexMap[K Equal + Hash, V] priv {
+    // entries — dense storage, insertion order. Internal: layout may change,
+    // do not access directly. Use @len() / @get() / @insert() / @iter().
+    entries [](K, V)
+
+    // index — key -> position in `entries`. Internal.
+    index HashMap[K, int]
+}
+
+/// Create an empty `IndexMap`.
+///
+/// # Examples
+///
+/// ```nova
+/// let mut m = IndexMap[str, int].new()
+/// assert(m.is_empty())
+/// ```
+#stable(since = "0.1")
+export fn IndexMap[K, V].new() -> Self => {
+    entries: [](K, V).new(),
+    index: HashMap[K, int].new(),
+}
+
+/// Number of key/value pairs in the map.
+#stable(since = "0.1")
+export fn IndexMap[K Equal + Hash, V] @len() -> int => @entries.len()
+
+/// `true` if the map is empty.
+#stable(since = "0.1")
+export fn IndexMap[K Equal + Hash, V] @is_empty() -> bool => @entries.len() == 0
+
+/// Look up a value by key.
+///
+/// # Examples
+///
+/// ```nova
+/// let mut m = IndexMap[str, int].new()
+/// m.insert("x", 10)
+/// assert(m.get("x") == Some(10))
+/// assert(m.get("y") == None)
+/// ```
+#stable(since = "0.1")
+export fn IndexMap[K Equal + Hash, V] @get(key K) -> Option[V] {
+    match @index.get(key) {
+        Some(i) => Some(@entries[i].1)
+        None => None
+    }
+}
+
+/// Check whether a key is present without extracting its value.
+#stable(since = "0.1")
+export fn IndexMap[K Equal + Hash, V] @contains(key K) -> bool => @index.contains(key)
+
+/// Insert/update the `(key, value)` pair.
+///
+/// If the key already exists — overwrites the value in place and returns
+/// `Some(old_value)`; the key's POSITION in insertion order is NOT changed
+/// (mirrors `HashMap.insert` / `JsonObject.insert`). Otherwise appends the
+/// pair to the end of `entries` and returns `None`.
+///
+/// # Examples
+///
+/// ```nova
+/// let mut m = IndexMap[str, int].new()
+/// assert(m.insert("a", 1) == None)
+/// assert(m.insert("a", 2) == Some(1))
+/// assert(m.get("a") == Some(2))
+/// ```
+#stable(since = "0.1")
+export fn IndexMap[K Equal + Hash, V] mut @insert(key K, value V) -> Option[V] {
+    match @index.get(key) {
+        Some(i) => {
+            ro old = @entries[i].1
+            @entries[i] = (key, value)
+            Some(old)
+        }
+        None => {
+            @index.insert(key, @entries.len())
+            @entries.push((key, value))
+            None
+        }
+    }
+}
+
+/// Remove the pair by key. Returns `Some(value)` if the key was present,
+/// otherwise `None`.
+///
+/// Implemented as swap-remove on `entries` (O(1) instead of O(n) shift) — the
+/// LAST entry moves into the removed slot, so removal does NOT preserve the
+/// relative order of the remaining entries (unlike `JsonObject`, which never
+/// implemented removal at all). The `index` entry for the moved key is
+/// updated to its new position.
+///
+/// # Examples
+///
+/// ```nova
+/// let mut m = IndexMap[str, int].new()
+/// m.insert("a", 1)
+/// assert(m.remove("a") == Some(1))
+/// assert(m.remove("a") == None)
+/// ```
+#stable(since = "0.1")
+export fn IndexMap[K Equal + Hash, V] mut @remove(key K) -> Option[V] {
+    match @index.get(key) {
+        None => None
+        Some(i) => {
+            ro removed = @entries[i].1
+            ro last = @entries.len() - 1
+            if i != last {
+                ro moved = @entries[last]
+                @entries[i] = moved
+                @index.insert(moved.0, i)
+            }
+            @entries.pop()
+            @index.remove(key)
+            Some(removed)
+        }
+    }
+}
+
+/// Remove all elements.
+#stable(since = "0.1")
+export fn IndexMap[K Equal + Hash, V] mut @clear() {
+    @entries.clear()
+    @index.clear()
+}
+
+/// Keys in insertion order.
+///
+/// # Examples
+///
+/// ```nova
+/// let mut m = IndexMap[str, int].new()
+/// m.insert("b", 2)
+/// m.insert("a", 1)
+/// assert(m.keys() == ["b", "a"])
+/// ```
+#stable(since = "0.1")
+export fn IndexMap[K Equal + Hash, V] @keys() -> []K {
+    mut out = []K.new(cap: @entries.len())
+    for pair in @entries {
+        out.push(pair.0)
+    }
+    out
+}
+
+/// Order-independent structural equality (D109/D237 `Equal`-impl) — mirrors
+/// `HashMap[K, V] @equal` / `JsonObject @equal`. Two `IndexMap`s are equal
+/// iff they hold the same set of `(key, value)` pairs, REGARDLESS of
+/// insertion order (only iteration/serialization order is
+/// insertion-order-dependent — a separate property from equality).
+///
+/// # Examples
+///
+/// ```nova
+/// let mut a = IndexMap[str, int].new()
+/// a.insert("x", 1)
+/// a.insert("y", 2)
+/// let mut b = IndexMap[str, int].new()
+/// b.insert("y", 2)
+/// b.insert("x", 1)
+/// assert(a.equal(b))   // order-independent
+/// ```
+#stable(since = "0.1")
+export fn IndexMap[K Equal + Hash, V] @equal(other IndexMap[K, V]) -> bool {
+    if @len() != other.len() {
+        return false
+    }
+    for (k, v) in @iter() {
+        match other.get(k) {
+            Some(ov) => {
+                if v != ov {
+                    return false
+                }
+            }
+            None => return false
+        }
+    }
+    true
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Iteration
+// ──────────────────────────────────────────────────────────────────────────
+
+// Iterator pattern — walks `entries` directly (insertion order), unlike
+// `HashMapIter` (hashmap/core.nv), which walks the bucket array (hash order).
+type IndexMapIter[K, V] { map IndexMap[K, V], pos int }
+
+/// Iterator over `(key, value)` pairs IN INSERTION ORDER (never hash order).
+///
+/// # Examples
+///
+/// ```nova
+/// let mut m = IndexMap[str, int].new()
+/// m.insert("a", 1)
+/// m.insert("b", 2)
+/// for (k, v) in m.iter() {
+///     assert(v > 0)
+/// }
+/// ```
+#stable(since = "0.1")
+#impl(Iter[IndexMapIter[K, V]])
+export fn IndexMap[K Equal + Hash, V] @iter() -> IndexMapIter[K, V] => { map: @, pos: 0 }
+
+#impl(Next[(K, V)])
+export fn IndexMapIter[K, V] mut @next() -> Option[(K, V)] {
+    if @pos >= @map.entries.len() {
+        None
+    } else {
+        ro pair = @map.entries[@pos]
+        @pos += 1
+        Some(pair)
+    }
+}

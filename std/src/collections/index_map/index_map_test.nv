@@ -1,0 +1,180 @@
+// Tests for std.collections.index_map (`IndexMap[K, V]`, реестр 221.1
+// №319/№320, окно p320-indexmap Фаза 2). Mirrors the shape of
+// std/src/collections/hashmap/core_test.nv, plus the two regression tests
+// explicitly required by the plan window's gate: "re-insert does not move
+// position" and "iteration == insertion order" — these are the very
+// properties that distinguish `IndexMap` from a bare `HashMap`.
+
+module collections.index_map
+
+test "new map is empty" {
+    ro m = IndexMap[str, int].new()
+    assert(m.is_empty())
+    assert(m.len() == 0)
+}
+
+test "insert and get" {
+    mut m = IndexMap[str, int].new()
+    m.insert("alice", 1)
+    m.insert("bob", 2)
+
+    assert(m.len() == 2)
+    assert(!m.is_empty())
+    assert(m.get("alice") == Some(1))
+    assert(m.get("bob") == Some(2))
+    assert(m.get("charlie") == None)
+}
+
+test "insert returns old value on overwrite" {
+    mut m = IndexMap[str, int].new()
+    assert(m.insert("a", 1) == None)
+    assert(m.insert("a", 2) == Some(1))
+    assert(m.get("a") == Some(2))
+    assert(m.len() == 1)
+}
+
+test "contains" {
+    mut m = IndexMap[str, int].new()
+    m.insert("a", 1)
+    assert(m.contains("a"))
+    assert(!m.contains("z"))
+}
+
+test "remove" {
+    mut m = IndexMap[str, int].new()
+    m.insert("a", 1)
+    m.insert("b", 2)
+
+    assert(m.remove("a") == Some(1))
+    assert(m.remove("a") == None)
+    assert(m.len() == 1)
+    assert(m.get("a") == None)
+    assert(m.get("b") == Some(2))
+}
+
+test "clear" {
+    mut m = IndexMap[str, int].new()
+    m.insert("a", 1)
+    m.insert("b", 2)
+    m.clear()
+    assert(m.is_empty())
+    assert(m.get("a") == None)
+}
+
+// ─── the core motivation of this type — insertion order, not hash order ───
+
+test "re-insert of an EXISTING key does NOT move its position (core IndexMap property)" {
+    mut m = IndexMap[str, int].new()
+    m.insert("first", 1)
+    m.insert("second", 2)
+    m.insert("third", 3)
+    // Re-insert "first" with a new value — position must stay at index 0.
+    assert(m.insert("first", 100) == Some(1))
+    assert(m.keys() == ["first", "second", "third"])
+    assert(m.get("first") == Some(100))
+}
+
+test "iteration follows insertion order, NOT hash order (core IndexMap property)" {
+    mut m = IndexMap[str, int].new()
+    // Insert in an order that would NOT match typical hash-bucket order for
+    // these short string keys — the point is order is INSERTION order,
+    // period, regardless of what a hash table would produce.
+    m.insert("z", 26)
+    m.insert("a", 1)
+    m.insert("m", 13)
+
+    mut collected = []str.new()
+    for (k, _) in m.iter() {
+        collected.push(k)
+    }
+    assert(collected == ["z", "a", "m"])
+}
+
+test "keys() returns keys in insertion order" {
+    mut m = IndexMap[str, int].new()
+    m.insert("b", 2)
+    m.insert("a", 1)
+    m.insert("c", 3)
+    assert(m.keys() == ["b", "a", "c"])
+}
+
+test "iter() yields (key, value) pairs in insertion order" {
+    mut m = IndexMap[str, int].new()
+    m.insert("x", 10)
+    m.insert("y", 20)
+
+    mut pairs = [](str, int).new()
+    for (k, v) in m.iter() {
+        pairs.push((k, v))
+    }
+    assert(pairs.len() == 2)
+    assert(pairs[0].0 == "x" && pairs[0].1 == 10)
+    assert(pairs[1].0 == "y" && pairs[1].1 == 20)
+}
+
+// ─── equal() is order-independent (structural equality, separate from iteration order) ───
+
+test "equal() is order-independent (D109/D237 Equal protocol)" {
+    mut a = IndexMap[str, int].new()
+    a.insert("x", 1)
+    a.insert("y", 2)
+
+    mut b = IndexMap[str, int].new()
+    b.insert("y", 2)
+    b.insert("x", 1)
+
+    assert(a.equal(b))
+}
+
+test "equal() detects a value difference" {
+    mut a = IndexMap[str, int].new()
+    a.insert("x", 1)
+
+    mut b = IndexMap[str, int].new()
+    b.insert("x", 2)
+
+    assert(!a.equal(b))
+}
+
+test "equal() detects a length difference" {
+    mut a = IndexMap[str, int].new()
+    a.insert("x", 1)
+
+    mut b = IndexMap[str, int].new()
+    b.insert("x", 1)
+    b.insert("y", 2)
+
+    assert(!a.equal(b))
+}
+
+// ─── swap-remove semantics: removal does NOT preserve remaining relative order ───
+
+test "remove of a middle entry swaps the last entry into its slot (documented swap-remove semantics)" {
+    mut m = IndexMap[str, int].new()
+    m.insert("a", 1)
+    m.insert("b", 2)
+    m.insert("c", 3)
+    assert(m.remove("a") == Some(1))
+    // "c" (the last entry) was swapped into "a"'s slot.
+    assert(m.keys() == ["c", "b"])
+    assert(m.get("b") == Some(2))
+    assert(m.get("c") == Some(3))
+}
+
+test "remove of the last entry needs no swap" {
+    mut m = IndexMap[str, int].new()
+    m.insert("a", 1)
+    m.insert("b", 2)
+    assert(m.remove("b") == Some(2))
+    assert(m.keys() == ["a"])
+}
+
+// ─── int keys — a second concrete K instantiation, per Nova's own mono model ───
+
+test "works with int keys (second K instantiation)" {
+    mut m = IndexMap[int, str].new()
+    m.insert(3, "three")
+    m.insert(1, "one")
+    assert(m.get(1) == Some("one"))
+    assert(m.keys() == [3, 1])
+}

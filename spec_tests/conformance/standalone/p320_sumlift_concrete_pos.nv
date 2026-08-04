@@ -1,0 +1,23 @@
+// №320 (реестр 221.1, окно p320): D55 "obvious single-wrapper coercion"
+// sum-lift — CONTROL case, no generics. `w` (a `Wrap` value) returned at a
+// `ro Node`-expected position auto-wraps into `Node.Leaf(w)` (spec/decisions/
+// 02-types.md "Obvious single-wrapper coercion (D55 amend, Plan 200,
+// 2026-07-12)"). This already worked before the №320 fix — kept as a sibling
+// baseline next to p320_sumlift_generic_pos.nv (the GENERIC instantiation of
+// the exact same pattern, which did NOT work before the fix — see that
+// file's header for the failure mode).
+module standalone.p320_sumlift_concrete_pos
+
+type Wrap value { ro key str, ro val int }
+
+type Node enum Empty | Leaf(Wrap)
+
+fn make(w Wrap) -> ro Node => w
+
+test "D55 sum-lift: non-generic named-type payload auto-wraps at return position (№320 control)" {
+    ro n = make(Wrap { key: "a", val: 1 })
+    match n {
+        Leaf(w) => assert(w.key == "a" && w.val == 1)
+        Empty => assert(false)
+    }
+}
