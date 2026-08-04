@@ -1425,17 +1425,17 @@ heap (или на стеке через escape analysis).
 - **Без разделения** — массивы `[N]T` потребуют литералов всюду;
   comptime станет несовместимым.
 
-### Сравнение с `readonly` / `mut` field — три оси immutability
+### Сравнение с `ro` / `mut` field — три оси immutability
 
 Nova имеет **три разных** keyword'а связанных с immutability — `let`,
-`const`, `readonly`/`mut` field. Они **не конкурируют**, потому что
+`const`, `ro`/`mut` field. Они **не конкурируют**, потому что
 работают на **разных уровнях** программы:
 
 | Конструкция | Что фиксирует | Где живёт | Решает |
 |---|---|---|---|
 | `let x` / `let mut x` | binding | в функции / scope | можно ли переприсвоить переменную |
 | `const X = ...` | compile-time placement | top-level или scope | известно ли значение при компиляции |
-| `readonly field T` | поле record'а never-mut | внутри `type X { ... }` ([D36](02-types.md#d36)) | можно ли мутировать поле даже у `let mut` binding'а |
+| `ro field T` | поле record'а never-mut | внутри `type X { ... }` ([D36](02-types.md#d36)) | можно ли мутировать поле даже у `let mut` binding'а |
 | `mut field T` | поле record'а always-mut | внутри `type X { ... }` ([D36](02-types.md#d36)) | можно ли мутировать поле даже у `let` binding'а |
 
 #### `let` / `let mut` — про **binding**
@@ -1468,7 +1468,7 @@ const-record'ы). `let` принимает любое runtime-выражение
 - Семантической декларации «это всегда константа», не «immutable
   до scope-exit».
 
-#### `readonly` / `mut` field — про **поле record'а**
+#### `ro` / `mut` field — про **поле record'а**
 
 ```nova
 type Account {
@@ -1483,7 +1483,7 @@ acc.id = 999               // ERR  — id ro
 acc.log_count += 1         // OK   — log_count mut
 ```
 
-`readonly` / `mut` per-field — это **freeze/unfreeze** конкретного
+`ro` / `mut` per-field — это **freeze/unfreeze** конкретного
 поля относительно дефолта. Они **не пересекаются** с `let`/`let mut`:
 binding управляет «можно ли модифицировать **переменную**», поле
 управляет «можно ли модифицировать **конкретное поле в записи**».
@@ -1494,10 +1494,10 @@ binding управляет «можно ли модифицировать **пе
 |---|---|---|
 | `let acc` | `field T` (default) | ❌ — binding immutable |
 | `let acc` | `mut field T` | ✅ — поле always-mut |
-| `let acc` | `readonly field T` | ❌ |
+| `let acc` | `ro field T` | ❌ |
 | `let mut acc` | `field T` (default) | ✅ |
 | `let mut acc` | `mut field T` | ✅ |
-| `let mut acc` | `readonly field T` | ❌ — readonly сильнее |
+| `let mut acc` | `ro field T` | ❌ — ro сильнее |
 
 #### Почему **три**, а не одно
 
@@ -1509,13 +1509,13 @@ binding управляет «можно ли модифицировать **пе
    const-eligible. Программист не видит явно «это compile-time»,
    а получает компилятор-error при первом нарушении. AI-unfriendly.
 
-2. **Только `let`/`let mut` без `readonly`/`mut field`** — потеря
+2. **Только `let`/`let mut` без `ro`/`mut field`** — потеря
    per-field freeze. Альтернатива — newtype wrappers (`type AccountId(u64)`
    для каждого immutable поля), что ведёт к verbose-коду и потере
    ergonomics (`acc.id.value()` вместо `acc.id`). Cell/RefCell-style
    wrappers (как в Rust) ещё хуже для AI-кодинга.
 
-3. **Только `const`/`readonly`** (без `let`/`let mut`) — теряем
+3. **Только `const`/`ro`** (без `let`/`let mut`) — теряем
    обычные mutable переменные в функциях. Можно через field record'а
    (тип-обёртку `Counter { mut value int }`), но это противоестественно
    для локальных счётчиков.
@@ -1523,7 +1523,7 @@ binding управляет «можно ли модифицировать **пе
 Это **три разные оси ответственности**, каждая решает свою задачу:
 - `let`/`let mut` — **binding mutability** (можно ли переприсвоить).
 - `const` — **compile-time vs runtime placement**.
-- `readonly`/`mut` field — **per-field freeze в record'е**.
+- `ro`/`mut` field — **per-field freeze в record'е**.
 
 ### Связь
 - [D27](#d27-синтаксис-массивов-t-префикс-nt-фиксированные) — `const`
@@ -1531,7 +1531,7 @@ binding управляет «можно ли модифицировать **пе
 - [D30](#d30-стиль-именования) — `SCREAMING_SNAKE_CASE` для `const`.
 - [D32](02-types.md#d32) — default immutable bindings; `mut` для
   переменных и параметров.
-- [D36](02-types.md#d36) — `readonly`/`mut` модификаторы полей
+- [D36](02-types.md#d36) — `ro`/`mut` модификаторы полей
   record'а; per-field freeze.
 - [07-modules.md](07-modules.md) — `export const` экспортирует.
 
@@ -1553,7 +1553,7 @@ binding управляет «можно ли модифицировать **пе
 > выше) была ДЕКЛАРАЦИЕЙ без энфорса на cross-binding — паттерн-биндинги
 > (match arm / `if Some(x) =`) не были заведены в L1 launder-таблицу
 > (D246 §ORACLE G), так что `Ok(b0) => { mut b = b0 }` на кучевом payload
-> отмывало readonly-заморозку МОЛЧА. Чекер теперь заводит bare
+> отмывало ro-заморозку МОЛЧА. Чекер теперь заводит bare
 > pattern-bind = L1-ro (ту же launder-проверку, что явный `ro x = ...`),
 > `mut x` внутри паттерна = mut — см. D246 §ORACLE G AMEND ниже.
 
@@ -1959,7 +1959,7 @@ fn Account @summary() -> str =>
 ```
 
 Mutation работает по правилам [05-memory.md](05-memory.md) (mut binding +
-поле без `readonly`):
+поле без `ro`):
 
 ```nova
 mut p = Point(1.0, 2.0)
@@ -4609,7 +4609,7 @@ D69 фиксирует variadic как полноценную фичу язык�
 **Декларации:** `module`, `import`, `use`, `export`, `external`, `fn`,
 `type`, `protocol`, `effect`, `handler`, `alias`.
 
-**Bindings:** `let`, `const`, `mut`, `readonly`.
+**Bindings:** `let`, `const`, `mut`, `ro`.
 
 **Control flow:** `if`, `else`, `match`, `for`, `while`, `loop`, `in`,
 `return`, `break`, `continue`.
@@ -8327,7 +8327,7 @@ edge cases, Rust comparison, V4.4 limitations.
 - FixedArray `[N]T` — `N * size_of(T)`, element alignment.
 - Array `[]T` — slice ABI = 16 bytes (pointer + length), align 8.
 - Unit `()` — size 0, align 1.
-- Readonly `readonly T` — same layout as T.
+- Readonly `ro T` — same layout as T.
 - Primitive table теперь (size, align) tuples — `str = (16, 8)` для slice ABI.
 
 Still V2 (требует TypeDecl access):
@@ -8457,7 +8457,7 @@ V4.5 ограничивался simple Named concrete types (`int`, `str`). M4 �
 - FixedArray `[4]int` → `fixarr4_int`
 - Named-with-generics `Option[int]` → `Option_int`
 - Unit `()` → `unit`
-- Readonly `readonly T` → `ro_<m>`
+- Readonly `ro T` → `ro_<m>`
 - Func type → `fn<n>_<params>_ret_<ret>`
 
 `GenericInst.concrete` теперь `Vec<TypeRef>`. Hash/Eq via `mangled_args()`
@@ -8638,7 +8638,7 @@ clang `redefinition` (ошибка в `.c`, не в `.nv`).
 ro input = read_line()
 ro input = input.trim()           \ тот же тип — pipeline (R5-тихо)
 ro input = parse_request(input)?  \ str → Request; str-версия НЕДОСТУПНА ниже (R1)
-mut work = work                   \ «разморозка» readonly→mut (Rust: let mut x = x)
+mut work = work                   \ «разморозка» ro→mut (Rust: let mut x = x)
 ```
 
 **Правило (R1–R7).**

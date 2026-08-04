@@ -1885,9 +1885,9 @@ multiline-объявление вместо одного-двух тегов н�
    private), но требует, чтобы comptime-генератор корректно вычислял
    эффект-сигнатуру.
 
-6. **Совместимость с `readonly`/`mut`-полями (D36).** При decode'е из
+6. **Совместимость с `ro`/`mut`-полями (D36).** При decode'е из
    wire-формата нужно создавать новый `User` (потому что `id` —
-   `readonly`), не мутировать существующий. Генератор должен это
+   `ro`), не мутировать существующий. Генератор должен это
    учитывать.
 
 **Связь.**
@@ -4985,7 +4985,7 @@ expr`) — это compile-time annotation, runtime-поведение не ме�
 при type-checker rewrite.
 
 **Связь:** Q-match-unit-arms-in-expr (родственное bootstrap-
-ограничение), [D33](decisions/03-syntax.md#d33) (let/const/mut/readonly),
+ограничение), [D33](decisions/03-syntax.md#d33) (let/const/mut/ro),
 Plan 02.
 
 ---
@@ -5245,8 +5245,8 @@ type DeepReadonly<T> = T extends object
 ```
 
 В Nova сейчас:
-- D36 даёт `readonly` modifier на отдельных **полях** record.
-- НЕТ `readonly T` как type-modifier для целого типа.
+- D36 даёт `ro` modifier на отдельных **полях** record.
+- НЕТ `ro T` как type-modifier для целого типа.
 - НЕТ `keyof T` / mapped types.
 
 **Use-cases:**
@@ -5258,7 +5258,7 @@ type DeepReadonly<T> = T extends object
 
 **Варианты:**
 
-1. **Полный TS-style.** `keyof T`, mapped types, `readonly T`,
+1. **Полный TS-style.** `keyof T`, mapped types, `ro T`,
    `DeepReadonly<T>`. Большая type-system фича. Compile-time only
    (нет runtime enforcement в managed heap без borrow-checker).
 2. **`Read[T]` effect-marker.** Маркируем функции «читает только» через
@@ -5271,19 +5271,19 @@ type DeepReadonly<T> = T extends object
    независимость.
 
 **Тонкость:** D6 (managed heap, без borrow-checker) ограничивает
-**runtime enforcement**. Любая readonly-проверка может быть только
+**runtime enforcement**. Любая ro-проверка может быть только
 compile-time (как в TS). Это значит Nova-код может через `as` cast'ом
-обойти readonly — это **soft guarantee**, не **hard**. TS живёт с
+обойти ro — это **soft guarantee**, не **hard**. TS живёт с
 этим, но это тонкость.
 
 **Предложение:** отложить до созревания. Сейчас — **4 (конвенция +
 копия)** через `Buffer.clone()`, `s.into() -> []byte` (копия) и т.д.
-Когда будет 5+ конкретных use-cases где readonly нужен — выбрать
+Когда будет 5+ конкретных use-cases где ro нужен — выбрать
 вариант 2 (`Read[T]` как effect) или 3 (`const T` newtype) в
 зависимости от того, нужно ли это compile-time only или runtime.
 
 **Связь:** [D6](decisions/05-memory.md#d6), [D36](decisions/03-syntax.md#d36)
-(`readonly` поля), [D62](decisions/04-effects.md#d62) (effects как
+(`ro` поля), [D62](decisions/04-effects.md#d62) (effects как
 runtime-marker pattern), Q-effect-polymorphism.
 
 ---

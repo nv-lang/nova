@@ -90,7 +90,7 @@ pending the owner's call in Open questions.
 | Token (code, unchanged in both languages) | Example (en) | Note (что значит по-русски) |
 |---|---|---|
 | `consume` | "A `consume`-typed binding is ownership-tracked." | параметр/связывание, привязка владения ресурсом; исчерпывается ровно один раз (или через `@cleanup`, D432) |
-| `ro` | "`ro` declares a read-only binding (never reassigned)" | связывание/параметр только для чтения; синоним `readonly` для параметров |
+| `ro` | "`ro` declares a read-only binding (never reassigned)" | связывание/параметр только для чтения; на параметре — синоним дефолтной формы `T` без модификатора |
 | `mut` | "`mut` declares a reassignable one [binding]" | разрешает мутацию/переприсваивание — на связывании, параметре или поле |
 | `use` (embed) | "`use account Account` — embed: field + auto-proxy methods" | встраивание типа как поля с автопрокси методов (композиция, не наследование) |
 | `spawn` | "`spawn` inside a `supervised` block starts a fire-and-forget fiber" | запуск нового файбера внутри области видимости structured concurrency |
@@ -263,12 +263,14 @@ pending the owner's call in Open questions.
    plus the additional spec/guide sourcing pass. If the owner wants any
    of these split back into separate rows for clarity, that's a
    low-cost follow-up edit, not a re-sourcing effort.
-5. **`ro` vs `readonly`.** `docs/guide/parameters.md` documents `readonly`
-   as an explicit synonym for the default (no-modifier) parameter mode,
-   while `ro` is the binding-declaration keyword (`ro x = ...`). Both
-   ended up in §2's `ro` row's note as one explanation; flag if the
-   owner wants them split into two distinct glossary rows since they are
-   technically two different keywords with overlapping meaning.
+5. **`ro` as binding keyword vs. `ro` as param modifier.** `ro` doubles as
+   the binding-declaration keyword (`ro x = ...`) and as an explicit
+   (redundant-with-default) parameter modifier (`ro x T`). `readonly` was
+   the pre-D184 (Plan 114) spelling for the field/param sense and no
+   longer exists in Nova syntax. Both readings ended up in §2's `ro` row's
+   note as one explanation; flag if the owner wants them split into two
+   distinct glossary rows since they cover two different senses of one
+   keyword.
 
 ### Русские формы — спорные, решает владелец (добор 2026-08-02, норма #language)
 
