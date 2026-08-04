@@ -30,3 +30,4 @@ typed-pointers
 value-vs-reference
 vec-lazy
 vec-owned
+z3-setup
