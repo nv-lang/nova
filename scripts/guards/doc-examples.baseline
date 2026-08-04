@@ -1,0 +1,63 @@
+# baseline 2026-08-05 (окно p-example-guard, sonnet) — первый ввод стража
+# check-doc-examples.sh. Числа сняты САМИМ СТРАЖОМ на дереве github/main
+# (коммит f34f4ce66), периметр: docs/guide/*.md (+ *.ru.md), spec/*.md
+# (+ *.en.md) КРОМЕ spec/open-questions.md (см. ниже), README.md/README.ru.md
+# — верхний уровень без рекурсии, только содержимое ```nova-блоков.
+#
+# --- ПЕРИМЕТР: почему spec/open-questions.md исключён из сканирования ---
+# Файл открывается заголовком «Nova — открытые вопросы дизайна» и подписью
+# «Что обсуждали, но не зафиксировали как решение» — это журнал НЕ решённых
+# (или решённых давно, но зафиксированных СВОЕГО ВРЕМЕНИ синтаксисом) design-
+# вопросов, а не «как писать Nova сегодня» гайд для читателя. В нём, например,
+# `external fn` фигурирует как канон, потому что решение Q-string-builder
+# зафиксировано 2026-05-08 — ДО ретракции D282/Plan 91.12 (`external fn` →
+# `extern "nova" fn`/`extern "C" fn`) — и с тех пор текст не обновлялся, как
+# и не обновляется большинство исторических записей журнала. Природа файла
+# та же, что у `spec/decisions/` — внутренний рабочий норматив/журнал, не
+# публикуемая читателю поверхность «как писать код» — check-doc-conventions.sh
+# по той же причине выводит `spec/decisions/**` из периметра dev_links
+# («внутренний рабочий норматив», см. его собственный baseline). Разница
+# лишь в том, ЧТО служит признаком: там — путь-каталог, здесь — путь-файл
+# (open-questions.md — единственный файл такой природы среди spec/*.md
+# верхнего уровня; остальные 12 — conversions/effects/overview/paradigm/
+# revolutionary/syntax/GLOSSARY — нормативный текст читателя, сканируются).
+# Без исключения 32 из 112 находок retired_external_fn (28%) были бы шумом
+# ОДНОГО нечитательского файла, топящим сигнал по реально опубликованным
+# docs/guide/*.md, ради которых страж и вводится.
+#
+# --- НАЙДЕННЫЙ ДОЛГ (после исключения open-questions.md) ---
+# retired_external_fn=60 и retired_addr_of=10 — РЕАЛЬНЫЕ снятые формы в
+# ОПУБЛИКОВАННЫХ docs/guide/*.md (не false positive стража, проверено
+# построчным чтением каждого совпадения): `external fn` (E_EXTERNAL_FN_RETRACTED,
+# Plan 91.12/D282, канон `extern "nova" fn`/`extern "C" fn`) и
+# `addr_of(x)`/`addr_of_mut(x)` (E_ADDR_OF_REMOVED, Plan 118.6/D216 §4, канон
+# `&x`) — оба класса представлены как ТЕКУЩИЙ валидный синтаксис (без
+# оговорки «устарело»/«снято» рядом), т.е. компилятор гарантированно отверг
+# бы эти примеры при попытке собрать. Файлы-источники (en/ru-пары, долг
+# симметричен по обеим сторонам):
+#   external fn (60): cleanup-cookbook.md/.ru.md (5), contracts.md/.ru.md (1),
+#     ffi-cookbook.md/.ru.md (22), typed-pointers.md/.ru.md (4)
+#     [числа — на СТОРОНУ пары; en+ru вместе дают 60]
+#   addr_of/addr_of_mut (10): ffi-cookbook.md/.ru.md (5 на сторону)
+# Остальные девять классов — 0 на текущем дереве (`let`/`readonly`/`*ro T`/
+# `*unsafe T`/постфикс-`!`/trait-impl-throws/`ref`-формы/`null <тип>`/
+# `#impl(<старое имя>)`) — либо доку успели вычистить раньше (см. коммит
+# f34f4ce66 «последние следы снятых форм»), либо конструкция никогда не
+# документировалась в живом примере.
+#
+# ДЕЙСТВИЕ: долг НЕ ретрофичен этой волной (задача волны — сам страж, не
+# чистка контента; тот же порядок, что doc-conventions.sh завёл для
+# mixed_language_files/dev_links при их первом вводе) — заморожен
+# храповиком. Погашение (переписать `external fn` → `extern "nova" fn`,
+# `addr_of(x)` → `&x` в 4 файлах) — отдельная волна.
+retired_kw_let=0
+retired_kw_readonly=0
+retired_pointer_ro=0
+retired_unsafe_type_modifier=0
+retired_postfix_bang=0
+retired_trait_impl_throws=0
+retired_ref_form=0
+retired_external_fn=60
+retired_addr_of=10
+retired_null_ptr=0
+retired_protocol_renamed=0
