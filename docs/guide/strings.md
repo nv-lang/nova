@@ -9,7 +9,7 @@
 
 ## The model
 
-`str` stores UTF-8 as `(ptr *ro u8, len int)` and is **always valid UTF-8**
+`str` stores UTF-8 as `(ptr *u8, len int)` and is **always valid UTF-8**
 (invariant R-UTF8). It is immutable. You don't index or measure `str` directly —
 you pick a **lens**:
 
