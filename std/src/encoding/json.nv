@@ -36,46 +36,80 @@ module encoding.json
 // (explicit-imports principle).
 import std.collections.hashmap.{HashMap}
 
+// Plan p320 Фаза 3 (реестр 221.1 №319): `JsonObject` used to hand-roll its
+// own "ordered map" (`key_order []str` + `HashMap[str, JsonValue]`) — now a
+// thin alias over the reusable `std.collections.index_map.IndexMap[K, V]`
+// (Фаза 2, №320-unblocked). `import`ed explicitly for the same reason
+// `HashMap` above is — peer_files codegen prepass needs it registered in
+// `generic_type_templates` before `JsonObject`'s alias target resolves.
+import std.collections.index_map.{IndexMap}
+
 // [M-json-encode-record-field-order-nondeterministic] (реестр 221.1 №148):
 // `HashMap[str, JsonValue]` не хранит порядок вставки, а итерация хеш-таблицы
 // НЕДЕТЕРМИНИРОВАНА между процессами (`nova_str_hash` зовёт рандомизированный
 // per-process siphash-seed — HashDoS-защита, `nova_rt.h` — трогать НЕЛЬЗЯ).
-// `JsonObject` ниже — упорядоченная map (вектор ключей в порядке вставки +
-// HashMap для O(1) поиска, аналог serde_json `IndexMap`/`preserve_order`) —
-// порядок полей хранится ОТДЕЛЬНО от хеш-таблицы, поэтому детерминирован
-// внутри и МЕЖДУ процессами. `JsonValue.Object` несёт `JsonObject` (не голый
-// HashMap) — см. ниже.
-/// Ordered JSON-object map: a vector of keys in insertion order plus a
-/// `HashMap[str, JsonValue]` for O(1) value lookup. Iteration (`@iter()`,
-/// `for (k, v) in obj`) always follows insertion order — NOT hash order.
-/// Re-inserting an existing key updates the value and does NOT move the
-/// key's position (like `HashMap.insert`).
+//
+// Plan p320 Фаза 3 (реестр 221.1 №319, было `[M-jsonobject-key-dup-
+// orderedmap]`): `JsonObject` USED TO hand-roll its own ordered-map shape
+// (`key_order []str` + `HashMap[str, JsonValue]`, duplicating every VALUE —
+// once in the hash bucket, once effectively addressed via key_order) — now a
+// thin `alias` over the reusable `std.collections.index_map.IndexMap[str,
+// JsonValue]` (Фаза 2). `JsonValue.Object`'s payload is `IndexMap[str,
+// JsonValue]` DIRECTLY (see the `enum` below) — `JsonObject` is kept ONLY as
+// a public, readable alias name for existing call sites
+// (`JsonValue.Object(obj)`, doc comments) — D52 alias form, zero-cost (same
+// C repr as the aliased type).
+//
+// Honest note on method delegation: a `type X alias Y` alias is transparent
+// for the TYPE CHECKER (assignability — `ro v: Y = x` where `x: X` type-
+// checks) but NOT for METHOD NAME RESOLUTION — `x.some_method()` where
+// `some_method` is declared on `Y`, not `X`, does NOT resolve through the
+// alias (confirmed empirically before writing this: a bare alias with no
+// re-declared methods sends `.insert(...)` into an unrelated same-named
+// method on a completely different type in the same compile-unit instead of
+// erroring OR forwarding). So every method `JsonObject` used to expose is
+// re-declared here as a THIN delegate — re-type `@`/args into
+// `IndexMap[str, JsonValue]` via a local binding (free, same repr), call the
+// real implementation, done. Not a copy of the implementation — every line
+// of actual map logic lives ONLY in `std/src/collections/index_map/core.nv`.
+/// Ordered JSON-object map — see the module-level Фаза 3 note above. Iteration
+/// (`@iter()`, `for (k, v) in obj`) always follows insertion order — NOT hash
+/// order. Re-inserting an existing key updates the value and does NOT move
+/// the key's position (like `HashMap.insert` / `IndexMap.insert`).
 #stable(since = "0.1")
-export type JsonObject priv {
-    key_order []str
-    map HashMap[str, JsonValue]
-}
+type JsonObject alias IndexMap[str, JsonValue]
 
 /// Create an empty `JsonObject`.
 #stable(since = "0.1")
-export fn JsonObject.new() -> Self =>
-    { key_order: [], map: HashMap[str, JsonValue].new() }
+export fn JsonObject.new() -> Self => IndexMap[str, JsonValue].new()
 
 /// Number of key/value pairs in the object.
 #stable(since = "0.1")
-export fn JsonObject @len() -> int => @map.len()
+export fn JsonObject @len() -> int {
+    ro m IndexMap[str, JsonValue] = @
+    m.len()
+}
 
 /// `true` if the object is empty.
 #stable(since = "0.1")
-export fn JsonObject @is_empty() -> bool => @map.is_empty()
+export fn JsonObject @is_empty() -> bool {
+    ro m IndexMap[str, JsonValue] = @
+    m.is_empty()
+}
 
 /// Look up a value by key.
 #stable(since = "0.1")
-export fn JsonObject @get(key str) -> Option[JsonValue] => @map.get(key)
+export fn JsonObject @get(key str) -> Option[JsonValue] {
+    ro m IndexMap[str, JsonValue] = @
+    m.get(key)
+}
 
 /// Check whether a key is present.
 #stable(since = "0.1")
-export fn JsonObject @contains(key str) -> bool => @map.contains(key)
+export fn JsonObject @contains(key str) -> bool {
+    ro m IndexMap[str, JsonValue] = @
+    m.contains(key)
+}
 
 /// Insert/update the `(key, value)` pair. Returns `Some(old_value)` if the
 /// key already existed (the value is overwritten and the insertion-order
@@ -83,55 +117,46 @@ export fn JsonObject @contains(key str) -> bool => @map.contains(key)
 /// key is appended to the end of the insertion order).
 #stable(since = "0.1")
 export fn JsonObject mut @insert(key str, value JsonValue) -> Option[JsonValue] {
-    ro old = @map.insert(key, value)
-    if old.is_none() {
-        @key_order.push(key)
-    }
+    mut m IndexMap[str, JsonValue] = @
+    ro old = m.insert(key, value)
+    @ = m
     old
 }
 
 /// Keys in insertion order.
 #stable(since = "0.1")
-export fn JsonObject @keys() -> []str => @key_order
-
-/// Order-independent structural equality (D109/D237 `Equal`-impl) —
-/// mirrors `HashMap[K, V] @equal`. Semantic equality of JSON objects does
-/// not depend on field order (only SERIALIZATION order is deterministic —
-/// a separate property).
-#stable(since = "0.1")
-export fn JsonObject @equal(other JsonObject) -> bool {
-    if @len() != other.len() {
-        return false
-    }
-    for (k, v) in @iter() {
-        match other.get(k) {
-            Some(ov) => {
-                if v != ov {
-                    return false
-                }
-            }
-            None => return false
-        }
-    }
-    true
+export fn JsonObject @keys() -> []str {
+    ro m IndexMap[str, JsonValue] = @
+    m.keys()
 }
 
-// Iterator pattern — тот же паттерн, что HashMapIter (hashmap/core.nv), но
-// идёт по `@key_order`, не по bucket-массиву — отсюда порядок вставки.
-type JsonObjectIter { obj JsonObject, pos int }
-
-/// Iterator over `(key, value)` pairs IN INSERTION ORDER (not hash order).
+/// Order-independent structural equality (D109/D237 `Equal`-impl) —
+/// mirrors `HashMap[K, V] @equal` / `IndexMap[K, V] @equal`. Semantic
+/// equality of JSON objects does not depend on field order (only
+/// SERIALIZATION order is deterministic — a separate property).
 #stable(since = "0.1")
-export fn JsonObject @iter() -> JsonObjectIter => { obj: @, pos: 0 }
+export fn JsonObject @equal(other JsonObject) -> bool {
+    ro m IndexMap[str, JsonValue] = @
+    ro om IndexMap[str, JsonValue] = other
+    m.equal(om)
+}
+
+/// Iterator over `(key, value)` pairs IN INSERTION ORDER (not hash order) —
+/// a thin delegate re-typed to `IndexMapIter[str, JsonValue]` (Фаза 2); kept
+/// under the `JsonObjectIter` name for source-compat with existing callers.
+type JsonObjectIter alias IndexMapIter[str, JsonValue]
+
+#stable(since = "0.1")
+export fn JsonObject @iter() -> JsonObjectIter {
+    ro m IndexMap[str, JsonValue] = @
+    m.iter()
+}
 
 export fn JsonObjectIter mut @next() -> Option[(str, JsonValue)] {
-    if @pos >= @obj.key_order.len() {
-        None
-    } else {
-        ro k = @obj.key_order[@pos]
-        @pos += 1
-        Some((k, @obj.map.get(k) ?? panic("JsonObject: key_order/map desync — invariant violated")))
-    }
+    mut it IndexMapIter[str, JsonValue] = @
+    ro r = it.next()
+    @ = it
+    r
 }
 
 /// JsonValue — a recursive sum type for an arbitrary JSON document.
@@ -146,7 +171,7 @@ export type JsonValue enum
     | Num(f64)
     | Str(str)
     | Array([]JsonValue)
-    | Object(JsonObject)
+    | Object(IndexMap[str, JsonValue])
 
 /// `ParseJsonError` — categories of JSON-parser errors with position for diagnostics.
 ///
@@ -183,23 +208,21 @@ export fn JsonValue.str(s str) -> Self => Str(s)
 #stable(since = "0.1")
 export fn JsonValue.array(items []JsonValue) -> Self => Array(items)
 
-/// Construct a JSON object from `HashMap[str, JsonValue]`.
+/// Construct a JSON object from `IndexMap[str, JsonValue]`.
 ///
-/// `HashMap` does not preserve insertion order, so keys are taken
-/// SORTED (deterministically, unlike the random hash order). For the
-/// DECLARATION order of a record's fields use `JsonObject` directly
-/// (`JsonValue.Object(obj)`) — as the record serializer does
-/// (`encoding.serde.json`).
+/// **BEHAVIOR CHANGE (Plan p320 Фаза 3, реестр 221.1 №319):** before this
+/// window, this constructor took a `HashMap[str, JsonValue]` (unordered) and
+/// emitted keys SORTED (deterministic, but NOT the caller's insertion
+/// order). `IndexMap[str, JsonValue]` already carries insertion order — no
+/// sorting is needed or performed anymore, and the SERIALIZED key order is
+/// now the CALLER's insertion order (matches `JsonValue.Object(obj)` used
+/// directly, and the record serializer's DECLARATION-order behavior,
+/// `encoding.serde.json`). A caller who relied on the OLD sorted-key output
+/// of `.object()` on a `HashMap` sees different — but still deterministic —
+/// output after migrating to `IndexMap`; migrate call sites deliberately,
+/// not silently (nova-http/nova-polaris — see the plan window's report).
 #stable(since = "0.1")
-export fn JsonValue.object(fields HashMap[str, JsonValue]) -> Self {
-    mut keys = fields.keys().collect()
-    keys.sort()
-    mut obj = JsonObject.new()
-    for k in keys {
-        obj.insert(k, fields.get(k) ?? panic("JsonValue.object: key from fields.keys() missing from fields — invariant violated"))
-    }
-    Object(obj)
-}
+export fn JsonValue.object(fields IndexMap[str, JsonValue]) -> Self => Object(fields)
 
 // ──────────────────────────────────────────────────────────────────────────
 // Геттеры / предикаты

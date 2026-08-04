@@ -78,4 +78,71 @@ sanity-проверка что раннер реально детектируе�
 `Vec[(K,V)]` → `[](K,V)`-спеллинга, W_VEC_SPELLING); arch-ratchet
 не тронут (std не входит в счёт).
 
-## Фаза 3-4 — НЕ начаты (зависят от Фазы 2, следующий шаг этого же окна)
+## Фаза 3 — ретайп `JsonObject`/`Object`-варианта на `IndexMap[str, JsonValue]` — ЗАКРЫТА
+
+`std/src/encoding/json.nv`: `JsonValue enum ... | Object(JsonObject)` →
+`| Object(IndexMap[str, JsonValue])`. `JsonObject` — `type JsonObject alias
+IndexMap[str, JsonValue]` (D52 alias, zero-cost).
+
+**Проба ПЕРВЫМ делом (по инструкции брифа) показала: alias НЕ даёт
+метод-резолв прозрачно** — `x.insert(...)` на голом alias-типе без
+собственных методов мис-резолвится в НЕСВЯЗАННЫЙ одноимённый метод другого
+типа в том же CU (не ошибка, не forward — тихий мисроут). Поэтому
+`JsonObject.new/@len/@is_empty/@get/@contains/@insert/@keys/@equal/@iter` +
+`JsonObjectIter mut @next()` оставлены ТОНКИМИ делегатами (не копии) —
+каждый ретайпит `@`/аргументы в `IndexMap[str, JsonValue]` через локальный
+`ro`/`mut`-биндинг (бесплатно, тот же repr) и зовёт настоящую реализацию;
+для `mut`-методов — `@ = m` после вызова, чтобы мутация пробросилась назад.
+
+`JsonValue.object(fields HashMap[str, JsonValue])` →
+`JsonValue.object(fields IndexMap[str, JsonValue]) -> Self => Object(fields)`
+— тело стало ОДНОЙ строкой (не циклом с сортировкой — `IndexMap` уже хранит
+порядок). **ПОВЕДЕНЧЕСКОЕ ИЗМЕНЕНИЕ**, задокументировано doc-comment'ом на
+месте (JSON-модуль не в основной языковой спеке — по инструкции брифа
+doc-comment достаточен): вывод `.object()` был SORTED, стал insertion-order.
+Плюс это breaking-изменение СИГНАТУРЫ (`HashMap`→`IndexMap`) — любой вызывающий
+код с `HashMap`-аргументом больше не компилируется (осознанно, не тихая
+порча поведения).
+
+Потребители (грепнуто по всей репе nova + nova-http + nova-polaris):
+- `std/src/crypto/jwt.nv` (`make_header_hs256` строит `JsonObject` через
+  `.insert()`, НЕ через `.object()`) — продолжает работать БЕЗ изменений
+  через alias + делегаты. `nova check std/src/crypto/jwt.nv` → ok.
+  `nova test std/src/crypto` — БЛОКИРОВАН пред-существующим ICE
+  (`Path call return type unknown for method=now`, emit_c.rs:59655) —
+  подтверждено идентичным на pristine main И до, И после этого окна
+  (Фаза 1 investigation) — НЕ регрессия Фазы 3, вне скоупа фикса.
+- `std/src/encoding/serde/json.nv` (`SerFrame.obj JsonObject`,
+  `fr.obj.insert(...)`, `JsonValue.Object(fr.obj)`) — `nova check
+  std/src/encoding/serde` → ok (3 pre-existing unused-import warnings,
+  несвязанные). Полный `nova test std/src/encoding/serde` заблокирован
+  ДРУГИМ пред-существующим CC-FAIL (`decode_errors_test`, Vec[str]/Vec[int]
+  Option-type mismatch, НЕ про JSON/IndexMap) — идентично на main, до этого
+  окна тоже НЕ проходил батчем (folder-module = один CU на всю папку,
+  один упавший файл блокирует весь батч) — не новая находка, не регрессия.
+- `nova-http` — grep не нашёл `.object(`/прямой `JsonObject`-конструкции,
+  только `JsonValue` как opaque тип (`RequestBuilder @json`, `@into_json`)
+  — не задет.
+- `nova-polaris/examples/05-auth/src/main.nv:38-39` — использует
+  `HashMap[str, JsonValue]` + `JsonValue.object(fields)` — **СЛОМАЕТСЯ**
+  при пересборке против нового std (по конструкции, задокументировано
+  брифом заранее). Миграция — ОТДЕЛЬНЫЙ коммит в pkg-репе, НЕ сделана
+  здесь (координация с владельцем/pkg-сессией).
+- `spec_tests/conformance/{json_roundtrip_object_flat,
+  json_roundtrip_object_empty, json_roundtrip_nested}.nv` — использовали
+  `HashMap[str, JsonValue]` + `JsonValue.object(m)` — МИГРИРОВАНЫ на
+  `IndexMap[str, JsonValue]` (ни один тест не проверял КОНКРЕТНЫЙ порядок
+  ключей в выводе — только `len()`/`contains()`/shape — миграция чистая,
+  не ослабляет проверки). `spec_tests/conformance/{d114_map_literal_sum_lift,
+  neg/d114_insert_generic_arg_incompatible_neg,
+  neg/d114_map_literal_incompatible_value_neg}.nv` используют
+  `HashMap[str, JsonValue]` тоже, но НЕ вызывают `.object()` — не задеты,
+  перепроверены зелёными без изменений.
+
+Гейты: `nova test std/src/encoding/json_test.nv` — PASS; `nova test
+std/src/encoding` (весь каталог) — PASS: 7 FAIL: 1 (тот самый пред-
+существующий `decode_errors_test`, δ0 против baseline); `nova test`
+на 3 мигрированных conformance-фикстур вместе — PASS: 3 FAIL: 0; d114-тройка
+(sum-lift + оба neg) — PASS: 3 FAIL: 0 (regression-check, не задеты).
+
+## Фаза 4 — НЕ начата (следующий шаг этого же окна)

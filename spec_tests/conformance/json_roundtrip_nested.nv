@@ -4,9 +4,13 @@
 // Splits into focused tests — deep if-let chains триггерят codegen
 // edge case (inconsistent arm types).
 
+// Plan p320 Фаза 3 (реестр 221.1 №319): `JsonValue.object()` теперь берёт
+// `IndexMap[str, JsonValue]`, не `HashMap[str, JsonValue]` — мигрировано
+// вместе с ретайпом (тесты ниже проверяют shape/len/contains, не порядок
+// ключей в выводе — миграция чистая).
 module spec_tests.conformance
 import std.encoding.json.{JsonValue, Json}
-import std.collections.hashmap.{HashMap}
+import std.collections.index_map.{IndexMap}
 
 test "parse nested — root is object" {
     ro parsed = Json.parse("{\"arr\": [1, {\"k\": \"v\"}]}")!!
@@ -40,13 +44,13 @@ test "nested object encoded round-trips via re-encode" {
     // mapping. HashMap iter order не гарантирован, поэтому byte compare
     // не подходит для object level — но nested array внутри сохраняет
     // порядок. Проверяем shape via parse-back.
-    mut inner = HashMap[str, JsonValue].new()
+    mut inner = IndexMap[str, JsonValue].new()
     inner.insert("k", JsonValue.str("v"))
     ro arr = JsonValue.array([
         JsonValue.num(1.0),
         JsonValue.object(inner),
     ])
-    mut root = HashMap[str, JsonValue].new()
+    mut root = IndexMap[str, JsonValue].new()
     root.insert("arr", arr)
     ro orig = JsonValue.object(root)
 

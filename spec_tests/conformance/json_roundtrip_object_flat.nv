@@ -1,13 +1,17 @@
 // Plan 91.3 Ф.3 (composites conformance): JSON roundtrip — flat object.
 //
 // `{"k": "v", "n": 42}` — простой объект с двумя полями разного типа.
-// HashMap iteration order не гарантирован → используем if-let semantic
-// field checks (JsonValue без structural ==, nested match триггерит
-// codegen edge case).
-
+// if-let semantic field checks (JsonValue без structural ==, nested match
+// триггерит codegen edge case) — не зависит от порядка ключей.
+//
+// Plan p320 Фаза 3 (реестр 221.1 №319): `JsonValue.object()` теперь берёт
+// `IndexMap[str, JsonValue]`, не `HashMap[str, JsonValue]` (D55-амендмент,
+// поведенческое изменение: вывод теперь insertion-order, не sorted) —
+// мигрировано вместе с ретайпом (этот тест не проверял конкретный порядок
+// ключей в выводе, только len()/contains(), так что миграция чистая).
 module spec_tests.conformance
 import std.encoding.json.{JsonValue, Json}
-import std.collections.hashmap.{HashMap}
+import std.collections.index_map.{IndexMap}
 
 test "parse flat object — keys present" {
     ro parsed = Json.parse("{\"k\": \"v\", \"n\": 42}")!!
@@ -25,7 +29,7 @@ test "parse flat object — len = 2" {
 }
 
 test "roundtrip flat object preserves len + key existence" {
-    mut m = HashMap[str, JsonValue].new()
+    mut m = IndexMap[str, JsonValue].new()
     m.insert("k", JsonValue.str("v"))
     m.insert("n", JsonValue.num(42.0))
     ro orig = JsonValue.object(m)

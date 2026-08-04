@@ -2,14 +2,17 @@
 //
 // Validates encode/decode/roundtrip для `{}`. format_object не должен
 // эмитить trailing comma при empty map; parser принимает `{}` как
-// `Object(HashMap.new())` без полей.
-
+// `Object(IndexMap.new())` без полей.
+//
+// Plan p320 Фаза 3 (реестр 221.1 №319): `JsonValue.object()` теперь берёт
+// `IndexMap[str, JsonValue]`, не `HashMap[str, JsonValue]` — мигрировано
+// вместе с ретайпом (empty-object output "{}" не зависит от порядка).
 module spec_tests.conformance
 import std.encoding.json.{JsonValue, Json}
-import std.collections.hashmap.{HashMap}
+import std.collections.index_map.{IndexMap}
 
 test "encode empty object" {
-    ro m = HashMap[str, JsonValue].new()
+    ro m = IndexMap[str, JsonValue].new()
     ro v = JsonValue.object(m)
     ro encoded = v.to_str()
     assert(encoded == "{}")
@@ -25,7 +28,7 @@ test "parse empty object" {
 }
 
 test "roundtrip empty object" {
-    ro m = HashMap[str, JsonValue].new()
+    ro m = IndexMap[str, JsonValue].new()
     ro orig = JsonValue.object(m)
     ro encoded = orig.to_str()
     ro decoded = Json.parse(encoded)!!
