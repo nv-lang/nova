@@ -317,36 +317,14 @@ toolchain не нужен — нужен только C-компилятор): �
 
 ## Сборка из исходников
 
-Соберите `nova` CLI, затем используйте его для компиляции Nova-программ:
-
 ```sh
-# build nova CLI (requires Rust + Cargo)
+git clone --recursive https://github.com/nv-lang/nova.git && cd nova
 cd nova-cli && cargo build --release && cd ..
-
-# compile a Nova file to a native binary, then run it
-nova-cli/target/release/nova build path/to/hello.nv -o hello
-./hello
-
-# type-check only
-nova-cli/target/release/nova check path/to/hello.nv
+# → nova-cli/target/release/nova
 ```
 
-Pipeline двухступенчатый: `nova-codegen` (внутренний) производит `.c`,
-нативный C-компилятор линкует его с runtime'ом (`nova_rt/`). `nova build`
-оркестрирует это автоматически.
-
-Ручной pipeline (без `nova` CLI):
-
-```sh
-cd compiler-codegen
-cargo run -- compile path/to/hello.nv          # Nova → C
-gcc path/to/hello.c nova_rt/alloc.c nova_rt/effects.c nova_rt/fibers.c \
-    -I. -o hello                                # C → binary
-./hello
-```
-
-Полный guide, опции, известные ограничения:
-[compiler-codegen/README.md](compiler-codegen/README.md).
+Ручной pipeline, зависимости, платформенные заметки:
+[docs/guide/building-from-source.ru.md](docs/guide/building-from-source.ru.md).
 
 ## Первые шаги
 
@@ -390,41 +368,8 @@ cd nova-cli && cargo build --release && cd ..
 nova-cli/target/release/nova test
 ```
 
-Частые флаги:
-
-```sh
-nova test --filter syntax/closure        # subset of tests
-nova test --mode release                 # -O3 -flto compilation
-nova test --toolchain clang              # force toolchain
-nova test --timeout 60                   # timeout per test
-nova test --format json                  # JSON events (one per line)
-nova test --format junit > results.xml   # JUnit XML for CI parsers
-nova test --retries 2                    # retry transient AV/race fails
-nova test --rerun-failed                 # only failed-last-time
-nova test --include-stdlib               # include std/* alongside nova_tests/*
-```
-
-Отладка одиночного теста (без walkdir, без параллельных накладных
-расходов):
-
-```sh
-./compiler-codegen/target/debug/nova-codegen test-build nova_tests/basics/literals.nv \
-    --toolchain clang --keep-artifacts
-```
-
-Настройка toolchain'а:
-- **Windows:** `winget install LLVM.LLVM` (Clang, рекомендуется) +
-  Visual Studio Build Tools (MSVC SDK + линкер, нужны и для Clang тоже).
-- **Linux:** `apt install clang` или `dnf install clang`; GCC обычно уже
-  установлен.
-- **macOS:** `xcode-select --install` (Apple Clang).
-
-Автоопределение выбирает сначала Clang, затем MSVC (Windows) или GCC
-(Linux). Переопределить: `--toolchain clang|msvc|gcc` или через
-переменные окружения (`NOVA_CLANG`, `NOVA_GCC`, `NOVA_VCVARS`).
-
-Подробный гайд флагов test-runner, EXPECT-маркеры, troubleshooting:
-[docs/dev/test-conventions.md](docs/dev/test-conventions.md).
+Флаги, отладка одиночного теста, настройка toolchain'а:
+[docs/guide/running-tests.ru.md](docs/guide/running-tests.ru.md).
 
 ## Документация (`nova doc`)
 
@@ -443,85 +388,17 @@ nova doc src/api.nv --check        # validate (broken links, missing summaries)
 ## SMT-верификация + настройка Z3
 
 Nova включает статический верификатор контрактов (`requires`/`ensures`/`invariant`).
-По умолчанию используется **TrivialBackend** (reflexive tautologies, constant folding) —
-работает без внешних зависимостей. Для полноценной верификации нужен **Z3**.
-
-### Без Z3 (по умолчанию)
-
-Работает сразу после обычной сборки. Доказывает только рефлексивные
-контракты и константные выражения. Z3-тесты автоматически SKIP.
-
-```bash
-cd nova-cli && cargo build --release
-nova test nova_tests/contracts/
-# PASS: 82  SKIP: 9 (z3-only)
-```
-
-### С Z3
-
-**Шаг 1: установить Z3 через vcpkg** (один раз)
-
-```bash
-# Windows:
-cd compiler-codegen
-vcpkg install --triplet x64-windows-static --x-manifest-root=.
-
-# Linux:
-cd compiler-codegen
-vcpkg install --triplet x64-linux --x-manifest-root=.
-
-# macOS:
-cd compiler-codegen
-vcpkg install --triplet x64-osx --x-manifest-root=.
-```
-
-`vcpkg.json` уже содержит `z3` и `bdwgc` — обе зависимости устанавливаются
-одной командой. Результат: `vcpkg_installed/<triplet>/lib/libz3.a`.
-
-> Этот шаг нужен ТОЛЬКО для Z3. Boehm GC (`bdwgc`) он тоже устанавливает —
-> если vcpkg уже настроен, `nova build`/`nova test` предпочтут vcpkg-сборку
-> (быстрее, без пересборки), — но с #269 Ф.2 это больше не обязательно:
-> без vcpkg/`NOVA_GC_LIB_DIR` компилятор одноразово собирает Boehm GC сам
-> из вендорённого сабмодуля (`compiler-codegen/nova_rt/gc` +
-> `compiler-codegen/nova_rt/libatomic_ops`, тянутся `git clone --recursive`
-> или `git submodule update --init`) — см. «Building from source» выше.
-
-**Шаг 2: собрать с feature `z3-backend`**
-
-```bash
-cd nova-cli
-cargo build --release --features z3-backend
-```
-
-**Шаг 3: запустить с Z3**
-
-```bash
-NOVA_SMT_BACKEND=z3 nova test nova_tests/contracts/
-# PASS: 91  SKIP: 0
-```
-
-> `VCPKG_TRIPLET` переопределяет triplet если нужен нестандартный
-> (например `arm64-linux`).
-
-Подробнее: [docs/plans/33-contracts-implementation.md](docs/plans/33-contracts-implementation.md) — раздел «Z3 dev-setup».
+Без дополнительной настройки используется **TrivialBackend** (reflexive
+tautologies, constant folding — без внешних зависимостей); для
+полноценной верификации нужен **Z3**. Настройка, build-feature
+`z3-backend` и шаги `vcpkg`: [docs/guide/z3-setup.ru.md](docs/guide/z3-setup.ru.md).
 
 ## Поддержка редакторов
 
 Плагины подсветки синтаксиса для нескольких редакторов лежат в
-[editors/](editors/). Это TextMate / написанные вручную грамматики — только
-подсветка синтаксиса. Семантические возможности (диагностика и т. д.)
-приходят из отдельного языкового сервера, [`nova-lsp/`](nova-lsp/); его
-подключение к этим редакторным плагинам в процессе.
-
-| Редактор | Подкаталог | Заметки |
-|---|---|---|
-| VSCode / Cursor / VSCodium | [`editors/vscode/`](editors/vscode/) | TextMate grammar |
-| Sublime Text / TextMate | [`editors/sublime/`](editors/sublime/) | переиспользует `.tmLanguage.json` от VSCode |
-| Vim / Neovim | [`editors/vim/`](editors/vim/) | написанный вручную `syntax/nova.vim` |
-| Emacs | [`editors/emacs/`](editors/emacs/) | major-mode `nova-mode.el` |
-
-Полный обзор, команды установки для каждого редактора и roadmap (LSP,
-tree-sitter, JetBrains) — см. [editors/README.md](editors/README.md).
+[editors/](editors/) — полный список, команды установки для каждого
+редактора и roadmap (LSP, tree-sitter, JetBrains) см. в
+[editors/README.md](editors/README.md).
 
 ## Зеркала
 

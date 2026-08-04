@@ -319,36 +319,14 @@ Linux, and a first "Hello, Nova!" program: **[docs/guide/quickstart.md](docs/gui
 
 ## Building from source
 
-Build the `nova` CLI, then use it to compile Nova programs:
-
 ```sh
-# build nova CLI (requires Rust + Cargo)
+git clone --recursive https://github.com/nv-lang/nova.git && cd nova
 cd nova-cli && cargo build --release && cd ..
-
-# compile a Nova file to a native binary, then run it
-nova-cli/target/release/nova build path/to/hello.nv -o hello
-./hello
-
-# type-check only
-nova-cli/target/release/nova check path/to/hello.nv
+# → nova-cli/target/release/nova
 ```
 
-The pipeline is two-stage: `nova-codegen` (internal) produces `.c`, a
-native C compiler links it with the runtime (`nova_rt/`). `nova build`
-orchestrates this automatically.
-
-Manual pipeline (without `nova` CLI):
-
-```sh
-cd compiler-codegen
-cargo run -- compile path/to/hello.nv          # Nova → C
-gcc path/to/hello.c nova_rt/alloc.c nova_rt/effects.c nova_rt/fibers.c \
-    -I. -o hello                                # C → binary
-./hello
-```
-
-Full guide, options, known limitations:
-[compiler-codegen/README.md](compiler-codegen/README.md).
+Manual pipeline, dependencies, platform notes:
+[docs/guide/building-from-source.md](docs/guide/building-from-source.md).
 
 ## Getting started
 
@@ -390,40 +368,8 @@ cd nova-cli && cargo build --release && cd ..
 nova-cli/target/release/nova test
 ```
 
-Common flags:
-
-```sh
-nova test --filter syntax/closure        # subset of tests
-nova test --mode release                 # -O3 -flto compilation
-nova test --toolchain clang              # force toolchain
-nova test --timeout 60                   # timeout per test
-nova test --format json                  # JSON events (one per line)
-nova test --format junit > results.xml   # JUnit XML for CI parsers
-nova test --retries 2                    # retry transient AV/race fails
-nova test --rerun-failed                 # only failed-last-time
-nova test --include-stdlib               # include std/* alongside nova_tests/*
-```
-
-Single-test debugging (no walkdir, no parallel overhead):
-
-```sh
-./compiler-codegen/target/debug/nova-codegen test-build nova_tests/basics/literals.nv \
-    --toolchain clang --keep-artifacts
-```
-
-Toolchain setup:
-- **Windows:** `winget install LLVM.LLVM` (Clang, recommended) +
-  Visual Studio Build Tools (MSVC SDK + linker, required by Clang too).
-- **Linux:** `apt install clang` or `dnf install clang`; GCC usually
-  pre-installed.
-- **macOS:** `xcode-select --install` (Apple Clang).
-
-Auto-detection picks Clang first, then MSVC (Windows) or GCC (Linux).
-Override with `--toolchain clang|msvc|gcc` or via env-vars
-(`NOVA_CLANG`, `NOVA_GCC`, `NOVA_VCVARS`).
-
-Full reference of test-runner flags, EXPECT-markers, troubleshooting:
-[docs/dev/test-conventions.md](docs/dev/test-conventions.md).
+Flags, single-test debugging, toolchain setup:
+[docs/guide/running-tests.md](docs/guide/running-tests.md).
 
 ## Documentation (`nova doc`)
 
@@ -443,86 +389,17 @@ Full user guide: [docs/nova-doc.md](docs/nova-doc.md).
 ## SMT verification + Z3 setup
 
 Nova includes a static contract verifier (`requires`/`ensures`/`invariant`).
-By default it uses **TrivialBackend** (reflexive tautologies, constant
-folding) — works with no external dependencies. Full verification needs
-**Z3**.
-
-### Without Z3 (default)
-
-Works right after a plain build. Proves only reflexive contracts and
-constant expressions. Z3-only tests are automatically SKIPped.
-
-```bash
-cd nova-cli && cargo build --release
-nova test nova_tests/contracts/
-# PASS: 82  SKIP: 9 (z3-only)
-```
-
-### With Z3
-
-**Step 1: install Z3 via vcpkg** (one time)
-
-```bash
-# Windows:
-cd compiler-codegen
-vcpkg install --triplet x64-windows-static --x-manifest-root=.
-
-# Linux:
-cd compiler-codegen
-vcpkg install --triplet x64-linux --x-manifest-root=.
-
-# macOS:
-cd compiler-codegen
-vcpkg install --triplet x64-osx --x-manifest-root=.
-```
-
-`vcpkg.json` already lists `z3` and `bdwgc` — both dependencies install with
-one command. Result: `vcpkg_installed/<triplet>/lib/libz3.a`.
-
-> This step is needed ONLY for Z3. It also installs the Boehm GC (`bdwgc`) —
-> if vcpkg is already configured, `nova build`/`nova test` prefer the vcpkg
-> build (faster, no rebuild) — but since #269 Ф.2 that is no longer required:
-> without vcpkg or `NOVA_GC_LIB_DIR` the compiler builds the Boehm GC once,
-> on its own, from the vendored submodule (`compiler-codegen/nova_rt/gc` +
-> `compiler-codegen/nova_rt/libatomic_ops`, pulled by `git clone --recursive`
-> or `git submodule update --init`) — see "Building from source" above.
-
-**Step 2: build with the `z3-backend` feature**
-
-```bash
-cd nova-cli
-cargo build --release --features z3-backend
-```
-
-**Step 3: run with Z3**
-
-```bash
-NOVA_SMT_BACKEND=z3 nova test nova_tests/contracts/
-# PASS: 91  SKIP: 0
-```
-
-> `VCPKG_TRIPLET` overrides the triplet if you need a non-standard one
-> (e.g. `arm64-linux`).
-
-Details: [docs/plans/33-contracts-implementation.md](docs/plans/33-contracts-implementation.md) — the "Z3 dev-setup" section.
+Without any extra setup it uses **TrivialBackend** (reflexive tautologies,
+constant folding — no external dependencies); full verification needs
+**Z3**. Setup, the `z3-backend` build feature, and `vcpkg` steps:
+[docs/guide/z3-setup.md](docs/guide/z3-setup.md).
 
 ## Editor support
 
 Syntax highlighting plugins for several editors are in
-[editors/](editors/). These are TextMate / handcrafted grammars —
-syntax highlighting only. Semantic features (diagnostics, etc.) come
-from a separate language server, [`nova-lsp/`](nova-lsp/); wiring it
-into these editor plugins is in progress.
-
-| Editor | Subdir | Notes |
-|---|---|---|
-| VSCode / Cursor / VSCodium | [`editors/vscode/`](editors/vscode/) | TextMate grammar |
-| Sublime Text / TextMate | [`editors/sublime/`](editors/sublime/) | reuses VSCode `.tmLanguage.json` |
-| Vim / Neovim | [`editors/vim/`](editors/vim/) | handcrafted `syntax/nova.vim` |
-| Emacs | [`editors/emacs/`](editors/emacs/) | major-mode `nova-mode.el` |
-
-See [editors/README.md](editors/README.md) for the full overview,
-install commands per editor, and roadmap (LSP, tree-sitter, JetBrains).
+[editors/](editors/) — see [editors/README.md](editors/README.md) for
+the full list, install commands per editor, and roadmap (LSP,
+tree-sitter, JetBrains).
 
 ## Mirrors
 

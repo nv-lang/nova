@@ -6,6 +6,7 @@
 # Стартовый состав — все guide-файлы (полная публикация, слово владельца).
 authoring-a-module
 auto-derive-guide
+building-from-source
 channels
 cleanup-cookbook
 consume-types
@@ -21,6 +22,7 @@ linux-build
 nova-cli
 parameters
 quickstart
+running-tests
 runtime-tuning
 size-of-align-of
 strings
@@ -30,3 +32,4 @@ typed-pointers
 value-vs-reference
 vec-lazy
 vec-owned
+z3-setup
