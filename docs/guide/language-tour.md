@@ -610,8 +610,8 @@ old built-in `ptr` type was removed. Wrap a raw `*()` in a record for a
 handle) aren't interchangeable at compile time, even though both are
 `void*` on the C side. `external fn name(args) -> ret` (D82) declares a
 binding to a C symbol; the full cookbook — layered wrapping, tuple-by-value
-returns, linking a static/shared library via `[ffi]`/`[ffi.staticlib]` in
-`nova.toml` — is in [docs/guide/ffi-cookbook.md](ffi-cookbook.md).
+returns, linking a static/shared library via `[ffi]` in `nova.toml` — is in
+[docs/guide/ffi-cookbook.md](ffi-cookbook.md).
 
 ```nova
 // ffi_tour.nv — FFI basics: opaque pointer `*()`, typed handles, `external fn`.
