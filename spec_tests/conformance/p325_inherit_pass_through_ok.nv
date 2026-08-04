@@ -8,11 +8,11 @@ module spec_tests.conformance
 
 type P325InheritPassRes consume { x int }
 
-fn P325InheritPassRes consume @finish() -> int { self.x }
+fn P325InheritPassRes consume @into_finish() -> int { self.x }
 
 fn p325_inherit_drain(consume v Vec[P325InheritPassRes]) -> () {
     for consume item in v {
-        item.finish()
+        item.into_finish()
     }
 }
 
@@ -35,6 +35,6 @@ test "container returned whole from a function" {
     // this sidesteps (pre-existing, out of this window's scope).
     consume v2 Vec[P325InheritPassRes] = p325_inherit_passthrough(v)
     for consume item in v2 {
-        item.finish()
+        item.into_finish()
     }
 }

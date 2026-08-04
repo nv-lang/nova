@@ -15,7 +15,7 @@ module spec_tests.conformance
 
 type P325InheritCtrlRes consume { x int }
 
-fn P325InheritCtrlRes consume @finish() -> int { self.x }
+fn P325InheritCtrlRes consume @into_finish() -> int { self.x }
 
 fn p325_inherit_make_result(ok bool) -> Result[P325InheritCtrlRes, str] {
     if ok {
@@ -28,7 +28,7 @@ fn p325_inherit_make_result(ok bool) -> Result[P325InheritCtrlRes, str] {
 test "Result[T,E] of a must-consume T — plain call-RHS, unaffected by the container fix" {
     mut r = p325_inherit_make_result(true)
     match r {
-        Ok(consume x) => { x.finish() }
+        Ok(consume x) => { x.into_finish() }
         Err(_e) => {}
     }
 }

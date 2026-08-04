@@ -13,7 +13,7 @@ module neg.consume_collection_container_unconsumed_neg
 
 type P325UnconsumedRes consume { x int }
 
-fn P325UnconsumedRes consume @finish() -> int { self.x }
+fn P325UnconsumedRes consume @into_finish() -> int { self.x }
 
 test "must-consume container binding left unconsumed at scope-exit" {
     consume v = Vec[P325UnconsumedRes].new()

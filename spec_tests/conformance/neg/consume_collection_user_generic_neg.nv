@@ -12,7 +12,7 @@ module neg.consume_collection_user_generic_neg
 
 type P325UserGenericRes consume { x int }
 
-fn P325UserGenericRes consume @finish() -> int { self.x }
+fn P325UserGenericRes consume @into_finish() -> int { self.x }
 
 type P325UserStack[T] {
     priv items []T,

@@ -10,13 +10,13 @@ module spec_tests.conformance
 
 type P325InheritForConsumeRes consume { x int }
 
-fn P325InheritForConsumeRes consume @finish() -> int { self.x }
+fn P325InheritForConsumeRes consume @into_finish() -> int { self.x }
 
 test "container of a must-consume element, discharged via `for consume`" {
     consume v = Vec[P325InheritForConsumeRes].new()
     v.push(P325InheritForConsumeRes { x: 1 })
     v.push(P325InheritForConsumeRes { x: 2 })
     for consume item in v {
-        item.finish()
+        item.into_finish()
     }
 }
