@@ -46,6 +46,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 /// Источник зафиксированной зависимости.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -550,6 +551,54 @@ pub fn load_pins(entry_pkg_dir: &Path) -> Result<()> {
         git_cache::install_lock_entries(existing.git_pins());
     }
     Ok(())
+}
+
+/// Per-process memo of package directories whose `nova.lock.toml` pins have
+/// already been installed into `git_cache`'s lock table via
+/// [`ensure_pins_loaded`] — keyed by canonicalized path.
+fn pins_seeded() -> &'static Mutex<HashSet<PathBuf>> {
+    static SEEDED: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+    SEEDED.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// Фикс №336: `nova build` сам засеивает lock-таблицу (`sync`/`load_pins`
+/// вызываются в `cmd_build` ДО резолва импортов) — а `nova check`/`nova
+/// test` зовут `imports::resolve_imports_inline*` НАПРЯМУЮ, без единого
+/// эквивалентного вызова где-либо на их пути (замерено: `grep lockfile::
+/// compiler-codegen/src` — ноль хитов вне комментариев; `grep lockfile::
+/// nova-cli/src` — хиты только в `cmd_build`/`cmd_update`/`cmd_add`). Для
+/// git-зависимости, объявленной ДИАПАЗОНОМ версий (`GitPin::Version`),
+/// незасеянная lock-таблица означает: `git_cache::resolve_git_dep`'s
+/// `locked_commit_for(url)` промахивается, и `resolve_git_dep_in`
+/// проваливается в ветку живого резолва (`select_version_tag` — fetch +
+/// максимальный подходящий тег) — на КАЖДЫЙ прогон `check`/`test`,
+/// безусловно, вне зависимости от вполне валидного `nova.lock.toml` рядом.
+/// `rev`/`tag`/точный `branch` этого не показывали — они детерминированы
+/// (либо намеренно «плывут») сами по себе; только `version`-диапазоны
+/// зависят от лока, чтобы взять КОНКРЕТНЫЙ тег, а не «что сейчас новее».
+///
+/// Это read-only, без перезаписи, аналог `sync`: устанавливает коммиты
+/// СУЩЕСТВУЮЩЕГО лока в lock-таблицу (как `load_pins`), но безопасен для
+/// вызова из горячего пути резолва зависимостей (`imports::
+/// lookup_dependency`, по разу на каждый import-lookup) — мемоизирован по
+/// канонической `pkg_dir`: файл читается/парсится максимум раз за
+/// процесс, не на каждый lookup. Битый `nova.lock.toml` (ошибка парсинга)
+/// всплывает ОДИН раз, на первом вызове для этой директории; случай
+/// «коммит не найден» (лок ссылается на исчезнувший коммит) — НЕ забота
+/// этой функции, он по-прежнему честно и громко всплывает из собственного
+/// пути `resolve_git_dep_in` (fetch → `rev_parse` → `bail!`) в момент,
+/// когда этот конкретный URL/коммит реально резолвится.
+pub fn ensure_pins_loaded(pkg_dir: &Path) -> Result<()> {
+    let key = canon(pkg_dir);
+    if pins_seeded().lock().unwrap().contains(&key) {
+        return Ok(());
+    }
+    let res = load_pins(pkg_dir);
+    // Отметить попытку выполненной ДАЖЕ при ошибке — иначе битый
+    // `nova.lock.toml` заставит перечитывать и падать на КАЖДЫЙ
+    // import-lookup вместо одного честного отказа на весь процесс.
+    pins_seeded().lock().unwrap().insert(key);
+    res
 }
 
 /// Plan 03.1 Ф.5 (`nova update`): пере-резолвить git-пины зависимостей.
