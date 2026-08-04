@@ -32,8 +32,8 @@ Pointer Optimization (NPO) для zero-cost null-safety через `Option[*T]`.
 - **Цель стрелки — в ТИПЕ, постфиксно на `*`** — говорит, *что можно делать с
   коробкой*: `*mut T` (в коробку можно писать), `*ro T` ≡ `*T` (коробка
   только для чтения), `*unsafe T` (коробка может быть неинициализированной).
-- **Сама стрелка — биндинг (`let` / `mut`, D36)** — говорит, *можно ли
-  перенацелить стрелку на другую коробку*: `let p` = стрелка зафиксирована,
+- **Сама стрелка — биндинг (`ro` / `mut`, D36)** — говорит, *можно ли
+  перенацелить стрелку на другую коробку*: `ro p` = стрелка зафиксирована,
   `mut p` = стрелку можно перенацеливать.
 
 Это две независимые оси. Они никогда не пересекаются, потому что одна живёт в
@@ -41,9 +41,9 @@ Pointer Optimization (NPO) для zero-cost null-safety через `Option[*T]`.
 
 ```nova
 mut p *mut T        // arrow re-pointable (mut binding) + box writable (*mut pointee)
-let q *ro T         // arrow fixed (let binding)        + box read-only (*ro pointee)
+ro q *ro T          // arrow fixed (ro binding)         + box read-only (*ro pointee)
 mut p *ro T         // arrow re-pointable               + box read-only
-let p *mut T        // arrow fixed                      + box writable
+ro p *mut T         // arrow fixed                      + box writable
 ```
 
 > **НЕ существует префикса `mut *` / `ro *` / `unsafe *`.** Модификатор перед
@@ -71,10 +71,10 @@ Option[*unsafe T]   // FFI nullable-uninit ptr (None = null, Some = non-null
 
 ```nova
 mut p *T = &acc     // mut binding → p may be reassigned later (p = &other)
-let q *T = &acc     // let binding → q is fixed (q = &other ⇒ E_REBIND)
+ro q *T = &acc      // ro binding → q is fixed (q = &other ⇒ E_REBIND)
 ```
 
-Переменная-указатель подчиняется **тем же** правилам `let` / `mut`, что и
+Переменная-указатель подчиняется **тем же** правилам `ro` / `mut`, что и
 любая другая переменная (D36). Тип никогда не кодирует перенацеливаемость.
 
 ### Цепочки указателей (несколько уровней) — постфиксно на каждом `*`
@@ -133,7 +133,7 @@ external fn os_read(fd int, buf *mut unsafe u8, n usize) -> int
 | Указатель на записываемую цель | `*mut T` | D216 §1 |
 | Указатель на possibly-uninit цель | `*unsafe T` | D216 §1 + V2 §V2.3 |
 | Перенацеливаемая переменная-указатель | `mut p *T` (биндинг) | D216 §2 + D36 |
-| Зафиксированная переменная-указатель | `let p *T` / `ro p *T` (биндинг) | D216 §2 + D36 |
+| Зафиксированная переменная-указатель | `ro p *T` (биндинг) | D216 §2 + D36 |
 | Nullable типизированный указатель | `Option[*T]` (NPO) | D216 §7 + V2 §V2.4 |
 | FFI nullable-uninit указатель | `Option[*unsafe T]` | D216 §1 + V2 §V2.4 |
 | Возврат указателя (записываемая цель) | `-> *mut T` | D184 амендмент (План 138.5) |
@@ -180,7 +180,7 @@ unsafe * safe T         // *T              (`safe` stopper removed)
 - Модификатор **перед** `*` ⇒ `E_POINTER_PREFIX_MODIFIER`.
 - Типовой модификатор `safe` ⇒ `E_SAFE_RETIRED` (останавливать нечего —
   префиксного распространения модификаторов больше нет).
-- Перенацеливаемость выражается биндингом (`let` / `mut`), никогда `mut *`.
+- Перенацеливаемость выражается биндингом (`ro` / `mut`), никогда `mut *`.
 
 ## Правило биндинга (D216 §2)
 
@@ -217,7 +217,7 @@ ro p = &acc                 // ro binding; pointee ro auto
 ```
 
 Перенацеливаемость переменной, держащей цепочку, — как всегда, дело биндинга
-(`let` / `mut`).
+(`ro` / `mut`).
 
 ## `&value` + escape-анализ (D216 §4)
 
@@ -463,7 +463,7 @@ mut p *mut u8 = undefined        // ❌ E_UNDEFINED_USE_NONE_INIT_PATTERN
 - `E_UNSAFE_T_NARROW_REQUIRES_UNSAFE` — сужающий каст `unsafe T → T` без unsafe (V2 §V2.3b)
 - `E_ARRAY_INDEX_PTR_BANNED` — `&arr[i]`
 - `E_NULL_LITERAL_USE_NONE` — использован литерал `null` (общий); используйте `None`
-- `E_NULL_PTR_RETRACTED_USE_OPTION` — `null ptr` отозван; используйте `Option[ptr] = None`
+- `E_NULL_PTR_RETRACTED_USE_OPTION` — использован `null ptr`; используйте `Option[ptr] = None`
 - `E_UNDEFINED_USE_NONE_INIT_PATTERN` — использован `undefined`
 - `E_CLOSURE_HAS_ENV` — каст fn → *fn с closure-env
 - `E_CALLBACK_THROWS_OVER_C_ABI` — каст Fn-с-Fail → *fn
@@ -530,7 +530,7 @@ mut p *mut u8 = undefined        // ❌ E_UNDEFINED_USE_NONE_INIT_PATTERN
 | Go | `*T` (managed) / `unsafe.Pointer` | пакет `unsafe` | Nil в рантайме | `p.field` авто | только `unsafe.Pointer` |
 | **Nova V1** (План 115) | только `ptr` | (нет) | `null ptr` | (нет) | запрещено |
 | **Nova V2** (План 118) | **семейство `*T`** + `unsafe` | `unsafe { }` + `#unsafe` (D2 амендмент) | `Option[*T]` + NPO | `p.field`/`p.method()` один уровень | gated unsafe → `*unsafe T` |
-| **Nova FINAL** (План 138.5) | **постфиксный pointee** `*ro T` / `*mut T` / `*unsafe T`; перенацеливаемость = биндинг (`let`/`mut`) | (как V2) + правила композиции value-T (§V3.1-V3.2) | `Option[*T]` (только) + NPO | (как V2) | (как V2) → `*unsafe T` |
+| **Nova FINAL** (План 138.5) | **постфиксный pointee** `*ro T` / `*mut T` / `*unsafe T`; перенацеливаемость = биндинг (`ro`/`mut`) | (как V2) + правила композиции value-T (§V3.1-V3.2) | `Option[*T]` (только) + NPO | (как V2) | (как V2) → `*unsafe T` |
 
 ## См. также
 
