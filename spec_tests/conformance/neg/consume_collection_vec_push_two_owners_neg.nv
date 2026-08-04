@@ -1,0 +1,22 @@
+// EXPECT_COMPILE_ERROR E_CONSUME_IN_STD_COLLECTION
+//
+// Plan 221 item 9 (Ш.0 barrier, defect №325): `Vec[T].push` takes a
+// non-consuming `T` param but keeps the argument — before the barrier this
+// gave a must-consume value TWO live owners (the source `consume` binding
+// stayed usable after `push`, e.g. `r.into_finish()` below), and `nova check`
+// was green on it. The barrier bans the `Vec[Res]` instantiation itself
+// (hard error at the TurboFish site), closing the hole above `push` until
+// Ш.1/Ш.2 (plan 246) land real per-element ownership tracking.
+
+module neg.consume_collection_vec_push_two_owners_neg
+
+type P325TwoOwnersRes consume { x int }
+
+fn P325TwoOwnersRes consume @into_finish() -> int { self.x }
+
+test "Vec[consume T] instantiation is a hard error (two-live-owners repro)" {
+    mut v = Vec[P325TwoOwnersRes].new()
+    consume r = P325TwoOwnersRes { x: 1 }
+    v.push(r)
+    assert(r.into_finish() == 1)
+}
