@@ -3032,6 +3032,19 @@ fn lookup_dependency(importer_path: &Path, dep_name: &str, entry_dir: &Path) -> 
     // wrong directory whenever root and `pkg_dir` don't share a parent).
     let is_root = is_root_package(&pkg_dir, entry_dir);
     let root_dir = find_root_package_dir(entry_dir);
+    // №336: `nova check`/`nova test` не зовут `lockfile::sync`/`load_pins`
+    // нигде на своём пути (в отличие от `cmd_build`) — без этого git+
+    // version-зависимости резолвились бы «вживую» (максимальный тег) на
+    // КАЖДЫЙ прогон, полностью игнорируя закоммиченный `nova.lock.toml`.
+    // Единая точка входа резолва зависимости — здесь; засеиваем
+    // lock-таблицу коммитами КОРНЕВОГО (не транзитивного) пакета —
+    // именно его lock описывает весь граф. Мемоизировано — дешёво звать
+    // на каждый lookup.
+    if let Some(rd) = root_dir.as_deref() {
+        if let Err(e) = crate::lockfile::ensure_pins_loaded(rd) {
+            return DepLookup::GitError(format!("nova.lock.toml: {}", e));
+        }
+    }
     let root_manifest = if is_root {
         None // already have it as `manifest` below — avoid a redundant reparse.
     } else {
@@ -3148,6 +3161,12 @@ pub fn resolved_dependency_roots(pkg_dir: &Path) -> Vec<PathBuf> {
     let Some(manifest) = crate::manifest::parse_manifest(&toml, pkg_dir) else {
         return Vec::new();
     };
+    // №336: та же засветка lock-таблицы, что и в `lookup_dependency` —
+    // `pkg_dir` здесь ВСЕГДА корневой пакет сборки (см. doc выше), лок
+    // рядом с ним описывает весь граф. Best-effort как и остальная
+    // функция (недоступная зависимость и так молча пропускается ниже) —
+    // громкая диагностика битого лока живёт в `lookup_dependency`.
+    let _ = crate::lockfile::ensure_pins_loaded(pkg_dir);
     let mut roots = Vec::new();
     for d in &manifest.dependencies {
         if d.name == "std" {
