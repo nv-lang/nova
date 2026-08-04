@@ -251,9 +251,9 @@ fn Db consume @close() -> () {
 
 // Example usage:
 //
-//   ro db = Db.open("/tmp/test.db")!
-//   db.@exec("CREATE TABLE users (id INT, name TEXT)")!
-//   db.@exec("INSERT INTO users VALUES (1, 'Alice')")!
+//   ro db = Db.open("/tmp/test.db")!!
+//   db.@exec("CREATE TABLE users (id INT, name TEXT)")!!
+//   db.@exec("INSERT INTO users VALUES (1, 'Alice')")!!
 //   defer db.@close()
 //   ...
 ```
