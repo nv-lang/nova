@@ -1,6 +1,6 @@
 ---
-source_rev: 615e2fa7e
-source_date: 2026-08-02
+source_rev: ad7336d39
+source_date: 2026-08-04
 ---
 
 > **Informative translation; the Russian text is normative.**
@@ -471,6 +471,15 @@ Do not use them for other purposes.
   (`into_str()`, `into_raw()`, D131). A universal `v.into()`
   (Rust-style, target type from context) does **not** exist in Nova — only
   concrete named methods.
+- **Linearity is inherited by the container** ([D156 amendment,
+  2026-08-04](decisions/02-types.md#d156)): if the element is a must-consume
+  type, the collection is must-consume too. A `Vec[T consume]` must be
+  consumed — by a taking traversal (`for consume`), by passing it on, or by
+  returning it; there is no "is the container empty" check, because emptiness
+  is only known at run time. The form `Vec[T consume Cleanup[E]]` declares its
+  own cleanup that walks the elements and, per
+  [D432](decisions/02-types.md#d432), becomes affine — you may forget it, the
+  compiler inserts the call.
 - `Display`/`@display(mut w Write)` — string representation for
   `${expr}` interpolation and `str.from(v)` on a user type
   ([D73](decisions/08-runtime.md#d73)).
@@ -1498,6 +1507,14 @@ ro msg = "id=${user_id}"                    // sugar над str.from(user_id) �
 **The D73 vs D55 boundary:** D55 — automatic coercion for record/sum-literals
 in a position with a known type (`ro u User = { id: 1, name: "x" }`).
 `T.from(v)` — an explicit method call for arbitrary types.
+
+**Where sum-lift stops (clarified 2026-08-04).** Auto-wrapping into the single
+matching unary variant works for concrete types and for a
+**generic-instantiated** named payload (`Node[K,V] enum Empty | Leaf(Wrap[K,V])`).
+It does NOT work when the payload is a **bare type parameter of the sum itself**
+(`Wrapper[T] enum W(T) | Empty`): the payload's kind is not matched against the
+value's kind without substituting `T`, and no such substitution exists yet.
+Details and status — in the [D55 amendment](decisions/02-types.md#d55).
 
 Details: [D54](decisions/03-syntax.md#d54), [D73](decisions/08-runtime.md#d73).
 
