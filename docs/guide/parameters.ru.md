@@ -148,7 +148,7 @@ ro (a, mut b) = pair              // a immutable, b mutable
 ro (mut a, mut b) = pair          // both mutable
 ```
 
-**Запрет group-mut** — `let mut (a, b) = ...` отвергается на уровне парсера
+**Запрет group-mut** — `mut (a, b) = ...` отвергается на уровне парсера
 (`E_PATTERN_GROUP_MUT`): ключевое слово `mut` относится к одному имени,
 не к pattern целиком.
 
