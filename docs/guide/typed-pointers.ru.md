@@ -41,9 +41,9 @@ Pointer Optimization (NPO) для zero-cost null-safety через `Option[*T]`.
 
 ```nova
 mut p *mut T        // arrow re-pointable (mut binding) + box writable (*mut pointee)
-let q *ro T         // arrow fixed (let binding)        + box read-only (*ro pointee)
+ro q *ro T          // arrow fixed (ro binding)         + box read-only (*ro pointee)
 mut p *ro T         // arrow re-pointable               + box read-only
-let p *mut T        // arrow fixed                      + box writable
+ro p *mut T         // arrow fixed                      + box writable
 ```
 
 > **НЕ существует префикса `mut *` / `ro *` / `unsafe *`.** Модификатор перед
@@ -71,7 +71,7 @@ Option[*unsafe T]   // FFI nullable-uninit ptr (None = null, Some = non-null
 
 ```nova
 mut p *T = &acc     // mut binding → p may be reassigned later (p = &other)
-let q *T = &acc     // let binding → q is fixed (q = &other ⇒ E_REBIND)
+ro q *T = &acc      // ro binding → q is fixed (q = &other ⇒ E_REBIND)
 ```
 
 Переменная-указатель подчиняется **тем же** правилам `let` / `mut`, что и
