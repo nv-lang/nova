@@ -1,0 +1,92 @@
+// №338 regression: a function with a DEFAULT-VALUED parameter that returns
+// a FUNCTION TYPE (`fn(...) -> ...`) produced broken C. `nova check` was
+// green — the checker resolves the call's return type fine — but `nova
+// build`/`nova test` failed: `callnorm.rs`'s `try_normalize_call` desugars
+// any default/named-arg call into a two-phase `{ let <param> = <default>;
+// callee(<param>...) }` Block, and the SYNTHESIZED inner `Call` node was
+// stamped `id: ExprId::UNSET`. `emit_block_expr` types the block's temp
+// variable from `infer_expr_c_type(block.trailing)` — both checker channels
+// (`resolved_callees`→`fn_ret_by_span` and `resolved_types`→
+// `resolved_type_to_c`) gate on `expr.id.is_set()` and silently miss an
+// UNSET id, falling to the legacy `infer_call_ret_c` free-fn (`Ident`)
+// branch, which deliberately refuses a `"void*"` answer (the generic
+// fn-type erasure) with no fallback — leaving the block's inferred type
+// `""`. Emitted C: `_nv_tmp_N;` (no type) and `_nv_tmp_N = ()(callee(...))`
+// (empty cast) → `error: use of undeclared identifier '_nv_tmp_N'`.
+//
+// Fix (channel, not legacy): the synthesized call reuses `e.id` — the
+// ORIGINAL call's `ExprId`, which `normalize_expr` leaves untouched on the
+// outer node it rewrites (`e.kind = new_kind`; `e.id` survives) and which
+// the checker already annotated before `callnorm` ran. This is honestly
+// "the same call site, args reordered", so reusing the id is correct, not
+// a hack — it just lets the pre-existing channels see it.
+//
+// Repro required all four call-argument shapes (omitted default / named
+// literal / forwarded variable / direct subexpression, no intermediate
+// binding) plus both a single-param and a `Middleware`-shaped (2-param)
+// function type, independent of `ro`/`mut` and explicit type annotation.
+module standalone.p338_default_arg_fn_type_return
+
+type Box { v int }
+
+fn mk_box(v int) -> Box => { v }
+
+// Single-param function type.
+fn make_adder(step Box = mk_box(1)) -> fn(Box) -> Box => |x| Box { v: x.v + step.v }
+
+// Middleware-shaped: multiple params on the returned function type.
+fn make_combiner(bonus Box = mk_box(1)) -> fn(Box, Box) -> Box =>
+    |a, b| Box { v: a.v + b.v + bonus.v }
+
+fn call_fn(f fn(Box) -> Box, x Box) -> Box => f(x)
+
+// pos-control A: default-valued parameter, ORDINARY (non-fn-type) return —
+// must stay unaffected by the fix.
+fn add_box(x Box, step Box = mk_box(1)) -> Box => { v: x.v + step.v }
+
+// pos-control B: NO default-valued parameters, fn-type return — must stay
+// unaffected by the fix (this path never goes through callnorm's Block
+// desugar at all, since there is nothing to backfill).
+fn make_adder_no_default(step Box) -> fn(Box) -> Box => |x| Box { v: x.v + step.v }
+
+test "default-valued param + fn-type return: omitted-default call" {
+    ro f1 = make_adder()
+    assert(f1(Box { v: 5 }).v == 6)
+}
+
+test "default-valued param + fn-type return: named-literal call" {
+    ro f2 = make_adder(step: mk_box(10))
+    assert(f2(Box { v: 5 }).v == 15)
+}
+
+test "default-valued param + fn-type return: forwarded-variable call" {
+    ro s = mk_box(100)
+    ro f3 = make_adder(step: s)
+    assert(f3(Box { v: 5 }).v == 105)
+}
+
+test "default-valued param + fn-type return: direct subexpression (no intermediate binding)" {
+    assert(call_fn(make_adder(), Box { v: 5 }).v == 6)
+}
+
+test "default-valued param + fn-type return: mut binding with explicit type annotation" {
+    mut f5 fn(Box) -> Box = make_adder(step: mk_box(2))
+    assert(f5(Box { v: 5 }).v == 7)
+}
+
+test "default-valued param + Middleware-shaped (multi-param) fn-type return" {
+    ro c1 = make_combiner()
+    assert(c1(Box { v: 2 }, Box { v: 3 }).v == 6)
+    ro c2 = make_combiner(bonus: mk_box(10))
+    assert(c2(Box { v: 2 }, Box { v: 3 }).v == 15)
+}
+
+test "pos-control A: default-valued param + ordinary return is unaffected" {
+    assert(add_box(Box { v: 5 }).v == 6)
+    assert(add_box(Box { v: 5 }, step: mk_box(10)).v == 15)
+}
+
+test "pos-control B: no default params + fn-type return is unaffected" {
+    ro fb = make_adder_no_default(mk_box(3))
+    assert(fb(Box { v: 5 }).v == 8)
+}
