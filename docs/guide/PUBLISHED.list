@@ -21,6 +21,7 @@ linux-build
 nova-cli
 parameters
 quickstart
+running-tests
 runtime-tuning
 size-of-align-of
 strings
