@@ -27,8 +27,8 @@ Think of a pointer as an **arrow** pointing at a **box** (the pointee):
 - **The arrow target — written in the TYPE, postfix on `*`** — says *what you
   can do to the box*: `*mut T` (you may write into the box), `*ro T` ≡ `*T`
   (read-only box), `*unsafe T` (box may be uninitialized).
-- **The arrow itself — the binding (`let` / `mut`, D36)** — says *whether you
-  can re-point the arrow at another box*: `let p` = arrow is fixed,
+- **The arrow itself — the binding (`ro` / `mut`, D36)** — says *whether you
+  can re-point the arrow at another box*: `ro p` = arrow is fixed,
   `mut p` = arrow can be re-pointed.
 
 These are two independent axes. They never collide because one lives in the
@@ -37,9 +37,9 @@ name):
 
 ```nova
 mut p *mut T        // arrow re-pointable (mut binding) + box writable (*mut pointee)
-let q *ro T         // arrow fixed (let binding)        + box read-only (*ro pointee)
+ro q *ro T          // arrow fixed (ro binding)         + box read-only (*ro pointee)
 mut p *ro T         // arrow re-pointable               + box read-only
-let p *mut T        // arrow fixed                      + box writable
+ro p *mut T         // arrow fixed                      + box writable
 ```
 
 > **There is NO `mut *` / `ro *` / `unsafe *` prefix.** A modifier before `*`
@@ -66,10 +66,10 @@ follows. The pointer value itself is **always non-null**; for nullable use
 
 ```nova
 mut p *T = &acc     // mut binding → p may be reassigned later (p = &other)
-let q *T = &acc     // let binding → q is fixed (q = &other ⇒ E_REBIND)
+ro q *T = &acc      // ro binding → q is fixed (q = &other ⇒ E_REBIND)
 ```
 
-A pointer variable obeys the **same** `let` / `mut` rule as every other
+A pointer variable obeys the **same** `ro` / `mut` rule as every other
 variable (D36). The type never encodes re-pointability.
 
 ### Pointer chains (multi-level) — postfix on each `*`
@@ -127,7 +127,7 @@ are both written postfix.
 | Pointer to writable target | `*mut T` | D216 §1 |
 | Pointer to possibly-uninit target | `*unsafe T` | D216 §1 + V2 §V2.3 |
 | Re-pointable pointer variable | `mut p *T` (binding) | D216 §2 + D36 |
-| Fixed pointer variable | `let p *T` / `ro p *T` (binding) | D216 §2 + D36 |
+| Fixed pointer variable | `ro p *T` (binding) | D216 §2 + D36 |
 | Nullable typed pointer | `Option[*T]` (NPO) | D216 §7 + V2 §V2.4 |
 | FFI nullable-uninit pointer | `Option[*unsafe T]` | D216 §1 + V2 §V2.4 |
 | Pointer return (writable target) | `-> *mut T` | D184 amend (Plan 138.5) |
@@ -173,7 +173,7 @@ unsafe * safe T         // *T              (`safe` stopper removed)
 - A modifier **before** `*` ⇒ `E_POINTER_PREFIX_MODIFIER`.
 - The `safe` type-modifier ⇒ `E_SAFE_RETIRED` (nothing to stop propagating —
   there is no prefix-modifier propagation anymore).
-- Re-pointability is expressed by the binding (`let` / `mut`), never `mut *`.
+- Re-pointability is expressed by the binding (`ro` / `mut`), never `mut *`.
 
 ## Binding mut rule (D216 §2)
 
@@ -210,7 +210,7 @@ the **target** of that `*` level; read left-to-right:
 ```
 
 Re-pointability of the variable holding the chain is, as always, the binding's
-concern (`let` / `mut`).
+concern (`ro` / `mut`).
 
 ## `&value` + escape analysis (D216 §4)
 
@@ -452,7 +452,7 @@ mut p *mut u8 = undefined        // ❌ E_UNDEFINED_USE_NONE_INIT_PATTERN
 - `E_UNSAFE_T_NARROW_REQUIRES_UNSAFE` — `unsafe T → T` narrow cast without unsafe (V2 §V2.3b)
 - `E_ARRAY_INDEX_PTR_BANNED` — `&arr[i]`
 - `E_NULL_LITERAL_USE_NONE` — `null` literal used (general); use `None`
-- `E_NULL_PTR_RETRACTED_USE_OPTION` — `null ptr` retracted; use `Option[ptr] = None`
+- `E_NULL_PTR_RETRACTED_USE_OPTION` — `null ptr` used; use `Option[ptr] = None`
 - `E_UNDEFINED_USE_NONE_INIT_PATTERN` — `undefined` used
 - `E_CLOSURE_HAS_ENV` — fn → *fn cast with a closure env
 - `E_CALLBACK_THROWS_OVER_C_ABI` — Fn-with-Fail → *fn cast
@@ -516,7 +516,7 @@ mut p *mut u8 = undefined        // ❌ E_UNDEFINED_USE_NONE_INIT_PATTERN
 | Go | `*T` (managed) / `unsafe.Pointer` | `unsafe` package | Nil runtime | `p.field` auto | `unsafe.Pointer` only |
 | **Nova V1** (Plan 115) | `ptr` only | (none) | `null ptr` | (none) | banned |
 | **Nova V2** (Plan 118) | **`*T` family** + `unsafe` | `unsafe { }` + `#unsafe` (D2 amend) | `Option[*T]` + NPO | `p.field`/`p.method()` one-level | gated unsafe → `*unsafe T` |
-| **Nova FINAL** (Plan 138.5) | **postfix pointee** `*ro T` / `*mut T` / `*unsafe T`; re-pointability = binding (`let`/`mut`) | (same as V2) + value-T composition rules (§V3.1-V3.2) | `Option[*T]` (only) + NPO | (same as V2) | (same as V2) → `*unsafe T` |
+| **Nova FINAL** (Plan 138.5) | **postfix pointee** `*ro T` / `*mut T` / `*unsafe T`; re-pointability = binding (`ro`/`mut`) | (same as V2) + value-T composition rules (§V3.1-V3.2) | `Option[*T]` (only) + NPO | (same as V2) | (same as V2) → `*unsafe T` |
 
 ## See also
 
