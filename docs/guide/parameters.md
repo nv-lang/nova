@@ -143,7 +143,7 @@ ro (a, mut b) = pair              // a immutable, b mutable
 ro (mut a, mut b) = pair          // both mutable
 ```
 
-**Group-mut is forbidden** — `let mut (a, b) = ...` is rejected at the
+**Group-mut is forbidden** — `mut (a, b) = ...` is rejected at the
 parser level (`E_PATTERN_GROUP_MUT`): the `mut` keyword applies to one
 name, not to the whole pattern.
 
