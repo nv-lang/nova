@@ -1,3 +1,5 @@
+**English** | [Русский](language-tour.ru.md)
+
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 # Nova language tour
 

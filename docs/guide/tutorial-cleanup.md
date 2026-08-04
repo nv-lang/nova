@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 # Tutorial — Resource Cleanup with `consume{}` (Plan 110)
 
+**English** | [Русский](tutorial-cleanup.ru.md)
+
 > **Plan 110.8.2.** Tutorial chapter introducing `consume X = ... { body }`
 > scope-block pattern for resource cleanup.
 
@@ -212,20 +214,20 @@ consume f = File.open(path)? {
 ```
 
 Nova advantages:
-- **Visible**: cleanup explicit, не magic Drop.
+- **Visible**: cleanup is explicit, not a magic Drop.
 - **Cancel-shield**: cleanup protected from cancel storm (D188 R3).
 - **Outcome-aware**: resource discriminates success/failure/panic.
-- **Async-capable**: can `await` в `@cleanup` (D191).
+- **Async-capable**: you can `await` inside `@cleanup` (D191).
 
 ## What's Next
 
-- Read [Q-cleanup-semantics](../dev/idioms/consume-scope-cleanup.md) для
+- Read [Q-cleanup-semantics](../dev/idioms/consume-scope-cleanup.md) for
   decision trees.
-- Read [Q-consumable-protocol](../dev/idioms/consume-scope-cleanup.md) для
+- Read [Q-consumable-protocol](../dev/idioms/consume-scope-cleanup.md) for
   implementation details.
-- Read [Q-application-effect](../dev/idioms/application-effect.md) для
+- Read [Q-application-effect](../dev/idioms/application-effect.md) for
   app-wide lifecycle.
-- Read [cleanup-cookbook.md](cleanup-cookbook.md) для production recipes.
+- Read [cleanup-cookbook.md](cleanup-cookbook.md) for production recipes.
 
 ## See also
 

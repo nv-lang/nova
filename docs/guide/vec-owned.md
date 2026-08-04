@@ -1,5 +1,7 @@
 # Vec[T] — Nova-native growable array
 
+**English** | [Русский](vec-owned.ru.md)
+
 `Vec[T]` is a generic growable array implemented entirely in Nova on top of
 raw pointer allocation (`RawMem.alloc`). It is available as
 `std.collections.vec_owned.Vec`.

@@ -247,7 +247,7 @@ separate package, written in Nova itself and pulled in via `nova.lock.toml`:
 | [nova-http](https://github.com/nv-lang/nova-http) | HTTP/1.1 client + server — request/response, headers, URL, transport | `v0.1.1` |
 | [nova-compress](https://github.com/nv-lang/nova-compress) | `deflate` / `gzip` / `zlib` / `brotli` codecs | `v0.1.1` |
 | [nova-polaris](https://github.com/nv-lang/nova-polaris) | Polaris ⭐ — web framework atop the HTTP core: router, extractors, middleware, auth, websockets | not yet tagged |
-| [nova-bigint](https://github.com/nv-lang/nova-bigint) | Arbitrary-precision integers in pure Nova, no C dependencies | in progress |
+| [nova-bignum](https://github.com/nv-lang/nova-bignum) | Arbitrary-precision integers in pure Nova, no C dependencies | in progress |
 | [tree-sitter-nova](https://github.com/nv-lang/tree-sitter-nova) | Tree-sitter grammar for the language | `v0.1.0` |
 
 ## Status
@@ -270,20 +270,20 @@ compiler:
   `nova build`, `nova test`, `nova regen-runtime`). The interpreter
   entry point `nova run` is currently **unsupported** — Nova compiles
   to C, so use `nova build` (native binary) or `nova test`.
-  `nova-codegen` — внутренний крейт-компилятор (движок, который `nova`
-  вызывает изнутри) + несколько maintainer-only build-тулов
-  (`unicode`-таблицы UCD, `compile` Nova→C, `dump-runtime`). **Для любой
-  обычной работы — только `nova`** (nova-cli): `nova check / build / test /
-  test-build <file> / lint / regen-runtime`. У `nova` есть свой
-  `test-build` (один файл), так что вызывать `nova-codegen` напрямую не
-  нужно; его `test-build` берёт ОДИН файл (директория → «read: os error 5»).
+  `nova-codegen` is the internal compiler crate (the engine `nova` invokes
+  internally) plus a handful of maintainer-only build tools (`unicode` UCD
+  tables, `compile` Nova→C, `dump-runtime`). **For any ordinary work, use
+  only `nova`** (nova-cli): `nova check / build / test / test-build <file> /
+  lint / regen-runtime`. `nova` has its own `test-build` (single file), so
+  there's no need to call `nova-codegen` directly; its `test-build` takes
+  exactly ONE file (a directory → "read: os error 5").
 
 What works today (bootstrap):
 
 - Cross-file imports (`import X.Y.Z`, selective `import X.{A, B}`,
   `export import X`, prelude auto-import) with DFS cycle detection.
 - **Folder-modules** (D29 rev-3 / Plan 42): module = single-file `X.nv`
-  ИЛИ folder `X/` with peer files (Go-style). All peers declare same
+  OR folder `X/` with peer files (Go-style). All peers declare same
   `module parent.X` and share namespace. Internal helpers without
   `export`. Test isolation via `_test.nv` suffix. `internal/` directory
   for library boundaries. File-level `#forbid Net, Fs` capability
@@ -297,7 +297,7 @@ What works today (bootstrap):
   per-worker libuv event loop, preemption (D103), GC_THREADS.
 - Contracts (D24): `requires`/`ensures`/`old`/`result`/`invariant`/
   `reads`/`modifies`/`decreases`/`ghost let`/`assume`/`assert_static`.
-  Bootstrap SMT через TrivialBackend (reflexive ensures); Z3 — milestone.
+  Bootstrap SMT via TrivialBackend (reflexive ensures); Z3 — milestone.
 - `defer` + consume-scope cleanup (D90/D188): `defer { ... }` runs on
   every scope exit — including `throw` and `panic` (unlike Rust `Drop`
   under `panic=abort`). A resource bound with `consume x = acquire() { ... }`
@@ -442,14 +442,15 @@ Full user guide: [docs/nova-doc.md](docs/nova-doc.md).
 
 ## SMT verification + Z3 setup
 
-Nova включает статический верификатор контрактов (`requires`/`ensures`/`invariant`).
-По умолчанию используется **TrivialBackend** (reflexive tautologies, constant folding) —
-работает без внешних зависимостей. Для полноценной верификации нужен **Z3**.
+Nova includes a static contract verifier (`requires`/`ensures`/`invariant`).
+By default it uses **TrivialBackend** (reflexive tautologies, constant
+folding) — works with no external dependencies. Full verification needs
+**Z3**.
 
-### Без Z3 (по умолчанию)
+### Without Z3 (default)
 
-Работает сразу после обычной сборки. Доказывает только рефлексивные
-контракты и константные выражения. Z3-тесты автоматически SKIP.
+Works right after a plain build. Proves only reflexive contracts and
+constant expressions. Z3-only tests are automatically SKIPped.
 
 ```bash
 cd nova-cli && cargo build --release
@@ -457,9 +458,9 @@ nova test nova_tests/contracts/
 # PASS: 82  SKIP: 9 (z3-only)
 ```
 
-### С Z3
+### With Z3
 
-**Шаг 1: установить Z3 через vcpkg** (один раз)
+**Step 1: install Z3 via vcpkg** (one time)
 
 ```bash
 # Windows:
@@ -475,35 +476,35 @@ cd compiler-codegen
 vcpkg install --triplet x64-osx --x-manifest-root=.
 ```
 
-`vcpkg.json` уже содержит `z3` и `bdwgc` — обе зависимости устанавливаются
-одной командой. Результат: `vcpkg_installed/<triplet>/lib/libz3.a`.
+`vcpkg.json` already lists `z3` and `bdwgc` — both dependencies install with
+one command. Result: `vcpkg_installed/<triplet>/lib/libz3.a`.
 
-> Этот шаг нужен ТОЛЬКО для Z3. Boehm GC (`bdwgc`) он тоже устанавливает —
-> если vcpkg уже настроен, `nova build`/`nova test` предпочтут vcpkg-сборку
-> (быстрее, без пересборки), — но с #269 Ф.2 это больше не обязательно:
-> без vcpkg/`NOVA_GC_LIB_DIR` компилятор одноразово собирает Boehm GC сам
-> из вендорённого сабмодуля (`compiler-codegen/nova_rt/gc` +
-> `compiler-codegen/nova_rt/libatomic_ops`, тянутся `git clone --recursive`
-> или `git submodule update --init`) — см. «Building from source» выше.
+> This step is needed ONLY for Z3. It also installs the Boehm GC (`bdwgc`) —
+> if vcpkg is already configured, `nova build`/`nova test` prefer the vcpkg
+> build (faster, no rebuild) — but since #269 Ф.2 that is no longer required:
+> without vcpkg or `NOVA_GC_LIB_DIR` the compiler builds the Boehm GC once,
+> on its own, from the vendored submodule (`compiler-codegen/nova_rt/gc` +
+> `compiler-codegen/nova_rt/libatomic_ops`, pulled by `git clone --recursive`
+> or `git submodule update --init`) — see "Building from source" above.
 
-**Шаг 2: собрать с feature `z3-backend`**
+**Step 2: build with the `z3-backend` feature**
 
 ```bash
 cd nova-cli
 cargo build --release --features z3-backend
 ```
 
-**Шаг 3: запустить с Z3**
+**Step 3: run with Z3**
 
 ```bash
 NOVA_SMT_BACKEND=z3 nova test nova_tests/contracts/
 # PASS: 91  SKIP: 0
 ```
 
-> `VCPKG_TRIPLET` переопределяет triplet если нужен нестандартный
-> (например `arm64-linux`).
+> `VCPKG_TRIPLET` overrides the triplet if you need a non-standard one
+> (e.g. `arm64-linux`).
 
-Подробнее: [docs/plans/33-contracts-implementation.md](docs/plans/33-contracts-implementation.md) — раздел «Z3 dev-setup».
+Details: [docs/plans/33-contracts-implementation.md](docs/plans/33-contracts-implementation.md) — the "Z3 dev-setup" section.
 
 ## Editor support
 

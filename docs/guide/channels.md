@@ -110,8 +110,8 @@ ro rx = ch.rx
 ```
 
 **Capacity ≥ 1.** `Channel.new(0)` currently panics with
-`"capacity must be >= 1"` ([Plan 44.1](../plans/44.1-channel-hardening.md)
-Ф.3) — zero-capacity rendezvous channels are not yet implemented.
+`"capacity must be >= 1"` ([Plan 44.1](../plans/44.1-channel-hardening.md))
+— zero-capacity rendezvous channels are not yet implemented.
 
 **The element type (`T`) is tracked when declared explicitly** — either via
 turbofish on `Channel.new`, or by annotating the capability types directly
@@ -857,8 +857,8 @@ not double-decrement `writer_count` (idempotent per instance).
 
 | Condition | Message |
 |---|---|
-| `Channel.new(0)` | `"capacity must be >= 1"` (Plan 44.1 Ф.3) |
-| `select` with all channels closed and no default | `"select: all channels closed"` (Plan 31 Ф.6) |
+| `Channel.new(0)` | `"capacity must be >= 1"` (Plan 44.1) |
+| `select` with all channels closed and no default | `"select: all channels closed"` (Plan 31) |
 | `ChanReader.close_after(<negative Duration>)` | panic with the nanosecond value |
 | `select` with `arm_count > stack` | overflow caught before allocation — explicit panic |
 
@@ -877,11 +877,11 @@ not double-decrement `writer_count` (idempotent per instance).
 | `defer tx.close()` + tuple/record destructure | [Plan 25](../plans/25-production-readiness-roadmap.md) G8 |
 | `pattern = rx.recv()` (with `.recv()`) form in select | only bare `pattern = rx` works |
 | `oneshot::channel<T>` / `watch::channel<T>` / `broadcast::channel<T>` (Tokio variants) | Plan 44.2 |
-| `recv_many` batch API | Plan 44.1 Ф.4 follow-up |
+| `recv_many` batch API | Plan 44.1 follow-up |
 | Lock-free SPSC flavor | Plan 50+ (Loom-verified) |
 | `tick_every(Duration)` periodic ticker | [Plan 66](../plans/66-timer-wheel-and-tick-every.md) |
-| `close_at(Monotonic)` absolute deadline | [Plan 65](../plans/65-chanreader-close-after.md) Ф.13 (✅ shipped) |
-| Time effect mock for deterministic timer tests | [Plan 65](../plans/65-chanreader-close-after.md) Ф.10 (✅ shipped) |
+| `close_at(Monotonic)` absolute deadline | [Plan 65](../plans/65-chanreader-close-after.md) (✅ shipped) |
+| Time effect mock for deterministic timer tests | [Plan 65](../plans/65-chanreader-close-after.md) (✅ shipped) |
 
 ---
 

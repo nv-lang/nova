@@ -1,5 +1,7 @@
 # Value Types vs Reference Types in Nova
 
+**English** | [Русский](value-vs-reference.ru.md)
+
 > Plan 120 (D215, 2026-05-31): explicit stack/heap allocation guide.
 > Cross-ref: [spec/decisions/02-types.md → D215](../../spec/decisions/02-types.md#d215).
 

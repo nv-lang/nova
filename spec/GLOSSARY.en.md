@@ -16,15 +16,16 @@
 > guide files already have settled vocabulary — *fiber*, *effect row*,
 > *record*, *protocol*, and so on) — the glossary must match how the
 > guide already talks, not invent new phrasing. Where no English
-> precedent exists anywhere in the repo, a term is proposed and marked
-> **`[proposed]`** for the owner to confirm or correct.
+> precedent existed anywhere in the repo, the term was proposed and
+> decided by the owner on 2026-08-03 — all such rows now carry the
+> decision in their Note column; no `[proposed]` rows remain.
 >
 > Nova keyword/identifier tokens (`consume`, `ro`, `use`, `spawn`,
 > `requires`, …) are **never translated** — they are code, not prose —
 > and are listed separately with a Russian explanation of what the token
 > means, not a translation of the token itself.
 >
-> **Minimal-English-words norm (owner, 2026-08-02; doc-conventions
+> **Minimal-English-words norm (owner, 2026-08-03; doc-conventions
 > `#language`).** Russian prose keeps anglicisms to a minimum: not
 > «роутер/хендлер/консюмить/капчурить», but «маршрутизатор/обработчик/
 > потреблять/захватывать». Every term row below carries a **Russian
@@ -48,16 +49,11 @@
 > (code keywords) is `[keep-en: код]` for every row by definition — see
 > its own note instead of repeating the tag 14 times.
 >
-> Open disagreements and gaps — including contested Russian forms the
-> owner should pick between (e.g. «файбер» vs «волокно») — are collected
-> in [Open questions for owner review](#open-questions-for-owner-review)
-> at the end of this file. A row marked **`[CONTESTED — см. Open
-> questions]`** instead of `[keep-en: …]` is a case where the current
-> Russian form is a transliteration that *does* need real-word
-> replacement per the norm, but the replacement itself is a substantive
-> naming decision (already in wide use across the codebase/docs) that
-> this glossary should not make unilaterally — it is listed with a
-> candidate replacement in Open questions instead.
+> **Status (2026-08-03): all owner questions are closed.** The section
+> [Open questions for owner review](#open-questions-for-owner-review) is
+> kept as the decision log — every entry records what the owner decided
+> and why, so later translators do not reopen a settled term. New
+> disagreements found during translation batches are appended there.
 
 ---
 
@@ -68,9 +64,10 @@
 | алгебраические эффекты | algebraic effects | "Algebraic effects + handlers (Koka, Effekt, Eff)" | central language idea; see spec/overview.md "Что заимствует у кого"; «алгебраические» — обычное русское прилагательное, не калька |
 | эффект | effect | "Network, disk, the clock … in Nova these are all **effects**." | language-tour.md §6; «эффект» — давно натурализованное русское слово (как в «побочный эффект»), не тег-калька и не жаргон — тег `[keep-en]` не нужен |
 | обработчик (эффекта) | handler | "Each effect has a **handler** that intercepts its operations" | language-tour.md §6; норма-форма — «обработчик», НЕ «хендлер» (жаргонная транслитерация, в прозу не пускать) |
-| проектирование с приоритетом ИИ `[keep-en: идиома]` (killer use-case) | AI-first design / killer use-case | "Nova — first language explicitly optimized for the pair 'LLM writes, human reviews'" | spec/overview.md "Killer use-case" heading; «AI-first» переведено («с приоритетом ИИ»), но «killer use-case» — устойчивая англ. идиома, спека сама заимствует её без перевода — keep-en |
-| одна дверь (единственный канонический путь) | single canonical path / "no second door" `[proposed]` | "not a second door to `?`, but an independent niche" (paraphrase of the retraction rationale) | idiom used repeatedly in spec/decisions (e.g. D86 amend: "она была второй дверью к `?`"); чисто русская метафора — образец нормы, английского эквивалента как раз и не хватает (см. Open questions) |
-| сопоставляемое значение (объект `match`) | scrutinee `[proposed]` | "the scrutinee of a `match` expression is the value being matched against its arms" | descriptive Russian phrase, no PL-jargon calque; «скрутини» — неприжившаяся транслитерация английского PL-термина, в прозу не пускать (см. Open questions — принимать ли «scrutinee» на английской стороне) |
+| проектирование с приоритетом ИИ | AI-first design | "Nova — first language explicitly optimized for the pair 'LLM writes, human reviews'" | spec/overview.md "Killer use-case"; «AI-first» переведено полностью («с приоритетом ИИ»), калек не осталось |
+| убойный сценарий использования `[keep-en: идиома]` (killer use-case) | killer use-case | "**Killer use-case.** AI-first programming." | spec/overview.md heading; «killer use-case» — устойчивая англ. идиома, спека сама заимствует её без перевода в норматив — keep-en; описательный русский вариант приведён для первого упоминания в прозе |
+| одна дверь (единственный канонический путь) | "no second door" | "not a second door to `?`, but an independent niche" (paraphrase of the retraction rationale) | idiom used repeatedly in spec/decisions (e.g. D86 amend: "она была второй дверью к `?`"); **утверждено владельцем 2026-08-03** — en-форма "no second door" (дверная метафора сохранена); описательное "single canonical path" допустимо как пояснение при первом упоминании |
+| сопоставляемое значение (объект `match`) | scrutinee | "the scrutinee of a `match` expression is the value being matched against its arms" | **утверждено владельцем 2026-08-03**: ru — «сопоставляемое значение» (транслит «скрутини» в новую прозу не пускать; существующие D-блоки не переписываем), en — scrutinee (стандартный PL-термин) |
 | эффект-строка | effect row | "`Fail[E]`, `Fail` — стандартный эффект — **в effect-row сигнатуры**" | spec/overview.md; составное «эффект»+«строка» — оба слова русские, калька смысла (не транслитерация), уже кодифицирована в норме spec — оставляем как есть |
 
 ---
@@ -90,7 +87,7 @@ pending the owner's call in Open questions.
 | Token (code, unchanged in both languages) | Example (en) | Note (что значит по-русски) |
 |---|---|---|
 | `consume` | "A `consume`-typed binding is ownership-tracked." | параметр/связывание, привязка владения ресурсом; исчерпывается ровно один раз (или через `@cleanup`, D432) |
-| `ro` | "`ro` declares a read-only binding (never reassigned)" | связывание/параметр только для чтения; на параметре — синоним дефолтной формы `T` без модификатора |
+| `ro` | "`ro` declares a read-only binding (never reassigned)" | связывание/параметр только для чтения; **утверждено владельцем 2026-08-03: использовать `ro`** — историческое написание `readonly` РЕТРАКТИРОВАНО (Plan 114 / D184, компилятор выдаёт `E_KW_REMOVED_READONLY`); в прозе при первом упоминании можно пояснить «`ro` — read-only» |
 | `mut` | "`mut` declares a reassignable one [binding]" | разрешает мутацию/переприсваивание — на связывании, параметре или поле |
 | `use` (embed) | "`use account Account` — embed: field + auto-proxy methods" | встраивание типа как поля с автопрокси методов (композиция, не наследование) |
 | `spawn` | "`spawn` inside a `supervised` block starts a fire-and-forget fiber" | запуск нового файбера внутри области видимости structured concurrency |
@@ -100,7 +97,10 @@ pending the owner's call in Open questions.
 | `with` | "`with Db = postgres_handler { ... }`" | установка обработчика эффекта на область видимости |
 | `effect` (keyword) | "`type X effect { ... }`" (declaration) / "`ro console = effect Logger { ... }`" (literal) | и kind-токен объявления эффект-типа, и ключевое слово литерала-обработчика |
 | `protocol` | "`protocol` declares a structural interface" | структурный контракт для значений (в отличие от `effect` — контракт для операций) |
-| `requires` / `ensures` / `invariant` / `decreases` | "`requires amount > 0`", "`ensures result >= 0`" | контрактные клозы: предусловие / постусловие / инвариант цикла / метрика терминации |
+| `requires` | "`requires amount > 0`" | контрактный клоз-предусловие функции |
+| `ensures` | "`ensures result >= 0`" | контрактный клоз-постусловие функции |
+| `invariant` | "`invariant sum >= 0`" (inside a `while` loop) | контрактный клоз — инвариант цикла (условие, верное на каждом входе в тело) |
+| `decreases` | "`decreases n`" | контрактный клоз — метрика терминации (доказательство, что рекурсия/цикл завершится) |
 | `defer` | "`defer { ... }` runs at scope exit, LIFO" | отложенный вызов при выходе из области видимости |
 | `forbid` | "`forbid Net, Fs, Db { eval(code) }`" | режим полномочий: запрет вызова функций с перечисленными эффектами внутри блока |
 
@@ -111,16 +111,19 @@ pending the owner's call in Open questions.
 | Русский (норма #language) | English | Example (en) | Note |
 |---|---|---|---|
 | запись | record | "`type X { ... }` declares a **record** — a heap-allocated, GC-managed reference type." | language-tour.md §2; `{}` braces, reference semantics; «запись» — стандартный русский CS-термин (как Pascal `record` = «запись»), не калька |
-| тип-сумма (sum-тип) | sum type | "A **sum type** requires the `enum` marker (`type X enum A \| B \| C`)" | language-tour.md §2; D406; в spec принято хайбридное «sum-тип» — норма-форма для прозы «тип-сумма» (по аналогии с «тип-произведение» в ФП-литературе), `[proposed]` |
+| тип-сумма (sum-тип) | sum type | "A **sum type** requires the `enum` marker (`type X enum A \| B \| C`)" | language-tour.md §2; D406; **утверждено владельцем 2026-08-03** — в новой ru-прозе «тип-сумма»; гибрид «sum-тип» в существующей спеке не переписывается (прецедент «скрутини») |
 | маркер `enum` `[keep-en: код]` | `enum` marker | "the `enum` marker is mandatory (D406); leading `\|` alone is not valid syntax anymore" | language-tour.md §2; `enum` — буквальное ключевое слово Nova внутри фразы |
-| кортеж (позиционный / именованный) | tuple (positional / named) | "`type X(T1, T2)` — positional tuple" / "`type Vec3(x f64, y f64, z f64)` — named tuple, .x/.y/.z access" | docs/guide/value-vs-reference.md bracket-rule table; both stack-allocated, value semantics; «кортеж» — стандартный русский матем./CS-термин |
+| позиционный кортеж | positional tuple | "`type X(T1, T2)` — positional tuple — stack — value (copy on pass)" | docs/guide/value-vs-reference.md bracket-rule table; доступ к полям по индексу (`.0`/`.1`); «кортеж» — стандартный русский матем./CS-термин |
+| именованный кортеж | named tuple | "`type Vec3(x f64, y f64, z f64)` — named tuple, .x/.y/.z access" | docs/guide/value-vs-reference.md; доступ к полям по имени, но то же представление в стеке, что и у позиционного кортежа |
 | value-запись `[keep-en: код]` | value record | "iterator value-records: `VecIter[T] value`" | spec/decisions/02-types.md D228/D290; `value` — буквальное ключевое слово Nova (`type X value { ... }`), «запись» уже по-русски |
-| тип-обёртка (newtype) | newtype | "Newtype (`type X Y`, without `alias`) is a **separate** type from the source" | spec/conversions.md "Newtype ↔ underlying"; норма-форма «тип-обёртка» (описательно, без англ. жаргона), `[proposed]` — «newtype» без перевода нигде в spec/guide не встречается как отдельное слово |
+| тип-обёртка (newtype) | newtype | "Newtype (`type X Y`, without `alias`) is a **separate** type from the source" | spec/conversions.md "Newtype ↔ underlying"; **утверждено владельцем 2026-08-03** — «тип-обёртка», при первом упоминании на странице «тип-обёртка (newtype)»; в русских переводах Rust/Haskell термин обычно не переводят — Nova вводит русскую форму по норме #language |
 | псевдоним (alias) | alias | "`type X alias Y` — там `X` и `Y` взаимозаменяемы без всякого cast'а" | spec/conversions.md; «псевдоним» — стандартный русский перевод (используется, напр., для `alias` в других языках), не калька |
 | протокол | protocol | "`protocol` declares a structural interface; `#impl(...)` opts a type into one explicitly" | language-tour.md §3; structural by default, nominal on demand; «протокол» — натурализованное русское слово |
 | параметр типа (обобщённый) | generic type parameter | "`[T]` on a function introduces a generic type parameter." | language-tour.md §2; норма-форма «обобщённый» вместо жаргонного «дженерик» |
-| ограничение типового параметра (через `protocol`/`type-set`) `[keep-en: код]` | generic bound | "`fn dedup[T Hash](xs []T) -> []T`" | spec/syntax.md "Generic bounds — `[T Protocol]` или `[T TypeSet]`"; `protocol`/`type-set` — конкретные Nova-конструкции, оставлены как код-имена; `type-set` = закрытый список конкретных типов (членство), не структурный |
-| мономорфизация / диспетчеризация `dyn` `[keep-en: код]` | monomorphization / dynamic dispatch (`dyn`) | "Performance, traits, мономорфизация" (spec/overview.md, source: Rust); "`dyn` — only when explicit runtime polymorphism is needed" (paraphrase of spec/paradigm.md "vtable-вызов") | «мономорфизация» — натурализованный CS-термин; норма-форма «диспетчеризация» вместо жаргонного «диспатч», `dyn` — ключевое слово Nova (`dyn Trait`/`dyn Protocol`) |
+| ограничение типового параметра через `protocol` `[keep-en: код]` | generic bound (protocol) | "`fn dedup[T Hash](xs []T) -> []T`" | spec/syntax.md "Generic bounds — `[T Protocol]`"; структурное ограничение — подходит любой тип с нужными методами; `protocol` — ключевое слово |
+| ограничение типового параметра через `type-set` `[keep-en: код]` | generic bound (type-set) | "`[T TypeSet]`" (paraphrase of spec/syntax.md "Type-set — bound по членству, не по структуре") | spec/syntax.md; `type-set` = закрытый список конкретных типов (проверка по членству), не структурный, в отличие от `protocol`-ограничения; `type-set` — конкретная Nova-конструкция |
+| мономорфизация | monomorphization | "Performance, traits, мономорфизация" (spec/overview.md, source: Rust) | «мономорфизация» — натурализованный CS-термин, дефолтная (нулевой стоимости) стратегия диспетчеризации в Nova |
+| диспетчеризация `dyn` `[keep-en: код]` | dynamic dispatch (`dyn`) | "`dyn` — only when explicit runtime polymorphism is needed" (paraphrase of spec/paradigm.md "vtable-вызов") | норма-форма «диспетчеризация» вместо жаргонного «диспатч»; `dyn` — ключевое слово Nova (`dyn Trait`/`dyn Protocol`), опциональная альтернатива мономорфизации |
 
 ---
 
@@ -133,11 +136,14 @@ pending the owner's call in Open questions.
 | аффинная дисциплина | affine (discipline) | "**D432** lets a `consume` type opt into an **affine** discipline instead" | language-tour.md §7; may-forget instead of must-consume; натурализованный термин теории типов |
 | заём-представление | view-borrow | "Function parameters of consume-type without the `consume` keyword are *views* — bounded by the callee's scope" | docs/guide/consume-types.md Rule 4; «заём» — устоявшийся русский перевод Rust-термина «borrow», «представление» — для «view»; составное — не калька, оба слова русские |
 | перемещение | move | "`consume b = a` — move — a dead, b owns; using `a` afterward triggers a `use-after-consume` diagnostic" | docs/guide/consume-types.md Rule 3; «перемещение» — устоявшийся русский перевод move-семантики (Rust-литература) |
-| цепочка вызовов / получатель | fluent chain / receiver | "Fluent chains compose mutators: `sb.append(\"a\").append(\"b\").as_str()`" | docs/guide/consume-types.md "Fluent-return chains"; «получатель» вместо жаргонного «ресивер» — получатель вызова метода (аналог `self`) |
+| цепочка вызовов | fluent chain | "Fluent chains compose mutators: `sb.append(\"a\").append(\"b\").as_str()`" | docs/guide/consume-types.md "Fluent-return chains"; последовательность вызовов, каждый из которых возвращает получателя (`-> @`) |
+| получатель | receiver | "receiver as the first argument a method is called on" (paraphrase, docs/guide/contracts.md) | «получатель» вместо жаргонного «ресивер» — объект вызова метода (аналог `self`) |
 | свойство по арности | property by arity | "**Properties by arity** (D84/D409) let one name serve as both getter and setter" | language-tour.md §3; «арность» — стандартный русский матем./CS-термин, не калька |
-| сопоставление с образцом (+ охранное условие) | pattern matching (+ guard) | "`match` supports literal patterns, guards (`n if n > 0`), and sum-variant destructuring." | language-tour.md §4; «сопоставление с образцом» — устоявшийся русский перевод в переводной ФП-литературе (Haskell/OCaml); «охранное условие» вместо непереведённого «guard» |
+| сопоставление с образцом | pattern matching | "`match` supports literal patterns, guards, and sum-variant destructuring." | language-tour.md §4; «сопоставление с образцом» — устоявшийся русский перевод в переводной ФП-литературе (Haskell/OCaml) |
+| охранное условие | guard | "guards (`n if n > 0`)" | language-tour.md §4; норма-форма вместо непереведённого «guard» — дополнительное булево условие на ветви `match` |
 | условная форма сопоставления | if-let form | "`if <Pattern> = expr { } else { }` is Nova's if-let form" | language-tour.md §4; описательная замена англ. идиомы «if-let» (в Nova нет отдельного ключевого слова `if let` — это форма обычного `if <паттерн> = выражение`) |
-| встраивание / делегирование | embed / delegation | "embed: имя поля обязательно (D39)" → "`use` — это **поле + автопрокси методов**" (spec/syntax.md) | composition via `use Type` (см. `use` в §2), not inheritance — компилятор генерирует прокси-методы (делегирование), без виртуального диспетчера; оба слова натурализованы в русской OOP-литературе |
+| встраивание | embed | "embed: имя поля обязательно (D39)" → "`use` — это **поле + автопрокси методов**" (spec/syntax.md) | composition via `use Type` (см. `use` в §2), not inheritance; «встраивание» натурализовано в русской OOP-литературе |
+| делегирование | delegation | "the compiler generates proxy methods (delegation), no virtual dispatch" (paraphrase, spec/paradigm.md) | результат встраивания — компилятор генерирует прокси-методы без виртуального диспетчера; «делегирование» натурализовано в русской OOP-литературе |
 
 ---
 
@@ -146,12 +152,14 @@ pending the owner's call in Open questions.
 | Русский (норма #language) | English | Example (en) | Note |
 |---|---|---|---|
 | подмена обработчика (через `with`) `[keep-en: код]` | handler substitution | "Each effect has a **handler** that intercepts its operations, substituted via `with Handler = ...`" | language-tour.md §6; «обработчик», не «хендлер»; `with` — ключевое слово (см. §2) |
-| прямой / транзитивный эффект | direct / transitive effect | "A function declares in its signature exactly which effects **it itself** performs; calling another function does not pull that function's effects up" | language-tour.md §6; spec/effects.md "Прямые эффекты, не транзитивные" (D28) — transitive is a warning by default, a hard error under `--strict-effects` |
+| прямой эффект | direct effect | "A function declares in its signature exactly which effects **it itself** performs" | language-tour.md §6; spec/effects.md "Прямые эффекты, не транзитивные" (D28) — эффект операций, вызванных САМОЙ функцией; необъявленный — всегда compile error |
+| транзитивный эффект | transitive effect | "calling another function does not pull that function's effects up into the caller's signature" | spec/effects.md (D28) — эффект вложенного вызова; необъявленный — warning по умолчанию, hard error под `--strict-effects` |
 | строгий режим эффектов (`--strict-effects`) `[keep-en: код]` | `--strict-effects` (strict-effects mode) | "programs (`examples/**`) build under `--strict-effects` … an experimental flag that promotes undeclared-transitive-effect … warnings to hard errors" | language-tour.md §6; Plan 197; `--strict-effects` — буквальный CLI-флаг |
 | эффект `Fail` `[keep-en: код]` | `Fail` effect | "`Fail[E]` — эффект-контракт для перехвата и обработки ошибки" | spec/effects.md "Роли — throw / Fail[E] / handler"; `Fail` — имя типа-эффекта в prelude |
 | выбросить ошибку (`throw`) `[keep-en: код]` | throw | "`throw err` — language syntax, raises an error" (paraphrase of spec/effects.md "Роли") | never resumes at the throw point; `never` operation type; `throw` — ключевое слово |
 | паника | panic | "**panic** is for a broken caller contract … and is never recoverable" | language-tour.md §5; натурализованный термин, стандартен в переводной PL-литературе |
-| постфиксные операторы `?` / `!!` | postfix operators `?` / `!!` | "`expr?` — return-style … `expr!!` — throw-style: 'didn't work — throw via `Fail`'" (paraphrase of spec/effects.md) | spec/effects.md "Операторы `?` и `!!`" — programmer picks the handling style at the use site; символьные операторы, не слова |
+| оператор `?` (return-стиль) | postfix operator `?` (return-style) | "`expr?` — return-style: 'didn't work — wrap it upward as a value'" (paraphrase of spec/effects.md) | spec/effects.md "Операторы `?` и `!!`"; ранний return обёртки — нужен `-> Option`/`-> Result` |
+| оператор `!!` (throw-стиль) | postfix operator `!!` (throw-style) | "`expr!!` — throw-style: 'didn't work — throw via `Fail`'" (paraphrase of spec/effects.md) | spec/effects.md "Операторы `?` и `!!`"; throw через `Fail[E]` — нужен `Fail[E]` в сигнатуре; программист выбирает стиль на месте использования |
 
 ---
 
@@ -161,7 +169,8 @@ pending the owner's call in Open questions.
 |---|---|---|---|
 | управляемая куча | managed heap | "`o is a pointer to managed heap; GC-tracked`" (paraphrase, docs/guide/value-vs-reference.md) | GC-tracked reference-type storage, default for records/sum types; уже полностью переведено, «managed heap» — только в англ. колонке |
 | анализ выхода за пределы области видимости (escape-анализ) `[keep-en: термин]` | escape analysis | "Go — escape analysis decides" (docs/guide/value-vs-reference.md comparison table); "не утекающие значения остаются на стеке" (spec/overview.md) | compiler decides stack vs heap automatically, no programmer annotation; устоявшегося краткого русского термина нет — «escape-анализ» встречается в компиляторной литературе как есть |
-| регион `[keep-en: код]` / зона реального времени (`#realtime nogc`) `[keep-en: код]` | region / real-time zone (`#realtime nogc`) | "Arena-allocations через `region { }` — проектируемая форма (D6), ⚠ в текущем компиляторе не реализована"; "For real-time зон (звук, торговля, embedded) — атрибут `#realtime nogc fn`" | spec/syntax.md "Производительность"; `region`/`#realtime nogc` — буквальные Nova-конструкции (ключевое слово и атрибут); `region` — **пока не реализован в компиляторе** |
+| регион `[keep-en: код]` | region | "Arena-allocations через `region { }` — проектируемая форма (D6), ⚠ в текущем компиляторе не реализована" | spec/syntax.md "Производительность"; `region` — буквальное ключевое слово Nova (arena-аллокация); **пока не реализован в компиляторе** |
+| зона реального времени (`#realtime nogc`) `[keep-en: код]` | real-time zone (`#realtime nogc`) | "For real-time зон (звук, торговля, embedded) — атрибут `#realtime nogc fn`" | spec/syntax.md "Производительность"; `#realtime nogc` — буквальный Nova-атрибут, запрещающий GC на функции для real-time кода |
 | стек-аллокация | stack allocation | "positional tuple — **stack** — value (copy on pass)" | docs/guide/value-vs-reference.md bracket-rule table; «стек» и «аллокация» — натурализованные CS-термины, не жаргон |
 
 ---
@@ -170,10 +179,11 @@ pending the owner's call in Open questions.
 
 | Русский (норма #language) | English | Example (en) | Note |
 |---|---|---|---|
-| файбер `[CONTESTED — см. Open questions]` | fiber | "Under the hood — **fiber-based scheduler** (like Go/OCaml 5)." | spec/effects.md "Async — невидимая инфраструктура"; ~4-8 KB stack, millions per machine; «файбер» — транслитерация, уже широко используется в коде/доках Nova — заменять единолично рискованно, решение владельца требуется (кандидат: «волокно») |
-| структурированная конкурентность | structured concurrency | "concurrency is structured, not a separate async dialect" | language-tour.md §8; в spec/overview.md встречается сырое англ. «Structured concurrency» в русском тексте — норма-форма переводит оба слова («конкурентность» уже натурализована), `[proposed]` |
+| файбер | fiber | "Under the hood — **fiber-based scheduler** (like Go/OCaml 5)." | spec/effects.md "Async — невидимая инфраструктура"; ~4-8 KB stack, millions per machine; **утверждено владельцем 2026-08-03** — «файбер» остаётся русской формой (не «волокно»), употребление по всей базе доков не меняется |
+| структурированная конкурентность | structured concurrency | "concurrency is structured, not a separate async dialect" | language-tour.md §8; **утверждено владельцем 2026-08-03**; сырое англ. «Structured concurrency» в русском тексте spec/overview.md — кандидат микро-правки норматива (заведено интегратору отдельно) |
 | супервизия | supervision | "Supervision of failures is an ordinary effect `Supervisor`" (paraphrase, spec/overview.md D416) | Erlang/OTP-style child-failure policy: `escalate()` / `stop()`; «супервизия» — натурализованный термин (используется вне IT, напр. в психотерапии/менеджменте), не жаргон |
-| дедлайн области видимости / отмена | (scope) deadline / cancellation | "`supervised(deadline:)` gives that block a shared deadline, and a spawn that misses it is genuinely cancelled" | language-tour.md §8; «дедлайн» — полностью натурализованное слово повседневного русского; «скоуп» заменён на «область видимости» |
+| дедлайн области видимости | (scope) deadline | "`supervised(deadline:)` gives that block a shared deadline" | language-tour.md §8; «дедлайн» — полностью натурализованное слово повседневного русского; «скоуп» заменён на «область видимости» |
+| отмена | cancellation | "a spawn that misses it [the deadline] is genuinely cancelled" | language-tour.md §8; структурная отмена (в отличие от ручной отмены в классических async-рантаймах) |
 | канал с разделёнными правами (send/recv) | capability-split | "The model is **capability-split** (Rust mpsc-style): `Channel.new(cap)` returns a **pair**" | docs/guide/channels.md; описательный перевод вместо хайбридного «capability-split»; `send`/`recv` — имена методов, keep-en по коду |
 | выбор (`select`) `[keep-en: код]` | `select` | "`select { ... }` is multiplexed channel operations: it waits on several recv/send operations at once" | docs/guide/channels.md; `select` — ключевое слово Nova |
 | свобода от гонок (данных) | data race freedom | heading of spec/decisions/06-concurrency.md D415: "Data race freedom — `#share`-атрибут, capture-check, consume в spawn" | compiler-enforced boundary rules for `mut` captures crossing fiber boundaries; «гонка (данных)» — стандартный русский CS-термин |
@@ -185,7 +195,8 @@ pending the owner's call in Open questions.
 | Русский (норма #language) | English | Example (en) | Note |
 |---|---|---|---|
 | модуль | module | "A **module** is either a single file `X.nv` or a **folder** `X/`" | language-tour.md §11; натурализованный термин |
-| папка-модуль / равноправные файлы | folder-module / peer files | "A **module** is either a single file `X.nv` or a **folder** `X/` whose **peer files** all declare the same `module` path and share one namespace" | language-tour.md §11; норма-форма «равноправные файлы» вместо хайбридного «peer-файлы» — файлы одного namespace без взаимного импорта, `[proposed]` |
+| папка-модуль | folder-module | "A **module** is either a single file `X.nv` or a **folder** `X/`" | language-tour.md §11; модуль как папка — альтернатива модулю-одному-файлу |
+| файлы одного модуля (равноправные файлы) | peer files | "whose **peer files** all declare the same `module` path and share one namespace" | language-tour.md §11; **утверждено владельцем 2026-08-03**, форма уточнена по его же замечанию (не видно связи с модулем) — русская форма явно называет связь с модулем: папка = ОДИН модуль, файлы внутри неё равноправны (ни один не «главнее»), у них общее пространство имён (объявленное в одном файле видно в другом без импорта), и друг друга по import они НЕ подключают; ближайший аналог в литературе — Go-шное «файлы одного пакета» |
 | пакет | package | "Every import path is fully qualified from the **package** root (the directory with `nova.toml`)" | language-tour.md §11; натурализованный термин |
 | рабочее пространство (`[workspace]`) `[keep-en: код]` | workspace | "Workspaces (`[workspace] members = [...]`) group several packages in a monorepo" | language-tour.md §11; норма-форма «рабочее пространство» вместо транслитерации «воркспейс»; `[workspace]` — буквальное имя секции в `nova.toml` |
 
@@ -198,7 +209,8 @@ pending the owner's call in Open questions.
 | непрозрачный указатель | opaque pointer | "Nova's opaque-pointer type is `*()` (pointer to unit — `void*` in C)" | language-tour.md §12; полностью русская форма, без калек |
 | типизированный дескриптор | typed handle | "Wrap a raw `*()` in a record for a **typed handle** so distinct native resources … aren't interchangeable at compile time" | language-tour.md §12; норма-форма «дескриптор» (стандартный русский CS-термин, как «дескриптор файла») вместо транслитерации «хэндл» |
 | внешняя функция (`external fn`) `[keep-en: код]` | `external fn` | "`external fn name(args) -> ret` (D82) declares a binding to a C symbol" | language-tour.md §12; `external fn` — буквальная конструкция Nova |
-| блок `unsafe` `[keep-en: код]` / модель мутабельности указателя | `unsafe` block / pointer-mutability model | heading of docs/guide/typed-pointers.md: "Typed pointers (`*T` family) + `unsafe` model", "Pointer-mutability model: 'arrow → box'" | `unsafe` is a scoped escape hatch for raw-pointer operations (Plan 138.5); `unsafe` — ключевое слово, «мутабельность» — натурализованный CS-термин |
+| блок `unsafe` `[keep-en: код]` | `unsafe` block | heading of docs/guide/typed-pointers.md: "Typed pointers (`*T` family) + `unsafe` model" | `unsafe` is a scoped escape hatch for raw-pointer operations (Plan 138.5); `unsafe` — ключевое слово |
+| модель мутабельности указателя | pointer-mutability model | "Pointer-mutability model: 'arrow → box'" | docs/guide/typed-pointers.md heading (Plan 138.5); «мутабельность» — натурализованный CS-термин |
 
 ---
 
@@ -207,10 +219,12 @@ pending the owner's call in Open questions.
 | Русский (норма #language) | English | Example (en) | Note |
 |---|---|---|---|
 | контракт (+ SMT-решатель) `[keep-en: аббревиатура]` | contract (+ SMT solver) | "Nova's contract system lets you state what a function **requires** and **ensures**, then verifies those claims at compile time via an SMT solver." | docs/guide/contracts.md intro; норма-форма «решатель» вместо транслитерации «солвер»; SMT — аббревиатура без русской расшифровки в обиходе |
-| принудительная проверка с устранением (доказано → вырезано) | enforce-with-elision | "Nova uses **enforce-with-elision** (D24 / Plan 140), *not* debug-only asserts" | docs/guide/contracts.md intro; описательный перевод вместо англ.-рус. гибрида «enforce-с-elision», `[proposed]` — авторский Nova-термин (D24/Plan 140), устоявшегося перевода ещё нет |
-| доказанный / недоказанный контракт | proven / unproven (contract) | "a **proven** contract is elided (zero runtime cost, even in debug); an **unproven** one is enforced at runtime in **both debug and release**" | docs/guide/contracts.md intro; полностью по-русски |
+| enforce-with-elision `[keep-en: термин]` | enforce-with-elision | "Nova uses **enforce-with-elision** (D24 / Plan 140), *not* debug-only asserts" | docs/guide/contracts.md intro; **утверждено владельцем 2026-08-03** — keep-en как имя собственное механизма (D24/Plan 140, аналогично CI/REST); при первом упоминании — русское пояснение: «контракты проверяются всегда, компилятор вырезает лишь доказанные проверки» |
+| доказанный контракт | proven contract | "a **proven** contract is elided (zero runtime cost, even in debug)" | docs/guide/contracts.md intro; полностью по-русски |
+| недоказанный контракт | unproven contract | "an **unproven** one is enforced at runtime in **both debug and release**" | docs/guide/contracts.md intro; полностью по-русски |
 | лемма | lemma | "A **lemma** is a `#verify` function whose purpose is to establish a mathematical fact" | docs/guide/contracts.md "Lemmas and apply"; натурализованный матем. термин |
-| постусловие / предусловие | postcondition / precondition | "`requires` — A precondition." / "`ensures` and `result` — A postcondition." | docs/guide/contracts.md; стандартные русские матем./CS-термины |
+| предусловие | precondition | "`requires` — A precondition." | docs/guide/contracts.md; стандартный русский матем./CS-термин |
+| постусловие | postcondition | "`ensures` and `result` — A postcondition." | docs/guide/contracts.md; стандартный русский матем./CS-термин |
 | условие `decreases` (доказательство терминации) `[keep-en: код]` | `decreases` clause | "`decreases` — Proves termination of recursive functions." | docs/guide/contracts.md "decreases"; норма-форма «условие» вместо транслитерации «клоз»; `decreases` — ключевое слово |
 
 ---
@@ -220,8 +234,10 @@ pending the owner's call in Open questions.
 | Русский (норма #language) | English | Example (en) | Note |
 |---|---|---|---|
 | приведение (`as`) `[keep-en: код]` | `as` cast | "`as` — infallible numeric/newtype/sum cast, compile-time, no runtime code" (paraphrase of spec/conversions.md "Три механизма") | spec/conversions.md; «приведение» — стандартный русский термин («приведение типа»), `as` — ключевое слово |
-| расширение / сужение | widening / narrowing | "Widening (no precision loss)" / "Narrowing (potential precision loss)" | spec/conversions.md "Numeric ↔ numeric"; полностью по-русски |
-| проверяемое сужение | checked narrowing | "Checked narrowing — `try_to_*` (D430, 2026-07-20)" | spec/conversions.md heading; полностью по-русски |
+| расширяющее преобразование | widening | "Widening (no precision loss)" | spec/conversions.md "Numeric ↔ numeric"; полностью по-русски; без потери точности (`i8 → i32`, `f32 → f64` и т.п.) |
+| сужающее преобразование | narrowing | "Narrowing (potential precision loss)" | spec/conversions.md "Numeric ↔ numeric"; полностью по-русски; возможна потеря точности (`i64 → i32` и т.п.), по умолчанию `as` — тихий wraparound |
+| проверяемое сужение | checked narrowing | "Checked narrowing — `try_to_*` (D430, 2026-07-20)" | spec/conversions.md heading; полностью по-русски; проверяемая альтернатива тихому `as`-wraparound |
+| семейство `to_str` (унифицированное строковое представление) `[keep-en: код]` | `to_str()` family | "`42.to_str()`" (numeric), "`bytes.to_str()`" (`[]u8` decode, checked) | spec/conversions.md D410; единый вход «значение → строка»: bare-`T` blanket + специализации (`char`, `[]u8`); `to_str` — буквальное имя метода |
 | неявная конверсия (`#coerce`) `[keep-en: код]` | `#coerce` (zero-cost implicit conversion) | "`#coerce` on a **unary** function declares an **implicit** conversion `I → O`, inserted by the compiler in a position with a known expected type" (paraphrase of spec/conversions.md) | spec/conversions.md "Zero-cost неявные конверсии" (D429); «конверсия» — натурализованный термин, `#coerce` — буквальный атрибут |
 | конвенция имени (`from`/`try_from`) `[keep-en: код]` | naming convention (`from`/`try_from`) | "these are three independent naming conventions, each an ordinary Nova function with no protocol behind it" (paraphrase of spec/conversions.md) | spec/conversions.md "Именование from/try_from — конвенция, не протокол"; `From`/`Into`/`TryFrom`/`TryInto` protocols retracted 2026-07-06; `from`/`try_from` — буквальные имена методов |
 | потребляющая передача владения (`consume @into_*`) `[keep-en: код]` | consuming ownership transfer (`consume @into_*`) | "`consume @into_ЦЕЛЬ()` — a consuming transfer of ownership (a concrete name on the source)" (paraphrase of spec/conversions.md "Три механизма" table) | spec/conversions.md; уже норма-форма («потребляющая» от глагола «потреблять»), `consume @into_*` — буквальный код-паттерн |
@@ -230,91 +246,57 @@ pending the owner's call in Open questions.
 
 ## Open questions for owner review
 
-1. **«Одна дверь» (§1).** No settled English phrase exists anywhere in
-   `docs/guide/*.md` or `spec/*.md` for this recurring design idiom
-   ("don't add a second way to do something the language already covers
-   one way"). Proposed: **"single canonical path"** or, closer to the
-   Russian door-metaphor, **"no second door"**. Needs owner sign-off
-   before `spec/*.en.md` translators start using it — it will recur
-   often (D86 amend, D429 §"третья дверь", nv-coding-style "запрещённая
-   пятая дверь", etc.).
-2. **«Скрутини» (§1).** Not attested anywhere in Nova's own docs — the
-   guide and spec both just say "the value being matched" / "паттерн
-   совпал". Proposed **"scrutinee"** is standard Rust/Haskell PL jargon,
-   which may be *more* precise than Nova's own house style wants for an
-   AI-first, plain-language project. Owner should decide: adopt
-   "scrutinee" as the technical term, or keep the descriptive phrasing
-   and drop this glossary entry as unnecessary.
-3. **`spec/paradigm.md` is stale.** Its own header (added 2026-xx) flags
-   it as describing a pre-D18/D24/D31/D33-D42/D52/D53/D61-D66/D70/D73
-   version of the language — it still talks about `trait`/`impl`,
-   which are retired in favor of `protocol` + effect-via-kind-token.
-   This glossary does **not** carry `trait`/`impl` forward as current
-   terminology; if a translator hits `paradigm.md` directly (out of
-   scope for Ф.1 per the plan's normative-file list, but flagging just
-   in case), the file needs a rewrite pass before translation, not just
-   a translation of stale content.
-4. **Term count vs. plan target.** The plan asks for "~50-80 pairs";
-   this glossary lands at exactly **80** table rows across 11 sections
-   (including the 14-row keyword table, §2). Several closely related
-   concepts were deliberately merged into one row (e.g. positional/named
-   tuple, widening/narrowing, deadline/cancellation) to stay inside the
-   range while still naming every concept from the plan's starter list
-   plus the additional spec/guide sourcing pass. If the owner wants any
-   of these split back into separate rows for clarity, that's a
-   low-cost follow-up edit, not a re-sourcing effort.
-5. **`ro` as binding keyword vs. `ro` as param modifier.** `ro` doubles as
-   the binding-declaration keyword (`ro x = ...`) and as an explicit
-   (redundant-with-default) parameter modifier (`ro x T`). `readonly` was
-   the pre-D184 (Plan 114) spelling for the field/param sense and no
-   longer exists in Nova syntax. Both readings ended up in §2's `ro` row's
-   note as one explanation; flag if the owner wants them split into two
-   distinct glossary rows since they cover two different senses of one
-   keyword.
+1. **«Одна дверь» (§1). ✅ РЕШЕНО (владелец 2026-08-03):** en-форма —
+   **"no second door"** (дверная метафора сохранена); "single canonical
+   path" — допустимое пояснение при первом упоминании. Строка §1
+   обновлена.
+2. **«Скрутини» (§1). ✅ РЕШЕНО (владелец 2026-08-03):** ru —
+   **«сопоставляемое значение»**, транслит «скрутини» в новую прозу не
+   пускать (существующие D-блоки не переписываем); en — **scrutinee**
+   принят как термин. Строка §1 обновлена.
+3. **`spec/paradigm.md` устарел. ✅ РЕШЕНО (владелец 2026-08-03):**
+   сначала **актуализировать** русский текст (снять `trait`/`impl` →
+   `protocol` + эффект-через-kind-токен, сверить с действующими D-блоками),
+   затем переводить. Порядок в Ф.1: 5 актуальных файлов переводятся сразу,
+   `paradigm.md` — после ревизии норматива (отдельная микро-задача, не
+   переводческая).
+4. **Счёт терминов — ✅ РЕШЕНО (владелец, отменяет прежнее решение по
+   этому пункту):** верхней границы числа терминов **нет** — «если есть
+   термин, он должен быть [в глоссарии]». Все строки, ранее объединявшие
+   два понятия ради экономии места (позиционный/именованный кортеж,
+   расширяющее/сужающее преобразование, дедлайн/отмена, прямой/
+   транзитивный эффект, embed/делегирование и т.д.), разнесены обратно
+   на отдельные строки — по строке на термин. Пополнение продолжается по
+   мере находок при переводе (Ф.1/Ф.1b) — потолка не заводим.
+5. **`ro` vs `readonly`. ✅ РЕШЕНО (владелец 2026-08-03):** использовать
+   **`ro`**; написание `readonly` ретрактировано (Plan 114 / D184). Отдельной строки
+   для `readonly` не заводим — примечание в строке `ro` (§2) обновлено.
 
 ### Русские формы — спорные, решает владелец (добор 2026-08-02, норма #language)
 
-6. **«Файбер» vs «волокно» (§7, помечено `[CONTESTED]`).** «Файбер» —
-   транслитерация английского «fiber», НЕ норма-форма по правилу
-   «минимум английских слов» — но термин уже насквозь пронизывает
-   существующие доки, спеку, dev-конвенции и, вероятно, диагностики
-   компилятора (`docs/dev/mn-coding-conventions.md`, весь `nova_rt/`).
-   Кандидат на замену — **«волокно»** (буквальный русский перевод
-   «fiber», уже встречается в русскоязычной литературе про
-   green-threads/stackful-корутины). Массовая замена — самостоятельное
-   терминологическое решение с широким blast radius (переименование по
-   всей кодовой базе доки, не только в guide), а не точечная калька-
-   правка, поэтому глоссарий её не делает единолично и выносит на
-   решение владельца. Если владелец выбирает «волокно» — это отдельная
-   волна правок (не в объёме Ф.0), а глоссарий обновляется первым.
-7. **«Тип-сумма» vs «sum-тип» (§3).** Spec нормативно использует
-   гибрид «sum-тип» (английское `sum` + русское `тип`). Предложенная
-   норма-форма «тип-сумма» — калька по образцу «тип-произведение» из
-   переводной ФП-литературы, но не засвидетельствована нигде в
-   репозитории — `[proposed]`, решает владелец, стоит ли вводить в
-   ru-guide-переводах или оставить «sum-тип» как уже привычную форму.
-8. **«Тип-обёртка» для newtype (§3).** Ни spec, ни guide не называют
-   «newtype» отдельным словом на русском — термин используется только
-   как английское `newtype` в примерах/decisions. Предложено описательно
-   «тип-обёртка»; альтернатива — оставить «newtype» транслитерацией как
-   устоявшийся Rust/Haskell-жаргон (`[keep-en: термин]` вместо перевода).
-   Решает владелец.
-9. **«Структурированная конкурентность» (§7).** `spec/overview.md`
-   вставляет необработанное английское «Structured concurrency» прямо в
-   русский текст (пункт 6 «Поддерживающих решений»). Норма-форма
-   «структурированная конкурентность» — прямой перевод, `[proposed]`,
-   не засвидетельствован в spec буквально. Если владелец согласен — это
-   заодно кандидат на амендмент самого `spec/overview.md` (отдельно от
-   Ф.0, но глоссарий фиксирует расхождение).
-10. **«Принудительная проверка с устранением» для enforce-with-elision
-    (§10).** Авторский Nova-термин (D24/Plan 140) без прецедента перевода
-    нигде в репозитории; предложенный описательный перевод длинный и
-    громоздкий — альтернатива — оставить «enforce-with-elision»
-    транслитерацией/`[keep-en: термин]` как имя собственное механизма
-    (аналогично тому, как «CI» или «REST» не переводятся). Решает
-    владелец.
-11. **«Равноправные файлы» для peer files (§8).** Описательный перевод,
-    не засвидетельствован в spec/guide как отдельный русский термин —
-    `[proposed]`. Альтернативы: «сорасположенные файлы»,
-    «файлы-соседи», оставить «peer-файлы» как устоявшийся англицизм
-    (`[keep-en: термин]`).
+6. **«Файбер» vs «волокно» (§7). ✅ РЕШЕНО (владелец 2026-08-03):**
+   **«файбер» остаётся** русской формой (сознательно сохранённая
+   транслитерация — термин насквозь пронизывает доки, спеку и
+   dev-конвенции; массовая замена не производится). Строка §7 обновлена,
+   пометка `[CONTESTED]` снята.
+7. **«Тип-сумма» vs «sum-тип» (§3). ✅ РЕШЕНО (владелец 2026-08-03):**
+   в новой ru-прозе — **«тип-сумма»**; гибрид «sum-тип» в существующей
+   спеке не переписываем (прецедент «скрутини»).
+8. **newtype по-русски (§3). ✅ РЕШЕНО (владелец 2026-08-03):**
+   **«тип-обёртка»**, при первом упоминании на странице — «тип-обёртка
+   (newtype)»; в коде и сигнатурах остаётся `newtype`.
+9. **«Структурированная конкурентность» (§7). ✅ РЕШЕНО (владелец
+   2026-08-03):** принято. Отдельно заведена микро-правка норматива:
+   в `spec/overview.md` сырое англ. «Structured concurrency» посреди
+   русской фразы → русская форма (правка языковая, смысл не меняется).
+10. **enforce-with-elision (§10). ✅ РЕШЕНО (владелец 2026-08-03):**
+    **keep-en** — имя собственное механизма (D24/Plan 140), как CI/REST;
+    при первом упоминании — краткое русское пояснение рядом.
+11. **peer files (§8). ✅ РЕШЕНО (владелец 2026-08-03), форма уточнена:**
+    **«файлы одного модуля (равноправные файлы)»** (не «peer-файлы», не
+    «файлы-соседи») — владелец принял «равноправные файлы», но заметил,
+    что из исходной формы не видно связи с модулем; строка §8
+    переформулирована так, чтобы связь была явной: папка = ОДИН модуль,
+    файлы внутри него равноправны, общее пространство имён, друг друга
+    по import не подключают. `folder-module` (контейнер) и `peer files`
+    (свойство файлов внутри него) — теперь отдельные строки §8.

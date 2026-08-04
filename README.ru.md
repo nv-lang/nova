@@ -7,7 +7,7 @@
 
   <p>
     <a href="https://nv-lang.org">Сайт</a> |
-    <a href="#быстрый-старт">Быстрый старт</a> |
+    <a href="docs/guide/quickstart.md">Быстрый старт</a> |
     <a href="spec/overview.md">Документация</a> |
     <a href="CONTRIBUTING.md">Участие в проекте</a>
   </p>
@@ -18,6 +18,18 @@
 </div>
 
 ---
+
+Nova компилируется в C, а затем в нативный бинарь — без VM, без
+интерпретатора. Побочные эффекты каждой функции (`Db`, `Net`, `Io`, `Time`,
+...) — часть её типа, проверяется компилятором, так что ревьюер видит, чего
+касается функция, не читая её тело. Память по умолчанию управляется Boehm
+GC; для ресурсов, которым нужна детерминированная очистка без пауз (файлы,
+сокеты, блокировки) `consume`/владение даёт гарантированный `on_exit` при
+выходе из scope, без GC в цепочке. Конкурентность — структурная (`spawn`,
+`parallel for`, `supervised`) поверх M:N work-stealing файбер-планировщика —
+без `async`/`await`, без раскола по «цвету функции». Стандартная библиотека
+идёт с батарейками в комплекте: `std` (коллекции, IO, время, JSON, ...) плюс
+отдельно версионируемые пакеты `net`, `tls`, `http` и `compress`.
 
 ```nova
 fn process_order(o Order) Db Net Time Fail -> Receipt
@@ -47,13 +59,13 @@ fn process_order(o Order) Db Net Time Fail -> Receipt
 ### 1. Эффект → handler → тест без моков
 
 ```nova
-// Объявляем эффект — контракт операций, без полей
+// Declare an effect — a contract of operations, no fields
 type Db effect {
     query(q Sql) -> []Row
     exec(q Sql)  -> ()
 }
 
-// Бизнес-логика: эффект Db в сигнатуре, реализация неизвестна
+// Business logic: Db effect in the signature, implementation unknown
 fn transfer(from u64, to u64, amount money) Db Fail -> () {
     ro src = Db.query(sql`SELECT * FROM accounts WHERE id = ${from}`)
     if src[0].balance < amount { throw InsufficientFunds }
@@ -61,13 +73,13 @@ fn transfer(from u64, to u64, amount money) Db Fail -> () {
     Db.exec(sql`UPDATE accounts SET balance = balance + ${amount} WHERE id = ${to}`)
 }
 
-// Production: реальный handler
+// Production: real handler
 fn main() Io Fail -> () =>
     with Db = postgres("postgres://...") {
         transfer(1, 2, 100)
     }
 
-// Тест: тот же код, in-memory handler, никаких моков
+// Test: same code, in-memory handler, no mocks at all
 test "transfer moves money" {
     ro mem = in_memory_db([
         Account { id: 1, balance: 500 },
@@ -104,6 +116,19 @@ scope ждёт всех, при ошибке хвост отменяется и 
 в caller через эффект `Fail` — обычный механизм обработки ошибок,
 такой же как в синхронном коде. Та же `Http.get` работает и в обычном
 цикле, и в `parallel for` — без изменений сигнатуры.
+
+Вот этот паттерн вживую — флагманская демка
+([examples/flagship/aggregator](examples/flagship/aggregator)): fan-out на
+6 источников под одним общим дедлайном; опоздавшие по-настоящему
+**отменяются**, а не бросаются; сервер репортит
+`fibers_spawned/closed: 12/12` — ноль утечек как проверяемый факт:
+
+![Nova flagship aggregator — parallel fan-out with real cancellation](docs/assets/aggregator-demo.gif)
+
+Запустить самому: `docker run --rm -p 8187:8187` (образ — см.
+[README демки](examples/flagship/aggregator/README.md)), или
+дистиллированная версия на 30 строк:
+[examples/mini_aggregator.nv](examples/mini_aggregator.nv).
 
 ### 3. Детерминированный random в тесте
 
@@ -169,7 +194,7 @@ fn withdraw(mut acc Account, amount money) Fail -> ()
 ```nova
 fn map_audio(samples []f32, gain f32) -> []f32 =>
     realtime {
-        samples.map(|x| x * gain)      // без GC, без suspension
+        samples.map(|x| x * gain)      // no GC, no suspension
     }
 ```
 
@@ -201,23 +226,53 @@ fn map_audio(samples []f32, gain f32) -> []f32 =>
 - [spec/effects.md](spec/effects.md) — система эффектов (базовое введение)
 - [spec/open-questions.md](spec/open-questions.md) — нерешённые вопросы
 - [spec/decisions/](spec/decisions/) — журнал дизайн-решений с эволюцией
-- [compiler-codegen/](compiler-codegen/) — компилятор Nova (Rust): парсер, type-checker, treewalk-интерпретатор, C-backend codegen
+- [docs/guide/typed-pointers.md](docs/guide/typed-pointers.md) — каноничный синтаксис семейства `*T` (правило право-связывания V2/V3, ключевое слово `safe`, правила композиции модификаторов)
+- [compiler-codegen/](compiler-codegen/) — компилятор Nova (Rust): парсер, type-checker, C-backend codegen, нативный runtime
+
+## Экосистема
+
+Компилятор, стандартная библиотека и спецификация живут в этом
+репозитории. Всё, чему не обязательно быть в комплекте с компилятором, —
+отдельный пакет, написанный на самой Nova и подтягиваемый через
+`nova.lock.toml`:
+
+| Пакет | Что это | Выпущено |
+|---|---|---|
+| [nova-tls](https://github.com/nv-lang/nova-tls) | TLS-клиент/сервер — рукопожатие, ALPN, SNI, горячая перезагрузка сертификатов | `v0.1.4` |
+| [nova-http](https://github.com/nv-lang/nova-http) | HTTP/1.1-клиент + сервер — запрос/ответ, заголовки, URL, транспорт | `v0.1.1` |
+| [nova-compress](https://github.com/nv-lang/nova-compress) | Кодеки `deflate` / `gzip` / `zlib` / `brotli` | `v0.1.1` |
+| [nova-polaris](https://github.com/nv-lang/nova-polaris) | Polaris ⭐ — веб-фреймворк поверх HTTP-ядра: маршрутизатор, экстракторы, middleware, аутентификация, websocket'ы | тега пока нет |
+| [nova-bignum](https://github.com/nv-lang/nova-bignum) | Числа произвольной точности на чистом Nova, без C-зависимостей | в работе |
+| [tree-sitter-nova](https://github.com/nv-lang/tree-sitter-nova) | Грамматика tree-sitter для языка | `v0.1.0` |
 
 ## Статус
 
-Активная разработка. Спецификация стабильна по ключевым областям
-(эффекты, handlers, синтаксис, память, конкуренция). Один компилятор:
+**v0.1.0 — первый публичный релиз.** Рано, но работает: компилятор
+(парсер, type-checker, C-backend codegen), CLI (`nova build`/`check`/
+`test`/`doc`), языковой сервер (`nova-lsp`) с расширением для VSCode, и
+стандартная библиотека, покрывающая коллекции, IO, время, JSON, а также —
+отдельными пакетами — сеть, TLS, HTTP и сжатие. Спецификация стабильна по
+ключевым возможностям (эффекты, handler'ы, синтаксис, память,
+конкурентность); некоторые участки (SMT-верификация контрактов за
+пределами тривиальных случаев, конкурентный GC) всё ещё в roadmap. Один
+компилятор:
 
-- **compiler-codegen** — Rust-реализация с парсером, type-checker'ом
-  и C-backend codegen'ом. Компилирует Nova в C через нативный runtime
-  (эффекты, файберы, GC, каналы); обслуживает как тестовые запуски
-  (`test`), так и нативную компиляцию (`build`).
-- **nova-cli** — единая точка входа для пользователя (`nova check`,
+- **compiler-codegen** — реализация на Rust с парсером, type-checker'ом и
+  C-backend codegen'ом. Компилирует Nova в C через нативный runtime
+  (эффекты, файберы, GC, каналы); обслуживает и тестовые прогоны (`test`),
+  и нативную компиляцию (`build`).
+- **nova-cli** — единственная пользовательская точка входа (`nova check`,
   `nova build`, `nova test`, `nova regen-runtime`). Точка входа
   интерпретатора `nova run` сейчас **не поддерживается** — Nova
   компилируется в C, поэтому используйте `nova build` (нативный бинарь)
-  или `nova test`. `nova-codegen` остаётся как внутренний инструмент
-  для IDE / CI / отладки codegen'а.
+  или `nova test`.
+  `nova-codegen` — внутренний крейт-компилятор (движок, который `nova`
+  вызывает изнутри) + несколько maintainer-only build-тулов
+  (`unicode`-таблицы UCD, `compile` Nova→C, `dump-runtime`). **Для любой
+  обычной работы — только `nova`** (nova-cli): `nova check / build / test /
+  test-build <file> / lint / regen-runtime`. У `nova` есть свой
+  `test-build` (один файл), так что вызывать `nova-codegen` напрямую не
+  нужно; его `test-build` берёт ОДИН файл (директория → «read: os error 5»).
 
 Что работает сегодня (bootstrap):
 
@@ -239,23 +294,40 @@ fn map_audio(samples []f32, gain f32) -> []f32 =>
 - Контракты (D24): `requires`/`ensures`/`old`/`result`/`invariant`/
   `reads`/`modifies`/`decreases`/`ghost let`/`assume`/`assert_static`.
   Bootstrap SMT через TrivialBackend (reflexive ensures); Z3 — milestone.
-- `defer` / `errdefer` cleanup (D90).
+- `defer` + cleanup consume-области (D90/D188): `defer { ... }`
+  выполняется при любом выходе из scope — включая `throw` и `panic` (в
+  отличие от Rust `Drop` при `panic=abort`). Ресурс, связанный через
+  `consume x = acquire() { ... }`, при выходе из scope запускает свой
+  `Consumable.on_exit(outcome)`, получая `ScopeOutcome` (`Success` /
+  `Failure` / `Panic`) для очистки, зависящей от исхода. (Более ранние
+  формы `errdefer` / `okdefer` / `defer |result|` были ретрагированы —
+  D189.)
 - Boehm GC default с introspection API (`heap_size`, `live_count`,
   `collect`).
+
+## Установка
+
+Самый простой способ начать на Windows x64 — предсобранный релизный архив
+(`nova.exe` + `nova-lsp.exe` + стандартная библиотека + C-рантайм, Rust
+toolchain не нужен — нужен только C-компилятор): скачайте его со
+[страницы релизов на GitHub](https://github.com/nv-lang/nova/releases),
+распакуйте и выполните `. .\setup-env.ps1`. Полное руководство, включая
+путь сборки из исходников на Linux и первую программу «Hello, Nova!»:
+**[docs/guide/quickstart.md](docs/guide/quickstart.md)**.
 
 ## Сборка из исходников
 
 Соберите `nova` CLI, затем используйте его для компиляции Nova-программ:
 
 ```sh
-# собрать nova CLI (требуется Rust + Cargo)
+# build nova CLI (requires Rust + Cargo)
 cd nova-cli && cargo build --release && cd ..
 
-# скомпилировать .nv в нативный бинарь и запустить его
+# compile a Nova file to a native binary, then run it
 nova-cli/target/release/nova build path/to/hello.nv -o hello
 ./hello
 
-# только type-check
+# type-check only
 nova-cli/target/release/nova check path/to/hello.nv
 ```
 
@@ -267,40 +339,89 @@ Pipeline двухступенчатый: `nova-codegen` (внутренний) �
 
 ```sh
 cd compiler-codegen
-cargo run --release -- compile path/to/hello.nv          # Nova → C
+cargo run -- compile path/to/hello.nv          # Nova → C
 gcc path/to/hello.c nova_rt/alloc.c nova_rt/effects.c nova_rt/fibers.c \
-    -I. -o hello                                          # C → бинарь
+    -I. -o hello                                # C → binary
 ./hello
 ```
 
 Полный guide, опции, известные ограничения:
 [compiler-codegen/README.md](compiler-codegen/README.md).
 
+## Первые шаги
+
+Когда `nova` собрана, запустите демонстрационную программу — один
+самодостаточный файл, который компилируется, запускается и тестируется без
+дополнительной настройки:
+
+```sh
+# build it to a native binary, then run it (prints the cart totals)
+nova-cli/target/release/nova build examples/getting_started.nv -o getting_started
+./getting_started
+
+# run its in-file tests (handler-swapped, no mocks)
+nova-cli/target/release/nova test examples/getting_started.nv
+```
+
+[`examples/getting_started.nv`](examples/getting_started.nv) проходит по
+ключевой части стандартной библиотеки 0.1 примерно в 150 строках с
+комментариями:
+
+- `fn main` + `println` — базовый hello;
+- тип **record** с доступом по именованным полям;
+- **sum-тип** + исчерпывающий `match`;
+- цикл `for`, накапливающий результат по диапазону;
+- **алгебраический эффект**, подставляемый через `with`-блок handler'ом в
+  `main`, а затем **подменяемый на другой in-memory handler** внутри
+  `test {}` — та же бизнес-логика проверяется без единого мока.
+
+Последний пункт — главный тезис Nova: handler'ы — это тестовый шов, так что
+тестам не нужен mocking-фреймворк.
+
 ## Запуск тестов
 
 Соберите `nova` CLI, затем запустите полный набор тестов:
 
 ```sh
-# собрать nova CLI (одноразово, или после изменений)
+# build nova CLI (one-time, or after changes)
 cd nova-cli && cargo build --release && cd ..
 
-# все тесты
+# run all tests
 nova-cli/target/release/nova test
 ```
 
 Частые флаги:
 
 ```sh
-nova test --filter syntax/closure        # подмножество тестов
-nova test --mode release                 # компиляция с -O3 -flto
-nova test --toolchain clang              # принудительный toolchain
-nova test --timeout 60                   # таймаут на тест
-nova test --format json                  # JSON-события построчно
-nova test --format junit > results.xml   # JUnit XML для CI
-nova test --retries 2                    # повтор flaky AV/race fails
-nova test --rerun-failed                 # только провалившиеся в last run
-nova test --include-stdlib               # включить std/* помимо nova_tests/*
+nova test --filter syntax/closure        # subset of tests
+nova test --mode release                 # -O3 -flto compilation
+nova test --toolchain clang              # force toolchain
+nova test --timeout 60                   # timeout per test
+nova test --format json                  # JSON events (one per line)
+nova test --format junit > results.xml   # JUnit XML for CI parsers
+nova test --retries 2                    # retry transient AV/race fails
+nova test --rerun-failed                 # only failed-last-time
+nova test --include-stdlib               # include std/* alongside nova_tests/*
 ```
+
+Отладка одиночного теста (без walkdir, без параллельных накладных
+расходов):
+
+```sh
+./compiler-codegen/target/debug/nova-codegen test-build nova_tests/basics/literals.nv \
+    --toolchain clang --keep-artifacts
+```
+
+Настройка toolchain'а:
+- **Windows:** `winget install LLVM.LLVM` (Clang, рекомендуется) +
+  Visual Studio Build Tools (MSVC SDK + линкер, нужны и для Clang тоже).
+- **Linux:** `apt install clang` или `dnf install clang`; GCC обычно уже
+  установлен.
+- **macOS:** `xcode-select --install` (Apple Clang).
+
+Автоопределение выбирает сначала Clang, затем MSVC (Windows) или GCC
+(Linux). Переопределить: `--toolchain clang|msvc|gcc` или через
+переменные окружения (`NOVA_CLANG`, `NOVA_GCC`, `NOVA_VCVARS`).
 
 Подробный гайд флагов test-runner, EXPECT-маркеры, troubleshooting:
 [docs/dev/test-conventions.md](docs/dev/test-conventions.md).
@@ -311,29 +432,113 @@ nova test --include-stdlib               # включить std/* помимо n
 intra-doc-links, stability/deprecation, JSON Schema 2020-12 output:
 
 ```sh
-nova doc src/api.nv                # Markdown в stdout
+nova doc src/api.nv                # Markdown to stdout
 nova doc src/api.nv --format json  # JSON (D107 schema v1)
-nova doc src/api.nv --test         # запустить doc-tests
+nova doc src/api.nv --test         # run doc-tests
 nova doc src/api.nv --check        # validate (broken links, missing summaries)
 ```
 
 Полный user guide: [docs/nova-doc.md](docs/nova-doc.md).
 
+## SMT-верификация + настройка Z3
+
+Nova включает статический верификатор контрактов (`requires`/`ensures`/`invariant`).
+По умолчанию используется **TrivialBackend** (reflexive tautologies, constant folding) —
+работает без внешних зависимостей. Для полноценной верификации нужен **Z3**.
+
+### Без Z3 (по умолчанию)
+
+Работает сразу после обычной сборки. Доказывает только рефлексивные
+контракты и константные выражения. Z3-тесты автоматически SKIP.
+
+```bash
+cd nova-cli && cargo build --release
+nova test nova_tests/contracts/
+# PASS: 82  SKIP: 9 (z3-only)
+```
+
+### С Z3
+
+**Шаг 1: установить Z3 через vcpkg** (один раз)
+
+```bash
+# Windows:
+cd compiler-codegen
+vcpkg install --triplet x64-windows-static --x-manifest-root=.
+
+# Linux:
+cd compiler-codegen
+vcpkg install --triplet x64-linux --x-manifest-root=.
+
+# macOS:
+cd compiler-codegen
+vcpkg install --triplet x64-osx --x-manifest-root=.
+```
+
+`vcpkg.json` уже содержит `z3` и `bdwgc` — обе зависимости устанавливаются
+одной командой. Результат: `vcpkg_installed/<triplet>/lib/libz3.a`.
+
+> Этот шаг нужен ТОЛЬКО для Z3. Boehm GC (`bdwgc`) он тоже устанавливает —
+> если vcpkg уже настроен, `nova build`/`nova test` предпочтут vcpkg-сборку
+> (быстрее, без пересборки), — но с #269 Ф.2 это больше не обязательно:
+> без vcpkg/`NOVA_GC_LIB_DIR` компилятор одноразово собирает Boehm GC сам
+> из вендорённого сабмодуля (`compiler-codegen/nova_rt/gc` +
+> `compiler-codegen/nova_rt/libatomic_ops`, тянутся `git clone --recursive`
+> или `git submodule update --init`) — см. «Building from source» выше.
+
+**Шаг 2: собрать с feature `z3-backend`**
+
+```bash
+cd nova-cli
+cargo build --release --features z3-backend
+```
+
+**Шаг 3: запустить с Z3**
+
+```bash
+NOVA_SMT_BACKEND=z3 nova test nova_tests/contracts/
+# PASS: 91  SKIP: 0
+```
+
+> `VCPKG_TRIPLET` переопределяет triplet если нужен нестандартный
+> (например `arm64-linux`).
+
+Подробнее: [docs/plans/33-contracts-implementation.md](docs/plans/33-contracts-implementation.md) — раздел «Z3 dev-setup».
+
 ## Поддержка редакторов
 
-Plugin'ы подсветки синтаксиса для нескольких редакторов лежат в
-[editors/](editors/). Все — TextMate grammar / handcrafted, без
-семантического анализа (LSP пока не реализован).
+Плагины подсветки синтаксиса для нескольких редакторов лежат в
+[editors/](editors/). Это TextMate / написанные вручную грамматики — только
+подсветка синтаксиса. Семантические возможности (диагностика и т. д.)
+приходят из отдельного языкового сервера, [`nova-lsp/`](nova-lsp/); его
+подключение к этим редакторным плагинам в процессе.
 
 | Редактор | Подкаталог | Заметки |
 |---|---|---|
 | VSCode / Cursor / VSCodium | [`editors/vscode/`](editors/vscode/) | TextMate grammar |
 | Sublime Text / TextMate | [`editors/sublime/`](editors/sublime/) | переиспользует `.tmLanguage.json` от VSCode |
-| Vim / Neovim | [`editors/vim/`](editors/vim/) | handcrafted `syntax/nova.vim` |
+| Vim / Neovim | [`editors/vim/`](editors/vim/) | написанный вручную `syntax/nova.vim` |
 | Emacs | [`editors/emacs/`](editors/emacs/) | major-mode `nova-mode.el` |
 
-Полный обзор, команды установки для каждого редактора и roadmap
-(LSP, tree-sitter, JetBrains): [editors/README.md](editors/README.md).
+Полный обзор, команды установки для каждого редактора и roadmap (LSP,
+tree-sitter, JetBrains) — см. [editors/README.md](editors/README.md).
+
+## Зеркала
+
+**GitHub — источник истины.** Issues и pull request'ы принимаются только
+там. Два других хостинга — зеркала, синхронизируемые пушем во все три
+сразу — изменение, сделанное прямо в зеркале, будет перезаписано следующим
+пушем, так что не присылайте туда патчи.
+
+| Хостинг | Организация | Роль |
+|---|---|---|
+| GitHub | [github.com/nv-lang](https://github.com/nv-lang) | **источник истины** — issues, pull request'ы, релизы |
+| GitVerse | [gitverse.ru/nv-lang](https://gitverse.ru/nv-lang) | зеркало |
+| SourceCraft | [sourcecraft.dev/nv-lang](https://sourcecraft.dev/nv-lang/repos) | зеркало |
+
+Каждый репозиторий из раздела [Экосистема](#экосистема) существует на всех
+трёх хостингах под тем же именем, так что любой из них можно клонировать,
+если GitHub недоступен.
 
 ## Лицензия
 

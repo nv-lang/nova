@@ -1,11 +1,13 @@
-﻿# Auto-derive Guide (Plan 126, D109 amend + D230)
+# Auto-derive Guide (Plan 126, D109 amend + D230)
+
+**English** | [Русский](auto-derive-guide.ru.md)
 
 > **Status:** ✅ landed 2026-06-05.
 > **D-blocks:** [D109 amend](../../spec/decisions/08-runtime.md#d109-amend-plan-126-2026-06-05---auto-derive-для-пользовательских-типов) + [D230 NEW](../../spec/decisions/02-types.md#d230-new--Clone-protocol-plan-126-ф1).
 
-Nova поддерживает **auto-derive** для пяти built-in протоколов через
-`#impl(P)` annotation на пользовательском типе. Аналог Rust `#[derive(...)]`
-без отдельного keyword'а — переиспользуется единый mechanism `#impl(P)` (D186).
+Nova supports **auto-derive** for five built-in protocols via an `#impl(P)`
+annotation on a user-defined type. An analog of Rust's `#[derive(...)]`
+with no separate keyword — the same `#impl(P)` mechanism is reused (D186).
 
 ## TL;DR
 
@@ -25,58 +27,61 @@ ro h = a.hash()            // auto-derived @hash
 ro cmp = a.compare(b)      // auto-derived @compare
 ```
 
-Компилятор синтезирует тела методов **memberwise рекурсивно** на основе полей
-типа.
+The compiler synthesizes method bodies **memberwise, recursively**, based on
+the type's fields.
 
-## Поддерживаемые протоколы
+## Supported protocols
 
-| Protocol     | Метод                          | Стратегия synth                            |
+| Protocol     | Method                          | Synthesis strategy                            |
 |--------------|--------------------------------|---------------------------------------------|
 | `Equal`  | `@equal(other) -> bool`       | memberwise `&&` chain                       |
 | `Hash`   | `@hash() -> u64`               | XOR + rotate FxHash-style combine           |
-| `Clone`  | `@clone() -> Self` ([D230](../../spec/decisions/02-types.md#d230-new--Clone-protocol-plan-126-ф1)) | record literal с `.clone()` per field |
+| `Clone`  | `@clone() -> Self` ([D230](../../spec/decisions/02-types.md#d230-new--Clone-protocol-plan-126-ф1)) | a record literal with `.clone()` per field |
 | `Compare` | `@compare(other) -> int`       | lexicographic if-chain (memcmp-style)       |
 | `Display`  | `@display(sb) -> ()`               | `sb.append("TypeName { f: v, ... }")` chain |
 
-Все 5 — single-method built-in protocols, объявлены в `std/prelude/protocols.nv`.
+All 5 are single-method built-in protocols, declared in
+`std/prelude/protocols.nv`.
 
-## Когда compiler synthesize'ит
+## When the compiler synthesizes
 
-1. Type помечен `#impl(P)` где `P` — один из 5 built-in protocols.
-2. Type **не** предоставляет explicit `fn T @method(...)` — иначе user wins.
-3. Все поля type'а **eligible** — primitive ИЛИ имеют `#impl(P)` ИЛИ
-   имеют explicit `fn FieldType @method`.
+1. The type is marked `#impl(P)` where `P` is one of the 5 built-in protocols.
+2. The type does **not** provide an explicit `fn T @method(...)` — otherwise
+   the user's version wins.
+3. All of the type's fields are **eligible** — primitive OR have `#impl(P)`
+   OR have an explicit `fn FieldType @method`.
 
-Если хотя бы одно условие нарушено — diagnostic из `E_AUTO_DERIVE_*` family
-(см. ниже).
+If even one condition is violated — a diagnostic from the `E_AUTO_DERIVE_*`
+family (see below).
 
-## Когда compiler НЕ synthesize'ит
+## When the compiler does NOT synthesize
 
-- **Protocol не built-in** (user-defined protocol) — auto-derive только для
-  5 known built-in. User-defined protocols → user пишет body вручную.
-- **Type provides explicit method** — `fn T @equal(other) -> bool => ...`
-  wins над auto-derive (manual override).
-- **Field type не implement** требуемый protocol →
+- **The protocol isn't built-in** (a user-defined protocol) — auto-derive is
+  only for the 5 known built-ins. User-defined protocols → the user writes
+  the body by hand.
+- **The type provides an explicit method** — `fn T @equal(other) -> bool => ...`
+  wins over auto-derive (a manual override).
+- **The field type doesn't implement** the required protocol →
   `E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL`.
 
 ## Field eligibility
 
-Каждое поле type'а должно быть одним из:
+Every field of the type must be one of:
 
-| Категория поля | Что делает synthesizer |
+| Field category | What the synthesizer does |
 |---|---|
-| Primitive (`int`/`f64`/`bool`/`char`/`byte`/`str`/`u*`/`i*`) | Inline copy/compare/hash через built-in routines |
+| Primitive (`int`/`f64`/`bool`/`char`/`byte`/`str`/`u*`/`i*`) | Inline copy/compare/hash via built-in routines |
 | `#impl(P)` annotated record/tuple | Recursive call `@field.method(...)` |
-| Explicit `fn FieldType @method` | Direct dispatch к user-provided method |
-| `[]T` array | Recursive по `T` |
-| Tuple `(A, B, ...)` | Recursive по element types |
+| Explicit `fn FieldType @method` | Direct dispatch to the user-provided method |
+| `[]T` array | Recursive over `T` |
+| Tuple `(A, B, ...)` | Recursive over element types |
 
-Что **не eligible** — `fn(...)` types, pointers `*T`, opaque types, protocol
-types (требуют explicit user impl).
+What's **not eligible** — `fn(...)` types, pointers `*T`, opaque types,
+protocol types (they require an explicit user impl).
 
-## Примеры
+## Examples
 
-### Простой record
+### A simple record
 
 ```nova
 #impl(Equal)
@@ -89,7 +94,7 @@ ro b = Money { cents: 100 }
 assert(a == b)  // → @a.cents == b.cents → true
 ```
 
-### Рекурсивный auto-derive
+### Recursive auto-derive
 
 ```nova
 #impl(Clone)
@@ -119,7 +124,7 @@ type CaseInsensitive {
     text str
 }
 
-// User implements @equal — wins над auto-derive.
+// User implements @equal — wins over auto-derive.
 fn CaseInsensitive @equal(other CaseInsensitive) -> bool =>
     @text.to_lower() == other.text.to_lower()
 
@@ -142,20 +147,20 @@ ro r = p.clone()
 
 ### Heap-record `==` override
 
-До Plan 126 на heap-record `a == b` был **identity-eq** (pointer comparison).
-После Plan 126:
+Before Plan 126, on a heap record `a == b` was **identity-eq** (pointer
+comparison). After Plan 126:
 
 ```nova
-// Без #impl(Equal) — identity-eq preserved (backward compat).
+// Without #impl(Equal) — identity-eq preserved (backward compat).
 type Account {
     id int
     balance f64
 }
 ro a = Account { id: 1, balance: 100.0 }
 ro b = Account { id: 1, balance: 100.0 }
-assert(a != b)  // ← разные allocation'ы, identity не совпадает
+assert(a != b)  // ← different allocations, identity doesn't match
 
-// С #impl(Equal) — structural eq.
+// With #impl(Equal) — structural eq.
 #impl(Equal)
 type AccountStruct {
     id int
@@ -166,16 +171,16 @@ ro y = AccountStruct { id: 1, balance: 100.0 }
 assert(x == y)  // ← memberwise structural eq
 ```
 
-## Диагностики (Plan 126 Ф.4)
+## Diagnostics (Plan 126)
 
-| Код                                  | Когда триггерится                                                              |
+| Code                                  | When it triggers                                                              |
 |---------------------------------------|--------------------------------------------------------------------------------|
-| `E_AUTO_DERIVE_CYCLE`                 | Cyclic recursion через fields не терминируется                                 |
-| `E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL`  | Field type не implement требуемый protocol                                     |
-| `E_AUTO_DERIVE_UNKNOWN_PROTOCOL`      | Protocol не в built-in list (`Equal`/`Hash`/`Clone`/`Compare`/`Display`) |
-| `E_AUTO_DERIVE_UNSUPPORTED_KIND`      | Type kind (Newtype/Alias/Effect/Protocol/Opaque) не поддерживает derive        |
+| `E_AUTO_DERIVE_CYCLE`                 | Cyclic recursion through fields doesn't terminate                                 |
+| `E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL`  | Field type doesn't implement the required protocol                                     |
+| `E_AUTO_DERIVE_UNKNOWN_PROTOCOL`      | Protocol isn't in the built-in list (`Equal`/`Hash`/`Clone`/`Compare`/`Display`) |
+| `E_AUTO_DERIVE_UNSUPPORTED_KIND`      | Type kind (Newtype/Alias/Effect/Protocol/Opaque) doesn't support derive        |
 
-### Пример E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL
+### Example: E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL
 
 ```nova
 type Plain {
@@ -184,16 +189,16 @@ type Plain {
 
 #impl(Equal)
 type Wrapper {
-    inner Plain    // ← Plain не #impl(Equal)
+    inner Plain    // ← Plain doesn't #impl(Equal)
 }
 // ❌ E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL:
 //   type `Wrapper` claims `#impl(Equal)` but field `inner`
 //   (type `Plain`) does not implement `Equal`.
-//   Either add `#impl(Equal)` to `Plain`, или provide explicit
+//   Either add `#impl(Equal)` to `Plain`, or provide explicit
 //   `fn Wrapper @equal(...)`.
 ```
 
-**Fix**: добавить `#impl(Equal)` на `Plain`:
+**Fix**: add `#impl(Equal)` to `Plain`:
 
 ```nova
 #impl(Equal)   // ← Fix: now Plain eligible
@@ -209,9 +214,9 @@ type Wrapper {
 
 ## Cycle detection
 
-Compiler ведёт **visited set** `(type, protocol)` во время synthesis. Если
-synthesis для типа `T` уже идёт, и встречается рекурсивный путь обратно к
-`T` — `E_AUTO_DERIVE_CYCLE`:
+The compiler maintains a **visited set** `(type, protocol)` during
+synthesis. If synthesis for type `T` is already underway and a recursive
+path back to `T` is encountered — `E_AUTO_DERIVE_CYCLE`:
 
 ```nova
 #impl(Clone)
@@ -219,41 +224,43 @@ type A { b B }
 
 #impl(Clone)
 type B { a A }
-// ❌ E_AUTO_DERIVE_CYCLE: cyclic recursion через fields не терминируется.
+// ❌ E_AUTO_DERIVE_CYCLE: cyclic recursion through fields doesn't terminate.
 //    Provide explicit `fn A @clone(...)` or `fn B @clone(...)`.
 ```
 
-**Fix**: явный impl на одном из типов разрывает рекурсию:
+**Fix**: an explicit impl on one of the types breaks the recursion:
 
 ```nova
 #impl(Clone)
 type A { b B }
 
-fn A @clone() -> A => A { b: @b }   // ← manual; синтезатор для B продолжит работать
+fn A @clone() -> A => A { b: @b }   // ← manual; the synthesizer for B will keep working
 ```
 
-## Композиция с Plan 124.x семантикой
+## Composition with Plan 124.x semantics
 
-Auto-derive **совместим** с:
+Auto-derive is **compatible** with:
 
-- **`priv` field modifier** ([Plan 124.1/D220 §3.3.1](../../spec/decisions/02-types.md#d220)):
-  synthesizer работает в type-method scope — имеет доступ к priv-полям.
-- **`mut` field modifier** ([D33](../../spec/decisions/02-types.md#d33)):
-  `mut`-fields копируются как обычные fields, mutability preserve'ится в new value.
-- **`ro` binding** ([D33](../../spec/decisions/02-types.md#d33), [D175](../../spec/decisions/02-types.md#d175)):
-  synthesized methods receive `ro Self` receiver — only-read access.
-- **Value-record `type X value { ... }`** ([Plan 124.8 D228](../../spec/decisions/02-types.md#d228)):
-  full support, synthesis работает идентично heap-record.
+- **The `priv` field modifier** ([Plan 124.1/D220 §3.3.1](../../spec/decisions/02-types.md#d220)):
+  the synthesizer runs in type-method scope — it has access to `priv` fields.
+- **The `mut` field modifier** ([D33](../../spec/decisions/02-types.md#d33)):
+  `mut` fields are copied like ordinary fields, mutability is preserved in
+  the new value.
+- **The `ro` binding** ([D33](../../spec/decisions/02-types.md#d33), [D175](../../spec/decisions/02-types.md#d175)):
+  synthesized methods receive a `ro Self` receiver — read-only access.
+- **Value record `type X value { ... }`** ([Plan 124.8 D228](../../spec/decisions/02-types.md#d228)):
+  full support, synthesis works identically to a heap record.
 - **Named tuple `type X(a int, b str)`** ([Plan 120 D215](../../spec/decisions/02-types.md#d215)):
-  fields обрабатываются через `NamedTupleField` ровно как `RecordField`.
+  fields are processed through `NamedTupleField` exactly like `RecordField`.
 
-## Sum-type rich synthesis (Plan 180 Ф.1, D345 — ✅ landed)
+## Sum-type rich synthesis ([Plan 180, D345](../../spec/decisions/02-types.md#d345) — ✅ landed)
 
-Все шесть built-in-протоколов синтезируются для sum-типов через
-`match @ { … }` с одной arm на variant (`SumVariantKind::Unit`/`Tuple`/`Record`).
-Payload-элементы биндятся в arm-паттерне и рекурсятся ровно как record-поля.
+All six built-in protocols are synthesized for sum types via
+`match @ { … }` with one arm per variant (`SumVariantKind::Unit`/`Tuple`/`Record`).
+Payload elements are bound in the arm pattern and recurse exactly like
+record fields.
 
-| Marker                          | Форма                                                          | Статус |
+| Marker                          | Form                                                          | Status |
 |---------------------------------|----------------------------------------------------------------|--------|
 | `[M-126-sum-equal-rich]`        | same-variant + payload-wise `==` (nested match, cross-variant → false) | ✅ CLOSED |
 | `[M-126-sum-hash-rich]`         | variant-index seed ⊕ payload-hash (rotate-XOR combine)         | ✅ CLOSED |
@@ -261,56 +268,63 @@ Payload-элементы биндятся в arm-паттерне и рекур�
 | `[M-126-sum-compare-rich]`      | variant-index order, then payload lexicographic                | ✅ CLOSED |
 | `[M-126-sum-fmt-rich]`          | variant-aware `@display`/`@debug` (`V` / `V(x, y)` / `V { f: x }`) | ✅ CLOSED |
 
-> **Ergonomics-примечание:** метод на bare-unit-варианте (`Nought.hash()`)
-> мис-инферится в тип-варианта; аннотируйте через локал `ro n Colour = Nought`
-> (та же bidirectional-инференс-граница, что для `Empty`-коллизий D141).
+> **Ergonomics note:** a method call on a bare unit variant (`Nought.hash()`)
+> mis-infers to the variant's type; annotate it via a local
+> `ro n Colour = Nought` (the same bidirectional-inference boundary as for
+> `Empty` collisions, D141).
 
-**Serialize/Deserialize (Plan 180 Ф.2-sum, externally-tagged — ✅ landed).**
-`#impl(Serialize + Deserialize)` на sum → externally-tagged wire (Q4): unit →
-`"V"`; single-payload → `{"V": x}`; tuple → `{"V": [a, b]}`; record →
-`{"V": {fields}}`. Deser читает тег (`is_str` → bare string / single object-key),
-unknown-tag → `DeError{UnknownVariant}`. Internal/adjacent/untagged tagging →
-followup `[M-180-serde-tagging-modes]` (гейт на `#serde`-атрибутах). Пример:
-`nova_tests/serde/sum_autoderive.nv`.
+**Serialize/Deserialize (Plan 180, externally-tagged — ✅ landed).**
+`#impl(Serialize + Deserialize)` on a sum → an externally-tagged wire (Q4):
+unit → `"V"`; single-payload → `{"V": x}`; tuple → `{"V": [a, b]}`; record →
+`{"V": {fields}}`. Deser reads the tag (`is_str` → bare string / single
+object key), an unknown tag → `DeError{UnknownVariant}`.
+Internal/adjacent/untagged tagging → followup `[M-180-serde-tagging-modes]`
+(gated on `#serde` attributes). Example: `nova_tests/serde/sum_autoderive.nv`.
 
-## Что НЕ supported V1 (followup)
+## What's NOT supported in V1 (followup)
 
-| Marker                          | Описание                                                       |
+| Marker                          | Description                                                       |
 |---------------------------------|----------------------------------------------------------------|
-| `[M-126-codegen-method-table]`  | V1: synthesized FnDecl не register'ится в method_table. Codegen wiring для full `a == b` runtime semantics — V2 expansion |
+| `[M-126-codegen-method-table]`  | V1: the synthesized FnDecl isn't registered in method_table. Codegen wiring for full `a == b` runtime semantics — V2 expansion |
 
-V1 fokuses на type-check level — auto-derive **suppresses** `E_IMPL_MISSING_METHODS` корректно, что разблокирует pattern usage в downstream type-checked code. Полное `==` wiring через method_table — Plan 126 V2 (когда понадобится в production stdlib).
+V1 focuses on the type-check level — auto-derive **correctly suppresses**
+`E_IMPL_MISSING_METHODS`, which unblocks pattern usage in downstream
+type-checked code. Full `==` wiring through method_table is Plan 126 V2
+(once it's needed in the production stdlib).
 
-## Метод-уровень `#impl(P)` — opt-in конформность (D268, Plan 154.1)
+## Method-level `#impl(P)` — opt-in conformance (D268, Plan 154.1)
 
-`#impl(P)` как ведущий атрибут работает не только на **типе** (auto-derive выше),
-но и на отдельной **метод-декларации** — это **необязательная** пометка «этот метод
-реализует метод протокола `P`»:
+`#impl(P)` as a leading attribute works not only on a **type** (auto-derive
+above), but also on an individual **method declaration** — it's an
+**optional** marker meaning "this method implements protocol `P`'s method":
 
 ```nova
 #impl(Display)
 fn int @display(mut sb StringBuilder) -> () { sb.append(@) }
 ```
 
-- **Opt-in, не required.** Конформность остаётся **структурной** — тип с подходящим
-  методом удовлетворяет бонд `[T Display]` и без `#impl`. `#impl` лишь **добавляет**
-  проверку подписи против `P` + явно привязывает `P` к receiver-типу
-  (`type_impl_protocols`), как если бы `P` был перечислен на `type`-декларации.
-- **Три кода ошибок** (checker): `E_IMPL_UNKNOWN_PROTOCOL` (P не протокол),
-  `E_IMPL_NOT_A_PROTOCOL_METHOD` (`@m` не объявлен в `P`),
-  `E_IMPL_SIGNATURE_MISMATCH` (подпись/receiver-mut не совпадает).
-- **Где применяется в stdlib:** все 6 примитивов (`int/f64/bool/char/str/f32`) получили
-  конкретные `#impl(Display)` + `#impl(Debug)` в [protocols.nv](../std/prelude/protocols.nv) —
-  это чинит мис-диспатч `Vec[T].debug(sb)` на примитивном элементе (Plan 154.1 / D269).
+- **Opt-in, not required.** Conformance remains **structural** — a type
+  with a matching method satisfies the bound `[T Display]` even without
+  `#impl`. `#impl` only **adds** a signature check against `P` + explicitly
+  binds `P` to the receiver type (`type_impl_protocols`), as if `P` had
+  been listed on the `type` declaration.
+- **Three error codes** (checker): `E_IMPL_UNKNOWN_PROTOCOL` (`P` isn't a
+  protocol), `E_IMPL_NOT_A_PROTOCOL_METHOD` (`@m` isn't declared in `P`),
+  `E_IMPL_SIGNATURE_MISMATCH` (the signature/receiver-mut doesn't match).
+- **Where it's used in the stdlib:** all 6 primitives
+  (`int/f64/bool/char/str/f32`) got concrete `#impl(Display)` +
+  `#impl(Debug)` in [protocols.nv](../std/prelude/protocols.nv) — this
+  fixes the mis-dispatch of `Vec[T].debug(sb)` on a primitive element
+  (Plan 154.1 / D269).
 
-Подробности — [D268](../../spec/decisions/10-overloading.md#d268-opt-in-конформность-протоколов-impl-на-метод-декларации)
-и [Plan 154.1](../plans/154.1-impl-conformance-primitive-format.md).
+Details — [D268](../../spec/decisions/10-overloading.md#d268-opt-in-конформность-протоколов-impl-на-метод-декларации)
+and [Plan 154.1](../plans/154.1-impl-conformance-primitive-format.md).
 
-## См. также
+## See also
 
-- [Plan 126 — Auto-derive протоколов](../plans/126-auto-derive-protocols.md) —
-  весь roadmap, design rationale, AC list.
-- [D268 / D269 — метод-уровень `#impl` + конкретные Display/Debug примитивов](../../spec/decisions/10-overloading.md#d268-opt-in-конформность-протоколов-impl-на-метод-декларации)
+- [Plan 126 — Protocol auto-derive](../plans/126-auto-derive-protocols.md) —
+  the whole roadmap, design rationale, AC list.
+- [D268 / D269 — method-level `#impl` + concrete primitive Display/Debug](../../spec/decisions/10-overloading.md#d268-opt-in-конформность-протоколов-impl-на-метод-декларации)
   (Plan 154.1).
 - [D109 amend](../../spec/decisions/08-runtime.md#d109-amend-plan-126-2026-06-05---auto-derive-для-пользовательских-типов)
   — auto-derive rules.

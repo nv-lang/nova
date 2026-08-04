@@ -1,17 +1,21 @@
+**English** | [Русский](ffi-cookbook.ru.md)
+
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Nova FFI Cookbook
 
-> **Scope.** Механика границы `.nv` ↔ native: `extern "C"`, opaque/typed
-> указатели, `CStr`, tuple-by-value, C-ABI-проверка, и **как подключить
-> native-артефакты к сборке** (`[ffi]` / `[ffi.staticlib]`). Foundational FFI —
-> Plan 115 D214; typed-pointer family (`*T`, `*mut T`, `Option[*T]`-NPO) —
-> **влит** (Plan 118/138.5/174.x; секции ниже — уже не «preview»).
+> **Scope.** The mechanics of the `.nv` ↔ native boundary: `extern "C"`,
+> opaque/typed pointers, `CStr`, tuple-by-value, C-ABI checking, and **how
+> to plug native artifacts into the build** (`[ffi]` / `[ffi.staticlib]`).
+> Foundational FFI — Plan 115 D214; the typed-pointer family (`*T`, `*mut
+> T`, `Option[*T]`-NPO) is **merged** (Plan 118/138.5/174.x; the sections
+> below are no longer "preview").
 >
-> **Как сделать МОДУЛЬ** (layout пакета, `nova.toml`, стабильность, тесты) —
-> общий гайд [authoring-a-module](authoring-a-module.md) (native-backed —
-> его §7). Дизайн-конвенции модуля (эффект-плумбинг, типы, ошибки) —
-> [module-conventions](../dev/module-conventions.md). Именование внешних пакетов
-> (`nova-<пакет>`) — [D78-амендмент Plan 195](../../spec/decisions/07-modules.md#именование-внешних-пакетов-репозиториев-амендмент-plan-192-2026-07-10).
+> **How to build a MODULE** (package layout, `nova.toml`, stability, tests) —
+> the general guide [authoring-a-module](authoring-a-module.md) (native-backed —
+> its §7). Module design conventions (effect plumbing, types, errors) —
+> [module-conventions](../dev/module-conventions.md). Naming of external
+> packages (`nova-<package>`) —
+> [D78 amendment Plan 195](../../spec/decisions/07-modules.md#именование-внешних-пакетов-репозиториев-амендмент-plan-192-2026-07-10).
 >
 > ⚠️ **Plan 134 (2026-06-09): `ptr` built-in type removed.** Use `*()` (pointer
 > to unit type = `void*` in C) everywhere `ptr` appeared. Compiler emits
@@ -34,19 +38,29 @@ introduced in Plan 115.
 
 ## Pointer modifier rules (FINAL — Plan 138.5)
 
-При записи FFI-сигнатур с pointer/typed wrappers модификатор pointee пишется **постфиксом**, сразу после `*` (`*mut T` / `*ro T` / `*unsafe T`). **Prefix перед `*` запрещён** (`mut * T` / `ro * T` / `unsafe * T` → `E_POINTER_PREFIX_MODIFIER`). Перепривязываемость указателя — это **binding** (`let` / `mut`), не тип.
+When writing FFI signatures with pointer/typed wrappers, the pointee
+modifier is written **postfix**, right after `*` (`*mut T` / `*ro T` /
+`*unsafe T`). **A prefix before `*` is forbidden** (`mut * T` / `ro * T` /
+`unsafe * T` → `E_POINTER_PREFIX_MODIFIER`). Whether a pointer can be
+re-pointed is a property of the **binding** (`let` / `mut`), not of the
+type.
 
-Краткая шпаргалка:
+Quick cheat sheet:
 
-- `*T` ≡ `*ro T` — pointer к read-only T (default)
-- `*mut T` — pointer к writable T (caller может изменить pointee)
-- `*unsafe T` — pointer к possibly-uninit T (MaybeUninit analog); сам указатель non-null
-- `Option[*T]` — **nullable** pointer (NPO, 8 байт); это замена старому `unsafe * T`
-- `Option[*unsafe T]` — FFI nullable-uninit pointer (None = null, Some = non-null ptr к uninit)
-- `*mut *ro Acc` — postfix chain (writable-target ptr к read-only-target ptr к Acc)
-- `mut p *mut T` — binding mut (p re-pointable) + pointee mut; `let q *ro T` — fixed binding + ro pointee
+- `*T` ≡ `*ro T` — pointer to read-only T (default)
+- `*mut T` — pointer to writable T (the caller may change the pointee)
+- `*unsafe T` — pointer to possibly-uninit T (MaybeUninit analog); the
+  pointer itself is non-null
+- `Option[*T]` — a **nullable** pointer (NPO, 8 bytes); this replaces the
+  old `unsafe * T`
+- `Option[*unsafe T]` — FFI nullable-uninit pointer (None = null, Some =
+  non-null ptr to uninit)
+- `*mut *ro Acc` — postfix chain (writable-target ptr to read-only-target
+  ptr to Acc)
+- `mut p *mut T` — mut binding (p is re-pointable) + mut pointee; `let q
+  *ro T` — fixed binding + ro pointee
 
-Полные правила (arrow→box model, value-T composition §V3.1/§V3.2) — см. [`docs/guide/typed-pointers.md`](typed-pointers.md). Spec — [D216 §1 FINAL](../../spec/decisions/02-types.md#d216-typed-pointer-family--unsafe-model--null-safety-через-npo) + [Plan 138.5](../plans/138.5-d216-v2-v3-simplification.md).
+Full rules (arrow→box model, value-T composition §V3.1/§V3.2) — see [`docs/guide/typed-pointers.md`](typed-pointers.md). Spec — [D216 §1 FINAL](../../spec/decisions/02-types.md#d216-typed-pointer-family--unsafe-model--null-safety-через-npo) + [Plan 138.5](../plans/138.5-d216-v2-v3-simplification.md).
 
 ## Layered FFI pattern
 
@@ -92,20 +106,21 @@ Nova V1 has these foundational pieces (commit `<plan-115-merge>`):
 - D82 amended (Plan 115): user-level `external fn` permitted in any
   module — no longer restricted to `std.runtime.*`.
 
-Shipped since V1 (не «future» — уже влито):
+Shipped since V1 (not "future" — already merged):
 - **Tuple newtype `type X(*())` constructor** ✅ (`[M-115-newtype-constructor]`)
-  — canonical-форма; single-field-record больше не нужна.
-- **User-shim build pipeline** ✅ — задаётся не CLI-флагом, а декларативно в
-  `nova.toml`: `[ffi]` (готовые `.c`-шимы + системные `libs`) и `[ffi.staticlib]`
-  (собираемый staticlib, Plan 195). При `import` модуля артефакты
-  компилируются/линкуются автоматически — перекомпилировать Nova-компилятор не
-  надо. См. [«Build pipeline»](#build-pipeline--ffi-и-ffistaticlib-манифест) ниже.
+  — the canonical form; a single-field record is no longer needed.
+- **User-shim build pipeline** ✅ — configured not via a CLI flag but
+  declaratively in `nova.toml`: `[ffi]` (ready-made `.c` shims + system
+  `libs`) and `[ffi.staticlib]` (a staticlib built on the fly, Plan 195).
+  When the module is `import`ed, the artifacts are compiled/linked
+  automatically — no need to recompile the Nova compiler. See
+  ["Build pipeline"](#build-pipeline--ffi-and-ffistaticlib-manifest) below.
 - **Typed-pointer family** ✅ (`*T`/`*mut T`/`Option[*T]`-NPO/`CStr`) — Plan
-  118/138.5; см. секции ниже.
+  118/138.5; see the sections below.
 
-Всё ещё followup:
+Still a followup:
 - Auto-generated bindings from C headers — `[M-115-bindgen-tool]`
-  (`nova bindgen header.h`, отдельный tooling-план).
+  (`nova bindgen header.h`, a separate tooling plan).
 
 ## Example 1 — libsqlite3 binding
 
@@ -222,7 +237,7 @@ const SQLITE_DONE int = 101
 
 type DbError | OpenFailed(int) | ExecFailed(int) | PrepareFailed(int)
 
-// Open database, wrap raw ptr в typed Db handle.
+// Open database, wrap raw ptr in a typed Db handle.
 fn Db.open(path str) Fail[DbError] -> Db {
     ro (raw, rc) = nova_fn_sqlite3_open(path)
     if rc != SQLITE_OK { Fail.throw(DbError.OpenFailed(rc)) }
@@ -235,7 +250,7 @@ fn Db @exec(sql str) Fail[DbError] -> () {
     if rc != SQLITE_OK { Fail.throw(DbError.ExecFailed(rc)) }
 }
 
-// Close. consume — после @close handle invalid (D131).
+// Close. consume — after @close, the handle is invalid (D131).
 fn Db consume @close() -> () {
     nova_fn_sqlite3_close(self.value)
 }
@@ -359,16 +374,16 @@ guard ensures single definition).
   Nova spawns fibers that touch the handle, ensure handle is either
   thread-safe or pinned to one fiber.
 
-## Typed pointers + unsafe model (Plan 118 — влито)
+## Typed pointers + unsafe model (Plan 118 — merged)
 
-> **Status:** влито (Plan 118 → 138.5 FINAL D216; unsafe fn keyword — 118.1.7;
+> **Status:** merged (Plan 118 → 138.5 FINAL D216; unsafe fn keyword — 118.1.7;
 > C-ABI checker — 174.6). Reference doc: [`docs/guide/typed-pointers.md`](typed-pointers.md).
 > Plan: [`docs/plans/118-typed-pointers-and-unsafe.md`](../plans/118-typed-pointers-and-unsafe.md).
-> Ниже — эволюция FFI-паттернов от opaque `*()` к typed `*T`; оба варианта
-> компилируются сегодня (opaque — legacy-совместимый, typed — предпочтительный).
+> Below — the evolution of FFI patterns from opaque `*()` to typed `*T`; both
+> variants compile today (opaque — legacy-compatible, typed — preferred).
 
-FFI-паттерны от opaque `*()` перешли к typed pointer family `*T` для
-type-safe FFI с buffers / structs / nullable returns:
+FFI patterns have moved from opaque `*()` to the typed pointer family `*T`
+for type-safe FFI with buffers / structs / nullable returns:
 
 ```nova
 // Plan 115 V1 / Plan 134 (current — works today):
@@ -394,8 +409,8 @@ unsafe {
 
 | | Plan 115 V1 / Plan 134 (`*()`) | Plan 118 V2 (*T family) |
 |---|---|---|
-| Type safety | ❌ opaque `*()` cast вручную | ✓ compile-time pointee check |
-| Mutability | ❌ нет различия | ✓ `*ro T` / `*mut T` |
+| Type safety | ❌ opaque `*()` cast by hand | ✓ compile-time pointee check |
+| Mutability | ❌ no distinction | ✓ `*ro T` / `*mut T` |
 | Null safety | ❌ `0 as *()` runtime check | ✓ `Option[*T]` + NPO zero-cost |
 | FFI buffer | ❌ untyped `*()` + manual offset | ✓ `*ro u8` / `*mut u8` typed |
 | Callback registration | ❌ N/A | ✓ `*fn(Args) -> Ret` |
@@ -405,11 +420,11 @@ unsafe {
 - `0 as ptr` → `0 as *()`
 - `null ptr` literals (already retracted Plan 118 A23) → `0 as *()`
 - Record handle wrappers `type X { ro value *() }` → tuple
-  newtype `type X(*)()` или `type X(*T)` для zero-overhead ABI
+  newtype `type X(*)()` or `type X(*T)` for a zero-overhead ABI
 
-See [`docs/guide/typed-pointers.md`](typed-pointers.md) для полной reference
-documentation и [`examples/typed_pointers/`](../../examples/typed_pointers/)
-для minimal working samples.
+See [`docs/guide/typed-pointers.md`](typed-pointers.md) for the full
+reference documentation and [`examples/typed_pointers/`](../../examples/typed_pointers/)
+for minimal working samples.
 
 ## Plan 118.1 — FFI intrinsics (foundation)
 
@@ -418,12 +433,12 @@ documentation и [`examples/typed_pointers/`](../../examples/typed_pointers/)
 ```nova
 import std.ffi.cstr.{CStr}
 
-// External fn principal pattern — typed handle вместо bare *u8
+// External fn principal pattern — a typed handle instead of a bare *u8
 external fn c_strlen(s CStr) -> i64
 external fn c_printf(fmt CStr) -> i32
 ```
 
-CStr backing type: `*u8` (Plan 118 typed pointer). ABI marshals к
+CStr backing type: `*u8` (Plan 118 typed pointer). The ABI marshals to
 `const char*` / `uint8_t*`.
 
 **Conversion methods (`@to_cstr`, copy-based, Plan 199 / D418, 2026-07-11):**
@@ -436,11 +451,11 @@ ro c = s.to_cstr()              // GC-allocs a fresh byte_len()+1 NUL-terminated
 ro buf = unsafe { RawMem.alloc(64) }
 ro c2 = s.to_cstr(buf, 64)      // copies ≤63 bytes + '\0'; TRUNCATES if longer, no scan
 
-// Direct usage в FFI call:
+// Direct usage in an FFI call:
 ro n = c_strlen(s.to_cstr())
 ```
 
-Pure-Nova реализация в `std/src/ffi/cstr.nv`: `str` carries no trailing-NUL
+Pure-Nova implementation in `std/src/ffi/cstr.nv`: `str` carries no trailing-NUL
 guarantee (D418 retracts D26 §Nul-termination), so BOTH `to_cstr` overloads
 COPY — there is no zero-copy path. `to_cstr()` allocates a fresh GC-managed
 `byte_len()+1`-byte buffer, copies the bytes, and appends `\0` — after an O(n)
@@ -454,18 +469,18 @@ are RETIRED, `to_` names the copy correctly).
 ```nova
 unsafe {
     ro x = 42
-    ro p = addr_of(x)         // *T pointer к local
+    ro p = addr_of(x)         // *T pointer to a local
     assert(p.read() == 42)
 }
 
 unsafe {
     mut buf = 0
     ro p = addr_of_mut(buf)   // *T (mut binding required)
-    p.write(100)               // codegen TBD per Ф.4
+    p.write(100)               // codegen TBD
 }
 ```
 
-Equivalent к `&x` operator (UnOp::AddrOf), rewriter-desugared.
+Equivalent to the `&x` operator (UnOp::AddrOf), rewriter-desugared.
 Use when explicit function-call syntax improves FFI readability.
 Same enforcement: unsafe context required, #realtime ban, lvalue
 validation (E_AMP_LITERAL / E_AMP_RECORD_LITERAL / E_ARRAY_INDEX_PTR_BANNED).
@@ -483,13 +498,13 @@ unsafe {
 }
 ```
 
-### Typed read/write на primitive `*T`
+### Typed read/write on a primitive `*T`
 
 ```nova
 unsafe {
     ro p = addr_of(some_int)
     ro v = p.read()                  // typed primitive read
-    p.write(100)                     // typed write (на *mut T)
+    p.write(100)                     // typed write (on *mut T)
     ro v_vol = p.read_volatile()     // MMIO read
     p.write_volatile(0xDEAD)         // MMIO write
 }
@@ -498,7 +513,7 @@ unsafe {
 ### Cross-refs
 
 - Spec D216 (typed pointers) + §22 (CStr type) — `spec/decisions/02-types.md`
-- Spec D418 §`str` без NUL-терминатора; copy-based `CStr`/`to_cstr`
+- Spec D418 §`str` without a NUL terminator; copy-based `CStr`/`to_cstr`
   (retracts D26 §«Nul-termination») — `spec/decisions/08-runtime.md`
 - Plan-doc — `docs/plans/118.1-ffi-intrinsics-and-cstring.md`,
   `docs/plans/199-str-drop-nul-termination.md`
@@ -672,53 +687,58 @@ rule (D294): the pointer is valid only while the `str` is live.
 
 ---
 
-## Build pipeline — `[ffi]` и `[ffi.staticlib]` манифест
+## Build pipeline — `[ffi]` and `[ffi.staticlib]` manifest
 
-Всё выше — как *написать* границу `.nv` ↔ native. Этот раздел — как *подключить*
-native-артефакты к сборке, чтобы `import` модуля тянул их **автоматически**, без
-правок компилятора. Декларация — в `nova.toml` пакета. Полное «как сделать
-модуль» — [authoring-a-module §7](authoring-a-module.md#7-native-backed-модуль-частный-случай).
+Everything above is about *writing* the `.nv` ↔ native boundary. This
+section is about *plugging* native artifacts into the build so that
+`import`ing the module pulls them in **automatically**, with no compiler
+changes. The declaration lives in the package's `nova.toml`. Full "how to
+build a module" — [authoring-a-module §7](authoring-a-module.md#7-native-backed-module-a-special-case).
 
-### `[ffi]` — готовые `.c`-шимы и системные `.lib` (Plan 115 D214)
+### `[ffi]` — ready-made `.c` shims and system `.lib`s (Plan 115 D214)
 
-Для тонкого C-шима и линковки уже-собранной системной библиотеки:
+For a thin C shim and linking an already-built system library:
 
 ```toml
 [ffi]
-c_shims      = ["native/sqlite3_shim.c"]            # компилируются и линкуются
+c_shims      = ["native/sqlite3_shim.c"]            # compiled and linked
 include_dirs = ["native/", "third_party/sqlite3/"]  # → clang -I
 libs         = ["sqlite3"]                          # → clang -lsqlite3 / sqlite3.lib
 ```
 
-Пути — относительно `nova.toml`; резолвятся в абсолютные перед вызовом clang.
-`.h`-only inline-шимы включаются force-include (`-include`), `.c` — как
-compilation unit. Секция `[ffi]` может быть пустой (`FFI-aware`-маркер).
+Paths are relative to `nova.toml`; they're resolved to absolute paths
+before invoking clang. `.h`-only inline shims are pulled in via
+force-include (`-include`), `.c` files as a compilation unit. The `[ffi]`
+section may be empty (an `FFI-aware` marker).
 
 ### `[ffi.staticlib]` — RETRACTED (Plan 195)
 
-**Ретрактировано владельцем 2026-07-10 (Plan 195).** Секция существовала
-(Plan 195) как обобщение хардкода `detect_tls`/`tls-cache`/`-lbcrypt -lntdll`
-на манифест-механизм, собирающий native-артефакт cargo'ом/make на лету. Она
-позволяла пользовательскому native-модулю требовать Rust/cargo как часть
-своей сборки — противоречит канону тулчейна (**компилятор Nova + clang**,
-`.nv → .c → бинарь`, БЕЗ Rust/cargo). `compiler-codegen/tls_shim/`
-(Rust-staticlib, rustls) — единственный пользователь механизма — заменён на
-`compiler-codegen/nova_rt/tls_c_shim.c` (mbedTLS, обычный `[ffi]`-путь).
-`FfiStaticlibConfig`/`resolve_ffi_staticlib`/`[ffi.staticlib]`-парсинг убраны
-из `manifest.rs`/`test_runner.rs` целиком.
+**Retracted by the owner on 2026-07-10 (Plan 195).** The section existed
+(Plan 195) as a generalization of the `detect_tls`/`tls-cache`/`-lbcrypt
+-lntdll` hardcoding into a manifest mechanism that built a native artifact
+via cargo/make on the fly. It let a user native module require Rust/cargo
+as part of its own build — which contradicts the toolchain canon
+(**Nova compiler + clang**, `.nv → .c → binary`, NO Rust/cargo).
+`compiler-codegen/tls_shim/` (a Rust staticlib, rustls) — the mechanism's
+only user — was replaced with `compiler-codegen/nova_rt/tls_c_shim.c`
+(mbedTLS, the ordinary `[ffi]` path). `FfiStaticlibConfig`/
+`resolve_ffi_staticlib`/`[ffi.staticlib]` parsing has been removed
+entirely from `manifest.rs`/`test_runner.rs`.
 
-**Канон native-модуля теперь — только `[ffi]` выше**: `.c`-шим (компилит
-clang, он в тулчейне) + опционально готовая `.lib`/`.a` (линкуется, не
-собирается — vcpkg/системный пакет/vendored-копия, см. `detect_brotli`/
-`detect_boehm`/`detect_mbedtls` в `test_runner.rs` для паттерна условной
-линковки библиотеки, ГОТОВОЙ заранее, а не строящейся build-скриптом).
+**The native-module canon is now `[ffi]` above, and only that**: a `.c`
+shim (compiled by clang, which is in the toolchain) + optionally a
+ready-made `.lib`/`.a` (linked, not built — vcpkg/system package/vendored
+copy; see `detect_brotli`/`detect_boehm`/`detect_mbedtls` in
+`test_runner.rs` for the pattern of conditionally linking a library that
+is ALREADY built, rather than one built by a build script).
 
-**Эталон.** `std/tls` (`nova_rt/tls_c_shim.c` + vcpkg mbedTLS) — реальный
-пример: mbedTLS ставится через `vcpkg install` (см. `compiler-codegen/
-vcpkg.json`, gitignored per-checkout), `tls_c_shim.c` компилируется/линкуется
-УСЛОВНО по факту использования `tls_*`-символов (тот же D337-механизм, что у
-brotli), без манифест-декларации в `std/nova.toml` вообще — линковка целиком
-в `test_runner.rs::build_command` (как `net.c`/`brotli_shim.c`).
+**Reference example.** `std/tls` (`nova_rt/tls_c_shim.c` + vcpkg mbedTLS)
+— a real example: mbedTLS is installed via `vcpkg install` (see
+`compiler-codegen/vcpkg.json`, gitignored per-checkout), `tls_c_shim.c`
+is compiled/linked CONDITIONALLY based on whether `tls_*` symbols are
+used (the same D337 mechanism as brotli), with no manifest declaration
+in `std/nova.toml` at all — the linking lives entirely in
+`test_runner.rs::build_command` (like `net.c`/`brotli_shim.c`).
 
 ---
 
@@ -727,10 +747,10 @@ brotli), без манифест-декларации в `std/nova.toml` воо�
 | Marker | What | Status |
 |---|---|---|
 | `[M-115-newtype-constructor]` | tuple newtype `type X(ptr)` constructor + `.0` access | ✅ CLOSED 2026-06-01 (canonical syntax shipped) |
-| `[M-115-ffi-build-pipeline]` | user-shim build/link pipeline | ✅ CLOSED — реализован декларативно через `nova.toml` `[ffi]` (готовые шимы/libs, Plan 115). `[ffi.staticlib]` (собираемый staticlib, Plan 195) RETRACTED владельцем (Plan 195) — native-модуль обязан собираться БЕЗ Rust/cargo. См. [«Build pipeline»](#build-pipeline--ffi-и-ffistaticlib-манифест) |
+| `[M-115-ffi-build-pipeline]` | user-shim build/link pipeline | ✅ CLOSED — implemented declaratively via `nova.toml` `[ffi]` (ready-made shims/libs, Plan 115). `[ffi.staticlib]` (a staticlib built on the fly, Plan 195) RETRACTED by the owner (Plan 195) — a native module must build WITHOUT Rust/cargo. See ["Build pipeline"](#build-pipeline--ffi-and-ffistaticlib-manifest) |
 | `[M-115-bindgen-tool]` | `nova bindgen header.h` auto-generated bindings | 🟡 deferred (major tooling, separate plan) |
-| `[M-115-d126-deprecation]` | `external type X` D126 migration audit | ✅ CLOSED: Plan 91.12 V2 hard retract — `external type X` теперь жёсткая ошибка E_EXTERNAL_TYPE_RETRACTED (sequence: newtype-constructor ✓ → Plan 91.12 Pattern B → D126 retract выполнен) |
-| `[M-115-tuple-gc-types]` | tuple elements GC-tracked types в external fn returns | 🟢 CLOSED as by-design (extern "C" boundary correctly excludes Nova-typed containers) |
+| `[M-115-d126-deprecation]` | `external type X` D126 migration audit | ✅ CLOSED: Plan 91.12 V2 hard retract — `external type X` is now a hard error E_EXTERNAL_TYPE_RETRACTED (sequence: newtype-constructor ✓ → Plan 91.12 Pattern B → D126 retract done) |
+| `[M-115-tuple-gc-types]` | tuple elements GC-tracked types in external fn returns | 🟢 CLOSED as by-design (extern "C" boundary correctly excludes Nova-typed containers) |
 | `[M-115-external-fn-method]` | receiver-method external fn | 🟢 CLOSED as not needed (free fn + Nova-side wrapper sufficient) |
-| `[M-115-examples-ffi-real-build]` | real libsqlite3 link через vcpkg | 🟡 deferred (V1 ships embedded mini-sqlite-equivalent в `nova_rt/sqlite_mini_ffi.h` — proves end-to-end FFI mechanism без external dependency; real link → CI step) |
-| `[M-115-null-ptr-to-option-after-npo]` | hard-retract `null ptr` после Plan 118 Option[*T] NPO | ✅ CLOSED Plan 134 (2026-06-09) — `ptr` removed; use `*()` and `0 as *()` |
+| `[M-115-examples-ffi-real-build]` | real libsqlite3 link via vcpkg | 🟡 deferred (V1 ships embedded mini-sqlite-equivalent in `nova_rt/sqlite_mini_ffi.h` — proves end-to-end FFI mechanism with no external dependency; real link → CI step) |
+| `[M-115-null-ptr-to-option-after-npo]` | hard-retract `null ptr` after Plan 118 Option[*T] NPO | ✅ CLOSED Plan 134 (2026-06-09) — `ptr` removed; use `*()` and `0 as *()` |

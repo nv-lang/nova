@@ -1,6 +1,8 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 # Quickstart
 
+**English** | [Русский](quickstart.ru.md)
+
 This page gets you from a downloaded zip to a running Nova program in a
 few minutes, then to a slightly bigger example that shows the two things
 that make Nova different: effects in function signatures, and structured

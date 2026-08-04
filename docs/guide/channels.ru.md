@@ -94,16 +94,16 @@ fn Channel[T].new(capacity int) -> { tx ChanWriter[T], rx ChanReader[T] }
 (reader-capability). Поддерживает три формы извлечения:
 
 ```nova
-// 1. Record-destructure (Plan 53, наиболее идиоматично)
+// 1. Record destructure (Plan 53, most idiomatic)
 ro { tx, rx } = Channel.new(4)
 
-// 2. Record-destructure с переименованием
+// 2. Record destructure with renaming
 ro { tx: sender, rx: receiver } = Channel.new(4)
 
-// 3. Tuple destructure (compat с D91 spec примерами)
+// 3. Tuple destructure (compat with D91 spec examples)
 ro (tx, rx) = Channel.new(4)
 
-// 4. Record-access (когда нужны разные lifetimes)
+// 4. Record access (when distinct lifetimes are needed)
 ro ch = Channel.new(4)
 ro tx = ch.tx
 ro rx = ch.rx
@@ -119,14 +119,14 @@ ro rx = ch.rx
 
 ```nova
 ro (tx, rx) = Channel[int].new(8)
-tx.send(42)           // проверено: `int` совместим с `int`
-ro v = rx.recv()      // Option[int] — настоящий, отслеженный чекером T
+tx.send(42)          // checked: `int` is assignable to `int`
+ro v = rx.recv()     // Option[int] — the real, checker-tracked T
 ```
 
 ```nova
 fn drain(rx ChanReader[int]) -> int {
     mut sum = 0
-    while Some(v) = rx.recv() { sum = sum + v }   // v: int, реальный тип
+    while Some(v) = rx.recv() { sum = sum + v }   // v: int, real type
     sum
 }
 ```
@@ -174,11 +174,11 @@ pointer-sized тип (`[]T`, records, `HashMap`, суммы, …) — работ
 ### `send` возвращает `bool`
 
 ```nova
-test "channel: send после close возвращает false, не паникует" {
+test "channel: send after close returns false, does not panic" {
     ro { tx, rx: _rx } = Channel.new(2)
     assert(tx.send(1))
     tx.close()
-    assert(!tx.send(99))    // false: канал закрыт
+    assert(!tx.send(99))    // false: channel closed
 }
 ```
 
@@ -189,7 +189,7 @@ fn produce(tx ChanWriter[Job], jobs []Job) {
     mut i = 0
     while i < jobs.len() {
         if !tx.send(jobs[i]) {
-            break               // consumer закрылся — выходим тихо
+            break               // consumer closed — exit silently
         }
         i = i + 1
     }
@@ -203,9 +203,9 @@ test "channel: try_send full buffer" {
     ro { tx, rx } = Channel.new(2)
     assert(tx.try_send(10))
     assert(tx.try_send(20))
-    assert(!tx.try_send(30))            // буфер полон
+    assert(!tx.try_send(30))            // buffer full
     assert(rx.recv() ?? -1 == 10)
-    assert(tx.try_send(30))             // место освободилось
+    assert(tx.try_send(30))             // slot freed
     tx.close()
 }
 ```
@@ -220,7 +220,7 @@ test "channel: try_send full buffer" {
 > глубокая копия = `clone` — везде в std.
 
 ```nova
-test "channel: fan-in — два writer'а, один reader" {
+test "channel: fan-in — two writers, one reader" {
     ro { tx, rx } = Channel.new(8)
     ro tx2 = tx.share()                // writer_count = 2
     mut sum = 0
@@ -266,28 +266,28 @@ test "channel: close + recv drain" {
     tx.close()
     assert(rx.recv() ?? -1 == 1)
     assert(rx.recv() ?? -1 == 2)
-    assert(rx.recv().is_none())             // drain'нули — None
-    assert(rx.recv().is_none())             // повторно — тоже None
+    assert(rx.recv().is_none())             // drained — None
+    assert(rx.recv().is_none())             // repeated — still None
 }
 ```
 
 ### `try_recv` различает empty-open vs empty-closed
 
 ```nova
-test "channel: try_recv различает empty-open от empty-closed через is_closed" {
+test "channel: try_recv distinguishes empty-open from empty-closed via is_closed" {
     ro { tx, rx } = Channel.new(4)
-    assert(rx.try_recv().is_none())     // пустой открытый
+    assert(rx.try_recv().is_none())     // empty, open
     assert(!rx.is_closed())
     tx.close()
-    assert(rx.try_recv().is_none())     // пустой закрытый — то же None
-    assert(rx.is_closed())              // отличает через is_closed
+    assert(rx.try_recv().is_none())     // empty, closed — same None
+    assert(rx.is_closed())              // distinguish via is_closed
 }
 ```
 
 ### `len` / `capacity`
 
 ```nova
-test "channel: len и capacity" {
+test "channel: len and capacity" {
     ro { tx, rx } = Channel.new(8)
     assert(rx.capacity() == 8)
     assert(rx.len() == 0)
@@ -338,7 +338,7 @@ test "channel: producer-consumer pipeline" {
             tx.send(3)
             tx.send(4)
             tx.send(5)
-            tx.close()                  // важно: producer закрывает после finish
+            tx.close()                  // important: producer closes after finishing
         }
         spawn {
             while Some(v) = rx.recv() {
@@ -382,13 +382,13 @@ test "channel: ping-pong" {
 ro { tx, rx } = Channel.new(8)
 supervised {
     for item in work_items {
-        ro worker_tx = tx.share()      // каждому spawn'у — свой capability
+        ro worker_tx = tx.share()      // each spawn gets its own capability
         spawn {
             worker_tx.send(process(item))
             worker_tx.close()
         }
     }
-    tx.close()                          // close корневого writer'а
+    tx.close()                          // close the root writer
     spawn {
         while Some(v) = rx.recv() {
             collect(v)
@@ -413,7 +413,7 @@ fn relay(rx ChanReader[int], tx ChanWriter[int]) {
     tx.close()
 }
 
-test "channel: relay — Receiver → Sender pipeline через функцию" {
+test "channel: relay — Receiver → Sender pipeline through a function" {
     ro { tx: tx1, rx: rx1 } = Channel.new(4)
     ro { tx: tx2, rx: rx2 } = Channel.new(4)
     tx1.send(1)
@@ -449,7 +449,7 @@ fn drain_channel(rx ChanReader[int]) -> int {
     sum
 }
 
-test "channel: Sender и Receiver передаются независимо" {
+test "channel: Sender and Receiver passed independently" {
     ro { tx, rx } = Channel.new(8)
     fill_channel(tx, [100, 200, 300])
     ro s = drain_channel(rx)
@@ -546,7 +546,7 @@ test "select send arm: sends to channel with space" {
 ### Guard arms
 
 ```nova
-test "select guard: disabled arm skips to default" {
+test "select guard: disabled arm falls through to default" {
     ro ch = Channel.new(1)
     ch.tx.send(10)
     ro rx = ch.rx
@@ -556,7 +556,7 @@ test "select guard: disabled arm skips to default" {
         Some(v) = rx if enabled => { branch = v }
         _                       => { branch = -1 }
     }
-    assert(branch == -1)         // arm disabled — default сработал
+    assert(branch == -1)         // arm disabled — default ran
 }
 ```
 
@@ -602,8 +602,8 @@ test "Some arm skips closed+empty, picks open channel with data" {
 
     mut result = 0
     select {
-        Some(v) = rx1 => { result = -1 }     // Some НЕ срабатывает на closed
-        Some(v) = rx2 => { result = v  }     // ← выполнится
+        Some(v) = rx1 => { result = -1 }     // Some does NOT fire on closed
+        Some(v) = rx2 => { result = v  }     // ← runs
     }
     assert(result == 42)
 }
@@ -616,7 +616,7 @@ test "wildcard fires immediately on closed+empty channel" {
 
     mut fired = false
     select {
-        _ = rx => { fired = true }           // ← wildcard ловит closed
+        _ = rx => { fired = true }           // ← wildcard catches closed
     }
     assert(fired)
 }
@@ -805,7 +805,7 @@ fn run_pipeline() Net -> () {
         spawn { for j in jobs { tx.send(j) } }
         spawn { while Some(j) = rx.recv() { process(j) } }
     }
-}   // <-- tx.close() сработает гарантированно; rx.recv() в spawn'е получит None и завершится
+}   // <-- tx.close() always runs; rx.recv() in the spawn gets None and terminates
 ```
 
 ### Bootstrap-ограничение: `defer` + tuple-destructure
@@ -840,7 +840,7 @@ flaky. Поэтому `close()` всегда explicit.
 test "channel: close idempotent" {
     ro { tx, rx } = Channel.new(2)
     tx.close()
-    tx.close()                  // не error
+    tx.close()                  // not an error
     assert(rx.is_closed())
 }
 ```

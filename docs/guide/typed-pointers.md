@@ -1,3 +1,5 @@
+**English** | [Русский](typed-pointers.ru.md)
+
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # Typed pointers (`*T` family) + `unsafe` model
 
@@ -7,9 +9,9 @@
 > (`E_POINTER_PREFIX_MODIFIER`). Full NPO codegen + escape analysis —
 > follow-on phases.
 
-Production-grade FFI и низкоуровневая работа с памятью требуют типизированных
-указателей. Plan 118 вводит `*T` family типов + `unsafe` model + Null
-Pointer Optimization (NPO) для `Option[*T]` zero-cost null-safety.
+Production-grade FFI and low-level memory work require typed pointers.
+Plan 118 introduces the `*T` type family + the `unsafe` model + Null
+Pointer Optimization (NPO) for `Option[*T]` zero-cost null-safety.
 
 ## Pointer-mutability model: "arrow → box" (Plan 138.5 FINAL)
 
@@ -53,7 +55,7 @@ let p *mut T        // arrow fixed                      + box writable
 *unsafe T           // pointer to possibly-uninit T (MaybeUninit pointee)
 Option[*T]          // NULLABLE pointer (NPO: None = null, 8 bytes)
 Option[*unsafe T]   // FFI nullable-uninit ptr (None = null, Some = non-null
-                    //   ptr к possibly-uninit pointee)
+                    //   ptr to a possibly-uninit pointee)
 ```
 
 The modifier is **always postfix** — it attaches to the pointee of the `*` it
@@ -134,18 +136,18 @@ are both written postfix.
 | Auto-deref field/method | `p.field` / `p.method()` | D216 §5 |
 | Pointer arithmetic | `unsafe { p + n }` → `*unsafe T` | D216 §6 |
 | Unsafe boundary | `unsafe { ... }` block / `#unsafe fn` | D216 §8-9 |
-| Function pointer для FFI | `*fn(Args) -> Ret` | D216 §10 |
+| Function pointer for FFI | `*fn(Args) -> Ret` | D216 §10 |
 | Opaque untyped (legacy) | `ptr` (D214 amend → `Option[*unsafe ()]` newtype) | D214 amend |
 
-## `*T` family типов
+## The `*T` type family
 
-**ABI:** все variants — single pointer-width (8 bytes на 64-bit; bootstrap
-target 64-bit only). C type emission: `*ro T` → `const T*` (helps clang/MSVC
+**ABI:** all variants are single pointer-width (8 bytes on 64-bit; bootstrap
+target 64-bit only). C type emission: `*ro T` → `const T*` (helps the clang/MSVC
 optimizer), `*mut T` / `*unsafe T` → `T*`.
 
 **Validity:** every pointer value (`*T` / `*ro T` / `*mut T` / `*unsafe T`)
 is **always non-null** (compile-time invariant). The nullable variant is
-`Option[*T]` via NPO (single pointer, NULL = None; см. §V2.4 в spec).
+`Option[*T]` via NPO (single pointer, NULL = None; see §V2.4 in the spec).
 `*unsafe T` describes a possibly-**uninitialized** pointee — the *pointer* is
 still non-null; null is `Option[*unsafe T]` (`None`).
 
@@ -199,8 +201,8 @@ the **target** of that `*` level; read left-to-right:
 
 ```nova
 *mut *ro Acc        // writable-target pointer → (read-only-target pointer → Acc)
-                    // *p  = другой_pointer OK   (outer pointee mut)
-                    // **p = новое_значение ERR  (inner pointee ro)
+                    // *p  = another_pointer OK   (outer pointee mut)
+                    // **p = a_new_value ERR  (inner pointee ro)
 
 *ro *mut Acc        // read-only-target pointer → (writable-target pointer → Acc)
                     // *p  = ...            ERR  (outer pointee ro)
@@ -220,11 +222,11 @@ ro x = 42                              // x — stack primitive
 ro p = &x                              // x auto-promoted to heap; type *ro i64
 ```
 
-**Critical:** `&value` это **НЕ Rust borrow** (D32 amend). Нет lifetime
-checker, нет `'a` параметров, нет XOR aliasing. Safety обеспечивается:
-1. Escape analysis + auto-promote (Go-style) для stack values
-2. Unsafe gating — `&` + pointer deref только в unsafe context
-3. GC honor-system — user обещает no GC trigger в unsafe (D216 §16)
+**Critical:** `&value` is **NOT a Rust borrow** (D32 amend). There is no
+lifetime checker, no `'a` parameters, no XOR aliasing. Safety is provided by:
+1. Escape analysis + auto-promote (Go-style) for stack values
+2. Unsafe gating — `&` + pointer deref only inside an unsafe context
+3. GC honor-system — the user promises no GC trigger inside unsafe (D216 §16)
 
 ## Auto-deref (D216 §5)
 
@@ -234,7 +236,7 @@ unsafe {
     p.method()              // ✓ auto-deref method call
     p.field = v             // ✓ auto-deref assignment (requires *mut T)
     *p                      // ✓ explicit deref
-    (*p).field              // ✓ multi-level chain через explicit *
+    (*p).field              // ✓ multi-level chain through an explicit *
 }
 ```
 
@@ -258,8 +260,8 @@ unsafe {
 }
 ```
 
-- `+`/`-` only в `unsafe { }` block, result `*unsafe T` для `ptr ± int`,
-  `isize` для `ptr - ptr`
+- `+`/`-` only inside an `unsafe { }` block, result `*unsafe T` for `ptr ± int`,
+  `isize` for `ptr - ptr`
 - Units: sizeof(T)-scaled (C/Rust convention)
 - `*`/`/`/`%` — `E_PTR_ARITHMETIC_INVALID`
 
@@ -277,7 +279,7 @@ unsafe {
 }
 ```
 
-**NPO applies к:** `Option[*T]`, `Option[*fn(...)]`, `Option[ptr]`,
+**NPO applies to:** `Option[*T]`, `Option[*fn(...)]`, `Option[ptr]`,
 `Option[Newtype-over-pointer]`.
 
 **Excluded:** `Option[Option[*T]]` — tagged fallback + `W_OPTION_DOUBLE_NESTED`.
@@ -308,7 +310,7 @@ fn safe_user_code() {
 | Order compare | `p < q` | address ordering |
 
 **`ptr[i]` pointer index** (D216 §8, closed `[M-118-ptr-index-unsafe]` 2026-06-09):
-`ptr[i]` is syntactic sugar for `*(ptr + i)` — raw pointer arithmetic с offset,
+`ptr[i]` is syntactic sugar for `*(ptr + i)` — raw pointer arithmetic with an offset,
 no bounds check, pointer must be valid. Requires `unsafe { }` or `unsafe fn` body.
 
 ```nova
@@ -318,7 +320,7 @@ unsafe fn read_at(p *u8, i int) -> u8 { p[i] }   // ✓ inside unsafe fn
 // ro v = buf[0]                 ← E_UNSAFE_REQUIRED
 ```
 
-**Implementation:** sugar над built-in `unsafe_handler` effect handler.
+**Implementation:** sugar over the built-in `unsafe_handler` effect handler.
 
 ```nova
 unsafe { expr }
@@ -326,7 +328,7 @@ unsafe { expr }
 with unsafe_handler { perform UnsafeOps.<op>(expr) }
 ```
 
-D2 spirit (всё — эффекты) preserved через built-in `unsafe_handler`
+D2 spirit (everything is an effect) preserved via the built-in `unsafe_handler`
 (not user-overridable). No effect propagation up — encapsulates per fn
 (canonical Rust pattern).
 
@@ -346,8 +348,8 @@ fn safe_caller() {
 }
 ```
 
-- `#unsafe fn` body имплицитно unsafe context
-- Каллеру требуется `unsafe { }` wrap (even another `#unsafe` fn — visual marker)
+- `#unsafe fn` body is implicitly an unsafe context
+- The caller needs an `unsafe { }` wrap (even another `#unsafe` fn — visual marker)
 - NO effect propagation up
 
 ## `*fn(...)` function pointers (D216 §10)
@@ -363,16 +365,16 @@ unsafe {
 ```
 
 - Cast `fn → *fn` — captureless required (`E_CLOSURE_HAS_ENV`)
-- Cast `*fn → fn` — unsafe (wraps в captureless closure)
+- Cast `*fn → fn` — unsafe (wraps in a captureless closure)
 - **Callback no-throw:** Fn-with-Fail cast → `*fn` — `E_CALLBACK_THROWS_OVER_C_ABI`
 - **external fn no-Fail:** `external fn ... Fail -> ...` — `E_EXTERNAL_FN_FAIL_EFFECT`
 
-C ABI текущей платформы (System V на Unix, MS x64 на Windows). No
+The current platform's C ABI (System V on Unix, MS x64 on Windows). No
 explicit `extern "C"` keywords — single ABI V1.
 
 ## FFI handle allocation contract (D216 §18)
 
-**Tuple newtype canonical для opaque handles** (zero-overhead):
+**Tuple newtype is canonical for opaque handles** (zero-overhead):
 
 ```nova
 type Sqlite3Handle(*sqlite3)               // stack, single pointer ABI
@@ -386,24 +388,24 @@ type DbSession {
     ro handle Sqlite3Handle
     ro path str
     ro opened_at Time
-}                                           // record — для handles с extra state
+}                                           // record — for handles with extra state
 ```
 
-Migration Plan 115 V1 cookbook examples (record form) → tuple newtype
-(zero-overhead) tracked в `[M-118-handle-migration]`.
+Migrating Plan 115 V1 cookbook examples (record form) → tuple newtype
+(zero-overhead) is tracked in `[M-118-handle-migration]`.
 
 ## GC honor-system (D216 §16)
 
-Внутри `unsafe { ... }` user **обещает** no GC trigger между pointer
-creation и use. GC trigger = heap allocation, yield-point (await/spawn/
-supervised), string formatting which allocates, calls to `#parks`/`#wakes`
-fns.
+Inside `unsafe { ... }` the user **promises** no GC trigger occurs between
+pointer creation and use. A GC trigger = heap allocation, a yield-point
+(await/spawn/supervised), string formatting that allocates, calls to
+`#parks`/`#wakes` fns.
 
-Compiler emits `W_UNSAFE_GC_TRIGGER` warning per violation site.
-Silence: `// noqa: W_UNSAFE_GC_TRIGGER` line marker.
+The compiler emits a `W_UNSAFE_GC_TRIGGER` warning per violation site.
+Silence it with the `// noqa: W_UNSAFE_GC_TRIGGER` line marker.
 
-V1 GC = Boehm conservative → не двигает объекты → V1 безопасно warning'ом.
-Future moving GC потребует formal pin API (`[M-118-pin-api]` followup).
+V1 GC = Boehm conservative → does not move objects → a warning is safe for V1.
+A future moving GC will require a formal pin API (`[M-118-pin-api]` followup).
 
 ## Pointer Debug formatting (D216 §17, Plan 91.14 D229)
 
@@ -422,7 +424,7 @@ unsafe {
 - `(*T).to_debug_str() -> str` — legacy built-in alias kept for
   backwards-compat; same semantics as `${p:?}`, allowed in unsafe only.
 - `"${p}"` direct (Display) interpolation → `E_PTR_NO_DISPLAY_USE_DEBUG_STR`;
-  diagnostic hint points to `${p:?}` (updated в Ф.5.3).
+  diagnostic hint points to `${p:?}` (per [D229](../../spec/decisions/02-types.md#d229-Debug-protocol--format-spec-expr)).
 - Pointer addresses non-deterministic, leak ASLR info — explicit decision
   forced.
 
@@ -444,29 +446,29 @@ mut p *mut u8 = undefined        // ❌ E_UNDEFINED_USE_NONE_INIT_PATTERN
 ### Errors
 
 - `E_UNSAFE_REQUIRED` — pointer op outside unsafe context (`*p`, `p[i]`, `&v`, order-compare)
-- `E_UNSAFE_CALL_REQUIRES_WRAP` — calling `#unsafe` fn без unsafe wrap
-- `E_UNSAFE_T_READ_REQUIRES_WRAP` — `unsafe T` value read без `unsafe { }` block (V2 §V2.3)
-- `E_UNSAFE_ARG_REQUIRES_WRAP` — `unsafe T` argument passed без unsafe wrap (V2 §V2.3b)
-- `E_UNSAFE_T_NARROW_REQUIRES_UNSAFE` — `unsafe T → T` narrow cast без unsafe (V2 §V2.3b)
+- `E_UNSAFE_CALL_REQUIRES_WRAP` — calling `#unsafe` fn without an unsafe wrap
+- `E_UNSAFE_T_READ_REQUIRES_WRAP` — `unsafe T` value read without an `unsafe { }` block (V2 §V2.3)
+- `E_UNSAFE_ARG_REQUIRES_WRAP` — `unsafe T` argument passed without an unsafe wrap (V2 §V2.3b)
+- `E_UNSAFE_T_NARROW_REQUIRES_UNSAFE` — `unsafe T → T` narrow cast without unsafe (V2 §V2.3b)
 - `E_ARRAY_INDEX_PTR_BANNED` — `&arr[i]`
 - `E_NULL_LITERAL_USE_NONE` — `null` literal used (general); use `None`
 - `E_NULL_PTR_RETRACTED_USE_OPTION` — `null ptr` retracted; use `Option[ptr] = None`
 - `E_UNDEFINED_USE_NONE_INIT_PATTERN` — `undefined` used
-- `E_CLOSURE_HAS_ENV` — fn → *fn cast с closure env
+- `E_CLOSURE_HAS_ENV` — fn → *fn cast with a closure env
 - `E_CALLBACK_THROWS_OVER_C_ABI` — Fn-with-Fail → *fn cast
-- `E_EXTERNAL_FN_FAIL_EFFECT` — external fn с Fail effect
+- `E_EXTERNAL_FN_FAIL_EFFECT` — external fn with a Fail effect
 - `E_PTR_ARITHMETIC_INVALID` — `p * 2`, `p / 4`, etc.
-- `E_POINTER_RO_ASSIGN` — `*p = v` / `p.field = v` где p ro
-- `E_POINTER_RO_MUT_METHOD` — `p.mut_method()` где p ro
+- `E_POINTER_RO_ASSIGN` — `*p = v` / `p.field = v` where p is ro
+- `E_POINTER_RO_MUT_METHOD` — `p.mut_method()` where p is ro
 - `E_PTR_CAST_INVALID_TARGET` — `p as bool / f64 / ...`
-- `E_INVALID_POINTER_MODIFIER` — `*const T` and др.
+- `E_INVALID_POINTER_MODIFIER` — `*const T` and others
 - `E_POINTER_PREFIX_MODIFIER` — modifier **before** `*` (`mut * T` / `ro * T` /
   `unsafe * T`); use postfix pointee `*mut T` / `*ro T` / `*unsafe T` or binding
   `mut x *T` (Plan 138.5, extends `E_INVALID_POINTER_MODIFIER`)
 - `E_SAFE_RETIRED` — `safe` type-modifier used; the `safe` propagation stopper
   is retired (no prefix-modifier propagation to stop) (Plan 138.5)
-- `E_PARSE_POINTER_TYPE_INCOMPLETE` — `*` без type
-- `E_REALTIME_POINTER_OP` — pointer op в `#realtime fn` body
+- `E_PARSE_POINTER_TYPE_INCOMPLETE` — `*` without a type
+- `E_REALTIME_POINTER_OP` — pointer op inside a `#realtime fn` body
 - `E_UNSAFE_HANDLER_BUILTIN_ONLY` — user-defined unsafe_handler attempt
 - `E_AMP_CONST_BINDING` — `&const_value`
 - `E_AMP_LITERAL` — `&42`
@@ -478,8 +480,8 @@ mut p *mut u8 = undefined        // ❌ E_UNDEFINED_USE_NONE_INIT_PATTERN
 #### V3 modifier-composition errors (D216 V3 amend, 2026-06-04)
 
 - `E_MUTABILITY_CONFLICT_VALUE_TYPE` — type-position `ro mut T` / `mut ro T`
-  на **value-type T** (primitives / value records / named tuples / anonymous
-  tuples / Unit). Binding-form `ro x mut T` остаётся allowed (orthogonal
+  on **value-type T** (primitives / value records / named tuples / anonymous
+  tuples / Unit). Binding-form `ro x mut T` remains allowed (orthogonal
   binding modifiers). Spec §V3.1.
 - `E_MODIFIER_ORDER` — safety modifier (`unsafe`) wrapping mutability modifier
   (`ro` / `mut`); reverse order required — **safety-inner / mutability-outer**
@@ -498,23 +500,23 @@ mut p *mut u8 = undefined        // ❌ E_UNDEFINED_USE_NONE_INIT_PATTERN
 
 ### Warnings
 
-- `W_UNSAFE_GC_TRIGGER` — GC trigger внутри unsafe с active pointer in scope
-- `W_PTR_AS_USIZE_GC_HASH_HAZARD` — `p as usize` как HashMap key
+- `W_UNSAFE_GC_TRIGGER` — GC trigger inside unsafe with an active pointer in scope
+- `W_PTR_AS_USIZE_GC_HASH_HAZARD` — `p as usize` used as a HashMap key
 - `W_OPTION_DOUBLE_NESTED` — `Option[Option[*T]]` NPO fallback
 
 ## Mainstream comparison
 
-| Язык | Typed ptr | Unsafe model | Null safety | Auto-deref | Pointer arith |
+| Language | Typed ptr | Unsafe model | Null safety | Auto-deref | Pointer arith |
 |---|---|---|---|---|---|
-| Rust | `*const T`/`*mut T`/`&T`/`&mut T` | `unsafe {}` + `unsafe fn` | `Option<&T>` + NPO | через ref | unsafe only |
-| Zig | `*T`/`*const T`/`[*]T` | (cast intrinsics) | `?*T` + NPO | `.*` postfix + `.` | `+` для `[*]T` |
+| Rust | `*const T`/`*mut T`/`&T`/`&mut T` | `unsafe {}` + `unsafe fn` | `Option<&T>` + NPO | via ref | unsafe only |
+| Zig | `*T`/`*const T`/`[*]T` | (cast intrinsics) | `?*T` + NPO | `.*` postfix + `.` | `+` for `[*]T` |
 | C# | `T*` / `ref T` / `in T` / `out T` | `unsafe` modifier | `T?` | `p->field` arrow | unsafe only |
 | Swift | `UnsafePointer<T>` / `UnsafeMutablePointer<T>` | Type-based prefix | Optional + NPO | `.pointee` | only `.advanced(by:)` |
 | D | `T*` / `ref T` / `scope T*` | `@safe`/`@trusted`/`@system` | `Nullable!T` | `p.field` auto | `@system` only |
 | Go | `*T` (managed) / `unsafe.Pointer` | `unsafe` package | Nil runtime | `p.field` auto | `unsafe.Pointer` only |
-| **Nova V1** (Plan 115) | `ptr` only | (нет) | `null ptr` | (нет) | banned |
+| **Nova V1** (Plan 115) | `ptr` only | (none) | `null ptr` | (none) | banned |
 | **Nova V2** (Plan 118) | **`*T` family** + `unsafe` | `unsafe { }` + `#unsafe` (D2 amend) | `Option[*T]` + NPO | `p.field`/`p.method()` one-level | gated unsafe → `*unsafe T` |
-| **Nova FINAL** (Plan 138.5) | **postfix pointee** `*ro T` / `*mut T` / `*unsafe T`; re-pointability = binding (`let`/`mut`) | (как V2) + value-T composition rules (§V3.1-V3.2) | `Option[*T]` (only) + NPO | (как V2) | (как V2) → `*unsafe T` |
+| **Nova FINAL** (Plan 138.5) | **postfix pointee** `*ro T` / `*mut T` / `*unsafe T`; re-pointability = binding (`let`/`mut`) | (same as V2) + value-T composition rules (§V3.1-V3.2) | `Option[*T]` (only) + NPO | (same as V2) | (same as V2) → `*unsafe T` |
 
 ## See also
 
@@ -522,7 +524,7 @@ mut p *mut u8 = undefined        // ❌ E_UNDEFINED_USE_NONE_INIT_PATTERN
 - [`docs/plans/118.1-ffi-intrinsics-and-cstring.md`](../plans/118.1-ffi-intrinsics-and-cstring.md) — Plan 118.1 sub-plan (FFI intrinsics)
 - [`docs/plans/118.2-slice-fat-pointer-and-uninit.md`](../plans/118.2-slice-fat-pointer-and-uninit.md) — Plan 118.2 sub-plan (slice + uninit)
 - [`docs/plans/118.3-pointer-concurrency-safety.md`](../plans/118.3-pointer-concurrency-safety.md) — Plan 118.3 sub-plan (concurrency)
-- [`docs/guide/ffi-cookbook.md`](ffi-cookbook.md) — FFI patterns с ptr + tuple FFI (Plan 115 V1)
+- [`docs/guide/ffi-cookbook.md`](ffi-cookbook.md) — FFI patterns with ptr + tuple FFI (Plan 115 V1)
 - [D216 V1](../../spec/decisions/02-types.md#d216-typed-pointer-family--unsafe-model--null-safety-через-npo) — spec foundation (typed-pointer family + unsafe model + NPO)
 - [D216 FINAL pointer model (Plan 138.5)](../../spec/decisions/02-types.md#d216-typed-pointer-family--unsafe-model--null-safety-через-npo) — pointer type = pointee-mut postfix only; re-pointability = binding (D36); prefix modifiers ⇒ `E_POINTER_PREFIX_MODIFIER`; nullable = `Option[*T]` only; `safe` + `Unsafe(Pointer)` retired
 - [D216 V2 amend](../../spec/decisions/02-types.md#d216-v2-amend-2026-06-04--universal-right-binding-rule-для-type-level-modifiers--unsafe-t-first-class) — historical right-binding rule (§V2.1, RETRACTED) + first-class `unsafe T` value-wrapper (§V2.3, KEPT) + NPO recalc (§V2.4)

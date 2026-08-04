@@ -1,6 +1,8 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 # Building Nova on Linux (native / WSL2)
 
+**English** | [Русский](linux-build.ru.md)
+
 Last updated 2026-07-21. Verified 2026-07-20 directly on WSL2 Ubuntu 26.04 (kernel
 `6.6.87.2-microsoft-standard-WSL2`), outside Docker. See also
 [`docker/README.md`](../../docker/README.md) for the earlier (2026-05-12)
