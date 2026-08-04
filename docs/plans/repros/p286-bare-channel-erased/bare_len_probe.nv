@@ -1,0 +1,29 @@
+// Probe: bare Channel.new (no [T] turbofish, no tuple-pattern T-annotation)
+// leaves T erased at the checker level (per PROGRESS-pchan.md: "strictly
+// additive" — untracked case falls through unchanged). Question: does a
+// later `.len()` call on the erased recv() result (1) get rejected by the
+// checker as unknown-method-on-int, (2) resolve correctly by legacy
+// name-only fallback (lucky), or (3) silently resolve to the WRONG same-
+// named method from another type present in the same CU (the original
+// №286 corruption)? Co-present type with a colliding `.len()`: EmbeddedDir
+// (via a companion asset dir), same trick as the tracked-T regression
+// fixture.
+module spec_tests.conformance
+
+test "bare erased channel + colliding .len() in same CU" {
+    ro d = embed_dir("bare_dir")
+    assert(d.len() == 1)
+
+    ro (tx, rx) = Channel.new(2)
+    mut v []int = []int.new()
+    v.push(10)
+    v.push(20)
+    v.push(30)
+    tx.send(v)
+    ro got = rx.recv()
+    match got {
+        Some(vv) => { assert(vv.len() == 3) }
+        None => { assert(false) }
+    }
+    tx.close()
+}
