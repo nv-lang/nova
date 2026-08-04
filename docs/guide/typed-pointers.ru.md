@@ -189,22 +189,24 @@ unsafe * safe T         // *T              (`safe` stopper removed)
 
 ## Правило биндинга (D216 §2)
 
-Ведущий `mut` / `ro` перед именем — это **биндинг** (перенацеливаемость, D36).
-Он ортогонален постфиксному модификатору pointee:
+Ведущий `mut` / `ro` перед именем — это **связывание** (перенацеливаемость, D36).
+Оно НЕЗАВИСИМО от постфиксного модификатора: `mut`-связывание НЕ делает
+содержимое за указателем изменяемым:
 
 ```nova
-ro p *Acc                   // ro binding (fixed arrow); pointee ro
-mut p *Acc                  // mut binding (re-pointable); pointee mut by default
-mut p *Acc  ≡  mut p *mut Acc   // mut binding defaults pointee to mut
+ro p *Acc                   // ro-binding: arrow fixed, pointee read-only
+mut p *Acc                  // mut-binding: arrow re-pointable, pointee STILL read-only
+mut p *mut Acc              // writable pointee — the ONLY way: explicit *mut
 ro p *mut Acc               // valid edge: arrow fixed, pointee writable
 
-mut q = &acc                // mut binding; pointee mut auto (no &mut acc needed)
-ro p = &acc                 // ro binding; pointee ro auto
+p = other_ptr               // allowed only with a mut binding (L1)
+p.field = 1                 // allowed only with a *mut pointee (L3)
 ```
 
-`mut`-биндинг по умолчанию делает pointee `mut` (`mut p *Acc` ≡
-`mut p *mut Acc`); это снижает шум в hot-path FFI-коде. Перенацеливаемость
-по-прежнему приходит только от биндинга — префикса `mut *` в типе нет.
+Связывание ничего не говорит о содержимом: `mut p *Acc` позволяет перенацелить
+стрелку, но запись за ней (`p.field = …`) по-прежнему требует явного
+`*mut Acc` (D246: `*T ≡ *ro T` универсально, оси L1/L2/L3 независимы).
+Перенацеливаемость приходит только от связывания — префикса `mut *` в типе нет.
 
 ## Порядок в цепочке (D216 §3)
 

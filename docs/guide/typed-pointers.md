@@ -182,21 +182,24 @@ unsafe * safe T         // *T              (`safe` stopper removed)
 ## Binding mut rule (D216 §2)
 
 The leading `mut` / `ro` before the name is the **binding** (re-pointability,
-D36). It is orthogonal to the postfix pointee modifier:
+D36). It is INDEPENDENT of the postfix pointee modifier — a `mut` binding does
+NOT make the pointee writable:
 
 ```nova
-ro p *Acc                   // ro binding (fixed arrow); pointee ro
-mut p *Acc                  // mut binding (re-pointable); pointee mut by default
-mut p *Acc  ≡  mut p *mut Acc   // mut binding defaults pointee to mut
+ro p *Acc                   // ro-binding: arrow fixed, pointee read-only
+mut p *Acc                  // mut-binding: arrow re-pointable, pointee STILL read-only
+mut p *mut Acc              // writable pointee — the ONLY way: explicit *mut
 ro p *mut Acc               // valid edge: arrow fixed, pointee writable
 
-mut q = &acc                // mut binding; pointee mut auto (no &mut acc needed)
-ro p = &acc                 // ro binding; pointee ro auto
+p = other_ptr               // allowed only with a mut binding (L1)
+p.field = 1                 // allowed only with a *mut pointee (L3)
 ```
 
-A `mut` binding defaults the pointee to `mut` (`mut p *Acc` ≡ `mut p *mut Acc`);
-this reduces noise in hot-path FFI code. Re-pointability still comes from the
-binding alone — there is no `mut *` prefix in the type.
+The binding says nothing about the pointee: `mut p *Acc` re-points the arrow,
+but writing through it (`p.field = …`) still requires an explicit `*mut Acc`
+(D246: `*T ≡ *ro T` universally, the axes L1/L2/L3 are independent).
+Re-pointability comes from the binding alone — there is no `mut *` prefix in
+the type.
 
 ## Chain order (D216 §3)
 
