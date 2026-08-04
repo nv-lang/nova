@@ -18,17 +18,18 @@ const DEFAULT_BUF_CAP = 8192
 
 // ─── BufWriter[W] — must-consume buffering sink ───
 
-/// Buffering wrapper over an inner `io.Write`. **Must be `@close`d**: an
-/// un-closed `BufWriter` is a compile error, and `@close` surfaces the final
+/// Buffering wrapper over an inner `io.Write`. `@close` surfaces the final
 /// flush error instead of swallowing it. Accumulates writes and flushes to the
 /// inner sink in `DEFAULT_BUF_CAP` chunks.
 ///
-/// **Deliberately excluded from auto-`@cleanup`, same rationale as `File`**
-/// (std/src/fs/fs.nv): `@close()` is fallible and its whole documented point is
-/// that the final-flush error is NOT swallowed on drop (the header comment above
-/// names this the #1 differentiator vs. Go/Rust/Zig) — an auto-inserted,
-/// error-discarding cleanup would reintroduce exactly that footgun. Regression
-/// guard: std/src/io/neg/d322_bufwriter_leak_neg.nv.
+/// **D432 §1 amendment (2026-08-04, №315 fix) — auto-`@cleanup` enabled**,
+/// same treatment as `File` (std/src/fs/fs.nv, see its type doc for the full
+/// rationale): a `BufWriter` left un-closed at scope-exit auto-`@cleanup`s
+/// instead of being a compile error, but the final-flush error is still NOT
+/// swallowed — it propagates via `Fail[IoError]`, a DIRECT effect the
+/// triggering function must declare (D432 §1) or `E_D432_CLEANUP_EFFECT_NOT_DECLARED`
+/// fires at compile time. Explicit `@close()` still works and disarms
+/// auto-cleanup (D432 §4).
 #stable(since = "0.1")
 export type BufWriter[W Write] consume priv {
     mut inner W
@@ -82,13 +83,26 @@ export fn BufWriter[W Write] mut @flush() -> Result[(), IoError] {
     }
 }
 
-/// Discharge: flush everything and consume the writer. The **only**
-/// explicit release; the flush error is returned in the happy path (not lost on
-/// drop). After `@close` the `BufWriter` cannot be used again (double-close is a
+/// Discharge: flush everything and consume the writer. The explicit
+/// release, still recommended (surfaces the flush error inline rather than
+/// through the caller's signature); the flush error is returned, never lost.
+/// After `@close` the `BufWriter` cannot be used again (double-close is a
 /// compile error).
 #stable(since = "0.1")
 export fn BufWriter[W Write] consume @close() -> Result[(), IoError] {
     @flush()
+}
+
+/// D432 §1 amendment (2026-08-04, №315 fix) `Cleanup[IoError]`
+/// implementation: cleanup = `@close()`, propagated via `!!` — see
+/// `File consume @cleanup` (std/src/fs/fs.nv) for the full rationale, same
+/// pattern here. No effect beyond `Fail[IoError]` is declared (mirrors
+/// `@close`/`@flush`/`@write` above, all effect-free in their OWN
+/// signature — the inner `W`'s effect, if any, surfaces transitively at
+/// monomorphisation, same as every other `BufWriter[W]` method).
+#stable(since = "0.1")
+export fn BufWriter[W Write] consume @cleanup(_outcome ScopeOutcome) Fail[IoError] -> () {
+    @close()!!
 }
 
 // ─── BufReader[R] — buffering source ───

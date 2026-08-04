@@ -23,14 +23,23 @@
 // auto-cleanup absent an explicit reason not to") and for forward
 // compatibility if the destructure-tracking gap is closed later.
 //
-// `File`/`BufWriter` stay OUT of this rollout — both are explicitly
-// documented (std/src/fs/fs.nv, std/src/io/buffered.nv) as celebrating
-// "no silent swallow of the close error" as their #1 differentiator vs.
-// Go/Rust/Java/Zig; D432 §1 restricts auto-cleanup to an EMPTY effect-row
-// `@cleanup` anyway (`@close()` on both is `Fail`-carrying), so this is
-// simultaneously a design-intent exclusion and an effect-guard exclusion.
-// `File`'s existing must-consume regression guard:
-// std/src/fs/neg/d323_file_not_consumed_neg.nv (unaffected by this rollout).
+// **Updated 2026-08-04 (№315 fix, D432 §1 amendment):** `File`/`BufWriter`
+// were originally OUT of this rollout — D432 §1 restricted auto-cleanup to
+// an EMPTY effect-row `@cleanup`, and `@close()` on both is `Fail`-carrying.
+// That restriction is LIFTED: fallible/effectful `@cleanup` is now ALSO
+// auto-cleanup eligible, with its effects propagated as DIRECT effects of
+// whichever function triggers the auto-insertion (checked at compile time,
+// `E_D432_CLEANUP_EFFECT_NOT_DECLARED` if undeclared) — "no silent swallow
+// of the close error" still holds, it just moved from "must explicitly
+// close" to "the close failure is visible in your signature". `File`/
+// `BufWriter[W]` now DO have their own `@cleanup` (std/src/fs/fs.nv,
+// std/src/io/buffered.nv). Regression guards: `File` —
+// std/src/fs/neg/d323_file_not_consumed_neg.nv (now expects
+// `E_D432_CLEANUP_EFFECT_NOT_DECLARED`, not `D133-not-consumed`);
+// `BufWriter[W]` — std/src/io/neg/d322_bufwriter_leak_neg.nv (still
+// `D133-not-consumed`, for an orthogonal pre-existing reason, see that
+// file's own comment); general mechanism —
+// spec_tests/conformance/d315_fallible_cleanup_effects.nv.
 
 module std.net
 
