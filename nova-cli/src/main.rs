@@ -5257,6 +5257,26 @@ fn cmd_build(
                 nova_codegen::chain_norm::normalize_chains_module(
                     &mut module, &build_env.resolved_types);
             }
+            // Plan 123.1 (D217) / 221.1 №304: method-local receiver field
+            // caching. `cmd_build` (`nova build`) NEVER called this —
+            // `test_runner.rs` (`nova test`) has this exact call at this
+            // exact pipeline position (after callnorm/chain_norm, before
+            // post-normalize-annotate); `nova build` fell straight through
+            // to codegen without it. Consequence (found by window p-fc291,
+            // confirmed by diffing generated `.c`): `nova build` and `nova
+            // test` compiled DIFFERENT C for byte-identical source — the
+            // Plan 123 field-cache optimization was validated exclusively
+            // through `nova test`/`nova bench`, never exercised on the path
+            // an actual user's `nova build` takes. Pure AST→AST pass,
+            // semantic equivalence guaranteed (D217 §1; write-site
+            // invalidation hardened by №291, already present in
+            // `field_cache.rs`); escape hatch `NOVA_FIELD_CACHE=0` mirrors
+            // `test_runner.rs`'s.
+            {
+                let _t = nova_codegen::perf_timer::PerfTimer::new("field-cache");
+                let cfg = nova_codegen::field_cache::FieldCacheConfig::from_env_or_default();
+                nova_codegen::field_cache::cache_module(&mut module, &cfg);
+            }
             // Plan 196.2 P1: post-normalize-annotate. desugar/callnorm/chain_norm
             // synthesize nodes with UNSET ids (e.g. `?`/operator-lowering Call) —
             // the checker channel cannot key them → their resolved_types are never
@@ -5308,6 +5328,25 @@ fn cmd_build(
                 let _t = nova_codegen::perf_timer::PerfTimer::new("codegen");
                 let mut emitter = nova_codegen::codegen::CEmitter::new();
                 emitter.set_source_for_annotations(src.clone());
+                // 221.1 №304-смежная находка: `cmd_build` никогда не звал
+                // `set_source_file_name` — эмиттер молча падал на дефолт
+                // `"<unknown>"` (см. `emit_c.rs` `CEmitter::new`), так что
+                // ЛЮБОЙ contract-violation/panic-трейс из бинаря, собранного
+                // `nova build`, печатал `<unknown>:45` вместо `main.nv:45`.
+                // `test_runner.rs` (`nova test`) уже вызывает это ровно так
+                // (см. её же комментарий "Plan 140.1 Ф.2 (D24/D13 amend):
+                // source file name for the location-first contract/assert
+                // diagnostic prefix") — зеркалим байт-в-байт. Найдено ЭТИМ
+                // окном при byte-identity сверке .c для №304 (diff вскрыл
+                // `"<unknown>"` vs `"repro.nv"` в `nova_contract_violation`/
+                // `nova_throw_trace_push` литералах), не было в брифе.
+                {
+                    let fname = path
+                        .file_name()
+                        .map(|s| s.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| path.to_string_lossy().into_owned());
+                    emitter.set_source_file_name(fname);
+                }
                 if let Some(dir) = embed_sidecar_dir.clone() {
                     emitter.set_blob_sidecar_dir(dir);
                 }
