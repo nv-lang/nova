@@ -21999,6 +21999,68 @@ impl<'a> TypeCheckCtx<'a> {
     ) {
         match &target.kind {
             ExprKind::Member { obj, name: field_name } => {
+                // **№349 fix (D246 L3, Ф.3-companion):** `p.field = v` where
+                // `p`'s type is a raw pointer is auto-deref sugar for
+                // `(*p).field = v` (D216 §5) — a WRITE THROUGH THE POINTER.
+                // Pointee-writability is an L3 property of the POINTER'S
+                // TYPE (`*mut T` vs bare `*T ≡ *ro T`), independent of L1
+                // binding (`mut p` does NOT grant a writable pointee) and
+                // independent of any L2 view wrapper on `p` — mirror the
+                // `*p = v` Deref arm and `p[i] = v` Index arm below, which
+                // already gate on `pointee_is_writable` and explicitly
+                // ignore the binding. Before this fix `p.field = v` fell
+                // through ALL of the checks below undetected: the L1/L2
+                // checks target VALUE bindings (their `scope.get(root)`
+                // lookups see the pointer's own — unrelated — type), and
+                // the direct-field lookup further down matches on
+                // `tr.strip_readonly()` which never yields `Named` for a
+                // `Pointer` type, so `type_name` was silently `None`. Net
+                // effect: `mut p *Counter; p.v = 5` passed `nova check`
+                // clean and only the generated C caught it downstream
+                // (`read-only variable is not assignable`) with no Nova
+                // diagnostic at all. Gate here FIRST and `return` in both
+                // branches so the unrelated value-binding logic never runs
+                // for a pointer receiver.
+                if let Some(obj_ty) = self.infer_expr_type(obj, scope) {
+                    if let Some(writable) = pointee_is_writable(&obj_ty) {
+                        if !writable {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[E_POINTER_RO_ASSIGN] cannot assign to `{}` \
+                                     through a readonly pointer — `*T` is a \
+                                     readonly pointee (the L3 default is `ro`: \
+                                     `*T ≡ *ro T`, Plan 147 / D246). `{}.{} = ...` \
+                                     is auto-deref sugar for `(*{}).{} = ...`; a \
+                                     writable pointee requires the `*mut T` opt-in \
+                                     on the pointer's TYPE. Pointer reassignability \
+                                     (`mut {}`) does NOT make the pointee writable.",
+                                    field_name,
+                                    Self::assign_root_ident(obj).unwrap_or("p"),
+                                    field_name,
+                                    Self::assign_root_ident(obj).unwrap_or("p"),
+                                    field_name,
+                                    Self::assign_root_ident(obj).unwrap_or("p"),
+                                ),
+                                target.span,
+                            ));
+                            return;
+                        }
+                        // Writable pointee (`*mut T`): the pointer indirection
+                        // itself is clear to write through, but the POINTEE's
+                        // own record type may still declare this specific
+                        // field `ro`/`priv` (D175/D220) — check those against
+                        // the pointee's named type, not the pointer's.
+                        if let Some(pointee_named) = pointee_named_type(&obj_ty) {
+                            self.check_field_write_attrs(
+                                &pointee_named,
+                                field_name,
+                                target,
+                                errors,
+                            );
+                        }
+                        return;
+                    }
+                }
                 // **Plan 147 Ф.3 (D246, R2-split):** an EXPLICIT `mut T`
                 // content-view (L2) on the binding overrides the bare-ro
                 // freeze — `ro r mut Point` permits `r.x = v` (content ✅)
@@ -22067,62 +22129,8 @@ impl<'a> TypeCheckCtx<'a> {
                     return;
                 }
                 // Direct check: is this specific field readonly?
-                let obj_ty = self.infer_expr_type(obj, scope);
-                if let Some(tr) = obj_ty {
-                    let type_name = match tr.strip_readonly() {
-                        TypeRef::Named { path, .. } => path.last().map(|s| s.as_str()),
-                        _ => None,
-                    };
-                    if let Some(tname) = type_name {
-                        if let Some(fields) = self.record_fields_for(tname) {
-                            if let Some(f) = fields.iter().find(|f| f.name == *field_name) {
-                                if f.readonly {
-                                    errors.push(Diagnostic::new(
-                                        format!(
-                                            "[E_READONLY_FIELD] cannot assign to `ro` field `{}` of type `{}`",
-                                            field_name, tname
-                                        ),
-                                        target.span,
-                                    ));
-                                }
-                                // Plan 124 (D220) + 124.6 (D225): priv field WRITE check.
-                                // Plan 160 (D281) Ф.2: module-private write.
-                                if f.priv_field
-                                    && !self.priv_field_access_allowed(tname, &f.visible_to)
-                                {
-                                    if f.priv_module_field {
-                                        if !self.module_priv_access_allowed(tname, target.span) {
-                                            errors.push(Diagnostic::new(
-                                                format!(
-                                                    "[E_FIELD_MODULE_PRIVATE] cannot write to \
-                                                     module-private field `{}.{}` from outside \
-                                                     its module. Type declared with bare `priv` \
-                                                     (Plan 160 / D281). Hint: add a public mutator \
-                                                     method on `{}`.",
-                                                    tname, field_name, tname,
-                                                ),
-                                                target.span,
-                                            ));
-                                        }
-                                    } else {
-                                        errors.push(Diagnostic::new(
-                                            format!(
-                                                "[E_PRIV_FIELD_WRITE] cannot write to private \
-                                                 field `{}.{}` outside type-method scope. \
-                                                 Field marked `priv` (Plan 124 / D220). \
-                                                 Hint: add public mutator method on `{}` \
-                                                 (e.g. `export fn {} mut @set_{}(v T)`), \
-                                                 move accessing code into a method of `{}`, \
-                                                 or use `#test_access({})` (D225).",
-                                                tname, field_name, tname, tname, field_name, tname, tname,
-                                            ),
-                                            target.span,
-                                        ));
-                                    }
-                                }
-                            }
-                        }
-                    }
+                if let Some(tr) = self.infer_expr_type(obj, scope) {
+                    self.check_field_write_attrs(&tr, field_name, target, errors);
                 }
             }
             // D176 / Plan 114 D184: index write `arr[i] = x` — forbid if arr has `ro` type.
@@ -22226,6 +22234,72 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Shared field-attribute check for a WRITE target `<obj>.<field_name>`,
+    /// given `obj`'s already-resolved receiver type `tr` — a record's own
+    /// `ro`/`priv` field markers (D175/D220/D281), independent of how the
+    /// receiver was reached (owned value, or through a `*mut T` pointer —
+    /// №349: the pointer-receiver branch of `check_target_readonly` calls
+    /// this with the POINTEE's named type after clearing the L3
+    /// pointee-writability gate). Split out of the direct value-field arm
+    /// so both receiver kinds share one implementation instead of drifting.
+    fn check_field_write_attrs(
+        &self,
+        tr: &TypeRef,
+        field_name: &str,
+        target: &Expr,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        let type_name = match tr.strip_readonly() {
+            TypeRef::Named { path, .. } => path.last().map(|s| s.as_str()),
+            _ => None,
+        };
+        let Some(tname) = type_name else { return };
+        let Some(fields) = self.record_fields_for(tname) else { return };
+        let Some(f) = fields.iter().find(|f| f.name == *field_name) else { return };
+        if f.readonly {
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_READONLY_FIELD] cannot assign to `ro` field `{}` of type `{}`",
+                    field_name, tname
+                ),
+                target.span,
+            ));
+        }
+        // Plan 124 (D220) + 124.6 (D225): priv field WRITE check.
+        // Plan 160 (D281) Ф.2: module-private write.
+        if f.priv_field && !self.priv_field_access_allowed(tname, &f.visible_to) {
+            if f.priv_module_field {
+                if !self.module_priv_access_allowed(tname, target.span) {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_FIELD_MODULE_PRIVATE] cannot write to \
+                             module-private field `{}.{}` from outside \
+                             its module. Type declared with bare `priv` \
+                             (Plan 160 / D281). Hint: add a public mutator \
+                             method on `{}`.",
+                            tname, field_name, tname,
+                        ),
+                        target.span,
+                    ));
+                }
+            } else {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_PRIV_FIELD_WRITE] cannot write to private \
+                         field `{}.{}` outside type-method scope. \
+                         Field marked `priv` (Plan 124 / D220). \
+                         Hint: add public mutator method on `{}` \
+                         (e.g. `export fn {} mut @set_{}(v T)`), \
+                         move accessing code into a method of `{}`, \
+                         or use `#test_access({})` (D225).",
+                        tname, field_name, tname, tname, field_name, tname, tname,
+                    ),
+                    target.span,
+                ));
+            }
         }
     }
 
@@ -23685,6 +23759,27 @@ fn pointee_is_writable(ty: &TypeRef) -> Option<bool> {
             TypeRef::Unit(_) => false,
             // Bare `*T ≡ *ro T` → readonly pointee (L3 default).
             _ => false,
+        }),
+        _ => None,
+    }
+}
+
+/// №349 companion to `pointee_is_writable`: given the type of a
+/// pointer-valued expression `p`, return the pointee's own type with any
+/// `Mut`/`Uninit`/`Readonly` L3 wrapper stripped — the type record-field
+/// lookups (`ro`/`priv` markers, D175/D220) should be checked against.
+/// `None` when `ty` is not a pointer type at all (mirrors
+/// `pointee_is_writable`'s `None` case).
+fn pointee_named_type(ty: &TypeRef) -> Option<TypeRef> {
+    match ty {
+        TypeRef::Readonly(inner, _)
+        | TypeRef::Mut(inner, _)
+        | TypeRef::Uninit(inner, _) => pointee_named_type(inner),
+        TypeRef::Pointer(pointee, _) => Some(match pointee.as_ref() {
+            TypeRef::Mut(inner, _) | TypeRef::Uninit(inner, _) | TypeRef::Readonly(inner, _) => {
+                (**inner).clone()
+            }
+            other => other.clone(),
         }),
         _ => None,
     }
