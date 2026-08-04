@@ -1,0 +1,14 @@
+// №325 Ш.2 (D156-амендмент 2026-08-04, plan 246 step B) — pos-control:
+// `Vec[int]` and other non-consume-element containers are entirely
+// unaffected — `type_is_consume` on a non-consume generic argument returns
+// false, so no new obligation is introduced. `mut`/`ro` bindings, no
+// `for consume` needed, ordinary drop at scope-exit.
+
+module spec_tests.conformance
+
+test "Vec[int] — ordinary container, no consume obligation introduced" {
+    mut v = Vec[int].new()
+    v.push(1)
+    v.push(2)
+    assert(v.len() == 2)
+}

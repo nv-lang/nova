@@ -1,0 +1,29 @@
+// EXPECT_COMPILE_ERROR E_CONSUME_KEYWORD_MISSING
+//
+// №325 Ш.2 (D156-амендмент 2026-08-04, plan 246 step B): the removed Ш.0
+// barrier ONLY ever fired for 8 hardcoded std-collection names — a
+// hand-written generic container (structurally nothing like `Vec`, just a
+// generic record with its own `.new()`/`@push`) leaked exactly the same
+// hole. This is the главная proof that the fix is a GENERAL rule
+// ("container inherits linearity from its element"), not a bigger name
+// list: `P325UserStack` is never mentioned anywhere in the compiler.
+
+module neg.consume_collection_user_generic_neg
+
+type P325UserGenericRes consume { x int }
+
+fn P325UserGenericRes consume @finish() -> int { self.x }
+
+type P325UserStack[T] {
+    priv items []T,
+}
+
+fn P325UserStack[T].new() -> Self => { items: [] }
+fn P325UserStack[T] mut @push(v T) -> @ {
+    @items.push(v)
+}
+
+test "user-defined generic container of a must-consume element requires `consume` on its own binding" {
+    mut s = P325UserStack[P325UserGenericRes].new()
+    s.push(P325UserGenericRes { x: 1 })
+}

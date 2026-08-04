@@ -1,0 +1,22 @@
+// №325 Ш.2 (D156-амендмент 2026-08-04, plan 246 step B): a properly
+// `consume`-bound container of a must-consume element is discharged by
+// `for consume` iteration (D156 collection-aware iteration, already a
+// general — not std-only — mechanism: `consume_walk_consume_for` declares
+// each loop var unconditionally and a fallback recognizes ANY globally-
+// registered consume-method call on an obligation with unknown var-type).
+// pos-control: this must compile clean.
+
+module spec_tests.conformance
+
+type P325InheritForConsumeRes consume { x int }
+
+fn P325InheritForConsumeRes consume @finish() -> int { self.x }
+
+test "container of a must-consume element, discharged via `for consume`" {
+    consume v = Vec[P325InheritForConsumeRes].new()
+    v.push(P325InheritForConsumeRes { x: 1 })
+    v.push(P325InheritForConsumeRes { x: 2 })
+    for consume item in v {
+        item.finish()
+    }
+}
