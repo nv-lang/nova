@@ -1,0 +1,55 @@
+// №320 (реестр 221.1, окно p320) [M-generic-sumlift-mono-missing-variant-wrap]:
+// second repro — TWO type params AND several unary variants of DIFFERENT
+// "kind" (D55 wrap-kind disambiguation, `WrapKind::Named(name)` — see
+// `wrap_kind_of` in compiler-codegen/src/types/mod.rs), so the fix in
+// p320_sumlift_generic_pos.nv isn't verified only on the narrowest possible
+// shape (one type param, one variant). `Leaf(Wrap[K, V])` and
+// `Paired(Pair[K, V])` are two DIFFERENT Named kinds ("Wrap" vs "Pair") on
+// the SAME generic sum `Node2[K, V]` — `single_wrap_candidates` must return
+// BOTH candidates and the caller's WrapKind filter must still pick exactly
+// the one matching the source expr's own type, with `expected.generics`
+// non-empty (K, V) for both.
+//
+// Two OTHER variant shapes were tried first while building this fixture and
+// hit SEPARATE, PRE-EXISTING codegen gaps unrelated to sum-lift (confirmed
+// via hand-written, non-lifted ctor calls reproducing identically — NOT a
+// regression from the №320 fix, NOT fixed here, reported to the owner as
+// separate findings):
+//   1. mixing a type-param-DEPENDENT unary variant (`Leaf(Wrap[K,V])`) with a
+//      type-param-INDEPENDENT one (`Tag(str)` / `Num(i64)`) in the SAME
+//      generic sum mis-boxes the independent variant's ctor argument as
+//      `void*` (`passing 'void *' to parameter of incompatible type
+//      'nova_str'`), even for a hand-written (non-lifted) `Tag(s)` call.
+//   2. a unary variant whose payload depends on only a SUBSET of the sum's
+//      own type params (`Boxed(Box[K])` on a `Node2[K, V]` — `Box` uses only
+//      `K`) hits the same erased/boxed-argument mismatch (`operand of type
+//      'NovaValue_Box____nova_str' where arithmetic or pointer type is
+//      required`), again reproducing hand-written.
+// Both variants below depend on ALL of `Node2`'s type params (K and V, same
+// order) to stay clear of both gaps — this fixture is scoped to the sum-lift
+// wrap mechanism only.
+module standalone.p320_sumlift_generic_multi_pos
+
+type Wrap[K, V] value { ro key K, ro val V }
+type Pair[A, B] value { ro a A, ro b B }
+
+type Node2[K, V] enum Empty | Leaf(Wrap[K, V]) | Paired(Pair[K, V])
+
+fn make_leaf[K, V](w Wrap[K, V]) -> ro Node2[K, V] => w
+fn make_paired[K, V](p Pair[K, V]) -> ro Node2[K, V] => p
+
+test "D55 sum-lift: generic sum with TWO type params, Leaf variant (№320, multi-variant disambiguation)" {
+    ro n = make_leaf(Wrap { key: "a", val: 1 })
+    match n {
+        Leaf(w) => assert(w.key == "a" && w.val == 1)
+        _ => assert(false)
+    }
+}
+
+test "D55 sum-lift: generic sum with TWO type params, DIFFERENT unary variant same sum (№320, multi-variant disambiguation)" {
+    ro n = make_paired(Pair { a: "x", b: 9 })
+    match n {
+        Paired(p) => assert(p.a == "x" && p.b == 9)
+        _ => assert(false)
+    }
+}

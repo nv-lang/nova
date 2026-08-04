@@ -1,0 +1,48 @@
+// №320 (реестр 221.1, окно p320) [M-generic-sumlift-mono-missing-variant-wrap]:
+// D55 "obvious single-wrapper coercion" sum-lift for a GENERIC-instantiated
+// named-type payload. Before the fix: `single_wrap_candidates`
+// (compiler-codegen/src/types/mod.rs) bailed out whenever `expected` (here
+// `Node[K, V]`) carried non-empty `generics`, regardless of arm — so the
+// checker never rewrote the bare leaf `w` into `Node.Leaf(w)`, and (return-
+// position compat against the declared return type is otherwise NOT enforced
+// via `assignable`/`assignable_direct` for a bare leaf — the rewrite IS the
+// only enforcement) codegen received the raw un-wrapped `w` and emitted
+// `return w;` into a function whose C return type is `Nova_Node____.. *` —
+// ICE: `returning 'NovaValue_Wrap____nova_str__nova_int' ... incompatible
+// result type 'Nova_Node____nova_str__nova_int *'`.
+//
+// Fix: the Sum arm of `single_wrap_candidates` no longer gates on `expected`'s
+// own generics (the WrapKind disambiguation this function feeds is already
+// name-only for a `Named` kind, so a generic instantiation's own type-args
+// were never actually needed here). Materializing the wrap ALSO had to switch
+// shape for a generic target: `try_wrap_leaf` now emits a BARE `Leaf(w)` call
+// (mirrors how `Some(x)`/`Ok(x)` are hand-written for `Option`/`Result`)
+// instead of the qualified `Node.Leaf(w)` non-generic sum-lift already used
+// (mirrors `SqlValue.I(1)`) — `emit_c.rs`'s `try_emit_explicit_variant_ctor`
+// explicitly declines a qualified call on a generic sum ("Generic sums keep
+// their own mono-aware bare-`Ident` variant path ... — not intercepted
+// here"); a qualified call mis-routed to static-METHOD dispatch (undefined
+// `Nova_Node..._static_Leaf` link symbol) before this second half of the fix.
+module standalone.p320_sumlift_generic_pos
+
+type Wrap[K, V] value { ro key K, ro val V }
+
+type Node[K, V] enum Empty | Leaf(Wrap[K, V])
+
+fn make[K, V](w Wrap[K, V]) -> ro Node[K, V] => w
+
+test "D55 sum-lift: generic-instantiated named-type payload auto-wraps at return position (№320)" {
+    ro n = make(Wrap { key: "a", val: 1 })
+    match n {
+        Leaf(w) => assert(w.key == "a" && w.val == 1)
+        Empty => assert(false)
+    }
+}
+
+test "D55 sum-lift: second distinct instantiation of the SAME generic sum (№320, mono sanity)" {
+    ro n = make(Wrap { key: 7, val: true })
+    match n {
+        Leaf(w) => assert(w.key == 7 && w.val)
+        Empty => assert(false)
+    }
+}

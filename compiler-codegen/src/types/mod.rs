@@ -22124,10 +22124,39 @@ pub(crate) enum WrapTarget {
 /// wrap; zero or ≥2 ⟹ no auto-wrap (ambiguous, or plain mismatch — the
 /// existing error stands).
 ///
-/// Bootstrap-scoped to NON-GENERIC wrapper types (`generics` must be empty)
-/// — `SqlValue`/`UserId`-shaped declarations; a parameterized wrapper
-/// (`Wrapper[T]`) is out of scope (mirrors D55's existing generic-arg
-/// coercion gaps elsewhere in this checker).
+/// Bootstrap-scoped to NON-GENERIC **newtype** wrappers (`generics` must be
+/// empty for the `Newtype` arm) — `UserId`-shaped declarations; a
+/// parameterized newtype (`Wrapper[T]`) stays out of scope (mirrors D55's
+/// existing generic-arg coercion gaps elsewhere in this checker; the `as`-
+/// cast codegen this arm feeds needs the DECLARED inner type verbatim, and a
+/// generic newtype's declared inner type is itself a bare type-param name —
+/// substituting it correctly is unimplemented, not merely untested).
+///
+/// [M-generic-sumlift-mono-missing-variant-wrap] fix (реестр 221.1 №320,
+/// Plan p320): the **Sum** arm is NOT so scoped — `expected`'s own generics
+/// (e.g. `Node[K, V]`) are irrelevant to the decision here. The disambiguation
+/// this function feeds (`wrap_kind_of`) compares a candidate's inner type by
+/// NAME only for a `Named` kind (generics of THAT inner type are never
+/// consulted — see `wrap_kind_of`'s `Named(name.clone())` arm) — so a
+/// variant's declared payload `Wrap[K, V]` (using the SUM's own, still-
+/// abstract type-param names) already carries everything the match needs:
+/// `WrapKind::Named("Wrap")`, identical to what `w`'s own concrete-at-the-
+/// call-site type `Wrap[K, V]` resolves to. The wrap materializes as an
+/// ordinary constructor call `Node.Leaf(w)` (`try_wrap_leaf`), which the
+/// SAME generic-inference machinery every hand-written `Node.Leaf(w)` call
+/// already goes through — no substitution needed here, only the previously-
+/// blanket bail removed. Before this fix, `single_wrap_candidates` returned
+/// EMPTY for any generic-instantiated `expected` regardless of arm, so a
+/// generic sum's single-unary-variant wrap silently produced NO auto-wrap:
+/// the checker never flagged the resulting return-position mismatch either
+/// (return-value compat against the declared return type is NOT enforced via
+/// `assignable`/`assignable_direct` — see `check_fn`'s `FnBody::Expr`/
+/// `FnBody::Block` arms, "return-type compat is checked elsewhere" — in
+/// practice for a bare leaf it is checked NOWHERE, only ever materialized
+/// correctly via this rewrite), so codegen received the RAW un-wrapped value
+/// and emitted `return w;` into a function whose C return type is the sum's
+/// own pointer/struct type — ICE (see probe fixtures
+/// `spec_tests/conformance/p320_sumlift_generic_*`).
 /// `lookup` — resolve a type NAME to its declared `TypeDeclKind` (owned —
 /// callers hold it either as `&TypeDecl` refs, borrowed-`HashMap<String,
 /// TypeDecl>`, or a fresh scan; a closure decouples this shared rule from
@@ -22148,14 +22177,14 @@ fn single_wrap_candidates(
         }
     }
     let TypeRef::Named { path, generics, .. } = ty else { return Vec::new() };
-    if !generics.is_empty() {
-        return Vec::new();
-    }
     let Some(name) = path.last() else { return Vec::new() };
     match lookup(name) {
-        Some(TypeDeclKind::Newtype(inner)) => {
+        // Newtype arm stays generic-free (see doc comment above).
+        Some(TypeDeclKind::Newtype(inner)) if generics.is_empty() => {
             vec![(WrapTarget::Newtype(name.clone()), inner)]
         }
+        // Sum arm: `expected`'s own generics are irrelevant here (№320 fix,
+        // see doc comment above) — no `generics.is_empty()` gate.
         Some(TypeDeclKind::Sum(variants)) => variants
             .iter()
             .filter_map(|v| match &v.kind {
@@ -44095,6 +44124,32 @@ impl MapLitAnnotator {
         let WrapTarget::SumVariant(tname, vname) = target else {
             return; // Newtype — accept-only, see doc comment above.
         };
+        // [M-generic-sumlift-mono-missing-variant-wrap] fix (реестр 221.1 №320):
+        // a GENERIC sum's variant ctor must be materialized BARE (`Leaf(w)`,
+        // the same shape hand-written `Some(x)`/`Ok(x)` already use for
+        // `Option`/`Result`) — NOT qualified (`Node.Leaf(w)`, the `SqlValue.I(1)`
+        // shape non-generic sum-lift already emitted). `emit_c.rs`'s
+        // `try_emit_explicit_variant_ctor` explicitly declines a QUALIFIED
+        // `Type.Variant(..)` call when `Type` is a generic sum ("Generic sums
+        // keep their own mono-aware bare-`Ident` variant path (arg boxing +
+        // instance queuing) — not intercepted here") — the qualified call then
+        // mis-routes to static-METHOD dispatch (undefined `Nova_<T>_static_
+        // <Variant>` symbol, a link-time ICE) instead of the mono-aware ctor
+        // path bare `Leaf(w)` triggers. `expected`'s own `generics` being
+        // non-empty (after peeling `ro`/`mut`/`uninit`) is exactly "this sum
+        // reference is a generic instantiation" — the same signal `single_
+        // wrap_candidates` above just started tolerating for this call.
+        let mut peeled = expected;
+        loop {
+            match peeled {
+                TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) | TypeRef::Uninit(inner, _) => {
+                    peeled = inner;
+                }
+                _ => break,
+            }
+        }
+        let target_is_generic_sum =
+            matches!(peeled, TypeRef::Named { generics, .. } if !generics.is_empty());
         let span = e.span;
         let old = std::mem::replace(e, Expr::new(ExprKind::UnitLit, span));
         // Numeric candidate payload (e.g. `i64`) — auto-insert `as <inner>`
@@ -44108,9 +44163,14 @@ impl MapLitAnnotator {
         } else {
             old
         };
+        let func = if target_is_generic_sum {
+            Expr::new(ExprKind::Ident(vname.clone()), span)
+        } else {
+            Expr::new(ExprKind::Path(vec![tname.clone(), vname.clone()]), span)
+        };
         *e = Expr::new(
             ExprKind::Call {
-                func: Box::new(Expr::new(ExprKind::Path(vec![tname.clone(), vname.clone()]), span)),
+                func: Box::new(func),
                 args: vec![CallArg::Item(payload)],
                 trailing: None,
             },
