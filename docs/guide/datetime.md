@@ -101,7 +101,7 @@ Parsing zoned strings has a separate `OffsetConflict` policy
 (`RejectMismatch` (default)/`Use`/`Prefer`/`Ignore`) for a mismatch between
 the stored offset and the zone's current rules (tzdb drift).
 
-## Parsing and formatting (Ф.5; §1а: methods on the source)
+## Parsing and formatting (methods on the source)
 
 | String | Method | Result |
 |---|---|---|
