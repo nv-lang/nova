@@ -1,0 +1,108 @@
+// D432 §1 amendment (2026-08-04, №315 fix): the auto-inserted `@cleanup(o)`
+// call synthesized for a `consume X = e { body }` scope-block (D188/D314)
+// carries DIRECT effects of the enclosing function — checked at the block-
+// form site itself now (previously invisible: the desugar into `defer`
+// happens AFTER effect-checking runs, `check_module_impl`/`infer_effects`).
+// Regression guards for the pos side of that fix (neg side:
+// spec_tests/conformance/neg/d315_block_cleanup_{fail,effect}_missing_neg.nv).
+// Part of the SINGLE `spec_tests.conformance` folder-module (one CU).
+module spec_tests.conformance
+
+// ── (1) declared effects — compiles, runs, cleanup's Fail routes through
+// the installed handler; declared plain effect (`D315Beep`) fires too. ──
+
+type D315Boom { msg str }
+type D315FailRes consume { id int }
+fn D315FailRes consume @cleanup(_outcome ScopeOutcome) Fail[D315Boom] -> () {
+    throw D315Boom { msg: "cleanup failed" }
+}
+fn D315FailRes.new(id int) -> D315FailRes => { id }
+
+fn d315_block_fail_sig_declared() Fail[D315Boom] -> () {
+    consume r = D315FailRes.new(1) {
+        ro _x = r.id
+    }
+}
+
+type D315Beep effect { ping() -> () }
+type D315BeepRes consume { id int }
+fn D315BeepRes consume @cleanup(_outcome ScopeOutcome) D315Beep -> () {
+    D315Beep.ping()
+}
+fn D315BeepRes.new(id int) -> D315BeepRes => { id }
+
+fn d315_block_beep_sig_declared() D315Beep -> () {
+    consume r = D315BeepRes.new(1) {
+        ro _x = r.id
+    }
+}
+
+test "d315: block-form fallible/effectful cleanup compiles when the effect is declared" {
+    mut pings = 0
+    with D315Beep = effect D315Beep {
+        ping() -> () { pings += 1 return () }
+    } {
+        d315_block_beep_sig_declared()
+    }
+    assert(pings == 1)
+
+    mut reached_after_call = false
+    with Fail[D315Boom] = |_e| interrupt () {
+        d315_block_fail_sig_declared()
+        reached_after_call = true
+    }
+    // The cleanup unconditionally throws (see D315FailRes above) — the
+    // installed handler intercepts via the implicit `interrupt()` of the
+    // lambda-catch form (D90), which aborts the REST of the `with`-body, so
+    // `reached_after_call` stays false. The point of this assert is that
+    // the program did not crash/abort and control returned here at all —
+    // proof the compiled cleanup call actually ran and its `Fail` was
+    // routed through the declared handler instead of being an undeclared
+    // direct effect (which would have been a compile error, see the `neg`
+    // siblings).
+    assert(reached_after_call == false)
+}
+
+// ── (2) control: an EMPTY-effect-row `@cleanup` (Ограждение 1's
+// pre-amendment case) is unaffected — no new diagnostic, no new
+// declaration requirement. ──
+
+type D315PureRes consume { id int }
+fn D315PureRes consume @cleanup(_outcome ScopeOutcome) -> () { () }
+fn D315PureRes.new(id int) -> D315PureRes => { id }
+
+fn d315_block_empty_row() -> () {
+    consume r = D315PureRes.new(1) {
+        ro _x = r.id
+    }
+}
+
+test "d315: block-form pure (empty-row) cleanup unaffected by the D432 amendment" {
+    d315_block_empty_row()
+    assert(true)
+}
+
+// ── (3) D432 §1 item 4 — attach, not replace: the block body throws the
+// PRIMARY error; the auto-inserted cleanup ALSO throws while the scope is
+// already failing (`Failure` outcome). The user must see the ORIGINAL body
+// error, not the cleanup's. ──
+
+type D315AttachRes consume { id int }
+fn D315AttachRes consume @cleanup(_outcome ScopeOutcome) Fail[D315Boom] -> () {
+    throw D315Boom { msg: "cleanup-failure" }
+}
+fn D315AttachRes.new(id int) -> D315AttachRes => { id }
+
+fn d315_attach_body_fails() Fail[D315Boom] -> () {
+    consume r = D315AttachRes.new(1) {
+        throw D315Boom { msg: "body-failure" }
+    }
+}
+
+test "d315: cleanup failure on an already-failing path attaches, does not replace the primary" {
+    ro caught_msg = with Fail[D315Boom] = |e| interrupt e.msg {
+        d315_attach_body_fails()
+        "unreachable"
+    }
+    assert(caught_msg == "body-failure")
+}

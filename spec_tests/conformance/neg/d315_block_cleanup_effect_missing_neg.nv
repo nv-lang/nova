@@ -1,0 +1,21 @@
+// EXPECT_COMPILE_ERROR E_D432_CLEANUP_EFFECT_NOT_DECLARED
+// №315 fix probe (block form, missing a PLAIN (non-Fail) effect). Same
+// D432 §1 rule as the Fail case — the auto-inserted `@cleanup(o)` call's
+// effects are DIRECT effects of the enclosing function, `Beep` included.
+module neg.d315_block_cleanup_effect_missing_neg
+
+type Beep effect { ping() -> () }
+
+type D315BeepRes consume { id int }
+
+fn D315BeepRes consume @cleanup(_outcome ScopeOutcome) Beep -> () {
+    Beep.ping()
+}
+
+fn D315BeepRes.new(id int) -> D315BeepRes => { id }
+
+fn d315_block_no_beep_sig() -> () {
+    consume r = D315BeepRes.new(1) {
+        ro _x = r.id
+    }
+}
