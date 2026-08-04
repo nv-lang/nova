@@ -358,7 +358,7 @@ stated in the doc comment for clarity.
 /// effect.Fail[NetError]: on connection failure, timeout, non-2xx
 ///
 /// example:
-///     let body = http.get("https://api.example.com/users/1")
+///     ro body = http.get("https://api.example.com/users/1")
 ///
 /// see also: http.post, http.client
 fn http.get(url str, timeout ms = 30000) Net Time Fail[NetError] -> Response
