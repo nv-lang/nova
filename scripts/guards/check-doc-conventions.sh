@@ -38,7 +38,7 @@
 #
 #   3. plan_status (ratchet) — `docs/plans/NNN-*.md` (тот же фильтр имён,
 #      что `scripts/tools/gen-plan-status.sh`: без README.md/STATUS.md,
-#      без суффиксов -notes/-progress/-execution-plan/-session*, только
+#      без суффиксов -notes/-progress/-execution-plan/-session*/-history, только
 #      файлы с ведущей цифрой) обязаны нести строку `**Статус:**`.
 #      Огромный исторический долг (458 из 599 на момент введения стража —
 #      старые планы до появления самой конвенции) — не ретрофитить разом,
@@ -190,7 +190,7 @@ if [ -n "$DIFF_BASE" ] && git -C "$ROOT" cat-file -e "$DIFF_BASE^{commit}" >/dev
         if [ -n "$diff_lines" ] && ! printf '%s\n' "$diff_lines" | grep -qvE '^[+-][[:space:]]*(source_rev|source_date):'; then
             return 0
         fi
-        red "same-commit pairing: $lone изменён без пары ($label) в диапазоне $DIFF_BASE..HEAD"
+        info "doc-conventions ПРЕДУПРЕЖДЕНИЕ (same-commit pairing): $lone изменён без пары ($label) в диапазоне $DIFF_BASE..HEAD — переводческие волны правят одну сторону законно; проверка наблюдательная (№322), гейт не роняет"
         same_commit_violations=$((same_commit_violations + 1))
     }
     for name in $discovered_guide_pairs; do
@@ -244,7 +244,7 @@ if [ -d "$plans_dir" ]; then
     plan_missing_status=$(grep -L -E '^\*\*Статус:\*\*' "$plans_dir"/*.md 2>/dev/null \
         | xargs -n1 basename 2>/dev/null \
         | grep -vE '^(README\.md|STATUS\.md)$' \
-        | grep -vE '(-notes|-progress|-execution-plan|-session[^.]*)\.md$' \
+        | grep -vE '(-notes|-progress|-execution-plan|-session[^.]*|-history)\.md$' \
         | grep -cE '^[0-9]')
 fi
 ratchet_check plan_missing_status "$plan_missing_status" "docs/plans/NNN-*.md без строки **Статус:**"
@@ -253,18 +253,32 @@ ratchet_check plan_missing_status "$plan_missing_status" "docs/plans/NNN-*.md б
 # 4. dev_links (ratchet): ссылки на docs/dev/ из docs/guide/** и spec/**.
 # ---------------------------------------------------------------------
 dev_link_pattern='(\.\./dev/|\.\./docs/dev/|docs/dev/)'
+# №315/№318: docs/plans/ так же не публикуется, как docs/dev/ — считаем ТОЛЬКО
+# кликабельные ссылки (markdown-цель), голые упоминания «Plan 210» в прозе
+# нарушением НЕ считаются (та же граница, что у проверки смешения языков:
+# метка-адрес — не дыра). Отдельный храповик, цель — «видно и не растёт».
+plans_link_pattern='\]\([^)]*(\.\./plans/|docs/plans/)[^)]*\)'
 dev_links=0
 scan_dirs=""
 [ -d "$guide_dir" ] && scan_dirs="$scan_dirs $guide_dir"
 [ -d "$spec_dir" ] && scan_dirs="$scan_dirs $spec_dir"
 if [ -n "$scan_dirs" ]; then
     # Периметр СУЖЕН (решение владельца 2026-08-03): spec/decisions/** НЕ
-    # считается — D-блоки по смыслу внутренние, их ссылки на docs/dev/ не
-    # долг публикуемой поверхности. Считаем только реально публикуемое:
-    # docs/guide/** и читательские файлы spec/*.md.
+    # считается. ВАЖНО (№331): не потому, что «не публикуется» — decisions
+    # как раз публикуются (RU-only, doc-conventions #zones; синк сайта их
+    # пишет наравне с guide). Исключены ПО ОБЪЁМУ И ПРИРОДЕ: ~64k строк
+    # рабочего норматива с плотной перекрёстной адресацией, где ссылки на
+    # процесс уместны; возврат их в счёт дал бы скачок базы (в первом замере
+    # dev_links это 56 из 113) без пользы для читателя гайдов.
     dev_links=$(grep -rhoE "$dev_link_pattern" $scan_dirs 2>/dev/null         --exclude-dir=decisions | wc -l)
 fi
 ratchet_check dev_links "$dev_links" "ссылки на docs/dev/ из docs/guide/** + spec/*.md без decisions/ (никогда не публикуется — #publishing)"
+
+plans_links=0
+if [ -n "$scan_dirs" ]; then
+    plans_links=$(grep -rhoE "$plans_link_pattern" $scan_dirs 2>/dev/null         --exclude-dir=decisions | wc -l)
+fi
+ratchet_check plans_links "$plans_links" "кликабельные ссылки в docs/plans/ из docs/guide/** + spec/*.md (зона не публикуется — #publishing)"
 
 # ---------------------------------------------------------------------
 # 5. code_block_identity (ratchet): байт-идентичность ```-фенсов пар.
@@ -275,14 +289,16 @@ extract_code_fences() {  # file
 code_block_mismatch_pairs=0
 mismatch_names=""
 for name in $discovered_guide_pairs; do
-    a="$(mktemp)"; b="$(mktemp)"
-    extract_code_fences "$guide_dir/$name.md" > "$a"
-    extract_code_fences "$guide_dir/$name.ru.md" > "$b"
-    if ! diff -q "$a" "$b" >/dev/null 2>&1; then
+    # №321: сравнение В ПАМЯТИ, без временных файлов. Прежняя схема делала
+    # по два mktemp на пару (52 файла за прогон) и на Windows/MSYS давала
+    # гонку: страж на НЕИЗМЕННОМ дереве отвечал по-разному от прогона к
+    # прогону. Командная подстановка детерминирована и не зависит от ФС.
+    fences_en="$(extract_code_fences "$guide_dir/$name.md")"
+    fences_ru="$(extract_code_fences "$guide_dir/$name.ru.md")"
+    if [ "$fences_en" != "$fences_ru" ]; then
         code_block_mismatch_pairs=$((code_block_mismatch_pairs + 1))
         mismatch_names="$mismatch_names docs/guide/$name"
     fi
-    rm -f "$a" "$b"
 done
 if [ -d "$spec_dir" ]; then
     shopt -s nullglob
@@ -290,14 +306,12 @@ if [ -d "$spec_dir" ]; then
         base="$(basename "$enf" .en.md)"
         ruf="$spec_dir/$base.md"
         [ -f "$ruf" ] || continue
-        a="$(mktemp)"; b="$(mktemp)"
-        extract_code_fences "$enf" > "$a"
-        extract_code_fences "$ruf" > "$b"
-        if ! diff -q "$a" "$b" >/dev/null 2>&1; then
+        fences_en="$(extract_code_fences "$enf")"
+        fences_ru="$(extract_code_fences "$ruf")"
+        if [ "$fences_en" != "$fences_ru" ]; then
             code_block_mismatch_pairs=$((code_block_mismatch_pairs + 1))
             mismatch_names="$mismatch_names spec/$base"
         fi
-        rm -f "$a" "$b"
     done
     shopt -u nullglob
 fi
@@ -321,15 +335,13 @@ if [ -f "$readme_en" ] || [ -f "$readme_ru" ]; then
         red "readme_pair: есть README.ru.md, нет README.md (пара обязательна — решение владельца 2026-08-03)"
     else
         # код-блоки README-пары — по общему правилу байт-в-байт
-        ra=$(mktemp); rb=$(mktemp)
-        awk '/^```/{f=!f; next} f' "$readme_en" > "$ra"
-        awk '/^```/{f=!f; next} f' "$readme_ru" > "$rb"
-        if diff -q "$ra" "$rb" >/dev/null 2>&1; then
+        ra="$(awk '/^```/{f=!f; next} f' "$readme_en")"
+        rb="$(awk '/^```/{f=!f; next} f' "$readme_ru")"
+        if [ "$ra" = "$rb" ]; then
             info "doc-conventions ok: readme_pair — README.md + README.ru.md, код-блоки идентичны"
         else
             red "readme_pair: код-блоки README.md и README.ru.md расходятся (#translation-drift)"
         fi
-        rm -f "$ra" "$rb"
     fi
 else
     info "doc-conventions ok (вакуумно): README в корне нет — проверять нечего"
@@ -431,9 +443,61 @@ if [ -d "$guide_dir" ]; then
     done
 fi
 [ -n "$ccru_names" ] && info "doc-conventions: русские комментарии в примерах английских страниц:$ccru_names"
-ratchet_check code_comment_ru_files "$code_comment_ru_files" "английские файлы с русскими комментариями внутри код-блоков"
+if [ "$code_comment_ru_files" -gt 0 ]; then
+    red "code_comment_ru: $code_comment_ru_files английских файлов содержат русские комментарии внутри примеров (правится СИНХРОННО в обеих сторонах пары)"
+else
+    info "doc-conventions ok: code_comment_ru — русских комментариев в примерах английских страниц нет"
+fi
 
 [ -n "$mixed_names" ] && info "doc-conventions: кириллица в английских файлах:$mixed_names (строк вне код-блоков)"
-ratchet_check mixed_language_files "$mixed_language_files" "английские файлы (README.md, docs/guide/*.md, spec/*.en.md) с кириллицей вне код-блоков"
+# ПРЯМАЯ проверка, не храповик (совет ревью): долг погашен до нуля, а
+# baseline=0 означает ровно «будь нулём» — чтение базы лишь маскировало бы
+# строгий инвариант и оставляло щель вписать туда «3 с запасом».
+if [ "$mixed_language_files" -gt 0 ]; then
+    red "mixed_language: $mixed_language_files английских файлов содержат русскую прозу (допустимы только адреса: цели ссылок, «Ф.N», якоря)"
+else
+    info "doc-conventions ok: mixed_language — русской прозы в английских файлах нет"
+fi
+
+# ---------------------------------------------------------------------
+# 8. translation_drift (ПРЕДУПРЕЖДЕНИЕ НАВСЕГДА, не храповик — совет ревью).
+#    Для каждого spec/X.en.md сравниваем source_rev с последним коммитом,
+#    тронувшим источник spec/X.md, и печатаем ГРАДУИРОВАННУЮ величину:
+#    сколько СОДЕРЖАТЕЛЬНЫХ строк набежало (правки одного frontmatter не
+#    считаются). Порога нет намеренно: срочность оценивает человек.
+#    Храповик здесь структурно неверен — отставание перевода это не разово
+#    гасимый долг, а постоянная задержка процесса: норматив ведёт одна
+#    сессия, перевод догоняет другая.
+#    УСЛОВИЕ УЖЕСТОЧЕНИЯ (фиксируется заранее, чтобы «временное» не осталось
+#    навсегда): как только перевод и норматив ведутся одной сессией ИЛИ
+#    появляется автоматический догон, проверка становится красной при
+#    дрейфе > 50 содержательных строк.
+# ---------------------------------------------------------------------
+if [ -d "$spec_dir" ] && command -v git >/dev/null 2>&1 &&
+   git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+    drift_lines_total=0
+    drift_names=""
+    for enf in "$spec_dir"/*.en.md; do
+        [ -f "$enf" ] || continue
+        case "$enf" in */GLOSSARY.en.md) continue ;; esac
+        base_name="$(basename "$enf" .en.md)"
+        ruf="spec/$base_name.md"
+        [ -f "$ROOT/$ruf" ] || continue
+        rev=$(awk -F': *' '/^source_rev:/{gsub(/[" ]/,"",$2); print $2; exit}' "$enf")
+        [ -n "$rev" ] || continue
+        git -C "$ROOT" cat-file -e "$rev^{commit}" 2>/dev/null || continue
+        # содержательные строки: без правок только-frontmatter
+        n=$(git -C "$ROOT" diff --unified=0 "$rev..HEAD" -- "$ruf" 2>/dev/null             | grep -E '^[+-]' | grep -vE '^(\+\+\+|---)'             | grep -vE '^[+-](source_rev|source_date):' | wc -l)
+        if [ "${n:-0}" -gt 0 ]; then
+            drift_lines_total=$((drift_lines_total + n))
+            drift_names="$drift_names $base_name(+$n)"
+        fi
+    done
+    if [ -n "$drift_names" ]; then
+        info "doc-conventions ИНФОРМАЦИОННО (translation_drift):$drift_names содержательных строк набежало с момента перевода. ДЕЙСТВИЕ НЕ ОТ ТЕБЯ, если ты ведёшь норматив: копится в бэклог волны перевода (план 241 Ф.3)"
+    else
+        info "doc-conventions ok: translation_drift — переводы спеки соответствуют своим ревизиям"
+    fi
+fi
 
 exit $fail

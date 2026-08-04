@@ -104,6 +104,7 @@ jobs:
         run: |
           set -uo pipefail
           bash scripts/guards/selftest/test-check-doc-conventions.sh
+          bash scripts/guards/selftest/test-doc-conventions-determinism.sh
       - name: check-doc-conventions.sh (real tree)
         env:
           DOC_GUARD_DIFF_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
