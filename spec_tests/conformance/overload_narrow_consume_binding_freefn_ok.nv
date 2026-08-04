@@ -1,0 +1,45 @@
+// №309/№317 (221.1, окно p-ovl-channel) — FREE-FUNCTION form of the mode-
+// axis overload pair (`overload_narrow_consume_binding_ok.nv` is the method
+// form). Brief requirement: "пара, отличающаяся ТОЛЬКО режимом, в двух
+// формах: свободная функция и метод". A free function has no receiver, so
+// only the parameter-mode axis is exercised here (the receiver-mutability
+// axis from the method fixture does not apply) — this isolates
+// [M-309-narrow-by-param-mode-binding-form] (the checker's mode-axis
+// tiebreak, `types/mod.rs` `mode_axis_tiebreak`, consulted at the free-fn
+// call site via `resolved_callees` — see `emit_c.rs` ~38900 channel-first
+// consult) from the receiver-mutable pre-filter ordering bug the method
+// fixture ALSO exercises (PROGRESS-ovl.md "дефект 1").
+//
+// Same four probes, same owner rule (2026-08-03, verbatim): "temporary OR
+// consuming — moves; everything else copies."
+module spec_tests.conformance
+
+fn p309ff_put(v int) -> int => 0
+fn p309ff_put(consume v int) -> int {
+    v
+}
+
+fn p309ff_make(n int) -> int => n
+
+test "№309 free-fn: временное значение — забирающая перегрузка" {
+    ro r = p309ff_put(p309ff_make(7))
+    assert(r == 7)
+}
+
+test "№309 free-fn: обычная (не-consume) привязка — копирующая перегрузка" {
+    mut x = 5
+    ro r = p309ff_put(x)
+    assert(r == 0)
+}
+
+test "№309 free-fn: забирающая привязка — забирающая перегрузка" {
+    consume t = 7
+    ro r = p309ff_put(t)
+    assert(r == 7)
+}
+
+test "№309 free-fn: ro-привязка (немутабельная, не-consume) — тоже копирующая" {
+    ro y = 9
+    ro r = p309ff_put(y)
+    assert(r == 0)
+}

@@ -3589,6 +3589,21 @@ struct TypeCheckCtx<'a> {
     /// Закрывает D175 §«binding dominates» — Rust-style rule.
     /// Tracks через f1_stmt Stmt::Let; cleared on scope exit (block end).
     ro_binding_names: std::cell::RefCell<std::collections::HashSet<String>>,
+    /// №309/№317 (221.1, окно p-ovl-channel): mirror of `ro_binding_names`
+    /// for `consume`-bound identifiers — set of local names whose CURRENT
+    /// binding was introduced via `consume x = ...` (`LetDecl.consume`) or a
+    /// `consume`-marked fn param (`Param.consume`). Independent axis from
+    /// `ro_binding_names` (a `consume` binding is ALSO non-`mut`, so it lands
+    /// in both sets — the two questions "can I write through this name" and
+    /// "does this name carry a linear/consume obligation" are orthogonal).
+    /// Consumed by `expr_mode_axis_consume_eligible` — the channel-first fix
+    /// for `[M-309-narrow-by-param-mode-binding-form]`: a NAMED consume-bound
+    /// argument now qualifies a `consume`-mode overload parameter, not only a
+    /// syntactic rvalue temporary (mirrors codegen's rejected `var_consume`
+    /// idea from the reverted 9fde1af15, but lives in the CHECKER channel
+    /// per §0, not in `emit_c.rs`). Same snapshot/restore discipline as
+    /// `ro_binding_names` (fn-entry params, `f1_block` block scope).
+    consume_binding_names: std::cell::RefCell<std::collections::HashSet<String>>,
     /// Plan 172.5 (D326 R10): names of the current function's `mut ref`
     /// parameters. A `ref` borrow lives only for the synchronous call — it must
     /// NOT escape (no store, no closure/spawn capture, no return; return/store
@@ -4409,6 +4424,7 @@ impl<'a> TypeCheckCtx<'a> {
             current_fn_generics: std::cell::RefCell::new(Vec::new()),
             current_fn_test_access: std::cell::RefCell::new(Vec::new()),
             ro_binding_names: std::cell::RefCell::new(std::collections::HashSet::new()),
+            consume_binding_names: std::cell::RefCell::new(std::collections::HashSet::new()),
             mut_ref_param_names: std::cell::RefCell::new(std::collections::HashSet::new()),
             user_shadowed_generic_types,
             type_defining_modules,
@@ -7648,6 +7664,21 @@ impl<'a> TypeCheckCtx<'a> {
                 }
             }
         }
+        // №309/№317 (окно p-ovl-channel): `consume_binding_names` fn-entry
+        // seed — NOT gated to `is_entry_fn` (unlike `ro_binding_names` above,
+        // which guards against false-positive WRITE-through-ro diagnostics on
+        // std bodies). This tracker feeds ONLY the mode-axis overload
+        // tiebreak (a dispatch DECISION, never a diagnostic), so it is safe
+        // — and necessary for correctness — to seed it for every fn, std
+        // included: a `consume`-mode overload call inside a std body must
+        // resolve exactly like one in user code.
+        let consume_snap_fn: std::collections::HashSet<String> =
+            self.consume_binding_names.borrow().clone();
+        for p in &fd.params {
+            if p.consume {
+                self.consume_binding_names.borrow_mut().insert(p.name.clone());
+            }
+        }
         // Plan 184 (заход-5, п.7): `mut ref`-параметров больше нет (ref сняты с
         // сигнатур заходом-1), поэтому набор пуст. Оставляем snapshot/clear для
         // сохранения формы (mut_ref_param_names ещё читается capture-баном ниже
@@ -7707,6 +7738,8 @@ impl<'a> TypeCheckCtx<'a> {
         // added — function scopes are independent; param names from one fn
         // must not bleed into the next fn's checks.
         *self.ro_binding_names.borrow_mut() = ro_snap_fn;
+        // №309/№317: restore consume_binding_names symmetrically.
+        *self.consume_binding_names.borrow_mut() = consume_snap_fn;
         // Plan 172.5 (D326 R10): restore the enclosing fn's mut-ref-param set.
         *self.mut_ref_param_names.borrow_mut() = mut_ref_snap_fn;
     }
@@ -7737,6 +7770,9 @@ impl<'a> TypeCheckCtx<'a> {
         // entries it added. Outer scopes are preserved (transitivity D175).
         let ro_snapshot: std::collections::HashSet<String> =
             self.ro_binding_names.borrow().clone();
+        // №309/№317: same block-scope snapshot/restore for consume_binding_names.
+        let consume_snapshot: std::collections::HashSet<String> =
+            self.consume_binding_names.borrow().clone();
         for s in &b.stmts {
             self.f1_stmt(s, gs, scope, errors);
         }
@@ -7751,6 +7787,7 @@ impl<'a> TypeCheckCtx<'a> {
             }
         }
         *self.ro_binding_names.borrow_mut() = ro_snapshot;
+        *self.consume_binding_names.borrow_mut() = consume_snapshot;
     }
 
     fn f1_stmt(
@@ -7789,6 +7826,20 @@ impl<'a> TypeCheckCtx<'a> {
                     let mut set = self.ro_binding_names.borrow_mut();
                     set.remove(&name);
                     if !d.mutable {
+                        set.insert(name);
+                    }
+                }
+                // №309/№317 (окно p-ovl-channel): track `consume x = ...`
+                // bindings the same way — shadow semantics identical to
+                // `ro_binding_names` just above (replace prior entry at each
+                // `let`, restored by the enclosing `f1_block`/fn-entry
+                // snapshot). Independent of the `mutable` axis above (a
+                // `consume` binding is also non-`mut`, so a name can be in
+                // BOTH sets at once — orthogonal questions).
+                if let Some(name) = pattern_simple_name(&d.pattern) {
+                    let mut set = self.consume_binding_names.borrow_mut();
+                    set.remove(&name);
+                    if d.consume {
                         set.insert(name);
                     }
                 }
@@ -12979,6 +13030,126 @@ impl<'a> TypeCheckCtx<'a> {
         Some(true)
     }
 
+    /// №309/№317 (221.1, окно p-ovl-channel, D84 mode-axis tiebreak). Checker-side
+    /// mirror of `emit_c.rs::is_place_mutable` — is `e` a WRITABLE named place (so a
+    /// `mut`-mode parameter may bind it)? `Ident` defers to `ro_binding_names` (the
+    /// SAME oracle the checker already uses elsewhere for "is this binding mutable",
+    /// e.g. lines ~21600/~17000) — a name absent from that set is `mut`-bound.
+    /// `SelfAccess` defers to `current_recv_is_mut` (mirrors emit_c's
+    /// `current_receiver_is_mut`). `Member`/`Index` recurse into the base place.
+    /// Anything else (a temporary) is not a place at all.
+    fn expr_mode_axis_mutable_place(&self, e: &Expr) -> bool {
+        match &e.kind {
+            ExprKind::Ident(name) => !self.ro_binding_names.borrow().contains(name),
+            ExprKind::SelfAccess => self.current_recv_is_mut.get(),
+            ExprKind::Member { obj, .. } => self.expr_mode_axis_mutable_place(obj),
+            ExprKind::Index { obj, .. } => self.expr_mode_axis_mutable_place(obj),
+            _ => false,
+        }
+    }
+
+    /// №309/№317: checker-side mirror of `emit_c.rs::is_rvalue_temp`, EXTENDED to
+    /// close [M-309-narrow-by-param-mode-binding-form] (the textual defect №309
+    /// records): a NAMED identifier whose CURRENT binding is `consume`-declared
+    /// (`consume_binding_names`, populated by `Stmt::Let`/consume params — see field
+    /// doc) is ALSO eligible for a `consume`-mode parameter, not only a syntactic
+    /// rvalue temporary. Owner's rule (2026-08-03, verbatim): "temporary OR
+    /// consuming — moves; everything else copies." `Member`/`Index`/`SelfAccess`
+    /// stay ineligible (a sub-place is never itself a consume-bound name, mirrors
+    /// emit_c exactly — no field/element-level consume tracking, D184 §1 scope).
+    fn expr_mode_axis_consume_eligible(&self, e: &Expr) -> bool {
+        match &e.kind {
+            ExprKind::Ident(name) => self.consume_binding_names.borrow().contains(name),
+            ExprKind::SelfAccess | ExprKind::Member { .. } | ExprKind::Index { .. } => false,
+            _ => true,
+        }
+    }
+
+    /// №309/№317 (221.1, окно p-ovl-channel): §0 channel-first tiebreak for an
+    /// overload SET that is ambiguous by TYPE alone (`compat_fns.len() >= 2`, all
+    /// already `overload_applicability`-compatible) because its members differ ONLY
+    /// by the D84 parameter-MODE axis (Plan 184: `ro`/`mut`/`consume` on a param)
+    /// and/or the receiver-mutability axis (Plan 135: `fn T @m` vs `fn T mut @m`) —
+    /// two axes `emit_c.rs`'s legacy dispatch resolves with two SEQUENTIAL greedy
+    /// filters (receiver-mut tiebreak, THEN `narrow_by_param_mode`) that can
+    /// short-circuit each other (see PROGRESS-ovl.md "дефект 1" — the receiver-mut
+    /// filter collapses the candidate pool to 1 BEFORE the param-mode filter ever
+    /// runs, whenever the two axes happen to correlate, e.g. `mut @put(consume v
+    /// int)` vs plain `@put(v int)`). Resolving the axes TOGETHER here, in the
+    /// checker, and recording the unique winner in `resolved_callees` sidesteps the
+    /// ordering bug entirely — `emit_c.rs`'s `channel_choice` already prefers the
+    /// channel over its own legacy pool (§0, U.4.3 c2.2 precedent).
+    ///
+    /// Guarded to a GENUINE axis-only overload set: every candidate must have the
+    /// SAME arity and STRUCTURALLY IDENTICAL param TypeRefs pairwise
+    /// (`typeref_equal`, the same D84 duplicate-signature equality already used
+    /// elsewhere in this file) — a real type-differentiated overload set is left to
+    /// the pre-existing (unchanged) resolution. `obj` is the call's receiver
+    /// expression (`None` for a free function — no receiver axis to consider).
+    ///
+    /// Selection: a candidate is INELIGIBLE (dropped, mirrors `narrow_by_param_mode`'s
+    /// `continue 'cand`) when a `mut` axis it declares is not satisfied by the
+    /// actual call site (`mut` receiver/param requires a mutable place; `consume`
+    /// param requires `expr_mode_axis_consume_eligible`). Eligible candidates are
+    /// scored by specificity (`consume` > `mut` > `ro`, same weights as
+    /// `narrow_by_param_mode`) and the unique highest-scoring one wins. Zero
+    /// eligible or a genuine tie → `None` (honest gap, falls through to the
+    /// pre-existing legacy resolution — never a wrong silent guess).
+    fn mode_axis_tiebreak(
+        &self,
+        obj: Option<&Expr>,
+        compat_fns: &[&FnDecl],
+        args: &[CallArg],
+    ) -> Option<crate::diag::Span> {
+        if compat_fns.len() < 2 {
+            return None;
+        }
+        let first = compat_fns[0];
+        let same_shape = compat_fns.iter().all(|f| {
+            f.params.len() == first.params.len()
+                && f.params.iter().zip(first.params.iter())
+                    .all(|(a, b)| typeref_equal(&a.ty, &b.ty))
+        });
+        if !same_shape {
+            return None;
+        }
+        let recv_mut = |f: &FnDecl| f.receiver.as_ref().map(|r| r.mutable).unwrap_or(false);
+        let axis_differs = compat_fns.windows(2).any(|w| {
+            recv_mut(w[0]) != recv_mut(w[1])
+                || w[0].params.iter().zip(w[1].params.iter())
+                    .any(|(a, b)| (a.consume, a.is_mut) != (b.consume, b.is_mut))
+        });
+        if !axis_differs {
+            return None;
+        }
+        let obj_mut = obj.map(|o| self.expr_mode_axis_mutable_place(o)).unwrap_or(false);
+        let mut scored: Vec<(&FnDecl, i32)> = Vec::new();
+        'cand: for f in compat_fns {
+            let mut score = 0i32;
+            if recv_mut(f) {
+                if !obj_mut { continue 'cand; }
+                score += 2;
+            }
+            for (p, a) in f.params.iter().zip(args.iter()) {
+                if p.consume {
+                    if !self.expr_mode_axis_consume_eligible(a.expr()) { continue 'cand; }
+                    score += 3;
+                } else if p.is_mut {
+                    if !self.expr_mode_axis_mutable_place(a.expr()) { continue 'cand; }
+                    score += 2;
+                }
+            }
+            scored.push((*f, score));
+        }
+        let best = scored.iter().map(|(_, s)| *s).max()?;
+        let mut at_best = scored.iter().filter(|(_, s)| *s == best);
+        let (winner, _) = at_best.next()?;
+        if at_best.next().is_some() {
+            return None; // genuine tie — leave to the legacy resolution.
+        }
+        Some(winner.span)
+    }
+
     /// Plan 172.1 U.3.3-instance (§6/§1). Resolve a value-receiver `obj.method(args)`
     /// call's overloads in the CHECKER and fire `[E_NO_MATCHING_OVERLOAD]` when a category
     /// mismatch is present — so it is a clean checker diagnostic, not a leaked `CC-FAIL`.
@@ -13503,6 +13674,12 @@ impl<'a> TypeCheckCtx<'a> {
             Some(concrete_compat[0])
         } else if compat_spans.len() == 1 {
             Some(compat_spans[0])
+        } else if let Some(sp) = self.mode_axis_tiebreak(Some(obj), &compat_fns, args) {
+            // №309/№317: ≥2 type-compatible candidates (the branches above all
+            // missed) — try the D84 mode/receiver-mutability axis (see doc on
+            // `mode_axis_tiebreak`) before giving up. `None` (not a pure axis
+            // set, or a genuine tie) falls through unchanged.
+            Some(sp)
         } else {
             None
         };
@@ -13860,7 +14037,18 @@ impl<'a> TypeCheckCtx<'a> {
                         let chosen_opt: Option<&&FnDecl> = match compat.len() {
                             0 => None,
                             1 => Some(compat[0]),
-                            _ => self.pick_no_default_overload(&compat, args).map(|i| compat[i]),
+                            _ => self.pick_no_default_overload(&compat, args).map(|i| compat[i])
+                                .or_else(|| {
+                                    // №309/№317: free-fn mode-axis tiebreak (no
+                                    // receiver — `narrow_by_param_mode`'s mode-only
+                                    // form, ADDITIONALLY binding-form-aware via
+                                    // `mode_axis_tiebreak`/`expr_mode_axis_consume_
+                                    // eligible`). Only reached when the default-count
+                                    // tiebreak above ALSO found no unique winner.
+                                    let fns: Vec<&FnDecl> = compat.iter().map(|f| **f).collect();
+                                    self.mode_axis_tiebreak(None, &fns, args)
+                                        .and_then(|sp| compat.iter().find(|f| f.span == sp).copied())
+                                }),
                         };
                         if let Some(chosen) = chosen_opt {
                             self.resolved_callees.borrow_mut().insert(call_id, chosen.span);
