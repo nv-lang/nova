@@ -10,7 +10,7 @@ source_date: 2026-08-02
 
 > **Scope.** Механика границы `.nv` ↔ native: `extern "C"`, opaque/typed
 > указатели, `CStr`, tuple-by-value, C-ABI-проверка, и **как подключить
-> native-артефакты к сборке** (`[ffi]` / `[ffi.staticlib]`). Foundational FFI —
+> native-артефакты к сборке** (`[ffi]`). Foundational FFI —
 > Plan 115 D214; typed-pointer family (`*T`, `*mut T`, `Option[*T]`-NPO) —
 > **влит** (Plan 118/138.5/174.x; секции ниже — уже не «preview»).
 >
@@ -41,7 +41,7 @@ sqlite3, libpng, libcurl — с помощью фундаментальных FF
 
 ## Правила модификаторов указателей (FINAL — Plan 138.5)
 
-При записи FFI-сигнатур с pointer/typed wrappers модификатор pointee пишется **постфиксом**, сразу после `*` (`*mut T` / `*ro T` / `*unsafe T`). **Prefix перед `*` запрещён** (`mut * T` / `ro * T` / `unsafe * T` → `E_POINTER_PREFIX_MODIFIER`). Перепривязываемость указателя — это **binding** (`let` / `mut`), не тип.
+При записи FFI-сигнатур с pointer/typed wrappers модификатор pointee пишется **постфиксом**, сразу после `*` (`*mut T` / `*ro T` / `*unsafe T`). **Prefix перед `*` запрещён** (`mut * T` / `ro * T` / `unsafe * T` → `E_POINTER_PREFIX_MODIFIER`). Перепривязываемость указателя — это **binding** (`ro` / `mut`), не тип.
 
 Краткая шпаргалка:
 
@@ -51,7 +51,7 @@ sqlite3, libpng, libcurl — с помощью фундаментальных FF
 - `Option[*T]` — **nullable** pointer (NPO, 8 байт); это замена старому `unsafe * T`
 - `Option[*unsafe T]` — FFI nullable-uninit pointer (None = null, Some = non-null ptr к uninit)
 - `*mut *ro Acc` — postfix chain (writable-target ptr к read-only-target ptr к Acc)
-- `mut p *mut T` — binding mut (p re-pointable) + pointee mut; `let q *ro T` — fixed binding + ro pointee
+- `mut p *mut T` — binding mut (p re-pointable) + pointee mut; `ro q *ro T` — fixed binding + ro pointee
 
 Полные правила (arrow→box model, value-T composition §V3.1/§V3.2) — см. [`docs/guide/typed-pointers.md`](typed-pointers.md). Spec — [D216 §1 FINAL](../../spec/decisions/02-types.md#d216-typed-pointer-family--unsafe-model--null-safety-через-npo) + [Plan 138.5](../plans/138.5-d216-v2-v3-simplification.md).
 
@@ -105,10 +105,9 @@ ABI не трогается; Nova-сторона бесплатно получа
 - **Конструктор tuple-newtype `type X(*())`** ✅ (`[M-115-newtype-constructor]`)
   — каноническая форма; single-field-record больше не нужен.
 - **Пайплайн сборки пользовательских шимов** ✅ — задаётся не CLI-флагом, а
-  декларативно в `nova.toml`: `[ffi]` (готовые `.c`-шимы + системные `libs`) и
-  `[ffi.staticlib]` (собираемый staticlib, Plan 195). При `import` модуля
-  артефакты компилируются/линкуются автоматически — перекомпилировать
-  Nova-компилятор не надо. См. [«Build pipeline»](#build-pipeline--ffi-и-ffistaticlib-манифест) ниже.
+  декларативно в `nova.toml`: `[ffi]` (готовые `.c`-шимы + системные `libs`).
+  При `import` модуля артефакты компилируются/линкуются автоматически —
+  перекомпилировать Nova-компилятор не надо. См. [«Build pipeline»](#build-pipeline--ffi-манифест) ниже.
 - **Typed-pointer family** ✅ (`*T`/`*mut T`/`Option[*T]`-NPO/`CStr`) — Plan
   118/138.5; см. секции ниже.
 
@@ -413,7 +412,7 @@ unsafe {
 **Путь миграции:**
 - `ptr` → `*()` (Plan 134 — ошибка компиляции на голый `ptr` в позиции типа)
 - `0 as ptr` → `0 as *()`
-- литералы `null ptr` (уже отозваны Plan 118 A23) → `0 as *()`
+- литералы `null ptr` → `0 as *()`
 - Record-обёртки хендлов `type X { ro value *() }` → tuple
   newtype `type X(*)()` или `type X(*T)` для zero-overhead ABI
 
@@ -685,7 +684,7 @@ C после вызова (хранимый в C-структуре, захва�
 
 ---
 
-## Build pipeline — манифест `[ffi]` и `[ffi.staticlib]`
+## Build pipeline — манифест `[ffi]`
 
 Всё выше — как *написать* границу `.nv` ↔ native. Этот раздел — как *подключить*
 native-артефакты к сборке, чтобы `import` модуля тянул их **автоматически**, без
@@ -707,24 +706,14 @@ libs         = ["sqlite3"]                          # → clang -lsqlite3 / sqli
 `.h`-only inline-шимы включаются force-include (`-include`), `.c` — как
 compilation unit. Секция `[ffi]` может быть пустой (`FFI-aware`-маркер).
 
-### `[ffi.staticlib]` — RETRACTED (Plan 195)
-
-**Ретрактировано владельцем 2026-07-10 (Plan 195).** Секция существовала
-(Plan 195) как обобщение хардкода `detect_tls`/`tls-cache`/`-lbcrypt -lntdll`
-на манифест-механизм, собирающий native-артефакт cargo'ом/make на лету. Она
-позволяла пользовательскому native-модулю требовать Rust/cargo как часть
-своей сборки — противоречит канону тулчейна (**компилятор Nova + clang**,
-`.nv → .c → бинарь`, БЕЗ Rust/cargo). `compiler-codegen/tls_shim/`
-(Rust-staticlib, rustls) — единственный пользователь механизма — заменён на
-`compiler-codegen/nova_rt/tls_c_shim.c` (mbedTLS, обычный `[ffi]`-путь).
-`FfiStaticlibConfig`/`resolve_ffi_staticlib`/`[ffi.staticlib]`-парсинг убраны
-из `manifest.rs`/`test_runner.rs` целиком.
-
-**Канон native-модуля теперь — только `[ffi]` выше**: `.c`-шим (компилит
+**Канон native-модуля — только `[ffi]` выше**: `.c`-шим (компилит
 clang, он в тулчейне) + опционально готовая `.lib`/`.a` (линкуется, не
 собирается — vcpkg/системный пакет/vendored-копия, см. `detect_brotli`/
 `detect_boehm`/`detect_mbedtls` в `test_runner.rs` для паттерна условной
 линковки библиотеки, ГОТОВОЙ заранее, а не строящейся build-скриптом).
+Native-модуль никогда не собирается через Rust/cargo как часть своей
+сборки — только `.nv` + опционально `.c` (компилит clang) + опционально
+готовая `.lib`/`.a`.
 
 **Эталон.** `std/tls` (`nova_rt/tls_c_shim.c` + vcpkg mbedTLS) — реальный
 пример: mbedTLS ставится через `vcpkg install` (см. `compiler-codegen/
@@ -740,7 +729,7 @@ brotli), без манифест-декларации в `std/nova.toml` воо�
 | Маркер | Что | Статус |
 |---|---|---|
 | `[M-115-newtype-constructor]` | конструктор tuple-newtype `type X(ptr)` + доступ `.0` | ✅ CLOSED 2026-06-01 (доставлен канонический синтаксис) |
-| `[M-115-ffi-build-pipeline]` | пайплайн сборки/линковки пользовательских шимов | ✅ CLOSED — реализован декларативно через `nova.toml` `[ffi]` (готовые шимы/libs, Plan 115). `[ffi.staticlib]` (собираемый staticlib, Plan 195) RETRACTED владельцем (Plan 195) — native-модуль обязан собираться БЕЗ Rust/cargo. См. [«Build pipeline»](#build-pipeline--ffi-и-ffistaticlib-манифест) |
+| `[M-115-ffi-build-pipeline]` | пайплайн сборки/линковки пользовательских шимов | ✅ CLOSED — реализован декларативно через `nova.toml` `[ffi]` (готовые шимы/libs, Plan 115); native-модуль собирается БЕЗ Rust/cargo. См. [«Build pipeline»](#build-pipeline--ffi-манифест) |
 | `[M-115-bindgen-tool]` | `nova bindgen header.h` авто-генерируемые биндинги | 🟡 deferred (major tooling, отдельный план) |
 | `[M-115-d126-deprecation]` | аудит миграции `external type X` D126 | ✅ CLOSED: Plan 91.12 V2 hard retract — `external type X` теперь жёсткая ошибка E_EXTERNAL_TYPE_RETRACTED (последовательность: newtype-constructor ✓ → Plan 91.12 Pattern B → D126 retract выполнен) |
 | `[M-115-tuple-gc-types]` | GC-tracked типы в элементах кортежа в возвратах external fn | 🟢 CLOSED as by-design (граница extern "C" корректно исключает Nova-типизированные контейнеры) |
