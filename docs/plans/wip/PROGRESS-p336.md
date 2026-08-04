@@ -114,4 +114,107 @@
 `lockfile::ensure_pins_loaded(dir)` — читает и засеивает `git_cache`
 lock-таблицу один раз за процесс на директорию, безопасно вызывать
 многократно (per-lookup). `nova build` не меняется (уже вызывает
+sync/load_pins раньше и полнее).
+
+## Реализация
+
+- `compiler-codegen/src/lockfile.rs`: `pub fn ensure_pins_loaded(pkg_dir:
+  &Path) -> Result<()>` — мемоизирован `static OnceLock<Mutex<HashSet<
+  PathBuf>>>` по канонической директории; внутри — `load_pins` (уже
+  существовавшая read-only функция).
+- `compiler-codegen/src/imports.rs::lookup_dependency`: вызов
+  `ensure_pins_loaded(root_dir)` сразу после вычисления `root_dir`, ДО
+  разбора `[replace]`/резолва git-зависимости; ошибка (битый
+  `nova.lock.toml`) → `DepLookup::GitError`.
+- `compiler-codegen/src/imports.rs::resolved_dependency_roots`: тот же
+  вызов, best-effort (`let _ =`) — симметрично остальной функции, которая
+  и так молча пропускает недоступные зависимости.
+- `compiler-codegen/tests/version_lock_honored_by_check_repro.rs` (новый):
+  бьёт `imports::resolve_imports_inline` НАПРЯМУЮ (тот же вызов, что
+  `check_one_file`) с git+version-зависимостью (`^1.0`), у которой ДВЕ
+  версии в диапазоне (v1.0.0/v1.5.0 с разными именами экспортов) и лок,
+  зафиксированный на v1.0.0. **Подтверждено красным/зелёным**: с временно
+  отключённым хуком (`if false { ... }` вокруг вызова) тест падает —
+  подтягивается `v2_marker` (v1.5.0, максимум диапазона); с хуком —
+  `v1_marker` (v1.0.0, лок). Первая версия теста (с v1.0.0/v2.0.0, диапазон
+  `^1.0`) была ложно-зелёной ДАЖЕ без фикса — `^1.0` сам по себе исключает
+  v2.0.0, тест ничего не проверял; исправлено на v1.0.0/v1.5.0 (обе в
+  диапазоне) до коммита фикса.
+- `compiler-codegen/tests/version_lock_transitive_via_path_repro.rs`
+  (новый, написан на этапе разведки) — оставлен как перманентный
+  регресс-тест: транзитивная git+version-зависимость, достижимая ТОЛЬКО
+  через `path`-пакет, держит commit через `sync` (механизм `nova build`
+  уже работал корректно — это позитивная регрессия, не про №336).
+
+## Проверка (вердикты дословно)
+
+Сборка `nova.exe` из `nova-p336`; сценарий — короткий путь `D:/nh1`
+(git-репо `lib` с тегами v1.0.0/v1.5.0 разными экспортами, потребитель
+`app` с `lib = { git=..., version="^1.0" }`).
+
+1. **«сборка при наличии лока даёт РОВНО записанный коммит»** — доказано
+   выводом: `nova check main.nv` → `PASS: 1`; checkout-каталог
+   `…/git/co/lib-…/0e2e09d2b6b0a1e88fd6978023c164f5392680af/core.nv`
+   существует и содержит РОВНО `v1_marker` (не `v2_marker` — v1.5.0 тоже
+   был в диапазоне `^1.0`, т.е. живой резолв выбрал бы его без фикса).
+   `nova build main.nv` (свежий `NOVA_HOME`) — та же материализация,
+   тот же commit (build уже был корректен, не регрессия).
+2. **«`nova update` меняет лок, следующая сборка берёт новое»** — доказано
+   выводом: `nova update` → `updated: git-пины пере-резолвлены`, лок
+   переписан на `version = "1.5.0"`, `commit =
+   2baa91db44b28c6d5fbd9d4059d6078d3a7c05da`. Следующий `nova check
+   main.nv` (тот же `main.nv`, всё ещё импортирующий старое имя
+   `v1_marker`) → `FAIL: main.nv:5:28: error: undefined identifier
+   \`v1_marker\`` — прямое доказательство, что резолвер материализовал
+   v1.5.0 (`v2_marker`), а не остался на v1.0.0.
+3. **«сборка без сети при валидном локе работает»** — доказано выводом:
+   `NOVA_OFFLINE=1 nova check main.nv` (лок восстановлен на v1.0.0, тот же
+   `NOVA_HOME` с уже клонированным bare-репо) → `PASS: 1`, без единого
+   сетевого вызова (fetch пропущен веткой `if let Some(locked) =
+   locked_commit`).
+4. **«лок на несуществующий коммит даёт внятную ошибку»** — доказано
+   выводом: лок с `commit =
+   "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"` → `nova check main.nv` →
+   `FAIL: import resolution: … git-зависимость \`lib\`: зафиксированный в
+   nova.lock.toml commit \`deadbeef…\` git-зависимости \`D:/nh1/lib\` не
+   найден в репозитории` — честная ошибка, НЕ тихий переход на другой тег.
+
+Плюс:
+- `cargo build --release` — компилятор-codegen и nova-cli, ЧИСТО (только
+  pre-existing dead-code warnings, не мои).
+- `nova check std/src` — канон **PASS: 148 FAIL: 26 WARN: 61** (совпадает
+  дословно).
+- Флагман `examples/flagship/aggregator/src/main.nv --strict-effects` —
+  `built: …\main.exe (35.26s)` (после разовой подготовки окружения
+  worktree: копия `libuv`-сабмодуля из main-репы без `.git`, `NOVA_GC_LIB_
+  DIR`/`NOVA_GC_INCLUDE_DIR` на main-репин vcpkg_installed — те же шаги,
+  что зафиксированы в памяти `project-worktree-nova-test-setup.md`;
+  worktree после проверки возвращён в чистое состояние: `git checkout --
+  compiler-codegen/nova_rt/libuv examples/nova.lock.toml`).
+- `arch-ratchet.sh` — `lines=64542 <= 64545` (в пределах требуемых 64542),
+  `infer=348 <= 348`.
+- `cargo test --lib` (compiler-codegen, `RUST_MIN_STACK=64MiB` — иначе
+  два ДРУГИХ, не связанных с этим окном теста падают STATUS_STACK_OVERFLOW
+  на дефолтном стеке потока, воспроизведено И на main-baseline с моими
+  файлами временно отброшенными до незакоммиченного состояния): **1223
+  passed, 0 failed** (искл. 4 pre-existing/несвязанных провала —
+  `array_lit_named_tuple_box_tests::{emit_array_lit_int_primitive_
+  unchanged,emit_array_lit_named_tuple_heap_box}`, `parser::tests::
+  if_let_pattern`, `test_runner::tests::p0_erased_now_dispatches_via_
+  vtable` — подтверждены НЕ мои: тот же провал на `main`-версии
+  `lockfile.rs`/`imports.rs`, никак не связаны с резолвом зависимостей).
+- Все lockfile/git_cache/resolver/imports юнит- и интеграционные тесты
+  (`lockfile::`, `git_cache::`, `resolver::`, `imports::`,
+  `version_lock_repro`, `version_lock_transitive_via_path_repro`,
+  `version_resolve_e2e`, `lockfile_repro`, `plan204_replace_e2e`,
+  `version_lock_honored_by_check_repro`) — зелёные.
+
+## Не тронуто (по периметру)
+
+`compiler-codegen/src/types/mod.rs` — не заходил, не потребовалось. Мега-CU
+conformance — приёмка за интегратором (не запускался в этом окне).
+`nova-lsp` тоже вызывает `imports::resolve_imports_inline*` напрямую и
+теоретически имел тот же дефект для git+version-зависимостей — фикс живёт
+в общем `imports.rs`, так что LSP получает его бесплатно, но отдельно не
+проверялся (вне периметра «резолвер + nova-cli»).
 `sync`/`load_pins` раньше и полнее).
