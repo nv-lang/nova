@@ -37,9 +37,9 @@ name):
 
 ```nova
 mut p *mut T        // arrow re-pointable (mut binding) + box writable (*mut pointee)
-let q *ro T         // arrow fixed (let binding)        + box read-only (*ro pointee)
+ro q *ro T          // arrow fixed (ro binding)         + box read-only (*ro pointee)
 mut p *ro T         // arrow re-pointable               + box read-only
-let p *mut T        // arrow fixed                      + box writable
+ro p *mut T         // arrow fixed                      + box writable
 ```
 
 > **There is NO `mut *` / `ro *` / `unsafe *` prefix.** A modifier before `*`
@@ -66,7 +66,7 @@ follows. The pointer value itself is **always non-null**; for nullable use
 
 ```nova
 mut p *T = &acc     // mut binding → p may be reassigned later (p = &other)
-let q *T = &acc     // let binding → q is fixed (q = &other ⇒ E_REBIND)
+ro q *T = &acc      // ro binding → q is fixed (q = &other ⇒ E_REBIND)
 ```
 
 A pointer variable obeys the **same** `let` / `mut` rule as every other
