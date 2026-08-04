@@ -306,8 +306,8 @@ a failure only produces a warning `W2401`/`W2402` and a runtime
 check in debug — the build succeeds. `#verify` upgrades that to a
 hard error.
 
-> **History:** `#verify` was called `#must_verify` before Plan 33.3
-> Ф.9, when it was renamed. Any old text mentioning `#must_verify`
+> **History:** `#verify` was called `#must_verify` before Plan 33.3,
+> when it was renamed. Any old text mentioning `#must_verify`
 > on a function refers to `#verify`.
 
 ```nova
@@ -368,7 +368,7 @@ fn safe_double(x int) -> int
 ### `#must_verify` (removed — use `#verify`)
 
 > **`#must_verify` no longer exists.** It was renamed to `#verify`
-> in Plan 33.3 Ф.9. Writing `#must_verify` today is silently
+> in Plan 33.3. Writing `#must_verify` today is silently
 > ignored by the parser (treated as an unknown attribute). Use
 > `#verify` instead.
 
@@ -872,7 +872,7 @@ fn complex_proof(x int) -> int
 Cross-check is a **CI-only soundness safety net**: it re-runs every
 verification condition through two *independent* solver paths and fails
 the build if their definite answers disagree. It is the second line of
-defence after the soundness-regression suite (Plan 33.8 Ф.7) — the
+defence after the soundness-regression suite (Plan 33.8) — the
 regression suite catches *known* bug classes, cross-check catches
 *unknown* ones.
 
@@ -884,8 +884,8 @@ The two paths are deliberately independent:
 
 The textual path shares no code with the Z3-FFI translation, so it is
 also a second independent *encoder*. An encoding bug that silently
-dropped a formula on the Z3 side (the class of bug found in Plan 33.8
-Ф.6.2) would be caught here even without a second solver.
+dropped a formula on the Z3 side (the class of bug found in Plan 33.8)
+would be caught here even without a second solver.
 
 ### Running it
 
@@ -990,7 +990,7 @@ result-ref       = 'result'                  // only in ensures
 
 | What does not work / is deferred | Plan |
 |---|---|
-| `#must_verify_module` — strict mode for an entire module | [D113](../../spec/decisions/09-tooling.md#d113) (Plan 33.3 Ф.13, V2) |
+| `#must_verify_module` — strict mode for an entire module | [D113](../../spec/decisions/09-tooling.md#d113) (Plan 33.3, V2) |
 | SMT cache + incremental verification | [D114](../../spec/decisions/09-tooling.md#d114) (V2) |
 | Parallel verification via `rayon` | [D114](../../spec/decisions/09-tooling.md#d114) (V2) |
 | Loop invariants with Z3 — full inductive reasoning | Plan 33.x V2 |
