@@ -317,36 +317,14 @@ toolchain не нужен — нужен только C-компилятор): �
 
 ## Сборка из исходников
 
-Соберите `nova` CLI, затем используйте его для компиляции Nova-программ:
-
 ```sh
-# build nova CLI (requires Rust + Cargo)
+git clone --recursive https://github.com/nv-lang/nova.git && cd nova
 cd nova-cli && cargo build --release && cd ..
-
-# compile a Nova file to a native binary, then run it
-nova-cli/target/release/nova build path/to/hello.nv -o hello
-./hello
-
-# type-check only
-nova-cli/target/release/nova check path/to/hello.nv
+# → nova-cli/target/release/nova
 ```
 
-Pipeline двухступенчатый: `nova-codegen` (внутренний) производит `.c`,
-нативный C-компилятор линкует его с runtime'ом (`nova_rt/`). `nova build`
-оркестрирует это автоматически.
-
-Ручной pipeline (без `nova` CLI):
-
-```sh
-cd compiler-codegen
-cargo run -- compile path/to/hello.nv          # Nova → C
-gcc path/to/hello.c nova_rt/alloc.c nova_rt/effects.c nova_rt/fibers.c \
-    -I. -o hello                                # C → binary
-./hello
-```
-
-Полный guide, опции, известные ограничения:
-[compiler-codegen/README.md](compiler-codegen/README.md).
+Ручной pipeline, зависимости, платформенные заметки:
+[docs/guide/building-from-source.ru.md](docs/guide/building-from-source.ru.md).
 
 ## Первые шаги
 

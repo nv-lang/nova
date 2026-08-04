@@ -6,6 +6,7 @@
 # Стартовый состав — все guide-файлы (полная публикация, слово владельца).
 authoring-a-module
 auto-derive-guide
+building-from-source
 channels
 cleanup-cookbook
 consume-types
