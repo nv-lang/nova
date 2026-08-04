@@ -1,0 +1,8 @@
+module scratch_p248.p3c_linear_nokw
+
+type Handle consume value { x int }
+
+test "probe linear type WITHOUT any consume method at all" {
+    consume h = Handle { x: 1 }
+    assert(h.x == 1)
+}

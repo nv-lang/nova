@@ -1,0 +1,3 @@
+module scratch_p248.p1_modifier
+
+type Handle nocopy value { x int }

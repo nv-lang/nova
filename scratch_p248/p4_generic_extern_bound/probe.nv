@@ -1,0 +1,12 @@
+module scratch_p248.p4_generic_extern_bound
+
+// Probe: free-standing generic extern "nova" function bounded by a type-set
+// (`Ints` — already declared in std/src/prelude/protocols.nv). No precedent
+// for this form per spec/decisions/04-effects.md:7466 (overflow policy D423
+// "Неопределённости" section) — checking what parse/check actually do today.
+extern "nova" fn[T Ints] nova_probe_double(x T) -> T
+
+test "probe generic extern nova fn with type-set bound" {
+    ro r = nova_probe_double(21)
+    assert(r == 42)
+}

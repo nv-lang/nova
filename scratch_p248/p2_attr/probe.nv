@@ -1,0 +1,4 @@
+module scratch_p248.p2_attr
+
+#nocopy
+type Handle { x int }
