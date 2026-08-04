@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 # Cleanup Cookbook — production recipes for `consume X = expr { body }`
 
-> **Plan 110 Ф.14.8.** A production-recipe book for the Nova V3
+> **Plan 110.** A production-recipe book for the Nova V3
 > cleanup family — migration patterns from Go/Rust/TS/Java/Kotlin,
 > common resource patterns (connection pools, file handles, transactions,
 > locks), anti-patterns + debugging, performance tips.
@@ -370,7 +370,7 @@ fn use_it() -> () {
 ```
 
 Suggestion: implement `Cleanup[E]` for the resource type. Quick-fix
-LSP code-action "implement Cleanup" (Plan 110.6 Ф.10.6).
+LSP code-action "implement Cleanup" (Plan 110.6).
 
 ### 5.2 Wrapped init without unwrap
 
@@ -491,7 +491,7 @@ Grep for `nv_consume_enter` / `nv_resolve_exit_timeout` — for `Cleanup[never]`
 
 ### 7.3 Cancel-shield overhead
 
-Per benchmark (Plan 110.6 Ф.11.5 target): cancel-shield + 3-level resolution
+Per benchmark (Plan 110.6 target): cancel-shield + 3-level resolution
 overhead ≤ Plan 100.4 baseline + 5%. Typical: < 100ns per cleanup entry.
 
 If a profile shows cleanup overhead > 5%:
@@ -532,7 +532,7 @@ SIGSEGV — NOT (the OS kills the process directly).
 
 For critical state on abort:
 - Use an OS-level mechanism (file flush, transactional DB);
-- Or the Plan 110.4 Ф.8.9 `#[run_on_abort]` attribute (follow-up
+- Or the Plan 110.4 `#[run_on_abort]` attribute (follow-up
   `[M-110-run-on-abort]`).
 
 ### 8.3 Nested Application semantics surprise

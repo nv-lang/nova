@@ -8,7 +8,7 @@ source_date: 2026-08-02
 // SPDX-License-Identifier: MIT OR Apache-2.0
 # Cleanup Cookbook — production-рецепты для `consume X = expr { body }`
 
-> **План 110 Ф.14.8.** Книга production-рецептов для cleanup-семейства
+> **План 110.** Книга production-рецептов для cleanup-семейства
 > Nova V3 — паттерны миграции из Go/Rust/TS/Java/Kotlin, общие
 > resource-паттерны (пулы соединений, файловые хендлы, транзакции,
 > блокировки), анти-паттерны + отладка, советы по производительности.
@@ -375,7 +375,7 @@ fn use_it() -> () {
 ```
 
 Предложение: реализуйте `Cleanup[E]` для resource-типа. Quick-fix
-LSP code-action «implement Cleanup» (План 110.6 Ф.10.6).
+LSP code-action «implement Cleanup» (План 110.6).
 
 ### 5.2 Обёрнутый init без unwrap
 
@@ -497,7 +497,7 @@ nova build --release --asm-dump src/lock_path.nv
 
 ### 7.3 Оверхед cancel-shield
 
-Per benchmark (цель Плана 110.6 Ф.11.5): оверхед cancel-shield +
+Per benchmark (цель Плана 110.6): оверхед cancel-shield +
 3-уровневого разрешения ≤ baseline Плана 100.4 + 5%. Типично: < 100ns на
 cleanup-entry.
 
@@ -540,7 +540,7 @@ SIGSEGV — НЕТ (OS убивает процесс напрямую).
 
 Для критичного состояния при abort:
 - Используйте OS-уровневые механизмы (flush файла, транзакционная БД);
-- Или атрибут `#[run_on_abort]` из Плана 110.4 Ф.8.9 (follow-up
+- Или атрибут `#[run_on_abort]` из Плана 110.4 (follow-up
   `[M-110-run-on-abort]`).
 
 ### 8.3 Сюрприз семантики вложенных Application
