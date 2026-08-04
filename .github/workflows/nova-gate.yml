@@ -83,6 +83,35 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # docs-guard (Plan 242, добавлено 2026-08-02): enforcement docs/dev/
+  # doc-conventions.md — быстрый bash/grep-страж, не требует cargo build/nova.
+  # Отдельный job (не шаг в `gate` ниже), чтобы падать за секунды, не ждать
+  # компилятор. diff-base для same-commit pairing (2b): PR — base SHA цели
+  # мержа; push — SHA до пуша (`github.event.before`; на первый пуш новой
+  # ветки это может быть all-zeros/недостижимым — скрипт тогда просто
+  # пропускает эту одну под-проверку, не роняя остальные, см. шапку
+  # scripts/guards/check-doc-conventions.sh).
+  docs-guard:
+    name: docs-guard (doc-conventions.md enforcement, Plan 242)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout nova (full history — same-commit pairing needs diff-base)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: check-doc-conventions.sh (self-test first)
+        run: |
+          set -uo pipefail
+          bash scripts/guards/selftest/test-check-doc-conventions.sh
+          bash scripts/guards/selftest/test-doc-conventions-determinism.sh
+      - name: check-doc-conventions.sh (real tree)
+        env:
+          DOC_GUARD_DIFF_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -uo pipefail
+          bash scripts/guards/check-doc-conventions.sh "$(pwd)" "${DOC_GUARD_DIFF_BASE:-}"
+
   gate:
     name: nova-gate (conformance + flagship examples)
     runs-on: ubuntu-latest
