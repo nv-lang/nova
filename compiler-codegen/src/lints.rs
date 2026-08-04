@@ -7369,7 +7369,7 @@ fn conv_fail_public_signature(src: &str, o: &ConvLintOptions, out: &mut Vec<Lint
             return;
         }
         if let Some(i) = code.find("Fail[") {
-            // D432-амендмент 2026-08-04 (№315 fix): `consume @cleanup(outcome
+            // D432 amendment 2026-08-04 (bug 315 fix): `consume @cleanup(outcome
             // ScopeOutcome) ... Fail[E] -> ()` — shape MANDATED by the
             // `Cleanup[E]` protocol itself (prelude/protocols.nv); R5's
             // "use `Result[T, XError]` instead" doesn't apply — the protocol
