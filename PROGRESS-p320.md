@@ -41,4 +41,41 @@ generic-aware WrapKind-подстановки, которой фикс №320 н
 Реестр: №320 → ✅ (формула закрытия — выше). Спека — D55 амендмент внесён тем
 же слиянием.
 
-## Фаза 2-4 — НЕ начаты (зависят от Фазы 1, ждут интегратора/следующего окна)
+## Фаза 2 — новый generic-тип `IndexMap[K, V]` в std — ЗАКРЫТА
+
+Дом: `std/src/collections/index_map/core.nv` (folder-module, по прецеденту
+`std/src/collections/vec/`) + пир `index_map_test.nv` (16 test-блоков).
+Реализация: dense `[](K, V)` (insertion order) + `HashMap[K, int]` (key →
+index, O(1) lookup) — честная граница объёма (значения не дублируются, ключи
+— ещё дублируются внутри `HashMap[K,int]`; `[M-hashmap-index-style-backing]`
+остаётся ОТКРЫТ отдельно) зафиксирована в доккомменте типа.
+
+API: `.new()`, `@len()`, `@is_empty()`, `@get()`, `@contains()`, `mut
+@insert()`, `mut @remove()` (swap-remove, O(1), задокументировано как
+НЕ-order-preserving для остатка — расширение сверх минимума брифа), `mut
+@clear()`, `@keys() -> []K`, `@equal(other …) -> bool`, `@iter() ->
+IndexMapIter[K, V]`.
+
+Находка при реализации: `@equal(other Self)` (буквально `Self`, как в
+брифе) триггерит компиляторный баг эрейзд-stub синтеза —
+`Nova_IndexMap_method_equal` получает ВТОРОЙ, конфликтующий C-forward-decl
+с `other`, типизированным как НЕСВЯЗАННЫЙ `Nova_EmbeddedDir*` (auto-derived
+`@equal` из `std/prelude/embed.nv`, транзитивно затянут в CU) —
+`CC-FAIL: conflicting types for 'Nova_IndexMap_method_equal'`. Обход —
+`@equal(other IndexMap[K, V])` (явный тип вместо `Self`) — ТА ЖЕ форма, что
+уже использует `HashMap[K, V] @equal(other HashMap[K, V])` (не хак, а
+следование существующему прецеденту в этом же файле-соседе). Не
+эскалировано как новый компиляторный фикс (Фаза 1 — единственная
+компиляторная часть окна; баг узкий и обходится идиоматично).
+
+Гейты: `nova test std/src/collections/index_map` — PASS (все 16 test-блоков
+зелёные, подтверждено дословно, включая обязательные регресс-тесты
+«re-insert не двигает позицию» и «итерация = порядок вставки», плюс
+sanity-проверка что раннер реально детектирует упавший assert — было
+временно вставлено, дало RUN-FAIL с точным именем теста, затем убрано);
+`nova test std/src/collections` (весь каталог, регресс) — PASS: 14 FAIL: 0;
+`nova lint std/src/collections/index_map` — 0 находок (после фикса
+`Vec[(K,V)]` → `[](K,V)`-спеллинга, W_VEC_SPELLING); arch-ratchet
+не тронут (std не входит в счёт).
+
+## Фаза 3-4 — НЕ начаты (зависят от Фазы 2, следующий шаг этого же окна)
