@@ -137,7 +137,7 @@ bridge is the explicit `write_str(w, s)`.
 
 ### `ReadFs` — one VFS protocol over the disk and an embedded directory
 
-`ReadFs` (`std.fs`, D323 amendment, Plan 210 Ф.6б) is a read-only virtual
+`ReadFs` (`std.fs`, [D323 amendment](../../spec/decisions/04-effects.md#d323), Plan 210) is a read-only virtual
 filesystem — `@read_file(path) -> Result[[]u8, IoError]` +
 `@path_exists(path) -> Result[bool, IoError]` — conformed by **`DirFs`** (a
 root-scoped view over the real disk, `Fs` effect) and by **`EmbeddedDir`**

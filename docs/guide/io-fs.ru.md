@@ -149,7 +149,7 @@ fn File @close(consume self) -> Result[(), IoError]   // the ONLY explicit disch
 
 ### `ReadFs` — один VFS-протокол поверх диска и встроенного каталога
 
-`ReadFs` (`std.fs`, амендмент D323, Plan 210 Ф.6б) — read-only виртуальная
+`ReadFs` (`std.fs`, [амендмент D323](../../spec/decisions/04-effects.md#d323), Plan 210) — read-only виртуальная
 файловая система — `@read_file(path) -> Result[[]u8, IoError]` +
 `@path_exists(path) -> Result[bool, IoError]` — которой соответствуют **`DirFs`**
 (вид с корнем поверх реального диска, эффект `Fs`) и **`EmbeddedDir`**
