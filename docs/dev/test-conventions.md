@@ -813,6 +813,42 @@ linkать. Workarounds:
 
 См. [Plan 26 retro](../plans/26-test-runner-hardening.md) для деталей.
 
+### Build/test byte-identity — когда гонять `check-build-test-identity.sh`
+
+`nova build` (`cmd_build`, nova-cli/src/main.rs) и `nova test`/`test-build`
+(`test_runner.rs::run_one`, compiler-codegen) — ДВЕ независимые, вручную
+поддерживаемые копии одного и того же конвейера (resolve-imports → ... →
+codegen). За историю проекта — пять независимых инцидентов класса
+«`cmd_build` забыл вызов, который есть у `test_runner`» (три видны прямо в
+комментариях `main.rs`; два найдены окном p-build304 2026-08-04, реестр
+221.1 №304 — `cmd_build` никогда не звал `field_cache::cache_module` и
+никогда не звал `emitter.set_source_file_name`). Обычный регресс этого не
+ловит: `nova test` тестирует ТОЛЬКО через свой собственный конвейер,
+`cmd_build` в регрессе не участвует вовсе.
+
+`scripts/tools/check-build-test-identity.sh` — постоянный инструмент,
+доказывающий побайтную (с точностью до короткого списка документированных
+исключений — см. `KNOWN_EXCEPTIONS` в
+`scripts/tools/check-build-test-identity.py`) идентичность `.c`,
+порождённого `nova build --keep-artifacts` и `nova test-build
+--keep-artifacts` для одного и того же исходника. Самотест —
+`scripts/guards/selftest/test-check-build-test-identity.sh`.
+
+**Когда гонять:** вручную при приёмке волны, трогающей конвейер сборки
+или кодоген — `cmd_build`/`test_runner.rs::run_one`, шаги между
+callnorm/chain_norm/field-cache/post-normalize-annotate/codegen, либо
+сам `CEmitter`/`emit_module`/`emit_module_multi_tu`. НЕ в `gate.sh`
+(решение владельца 2026-08-04) — скрипт делает ДВЕ полные сборки на
+фикстуру, это дорого для гейта, который гоняется многократно за день.
+
+**Что означает красный:** `nova build` и `nova test`/`nova test-build`
+породили РАЗНЫЙ код для одного исходника — реальный, пользователь-видимый
+риск (пользовательские `nova build`-сборки идут по непроверенному
+регрессом пути). Скрипт печатает, какие функции разошлись, и первые
+строки diff — это находка для нового окна, а не для правки прямо здесь;
+чинится в `cmd_build` (зеркалируя `test_runner.rs`), см. прецедент
+№304/коммит `ac684356f`.
+
 ---
 
 ## Зачем маркеры
