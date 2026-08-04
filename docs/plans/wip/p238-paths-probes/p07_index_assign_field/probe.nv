@@ -1,0 +1,36 @@
+// p238-paths probe 07: FIELD WRITE VIA INDEX-ASSIGNMENT. D441 §3(г) (S1a)
+// documents its write-site gate as exactly three forms: a whitelisted
+// mutator method name on the tainted field (`.push`/`.append`/`.add`/
+// `.insert`/`.push_back`/`.push_front`/`.set`), OR direct field assignment
+// (`@field = v` / `obj.field = v`). Index-assignment into an element of a
+// container-typed field (`@field[i] = v`) is a THIRD, distinct AST shape —
+// neither a whitelisted method call nor a whole-field assignment — that is
+// not named in that list. This probe writes a closure into a pre-sized
+// `Vec[fn()->()]` field by index instead of by `.push`/`.set`, to test
+// whether the write-site scan actually covers this form or only recognizes
+// the enumerated spellings.
+
+module p238paths.p07_index_assign_field
+
+type IndexSink { mut hooks Vec[fn() -> ()] }
+
+fn IndexSink.new() -> IndexSink => { hooks: Vec[fn() -> ()].of(|| {}) }
+
+fn IndexSink mut @set_hook(f fn() -> ()) -> () {
+    @hooks[0] = f
+}
+
+fn IndexSink @run() -> () {
+    supervised {
+        spawn {
+            (@hooks[0])()
+        }
+    }
+}
+
+fn main() {
+    mut order = Vec[int].new()
+    mut sink = IndexSink.new()
+    sink.set_hook(|| { order.push(1) })
+    sink.run()
+}

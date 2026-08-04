@@ -1,0 +1,21 @@
+// p238-paths probe 10: MULTI-HOP LET-ALIAS CHAIN. `field_sink_call_let_
+// bound_neg.nv` (existing conformance fixture) proves ONE hop of plain-
+// identifier re-binding is tracked (`ro g = h.f; g()`). This probe chains
+// THREE plain-identifier re-bindings (`a` -> `b` -> `c`) before the final
+// call inside `spawn`, all within the SAME function, no field/container/
+// function-call boundary involved at all — purely to find where (if
+// anywhere) the snapshot-propagation-by-alias stops.
+
+module p238paths.p10_alias_chain_multi_hop
+
+fn main() {
+    mut acc = Vec[int].new()
+    ro a = || { acc.push(1) }
+    ro b = a
+    ro c = b
+    supervised {
+        spawn {
+            c()
+        }
+    }
+}
