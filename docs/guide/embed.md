@@ -4,8 +4,8 @@
 
 > A user guide to the compile-time intrinsics `embed("file")`
 > ([D412](../../spec/decisions/03-syntax.md#d412), Plan 186) and `embed_dir("dir")`
-> (D412 amendment in the same file, `spec/decisions/03-syntax.md` — search for
-> "D412-амендмент", Plan 210). Both are class-C intrinsics (file input at
+> ([D412 amendment](../../spec/decisions/03-syntax.md#d412) in the same file,
+> Plan 210). Both are class-C intrinsics (file input at
 > compile time, with precedent in Rust `include_bytes!`, Go `//go:embed`,
 > Zig `@embedFile`, C23 `#embed`).
 
@@ -236,7 +236,7 @@ U+00E9 code point). The same git checkout on different OSes used to
 produce DIFFERENT byte keys in the `embed_dir` table — and, correspondingly,
 different generated `.c` for identical repository content.
 
-**The fix (D412 amendment, Ф.6а):** every relative entry path is
+**The fix ([D412 amendment](../../spec/decisions/03-syntax.md#d412)):** every relative entry path is
 normalized to **NFC** while walking. `get("café.txt")` with an ordinary
 (precomposed) string literal in the source now finds the file regardless
 of which form the filesystem physically stored the name in on disk:
@@ -348,8 +348,8 @@ via `embed`/`embed_dir`.
 
 A common case: serving a web server's static assets — from disk in dev mode
 (live reload on file edits) and baked into the binary in prod. `ReadFs`
-([D323 amendment](../../spec/decisions/04-effects.md#d323), `std.fs`, Plan 210
-Ф.6б) is a read-only VFS protocol, conformed to by **both** sources:
+([D323 amendment](../../spec/decisions/04-effects.md#d323), `std.fs`, Plan 210)
+is a read-only VFS protocol, conformed to by **both** sources:
 
 ```nova
 import std.fs.{ReadFs, DirFs}
@@ -403,7 +403,7 @@ and [Plan 210 §6б](../plans/210-embed-dir.md).
 | Sorting/binary search | yes, sorted + O(log N) `get` | yes (`embed.FS`) | linear (crate) | — | — |
 | Hidden files | skipped (`.`-prefix) | skipped (`.`/`_`-prefix) | configurable (crate) | — | — |
 | Dev mode (reading from disk) | NO intrinsic substitution — explicit `DirFs` via `ReadFs` | no | `rust-embed` debug=disk (crate option) | — | — |
-| NFC path normalization | yes (Ф.6а) + `E_EMBED_DIR_NFC_COLLISION` | no (silent) | no (silent) | — | — |
+| NFC path normalization | yes + `E_EMBED_DIR_NFC_COLLISION` | no (silent) | no (silent) | — | — |
 | Materialization | `.rodata`, zero-copy view | `.rodata`-like (Go binary) | `.rodata`, zero-copy | `.rodata` | `.rodata`, no hex-text bloat |
 
 **What Nova takes:** from Go — recursion, sorting, binary search, dot-skip,
@@ -420,11 +420,11 @@ NFD/NFC cross-platform file-name-reproducibility trap at all.
 
 - [D412](../../spec/decisions/03-syntax.md#d412) —
   the hex-blob literal `x"…"` + `embed("path")` (original decision, Plan 186).
-- D412 amendment (`spec/decisions/03-syntax.md`, search for "D412-амендмент") —
-  `embed_dir`, `EmbeddedDir`, diagnostic codes, including AMEND Ф.6а (NFC).
-- [D323 amendment](../../spec/decisions/04-effects.md#d323) — `ReadFs` (Plan 210 Ф.6б).
+- [D412 amendment](../../spec/decisions/03-syntax.md#d412) —
+  `embed_dir`, `EmbeddedDir`, diagnostic codes, including the NFC amendment.
+- [D323 amendment](../../spec/decisions/04-effects.md#d323) — `ReadFs` (Plan 210).
 - [Plan 210](../plans/210-embed-dir.md) — the full design/decision/risk map
-  (exploration, materialization Option R′, review 1/2/3, Ф.6а/Ф.6б).
+  (exploration, materialization Option R′, review 1/2/3).
 - [`docs/guide/io-fs.md`](io-fs.md) — `std.io`/`std.fs`/`std.os` overall, including
   `ReadFs`.
 - [`std/src/prelude/embed.nv`](../../std/src/prelude/embed.nv) — the source of
