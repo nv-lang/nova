@@ -1,6 +1,20 @@
 // EXPECT_COMPILE_ERROR D133
-// BufWriter is must-consume (D133, Q10): never calling @close is a compile error
-// — the flush error cannot be silently dropped (the §1a #1 differentiator).
+// Updated 2026-08-04 (№315 fix): D432 §1 amendment made `BufWriter[W]`
+// auto-`@cleanup`-eligible in general (std/src/io/buffered.nv's type doc) —
+// a leftover `BufWriter` is normally NOT a compile error anymore, it
+// auto-closes, and the flush error becomes a DIRECT `Fail[IoError]` effect
+// the triggering function must declare (same mechanism/regression-guard as
+// File: spec_tests/conformance/d315_fallible_cleanup_effects.nv). This
+// SPECIFIC file still fails as `D133-not-consumed` (unchanged) because its
+// `consume bw = BufWriter[BytesWriter].new(sink)` init shape (explicit
+// turbofish generic constructor) hits a PRE-EXISTING, orthogonal gap: the
+// checker's leftover-binding type inference records an EMPTY type name for
+// this exact shape, so the new eligibility lookup (keyed by type name)
+// silently misses it and the old strict-linear path fires instead — a
+// fail-safe (stricter than necessary), not a soundness bug, but NOT the
+// same code path spec_tests/conformance's regression guard exercises.
+// Found and left as-is (out of №315's scope) while rolling out the D432
+// amendment for File/BufWriter — flagged for a future window.
 
 module neg.d322_bufwriter_leak_neg
 

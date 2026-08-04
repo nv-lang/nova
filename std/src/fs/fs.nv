@@ -1,15 +1,23 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // std/fs/fs.nv — File (must-consume), OpenOptions, real_fs handler, convenience.
 //
-// 🏆 `File` is **must-consume** — the #1 differentiator: a `File` that
-// is never `@close`d is a **compile error** (`D133-not-consumed`), and `@close`
-// returns the `Result` so a close error (ENOSPC/EIO/quota — often visible ONLY on
-// close) is **not ignorable** and cannot be silently dropped. Beats every peer:
-// Go `defer Close()` swallows, Rust `Drop` swallows, Java/Kotlin suppress, Zig
-// `close()->void` has nowhere to put the error. `@close` is the single EXPLICIT
-// discharge; double-close is impossible (consume). File conforms to io.Read /
-// io.Write / io.Seek — its `@read`/`@write` carry the `Fs` effect, which surfaces
-// transitively when a generic io helper is monomorphised over it.
+// 🏆 `File` is **must-consume** — the #1 differentiator: a close error
+// (ENOSPC/EIO/quota — often visible ONLY on close) is **not ignorable** and
+// cannot be silently dropped. Beats every peer: Go `defer Close()` swallows,
+// Rust `Drop` swallows, Java/Kotlin suppress, Zig `close()->void` has nowhere
+// to put the error. **D432 §1 amendment (2026-08-04, №315 fix):** a `File`
+// left un-closed is no longer a compile error — it auto-`@cleanup`s at
+// scope-exit like `TcpStream`/`TcpListener` (D432 hybrid-C) — but the
+// close error is still NOT swallowed: `@cleanup` propagates it via `Fs
+// Fail[IoError]`, which the auto-inserted call makes a DIRECT effect of
+// whichever function leaves the `File` unconsumed (checked at compile time,
+// `E_D432_CLEANUP_EFFECT_NOT_DECLARED` if missing) — the differentiator
+// moves from "must declare a close call" to "must declare (or locally
+// handle) the close failure", still strictly stronger than every peer
+// above. Explicit `@close()` remains available and still disarms
+// auto-cleanup (D432 §4, no double-close). File conforms to io.Read /
+// io.Write / io.Seek — its `@read`/`@write` carry the `Fs` effect, which
+// surfaces transitively when a generic io helper is monomorphised over it.
 //
 // `IoError`/`Metadata`/`DirEntry` are all built HERE, in the pure-Nova wrapper
 // layer, from the `Fs` effect's primitive `int`/`str` codes — never across the
@@ -174,19 +182,25 @@ export fn OpenOptions @open(path Path) Fs -> Result[File, IoError] {
 
 // ─── File (must-consume) ──
 
-/// An open file handle. **Must be `@close`d**: a `File` that leaves scope
-/// un-closed is a compile error. Conforms to io.Read / io.Write / io.Seek (its
+/// An open file handle. Conforms to io.Read / io.Write / io.Seek (its
 /// methods carry the `Fs` effect, surfaced transitively at monomorphisation).
 ///
-/// **Plan 217.1 (D432 rollout) — deliberately excluded from auto-`@cleanup`.**
-/// `@close()` is fallible (`Fs -> Result[(), IoError]`, see the 🏆 rationale
-/// above this file's header): D432 §1 restricts auto-cleanup to an EMPTY
-/// effect-row `@cleanup` anyway, so `File` doesn't qualify as-is. Even setting
-/// that guard aside, silently swallowing the close error on an auto-inserted
-/// path would undo the exact differentiator this type exists for (Go/Rust/
-/// Java/Zig all swallow it on drop) — `File` stays must-consume regardless of
-/// any future fallible-`@cleanup` effect-propagation policy (Plan 217 §8 item 1).
-/// Regression guard: std/src/fs/neg/d323_file_not_consumed_neg.nv.
+/// **D432 §1 amendment (2026-08-04, №315 fix) — auto-`@cleanup` enabled.**
+/// A `File` left un-closed at scope-exit is no longer a compile error: the
+/// compiler auto-inserts `@cleanup(outcome)` (D432 hybrid-C), which calls
+/// `@close()` and propagates its error via `Fs Fail[IoError]` — NOT
+/// swallowed. Because that auto-inserted call is a DIRECT effect of
+/// whichever function triggers it (D432 §1), any function that leaves a
+/// `File` unconsumed must itself declare `Fs Fail[IoError]` (or locally
+/// handle it via `with Fs =`/`with Fail[IoError] =`), else
+/// `E_D432_CLEANUP_EFFECT_NOT_DECLARED` at compile time — the must-consume
+/// discipline moved from "close it explicitly" to "the close failure is
+/// visible in your signature", never to "ignorable". Explicit `@close()`
+/// still works exactly as before and disarms auto-cleanup (D432 §4, no
+/// double-close). See `spec/decisions/02-types.md` D432 §1 amendment.
+/// Regression guards: std/src/fs/d323_file_must_consume_test.nv (explicit
+/// close, unaffected), spec_tests/conformance/d315_fallible_cleanup_effects.nv
+/// (auto-cleanup + effect enforcement, general mechanism).
 #stable(since = "0.1")
 export type File consume {
     priv fd int
@@ -288,11 +302,30 @@ export fn File @metadata() Fs -> Result[Metadata, IoError] {
     if rc < 0 { Err(IoError.from_os(0 - rc, "fstat")) } else { Ok(read_meta(img)) }
 }
 
-/// Discharge: close the fd and consume the handle — the **only** explicit
-/// release. The close error is returned (never swallowed on drop). Double-close
-/// is a compile error.
+/// Discharge: close the fd and consume the handle — the explicit release,
+/// still the recommended one (surfaces the close error inline at the call
+/// site rather than propagating it through the caller's signature). The
+/// close error is returned (never swallowed). Double-close is a compile
+/// error.
 #stable(since = "0.1")
 export fn File consume @close() Fs -> Result[(), IoError] => wrap_unit(Fs.close(@fd), "close")
+
+/// D432 §1 amendment (2026-08-04, №315 fix) `Cleanup[IoError]`
+/// implementation: cleanup = `@close()`, propagated via `?` — makes `File`
+/// usable with auto-`@cleanup` (D432 hybrid-C) when left unconsumed at
+/// scope-exit, same as `TcpStream`/`TcpListener`, but WITH the close error
+/// surfaced (not swallowed): `!!` turns a close failure into this cleanup's
+/// own `Fail[IoError]`, which the compiler then requires the TRIGGERING
+/// function to declare (`Fs Fail[IoError]`, direct effect, D432 §1) — the
+/// error is never silently lost, it either shows up in a signature or gets
+/// locally handled. On a path where the scope was ALREADY failing
+/// (`outcome` = `Failure`/`Panic`), the close failure ATTACHES to that
+/// original cause instead of replacing it (suppressed-pocket, D158-D162 —
+/// the same machinery `defer`+`Fail` already use, not new here).
+#stable(since = "0.1")
+export fn File consume @cleanup(_outcome ScopeOutcome) Fs Fail[IoError] -> () {
+    @close()!!
+}
 
 // ─── real_fs — the production Fs handler over libuv (nova_rt/fs.c) ──
 //

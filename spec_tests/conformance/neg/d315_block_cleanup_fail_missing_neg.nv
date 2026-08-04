@@ -1,0 +1,23 @@
+// EXPECT_COMPILE_ERROR E_D432_CLEANUP_EFFECT_NOT_DECLARED
+// №315 fix probe (block form, missing Fail[E]). D432 §1 amendment
+// (2026-08-04): `consume x = e { body }`'s auto-inserted `@cleanup(o)` call
+// is a DIRECT effect of the enclosing function. Here `D315FailRes`'s
+// `@cleanup` carries `Fail[D315Boom]`, but the enclosing fn declares NO
+// effects at all — must be a compile error pointing at the binding.
+module neg.d315_block_cleanup_fail_missing_neg
+
+type D315Boom { msg str }
+
+type D315FailRes consume { id int }
+
+fn D315FailRes consume @cleanup(_outcome ScopeOutcome) Fail[D315Boom] -> () {
+    throw D315Boom { msg: "cleanup failed" }
+}
+
+fn D315FailRes.new(id int) -> D315FailRes => { id }
+
+fn d315_block_no_fail_sig() -> () {
+    consume r = D315FailRes.new(1) {
+        ro _x = r.id
+    }
+}

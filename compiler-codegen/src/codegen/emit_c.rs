@@ -5090,17 +5090,15 @@ impl CEmitter {
             }
         }
 
-        // Plan 217 (D-новый, гибрид C, §8а п.1): pre-pass — collect PLAIN
-        // Nova type names (not C-ident) whose `@cleanup` is effect-pure
-        // (`f.effects.is_empty()`). Unlike the ccount pre-pass above, extern
-        // "nova" cleanups COUNT here (MutexGuard/ReadGuard/WriteGuard/Permit/
-        // TcpStream today — all `extern "nova"` + empty effect-row) — auto-
-        // cleanup eligibility depends only on effect-purity, not on who
-        // wrote the cleanup body. Mirrors `LinearityRegistry::build`'s
-        // `cleanup_pure_types` (types/mod.rs checker side) — MUST stay in
-        // sync so checker-suppressed-diagnostic and codegen-inserted-cleanup
-        // never diverge (a mismatch would silently leak a resource instead
-        // of erroring, per feedback-zero-tolerance-bugs).
+        // Plan 217 (гибрид C, §8а п.1) + D432-амендмент 2026-08-04 (№315
+        // fix): pre-pass — PLAIN Nova type names whose `@cleanup` is
+        // protocol-shaped, ANY effect-row now (amendment lifted the prior
+        // `f.effects.is_empty()` gate; checker enforces the triggering fn
+        // declares those effects — `types/mod.rs` `check_obligations_at_exit`/
+        // `validate_consume_scope_init`). extern "nova" cleanups COUNT here
+        // (MutexGuard/TcpStream/…) — eligibility depends only on shape.
+        // Mirrors `LinearityRegistry::build`'s `cleanup_effect_rows` — MUST
+        // stay in sync (mismatch = silent leak, feedback-zero-tolerance-bugs).
         {
             let mut collect = |items: &[Item]| {
                 for item in items {
@@ -5125,7 +5123,6 @@ impl CEmitter {
                                     TypeRef::Named { path, .. } if path.last().map_or(false, |s| s == "ScopeOutcome"));
                             if recv.consume
                                 && matches!(recv.kind, ReceiverKind::Instance)
-                                && f.effects.is_empty()
                                 && is_cleanup_protocol_shape
                             {
                                 self.auto_cleanup_types.insert(recv.type_name.clone());

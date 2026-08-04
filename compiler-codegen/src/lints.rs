@@ -7369,6 +7369,14 @@ fn conv_fail_public_signature(src: &str, o: &ConvLintOptions, out: &mut Vec<Lint
             return;
         }
         if let Some(i) = code.find("Fail[") {
+            // D432-амендмент 2026-08-04 (№315 fix): `consume @cleanup(outcome
+            // ScopeOutcome) ... Fail[E] -> ()` — shape MANDATED by the
+            // `Cleanup[E]` protocol itself (prelude/protocols.nv); R5's
+            // "use `Result[T, XError]` instead" doesn't apply — the protocol
+            // return type is fixed to `()`, there is no Result form to use.
+            if t.contains("@cleanup(") {
+                return;
+            }
             // Generic re-throw `Fail[E]` (одна заглавная буква = тип-параметр)
             // — легальный комбинатор-паттерн (retry/execute), не собственная
             // ошибка std. R5 — про конкретные XError-типы.

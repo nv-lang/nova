@@ -1,9 +1,15 @@
-// EXPECT_COMPILE_ERROR D133-not-consumed
-// D432 ограждение 1 (эффект-чистота, ГЛАВНОЕ): `@cleanup` с НЕПУСТЫМ
-// effect-row (fallible cleanup) is NOT auto-cleanup-eligible — stays
-// strict-linear. Auto-cleanup starts ONLY for Cleanup[never]/effect-pure
-// cleanup methods (six existing std types today); fallible-cleanup
-// (File/Transaction-style) is a deliberately separate future decision.
+// EXPECT_COMPILE_ERROR E_D432_CLEANUP_EFFECT_NOT_DECLARED
+// **Updated 2026-08-04 (№315 fix, D432 §1 amendment).** Ограждение 1
+// (эффект-чистота) originally made `@cleanup` with a NON-EMPTY effect-row
+// (fallible cleanup) NOT auto-cleanup-eligible at all — stayed strict-
+// linear. That restriction is LIFTED: fallible/effectful `@cleanup` is now
+// ALSO auto-cleanup eligible, with its effects propagated as DIRECT effects
+// of whichever function triggers the auto-insertion (D432 §1). This file
+// now tests THAT rule instead (bare-form leftover-at-exit, complementing
+// the block-form pair in ../d315_fallible_cleanup_effects.nv): the
+// enclosing fn below deliberately does NOT declare `Fail[D432Boom]` (it did,
+// pre-amendment, precisely because leaving `r` unconsumed used to be a
+// D133-not-consumed regardless) — now that omission is the actual defect.
 module neg.d432_effectful_cleanup_not_auto_neg
 
 type D432Boom { msg str }
@@ -16,7 +22,7 @@ fn D432Fallible consume @cleanup(_outcome ScopeOutcome) Fail[D432Boom] -> () {
 
 fn d432_make_f(id int) -> D432Fallible => { id }
 
-fn d432_neg_fallible_cleanup() Fail[D432Boom] -> () {
+fn d432_neg_fallible_cleanup() -> () {
     consume r = d432_make_f(1)
     ro _x = r.id
 }

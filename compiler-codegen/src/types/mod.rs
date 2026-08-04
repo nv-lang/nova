@@ -4938,17 +4938,25 @@ impl<'a> TypeCheckCtx<'a> {
         for item in &module.items {
             match item {
                 Item::Fn(fd) => {
+                    // D432-амендмент 2026-08-04 (№315 fix): fn's own
+                    // declared effects, needed to verify a block-form
+                    // `consume X = e { body }`'s auto-inserted cleanup call
+                    // doesn't carry an undeclared direct effect.
+                    let cfe = Some(fd.effects.as_slice());
                     match &fd.body {
-                        FnBody::Block(b) => self.check_consume_scopes_in_block(b, errors),
-                        FnBody::Expr(e) => self.check_consume_scopes_in_expr(e, errors),
+                        FnBody::Block(b) => self.check_consume_scopes_in_block(b, cfe, errors),
+                        FnBody::Expr(e) => self.check_consume_scopes_in_expr(e, cfe, errors),
                         FnBody::External => {}
                     }
                 }
-                Item::Test(t) => self.check_consume_scopes_in_block(&t.body, errors),
+                // Test/bench bodies have no fn-sig to declare effects against —
+                // `None` = ambient/unchecked, same treatment effect
+                // declarations already get for test bodies elsewhere.
+                Item::Test(t) => self.check_consume_scopes_in_block(&t.body, None, errors),
                 Item::Bench(b) => {
-                    for s in &b.setup { self.check_consume_scopes_in_stmt(s, errors); }
-                    self.check_consume_scopes_in_block(&b.measure_body, errors);
-                    for s in &b.teardown { self.check_consume_scopes_in_stmt(s, errors); }
+                    for s in &b.setup { self.check_consume_scopes_in_stmt(s, None, errors); }
+                    self.check_consume_scopes_in_block(&b.measure_body, None, errors);
+                    for s in &b.teardown { self.check_consume_scopes_in_stmt(s, None, errors); }
                 }
                 _ => {}
             }
@@ -4956,20 +4964,22 @@ impl<'a> TypeCheckCtx<'a> {
     }
 
     /// Plan 110.1.2 (D188): recursive walk через Block для ConsumeScope check.
-    fn check_consume_scopes_in_block(&self, b: &Block, errors: &mut Vec<Diagnostic>) {
+    /// `current_fn_effects` — D432-амендмент 2026-08-04 (№315 fix):
+    /// enclosing fn's declared effects (`None` for test/bench — ambient).
+    fn check_consume_scopes_in_block(&self, b: &Block, current_fn_effects: Option<&[TypeRef]>, errors: &mut Vec<Diagnostic>) {
         for s in &b.stmts {
-            self.check_consume_scopes_in_stmt(s, errors);
+            self.check_consume_scopes_in_stmt(s, current_fn_effects, errors);
         }
         if let Some(t) = &b.trailing {
-            self.check_consume_scopes_in_expr(t, errors);
+            self.check_consume_scopes_in_expr(t, current_fn_effects, errors);
         }
     }
 
     /// Plan 110.1.2 (D188): walk Stmt looking for ConsumeScope, recurse into children.
-    fn check_consume_scopes_in_stmt(&self, s: &Stmt, errors: &mut Vec<Diagnostic>) {
+    fn check_consume_scopes_in_stmt(&self, s: &Stmt, current_fn_effects: Option<&[TypeRef]>, errors: &mut Vec<Diagnostic>) {
         match s {
             Stmt::ConsumeScope { binding, init, body, .. } => {
-                self.validate_consume_scope_init(init, errors);
+                self.validate_consume_scope_init(binding, init, current_fn_effects, errors);
                 // Plan 110.1.5 (D188 R2 enforcement at compile time):
                 // detect manual `binding.cleanup(...)` calls в body.
                 // Runtime exactly-once guard prevents double dispatch;
@@ -4977,86 +4987,86 @@ impl<'a> TypeCheckCtx<'a> {
                 let mut tracked = std::collections::HashSet::new();
                 tracked.insert(binding.clone());
                 self.check_no_manual_on_exit_call_in_block(&tracked, body, errors);
-                self.check_consume_scopes_in_expr(init, errors);
-                self.check_consume_scopes_in_block(body, errors);
+                self.check_consume_scopes_in_expr(init, current_fn_effects, errors);
+                self.check_consume_scopes_in_block(body, current_fn_effects, errors);
             }
-            Stmt::Let(d) => self.check_consume_scopes_in_expr(&d.value, errors),
+            Stmt::Let(d) => self.check_consume_scopes_in_expr(&d.value, current_fn_effects, errors),
             // Plan 114.4 Ф.2: scope-local const — walk value for nested ConsumeScope.
-            Stmt::Const(d) => self.check_consume_scopes_in_expr(&d.value, errors),
-            Stmt::Expr(e) => self.check_consume_scopes_in_expr(e, errors),
+            Stmt::Const(d) => self.check_consume_scopes_in_expr(&d.value, current_fn_effects, errors),
+            Stmt::Expr(e) => self.check_consume_scopes_in_expr(e, current_fn_effects, errors),
             Stmt::Assign { target, value, .. } => {
-                self.check_consume_scopes_in_expr(target, errors);
-                self.check_consume_scopes_in_expr(value, errors);
+                self.check_consume_scopes_in_expr(target, current_fn_effects, errors);
+                self.check_consume_scopes_in_expr(value, current_fn_effects, errors);
             }
             Stmt::Return { value, .. } => {
-                if let Some(v) = value { self.check_consume_scopes_in_expr(v, errors); }
+                if let Some(v) = value { self.check_consume_scopes_in_expr(v, current_fn_effects, errors); }
             }
-            Stmt::Throw { value, .. } => self.check_consume_scopes_in_expr(value, errors),
+            Stmt::Throw { value, .. } => self.check_consume_scopes_in_expr(value, current_fn_effects, errors),
             Stmt::Defer { body, .. } => {
-                self.check_consume_scopes_in_expr(body, errors);
+                self.check_consume_scopes_in_expr(body, current_fn_effects, errors);
             }
             Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
-                self.check_consume_scopes_in_expr(expr, errors);
+                self.check_consume_scopes_in_expr(expr, current_fn_effects, errors);
             }
             Stmt::Break(_) | Stmt::Continue(_) | Stmt::Reveal { .. }
             | Stmt::Apply { .. } | Stmt::Calc { .. } => {}
             // Plan 136: tuple destructuring assignment.
             Stmt::TupleAssign { lhs, rhs, .. } => {
-                for e in lhs { self.check_consume_scopes_in_expr(e, errors); }
-                for e in rhs { self.check_consume_scopes_in_expr(e, errors); }
+                for e in lhs { self.check_consume_scopes_in_expr(e, current_fn_effects, errors); }
+                for e in rhs { self.check_consume_scopes_in_expr(e, current_fn_effects, errors); }
             }
         }
     }
 
     /// Plan 110.1.2 (D188): walk Expr looking for nested ConsumeScope in
     /// bodies (lambdas, blocks, if-then-else, match arms, etc).
-    fn check_consume_scopes_in_expr(&self, e: &Expr, errors: &mut Vec<Diagnostic>) {
+    fn check_consume_scopes_in_expr(&self, e: &Expr, current_fn_effects: Option<&[TypeRef]>, errors: &mut Vec<Diagnostic>) {
         use crate::ast::ExprKind;
         match &e.kind {
-            ExprKind::Block(b) => self.check_consume_scopes_in_block(b, errors),
+            ExprKind::Block(b) => self.check_consume_scopes_in_block(b, current_fn_effects, errors),
             ExprKind::If { cond, then, else_, .. } => {
-                self.check_consume_scopes_in_expr(cond, errors);
-                self.check_consume_scopes_in_block(then, errors);
+                self.check_consume_scopes_in_expr(cond, current_fn_effects, errors);
+                self.check_consume_scopes_in_block(then, current_fn_effects, errors);
                 if let Some(eb) = else_ {
                     match eb {
-                        crate::ast::ElseBranch::Block(b) => self.check_consume_scopes_in_block(b, errors),
-                        crate::ast::ElseBranch::If(ei) => self.check_consume_scopes_in_expr(ei, errors),
+                        crate::ast::ElseBranch::Block(b) => self.check_consume_scopes_in_block(b, current_fn_effects, errors),
+                        crate::ast::ElseBranch::If(ei) => self.check_consume_scopes_in_expr(ei, current_fn_effects, errors),
                     }
                 }
             }
             ExprKind::While { cond, body, .. } => {
-                self.check_consume_scopes_in_expr(cond, errors);
-                self.check_consume_scopes_in_block(body, errors);
+                self.check_consume_scopes_in_expr(cond, current_fn_effects, errors);
+                self.check_consume_scopes_in_block(body, current_fn_effects, errors);
             }
             ExprKind::For { iter, body, .. } => {
-                self.check_consume_scopes_in_expr(iter, errors);
-                self.check_consume_scopes_in_block(body, errors);
+                self.check_consume_scopes_in_expr(iter, current_fn_effects, errors);
+                self.check_consume_scopes_in_block(body, current_fn_effects, errors);
             }
-            ExprKind::Loop { body, .. } => self.check_consume_scopes_in_block(body, errors),
+            ExprKind::Loop { body, .. } => self.check_consume_scopes_in_block(body, current_fn_effects, errors),
             ExprKind::Call { func, args, .. } => {
-                self.check_consume_scopes_in_expr(func, errors);
+                self.check_consume_scopes_in_expr(func, current_fn_effects, errors);
                 for a in args {
                     match a {
                         crate::ast::CallArg::Item(e) | crate::ast::CallArg::Spread(e) => {
-                            self.check_consume_scopes_in_expr(e, errors);
+                            self.check_consume_scopes_in_expr(e, current_fn_effects, errors);
                         }
                         _ => {}
                     }
                 }
             }
-            ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::RefArg(e) => self.check_consume_scopes_in_expr(e, errors),
+            ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::RefArg(e) => self.check_consume_scopes_in_expr(e, current_fn_effects, errors),
             ExprKind::Coalesce(a, b) => {
-                self.check_consume_scopes_in_expr(a, errors);
-                self.check_consume_scopes_in_expr(b, errors);
+                self.check_consume_scopes_in_expr(a, current_fn_effects, errors);
+                self.check_consume_scopes_in_expr(b, current_fn_effects, errors);
             }
             ExprKind::Binary { left, right, .. } => {
-                self.check_consume_scopes_in_expr(left, errors);
-                self.check_consume_scopes_in_expr(right, errors);
+                self.check_consume_scopes_in_expr(left, current_fn_effects, errors);
+                self.check_consume_scopes_in_expr(right, current_fn_effects, errors);
             }
-            ExprKind::Unary { operand, .. } => self.check_consume_scopes_in_expr(operand, errors),
-            ExprKind::Member { obj, .. } => self.check_consume_scopes_in_expr(obj, errors),
+            ExprKind::Unary { operand, .. } => self.check_consume_scopes_in_expr(operand, current_fn_effects, errors),
+            ExprKind::Member { obj, .. } => self.check_consume_scopes_in_expr(obj, current_fn_effects, errors),
             // Lambda / closure bodies — separate scopes; walk their bodies too.
-            ExprKind::Lambda { body, .. } => self.check_consume_scopes_in_expr(body, errors),
+            ExprKind::Lambda { body, .. } => self.check_consume_scopes_in_expr(body, current_fn_effects, errors),
             _ => {}
         }
     }
@@ -5065,7 +5075,11 @@ impl<'a> TypeCheckCtx<'a> {
     /// Cleanup. Uses простой heuristic для type inference (Type.method() →
     /// return type; record literal → type; ?/!! → recurse). Полный inference
     /// (method chain, conditional, generic) — staged delivery 110.1.3+.
-    fn validate_consume_scope_init(&self, init: &Expr, errors: &mut Vec<Diagnostic>) {
+    /// `binding` + `current_fn_effects` — D432-амендмент 2026-08-04 (№315
+    /// fix): needed by the effect check at the end (block-form ALWAYS
+    /// installs the cleanup call, regardless of whether `binding` is
+    /// otherwise consumed in `body`).
+    fn validate_consume_scope_init(&self, binding: &str, init: &Expr, current_fn_effects: Option<&[TypeRef]>, errors: &mut Vec<Diagnostic>) {
         // Plan 110.1.3 (D196 form 5 — wrapped без unwrap): detect raw
         // Option[T] / Result[T,_] returning expressions WITHOUT ?/!!
         // unwrap. Emit specific D196-wrapped-init-needs-unwrap hint.
@@ -5146,6 +5160,37 @@ impl<'a> TypeCheckCtx<'a> {
             // Минимальная проверка: первый param должен быть ScopeOutcome.
             // Глубокая validation (Fail[E] check, return type ()) — 110.1.3.
             self.validate_on_exit_signature(&type_name, init.span, errors);
+            // D432-амендмент 2026-08-04 (№315 fix): block-form ALWAYS
+            // installs the cleanup call (defer-desugar, D188/D314 §3)
+            // regardless of whether `binding` is otherwise consumed in
+            // `body` — its effects are DIRECT effects of the enclosing
+            // function (D432 §1), checked here (BEFORE desugar/effect-check
+            // run, so the desugar-invisible synthesized call is finally
+            // caught). `current_fn_effects == None` (test/bench ambient
+            // context) — deliberately skipped, see struct/field docs.
+            if let Some(cfe) = current_fn_effects {
+                if let Some(decls) = self.method_overloads(&type_name, "cleanup") {
+                    let mut row: Vec<TypeRef> = Vec::new();
+                    let mut seen_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+                    for d in decls {
+                        for eff in &d.effects {
+                            if let TypeRef::Named { path, .. } = eff {
+                                if let Some(nm) = path.last() {
+                                    if seen_names.insert(nm.clone()) {
+                                        row.push(eff.clone());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if !row.is_empty() {
+                        let missing = missing_cleanup_effect_names(&row, cfe);
+                        if !missing.is_empty() {
+                            errors.push(d432_cleanup_effect_diag(binding, &type_name, &missing, init.span));
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -5244,28 +5289,16 @@ impl<'a> TypeCheckCtx<'a> {
                 ));
                 continue;
             }
-            // 2. Effects must contain at most Fail[E].
-            let effects_ok = decl.effects.iter().all(|eff| {
-                matches!(
-                    eff,
-                    TypeRef::Named { path, .. }
-                        if path.last().map_or(false, |s| s == "Fail")
-                )
-            });
-            if !effects_ok {
-                errors.push(Diagnostic::new(
-                    format!(
-                        "[D188-malformed-on-exit] `fn {tn} @cleanup(...)` effects list \
-                         invalid (Plan 110.9.5 V1.1): protocol allows only `Fail[E]` effect \
-                         (or no effects). Other effects (handler invocations, `parks`/`wakes`, \
-                         capability requirements) violate cleanup contract. Got: {effs:?}.",
-                        tn = type_name,
-                        effs = decl.effects
-                    ),
-                    init_span,
-                ));
-                continue;
-            }
+            // 2. Effects: pre-D432-amendment (2026-08-04) this protocol
+            // allowed ONLY `Fail[E]` (or no effects) — Plan 110.9.5 V1.1's
+            // structural gate, `D188-malformed-on-exit`. The amendment (§1)
+            // LIFTS that restriction: any effect is legal on `@cleanup` now
+            // — it becomes a DIRECT effect of whichever function triggers
+            // the auto-insertion (bare-form leftover-at-exit or block-form
+            // `consume X = e { body }`), checked at EACH such site instead
+            // of at the declaration (`check_obligations_at_exit` /
+            // `validate_consume_scope_init`'s effect check below, D432 §1,
+            // №315 fix). No structural gate here anymore.
             // 3. No generic params (would imply per-call mono за scope of cleanup).
             if !decl.generics.is_empty() {
                 errors.push(Diagnostic::new(
@@ -32859,6 +32892,62 @@ fn has_fail_effect(effects: &[TypeRef]) -> bool {
     })
 }
 
+/// D432-амендмент 2026-08-04 (№315 fix): имена эффектов, присутствующих в
+/// `cleanup_row` (effect-row объявленного `@cleanup`), но отсутствующих в
+/// `current_fn_effects` (собственные, явно объявленные эффекты объемлющей
+/// функции — того места, откуда компилятор синтезирует вызов
+/// `X.@cleanup(outcome)`). Сравнение ТОЛЬКО по имени (`path.last()`) —
+/// тот же прецедент, что `has_fail_effect`: несовпадение generic-аргумента
+/// `Fail[E]` этой проверке не важно (D65 — любой `Fail[..]` в сигнатуре
+/// удовлетворяет требование «Fail объявлен»).
+fn missing_cleanup_effect_names(cleanup_row: &[TypeRef], current_fn_effects: &[TypeRef]) -> Vec<String> {
+    let declared: HashSet<&str> = current_fn_effects.iter()
+        .filter_map(|e| match e {
+            TypeRef::Named { path, .. } => path.last().map(|s| s.as_str()),
+            _ => None,
+        })
+        .collect();
+    let mut missing: Vec<String> = Vec::new();
+    for eff in cleanup_row {
+        if let TypeRef::Named { path, .. } = eff {
+            if let Some(nm) = path.last() {
+                if !declared.contains(nm.as_str()) && !missing.iter().any(|m| m == nm) {
+                    missing.push(nm.clone());
+                }
+            }
+        }
+    }
+    missing
+}
+
+/// D432-амендмент 2026-08-04 (№315 fix): диагностика
+/// `E_D432_CLEANUP_EFFECT_NOT_DECLARED` — авто-вставленный компилятором
+/// вызов `<ty>.@cleanup(outcome)` (на непотреблённом `consume`-биндинге —
+/// bare leftover-at-exit ИЛИ block-форма `consume X = e { body }`) несёт
+/// эффект(ы), которые объемлющая функция не объявляет. Текст по образцу
+/// D158-defer-fail-not-in-sig (тот же класс: эффект компилятор-вставленного
+/// вызова протекает мимо sig-объявленных эффектов), но общий — любой прямой
+/// эффект, не только `Fail`. Диагностика указывает на САМ биндинг (D432 §1
+/// п.3 «с указанием на биндинг, который её породил»), не на место throw'а —
+/// throw-сайта в тексте программы нет, он синтезирован.
+fn d432_cleanup_effect_diag(binding_name: &str, ty: &str, missing: &[String], span: Span) -> Diagnostic {
+    let missing_fmt = missing.iter().map(|m| format!("`{}`", m)).collect::<Vec<_>>().join(", ");
+    Diagnostic::new(
+        format!(
+            "[E_D432_CLEANUP_EFFECT_NOT_DECLARED] variable `{name}` (type `{ty}`) is left \
+             un-consumed here; the compiler auto-inserts `{ty}.@cleanup(outcome)` on this \
+             binding (D432 hybrid-C auto-cleanup), and that call carries effect(s) {missing_fmt} \
+             which the enclosing function does not declare. D432 §1 amendment (2026-08-04): a \
+             cleanup call's effects are DIRECT effects of the enclosing function (the call is \
+             physically generated in its body), not transitive — add {missing_fmt} to this \
+             function's signature, or explicitly consume `{name}` (e.g. call its close/finalize \
+             method) before scope-exit to avoid auto-cleanup entirely.",
+            name = binding_name, ty = ty, missing_fmt = missing_fmt,
+        ),
+        span,
+    )
+}
+
 /// Содержит ли тело fn выражение `throw` (рекурсивно).
 fn has_throw_in_fn(f: &FnDecl) -> bool {
     match &f.body {
@@ -34293,14 +34382,19 @@ struct LinearityRegistry {
     /// для локальных типов — для внешних типов мы не знаем их consume-статус
     /// из module.items.
     local_type_names: HashSet<String>,
-    /// Plan 217 (D-новый, «авто-`@cleanup` (гибрид C)», §8а п.1): имена
-    /// типов, чей `@cleanup(outcome ScopeOutcome)` метод объявлен и несёт
-    /// ПУСТОЙ effect-row (эффект-чистый — `extern "nova"` guard'ы ТОЖЕ
-    /// считаются, в отличие от codegen'ового `consume_cleanup_types`,
-    /// который исключает extern ради ccount-поля). Ограждение 1 плана:
-    /// авто-cleanup стартует ТОЛЬКО для этих типов; fallible-`@cleanup`
-    /// (непустой effect-row) остаётся строго-линейным (D133 без изменений).
-    cleanup_pure_types: HashSet<String>,
+    /// Plan 217 (D-новый, «авто-`@cleanup` (гибрид C)», §8а п.1) +
+    /// **D432-амендмент 2026-08-04 (№315 fix)**: имена типов, чей
+    /// `@cleanup(outcome ScopeOutcome)` метод объявлен и protocol-shaped
+    /// (`extern "nova"` guard'ы ТОЖЕ считаются, в отличие от codegen'ового
+    /// `consume_cleanup_types`, который исключает extern ради ccount-поля),
+    /// сопоставлены СВОЕМУ effect-row (может быть пустым — «Ограждение 1»
+    /// до амендмента — или непустым — fallible/эффектный cleanup, разрешён
+    /// амендментом). Тип с ЛЮБЫМ objявленным cleanup — auto-cleanup
+    /// eligible (аффинный); если row непустой, вызывающая сторона (bare
+    /// leftover-at-exit ИЛИ block-форма) обязана явно объявить эти эффекты
+    /// в своей сигнатуре — проверяется отдельно (`missing_cleanup_effect_names`
+    /// + `check_obligations_at_exit` / `validate_consume_scope_init`).
+    cleanup_effect_rows: HashMap<String, Vec<TypeRef>>,
 }
 
 impl LinearityRegistry {
@@ -34308,7 +34402,34 @@ impl LinearityRegistry {
         let mut consume_types = HashSet::new();
         let mut consume_methods: HashMap<String, Vec<String>> = HashMap::new();
         let mut local_type_names = HashSet::new();
-        let mut cleanup_pure_types = HashSet::new();
+        let mut cleanup_effect_rows: HashMap<String, Vec<TypeRef>> = HashMap::new();
+
+        // Plan 217 §8а п.1 / D432-амендмент 2026-08-04 (№315): `@cleanup`
+        // (метод `cleanup` на consume-receiver'е, instance-kind, protocol-
+        // shaped) → его effect-row, ЛЮБОЙ (пустой ИЛИ непустой — амендмент
+        // снял прежний "только пустой" гейт). `extern "nova"` включаются
+        // (`MutexGuard`/`TcpStream`/… сегодня все extern + `[never]`) — в
+        // отличие от codegen-ового ccount-реестра, здесь extern-статус не
+        // имеет значения (нас интересует форма+effects сигнатуры).
+        // BUGFIX (found via folder-CU regression run, 2026-07-20):
+        // matching by NAME alone false-positived on
+        // `cross_pkg_consume_via_protocol_ok.nv`'s
+        // `DbConnection consume @cleanup() -> ()` — a ZERO-ARG method
+        // satisfying a DIFFERENT ad-hoc `Resource` protocol, not
+        // `Cleanup[E]`'s `@cleanup(outcome ScopeOutcome) -> ()` shape.
+        // Require the REAL protocol signature: exactly one param, typed
+        // `ScopeOutcome`.
+        let mut register_cleanup = |fd: &FnDecl, recv: &crate::ast::Receiver| {
+            let is_cleanup_protocol_shape = fd.params.len() == 1
+                && matches!(&fd.params[0].ty,
+                    TypeRef::Named { path, .. } if path.last().map_or(false, |s| s == "ScopeOutcome"));
+            if fd.name == "cleanup"
+                && matches!(recv.kind, ReceiverKind::Instance)
+                && is_cleanup_protocol_shape
+            {
+                cleanup_effect_rows.insert(recv.type_name.clone(), fd.effects.clone());
+            }
+        };
 
         // 1. Local module: consume-types + consume-methods + all local type names.
         for item in &module.items {
@@ -34325,47 +34446,62 @@ impl LinearityRegistry {
                             .entry(recv.type_name.clone())
                             .or_default()
                             .push(fd.name.clone());
-                        // Plan 217 §8а п.1: `@cleanup` (метод `cleanup` на
-                        // consume-receiver'е, instance-kind) с ПУСТЫМ
-                        // effects-row → эффект-чистый уборщик. `extern
-                        // "nova"` включаются (`MutexGuard`/`TcpStream`/…
-                        // сегодня все extern + `[never]`) — в отличие от
-                        // codegen-ового ccount-реестра, здесь extern-статус
-                        // не имеет значения (нас интересует ТОЛЬКО effect-
-                        // чистота сигнатуры).
-                        // BUGFIX (found via folder-CU regression run,
-                        // 2026-07-20): matching by NAME alone false-
-                        // positived on `cross_pkg_consume_via_protocol_ok.nv`'s
-                        // `DbConnection consume @cleanup() -> ()` — a
-                        // ZERO-ARG method satisfying a DIFFERENT ad-hoc
-                        // `Resource` protocol, not `Cleanup[E]`'s
-                        // `@cleanup(outcome ScopeOutcome) -> ()` shape.
-                        // Require the REAL protocol signature: exactly one
-                        // param, typed `ScopeOutcome`.
-                        let is_cleanup_protocol_shape = fd.params.len() == 1
-                            && matches!(&fd.params[0].ty,
-                                TypeRef::Named { path, .. } if path.last().map_or(false, |s| s == "ScopeOutcome"));
-                        if fd.name == "cleanup"
-                            && matches!(recv.kind, ReceiverKind::Instance)
-                            && fd.effects.is_empty()
-                            && is_cleanup_protocol_shape
-                        {
-                            cleanup_pure_types.insert(recv.type_name.clone());
+                        register_cleanup(fd, recv);
+                    }
+                }
+            }
+        }
+
+        // 2. D432-амендмент 2026-08-04 (№315 fix): folder-module peer files
+        // (co-equal files of the SAME module, `module.peer_files`) — the
+        // LOCAL loop above missed these; codegen's mirror pre-pass
+        // (`emit_c.rs` `auto_cleanup_types`) already walks them, so their
+        // omission here was a checker/codegen asymmetry (a type's cleanup
+        // declared in a peer file would be codegen-eligible but not
+        // checker-recognized). `consume_types`/`consume_methods` intentionally
+        // NOT extended here — kept to the pre-existing scope of this fix.
+        for pf in &module.peer_files {
+            for item in &pf.items_here {
+                if let Item::Fn(fd) = item {
+                    if let Some(recv) = &fd.receiver {
+                        if recv.consume {
+                            register_cleanup(fd, recv);
                         }
                     }
                 }
             }
         }
 
-        LinearityRegistry { consume_types, consume_methods, local_type_names, cleanup_pure_types }
+        LinearityRegistry { consume_types, consume_methods, local_type_names, cleanup_effect_rows }
     }
 
-    /// Plan 217 §8а п.1/п.2: тип объявил `@cleanup` эффект-чисто → гибрид C
-    /// авто-cleanup применим (аффинный: непотребление к концу скоупа — НЕ
-    /// ошибка). Пустая строка / неизвестный тип → false (fail-safe: остаётся
-    /// строгая линейность D133, как до 217).
-    fn has_pure_cleanup(&self, ty: &str) -> bool {
-        !ty.is_empty() && self.cleanup_pure_types.contains(ty)
+    /// D432-амендмент 2026-08-04 (№315 fix): declared `@cleanup`'s effect
+    /// row for `ty`, if any (empty Vec == effect-pure, non-empty ==
+    /// fallible/effectful — BOTH are now auto-cleanup eligible; callers of
+    /// this must additionally verify a non-empty row's effects are declared
+    /// by whichever function triggers the auto-insertion, see
+    /// `missing_cleanup_effect_names`).
+    fn cleanup_effects(&self, ty: &str) -> Option<&Vec<TypeRef>> {
+        if ty.is_empty() { return None; }
+        self.cleanup_effect_rows.get(ty)
+    }
+
+    /// D432-амендмент 2026-08-04 (№315 fix): `ty` has ANY declared
+    /// `@cleanup` (pure or fallible/effectful) — i.e. it's auto-cleanup
+    /// eligible at all. Used to skip D162 error/success-path coverage
+    /// diagnostics for such bindings: auto-cleanup already fires on EVERY
+    /// exit path uniformly (success/throw/panic/cancel — that is the whole
+    /// point of D432 hybrid-C), so an `errdefer`/`okdefer` is redundant, not
+    /// missing. Found while rolling out fallible cleanup for №315: a
+    /// regular fail-declaring `fn` with a leftover fallible-cleanup binding
+    /// tripped a false `D162-uncovered-error-path` (`check_d162_coverage`
+    /// didn't know the binding was already covered by auto-cleanup) — the
+    /// SAME latent gap existed for pure-cleanup types (`TcpStream` etc.)
+    /// too, just never exercised: every existing pure-cleanup regression
+    /// test lives in a `test {}` block, and `check_d162_coverage` only runs
+    /// for `Item::Fn` bodies (never `Item::Test`).
+    fn has_any_cleanup(&self, ty: &str) -> bool {
+        self.cleanup_effects(ty).is_some()
     }
 
     /// Plan 100.1 (D133 / D6): `type_is_consume(TypeRef)` — рекурсивно
@@ -35694,6 +35830,17 @@ struct ConsumeCtx<'a> {
     /// note — the source already says so). Empty for programs that never hit
     /// the finalize lane's implicit-coerce call-arg shape.
     coerce_consumed_via: HashMap<Span, String>,
+    /// D432-амендмент 2026-08-04 (№315 fix): объемлющей fn-sig'и явно
+    /// объявленные эффекты (`Item::Fn`'s `f.effects`) — сверяется в
+    /// `check_obligations_at_exit` против effect-row fallible/effectful
+    /// `@cleanup` типа (`LinearityRegistry::cleanup_effects`), чтобы поймать
+    /// авто-вставленный cleanup-вызов, несущий необъявленный эффект.
+    /// `None` — контекст БЕЗ fn-sig'и (test/bench тело): та же "ambient,
+    /// без объявления эффектов" трактовка, что уже действует для test-тел
+    /// в остальном компиляторе (эффекты там не требуют декларации) —
+    /// проверка молча пропускается (см. PROGRESS-p315.md «Known scope
+    /// narrowing»).
+    current_fn_effects: Option<&'a [TypeRef]>,
 }
 
 impl<'a> ConsumeCtx<'a> {
@@ -35727,6 +35874,7 @@ impl<'a> ConsumeCtx<'a> {
             block_guards: HashSet::new(),
             guard_violations: Vec::new(),
             coerce_consumed_via: HashMap::new(),
+            current_fn_effects: None,
         }
     }
 
@@ -36396,18 +36544,38 @@ impl<'a> ConsumeCtx<'a> {
             // используем D156-strict-forget вместо D133-not-consumed.
             let is_strict_generic = !ty.is_empty()
                 && self.consume_bound_generics.contains(&ty);
-            // Plan 217 (D-новый, §8а п.1/п.2, гибрид C): тип объявил
-            // ЭФФЕКТ-ЧИСТЫЙ `@cleanup` → аффинный (≤1), непотребление к
+            // Plan 217 (D-новый, §8а п.1/п.2, гибрид C) + **D432-амендмент
+            // 2026-08-04 (№315 fix)**: тип объявил `@cleanup` (ЛЮБОЙ
+            // effect-row, не только пустой — амендмент снял прежний гейт
+            // «только эффект-чистый») → аффинный (≤1), непотребление к
             // scope-exit НЕ ошибка — компилятор авто-вставляет
             // `@cleanup(outcome)` (codegen: emit_c.rs `auto_cleanup_*`,
-            // per-block DeferEntry.consume_policy, drop-флаг §8а п.6).
+            // per-block DeferEntry.consume_policy, drop-флаг §8а п.6). Если
+            // row непустой, эта авто-вставка несёт ПРЯМОЙ эффект для ЭТОЙ
+            // функции (D432 §1) — обязана быть объявлена в её сигнатуре;
+            // иначе `E_D432_CLEANUP_EFFECT_NOT_DECLARED` вместо молчаливого
+            // accept (проверяется ниже, ТОЛЬКО когда биндинг реально
+            // остаётся Live/MaybeConsumed — иначе никакого авто-вызова нет).
             // Generic `[T consume]`-bound (`is_strict_generic`) исключён —
             // конкретный тип неизвестен статически, D156-strict-forget как
             // раньше. Типы БЕЗ `@cleanup` (StringBuilder и т.п., §1) —
-            // строгая линейность без изменений (`has_pure_cleanup` даёт
-            // false для них).
-            let is_auto_cleanup_eligible = !is_strict_generic
-                && self.lin_reg.has_pure_cleanup(&ty);
+            // строгая линейность без изменений (`cleanup_effects` даёт
+            // `None` для них).
+            let cleanup_row = if is_strict_generic { None } else { self.lin_reg.cleanup_effects(&ty) };
+            let is_auto_cleanup_eligible = cleanup_row.is_some();
+            let leftover_at_exit = matches!(state, Some(VarState::Live) | Some(VarState::MaybeConsumed(_)));
+            if is_auto_cleanup_eligible && leftover_at_exit {
+                if let (Some(row), Some(cfe)) = (cleanup_row, self.current_fn_effects) {
+                    if !row.is_empty() {
+                        let missing = missing_cleanup_effect_names(row, cfe);
+                        if !missing.is_empty() {
+                            errors.push(d432_cleanup_effect_diag(name, &ty, &missing, exit_span));
+                        }
+                    }
+                }
+                // current_fn_effects == None → test/bench ambient context,
+                // deliberately skipped (see ConsumeCtx field doc).
+            }
             match state {
                 Some(VarState::Live) if is_auto_cleanup_eligible => {}
                 Some(VarState::MaybeConsumed(_)) if is_auto_cleanup_eligible => {}
@@ -37800,6 +37968,10 @@ fn check_consume(module: &Module, errors: &mut Vec<Diagnostic>) {
         match item {
             Item::Fn(f) => {
                 let mut ctx = ConsumeCtx::new(&reg, &lin_reg, &module.rebind_shadows);
+                // D432-амендмент 2026-08-04 (№315 fix): fn's own declared
+                // effects, consulted by `check_obligations_at_exit` against
+                // a leftover fallible-`@cleanup` binding's effect row.
+                ctx.current_fn_effects = Some(&f.effects);
 
                 // Plan 100.2 (D156): collect `[T consume]` bound generics.
                 // Внутри тела функции параметры с такими типами —
@@ -38048,6 +38220,13 @@ fn check_d162_coverage(
                 .or_else(|| ctx.var_types.get(&canon))
                 .cloned()
                 .unwrap_or_default();
+            // D432-амендмент 2026-08-04 (№315 fix): auto-cleanup-eligible
+            // type (ЛЮБОЙ declared `@cleanup`, pure or fallible) — already
+            // covered on EVERY exit path by the compiler-inserted call,
+            // errdefer redundant. See `has_any_cleanup` doc.
+            if lin_reg.has_any_cleanup(&ty) {
+                continue;
+            }
             let methods = lin_reg.consume_methods_for(&ty);
             let cleanup_method = if methods.len() > 1 {
                 methods.last().cloned().unwrap_or_default()
@@ -38101,6 +38280,12 @@ fn check_d162_coverage(
                     .or_else(|| ctx.var_types.get(&canon))
                     .cloned()
                     .unwrap_or_default();
+                // D432-амендмент 2026-08-04 (№315 fix): same skip as the
+                // error-path loop above — auto-cleanup-eligible type is
+                // already covered on every exit path.
+                if lin_reg.has_any_cleanup(&ty) {
+                    continue;
+                }
                 let methods = lin_reg.consume_methods_for(&ty);
                 let primary_method = methods.first().cloned()
                     .unwrap_or_else(|| "commit".to_string());

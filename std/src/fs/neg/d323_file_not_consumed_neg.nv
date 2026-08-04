@@ -1,12 +1,17 @@
-// EXPECT_COMPILE_ERROR D133-not-consumed
-// D323: File is must-consume (D133) — a File handed to a function that never
-// @close's it is a compile error, so the close error (ENOSPC/EIO/quota) cannot be
-// silently lost. (The checker enforces consume on params + direct bindings;
-// tracking through a Result/match extraction is [M-176-consume-through-result-match].)
+// EXPECT_COMPILE_ERROR E_D432_CLEANUP_EFFECT_NOT_DECLARED
+// D323/D432 (updated 2026-08-04, №315 fix): a `File` that never `@close`s
+// is no longer D133-not-consumed by itself — D432 §1 amendment made `File`
+// auto-`@cleanup`-eligible (see std/src/fs/fs.nv's type doc). The close
+// error is still NOT ignorable: it becomes THIS function's own direct
+// effect (`Fs Fail[IoError]`, D432 §1) — `d323n_discard` already declares
+// `Fs` but not `Fail[IoError]`, so it now fails for the NEW reason instead.
+// A function that declares BOTH compiles clean (see
+// spec_tests/conformance/d315_fallible_cleanup_effects.nv for the general
+// pos/neg pair — this file is the File-specific regression guard).
 module neg.d323_file_not_consumed_neg
 
 import std.fs.{File, Fs}
 
 fn d323n_discard(consume f File) Fs -> () {
-    ()   // f is never @close'd → D133-not-consumed
+    ()   // f is never @close'd → auto-@cleanup needs Fail[IoError] too
 }
