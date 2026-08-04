@@ -774,13 +774,34 @@ fn try_normalize_call(e: &Expr, sigs: &Sigs) -> Option<ExprKind> {
 
     // Финальный call в param-order. Trailing сохраняется. func —
     // переписанный (receiver вынесен в temp для Member, иначе как есть).
+    // [fix №338]: id = e.id (ОРИГИНАЛЬНЫЙ id вызова, не UNSET). Чекер уже
+    // аннотировал ИМЕННО этот call-site (resolved_callees/resolved_types
+    // ключуются по e.id — `e` это тот самый Call, который мы здесь
+    // переписываем в двухфазный Block, `e.kind` заменяется на Block, но
+    // САМ `e.id` наверху остаётся). Синтезированный `new_call` — тот же
+    // логический call (тот же callee, та же резолюция), просто с
+    // аргументами в param-order — так что переиспользование e.id корректно
+    // отражает факт «это тот же вызов» и открывает codegen's Channel 1/2
+    // (infer_expr_c_type: resolved_callees→fn_ret_by_span,
+    // resolved_types→resolved_type_to_c) для block.trailing внутри
+    // emit_block_expr. С UNSET id оба канала гейтятся на `expr.id.is_set()`
+    // и молча пропускались → block_ty падал в legacy `infer_call_ret_c`,
+    // чья Ident-ветка (B10f) НАРОЧНО отвергает "void*" (générique erasure
+    // для fn-типов) и не эмитит альтернативы — `block_ty` оставался ""
+    // → `_nv_tmp_N;` без типа, `_nv_tmp_N = ()(...)` пустой каст, CC-FAIL
+    // "use of undeclared identifier '_nv_tmp_N'". Репро: любой вызов
+    // функции с default-параметром, возвращающей функциональный тип
+    // (`fn(...) -> ...`), из-за чего требуется default-arg backfill
+    // (омитнутый арг / именованный дефолт / форвард переменной — все три
+    // формы требуют этот Block). Прямой (недесугаренный) вызов с тем же
+    // сигнатурным профилем не сломан — у него `expr.id` уже ИЗНАЧАЛЬНО SET.
     let new_call = Expr {
         kind: ExprKind::Call {
             func: final_func,
             args: call_args,
             trailing: trailing.clone(),
         },
-        span: sp, id: crate::ast::ExprId::UNSET, debug_only: false,
+        span: sp, id: e.id, debug_only: false,
     };
 
     Some(ExprKind::Block(Block {
