@@ -1,0 +1,10 @@
+export type Safe protocol {
+    @dummy() -> ()
+}
+
+export fn register() Safe -> () {
+    Safe.dummy()
+}
+
+// honesty control
+export fn honesty_control() -> int => undefined_identifier_zzz
