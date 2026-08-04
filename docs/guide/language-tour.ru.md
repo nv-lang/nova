@@ -26,7 +26,7 @@ Nova компилируется в C, а затем в нативный бина
 `mut`-биндинг, чьё начальное значение не делает тип очевидным).
 
 ```nova
-// hello.nv — functions, let/mut, type inference.
+// hello.nv — functions, ro/mut, type inference.
 module tour.hello
 
 fn add(a int, b int) -> int => a + b
