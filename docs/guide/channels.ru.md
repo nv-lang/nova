@@ -820,9 +820,9 @@ fn run_pipeline() Net -> () {
 > разделить destructure:
 >
 > ```nova
-> let ch = Channel.new(N)
-> let tx = ch.tx
-> let rx = ch.rx
+> ro ch = Channel.new(N)
+> ro tx = ch.tx
+> ro rx = ch.rx
 > defer tx.close()    // OK — tx объявлен напрямую
 > // ...
 > ```

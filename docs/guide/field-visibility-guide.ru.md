@@ -69,7 +69,7 @@ kubernetes API). Опт-ин `priv` на поле — когда нужна за
 
 ```nova
 priv mut money f64       // private + mutable
-priv ro id u64           // private + readonly
+priv ro id u64           // private + read-only
 priv consume token Token // private + consume (Plan 100.x)
 ```
 

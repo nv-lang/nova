@@ -823,9 +823,9 @@ fn run_pipeline() Net -> () {
 > split the destructure:
 >
 > ```nova
-> let ch = Channel.new(N)
-> let tx = ch.tx
-> let rx = ch.rx
+> ro ch = Channel.new(N)
+> ro tx = ch.tx
+> ro rx = ch.rx
 > defer tx.close()    // OK — tx is declared directly
 > // ...
 > ```

@@ -65,7 +65,7 @@ Visibility modifier first, then mutability, then name, then type:
 
 ```nova
 priv mut money f64       // private + mutable
-priv ro id u64           // private + readonly
+priv ro id u64           // private + read-only
 priv consume token Token // private + consume (Plan 100.x)
 ```
 
