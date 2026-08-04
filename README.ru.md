@@ -396,20 +396,9 @@ tautologies, constant folding — без внешних зависимостей
 ## Поддержка редакторов
 
 Плагины подсветки синтаксиса для нескольких редакторов лежат в
-[editors/](editors/). Это TextMate / написанные вручную грамматики — только
-подсветка синтаксиса. Семантические возможности (диагностика и т. д.)
-приходят из отдельного языкового сервера, [`nova-lsp/`](nova-lsp/); его
-подключение к этим редакторным плагинам в процессе.
-
-| Редактор | Подкаталог | Заметки |
-|---|---|---|
-| VSCode / Cursor / VSCodium | [`editors/vscode/`](editors/vscode/) | TextMate grammar |
-| Sublime Text / TextMate | [`editors/sublime/`](editors/sublime/) | переиспользует `.tmLanguage.json` от VSCode |
-| Vim / Neovim | [`editors/vim/`](editors/vim/) | написанный вручную `syntax/nova.vim` |
-| Emacs | [`editors/emacs/`](editors/emacs/) | major-mode `nova-mode.el` |
-
-Полный обзор, команды установки для каждого редактора и roadmap (LSP,
-tree-sitter, JetBrains) — см. [editors/README.md](editors/README.md).
+[editors/](editors/) — полный список, команды установки для каждого
+редактора и roadmap (LSP, tree-sitter, JetBrains) см. в
+[editors/README.md](editors/README.md).
 
 ## Зеркала
 

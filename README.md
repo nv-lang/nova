@@ -397,20 +397,9 @@ constant folding — no external dependencies); full verification needs
 ## Editor support
 
 Syntax highlighting plugins for several editors are in
-[editors/](editors/). These are TextMate / handcrafted grammars —
-syntax highlighting only. Semantic features (diagnostics, etc.) come
-from a separate language server, [`nova-lsp/`](nova-lsp/); wiring it
-into these editor plugins is in progress.
-
-| Editor | Subdir | Notes |
-|---|---|---|
-| VSCode / Cursor / VSCodium | [`editors/vscode/`](editors/vscode/) | TextMate grammar |
-| Sublime Text / TextMate | [`editors/sublime/`](editors/sublime/) | reuses VSCode `.tmLanguage.json` |
-| Vim / Neovim | [`editors/vim/`](editors/vim/) | handcrafted `syntax/nova.vim` |
-| Emacs | [`editors/emacs/`](editors/emacs/) | major-mode `nova-mode.el` |
-
-See [editors/README.md](editors/README.md) for the full overview,
-install commands per editor, and roadmap (LSP, tree-sitter, JetBrains).
+[editors/](editors/) — see [editors/README.md](editors/README.md) for
+the full list, install commands per editor, and roadmap (LSP,
+tree-sitter, JetBrains).
 
 ## Mirrors
 
