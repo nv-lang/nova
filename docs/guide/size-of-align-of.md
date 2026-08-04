@@ -2,7 +2,7 @@
 
 **English** | [Русский](size-of-align-of.ru.md)
 
-> **Plan 114.4.4 Ф.5 V4 + V4.4 Ф.1.** Comptime built-in identifiers,
+> **Plan 114.4.4.** Comptime built-in identifiers,
 > replaced by an `int` literal in the rewriter pass. Only inside a `const`
 > context (RHS of a `const` decl or a const fn body).
 
