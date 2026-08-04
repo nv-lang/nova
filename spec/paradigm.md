@@ -1,22 +1,4 @@
-> ⚠️ **УСТАРЕЛО.** Этот документ описывает парадигму ранней версии
-> (D1–D17), до решений D18/D24/D31/D33–D42/D52/D53/D61–D66/D70/D73. Текст
-> синтаксически некорректен по нескольким направлениям:
->
-> - `mut self` в параметрах → `mut @field` ([D35](decisions/03-syntax.md#d35))
-> - `trait`/`impl` → `protocol`/`effect` через kind-токен ([D53](decisions/02-types.md#d53), [D61](decisions/04-effects.md#d61))
-> - `throws E` → `Fail[E]` ([D25](decisions/04-effects.md#d25), [D65](decisions/04-effects.md#d65))
-> - `:` в аннотациях типа → бесколонная форма (`let x int = 42`)
-> - `type X = { поля }` → `type X { поля }` ([D52](decisions/02-types.md#d52))
-> - alias через `=` → `type X alias Y` ([D52](decisions/02-types.md#d52))
-> - `Async`/`Mut`/`Par` как эффекты → ambient runtime, удалены ([D62](decisions/04-effects.md#d62), [D14 REVISED](decisions/06-concurrency.md#d14))
-> - `resume` keyword → удалён, handler-method = финальное выражение / `return v` / `interrupt v` ([D61](decisions/04-effects.md#d61))
-> - `to_str(self)` / `ToStr` protocol → удалён ([D70 REPLACED → D73](decisions/08-runtime.md#d73))
->   и заменён на `From`/`Into` pair с auto-derive
->
-> **Актуальная парадигма** — в [decisions/](decisions/), [syntax.md](syntax.md).
-> Этот файл будет переписан целиком (см. open-questions Q8).
-
-# Nova — парадигма: traits + data, без классов
+# Nova — парадигма: protocols + data, без классов
 
 Классов нет. Наследования нет. Вместо них — связка из четырёх вещей,
 которая покрывает всё, что обычно делают классами, но без их проблем.
@@ -24,12 +6,15 @@
 ## Четыре строительных блока
 
 1. **`type`** — данные (record, sum-type, alias). Просто структура.
-2. **`fn T.method(self, ...)`** — методы, привязанные к типу.
-   Как в Go, но синтаксис ближе к Rust `impl`.
-3. **`trait`** — контракт (что-то вроде Rust trait / Go interface).
-   Структурный по умолчанию, номинальный по требованию.
-4. **`impl Trait for Type`** — реализация трейта. Можно для чужого типа
-   (как в Rust).
+2. **`fn Type @method(...)`** — методы, привязанные к типу, с неявным
+   self. Мутирующий метод — `fn Type mut @method(...)`.
+3. **`protocol`** — контракт (что-то вроде Rust trait / Go interface),
+   объявляется формой `type X protocol { ... }`. Структурный —
+   единственный способ: номинальной формы нет.
+4. **Структурное соответствие — автоматическое.** Тип, у которого уже
+   есть методы нужной формы, удовлетворяет протоколу без отдельного
+   шага «реализации»; блоков вроде `impl Protocol for Type` не
+   существует.
 
 Никакого `extends`, `super`, `protected`, `abstract class`. Вместо
 наследования — **композиция + делегирование** одной строкой.
@@ -38,29 +23,31 @@
 
 ```nova
 // === ДАННЫЕ ===
-type Account = {
-    id: u64
-    owner: str
-    balance: money
-    mut closed: bool   // mut — единственный способ мутации поля
+type Account {
+    id u64
+    owner str
+    balance money
+    mut closed bool   // mut — единственный способ мутации поля
 }
 
 // === КОНСТРУКТОР — это просто функция ===
-fn Account.new(owner: str) -> Account =
+fn Account.new(owner str) -> Account =>
     Account { id: ids.next(), owner, balance: money.zero, closed: false }
 
 // === МЕТОДЫ ===
-fn Account.deposit(mut self, amount: money) throws -> () =
-    if self.closed { throw ClosedAccount }
+fn Account mut @deposit(amount money) Fail -> () {
+    if @closed { throw ClosedAccount }
     if amount <= 0 { throw InvalidAmount }
-    self.balance += amount
+    @balance += amount
+}
 
-fn Account.withdraw(mut self, amount: money) throws -> () =
-    if amount > self.balance { throw Overdraft }
-    self.balance -= amount
+fn Account mut @withdraw(amount money) Fail -> () {
+    if amount > @balance { throw Overdraft }
+    @balance -= amount
+}
 
 // Чистый геттер — выводится как pure, без побочных эффектов
-fn Account.is_solvent(self) = self.balance > 0
+fn Account @is_solvent() => @balance > 0
 ```
 
 Использование:
@@ -72,83 +59,118 @@ acc.withdraw(30)?
 print(acc.balance)  // 70
 ```
 
-`mut self` в сигнатуре — единственный способ мутировать. Если метод не
-пишет — `self` без `mut`, и компилятор это проверяет.
+`mut` перед `@name` в сигнатуре — единственный способ мутировать поля.
+Если метод не пишет — `@name` без `mut`, и компилятор это проверяет.
 
-## Полиморфизм через trait
+## Полиморфизм через protocol
+
+`Display` — не учебный пример, а реальный built-in protocol стандартной
+библиотеки (`std/prelude/protocols.nv`,
+[D422](decisions/02-types.md#d422)):
 
 ```nova
-trait Printable {
-    fn show(self) -> str
+export type Display protocol {
+    @display(mut f Fmt) -> ()
 }
-
-impl Printable for Account {
-    fn show(self) = "Account(${self.owner}, ${self.balance})"
-}
-
-impl Printable for int {
-    fn show(self) = self.to_str()
-}
-
-fn log_all(xs: [impl Printable]) =
-    for x in xs { print(x.show()) }
 ```
 
-Структурный bonus: если `Account` уже имеет метод `show(self) -> str`,
-его не обязательно объявлять `impl Printable` явно — компилятор видит
-совпадение по форме. Но если хочется номинальной строгости, пишешь
-`impl` явно.
+Пользовательский тип удовлетворяет ему структурно — без отдельного
+шага «реализации»:
+
+```nova
+fn Account @display(mut f Fmt) -> () {
+    f.write("Account(${@owner}, ${@balance})".bytes())
+}
+```
+
+Ещё один тип-запись — та же схема; `Point` — собственный тип, никакого
+extension-метода на чужом типе не требуется:
+
+```nova
+type Point {
+    x f64
+    y f64
+}
+
+fn Point @display(mut f Fmt) -> () {
+    f.write("Point(${@x}, ${@y})".bytes())
+}
+```
+
+Структурная совместимость — единственный механизм: если `Account` уже
+имеет метод `@display(mut f Fmt) -> ()`, он автоматически удовлетворяет
+`Display`. Отдельного шага «реализации» нет, `impl`-блоков в языке не
+существует; номинальной формы тоже нет.
 
 ## Вместо наследования — embed + delegate
 
 ```nova
-type AuditedAccount = {
-    use Account            // встраивание: все поля + методы Account доступны напрямую
-    audit_log: [AuditEntry]
+type AuditedAccount {
+    use account Account    // встраивание: все поля + методы Account доступны напрямую
+    audit_log []AuditEntry
 }
 
 // Переопределяем только то, что нужно
-fn AuditedAccount.deposit(mut self, amount: money) throws -> () =
-    self.Account.deposit(amount)?       // явный вызов «родителя»
-    self.audit_log.push(AuditEntry.deposit(amount))
+fn AuditedAccount mut @deposit(amount money) Fail -> () {
+    @account.deposit(amount)?       // явный вызов «родителя» через имя поля
+    @audit_log.push(AuditEntry.deposit(amount))
+}
 ```
 
-`use Account` — это **delegation**, а не наследование: компилятор генерирует
-прокси-методы. Никакого виртуального диспатча, никакого diamond problem.
+`use account Account` — это **delegation**, а не наследование: компилятор
+генерирует прокси-методы. Никакого виртуального диспатча, никакого diamond
+problem.
 
 ## Sum-types вместо иерархии классов
 
 ```nova
-type Shape =
-    | Circle    { radius: f64 }
-    | Square    { side: f64 }
-    | Triangle  { a: f64, b: f64, c: f64 }
+type Shape enum
+    | Circle    { radius f64 }
+    | Square    { side f64 }
+    | Triangle  { a f64, b f64, c f64 }
 
-fn Shape.area(self) = match self {
-    Circle { radius }     -> 3.14159 * radius * radius
-    Square { side }       -> side * side
-    Triangle { a, b, c }  -> heron(a, b, c)
+fn Shape @area() => match @ {
+    Circle { radius }     => 3.14159 * radius * radius
+    Square { side }       => side * side
+    Triangle { a, b, c }  => heron(a, b, c)
 }
 ```
 
 Добавил новый вариант — компилятор показывает все `match`, где не хватает
 ветки.
 
-## Динамический диспатч — через `dyn Trait`
+## Динамический диспатч — protocol-тип в обычной позиции (existential)
+
+По умолчанию — мономорфизация (нулевая стоимость). Коллекция
+протокольных значений — обобщённая функция с bound'ом `[T Display]`
+([D72](decisions/02-types.md#d72)), одна мономорфизация на конкретный `T`:
 
 ```nova
-ro items: [dyn Printable] = [acc, 42, "hello"]
-for x in items { print(x.show()) }  // vtable-вызов
+fn log_all[T Display](xs []T) -> () {
+    for x in xs { print(x) }
+}
+
+log_all(accounts)      // []Account — одна мономорфизация
+log_all([42, 7, 13])   // []int — другая, отдельная
 ```
 
-По умолчанию — мономорфизация (нулевая стоимость). `dyn` — только когда
-явно нужен runtime-полиморфизм.
+Protocol-тип в обычной (не generic) позиции **параметра** — это и есть
+runtime-полиморфизм (existential, vtable-вызов), без отдельного
+keyword'а (D72: `fn f(x Hash)`):
+
+```nova
+fn describe(x Display) -> str => "${x}"
+
+describe(acc)         // Account — структурное соответствие
+describe(42)          // int — встроенный @display (std/prelude/protocols.nv)
+describe("hello")     // str — встроенный @display
+```
 
 ## Инкапсуляция — на уровне модуля
 
 ```nova
-type Account = { ... }              // публичный
-type _internal_state = { ... }      // приватный (префикс _)
+type Account { ... }                // публичный
+type _internal_state { ... }        // приватный (префикс _)
 
 pub fn Account.new(...) = ...       // публично
 fn validate(...) = ...              // приватно для модуля
@@ -163,11 +185,11 @@ fn validate(...) = ...              // приватно для модуля
 | Класс | `type` + методы |
 | Конструктор | обычная функция `Type.new(...)` |
 | Наследование | `use Parent` (delegation) |
-| Виртуальные методы | trait + `dyn Trait` или мономорфизация |
-| Абстрактный класс | `trait` с дефолтными методами |
-| Интерфейс | `trait` (структурный или номинальный) |
+| Виртуальные методы | protocol (existential-позиция) или мономорфизация |
+| Абстрактный класс | нет аналога: протоколы не несут реализаций по умолчанию ([D15](decisions/02-types.md#d15)) |
+| Интерфейс | `protocol` (структурный — единственная форма) |
 | Перегрузка методов | нет, разные имена |
-| Перегрузка операторов | только через стандартные traits (`Add`, `Eq`, …) |
+| Перегрузка операторов | только через стандартные protocol'ы (`Add`, `Eq`, …) |
 | `protected` | нет, только pub / module-private |
 | `static` методы | просто функции в модуле |
 | Singleton | модуль-уровень `let` |
