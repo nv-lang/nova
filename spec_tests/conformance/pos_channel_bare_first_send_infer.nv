@@ -1,0 +1,43 @@
+// Plan 221.1 №286 residual gap (window p286, 2026-08-04, follow-up to
+// window p-chan's №143/№286 core fix). p-chan tracked `T` end-to-end ONLY
+// when declared explicitly (turbofish `Channel[T].new` / `ChanWriter[T]`/
+// `ChanReader[T]` annotation) — a BARE `Channel.new(cap)` left `T`
+// permanently untracked, and `docs/guide/channels.md` was rewritten to
+// honestly document that the "T inferred from first send/recv" promise
+// never actually held.
+//
+// Measured this window that the permissiveness is not benign: an untyped
+// channel's erased `recv()` result still lets `.method()` calls through to
+// the legacy name-only `method_receivers` codegen fallback (the ORIGINAL
+// №286 class), so a co-present unrelated type sharing a method name can
+// silently win. This file's own `.len()` call is deliberately placed in
+// the SAME compile-unit as `d412d_embed_dir.nv` (both `module
+// spec_tests.conformance` — the top-level flat-file group compiles as one
+// CU) whose `EmbeddedDir.len()` is the exact collision partner that
+// caused the original №286 finding. Before this window's fix, this test
+// silently asserted the wrong `.len()` (EmbeddedDir's, not Vec's) instead
+// of failing to compile or crashing — see
+// `docs/plans/repros/p286-bare-channel-erased/bare_len_probe.nv` for the
+// isolated RED-before/GREEN-after repro.
+//
+// Fix: `T` is now honestly inferred from the writer's first `.send`/
+// `.try_send` call in the same block (honoring the doc's original intent
+// for real, this time) — see `seed_channel_bare_send_hints` in
+// `compiler-codegen/src/types/mod.rs`.
+
+module spec_tests.conformance
+
+test "bare channel.new: T inferred from first send resolves .len() by the REAL type, not by name" {
+    ro (tx, rx) = Channel.new(2)
+    mut v []int = []int.new()
+    v.push(10)
+    v.push(20)
+    v.push(30)
+    tx.send(v)
+    ro got = rx.recv()
+    match got {
+        Some(vv) => { assert(vv.len() == 3) }
+        None => { assert(false) }
+    }
+    tx.close()
+}
