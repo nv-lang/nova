@@ -39,26 +39,28 @@ introduced in Plan 115.
 ## Pointer modifier rules (FINAL — Plan 138.5)
 
 When writing FFI signatures with pointer/typed wrappers, the pointee
-modifier is written **postfix**, right after `*` (`*mut T` / `*ro T` /
-`*unsafe T`). **A prefix before `*` is forbidden** (`mut * T` / `ro * T` /
-`unsafe * T` → `E_POINTER_PREFIX_MODIFIER`). Whether a pointer can be
+modifier is written **postfix**, right after `*` (`*mut T` / `*uninit T`;
+read-only has no modifier — a bare `*T` already means read-only, writing it
+out as `*ro T` is redundant and rejected, `E_REDUNDANT_POINTER_RO`). **A
+prefix before `*` is forbidden** (`mut * T` / `ro * T` /
+`uninit * T` → `E_POINTER_PREFIX_MODIFIER`). Whether a pointer can be
 re-pointed is a property of the **binding** (`ro` / `mut`), not of the
 type.
 
 Quick cheat sheet:
 
-- `*T` ≡ `*ro T` — pointer to read-only T (default)
+- `*T` — pointer to read-only T (default; the only read-only spelling)
 - `*mut T` — pointer to writable T (the caller may change the pointee)
-- `*unsafe T` — pointer to possibly-uninit T (MaybeUninit analog); the
+- `*uninit T` — pointer to possibly-uninit T (MaybeUninit analog); the
   pointer itself is non-null
 - `Option[*T]` — a **nullable** pointer (NPO, 8 bytes); this replaces the
   old `unsafe * T`
-- `Option[*unsafe T]` — FFI nullable-uninit pointer (None = null, Some =
+- `Option[*uninit T]` — FFI nullable-uninit pointer (None = null, Some =
   non-null ptr to uninit)
-- `*mut *ro Acc` — postfix chain (writable-target ptr to read-only-target
+- `*mut *Acc` — postfix chain (writable-target ptr to read-only-target
   ptr to Acc)
 - `mut p *mut T` — mut binding (p is re-pointable) + mut pointee; `ro q
-  *ro T` — fixed binding + ro pointee
+  *T` — fixed binding + ro pointee
 
 Full rules (arrow→box model, value-T composition §V3.1/§V3.2) — see [`docs/guide/typed-pointers.md`](typed-pointers.md). Spec — [D216 §1 FINAL](../../spec/decisions/02-types.md#d216-typed-pointer-family--unsafe-model--null-safety-через-npo) + [Plan 138.5](../plans/138.5-d216-v2-v3-simplification.md).
 
@@ -409,9 +411,9 @@ unsafe {
 | | Plan 115 V1 / Plan 134 (`*()`) | Plan 118 V2 (*T family) |
 |---|---|---|
 | Type safety | ❌ opaque `*()` cast by hand | ✓ compile-time pointee check |
-| Mutability | ❌ no distinction | ✓ `*ro T` / `*mut T` |
+| Mutability | ❌ no distinction | ✓ `*T` / `*mut T` |
 | Null safety | ❌ `0 as *()` runtime check | ✓ `Option[*T]` + NPO zero-cost |
-| FFI buffer | ❌ untyped `*()` + manual offset | ✓ `*ro u8` / `*mut u8` typed |
+| FFI buffer | ❌ untyped `*()` + manual offset | ✓ `*u8` / `*mut u8` typed |
 | Callback registration | ❌ N/A | ✓ `*fn(Args) -> Ret` |
 
 **Migration path:**
