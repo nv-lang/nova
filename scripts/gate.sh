@@ -17,6 +17,50 @@ unset NOVA_STD_PATH 2>/dev/null || true
 
 fail() { echo "GATE FAIL: $1" >&2; exit 1; }
 
+# --- gate: dev-override visibility (221.1 №283, владелец 2026-08-04) -------
+# `nova.override.toml`/`nova.local.toml` ([replace], D420) — gitignored,
+# законный инструмент владельца для локальной разработки: путь-оверрайд
+# поверх запиненной git-зависимости, без re-tag/push на каждой итерации.
+# Опасность — не в самом файле, а в том, что он МОЛЧА подменяет резолв
+# для перекрытых пакетов: гейт может показать `built:` на дереве с
+# override, хотя тот же граф по `nova.lock.toml` (то, что реально видит
+# любой чистый checkout — worktree/clone/CI) не соберётся вовсе. Ровно
+# так был замаскирован №283 (tls запинен на коммите ДО переименования
+# read_to_vec -> read_bytes, флагман уже звал новое имя — main собирался
+# только потому, что override тихо подставлял живую соседнюю nova-tls).
+#
+# Выбор — ПРЕДУПРЕЖДЕНИЕ, не отказ. Override — рабочий инструмент
+# владельца для повседневной разработки; гейт гоняется с главного репо
+# постоянно (сегодня — пять раз), и жёсткий отказ означал бы либо вечно
+# красный гейт на обычном рабочем дереве владельца, либо (реалистичнее)
+# что первый же отказ научит держать override временно переименованным
+# на время гейта — то есть ту же слепоту, только руками, а не автоматикой.
+# Дыра была не в СУЩЕСТВОВАНИИ override, а в его МОЛЧАНИИ: «built:» и
+# «GATE OK» выглядели одинаково что с override, что без него. Здесь чиним
+# именно это — предупреждение печатается дважды (в начале прогона И рядом
+# с финальным вердиктом, чтобы не потерялось при `tail`), перечисляет
+# перекрытые пакеты и НЕ трогает exit code гейта.
+OVERRIDE_FILES=$(find "$ROOT" \
+    \( -path "*/target" -o -path "*/.git" -o -path "*/vcpkg_installed" \
+       -o -path "*/node_modules" -o -path "*/.claude" \) -prune \
+    -o \( -iname "nova.override.toml" -o -iname "nova.local.toml" \) -print \
+    2>/dev/null)
+print_override_warning() {
+    echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+    echo "!!! GATE WARNING: dev-override (nova.override.toml/nova.local.toml) активен."
+    echo "!!! Этот прогон НЕ доказывает, что дерево собирается на чистом checkout'е"
+    echo "!!! (worktree/clone/CI) — перекрытые пакеты резолвятся МИМО nova.lock.toml."
+    echo "$OVERRIDE_FILES" | while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        echo "!!!   файл: $f"
+        grep -v '^[[:space:]]*#' "$f" | grep -v '^[[:space:]]*$' | sed 's/^/!!!     /'
+    done
+    echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+}
+if [ -n "$OVERRIDE_FILES" ]; then
+    print_override_warning
+fi
+
 echo "== gate: arch-ratchet =="
 bash "$ROOT/scripts/guards/arch-ratchet.sh" || fail "arch-ratchet (emit_c growth)"
 
@@ -114,4 +158,9 @@ echo "== gate: D-number uniqueness =="
 DUPES=$(grep -rhoE "^## D[0-9]+(\.|[[:space:]]+—)" spec/decisions/*.md \
         | grep -oE "[0-9]+" | sort -n | uniq -d)
 [ -n "$DUPES" ] && fail "дублирующиеся номера D-блоков: $(echo "$DUPES" | tr '\n' ' ')"
-echo "GATE OK (final)"
+if [ -n "$OVERRIDE_FILES" ]; then
+    print_override_warning
+    echo "GATE OK (final) [DEV-OVERRIDE ACTIVE — не доказательство чистого дерева, см. предупреждение выше]"
+else
+    echo "GATE OK (final)"
+fi
