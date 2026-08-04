@@ -116,8 +116,8 @@ ro rx = ch.rx
 ```
 
 **Ёмкость ≥ 1.** `Channel.new(0)` сейчас паникует с
-`"capacity must be >= 1"` ([Plan 44.1](../plans/44.1-channel-hardening.md)
-Ф.3) — каналы rendezvous с нулевой ёмкостью пока не реализованы.
+`"capacity must be >= 1"` ([Plan 44.1](../plans/44.1-channel-hardening.md))
+— каналы rendezvous с нулевой ёмкостью пока не реализованы.
 
 **Тип передачи (`T`)** выводится из первого `send`/`recv`:
 
@@ -839,8 +839,8 @@ test "channel: close idempotent" {
 
 | Условие | Сообщение |
 |---|---|
-| `Channel.new(0)` | `"capacity must be >= 1"` (Plan 44.1 Ф.3) |
-| `select` со всеми закрытыми каналами и без default | `"select: all channels closed"` (Plan 31 Ф.6) |
+| `Channel.new(0)` | `"capacity must be >= 1"` (Plan 44.1) |
+| `select` со всеми закрытыми каналами и без default | `"select: all channels closed"` (Plan 31) |
 | `ChanReader.close_after(<negative Duration>)` | паника со значением в наносекундах |
 | `select` с `arm_count > stack` | переполнение ловится до выделения памяти — явная паника |
 
@@ -859,11 +859,11 @@ test "channel: close idempotent" {
 | `defer tx.close()` + tuple/record destructure | [Plan 25](../plans/25-production-readiness-roadmap.md) G8 |
 | `pattern = rx.recv()` (с `.recv()`) форма в select | работает только bare `pattern = rx` |
 | `oneshot::channel<T>` / `watch::channel<T>` / `broadcast::channel<T>` (Tokio variants) | Plan 44.2 |
-| `recv_many` batch API | Plan 44.1 Ф.4 follow-up |
+| `recv_many` batch API | Plan 44.1 follow-up |
 | Разновидность SPSC без блокировок | Plan 50+ (Loom-verified) |
 | `tick_every(Duration)` периодический тикер | [Plan 66](../plans/66-timer-wheel-and-tick-every.md) |
-| `close_at(Monotonic)` абсолютный дедлайн | [Plan 65](../plans/65-chanreader-close-after.md) Ф.13 (✅ реализовано) |
-| Имитация эффекта времени для детерминированных тестов таймеров | [Plan 65](../plans/65-chanreader-close-after.md) Ф.10 (✅ реализовано) |
+| `close_at(Monotonic)` абсолютный дедлайн | [Plan 65](../plans/65-chanreader-close-after.md) (✅ реализовано) |
+| Имитация эффекта времени для детерминированных тестов таймеров | [Plan 65](../plans/65-chanreader-close-after.md) (✅ реализовано) |
 
 ---
 
