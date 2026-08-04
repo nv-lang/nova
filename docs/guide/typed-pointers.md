@@ -424,7 +424,7 @@ unsafe {
 - `(*T).to_debug_str() -> str` — legacy built-in alias kept for
   backwards-compat; same semantics as `${p:?}`, allowed in unsafe only.
 - `"${p}"` direct (Display) interpolation → `E_PTR_NO_DISPLAY_USE_DEBUG_STR`;
-  diagnostic hint points to `${p:?}` (updated in Ф.5.3).
+  diagnostic hint points to `${p:?}` (per [D229](../../spec/decisions/02-types.md#d229-Debug-protocol--format-spec-expr)).
 - Pointer addresses non-deterministic, leak ASLR info — explicit decision
   forced.
 
