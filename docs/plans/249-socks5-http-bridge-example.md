@@ -112,7 +112,7 @@ fn main() Net Os Time -> () {
     consume listener = TcpListener.bind("127.0.0.1:${cfg.listen_port}")!!
     loop {
         consume client = listener.accept()!!
-        spawn { handle_client(client, cfg) }
+        spawn consume client { handle_client(client, cfg) }   // D415 §4: линейное — явной передачей
     }
 }
 
@@ -134,7 +134,8 @@ fn handle_client(consume client TcpStream, cfg Config) Net Time -> () {
 
 **`pipe_bidirectional(consume a TcpStream, consume b TcpStream)`** — ядро
 примера, владение раскладывается по `into_split`: `(ar, aw) = a.into_split()`,
-`(br, bw) = b.into_split()`; файбер №1 качает `ar → bw`, файбер №2 — `br → aw`.
+`(br, bw) = b.into_split()`; файбер №1 качает `ar → bw`, файбер №2 — `br → aw`
+(каждый — `spawn consume … { … }`, D415 §4).
 Каждый файбер владеет своей парой половинок — линейность соблюдена без
 разделяемого состояния. По EOF направление закрывает СВОЮ write-половину
 (проброс FIN — пин Ф.0-а) и завершается; механизм завершения второго файбера —
