@@ -33,7 +33,7 @@
 // method: the checker's module-branch (`self.sig.fn_decls.get(name)`)
 // unconditionally takes a single-overload free-fn match and records IT
 // (not the correct instance method) into the `resolved_callees` channel
-// — a strictly worse, `[M-tihaya-porcha]`-class outcome (K1) that this
+// — a strictly worse, silent-corruption-class outcome (K1) that this
 // fixture pins directly).
 //
 // This fixture pins the general shape without depending on
