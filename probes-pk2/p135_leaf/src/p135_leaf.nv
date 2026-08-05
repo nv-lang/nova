@@ -1,0 +1,5 @@
+module p135_leaf
+
+import bignum.bigdecimal.{BigDecimal}
+
+export fn nzp135_leaf_zero() -> BigDecimal => BigDecimal.zero()

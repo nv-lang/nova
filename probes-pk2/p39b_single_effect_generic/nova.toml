@@ -1,0 +1,7 @@
+[package]
+name = "p39b_single_effect_generic"
+version = "0.1.0"
+
+[[bin]]
+name = "p39bmain"
+path = "main.nv"

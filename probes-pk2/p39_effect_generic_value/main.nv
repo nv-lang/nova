@@ -1,0 +1,27 @@
+// pk2-probe №39: generic value-record по ЭФФЕКТ-типовому параметру —
+// два разных эффект-инстанса одного generic value-типа в одном CU.
+module p39_effect_generic_value
+
+type Nzp39Db effect {
+    query(sql str) -> str
+}
+
+type Nzp39Log effect {
+    write(msg str) -> ()
+}
+
+type Nzp39Handler[E] value {
+    tag str
+}
+
+fn Nzp39Handler[E].new(tag str) -> Nzp39Handler[E] => { tag }
+
+fn nzp39_use_db(h Nzp39Handler[Nzp39Db]) -> str => h.tag
+fn nzp39_use_log(h Nzp39Handler[Nzp39Log]) -> str => h.tag
+
+fn main() {
+    ro nzp39_hd = Nzp39Handler[Nzp39Db].new("db")
+    ro nzp39_hl = Nzp39Handler[Nzp39Log].new("log")
+    println(nzp39_use_db(nzp39_hd))
+    println(nzp39_use_log(nzp39_hl))
+}

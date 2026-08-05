@@ -1,0 +1,13 @@
+// pk2-probe №172: requires с вызовом метода в условии (#unverified @div) —
+// проверка, enforce'ится ли контракт в рантайме.
+module p172_contract_div
+
+import bignum.bigdecimal.{BigDecimal, MathContext, RoundingMode}
+
+fn main() {
+    ro nzp172_a = BigDecimal.zero()
+    ro nzp172_mc = MathContext.new(5, RoundingMode.HalfEven)
+    ro nzp172_zero_divisor = BigDecimal.zero()
+    ro nzp172_result = nzp172_a.div(nzp172_zero_divisor, nzp172_mc)
+    println("unreachable")
+}

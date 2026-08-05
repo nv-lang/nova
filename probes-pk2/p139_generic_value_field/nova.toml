@@ -1,0 +1,7 @@
+[package]
+name = "p139_generic_value_field"
+version = "0.1.0"
+
+[[bin]]
+name = "p139main"
+path = "main.nv"

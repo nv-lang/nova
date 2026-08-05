@@ -1,0 +1,21 @@
+// pk2-probe №147 (через блокер №4 [M-d39-embed-delegation-dispatch-noop]):
+// диспетчеризация через `use name Type` (D39 embed) — прямой доступ к
+// полям/методам встроенного типа должен работать без ручной распаковки.
+module p147_embed_delegation
+
+type Nzp147Account value {
+    balance int
+}
+
+fn Nzp147Account @balance_pct(of int) -> int => @balance * 100 / of
+
+type Nzp147Audited value {
+    use nzp147_acc Nzp147Account
+    log_count int
+}
+
+fn main() {
+    ro nzp147_a = Nzp147Audited { nzp147_acc: Nzp147Account { balance: 50 }, log_count: 0 }
+    println("direct field proxy: balance=${nzp147_a.balance}")
+    println("direct method proxy: balance_pct=${nzp147_a.balance_pct(200)}")
+}
