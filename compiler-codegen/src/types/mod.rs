@@ -10000,6 +10000,96 @@ impl<'a> TypeCheckCtx<'a> {
                             Some(())
                         };
                         let _ = none_side(left, right).or_else(|| none_side(right, left));
+                        // [M-option-eq-some-literal-elem-adapt] (реестр 221.1 №364,
+                        // 2026-08-05): sibling of `none_side` above, for a LITERAL-
+                        // payload `Some(0)` compared against an operand whose type is
+                        // known+concrete (`limbs.last() == Some(0)`). Root cause
+                        // (confirmed, NOT the diagnosis's original hypothesis): the
+                        // literal-coercion channel's ctor arm (`materialize_literal_
+                        // coercion`, `ctor_payload_expected`, ~16960 below) IS wired
+                        // at every other definite site (return/let/call-arg/
+                        // turbofish) — Binary comparison was simply the one missing
+                        // call site. But ALSO, independently, the P67 Ф.2 `Some(x)`
+                        // producer (~9652 above, `ExprKind::Call` arm) unconditionally
+                        // stamps `resolved_types_buf[ctor_call.id]` from the
+                        // literal's OWN un-adapted seed type (`int`, wide-default)
+                        // the moment `f1_expr` walks the ctor call as a child of
+                        // this Binary node — BEFORE this code runs. So the ctor
+                        // call already carries a (wrong) buf entry; simply calling
+                        // the channel here still fixes it, because `materialize_
+                        // literal_coercion`'s ctor arm OVERWRITES `resolved_types_
+                        // buf[value.id]` (`insert`, not `entry().or_insert()`) once
+                        // `ctor_payload_expected` confirms the ctor/expected shape
+                        // matches — no separate P67-producer change needed.
+                        // Symmetric (the literal ctor may sit on either side of
+                        // `==`/`!=`). `other_ty` is read via `infer_expr_type`
+                        // (mirrors the `As` arm's own use of it, ~9895) rather than
+                        // straight off `resolved_types_buf` like `none_side` does —
+                        // `infer_expr_type`'s own `Call` arm (~19904) already reads
+                        // BACK `resolved_types_buf` first for any general method/fn
+                        // call, so this is a strict superset (covers Ident-from-
+                        // scope, Member, etc. too), not a weaker source. gs-gated
+                        // (`typeref_mentions_any`) exactly like every OTHER
+                        // `materialize_literal_coercion` call site — the shared
+                        // `ConcreteNamedNoArgs` gate this fn's ctor arm uses
+                        // structurally cannot tell a bare generic-param `Named("T")`
+                        // apart from a genuine concrete declared type, so callers
+                        // are the ones responsible for excluding in-scope generics.
+                        //
+                        // SCOPED TO `Some` ONLY (Option, ONE generic slot) — `Ok`/
+                        // `Err` (Result, TWO generic slots) tried and REVERTED: this
+                        // channel write only ever supplies the slot the literal
+                        // itself carries (`E` for `Err(0)`, `T` for `Ok(0)`); the
+                        // OTHER (unsupplied) slot has no source here and stays on
+                        // whatever `expected`'s generics say — which IS structurally
+                        // correct (both slots concrete from `other_ty`) at the
+                        // CHECKER layer. But `emit_c`'s `Ok`/`Err` ctor emission
+                        // (`emit_c.rs` ~38169, gated on `self.current_fn_return_ty`)
+                        // does NOT consult `resolved_types_buf` for the ctor call's
+                        // own two-generic type outside return-position at all — for
+                        // the unsupplied slot it falls through to a hardcoded
+                        // default (`Err` → Ok-slot `nova_int`; `Ok` → Err-slot
+                        // `nova_str`) regardless of what the channel says. Verified
+                        // (fresh-dir A/B, baseline vs patched): `Result[str, u32] ==
+                        // Err(0)` — baseline BUILDS (an unresolved ctor node routes
+                        // codegen down a different, untyped comparison path);
+                        // WITH `Ok`/`Err` wired into this arm, it CC-FAILs
+                        // (`passing 'nova_int' to incompatible type 'nova_str'`) —
+                        // making the channel entry "more correct" for the CHECKER
+                        // paradoxically REGRESSES this codegen consumer, because the
+                        // consumer only reads it well enough to pick the (broken)
+                        // hardcoded-default path instead of its prior safe fallback.
+                        // A real fix needs `emit_c`'s ctor emission extended to
+                        // consult the channel for BOTH slots — an `emit_c` change,
+                        // out of this window's channel-only mandate; left as a
+                        // separate, deeper finding (see window report). `Option` has
+                        // no such "other slot" — its ONE generic is always exactly
+                        // the literal's own (channel-corrected) type, so this class
+                        // of regression structurally cannot occur for `Some`.
+                        if matches!(op, BinOp::Eq | BinOp::Neq) {
+                            let ctor_side = |ctor_expr: &Expr, other: &Expr| -> Option<()> {
+                                let ExprKind::Call { func, args, .. } = &ctor_expr.kind else {
+                                    return None;
+                                };
+                                if args.len() != 1 {
+                                    return None;
+                                }
+                                let ExprKind::Ident(ctor) = &func.kind else { return None };
+                                // `Some` only — see doc-comment above (Ok/Err
+                                // reverted: regresses emit_c's Result ctor codegen).
+                                if ctor != "Some" || scope.contains_key(ctor.as_str()) {
+                                    return None;
+                                }
+                                let other_ty = self.infer_expr_type(other, scope)?;
+                                if typeref_mentions_any(&other_ty, gs) {
+                                    return None;
+                                }
+                                ctor_payload_expected(ctor, &other_ty)?;
+                                self.materialize_literal_coercion(ctor_expr, &other_ty);
+                                Some(())
+                            };
+                            let _ = ctor_side(left, right).or_else(|| ctor_side(right, left));
+                        }
                     }
                     let res_rt: Option<ResolvedType> = match op {
                         BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge

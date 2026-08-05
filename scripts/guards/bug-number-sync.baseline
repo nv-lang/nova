@@ -660,7 +660,6 @@ M-opt-iter-generic-combinators
 M-opt-leaf-preempt-entry-elision
 M-opt-preempt-strided-loop
 M-opt-value-sum-types
-M-option-eq-some-literal-elem-adapt
 M-option-self-recursive-record-mono
 M-p200-17-remaining-1-fmtbuf
 M-p200-17-remaining-3
