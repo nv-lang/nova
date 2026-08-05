@@ -136,6 +136,15 @@ PASS: 148  FAIL: 26  WARN: 61
 `arch-ratchet.baseline`-комментарии для одного из прошлых окон) — фикс
 канон не сдвинул.
 
+`nova lint` на фикстуре (приёмочный ритуал): первый прогон — 4 находки
+(2× `W_NON_COMPOUND_ASSIGN` `i = i + 1`, 2× `W_WHILE_COUNTER_FOR_RANGE`).
+Compound-assign починил (`i += 1`). `W_WHILE_COUNTER_FOR_RANGE` — оставил
+осознанно: nv-coding-style §10 прямо разрешает `while` вместо `for in`,
+если это документировано и не честный range-проход — фикстура
+СПЕЦИАЛЬНО тестирует счётный `while` (точная форма из регистра №240),
+задокументировал это инлайн-комментарием у каждого `while` по требованию
+§10. Финально: 2 находки (обе — задокументированные `W_WHILE_COUNTER_FOR_RANGE`).
+
 ## Найденный ПОБОЧНЫЙ дефект (НЕ фиксил, вне периметра этого окна)
 
 При тестировании обнаружил ОТДЕЛЬНЫЙ, более узкий дефект того же семейства:
@@ -184,6 +193,10 @@ retroactive-insert ПОСЛЕ её собственного объявления
   (`compiler-codegen/src/codegen/emit_c.rs`,
   `compiler-codegen/src/codegen/emit_c/emit_detach.rs`,
   `spec_tests/conformance/standalone/m240_detach_box_while_loop_read_after.nv`).
+- `c718915cf` — `chore(240): lower arch-ratchet baseline (64545 -> 64150) + progress report`
+  (`scripts/guards/arch-ratchet.baseline`, `docs/plans/wip/PROGRESS-p240-detach.md`).
+- `3c60c170f` — `style(240): compound-assign + deliberate-while justification in fixture`
+  (`spec_tests/conformance/standalone/m240_detach_box_while_loop_read_after.nv`).
 
 ## Статус
 
