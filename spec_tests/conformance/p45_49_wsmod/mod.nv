@@ -1,0 +1,18 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Tiny standalone module used ONLY as the "colliding module name" half of
+// the [M-module-name-shadows-local] regression (221.1 №49) — see
+// `p45_49_module_shadows_local_consume.nv` next to this file for the real
+// fixture. Name deliberately generic (`p45_49_wsmod`), imported `as ws` at
+// the call site to mirror the real-world collision found in nova-http's
+// `net/policy.nv` (module `http.ws`, 222.14). `p4549_marker()` deliberately
+// shares its bare name with a method declared on the fixture's OWN
+// `P4549Guard` type — the exact shape that turns a scope-tracking gap into
+// a SILENT wrong-callee resolution (checker channel picks THIS free
+// function over the intended instance method) rather than a merely
+// confusing compile error.
+
+module conformance.p45_49_wsmod
+
+export fn ping() -> int => 7
+
+export fn p4549_marker() -> int => -1

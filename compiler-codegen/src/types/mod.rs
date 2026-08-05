@@ -8203,14 +8203,42 @@ impl<'a> TypeCheckCtx<'a> {
             }
             // Plan 110 D188: walk init + body (full D188 R1-R6 check лежит
             // в Plan 110.1.2/110.1.3 — здесь scaffold walking).
-            Stmt::ConsumeScope { init, body, .. } => {
+            Stmt::ConsumeScope { binding, type_annot, init, body, .. } => {
                 self.f1_expr(init, gs, scope, errors);
                 self.f4_check_value(init, scope, errors);
+                // №49 (221.1) [M-module-name-shadows-local]: `binding` was
+                // NEVER registered in `scope` for the extent of `body` — a
+                // `spawn consume ws = s.share() { ws.read_bytes(...) }`
+                // (or plain `consume ws = … { … }`) whose binding name
+                // collides with an IMPORTED MODULE name then had `ws.foo(…)`
+                // inside `body` wrongly resolved as a module-qualified call
+                // (`f1_check_call`'s `scope.contains_key(prefix)` guard saw
+                // no entry → fell through to the module branch → false
+                // `[E7401]`/wrong callee) instead of an instance-method call
+                // on the binding — same shadow rule `f1_block` already
+                // applies to a plain `let`. Snapshot/restore mirrors
+                // `f1_block`'s own let-shadowing pattern so the outer scope
+                // is byte-identical once `body` is done.
+                let bind_ty = type_annot.clone()
+                    .or_else(|| self.infer_expr_type(init, scope))
+                    .or_else(|| {
+                        if !init.id.is_set() { return None; }
+                        let buf = self.resolved_types_buf.borrow();
+                        let rt = buf.get(&init.id)?.clone();
+                        drop(buf);
+                        Self::resolved_to_typeref_tp(&rt, init.span)
+                    })
+                    .unwrap_or_else(|| prim_ref("Any", init.span));
+                let prev_binding = scope.insert(binding.clone(), bind_ty);
                 for s in &body.stmts {
                     self.f1_stmt(s, gs, scope, errors);
                 }
                 if let Some(t) = &body.trailing {
                     self.f1_expr(t, gs, scope, errors);
+                }
+                match prev_binding {
+                    Some(t) => { scope.insert(binding.clone(), t); }
+                    None => { scope.remove(binding); }
                 }
             }
             Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {

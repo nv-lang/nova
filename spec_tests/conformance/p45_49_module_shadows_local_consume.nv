@@ -1,0 +1,84 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// [M-module-name-shadows-local] (221.1 bug-sweep №49, confirmed by live
+// symptom №50): a `consume`/`spawn consume` binding whose name collides
+// with an IMPORTED MODULE name was NEVER registered in the checker's
+// `scope` map for the extent of its body (`Stmt::ConsumeScope` arm of
+// `f1_stmt`, compiler-codegen/src/types/mod.rs) — unlike a plain `let`,
+// which `f1_block` DOES shadow correctly (snapshot/restore in `f1_block`).
+// So `ws.method(...)` inside the body fell through the
+// `scope.contains_key(prefix)` local-shadow guard in `f1_check_call`'s
+// `ExprKind::Member` arm and was wrongly treated as a module-qualified
+// free-function call on the IMPORTED MODULE `ws`, not an instance-method
+// call on the binding.
+//
+// Found live in nova-http's `net/policy.nv`: the appearance of the
+// `http.ws` module (Plan 222.14) started shadowing a pre-existing local
+// named `ws` (`spawn consume ws = s.share() { ws.read_bytes(...) }`),
+// worked around there by renaming the local to `shs` — see the comment
+// still in that file (the original report's `[E7401] no function
+// read_to_vec in module ws` — a compile-error symptom — no longer
+// reproduces verbatim: `is_known_fn`'s cross-module sig-table lookup
+// (Plan 162.2 Ф.3, `compiler-codegen/src/imports.rs`
+// `collect_module_signatures_from_items`) indexes EVERY `fn` item —
+// method-fns included, regardless of `is_instance` — across the WHOLE
+// reachable module graph, INCLUDING the entry file's own declarations
+// (`collect_all_signatures`: "Seed the table with the entry module's own
+// items"), so any method name that is genuinely declared SOMEWHERE
+// reachable now suppresses the false `E7401` by coincidence. That
+// suppression is a separate, pre-existing, intentional safety net — not
+// this window's bug — but it means the SAME underlying scope gap now
+// surfaces as a SILENT WRONG-CALLEE resolution instead of a confusing
+// compile error whenever the shadowing module happens to ALSO export a
+// free function with the exact same bare name as the binding's own
+// method: the checker's module-branch (`self.sig.fn_decls.get(name)`)
+// unconditionally takes a single-overload free-fn match and records IT
+// (not the correct instance method) into the `resolved_callees` channel
+// — a strictly worse, `[M-tihaya-porcha]`-class outcome (K1) that this
+// fixture pins directly).
+//
+// This fixture pins the general shape without depending on
+// `std.net`/concurrency effects: a tiny sibling module (`p45_49_wsmod`,
+// exporting a free fn `p4549_marker()` that returns `-1`) imported `as
+// ws`, colliding with a `consume ws = ... { ws.p4549_marker() }` binding
+// whose OWN type also declares an instance method named `p4549_marker`
+// (returning the guard's `id`, never `-1`). Pre-fix: the checker
+// wrongly resolves the call to the MODULE's free function (`-1`) even
+// though `ws.p4549_marker()` unambiguously means "call the method on my
+// local binding" (D-scoping: an in-scope local always shadows a module
+// alias of the same name, mirrored by `emit_c.rs`'s OWN
+// `var_types.contains_key(prefix)` codegen-side guard, which already gets
+// this right — only the CHECKER channel had the gap).
+
+module spec_tests.conformance
+
+import spec_tests.conformance.p45_49_wsmod as ws
+
+type P4549Guard consume {
+    ro id int,
+}
+
+fn P4549Guard consume @cleanup(_outcome ScopeOutcome) -> () { () }
+
+fn P4549Guard @p4549_marker() -> int { @id }
+
+test "consume binding whose name shadows an imported module resolves to the LOCAL binding's method, not the module's free fn of the same name" {
+    consume ws = P4549Guard { id: 42 } {
+        assert(ws.p4549_marker() == 42)
+    }
+    // Outside the consume-block `ws` is once again the module alias — a
+    // sanity check that the fix does not break genuine module resolution.
+    assert(ws.ping() == 7)
+    assert(ws.p4549_marker() == -1)
+}
+
+test "spawn consume binding whose name shadows an imported module resolves to the LOCAL binding's method" {
+    ro (tx, rx) = Channel.new(1)
+    supervised {
+        spawn consume ws = P4549Guard { id: 100 } {
+            ro _ = tx.try_send(ws.p4549_marker())
+        }
+    }
+    tx.close()
+    ro got = rx.try_recv() ?? -1
+    assert(got == 100)
+}
