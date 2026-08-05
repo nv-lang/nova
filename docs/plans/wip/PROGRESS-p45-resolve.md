@@ -2,6 +2,110 @@
 
 Модель: sonnet. Ветка `p45-resolve`, worktree `d:/Sources/nv-lang/nova-p45`.
 
+## №45 `[M-fn-type-expected-any-bypass]` + №50 (живое подтверждение №45)
+
+**Воспроизведено — чисто, красно-зелёная пара получена.** Один фикс
+закрывает ОБА номера: №50 в реестре прямо помечен как «ЖИВОЕ ПОДТВЕРЖДЕНИЕ
+№45» (не отдельный дефект, а живой пример того же корня на флагмане).
+
+### Проба на актуальность
+
+Проба на pristine-бинаре главной репы (`d:/Sources/nv-lang/nova/nova-cli/
+target/release/nova.exe`, собран 2026-08-05) — дефект воспроизводится
+дословно: fn-типизированный аргумент СО СТРУКТУРНО НЕСОВПАДАЮЩЕЙ
+сигнатурой (`fn(int) -> str`, передан туда, где ожидался `fn(int) -> int`)
+проходит `nova check` БЕЗ единой ошибки/предупреждения (`PASS: 1 FAIL: 0`).
+
+### Корень
+
+`compiler-codegen/src/types/mod.rs`, `resolved_cat_of_depth` (строка
+~22432): `TypeRef::Tuple(_, _) | TypeRef::Func { .. } => R::Any` —
+ЛЮБОЙ fn-типизированный EXPECTED-тип схлопывается в категорию `Any`
+(общий, намеренный коллапс — трогать его саму НЕ стал, он используется
+повсеместно и намеренно permissive для erased/generic fn-типов).
+`assignable_direct`'s ранний `if matches!(exp_rt, ResolvedType::Any) {
+... return Compat::Ok; }` (строка ~17935) на этом основании пропускал
+АБСОЛЮТНО ЛЮБОЕ значение на fn-типизированную позицию без единой
+структурной проверки сигнатуры — единственная существующая узкая
+пере-проверка внутри этой Any-ветки (`protocol_mismatch_found`) касалась
+ТОЛЬКО протокольных типов, для `TypeRef::Func` явно возвращала `None`
+(строка ~18327: `_ => return None, // Any/never/Self, func, tuple, ...`).
+
+### Фикс (канал, `compiler-codegen/src/types/mod.rs`)
+
+Новый метод `fn_type_mismatch_found` (вставлен сразу после
+`protocol_mismatch_found`, зеркалит его же узко-гейтованный паттерн —
+НЕ трогает общий `resolved_cat_of_depth`-коллапс, отдельная адресная
+пере-проверка ТОЛЬКО для источника `Any` = `TypeRef::Func`): peel'ит
+L2-обёртки (`ro`/`mut`/`uninit`/`ref`) с обеих сторон, требует, чтобы
+И expected, И `infer_expr_type(expr)`-тип аргумента peel'ились в
+КОНКРЕТНЫЙ (не generic/erased) `TypeRef::Func` — иначе `None`
+(permissive, поведение не меняется). При совпадении арности параметров
+сравнивает КАЖДЫЙ параметр + возврат через уже существующий
+`cat_compatible_rt` (та же permissive категорийная проверка, что
+`assignable` использует повсюду — `(Any,_)|(_,Any) => true`, так что
+вложенные generic/fn/tuple-параметры остаются permissive на обеих
+сторонах и НЕ дают ложных срабатываний). Несовпадение арности ИЛИ
+категорийное несовпадение хотя бы одного параметра/возврата →
+`Compat::Bad` → существующий E7301 (переиспользован, новый код ошибки
+не заводил).
+
+Вызов пришит в `assignable_direct` сразу после
+`protocol_mismatch_found`, тем же паттерном (строка ~17958-17966).
+
+### Фикстуры
+
+`spec_tests/conformance/fn_type_signature_mismatch_pos.nv` (позитив —
+совпадающая сигнатура через explicit closure-full + closure-light с
+выводом типа из контекста — оба должны остаться зелёными, никакого
+ложного срабатывания) + `spec_tests/conformance/neg/
+fn_type_signature_mismatch_neg.nv` (`EXPECT_COMPILE_ERROR E7301` —
+`fn(int)->str` туда, где ждут `fn(int)->int`).
+
+### Прогоны (дословно)
+
+- Изолированный scratch-probe (`p45_probe`, вне git, тот же текст, что и
+  neg-фикстура) на PRISTINE бинаре главной репы: `PASS: 1 FAIL: 0` — не
+  ловит (RED, подтверждает актуальность).
+- Тот же probe на ФИКСИРОВАННОМ бинаре (`nova check`):
+  `[E7301] cannot pass \`fn(..)\` as argument \`f\` of type \`fn(int) -> int\``,
+  `PASS: 0 FAIL: 1` (correctly rejected, GREEN).
+- Позитив-контроль (matching signature + closure-light) на фиксированном
+  бинаре: `nova test main.nv --format json` →
+  `{"pass":1,"fail":0}` — фикс не даёт ложных срабатываний.
+- Реальный путь `spec_tests/conformance/neg/fn_type_signature_mismatch_neg.nv`
+  через `nova test` (раннер понимает `EXPECT_COMPILE_ERROR`):
+  `{"event":"finished","test":"conformance/neg/fn_type_signature_mismatch_neg","status":"pass",...}`,
+  `{"pass":1,"fail":0}`.
+- Реальный путь `spec_tests/conformance/fn_type_signature_mismatch_pos.nv`
+  через `nova check` (весь mega-peer `conformance/`): `PASS: 1 FAIL: 0
+  WARN: 65`.
+- `cargo build --release` (nova-cli) — чисто, `Finished release profile
+  [optimized] target(s) in 1m 57s`.
+- `nova check std/src` — **`PASS: 148 FAIL: 26 WARN: 61`** — канон
+  байт-в-байт, отклонений нет (прогнан ПОСЛЕ фикса #45, поверх фикса
+  #49 — накопительно).
+
+**Вердикт: дефект №45/№50 воспроизведён (RED на pristine-бинаре),
+исправлен в чекер-канале, фикстуры зелёные И на изолированном probe, И
+на реальном пути spec_tests/conformance, ложных срабатываний на
+позитив-контролях не найдено. Мега-CU/флагман под `--strict-effects` —
+за интегратором (по заданию окна).**
+
+### Смежные находки (не в объёме, для интегратора)
+
+- `resolved_cat_of_depth`'s `TypeRef::Tuple(_, _) => R::Any` — та же
+  permissive-коллапс проблема потенциально касается КОРТЕЖНЫХ
+  expected-позиций (`(int, str)` ожидается, а передаётся `(str, int)`)
+  — НЕ проверял, вне объёма этого окна, но тот же класс дыры (`[M-tuple-
+  type-expected-any-bypass]`-кандидат, номер присвоит интегратор).
+- `fn_type_mismatch_found` намеренно НЕ проверяет `effects`/`extern_abi`
+  поля `TypeRef::Func` (только `params`+`return_type`) — узкий, но
+  реальный остаточный пробел (можно теоретически подсунуть fn с ДРУГИМ
+  набором эффектов той же params/return-формы) — оставил как есть,
+  чтобы не расширять объём фикса за пределы точно продиагностированного
+  №45/№50; кандидат на отдельный follow-up, если понадобится.
+
 ## №49 `[M-module-name-shadows-local]`
 
 **Воспроизведено — частично, на уровне внутреннего состояния чекера, НЕ на
