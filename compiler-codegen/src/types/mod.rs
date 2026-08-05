@@ -48936,6 +48936,88 @@ impl UnsafeCtx {
 }
 
 #[cfg(test)]
+mod p248_mech_no_copy_tests {
+    //! Plan 248 (mech, wave 1, p248-mech): `#no_copy` — parser branch, AST
+    //! field, consume-level registry + transitive propagation.
+    //!
+    //! Wave 1 is checker-MECHANICS-only: `ConsumeLevel::Affine` (the level
+    //! `#no_copy` types register at) is not yet consulted by any
+    //! diagnostic (D180 Rule 1/2 wiring is a later wave) — so there is no
+    //! user-visible `nova check` output to pin transitivity against yet.
+    //! These tests exercise `LinearityRegistry`/`type_consume_level`
+    //! directly instead, mirroring `named_tuple_ctor_infer_tests` above
+    //! (same `crate::parser::parse` + direct internal-API pattern).
+    use super::*;
+    use crate::diag::Span;
+
+    fn parse_ok(src: &str) -> Module {
+        crate::parser::parse(src).unwrap_or_else(|d| panic!("parse failed: {}", d.message))
+    }
+
+    fn named(name: &str) -> TypeRef {
+        TypeRef::Named { path: vec![name.to_string()], generics: vec![], span: Span::dummy() }
+    }
+
+    #[test]
+    fn no_copy_attr_parses_and_sets_ast_flag() {
+        let module = parse_ok("#no_copy\ntype Handle value priv { n u32 }\n");
+        let td = module.items.iter().find_map(|it| match it {
+            Item::Type(td) if td.name == "Handle" => Some(td),
+            _ => None,
+        }).expect("Handle type decl not found");
+        assert!(td.no_copy, "TypeDecl.no_copy must be true for a #no_copy-marked type");
+        assert!(!td.consume, "#no_copy must NOT set the unrelated `consume` flag");
+    }
+
+    #[test]
+    fn no_copy_registers_affine_level_directly() {
+        let module = parse_ok("#no_copy\ntype Handle value priv { n u32 }\n");
+        let reg = LinearityRegistry::build(&module);
+        assert_eq!(reg.type_consume_level(&named("Handle"), &module), Some(ConsumeLevel::Affine));
+        // Wave-1 neutrality: the pre-existing bool-collapsing `type_is_consume`
+        // must stay false for Affine — only MustConsume collapses to true,
+        // byte-identical to pre-wave behavior (see its doc comment).
+        assert!(!reg.type_is_consume(&named("Handle"), &module));
+    }
+
+    #[test]
+    fn no_copy_propagates_transitively_through_record_field() {
+        let module = parse_ok(
+            "#no_copy\ntype Handle value priv { n u32 }\n\
+             type Wrapper { h Handle }\n"
+        );
+        let reg = LinearityRegistry::build(&module);
+        assert_eq!(
+            reg.type_consume_level(&named("Wrapper"), &module),
+            Some(ConsumeLevel::Affine),
+            "a record field of an Affine (#no_copy) type must transitively \
+             make the containing type Affine too — same wrap-transitivity \
+             `type_is_consume` already has for MustConsume"
+        );
+    }
+
+    #[test]
+    fn must_consume_dominates_affine_when_mixed_in_same_container() {
+        let module = parse_ok(
+            "#no_copy\ntype Handle value priv { n u32 }\n\
+             type Res consume { id int }\n\
+             fn Res consume @close() -> () { }\n\
+             type Mixed { h Handle, r Res }\n"
+        );
+        let reg = LinearityRegistry::build(&module);
+        assert_eq!(
+            reg.type_consume_level(&named("Mixed"), &module),
+            Some(ConsumeLevel::MustConsume),
+            "MustConsume must dominate Affine when a container mixes both \
+             levels via different fields — combine_consume_level order \
+             must not matter (non-short-circuiting exhaustive walk)"
+        );
+        // And the collapsed bool must ALSO see it (Rule 1/2 read this path).
+        assert!(reg.type_is_consume(&named("Mixed"), &module));
+    }
+}
+
+#[cfg(test)]
 mod primitive_mut_method_tests {
     //! Plan 128 Ф.3: `E_PRIMITIVE_MUT_METHOD` rejects `fn <primitive> mut
     //! @method(...)` declarations. Parser permits the form; codegen would
