@@ -296,4 +296,18 @@ if [ "$fail" -eq 0 ] && [ "${DOC_EXAMPLES_SHOW_MATCHES:-1}" = "1" ]; then
     [ -n "$bang_matches" ] && printf 'doc-examples находки (retired_postfix_bang):\n%s\n' "$bang_matches"
 fi
 
+
+# ---------------------------------------------------------------------
+# ПРЕДУПРЕЖДЕНИЕ (не храповик): методы-аналоги операторов в примерах.
+# Конвенция (nv-coding-style §"операторы", D46): в коде пишут `a + b`, а
+# `@plus`/`@minus`/`@times`/`@neg` — это ИМЕНА ПЕРЕГРУЗКИ. Прецедент:
+# документация bignum учила `a.plus(b)` (замечание владельца 2026-08-05).
+# Не красный: у части типов операторной формы нет (BigFloat требует контекст
+# точности), поэтому это подсказка для вычитки, а не гейт.
+op_style=$(printf '%s
+' "$kept" | grep -oE '\.(plus|minus|times|neg)\(' | wc -l)
+if [ "${op_style:-0}" -gt 0 ]; then
+    info "doc-examples ПРЕДУПРЕЖДЕНИЕ (operator_style): вызовов .plus/.minus/.times/.neg в примерах — $op_style; где у типа есть операторная форма, писать \`a + b\` (конвенция); гейт не роняется"
+fi
+
 exit $fail
