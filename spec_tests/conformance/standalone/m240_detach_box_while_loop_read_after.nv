@@ -1,0 +1,114 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Regression for [M-detach-box-while-loop-read-after] (221.1 bug-sweep #240,
+// window p240-detach, 2026-08-05).
+//
+// Root cause (compiler-codegen/src/codegen/emit_c/emit_detach.rs, split out
+// of emit_c.rs this window — see that file's module doc): a `mut` local
+// captured by `detach{}` is heap-boxed lazily, right where `detach{}`
+// textually sits ([M-conformance-megacu-intermittent-run-crash], 2026-07-22).
+// The box POINTER's C declaration used to be emitted at that same position
+// via a plain `self.line(...)`. If `detach{}` sits inside a `while`/`if`/
+// match-arm C block, that declaration is block-scoped: the C identifier goes
+// out of scope once the block's `}` closes, even though the heap cell it
+// points to is still alive (GC-scanned via the ctx). `var_boxed` (Rust-side,
+// survives past the C block) kept rewriting every LATER read of the captured
+// name to the now-invisible identifier: `use of undeclared identifier
+// '_nova_detach_N_box_<cap>'` for any read after the enclosing loop closed.
+//
+// Fix: `hoist_box_decl` retroactively inserts ONLY the bare declaration
+// (`T* bv;`, no initializer) at the enclosing top-level C function's own top
+// scope (anchor set once per function by `emit_c.rs::emit_block_stmts`,
+// right after the function's own opening brace) — a scope that by
+// construction dominates both the capture point and every later read in the
+// same function, since Nova requires a captured `mut` local's OWN
+// declaration to already be in scope before any capture of it. The heap-
+// alloc ASSIGNMENT (still exactly-once per loop iteration, same control flow
+// as before) stays at the original (possibly nested) site.
+//
+// SCOPE NOTE (follow-up filed, NOT fixed here): this window covers the
+// reported shape — the nested block DOES execute at least once, so the
+// hoisted box pointer gets assigned before any post-block read. A DIFFERENT
+// edge case was found while testing this fix: if the nested block NEVER
+// executes at runtime (`while false { detach {...} }`, or `if false {
+// detach {...} }`), the box pointer is never assigned — reading through it
+// afterward is undefined behavior (uninitialized pointer deref), where
+// pre-fix this whole program simply failed to COMPILE (so the bad runtime
+// path was unreachable). This is a distinct defect from #240's compile-time
+// bug; a real fix needs either eager (unconditional) boxing at the captured
+// var's own declaration or a guarded fallback read, both bigger than this
+// window's scope — see PROGRESS-p240-detach.md.
+
+module standalone.m240_detach_box_while_loop_read_after
+
+import std.time.duration
+
+// Shape 1 (the exact reported repro, value-checked): a `mut` local declared
+// OUTSIDE a `while` loop, captured by a `detach{}` INSIDE the loop body,
+// read AFTER the loop closes. `Time` effect (sleep) makes the orphan's wake
+// deterministic-late, same discipline as detach_mut_capture_outlives_frame.nv
+// — the read-after-loop must observe the value regardless of scheduling.
+fn m240_while_loop(iters int) Detach Time -> int {
+    mut counter = AtomicInt.new(0)
+    mut i = 0
+    while i < iters {
+        detach {
+            (5).to_millis().sleep()
+            ro _ = counter.fetch_add(1)
+        }
+        i = i + 1
+    }
+    runtime.drain_orphans()
+    // Read AFTER the loop — this is the exact position that hit "use of
+    // undeclared identifier" pre-fix.
+    return counter.load()
+}
+
+// Shape 2: same class, `if` block instead of `while` — the fix's anchor
+// (function-top hoist) is construct-agnostic, not `while`-specific.
+fn m240_if_block(take bool) Detach Time -> int {
+    mut flag = AtomicInt.new(0)
+    if take {
+        detach {
+            (5).to_millis().sleep()
+            ro _ = flag.fetch_add(1)
+        }
+    }
+    runtime.drain_orphans()
+    return flag.load()
+}
+
+// Shape 3: TWO detach{} sites inside the SAME while loop, both capturing the
+// same mut local — exercises the `var_boxed` reuse branch (existing box
+// reused, no re-declaration) alongside the hoist.
+fn m240_while_loop_two_sites(iters int) Detach Time -> int {
+    mut counter = AtomicInt.new(0)
+    mut i = 0
+    while i < iters {
+        detach {
+            (5).to_millis().sleep()
+            ro _ = counter.fetch_add(1)
+        }
+        detach {
+            (5).to_millis().sleep()
+            ro _ = counter.fetch_add(1)
+        }
+        i = i + 1
+    }
+    runtime.drain_orphans()
+    return counter.load()
+}
+
+test "detach box: mut local captured inside while loop, read after loop (value-checked, №240)" {
+    ro n = m240_while_loop(3)
+    assert(n == 3)
+}
+
+test "detach box: mut local captured inside if block, read after block (№240 generalization)" {
+    ro n = m240_if_block(true)
+    assert(n == 1)
+}
+
+test "detach box: two detach sites per loop iteration share the hoisted box (№240)" {
+    ro n = m240_while_loop_two_sites(3)
+    assert(n == 6)
+}
