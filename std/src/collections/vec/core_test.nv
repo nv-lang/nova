@@ -39,7 +39,7 @@ test "grow — Vec[u8] past initial capacity (non-str T mono regression)" {
     mut v = Vec[u8].new()
     for i in 0..40 { v.push(i as u8) }
     assert(v.len() == 40)
-    assert(v.get(0) == Some(0 as u8))
-    assert(v.get(5) == Some(5 as u8))
-    assert(v.get(39) == Some(39 as u8))
+    assert(v.get(0) == Some(0))
+    assert(v.get(5) == Some(5))
+    assert(v.get(39) == Some(39))
 }

@@ -68,7 +68,7 @@ test "предикаты" {
 }
 
 test "обратная конверсия в i64" {
-    assert((42 as i64).to_i128().to_i64_checked() == Some(42 as i64))
+    assert((42 as i64).to_i128().to_i64_checked() == Some(42))
     assert((-42 as i64).to_i128().to_i64_checked() == Some(-42 as i64))
     // 2^64 в i64 не помещается.
     assert(i128(1, 0).to_i64_checked() == None)
