@@ -1,0 +1,20 @@
+// EXPECT_COMPILE_ERROR E_NO_COPY_SECOND_NAME
+// D447 — `#no_copy`: field-read-into-local form (`x = obj.field`). Found by
+// the plan-248 recon window (PROGRESS-p248-nocopy2.md §2): the pre-existing
+// D180 alias check only matches a bare `Ident` RHS — a one-level `.field`
+// projection reading a no_copy value out of a containing record was
+// invisible to it entirely. Positive complement: d447_no_copy_second_name.nv.
+// Spec: spec/decisions/02-types.md (D447).
+module neg.n_d447_field_read
+
+#no_copy type N447FieldHandle value priv { n int }
+
+fn N447FieldHandle @get() -> int { @n }
+
+type N447FieldWrapper value { h N447FieldHandle }
+
+test "t" {
+    ro w = N447FieldWrapper{ h: N447FieldHandle{ n: 1 } }
+    ro x = w.h
+    assert(x.get() == 1)
+}

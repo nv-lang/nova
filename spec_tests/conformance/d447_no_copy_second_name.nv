@@ -1,0 +1,45 @@
+// D447 — `#no_copy`: aффинность на уровне ТИПА (нельзя связать вторым
+// именем; забыть — можно, обязанности потребления НЕТ). Plan 248, wave 2
+// (p248-w2). Positive: construction is unaffected (no `consume`-style
+// ritual on the FIRST binding), and passing the value into a `ro`-parameter
+// whose body does not store/return/capture it remains a legal BORROW (not a
+// copy) — the key distinction the rule rests on. The four "second name"
+// forms this D447-amendment newly rejects (bare alias, field-read-into-
+// local, non-borrowing argument, record/tuple-literal embed) have their own
+// NEG complements: neg/n_d447_bare_alias.nv, neg/n_d447_field_read.nv,
+// neg/n_d447_arg_escape.nv, neg/n_d447_record_literal_embed.nv,
+// neg/n_d447_tuple_literal_embed.nv. The type-level guards (mutually
+// exclusive with `consume`; valid only on kinds with their own storage) —
+// neg/n_d447_consume_conflict.nv, neg/n_d447_invalid_kind.nv.
+// Spec: spec/decisions/02-types.md (D447).
+module spec_tests.conformance
+
+#no_copy type D447Handle value priv { n int }
+
+fn D447Handle @get() -> int { @n }
+
+fn d447_borrow_only(h D447Handle) -> int {
+    h.get()
+}
+
+test "D447: construction needs no consume-style keyword ritual" {
+    ro a = D447Handle{ n: 1 }
+    assert(a.get() == 1)
+
+    ro b = D447Handle{ n: 2 }
+    assert(b.get() == 2)
+}
+
+test "D447: passing to a non-escaping ro-param is a borrow, not a copy" {
+    ro a = D447Handle{ n: 7 }
+    assert(d447_borrow_only(a) == 7)
+    // `a` itself is still usable afterward — the call above only borrowed it.
+    assert(a.get() == 7)
+}
+
+test "D447: independent constructions are unrelated values (not aliasing)" {
+    ro a = D447Handle{ n: 1 }
+    ro b = D447Handle{ n: 2 }
+    assert(a.get() == 1)
+    assert(b.get() == 2)
+}

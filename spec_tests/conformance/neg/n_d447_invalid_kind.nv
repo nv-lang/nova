@@ -1,0 +1,12 @@
+// EXPECT_COMPILE_ERROR E_NO_COPY_INVALID_KIND
+// D447 — `#no_copy` is meaningful only on a type-decl kind that owns its
+// OWN storage/value (record, sum, named tuple, newtype, external opaque —
+// the same allowed set as `#share`, D415 §1). An `alias` decl has no
+// storage of its own to forbid copying of — rejected. Mirrors the existing
+// `E_ZERO_ON_MOVE_INVALID_KIND` guard for `#zero_on_move`.
+// Spec: spec/decisions/02-types.md (D447).
+module neg.n_d447_invalid_kind
+
+#no_copy type N447NotAHandle alias int
+
+fn n447_touch() -> int { 0 }

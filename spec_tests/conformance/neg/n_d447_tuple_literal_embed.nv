@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR E_NO_COPY_SECOND_NAME
+// D447 — `#no_copy`: embedding an EXISTING named value into a tuple literal
+// (`(a, b)`) is the same "second name" shape as a record-literal embed
+// (n_d447_record_literal_embed.nv), just for the other aggregate-literal
+// form the plan brief calls out explicitly.
+// Spec: spec/decisions/02-types.md (D447).
+module neg.n_d447_tuple_literal_embed
+
+#no_copy type N447TupHandle value priv { n int }
+
+test "t" {
+    ro a = N447TupHandle{ n: 1 }
+    ro pair = (a, 1)
+    assert(true)
+}

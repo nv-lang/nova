@@ -1,0 +1,20 @@
+// EXPECT_COMPILE_ERROR E_NO_COPY_SECOND_NAME
+// D447 — `#no_copy`: bare-alias form (`ro b = a`) of the "second name"
+// prohibition. This is the ONE form the pre-existing D180 machinery would
+// have caught for a MustConsume type (Rule 2, E_VIEW_BINDING_FORBIDDEN) —
+// but D180's alias detection is keyed off `consume_types`/`type_is_consume`
+// (MustConsume only); an `Affine` (`#no_copy`) type needs its own check
+// (`check_no_copy_second_name`, wave 2), since it carries no consume
+// obligation at all. Positive complement: d447_no_copy_second_name.nv.
+// Spec: spec/decisions/02-types.md (D447).
+module neg.n_d447_bare_alias
+
+#no_copy type N447BareHandle value priv { n int }
+
+fn N447BareHandle @get() -> int { @n }
+
+test "t" {
+    ro a = N447BareHandle{ n: 1 }
+    ro b = a
+    assert(b.get() == 1)
+}
