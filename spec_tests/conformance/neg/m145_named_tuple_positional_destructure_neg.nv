@@ -1,0 +1,20 @@
+// №145 companion NEG (gap 3, owner canon 2026-07-27): a named tuple has
+// field NAMES — it destructures by curly `{…}` (name) only, never round
+// `(…)` (position). Before this fix, `ro (a, b) = p` on a named tuple
+// compiled all the way to a codegen CC-FAIL ("initializing '_NovaTuple2'
+// with an expression of incompatible type 'NovaTuple_X'" — the legacy
+// POSITIONAL-tuple lowering, which the named-tuple ABI was never taught
+// about) instead of a clear, actionable Nova-level diagnostic. Sibling:
+// ../m145_named_tuple_destructure_and_d102_pos.nv (the curly form, positive).
+//
+// EXPECT_COMPILE_ERROR E_NAMED_TUPLE_POSITIONAL_DESTRUCTURE
+
+module neg.m145_named_tuple_positional_destructure_neg
+
+type M145Pair(x int, y int)
+
+fn bad() -> int {
+    ro p = M145Pair(1, 2)
+    ro (a, b) = p
+    a + b
+}

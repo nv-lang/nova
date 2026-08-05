@@ -16,7 +16,8 @@ type Wrapper2 {
 }
 
 fn Wrapper2.new() -> Self => {
-    inner: Vec32_2(x: 1, y: 2, z: 3),
+    // №145: positional — no defaults, D102 forbids named-arg form.
+    inner: Vec32_2(1, 2, 3),
 }
 
 test "mut binding + member chain + mut method — OK" {

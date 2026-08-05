@@ -1,0 +1,101 @@
+// №248 [M-named-tuple-interp-display-dispatch-miss]: bare string
+// interpolation (`"${x}"`) of a NAMED-TUPLE (D215, `NovaTuple_X` ABI) value
+// with a genuine `#impl(Display)`/`to_str()` failed to dispatch to it —
+// codegen fell through to the numeric-cast last resort
+// (`nova_int_to_str((nova_int)(v))`), a hard CC-FAIL for a by-value struct
+// (`operand of type 'NovaTuple_X' where arithmetic or pointer type is
+// required`). The CHECKER already let the interpolation through cleanly
+// (`interp_display_via_str_from_or_to_str` / `find_method_decl` resolve the
+// method by the Nova type name and are satisfied) — the miss was CODEGEN's
+// own, REDUNDANT re-resolution of the same question via
+// `debt_strip_value_prefix_or_nova_trim_start` (emit_c.rs), which strips
+// `NovaValue_`/`Nova_` but — unlike its sibling `debt_strip_recv_c_prefix`,
+// the general method-dispatch receiver-key helper, already patched for D215
+// — never learned to strip `NovaTuple_`. `"NovaTuple_X".strip_prefix("Nova_")`
+// does not match (`NovaTuple_`'s 5th byte is `T`, not `_`), so the helper
+// returned the RAW, unstripped `"NovaTuple_X"` string, which never matches
+// any `all_methods`/`method_overloads` entry (those are keyed by the bare
+// Nova name `"X"`) — the lookup missed even when `X` genuinely declares
+// `@display`/`@debug`/`@to_str`.
+//
+// Bisected trigger (original report, `docs/plans/backlog-followups.md`
+// #248): "D215 named tuple + `.div_rem()` (a `Result[(T, T), E]`-returning
+// method) + StringBuilder in the same compile unit" — `.div_rem()` itself
+// dispatches fine (a separate, ordinary method call — the misresolution
+// is NOT there); the actual defect is downstream, when a named-tuple VALUE
+// obtained from such a call is later interpolated. `StringBuilder`
+// involvement is not incidental: `emit_interpolated_str` unconditionally
+// builds its result via `Nova_StringBuilder_method_append` regardless of
+// whether the user's own code ever names `StringBuilder` — every `${x}`
+// interpolation routes through it. Reproduced end-to-end against
+// `nova-bignum`'s in-flight `BigInt` value-record -> named-tuple migration:
+// `BigDecimal.to_str()`'s `"${int_part}"`, where `int_part` comes from
+// `BigInt @div_rem(...)`, hit exactly this path.
+//
+// Root-cause class: same family as №129 (single-key/"debt" prefix-strip
+// helpers omitting an ABI form) — here the omitted form is `NovaTuple_`,
+// mirroring the SAME fix `debt_strip_recv_c_prefix` already carries.
+//
+// Part of the SINGLE `spec_tests.conformance` folder-module.
+module spec_tests.conformance
+
+// (1) D410 to_str()-fallback form (no `#impl(Display)` — instance `to_str`
+// alone routes bare `${x}`, mirrors `str.from`/`@to_str` D410 rule).
+export type M248Frac(num int, den int)
+
+export fn M248Frac @to_str() -> str {
+    consume sb = StringBuilder.new()
+    sb.append(@num)
+    sb.append("/")
+    sb.append(@den)
+    return sb.into_str()
+}
+
+type M248DivError enum ByZero
+
+// Mirrors the bisected trigger exactly: a `Result[(T, T), E]`-returning
+// instance method (`.div_rem()`) on the named tuple, in the same
+// compile unit as `StringBuilder` usage (both here and, unconditionally,
+// inside `emit_interpolated_str` itself).
+export fn M248Frac @div_rem(other M248Frac) -> Result[(M248Frac, M248Frac), M248DivError] {
+    if other.num == 0 {
+        return Err(M248DivError.ByZero)
+    }
+    ro q = M248Frac(@num / other.num, @den / other.den)
+    ro r = M248Frac(@num % other.num, @den % other.den)
+    return Ok((q, r))
+}
+
+// (2) Explicit `#impl(Display)` form (separate dispatch branch, same helper).
+export type M248Vec2(x int, y int)
+
+#impl(Display)
+fn M248Vec2 @display(mut f Fmt) -> () {
+    f.write("(".bytes())
+    f.write(@x.to_str().bytes())
+    f.write(", ".bytes())
+    f.write(@y.to_str().bytes())
+    f.write(")".bytes())
+}
+
+test "named-tuple to_str() dispatches through bare ${x} interpolation (№248)" {
+    ro m248_a = M248Frac(6, 4)
+    assert("${m248_a}" == "6/4")
+}
+
+test "named-tuple value sourced from a Result-of-tuple method interpolates correctly (№248 bisected shape)" {
+    ro m248_a = M248Frac(10, 3)
+    ro m248_b = M248Frac(2, 1)
+    match m248_a.div_rem(m248_b) {
+        Ok((m248_q, m248_r)) => {
+            assert("q=${m248_q}" == "q=5/3")
+            assert("r=${m248_r}" == "r=0/0")
+        }
+        Err(_) => assert(false)
+    }
+}
+
+test "named-tuple #impl(Display) dispatches through bare ${x} interpolation (№248)" {
+    ro m248_v = M248Vec2(1, 2)
+    assert("${m248_v}" == "(1, 2)")
+}

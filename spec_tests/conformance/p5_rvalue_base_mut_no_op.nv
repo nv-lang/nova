@@ -18,7 +18,8 @@ type Wrapper3 {
 }
 
 fn make_w() -> Wrapper3 => {
-    inner: Vec38(x: 1, y: 2, z: 3),
+    // №145: positional — no defaults, D102 forbids named-arg form.
+    inner: Vec38(1, 2, 3),
 }
 
 test "rvalue base + mut method chain — compiles (mutation discarded)" {

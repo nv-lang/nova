@@ -1,7 +1,11 @@
 // D215 — Named tuple = stack-allocated VALUE type with named field access (`.x`,`.y`,`.z`).
-// Constructed via named args `T(x:.., y:.., z:..)`; copy-on-pass; identical perf to positional
-// (D123 codegen → C named struct, no pointer in signature). `@`-method receiver reads fields
-// via `@x`. POS conformance for D215 spec/decisions/02-types.md §3988 (Plan 120/128).
+// Constructed POSITIONALLY (`T(1.0, 2.0, 3.0)`) — the fields have no defaults,
+// so D102 ("required param — positional, optional — by name") forbids the
+// named-arg form for them; migrated off it as part of №145 (D102 enforcement
+// for named-tuple construction, previously unenforced). Copy-on-pass;
+// identical perf to positional (D123 codegen → C named struct, no pointer in
+// signature). `@`-method receiver reads fields via `@x`. POS conformance for
+// D215 spec/decisions/02-types.md §3988 (Plan 120/128).
 // Part of the SINGLE `spec_tests.conformance` folder-module; D-prefixed name avoids clashes.
 module spec_tests.conformance
 
@@ -11,14 +15,14 @@ type D215Vec3(x f64, y f64, z f64)
 // `=>` single-expression body, ro receiver (copy semantics), identical to record methods.
 fn D215Vec3 @sum() -> f64 => @x + @y + @z
 
-test "named tuple: named-args construction + by-name field access (D215)" {
-    ro v = D215Vec3(x: 1.0, y: 2.0, z: 3.0)
+test "named tuple: positional construction + by-name field access (D215)" {
+    ro v = D215Vec3(1.0, 2.0, 3.0)
     assert(v.x == 1.0)
     assert(v.y == 2.0)
     assert(v.z == 3.0)
 }
 
 test "named tuple: @-method receiver reads fields (D215)" {
-    ro v = D215Vec3(x: 1.0, y: 2.0, z: 3.0)
+    ro v = D215Vec3(1.0, 2.0, 3.0)
     assert(v.sum() == 6.0)
 }

@@ -5,11 +5,12 @@ type Point6(x f64, y f64)
 type Vec3_1(x f64, y f64, z f64)
 
 test "single-line named tuple parses + constructs" {
-    ro p = Point6(x: 1.0, y: 2.0)
+    // №145: positional — no defaults, D102 forbids named-arg form.
+    ro p = Point6(1.0, 2.0)
     assert(p.x == 1.0)
     assert(p.y == 2.0)
 
-    ro v = Vec3_1(x: 1.0, y: 2.0, z: 3.0)
+    ro v = Vec3_1(1.0, 2.0, 3.0)
     assert(v.x == 1.0)
     assert(v.y == 2.0)
     assert(v.z == 3.0)

@@ -17,7 +17,8 @@ type Outer4 {
 }
 
 fn Outer4.new() -> Self => {
-    inner: Vec34(x: 1, y: 2, z: 3),
+    // №145: positional — no defaults, D102 forbids named-arg form.
+    inner: Vec34(1, 2, 3),
 }
 
 fn Outer4 mut @foo() -> () {

@@ -3896,9 +3896,19 @@ impl CEmitter {
     /// THAT prefix first (single `strip_prefix`); else fall back to the (repeated)
     /// `Nova_` strip. Preserves the asymmetric strip semantics of the original
     /// inline call sites exactly (single-strip vs `trim_start_matches` repeat).
+    ///
+    /// №248 fix: `"NovaTuple_X"` (named-tuple D215 by-value C type) never
+    /// matched `Nova_`/`NovaValue_` (5th byte `T`≠`_`), so callers' lookup
+    /// key into `all_methods`/`method_overloads` (keyed by bare `"X"`)
+    /// always missed for named tuples — broke `${x}` interpolation display/
+    /// debug/to_str dispatch (fell to the numeric-cast CC-FAIL fallback)
+    /// even when `X` genuinely declares the method. Mirrors the sibling
+    /// `debt_strip_recv_c_prefix` (~line 55203), which already strips
+    /// `NovaTuple_` for the identical D215/Plan 120 reason.
     fn debt_strip_value_prefix_or_nova_trim_start(s: &str) -> String {
         s.strip_prefix("NovaValue_")
             .map(|s| s.trim_end_matches('*').trim().to_string())
+            .or_else(|| s.strip_prefix("NovaTuple_").map(|s| s.trim_end_matches('*').trim().to_string()))
             .unwrap_or_else(|| s.trim_start_matches("Nova_").trim_end_matches('*').trim().to_string())
     }
 
@@ -51544,10 +51554,25 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         let base = scr_ty.trim_end_matches('*').trim();
                         // Value records use `NovaValue_X` prefix; heap records use `Nova_X*`.
                         // Strip the right prefix so record_schemas lookup finds the entry.
+                        //
+                        // №145 fix (D221 §7/D222 §2, "Vec3 { x, y, z } = v —
+                        // same as record"): a named-tuple (D215) scrutinee's
+                        // `NovaTuple_X` C type matched neither prefix (5th
+                        // byte `T`≠`_`), so this returned "" — missed the
+                        // `record_schemas` entry named tuples DO carry
+                        // (`emit_named_tuple_type`, ~18322) and fell through
+                        // to the sum-variant `scr->payload...` branch below
+                        // (CC-FAIL: "no member named payload"). Sibling fix
+                        // to `debt_strip_recv_c_prefix`, D215/Plan 120.
                         if let Some(n) = base.strip_prefix("NovaValue_") {
                             n.to_string()
                         } else {
-                            Self::debt_strip_nova_prefix_or_empty(base).to_string()
+                            let nt = Self::debt_strip_novatuple_prefix_or_empty(base);
+                            if !nt.is_empty() {
+                                nt.to_string()
+                            } else {
+                                Self::debt_strip_nova_prefix_or_empty(base).to_string()
+                            }
                         }
                     });
                 let is_plain_record = self.record_schemas.contains_key(&type_name_from_path);

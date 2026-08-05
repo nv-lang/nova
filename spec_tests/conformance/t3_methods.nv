@@ -7,22 +7,23 @@ fn Vec35 @dot(other Vec35) -> f64 =>
     @x * other.x + @y * other.y + @z * other.z
 
 fn Vec35 @scale(s f64) -> Vec35 =>
-    Vec35(x: @x * s, y: @y * s, z: @z * s)
+    Vec35(@x * s, @y * s, @z * s)
 
 fn Vec35 @add(other Vec35) -> Vec35 =>
-    Vec35(x: @x + other.x, y: @y + other.y, z: @z + other.z)
+    Vec35(@x + other.x, @y + other.y, @z + other.z)
 
+// №145: positional construction — no defaults, D102 forbids named-arg form.
 test "Vec35 dot product" {
-    ro a = Vec35(x: 1.0, y: 0.0, z: 0.0)
-    ro b = Vec35(x: 0.0, y: 1.0, z: 0.0)
+    ro a = Vec35(1.0, 0.0, 0.0)
+    ro b = Vec35(0.0, 1.0, 0.0)
     assert(a.dot(b) == 0.0)
-    ro c = Vec35(x: 1.0, y: 2.0, z: 3.0)
-    ro d = Vec35(x: 1.0, y: 2.0, z: 3.0)
+    ro c = Vec35(1.0, 2.0, 3.0)
+    ro d = Vec35(1.0, 2.0, 3.0)
     assert(c.dot(d) == 14.0)
 }
 
 test "Vec35 scale" {
-    ro v = Vec35(x: 1.0, y: 2.0, z: 3.0)
+    ro v = Vec35(1.0, 2.0, 3.0)
     ro scaled = v.scale(2.0)
     assert(scaled.x == 2.0)
     assert(scaled.y == 4.0)
@@ -30,8 +31,8 @@ test "Vec35 scale" {
 }
 
 test "Vec35 add" {
-    ro a = Vec35(x: 1.0, y: 2.0, z: 3.0)
-    ro b = Vec35(x: 4.0, y: 5.0, z: 6.0)
+    ro a = Vec35(1.0, 2.0, 3.0)
+    ro b = Vec35(4.0, 5.0, 6.0)
     ro sum = a.add(b)
     assert(sum.x == 5.0)
     assert(sum.y == 7.0)

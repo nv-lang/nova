@@ -7875,6 +7875,11 @@ impl<'a> TypeCheckCtx<'a> {
                 self.check_priv_pattern_recursive_inner(
                     &d.pattern, scrut_ty.as_ref(), true, errors,
                 );
+                // №145 gap 3: positional `(…)` destructure of a NAMED tuple
+                // is forbidden by canon — curly `{…}` only.
+                self.check_positional_destructure_on_named_tuple(
+                    &d.pattern, scrut_ty.as_ref(), errors,
+                );
                 // Plan 124.8 (D175 amend): track ro-binding names. `ro x = expr`
                 // делает binding immutable — даже `mut field` через `x.f = ...`
                 // блокируется (Rust-style binding dominates).
@@ -11557,6 +11562,65 @@ impl<'a> TypeCheckCtx<'a> {
     //
     // The `rest: bool` flag on Pattern::Record marks `..` syntactic
     // presence; it does NOT bind anything, so does NOT leak priv (D221 §3).
+
+    /// №145 (D215/D221/D222 gap 3, owner ruling 2026-07-27): a bracket kind
+    /// encodes HOW fields are addressed — round for POSITION, curly for
+    /// NAME. A positional tuple (`type X(T, U)`, unnamed fields) destructures
+    /// `ro (a, b) = t` only; a NAMED tuple (`type X(a T, b U)`, D215) HAS
+    /// names, so it destructures `ro { a, b } = t` only — the round form is
+    /// forbidden by the canon ("iначе вторая дверь и хрупкость: перестановка
+    /// полей при рефакторинге молча меняет значения местами"). Before this
+    /// check the round form on a named tuple compiled all the way to a
+    /// CC-FAIL deep in codegen (`initializing '_NovaTuple2' with an
+    /// expression of incompatible type 'NovaTuple_X'` — the legacy
+    /// positional-tuple lowering, `_NovaTupleN`, was never taught about the
+    /// `NovaTuple_X` named-tuple ABI) — an un-actionable internal-C leak
+    /// instead of a clear Nova-level diagnostic pointing at the canon.
+    /// Scope: the DIRECT `Stmt::Let` scrutinee only (mirrors
+    /// `check_priv_pattern_recursive_inner`'s own `Stmt::Let`-only D411
+    /// `enforce_binding_rest` scoping) — nested nested Pattern::Tuple
+    /// sub-patterns are `t_provides_field`-agnostic (no concrete element
+    /// type per position for an ad-hoc tuple) and are left to the existing
+    /// (permissive) sub-pattern walk, matching the pre-existing scope note
+    /// on `check_priv_pattern_recursive` just above.
+    fn check_positional_destructure_on_named_tuple(
+        &self,
+        pattern: &Pattern,
+        scrutinee_ty: Option<&TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        let Pattern::Tuple(_, span) = pattern else { return };
+        let tname_opt: Option<&str> = match scrutinee_ty {
+            Some(TypeRef::Named { path, .. }) => path.last().map(|s| s.as_str()),
+            Some(TypeRef::Readonly(inner, _)) => match inner.as_ref() {
+                TypeRef::Named { path, .. } => path.last().map(|s| s.as_str()),
+                _ => None,
+            },
+            _ => None,
+        };
+        let Some(tname) = tname_opt else { return };
+        let Some(td) = self.types.get(tname) else { return };
+        if let TypeDeclKind::NamedTuple(fields) = &td.kind {
+            let field_list: Vec<&str> = fields.iter().map(|f| f.name.as_str()).collect();
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_NAMED_TUPLE_POSITIONAL_DESTRUCTURE] named tuple `{ty}` \
+                     cannot be destructured with the POSITIONAL form `(…)` — \
+                     it has field names, so it destructures by NAME only \
+                     (D215/D221/D222 canon: round brackets address by \
+                     position, curly brackets address by name; a named \
+                     tuple always has names). Hint: use `{{ {fields} }}` \
+                     instead of `({ph})` (partial lists are allowed with an \
+                     explicit `..`, e.g. `{{ {first}, .. }}`).",
+                    ty = tname,
+                    fields = field_list.join(", "),
+                    ph = field_list.iter().map(|_| "_").collect::<Vec<_>>().join(", "),
+                    first = field_list.first().copied().unwrap_or("field"),
+                ),
+                *span,
+            ));
+        }
+    }
     fn check_priv_pattern_recursive(
         &self,
         pattern: &Pattern,
@@ -15497,7 +15561,8 @@ impl<'a> TypeCheckCtx<'a> {
                 let base_allowed = self.priv_access_allowed_base(name.as_str());
                 for arg in args {
                     if let CallArg::Named { name: field_name, value: arg_value } = arg {
-                        if !fields.iter().any(|f| &f.name == field_name) {
+                        let field_decl = fields.iter().find(|f| &f.name == field_name);
+                        if field_decl.is_none() {
                             let avail: Vec<&str> =
                                 fields.iter().map(|f| f.name.as_str()).collect();
                             let mut diag = Diagnostic::new(
@@ -15516,6 +15581,42 @@ impl<'a> TypeCheckCtx<'a> {
                                 ));
                             }
                             errors.push(diag);
+                        } else if let Some(fd) = field_decl {
+                            // №145 (D102, `03-syntax.md:5327`): a REQUIRED
+                            // param — one WITHOUT a default — binds
+                            // POSITIONALLY only; keyword form is reserved
+                            // for OPTIONAL (defaulted) params. This mirrors
+                            // `check_keyword_only`'s free-fn/static-method
+                            // rule (Plan 50) — the named-tuple constructor
+                            // call (`TypeName(...)`) never routed through
+                            // that check at all (it resolves via
+                            // `self.sig.fn_decls`/`method_table`, and a
+                            // type name is neither), so this exact class of
+                            // violation compiled silently until now
+                            // (measured: `Complex(re: 0.0, im: 1.0)` for a
+                            // no-defaults `Complex(re f64, im f64)` passed
+                            // clean). D215/D222's own doc examples show a
+                            // named-arg construction call for a type with
+                            // NO defaults (`Vec3(x: 1.0, y: 2.0, z: 3.0)`)
+                            // — those are spec bugs, not counter-evidence
+                            // (owner ruling 2026-07-27: canon is positional
+                            // `Complex(0.0, 1.0)`; the doc examples need a
+                            // D-amendment, tracked separately, NOT fixed by
+                            // loosening this rule).
+                            if fd.default.is_none() {
+                                errors.push(Diagnostic::new(
+                                    format!(
+                                        "[E_TUPLE_NAMED_ARG_NO_DEFAULT] named tuple \
+                                         `{ty}`'s field `{f}` has no default — it is a \
+                                         REQUIRED param and must be passed positionally, \
+                                         not by name (D102: keyword args are reserved \
+                                         for optional/defaulted params). Hint: pass \
+                                         `{f}`'s value positionally instead of `{f}: …`.",
+                                        ty = name, f = field_name,
+                                    ),
+                                    arg_value.span,
+                                ));
+                            }
                         }
                         if has_priv && !base_allowed {
                             if let Some(fd) = fields.iter().find(|f| &f.name == field_name) {

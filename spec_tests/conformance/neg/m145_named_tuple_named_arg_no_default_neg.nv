@@ -1,0 +1,17 @@
+// №145 companion NEG (gap 2 — D102 enforcement, `03-syntax.md:5327`): a
+// named arg for a named-tuple field WITHOUT a default must be REJECTED —
+// keyword form is reserved for OPTIONAL (defaulted) params, the required
+// param binds positionally only. Measured before this fix: `Complex(re:
+// 0.0, im: 1.0)` for `Complex(re f64, im f64)` (no defaults) compiled clean
+// (PASS 1/0) — the compiler accepted what the spec (D102) forbids. Sibling:
+// ../m145_named_tuple_destructure_and_d102_pos.nv (legal forms, positive).
+//
+// EXPECT_COMPILE_ERROR E_TUPLE_NAMED_ARG_NO_DEFAULT
+
+module neg.m145_named_tuple_named_arg_no_default_neg
+
+type M145NoDefault(re f64, im f64)
+
+fn bad() -> M145NoDefault {
+    M145NoDefault(re: 0.0, im: 1.0)
+}
