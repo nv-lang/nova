@@ -1220,6 +1220,16 @@ pub struct TypeDecl {
     /// не участвующих в consume-flow — no-op (flag сохраняется).
     /// Backward-compat: default false.
     pub zero_on_move: bool,
+    /// Plan 248 (mech, wave 1, p248-mech): `#no_copy type X { ... }` —
+    /// type-level affine marker (D133 таблица «искомое»: значение нельзя
+    /// связать вторым именем, но забыть — можно, в отличие от `consume`
+    /// не требует расхода на каждом exit-пути). Checker-only признак —
+    /// codegen (`emit_c.rs`) его не читает. Wave 1 строит только
+    /// парсер/AST/реестр-с-уровнем/транзитивность; enforcement
+    /// (запрет второго имени) — отдельная волна (p248-*), намеренно
+    /// не подключена здесь (поведенческая нейтральность волны 1).
+    /// Backward-compat: default false.
+    pub no_copy: bool,
     /// Plan 124.6 (D225): `#pub_to(TypeA, TypeB, ...)` — selective friend visibility.
     /// The type's private fields are readable from the bodies of the listed types
     /// (as if those types were in the same module). Empty Vec = no extra grants

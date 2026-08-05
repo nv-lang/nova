@@ -1367,7 +1367,7 @@ impl Parser {
         // Помечает str-keyed map-тип для D55 map-coercion (`{field: v}`).
         // Парсится ПЕРЕД `export` (консистентно с `#cfg`) и только перед
         // `type`. Контекстный разбор после `#` (не keyword).
-        let (type_attrs, impl_protocols, zero_on_move_attr, pub_to_attr, serde_attrs) = self.parse_type_attrs()?;
+        let (type_attrs, impl_protocols, zero_on_move_attr, pub_to_attr, serde_attrs, no_copy_attr) = self.parse_type_attrs()?;
 
         // Plan 110.7.3.a: pre-parse #cancel_safe здесь чтобы canonical
         // form `#cancel_safe\nexternal fn ...` работала (attribute может
@@ -1704,12 +1704,13 @@ impl Parser {
         // Plan 124.8 [M-124.8-zero-on-move]: `#zero_on_move` — также только
         // перед `type`.
         // Plan 124.6 (D225): `#pub_to(...)` — также только перед `type`.
-        if (!type_attrs.is_empty() || zero_on_move_attr || !pub_to_attr.is_empty() || !serde_attrs.is_empty())
+        // Plan 248 (mech, wave 1): `#no_copy` — также только перед `type`.
+        if (!type_attrs.is_empty() || zero_on_move_attr || !pub_to_attr.is_empty() || !serde_attrs.is_empty() || no_copy_attr)
             && !matches!(self.peek().kind, TokenKind::KwType)
         {
             let span = self.peek().span;
             return Err(Diagnostic::new(
-                "`#from_fields` / `#from_pairs` / `#zero_on_move` / `#pub_to` / `#serde` are only valid before `type`",
+                "`#from_fields` / `#from_pairs` / `#zero_on_move` / `#pub_to` / `#serde` / `#no_copy` are only valid before `type`",
                 span,
             ));
         }
@@ -1743,7 +1744,7 @@ impl Parser {
         }
         let parsed = match self.peek().kind {
             TokenKind::KwFn => Item::Fn(self.parse_fn(is_export, is_external, extern_abi, realtime_attr, blocking_attr, thread_affine_attr, cancel_safe_attr, coerce_attr, impl_protocols, contract_attrs, pending_doc.clone(), pending_doc_attrs.clone(), file_private)?),
-            TokenKind::KwType => Item::Type(self.parse_type_decl(is_export, is_external, type_attrs, impl_protocols, zero_on_move_attr, pub_to_attr, serde_attrs, pending_doc.clone(), pending_doc_attrs.clone(), file_private)?),
+            TokenKind::KwType => Item::Type(self.parse_type_decl(is_export, is_external, type_attrs, impl_protocols, zero_on_move_attr, pub_to_attr, serde_attrs, no_copy_attr, pending_doc.clone(), pending_doc_attrs.clone(), file_private)?),
             TokenKind::KwLet => {
                 if let Some(d) = &pending_doc {
                     // Plan 45 Ф.3: orphan `///` warning — doc-comment'ы
@@ -2634,9 +2635,9 @@ impl Parser {
     /// - `#pub_to(TypeA, TypeB, ...)` — Plan 124.6 (D225): selective
     ///   friend visibility; listed types get private-field read access.
     ///
-    /// Returns `(attrs, impl_protocols, zero_on_move, pub_to, serde_attrs)`.
+    /// Returns `(attrs, impl_protocols, zero_on_move, pub_to, serde_attrs, no_copy)`.
     fn parse_type_attrs(&mut self)
-        -> Result<(Vec<crate::ast::TypeAttr>, Vec<String>, bool, Vec<String>, Vec<crate::ast::SerdeArg>), Diagnostic>
+        -> Result<(Vec<crate::ast::TypeAttr>, Vec<String>, bool, Vec<String>, Vec<crate::ast::SerdeArg>, bool), Diagnostic>
     {
         let mut attrs = Vec::new();
         let mut impl_protocols: Vec<String> = Vec::new();
@@ -2647,6 +2648,12 @@ impl Parser {
         let mut pub_to: Vec<String> = Vec::new();
         // Plan 180 Ф.6 (D382): `#serde(tag=/content=/untagged)` — serde tagging mode.
         let mut serde_attrs: Vec<crate::ast::SerdeArg> = Vec::new();
+        // Plan 248 (mech, wave 1, p248-mech): `#no_copy` — type-level affine
+        // marker (D133 таблица, «искомое»: значение нельзя связать вторым
+        // именем, но забыть — можно; в отличие от `consume` не требует
+        // расхода на каждом exit-пути). Bare marker, no args, по образцу
+        // `zero_on_move`.
+        let mut no_copy: bool = false;
         loop {
             if !matches!(self.peek().kind, TokenKind::Hash) {
                 break;
@@ -2800,6 +2807,21 @@ impl Parser {
                     self.bump(); // zero_on_move
                     zero_on_move = true;
                 }
+                "no_copy" => {
+                    // Plan 248 (mech, wave 1): `#no_copy type X { ... }` —
+                    // affine marker. Bare marker, no args, duplicate-check
+                    // — same shape as `#zero_on_move` above.
+                    if no_copy {
+                        let span = self.peek().span;
+                        return Err(Diagnostic::new(
+                            "duplicate `#no_copy` attribute",
+                            span,
+                        ));
+                    }
+                    self.bump(); // #
+                    self.bump(); // no_copy
+                    no_copy = true;
+                }
                 "pub_to" => {
                     // Plan 124.6 (D225): `#pub_to(TypeA, TypeB, ...)` — selective
                     // friend visibility. The listed types get private-field read
@@ -2864,7 +2886,7 @@ impl Parser {
             }
             self.skip_newlines();
         }
-        Ok((attrs, impl_protocols, zero_on_move, pub_to, serde_attrs))
+        Ok((attrs, impl_protocols, zero_on_move, pub_to, serde_attrs, no_copy))
     }
 
     /// Plan 180 Ф.6 (D382): parse ONE `#serde(...)` annotation, appending its
@@ -4096,7 +4118,7 @@ impl Parser {
 
     // ─── type declarations ───────────────────────────────────────────────
 
-    fn parse_type_decl(&mut self, is_export: bool, is_external: bool, attrs: Vec<crate::ast::TypeAttr>, impl_protocols: Vec<String>, zero_on_move: bool, pub_to: Vec<String>, serde_attrs: Vec<crate::ast::SerdeArg>, doc: Option<crate::ast::DocBlock>, doc_attrs: Vec<crate::ast::DocAttr>, file_private: bool) -> Result<TypeDecl, Diagnostic> {
+    fn parse_type_decl(&mut self, is_export: bool, is_external: bool, attrs: Vec<crate::ast::TypeAttr>, impl_protocols: Vec<String>, zero_on_move: bool, pub_to: Vec<String>, serde_attrs: Vec<crate::ast::SerdeArg>, no_copy: bool, doc: Option<crate::ast::DocBlock>, doc_attrs: Vec<crate::ast::DocAttr>, file_private: bool) -> Result<TypeDecl, Diagnostic> {
         let start = self.peek().span;
         self.expect(&TokenKind::KwType)?;
         let (name, name_span) = self.parse_ident()?;
@@ -4350,6 +4372,7 @@ impl Parser {
                 field_default_visibility,
                 allocation,
                 zero_on_move,
+                no_copy,
                 pub_to: pub_to.clone(),
                 file_private,
                 serde_attrs: serde_attrs.clone(),
@@ -4438,6 +4461,7 @@ impl Parser {
                     allocation: crate::ast::AllocKind::Heap,
                     impl_protocols: impl_protocols.clone(),
                     zero_on_move,
+                    no_copy,
                     pub_to: pub_to.clone(),
                     file_private,
                     serde_attrs: serde_attrs.clone(),
@@ -4599,6 +4623,7 @@ impl Parser {
             allocation,
             impl_protocols,
             zero_on_move,
+            no_copy,
             pub_to,
             file_private,
             serde_attrs,
