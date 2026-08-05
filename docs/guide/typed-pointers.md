@@ -118,6 +118,12 @@ extern "C" fn os_read(fd int, buf *mut uninit u8, n usize) -> int
 //                       arrow re-pointability is the binding's concern
 ```
 
+> **Why `*mut uninit` and not just `*uninit`.** Today a bare `*uninit T` also
+> permits writes (writing into uninitialised memory is initialisation, not
+> mutation), so both forms compile. `*mut uninit T` is the forward-compatible
+> spelling: it survives the fix tracked as `[M-174.5-pointer-ops-methods]`,
+> after which a bare `*uninit T` becomes read-only.
+
 The pointee axes (`mut` and `uninit`) commute on a value-T pointee and are
 both written postfix; read-only has no explicit token — it is what's left
 when neither is written.
