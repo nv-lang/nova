@@ -34608,6 +34608,25 @@ enum VarState {
     MaybeConsumed(Span),
 }
 
+/// Plan 248 (mech, wave 1, p248-mech): строгость аффинности типа —
+/// достраивает D133-таблицу (см. `docs/plans/248-shared-handles-linearity.md`,
+/// раздел «МЕХАНИЗМ ЗАПРЕТА КОПИРОВАНИЯ — РЕШЁН») до полной. `MustConsume` —
+/// существующая `type X consume {...}` семантика (потребить РОВНО ≥1 раз,
+/// обязательный расход на каждом exit-пути — D133/D180 Rule 1/2, как
+/// сегодня). `Affine` — новая `#no_copy type X {...}` семантика (потребить
+/// ≤1 раз: второе имя запрещено, но забыть — можно; никакого exit-path
+/// расхода не требуется). Wave 1 строит только сам уровень + его
+/// транзитивное распространение (`type_consume_level`/`_v`) — Rule 1/2 (и
+/// любые новые no_copy-диагностики) на `Affine` пока НЕ реагируют
+/// (`consume_types`/`type_is_consume` ниже читают только `MustConsume`,
+/// байт-в-байт как до этой волны) — подключение оставлено следующей волне
+/// намеренно, ради поведенческой нейтральности волны 1.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ConsumeLevel {
+    MustConsume,
+    Affine,
+}
+
 /// Plan 100.1 (D133 / D6): registry consume-типов модуля. Заполняется
 /// pre-pass'ом до `check_consume`. Используется `type_is_consume`
 /// для рекурсивной классификации (record-field consume-types,
@@ -34616,8 +34635,22 @@ enum VarState {
 /// **НЕ путать с `ConsumeRegistry`** (Plan 73 D131 — registry consume-
 /// методов и consume-параметров; flat-name based).
 struct LinearityRegistry {
-    /// Имена типов, объявленных `type X consume {...}`.
+    /// Имена типов, объявленных `type X consume {...}`. Оставлен
+    /// НЕТРОНУТЫМ волной p248-mech (только `MustConsume`-уровень,
+    /// как всегда) — читается ~20 существующими сайтами Rule 1/2 и
+    /// смежных проверок; `#no_copy`-типы сюда НЕ попадают (см.
+    /// `consume_levels` ниже).
     consume_types: HashSet<String>,
+    /// Plan 248 (mech, wave 1): имя → уровень строгости (`ConsumeLevel`),
+    /// покрывает ОБА уровня — существующий `MustConsume` (те же имена,
+    /// что и `consume_types` выше) И новый `Affine` (`#no_copy`-типы).
+    /// Питает ТОЛЬКО транзитивный обход `type_consume_level`/`_v` —
+    /// Rule 1 (`E_CONSUME_KEYWORD_MISSING`) / Rule 2
+    /// (`E_VIEW_BINDING_FORBIDDEN`) читают `consume_types`/`type_is_consume`
+    /// (см. их доккомментарии), которые остаются `MustConsume`-only —
+    /// подключение `Affine` к enforcement-путям сознательно оставлено
+    /// следующей волне.
+    consume_levels: HashMap<String, ConsumeLevel>,
     /// Consume-методы по типу: type_name → Vec<method_name>.
     consume_methods: HashMap<String, Vec<String>>,
     /// Все имена типов, объявленных ЛОКАЛЬНО в модуле (независимо от consume).
@@ -34643,6 +34676,7 @@ struct LinearityRegistry {
 impl LinearityRegistry {
     fn build(module: &Module) -> Self {
         let mut consume_types = HashSet::new();
+        let mut consume_levels: HashMap<String, ConsumeLevel> = HashMap::new();
         let mut consume_methods: HashMap<String, Vec<String>> = HashMap::new();
         let mut local_type_names = HashSet::new();
         let mut cleanup_effect_rows: HashMap<String, Vec<TypeRef>> = HashMap::new();
@@ -34680,6 +34714,13 @@ impl LinearityRegistry {
                 local_type_names.insert(td.name.clone());
                 if td.consume {
                     consume_types.insert(td.name.clone());
+                    consume_levels.insert(td.name.clone(), ConsumeLevel::MustConsume);
+                } else if td.no_copy {
+                    // Plan 248 (mech, wave 1): `#no_copy` — Affine level.
+                    // Intentionally NOT inserted into `consume_types` — see
+                    // that field's doc comment (Rule 1/2 неизменны в этой
+                    // волне).
+                    consume_levels.insert(td.name.clone(), ConsumeLevel::Affine);
                 }
             }
             if let Item::Fn(fd) = item {
@@ -34715,7 +34756,7 @@ impl LinearityRegistry {
             }
         }
 
-        LinearityRegistry { consume_types, consume_methods, local_type_names, cleanup_effect_rows }
+        LinearityRegistry { consume_types, consume_levels, consume_methods, local_type_names, cleanup_effect_rows }
     }
 
     /// D432-амендмент 2026-08-04 (№315 fix): declared `@cleanup`'s effect
@@ -34751,77 +34792,126 @@ impl LinearityRegistry {
     /// определяет, является ли тип consume через wrap-transitivity.
     /// Bootstrap: generic-param без bound → false (silent-ignore;
     /// 100.2 закроет через `[T consume]`).
+    ///
+    /// Plan 248 (mech, wave 1, p248-mech): реализован через
+    /// `type_consume_level` — единый обход (см. его доккомментарий),
+    /// коллапсированный до bool так, чтобы результат остался БАЙТ-В-БАЙТ
+    /// таким же, каким был до этой волны: `true` ТОЛЬКО для `MustConsume`.
+    /// Новый `Affine`-уровень (`#no_copy`) этой функцией не виден —
+    /// это сознательное сохранение прежнего поведения (Rule 1/2 читают
+    /// именно её), а не пробел.
     fn type_is_consume(&self, t: &TypeRef, module: &Module) -> bool {
+        matches!(self.type_consume_level(t, module), Some(ConsumeLevel::MustConsume))
+    }
+
+    /// Plan 248 (mech, wave 1, p248-mech): `type_consume_level(TypeRef)` —
+    /// уровень строгости (`ConsumeLevel`), рекурсивно определяемый через
+    /// ту же wrap-transitivity, что и `type_is_consume` (поля записи,
+    /// варианты суммы, обёртки-дженерики, кортежи) — ОДИН обход, не
+    /// раздвоенный: `type_is_consume` — тонкая обёртка над этой функцией
+    /// (см. выше), отдельного parallel-walk для bool-варианта нет.
+    /// Возвращает `None`, если тип (транзитивно) не несёт ни одного из
+    /// двух уровней. `MustConsume` доминирует над `Affine` — если тип
+    /// комбинирует оба (например, record с одним consume-полем и одним
+    /// `#no_copy`-полем), доминирует более строгий уровень, точно так
+    /// же, как старый bool-обход был бы `true`, найдя consume ГДЕ УГОДНО
+    /// в структуре — обход НЕ short-circuit'ит на первой находке уровня,
+    /// а собирает максимум по всем полям/вариантам/дженерикам.
+    fn type_consume_level(&self, t: &TypeRef, module: &Module) -> Option<ConsumeLevel> {
         // [M-checker-recursive-type-overflow]: the field-walk below follows
         // named-type references, which form a CYCLE for a recursive type
         // (`type Tree | Leaf | Node(int, Tree, Tree)`, or an invalid value
         // self-cycle `type N value { next N }`). Without a guard the recursion
         // never terminates → stack overflow during `nova check`. Thread a
         // visited-set keyed by the named type currently being resolved; a
-        // re-entry returns `false` (consume-ness cannot be "introduced" by a
+        // re-entry returns `None` (a level cannot be "introduced" by a
         // back-edge — the field that closes the cycle is already being checked,
-        // and a genuine consume field elsewhere is still discovered on its own
-        // forward edge). Public signature unchanged.
+        // and a genuine consume/no_copy field elsewhere is still discovered on
+        // its own forward edge). Public signature unchanged.
         let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
-        self.type_is_consume_v(t, module, &mut visited)
+        self.type_consume_level_v(t, module, &mut visited)
     }
 
-    fn type_is_consume_v(
+    /// `MustConsume` doминирует над `Affine` — combiner for the exhaustive
+    /// (non-short-circuiting) level walk in `type_consume_level_v`.
+    fn combine_consume_level(a: Option<ConsumeLevel>, b: Option<ConsumeLevel>) -> Option<ConsumeLevel> {
+        match (a, b) {
+            (Some(ConsumeLevel::MustConsume), _) | (_, Some(ConsumeLevel::MustConsume)) =>
+                Some(ConsumeLevel::MustConsume),
+            (Some(ConsumeLevel::Affine), _) | (_, Some(ConsumeLevel::Affine)) =>
+                Some(ConsumeLevel::Affine),
+            (None, None) => None,
+        }
+    }
+
+    fn type_consume_level_v(
         &self,
         t: &TypeRef,
         module: &Module,
         visited: &mut std::collections::HashSet<String>,
-    ) -> bool {
+    ) -> Option<ConsumeLevel> {
         match t {
             TypeRef::Named { path, generics, .. } => {
-                // Direct consume-type.
+                // Direct consume/no_copy-type.
                 let name = path.last().cloned().unwrap_or_default();
-                if self.consume_types.contains(&name) {
-                    return true;
-                }
+                let mut level = self.consume_levels.get(&name).copied();
                 // Generic wrap: Option[Transaction], Box[Tx], Wrapper[T].
-                if generics.iter().any(|a| self.type_is_consume_v(a, module, visited)) {
-                    return true;
+                for a in generics {
+                    level = Self::combine_consume_level(level, self.type_consume_level_v(a, module, visited));
                 }
-                // Record/sum lookup: own fields consume-typed? Guard against
-                // recursive named-type cycles (see type_is_consume doc above).
+                // Record/sum lookup: own fields consume/no_copy-typed? Guard
+                // against recursive named-type cycles (see doc above).
                 if !visited.insert(name.clone()) {
-                    return false;
+                    return level;
                 }
-                let result = (|| {
+                let field_level = (|| {
                     for item in &module.items {
                         if let Item::Type(td) = item {
                             if td.name == name {
                                 return match &td.kind {
                                     TypeDeclKind::Record(fields) =>
-                                        fields.iter().any(|f|
-                                            f.consume || self.type_is_consume_v(&f.ty, module, visited)),
+                                        fields.iter().fold(None, |acc, f| {
+                                            let f_level = if f.consume {
+                                                Some(ConsumeLevel::MustConsume)
+                                            } else {
+                                                self.type_consume_level_v(&f.ty, module, visited)
+                                            };
+                                            Self::combine_consume_level(acc, f_level)
+                                        }),
                                     TypeDeclKind::Sum(variants) =>
-                                        variants.iter().any(|v|
-                                            match &v.kind {
+                                        variants.iter().fold(None, |acc, v| {
+                                            let v_level = match &v.kind {
                                                 SumVariantKind::Tuple(payloads) =>
-                                                    payloads.iter().any(|p|
-                                                        self.type_is_consume_v(p, module, visited)),
+                                                    payloads.iter().fold(None, |a2, p|
+                                                        Self::combine_consume_level(a2, self.type_consume_level_v(p, module, visited))),
                                                 SumVariantKind::Record(fields) =>
-                                                    fields.iter().any(|f|
-                                                        f.consume || self.type_is_consume_v(&f.ty, module, visited)),
-                                                SumVariantKind::Unit => false,
-                                            }),
-                                    _ => false,
+                                                    fields.iter().fold(None, |a2, f| {
+                                                        let f_level = if f.consume {
+                                                            Some(ConsumeLevel::MustConsume)
+                                                        } else {
+                                                            self.type_consume_level_v(&f.ty, module, visited)
+                                                        };
+                                                        Self::combine_consume_level(a2, f_level)
+                                                    }),
+                                                SumVariantKind::Unit => None,
+                                            };
+                                            Self::combine_consume_level(acc, v_level)
+                                        }),
+                                    _ => None,
                                 };
                             }
                         }
                     }
-                    false
+                    None
                 })();
                 visited.remove(&name);
-                result
+                Self::combine_consume_level(level, field_level)
             }
             TypeRef::Tuple(elems, _) =>
-                elems.iter().any(|e| self.type_is_consume_v(e, module, visited)),
-            TypeRef::Array(inner, _) => self.type_is_consume_v(inner, module, visited),
+                elems.iter().fold(None, |acc, e| Self::combine_consume_level(acc, self.type_consume_level_v(e, module, visited))),
+            TypeRef::Array(inner, _) => self.type_consume_level_v(inner, module, visited),
             // Generic-param без bound — bootstrap silent-ignore.
-            _ => false,
+            _ => None,
         }
     }
 
@@ -34843,6 +34933,12 @@ impl LinearityRegistry {
             if let Item::Type(td) = item {
                 if td.consume {
                     self.consume_types.insert(td.name.clone());
+                    self.consume_levels.insert(td.name.clone(), ConsumeLevel::MustConsume);
+                } else if td.no_copy {
+                    // Plan 248 (mech, wave 1): external/builtin `#no_copy`
+                    // types — same Affine-only registration as the local
+                    // loop in `build()` above.
+                    self.consume_levels.insert(td.name.clone(), ConsumeLevel::Affine);
                 }
             }
             if let Item::Fn(fd) = item {
