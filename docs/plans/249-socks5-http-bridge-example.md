@@ -1,8 +1,9 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
-# План 249 — `examples/net/socks5_http_bridge`: SOCKS5-клиент + HTTP↔SOCKS5-мост
+# План 249 — `examples/net/socks5_http_bridge/`: SOCKS5-клиент + HTTP↔SOCKS5-мост
 
-**Статус:** 📋 НАБРОСОК (написан интегратором по слову владельца 2026-08-04; реализация НЕ
-начата). **Приоритет:** P3 (новый пример; не блокер релиза v0.1).
+**Статус:** 📋 НАБРОСОК (написан интегратором по слову владельца 2026-08-04; ревизия
+док-сессии 2026-08-05 — пины линейности/half-close, форма package-примера, дом-папка;
+реализация НЕ начата). **Приоритет:** P3 (новый пример; не блокер релиза v0.1).
 **Источник:** реестр [221.1](221.1-bug-sweep.md) №360, `[M-socks5-client-missing]`
 (`docs/plans/backlog-followups.md`) — вопрос владельца о feasibility.
 
@@ -20,15 +21,24 @@ Windows принимают только **HTTP-прокси** и не умеют
 
 **Языковая ценность примера** (независимо от личного сценария): демонстрирует реализацию
 чужого бинарного протокола (SOCKS5, RFC 1928/1929) поверх сырого `std.net`, и
-двусторонний байтовый relay через `spawn` — класс задач, которого среди нынешних 12
-примеров `nova-polaris` нет вовсе (все они — HTTP-уровень поверх готового фреймворка).
+двусторонний байтовый relay через `spawn` + `into_split` — класс задач, которого среди
+нынешних 12 примеров `nova-polaris` нет вовсе (все они — HTTP-уровень поверх готового
+фреймворка).
 
-## 1. Разведка (сделана интегратором 2026-08-04, до этого плана)
+## 1. Разведка (интегратор 2026-08-04 + док-сессия 2026-08-05)
 
 - **SOCKS5-клиента нет нигде** в экосистеме — грепом подтверждено: `std`, `nova-http`,
   `nova-polaris`, `nova-tls` — ноль носителей.
 - **Уже есть, переиспользуется без изменений:**
   - `std.net` (`TcpListener`/`TcpStream`/`Net`-эффект) — сырой TCP;
+  - **`TcpStream consume @into_split() -> (TcpReadHalf, TcpWriteHalf)`**
+    (`std/src/net/tcp.nv:320-384`) — половины по доке «могут работать в разных
+    файберах»; двусторонний relay выразим в линейной модели БЕЗ доработки std:
+    файбер A владеет `client.read + upstream.write`, файбер B — зеркальной парой;
+  - `TcpStream mut @shutdown()` (`std/src/net/tcp.nv:246`) — есть; семантика
+    close половинок — пин Ф.0 (см. §4);
+  - `std.os`: `env(key) Os -> Option[str]`, `args() Os -> []str` — источник
+    конфига моста (адрес прокси, креды, порт listen);
   - `Method.Connect` — готовый вариант `Method`-enum (`nova-http/src/method.nv:16`);
   - `ServerResponse.upgrade(fn(TcpStream) Net -> ())` (`nova-polaris/src/ws_upgrade.nv:
     110-115`) — ОБЩИЙ (не WS-специфичный) хук «захвата сокета после ответа»; структурно
@@ -38,8 +48,12 @@ Windows принимают только **HTTP-прокси** и не умеют
   `ServerRequest.@url()` парсит только обычный `Url`. Значит `upgrade()`-хук через Router
   подключить нельзя без доработки самого фреймворка (вне объёма примера) — **пример
   ОБЯЗАН идти поверх сырого `std.net`**, минуя `polaris` целиком.
-- **Дом:** `examples/net/` (репа `nova`, категория уже существует —
-  `echo_client.nv`/`echo_server.nv`), **НЕ** `nova-polaris/examples/`.
+- **Дом:** под-папка **`examples/net/socks5_http_bridge/`** (репа `nova`; модель
+  модулей «папка = один модуль из равноправных файлов»): `main.nv` (мост) +
+  `socks5.nv` (клиент) + `socks5_test.nv` (тесты рядом с модулем, по
+  test-conventions) + `README.md`/`README.ru.md`. Соседние `echo_client.nv`/
+  `echo_server.nv` остаются одиночными файлами — прецедент оформления README, не
+  структуры. **НЕ** `nova-polaris/examples/`.
 
 ## 2. Объём V1
 
@@ -50,19 +64,23 @@ SOCKS4/4a; GSSAPI-аутентификация (RFC 1961, редкая в про
 
 ## 3. Дизайн
 
-### 3.1 `std.socks` — SOCKS5-клиент (новый модуль)
+Тело плана написано под **package-пример** (рекомендация §7 в.1): модуль
+`socks5.nv` живёт внутри папки примера, `export` не нужен (равноправные файлы
+одного модуля видят друг друга), на std-поверхность не претендует.
+
+### 3.1 `socks5.nv` — SOCKS5-клиент (файл модуля примера)
 
 ```nova
-export type SocksError enum
+type SocksError enum
     | ConnectFailed { reason str }
     | AuthFailed
     | AuthRequired            // сервер требует auth, креды не даны
     | UnsupportedMethod
     | HostTooLong             // domain-адрес > 255 байт (протокольный лимит)
-    | GeneralFailure { code u8 }   // s709 REP-код сервера, не наш (D30-conventions: код в поле)
+    | GeneralFailure { code u8 }   // REP-код сервера, не наш (D30-conventions: код в поле)
     | Protocol { detail str }
 
-export fn socks5_connect(
+fn socks5_connect(
     proxy_host str, proxy_port int,
     user Option[str], pass Option[str],
     target_host str, target_port int
@@ -71,24 +89,38 @@ export fn socks5_connect(
 
 Реализация — прямой перевод RFC 1928 (version/methods negotiation → auth
 sub-negotiation RFC 1929, если сервер выбрал `0x02` → CONNECT-команда → разбор
-bound-адреса ответа) в последовательные `Net.write`/`Net.read` на уже открытом
+bound-адреса ответа) в последовательные `read`/`write` на уже открытом
 `TcpStream`. Без крипто — чистое byte-level message framing.
 
-### 3.2 Мост — `examples/net/socks5_http_bridge.nv`
+**Тестируемость закладывается в структуру:** сборка/разбор каждого
+handshake-сообщения — **чистые encode/decode-функции над `[]u8`** (без `Net`),
+тестируемые байтовыми фикстурами напрямую; сетевой слой (`socks5_connect`) —
+тонкая обвязка «прочитай N байт → decode → encode → запиши». Реальный
+SOCKS5-сервер для тестов не нужен. Заодно решается вопрос фиксированных длин:
+один helper `read_exact(stream, n)` поверх `@read` (у `@read_bytes(max)`
+семантика «до max», для протокольных полей нужен точный N).
+
+### 3.2 Мост — `main.nv`
+
+Конфиг из окружения/аргументов (`std.os`, эффект `Os`): `SOCKS5_PROXY`
+(`host:port`), `SOCKS5_USER`/`SOCKS5_PASS` — через `env()`; порт listen —
+первым аргументом `args()` (по умолчанию 8899).
 
 ```nova
-fn main() Net Time -> () {
-    consume listener = TcpListener.bind("127.0.0.1:8899")!!
+fn main() Net Os Time -> () {
+    ro cfg = load_config()                       // env + args, валидация на старте
+    consume listener = TcpListener.bind("127.0.0.1:${cfg.listen_port}")!!
     loop {
         consume client = listener.accept()!!
-        spawn { handle_client(client) }
+        spawn { handle_client(client, cfg) }
     }
 }
 
-fn handle_client(consume client TcpStream) Net -> () {
-    ro head = read_headers(client)              // до \r\n\r\n
+fn handle_client(consume client TcpStream, cfg Config) Net Time -> () {
+    ro head = read_headers(client)               // до \r\n\r\n
     match parse_request_line(head) {
-        Connect(host, port) => match socks5_connect(PROXY_HOST, PROXY_PORT, user, pass, host, port) {
+        Connect(host, port) => match socks5_connect(cfg.proxy_host, cfg.proxy_port,
+                                                    cfg.user, cfg.pass, host, port) {
             Ok(consume upstream) => {
                 client.write_all("HTTP/1.1 200 Connection Established\r\n\r\n")!!
                 pipe_bidirectional(client, upstream)
@@ -100,15 +132,23 @@ fn handle_client(consume client TcpStream) Net -> () {
 }
 ```
 
+**`pipe_bidirectional(consume a TcpStream, consume b TcpStream)`** — ядро
+примера, владение раскладывается по `into_split`: `(ar, aw) = a.into_split()`,
+`(br, bw) = b.into_split()`; файбер №1 качает `ar → bw`, файбер №2 — `br → aw`.
+Каждый файбер владеет своей парой половинок — линейность соблюдена без
+разделяемого состояния. По EOF направление закрывает СВОЮ write-половину
+(проброс FIN — пин Ф.0-а) и завершается; механизм завершения второго файбера —
+пин Ф.0-б.
+
 **Отличия от типового скрипт-прототипа этого класса задач (осознанные архитектурные
 решения, не копирование один-в-один):**
 - upstream-коннект **до** ответа клиенту, не после — 502 при провале естественный, без
   гонки «уже отправили 200, а сервер недоступен»;
-- `pipe_bidirectional` — два `spawn` с `Net.read`/`Net.write` в цикле, не
+- `pipe_bidirectional` — два `spawn` поверх `into_split`, не
   callback-ориентированный event-loop;
 - ретраи на временную недоступность upstream (провайдеры нередко ротируют IP) —
   через `Time.sleep`, тем же паттерном, что остальные примеры используют для
-  detrministic-тестируемости (`with Time = th.fixed_ms(...)` в тестах).
+  deterministic-тестируемости (`with Time = th.fixed_ms(...)` в тестах).
 
 **Сознательно НЕ переносится:** список «шумных» доменов-трекеров, которые
 скрипт-прототип не пишет в лог — это специфика конкретного internet-сценария, не
@@ -116,44 +156,59 @@ fn handle_client(consume client TcpStream) Net -> () {
 
 ## 4. Фазы
 
-- **Ф.0** — пины: подтвердить пробой форму error-enum'а (`SocksError`, D30-конвенция) и
-  что `Net.read`/`Net.write` дают удобный примитив для фиксированной длины
-  (handshake-сообщения SOCKS5 имеют точные байтовые размеры на большинстве шагов).
-- **Ф.1** — `std.socks.socks5_client` + юнит-тесты (мок upstream — байтовые
-  фикстуры известных handshake-обменов из RFC 1928/1929, реальный SOCKS5-сервер
-  для тестов НЕ нужен).
-- **Ф.2** — мост (`examples/net/socks5_http_bridge.nv`): accept-loop, парсинг
-  первой строки, CONNECT-путь.
+- **Ф.0 — пины feasibility (ворота всего плана, пробой на компиляторе):**
+  - **(а) half-close:** делает ли `TcpWriteHalf.consume @close()` реальный
+    `shutdown(SHUT_WR)` (FIN уходит пиру, read-половина продолжает читать) — или
+    просто роняет handle? Дока (`tcp.nv:376-378`: «closes the socket if the read
+    half is gone») это не фиксирует; смотреть C-шим `net_tcp_shutdown`/close.
+    Без проброса FIN туннели будут подвисать на протоколах, закрывающих
+    соединение односторонне. Если shutdown-write нет — мини-доработка `std.net`
+    (отдельный коммит, канал std, не обход в примере).
+  - **(б) завершение пары файберов:** направление A получило EOF и закрылось —
+    как завершить направление B, висящее в блокирующем `read`? Кандидаты:
+    structured scope + cancel; либо естественное завершение по FIN из (а).
+    Зафиксировать рабочий механизм пробой (два файбера, реальный loopback).
+  - **(в) формы:** error-enum `SocksError` (D30-конвенция) компилируется;
+    `read_exact`-helper поверх `mut @read` работает как ожидается.
+- **Ф.1** — `socks5.nv`: чистые encode/decode + обвязка `socks5_connect`;
+  `socks5_test.nv` — байтовые фикстуры handshake-обменов, сверенные с текстом
+  RFC 1928/1929 (не по памяти).
+- **Ф.2** — мост (`main.nv`): конфиг из `Os`, accept-loop, парсинг первой
+  строки, CONNECT-путь, `pipe_bidirectional`.
 - **Ф.3** — plain-HTTP-путь (переписывание absolute-URI → origin-form, срез
   `Proxy-*`-заголовков) — вторичный, можно отложить за Ф.2 отдельным коммитом.
 - **Ф.4** — README (EN+RU, по конвенции examples) — что показывает, как
-  запустить, честная пометка «нужен реальный SOCKS5-прокси для ручной проверки,
-  не входит в CI-гейт».
+  запустить (переменные окружения из §3.2), честная пометка «нужен реальный
+  SOCKS5-прокси для ручной проверки, не входит в CI-гейт».
 
 ## 5. Гейты
 
-`std.socks` — таргетные юнит-тесты (мок-байты, без сети) обязательны и входят в
-общий гейт `nova test std`. Сам мост (`examples/net/`) — компилируется
-`--strict-effects` (конвенция examples); **ручной smoke — вне CI** (нужен реальный
-внешний SOCKS5-прокси, недоступен в автоматическом прогоне) — задокументировать
-это ограничение явно в README примера, не заявлять «протестировано end-to-end».
+Тесты модуля — рядом с ним (`socks5_test.nv`, мок-байты + loopback для Ф.0-проб,
+внешней сети ноль) — обязательны, гоняются `nova test` по папке примера. Вся
+папка компилируется `--strict-effects` (конвенция examples). **Ручной smoke —
+вне CI** (нужен реальный внешний SOCKS5-прокси, недоступен в автоматическом
+прогоне) — задокументировать это ограничение явно в README примера, не заявлять
+«протестировано end-to-end». Если Ф.0-а потребует доработку `std.net` — на неё
+дополнительно обычный std-гейт (`nova test std`).
 
 ## 6. Риски
 
 | Риск | Митигация |
 |---|---|
-| SOCKS5 handshake — точная байтовая раскладка, легко ошибиться в порядке полей | юнит-тесты на КАЖДЫЙ шаг протокола отдельно, байтовые фикстуры сверены с RFC 1928/1929 текстом, не с памятью |
+| Half-close не пробрасывает FIN (Ф.0-а) — туннели подвисают | пин до старта волны; при отсутствии — мини-доработка std.net отдельным коммитом, не обход в примере |
+| SOCKS5 handshake — точная байтовая раскладка, легко ошибиться в порядке полей | чистые encode/decode + юнит-тест на КАЖДЫЙ шаг протокола отдельно, фикстуры сверены с RFC 1928/1929 текстом, не с памятью |
+| Файбер-утечка: зависшие соединения без таймаутов чтения живут вечно | для примера допустимо (V1 без таймаутов), но честно назвать в README как известное ограничение; проверка руками в smoke |
 | `Router`/`polaris` эволюционирует и научится CONNECT — пример устареет архитектурно | не блокирует V1; ревизия при появлении authority-form в polaris — отдельный follow-up |
 | Ручной smoke невозможен в CI | честно задокументировано (§5), не выдаётся за протестированное |
 
 ## 7. Открытые вопросы владельцу (до запуска волны)
 
-1. **Имя модуля:** `std.socks` (в стандартной библиотеке) или изолированный
-   package-пример без претензии на std-API (`examples/net/_socks5.nv`,
-   module-private, не `export`)? Рекомендация: **package-пример** — SOCKS5-клиент
-   без реальных других потребителей в экосистеме пока не тянет на std-поверхность
-   (§3 maximize-nv не про «добавить в std всё, что написано», а про «где уже есть
-   потребитель»).
+1. **Имя модуля:** `std.socks` (в стандартной библиотеке) или package-пример без
+   претензии на std-API? Рекомендация: **package-пример** (тело плана написано
+   под неё) — SOCKS5-клиент без реальных других потребителей в экосистеме пока
+   не тянет на std-поверхность (§3 maximize-nv не про «добавить в std всё, что
+   написано», а про «где уже есть потребитель»). Переезд в std позже —
+   механический (файл уже самодостаточен).
 2. **IPv6-адреса в SOCKS5** (address type `0x04`) — в V1 или явный `Err(Unsupported)`
    до первого реального носителя? Рекомендация: явный `Err` — YAGNI, домен/IPv4
    покрывают мотивирующий сценарий.
@@ -161,8 +216,11 @@ fn handle_client(consume client TcpStream) Net -> () {
 ## Связи
 
 Реестр [221.1](221.1-bug-sweep.md) №360 / `[M-socks5-client-missing]`
-(`backlog-followups.md`) · `nova-http/src/method.nv` (`Method.Connect`) ·
+(`backlog-followups.md`) · `std/src/net/tcp.nv` (`into_split`/половины —
+несущая конструкция relay; `@shutdown`) · `std/src/os/os.nv` (`env`/`args` —
+конфиг моста) · `nova-http/src/method.nv` (`Method.Connect`) ·
 `nova-polaris/src/ws_upgrade.nv` (`ServerResponse.upgrade` — прецедент хука, не
-переиспользуется напрямую из-за загвоздки §1) · `examples/net/` (категория-дом,
-`echo_client.nv`/`echo_server.nv` — прецедент оформления) · RFC 1928 (SOCKS5) ·
-RFC 1929 (username/password auth) · RFC 7230 §5.3.3 (authority-form request-target).
+переиспользуется напрямую из-за загвоздки §1) · `examples/net/` (категория-дом;
+`echo_client.nv`/`echo_server.nv` — прецедент оформления README) · RFC 1928
+(SOCKS5) · RFC 1929 (username/password auth) · RFC 7230 §5.3.3 (authority-form
+request-target).
