@@ -34259,7 +34259,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // concern below, Plan 175 Ф.1b/Ф.3) so `&tmp` is always valid.
                             let recv_tmp = self.fresh_tmp();
                             self.line(&format!("{} {} = {};", tuple_ty, recv_tmp, l));
-                            let call = format!("{}(&({}), {})", c_name, recv_tmp, r);
+                            let call = format!("{}(&({}), {})", c_name, recv_tmp, if self.method_byref_flag(type_name, method_name, 0) { format!("&({})", r) } else { r.clone() });
                             return Ok(match op {
                                 BinOp::Neq => format!("(!({}))", call),
                                 _          => format!("({})", call),
@@ -34291,7 +34291,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     {
                         let recv_tmp = self.fresh_tmp();
                         self.line(&format!("{} {} = {};", tuple_ty, recv_tmp, l));
-                        let call = format!("{}(&({}), {})", c_name, recv_tmp, r);
+                        let call = format!("{}(&({}), {})", c_name, recv_tmp, if self.method_byref_flag(type_name, "compare", 0) { format!("&({})", r) } else { r.clone() });
                         return Ok(match op {
                             BinOp::Lt => format!("(({}) < 0)", call),
                             BinOp::Le => format!("(({}) <= 0)", call),
