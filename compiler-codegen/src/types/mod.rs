@@ -10,6 +10,12 @@ use crate::diag::{Diagnostic, FileId, MAIN_FILE_ID, Span};
 use crate::parser::{impl_spec_base_name, impl_spec_args_text};
 use std::collections::{HashMap, HashSet};
 
+/// Plan 238 Ф.1 (D446 "Ф.8-НОВАЯ"): total per-function/method M:N-safety
+/// tag over the resolved call graph — measurement/dump only, no
+/// enforcement (Ф.2). See `fiber_safety.rs`'s module doc for the full
+/// design and `docs/plans/238-fiber-memory-model.md`.
+mod fiber_safety;
+
 /// Plan 196 (gs-bounds migration, spike `docs/plans/wip/196-gs-spike.md`):
 /// `gs` ("generics in scope") used to be `HashSet<String>` — ONLY the names of the
 /// generic-parameters visible in the current fn/type-decl body, no protocol bounds
@@ -1942,6 +1948,15 @@ fn check_module_impl(
     // OR enclosing #unsafe fn). Walks fn bodies + test bodies, maintains
     // depth counter, emits diagnostic при depth == 0.
     check_unsafe_context_in_module(module, &type_check_ctx.resolved_callees.borrow(), &mut errors);
+
+    // Plan 238 Ф.1 (D446 "Ф.8-НОВАЯ"): total per-fn/method M:N-safety tag,
+    // built over the NOW-FINAL `resolved_callees` (must run after the main
+    // check pass populates it, same requirement `check_unsafe_context_in_
+    // module` above already has). Measurement/dump only — computes an
+    // in-memory map, prints nothing unless `NOVA_DEBUG_FIBER_SAFETY=1`, and
+    // is not read by any diagnostic or by codegen (behaviorally neutral by
+    // construction — see `fiber_safety.rs` module doc).
+    let _fiber_safety = fiber_safety::run(module, &type_check_ctx.resolved_callees.borrow());
 
     // Plan 174.6 M1 (D282 rule 2 / D353): validate that `extern "C" fn`
     // signatures (params + return) — and every `*extern "C" fn` fn-pointer
