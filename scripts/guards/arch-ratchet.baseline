@@ -587,5 +587,17 @@
 # `@slice` (единственная recv-mut-only пара в std/polaris — найдена
 # грепом, № param-mode-only пар НЕ найдено вовсе) behavioral-тест 8/8;
 # polaris `--strict-effects` 37/0/18 байт-в-байт.
-lines=64545
+# Снижение 64545→64150 (окно p240-detach, №240,
+# [M-detach-box-while-loop-read-after]): `emit_detach` + новый хелпер
+# `hoist_box_decl` вынесены целиком в дочерний модуль
+# `codegen/emit_c/emit_detach.rs` (объявлен `mod emit_detach;` внутри
+# emit_c.rs; дочерний модуль видит приватные поля/методы CEmitter — правило
+# Rust-приватности «потомок видит предков»), чтобы фикс box-scope-leak'а
+# (bare box-pointer decl ретроактивно хоистится в top-level function scope
+# вместо блок-scoped объявления на месте вложенного `detach{}`) уместился
+# при нулевой/отрицательной дельте самого emit_c.rs — до вычитки строка в
+# строку emit_c.rs был РОВНО на прежнем baseline, запаса не было. infer
+# не менялся (фикс не трогал infer_expr_c_type). Снижение — по инструкции
+# наверху этого файла («снижение приветствуется, обнови baseline вниз»).
+lines=64150
 infer=348
