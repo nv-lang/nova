@@ -1,0 +1,27 @@
+// №361 (docs/plans/221.1-bug-sweep.md), cross-file variant of #271
+// (`[M-181-result-over-named-tuple-codegen]`): standalone `#271`-shaped
+// repro (`spec_tests/conformance/static_ctor_instance_method_named_tuple.nv`)
+// proved a `@equal` + `Result[(Self,Self),E]`-returning method coexisting
+// on ONE named-tuple type; `p271-mangle`'s "разблокировано" verdict was
+// premature — the REAL nova-bignum migration attempt (BigInt tuple +
+// BigDecimal record consumer, `docs/plans/wip/PROGRESS-p-bignum-tuple.md`
+// дефект C) hit the SAME C error class again on a case #271's fix didn't
+// cover: a named-tuple type used as a FIELD by a value-record defined in a
+// DIFFERENT, importing module. This file is the producer half — mirrors
+// `bignum.bigint`'s `BigInt(sign, limbs)` shape (positional tuple, `@equal`
+// + a `Result[(Self,Self),E]`-returning method). See
+// `p361_named_tuple_consumer.nv` (same directory, imports this module) for
+// the actual cross-file trigger and the regression test.
+
+module modules.p361_named_tuple_producer
+
+export type P361Pair(x int, y int)
+
+export fn P361Pair @equal(other P361Pair) -> bool => @x == other.x && @y == other.y
+
+export type P361SplitErr enum ZeroX
+
+export fn P361Pair @split(other P361Pair) -> Result[(P361Pair, P361Pair), P361SplitErr] {
+    if other.x == 0 { return Err(ZeroX) }
+    Ok((@, other))
+}
