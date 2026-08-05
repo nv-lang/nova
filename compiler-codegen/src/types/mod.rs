@@ -22386,16 +22386,24 @@ impl<'a> TypeCheckCtx<'a> {
                 // for value collections), so this carve-out is pointer-exact. (169.2:
                 // P7 was over-strict on `*mut T` index-writes — [M-169.2-ptr-index-ro-binding].)
                 if let Some(ty) = &obj_ty {
-                    if let Some(writable) = pointee_is_writable(ty) {
-                        if !writable {
-                            errors.push(Diagnostic::new(
-                                "[E_POINTER_RO_ASSIGN] cannot write through index on a \
-                                 readonly pointer — `*T` is a readonly pointee (L3 default). \
-                                 Use `*mut T` to opt into a writable pointee."
-                                    .to_string(),
-                                target.span,
-                            ));
-                        }
+                    if pointee_is_writable(ty).is_some() {
+                        // **№353 fix (D216 amend, Plan 174.5 §3/§9 retraction,
+                        // checker-channel companion of the codegen-side
+                        // `E_POINTER_OP_USE_METHOD` guard in `emit_c.rs`):**
+                        // `p[i] = v` — the index-write OPERATOR form on a raw
+                        // pointer is retired, full stop, regardless of the
+                        // pointee's L3 writability — mirror the Deref arm
+                        // above. Same rationale: `nova check` never reached
+                        // the codegen-only retraction check, so this form
+                        // passed clean on a writable `*mut T` pointee. Use
+                        // `p.write_at(i, v)` instead.
+                        errors.push(Diagnostic::new(
+                            "[E_POINTER_OP_USE_METHOD] operator `p[i] = v` (index \
+                             write) on raw pointer retired (Plan 174.5 §3/§9, \
+                             D216 amend) — use `p.write_at(i, v)`"
+                                .to_string(),
+                            target.span,
+                        ));
                         return;
                     }
                 }
@@ -22446,30 +22454,29 @@ impl<'a> TypeCheckCtx<'a> {
                     }
                 }
             }
-            // **Plan 147 Ф.3 (D246, L3 pointee-capability):** `*p = v` — a
-            // write THROUGH a pointer. The pointee-mutability is read FROM THE
-            // TYPE (L3), position- and binding-independent: `*mut T` (=
-            // `Pointer(Mut(T))`) is writable; a bare `*T ≡ *ro T` (=
-            // `Pointer(T)`) is a readonly pointee → `E_POINTER_RO_ASSIGN`.
-            // The binding (L1: `ro p` / `mut p`) controls reassignment of `p`
-            // itself, NOT the pointee — so even `ro p *mut T` allows `*p = v`
-            // (oracle row C), and `mut p *T` forbids it. We therefore inspect
-            // `p`'s *type* and ignore the binding here.
+            // **№353 fix (D216 amend, Plan 174.5 §3/§9 retraction, checker-
+            // channel companion to the codegen-side `E_POINTER_OP_USE_METHOD`
+            // guard in `emit_c.rs`):** `*p = v` — the deref-write OPERATOR
+            // form on a raw pointer is retired, full stop, regardless of the
+            // pointee's L3 writability. `nova check` ran no codegen and so
+            // never reached the codegen-only retraction check — this form
+            // passed `nova check` clean on a writable `*mut T` pointee, and
+            // on a readonly `*T` pointee it surfaced the WRONG diagnostic
+            // (`E_POINTER_RO_ASSIGN`, which implies the operator form would
+            // be legal on a `*mut T` — it is not). The retraction check must
+            // therefore fire FIRST, before any writability question, and
+            // `return` so the (now unreachable for this arm) L3 branch below
+            // never masks it. Use `p.write(v)` instead.
             ExprKind::Unary { op: UnOp::Deref, operand } => {
                 if let Some(ty) = self.infer_expr_type(operand, scope) {
-                    if let Some(writable) = pointee_is_writable(&ty) {
-                        if !writable {
-                            errors.push(Diagnostic::new(
-                                "[E_POINTER_RO_ASSIGN] cannot write through a \
-                                 readonly pointer — `*T` is a readonly pointee \
-                                 (the L3 default is `ro`: `*T ≡ *ro T`, Plan \
-                                 147 / D246). A writable pointee requires the \
-                                 `*mut T` opt-in; pointer reassignability \
-                                 (`mut p`) does NOT make the pointee writable."
-                                    .to_string(),
-                                target.span,
-                            ));
-                        }
+                    if pointee_is_writable(&ty).is_some() {
+                        errors.push(Diagnostic::new(
+                            "[E_POINTER_OP_USE_METHOD] operator `*p = v` (deref \
+                             write) on raw pointer retired (Plan 174.5 §3/§9, \
+                             D216 amend) — use `p.write(v)`"
+                                .to_string(),
+                            target.span,
+                        ));
                     }
                 }
             }
@@ -23975,16 +23982,34 @@ pub(crate) fn coalesce_advice_render(
 ///
 /// Returns:
 /// - `Some(true)`  — pointee is writable (`*mut T` = `Pointer(Mut(..))`, or
-///   `*unsafe T` = `Pointer(Unsafe(..))` which is a writable raw pointee).
-/// - `Some(false)` — pointee is readonly (a bare `*T ≡ *ro T` = `Pointer(T)`
-///   over a non-Mut/Unsafe pointee).
+///   the composed `*mut uninit T` = `Pointer(Mut(Uninit(..)))` — the `Mut`
+///   arm matches regardless of what it wraps).
+/// - `Some(false)` — pointee is readonly (a bare `*T ≡ *ro T` = `Pointer(T)`,
+///   OR a bare `*uninit T` = `Pointer(Uninit(..))` with no `mut` opt-in — see
+///   the №358 note below).
 /// - `None`        — `p` is not a pointer type (no L3 capability to enforce;
 ///   non-pointer deref is handled elsewhere / a no-op here).
 ///
 /// Outer binding-level / value-level modifier wrappers (`Readonly` / `Mut` /
-/// `Unsafe`) around the WHOLE type are transparent — they belong to L1/L2 (the
+/// `Uninit`) around the WHOLE type are transparent — they belong to L1/L2 (the
 /// name/value view), not to L3 (the pointee). A `*()` (void pointer, opaque
 /// pointee) carries no writable element, so it is treated as readonly.
+///
+/// **№358 fix (D246 amend):** a bare `*uninit T` (no explicit `mut`) used to
+/// return `Some(true)` here — the possibly-uninit CONTRACT (init/layout, a
+/// READ-side UB concern, §21 item 6/`E_UNSAFE_T_READ_REQUIRES_WRAP`) was
+/// conflated with the L3 WRITE-capability axis. D246 states the write-cap
+/// opt-in is `*mut T`, full stop — `uninit` is an orthogonal axis, not a
+/// second way to earn it. Writing Nova-side into possibly-uninit memory
+/// (`p.write(v)` / `*p = v`) now requires the explicit COMPOSED opt-in `*mut
+/// uninit T` (`Pointer(Mut(Uninit(T)))`, §V2.2 `02-types.md:10648` amend) —
+/// the `TypeRef::Mut(..)` arm below already matches that shape regardless of
+/// what it wraps, so only the stale `TypeRef::Uninit(..)` disjunct needed
+/// removing (folds into the `_ => false` default). A bare `*uninit T` stays
+/// perfectly legal for FFI out-params where the FOREIGN side writes (the
+/// canonical `os_read(fd, buf *uninit u8, n)` — the OS/C side fills it, not
+/// checked Nova code) and for `.read()` (still `Some`-any-pointee, unaffected
+/// — reading is unsafe-gated separately, not L3-gated).
 fn pointee_is_writable(ty: &TypeRef) -> Option<bool> {
     match ty {
         // Transparent over outer L1/L2 modifier wrappers — the pointee
@@ -23993,11 +24018,13 @@ fn pointee_is_writable(ty: &TypeRef) -> Option<bool> {
         | TypeRef::Mut(inner, _)
         | TypeRef::Uninit(inner, _) => pointee_is_writable(inner),
         TypeRef::Pointer(pointee, _) => Some(match pointee.as_ref() {
-            // `*mut T` / `*unsafe T` → writable pointee (L3 opt-in).
-            TypeRef::Mut(..) | TypeRef::Uninit(..) => true,
+            // `*mut T` (and the composed `*mut uninit T`) → writable pointee
+            // (L3 opt-in). Matches regardless of what `Mut` wraps.
+            TypeRef::Mut(..) => true,
             // `*()` = void pointer — opaque, no writable element.
             TypeRef::Unit(_) => false,
-            // Bare `*T ≡ *ro T` → readonly pointee (L3 default).
+            // Bare `*T ≡ *ro T`, and bare `*uninit T` (no `mut` opt-in, №358)
+            // → readonly pointee (L3 default).
             _ => false,
         }),
         _ => None,
