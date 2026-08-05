@@ -1,0 +1,38 @@
+// EXPECT_COMPILE_ERROR E_LINEAR_CAPTURE_IN_FIBER
+// №364 (К1 звучность) — third gap: `ro (r, w) = conn.split()` tuple-
+// destructure, no annotation. Both `P364Half1`/`P364Half2` are `consume`
+// types (mirrors `TcpStream.into_split() -> (TcpReadHalf, TcpWriteHalf)`,
+// std/src/net/tcp.nv:329 — both halves `consume value`). Before the fix, a
+// SINGLE combined `ty` (the whole-`let`'s syntactic-init-type sketch, `None`
+// here since the RHS is an instance method call, not a `Type.new(..)` ctor)
+// was cloned onto EVERY destructured name, so per-element linearity was
+// never visible to `flag_boundary_captures`'s `ty`-based lookup — capturing
+// `w` bare inside `spawn` slipped through entirely. Fixed by resolving the
+// call's declared per-element return type via `self.sig.method_table`
+// (`resolve_tuple_call_return`) when the receiver's own static type is
+// known (here: the `P364Conn` annotation on `conn`).
+module neg.p364_tuple_destructure_consume_spawn_neg
+
+type P364Half1 consume { id int }
+fn P364Half1 consume @cleanup(_outcome ScopeOutcome) -> () { () }
+fn P364Half1 consume @dispose() -> () { () }
+
+type P364Half2 consume { id int }
+fn P364Half2 consume @cleanup(_outcome ScopeOutcome) -> () { () }
+fn P364Half2 consume @dispose() -> () { () }
+
+type P364Conn consume { id int }
+fn P364Conn consume @cleanup(_outcome ScopeOutcome) -> () { () }
+fn P364Conn consume @split() -> (P364Half1, P364Half2) =>
+    (P364Half1 { id: 1 }, P364Half2 { id: 2 })
+
+test "tuple-destructure of consume halves, one half captured bare in spawn — E_LINEAR_CAPTURE_IN_FIBER" {
+    consume conn P364Conn = P364Conn { id: 0 }
+    ro (r, w) = conn.split()
+    supervised {
+        spawn {
+            ro _x = w.id
+        }
+    }
+    r.dispose()
+}
