@@ -319,6 +319,22 @@ fi
 ratchet_check code_block_mismatch_pairs "$code_block_mismatch_pairs" "пары X.md/X.ru.md(.en.md) с несовпадающими code-fence блоками"
 
 # ---------------------------------------------------------------------
+# ---------------------------------------------------------------------
+# 5б. manifest_genre: страницы «внутреннего» жанра в манифесте публикации.
+#     site-conventions #page-genre (2026-08-05): roadmap/changelog/планы/wip/
+#     design-notes НЕ публикуются по умолчанию — план развития на сайте
+#     читается как обещание. Прецедент: roadmap полариса попал в публикацию
+#     механически. Проверка КРАСНАЯ: следующий такой файл не должен уехать
+#     на сайт незаметно; осознанное исключение = закомментированная строка.
+# ---------------------------------------------------------------------
+for mf in "$ROOT/docs/guide/PUBLISHED.list" "$ROOT/docs/PUBLISHED.list"; do
+    [ -f "$mf" ] || continue
+    genre_hits=$(grep -vE '^[[:space:]]*(#|$)' "$mf"         | grep -ciE '^(roadmap|changelog|todo|wip([-_].*)?|plans?([-_].*)?|design-notes?)$')
+    if [ "${genre_hits:-0}" -gt 0 ]; then
+        red "manifest_genre: $mf публикует страницу внутреннего жанра (roadmap/changelog/plans/wip) — site-conventions #page-genre; исключи строку или закомментируй с причиной"
+    fi
+done
+
 # 6. readme_pair: README пакета/модуля — ВСЕГДА пара en+ru.
 #    Решение владельца 2026-08-03: «ридми для пакетов, модулей всегда
 #    на анг + рус». Проверка безусловная (не храповик): есть README.md —

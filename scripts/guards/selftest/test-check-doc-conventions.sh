@@ -79,6 +79,34 @@ code
     rm -rf "$RT" /tmp/dc_8a_$$ /tmp/dc_8b_$$ /tmp/dc_8c_$$ /tmp/dc_8d_$$
 ) || fails=$((fails + 1))
 
+# ---------------------------------------------------------------------
+# 10. manifest_genre: страница внутреннего жанра в манифесте — красный;
+#     закомментированная с причиной — зелёный (#page-genre, прецедент roadmap).
+# ---------------------------------------------------------------------
+(
+    RT=$(mktemp -d)
+    mkdir -p "$RT/docs/guide"
+    printf 'quickstart
+roadmap
+' > "$RT/docs/guide/PUBLISHED.list"
+    printf '# q
+' > "$RT/docs/guide/quickstart.md"; printf '# q
+' > "$RT/docs/guide/quickstart.ru.md"
+    printf '# r
+' > "$RT/docs/guide/roadmap.md"; printf '# r
+' > "$RT/docs/guide/roadmap.ru.md"
+    if sh "$(dirname "$0")/../check-doc-conventions.sh" "$RT" 2>&1 | grep -q "manifest_genre"; then :; else
+        echo "SELFTEST FAIL: 10a — roadmap в манифесте не пойман" >&2; rm -rf "$RT"; exit 1
+    fi
+    printf 'quickstart
+# roadmap — внутренний план, не публикуется
+' > "$RT/docs/guide/PUBLISHED.list"
+    if sh "$(dirname "$0")/../check-doc-conventions.sh" "$RT" 2>&1 | grep -q "manifest_genre"; then
+        echo "SELFTEST FAIL: 10b — закомментированный roadmap ложнит" >&2; rm -rf "$RT"; exit 1
+    fi
+    rm -rf "$RT"
+) || fails=$((fails + 1))
+
 rm -rf "$TMP"
     mkdir -p "$TMP/spec" "$TMP/docs/guide" "$TMP/docs/plans" "$TMP/scripts/guards"
     cp "$GUARD_SRC" "$TMP/scripts/guards/check-doc-conventions.sh"
