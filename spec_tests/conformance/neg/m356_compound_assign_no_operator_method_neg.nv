@@ -1,0 +1,25 @@
+// №356 (NEG) — компаньон к m356_named_tuple_compound_assign_pos.nv: убедиться,
+// что расширение предиката `is_overloaded_add_ty` (emit_c.rs) на именованные
+// кортежи и на `*=`/`/=` не проглатывает случай без операторного метода —
+// `+=` на именованном кортеже БЕЗ `@plus` обязан детерминированно упасть, а
+// не молча собраться (тот же класс отказа, что и до фикса №356 — invalid
+// operands на структурном операнде, теперь эмитится через ре-диспатч
+// синтезированного `Binary`, а не сырой C compound-assign напрямую).
+
+module neg.m356_compound_assign_no_operator_method_neg
+
+type M356NoOpTup(lo int, hi int)
+
+// EXPECT_CC_ERROR invalid operands
+fn m356_bad() {
+    mut t = M356NoOpTup(1, 2)
+    t += M356NoOpTup(1, 1)
+}
+
+// A runnable entry is required — EXPECT_CC_ERROR (unlike EXPECT_COMPILE_ERROR)
+// needs the pipeline to reach the C-compiler stage; without `fn main()` /
+// a `test` block the runner short-circuits at "nothing to link/run" and
+// never invokes cc at all (mirrors neg/d55_fn_newtype_ambiguous_lift_neg.nv).
+fn main() {
+    m356_bad()
+}

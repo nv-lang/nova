@@ -32243,7 +32243,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // План 234 Ф.2а (D46 §C): `&=`/`|=`/`^=` — тот же route,
                 // desugar `a = a <op> b`. `<<=`/`>>=` НЕ включены — `@shl`/
                 // `@shr` без flat-record dispatch (пред-сущ. гэп, см. отчёт).
-                if matches!(op, AssignOp::Add | AssignOp::Sub
+                // №356: `*=`/`/=` были исключены из ветки целиком (для ЛЮБОГО
+                // ABI) — тот же raw-C-CC-FAIL класс, что и `+=`/`-=` до №284,
+                // просто по op, а не по типу. Включены сюда же.
+                if matches!(op, AssignOp::Add | AssignOp::Sub | AssignOp::Mul | AssignOp::Div
                     | AssignOp::BitAnd | AssignOp::BitOr | AssignOp::BitXor)
                 {
                     let tgt_ty = self.infer_expr_c_type(target);
@@ -32260,11 +32263,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // C `+=` on a struct operand (CC-FAIL) — same route as
                         // the heap-record arm above.
                         || (tgt_ty.starts_with("NovaValue_")
+                            && !tgt_ty.ends_with('*'))
+                        // №356: named-tuple (`NovaTuple_X`, D215/Plan 120)
+                        // matched NEITHER `Nova_` (5th char `T` != `_`) NOR
+                        // `NovaValue_` — fell through, raw-C CC-FAIL.
+                        || (tgt_ty.starts_with("NovaTuple_")
                             && !tgt_ty.ends_with('*'));
                     if is_overloaded_add_ty {
                         let bin_op = match op {
                             AssignOp::Add => BinOp::Add,
                             AssignOp::Sub => BinOp::Sub,
+                            AssignOp::Mul => BinOp::Mul,
+                            AssignOp::Div => BinOp::Div,
                             AssignOp::BitAnd => BinOp::BitAnd,
                             AssignOp::BitOr => BinOp::BitOr,
                             AssignOp::BitXor => BinOp::BitXor,
@@ -34240,6 +34250,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         BinOp::Sub => "minus",
                         BinOp::Mul => "times",
                         BinOp::Div => "div",
+                        // №356: `&`/`|`/`^` — compound-assign desugar needs a
+                        // real @bitand/@bitor/@bitxor route on named tuples.
+                        BinOp::BitAnd => "bitand",
+                        BinOp::BitOr => "bitor",
+                        BinOp::BitXor => "bitxor",
                         _ => "",
                     };
                     if !method_name.is_empty() {
@@ -34337,7 +34352,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // cross-clock safety is preserved by requiring an @minus
                 // overload whose param matches the RHS (exact for record args;
                 // numeric-class match for int/f64 scalar coercion).
-                if matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod)
+                // №356: `&`/`|`/`^` — compound-assign desugar needs a real
+                // @bitand/@bitor/@bitxor route on value-records too.
+                if matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod
+                    | BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor)
                     && lty.starts_with("NovaValue_") && !lty.ends_with('*')
                 {
                     let type_name = lty.strip_prefix("NovaValue_").unwrap_or("").to_string();
@@ -34347,6 +34365,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         BinOp::Mul => "times",
                         BinOp::Div => "div",
                         BinOp::Mod => "rem",
+                        BinOp::BitAnd => "bitand",
+                        BinOp::BitOr => "bitor",
+                        BinOp::BitXor => "bitxor",
                         _ => unreachable!(),
                     };
                     let key = (type_name.clone(), method_name.to_string());
