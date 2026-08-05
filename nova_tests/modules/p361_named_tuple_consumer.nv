@@ -1,0 +1,61 @@
+// №361 (docs/plans/221.1-bug-sweep.md) — cross-file trigger. Run this file
+// directly as the compile ENTRY (`nova test
+// nova_tests/modules/p361_named_tuple_consumer.nv`) — the bug needs a
+// SEPARATE, IMPORTING module's own compile unit, not the producer's; see
+// `p361_named_tuple_producer.nv` (same directory) for the imported type and
+// full history.
+//
+// `P361Holder` is a value-record whose field embeds the producer's named
+// tuple (`P361Pair`, which has its own `@equal`) — mirrors
+// `bignum.bigdecimal.BigDecimal { mant BigInt, ... }` embedding
+// `bignum.bigint.BigInt` (positional tuple). `str @to_p361holder() ->
+// Result[P361Holder, P361ParseErr]` mirrors `str @to_bigdecimal() ->
+// Result[BigDecimal, ParseNumberError]` — the function whose SIGNATURE scan
+// triggers `register_novares_decl`/`register_novaopt_decl` for the
+// `P361Holder` payload EARLY, before this file's own methods are indexed.
+//
+// Before the fix: `nova test` on this file alone (no other file involved)
+// gave `CC-FAIL … conflicting types for 'Nova_P361Pair_method_equal'` — the
+// compiler auto-synthesized a structural-equality helper for
+// `Option[P361Holder]`/`Result[P361Holder, …]`, recursed into the `p`
+// field's OWN `@equal` (found via `producer`'s already-fully-processed
+// method table), and emitted that CALL into the EARLY buffer, before
+// `P361Pair`'s real forward declaration existed later in THIS SAME .c file
+// — an implicit C declaration from the early call then conflicted with the
+// real one. Fixed by broadening `debt_is_late_emitted_value_payload`
+// (`compiler-codegen/src/codegen/emit_c.rs`) to defer ANY plain
+// `NovaValue_<Name>` payload (not only mono-generic `…____…` ones) to the
+// late buffer — a plain value-record's OWN field may itself be a late
+// payload, which the old check could not see.
+
+module modules.p361_named_tuple_consumer
+
+import nova_tests.modules.p361_named_tuple_producer.{P361Pair}
+
+export type P361ParseErr enum BadInput
+
+export type P361Holder value {
+    p P361Pair
+    tag int
+}
+
+export fn str @to_p361holder() -> Result[P361Holder, P361ParseErr] {
+    if @ == "bad" { return Err(BadInput) }
+    Ok(P361Holder { p: P361Pair(1, 2), tag: 0 })
+}
+
+test "#361: cross-file named-tuple field consumer compiles and equals structurally" {
+    match "ok".to_p361holder() {
+        Ok(h) => {
+            assert(h.p.x == 1)
+            assert(h.p.y == 2)
+            assert(h.tag == 0)
+            assert(Some(h) == Some(P361Holder { p: P361Pair(1, 2), tag: 0 }))
+        }
+        Err(_) => assert(false)
+    }
+    match "bad".to_p361holder() {
+        Ok(_) => assert(false)
+        Err(e) => assert(e == BadInput)
+    }
+}
