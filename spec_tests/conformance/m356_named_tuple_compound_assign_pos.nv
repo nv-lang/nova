@@ -1,0 +1,103 @@
+// №356 (221.1): составное присваивание (`+=`/`-=`/`*=`/`/=`/`&=`/`|=`/`^=`) на
+// ИМЕНОВАННОМ КОРТЕЖЕ (`NovaTuple_`-ABI, D215/Plan 120) с операторным методом
+// не десугаривалось — предикат `is_overloaded_add_ty` (emit_c.rs, D263/153.5,
+// расширение 234 Ф.2а) проверял ТОЛЬКО `nova_str`/`Nova_Vec____`/heap `Nova_*`
+// (5-й символ `_`, не совпадает с `NovaTuple_`)/`NovaValue_` — именованный
+// кортеж не матчился НИКУДА, падал в сырой C compound-assign на структуре
+// (CC-FAIL «invalid operands»). Тот же класс, что №284 (value-record), но
+// №284 эту ветку ABI не достал. Заодно: `*=`/`/=` были исключены из
+// предиката вообще (для ВСЕХ типов-ABI, включая heap-record) — тот же
+// raw-C-CC-FAIL класс, что и `+=`/`-=` до №284, просто по операции, а не по
+// типу. Носитель: миграция `nova-bignum` на кортежи (`bigfloat/core.nv:338`).
+// Ловушка: линт W_NON_COMPOUND_ASSIGN сам советует compound-форму.
+module spec_tests.conformance
+
+type M356Tup(lo int, hi int)
+
+fn M356Tup @plus(other M356Tup) -> M356Tup => M356Tup(@lo + other.lo, @hi + other.hi)
+fn M356Tup @minus(other M356Tup) -> M356Tup => M356Tup(@lo - other.lo, @hi - other.hi)
+fn M356Tup @times(other M356Tup) -> M356Tup => M356Tup(@lo * other.lo, @hi * other.hi)
+fn M356Tup @div(other M356Tup) -> M356Tup => M356Tup(@lo / other.lo, @hi / other.hi)
+fn M356Tup @bitand(other M356Tup) -> M356Tup => M356Tup(@lo & other.lo, @hi & other.hi)
+fn M356Tup @bitor(other M356Tup) -> M356Tup => M356Tup(@lo | other.lo, @hi | other.hi)
+fn M356Tup @bitxor(other M356Tup) -> M356Tup => M356Tup(@lo ^ other.lo, @hi ^ other.hi)
+
+type M356ValRec value {
+    lo int
+    hi int
+}
+
+fn M356ValRec @times(other M356ValRec) -> M356ValRec =>
+    { lo: @lo * other.lo, hi: @hi * other.hi }
+fn M356ValRec @div(other M356ValRec) -> M356ValRec =>
+    { lo: @lo / other.lo, hi: @hi / other.hi }
+fn M356ValRec @bitand(other M356ValRec) -> M356ValRec =>
+    { lo: @lo & other.lo, hi: @hi & other.hi }
+fn M356ValRec @bitor(other M356ValRec) -> M356ValRec =>
+    { lo: @lo | other.lo, hi: @hi | other.hi }
+fn M356ValRec @bitxor(other M356ValRec) -> M356ValRec =>
+    { lo: @lo ^ other.lo, hi: @hi ^ other.hi }
+
+type M356HeapRec {
+    lo int
+    hi int
+}
+
+fn M356HeapRec @times(other M356HeapRec) -> M356HeapRec =>
+    { lo: @lo * other.lo, hi: @hi * other.hi }
+fn M356HeapRec @div(other M356HeapRec) -> M356HeapRec =>
+    { lo: @lo / other.lo, hi: @hi / other.hi }
+
+test "m356: += -= *= /= &= |= ^= на именованном кортеже десугарится верно" {
+    mut m356_t = M356Tup(20, 30)
+    m356_t += M356Tup(1, 1)
+    assert(m356_t.lo == 21)
+    assert(m356_t.hi == 31)
+    m356_t -= M356Tup(1, 1)
+    assert(m356_t.lo == 20)
+    assert(m356_t.hi == 30)
+    m356_t *= M356Tup(2, 2)
+    assert(m356_t.lo == 40)
+    assert(m356_t.hi == 60)
+    m356_t /= M356Tup(4, 6)
+    assert(m356_t.lo == 10)
+    assert(m356_t.hi == 10)
+    m356_t &= M356Tup(6, 12)
+    assert(m356_t.lo == 2)
+    assert(m356_t.hi == 8)
+    m356_t |= M356Tup(1, 1)
+    assert(m356_t.lo == 3)
+    assert(m356_t.hi == 9)
+    m356_t ^= M356Tup(3, 9)
+    assert(m356_t.lo == 0)
+    assert(m356_t.hi == 0)
+}
+
+test "m356: *= /= &= |= ^= на value-record десугарится верно (родня №284)" {
+    mut m356_v = M356ValRec { lo: 12, hi: 16 }
+    m356_v *= M356ValRec { lo: 2, hi: 2 }
+    assert(m356_v.lo == 24)
+    assert(m356_v.hi == 32)
+    m356_v /= M356ValRec { lo: 4, hi: 4 }
+    assert(m356_v.lo == 6)
+    assert(m356_v.hi == 8)
+    m356_v &= M356ValRec { lo: 6, hi: 8 }
+    assert(m356_v.lo == 6)
+    assert(m356_v.hi == 8)
+    m356_v |= M356ValRec { lo: 1, hi: 1 }
+    assert(m356_v.lo == 7)
+    assert(m356_v.hi == 9)
+    m356_v ^= M356ValRec { lo: 7, hi: 9 }
+    assert(m356_v.lo == 0)
+    assert(m356_v.hi == 0)
+}
+
+test "m356: *= /= на heap-record тоже десугарится (предикат был закрыт по операции, не по типу)" {
+    mut m356_h = M356HeapRec { lo: 6, hi: 8 }
+    m356_h *= M356HeapRec { lo: 2, hi: 2 }
+    assert(m356_h.lo == 12)
+    assert(m356_h.hi == 16)
+    m356_h /= M356HeapRec { lo: 4, hi: 4 }
+    assert(m356_h.lo == 3)
+    assert(m356_h.hi == 4)
+}
