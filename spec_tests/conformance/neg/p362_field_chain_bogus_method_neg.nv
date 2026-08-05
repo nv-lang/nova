@@ -1,0 +1,24 @@
+// №362 (p362-advice), broader regression pin for the same root cause as
+// `p362_clone_advice_no_impl_neg.nv`: the gap was NOT specific to `.clone()`
+// — `infer_expr_type`'s `Member` arm silently returned `None` for `@field`
+// whenever the ENCLOSING type was a named tuple, which disabled ALL member/
+// method validation chained off it. A completely unrelated, never-declared
+// method name reached the exact same silent-accept before the fix. Pinned
+// separately from the `.clone()` case so a future regression narrowly
+// scoped to `clone` wouldn't quietly leave this door open again.
+//
+// EXPECT_COMPILE_ERROR E7320
+
+module neg.p362_field_chain_bogus_method_neg
+
+import std.collections.vec.{Vec}
+
+type P362NInt(sign int, limbs Vec[u32])
+
+type P362NDec(mant P362NInt, scale int)
+
+fn P362NDec @bogus_chain() -> int {
+    @mant.frobnicate_does_not_exist()
+}
+
+fn main() -> () {}

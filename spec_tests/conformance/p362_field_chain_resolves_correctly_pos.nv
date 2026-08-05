@@ -1,0 +1,36 @@
+// №362 (p362-advice) — positive counterpart to `neg/p362_clone_advice_no_impl_
+// neg.nv` / `neg/p362_field_chain_bogus_method_neg.nv`: the fix (a missing
+// `TypeDeclKind::NamedTuple` arm added to `infer_expr_type`'s `Member` case,
+// compiler-codegen/src/types/mod.rs) must not just REJECT bogus chains — a
+// REAL method chained off a named-tuple self-field (`@field.method()`, where
+// `Self` is itself a named tuple) must still resolve to the CORRECT receiver
+// and execute with the CORRECT value. Before the fix, `f3_check_member_ctx`
+// silently skipped ALL validation for this shape (its own `infer_expr_type
+// (obj, scope)` call returned `None`) — this pins that the codegen dispatch
+// path was never itself broken, only the checker-level safety net was
+// missing (docs/plans/wip/PROGRESS-p362-advice.md). Part of the SINGLE
+// `spec_tests.conformance` folder-module.
+module spec_tests.conformance
+
+import std.collections.vec.{Vec}
+
+export type P362OInt(sign int, limbs Vec[int])
+
+export fn P362OInt.new(sign int, limbs Vec[int]) -> P362OInt => P362OInt(sign, limbs)
+
+export fn P362OInt @total() -> int {
+    @sign * @limbs.len()
+}
+
+export type P362ODec(mant P362OInt, scale int)
+
+export fn P362ODec.new(mant P362OInt, scale int) -> P362ODec => P362ODec(mant, scale)
+
+export fn P362ODec @mant_total() -> int {
+    @mant.total()
+}
+
+test "№362: chained method through a named-tuple self-field resolves to the correct receiver" {
+    ro d = P362ODec.new(P362OInt.new(3, Vec[int].of(1, 2, 3)), 0)
+    assert(d.mant_total() == 9)
+}

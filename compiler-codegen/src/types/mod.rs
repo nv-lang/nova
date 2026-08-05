@@ -11189,6 +11189,45 @@ impl<'a> TypeCheckCtx<'a> {
                         ),
                         _ => "источник".to_string(),
                     };
+                    // №362 (p362-advice): suggestion (b) below used to claim
+                    // `.clone()` unconditionally, regardless of whether the
+                    // FIELD's own type actually provides one. `Clone` is opt-in
+                    // (D230 — auto-derive requires `#impl(Clone)`; a type that
+                    // never opted in has no `clone` method at all, record OR
+                    // named tuple alike), so a bare recommendation was actively
+                    // wrong for such a field (confirmed via nova-bignum's
+                    // `BigInt(sign, limbs)` — no `#impl(Clone)` — report
+                    // `docs/plans/wip/PROGRESS-p-bignum-tuple.md`, Defect A
+                    // Problem 1). Gate the wording on the SAME availability
+                    // check the general call-site validator uses (`t_provides_
+                    // method` direct + `protocol_method_satisfiable_for` for a
+                    // not-yet-materialized auto-derive), so the hint never
+                    // dangles into a fresh `[E7320] no field or method clone`.
+                    let clone_tname: Option<String> = field_ty.as_ref()
+                        .and_then(|t| match t.strip_readonly() {
+                            TypeRef::Named { path, .. } => path.last().cloned(),
+                            _ => None,
+                        });
+                    let clone_available = clone_tname.as_deref().is_some_and(|tn| {
+                        self.t_provides_method(tn, "clone")
+                            || self.protocol_method_satisfiable_for(tn, "clone")
+                    });
+                    let solution_b = if clone_available {
+                        "(b) скопируй явно — `.clone()` (D230) — если нужна \
+                         НЕЗАВИСИМАЯ mutable-копия; ".to_string()
+                    } else {
+                        format!(
+                            "(b) поле не реализует `Clone` (нет `#impl(Clone)` на \
+                             `{}`) — `.clone()` здесь НЕ сработает (D230 — auto-\
+                             derive только opt-in); либо добавь `#impl(Clone)` на \
+                             саму декларацию типа, либо вынеси код в приватный \
+                             хелпер с `mut`-параметром напрямую (`fn helper(mut x \
+                             T) -> T`, D326 in-out — передача поля АРГУМЕНТОМ уже \
+                             даёт независимую копию на границе вызова, `.clone()` \
+                             не нужен); ",
+                            clone_tname.as_deref().unwrap_or("поля"),
+                        )
+                    };
                     errors.push(Diagnostic::new(
                         format!(
                             "[E_READONLY_COERCE] поле, прочитанное с {root_desc}, \
@@ -11203,8 +11242,7 @@ impl<'a> TypeCheckCtx<'a> {
                              decision 2026-08-01). Решения: (a) сделай метод \
                              `mut @method` (receiver уже mut — launder не \
                              нужен, можно писать через поле напрямую); \
-                             (b) скопируй явно — `.clone()` (D230) — если нужна \
-                             НЕЗАВИСИМАЯ mutable-копия; (c) оставь цель тоже \
+                             {solution_b}(c) оставь цель тоже \
                              `ro` (поле только читается)."
                         ),
                         value.span,
@@ -19254,6 +19292,45 @@ impl<'a> TypeCheckCtx<'a> {
                                 // f3_check_member_ctx молча пропускал НЕСУЩЕСТВУЮЩЕЕ
                                 // поле (`@map._buckets` после переименования) → чекер
                                 // PASS + P67-ICE в codegen (Index element type unknown).
+                                if !td.generics.is_empty() && td.generics.len() == generics.len() {
+                                    return fields
+                                        .iter()
+                                        .find(|f| &f.name == name)
+                                        .map(|f| self.subst_receiver_generics(
+                                            &f.ty, &td.generics, generics));
+                                }
+                            }
+                            // №362 (p362-advice): mirror the Record arm immediately
+                            // above for `TypeDeclKind::NamedTuple` (D215) — this Member
+                            // arm previously had NO NamedTuple case at all, so
+                            // `infer_expr_type(@field, scope)` returned `None` whenever
+                            // the ENCLOSING/receiver type of `@field` (e.g. `Self` for a
+                            // self-field read) was itself a named tuple, independent of
+                            // the field's own type. That silent `None` breaks EVERY
+                            // caller that chains a further `.member`/`.method(...)` off
+                            // the result — most importantly `f3_check_member_ctx`
+                            // (~15042, `let Some(obj_tr) = self.infer_expr_type(obj,
+                            // scope) else { return; }`), which exists specifically to
+                            // validate that chained access. The gap made `@field.
+                            // anything` (a bogus field, a bogus method, or the
+                            // E_READONLY_COERCE-suggested `.clone()` on a field type with
+                            // NO `#impl(Clone)`) type-check with ZERO diagnostics —
+                            // confirmed via minimal repro (`nova check` accepted
+                            // `@mant.nonexistent_field_xyz` on a NamedTuple `Self`
+                            // outright) and matches nova-bignum's field report
+                            // (docs/plans/wip/PROGRESS-p-bignum-tuple.md, Defect A
+                            // Problem 2: `E_RECV_METHOD_MISMATCH` misresolving `.div_rem`
+                            // on the result of `@mant.clone()` to an unrelated type —
+                            // downstream of THIS same untyped chain, not a `.clone()`-
+                            // specific bug). Same generic-substitution shape as the
+                            // Record arm (bare vs receiver-typed fields).
+                            if let TypeDeclKind::NamedTuple(fields) = &td.kind {
+                                if td.generics.is_empty() && generics.is_empty() {
+                                    return fields
+                                        .iter()
+                                        .find(|f| &f.name == name)
+                                        .map(|f| f.ty.clone());
+                                }
                                 if !td.generics.is_empty() && td.generics.len() == generics.len() {
                                     return fields
                                         .iter()
