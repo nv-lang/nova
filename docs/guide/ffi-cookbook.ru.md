@@ -36,7 +36,7 @@ sqlite3, libpng, libcurl — с помощью фундаментальных FF
 | Литерал NULL | `0 as *()` | D214 амендмент Plan 134 |
 | Типизированный хендл | запись `type X { ro value *() }` | D214 §3 |
 | Многозначный возврат | `(T1, T2)` tuple-by-value | D214 §2 |
-| Объявление external fn | `external fn name(args) -> ret` | [D82](../../spec/decisions/03-syntax.md#d82) |
+| Объявление extern fn | `extern "nova" fn` / `extern "C" fn name(args) -> ret` | [D282](../../spec/decisions/08-runtime.md#d282) |
 | Очистка ресурса | метод `consume close()` + `defer` | [D90 / D131](../../spec/decisions/03-syntax.md#d90) |
 
 ## Правила модификаторов указателей (FINAL — Plan 138.5)
@@ -62,8 +62,8 @@ LAYER 1  Nova public API           Database.open(path)
    ↓
 LAYER 2  Nova wrapper              construct typed handle from raw return
    ↓
-LAYER 3  external fn declaration   typed handle + tuple return
-            external fn nova_fn_sqlite3_open(path str) -> (*(), int)
+LAYER 3  extern "C" fn declaration typed handle + tuple return
+            extern "C" fn nova_fn_sqlite3_open(path str) -> (*(), int)
    ↓
 LAYER 4  C shim                    ~5-10 lines, adapts out-param → struct
             _NovaTuple_2_8_nova_ptr_8_nova_int
@@ -214,14 +214,14 @@ module my_app.sqlite3
 type Db { ro value *() }
 type Stmt { ro value *() }
 
-// External declarations matching the C shim.
-external fn nova_fn_sqlite3_open(path str) -> (*(), int)
-external fn nova_fn_sqlite3_close(db *()) -> int
-external fn nova_fn_sqlite3_exec(db *(), sql str) -> int
-external fn nova_fn_sqlite3_prepare(db *(), sql str) -> (*(), int)
-external fn nova_fn_sqlite3_step(stmt *()) -> int
-external fn nova_fn_sqlite3_column_int(stmt *(), col int) -> int
-external fn nova_fn_sqlite3_finalize(stmt *()) -> int
+// Extern declarations matching the C shim (literal C symbol names).
+extern "C" fn nova_fn_sqlite3_open(path str) -> (*(), int)
+extern "C" fn nova_fn_sqlite3_close(db *()) -> int
+extern "C" fn nova_fn_sqlite3_exec(db *(), sql str) -> int
+extern "C" fn nova_fn_sqlite3_prepare(db *(), sql str) -> (*(), int)
+extern "C" fn nova_fn_sqlite3_step(stmt *()) -> int
+extern "C" fn nova_fn_sqlite3_column_int(stmt *(), col int) -> int
+extern "C" fn nova_fn_sqlite3_finalize(stmt *()) -> int
 
 // SQLite return codes (extract subset).
 const SQLITE_OK   int = 0
@@ -277,13 +277,13 @@ module my_app.png
 type PngFile { ro value *() }
 type PngInfo { ro value *() }
 
-external fn nova_fn_png_create_read_struct() -> *()
-external fn nova_fn_png_create_info_struct(png *()) -> *()
-external fn nova_fn_png_init_io(png *(), fp *()) -> int
-external fn nova_fn_png_read_info(png *(), info *()) -> int
-external fn nova_fn_png_get_image_width(png *(), info *()) -> int
-external fn nova_fn_png_get_image_height(png *(), info *()) -> int
-external fn nova_fn_png_destroy_read_struct(png *(), info *()) -> ()
+extern "C" fn nova_fn_png_create_read_struct() -> *()
+extern "C" fn nova_fn_png_create_info_struct(png *()) -> *()
+extern "C" fn nova_fn_png_init_io(png *(), fp *()) -> int
+extern "C" fn nova_fn_png_read_info(png *(), info *()) -> int
+extern "C" fn nova_fn_png_get_image_width(png *(), info *()) -> int
+extern "C" fn nova_fn_png_get_image_height(png *(), info *()) -> int
+extern "C" fn nova_fn_png_destroy_read_struct(png *(), info *()) -> ()
 
 fn PngFile.from_handle(p *()) -> PngFile => PngFile { value: p }
 
@@ -309,12 +309,12 @@ module my_app.curl
 type CurlHandle { ro value *() }
 type CurlResult | Success | Failed(int)
 
-external fn nova_fn_curl_easy_init() -> *()
-external fn nova_fn_curl_easy_setopt_url(h *(), url str) -> int
-external fn nova_fn_curl_easy_setopt_write_to_buffer(h *()) -> int
-external fn nova_fn_curl_easy_perform(h *()) -> int
-external fn nova_fn_curl_easy_cleanup(h *()) -> ()
-external fn nova_fn_curl_get_response_body() -> str
+extern "C" fn nova_fn_curl_easy_init() -> *()
+extern "C" fn nova_fn_curl_easy_setopt_url(h *(), url str) -> int
+extern "C" fn nova_fn_curl_easy_setopt_write_to_buffer(h *()) -> int
+extern "C" fn nova_fn_curl_easy_perform(h *()) -> int
+extern "C" fn nova_fn_curl_easy_cleanup(h *()) -> ()
+extern "C" fn nova_fn_curl_get_response_body() -> str
 
 fn CurlHandle.new() -> CurlHandle {
     ro raw = nova_fn_curl_easy_init()
@@ -337,7 +337,7 @@ fn CurlHandle consume @close() -> () {
 
 ## Шпаргалка по ABI
 
-Для кортежных возвратов external fn C ABI определяется раскладкой элементов:
+Для кортежных возвратов `extern "C" fn` C ABI определяется раскладкой элементов:
 
 | Кортеж | Sys V AMD64 | Windows x64 MSVC | macOS ARM64 |
 |---|---|---|---|
@@ -381,13 +381,13 @@ type-safe FFI с buffers / structs / nullable returns:
 
 ```nova
 // Plan 115 V1 / Plan 134 (current — works today):
-external fn nova_sqlite3_open(path str) -> (*(), int)
+extern "C" fn nova_sqlite3_open(path str) -> (*(), int)
 
 ro (h, rc) = nova_sqlite3_open(path)
 if rc != 0 { Fail.throw(DbError.OpenFailed(rc)) }
 
 // Plan 118 V2 (typed + nullable + NPO):
-external fn sqlite3_open(path str) -> (Option[Sqlite3Handle], i64)
+extern "C" fn sqlite3_open(path str) -> (Option[Sqlite3Handle], i64)
 type Sqlite3Handle(*sqlite3)               // tuple newtype, zero-overhead
 
 unsafe {
@@ -427,9 +427,9 @@ documentation и [`examples/typed_pointers/`](../../examples/typed_pointers/)
 ```nova
 import std.ffi.cstr.{CStr}
 
-// External fn principal pattern — a typed handle instead of a bare *u8
-external fn c_strlen(s CStr) -> i64
-external fn c_printf(fmt CStr) -> i32
+// Extern fn principal pattern — a typed handle instead of a bare *u8
+extern "C" fn c_strlen(s CStr) -> i64
+extern "C" fn c_printf(fmt CStr) -> i32
 ```
 
 Backing-тип CStr: `*u8` (Plan 118 typed pointer). ABI маршалится в
@@ -459,25 +459,29 @@ GC-управляемый буфер на `byte_len()+1` байт, копиру�
 буфером»; `as_cstr`/`as_cstr_unchecked` ВЫВЕДЕНЫ, имя `to_` честно называет
 копирование).
 
-### addr_of / addr_of_mut (создание указателей в стиле Zig)
+### `&x` — взятие адреса (создание указателей)
 
 ```nova
 unsafe {
     ro x = 42
-    ro p = addr_of(x)         // *T pointer to a local
+    ro p = &x                  // *T pointer to a local
     assert(p.read() == 42)
 }
 
 unsafe {
     mut buf = 0
-    ro p = addr_of_mut(buf)   // *T (mut binding required)
-    p.write(100)               // codegen TBD
+    ro p = &buf                // *mut T (mut binding auto-infers *mut)
+    p.write(100)                // codegen TBD
 }
 ```
 
-Эквивалентно оператору `&x` (UnOp::AddrOf), дешугарится rewriter'ом.
-Используйте, когда явный синтаксис вызова функции улучшает читаемость FFI.
-Та же enforce-логика: требуется unsafe-контекст, запрет `#realtime`, валидация
+`&x` (`UnOp::AddrOf`) безопасен для всех типов начиная с Plan 118.6 — для
+самого пути promote `unsafe {}` не требуется (здесь блок оставлен для
+группировки с соседними FFI/pointer-op примерами). Прежние
+builtin-fn-алиасы `addr_of(x)` / `addr_of_mut(x)` **сняты**
+(`E_ADDR_OF_REMOVED`, Plan 118.6, D216 §4 amend) — вместо обоих пишите `&x`:
+`mut`-биндинг автоматически выводит `*mut T`, `ro`-биндинг — `*T`.
+Та же enforce-логика: запрет `#realtime`, валидация
 lvalue (E_AMP_LITERAL / E_AMP_RECORD_LITERAL / E_ARRAY_INDEX_PTR_BANNED).
 
 ### Intrinsics RawMem (массовые операции с памятью)
@@ -497,7 +501,7 @@ unsafe {
 
 ```nova
 unsafe {
-    ro p = addr_of(some_int)
+    ro p = &some_int
     ro v = p.read()                  // typed primitive read
     p.write(100)                     // typed write (on *mut T)
     ro v_vol = p.read_volatile()     // MMIO read
@@ -531,13 +535,13 @@ export unsafe fn read_first_byte(p *u8) -> u8 {
 }
 ```
 
-### Объявление unsafe external (C) функции
+### Объявление unsafe extern-функции (runtime-backed)
 
 ```nova
-// external unsafe fn — requires unsafe {} at call site
+// extern "nova" unsafe fn — requires unsafe {} at call site
 // pointee-mut written postfix: `*mut u8` = writable target (FINAL, Plan 138.5)
-external unsafe fn RawMem.copy(src *u8, dst *mut u8, n int) -> ()
-external unsafe fn RawMem.fill(dst *mut u8, byte_value u8, n int) -> ()
+extern "nova" unsafe fn RawMem.copy(src *u8, dst *mut u8, n int) -> ()
+extern "nova" unsafe fn RawMem.fill(dst *mut u8, byte_value u8, n int) -> ()
 ```
 
 ### Вызов unsafe-функции
@@ -553,9 +557,9 @@ unsafe {
 ### unsafe fn как тип указателя на функцию
 
 ```nova
-// addr_of(unsafe fn) propagates unsafe to fn-ptr type: *unsafe fn(...)
+// &(unsafe fn) propagates unsafe to fn-ptr type: *unsafe fn(...)
 unsafe fn risky(p *u8) -> () { /* ... */ }
-ro fn_ptr = addr_of(risky)   // type: *unsafe fn(p *u8) -> ()
+ro fn_ptr = &risky            // type: *unsafe fn(p *u8) -> ()
 
 // Calling via unsafe fn pointer also requires unsafe {}
 unsafe { fn_ptr(some_ptr) }
