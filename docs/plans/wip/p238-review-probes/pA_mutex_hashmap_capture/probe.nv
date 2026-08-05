@@ -1,0 +1,37 @@
+// p238-review probe A: does the EXISTING share_check (D415/D441 whitelist)
+// treat a Mutex+HashMap value-record (the exact `BucketTable`/`MetricsRegistry`
+// shape from nova-polaris, #stable corpus code) as safe to `mut`-capture
+// into `spawn`? Neither field carries the `mut` field-level keyword (matches
+// the real corpus declarations byte-for-byte in that respect) — testing
+// whether share_check's per-field access derivation (`f.mutable`) actually
+// requires internal synchronization for HashMap's OWN backing storage, or
+// whether the absence of the `mut` field keyword lets it through regardless.
+
+module p238review.pa_mutex_hashmap
+
+import std.runtime.sync.{Mutex}
+import std.collections.hashmap.{HashMap}
+
+type Table value priv {
+    mutex   Mutex
+    entries HashMap[str, int]
+}
+
+fn Table.new() -> Table => { mutex: Mutex.new(), entries: HashMap[str, int].new() }
+
+fn Table @bump(key str) {
+    consume g = @mutex.lock()
+    ro prev = @entries.get(key) ?? 0
+    ro _ = @entries.insert(key, prev + 1)
+}
+
+fn main() {
+    mut table = Table.new()
+    supervised {
+        for _ in 0..4 {
+            spawn {
+                table.bump("k")
+            }
+        }
+    }
+}

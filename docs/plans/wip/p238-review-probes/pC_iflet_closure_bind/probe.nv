@@ -1,0 +1,35 @@
+// p238-review probe C: does the `if pattern = expr` condition-position
+// bind (D34 — a DIFFERENT AST node than both plain `ro b = a` [transition
+// 9] and `match` arms [transition 7's test vehicle in p238-paths]) carry
+// the same closure-capture safety check when it unwraps a mut-capturing
+// closure out of an `Option` right before a `spawn`? Motivation: an
+// analogous checker (D246 L1-launder table, reserved for a DIFFERENT
+// soundness rule) had EXACTLY this gap — `if`/`while` pattern-bind was not
+// wired into the same table as match arms (reg. 221.1 №106, fixed
+// 2026-07-25) — so this AST position has prior form for silently missing
+// coverage that a match-arm-only test would not catch.
+
+module p238review.pc_iflet
+
+fn make_counter() -> fn() -> () {
+    mut count = 0
+    || { count = count + 1 }
+}
+
+fn maybe_counter(flag bool) -> Option[fn() -> ()] {
+    if flag { Some(make_counter()) } else { None }
+}
+
+fn main() {
+    if Some(bump) = maybe_counter(true) {
+        supervised {
+            for _ in 0..8 {
+                spawn {
+                    bump()
+                }
+            }
+        }
+    }
+    // Honesty control: deliberate, unrelated type error.
+    ro _honesty_control int = "not an int"
+}
