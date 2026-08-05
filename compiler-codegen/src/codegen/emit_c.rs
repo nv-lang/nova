@@ -5,6 +5,12 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, BTreeMap};
 use std::fmt::Write as FmtWrite;
 
+// №240 [M-detach-box-while-loop-read-after]: `emit_detach` + its
+// `hoist_box_decl` helper live in a child module (arch-ratchet headroom —
+// scripts/guards/arch-ratchet.sh only measures this file). See that
+// module's doc comment.
+mod emit_detach;
+
 /// Plan 11 Ф.1: одна signature метода в multi-overload registry (`method_overloads`).
 ///
 /// Plan 172.1 U.2.5 (§0, [M-172-sig-registry]): `MethodSig` СВЁРНУТ в единый тип
@@ -1803,6 +1809,14 @@ pub struct CEmitter {
     /// reads/writes go through the box. The closure env stores `_box_x` directly
     /// (no dangling-ptr risk on escape). Cleared and #undef'd at function exit.
     var_boxed: HashMap<String, String>,
+    /// №240 [M-detach-box-while-loop-read-after]: `(byte-offset, indent)`
+    /// into `self.out`, set once per top-level C function body by
+    /// `emit_block_stmts` (right after the function's own opening brace).
+    /// `codegen/emit_c/emit_detach.rs::hoist_box_decl` retroactively inserts
+    /// bare box-pointer declarations here, so a `detach{}` nested inside a
+    /// `while`/`if`/match-arm C block still declares its box pointer in a
+    /// scope that dominates reads occurring after that nested block closes.
+    detach_box_hoist: Option<(usize, usize)>,
     /// Plan 48: generic FnDecls for monomorphization worklist drain.
     /// Key = Nova fn name (e.g. "within"). Populated during pre-pass.
     mono_fn_decls: HashMap<String, crate::ast::FnDecl>,
@@ -2542,6 +2556,7 @@ impl CEmitter {
             auto_cleanup_active: Vec::new(),
             loop_body_has_scope: Vec::new(),
             var_boxed: HashMap::new(),
+            detach_box_hoist: None,
             warnings: std::cell::RefCell::new(Vec::new()),
             strict_errors: std::cell::RefCell::new(Vec::new()),
             interned_str_literals: HashMap::new(),
@@ -14696,419 +14711,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.deferred_impls.push_str(&entry_code);
         self.indent = saved_indent;
         Ok(())
-    }
-
-    /// Emit `detach { body }` — D50 fire-and-forget primitive.
-    /// Bootstrap default handler is SyncDetach: body executes inline in the caller's
-    /// stack, no fiber, no scheduler. Production runtime would route to a global
-    /// supervisor on a separate OS thread (with LogAndDrop default panic policy).
-    /// Plan 83.4.5.2 Ф.2 (2026-05-23): `detach { body }` — production-grade
-    /// fire-and-forget на orphan fiber (D50 AsyncDetach default).
-    ///
-    /// Архитектура (паритет Go `go fn()` / tokio::spawn без JoinHandle):
-    /// 1. Capture-анализ (как у emit_spawn): immutable captures by-value;
-    ///    mutable captures — HEAP-BOX (НЕ `&stack_local` как в emit_spawn:
-    ///    орфан переживает кадр вызывающего —
-    ///    [M-conformance-megacu-intermittent-run-crash], см. capture-setup
-    ///    ниже).
-    /// 2. Ctx-struct с NovaSpawnCtxBase prefix + capture fields →
-    ///    `lambda_forward_decls` (file scope).
-    /// 3. Entry function `_nova_detach_N(mco_coro*)` — body wrapped в
-    ///    LogAndDrop fail-frame (errors logged to stderr, не propagate'ятся).
-    /// 4. На call site: heap-alloc ctx (GC-tracked), set captures, set
-    ///    _nova_parent_scope=NULL (orphan!), captures init_snapshot для
-    ///    handler inheritance, вызов `nova_runtime_spawn_orphan(entry, ctx)`.
-    /// 5. Возвращается NOVA_UNIT мгновенно — caller не ждёт.
-    ///
-    /// Runtime routing (см. runtime.c::nova_runtime_spawn_orphan):
-    ///   - armed → push в worker deque (parent_scope=NULL → LogAndDrop в
-    ///     fiber's fail-handler без scope.report_error).
-    ///   - bootstrap → cooperative spawn в global `_nova_orphan_scope`,
-    ///     drained on atexit либо explicit `runtime.drain_orphans()`.
-    ///
-    /// Cross-runtime parity:
-    ///   - Go `go fn()` — runtime.newproc, fiber goes to scheduler runq,
-    ///     orphan'е errors → goroutine panic propagate process-wide
-    ///     (Nova: LogAndDrop вместо panic, D50 spec).
-    ///   - tokio `tokio::spawn(future)` без JoinHandle — multi-thread
-    ///     executor, error в task — implicit drop.
-    ///   - Kotlin `GlobalScope.launch { … }` — truly detached coroutine.
-    ///   - Node `setImmediate(cb)` — single-thread event-loop queue.
-    fn emit_detach(&mut self, body: &Block) -> Result<String, String> {
-        let detach_id = format!("_nova_detach_{}", self.detach_counter);
-        self.detach_counter += 1;
-
-        // ── Capture-анализ (по образцу emit_spawn) ──
-        // [M-parfor-loopvar-nonscalar-byref-capture] (2026-07-13): by-value gate
-        // widened to ANY immutable capture (was scalar-only) — see emit_spawn's
-        // capture-analysis comment for the full rationale (loop-variable aliasing
-        // of non-scalar types, e.g. `str`, was captured by-reference and observed
-        // stale/duplicate values).
-        let mut refs: Vec<String> = Vec::new();
-        Self::collect_idents_block(body, &mut refs);
-        refs.sort();
-        refs.dedup();
-        let mut bound: HashSet<String> = HashSet::new();
-        Self::collect_bound_names_block(body, &mut bound);
-
-        let mut captures: Vec<(String, String, bool)> = Vec::new();
-        for name in refs {
-            if bound.contains(&name) { continue; }
-            // [M-spawn-module-const-capture]: module-level const — resolves to
-            // its mangled file-scope global, never a capture (see emit_spawn).
-            if self.private_const_c_names
-                .contains_key(&(body.span.file_id, name.clone()))
-            {
-                continue;
-            }
-            if let Some(ty) = self.var_types.get(&name).cloned() {
-                let is_mut = self.var_mutable.contains(&name);
-                let by_value = !is_mut;
-                captures.push((name, ty, by_value));
-            }
-        }
-
-        let ctx_ty  = format!("NovaDetachCtx_{}", &detach_id[1..]);
-        let ctx_var = format!("{}_ctx", detach_id);
-
-        // ── Ctx-struct typedef + entry forward-decl → lambda_forward_decls ──
-        // NovaSpawnCtxBase prefix (6 fields) — required so worker loop в
-        // runtime.c корректно cast'ает user_data к NovaSpawnCtxBase* и
-        // обрабатывает handler-snapshot adopt (Plan 83.4.5.4).
-        let _ = writeln!(self.lambda_forward_decls, "typedef struct {{");
-        let _ = writeln!(self.lambda_forward_decls,
-            "    NovaFiberQueue* _nova_parent_scope;");
-        // Plan 173.0 Ф.2 (A2.2): must mirror NovaSpawnCtxBase field order
-        // exactly (see emit_spawn's identical field for the full rationale).
-        // Detach/orphan fibers never participate in Ф.2 retention (LogAndDrop
-        // has no supervising parent to retain errors for) — stays -1 always,
-        // but the field must exist for common-initial-sequence layout parity.
-        let _ = writeln!(self.lambda_forward_decls,
-            "    int _nova_parent_slot;");
-        let _ = writeln!(self.lambda_forward_decls,
-            "    int _nova_worker_slot;");
-        let _ = writeln!(self.lambda_forward_decls,
-            "    NovaFailFrame* _nova_saved_fail_top;");
-        let _ = writeln!(self.lambda_forward_decls,
-            "    NovaInterruptFrame* _nova_saved_interrupt_top;");
-        let _ = writeln!(self.lambda_forward_decls,
-            "    NovaFiberQueue* _nova_fiber_scope;");
-        let _ = writeln!(self.lambda_forward_decls,
-            "    NovaEffectSnapshot* _nova_init_snapshot;");
-        // Plan 83.4.5.7 (2026-05-23): atomic fiber state machine — see
-        // NovaSpawnCtxBase в fibers.h. MUST match layout exactly.
-        let _ = writeln!(self.lambda_forward_decls,
-            "    nova_atomic_int _nova_fiber_state;");
-        // Plan 83.6 (2026-05-24): allocation size — used by free path.
-        let _ = writeln!(self.lambda_forward_decls,
-            "    size_t _nova_pool_size;");
-        // Plan 110.2.1.a (D188 R3) [M-110.x-cleanup-shield-deadline-underflow]
-        // supervised(cancel:) fix (2026-06-05): cancel-shield mask + deadline
-        // fields — same as NovaSpawnCtx layout. Без них runtime reads past
-        // struct → garbage mask > 0 triggers bogus watchdog-варн (было:
-        // bogus CleanupTimeoutError — D192-ретракт, Plan 173 Ф.5 п.2).
-        let _ = writeln!(self.lambda_forward_decls,
-            "    nova_atomic_int _nova_cancel_mask_count;");
-        let _ = writeln!(self.lambda_forward_decls,
-            "    int64_t _nova_cancel_deadline_ns;");
-        // Plan 83-go-cmn Ф.2: gopark/goready 4-state park-latch — mirrors
-        // NovaSpawnCtxBase._nova_park_state (fibers.h). MUST be BEFORE schedlink
-        // (schedlink stays LAST base field). Same FATAL as emit_spawn if omitted.
-        let _ = writeln!(self.lambda_forward_decls,
-            "    nova_atomic_int _nova_park_state;");
-        // Plan 83-go-cmn Ф.1: intrusive overflow link — LAST base field,
-        // mirrors NovaSpawnCtxBase.schedlink (fibers.h). See emit_spawn note.
-        let _ = writeln!(self.lambda_forward_decls,
-            "    mco_coro* schedlink;");
-        for (cap, ty, by_value) in &captures {
-            if *by_value {
-                let _ = writeln!(self.lambda_forward_decls, "    {} {};", ty, cap);
-            } else {
-                let _ = writeln!(self.lambda_forward_decls, "    {}* {};", ty, cap);
-            }
-        }
-        let _ = writeln!(self.lambda_forward_decls, "}} {};", ctx_ty);
-        let _ = writeln!(self.lambda_forward_decls,
-            "{}void {}(mco_coro* _co);", self.top_level_storage(), detach_id);
-
-        // ── Entry function body в deferred_impls ──
-        let saved_out = std::mem::take(&mut self.out);
-        let saved_indent = self.indent;
-        self.indent = 0;
-        // Plan 175 Ф.2-v2 ([M-spawn-var-boxed-leak] class, mirrors emit_spawn's
-        // identical fix): isolate `var_boxed` for this detach-body's own
-        // scope — captures here are resolved via `current_spawn_captures`
-        // (`_c->name`), not `var_boxed`; a stale outer entry would shadow it.
-        let saved_var_boxed_detach = std::mem::take(&mut self.var_boxed);
-
-        self.line(&format!("{}void {}(mco_coro* _co) {{", self.top_level_storage(), detach_id));
-        self.indent += 1;
-        self.line(&format!("{ctx}* _c = ({ctx}*)mco_get_user_data(_co);", ctx = ctx_ty));
-
-        // Worker preamble (M:N path): alloc home scope slot + adopt init_snapshot.
-        // Single-thread path: parent_scope == NULL → skip; orphan fiber's
-        // home scope (для cooperative) — global _nova_orphan_scope, который
-        // nova_fiber_spawn_into добавил в подложку queue.
-        self.line("if (_c->_nova_parent_scope) {");
-        self.indent += 1;
-        self.line("_nova_active_slot = nova_scope_alloc_slot(_nova_active_scope, _co);");
-        self.line("_c->_nova_worker_slot = _nova_active_slot;");
-        self.line("_c->_nova_fiber_scope = _nova_active_scope;");
-        self.line("if (_c->_nova_init_snapshot && _nova_active_slot >= 0) {");
-        self.indent += 1;
-        self.line("_nova_active_scope->fiber_effect_snapshot[_nova_active_slot] = _c->_nova_init_snapshot;");
-        self.line("_c->_nova_init_snapshot = NULL;");
-        self.indent -= 1;
-        self.line("}");
-        self.indent -= 1;
-        self.line("} else {");
-        self.indent += 1;
-        self.line("_c->_nova_worker_slot = -1;");
-        self.indent -= 1;
-        self.line("}");
-
-        // Capture rewriting context — ExprKind::Ident → `(*_c->name)` / `_c->name`.
-        let mut cap_set: HashSet<String> = HashSet::new();
-        let mut cap_by_value: HashSet<String> = HashSet::new();
-        for (cap, _, by_value) in &captures {
-            cap_set.insert(cap.clone());
-            if *by_value { cap_by_value.insert(cap.clone()); }
-        }
-        let prev_caps = std::mem::replace(&mut self.current_spawn_captures, Some(cap_set));
-        let prev_by_value = std::mem::replace(
-            &mut self.current_spawn_capture_by_value, Some(cap_by_value));
-
-        // LogAndDrop fail-frame: D50 detach errors → log to stderr, не propagate.
-        // (vs emit_spawn где error report'ится в parent scope для scope-wide
-        // first_error+kind propagation — orphan не имеет parent scope.)
-        self.line("NovaFailFrame _ff;");
-        self.line("nova_fail_push(&_ff);");
-        self.line("if (setjmp(_ff.jmp) == 0) {");
-        self.indent += 1;
-
-        let block_id = self.enter_defer_scope(body, false);
-        for stmt in &body.stmts {
-            self.emit_stmt(stmt)?;
-        }
-        if let Some(trailing) = &body.trailing {
-            let v = self.emit_expr(trailing)?;
-            self.line(&format!("(void)({});", v));
-        }
-        self.leave_defer_scope(block_id);
-
-        self.line("nova_fail_pop();");
-        self.indent -= 1;
-        self.line("} else {");
-        self.indent += 1;
-        self.line("nova_fail_pop();");
-        // LogAndDrop: print error to stderr (per D50), fiber exits cleanly.
-        // Не вызываем nova_fiber_report_error — orphan нет parent scope для
-        // propagation; errors не должны abort'ить процесс (другие orphans
-        // / main flow продолжают).
-        self.line("fprintf(stderr, \"nova: detach orphan fiber error (LogAndDrop): %.*s\\n\", (int)_ff.error_msg.len, _ff.error_msg.ptr ? _ff.error_msg.ptr : \"<no message>\");");
-        self.indent -= 1;
-        self.line("}");
-
-        // Plan 83.4.5.8 (2026-05-24): orphan epilogue — dec pending_remote
-        // + signal_main + free uncollectable slot (если был). Под armed
-        // detach'ы tracked через _nova_orphan_scope.pending_remote чтобы
-        // runtime.drain_orphans() мог wait их завершения (как
-        // supervised_run_impl wait wait для children). Под bootstrap
-        // parent_scope = NULL → этот блок пропускается; cooperative
-        // queue (orphan_scope.fibers[]) drain'ится через
-        // nova_supervised_drain_main_scope.
-        self.line("if (_c->_nova_parent_scope) {");
-        self.indent += 1;
-        self.line("if (_c->_nova_worker_slot >= 0) {");
-        self.indent += 1;
-        self.line("nova_scope_free_slot(_nova_active_scope, _c->_nova_worker_slot);");
-        self.line("_nova_active_slot = -1;");
-        self.indent -= 1;
-        self.line("}");
-        // [196.6 / D228 §6 class]: pending_sweeps++ strictly BEFORE the
-        // pending_remote release-decrement (same thread, program order) —
-        // the scope owner that observes pending_remote==0 therefore also
-        // observes pending_sweeps>0 until the worker's post-mortem sweep
-        // (nova_scope_sweep_dead_child) release-decrements it. Closes the
-        // stack-scope use-after-return in the sweep (Plan 198 floating AV;
-        // docs/plans/196.6-race-state-dump-notes.md).
-        self.line("(void)nova_aint_inc(&_c->_nova_parent_scope->pending_sweeps);");
-        self.line("(void)nova_aint_fetch_sub_release(&_c->_nova_parent_scope->pending_remote);");
-        self.line("nova_runtime_signal_main();");
-        self.indent -= 1;
-        self.line("}");
-
-        self.indent -= 1;
-        self.line("}");
-
-        self.current_spawn_captures = prev_caps;
-        self.current_spawn_capture_by_value = prev_by_value;
-
-        // Move entry-fn body to deferred_impls, restore main out.
-        let entry_fn_text = std::mem::take(&mut self.out);
-        self.indent = saved_indent;
-        self.out = saved_out;
-        self.var_boxed = saved_var_boxed_detach;
-        self.deferred_impls.push_str(&entry_fn_text);
-
-        // ── Call site: heap-alloc ctx, fill captures, spawn_orphan ──
-        // ctx должен пережить caller — heap (GC-tracked). Plan 82 fiber arena
-        // независим от user-managed heap.
-        //
-        // Plan 83.4.5.8 (2026-05-24): conditional allocation. Под armed M:N
-        // используем nova_alloc_uncollectable (см. emit_spawn для rationale —
-        // worker-side reading ctx fields через mco_get_user_data видит zeros
-        // если ctx становится GC-unreachable между main's write и worker's
-        // read). Под bootstrap (`_armed == false`) — regular nova_alloc;
-        // orphan scope's q->fiber_ctx[] держит ctx reachable.
-        self.line(&format!(
-            "nova_bool _nova_is_init_detach_{ctr} = nova_runtime_is_initialized();",
-            ctr = self.detach_counter - 1));
-        // Plan 83.6 (2026-05-24): per-worker SpawnCtx pool — см. emit_spawn.
-        self.line(&format!(
-            "{ctx_ty}* {ctx_var} = ({ctx_ty}*)(_nova_is_init_detach_{ctr} ? nova_spawn_pool_acquire(sizeof({ctx_ty})) : nova_alloc(sizeof({ctx_ty})));",
-            ctr = self.detach_counter - 1));
-        // Plan 83.4.5.8 (2026-05-24): под armed M:N orphan tracked через
-        // _nova_orphan_scope.pending_remote — drain_orphans ждёт worker-pool
-        // orphan'ов. Под bootstrap: parent_scope = NULL (orphan_scope handles
-        // через nova_fiber_spawn_into → q->fibers[] queue). Init orphan scope
-        // явно чтобы получить valid pointer.
-        self.line(&format!(
-            "if (_nova_is_init_detach_{ctr}) {{", ctr = self.detach_counter - 1));
-        self.indent += 1;
-        self.line("nova_runtime_orphan_scope_init();");
-        self.line(&format!("{ctx_var}->_nova_parent_scope = nova_runtime_orphan_scope();"));
-        /* Inc pending_remote BEFORE spawn (consistency w/ emit_spawn). */
-        self.line(&format!("nova_aint_inc(&{ctx_var}->_nova_parent_scope->pending_remote);"));
-        self.indent -= 1;
-        self.line("} else {");
-        self.indent += 1;
-        self.line(&format!("{ctx_var}->_nova_parent_scope = NULL;"));  // orphan!
-        self.indent -= 1;
-        self.line("}");
-        // Plan 173.0 Ф.2 (A2.2): detach/orphan fibers never allocate a
-        // retention slot (no supervising parent — LogAndDrop) — always -1.
-        self.line(&format!("{ctx_var}->_nova_parent_slot = -1;"));
-        self.line(&format!("{ctx_var}->_nova_worker_slot = -1;"));
-        self.line(&format!("{ctx_var}->_nova_saved_fail_top = NULL;"));
-        self.line(&format!("{ctx_var}->_nova_saved_interrupt_top = NULL;"));
-        self.line(&format!("{ctx_var}->_nova_fiber_scope = NULL;"));
-
-        // Plan 83.4.5.4: capture parent TLS snapshot for handler inheritance.
-        // Под bootstrap nova_fiber_spawn_into внутри spawn_orphan тоже save'ит
-        // snapshot — но codegen-init его ноль'ит, чтобы избежать double-save.
-        // Plan 83.4.5.8: snapshot тоже uncollectable под armed.
-        // Plan 83.4.5.8: snapshot — collectable, reachable через ctx
-        // (uncollectable, scanned) и scope's fiber_effect_snapshot[].
-        self.line(&format!(
-            "if (_nova_is_init_detach_{ctr}) {{", ctr = self.detach_counter - 1));
-        self.indent += 1;
-        self.line(&format!("{ctx_var}->_nova_init_snapshot = (NovaEffectSnapshot*)nova_alloc(sizeof(NovaEffectSnapshot));"));
-        self.line(&format!("nova_effect_snapshot_save({ctx_var}->_nova_init_snapshot);"));
-        self.indent -= 1;
-        self.line("} else {");
-        self.indent += 1;
-        self.line(&format!("{ctx_var}->_nova_init_snapshot = NULL;"));
-        self.indent -= 1;
-        self.line("}");
-
-        // Capture setup (как у emit_spawn — handles nested-capture rewriting).
-        //
-        // [M-conformance-megacu-intermittent-run-crash] (2026-07-22): mutable
-        // captures are HEAP-BOXED here, NOT taken by `&stack_local` as
-        // emit_spawn does. emit_spawn's by-ref capture is sound because a
-        // supervised parent JOINS its children before the enclosing frame
-        // pops; a detach orphan is fire-and-forget and ROUTINELY outlives the
-        // caller frame — `ctx->cap = &local` was a use-after-return that hit
-        // as a stochastic AV (frame[1] = `_nova_detach_1` →
-        // `Nova_AtomicInt_method_fetch_sub_int` on a garbage handle read from
-        // the dead frame) whenever the orphan's worker pickup was delayed past
-        // the caller's return under CPU contention (~15%/run at 4-way load on
-        // the conformance mega-CU; the «~1 of 8 gate runs» silent mid-run
-        // death of `a_q3_println_debug_record`). Fix mirrors the established
-        // escaping-handler idiom (emit_effect_handler_literal case (a)):
-        // lazily heap-promote the var into a GC box, register it in
-        // `var_boxed` so textually-later reads/writes in the enclosing fn
-        // transparently deref the box (keeps the D50 §3.1 canonical pattern
-        // `mut x = 0; detach { x = 42 }; runtime.drain_orphans();
-        // assert(x == 42)` working), and store the BOX pointer in the ctx —
-        // the ctx field type (`T*`) and the orphan body's `(*_c->cap)` access
-        // are unchanged; only the pointee moves stack → GC heap. The box is
-        // collectable (`nova_alloc`) and stays reachable through the scanned
-        // ctx for the orphan's whole life. D415 §2 already restricts mut
-        // captures across a detach boundary to `#share` types
-        // (AtomicInt/Mutex/#share records), for which a boxed handle copy
-        // preserves shared-object mutation exactly.
-        //
-        // Known accepted limits (same class as the escaping-handler box,
-        // [M-175-handler-lit-boxed-var-c-scope-leak]): (a) box reuse across
-        // TWO detach sites capturing the same var relies on the first box's
-        // C declaration still being in scope; (b) rebinding-visibility of a
-        // scalar capture read BEFORE the detach line inside a loop follows
-        // emission order, not iteration order. Neither shape exists in the
-        // corpus; both degrade to stale reads, never to UB.
-        for (cap, ty, by_value) in &captures {
-            let is_outer_cap = self.current_spawn_captures.as_ref()
-                .map(|s| s.contains(cap)).unwrap_or(false);
-            let outer_by_value = self.current_spawn_capture_by_value.as_ref()
-                .map(|s| s.contains(cap)).unwrap_or(false);
-            // [M-detach-ctx-capture-after-ro-call-value-ptr-mismatch] fix
-            // (221.1 Ф.2 #16, mirrors emit_spawn's identical
-            // [M-nv-spawn-ctx-capture-mut-param-ptr-mismatch] fix, same
-            // file's `emit_spawn` capture loop above): a captured name that
-            // is NOT itself an outer-fiber
-            // capture (`is_outer_cap` false) is not necessarily a plain C
-            // value either — a `mut T` in-out param (Plan 184 R10) OR a
-            // large `ro` value-struct param passed by-ref for efficiency
-            // (Plan 172.14 Ф.1, free fn or method) is ALREADY `T*` in C
-            // (`self.ref_params`, populated once per enclosing fn — see
-            // emit_fn's param-classification pass). This detach capture-
-            // populate loop only ever checked `is_outer_cap`, never
-            // `ref_params` — so capturing such a parameter into `detach {}`
-            // (with NO intervening spawn) fell through to the bare
-            // `cap.clone()` "ordinary local" arm, which assumes `cap`'s C
-            // storage IS the value: `ctx->field = cap;` (by_value) then
-            // assigned a `T*` into a `T` field (clang: "assigning to 'T'
-            // from incompatible type 'T *'"). Live repro: a bare (no `mut`/
-            // `consume`) multi-field value-record parameter (nova-http's
-            // `ServerPolicy`, 8 fields) captured into `detach { ... }` —
-            // reproduced independent of any earlier method call on it (the
-            // "after an earlier ro-call" framing was circumstantial: any
-            // multi-field value-struct param triggers `free_fn_byref_flag`/
-            // `method_byref_flag` and lands in `ref_params` regardless).
-            let outer_is_ref_param = self.ref_params.contains(cap);
-            let access_outer = if is_outer_cap {
-                if outer_by_value { format!("_c->{}", cap) }
-                else { format!("(*_c->{})", cap) }
-            } else if outer_is_ref_param {
-                format!("(*{})", cap)
-            } else { cap.clone() };
-            if *by_value {
-                self.line(&format!("{ctx_var}->{cap} = {access_outer};"));
-            } else {
-                let box_ptr = if let Some(existing) = self.var_boxed.get(cap) {
-                    // Var already heap-promoted by an earlier closure/handler/
-                    // detach in this enclosing fn — share the same box so all
-                    // parties observe the same cell.
-                    existing.clone()
-                } else {
-                    let bv = format!("{}_box_{}", detach_id, cap);
-                    self.line(&format!(
-                        "{ty}* {bv} = ({ty}*)nova_alloc(sizeof({ty}));",
-                        ty = ty, bv = bv));
-                    self.line(&format!("*{bv} = {access_outer};",
-                        bv = bv, access_outer = access_outer));
-                    self.var_boxed.insert(cap.clone(), bv.clone());
-                    bv
-                };
-                self.line(&format!("{ctx_var}->{cap} = {box_ptr};"));
-            }
-        }
-
-        // Fire-and-forget — caller continues without waiting.
-        self.line(&format!("nova_runtime_spawn_orphan({detach_id}, {ctx_var});"));
-
-        Ok("NOVA_UNIT".to_string())
     }
 
     /// Emit `blocking { body }` — Plan 83.3 Ф.4.2 (D50): real threadpool
@@ -30309,6 +29911,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     }
 
     fn emit_block_stmts(&mut self, block: &Block, ret_ty: &str) -> Result<(), String> {
+        // №240: every call here is a genuine new top-level C function body
+        // start (fn/test/method/lambda) — see `detach_box_hoist` doc.
+        self.detach_box_hoist = Some((self.out.len(), self.indent));
         let block_id = self.enter_defer_scope(block, false);
         for stmt in &block.stmts {
             self.emit_stmt(stmt)?;
