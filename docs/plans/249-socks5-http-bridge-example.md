@@ -109,10 +109,18 @@ SOCKS5-сервер для тестов не нужен. Заодно решае
 ```nova
 fn main() Net Os Time -> () {
     ro cfg = load_config()                       // env + args, валидация на старте
-    consume listener = TcpListener.bind("127.0.0.1:${cfg.listen_port}")!!
-    loop {
-        consume client = listener.accept()!!
-        spawn consume client { handle_client(client, cfg) }   // D415 §4: линейное — явной передачей
+    consume listener = TcpListener.bind(SocketAddr.loopback(cfg.listen_port))!!
+    supervised {                                 // D50: spawn ТОЛЬКО внутри structured-scope
+        loop {
+            match listener.accept() {
+                // ФОРМА ОБЯЗАТЕЛЬНА (проверено сборкой 2026-08-06): биндинг приходит
+                // из match-АРМА и уходит в файбер `spawn consume` (D415 §4).
+                // ВНЕШНИЙ `consume client = listener.accept()!!` + spawn НЕ собирается —
+                // [M-consume-param-spawn-defer-active] (симптом дыры гейта №364).
+                Ok(consume conn) => spawn consume conn { handle_client(conn, cfg) }
+                Err(_)           => ()           // политика на Ф.2: лог и продолжить
+            }
+        }
     }
 }
 
@@ -160,7 +168,9 @@ fn handle_client(consume client TcpStream, cfg Config) Net Time -> () {
 - **Ф.0 — пины feasibility (ворота всего плана, пробой на компиляторе):**
   - **(а) half-close:** делает ли `TcpWriteHalf.consume @close()` реальный
     `shutdown(SHUT_WR)` (FIN уходит пиру, read-половина продолжает читать) — или
-    просто роняет handle? Дока (`tcp.nv:376-378`: «closes the socket if the read
+    просто роняет handle? **Уточнено 2026-08-06:** у половинок вообще НЕТ
+    `@shutdown()` — только `consume @close()` (`tcp.nv:354/378`), т.е. это
+    единственный кандидат и пин обязателен. Дока (`tcp.nv:376-378`: «closes the socket if the read
     half is gone») это не фиксирует; смотреть C-шим `net_tcp_shutdown`/close.
     Без проброса FIN туннели будут подвисать на протоколах, закрывающих
     соединение односторонне. Если shutdown-write нет — мини-доработка `std.net`
