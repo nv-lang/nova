@@ -111,6 +111,21 @@ jobs:
         run: |
           set -uo pipefail
           bash scripts/guards/check-doc-conventions.sh "$(pwd)" "${DOC_GUARD_DIFF_BASE:-}"
+      # check-doc-examples.sh (окно p-example-guard, 2026-08-05): ловит
+      # снятые/переименованные конструкции языка в nova-код-блоках
+      # публикуемой доки (let/readonly/*ro T/*unsafe T/постфикс-!/
+      # trait-impl-throws/ref-формы/external fn/addr_of/null <тип>/
+      # #impl(<старое имя протокола>)) — см. шапку самого стража.
+      - name: check-doc-examples.sh (self-test first)
+        run: |
+          set -uo pipefail
+          bash scripts/guards/selftest/test-check-doc-examples.sh
+      - name: check-doc-examples.sh (real tree)
+        env:
+          DOC_EXAMPLES_SHOW_MATCHES: "0"
+        run: |
+          set -uo pipefail
+          bash scripts/guards/check-doc-examples.sh "$(pwd)"
 
   gate:
     name: nova-gate (conformance + flagship examples)

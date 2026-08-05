@@ -98,6 +98,10 @@ DOC_GUARD_BASE="$(git -C "$ROOT" rev-parse --verify -q HEAD~1 2>/dev/null || tru
 bash "$ROOT/scripts/guards/check-doc-conventions.sh" "$ROOT" "$DOC_GUARD_BASE" || fail "doc-conventions (шапка/frontmatter spec en, guide-парность, статус-строка плана, dev-ссылки, код-блоки пар — см. вывод выше)"
 bash "$ROOT/scripts/guards/selftest/test-check-doc-conventions.sh" || fail "doc-conventions selftest"
 bash "$ROOT/scripts/guards/selftest/test-doc-conventions-determinism.sh" || fail "doc-conventions determinism selftest (№321)"
+
+echo "== gate: doc-examples (снятые формы в nova-примерах публикуемой доки, окно p-example-guard) =="
+DOC_EXAMPLES_SHOW_MATCHES=0 bash "$ROOT/scripts/guards/check-doc-examples.sh" "$ROOT" || fail "doc-examples (дока учит снятому синтаксису — let/readonly/*ro T/*unsafe T/постфикс-!/trait-impl-throws/ref-формы/external fn/addr_of/null <тип>/#impl(<старое имя>) — см. вывод выше)"
+bash "$ROOT/scripts/guards/selftest/test-check-doc-examples.sh" || fail "doc-examples selftest"
 for st in "$ROOT"/scripts/guards/selftest/test-*.sh; do
     [ -e "$st" ] || continue
     bash "$st" || fail "самотест стража: $(basename "$st")"
