@@ -52,3 +52,49 @@ test "static Result-returning ctor (-> Result[Self, E]) + instance method coexis
         Err(e) => assert(e == "negative x")
     }
 }
+
+// #271 (2026-08-05, distinct root cause found while unblocking nova-bignum's
+// BigInt named-tuple migration): the OLD marker text above ("static ctor
+// Self-return ABI mismatch") does NOT describe this case — `SctPair271` has
+// NO static namespace fn at all. The real trigger is `@equal` COEXISTING
+// with any method returning `Result[(Self, Self), E]` (or `Option[(Self,
+// Self)]`) — mirrors `BigInt @equal` + `BigInt @div_rem(...) ->
+// Result[(BigInt, BigInt), DivError]`. The compiler auto-synthesizes a
+// structural-equality helper for the compound `Result`/`Option`-of-tuple-of-
+// named-tuple payload (needed so `==`/pattern-derived equality on it works);
+// that helper's body calls the element's own `@equal` — but was emitted into
+// the EARLY buffer (before ANY instance method forward-decl exists), producing
+// an implicit C declaration that then conflicts with the real, later one:
+// `conflicting types for 'Nova_SctPair271_method_equal'`. Fixed in
+// `debt_is_late_emitted_value_payload` (emit_c.rs): a positional tuple
+// (`_NovaTuple_…`) now recursively decodes its element types
+// (`parse_mono_tuple_elements`) and defers to the LATE buffer (after method
+// forward-decls) whenever an element is itself a named-tuple/value-record
+// payload — same "early proto + late body" split the sibling branches above
+// already use, just made to see through one more layer of tupling.
+export type SctPair271(x int, y int)
+
+export type SctPair271Err enum ZeroX
+
+export fn SctPair271 @equal(other SctPair271) -> bool => @x == other.x && @y == other.y
+
+export fn SctPair271 @split(other SctPair271) -> Result[(SctPair271, SctPair271), SctPair271Err] {
+    if other.x == 0 { return Err(ZeroX) }
+    Ok((@, other))
+}
+
+test "#271: @equal + method returning Result[(Self, Self), E] coexist on a named tuple" {
+    ro a = SctPair271(1, 2)
+    ro b = SctPair271(3, 4)
+    match a.split(b) {
+        Ok((p, q)) => {
+            assert(p.equal(a))
+            assert(q.equal(b))
+        }
+        Err(_) => assert(false)
+    }
+    match a.split(SctPair271(0, 9)) {
+        Ok(_) => assert(false)
+        Err(e) => assert(e == ZeroX)
+    }
+}
