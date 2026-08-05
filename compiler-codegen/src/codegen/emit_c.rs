@@ -8555,9 +8555,9 @@ impl CEmitter {
         // separate, position-fixed category either: a NORMAL (non-late)
         // `Option`/`Result` payload — e.g. `Option[Utf8Error]`, std
         // prelude, ubiquitous — is NOT covered by the `NovaOpt`/`NovaRes`
-        // VR-routing (`debt_is_late_emitted_value_payload` only recognizes
-        // MONO value-records/named-tuples as "late" — a PLAIN user
-        // value-record is NOT), so it needs to be available BEFORE
+        // VR-routing (`debt_is_late_emitted_value_payload` recognizes MONO
+        // value-records/named-tuples as "late"; #361 extends it to a PLAIN
+        // record too, but ONLY if it embeds one — else early), so it must be BEFORE
         // `__NOVAOPT_TYPEDEFS__`/`__NOVARES_TYPEDEFS__` — i.e. at THIS
         // (early) marker position, not the later `__GENERIC_TYPE_DEFS__`
         // position rounds 1/2/first cut of round 3 tried). Spliced here,
@@ -54265,7 +54265,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // [M-153.2-flat-map-inner-option]: value-record payloads — route to VR
         // buffer (same logic as register_novaopt_decl path above).
         // D215 amend: NovaTuple_ payloads need the same treatment.
-        if Self::debt_is_late_emitted_value_payload(c_ty) {
+        if self.debt_is_late_emitted_value_payload(c_ty) {
             self.novaopt_value_types.borrow_mut()
                 .insert(sanitized.to_string(), c_ty.to_string());
             let cmp_body_vr = "a.value == b.value".to_string(); // force_npo path
@@ -54370,7 +54370,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // compiles without "field has incomplete type".
         // D215 amend: same issue applies to NovaTuple_ (named tuple) payloads —
         // the struct body must be defined before its use in Option payload.
-        if Self::debt_is_late_emitted_value_payload(c_ty) {
+        if self.debt_is_late_emitted_value_payload(c_ty) {
             self.novaopt_value_types.borrow_mut()
                 .insert(sanitized.to_string(), c_ty.to_string());
             // [M-static-selfreturn-value-mangle-conflict] (Plan 172.13) / §0
@@ -54853,17 +54853,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     }
 
     /// [M-181-result-over-named-tuple-codegen] / [M-153.2] (D215) / #271/#361:
-    /// true when `c_ty`'s struct body is emitted LATE — ANY `NovaValue_<Name>`
-    /// (#361: not just mono `…____…` — a plain record field may embed one
-    /// too), `NovaTuple_<Name>`, or a positional tuple recursively embedding
-    /// one (`parse_mono_tuple_elements`, e.g. `Result[(BigInt, BigInt), E]`).
-    /// Deferred past the payload's body AND method fwd-decls, else an early
-    /// `emit_field_eq` call sees no prototype → C "conflicting types" (#271/#361).
-    fn debt_is_late_emitted_value_payload(c_ty: &str) -> bool {
-        c_ty.starts_with("NovaValue_")
+    /// true when `c_ty`'s struct body is LATE — `NovaTuple_<Name>`, mono
+    /// `NovaValue_…____…`, a tuple embedding one, or (#361) a PLAIN record
+    /// whose field is itself late (NOT unconditional — sibling hoist needs it early).
+    fn debt_is_late_emitted_value_payload(&self, c_ty: &str) -> bool {
+        (c_ty.contains("____") && c_ty.starts_with("NovaValue_"))
             || (c_ty.starts_with("NovaTuple_") && !c_ty.ends_with('*'))
             || Self::parse_mono_tuple_elements(c_ty).is_some_and(
-                |es| es.iter().any(|e| Self::debt_is_late_emitted_value_payload(e)))
+                |es| es.iter().any(|e| self.debt_is_late_emitted_value_payload(e)))
+            || (!c_ty.ends_with('*') && c_ty.strip_prefix("NovaValue_").and_then(|n| self.record_schemas.get(n)).is_some_and(|s| s.values().any(|f| self.debt_is_late_emitted_value_payload(f))))
     }
 
     /// [M-172.1-option-eq-heap-aggregate-structural] Does this Option-payload C-type
@@ -54975,8 +54973,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // `__NOVARES_TYPEDEFS__` marker (pointer use in fn prototypes is fine) and
         // defer the struct BODY + constructors to `__NOVARES_VR_TYPEDEFS__` (after
         // the named-tuple/value-record bodies). Mirror of NovaOpt VR-routing.
-        let payload_late = Self::debt_is_late_emitted_value_payload(ok_c)
-            || Self::debt_is_late_emitted_value_payload(err_c);
+        let payload_late = self.debt_is_late_emitted_value_payload(ok_c)
+            || self.debt_is_late_emitted_value_payload(err_c);
 
         let mut body = String::new();
         // Plan 59 Ф.7.5 D3: схема A + typed-Err поля (`err_typed_payload`
@@ -62862,32 +62860,34 @@ mod mangle_tests {
 
 #[cfg(test)]
 mod novares_late_payload_tests {
-    //! [M-181-result-over-named-tuple-codegen]: a generic wrapper (`NovaRes_<n>` /
-    //! `NovaOpt_<n>`) that embeds its payload BY VALUE needs the payload's complete
-    //! struct body to precede it. `debt_is_late_emitted_value_payload` flags the payloads
-    //! whose body is emitted LATE (named tuple / mono value-record), so the wrapper
-    //! body is deferred past them; everything else stays in the early section.
+    //! [M-181-result-over-named-tuple-codegen]: a generic wrapper embeds its payload BY
+    //! VALUE — needs the struct body first. `debt_is_late_emitted_value_payload` flags
+    //! LATE ones (named tuple / mono value-record / #361: plain record embedding one).
     use super::CEmitter;
 
     #[test]
     fn gates_named_tuple_and_mono_value_record_but_not_others() {
+        let mut e = CEmitter::new();
         // Named tuple (value type, emitted in the main type pass → late) → defer.
-        assert!(CEmitter::debt_is_late_emitted_value_payload("NovaTuple_Complex"));
-        assert!(CEmitter::debt_is_late_emitted_value_payload("NovaTuple_Foo"));
+        assert!(e.debt_is_late_emitted_value_payload("NovaTuple_Complex"));
+        assert!(e.debt_is_late_emitted_value_payload("NovaTuple_Foo"));
         // Mono'd value-record (emitted into generic_type_defs → late) → defer.
-        assert!(CEmitter::debt_is_late_emitted_value_payload("NovaValue_Box____nova_int"));
-        // Positional mono tuple of PLAIN scalars stays EARLY; a tuple whose element
-        // is itself a named tuple (#271, e.g. `Result[(BigInt, BigInt), E]`) → late.
-        assert!(!CEmitter::debt_is_late_emitted_value_payload("_NovaTuple_2_8_nova_int_8_nova_int"));
-        assert!(CEmitter::debt_is_late_emitted_value_payload("_NovaTuple_2_17_NovaTuple_Complex_17_NovaTuple_Complex"));
+        assert!(e.debt_is_late_emitted_value_payload("NovaValue_Box____nova_int"));
+        // Positional tuple of scalars stays EARLY; nested named-tuple elem (#271) → late.
+        assert!(!e.debt_is_late_emitted_value_payload("_NovaTuple_2_8_nova_int_8_nova_int"));
+        assert!(e.debt_is_late_emitted_value_payload("_NovaTuple_2_17_NovaTuple_Complex_17_NovaTuple_Complex"));
         // Primitives / heap records / pointers → early or forward-decl suffices.
-        assert!(!CEmitter::debt_is_late_emitted_value_payload("nova_int"));
-        assert!(!CEmitter::debt_is_late_emitted_value_payload("nova_str"));
-        assert!(!CEmitter::debt_is_late_emitted_value_payload("Nova_FooError*"));
+        assert!(!e.debt_is_late_emitted_value_payload("nova_int"));
+        assert!(!e.debt_is_late_emitted_value_payload("nova_str"));
+        assert!(!e.debt_is_late_emitted_value_payload("Nova_FooError*"));
         // Pointer-to-named-tuple → forward decl is enough (not by value).
-        assert!(!CEmitter::debt_is_late_emitted_value_payload("NovaTuple_Foo*"));
-        // #361: plain non-mono value-record ALSO defers — its own field may embed a late payload.
-        assert!(CEmitter::debt_is_late_emitted_value_payload("NovaValue_Plain"));
+        assert!(!e.debt_is_late_emitted_value_payload("NovaTuple_Foo*"));
+        // #361 accept-2: plain record, ONLY scalar fields — stays EARLY (sibling hoist).
+        e.record_schemas.insert("Plain".into(), [("n".into(), "nova_int".into())].into());
+        assert!(!e.debt_is_late_emitted_value_payload("NovaValue_Plain"));
+        // #361: plain record whose OWN field is itself late (`BigDecimal.mant`) → defers.
+        e.record_schemas.insert("Holder".into(), [("mant".into(), "NovaTuple_BigInt".into())].into());
+        assert!(e.debt_is_late_emitted_value_payload("NovaValue_Holder"));
     }
 }
 
