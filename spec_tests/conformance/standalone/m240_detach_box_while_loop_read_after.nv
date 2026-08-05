@@ -50,12 +50,15 @@ import std.time.duration
 fn m240_while_loop(iters int) Detach Time -> int {
     mut counter = AtomicInt.new(0)
     mut i = 0
+    // Deliberate `while`, not `for i in 0..iters` (nv-coding-style §10): the
+    // reported bug (№240) is specifically about a counted `while` C-block —
+    // matching its exact registered shape is the point of this fixture.
     while i < iters {
         detach {
             (5).to_millis().sleep()
             ro _ = counter.fetch_add(1)
         }
-        i = i + 1
+        i += 1
     }
     runtime.drain_orphans()
     // Read AFTER the loop — this is the exact position that hit "use of
@@ -83,6 +86,7 @@ fn m240_if_block(take bool) Detach Time -> int {
 fn m240_while_loop_two_sites(iters int) Detach Time -> int {
     mut counter = AtomicInt.new(0)
     mut i = 0
+    // Deliberate `while`, same rationale as `m240_while_loop` above.
     while i < iters {
         detach {
             (5).to_millis().sleep()
@@ -92,7 +96,7 @@ fn m240_while_loop_two_sites(iters int) Detach Time -> int {
             (5).to_millis().sleep()
             ro _ = counter.fetch_add(1)
         }
-        i = i + 1
+        i += 1
     }
     runtime.drain_orphans()
     return counter.load()
