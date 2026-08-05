@@ -71,8 +71,8 @@ SOCKS4/4a; GSSAPI-аутентификация (RFC 1961, редкая в про
 ### 3.1 `socks5.nv` — SOCKS5-клиент (файл модуля примера)
 
 ```nova
-type SocksError enum
-    | ConnectFailed { reason str }
+// Канон D406: без ведущего `|` (снятая форма тихо проскакивает — не переносить её в код)
+type SocksError enum ConnectFailed { reason str }
     | AuthFailed
     | AuthRequired            // сервер требует auth, креды не даны
     | UnsupportedMethod
@@ -113,10 +113,11 @@ fn main() Net Os Time -> () {
     supervised {                                 // D50: spawn ТОЛЬКО внутри structured-scope
         loop {
             match listener.accept() {
-                // ФОРМА ОБЯЗАТЕЛЬНА (проверено сборкой 2026-08-06): биндинг приходит
-                // из match-АРМА и уходит в файбер `spawn consume` (D415 §4).
-                // ВНЕШНИЙ `consume client = listener.accept()!!` + spawn НЕ собирается —
-                // [M-consume-param-spawn-defer-active] (симптом дыры гейта №364).
+                // ФОРМА ОБЯЗАТЕЛЬНА: биндинг приходит из match-АРМА и уходит в
+                // файбер `spawn consume` (D415 §4). ВНЕШНИЙ `consume client = …` +
+                // голый spawn: до №364-фикса падал кодогеном (симптом дыры гейта),
+                // ПОСЛЕ №364 — честно красный E_LINEAR_CAPTURE_IN_FIBER на проверке.
+                // Причина формы теперь — сам гейт, не codegen-маркер (пере-пин Ф.0-г).
                 Ok(consume conn) => spawn consume conn { handle_client(conn, cfg) }
                 Err(_)           => ()           // политика на Ф.2: лог и продолжить
             }
@@ -179,8 +180,17 @@ fn handle_client(consume client TcpStream, cfg Config) Net Time -> () {
     как завершить направление B, висящее в блокирующем `read`? Кандидаты:
     structured scope + cancel; либо естественное завершение по FIN из (а).
     Зафиксировать рабочий механизм пробой (два файбера, реальный loopback).
-  - **(в) формы:** error-enum `SocksError` (D30-конвенция) компилируется;
-    `read_exact`-helper поверх `mut @read` работает как ожидается.
+  - **(в) формы:** error-enum `SocksError` (D30-конвенция, канон D406 без
+    ведущего `|`) компилируется; `read_exact`-helper поверх `mut @read`
+    работает как ожидается.
+  - **(г) пере-пин после №364 (гейт линейного захвата ужесточён):** весь
+    скелет §3.2 прогнать пробой на компиляторе С влитым №364-фиксом —
+    `consume listener = …` без аннотации теперь классифицируется по типу
+    инициализатора; убедиться, что supervised-scope не считается захватом в
+    файбер и пример остаётся зелёным, а внешний-биндинг-форма даёт именно
+    `E_LINEAR_CAPTURE_IN_FIBER` (обновить комментарий §3.2, если текст
+    диагностики другой). Судьба `[M-consume-param-spawn-defer-active]` — по
+    отчёту окна p364.
 - **Ф.1** — `socks5.nv`: чистые encode/decode + обвязка `socks5_connect`;
   `socks5_test.nv` — байтовые фикстуры handshake-обменов, сверенные с текстом
   RFC 1928/1929 (не по памяти).
