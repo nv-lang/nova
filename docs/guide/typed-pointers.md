@@ -112,7 +112,7 @@ pointer-mut to choose).
 ### FFI out-param / uninit pointee
 
 ```nova
-external fn os_read(fd int, buf *mut uninit u8, n usize) -> int
+extern "C" fn os_read(fd int, buf *mut uninit u8, n usize) -> int
 //                              ^^^^^^^^^^^^^^^
 //                       pointee writable (*mut) + possibly-uninit (uninit);
 //                       arrow re-pointability is the binding's concern
@@ -275,7 +275,7 @@ unsafe {
 ## Null safety: `Option[*T]` + NPO (D216 §7)
 
 ```nova
-external fn malloc(sz usize) -> Option[*u8]
+extern "C" fn malloc(sz usize) -> Option[*u8]
 // C codegen: uint8_t* malloc(size_t sz);   // single pointer, NULL = None
 
 unsafe {
@@ -301,7 +301,7 @@ fn safe_user_code() {
     unsafe {
         ro x = *p                    // ✓ pointer deref
         ro v = buf[2]                // ✓ pointer index (ptr[i] syntax, [M-118-ptr-index-unsafe])
-        ro y = malloc(1024)          // ✓ external fn returning pointer
+        ro y = malloc(1024)          // ✓ extern "C" fn returning pointer
     }
 }
 ```
@@ -362,7 +362,7 @@ fn safe_caller() {
 ## `*fn(...)` function pointers (D216 §10)
 
 ```nova
-external fn libuv_set_timer_cb(cb *fn(i64) -> ()) -> i64
+extern "C" fn libuv_set_timer_cb(cb *fn(i64) -> ()) -> i64
 
 fn my_callback(timeout i64) -> () { ... }       // no Fail
 
@@ -385,7 +385,7 @@ explicit `extern "C"` keywords — single ABI V1.
 
 ```nova
 type Sqlite3Handle(*sqlite3)               // stack, single pointer ABI
-external fn open(path str) -> (Option[Sqlite3Handle], i64)
+extern "C" fn open(path str) -> (Option[Sqlite3Handle], i64)
 ```
 
 vs record form (extra indirection — pointer-to-struct ABI):
