@@ -327,8 +327,8 @@ timeout (5s hardcoded, если не задан).
 ```nova
 external type SqliteConn
 
-external fn sqlite_open(path str) -> SqliteConn
-external fn sqlite_close(conn SqliteConn) Fail[IoError] -> ()
+extern "C" fn sqlite_open(path str) -> SqliteConn
+extern "C" fn sqlite_close(conn SqliteConn) Fail[IoError] -> ()
 
 // Wrap external resource in Cleanup:
 fn SqliteConn consume @cleanup(_outcome ScopeOutcome) Fail[IoError] -> () =>
@@ -347,9 +347,9 @@ fn query_users(db_path str) Fail[IoError] -> []User {
 
 ```nova
 external type CurlHandle
-external fn curl_init() -> CurlHandle
-external fn curl_perform(h CurlHandle) Fail[NetError] -> []byte
-external fn curl_cleanup(h CurlHandle) -> ()
+extern "C" fn curl_init() -> CurlHandle
+extern "C" fn curl_perform(h CurlHandle) Fail[NetError] -> []byte
+extern "C" fn curl_cleanup(h CurlHandle) -> ()
 
 fn CurlHandle consume @cleanup(_outcome ScopeOutcome) -> () => curl_cleanup(@)
 
