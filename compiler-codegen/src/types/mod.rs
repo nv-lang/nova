@@ -8203,14 +8203,42 @@ impl<'a> TypeCheckCtx<'a> {
             }
             // Plan 110 D188: walk init + body (full D188 R1-R6 check лежит
             // в Plan 110.1.2/110.1.3 — здесь scaffold walking).
-            Stmt::ConsumeScope { init, body, .. } => {
+            Stmt::ConsumeScope { binding, type_annot, init, body, .. } => {
                 self.f1_expr(init, gs, scope, errors);
                 self.f4_check_value(init, scope, errors);
+                // №49 (221.1) [M-module-name-shadows-local]: `binding` was
+                // NEVER registered in `scope` for the extent of `body` — a
+                // `spawn consume ws = s.share() { ws.read_bytes(...) }`
+                // (or plain `consume ws = … { … }`) whose binding name
+                // collides with an IMPORTED MODULE name then had `ws.foo(…)`
+                // inside `body` wrongly resolved as a module-qualified call
+                // (`f1_check_call`'s `scope.contains_key(prefix)` guard saw
+                // no entry → fell through to the module branch → false
+                // `[E7401]`/wrong callee) instead of an instance-method call
+                // on the binding — same shadow rule `f1_block` already
+                // applies to a plain `let`. Snapshot/restore mirrors
+                // `f1_block`'s own let-shadowing pattern so the outer scope
+                // is byte-identical once `body` is done.
+                let bind_ty = type_annot.clone()
+                    .or_else(|| self.infer_expr_type(init, scope))
+                    .or_else(|| {
+                        if !init.id.is_set() { return None; }
+                        let buf = self.resolved_types_buf.borrow();
+                        let rt = buf.get(&init.id)?.clone();
+                        drop(buf);
+                        Self::resolved_to_typeref_tp(&rt, init.span)
+                    })
+                    .unwrap_or_else(|| prim_ref("Any", init.span));
+                let prev_binding = scope.insert(binding.clone(), bind_ty);
                 for s in &body.stmts {
                     self.f1_stmt(s, gs, scope, errors);
                 }
                 if let Some(t) = &body.trailing {
                     self.f1_expr(t, gs, scope, errors);
+                }
+                match prev_binding {
+                    Some(t) => { scope.insert(binding.clone(), t); }
+                    None => { scope.remove(binding); }
                 }
             }
             Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
@@ -17930,6 +17958,12 @@ impl<'a> TypeCheckCtx<'a> {
             if let Some(found) = self.protocol_mismatch_found(expr, expected, exp_gs, scope) {
                 return Compat::Bad { found };
             }
+            // №45 (221.1) [M-fn-type-expected-any-bypass]: same-shaped narrow re-check,
+            // this time for the fn-typed source of the `Any` collapse (see doc comment
+            // on `fn_type_mismatch_found`).
+            if let Some(found) = self.fn_type_mismatch_found(expr, expected, expr_gs, exp_gs, scope) {
+                return Compat::Bad { found };
+            }
             return Compat::Ok;
         }
         // Литералы: тип адаптируется к контексту (D44).
@@ -18363,6 +18397,81 @@ impl<'a> TypeCheckCtx<'a> {
             "{} (does not satisfy `{}`; missing: {})",
             concrete_name, proto_display, missing.join(", ")
         ))
+    }
+
+    /// №45 (221.1 bug-sweep) `[M-fn-type-expected-any-bypass]`: `resolved_cat_of_depth`
+    /// maps EVERY fn-typed EXPECTED position to `Any` (`TypeRef::Tuple(_) |
+    /// TypeRef::Func { .. } => R::Any` — a deliberate, general category collapse, not
+    /// something to touch broadly here) — so `assignable_direct`'s `Any` early-return
+    /// used to accept ANY value at a `fn(...)-> ...`-typed position with ZERO structural
+    /// verification of the callee's actual signature: `fn(int) -> str` could be handed
+    /// where `fn(Req) -> Resp` was expected and the checker stayed silent (found live on
+    /// real code — №50: `handle_connection(stream, Router)` called where the parameter
+    /// had been re-typed to `fn([]u8) -> ServerResponse`, only caught by the C compiler).
+    /// Mirrors `protocol_mismatch_found` immediately above: a SEPARATE, narrowly-gated
+    /// re-check for the ONE Any-source `resolved_cat_of_depth` collapses without
+    /// verifying, not a change to the shared category collapse itself (which other
+    /// callers legitimately rely on staying permissive for erased/generic fn-types).
+    /// Conservative like its sibling: `None` (permissive, unchanged behavior) whenever
+    /// EITHER side is not a decidable, concrete `TypeRef::Func` — an erased/generic
+    /// fn-type, a fn-newtype, a closure-light literal whose type doesn't resolve here,
+    /// etc. all stay exactly as permissive as before this fix. Only fires on a param-
+    /// count mismatch or a per-param/return category mismatch that `cat_compatible_rt`
+    /// (the same permissive category-compat predicate `assignable` uses everywhere else)
+    /// confidently reports as incompatible — nested fn/tuple/generic params legitimately
+    /// collapse to `Any` on BOTH sides via the SAME `resolved_cat_of` and stay permissive
+    /// (`cat_compatible_rt`'s `(Any, _) | (_, Any) => true` arm), so this cannot regress
+    /// any currently-accepted erased-generic fn-type call site.
+    fn fn_type_mismatch_found(
+        &self,
+        expr: &Expr,
+        expected: &TypeRef,
+        expr_gs: &GenericScope,
+        exp_gs: &GenericScope,
+        scope: &HashMap<String, TypeRef>,
+    ) -> Option<String> {
+        fn peel(mut t: &TypeRef) -> &TypeRef {
+            loop {
+                t = match t {
+                    TypeRef::Readonly(inner, _)
+                    | TypeRef::Mut(inner, _)
+                    | TypeRef::Uninit(inner, _)
+                    | TypeRef::Ref(inner, _) => inner.as_ref(),
+                    _ => return t,
+                };
+            }
+        }
+        let TypeRef::Func { params: exp_params, return_type: exp_ret, .. } = peel(expected) else {
+            return None; // Tuple/other Any-source — untouched, unrelated to this fix
+        };
+        let found_tr = self.infer_expr_type(expr, scope)?;
+        let found_peeled = peel(&found_tr);
+        let TypeRef::Func { params: found_params, return_type: found_ret, .. } = found_peeled else {
+            return None; // arg's own type isn't a decidable fn-type here — undecidable, permissive
+        };
+        if exp_params.len() != found_params.len() {
+            return Some(Self::typeref_display(found_peeled));
+        }
+        for (ep, fp) in exp_params.iter().zip(found_params.iter()) {
+            let ecat = self.resolved_cat_of(ep, exp_gs);
+            let fcat = self.resolved_cat_of(fp, expr_gs);
+            if !cat_compatible_rt(&fcat, &ecat) {
+                return Some(Self::typeref_display(found_peeled));
+            }
+        }
+        match (exp_ret.as_deref(), found_ret.as_deref()) {
+            (Some(er), Some(fr)) => {
+                let ecat = self.resolved_cat_of(er, exp_gs);
+                let fcat = self.resolved_cat_of(fr, expr_gs);
+                if !cat_compatible_rt(&fcat, &ecat) {
+                    return Some(Self::typeref_display(found_peeled));
+                }
+            }
+            (None, None) => {}
+            // unit-returning vs value-returning — a genuine, decidable mismatch.
+            _ => return Some(Self::typeref_display(found_peeled)),
+        }
+        None
     }
 
     /// [M-checker-protocol-typed-arg-any-bypass] fix: does `type_name` provide every

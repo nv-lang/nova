@@ -1,0 +1,24 @@
+// EXPECT_COMPILE_ERROR E7301
+//
+// [M-fn-type-expected-any-bypass] (221.1 bug-sweep №45, live confirmation
+// №50) — see `fn_type_signature_mismatch_pos.nv` (same directory's
+// parent) for the full root-cause writeup. Before the fix, `assignable_
+// direct` collapsed EVERY fn-typed expected position to `Any`
+// (`resolved_cat_of_depth`'s `TypeRef::Func { .. } => R::Any` arm) with
+// NO structural check of the actual signature — `bad`, a genuine `fn(int)
+// -> str` value, passed silently where `fn(int) -> int` was expected.
+// `fn_type_mismatch_found` (compiler-codegen/src/types/mod.rs, mirrors
+// `protocol_mismatch_found`'s narrow re-check pattern) now catches this
+// specific, fully-decidable shape: both sides are concrete, non-generic
+// `TypeRef::Func` values, and the return-type category differs
+// (`str` vs `int`) — a definite mismatch, not an erased/generic one.
+
+module neg.fn_type_signature_mismatch_neg
+
+fn fn_type_mismatch_apply(x int, f fn(int) -> int) -> int => f(x)
+
+test "fn(int)->str cannot silently pass where fn(int)->int is expected" {
+    ro bad fn(int) -> str = fn(x int) -> str => "n"
+    ro _ = fn_type_mismatch_apply(10, bad)
+    assert(true)
+}

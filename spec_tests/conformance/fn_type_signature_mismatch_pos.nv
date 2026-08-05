@@ -1,0 +1,32 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// [M-fn-type-expected-any-bypass] (221.1 bug-sweep №45, live confirmation
+// №50): `resolved_cat_of_depth` maps EVERY fn-typed EXPECTED position to
+// `Any` (`TypeRef::Tuple(_) | TypeRef::Func { .. } => R::Any`, compiler-
+// codegen/src/types/mod.rs) — a deliberate, general category collapse that
+// stays untouched here. `assignable_direct`'s `Any` early-return used to
+// accept this with ZERO structural verification of the actual fn
+// signature: `fn(int) -> str` could be silently handed where `fn(Req) ->
+// Resp` was expected — a genuine soundness hole (found live: №50 —
+// `handle_connection(stream, Router)` called where the parameter had been
+// re-typed to `fn([]u8) -> ServerResponse`; the checker stayed silent,
+// only the C compiler caught it).
+//
+// This file is the POSITIVE half — matching/undecidable fn-type shapes
+// must keep compiling exactly as before this fix (no false positive from
+// the new `fn_type_mismatch_found` structural re-check, mirrored on
+// `protocol_mismatch_found`'s own narrowly-gated pattern immediately
+// above it in the source). See `neg/fn_type_signature_mismatch_neg.nv`
+// for the actual defect this fixture's sibling pins.
+
+module spec_tests.conformance
+
+fn fn_type_mismatch_apply(x int, f fn(int) -> int) -> int => f(x)
+
+test "matching fn(int)->int passes cleanly through a fn-typed param (no false positive)" {
+    ro good fn(int) -> int = fn(x int) -> int => x * 2
+    assert(fn_type_mismatch_apply(10, good) == 20)
+}
+
+test "closure-light (erased/inferred sig from context) still passes (no false positive)" {
+    assert(fn_type_mismatch_apply(10, |x| x + 1) == 11)
+}
