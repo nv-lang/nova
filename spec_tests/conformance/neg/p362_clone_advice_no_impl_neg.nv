@@ -1,0 +1,47 @@
+// №362 (p362-advice, p-bignum-tuple Defect A, Problem 1+2): E_READONLY_COERCE's
+// suggestion (b) is `@field.clone()` — but `Clone` is opt-in (D230, `#impl
+// (Clone)`), so it only actually exists when the FIELD's type opted in.
+// Applying the advice literally on a field type that did NOT (a plain
+// named tuple, no `#impl(Clone)`) must fail HONESTLY at check-time with
+// `E7320` (no such method) — NOT silently pass `nova check` and corrupt
+// codegen downstream with a misresolved receiver (`E_RECV_METHOD_MISMATCH`,
+// the original — worse — symptom nova-bignum hit,
+// docs/plans/wip/PROGRESS-p-bignum-tuple.md).
+//
+// Root cause (found this window): `infer_expr_type`'s `Member` arm
+// (compiler-codegen/src/types/mod.rs) had NO `TypeDeclKind::NamedTuple` case
+// — only `Record`. So `infer_expr_type(@field, scope)` returned `None`
+// whenever the ENCLOSING type of `@field` (here, `Self` — `P362MDec`) was
+// itself a named tuple, independent of the field's own type. That silent
+// `None` short-circuits `f3_check_member_ctx` (~15042: `let Some(obj_tr) =
+// self.infer_expr_type(obj, scope) else { return; }`) — the function that
+// exists specifically to validate a CHAINED member/method access — so
+// `@mant.clone()` (or `@mant.anything`) type-checked with ZERO diagnostics.
+// Fixed by adding the missing `NamedTuple` arm, mirroring the existing
+// `Record` one (same field-lookup + generic-substitution shape).
+//
+// EXPECT_COMPILE_ERROR E7320
+
+module neg.p362_clone_advice_no_impl_neg
+
+import std.collections.vec.{Vec}
+
+// No `#impl(Clone)` — this named tuple never opted into `Clone` (D230).
+type P362MInt(sign int, limbs Vec[u32])
+
+type P362MDec(mant P362MInt, scale int)
+
+fn P362MDec.new(mant P362MInt, scale int) -> P362MDec => P362MDec(mant, scale)
+
+// RO-receiver method: `@mant` is not fully-stack (heap `Vec[u32]` field) so
+// a bare `mut mant = @mant` would trip `E_READONLY_COERCE`, whose own
+// suggestion (b) is exactly the `.clone()` below.
+fn P362MDec @normalize() -> P362MInt {
+    mut mant = @mant.clone()
+    mant
+}
+
+fn main() -> () {
+    ro d = P362MDec.new(P362MInt(1, Vec[u32].of(1, 2, 3)), 0)
+    print(d.normalize().sign)
+}
