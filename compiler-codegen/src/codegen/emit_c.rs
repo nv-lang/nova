@@ -54852,15 +54852,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
     }
 
-    /// [M-181-result-over-named-tuple-codegen] / [M-153.2] (D215) / #271: true
-    /// when `c_ty`'s struct body is emitted LATE — `NovaTuple_<Name>`,
-    /// `NovaValue_…____…`, or a positional tuple recursively embedding one as
-    /// an element (`parse_mono_tuple_elements`, e.g. `Result[(BigInt, BigInt),
-    /// E]`). Deferred past the payload's body AND method fwd-decls, else an
-    /// early `emit_field_eq` call (e.g. into `@equal`) sees no prototype yet
-    /// → C "conflicting types" (#271).
+    /// [M-181-result-over-named-tuple-codegen] / [M-153.2] (D215) / #271/#361:
+    /// true when `c_ty`'s struct body is emitted LATE — ANY `NovaValue_<Name>`
+    /// (#361: not just mono `…____…` — a plain record field may embed one
+    /// too), `NovaTuple_<Name>`, or a positional tuple recursively embedding
+    /// one (`parse_mono_tuple_elements`, e.g. `Result[(BigInt, BigInt), E]`).
+    /// Deferred past the payload's body AND method fwd-decls, else an early
+    /// `emit_field_eq` call sees no prototype → C "conflicting types" (#271/#361).
     fn debt_is_late_emitted_value_payload(c_ty: &str) -> bool {
-        (c_ty.contains("____") && c_ty.starts_with("NovaValue_"))
+        c_ty.starts_with("NovaValue_")
             || (c_ty.starts_with("NovaTuple_") && !c_ty.ends_with('*'))
             || Self::parse_mono_tuple_elements(c_ty).is_some_and(
                 |es| es.iter().any(|e| Self::debt_is_late_emitted_value_payload(e)))
@@ -62886,8 +62886,8 @@ mod novares_late_payload_tests {
         assert!(!CEmitter::debt_is_late_emitted_value_payload("Nova_FooError*"));
         // Pointer-to-named-tuple → forward decl is enough (not by value).
         assert!(!CEmitter::debt_is_late_emitted_value_payload("NovaTuple_Foo*"));
-        // Non-mono value-record (no `____`) is emitted early via value_record_defs_buf.
-        assert!(!CEmitter::debt_is_late_emitted_value_payload("NovaValue_Plain"));
+        // #361: plain non-mono value-record ALSO defers — its own field may embed a late payload.
+        assert!(CEmitter::debt_is_late_emitted_value_payload("NovaValue_Plain"));
     }
 }
 
