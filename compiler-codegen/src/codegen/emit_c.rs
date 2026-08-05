@@ -54852,19 +54852,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
     }
 
-    /// [M-181-result-over-named-tuple-codegen] / [M-153.2] (D215): true when
-    /// `c_ty` is a by-value payload whose C struct body is emitted LATE (in the
-    /// main type pass / generic-type-defs, after the early wrapper sections) —
-    /// a named tuple (`NovaTuple_<Name>`, no leading underscore — positional
-    /// `_NovaTuple_…` are emitted EARLY and excluded) or a mono'd value-record
-    /// (`NovaValue_…____…`). Such a payload cannot sit in an EARLY wrapper typedef
-    /// by value: a C struct member of incomplete type is rejected even with a
-    /// forward typedef, so the wrapper struct body must be deferred past the
-    /// payload's definition. This is the exact predicate the NovaOpt VR-routing
-    /// uses ([M-153.2] at `register_novaopt_decl[_forced]`).
+    /// [M-181-result-over-named-tuple-codegen] / [M-153.2] (D215) / #271: true
+    /// when `c_ty`'s struct body is emitted LATE — `NovaTuple_<Name>`,
+    /// `NovaValue_…____…`, or a positional tuple recursively embedding one as
+    /// an element (`parse_mono_tuple_elements`, e.g. `Result[(BigInt, BigInt),
+    /// E]`). Deferred past the payload's body AND method fwd-decls, else an
+    /// early `emit_field_eq` call (e.g. into `@equal`) sees no prototype yet
+    /// → C "conflicting types" (#271).
     fn debt_is_late_emitted_value_payload(c_ty: &str) -> bool {
         (c_ty.contains("____") && c_ty.starts_with("NovaValue_"))
             || (c_ty.starts_with("NovaTuple_") && !c_ty.ends_with('*'))
+            || Self::parse_mono_tuple_elements(c_ty).is_some_and(
+                |es| es.iter().any(|e| Self::debt_is_late_emitted_value_payload(e)))
     }
 
     /// [M-172.1-option-eq-heap-aggregate-structural] Does this Option-payload C-type
@@ -62877,9 +62876,10 @@ mod novares_late_payload_tests {
         assert!(CEmitter::debt_is_late_emitted_value_payload("NovaTuple_Foo"));
         // Mono'd value-record (emitted into generic_type_defs → late) → defer.
         assert!(CEmitter::debt_is_late_emitted_value_payload("NovaValue_Box____nova_int"));
-        // Positional mono tuple (`_NovaTuple_…`, leading underscore) is emitted
-        // EARLY in __MONO_TUPLE_TYPEDEFS__ → NOT late.
+        // Positional mono tuple of PLAIN scalars stays EARLY; a tuple whose element
+        // is itself a named tuple (#271, e.g. `Result[(BigInt, BigInt), E]`) → late.
         assert!(!CEmitter::debt_is_late_emitted_value_payload("_NovaTuple_2_8_nova_int_8_nova_int"));
+        assert!(CEmitter::debt_is_late_emitted_value_payload("_NovaTuple_2_17_NovaTuple_Complex_17_NovaTuple_Complex"));
         // Primitives / heap records / pointers → early or forward-decl suffices.
         assert!(!CEmitter::debt_is_late_emitted_value_payload("nova_int"));
         assert!(!CEmitter::debt_is_late_emitted_value_payload("nova_str"));
