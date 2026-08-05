@@ -1,0 +1,64 @@
+// [M-option-eq-some-literal-elem-adapt] (реестр 221.1 №364, 2026-08-06): bare int-литерал
+// внутри `Some(..)` на одной стороне `==`/`!=` не адаптировался к element-типу конкретного
+// `Option[T]` на другой стороне — структурный eq генерил `NovaOpt_nova_int` там, где codegen
+// ждал `NovaOpt_uint32_t` (CC-FAIL: «passing 'NovaOpt_nova_int' to parameter of incompatible
+// type 'NovaOpt_uint32_t'»). Литерал-коэрсия channel (Plan 172.1,
+// `materialize_literal_coercion`/`ctor_payload_expected`) уже был вызван на каждом ДРУГОМ
+// определённом сайте (return/аннотированный let/аргумент вызова/turbofish) — Binary-сравнение
+// было единственным пропущенным вызовом.
+//
+// СКОУП: только `Option`/`Some` (ОДИН generic-слот). `Result`/`Ok`/`Err` (ДВА generic-слота)
+// пробовано и ОТКАЧЕНО тем же окном — см. doc-comment у места фикса
+// (`compiler-codegen/src/types/mod.rs`, `f1_expr`, `ExprKind::Binary` арм): `emit_c`'s
+// Ok/Err ctor-эмиссия не читает канал за пределами return-позиции и для "неснабжённого"
+// generic-слота хардкодит дефолт — «более честная» channel-запись парадоксально РЕГРЕССИТ
+// этого потребителя (напр. `Result[str, u32] == Err(0)` — baseline собирается, с Ok/Err в
+// этом арме — CC-FAIL). Настоящий фикс для Result требует правки emit_c — вне мандата
+// этого окна (только чекер-канал); отдельная находка, см. отчёт окна.
+module spec_tests.conformance
+
+test "364: Vec[u32] — v.get(0) == Some(0), голый литерал без as" {
+    mut v = Vec[u32].new()
+    v.push(0)
+    v.push(7)
+    assert(v.get(0) == Some(0))
+    assert(v.get(1) != Some(0))
+}
+
+test "364: Vec[u32] — v.last() == Some(0), голый литерал без as" {
+    mut v = Vec[u32].new()
+    v.push(1)
+    v.push(0)
+    assert(v.last() == Some(0))
+    v.pop()
+    assert(v.last() != Some(0))
+}
+
+test "364: Vec[u8] — element-тип u8, не только u32" {
+    mut v = Vec[u8].new()
+    v.push(0)
+    assert(v.get(0) == Some(0))
+    assert(v.last() == Some(0))
+}
+
+test "364: Vec[i64] — element-тип i64" {
+    mut v = Vec[i64].new()
+    v.push(0)
+    assert(v.get(0) == Some(0))
+    assert(v.last() == Some(0))
+}
+
+test "364: литерал СЛЕВА от == (симметрия)" {
+    mut v = Vec[u32].new()
+    v.push(0)
+    assert(Some(0) == v.last())
+    assert(Some(0) == v.get(0))
+}
+
+test "364-регресс: Vec[int] — v.get(0) == Some(5) должно работать как ДО фикса" {
+    mut v = Vec[int].new()
+    v.push(5)
+    v.push(9)
+    assert(v.get(0) == Some(5))
+    assert(v.get(1) != Some(5))
+}
