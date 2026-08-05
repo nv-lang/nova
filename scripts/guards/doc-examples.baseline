@@ -50,6 +50,36 @@
 # mixed_language_files/dev_links при их первом вводе) — заморожен
 # храповиком. Погашение (переписать `external fn` → `extern "nova" fn`,
 # `addr_of(x)` → `&x` в 4 файлах) — отдельная волна.
+#
+# --- ПОГАШЕНИЕ 2026-08-05 (окно p-extern-debt, sonnet) ---
+# retired_external_fn 60→0, retired_addr_of 10→0. Оба класса переписаны на
+# канон во ВСЕХ 4 файловых парах (cleanup-cookbook, contracts, ffi-cookbook,
+# typed-pointers, .md+.ru.md — код-блоки байт-в-байт равны между сторонами
+# пары после правки). ABI-выбор (`extern "nova" fn` vs `extern "C" fn`) —
+# НЕ угадан построчно: sqlite3/libpng/libcurl/libuv/malloc/os_read/open —
+# литеральные C-библиотеки/симв., рядом C-shim или прямое упоминание
+# библиотеки → `extern "C" fn`; `RawMem.copy`/`RawMem.fill` — сверено с
+# РЕАЛЬНЫМ std/src/runtime/raw_mem.nv (`export extern "nova" unsafe fn
+# RawMem.copy/.fill/...`) → `extern "nova" unsafe fn`; `libc_strlen` в
+# contracts.md/.ru.md — сверено с РЕАЛЬНЫМ тестом
+# nova_tests/contracts/neg/external_no_trusted_fail.nv (`extern "nova" fn
+# libc_strlen(s str) -> int`, тот же сигнатурный близнец) → `extern "nova"
+# fn` (НЕ extern "C" fn, хотя имя намекает на literal libc — в этом дереве
+# уже есть прецедент, решающий неоднозначность в пользу runtime-backed).
+# `c_strlen`/`c_printf` (ffi-cookbook.md/.ru.md, «CStr handle» секция) —
+# буквального C-имени/библиотеки рядом нет (иллюстративные имена из Plan
+# 118.1, `docs/plans/118.1-ffi-intrinsics-and-cstring.md:1217` использует то
+# же имя без привязки к реальному символу), но ВЕСЬ файл — «bind Nova to
+# third-party C libraries» (шапка файла) и раздел прямо о C-ABI (`const
+# char*`) — решено в пользу `extern "C" fn` по теме документа, а не оставлено
+# как отдельный неразрешённый остаток (отмечено в отчёте окна p-extern-debt
+# как наименее уверенный вызов). `addr_of`/`addr_of_mut` → `&x` (обе формы
+# ретрагированы на ОДНУ; типизация `*mut T` для mut-биндинга — сверено с
+# spec/decisions/02-types.md:9660 «`&x` with mut binding auto-infers `*mut
+# T`»). Остаточные упоминания «external fn»/«addr_of» вне ```nova-блоков
+# (историческая проза Plan 115 V1 setup, M-номер-таблица закрытых followup'ов)
+# — НЕ тронуты: описывают ИСТОРИЮ («тогда было так»), не текущий синтаксис,
+# тот же принцип, что exempts spec/open-questions.md выше.
 retired_kw_let=0
 retired_kw_readonly=0
 retired_pointer_ro=0
@@ -57,7 +87,7 @@ retired_unsafe_type_modifier=0
 retired_postfix_bang=0
 retired_trait_impl_throws=0
 retired_ref_form=0
-retired_external_fn=60
-retired_addr_of=10
+retired_external_fn=0
+retired_addr_of=0
 retired_null_ptr=0
 retired_protocol_renamed=0
