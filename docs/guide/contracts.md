@@ -822,14 +822,15 @@ bit-vector theory as unsupported.
 
 ## Trusted external functions
 
-`external fn` with contracts requires `#trusted`. The contracts are
+An `extern` fn (`extern "nova" fn` / `extern "C" fn`) with contracts requires
+`#trusted`. The contracts are
 registered as **axioms** — callers receive the `ensures` as
 assumptions without proof. The compiler does not verify the body
 (there is no Nova body to check).
 
 ```nova
 #trusted
-external fn libc_strlen(s str) -> int
+extern "nova" fn libc_strlen(s str) -> int
     requires s.is_valid_cstring()
     ensures  result >= 0
 
