@@ -5,9 +5,14 @@
 
 ## Итог одной строкой
 
-**№361 закрыт и доказан на пакете.** Корень найден в `emit_c.rs`
+**№361 закрыт и доказан на пакете; фикс прошёл 2 раунда приёмки.** Раунд 1
+(широкий фикс — ЛЮБОЙ `NovaValue_<Name>` откладывается) сломал мега-CU
+(3 фикстуры, `unknown type name 'NovaOpt_NovaValue_X'`) — снят интегратором.
+Раунд 2 (см. секцию «Приёмка, раунд 2» ниже) — фикс СУЖЕН: плоская запись
+откладывается ТОЛЬКО когда сама содержит позднее поле, иначе остаётся
+рано (как было до №361). Корень — в `emit_c.rs`
 (`register_novaopt_decl`'s fallback-ветка через `debt_is_late_emitted_value_payload`),
-фикс — расширение одного предиката, net-zero по строкам (64545 == 64545).
+итоговый фикс — net-zero по строкам (64545 == 64545).
 Проверка по назначению: копия `nova-bignum` с мигрированным `BigInt` (позиционный
 кортеж) — файл, из-за которого вчера ошибочно объявили миграцию разблокированной
 (`src/bigdecimal/core`), теперь **PASS**. Но **`nova test src` на пакете
@@ -313,6 +318,142 @@ CC-FAIL → PASS, единственный файл, что вчера дал л
 «Фикстура зелёная» (моя `p361_named_tuple_consumer.nv`, `bigdecimal/core`)
 и «дефект закрыт» — верно; «миграция разблокирована» (пакет `nova test src`
 целиком зелёный) — НЕТ, требует отдельного окна на Дефект B.
+
+## Приёмка, раунд 2 — мега-CU КРАСНЫЙ, фикс сужен
+
+Интегратор снял слияние с main: мега-CU дал `PASS: 655 FAIL: 3` (канон
+658/0) на трёх фикстурах, все ОДНОГО класса — `unknown type name
+'NovaOpt_NovaValue_<X>'` (`derive_seed_combined_cu/dsc_entry`,
+`standalone/m196_serde_option_match_arm`, `a_q3_println_debug_record`).
+
+**Диагноз интегратора подтверждён.** Первая версия фикса убрала условие
+`contains("____")` ЦЕЛИКОМ — предикат стал «ЛЮБОЙ `NovaValue_<Name>`
+откладывается». Это сломало ДРУГОЙ, ранее существовавший механизм:
+`emit_value_record_type` (`emit_c.rs:17785`, `opt_delta`-hoist, комментарий
+на `:17809-17826`) целенаправленно рассчитывает, что обёртка
+`NovaOpt_NovaValue_<Plain>` для ОБЫЧНОЙ (не-generic) записи-значения без
+поздней нагрузки эмитится РАНО — потому что запись-значение-СОСЕД, чьё
+собственное поле имеет тип `Option[<Plain>]` (пример из самого кода:
+`ExtDto.opt_rec Option[ValRec]`, `std/src/encoding/serde/
+record_autoderive_ext_test.nv:36`), нуждается в ГОТОВОЙ структуре обёртки
+ДО своего собственного тела. Мой блэнкет-фикс отправил `NovaOpt_NovaValue_
+ValRec` в поздний буфер (`novaopt_vr_typedefs_buf`), а «ранний» hoist ищет
+typedef в РАННЕМ буфере (`novaopt_typedefs_buf`) — не находит, молча
+no-op'ит (`buf.find(...)` → `None` → `continue`) — обёртка нигде не
+объявляется вовремя → «unknown type name».
+
+### Фикс — сужен, а не снят
+
+`compiler-codegen/src/codegen/emit_c.rs`, `debt_is_late_emitted_value_payload`
+теперь **требует `&self`** (доступ к `record_schemas`) и откладывает ПЛОСКУЮ
+(не-generic) `NovaValue_<Name>` ТОЛЬКО когда она РЕКУРСИВНО (через
+`record_schemas`) содержит ПОЛЕ, которое само уже позднее (`NovaTuple_…`
+или mono `NovaValue_…____…`) — иначе (только скаляры, как `ValRec{n int,
+tag str}`, или неизвестная схема) остаётся рано, как было ДО вчерашнего
+фикса №271-crossfile v1:
+
+```rust
+fn debt_is_late_emitted_value_payload(&self, c_ty: &str) -> bool {
+    (c_ty.contains("____") && c_ty.starts_with("NovaValue_"))
+        || (c_ty.starts_with("NovaTuple_") && !c_ty.ends_with('*'))
+        || Self::parse_mono_tuple_elements(c_ty).is_some_and(
+            |es| es.iter().any(|e| self.debt_is_late_emitted_value_payload(e)))
+        || (!c_ty.ends_with('*') && c_ty.strip_prefix("NovaValue_").and_then(|n| self.record_schemas.get(n)).is_some_and(|s| s.values().any(|f| self.debt_is_late_emitted_value_payload(f))))
+}
+```
+
+Все вызывающие места (`register_novaopt_decl_forced`, `register_novaopt_decl`,
+`register_novares_decl`) переведены с `Self::...` на `self....`. Net-zero
+по строкам сохранён (`64545 == 64545` — комментарии над функцией/тестом
+уплотнены, чтобы скомпенсировать добавленную ветку).
+
+### Юнит-тест расширен под ОБА поведения
+
+`novares_late_payload_tests::gates_named_tuple_and_mono_value_record_but_not_others`
+теперь строит `CEmitter` (нужен `&self`) и покрывает ОБА случая явно:
+- плоская запись ТОЛЬКО со скалярными полями (`Plain{n int}`) — `assert!(!...)`,
+  ровно СТАРОЕ поведение, которое сломала первая версия фикса;
+- плоская запись с полем-кортежем (`Holder{mant NovaTuple_BigInt}`,
+  зеркалит `BigDecimal.mant BigInt`) — `assert!(...)`, ровно НОВЫЙ случай
+  №361.
+
+### Прогоны раунда 2 — вердикты дословно
+
+**Три упавшие фикстуры мега-CU (по отдельности, как раннер их и гонял —
+каждая тянет свою папку/CU целиком):**
+```
+$ nova test spec_tests/conformance/derive_seed_combined_cu/dsc_entry.nv
+PASS           spec_tests/conformance/derive_seed_combined_cu/dsc_entry
+PASS: 1  FAIL: 0
+
+$ nova test spec_tests/conformance/standalone/m196_serde_option_match_arm.nv
+PASS           spec_tests/conformance/standalone/m196_serde_option_match_arm
+PASS: 1  FAIL: 0
+
+$ nova test spec_tests/conformance/a_q3_println_debug_record.nv
+PASS           spec_tests/conformance/a_q3_println_debug_record
+PASS: 1  FAIL: 0
+```
+
+**Rust unit test:**
+```
+test codegen::emit_c::novares_late_payload_tests::gates_named_tuple_and_mono_value_record_but_not_others ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1230 filtered out; finished in 0.09s
+```
+
+**`cargo build --release` (nova-cli):** чисто.
+
+**Межфайловая фикстура (`nova_tests/modules/p361_named_tuple_consumer.nv`)
+— по-прежнему зелёная:**
+```
+PASS           nova_tests/modules/p361_named_tuple_consumer
+PASS: 1  FAIL: 0
+```
+
+**`nova check std/src` (без редиректа):**
+```
+PASS: 148  FAIL: 26  WARN: 61
+```
+Байт-в-байт канон, не сдвинулся.
+
+**`arch-ratchet.sh`:**
+```
+arch-ratchet ok: lines=64545 <= 64545
+arch-ratchet ok: infer=348 <= 348
+```
+
+**Пакет `nova-bignum` (копия, `nova test src`) — не изменился относительно
+раунда 1** (сужение фикса не задевает случай №361 самого себя, только
+убирает лишнюю ложную ветку):
+```
+PASS: 4  FAIL: 3  SKIP: 2 (skipped)
+```
+`src/bigdecimal/core` — по-прежнему **PASS**. Три оставшихся CC-FAIL — те же
+самые (`invalid operands to binary expression`, Дефект B, вне периметра).
+
+**`cargo test --release --lib` (`RUST_MIN_STACK=67108864`, полный):**
+```
+test result: FAILED. 1227 passed; 4 failed; 0 ignored; 0 measured; 0 filtered out; finished in 38.49s
+```
+Те же 4 предсуществующих фейла, что в раунде 1 (не связаны с этим окном,
+см. выше) — состав не изменился.
+
+### Урок (по требованию интегратора — в отчёт)
+
+Расширение предиката эмиссии проверялось в раунде 1 ТОЛЬКО на новом случае
+(№361-репро) + на каноне (std/ratchet/мой юнит-тест, который на тот момент
+покрывал лишь один плоский пример — `NovaValue_Plain` — и я его же и
+переписал под НОВОЕ поведение, не заметив, что СТАРОЕ поведение для
+scalar-only записи было там не случайно). Мега-CU — единственное место,
+где реально существующие потребители СТАРОГО «рано»-поведения (записи,
+чьи соседи закладываются на их раннюю обёртку через `Option[Self]`)
+собраны в количестве. Правильный порядок проверки для расширения ЛЮБОГО
+classification-предиката в этом файле: (1) новый случай зелёный, (2) СТАРЫЕ
+случаи, что предикат уже классифицировал, остаются с ТЕМ ЖЕ вердиктом —
+явным тестом на конкретном представителе (`Plain`/`ValRec`-shape), не
+только "канон не покраснел" (канон std/ratchet не тронул НИ одного
+`Option[PlainValueRecord]`-потребителя, поэтому молчал оба раунда — эта
+проверка КАЧЕСТВЕННО не покрывает то, что покрывает мега-CU).
 
 ## Модель
 
