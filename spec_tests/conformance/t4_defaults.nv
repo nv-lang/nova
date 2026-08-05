@@ -36,7 +36,9 @@ test "all fields provided" {
 }
 
 test "mixed required and default: all defaults omitted" {
-    ro r = Rect3(x: 10.0, y: 20.0)
+    // №145: x/y have no default — D102 requires positional; width/height
+    // have defaults and stay legal by name.
+    ro r = Rect3(10.0, 20.0)
     assert(r.x == 10.0)
     assert(r.y == 20.0)
     assert(r.width == 100.0)
@@ -44,7 +46,7 @@ test "mixed required and default: all defaults omitted" {
 }
 
 test "mixed required and default: override width" {
-    ro r = Rect3(x: 0.0, y: 0.0, width: 200.0)
+    ro r = Rect3(0.0, 0.0, width: 200.0)
     assert(r.width == 200.0)
     assert(r.height == 50.0)
 }

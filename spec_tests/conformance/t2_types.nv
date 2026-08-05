@@ -4,15 +4,16 @@ module spec_tests.conformance
 type Vec31(x f64, y f64, z f64)
 type Color3(r u8, g u8, b u8, a u8)
 
+// №145: positional construction — no defaults, D102 forbids named-arg form.
 test "Vec31: construct and access all fields" {
-    ro v = Vec31(x: 1.0, y: 2.0, z: 3.0)
+    ro v = Vec31(1.0, 2.0, 3.0)
     assert(v.x == 1.0)
     assert(v.y == 2.0)
     assert(v.z == 3.0)
 }
 
 test "Color3: all four components" {
-    ro c = Color3(r: 255, g: 0, b: 128, a: 255)
+    ro c = Color3(255, 0, 128, 255)
     assert(c.r == 255)
     assert(c.g == 0)
     assert(c.b == 128)

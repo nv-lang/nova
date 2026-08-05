@@ -1,0 +1,20 @@
+// №145 companion NEG (gap 3, partial-form guard): a PARTIAL curly
+// destructure of a named tuple — fewer field names listed than the type
+// declares — requires an explicit `..` to mark the rest as intentionally
+// dropped (D411, `[M-d411-record-binding-destructuring]`), same rule
+// records already enforce (owner ruling 2026-07-27 says named-tuple
+// destructure behaves "как у записей" — like records). `{ im }` alone
+// (2-field type, 1 name listed, no `..`) must be rejected — see the
+// positive sibling's `{ im, .. }` form.
+//
+// EXPECT_COMPILE_ERROR E_RECORD_PATTERN_NEEDS_REST
+
+module neg.m145_named_tuple_partial_destructure_needs_rest_neg
+
+type M145Complex2(re f64, im f64)
+
+fn bad() -> f64 {
+    ro p = M145Complex2(1.0, 2.0)
+    ro { im } = p
+    im
+}

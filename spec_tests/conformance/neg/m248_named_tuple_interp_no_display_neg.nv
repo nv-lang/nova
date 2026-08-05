@@ -1,0 +1,21 @@
+// №248 companion NEG: a NAMED-TUPLE (D215) type with NEITHER
+// `#impl(Display)` NOR an instance `to_str()` must still be REJECTED by
+// `${x}` interpolation with `E_INTERP_NO_DISPLAY` (D186) — the checker-side
+// guard (`check_interp_no_display`/`resolve_interp_user_value_type`, which
+// already covers `TypeDeclKind::NamedTuple`) is untouched by the №248 fix
+// (`debt_strip_value_prefix_or_nova_trim_start` learning to strip
+// `NovaTuple_`); this pins that the fix does not accidentally widen what
+// bare interpolation silently accepts for named tuples without a real
+// Display/to_str route. Sibling: ../m248_named_tuple_interp_display_dispatch_pos.nv
+// (the `#impl(Display)`/`to_str()` companion cases, positive).
+//
+// EXPECT_COMPILE_ERROR E_INTERP_NO_DISPLAY
+
+module neg.m248_named_tuple_interp_no_display_neg
+
+type M248NoDisplayPair(a int, b int)
+
+fn bad() -> str {
+    ro p = M248NoDisplayPair(1, 2)
+    "${p}"
+}

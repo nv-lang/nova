@@ -3,14 +3,18 @@
 module spec_tests.conformance
 type Point13(x f64, y f64)
 
+// №145: positional construction — `Point13(x f64, y f64)` has no defaults,
+// D102 forbids the named-arg form for required params (previously
+// unenforced for named-tuple constructors — see the neg fixture that pins
+// this: neg/m145_named_tuple_named_arg_no_default_neg.nv).
 test "named tuple: construct and read fields" {
-    ro p = Point13(x: 1.0, y: 2.0)
+    ro p = Point13(1.0, 2.0)
     assert(p.x == 1.0)
     assert(p.y == 2.0)
 }
 
-test "named tuple: field access order independence" {
-    ro p = Point13(x: 3.14, y: 2.72)
+test "named tuple: field access reads the right value per position" {
+    ro p = Point13(3.14, 2.72)
     assert(p.x == 3.14)
     assert(p.y == 2.72)
 }

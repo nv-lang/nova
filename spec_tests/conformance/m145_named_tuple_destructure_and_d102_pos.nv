@@ -1,0 +1,88 @@
+// №145 [M-named-tuple-three-gaps]: three holes around named tuples (D215),
+// разобрано с владельцем 2026-07-27. This file covers the two gaps fixed in
+// the CHECKER/CODEGEN (gap 2 — D102 enforcement; gap 3 — destructuring):
+//
+// (2) D102 was NOT enforced for named-tuple construction: a named arg for a
+// field WITHOUT a default used to compile silently (measured:
+// `Complex(re: 0.0, im: 1.0)` for `Complex(re f64, im f64)` — PASS 1/0).
+// Fixed in `f5_check_tuple_construct` (types/mod.rs) — a named arg targeting
+// a no-default field is now `[E_TUPLE_NAMED_ARG_NO_DEFAULT]`. Positional
+// construction (always legal) and named args for DEFAULTED fields (D372
+// keyword-only rule) are unaffected — both exercised below.
+//
+// (3) Destructuring did not exist AT ALL — both intuitive forms crashed in
+// codegen: `ro (a, b) = p` -> "initializing `_NovaTuple2` with an expression
+// of incompatible type `NovaTuple_PVal`" (legacy POSITIONAL-tuple lowering
+// never knew about the named-tuple ABI); `ro { x, y } = p` -> "member
+// reference type `NovaTuple_P2` is not a pointer... no member named
+// `payload`" (the anonymous-record-pattern codegen path, `pattern_bind_
+// typed`'s `Pattern::Record` arm, resolved the scrutinee's bare type name
+// via a "debt_strip_*" prefix helper that (like several siblings in this
+// codebase — the same class as №129) never learned the `NovaTuple_` prefix,
+// so `record_schemas.contains_key("")` always missed and fell into the
+// WRONG "sum-type variant" fallback branch). Canon (owner ruling
+// 2026-07-27): the bracket kind encodes HOW fields are addressed — round
+// bracket = position, curly = name; a named tuple HAS names, so it
+// destructures `ro { x, y } = p` ONLY (curly), never `ro (a, b) = p`
+// (round) — asymmetric with construction (which stays positional-legal)
+// deliberately: at construction the field ORDER is checked against the
+// declaration, but at destructure a name is a more durable contract than a
+// position. Partial destructure (`ro { y, .. } = p`, only the needed
+// field(s)) is REQUIRED, not a bonus — it now works through the SAME D411
+// rest-rule records already enforce (an explicit `..` is required whenever
+// the listed field set is a strict subset of the type's full field list;
+// `{ y }` alone — no `..` — is `E_RECORD_PATTERN_NEEDS_REST`, see the
+// sibling neg fixture).
+//
+// Round-tripped through the exact shape the original report cited: a
+// `Result[(T, T), E]`-returning instance method whose result is destructured
+// via `match Ok((q, r)) => ...` (that path — sum-variant tuple-payload
+// binding — was ALREADY correct before this window; only the bare
+// `Stmt::Let` `Pattern::Record`/`Pattern::Tuple` sites were broken).
+//
+// D-amendment still owed (integrator's zone, NOT done by this window):
+// D215/D222's OWN doc examples (`Vec3(x: 1.0, y: 2.0, z: 3.0)` for a
+// no-defaults `Vec3`) contradict D102 and must be corrected to positional
+// construction (`Vec3(1.0, 2.0, 3.0)`); D221/D222 need the destructuring
+// rule spelled out (currently absent from every D-block). See
+// docs/plans/wip/PROGRESS-p248tup.md for the exact D-amendment text needed.
+//
+// Part of the SINGLE `spec_tests.conformance` folder-module.
+module spec_tests.conformance
+
+export type M145Complex(re f64, im f64)
+export type M145WithDefault(a int, b int = 5)
+
+test "named-tuple construction: positional always legal, no D102 involved (№145)" {
+    ro m145_c = M145Complex(1.0, 2.0)
+    assert(m145_c.re == 1.0)
+    assert(m145_c.im == 2.0)
+}
+
+test "named-tuple construction: named arg for a DEFAULTED field is legal (D102, №145)" {
+    ro m145_w1 = M145WithDefault(1)
+    ro m145_w2 = M145WithDefault(1, b: 9)
+    assert(m145_w1.a == 1)
+    assert(m145_w1.b == 5)
+    assert(m145_w2.b == 9)
+}
+
+test "named-tuple destructure: FULL curly form binds every field (№145 gap 3)" {
+    ro m145_p = M145Complex(3.0, 4.0)
+    ro { re, im } = m145_p
+    assert(re == 3.0)
+    assert(im == 4.0)
+}
+
+test "named-tuple destructure: PARTIAL curly form with explicit `..` (owner-mandated, №145 gap 3)" {
+    ro m145_p = M145Complex(3.0, 4.0)
+    ro { im, .. } = m145_p
+    assert(im == 4.0)
+}
+
+test "named-tuple destructure: renamed binding `{ field: newname }` still works (№145 gap 3)" {
+    ro m145_p = M145Complex(5.0, 6.0)
+    ro { re: real_part, im: imag_part } = m145_p
+    assert(real_part == 5.0)
+    assert(imag_part == 6.0)
+}

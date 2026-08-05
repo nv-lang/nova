@@ -189,7 +189,9 @@ type M139Pair(a int, b int)
 type M139B8 value { pair M139Pair, n int }
 
 test "m139: value-тип с полем — ИМЕНОВАННЫЙ кортеж" {
-    ro b = M139B8 { pair: M139Pair(a: 1, b: 2), n: 3 }
+    // №145: positional — `M139Pair(a int, b int)` has no defaults, D102
+    // forbids the named-arg form for required params.
+    ro b = M139B8 { pair: M139Pair(1, 2), n: 3 }
     assert(b.pair.a == 1)
     assert(b.pair.b == 2)
     assert(b.n == 3)

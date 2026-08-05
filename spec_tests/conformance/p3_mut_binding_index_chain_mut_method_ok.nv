@@ -12,9 +12,10 @@ fn Vec36 mut @set_x(v int) -> () {
 }
 
 test "mut binding + index chain + mut method — OK" {
+    // №145: positional — no defaults, D102 forbids named-arg form.
     mut arr = [
-        Vec36(x: 1, y: 2, z: 3),
-        Vec36(x: 4, y: 5, z: 6),
+        Vec36(1, 2, 3),
+        Vec36(4, 5, 6),
     ]
     arr[0].set_x(42)
     assert(arr[0].x == 42)
