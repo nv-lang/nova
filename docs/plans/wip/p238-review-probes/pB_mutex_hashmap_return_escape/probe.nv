@@ -1,0 +1,50 @@
+// p238-review probe B: the REAL nova-polaris shape (ratelimit.nv/metrics.nv
+// `BucketTable`/`MetricsRegistry` — Mutex + HashMap value-record, #stable,
+// accepted corpus code) via RETURN-ESCAPE (mirrors №341: a factory builds
+// shared state, returns a closure over it, the closure is registered as a
+// long-lived handler and invoked LATER from many concurrent fibers — same
+// shape as p238-paths probe p01_return_escape, but with the Mutex-guarded
+// composite instead of a bare `mut int`). Probe A (sibling dir) proved the
+// DIRECT-capture form of this exact type IS rejected today
+// (E_CONCURRENT_MUT_CAPTURE, HashMap's generic payload poisons it). This
+// probe checks whether the RETURN-ESCAPE form of the SAME type is caught —
+// prediction, per Ф.7 (path 3, №341): NO, it passes silently. A trailing,
+// unrelated type error is the honesty control (Ф.7 methodology) — proves
+// the file is read to the end and silence is not a truncated-scan artifact.
+
+module p238review.pb_mutex_hashmap_return_escape
+
+import std.runtime.sync.{Mutex}
+import std.collections.hashmap.{HashMap}
+
+type Table value priv {
+    mutex   Mutex
+    entries HashMap[str, int]
+}
+
+fn Table.new() -> Table => { mutex: Mutex.new(), entries: HashMap[str, int].new() }
+
+fn Table @bump(key str) {
+    consume g = @mutex.lock()
+    ro prev = @entries.get(key) ?? 0
+    ro _ = @entries.insert(key, prev + 1)
+}
+
+fn make_bumper() -> fn() -> () {
+    mut table = Table.new()
+    || { table.bump("k") }
+}
+
+fn main() {
+    ro bump = make_bumper()
+    supervised {
+        for _ in 0..4 {
+            spawn {
+                bump()
+            }
+        }
+    }
+    // Honesty control: deliberate, unrelated type error — proves the file
+    // is read to the end and silence above is not a truncated-scan artifact.
+    ro _honesty_control int = "not an int"
+}
