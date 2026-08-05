@@ -3896,20 +3896,15 @@ impl CEmitter {
     /// THAT prefix first (single `strip_prefix`); else fall back to the (repeated)
     /// `Nova_` strip. Preserves the asymmetric strip semantics of the original
     /// inline call sites exactly (single-strip vs `trim_start_matches` repeat).
-    ///
-    /// №248 fix: `"NovaTuple_X"` (named-tuple D215 by-value C type) never
-    /// matched `Nova_`/`NovaValue_` (5th byte `T`≠`_`), so callers' lookup
-    /// key into `all_methods`/`method_overloads` (keyed by bare `"X"`)
-    /// always missed for named tuples — broke `${x}` interpolation display/
-    /// debug/to_str dispatch (fell to the numeric-cast CC-FAIL fallback)
-    /// even when `X` genuinely declares the method. Mirrors the sibling
-    /// `debt_strip_recv_c_prefix` (~line 55203), which already strips
-    /// `NovaTuple_` for the identical D215/Plan 120 reason.
     fn debt_strip_value_prefix_or_nova_trim_start(s: &str) -> String {
         s.strip_prefix("NovaValue_")
             .map(|s| s.trim_end_matches('*').trim().to_string())
-            .or_else(|| s.strip_prefix("NovaTuple_").map(|s| s.trim_end_matches('*').trim().to_string()))
             .unwrap_or_else(|| s.trim_start_matches("Nova_").trim_end_matches('*').trim().to_string())
+    }
+
+    // №248/№145 §0: `resolved_types[id]`'s bare NON-generic name, `record_schemas`-validated.
+    fn channel_named_type(&self, id: crate::ast::ExprId) -> Option<String> {
+        self.resolved_types.get(&id).and_then(|rt| if let crate::types::ResolvedType::Named { name, args, .. } = rt { args.is_empty().then(|| name.clone()) } else { None }).filter(|n| self.record_schemas.contains_key(n))
     }
 
     /// `Nova_<X>` or `NovaValue_<X>`, first match wins (opposite priority from
@@ -37034,7 +37029,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     self.indent += 1;
                     // Bind pattern vars BEFORE inferring guard type so that
                     // member accesses like `user.active` resolve correctly.
-                    self.pattern_bind_typed(pattern, &scr_tmp)?;
+                    self.pattern_bind_typed(pattern, &scr_tmp, None)?;
                     // Plan 106: bool-check guard after pattern binds are in var_types.
                     let guard_ty = self.infer_expr_c_type(guard_expr);
                     self.check_bool_condition_at(&guard_ty, "if-let guard", guard_expr.span)?;
@@ -37093,7 +37088,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     let cond = self.pattern_cond(pattern, &scr_tmp)?;
                     self.line(&format!("if ({}) {{", cond));
                     self.indent += 1;
-                    self.pattern_bind_typed(pattern, &scr_tmp)?;
+                    self.pattern_bind_typed(pattern, &scr_tmp, None)?;
                     let then_block_id = self.enter_defer_scope(then, false);
                     for stmt in &then.stmts { self.emit_stmt(stmt)?; }
                     if let Some(trailing) = &then.trailing {
@@ -37169,7 +37164,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 }
                 let cond = self.pattern_cond(pattern, &scr_tmp)?;
                 self.line(&format!("if (!({cond})) break;"));
-                self.pattern_bind_typed(pattern, &scr_tmp)?;
+                self.pattern_bind_typed(pattern, &scr_tmp, None)?;
                 // Plan 106: guard — evaluated with pattern bindings in scope.
                 // When guard fails, break the loop (pattern matched but guard didn't).
                 if let Some(guard_expr) = guard {
@@ -46739,10 +46734,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             "nova_str" | "nova_char" | "nova_bool"
                             | "nova_f64" | "nova_f32" | "nova_int")
                     {
-                        // Plan 175 Ф.3(d): value-record-aware strip (see note above) —
-                        // fixes `${d}`/`${d:?}` falling through to the numeric-cast
-                        // fallback for `NovaValue_<X>` types with a user @display/@debug.
-                        let arg_type = Self::debt_strip_value_prefix_or_nova_trim_start(&arg_ty);
+                        let arg_type = self.channel_named_type(e.id).unwrap_or_else(|| Self::debt_strip_value_prefix_or_nova_trim_start(&arg_ty));
                         let has_explicit = self.all_methods
                             .contains(&(arg_type.clone(), method_name.to_string()));
                         let method_c_fn: Option<String> = if has_explicit {
@@ -46822,8 +46814,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // User-type fallback path — Display str.from chain (D237).
                         // (debug fallback when debug synthesis failed
                         // earlier — caller already tried via method dispatch).
-                        // Plan 175 Ф.3(d): value-record-aware strip (see note above).
-                        let arg_type = Self::debt_strip_value_prefix_or_nova_trim_start(&arg_ty);
+                        let arg_type = self.channel_named_type(e.id).unwrap_or_else(|| Self::debt_strip_value_prefix_or_nova_trim_start(&arg_ty));
                         let from_method = if is_debug { "from_debug" } else { "from" };
                         let key = ("str".to_string(), from_method.to_string());
                         let str_from_c: Option<String> = self.method_overloads
@@ -48418,7 +48409,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             self.indent += 1;
 
             // Emit pattern bindings
-            self.pattern_bind_typed(&arm.pattern, &scr_tmp)?;
+            self.pattern_bind_typed(&arm.pattern, &scr_tmp, None)?;
             if let Some(sig) = &scrutinee_wrapped_fn_sig {
                 if let Pattern::Variant { kind: VariantPatternKind::Tuple { patterns, .. }, .. } = &arm.pattern {
                     if let [Pattern::Ident { name, .. }] = patterns.as_slice() {
@@ -50634,8 +50625,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // чтобы понять, через `.` или `->` обращаться к полям.
         self.var_types.insert(tmp.clone(), ty_c.clone());
         self.line(&format!("{} {} = {};", ty_c, tmp, val));
-        // Делегируем биндинг полей в общий helper match-arm'ов.
-        self.pattern_bind_typed(&decl.pattern, &tmp)?;
+        // Делегируем биндинг полей в общий helper match-arm'ов (№145 §0: channel-first type hint).
+        let scr_nova_type = self.channel_named_type(decl.value.id);
+        self.pattern_bind_typed(&decl.pattern, &tmp, scr_nova_type.as_deref())?;
         // Plan 53 Ф.6.3: propagate decl.mutable to all bound names from the
         // pattern. Без этого `let mut { x, y } = p; spawn { use(x); }` ловит
         // wrong capture-mode (by-value вместо by-ref) — `var_mutable` определяет
@@ -51086,7 +51078,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     }
 
     /// Emit variable bindings for pattern (after condition is confirmed true).
-    fn pattern_bind_typed(&mut self, pat: &Pattern, scr: &str) -> Result<(), String> {
+    /// `scr_nova_type` (№145 §0): channel-resolved bare Nova type name, `None` if unthreaded.
+    fn pattern_bind_typed(&mut self, pat: &Pattern, scr: &str, scr_nova_type: Option<&str>) -> Result<(), String> {
         match pat {
             Pattern::Ident { name, .. } => {
                 // Infer type from what scr is
@@ -51357,7 +51350,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     self.line(&format!("{} {} = {};", field_ty, name_c, field));
                                 }
                             } else {
-                                self.pattern_bind_typed(p, &field)?;
+                                self.pattern_bind_typed(p, &field, None)?;
                             }
                         }
                         // Plan 14 Ф.1: cleanup временных регистраций
@@ -51419,7 +51412,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 self.line(&format!("{} {} = {};", elem_ty, Self::mangle_field_name(name), field));
                             } else {
                                 self.var_types.insert(field.clone(), elem_ty.clone());
-                                self.pattern_bind_typed(p, &field)?;
+                                self.pattern_bind_typed(p, &field, None)?;
                             }
                         }
                         ArrayPatternElem::RestBind(name) => {
@@ -51509,9 +51502,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 self.line(&format!("{} {} = *{};", base_ty, val_tmp, ptr_tmp));
                                 // Register element types for val_tmp (we don't know them exactly, default nova_int)
                                 self.var_types.insert(val_tmp.clone(), base_ty.to_string());
-                                self.pattern_bind_typed(p, &val_tmp)?;
+                                self.pattern_bind_typed(p, &val_tmp, None)?;
                             } else {
-                                self.pattern_bind_typed(p, &field_raw)?;
+                                self.pattern_bind_typed(p, &field_raw, None)?;
                             }
                         }
                         _ => {
@@ -51533,7 +51526,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             } else {
                                 false
                             };
-                            self.pattern_bind_typed(p, &field)?;
+                            self.pattern_bind_typed(p, &field, None)?;
                             if registered {
                                 self.var_types.remove(&field);
                             }
@@ -51544,35 +51537,20 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             Pattern::Record { type_path, fields, .. } => {
                 let scr_ty = self.var_types.get(scr).cloned().unwrap_or_default();
                 // Plan 53: anonymous record pattern `{ x, y }` (type_path
-                // is None) — выводим имя record-типа из scr_ty: e.g.
-                // `Nova_Pair*` → `Pair`. Это нужно для let-destructuring,
-                // где user обычно не пишет type-prefix.
+                // is None) — выводим имя record-типа; №145 §0 prefers the
+                // channel-resolved `scr_nova_type` first (see call sites).
                 let type_name_from_path = type_path
                     .as_ref()
                     .and_then(|p| p.last().cloned())
+                    .or_else(|| scr_nova_type.map(String::from))
                     .unwrap_or_else(|| {
                         let base = scr_ty.trim_end_matches('*').trim();
                         // Value records use `NovaValue_X` prefix; heap records use `Nova_X*`.
                         // Strip the right prefix so record_schemas lookup finds the entry.
-                        //
-                        // №145 fix (D221 §7/D222 §2, "Vec3 { x, y, z } = v —
-                        // same as record"): a named-tuple (D215) scrutinee's
-                        // `NovaTuple_X` C type matched neither prefix (5th
-                        // byte `T`≠`_`), so this returned "" — missed the
-                        // `record_schemas` entry named tuples DO carry
-                        // (`emit_named_tuple_type`, ~18322) and fell through
-                        // to the sum-variant `scr->payload...` branch below
-                        // (CC-FAIL: "no member named payload"). Sibling fix
-                        // to `debt_strip_recv_c_prefix`, D215/Plan 120.
                         if let Some(n) = base.strip_prefix("NovaValue_") {
                             n.to_string()
                         } else {
-                            let nt = Self::debt_strip_novatuple_prefix_or_empty(base);
-                            if !nt.is_empty() {
-                                nt.to_string()
-                            } else {
-                                Self::debt_strip_nova_prefix_or_empty(base).to_string()
-                            }
+                            Self::debt_strip_nova_prefix_or_empty(base).to_string()
                         }
                     });
                 let is_plain_record = self.record_schemas.contains_key(&type_name_from_path);
@@ -51607,7 +51585,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 // `{ inner: { x, y } }` — иначе inner идёт в
                                 // sum-variant ветку из-за пустого scr_ty).
                                 self.var_types.insert(field_access.clone(), ty.clone());
-                                self.pattern_bind_typed(sub_pat, &field_access)?;
+                                self.pattern_bind_typed(sub_pat, &field_access, None)?;
                             }
                         }
                     }
@@ -51651,7 +51629,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             }
                             Some(Pattern::Wildcard(_)) | Some(Pattern::Literal(..)) => {}
                             Some(sub_pat) => {
-                                self.pattern_bind_typed(sub_pat, &field_access)?;
+                                self.pattern_bind_typed(sub_pat, &field_access, None)?;
                             }
                         }
                     }
@@ -51664,7 +51642,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // вводить одинаковый набор bindings — bootstrap не проверяет,
                 // используем первого как канонический.
                 if let Some(first) = alternatives.first() {
-                    self.pattern_bind_typed(first, scr)?;
+                    self.pattern_bind_typed(first, scr, scr_nova_type)?;
                 }
             }
             _ => {}

@@ -36,6 +36,20 @@
 // helpers omitting an ABI form) — here the omitted form is `NovaTuple_`,
 // mirroring the SAME fix `debt_strip_recv_c_prefix` already carries.
 //
+// Channel-first fix (§0 accepted revision): the checker writes the
+// resolved bare Nova type name for an interpolated expr into
+// `resolved_types[expr.id]` (`f1_expr`'s `InterpolatedStr` handling), keyed
+// off `scope`'s type for the expr. `scope` gets a name's type from a
+// `Stmt::Let` binding's own tuple-registration (`??`-unwrapped `ro (q, r) =
+// a.div_rem(b) ?? panic(...)`, below) correctly — a MATCH-ARM-bound nested
+// tuple (`Ok((q, r)) => …`) does NOT (a separate, pre-existing checker gap
+// in `match_arm_bindings`, only handling a single bare `Ok(x)` bind, found
+// while wiring this channel — attempting to extend it regressed 17
+// unrelated conformance files via generic-body `scope` pollution, reverted;
+// left as a documented, NOT-fixed-here gap for a future window). This
+// fixture therefore uses the `??`-unwrap let-form, which the channel does
+// cover, to pin the bisected "value from a Result-of-tuple method" shape.
+//
 // Part of the SINGLE `spec_tests.conformance` folder-module.
 module spec_tests.conformance
 
@@ -86,13 +100,9 @@ test "named-tuple to_str() dispatches through bare ${x} interpolation (№248)" 
 test "named-tuple value sourced from a Result-of-tuple method interpolates correctly (№248 bisected shape)" {
     ro m248_a = M248Frac(10, 3)
     ro m248_b = M248Frac(2, 1)
-    match m248_a.div_rem(m248_b) {
-        Ok((m248_q, m248_r)) => {
-            assert("q=${m248_q}" == "q=5/3")
-            assert("r=${m248_r}" == "r=0/0")
-        }
-        Err(_) => assert(false)
-    }
+    ro (m248_q, m248_r) = m248_a.div_rem(m248_b) ?? panic("unexpected div-by-zero")
+    assert("q=${m248_q}" == "q=5/3")
+    assert("r=${m248_r}" == "r=0/0")
 }
 
 test "named-tuple #impl(Display) dispatches through bare ${x} interpolation (№248)" {

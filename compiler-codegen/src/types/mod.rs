@@ -7880,6 +7880,26 @@ impl<'a> TypeCheckCtx<'a> {
                 self.check_positional_destructure_on_named_tuple(
                     &d.pattern, scrut_ty.as_ref(), errors,
                 );
+                // §0 channel-first: codegen's `Pattern::Record` destructure
+                // (emit_c.rs `emit_record_destructure`) needs the scrutinee's
+                // BARE Nova type name to pick the right field-schema registry
+                // — hand it the already-resolved `scrut_ty` here instead of
+                // making codegen re-derive it by parsing the C-type string
+                // (that string-parsing is what dropped `NovaTuple_` — №145).
+                // Scoped to a DECLARED named-tuple type only (excludes a
+                // compiler-intrinsic scrutinee with no `.nv` decl, e.g.
+                // `Channel.new(...)`, whose type must not shadow the
+                // hardcoded `record_schemas["ChannelPair"]` codegen has).
+                if let (Pattern::Record { .. }, true, Some(TypeRef::Named { path, .. })) =
+                    (&d.pattern, d.value.id.is_set(), &scrut_ty)
+                {
+                    let is_nt = path.last().and_then(|n| self.types.get(n.as_str()))
+                        .map_or(false, |td| matches!(td.kind, TypeDeclKind::NamedTuple(_)));
+                    if is_nt {
+                        self.resolved_types_buf.borrow_mut().entry(d.value.id)
+                            .or_insert_with(|| ResolvedType::from_type_ref(scrut_ty.as_ref().unwrap()));
+                    }
+                }
                 // Plan 124.8 (D175 amend): track ro-binding names. `ro x = expr`
                 // делает binding immutable — даже `mut field` через `x.f = ...`
                 // блокируется (Rust-style binding dominates).
@@ -10750,6 +10770,16 @@ impl<'a> TypeCheckCtx<'a> {
                         // case — it was never wired up. See
                         // `check_interp_no_debug` doc for full scope.
                         self.check_interp_no_debug(e, gs, scope, spec, errors);
+                        // №248 §0 channel-first: hand emit_c the resolved
+                        // bare Nova type name for this expr instead of
+                        // making it re-derive one from the C-type string
+                        // (string-parsing there dropped `NovaTuple_`).
+                        if e.id.is_set() {
+                            if let Some(tn) = self.resolve_interp_user_value_type(e, gs, scope) {
+                                self.resolved_types_buf.borrow_mut().entry(e.id)
+                                    .or_insert(ResolvedType::Named { name: tn, module: vec![], args: vec![] });
+                            }
+                        }
                         self.f1_expr(e, gs, scope, errors);
                     }
                 }
