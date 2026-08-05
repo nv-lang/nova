@@ -1,5 +1,5 @@
 ---
-source_rev: 7a17f3d2e
+source_rev: 6759a7f11
 source_date: 2026-08-04
 ---
 
@@ -342,6 +342,24 @@ guaranteed-kill the process — a separate `exit(code, msg)` function ([D13](dec
 Otherwise `Fail[DivByZero]` would be in every other signature — the
 informativeness of effects would disappear. A conscious compromise,
 in detail — [decisions/08-runtime.md#d13](decisions/08-runtime.md#d13).
+
+## Cross-fiber safety — a property of the type, a requirement at the boundary (D446)
+
+The rule in one sentence: **a value may be reachable from more than one fiber
+only if it is immutable, or solely owned by one owner, or its type is declared
+safe for concurrent use — and that declaration is checked by the compiler.**
+
+It is checked in three local steps, without reachability analysis:
+
+- a type carries a checkable "safe for concurrent use" property;
+- a closure is safe when everything it captured is safe;
+- a function that accepts a value which will LATER run concurrently
+  (installing middleware, registering a handler) declares that requirement in
+  its own signature.
+
+The compiler does not work out who calls from where: every entry into
+concurrency demands the property from what it accepts. Details and rationale —
+[D446](decisions/06-concurrency.md#d446).
 
 ## Roles — `throw` / `Fail[E]` / handler
 
