@@ -837,13 +837,14 @@ fn safe_add_u32(a u32, b u32) -> u32
 
 ## Доверенные внешние функции
 
-`external fn` с контрактами требует `#trusted`. Контракты регистрируются
+`extern`-функция (`extern "nova" fn` / `extern "C" fn`) с контрактами требует
+`#trusted`. Контракты регистрируются
 как **аксиомы** — вызывающие стороны получают `ensures` как предположения
 без доказательства. Компилятор не верифицирует тело (Nova-тела нет).
 
 ```nova
 #trusted
-external fn libc_strlen(s str) -> int
+extern "nova" fn libc_strlen(s str) -> int
     requires s.is_valid_cstring()
     ensures  result >= 0
 
