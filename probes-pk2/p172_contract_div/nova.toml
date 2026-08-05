@@ -1,0 +1,10 @@
+[package]
+name = "p172_contract_div"
+version = "0.1.0"
+
+[[bin]]
+name = "p172main"
+path = "main.nv"
+
+[dependencies]
+bignum = { path = "../../../nova-bignum" }

@@ -1,0 +1,17 @@
+// pk2-probe №39 (истинно рабочая соседняя форма-контроль): ТОТ ЖЕ generic
+// value-тип, но инстанцирован ОБЫЧНЫМ (не-эффектным) типом-параметром —
+// изолирует, действительно ли именно effect-кайнд параметра ломает mono.
+module p39c_plain_type_generic
+
+type Nzp39cHandler[E] value {
+    tag str
+}
+
+fn Nzp39cHandler[E].new(tag str) -> Nzp39cHandler[E] => { tag }
+
+fn nzp39c_use_int(h Nzp39cHandler[int]) -> str => h.tag
+
+fn main() {
+    ro nzp39c_hd = Nzp39cHandler[int].new("plain")
+    println(nzp39c_use_int(nzp39c_hd))
+}

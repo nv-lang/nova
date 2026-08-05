@@ -1,0 +1,7 @@
+[package]
+name = "p126_static_generic_path"
+version = "0.1.0"
+
+[[bin]]
+name = "p126main"
+path = "main.nv"

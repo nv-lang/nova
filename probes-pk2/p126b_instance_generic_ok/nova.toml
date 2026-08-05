@@ -1,0 +1,7 @@
+[package]
+name = "p126b_instance_generic_ok"
+version = "0.1.0"
+
+[[bin]]
+name = "p126bmain"
+path = "main.nv"

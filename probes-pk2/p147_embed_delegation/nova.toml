@@ -1,0 +1,7 @@
+[package]
+name = "p147_embed_delegation"
+version = "0.1.0"
+
+[[bin]]
+name = "p147main"
+path = "main.nv"
