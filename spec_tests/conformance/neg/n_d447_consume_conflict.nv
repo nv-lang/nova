@@ -1,0 +1,12 @@
+// EXPECT_COMPILE_ERROR E_NO_COPY_CONSUME_CONFLICT
+// D447 — `#no_copy` and `consume` on the SAME type-decl are two mutually
+// exclusive strictness levels ("must consume >=1 time" vs "consuming is not
+// required at all") — wave 1 left the combination silently resolved in
+// `consume`'s favor; the integrator's decision (plan 248, "ВОЛНА 1
+// ИСПОЛНЕНА", п.1) promotes it to a hard error instead.
+// Spec: spec/decisions/02-types.md (D447).
+module neg.n_d447_consume_conflict
+
+#no_copy type N447ConflictHandle consume value priv { n int }
+
+fn N447ConflictHandle consume @close() -> () {}

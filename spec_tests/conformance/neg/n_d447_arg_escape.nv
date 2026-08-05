@@ -1,0 +1,24 @@
+// EXPECT_COMPILE_ERROR E_NO_COPY_SECOND_NAME
+// D447 — `#no_copy`: passing a no_copy value as an argument to a receiver
+// that does NOT borrow it (here: the receiver returns its param, handing
+// the SAME identity out to a second name at the call site) is a copy, not a
+// borrow, and is rejected. Complements the POSITIVE borrow case in
+// d447_no_copy_second_name.nv (`d447_borrow_only`, whose param is `ro` and
+// never returns/stores/captures it) — the contrast between the two fixtures
+// is the borrow-vs-copy line D447 draws.
+// Spec: spec/decisions/02-types.md (D447).
+module neg.n_d447_arg_escape
+
+#no_copy type N447EscHandle value priv { n int }
+
+fn N447EscHandle @get() -> int { @n }
+
+fn n447_returns_it(h N447EscHandle) -> N447EscHandle {
+    h
+}
+
+test "t" {
+    ro a = N447EscHandle{ n: 1 }
+    ro r = n447_returns_it(a)
+    assert(r.get() == 1)
+}

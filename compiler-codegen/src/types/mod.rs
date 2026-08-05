@@ -1697,6 +1697,12 @@ fn check_module_impl(
     // легален (не флагаем).
     check_ref_addr_escape(module, &mut errors);
 
+    // Plan 248 (wave 2, D447): `#no_copy` — «второе имя запрещено» для
+    // Affine-типов. Отдельный (не flow-sensitive) проход — Affine не несёт
+    // consume-обязанности, поэтому не переиспользует `check_consume`'s
+    // Live/Consumed машину. См. доккомментарий `check_no_copy_second_name`.
+    check_no_copy_second_name(module, &mut errors);
+
     // Plan 91.10 (D163 retracted, 2026-05-30): check_external_fn_needs_caps
     // удалён. Capability tracking via отдельный syntax — redundant с effect
     // system. См. docs/plans/91.10-d163-retract-capability-syntax.md.
@@ -34875,19 +34881,19 @@ enum VarState {
     MaybeConsumed(Span),
 }
 
-/// Plan 248 (mech, wave 1, p248-mech): строгость аффинности типа —
-/// достраивает D133-таблицу (см. `docs/plans/248-shared-handles-linearity.md`,
-/// раздел «МЕХАНИЗМ ЗАПРЕТА КОПИРОВАНИЯ — РЕШЁН») до полной. `MustConsume` —
-/// существующая `type X consume {...}` семантика (потребить РОВНО ≥1 раз,
-/// обязательный расход на каждом exit-пути — D133/D180 Rule 1/2, как
-/// сегодня). `Affine` — новая `#no_copy type X {...}` семантика (потребить
-/// ≤1 раз: второе имя запрещено, но забыть — можно; никакого exit-path
-/// расхода не требуется). Wave 1 строит только сам уровень + его
-/// транзитивное распространение (`type_consume_level`/`_v`) — Rule 1/2 (и
-/// любые новые no_copy-диагностики) на `Affine` пока НЕ реагируют
-/// (`consume_types`/`type_is_consume` ниже читают только `MustConsume`,
-/// байт-в-байт как до этой волны) — подключение оставлено следующей волне
-/// намеренно, ради поведенческой нейтральности волны 1.
+/// Plan 248 (D447): строгость аффинности типа — достраивает D133-таблицу
+/// (см. `docs/plans/248-shared-handles-linearity.md`, раздел «МЕХАНИЗМ
+/// ЗАПРЕТА КОПИРОВАНИЯ — РЕШЁН») до полной. `MustConsume` — существующая
+/// `type X consume {...}` семантика (потребить РОВНО ≥1 раз, обязательный
+/// расход на каждом exit-пути — D133/D180 Rule 1/2, как сегодня). `Affine` —
+/// `#no_copy type X {...}` семантика (потребить ≤1 раз: второе имя
+/// запрещено, но забыть — можно; никакого exit-path расхода не требуется).
+/// Wave 1 (p248-mech) построила сам уровень + транзитивное распространение
+/// (`type_consume_level`/`_v`), не подключая `Affine` ни к одной
+/// диагностике. Wave 2 (p248-w2) подключила: `is_must_consume_name`/
+/// `type_is_consume` читают только `MustConsume` (Rule 1/2 D180, байт-в-байт
+/// как раньше через отдельный `consume_types`), `type_is_no_copy`/
+/// `check_no_copy_second_name` — новый энфорс на `Affine` (D447 §Rule).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ConsumeLevel {
     MustConsume,
@@ -34902,21 +34908,15 @@ enum ConsumeLevel {
 /// **НЕ путать с `ConsumeRegistry`** (Plan 73 D131 — registry consume-
 /// методов и consume-параметров; flat-name based).
 struct LinearityRegistry {
-    /// Имена типов, объявленных `type X consume {...}`. Оставлен
-    /// НЕТРОНУТЫМ волной p248-mech (только `MustConsume`-уровень,
-    /// как всегда) — читается ~20 существующими сайтами Rule 1/2 и
-    /// смежных проверок; `#no_copy`-типы сюда НЕ попадают (см.
-    /// `consume_levels` ниже).
-    consume_types: HashSet<String>,
-    /// Plan 248 (mech, wave 1): имя → уровень строгости (`ConsumeLevel`),
-    /// покрывает ОБА уровня — существующий `MustConsume` (те же имена,
-    /// что и `consume_types` выше) И новый `Affine` (`#no_copy`-типы).
-    /// Питает ТОЛЬКО транзитивный обход `type_consume_level`/`_v` —
-    /// Rule 1 (`E_CONSUME_KEYWORD_MISSING`) / Rule 2
-    /// (`E_VIEW_BINDING_FORBIDDEN`) читают `consume_types`/`type_is_consume`
-    /// (см. их доккомментарии), которые остаются `MustConsume`-only —
-    /// подключение `Affine` к enforcement-путям сознательно оставлено
-    /// следующей волне.
+    /// Plan 248 (wave 2, p248-w2): имя → уровень строгости (`ConsumeLevel`),
+    /// ЕДИНЫЙ источник истины для ОБОИХ уровней — `MustConsume`
+    /// (`type X consume {...}`) и `Affine` (`#no_copy type X {...}`).
+    /// До волны 2 существовал параллельный `consume_types: HashSet<String>`
+    /// (только `MustConsume`, читался ~20 сайтами Rule 1/2 и смежных
+    /// проверок) — свёрнут в эту карту (план 248, «Свод реестров», раздел
+    /// «ВОЛНА 1 ИСПОЛНЕНА»). Читатели, которым нужен именно `MustConsume`,
+    /// используют `is_must_consume`/`type_is_consume` (тонкие обёртки,
+    /// байт-в-байт эквивалентные старому `consume_types.contains`).
     consume_levels: HashMap<String, ConsumeLevel>,
     /// Consume-методы по типу: type_name → Vec<method_name>.
     consume_methods: HashMap<String, Vec<String>>,
@@ -34942,7 +34942,6 @@ struct LinearityRegistry {
 
 impl LinearityRegistry {
     fn build(module: &Module) -> Self {
-        let mut consume_types = HashSet::new();
         let mut consume_levels: HashMap<String, ConsumeLevel> = HashMap::new();
         let mut consume_methods: HashMap<String, Vec<String>> = HashMap::new();
         let mut local_type_names = HashSet::new();
@@ -34980,13 +34979,9 @@ impl LinearityRegistry {
             if let Item::Type(td) = item {
                 local_type_names.insert(td.name.clone());
                 if td.consume {
-                    consume_types.insert(td.name.clone());
                     consume_levels.insert(td.name.clone(), ConsumeLevel::MustConsume);
                 } else if td.no_copy {
-                    // Plan 248 (mech, wave 1): `#no_copy` — Affine level.
-                    // Intentionally NOT inserted into `consume_types` — see
-                    // that field's doc comment (Rule 1/2 неизменны в этой
-                    // волне).
+                    // Plan 248 (wave 2): `#no_copy` — Affine level.
                     consume_levels.insert(td.name.clone(), ConsumeLevel::Affine);
                 }
             }
@@ -35023,7 +35018,7 @@ impl LinearityRegistry {
             }
         }
 
-        LinearityRegistry { consume_types, consume_levels, consume_methods, local_type_names, cleanup_effect_rows }
+        LinearityRegistry { consume_levels, consume_methods, local_type_names, cleanup_effect_rows }
     }
 
     /// D432-амендмент 2026-08-04 (№315 fix): declared `@cleanup`'s effect
@@ -35065,10 +35060,30 @@ impl LinearityRegistry {
     /// коллапсированный до bool так, чтобы результат остался БАЙТ-В-БАЙТ
     /// таким же, каким был до этой волны: `true` ТОЛЬКО для `MustConsume`.
     /// Новый `Affine`-уровень (`#no_copy`) этой функцией не виден —
-    /// это сознательное сохранение прежнего поведения (Rule 1/2 читают
-    /// именно её), а не пробел.
+    /// нужен именно `MustConsume` (Rule 1/2 читают её же). Для `Affine`
+    /// см. `type_is_no_copy`.
     fn type_is_consume(&self, t: &TypeRef, module: &Module) -> bool {
         matches!(self.type_consume_level(t, module), Some(ConsumeLevel::MustConsume))
+    }
+
+    /// Plan 248 (wave 2): зеркало `type_is_consume`, но для `Affine`
+    /// (`#no_copy`) — «второе имя запрещено, забыть можно». Та же
+    /// транзитивная развёртка (`type_consume_level`), MustConsume
+    /// доминирует: тип с ОБОИМИ уровнями где-то в структуре считается
+    /// `type_is_consume`-true, а `type_is_no_copy`-false — Rule 1/2
+    /// (consume-обязанность) для него уже покрывают связывание, второе
+    /// имя запрещать отдельно избыточно (тип и так не копируется молча —
+    /// D180 не разрешает bare-alias consume-обязательного значения).
+    fn type_is_no_copy(&self, t: &TypeRef, module: &Module) -> bool {
+        matches!(self.type_consume_level(t, module), Some(ConsumeLevel::Affine))
+    }
+
+    /// Имя типа зарегистрировано как `MustConsume` (`type X consume`).
+    /// Прямая (нетранзитивная) проверка по имени — байт-в-байт эквивалент
+    /// старого `consume_types.contains(name)` (до волны 2 отдельного
+    /// `HashSet`; см. доккомментарий `consume_levels`).
+    fn is_must_consume_name(&self, name: &str) -> bool {
+        matches!(self.consume_levels.get(name), Some(ConsumeLevel::MustConsume))
     }
 
     /// Plan 248 (mech, wave 1, p248-mech): `type_consume_level(TypeRef)` —
@@ -35199,12 +35214,11 @@ impl LinearityRegistry {
         for item in &module.items {
             if let Item::Type(td) = item {
                 if td.consume {
-                    self.consume_types.insert(td.name.clone());
                     self.consume_levels.insert(td.name.clone(), ConsumeLevel::MustConsume);
                 } else if td.no_copy {
-                    // Plan 248 (mech, wave 1): external/builtin `#no_copy`
-                    // types — same Affine-only registration as the local
-                    // loop in `build()` above.
+                    // Plan 248 (wave 2): external/builtin `#no_copy` types —
+                    // same Affine registration as the local loop in `build()`
+                    // above.
                     self.consume_levels.insert(td.name.clone(), ConsumeLevel::Affine);
                 }
             }
@@ -35267,6 +35281,64 @@ fn check_linearity_markers(
 ) {
     for item in &module.items {
         let Item::Type(td) = item else { continue; };
+
+        // Plan 248 (wave 2, D447): `consume` + `#no_copy` на одном
+        // type-decl — два взаимоисключающих уровня строгости («обязан
+        // израсходовать» vs «расходовать не обязан»). Wave 1 разрешала
+        // конфликт молча (`consume` побеждал, `no_copy` не регистрировался
+        // в реестре) — интегратор решил (план 248, «ВОЛНА 1 ИСПОЛНЕНА»,
+        // п.1): это ошибка, не молчаливое старшинство.
+        if td.consume && td.no_copy {
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_NO_COPY_CONSUME_CONFLICT] type `{}` помечен одновременно \
+                     `consume` и `#no_copy` — взаимоисключающие уровни строгости \
+                     (D447): `consume` требует потребить ≥1 раз, `#no_copy` \
+                     запрещает второе имя, но потреблять не обязывает. Оставь \
+                     ровно один из двух.",
+                    td.name),
+                td.span,
+            ));
+        }
+        // Plan 248 (wave 2, D447): `#no_copy` осмыслен только там, где у
+        // объявления есть СОБСТВЕННОЕ значение (Record/Sum/NamedTuple/
+        // Newtype/Opaque — то же множество допустимых видов, что и у
+        // `#share`, D415 §1, чуть ниже); алиасы (`Alias`/`TypeSet`) и
+        // интерфейсные виды (`Effect`/`Protocol`) не несут own storage —
+        // копировать (или запрещать копирование) нечего.
+        if td.no_copy {
+            let kind_ok = matches!(
+                &td.kind,
+                TypeDeclKind::Record(_)
+                    | TypeDeclKind::Sum(_)
+                    | TypeDeclKind::NamedTuple(_)
+                    | TypeDeclKind::Newtype(_)
+                    | TypeDeclKind::Opaque
+            );
+            if !kind_ok {
+                let kind_str = match &td.kind {
+                    TypeDeclKind::Record(_) => "record",
+                    TypeDeclKind::Sum(_) => "sum",
+                    TypeDeclKind::Effect(_) => "effect",
+                    TypeDeclKind::Protocol { .. } => "protocol",
+                    TypeDeclKind::Alias(_) => "alias",
+                    TypeDeclKind::Opaque => "external opaque",
+                    TypeDeclKind::NamedTuple(_) => "named tuple",
+                    TypeDeclKind::Newtype(_) => "newtype",
+                    TypeDeclKind::TypeSet(_) => "type set",
+                };
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E_NO_COPY_INVALID_KIND] `#no_copy` cannot be applied to \
+                         `{}` ({}) — no own storage/value to forbid copying of. \
+                         Allowed kinds: record, sum, named tuple, newtype, \
+                         external opaque (D447).",
+                        td.name, kind_str
+                    ),
+                    td.span,
+                ));
+            }
+        }
 
         // Sum-types — D4 covers fields-level only для record-variants;
         // skip for now (sum-variants могут содержать consume-payload —
@@ -35557,8 +35629,9 @@ struct ConsumeRegistry {
     fn_param_output_keys: HashMap<String, Vec<String>>,
     /// Plan 214 (D429): I type name → (O canonical key → method name) for
     /// FINALIZE-lane `#coerce` pairs only (view-lane pairs never consume
-    /// anything — their I is never a `LinearityRegistry.consume_types`
-    /// member in the first place, so they need no entry here). Built via
+    /// anything — their I is never `MustConsume` in
+    /// `LinearityRegistry.consume_levels` in the first place, so they need
+    /// no entry here). Built via
     /// `collect_coerce_pairs` (same collector the checker accept-path /
     /// AST-rewrite use — R9 "one window"), filtered to `is_finalize`. The
     /// method name (not just a `HashSet<String>` of keys) is kept so the R7
@@ -35756,7 +35829,7 @@ impl ConsumeRegistry {
         }
 
         // Plan 100.3 (D157): collect consume-types for view-param detection.
-        // Mirrors LinearityRegistry::build consume_types collection.
+        // Mirrors LinearityRegistry::build's MustConsume collection.
         let consume_type_names: HashSet<String> = module.items.iter()
             .filter_map(|it| {
                 if let Item::Type(td) = it {
@@ -37227,7 +37300,7 @@ impl<'a> ConsumeCtx<'a> {
                     // объявлен в текущем модуле, он из внешнего пакета.
                     // Используем другой hint, чтобы не вводить в заблуждение.
                     let is_external_type = !ty.is_empty()
-                        && !self.lin_reg.consume_types.contains(&ty);
+                        && !self.lin_reg.is_must_consume_name(&ty);
                     let hint = if methods.is_empty() {
                         if is_external_type {
                             format!(
@@ -37280,7 +37353,7 @@ impl<'a> ConsumeCtx<'a> {
                     // Plan 100.6 (D164 §5): cross-module hint — тип из
                     // внешнего пакета (не в локальном LinearityRegistry).
                     let is_external_type = !ty.is_empty()
-                        && !self.lin_reg.consume_types.contains(&ty);
+                        && !self.lin_reg.is_must_consume_name(&ty);
                     let hint = if methods.is_empty() {
                         if is_external_type {
                             format!(
@@ -38233,6 +38306,550 @@ fn turbofish_ctor_type_ref(e: &Expr) -> Option<TypeRef> {
     Some(TypeRef::Named { path: vec![name], generics: type_args.clone(), span: e.span })
 }
 
+// ============================================================================
+// Plan 248 (wave 2, D447): `#no_copy` — «второе имя запрещено» (Affine-
+// уровень `LinearityRegistry.consume_levels`). D180 Rule 1/2 (см.
+// `check_consume` ниже) покрывают только `MustConsume` — Affine НЕ обязан
+// быть потреблён («забыть — можно», D447), значит нужен НЕ flow-sensitive
+// Live/Consumed-проход, а более простой структурный энфорс: запретить
+// СОЗДАНИЕ второго имени для существующего значения в четырёх формах:
+//   (a) bare alias:    `ro b = a`
+//   (b) field-read:    `x = obj.field`
+//   (c) argument:      `f(a)` — если получатель НЕ borrow (см. критерий ниже)
+//   (d) literal-embed: `Type { field: a }`, `(a, b)`
+// Свежая конструкция (`Type { field: literal_or_call() }`, `f()`, бинарная
+// операция, …) — НЕ второе имя (нет существующего значения, которое
+// разделяется), поэтому не флагуется: проверка смотрит только на выражения-
+// «пути» (bare identifier / `@self` / цепочка `.field`), у которых уже есть
+// резолвящийся best-effort тип.
+//
+// Заимствование (c) разрешено консервативным критерием (бриф явно требует
+// «начни с консервативного» + документируй непокрытое, план 248 «ВОЛНА 1
+// ИСПОЛНЕНА»): параметр получателя — голый `ro` (не `mut`, не `consume`) И
+// тело получателя НЕ эскейпит его (не пишет в поле, не возвращает, не
+// встраивает в литерал, не захватывает в замыкание/spawn/detach/blocking,
+// не передаёт дальше аргументом другого вызова). Недоступный статически
+// получатель (внешняя/external fn, dynamic dispatch через generic-параметр
+// или значение-функцию) → эскейп по умолчанию — безопасный дефолт, не
+// «дыра» (см. отчёт волны за полным списком непокрытых случаев: named/spread
+// call-аргументы тоже по умолчанию НЕ заимствование).
+// ============================================================================
+
+/// Пер-модульный индекс: field-типы записей (для резолва `obj.field`) +
+/// функции по `(receiver_type_name_или_None, fn_name)` (для критерия
+/// заимствования аргумента). Строится один раз на модуль, включая peer-файлы
+/// (D29 co-equal files одного модуля).
+struct NoCopyIndex<'a> {
+    record_fields: HashMap<String, &'a Vec<RecordField>>,
+    fns: HashMap<(Option<String>, String), &'a FnDecl>,
+}
+
+impl<'a> NoCopyIndex<'a> {
+    fn build(module: &'a Module) -> Self {
+        let mut record_fields: HashMap<String, &'a Vec<RecordField>> = HashMap::new();
+        let mut fns: HashMap<(Option<String>, String), &'a FnDecl> = HashMap::new();
+        let mut index_items = |items: &'a [Item]| {
+            for it in items {
+                match it {
+                    Item::Type(td) => {
+                        if let TypeDeclKind::Record(fields) = &td.kind {
+                            record_fields.insert(td.name.clone(), fields);
+                        }
+                    }
+                    Item::Fn(fd) => {
+                        let recv_name = fd.receiver.as_ref().map(|r| r.type_name.clone());
+                        fns.insert((recv_name, fd.name.clone()), fd);
+                    }
+                    _ => {}
+                }
+            }
+        };
+        index_items(&module.items);
+        for pf in &module.peer_files {
+            index_items(&pf.items_here);
+        }
+        NoCopyIndex { record_fields, fns }
+    }
+
+    fn field_type(&self, type_name: &str, field_name: &str) -> Option<&TypeRef> {
+        self.record_fields.get(type_name)
+            .and_then(|fields| fields.iter().find(|f| f.name == field_name))
+            .map(|f| &f.ty)
+    }
+}
+
+/// Best-effort «имя типа» из `TypeRef`, для diagnostics/lookup — снимает
+/// `ro`/`mut`/`uninit`-обёртки, берёт последний segment `Named`.
+fn nc_type_name(t: &TypeRef) -> Option<String> {
+    match t.strip_readonly().strip_modifiers() {
+        TypeRef::Named { path, .. } => path.last().cloned(),
+        _ => None,
+    }
+}
+
+fn nc_emit_second_name(span: Span, ty_name: &str, form: &str, errors: &mut Vec<Diagnostic>) {
+    errors.push(Diagnostic::new(
+        format!(
+            "[E_NO_COPY_SECOND_NAME] нельзя завести второе имя для значения \
+             типа `{}` (D447, `#no_copy`): {}. Копия запрещена; забыть \
+             исходное имя МОЖНО (в отличие от `consume` — потреблять не \
+             обязательно). Нужен только временный доступ без владения — \
+             передайте в `ro`-параметр, который получатель НЕ сохраняет (не \
+             пишет в поле, не возвращает, не захватывает в замыкание) — \
+             такая передача остаётся заимствованием и разрешена.",
+            ty_name, form
+        ),
+        span,
+    ));
+}
+
+/// Per-function walk: связывает `let`-локалы с best-effort типом (для (a)/
+/// (b) — распознавания bare-alias / field-read), проверяет литералы (d) и
+/// аргументы вызовов (c) на лету.
+struct NoCopyWalk<'a, 'b> {
+    idx: &'b NoCopyIndex<'a>,
+    lin_reg: &'b LinearityRegistry,
+    module: &'a Module,
+    self_type: Option<String>,
+    scope: HashMap<String, TypeRef>,
+}
+
+impl<'a, 'b> NoCopyWalk<'a, 'b> {
+    /// Резолвит выражение-«путь» (`Ident` / `@self` / `.field`-цепочка) до
+    /// `TypeRef`, best-effort (неизвестное — `None`, false-negative
+    /// permissive, как везде в этом файле).
+    fn resolve_path_type(&self, e: &Expr) -> Option<TypeRef> {
+        match &e.kind {
+            ExprKind::Ident(name) => self.scope.get(name).cloned(),
+            ExprKind::SelfAccess => self.self_type.as_ref().map(|n| TypeRef::Named {
+                path: vec![n.clone()], generics: Vec::new(), span: e.span,
+            }),
+            ExprKind::Member { obj, name } => {
+                let obj_ty = self.resolve_path_type(obj)?;
+                let tname = nc_type_name(&obj_ty)?;
+                self.idx.field_type(&tname, name).cloned()
+            }
+            _ => None,
+        }
+    }
+
+    fn record_lit_type(&self, e: &Expr) -> Option<TypeRef> {
+        if let ExprKind::RecordLit { type_name: Some(path), .. } = &e.kind {
+            Some(TypeRef::Named { path: path.clone(), generics: Vec::new(), span: e.span })
+        } else {
+            None
+        }
+    }
+
+    /// `e` именует СУЩЕСТВУЮЩЕЕ значение (не свежую конструкцию) типа,
+    /// зарегистрированного `Affine` (`#no_copy`) — прямо или транзитивно
+    /// (обёртки/контейнеры, тот же обход, что `type_is_consume`).
+    fn affine_path_type(&self, e: &Expr) -> Option<TypeRef> {
+        if !matches!(e.kind, ExprKind::Ident(_) | ExprKind::SelfAccess | ExprKind::Member { .. }) {
+            return None;
+        }
+        let ty = self.resolve_path_type(e)?;
+        if self.lin_reg.type_is_no_copy(&ty, self.module) {
+            Some(ty)
+        } else {
+            None
+        }
+    }
+
+    fn resolve_callee(&self, func: &Expr) -> Option<&'a FnDecl> {
+        match &func.kind {
+            ExprKind::Ident(name) => self.idx.fns.get(&(None, name.clone())).copied(),
+            ExprKind::Member { obj, name: method } => {
+                let recv_type = match &obj.kind {
+                    ExprKind::SelfAccess => self.self_type.clone(),
+                    _ => self.resolve_path_type(obj).as_ref().and_then(nc_type_name),
+                };
+                self.idx.fns.get(&(recv_type, method.clone())).copied()
+            }
+            _ => None,
+        }
+    }
+
+    fn walk_block(&mut self, b: &Block, errors: &mut Vec<Diagnostic>) {
+        for s in &b.stmts {
+            self.walk_stmt(s, errors);
+        }
+        if let Some(t) = &b.trailing {
+            self.walk_expr(t, errors);
+        }
+    }
+
+    fn walk_stmt(&mut self, s: &Stmt, errors: &mut Vec<Diagnostic>) {
+        match s {
+            Stmt::Let(decl) => {
+                self.walk_expr(&decl.value, errors);
+                let Pattern::Ident { name, .. } = &decl.pattern else {
+                    return;
+                };
+                // (a)/(b): bare-alias / field-read в НОВУЮ локальную.
+                if let Some(ty) = self.affine_path_type(&decl.value) {
+                    let form = if matches!(decl.value.kind, ExprKind::Member { .. }) {
+                        "чтение поля в локальную переменную (`x = obj.field`)"
+                    } else {
+                        "голое связывание существующего значения (`ro b = a`)"
+                    };
+                    nc_emit_second_name(decl.value.span, &nc_type_name(&ty).unwrap_or_default(), form, errors);
+                }
+                // Продолжить нести best-effort тип для дальнейших lookup'ов
+                // (`x = obj.field; y = x.inner`) — не влияет на диагностику
+                // выше (та уже эмитирована), только на РЕЗОЛВ дальше по телу.
+                let inferred = decl.ty.as_ref()
+                    .map(|t| t.strip_readonly().clone())
+                    .or_else(|| self.resolve_path_type(&decl.value))
+                    .or_else(|| self.record_lit_type(&decl.value));
+                match inferred {
+                    Some(t) => { self.scope.insert(name.clone(), t); }
+                    None => { self.scope.remove(name); }
+                }
+            }
+            Stmt::Const(cd) => self.walk_expr(&cd.value, errors),
+            Stmt::Expr(e) => self.walk_expr(e, errors),
+            Stmt::Assign { target, value, .. } => {
+                self.walk_expr(target, errors);
+                self.walk_expr(value, errors);
+            }
+            Stmt::TupleAssign { lhs, rhs, .. } => {
+                for e in lhs { self.walk_expr(e, errors); }
+                for e in rhs { self.walk_expr(e, errors); }
+            }
+            Stmt::Return { value: Some(v), .. } => self.walk_expr(v, errors),
+            Stmt::Throw { value, .. } => self.walk_expr(value, errors),
+            Stmt::Defer { body, .. } => self.walk_expr(body, errors),
+            Stmt::ConsumeScope { init, body, .. } => {
+                self.walk_expr(init, errors);
+                self.walk_block(body, errors);
+            }
+            _ => {}
+        }
+    }
+
+    fn walk_expr(&mut self, e: &Expr, errors: &mut Vec<Diagnostic>) {
+        match &e.kind {
+            ExprKind::RecordLit { fields, .. } => {
+                for f in fields {
+                    if let Some(v) = &f.value {
+                        // `at_shorthand`/plain-punning `{ name }` desugars
+                        // to `Member{obj: SelfAccess, name}` value — still
+                        // a `.field`-path, still checked by `affine_path_type`
+                        // like any other embed.
+                        if let Some(ty) = self.affine_path_type(v) {
+                            nc_emit_second_name(v.span, &nc_type_name(&ty).unwrap_or_default(),
+                                "встраивание в литерал записи (`Type { field: a }`)", errors);
+                        }
+                        self.walk_expr(v, errors);
+                    }
+                }
+            }
+            ExprKind::TupleLit(elems) => {
+                for el in elems {
+                    if let Some(ty) = self.affine_path_type(el) {
+                        nc_emit_second_name(el.span, &nc_type_name(&ty).unwrap_or_default(),
+                            "встраивание в литерал кортежа (`(a, b)`)", errors);
+                    }
+                    self.walk_expr(el, errors);
+                }
+            }
+            ExprKind::Call { func, args, .. } => {
+                self.walk_expr(func, errors);
+                let callee = self.resolve_callee(func);
+                for (i, a) in args.iter().enumerate() {
+                    let arg_expr = a.expr();
+                    if let Some(ty) = self.affine_path_type(arg_expr) {
+                        // Только позиционные (`Item`) аргументы участвуют в
+                        // borrow-критерии по индексу параметра — `Named`/
+                        // `Spread` не сопоставляются надёжно позиционно,
+                        // консервативный дефолт = эскейп (см. заголовок).
+                        let borrowed_ok = matches!(a, CallArg::Item(_))
+                            && callee.map_or(false, |fd| {
+                                fd.params.get(i).map_or(false, |p| {
+                                    !p.is_mut && !p.consume && !nc_param_escapes(fd, &p.name)
+                                })
+                            });
+                        if !borrowed_ok {
+                            nc_emit_second_name(arg_expr.span, &nc_type_name(&ty).unwrap_or_default(),
+                                "передача аргументом получателю без гарантии заимствования \
+                                 (не `ro`-параметр без эскейпа, либо получатель статически \
+                                 не резолвится)", errors);
+                        }
+                    }
+                    self.walk_expr(arg_expr, errors);
+                }
+            }
+            ExprKind::Binary { left, right, .. } => { self.walk_expr(left, errors); self.walk_expr(right, errors); }
+            ExprKind::Unary { operand, .. } => self.walk_expr(operand, errors),
+            ExprKind::Block(b) => self.walk_block(b, errors),
+            ExprKind::Member { obj, .. } => self.walk_expr(obj, errors),
+            ExprKind::Index { obj, index } => { self.walk_expr(obj, errors); self.walk_expr(index, errors); }
+            ExprKind::If { cond, then, else_ } => {
+                self.walk_expr(cond, errors);
+                self.walk_block(then, errors);
+                if let Some(eb) = else_ {
+                    match eb {
+                        ElseBranch::Block(b) => self.walk_block(b, errors),
+                        ElseBranch::If(ie) => self.walk_expr(ie, errors),
+                    }
+                }
+            }
+            ExprKind::Match { scrutinee, arms } => {
+                self.walk_expr(scrutinee, errors);
+                for arm in arms {
+                    if let Some(g) = &arm.guard { self.walk_expr(g, errors); }
+                    match &arm.body {
+                        MatchArmBody::Expr(ex) => self.walk_expr(ex, errors),
+                        MatchArmBody::Block(b) => self.walk_block(b, errors),
+                    }
+                }
+            }
+            ExprKind::For { iter, body, .. } => { self.walk_expr(iter, errors); self.walk_block(body, errors); }
+            ExprKind::While { cond, body, .. } => { self.walk_expr(cond, errors); self.walk_block(body, errors); }
+            ExprKind::Loop { body, .. } => self.walk_block(body, errors),
+            ExprKind::Try(i) | ExprKind::Bang(i) | ExprKind::RefArg(i) => self.walk_expr(i, errors),
+            ExprKind::Coalesce(a, b) => { self.walk_expr(a, errors); self.walk_expr(b, errors); }
+            ExprKind::As(i, _) | ExprKind::Is(i, _) => self.walk_expr(i, errors),
+            ExprKind::ClosureLight { body, .. } => match body {
+                ClosureBody::Expr(ex) => self.walk_expr(ex, errors),
+                ClosureBody::Block(b) => self.walk_block(b, errors),
+            },
+            ExprKind::Spawn(b) => self.walk_expr(b, errors),
+            ExprKind::Supervised { body, .. } | ExprKind::Detach(body) | ExprKind::Blocking(body) => {
+                self.walk_block(body, errors);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// `contains_ident`: `name` встречается где-либо в поддереве `e` (любая
+/// глубина, включая внутри литералов/замыканий/вызовов) — переиспользует
+/// готовый alpha-rename коллектор имён (используется тем же способом Plan
+/// 172.5 D326 R10 `check_ref_escape_capture` выше по файлу).
+fn nc_expr_contains(e: &Expr, name: &str) -> bool {
+    let mut names: HashSet<String> = HashSet::new();
+    crate::alpha_rename::collect_names_expr(e, &mut names);
+    names.contains(name)
+}
+
+fn nc_block_contains(b: &Block, name: &str) -> bool {
+    let mut names: HashSet<String> = HashSet::new();
+    crate::alpha_rename::collect_names_block(b, &mut names);
+    names.contains(name)
+}
+
+/// `name`'s ЗНАЧЕНИЕ-ИДЕНТИЧНОСТЬ (не просто чтение через него) может
+/// покинуть текущую позицию через `e`: bare-identity (`h`), сквозные
+/// обёртки, под которыми значение «протекает» неизменным (блок/if/match/
+/// coalesce/try/bang/as/refarg — их РЕЗУЛЬТАТ может быть буквально `h`),
+/// встраивание в литерал, дальнейшая передача аргументом (forward).
+///
+/// НЕ распознаёт (сознательно): проекции (`.field`, индекс), бинарные/
+/// унарные операции, вызовы МЕТОДОВ на `name` (`h.get()` — `func`
+/// НЕ проверяется, только `args`) — их результат СТРУКТУРНО новое
+/// значение, не идентичность `name`. Без этого различения `h.get()` как
+/// tail/return блокировал бы каждое типовое заимствование — именно баг,
+/// пойманный на probe_pos при верификации волны (см. отчёт).
+fn nc_value_escapes(e: &Expr, name: &str) -> bool {
+    match &e.kind {
+        ExprKind::Ident(n) => n == name,
+        ExprKind::RecordLit { fields, .. } => fields.iter()
+            .any(|f| f.value.as_ref().map_or(false, |v| nc_value_escapes(v, name))),
+        ExprKind::TupleLit(elems) => elems.iter().any(|el| nc_value_escapes(el, name)),
+        ExprKind::Call { args, .. } => args.iter().any(|a| nc_value_escapes(a.expr(), name)),
+        ExprKind::Block(b) => b.trailing.as_ref().map_or(false, |t| nc_value_escapes(t, name)),
+        ExprKind::If { then, else_, .. } => {
+            then.trailing.as_ref().map_or(false, |t| nc_value_escapes(t, name))
+                || else_.as_ref().map_or(false, |eb| match eb {
+                    ElseBranch::Block(b) => b.trailing.as_ref().map_or(false, |t| nc_value_escapes(t, name)),
+                    ElseBranch::If(ie) => nc_value_escapes(ie, name),
+                })
+        }
+        ExprKind::Match { arms, .. } => arms.iter().any(|arm| match &arm.body {
+            MatchArmBody::Expr(ex) => nc_value_escapes(ex, name),
+            MatchArmBody::Block(b) => b.trailing.as_ref().map_or(false, |t| nc_value_escapes(t, name)),
+        }),
+        ExprKind::Coalesce(a, b) => nc_value_escapes(a, name) || nc_value_escapes(b, name),
+        ExprKind::Try(i) | ExprKind::Bang(i) | ExprKind::RefArg(i) | ExprKind::As(i, _) => {
+            nc_value_escapes(i, name)
+        }
+        _ => false,
+    }
+}
+
+/// Консервативный critерий заимствования для (c): `true`, если `param` МОЖЕТ
+/// эскейпнуть тело `fd` — записью в поле, возвратом, встраиванием в литерал
+/// либо захватом в замыкание/spawn/detach/blocking либо дальнейшей передачей
+/// аргументом другого вызова. Sound false-positive-permissive (над-report =
+/// денай безопасного заимствования — раздражает, но не пропускает копию);
+/// известные непокрытые формы — см. заголовок секции + отчёт волны.
+fn nc_param_escapes(fd: &FnDecl, param: &str) -> bool {
+    match &fd.body {
+        FnBody::Block(b) => nc_scan_block(b, param, true),
+        FnBody::Expr(e) => nc_value_escapes(e, param) || nc_scan_expr(e, param),
+        FnBody::External => true, // неизвестное тело → безопасный дефолт: эскейп
+    }
+}
+
+fn nc_scan_block(b: &Block, name: &str, is_fn_top_level: bool) -> bool {
+    for s in &b.stmts {
+        if nc_scan_stmt(s, name) { return true; }
+    }
+    if let Some(t) = &b.trailing {
+        if is_fn_top_level && nc_value_escapes(t, name) { return true; }
+        if nc_scan_expr(t, name) { return true; }
+    }
+    false
+}
+
+fn nc_scan_stmt(s: &Stmt, name: &str) -> bool {
+    match s {
+        Stmt::Return { value: Some(v), .. } => nc_value_escapes(v, name) || nc_scan_expr(v, name),
+        Stmt::Assign { target, value, .. } => {
+            (matches!(target.kind, ExprKind::Member { .. } | ExprKind::Index { .. })
+                && nc_value_escapes(value, name))
+                || nc_scan_expr(target, name) || nc_scan_expr(value, name)
+        }
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            let any_field_target = lhs.iter()
+                .any(|t| matches!(t.kind, ExprKind::Member { .. } | ExprKind::Index { .. }));
+            (any_field_target && rhs.iter().any(|v| nc_value_escapes(v, name)))
+                || lhs.iter().any(|e| nc_scan_expr(e, name))
+                || rhs.iter().any(|e| nc_scan_expr(e, name))
+        }
+        Stmt::Let(d) => nc_scan_expr(&d.value, name),
+        Stmt::Const(cd) => nc_scan_expr(&cd.value, name),
+        Stmt::Expr(e) => nc_scan_expr(e, name),
+        Stmt::Throw { value, .. } => nc_value_escapes(value, name) || nc_scan_expr(value, name),
+        Stmt::Defer { body, .. } => nc_expr_contains(body, name) || nc_scan_expr(body, name),
+        Stmt::ConsumeScope { init, body, .. } => {
+            nc_value_escapes(init, name) || nc_scan_expr(init, name) || nc_block_contains(body, name)
+        }
+        _ => false,
+    }
+}
+
+fn nc_scan_expr(e: &Expr, name: &str) -> bool {
+    match &e.kind {
+        ExprKind::RecordLit { fields, .. } => fields.iter().any(|f| {
+            f.value.as_ref().map_or(false, |v| nc_value_escapes(v, name) || nc_scan_expr(v, name))
+        }),
+        ExprKind::TupleLit(elems) => elems.iter().any(|el| nc_value_escapes(el, name) || nc_scan_expr(el, name)),
+        ExprKind::Call { func, args, .. } => {
+            args.iter().any(|a| nc_value_escapes(a.expr(), name) || nc_scan_expr(a.expr(), name))
+                || nc_scan_expr(func, name)
+        }
+        ExprKind::Lambda { body, .. } => nc_expr_contains(body, name),
+        ExprKind::ClosureLight { body, .. } => match body {
+            ClosureBody::Expr(ex) => nc_expr_contains(ex, name),
+            ClosureBody::Block(b) => nc_block_contains(b, name),
+        },
+        ExprKind::ClosureFull(_) => nc_expr_contains(e, name), // conservative whole-node scan
+        ExprKind::Spawn(b) => nc_expr_contains(b, name),
+        ExprKind::Supervised { body, .. } | ExprKind::Detach(body) | ExprKind::Blocking(body) => {
+            nc_block_contains(body, name)
+        }
+        ExprKind::Binary { left, right, .. } => nc_scan_expr(left, name) || nc_scan_expr(right, name),
+        ExprKind::Unary { operand, .. } => nc_scan_expr(operand, name),
+        ExprKind::Block(b) => nc_scan_block(b, name, false),
+        ExprKind::Member { obj, .. } => nc_scan_expr(obj, name),
+        ExprKind::Index { obj, index } => nc_scan_expr(obj, name) || nc_scan_expr(index, name),
+        ExprKind::If { cond, then, else_ } => {
+            nc_scan_expr(cond, name) || nc_scan_block(then, name, false)
+                || else_.as_ref().map_or(false, |eb| match eb {
+                    ElseBranch::Block(b) => nc_scan_block(b, name, false),
+                    ElseBranch::If(ie) => nc_scan_expr(ie, name),
+                })
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            nc_scan_expr(scrutinee, name) || arms.iter().any(|arm| {
+                arm.guard.as_ref().map_or(false, |g| nc_scan_expr(g, name))
+                    || match &arm.body {
+                        MatchArmBody::Expr(ex) => nc_scan_expr(ex, name),
+                        MatchArmBody::Block(b) => nc_scan_block(b, name, false),
+                    }
+            })
+        }
+        ExprKind::Try(i) | ExprKind::Bang(i) | ExprKind::RefArg(i) => nc_scan_expr(i, name),
+        ExprKind::Coalesce(a, b) => nc_scan_expr(a, name) || nc_scan_expr(b, name),
+        ExprKind::As(i, _) | ExprKind::Is(i, _) => nc_scan_expr(i, name),
+        ExprKind::For { iter, body, .. } => nc_scan_expr(iter, name) || nc_scan_block(body, name, false),
+        ExprKind::While { cond, body, .. } => nc_scan_expr(cond, name) || nc_scan_block(body, name, false),
+        ExprKind::Loop { body, .. } => nc_scan_block(body, name, false),
+        _ => false,
+    }
+}
+
+/// Точка входа волны 2: пробегает КАЖДУЮ `fn`-декларацию модуля (+ peer-
+/// файлы), проверяя четыре формы «второго имени» для `Affine` (`#no_copy`)
+/// типов. Быстрый выход, если в модуле вовсе нет `#no_copy`-типов (истинно
+/// для всего сегодняшнего корпуса — ни один тип в std/examples/пакетах ещё
+/// не несёт атрибут) — проверка не тратит время на подавляющем большинстве
+/// модулей и байт-в-байт нейтральна там, где `#no_copy` не встречается.
+fn check_no_copy_second_name(module: &Module, errors: &mut Vec<Diagnostic>) {
+    let mut lin_reg = LinearityRegistry::build(module);
+    for bm in crate::codegen::external_registry::ExternalRegistry::builtin_modules() {
+        lin_reg.absorb_external(bm);
+    }
+    if !lin_reg.consume_levels.values().any(|l| *l == ConsumeLevel::Affine) {
+        return;
+    }
+    let idx = NoCopyIndex::build(module);
+    let visit_fn = |fd: &FnDecl, errors: &mut Vec<Diagnostic>| {
+        let FnBody::Block(body) = &fd.body else {
+            // `FnBody::Expr` / `External` — не покрыто этой волной (те же
+            // четыре формы теоретически применимы, но `=> expr`-тела
+            // короткие и в корпусе `#no_copy` пока не встречаются; см. отчёт).
+            return;
+        };
+        let mut scope: HashMap<String, TypeRef> = HashMap::new();
+        for p in &fd.params {
+            scope.insert(p.name.clone(), p.ty.strip_readonly().clone());
+        }
+        let mut w = NoCopyWalk {
+            idx: &idx,
+            lin_reg: &lin_reg,
+            module,
+            self_type: fd.receiver.as_ref().map(|r| r.type_name.clone()),
+            scope,
+        };
+        w.walk_block(body, errors);
+    };
+    // Plan 248 (wave 2): `test { … }` — отдельный `Item::Test`, НЕ `Item::Fn`
+    // (найдено при верификации: три из четырёх зондов внутри `test`-блока
+    // молча проходили — `check_consume` уже ходит по обоим kind'ам, см.
+    // `Item::Test`-ветку рядом в `check_consume` ниже, тот же пробел
+    // повторяться не должен). Свежий scope, без `self`/параметров.
+    let visit_test = |body: &Block, errors: &mut Vec<Diagnostic>| {
+        let mut w = NoCopyWalk {
+            idx: &idx,
+            lin_reg: &lin_reg,
+            module,
+            self_type: None,
+            scope: HashMap::new(),
+        };
+        w.walk_block(body, errors);
+    };
+    for item in &module.items {
+        match item {
+            Item::Fn(fd) => visit_fn(fd, errors),
+            Item::Test(t) => visit_test(&t.body, errors),
+            _ => {}
+        }
+    }
+    for pf in &module.peer_files {
+        for item in &pf.items_here {
+            match item {
+                Item::Fn(fd) => visit_fn(fd, errors),
+                Item::Test(t) => visit_test(&t.body, errors),
+                _ => {}
+            }
+        }
+    }
+}
+
 fn check_consume(module: &Module, errors: &mut Vec<Diagnostic>) {
     let mut reg = ConsumeRegistry::build(module);
     // Plan 100.1 (D133): LinearityRegistry + marker consistency.
@@ -38338,7 +38955,7 @@ fn check_consume(module: &Module, errors: &mut Vec<Diagnostic>) {
                         // pass to other view-params. Cannot call consume-methods,
                         // cannot return.
                         let is_consume_type = pty.as_ref()
-                            .map(|t| lin_reg.consume_types.contains(t))
+                            .map(|t| lin_reg.is_must_consume_name(t))
                             .unwrap_or(false);
                         if is_consume_type {
                             ctx.declare_view_param(&p.name, pty);
@@ -38865,7 +39482,7 @@ fn consume_require_pattern_binding(
     if name == "_" { return; }
     let ty = payload_ty.map(|s| s.to_string());
     let must_consume = payload_ty
-        .map(|t| ctx.lin_reg.consume_types.contains(t))
+        .map(|t| ctx.lin_reg.is_must_consume_name(t))
         .unwrap_or(false);
     if !must_consume {
         ctx.declare(name, ty);
@@ -39243,7 +39860,7 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
             // `type_is_consume` fed by `infer_let_type_ref` (which, unlike
             // `infer_let_type` above, keeps the RHS/annotation's generics).
             let rhs_yields_consume_type = inferred_ty_d180.as_ref()
-                .map(|ty| ctx.lin_reg.consume_types.contains(ty))
+                .map(|ty| ctx.lin_reg.is_must_consume_name(ty))
                 .unwrap_or(false);
             let container_ty_ref_d325 = ctx.infer_let_type_ref(decl);
             let rhs_yields_consume_type = rhs_yields_consume_type
@@ -39262,7 +39879,7 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
             let alias_obligated = if let Some(canon) = &alias_src {
                 ctx.consume_obligations.contains(canon)
                     || ctx.var_types.get(canon)
-                        .map(|ty| ctx.lin_reg.consume_types.contains(ty))
+                        .map(|ty| ctx.lin_reg.is_must_consume_name(ty))
                         .unwrap_or(false)
             } else { false };
 
@@ -39716,7 +40333,7 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
                 .cloned();
             if let Some(ty) = &ty {
                 let ty_known = ctx.lin_reg.local_type_names.contains(ty.as_str())
-                    || ctx.lin_reg.consume_types.contains(ty.as_str())
+                    || ctx.lin_reg.is_must_consume_name(ty.as_str())
                     || ctx.lin_reg.consume_methods.contains_key(ty.as_str());
                 let has_cleanup = ctx.lin_reg.consume_methods
                     .get(ty.as_str())
@@ -39822,7 +40439,7 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
                 };
                 let known_result_ty = raw_result_ty.filter(|t| {
                     ctx.lin_reg.local_type_names.contains(t.as_str())
-                        || ctx.lin_reg.consume_types.contains(t.as_str())
+                        || ctx.lin_reg.is_must_consume_name(t.as_str())
                         || ctx.lin_reg.consume_methods.contains_key(t.as_str())
                 });
                 if tail_escape || r.declared_consume {
@@ -39898,7 +40515,7 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
                         .or_else(|| ctx.var_types.get(&root))
                         .cloned();
                     if let Some(ref ty) = ty_str {
-                        if ctx.lin_reg.consume_types.contains(ty) {
+                        if ctx.lin_reg.is_must_consume_name(ty) {
                             errors.push(Diagnostic::new(
                                 format!(
                                     "[E_TUPLE_ASSIGN_CONSUME_TYPE] tuple assign: lhs element {} \
@@ -41177,8 +41794,9 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                             for a in args { consume_walk_expr(ctx, a.expr(), errors); }
                             if let Some(t) = trailing { consume_walk_trailing(ctx, t, errors); }
                             // Если метод — consume-метод типа поля → mark field Consumed.
-                            let is_consume_method = ctx.lin_reg.consume_types.iter()
-                                .any(|ty| ctx.lin_reg.consume_methods
+                            let is_consume_method = ctx.lin_reg.consume_levels.iter()
+                                .filter(|(_, lvl)| **lvl == ConsumeLevel::MustConsume)
+                                .any(|(ty, _)| ctx.lin_reg.consume_methods
                                     .get(ty.as_str())
                                     .map_or(false, |ms| ms.contains(method)));
                             if is_consume_method {
@@ -41209,8 +41827,9 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                             // nested field consume. Mark parent field as
                             // MaybeConsumed (partially consumed sub-field).
                             if matches!(deep_obj.kind, ExprKind::SelfAccess) {
-                                let is_consume_method = ctx.lin_reg.consume_types.iter()
-                                    .any(|ty| ctx.lin_reg.consume_methods
+                                let is_consume_method = ctx.lin_reg.consume_levels.iter()
+                                    .filter(|(_, lvl)| **lvl == ConsumeLevel::MustConsume)
+                                    .any(|(ty, _)| ctx.lin_reg.consume_methods
                                         .get(ty.as_str())
                                         .map_or(false, |ms| ms.contains(method)));
                                 if is_consume_method
@@ -41298,7 +41917,7 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                                     _ => None,
                                 };
                                 if let Some(rt) = ret_type {
-                                    if ctx.lin_reg.consume_types.contains(&rt) {
+                                    if ctx.lin_reg.is_must_consume_name(&rt) {
                                         errors.push(Diagnostic::new(
                                             format!(
                                                 "[D133-consume-rvalue-in-view] consume-rvalue (тип `{}`) \
@@ -41793,7 +42412,7 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                 }
                 ctx.var_types.get(&canon)
                     .or_else(|| ctx.var_types.get(name))
-                    .map_or(false, |t| ctx.lin_reg.consume_types.contains(t)
+                    .map_or(false, |t| ctx.lin_reg.is_must_consume_name(t)
                         || ctx.consume_bound_generics.contains(t))
             };
             for f in fields {

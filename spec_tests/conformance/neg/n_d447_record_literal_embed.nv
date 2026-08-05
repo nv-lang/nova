@@ -1,0 +1,19 @@
+// EXPECT_COMPILE_ERROR E_NO_COPY_SECOND_NAME
+// D447 — `#no_copy`: embedding an EXISTING named value into a record
+// literal field (`Type { field: a }`) is a second name for `a`, not a fresh
+// construction — rejected. Contrast: constructing the field value INLINE
+// (`Type { field: Handle{...} }`, see d447_no_copy_second_name.nv /
+// n_d447_field_read.nv's own `N447FieldWrapper{ h: N447FieldHandle{...} }`)
+// is a fresh value, not a second name, and stays legal.
+// Spec: spec/decisions/02-types.md (D447).
+module neg.n_d447_record_literal_embed
+
+#no_copy type N447RecHandle value priv { n int }
+
+type N447RecWrapper value { h N447RecHandle }
+
+test "t" {
+    ro a = N447RecHandle{ n: 1 }
+    ro w = N447RecWrapper{ h: a }
+    assert(true)
+}
