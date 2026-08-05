@@ -9936,7 +9936,7 @@ primitive `T` only, struct-`T` deferred):
 | Method                  | Receiver      | Returns    | C codegen                          |
 |-------------------------|---------------|------------|------------------------------------|
 | `(*ro T).read()`        | any `*T`/`*ro T`/`*mut T`/`*uninit T` | `T`        | `(*p)`                             |
-| `(*mut T).write(v T)`   | `*mut T` / `*uninit T`                | `nova_unit`| `((*p) = v, NOVA_UNIT)`            |
+| `(*mut T).write(v T)`   | `*mut T` (амендмент 2026-08-05, №358: голый `*uninit T` БОЛЬШЕ НЕ writable — нужен составной `*mut uninit T`, см. §V2.2) | `nova_unit`| `((*p) = v, NOVA_UNIT)`            |
 
 Detection: `obj_ty` ends в `*` AND not a known Nova typedef
 (`Nova_*`/`NovaArray_*`/`NovaOpt_*`/`NovaRes_*`/`NovaBox_*`/`NovaValue_*`)
@@ -10121,6 +10121,14 @@ codegen: `emit_c.rs` безусловно (независимо от unsafe-wrap
 использование `*p`/`p[i]`/`p<q` падает на codegen-стадии независимо от
 исхода checker-стадии. Живые, реально-используемые эквиваленты — строка 8
 следующей таблицы.
+
+**Амендмент 2026-08-05 (№353, окно p-ptr):** та же ретракция enforced
+ТАКЖЕ в checker'е (`nova check`, не только codegen/`nova test`) —
+`check_target_readonly`'s Deref/Index arms, `types/mod.rs`; проверка
+срабатывает ПЕРВОЙ и безусловно по writability (на ro-указателе больше не
+выскакивает сбивающий `E_POINTER_RO_ASSIGN`). Codegen-проверка остаётся
+defense-in-depth. Формы ЧТЕНИЯ (`x = *p`, `y = p[i]`) чекером пока не
+покрыты — №367 реестра.
 
 #### Карта продолжение: НЕ enforced checker'ом, но контрактно unsafe (известные gaps)
 
@@ -10645,7 +10653,7 @@ ro p *mut *T        // L3 из типа (D246): внешний *mut (writable), 
 ro p *T             // binding ro: p фиксирован; pointee ro
 mut p *T            // binding mut: p reassignable; pointee ro (*p = … ❌ — L1 mut ≠ mut-pointee)
 mut p *mut T        // binding mut: p reassignable; pointee mut, writable (*p = … ✅)
-mut p *uninit u8    // binding mut: p reassignable; pointee possibly-uninit byte
+mut p *uninit u8    // binding mut: p reassignable; pointee possibly-uninit, НЕ writable (*p/… ❌; №358 2026-08-05 — запись только через *mut uninit u8)
 ```
 
 RETRACTED (теперь parse error `E_POINTER_PREFIX_MODIFIER`):
@@ -17890,6 +17898,37 @@ floor: отрицательный литерал НЕ усыновляет `uint
 
 Диагностики — **свои**, не переиспользовать тексты `consume`: там речь про
 «обязан потребить», здесь про «нельзя завести второе имя».
+
+### Энфорс — волна 2 (план 248, 2026-08-05)
+
+**Правило второго имени.** Значение `Affine`-типа (`#no_copy`) не может
+получить второе имя. Проверяются четыре формы:
+
+1. Голое связывание: `ro b = a`.
+2. Чтение поля в локальную: `x = obj.field`.
+3. Передача аргументом получателю, который его НЕ заимствует (см. ниже).
+4. Встраивание в литерал записи/кортежа: `Type { field: a }`, `(a, b)`.
+
+Диагностика — `E_NO_COPY_SECOND_NAME`. Свежая конструкция
+(`Type{field: Handle{...}}`, вызов функции, бинарная операция) НЕ
+считается вторым именем — второе имя относится только к уже
+СУЩЕСТВУЮЩЕМУ значению (bare identifier / `@self` / `.field`-путь).
+
+**Заимствование.** Передача `Affine`-значения в параметр — не копия,
+если параметр получателя `ro` (не `mut`, не `consume`) И тело получателя
+НЕ сохраняет его: не пишет в поле, не возвращает, не встраивает в
+литерал, не захватывает в замыкание/`spawn`/`detach`/`blocking`/
+`supervised`, не передаёт дальше аргументом. Такая передача — заём, не
+перевязка, и остаётся законной.
+
+**`consume` и `#no_copy` на одном типе — ошибка**
+(`E_NO_COPY_CONSUME_CONFLICT`): два взаимоисключающих уровня строгости
+(«обязан израсходовать» против «расходовать не обязан»).
+
+**`#no_copy` применим к видам объявления с собственным хранилищем** —
+record, sum, named tuple, newtype, external opaque (то же множество, что
+у `#share`, D415 §1). На alias/type-set/effect/protocol —
+`E_NO_COPY_INVALID_KIND`.
 
 ### Связь
 

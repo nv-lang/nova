@@ -1,0 +1,25 @@
+// EXPECT_COMPILE_ERROR E_LINEAR_CAPTURE_IN_FIBER
+// №364 (К1 звучность) — same gap as
+// neg/p364_consume_let_unannotated_spawn_neg.nv, `detach` twin: an
+// unannotated `consume x = expr` bind (no `ty`, `linear_pattern` previously
+// only fed from pattern-level `is_consume`, never the LetDecl's own
+// `consume` keyword / `d.consume`) captured bare inside a `detach` body used
+// to slip past `flag_boundary_captures` entirely — a fire-and-forget orphan
+// fiber holding a by-value copy of a linear resource with no ownership
+// tracking (double-close/interference class, same as the annotated form
+// `neg/d188_linear_capture_spawn_neg.nv` already catches).
+module neg.p364_consume_let_unannotated_detach_neg
+
+type P364DRes consume { id int }
+fn P364DRes consume @cleanup(_outcome ScopeOutcome) -> () { () }
+fn P364DRes consume @dispose() -> () { () }
+
+fn p364d_make_res() -> P364DRes => { id: 7 }
+
+test "unannotated consume-let captured bare in detach — E_LINEAR_CAPTURE_IN_FIBER" {
+    consume r = p364d_make_res()
+    detach {
+        ro _x = r.id
+    }
+    r.dispose()
+}

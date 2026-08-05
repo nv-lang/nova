@@ -1,0 +1,31 @@
+// EXPECT_COMPILE_ERROR E_LINEAR_CAPTURE_IN_FIBER
+// №364 (К1 звучность): `consume x = expr` WITHOUT a static type annotation —
+// the explicit `consume` keyword at LetDecl-level (D133, `LetDecl.consume`)
+// is set, but `ScopeBinding.ty` used to stay `None` (no annotation, and the
+// RHS here is a plain free-fn call — not the `Type.new(..)`-shaped ctor the
+// syntactic init-type sketch `capture_syntactic_init_type` recognizes). That
+// left the bind invisible to BOTH linear-classification branches in
+// `flag_boundary_captures`: the `ty`-based `linear_flagged` lookup (no `ty`
+// to look up) AND `pattern_linear_flagged`'s `linear_pattern` (only set for
+// an explicit `Ok(consume x)`-style PATTERN sub-bind, never for a LetDecl's
+// own `consume` keyword on a plain `Pattern::Ident`) — the capture slipped
+// past the gate entirely and `nova build --strict-effects` produced a
+// working binary. Fixed by also seeding `linear_pattern` from `d.consume`
+// at `Stmt::Let` registration (`types/mod.rs` `walk_stmt`).
+module neg.p364_consume_let_unannotated_spawn_neg
+
+type P364Res consume { id int }
+fn P364Res consume @cleanup(_outcome ScopeOutcome) -> () { () }
+fn P364Res consume @dispose() -> () { () }
+
+fn p364_make_res() -> P364Res => { id: 1 }
+
+test "unannotated consume-let captured bare in spawn — E_LINEAR_CAPTURE_IN_FIBER" {
+    consume r = p364_make_res()
+    supervised {
+        spawn {
+            ro _x = r.id
+        }
+    }
+    r.dispose()
+}

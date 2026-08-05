@@ -28183,15 +28183,61 @@ impl<'a> CapabilityCtx<'a> {
                     }
                     _ => None,
                 };
+                let ty = d.ty.clone().or_else(|| {
+                    capture_syntactic_init_type(&d.value, &self.type_decls)
+                });
+                let names = pattern_capture_names(&d.pattern);
+                // №364 (D415 §4 extension, К1 звучность): a single combined
+                // `ty` cloned onto EVERY destructured name can't classify
+                // per-element linearity — `ro (r, w) = s.into_split()`
+                // returning `(TcpReadHalf, TcpWriteHalf)` (BOTH `consume
+                // value`) previously left every bound name with the whole
+                // Tuple TypeRef, which `TypeCheckCtx::typeref_named_base`'s
+                // Named-only unwrap can never resolve to a `type_decls`
+                // entry — the linear check saw NOTHING to classify. When the
+                // pattern is a top-level `Pattern::Tuple` matching the RHS's
+                // tuple SHAPE, zip element i's own TypeRef onto bound name i
+                // instead: either from an explicit tuple annotation, or —
+                // unannotated — from resolving the RHS method-call's
+                // declared return type via `self.sig.method_table`
+                // (`resolve_tuple_call_return`, conservative: `None` on any
+                // ambiguity, whole-`ty` fallback then applies). Computed
+                // BEFORE `state.scopes.last_mut()` below — `resolve_tuple_
+                // call_return` needs an immutable `&state` (receiver-type
+                // lookup through `state.scopes`), which can't overlap the
+                // frame's mutable borrow.
+                let elem_tys: Option<Vec<TypeRef>> = match &d.pattern {
+                    Pattern::Tuple(pats, _) if pats.len() == names.len() => {
+                        match &ty {
+                            Some(TypeRef::Tuple(elems, _)) if elems.len() == pats.len() => {
+                                Some(elems.clone())
+                            }
+                            None => self
+                                .resolve_tuple_call_return(&d.value, state)
+                                .filter(|v| v.len() == pats.len()),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                };
                 if let Some(frame) = state.scopes.last_mut() {
-                    let ty = d.ty.clone().or_else(|| {
-                        capture_syntactic_init_type(&d.value, &self.type_decls)
-                    });
-                    for (name, pat_mut, pat_consume) in pattern_capture_names(&d.pattern) {
+                    for (i, (name, pat_mut, pat_consume)) in names.into_iter().enumerate() {
+                        let elem_ty = elem_tys.as_ref().map(|v| v[i].clone()).or_else(|| ty.clone());
                         frame.insert(name, ScopeBinding {
                             mutable: d.mutable || pat_mut,
-                            ty: ty.clone(),
-                            linear_pattern: pat_consume,
+                            ty: elem_ty,
+                            // №364: `consume lst = expr` (no static
+                            // annotation, `d.consume` — the LetDecl-level
+                            // explicit-`consume` keyword, D133) is just as
+                            // authoritative a linear signal as a pattern
+                            // sub-bind's own `is_consume` (the existing
+                            // `pattern_linear_flagged` rationale above
+                            // applies verbatim: source syntax already marked
+                            // the bind `consume`). `pat_consume` alone missed
+                            // this — it's set only for `Ok(consume x)`-style
+                            // pattern sub-binds, never for the LetDecl's own
+                            // `consume` keyword on a plain `Pattern::Ident`.
+                            linear_pattern: pat_consume || d.consume,
                             closure_free_vars: closure_vars.clone(),
                         });
                     }
@@ -29527,6 +29573,43 @@ impl<'a> CapabilityCtx<'a> {
                 ),
                 span,
             ));
+        }
+    }
+
+    /// №364 (D415 §4 extension, К1 звучность): resolve an UNANNOTATED
+    /// tuple-destructure `let`'s RHS method-call return type — `ro (r, w) =
+    /// s.into_split()`, no `d.ty` — via `self.sig.method_table`, so a
+    /// `Pattern::Tuple` `Stmt::Let` registration (see `walk_stmt`) can zip a
+    /// per-element `TypeRef` onto each bound name instead of leaving every
+    /// name with `ty: None` (invisible to the linear-capture classification
+    /// in `flag_boundary_captures`). Deliberately conservative — bails to
+    /// `None` (whole-`ty`/`None` fallback then applies at the call site) on
+    /// ANY ambiguity:
+    /// - RHS is not a plain `recv.method(..)` call (`ExprKind::Call` over
+    ///   `ExprKind::Member`);
+    /// - the receiver is not a bare `Ident` already carrying a known static
+    ///   `ScopeBinding.ty` in `state.scopes` (no receiver-type inference
+    ///   here — CapabilityCtx runs BEFORE `TypeCheckCtx`'s full inference
+    ///   pass, see `run_checks`' `CapabilityCtx::build`/`TypeCheckCtx::build`
+    ///   ordering, so there is no `resolved_types` channel available yet at
+    ///   this pass);
+    /// - `method_table` doesn't resolve the receiver type + method name to
+    ///   EXACTLY one overload (multiple overloads on the same name could
+    ///   disagree on return shape — safer to see nothing than guess wrong);
+    /// - that overload's `return_type` isn't a `TypeRef::Tuple`.
+    fn resolve_tuple_call_return(&self, e: &Expr, state: &CapState) -> Option<Vec<TypeRef>> {
+        let ExprKind::Call { func, .. } = &e.kind else { return None };
+        let ExprKind::Member { obj, name: method } = &func.kind else { return None };
+        let ExprKind::Ident(recv_name) = &obj.kind else { return None };
+        let recv_ty = state.scopes.iter().rev()
+            .find_map(|f| f.get(recv_name))
+            .and_then(|b| b.ty.as_ref())
+            .and_then(TypeCheckCtx::typeref_named_base)?;
+        let overloads = self.sig.method_table.get(recv_ty)?.get(method.as_str())?;
+        let [fd] = overloads.as_slice() else { return None };
+        match fd.return_type.as_ref()? {
+            TypeRef::Tuple(elems, _) => Some(elems.clone()),
+            _ => None,
         }
     }
 
