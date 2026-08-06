@@ -35,7 +35,11 @@ fn p238f3_seed_middleware(f fn() -> ()) {
 // an extern fn's function-typed parameter, explicitly marked. Inference
 // cannot see INTO this fn's (non-existent, in Nova source) body — the
 // annotation is the only way to attach a requirement to it.
-export extern "nova" fn p238f3_run_on_worker(#fiber_safe task fn() -> ())
+// NB (интегратор 2026-08-06): объявление БЕЗ тела не линкуется в мега-CU
+// («undefined nova_fn_p238f3_run_on_worker») — фикстура даёт телу заглушку;
+// проверяется ровно то же: атрибут на параметре функционального типа виден
+// проверке передачи, вывод внутрь тела не нужен.
+export fn p238f3_run_on_worker(#fiber_safe task fn() -> ()) -> () => task()
 
 test "p238f3: passing a Safe closure directly into a required parameter — legal (rule 1)" {
     ro shared_count = 42
