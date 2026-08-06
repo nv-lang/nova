@@ -1,0 +1,20 @@
+// EXPECT_COMPILE_ERROR [E_FIBER_UNSAFE_ARG] passing this closure to `p238f3_run_on_worker`'s parameter `task`
+
+// Plan 238 Ф.3 (D446 §4/§5 амендмент) — neg twin of the `#fiber_safe` pos
+// case (`fiber_param_requirement_pos.nv`): `p238f3_run_on_worker`'s
+// parameter `task` is `no_body` (extern) — inference cannot see a body to
+// derive a requirement FROM, so the requirement comes ENTIRELY from the
+// explicit `#fiber_safe` annotation (parsed by `parser/mod.rs`'s
+// `parse_fiber_safe_attr`, mirrors `#cancel_safe`). Same enforcement
+// mechanism as an inferred requirement (`check_param_passing`) — the
+// annotation only supplies the requirement BIT, not a separate code path
+// (confirmed by the chain text: "explicitly annotated `#fiber_safe`").
+
+module neg.fiber_safe_attr_arg_neg
+
+export extern "nova" fn p238f3_run_on_worker(#fiber_safe task fn() -> ())
+
+fn main() {
+    mut counter = 0
+    p238f3_run_on_worker(|| { counter = counter + 1 })
+}

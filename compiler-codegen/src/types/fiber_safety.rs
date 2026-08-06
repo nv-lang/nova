@@ -3847,10 +3847,11 @@ fn cpp_check_call(
         let mut msg = format!(
             "[E_FIBER_UNSAFE_ARG] passing this closure to `{fname}`'s parameter \
              `{pname}` is unsafe — that parameter REQUIRES a `Safe` closure \
-             (Plan 238 Ф.3, D446 §4/§5 амендмент: the requirement is inferred \
-             from `{fname}`'s own body, or from a callee it forwards `{pname}` \
-             to, unchanged — enforced at every call site that passes an \
-             argument, not just where the parameter is itself invoked). The \
+             (Plan 238 Ф.3, D446 §4/§5 амендмент: the requirement is either \
+             inferred from `{fname}`'s own body (or from a callee it forwards \
+             `{pname}` to, unchanged), or an explicit `#fiber_safe` annotation \
+             — see the chain below — enforced at every call site that passes \
+             an argument, not just where the parameter is itself invoked). The \
              closure passed here is `{tag:?}` (cause: {reason}): it captures \
              mutable state reachable from the enclosing scope with no live \
              lock and no `#share`/`consume` proof. Under M:N scheduling this \
