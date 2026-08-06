@@ -9257,11 +9257,14 @@ deref, arithmetic banned by default).
 >
 > **D216 §4 AMEND (Plan 118.6, 2026-06-17):** `&x` safe for all types (no
 > `unsafe {}` required for promote path). `addr_of()` / `addr_of_mut()` retired
-> → `E_ADDR_OF_REMOVED`. ~~`mut` binding → `*mut T` auto; `ro` binding → `*T`
-> auto~~ **← SUPERSEDED by D246 (Plan 147): вывод `&x` всегда `*T` (ro-pointee);
-> писабельность — только явной аннотацией `*mut T`, НЕ наследуется от binding
-> (см. «Восстановление §V2.6» ниже). Противоречие двух норм найдено вопросом
-> владельца 2026-08-06; компилятор всегда жил по D246-стороне.** Escape
+> → `E_ADDR_OF_REMOVED`. `mut` binding → `*mut T` auto; `ro` binding → `*T` auto —
+> **норма 118.6 ВОССТАНОВЛЕНА решением владельца 2026-08-06** (в июле
+> D246/Plan 147 временно заменял её на «вывод всегда `*T`»; обиход показал,
+> что аннотационную церемонию систематически обходили кастом
+> `*T as *mut T`, которому учил даже гайд). Сопровождение: каст
+> `*T as *mut T` РЕТРАКТИРОВАН; от ro-биндинга `*mut T` не получить никак —
+> ни выводом, ни аннотацией, ни кастом (№375); явная аннотация
+> `ro p *mut T = &mut_x` остаётся легальной.** Escape
 > analysis extended to primitives. 15/15 tests PASS.
 >
 > **D216 §4 AMEND 2 (Plan 118.7, 2026-06-18):** `raw &x` — новый унарный
@@ -9537,13 +9540,15 @@ ro p *Acc           // p фиксирован; pointee ro (*p = … ❌)
 mut p *Acc          // p reassignable; pointee ro (*p = … ❌ — L1 mut НЕ даёт mut-pointee)
 mut p *mut Acc      // p reassignable; pointee mut (*p = … ✅)
 ro p *mut Acc       // p фиксирован; pointee mut (*p = … ✅) — оси независимы
-mut q = &acc        // pointer mut auto (no &mut acc needed); pointee из контекста
+mut q = &acc        // от MUT-биндинга: сразу *mut Acc (решение 2026-08-06 — восстановленная 118.6)
 ```
 
-**Восстановление D216 §V2.6:** mut-pointee при mut-binding **НЕ автоматичен** —
-`mut p *T` даёт ro-pointee; writable pointee требует **явного** `mut p *mut T`.
-Тип самодостаточен (C1): `*T` всегда ro независимо от позиции/binding. «One
-canonical syntax» per смысл: ro-pointee — только `*T`, mut-pointee — только `*mut T`.
+**Восстановление D216 §V2.6 — ЧАСТИЧНО ОТМЕНЕНО 2026-08-06 (вариант Б,
+решение владельца):** для АННОТИРОВАННОГО типа правило держится (`*T` в
+аннотации всегда ro-pointee; `mut p *T` записи не даёт), но ВЫВОД `&x`
+снова наследует от источника: от mut-биндинга — `*mut T`, от ro — `*T`
+(восстановленная 118.6). Каст `*T as *mut T` ретрактирован. Гарантия: от
+ro-источника писабельный указатель недостижим никаким путём (№375).
 
 ### §3. Chain order (multi-level pointers)
 
