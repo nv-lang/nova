@@ -1,0 +1,73 @@
+// №379 (D415-amendment): `spawn consume a, b, ... { body }` / `detach
+// consume a, b, ... { body }` — multi-var mirror of the single-var
+// `spawn consume c { body }` / `detach consume c { body }` form. Every
+// listed binding transfers REAL ownership into the child fiber at the
+// spawn/detach statement point (NOT the D188-multivar `consume A, B, C
+// { body }` sugar, which stays a read-only view in the SAME scope — see
+// spec/decisions/06-concurrency.md D415 §4 amendment for the distinction).
+
+module spec_tests.conformance
+
+type Mv379Half consume {
+    id int,
+}
+
+fn Mv379Half.new(id int) -> Mv379Half => { id }
+fn Mv379Half consume @cleanup(_outcome ScopeOutcome) -> () => ()
+
+fn mv379_pump2(consume x Mv379Half, consume y Mv379Half) -> () {
+    ro _a = x.id
+    ro _b = y.id
+}
+
+fn mv379_pump3(consume x Mv379Half, consume y Mv379Half, consume z Mv379Half) -> () {
+    ro _a = x.id
+    ro _b = y.id
+    ro _c = z.id
+}
+
+test "spawn consume a, b { ... } — two consume-typed bindings, both moved into the child" {
+    consume mv379_a = Mv379Half.new(1)
+    consume mv379_b = Mv379Half.new(2)
+    supervised {
+        spawn consume mv379_a, mv379_b { mv379_pump2(mv379_a, mv379_b) }
+    }
+}
+
+test "detach consume a, b { ... } — symmetric with spawn (D415-amendment)" {
+    consume mv379_c = Mv379Half.new(3)
+    consume mv379_d = Mv379Half.new(4)
+    detach consume mv379_c, mv379_d { mv379_pump2(mv379_c, mv379_d) }
+}
+
+test "spawn consume a, b, c { ... } — three-plus bindings, a list not a pair" {
+    consume mv379_e = Mv379Half.new(5)
+    consume mv379_f = Mv379Half.new(6)
+    consume mv379_g = Mv379Half.new(7)
+    supervised {
+        spawn consume mv379_e, mv379_f, mv379_g { mv379_pump3(mv379_e, mv379_f, mv379_g) }
+    }
+}
+
+test "bidirectional relay — spawn consume ar, bw / spawn consume br, aw over independent consume-locals (no destructuring; №378 runs in parallel)" {
+    consume mv379_ar = Mv379Half.new(8)
+    consume mv379_aw = Mv379Half.new(9)
+    consume mv379_br = Mv379Half.new(10)
+    consume mv379_bw = Mv379Half.new(11)
+    supervised {
+        spawn consume mv379_ar, mv379_bw { mv379_pump2(mv379_ar, mv379_bw) }
+        spawn consume mv379_br, mv379_aw { mv379_pump2(mv379_br, mv379_aw) }
+    }
+}
+
+test "pos-regress: single-var spawn consume x { ... } unchanged" {
+    consume mv379_h = Mv379Half.new(12)
+    supervised {
+        spawn consume mv379_h { ro _z = mv379_h.id }
+    }
+}
+
+test "pos-regress: single-var detach consume x { ... } unchanged" {
+    consume mv379_i = Mv379Half.new(13)
+    detach consume mv379_i { ro _z = mv379_i.id }
+}

@@ -1,0 +1,31 @@
+// EXPECT_COMPILE_ERROR D131
+//
+// №379 (D415-amendment): use-after-consume for ANY binding listed in
+// `spawn consume a, b { ... }` is closed by the same ownership-transfer
+// machinery the single-var form uses — `mv379_b` is moved into the child
+// fiber AT the spawn statement; referencing it afterward in the parent is
+// use of an already-consumed variable (D131), same class of error the
+// single-var `spawn consume c { ... }` form gives (see
+// neg/use_after_spawn_consume.nv).
+module neg.spawn_consume_multivar_use_after_neg
+
+type Mv379UaJob consume {
+    payload int,
+}
+
+fn Mv379UaJob.new(p int) -> Mv379UaJob => { payload: p }
+fn Mv379UaJob consume @cleanup(_outcome ScopeOutcome) -> () => ()
+
+fn mv379ua_pump(consume x Mv379UaJob, consume y Mv379UaJob) -> () {
+    ro _a = x.payload
+    ro _b = y.payload
+}
+
+fn mv379ua_use_after_move() -> int {
+    consume mv379ua_a = Mv379UaJob.new(1)
+    consume mv379ua_b = Mv379UaJob.new(2)
+    supervised {
+        spawn consume mv379ua_a, mv379ua_b { mv379ua_pump(mv379ua_a, mv379ua_b) }
+    }
+    mv379ua_b.payload
+}
