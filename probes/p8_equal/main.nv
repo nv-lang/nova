@@ -1,0 +1,11 @@
+module p8_equal
+
+type NoEqual8 { junk int }
+
+fn[T Equal] use_equal(a T, b T) -> bool => a.equal(b)
+
+fn main() Io -> () {
+    ro v = NoEqual8 { junk: 1 }
+    ro w = NoEqual8 { junk: 2 }
+    print("${use_equal(v, w)}")
+}

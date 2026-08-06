@@ -1,0 +1,10 @@
+module p11_index
+
+type NoIndex11 { junk int }
+
+fn[T Index[K, V], K, V] use_index(x T, k K) -> V => x.index(k)
+
+fn main() Io -> () {
+    ro v = NoIndex11 { junk: 1 }
+    use_index(v, 0)
+}

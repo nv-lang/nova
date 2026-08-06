@@ -1,0 +1,14 @@
+module p13_methodbound
+
+type Box13 { val int }
+
+type NoClone13 { junk int }
+
+fn Box13 @combine[S Clone](other S) -> S => other.clone()
+
+fn main() Io -> () {
+    ro h = Box13 { val: 1 }
+    ro v = NoClone13 { junk: 1 }
+    ro r = h.combine(v)
+    print("${r.junk}")
+}

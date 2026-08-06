@@ -1,0 +1,12 @@
+module p6_write
+
+type NoWrite6 { junk int }
+
+fn[T Write] use_write(mut x T) -> () {
+    x.write("hi".bytes())
+}
+
+fn main() Io -> () {
+    mut v = NoWrite6 { junk: 1 }
+    use_write(v)
+}

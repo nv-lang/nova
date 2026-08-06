@@ -1,0 +1,8 @@
+module p1_asslice
+
+type NoSlice { junk int }
+
+fn main() Io -> () {
+    mut v = []u8.new()
+    v.append(NoSlice { junk: 7 })
+}

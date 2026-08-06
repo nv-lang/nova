@@ -1,0 +1,9 @@
+module p2_compare
+
+type NoCompare2 { junk int }
+
+fn main() Io -> () {
+    mut v = []NoCompare2.new()
+    v.push(NoCompare2 { junk: 1 })
+    v.sort_of()
+}

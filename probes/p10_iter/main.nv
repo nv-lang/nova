@@ -1,0 +1,10 @@
+module p10_iter
+
+type NoIter10 { junk int }
+
+fn[T Iter[I], I] use_iter(x T) -> I => x.iter()
+
+fn main() Io -> () {
+    ro v = NoIter10 { junk: 1 }
+    use_iter(v)
+}

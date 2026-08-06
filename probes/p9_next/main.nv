@@ -1,0 +1,10 @@
+module p9_next
+
+type NoNext9 { junk int }
+
+fn[T Next[U], U] use_next(mut x T) -> Option[U] => x.next()
+
+fn main() Io -> () {
+    mut v = NoNext9 { junk: 1 }
+    use_next(v)
+}

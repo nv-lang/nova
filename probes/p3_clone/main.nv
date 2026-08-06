@@ -1,0 +1,10 @@
+module p3_clone
+
+type NoClone3 { junk int }
+
+fn[T Clone] use_clone(x T) -> T => x.clone()
+
+fn main() Io -> () {
+    ro v = NoClone3 { junk: 1 }
+    use_clone(v)
+}

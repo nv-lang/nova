@@ -1,0 +1,8 @@
+module p4_display
+
+type NoDisplay4 { junk int }
+
+fn main() Io -> () {
+    ro v = NoDisplay4 { junk: 1 }
+    print("${v}")
+}

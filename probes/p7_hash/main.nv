@@ -1,0 +1,10 @@
+module p7_hash
+
+type NoHash7 { junk int }
+
+fn[T Hash] use_hash(x T) -> u64 => x.hash()
+
+fn main() Io -> () {
+    ro v = NoHash7 { junk: 1 }
+    use_hash(v)
+}

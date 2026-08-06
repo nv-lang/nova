@@ -1,0 +1,10 @@
+module p12_mutindex
+
+type NoMutIndex12 { junk int }
+
+fn[T MutIndex[K, V], K, V] use_mutindex(mut x T, k K, val V) -> () { x.index(k, val) }
+
+fn main() Io -> () {
+    mut v = NoMutIndex12 { junk: 1 }
+    use_mutindex(v, 0, 5)
+}

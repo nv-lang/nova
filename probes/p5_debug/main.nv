@@ -1,0 +1,8 @@
+module p5_debug
+
+type NoDebug5 { junk int }
+
+fn main() Io -> () {
+    ro v = NoDebug5 { junk: 1 }
+    print("${v:?}")
+}
