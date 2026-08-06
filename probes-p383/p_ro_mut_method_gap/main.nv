@@ -1,0 +1,33 @@
+module p_ro_mut_method_gap
+
+// №TBD finding (coordinator add-on, 2026-08-06): `E_POINTER_RO_MUT_METHOD`
+// (spec 02-types.md:9700/10497 — "p.method() (mut recv) через *ro T ->
+// ❌ E_POINTER_RO_MUT_METHOD") has ZERO emissions anywhere in the compiler
+// (confirmed by grep before AND after this window's changes — unrelated to
+// №383/№384, NOT touched by this window's fix). Empirically CONFIRMED live
+// and unenforced, both on `nova check` (no diagnostic at all, not even
+// E_UNSAFE_UNUSED — a mut-method call auto-derefed through a raw pointer
+// isn't recognized as needing `unsafe` in the first place) and on
+// `nova build` + run: this program prints "1" — the mutation through the
+// `ro`-declared pointer `p` silently succeeded on the ORIGINAL binding `x`.
+// This is a DIFFERENT root cause from №377 ("what comes back through a
+// pointer" — deref garbage): this is "is a MUT method call allowed through
+// a RO pointer at all" — never enforced. The existing sibling mechanism
+// (`E_POINTER_RO_ASSIGN`, types/mod.rs ~9067-9089) only gates a HARDCODED
+// list of raw-pointer intrinsic method names (`write`/`write_at`/…), not
+// arbitrary user `mut @method` calls — extending that same gate to consult
+// the resolved callee's `Receiver.mutable` is the likely fix shape, but NOT
+// implemented in this window (separate mechanism — pointer safety, not
+// generic-bound checking — out of scope for №383/№384; flagging per
+// explicit coordinator request to report, not fix).
+
+type Counter { mut v int }
+
+fn Counter mut @bump() -> @ { @v += 1 }
+
+fn main() Io -> () {
+    mut x = Counter { v: 0 }
+    ro p *Counter = &x
+    p.bump()
+    print("${x.v}")
+}

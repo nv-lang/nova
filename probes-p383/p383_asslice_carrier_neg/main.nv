@@ -1,0 +1,21 @@
+module p383_asslice_carrier_neg
+
+// №383/№381: `AsSlice[T]` method-own bound on the CARRIER-generic form
+// `fn Vec[T] mut @append[S AsSlice[T]](other S)` (std/collections/vec/
+// mutate.nv) — receiver is `Vec[T]` (a carrier, keyed "Vec" in
+// method_table), NOT the Plan 101 `fn[T] []T @method` sentinel form; `S`
+// is method-own. Requires an EXPLICIT `[]u8` annotation on `v` — the
+// checker's `infer_arg_ty` only special-cases `Atomic*.new()` for
+// unannotated ctor-call locals (Plan 207, deliberately narrow), so an
+// unannotated `mut v = []u8.new()` bails out of this bound-check entirely
+// (a separate, pre-existing, documented best-effort gap — NOT part of
+// №383's method-bound root, and it affects free-function bound-checks
+// identically, so it is not a NEW asymmetry between method and
+// free-function forms).
+
+type NoSlice { junk int }
+
+fn main() Io -> () {
+    mut v []u8 = []u8.new()
+    v.append(NoSlice { junk: 7 })
+}
