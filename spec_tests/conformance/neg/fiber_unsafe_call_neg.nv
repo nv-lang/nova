@@ -1,0 +1,40 @@
+// EXPECT_COMPILE_ERROR [E_FIBER_UNSAFE_CALL] call to `Counter.bump`
+
+// Plan 238 Ф.2 (D446 "Ф.8-НОВАЯ" П.2, seeding-point enforcement, финальная
+// редакция — приёмка 2026-08-06, третий раунд): a `spawn` body calling a
+// function whose total M:N-safety бирка (Ф.1,
+// `compiler-codegen/src/types/fiber_safety.rs`) is `Tag::Unsafe` (a
+// self/`@`-rooted touch with no live lock, no `#share`/`consume` proof —
+// PROVEN unsafe, not a model limit) is a hard error, ALWAYS, independent
+// of `NOVA_FIBER_INDIRECT`. `Counter.bump` mutates its own `@count` field;
+// `Counter` is an ordinary record (no `#share`, no `consume`), so its
+// бирка is `Unsafe("unguarded_mutation")` UNCONDITIONALLY.
+//
+// `c` here is captured BY REFERENCE from the ENCLOSING scope (declared
+// BEFORE `supervised`, not `let`-bound WITHIN the `spawn` body) — so this
+// is NOT exempted by the seed-point `local_receiver` proof (which only
+// covers a receiver PROVABLY fresh/non-escaping AT the seed itself — a
+// name bound by `Let`/`consume` WITHIN this exact spawn body, per
+// `check_resolved_target`'s doc). This also trips the PRE-EXISTING D415
+// capture-check (`E_CONCURRENT_MUT_CAPTURE` — an outer `mut` binding
+// captured by reference into `spawn`) — both fire, on purpose: this
+// fixture demonstrates Ф.8's transitive-call-graph half is a REAL,
+// additional net (not just a restatement of the older capture check),
+// while staying a case D415 was already going to catch too.
+
+module neg.fiber_unsafe_call_neg
+
+type Counter { mut count int }
+
+fn Counter mut @bump() {
+    @count = @count + 1
+}
+
+fn spawns_unsafe_call() {
+    mut c = Counter { count: 0 }
+    supervised {
+        spawn {
+            c.bump()
+        }
+    }
+}

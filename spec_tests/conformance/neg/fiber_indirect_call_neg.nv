@@ -1,0 +1,34 @@
+// EXPECT_COMPILE_ERROR [E_FIBER_INDIRECT_CALL] indirect call inside a `spawn` body
+//
+// !!! RUN WITH `NOVA_FIBER_INDIRECT=1` SET !!! Приёмка интегратора
+// 2026-08-06 (второй раунд, p238-f2): `E_FIBER_INDIRECT_CALL` is gated
+// behind `NOVA_FIBER_INDIRECT=1` (default OFF) — the `Tag::Undecided`
+// family (D446 §4's "непрямые вызовы недоказуемы без типизированной
+// пометки на параметре") is a model LIMIT, not a proven finding, per the
+// governing principle in `docs/plans/wip/PROGRESS-p238-f2.md` §4. WITHOUT
+// the env var this file compiles CLEAN (`ok:`) — that is the CORRECT,
+// intended default behavior, not a regression. If the authoritative
+// conformance runner does not (yet) support per-fixture env vars, this
+// file will show as an unexpected PASS under a vanilla run — flag for the
+// integrator to either wire the env var into the runner for this fixture
+// or move it out of the default-run set until the parameter-safety-marker
+// mechanism (owner decision, not yet made) lets it become a permanent,
+// always-on finding.
+
+// Plan 238 Ф.2 (D446 §4/Ф.8-НОВАЯ П.2): a call reached inside a `spawn`
+// body through a PARAMETER of function type — the concrete target is not
+// statically knowable (any closure the caller passes could be substituted)
+// — is conservatively treated as unsafe under the flag. This is the
+// D446 §4 "непрямые вызовы" case, distinct from `E_FIBER_UNSAFE_CALL`
+// (a resolved target whose бирка is `Tag::Unsafe`): here there is no
+// target to even look up a бирка for.
+
+module neg.fiber_indirect_call_neg
+
+fn run_in_fiber(task fn() -> ()) {
+    supervised {
+        spawn {
+            task()
+        }
+    }
+}

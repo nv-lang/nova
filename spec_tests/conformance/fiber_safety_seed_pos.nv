@@ -1,0 +1,57 @@
+// Plan 238 Ф.2 (D446 "Ф.8-НОВАЯ" П.2, seeding-point enforcement) — pos twin
+// of `neg/fiber_unsafe_call_neg.nv` / `neg/fiber_indirect_call_neg.nv`:
+// patterns that MUST stay legal under the new seed-point gate, each
+// exercising one of the Ф.2 refinements to Ф.1's total бирка that were
+// needed to make the enforcement usable on real code (measured live gaps
+// on `std`/`examples/flagship/aggregator`, `docs/plans/wip/
+// PROGRESS-p238-f2.md` §"Ф.2 refinements"):
+//   1. an `Atomic*`/`#share`-verified type's own extern methods
+//      (`share_verified_extern` бирка reason) — atomics are D446's own
+//      named white-list brick;
+//   2. a pure arithmetic generic leaf (`generic_leaf_no_op`) — no calls,
+//      no touches, safe regardless of the type parameter;
+//   3. a `consume`/linear-typed resource's own mutating method
+//      (brick 2 — ownership, not synchronization) called on a value
+//      created fresh inside the fiber (never crosses any boundary at all).
+
+module spec_tests.conformance
+
+type Linear consume { mut n int }
+
+fn Linear.new() -> Self => { n: 0 }
+
+fn Linear mut @bump() -> @ {
+    @n = @n + 1
+    @
+}
+
+fn Linear @value() -> int => @n
+
+fn[T Ints] T @doubled() -> int => (@ as int) * 2
+
+test "spawn calling Atomic*'s own extern methods — легально (share_verified_extern)" {
+    mut ctr = AtomicInt.new(0)
+    supervised {
+        spawn {
+            ctr.fetch_add(1)
+        }
+    }
+}
+
+test "spawn calling a pure generic-leaf arithmetic method — легально (generic_leaf_no_op)" {
+    supervised {
+        spawn {
+            ro _r = (21).doubled()
+        }
+    }
+}
+
+test "spawn mutating a `consume`-typed resource created fresh inside the fiber — легально (D446 brick 2, ownership)" {
+    supervised {
+        spawn {
+            mut lin = Linear.new()
+            lin.bump()
+            assert(lin.value() == 1)
+        }
+    }
+}
