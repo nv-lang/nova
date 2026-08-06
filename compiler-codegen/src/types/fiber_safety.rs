@@ -506,6 +506,51 @@ fn place_root(e: &Expr, mut_params: &HashSet<String>) -> Option<PlaceRoot> {
     }
 }
 
+/// Companion to [`place_root`] for a FREE-function call's ARGUMENTS (not a
+/// receiver) — see `pb_walk_expr`'s `ExprKind::Ident(_)` callee branch.
+/// `true` = this argument's syntactic root is provably NOT `@`/a `mut`
+/// param of the CURRENT fn (a plain non-`mut` param, a local, or a value
+/// with no traceable `Ident` root at all — a literal/computed temporary,
+/// which cannot alias anything named). Walks through `Member`/zero-arg
+/// method `Call` chains (`b.ptr()`) and the same wrapper set `place_root`
+/// already strips. Deliberately conservative on anything it cannot trace
+/// through (a `Call` with a non-`Member` callee, e.g. a further nested
+/// free-fn call) — `false`, same "can't prove ⇒ not exempted" default.
+fn arg_root_safe(e: &Expr, mut_params: &HashSet<String>) -> bool {
+    match &e.kind {
+        ExprKind::SelfAccess => false,
+        ExprKind::Ident(name) => !mut_params.contains(name),
+        ExprKind::Member { obj, .. } => arg_root_safe(obj, mut_params),
+        ExprKind::Index { obj, .. } => arg_root_safe(obj, mut_params),
+        ExprKind::As(inner, _) => arg_root_safe(inner, mut_params),
+        ExprKind::TurboFish { base, .. }
+        | ExprKind::Try(base)
+        | ExprKind::Bang(base)
+        | ExprKind::RefArg(base) => arg_root_safe(base, mut_params),
+        // `b.ptr()`-style zero-arg method call — trace through to the
+        // receiver; a call with a non-`Member` callee (nested free-fn
+        // call) is NOT traced (conservative — no known live pattern needs
+        // it, and guessing wrong here would be a false EXEMPTION, the
+        // wrong direction to be wrong in).
+        ExprKind::Call { func, .. } => match &func.kind {
+            ExprKind::Member { obj, .. } => arg_root_safe(obj, mut_params),
+            _ => false,
+        },
+        // No traceable `Ident` root at all (literal, arithmetic, etc.) —
+        // cannot alias anything named.
+        ExprKind::IntLit(_)
+        | ExprKind::FloatLit(_)
+        | ExprKind::StrLit(_)
+        | ExprKind::BoolLit(_)
+        | ExprKind::UnitLit
+        | ExprKind::CharLit(_)
+        | ExprKind::NullPtrLit
+        | ExprKind::Binary { .. }
+        | ExprKind::Unary { .. } => true,
+        _ => false,
+    }
+}
+
 #[derive(Default)]
 struct FnFacts {
     /// Resolved LOCAL callees (target span found in this module's own
@@ -797,11 +842,31 @@ fn pb_walk_expr(e: &Expr, ctx: &PassBCtx, guards: &mut Vec<String>, facts: &mut 
         ExprKind::Call { func, args, trailing } => {
             // Touch detection: a method call rooted at `@`/a `mut` param.
             let mut skip_edge = false;
-            if let ExprKind::Member { obj, .. } = &func.kind {
+            if let ExprKind::Member { obj, name } = &func.kind {
                 if let Some(root) = place_root(obj, ctx.mut_params) {
                     let resolved = ctx.resolved_callees.get(&e.id).copied();
                     let mutates = match resolved {
                         Some(span) if ctx.fn_index.contains_key(&span) => callee_mutates(span, ctx),
+                        // Приёмка интегратора 2026-08-06 — measured live gap:
+                        // raw-pointer intrinsic methods (`*T`'s hardcoded
+                        // dispatch set, `types/mod.rs`'s own `is_raw_pointer_
+                        // intrinsic_method` — "read"/"write"/"offset"/"dist"/
+                        // ...) are NEVER `Item::Fn` (special-cased directly in
+                        // codegen), so `resolved_callees` has NO entry for
+                        // them — this arm's conservative "unresolved from a
+                        // self/mut-param place ⇒ assume mutates" default fired
+                        // on `@ptr.offset(i)` inside `str.find`/`.rfind`
+                        // (`std/src/runtime/string/search.nv`), poisoning BOTH
+                        // (and transitively EVERY caller — `str.find` is used
+                        // pervasively) even though `.offset(..)` is PURE
+                        // pointer arithmetic — it computes a new address, it
+                        // never touches memory at all, let alone writes
+                        // through `@`. `offset`/`dist` are the only two
+                        // entries in that fixed set with this property (the
+                        // rest — `read`/`write`/`copy_from`/... — genuinely
+                        // access memory through the pointer and stay
+                        // conservative).
+                        _ if name == "offset" || name == "dist" => false,
                         // Cross-module OR genuinely unresolved (indirect)
                         // target reached FROM a self/mut-param place:
                         // conservative — assume it mutates (§0 default:
@@ -813,6 +878,32 @@ fn pb_walk_expr(e: &Expr, ctx: &PassBCtx, guards: &mut Vec<String>, facts: &mut 
                             guarded: !guards.is_empty(),
                             share_ok: if guards.is_empty() { touch_share_ok(&root, ctx) } else { false },
                         });
+                    }
+                    // Приёмка интегратора 2026-08-06 — measured live gap:
+                    // `BucketTable.bucket_for` (`nova-polaris/src/middleware/
+                    // ratelimit.nv`) does `consume g = @mutex.lock(); ...;
+                    // @buckets.insert(..)` — the DIRECT touch above is
+                    // correctly marked `guarded: true` (not itself flagged),
+                    // but `record_call_edge` (below, unconditional) STILL
+                    // added `HashMap.insert` as a graph edge regardless of
+                    // guard state — and `HashMap.insert`'s OWN tag is
+                    // Unsafe("unguarded_mutation") UNCONDITIONALLY (it
+                    // touches ITS OWN `@`, `HashMap` is ordinary, not
+                    // `#share`/`consume`) — so `bucket_for` inherited
+                    // `calls_unsafe` from ITS OWN correctly-guarded callee,
+                    // silently OVERRIDING the guard verdict the direct-touch
+                    // check just computed. The guard protects exactly this:
+                    // a call reached while `g` is live, on the SAME `@`-
+                    // rooted receiver, whose ENTIRE unsafety is its own
+                    // direct self-touch (not something deeper/unrelated) —
+                    // skip the edge so the fixed-point does not re-derive
+                    // "unguarded" from a call that plainly IS guarded here.
+                    if !guards.is_empty() && mutates {
+                        if let Some(span) = resolved {
+                            if ctx.fn_index.contains_key(&span) {
+                                skip_edge = true;
+                            }
+                        }
                     }
                 } else {
                     // Ф.2 fix (measured live gap — `Path.join_path`'s `out.push
@@ -848,6 +939,37 @@ fn pb_walk_expr(e: &Expr, ctx: &PassBCtx, guards: &mut Vec<String>, facts: &mut 
                     // ratelimit.nv shape).
                     if let Some(span) = ctx.resolved_callees.get(&e.id).copied() {
                         if ctx.fn_index.contains_key(&span) && callee_mutates(span, ctx) {
+                            skip_edge = true;
+                        }
+                    }
+                }
+            } else if matches!(func.kind, ExprKind::Ident(_)) {
+                // Приёмка интегратора 2026-08-06 — companion fix, free-
+                // function twin of the Member-receiver case above. Measured
+                // live gap: `net_addr_loopback_into(port as u16, b.ptr())`/
+                // `fs_stat_size(img.ptr())`-style raw-pointer FFI wrappers
+                // (`std/src/net/ffi.nv`, `std/src/fs/ffi.nv`) — their OWN
+                // signature is unconditionally `no_body`+"takes a raw
+                // pointer" (nothing can vouch for an opaque `*T`/`*mut T`
+                // structurally), but EVERY pointer-bearing argument at
+                // THIS call site traces back to a value `b`/`img` this fn
+                // owns exclusively (a fresh local, or its own non-`mut`
+                // parameter — never `@`/a `mut` param, checked by
+                // `arg_root_safe` below, same "not observable outside this
+                // call" reasoning as `place_root`'s touch check). Checked
+                // against the target's OWN SIGNATURE directly (`signature_
+                // undecided_reason`, not its settled tag — the fixed-point
+                // hasn't run yet at this point in `run`, ordering over
+                // `fn_index` is not guaranteed) — `no_body` specifically,
+                // since that is the ONLY signature-level reason this
+                // exemption is meant to cover (a `generic`/`extern`/
+                // `fn_param_in_sig` target is left untouched, still records
+                // the edge, conservative default unchanged).
+                if let Some(span) = ctx.resolved_callees.get(&e.id).copied() {
+                    if let Some(target_fd) = ctx.fn_index.get(&span) {
+                        if signature_undecided_reason(target_fd) == Some("no_body")
+                            && args.iter().all(|a| arg_root_safe(a.expr(), ctx.mut_params))
+                        {
                             skip_edge = true;
                         }
                     }
@@ -1167,6 +1289,33 @@ pub fn run(module: &Module, resolved_callees: &HashMap<ExprId, Span>) -> HashMap
                                 }
                             }
                         }
+                        // Приёмка интегратора 2026-08-06: a raw pointer
+                        // to a NON-`mut` pointee (`*T` — the parser's OWN
+                        // canonical default, `parser/mod.rs`: "`*T` →
+                        // Pointer(T) (default ≡ ro target)"; only `*mut T`
+                        // → `Pointer(Mut(T))` is writable) cannot be
+                        // written through AT ALL — `share_check.rs`'s
+                        // `share_rec` refuses EVERY `TypeRef::Pointer`
+                        // unconditionally (it does not consult the pointee
+                        // modifier), which is the right call FOR ITS OWN
+                        // callers (D415 capture-check — a captured `mut`
+                        // BINDING's aliasing is a different question from a
+                        // parameter's declared TYPE) but too coarse here.
+                        // Measured live gap: `net_addr_port(addr *u8) ->
+                        // u16`/`fs_stat_size(img *u8) -> int` (both plain
+                        // `*T`, read-only by the type itself) were blanket
+                        // Undecided("no_body"). Handled LOCALLY (not by
+                        // editing `share_check.rs`, which other, unrelated
+                        // callers rely on staying exactly as strict as it
+                        // is) — only a bare `TypeRef::Pointer` whose
+                        // pointee is NOT itself `TypeRef::Mut` is treated
+                        // as safe; `*mut T` still falls through to
+                        // `is_alias_read_safe`'s unconditional refusal.
+                        if let TypeRef::Pointer(inner, _) = ty {
+                            if !matches!(inner.as_ref(), TypeRef::Mut(..)) {
+                                return true;
+                            }
+                        }
                         crate::protocols::share_check::is_alias_read_safe(&q, ty)
                     };
                     let all_safe = fd.params.iter().all(|p| param_safe(&p.ty))
@@ -1414,6 +1563,10 @@ struct SeedCall {
     /// disambiguate these (measured: `[]u8.new()`'s bare name "new" collides
     /// with EVERY OTHER type's constructor in `name_index`).
     static_key: Option<(String, String)>,
+    /// True iff this is a `obj.method(..)` call whose `obj` is a bare
+    /// `Ident` bound by a `Let` WITHIN this seed body (never captured from
+    /// the enclosing scope) — see the push site's doc comment.
+    local_receiver: bool,
 }
 
 /// Mirrors `types/mod.rs`'s `generic_static_receiver` (duplicated — same
@@ -1624,20 +1777,23 @@ fn find_seeds_expr(
     match &e.kind {
         ExprKind::Spawn(inner) => {
             let mut calls = Vec::new();
-            collect_seed_calls_expr(inner, &mut calls);
+            let mut locals = HashSet::new();
+            collect_seed_calls_expr(inner, &mut calls, &mut locals);
             check_one_seed("spawn", &calls, rc, tags, fn_index, name_index, type_method_index, errors);
             find_seeds_expr(inner, rc, tags, fn_index, name_index, type_method_index, errors);
         }
         ExprKind::Detach(body) => {
             let mut calls = Vec::new();
-            collect_seed_calls_block(body, &mut calls);
+            let mut locals = HashSet::new();
+            collect_seed_calls_block(body, &mut calls, &mut locals);
             check_one_seed("detach", &calls, rc, tags, fn_index, name_index, type_method_index, errors);
             find_seeds_block(body, rc, tags, fn_index, name_index, type_method_index, errors);
         }
         ExprKind::ParallelFor { iter, body, .. } => {
             find_seeds_expr(iter, rc, tags, fn_index, name_index, type_method_index, errors);
             let mut calls = Vec::new();
-            collect_seed_calls_block(body, &mut calls);
+            let mut locals = HashSet::new();
+            collect_seed_calls_block(body, &mut calls, &mut locals);
             check_one_seed("parallel for", &calls, rc, tags, fn_index, name_index, type_method_index, errors);
             find_seeds_block(body, rc, tags, fn_index, name_index, type_method_index, errors);
         }
@@ -1775,39 +1931,62 @@ fn find_seeds_expr(
 /// does NOT descend into a nested `Spawn`/`Detach`/`ParallelFor`/`Blocking` —
 /// that one is a SEPARATE seed, checked independently by `find_seeds_expr`
 /// (mirrors `own_fiber_call_names_expr`'s identical stance, D441/A-V10).
-fn collect_seed_calls_expr(e: &Expr, out: &mut Vec<SeedCall>) {
+fn collect_seed_calls_expr(e: &Expr, out: &mut Vec<SeedCall>, locals: &mut HashSet<String>) {
     match &e.kind {
         ExprKind::Call { func, args, trailing } => {
+            // Ф.2 (приёмка 2026-08-06 — измеренный live gap, `Vec.resize`/
+            // `.push`/... blanket-Unsafe from touching THEIR OWN receiver,
+            // reached via `obj.method(..)` where `obj` is a name bound by a
+            // `Let` WITHIN this very seed body — never captured from the
+            // enclosing scope at all, provably fresh/non-escaping. Mirrors
+            // `record_call_edge`'s OWN "local receiver, mutating method"
+            // exemption (Pass B, used when computing ANOTHER function's own
+            // facts) — this is the SAME reasoning applied at the SEED point
+            // itself, which `record_call_edge`'s fix could not reach (a
+            // seed body is not an `Item::Fn`, its own calls are gated
+            // directly against the callee's GLOBAL tag, which is Unsafe
+            // unconditionally for an ordinary `mut @method`). See
+            // `check_resolved_target`'s use of this flag for the exact,
+            // narrow condition under which it is honored (self-touch only,
+            // never a deeper `calls_unsafe/undecided` propagation).
+            let local_receiver = match &func.kind {
+                ExprKind::Member { obj, .. } => match &obj.kind {
+                    ExprKind::Ident(name) => locals.contains(name),
+                    _ => false,
+                },
+                _ => false,
+            };
             out.push(SeedCall {
                 id: e.id,
                 site: e.span,
                 name: callee_bare_name(func),
                 static_key: static_receiver_type_method(func),
+                local_receiver,
             });
-            collect_seed_calls_expr(func, out);
+            collect_seed_calls_expr(func, out, locals);
             for a in args {
-                collect_seed_calls_expr(a.expr(), out);
+                collect_seed_calls_expr(a.expr(), out, locals);
             }
             if let Some(t) = trailing {
                 match t {
-                    Trailing::Block(b) => collect_seed_calls_block(b, out),
-                    Trailing::LegacyBlockWithParams(tb) => collect_seed_calls_block(&tb.body, out),
+                    Trailing::Block(b) => collect_seed_calls_block(b, out, locals),
+                    Trailing::LegacyBlockWithParams(tb) => collect_seed_calls_block(&tb.body, out, locals),
                     Trailing::Fn(sb) => match &sb.body {
-                        FnBody::Block(b) => collect_seed_calls_block(b, out),
-                        FnBody::Expr(ex) => collect_seed_calls_expr(ex, out),
+                        FnBody::Block(b) => collect_seed_calls_block(b, out, locals),
+                        FnBody::Expr(ex) => collect_seed_calls_expr(ex, out, locals),
                         FnBody::External => {}
                     },
                 }
             }
         }
-        ExprKind::Lambda { body, .. } => collect_seed_calls_expr(body, out),
+        ExprKind::Lambda { body, .. } => collect_seed_calls_expr(body, out, locals),
         ExprKind::ClosureLight { body, .. } => match body {
-            ClosureBody::Expr(ex) => collect_seed_calls_expr(ex, out),
-            ClosureBody::Block(b) => collect_seed_calls_block(b, out),
+            ClosureBody::Expr(ex) => collect_seed_calls_expr(ex, out, locals),
+            ClosureBody::Block(b) => collect_seed_calls_block(b, out, locals),
         },
         ExprKind::ClosureFull(sb) => match &sb.body {
-            FnBody::Block(b) => collect_seed_calls_block(b, out),
-            FnBody::Expr(ex) => collect_seed_calls_expr(ex, out),
+            FnBody::Block(b) => collect_seed_calls_block(b, out, locals),
+            FnBody::Expr(ex) => collect_seed_calls_expr(ex, out, locals),
             FnBody::External => {}
         },
         // Nested seed boundary — its own, independent check (`find_seeds_*`
@@ -1817,137 +1996,164 @@ fn collect_seed_calls_expr(e: &Expr, out: &mut Vec<SeedCall>) {
         | ExprKind::Detach(_)
         | ExprKind::ParallelFor { .. }
         | ExprKind::Blocking(_) => {}
-        ExprKind::Block(b) => collect_seed_calls_block(b, out),
+        ExprKind::Block(b) => collect_seed_calls_block(b, out, locals),
         ExprKind::If { cond, then, else_ } => {
-            collect_seed_calls_expr(cond, out);
-            collect_seed_calls_block(then, out);
+            collect_seed_calls_expr(cond, out, locals);
+            collect_seed_calls_block(then, out, locals);
             match else_ {
-                Some(ElseBranch::Block(b)) => collect_seed_calls_block(b, out),
-                Some(ElseBranch::If(e2)) => collect_seed_calls_expr(e2, out),
+                Some(ElseBranch::Block(b)) => collect_seed_calls_block(b, out, locals),
+                Some(ElseBranch::If(e2)) => collect_seed_calls_expr(e2, out, locals),
                 None => {}
             }
         }
         ExprKind::IfLet { scrutinee, guard, then, else_, .. } => {
-            collect_seed_calls_expr(scrutinee, out);
+            collect_seed_calls_expr(scrutinee, out, locals);
             if let Some(g) = guard {
-                collect_seed_calls_expr(g, out);
+                collect_seed_calls_expr(g, out, locals);
             }
-            collect_seed_calls_block(then, out);
+            collect_seed_calls_block(then, out, locals);
             match else_ {
-                Some(ElseBranch::Block(b)) => collect_seed_calls_block(b, out),
-                Some(ElseBranch::If(e2)) => collect_seed_calls_expr(e2, out),
+                Some(ElseBranch::Block(b)) => collect_seed_calls_block(b, out, locals),
+                Some(ElseBranch::If(e2)) => collect_seed_calls_expr(e2, out, locals),
                 None => {}
             }
         }
         ExprKind::Match { scrutinee, arms } => {
-            collect_seed_calls_expr(scrutinee, out);
+            collect_seed_calls_expr(scrutinee, out, locals);
             for a in arms {
                 if let Some(g) = &a.guard {
-                    collect_seed_calls_expr(g, out);
+                    collect_seed_calls_expr(g, out, locals);
                 }
                 match &a.body {
-                    MatchArmBody::Expr(be) => collect_seed_calls_expr(be, out),
-                    MatchArmBody::Block(bb) => collect_seed_calls_block(bb, out),
+                    MatchArmBody::Expr(be) => collect_seed_calls_expr(be, out, locals),
+                    MatchArmBody::Block(bb) => collect_seed_calls_block(bb, out, locals),
                 }
             }
         }
         ExprKind::For { iter, body, .. } => {
-            collect_seed_calls_expr(iter, out);
-            collect_seed_calls_block(body, out);
+            collect_seed_calls_expr(iter, out, locals);
+            collect_seed_calls_block(body, out, locals);
         }
         ExprKind::While { cond, body, .. } => {
-            collect_seed_calls_expr(cond, out);
-            collect_seed_calls_block(body, out);
+            collect_seed_calls_expr(cond, out, locals);
+            collect_seed_calls_block(body, out, locals);
         }
         ExprKind::WhileLet { scrutinee, guard, body, .. } => {
-            collect_seed_calls_expr(scrutinee, out);
+            collect_seed_calls_expr(scrutinee, out, locals);
             if let Some(g) = guard {
-                collect_seed_calls_expr(g, out);
+                collect_seed_calls_expr(g, out, locals);
             }
-            collect_seed_calls_block(body, out);
+            collect_seed_calls_block(body, out, locals);
         }
-        ExprKind::Loop { body, .. } => collect_seed_calls_block(body, out),
+        ExprKind::Loop { body, .. } => collect_seed_calls_block(body, out, locals),
         ExprKind::Supervised { body, cancel, deadline } => {
             if let Some(c) = cancel {
-                collect_seed_calls_expr(c, out);
+                collect_seed_calls_expr(c, out, locals);
             }
             if let Some(dl) = deadline {
-                collect_seed_calls_expr(&dl.expr, out);
+                collect_seed_calls_expr(&dl.expr, out, locals);
             }
-            collect_seed_calls_block(body, out);
+            collect_seed_calls_block(body, out, locals);
         }
         ExprKind::With { bindings, body } => {
             for b in bindings {
-                collect_seed_calls_expr(&b.handler, out);
+                collect_seed_calls_expr(&b.handler, out, locals);
             }
-            collect_seed_calls_block(body, out);
+            collect_seed_calls_block(body, out, locals);
         }
         ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
-            collect_seed_calls_block(body, out)
+            collect_seed_calls_block(body, out, locals)
         }
         ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) => {
-            collect_seed_calls_expr(inner, out)
+            collect_seed_calls_expr(inner, out, locals)
         }
         ExprKind::Coalesce(a, b) => {
-            collect_seed_calls_expr(a, out);
-            collect_seed_calls_expr(b, out);
+            collect_seed_calls_expr(a, out, locals);
+            collect_seed_calls_expr(b, out, locals);
         }
-        ExprKind::As(inner, _) | ExprKind::Is(inner, _) => collect_seed_calls_expr(inner, out),
+        ExprKind::As(inner, _) | ExprKind::Is(inner, _) => collect_seed_calls_expr(inner, out, locals),
         ExprKind::Binary { left, right, .. } => {
-            collect_seed_calls_expr(left, out);
-            collect_seed_calls_expr(right, out);
+            collect_seed_calls_expr(left, out, locals);
+            collect_seed_calls_expr(right, out, locals);
         }
-        ExprKind::Unary { operand, .. } => collect_seed_calls_expr(operand, out),
-        ExprKind::Member { obj, .. } => collect_seed_calls_expr(obj, out),
+        ExprKind::Unary { operand, .. } => collect_seed_calls_expr(operand, out, locals),
+        ExprKind::Member { obj, .. } => collect_seed_calls_expr(obj, out, locals),
         ExprKind::Index { obj, index } => {
-            collect_seed_calls_expr(obj, out);
-            collect_seed_calls_expr(index, out);
+            collect_seed_calls_expr(obj, out, locals);
+            collect_seed_calls_expr(index, out, locals);
         }
         ExprKind::TupleLit(elems) => {
             for el in elems {
-                collect_seed_calls_expr(el, out);
+                collect_seed_calls_expr(el, out, locals);
             }
         }
-        ExprKind::TurboFish { base, .. } => collect_seed_calls_expr(base, out),
+        ExprKind::TurboFish { base, .. } => collect_seed_calls_expr(base, out, locals),
         _ => {}
     }
 }
 
-fn collect_seed_calls_block(b: &Block, out: &mut Vec<SeedCall>) {
+fn collect_seed_calls_block(b: &Block, out: &mut Vec<SeedCall>, locals: &mut HashSet<String>) {
     for s in &b.stmts {
-        collect_seed_calls_stmt(s, out);
+        collect_seed_calls_stmt(s, out, locals);
     }
     if let Some(t) = &b.trailing {
-        collect_seed_calls_expr(t, out);
+        collect_seed_calls_expr(t, out, locals);
     }
 }
 
-fn collect_seed_calls_stmt(s: &Stmt, out: &mut Vec<SeedCall>) {
+/// Collects every `Ident`-bound name reachable in `p` into `locals` — used
+/// to recognise "this receiver was bound by a `Let` WITHIN this seed body"
+/// (see `collect_seed_calls_expr`'s `ExprKind::Call` arm doc). Partial
+/// coverage (`Ident`/`Tuple`/`Binding` — the common `let` shapes) is safe
+/// to under-approximate: a MISSED binding just means the "local receiver"
+/// exemption does not fire for it, staying MORE conservative, never less.
+fn collect_pattern_names(p: &Pattern, locals: &mut HashSet<String>) {
+    match p {
+        Pattern::Ident { name, .. } => {
+            locals.insert(name.clone());
+        }
+        Pattern::Tuple(elems, _) => {
+            for e in elems {
+                collect_pattern_names(e, locals);
+            }
+        }
+        Pattern::Binding { name, inner, .. } => {
+            locals.insert(name.clone());
+            collect_pattern_names(inner, locals);
+        }
+        _ => {}
+    }
+}
+
+fn collect_seed_calls_stmt(s: &Stmt, out: &mut Vec<SeedCall>, locals: &mut HashSet<String>) {
     match s {
-        Stmt::Let(d) => collect_seed_calls_expr(&d.value, out),
-        Stmt::Expr(e) => collect_seed_calls_expr(e, out),
+        Stmt::Let(d) => {
+            collect_seed_calls_expr(&d.value, out, locals);
+            collect_pattern_names(&d.pattern, locals);
+        }
+        Stmt::Expr(e) => collect_seed_calls_expr(e, out, locals),
         Stmt::Assign { target, value, .. } => {
-            collect_seed_calls_expr(target, out);
-            collect_seed_calls_expr(value, out);
+            collect_seed_calls_expr(target, out, locals);
+            collect_seed_calls_expr(value, out, locals);
         }
         Stmt::TupleAssign { lhs, rhs, .. } => {
             for e in lhs {
-                collect_seed_calls_expr(e, out);
+                collect_seed_calls_expr(e, out, locals);
             }
             for e in rhs {
-                collect_seed_calls_expr(e, out);
+                collect_seed_calls_expr(e, out, locals);
             }
         }
         Stmt::Return { value, .. } => {
             if let Some(v) = value {
-                collect_seed_calls_expr(v, out);
+                collect_seed_calls_expr(v, out, locals);
             }
         }
-        Stmt::Throw { value, .. } => collect_seed_calls_expr(value, out),
-        Stmt::Defer { body, .. } => collect_seed_calls_expr(body, out),
+        Stmt::Throw { value, .. } => collect_seed_calls_expr(value, out, locals),
+        Stmt::Defer { body, .. } => collect_seed_calls_expr(body, out, locals),
         Stmt::ConsumeScope { init, body, .. } => {
-            collect_seed_calls_expr(init, out);
-            collect_seed_calls_block(body, out);
+            collect_seed_calls_expr(init, out, locals);
+            collect_seed_calls_block(body, out, locals);
         }
         Stmt::Const(_)
         | Stmt::Break(_)
@@ -1958,6 +2164,18 @@ fn collect_seed_calls_stmt(s: &Stmt, out: &mut Vec<SeedCall>) {
         | Stmt::Calc { .. }
         | Stmt::Reveal { .. } => {}
     }
+}
+
+/// Приёмка интегратора 2026-08-06 (p238-f2): `E_FIBER_INDIRECT_CALL`'s
+/// on/off switch. Default OFF (unset/anything other than `"1"`) — indirect
+/// calls (D446 §4) need a type-level safety marker on the function-typed
+/// parameter to be migratable, and that marker's syntax is an OPEN owner
+/// decision (not yet made) — enforcing unconditionally today breaks corpus
+/// patterns (`race2[T]`, task queues, route dispatch) with NO available
+/// fix. Fixtures exercising the indirect path run with `NOVA_FIBER_
+/// INDIRECT=1` set explicitly (see each fixture's own header comment).
+fn indirect_enforcement_enabled() -> bool {
+    std::env::var("NOVA_FIBER_INDIRECT").ok().as_deref() == Some("1")
 }
 
 /// П.2 (Ф.8-НОВАЯ): for every call reached in ONE seed body, resolve its
@@ -2030,11 +2248,33 @@ fn check_one_seed(
             }
         });
         match resolved {
-            Some(target) => check_resolved_target(boundary, call.site, target, tags, fn_index, errors),
+            Some(target) => check_resolved_target(
+                boundary, call.site, target, call.local_receiver, tags, fn_index, errors,
+            ),
             None => {
                 let whitelisted = call.name.as_deref().map(is_builtin_channel_or_timer_op).unwrap_or(false);
                 if whitelisted {
                     continue; // D446 sync brick 3 — channel endpoint, safe by construction.
+                }
+                // Приёмка интегратора 2026-08-06 (p238-f2): E_FIBER_UNSAFE_
+                // CALL (direct — a RESOLVED target whose бирка isn't Safe)
+                // stays enforced unconditionally — direct enforcement is
+                // sound and the corpus is migratable (see PROGRESS-p238-f2
+                // §"background.nv"/№364-style fixes). E_FIBER_INDIRECT_CALL
+                // (a call whose target CANNOT be resolved at all — D446 §4)
+                // is a DIFFERENT question: it needs a type-level safety
+                // marker on the function-typed parameter (owner-designed,
+                // Plan 248-adjacent, not yet specified) to be migratable
+                // rather than just suppressed — enforcing it unconditionally
+                // TODAY breaks `std`/`nova-polaris` on patterns (`race2[T]`,
+                // background task queues, route dispatch) that have no fix
+                // available yet. Gated behind `NOVA_FIBER_INDIRECT=1`
+                // (default OFF) — mechanism stays fully wired (still walks
+                // every seed, still resolves via all three fallbacks/
+                // whitelist first), only the FINAL diagnostic emission for
+                // a genuinely-undecidable target is suppressed by default.
+                if !indirect_enforcement_enabled() {
+                    continue;
                 }
                 errors.push(crate::diag::Diagnostic::new(
                     format!(
@@ -2063,11 +2303,29 @@ fn check_resolved_target(
     boundary: &'static str,
     site: Span,
     target: Span,
+    local_receiver: bool,
     tags: &HashMap<Span, FnSafety>,
     fn_index: &HashMap<Span, &FnDecl>,
     errors: &mut Vec<crate::diag::Diagnostic>,
 ) {
     match tags.get(&target) {
+        // Приёмка интегратора 2026-08-06: `local_receiver` — this call's
+        // receiver is a name bound by a `Let` WITHIN this seed body (never
+        // captured). If the ENTIRE reason `target` isn't `Safe` is its own
+        // DIRECT self-touch (`unguarded_mutation` — reached its own `@`/
+        // mut-param, not a further `calls_unsafe`/`calls_undecided` hop
+        // into something else), that self-touch is happening on a
+        // receiver PROVABLY local to this fiber — exactly as safe as this
+        // seed body mutating it directly would be (Pass B's OWN "local mut
+        // accumulator is not a touch" rule, `record_call_edge`'s twin fix,
+        // applied here at the seed point where that fix could not reach).
+        // Deliberately narrow: does NOT fire when the unsafety comes from
+        // something DEEPER (`calls_unsafe`/`calls_undecided`) — that risk
+        // exists regardless of receiver locality. Measured live gap:
+        // `Vec.resize`/`.push`/... on a freshly-`let`-bound local inside a
+        // `spawn` body (`std/src/net/byte_surface_test.nv`) was blanket
+        // `E_FIBER_UNSAFE_CALL` even though nothing here is shared at all.
+        Some(fs) if local_receiver && fs.reason == "unguarded_mutation" => {}
         None => {
             let name = fn_index.get(&target).map(|fd| render_fn_name(fd)).unwrap_or_default();
             errors.push(crate::diag::Diagnostic::new(
