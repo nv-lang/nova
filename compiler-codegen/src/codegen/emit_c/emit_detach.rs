@@ -76,7 +76,21 @@ impl CEmitter {
                 continue;
             }
             if let Some(ty) = self.var_types.get(&name).cloned() {
-                let is_mut = self.var_mutable.contains(&name);
+                // Plan 248 (wave 3, third mega-CU regression,
+                // [M-detach-capture-mut-param-not-in-var-mutable]):
+                // `var_mutable` tracks only `let mut` LOCALS, never a `mut x
+                // T` PARAMETER of the enclosing fn (see `mut_param_names`'s
+                // own doc — deliberately a separate set, not folded into
+                // `var_mutable`). A captured `mut` PARAM must count as a
+                // real mutating capture (`by_value = false`, boxed/pointer-
+                // forwarded below) exactly like a captured `mut` local —
+                // found via `detach_mut_capture_outlives_frame.nv`'s
+                // `dmc_kick(mut n AtomicInt)`: without this, `n` was
+                // misclassified as a read-only capture and the orphan
+                // mutated a throwaway BY-VALUE ctx-struct snapshot, never
+                // touching the caller's real `n`.
+                let is_mut = self.var_mutable.contains(&name)
+                    || self.mut_param_names.contains(&name);
                 let by_value = !is_mut;
                 captures.push((name, ty, by_value));
             }
@@ -419,8 +433,49 @@ impl CEmitter {
             } else if outer_is_ref_param {
                 format!("(*{})", cap)
             } else { cap.clone() };
+            // Plan 248 (wave 3, second mega-CU regression,
+            // [M-detach-box-mut-param-value-copy-diverges]): is the capture's
+            // SOURCE already a pointer to storage whose lifetime is someone
+            // ELSE's guarantee — an outer fiber's own capture slot (`_c->cap`,
+            // already either a box or a P10 pointer set up by whoever emitted
+            // THAT capture) or a P10 `mut x T` in-out PARAMETER (`ref_params`,
+            // pointing at the CALLER's frame — which may well still be alive,
+            // e.g. a test body that calls a helper taking `mut n AtomicInt`,
+            // detaches inside it, and reads `n` back itself after
+            // `drain_orphans()`) — as opposed to a genuine LOCAL declared in
+            // THIS function's own body (`mut n = AtomicInt.new(0)` right
+            // here), whose storage really IS this frame's own stack and
+            // really does need a fresh heap box (see the box branch below,
+            // and its own №240 doc, for THAT case).
+            let source_is_already_ptr = (is_outer_cap && !outer_by_value) || outer_is_ref_param;
             if *by_value {
                 self.line(&format!("{ctx_var}->{cap} = {access_outer};"));
+            } else if source_is_already_ptr {
+                // `access_outer` above DEREFERENCES the source pointer down
+                // to a VALUE (right for the `*by_value` read-only-snapshot
+                // arm just above). For a MUTABLE capture whose source is
+                // ALREADY a pointer, copying that VALUE into a NEW heap box
+                // (the branch below) would SEVER the alias: the box becomes
+                // an independent cell, and neither the caller's own storage
+                // nor any sibling capture of the SAME source ever observes
+                // the orphan's mutation. Invisible for the old pointer-
+                // newtype shapes — dereferencing there landed on ANOTHER
+                // pointer (`T*` all the way down), still aliasing the one
+                // shared heap object even after boxing. For a value-inside
+                // `#share` type the dereference lands on the REAL value, and
+                // boxing IT is a genuine, diverging copy. Found via
+                // `detach_mut_capture_outlives_frame.nv`'s `dmc_kick(mut n
+                // AtomicInt)` — `n` is a P10 pointer into the TEST's own
+                // (still-alive) frame; forward it AS-IS, no allocation at
+                // all — the pointee's lifetime is already someone else's
+                // guarantee, exactly the property `#share` types exist for.
+                // Ctx field type is already `T*` for non-by-value captures
+                // (see `lambda_forward_decls` above); no `var_boxed` entry
+                // either — there is no box, later reads of `cap` in THIS
+                // function's own body are untouched (still plain `n`/
+                // `(*n)`, unaffected by anything a `detach{}` did with it).
+                let ptr_expr = if is_outer_cap { format!("_c->{}", cap) } else { cap.clone() };
+                self.line(&format!("{ctx_var}->{cap} = {ptr_expr};"));
             } else {
                 let box_ptr = if let Some(existing) = self.var_boxed.get(cap) {
                     // Var already heap-promoted by an earlier closure/handler/

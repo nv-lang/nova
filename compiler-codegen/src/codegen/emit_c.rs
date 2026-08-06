@@ -765,6 +765,23 @@ pub struct CEmitter {
     /// `(*name) = v`, so writes land in the caller's storage. Populated at fn
     /// body emission and restored afterwards (methods can nest via closures).
     ref_params: std::collections::HashSet<String>,
+    /// Plan 248 (wave 3, third mega-CU regression,
+    /// [M-detach-capture-mut-param-not-in-var-mutable]): names of the current
+    /// function's genuinely `mut x T` (non-`consume`) parameters — populated
+    /// in the SAME loop as `ref_params` (fn body emission entry), scoped/
+    /// restored the same way. Deliberately SEPARATE from `var_mutable`
+    /// (which tracks only `let mut` locals, never params): `var_mutable`
+    /// drives several OTHER capture/mutability decisions (handler-literal
+    /// capture-by-value-to-avoid-a-dangling-pointer, `is_place_mutable`,
+    /// overload mode tiebreak, …) that deliberately treat a captured PARAM
+    /// as immutable/by-value for reasons unrelated to `detach{}`'s box
+    /// mechanism — broadening `var_mutable` itself to cover params was tried
+    /// and reverted (risked flipping those unrelated decisions too). Only
+    /// `emit_detach`'s (and, if the same class of bug is found there,
+    /// `emit_spawn`'s) own capture classification consults this set, to
+    /// correctly recognize a captured `mut` PARAM as a live, mutating
+    /// capture rather than a read-only value snapshot.
+    mut_param_names: std::collections::HashSet<String>,
     /// Plan 48 method-param mono (Plan 63 followup, 2026-05-17): per-name override
     /// for closure param types, consulted by `infer_expr_c_type` Ident arm BEFORE
     /// `var_types`. Needed because `infer_mono_method_ret_with_args` takes `&self`
@@ -2395,6 +2412,7 @@ impl CEmitter {
             proto_unify_depth: std::cell::Cell::new(0),
             consume_reuse_spans: HashSet::new(),
             ref_params: std::collections::HashSet::new(),
+            mut_param_names: std::collections::HashSet::new(),
             closure_param_type_overrides: RefCell::new(HashMap::new()),
             type_subst_overrides: RefCell::new(HashMap::new()),
             pattern_binding_overrides: RefCell::new(HashMap::new()),
@@ -27664,6 +27682,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // body uses of their names auto-deref (`name` → `(*name)`). Scoped per
         // fn body (restored at exit) so a nested/sibling fn is unaffected.
         let saved_ref_params_fn = std::mem::take(&mut self.ref_params);
+        // Plan 248 (wave 3): scoped/restored the same way, same reason —
+        // see the field's own doc.
+        let saved_mut_param_names_fn = std::mem::take(&mut self.mut_param_names);
         for (p_idx, p) in f.params.iter().enumerate() {
             if p.is_mut && !p.consume {
                 // Plan 184 Р10: a value/primitive `mut x T` param is by-pointer
@@ -27677,6 +27698,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 if Self::param_is_inout_ptr(p, &ty_c) {
                     self.ref_params.insert(p.name.clone());
                 }
+                // Plan 248 (wave 3, third mega-CU regression,
+                // [M-detach-capture-mut-param-not-in-var-mutable]): register in
+                // the NARROW `mut_param_names` set (below), NOT the general
+                // `var_mutable` — see that field's own doc for why: a broad
+                // `var_mutable.insert` here was tried first and reverted, because
+                // `var_mutable` also drives OTHER, unrelated capture decisions
+                // (e.g. handler-literal capture, ~line 12395: "immutable scalar
+                // (function param / let) → by-value snapshot... critical for
+                // factory pattern where the literal escapes the fn — a stack-
+                // local pointer would be dangling") that DELIBERATELY treat a
+                // captured PARAM as by-value specifically to avoid a dangling
+                // pointer once the function returns — flipping that for EVERY
+                // `var_mutable` consumer risked trading the detach/mut-param bug
+                // for a handler-literal dangling-pointer regression elsewhere.
+                self.mut_param_names.insert(p.name.clone());
             } else if f.receiver.is_none() && self.free_fn_byref_flag(&f.name, p_idx) {
                 // Plan 172.14 Ф.1: большой ro value-struct параметр — by-ref
                 // `T*`; чтения в теле auto-deref (`name` → `(*name)`), как у
@@ -28091,6 +28127,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.var_mutable = saved_var_mutable_fn;
         // Plan 172.5 (D326 R5): restore caller's ref-param set.
         self.ref_params = saved_ref_params_fn;
+        // Plan 248 (wave 3): restore caller's mut-param-name set.
+        self.mut_param_names = saved_mut_param_names_fn;
         // Undef any heap-promoted mut-captures so macros don't leak to sibling fns.
         self.flush_boxed_vars();
         self.indent = 0;
