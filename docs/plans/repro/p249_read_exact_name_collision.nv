@@ -1,0 +1,54 @@
+// РЕПРО для коллизии имени: package-private `read_exact` резолвится в
+// НЕСВЯЗАННУЮ generic-функцию `std.io.read_exact[R Read](mut r R, buf mut
+// []u8) -> Result[(), IoError]`, доступную транзитивно через `std.net`
+// (`TcpStream` структурно удовлетворяет `io.Read` — доккомент в
+// std/net/tcp.nv у `@read`/`@write`). Найдено интегратором окном
+// p249-socks-package (план 249, репа nova-socks) 2026-08-06.
+//
+// Команда: `nova test <путь к этому файлу>` (однофайловый прогон).
+//
+// Симптом (компиляция доходит до codegen, падает ТАМ — не type-check):
+//   CODEGEN-FAIL src/lib  # codegen error: cannot infer type argument `R`
+//   for generic function `read_exact` — appears in param `r` (#0); use
+//   turbofish: `read_exact[R](...)`
+//
+// Т.е. вызов `read_exact(stream, 2)` (два аргумента: TcpStream, int) — под
+// сигнатуру package-private `read_exact(mut stream TcpStream, n int) Net ->
+// Result[[]u8, str]` НИЖЕ в ЭТОМ ЖЕ файле — резолвится в ЧУЖУЮ generic
+// `std.io.read_exact[R](mut r R, buf mut []u8)`, у которой ВТОРОЙ параметр
+// `mut []u8`, а не `int` — типы аргументов не совпадают с генериком, отсюда
+// ошибка вывода типа R. Резолвер (видимо) находит ОБЕ функции по имени, но
+// НЕ предпочитает module-local non-generic над импортированной transitive
+// generic — тихая победа «чужого» символа вместо ожидаемого локального
+// (класс: резолвер берёт чужой одноимённый метод — родственно №384).
+//
+// Обход (nova-socks/src/socks5.nv): переименовал package-private хелпер в
+// `read_exact_n` — коллизия ушла. Компилятор не трогали (вне объёма окна).
+
+module scratch249.readexactcollision
+
+import std.net.{TcpStream}
+
+fn read_exact(mut stream TcpStream, n int) Net -> Result[[]u8, str] {
+    mut out []u8 = []u8.new()
+    out.resize(n, 0 as u8)
+    mut filled = 0
+    mut chunk []u8 = []u8.new()
+    chunk.resize(n, 0 as u8)
+    while filled < n {
+        match stream.read(chunk) {
+            Ok(0) => return Err("eof")
+            Ok(k) => {
+                for i in 0..k { out[filled + i] = chunk[i] }
+                filled += k
+                chunk.resize(n - filled, 0 as u8)
+            }
+            Err(_) => return Err("io")
+        }
+    }
+    Ok(out)
+}
+
+export fn read_two(mut stream TcpStream) Net -> Result[[]u8, str] {
+    read_exact(stream, 2)
+}

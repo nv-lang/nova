@@ -1,0 +1,50 @@
+// РЕПРО: голый payload-less вариант суммы, сразу за которым `.method()`
+// (`AuthFailed.to_str()`), резолвится НЕ в диспетч instance-метода
+// `MyErr @to_str()` на СКОНСТРУИРОВАННОМ значении `AuthFailed`, а в вызов
+// ПОСТОРОННЕЙ свободной функции `nova_fn_AuthFailed_to_str()` — которая
+// нигде не объявлена (C только implicit-int fallback, отсюда несовпадение
+// типов на границе с реальной `nova_str`-сигнатурой). Найдено интегратором
+// окном p249-socks-package (план 249, репа nova-socks) 2026-08-06. Родня
+// №384 (резолвер берёт чужой одноимённый метод) — возможно, закрывается тем
+// же фиксом (предположение владельца/интегратора, не проверено этим окном).
+//
+// Команда: `nova test <путь к этому файлу>`.
+//
+// Симптом (компиляция доходит до C-компилятора, падает ТАМ):
+//   CC-FAIL src/lib  # …/lib.c:9333:48: error: passing 'int' to parameter
+//   of incompatible type 'nova_str' | 1 error generated.
+//
+// Диагностика сгенерированного .c (интегратор проверил вручную):
+//   - `nova_fn_AuthFailed_to_str` встречается РОВНО ОДИН раз во всём файле —
+//     на месте ВЫЗОВА (`lib.c:9333`); ОБЪЯВЛЕНИЯ/ОПРЕДЕЛЕНИЯ нет вообще.
+//   - C для необъявленной функции без прототипа исторически принимает
+//     implicit-int (K&R fallback) — отсюда `int`, который потом не лезет в
+//     `nova_str`-параметр внешнего `Nova_str_method_byte_len(...)`.
+//   - Корректный конструктор варианта — `nova_make_MyErr_AuthFailed(void)`
+//     (объявлен и определён рядом, ~1220) — кодогену как будто «не хватило
+//     шага» связать голый идентификатор варианта суммы с построением
+//     значения типа `MyErr` ПЕРЕД диспетчем `.to_str()`, и он вместо этого
+//     синтезировал вызов по шаблону `Type_method` как для СТАТИЧЕСКОГО пути
+//     (`Type.static_fn()`), которого здесь на самом деле нет.
+//
+// Обход (nova-socks/src/socks5_test.nv): явный типизированный `ro e MyErr =
+// MyErr.AuthFailed` ПЕРЕД вызовом `.to_str()` — резолвится верно. Компилятор
+// не трогали (вне объёма окна).
+
+module scratch249.bareenummethod
+
+export type MyErr enum ConnectFailed { reason str }
+    | AuthFailed
+    | AuthRequired
+
+export fn MyErr @to_str() -> str {
+    match @ {
+        ConnectFailed { reason } => "connect failed: ${reason}"
+        AuthFailed                => "auth failed"
+        AuthRequired               => "auth required"
+    }
+}
+
+test "bare payload-less variant then .method()" {
+    assert(AuthFailed.to_str().byte_len() > 0)
+}

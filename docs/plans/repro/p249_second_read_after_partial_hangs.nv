@@ -1,0 +1,118 @@
+// РЕПРО (std/net, БЕЗ участия nova-socks): ВТОРОЙ вызов `TcpStream.read()`
+// на соединении, где пир прислал часть данных и ЗАКРЫЛСЯ (реальный FIN),
+// зависает — и `supervised(timeout: …)` его НЕ будит, хотя для
+// `accept()` этот же механизм регрессионно закреплён и работает
+// (`std/src/net/supervised_cancel_accept_test.nv:90`, №165). Найдено
+// интегратором окном p249-socks-package (план 249, репа nova-socks)
+// 2026-08-06 при попытке написать real-loopback негативные тесты для
+// SOCKS5-хендшейка («сервер прислал часть ответа и закрылся»).
+//
+// Команда: `nova test <путь к этому файлу>` (однофайловый прогон).
+//
+// Наблюдаемое поведение: процесс зависает НАВСЕГДА (проверено интегратором:
+// >40 секунд реального времени БЕЗ какого-либо прогресса, при том что
+// `supervised(timeout: 2000.to_millis())` внутри теста должен был прервать
+// зависшую операцию через 2 секунды — принудительно убит внешним
+// таймаутом инструмента; НИ ОДИН из двух путей `Fail[TimeoutError]`-
+// обработчика/тела теста не достигнут).
+//
+// Изоляция (независимые повторные прогоны интегратора, все воспроизвели):
+//   1. `read_exact_n`-подобный ретрай-цикл (свой хелпер в nova-socks) —
+//      зависает на ВТОРОМ вызове `stream.read(chunk)`.
+//   2. ДВА подряд СЫРЫХ `conn.read(buf)`-вызова (без цикла, без
+//      посторонней логики) на том же соединении — зависает ТОЧНО ТАК ЖЕ.
+//      Т.е. дело не в цикле/Vec-логике вызывающего кода — только в самом
+//      факте ВТОРОГО чтения после первого частичного.
+//   3. Тот же сценарий БЕЗ `spawn` вообще (последовательно: bind → connect
+//      → accept через backlog → write+close → ДВА read) — зависает так же
+//      (после подтверждения, что `connect()`-до-`accept()` через backlog
+//      само по себе не проблема — ПЕРВЫЙ read всегда успешен, `n==1`).
+//   4. Обёртка `supervised(timeout: 2000.to_millis())` (тот же механизм,
+//      что регрессионно доказан для `accept()`, №165) — таймаут НЕ будит
+//      зависший ВТОРОЙ `read()`; процесс висит далеко за пределами
+//      заявленного дедлайна.
+//
+// Контроль (что НЕ висит — для контраста):
+//   - `std/src/net/tcp_test.nv:77` («read observes clean EOF as Ok(0)»)
+//     проверяет EOF ОДНИМ read-вызовом на СВЕЖЕМ соединении, которое
+//     закрыто СРАЗУ (без предварительного успешного частичного чтения) —
+//     проходит штатно. Т.е. "первый read видит EOF" — работает; "ВТОРОЙ
+//     read после частичного первого видит EOF" — НЕ работает (или, как
+//     минимум, интегратор не нашёл рабочей формы в бюджете окна).
+//   - `std/src/net/supervised_cancel_accept_test.nv:90` («timeout: wakes a
+//     directly-parked accept()») — тот же `timeout:`-механизм ЭТОТ случай
+//     (`accept()`) будит штатно.
+//
+// Гипотеза интегратора (НЕ проверена, ошибка ещё не локализована в C):
+// возможно, второй `read()` на уже частично прочитанном сокете
+// регистрирует park по другому пути (park-slot? already-armed watcher?),
+// который: (а) не резолвится нормальным I/O-событием (данных больше нет,
+// но FIN уже должен был быть замечен первым read'ом ИЛИ отдельным
+// событием), и (б) не виден `nova_scope_deliver_cancel`/early-deadline
+// таймеру, которые штатно достают ПЕРВЫЙ/единственный `accept()`-park.
+//
+// Контекст находки: nova-socks/src/socks5.nv (план 249) — реальный клиент
+// SOCKS5 читает протокольные поля точными порциями (`read_exact_n`), и
+// сценарий «сервер прислал МЕНЬШЕ объявленного и закрылся» — штатный
+// негативный кейс протокола (короткий ответ, лгущая длина домена) —
+// требует ИМЕННО повторного read после частичного. Реальный adversarial-
+// тест для этого сценария (byte-level TCP loopback) пришлось убрать из
+// пакета — он вешает `nova test`, а не проходит/падает штатно.
+
+module scratch249.readhang
+
+import std.net.{TcpListener, TcpStream, SocketAddr, real_net}
+import std.time.duration
+
+fn b(vals []int) -> []u8 {
+    mut out []u8 = []u8.new()
+    for v in vals { out.push(v as u8) }
+    out
+}
+
+test "second read() after partial-data-then-close appears to hang, timeout does not rescue it" {
+    with Net = real_net() {
+        ro ch_port = Channel.new(1)
+        ro ch_result = Channel.new(1)
+        with Fail[TimeoutError] = |_e| { ro _ = ch_result.tx.send(-777) } {
+            supervised(timeout: 2000.to_millis()) {
+                spawn {
+                    consume lst = TcpListener.bind(SocketAddr.loopback(0))!!
+                    ch_port.tx.send(lst.local_port())
+                    ro accepted = lst.accept()
+                    lst.close()
+                    match accepted {
+                        Ok(consume conn) => {
+                            ro _ = conn.write_all(b([]int.of(0x05)))  // 1 byte
+                            conn.close()                               // real FIN
+                        }
+                        Err(_) => ()
+                    }
+                }
+                spawn {
+                    ro port = match ch_port.rx.recv() { Some(p) => p  None => 0 as u16 }
+                    match TcpStream.connect(SocketAddr.loopback(port as int)) {
+                        Ok(consume conn) => {
+                            mut buf1 []u8 = []u8.new()
+                            buf1.resize(1, 0 as u8)
+                            ro n1 = match conn.read(buf1) { Ok(k) => k  Err(_) => -1 }
+                            // n1 == 1 here (confirmed separately, single-read
+                            // tests pass fine). The SECOND read is where it
+                            // hangs:
+                            mut buf2 []u8 = []u8.new()
+                            buf2.resize(1, 0 as u8)
+                            ro n2 = match conn.read(buf2) { Ok(k) => k  Err(_) => -2 }
+                            conn.close()
+                            ch_result.tx.send(n1 * 100 + n2)
+                        }
+                        Err(_) => ch_result.tx.send(-999)
+                    }
+                }
+            }
+        }
+        ro combined = match ch_result.rx.recv() { Some(v) => v  None => -998 }
+        // Expected (if healthy): 100 (n1=1, n2=0 clean EOF).
+        // Observed: neither branch reached — process hangs indefinitely.
+        assert(combined == 100)
+    }
+}

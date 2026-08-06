@@ -1,0 +1,62 @@
+// РЕПРО для внутренней ошибки компилятора P67-LEGACY, найдено интегратором
+// окном p249-socks-package (план 249, репа nova-socks) 2026-08-06, изолировано
+// (минимизировано с ~330 строк socks5.nv до 15) в этой же сессии.
+//
+// Команда: `nova test <путь к этому файлу>` (однофайловый прогон, package не
+// нужен — только NOVA_STD_PATH и обычные NOVA_RT_DIR/NOVA_CG_INCLUDE/
+// NOVA_GC_LIB_DIR/NOVA_GC_INCLUDE_DIR env).
+//
+// Симптом:
+//   nova: internal error at compiler-codegen/src/codegen/emit_c.rs:62169:
+//   [P67-LEGACY] Try/Bang on Result: Ok type unknown for
+//   inner_ty="NovaRes_NovaValue_SocketAddr_Nova_MyErr_p*" — checker must
+//   annotate (compiler-conventions.md §0)
+//
+// Триггер: `Option[SocketAddr] @ok_or(RecordVariant { field: literal })?`
+// внутри функции, чей СОБСТВЕННЫЙ Ok-тип (`TcpStream`) ОТЛИЧАЕТСЯ от Ok-типа
+// узла (`SocketAddr`) — т.е. `?` пробрасывает ТОЛЬКО Err дальше, Ok-тип узла
+// используется только локально (`ro addr = …?`), но P67-путь codegen'а,
+// похоже, путает «Ok-тип узла» с «Ok-тип функции» именно когда аргумент
+// `.ok_or(...)` — RECORD-вариант суммы (не голый unit-вариант: `Missing`
+// вместо `ConnectFailed { reason: … }` НЕ ловит баг — проверено интегратором
+// в ходе минимизации, `.map_err(|e| …)?` тоже не обязателен — `.ok_or(...)?`
+// одного достаточно).
+//
+// Изоляция (стадии минимизации, для справки):
+//   - `nova build <файл>.nv` (без `test`-блока, с `fn main()`) — НЕ падает;
+//     `nova test <файл>.nv` (с `test`-блоком) — падает. Разница — команда
+//     `test` vs `build`, НЕ «package vs однофайловый прогон» (то и другое
+//     однофайловые здесь).
+//   - Сумма из 8 вариантов (оригинальный `SocksError`) — падает.
+//   - Сумма из 2 вариантов (`ConnectFailed{reason} | Other{detail}`) —
+//     падает.
+//   - Сумма из 1 варианта (этот файл) — падает.
+//   - Замена `ConnectFailed { reason: … }` на голый unit-вариант в
+//     `.ok_or(...)` — НЕ падает (компилируется чисто). Так что дело именно в
+//     RECORD-варианте как аргументе `.ok_or`, не в количестве вариантов суммы.
+//
+// Контекст находки: `src/socks5.nv` (nova-socks, план 249) исходно писал
+// `ro addr = addrs.get(0).ok_or(ConnectFailed { reason: "…" })?` — обойдено
+// вручную ("`match addrs.get(0) { Some(a) => a, None => return Err(…) }`"),
+// компилятор не трогали (вне объёма окна p249-socks-package).
+
+module scratch249.p67legacy
+
+import std.net.{TcpStream, resolve}
+
+export type MyErr enum ConnectFailed { reason str }
+
+export fn connect_first(host str, port int) Net -> Result[TcpStream, MyErr] {
+    ro addrs = match resolve(host, port as u16) {
+        Ok(a)  => a
+        Err(_) => return Err(ConnectFailed { reason: "dns" })
+    }
+    ro addr = addrs.get(0).ok_or(ConnectFailed { reason: "empty" })?
+    match TcpStream.connect(addr) {
+        Ok(consume s) => Ok(s)
+        Err(_)        => Err(ConnectFailed { reason: "connect" })
+    }
+}
+// NB: файл НЕ содержит `test`-блок и НЕ содержит `fn main()` — падает уже на
+// codegen самого модуля, когда команда именно `nova test` (не `nova build`,
+// см. изоляцию выше).
