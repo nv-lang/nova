@@ -13599,6 +13599,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Note: no `_nova_result` field — spawn returns unit (D50/D71).
         let _ = writeln!(self.lambda_forward_decls, "}} {};", ctx_ty);
 
+        // №379 fix: disarm any outer bare-auto-cleanup entries the
+        // `spawn consume a[, b, …] { … }` desugar's nested ConsumeScope
+        // spine takes ownership of — MUST run in THIS (parent) function,
+        // before the `self.out` swap below moves emission into the child
+        // fiber function (see `disarm_outer_auto_cleanup_for_fiber_body`).
+        if let ExprKind::Block(b) = &body.kind {
+            self.disarm_outer_auto_cleanup_for_fiber_body(b);
+        }
+
         // Swap out to deferred_impls for body emission
         let saved_out    = std::mem::take(&mut self.out);
         let saved_indent = self.indent;
@@ -30528,6 +30537,57 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             return Some(format!("_defer_{}_{}_active", bid, idx));
         }
         None
+    }
+
+    /// №379 fix (D415 §4): `spawn consume a[, b, …] { body }` / `detach
+    /// consume a[, b, …] { body }` desugar to nested `Stmt::ConsumeScope`
+    /// layers (`re_consume: false`, "already-bound" form — `parse_spawn` /
+    /// `parse_detach` / `parse_spawn_detach_consume_multivar`), each layer
+    /// transferring ownership of an OUTER binding into the child fiber. If
+    /// that outer binding was ALSO a bare auto-cleanup-eligible `consume x
+    /// = e;` (registered in `auto_cleanup_active` by `enter_defer_scope`),
+    /// the outer entry has no idea the fiber now owns cleanup and stays
+    /// armed — `emit_spawn`/`emit_detach` then swap `self.out` to the
+    /// child fiber's OWN C function before emitting `body`, so the generic
+    /// `disarm_auto_cleanup_receiver_call` (consume-param call-arg /
+    /// consuming-receiver-call disarm) can find the stale outer entry from
+    /// INSIDE the fiber body and emit a disarm assignment targeting a C
+    /// local declared in the PARENT function — "use of undeclared
+    /// identifier" (multi-var repro: `spawn_detach_consume_multivar_ok.nv`
+    /// two-binding form; the same class is latent, untriggered, for the
+    /// single-var form too — no existing fixture called a consume-param
+    /// helper on the captured binding from inside a single-var fiber
+    /// body). Leaving the entry armed is ALSO a double-cleanup risk
+    /// symmetric to the `if *re_consume` outer-disarm branch in
+    /// `Stmt::ConsumeScope` codegen just below (folder-CU
+    /// `d188_reconsume_block.nv` regression) — the outer scope's own exit
+    /// would fire `@cleanup` a second time. Fix: walk the desugar's
+    /// nested-ConsumeScope spine BEFORE the `self.out` swap (still in the
+    /// PARENT function), disarming + dropping each already-bound outer
+    /// entry exactly once — mirrors that branch's own outer-disarm but
+    /// unconditional on `re_consume` (both forms move ownership out
+    /// permanently). Called from `emit_spawn`/`emit_detach`.
+    fn disarm_outer_auto_cleanup_for_fiber_body(&mut self, block: &Block) {
+        let mut cur = block;
+        loop {
+            let (binding, init, re_consume, inner) = match cur.stmts.first() {
+                Some(Stmt::ConsumeScope { binding, init, re_consume, body, .. }) => {
+                    (binding, init, *re_consume, body)
+                }
+                _ => break,
+            };
+            if re_consume { break; }
+            if !matches!(&init.kind, ExprKind::Ident(n) if n == binding) { break; }
+            if let Some(var) = self.disarm_var_for(binding) {
+                self.line(&format!(
+                    "{} = 0;  /* №379: spawn/detach-consume — outer auto-cleanup дизармлен перед файбером */",
+                    var));
+            }
+            self.auto_cleanup_active.retain(|(n, _, _)| n != binding);
+            let single_stmt_no_trailing = cur.stmts.len() == 1 && cur.trailing.is_none();
+            if !single_stmt_no_trailing { break; }
+            cur = inner;
+        }
     }
 
     /// Plan 217: if `e` is a Call, disarm auto-cleanup/re-consume bindings

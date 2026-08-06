@@ -159,6 +159,14 @@ impl CEmitter {
         let _ = writeln!(self.lambda_forward_decls,
             "{}void {}(mco_coro* _co);", self.top_level_storage(), detach_id);
 
+        // №379 fix (mirrors emit_spawn's identical fix): disarm any outer
+        // bare-auto-cleanup entries the `detach consume a[, b, …] { … }`
+        // desugar's nested ConsumeScope spine takes ownership of — MUST run
+        // in THIS (parent) function, before the `self.out` swap below moves
+        // emission into the orphan fiber function (see
+        // `disarm_outer_auto_cleanup_for_fiber_body`).
+        self.disarm_outer_auto_cleanup_for_fiber_body(body);
+
         // ── Entry function body в deferred_impls ──
         let saved_out = std::mem::take(&mut self.out);
         let saved_indent = self.indent;
