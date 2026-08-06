@@ -9257,8 +9257,12 @@ deref, arithmetic banned by default).
 >
 > **D216 §4 AMEND (Plan 118.6, 2026-06-17):** `&x` safe for all types (no
 > `unsafe {}` required for promote path). `addr_of()` / `addr_of_mut()` retired
-> → `E_ADDR_OF_REMOVED`. `mut` binding → `*mut T` auto; `ro` binding → `*T`
-> auto. Escape analysis extended to primitives. 15/15 tests PASS.
+> → `E_ADDR_OF_REMOVED`. ~~`mut` binding → `*mut T` auto; `ro` binding → `*T`
+> auto~~ **← SUPERSEDED by D246 (Plan 147): вывод `&x` всегда `*T` (ro-pointee);
+> писабельность — только явной аннотацией `*mut T`, НЕ наследуется от binding
+> (см. «Восстановление §V2.6» ниже). Противоречие двух норм найдено вопросом
+> владельца 2026-08-06; компилятор всегда жил по D246-стороне.** Escape
+> analysis extended to primitives. 15/15 tests PASS.
 >
 > **D216 §4 AMEND 2 (Plan 118.7, 2026-06-18):** `raw &x` — новый унарный
 > оператор для сырого стек-адреса без escape analysis / auto-promote.
