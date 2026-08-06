@@ -41317,6 +41317,44 @@ fn consume_walk_isolated_expr(ctx: &mut ConsumeCtx, params: &[String],
     ctx.states = saved;
 }
 
+/// №379: collect every `(binding-name, span)` along a `spawn`/`detach
+/// consume a, b, … { body }` desugar chain — nested single-stmt
+/// `Stmt::ConsumeScope{re_consume:false, init:Ident(name), body, ..}`
+/// layers, one per listed binding, innermost = the real user body
+/// (`parse_spawn_detach_consume_multivar`). The single-var form
+/// (`spawn consume c { .. }`) is the depth-1 case of the SAME shape.
+/// Stops descending the moment the pattern breaks (any OTHER block shape —
+/// including the ordinary user body once the chain bottoms out) — a
+/// conservative walk, never over-collects.
+fn collect_spawn_detach_reuse_names(b: &Block, out: &mut Vec<(String, Span)>) {
+    if let [Stmt::ConsumeScope { init, re_consume: false, body, span, .. }] = b.stmts.as_slice() {
+        if let ExprKind::Ident(n) = &init.kind {
+            out.push((n.clone(), *span));
+        }
+        collect_spawn_detach_reuse_names(body, out);
+    }
+}
+
+/// №379: re-apply the Consumed state for every binding
+/// [`collect_spawn_detach_reuse_names`] finds along a `spawn`/`detach
+/// consume …` desugar chain, in the SURVIVING (non-isolated) `ctx` — see
+/// the `ExprKind::Spawn`/`ExprKind::Detach` call sites' doc-comments for why
+/// this re-apply is needed (the isolated walk's `ctx.states` restore
+/// otherwise silently undoes it). Gated per-name on `consume_obligations`
+/// (only a pre-existing owned/consume-tracked binding's move needs
+/// re-applying — a fresh `consume x = Type.new() { .. }` D188 binding-form
+/// init has no outer obligation to close, and correctly no-ops here).
+fn reapply_spawn_detach_consume_moves(ctx: &mut ConsumeCtx, b: &Block) {
+    let mut names = Vec::new();
+    collect_spawn_detach_reuse_names(b, &mut names);
+    for (n, span) in names {
+        let canon = ctx.canonical(&n);
+        if ctx.consume_obligations.contains(&canon) || ctx.consume_obligations.contains(n.as_str()) {
+            ctx.mark_consumed_bypass_guard(&n, span);
+        }
+    }
+}
+
 /// Plan 100.4.5 (D162): scan defer/errdefer/okdefer body для consume-method
 /// calls над outer consume-vars. Mark такие vars как Consumed в outer ctx.
 ///
@@ -43087,38 +43125,54 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
         ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
             consume_walk_block(ctx, body, errors);
         }
-        ExprKind::Detach(b) | ExprKind::Blocking(b) => consume_walk_isolated_block(ctx, &[], b, errors),
+        ExprKind::Detach(b) | ExprKind::Blocking(b) => {
+            consume_walk_isolated_block(ctx, &[], b, errors);
+            // №379 (checker-channel gap found while generalizing the `spawn`
+            // re-apply below to multi-var nesting): `detach`'s isolated walk
+            // does the SAME snapshot/restore of `ctx.states` as `spawn`'s but
+            // had NO analogous re-apply step — `consume j = Job.new(1);
+            // detach consume j { .. }; j.payload` used to compile clean
+            // (missed use-after-move for the "already-bound" `detach
+            // consume c { .. }` form; probed live, `nova check` on a
+            // standalone repro). `reapply_spawn_detach_consume_moves` is a
+            // no-op for `Blocking` (Plan 113/D172 removed its block-form —
+            // `ExprKind::Blocking` never carries this desugar shape) and for
+            // any OTHER `re_consume:false` producer whose `init` isn't a
+            // pre-existing consume-obligation `Ident` (D188 binding form,
+            // e.g. `consume x = Type.new() { .. }` — see the sibling
+            // `Stmt::ConsumeScope` re_consume:false arm's own doc-comment),
+            // so sharing this match arm stays behavior-neutral there.
+            reapply_spawn_detach_consume_moves(ctx, b);
+        }
         ExprKind::Spawn(inner) => {
             consume_walk_isolated_expr(ctx, &[], inner, errors);
-            // [M-consume-param-spawn-defer-active] (ICE-пачка п.11): `spawn
-            // consume c { body }` desugars (parser's `parse_spawn`) to
-            // `Spawn(Block[ConsumeScope{re_consume:false, init:Ident(c),
-            // ...}])` — the `consume_walk_isolated_expr` call just above
-            // snapshots/restores `ctx.states` around the WHOLE spawn body
-            // (sound in general: a spawned child's mutations to captured
-            // `mut` vars must not appear "already applied" to the parent's
-            // own sequential view before the child has necessarily run) —
-            // but that restore ALSO silently undoes the `Stmt::ConsumeScope`
-            // `re_consume=false` arm's own `mark_consumed_bypass_guard` call
-            // for the reused `c`. Ownership-transfer is NOT like a mut-
-            // capture: `c` genuinely, unconditionally leaves the parent's
-            // scope AT the spawn statement itself (a synchronous move, not
-            // something the child fiber does later) — its Consumed state
-            // must survive the restore. Detect the exact desugar shape here
-            // (the isolated walk above already validated the body — this is
-            // purely re-applying the state change in the SURVIVING,
-            // non-isolated `ctx`) and mark the outer binding consumed.
+            // [M-consume-param-spawn-defer-active] (ICE-пачка п.11), extended
+            // №379: `spawn consume c { body }` desugars (parser's
+            // `parse_spawn`) to `Spawn(Block[ConsumeScope{re_consume:false,
+            // init:Ident(c), ...}])`; `spawn consume a, b { body }` (№379
+            // multi-var) desugars to the SAME shape nested N-deep — one
+            // `ConsumeScope` layer per listed binding, innermost = the real
+            // user body (`parse_spawn_detach_consume_multivar`). The
+            // `consume_walk_isolated_expr` call just above snapshots/
+            // restores `ctx.states` around the WHOLE spawn body (sound in
+            // general: a spawned child's mutations to captured `mut` vars
+            // must not appear "already applied" to the parent's own
+            // sequential view before the child has necessarily run) — but
+            // that restore ALSO silently undoes EVERY nested `Stmt::
+            // ConsumeScope` `re_consume=false` arm's own `mark_consumed_
+            // bypass_guard` call for its reused binding. Ownership-transfer
+            // is NOT like a mut-capture: each listed binding genuinely,
+            // unconditionally leaves the parent's scope AT the spawn
+            // statement itself (a synchronous move, not something the child
+            // fiber does later) — its Consumed state must survive the
+            // restore. `reapply_spawn_detach_consume_moves` walks the WHOLE
+            // nested chain (not just the outermost layer — that was this
+            // fix's original single-element-slice match, silently blind to
+            // every binding but the first once nesting could go N deep) and
+            // re-applies the state change in the SURVIVING, non-isolated
+            // `ctx` for each one.
             if let ExprKind::Block(b) = &inner.kind {
-                if let [Stmt::ConsumeScope { init, re_consume: false, .. }] = b.stmts.as_slice() {
-                    if let ExprKind::Ident(n) = &init.kind {
-                        let canon = ctx.canonical(n);
-                        if ctx.consume_obligations.contains(&canon)
-                            || ctx.consume_obligations.contains(n.as_str())
-                        {
-                            ctx.mark_consumed_bypass_guard(n, inner.span);
-                        }
-                    }
-                }
+                reapply_spawn_detach_consume_moves(ctx, b);
             }
         }
 

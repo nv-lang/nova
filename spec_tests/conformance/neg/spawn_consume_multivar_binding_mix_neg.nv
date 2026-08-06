@@ -1,0 +1,24 @@
+// EXPECT_COMPILE_ERROR E_SPAWN_CONSUME_MULTIVAR_BINDING_MIX
+//
+// №379 (D415-amendment): multi-var `spawn consume a, b, ... { ... }` moves
+// EXISTING owned bindings into the child fiber and takes no `=`
+// initializer — mixing with the single-var binding form
+// (`spawn consume c = expr { ... }`) is a parse error, mirroring the
+// D188-multivar `consume A, B, C { ... }` sugar's own mix-ban
+// (`E_CONSUME_MULTIVAR_BINDING_MIX`, Plan 174).
+module neg.spawn_consume_multivar_binding_mix_neg
+
+type Mv379MixJob consume {
+    payload int,
+}
+
+fn Mv379MixJob.new(p int) -> Mv379MixJob => { payload: p }
+fn Mv379MixJob consume @cleanup(_outcome ScopeOutcome) -> () => ()
+
+fn mv379mix_use() -> () {
+    supervised {
+        spawn consume mv379mix_a, mv379mix_b = Mv379MixJob.new(1) {
+            ro _x = mv379mix_a.payload
+        }
+    }
+}

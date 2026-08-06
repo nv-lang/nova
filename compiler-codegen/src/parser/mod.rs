@@ -10903,6 +10903,16 @@ impl Parser {
         if matches!(self.peek().kind, TokenKind::KwConsume) {
             self.bump(); // consume
             let (name, name_span) = self.parse_ident()?;
+            // №379: `spawn consume a, b, ... { body }` — multi-var mirror of
+            // this single-var form (D415-amendment). Comma after the first
+            // ident routes to the shared multi-var desugar helper.
+            if matches!(self.peek().kind, TokenKind::Comma) {
+                let (wrapped, cs_span) = self.parse_spawn_detach_consume_multivar(
+                    start, name, name_span, "spawn",
+                )?;
+                let body_expr = Expr::new(ExprKind::Block(wrapped), cs_span);
+                return Ok(Expr::new(ExprKind::Spawn(Box::new(body_expr)), cs_span));
+            }
             let init = if matches!(self.peek().kind, TokenKind::Eq) {
                 self.bump(); // =
                 self.skip_newlines();
@@ -11064,6 +11074,16 @@ impl Parser {
         if matches!(self.peek().kind, TokenKind::KwConsume) {
             self.bump(); // consume
             let (name, name_span) = self.parse_ident()?;
+            // №379: `detach consume a, b, ... { body }` — multi-var mirror,
+            // symmetric with `spawn consume a, b, ... { body }`
+            // (D415-amendment). Comma after the first ident routes to the
+            // shared multi-var desugar helper.
+            if matches!(self.peek().kind, TokenKind::Comma) {
+                let (wrapped, cs_span) = self.parse_spawn_detach_consume_multivar(
+                    start, name, name_span, "detach",
+                )?;
+                return Ok(Expr::new(ExprKind::Detach(wrapped), cs_span));
+            }
             let init = if matches!(self.peek().kind, TokenKind::Eq) {
                 self.bump(); // =
                 self.skip_newlines();
@@ -11108,6 +11128,113 @@ impl Parser {
         let block = self.parse_block()?;
         let end = block.span;
         Ok(Expr::new(ExprKind::Detach(block), start.merge(end)))
+    }
+
+    /// №379 (D415-amendment): `spawn consume a, b, ... { body }` /
+    /// `detach consume a, b, ... { body }` — multi-var mirror of the
+    /// single-var `spawn consume c { body }` form (D415 §4). NOT the D188-
+    /// multivar `consume A, B, C { body }` sugar (`parse_multi_reconsume_
+    /// scope`) — that gives a RO view inside (`E_CONSUME_BLOCK_MOVE_OUT`
+    /// blocks passing a listed binding into a consume-param), because it
+    /// re_consume's the SAME still-owning lexical scope. Here every listed
+    /// binding transfers REAL OWNERSHIP into the child fiber, same as the
+    /// single-var spawn/detach form: each nested layer uses
+    /// `re_consume: false` (D415 §4 "already-bound" form, not the Plan-201
+    /// re-consume view — no move-out restriction is introduced).
+    ///
+    /// Desugar is nested `Stmt::ConsumeScope`, innermost layer = the real
+    /// user body — same shape `parse_multi_reconsume_scope` uses for the
+    /// non-spawn D188-multivar sugar. The checker's spawn/detach free-
+    /// variable capture scan (`capture_scan_stmt`'s `Stmt::ConsumeScope`
+    /// arm, types/mod.rs) walks the WHOLE closure body for owned/linear
+    /// references regardless of nesting depth and exempts every `init`
+    /// Ident along the chain — so all listed bindings are captured (moved)
+    /// into the child at the ONE `spawn`/`detach` statement point, before
+    /// the child body starts running. Nesting is parse-time sugar only; it
+    /// does not introduce a sequential-move-at-runtime story.
+    ///
+    /// Cleanup order: LIFO — the last-listed binding's `ConsumeScope` is
+    /// innermost (closest to the user body), so its cleanup fires FIRST on
+    /// the way back out, mirroring D188-multivar's documented order. See
+    /// spec/decisions/06-concurrency.md D415 §4 amendment.
+    ///
+    /// Caller has already consumed `spawn`/`detach consume` and the FIRST
+    /// ident (`first_name`/`first_span`); this is called on seeing a `,`
+    /// after it. The list is re-consume-only (no `=` init) — mixing with
+    /// the binding form (`spawn consume a, b = expr { … }`) is a parse
+    /// error, mirroring D188-multivar's own mix-ban.
+    fn parse_spawn_detach_consume_multivar(
+        &mut self,
+        start: Span,
+        first_name: String,
+        first_span: Span,
+        keyword: &'static str,
+    ) -> Result<(Block, Span), Diagnostic> {
+        let mut idents: Vec<(String, Span)> = vec![(first_name, first_span)];
+        loop {
+            if self.eat(&TokenKind::Comma).is_some() {
+                let (name, name_span) = self.parse_ident()?;
+                idents.push((name, name_span));
+                continue;
+            }
+            break;
+        }
+        if matches!(self.peek().kind, TokenKind::Eq) {
+            return Err(Diagnostic::new(
+                format!(
+                    "[E_SPAWN_CONSUME_MULTIVAR_BINDING_MIX] `{kw} consume a, b = expr {{ … }}` \
+                     is not valid (№379): multi-var `{kw} consume` moves EXISTING owned \
+                     bindings into the child fiber and does not support `=`-initialization; \
+                     the binding form (`{kw} consume c = expr {{ body }}`) stays single-ident.",
+                    kw = keyword
+                ),
+                self.peek().span,
+            ));
+        }
+        self.skip_newlines();
+        if !matches!(self.peek().kind, TokenKind::LBrace) {
+            return Err(Diagnostic::new(
+                format!(
+                    "`{kw} consume a, b, ... {{ ... }}` requires a block body `{{ ... }}` \
+                     (№379, D415-amendment) — the child fiber owns every listed binding; \
+                     cleanup fires when the child body exits, not the lexical block.",
+                    kw = keyword
+                ),
+                self.peek().span,
+            ));
+        }
+        let user_body = self.parse_block()?;
+        let cs_span = start.merge(user_body.span);
+        let mut inner_body = user_body;
+        for (name, name_span) in idents.into_iter().rev() {
+            let scope_span = name_span.merge(inner_body.span);
+            let scope_stmt = Stmt::ConsumeScope {
+                binding: name.clone(),
+                type_annot: None,
+                init: Expr::new(ExprKind::Ident(name), name_span),
+                body: inner_body,
+                re_consume: false,
+                result: None,
+                span: scope_span,
+            };
+            inner_body = Block {
+                stmts: vec![scope_stmt],
+                trailing: None,
+                span: scope_span,
+                is_unsafe: false,
+            };
+        }
+        // `inner_body` now: a Block with exactly ONE stmt, the OUTERMOST
+        // (first-listed) `Stmt::ConsumeScope`, spanning only its own
+        // name+inner-body merge. Force both the wrapping Block's span AND
+        // the outer ConsumeScope's own span to the full `cs_span` (mirrors
+        // `parse_multi_reconsume_scope`'s outer-span fixup) for accurate
+        // diagnostic positions on the whole construct.
+        inner_body.span = cs_span;
+        if let Some(Stmt::ConsumeScope { span, .. }) = inner_body.stmts.first_mut() {
+            *span = cs_span;
+        }
+        Ok((inner_body, cs_span))
     }
 
     /// Plan 113 (D172): `blocking { }` block-form is removed.
