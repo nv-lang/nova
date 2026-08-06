@@ -88,7 +88,22 @@ RUNS="$(gh run list --limit 40 \
         --json name,status,conclusion,headSha,createdAt 2>/dev/null || true)"
 [ -n "$RUNS" ] || skip "gh не вернул список прогонов (сеть/лимит?)"
 
-VERDICT="$(printf '%s' "$RUNS" | python -c "
+# Интерпретатор: в Ubuntu (и на CI) `python` ОТСУТСТВУЕТ — есть только
+# `python3`. Без этого фолбэка страж на Linux молча уходил в SKIP и не
+# проверял ничего (найдено прогоном самотестов в WSL 2026-08-07, тот же
+# класс, что №404: инструмент писался и проверялся только на Windows).
+# Выбираем по ФАКТУ ИСПОЛНЕНИЯ, а не по наличию в PATH: в Windows
+# `python3` часто резолвится в заглушку Microsoft Store, которая существует,
+# запускается и не делает НИЧЕГО — проверка `command -v` её пропускает, и
+# страж молча уходил бы в SKIP на машине, где python есть.
+PY_BIN=""
+for _cand in python3 python; do
+    if command -v "$_cand" >/dev/null 2>&1 && [ "$("$_cand" -c 'print(42)' 2>/dev/null)" = "42" ]; then
+        PY_BIN="$_cand"; break
+    fi
+done
+[ -n "$PY_BIN" ] || skip "не найден рабочий python/python3 (разбор ответа gh невозможен)"
+VERDICT="$(printf '%s' "$RUNS" | "$PY_BIN" -c "
 import json,sys
 sha=sys.argv[1]
 try:
