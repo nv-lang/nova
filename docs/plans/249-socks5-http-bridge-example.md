@@ -1,10 +1,18 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
 # План 249 — пакет `nova-socks` + пример `examples/net/socks5_http_bridge/`
 
-**Статус:** 📋 НАБРОСОК, **СТАРТ ЗАБЛОКИРОВАН** (реализация НЕ начата). Написан
-интегратором 2026-08-04; ревизия док-сессии 2026-08-05 (пины линейности/half-close, форма
-package-примера, дом-папка); ревизия интегратора 2026-08-06 — скетч §3.2 приведён к форме,
-ПРОВЕРЕННОЙ СБОРКОЙ, добавлен пин Ф.0-г и лимит заголовков.
+**Статус:** 🚧 ЧАСТИЧНО ИСПОЛНЕНО (2026-08-06, окно p249-socks-package).
+**Ф.П/Ф.1/Ф.4 — ГОТОВО**: новая репа `nova-socks` (github+gitverse+sourcecraft
+remotes подготовлены, пуш ждёт слова владельца), `src/socks5.nv` (SOCKS5-клиент,
+RFC 1928 CONNECT + RFC 1929 auth) + `src/socks5_test.nv` (22 байтовых
+фикстур-теста, зелёные), README EN+RU. Коммиты (репа `nova-socks`, ветка
+`main`): `35f45c2` (Ф.П скелет), `48ca093` (Ф.1 клиент), `52749cf` (Ф.4 README).
+**Ф.2 (мост)/Ф.3 (plain-HTTP) — ОСТАЮТСЯ ЗАБЛОКИРОВАНЫ**, вне объёма этого окна
+(ждут `[M-73.1-destructure]`/`[M-consume-param-spawn-defer-active]`, см. ниже).
+Написан интегратором 2026-08-04; ревизия док-сессии 2026-08-05 (пины
+линейности/half-close, форма package-примера, дом-папка); ревизия интегратора
+2026-08-06 — скетч §3.2 приведён к форме, ПРОВЕРЕННОЙ СБОРКОЙ, добавлен пин
+Ф.0-г и лимит заголовков.
 **§7 ЗАКРЫТ решениями владельца 2026-08-06** (отдельный пакет `nova-socks`; IPv6 → `Err`).
 **Блокеров старта НЕТ** (уточнено 2026-08-06 по вопросу владельца — прежняя формулировка
 «старт заблокирован» была перетянута):
@@ -260,22 +268,35 @@ fn handle_client(consume client TcpStream, cfg Config) Net Time -> () {
     `E_LINEAR_CAPTURE_IN_FIBER` (обновить комментарий §3.2, если текст
     диагностики другой). Судьба `[M-consume-param-spawn-defer-active]` — по
     отчёту окна p364.
-- **Ф.П — создание пакета `nova-socks`** (отдельным коммитом, ДО кода): скелет по
-  образцу `nova-compress` (§3.1), три зеркала, `nova.toml`, лицензии, README-пара,
-  `.gitignore`, githooks. Приёмка: пустой пакет собирается (`nova check src`),
-  зеркала сверены `ls-remote` (правило трёх зеркал — расходятся молча).
-- **Ф.1** — `src/socks5.nv`: чистые encode/decode + обвязка `socks5_connect`;
-  `src/socks5_test.nv` — байтовые фикстуры handshake-обменов, сверенные с текстом
-  RFC 1928/1929 (не по памяти); фикстура на IPv6-ATYP → `Err(UnsupportedAddressType)`.
+- **Ф.П — ✅ ИСПОЛНЕНО (2026-08-06, окно p249-socks-package, коммит `35f45c2`).**
+  Скелет по образцу `nova-compress` (§3.1): `nova.toml`, лицензии MIT/Apache-2.0,
+  `.gitignore`, `scripts/githooks/pre-commit`. Три remote'а (github/gitverse/
+  sourcecraft) добавлены в репу; **пуш НЕ выполнен** (ждёт слова владельца —
+  `ls-remote`-сверка возможна только после пуша). `docs/guide/PUBLISHED.list` НЕ
+  заведён (нет публикуемых guide-страниц — страж вакуумно зелёный, репа на сайт
+  до тега не выводится).
+- **Ф.1 — ✅ ИСПОЛНЕНО (коммит `48ca093`).** `src/socks5.nv`: чистые encode/decode
+  + `socks5_connect`; `src/socks5_test.nv` — 22 байтовых фикстуры (все шаги
+  хендшейка + негативы: 0xFF→UnsupportedMethod, auth-провал→AuthFailed,
+  ATYP 0x04→UnsupportedAddressType, domain>255→HostTooLong, REP≠0→
+  GeneralFailure), сверены с текстом RFC 1928/1929. `nova check`/`nova test src`
+  зелёные (22/22), `nova lint` — 2 находки (обе намеренно оставлены,
+  документированы в коде: `?`/`.map_err()?`/`.ok_or()?` на
+  `Result[SocketAddr, SocksError]` роняет компилятор внутренней ошибкой
+  P67-LEGACY — компиляторные файлы вне объёма этого окна).
 - **Ф.2** — мост (`examples/net/socks5_http_bridge/main.nv`): подключить `socks`
   в `examples/nova.toml` (git+semver по D420; локальная разработка — через
   `nova.override.toml`, НЕ `[replace]` в манифесте), конфиг из `Os`, accept-loop,
   парсинг первой строки (с `MAX_HEADER_BYTES`), CONNECT-путь, `pipe_bidirectional`.
+  **НЕ начата** (вне объёма окна p249-socks-package; ждёт
+  `[M-73.1-destructure]`/`[M-consume-param-spawn-defer-active]`, см. статус выше).
 - **Ф.3** — plain-HTTP-путь (переписывание absolute-URI → origin-form, срез
   `Proxy-*`-заголовков) — вторичный, можно отложить за Ф.2 отдельным коммитом.
-- **Ф.4** — README (EN+RU, по конвенции examples) — что показывает, как
-  запустить (переменные окружения из §3.2), честная пометка «нужен реальный
-  SOCKS5-прокси для ручной проверки, не входит в CI-гейт».
+  **НЕ начата** (ждёт Ф.2).
+- **Ф.4 — ✅ ИСПОЛНЕНО (коммит `52749cf`).** README EN+RU: что пакет делает,
+  почему отдельно от nova-http, объём V1, пример `socks5_connect`, честная
+  пометка «ручной end-to-end smoke — вне CI, нужен реальный внешний
+  SOCKS5-прокси».
 
 ## 5. Гейты
 
