@@ -631,9 +631,6 @@ zero lifetime annotations, dangling-view-impossible by construction
 
 ### Что отложено (honest defer)
 
-- **Destructuring patterns** в consume-binding (`consume (a, b) = pair`)
-  — V1 поддерживает только simple ident pattern. → followup `[M-73.1-
-  destructure]` if запрос.
 - **Cross-module flow inference** — V1 conservative: external fn
   возврат-types помечены явно (D163 FFI consume); если нет — assumes
   non-consume. → followup `[M-73.1-cross-module-flow]`.
@@ -808,6 +805,69 @@ handler внутри `consume_walk_expr` (оба —
 `spec_tests/conformance/d180_match_tail_consume_binding_ok.nv` (GREEN,
 канонический фикс + divergence-join regression pin, оба test-блока
 реально исполнены — не только type-check).
+
+### Амендмент (№378, `[M-73.1-destructure]`, окно p378-consume-destructure,
+2026-08-06) — destructuring patterns в consume-binding реализованы
+
+Закрывает honest-defer пункт выше («Destructuring patterns … if запрос»);
+запрос владельца поступил 2026-08-06 (мотивация — `TcpStream consume
+@into_split() -> (TcpReadHalf, TcpWriteHalf)`, `std/src/net/tcp.nv`: пара
+линейных значений, связать которую owned-биндингом было нечем — `ro (r,
+w) = …` даёт ро-вью, ловится `E_CONSUME_BLOCK_NOT_OWNED` при попытке
+re-consume).
+
+**Обе формы теперь живые, СИММЕТРИЧНО `ro`/`mut`** — каждая по своему
+канону (совпадает с амендментом 2026-08-05 «Конструирование и
+деструктуризация именованного кортежа» под [D222](02-types.md#d222)):
+
+| Форма | Семантика | На именованном кортеже/записи |
+|---|---|---|
+| `consume (a, b) = pair` | разбор ПО ПОЗИЦИИ, применима к анонимным (positional) кортежам | `E_NAMED_TUPLE_POSITIONAL_DESTRUCTURE` |
+| `consume {a, b} = rec` | разбор ПО ИМЕНИ, применима к записям и именованным кортежам | единственная законная |
+
+Частичный разбор фигурной формы — как у записей (D411): `consume {x, y,
+..} = triple` требует явный `..`, если перечислены не все поля.
+
+**Линейность — per-элемент, не паттерн целиком (D133).** Каждое имя,
+которое `consume`-биндинг вводит через `Pattern::Tuple`/`Pattern::Record`,
+получает СОБСТВЕННОЕ consume-обязательство: забытый элемент диагностируется
+`D133-not-consumed` ПО ИМЕНИ этого элемента, не всего биндинга. Элемент
+можно передать в consume-параметр функции (`pump(r, w)`) или re-consume
+через блок-форму (`consume r { … }`) — оба места видят элемент как честный
+owned-биндинг (`ctx.consume_obligations`), а не как ро-вью.
+
+**Реализация — канал целиком существовал ДО этого окна, кроме одного
+парсер-гейта:**
+
+- Парсер: `parse_stmt_or_expr`'s `TokenKind::KwConsume` арм требовал
+  lookahead `Ident`/`KwMut` после `consume` — `(`/`{` уходили в
+  expression-парсер и давали «unexpected `consume` in expression».
+  Единственная правка — расширить lookahead на `LParen`/`LBrace`;
+  `parse_consume_decl_or_scope` уже вызывал общий `parse_pattern()`,
+  который строит `Pattern::Tuple`/`Pattern::Record` для ЛЮБОГО
+  вызывающего контекста (`ro`/`mut`/`consume` идентичны с этой точки).
+- Чекер: `consume_walk_stmt`'s `Stmt::Let`-обработка уже итерирует ВСЕ
+  имена паттерна (`consume_pattern_names`, tuple/record-агностична) и
+  вызывает `declare_consume_binding` на каждое — механизм per-элементной
+  линейности не писался заново, он уже обслуживал `ro`/`mut`-tuple/record
+  destructure и просто заработал на `consume` в момент, когда парсер начал
+  такие паттерны пропускать.
+- Проверка «круглая форма на именованном кортеже — ошибка» переиспользует
+  `check_positional_destructure_on_named_tuple` (№145,
+  `E_NAMED_TUPLE_POSITIONAL_DESTRUCTURE`) без изменений — тот же код,
+  что уже действует для `ro`/`mut`.
+- Fiber-safety (`E_LINEAR_CAPTURE_IN_FIBER`, №364 precedent): capture-анализ
+  уже читал `LetDecl.consume` как per-имени authoritative linear-сигнал
+  (`linear_pattern: pat_consume || d.consume`, `types/mod.rs`) — написано
+  ЗАРАНЕЕ, до того как парсер разрешил деструктуризацию, с явным
+  комментарием, что это покрывает именно `consume (a, b) = expr`.
+
+**НЕ покрыто этим окном (осознанно, за периметром):** мульти-var re-consume
+блок для деструктурированных элементов (`spawn consume a, b { … }`,
+`[M-consume-param-spawn-defer-active]`) — вложенная форма `spawn consume ar
+{ consume bw { … } }` неработоспособна ПРИНЦИПИАЛЬНО (владение переносится
+СИНХРОННО в момент `spawn`-statement'а, вложенный re-consume исполнялся бы
+уже внутри ребёнка), не баг, не в объёме этого амендмента.
 
 ---
 

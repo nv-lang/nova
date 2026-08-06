@@ -1,0 +1,75 @@
+// №378 (`[M-73.1-destructure]`, D180 followup, окно p378-consume-destructure,
+// 2026-08-06): `consume`-биндинг поддерживал только простой identifier
+// pattern — любая деструктуризация после `consume` не парсилась.
+//
+// Две РАЗНЫЕ формы (амендмент 2026-08-05, `02-types.md` «Конструирование и
+// деструктуризация именованного кортежа»): `(a, b)` разбирает ПО ПОЗИЦИИ
+// (анонимный/positional tuple), `{a, b}` разбирает ПО ИМЕНИ (record /
+// named tuple). Мотивирующий носитель: `TcpStream consume @into_split()
+// -> (TcpReadHalf, TcpWriteHalf)` (std/src/net/tcp.nv) — анонимный
+// positional tuple из ДВУХ линейных значений; до этого окна связать их
+// owned-биндингом было нечем (`ro (r, w) = …` даёт ро-вью).
+//
+// Каждый элемент паттерна несёт СОБСТВЕННОЕ consume-обязательство (D133) —
+// не паттерн целиком; забытый элемент ловится по имени (см. neg-сосед
+// `neg/p378_consume_destructure_forget_element_neg.nv`).
+
+module spec_tests.conformance
+
+type P378Half1 consume { id int }
+fn P378Half1 consume @close() -> () { () }
+
+type P378Half2 consume { id int }
+fn P378Half2 consume @close() -> () { () }
+
+fn p378_make_pair() -> (P378Half1, P378Half2) =>
+    (P378Half1 { id: 1 }, P378Half2 { id: 2 })
+
+test "consume (a, b) = positional tuple — both elements owned, consumed independently" {
+    consume (a, b) = p378_make_pair()
+    a.close()
+    b.close()
+}
+
+// Passing destructured owned elements into consume-params in a plain
+// (non-fiber) context — the relay-shaped use case минус spawn.
+fn p378_pump(consume r P378Half1, consume w P378Half2) -> () {
+    r.close()
+    w.close()
+}
+
+test "consume (r, w) = pair; pump(r, w) — owned elements flow into consume-params" {
+    consume (r, w) = p378_make_pair()
+    p378_pump(r, w)
+}
+
+type P378Pair consume(x P378Half1, y P378Half2)
+
+fn p378_make_named_pair() -> P378Pair =>
+    P378Pair(P378Half1 { id: 1 }, P378Half2 { id: 2 })
+
+test "consume {x, y} = named tuple — curly/by-name form, full field list" {
+    consume {x, y} = p378_make_named_pair()
+    x.close()
+    y.close()
+}
+
+type P378Triple consume(x P378Half1, y P378Half2, tag int)
+
+fn p378_make_triple() -> P378Triple =>
+    P378Triple(P378Half1 { id: 1 }, P378Half2 { id: 2 }, 7)
+
+test "consume {x, y, ..} = named tuple — partial destructure with explicit rest (D411)" {
+    consume {x, y, ..} = p378_make_triple()
+    x.close()
+    y.close()
+}
+
+// Regression: plain single-ident `consume x = expr` — unchanged behavior.
+type P378Simple consume { id int }
+fn P378Simple consume @close() -> () { () }
+
+test "consume x = expr — simple ident form still works byte-for-byte (regression)" {
+    consume x = P378Simple { id: 9 }
+    x.close()
+}

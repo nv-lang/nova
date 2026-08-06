@@ -11578,9 +11578,17 @@ impl Parser {
             // Disambig vs `consume` в receiver-pos (parse_fn handles before
             // stmt-context). Disambig vs `consume` method-arg keyword
             // (always inside parens, handled by parse_call_args).
-            // Lookahead: `consume <ident>` или `consume mut` — не путать
-            // с `consume` как часть expression (method call на receiver).
-            TokenKind::KwConsume if matches!(self.peek_at(1).kind, TokenKind::Ident(_) | TokenKind::KwMut) => {
+            // Lookahead: `consume <ident>` / `consume mut` / `consume (…)`
+            // (positional destructure, №378 M-73.1-destructure) /
+            // `consume {…}` (record/named-tuple destructure, same followup)
+            // — не путать с `consume` как часть expression (method call на
+            // receiver). `(`/`{` can't start a valid stand-alone expression
+            // right after bare `consume` (no such expr form exists), so
+            // widening the gate introduces no ambiguity with the `_` arm.
+            TokenKind::KwConsume if matches!(
+                self.peek_at(1).kind,
+                TokenKind::Ident(_) | TokenKind::KwMut | TokenKind::LParen | TokenKind::LBrace
+            ) => {
                 // Plan 110 D188: returns either Stmt::Let (raw form, D180)
                 // или Stmt::ConsumeScope (block form, D188).
                 let stmt = self.parse_consume_decl_or_scope()?;
