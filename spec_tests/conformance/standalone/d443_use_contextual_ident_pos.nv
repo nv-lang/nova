@@ -12,7 +12,7 @@ module standalone.d443_use_contextual_ident_pos
 
 // (a) import-synonym: `use` accepted anywhere `import` is (bootstrap
 // behaviour, unchanged by the retraction — only the token kind changed).
-use std.collections.hashmap.{HashMap}
+use std.collections.hash_map.{HashMap}
 
 // (a) record-field embed (D39): `use alias Type`.
 type D443Inner {

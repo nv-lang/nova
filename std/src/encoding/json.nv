@@ -34,7 +34,7 @@ module encoding.json
 // правильное (а не workaround) решение: json.nv действительно
 // ИСПОЛЬЗУЕТ HashMap, поэтому ДОЛЖЕН его импортировать
 // (explicit-imports principle).
-import std.collections.hashmap.{HashMap}
+import std.collections.hash_map.{HashMap}
 
 // Plan p320 Фаза 3 (реестр 221.1 №319): `JsonObject` used to hand-roll its
 // own "ordered map" (`key_order []str` + `HashMap[str, JsonValue]`) — now a

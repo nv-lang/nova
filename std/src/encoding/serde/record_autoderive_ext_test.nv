@@ -24,7 +24,7 @@
 module encoding.serde
 
 import std.encoding.serde.{Serialize, Deserialize}
-import std.collections.hashmap.{HashMap}
+import std.collections.hash_map.{HashMap}
 
 // value-record (NovaValue_ ABI) — the case that regressed the Option/HashMap
 // mono-collection (родич keystone [M-valuerecord-result-vtable-mono]).

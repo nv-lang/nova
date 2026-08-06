@@ -9,7 +9,7 @@
 
 module collections.lru
 
-import std.collections.hashmap.{HashMap}
+import std.collections.hash_map.{HashMap}
 
 /// An LRU (Least Recently Used) cache with a fixed capacity.
 ///

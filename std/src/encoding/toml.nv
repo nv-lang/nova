@@ -27,7 +27,7 @@
 
 module encoding.toml
 
-import std.collections.hashmap.{HashMap}
+import std.collections.hash_map.{HashMap}
 
 /// TOML value variants (string/int/float/bool/array/table).
 #stable(since = "0.1")

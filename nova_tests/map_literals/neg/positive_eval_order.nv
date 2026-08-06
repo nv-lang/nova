@@ -11,7 +11,7 @@
 // stdout-pattern проверяет точный порядок.
 module neg.positive_eval_order
 
-import std.collections.hashmap.{HashMap}
+import std.collections.hash_map.{HashMap}
 
 fn rec_k(label str) -> str {
     print(label)

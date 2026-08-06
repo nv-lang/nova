@@ -6,7 +6,7 @@
 // Nova — compile-time warning + позволяет (для редких случаев).
 module neg.lint_nan_key
 
-import std.collections.hashmap.{HashMap}
+import std.collections.hash_map.{HashMap}
 
 fn main() -> () {
     ro m HashMap[f64, str] = [f64.NAN: "lost"]

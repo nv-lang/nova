@@ -8,7 +8,7 @@
 // Spec: spec/decisions/03-syntax.md D108. Единица: folder-module `spec_tests.conformance`.
 module spec_tests.conformance
 
-import std.collections.hashmap.{HashMap}
+import std.collections.hash_map.{HashMap}
 
 test "map literal with int keys creates HashMap (D108)" {
     ro m HashMap[int, str] = [1: "one", 2: "two", 3: "three"]

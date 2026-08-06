@@ -8,7 +8,7 @@
 // Spec: spec/decisions/03-syntax.md D117. Единица: folder-module `spec_tests.conformance`.
 module spec_tests.conformance
 
-import std.collections.hashmap.{HashMap}
+import std.collections.hash_map.{HashMap}
 
 test "slice .len() call syntax (D117)" {
     ro xs = [1, 2, 3, 4, 5]

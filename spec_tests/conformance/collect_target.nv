@@ -7,7 +7,7 @@
 module spec_tests.conformance
 import std.collections.vec_lazy
 import std.collections.set.{Set}
-import std.collections.hashmap.{HashMap}
+import std.collections.hash_map.{HashMap}
 
 // ── Default collect-target: Vec ───────────────────────────────────────────
 

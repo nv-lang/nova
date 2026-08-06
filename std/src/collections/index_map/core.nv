@@ -36,7 +36,7 @@
 
 module collections.index_map
 
-import std.collections.hashmap.{HashMap}
+import std.collections.hash_map.{HashMap}
 import std.collections.vec.{Vec}
 
 /// Insertion-order-preserving map: a dense `Vec[(K, V)]` (iteration/insertion

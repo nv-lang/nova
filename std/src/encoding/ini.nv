@@ -21,7 +21,7 @@
 
 module encoding.ini
 
-import std.collections.hashmap.{HashMap}
+import std.collections.hash_map.{HashMap}
 
 /// Errors while parsing INI.
 #stable(since = "0.1")

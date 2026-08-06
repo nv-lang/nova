@@ -5,7 +5,7 @@
 // constructor + match destructuring access HashMap methods.
 
 module spec_tests.conformance
-import std.collections.hashmap.{HashMap}
+import std.collections.hash_map.{HashMap}
 
 // Производит непустую HashMap внутри Option, mono'd return type.
 fn make_pair() -> Option[HashMap[str, int]] {

@@ -17,7 +17,7 @@
 
 module std.unicode
 
-import std.collections.hashmap.{HashMap}
+import std.collections.hash_map.{HashMap}
 import std.collections.vec.{Vec}
 
 // ---- Hangul constants (UAX #15) ----

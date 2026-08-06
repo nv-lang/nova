@@ -2,7 +2,7 @@
 // 100 clones × 100 entries — heap bounded.
 
 module spec_tests.conformance
-import std.collections.hashmap.{HashMap}
+import std.collections.hash_map.{HashMap}
 
 
 test "@clone × 100 итераций — heap bounded" {

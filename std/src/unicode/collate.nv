@@ -27,7 +27,7 @@
 
 module std.unicode
 
-import std.collections.hashmap.{HashMap}
+import std.collections.hash_map.{HashMap}
 import std.collections.vec.{Vec}
 
 // ── DUCET table parsing (lazy-static, built once on first touch) ──

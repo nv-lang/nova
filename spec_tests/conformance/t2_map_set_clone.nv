@@ -22,7 +22,7 @@
 // shares the element pointers).
 
 module spec_tests.conformance
-import std.collections.hashmap.{HashMap}
+import std.collections.hash_map.{HashMap}
 import std.collections.set.{Set}
 
 test "HashMap[str,int].clone — table independence: insert on clone does not touch original" {

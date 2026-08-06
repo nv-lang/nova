@@ -17,7 +17,7 @@
 module neg.d114_insert_generic_arg_incompatible_neg
 
 import std.encoding.json.{JsonValue}
-import std.collections.hashmap.{HashMap}
+import std.collections.hash_map.{HashMap}
 
 fn d114_neg_insert() -> HashMap[str, JsonValue] {
     mut m HashMap[str, JsonValue] = HashMap[str, JsonValue].new()

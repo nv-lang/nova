@@ -9,7 +9,7 @@
 
 module collections.set
 
-import std.collections.hashmap.{HashMap}
+import std.collections.hash_map.{HashMap}
 
 test "insert returns true for new, false for existing" {
     mut s = Set[int].new()

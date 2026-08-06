@@ -8,7 +8,7 @@
 // Root cause: auto-derive's synthesized `@serialize`/`.deserialize` bodies
 // dispatch a container/record field's OWN `.serialize(s)`/`.deserialize(x)`
 // (e.g. `HashMap[str,V]`'s, declared in `std.encoding.serde`, a DIFFERENT
-// module than `HashMap`'s own `collections.hashmap` — so from the
+// module than `HashMap`'s own `collections.hash_map` — so from the
 // extension-method-policy's point of view it IS an extension method).
 // `auto_derive.rs` built those Call/Member nodes via the plain
 // `ex()`/`member_call()` helpers, which stamp `span_dummy()` ==
@@ -23,7 +23,7 @@
 // under `#impl(Serialize)`, mirroring http.server's respond.nv role.
 module derive_seed_combined_cu.dsc_a
 
-import std.collections.hashmap.{HashMap}
+import std.collections.hash_map.{HashMap}
 import std.encoding.serde.{Serialize}
 
 #impl(Serialize)

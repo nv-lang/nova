@@ -1,7 +1,7 @@
 // Plan 91 Ф.5 conformance: HashMap realistic use-cases.
 // word-frequency counter pattern.
 module spec_tests.conformance
-import std.collections.hashmap.{HashMap}
+import std.collections.hash_map.{HashMap}
 
 fn count_words(words []str) -> HashMap[str, int] {
     mut counts = HashMap[str, int].new()

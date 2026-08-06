@@ -6,7 +6,7 @@
 
 module std.unicode
 
-import std.collections.hashmap.{HashMap}
+import std.collections.hash_map.{HashMap}
 import std.collections.vec.{Vec}
 
 // Parse a lowercase-hex codepoint/weight as `u32` (D54/D77: `None` on malformed

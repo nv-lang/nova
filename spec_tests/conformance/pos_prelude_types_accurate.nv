@@ -2,7 +2,7 @@
 // Verifies int/f64/f32/bool/str/Option/Result/Vec/HashMap work as expected.
 // (float/usize/Map removed from completion — Plan 114/133.)
 module spec_tests.conformance
-import std.collections.hashmap.{HashMap}
+import std.collections.hash_map.{HashMap}
 
 test "int type available" {
     ro x int = 42

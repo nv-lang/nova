@@ -21,7 +21,7 @@
 // Каждый test ниже — один из ранее падавших контекстов.
 module spec_tests.conformance
 
-import std.collections.hashmap.{HashMap}
+import std.collections.hash_map.{HashMap}
 
 test "from_fields: let с явным типом (D55 базовый случай)" {
     mut m HashMap[str, int] = { a: 1, b: 2 }

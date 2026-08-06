@@ -4,7 +4,7 @@
 // (для concrete K) или vtable (для erased generic body).
 
 module spec_tests.conformance
-import std.collections.hashmap.{HashMap}
+import std.collections.hash_map.{HashMap}
 
 
 test "HashMap[str, int].clone() — пустая мапа" {

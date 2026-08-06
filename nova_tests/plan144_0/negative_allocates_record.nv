@@ -15,7 +15,7 @@
 
 module plan144_0.negative_allocates_record
 
-import std.collections.hashmap.{HashMap}
+import std.collections.hash_map.{HashMap}
 
 type Point {
     x int

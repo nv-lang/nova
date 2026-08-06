@@ -4,7 +4,7 @@
 
 module nova_tests.plan79
 
-import std.collections.hashmap.{HashMap}
+import std.collections.hash_map.{HashMap}
 
 type Box[T] { value T }
 

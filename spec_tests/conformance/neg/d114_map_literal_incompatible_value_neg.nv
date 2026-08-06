@@ -12,6 +12,6 @@
 module neg.d114_map_literal_incompatible_value_neg
 
 import std.encoding.json.{JsonValue}
-import std.collections.hashmap.{HashMap}
+import std.collections.hash_map.{HashMap}
 
 fn d114_neg_map_lit(s str) -> HashMap[str, JsonValue] => ["sub": s, "n": 42]

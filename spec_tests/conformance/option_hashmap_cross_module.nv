@@ -13,7 +13,7 @@
 //     иначе NovaOpt typedef references undeclared struct.
 
 module spec_tests.conformance
-import std.collections.hashmap.{HashMap}
+import std.collections.hash_map.{HashMap}
 
 // Function returning Option[HashMap[K, V]] cross-module — before fix
 // signature compiled to NovaOpt_nova_int while body inferred mono'd type.

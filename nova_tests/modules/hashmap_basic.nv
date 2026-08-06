@@ -4,7 +4,7 @@
 
 module modules.hashmap_basic
 
-import std.collections.hashmap.{HashMap}
+import std.collections.hash_map.{HashMap}
 
 test "HashMap[str, int] insert and get" {
     mut m = HashMap[str, int].new()

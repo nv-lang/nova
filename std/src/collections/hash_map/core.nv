@@ -16,7 +16,7 @@
 //   - Поля по правилам: `readonly` для invariants, без префикса для
 //     мутируемых.
 
-module collections.hashmap
+module collections.hash_map
 
 // Importing the Vec template here registers `generic_type_templates["Vec"]`, so
 // the `[]Slot[K,V]` bucket fields below lower to a TYPED
@@ -33,7 +33,7 @@ import std.collections.vec.{Vec}
 // protocol (hash-only; equality вынесена в отдельный `Equal`). Удалена
 // local-декларация чтобы избежать `duplicate top-level name Hash` при
 // загрузке prelude (auto-import делает prelude `Hash` видимым в каждом
-// module включая `std.collections.hashmap`).
+// module включая `std.collections.hash_map`).
 //
 // `HashMap[K Hash, V]` ниже резолвит `Hash` через cross-file resolve в
 // prelude (`std.prelude.protocols.Hash`). Key collision check использует
