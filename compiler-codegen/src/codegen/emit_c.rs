@@ -15024,8 +15024,44 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             .clone();
 
         // Collect param C types (parallel to args).
-        let param_c_types: Vec<String> = fn_decl.params.iter()
-            .map(|p| self.type_ref_to_c(&p.ty).unwrap_or_else(|_| "nova_int".into()))
+        //
+        // Plan 248 (wave 3 fallout, real bug found by the integrator's
+        // mega-CU gate, [M-blocking-fn-call-mut-param-value-ptr-mismatch]):
+        // this used the param's BARE declared C type — never accounting for
+        // `mut x T` (Plan 184 §Р10 by-pointer in-out ABI: a `mut` param of a
+        // value/primitive type is `T*` in the callee's REAL C signature, the
+        // callee receives the caller's storage address). Every OTHER call
+        // path (ordinary free-fn calls via `synthesize_inout_refargs`,
+        // `emit_fn_forward_decl`'s own signature emission) already applies
+        // this; `#blocking fn` calls have their OWN dedicated ctx-struct
+        // codegen path (thread-offload machinery) that independently (and,
+        // until now, incompletely) recomputes param types — never learned
+        // about Р10. Invisible before Plan 248 wave 3: for the old pointer-
+        // newtype `Atomic*`/`Mutex` shapes, the bare value type WAS already
+        // a pointer (`Nova_AtomicI64*`), so the missing `mut`-adjustment
+        // never changed anything; now that `AtomicI64` etc. are genuine
+        // value records (`NovaValue_AtomicI64`, `#no_copy`), the ctx struct
+        // field ended up VALUE-typed while the offloaded call site still
+        // needed to pass the ADDRESS — "assigning to 'NovaValue_AtomicI64'
+        // from incompatible type 'NovaValue_AtomicI64 *'" (field decl) /
+        // "passing 'NovaValue_AtomicI64' to parameter of incompatible type
+        // 'NovaValue_AtomicI64 *'" (the `_c->d172_a` call-through) — found
+        // via `d172_realtime_blocking_attrs.nv`'s `#blocking fn
+        // d172_blk_fetch_add(mut d172_a AtomicI64, delta int)`.
+        // `bool` alongside each type: is this param's ctx field an inout-ptr
+        // (Р10) — needed again below when filling the field (address-of the
+        // argument, not the bare value) and when building the in-work-fn
+        // call (`_c->field` already IS the pointer the callee expects — no
+        // further change needed there).
+        let param_c_types: Vec<(String, bool)> = fn_decl.params.iter()
+            .map(|p| {
+                let base = self.type_ref_to_c(&p.ty).unwrap_or_else(|_| "nova_int".into());
+                if Self::param_is_inout_ptr(p, &base) {
+                    (format!("{}*", base), true)
+                } else {
+                    (base, false)
+                }
+            })
             .collect();
 
         let result_ty = self.return_type_c(&fn_decl)?;
@@ -15036,7 +15072,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
 
         // ─── ctx-struct typedef + work-fn forward decl → lambda_forward_decls ───
         let _ = writeln!(self.lambda_forward_decls, "typedef struct {{");
-        for (i, ty) in param_c_types.iter().enumerate() {
+        for (i, (ty, _)) in param_c_types.iter().enumerate() {
             let field = fn_decl.params.get(i)
                 .map(|p| p.name.as_str())
                 .unwrap_or("_arg");
@@ -15050,6 +15086,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             "{}void {}(void* _blk_arg);", self.top_level_storage(), blk_id);
 
         // ─── ctx instance on stack + fill args ───
+        // Note: `args` has already passed through `emit_call`'s
+        // `synthesize_inout_refargs` (Р10, upstream of the `#blocking fn`
+        // dispatch that routes here) — a `mut x T` positional arg arrives
+        // pre-wrapped as `RefArg(place)`, and `self.emit_expr` on that node
+        // already emits the address (`&(place)`). No further address-of
+        // needed here — `arg_c` is already the right C expression for
+        // EITHER field shape (bare value or, per the `param_c_types` fix
+        // just above, `T*`).
         self.line(&format!("{} {};", ctx_ty, ctx_var));
         for (i, arg) in args.iter().enumerate() {
             let field = fn_decl.params.get(i)
