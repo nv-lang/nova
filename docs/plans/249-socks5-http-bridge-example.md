@@ -23,9 +23,19 @@ package-примера, дом-папка); ревизия интегратор�
   (`type Leg consume { consume r TcpReadHalf; consume w TcpWriteHalf }`), и ровно она бьётся
   в открытый codegen-баг `[M-consume-param-spawn-defer-active]` (`_defer_N_M_active`
   undeclared) — репро сохранено: `docs/plans/repro/m_consume_param_spawn_defer_active_tcp.nv`.
-  **Значит Ф.2 ждёт ОДНОГО из двух:** (а) мульти-var `spawn consume a, b { … }` (нужна своя
-  move-семантика десугара, НЕ вложение D188 — см. маркер), либо (б) фикс codegen-половины
-  `[M-consume-param-spawn-defer-active]`, разблокирующий Leg-форму.
+  **Причина уточнена 2026-08-06 (поправки владельца): дело не в «языку нечем выразить», а в
+  ДВУХ отложенных пунктах, оба названы самой спекой:**
+  1. **`[M-73.1-destructure]` (221.1 №378) — головной.** `consume (a, b) = …` и
+     `consume {a, b} = …` не поддержаны (только простой идент), хотя для `ro`/`mut` обе формы
+     живые. D180 (`05-memory.md:634`) отложил это «if запрос» — запрос теперь есть:
+     `into_split()` отдаёт ПАРУ линейных значений, связать их owned нечем.
+  2. **Мульти-var `spawn consume a, b { … }`** — пробел зеркала D188
+     (`[M-consume-param-spawn-defer-active]`, там же разбор: сахар вложением НЕВОЗМОЖЕН,
+     нужна своя move-семантика).
+  **Возможно, хватит одного п.1** — если owned-деструктур снимет `E_CONSUME_BLOCK_NOT_OWNED`,
+  останется проверить `E_CONSUME_BLOCK_MOVE_OUT` на вложенной форме (пробой ПОСЛЕ фикса, не
+  гадать). Запасной путь без обоих — Leg-упаковка, но она бьётся в открытый codegen-баг
+  (репро `docs/plans/repro/m_consume_param_spawn_defer_active_tcp.nv`).
 - `[M-178-client-policy-surface]` (прокси у `HttpClient`) — **НЕ блокер**: это будущий
   потребитель пакета, который ЭТОТ план и делает возможным.
 **Приоритет:** P3 (новый пример; не блокер релиза v0.1).
