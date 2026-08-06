@@ -1,0 +1,42 @@
+// bench2_latency.nv — план 244, Ф.0. Задержка на пустом канале ТЕКУЩЕЙ
+// (сишной) реализации: получатель уже припаркован, отправитель приходит —
+// время от отправки до пробуждения (проверяет прямую передачу значения).
+//
+// Build: nova build docs/plans/wip/bench-p244/bench2_latency.nv -o bench2
+module bench.p244_latency
+
+import std.time.duration
+
+fn latency_once_ns(cap int) Time -> f64 {
+    ro (tx, rx) = Channel[int].new(cap)
+    mut recv_ns = AtomicI64.new(0)
+    mut send_ns = AtomicI64.new(0)
+    supervised {
+        spawn {
+            ro _ = rx.recv()                        // паркуется сразу — канал пуст
+            recv_ns.store(Monotonic.now().nanos())   // разбужен
+        }
+        spawn {
+            (2).to_millis().sleep()                  // дать получателю время припарковаться
+            send_ns.store(Monotonic.now().nanos())
+            ro _ = tx.send(1)
+        }
+    }
+    ro d = recv_ns.load() - send_ns.load()
+    d as f64
+}
+
+fn main() Time {
+    ro rounds = 200
+    mut sum_ns = 0.0
+    mut min_ns = 1.0e18
+    mut i = 0
+    while i < rounds {
+        ro d = latency_once_ns(1)
+        sum_ns = sum_ns + d
+        if d < min_ns { min_ns = d }
+        i += 1
+    }
+    ro avg_ns = sum_ns / (rounds as f64)
+    println("cap=1 rounds=${rounds} avg_latency_ns=${avg_ns} min_latency_ns=${min_ns}")
+}

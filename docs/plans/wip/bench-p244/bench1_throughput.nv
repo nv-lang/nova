@@ -1,0 +1,61 @@
+// bench1_throughput.nv — план 244, Ф.0. Базовый замер пропускной способности
+// ТЕКУЩЕЙ (сишной) реализации Channel[T]: один отправитель, один получатель,
+// буфер ёмкости 1 / 16 / 1024, N элементов, элементов/сек.
+//
+// Числа записываются в docs/plans/wip/PROGRESS-p244.md как эталон Ф.0.
+// Build: nova build docs/plans/wip/bench-p244/bench1_throughput.nv -o bench1
+module bench.p244_throughput
+
+import std.time.duration
+
+fn producer(tx ChanWriter[int], n int) -> () {
+    // send(consume v T) потребляет привязку аргумента (D131) даже для int
+    // (владелец, №300/№309). `for i in 0..n` даёт СВЕЖУЮ привязку `i` на
+    // каждой итерации (не переиспользуемую mut-переменную) — потребление
+    // безопасно; `while`-версия с mut-счётчиком, инкрементируемым ПОСЛЕ
+    // чтения в отдельную `ro`-привязку, у текущего компилятора даёт
+    // ложный "использование, возможно, потреблённой переменной" на самой
+    // переменной цикла (находка Ф.0, №TBD — вне объёма этого окна, обойдено).
+    for i int in 0..n {
+        ro _ = tx.send(i)
+    }
+    tx.close()
+}
+
+fn consumer(rx ChanReader[int]) -> int {
+    mut sum = 0
+    while Some(v) = rx.recv() {
+        sum += v
+    }
+    sum
+}
+
+fn run_once(cap int, n int) Time -> f64 {
+    ro (tx, rx) = Channel[int].new(cap)
+    ro t0 = Monotonic.now()
+    mut total = AtomicInt.new(0)
+    supervised {
+        spawn { producer(tx, n) }
+        spawn {
+            ro s = consumer(rx)
+            total.store(s)
+        }
+    }
+    ro dt = Monotonic.now().elapsed_since(t0)
+    // sanity: sum of 0..n-1
+    ro expected = (n * (n - 1)) / 2
+    if total.load() != expected {
+        println("MISMATCH cap=${cap} n=${n} got=${total.load()} expected=${expected}")
+    }
+    (n as f64) / dt.seconds_f64()
+}
+
+fn main() Time {
+    ro n = 200_000
+    ro rate1 = run_once(1, n)
+    println("cap=1    elems/sec=${rate1}")
+    ro rate16 = run_once(16, n)
+    println("cap=16   elems/sec=${rate16}")
+    ro rate1024 = run_once(1024, n)
+    println("cap=1024 elems/sec=${rate1024}")
+}
