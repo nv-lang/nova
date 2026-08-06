@@ -31,6 +31,8 @@ RFC 1928 CONNECT + RFC 1929 auth) + `src/socks5_test.nv` (22 байтовых
   (`type Leg consume { consume r TcpReadHalf; consume w TcpWriteHalf }`), и ровно она бьётся
   в открытый codegen-баг `[M-consume-param-spawn-defer-active]` (`_defer_N_M_active`
   undeclared) — репро сохранено: `docs/plans/repro/m_consume_param_spawn_defer_active_tcp.nv`.
+  **ДВА ЯЗЫКОВЫХ БЛОКЕРА СНЯТЫ (проверено сборкой интегратора 2026-08-06 на пакете `7ed38407d`):** №378 (`consume (ar, aw) = a.into_split()`) и №379 (`spawn consume ar, bw { … }`) влиты; форма relay из §3.2 проходит `nova check` И `nova build --strict-effects` до бинаря — та самая, что до пакета падала кодогеном (`_defer_N_M_active`). Ф.2 теперь держит РОВНО ОДИН блокер — №390 ниже (плюс операционные ограничения №396/№398 из пакета: `cancel:` вокруг прямой блокирующей операции не прерывает, `with Fail` внутри `supervised` не ловит — учесть при написании моста).
+
   **ТРЕТИЙ блокер Ф.2, функциональный (№390, К1, найден окном p249 2026-08-06):** ВТОРОЙ `TcpStream.read()` после ЧАСТИЧНОГО чтения и close пира виснет навсегда, `supervised(timeout:)` его НЕ будит (репро `docs/plans/repro/p249_second_read_after_partial_hangs.nv`). Для МОСТА это не частный случай, а основная работа: `pipe_bidirectional` только и делает, что продолжает чтение после частичных данных — т.е. даже при закрытых №378/№379 мост будет вешать файберы на каждом закрытом пире. Ф.2 не сдавать, пока №390 открыт.
 
   **Причина уточнена 2026-08-06 (поправки владельца): дело не в «языку нечем выразить», а в
