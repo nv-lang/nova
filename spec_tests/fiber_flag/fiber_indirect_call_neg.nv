@@ -1,3 +1,6 @@
+// FLAG-GATED: run with NOVA_FIBER_INDIRECT=1 (indirect enforcement is
+// off by default until the parameter safety marker lands — Plan 238 F3).
+// Excluded from the default conformance lane on purpose.
 // EXPECT_COMPILE_ERROR [E_FIBER_INDIRECT_CALL] indirect call inside a `spawn` body
 //
 // !!! RUN WITH `NOVA_FIBER_INDIRECT=1` SET !!! Приёмка интегратора
