@@ -1,0 +1,10 @@
+module p14_impl_equal
+
+#impl(Equal)
+type BadImplEqual14 { junk int }
+
+fn main() Io -> () {
+    ro v = BadImplEqual14 { junk: 1 }
+    ro w = BadImplEqual14 { junk: 2 }
+    print("${v.equal(w)}")
+}

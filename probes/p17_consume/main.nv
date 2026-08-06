@@ -1,0 +1,10 @@
+module p17_consume
+
+type Tx17 consume { id int }
+
+fn Tx17 consume @commit() -> () {}
+
+fn main() Io -> () {
+    consume t = Tx17 { id: 1 }
+    print("never consumed")
+}

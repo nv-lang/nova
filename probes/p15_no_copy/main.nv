@@ -1,0 +1,9 @@
+module p15_no_copy
+
+#no_copy type Handle15 value priv { v u32 }
+
+fn main() Io -> () {
+    ro h = Handle15 { v: 1 }
+    ro h2 = h
+    print("${h2.v()}")
+}

@@ -1,0 +1,9 @@
+module p16_from_fields
+
+#from_fields
+type BadMap16[V] { junk int }
+
+fn main() Io -> () {
+    ro m BadMap16[int] = { a: 1, b: 2 }
+    print("${m.junk}")
+}
