@@ -236,7 +236,7 @@ printf 'plan_missing_status=0\ndev_links=0\ncode_block_mismatch_pairs=0\nmixed_l
     printf '# Pair EN v2 changed\n' > docs/guide/pair.md
     git add docs/guide/pair.md
     git commit -q -m "only en side"
-    sh scripts/guards/check-doc-conventions.sh . "$base_sha" >/tmp/dc_2b_out_$$ 2>&1
+    bash scripts/guards/check-doc-conventions.sh . "$base_sha" >/tmp/dc_2b_out_$$ 2>&1
     code=$?
     # №322: проверка НАБЛЮДАТЕЛЬНАЯ — гейт не роняет, но обязана сообщить.
     if [ "$code" -ne 0 ]; then
