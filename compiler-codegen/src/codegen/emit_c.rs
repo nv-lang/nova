@@ -16758,8 +16758,36 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // `mut c = AtomicInt.new(0)` local declared `Nova_AtomicInt*`
             // while the hand-written ctor now returns a bare
             // `NovaValue_AtomicInt` struct by value).
+            // [M-str-record-schemas-revives-legacy-from-dispatch] (found by
+            // differential bisect, 2026-08-06 — regression from THIS same
+            // wave, `83788f7a9`, root-caused post-hoc, not by the wave
+            // itself): `str` is ALSO `RUNTIME_DEFINED_TYPES` (lang-item,
+            // hand-written `nova_str` typedef — see the const list above)
+            // AND declared `TypeDeclKind::Record` + `AllocKind::Value`
+            // (Plan 139.1) — so it falls into this branch exactly like the
+            // 11 atomics it was written for, and would get a
+            // `record_schemas["str"]` entry. That specific registration
+            // was ALREADY diagnosed and reverted once before, for an
+            // UNRELATED reason (`[M-open-range-len-source-hardcoded]`, see
+            // the Ф.1-REVERTED comment ~6330 above): putting `"str"` into
+            // `record_schemas` at all — regardless of WHICH code path does
+            // it — revives a dormant legacy `.from`-dispatch fallback keyed
+            // on "is this name in record_schemas", independent of the
+            // schema's actual content. Symptom: `str.from(5)` (retracted,
+            // D410 — must be a compile error, `neg_str_from_retracted`)
+            // silently compiles again, codegen emitting a call to the
+            // still-present-but-unreachable-by-design `Nova_str_static_from`
+            // runtime helper. `str` needs NONE of this branch's registration
+            // (`type_aliases`/`value_record_names`/`value_struct_field_tys`)
+            // — its C type is the hand-written `nova_str` (not
+            // `NovaValue_str`), wired through its own dedicated paths
+            // elsewhere, same reasoning as the original revert. Excluded by
+            // name, not by weakening the shared Value+Record gate (the 11
+            // atomics — and any future RUNTIME_DEFINED_TYPES value-record —
+            // still need it).
             if let TypeDeclKind::Record(fields) = &t.kind {
-                if matches!(t.allocation, crate::ast::AllocKind::Value)
+                if t.name != "str"
+                    && matches!(t.allocation, crate::ast::AllocKind::Value)
                     && !self.record_schemas.contains_key(&t.name)
                 {
                     let mut schema = HashMap::new();

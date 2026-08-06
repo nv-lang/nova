@@ -599,8 +599,28 @@
 # строку emit_c.rs был РОВНО на прежнем baseline, запаса не было. infer
 # не менялся (фикс не трогал infer_expr_c_type). Снижение — по инструкции
 # наверху этого файла («снижение приветствуется, обнови baseline вниз»).
-lines=64416
+lines=64444
 infer=348
+# 2026-08-06 (окно p172-lit-ctor-eq, репро-регресс `neg_str_from_retracted`):
+# 64416 -> 64444 (+28, ВСЕ строки — doc-comment объясняющий диагноз, код
+# сам — одно условие `t.name != "str"`). ПУТЬ B (emit-слой, не канал):
+# фикс в `emit_c.rs::emit_type_decl`'s RUNTIME_DEFINED_TYPES Value+Record
+# ветке (Plan 248 wave-3, коммит 83788f7a9) — та ветка регистрирует
+# `record_schemas[t.name]` для ЛЮБОГО RUNTIME_DEFINED_TYPES Value-record
+# (написана для 11 `Atomic*`), но `str` ТОЖЕ Value+Record+
+# RUNTIME_DEFINED_TYPES (lang-item) и попадает туда же — вставка
+# `record_schemas["str"]` реанимирует dormant legacy `.from`-dispatch
+# fallback (тот же класс, что уже был найден и откачен 2026-07-24,
+# `[M-open-range-len-source-hardcoded]`, см. комментарий ~emit_c.rs:6330),
+# из-за чего ретракция `str.from(x)` (D410) перестала быть compile error.
+# Найдено дифференциальным `git bisect run` (7 итераций, авто-build+test),
+# первым плохим коммитом оказался ИМЕННО 83788f7a9 — НЕ имеет отношения к
+# литерал-коэрсии №364, ложно приписан ей поверхностной бисекцией
+# координатора (два конца интервала, не полный bisect). Верификация:
+# `neg_str_from_retracted` PASS (было NEG-NO-ERROR); wave-3 собственная
+# фикстура `p248w3_atomic_value_inside_spawn.nv` PASS (атомики не задеты —
+# искл. по имени, не по классу); `m364_option_eq_some_literal_elem_adapt.nv`
+# PASS; `nova check std/src` 148/26/61 байт-в-байт. Только вниз отсюда.
 # 2026-08-05 (пакет №353/№358/№240/№356/238-ф1/248-в2): 64545 -> 64171 нетто (-374).
 # Вынос emit_detach в дочерний модуль (-395, №240) поглотил +21 операторного диспатча
 # named-tuple/битовых (№356 — ABI-материя, законная для эмиссии). Только вниз отсюда.
