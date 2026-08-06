@@ -1,0 +1,53 @@
+// SCRATCH (p390 diagnosis, NOT a committed repro): fully SEQUENTIAL variant
+// (no spawn, no supervised, single fiber does everything: bind, connect via
+// backlog BEFORE accept, write, close, then two reads on the client side).
+// Confirms whether "second read never completes" is purely a libuv/Windows
+// phenomenon independent of the M:N/Vela scheduler (spawn/supervised/park
+// across fibers) — matches p249's own point #3 ("без spawn вообще").
+
+module scratch390.sequential
+
+import std.net.{TcpListener, TcpStream, SocketAddr, real_net}
+import std.time.duration
+
+fn b(vals []int) -> []u8 {
+    mut out []u8 = []u8.new()
+    for v in vals { out.push(v as u8) }
+    out
+}
+
+test "diag: sequential no-spawn second read after partial+close" {
+    with Net = real_net() {
+        supervised(timeout: 5000.to_millis()) {
+            with Fail[TimeoutError] = |_e| { println("TIMEOUT fired (5s)") } {
+                consume lst = TcpListener.bind(SocketAddr.loopback(0))!!
+                ro port = lst.local_port()
+                println("bound port=${port}")
+                consume client = TcpStream.connect(SocketAddr.loopback(port as int))!!
+                println("client connected")
+                ro accepted = lst.accept()
+                lst.close()
+                match accepted {
+                    Ok(consume srv) => {
+                        println("server accepted")
+                        ro _ = srv.write_all(b([]int.of(0x05)))
+                        println("server wrote 1 byte")
+                        srv.close()
+                        println("server closed")
+                    }
+                    Err(_) => { println("accept err") }
+                }
+                mut buf1 []u8 = []u8.new()
+                buf1.resize(1, 0 as u8)
+                ro n1 = match client.read(buf1) { Ok(k) => k  Err(_) => -1 }
+                println("client first read n=${n1}")
+                mut buf2 []u8 = []u8.new()
+                buf2.resize(1, 0 as u8)
+                ro n2 = match client.read(buf2) { Ok(k) => k  Err(_) => -2 }
+                println("client second read n=${n2}")
+                client.close()
+            }
+        }
+        println("test finished")
+    }
+}
