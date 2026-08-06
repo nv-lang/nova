@@ -32981,7 +32981,33 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // expr (the overwhelming majority of `nova_unit`-target call sites —
         // ordinary unit-valued statements/returns) `expr_diverges_125` is
         // `false` and this whole branch stays a no-op, byte-identical to before.
-        if target_ty_c != "nova_int" && self.expr_diverges_125(expr) {
+        // [M-402-match-all-diverge-int-target] (реестр 221.1 №402): the bare
+        // `target_ty_c != "nova_int"` skip above is correct for a SIMPLE divergent
+        // expr (`throw e`, `panic(...)`) — its own comma-expr dummy IS ALREADY
+        // `(nova_int)0LL`, so an `nova_int` target needs no substitution. It is
+        // WRONG for `ExprKind::Match` whose arms ALL diverge (`match err_opt {
+        // Some(e) => throw e, None => throw …!! }` — `std/src/concurrency/
+        // retry.nv`'s `result ?? match last_error {…}`, found CI nightly via
+        // `retry_test.nv`): `emit_match`'s OWN result-type derivation (first/
+        // second legacy pass) explicitly SKIPS every diverging arm while hunting
+        // for a value type — with ZERO non-diverging arms it falls through to its
+        // bail-safe default `nova_unit`, irrespective of the caller's target. Left
+        // unrouted here, `emit_expr` returns that `nova_unit`-typed match temp
+        // DIRECTLY as the value — CC-FAIL "incompatible operand types ('nova_int'
+        // and 'nova_unit')" at the `??` ternary. Only the T=int/E=int monomorphization
+        // hit this: T=str/E=str already routed correctly (target ≠ "nova_int" there).
+        // Same fix SHAPE as №118 just above (`nova_unit`-target exclusion-drop):
+        // narrow the `nova_int` skip so it still covers the bare-divergent-dummy
+        // case (unaffected: non-Match, or a Match with at least one non-diverging
+        // arm) but NOT a fully-divergent Match, which now routes into the SAME
+        // existing `emit_divergent_with_target_125` machinery the №118 fix already
+        // proved correct for `nova_unit` (comma-discards the mistyped match temp,
+        // substitutes a target-typed zero as the visible value) — no new
+        // special-casing, just closing the one shape this dispatcher didn't cover.
+        let diverges = self.expr_diverges_125(expr);
+        let bare_int_dummy_already_correct =
+            target_ty_c == "nova_int" && !matches!(&expr.kind, ExprKind::Match { .. });
+        if diverges && !bare_int_dummy_already_correct {
             return self.emit_divergent_with_target_125(expr, target_ty_c);
         }
         // [M-d55-str-literal-coercion-name-gated] fix (2026-07-17): D55 amend
@@ -36034,6 +36060,47 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // suffix: `nova_int`, `NovaValue_…`, `NovaTuple_…`) pass through
                     // unchanged, so this is byte-identical for every non-pointer payload.
                     let payload_c = Self::desanitize_c_from_ident(sani);
+                    // [M-402-coalesce-match-eager-side-effect] (реестр 221.1 №402,
+                    // вскрыто ПОСЛЕ фикса CC-FAIL выше — фикс типа обнажил живущий
+                    // ПОД ним рантайм-баг, тот же файл, та же волна): когда `right`
+                    // — `match { ... }`, его codegen (`emit_match`) — НЕ является
+                    // C-выражением — это ПОСЛЕДОВАТЕЛЬНОСТЬ STATEMENT'ов (decl +
+                    // if-армы), вытолкнутая через `self.line(...)` в ТЕКУЩИЙ
+                    // statement-stream БЕЗУСЛОВНО, до того как тернарный `?:` ниже
+                    // вообще решит, нужно ли её значение. Итог: армы match'а
+                    // выполняются КАЖДЫЙ РАЗ, даже когда `opt_tmp` — `Some` и
+                    // тернарь его игнорирует. `std/src/concurrency/retry.nv`'s
+                    // `result ?? match last_error { Some(e) => throw e, None =>
+                    // throw last_error!! }` — канонический носитель: на успешной
+                    // первой попытке (`result=Some(42)`, `last_error=None`) None-арм
+                    // всё равно исполняется и кидает `RuntimeNoneError`; на retry-до
+                    // успеха последний `last_error=Some("transient")` того же
+                    // Some-арма кидает "transient" вместо возврата успешного
+                    // результата — обнаружено обоими regression-тестами
+                    // `retry_test.nv` после того, как тип перестал CC-FAIL'ить.
+                    // Фикс: для ИМЕННО этой формы (RHS = `match`) — не тернарь, а
+                    // `if/else` с общим result-temp, ЛЕНИВО оборачивающий
+                    // `right`'у statement-emission внутрь `else`-ветки (исполняется
+                    // ТОЛЬКО когда `opt_tmp` реально `None`). Любая другая форма
+                    // RHS (литерал/вызов/панике-comma-expr и т.д.) остаётся на
+                    // прежнем тернарном пути байт-в-байт — сужено строго до формы,
+                    // которая единственная строит statement-уровневый C для своего
+                    // значения.
+                    if matches!(&right.kind, ExprKind::Match { .. }) {
+                        let result_tmp = self.fresh_tmp_named("coalesce");
+                        self.line(&format!("{} {};", payload_c, result_tmp));
+                        self.line(&format!("if ({}) {{", some_check));
+                        self.indent += 1;
+                        self.line(&format!("{} = {}.value;", result_tmp, opt_tmp));
+                        self.indent -= 1;
+                        self.line("} else {");
+                        self.indent += 1;
+                        let r = self.emit_expr_with_target_type(right, &payload_c)?;
+                        self.line(&format!("{} = {};", result_tmp, r));
+                        self.indent -= 1;
+                        self.line("}");
+                        return Ok(result_tmp);
+                    }
                     let r = self.emit_expr_with_target_type(right, &payload_c)?;
                     Ok(format!("({} ? {}.value : {})", some_check, opt_tmp, r))
                 } else if Self::is_result_like(&left_ty) {

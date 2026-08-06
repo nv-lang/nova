@@ -1,0 +1,51 @@
+// m221_401_timestamp_static_singlefile.nv — regression pin, реестр 221.1 №401.
+//
+// Мин-репро класса `[P67-LEGACY] Path call return type unknown for
+// method=now`: одиночный Path-call статик-метода (`Timestamp.now()`,
+// объявлен `export fn Timestamp.now() Time -> Timestamp` в
+// std/time/duration/timestamp.nv) ИМПОРТИРОВАННОГО модуля, с эффектом
+// (`Time`), в STANDALONE compile-unit (эта фикстура — отдельный CU в
+// standalone-lane, НЕ мега-CU). Прямой родственник `m221_81_monotonic_
+// static_singlefile.nv` (маркер №81) — тот же класс, соседний
+// статик-метод (`Timestamp.now()` вместо `Monotonic.now()`).
+//
+// Найдено CI nightly (`nova test / full (nightly)`, 2026-08-06): CI-прогон
+// падал ИМЕННО на этом ICE в `std/src/crypto/jwt.nv`, обрывая весь ночной
+// прогон std. Как и у №81, ICE-класс сам по себе НЕ дефект «single-file
+// теряет checker-канал» — Path(len==2)-ветка чекера (`f1_expr`) корректно
+// резолвит `Timestamp.now()` и материализует `resolved_callees`/
+// `fn_ret_by_span` В ЛЮБОМ compile-unit, ЕСЛИ `Timestamp` реально
+// импортирован (`import std.time.duration`, как ниже). Репортнутый ICE
+// был вызван РОВНО ТЕМ ЖЕ багом, что и №81, только в ДРУГИХ 4 файлах:
+// `std/src/crypto/jwt.nv`, `std/src/identifiers/{snowflake,ulid,uuid}.nv`
+// звали `Timestamp.now()` БЕЗ импорта `std.time.duration` вовсе — молча
+// проходило ТОЛЬКО внутри мега-CU (spec_tests/conformance), где какой-то
+// другой файл того же CU уже импортировал модуль (маскировка отсутствующего
+// импорта); изолированный single-file компайл (ровно то, что гоняет CI
+// nightly per-файл) такого соседа не имел — молчание чекера
+// (`method_overloads` вернул `None`, отсутствующий import НЕ
+// диагностируется — намеренно: аудит №81 нашёл, что общий
+// checker-диагноз для ЭТОГО случая регрессирует 42 файла ложными
+// позитивами на легитимные cross-module intrinsic-формы) доходило до
+// emit_c'ового legacy-фоллбэка `infer_call_ret_c`, у которого канала на
+// этот случай тоже нет → паника. Настоящий фикс — добавленный
+// `import std.time.duration` во все 4 файла (та же терапия, что №81).
+// Эта фикстура пинит ПОЗИТИВНЫЙ случай (корректный импорт → корректная
+// компиляция single-file/standalone) для `Timestamp.now()` конкретно, так
+// же как №81 пинит его для `Monotonic.now()` — обе стороны одного
+// Path-call-канала (Channel 1: `resolved_callees` → `fn_ret_by_span`).
+// EXPECT_STDOUT M221_401_TIMESTAMP_STATIC_SINGLEFILE_OK
+
+module standalone.m221_401_timestamp_static_singlefile
+
+import std.time.duration
+
+fn main() Time -> () {
+    ro t0 = Timestamp.now()
+    ro ms = t0.unix_millis()
+    if ms >= 0 {
+        println("M221_401_TIMESTAMP_STATIC_SINGLEFILE_OK")
+    } else {
+        println("UNEXPECTED")
+    }
+}

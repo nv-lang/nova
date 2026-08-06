@@ -11,6 +11,8 @@
 
 module identifiers.snowflake
 
+import std.time.duration
+
 // Custom epoch: 2020-01-01 UTC = 1577836800000 ms since Unix epoch.
 // Можно настроить под проект, но для совместимости используем стандартный.
 const TWITTER_EPOCH_MS i64 = 1577836800000
