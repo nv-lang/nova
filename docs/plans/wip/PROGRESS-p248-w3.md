@@ -391,3 +391,123 @@ aliases the SAME two cells» — фактически копирования (в
 дальнейшей работы над D447-механизмом) — не решались за пределами
 минимального фикса B (сама волна не могла оставаться регрессией на
 корпусе) и документирования остальных.
+
+---
+
+## Приёмка интегратора (2026-08-06) — мега-CU 669/3, два регресса найдены и починены
+
+Интегратор прогнал мега-CU на слиянии p248-w3: **PASS 669 FAIL 3**. Два
+регресса вернулись на доработку, третий («№TBD-F» ниже) — пред-существующий,
+задокументирован, не мой мандат.
+
+### Регресс 1 — `a_q3_println_debug_record` CC-FAIL (2 места)
+
+```
+error: assigning to 'NovaValue_AtomicI64' from incompatible type 'NovaValue_AtomicI64 *'; dereference with *
+error: passing 'NovaValue_AtomicI64' to parameter of incompatible type 'NovaValue_AtomicI64 *'; take the address with &
+```
+
+Файл в мега-CU объединяет ВЕСЬ `spec_tests/conformance` — реальный источник
+(по номерам строк порождённого C) — `d172_realtime_blocking_attrs.nv`'s
+`#blocking fn d172_blk_fetch_add(mut d172_a AtomicI64, delta int)`.
+
+**Корень**: `emit_blocking_fn_call` (Plan 113/D172, `#blocking fn`
+call-site → thread-pool offload, `compiler-codegen/src/codegen/emit_c.rs`)
+вычисляла C-тип ctx-struct-поля для КАЖДОГО параметра через голый
+`type_ref_to_c(&p.ty)` — НИКОГДА не применяя Plan 184 §Р10 (`mut x T` для
+value/примитивного `T` — указатель `T*` в C, ЛЮБОЙ ДРУГОЙ call-путь уже это
+делает: `synthesize_inout_refargs`, `emit_fn_forward_decl`). Невидимо ДО
+этой волны: у старого pointer-newtype `AtomicI64` голый value-тип УЖЕ БЫЛ
+указателем (`Nova_AtomicI64*`), отсутствие Р10-поправки ничего не меняло.
+Теперь `AtomicI64` — настоящий value-record (`NovaValue_AtomicI64`) — поле
+осталось VALUE-типизированным, а аргументы на call-site УЖЕ приходят
+`RefArg`-обёрнутыми (Р10-обвязка апстрим в `emit_call`, ДО диспетча в
+`emit_blocking_fn_call`) — то есть уже АДРЕСА. Несовпадение типа поля vs
+типа значения — обе ошибки клэнга ровно про это.
+
+**Фикс**: применить существующий хелпер `param_is_inout_ptr` к вычислению
+типа ctx-поля (добавляет `*`, когда параметр `mut`+value/примитив). Аргумент-
+заполняющий цикл НЕ трогался — он и так передаёт уже-адресное значение;
+первая версия фикса добавляла ВТОРОЙ слой адресации там (`&(arg_c)`), что
+давало `&(&(d172_la))` — поймано ДО коммита прогоном `d172_realtime_
+blocking_attrs.nv` standalone (`initializing 'NovaValue_AtomicI64' with an
+expression of incompatible type 'NovaValue_AtomicI64 *'`), откачено.
+
+**Верификация**: `d172_realtime_blocking_attrs.nv` standalone — `PASS: 1
+FAIL: 0`.
+
+### Регресс 2 — `standalone/m240_detach_box_while_loop_read_after` RUN-FAIL
+
+```
+:107 assert failed: n == 3
+:117 assert failed: n == 6
+```
+
+**Дифференциально проверено — НЕ вызвано `callnorm.rs`-фиксом** (отключение
+куска не меняло результат; баг воспроизводится и с полностью откаченным
+`is_addressable_receiver`).
+
+**Реальный корень**: `emit_detach.rs`'s heap-boxing мутабельно-захваченных
+в `detach{}` локалов (Fix №240, ДРУГОЕ окно, дочерний модуль `compiler-
+codegen/src/codegen/emit_c/emit_detach.rs` — ratchet его не измеряет).
+alloc+copy-в-бокс (`*bv = counter;`) стоит на C-позиции самого `detach{}` —
+если эта позиция внутри `while`-тела, код ИСПОЛНЯЕТСЯ на каждой итерации. Для
+СТАРОГО pointer-kind захвата (`Nova_AtomicI64*`) повторное копирование —
+безобидно: копируется указатель, все копии алиасят ОДИН shared-объект. Для
+value-inside `AtomicInt` (эта волна) `*bv = counter` КОПИРУЕТ ЗНАЧЕНИЕ —
+каждая итерация тихо заводит НЕЗАВИСИМЫЙ свежий счётчик (снимок вечно-
+неизменной `counter`, которая никогда не пишется обратно), более ранние
+итерации мутируют СИРОТСКИЕ, более недостижимые через текущий указатель
+бокса, ячейки. `runtime.drain_orphans()` + чтение после цикла видит только
+ПОСЛЕДНИЙ, почти всегда нулевой, бокс.
+
+**Фикс**: hoisted box-указатель инициализируется `NULL`
+(`hoist_box_decl`); alloc+copy обёрнут в `if (!bv) { ... }` — boxing
+происходит НЕ БОЛЕЕ ОДНОГО РАЗА за вызов содержащей функции (hoisted
+declaration — обычная C-локальная, свежий `NULL` на каждом новом
+стек-фрейме), все дальнейшие итерации И все прочие `detach{}`-сайты,
+делящие тот же `var_boxed`-реюз, переиспользуют ТУ ЖЕ ячейку — ровно то же
+поведение, что уже было у pointer-kind типов, теперь верно и для
+value-kind.
+
+**Верификация**: `standalone/m240_detach_box_while_loop_read_after.nv`
+standalone — `PASS: 1 FAIL: 0` (все 3 под-теста: `n==3`/`n==1`/`n==6`).
+
+### №TBD-F. `neg/neg_str_from_retracted` — NEG-NO-ERROR, ПРЕД-СУЩЕСТВУЮЩИЙ, не мой мандат
+
+Третья строка мега-CU-фейла (669/3 = a_q3 + m240 + этот): `str.from(5)`
+(Plan 174.2 ретракция) ожидает `EXPECT_COMPILE_ERROR`, но codegen проходит
+без ошибки **только в мега-CU контексте** — изолированный прогон (`nova
+check` на копии в свою директорию) даёт `ok` (нет ошибки) И на этой ветке,
+И на немодифицированном `main` — байт-в-байт то же поведение. Не связано с
+`Atomic*`/D447/этой волной вообще (файл не ссылается ни на что из моих
+изменений); похоже на порядко-зависимый мега-CU-артефакт (какая-то другая
+декларация в CU конкурирует за имя/резолв `str.from`). Не чинилось —
+не моя область, не регрессия этой волны.
+
+### Финальные каноны (последний синхронный прогон, ПОСЛЕ обоих фиксов)
+
+```
+nova check std/src:            PASS: 148  FAIL: 26  WARN: 61   (байт-в-байт)
+nova-polaris check --strict-effects (свой бинарь): PASS: 55  FAIL: 0  WARN: 3134
+cargo build --release:         чисто
+```
+
+### Ratchet
+
+`lines` поднят ДО 64349 (+44 от моей предыдущей 64305, обоснование дописано
+в `scripts/guards/arch-ratchet.baseline`) — ТОЛЬКО фикс регресса 1
+(`emit_blocking_fn_call`, в самом `emit_c.rs`); фикс регресса 2 — в дочернем
+модуле `emit_detach.rs`, ratchet-метрику не трогает. **По указанию
+интегратора базу дальше НЕ трогаю** — у интегратора своя рабочая копия уже
+на 64306 (+1 от параллельного слияния "pk2" поверх моей 64305); сведение
+64306+44 — на интеграторе при мёрже.
+
+### Файлы (дополнение к списку выше)
+
+- `compiler-codegen/src/codegen/emit_c.rs` — `emit_blocking_fn_call`
+  Р10-поправка ctx-struct-поля (регресс 1).
+- `compiler-codegen/src/codegen/emit_c/emit_detach.rs` — box-once-guard
+  (`hoist_box_decl` init `NULL` + `if (!bv)` вокруг alloc+copy, регресс 2).
+- `scripts/guards/arch-ratchet.baseline` — новая запись обоснования
+  (64305→64349), база НЕ финализирована (см. выше).

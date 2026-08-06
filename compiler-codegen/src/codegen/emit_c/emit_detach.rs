@@ -432,12 +432,57 @@ impl CEmitter {
                     // №240: bare declaration hoisted (see fn-doc above);
                     // only the assignment stays at this (possibly nested)
                     // call site.
+                    //
+                    // Plan 248 (wave 3 fallout, real bug found by the
+                    // integrator's mega-CU gate, [M-detach-box-value-inside-
+                    // reboxing-loses-aggregation]): the alloc+copy below sits
+                    // at the (possibly LOOPED) call site of `detach{}` — a
+                    // single AST node compiled ONCE, but when that C position
+                    // is inside a `while`/`for` body it EXECUTES every
+                    // iteration. For a POINTER-kind captured type (the only
+                    // shape this mechanism ever boxed before this plan —
+                    // Mutex/Condvar/the old Atomic* newtypes) re-running
+                    // `*bv = counter` every iteration only re-copies the SAME
+                    // pointer VALUE — wasteful (a fresh heap cell per
+                    // iteration) but harmless, since dereferencing ANY of
+                    // those cells still reaches the ONE shared pointee. For a
+                    // value-inside `#no_copy` `#share` type (Plan 248 wave 3
+                    // — `AtomicInt` etc. now hold their state INLINE, no
+                    // indirection) `*bv = counter` COPIES THE CURRENT VALUE —
+                    // every iteration silently starts a BRAND NEW,
+                    // independent counter at whatever `counter` (never
+                    // written back from any box) currently reads, and every
+                    // earlier iteration's fibers end up mutating an orphaned,
+                    // no-longer-referenced box. `runtime.drain_orphans()` +
+                    // read-after only ever observes the LAST iteration's
+                    // fresh, near-zero box — found via `standalone/
+                    // m240_detach_box_while_loop_read_after.nv`'s value-
+                    // checked asserts going from `n == 3`/`n == 6` to wrong
+                    // numbers once `AtomicInt` moved off the pointer-newtype
+                    // shape (byte-identical C position/shape either way —
+                    // this bug always existed in the GENERATED C, masked
+                    // purely by the old representation's copy-is-cheap-alias
+                    // property, same class as the `compare_exchange`-through-
+                    // `callnorm.rs`-hoist bug found earlier in this wave).
+                    // Fix: guard the alloc+copy so it runs at most ONCE per
+                    // enclosing-function CALL (the hoisted declaration is a
+                    // plain C local, freshly `NULL` on every fresh stack
+                    // frame) — every LATER iteration (and every OTHER
+                    // `detach{}` site sharing this box via the `var_boxed`
+                    // reuse branch above) reuses the SAME heap cell, matching
+                    // the pointer-kind behavior exactly and restoring correct
+                    // cross-iteration/cross-site aggregation for value-inside
+                    // types without changing anything for pointer-kind ones.
                     self.hoist_box_decl(ty, &bv);
+                    self.line(&format!("if (!{bv}) {{", bv = bv));
+                    self.indent += 1;
                     self.line(&format!(
                         "{bv} = ({ty}*)nova_alloc(sizeof({ty}));",
                         ty = ty, bv = bv));
                     self.line(&format!("*{bv} = {access_outer};",
                         bv = bv, access_outer = access_outer));
+                    self.indent -= 1;
+                    self.line("}");
                     self.var_boxed.insert(cap.clone(), bv.clone());
                     bv
                 };
@@ -464,13 +509,20 @@ impl CEmitter {
     /// not happen in practice, every `detach{}`-containing body routes
     /// through `emit_block_stmts` first) falls back to the old inline
     /// declare-at-call-site behavior.
+    ///
+    /// Plan 248 (wave 3 fallout): initialized to `NULL` — the call site's
+    /// alloc+copy is now guarded by `if (!bv)` (see the capture-setup loop
+    /// above) so a re-executed (looped) `detach{}` position boxes AT MOST
+    /// ONCE per enclosing-function call, instead of re-allocating (and, for
+    /// value-inside captured types, re-SNAPSHOTTING) a fresh cell on every
+    /// iteration.
     fn hoist_box_decl(&mut self, ty: &str, bv: &str) {
         if let Some((offset, indent)) = self.detach_box_hoist {
-            let text = format!("{}{}* {};\n", "    ".repeat(indent), ty, bv);
+            let text = format!("{}{}* {} = NULL;\n", "    ".repeat(indent), ty, bv);
             self.out.insert_str(offset, &text);
             self.detach_box_hoist = Some((offset + text.len(), indent));
         } else {
-            self.line(&format!("{}* {};", ty, bv));
+            self.line(&format!("{}* {} = NULL;", ty, bv));
         }
     }
 }
