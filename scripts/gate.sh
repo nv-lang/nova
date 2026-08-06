@@ -108,6 +108,13 @@ TFC_BASE="$(git -C "$ROOT" rev-parse --verify -q HEAD~1 2>/dev/null || true)"
 bash "$ROOT/scripts/guards/check-test-fixture-coverage.sh" "$ROOT" "$TFC_BASE" || fail "test-fixture-coverage (новый E_*/W_*-код без neg-фикстуры, ИЛИ строка реестра 221.1 закрыта без .nv-ссылки — см. вывод выше; WARN про registry/backlog-расхождение НЕ роняет гейт)"
 bash "$ROOT/scripts/guards/selftest/test-check-test-fixture-coverage.sh" || fail "test-fixture-coverage selftest"
 
+echo "== gate: ci-status (внешний авторитетный гейт — GitHub Actions; реестр 221.1 №395/№401/№402) =="
+# НЕ блокирующий: внешний сервис бывает недоступен, и падение сети не должно
+# ронять локальный гейт. Блокирует отправку хук `pre-push` (--strict).
+# Смысл шага — чтобы «локально зелено» и «снаружи красно» не могли разойтись
+# молча, как расходились сутки 2026-08-05/06 (24 слияния подряд без взгляда в CI).
+bash "$ROOT/scripts/guards/check-ci-status.sh" || true
+
 for st in "$ROOT"/scripts/guards/selftest/test-*.sh; do
     [ -e "$st" ] || continue
     bash "$st" || fail "самотест стража: $(basename "$st")"
