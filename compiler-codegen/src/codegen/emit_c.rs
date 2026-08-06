@@ -30759,7 +30759,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // (например let x Option[str] = None без hint).
                         // TODO(62.B): bidirectional inference из usage.
                         "NovaOpt_nova_int".into()
-                    } else {
+                    } else if Self::is_value_struct_ptr(&inferred) && self.is_fluent_value_ptr_for_target(&decl.value, inferred.trim_end_matches('*')) { inferred.trim_end_matches('*').to_string() /* [реестр №36] unannotated let from fluent `-> @` setter: decay ptr->value */ } else {
                         inferred
                     }
                 };
@@ -37732,10 +37732,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // the wildcard emit_expr(func) → plain field access `(obj->method)`,
         // silently dropping type_args. Stash the type_args, recurse on the Member
         // base so the normal Member dispatch fires, and let resolve_method_level_subst
-        // seed the slots. Save/restore mirrors current_type_subst idiom. Only fires
-        // for base:Member — the TurboFish{base:Ident} free-fn form is handled downstream.
+        // seed the slots. Save/restore mirrors current_type_subst idiom. Also fires
+        // for base:Path(len2) (№126 static own-generic Path-turbofish, parser ~9115).
         if let ExprKind::TurboFish { base, type_args } = &func.kind {
-            if matches!(base.kind, ExprKind::Member { .. }) {
+            if matches!(base.kind, ExprKind::Member { .. }) || matches!(&base.kind, ExprKind::Path(p) if p.len() == 2) {
                 let saved_tf = std::mem::replace(
                     &mut self.current_method_turbofish, type_args.clone());
                 let r = self.emit_call(base, args, call_id);
@@ -56510,6 +56510,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     && !self.generic_types.contains(tok)
                     && !self.opaque_ffi_types.contains(tok)
                     && !self.is_concrete_primitive_token(tok)
+                    && !self.effect_schemas.contains_key(tok) // [реестр №39] effect types are concrete, not placeholders
                 {
                     return true;
                 }

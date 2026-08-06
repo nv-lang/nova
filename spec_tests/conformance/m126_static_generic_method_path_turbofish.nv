@@ -1,0 +1,56 @@
+// Реестр 221.1 №126 (`[M-static-generic-method-path-call-p67-panic]`) —
+// a STATIC method's OWN generic, called via the Path-turbofish form
+// `Type.method[T](args)` (brackets on the METHOD name, not the receiver
+// type's own carrier — the type itself has NO generics here). Before the
+// fix this crashed UNCONDITIONALLY with `nova: internal error ...
+// [P67-LEGACY] Path call return type unknown for method=... — checker must
+// annotate`: the checker had no producer for this exact AST/generic-axis
+// combination (`resolve_instance_method_return_arity` is instance-receiver-
+// only by design; the sibling `resolve_generic_static_return` covers ONLY a
+// turbofish on the receiver type's own carrier generics, `Type[T].ctor()`
+// — a structurally different shape). A SECOND, independent gap lived in
+// codegen: `Type.method[T](...)` on a PascalCase type name parses to
+// `TurboFish{base:Path([Type,method])}` (not `Member`) — the pre-existing
+// `[M-91.1-method-turbofish-dispatch]` recursion only matched a `Member`
+// base, so even with the checker fixed the call-site emitted an unmangled,
+// never-defined `Type_method` symbol (link error) instead of dispatching
+// through the mono machinery.
+// Part of the SINGLE `spec_tests.conformance` folder-module.
+module spec_tests.conformance
+
+type M126Utils value {
+    marker int
+}
+
+// Implicit-Unit return (no `->`) — the ORIGINAL probe shape.
+fn M126Utils.show[T](x T) {
+    assert(x == x) // sanity: body actually runs with the right T
+}
+
+// Explicit generic return (`-> T`) — exercises the substituted-return path
+// of the same producer (not just the implicit-Unit shortcut).
+fn M126Utils.echo[T](x T) -> ro T => x
+
+test "static method's OWN generic via Path-turbofish, implicit Unit return (№126)" {
+    M126Utils.show[int](42)
+    M126Utils.show[str]("hi")
+}
+
+test "static method's OWN generic via Path-turbofish, explicit -> T return (№126)" {
+    ro n = M126Utils.echo[int](7)
+    assert(n == 7)
+    ro s = M126Utils.echo[str]("ok")
+    assert(s == "ok")
+}
+
+// Sibling working form (instance receiver, `x.method[T](args)`) stays a
+// DIFFERENT AST shape (`TurboFish{base:Member}` with a VALUE obj) —
+// unaffected by this fix, included as a same-file regression guard that the
+// static-Path fix didn't perturb the pre-existing instance-turbofish path.
+fn M126Utils @tag[T](x T) -> ro T => x
+
+test "instance method's OWN generic via Member-turbofish, unaffected (№126 regression guard)" {
+    ro u = M126Utils { marker: 0 }
+    ro got = u.tag[int](9)
+    assert(got == 9)
+}

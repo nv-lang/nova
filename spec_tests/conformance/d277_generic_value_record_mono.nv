@@ -74,3 +74,40 @@ test "self-referential nested generic-over-source: double map (D277 Stage 2)" {
     ro got = v.iter().map(|x| x + 1).map(|x| x * 10).collect()
     assert(got == [20, 30, 40])
 }
+
+// D277 Stage 3 (реестр 221.1 №39, pk2-fix): a generic value-record instantiated
+// by an EFFECT-typed parameter. `debt_mangled_has_nested_placeholder` (emit_c.rs)
+// checked the mangled-name token against `record_schemas`/`sum_schemas`/
+// `generic_types`/`opaque_ffi_types`/primitives to decide "still an unresolved
+// type-param" — but never against `effect_schemas`. Any effect-typed type-arg to
+// a generic `value` record therefore misread as an unresolved placeholder, and
+// `drain_generic_type_worklist`'s Stage-2 skip silently dropped the by-value mono
+// struct — "unknown type name NovaValue_<Name>____Nova_<Effect>_p" downstream.
+// Reproduces with ONE effect-typed instance already (no second instance needed
+// to trigger it — sузили диагноз пробой pk2, реестр записывал шире факта).
+type M39Handler[E] value { tag str }
+
+fn M39Handler[E].new(tag str) -> M39Handler[E] => { tag }
+
+type M39Db effect {
+    query(sql str) -> str
+}
+
+type M39Log effect {
+    write(msg str) -> ()
+}
+
+fn m39_use_db(h M39Handler[M39Db]) -> str => h.tag
+fn m39_use_log(h M39Handler[M39Log]) -> str => h.tag
+
+test "generic value-record instantiated by a single effect type-param (D277 Stage 3, №39)" {
+    ro h = M39Handler[M39Db].new("db")
+    assert(m39_use_db(h) == "db")
+}
+
+test "generic value-record instantiated by TWO different effect type-params in one CU (D277 Stage 3, №39)" {
+    ro hd = M39Handler[M39Db].new("db")
+    ro hl = M39Handler[M39Log].new("log")
+    assert(m39_use_db(hd) == "db")
+    assert(m39_use_log(hl) == "log")
+}
