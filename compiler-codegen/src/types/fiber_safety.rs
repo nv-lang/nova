@@ -1334,41 +1334,34 @@ pub fn run(module: &Module, resolved_callees: &HashMap<ExprId, Span>) -> HashMap
                     }
                 }
             }
-            // Ф.2 narrow refinement: a GENERIC fn whose body makes ZERO
-            // calls and ZERO touches (`T` is purely inert data — cast/
-            // copied, never itself the target of a dispatched operation)
-            // cannot do anything unsafe regardless of what `T` is
-            // instantiated to — measured live gap: `fn[T Ints] T
-            // @to_millis() -> Duration => { nanos: (@ as i64)*1_000_000 }`
-            // (`std/src/time/duration/core.nv`) was blanket
-            // Undecided("generic") despite being a pure arithmetic leaf,
-            // and this shape is pervasive in the real corpus (`Duration`'s
-            // whole `to_*` conversion family). Deliberately NARROW — a
-            // generic fn that calls ANYTHING (even something itself
-            // `Safe`) stays Undecided: bound-sensitive call safety is NOT
-            // implemented here (D446 Ф.1 report §6 pt.4 — explicitly
-            // deferred, "work of the first wave after measurement"); this
-            // only stops over-rejecting the total-leaf case.
-            if reason == "generic" {
-                let facts = analyze_fn_body(fd, &ctx);
-                if facts.touches.is_empty() && facts.local_callees.is_empty() && !facts.cross_module_callee {
-                    final_tag.insert(
-                        span,
-                        FnSafety {
-                            tag: Tag::Safe,
-                            reason: "generic_leaf_no_op",
-                            detail: None,
-                            detail_span: None,
-                        },
-                    );
-                    continue;
-                }
+            // Приёмка интегратора 2026-08-06 (второй раунд): a GENERIC fn
+            // is now the SAME fixed-point candidate as an ordinary one —
+            // "Safe iff every RESOLVED callee is Safe" IS the fixed point
+            // this whole graph already computes; the earlier "zero calls"
+            // leaf rule was an unnecessary special case of exactly that
+            // (owner's call — "не выдумывай спецслучай"). Falls through to
+            // the shared `analyze_fn_body`/`facts_to_intra` path below,
+            // UNCHANGED from the non-generic case; `candidates`/`local_
+            // callees_of` do not know or care that a span came from a
+            // "generic" signature. The residual, UNCLOSED risk this
+            // accepts (same one the plan's own bound-sensitivity deferral
+            // already named, D446 Ф.1 report §6 pt.4): a call dispatched
+            // THROUGH the generic parameter's own protocol bound (`t.
+            // display()` for `fn[T Printable]`) is invisible to `resolved_
+            // callees` the SAME way any unresolvable indirect target is —
+            // such a fn can settle Safe without that call ever being
+            // counted. This is not NEW exposure specific to generics
+            // (protocol/existential dispatch is already invisible to this
+            // graph for non-generic code too); it is the owner-accepted
+            // cost of closing the FAR more common "generic leaf/plumbing
+            // fn calling only concrete, resolvable things" case.
+            if reason != "generic" {
+                final_tag.insert(
+                    span,
+                    FnSafety { tag: Tag::Undecided, reason, detail: None, detail_span: None },
+                );
+                continue;
             }
-            final_tag.insert(
-                span,
-                FnSafety { tag: Tag::Undecided, reason, detail: None, detail_span: None },
-            );
-            continue;
         }
         let facts = analyze_fn_body(fd, &ctx);
         local_callees_of.insert(span, facts.local_callees.clone());
@@ -2326,6 +2319,24 @@ fn check_resolved_target(
         // `spawn` body (`std/src/net/byte_surface_test.nv`) was blanket
         // `E_FIBER_UNSAFE_CALL` even though nothing here is shared at all.
         Some(fs) if local_receiver && fs.reason == "unguarded_mutation" => {}
+        // Приёмка интегратора 2026-08-06 (следующий раунд): a DIRECT call
+        // whose chain bottoms out in `fn_param_in_sig` (a fn/method that
+        // ITSELF takes a function-typed parameter — an HOF wrapper like
+        // `middleware(f fn(..)->..)`) is the SAME "unprovable without a
+        // parameter safety marker" gap as `E_FIBER_INDIRECT_CALL`, just
+        // reached by a DIRECT call to the wrapper instead of an indirect
+        // call THROUGH the parameter — the wrapper's own body typically
+        // just stores/returns the closure (safe plumbing), the actual
+        // unprovable step is whatever LATER invokes it, which is exactly
+        // D446 §4's territory. Folded into the SAME flag/bucket — per-file
+        // migration here would just be working around the enforcement
+        // (nothing to fix in `middleware` itself), which the plan
+        // explicitly does not want. `NOVA_FIBER_INDIRECT` gates this exactly
+        // like the indirect-call case.
+        Some(fs)
+            if fs.tag != Tag::Safe
+                && chain_terminal_reason(target, tags) == "fn_param_in_sig"
+                && !indirect_enforcement_enabled() => {}
         None => {
             let name = fn_index.get(&target).map(|fd| render_fn_name(fd)).unwrap_or_default();
             errors.push(crate::diag::Diagnostic::new(
