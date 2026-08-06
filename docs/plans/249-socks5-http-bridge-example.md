@@ -31,6 +31,8 @@ RFC 1928 CONNECT + RFC 1929 auth) + `src/socks5_test.nv` (22 байтовых
   (`type Leg consume { consume r TcpReadHalf; consume w TcpWriteHalf }`), и ровно она бьётся
   в открытый codegen-баг `[M-consume-param-spawn-defer-active]` (`_defer_N_M_active`
   undeclared) — репро сохранено: `docs/plans/repro/m_consume_param_spawn_defer_active_tcp.nv`.
+  **ТРЕТИЙ блокер Ф.2, функциональный (№390, К1, найден окном p249 2026-08-06):** ВТОРОЙ `TcpStream.read()` после ЧАСТИЧНОГО чтения и close пира виснет навсегда, `supervised(timeout:)` его НЕ будит (репро `docs/plans/repro/p249_second_read_after_partial_hangs.nv`). Для МОСТА это не частный случай, а основная работа: `pipe_bidirectional` только и делает, что продолжает чтение после частичных данных — т.е. даже при закрытых №378/№379 мост будет вешать файберы на каждом закрытом пире. Ф.2 не сдавать, пока №390 открыт.
+
   **Причина уточнена 2026-08-06 (поправки владельца): дело не в «языку нечем выразить», а в
   ДВУХ отложенных пунктах, оба названы самой спекой:**
   1. **`[M-73.1-destructure]` (221.1 №378) — головной.** `consume (a, b) = …` и
