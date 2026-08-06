@@ -20,9 +20,12 @@ type Linear consume { mut n int }
 
 fn Linear.new() -> Self => { n: 0 }
 
+// D133: a consume-type needs at least one consume-method; D409: `-> @`
+// returns the receiver automatically — no explicit `@` in the body.
+fn Linear consume @finish() -> int => @n
+
 fn Linear mut @bump() -> @ {
     @n = @n + 1
-    @
 }
 
 fn Linear @value() -> int => @n
@@ -49,9 +52,10 @@ test "spawn calling a pure generic-leaf arithmetic method — легально (
 test "spawn mutating a `consume`-typed resource created fresh inside the fiber — легально (D446 brick 2, ownership)" {
     supervised {
         spawn {
-            mut lin = Linear.new()
+            consume lin = Linear.new()
             lin.bump()
             assert(lin.value() == 1)
+            ro _ = lin.finish()
         }
     }
 }
