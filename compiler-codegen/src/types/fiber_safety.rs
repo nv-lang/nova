@@ -3254,60 +3254,97 @@ fn tag_from_facts_and_callees(
 /// precise — a shadowed name in an inner block is over-approximated as
 /// "still capturable", the safe direction, same precedent as `collect_
 /// pattern_names`'s own doc).
-fn collect_capturable_mut(fd: &FnDecl) -> (HashSet<String>, HashMap<String, TypeRef>) {
+fn collect_capturable_mut(fd: &FnDecl, resolved_types: &HashMap<ExprId, super::ResolvedType>) -> (HashSet<String>, HashMap<String, TypeRef>) {
     let mut names: HashSet<String> = fd.params.iter().filter(|p| p.is_mut).map(|p| p.name.clone()).collect();
     let mut types: HashMap<String, TypeRef> = fd.params.iter().map(|p| (p.name.clone(), p.ty.clone())).collect();
     match &fd.body {
-        FnBody::Block(b) => ccm_walk_block(b, &mut names, &mut types),
-        FnBody::Expr(e) => ccm_walk_expr(e, &mut names, &mut types),
+        FnBody::Block(b) => ccm_walk_block(b, &mut names, &mut types, resolved_types),
+        FnBody::Expr(e) => ccm_walk_expr(e, &mut names, &mut types, resolved_types),
         FnBody::External => {}
     }
     (names, types)
 }
 
-fn ccm_note_let(d: &crate::ast::LetDecl, names: &mut HashSet<String>, types: &mut HashMap<String, TypeRef>) {
+fn ccm_note_let(d: &crate::ast::LetDecl, names: &mut HashSet<String>, types: &mut HashMap<String, TypeRef>, resolved_types: &HashMap<ExprId, super::ResolvedType>) {
     if d.mutable {
         if let Pattern::Ident { name, .. } = &d.pattern {
             names.insert(name.clone());
             if let Some(t) = &d.ty {
                 types.insert(name.clone(), t.clone());
+            } else if let Some(named) = resolved_type_named_ref(resolved_types.get(&d.value.id)) {
+                // Приёмка Ф.3 (измеренный ложняк, `PROGRESS-p238-f3.md` §5):
+                // idiomatic Nova almost never writes `mut x T = expr` with an
+                // EXPLICIT annotation — the type is inferred from the RHS
+                // (`mut counter = AtomicInt.new(0)`). Without this, EVERY
+                // untyped `mut` local was invisible to `touch_share_ok`'s type
+                // lookup (`ctx.param_types.get(name)` → `None` → NOT share-ok
+                // → forced `Tag::Unsafe`) even when its inferred type is
+                // `#share`-verified — measured live gap:
+                // `standalone/mut_capture_transitive_atomic_control_test.nv`'s
+                // OWN control case (a closure closing over `mut counter =
+                // AtomicInt.new(0)`, passed BY VALUE into a spawn-invoking
+                // parameter — the exact legal shape the fixture's own name
+                // promises) went from silently-legal to a false `E_FIBER_
+                // UNSAFE_ARG` before this fix. Sourced from the SAME checker
+                // channel `resolved_callees` already is (§0/196) —
+                // `resolved_types_buf`, keyed by the `let`'s OWN value
+                // expression id (`d.value.id`), not a re-derive.
+                types.insert(name.clone(), named);
             }
         }
     }
 }
 
-fn ccm_walk_block(b: &Block, names: &mut HashSet<String>, types: &mut HashMap<String, TypeRef>) {
-    for s in &b.stmts {
-        ccm_walk_stmt(s, names, types);
-    }
-    if let Some(t) = &b.trailing {
-        ccm_walk_expr(t, names, types);
+/// Extracts a synthetic `TypeRef::Named{path: [name], ..}` from a resolved
+/// type's `Named` variant (peeling `Readonly`, mirroring `peel_view`) — the
+/// SAME synthetic-carrier shape [`touch_share_ok`] already builds for
+/// `PlaceRoot::SelfBare`. `None` for every other `ResolvedType` shape
+/// (scalars, generics, ...) — those either need no `#share` check (`is_mut_
+/// alias_safe`'s own primitive handling) or are genuinely out of reach here;
+/// declining is the safe direction (falls back to the pre-existing
+/// "type unknown ⇒ not share-ok" default, never a false Safe).
+fn resolved_type_named_ref(rt: Option<&super::ResolvedType>) -> Option<TypeRef> {
+    match rt? {
+        super::ResolvedType::Readonly(inner) => resolved_type_named_ref(Some(inner)),
+        super::ResolvedType::Named { name, .. } => {
+            Some(TypeRef::Named { path: vec![name.clone()], generics: vec![], span: Span::default() })
+        }
+        _ => None,
     }
 }
 
-fn ccm_walk_stmt(s: &Stmt, names: &mut HashSet<String>, types: &mut HashMap<String, TypeRef>) {
+fn ccm_walk_block(b: &Block, names: &mut HashSet<String>, types: &mut HashMap<String, TypeRef>, resolved_types: &HashMap<ExprId, super::ResolvedType>) {
+    for s in &b.stmts {
+        ccm_walk_stmt(s, names, types, resolved_types);
+    }
+    if let Some(t) = &b.trailing {
+        ccm_walk_expr(t, names, types, resolved_types);
+    }
+}
+
+fn ccm_walk_stmt(s: &Stmt, names: &mut HashSet<String>, types: &mut HashMap<String, TypeRef>, resolved_types: &HashMap<ExprId, super::ResolvedType>) {
     match s {
         Stmt::Let(d) => {
-            ccm_walk_expr(&d.value, names, types);
-            ccm_note_let(d, names, types);
+            ccm_walk_expr(&d.value, names, types, resolved_types);
+            ccm_note_let(d, names, types, resolved_types);
         }
-        Stmt::Expr(e) => ccm_walk_expr(e, names, types),
+        Stmt::Expr(e) => ccm_walk_expr(e, names, types, resolved_types),
         Stmt::Assign { target, value, .. } => {
-            ccm_walk_expr(target, names, types);
-            ccm_walk_expr(value, names, types);
+            ccm_walk_expr(target, names, types, resolved_types);
+            ccm_walk_expr(value, names, types, resolved_types);
         }
         Stmt::TupleAssign { lhs, rhs, .. } => {
             for e in lhs {
-                ccm_walk_expr(e, names, types);
+                ccm_walk_expr(e, names, types, resolved_types);
             }
             for e in rhs {
-                ccm_walk_expr(e, names, types);
+                ccm_walk_expr(e, names, types, resolved_types);
             }
         }
-        Stmt::Defer { body, .. } => ccm_walk_expr(body, names, types),
+        Stmt::Defer { body, .. } => ccm_walk_expr(body, names, types, resolved_types),
         Stmt::ConsumeScope { init, body, .. } => {
-            ccm_walk_expr(init, names, types);
-            ccm_walk_block(body, names, types);
+            ccm_walk_expr(init, names, types, resolved_types);
+            ccm_walk_block(body, names, types, resolved_types);
         }
         _ => {}
     }
@@ -3316,57 +3353,57 @@ fn ccm_walk_stmt(s: &Stmt, names: &mut HashSet<String>, types: &mut HashMap<Stri
 /// Only descends into constructs that share `fd`'s OWN lexical scope
 /// (control flow); a closure literal's body is its own scope, deliberately
 /// NOT walked (see [`collect_capturable_mut`]'s doc).
-fn ccm_walk_expr(e: &Expr, names: &mut HashSet<String>, types: &mut HashMap<String, TypeRef>) {
+fn ccm_walk_expr(e: &Expr, names: &mut HashSet<String>, types: &mut HashMap<String, TypeRef>, resolved_types: &HashMap<ExprId, super::ResolvedType>) {
     match &e.kind {
-        ExprKind::Block(b) => ccm_walk_block(b, names, types),
+        ExprKind::Block(b) => ccm_walk_block(b, names, types, resolved_types),
         ExprKind::If { cond, then, else_ } => {
-            ccm_walk_expr(cond, names, types);
-            ccm_walk_block(then, names, types);
+            ccm_walk_expr(cond, names, types, resolved_types);
+            ccm_walk_block(then, names, types, resolved_types);
             match else_ {
-                Some(ElseBranch::Block(b)) => ccm_walk_block(b, names, types),
-                Some(ElseBranch::If(e2)) => ccm_walk_expr(e2, names, types),
+                Some(ElseBranch::Block(b)) => ccm_walk_block(b, names, types, resolved_types),
+                Some(ElseBranch::If(e2)) => ccm_walk_expr(e2, names, types, resolved_types),
                 None => {}
             }
         }
         ExprKind::IfLet { scrutinee, then, else_, .. } => {
-            ccm_walk_expr(scrutinee, names, types);
-            ccm_walk_block(then, names, types);
+            ccm_walk_expr(scrutinee, names, types, resolved_types);
+            ccm_walk_block(then, names, types, resolved_types);
             match else_ {
-                Some(ElseBranch::Block(b)) => ccm_walk_block(b, names, types),
-                Some(ElseBranch::If(e2)) => ccm_walk_expr(e2, names, types),
+                Some(ElseBranch::Block(b)) => ccm_walk_block(b, names, types, resolved_types),
+                Some(ElseBranch::If(e2)) => ccm_walk_expr(e2, names, types, resolved_types),
                 None => {}
             }
         }
         ExprKind::Match { scrutinee, arms } => {
-            ccm_walk_expr(scrutinee, names, types);
+            ccm_walk_expr(scrutinee, names, types, resolved_types);
             for a in arms {
                 match &a.body {
-                    MatchArmBody::Expr(be) => ccm_walk_expr(be, names, types),
-                    MatchArmBody::Block(bb) => ccm_walk_block(bb, names, types),
+                    MatchArmBody::Expr(be) => ccm_walk_expr(be, names, types, resolved_types),
+                    MatchArmBody::Block(bb) => ccm_walk_block(bb, names, types, resolved_types),
                 }
             }
         }
         ExprKind::For { iter, body, .. } => {
-            ccm_walk_expr(iter, names, types);
-            ccm_walk_block(body, names, types);
+            ccm_walk_expr(iter, names, types, resolved_types);
+            ccm_walk_block(body, names, types, resolved_types);
         }
         ExprKind::While { cond, body, .. } => {
-            ccm_walk_expr(cond, names, types);
-            ccm_walk_block(body, names, types);
+            ccm_walk_expr(cond, names, types, resolved_types);
+            ccm_walk_block(body, names, types, resolved_types);
         }
         ExprKind::WhileLet { scrutinee, body, .. } => {
-            ccm_walk_expr(scrutinee, names, types);
-            ccm_walk_block(body, names, types);
+            ccm_walk_expr(scrutinee, names, types, resolved_types);
+            ccm_walk_block(body, names, types, resolved_types);
         }
-        ExprKind::Loop { body, .. } => ccm_walk_block(body, names, types),
-        ExprKind::Supervised { body, .. } => ccm_walk_block(body, names, types),
-        ExprKind::Spawn(inner) => ccm_walk_expr(inner, names, types),
-        ExprKind::Detach(b) | ExprKind::Blocking(b) => ccm_walk_block(b, names, types),
-        ExprKind::ParallelFor { body, .. } => ccm_walk_block(body, names, types),
-        ExprKind::With { body, .. } => ccm_walk_block(body, names, types),
-        ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => ccm_walk_block(body, names, types),
+        ExprKind::Loop { body, .. } => ccm_walk_block(body, names, types, resolved_types),
+        ExprKind::Supervised { body, .. } => ccm_walk_block(body, names, types, resolved_types),
+        ExprKind::Spawn(inner) => ccm_walk_expr(inner, names, types, resolved_types),
+        ExprKind::Detach(b) | ExprKind::Blocking(b) => ccm_walk_block(b, names, types, resolved_types),
+        ExprKind::ParallelFor { body, .. } => ccm_walk_block(body, names, types, resolved_types),
+        ExprKind::With { body, .. } => ccm_walk_block(body, names, types, resolved_types),
+        ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => ccm_walk_block(body, names, types, resolved_types),
         ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) => {
-            ccm_walk_expr(inner, names, types)
+            ccm_walk_expr(inner, names, types, resolved_types)
         }
         _ => {}
         // Deliberately NOT recursed into: `Call` args (a `let` cannot
@@ -3524,6 +3561,7 @@ enum ClosureRef<'e> {
 pub fn check_param_passing(
     module: &Module,
     resolved_callees: &HashMap<ExprId, Span>,
+    resolved_types: &HashMap<ExprId, super::ResolvedType>,
     tags: &HashMap<Span, FnSafety>,
     required: &RequiredParams,
     errors: &mut Vec<crate::diag::Diagnostic>,
@@ -3537,7 +3575,7 @@ pub fn check_param_passing(
 
     let mut check_fn_body = |fd: &FnDecl, errors: &mut Vec<crate::diag::Diagnostic>| {
         let receiver_type = fd.receiver.as_ref().map(|r| r.type_name.as_str());
-        let (mut_params, param_types) = collect_capturable_mut(fd);
+        let (mut_params, param_types) = collect_capturable_mut(fd, resolved_types);
         let mut closure_lets: HashMap<String, &Expr> = HashMap::new();
         collect_closure_lets(fd, &mut closure_lets);
         let ctx = PassBCtx {
@@ -3567,7 +3605,7 @@ pub fn check_param_passing(
                 // literal defined inside it, same as any fn body.
                 let mut mut_params: HashSet<String> = HashSet::new();
                 let mut param_types: HashMap<String, TypeRef> = HashMap::new();
-                ccm_walk_block(&td.body, &mut mut_params, &mut param_types);
+                ccm_walk_block(&td.body, &mut mut_params, &mut param_types, resolved_types);
                 let mut closure_lets: HashMap<String, &Expr> = HashMap::new();
                 ccl_walk_block(&td.body, &mut closure_lets);
                 let ctx = PassBCtx {

@@ -1981,6 +1981,7 @@ fn check_module_impl(
     fiber_safety::check_param_passing(
         module,
         &type_check_ctx.resolved_callees.borrow(),
+        &type_check_ctx.resolved_types_buf.borrow(),
         &fiber_safety_tags,
         &fiber_required_params,
         &mut errors,
