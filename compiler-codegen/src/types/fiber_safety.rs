@@ -569,6 +569,27 @@ struct FnFacts {
 struct Touch {
     guarded: bool,
     share_ok: bool,
+    /// Приёмка интегратора 2026-08-06 (третий раунд) — distinguishes the
+    /// TWO shapes `place_root` can return, which are NOT the same danger:
+    /// `true` (`SelfBare`/`SelfField`) — the receiver's OWN persistent
+    /// state (the `MetricsRegistry`/`BucketTable` shape D446 exists to
+    /// catch: an object with a LIFETIME beyond one call, reachable from
+    /// many call sites/fibers — an unguarded touch here is a PROVEN race,
+    /// `Tag::Unsafe`). `false` (`MutParam`) — an ordinary `mut` PARAMETER
+    /// of a ONE-CALL scope; whether ITS specific argument at any given
+    /// call site is exclusively-owned (a fresh scratch buffer threaded
+    /// down a few hops) or genuinely shared is NOT decidable from the
+    /// callee's signature alone — "cannot prove either way", `Tag::
+    /// Undecided`, not a proven finding. Measured: `flush_out(mut tcp
+    /// TcpStream, .., mut scratch []u8)` touching `scratch` — a `mut`
+    /// PARAMETER, not `@` — was blanket `Tag::Unsafe` alongside genuine
+    /// `@`-field races, collapsing two different confidence levels into
+    /// one.
+    is_self: bool,
+}
+
+fn place_root_is_self(root: &PlaceRoot) -> bool {
+    matches!(root, PlaceRoot::SelfBare | PlaceRoot::SelfField(_))
 }
 
 struct PassBCtx<'a> {
@@ -709,6 +730,7 @@ fn pb_walk_stmt(s: &Stmt, ctx: &PassBCtx, guards: &mut Vec<String>, facts: &mut 
                 facts.touches.push(Touch {
                     guarded: !guards.is_empty(),
                     share_ok: touch_share_ok(&root, ctx),
+                    is_self: place_root_is_self(&root),
                 });
             } else {
                 pb_walk_expr(target, ctx, guards, facts);
@@ -723,6 +745,7 @@ fn pb_walk_stmt(s: &Stmt, ctx: &PassBCtx, guards: &mut Vec<String>, facts: &mut 
                     facts.touches.push(Touch {
                         guarded: !guards.is_empty(),
                         share_ok: touch_share_ok(&root, ctx),
+                        is_self: place_root_is_self(&root),
                     });
                 } else {
                     pb_walk_expr(e, ctx, guards, facts);
@@ -877,6 +900,7 @@ fn pb_walk_expr(e: &Expr, ctx: &PassBCtx, guards: &mut Vec<String>, facts: &mut 
                         facts.touches.push(Touch {
                             guarded: !guards.is_empty(),
                             share_ok: if guards.is_empty() { touch_share_ok(&root, ctx) } else { false },
+                            is_self: place_root_is_self(&root),
                         });
                     }
                     // Приёмка интегратора 2026-08-06 — measured live gap:
@@ -1107,10 +1131,25 @@ enum Intra {
 }
 
 fn facts_to_intra(facts: &FnFacts) -> Intra {
-    if facts.touches.iter().any(|t| !t.guarded && !t.share_ok) {
+    // Приёмка интегратора 2026-08-06 (третий раунд): a `@`/self-rooted
+    // unguarded touch is a PROVEN finding (the receiver is persistent,
+    // reachable-again state — `Tag::Unsafe`, always enforced). A `mut`-
+    // PARAMETER-rooted one is the model's OWN limit — whether THIS
+    // argument is exclusively-owned isn't decidable from the callee's
+    // signature (`Tag::Undecided`, gated). Self-touches checked FIRST —
+    // if a fn has BOTH kinds, the proven finding wins (worse tag).
+    if facts.touches.iter().any(|t| !t.guarded && !t.share_ok && t.is_self) {
         return Intra::Fixed(FnSafety {
             tag: Tag::Unsafe,
             reason: "unguarded_mutation",
+            detail: None,
+            detail_span: None,
+        });
+    }
+    if facts.touches.iter().any(|t| !t.guarded && !t.share_ok && !t.is_self) {
+        return Intra::Fixed(FnSafety {
+            tag: Tag::Undecided,
+            reason: "unguarded_mut_param",
             detail: None,
             detail_span: None,
         });
@@ -1947,6 +1986,20 @@ fn collect_seed_calls_expr(e: &Expr, out: &mut Vec<SeedCall>, locals: &mut HashS
                     ExprKind::Ident(name) => locals.contains(name),
                     _ => false,
                 },
+                // Приёмка интегратора 2026-08-06 (третий раунд) — companion
+                // for a FREE-function call whose value-bearing arguments are
+                // ALL seed-local (`write_response_keepalive(shs, resp)`
+                // where both `shs`/`resp` are `let`-bound in this same
+                // spawn body): the exact same "fresh, non-escaping" proof,
+                // just for a free fn instead of a method receiver. `true`
+                // only when EVERY argument is a bare local `Ident` (no
+                // partial credit — a mixed call with even one non-local
+                // arg stays unexempted, conservative).
+                ExprKind::Ident(_) => !args.is_empty()
+                    && args.iter().all(|a| match &a.expr().kind {
+                        ExprKind::Ident(name) => locals.contains(name),
+                        _ => false,
+                    }),
                 _ => false,
             };
             out.push(SeedCall {
@@ -2144,7 +2197,18 @@ fn collect_seed_calls_stmt(s: &Stmt, out: &mut Vec<SeedCall>, locals: &mut HashS
         }
         Stmt::Throw { value, .. } => collect_seed_calls_expr(value, out, locals),
         Stmt::Defer { body, .. } => collect_seed_calls_expr(body, out, locals),
-        Stmt::ConsumeScope { init, body, .. } => {
+        Stmt::ConsumeScope { binding, init, body, .. } => {
+            // Приёмка интегратора 2026-08-06 (третий раунд): `spawn consume
+            // shs = expr { body }` (D415 §4 move-capture — desugars to a
+            // `ConsumeScope` wrapping the spawn body itself, measured live:
+            // `nova-polaris/src/net/serve.nv`'s `spawn consume shs = s.
+            // share() { .. write_response_keepalive(shs, resp) .. }`) binds
+            // `binding` EVEN MORE safely-local than an ordinary `let` — an
+            // explicit move guarantees single ownership by construction
+            // (D415's whole point). Register it the SAME as a `Let`-bound
+            // name so the free-fn `local_receiver` check (`collect_seed_
+            // calls_expr`'s `ExprKind::Ident` arm) recognises it.
+            locals.insert(binding.clone());
             collect_seed_calls_expr(init, out, locals);
             collect_seed_calls_block(body, out, locals);
         }
@@ -2301,43 +2365,81 @@ fn check_resolved_target(
     fn_index: &HashMap<Span, &FnDecl>,
     errors: &mut Vec<crate::diag::Diagnostic>,
 ) {
+    // Приёмка интегратора 2026-08-06 (третий раунд) — the governing
+    // principle, stated once here rather than as a pile of per-reason
+    // special cases: the tag ITSELF already draws the right line.
+    //
+    //   `Tag::Unsafe`     — PROVEN unsafe: an actual unguarded touch
+    //                       (`unguarded_mutation`), or a call chain that
+    //                       transitively REACHES one (`calls_unsafe`).
+    //                       Always enforced, flag or no flag — this is a
+    //                       real, demonstrated race, not a limit of the
+    //                       model.
+    //   `Tag::Undecided`  — the MODEL'S limit, not a finding about the
+    //                       code: `no_body`/`extern` (opaque FFI),
+    //                       `fn_param_in_sig` (HOF wrapper — D446 §4's
+    //                       "непрямые вызовы" territory, just reached by a
+    //                       direct call to the wrapper), a generic fn whose
+    //                       callee resolution hit a protocol-dispatch wall
+    //                       (`calls_undecided`), `cross_module_callee`, or
+    //                       (the `None`-tag branch below) a target this
+    //                       compile unit never computed a tag for at all.
+    //                       ALL of these say "cannot prove EITHER way", not
+    //                       "proven unsafe" — gated behind `NOVA_FIBER_
+    //                       INDIRECT`, the SAME bucket as an unresolved
+    //                       indirect call (D446 §4), because they need the
+    //                       SAME missing thing: a type-level safety marker
+    //                       (or, for `cross_module_callee`, a cross-unit
+    //                       channel) neither of which exists yet.
+    //
+    // `local_receiver`'s exemption (below) is a THIRD thing — not a gate
+    // on an already-Unsafe/Undecided verdict, but proof the touch was
+    // never actually unsafe in the first place (a fresh, non-escaping
+    // receiver) — stays unconditional, flag-independent, same as before.
     match tags.get(&target) {
-        // Приёмка интегратора 2026-08-06: `local_receiver` — this call's
-        // receiver is a name bound by a `Let` WITHIN this seed body (never
-        // captured). If the ENTIRE reason `target` isn't `Safe` is its own
-        // DIRECT self-touch (`unguarded_mutation` — reached its own `@`/
-        // mut-param, not a further `calls_unsafe`/`calls_undecided` hop
-        // into something else), that self-touch is happening on a
-        // receiver PROVABLY local to this fiber — exactly as safe as this
-        // seed body mutating it directly would be (Pass B's OWN "local mut
-        // accumulator is not a touch" rule, `record_call_edge`'s twin fix,
-        // applied here at the seed point where that fix could not reach).
-        // Deliberately narrow: does NOT fire when the unsafety comes from
-        // something DEEPER (`calls_unsafe`/`calls_undecided`) — that risk
-        // exists regardless of receiver locality. Measured live gap:
+        // `local_receiver` — this call's receiver is a name bound by a
+        // `Let` WITHIN this seed body (never captured). If the ENTIRE
+        // reason `target` isn't `Safe` is its own DIRECT self-touch
+        // (`unguarded_mutation` — reached its own `@`/mut-param, not a
+        // further `calls_unsafe`/`calls_undecided` hop into something
+        // else), that self-touch is happening on a receiver PROVABLY local
+        // to this fiber — exactly as safe as this seed body mutating it
+        // directly would be (Pass B's OWN "local mut accumulator is not a
+        // touch" rule, `record_call_edge`'s twin fix, applied here at the
+        // seed point where that fix could not reach). Measured live gap:
         // `Vec.resize`/`.push`/... on a freshly-`let`-bound local inside a
         // `spawn` body (`std/src/net/byte_surface_test.nv`) was blanket
         // `E_FIBER_UNSAFE_CALL` even though nothing here is shared at all.
-        Some(fs) if local_receiver && fs.reason == "unguarded_mutation" => {}
-        // Приёмка интегратора 2026-08-06 (следующий раунд): a DIRECT call
-        // whose chain bottoms out in `fn_param_in_sig` (a fn/method that
-        // ITSELF takes a function-typed parameter — an HOF wrapper like
-        // `middleware(f fn(..)->..)`) is the SAME "unprovable without a
-        // parameter safety marker" gap as `E_FIBER_INDIRECT_CALL`, just
-        // reached by a DIRECT call to the wrapper instead of an indirect
-        // call THROUGH the parameter — the wrapper's own body typically
-        // just stores/returns the closure (safe plumbing), the actual
-        // unprovable step is whatever LATER invokes it, which is exactly
-        // D446 §4's territory. Folded into the SAME flag/bucket — per-file
-        // migration here would just be working around the enforcement
-        // (nothing to fix in `middleware` itself), which the plan
-        // explicitly does not want. `NOVA_FIBER_INDIRECT` gates this exactly
-        // like the indirect-call case.
-        Some(fs)
-            if fs.tag != Tag::Safe
-                && chain_terminal_reason(target, tags) == "fn_param_in_sig"
-                && !indirect_enforcement_enabled() => {}
+        // Приёмка интегратора 2026-08-06 (третий раунд, финальная зачистка):
+        // broadened from "only a DIRECT self-touch" to "any `Tag::Unsafe`
+        // verdict" — measured live gap: `resp.header(..)` (`resp` fresh/
+        // `let`-bound in the seed) calling `ServerResponse.header`, whose
+        // OWN reason settles as `calls_unsafe` (NOT a direct touch — it
+        // transitively reaches `HeaderMap.insert`'s self-touch on `resp`'s
+        // OWN `@headers` field), was still rejected under the narrower
+        // rule. Since the Ф.2 self/mut-param split (this same round) means
+        // `Tag::Unsafe` is now NEVER produced by a mut-param touch (only by
+        // a `@`/self-rooted one, `facts_to_intra`), every `Tag::Unsafe`
+        // chain — direct or propagated — bottoms out in SOME receiver's
+        // own field being mutated; when the OUTERMOST receiver at the seed
+        // is provably fresh, that fresh object graph is what every nested
+        // self-touch in the chain is reached through in the common case.
+        // Accepted, undemonstrated residual risk: a callee that reaches an
+        // UNRELATED shared object via a name OTHER than the traced
+        // receiver (e.g. `resp.finalize()` internally touching an
+        // unrelated global registry) would ALSO be silently exempted here
+        // — no live instance of this shape has been measured; flagged
+        // honestly in the report rather than solved (would need per-hop
+        // receiver-provenance threading through the call graph — real
+        // interprocedural work, out of this window's budget).
+        Some(fs) if local_receiver && fs.tag == Tag::Unsafe => {}
+        // Cross-compile-unit gap (Ф.1 report §6 point 3): this compile
+        // unit never computed a tag for `target` at all — genuinely
+        // "cannot prove either way", the Undecided family, gated the same.
         None => {
+            if !indirect_enforcement_enabled() {
+                return;
+            }
             let name = fn_index.get(&target).map(|fd| render_fn_name(fd)).unwrap_or_default();
             errors.push(crate::diag::Diagnostic::new(
                 format!(
@@ -2355,6 +2457,9 @@ fn check_resolved_target(
                 site,
             ));
         }
+        // `Tag::Undecided` — the model's limit, not a proven finding —
+        // gated behind the SAME flag as an indirect call.
+        Some(fs) if fs.tag == Tag::Undecided && !indirect_enforcement_enabled() => {}
         Some(fs) if fs.tag != Tag::Safe => {
             let name = fn_index.get(&target).map(|fd| render_fn_name(fd)).unwrap_or_default();
             let chain = render_chain(target, tags, fn_index);
@@ -2434,6 +2539,7 @@ fn chain_terminal_reason(start: Span, tags: &HashMap<Span, FnSafety>) -> &'stati
 fn terminal_reason_text(reason: &str) -> &'static str {
     match reason {
         "unguarded_mutation" => "mutates reachable state with no live lock and no `#share`-verified type",
+        "unguarded_mut_param" => "mutates a `mut` PARAMETER (not `@`) with no live lock and no `#share`/`consume`-verified type — whether this specific argument is exclusively-owned isn't decidable from the signature alone",
         "no_body" => "bottoms out in an external (no-body) fn — nothing to prove from",
         "generic" => "bottoms out in a generic fn with no safety bound on its type parameter",
         "extern" => "bottoms out in an `extern`-declared fn",
