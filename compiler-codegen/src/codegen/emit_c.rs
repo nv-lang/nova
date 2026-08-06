@@ -68,6 +68,17 @@ pub(crate) const RUNTIME_DEFINED_TYPES: &[&str] = &[
     "AtomicI8", "AtomicI16", "AtomicI32", "AtomicI64",
     "AtomicU8", "AtomicU16", "AtomicU32", "AtomicU64",
     "AtomicInt", "AtomicUint",
+    // Plan 248 (wave 3, D447 #no_copy): was missing — a pre-existing gap
+    // invisible before this wave (Newtype-kind types are gated by the
+    // SEPARATE `debt_is_runtime_backed_newtype` list, which DID include
+    // "AtomicBool"; this const only mattered for Record/Sum-kind checks,
+    // and AtomicBool was never Record-kind until this wave). Missing here
+    // made emit_type_decl's RUNTIME_DEFINED_TYPES skip-gate not fire for
+    // AtomicBool once it became `value priv {...}` (Record+Value kind) —
+    // codegen auto-emitted a COMPETING `NovaValue_AtomicBool` struct
+    // definition, conflicting with the hand-written one in
+    // sync_primitives.h ("typedef redefinition with different types").
+    "AtomicBool",
     // sync sum-types pre-declared (OnceState, WaitResult)
     "OnceState", "WaitResult",
     // consume guard types (sync_primitives.h `_s`-suffix structs)
@@ -4004,6 +4015,25 @@ impl CEmitter {
     }
 
     fn debt_is_guaranteed_struct_tag(&self, pointee: &str) -> bool {
+        // Plan 248 (wave 3, D447 #no_copy): the 11 value-inside atomics are
+        // `NovaValue_`-prefixed like an ordinary user value-record, but
+        // their struct is hand-written in sync_primitives.h as an ANONYMOUS
+        // struct (`typedef struct { ... } NovaValue_AtomicI64;`, no tag) —
+        // the SAME shape the `_NovaTuple2`/mono-tuple exclusion below
+        // documents. A `typedef struct NovaValue_AtomicI64 NovaValue_AtomicI64;`
+        // forward-decl (as the generic `NovaValue_` prefix match just below
+        // would otherwise emit for a by-pointer field, e.g. `TcpStream.rc
+        // *mut AtomicInt`) declares a DIFFERENT, tagged type under the same
+        // name — "typedef redefinition with different types" — never
+        // needed anyway, since the header's own typedef already precedes
+        // every reference (it's `#include`d first).
+        if matches!(pointee,
+            "NovaValue_AtomicI64" | "NovaValue_AtomicI32" | "NovaValue_AtomicI16" | "NovaValue_AtomicI8" |
+            "NovaValue_AtomicU64" | "NovaValue_AtomicU32" | "NovaValue_AtomicU16" | "NovaValue_AtomicU8" |
+            "NovaValue_AtomicInt" | "NovaValue_AtomicUint" | "NovaValue_AtomicBool")
+        {
+            return false;
+        }
         pointee.contains("____")
             || pointee.starts_with("NovaValue_")
             || pointee.starts_with("NovaTuple_")
@@ -4672,6 +4702,22 @@ impl CEmitter {
                 _ => "void*".to_string(),
             },
             "CancelToken" => "NovaCancelToken*".to_string(),
+            // Plan 248 (wave 3, D447 #no_copy): hardcoded name→C-type for the
+            // 11 value-inside atomics — does NOT depend on `type_aliases`
+            // having already been populated by an earlier processing of
+            // sync.nv's OWN module (a real, hit-in-practice ordering gap: a
+            // DIFFERENT module referencing `AtomicInt`, e.g. `*mut AtomicInt`
+            // in `std/net/tcp.nv`'s `TcpStream.rc` field, resolved this
+            // BEFORE sync.nv's early registration ran in this CU, producing
+            // the stale `Nova_AtomicInt*` heap-pointer fallback — doubly
+            // wrong once wrapped in the outer pointer: `Nova_AtomicInt**`).
+            // Bare-value uses (`AtomicInt` local/field, no pointer) get this
+            // string as-is (`NovaValue_AtomicInt`); `*mut AtomicInt`/`*AtomicInt`
+            // wrap it in one more `*` at the `TypedPtr` call site, unaffected.
+            "AtomicI64" | "AtomicI32" | "AtomicI16" | "AtomicI8" |
+            "AtomicU64" | "AtomicU32" | "AtomicU16" | "AtomicU8" |
+            "AtomicInt" | "AtomicUint" | "AtomicBool" =>
+                format!("NovaValue_{}", full),
             "Write" => "Nova_StringBuilder*".to_string(),
             // Plan 208 Ф.2 (D422, was D419/Plan 152.7.2): `Fmt` protocol — same
             // V1 erasure strategy as `Write` above (concrete C type, vtable
@@ -6456,7 +6502,40 @@ impl CEmitter {
                 // `Nova_MutexGuard_s`) при INLINE sync/atomics через `import`. Тот же список
                 // skip'ает struct-body в emit_type_decl (§0). До этого fwd-decl-loop его НЕ
                 // проверял → inline guard-типов давал typedef redefinition.
-                if RUNTIME_DEFINED_TYPES.contains(&t.name.as_str()) { continue; }
+                if RUNTIME_DEFINED_TYPES.contains(&t.name.as_str()) {
+                    // Plan 248 (wave 3, D447 #no_copy): the 11 `Atomic*` types
+                    // are RUNTIME_DEFINED_TYPES *value*-records now (moved off
+                    // the old pointer-newtype `(*())` shape) — their C struct
+                    // lives hand-written in sync_primitives.h as `NovaValue_
+                    // <Name>` (same prefix every OTHER value-record uses, §0
+                    // single source). Register the `type_aliases`/
+                    // `value_record_names` entries HERE, at the SAME early
+                    // point the ordinary value-record branch just below does
+                    // (Plan 91.12 V2 comment: "pre-body passes that run
+                    // before emit_value_record_type fills the alias") —
+                    // `emit_type_decl`'s own RUNTIME_DEFINED_TYPES-gated
+                    // branch (struct-BODY skip, since the header owns it)
+                    // runs too LATE: `emit_fn_forward_decl` computes a
+                    // method's `nova_self` C type (`receiver_c_type` →
+                    // `type_aliases.get`) BEFORE every type in the module
+                    // has been visited, so without this early registration
+                    // it fell to the generic-fallback `Nova_<Name>*` heap-
+                    // pointer convention — confirmed by a real CC-FAIL
+                    // (`compare_exchange`'s forward decl declaring `nova_self`
+                    // as `Nova_AtomicI64*`, an undeclared type once the
+                    // struct itself is `NovaValue_AtomicI64`). No forward-
+                    // decl TEXT is pushed (unlike the ordinary branch below)
+                    // — the header already provides the typedef.
+                    if let TypeDeclKind::Record(_) = &t.kind {
+                        use crate::ast::AllocKind;
+                        if matches!(t.allocation, AllocKind::Value) {
+                            self.type_aliases.insert(
+                                t.name.clone(), format!("NovaValue_{}", t.name));
+                            self.value_record_names.insert(t.name.clone());
+                        }
+                    }
+                    continue;
+                }
                 match &t.kind {
                     TypeDeclKind::Record(_) => {
                         // Plan 139.1 (lang-item str): `str` — value-record, но
@@ -16596,6 +16675,49 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     self.type_aliases.insert(t.name.clone(), format!("NovaTuple_{}", t.name));
                 }
             }
+            // Plan 248 (wave 3, D447 #no_copy): RUNTIME_DEFINED_TYPES
+            // value-record registration — mirrors the NamedTuple branch just
+            // above. The 11 `Atomic*` types moved from a pointer-newtype
+            // (`type X(*())`) to a value-inside record (`type X value priv
+            // { v T }`) whose C struct is hand-written directly in
+            // sync_primitives.h, named `NovaValue_<Name>` — the SAME prefix
+            // convention every OTHER value-record in the language uses
+            // (§0 single source: `is_value_struct`/receiver-ABI/generic
+            // Option-Result wrapping all key off this exact prefix; the
+            // header struct is named to match rather than the codegen
+            // learning a second, unrecognized "value but not NovaValue_-
+            // prefixed" case). Struct-body emission stays skipped (the
+            // header owns it, RUNTIME_DEFINED_TYPES gate above); only the
+            // schema/alias registration an ordinary value-record gets from
+            // `emit_value_record_type` is missing without this branch — the
+            // generic-fallback `Nova_<Name>*` heap-pointer convention
+            // (`resolved_named_to_c`'s catch-all) would apply instead, wrong
+            // ABI for a stack value (surfaced as a C type-mismatch: a
+            // `mut c = AtomicInt.new(0)` local declared `Nova_AtomicInt*`
+            // while the hand-written ctor now returns a bare
+            // `NovaValue_AtomicInt` struct by value).
+            if let TypeDeclKind::Record(fields) = &t.kind {
+                if matches!(t.allocation, crate::ast::AllocKind::Value)
+                    && !self.record_schemas.contains_key(&t.name)
+                {
+                    let mut schema = HashMap::new();
+                    let mut field_c_tys: Vec<String> = Vec::new();
+                    for f in fields {
+                        let ty_c = self.type_ref_to_c(&f.ty)?;
+                        schema.insert(f.name.clone(), ty_c.clone());
+                        field_c_tys.push(ty_c);
+                    }
+                    self.record_schemas.insert(t.name.clone(), schema);
+                    self.record_field_order.insert(
+                        t.name.clone(),
+                        fields.iter().map(|f| f.name.clone()).collect(),
+                    );
+                    self.value_struct_field_tys
+                        .insert(format!("NovaValue_{}", t.name), field_c_tys);
+                    self.type_aliases.insert(t.name.clone(), format!("NovaValue_{}", t.name));
+                    self.value_record_names.insert(t.name.clone());
+                }
+            }
             return Ok(());
         }
         // Plan 48 Ф.3: generic types are emitted in erased form (void* for type-param fields)
@@ -19133,6 +19255,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // `Nova_Option*` (incomplete type) — корень Plan 93 Ф.0 CC-fail'а.
             "Option" | "Result" => self.builtin_sum_receiver_c_type(type_name),
             other => {
+                // Plan 248 (wave 3, D447 #no_copy): the 11 value-inside
+                // atomics — hardcoded, order-independent (mirrors the
+                // value-generic-mono check just below, same reasoning):
+                // does not depend on `type_aliases` having already been
+                // populated by an earlier pass over sync.nv's own module.
+                if matches!(other,
+                    "AtomicI64" | "AtomicI32" | "AtomicI16" | "AtomicI8" |
+                    "AtomicU64" | "AtomicU32" | "AtomicU16" | "AtomicU8" |
+                    "AtomicInt" | "AtomicUint" | "AtomicBool")
+                {
+                    return format!("NovaValue_{}*", other);
+                }
                 // Plan 153.2 Ф.1 (STAGE 1 — by-value generic value-records):
                 // a `value` generic mono receiver (`BoxIter____nova_int`) is a
                 // D226 value-record — its receiver C-type is a POINTER to a

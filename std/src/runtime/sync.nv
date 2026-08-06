@@ -138,7 +138,8 @@ type CasRawBool(ok bool, witness bool)
 /// - `[MemOrdering]` — ordering parameter enum
 #stable(since = "0.1")
 #share
-export type AtomicI64(*())
+#no_copy
+export type AtomicI64 value priv { v i64 }
 
 #realtime
 #stable(since = "0.1")
@@ -252,7 +253,8 @@ export extern "nova" fn AtomicI64 mut @fetch_nand(v i64) -> i64
 /// Wraparound: signed overflow — modular arithmetic.
 #stable(since = "0.1")
 #share
-export type AtomicI32(*())
+#no_copy
+export type AtomicI32 value priv { v i32 }
 
 #realtime
 #stable(since = "0.1")
@@ -366,7 +368,8 @@ export extern "nova" fn AtomicI32 mut @fetch_nand(v i32) -> i32
 /// Wraparound: signed overflow — modular arithmetic.
 #stable(since = "0.1")
 #share
-export type AtomicI16(*())
+#no_copy
+export type AtomicI16 value priv { v i16 }
 
 #realtime
 #stable(since = "0.1")
@@ -480,7 +483,8 @@ export extern "nova" fn AtomicI16 mut @fetch_nand(v i16) -> i16
 /// Wraparound: i8 [-128, 127]; overflow wraps modularly.
 #stable(since = "0.1")
 #share
-export type AtomicI8(*())
+#no_copy
+export type AtomicI8 value priv { v i8 }
 
 #realtime
 #stable(since = "0.1")
@@ -594,7 +598,8 @@ export extern "nova" fn AtomicI8 mut @fetch_nand(v i8) -> i8
 /// Wraparound: unsigned overflow wraps modularly.
 #stable(since = "0.1")
 #share
-export type AtomicU64(*())
+#no_copy
+export type AtomicU64 value priv { v u64 }
 
 #realtime
 #stable(since = "0.1")
@@ -708,7 +713,8 @@ export extern "nova" fn AtomicU64 mut @fetch_nand(v u64) -> u64
 /// Wraparound: unsigned overflow wraps modularly.
 #stable(since = "0.1")
 #share
-export type AtomicU32(*())
+#no_copy
+export type AtomicU32 value priv { v u32 }
 
 #realtime
 #stable(since = "0.1")
@@ -822,7 +828,8 @@ export extern "nova" fn AtomicU32 mut @fetch_nand(v u32) -> u32
 /// Wraparound: unsigned overflow wraps modularly.
 #stable(since = "0.1")
 #share
-export type AtomicU16(*())
+#no_copy
+export type AtomicU16 value priv { v u16 }
 
 #realtime
 #stable(since = "0.1")
@@ -936,7 +943,8 @@ export extern "nova" fn AtomicU16 mut @fetch_nand(v u16) -> u16
 /// Wraparound: u8 [0, 255]; overflow wraps modularly.
 #stable(since = "0.1")
 #share
-export type AtomicU8(*())
+#no_copy
+export type AtomicU8 value priv { v u8 }
 
 #realtime
 #stable(since = "0.1")
@@ -1058,7 +1066,8 @@ export extern "nova" fn AtomicU8 mut @fetch_nand(v u8) -> u8
 /// SeqCst overloads of this type).
 #stable(since = "0.1")
 #share
-export type AtomicInt(*())
+#no_copy
+export type AtomicInt value priv { v int }
 
 #realtime
 #stable(since = "0.1")
@@ -1176,7 +1185,8 @@ export extern "nova" fn AtomicInt mut @fetch_nand(v int) -> int
 /// `Usize` — renamed to `AtomicUint`.
 #stable(since = "0.1")
 #share
-export type AtomicUint(*())
+#no_copy
+export type AtomicUint value priv { v uint }
 
 #realtime
 #stable(since = "0.1")
@@ -1300,7 +1310,8 @@ export extern "nova" fn AtomicUint mut @fetch_nand(v uint) -> uint
 /// - `[MemOrdering]` — ordering parameter enum
 #stable(since = "0.1")
 #share
-export type AtomicBool(*())
+#no_copy
+export type AtomicBool value priv { v bool }
 
 #realtime
 #stable(since = "0.1")

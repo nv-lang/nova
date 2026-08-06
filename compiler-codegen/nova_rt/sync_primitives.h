@@ -191,414 +191,418 @@ static inline int nova_mo_c(const Nova_MemOrdering* ord) {
 
 /* ── Plan 103.2: AtomicI64 ─────────────────────────────────────── */
 
-typedef struct { int64_t value; } Nova_AtomicI64;
+typedef struct { int64_t v; } NovaValue_AtomicI64;
 
-static inline Nova_AtomicI64* Nova_AtomicI64_static_new(nova_int v) {
-    Nova_AtomicI64* a = (Nova_AtomicI64*)nova_alloc(sizeof(Nova_AtomicI64));
-    __atomic_store_n(&a->value, (int64_t)v, __ATOMIC_SEQ_CST);
+/* Plan 248 (wave 3, D447 #no_copy): value-inside representation — no
+ * heap allocation, no pointer indirection. Constructed directly on the
+ * caller's stack (or wherever the containing value lives); methods still
+ * take NovaValue_AtomicI64* (address of that in-place field), unchanged. */
+static inline NovaValue_AtomicI64 Nova_AtomicI64_static_new(nova_int v) {
+    NovaValue_AtomicI64 a;
+    a.v = (int64_t)v;
     return a;
 }
 /* load */
-static inline nova_int Nova_AtomicI64_method_load_MemOrdering(const Nova_AtomicI64* a, const Nova_MemOrdering* ord) {
-    return (nova_int)__atomic_load_n(&a->value, nova_mo_c(ord));
+static inline nova_int Nova_AtomicI64_method_load_MemOrdering(const NovaValue_AtomicI64* a, const Nova_MemOrdering* ord) {
+    return (nova_int)__atomic_load_n(&a->v, nova_mo_c(ord));
 }
-static inline nova_int Nova_AtomicI64_method_load(const Nova_AtomicI64* a) {
-    return (nova_int)__atomic_load_n(&a->value, __ATOMIC_SEQ_CST);
+static inline nova_int Nova_AtomicI64_method_load(const NovaValue_AtomicI64* a) {
+    return (nova_int)__atomic_load_n(&a->v, __ATOMIC_SEQ_CST);
 }
 /* store */
-static inline nova_unit Nova_AtomicI64_method_store_MemOrdering(Nova_AtomicI64* a, nova_int v, const Nova_MemOrdering* ord) {
-    __atomic_store_n(&a->value, (int64_t)v, nova_mo_c(ord)); return NOVA_UNIT;
+static inline nova_unit Nova_AtomicI64_method_store_MemOrdering(NovaValue_AtomicI64* a, nova_int v, const Nova_MemOrdering* ord) {
+    __atomic_store_n(&a->v, (int64_t)v, nova_mo_c(ord)); return NOVA_UNIT;
 }
-static inline nova_unit Nova_AtomicI64_method_store_i64(Nova_AtomicI64* a, nova_int v) {
-    __atomic_store_n(&a->value, (int64_t)v, __ATOMIC_SEQ_CST); return NOVA_UNIT;
+static inline nova_unit Nova_AtomicI64_method_store_i64(NovaValue_AtomicI64* a, nova_int v) {
+    __atomic_store_n(&a->v, (int64_t)v, __ATOMIC_SEQ_CST); return NOVA_UNIT;
 }
 /* swap */
-static inline nova_int Nova_AtomicI64_method_swap_MemOrdering(Nova_AtomicI64* a, nova_int v, const Nova_MemOrdering* ord) {
-    return (nova_int)__atomic_exchange_n(&a->value, (int64_t)v, nova_mo_c(ord));
+static inline nova_int Nova_AtomicI64_method_swap_MemOrdering(NovaValue_AtomicI64* a, nova_int v, const Nova_MemOrdering* ord) {
+    return (nova_int)__atomic_exchange_n(&a->v, (int64_t)v, nova_mo_c(ord));
 }
-static inline nova_int Nova_AtomicI64_method_swap_i64(Nova_AtomicI64* a, nova_int v) {
-    return (nova_int)__atomic_exchange_n(&a->value, (int64_t)v, __ATOMIC_SEQ_CST);
+static inline nova_int Nova_AtomicI64_method_swap_i64(NovaValue_AtomicI64* a, nova_int v) {
+    return (nova_int)__atomic_exchange_n(&a->v, (int64_t)v, __ATOMIC_SEQ_CST);
 }
 /* compare_exchange (Plan 207: raw ok+witness, one intrinsic for strong+weak —
  * public compare_exchange/_weak wrappers (plain .nv fn) build Result[(), i64]. */
 static inline NovaTuple_CasRawI64 Nova_AtomicI64_method_cmpxchg(
-        Nova_AtomicI64* a, nova_int expected_val, nova_int desired, nova_bool weak,
+        NovaValue_AtomicI64* a, nova_int expected_val, nova_int desired, nova_bool weak,
         const Nova_MemOrdering* success_ord, const Nova_MemOrdering* failure_ord) {
     int64_t exp = (int64_t)expected_val;
-    nova_bool ok = (nova_bool)__atomic_compare_exchange_n(&a->value, &exp, (int64_t)desired,
+    nova_bool ok = (nova_bool)__atomic_compare_exchange_n(&a->v, &exp, (int64_t)desired,
         weak, nova_mo_c(success_ord), nova_mo_c(failure_ord));
     NovaTuple_CasRawI64 r; r.ok = ok; r.witness = exp; return r;
 }
 /* fetch_add */
-static inline nova_int Nova_AtomicI64_method_fetch_add_MemOrdering(Nova_AtomicI64* a, nova_int v, const Nova_MemOrdering* ord) { return (nova_int)__atomic_fetch_add(&a->value, (int64_t)v, nova_mo_c(ord)); }
-static inline nova_int Nova_AtomicI64_method_fetch_add_i64(Nova_AtomicI64* a, nova_int v) { return (nova_int)__atomic_fetch_add(&a->value, (int64_t)v, __ATOMIC_SEQ_CST); }
+static inline nova_int Nova_AtomicI64_method_fetch_add_MemOrdering(NovaValue_AtomicI64* a, nova_int v, const Nova_MemOrdering* ord) { return (nova_int)__atomic_fetch_add(&a->v, (int64_t)v, nova_mo_c(ord)); }
+static inline nova_int Nova_AtomicI64_method_fetch_add_i64(NovaValue_AtomicI64* a, nova_int v) { return (nova_int)__atomic_fetch_add(&a->v, (int64_t)v, __ATOMIC_SEQ_CST); }
 /* fetch_sub */
-static inline nova_int Nova_AtomicI64_method_fetch_sub_MemOrdering(Nova_AtomicI64* a, nova_int v, const Nova_MemOrdering* ord) { return (nova_int)__atomic_fetch_sub(&a->value, (int64_t)v, nova_mo_c(ord)); }
-static inline nova_int Nova_AtomicI64_method_fetch_sub_i64(Nova_AtomicI64* a, nova_int v) { return (nova_int)__atomic_fetch_sub(&a->value, (int64_t)v, __ATOMIC_SEQ_CST); }
+static inline nova_int Nova_AtomicI64_method_fetch_sub_MemOrdering(NovaValue_AtomicI64* a, nova_int v, const Nova_MemOrdering* ord) { return (nova_int)__atomic_fetch_sub(&a->v, (int64_t)v, nova_mo_c(ord)); }
+static inline nova_int Nova_AtomicI64_method_fetch_sub_i64(NovaValue_AtomicI64* a, nova_int v) { return (nova_int)__atomic_fetch_sub(&a->v, (int64_t)v, __ATOMIC_SEQ_CST); }
 /* fetch_or */
-static inline nova_int Nova_AtomicI64_method_fetch_or_MemOrdering(Nova_AtomicI64* a, nova_int v, const Nova_MemOrdering* ord) { return (nova_int)__atomic_fetch_or(&a->value, (int64_t)v, nova_mo_c(ord)); }
-static inline nova_int Nova_AtomicI64_method_fetch_or_i64(Nova_AtomicI64* a, nova_int v) { return (nova_int)__atomic_fetch_or(&a->value, (int64_t)v, __ATOMIC_SEQ_CST); }
+static inline nova_int Nova_AtomicI64_method_fetch_or_MemOrdering(NovaValue_AtomicI64* a, nova_int v, const Nova_MemOrdering* ord) { return (nova_int)__atomic_fetch_or(&a->v, (int64_t)v, nova_mo_c(ord)); }
+static inline nova_int Nova_AtomicI64_method_fetch_or_i64(NovaValue_AtomicI64* a, nova_int v) { return (nova_int)__atomic_fetch_or(&a->v, (int64_t)v, __ATOMIC_SEQ_CST); }
 /* fetch_and */
-static inline nova_int Nova_AtomicI64_method_fetch_and_MemOrdering(Nova_AtomicI64* a, nova_int v, const Nova_MemOrdering* ord) { return (nova_int)__atomic_fetch_and(&a->value, (int64_t)v, nova_mo_c(ord)); }
-static inline nova_int Nova_AtomicI64_method_fetch_and_i64(Nova_AtomicI64* a, nova_int v) { return (nova_int)__atomic_fetch_and(&a->value, (int64_t)v, __ATOMIC_SEQ_CST); }
+static inline nova_int Nova_AtomicI64_method_fetch_and_MemOrdering(NovaValue_AtomicI64* a, nova_int v, const Nova_MemOrdering* ord) { return (nova_int)__atomic_fetch_and(&a->v, (int64_t)v, nova_mo_c(ord)); }
+static inline nova_int Nova_AtomicI64_method_fetch_and_i64(NovaValue_AtomicI64* a, nova_int v) { return (nova_int)__atomic_fetch_and(&a->v, (int64_t)v, __ATOMIC_SEQ_CST); }
 /* fetch_xor */
-static inline nova_int Nova_AtomicI64_method_fetch_xor_MemOrdering(Nova_AtomicI64* a, nova_int v, const Nova_MemOrdering* ord) { return (nova_int)__atomic_fetch_xor(&a->value, (int64_t)v, nova_mo_c(ord)); }
-static inline nova_int Nova_AtomicI64_method_fetch_xor_i64(Nova_AtomicI64* a, nova_int v) { return (nova_int)__atomic_fetch_xor(&a->value, (int64_t)v, __ATOMIC_SEQ_CST); }
+static inline nova_int Nova_AtomicI64_method_fetch_xor_MemOrdering(NovaValue_AtomicI64* a, nova_int v, const Nova_MemOrdering* ord) { return (nova_int)__atomic_fetch_xor(&a->v, (int64_t)v, nova_mo_c(ord)); }
+static inline nova_int Nova_AtomicI64_method_fetch_xor_i64(NovaValue_AtomicI64* a, nova_int v) { return (nova_int)__atomic_fetch_xor(&a->v, (int64_t)v, __ATOMIC_SEQ_CST); }
 /* fetch_max (CAS loop — no __atomic_fetch_max builtin) */
-static inline nova_int Nova_AtomicI64_method_fetch_max_MemOrdering(Nova_AtomicI64* a, nova_int v, const Nova_MemOrdering* ord) {
-    int mo = nova_mo_c(ord); int64_t cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
-    while (cur < (int64_t)v) { if (__atomic_compare_exchange_n(&a->value, &cur, (int64_t)v, true, mo, __ATOMIC_RELAXED)) break; }
+static inline nova_int Nova_AtomicI64_method_fetch_max_MemOrdering(NovaValue_AtomicI64* a, nova_int v, const Nova_MemOrdering* ord) {
+    int mo = nova_mo_c(ord); int64_t cur = __atomic_load_n(&a->v, __ATOMIC_RELAXED);
+    while (cur < (int64_t)v) { if (__atomic_compare_exchange_n(&a->v, &cur, (int64_t)v, true, mo, __ATOMIC_RELAXED)) break; }
     return (nova_int)cur;
 }
-static inline nova_int Nova_AtomicI64_method_fetch_max_i64(Nova_AtomicI64* a, nova_int v) {
-    int64_t cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
-    while (cur < (int64_t)v) { if (__atomic_compare_exchange_n(&a->value, &cur, (int64_t)v, true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) break; }
+static inline nova_int Nova_AtomicI64_method_fetch_max_i64(NovaValue_AtomicI64* a, nova_int v) {
+    int64_t cur = __atomic_load_n(&a->v, __ATOMIC_RELAXED);
+    while (cur < (int64_t)v) { if (__atomic_compare_exchange_n(&a->v, &cur, (int64_t)v, true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) break; }
     return (nova_int)cur;
 }
 /* fetch_min */
-static inline nova_int Nova_AtomicI64_method_fetch_min_MemOrdering(Nova_AtomicI64* a, nova_int v, const Nova_MemOrdering* ord) {
-    int mo = nova_mo_c(ord); int64_t cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
-    while (cur > (int64_t)v) { if (__atomic_compare_exchange_n(&a->value, &cur, (int64_t)v, true, mo, __ATOMIC_RELAXED)) break; }
+static inline nova_int Nova_AtomicI64_method_fetch_min_MemOrdering(NovaValue_AtomicI64* a, nova_int v, const Nova_MemOrdering* ord) {
+    int mo = nova_mo_c(ord); int64_t cur = __atomic_load_n(&a->v, __ATOMIC_RELAXED);
+    while (cur > (int64_t)v) { if (__atomic_compare_exchange_n(&a->v, &cur, (int64_t)v, true, mo, __ATOMIC_RELAXED)) break; }
     return (nova_int)cur;
 }
-static inline nova_int Nova_AtomicI64_method_fetch_min_i64(Nova_AtomicI64* a, nova_int v) {
-    int64_t cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
-    while (cur > (int64_t)v) { if (__atomic_compare_exchange_n(&a->value, &cur, (int64_t)v, true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) break; }
+static inline nova_int Nova_AtomicI64_method_fetch_min_i64(NovaValue_AtomicI64* a, nova_int v) {
+    int64_t cur = __atomic_load_n(&a->v, __ATOMIC_RELAXED);
+    while (cur > (int64_t)v) { if (__atomic_compare_exchange_n(&a->v, &cur, (int64_t)v, true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) break; }
     return (nova_int)cur;
 }
 /* fetch_nand */
-static inline nova_int Nova_AtomicI64_method_fetch_nand_MemOrdering(Nova_AtomicI64* a, nova_int v, const Nova_MemOrdering* ord) { return (nova_int)__atomic_fetch_nand(&a->value, (int64_t)v, nova_mo_c(ord)); }
-static inline nova_int Nova_AtomicI64_method_fetch_nand_i64(Nova_AtomicI64* a, nova_int v) { return (nova_int)__atomic_fetch_nand(&a->value, (int64_t)v, __ATOMIC_SEQ_CST); }
+static inline nova_int Nova_AtomicI64_method_fetch_nand_MemOrdering(NovaValue_AtomicI64* a, nova_int v, const Nova_MemOrdering* ord) { return (nova_int)__atomic_fetch_nand(&a->v, (int64_t)v, nova_mo_c(ord)); }
+static inline nova_int Nova_AtomicI64_method_fetch_nand_i64(NovaValue_AtomicI64* a, nova_int v) { return (nova_int)__atomic_fetch_nand(&a->v, (int64_t)v, __ATOMIC_SEQ_CST); }
 
 /* ── Plan 103.2: AtomicI32 ─────────────────────────────────────── */
 
-typedef struct { int32_t value; } Nova_AtomicI32;
+typedef struct { int32_t v; } NovaValue_AtomicI32;
 
-static inline Nova_AtomicI32* Nova_AtomicI32_static_new(int32_t v) {
-    Nova_AtomicI32* a = (Nova_AtomicI32*)nova_alloc(sizeof(Nova_AtomicI32));
-    __atomic_store_n(&a->value, v, __ATOMIC_SEQ_CST); return a;
+/* Plan 248 (wave 3): value-inside — see AtomicI64 comment above. */
+static inline NovaValue_AtomicI32 Nova_AtomicI32_static_new(int32_t v) {
+    NovaValue_AtomicI32 a; a.v = v; return a;
 }
-static inline int32_t Nova_AtomicI32_method_load_MemOrdering(const Nova_AtomicI32* a, const Nova_MemOrdering* ord) { return __atomic_load_n(&a->value, nova_mo_c(ord)); }
-static inline int32_t Nova_AtomicI32_method_load(const Nova_AtomicI32* a) { return __atomic_load_n(&a->value, __ATOMIC_SEQ_CST); }
-static inline nova_unit Nova_AtomicI32_method_store_MemOrdering(Nova_AtomicI32* a, int32_t v, const Nova_MemOrdering* ord) { __atomic_store_n(&a->value, v, nova_mo_c(ord)); return NOVA_UNIT; }
-static inline nova_unit Nova_AtomicI32_method_store_i32(Nova_AtomicI32* a, int32_t v) { __atomic_store_n(&a->value, v, __ATOMIC_SEQ_CST); return NOVA_UNIT; }
-static inline int32_t Nova_AtomicI32_method_swap_MemOrdering(Nova_AtomicI32* a, int32_t v, const Nova_MemOrdering* ord) { return __atomic_exchange_n(&a->value, v, nova_mo_c(ord)); }
-static inline int32_t Nova_AtomicI32_method_swap_i32(Nova_AtomicI32* a, int32_t v) { return __atomic_exchange_n(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline NovaTuple_CasRawI32 Nova_AtomicI32_method_cmpxchg(Nova_AtomicI32* a, int32_t e, int32_t d, nova_bool weak, const Nova_MemOrdering* s, const Nova_MemOrdering* f) {
-    nova_bool ok = (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, weak, nova_mo_c(s), nova_mo_c(f));
+static inline int32_t Nova_AtomicI32_method_load_MemOrdering(const NovaValue_AtomicI32* a, const Nova_MemOrdering* ord) { return __atomic_load_n(&a->v, nova_mo_c(ord)); }
+static inline int32_t Nova_AtomicI32_method_load(const NovaValue_AtomicI32* a) { return __atomic_load_n(&a->v, __ATOMIC_SEQ_CST); }
+static inline nova_unit Nova_AtomicI32_method_store_MemOrdering(NovaValue_AtomicI32* a, int32_t v, const Nova_MemOrdering* ord) { __atomic_store_n(&a->v, v, nova_mo_c(ord)); return NOVA_UNIT; }
+static inline nova_unit Nova_AtomicI32_method_store_i32(NovaValue_AtomicI32* a, int32_t v) { __atomic_store_n(&a->v, v, __ATOMIC_SEQ_CST); return NOVA_UNIT; }
+static inline int32_t Nova_AtomicI32_method_swap_MemOrdering(NovaValue_AtomicI32* a, int32_t v, const Nova_MemOrdering* ord) { return __atomic_exchange_n(&a->v, v, nova_mo_c(ord)); }
+static inline int32_t Nova_AtomicI32_method_swap_i32(NovaValue_AtomicI32* a, int32_t v) { return __atomic_exchange_n(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline NovaTuple_CasRawI32 Nova_AtomicI32_method_cmpxchg(NovaValue_AtomicI32* a, int32_t e, int32_t d, nova_bool weak, const Nova_MemOrdering* s, const Nova_MemOrdering* f) {
+    nova_bool ok = (nova_bool)__atomic_compare_exchange_n(&a->v, &e, d, weak, nova_mo_c(s), nova_mo_c(f));
     NovaTuple_CasRawI32 r; r.ok = ok; r.witness = e; return r;
 }
-static inline int32_t Nova_AtomicI32_method_fetch_add_MemOrdering(Nova_AtomicI32* a, int32_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_add(&a->value, v, nova_mo_c(ord)); }
-static inline int32_t Nova_AtomicI32_method_fetch_add_i32(Nova_AtomicI32* a, int32_t v) { return __atomic_fetch_add(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline int32_t Nova_AtomicI32_method_fetch_sub_MemOrdering(Nova_AtomicI32* a, int32_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_sub(&a->value, v, nova_mo_c(ord)); }
-static inline int32_t Nova_AtomicI32_method_fetch_sub_i32(Nova_AtomicI32* a, int32_t v) { return __atomic_fetch_sub(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline int32_t Nova_AtomicI32_method_fetch_or_MemOrdering(Nova_AtomicI32* a, int32_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_or(&a->value, v, nova_mo_c(ord)); }
-static inline int32_t Nova_AtomicI32_method_fetch_or_i32(Nova_AtomicI32* a, int32_t v) { return __atomic_fetch_or(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline int32_t Nova_AtomicI32_method_fetch_and_MemOrdering(Nova_AtomicI32* a, int32_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_and(&a->value, v, nova_mo_c(ord)); }
-static inline int32_t Nova_AtomicI32_method_fetch_and_i32(Nova_AtomicI32* a, int32_t v) { return __atomic_fetch_and(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline int32_t Nova_AtomicI32_method_fetch_xor_MemOrdering(Nova_AtomicI32* a, int32_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_xor(&a->value, v, nova_mo_c(ord)); }
-static inline int32_t Nova_AtomicI32_method_fetch_xor_i32(Nova_AtomicI32* a, int32_t v) { return __atomic_fetch_xor(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline int32_t Nova_AtomicI32_method_fetch_max_MemOrdering(Nova_AtomicI32* a, int32_t v, const Nova_MemOrdering* ord) {
-    int mo = nova_mo_c(ord); int32_t cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
-    while (cur < v) { if (__atomic_compare_exchange_n(&a->value, &cur, v, true, mo, __ATOMIC_RELAXED)) break; } return cur;
+static inline int32_t Nova_AtomicI32_method_fetch_add_MemOrdering(NovaValue_AtomicI32* a, int32_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_add(&a->v, v, nova_mo_c(ord)); }
+static inline int32_t Nova_AtomicI32_method_fetch_add_i32(NovaValue_AtomicI32* a, int32_t v) { return __atomic_fetch_add(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline int32_t Nova_AtomicI32_method_fetch_sub_MemOrdering(NovaValue_AtomicI32* a, int32_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_sub(&a->v, v, nova_mo_c(ord)); }
+static inline int32_t Nova_AtomicI32_method_fetch_sub_i32(NovaValue_AtomicI32* a, int32_t v) { return __atomic_fetch_sub(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline int32_t Nova_AtomicI32_method_fetch_or_MemOrdering(NovaValue_AtomicI32* a, int32_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_or(&a->v, v, nova_mo_c(ord)); }
+static inline int32_t Nova_AtomicI32_method_fetch_or_i32(NovaValue_AtomicI32* a, int32_t v) { return __atomic_fetch_or(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline int32_t Nova_AtomicI32_method_fetch_and_MemOrdering(NovaValue_AtomicI32* a, int32_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_and(&a->v, v, nova_mo_c(ord)); }
+static inline int32_t Nova_AtomicI32_method_fetch_and_i32(NovaValue_AtomicI32* a, int32_t v) { return __atomic_fetch_and(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline int32_t Nova_AtomicI32_method_fetch_xor_MemOrdering(NovaValue_AtomicI32* a, int32_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_xor(&a->v, v, nova_mo_c(ord)); }
+static inline int32_t Nova_AtomicI32_method_fetch_xor_i32(NovaValue_AtomicI32* a, int32_t v) { return __atomic_fetch_xor(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline int32_t Nova_AtomicI32_method_fetch_max_MemOrdering(NovaValue_AtomicI32* a, int32_t v, const Nova_MemOrdering* ord) {
+    int mo = nova_mo_c(ord); int32_t cur = __atomic_load_n(&a->v, __ATOMIC_RELAXED);
+    while (cur < v) { if (__atomic_compare_exchange_n(&a->v, &cur, v, true, mo, __ATOMIC_RELAXED)) break; } return cur;
 }
-static inline int32_t Nova_AtomicI32_method_fetch_max_i32(Nova_AtomicI32* a, int32_t v) {
-    int32_t cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
-    while (cur < v) { if (__atomic_compare_exchange_n(&a->value, &cur, v, true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) break; } return cur;
+static inline int32_t Nova_AtomicI32_method_fetch_max_i32(NovaValue_AtomicI32* a, int32_t v) {
+    int32_t cur = __atomic_load_n(&a->v, __ATOMIC_RELAXED);
+    while (cur < v) { if (__atomic_compare_exchange_n(&a->v, &cur, v, true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) break; } return cur;
 }
-static inline int32_t Nova_AtomicI32_method_fetch_min_MemOrdering(Nova_AtomicI32* a, int32_t v, const Nova_MemOrdering* ord) {
-    int mo = nova_mo_c(ord); int32_t cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
-    while (cur > v) { if (__atomic_compare_exchange_n(&a->value, &cur, v, true, mo, __ATOMIC_RELAXED)) break; } return cur;
+static inline int32_t Nova_AtomicI32_method_fetch_min_MemOrdering(NovaValue_AtomicI32* a, int32_t v, const Nova_MemOrdering* ord) {
+    int mo = nova_mo_c(ord); int32_t cur = __atomic_load_n(&a->v, __ATOMIC_RELAXED);
+    while (cur > v) { if (__atomic_compare_exchange_n(&a->v, &cur, v, true, mo, __ATOMIC_RELAXED)) break; } return cur;
 }
-static inline int32_t Nova_AtomicI32_method_fetch_min_i32(Nova_AtomicI32* a, int32_t v) {
-    int32_t cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
-    while (cur > v) { if (__atomic_compare_exchange_n(&a->value, &cur, v, true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) break; } return cur;
+static inline int32_t Nova_AtomicI32_method_fetch_min_i32(NovaValue_AtomicI32* a, int32_t v) {
+    int32_t cur = __atomic_load_n(&a->v, __ATOMIC_RELAXED);
+    while (cur > v) { if (__atomic_compare_exchange_n(&a->v, &cur, v, true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) break; } return cur;
 }
-static inline int32_t Nova_AtomicI32_method_fetch_nand_MemOrdering(Nova_AtomicI32* a, int32_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_nand(&a->value, v, nova_mo_c(ord)); }
-static inline int32_t Nova_AtomicI32_method_fetch_nand_i32(Nova_AtomicI32* a, int32_t v) { return __atomic_fetch_nand(&a->value, v, __ATOMIC_SEQ_CST); }
+static inline int32_t Nova_AtomicI32_method_fetch_nand_MemOrdering(NovaValue_AtomicI32* a, int32_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_nand(&a->v, v, nova_mo_c(ord)); }
+static inline int32_t Nova_AtomicI32_method_fetch_nand_i32(NovaValue_AtomicI32* a, int32_t v) { return __atomic_fetch_nand(&a->v, v, __ATOMIC_SEQ_CST); }
 
 /* ── Plan 103.2: AtomicI16 ─────────────────────────────────────── */
 
-typedef struct { int16_t value; } Nova_AtomicI16;
+typedef struct { int16_t v; } NovaValue_AtomicI16;
 
-static inline Nova_AtomicI16* Nova_AtomicI16_static_new(int16_t v) {
-    Nova_AtomicI16* a = (Nova_AtomicI16*)nova_alloc(sizeof(Nova_AtomicI16));
-    __atomic_store_n(&a->value, v, __ATOMIC_SEQ_CST); return a;
+/* Plan 248 (wave 3): value-inside — see AtomicI64 comment above. */
+static inline NovaValue_AtomicI16 Nova_AtomicI16_static_new(int16_t v) {
+    NovaValue_AtomicI16 a; a.v = v; return a;
 }
-static inline int16_t Nova_AtomicI16_method_load_MemOrdering(const Nova_AtomicI16* a, const Nova_MemOrdering* ord) { return __atomic_load_n(&a->value, nova_mo_c(ord)); }
-static inline int16_t Nova_AtomicI16_method_load(const Nova_AtomicI16* a) { return __atomic_load_n(&a->value, __ATOMIC_SEQ_CST); }
-static inline nova_unit Nova_AtomicI16_method_store_MemOrdering(Nova_AtomicI16* a, int16_t v, const Nova_MemOrdering* ord) { __atomic_store_n(&a->value, v, nova_mo_c(ord)); return NOVA_UNIT; }
-static inline nova_unit Nova_AtomicI16_method_store_i16(Nova_AtomicI16* a, int16_t v) { __atomic_store_n(&a->value, v, __ATOMIC_SEQ_CST); return NOVA_UNIT; }
-static inline int16_t Nova_AtomicI16_method_swap_MemOrdering(Nova_AtomicI16* a, int16_t v, const Nova_MemOrdering* ord) { return __atomic_exchange_n(&a->value, v, nova_mo_c(ord)); }
-static inline int16_t Nova_AtomicI16_method_swap_i16(Nova_AtomicI16* a, int16_t v) { return __atomic_exchange_n(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline NovaTuple_CasRawI16 Nova_AtomicI16_method_cmpxchg(Nova_AtomicI16* a, int16_t e, int16_t d, nova_bool weak, const Nova_MemOrdering* s, const Nova_MemOrdering* f) {
-    nova_bool ok = (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, weak, nova_mo_c(s), nova_mo_c(f));
+static inline int16_t Nova_AtomicI16_method_load_MemOrdering(const NovaValue_AtomicI16* a, const Nova_MemOrdering* ord) { return __atomic_load_n(&a->v, nova_mo_c(ord)); }
+static inline int16_t Nova_AtomicI16_method_load(const NovaValue_AtomicI16* a) { return __atomic_load_n(&a->v, __ATOMIC_SEQ_CST); }
+static inline nova_unit Nova_AtomicI16_method_store_MemOrdering(NovaValue_AtomicI16* a, int16_t v, const Nova_MemOrdering* ord) { __atomic_store_n(&a->v, v, nova_mo_c(ord)); return NOVA_UNIT; }
+static inline nova_unit Nova_AtomicI16_method_store_i16(NovaValue_AtomicI16* a, int16_t v) { __atomic_store_n(&a->v, v, __ATOMIC_SEQ_CST); return NOVA_UNIT; }
+static inline int16_t Nova_AtomicI16_method_swap_MemOrdering(NovaValue_AtomicI16* a, int16_t v, const Nova_MemOrdering* ord) { return __atomic_exchange_n(&a->v, v, nova_mo_c(ord)); }
+static inline int16_t Nova_AtomicI16_method_swap_i16(NovaValue_AtomicI16* a, int16_t v) { return __atomic_exchange_n(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline NovaTuple_CasRawI16 Nova_AtomicI16_method_cmpxchg(NovaValue_AtomicI16* a, int16_t e, int16_t d, nova_bool weak, const Nova_MemOrdering* s, const Nova_MemOrdering* f) {
+    nova_bool ok = (nova_bool)__atomic_compare_exchange_n(&a->v, &e, d, weak, nova_mo_c(s), nova_mo_c(f));
     NovaTuple_CasRawI16 r; r.ok = ok; r.witness = e; return r;
 }
-static inline int16_t Nova_AtomicI16_method_fetch_add_MemOrdering(Nova_AtomicI16* a, int16_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_add(&a->value, v, nova_mo_c(ord)); }
-static inline int16_t Nova_AtomicI16_method_fetch_add_i16(Nova_AtomicI16* a, int16_t v) { return __atomic_fetch_add(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline int16_t Nova_AtomicI16_method_fetch_sub_MemOrdering(Nova_AtomicI16* a, int16_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_sub(&a->value, v, nova_mo_c(ord)); }
-static inline int16_t Nova_AtomicI16_method_fetch_sub_i16(Nova_AtomicI16* a, int16_t v) { return __atomic_fetch_sub(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline int16_t Nova_AtomicI16_method_fetch_or_MemOrdering(Nova_AtomicI16* a, int16_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_or(&a->value, v, nova_mo_c(ord)); }
-static inline int16_t Nova_AtomicI16_method_fetch_or_i16(Nova_AtomicI16* a, int16_t v) { return __atomic_fetch_or(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline int16_t Nova_AtomicI16_method_fetch_and_MemOrdering(Nova_AtomicI16* a, int16_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_and(&a->value, v, nova_mo_c(ord)); }
-static inline int16_t Nova_AtomicI16_method_fetch_and_i16(Nova_AtomicI16* a, int16_t v) { return __atomic_fetch_and(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline int16_t Nova_AtomicI16_method_fetch_xor_MemOrdering(Nova_AtomicI16* a, int16_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_xor(&a->value, v, nova_mo_c(ord)); }
-static inline int16_t Nova_AtomicI16_method_fetch_xor_i16(Nova_AtomicI16* a, int16_t v) { return __atomic_fetch_xor(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline int16_t Nova_AtomicI16_method_fetch_max_MemOrdering(Nova_AtomicI16* a, int16_t v, const Nova_MemOrdering* ord) {
-    int mo = nova_mo_c(ord); int16_t cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
-    while (cur < v) { if (__atomic_compare_exchange_n(&a->value, &cur, v, true, mo, __ATOMIC_RELAXED)) break; } return cur;
+static inline int16_t Nova_AtomicI16_method_fetch_add_MemOrdering(NovaValue_AtomicI16* a, int16_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_add(&a->v, v, nova_mo_c(ord)); }
+static inline int16_t Nova_AtomicI16_method_fetch_add_i16(NovaValue_AtomicI16* a, int16_t v) { return __atomic_fetch_add(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline int16_t Nova_AtomicI16_method_fetch_sub_MemOrdering(NovaValue_AtomicI16* a, int16_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_sub(&a->v, v, nova_mo_c(ord)); }
+static inline int16_t Nova_AtomicI16_method_fetch_sub_i16(NovaValue_AtomicI16* a, int16_t v) { return __atomic_fetch_sub(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline int16_t Nova_AtomicI16_method_fetch_or_MemOrdering(NovaValue_AtomicI16* a, int16_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_or(&a->v, v, nova_mo_c(ord)); }
+static inline int16_t Nova_AtomicI16_method_fetch_or_i16(NovaValue_AtomicI16* a, int16_t v) { return __atomic_fetch_or(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline int16_t Nova_AtomicI16_method_fetch_and_MemOrdering(NovaValue_AtomicI16* a, int16_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_and(&a->v, v, nova_mo_c(ord)); }
+static inline int16_t Nova_AtomicI16_method_fetch_and_i16(NovaValue_AtomicI16* a, int16_t v) { return __atomic_fetch_and(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline int16_t Nova_AtomicI16_method_fetch_xor_MemOrdering(NovaValue_AtomicI16* a, int16_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_xor(&a->v, v, nova_mo_c(ord)); }
+static inline int16_t Nova_AtomicI16_method_fetch_xor_i16(NovaValue_AtomicI16* a, int16_t v) { return __atomic_fetch_xor(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline int16_t Nova_AtomicI16_method_fetch_max_MemOrdering(NovaValue_AtomicI16* a, int16_t v, const Nova_MemOrdering* ord) {
+    int mo = nova_mo_c(ord); int16_t cur = __atomic_load_n(&a->v, __ATOMIC_RELAXED);
+    while (cur < v) { if (__atomic_compare_exchange_n(&a->v, &cur, v, true, mo, __ATOMIC_RELAXED)) break; } return cur;
 }
-static inline int16_t Nova_AtomicI16_method_fetch_max_i16(Nova_AtomicI16* a, int16_t v) {
-    int16_t cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
-    while (cur < v) { if (__atomic_compare_exchange_n(&a->value, &cur, v, true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) break; } return cur;
+static inline int16_t Nova_AtomicI16_method_fetch_max_i16(NovaValue_AtomicI16* a, int16_t v) {
+    int16_t cur = __atomic_load_n(&a->v, __ATOMIC_RELAXED);
+    while (cur < v) { if (__atomic_compare_exchange_n(&a->v, &cur, v, true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) break; } return cur;
 }
-static inline int16_t Nova_AtomicI16_method_fetch_min_MemOrdering(Nova_AtomicI16* a, int16_t v, const Nova_MemOrdering* ord) {
-    int mo = nova_mo_c(ord); int16_t cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
-    while (cur > v) { if (__atomic_compare_exchange_n(&a->value, &cur, v, true, mo, __ATOMIC_RELAXED)) break; } return cur;
+static inline int16_t Nova_AtomicI16_method_fetch_min_MemOrdering(NovaValue_AtomicI16* a, int16_t v, const Nova_MemOrdering* ord) {
+    int mo = nova_mo_c(ord); int16_t cur = __atomic_load_n(&a->v, __ATOMIC_RELAXED);
+    while (cur > v) { if (__atomic_compare_exchange_n(&a->v, &cur, v, true, mo, __ATOMIC_RELAXED)) break; } return cur;
 }
-static inline int16_t Nova_AtomicI16_method_fetch_min_i16(Nova_AtomicI16* a, int16_t v) {
-    int16_t cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
-    while (cur > v) { if (__atomic_compare_exchange_n(&a->value, &cur, v, true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) break; } return cur;
+static inline int16_t Nova_AtomicI16_method_fetch_min_i16(NovaValue_AtomicI16* a, int16_t v) {
+    int16_t cur = __atomic_load_n(&a->v, __ATOMIC_RELAXED);
+    while (cur > v) { if (__atomic_compare_exchange_n(&a->v, &cur, v, true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) break; } return cur;
 }
-static inline int16_t Nova_AtomicI16_method_fetch_nand_MemOrdering(Nova_AtomicI16* a, int16_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_nand(&a->value, v, nova_mo_c(ord)); }
-static inline int16_t Nova_AtomicI16_method_fetch_nand_i16(Nova_AtomicI16* a, int16_t v) { return __atomic_fetch_nand(&a->value, v, __ATOMIC_SEQ_CST); }
+static inline int16_t Nova_AtomicI16_method_fetch_nand_MemOrdering(NovaValue_AtomicI16* a, int16_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_nand(&a->v, v, nova_mo_c(ord)); }
+static inline int16_t Nova_AtomicI16_method_fetch_nand_i16(NovaValue_AtomicI16* a, int16_t v) { return __atomic_fetch_nand(&a->v, v, __ATOMIC_SEQ_CST); }
 
 /* ── Plan 103.2: AtomicI8 ──────────────────────────────────────── */
 
-typedef struct { int8_t value; } Nova_AtomicI8;
+typedef struct { int8_t v; } NovaValue_AtomicI8;
 
-static inline Nova_AtomicI8* Nova_AtomicI8_static_new(int8_t v) {
-    Nova_AtomicI8* a = (Nova_AtomicI8*)nova_alloc(sizeof(Nova_AtomicI8));
-    __atomic_store_n(&a->value, v, __ATOMIC_SEQ_CST); return a;
+/* Plan 248 (wave 3): value-inside — see AtomicI64 comment above. */
+static inline NovaValue_AtomicI8 Nova_AtomicI8_static_new(int8_t v) {
+    NovaValue_AtomicI8 a; a.v = v; return a;
 }
-static inline int8_t Nova_AtomicI8_method_load_MemOrdering(const Nova_AtomicI8* a, const Nova_MemOrdering* ord) { return __atomic_load_n(&a->value, nova_mo_c(ord)); }
-static inline int8_t Nova_AtomicI8_method_load(const Nova_AtomicI8* a) { return __atomic_load_n(&a->value, __ATOMIC_SEQ_CST); }
-static inline nova_unit Nova_AtomicI8_method_store_MemOrdering(Nova_AtomicI8* a, int8_t v, const Nova_MemOrdering* ord) { __atomic_store_n(&a->value, v, nova_mo_c(ord)); return NOVA_UNIT; }
-static inline nova_unit Nova_AtomicI8_method_store_i8(Nova_AtomicI8* a, int8_t v) { __atomic_store_n(&a->value, v, __ATOMIC_SEQ_CST); return NOVA_UNIT; }
-static inline int8_t Nova_AtomicI8_method_swap_MemOrdering(Nova_AtomicI8* a, int8_t v, const Nova_MemOrdering* ord) { return __atomic_exchange_n(&a->value, v, nova_mo_c(ord)); }
-static inline int8_t Nova_AtomicI8_method_swap_i8(Nova_AtomicI8* a, int8_t v) { return __atomic_exchange_n(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline NovaTuple_CasRawI8 Nova_AtomicI8_method_cmpxchg(Nova_AtomicI8* a, int8_t e, int8_t d, nova_bool weak, const Nova_MemOrdering* s, const Nova_MemOrdering* f) {
-    nova_bool ok = (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, weak, nova_mo_c(s), nova_mo_c(f));
+static inline int8_t Nova_AtomicI8_method_load_MemOrdering(const NovaValue_AtomicI8* a, const Nova_MemOrdering* ord) { return __atomic_load_n(&a->v, nova_mo_c(ord)); }
+static inline int8_t Nova_AtomicI8_method_load(const NovaValue_AtomicI8* a) { return __atomic_load_n(&a->v, __ATOMIC_SEQ_CST); }
+static inline nova_unit Nova_AtomicI8_method_store_MemOrdering(NovaValue_AtomicI8* a, int8_t v, const Nova_MemOrdering* ord) { __atomic_store_n(&a->v, v, nova_mo_c(ord)); return NOVA_UNIT; }
+static inline nova_unit Nova_AtomicI8_method_store_i8(NovaValue_AtomicI8* a, int8_t v) { __atomic_store_n(&a->v, v, __ATOMIC_SEQ_CST); return NOVA_UNIT; }
+static inline int8_t Nova_AtomicI8_method_swap_MemOrdering(NovaValue_AtomicI8* a, int8_t v, const Nova_MemOrdering* ord) { return __atomic_exchange_n(&a->v, v, nova_mo_c(ord)); }
+static inline int8_t Nova_AtomicI8_method_swap_i8(NovaValue_AtomicI8* a, int8_t v) { return __atomic_exchange_n(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline NovaTuple_CasRawI8 Nova_AtomicI8_method_cmpxchg(NovaValue_AtomicI8* a, int8_t e, int8_t d, nova_bool weak, const Nova_MemOrdering* s, const Nova_MemOrdering* f) {
+    nova_bool ok = (nova_bool)__atomic_compare_exchange_n(&a->v, &e, d, weak, nova_mo_c(s), nova_mo_c(f));
     NovaTuple_CasRawI8 r; r.ok = ok; r.witness = e; return r;
 }
-static inline int8_t Nova_AtomicI8_method_fetch_add_MemOrdering(Nova_AtomicI8* a, int8_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_add(&a->value, v, nova_mo_c(ord)); }
-static inline int8_t Nova_AtomicI8_method_fetch_add_i8(Nova_AtomicI8* a, int8_t v) { return __atomic_fetch_add(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline int8_t Nova_AtomicI8_method_fetch_sub_MemOrdering(Nova_AtomicI8* a, int8_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_sub(&a->value, v, nova_mo_c(ord)); }
-static inline int8_t Nova_AtomicI8_method_fetch_sub_i8(Nova_AtomicI8* a, int8_t v) { return __atomic_fetch_sub(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline int8_t Nova_AtomicI8_method_fetch_or_MemOrdering(Nova_AtomicI8* a, int8_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_or(&a->value, v, nova_mo_c(ord)); }
-static inline int8_t Nova_AtomicI8_method_fetch_or_i8(Nova_AtomicI8* a, int8_t v) { return __atomic_fetch_or(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline int8_t Nova_AtomicI8_method_fetch_and_MemOrdering(Nova_AtomicI8* a, int8_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_and(&a->value, v, nova_mo_c(ord)); }
-static inline int8_t Nova_AtomicI8_method_fetch_and_i8(Nova_AtomicI8* a, int8_t v) { return __atomic_fetch_and(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline int8_t Nova_AtomicI8_method_fetch_xor_MemOrdering(Nova_AtomicI8* a, int8_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_xor(&a->value, v, nova_mo_c(ord)); }
-static inline int8_t Nova_AtomicI8_method_fetch_xor_i8(Nova_AtomicI8* a, int8_t v) { return __atomic_fetch_xor(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline int8_t Nova_AtomicI8_method_fetch_max_MemOrdering(Nova_AtomicI8* a, int8_t v, const Nova_MemOrdering* ord) {
-    int mo = nova_mo_c(ord); int8_t cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
-    while (cur < v) { if (__atomic_compare_exchange_n(&a->value, &cur, v, true, mo, __ATOMIC_RELAXED)) break; } return cur;
+static inline int8_t Nova_AtomicI8_method_fetch_add_MemOrdering(NovaValue_AtomicI8* a, int8_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_add(&a->v, v, nova_mo_c(ord)); }
+static inline int8_t Nova_AtomicI8_method_fetch_add_i8(NovaValue_AtomicI8* a, int8_t v) { return __atomic_fetch_add(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline int8_t Nova_AtomicI8_method_fetch_sub_MemOrdering(NovaValue_AtomicI8* a, int8_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_sub(&a->v, v, nova_mo_c(ord)); }
+static inline int8_t Nova_AtomicI8_method_fetch_sub_i8(NovaValue_AtomicI8* a, int8_t v) { return __atomic_fetch_sub(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline int8_t Nova_AtomicI8_method_fetch_or_MemOrdering(NovaValue_AtomicI8* a, int8_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_or(&a->v, v, nova_mo_c(ord)); }
+static inline int8_t Nova_AtomicI8_method_fetch_or_i8(NovaValue_AtomicI8* a, int8_t v) { return __atomic_fetch_or(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline int8_t Nova_AtomicI8_method_fetch_and_MemOrdering(NovaValue_AtomicI8* a, int8_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_and(&a->v, v, nova_mo_c(ord)); }
+static inline int8_t Nova_AtomicI8_method_fetch_and_i8(NovaValue_AtomicI8* a, int8_t v) { return __atomic_fetch_and(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline int8_t Nova_AtomicI8_method_fetch_xor_MemOrdering(NovaValue_AtomicI8* a, int8_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_xor(&a->v, v, nova_mo_c(ord)); }
+static inline int8_t Nova_AtomicI8_method_fetch_xor_i8(NovaValue_AtomicI8* a, int8_t v) { return __atomic_fetch_xor(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline int8_t Nova_AtomicI8_method_fetch_max_MemOrdering(NovaValue_AtomicI8* a, int8_t v, const Nova_MemOrdering* ord) {
+    int mo = nova_mo_c(ord); int8_t cur = __atomic_load_n(&a->v, __ATOMIC_RELAXED);
+    while (cur < v) { if (__atomic_compare_exchange_n(&a->v, &cur, v, true, mo, __ATOMIC_RELAXED)) break; } return cur;
 }
-static inline int8_t Nova_AtomicI8_method_fetch_max_i8(Nova_AtomicI8* a, int8_t v) {
-    int8_t cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
-    while (cur < v) { if (__atomic_compare_exchange_n(&a->value, &cur, v, true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) break; } return cur;
+static inline int8_t Nova_AtomicI8_method_fetch_max_i8(NovaValue_AtomicI8* a, int8_t v) {
+    int8_t cur = __atomic_load_n(&a->v, __ATOMIC_RELAXED);
+    while (cur < v) { if (__atomic_compare_exchange_n(&a->v, &cur, v, true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) break; } return cur;
 }
-static inline int8_t Nova_AtomicI8_method_fetch_min_MemOrdering(Nova_AtomicI8* a, int8_t v, const Nova_MemOrdering* ord) {
-    int mo = nova_mo_c(ord); int8_t cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
-    while (cur > v) { if (__atomic_compare_exchange_n(&a->value, &cur, v, true, mo, __ATOMIC_RELAXED)) break; } return cur;
+static inline int8_t Nova_AtomicI8_method_fetch_min_MemOrdering(NovaValue_AtomicI8* a, int8_t v, const Nova_MemOrdering* ord) {
+    int mo = nova_mo_c(ord); int8_t cur = __atomic_load_n(&a->v, __ATOMIC_RELAXED);
+    while (cur > v) { if (__atomic_compare_exchange_n(&a->v, &cur, v, true, mo, __ATOMIC_RELAXED)) break; } return cur;
 }
-static inline int8_t Nova_AtomicI8_method_fetch_min_i8(Nova_AtomicI8* a, int8_t v) {
-    int8_t cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
-    while (cur > v) { if (__atomic_compare_exchange_n(&a->value, &cur, v, true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) break; } return cur;
+static inline int8_t Nova_AtomicI8_method_fetch_min_i8(NovaValue_AtomicI8* a, int8_t v) {
+    int8_t cur = __atomic_load_n(&a->v, __ATOMIC_RELAXED);
+    while (cur > v) { if (__atomic_compare_exchange_n(&a->v, &cur, v, true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) break; } return cur;
 }
-static inline int8_t Nova_AtomicI8_method_fetch_nand_MemOrdering(Nova_AtomicI8* a, int8_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_nand(&a->value, v, nova_mo_c(ord)); }
-static inline int8_t Nova_AtomicI8_method_fetch_nand_i8(Nova_AtomicI8* a, int8_t v) { return __atomic_fetch_nand(&a->value, v, __ATOMIC_SEQ_CST); }
+static inline int8_t Nova_AtomicI8_method_fetch_nand_MemOrdering(NovaValue_AtomicI8* a, int8_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_nand(&a->v, v, nova_mo_c(ord)); }
+static inline int8_t Nova_AtomicI8_method_fetch_nand_i8(NovaValue_AtomicI8* a, int8_t v) { return __atomic_fetch_nand(&a->v, v, __ATOMIC_SEQ_CST); }
 
 /* ── Plan 103.2: AtomicU64 ─────────────────────────────────────── */
 
-typedef struct { uint64_t value; } Nova_AtomicU64;
+typedef struct { uint64_t v; } NovaValue_AtomicU64;
 
-static inline Nova_AtomicU64* Nova_AtomicU64_static_new(uint64_t v) {
-    Nova_AtomicU64* a = (Nova_AtomicU64*)nova_alloc(sizeof(Nova_AtomicU64));
-    __atomic_store_n(&a->value, v, __ATOMIC_SEQ_CST); return a;
+/* Plan 248 (wave 3): value-inside — see AtomicI64 comment above. */
+static inline NovaValue_AtomicU64 Nova_AtomicU64_static_new(uint64_t v) {
+    NovaValue_AtomicU64 a; a.v = v; return a;
 }
-static inline uint64_t Nova_AtomicU64_method_load_MemOrdering(const Nova_AtomicU64* a, const Nova_MemOrdering* ord) { return __atomic_load_n(&a->value, nova_mo_c(ord)); }
-static inline uint64_t Nova_AtomicU64_method_load(const Nova_AtomicU64* a) { return __atomic_load_n(&a->value, __ATOMIC_SEQ_CST); }
-static inline nova_unit Nova_AtomicU64_method_store_MemOrdering(Nova_AtomicU64* a, uint64_t v, const Nova_MemOrdering* ord) { __atomic_store_n(&a->value, v, nova_mo_c(ord)); return NOVA_UNIT; }
-static inline nova_unit Nova_AtomicU64_method_store_u64(Nova_AtomicU64* a, uint64_t v) { __atomic_store_n(&a->value, v, __ATOMIC_SEQ_CST); return NOVA_UNIT; }
-static inline uint64_t Nova_AtomicU64_method_swap_MemOrdering(Nova_AtomicU64* a, uint64_t v, const Nova_MemOrdering* ord) { return __atomic_exchange_n(&a->value, v, nova_mo_c(ord)); }
-static inline uint64_t Nova_AtomicU64_method_swap_u64(Nova_AtomicU64* a, uint64_t v) { return __atomic_exchange_n(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline NovaTuple_CasRawU64 Nova_AtomicU64_method_cmpxchg(Nova_AtomicU64* a, uint64_t e, uint64_t d, nova_bool weak, const Nova_MemOrdering* s, const Nova_MemOrdering* f) {
-    nova_bool ok = (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, weak, nova_mo_c(s), nova_mo_c(f));
+static inline uint64_t Nova_AtomicU64_method_load_MemOrdering(const NovaValue_AtomicU64* a, const Nova_MemOrdering* ord) { return __atomic_load_n(&a->v, nova_mo_c(ord)); }
+static inline uint64_t Nova_AtomicU64_method_load(const NovaValue_AtomicU64* a) { return __atomic_load_n(&a->v, __ATOMIC_SEQ_CST); }
+static inline nova_unit Nova_AtomicU64_method_store_MemOrdering(NovaValue_AtomicU64* a, uint64_t v, const Nova_MemOrdering* ord) { __atomic_store_n(&a->v, v, nova_mo_c(ord)); return NOVA_UNIT; }
+static inline nova_unit Nova_AtomicU64_method_store_u64(NovaValue_AtomicU64* a, uint64_t v) { __atomic_store_n(&a->v, v, __ATOMIC_SEQ_CST); return NOVA_UNIT; }
+static inline uint64_t Nova_AtomicU64_method_swap_MemOrdering(NovaValue_AtomicU64* a, uint64_t v, const Nova_MemOrdering* ord) { return __atomic_exchange_n(&a->v, v, nova_mo_c(ord)); }
+static inline uint64_t Nova_AtomicU64_method_swap_u64(NovaValue_AtomicU64* a, uint64_t v) { return __atomic_exchange_n(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline NovaTuple_CasRawU64 Nova_AtomicU64_method_cmpxchg(NovaValue_AtomicU64* a, uint64_t e, uint64_t d, nova_bool weak, const Nova_MemOrdering* s, const Nova_MemOrdering* f) {
+    nova_bool ok = (nova_bool)__atomic_compare_exchange_n(&a->v, &e, d, weak, nova_mo_c(s), nova_mo_c(f));
     NovaTuple_CasRawU64 r; r.ok = ok; r.witness = e; return r;
 }
-static inline uint64_t Nova_AtomicU64_method_fetch_add_MemOrdering(Nova_AtomicU64* a, uint64_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_add(&a->value, v, nova_mo_c(ord)); }
-static inline uint64_t Nova_AtomicU64_method_fetch_add_u64(Nova_AtomicU64* a, uint64_t v) { return __atomic_fetch_add(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline uint64_t Nova_AtomicU64_method_fetch_sub_MemOrdering(Nova_AtomicU64* a, uint64_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_sub(&a->value, v, nova_mo_c(ord)); }
-static inline uint64_t Nova_AtomicU64_method_fetch_sub_u64(Nova_AtomicU64* a, uint64_t v) { return __atomic_fetch_sub(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline uint64_t Nova_AtomicU64_method_fetch_or_MemOrdering(Nova_AtomicU64* a, uint64_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_or(&a->value, v, nova_mo_c(ord)); }
-static inline uint64_t Nova_AtomicU64_method_fetch_or_u64(Nova_AtomicU64* a, uint64_t v) { return __atomic_fetch_or(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline uint64_t Nova_AtomicU64_method_fetch_and_MemOrdering(Nova_AtomicU64* a, uint64_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_and(&a->value, v, nova_mo_c(ord)); }
-static inline uint64_t Nova_AtomicU64_method_fetch_and_u64(Nova_AtomicU64* a, uint64_t v) { return __atomic_fetch_and(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline uint64_t Nova_AtomicU64_method_fetch_xor_MemOrdering(Nova_AtomicU64* a, uint64_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_xor(&a->value, v, nova_mo_c(ord)); }
-static inline uint64_t Nova_AtomicU64_method_fetch_xor_u64(Nova_AtomicU64* a, uint64_t v) { return __atomic_fetch_xor(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline uint64_t Nova_AtomicU64_method_fetch_max_MemOrdering(Nova_AtomicU64* a, uint64_t v, const Nova_MemOrdering* ord) {
-    int mo = nova_mo_c(ord); uint64_t cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
-    while (cur < v) { if (__atomic_compare_exchange_n(&a->value, &cur, v, true, mo, __ATOMIC_RELAXED)) break; } return cur;
+static inline uint64_t Nova_AtomicU64_method_fetch_add_MemOrdering(NovaValue_AtomicU64* a, uint64_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_add(&a->v, v, nova_mo_c(ord)); }
+static inline uint64_t Nova_AtomicU64_method_fetch_add_u64(NovaValue_AtomicU64* a, uint64_t v) { return __atomic_fetch_add(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline uint64_t Nova_AtomicU64_method_fetch_sub_MemOrdering(NovaValue_AtomicU64* a, uint64_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_sub(&a->v, v, nova_mo_c(ord)); }
+static inline uint64_t Nova_AtomicU64_method_fetch_sub_u64(NovaValue_AtomicU64* a, uint64_t v) { return __atomic_fetch_sub(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline uint64_t Nova_AtomicU64_method_fetch_or_MemOrdering(NovaValue_AtomicU64* a, uint64_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_or(&a->v, v, nova_mo_c(ord)); }
+static inline uint64_t Nova_AtomicU64_method_fetch_or_u64(NovaValue_AtomicU64* a, uint64_t v) { return __atomic_fetch_or(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline uint64_t Nova_AtomicU64_method_fetch_and_MemOrdering(NovaValue_AtomicU64* a, uint64_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_and(&a->v, v, nova_mo_c(ord)); }
+static inline uint64_t Nova_AtomicU64_method_fetch_and_u64(NovaValue_AtomicU64* a, uint64_t v) { return __atomic_fetch_and(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline uint64_t Nova_AtomicU64_method_fetch_xor_MemOrdering(NovaValue_AtomicU64* a, uint64_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_xor(&a->v, v, nova_mo_c(ord)); }
+static inline uint64_t Nova_AtomicU64_method_fetch_xor_u64(NovaValue_AtomicU64* a, uint64_t v) { return __atomic_fetch_xor(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline uint64_t Nova_AtomicU64_method_fetch_max_MemOrdering(NovaValue_AtomicU64* a, uint64_t v, const Nova_MemOrdering* ord) {
+    int mo = nova_mo_c(ord); uint64_t cur = __atomic_load_n(&a->v, __ATOMIC_RELAXED);
+    while (cur < v) { if (__atomic_compare_exchange_n(&a->v, &cur, v, true, mo, __ATOMIC_RELAXED)) break; } return cur;
 }
-static inline uint64_t Nova_AtomicU64_method_fetch_max_u64(Nova_AtomicU64* a, uint64_t v) {
-    uint64_t cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
-    while (cur < v) { if (__atomic_compare_exchange_n(&a->value, &cur, v, true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) break; } return cur;
+static inline uint64_t Nova_AtomicU64_method_fetch_max_u64(NovaValue_AtomicU64* a, uint64_t v) {
+    uint64_t cur = __atomic_load_n(&a->v, __ATOMIC_RELAXED);
+    while (cur < v) { if (__atomic_compare_exchange_n(&a->v, &cur, v, true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) break; } return cur;
 }
-static inline uint64_t Nova_AtomicU64_method_fetch_min_MemOrdering(Nova_AtomicU64* a, uint64_t v, const Nova_MemOrdering* ord) {
-    int mo = nova_mo_c(ord); uint64_t cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
-    while (cur > v) { if (__atomic_compare_exchange_n(&a->value, &cur, v, true, mo, __ATOMIC_RELAXED)) break; } return cur;
+static inline uint64_t Nova_AtomicU64_method_fetch_min_MemOrdering(NovaValue_AtomicU64* a, uint64_t v, const Nova_MemOrdering* ord) {
+    int mo = nova_mo_c(ord); uint64_t cur = __atomic_load_n(&a->v, __ATOMIC_RELAXED);
+    while (cur > v) { if (__atomic_compare_exchange_n(&a->v, &cur, v, true, mo, __ATOMIC_RELAXED)) break; } return cur;
 }
-static inline uint64_t Nova_AtomicU64_method_fetch_min_u64(Nova_AtomicU64* a, uint64_t v) {
-    uint64_t cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
-    while (cur > v) { if (__atomic_compare_exchange_n(&a->value, &cur, v, true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) break; } return cur;
+static inline uint64_t Nova_AtomicU64_method_fetch_min_u64(NovaValue_AtomicU64* a, uint64_t v) {
+    uint64_t cur = __atomic_load_n(&a->v, __ATOMIC_RELAXED);
+    while (cur > v) { if (__atomic_compare_exchange_n(&a->v, &cur, v, true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) break; } return cur;
 }
-static inline uint64_t Nova_AtomicU64_method_fetch_nand_MemOrdering(Nova_AtomicU64* a, uint64_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_nand(&a->value, v, nova_mo_c(ord)); }
-static inline uint64_t Nova_AtomicU64_method_fetch_nand_u64(Nova_AtomicU64* a, uint64_t v) { return __atomic_fetch_nand(&a->value, v, __ATOMIC_SEQ_CST); }
+static inline uint64_t Nova_AtomicU64_method_fetch_nand_MemOrdering(NovaValue_AtomicU64* a, uint64_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_nand(&a->v, v, nova_mo_c(ord)); }
+static inline uint64_t Nova_AtomicU64_method_fetch_nand_u64(NovaValue_AtomicU64* a, uint64_t v) { return __atomic_fetch_nand(&a->v, v, __ATOMIC_SEQ_CST); }
 
 /* ── Plan 103.2: AtomicU32 ─────────────────────────────────────── */
 
-typedef struct { uint32_t value; } Nova_AtomicU32;
+typedef struct { uint32_t v; } NovaValue_AtomicU32;
 
-static inline Nova_AtomicU32* Nova_AtomicU32_static_new(uint32_t v) {
-    Nova_AtomicU32* a = (Nova_AtomicU32*)nova_alloc(sizeof(Nova_AtomicU32));
-    __atomic_store_n(&a->value, v, __ATOMIC_SEQ_CST); return a;
+/* Plan 248 (wave 3): value-inside — see AtomicI64 comment above. */
+static inline NovaValue_AtomicU32 Nova_AtomicU32_static_new(uint32_t v) {
+    NovaValue_AtomicU32 a; a.v = v; return a;
 }
-static inline uint32_t Nova_AtomicU32_method_load_MemOrdering(const Nova_AtomicU32* a, const Nova_MemOrdering* ord) { return __atomic_load_n(&a->value, nova_mo_c(ord)); }
-static inline uint32_t Nova_AtomicU32_method_load(const Nova_AtomicU32* a) { return __atomic_load_n(&a->value, __ATOMIC_SEQ_CST); }
-static inline nova_unit Nova_AtomicU32_method_store_MemOrdering(Nova_AtomicU32* a, uint32_t v, const Nova_MemOrdering* ord) { __atomic_store_n(&a->value, v, nova_mo_c(ord)); return NOVA_UNIT; }
-static inline nova_unit Nova_AtomicU32_method_store_u32(Nova_AtomicU32* a, uint32_t v) { __atomic_store_n(&a->value, v, __ATOMIC_SEQ_CST); return NOVA_UNIT; }
-static inline uint32_t Nova_AtomicU32_method_swap_MemOrdering(Nova_AtomicU32* a, uint32_t v, const Nova_MemOrdering* ord) { return __atomic_exchange_n(&a->value, v, nova_mo_c(ord)); }
-static inline uint32_t Nova_AtomicU32_method_swap_u32(Nova_AtomicU32* a, uint32_t v) { return __atomic_exchange_n(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline NovaTuple_CasRawU32 Nova_AtomicU32_method_cmpxchg(Nova_AtomicU32* a, uint32_t e, uint32_t d, nova_bool weak, const Nova_MemOrdering* s, const Nova_MemOrdering* f) {
-    nova_bool ok = (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, weak, nova_mo_c(s), nova_mo_c(f));
+static inline uint32_t Nova_AtomicU32_method_load_MemOrdering(const NovaValue_AtomicU32* a, const Nova_MemOrdering* ord) { return __atomic_load_n(&a->v, nova_mo_c(ord)); }
+static inline uint32_t Nova_AtomicU32_method_load(const NovaValue_AtomicU32* a) { return __atomic_load_n(&a->v, __ATOMIC_SEQ_CST); }
+static inline nova_unit Nova_AtomicU32_method_store_MemOrdering(NovaValue_AtomicU32* a, uint32_t v, const Nova_MemOrdering* ord) { __atomic_store_n(&a->v, v, nova_mo_c(ord)); return NOVA_UNIT; }
+static inline nova_unit Nova_AtomicU32_method_store_u32(NovaValue_AtomicU32* a, uint32_t v) { __atomic_store_n(&a->v, v, __ATOMIC_SEQ_CST); return NOVA_UNIT; }
+static inline uint32_t Nova_AtomicU32_method_swap_MemOrdering(NovaValue_AtomicU32* a, uint32_t v, const Nova_MemOrdering* ord) { return __atomic_exchange_n(&a->v, v, nova_mo_c(ord)); }
+static inline uint32_t Nova_AtomicU32_method_swap_u32(NovaValue_AtomicU32* a, uint32_t v) { return __atomic_exchange_n(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline NovaTuple_CasRawU32 Nova_AtomicU32_method_cmpxchg(NovaValue_AtomicU32* a, uint32_t e, uint32_t d, nova_bool weak, const Nova_MemOrdering* s, const Nova_MemOrdering* f) {
+    nova_bool ok = (nova_bool)__atomic_compare_exchange_n(&a->v, &e, d, weak, nova_mo_c(s), nova_mo_c(f));
     NovaTuple_CasRawU32 r; r.ok = ok; r.witness = e; return r;
 }
-static inline uint32_t Nova_AtomicU32_method_fetch_add_MemOrdering(Nova_AtomicU32* a, uint32_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_add(&a->value, v, nova_mo_c(ord)); }
-static inline uint32_t Nova_AtomicU32_method_fetch_add_u32(Nova_AtomicU32* a, uint32_t v) { return __atomic_fetch_add(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline uint32_t Nova_AtomicU32_method_fetch_sub_MemOrdering(Nova_AtomicU32* a, uint32_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_sub(&a->value, v, nova_mo_c(ord)); }
-static inline uint32_t Nova_AtomicU32_method_fetch_sub_u32(Nova_AtomicU32* a, uint32_t v) { return __atomic_fetch_sub(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline uint32_t Nova_AtomicU32_method_fetch_or_MemOrdering(Nova_AtomicU32* a, uint32_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_or(&a->value, v, nova_mo_c(ord)); }
-static inline uint32_t Nova_AtomicU32_method_fetch_or_u32(Nova_AtomicU32* a, uint32_t v) { return __atomic_fetch_or(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline uint32_t Nova_AtomicU32_method_fetch_and_MemOrdering(Nova_AtomicU32* a, uint32_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_and(&a->value, v, nova_mo_c(ord)); }
-static inline uint32_t Nova_AtomicU32_method_fetch_and_u32(Nova_AtomicU32* a, uint32_t v) { return __atomic_fetch_and(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline uint32_t Nova_AtomicU32_method_fetch_xor_MemOrdering(Nova_AtomicU32* a, uint32_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_xor(&a->value, v, nova_mo_c(ord)); }
-static inline uint32_t Nova_AtomicU32_method_fetch_xor_u32(Nova_AtomicU32* a, uint32_t v) { return __atomic_fetch_xor(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline uint32_t Nova_AtomicU32_method_fetch_max_MemOrdering(Nova_AtomicU32* a, uint32_t v, const Nova_MemOrdering* ord) {
-    int mo = nova_mo_c(ord); uint32_t cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
-    while (cur < v) { if (__atomic_compare_exchange_n(&a->value, &cur, v, true, mo, __ATOMIC_RELAXED)) break; } return cur;
+static inline uint32_t Nova_AtomicU32_method_fetch_add_MemOrdering(NovaValue_AtomicU32* a, uint32_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_add(&a->v, v, nova_mo_c(ord)); }
+static inline uint32_t Nova_AtomicU32_method_fetch_add_u32(NovaValue_AtomicU32* a, uint32_t v) { return __atomic_fetch_add(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline uint32_t Nova_AtomicU32_method_fetch_sub_MemOrdering(NovaValue_AtomicU32* a, uint32_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_sub(&a->v, v, nova_mo_c(ord)); }
+static inline uint32_t Nova_AtomicU32_method_fetch_sub_u32(NovaValue_AtomicU32* a, uint32_t v) { return __atomic_fetch_sub(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline uint32_t Nova_AtomicU32_method_fetch_or_MemOrdering(NovaValue_AtomicU32* a, uint32_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_or(&a->v, v, nova_mo_c(ord)); }
+static inline uint32_t Nova_AtomicU32_method_fetch_or_u32(NovaValue_AtomicU32* a, uint32_t v) { return __atomic_fetch_or(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline uint32_t Nova_AtomicU32_method_fetch_and_MemOrdering(NovaValue_AtomicU32* a, uint32_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_and(&a->v, v, nova_mo_c(ord)); }
+static inline uint32_t Nova_AtomicU32_method_fetch_and_u32(NovaValue_AtomicU32* a, uint32_t v) { return __atomic_fetch_and(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline uint32_t Nova_AtomicU32_method_fetch_xor_MemOrdering(NovaValue_AtomicU32* a, uint32_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_xor(&a->v, v, nova_mo_c(ord)); }
+static inline uint32_t Nova_AtomicU32_method_fetch_xor_u32(NovaValue_AtomicU32* a, uint32_t v) { return __atomic_fetch_xor(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline uint32_t Nova_AtomicU32_method_fetch_max_MemOrdering(NovaValue_AtomicU32* a, uint32_t v, const Nova_MemOrdering* ord) {
+    int mo = nova_mo_c(ord); uint32_t cur = __atomic_load_n(&a->v, __ATOMIC_RELAXED);
+    while (cur < v) { if (__atomic_compare_exchange_n(&a->v, &cur, v, true, mo, __ATOMIC_RELAXED)) break; } return cur;
 }
-static inline uint32_t Nova_AtomicU32_method_fetch_max_u32(Nova_AtomicU32* a, uint32_t v) {
-    uint32_t cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
-    while (cur < v) { if (__atomic_compare_exchange_n(&a->value, &cur, v, true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) break; } return cur;
+static inline uint32_t Nova_AtomicU32_method_fetch_max_u32(NovaValue_AtomicU32* a, uint32_t v) {
+    uint32_t cur = __atomic_load_n(&a->v, __ATOMIC_RELAXED);
+    while (cur < v) { if (__atomic_compare_exchange_n(&a->v, &cur, v, true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) break; } return cur;
 }
-static inline uint32_t Nova_AtomicU32_method_fetch_min_MemOrdering(Nova_AtomicU32* a, uint32_t v, const Nova_MemOrdering* ord) {
-    int mo = nova_mo_c(ord); uint32_t cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
-    while (cur > v) { if (__atomic_compare_exchange_n(&a->value, &cur, v, true, mo, __ATOMIC_RELAXED)) break; } return cur;
+static inline uint32_t Nova_AtomicU32_method_fetch_min_MemOrdering(NovaValue_AtomicU32* a, uint32_t v, const Nova_MemOrdering* ord) {
+    int mo = nova_mo_c(ord); uint32_t cur = __atomic_load_n(&a->v, __ATOMIC_RELAXED);
+    while (cur > v) { if (__atomic_compare_exchange_n(&a->v, &cur, v, true, mo, __ATOMIC_RELAXED)) break; } return cur;
 }
-static inline uint32_t Nova_AtomicU32_method_fetch_min_u32(Nova_AtomicU32* a, uint32_t v) {
-    uint32_t cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
-    while (cur > v) { if (__atomic_compare_exchange_n(&a->value, &cur, v, true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) break; } return cur;
+static inline uint32_t Nova_AtomicU32_method_fetch_min_u32(NovaValue_AtomicU32* a, uint32_t v) {
+    uint32_t cur = __atomic_load_n(&a->v, __ATOMIC_RELAXED);
+    while (cur > v) { if (__atomic_compare_exchange_n(&a->v, &cur, v, true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) break; } return cur;
 }
-static inline uint32_t Nova_AtomicU32_method_fetch_nand_MemOrdering(Nova_AtomicU32* a, uint32_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_nand(&a->value, v, nova_mo_c(ord)); }
-static inline uint32_t Nova_AtomicU32_method_fetch_nand_u32(Nova_AtomicU32* a, uint32_t v) { return __atomic_fetch_nand(&a->value, v, __ATOMIC_SEQ_CST); }
+static inline uint32_t Nova_AtomicU32_method_fetch_nand_MemOrdering(NovaValue_AtomicU32* a, uint32_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_nand(&a->v, v, nova_mo_c(ord)); }
+static inline uint32_t Nova_AtomicU32_method_fetch_nand_u32(NovaValue_AtomicU32* a, uint32_t v) { return __atomic_fetch_nand(&a->v, v, __ATOMIC_SEQ_CST); }
 
 /* ── Plan 103.2: AtomicU16 ─────────────────────────────────────── */
 
-typedef struct { uint16_t value; } Nova_AtomicU16;
+typedef struct { uint16_t v; } NovaValue_AtomicU16;
 
-static inline Nova_AtomicU16* Nova_AtomicU16_static_new(uint16_t v) {
-    Nova_AtomicU16* a = (Nova_AtomicU16*)nova_alloc(sizeof(Nova_AtomicU16));
-    __atomic_store_n(&a->value, v, __ATOMIC_SEQ_CST); return a;
+/* Plan 248 (wave 3): value-inside — see AtomicI64 comment above. */
+static inline NovaValue_AtomicU16 Nova_AtomicU16_static_new(uint16_t v) {
+    NovaValue_AtomicU16 a; a.v = v; return a;
 }
-static inline uint16_t Nova_AtomicU16_method_load_MemOrdering(const Nova_AtomicU16* a, const Nova_MemOrdering* ord) { return __atomic_load_n(&a->value, nova_mo_c(ord)); }
-static inline uint16_t Nova_AtomicU16_method_load(const Nova_AtomicU16* a) { return __atomic_load_n(&a->value, __ATOMIC_SEQ_CST); }
-static inline nova_unit Nova_AtomicU16_method_store_MemOrdering(Nova_AtomicU16* a, uint16_t v, const Nova_MemOrdering* ord) { __atomic_store_n(&a->value, v, nova_mo_c(ord)); return NOVA_UNIT; }
-static inline nova_unit Nova_AtomicU16_method_store_u16(Nova_AtomicU16* a, uint16_t v) { __atomic_store_n(&a->value, v, __ATOMIC_SEQ_CST); return NOVA_UNIT; }
-static inline uint16_t Nova_AtomicU16_method_swap_MemOrdering(Nova_AtomicU16* a, uint16_t v, const Nova_MemOrdering* ord) { return __atomic_exchange_n(&a->value, v, nova_mo_c(ord)); }
-static inline uint16_t Nova_AtomicU16_method_swap_u16(Nova_AtomicU16* a, uint16_t v) { return __atomic_exchange_n(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline NovaTuple_CasRawU16 Nova_AtomicU16_method_cmpxchg(Nova_AtomicU16* a, uint16_t e, uint16_t d, nova_bool weak, const Nova_MemOrdering* s, const Nova_MemOrdering* f) {
-    nova_bool ok = (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, weak, nova_mo_c(s), nova_mo_c(f));
+static inline uint16_t Nova_AtomicU16_method_load_MemOrdering(const NovaValue_AtomicU16* a, const Nova_MemOrdering* ord) { return __atomic_load_n(&a->v, nova_mo_c(ord)); }
+static inline uint16_t Nova_AtomicU16_method_load(const NovaValue_AtomicU16* a) { return __atomic_load_n(&a->v, __ATOMIC_SEQ_CST); }
+static inline nova_unit Nova_AtomicU16_method_store_MemOrdering(NovaValue_AtomicU16* a, uint16_t v, const Nova_MemOrdering* ord) { __atomic_store_n(&a->v, v, nova_mo_c(ord)); return NOVA_UNIT; }
+static inline nova_unit Nova_AtomicU16_method_store_u16(NovaValue_AtomicU16* a, uint16_t v) { __atomic_store_n(&a->v, v, __ATOMIC_SEQ_CST); return NOVA_UNIT; }
+static inline uint16_t Nova_AtomicU16_method_swap_MemOrdering(NovaValue_AtomicU16* a, uint16_t v, const Nova_MemOrdering* ord) { return __atomic_exchange_n(&a->v, v, nova_mo_c(ord)); }
+static inline uint16_t Nova_AtomicU16_method_swap_u16(NovaValue_AtomicU16* a, uint16_t v) { return __atomic_exchange_n(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline NovaTuple_CasRawU16 Nova_AtomicU16_method_cmpxchg(NovaValue_AtomicU16* a, uint16_t e, uint16_t d, nova_bool weak, const Nova_MemOrdering* s, const Nova_MemOrdering* f) {
+    nova_bool ok = (nova_bool)__atomic_compare_exchange_n(&a->v, &e, d, weak, nova_mo_c(s), nova_mo_c(f));
     NovaTuple_CasRawU16 r; r.ok = ok; r.witness = e; return r;
 }
-static inline uint16_t Nova_AtomicU16_method_fetch_add_MemOrdering(Nova_AtomicU16* a, uint16_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_add(&a->value, v, nova_mo_c(ord)); }
-static inline uint16_t Nova_AtomicU16_method_fetch_add_u16(Nova_AtomicU16* a, uint16_t v) { return __atomic_fetch_add(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline uint16_t Nova_AtomicU16_method_fetch_sub_MemOrdering(Nova_AtomicU16* a, uint16_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_sub(&a->value, v, nova_mo_c(ord)); }
-static inline uint16_t Nova_AtomicU16_method_fetch_sub_u16(Nova_AtomicU16* a, uint16_t v) { return __atomic_fetch_sub(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline uint16_t Nova_AtomicU16_method_fetch_or_MemOrdering(Nova_AtomicU16* a, uint16_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_or(&a->value, v, nova_mo_c(ord)); }
-static inline uint16_t Nova_AtomicU16_method_fetch_or_u16(Nova_AtomicU16* a, uint16_t v) { return __atomic_fetch_or(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline uint16_t Nova_AtomicU16_method_fetch_and_MemOrdering(Nova_AtomicU16* a, uint16_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_and(&a->value, v, nova_mo_c(ord)); }
-static inline uint16_t Nova_AtomicU16_method_fetch_and_u16(Nova_AtomicU16* a, uint16_t v) { return __atomic_fetch_and(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline uint16_t Nova_AtomicU16_method_fetch_xor_MemOrdering(Nova_AtomicU16* a, uint16_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_xor(&a->value, v, nova_mo_c(ord)); }
-static inline uint16_t Nova_AtomicU16_method_fetch_xor_u16(Nova_AtomicU16* a, uint16_t v) { return __atomic_fetch_xor(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline uint16_t Nova_AtomicU16_method_fetch_max_MemOrdering(Nova_AtomicU16* a, uint16_t v, const Nova_MemOrdering* ord) {
-    int mo = nova_mo_c(ord); uint16_t cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
-    while (cur < v) { if (__atomic_compare_exchange_n(&a->value, &cur, v, true, mo, __ATOMIC_RELAXED)) break; } return cur;
+static inline uint16_t Nova_AtomicU16_method_fetch_add_MemOrdering(NovaValue_AtomicU16* a, uint16_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_add(&a->v, v, nova_mo_c(ord)); }
+static inline uint16_t Nova_AtomicU16_method_fetch_add_u16(NovaValue_AtomicU16* a, uint16_t v) { return __atomic_fetch_add(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline uint16_t Nova_AtomicU16_method_fetch_sub_MemOrdering(NovaValue_AtomicU16* a, uint16_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_sub(&a->v, v, nova_mo_c(ord)); }
+static inline uint16_t Nova_AtomicU16_method_fetch_sub_u16(NovaValue_AtomicU16* a, uint16_t v) { return __atomic_fetch_sub(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline uint16_t Nova_AtomicU16_method_fetch_or_MemOrdering(NovaValue_AtomicU16* a, uint16_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_or(&a->v, v, nova_mo_c(ord)); }
+static inline uint16_t Nova_AtomicU16_method_fetch_or_u16(NovaValue_AtomicU16* a, uint16_t v) { return __atomic_fetch_or(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline uint16_t Nova_AtomicU16_method_fetch_and_MemOrdering(NovaValue_AtomicU16* a, uint16_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_and(&a->v, v, nova_mo_c(ord)); }
+static inline uint16_t Nova_AtomicU16_method_fetch_and_u16(NovaValue_AtomicU16* a, uint16_t v) { return __atomic_fetch_and(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline uint16_t Nova_AtomicU16_method_fetch_xor_MemOrdering(NovaValue_AtomicU16* a, uint16_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_xor(&a->v, v, nova_mo_c(ord)); }
+static inline uint16_t Nova_AtomicU16_method_fetch_xor_u16(NovaValue_AtomicU16* a, uint16_t v) { return __atomic_fetch_xor(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline uint16_t Nova_AtomicU16_method_fetch_max_MemOrdering(NovaValue_AtomicU16* a, uint16_t v, const Nova_MemOrdering* ord) {
+    int mo = nova_mo_c(ord); uint16_t cur = __atomic_load_n(&a->v, __ATOMIC_RELAXED);
+    while (cur < v) { if (__atomic_compare_exchange_n(&a->v, &cur, v, true, mo, __ATOMIC_RELAXED)) break; } return cur;
 }
-static inline uint16_t Nova_AtomicU16_method_fetch_max_u16(Nova_AtomicU16* a, uint16_t v) {
-    uint16_t cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
-    while (cur < v) { if (__atomic_compare_exchange_n(&a->value, &cur, v, true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) break; } return cur;
+static inline uint16_t Nova_AtomicU16_method_fetch_max_u16(NovaValue_AtomicU16* a, uint16_t v) {
+    uint16_t cur = __atomic_load_n(&a->v, __ATOMIC_RELAXED);
+    while (cur < v) { if (__atomic_compare_exchange_n(&a->v, &cur, v, true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) break; } return cur;
 }
-static inline uint16_t Nova_AtomicU16_method_fetch_min_MemOrdering(Nova_AtomicU16* a, uint16_t v, const Nova_MemOrdering* ord) {
-    int mo = nova_mo_c(ord); uint16_t cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
-    while (cur > v) { if (__atomic_compare_exchange_n(&a->value, &cur, v, true, mo, __ATOMIC_RELAXED)) break; } return cur;
+static inline uint16_t Nova_AtomicU16_method_fetch_min_MemOrdering(NovaValue_AtomicU16* a, uint16_t v, const Nova_MemOrdering* ord) {
+    int mo = nova_mo_c(ord); uint16_t cur = __atomic_load_n(&a->v, __ATOMIC_RELAXED);
+    while (cur > v) { if (__atomic_compare_exchange_n(&a->v, &cur, v, true, mo, __ATOMIC_RELAXED)) break; } return cur;
 }
-static inline uint16_t Nova_AtomicU16_method_fetch_min_u16(Nova_AtomicU16* a, uint16_t v) {
-    uint16_t cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
-    while (cur > v) { if (__atomic_compare_exchange_n(&a->value, &cur, v, true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) break; } return cur;
+static inline uint16_t Nova_AtomicU16_method_fetch_min_u16(NovaValue_AtomicU16* a, uint16_t v) {
+    uint16_t cur = __atomic_load_n(&a->v, __ATOMIC_RELAXED);
+    while (cur > v) { if (__atomic_compare_exchange_n(&a->v, &cur, v, true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) break; } return cur;
 }
-static inline uint16_t Nova_AtomicU16_method_fetch_nand_MemOrdering(Nova_AtomicU16* a, uint16_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_nand(&a->value, v, nova_mo_c(ord)); }
-static inline uint16_t Nova_AtomicU16_method_fetch_nand_u16(Nova_AtomicU16* a, uint16_t v) { return __atomic_fetch_nand(&a->value, v, __ATOMIC_SEQ_CST); }
+static inline uint16_t Nova_AtomicU16_method_fetch_nand_MemOrdering(NovaValue_AtomicU16* a, uint16_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_nand(&a->v, v, nova_mo_c(ord)); }
+static inline uint16_t Nova_AtomicU16_method_fetch_nand_u16(NovaValue_AtomicU16* a, uint16_t v) { return __atomic_fetch_nand(&a->v, v, __ATOMIC_SEQ_CST); }
 
 /* ── Plan 103.2: AtomicU8 ──────────────────────────────────────── */
 
-typedef struct { uint8_t value; } Nova_AtomicU8;
+typedef struct { uint8_t v; } NovaValue_AtomicU8;
 
-static inline Nova_AtomicU8* Nova_AtomicU8_static_new(nova_byte v) {
-    Nova_AtomicU8* a = (Nova_AtomicU8*)nova_alloc(sizeof(Nova_AtomicU8));
-    __atomic_store_n(&a->value, (uint8_t)v, __ATOMIC_SEQ_CST); return a;
+/* Plan 248 (wave 3): value-inside — see AtomicI64 comment above. */
+static inline NovaValue_AtomicU8 Nova_AtomicU8_static_new(nova_byte v) {
+    NovaValue_AtomicU8 a; a.v = (uint8_t)v; return a;
 }
-static inline nova_byte Nova_AtomicU8_method_load_MemOrdering(const Nova_AtomicU8* a, const Nova_MemOrdering* ord) { return (nova_byte)__atomic_load_n(&a->value, nova_mo_c(ord)); }
-static inline nova_byte Nova_AtomicU8_method_load(const Nova_AtomicU8* a) { return (nova_byte)__atomic_load_n(&a->value, __ATOMIC_SEQ_CST); }
-static inline nova_unit Nova_AtomicU8_method_store_MemOrdering(Nova_AtomicU8* a, nova_byte v, const Nova_MemOrdering* ord) { __atomic_store_n(&a->value, (uint8_t)v, nova_mo_c(ord)); return NOVA_UNIT; }
-static inline nova_unit Nova_AtomicU8_method_store_u8(Nova_AtomicU8* a, nova_byte v) { __atomic_store_n(&a->value, (uint8_t)v, __ATOMIC_SEQ_CST); return NOVA_UNIT; }
-static inline nova_byte Nova_AtomicU8_method_swap_MemOrdering(Nova_AtomicU8* a, nova_byte v, const Nova_MemOrdering* ord) { return (nova_byte)__atomic_exchange_n(&a->value, (uint8_t)v, nova_mo_c(ord)); }
-static inline nova_byte Nova_AtomicU8_method_swap_u8(Nova_AtomicU8* a, nova_byte v) { return (nova_byte)__atomic_exchange_n(&a->value, (uint8_t)v, __ATOMIC_SEQ_CST); }
-static inline NovaTuple_CasRawU8 Nova_AtomicU8_method_cmpxchg(Nova_AtomicU8* a, nova_byte ev, nova_byte dv, nova_bool weak, const Nova_MemOrdering* s, const Nova_MemOrdering* f) {
+static inline nova_byte Nova_AtomicU8_method_load_MemOrdering(const NovaValue_AtomicU8* a, const Nova_MemOrdering* ord) { return (nova_byte)__atomic_load_n(&a->v, nova_mo_c(ord)); }
+static inline nova_byte Nova_AtomicU8_method_load(const NovaValue_AtomicU8* a) { return (nova_byte)__atomic_load_n(&a->v, __ATOMIC_SEQ_CST); }
+static inline nova_unit Nova_AtomicU8_method_store_MemOrdering(NovaValue_AtomicU8* a, nova_byte v, const Nova_MemOrdering* ord) { __atomic_store_n(&a->v, (uint8_t)v, nova_mo_c(ord)); return NOVA_UNIT; }
+static inline nova_unit Nova_AtomicU8_method_store_u8(NovaValue_AtomicU8* a, nova_byte v) { __atomic_store_n(&a->v, (uint8_t)v, __ATOMIC_SEQ_CST); return NOVA_UNIT; }
+static inline nova_byte Nova_AtomicU8_method_swap_MemOrdering(NovaValue_AtomicU8* a, nova_byte v, const Nova_MemOrdering* ord) { return (nova_byte)__atomic_exchange_n(&a->v, (uint8_t)v, nova_mo_c(ord)); }
+static inline nova_byte Nova_AtomicU8_method_swap_u8(NovaValue_AtomicU8* a, nova_byte v) { return (nova_byte)__atomic_exchange_n(&a->v, (uint8_t)v, __ATOMIC_SEQ_CST); }
+static inline NovaTuple_CasRawU8 Nova_AtomicU8_method_cmpxchg(NovaValue_AtomicU8* a, nova_byte ev, nova_byte dv, nova_bool weak, const Nova_MemOrdering* s, const Nova_MemOrdering* f) {
     uint8_t e = (uint8_t)ev;
-    nova_bool ok = (nova_bool)__atomic_compare_exchange_n(&a->value, &e, (uint8_t)dv, weak, nova_mo_c(s), nova_mo_c(f));
+    nova_bool ok = (nova_bool)__atomic_compare_exchange_n(&a->v, &e, (uint8_t)dv, weak, nova_mo_c(s), nova_mo_c(f));
     NovaTuple_CasRawU8 r; r.ok = ok; r.witness = (nova_byte)e; return r;
 }
-static inline nova_byte Nova_AtomicU8_method_fetch_add_MemOrdering(Nova_AtomicU8* a, nova_byte v, const Nova_MemOrdering* ord) { return (nova_byte)__atomic_fetch_add(&a->value, (uint8_t)v, nova_mo_c(ord)); }
-static inline nova_byte Nova_AtomicU8_method_fetch_add_u8(Nova_AtomicU8* a, nova_byte v) { return (nova_byte)__atomic_fetch_add(&a->value, (uint8_t)v, __ATOMIC_SEQ_CST); }
-static inline nova_byte Nova_AtomicU8_method_fetch_sub_MemOrdering(Nova_AtomicU8* a, nova_byte v, const Nova_MemOrdering* ord) { return (nova_byte)__atomic_fetch_sub(&a->value, (uint8_t)v, nova_mo_c(ord)); }
-static inline nova_byte Nova_AtomicU8_method_fetch_sub_u8(Nova_AtomicU8* a, nova_byte v) { return (nova_byte)__atomic_fetch_sub(&a->value, (uint8_t)v, __ATOMIC_SEQ_CST); }
-static inline nova_byte Nova_AtomicU8_method_fetch_or_MemOrdering(Nova_AtomicU8* a, nova_byte v, const Nova_MemOrdering* ord) { return (nova_byte)__atomic_fetch_or(&a->value, (uint8_t)v, nova_mo_c(ord)); }
-static inline nova_byte Nova_AtomicU8_method_fetch_or_u8(Nova_AtomicU8* a, nova_byte v) { return (nova_byte)__atomic_fetch_or(&a->value, (uint8_t)v, __ATOMIC_SEQ_CST); }
-static inline nova_byte Nova_AtomicU8_method_fetch_and_MemOrdering(Nova_AtomicU8* a, nova_byte v, const Nova_MemOrdering* ord) { return (nova_byte)__atomic_fetch_and(&a->value, (uint8_t)v, nova_mo_c(ord)); }
-static inline nova_byte Nova_AtomicU8_method_fetch_and_u8(Nova_AtomicU8* a, nova_byte v) { return (nova_byte)__atomic_fetch_and(&a->value, (uint8_t)v, __ATOMIC_SEQ_CST); }
-static inline nova_byte Nova_AtomicU8_method_fetch_xor_MemOrdering(Nova_AtomicU8* a, nova_byte v, const Nova_MemOrdering* ord) { return (nova_byte)__atomic_fetch_xor(&a->value, (uint8_t)v, nova_mo_c(ord)); }
-static inline nova_byte Nova_AtomicU8_method_fetch_xor_u8(Nova_AtomicU8* a, nova_byte v) { return (nova_byte)__atomic_fetch_xor(&a->value, (uint8_t)v, __ATOMIC_SEQ_CST); }
-static inline nova_byte Nova_AtomicU8_method_fetch_max_MemOrdering(Nova_AtomicU8* a, nova_byte v, const Nova_MemOrdering* ord) {
-    int mo = nova_mo_c(ord); uint8_t cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED), vv = (uint8_t)v;
-    while (cur < vv) { if (__atomic_compare_exchange_n(&a->value, &cur, vv, true, mo, __ATOMIC_RELAXED)) break; } return (nova_byte)cur;
+static inline nova_byte Nova_AtomicU8_method_fetch_add_MemOrdering(NovaValue_AtomicU8* a, nova_byte v, const Nova_MemOrdering* ord) { return (nova_byte)__atomic_fetch_add(&a->v, (uint8_t)v, nova_mo_c(ord)); }
+static inline nova_byte Nova_AtomicU8_method_fetch_add_u8(NovaValue_AtomicU8* a, nova_byte v) { return (nova_byte)__atomic_fetch_add(&a->v, (uint8_t)v, __ATOMIC_SEQ_CST); }
+static inline nova_byte Nova_AtomicU8_method_fetch_sub_MemOrdering(NovaValue_AtomicU8* a, nova_byte v, const Nova_MemOrdering* ord) { return (nova_byte)__atomic_fetch_sub(&a->v, (uint8_t)v, nova_mo_c(ord)); }
+static inline nova_byte Nova_AtomicU8_method_fetch_sub_u8(NovaValue_AtomicU8* a, nova_byte v) { return (nova_byte)__atomic_fetch_sub(&a->v, (uint8_t)v, __ATOMIC_SEQ_CST); }
+static inline nova_byte Nova_AtomicU8_method_fetch_or_MemOrdering(NovaValue_AtomicU8* a, nova_byte v, const Nova_MemOrdering* ord) { return (nova_byte)__atomic_fetch_or(&a->v, (uint8_t)v, nova_mo_c(ord)); }
+static inline nova_byte Nova_AtomicU8_method_fetch_or_u8(NovaValue_AtomicU8* a, nova_byte v) { return (nova_byte)__atomic_fetch_or(&a->v, (uint8_t)v, __ATOMIC_SEQ_CST); }
+static inline nova_byte Nova_AtomicU8_method_fetch_and_MemOrdering(NovaValue_AtomicU8* a, nova_byte v, const Nova_MemOrdering* ord) { return (nova_byte)__atomic_fetch_and(&a->v, (uint8_t)v, nova_mo_c(ord)); }
+static inline nova_byte Nova_AtomicU8_method_fetch_and_u8(NovaValue_AtomicU8* a, nova_byte v) { return (nova_byte)__atomic_fetch_and(&a->v, (uint8_t)v, __ATOMIC_SEQ_CST); }
+static inline nova_byte Nova_AtomicU8_method_fetch_xor_MemOrdering(NovaValue_AtomicU8* a, nova_byte v, const Nova_MemOrdering* ord) { return (nova_byte)__atomic_fetch_xor(&a->v, (uint8_t)v, nova_mo_c(ord)); }
+static inline nova_byte Nova_AtomicU8_method_fetch_xor_u8(NovaValue_AtomicU8* a, nova_byte v) { return (nova_byte)__atomic_fetch_xor(&a->v, (uint8_t)v, __ATOMIC_SEQ_CST); }
+static inline nova_byte Nova_AtomicU8_method_fetch_max_MemOrdering(NovaValue_AtomicU8* a, nova_byte v, const Nova_MemOrdering* ord) {
+    int mo = nova_mo_c(ord); uint8_t cur = __atomic_load_n(&a->v, __ATOMIC_RELAXED), vv = (uint8_t)v;
+    while (cur < vv) { if (__atomic_compare_exchange_n(&a->v, &cur, vv, true, mo, __ATOMIC_RELAXED)) break; } return (nova_byte)cur;
 }
-static inline nova_byte Nova_AtomicU8_method_fetch_max_u8(Nova_AtomicU8* a, nova_byte v) {
-    uint8_t cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED), vv = (uint8_t)v;
-    while (cur < vv) { if (__atomic_compare_exchange_n(&a->value, &cur, vv, true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) break; } return (nova_byte)cur;
+static inline nova_byte Nova_AtomicU8_method_fetch_max_u8(NovaValue_AtomicU8* a, nova_byte v) {
+    uint8_t cur = __atomic_load_n(&a->v, __ATOMIC_RELAXED), vv = (uint8_t)v;
+    while (cur < vv) { if (__atomic_compare_exchange_n(&a->v, &cur, vv, true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) break; } return (nova_byte)cur;
 }
-static inline nova_byte Nova_AtomicU8_method_fetch_min_MemOrdering(Nova_AtomicU8* a, nova_byte v, const Nova_MemOrdering* ord) {
-    int mo = nova_mo_c(ord); uint8_t cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED), vv = (uint8_t)v;
-    while (cur > vv) { if (__atomic_compare_exchange_n(&a->value, &cur, vv, true, mo, __ATOMIC_RELAXED)) break; } return (nova_byte)cur;
+static inline nova_byte Nova_AtomicU8_method_fetch_min_MemOrdering(NovaValue_AtomicU8* a, nova_byte v, const Nova_MemOrdering* ord) {
+    int mo = nova_mo_c(ord); uint8_t cur = __atomic_load_n(&a->v, __ATOMIC_RELAXED), vv = (uint8_t)v;
+    while (cur > vv) { if (__atomic_compare_exchange_n(&a->v, &cur, vv, true, mo, __ATOMIC_RELAXED)) break; } return (nova_byte)cur;
 }
-static inline nova_byte Nova_AtomicU8_method_fetch_min_u8(Nova_AtomicU8* a, nova_byte v) {
-    uint8_t cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED), vv = (uint8_t)v;
-    while (cur > vv) { if (__atomic_compare_exchange_n(&a->value, &cur, vv, true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) break; } return (nova_byte)cur;
+static inline nova_byte Nova_AtomicU8_method_fetch_min_u8(NovaValue_AtomicU8* a, nova_byte v) {
+    uint8_t cur = __atomic_load_n(&a->v, __ATOMIC_RELAXED), vv = (uint8_t)v;
+    while (cur > vv) { if (__atomic_compare_exchange_n(&a->v, &cur, vv, true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) break; } return (nova_byte)cur;
 }
-static inline nova_byte Nova_AtomicU8_method_fetch_nand_MemOrdering(Nova_AtomicU8* a, nova_byte v, const Nova_MemOrdering* ord) { return (nova_byte)__atomic_fetch_nand(&a->value, (uint8_t)v, nova_mo_c(ord)); }
-static inline nova_byte Nova_AtomicU8_method_fetch_nand_u8(Nova_AtomicU8* a, nova_byte v) { return (nova_byte)__atomic_fetch_nand(&a->value, (uint8_t)v, __ATOMIC_SEQ_CST); }
+static inline nova_byte Nova_AtomicU8_method_fetch_nand_MemOrdering(NovaValue_AtomicU8* a, nova_byte v, const Nova_MemOrdering* ord) { return (nova_byte)__atomic_fetch_nand(&a->v, (uint8_t)v, nova_mo_c(ord)); }
+static inline nova_byte Nova_AtomicU8_method_fetch_nand_u8(NovaValue_AtomicU8* a, nova_byte v) { return (nova_byte)__atomic_fetch_nand(&a->v, (uint8_t)v, __ATOMIC_SEQ_CST); }
 
 /* ── Plan 103.2: AtomicInt (int = nova_int = intptr_t, address-sized;
  * Plan 133 — on x64 coincides in width with int64_t). Plan 207
@@ -608,99 +612,99 @@ static inline nova_byte Nova_AtomicU8_method_fetch_nand_u8(Nova_AtomicU8* a, nov
  * new/load/store/fetch_add/fetch_sub/compare_exchange calls are covered
  * 1:1 by this type's SeqCst-default overloads). ────────────────────── */
 
-typedef struct { nova_int value; } Nova_AtomicInt;
+typedef struct { nova_int v; } NovaValue_AtomicInt;
 
-static inline Nova_AtomicInt* Nova_AtomicInt_static_new(nova_int v) {
-    Nova_AtomicInt* a = (Nova_AtomicInt*)nova_alloc(sizeof(Nova_AtomicInt));
-    __atomic_store_n(&a->value, v, __ATOMIC_SEQ_CST); return a;
+/* Plan 248 (wave 3): value-inside — see AtomicI64 comment above. */
+static inline NovaValue_AtomicInt Nova_AtomicInt_static_new(nova_int v) {
+    NovaValue_AtomicInt a; a.v = v; return a;
 }
-static inline nova_int Nova_AtomicInt_method_load_MemOrdering(const Nova_AtomicInt* a, const Nova_MemOrdering* ord) { return __atomic_load_n(&a->value, nova_mo_c(ord)); }
-static inline nova_int Nova_AtomicInt_method_load(const Nova_AtomicInt* a) { return __atomic_load_n(&a->value, __ATOMIC_SEQ_CST); }
-static inline nova_unit Nova_AtomicInt_method_store_MemOrdering(Nova_AtomicInt* a, nova_int v, const Nova_MemOrdering* ord) { __atomic_store_n(&a->value, v, nova_mo_c(ord)); return NOVA_UNIT; }
-static inline nova_unit Nova_AtomicInt_method_store_int(Nova_AtomicInt* a, nova_int v) { __atomic_store_n(&a->value, v, __ATOMIC_SEQ_CST); return NOVA_UNIT; }
-static inline nova_int Nova_AtomicInt_method_swap_MemOrdering(Nova_AtomicInt* a, nova_int v, const Nova_MemOrdering* ord) { return __atomic_exchange_n(&a->value, v, nova_mo_c(ord)); }
-static inline nova_int Nova_AtomicInt_method_swap_int(Nova_AtomicInt* a, nova_int v) { return __atomic_exchange_n(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline NovaTuple_CasRawInt Nova_AtomicInt_method_cmpxchg(Nova_AtomicInt* a, nova_int e, nova_int d, nova_bool weak, const Nova_MemOrdering* s, const Nova_MemOrdering* f) {
-    nova_bool ok = (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, weak, nova_mo_c(s), nova_mo_c(f));
+static inline nova_int Nova_AtomicInt_method_load_MemOrdering(const NovaValue_AtomicInt* a, const Nova_MemOrdering* ord) { return __atomic_load_n(&a->v, nova_mo_c(ord)); }
+static inline nova_int Nova_AtomicInt_method_load(const NovaValue_AtomicInt* a) { return __atomic_load_n(&a->v, __ATOMIC_SEQ_CST); }
+static inline nova_unit Nova_AtomicInt_method_store_MemOrdering(NovaValue_AtomicInt* a, nova_int v, const Nova_MemOrdering* ord) { __atomic_store_n(&a->v, v, nova_mo_c(ord)); return NOVA_UNIT; }
+static inline nova_unit Nova_AtomicInt_method_store_int(NovaValue_AtomicInt* a, nova_int v) { __atomic_store_n(&a->v, v, __ATOMIC_SEQ_CST); return NOVA_UNIT; }
+static inline nova_int Nova_AtomicInt_method_swap_MemOrdering(NovaValue_AtomicInt* a, nova_int v, const Nova_MemOrdering* ord) { return __atomic_exchange_n(&a->v, v, nova_mo_c(ord)); }
+static inline nova_int Nova_AtomicInt_method_swap_int(NovaValue_AtomicInt* a, nova_int v) { return __atomic_exchange_n(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline NovaTuple_CasRawInt Nova_AtomicInt_method_cmpxchg(NovaValue_AtomicInt* a, nova_int e, nova_int d, nova_bool weak, const Nova_MemOrdering* s, const Nova_MemOrdering* f) {
+    nova_bool ok = (nova_bool)__atomic_compare_exchange_n(&a->v, &e, d, weak, nova_mo_c(s), nova_mo_c(f));
     NovaTuple_CasRawInt r; r.ok = ok; r.witness = e; return r;
 }
-static inline nova_int Nova_AtomicInt_method_fetch_add_MemOrdering(Nova_AtomicInt* a, nova_int v, const Nova_MemOrdering* ord) { return __atomic_fetch_add(&a->value, v, nova_mo_c(ord)); }
-static inline nova_int Nova_AtomicInt_method_fetch_add_int(Nova_AtomicInt* a, nova_int v) { return __atomic_fetch_add(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline nova_int Nova_AtomicInt_method_fetch_sub_MemOrdering(Nova_AtomicInt* a, nova_int v, const Nova_MemOrdering* ord) { return __atomic_fetch_sub(&a->value, v, nova_mo_c(ord)); }
-static inline nova_int Nova_AtomicInt_method_fetch_sub_int(Nova_AtomicInt* a, nova_int v) { return __atomic_fetch_sub(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline nova_int Nova_AtomicInt_method_fetch_or_MemOrdering(Nova_AtomicInt* a, nova_int v, const Nova_MemOrdering* ord) { return __atomic_fetch_or(&a->value, v, nova_mo_c(ord)); }
-static inline nova_int Nova_AtomicInt_method_fetch_or_int(Nova_AtomicInt* a, nova_int v) { return __atomic_fetch_or(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline nova_int Nova_AtomicInt_method_fetch_and_MemOrdering(Nova_AtomicInt* a, nova_int v, const Nova_MemOrdering* ord) { return __atomic_fetch_and(&a->value, v, nova_mo_c(ord)); }
-static inline nova_int Nova_AtomicInt_method_fetch_and_int(Nova_AtomicInt* a, nova_int v) { return __atomic_fetch_and(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline nova_int Nova_AtomicInt_method_fetch_xor_MemOrdering(Nova_AtomicInt* a, nova_int v, const Nova_MemOrdering* ord) { return __atomic_fetch_xor(&a->value, v, nova_mo_c(ord)); }
-static inline nova_int Nova_AtomicInt_method_fetch_xor_int(Nova_AtomicInt* a, nova_int v) { return __atomic_fetch_xor(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline nova_int Nova_AtomicInt_method_fetch_max_MemOrdering(Nova_AtomicInt* a, nova_int v, const Nova_MemOrdering* ord) {
-    int mo = nova_mo_c(ord); nova_int cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
-    while (cur < v) { if (__atomic_compare_exchange_n(&a->value, &cur, v, true, mo, __ATOMIC_RELAXED)) break; } return cur;
+static inline nova_int Nova_AtomicInt_method_fetch_add_MemOrdering(NovaValue_AtomicInt* a, nova_int v, const Nova_MemOrdering* ord) { return __atomic_fetch_add(&a->v, v, nova_mo_c(ord)); }
+static inline nova_int Nova_AtomicInt_method_fetch_add_int(NovaValue_AtomicInt* a, nova_int v) { return __atomic_fetch_add(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline nova_int Nova_AtomicInt_method_fetch_sub_MemOrdering(NovaValue_AtomicInt* a, nova_int v, const Nova_MemOrdering* ord) { return __atomic_fetch_sub(&a->v, v, nova_mo_c(ord)); }
+static inline nova_int Nova_AtomicInt_method_fetch_sub_int(NovaValue_AtomicInt* a, nova_int v) { return __atomic_fetch_sub(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline nova_int Nova_AtomicInt_method_fetch_or_MemOrdering(NovaValue_AtomicInt* a, nova_int v, const Nova_MemOrdering* ord) { return __atomic_fetch_or(&a->v, v, nova_mo_c(ord)); }
+static inline nova_int Nova_AtomicInt_method_fetch_or_int(NovaValue_AtomicInt* a, nova_int v) { return __atomic_fetch_or(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline nova_int Nova_AtomicInt_method_fetch_and_MemOrdering(NovaValue_AtomicInt* a, nova_int v, const Nova_MemOrdering* ord) { return __atomic_fetch_and(&a->v, v, nova_mo_c(ord)); }
+static inline nova_int Nova_AtomicInt_method_fetch_and_int(NovaValue_AtomicInt* a, nova_int v) { return __atomic_fetch_and(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline nova_int Nova_AtomicInt_method_fetch_xor_MemOrdering(NovaValue_AtomicInt* a, nova_int v, const Nova_MemOrdering* ord) { return __atomic_fetch_xor(&a->v, v, nova_mo_c(ord)); }
+static inline nova_int Nova_AtomicInt_method_fetch_xor_int(NovaValue_AtomicInt* a, nova_int v) { return __atomic_fetch_xor(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline nova_int Nova_AtomicInt_method_fetch_max_MemOrdering(NovaValue_AtomicInt* a, nova_int v, const Nova_MemOrdering* ord) {
+    int mo = nova_mo_c(ord); nova_int cur = __atomic_load_n(&a->v, __ATOMIC_RELAXED);
+    while (cur < v) { if (__atomic_compare_exchange_n(&a->v, &cur, v, true, mo, __ATOMIC_RELAXED)) break; } return cur;
 }
-static inline nova_int Nova_AtomicInt_method_fetch_max_int(Nova_AtomicInt* a, nova_int v) {
-    nova_int cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
-    while (cur < v) { if (__atomic_compare_exchange_n(&a->value, &cur, v, true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) break; } return cur;
+static inline nova_int Nova_AtomicInt_method_fetch_max_int(NovaValue_AtomicInt* a, nova_int v) {
+    nova_int cur = __atomic_load_n(&a->v, __ATOMIC_RELAXED);
+    while (cur < v) { if (__atomic_compare_exchange_n(&a->v, &cur, v, true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) break; } return cur;
 }
-static inline nova_int Nova_AtomicInt_method_fetch_min_MemOrdering(Nova_AtomicInt* a, nova_int v, const Nova_MemOrdering* ord) {
-    int mo = nova_mo_c(ord); nova_int cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
-    while (cur > v) { if (__atomic_compare_exchange_n(&a->value, &cur, v, true, mo, __ATOMIC_RELAXED)) break; } return cur;
+static inline nova_int Nova_AtomicInt_method_fetch_min_MemOrdering(NovaValue_AtomicInt* a, nova_int v, const Nova_MemOrdering* ord) {
+    int mo = nova_mo_c(ord); nova_int cur = __atomic_load_n(&a->v, __ATOMIC_RELAXED);
+    while (cur > v) { if (__atomic_compare_exchange_n(&a->v, &cur, v, true, mo, __ATOMIC_RELAXED)) break; } return cur;
 }
-static inline nova_int Nova_AtomicInt_method_fetch_min_int(Nova_AtomicInt* a, nova_int v) {
-    nova_int cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
-    while (cur > v) { if (__atomic_compare_exchange_n(&a->value, &cur, v, true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) break; } return cur;
+static inline nova_int Nova_AtomicInt_method_fetch_min_int(NovaValue_AtomicInt* a, nova_int v) {
+    nova_int cur = __atomic_load_n(&a->v, __ATOMIC_RELAXED);
+    while (cur > v) { if (__atomic_compare_exchange_n(&a->v, &cur, v, true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) break; } return cur;
 }
-static inline nova_int Nova_AtomicInt_method_fetch_nand_MemOrdering(Nova_AtomicInt* a, nova_int v, const Nova_MemOrdering* ord) { return __atomic_fetch_nand(&a->value, v, nova_mo_c(ord)); }
-static inline nova_int Nova_AtomicInt_method_fetch_nand_int(Nova_AtomicInt* a, nova_int v) { return __atomic_fetch_nand(&a->value, v, __ATOMIC_SEQ_CST); }
+static inline nova_int Nova_AtomicInt_method_fetch_nand_MemOrdering(NovaValue_AtomicInt* a, nova_int v, const Nova_MemOrdering* ord) { return __atomic_fetch_nand(&a->v, v, nova_mo_c(ord)); }
+static inline nova_int Nova_AtomicInt_method_fetch_nand_int(NovaValue_AtomicInt* a, nova_int v) { return __atomic_fetch_nand(&a->v, v, __ATOMIC_SEQ_CST); }
 
 /* ── Plan 103.2: AtomicUint (uint = nova_uint = uintptr_t, address-sized;
  * Plan 133 — on x64 coincides in width with uint64_t). Plan 207
  * (2026-07-16 consolidation): renamed from the `Atomic`+`Usize` spelling. */
 
-typedef struct { uint64_t value; } Nova_AtomicUint;
+typedef struct { uint64_t v; } NovaValue_AtomicUint;
 
-static inline Nova_AtomicUint* Nova_AtomicUint_static_new(uint64_t v) {
-    Nova_AtomicUint* a = (Nova_AtomicUint*)nova_alloc(sizeof(Nova_AtomicUint));
-    __atomic_store_n(&a->value, v, __ATOMIC_SEQ_CST); return a;
+/* Plan 248 (wave 3): value-inside — see AtomicI64 comment above. */
+static inline NovaValue_AtomicUint Nova_AtomicUint_static_new(uint64_t v) {
+    NovaValue_AtomicUint a; a.v = v; return a;
 }
-static inline uint64_t Nova_AtomicUint_method_load_MemOrdering(const Nova_AtomicUint* a, const Nova_MemOrdering* ord) { return __atomic_load_n(&a->value, nova_mo_c(ord)); }
-static inline uint64_t Nova_AtomicUint_method_load(const Nova_AtomicUint* a) { return __atomic_load_n(&a->value, __ATOMIC_SEQ_CST); }
-static inline nova_unit Nova_AtomicUint_method_store_MemOrdering(Nova_AtomicUint* a, uint64_t v, const Nova_MemOrdering* ord) { __atomic_store_n(&a->value, v, nova_mo_c(ord)); return NOVA_UNIT; }
-static inline nova_unit Nova_AtomicUint_method_store_uint(Nova_AtomicUint* a, uint64_t v) { __atomic_store_n(&a->value, v, __ATOMIC_SEQ_CST); return NOVA_UNIT; }
-static inline uint64_t Nova_AtomicUint_method_swap_MemOrdering(Nova_AtomicUint* a, uint64_t v, const Nova_MemOrdering* ord) { return __atomic_exchange_n(&a->value, v, nova_mo_c(ord)); }
-static inline uint64_t Nova_AtomicUint_method_swap_uint(Nova_AtomicUint* a, uint64_t v) { return __atomic_exchange_n(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline NovaTuple_CasRawUint Nova_AtomicUint_method_cmpxchg(Nova_AtomicUint* a, uint64_t e, uint64_t d, nova_bool weak, const Nova_MemOrdering* s, const Nova_MemOrdering* f) {
-    nova_bool ok = (nova_bool)__atomic_compare_exchange_n(&a->value, &e, d, weak, nova_mo_c(s), nova_mo_c(f));
+static inline uint64_t Nova_AtomicUint_method_load_MemOrdering(const NovaValue_AtomicUint* a, const Nova_MemOrdering* ord) { return __atomic_load_n(&a->v, nova_mo_c(ord)); }
+static inline uint64_t Nova_AtomicUint_method_load(const NovaValue_AtomicUint* a) { return __atomic_load_n(&a->v, __ATOMIC_SEQ_CST); }
+static inline nova_unit Nova_AtomicUint_method_store_MemOrdering(NovaValue_AtomicUint* a, uint64_t v, const Nova_MemOrdering* ord) { __atomic_store_n(&a->v, v, nova_mo_c(ord)); return NOVA_UNIT; }
+static inline nova_unit Nova_AtomicUint_method_store_uint(NovaValue_AtomicUint* a, uint64_t v) { __atomic_store_n(&a->v, v, __ATOMIC_SEQ_CST); return NOVA_UNIT; }
+static inline uint64_t Nova_AtomicUint_method_swap_MemOrdering(NovaValue_AtomicUint* a, uint64_t v, const Nova_MemOrdering* ord) { return __atomic_exchange_n(&a->v, v, nova_mo_c(ord)); }
+static inline uint64_t Nova_AtomicUint_method_swap_uint(NovaValue_AtomicUint* a, uint64_t v) { return __atomic_exchange_n(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline NovaTuple_CasRawUint Nova_AtomicUint_method_cmpxchg(NovaValue_AtomicUint* a, uint64_t e, uint64_t d, nova_bool weak, const Nova_MemOrdering* s, const Nova_MemOrdering* f) {
+    nova_bool ok = (nova_bool)__atomic_compare_exchange_n(&a->v, &e, d, weak, nova_mo_c(s), nova_mo_c(f));
     NovaTuple_CasRawUint r; r.ok = ok; r.witness = e; return r;
 }
-static inline uint64_t Nova_AtomicUint_method_fetch_add_MemOrdering(Nova_AtomicUint* a, uint64_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_add(&a->value, v, nova_mo_c(ord)); }
-static inline uint64_t Nova_AtomicUint_method_fetch_add_uint(Nova_AtomicUint* a, uint64_t v) { return __atomic_fetch_add(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline uint64_t Nova_AtomicUint_method_fetch_sub_MemOrdering(Nova_AtomicUint* a, uint64_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_sub(&a->value, v, nova_mo_c(ord)); }
-static inline uint64_t Nova_AtomicUint_method_fetch_sub_uint(Nova_AtomicUint* a, uint64_t v) { return __atomic_fetch_sub(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline uint64_t Nova_AtomicUint_method_fetch_or_MemOrdering(Nova_AtomicUint* a, uint64_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_or(&a->value, v, nova_mo_c(ord)); }
-static inline uint64_t Nova_AtomicUint_method_fetch_or_uint(Nova_AtomicUint* a, uint64_t v) { return __atomic_fetch_or(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline uint64_t Nova_AtomicUint_method_fetch_and_MemOrdering(Nova_AtomicUint* a, uint64_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_and(&a->value, v, nova_mo_c(ord)); }
-static inline uint64_t Nova_AtomicUint_method_fetch_and_uint(Nova_AtomicUint* a, uint64_t v) { return __atomic_fetch_and(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline uint64_t Nova_AtomicUint_method_fetch_xor_MemOrdering(Nova_AtomicUint* a, uint64_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_xor(&a->value, v, nova_mo_c(ord)); }
-static inline uint64_t Nova_AtomicUint_method_fetch_xor_uint(Nova_AtomicUint* a, uint64_t v) { return __atomic_fetch_xor(&a->value, v, __ATOMIC_SEQ_CST); }
-static inline uint64_t Nova_AtomicUint_method_fetch_max_MemOrdering(Nova_AtomicUint* a, uint64_t v, const Nova_MemOrdering* ord) {
-    int mo = nova_mo_c(ord); uint64_t cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
-    while (cur < v) { if (__atomic_compare_exchange_n(&a->value, &cur, v, true, mo, __ATOMIC_RELAXED)) break; } return cur;
+static inline uint64_t Nova_AtomicUint_method_fetch_add_MemOrdering(NovaValue_AtomicUint* a, uint64_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_add(&a->v, v, nova_mo_c(ord)); }
+static inline uint64_t Nova_AtomicUint_method_fetch_add_uint(NovaValue_AtomicUint* a, uint64_t v) { return __atomic_fetch_add(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline uint64_t Nova_AtomicUint_method_fetch_sub_MemOrdering(NovaValue_AtomicUint* a, uint64_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_sub(&a->v, v, nova_mo_c(ord)); }
+static inline uint64_t Nova_AtomicUint_method_fetch_sub_uint(NovaValue_AtomicUint* a, uint64_t v) { return __atomic_fetch_sub(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline uint64_t Nova_AtomicUint_method_fetch_or_MemOrdering(NovaValue_AtomicUint* a, uint64_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_or(&a->v, v, nova_mo_c(ord)); }
+static inline uint64_t Nova_AtomicUint_method_fetch_or_uint(NovaValue_AtomicUint* a, uint64_t v) { return __atomic_fetch_or(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline uint64_t Nova_AtomicUint_method_fetch_and_MemOrdering(NovaValue_AtomicUint* a, uint64_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_and(&a->v, v, nova_mo_c(ord)); }
+static inline uint64_t Nova_AtomicUint_method_fetch_and_uint(NovaValue_AtomicUint* a, uint64_t v) { return __atomic_fetch_and(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline uint64_t Nova_AtomicUint_method_fetch_xor_MemOrdering(NovaValue_AtomicUint* a, uint64_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_xor(&a->v, v, nova_mo_c(ord)); }
+static inline uint64_t Nova_AtomicUint_method_fetch_xor_uint(NovaValue_AtomicUint* a, uint64_t v) { return __atomic_fetch_xor(&a->v, v, __ATOMIC_SEQ_CST); }
+static inline uint64_t Nova_AtomicUint_method_fetch_max_MemOrdering(NovaValue_AtomicUint* a, uint64_t v, const Nova_MemOrdering* ord) {
+    int mo = nova_mo_c(ord); uint64_t cur = __atomic_load_n(&a->v, __ATOMIC_RELAXED);
+    while (cur < v) { if (__atomic_compare_exchange_n(&a->v, &cur, v, true, mo, __ATOMIC_RELAXED)) break; } return cur;
 }
-static inline uint64_t Nova_AtomicUint_method_fetch_max_uint(Nova_AtomicUint* a, uint64_t v) {
-    uint64_t cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
-    while (cur < v) { if (__atomic_compare_exchange_n(&a->value, &cur, v, true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) break; } return cur;
+static inline uint64_t Nova_AtomicUint_method_fetch_max_uint(NovaValue_AtomicUint* a, uint64_t v) {
+    uint64_t cur = __atomic_load_n(&a->v, __ATOMIC_RELAXED);
+    while (cur < v) { if (__atomic_compare_exchange_n(&a->v, &cur, v, true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) break; } return cur;
 }
-static inline uint64_t Nova_AtomicUint_method_fetch_min_MemOrdering(Nova_AtomicUint* a, uint64_t v, const Nova_MemOrdering* ord) {
-    int mo = nova_mo_c(ord); uint64_t cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
-    while (cur > v) { if (__atomic_compare_exchange_n(&a->value, &cur, v, true, mo, __ATOMIC_RELAXED)) break; } return cur;
+static inline uint64_t Nova_AtomicUint_method_fetch_min_MemOrdering(NovaValue_AtomicUint* a, uint64_t v, const Nova_MemOrdering* ord) {
+    int mo = nova_mo_c(ord); uint64_t cur = __atomic_load_n(&a->v, __ATOMIC_RELAXED);
+    while (cur > v) { if (__atomic_compare_exchange_n(&a->v, &cur, v, true, mo, __ATOMIC_RELAXED)) break; } return cur;
 }
-static inline uint64_t Nova_AtomicUint_method_fetch_min_uint(Nova_AtomicUint* a, uint64_t v) {
-    uint64_t cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
-    while (cur > v) { if (__atomic_compare_exchange_n(&a->value, &cur, v, true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) break; } return cur;
+static inline uint64_t Nova_AtomicUint_method_fetch_min_uint(NovaValue_AtomicUint* a, uint64_t v) {
+    uint64_t cur = __atomic_load_n(&a->v, __ATOMIC_RELAXED);
+    while (cur > v) { if (__atomic_compare_exchange_n(&a->v, &cur, v, true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) break; } return cur;
 }
-static inline uint64_t Nova_AtomicUint_method_fetch_nand_MemOrdering(Nova_AtomicUint* a, uint64_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_nand(&a->value, v, nova_mo_c(ord)); }
-static inline uint64_t Nova_AtomicUint_method_fetch_nand_uint(Nova_AtomicUint* a, uint64_t v) { return __atomic_fetch_nand(&a->value, v, __ATOMIC_SEQ_CST); }
+static inline uint64_t Nova_AtomicUint_method_fetch_nand_MemOrdering(NovaValue_AtomicUint* a, uint64_t v, const Nova_MemOrdering* ord) { return __atomic_fetch_nand(&a->v, v, nova_mo_c(ord)); }
+static inline uint64_t Nova_AtomicUint_method_fetch_nand_uint(NovaValue_AtomicUint* a, uint64_t v) { return __atomic_fetch_nand(&a->v, v, __ATOMIC_SEQ_CST); }
 
 /* ── AtomicBool ────────────────────────────────────────────────── */
 
@@ -712,49 +716,50 @@ static inline uint64_t Nova_AtomicUint_method_fetch_nand_uint(Nova_AtomicUint* a
  * param get _bool suffix, methods with MemOrdering get _MemOrdering suffix.
  * load() has 0 params → no suffix (two overloads: load vs load_MemOrdering). */
 typedef struct {
-    nova_atomic_bool value;
-} Nova_AtomicBool;
+    nova_atomic_bool v;
+} NovaValue_AtomicBool;
 
-static inline Nova_AtomicBool* Nova_AtomicBool_static_new(nova_bool v) {
-    Nova_AtomicBool* a = (Nova_AtomicBool*)nova_alloc(sizeof(Nova_AtomicBool));
-    __atomic_store_n(&a->value, (bool)v, __ATOMIC_SEQ_CST);
+/* Plan 248 (wave 3): value-inside — see AtomicI64 comment above. */
+static inline NovaValue_AtomicBool Nova_AtomicBool_static_new(nova_bool v) {
+    NovaValue_AtomicBool a;
+    a.v = (bool)v;
     return a;
 }
 
 /* load(): 0 params → no suffix; load_MemOrdering: explicit. */
-static inline nova_bool Nova_AtomicBool_method_load(const Nova_AtomicBool* a) {
-    return (nova_bool)__atomic_load_n(&a->value, __ATOMIC_SEQ_CST);
+static inline nova_bool Nova_AtomicBool_method_load(const NovaValue_AtomicBool* a) {
+    return (nova_bool)__atomic_load_n(&a->v, __ATOMIC_SEQ_CST);
 }
-static inline nova_bool Nova_AtomicBool_method_load_MemOrdering(const Nova_AtomicBool* a, const Nova_MemOrdering* ord) {
-    return (nova_bool)__atomic_load_n(&a->value, nova_mo_c(ord));
+static inline nova_bool Nova_AtomicBool_method_load_MemOrdering(const NovaValue_AtomicBool* a, const Nova_MemOrdering* ord) {
+    return (nova_bool)__atomic_load_n(&a->v, nova_mo_c(ord));
 }
 
 /* store_bool / store_MemOrdering. */
-static inline nova_unit Nova_AtomicBool_method_store_bool(Nova_AtomicBool* a, nova_bool v) {
-    __atomic_store_n(&a->value, (bool)v, __ATOMIC_SEQ_CST);
+static inline nova_unit Nova_AtomicBool_method_store_bool(NovaValue_AtomicBool* a, nova_bool v) {
+    __atomic_store_n(&a->v, (bool)v, __ATOMIC_SEQ_CST);
     return NOVA_UNIT;
 }
-static inline nova_unit Nova_AtomicBool_method_store_MemOrdering(Nova_AtomicBool* a, nova_bool v, const Nova_MemOrdering* ord) {
-    __atomic_store_n(&a->value, (bool)v, nova_mo_c(ord));
+static inline nova_unit Nova_AtomicBool_method_store_MemOrdering(NovaValue_AtomicBool* a, nova_bool v, const Nova_MemOrdering* ord) {
+    __atomic_store_n(&a->v, (bool)v, nova_mo_c(ord));
     return NOVA_UNIT;
 }
 
 /* swap_bool / swap_MemOrdering. */
-static inline nova_bool Nova_AtomicBool_method_swap_bool(Nova_AtomicBool* a, nova_bool v) {
-    return (nova_bool)__atomic_exchange_n(&a->value, (bool)v, __ATOMIC_SEQ_CST);
+static inline nova_bool Nova_AtomicBool_method_swap_bool(NovaValue_AtomicBool* a, nova_bool v) {
+    return (nova_bool)__atomic_exchange_n(&a->v, (bool)v, __ATOMIC_SEQ_CST);
 }
-static inline nova_bool Nova_AtomicBool_method_swap_MemOrdering(Nova_AtomicBool* a, nova_bool v, const Nova_MemOrdering* ord) {
-    return (nova_bool)__atomic_exchange_n(&a->value, (bool)v, nova_mo_c(ord));
+static inline nova_bool Nova_AtomicBool_method_swap_MemOrdering(NovaValue_AtomicBool* a, nova_bool v, const Nova_MemOrdering* ord) {
+    return (nova_bool)__atomic_exchange_n(&a->v, (bool)v, nova_mo_c(ord));
 }
 
 /* Plan 207: raw (ok, witness) pair, strong+weak share one intrinsic — public
  * compare_exchange/_weak wrappers (plain .nv fn) build Result[(), bool]. */
 static inline NovaTuple_CasRawBool Nova_AtomicBool_method_cmpxchg(
-        Nova_AtomicBool* a, nova_bool expected_val, nova_bool desired, nova_bool weak,
+        NovaValue_AtomicBool* a, nova_bool expected_val, nova_bool desired, nova_bool weak,
         const Nova_MemOrdering* success, const Nova_MemOrdering* failure) {
     bool exp = (bool)expected_val;
     nova_bool ok = (nova_bool)__atomic_compare_exchange_n(
-        &a->value, &exp, (bool)desired,
+        &a->v, &exp, (bool)desired,
         weak, nova_mo_c(success), nova_mo_c(failure));
     NovaTuple_CasRawBool r; r.ok = ok; r.witness = (nova_bool)exp; return r;
 }
@@ -764,7 +769,7 @@ static inline NovaTuple_CasRawBool Nova_AtomicBool_method_cmpxchg(
  * gcc 14+ (incl. 15.2) rejects __atomic_fetch_{or,and,xor} directly on a
  * `_Bool*` operand (nova_atomic_bool == bool) — RMW bitwise builtins on
  * _Bool are refused by design; clang still accepts it, which is why this
- * class only showed up once the WSL toolchain moved to gcc 15. `value`
+ * class only showed up once the WSL toolchain moved to gcc 15. `v`
  * itself stays `bool` (nova_atomic_bool's underlying type is NOT changed —
  * every other nova_atomic_bool site in the runtime, incl. scheduler flags
  * like cancel_requested/stop/started, only ever load/store/exchange it,
@@ -777,45 +782,45 @@ static inline NovaTuple_CasRawBool Nova_AtomicBool_method_cmpxchg(
  * OR/AND/XOR is identical to logical OR/AND/XOR, and the loop returns the
  * value observed immediately before the winning CAS — exactly what the
  * direct __atomic_fetch_* intrinsic would have returned. */
-static inline nova_bool Nova_AtomicBool_method_fetch_or_bool(Nova_AtomicBool* a, nova_bool v) {
+static inline nova_bool Nova_AtomicBool_method_fetch_or_bool(NovaValue_AtomicBool* a, nova_bool v) {
     bool want = (bool)v;
-    bool cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
-    while (!__atomic_compare_exchange_n(&a->value, &cur, (bool)(cur | want), true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) { /* cur refreshed by CAS on failure */ }
+    bool cur = __atomic_load_n(&a->v, __ATOMIC_RELAXED);
+    while (!__atomic_compare_exchange_n(&a->v, &cur, (bool)(cur | want), true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) { /* cur refreshed by CAS on failure */ }
     return (nova_bool)cur;
 }
-static inline nova_bool Nova_AtomicBool_method_fetch_or_MemOrdering(Nova_AtomicBool* a, nova_bool v, const Nova_MemOrdering* ord) {
+static inline nova_bool Nova_AtomicBool_method_fetch_or_MemOrdering(NovaValue_AtomicBool* a, nova_bool v, const Nova_MemOrdering* ord) {
     int mo = nova_mo_c(ord);
     bool want = (bool)v;
-    bool cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
-    while (!__atomic_compare_exchange_n(&a->value, &cur, (bool)(cur | want), true, mo, __ATOMIC_RELAXED)) { /* cur refreshed by CAS on failure */ }
+    bool cur = __atomic_load_n(&a->v, __ATOMIC_RELAXED);
+    while (!__atomic_compare_exchange_n(&a->v, &cur, (bool)(cur | want), true, mo, __ATOMIC_RELAXED)) { /* cur refreshed by CAS on failure */ }
     return (nova_bool)cur;
 }
 
-static inline nova_bool Nova_AtomicBool_method_fetch_and_bool(Nova_AtomicBool* a, nova_bool v) {
+static inline nova_bool Nova_AtomicBool_method_fetch_and_bool(NovaValue_AtomicBool* a, nova_bool v) {
     bool want = (bool)v;
-    bool cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
-    while (!__atomic_compare_exchange_n(&a->value, &cur, (bool)(cur & want), true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) { /* cur refreshed by CAS on failure */ }
+    bool cur = __atomic_load_n(&a->v, __ATOMIC_RELAXED);
+    while (!__atomic_compare_exchange_n(&a->v, &cur, (bool)(cur & want), true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) { /* cur refreshed by CAS on failure */ }
     return (nova_bool)cur;
 }
-static inline nova_bool Nova_AtomicBool_method_fetch_and_MemOrdering(Nova_AtomicBool* a, nova_bool v, const Nova_MemOrdering* ord) {
+static inline nova_bool Nova_AtomicBool_method_fetch_and_MemOrdering(NovaValue_AtomicBool* a, nova_bool v, const Nova_MemOrdering* ord) {
     int mo = nova_mo_c(ord);
     bool want = (bool)v;
-    bool cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
-    while (!__atomic_compare_exchange_n(&a->value, &cur, (bool)(cur & want), true, mo, __ATOMIC_RELAXED)) { /* cur refreshed by CAS on failure */ }
+    bool cur = __atomic_load_n(&a->v, __ATOMIC_RELAXED);
+    while (!__atomic_compare_exchange_n(&a->v, &cur, (bool)(cur & want), true, mo, __ATOMIC_RELAXED)) { /* cur refreshed by CAS on failure */ }
     return (nova_bool)cur;
 }
 
-static inline nova_bool Nova_AtomicBool_method_fetch_xor_bool(Nova_AtomicBool* a, nova_bool v) {
+static inline nova_bool Nova_AtomicBool_method_fetch_xor_bool(NovaValue_AtomicBool* a, nova_bool v) {
     bool want = (bool)v;
-    bool cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
-    while (!__atomic_compare_exchange_n(&a->value, &cur, (bool)(cur ^ want), true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) { /* cur refreshed by CAS on failure */ }
+    bool cur = __atomic_load_n(&a->v, __ATOMIC_RELAXED);
+    while (!__atomic_compare_exchange_n(&a->v, &cur, (bool)(cur ^ want), true, __ATOMIC_SEQ_CST, __ATOMIC_RELAXED)) { /* cur refreshed by CAS on failure */ }
     return (nova_bool)cur;
 }
-static inline nova_bool Nova_AtomicBool_method_fetch_xor_MemOrdering(Nova_AtomicBool* a, nova_bool v, const Nova_MemOrdering* ord) {
+static inline nova_bool Nova_AtomicBool_method_fetch_xor_MemOrdering(NovaValue_AtomicBool* a, nova_bool v, const Nova_MemOrdering* ord) {
     int mo = nova_mo_c(ord);
     bool want = (bool)v;
-    bool cur = __atomic_load_n(&a->value, __ATOMIC_RELAXED);
-    while (!__atomic_compare_exchange_n(&a->value, &cur, (bool)(cur ^ want), true, mo, __ATOMIC_RELAXED)) { /* cur refreshed by CAS on failure */ }
+    bool cur = __atomic_load_n(&a->v, __ATOMIC_RELAXED);
+    while (!__atomic_compare_exchange_n(&a->v, &cur, (bool)(cur ^ want), true, mo, __ATOMIC_RELAXED)) { /* cur refreshed by CAS on failure */ }
     return (nova_bool)cur;
 }
 
