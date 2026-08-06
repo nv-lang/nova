@@ -17,6 +17,7 @@ module crypto.jwt
 import std.crypto.hmac.{HmacSha256}
 import std.encoding.base64.{Base64}
 import std.encoding.json.{Json, JsonValue, JsonObject}
+import std.time.duration
 
 /// Errors in JWT operations.
 #stable(since = "0.1")
