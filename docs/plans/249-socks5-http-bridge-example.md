@@ -1,13 +1,14 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
-# План 249 — `examples/net/socks5_http_bridge/`: SOCKS5-клиент + HTTP↔SOCKS5-мост
+# План 249 — пакет `nova-socks` + пример `examples/net/socks5_http_bridge/`
 
 **Статус:** 📋 НАБРОСОК, **СТАРТ ЗАБЛОКИРОВАН** (реализация НЕ начата). Написан
 интегратором 2026-08-04; ревизия док-сессии 2026-08-05 (пины линейности/half-close, форма
 package-примера, дом-папка); ревизия интегратора 2026-08-06 — скетч §3.2 приведён к форме,
 ПРОВЕРЕННОЙ СБОРКОЙ, добавлен пин Ф.0-г и лимит заголовков.
-**Два условия старта:** (1) ответы владельца на §7 (обе — с рекомендациями, ждут слова);
-(2) влитое компиляторное окно **p364** (`[M-linear-capture-gate-blind-to-consume-let]`,
-221.1 №364) — от него зависит Ф.0-г и формулировка §3.2.
+**§7 ЗАКРЫТ решениями владельца 2026-08-06** (отдельный пакет `nova-socks`; IPv6 → `Err`).
+**Условие старта одно:** влитое компиляторное окно **p364**
+(`[M-linear-capture-gate-blind-to-consume-let]`, 221.1 №364) — от него зависит Ф.0-г и
+формулировка §3.2.
 **Приоритет:** P3 (новый пример; не блокер релиза v0.1).
 **Источник:** реестр [221.1](221.1-bug-sweep.md) №360, `[M-socks5-client-missing]`
 (`docs/plans/backlog-followups.md`) — вопрос владельца о feasibility.
@@ -53,12 +54,21 @@ Windows принимают только **HTTP-прокси** и не умеют
   `ServerRequest.@url()` парсит только обычный `Url`. Значит `upgrade()`-хук через Router
   подключить нельзя без доработки самого фреймворка (вне объёма примера) — **пример
   ОБЯЗАН идти поверх сырого `std.net`**, минуя `polaris` целиком.
-- **Дом:** под-папка **`examples/net/socks5_http_bridge/`** (репа `nova`; модель
-  модулей «папка = один модуль из равноправных файлов»): `main.nv` (мост) +
-  `socks5.nv` (клиент) + `socks5_test.nv` (тесты рядом с модулем, по
-  test-conventions) + `README.md`/`README.ru.md`. Соседние `echo_client.nv`/
-  `echo_server.nv` остаются одиночными файлами — прецедент оформления README, не
-  структуры. **НЕ** `nova-polaris/examples/`.
+- **Дом — ДВА артефакта (решение владельца 2026-08-06):**
+  1. **Новый пакет `nova-socks`** (репа `d:/Sources/nv-lang/nova-socks`, зеркала ×3) —
+     сам SOCKS5-клиент. Обоснование прецедентами: **никто не кладёт SOCKS5 внутрь
+     HTTP-библиотеки** — Go `golang.org/x/net/proxy`, Rust `tokio-socks`/`socks`
+     (reqwest подключает фичей `socks`), Python `PySocks` (`requests[socks]`),
+     Node `socks` + `socks-proxy-agent` — все держат ОТДЕЛЬНО и связывают
+     опционально; внутри платформы только Java/.NET (толстая платформа, не наш случай).
+     Nova по устройству — тонкое ядро (`tls`/`compress` уже вынесены по этому же
+     принципу, обоснование в манифесте `nova-http`), поэтому std отпадает.
+     SOCKS5 проксирует ЛЮБОЙ TCP, не только HTTP — класть в `nova-http` значило бы
+     тащить весь HTTP тому, кому нужен голый туннель.
+  2. **Пример** — под-папка `examples/net/socks5_http_bridge/` (репа `nova`):
+     `main.nv` + `README.md`/`README.ru.md`; зависит от пакета `nova-socks`.
+     Соседние `echo_client.nv`/`echo_server.nv` остаются одиночными файлами —
+     прецедент оформления README, не структуры. **НЕ** `nova-polaris/examples/`.
 
 ## 2. Объём V1
 
@@ -69,11 +79,23 @@ SOCKS4/4a; GSSAPI-аутентификация (RFC 1961, редкая в про
 
 ## 3. Дизайн
 
-Тело плана написано под **package-пример** (рекомендация §7 в.1): модуль
-`socks5.nv` живёт внутри папки примера, `export` не нужен (равноправные файлы
-одного модуля видят друг друга), на std-поверхность не претендует.
+Тело — под **отдельный пакет** (решение владельца 2026-08-06, §7 в.1): поверхность
+`export`-ная, как у `tls`/`compress`; пример — обычный внешний потребитель.
 
-### 3.1 `socks5.nv` — SOCKS5-клиент (файл модуля примера)
+### 3.1 Пакет `nova-socks` — SOCKS5-клиент
+
+**Скелет пакета — по образцу `nova-compress`** (самый близкий по размеру; сверить
+пофайлово при создании): `nova.toml` (`[package] name = "socks"`, `[lib] src = "src"`
+— module-путь БЕЗ `src`, D78), `src/socks5.nv` + пир `src/socks5_test.nv`,
+`README.md`/`README.ru.md`, `LICENSE-MIT`/`LICENSE-APACHE`, `.gitignore`,
+`scripts/githooks`. Нативных артефактов НЕТ (чистая Nova поверх `std.net`) — секция
+`[ffi]` не нужна, это проще и tls, и compress.
+
+**Зеркала ×3 и релиз-скоуп:** репа заводится на github+gitverse+sourcecraft (правило
+трёх зеркал). **В скоуп тега v0.1.0 НЕ входит** — план P3, не блокер релиза; тег
+пакета — отдельным решением после того, как появится первый стабильный потребитель
+(`[M-178-client-policy-surface]`, прокси у `HttpClient`, — естественный кандидат).
+Строку в план 221 про состав тегов НЕ трогать без отдельного слова владельца.
 
 ```nova
 // Канон D406: без ведущего `|` (снятая форма тихо проскакивает — не переносить её в код)
@@ -82,10 +104,11 @@ type SocksError enum ConnectFailed { reason str }
     | AuthRequired            // сервер требует auth, креды не даны
     | UnsupportedMethod
     | HostTooLong             // domain-адрес > 255 байт (протокольный лимит)
+    | UnsupportedAddressType  // ATYP 0x04 (IPv6) — решение §7 п.2: честный Err, не разбор
     | GeneralFailure { code u8 }   // REP-код сервера, не наш (D30-conventions: код в поле)
     | Protocol { detail str }
 
-fn socks5_connect(
+export fn socks5_connect(
     proxy_host str, proxy_port int,
     user Option[str], pass Option[str],
     target_host str, target_port int
@@ -201,11 +224,17 @@ fn handle_client(consume client TcpStream, cfg Config) Net Time -> () {
     `E_LINEAR_CAPTURE_IN_FIBER` (обновить комментарий §3.2, если текст
     диагностики другой). Судьба `[M-consume-param-spawn-defer-active]` — по
     отчёту окна p364.
-- **Ф.1** — `socks5.nv`: чистые encode/decode + обвязка `socks5_connect`;
-  `socks5_test.nv` — байтовые фикстуры handshake-обменов, сверенные с текстом
-  RFC 1928/1929 (не по памяти).
-- **Ф.2** — мост (`main.nv`): конфиг из `Os`, accept-loop, парсинг первой
-  строки, CONNECT-путь, `pipe_bidirectional`.
+- **Ф.П — создание пакета `nova-socks`** (отдельным коммитом, ДО кода): скелет по
+  образцу `nova-compress` (§3.1), три зеркала, `nova.toml`, лицензии, README-пара,
+  `.gitignore`, githooks. Приёмка: пустой пакет собирается (`nova check src`),
+  зеркала сверены `ls-remote` (правило трёх зеркал — расходятся молча).
+- **Ф.1** — `src/socks5.nv`: чистые encode/decode + обвязка `socks5_connect`;
+  `src/socks5_test.nv` — байтовые фикстуры handshake-обменов, сверенные с текстом
+  RFC 1928/1929 (не по памяти); фикстура на IPv6-ATYP → `Err(UnsupportedAddressType)`.
+- **Ф.2** — мост (`examples/net/socks5_http_bridge/main.nv`): подключить `socks`
+  в `examples/nova.toml` (git+semver по D420; локальная разработка — через
+  `nova.override.toml`, НЕ `[replace]` в манифесте), конфиг из `Os`, accept-loop,
+  парсинг первой строки (с `MAX_HEADER_BYTES`), CONNECT-путь, `pipe_bidirectional`.
 - **Ф.3** — plain-HTTP-путь (переписывание absolute-URI → origin-form, срез
   `Proxy-*`-заголовков) — вторичный, можно отложить за Ф.2 отдельным коммитом.
 - **Ф.4** — README (EN+RU, по конвенции examples) — что показывает, как
@@ -214,8 +243,10 @@ fn handle_client(consume client TcpStream, cfg Config) Net Time -> () {
 
 ## 5. Гейты
 
-Тесты модуля — рядом с ним (`socks5_test.nv`, мок-байты + loopback для Ф.0-проб,
-внешней сети ноль) — обязательны, гоняются `nova test` по папке примера. Вся
+**Пакет `nova-socks`:** `nova check src` + `nova test src` (тесты пиром,
+`socks5_test.nv` — мок-байты + loopback для Ф.0-проб, внешней сети ноль) +
+`nova lint` (ритуал приёмки .nv-волн) + пуш на три зеркала со сверкой `ls-remote`.
+**Пример:** тесты примера гоняются `nova test` по его папке. Вся
 папка компилируется `--strict-effects` (конвенция examples). **Ручной smoke —
 вне CI** (нужен реальный внешний SOCKS5-прокси, недоступен в автоматическом
 прогоне) — задокументировать это ограничение явно в README примера, не заявлять
@@ -233,21 +264,27 @@ fn handle_client(consume client TcpStream, cfg Config) Net Time -> () {
 | `Router`/`polaris` эволюционирует и научится CONNECT — пример устареет архитектурно | не блокирует V1; ревизия при появлении authority-form в polaris — отдельный follow-up |
 | Ручной smoke невозможен в CI | честно задокументировано (§5), не выдаётся за протестированное |
 
-## 7. Открытые вопросы владельцу (до запуска волны)
+## 7. Решения владельца (закрыто 2026-08-06)
 
-1. **Имя модуля:** `std.socks` (в стандартной библиотеке) или package-пример без
-   претензии на std-API? Рекомендация: **package-пример** (тело плана написано
-   под неё) — SOCKS5-клиент без реальных других потребителей в экосистеме пока
-   не тянет на std-поверхность (§3 maximize-nv не про «добавить в std всё, что
-   написано», а про «где уже есть потребитель»). Переезд в std позже —
-   механический (файл уже самодостаточен).
-2. **IPv6-адреса в SOCKS5** (address type `0x04`) — в V1 или явный `Err(Unsupported)`
-   до первого реального носителя? Рекомендация: явный `Err` — YAGNI, домен/IPv4
-   покрывают мотивирующий сценарий.
+1. **Дом — ✅ РЕШЕНО: отдельный пакет `nova-socks`** (владелец 2026-08-06, «ДА» на
+   вариант (а)). Рассмотрены и отклонены: `std.socks` (против устройства «тонкое
+   ядро» — прецедент манифеста `nova-http`), внутрь `nova-http` (против ВСЕХ
+   индустриальных прецедентов — Go/Rust/Python/Node держат SOCKS5 отдельно от
+   HTTP-библиотеки; SOCKS5 проксирует любой TCP), внутрь примера (потерялся бы
+   реальный потребитель — прокси у `HttpClient`). Инфраструктурная цена (репа +
+   3 зеркала + CI) принята владельцем осознанно, ДО тега.
+2. **IPv6 — ✅ РЕШЕНО: НЕ реализовывать в V1** (владелец 2026-08-06, «ДА»).
+   Address type `0x04` → `Err(UnsupportedAddressType)`; домен + IPv4 покрывают
+   мотивирующий сценарий. Вариант enum'а `SocksError` (§3.1) дополнить этим
+   членом; фикстура на честный `Err` обязательна (не молчаливый неверный разбор).
 
 ## Связи
 
-Реестр [221.1](221.1-bug-sweep.md) №360 / `[M-socks5-client-missing]`
+Пакет-образец `nova-compress` (скелет; `nova-tls` — тот же extraction-shape) ·
+`[M-178-client-policy-surface]` (nova-http: прокси у `HttpClient` — будущий второй
+потребитель) · прецеденты индустрии: Go `x/net/proxy`, Rust `tokio-socks`/reqwest
+`socks`-feature, Python `PySocks`/`requests[socks]`, Node `socks`+`socks-proxy-agent` ·
+реестр [221.1](221.1-bug-sweep.md) №360 / `[M-socks5-client-missing]`
 (`backlog-followups.md`) · `std/src/net/tcp.nv` (`into_split`/половины —
 несущая конструкция relay; `@shutdown`) · `std/src/os/os.nv` (`env`/`args` —
 конфиг моста) · `nova-http/src/method.nv` (`Method.Connect`) ·
