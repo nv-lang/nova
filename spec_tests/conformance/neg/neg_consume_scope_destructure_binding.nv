@@ -1,6 +1,16 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //
-// EXPECT_COMPILE_ERROR unexpected `consume` in expression
+// EXPECT_COMPILE_ERROR requires single identifier binding
+//
+// 2026-08-06 (№378): ожидание обновлено с общего парсерного `unexpected
+// `consume` in expression` на специализированную диагностику D188. Причина —
+// НЕ ослабление: до №378 lookahead-гейт `KwConsume` не пускал `(`/`{`, форма
+// падала в expr-парсер раньше, чем доходила до проверки D188. №378 расширил
+// гейт (деструктуризация в raw-форме `consume (a, b) = expr` стала законной),
+// и та же самая форма СО scope-блоком теперь доходит до ветки D188 и получает
+// точный текст. Норма не менялась: scope-block по-прежнему требует single-ident
+// и по-прежнему отвергается — сменился только текст диагностики, в лучшую
+// сторону. Проверено: позиция ошибки та же (22:37).
 //
 // Plan 110.1.1 (D188): scope-block требует **single-ident** binding.
 // Destructure pattern (`consume (a, b) = init() { body }`) не
