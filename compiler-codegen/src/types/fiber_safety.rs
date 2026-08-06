@@ -620,6 +620,27 @@ fn touch_share_ok(root: &PlaceRoot, ctx: &PassBCtx) -> bool {
             if crate::protocols::share_check::is_mut_alias_safe(&q, &t) {
                 return true;
             }
+            // Приёмка интегратора 2026-08-06 (четвёртый раунд) — measured
+            // live gap: `TcpStream.rc` (wave 3 representation) is now
+            // `*mut AtomicInt`, and `@share()`'s `@rc.fetch_add(1)` touches
+            // a POINTER field — `is_mut_alias_safe`'s own poison-base rule
+            // (`share_check.rs`: "a raw pointer, ANY pointee, never share
+            // by structure — only the CONTAINING type's own `#share` vouch
+            // escapes") refuses it unconditionally, deliberately, for ITS
+            // OWN callers (the capture-check: a raw pointer CAPTURED by
+            // reference has no static guarantee its pointee stays #share
+            // for the alias's whole lifetime — that rule is right there).
+            // `touch_share_ok` asks a NARROWER question — is calling a
+            // method through THIS receiver's OWN field, whose declared
+            // POINTEE type is statically known right here, safe — and for
+            // that question a pointer to an audited `#share` type carries
+            // the SAME vouch its pointee does: `*mut AtomicInt`'s pointee
+            // IS `AtomicInt`, whose own atomic ops are its entire purpose.
+            // Deref-through-pointer does not strip `#share`-ness, it is
+            // just how the field happens to be stored.
+            if pointee_share_ok(&t, ctx.type_decls) {
+                return true;
+            }
             // Ф.2 companion fix (D446 sync brick 2 — linearity, not brick
             // 3 — synchronization): a touch on a `consume`/LINEAR-typed
             // receiver (`TcpStream`/`Transaction`/... — D415's own named
@@ -658,6 +679,27 @@ fn typeref_named_base(ty: &TypeRef) -> Option<&str> {
             typeref_named_base(inner)
         }
         _ => None,
+    }
+}
+
+/// Приёмка интегратора 2026-08-06 (четвёртый раунд): `true` iff `ty` is a
+/// raw pointer (`*T`/`*mut T`/`*ro T`/`*uninit T` — any pointee modifier,
+/// strips the SAME way `typeref_named_base` does) whose POINTEE resolves
+/// to a type declaration carrying the `#share` audited vouch
+/// (`TypeAttr::Share`). Used ONLY by [`touch_share_ok`] — a narrower,
+/// intentional widening of `is_mut_alias_safe`'s own stricter "raw
+/// pointer is an unconditional poison base" rule, see that call site's
+/// doc for why the two questions differ.
+fn pointee_share_ok(ty: &TypeRef, type_decls: &HashMap<String, &TypeDecl>) -> bool {
+    match ty {
+        TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) | TypeRef::Uninit(inner, _) => {
+            pointee_share_ok(inner, type_decls)
+        }
+        TypeRef::Pointer(inner, _) => typeref_named_base(inner)
+            .and_then(|b| type_decls.get(b))
+            .map(|td| td.attrs.contains(&crate::ast::TypeAttr::Share))
+            .unwrap_or(false),
+        _ => false,
     }
 }
 
