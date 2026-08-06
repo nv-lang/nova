@@ -1,24 +1,26 @@
-// №377 (window p375-ptr2, investigation only — NOT fixed this window, see
-// PROGRESS-p375-ptr2.md) — value-checking regression guard for the TWO
-// auto-deref paths D216 §5 documents (`p.field`, `p.method()`) plus the
-// officially-recommended workaround (`p.read().method()`, `docs/guide/
-// typed-pointers.md:205-212`):
+// №377 (window p375-ptr2) — FIXED per owner decision 2026-08-06 (variant
+// A): auto-deref for METHOD calls through a typed pointer (`p.method()`,
+// D216 §5) now works as designed. Root cause was `emit_c.rs`'s
+// `prepare_method_recv` receiver-emission helper: it had NO case for a
+// `Nova_X**` (raw pointer to a HEAP record) receiver — every OTHER shape
+// it already handled (`NovaValue_X`/`NovaTuple_X` pointer-ABI receivers)
+// — so the method received the ADDRESS OF THE POINTER VARIABLE itself
+// (one level too shallow) instead of the pointee. Fixed by mirroring the
+// sibling `ExprKind::Member` field-access arm's own `is_double_ptr` check
+// (same file, ~line 34944-34958) — one level of deref before the call.
 //
-//   - `p.field` (this file, below) — auto-deref field READ through a
-//     pointer — CONFIRMED CORRECT (value-checked here).
-//   - `p.method()` (auto-deref METHOD call through a pointer) — CONFIRMED
-//     BROKEN (returns a garbage/address-like value — root cause: `emit_c.
-//     rs`'s `prepare_method_recv` receiver-emission helper has no
-//     `Nova_X**`-deref case, unlike the field-access path's own
-//     `is_double_ptr` check) — deliberately NOT asserted here (a fixture
-//     asserting the CORRECT value would fail on the current compiler; a
-//     fixture asserting the WRONG value would enshrine the bug as "spec").
-//     Already tracked in the guide (typed-pointers.md:208-212); root cause
-//     + two remediation options (narrow emit_c.rs fix vs retract method
-//     auto-deref) reported to the integrator, not decided by this window.
-//   - `p.read().method()` — the CURRENT canonical workaround — value-
-//     checked here as a regression guard (must keep working regardless of
-//     how №377 is eventually resolved).
+// This file value-checks ALL THREE auto-deref paths D216 §5 documents,
+// from BOTH pointer sources, plus the round-trip through a `*mut T`
+// (write-then-read-back), which is what actually exercises the fix (a
+// stale/garbage receiver would silently read back the OLD value or an
+// address-like garbage int, not the freshly-written one):
+//
+//   - `p.field` — auto-deref field READ (was already correct; regressed
+//     here for completeness/symmetry with the two other paths).
+//   - `p.method()` — auto-deref METHOD call (THE fix under test).
+//   - `p.read().method()` — the pre-fix workaround the guide recommended
+//     (`docs/guide/typed-pointers.md:205-212`) — regression guard, must
+//     keep working regardless.
 //
 // Part of the single conformance folder-module (`Ptr377Counter` — unique
 // name, no collision with `Counter`/`PtrSrcCounter` used by sibling
@@ -29,13 +31,42 @@ type Ptr377Counter { v int }
 
 fn Ptr377Counter @val() -> int => @v
 
-test "p.field auto-deref read through a pointer is correct" {
+test "p.field — ro source (*T, readonly pointee)" {
+    ro a = Ptr377Counter { v: 21 }
+    ro p = &a
+    assert(p.v == 21)
+}
+
+test "p.field — mut source (*mut T, writable pointee)" {
     mut a = Ptr377Counter { v: 21 }
     ro p = &a
     assert(p.v == 21)
 }
 
-test "p.read().method() workaround (canonical per guide) stays correct" {
+test "p.method() auto-deref — ro source (*T) returns the real value, not garbage" {
+    ro a = Ptr377Counter { v: 21 }
+    ro p = &a
+    assert(p.val() == 21)
+}
+
+test "p.method() auto-deref — mut source (*mut T), write-then-read round trip" {
+    // №375/118.6: `&a` from a `mut`-bound `a` infers `*mut Ptr377Counter`
+    // directly (no annotation/cast needed) — exercises the SAME `Nova_
+    // Ptr377Counter**` receiver shape the emit_c.rs fix targets, but this
+    // time through a pointer that ALSO permits writing through it.
+    mut a = Ptr377Counter { v: 21 }
+    ro p = &a
+    assert(p.val() == 21)
+    unsafe { p.write(Ptr377Counter { v: 42 }) }
+    // The method call must see the FRESHLY WRITTEN value (42), not a
+    // stale/garbage read off the wrong address — this is what a
+    // one-level-too-shallow receiver would get wrong even if the
+    // FIRST call (above) happened to look plausible.
+    assert(p.val() == 42)
+    assert(a.v == 42)
+}
+
+test "p.read().method() workaround stays correct (regression guard)" {
     mut a = Ptr377Counter { v: 21 }
     ro p = &a
     assert(p.read().val() == 21)

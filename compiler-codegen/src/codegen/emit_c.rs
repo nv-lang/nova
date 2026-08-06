@@ -55279,6 +55279,34 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         recv_mutable: bool,
         obj_ast: Option<&Expr>,
     ) -> String {
+        // №377 (D216 §5, owner decision 2026-08-06, variant A — auto-deref
+        // for METHOD calls through a typed pointer): mirrors the sibling
+        // `ExprKind::Member` field-access arm's `is_double_ptr` check
+        // (~line 34944-34958, same file). A typed pointer `*T`/`*mut T`
+        // over a HEAP record `T` is represented in C as `Nova_T**` (double
+        // pointer) — `Nova_T` itself already a pointer typedef, so ONE
+        // level of deref (`*obj_c`) is required before the receiver
+        // reaches the callee's expected `Nova_T*` ABI. Before this fix
+        // `prepare_method_recv` had NO case for this shape at all — it
+        // fell through to the plain pass-through `else` branch below, and
+        // the method received the ADDRESS OF THE POINTER VARIABLE itself
+        // (one level too shallow) — reading garbage off the wrong memory.
+        // (`p.method()` returned an address-like value while `p.field`/
+        // `p.read().method()` were already correct — exactly the
+        // asymmetry №377 reported.) Scoped identically to the field-arm
+        // sibling (`ends_with("**")`, no `Nova_`-prefix gate): a
+        // value-record raw pointer (`*SomeValueRecordT`) stays
+        // single-starred (`NovaValue_T*`) — `SomeValueRecordT`'s OWN C repr
+        // is already a bare (non-pointer) struct — so this branch is
+        // unreachable for that shape and cannot interfere with the
+        // `is_value_struct_val` branch below. Checked FIRST/`return`s —
+        // the (already-dereferenced) `Nova_T*` needs no further
+        // address-taking, mirroring how a plain (non-pointer) heap-record
+        // receiver already passes straight through in the final `else`.
+        let trimmed_recv_ty = obj_ty.trim_start_matches("const ").trim();
+        if trimmed_recv_ty.ends_with("**") {
+            return format!("(*{})", obj_c.trim());
+        }
         // [M-static-selfreturn-value-mangle-conflict] (Plan 172.13): a lazy
         // module-level const (`const ZERO = Complex(0, 0)`, non-constexpr
         // init) is `ExprKind::Ident("ZERO")` at the AST level — indistinguishable
