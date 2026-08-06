@@ -102,6 +102,12 @@ bash "$ROOT/scripts/guards/selftest/test-doc-conventions-determinism.sh" || fail
 echo "== gate: doc-examples (снятые формы в nova-примерах публикуемой доки, окно p-example-guard) =="
 DOC_EXAMPLES_SHOW_MATCHES=0 bash "$ROOT/scripts/guards/check-doc-examples.sh" "$ROOT" || fail "doc-examples (дока учит снятому синтаксису — let/readonly/*ro T/*unsafe T/постфикс-!/trait-impl-throws/ref-формы/external fn/addr_of/null <тип>/#impl(<старое имя>) — см. вывод выше)"
 bash "$ROOT/scripts/guards/selftest/test-check-doc-examples.sh" || fail "doc-examples selftest"
+
+echo "== gate: test-fixture-coverage (правила 1/5 test-conventions.md — neg-фикстура на новый E_*/W_*, регресс-фикстура на закрытие маркера; реестр 221.1 №399) =="
+TFC_BASE="$(git -C "$ROOT" rev-parse --verify -q HEAD~1 2>/dev/null || true)"
+bash "$ROOT/scripts/guards/check-test-fixture-coverage.sh" "$ROOT" "$TFC_BASE" || fail "test-fixture-coverage (новый E_*/W_*-код без neg-фикстуры, ИЛИ строка реестра 221.1 закрыта без .nv-ссылки — см. вывод выше; WARN про registry/backlog-расхождение НЕ роняет гейт)"
+bash "$ROOT/scripts/guards/selftest/test-check-test-fixture-coverage.sh" || fail "test-fixture-coverage selftest"
+
 for st in "$ROOT"/scripts/guards/selftest/test-*.sh; do
     [ -e "$st" ] || continue
     bash "$st" || fail "самотест стража: $(basename "$st")"
