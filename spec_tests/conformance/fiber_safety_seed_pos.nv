@@ -13,8 +13,27 @@
 //   3. a `consume`/linear-typed resource's own mutating method
 //      (brick 2 — ownership, not synchronization) called on a value
 //      created fresh inside the fiber (never crosses any boundary at all).
+//   4. (приёмка интегратора 2026-08-06, четвёртый раунд) — a method that
+//      touches a raw-pointer FIELD whose POINTEE is itself `#share`-
+//      verified (`*mut AtomicInt` — the D446 white-list brick 3 vouch
+//      survives a level of pointer indirection; deref does not strip
+//      `#share`-ness, `pointee_share_ok` in `fiber_safety.rs`), called via
+//      `spawn consume w = h.share() { .. }` (D415 §4 move-capture) FROM a
+//      `mut` PARAMETER of the enclosing fn — the exact shape of
+//      `TcpStream.@share()`'s current representation
+//      (`spec_tests/conformance/standalone/m222_7_spawn_ctx_capture_mut_
+//      param.nv`'s live pattern) and of `Handle` below.
 
 module spec_tests.conformance
+
+import std.runtime.sync.{AtomicInt}
+
+type Handle value { priv rc *mut AtomicInt }
+
+fn Handle @share() -> Handle {
+    @rc.fetch_add(1)
+    Handle { @rc }
+}
 
 type Linear consume { mut n int }
 
@@ -22,10 +41,11 @@ fn Linear.new() -> Self => { n: 0 }
 
 fn Linear mut @bump() -> @ {
     @n = @n + 1
-    @
 }
 
 fn Linear @value() -> int => @n
+
+fn Linear consume @discard() {}
 
 fn[T Ints] T @doubled() -> int => (@ as int) * 2
 
@@ -49,9 +69,28 @@ test "spawn calling a pure generic-leaf arithmetic method — легально (
 test "spawn mutating a `consume`-typed resource created fresh inside the fiber — легально (D446 brick 2, ownership)" {
     supervised {
         spawn {
-            mut lin = Linear.new()
+            consume lin = Linear.new()
             lin.bump()
             assert(lin.value() == 1)
+            lin.discard()
+        }
+    }
+}
+
+// NOTE: no runnable `test` block constructing a `Handle` here — this
+// worktree does not (yet) carry the `*mut AtomicInt`-field representation
+// live in `std` (that landed in a concurrent wave not yet merged, see
+// `docs/plans/wip/PROGRESS-p238-f2.md` §"pointee_share_ok"), so there is
+// no vetted, canonical way to construct a `*mut AtomicInt` value from
+// Nova source in THIS tree to plug into `Handle { rc: .. }`. Declaring the
+// function is enough to exercise the checker (`nova check` type-checks
+// every declared item regardless of whether it is called) — the whole
+// point of this fixture is the SEED-POINT ENFORCEMENT verdict on `h.
+// share()`'s call, which is decided at check time, not at run time.
+fn share_via_ptr_field(mut h Handle) {
+    supervised {
+        spawn consume w = h.share() {
+            ro _ = w
         }
     }
 }
