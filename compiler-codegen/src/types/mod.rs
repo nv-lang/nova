@@ -16682,111 +16682,15 @@ impl<'a> TypeCheckCtx<'a> {
         false
     }
 
-    /// Recursively walks `body` (a protocol default_body Block) and checks
-    /// whether every method reference / free-fn call on Self/@ resolves
-    /// to a method available on `tname` (directly or via well-known
-    /// auto-derive: `str.from(T)` overload OR `T.@into() -> str`).
-    ///
-    /// Conservative: unknown patterns return `true` (assume satisfiable).
-    /// Codegen general synthesizer does the precise check at emission.
+    /// №384 (Plan p383-bounds, единый вход): whether every method reference /
+    /// free-fn call on Self/@ inside `body` resolves for `tname`. Thin
+    /// delegator to the free-standing `default_body_calls_satisfy_for`
+    /// walker below (shared with `BoundCtx::check_satisfaction_against_methods`
+    /// — decl-site `#impl(P)` verification and call-site generic-bound
+    /// satisfaction now run through the SAME walker, not two copies of it;
+    /// `self` supplies the `DefaultBodyProbe` backend for this ctx).
     fn default_body_calls_satisfy_for(&self, body: &Block, tname: &str) -> bool {
-        let mut ok = true;
-        self.walk_default_body_block(body, tname, &mut ok);
-        ok
-    }
-
-    fn walk_default_body_block(&self, b: &Block, tname: &str, ok: &mut bool) {
-        for s in &b.stmts {
-            self.walk_default_body_stmt(s, tname, ok);
-            if !*ok { return; }
-        }
-        if let Some(t) = &b.trailing {
-            self.walk_default_body_expr(t, tname, ok);
-        }
-    }
-
-    fn walk_default_body_stmt(&self, s: &Stmt, tname: &str, ok: &mut bool) {
-        match s {
-            Stmt::Expr(e) => self.walk_default_body_expr(e, tname, ok),
-            Stmt::Return { value: Some(e), .. } => self.walk_default_body_expr(e, tname, ok),
-            Stmt::Let(d) => self.walk_default_body_expr(&d.value, tname, ok),
-            Stmt::Const(_) => {}
-            Stmt::Assign { target, value, .. } => {
-                self.walk_default_body_expr(target, tname, ok);
-                self.walk_default_body_expr(value, tname, ok);
-            }
-            _ => {}
-        }
-    }
-
-    fn walk_default_body_expr(&self, e: &Expr, tname: &str, ok: &mut bool) {
-        if !*ok { return; }
-        match &e.kind {
-            ExprKind::Call { func, args, .. } => {
-                // Check the call target. Two patterns matter:
-                // 1. Member call `obj.method(...)` where `obj` is `@` (SelfAccess)
-                //    → require T provides the method.
-                // 2. Path call `Type.method(arg)` where one arg is `@` → handle
-                //    well-known auto-derive: `str.from(@)` accepts if T has
-                //    `str.from(T)` overload OR `T.@into() -> str`.
-                if let ExprKind::Member { obj, name } = &func.kind {
-                    if matches!(obj.kind, ExprKind::SelfAccess) {
-                        if !self.t_provides_method(tname, name) {
-                            *ok = false;
-                            return;
-                        }
-                    }
-                } else if let ExprKind::Path(parts) = &func.kind {
-                    if parts.len() == 2 && parts[0] == "str" && parts[1] == "from" {
-                        if args.iter().any(|a| matches!(a.expr().kind, ExprKind::SelfAccess))
-                            && !self.t_satisfies_str_from(tname)
-                        {
-                            *ok = false;
-                            return;
-                        }
-                    }
-                }
-                self.walk_default_body_expr(func, tname, ok);
-                for a in args { self.walk_default_body_expr(a.expr(), tname, ok); }
-            }
-            ExprKind::Member { obj, name } => {
-                if matches!(obj.kind, ExprKind::SelfAccess) {
-                    // Bare access `@method` (method-value, not call) — require T provides.
-                    if !self.t_provides_method(tname, name)
-                        && !self.t_provides_field(tname, name)
-                    {
-                        *ok = false;
-                        return;
-                    }
-                }
-                self.walk_default_body_expr(obj, tname, ok);
-            }
-            ExprKind::Binary { left, right, .. } => {
-                self.walk_default_body_expr(left, tname, ok);
-                self.walk_default_body_expr(right, tname, ok);
-            }
-            ExprKind::Unary { operand, .. } => self.walk_default_body_expr(operand, tname, ok),
-            ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) => self.walk_default_body_expr(inner, tname, ok),
-            ExprKind::Coalesce(a, b) => {
-                self.walk_default_body_expr(a, tname, ok);
-                self.walk_default_body_expr(b, tname, ok);
-            }
-            ExprKind::As(inner, _) | ExprKind::Is(inner, _) => {
-                self.walk_default_body_expr(inner, tname, ok);
-            }
-            ExprKind::If { cond, then, else_ } => {
-                self.walk_default_body_expr(cond, tname, ok);
-                self.walk_default_body_block(then, tname, ok);
-                if let Some(eb) = else_ {
-                    match eb {
-                        crate::ast::ElseBranch::Block(b) => self.walk_default_body_block(b, tname, ok),
-                        crate::ast::ElseBranch::If(i) => self.walk_default_body_expr(i, tname, ok),
-                    }
-                }
-            }
-            ExprKind::Block(b) => self.walk_default_body_block(b, tname, ok),
-            _ => {}
-        }
+        default_body_calls_satisfy_for(body, tname, self)
     }
 
     /// T has method `name` (instance or static, with-or-without `@` prefix).
@@ -25232,6 +25136,153 @@ fn check_generic_bound_declarations(
     }
 }
 
+/// №384 (Plan p383-bounds, единый вход): the small "does T provide X"
+/// backend a `default_body_calls_satisfy_for` walk needs. Two callers, two
+/// contexts with different data available:
+///   - `TypeCheckCtx` (decl-site `#impl(P)` verification, `verify_impl_protocols`)
+///     — has the full synth/auto-derive overlay AND a per-type field table.
+///   - `BoundCtx` (call-site generic-bound satisfaction,
+///     `check_satisfaction_against_methods`) — only the base `sig.method_table`,
+///     no synth overlay, no field table.
+/// The WALKER (the part that actually matters — recursing through a default
+/// body and deciding which sub-expressions are dependency calls that must
+/// resolve) is ONE implementation, free-standing below; each ctx supplies
+/// its own answers to the three primitive queries through this trait,
+/// rather than duplicating the walk.
+trait DefaultBodyProbe {
+    fn provides_method(&self, tname: &str, name: &str) -> bool;
+    fn provides_field(&self, tname: &str, name: &str) -> bool;
+    fn satisfies_str_from(&self, tname: &str) -> bool;
+}
+
+impl<'a> DefaultBodyProbe for TypeCheckCtx<'a> {
+    fn provides_method(&self, tname: &str, name: &str) -> bool {
+        self.t_provides_method(tname, name)
+    }
+    fn provides_field(&self, tname: &str, name: &str) -> bool {
+        self.t_provides_field(tname, name)
+    }
+    fn satisfies_str_from(&self, tname: &str) -> bool {
+        self.t_satisfies_str_from(tname)
+    }
+}
+
+/// №384: recursively walks `body` (a protocol default_body Block) and checks
+/// whether every method reference / free-fn call on Self/@ resolves to a
+/// method available on `tname` (directly or via well-known auto-derive:
+/// `str.from(T)` overload OR `T.@into() -> str`).
+///
+/// Conservative: unknown patterns return `true` (assume satisfiable).
+/// Codegen general synthesizer does the precise check at emission.
+///
+/// Единый вход: this is the SAME walker both `TypeCheckCtx::verify_impl_protocols`
+/// (decl-site `#impl(P)`) and `BoundCtx::check_satisfaction_against_methods`
+/// (call-site `[T P]` bound satisfaction) call — previously only the
+/// decl-site path ran this walk; the call-site path unconditionally
+/// accepted ANY `default_body.is_some()` without checking the body's own
+/// dependencies, which is exactly how `a.equal(b)` on a type without
+/// `@compare` slipped through to a resolver falling back onto an unrelated
+/// same-named method elsewhere in the program (UB, №384 Корень Б).
+fn default_body_calls_satisfy_for(body: &Block, tname: &str, probe: &dyn DefaultBodyProbe) -> bool {
+    let mut ok = true;
+    walk_default_body_block(body, tname, &mut ok, probe);
+    ok
+}
+
+fn walk_default_body_block(b: &Block, tname: &str, ok: &mut bool, probe: &dyn DefaultBodyProbe) {
+    for s in &b.stmts {
+        walk_default_body_stmt(s, tname, ok, probe);
+        if !*ok { return; }
+    }
+    if let Some(t) = &b.trailing {
+        walk_default_body_expr(t, tname, ok, probe);
+    }
+}
+
+fn walk_default_body_stmt(s: &Stmt, tname: &str, ok: &mut bool, probe: &dyn DefaultBodyProbe) {
+    match s {
+        Stmt::Expr(e) => walk_default_body_expr(e, tname, ok, probe),
+        Stmt::Return { value: Some(e), .. } => walk_default_body_expr(e, tname, ok, probe),
+        Stmt::Let(d) => walk_default_body_expr(&d.value, tname, ok, probe),
+        Stmt::Const(_) => {}
+        Stmt::Assign { target, value, .. } => {
+            walk_default_body_expr(target, tname, ok, probe);
+            walk_default_body_expr(value, tname, ok, probe);
+        }
+        _ => {}
+    }
+}
+
+fn walk_default_body_expr(e: &Expr, tname: &str, ok: &mut bool, probe: &dyn DefaultBodyProbe) {
+    if !*ok { return; }
+    match &e.kind {
+        ExprKind::Call { func, args, .. } => {
+            // Check the call target. Two patterns matter:
+            // 1. Member call `obj.method(...)` where `obj` is `@` (SelfAccess)
+            //    → require T provides the method.
+            // 2. Path call `Type.method(arg)` where one arg is `@` → handle
+            //    well-known auto-derive: `str.from(@)` accepts if T has
+            //    `str.from(T)` overload OR `T.@into() -> str`.
+            if let ExprKind::Member { obj, name } = &func.kind {
+                if matches!(obj.kind, ExprKind::SelfAccess) {
+                    if !probe.provides_method(tname, name) {
+                        *ok = false;
+                        return;
+                    }
+                }
+            } else if let ExprKind::Path(parts) = &func.kind {
+                if parts.len() == 2 && parts[0] == "str" && parts[1] == "from" {
+                    if args.iter().any(|a| matches!(a.expr().kind, ExprKind::SelfAccess))
+                        && !probe.satisfies_str_from(tname)
+                    {
+                        *ok = false;
+                        return;
+                    }
+                }
+            }
+            walk_default_body_expr(func, tname, ok, probe);
+            for a in args { walk_default_body_expr(a.expr(), tname, ok, probe); }
+        }
+        ExprKind::Member { obj, name } => {
+            if matches!(obj.kind, ExprKind::SelfAccess) {
+                // Bare access `@method` (method-value, not call) — require T provides.
+                if !probe.provides_method(tname, name)
+                    && !probe.provides_field(tname, name)
+                {
+                    *ok = false;
+                    return;
+                }
+            }
+            walk_default_body_expr(obj, tname, ok, probe);
+        }
+        ExprKind::Binary { left, right, .. } => {
+            walk_default_body_expr(left, tname, ok, probe);
+            walk_default_body_expr(right, tname, ok, probe);
+        }
+        ExprKind::Unary { operand, .. } => walk_default_body_expr(operand, tname, ok, probe),
+        ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) => walk_default_body_expr(inner, tname, ok, probe),
+        ExprKind::Coalesce(a, b) => {
+            walk_default_body_expr(a, tname, ok, probe);
+            walk_default_body_expr(b, tname, ok, probe);
+        }
+        ExprKind::As(inner, _) | ExprKind::Is(inner, _) => {
+            walk_default_body_expr(inner, tname, ok, probe);
+        }
+        ExprKind::If { cond, then, else_ } => {
+            walk_default_body_expr(cond, tname, ok, probe);
+            walk_default_body_block(then, tname, ok, probe);
+            if let Some(eb) = else_ {
+                match eb {
+                    crate::ast::ElseBranch::Block(b) => walk_default_body_block(b, tname, ok, probe),
+                    crate::ast::ElseBranch::If(i) => walk_default_body_expr(i, tname, ok, probe),
+                }
+            }
+        }
+        ExprKind::Block(b) => walk_default_body_block(b, tname, ok, probe),
+        _ => {}
+    }
+}
+
 /// Plan 15 (D72): registry для bound enforcement.
 ///
 /// `protocol_specs`: для каждого `type Foo protocol { ... }` — список
@@ -25331,6 +25382,41 @@ struct BoundCtx<'a> {
     /// a false bound-violation diagnostic — found verifying
     /// `check_receiver_carrier_bounds` against the real corpus.
     current_recv_ty: std::cell::RefCell<Option<TypeRef>>,
+}
+
+/// №384 (Plan p383-bounds): `BoundCtx`'s `DefaultBodyProbe` backend — base
+/// `sig.method_table` only, no synth/auto-derive overlay (that overlay is
+/// TypeCheckCtx-private) and no per-type field table (`provides_field`
+/// conservatively `false`). Strictly a SUBSET of what `TypeCheckCtx`'s own
+/// impl can answer, never a superset — this can only make the call-site
+/// bound-check MORE conservative (occasionally still reports "missing" for
+/// a method that IS really synth-derivable), never less conservative, so it
+/// carries no risk of masking a real gap the way the old unconditional
+/// `default_body.is_some() => satisfied` did.
+impl<'a> DefaultBodyProbe for BoundCtx<'a> {
+    fn provides_method(&self, tname: &str, name: &str) -> bool {
+        self.sig.methods_of(tname)
+            .map_or(false, |m| m.keys().any(|k| k.trim_start_matches('@') == name))
+    }
+    fn provides_field(&self, _tname: &str, _name: &str) -> bool {
+        false
+    }
+    fn satisfies_str_from(&self, tname: &str) -> bool {
+        let str_from = self.sig.methods_of("str")
+            .and_then(|m| m.get("from"))
+            .map_or(false, |fns| fns.iter().any(|f| {
+                f.params.len() == 1
+                    && matches!(&f.params[0].ty, TypeRef::Named { path, .. }
+                        if path.last().map_or(false, |s| s == tname))
+            }));
+        if str_from { return true; }
+        self.sig.methods_of(tname).map_or(false, |m| {
+            m.get("into").or_else(|| m.get("@into")).map_or(false, |fns| fns.iter().any(|f| {
+                matches!(&f.return_type, Some(TypeRef::Named { path, .. })
+                    if path.len() == 1 && path[0] == "str")
+            }))
+        })
+    }
 }
 
 impl<'a> BoundCtx<'a> {
@@ -28120,11 +28206,26 @@ impl<'a> BoundCtx<'a> {
                 fns.iter().any(|f| f.params.len() == req.params.len())
             }).unwrap_or(false);
             if !found {
-                // Plan 91.8a.2 part 2 (D183 amendment): default body fallback.
-                // Если protocol method имеет default body — type can satisfy via
-                // codegen synthesis. Assumption: synthesis will lower default body
-                // calls correctly или error там. Здесь — accept satisfaction.
-                if req.default_body.is_some() {
+                // Plan 91.8a.2 part 2 (D183 amendment) + №384 (Plan p383-bounds,
+                // единый вход): default body fallback. A protocol method with a
+                // default body (`Equal.equal => @compare(other) == 0`, D145/D183)
+                // can satisfy the bound ONLY if the body's OWN dependency calls
+                // (here `@compare`) themselves resolve for `concrete_name` — the
+                // OLD code accepted ANY `default_body.is_some()` unconditionally
+                // ("Assumption: synthesis will lower default body calls correctly
+                // или error там" — a false assumption: neither codegen NOR this
+                // checker verified it downstream, so the call-site resolver
+                // silently picked an ARBITRARY same-named method elsewhere in the
+                // program — `a.equal(b)` on a type without `@compare` compiled to
+                // `Nova_HashMap_method_equal(a, (void*)(b))`, a `void*`-cast type
+                // confusion / UB, not a caught error). Единый вход: reuse the
+                // EXACT SAME walker `verify_impl_protocols` already uses at
+                // decl-site (`#impl(P)` verification) — `default_body_calls_satisfy_for`
+                // — rather than a second, call-site-only implementation.
+                let satisfied_via_default = req.default_body.as_ref()
+                    .map(|body| default_body_calls_satisfy_for(body, &concrete_name, self))
+                    .unwrap_or(false);
+                if satisfied_via_default {
                     continue;
                 }
                 let sig = render_method_sig(&req.name, &req.params, &req.return_type);
