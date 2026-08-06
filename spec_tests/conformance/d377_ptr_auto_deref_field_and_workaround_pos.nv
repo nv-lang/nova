@@ -1,0 +1,42 @@
+// №377 (window p375-ptr2, investigation only — NOT fixed this window, see
+// PROGRESS-p375-ptr2.md) — value-checking regression guard for the TWO
+// auto-deref paths D216 §5 documents (`p.field`, `p.method()`) plus the
+// officially-recommended workaround (`p.read().method()`, `docs/guide/
+// typed-pointers.md:205-212`):
+//
+//   - `p.field` (this file, below) — auto-deref field READ through a
+//     pointer — CONFIRMED CORRECT (value-checked here).
+//   - `p.method()` (auto-deref METHOD call through a pointer) — CONFIRMED
+//     BROKEN (returns a garbage/address-like value — root cause: `emit_c.
+//     rs`'s `prepare_method_recv` receiver-emission helper has no
+//     `Nova_X**`-deref case, unlike the field-access path's own
+//     `is_double_ptr` check) — deliberately NOT asserted here (a fixture
+//     asserting the CORRECT value would fail on the current compiler; a
+//     fixture asserting the WRONG value would enshrine the bug as "spec").
+//     Already tracked in the guide (typed-pointers.md:208-212); root cause
+//     + two remediation options (narrow emit_c.rs fix vs retract method
+//     auto-deref) reported to the integrator, not decided by this window.
+//   - `p.read().method()` — the CURRENT canonical workaround — value-
+//     checked here as a regression guard (must keep working regardless of
+//     how №377 is eventually resolved).
+//
+// Part of the single conformance folder-module (`Ptr377Counter` — unique
+// name, no collision with `Counter`/`PtrSrcCounter` used by sibling
+// pointer fixtures in this same folder-module).
+module spec_tests.conformance
+
+type Ptr377Counter { v int }
+
+fn Ptr377Counter @val() -> int => @v
+
+test "p.field auto-deref read through a pointer is correct" {
+    mut a = Ptr377Counter { v: 21 }
+    ro p = &a
+    assert(p.v == 21)
+}
+
+test "p.read().method() workaround (canonical per guide) stays correct" {
+    mut a = Ptr377Counter { v: 21 }
+    ro p = &a
+    assert(p.read().val() == 21)
+}
