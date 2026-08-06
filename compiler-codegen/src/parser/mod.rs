@@ -3735,6 +3735,17 @@ impl Parser {
     }
 
     fn parse_param(&mut self) -> Result<Param, Diagnostic> {
+        // Plan 238 Ф.3 (D446 §4/§5 амендмент): `#fiber_safe name Type` —
+        // explicit annotation, parsed FIRST (before `...`/`ro`/`const`/
+        // `consume`/`mut`), same contextual-after-`#` convention as
+        // `parse_cancel_safe_attr`/`parse_coerce_attr` above. Accepted on
+        // ANY param syntactically (not just a function-typed one, not just
+        // an extern fn's param) — the narrower "only meaningful on a
+        // function-typed param of a no-body fn" rule is a checker-channel
+        // concern (`fiber_safety.rs`), not a parser one; mirrors how
+        // `#cancel_safe` itself is parsed unconditionally on any fn and
+        // only CONSULTED where it matters.
+        let fiber_safe_attr = self.parse_fiber_safe_attr();
         // Plan 14 Ф.6 (D69): `...` префикс перед именем — variadic param.
         // Только последний param в списке может быть variadic; check
         // выполняется в parse_fn после сбора всех params'ов.
@@ -4008,7 +4019,28 @@ impl Parser {
             is_mut,
             is_const: is_const_param,
             mut_type_pos_legacy,
+            fiber_safe_attr,
         })
+    }
+
+    /// Plan 238 Ф.3 (D446 §4/§5 амендмент): parse `#fiber_safe` attribute
+    /// перед a parameter. `fiber_safe` — обычный identifier (не keyword в
+    /// lexer'е), парсится контекстно после `#`, тем же путём, что
+    /// `cancel_safe`/`coerce`/`thread_affine` выше. Returns true if the
+    /// attribute was present.
+    fn parse_fiber_safe_attr(&mut self) -> bool {
+        if !matches!(self.peek().kind, TokenKind::Hash) {
+            return false;
+        }
+        match &self.peek_at(1).kind {
+            TokenKind::Ident(n) if n == "fiber_safe" => {
+                self.bump(); // #
+                self.bump(); // fiber_safe
+                self.skip_newlines();
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Plan 184 (D326-ревизия Р4): call-site маркер `ref <place>` УДАЛЁН.

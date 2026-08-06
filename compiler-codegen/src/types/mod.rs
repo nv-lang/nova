@@ -1970,6 +1970,21 @@ fn check_module_impl(
     // module already computed, emits into the SAME `errors` every other
     // checker pass in this fn writes to.
     fiber_safety::check_seed_points(module, &type_check_ctx.resolved_callees.borrow(), &fiber_safety_tags, &mut errors);
+    // Plan 238 Ф.3 (D446 §4/§5 амендмент, owner decision 2026-08-06):
+    // AUTOMATIC per-parameter safety-requirement inference + exact
+    // enforcement at the PASSING site (`E_FIBER_UNSAFE_ARG`) — see
+    // `fiber_safety.rs`'s own "Plan 238 Ф.3" module-doc section for the
+    // full design. Same checker-channel-only discipline as Ф.1/Ф.2 above;
+    // additive, reuses the SAME `resolved_callees`/`fiber_safety_tags`.
+    let fiber_required_params =
+        fiber_safety::compute_required_params(module, &type_check_ctx.resolved_callees.borrow());
+    fiber_safety::check_param_passing(
+        module,
+        &type_check_ctx.resolved_callees.borrow(),
+        &fiber_safety_tags,
+        &fiber_required_params,
+        &mut errors,
+    );
 
     // Plan 174.6 M1 (D282 rule 2 / D353): validate that `extern "C" fn`
     // signatures (params + return) — and every `*extern "C" fn` fn-pointer
