@@ -31,12 +31,22 @@ export type TcpListener consume value { priv handle *() }
 /// `close()` consumes (use-after-close is a compile error).
 ///
 /// Plan 201 (D188 amendment): `rc` — a shared refcount of owners:
-/// `@share()` copies carry THE SAME `AtomicInt`; `@close`/`@cleanup` =
+/// `@share()` copies carry THE SAME `AtomicInt` cell; `@close`/`@cleanup` =
 /// `fetch_sub`, the real extern socket close runs ONLY in the LAST owner
 /// (transition to 0). The refcount lives entirely in nv (convention §3) — zero
 /// new C.
+///
+/// Plan 248 (wave 3, D447): `AtomicInt` moved to a value-inside, `#no_copy`
+/// representation (no heap allocation, no pointer indirection PER ATOMIC) —
+/// copying an `AtomicInt` value now gives each copy its OWN independent
+/// counter, which is the opposite of what a shared refcount needs. `rc` is
+/// therefore a `*mut AtomicInt` — a pointer to ONE counter cell that ALL
+/// `share()` copies of a stream alias. The cell is heap-escape-promoted from
+/// a local in `TcpStream.from_raw` (see below); `share_copy` only ever
+/// copies the pointer itself (cheap, and correctly aliases the same cell —
+/// pointers are ordinary Copy values, `#no_copy` does not apply to them).
 #stable(since = "0.1")
-export type TcpStream consume value { priv handle *(), priv rc AtomicInt }
+export type TcpStream consume value { priv handle *(), priv rc *mut AtomicInt }
 
 /// Read half of a split `TcpStream`. Shares the connection with its
 /// sibling `TcpWriteHalf`; the two may run in separate fibers (independent
@@ -55,9 +65,15 @@ fn TcpListener.from_raw(h *()) -> TcpListener => { handle: h }
 // `from_raw(@handle)`-обёртки в half-методах ниже тоже аллоцируют rc —
 // мелкая GC-аллокация на вызов (перф-заметка; половины хранят
 // голый handle, их close идёт мимо nv-rc через C-side split-refcount).
-fn TcpStream.from_raw(h *()) -> TcpStream => { handle: h, rc: AtomicInt.new(1) }
-// Share-копия — тот же handle И ТОТ ЖЕ rc (alias владения).
-fn share_copy(h *(), rc AtomicInt) -> TcpStream => { handle: h, rc }
+fn TcpStream.from_raw(h *()) -> TcpStream {
+    // Plan 248 (wave 3): heap-escape-promoted counter cell (D216 §4 escape
+    // analysis) — `&counter` outlives this frame, valid for every share()
+    // copy that later aliases the same pointer.
+    mut counter = AtomicInt.new(1)
+    TcpStream { handle: h, rc: &counter }
+}
+// Share-копия — тот же handle И ТОТ ЖЕ rc-указатель (alias владения).
+fn share_copy(h *(), rc *mut AtomicInt) -> TcpStream => { handle: h, rc }
 
 fn TcpReadHalf.from_raw(h *()) -> TcpReadHalf => { handle: h }
 

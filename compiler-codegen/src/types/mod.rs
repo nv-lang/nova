@@ -38835,6 +38835,39 @@ impl<'a, 'b> NoCopyWalk<'a, 'b> {
         }
     }
 
+    /// Plan 248 (wave 3, D447 fallout — real gap, not atomic-specific):
+    /// static/associated constructor call (`Type.new(...)`, `Type.method(...)`)
+    /// whose callee's declared return type is resolvable — `resolve_path_type`
+    /// (path-only: `Ident`/`SelfAccess`/`Member`) and `record_lit_type`
+    /// (`RecordLit` only) both miss this shape entirely, so `mut a =
+    /// AtomicInt.new(0)` never got a scope entry for `a` at all — the
+    /// SUBSEQUENT `ro b = a` bare-alias (D447 form 1) then silently found
+    /// `resolve_path_type(a) == None` and skipped, a false-negative found by
+    /// direct probe (not a hypothesis): ALL 11 atomics are constructed via
+    /// `.new()` — none are ever built via a `Type{...}` literal outside
+    /// their own module (`priv` fields) — so this gap made wave-2's own
+    /// bare-alias/field-read rules structurally unable to fire on the exact
+    /// types this wave introduces `#no_copy` for. `resolve_callee` doesn't
+    /// cover this either — its `Member` arm only resolves a `SelfAccess` or
+    /// VARIABLE receiver (`resolve_path_type(obj)`), never a bare TYPE-NAME
+    /// receiver (`obj` = `Ident("AtomicInt")` names a TYPE, not something in
+    /// `scope`). `Self`-returns resolve to the static receiver's own type
+    /// name (mirrors the checker's established `Self`-on-static-fn
+    /// resolution, `resolved_named_to_c`'s `"Self"` arm, `emit_c.rs`).
+    fn call_result_type(&self, e: &Expr) -> Option<TypeRef> {
+        let ExprKind::Call { func, .. } = &e.kind else { return None; };
+        let ExprKind::Member { obj, name: method } = &func.kind else { return None; };
+        let ExprKind::Ident(type_name) = &obj.kind else { return None; };
+        let fd = self.idx.fns.get(&(Some(type_name.clone()), method.clone()))?;
+        match fd.return_type.as_ref()? {
+            TypeRef::Named { path, .. } if path.last().map_or(false, |n| n == "Self") =>
+                Some(TypeRef::Named {
+                    path: vec![type_name.clone()], generics: Vec::new(), span: e.span,
+                }),
+            other => Some(other.clone()),
+        }
+    }
+
     /// `e` именует СУЩЕСТВУЮЩЕЕ значение (не свежую конструкцию) типа,
     /// зарегистрированного `Affine` (`#no_copy`) — прямо или транзитивно
     /// (обёртки/контейнеры, тот же обход, что `type_is_consume`).
@@ -38895,7 +38928,8 @@ impl<'a, 'b> NoCopyWalk<'a, 'b> {
                 let inferred = decl.ty.as_ref()
                     .map(|t| t.strip_readonly().clone())
                     .or_else(|| self.resolve_path_type(&decl.value))
-                    .or_else(|| self.record_lit_type(&decl.value));
+                    .or_else(|| self.record_lit_type(&decl.value))
+                    .or_else(|| self.call_result_type(&decl.value));
                 match inferred {
                     Some(t) => { self.scope.insert(name.clone(), t); }
                     None => { self.scope.remove(name); }
@@ -38958,16 +38992,37 @@ impl<'a, 'b> NoCopyWalk<'a, 'b> {
                         // borrow-критерии по индексу параметра — `Named`/
                         // `Spread` не сопоставляются надёжно позиционно,
                         // консервативный дефолт = эскейп (см. заголовок).
+                        //
+                        // Plan 248 (wave 3) amendment: `mut`-параметр — ТОЖЕ
+                        // законное заимствование, не только голый `ro`.
+                        // Найдено реальной регрессией на корпусе (nova-http
+                        // `middleware/log.nv`'s `fresh_id(mut counter
+                        // AtomicInt)`/`request_id_of(mut counter AtomicInt,
+                        // ...)`): D246/Plan 184 Р10 уже давно делают `mut x T`
+                        // ДЛЯ VALUE-типов (ровно множество, на которое
+                        // `#no_copy` вообще применим — record/sum/named-
+                        // tuple/newtype/opaque, D447 §«применим к видам»)
+                        // by-pointer in-out ABI — параметр это указатель на
+                        // СЛОТ вызывающего, не копия. Волна 2 требовала голый
+                        // `ro` для borrow-легальности буквально по тексту
+                        // D447 §«Заимствование» — это было СПЕЦИФИКАЦИОННОЙ
+                        // недомоткой, не сознательным решением: тот же самый
+                        // ABI-факт уже используется ЭТИМ ЖЕ файлом (receiver-
+                        // ABI, `prepare_method_recv`) для value-record'ов —
+                        // `mut`-параметр не копирует ничего, поэтому не может
+                        // быть «вторым именем» в смысле D447. `consume`
+                        // остаётся исключённым (переход владения — реальная
+                        // передача, не temporary access).
                         let borrowed_ok = matches!(a, CallArg::Item(_))
                             && callee.map_or(false, |fd| {
                                 fd.params.get(i).map_or(false, |p| {
-                                    !p.is_mut && !p.consume && !nc_param_escapes(fd, &p.name)
+                                    !p.consume && !nc_param_escapes(fd, &p.name)
                                 })
                             });
                         if !borrowed_ok {
                             nc_emit_second_name(arg_expr.span, &nc_type_name(&ty).unwrap_or_default(),
                                 "передача аргументом получателю без гарантии заимствования \
-                                 (не `ro`-параметр без эскейпа, либо получатель статически \
+                                 (не `ro`/`mut`-параметр без эскейпа, либо получатель статически \
                                  не резолвится)", errors);
                         }
                     }

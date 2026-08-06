@@ -1,0 +1,76 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Plan 248 (wave 3, D447 #no_copy): the 11 `Atomic*` types moved from a
+// pointer-newtype (`type X(*())`, heap-allocated) to a value-inside record
+// (`#no_copy type X value priv { v T }`, stack-resident when possible) —
+// value-checking cross-fiber coverage: `mut`-capture into `spawn`/
+// `supervised`/`parallel for` (escape-promotion, D228) must still route
+// EVERY fiber's `fetch_add` to the SAME counter storage, not per-fiber
+// independent copies (exactly what the value-inside representation would
+// break if the capture path were copy-based instead of pointer-based).
+// Same shape as `examples/effects/spawn_demo.nv`'s existing `sum_sq`
+// accumulator; here with an accumulate-then-verify count across
+// AtomicInt/AtomicI64/AtomicBool (a representative spread).
+//
+// NOT covered here, found and reported instead of silently worked around:
+// `compare_exchange` CC-FAILs ("no member named 'compare_exchange'",
+// codegen emits literal C struct-member syntax instead of a method-
+// dispatch call) once the call site sits inside a `while`-loop body —
+// reproduced by wrapping `std/runtime/sync_test.nv`'s own ALREADY-PASSING
+// `compare_exchange` call (byte-identical args) in a trivial `while i < 1
+// { … }`; a bare, unlooped call outside that specific file/compile context
+// intermittently CC-FAILed too during isolation probing (root cause not
+// fully pinned down — narrowing further was out of this window's budget).
+// Reproduced IDENTICALLY on baseline `main` (pre-wave, pointer-newtype
+// atomics — same symptom, `c32->compare_exchange`), independent of D447/
+// value-inside representation and of receiver width — a pre-existing,
+// unrelated gap. This means the documented retry-loop idiom (the type's
+// OWN doc comment calls it out as "the motivating use case") does not
+// reliably compile once looped; not demonstrated as working in this
+// fixture.
+
+module spec_tests.conformance
+
+test "D447 wave 3: AtomicInt fetch_add from parallel-for fibers accumulates on ONE stack-resident cell" {
+    mut counter = AtomicInt.new(0)
+    supervised {
+        parallel for _i in 0..10 {
+            counter.fetch_add(1)
+        }
+    }
+    assert(counter.load() == 10)
+}
+
+test "D447 wave 3: AtomicI64 fetch_add from TWO explicit spawn fibers accumulates correctly" {
+    mut total = AtomicI64.new(0)
+    supervised {
+        spawn {
+            mut i = 0
+            while i < 100 {
+                total.fetch_add(1)
+                i += 1
+            }
+        }
+        spawn {
+            mut i = 0
+            while i < 100 {
+                total.fetch_add(1)
+                i += 1
+            }
+        }
+    }
+    assert(total.load() == 200)
+}
+
+test "D447 wave 3: AtomicBool swap across a spawned fiber mutates the SAME cell (not a copy)" {
+    mut flag = AtomicBool.new(false)
+    supervised {
+        spawn {
+            flag.store(true)
+        }
+    }
+    assert(flag.load() == true)
+    ro prev = flag.swap(false)
+    assert(prev == true)
+    assert(flag.load() == false)
+}

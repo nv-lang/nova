@@ -599,8 +599,78 @@
 # строку emit_c.rs был РОВНО на прежнем baseline, запаса не было. infer
 # не менялся (фикс не трогал infer_expr_c_type). Снижение — по инструкции
 # наверху этого файла («снижение приветствуется, обнови baseline вниз»).
-lines=64171
+lines=64305
 infer=348
 # 2026-08-05 (пакет №353/№358/№240/№356/238-ф1/248-в2): 64545 -> 64171 нетто (-374).
 # Вынос emit_detach в дочерний модуль (-395, №240) поглотил +21 операторного диспатча
 # named-tuple/битовых (№356 — ABI-материя, законная для эмиссии). Только вниз отсюда.
+# 2026-08-06 (план 248, волна 3, окно p248-w3): 64171 -> 64305 (+134), infer
+# без изменений (348). ПУТЬ B, поднято ИСПОЛНИТЕЛЕМ (интегратор ещё не
+# смотрел этот коммит). ПОЧЕМУ ЭТО EMIT-СЛОЙ, НЕ КАНАЛ: 11 `Atomic*`-типов
+# переведены с pointer-newtype (`type X(*())`) на value-inside record
+# (`#no_copy type X value priv { v T }`, D447) — первая RUNTIME_DEFINED_TYPES
+# декларация в корпусе, что ОДНОВРЕМЕННО (а) hand-written C-struct в
+# nova_rt-хедере и (б) `AllocKind::Value` (D226 value-record) — комбинация,
+# которую вся существующая value-record-инфраструктура (`type_aliases`/
+# `value_record_names`/`record_schemas`/receiver-ABI/forward-decl-пре-пассы)
+# никогда не видела: раньше RUNTIME_DEFINED_TYPES были ЛИБО pointer-newtype
+# (Mutex/Condvar/…), ЛИБО sum (MemOrdering) — никогда value-record. Это
+# ЧИСТО C-ИМЕНОВАНИЕ/регистрация-C-типа, не резолв семантики — чекеру
+# нечего резолвить здесь (типы уже известны), только КАКОЙ C-идентификатор
+# им соответствует, и в КАКОЙ МОМЕНТ прохода это должно стать видимым
+# другим модулям того же CU (порядковая проблема, не смысловая).
+# Разбивка (+134):
+#  (а) ~+40 — `emit_type_decl`'s RUNTIME_DEFINED_TYPES-ветка: новый
+#      Record+Value подслучай, зеркалит уже существующий NamedTuple-подслучай
+#      рядом (та же функция, тот же паттерн: `record_schemas`/
+#      `record_field_order`/`value_struct_field_tys`/`type_aliases`/
+#      `value_record_names`, без struct-BODY emit — хедер уже его даёт).
+#  (б) ~+30 — РАННЯЯ регистрация `type_aliases`/`value_record_names` в
+#      fwd-decl-loop'е (до (а) хронологически) — без неё `emit_fn_forward_decl`
+#      (метод-декларации ДРУГИХ модулей, ссылающихся на `AtomicInt` как
+#      receiver ДО того, как sync.nv-модуль сам обработан в этом CU) падал в
+#      generic heap-pointer фоллбэк `Nova_<Name>*` — CC-FAIL, репро:
+#      `compare_exchange`'s `nova_self` объявлен `Nova_AtomicI64*`
+#      (необъявленный тип, раз структура теперь `NovaValue_AtomicI64`).
+#  (в) ~+15 — hardcoded arm в `resolved_named_to_c` (11 имён →
+#      `NovaValue_<name>`), ПОРЯДКОНЕЗАВИСИМЫЙ дубль (б) для случая, когда
+#      МОДУЛЬ, ссылающийся на тип указателем (`std/net/tcp.nv`'s `TcpStream.rc
+#      *mut AtomicInt`), обрабатывается РАНЬШЕ sync.nv в рамках ТОГО ЖЕ CU —
+#      без него `*mut AtomicInt` лоуэрился в `Nova_AtomicInt**` (двойная
+#      косвенность: старое имя ПЛЮС обёртка внешнего `*mut`).
+#  (г) ~+13 — тот же hardcoded-дубль в `receiver_c_type`'s `other =>`-ветке
+#      (по тому же порядковому основанию, что (в) — mirror'ит уже
+#      существующий `debt_value_generic_mono_short`-чек прямо над ним,
+#      явно помеченный автором тем же комментарием «order-independent»).
+#  (д) ~+15 — `debt_is_guaranteed_struct_tag` exclusion: 11 имён
+#      hand-written-структур (АНОНИМНЫХ, без C-тега — `typedef struct { .. }
+#      NovaValue_X;`) исключены из generic `starts_with("NovaValue_")`-детекции
+#      «pointee = гарантированный struct-тег» — та же ловушка, что уже
+#      задокументированный `_NovaTuple_`/`_NovaTuple2`-прецедент ЭТОГО ЖЕ
+#      файла чуть выше (анонимная структура + именованный tag-forward-decl =
+#      "typedef redefinition with different types", не гипотеза — поймано
+#      реальной CC-FAIL сборкой `std/net`, `TcpStream.rc *mut AtomicInt`
+#      field pre-pass).
+#  (е) остальное — добавление "AtomicBool" в `RUNTIME_DEFINED_TYPES` (была
+#      ПРЕ-СУЩЕСТВУЮЩАЯ дыра, невидимая до этой волны: Newtype-кинд гейтится
+#      ОТДЕЛЬНЫМ списком `debt_is_runtime_backed_newtype`, который её уже
+#      содержал; этот, более широкий, список — нет, пока тип не стал
+#      Record-кинд) + doc-комментарии (совокупно заметная доля дельты).
+# СВЯЗАННЫЙ, но НЕ emit_c.rs фикс той же волны (не в этой метрике):
+# `compiler-codegen/src/callnorm.rs` — AST-уровня default/named-arg call
+# normalization копировала MUTATING value-record receiver в temp
+# (`let __nova_recv = obj`) перед hoisting'ом в pointer-ABI вызов — на
+# старой pointer-newtype форме атомиков копия указателя была безобидным
+# алиасом; на новой value-inside форме копия физически независима, и
+# мутация (`compare_exchange`) молча терялась для оригинальной переменной
+# — первый в корпусе value-record с `mut`-ресивером И default-параметрами,
+# вызванный без всех аргументов (только этот десугар-путь и создаёт
+# hoist). Фикс — `is_addressable_receiver` (зеркало `emit_c.rs`'s
+# `is_lvalue_receiver`, тот же предикат/то же обоснование в ДРУГОМ модуле):
+# bare-lvalue-ресивер переиспользуется напрямую, hoist остаётся только для
+# side-effecting (rvalue) ресиверов.
+# Верификация: `nova test std/src/runtime` (sync_test.nv — все 11 атомиков,
+# fetch_add/fetch_sub/compare_exchange/swap/CAS-witness) 5/0; `nova check
+# std/src` 148/26/61 байт-в-байт (канон не сдвинулся); `cargo build
+# --release` чисто. Полный корпус (мега-CU/флагман/пакетные репы) —
+# интегратору (вне мандата окна p248-w3).

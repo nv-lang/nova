@@ -705,6 +705,33 @@ fn try_normalize_call(e: &Expr, sigs: &Sigs) -> Option<ExprKind> {
     let final_func: Box<Expr> = if let ExprKind::Member { obj, name } = &func.kind {
         if is_static_generic_recv {
             func.clone()
+        } else if is_addressable_receiver(obj) {
+            // Plan 248 (wave 3, D447 fallout — real bug, not atomic-specific):
+            // `obj` is a simple, side-effect-free lvalue (bare Ident/`@field`/
+            // a pure projection chain of these) — re-embed it directly instead
+            // of hoisting into `let __nova_recv = obj`. Hoisting COPIES the
+            // receiver's VALUE; for a value-record (D226) type with a `mut`
+            // receiver method, that copy silently drops the mutation from the
+            // caller's original binding the moment this desugar fires (only
+            // for named/default-arg calls) — e.g. `c.compare_exchange(a, b)`
+            // (2 defaulted trailing params) mutated a throwaway `__nova_recv`
+            // copy, leaving the caller's own `c` untouched (found on
+            // `AtomicInt`/`AtomicI64`/`AtomicBool`, the first D226 value-
+            // records in the corpus with a `mut`-receiver method that ALSO
+            // has default params — masked forever on the old pointer-newtype
+            // shape, where copying the receiver only ever copied a harmless
+            // alias pointer, not the pointee). A bare-lvalue READ has no
+            // evaluation-order hazard against the sibling argument temps
+            // below (unlike a `Call`/other side-effecting receiver, which
+            // still needs the hoist for correct source-order — see the `else`
+            // branch), so reusing it as-is is safe.
+            Box::new(Expr {
+                kind: ExprKind::Member {
+                    obj: obj.clone(),
+                    name: name.clone(),
+                },
+                span: func.span, id: crate::ast::ExprId::UNSET, debug_only: false,
+            })
         } else {
         let recv_name = "__nova_recv";
         stmts.push(let_stmt(recv_name, (**obj).clone(), sp));
@@ -809,6 +836,26 @@ fn try_normalize_call(e: &Expr, sigs: &Sigs) -> Option<ExprKind> {
         trailing: Some(Box::new(new_call)),
         span: sp, is_unsafe: false
     }))
+}
+
+/// Plan 248 (wave 3, D447 fallout): classify a method-call receiver `Expr`
+/// as an addressable lvalue — mirrors `emit_c.rs`'s `is_lvalue_receiver`
+/// (same predicate, same reasoning, different crate module: codegen's own
+/// receiver-ABI adaptation already established that a bare Ident/`@field`/
+/// pure-projection-chain receiver is safe to reference directly, without an
+/// intermediate temp, because reading it has no evaluation-order hazard).
+/// Used here to decide whether the default/named-arg call-normalization
+/// Block may skip hoisting the receiver into `let __nova_recv = obj` — for
+/// non-addressable (rvalue) receivers the hoist is still required (source-
+/// order correctness against the sibling argument temps).
+fn is_addressable_receiver(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Ident(_) | ExprKind::SelfAccess => true,
+        ExprKind::Member { obj, .. } | ExprKind::Index { obj, .. } =>
+            is_addressable_receiver(obj),
+        ExprKind::TurboFish { base, .. } => is_addressable_receiver(base),
+        _ => false,
+    }
 }
 
 /// `let <name> = <value>` statement.
