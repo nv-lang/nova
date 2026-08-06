@@ -23,7 +23,7 @@ printf '# Другая\n\n```\ncode-ru\n```\n' > "$TMP/docs/guide/diff.ru.md"
 first=""
 i=0
 while [ "$i" -lt 3 ]; do
-    out=$(sh "$TMP/scripts/guards/check-doc-conventions.sh" "$TMP" 2>&1 \
+    out=$(bash "$TMP/scripts/guards/check-doc-conventions.sh" "$TMP" 2>&1 \
           | grep -oE 'code_block_mismatch_pairs=[0-9]+' | head -1)
     [ -z "$first" ] && first="$out"
     if [ "$out" != "$first" ]; then

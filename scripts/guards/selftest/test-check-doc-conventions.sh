@@ -48,7 +48,7 @@ setup_tree() {  # корень, куда кладём guard+baseline co-located 
 code
 ```
 ' > "$RT/README.md"
-    sh "$(dirname "$0")/../check-doc-conventions.sh" "$RT" >/tmp/dc_8a_$$ 2>&1
+    bash "$(dirname "$0")/../check-doc-conventions.sh" "$RT" >/tmp/dc_8a_$$ 2>&1
     grep -q "readme_pair: есть README.md, нет README.ru.md" /tmp/dc_8a_$$ || {
         echo "SELFTEST FAIL: 8a — одиночный README.md не пойман" >&2; rm -rf "$RT"; exit 1; }
 
@@ -58,7 +58,7 @@ code
 code
 ```
 ' > "$RT/README.ru.md"
-    sh "$(dirname "$0")/../check-doc-conventions.sh" "$RT" >/tmp/dc_8b_$$ 2>&1
+    bash "$(dirname "$0")/../check-doc-conventions.sh" "$RT" >/tmp/dc_8b_$$ 2>&1
     grep -q "readme_pair — README.md + README.ru.md" /tmp/dc_8b_$$ || {
         echo "SELFTEST FAIL: 8b — корректная пара README не принята" >&2; rm -rf "$RT"; exit 1; }
 
@@ -68,12 +68,12 @@ code
 другой-код
 ```
 ' > "$RT/README.ru.md"
-    sh "$(dirname "$0")/../check-doc-conventions.sh" "$RT" >/tmp/dc_8c_$$ 2>&1
+    bash "$(dirname "$0")/../check-doc-conventions.sh" "$RT" >/tmp/dc_8c_$$ 2>&1
     grep -q "код-блоки README.md и README.ru.md расходятся" /tmp/dc_8c_$$ || {
         echo "SELFTEST FAIL: 8c — расхождение код-блоков README не поймано" >&2; rm -rf "$RT"; exit 1; }
 
     rm -f "$RT/README.md" "$RT/README.ru.md"
-    sh "$(dirname "$0")/../check-doc-conventions.sh" "$RT" >/tmp/dc_8d_$$ 2>&1
+    bash "$(dirname "$0")/../check-doc-conventions.sh" "$RT" >/tmp/dc_8d_$$ 2>&1
     grep -q "README в корне нет" /tmp/dc_8d_$$ || {
         echo "SELFTEST FAIL: 8d — репа без README не вакуумно-зелёная" >&2; rm -rf "$RT"; exit 1; }
     rm -rf "$RT" /tmp/dc_8a_$$ /tmp/dc_8b_$$ /tmp/dc_8c_$$ /tmp/dc_8d_$$
@@ -95,13 +95,13 @@ roadmap
     printf '# r
 ' > "$RT/docs/guide/roadmap.md"; printf '# r
 ' > "$RT/docs/guide/roadmap.ru.md"
-    if sh "$(dirname "$0")/../check-doc-conventions.sh" "$RT" 2>&1 | grep -q "manifest_genre"; then :; else
+    if bash "$(dirname "$0")/../check-doc-conventions.sh" "$RT" 2>&1 | grep -q "manifest_genre"; then :; else
         echo "SELFTEST FAIL: 10a — roadmap в манифесте не пойман" >&2; rm -rf "$RT"; exit 1
     fi
     printf 'quickstart
 # roadmap — внутренний план, не публикуется
 ' > "$RT/docs/guide/PUBLISHED.list"
-    if sh "$(dirname "$0")/../check-doc-conventions.sh" "$RT" 2>&1 | grep -q "manifest_genre"; then
+    if bash "$(dirname "$0")/../check-doc-conventions.sh" "$RT" 2>&1 | grep -q "manifest_genre"; then
         echo "SELFTEST FAIL: 10b — закомментированный roadmap ложнит" >&2; rm -rf "$RT"; exit 1
     fi
     rm -rf "$RT"
@@ -112,7 +112,7 @@ rm -rf "$TMP"
     cp "$GUARD_SRC" "$TMP/scripts/guards/check-doc-conventions.sh"
     printf 'plan_missing_status=0\ndev_links=0\ncode_block_mismatch_pairs=0\nmixed_language_files=99\ncode_comment_ru_files=99\nplans_links=999\n' > "$TMP/scripts/guards/doc-conventions.baseline"
 }
-run_guard() { sh "$TMP/scripts/guards/check-doc-conventions.sh" "$TMP" 2>"$TMP/.stderr"; }
+run_guard() { bash "$TMP/scripts/guards/check-doc-conventions.sh" "$TMP" 2>"$TMP/.stderr"; }
 
 # ============================================================
 # 1. spec_en_header

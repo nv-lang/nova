@@ -38,7 +38,7 @@ set -euo pipefail
 # (✅ 3-байтовый матчился — потому порог «3 строки» тихо не добирался).
 # Поймано селфтестом в gate.sh 2026-08-01; тот же класс, что check-doc-hygiene.
 export LC_ALL=C
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # Скрипт живёт в scripts/guards/ — корень репы на два уровня выше.
 REPO_ROOT="${1:-$(cd "$SCRIPT_DIR/../.." && pwd)}"  # аргумент — для самотеста на фикстурах
 README="$REPO_ROOT/docs/plans/README.md"

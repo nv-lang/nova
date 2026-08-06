@@ -9,10 +9,10 @@ cp "$GUARD" "$TMP/scripts/guards/"
 : > "$TMP/scripts/guards/bug-number-sync.baseline"
 printf '| 1 | `[M-numbered-bug]` — text | OPEN |\n' > "$TMP/docs/plans/221.1-bug-sweep.md"
 printf '| `[M-numbered-bug]` | text |\n' > "$TMP/docs/plans/backlog-followups.md"
-sh "$TMP/scripts/guards/check-bug-number-sync.sh" "$TMP" >/dev/null 2>&1 || { echo "SELFTEST FAIL: ложняк на нумерованном"; rm -rf "$TMP"; exit 1; }
+bash "$TMP/scripts/guards/check-bug-number-sync.sh" "$TMP" >/dev/null 2>&1 || { echo "SELFTEST FAIL: ложняк на нумерованном"; rm -rf "$TMP"; exit 1; }
 printf '| `[M-new-unnumbered-bug]` | text |\n' >> "$TMP/docs/plans/backlog-followups.md"
-sh "$TMP/scripts/guards/check-bug-number-sync.sh" "$TMP" >/dev/null 2>&1 && { echo "SELFTEST FAIL: не поймал безномерный"; rm -rf "$TMP"; exit 1; }
+bash "$TMP/scripts/guards/check-bug-number-sync.sh" "$TMP" >/dev/null 2>&1 && { echo "SELFTEST FAIL: не поймал безномерный"; rm -rf "$TMP"; exit 1; }
 printf 'M-new-unnumbered-bug\n' >> "$TMP/scripts/guards/bug-number-sync.baseline"
-sh "$TMP/scripts/guards/check-bug-number-sync.sh" "$TMP" >/dev/null 2>&1 || { echo "SELFTEST FAIL: baseline-исключение не работает"; rm -rf "$TMP"; exit 1; }
+bash "$TMP/scripts/guards/check-bug-number-sync.sh" "$TMP" >/dev/null 2>&1 || { echo "SELFTEST FAIL: baseline-исключение не работает"; rm -rf "$TMP"; exit 1; }
 rm -rf "$TMP"
 echo "selftest check-bug-number-sync: OK (ловит безномерный / без ложняка / baseline работает)"

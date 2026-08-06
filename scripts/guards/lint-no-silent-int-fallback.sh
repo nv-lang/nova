@@ -54,7 +54,7 @@ BASELINE_WILDCARD_NOVA_INT=26        # _ => "nova_int" (Cat B/D legitimate)
                                      #   type_ref_to_c_minimal — schema-registration only).
 
 # Script lives in scripts/guards/ — repo root is two levels up.
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)"
 CODEGEN_SRC="${PROJECT_ROOT}/compiler-codegen/src"
 
 # Pattern 1: type_ref_to_c result with silent nova_int fallback

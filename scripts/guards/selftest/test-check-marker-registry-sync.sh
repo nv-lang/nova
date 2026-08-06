@@ -26,7 +26,7 @@ cat > "$TMP/std/src/probe.nv" <<'EOF'
 fn probe() -> int => 1
 EOF
 
-if sh "$GUARD" "$TMP" >/dev/null 2>&1; then
+if bash "$GUARD" "$TMP" >/dev/null 2>&1; then
     echo "SELFTEST FAIL: страж НЕ поймал неучтённый маркер (свойство 1 не выполнено)" >&2
     rm -rf "$TMP"; exit 1
 fi
@@ -34,7 +34,7 @@ fi
 # --- (2) НЕТ ЛОЖНЯКА: тот же маркер занесён в реестр ---
 echo "| 999 | \`[M-selftest-orphan-marker]\` — тестовая запись | P3 |" > "$TMP/docs/plans/221.1-bug-sweep.md"
 
-if sh "$GUARD" "$TMP" >/dev/null 2>&1; then
+if bash "$GUARD" "$TMP" >/dev/null 2>&1; then
     :
 else
     echo "SELFTEST FAIL: страж краснеет на УЧТЁННОМ маркере (ложняк, свойство 2 не выполнено)" >&2
@@ -44,7 +44,7 @@ fi
 # --- (3) ХРАПОВИК: долг в пределах baseline не краснеет ---
 rm -f "$TMP/docs/plans/221.1-bug-sweep.md"; : > "$TMP/docs/plans/221.1-bug-sweep.md"
 echo "unregistered=1" > "$TMP/scripts/guards/marker-registry.baseline"
-if sh "$GUARD" "$TMP" >/dev/null 2>&1; then
+if bash "$GUARD" "$TMP" >/dev/null 2>&1; then
     :
 else
     echo "SELFTEST FAIL: храповик не пропускает долг в пределах baseline" >&2

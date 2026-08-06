@@ -72,7 +72,7 @@ cat > "$REPO/docs/plans/221.1-bug-sweep.md" <<'EOF'
 | 1 | категория | `[M-selftest-marker]` — тестовая находка | ✅ ЗАКРЫТ 2026-08-06 (без фикстуры) |
 EOF
 
-OUT="$(sh "$GUARD" "$REPO" "$BASE_SHA" 2>&1)"
+OUT="$(bash "$GUARD" "$REPO" "$BASE_SHA" 2>&1)"
 RC=$?
 if [ "$RC" -eq 0 ]; then
     echo "SELFTEST FAIL (A1/B1): страж НЕ покраснел на новом коде без фикстуры + закрытой строке без .nv" >&2
@@ -102,7 +102,7 @@ cat > "$REPO/docs/plans/221.1-bug-sweep.md" <<'EOF'
 | 1 | категория | `[M-selftest-marker]` — тестовая находка | ✅ ЗАКРЫТ 2026-08-06 (фикстура spec_tests/conformance/neg/selftest_probe_neg.nv) |
 EOF
 
-OUT2="$(sh "$GUARD" "$REPO" "$BASE_SHA" 2>&1)"
+OUT2="$(bash "$GUARD" "$REPO" "$BASE_SHA" 2>&1)"
 RC2=$?
 if [ "$RC2" -ne 0 ]; then
     echo "SELFTEST FAIL (A2/B2): страж ЛОЖНИТ на фикстуре+ссылке, которые чинят оба нарушения" >&2
@@ -126,7 +126,7 @@ cat > "$CDIR/docs/plans/backlog-followups.md" <<'EOF'
 |---|---|---|---|
 | `[M-bonus-marker]` | **OPEN 2026-08-04 (наблюдение).** Ещё не тронуто. | floating | P2 |
 EOF
-OUT3="$(sh "$GUARD" "$CDIR" 2>&1)"
+OUT3="$(bash "$GUARD" "$CDIR" 2>&1)"
 RC3=$?
 if [ "$RC3" -ne 0 ]; then
     echo "SELFTEST FAIL (C1): bonus ошибочно ПАДАЕТ (должен быть non-blocking WARN, не FAIL) — код выхода $RC3" >&2
@@ -144,7 +144,7 @@ cat > "$CDIR/docs/plans/backlog-followups.md" <<'EOF'
 |---|---|---|---|
 | `[M-other-marker]` | **OPEN 2026-08-04.** Родня `[M-bonus-marker]` (уже закрыт отдельно, см. реестр). | floating | P2 |
 EOF
-OUT4="$(sh "$GUARD" "$CDIR" 2>&1)"
+OUT4="$(bash "$GUARD" "$CDIR" 2>&1)"
 RC4=$?
 if [ "$RC4" -ne 0 ] || printf '%s' "$OUT4" | grep -q "M-bonus-marker"; then
     echo "SELFTEST FAIL (C2): bonus ЛОЖНИТ на мимоходном упоминании закрытого маркера в чужой backlog-записи" >&2
@@ -158,7 +158,7 @@ cat > "$CDIR/docs/plans/backlog-followups.md" <<'EOF'
 |---|---|---|---|
 | `[M-bonus-marker]` | **РЕШЕНО 2026-08-06.** Синхронизировано с реестром. | floating | P2 |
 EOF
-OUT5="$(sh "$GUARD" "$CDIR" 2>&1)"
+OUT5="$(bash "$GUARD" "$CDIR" 2>&1)"
 RC5=$?
 if [ "$RC5" -ne 0 ] || printf '%s' "$OUT5" | grep -q "M-bonus-marker"; then
     echo "SELFTEST FAIL (C3): bonus ЛОЖНИТ, когда backlog тоже считает маркер закрытым" >&2

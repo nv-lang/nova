@@ -80,7 +80,7 @@
 set -u
 export LC_ALL=C
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 ROOT="${1:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 DIFF_BASE="${2:-${DOC_GUARD_DIFF_BASE:-}}"
 BASELINE="$SCRIPT_DIR/doc-conventions.baseline"

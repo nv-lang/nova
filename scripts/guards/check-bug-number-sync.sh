@@ -12,7 +12,7 @@
 # владельца ЗАПРЕЩЕНО (при молчании — напоминать повторно).
 set -u
 export LC_ALL=C
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 ROOT="${1:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 BASELINE="$SCRIPT_DIR/bug-number-sync.baseline"
 BACKLOG="$ROOT/docs/plans/backlog-followups.md"

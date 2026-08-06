@@ -25,7 +25,7 @@
 
 set -uo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # Скрипт живёт в scripts/guards/selftest/ — корень репы на три уровня выше.
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 TOOL="$REPO_ROOT/scripts/tools/check-build-test-identity.sh"

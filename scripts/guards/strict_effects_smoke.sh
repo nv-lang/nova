@@ -21,7 +21,7 @@
 # the `--strict-effects` code path change.
 set -euo pipefail
 # Script lives in scripts/guards/ — repo root is two levels up.
-cd "$(dirname "${BASH_SOURCE[0]}")/../.."
+cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.."
 
 NOVA_BIN="${1:-nova-cli/target/debug/nova.exe}"
 if [ ! -f "$NOVA_BIN" ]; then

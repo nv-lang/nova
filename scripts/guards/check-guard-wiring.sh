@@ -40,7 +40,7 @@ set -uo pipefail
 # символы; класс пойман селфтестами 2026-08-01 — doc-hygiene, status-table)
 export LC_ALL=C
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # Скрипт живёт в scripts/guards/ — корень репы на два уровня выше.
 REPO_ROOT="${1:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 GATE="$REPO_ROOT/scripts/gate.sh"

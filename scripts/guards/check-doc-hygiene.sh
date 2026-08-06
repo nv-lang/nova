@@ -26,7 +26,7 @@ set -u
 # «Invalid collation character» (EXIT=2) → 2>/dev/null тихо считал 0,
 # храповик «только вниз» это маскировал; поймано селфтестом 2026-08-01.
 export LC_ALL=C
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 ROOT="${1:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 BASELINE="$SCRIPT_DIR/doc-hygiene.baseline"
 

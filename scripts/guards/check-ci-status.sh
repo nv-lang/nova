@@ -65,7 +65,7 @@ for arg in "$@"; do
 done
 
 STALE_MIN="${NOVA_CI_STALE_MIN:-20}"
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)"
 cd "$REPO_ROOT" || exit 0
 
 say()  { echo "check-ci-status: $*"; }

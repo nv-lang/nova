@@ -16,7 +16,7 @@
 export LC_ALL=C
 set -u
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../../.." && pwd)"
 GUARD="$ROOT/scripts/guards/check-ci-status.sh"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT

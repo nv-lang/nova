@@ -32,7 +32,7 @@ setup_tree() {
     cp "$GUARD_SRC" "$TMP/scripts/guards/check-doc-examples.sh"
     printf '%s' "$zero_baseline" > "$TMP/scripts/guards/doc-examples.baseline"
 }
-run_guard() { DOC_EXAMPLES_SHOW_MATCHES=0 sh "$TMP/scripts/guards/check-doc-examples.sh" "$TMP" >"$TMP/.stdout" 2>"$TMP/.stderr"; }
+run_guard() { DOC_EXAMPLES_SHOW_MATCHES=0 bash "$TMP/scripts/guards/check-doc-examples.sh" "$TMP" >"$TMP/.stdout" 2>"$TMP/.stderr"; }
 
 # ============================================================
 # 0. Пустое/чистое дерево — вакуумно-зелёное.
