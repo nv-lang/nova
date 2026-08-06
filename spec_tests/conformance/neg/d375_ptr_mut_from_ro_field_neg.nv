@@ -1,0 +1,18 @@
+// №375 (D246 amend, Plan 221 п.12, window p375-ptr2) — initializing a
+// `*mut T` RECORD FIELD from `&ro_b`. Same source-check as the let-annotation
+// sibling (d375_ptr_mut_from_ro_let_neg.nv), exercised at a record-literal
+// field-init position instead.
+
+// EXPECT_COMPILE_ERROR E_POINTER_MUT_FROM_RO_SOURCE
+
+module neg.d375_ptr_mut_from_ro_field_neg
+
+type Counter { v int }
+type Holder { p *mut Counter }
+
+test "rejects `Holder { p: &ro_b }` (writable-pointer field from ro source)" {
+    ro b = Counter { v: 7 }
+    mut h = Holder { p: &b }
+    unsafe { h.p.write(Counter { v: 8 }) }
+    assert(b.v == 8)
+}

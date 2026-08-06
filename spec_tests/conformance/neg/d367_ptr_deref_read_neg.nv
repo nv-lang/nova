@@ -1,0 +1,20 @@
+// №367 (window p375-ptr2) — READ-form parity: `x = *p` deref READ on a raw
+// pointer must be retired exactly like the already-closed WRITE sibling
+// (`*p = v`, №353). `nova check` used to let this rvalue form through clean
+// (only codegen's separate C-type-string check caught it) — closed here in
+// the SAME `check_target_readonly`-adjacent node (`f1_expr_inner`'s
+// `ExprKind::Unary` arm).
+
+// EXPECT_COMPILE_ERROR E_POINTER_OP_USE_METHOD
+
+module neg.d367_ptr_deref_read_neg
+
+test "rejects `x = *p` deref read on a raw pointer" {
+    mut x int = 41
+    unsafe {
+        ro p = &x
+        mut y = *p
+        y = y + 1
+        assert(y == 42)
+    }
+}

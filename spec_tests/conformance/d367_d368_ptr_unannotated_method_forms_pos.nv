@@ -1,0 +1,31 @@
+// №367 / №368 (window p375-ptr2) — POS boundary for the neg families
+// (neg/d367_ptr_*_read_neg.nv, neg/d368_ptr_unannotated_ro_source_write_neg.nv):
+// the METHODIC forms (`.read()`/`.read_at(i)`/`.write(v)`/`.write_at(i,v)`)
+// stay fully legal on an UNANNOTATED `buf.ptr()` binding — proving №368's
+// classification fix (the binding IS seen as a pointer now) without also
+// over-tripping №367's read-form retirement (which targets ONLY the
+// `*p`/`p[i]` OPERATOR forms, never the methods). Covers both the `ro`- and
+// `mut`-source `@ptr()` overload selection (readonly vs writable pointee),
+// value-checking throughout. Part of the single conformance folder-module.
+module spec_tests.conformance
+
+test "unannotated `mut p = mut_buf.ptr()` — methodic write/read stay legal" {
+    mut buf []int = [1, 2, 3]
+    unsafe {
+        mut p = buf.ptr()
+        p.write_at(1, 99)
+        assert(p.read_at(1) == 99)
+        p.write(7)
+        assert(p.read() == 7)
+    }
+    assert(buf[0] == 7 && buf[1] == 99)
+}
+
+test "unannotated `ro p = ro_buf.ptr()` — methodic READ stays legal (ro pointee)" {
+    ro buf []int = [4, 5, 6]
+    unsafe {
+        ro p = buf.ptr()
+        assert(p.read() == 4)
+        assert(p.read_at(2) == 6)
+    }
+}

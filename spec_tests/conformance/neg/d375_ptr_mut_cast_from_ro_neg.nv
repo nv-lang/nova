@@ -1,0 +1,22 @@
+// №375 (D216 §4 AMEND / D246, Plan 118.6 restored, owner decision
+// 2026-08-06, window p375-ptr2) — the CAST path: `(&ro_b) as *mut T`. This
+// was the ONE remaining bypass the guide itself used to teach (before
+// Plan 118.6 restored `&mut_x` → `*mut T` inference) — `&ro_b` infers the
+// readonly `*T`, and casting that to `*mut T` used to slip past `nova
+// check` and execute the write at runtime. The whole cast FORM (same
+// pointee `T`, source is a direct `&`/`raw &`) is now retired regardless of
+// the source's L1 binding — see the mut-source sibling
+// d375_ptr_mut_cast_from_mut_neg.nv.
+
+// EXPECT_COMPILE_ERROR E_POINTER_OP_USE_METHOD
+
+module neg.d375_ptr_mut_cast_from_ro_neg
+
+type Counter { v int }
+
+test "rejects `(&ro_b) as *mut T` — retired cast form, ro source" {
+    ro b = Counter { v: 7 }
+    ro q = unsafe { (&b) as *mut Counter }
+    unsafe { q.write(Counter { v: 8 }) }
+    assert(b.v == 8)
+}

@@ -3804,6 +3804,19 @@ struct TypeCheckCtx<'a> {
     /// f1 Member-арм потребляет (replace(false)) — отличает `v.len()` (метод)
     /// от `@len` (field-read) при same-name field/method (Vec.len, str.len).
     in_call_func: std::cell::Cell<bool>,
+    /// №367 (window p375-ptr2, D216/174.5 read-parity): mirrors `in_call_func`'s
+    /// set-before/consume-on-entry protocol. `Stmt::Assign` sets this `true`
+    /// immediately before its own `f1_expr(target, ..)` call; the
+    /// `ExprKind::Unary`/`ExprKind::Index` arms consume it via
+    /// `replace(false)` on entry — `true` ONLY for the exact top-level
+    /// assignment-target node (`*p = v` / `p[i] = v`), `false` for every
+    /// nested/recursive visit (including the SAME node reached any other
+    /// way). Lets the READ-form pointer-op retirement check
+    /// (`*p`/`p[i]` used as an rvalue) skip the exact span
+    /// `check_target_readonly`'s WRITE-form arms already diagnose, without
+    /// silently under-covering a nested read (`**p = v` — outer deref is the
+    /// write target, inner is a genuine read).
+    assign_target_top: std::cell::Cell<bool>,
     /// Plan 104.10 Ф.2 (D379): OPT-IN flag — when `true` the `f1_expr` walk records each
     /// expression's inferred type into `expr_types_buf` (lifted into `ModuleEnv.expr_types`
     /// for the IDE). `false` in the normal `check_module` path → ZERO overhead (the map
@@ -4497,6 +4510,7 @@ impl<'a> TypeCheckCtx<'a> {
             // call-return decl-span side channel; filled during the check walk.
             call_return_decl_span: std::cell::RefCell::new(HashMap::new()),
             in_call_func: std::cell::Cell::new(false),
+            assign_target_top: std::cell::Cell::new(false),
             numeric_bounded_params: std::cell::RefCell::new(HashSet::new()),
             // Plan 104.10 Ф.2: OFF by default (zero-overhead). check_module_with_expr_types
             // flips it AFTER build; the empty buffer stays empty on the normal compile path.
@@ -8135,7 +8149,15 @@ impl<'a> TypeCheckCtx<'a> {
             // Plan 114.4 Ф.2: scope-local const — pass-through (no-op for now).
             Stmt::Const(_) => {}
             Stmt::Assign { target, value, .. } => {
+                // №367 (window p375-ptr2): mark `target` as the top-level
+                // assignment place BEFORE walking it — consumed by the
+                // `ExprKind::Unary`/`ExprKind::Index` arms (see
+                // `assign_target_top`'s field doc) so the READ-form pointer-
+                // op retirement check does not also fire on a WRITE target
+                // already covered by `check_target_readonly` below.
+                self.assign_target_top.set(true);
                 self.f1_expr(target, gs, scope, errors);
+                self.assign_target_top.set(false);
                 self.f1_expr(value, gs, scope, errors);
                 // D175/D176 (Plan 108): check that we're not assigning to a
                 // readonly field or through a readonly index.
@@ -8237,6 +8259,11 @@ impl<'a> TypeCheckCtx<'a> {
                 if let Some(v) = value {
                     self.f1_expr(v, gs, scope, errors);
                     self.f4_check_value(v, scope, errors);
+                    // №375 (window p375-ptr2): `return &ro_x` from a fn
+                    // declared `-> *mut T`.
+                    if let Some(ret_ty) = self.current_fn_return_ty.borrow().clone() {
+                        self.check_addrof_mut_from_ro_source(v, &ret_ty, errors);
+                    }
                 }
             }
             Stmt::Throw { value, .. } => {
@@ -9857,6 +9884,72 @@ impl<'a> TypeCheckCtx<'a> {
             }
             ExprKind::As(inner, cast_ty) => {
                 self.f1_expr(inner, gs, scope, errors);
+                // **№375 (D216 §4 AMEND / D246, Plan 118.6 restored, owner
+                // decision 2026-08-06, spec commit 96100421e, window
+                // p375-ptr2):** `(&place) as *mut T` / `(raw &place) as *mut
+                // T` — an address-of expression cast to `*mut T` over the
+                // SAME pointee `T` it already syntactically addresses — is a
+                // RETIRED operator form — same family as the other
+                // D216/174.5 operator retractions (`E_POINTER_OP_USE_METHOD`:
+                // `p[i]=v`/`*p=v`/`p+i`/`p<q`). `&x` now infers `*mut T`
+                // automatically from a `mut`-bound source (118.6 restored
+                // above), so this cast is either (a) a redundant
+                // re-assertion (source already `*mut T`) or (b) the ro→mut
+                // escalation bypass the guide itself used to teach (`&ro_x`
+                // infers the readonly `*T`; casting THAT to `*mut T` was the
+                // one path №375 found still open) — both retired, full stop,
+                // regardless of the source's own L1 binding.
+                //
+                // Deliberately scoped to a DIRECT `&`/`raw &` INNER syntax
+                // only — not to any already-pointer-typed expression in
+                // general. `Vec[T].new(ptr *T, len) -> ro Self`'s documented
+                // VIEW-constructor internal (`unsafe { ptr as *mut T }`,
+                // std/src/collections/vec/core.nv:119) reinterprets a
+                // CALLER-SUPPLIED `*T` PARAMETER inside an `unsafe fn` whose
+                // doc comment already places the safety obligation on the
+                // call site — not an address-of-a-ro-binding bypass at all
+                // (no local binding here to make `mut`, no
+                // annotation/inference-only rewrite exists for a param).
+                // Every `&x`-derived example this window is given (guide
+                // lines 194/316, coordinator's own repro) is the direct
+                // address-of shape; the general parameter-reinterpret idiom
+                // stays the separate, pre-existing `unsafe fn` question this
+                // window does not retract.
+                if pointee_is_writable(cast_ty) == Some(true)
+                    && matches!(&inner.kind, ExprKind::Unary {
+                        op: UnOp::AddrOf | UnOp::RawAddrOf, ..
+                    })
+                {
+                    if let Some(src_ty) = self.infer_expr_type(inner, scope) {
+                        if pointee_is_writable(&src_ty).is_some() {
+                            let same_pointee = match (
+                                pointee_named_type(&src_ty),
+                                pointee_named_type(cast_ty),
+                            ) {
+                                (Some(s), Some(t)) => typeref_equal(&s, &t),
+                                _ => false,
+                            };
+                            if same_pointee {
+                                errors.push(Diagnostic::new(
+                                    "[E_POINTER_OP_USE_METHOD] cast `... as *mut T` \
+                                     re-asserting a pointer's mutability over the SAME \
+                                     pointee type is retired (D216 §4 AMEND / D246, Plan \
+                                     118.6 restored, owner decision 2026-08-06, №375) — a \
+                                     writable `*mut T` pointer is obtained ONLY by taking \
+                                     the address of a `mut`-bound source directly \
+                                     (`&mut_x` now infers `*mut T` on its own, no cast \
+                                     needed); a `ro`-bound source can never produce a \
+                                     writable pointer via ANY path (inference / \
+                                     annotation / param / field / return / cast). Fix-it: \
+                                     take the address from a `mut`-bound binding — \
+                                     `&mut_x` — instead of casting."
+                                        .to_string(),
+                                    e.span,
+                                ));
+                            }
+                        }
+                    }
+                }
                 // [M-option-int-cast-u64-cc-fail] (ICE-пачка п.7): `expr as
                 // <numeric>` never validated that `expr`'s OWN type is
                 // actually scalar-cast-compatible — a source expression whose
@@ -10285,9 +10378,38 @@ impl<'a> TypeCheckCtx<'a> {
                     }
                 }
             }
-            ExprKind::Unary { operand, .. } => {
+            ExprKind::Unary { op, operand } => {
+                // №367 (window p375-ptr2, D216/174.5 read-parity): consume
+                // the assign-target marker BEFORE recursing (see
+                // `assign_target_top`'s field doc) — a nested Deref reached
+                // through `operand` below must see it already cleared.
+                let is_assign_target_top = self.assign_target_top.replace(false);
                 self.f1_expr(operand, gs, scope, errors);
                 self.f4_check_value(operand, scope, errors);
+                // №367: `*p` DEREF READ on a raw pointer — the READ-form
+                // sibling of the already-closed WRITE retraction (`*p = v`,
+                // №353, `check_target_readonly`'s Deref arm). `nova check`
+                // never enforced this for the READ form — only codegen did
+                // (emit_c.rs, C-type-string based) — so `x = *p` / any other
+                // rvalue use of `*p` on a raw pointer passed `nova check`
+                // clean. Skipped when THIS node is the immediate assignment
+                // TARGET (`*p = v`) — already diagnosed (as a WRITE) by
+                // `check_target_readonly`; the exclusion prevents a
+                // redundant/misleadingly-worded second diagnostic on the
+                // same span.
+                if !is_assign_target_top && matches!(op, UnOp::Deref) {
+                    if let Some(operand_ty) = self.infer_expr_type(operand, scope) {
+                        if pointee_is_writable(&operand_ty).is_some() {
+                            errors.push(Diagnostic::new(
+                                "[E_POINTER_OP_USE_METHOD] operator `*p` (deref read) on \
+                                 raw pointer retired (Plan 174.5 §3/§9, D216 amend, №367 \
+                                 read-parity) — use `p.read()`"
+                                    .to_string(),
+                                e.span,
+                            ));
+                        }
+                    }
+                }
                 // Plan 172.1.1 (U.4.5 — Unary arm): materialize the unary expr's resolved type.
                 // `infer_expr_type(e)` dispatches by UnOp: Neg/Not → operand type; Deref →
                 // pointee (strip Pointer wrapper); AddrOf/RawAddrOf → Pointer(operand_type).
@@ -10448,6 +10570,11 @@ impl<'a> TypeCheckCtx<'a> {
                 // канал содержит только доверенные типы, guard у потребителя снят.
             }
             ExprKind::Index { obj, index } => {
+                // №367 (window p375-ptr2, D216/174.5 read-parity): consume
+                // the assign-target marker BEFORE recursing — mirrors the
+                // `ExprKind::Unary` arm (see `assign_target_top`'s field
+                // doc and that arm's comment for the full rationale).
+                let is_assign_target_top = self.assign_target_top.replace(false);
                 self.f1_expr(obj, gs, scope, errors);
                 self.f1_expr(index, gs, scope, errors);
                 // Plan 152.1 Ф.1 (D249): `str` is NOT integer-indexable — codepoint
@@ -10496,6 +10623,22 @@ impl<'a> TypeCheckCtx<'a> {
                         }
                     }
                     if let Some(obj_tr) = self.infer_expr_type(obj, scope) {
+                        // №367: `p[i]` INDEX READ on a raw pointer — the
+                        // READ-form sibling of the already-closed WRITE
+                        // retraction (`p[i] = v`, №353, `check_target_
+                        // readonly`'s Index arm). Same rationale/exclusion
+                        // as the `ExprKind::Unary` Deref-read check above —
+                        // skipped when THIS node is the immediate
+                        // assignment TARGET (already diagnosed as a WRITE).
+                        if !is_assign_target_top && pointee_is_writable(&obj_tr).is_some() {
+                            errors.push(Diagnostic::new(
+                                "[E_POINTER_OP_USE_METHOD] operator `p[i]` (index read) on \
+                                 raw pointer retired (Plan 174.5 §3/§9, D216 amend, №367 \
+                                 read-parity) — use `p.read_at(i)`"
+                                    .to_string(),
+                                e.span,
+                            ));
+                        }
                         if Self::typeref_named_base(&obj_tr) == Some("str") {
                             errors.push(Diagnostic::new(
                                 "[E_STR_NO_INT_INDEX] `str` cannot be indexed by an integer — \
@@ -10865,10 +11008,20 @@ impl<'a> TypeCheckCtx<'a> {
                     }
                 }
             }
-            ExprKind::RecordLit { fields, .. } => {
+            ExprKind::RecordLit { type_name, fields, .. } => {
                 for f in fields {
                     if let Some(v) = &f.value {
                         self.f1_expr(v, gs, scope, errors);
+                        // №375 (window p375-ptr2): `Type { ptr_field: &ro_x }`
+                        // initializing a `*mut T` field from a `ro` source.
+                        if let Some(tn) = type_name.as_ref().and_then(|p| p.last()) {
+                            if let Some(field_ty) = self.record_fields_for(tn)
+                                .and_then(|fs| fs.iter().find(|rf| rf.name == f.name))
+                                .map(|rf| rf.ty.clone())
+                            {
+                                self.check_addrof_mut_from_ro_source(v, &field_ty, errors);
+                            }
+                        }
                     }
                 }
             }
@@ -11413,6 +11566,10 @@ impl<'a> TypeCheckCtx<'a> {
         if value.id.is_set() && matches!(value.kind, ExprKind::ClosureLight { .. }) {
             self.resolved_types_buf.borrow_mut().insert(value.id, ResolvedType::from_type_ref(ann));
         }
+        // №375 (window p375-ptr2): `ro q *mut T = &b` over a readonly `b` —
+        // checked at the annotation, independent of `assignable`'s structural
+        // Ptr-category compat (which cannot see the mut/readonly pointee split).
+        self.check_addrof_mut_from_ro_source(value, ann, errors);
         match self.assignable(value, ann, gs, gs, scope) {
             Compat::Bad { found } => {
                 errors.push(
@@ -14137,6 +14294,12 @@ impl<'a> TypeCheckCtx<'a> {
                         // call so codegen sees a well-typed value) is NOT done here — this
                         // closes the silent diagnostic hole only; see window report for the
                         // honest remainder.
+                        // №375 (window p375-ptr2): same source-check, generic-
+                        // receiver instance-call arg path (this site's own
+                        // `Compat::CoerceConflict` surfacing below is gated to
+                        // `generic_param`-only — the source-check must NOT
+                        // depend on that gate).
+                        self.check_addrof_mut_from_ro_source(arg.expr(), &exp_ty, errors);
                         let compat = self.assignable(arg.expr(), &exp_ty, gs, &callee_gs, scope);
                         let recv_generic_names: HashSet<String> = subst.keys().cloned().collect();
                         let generic_param = !recv_generic_names.is_empty()
@@ -14246,6 +14409,8 @@ impl<'a> TypeCheckCtx<'a> {
         }
         for (arg, param_ty) in args.iter().zip(params.iter()) {
             let arg_expr = arg.expr();
+            // №375 (window p375-ptr2): same source-check, fn-value call path.
+            self.check_addrof_mut_from_ro_source(arg_expr, param_ty, errors);
             match self.assignable(arg_expr, param_ty, gs, gs, scope) {
                 Compat::Bad { found } => {
                     errors.push(Diagnostic::new(
@@ -14991,6 +15156,9 @@ impl<'a> TypeCheckCtx<'a> {
             } else {
                 self.materialize_literal_coercion(arg.expr(), &param.ty);
             }
+            // №375 (window p375-ptr2): `&ro_x` passed where a `*mut T` param
+            // is declared — same source-check as the let-annotation site.
+            self.check_addrof_mut_from_ro_source(arg.expr(), &param.ty, errors);
             match self.assignable(arg.expr(), &param.ty, gs, &callee_gs, scope)
             {
                 Compat::Bad { found } => {
@@ -19288,8 +19456,32 @@ impl<'a> TypeCheckCtx<'a> {
                         }),
                         _ => None,
                     },
+                    // **Plan 118.6 RESTORED (D216 §4 AMEND / D246 «§V2.6
+                    // частично отменено», owner decision 2026-08-06, window
+                    // p375-ptr2, spec commit 96100421e):** `&x` from a
+                    // `mut`-bound SOURCE infers the writable `*mut T`
+                    // automatically; from a `ro`-bound source (or any
+                    // non-simple-place operand — Member/Index roots also
+                    // qualify via `assign_root_ident`, anything else stays
+                    // conservative) it infers the readonly `*T` default. The
+                    // ANNOTATED type still wins wherever one is present (`ro
+                    // p *T = &mut_x` stays a readonly-pointee `p` — checked
+                    // structurally elsewhere, this arm only supplies the
+                    // UNANNOTATED inferred shape). Guarantee (№375): a
+                    // writable pointer can never be materialized from a
+                    // `ro`-bound source via ANY path (this inference default,
+                    // an explicit annotation, a param/field/return position,
+                    // or an `as`-cast — see `check_addrof_mut_from_ro_source`
+                    // and the `ExprKind::As` same-pointee-cast retraction).
                     UnOp::AddrOf | UnOp::RawAddrOf => {
-                        Some(TypeRef::Pointer(Box::new(op_tr), expr.span))
+                        let mut_source = Self::assign_root_ident(operand)
+                            .map_or(false, |root| !self.ro_binding_names.borrow().contains(root));
+                        let pointee = if mut_source {
+                            TypeRef::Mut(Box::new(op_tr), expr.span)
+                        } else {
+                            op_tr
+                        };
+                        Some(TypeRef::Pointer(Box::new(pointee), expr.span))
                     }
                 }
             }
@@ -19538,6 +19730,40 @@ impl<'a> TypeCheckCtx<'a> {
                                 ) {
                                     return Some(rt);
                                 }
+                            }
+                        }
+                    }
+                }
+                // №368 (window p375-ptr2): the SAME structural gap as the
+                // FixedArray `len`/`ptr` special case just above, for the
+                // DYNAMIC `[]T`/`Vec[T]` receiver's `.ptr()` — `mut p =
+                // buf.ptr()` with NO annotation left `p` UNTYPED in scope
+                // (this general Call arm has no instance-method-return
+                // resolution path for an ordinary `.nv`-declared method —
+                // `resolve_instance_method_return` exists but has no live
+                // caller; wiring it in generally is a much bigger, riskier
+                // change than this bug needs). Every LATER checker gate
+                // keyed off `infer_expr_type(p)` (E_POINTER_RO_ASSIGN, №349,
+                // №353, №367's read-form checks, №375's
+                // `check_addrof_mut_from_ro_source`) silently no-opped for
+                // this idiom while codegen (a separate, C-type-string-based
+                // inference) still classified `p` correctly — exactly the
+                // asymmetry №368 reports. Mirrors Vec[T]'s real two-overload
+                // `@ptr()`/`mut @ptr()` pair (access.nv:258/266)
+                // structurally: `array_elem_type` normalizes BOTH the `[]T`
+                // sugar and explicit `Vec[T]` (D239 alias) to the same
+                // element type, so this covers both spellings in one arm.
+                if let ExprKind::Member { obj, name } = &func.kind {
+                    if name == "ptr" && outer_call_args.is_empty() {
+                        if let Some(obj_ty) = self.infer_expr_type(obj, scope) {
+                            if let Some(inner) = array_elem_type(&obj_ty) {
+                                let is_mut = !self.is_through_ro_binding(obj);
+                                let pointee = if is_mut {
+                                    TypeRef::Mut(Box::new(inner.clone()), expr.span)
+                                } else {
+                                    inner.clone()
+                                };
+                                return Some(TypeRef::Pointer(Box::new(pointee), expr.span));
                             }
                         }
                     }
@@ -22306,6 +22532,78 @@ impl<'a> TypeCheckCtx<'a> {
             ExprKind::Member { obj, .. } => Self::assign_root_ident(obj),
             ExprKind::Index { obj, .. } => Self::assign_root_ident(obj),
             _ => None,
+        }
+    }
+
+    /// **№375 (D246 amend, Plan 221 п.12, window p375-ptr2):** given `expr` is
+    /// about to be materialized at a position that EXPECTS a `*mut T`
+    /// (writable-pointee) pointer, does it root in a direct `&place` /
+    /// `raw &place` address-of over a `ro`-bound SOURCE binding? Returns the
+    /// root name for the diagnostic when so.
+    ///
+    /// This checks the SOURCE, not `&x`'s own inferred type — `&x` (D246,
+    /// intentional) always infers as the READONLY `*T` regardless of `x`'s L1
+    /// binding (L1 does not leak into L3), so a structural type-compat check
+    /// alone can never see this violation: `Pointer(bare T)` and
+    /// `Pointer(Mut(T))` both collapse to the same `Ptr` category in
+    /// `resolved_cat_of`. The predicate is therefore invariant to whichever
+    /// way a FUTURE separate decision on the `&x` INFERENCE default (A: stays
+    /// always-`*T`: B: mut-source→`*mut T`, ro-source→`*T`) resolves — either
+    /// way, a WRITABLE pointer may only be materialized from a `mut`-bound
+    /// source, checked HERE at the point the address-expr meets the expected
+    /// pointer type (annotation / param / field / `as`-cast target / return).
+    ///
+    /// Deliberately NOT recursive through `ExprKind::As` — an intermediate
+    /// cast is its own separate checkpoint (the `ExprKind::As` arm in
+    /// `f1_expr_inner` calls this same helper with the cast's OWN inner/target
+    /// pair), so peeling here would double-report `(&ro_x) as *mut T` once at
+    /// the As-node itself and again at whatever outer position consumes the
+    /// cast's result. Only the DIRECT `&place`/`raw &place` shape roots here —
+    /// an opaque pointer-returning call (`buf.ptr() as *mut T`) is a different,
+    /// unrelated question the L3 pointee-writability axis already governs.
+    fn addrof_mut_ro_source_root<'e>(&self, expr: &'e Expr) -> Option<&'e str> {
+        match &expr.kind {
+            ExprKind::Unary { op: UnOp::AddrOf | UnOp::RawAddrOf, operand } => {
+                if self.is_through_ro_binding(operand) {
+                    Self::assign_root_ident(operand)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// **№375:** shared enforcement — `expected` is the pointer type `value`
+    /// is about to be materialized INTO (let/param/field annotation, `as`-cast
+    /// target, or a fn's declared return type). Fires only when `expected`'s
+    /// pointee is WRITABLE and `value` is a direct `&`/`raw &` over a
+    /// `ro`-bound source (`addrof_mut_ro_source_root`). New diagnostic —
+    /// closes the ro-guarantee bypass: previously `ro q *mut T = &b` (readonly
+    /// `b`) passed `nova check` clean and the write executed at runtime.
+    fn check_addrof_mut_from_ro_source(
+        &self,
+        value: &Expr,
+        expected: &TypeRef,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        if pointee_is_writable(expected) != Some(true) {
+            return;
+        }
+        if let Some(root) = self.addrof_mut_ro_source_root(value) {
+            errors.push(Diagnostic::new(
+                format!(
+                    "[E_POINTER_MUT_FROM_RO_SOURCE] cannot materialize a writable \
+                     `*mut T` pointer from `&{root}` — `{root}` is a `ro`-bound \
+                     source (L1). A `*mut T` pointer may only be taken from a \
+                     `mut`-bound binding (D246 amend, Plan 221 п.12 / №375); the \
+                     bare `&x` DEFAULT stays the readonly `*T` regardless of `x`'s \
+                     binding (L1 does not leak into L3) — this is checked at the \
+                     SOURCE, where the address-expression meets the expected \
+                     writable-pointer type. Hint: declare `mut {root} = ...`.",
+                ),
+                value.span,
+            ));
         }
     }
 

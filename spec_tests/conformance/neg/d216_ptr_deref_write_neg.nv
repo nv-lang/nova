@@ -8,7 +8,7 @@ module neg.d216_ptr_deref_write_neg
 test "rejects `*p = v` deref write" {
     mut x int = 1
     unsafe {
-        ro p = (&x) as *mut int
+        ro p = &x
         *p = 42
     }
     assert(x == 42)

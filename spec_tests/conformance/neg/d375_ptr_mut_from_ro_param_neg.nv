@@ -1,0 +1,20 @@
+// №375 (D246 amend, Plan 221 п.12, window p375-ptr2) — passing `&ro_b` where
+// a `*mut T` PARAMETER is declared. Same source-check as the let-annotation
+// sibling (d375_ptr_mut_from_ro_let_neg.nv), exercised at a call-argument
+// position instead.
+
+// EXPECT_COMPILE_ERROR E_POINTER_MUT_FROM_RO_SOURCE
+
+module neg.d375_ptr_mut_from_ro_param_neg
+
+type Counter { v int }
+
+fn bump(p *mut Counter) {
+    unsafe { p.write(Counter { v: 8 }) }
+}
+
+test "rejects `&ro_b` passed to a `*mut T` parameter" {
+    ro b = Counter { v: 7 }
+    bump(&b)
+    assert(b.v == 8)
+}

@@ -1,0 +1,19 @@
+// №375 (D246 amend, Plan 221 п.12, window p375-ptr2) — `return &ro_b` from a
+// fn declared `-> *mut T`. Same source-check as the let-annotation sibling
+// (d375_ptr_mut_from_ro_let_neg.nv), exercised at a return position instead.
+
+// EXPECT_COMPILE_ERROR E_POINTER_MUT_FROM_RO_SOURCE
+
+module neg.d375_ptr_mut_from_ro_return_neg
+
+type Counter { v int }
+
+fn get() -> *mut Counter {
+    ro b = Counter { v: 7 }
+    return &b
+}
+
+test "rejects `return &ro_b` from a fn declared `-> *mut T`" {
+    ro q = get()
+    unsafe { q.write(Counter { v: 8 }) }
+}
