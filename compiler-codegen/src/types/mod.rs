@@ -20436,6 +20436,14 @@ impl<'a> TypeCheckCtx<'a> {
         type_args: &[TypeRef],
         span: Span,
     ) -> Option<(TypeRef, Vec<(String, ResolvedType)>, Span)> {
+        // [реестр 221.1 №126, harden] primitives have their own dedicated static-
+        // method resolution/rejection pipeline (E_UNKNOWN_STATIC_METHOD et al.) —
+        // never let a user-type generic-static producer speak for a primitive name
+        // (would risk resurrecting a RETRACTED primitive static, e.g. `str.from`,
+        // D410, if `method_overloads` ever mis-keys a blanket entry under it).
+        if is_primitive_recv_name(tyname) {
+            return None;
+        }
         let overloads = self.method_overloads(tyname, method)?;
         let [f] = overloads.as_slice() else { return None; };
         let recv = f.receiver.as_ref()?;
