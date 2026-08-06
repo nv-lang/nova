@@ -26,6 +26,19 @@ fn mv379_pump3(consume x Mv379Half, consume y Mv379Half, consume z Mv379Half) ->
     ro _c = z.id
 }
 
+// №TBD fix probe: a consume-param call INSIDE the fiber body, on a binding
+// that was ALSO a bare auto-cleanup `consume x = e;` in the OUTER (parent)
+// scope before the spawn/detach statement — this is the exact shape that
+// exposed the CC-FAIL (`disarm_auto_cleanup_receiver_call` finding the
+// outer scope's stale `_defer_<bid>_<idx>_active` entry from inside the
+// fiber's own, separate C function). `mv379_pump2`/`mv379_pump3` above
+// already cover the multi-var (2/3-binding) forms; `mv379_pump1` closes the
+// SINGLE-var gap — no pre-existing fixture called a consume-param helper on
+// a single-var spawn/detach-consume's captured binding.
+fn mv379_pump1(consume x Mv379Half) -> () {
+    ro _a = x.id
+}
+
 test "spawn consume a, b { ... } — two consume-typed bindings, both moved into the child" {
     consume mv379_a = Mv379Half.new(1)
     consume mv379_b = Mv379Half.new(2)
@@ -70,4 +83,40 @@ test "pos-regress: single-var spawn consume x { ... } unchanged" {
 test "pos-regress: single-var detach consume x { ... } unchanged" {
     consume mv379_i = Mv379Half.new(13)
     detach consume mv379_i { ro _z = mv379_i.id }
+}
+
+test "№TBD probe: single-var spawn consume x { pump1(x) } — consume-param call inside the fiber on the outer auto-cleanup binding" {
+    consume mv379_j = Mv379Half.new(14)
+    supervised {
+        spawn consume mv379_j { mv379_pump1(mv379_j) }
+    }
+}
+
+test "№TBD probe: single-var detach consume x { pump1(x) } — same, orphan fiber" {
+    consume mv379_k = Mv379Half.new(15)
+    detach consume mv379_k { mv379_pump1(mv379_k) }
+}
+
+test "№TBD probe: consume-param call NESTED inside an if-block within the fiber body — disarm must not need the call at fiber-body top level" {
+    consume mv379_l = Mv379Half.new(16)
+    supervised {
+        spawn consume mv379_l {
+            if true {
+                mv379_pump1(mv379_l)
+            }
+        }
+    }
+}
+
+test "№TBD probe: three-plus bindings AND two multi-var spawn statements back-to-back — block-id numbering must not collide across either axis" {
+    consume mv379_m = Mv379Half.new(17)
+    consume mv379_n = Mv379Half.new(18)
+    consume mv379_o = Mv379Half.new(19)
+    consume mv379_p = Mv379Half.new(20)
+    consume mv379_q = Mv379Half.new(21)
+    consume mv379_r = Mv379Half.new(22)
+    supervised {
+        spawn consume mv379_m, mv379_n, mv379_o { mv379_pump3(mv379_m, mv379_n, mv379_o) }
+        spawn consume mv379_p, mv379_q, mv379_r { mv379_pump3(mv379_p, mv379_q, mv379_r) }
+    }
 }

@@ -599,7 +599,7 @@
 # строку emit_c.rs был РОВНО на прежнем baseline, запаса не было. infer
 # не менялся (фикс не трогал infer_expr_c_type). Снижение — по инструкции
 # наверху этого файла («снижение приветствуется, обнови baseline вниз»).
-lines=64444
+lines=64446
 infer=348
 # 2026-08-06 (окно p172-lit-ctor-eq, репро-регресс `neg_str_from_retracted`):
 # 64416 -> 64444 (+28, ВСЕ строки — doc-comment объясняющий диагноз, код
@@ -794,6 +794,39 @@ infer=348
 # 2026-08-06 (w3 заход-3): классификация detach-захвата mut-параметров +
 # прямая передача указательного источника (ABI-материя). Сведено по факту
 # слияния. Только вниз отсюда.
-# 2026-08-06 (№377-А, решение владельца): +28 (3 кода + 25 док-диагноза) —
-# deref двойного указателя в prepare_method_recv, ABI получателя. Сведено
-# по факту. Только вниз отсюда.
+# 2026-08-06 (№379, окно p379-defer, sonnet): 64444 -> 64446 (+2), infer без
+# изменений (348). ПУТЬ B, поднято ИСПОЛНИТЕЛЕМ (интегратор ещё не смотрел
+# этот коммит). ПОЧЕМУ ЭТО EMIT-СЛОЙ, НЕ КАНАЛ: `spawn consume a[, b, …]
+# { body }` / `detach consume a[, b, …] { body }` desugar to nested
+# `Stmt::ConsumeScope` (re_consume:false, "already-bound" form). `emit_spawn`/
+# `emit_detach` swap `self.out` to the fiber's OWN, separate C function
+# before emitting `body` — a pure C-emission/scoping fact, not something the
+# checker resolves (it has no notion of "which C function a statement lands
+# in"). The bug: `disarm_auto_cleanup_receiver_call` (Plan 217) could still
+# find a STALE `auto_cleanup_active` entry left by the OUTER bare `consume
+# x = e;` (registered before the swap) from INSIDE the fiber body, emitting
+# a disarm assignment to a PARENT-function-local C flag — "use of undeclared
+# identifier" in the fiber's own function (multi-var repro:
+# `spawn_detach_consume_multivar_ok.nv`; latent, untriggered, for single-var
+# too). Fix: `disarm_outer_auto_cleanup_for_fiber_body` (new fn, homed in
+# `codegen/emit_c/emit_detach.rs` — child module, ratchet-exempt, `pub(super)`
+# — NOT emit_c.rs itself) walks the desugar's nested-ConsumeScope spine
+# BEFORE the `self.out` swap, disarming + dropping each already-bound outer
+# entry once. The unavoidable emit_c.rs cost is the two call-sites in
+# `emit_spawn` (`emit_detach`'s own call-site lives in emit_detach.rs, off
+# this metric) — squeezed to a single comment+call line (+2, was +60 before
+# relocating the fn body out of this file).
+# Верификация: изолированный репро (spawn_detach_consume_multivar_ok.nv в
+# собственной директории, без соседей по CU) CC-FAIL "_defer_1_0/1_active
+# undeclared" -> PASS; та же фикстура IN-PLACE (реальный
+# spec_tests/conformance folder-CU, старый бинарь) воспроизводит РОВНО
+# репортованное владельцем падение (`_defer_328_0/1_active` + третий,
+# независимый случай `_defer_333_0_active` — тот же класс, другая
+# фикстура) -> новым бинарём компиляция проходит ДО стадии линковки (упирается
+# в НЕСВЯЗАННЫЙ pre-existing Windows-only линк-гэп `nova_fn_p238f3_
+# run_on_worker`, воспроизводится ТАКЖЕ на файлах, вообще не касающихся
+# spawn/detach-consume — не регрессия этого окна). Расширенная фикстура
+# (single-var + multi-var + 3-var, вложенный if внутри файбера, ДВА
+# multi-var spawn statement'а подряд в одной функции) — все формы зелёные
+# одним CU, изолированно. `nova check std/src` 148/26/61 байт-в-байт;
+# `cargo build --release` чисто.

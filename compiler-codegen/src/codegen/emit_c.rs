@@ -13598,6 +13598,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
         // Note: no `_nova_result` field — spawn returns unit (D50/D71).
         let _ = writeln!(self.lambda_forward_decls, "}} {};", ctx_ty);
+        // №379 fix (`disarm_outer_auto_cleanup_for_fiber_body`, emit_detach.rs) — MUST run before the `self.out` swap below.
+        if let ExprKind::Block(b) = &body.kind { self.disarm_outer_auto_cleanup_for_fiber_body(b); }
 
         // Swap out to deferred_impls for body emission
         let saved_out    = std::mem::take(&mut self.out);
