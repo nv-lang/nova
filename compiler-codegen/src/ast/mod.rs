@@ -800,6 +800,19 @@ pub struct Param {
     // ОГРАНИЧЕННЫЙ ТИП (`TypeRef::Ref`), а in-out `mut x T` ведётся value-путём
     // Р10 (`param_is_inout_ptr`/`param_ty_is_inout_value`), не отдельным полем
     // режима. Формы `ro ref`/`mut ref` в параметре сняты заходом-1.
+    /// Plan 238 Ф.3 (D446 §4/§5 амендмент): `#fiber_safe name Type` —
+    /// explicit annotation on a function-typed parameter, ТОЛЬКО для границ
+    /// без вывода (extern/no-body fn — тело невидимо, автовывод по телу
+    /// невозможен). Значит то же самое, что вывод из тела вычислил бы, если
+    /// бы мог видеть тело: "этот параметр требует Safe-замыкания". Parsed
+    /// контекстно после `#`, тем же путём, что `#cancel_safe`/`#coerce`
+    /// (`parser/mod.rs`'s `parse_cancel_safe_attr` — образец). НЕ читается
+    /// для fn с телом — там требование ВЫВОДИТСЯ (`fiber_safety.rs`'s
+    /// `compute_required_params`), явная пометка была бы избыточна и могла
+    /// разойтись с реальным телом; парсится безусловно (не ошибка на fn с
+    /// телом), проверяется только там, где вывод НЕ может сработать.
+    /// Default = false (все синтетические/non-parsed конструкторы `Param`).
+    pub fiber_safe_attr: bool,
 }
 
 /// Plan 15 (D72): generic-параметр с optional bound.

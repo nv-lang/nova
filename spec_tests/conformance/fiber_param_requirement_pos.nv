@@ -1,0 +1,55 @@
+// Plan 238 Ф.3 (D446 §4/§5 амендмент) — pos twin of `neg/fiber_unsafe_arg_
+// neg.nv`/`neg/fiber_unsafe_arg_transitive_neg.nv`/`neg/fiber_safe_attr_
+// arg_neg.nv`: patterns that MUST stay legal under the new required-
+// parameter inference + passing-site enforcement
+// (`compute_required_params`/`check_param_passing`, `fiber_safety.rs`).
+//   1. `p238f3_seed_helper`'s parameter `g` is REQUIRED (rule 1 — called
+//      directly by name inside its own `spawn` body); passing a closure
+//      that captures nothing dangerous (`ro` state only) is legal.
+//   2. `p238f3_seed_middleware`'s parameter `f` is required TRANSITIVELY
+//      (rule 2 — forwarded, unchanged, into the helper's own required
+//      `g`) — the owner's own example shape (`middleware(f) → helper(g)`).
+//      Passing the same Safe closure through the forwarding wrapper is
+//      legal too.
+//   3. `#fiber_safe` — explicit marker on an extern (no-body) fn's
+//      parameter, the ONLY boundary inference cannot reach on its own (no
+//      visible body). No such case exists in the corpus today (measured,
+//      `PROGRESS-p238-f3.md` §4); this is a synthetic minimum exercising
+//      parse + the SAME passing-site check.
+
+module spec_tests.conformance
+
+fn p238f3_seed_helper(g fn() -> ()) {
+    supervised {
+        spawn {
+            g()
+        }
+    }
+}
+
+fn p238f3_seed_middleware(f fn() -> ()) {
+    p238f3_seed_helper(f)
+}
+
+// Plan 238 Ф.3 — minimal `#fiber_safe` fixture (no real corpus case today):
+// an extern fn's function-typed parameter, explicitly marked. Inference
+// cannot see INTO this fn's (non-existent, in Nova source) body — the
+// annotation is the only way to attach a requirement to it.
+export extern "nova" fn p238f3_run_on_worker(#fiber_safe task fn() -> ())
+
+test "p238f3: passing a Safe closure directly into a required parameter — legal (rule 1)" {
+    ro shared_count = 42
+    ro safe_closure = || { ro _x = shared_count + 1 }
+    p238f3_seed_helper(safe_closure)
+}
+
+test "p238f3: passing a Safe closure transitively through a forwarding wrapper — legal (rule 2)" {
+    ro shared_count = 42
+    ro safe_closure = || { ro _x = shared_count + 1 }
+    p238f3_seed_middleware(safe_closure)
+}
+
+test "p238f3: passing a Safe closure to an explicitly #fiber_safe-marked extern parameter — legal" {
+    ro safe_closure = || {}
+    p238f3_run_on_worker(safe_closure)
+}

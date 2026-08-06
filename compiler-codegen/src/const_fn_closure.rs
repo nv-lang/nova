@@ -678,6 +678,7 @@ fn lambda_params_to_fn_params(
             is_mut: false,
             is_const: false,
             mut_type_pos_legacy: false,
+            fiber_safe_attr: false,
         });
     }
     Ok(out)
@@ -720,6 +721,7 @@ fn closure_light_params_to_fn_params(
             is_mut: false,
             is_const: false,
             mut_type_pos_legacy: false,
+            fiber_safe_attr: false,
         });
     }
     Ok(out)

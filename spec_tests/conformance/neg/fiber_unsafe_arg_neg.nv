@@ -1,0 +1,30 @@
+// EXPECT_COMPILE_ERROR [E_FIBER_UNSAFE_ARG] passing this closure to `p238f3_helper`'s parameter `g`
+
+// Plan 238 Ф.3 (D446 §4/§5 амендмент): `p238f3_helper`'s parameter `g` is
+// REQUIRED (rule 1 — called directly by name inside `p238f3_helper`'s own
+// `spawn` body). `main` never writes `spawn`/`detach`/`parallel for`
+// anywhere near the closure literal itself — D415's own syntactic
+// capture-check ALSO fires here (`E_CONCURRENT_MUT_CAPTURE`, its own
+// "transitive crossing" №168 rule — one function-call hop, `PROGRESS-
+// p238-f3.md` §2), same "both fire, on purpose" precedent as `fiber_
+// unsafe_call_neg.nv` (Ф.2): this fixture demonstrates Ф.3's mechanism
+// specifically, the transitive TWO-hop twin (`fiber_unsafe_arg_
+// transitive_neg.nv`) demonstrates it is a genuinely ADDITIONAL net, not a
+// restatement of D415 (D415's own one-hop mechanism does not reach two
+// hops — measured, `p238-paths-probes/p02_two_hop_param`).
+
+module neg.fiber_unsafe_arg_neg
+
+fn p238f3_helper(g fn() -> ()) {
+    supervised {
+        spawn {
+            g()
+        }
+    }
+}
+
+fn main() {
+    mut counter = 0
+    ro unsafe_closure = || { counter = counter + 1 }
+    p238f3_helper(unsafe_closure)
+}
