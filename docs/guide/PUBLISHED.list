@@ -26,6 +26,7 @@ running-tests
 runtime-tuning
 size-of-align-of
 strings
+structured-concurrency
 time
 tutorial-cleanup
 typed-pointers

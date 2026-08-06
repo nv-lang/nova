@@ -141,8 +141,9 @@ buffer, that is the form to declare.
 > methods only**. The operator forms are RETIRED with a hard error
 > `E_POINTER_OP_USE_METHOD` — including the read forms:
 > `*p`, `*p = v`, `p[i]`, `p[i] = v`, `p ± i`, `p - q`, `p < q` (all order
-> compares). Since the p-ptr window (2026-08-05) `nova check` rejects the
-> write forms too — previously they only failed at the build stage.
+> compares). `nova check` rejects both the write forms (since 2026-08-05)
+> and the read forms `x = *p` / `y = p[i]` (since 2026-08-06) — previously
+> they only failed at the build stage.
 
 | Method | Replaces | Semantics |
 |---|---|---|
@@ -191,7 +192,7 @@ One-level field access through a pointer works without an explicit deref:
 type Counter { mut v int }
 
 mut a = Counter { v: 1 }
-ro p = (&a) as *mut Counter
+ro p = &a                   // a is mut → p is *mut Counter
 p.v = 5                     // ✓ field store via auto-deref (requires *mut pointee)
 ro r = p.v                  // ✓ field read via auto-deref (any *T)
 assert(a.v() == 5)
@@ -205,11 +206,11 @@ assert(a.v() == 5)
 **One-level only.** For deeper chains read the pointer value first
 (`p.read()`), then continue on the value.
 
-> **Method calls through a pointer** (`p.method()`) are part of the D216 §5
-> model but are currently unreliable in the bootstrap compiler (a call
-> through a pointer can silently return a wrong value) — the defect is
-> reported and tracked. Until it is fixed, read the value first:
-> `p.read().method()`.
+> **Method calls through a pointer** (`p.method()`) work for regular
+> methods. One narrow exception remains: calling a *field-accessor property
+> method* through a pointer (`p.v()` for field `v`) currently fails to
+> compile — the defect is reported and tracked. Read the field directly
+> (`p.v`) or read the value first (`p.read().v()`).
 
 ## Quick reference
 
@@ -308,15 +309,24 @@ ro q = &x                              // safe; x auto-promoted to heap; type *i
 ```
 
 `&x` is **safe** (Plan 118.6): no `unsafe { }` wrap is needed — escape
-analysis auto-promotes stack values to the heap. `&x` always yields a
-read-only-pointee `*T`; a writable pointee is an explicit opt-in via a cast:
+analysis auto-promotes stack values to the heap. The pointee-mutability of
+the result follows the **source binding** (D216 §4 amend, owner decision
+2026-08-06): `&a` from a `mut` variable is `*mut T`, from a `ro` variable —
+`*T`. The canonical way to get a writable pointer is simply:
 
 ```nova
 mut x int = 1
-ro p = (&x) as *mut int     // explicit opt-in to a writable pointee
+ro p = &x                   // x is mut → p is *mut int, no cast needed
 unsafe { p.write(42) }
 assert(x == 42)
 ```
+
+An explicit annotation is an equivalent form (`ro p *mut int = &x`); in
+annotations a bare `*T` still always means a read-only pointee. The old
+cast opt-in `(&x) as *mut int` is **retired**: re-asserting mutability over
+the same pointee type via a cast is rejected (`E_POINTER_OP_USE_METHOD`
+family). And the guarantee behind it all: from a `ro` variable a writable
+pointer **cannot be obtained by any route**.
 
 For a **raw stack address** without escape analysis or auto-promote there is
 a separate operator (Plan 118.7) — it may dangle after scope exit, so it
@@ -528,9 +538,10 @@ There is no `null` / `undefined` in the language: an absent pointer is
 ### Errors
 
 - `E_POINTER_OP_USE_METHOD` — a retired pointer operator (`*p`, `*p = v`,
-  `p[i]`, `p[i] = v`, `p ± i`, `p - q`, order compares); use the intrinsic
-  methods (`.read()` / `.write()` / `.read_at()` / `.write_at()` /
-  `.offset()` / `.dist()`)
+  `p[i]`, `p[i] = v`, `p ± i`, `p - q`, order compares) or the retired
+  mutability-re-asserting cast `p as *mut T` over the same pointee; use the
+  intrinsic methods (`.read()` / `.write()` / `.read_at()` / `.write_at()` /
+  `.offset()` / `.dist()`) and source-binding inference for `&`
 - `E_POINTER_RO_ASSIGN` — `p.field = v` or a write-family method call
   (`.write()` / `.write_at()` / …) through a read-only pointee; the writable
   pointee requires the `*mut T` opt-in
