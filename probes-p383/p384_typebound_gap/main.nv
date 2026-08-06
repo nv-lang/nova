@@ -1,0 +1,27 @@
+module p384_typebound_gap
+
+// №TBD finding (coordinator add-on, 2026-08-06): a FOURTH bound-carrier
+// form, distinct from method-own (№383) and free-function bounds — a bound
+// declared on the TYPE DECLARATION's own generic parameter list
+// (`type IndexMap[K Equal + Hash, V] priv { ... }`,
+// std/collections/index_map/core.nv:56). NOT checked at instantiation
+// sites AT ALL (confirmed: zero hits for any "type-level generic bound"
+// enforcement anywhere in types/mod.rs). `nova check` passes clean here;
+// `nova build` does NOT silently produce UB the way №384's call-site gap
+// did — it hits an UNRELATED pre-existing codegen crash first (a
+// monomorphization naming mismatch in Vec[Slot[K,V]]'s iterator type, deep
+// inside HashMap's resize path), before ever reaching the point where
+// NoEqualHash's missing `@hash`/`@equal` would matter. Not fixed in this
+// window (out of scope for №383/№384 — a genuinely separate mechanism, and
+// the C-compile crash needs its own investigation to even observe the
+// Equal/Hash-specific behavior cleanly). See PROGRESS-p383-bounds.md for
+// the full trace.
+
+import std.collections.index_map.{IndexMap}
+
+type NoEqualHash { junk int }
+
+fn main() Io -> () {
+    mut m = IndexMap[NoEqualHash, int].new()
+    m.insert(NoEqualHash { junk: 1 }, 5)
+}

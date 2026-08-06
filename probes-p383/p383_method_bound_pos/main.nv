@@ -1,0 +1,20 @@
+module p383_method_bound_pos
+
+// №383 pos-regression: same method-own generic-bound shape as
+// p383_method_bound_neg, but the argument type DOES provide the required
+// method — must compile clean (the fix must not over-reject).
+
+type Box13 { val int }
+
+type HasClone13 { junk int }
+
+fn HasClone13 @clone() -> HasClone13 => { @junk }
+
+fn Box13 @combine[S Clone](other S) -> S => other.clone()
+
+fn main() Io -> () {
+    ro h = Box13 { val: 1 }
+    ro v = HasClone13 { junk: 7 }
+    ro r = h.combine(v)
+    print("${r.junk}")
+}

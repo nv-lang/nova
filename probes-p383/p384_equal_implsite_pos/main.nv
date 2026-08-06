@@ -1,0 +1,22 @@
+module p384_equal_implsite_pos
+
+// №384 decl-site companion: `#impl(Equal)` on a type WITHOUT `@compare`.
+// Verified this is NOT a bug (unlike the call-site case above) — the
+// decl-site path (`verify_impl_protocols`) correctly determines the
+// default-body dependency (`@compare`) does NOT resolve, but then falls
+// back to a SEPARATE, legitimate mechanism: full structural auto-derive
+// (Plan 126/180, gated on `#impl(Equal)` being an auto-derivable builtin
+// protocol). Verified via generated C: `v.equal(w)` lowers to a properly
+// typed `Nova_BadImplEqual14_method_equal` performing real field-wise
+// comparison (`nova_self->junk == other->junk`), NOT a `void*`-cast
+// collision with an unrelated type's method. Kept as a pos fixture so a
+// future window doesn't "fix" this into a spurious E_IMPL_MISSING_METHODS.
+
+#impl(Equal)
+type BadImplEqual14 { junk int }
+
+fn main() Io -> () {
+    ro v = BadImplEqual14 { junk: 1 }
+    ro w = BadImplEqual14 { junk: 2 }
+    print("${v.equal(w)}")
+}

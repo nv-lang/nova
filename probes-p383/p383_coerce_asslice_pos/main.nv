@@ -1,0 +1,20 @@
+module p383_coerce_asslice_pos
+
+// Owner's adjacent question: does a `#coerce` conversion satisfy a protocol
+// bound? Answer (empirical, see PROGRESS-p383-bounds.md): for `str`
+// specifically, this compiles AND runs correctly (verified: builds, prints
+// the coerced length) — but NOT because the bound-checker understands
+// `#coerce`. `check_satisfaction_against_methods` hard-codes an early-return
+// bypass for a FIXED primitive-name allowlist (types/mod.rs ~28039, includes
+// "str") that treats ANY bound as trivially satisfied for those names,
+// regardless of structural fit; separately, codegen independently applies
+// `#coerce fn str @bytes() -> ro []u8` at the call-argument position, so the
+// value actually passed to `@append` is a real `[]u8` (which DOES
+// structurally satisfy AsSlice). Two independent mechanisms coincide for
+// `str`; a NON-primitive user type with its own `#coerce` to an
+// AsSlice-satisfying type would NOT get the same free pass — the
+// bound-checker has no `#coerce`-awareness of its own.
+fn main() Io -> () {
+    mut v []u8 = []u8.new()
+    v.append("hello")
+}

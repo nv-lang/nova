@@ -1,0 +1,16 @@
+module p384_equal_implsite_neg
+
+// №384 decl-site negative companion to p384_equal_implsite_pos: when the
+// field type genuinely CANNOT be auto-derived (a `fn`-typed field has no
+// Equal), decl-site verification correctly rejects with
+// E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL + E_IMPL_MISSING_METHODS — confirms
+// decl-site enforcement is real and not just "always passes".
+
+#impl(Equal)
+type BadImplEqual2 { f fn() -> int }
+
+fn main() Io -> () {
+    ro v = BadImplEqual2 { f: || 1 }
+    ro w = BadImplEqual2 { f: || 2 }
+    print("${v.equal(w)}")
+}

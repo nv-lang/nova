@@ -1,0 +1,20 @@
+module p384_equal_callsite_neg
+
+// №384 Корень Б: `Equal.@equal` has a default body (`=> @compare(other) ==
+// 0`, protocols.nv). A type without `@compare` must NOT satisfy the
+// `[T Equal]` bound at a generic call-site — before the fix, the checker
+// unconditionally accepted ANY `default_body.is_some()` without verifying
+// the body's own dependency (`@compare`) resolves, and the call-site
+// resolver silently picked an unrelated same-named method elsewhere in the
+// program (`Nova_HashMap_method_equal`, verified via generated C) — UB, not
+// a caught error.
+
+type NoEqual8 { junk int }
+
+fn[T Equal] use_equal(a T, b T) -> bool => a.equal(b)
+
+fn main() Io -> () {
+    ro v = NoEqual8 { junk: 1 }
+    ro w = NoEqual8 { junk: 2 }
+    print("${use_equal(v, w)}")
+}
