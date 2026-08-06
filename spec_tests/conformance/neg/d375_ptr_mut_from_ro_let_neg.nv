@@ -1,0 +1,19 @@
+// №375 (D246 amend, Plan 221 п.12, window p375-ptr2, owner decision
+// 2026-08-06) — `ro q *mut T = &b` over a READONLY `b` used to pass `nova
+// check` clean, build, and execute the write at runtime (ro-guarantee
+// bypass). `&b` (D246/118.6 restored) infers `*T` from a `ro`-bound source;
+// the explicit `*mut T` annotation cannot override that at the SOURCE — a
+// writable pointer may only be taken from a `mut`-bound binding.
+
+// EXPECT_COMPILE_ERROR E_POINTER_MUT_FROM_RO_SOURCE
+
+module neg.d375_ptr_mut_from_ro_let_neg
+
+type Counter { v int }
+
+test "rejects `ro q *mut T = &ro_b` (writable pointer from ro-bound source)" {
+    ro b = Counter { v: 7 }
+    ro q *mut Counter = &b
+    unsafe { q.write(Counter { v: 8 }) }
+    assert(b.v == 8)
+}

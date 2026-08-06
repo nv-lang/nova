@@ -19,7 +19,7 @@ unsafe fn double_174_5(x i64) -> i64 {
 test "unsafe block calling `.write()` raw-pointer intrinsic — legitimately used" {
     mut x int = 21
     unsafe {
-        ro p = (&x) as *mut int
+        ro p = &x
         p.write(42)
     }
     assert(x == 42)

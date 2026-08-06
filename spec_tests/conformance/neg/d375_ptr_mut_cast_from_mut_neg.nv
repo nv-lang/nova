@@ -1,0 +1,21 @@
+// №375 (D216 §4 AMEND / D246, Plan 118.6 restored, owner decision
+// 2026-08-06, window p375-ptr2) — the CAST path retirement is UNCONDITIONAL:
+// `(&mut_b) as *mut T` is ALSO rejected, even though `mut_b` is a `mut`-bound
+// source and `&mut_b` alone ALREADY infers `*mut T` (118.6 restored) — the
+// cast is redundant, and the whole FORM is retired regardless. Mirrors the
+// ro-source sibling d375_ptr_mut_cast_from_ro_neg.nv; together the pair
+// proves the cast form is gone entirely, not just gated on source
+// mutability. Fix: drop the cast — `ro q = &mut_b` already gives `*mut T`.
+
+// EXPECT_COMPILE_ERROR E_POINTER_OP_USE_METHOD
+
+module neg.d375_ptr_mut_cast_from_mut_neg
+
+type Counter { v int }
+
+test "rejects `(&mut_b) as *mut T` — retired cast form, mut source too" {
+    mut b = Counter { v: 7 }
+    ro q = unsafe { (&b) as *mut Counter }
+    unsafe { q.write(Counter { v: 8 }) }
+    assert(b.v == 8)
+}

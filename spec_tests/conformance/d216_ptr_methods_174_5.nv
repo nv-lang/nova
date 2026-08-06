@@ -44,7 +44,7 @@ test "dist — signed element count, sign gives order" {
 test "write(v T) classic value store still works" {
     mut x int = 1
     unsafe {
-        ro p = (&x) as *mut int
+        ro p = &x
         p.write(42)
     }
     assert(x == 42)
@@ -54,8 +54,8 @@ test "write(v *T) overload — copy from a source pointer" {
     mut dst int = 0
     ro src int = 77
     unsafe {
-        ro d = (&dst) as *mut int
-        ro s = (&src) as *int
+        ro d = &dst
+        ro s = &src
         d.write(s)
     }
     assert(dst == 77)

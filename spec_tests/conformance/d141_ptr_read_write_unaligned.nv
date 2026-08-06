@@ -6,9 +6,10 @@
 // item 2: separate `.read_unaligned()`/`.write_unaligned(v)` — memcpy-
 //   emission, safe at any (incl. odd) byte offset. Spot-checked against
 //   emitted C separately (must contain `memcpy` for these two calls).
-// item 4: `&ro-value as *T` (ro pointer) / `&mut-value as *mut T` (mut
-//   pointer) — address-of-then-cast associates as `(&expr) as *T`, not
-//   `&(expr as *T)` (D54/L3 unsafe boundary).
+// item 4: `&ro-value as *T` — address-of-then-cast associates as `(&expr)
+//   as *T`, not `&(expr as *T)` (D54/L3 unsafe boundary). `&mut-value as
+//   *mut T` was retired (№375, 2026-08-06, Plan 118.6 restored): `&mut_x`
+//   now infers the writable `*mut T` directly — no cast needed.
 // Единица: folder-module `spec_tests.conformance`.
 module spec_tests.conformance
 
@@ -20,7 +21,7 @@ test "ptr read()/write() bare deref round-trip" {
     }
     mut y int = 7
     unsafe {
-        ro q = (&y) as *mut int
+        ro q = &y
         q.write(99)
         assert(y == 99)
     }

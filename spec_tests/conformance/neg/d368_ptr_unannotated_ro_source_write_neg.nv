@@ -1,0 +1,20 @@
+// №368 (window p375-ptr2) — classification gap: `mut p = buf.ptr()` with NO
+// type annotation left `p` UNTYPED in the checker's scope (`infer_expr_type`
+// had no instance-method-return path for `Vec[T]`/`[]T`'s real `@ptr()`/
+// `mut @ptr()` overload pair — only the FixedArray `[N]T` sibling had a
+// targeted fix). Every LATER check keyed off `infer_expr_type(p)` silently
+// no-opped for this idiom — including E_POINTER_RO_ASSIGN, exercised here:
+// `buf` is `ro`-bound, so `buf.ptr()` picks the READONLY `@ptr() -> *T`
+// overload; writing through the (unannotated) result must still be
+// rejected exactly as it already is for the ANNOTATED / mut-source cases.
+
+// EXPECT_COMPILE_ERROR E_POINTER_RO_ASSIGN
+
+module neg.d368_ptr_unannotated_ro_source_write_neg
+
+test "rejects write through unannotated `p = ro_buf.ptr()` (ro pointee)" {
+    ro buf []int = [1, 2, 3]
+    mut p = buf.ptr()
+    unsafe { p.write(99) }
+    assert(buf[0] == 99)
+}

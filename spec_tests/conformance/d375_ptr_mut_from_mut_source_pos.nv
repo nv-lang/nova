@@ -1,0 +1,37 @@
+// №375 (D216 §4 AMEND / D246, Plan 118.6 restored, owner decision
+// 2026-08-06, window p375-ptr2) — POS boundary for the neg family
+// (neg/d375_ptr_mut_from_ro_*_neg.nv, neg/d375_ptr_mut_cast_from_*_neg.nv):
+// a writable `*mut T` pointer materialized from a `mut`-bound SOURCE stays
+// fully legal, both via the restored 118.6 unannotated inference (`&mut_x`
+// alone → `*mut T`) and via an explicit `*mut T` annotation over a
+// mut-bound source. Value-checking: the write through the pointer is
+// actually OBSERVED on the original binding, not just "compiles".
+// Part of the single conformance folder-module (D246-prefixed names avoid
+// collisions — `PtrSrcCounter` is exclusive to this file).
+module spec_tests.conformance
+
+type PtrSrcCounter { v int }
+
+test "unannotated `&mut_x` infers `*mut T` and the write is observed (118.6 restored)" {
+    mut a = PtrSrcCounter { v: 21 }
+    ro p = &a
+    unsafe { p.write(PtrSrcCounter { v: 42 }) }
+    assert(a.v == 42)
+}
+
+test "explicit `*mut T` annotation over a mut-bound source stays legal" {
+    mut a = PtrSrcCounter { v: 1 }
+    ro p *mut PtrSrcCounter = &a
+    unsafe { p.write(PtrSrcCounter { v: 2 }) }
+    assert(a.v == 2)
+}
+
+fn d375_bump_ptr_src(p *mut PtrSrcCounter) {
+    unsafe { p.write(PtrSrcCounter { v: 99 }) }
+}
+
+test "`&mut_x` passed to a `*mut T` param stays legal" {
+    mut a = PtrSrcCounter { v: 1 }
+    d375_bump_ptr_src(&a)
+    assert(a.v == 99)
+}
