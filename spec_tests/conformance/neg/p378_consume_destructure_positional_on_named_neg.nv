@@ -1,0 +1,30 @@
+// №378 (`[M-73.1-destructure]`, окно p378-consume-destructure, 2026-08-06):
+// круглая (positional) форма `consume (a, b) = …` на ИМЕНОВАННОМ кортеже
+// запрещена каноном (амендмент 2026-08-05, `02-types.md` «Конструирование и
+// деструктуризация именованного кортежа») — именованный кортеж разбирается
+// по именам полей, как запись; круглая скобка — позиционный разбор,
+// который молча сломается при перестановке полей. Проверка переиспользует
+// существующую `check_positional_destructure_on_named_tuple`
+// (`E_NAMED_TUPLE_POSITIONAL_DESTRUCTURE`, №145) — тот же код, что уже
+// работает для `ro`/`mut`; новой диагностики под №378 не заводилось.
+//
+// EXPECT_COMPILE_ERROR E_NAMED_TUPLE_POSITIONAL_DESTRUCTURE
+
+module neg.p378_consume_destructure_positional_on_named_neg
+
+type P378Half1 consume { id int }
+fn P378Half1 consume @close() -> () { () }
+
+type P378Half2 consume { id int }
+fn P378Half2 consume @close() -> () { () }
+
+type P378Pair consume(x P378Half1, y P378Half2)
+
+fn p378_make_named_pair() -> P378Pair =>
+    P378Pair(P378Half1 { id: 1 }, P378Half2 { id: 2 })
+
+test "consume (x, y) = named tuple — positional form on named tuple rejected" {
+    consume (x, y) = p378_make_named_pair()
+    x.close()
+    y.close()
+}

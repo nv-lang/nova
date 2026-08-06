@@ -1,0 +1,23 @@
+// №378 (`[M-73.1-destructure]`, окно p378-consume-destructure, 2026-08-06):
+// каждый элемент паттерна после `consume` несёт СОБСТВЕННОЕ consume-
+// обязательство (D133) — не паттерн целиком. Забытый ВТОРОЙ элемент (`b`)
+// должен диагностироваться по ИМЕНИ элемента, не всего биндинга.
+//
+// EXPECT_COMPILE_ERROR D133-not-consumed
+
+module neg.p378_consume_destructure_forget_element_neg
+
+type P378Half1 consume { id int }
+fn P378Half1 consume @close() -> () { () }
+
+type P378Half2 consume { id int }
+fn P378Half2 consume @close() -> () { () }
+
+fn p378_make_pair() -> (P378Half1, P378Half2) =>
+    (P378Half1 { id: 1 }, P378Half2 { id: 2 })
+
+test "consume (a, b) = pair; forgot b — D133-not-consumed on b" {
+    consume (a, b) = p378_make_pair()
+    a.close()
+    // ОШИБКА D133-not-consumed: `b` Live на exit'е scope'а.
+}
