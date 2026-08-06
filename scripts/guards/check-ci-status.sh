@@ -146,7 +146,10 @@ case "$KIND" in
         CT="$(git show -s --format=%ct "$SHA" 2>/dev/null || echo 0)"
         NOW="$(date +%s)"
         AGE_MIN=$(( (NOW - CT) / 60 ))
-        if [ "$CT" -gt 0 ] && [ "$AGE_MIN" -gt "$STALE_MIN" ]; then
+        # `-ge`, а не `-gt`: с порогом 0 («считать молчащим сразу») строгое сравнение
+        # никогда не срабатывает на свежем коммите — самотест на Linux падал именно
+        # так (клон --depth 1, возраст HEAD = 0 мин, порог 0 → 0 > 0 = false).
+        if [ "$CT" -gt 0 ] && [ "$AGE_MIN" -ge "$STALE_MIN" ] && [ "$STALE_MIN" -ge 0 ]; then
             say "STALE — на $SHORT НЕТ НИ ОДНОГО ПРОГОНА, коммиту $AGE_MIN мин"
             say "  пуш прошёл, CI не отреагировал — молчащий гейт опаснее красного"
             [ "$STRICT" -eq 1 ] && exit 1
