@@ -1,0 +1,19 @@
+// EXPECT_COMPILE_ERROR [E_FIBER_INDIRECT_CALL] indirect call inside a `spawn` body
+
+// Plan 238 Ф.2 (D446 §4/Ф.8-НОВАЯ П.2): a call reached inside a `spawn`
+// body through a PARAMETER of function type — the concrete target is not
+// statically knowable (any closure the caller passes could be substituted)
+// — is conservatively treated as unsafe, unconditionally. This is the
+// D446 §4 "непрямые вызовы" case, distinct from `E_FIBER_UNSAFE_CALL`
+// (a resolved target whose бирка is not `Safe`): here there is no target
+// to even look up a бирка for.
+
+module neg.fiber_indirect_call_neg
+
+fn run_in_fiber(task fn() -> ()) {
+    supervised {
+        spawn {
+            task()
+        }
+    }
+}

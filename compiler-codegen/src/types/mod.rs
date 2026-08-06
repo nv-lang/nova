@@ -1958,11 +1958,18 @@ fn check_module_impl(
     // Plan 238 Ф.1 (D446 "Ф.8-НОВАЯ"): total per-fn/method M:N-safety tag,
     // built over the NOW-FINAL `resolved_callees` (must run after the main
     // check pass populates it, same requirement `check_unsafe_context_in_
-    // module` above already has). Measurement/dump only — computes an
-    // in-memory map, prints nothing unless `NOVA_DEBUG_FIBER_SAFETY=1`, and
-    // is not read by any diagnostic or by codegen (behaviorally neutral by
-    // construction — see `fiber_safety.rs` module doc).
-    let _fiber_safety = fiber_safety::run(module, &type_check_ctx.resolved_callees.borrow());
+    // module` above already has). Prints nothing unless
+    // `NOVA_DEBUG_FIBER_SAFETY=1`.
+    let fiber_safety_tags = fiber_safety::run(module, &type_check_ctx.resolved_callees.borrow());
+    // Plan 238 Ф.2 (D446 "Ф.8-НОВАЯ" П.2, seeding-point enforcement): every
+    // call reached inside a `spawn`/`detach`/`parallel for` body must
+    // resolve to a `Safe`-tagged fn/method — an indirect call (D446 §4) or
+    // a call whose tag is `Unsafe`/`Undecided` is a hard error
+    // (`E_FIBER_UNSAFE_CALL`/`E_FIBER_INDIRECT_CALL`). Checker-channel only
+    // (§0/196) — reuses the SAME `resolved_callees`/`fiber_safety_tags` this
+    // module already computed, emits into the SAME `errors` every other
+    // checker pass in this fn writes to.
+    fiber_safety::check_seed_points(module, &type_check_ctx.resolved_callees.borrow(), &fiber_safety_tags, &mut errors);
 
     // Plan 174.6 M1 (D282 rule 2 / D353): validate that `extern "C" fn`
     // signatures (params + return) — and every `*extern "C" fn` fn-pointer

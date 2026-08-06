@@ -126,13 +126,18 @@ impl Tag {
 /// П.3 basis + debug-dump vocabulary. `reason` is a FIXED set of static
 /// codes (see the dump in [`run`]) so counters can be grouped; `detail`
 /// carries the offending callee's rendered name for the two
-/// graph-propagated reasons (cheap breadcrumb for a later phase's
-/// diagnostic — unused by phase 1 itself).
+/// graph-propagated reasons (`calls_unsafe`/`calls_undecided`) — read by
+/// phase 2's [`render_chain`] together with `detail_span` (the SAME
+/// callee's declaration `Span`, i.e. a valid key back into the `tags` map)
+/// to walk the cause backward, one hop per `calls_unsafe`/`calls_undecided`
+/// link, until a TERMINAL reason (anything else) is reached. `detail_span`
+/// is `None` exactly when `detail` is (every non-graph-propagated reason).
 #[derive(Clone, Debug)]
 pub struct FnSafety {
     pub tag: Tag,
     pub reason: &'static str,
     pub detail: Option<String>,
+    pub detail_span: Option<Span>,
 }
 
 // ── Pass 0: flat index over Item::Fn (free fns AND methods) ───────────
@@ -142,6 +147,33 @@ fn build_fn_index(module: &Module) -> HashMap<Span, &FnDecl> {
     for item in &module.items {
         if let Item::Fn(fd) = item {
             idx.insert(fd.span, fd);
+        }
+    }
+    // Ф.2: mirrors `build_type_decls`'s registry merge below (same file,
+    // same established pattern) — registry-only builtin modules
+    // (`sync.nv`'s Atomic*/Mutex/RwLock/Semaphore/... among them) are NOT
+    // literally `import`ed into `module.items` the way a regular `.nv`
+    // file's own declarations are: `external_registry::builtin_sig_
+    // modules()` is a SEPARATE resolution channel that `resolved_callees`
+    // itself already consults (a call to `AtomicInt.fetch_add` resolves
+    // and type-checks fine), but a plain `module.items` walk never sees
+    // these declarations. Without this merge, EVERY method on an
+    // `Atomic*`/`Mutex`/`CancelToken`/... type is invisible to `fn_index`
+    // — measured live gap: `AtomicInt.fetch_add` inside a `spawn` body
+    // reported "belongs to a DIFFERENT compile unit" even checking
+    // `std/src` itself, where nothing is actually cross-package. Registry
+    // entries are keyed by their OWN stable declaration `Span` (the
+    // registry's content is loaded once, not re-parsed per compile unit),
+    // so this merge is safe to repeat on every `run()`/`check_seed_
+    // points()` call — `or_insert` leaves a real, module-declared `fn` of
+    // the same span untouched (can't happen in practice, spans are
+    // per-file-unique, but matches `build_type_decls`'s own precedence
+    // convention for consistency).
+    for ext_mod in crate::codegen::external_registry::builtin_sig_modules() {
+        for item in &ext_mod.items {
+            if let Item::Fn(fd) = item {
+                idx.entry(fd.span).or_insert(fd);
+            }
         }
     }
     idx
@@ -519,9 +551,47 @@ fn touch_share_ok(root: &PlaceRoot, ctx: &PassBCtx) -> bool {
     match ty {
         Some(t) => {
             let q = super::CapShareQuery(ctx.type_decls);
-            crate::protocols::share_check::is_mut_alias_safe(&q, &t)
+            if crate::protocols::share_check::is_mut_alias_safe(&q, &t) {
+                return true;
+            }
+            // Ф.2 companion fix (D446 sync brick 2 — linearity, not brick
+            // 3 — synchronization): a touch on a `consume`/LINEAR-typed
+            // receiver (`TcpStream`/`Transaction`/... — D415's own named
+            // examples) is safe for a DIFFERENT reason than `#share`: a
+            // linear type's single-ownership discipline (D131/consume)
+            // ALREADY guarantees no second alias exists to race with —
+            // that is what makes `spawn consume c { ... }` sound in the
+            // FIRST place (D415 §4). `is_mut_alias_safe` alone only
+            // implements brick 3 (audited synchronization); without this,
+            // EVERY `mut`-parameter of a linear type (the ordinary way a
+            // moved-in resource is threaded through a call chain once
+            // inside its owning fiber) was blanket Unsafe("unguarded_
+            // mutation") — measured live gap: `TcpStream.read`/`.write`
+            // inside `examples/flagship/aggregator`'s `spawn`/`detach`
+            // bodies (36 seed-point rejections, virtually all bottoming
+            // out in `TcpStream.*`/`TlsStream.*` touching their OWN
+            // receiver — a receiver that, by construction, was `consume`d
+            // into this fiber and can have no second owner).
+            typeref_named_base(&t)
+                .and_then(|b| ctx.type_decls.get(b))
+                .map(|td| td.consume)
+                .unwrap_or(false)
         }
         None => false,
+    }
+}
+
+/// Strips `ro`/`mut`/`uninit` binding-modifier wrappers to the named base
+/// type — mirrors `TypeCheckCtx::typeref_named_base` (types/mod.rs), not
+/// shared directly (this module has no `&self` `TypeCheckCtx` to call it
+/// on — same small-helper-duplication precedent as `callee_bare_name`).
+fn typeref_named_base(ty: &TypeRef) -> Option<&str> {
+    match ty {
+        TypeRef::Named { path, .. } => path.last().map(|s| s.as_str()),
+        TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) | TypeRef::Uninit(inner, _) => {
+            typeref_named_base(inner)
+        }
+        _ => None,
     }
 }
 
@@ -726,6 +796,7 @@ fn pb_walk_expr(e: &Expr, ctx: &PassBCtx, guards: &mut Vec<String>, facts: &mut 
     match &e.kind {
         ExprKind::Call { func, args, trailing } => {
             // Touch detection: a method call rooted at `@`/a `mut` param.
+            let mut skip_edge = false;
             if let ExprKind::Member { obj, .. } = &func.kind {
                 if let Some(root) = place_root(obj, ctx.mut_params) {
                     let resolved = ctx.resolved_callees.get(&e.id).copied();
@@ -743,9 +814,48 @@ fn pb_walk_expr(e: &Expr, ctx: &PassBCtx, guards: &mut Vec<String>, facts: &mut 
                             share_ok: if guards.is_empty() { touch_share_ok(&root, ctx) } else { false },
                         });
                     }
+                } else {
+                    // Ф.2 fix (measured live gap — `Path.join_path`'s `out.push
+                    // (..)`, `read_dir`'s local `Vec`-building, pervasive across
+                    // `std`/flagship): `obj` resolves to NEITHER `@` nor a
+                    // `mut`-param of THIS fn — a purely LOCAL, non-escaping
+                    // receiver (the SAME "local mut accumulator is not a touch"
+                    // exemption the module doc already states for a DIRECT
+                    // assignment `out = ...`; `record_call_edge`, unlike
+                    // `place_root`'s OWN touch check above, did not previously
+                    // apply that exemption to a METHOD CALL on such a receiver
+                    // — `out.push(x)` unconditionally added `Vec.push` as a
+                    // graph edge regardless of `out`'s locality, so ANY caller
+                    // of an ordinary (non-`#share`) collection's mutating method
+                    // permanently inherited that method's OWN unavoidable
+                    // "touches its own `@`" tag — transitively poisoning nearly
+                    // every real caller (measured: flagship `examples/flagship/
+                    // aggregator` alone produced 37 seed-point rejections before
+                    // this fix, virtually all bottoming out in `Vec.*`/`String.*`
+                    // mutating their OWN receiver, not in anything actually
+                    // reachable from OUTSIDE the local call). If the resolved
+                    // target is a LOCALLY-known (`ctx.fn_index`) `mut @method`,
+                    // skip the graph edge: whatever it does to ITS OWN receiver
+                    // is exactly as safe as this fn mutating `out` directly,
+                    // which Pass B already exempts. A genuinely opaque target
+                    // (unresolved, or resolved outside this module) still
+                    // records the edge — this fix narrows ONLY the provably-
+                    // safe "local receiver, known same-module mutator" case,
+                    // it does not touch the `@`/`mut`-param path above at all
+                    // (a receiver ACTUALLY rooted at `@`/a param is unaffected
+                    // — that is the genuinely observable-outside-this-call
+                    // case D446 exists to catch, e.g. the metrics.nv/
+                    // ratelimit.nv shape).
+                    if let Some(span) = ctx.resolved_callees.get(&e.id).copied() {
+                        if ctx.fn_index.contains_key(&span) && callee_mutates(span, ctx) {
+                            skip_edge = true;
+                        }
+                    }
                 }
             }
-            record_call_edge(e, ctx, facts);
+            if !skip_edge {
+                record_call_edge(e, ctx, facts);
+            }
             pb_walk_expr(func, ctx, guards, facts);
             pb_walk_call_args(e, args, trailing, ctx, guards, facts);
             // Consume-the-guard bookkeeping (mirrors Pass A exactly).
@@ -880,6 +990,7 @@ fn facts_to_intra(facts: &FnFacts) -> Intra {
             tag: Tag::Unsafe,
             reason: "unguarded_mutation",
             detail: None,
+            detail_span: None,
         });
     }
     if facts.cross_module_callee {
@@ -887,6 +998,7 @@ fn facts_to_intra(facts: &FnFacts) -> Intra {
             tag: Tag::Undecided,
             reason: "cross_module_callee",
             detail: None,
+            detail_span: None,
         });
     }
     if facts.touches.is_empty() {
@@ -915,13 +1027,6 @@ pub fn run(module: &Module, resolved_callees: &HashMap<ExprId, Span>) -> HashMap
     let mut final_tag: HashMap<Span, FnSafety> = HashMap::new();
 
     for (&span, fd) in &fn_index {
-        if let Some(reason) = signature_undecided_reason(fd) {
-            final_tag.insert(
-                span,
-                FnSafety { tag: Tag::Undecided, reason, detail: None },
-            );
-            continue;
-        }
         let receiver_type = fd.receiver.as_ref().map(|r| r.type_name.as_str());
         let mut_params: HashSet<String> =
             fd.params.iter().filter(|p| p.is_mut).map(|p| p.name.clone()).collect();
@@ -936,6 +1041,186 @@ pub fn run(module: &Module, resolved_callees: &HashMap<ExprId, Span>) -> HashMap
             mut_params: &mut_params,
             param_types: &param_types,
         };
+        if let Some(reason) = signature_undecided_reason(fd) {
+            // Ф.2 (D446 sync brick 3): an extern (no-body) METHOD on a
+            // `#share`-verified receiver type is that type's OWN audited
+            // synchronized primitive (Atomic*/Mutex/CancelToken/... — the
+            // white list's actual FFI implementation) — not "unprovable".
+            // Measured live gap: `CancelToken.cancel`/`.is_cancelled`
+            // (both `export extern "nova" fn`, `CancelToken` is `#share`,
+            // D415-audited) were blanket Undecided("no_body") before this
+            // fix — the white list existed on the TYPE but was never
+            // consulted for its own extern methods. `is_mut_alias_safe`
+            // (D415's structural walk, VERBATIM reuse — same call
+            // `touch_share_ok` below already makes) on the receiver type
+            // itself decides.
+            if reason == "no_body" {
+                // Ф.2: only an INSTANCE receiver (`@`) has an actual `self`
+                // value whose OWN `#share`-ness is the right question —
+                // route it through the receiver-type check below. A
+                // STATIC-receiver extern (`SocketAddr.loopback(port)`,
+                // `Receiver::kind == Static`, no `@` in its body at all —
+                // essentially a namespaced free fn) has NOTHING to check
+                // `#share` on; the args-safety check (the SAME one
+                // receiverless free fns use) is the right question for it
+                // instead. Measured live gap: `SocketAddr.loopback`
+                // (`export extern "nova" fn SocketAddr.loopback(port u16)
+                // -> Self`) was blanket Undecided("no_body") — the
+                // receiver-type check tried (wrongly) to verify `#share`
+                // on `SocketAddr` itself, which is not what a static ctor
+                // even touches.
+                let is_instance_recv = fd
+                    .receiver
+                    .as_ref()
+                    .map(|r| r.kind == crate::ast::ReceiverKind::Instance)
+                    .unwrap_or(false);
+                if is_instance_recv {
+                    if let Some(tn) = receiver_type {
+                        let recv_ty = TypeRef::Named {
+                            path: vec![tn.to_string()],
+                            generics: vec![],
+                            span: Span::default(),
+                        };
+                        let q = super::CapShareQuery(&type_decls);
+                        if crate::protocols::share_check::is_mut_alias_safe(&q, &recv_ty) {
+                            final_tag.insert(
+                                span,
+                                FnSafety {
+                                    tag: Tag::Safe,
+                                    reason: "share_verified_extern",
+                                    detail: None,
+                                    detail_span: None,
+                                },
+                            );
+                            continue;
+                        }
+                    }
+                } else {
+                    // Ф.2 companion fix — a receiverless-or-STATIC extern
+                    // (no `@` value to check `#share` on — either no
+                    // receiver at all, or a static/namespaced one) whose
+                    // ENTIRE signature (every param, the return type) is
+                    // `mut`-alias-safe (D415's own "ro/primitive ⇒
+                    // shareable" brick 1, `is_mut_alias_safe` again —
+                    // reused, not a new rule) receives nothing it could
+                    // hand a caller-visible mutable alias through, so
+                    // whatever the FFI body does internally cannot touch
+                    // caller-observable shared state via ITS ARGUMENTS. A
+                    // bare `mut T` parameter type is EXCLUDED on purpose
+                    // (`TypeRef::Mut` fails `is_mut_alias_safe`'s own check
+                    // already — no special-casing needed) since that DOES
+                    // let the FFI write through a caller-visible place.
+                    // Measured live gaps: `assert(cond bool)`/`assert(cond
+                    // bool, msg str)` (`std/src/prelude/runtime.nv`, used
+                    // pervasively inside `spawn` bodies across the ENTIRE
+                    // test corpus) and `SocketAddr.loopback(port u16)` —
+                    // both were blanket Undecided("no_body") despite being
+                    // unable to reach any state beyond their own by-value
+                    // args.
+                    // NOTE: `is_mut_alias_safe` (`Access::Mut`, fixed) is
+                    // the WRONG predicate here — it is D415's "is aliasing
+                    // this MUT BINDING safe" check, which refuses EVERY
+                    // bare scalar unconditionally (`bool`/`str`/`int` —
+                    // "a writable scalar cell aliased across fibers IS the
+                    // race", `share_check.rs`'s own comment) REGARDLESS of
+                    // whether this specific parameter is actually mutable —
+                    // it assumes `Access::Mut` universally, so `assert(cond
+                    // bool)` failed THIS check even though `cond` is an
+                    // ordinary by-VALUE bool copy, not an alias to
+                    // anything. `is_alias_read_safe` (`Access::Read`) is
+                    // the right predicate for a plain by-value PARAMETER —
+                    // the callee reads/copies it, it does not hand back a
+                    // caller-visible mutable place. A parameter EXPLICITLY
+                    // typed `mut T` is excluded by hand (not through
+                    // `share_rec`'s `TypeRef::Mut` arm, which just forwards
+                    // whatever `access` it's given — see that arm's own
+                    // comment: the mut/ro distinction there is meant to
+                    // come from the BINDING at a capture site, not from a
+                    // signature's own type annotation) — a genuine `mut`
+                    // parameter DOES let the FFI write through a
+                    // caller-visible place and must not be blessed here.
+                    let q = super::CapShareQuery(&type_decls);
+                    let param_safe = |ty: &TypeRef| -> bool {
+                        if matches!(ty, TypeRef::Mut(..)) {
+                            return false;
+                        }
+                        // `never` (a fn that does not return normally —
+                        // `panic(msg str) -> never`) produces NO value
+                        // ever, so it cannot hand back a caller-visible
+                        // alias — trivially safe, but `share_rec` has no
+                        // dedicated arm for it (parses as an ordinary
+                        // `TypeRef::Named{path:["never"]}`, not in
+                        // `NOVA_PRIMITIVES`, falls through to the unknown-
+                        // type refusal). `Self` on a STATIC receiver
+                        // (`SocketAddr.loopback(..) -> Self`) resolves to
+                        // a BRAND NEW instance of the receiver type being
+                        // constructed and returned — not an alias to any
+                        // EXISTING caller-visible state — also trivially
+                        // safe regardless of what `is_alias_read_safe`
+                        // would say about the receiver type's OWN general
+                        // `#share`-ness (a fresh value has no second owner
+                        // yet). Both measured live gaps on `std/src/net`.
+                        if let TypeRef::Named { path, generics, .. } = ty {
+                            if generics.is_empty() && path.len() == 1 {
+                                if path[0] == "never" || path[0] == "Self" {
+                                    return true;
+                                }
+                            }
+                        }
+                        crate::protocols::share_check::is_alias_read_safe(&q, ty)
+                    };
+                    let all_safe = fd.params.iter().all(|p| param_safe(&p.ty))
+                        && fd.return_type.as_ref().map_or(true, |rt| param_safe(rt));
+                    if all_safe {
+                        final_tag.insert(
+                            span,
+                            FnSafety {
+                                tag: Tag::Safe,
+                                reason: "share_verified_extern_args",
+                                detail: None,
+                                detail_span: None,
+                            },
+                        );
+                        continue;
+                    }
+                }
+            }
+            // Ф.2 narrow refinement: a GENERIC fn whose body makes ZERO
+            // calls and ZERO touches (`T` is purely inert data — cast/
+            // copied, never itself the target of a dispatched operation)
+            // cannot do anything unsafe regardless of what `T` is
+            // instantiated to — measured live gap: `fn[T Ints] T
+            // @to_millis() -> Duration => { nanos: (@ as i64)*1_000_000 }`
+            // (`std/src/time/duration/core.nv`) was blanket
+            // Undecided("generic") despite being a pure arithmetic leaf,
+            // and this shape is pervasive in the real corpus (`Duration`'s
+            // whole `to_*` conversion family). Deliberately NARROW — a
+            // generic fn that calls ANYTHING (even something itself
+            // `Safe`) stays Undecided: bound-sensitive call safety is NOT
+            // implemented here (D446 Ф.1 report §6 pt.4 — explicitly
+            // deferred, "work of the first wave after measurement"); this
+            // only stops over-rejecting the total-leaf case.
+            if reason == "generic" {
+                let facts = analyze_fn_body(fd, &ctx);
+                if facts.touches.is_empty() && facts.local_callees.is_empty() && !facts.cross_module_callee {
+                    final_tag.insert(
+                        span,
+                        FnSafety {
+                            tag: Tag::Safe,
+                            reason: "generic_leaf_no_op",
+                            detail: None,
+                            detail_span: None,
+                        },
+                    );
+                    continue;
+                }
+            }
+            final_tag.insert(
+                span,
+                FnSafety { tag: Tag::Undecided, reason, detail: None, detail_span: None },
+            );
+            continue;
+        }
         let facts = analyze_fn_body(fd, &ctx);
         local_callees_of.insert(span, facts.local_callees.clone());
         match facts_to_intra(&facts) {
@@ -973,11 +1258,11 @@ pub fn run(module: &Module, resolved_callees: &HashMap<ExprId, Span>) -> HashMap
                     }
                 }
                 let fs = match worst {
-                    Tag::Safe => FnSafety { tag: Tag::Safe, reason, detail: None },
+                    Tag::Safe => FnSafety { tag: Tag::Safe, reason, detail: None, detail_span: None },
                     _ => {
                         let (r, callee_span) = worst_detail.unwrap();
                         let name = fn_index.get(&callee_span).map(|fd| render_fn_name(fd)).unwrap_or_default();
-                        FnSafety { tag: worst, reason: r, detail: Some(name) }
+                        FnSafety { tag: worst, reason: r, detail: Some(name), detail_span: Some(callee_span) }
                     }
                 };
                 final_tag.insert(span, fs);
@@ -991,7 +1276,7 @@ pub fn run(module: &Module, resolved_callees: &HashMap<ExprId, Span>) -> HashMap
     // path to unsafe never gets marked unsafe" reasoning
     // `thread_affine_closure` already relies on.
     for (&span, &reason) in &candidates {
-        final_tag.entry(span).or_insert(FnSafety { tag: Tag::Safe, reason, detail: None });
+        final_tag.entry(span).or_insert(FnSafety { tag: Tag::Safe, reason, detail: None, detail_span: None });
     }
 
     debug_assert_eq!(
@@ -1095,5 +1380,796 @@ fn pct(n: usize, total: usize) -> f64 {
         0.0
     } else {
         (n as f64) * 100.0 / (total as f64)
+    }
+}
+
+// ============================================================================
+// Plan 238 Ф.2 (D446 "Ф.8-НОВАЯ", план раздел "П.2"/"Критерий приёмки"):
+// enforcement at fiber-SEEDING points. Phase 1 built the total bирка (tag)
+// over the resolved call graph and deliberately enforced NOTHING (measurement
+// only). This section is the missing other half: `spawn`/`detach`/`parallel
+// for` bodies are exactly the places D446 §1 names as where a SECOND fiber
+// gets added — `main` (and every ordinary fn body outside one of these three
+// constructs) is the base unit and never seeds on its own. `supervised { }`
+// is NOT a fourth boundary of its own (D446 Ф.6 decision 1's "надзор,
+// порождающий детей" cashes out as: a supervised body spawns children via an
+// ordinary `spawn` INSIDE it — that `spawn` node is what actually seeds, and
+// `find_seeds_*` below reaches it exactly like any other, since it recurses
+// through `Supervised`'s body).
+// ============================================================================
+
+/// One `Call` reached SYNCHRONOUSLY inside a seed body — its own span (for
+/// diagnostic placement), `ExprId` (the `resolved_callees` lookup key), and
+/// the BARE callee name (last segment only — `foo`/`Type.method`'s `method`/
+/// `a::b::c`'s `c`) used by the two fallbacks below when `resolved_callees`
+/// itself has no entry (see their doc comments for WHY that gap exists and
+/// is not itself a soundness hole).
+struct SeedCall {
+    id: ExprId,
+    site: Span,
+    name: Option<String>,
+    /// `(type_name, method_name)` for the generic-static-receiver call
+    /// shapes (`Vec[T].new(...)`/`[]u8.new(...)`) — see [`static_receiver_
+    /// type_method`]'s doc for why bare-`name` fallback alone cannot
+    /// disambiguate these (measured: `[]u8.new()`'s bare name "new" collides
+    /// with EVERY OTHER type's constructor in `name_index`).
+    static_key: Option<(String, String)>,
+}
+
+/// Mirrors `types/mod.rs`'s `generic_static_receiver` (duplicated — same
+/// established "small, stable snippet, cheaper to copy than to plumb a
+/// cross-module dependency" precedent as `callee_bare_name`/`call_callee_
+/// name` below): recognises the TWO generic-static-receiver shapes the
+/// parser produces — `Vec[T].new(...)` (`Member{ obj: TurboFish{ base:
+/// Ident|Path(1) }, name }`) and the `[]T` slice-sugar spelling
+/// (`Member{ obj: Path(["__array", elem]), name }`, normalized to the
+/// `"Vec"` key — `callnorm.rs`'s own `static_key` convention). `None` for
+/// every other call shape (this is intentionally narrow — ordinary
+/// instance/free calls already resolve via `resolved_callees` directly or
+/// via the bare-name fallback; this ONLY exists for the one measured shape
+/// neither of those two handles).
+fn static_receiver_type_method(func: &Expr) -> Option<(String, String)> {
+    let ExprKind::Member { obj, name } = &func.kind else { return None };
+    match &obj.kind {
+        ExprKind::TurboFish { base, .. } => match &base.kind {
+            ExprKind::Ident(n) => Some((n.clone(), name.clone())),
+            ExprKind::Path(parts) if parts.len() == 1 => Some((parts[0].clone(), name.clone())),
+            _ => None,
+        },
+        ExprKind::Path(parts) if parts.len() == 2 && parts[0] == "__array" => {
+            Some(("Vec".to_string(), name.clone()))
+        }
+        _ => None,
+    }
+}
+
+/// Mirrors `types/mod.rs`'s own `call_callee_name` (duplicated, not shared —
+/// same "small, stable snippet, cheaper to copy than to plumb a shared
+/// dependency across module boundaries" precedent that function's own doc
+/// comment already establishes for an identical need).
+fn callee_bare_name(func: &Expr) -> Option<String> {
+    match &func.kind {
+        ExprKind::Ident(n) => Some(n.clone()),
+        ExprKind::Member { name, .. } => Some(name.clone()),
+        ExprKind::Path(segs) => segs.last().cloned(),
+        _ => None,
+    }
+}
+
+/// D446 sync-side brick 3 ("белый список синхронизированных... концы
+/// каналов"): channel send/recv and the timer-channel constructors are
+/// COMPILER BUILTINS with no corresponding `Item::Fn` anywhere in `std`
+/// (verified by grep — `std/src/concurrency/timer.nv`'s own comment on
+/// `ChanReader.close_after` says it outright: "via compiler builtin, not
+/// via this fn"; channel `send`/`recv`/`try_send`/`try_recv` have no
+/// declaration in `std/src/concurrency/*.nv`/`prelude/*.nv` at all — the
+/// channel TYPE itself is compiler-intrinsic, not a `std`-defined generic
+/// type with ordinary methods). A call to one of these can therefore NEVER
+/// have a `resolved_callees` entry — that is not "target statically
+/// unknown" (D446 §4's actual concern, a value of function type invoked
+/// through a param/field), it is a plumbing fact about where the dispatch
+/// lives. Channel endpoints are explicitly the D446 white list's OWN
+/// example of a safe-by-construction synchronized primitive — treating a
+/// call to one as `Safe` here is applying that brick, not suppressing a
+/// finding. A narrow, explicitly-named allowlist (mirrors the established
+/// `is_suspend_op_path`/`is_raw_pointer_intrinsic_method` precedent
+/// elsewhere in this file's sibling module for the identical class of
+/// problem — a compiler-builtin op with no AST `FnDecl` to hang a tag on).
+fn is_builtin_channel_or_timer_op(name: &str) -> bool {
+    matches!(name, "send" | "recv" | "try_send" | "try_recv" | "close_after" | "tick_every")
+}
+
+/// Ф.2 entry point: walk EVERY `Item::Fn`/`Item::Test` body in `module`
+/// (`module.items` is already flat — folder-modules included, `Module.
+/// items`'s own doc: "остаются flat for backward compat") looking for a
+/// `spawn`/`detach`/`parallel for` node anywhere in it (not just top-level —
+/// `find_seeds_expr`/`find_seeds_block` recurse through the WHOLE body).
+/// `tags` is the SAME map [`run`] returned for this module (Phase 1's
+/// bирка) — reused, not recomputed. `fn_index` is rebuilt locally (cheap,
+/// module-sized single pass — mirrors [`run`]'s own, kept separate so this
+/// fn's signature does not depend on `run`'s internals).
+pub fn check_seed_points(
+    module: &Module,
+    resolved_callees: &HashMap<ExprId, Span>,
+    tags: &HashMap<Span, FnSafety>,
+    errors: &mut Vec<crate::diag::Diagnostic>,
+) {
+    let fn_index = build_fn_index(module);
+    // Name-based fallback index (bare fn/method NAME → every declaration
+    // span sharing it, receiver ignored) — see `check_one_seed`'s doc for
+    // WHY this is needed (a `resolved_callees` coverage gap for certain
+    // call shapes, measured on the real `std` corpus: generic-blanket
+    // primitive-receiver methods like `T@to_millis()`/`T@sleep()` and the
+    // `__array::Elem.new(...)` slice-sugar constructor shape never get a
+    // `resolved_callees` entry even though they ARE ordinary, unambiguous
+    // `Item::Fn`s). Only consulted when a call's target is ambiguous by
+    // NAME (2+ spans) does the fallback decline to guess (same "ambiguity
+    // → don't guess" stance `resolve_tuple_call_return` already documents
+    // elsewhere in this crate for an analogous problem).
+    let mut name_index: HashMap<String, Vec<Span>> = HashMap::new();
+    // `(receiver type, method)` fallback for the generic-static-receiver
+    // shapes `static_receiver_type_method` recognises — see [`SeedCall`]'s
+    // doc: `[]u8.new()`'s bare name "new" collides with every OTHER type's
+    // constructor in `name_index`, this index disambiguates by receiver too.
+    let mut type_method_index: HashMap<(String, String), Vec<Span>> = HashMap::new();
+    for (&span, fd) in &fn_index {
+        name_index.entry(fd.name.clone()).or_default().push(span);
+        if let Some(r) = &fd.receiver {
+            type_method_index
+                .entry((r.type_name.clone(), fd.name.clone()))
+                .or_default()
+                .push(span);
+        }
+    }
+    for item in &module.items {
+        match item {
+            Item::Fn(fd) => match &fd.body {
+                FnBody::Block(b) => find_seeds_block(
+                    b, resolved_callees, tags, &fn_index, &name_index, &type_method_index, errors,
+                ),
+                FnBody::Expr(e) => find_seeds_expr(
+                    e, resolved_callees, tags, &fn_index, &name_index, &type_method_index, errors,
+                ),
+                FnBody::External => {}
+            },
+            Item::Test(td) => find_seeds_block(
+                &td.body, resolved_callees, tags, &fn_index, &name_index, &type_method_index, errors,
+            ),
+            _ => {}
+        }
+    }
+}
+
+/// Full recursive walk (same `ExprKind` coverage as Pass B's `pb_walk_expr`)
+/// looking for a seed node ANYWHERE in the tree — including nested inside
+/// call arguments, closures, branches, etc. At each `Spawn`/`Detach`/
+/// `ParallelFor`, checks that ONE seed's own call surface (`check_one_seed_*`)
+/// and THEN keeps recursing into its body too, so a seed nested inside
+/// another seed gets its own, independent check (matches `own_fiber_call_
+/// names_expr`'s established "stop the SURFACE scan at a nested boundary,
+/// but the OUTER walk still visits it" split, reused here as two functions
+/// instead of one flag).
+fn find_seeds_block(
+    b: &Block,
+    rc: &HashMap<ExprId, Span>,
+    tags: &HashMap<Span, FnSafety>,
+    fn_index: &HashMap<Span, &FnDecl>,
+    name_index: &HashMap<String, Vec<Span>>,
+    type_method_index: &HashMap<(String, String), Vec<Span>>,
+    errors: &mut Vec<crate::diag::Diagnostic>,
+) {
+    for s in &b.stmts {
+        find_seeds_stmt(s, rc, tags, fn_index, name_index, type_method_index, errors);
+    }
+    if let Some(t) = &b.trailing {
+        find_seeds_expr(t, rc, tags, fn_index, name_index, type_method_index, errors);
+    }
+}
+
+fn find_seeds_stmt(
+    s: &Stmt,
+    rc: &HashMap<ExprId, Span>,
+    tags: &HashMap<Span, FnSafety>,
+    fn_index: &HashMap<Span, &FnDecl>,
+    name_index: &HashMap<String, Vec<Span>>,
+    type_method_index: &HashMap<(String, String), Vec<Span>>,
+    errors: &mut Vec<crate::diag::Diagnostic>,
+) {
+    match s {
+        Stmt::Let(d) => find_seeds_expr(&d.value, rc, tags, fn_index, name_index, type_method_index, errors),
+        Stmt::Expr(e) => find_seeds_expr(e, rc, tags, fn_index, name_index, type_method_index, errors),
+        Stmt::Assign { target, value, .. } => {
+            find_seeds_expr(target, rc, tags, fn_index, name_index, type_method_index, errors);
+            find_seeds_expr(value, rc, tags, fn_index, name_index, type_method_index, errors);
+        }
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            for e in lhs {
+                find_seeds_expr(e, rc, tags, fn_index, name_index, type_method_index, errors);
+            }
+            for e in rhs {
+                find_seeds_expr(e, rc, tags, fn_index, name_index, type_method_index, errors);
+            }
+        }
+        Stmt::Return { value, .. } => {
+            if let Some(v) = value {
+                find_seeds_expr(v, rc, tags, fn_index, name_index, type_method_index, errors);
+            }
+        }
+        Stmt::Throw { value, .. } => find_seeds_expr(value, rc, tags, fn_index, name_index, type_method_index, errors),
+        Stmt::Defer { body, .. } => find_seeds_expr(body, rc, tags, fn_index, name_index, type_method_index, errors),
+        Stmt::ConsumeScope { init, body, .. } => {
+            find_seeds_expr(init, rc, tags, fn_index, name_index, type_method_index, errors);
+            find_seeds_block(body, rc, tags, fn_index, name_index, type_method_index, errors);
+        }
+        Stmt::Const(_)
+        | Stmt::Break(_)
+        | Stmt::Continue(_)
+        | Stmt::AssertStatic { .. }
+        | Stmt::Assume { .. }
+        | Stmt::Apply { .. }
+        | Stmt::Calc { .. }
+        | Stmt::Reveal { .. } => {}
+    }
+}
+
+fn find_seeds_expr(
+    e: &Expr,
+    rc: &HashMap<ExprId, Span>,
+    tags: &HashMap<Span, FnSafety>,
+    fn_index: &HashMap<Span, &FnDecl>,
+    name_index: &HashMap<String, Vec<Span>>,
+    type_method_index: &HashMap<(String, String), Vec<Span>>,
+    errors: &mut Vec<crate::diag::Diagnostic>,
+) {
+    match &e.kind {
+        ExprKind::Spawn(inner) => {
+            let mut calls = Vec::new();
+            collect_seed_calls_expr(inner, &mut calls);
+            check_one_seed("spawn", &calls, rc, tags, fn_index, name_index, type_method_index, errors);
+            find_seeds_expr(inner, rc, tags, fn_index, name_index, type_method_index, errors);
+        }
+        ExprKind::Detach(body) => {
+            let mut calls = Vec::new();
+            collect_seed_calls_block(body, &mut calls);
+            check_one_seed("detach", &calls, rc, tags, fn_index, name_index, type_method_index, errors);
+            find_seeds_block(body, rc, tags, fn_index, name_index, type_method_index, errors);
+        }
+        ExprKind::ParallelFor { iter, body, .. } => {
+            find_seeds_expr(iter, rc, tags, fn_index, name_index, type_method_index, errors);
+            let mut calls = Vec::new();
+            collect_seed_calls_block(body, &mut calls);
+            check_one_seed("parallel for", &calls, rc, tags, fn_index, name_index, type_method_index, errors);
+            find_seeds_block(body, rc, tags, fn_index, name_index, type_method_index, errors);
+        }
+        ExprKind::Blocking(b) => find_seeds_block(b, rc, tags, fn_index, name_index, type_method_index, errors),
+        ExprKind::Call { func, args, trailing } => {
+            find_seeds_expr(func, rc, tags, fn_index, name_index, type_method_index, errors);
+            for a in args {
+                find_seeds_expr(a.expr(), rc, tags, fn_index, name_index, type_method_index, errors);
+            }
+            if let Some(t) = trailing {
+                match t {
+                    Trailing::Block(b) => find_seeds_block(b, rc, tags, fn_index, name_index, type_method_index, errors),
+                    Trailing::LegacyBlockWithParams(tb) => {
+                        find_seeds_block(&tb.body, rc, tags, fn_index, name_index, type_method_index, errors)
+                    }
+                    Trailing::Fn(sb) => match &sb.body {
+                        FnBody::Block(b) => find_seeds_block(b, rc, tags, fn_index, name_index, type_method_index, errors),
+                        FnBody::Expr(ex) => find_seeds_expr(ex, rc, tags, fn_index, name_index, type_method_index, errors),
+                        FnBody::External => {}
+                    },
+                }
+            }
+        }
+        ExprKind::Lambda { body, .. } => find_seeds_expr(body, rc, tags, fn_index, name_index, type_method_index, errors),
+        ExprKind::ClosureLight { body, .. } => match body {
+            ClosureBody::Expr(ex) => find_seeds_expr(ex, rc, tags, fn_index, name_index, type_method_index, errors),
+            ClosureBody::Block(b) => find_seeds_block(b, rc, tags, fn_index, name_index, type_method_index, errors),
+        },
+        ExprKind::ClosureFull(sb) => match &sb.body {
+            FnBody::Block(b) => find_seeds_block(b, rc, tags, fn_index, name_index, type_method_index, errors),
+            FnBody::Expr(ex) => find_seeds_expr(ex, rc, tags, fn_index, name_index, type_method_index, errors),
+            FnBody::External => {}
+        },
+        ExprKind::Block(b) => find_seeds_block(b, rc, tags, fn_index, name_index, type_method_index, errors),
+        ExprKind::If { cond, then, else_ } => {
+            find_seeds_expr(cond, rc, tags, fn_index, name_index, type_method_index, errors);
+            find_seeds_block(then, rc, tags, fn_index, name_index, type_method_index, errors);
+            match else_ {
+                Some(ElseBranch::Block(b)) => find_seeds_block(b, rc, tags, fn_index, name_index, type_method_index, errors),
+                Some(ElseBranch::If(e2)) => find_seeds_expr(e2, rc, tags, fn_index, name_index, type_method_index, errors),
+                None => {}
+            }
+        }
+        ExprKind::IfLet { scrutinee, guard, then, else_, .. } => {
+            find_seeds_expr(scrutinee, rc, tags, fn_index, name_index, type_method_index, errors);
+            if let Some(g) = guard {
+                find_seeds_expr(g, rc, tags, fn_index, name_index, type_method_index, errors);
+            }
+            find_seeds_block(then, rc, tags, fn_index, name_index, type_method_index, errors);
+            match else_ {
+                Some(ElseBranch::Block(b)) => find_seeds_block(b, rc, tags, fn_index, name_index, type_method_index, errors),
+                Some(ElseBranch::If(e2)) => find_seeds_expr(e2, rc, tags, fn_index, name_index, type_method_index, errors),
+                None => {}
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            find_seeds_expr(scrutinee, rc, tags, fn_index, name_index, type_method_index, errors);
+            for a in arms {
+                if let Some(g) = &a.guard {
+                    find_seeds_expr(g, rc, tags, fn_index, name_index, type_method_index, errors);
+                }
+                match &a.body {
+                    MatchArmBody::Expr(be) => find_seeds_expr(be, rc, tags, fn_index, name_index, type_method_index, errors),
+                    MatchArmBody::Block(bb) => find_seeds_block(bb, rc, tags, fn_index, name_index, type_method_index, errors),
+                }
+            }
+        }
+        ExprKind::For { iter, body, .. } => {
+            find_seeds_expr(iter, rc, tags, fn_index, name_index, type_method_index, errors);
+            find_seeds_block(body, rc, tags, fn_index, name_index, type_method_index, errors);
+        }
+        ExprKind::While { cond, body, .. } => {
+            find_seeds_expr(cond, rc, tags, fn_index, name_index, type_method_index, errors);
+            find_seeds_block(body, rc, tags, fn_index, name_index, type_method_index, errors);
+        }
+        ExprKind::WhileLet { scrutinee, guard, body, .. } => {
+            find_seeds_expr(scrutinee, rc, tags, fn_index, name_index, type_method_index, errors);
+            if let Some(g) = guard {
+                find_seeds_expr(g, rc, tags, fn_index, name_index, type_method_index, errors);
+            }
+            find_seeds_block(body, rc, tags, fn_index, name_index, type_method_index, errors);
+        }
+        ExprKind::Loop { body, .. } => find_seeds_block(body, rc, tags, fn_index, name_index, type_method_index, errors),
+        ExprKind::Supervised { body, cancel, deadline } => {
+            if let Some(c) = cancel {
+                find_seeds_expr(c, rc, tags, fn_index, name_index, type_method_index, errors);
+            }
+            if let Some(dl) = deadline {
+                find_seeds_expr(&dl.expr, rc, tags, fn_index, name_index, type_method_index, errors);
+            }
+            find_seeds_block(body, rc, tags, fn_index, name_index, type_method_index, errors);
+        }
+        ExprKind::With { bindings, body } => {
+            for b in bindings {
+                find_seeds_expr(&b.handler, rc, tags, fn_index, name_index, type_method_index, errors);
+            }
+            find_seeds_block(body, rc, tags, fn_index, name_index, type_method_index, errors);
+        }
+        ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
+            find_seeds_block(body, rc, tags, fn_index, name_index, type_method_index, errors)
+        }
+        ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) => {
+            find_seeds_expr(inner, rc, tags, fn_index, name_index, type_method_index, errors)
+        }
+        ExprKind::Coalesce(a, b) => {
+            find_seeds_expr(a, rc, tags, fn_index, name_index, type_method_index, errors);
+            find_seeds_expr(b, rc, tags, fn_index, name_index, type_method_index, errors);
+        }
+        ExprKind::As(inner, _) | ExprKind::Is(inner, _) => {
+            find_seeds_expr(inner, rc, tags, fn_index, name_index, type_method_index, errors)
+        }
+        ExprKind::Binary { left, right, .. } => {
+            find_seeds_expr(left, rc, tags, fn_index, name_index, type_method_index, errors);
+            find_seeds_expr(right, rc, tags, fn_index, name_index, type_method_index, errors);
+        }
+        ExprKind::Unary { operand, .. } => find_seeds_expr(operand, rc, tags, fn_index, name_index, type_method_index, errors),
+        ExprKind::Member { obj, .. } => find_seeds_expr(obj, rc, tags, fn_index, name_index, type_method_index, errors),
+        ExprKind::Index { obj, index } => {
+            find_seeds_expr(obj, rc, tags, fn_index, name_index, type_method_index, errors);
+            find_seeds_expr(index, rc, tags, fn_index, name_index, type_method_index, errors);
+        }
+        ExprKind::TupleLit(elems) => {
+            for el in elems {
+                find_seeds_expr(el, rc, tags, fn_index, name_index, type_method_index, errors);
+            }
+        }
+        ExprKind::TurboFish { base, .. } => find_seeds_expr(base, rc, tags, fn_index, name_index, type_method_index, errors),
+        _ => {}
+    }
+}
+
+/// The "stop at a NESTED boundary" half — collects every `Call` reached
+/// SYNCHRONOUSLY in `e`'s execution as part of THIS seed body (recursing
+/// through ordinary control flow/closures-defined-and-inspected-here), but
+/// does NOT descend into a nested `Spawn`/`Detach`/`ParallelFor`/`Blocking` —
+/// that one is a SEPARATE seed, checked independently by `find_seeds_expr`
+/// (mirrors `own_fiber_call_names_expr`'s identical stance, D441/A-V10).
+fn collect_seed_calls_expr(e: &Expr, out: &mut Vec<SeedCall>) {
+    match &e.kind {
+        ExprKind::Call { func, args, trailing } => {
+            out.push(SeedCall {
+                id: e.id,
+                site: e.span,
+                name: callee_bare_name(func),
+                static_key: static_receiver_type_method(func),
+            });
+            collect_seed_calls_expr(func, out);
+            for a in args {
+                collect_seed_calls_expr(a.expr(), out);
+            }
+            if let Some(t) = trailing {
+                match t {
+                    Trailing::Block(b) => collect_seed_calls_block(b, out),
+                    Trailing::LegacyBlockWithParams(tb) => collect_seed_calls_block(&tb.body, out),
+                    Trailing::Fn(sb) => match &sb.body {
+                        FnBody::Block(b) => collect_seed_calls_block(b, out),
+                        FnBody::Expr(ex) => collect_seed_calls_expr(ex, out),
+                        FnBody::External => {}
+                    },
+                }
+            }
+        }
+        ExprKind::Lambda { body, .. } => collect_seed_calls_expr(body, out),
+        ExprKind::ClosureLight { body, .. } => match body {
+            ClosureBody::Expr(ex) => collect_seed_calls_expr(ex, out),
+            ClosureBody::Block(b) => collect_seed_calls_block(b, out),
+        },
+        ExprKind::ClosureFull(sb) => match &sb.body {
+            FnBody::Block(b) => collect_seed_calls_block(b, out),
+            FnBody::Expr(ex) => collect_seed_calls_expr(ex, out),
+            FnBody::External => {}
+        },
+        // Nested seed boundary — its own, independent check (`find_seeds_*`
+        // reaches it separately); do not fold its calls into THIS seed's
+        // surface.
+        ExprKind::Spawn(_)
+        | ExprKind::Detach(_)
+        | ExprKind::ParallelFor { .. }
+        | ExprKind::Blocking(_) => {}
+        ExprKind::Block(b) => collect_seed_calls_block(b, out),
+        ExprKind::If { cond, then, else_ } => {
+            collect_seed_calls_expr(cond, out);
+            collect_seed_calls_block(then, out);
+            match else_ {
+                Some(ElseBranch::Block(b)) => collect_seed_calls_block(b, out),
+                Some(ElseBranch::If(e2)) => collect_seed_calls_expr(e2, out),
+                None => {}
+            }
+        }
+        ExprKind::IfLet { scrutinee, guard, then, else_, .. } => {
+            collect_seed_calls_expr(scrutinee, out);
+            if let Some(g) = guard {
+                collect_seed_calls_expr(g, out);
+            }
+            collect_seed_calls_block(then, out);
+            match else_ {
+                Some(ElseBranch::Block(b)) => collect_seed_calls_block(b, out),
+                Some(ElseBranch::If(e2)) => collect_seed_calls_expr(e2, out),
+                None => {}
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            collect_seed_calls_expr(scrutinee, out);
+            for a in arms {
+                if let Some(g) = &a.guard {
+                    collect_seed_calls_expr(g, out);
+                }
+                match &a.body {
+                    MatchArmBody::Expr(be) => collect_seed_calls_expr(be, out),
+                    MatchArmBody::Block(bb) => collect_seed_calls_block(bb, out),
+                }
+            }
+        }
+        ExprKind::For { iter, body, .. } => {
+            collect_seed_calls_expr(iter, out);
+            collect_seed_calls_block(body, out);
+        }
+        ExprKind::While { cond, body, .. } => {
+            collect_seed_calls_expr(cond, out);
+            collect_seed_calls_block(body, out);
+        }
+        ExprKind::WhileLet { scrutinee, guard, body, .. } => {
+            collect_seed_calls_expr(scrutinee, out);
+            if let Some(g) = guard {
+                collect_seed_calls_expr(g, out);
+            }
+            collect_seed_calls_block(body, out);
+        }
+        ExprKind::Loop { body, .. } => collect_seed_calls_block(body, out),
+        ExprKind::Supervised { body, cancel, deadline } => {
+            if let Some(c) = cancel {
+                collect_seed_calls_expr(c, out);
+            }
+            if let Some(dl) = deadline {
+                collect_seed_calls_expr(&dl.expr, out);
+            }
+            collect_seed_calls_block(body, out);
+        }
+        ExprKind::With { bindings, body } => {
+            for b in bindings {
+                collect_seed_calls_expr(&b.handler, out);
+            }
+            collect_seed_calls_block(body, out);
+        }
+        ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
+            collect_seed_calls_block(body, out)
+        }
+        ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) => {
+            collect_seed_calls_expr(inner, out)
+        }
+        ExprKind::Coalesce(a, b) => {
+            collect_seed_calls_expr(a, out);
+            collect_seed_calls_expr(b, out);
+        }
+        ExprKind::As(inner, _) | ExprKind::Is(inner, _) => collect_seed_calls_expr(inner, out),
+        ExprKind::Binary { left, right, .. } => {
+            collect_seed_calls_expr(left, out);
+            collect_seed_calls_expr(right, out);
+        }
+        ExprKind::Unary { operand, .. } => collect_seed_calls_expr(operand, out),
+        ExprKind::Member { obj, .. } => collect_seed_calls_expr(obj, out),
+        ExprKind::Index { obj, index } => {
+            collect_seed_calls_expr(obj, out);
+            collect_seed_calls_expr(index, out);
+        }
+        ExprKind::TupleLit(elems) => {
+            for el in elems {
+                collect_seed_calls_expr(el, out);
+            }
+        }
+        ExprKind::TurboFish { base, .. } => collect_seed_calls_expr(base, out),
+        _ => {}
+    }
+}
+
+fn collect_seed_calls_block(b: &Block, out: &mut Vec<SeedCall>) {
+    for s in &b.stmts {
+        collect_seed_calls_stmt(s, out);
+    }
+    if let Some(t) = &b.trailing {
+        collect_seed_calls_expr(t, out);
+    }
+}
+
+fn collect_seed_calls_stmt(s: &Stmt, out: &mut Vec<SeedCall>) {
+    match s {
+        Stmt::Let(d) => collect_seed_calls_expr(&d.value, out),
+        Stmt::Expr(e) => collect_seed_calls_expr(e, out),
+        Stmt::Assign { target, value, .. } => {
+            collect_seed_calls_expr(target, out);
+            collect_seed_calls_expr(value, out);
+        }
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            for e in lhs {
+                collect_seed_calls_expr(e, out);
+            }
+            for e in rhs {
+                collect_seed_calls_expr(e, out);
+            }
+        }
+        Stmt::Return { value, .. } => {
+            if let Some(v) = value {
+                collect_seed_calls_expr(v, out);
+            }
+        }
+        Stmt::Throw { value, .. } => collect_seed_calls_expr(value, out),
+        Stmt::Defer { body, .. } => collect_seed_calls_expr(body, out),
+        Stmt::ConsumeScope { init, body, .. } => {
+            collect_seed_calls_expr(init, out);
+            collect_seed_calls_block(body, out);
+        }
+        Stmt::Const(_)
+        | Stmt::Break(_)
+        | Stmt::Continue(_)
+        | Stmt::AssertStatic { .. }
+        | Stmt::Assume { .. }
+        | Stmt::Apply { .. }
+        | Stmt::Calc { .. }
+        | Stmt::Reveal { .. } => {}
+    }
+}
+
+/// П.2 (Ф.8-НОВАЯ): for every call reached in ONE seed body, resolve its
+/// target and gate it.
+///
+/// `resolved_callees` has NO entry for two measured, DIFFERENT reasons —
+/// conflating them was this phase's first false-positive class (measured on
+/// `nova check std/src`: 124 "no entry" calls, of which only 2 were a
+/// genuine indirect closure call — the rest were plumbing gaps, not D446
+/// §4's actual concern):
+///  1. a compiler-builtin op with no `Item::Fn` at all (channel `send`/
+///     `recv`/timer constructors — [`is_builtin_channel_or_timer_op`]);
+///  2. an ordinary, unambiguous `Item::Fn` that this checker version simply
+///     never wrote a `resolved_callees` entry for (measured: generic-
+///     blanket primitive-receiver methods like `T@to_millis()`, and the
+///     `__array::Elem.new(...)` slice-sugar constructor shape) — resolved
+///     via `name_index`'s unique-name fallback.
+/// Only once BOTH fallbacks decline (no builtin match, and the name is
+/// either unknown or ambiguous in `name_index`) is a call treated as
+/// GENUINELY indirect (D446 §4 — a value of function type invoked through a
+/// param/field, target set undecidable) and flagged `E_FIBER_INDIRECT_
+/// CALL` — "target undecidable ⇒ unsafe", false rejections expected/
+/// accepted per П.2.
+///
+/// A call whose target DOES resolve (directly, or via the name fallback) is
+/// gated by [`check_resolved_target`]: `Safe` passes silently; anything
+/// else is `E_FIBER_UNSAFE_CALL` with the backward chain
+/// ([`render_chain`]) to the root cause; a target with NO tag at all is a
+/// genuine cross-compile-unit gap (Ф.1 report §6 point 3) — same
+/// conservative default, no new channel needed.
+fn check_one_seed(
+    boundary: &'static str,
+    calls: &[SeedCall],
+    rc: &HashMap<ExprId, Span>,
+    tags: &HashMap<Span, FnSafety>,
+    fn_index: &HashMap<Span, &FnDecl>,
+    name_index: &HashMap<String, Vec<Span>>,
+    type_method_index: &HashMap<(String, String), Vec<Span>>,
+    errors: &mut Vec<crate::diag::Diagnostic>,
+) {
+    for call in calls {
+        let direct = rc.get(&call.id).copied();
+        // Fallback 1 — `(type, method)` generic-static-receiver shape
+        // (`[]u8.new()`/`Vec[T].new()`): if EVERY candidate overload the
+        // receiver+name key resolves to shares the SAME tag, the identity
+        // ambiguity (which overload) doesn't matter — the SAFETY verdict is
+        // unanimous, so resolve to the first candidate. If they disagree,
+        // decline (stay conservative — matches the plain bare-name
+        // fallback's "ambiguous → don't guess" stance, just one step less
+        // strict since here "ambiguous" only bites when the VERDICT, not
+        // merely the identity, is actually in question).
+        let via_static_key = call.static_key.as_ref().and_then(|key| {
+            let candidates = type_method_index.get(key)?;
+            let first = *candidates.first()?;
+            let first_tag = tags.get(&first).map(|fs| fs.tag);
+            if candidates.iter().all(|c| tags.get(c).map(|fs| fs.tag) == first_tag) {
+                Some(first)
+            } else {
+                None
+            }
+        });
+        let resolved = direct.or(via_static_key).or_else(|| {
+            let name = call.name.as_deref()?;
+            if is_builtin_channel_or_timer_op(name) {
+                return None; // handled below — whitelisted, not a fallback target.
+            }
+            match name_index.get(name)?.as_slice() {
+                [only] => Some(*only),
+                _ => None, // zero or ambiguous — decline, stay conservative.
+            }
+        });
+        match resolved {
+            Some(target) => check_resolved_target(boundary, call.site, target, tags, fn_index, errors),
+            None => {
+                let whitelisted = call.name.as_deref().map(is_builtin_channel_or_timer_op).unwrap_or(false);
+                if whitelisted {
+                    continue; // D446 sync brick 3 — channel endpoint, safe by construction.
+                }
+                errors.push(crate::diag::Diagnostic::new(
+                    format!(
+                        "[E_FIBER_INDIRECT_CALL] indirect call inside a `{boundary}` \
+                         body — the callee is reached through a parameter/field of \
+                         function type, so its concrete target is not statically known \
+                         (D446 §4/Ф.8-НОВАЯ П.2: an indeterminable target set is treated \
+                         as unsafe — false rejections are expected and accepted here, a \
+                         silent pass is the failure mode this wave closes). Under M:N \
+                         scheduling this fiber may run concurrently with, or migrate \
+                         across threads from, its parent/siblings — an unproven callee \
+                         reached this way could touch unguarded shared state. Fix: call \
+                         the concrete function BEFORE `{boundary}` (capture its result \
+                         `ro`), or change the parameter/field's type to a closed set your \
+                         call site can resolve statically.",
+                        boundary = boundary,
+                    ),
+                    call.site,
+                ));
+            }
+        }
+    }
+}
+
+fn check_resolved_target(
+    boundary: &'static str,
+    site: Span,
+    target: Span,
+    tags: &HashMap<Span, FnSafety>,
+    fn_index: &HashMap<Span, &FnDecl>,
+    errors: &mut Vec<crate::diag::Diagnostic>,
+) {
+    match tags.get(&target) {
+        None => {
+            let name = fn_index.get(&target).map(|fd| render_fn_name(fd)).unwrap_or_default();
+            errors.push(crate::diag::Diagnostic::new(
+                format!(
+                    "[E_FIBER_UNSAFE_CALL] call to `{name}` inside a `{boundary}` \
+                     body — `{name}` belongs to a DIFFERENT compile unit (its M:N-\
+                     safety tag was computed in a separate `run`, not this one — \
+                     D446 Ф.1 report §6 point 3's cross-compile-unit gap) and is \
+                     therefore UNPROVEN here. D446 Ф.8-НОВАЯ П.2: not proven ⇒ \
+                     unsafe, by default. Fix: if `{name}` is genuinely M:N-safe, \
+                     recompile the crossing package alongside this one so the tag \
+                     is visible, or restructure so the call happens BEFORE \
+                     `{boundary}`.",
+                    name = name, boundary = boundary,
+                ),
+                site,
+            ));
+        }
+        Some(fs) if fs.tag != Tag::Safe => {
+            let name = fn_index.get(&target).map(|fd| render_fn_name(fd)).unwrap_or_default();
+            let chain = render_chain(target, tags, fn_index);
+            errors.push(crate::diag::Diagnostic::new(
+                format!(
+                    "[E_FIBER_UNSAFE_CALL] call to `{name}` inside a `{boundary}` \
+                     body — its M:N-safety tag is `{tag:?}`, not `Safe` (D446 Ф.8-\
+                     НОВАЯ П.2: not proven ⇒ unsafe, by default — every fn/method \
+                     gets a tag, an unrecognised shape is a REJECTION, not a silent \
+                     pass). Cause: {reason}. Chain: {chain}. Under M:N scheduling \
+                     this fiber may run concurrently with, or migrate across \
+                     threads from, its parent/siblings — an unguarded mutation \
+                     reached through this call is a data race. Fix: guard the \
+                     touched state under a live lock (`consume g = x.lock()`), \
+                     make its type `#share`-safe and structurally verified, or \
+                     restructure so the call happens BEFORE `{boundary}` (its \
+                     result captured `ro` into the fiber).",
+                    name = name,
+                    boundary = boundary,
+                    tag = fs.tag,
+                    reason = terminal_reason_text(chain_terminal_reason(target, tags)),
+                    chain = chain,
+                ),
+                site,
+            ));
+        }
+        Some(_) => {} // Safe — no diagnostic.
+    }
+}
+
+/// Ш.7 (D446/plan Ф.8-НОВАЯ, "диагностика — обход назад"): follow `detail_
+/// span` through `calls_unsafe`/`calls_undecided` links, one hop per link,
+/// rendering `` `name` → `name` → … `` until a TERMINAL reason (anything
+/// else — `unguarded_mutation`/`no_body`/`generic`/`extern`/`fn_param_in_
+/// sig`/`cross_module_callee`) is reached. Capped at 32 hops as a defensive
+/// guard against a malformed chain — the fixed-point construction in
+/// [`run`] is acyclic along `calls_unsafe`/`calls_undecided` edges by
+/// design (a `Fixed` fn's tag never changes once set, so a cycle purely
+/// among candidates resolves to `Safe`+its own intra reason, never a
+/// `calls_*` reason — see `run`'s own "Leftover" comment), so 32 is slack,
+/// not a real ceiling.
+fn render_chain(start: Span, tags: &HashMap<Span, FnSafety>, fn_index: &HashMap<Span, &FnDecl>) -> String {
+    let mut hops: Vec<String> = Vec::new();
+    let mut span = start;
+    for _ in 0..32 {
+        let name = fn_index.get(&span).map(|fd| render_fn_name(fd)).unwrap_or_else(|| "?".to_string());
+        hops.push(format!("`{}`", name));
+        match tags.get(&span) {
+            Some(fs) if matches!(fs.reason, "calls_unsafe" | "calls_undecided") => match fs.detail_span {
+                Some(next) => span = next,
+                None => break,
+            },
+            _ => break,
+        }
+    }
+    hops.join(" → ")
+}
+
+/// The reason at the END of `render_chain`'s walk (the terminal cause) —
+/// walked separately (not threaded back out of `render_chain` as a return
+/// value) to keep `render_chain`'s own signature focused on rendering.
+fn chain_terminal_reason(start: Span, tags: &HashMap<Span, FnSafety>) -> &'static str {
+    let mut span = start;
+    for _ in 0..32 {
+        match tags.get(&span) {
+            Some(fs) if matches!(fs.reason, "calls_unsafe" | "calls_undecided") => match fs.detail_span {
+                Some(next) => span = next,
+                None => return fs.reason,
+            },
+            Some(fs) => return fs.reason,
+            None => return "unknown",
+        }
+    }
+    "unknown"
+}
+
+fn terminal_reason_text(reason: &str) -> &'static str {
+    match reason {
+        "unguarded_mutation" => "mutates reachable state with no live lock and no `#share`-verified type",
+        "no_body" => "bottoms out in an external (no-body) fn — nothing to prove from",
+        "generic" => "bottoms out in a generic fn with no safety bound on its type parameter",
+        "extern" => "bottoms out in an `extern`-declared fn",
+        "fn_param_in_sig" => "bottoms out in a fn taking a function-typed parameter — its target is not statically closed",
+        "cross_module_callee" => "bottoms out in a call whose target is outside this compile unit",
+        _ => "reason not recovered (defensive fallback — should not normally occur)",
     }
 }
