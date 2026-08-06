@@ -1,0 +1,52 @@
+// D326 Plan 184 (Р5/Р7), реестр 221.1 №39/pk2-fix №36 — an UNANNOTATED `mut`/`ro`
+// let-binding whose RHS is a value-record fluent `mut @setter(v) -> @` call
+// (`mut out = resp.body(data)`, no `T` annotation): the LOCAL itself must end up
+// VALUE-typed, not pointer-typed. Before the fix, `infer_expr_c_type` reported the
+// callee's raw EMITTED C return type (`NovaValue_X*` — `ref Self`, the fluent-chain
+// ABI) as the let-binding's own C type, so the local was declared as a raw pointer.
+// The sibling fixtures (`d326_fluent_value_return.nv`/`..._argpos.nv`/`..._stmt.nv`)
+// all consume the fluent call EXPRESSION directly at its own use-site, where the
+// shared `is_fluent_value_ptr_for_target` predicate already fires; THIS gap is the
+// TWO-STEP shape — bind first (no annotation), read the plain Ident LATER in a
+// value position (here: the function's own `-> X` return) — which had no fluent-
+// call AST node left at the read site to trigger that same predicate against.
+// CC-FAIL before the fix: "initializing 'NovaValue_X' with an expression of
+// incompatible type 'NovaValue_X *'; dereference with *".
+// Spec: spec/decisions/02-types.md D326 (Plan 184 Р5/Р7).
+// Part of the SINGLE `spec_tests.conformance` folder-module.
+module spec_tests.conformance
+
+type D326LetRec value {
+    tag []u8
+}
+
+fn D326LetRec.new(t []u8) -> D326LetRec => { tag: t }
+
+fn D326LetRec mut @tag(data []u8) -> @ {
+    @tag = data
+}
+
+// Unannotated `mut` let bound DIRECTLY from a fluent-setter call, then the plain
+// Ident is read back later in the function's own by-value return position.
+fn d326_let_fluent_then_return() -> D326LetRec {
+    mut root = D326LetRec.new([9 as u8])
+    mut out = root.tag([1 as u8, 2 as u8, 3 as u8])
+    out
+}
+
+// Same shape via `ro` (immutable local, still bound from a fluent-setter call).
+fn d326_let_ro_fluent_then_return() -> D326LetRec {
+    mut root = D326LetRec.new([9 as u8])
+    ro out = root.tag([4 as u8, 5 as u8])
+    out
+}
+
+test "unannotated mut-let from fluent setter, read later as plain ident in return position (D326 №36)" {
+    ro r = d326_let_fluent_then_return()
+    assert(r.tag == [1 as u8, 2 as u8, 3 as u8])
+}
+
+test "unannotated ro-let from fluent setter, read later as plain ident in return position (D326 №36)" {
+    ro r = d326_let_ro_fluent_then_return()
+    assert(r.tag == [4 as u8, 5 as u8])
+}

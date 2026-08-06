@@ -20412,6 +20412,86 @@ impl<'a> TypeCheckCtx<'a> {
         Some((out, ordered, f.span))
     }
 
+    /// [реестр 221.1 №126, `[M-static-generic-method-path-call-p67-panic]`] Sibling of
+    /// `resolve_generic_static_return` for a DIFFERENT AST/generic axis: `Type.method[T]
+    /// (args)` — the explicit turbofish sits on the METHOD name, binding the static
+    /// method's OWN generics (`f.generics`), not the receiver TYPE's carrier generics
+    /// (`Type[T].ctor()` — `resolve_generic_static_return`'s territory, the structurally
+    /// different `Member{obj:TurboFish}` AST shape vs this call's `TurboFish{base:Member}`).
+    /// Before this producer existed, NEITHER channel covered the call: `resolve_instance_
+    /// method_return_arity` (the generic instance-call path `infer_method_call_channel_type`
+    /// otherwise reaches for a `TurboFish{base:Member}` call) bails unconditionally on a
+    /// `ReceiverKind::Static` receiver (instance-only by design), and `resolve_generic_
+    /// static_return` bails on the carrier-generics arity mismatch (0 carrier generics vs
+    /// the method's own). Codegen's legacy `infer_call_ret_c` has no bucket for this shape
+    /// either → unconditional `[P67-LEGACY]` panic. Narrowed to a receiver type with NO
+    /// carrier generics of its own (`recv.generics.is_empty()`) so the turbofish arg count
+    /// unambiguously binds `f.generics` — a generic RECEIVER type ADDITIONALLY carrying its
+    /// own generic static method (`Type[G].method[M]`, a double-turbofish call) is a
+    /// distinct, unhandled shape, left to legacy (permissive bail, no regression).
+    fn resolve_generic_static_method_own_return(
+        &self,
+        tyname: &str,
+        method: &str,
+        type_args: &[TypeRef],
+        span: Span,
+    ) -> Option<(TypeRef, Vec<(String, ResolvedType)>, Span)> {
+        let overloads = self.method_overloads(tyname, method)?;
+        let [f] = overloads.as_slice() else { return None; };
+        let recv = f.receiver.as_ref()?;
+        if !matches!(recv.kind, ReceiverKind::Static) {
+            return None;
+        }
+        if recv.type_name != tyname {
+            return None;
+        }
+        if !recv.generics.is_empty() {
+            return None; // ambiguous double-turbofish shape — decline, leave to legacy.
+        }
+        if type_args.len() != f.generics.len() {
+            return None;
+        }
+        let recv_ty = TypeRef::Named {
+            path: vec![tyname.to_string()],
+            generics: Vec::new(),
+            span,
+        };
+        let mut subst: HashMap<String, TypeRef> = HashMap::new();
+        subst.insert("Self".to_string(), recv_ty);
+        let mut method_names_ordered: Vec<String> = Vec::new();
+        for (g, ta) in f.generics.iter().zip(type_args.iter()) {
+            subst.insert(g.name.clone(), ta.clone());
+            method_names_ordered.push(g.name.clone());
+        }
+        // No declared `->` (implicit-Unit body, e.g. `fn Type.show[T](x T) { ... }`) —
+        // the call's return is simply Unit, no subst needed at all.
+        let ret = match f.return_type.as_ref() {
+            Some(r) => r.clone(),
+            None => return Some((TypeRef::Unit(span), Vec::new(), f.span)),
+        };
+        let out = crate::const_fn_trampoline::subst_type_ref_pub(&ret, &subst);
+        // Don't materialize a half-resolved type: bail if the substituted return still
+        // mentions any of this method's own generics (should be unreachable given the
+        // arity match above — defensive, mirrors the sibling fn's own gate).
+        let bound: HashSet<&str> = subst.keys().map(String::as_str).collect();
+        let unbound: HashSet<String> = f.generics.iter()
+            .map(|g| g.name.clone())
+            .filter(|n| !bound.contains(n.as_str()))
+            .collect();
+        if !unbound.is_empty() && typeref_mentions_any(&out, &unbound) {
+            return None;
+        }
+        let ordered: Vec<(String, ResolvedType)> = method_names_ordered.iter()
+            .filter_map(|n| subst.get(n.as_str()).map(|ta| (n.clone(), ResolvedType::from_type_ref(ta))))
+            .collect();
+        let ordered = if !ordered.is_empty() && ordered.iter().all(|(_, v)| self.rt_is_closed(v)) {
+            ordered
+        } else {
+            Vec::new()
+        };
+        Some((out, ordered, f.span))
+    }
+
     /// Plan 200 П19: peel `ro`/`mut` TYPE wrappers off a receiver `TypeRef` and, if the
     /// core shape is `[N]T` (`TypeRef::FixedArray`), return `(N, &elem)`. Mirror of the
     /// peel-loop `resolve_instance_method_return_arity`/`check_instance_overload` already
@@ -21432,6 +21512,55 @@ impl<'a> TypeCheckCtx<'a> {
         gs: &GenericScope,
     ) -> Option<TypeRef> {
         let ExprKind::Call { func, args: call_args, .. } = &e.kind else { return None; };
+        // [реестр 221.1 №126, `[M-static-generic-method-path-call-p67-panic]`]
+        // `Type.method[T](args)` — turbofish on the METHOD name (a STATIC method's
+        // OWN generics), parses to `TurboFish{base, type_args}` where `base` is
+        // EITHER `Member{obj:Ident(tyname), name}` (a lowercase-first-continuation
+        // parse) OR — the ACTUAL shape for a PascalCase type name like our probe's
+        // `Nzp126Utils.show[int](42)` — `Path([tyname, name])` (parser/mod.rs
+        // `starts_uppercase` loop, ~9115: greedily folds `Type.method` into a
+        // 2-segment Path BEFORE the postfix stage ever sees a Dot to build a
+        // Member node). Checked FIRST (before either AST shape is destructured by
+        // the arms below) so both encodings reach the SAME dedicated static-own-
+        // generic producer: none of the instance-oriented `rt`-inference sources
+        // further down can ever resolve a bare TYPE name as a VALUE type (by
+        // design — `resolve_instance_method_return_arity` bails on
+        // `ReceiverKind::Static`), and the sibling `resolve_generic_static_return`
+        // covers ONLY a turbofish on the type's own CARRIER generics (`Type[T].
+        // ctor()`, the different `Member{obj:TurboFish}` shape) — this call form
+        // had NO producer at all before, hence the unconditional `[P67-LEGACY]`
+        // panic. A miss (name shadowed by a variable, ambiguous double-turbofish
+        // receiver, non-static/overloaded method, …) falls through unchanged to
+        // the existing resolution below.
+        if let ExprKind::TurboFish { base, type_args } = &func.kind {
+            let tyname_name: Option<(&str, &str)> = match &base.kind {
+                ExprKind::Member { obj, name } => match &obj.kind {
+                    ExprKind::Ident(t) if !scope.contains_key(t.as_str()) => {
+                        Some((t.as_str(), name.as_str()))
+                    }
+                    _ => None,
+                },
+                ExprKind::Path(parts) if parts.len() == 2 => {
+                    Some((parts[0].as_str(), parts[1].as_str()))
+                }
+                _ => None,
+            };
+            if let Some((tyname, method_name)) = tyname_name {
+                if let Some((static_rt, ordered, fn_span)) = self
+                    .resolve_generic_static_method_own_return(
+                        tyname, method_name, type_args, e.span,
+                    )
+                {
+                    if e.id.is_set() {
+                        if !ordered.is_empty() {
+                            self.node_substs.borrow_mut().insert(e.id, ordered);
+                        }
+                        self.resolved_callees.borrow_mut().insert(e.id, fn_span);
+                    }
+                    return Some(static_rt);
+                }
+            }
+        }
         // Plan 200 П19: `[N]T @len()`/`@ptr()` — same compiler-synthesized FixedArray
         // accessors as the early check in `infer_expr_type`'s Call arm (§3 one-window: one
         // shared `fixed_array_accessor_return`, two producer call-sites — this fn feeds the
