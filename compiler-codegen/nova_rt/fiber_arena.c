@@ -1139,8 +1139,53 @@ void nova_fiber_arena_release_retired(void) { }
  * main ДО первого GC под оверрайднутым push_other_roots. */
 void nova_fiber_arena_set_main_stack(void) {
 #ifdef NOVA_GC_BOEHM
+    /* [p418, №418 корень B] First-caller-wins, NOT unconditional overwrite.
+     * This function has exactly one correctness contract: the published
+     * probe must point somewhere INSIDE the real main OS thread's native
+     * stack VMA (consumed by _nova_push_main_stack_vma via /proc/self/maps
+     * every GC cycle — see the push_other_roots block above). It has TWO
+     * call sites: (1) nova_fiber_arena_init's own bootstrap safety net
+     * (fires on the main thread's FIRST mco_create — genuinely on the
+     * native stack, no fiber has been resumed yet) and (2) _materialize_
+     * pool (runtime.c, Plan 151), whose doc comment claims "we are
+     * guaranteed on main, main isn't running a fiber here" — TRUE before
+     * Plan 221.1 №108, FALSE after: №108 made main-body itself a real
+     * fiber (nova_fiber_spawn_into + nova_supervised_run in emit_main_
+     * wrapper), so EVERY user-level spawn — including the one that lazily
+     * triggers _materialize_pool on the first worker-bound spawn — now
+     * executes NESTED inside the already-resumed main-body fiber, i.e. on
+     * the fiber's OWN arena stack, not the native one.
+     *
+     * An unconditional second write here therefore used to silently
+     * replace the CORRECT probe (from call site 1, always genuinely
+     * native) with a BOGUS one (from call site 2, now on the arena stack)
+     * the moment the first worker-bound spawn fired — typically well
+     * before the program finishes. From that point on, category (а) of
+     * push_other_roots scanned the WRONG VMA (the fiber arena — already
+     * redundantly covered by category (в)) and the REAL [stack] VMA
+     * (holding e.g. `_nova_main_scope`, a NovaFiberQueue local to main())
+     * dropped out of the GC root scan entirely. Anything reachable ONLY
+     * through that stack-resident struct (its heap-allocated `sched_state`
+     * chain in particular) became premature-collect bait — exactly the
+     * class this file's push_other_roots override exists to prevent (see
+     * [M-mn-spawnctx-corruption-cancel-wake] above): `nested_shield_
+     * deadline_outer_fire_neg_v1_1`'s direct (non-supervised) `Time.
+     * sleep()` on the main-body fiber crashed in `_nova_park_mark_slot`
+     * writing through a NULL `nova_sched_parked_at()` — `st->capacity==0`,
+     * `st->parked_chunks[0]==NULL`, i.e. a freshly-zeroed block reused at
+     * the address the REAL (already fully grown) NovaSchedState used to
+     * live at. Confirmed via the GC_DONT_GC=1 discriminator: 0/5 PASS
+     * baseline -> 5/5 PASS with collection disabled.
+     *
+     * Fix: CAS NULL -> probe. Whichever caller runs FIRST wins (call site
+     * 1 always runs first post-№108, since main-body's own fiber creation
+     * is unconditionally the first `mco_create` of the whole process) —
+     * later callers become harmless no-ops instead of clobbers. */
+    char* expected = NULL;
     char probe_local;
-    __atomic_store_n(&_nova_main_stack_probe, (char*)&probe_local, __ATOMIC_RELEASE);
+    __atomic_compare_exchange_n(&_nova_main_stack_probe, &expected,
+                                 (char*)&probe_local, false,
+                                 __ATOMIC_RELEASE, __ATOMIC_RELAXED);
 #endif
 }
 

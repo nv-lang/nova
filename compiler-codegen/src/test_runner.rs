@@ -27,6 +27,72 @@ use std::time::{Duration, Instant};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
+// ---------- Окно p401b-p67-class (реестр 221.1 №401, "ПЕРЕОТКРЫТ"): per-unit
+// panic containment ----------
+//
+// A codegen-side internal-error panic (any `panic!` reached during
+// `codegen_to_c` — the `[P67-LEGACY]` class among others) used to be fatal to
+// the WHOLE `nova test <dir>` process: the CLI's global panic hook
+// (`nova-cli/src/main.rs`) called `std::process::exit(101)` unconditionally
+// on ANY thread's panic, so one file's gap killed every file queued after it
+// — "цена" documented in реестр 221.1 №401. This flag (thread-local: each
+// `jobs` worker owns its own) tells that hook "a caller up this SAME thread's
+// stack is about to `catch_unwind` around a single compile-unit — stay quiet,
+// don't print the misleading 'internal error / please report a bug' banner,
+// and don't exit the process; let the panic unwind to that catcher." The
+// catcher (below, wrapping the `codegen_to_c` call) reports the panic through
+// the EXACT SAME `Result<_, String>` channel `codegen_to_c` already uses for
+// ordinary compile errors (`E_FFI_C_NAME_OVERLOAD_CONFLICT` and siblings) —
+// so the rest of the per-test pipeline (FAIL reporting, results-file
+// writing, batch continuation to the NEXT file) needs zero changes: it
+// already handles `Err(String)` from this exact call correctly (verified:
+// a genuine syntax error in one file of a batch does NOT stop the batch).
+//
+// Outside this window (`nova build` on a single file, `nova check`, or any
+// panic NOT reached through this wrapped call) the flag stays `false` and
+// behavior is BYTE-IDENTICAL to before: hook prints the banner, and the
+// outermost `catch_unwind` in `nova-cli::main` exits 101 (same user-visible
+// result, only the `exit` call itself moved from the hook to the outer
+// catcher so THIS thread-local can intercept it first).
+thread_local! {
+    static CATCHING_UNIT_PANIC: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// `nova-cli`'s panic hook (crate boundary: the hook lives in the `nova`
+/// binary, this flag lives in the `nova_codegen` library both link against)
+/// calls this to decide whether to print the "internal error ... please
+/// report it" banner. `true` = a `catch_unwind` up this thread's OWN stack
+/// is about to handle the panic as an ordinary per-unit compile failure —
+/// suppress the banner (the catcher reports it as a normal `FAIL`/`CC-FAIL`-
+/// style line instead, no "please report a bug" noise).
+pub fn catching_panic_active() -> bool {
+    CATCHING_UNIT_PANIC.with(|f| f.get())
+}
+
+/// Run `f` with a per-compile-unit panic net: sets [`catching_panic_active`]
+/// for the duration (suppressing the misleading crash banner in the hook),
+/// runs `f` under `catch_unwind`, and on a caught panic formats the payload
+/// into the SAME `Err(String)` shape `codegen_to_c`'s ordinary compile-error
+/// path already returns — so callers need no new match arm. `pub`: also used
+/// by `nova-cli`'s `cmd_build` (single-file build path) around
+/// `emitter.emit_module_multi_tu(...)`, which already returns
+/// `Result<_, String>` for ordinary codegen errors — same reuse, same
+/// reasoning, one file instead of a whole batch.
+pub fn catch_unit_panic<T>(f: impl FnOnce() -> Result<T, String> + std::panic::UnwindSafe) -> Result<T, String> {
+    CATCHING_UNIT_PANIC.with(|flag| flag.set(true));
+    let result = std::panic::catch_unwind(f);
+    CATCHING_UNIT_PANIC.with(|flag| flag.set(false));
+    match result {
+        Ok(inner) => inner,
+        Err(payload) => {
+            let msg = payload.downcast_ref::<&str>().map(|s| s.to_string())
+                .or_else(|| payload.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "<no panic message>".to_string());
+            Err(format!("[INTERNAL-PANIC] {}", msg))
+        }
+    }
+}
+
 // ---------- Plan 26 Ф.1: per-test timeout ----------
 
 /// Запускает `child` и ждёт завершения с timeout. Возвращает:
@@ -2901,9 +2967,15 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
         .iter()
         .find_map(|s| parse_contracts_policy(s))
         .unwrap_or(opts.contracts_mode);
-    let codegen_result = codegen_to_c(
-        opts.nv_file, &src, opts.mono_depth, contracts_mode, opts.repo, opts.stdlib_dir,
-    );
+    // Окно p401b-p67-class: per-unit panic net — a codegen internal-error
+    // panic (`[P67-LEGACY]` and any other) is caught HERE and reported
+    // through the same `Err(String)` channel as an ordinary compile error,
+    // instead of killing the whole batch (see `catch_unit_panic` doc above).
+    let codegen_result = catch_unit_panic(std::panic::AssertUnwindSafe(|| {
+        codegen_to_c(
+            opts.nv_file, &src, opts.mono_depth, contracts_mode, opts.repo, opts.stdlib_dir,
+        )
+    }));
     let codegen_warnings: Vec<String> = match &codegen_result {
         Ok((ws, _, _, _)) => ws.clone(),
         Err(_) => vec![],
