@@ -425,9 +425,20 @@ static inline void nova_throw(nova_str msg) {
     nova_throw_ex(msg, NULL);
 }
 
+/* [221.1 №431] `_nova_fail_top == NULL` at a cancel-throw is NOT a reason to
+ * abort() the whole process — D75 (`spec/decisions/06-concurrency.md`)
+ * promises `tok.cancel()` is a harmless no-op once "the token isn't bound,
+ * or the scope has already ended". All 8 call sites of
+ * nova_throw_cancel(_reason) across channels.h/fibers.h share the SAME
+ * shape (a fiber woke up, observed its OWN scope's cancel_requested, and
+ * throws) — absence of a fail-frame at that exact moment means precisely
+ * that: nobody is left to catch it. Defined in effects.c (not inline here)
+ * because effects.h is included before fibers.h/minicoro.h — same reason
+ * nova_in_fiber() lives there instead of here. */
+void _nova_cancel_no_handler(void);
+
 /* Plan 49 Ф.0: cancel-throw — kind=CANCEL, reason=NULL (Ф.1 заполняет
- * caller через _reason вариант). Без активного handler'а отмена бесполезна
- * (некому её перехватить) — abort с диагностикой. */
+ * caller через _reason вариант). */
 static inline void nova_throw_cancel(nova_str msg) {
     nova_last_error_set(msg, NOVA_THROW_CANCEL, NULL, NOVA_TID_NONE);  /* Ф.4 #5 */
     if (_nova_fail_top) {
@@ -439,10 +450,11 @@ static inline void nova_throw_cancel(nova_str msg) {
         _nova_fail_top->error_suppressed = NULL;  /* D158 */
         longjmp(_nova_fail_top->jmp, 1);
     }
-    fflush(stdout);
-    fprintf(stderr, "nova: cancel-throw outside any supervised scope: %.*s\n",
-        (int)msg.len, msg.ptr);
-    abort();
+    /* [221.1 №431] No handler = the addressee scope already unwound
+     * (D75 no-op) — quietly retire this fiber instead of abort()ing the
+     * process. See _nova_cancel_no_handler (effects.c) for the full
+     * rationale and the counter/diagnostics it maintains. */
+    _nova_cancel_no_handler();
 }
 
 /* Plan 49 Ф.1: cancel-throw с типизированной причиной. `reason_ptr` —
@@ -459,10 +471,10 @@ static inline void nova_throw_cancel_reason(nova_str msg, void* reason_ptr) {
         _nova_fail_top->error_suppressed = NULL;  /* D158 */
         longjmp(_nova_fail_top->jmp, 1);
     }
-    fflush(stdout);
-    fprintf(stderr, "nova: cancel-throw outside any supervised scope: %.*s\n",
-        (int)msg.len, msg.ptr);
-    abort();
+    /* [221.1 №431] Same "addressee already gone" case as nova_throw_cancel
+     * above — `reason_ptr` needs no special handling here: nobody is left
+     * to read it either. */
+    _nova_cancel_no_handler();
 }
 
 /* ---- Plan 100.4.1 (D158): failable cleanup body — multi-error composition ----
