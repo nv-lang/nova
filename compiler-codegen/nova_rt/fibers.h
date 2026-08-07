@@ -811,6 +811,9 @@ static inline void nova_sched_unregister_pending(NovaFiberQueue* scope, int slot
 /* Plan 83.11 Ф.3: forward decls (definitions further down in this file). */
 static inline void _nova_sleep_via_driver(NovaFiberQueue* scope, int slot, nova_int ms);
 static inline void _nova_cancel_via_driver(NovaFiberQueue* scope);
+/* №398: targeted single-slot counterpart — see driver.h
+ * NOVA_DRV_JOB_CANCEL_SLOT doc + nova_scope_deliver_cancel call site. */
+static inline void _nova_cancel_via_driver_slot(NovaFiberQueue* scope, int slot);
 
 /* Plan 22 Ф.7: grow scope arrays до new_cap. capacity-doubling.
  * Caller responsibility: вызывать ПЕРЕД увеличением count past capacity. */
@@ -2872,6 +2875,14 @@ static inline void nova_scope_deliver_cancel(NovaFiberQueue* q, void* reason_ptr
      * accept() … }` (no inner `spawn`) actually interruptible — see D439
      * amendment / [M-supervised-cancel-no-interrupt-parked-accept]. */
     nova_sched_cancel_pending_slot(q->owner_scope, q->owner_slot);
+    /* №398 (D442 amendment; same marker as above — one bug, two backends):
+     * the broadcast above only reaches `nova_sched_register_pending`-style
+     * ops (net.c: accept/read/write/connect). A direct-body `Time.sleep`
+     * never registers there — it arms itself under `owner_scope`'s
+     * `armed_sleeps_head` instead (driver-routed timer bookkeeping, see
+     * `_nova_sleep_via_driver`). Reach THAT mechanism too, targeted at the
+     * same (owner_scope, owner_slot) identity. */
+    _nova_cancel_via_driver_slot(q->owner_scope, q->owner_slot);
 }
 
 /* Plan 174 (D349): typed `TimeoutError` throw hook. Assigned by codegen in
@@ -2996,6 +3007,18 @@ static void _nova_early_dl_timer_cb(uv_timer_t* h) {
     if (__atomic_compare_exchange_n(&dl->fired, &expect, 1, 0,
                                      __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
         nova_sched_cancel_pending_slot(dl->owner_scope, dl->owner_slot);
+        /* №398 (same gap as nova_scope_deliver_cancel — see
+         * _nova_cancel_via_driver_slot's doc comment): the call above only
+         * reaches net.c-style ops registered via nova_sched_register_pending.
+         * A direct-body `Time.sleep` under M:N (driver started) arms itself
+         * on `dl->owner_scope`'s `armed_sleeps_head` instead — reach that
+         * too, same (owner_scope, owner_slot) target. This is what makes
+         * `supervised(timeout:/deadline:) { Time.sleep(...) }` (no `spawn`)
+         * actually interruptible while the M:N driver is running — under
+         * bootstrap/single-thread (driver not started) `Time.sleep` takes
+         * the legacy libuv path instead, which nova_sched_cancel_pending_slot
+         * alone already handles (pre-existing #165 coverage). */
+        _nova_cancel_via_driver_slot(dl->owner_scope, dl->owner_slot);
     }
     uv_close((uv_handle_t*)&dl->timer, _nova_early_dl_close_cb);
 }
@@ -4436,6 +4459,54 @@ static inline void _nova_cancel_via_driver(NovaFiberQueue* scope) {
     }
 }
 
+/* №398 (docs/plans/221.1-bug-sweep.md К1; план 221 п.11; D442 amendment;
+ * closes [M-supervised-cancel-no-interrupt-parked-accept] for the
+ * `Time.sleep` case): targeted single-(scope,slot) counterpart of
+ * `_nova_cancel_via_driver`.
+ *
+ * Root cause this closes: a direct (non-`spawn`) blocking op written
+ * straight in a `supervised{}` body runs on the SAME fiber that was
+ * executing before entering the block — its `NovaSpawnCtxBase::_nova_
+ * parent_scope` was fixed at THAT fiber's own creation time and does NOT
+ * update on entry to a (possibly nested) `supervised(cancel:)`/`(deadline:)`
+ * block. `_nova_sleep_via_driver`'s `cancel_scope` derivation therefore
+ * resolves to the OWNER's ambient scope (`q->owner_scope`/`owner_slot` —
+ * see fibers.h struct doc + nova_sched.h `nova_sched_cancel_pending_slot`)
+ * for such an op, NOT the innermost scope `q` the cancel/deadline actually
+ * fired on. `nova_scope_deliver_cancel`'s existing `_nova_cancel_via_driver(q)`
+ * only walks `q`'s OWN `armed_sleeps_head` — empty, because the sleep is
+ * armed under `owner_scope`'s list instead — so the CANCEL_SCOPE job is a
+ * silent no-op for this case and the sleep runs to full term. This
+ * targeted job reaches into `owner_scope`'s list but, mirroring
+ * `nova_sched_cancel_pending_slot`'s single-slot contract, only touches
+ * the ONE entry belonging to `owner_slot` — every other armed sleep on
+ * that (possibly outer, longer-lived, unrelated) scope is left alone.
+ *
+ * Same lifetime contract as `_nova_cancel_via_driver`: increments
+ * `scope->pending_driver_jobs` (here `scope` == the OWNER scope, an
+ * ancestor frame still on the stack — its own `nova_supervised_run_impl`
+ * spin-wait, or the fact that the root/main scope's frame lives for the
+ * whole program, keeps it alive until the driver thread decrements). */
+static inline void _nova_cancel_via_driver_slot(NovaFiberQueue* scope, int slot) {
+    if (!nova_driver_is_started()) return;
+    if (!scope || slot < 0) return;
+
+    NovaDriverJob* job = (NovaDriverJob*)malloc(sizeof(NovaDriverJob));
+    if (!job) {
+        fprintf(stderr, "nova: _nova_cancel_via_driver_slot: malloc job failed\n");
+        return;  /* Fall through — legacy cancel paths may still catch */
+    }
+    job->kind = NOVA_DRV_JOB_CANCEL_SLOT;
+    job->u.cancel_slot.scope = scope;
+    job->u.cancel_slot.slot = slot;
+
+    nova_aint_inc(&scope->pending_driver_jobs);
+    if (nova_driver_submit_job(job) != 0) {
+        free(job);
+        (void)__atomic_fetch_sub(&scope->pending_driver_jobs, 1, __ATOMIC_ACQ_REL);
+    }
+}
+
 /* Default impl: context-sensitive sleep (D71 + Plan 22 F2 libuv mandatory).
  *  - In fiber: park-on-uv_timer (Plan 22 Ф.4, D93)
  *  - On main inside supervised body → drain queue + bounded uv_run.
@@ -4626,3 +4697,10 @@ static inline void nova_runtime_reset(void) {
 }
 
 #endif /* NOVA_RT_FIBERS_H */
+
+
+
+
+
+
+

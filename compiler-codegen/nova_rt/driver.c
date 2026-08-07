@@ -336,6 +336,43 @@ static void _nova_driver_handle_cancel_scope(NovaFiberQueue* scope) {
     (void)__atomic_fetch_sub(&scope->pending_driver_jobs, 1, __ATOMIC_RELEASE);
 }
 
+/* №398: CANCEL_SLOT job handler — driver thread. Targeted counterpart of
+ * `_nova_driver_handle_cancel_scope` for exactly ONE (scope, slot) — see
+ * driver.h `NOVA_DRV_JOB_CANCEL_SLOT` doc for why this exists (direct-body
+ * `Time.sleep` arms itself under the OWNER scope, not the innermost
+ * `supervised(cancel:)` scope). Walks `scope`'s armed list (same
+ * single-mutator/driver-thread-only safety as `_handle_cancel_scope`) but
+ * only CAS/close's entries whose `slot` matches — every OTHER armed sleep
+ * belonging to unrelated slots of the (possibly outer/long-lived) owner
+ * scope is left untouched. At most one match expected (a slot holds at
+ * most one direct blocking op at a time) but the loop doesn't assume it —
+ * same defensive stance as nova_sched_cancel_pending_slot's doc (stale/
+ * reused slot = safe no-op). */
+static void _nova_driver_handle_cancel_slot(NovaFiberQueue* scope, int slot) {
+    if (!scope || slot < 0) return;
+
+    NovaSleepState* st = scope->armed_sleeps_head;
+    while (st) {
+        NovaSleepState* next = st->next_in_scope;
+
+        if (st->slot == slot) {
+            int32_t expected = NOVA_SLEEP_DRV_ARMED;
+            if (nova_aint_cas(&st->stage, &expected, NOVA_SLEEP_DRV_CANCEL_REQ)) {
+                uv_close((uv_handle_t*)&st->timer, _nova_driver_sleep_close_cb);
+            }
+        }
+
+        st = next;
+    }
+
+    /* Same lifetime contract as _handle_cancel_scope (§12.31): decrement
+     * AFTER we're done dereferencing `scope`'s fields, so the submitter's
+     * spin-wait (nova_supervised_run_impl's own pending_driver_jobs loop,
+     * which every `supervised{}` frame — incl. the owner — runs before
+     * returning) keeps the stack frame alive until here. */
+    (void)__atomic_fetch_sub(&scope->pending_driver_jobs, 1, __ATOMIC_RELEASE);
+}
+
 /* CANCEL_TIMER job handler — driver thread. Single-timer cancel (для
  * cleanup callbacks of linked tokens etc). */
 static void _nova_driver_handle_cancel_timer(NovaSleepState* st) {
@@ -500,8 +537,13 @@ static void _nova_driver_process_job(NovaDriverJob* job) {
     case NOVA_DRV_JOB_ARM_BLOCKING:
         _nova_driver_handle_arm_blocking(job->u.arm_blocking.st);
         break;
+    case NOVA_DRV_JOB_CANCEL_SLOT:  /* №398 */
+        _nova_driver_handle_cancel_slot(job->u.cancel_slot.scope, job->u.cancel_slot.slot);
+        break;
     default:
         fprintf(stderr, "nova: driver unknown job kind %d\n", (int)job->kind);
         break;
     }
 }
+
+

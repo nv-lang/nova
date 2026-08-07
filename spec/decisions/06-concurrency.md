@@ -8164,23 +8164,62 @@ out of its scope). `std/src/concurrency/supervised_deadline_test.nv`
 
 ### Границы
 
-- `Time.sleep()` specifically has a KNOWN, narrower remaining gap, NOT
-  closed by this amendment: `_nova_sleep_via_libuv`'s own park wakes early
-  correctly (its stage-based close is scope-agnostic, same as `net.c`'s
-  ops), but the post-wake check only consults `cancel_scope->cancel_
-  requested` (the OWNER's real scope — wrong one here) with no per-op
-  `cancelled` latch equivalent to `channels.h`'s `w->cancelled` (which THIS
-  window did add, closing the same gap for `Channel.recv`/`send`/`select`)
-  — so an interrupted direct-body `sleep` silently behaves as if it
-  completed normally, with no signal to the caller. `_nova_sleep_via_driver`
-  (the driver-armed path, active by default under this window's own
-  measurement) is not reached by `nova_sched_cancel_pending_slot` AT ALL —
-  it does not register through `nova_sched_register_pending`; it links into
-  `scope->armed_sleeps_head`, keyed by the SAME `owner_scope` mismatch, and
-  needs its own, separate fix (driver.c `armed_sleeps_head` walk keyed by
-  `owner_scope`/`owner_slot`, or routing the ARM_SLEEP job through the new
-  scope directly) — compiler/runtime queue, see backlog-followups.
-  `[M-supervised-direct-sleep-timeout-silent]` marker to add at close.
+- **Амендмент 2026-08-07 (реестр 221.1 №398/№224 переоткрытие, окно
+  p398-cancel-direct-body):** проба владельца (2026-08-06: `Time.sleep(3000)`
+  прямо в теле `supervised(cancel: tok)`, отмена через 200мс → сон досидел
+  3181мс) показала, что этот же gap бьёт не только `_nova_sleep_via_driver`
+  как теоретический разбор ниже предсказывал, но что и `timeout:`/`deadline:`
+  под M:N (driver уже запущен — т.е. в программе БЫЛ хотя бы один `spawn`
+  раньше по времени) страдали ИДЕНТИЧНО: `_nova_early_dl_timer_cb`
+  (early-armed timer, см. «Механика» выше) звал ТОЛЬКО
+  `nova_sched_cancel_pending_slot`, тот же самый недостаточный вызов, что и
+  `nova_scope_deliver_cancel`'s `_nova_cancel_via_driver(q)` — оба смотрят
+  `q`'s (пустой) `armed_sleeps_head`, а driver-armed `Time.sleep` регистрирует
+  себя под `owner_scope`'s списком (см. ниже). ПРОБА ИНТЕГРАТОРА, заявившая
+  «timeout: 200 → прерван за 489мс, дедлайн-путь работает» — не была
+  ошибочна, но её стенд не имел ни одного `spawn` до замера: без driver'а
+  `Time.sleep` идёт ЛЕГАСИ `_nova_sleep_via_libuv`-путём, который
+  `nova_sched_cancel_pending_slot` УЖЕ покрывал (fix №165) — с driver'ом
+  запущенным (обычный случай в реальной M:N-программе) `timeout:` был
+  сломан ТАК ЖЕ, как `cancel:`.
+
+  **Фикс:** новый driver-job `NOVA_DRV_JOB_CANCEL_SLOT` (`driver.h`/
+  `driver.c`, `_nova_driver_handle_cancel_slot`) — таргетированный по
+  `(scope, slot)` аналог `CANCEL_SCOPE`: walk `armed_sleeps_head` того
+  scope'а, но CAS/close только запись, чей `slot` совпадает — соседние
+  операции ТОГО ЖЕ (возможно внешнего, долгоживущего) owner-scope не
+  трогает. Submit-обёртка `_nova_cancel_via_driver_slot` (fibers.h) —
+  вызывается из ОБОИХ прежних тупиков: `nova_scope_deliver_cancel`
+  (`cancel:`) сразу после существующего
+  `nova_sched_cancel_pending_slot(q->owner_scope, q->owner_slot)`, и
+  `_nova_early_dl_timer_cb` (`timeout:`/`deadline:`) сразу после его
+  собственного такого же вызова. Lifetime-контракт зеркалит
+  `_nova_cancel_via_driver`: инкремент/декремент `owner_scope->pending_
+  driver_jobs` — безопасно, потому что `owner_scope` есть ПРЕДОК текущего
+  стека (его собственный `nova_supervised_run_impl` либо ещё крутит тот же
+  spin-wait для СВОИХ jobs, либо это root/main scope, чей фрейм жив весь
+  процесс).
+
+  Матрица приёмки (позитив+негатив, `Time.sleep`×{прямая операция,
+  `spawn`}×{`cancel:`,`timeout:`,`deadline:`,комбинация}) — `docs/plans/wip/
+  PROGRESS-p398.md` (сохранена как справочная запись; не переносится в
+  `std/` целиком — см. приёмку ниже).
+
+- **Остаток, НЕ закрытый этим амендментом (сузился, но не исчез):**
+  `Time.sleep()` теперь корректно БУДИТСЯ рано под ОБОИМИ путями
+  (`_nova_sleep_via_libuv` — уже было верно; `_nova_sleep_via_driver` —
+  фикс выше), но пост-wake проверка ОБОИХ путей по-прежнему консультирует
+  только `cancel_scope->cancel_requested` (OWNER-scope — НЕ `q`) с нет
+  per-op `cancelled`-латча, эквивалентного `channels.h`'s `w->cancelled`
+  (уже добавлен и закрывает тот же класс для `Channel.recv`/`send`/
+  `select`, см. «Механика» выше). Практическое следствие: прерванный
+  direct-body `sleep` возвращается управление БЕЗ throw — код,
+  синтаксически идущий сразу за ним в теле, ещё исполняется (внешний
+  `supervised` тем не менее корректно и в срок ловит/бросает `cancel:`/
+  `TimeoutError` — прикладной наблюдатель снаружи блока не замечает
+  разницы, но код МЕЖДУ прерванной операцией и концом блока успевает
+  выполниться, не будучи "должен был"). Маркер сужен и остаётся открытым:
+  `[M-supervised-direct-sleep-timeout-silent]` (backlog-followups.md).
 
 ---
 
