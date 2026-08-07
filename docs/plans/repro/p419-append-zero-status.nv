@@ -1,0 +1,39 @@
+// №419 (K1) audit probe — `Vec[T].append_zero(n)` fabricates values.
+//
+// `Vec[T] mut @append_zero(n int)` (std/src/collections/vec/mutate.nv:428)
+// is declared on ANY `T` and fills the new tail with `RawMem.fill(_, 0, n *
+// sizeof(T))` — a raw memset, no `unsafe` required at the call site. For a
+// value type with a validated invariant this produces an instance the
+// type's own constructor refuses to build.
+//
+// Run: nova build docs/plans/repro/p419-append-zero-status.nv -o /tmp/p419a && /tmp/p419a
+
+module repro.p419_append_zero_status
+
+type Status value {
+    priv code int
+}
+
+fn Status.new(c int) -> Result[Status, str] {
+    if c < 100 || c > 599 {
+        return Err("out of range: ${c}")
+    }
+    Ok({ code: c })
+}
+
+fn Status @is_valid() -> bool => @code >= 100 && @code <= 599
+fn Status @code() -> int => @code
+
+fn main() -> () {
+    // Honest path: the constructor rejects 0.
+    match Status.new(0) {
+        Ok(_) => println("Status.new(0) unexpectedly Ok"),
+        Err(e) => println("Status.new(0) honestly rejects: ", e),
+    }
+
+    // append_zero path: no constructor call at all, no `unsafe`.
+    mut v = Vec[Status].new()
+    v.append_zero(1)
+    ro fabricated = v.get(0).unwrap()
+    println("append_zero(1) fabricated Status: code=", fabricated.code(), " is_valid=", fabricated.is_valid())
+}
