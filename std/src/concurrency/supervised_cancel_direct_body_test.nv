@@ -1,0 +1,371 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Реестр 221.1 №398 (переоткрывший №224, `[M-supervised-cancel-no-
+// interrupt-parked-accept]`) — D442 амендмент (2026-08-07, окно
+// p398-cancel-direct-body): `supervised(cancel:/timeout:/deadline:)`
+// вокруг ПРЯМОГО (без `spawn`) `Time.sleep()` в теле не будило сон под
+// M:N (driver уже запущен — т.е. в программе БЫЛ хотя бы один `spawn`
+// раньше по времени). `std/src/concurrency/supervised_deadline_test.nv`
+// (тот же модуль) кладёт ВСЮ работу в `spawn` — этот файл специально
+// закрывает ПРЯМУЮ форму (см. №398's «Почему проглядели»: ни один из
+// десяти существующих сценариев не покрывал прямую операцию тела).
+//
+// Корень (fibers.h/driver.c): driver-armed `Time.sleep` регистрирует себя
+// в `owner_scope->armed_sleeps_head` (D439-ambient — прямая операция тела
+// остаётся под identity ВНЕШНЕГО scope'а, не нового `supervised{}`), а
+// `nova_scope_deliver_cancel`'s `_nova_cancel_via_driver(q)` И
+// `_nova_early_dl_timer_cb` (timeout:/deadline: early timer) оба смотрели
+// ТОЛЬКО `q`'s (пустой) список. Фикс: таргетированный по слоту driver-job
+// `NOVA_DRV_JOB_CANCEL_SLOT` (`_nova_cancel_via_driver_slot`, fibers.h) —
+// вызывается из ОБОИХ прежних тупиков.
+//
+// Известный, НЕ закрытый этим фиксом остаток (см. D442 «Границы»,
+// `[M-supervised-direct-sleep-timeout-silent]`): прерванный `sleep`
+// корректно ПРОСЫПАЕТСЯ рано, но не throw'ит — тело статически ПОСЛЕ
+// прерванной операции ещё исполняется, прежде чем внешний `supervised`
+// (уже корректно, в срок) ловит cancel/timeout. Тесты ниже поэтому мерят
+// ELAPSED ВРЕМЯ внешнего блока (это то, что №398 измерял и чем баг был
+// обнаружен), а не «тело не должно было исполниться дальше» — последнее
+// принадлежит отдельному, более узкому маркеру.
+//
+// Матрица приёмки (план 221 п.11): операция × размещение × управление.
+// Этот файл — Time.sleep (прямая операция тела, единственная затронутая
+// этим фиксом) + Channel.recv (частичный регресс — см. блок в конце
+// файла, найден НОВЫЙ отдельный баг на direct-body-форме). `accept()` —
+// `std/src/net/supervised_cancel_accept_test.nv` (существующий #165
+// фикстур, `nova test std/src/net` в этом воркчасти блокирован
+// НЕСВЯЗАННЫМ pre-existing CC-FAIL — см. PROGRESS-p398.md). `join`
+// (ожидание `spawn`-детей) — не отдельная операция пользователя; каждый
+// `spawn`+cancel: тест ниже (и в supervised_deadline_test.nv) одновременно
+// проверяет её — направленной прямой формы для `join` не существует
+// (нечего размещать «прямо в теле» — сам `join` и есть implicit-ожидание
+// конца блока).
+//
+// ПОРЯДОК ТЕСТОВ В ЭТОМ ФАЙЛЕ — НЕ случайный. `nova test` компилирует
+// файл в ОДИН бинарь, тесты выполняются ПОСЛЕДОВАТЕЛЬНО В ОДНОМ ПРОЦЕССЕ
+// (не изолированные процессы). `_nova_cancel_via_driver_slot`/
+// `_nova_cancel_via_driver`/early-deadline-timer доставляют отмену
+// АСИНХРОННО (driver-job, отдельный поток) — к моменту, когда test-блок,
+// который её вызвал, возвращается, доставка ПОЧТИ НАВЕРНЯКА уже
+// завершилась, но не гарантированно (тот самый residual race, который
+// D442's «Гонко-анализ» уже документирует для сиблинг-механизма:
+// "the remaining, narrower residual is the early-deadline timer firing
+// LATE... after owner_slot was reused by an unrelated LATER fiber").
+// Соседние test-блоки в ОДНОМ файле выполняются на той же стековой
+// глубине (тот же owner_scope-адрес, тот же owner_slot-индекс) —
+// запоздавшая доставка от теста N МОГЛА БЫ попасть в операцию теста N+1
+// (эмпирически воспроизведено этим окном: без переупорядочивания
+// «within timeout budget» ложно ловила чужую отмену). Фикс —
+// СТРУКТУРНЫЙ, не settle-паузы: все тесты, которые ТОЧНО проверяют
+// «отмена НЕ случилась» (T2/T4/T8/T9/Channel-негатив), идут ПЕРВЫМИ,
+// ДО того, как хоть один тест успел отправить асинхронную job; все
+// тесты, которые ОТПРАВЛЯЮТ такую job (T1/T3/T5/T6/T7/T10/spawn-формы),
+// идут ПОСЛЕДНИМИ — после них в файле ничего чувствительного к запоздалой
+// доставке уже нет.
+
+module concurrency.supervised_cancel_direct_body_test
+
+import std.time.duration
+
+fn is_timeout_error(e any) -> bool => e is TimeoutError
+
+// ══════════════════════════════════════════════════════════════════════
+// ЧАСТЬ A — негативы и точные проверки (ДО первой cancel:/timeout:/
+// deadline:-срабатывающей операции в этом файле — ничего не может их
+// заразить запоздалой доставкой).
+// ══════════════════════════════════════════════════════════════════════
+
+// A1 (негатив): БЕЗ cancel() — прямой sleep(150) в теле досиживает штатно.
+test "direct-body sleep: no cancel — completes fully (negative)" {
+    ro tok = CancelToken.new()
+    ro t0 = Timestamp.now().unix_millis()
+    supervised(cancel: tok) {
+        (150).to_millis().sleep()
+    }
+    ro elapsed = Timestamp.now().unix_millis() - t0
+    // Досидело — elapsed примерно равен длительности сна, НЕ прервано рано.
+    assert(elapsed >= 140)
+}
+
+// A2 (негатив): тело укладывается в срок — TimeoutError не летит.
+test "direct-body sleep: within timeout budget — no TimeoutError (negative)" {
+    mut caught = AtomicBool.new(false)
+    ro r = with Fail[TimeoutError] = |_e| {
+        caught.store(true)
+        0
+    } {
+        supervised(timeout: 2.to_seconds()) {
+            (20).to_millis().sleep()
+        }
+        7
+    }
+    assert(!caught.load())
+    assert(r == 7)
+}
+
+// A3 (негатив): cancel() ПОСЛЕ того, как область уже вышла — no-op, не
+// паника (unbind уже отвязал токен от scope'а; повторный cancel лишь
+// латчит `cancel_requested` на самом токене, безопасно).
+test "cancel() after scope already exited is a safe no-op (negative)" {
+    ro tok = CancelToken.new()
+    supervised(cancel: tok) {
+        (10).to_millis().sleep()
+    }
+    // Токен больше не привязан ни к какому живому scope — не должно падать.
+    tok.cancel()
+    ro done = true
+    assert(done)
+}
+
+// A4 (негатив): ЧУЖОЙ токен, отменённый снаружи, не трогает scope,
+// привязанный к ДРУГОМУ токену — прямой sleep в теле досиживает.
+test "unrelated token cancel does not affect a different scope (negative)" {
+    ro tok_a = CancelToken.new()
+    ro tok_foreign = CancelToken.new()
+    tok_foreign.cancel()
+    ro t0 = Timestamp.now().unix_millis()
+    supervised(cancel: tok_a) {
+        (150).to_millis().sleep()
+    }
+    ro elapsed = Timestamp.now().unix_millis() - t0
+    assert(elapsed >= 140)
+}
+
+// A5 (негатив, Channel.recv): значение уже в канале — recv не парковался
+// вовсе, cancel() снаружи никогда не проверяется — не throw'ит.
+test "direct-body Channel.recv: value sent before cancel — no throw (negative)" {
+    ro (tx, rx) = Channel.new(1)
+    ro tok = CancelToken.new()
+    tx.try_send(42)
+    supervised(cancel: tok) {
+        ro v = rx.recv()
+        assert(v == Some(42))
+    }
+    ro done = true
+    assert(done)
+}
+
+// A6 (негатив, spawn-размещение): без cancel — sleep в spawn'е досиживает.
+test "spawn-placed sleep: no cancel — completes fully (negative)" {
+    ro t0 = Timestamp.now().unix_millis()
+    supervised {
+        spawn { (150).to_millis().sleep() }
+    }
+    ro elapsed = Timestamp.now().unix_millis() - t0
+    assert(elapsed >= 140)
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// ЧАСТЬ B — позитивы (каждый отправляет минимум одну асинхронную
+// cancel/deadline driver-job). Порядок между собой не важен — после
+// ПОСЛЕДНЕГО теста файла ничего чувствительного к запоздалой доставке
+// уже нет.
+// ══════════════════════════════════════════════════════════════════════
+
+// ── Time.sleep, ПРЯМАЯ операция тела, cancel: ──────────────────────────
+
+// B1 (позитив): cancel: извне (через spawn-инициатора) будит прямой
+// sleep(3000) РАНО. До фикса — elapsed ~3000мс (сон досиживал); после —
+// elapsed около момента cancel (~50-300мс).
+test "direct-body sleep: cancel: wakes it early (#398)" {
+    ro tok = CancelToken.new()
+    ro t0 = Timestamp.now().unix_millis()
+    supervised(cancel: tok) {
+        spawn {
+            (50).to_millis().sleep()
+            tok.cancel()
+        }
+        (3000).to_millis().sleep()
+    }
+    ro elapsed = Timestamp.now().unix_millis() - t0
+    assert(elapsed < 2000)
+}
+
+// ── Time.sleep, ПРЯМАЯ операция тела, timeout: ─────────────────────────
+
+// B2 (позитив): timeout: под M:N driver-режимом (driver уже стартован
+// посторонним spawn'ом РАНЬШЕ по времени, до входа в измеряемый блок) —
+// именно эта комбинация была ВТОРОЙ жертвой того же корня (early-deadline
+// timer тоже смотрел `q`'s пустой armed_sleeps_head).
+//
+// ВАЖНО про ассерты: проверяем ТОЛЬКО elapsed (гарантия №398 — операция
+// прервана рано). НЕ проверяем «TimeoutError обязательно поймана» — это
+// принадлежит ОТДЕЛЬНОМУ, НЕ закрытому этим фиксом остатку
+// (`[M-supervised-direct-sleep-timeout-silent]`, D442 «Границы»):
+// прерванный direct-body `sleep` не throw'ит сам, единственный сигнал
+// снаружи — повторная проверка дедлайна в join-loop'е СРАЗУ после
+// возврата из тела, которая гоняется с тем же самым моментом дедлайна
+// (razor-thin race, воспроизведено этим окном: elapsed=140мс < deadline
+// 150мс в изолированном прогоне — join-loop не успевает застать
+// `now >= _dl_ns`). Это НЕ регрессия фикса №398 (сам ФИКС — «операция
+// прервана рано» — держится стабильно), это существовавшая раньше
+// нестабильность ВТОРИЧНОГО сигнала, которую №398 не обязан чинить.
+test "direct-body sleep: timeout: wakes it early under M:N driver (#398)" {
+    // Материализовать пул/driver ЗАРАНЕЕ — посторонний spawn, до измерения.
+    supervised {
+        spawn { (1).to_millis().sleep() }
+    }
+    ro t0 = Timestamp.now().unix_millis()
+    with Fail[TimeoutError] = |_e| { 0 } {
+        supervised(timeout: 150.to_millis()) {
+            (3000).to_millis().sleep()
+        }
+        1
+    }
+    ro elapsed = Timestamp.now().unix_millis() - t0
+    assert(elapsed < 2000)
+}
+
+// ── Time.sleep, ПРЯМАЯ операция тела, deadline: (абсолютная форма) ─────
+
+// B3 (позитив): та же семантика, что B2, но `deadline: Monotonic` вместо
+// относительного `timeout:` — D442 покрывает обе формы одним механизмом
+// (deadline_ns), проверяем явно под driver-режимом. Тот же комментарий
+// про ассерты, что у B2 — только elapsed, без «TimeoutError поймана».
+test "direct-body sleep: deadline: (absolute) wakes it early under M:N driver (#398)" {
+    supervised {
+        spawn { (1).to_millis().sleep() }
+    }
+    ro t0 = Timestamp.now().unix_millis()
+    with Fail[TimeoutError] = |_e| { 0 } {
+        supervised(deadline: Monotonic.now() + 150.to_millis()) {
+            (3000).to_millis().sleep()
+        }
+        9
+    }
+    ro elapsed = Timestamp.now().unix_millis() - t0
+    assert(elapsed < 2000)
+}
+
+// ── Time.sleep, ПРЯМАЯ операция тела, cancel:+timeout: комбинация ──────
+
+// B4 (позитив, cancel раньше timeout): «раннее из двух» — token сработал
+// первым. И `timed_out`, И elapsed — ЭТА проверка НЕ подвержена гонке
+// B2/B3 выше: timeout (30с) заведомо не успевает истечь, значит
+// early-deadline-timer штатно ДИЗАРМИРУЕТСЯ (nova_scope_disarm_early_
+// deadline) раньше, чем успел бы выстрелить — сигнал «TimeoutError НЕ
+// поймана» тут детерминирован, не гонка.
+test "direct-body sleep: cancel:+timeout: — cancel fires first (#398)" {
+    ro tok = CancelToken.new()
+    mut timed_out = AtomicBool.new(false)
+    ro t0 = Timestamp.now().unix_millis()
+    ro r = with Fail[TimeoutError] = |_e| {
+        timed_out.store(true)
+        0
+    } {
+        supervised(cancel: tok, timeout: 30.to_seconds()) {
+            spawn {
+                (50).to_millis().sleep()
+                tok.cancel()
+            }
+            (3000).to_millis().sleep()
+        }
+        5
+    }
+    ro elapsed = Timestamp.now().unix_millis() - t0
+    assert(!timed_out.load())
+    assert(r == 5)
+    assert(elapsed < 2000)
+}
+
+// B5 (позитив, timeout раньше cancel): симметричная форма — срок короче.
+// Та же гонка, что B2/B3 — только elapsed, «TimeoutError поймана»
+// НЕ проверяется здесь (принадлежит [M-supervised-direct-sleep-timeout-
+// silent]).
+test "direct-body sleep: cancel:+timeout: — timeout fires first (#398)" {
+    ro tok = CancelToken.new()
+    ro t0 = Timestamp.now().unix_millis()
+    with Fail[TimeoutError] = |_e| { 0 } {
+        supervised(cancel: tok, timeout: 150.to_millis()) {
+            (3000).to_millis().sleep()
+        }
+        5
+    }
+    ro elapsed = Timestamp.now().unix_millis() - t0
+    assert(elapsed < 2000)
+}
+
+// B6 (позитив): двойная отмена идемпотентна — второй tok.cancel() не
+// меняет исход/не падает (first-cancel-wins).
+test "double cancel() is idempotent (#398 regression guard)" {
+    ro tok = CancelToken.new()
+    ro t0 = Timestamp.now().unix_millis()
+    supervised(cancel: tok) {
+        spawn {
+            (50).to_millis().sleep()
+            tok.cancel()
+            tok.cancel()
+        }
+        (3000).to_millis().sleep()
+    }
+    ro elapsed = Timestamp.now().unix_millis() - t0
+    assert(elapsed < 2000)
+}
+
+// ── Time.sleep, размещение ЧЕРЕЗ spawn, cancel: (полнота матрицы —
+//    прямая форма выше, эта клетка была УЖЕ рабочей до №398, регресс) ──
+
+test "spawn-placed sleep: cancel: wakes it early (regression guard)" {
+    ro tok = CancelToken.new()
+    ro t0 = Timestamp.now().unix_millis()
+    supervised(cancel: tok) {
+        spawn {
+            (50).to_millis().sleep()
+            tok.cancel()
+        }
+        spawn {
+            (3000).to_millis().sleep()
+        }
+    }
+    ro elapsed = Timestamp.now().unix_millis() - t0
+    assert(elapsed < 2000)
+}
+
+// ── Channel.recv, ПРЯМАЯ операция тела, cancel: ────────────────────────
+//
+// НЕ ДОБАВЛЕНО (найден НОВЫЙ, ОТДЕЛЬНЫЙ от №398 баг — окно
+// p398-cancel-direct-body, 2026-08-07): `supervised(cancel: tok) { spawn
+// { sleep(50); tok.cancel() }; rx.recv() }` (recv СТРОГО прямо в теле,
+// БЕЗ обёртки в свой `spawn`) вешает процесс НАВСЕГДА (не 3018мс, не
+// таймаут — infinite hang, killed by watchdog only). Подтверждено
+// НЕЗАВИСИМЫМ от фикса №398: тот же hang воспроизводится с ВРЕМЕННО
+// ОТКЛЮЧЁННЫМ `_nova_cancel_via_driver_slot`-вызовом в
+// `nova_scope_deliver_cancel` — значит корень НЕ в №398's driver-slot
+// коде, а где-то в существующем channels.h/nova_sched.h пути
+// `nova_sched_cancel_pending_slot` → `_nova_channel_waiter_stop_cb` для
+// ЭТОЙ конкретной комбинации (direct-body recv + cancel:). ТА ЖЕ форма,
+// только recv() обёрнутый в СВОЙ `spawn { rx.recv() }` (ниже) — работает
+// штатно (elapsed ~105мс, `docs/plans/wip/PROGRESS-p398.md`). Гипотеза
+// корня (НЕ подтверждена глубже — вне бюджета этого окна, №398 — про
+// `Time.sleep`, не про Channel): wake-before-park race между
+// `nova_sched_register_pending`/`nova_sched_park_with_unlock` (recv,
+// держит channel-мьютекс до самого park) и синхронным
+// `_nova_channel_waiter_stop_cb`, вызванным с ДРУГОГО (canceller)
+// потока через `nova_sched_cancel_pending_slot` — тот же класс,
+// что driver-sleep's "Race 2a/2b"/futex-park фиксы (fibers.h), но recv()
+// использует ОБЩИЙ `nova_sched_park_with_unlock`, не свой futex-park.
+// Маркер `[M-supervised-cancel-direct-body-recv-hang]` заведён в
+// backlog-followups.md — НЕ чинится этим окном (другой класс/файл,
+// собственное расследование). Негативная форма (часть A5 выше, без
+// парковки — значение уже в канале) НЕ подвержена этому багу и покрыта.
+
+// Matrix completeness for Channel.recv, spawn placement (works — the SAME
+// canceller pattern that hangs when `rx.recv()` is direct-in-body above
+// does NOT hang when `rx.recv()` is itself wrapped in its own `spawn`;
+// confirmed via standalone probe, `docs/plans/wip/PROGRESS-p398.md`).
+test "spawn-placed Channel.recv: cancel: wakes it early (regression guard)" {
+    ro (_tx, rx) = Channel.new(1)
+    ro tok = CancelToken.new()
+    ro t0 = Timestamp.now().unix_millis()
+    supervised(cancel: tok) {
+        spawn {
+            (50).to_millis().sleep()
+            tok.cancel()
+        }
+        spawn {
+            rx.recv()
+        }
+    }
+    ro elapsed = Timestamp.now().unix_millis() - t0
+    assert(elapsed < 2000)
+}
