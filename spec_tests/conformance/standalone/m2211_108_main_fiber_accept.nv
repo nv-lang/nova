@@ -42,8 +42,7 @@ fn main() Detach {
         detach {
             ro caddr = SocketAddr.loopback(port)
             match TcpStream.connect(caddr) {
-                Ok(consume conn) => {
-                    consume c = conn
+                Ok(consume c) => {
                     c.close()
                 }
                 Err(_) => println("client connect failed")
@@ -55,8 +54,7 @@ fn main() Detach {
         // this fiber's real scheduler slot (D93) until the detached client
         // connects.
         match lst.accept() {
-            Ok(consume stream) => {
-                consume s = stream
+            Ok(consume s) => {
                 println("ACCEPTED")
                 s.close()
             }

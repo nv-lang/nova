@@ -15,9 +15,9 @@ type Db(*())
 type Stmt(*())
 
 // SQLite-compatible return codes (subset).
-const SQLITE_OK   int = 0
-const SQLITE_ROW  int = 100
-const SQLITE_DONE int = 101
+const SQLITE_OK   = 0
+const SQLITE_ROW  = 100
+const SQLITE_DONE = 101
 
 // ─── extern "nova" fn declarations ────────────────────────────────────
 extern "nova" fn mini_sqlite_open(path str) -> (*(), int)

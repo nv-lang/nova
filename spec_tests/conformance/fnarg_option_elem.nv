@@ -2,11 +2,7 @@
 // в функцию, ожидающую `Option[T]` по значению.
 
 module spec_tests.conformance
-fn unwrap_or_zero(o Option[int]) -> int =>
-    match o {
-        Some(v) => v
-        None => 0
-    }
+fn unwrap_or_zero(o Option[int]) -> int => o ?? 0
 
 fn is_present(o Option[int]) -> bool => o.is_some()
 

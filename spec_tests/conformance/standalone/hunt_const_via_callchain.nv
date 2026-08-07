@@ -7,7 +7,7 @@
 // EXPECT_STDOUT 4242
 
 module standalone.hunt_const_via_callchain
-const BASE int = 4242
+const BASE = 4242
 
 fn reader() -> int {
     BASE

@@ -10,12 +10,12 @@ module spec_tests.conformance
 type D326Box { v int }
 fn D326Box.new(n int) -> D326Box => { v: n }
 // consume-метод — терминальный потребитель для consume-перегрузки (D131/D133).
-fn D326Box consume @sink() -> int => 3
+fn D326Box consume @into_sink() -> int => 3
 
 // --- Ось режима на обычном параметре: три перегрузки одного имени ---
-fn d326_tag(x D326Box) -> int => 1               // ro (default)
-fn d326_tag(mut x D326Box) -> int => 2           // mut
-fn d326_tag(consume x D326Box) -> int => x.sink() // consume (потребляет x → 3)
+fn d326_tag(x D326Box) -> int => 1                    // ro (default)
+fn d326_tag(mut x D326Box) -> int => 2                // mut
+fn d326_tag(consume x D326Box) -> int => x.into_sink() // consume (потребляет x → 3)
 
 test "param-mode overload: ro binding dispatches to ro version (Р13/Р14)" {
     ro b = D326Box.new(0)

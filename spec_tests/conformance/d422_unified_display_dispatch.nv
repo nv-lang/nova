@@ -21,12 +21,12 @@ fn TaggedFmt @to_str() -> str => @s
 
 fn TaggedFmt @display(mut f Fmt) -> () {
     if f.alternate() {
-        f.write("<".bytes())
+        f.write("<")
         f.write(@s.bytes())
-        f.write(">".bytes())
+        f.write(">")
     } else {
         match f.precision() {
-            Some(p) => f.write("${@s}#${p}".bytes())
+            Some(p) => f.write("${@s}#${p}")
             None    => f.write(@s.bytes())
         }
     }

@@ -22,7 +22,7 @@ fn d268_describe_all[T D268Describe](items []T) -> str {
     for item in items {
         result.append(item.describe()).append(" ")
     }
-    result.into_str()
+    result
 }
 
 fn d268_total[T D268Measure](items []T) -> int {

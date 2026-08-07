@@ -53,6 +53,7 @@ fn m240_while_loop(iters int) Detach Time -> int {
     // Deliberate `while`, not `for i in 0..iters` (nv-coding-style §10): the
     // reported bug (№240) is specifically about a counted `while` C-block —
     // matching its exact registered shape is the point of this fixture.
+    // nova:allow W_WHILE_COUNTER_FOR_RANGE -- see comment above (counted while-block is the exact registered repro shape, not a stray counter)
     while i < iters {
         detach {
             (5).to_millis().sleep()
@@ -87,6 +88,7 @@ fn m240_while_loop_two_sites(iters int) Detach Time -> int {
     mut counter = AtomicInt.new(0)
     mut i = 0
     // Deliberate `while`, same rationale as `m240_while_loop` above.
+    // nova:allow W_WHILE_COUNTER_FOR_RANGE -- see comment above (counted while-block is the exact registered repro shape, not a stray counter)
     while i < iters {
         detach {
             (5).to_millis().sleep()

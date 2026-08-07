@@ -28,6 +28,14 @@ type Res consume { ro n int }
 
 fn Res.new(n int) -> Res => { n }
 
+// `into` is the exact bare name from the confirmed live repro (header
+// comment above: `r.into[str]()`) — the bug was specifically that a
+// `consume` method named `into` with ONLY the type-param in return position
+// was not recognized as consuming its receiver. Renaming per
+// W_CONSUME_NAKED_NAME's literal suggestion (`@into_into()`) is nonsensical
+// (double "into"); renaming to anything else would lose fidelity to the
+// exact historically-confirmed repro shape this fixture pins.
+// nova:allow W_CONSUME_NAKED_NAME -- see comment above (exact repro shape, not a naming-convention miss)
 fn Res consume @into[T]() -> Option[T] => None
 
 test "consume method with turbofish is recognized as consuming its receiver" {

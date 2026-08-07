@@ -7,6 +7,7 @@
 
 module standalone.hunt_str_concat_operator
 fn main() {
+    // nova:allow W_STR_CONCAT_METHOD -- explicit `.concat()` IS the test subject: this fixture pins that chained .concat() calls keep `str.concat` DCE-reachable (see header); interpolation would never call it at all.
     ro s = "a".concat("+").concat("b").concat("+").concat("c")
     println(s)
 }

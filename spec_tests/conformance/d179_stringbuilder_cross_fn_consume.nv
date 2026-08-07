@@ -30,7 +30,7 @@ fn d179_fmt_leaf(s str) -> str {
         buf.append(c)
     }
     buf.append("\"")
-    buf.into_str()
+    buf
 }
 
 // Sibling 2: own consume buf; calls d179_fmt_leaf (→ another LIVE consume buf)
@@ -45,7 +45,7 @@ fn d179_fmt_list(items []str) -> str {
         buf.append(d179_fmt_leaf(it))
     }
     buf.append("]")
-    buf.into_str()
+    buf
 }
 
 // Sibling 3: own consume buf; cross-calls BOTH other siblings while buf live,
@@ -64,7 +64,7 @@ fn d179_fmt_object(keys []str, vals []str) -> str {
         i += 1
     }
     buf.append("}")
-    buf.into_str()
+    buf
 }
 
 test "StringBuilder into_str: leaf sibling round-trips (D179)" {

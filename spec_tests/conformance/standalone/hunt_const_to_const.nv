@@ -8,7 +8,7 @@
 
 module standalone.hunt_const_to_const
 
-const RAW int = 300
+const RAW = 300
 
 // `ro` lazy-static global whose initializer reads the const RAW (a fn call to
 // keep the init in a context codegen supports — mirrors `ro m = parse(DATA)`).

@@ -191,6 +191,7 @@ test "to_bytes / to_chars: owned-линзы (D251)" {
     // priv(type)` iterators like CharsIter (found during this migration,
     // reported separately as a defect); the push-loop is bug-free and
     // semantically identical.
+    // nova:allow W_MANUAL_COLLECT -- see comment above (documented codegen gap, .collect() does not work here)
     mut d251_c []char = []char.new()
     for c in "hé".chars() { d251_c.push(c) }
     assert(d251_c.len() == 2)

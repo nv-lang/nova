@@ -25,7 +25,13 @@ type SamenameRecvUser { tag int }
 
 type SamenameRecvHolder { bytes []u8, name str, user SamenameRecvUser }
 
-// Three receivers, ONE shared method name `describe` — the collision.
+// Three receivers, ONE shared method name `describe` — the collision. The
+// []u8 overload is `consume` and returns a DIFFERENT type (str), which would
+// normally be flagged by W_CONSUME_NAKED_NAME (canon: `@into_describe()`) —
+// but renaming JUST this receiver's overload would break the very collision
+// this fixture exists to pin (all three receivers MUST share the identical
+// bare name `describe`, that is the Plan 92 repro shape).
+// nova:allow W_CONSUME_NAKED_NAME -- see comment above (Plan 92 same-name collision is the test subject)
 export fn []u8 consume @describe() -> str => "bytes:${@len()}"
 export fn str @describe() -> str => "str:${@}"
 export fn SamenameRecvUser @describe() -> str => "user:${@tag}"

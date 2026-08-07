@@ -40,7 +40,7 @@ type Linear consume { mut n int }
 fn Linear.new() -> Self => { n: 0 }
 
 fn Linear mut @bump() -> @ {
-    @n = @n + 1
+    @n += 1
 }
 
 fn Linear @value() -> int => @n

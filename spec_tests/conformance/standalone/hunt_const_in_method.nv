@@ -5,7 +5,7 @@
 
 module standalone.hunt_const_in_method
 
-const SCALE int = 50
+const SCALE = 50
 
 type Widget value {
     n int
