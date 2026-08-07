@@ -1,0 +1,209 @@
+// nvchan_test.nv — Plan 244 Ф.1 beside-test for std/concurrency/nvchan.nv.
+//
+// Матрица осей исполнения (test-conventions.md правило 6): метод × место
+// {в теле области ("body"), внутри spawn} × состояние канала {пустой,
+// частично полный, полный, закрытый}. Покрытие сведено таблицей в
+// docs/plans/wip/PROGRESS-p244.md; непокрытые клетки — с причиной там же
+// (не молча).
+
+module concurrency.nvchan_test
+
+import std.concurrency.nvchan.{Chan}
+import std.time.duration
+
+// ── len/capacity — состояние: пустой, частично полный, полный (body) ──────
+
+test "new/len/capacity: пустой канал — len=0, capacity=cap" {
+    ro pair = Chan[int].new(4)
+    ro tx = pair.tx
+    ro rx = pair.rx
+    assert(rx.len() == 0)
+    assert(rx.capacity() == 4)
+    assert(!tx.is_closed())
+    assert(!rx.is_closed())
+}
+
+test "send/recv FIFO: частично полный -> полный -> дренаж (body)" {
+    ro pair = Chan[int].new(3)
+    ro tx = pair.tx
+    ro rx = pair.rx
+    assert(tx.send(1))
+    assert(rx.len() == 1)                 // частично полный
+    assert(tx.send(2))
+    assert(tx.send(3))
+    assert(rx.len() == 3)
+    assert(rx.len() == rx.capacity())      // полный, граница
+
+    // FIFO: значения выходят в порядке отправки, не LIFO.
+    match rx.recv() { Some(v) => assert(v == 1), None => assert(false) }
+    match rx.recv() { Some(v) => assert(v == 2), None => assert(false) }
+    match rx.recv() { Some(v) => assert(v == 3), None => assert(false) }
+    assert(rx.len() == 0)                  // снова пуст, граница
+}
+
+test "try_send: возвращает false на полном буфере, не блокирует (body, полный)" {
+    ro pair = Chan[int].new(1)
+    ro tx = pair.tx
+    ro rx = pair.rx
+    assert(tx.try_send(10))                // 0 -> 1, ok
+    assert(!tx.try_send(20))               // полн: false, НЕ блокирует (тест бы завис)
+    assert(rx.len() == 1)                  // второе значение не попало в буфер
+    match rx.recv() { Some(v) => assert(v == 10), None => assert(false) }  // первое цело
+}
+
+test "try_recv на пустом ChanRx: None, без блокировки (body, пустой)" {
+    ro pair = Chan[int].new(2)
+    ro tx = pair.tx
+    ro rx = pair.rx
+    match rx.try_recv() {
+        None => assert(true),
+        Some(_) => assert(false),
+    }
+}
+
+// ── close(): идемпотентность, взаимодействие с send/recv/try_* ────────────
+
+test "close(): send в закрытый канал -> false, не panic (body, закрыт)" {
+    ro pair = Chan[int].new(2)
+    ro tx = pair.tx
+    ro rx = pair.rx
+    tx.close()
+    assert(!tx.send(99))                   // закрыт -> false, не блокирует и не падает
+    assert(!tx.try_send(99))
+}
+
+test "close(): recv из закрытого ПУСТОГО канала -> None (body, закрыт+пуст)" {
+    ro pair = Chan[int].new(2)
+    ro tx = pair.tx
+    ro rx = pair.rx
+    tx.close()
+    match rx.recv() { None => assert(true), Some(_) => assert(false) }
+    match rx.try_recv() { None => assert(true), Some(_) => assert(false) }
+}
+
+test "close(): буфер дренируется ПЕРЕД None — закрытый непустой канал (body, закрыт+частично полный)" {
+    ro pair = Chan[int].new(2)
+    ro tx = pair.tx
+    ro rx = pair.rx
+    assert(tx.send(7))
+    tx.close()                             // закрыт, но в буфере ещё значение
+    match rx.recv() { Some(v) => assert(v == 7), None => assert(false) }  // дренаж
+    match rx.recv() { None => assert(true), Some(_) => assert(false) }    // теперь закрыт+пуст
+}
+
+test "close(): идемпотентен — повторный вызов не panic-ит (body)" {
+    ro pair = Chan[int].new(1)
+    ro tx = pair.tx
+    ro rx = pair.rx
+    tx.close()
+    tx.close()                             // второй вызов — no-op, не должен упасть
+    tx.close()                             // третий — тоже
+    assert(tx.is_closed())
+    match rx.recv() { None => assert(true), Some(_) => assert(false) }
+}
+
+test "is_closed(): false до close(), true после — на ОБЕИХ половинах (body)" {
+    ro pair = Chan[int].new(1)
+    ro tx = pair.tx
+    ro rx = pair.rx
+    assert(!tx.is_closed())
+    assert(!rx.is_closed())
+    tx.close()
+    assert(tx.is_closed())
+    assert(rx.is_closed())                 // видно с читающей стороны тоже
+}
+
+// ── send/recv, блокирующие пути — placement: spawn (пустой/полный) ────────
+
+test "recv блокируется на пустом канале, будится send() из spawn (spawn, пустой)" {
+    ro pair = Chan[int].new(1)
+    ro tx = pair.tx
+    ro rx = pair.rx
+    mut got = AtomicInt.new(-1)
+    supervised {
+        spawn {
+            // rx.recv() ЗДЕСЬ, внутри spawn — блокирующий путь, placement=spawn.
+            match rx.recv() {
+                Some(v) => got.store(v),
+                None => got.store(-2),
+            }
+        }
+        spawn {
+            (5).to_millis().sleep()        // дать recv() время припарковаться
+            ro _ = tx.send(42)
+        }
+    }
+    assert(got.load() == 42)
+}
+
+test "send блокируется на полном канале, будится recv() из другого spawn (spawn, полный)" {
+    ro pair = Chan[int].new(1)
+    ro tx = pair.tx
+    ro rx = pair.rx
+    assert(tx.send(1))                     // буфер полон (cap=1)
+    mut sent_ok = AtomicBool.new(false)
+    mut second = AtomicInt.new(-1)
+    supervised {
+        spawn {
+            // send() здесь блокируется, пока буфер полон — placement=spawn.
+            ro ok = tx.send(2)
+            sent_ok.store(ok)
+        }
+        spawn {
+            (5).to_millis().sleep()        // дать send() время припарковаться
+            match rx.recv() {              // освобождает слот -> будит send()
+                Some(v) => second.store(v),
+                None => second.store(-2),
+            }
+        }
+    }
+    assert(sent_ok.load())
+    assert(second.load() == 1)             // первое значение ушло получателю
+    match rx.recv() { Some(v) => assert(v == 2), None => assert(false) }  // второе тоже дошло
+}
+
+test "recv из закрытого канала внутри spawn (spawn, закрыт+пуст)" {
+    ro pair = Chan[int].new(1)
+    ro tx = pair.tx
+    ro rx = pair.rx
+    tx.close()
+    mut got_none = AtomicBool.new(false)
+    supervised {
+        spawn {
+            match rx.recv() {
+                None => got_none.store(true),
+                Some(_) => got_none.store(false),
+            }
+        }
+    }
+    assert(got_none.load())
+}
+
+test "send/try_send/is_closed/len/capacity вызванные ВНУТРИ spawn — гладкий смок (spawn, частично полный)" {
+    ro pair = Chan[int].new(4)
+    ro tx = pair.tx
+    ro rx = pair.rx
+    mut ok1 = AtomicBool.new(false)
+    mut ok2 = AtomicBool.new(false)
+    mut seen_len = AtomicInt.new(-1)
+    mut seen_cap = AtomicInt.new(-1)
+    mut seen_closed = AtomicBool.new(true)
+    supervised {
+        spawn {
+            ok1.store(tx.send(1))
+            ok2.store(tx.try_send(2))
+            seen_len.store(rx.len())
+            seen_cap.store(rx.capacity())
+            seen_closed.store(tx.is_closed())
+        }
+    }
+    assert(ok1.load())
+    assert(ok2.load())
+    assert(seen_len.load() == 2)
+    assert(seen_cap.load() == 4)
+    assert(!seen_closed.load())
+}
+
+// ── адверсарная проба «подсунь заведомо негодное» — см. отдельный файл
+// nvchan_break_test.nv (Ф.1, требование приёмки п.1): реализация ломается
+// намеренно, эти тесты обязаны покраснеть.
