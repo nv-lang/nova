@@ -1,0 +1,21 @@
+// EXPECT_COMPILE_ERROR does not satisfy `NeedsFoo386` bound
+module neg.p386_type_decl_bound_recordlit_neg
+// №386 (Plan p386-bound-doors) — "4th door": the bound on a GENERIC TYPE
+// DECLARATION itself (`type Box386[K NeedsFoo386] { ... }`) was never
+// checked anywhere (docs/plans/221.1-bug-sweep.md #386). This guards the
+// most common instantiation surface: a record literal whose generic
+// type-arg is inferred PURELY from the field-literal value (no explicit
+// `Box386[Widget386]` anywhere in the source) — `check_record_lit_decl_bounds`
+// (types/mod.rs).
+
+type NeedsFoo386 protocol { @foo() -> int }
+
+type Box386[K NeedsFoo386] { ro k K }
+
+// Widget386 does NOT implement NeedsFoo386 — no @foo method.
+type Widget386 { id int }
+
+test "(386-neg) record-lit generic instantiation violating the type decl's OWN bound" {
+    ro b = Box386 { k: Widget386 { id: 1 } }
+    print(b.k.id)
+}

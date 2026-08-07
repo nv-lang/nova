@@ -1,0 +1,17 @@
+// №386 (Plan p386-bound-doors) — positive guard: a record field type
+// whose type-arg DOES satisfy the wrapped generic's own bound must keep
+// compiling and running exactly as before.
+module spec_tests.conformance
+
+type NeedsFoo386FldPos protocol { @foo() -> int }
+type BoxFld386Pos[K NeedsFoo386FldPos] { ro k K }
+
+type Fooable386FldPos { id int }
+fn Fooable386FldPos @foo() -> int => @id
+
+type Wrapper386FldPos { w BoxFld386Pos[Fooable386FldPos] }
+
+test "(386-pos) record field type satisfying the wrapped generic's OWN bound" {
+    ro w = Wrapper386FldPos { w: BoxFld386Pos { k: Fooable386FldPos { id: 11 } } }
+    assert(w.w.k.id == 11)
+}

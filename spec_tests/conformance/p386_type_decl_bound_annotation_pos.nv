@@ -1,0 +1,15 @@
+// №386 (Plan p386-bound-doors) — positive guard: a let-annotation whose
+// type-arg DOES satisfy the type declaration's own bound must keep
+// compiling and running exactly as before.
+module spec_tests.conformance
+
+type NeedsFoo386AnnPos protocol { @foo() -> int }
+type BoxA386Pos[K NeedsFoo386AnnPos] { ro k K }
+
+type Fooable386AnnPos { id int }
+fn Fooable386AnnPos @foo() -> int => @id
+
+test "(386-pos) let-annotation satisfying the type decl's OWN bound" {
+    ro b BoxA386Pos[Fooable386AnnPos] = { k: Fooable386AnnPos { id: 3 } }
+    assert(b.k.id == 3)
+}

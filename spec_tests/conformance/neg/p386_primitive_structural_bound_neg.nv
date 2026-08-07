@@ -1,0 +1,16 @@
+// EXPECT_COMPILE_ERROR does not satisfy `AsSlice` bound
+module neg.p386_primitive_structural_bound_neg
+// №388 (Plan p386-bound-doors) — "5th door": a primitive PASSED THROUGH
+// EVERY bound unconditionally, without structural verification — for
+// `str` this accidentally coincided with `#coerce str@bytes()`; for every
+// OTHER primitive there was no bridge at all. Exact owner repro
+// (docs/plans/221.1-bug-sweep.md #388, 2026-08-06): `int` in a position
+// requiring `AsSlice[u8]` (`@ptr() -> *T`, `@len() -> int`) — `int` has
+// neither method and must be rejected exactly like any declared type
+// missing those methods (`check_satisfaction`/`check_satisfaction_against_methods`,
+// types/mod.rs).
+
+test "(388-neg) int does not structurally satisfy AsSlice[u8]" {
+    mut v = []u8.new()
+    v.append(42)
+}

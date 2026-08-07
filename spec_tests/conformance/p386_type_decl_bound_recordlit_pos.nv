@@ -1,0 +1,16 @@
+// №386 (Plan p386-bound-doors) — positive guard: a record-lit generic
+// instantiation whose field-inferred type-arg DOES satisfy the type
+// declaration's own bound must keep compiling exactly as before.
+module spec_tests.conformance
+
+type NeedsFoo386Pos protocol { @foo() -> int }
+
+type Box386Pos[K NeedsFoo386Pos] { ro k K }
+
+type Fooable386Pos { id int }
+fn Fooable386Pos @foo() -> int => @id
+
+test "(386-pos) record-lit generic instantiation satisfying the type decl's OWN bound" {
+    ro b = Box386Pos { k: Fooable386Pos { id: 7 } }
+    assert(b.k.id == 7)
+}

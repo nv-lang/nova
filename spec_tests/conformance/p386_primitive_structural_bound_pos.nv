@@ -1,0 +1,33 @@
+// №388 (Plan p386-bound-doors) — positive guard, two angles:
+// 1. a primitive that DOES structurally satisfy a bound (via a real
+//    `AsSlice`-implementing `[]u8` argument, or via one of the compiler's
+//    built-in auto-derivable protocols — `int` satisfies `Hash` the same
+//    way it always has) must keep compiling and running exactly as before;
+// 2. `str`'s real bridge into `AsSlice[u8]` is the EXPLICIT `#coerce
+//    str@bytes()` conversion (D429) — the bound-checker now recognizes
+//    `#coerce` as its OWN legitimate satisfaction path (`coerce_output` /
+//    types/mod.rs), NOT a blanket primitive skip. A bare `str` argument
+//    (no explicit `.bytes()` — `#coerce` inserts the conversion implicitly,
+//    same as any other `#coerce` call site, D429 R6) must keep working —
+//    this is the EXACT verified-passing shape from the prior p383 window's
+//    `probes-p383/p383_coerce_asslice_pos/main.nv`, guarded here for real.
+module spec_tests.conformance
+
+type NeedsHash386Pos[T Hash] { ro v T }
+
+test "(388-pos) primitives satisfy the compiler's built-in auto-derivable protocols" {
+    ro h = NeedsHash386Pos { v: 42 }
+    assert(h.v == 42)
+}
+
+test "(388-pos) Vec[u8] structurally satisfies AsSlice[u8] for @append" {
+    mut v = []u8.new()
+    v.append([]u8.of(1, 2, 3))
+    assert(v.len() == 3)
+}
+
+test "(388-pos) str's real AsSlice[u8] bridge is #coerce (D429), not a blanket skip" {
+    mut v = []u8.new()
+    v.append("hi")
+    assert(v.len() == 2)
+}

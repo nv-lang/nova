@@ -25337,6 +25337,39 @@ struct BoundCtx<'a> {
     /// recognized inline. Heap records / protocols / typevars are absent here,
     /// so their `mut` params keep the handle ABI unconstrained (Р6).
     value_type_names: std::collections::HashSet<String>,
+    /// №386 (Plan p386-bound-doors, "4th door"): name → `TypeDecl`, so the
+    /// declaration's OWN generic bounds (`type Box[K Equal + Hash] { … }`)
+    /// can be checked against concrete type-args wherever a WRITTEN
+    /// `TypeRef` names a generic type (`check_typeref_bounds`) — previously
+    /// `BoundCtx` had no type-declaration lookup at all (only
+    /// `TypeCheckCtx` did, for arity/existence, a separate pass this
+    /// checker cannot call into). Scanned local + peer files, same pattern
+    /// as `impl_protocol_types`/`value_type_names` above.
+    type_decls: HashMap<String, &'a TypeDecl>,
+    /// №388 (Plan p386-bound-doors) supplement: `#coerce` (D429) receiver-type
+    /// key -> declared output `TypeRef`, for the SAME `str -> bytes() -> []u8`
+    /// bridge `str@bytes()` provides — `AsSlice[u8]` is satisfied by `[]u8`,
+    /// NOT literally by `str`. Before this field, `check_satisfaction_*`
+    /// closed the gap with a blanket "any primitive vacuously satisfies any
+    /// bound" skip that happened to also cover `str`'s real `#coerce` case
+    /// as an unprincipled side effect (verified: removing the primitive
+    /// blanket-skip broke `probes-p383/p383_coerce_asslice_pos/main.nv`'s
+    /// `v.append("hello")`, a DESIGNED/verified-passing `#coerce` case from
+    /// the prior p383 window, until this field was added). `#coerce` is now
+    /// its OWN explicit satisfaction path (task's own framing: "#coerce —
+    /// отдельный законный путь, оформить явно"), tried in
+    /// `check_satisfaction_against_methods` for ANY concrete type — not
+    /// primitive-only — after the direct structural check fails, before
+    /// reporting "missing". Deliberately NOT the full D429 R1-R15
+    /// validated `collect_coerce_pairs` registry (that emits `E_COERCE_*`
+    /// diagnostics and needs a `TypeCheckCtx`-only `lookup` closure this
+    /// separate pass doesn't have) — a lightweight, best-effort re-scan of
+    /// `#coerce`-attributed fns' receiver -> return type, matching the
+    /// permissive "best-effort, not the source of truth" character of
+    /// every other lookup in this struct (`type_decls`, `impl_protocol_types`,
+    /// …). Malformed `#coerce` declarations are still caught by
+    /// `TypeCheckCtx`'s own `E_COERCE_*` diagnostics independently.
+    coerce_output: HashMap<String, TypeRef>,
     /// [D52-амендмент, ОКНО-5, M-newtype-over-fn-type-unsupported /
     /// M-alias-of-fn-type-not-callable]: name of a declared `type X fn(A) ->
     /// B` newtype (one level — the grammar itself disallows chaining) OR
@@ -25475,6 +25508,40 @@ impl<'a> BoundCtx<'a> {
         value_scan(&module.items, &mut value_type_names);
         for pf in &module.peer_files {
             value_scan(&pf.items_here, &mut value_type_names);
+        }
+        // №386 (Plan p386-bound-doors): name -> TypeDecl (local + peers), see
+        // field doc on `type_decls`.
+        let mut type_decls: HashMap<String, &'a TypeDecl> = HashMap::new();
+        for item in &module.items {
+            if let Item::Type(t) = item {
+                type_decls.insert(t.name.clone(), t);
+            }
+        }
+        for pf in &module.peer_files {
+            for item in &pf.items_here {
+                if let Item::Type(t) = item {
+                    type_decls.insert(t.name.clone(), t);
+                }
+            }
+        }
+        // №388 (Plan p386-bound-doors) supplement: `#coerce fn Type @method()
+        // -> O` -> receiver-type-name -> O (see `coerce_output`'s field doc).
+        // Lightweight re-scan, NOT the validated D429 registry.
+        let mut coerce_output: HashMap<String, TypeRef> = HashMap::new();
+        let coerce_scan = |items: &[Item], m: &mut HashMap<String, TypeRef>| {
+            for item in items {
+                let Item::Fn(f) = item else { continue };
+                if !f.coerce_attr {
+                    continue;
+                }
+                let Some(recv) = &f.receiver else { continue };
+                let Some(rt) = &f.return_type else { continue };
+                m.entry(recv.type_name.clone()).or_insert_with(|| rt.clone());
+            }
+        };
+        coerce_scan(&module.items, &mut coerce_output);
+        for pf in &module.peer_files {
+            coerce_scan(&pf.items_here, &mut coerce_output);
         }
         // [D52-амендмент, ОКНО-5]: callable-fn-type names (newtype-over-fn /
         // alias-of-fn) — see `fn_type_names` doc above.
@@ -25637,7 +25704,7 @@ impl<'a> BoundCtx<'a> {
             }
         }
 
-        BoundCtx { protocol_specs, effect_decls, sig, sum_variant_names, type_defining_modules, type_method_map, type_sets, impl_protocol_types, value_type_names, fn_type_names, current_fn_gs: std::cell::RefCell::new(HashMap::new()), current_recv_ty: std::cell::RefCell::new(None) }
+        BoundCtx { protocol_specs, effect_decls, sig, sum_variant_names, type_defining_modules, type_method_map, type_sets, impl_protocol_types, value_type_names, type_decls, coerce_output, fn_type_names, current_fn_gs: std::cell::RefCell::new(HashMap::new()), current_recv_ty: std::cell::RefCell::new(None) }
     }
 
     /// Plan 162 Ф.3: returns true iff method_name on type type_name is inherent
@@ -25682,6 +25749,19 @@ impl<'a> BoundCtx<'a> {
                         generics: r.generics.clone(),
                         span: r.span,
                     });
+                    // №386 (Plan p386-bound-doors): check the DECLARATION-level
+                    // bounds of every generic type named in a param/return
+                    // annotation (`fn f(m IndexMap[NoMethods, int])`) — after
+                    // `current_fn_gs` is set above, so a param whose type-arg is
+                    // the enclosing fn's OWN typevar correctly uses the
+                    // passthrough-coverage path `check_satisfaction` already has,
+                    // instead of a false positive on an unresolved name.
+                    for p in &f.params {
+                        self.check_typeref_bounds(&p.ty, errors);
+                    }
+                    if let Some(rt) = &f.return_type {
+                        self.check_typeref_bounds(rt, errors);
+                    }
                     self.walk_fn_body(f, &mut scope, errors);
                     self.current_fn_gs.borrow_mut().clear();
                     *self.current_recv_ty.borrow_mut() = None;
@@ -25691,6 +25771,61 @@ impl<'a> BoundCtx<'a> {
                     // c bounds — обходим их body со свежим scope.
                     let mut scope: HashMap<String, TypeRef> = HashMap::new();
                     self.walk_block(&t.body, &mut scope, errors);
+                }
+                // №386 (Plan p386-bound-doors): a record/named-tuple/sum-variant
+                // FIELD declared with a concrete generic type-arg
+                // (`type Foo { m IndexMap[NoMethods, int] }`) is a written
+                // `TypeRef` just like a param/return type — check it once here
+                // at the declaration (not per instantiation: a concrete field
+                // type is a fixed fact of the declaration, independent of how
+                // many times `Foo` itself gets instantiated). `current_fn_gs` is
+                // seeded with THIS type's own generics so a field reusing `Foo`'s
+                // own type-param (`type Foo[T] { m IndexMap[T, int] }`) is a
+                // passthrough, not a false positive — same mechanism `fn_generic_scope`
+                // gives function bodies above.
+                Item::Type(t) => {
+                    let mut gs: GenericScope = HashMap::new();
+                    for g in &t.generics {
+                        gs.insert(g.name.clone(), g.clone());
+                    }
+                    *self.current_fn_gs.borrow_mut() = gs;
+                    match &t.kind {
+                        TypeDeclKind::Record(fields) => {
+                            for f in fields {
+                                self.check_typeref_bounds(&f.ty, errors);
+                            }
+                        }
+                        TypeDeclKind::NamedTuple(fields) => {
+                            for f in fields {
+                                self.check_typeref_bounds(&f.ty, errors);
+                            }
+                        }
+                        TypeDeclKind::Sum(variants) => {
+                            for v in variants {
+                                match &v.kind {
+                                    SumVariantKind::Tuple(tys) => {
+                                        for ty in tys {
+                                            self.check_typeref_bounds(ty, errors);
+                                        }
+                                    }
+                                    SumVariantKind::Record(fields) => {
+                                        for f in fields {
+                                            self.check_typeref_bounds(&f.ty, errors);
+                                        }
+                                    }
+                                    SumVariantKind::Unit => {}
+                                }
+                            }
+                        }
+                        TypeDeclKind::Newtype(inner) | TypeDeclKind::Alias(inner) => {
+                            self.check_typeref_bounds(inner, errors);
+                        }
+                        TypeDeclKind::Protocol { .. }
+                        | TypeDeclKind::Effect(_)
+                        | TypeDeclKind::TypeSet(_)
+                        | TypeDeclKind::Opaque => {}
+                    }
+                    self.current_fn_gs.borrow_mut().clear();
                 }
                 _ => {}
             }
@@ -25736,6 +25871,11 @@ impl<'a> BoundCtx<'a> {
             Stmt::Expr(e) => self.walk_expr(e, scope, errors),
             Stmt::Let(d) => {
                 self.walk_expr(&d.value, scope, errors);
+                // №386 (Plan p386-bound-doors): explicit `ro x: T = …` / `mut x: T = …`
+                // annotation is a WRITTEN TypeRef (`ro m: IndexMap[NoMethods, int] = …`).
+                if let Some(ty) = &d.ty {
+                    self.check_typeref_bounds(ty, errors);
+                }
                 // Plan 53: refutable pattern в `let` — compile error.
                 // Допустимы только irrefutable patterns (Ident, Wildcard,
                 // Tuple, plain-Record). Refutable (Literal, Variant, Or,
@@ -25859,7 +25999,34 @@ impl<'a> BoundCtx<'a> {
                     }
                 }
             }
-            ExprKind::TurboFish { base, .. } => self.walk_expr(base, scope, errors),
+            ExprKind::TurboFish { base, type_args } => {
+                self.walk_expr(base, scope, errors);
+                // №386 (Plan p386-bound-doors): explicit turbofish type-args
+                // naming a generic TYPE declaration — `IndexMap[NoMethods,
+                // int].new()`, `Box[NoMethods]?`, any `Type[ConcreteArgs]`
+                // construction. Free-function turbofish (`f[T](args)`) also
+                // reaches this arm; `type_decls.get` simply misses (fn names
+                // aren't in that map), so this is a no-op there — same
+                // best-effort skip as `check_typeref_bounds`.
+                if let Some(name) = Self::turbofish_base_name(base) {
+                    if let Some(td) = self.type_decls.get(name.as_str()) {
+                        if td.generics.len() == type_args.len() {
+                            let gs = self.current_fn_gs.borrow();
+                            for (gp, concrete) in td.generics.iter().zip(type_args.iter()) {
+                                if gp.bounds.is_empty() || Self::is_passthrough_typevar(concrete, &gs) {
+                                    continue;
+                                }
+                                for bound in &gp.bounds {
+                                    self.check_satisfaction(concrete, bound, &gp.name, name.as_str(), e.span, errors);
+                                }
+                            }
+                        }
+                    }
+                    for t in type_args {
+                        self.check_typeref_bounds(t, errors);
+                    }
+                }
+            }
             ExprKind::Binary { left, right, op } => {
                 // Plan 115 D214: ptr arithmetic banned (E_PTR_ARITHMETIC_BANNED).
                 // V1: only comparison (Eq/Neq) и cast (handled separately)
@@ -26097,9 +26264,16 @@ impl<'a> BoundCtx<'a> {
             ExprKind::TupleLit(elems) => {
                 for e in elems { self.walk_expr(e, scope, errors); }
             }
-            ExprKind::RecordLit { fields, .. } => {
+            ExprKind::RecordLit { type_name, fields, .. } => {
                 for f in fields {
                     if let Some(v) = &f.value { self.walk_expr(v, scope, errors); }
+                }
+                // №386 (Plan p386-bound-doors): a generic type's own bounds
+                // instantiated purely by FIELD-LITERAL inference (`Box { k:
+                // NoMethods{x:1} }`, no explicit `Box[NoMethods]` anywhere for
+                // `check_typeref_bounds` to see — own call site, own doc).
+                if let Some(name) = type_name {
+                    self.check_record_lit_decl_bounds(name, fields, e.span, scope, errors);
                 }
             }
             ExprKind::TaggedTemplate { tag, args, .. } => {
@@ -26432,6 +26606,178 @@ impl<'a> BoundCtx<'a> {
             ),
             func.span,
         ));
+    }
+
+    /// №386 (Plan p386-bound-doors): is `ty` a BARE name currently in scope
+    /// as an abstract type-parameter (`gs` — `current_fn_gs`, seeded either
+    /// with the enclosing fn's generics+receiver-generics, or — while
+    /// walking a type declaration's own fields — that type's own
+    /// generics)? An in-scope typevar is NOT a "concrete" instantiation for
+    /// the door-4/5 declaration-bound checks below — it is an UNRESOLVED
+    /// parameter of the CURRENT declaration, still waiting for an external
+    /// caller to supply a real type. Whether THAT external caller's choice
+    /// satisfies the bound is checked at ITS OWN instantiation site (the
+    /// other `check_typeref_bounds`/`check_record_lit_decl_bounds`/turbofish
+    /// call sites already wired) — checking it AGAIN here, against an
+    /// abstract name, would be either redundant (if bounded) or a FALSE
+    /// POSITIVE against std's existing, DOCUMENTED under-constrained
+    /// generics (verified regression, `nova check std/src`):
+    /// `HashMap[K, V].new()` returns `HashMap[K, V]` without restating the
+    /// type's own `K Hash`; `type HashMapIter[K, V] { map HashMap[K, V] }`
+    /// doesn't restate it either; `type Set[T] { use map HashMap[T, ()] }`
+    /// is EXPLICITLY documented (`set/core.nv` header comment, spec
+    /// `Q-bounds`) as bound-free by design, deferring enforcement to
+    /// `Set[T]`'s OWN use sites. This guard scopes the 4 new doors to
+    /// GENUINELY concrete instantiations, leaving that documented
+    /// under-constrained-generic gap exactly as open as it already was —
+    /// not silently narrower, not silently wider.
+    fn is_passthrough_typevar(ty: &TypeRef, gs: &GenericScope) -> bool {
+        matches!(ty, TypeRef::Named { path, generics, .. }
+            if generics.is_empty() && path.len() == 1 && gs.contains_key(&path[0]))
+    }
+
+    /// №386 (Plan p386-bound-doors): base-identifier of a turbofish
+    /// (`Type[Args]` / `f[T]`) — last path segment of `Ident`/`Path`, `None`
+    /// for any other base shape (already-resolved value expr, etc).
+    fn turbofish_base_name(base: &Expr) -> Option<String> {
+        match &base.kind {
+            ExprKind::Ident(n) => Some(n.clone()),
+            ExprKind::Path(p) => p.last().cloned(),
+            _ => None,
+        }
+    }
+
+    /// №386 (Plan p386-bound-doors, "4th door"): recursively walk a WRITTEN
+    /// `TypeRef` and, for every `Named` node whose generics are non-empty
+    /// AND whose name resolves to a locally-known generic `TypeDecl`, check
+    /// the DECLARATION's own bounds (`type Box[K Equal + Hash] { … }`)
+    /// against the concrete type-args actually written — delegating to the
+    /// SAME `check_satisfaction` primitive doors 1-3 (free fn / method /
+    /// method-own typevar, №383) already funnel into via
+    /// `check_generic_bounds_for_call`. This is a FOURTH call site into that
+    /// one satisfaction-check, not a parallel re-implementation.
+    ///
+    /// Recurses into `generics` FIRST (mirrors `TypeCheckCtx::walk_typeref`'s
+    /// own order), so a nested generic (`Box[Box[NoMethods]]`) is checked at
+    /// EVERY nesting level automatically — no separate nested-generic case
+    /// needed.
+    ///
+    /// Best-effort, matching every other path in this checker: an arity
+    /// mismatch against `td.generics.len()` is silently skipped (that is
+    /// `E_TYPE_ARITY_MISMATCH`'s job, in `TypeCheckCtx::walk_typeref` — a
+    /// separate pass this checker cannot call into, see `type_decls`'s field
+    /// doc); a name absent from `type_decls` (unresolved / not a generic
+    /// type) is skipped too.
+    ///
+    /// Call sites (the actual "instantiation surfaces" for a WRITTEN
+    /// TypeRef): `let`/`ro`/`mut` annotations, fn param/return types, and
+    /// record/named-tuple field declarations — wired at each in
+    /// `check_module`/`walk_stmt`. A generic instantiated WITHOUT an
+    /// explicit annotation (`Box { k: NoMethods{x:1} }`, K inferred from the
+    /// field literal, no `TypeRef` anywhere in the source spells `Box[
+    /// NoMethods]`) is NOT reachable through this walker at all — that is
+    /// `check_record_lit_decl_bounds`'s separate job (own call site,
+    /// same `check_satisfaction` primitive).
+    fn check_typeref_bounds(&self, tr: &TypeRef, errors: &mut Vec<Diagnostic>) {
+        match tr {
+            TypeRef::Named { path, generics, span } => {
+                for g in generics {
+                    self.check_typeref_bounds(g, errors);
+                }
+                let Some(name) = path.last() else { return; };
+                if generics.is_empty() {
+                    return;
+                }
+                let Some(td) = self.type_decls.get(name.as_str()) else { return; };
+                if td.generics.len() != generics.len() {
+                    return; // arity mismatch — E_TYPE_ARITY_MISMATCH's job, not ours.
+                }
+                let gs = self.current_fn_gs.borrow();
+                for (gp, concrete) in td.generics.iter().zip(generics.iter()) {
+                    if gp.bounds.is_empty() || Self::is_passthrough_typevar(concrete, &gs) {
+                        continue;
+                    }
+                    for bound in &gp.bounds {
+                        self.check_satisfaction(concrete, bound, &gp.name, name, *span, errors);
+                    }
+                }
+            }
+            TypeRef::Array(inner, _) | TypeRef::FixedArray(_, inner, _) => {
+                self.check_typeref_bounds(inner, errors);
+            }
+            TypeRef::Tuple(items, _) => {
+                for it in items {
+                    self.check_typeref_bounds(it, errors);
+                }
+            }
+            TypeRef::Func { params, return_type, .. } => {
+                for p in params {
+                    self.check_typeref_bounds(p, errors);
+                }
+                if let Some(rt) = return_type {
+                    self.check_typeref_bounds(rt, errors);
+                }
+            }
+            TypeRef::Readonly(inner, _)
+            | TypeRef::Pointer(inner, _)
+            | TypeRef::Mut(inner, _)
+            | TypeRef::Uninit(inner, _)
+            | TypeRef::Ref(inner, _) => self.check_typeref_bounds(inner, errors),
+            TypeRef::Protocol { .. } | TypeRef::Unit(_) => {}
+        }
+    }
+
+    /// №386 (Plan p386-bound-doors): a record literal whose generic type-args
+    /// are inferred PURELY from field-literal values (`Box { k:
+    /// NoMethods{x:1} }` — no explicit `Box[NoMethods]` anywhere in the
+    /// source for `check_typeref_bounds` to walk) is a SEPARATE
+    /// instantiation surface from any written `TypeRef`; own call site into
+    /// the same `check_satisfaction` primitive. Mirrors
+    /// `TypeCheckCtx::f1_expr_inner`'s RecordLit `gen_args` inference (same
+    /// all-or-nothing rule per param: an unresolvable field skips just THAT
+    /// generic param, not the whole literal) — reimplemented here because
+    /// `BoundCtx` is a wholly separate pass with no access to
+    /// `TypeCheckCtx`'s internals (`resolved_types_buf` etc.).
+    fn check_record_lit_decl_bounds(
+        &self,
+        type_name: &[String],
+        fields: &[RecordLitField],
+        span: Span,
+        scope: &HashMap<String, TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        let Some(last) = type_name.last() else { return; };
+        let Some(td) = self.type_decls.get(last.as_str()) else { return; };
+        if td.generics.iter().all(|g| g.bounds.is_empty()) {
+            return;
+        }
+        let TypeDeclKind::Record(field_decls) = &td.kind else { return; };
+        for gp in &td.generics {
+            if gp.bounds.is_empty() {
+                continue;
+            }
+            // Concrete type-arg for this generic param = inferred type of the
+            // field literal whose DECLARED type is exactly this bare param
+            // (same match `TypeCheckCtx::f1_expr_inner`'s `gen_args` uses).
+            let concrete = field_decls.iter().find_map(|fd| {
+                if let TypeRef::Named { path, generics: fg, .. } = &fd.ty {
+                    if fg.is_empty() && path.join("_") == gp.name {
+                        return fields.iter()
+                            .find(|f| f.name == fd.name)
+                            .and_then(|f| f.value.as_ref())
+                            .and_then(|v| Self::infer_arg_ty(v, scope));
+                    }
+                }
+                None
+            });
+            let Some(concrete) = concrete else { continue }; // not inferable — best-effort skip.
+            if Self::is_passthrough_typevar(&concrete, &self.current_fn_gs.borrow()) {
+                continue; // abstract param of the CURRENT decl — see doc on `is_passthrough_typevar`.
+            }
+            for bound in &gp.bounds {
+                self.check_satisfaction(&concrete, bound, &gp.name, last, span, errors);
+            }
+        }
     }
 
     /// Plan 15 Ф.3: проверить bound'ы на конкретном call-site.
@@ -27906,6 +28252,38 @@ impl<'a> BoundCtx<'a> {
                         });
                     }
                 }
+                // №388 (Plan p386-bound-doors) supplement: `mut v = []u8.new()`
+                // (no explicit annotation) parses `[]u8` as the SENTINEL
+                // `Path(["__array", "u8"])` (parser/mod.rs's D38 array-type-
+                // static-method carve-out), so `.new()` is `Member{obj:
+                // Path(["__array", elem]), name: "new"}` — neither shape above
+                // matched (`member_shape` requires an `Ident` obj; `path_shape`
+                // requires `func` itself to be a bare 2-segment `Path`, not a
+                // `Member` wrapping one), so `v` NEVER entered `scope` at all
+                // and EVERY later `v.method(...)` bound-check on it silently
+                // no-op'd — not specific to primitives: verified the identical
+                // silent-pass for a non-primitive bad-bound argument too
+                // (`v.append(NoMethods{..})`), only fixed by adding an
+                // EXPLICIT `mut v []u8 = …` annotation. Recognizing this one
+                // more shape restores the SAME `[]<elem>` type this checker
+                // already infers for a plain `[]elem.of(...)`-style array
+                // literal (`ArrayLit` arm above) — not a new inference rule.
+                if let ExprKind::Member { obj, name } = &func.kind {
+                    if name == "new" {
+                        if let ExprKind::Path(parts) = &obj.kind {
+                            if parts.len() == 2 && parts[0] == "__array" {
+                                return Some(TypeRef::Array(
+                                    Box::new(TypeRef::Named {
+                                        path: vec![parts[1].clone()],
+                                        generics: Vec::new(),
+                                        span: e.span,
+                                    }),
+                                    e.span,
+                                ));
+                            }
+                        }
+                    }
+                }
                 None
             }
             _ => None,
@@ -28074,15 +28452,40 @@ impl<'a> BoundCtx<'a> {
                 return;
             }
         }
-        // Built-in primitives автоматически удовлетворяют ничему — у нас
-        // нет registry их методов в method_table. Skip (best-effort).
+        // №388 (Plan p386-bound-doors): primitives no longer bypass EVERY
+        // bound unconditionally. `never` (Plan 76, bottom-type) and `any`
+        // (D-any, top-type/empty-contract protocol) stay a vacuous pass
+        // regardless of bound — that IS their entire semantics, unrelated to
+        // primitive-ness. Every OTHER primitive auto-satisfies EXACTLY the
+        // compiler's built-in auto-derivable protocol family
+        // (`is_builtin_protocol`: Equal/Hash/Compare/Clone/Display/Debug/
+        // Serialize/Deserialize/Reflect) — the SAME authority
+        // `auto_derive::check_field_eligibility`'s unconditional
+        // `is_primitive_type(name) => true` already grants primitive FIELDS
+        // for exactly this protocol family (field-eligibility for
+        // auto-derive), reused here for a primitive used directly as a
+        // bound's concrete type. Any OTHER bound (user protocol, `AsSlice`,
+        // anonymous `protocol { … }`) is NOT vacuously satisfied anymore —
+        // falls through to the SAME structural method_table lookup every
+        // declared type goes through below (`v.append(42)` — `int` lacks
+        // `AsSlice[u8]`'s `@ptr`/`@len` — now correctly rejected). `str`'s
+        // previous apparent pass on `AsSlice[u8]` was NEVER decided by this
+        // block — `#coerce str@bytes()` rewrites the call-site argument to
+        // `[]u8` upstream of this checker; that path is untouched.
         if matches!(concrete_name.as_str(),
             "int" | "i8" | "i16" | "i32" | "i64"
             | "u8" | "u16" | "u32" | "u64"
             | "f32" | "f64" | "bool" | "char"
-            // Plan 76: `never` — bottom-тип, vacuously удовлетворяет любому bound.
             | "str" | "any" | "never") {
-            return;
+            if matches!(concrete_name.as_str(), "any" | "never") {
+                return;
+            }
+            if crate::protocols::auto_derive::is_builtin_protocol(&bound_name) {
+                return;
+            }
+            // Fall through to the structural protocol_specs/method_table
+            // check below — same path every non-primitive concrete type
+            // takes for a non-builtin bound.
         }
         let Some(spec_methods) = self.protocol_specs.get(&bound_name) else {
             // Bound — не зарегистрирован ни как protocol, ни как effect.
@@ -28122,12 +28525,26 @@ impl<'a> BoundCtx<'a> {
             TypeRef::Array(_, _) => "Vec".to_string(),
             _ => return,
         };
+        // №388 (Plan p386-bound-doors): mirrors the identical fix in
+        // `check_satisfaction` above (this fn is the shared satisfaction
+        // primitive both `check_satisfaction` AND the anonymous-protocol /
+        // `Vec`-element-recursion callers route through — see doc there for
+        // the full rationale). `bound_name` is `None` for an anonymous
+        // `protocol { … }` bound — `is_builtin_protocol` never matches
+        // `None`, so an anon-protocol bound on a primitive correctly falls
+        // through to the structural check (no builtin-protocol name to
+        // vacuously grant).
         if matches!(concrete_name.as_str(),
             "int" | "i8" | "i16" | "i32" | "i64"
             | "u8" | "u16" | "u32" | "u64"
             | "f32" | "f64" | "bool" | "char"
             | "str" | "any" | "never") {
-            return;
+            if matches!(concrete_name.as_str(), "any" | "never") {
+                return;
+            }
+            if bound_name.map_or(false, crate::protocols::auto_derive::is_builtin_protocol) {
+                return;
+            }
         }
         // Plan 180: a type declaring `#impl(P)` for a built-in AUTO-DERIVABLE
         // protocol P (Serialize/Deserialize/Equal/Hash/Clone/Compare/Display/
@@ -28235,6 +28652,35 @@ impl<'a> BoundCtx<'a> {
         }
         if missing.is_empty() {
             return;
+        }
+        // №388 (Plan p386-bound-doors) supplement: `#coerce` bridge — see
+        // `coerce_output`'s field doc. Tried AFTER the direct structural
+        // check fails: if `concrete_name` has a declared `#coerce` target
+        // (`str @bytes() -> ro []u8`), the value ACTUALLY reaching a call
+        // site is the coerced type (codegen splices the conversion in), so
+        // bound satisfaction is decided on THAT type instead — one hop
+        // only (no further coerce chase — `coerced_methods` is looked up
+        // directly, no recursive coerce_output lookup), matching D429's
+        // zero-cost/no-chaining character. `v.append("hello")` — `str`
+        // itself lacks `@ptr`/`@len`, but `str`'s `#coerce` target `[]u8`
+        // has both (`Vec[T] #impl(AsSlice[T])`) — satisfied.
+        if let Some(coerced) = self.coerce_output.get(&concrete_name) {
+            let coerced_name = match coerced.strip_modifiers() {
+                TypeRef::Named { path, .. } if path.len() == 1 => Some(path[0].clone()),
+                TypeRef::Array(_, _) | TypeRef::FixedArray(_, _, _) => Some("Vec".to_string()),
+                _ => None,
+            };
+            if let Some(coerced_name) = coerced_name {
+                let coerced_methods = self.sig.method_table.get(&coerced_name).unwrap_or(&empty);
+                let all_found = required.iter().all(|req| {
+                    coerced_methods.get(&req.name).map_or(false, |fns| {
+                        fns.iter().any(|f| f.params.len() == req.params.len())
+                    })
+                });
+                if all_found {
+                    return;
+                }
+            }
         }
         let bound_display = bound_name
             .map(|n| n.to_string())

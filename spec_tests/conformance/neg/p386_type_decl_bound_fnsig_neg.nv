@@ -1,0 +1,23 @@
+// EXPECT_COMPILE_ERROR does not satisfy `NeedsFoo386Fn` bound
+module neg.p386_type_decl_bound_fnsig_neg
+// №386 (Plan p386-bound-doors) — "4th door", fn PARAM-type surface: a
+// generic type used in a fn param annotation (`fn take(b BoxFn386[Bad]) ->
+// ()`) violates the type decl's own bound EVEN THOUGH the fn is never
+// called — the signature itself is a written `TypeRef` (checked in
+// `BoundCtx::check_module`'s `Item::Fn` loop -> `check_typeref_bounds`,
+// mirroring `TypeCheckCtx::walk_typeref`'s pre-existing arity walk).
+
+type NeedsFoo386Fn protocol { @foo() -> int }
+type BoxFn386[K NeedsFoo386Fn] { ro k K }
+
+// Widget386Fn does NOT implement NeedsFoo386Fn — no @foo method.
+type Widget386Fn { id int }
+
+fn take386fn(b BoxFn386[Widget386Fn]) -> () {
+    print(b.k.id)
+}
+
+test "(386-neg) fn param type violating the type decl's OWN bound" {
+    // Unreachable — the violation is in the SIGNATURE, caught at check time
+    // regardless of whether `take386fn` is ever invoked.
+}
