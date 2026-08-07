@@ -1,0 +1,8 @@
+module neg.type_set_cycle_self
+// Plan p424 (D310 amendment) — NEGATIVE: a type-set that (directly)
+// contains itself has no finite expansion.
+// EXPECT_COMPILE_ERROR E_TYPE_SET_CYCLE
+
+type D310SelfCycle set D310SelfCycle
+
+fn main() -> int { 0 }

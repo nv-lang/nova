@@ -1,0 +1,32 @@
+// Plan p424 (D310 amendment §Синтаксис) — POSITIVE: a type-set MEMBER may
+// itself be another type-set — its members are expanded (flattened,
+// dedup'd, origin-tagged for diagnostics) into the OUTER set on
+// declaration. `~underlying` is still NOT introduced — nesting is the only
+// new form. See 02-types.md §D310 «Синтаксис» for the amendment text.
+module spec_tests.conformance
+
+// Q: nested — `SignedInts | UnsignedInts` (prelude names) expands to the
+// same ten leaf members as `Ints` (prelude), just declared by composition
+// instead of listing all ten again.
+type D310NestedQ set SignedInts | UnsignedInts
+
+fn[T D310NestedQ] d310_nested_q_twice(x T) -> T => x + x
+
+test "type-set: nested type-set member expands to its leaves, mono's on members from BOTH nested sets (D310 amendment)" {
+    assert(d310_nested_q_twice[i32](21) == 42)   // leaf via SignedInts
+    assert(d310_nested_q_twice[u32](21) == 42)   // leaf via UnsignedInts
+    assert(d310_nested_q_twice[i64](10) == 20)   // another SignedInts leaf
+    assert(d310_nested_q_twice[u8](5) == 10)     // another UnsignedInts leaf
+}
+
+// R: dedup — `Ints | i32` must not double-list `i32` (already a leaf of
+// `Ints`); mono still works both for a member reachable ONLY through the
+// nested `Ints` and for the explicitly re-listed direct member.
+type D310NestedR set Ints | i32
+
+fn[T D310NestedR] d310_nested_r_twice(x T) -> T => x + x
+
+test "type-set: dedup'd member (`Ints | i32`) doesn't break mono — direct AND via-nested collapse to one (D310 amendment)" {
+    assert(d310_nested_r_twice[i32](5) == 10)    // listed directly AND reachable via Ints — deduped
+    assert(d310_nested_r_twice[u16](7) == 14)    // reachable via Ints only
+}
