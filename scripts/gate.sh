@@ -129,8 +129,34 @@ NOVA="$ROOT/nova-cli/target/release/nova.exe"
 
 echo "== gate: mega-CU (spec_tests/conformance, one CU) =="
 MEGA_LOG="${TMPDIR:-/tmp}/gate_mega_$$.log"
+_MEGA_T0=$(date +%s)
 "$NOVA" test --positive --compile-error "$ROOT/spec_tests/conformance" >"$MEGA_LOG" 2>&1
 MEGA_EXIT=$?
+_MEGA_SEC=$(( $(date +%s) - _MEGA_T0 ))
+# ── Храповик ВРЕМЕНИ мега-CU (реестр 221.1 №437) ─────────────────────────────
+# ЗАЧЕМ: №437 (замедление чекера ~4x) и №429 (регресс латентности) оба прожили
+# незамеченными, потому что скорость мы меряем только когда случайно заглянем.
+# Этот шаг делает время ВИДИМЫМ на каждом прогоне.
+# ДИЗАЙН — ИНФОРМАЦИОННЫЙ, НЕ блокирующий: wall-time шумит (скорость машины,
+# фоновая нагрузка), и жёсткий порог ложно ронял бы гейт. Урок 2026-08-07:
+# «деградация чекера» оказалась частично артефактом замера под нагрузкой
+# конкурирующих окон (p-stability подтвердил паритет латентности в ЧИСТОМ замере).
+# Поэтому: печатаем время и дельту ВСЕГДА; ГРОМКО предупреждаем при росте >50%;
+# гейт НЕ роняем (никакой fail). Порог 1.5x ловит алгоритмический скачок (×4 у
+# №437 закричал бы), но переживает 20-30% шума машины.
+_MEGA_TIME_BASE="$ROOT/scripts/guards/mega-cu-time.baseline"
+_MEGA_BASE=$(grep -E '^seconds=' "$_MEGA_TIME_BASE" 2>/dev/null | head -1 | cut -d= -f2)
+if [ -n "$_MEGA_BASE" ] && [ "$_MEGA_BASE" -gt 0 ] 2>/dev/null; then
+    _MEGA_PCT=$(( (_MEGA_SEC - _MEGA_BASE) * 100 / _MEGA_BASE ))
+    echo "mega-CU wall-time: ${_MEGA_SEC}s (baseline ${_MEGA_BASE}s, дельта ${_MEGA_PCT}%)"
+    if [ "$_MEGA_SEC" -gt $(( _MEGA_BASE * 3 / 2 )) ]; then
+        echo "  ⚠️  МЕГА-CU МЕДЛЕННЕЕ БАЗЫ БОЛЕЕ ЧЕМ НА 50% (№437-класс)." >&2
+        echo "  ⚠️  Проверь нагрузку машины (tasklist | grep cargo/clang); если чисто —" >&2
+        echo "  ⚠️  это НАСТОЯЩИЙ регресс скорости, замерь профиль. Гейт НЕ роняю (шум)." >&2
+    fi
+else
+    echo "mega-CU wall-time: ${_MEGA_SEC}s (baseline не задан — см. scripts/guards/mega-cu-time.baseline)"
+fi
 MEGA_LINE=$(sed -e "s/\[[0-9;]*m//g" "$MEGA_LOG" | grep -E "PASS: [0-9]+ +FAIL: [0-9]+" | tail -1)
 echo "mega-CU exit=$MEGA_EXIT :: $MEGA_LINE"
 # Строка PASS/FAIL ОБЯЗАНА присутствовать: краш компилятора её не печатает вовсе,
