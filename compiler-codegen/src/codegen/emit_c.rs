@@ -2964,6 +2964,65 @@ impl CEmitter {
         (Self::escape_c_str(&self.source_file_name), line)
     }
 
+    /// [P67-LEGACY→honest-error] (окно p401b-p67-class, реестр 221.1 №401,
+    /// "ПЕРЕОТКРЫТ"): terminal fallback for the legacy `infer_call_ret_c` /
+    /// `infer_expr_c_type_legacy` dispatch chain — reached when the checker
+    /// failed to annotate an expr's C-type (`resolved_types`/
+    /// `resolved_callees`, compiler-conventions.md §0) AND none of the legacy
+    /// re-derive heuristics ahead of the call site matched either.
+    ///
+    /// Every one of these sites used to be a raw `panic!("[P67-LEGACY] ...")`,
+    /// caught by the CLI's global panic hook (`nova-cli/src/main.rs`) and
+    /// printed as `nova: internal error at ... / This is a bug in nova.
+    /// Please report it.` — misleading (the single reproduced carrier for
+    /// this class, `Io.write_out("")` bound to a `ro` without `import
+    /// std.io`, is a missing import, not a compiler defect) AND, in a
+    /// multi-file batch run (`nova test <dir>`), fatal to the WHOLE process
+    /// via `std::process::exit(101)` in that same hook — one file's gap kills
+    /// every file queued after it (реестр 221.1 №401, "цена").
+    ///
+    /// This prints a real compile-error diagnostic instead: a stable
+    /// `[E_CODEGEN_TYPE_UNKNOWN]` code (pinnable by a neg-fixture,
+    /// test-conventions.md rule 5) plus a `file:line:col` location when
+    /// `annotation_source` is available, and exits with the ordinary
+    /// compile-error convention (`exit(1)`, no "please report a bug" framing,
+    /// no panic-hook backtrace noise). The user-visible outcome is the same
+    /// as before (this compile unit does not finish), but HONESTLY reported —
+    /// this does NOT fix the underlying §0 gap (the checker still did not
+    /// annotate the expression), it only replaces an internal-error crash
+    /// with a diagnosable stop, which is the explicitly sanctioned outcome
+    /// for the remainder of this class (окно p401b brief, Step 4: "Замена
+    /// паники на честную диагностику с кодом — приемлемый исход").
+    fn fatal_codegen_type_unknown(&self, detail: &str, span: crate::diag::Span) -> ! {
+        let (line, col) = match &self.annotation_source {
+            Some(src) => crate::diag::byte_to_line_col(src, span.start),
+            None => (0, 0),
+        };
+        // Окно p401b-p67-class: a genuine `panic!`, NOT `std::process::exit`
+        // — deliberately, so it unwinds and can be caught by
+        // `nova_codegen::test_runner::catch_unit_panic` (wraps both the
+        // `nova test` per-file compile call AND `nova build`'s
+        // `emit_module_multi_tu` call). `process::exit` bypasses unwinding
+        // entirely and cannot be caught by anything, which — verified by
+        // probe — re-broke the exact "one file's gap kills the whole batch"
+        // regression this window exists to close (an EARLIER version of
+        // this helper used `process::exit(1)`; a 4-file batch with one
+        // `E_CODEGEN_TYPE_UNKNOWN` carrier among three good files printed
+        // the diagnostic for the bad file and then produced NO summary line
+        // at all — the good files after it never ran). The panic-hook
+        // banner ("internal error ... please report it") is suppressed
+        // whenever a catcher is active (`catching_panic_active`); when NONE
+        // is active (a panic escaping every catcher — should not happen for
+        // this specific message, kept as defense in depth) the hook still
+        // prints its own generic banner ahead of this message, and the
+        // outer `catch_unwind` in `nova-cli::main::run_catching` exits 101 —
+        // same terminal outcome as any other unanticipated internal panic.
+        panic!(
+            "[E_CODEGEN_TYPE_UNKNOWN] {}\n  --> {}:{}:{}\n  hint: the type-checker did not annotate this expression's C type (compiler-conventions.md §0) — this is usually a missing `import` for the type/effect used on the left of `.`; if the import is already present, this is a compiler bug, please report it.",
+            detail, self.source_file_name, line, col
+        );
+    }
+
     /// Plan 140.1 Ф.2 (D24 amend): render the optional contract `user_msg`
     /// argument for `nova_contract_violation`. `None` → `"NULL"` (format A,
     /// no message); `Some(msg)` → a C-escaped string literal `"<msg>"`
@@ -57365,7 +57424,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                     }
                                                 }
                                             }
-                                            self.type_ref_to_c(tr).unwrap_or_else(|e| panic!("[P67-LEGACY] turbofish type_arg lowering failed: {:?} (compiler-conventions.md §0)", e))
+                                            self.type_ref_to_c(tr).unwrap_or_else(|e| self.fatal_codegen_type_unknown(
+                                                &format!("turbofish type_arg lowering failed: {:?}", e),
+                                                expr.span,
+                                            ))
                                         })
                                         .collect();
                                     let mangled = Self::compute_generic_type_c_name(type_name, &type_args_c);
@@ -59178,7 +59240,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             }
                             // Plan 59 Ф.7.5-lite: inline-aware (T,E) inference.
                             let (ok_c, err_c) = self.resolve_result_te(obj, &obj_ty)
-                                .unwrap_or_else(|| panic!("[P67-LEGACY] Result T/E unknown for obj_ty={:?} — checker must annotate (compiler-conventions.md §0)", obj_ty));
+                                .unwrap_or_else(|| self.fatal_codegen_type_unknown(
+                                    &format!("Result T/E unknown for obj_ty={:?}", obj_ty),
+                                    expr.span,
+                                ));
                             let ok_ident = Self::sanitize_c_for_ident(&ok_c);
                             let err_ident = Self::sanitize_c_for_ident(&err_c);
                             // Plan 99.1 Ф.3: для Nova-body методов с
@@ -59566,7 +59631,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 _ => "Other".into(),
                             };
                             self.icr_trace("B11al_panic_method_p67");
-                            panic!("[P67-LEGACY] method call `.{}` return type unknown — checker must annotate (compiler-conventions.md §0); obj_ty={:?} obj={} expr span={:?}", method, obj_ty, obj_desc, expr.span)
+                            self.fatal_codegen_type_unknown(
+                                &format!("method call `.{}` return type unknown; obj_ty={:?} obj={}", method, obj_ty, obj_desc),
+                                expr.span,
+                            )
                         }
                     } else if let ExprKind::Path(parts) = &func.kind {
                         // Plan 11 Ф.4.5: Self.method(...) → <current>.method(...).
@@ -59709,14 +59777,23 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 return format!("Nova_{}*", eff_q);
                             }
                             self.icr_trace("B12q_panic_path_p67");
-                            panic!("[P67-LEGACY] Path call return type unknown for method={} — checker must annotate (compiler-conventions.md §0)", method_name)
+                            self.fatal_codegen_type_unknown(
+                                &format!("Path call return type unknown for method={}", method_name),
+                                expr.span,
+                            )
                         } else {
                             self.icr_trace("B12r_panic_path_no_method_seg");
-                            panic!("[P67-LEGACY] Path call return type unknown (no method segment) — checker must annotate (compiler-conventions.md §0)")
+                            self.fatal_codegen_type_unknown(
+                                "Path call return type unknown (no method segment)",
+                                expr.span,
+                            )
                         }
                     } else {
                         self.icr_trace("B12s_panic_path_no_parts");
-                        panic!("[P67-LEGACY] Path call return type unknown (no parts) — checker must annotate (compiler-conventions.md §0)")
+                        self.fatal_codegen_type_unknown(
+                            "Path call return type unknown (no parts)",
+                            expr.span,
+                        )
                     }
     }
 
@@ -60486,7 +60563,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             }
                         }
                     }
-                    panic!("[P67-LEGACY] Index element type unknown for obj_ty={:?} — checker must annotate (compiler-conventions.md §0); expr.span={:?} expr.id={:?} src={}", obj_ty_pre, expr.span, expr.id, self.source_file_name)
+                    self.fatal_codegen_type_unknown(
+                        &format!("Index element type unknown for obj_ty={:?}; expr.id={:?}", obj_ty_pre, expr.id),
+                        expr.span,
+                    )
         }
         // Channel 6n (2026-07-04): RecordLit — ДОСЛОВНЫЙ подъём legacy-арма.
         if let ExprKind::RecordLit { type_name: Some(name), fields, .. } = &expr.kind {
@@ -60729,7 +60809,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     if self.imported_modules.contains(name.as_str()) {
                         return String::new();
                     }
-                    panic!("[P67-LEGACY] Ident `{}` not in var_types / not a sum-variant — unknown type (compiler-conventions.md §0)", name)
+                    self.fatal_codegen_type_unknown(
+                        &format!("Ident `{}` not in var_types / not a sum-variant — unknown type", name),
+                        expr.span,
+                    )
             };
         }
         // Channel 6m (2026-07-04): Member — ДОСЛОВНЫЙ подъём главного
@@ -61836,7 +61919,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     if self.imported_modules.contains(name.as_str()) {
                         return String::new();
                     }
-                    panic!("[P67-LEGACY] Ident `{}` not in var_types / not a sum-variant — unknown type (compiler-conventions.md §0)", name)
+                    self.fatal_codegen_type_unknown(
+                        &format!("Ident `{}` not in var_types / not a sum-variant — unknown type", name),
+                        expr.span,
+                    )
                 }
                 // Plan 196.3 wave-2 (D239 one-window, tail-arm prune): `ExprKind::Index`
                 // REMOVED here — structurally unreachable, not just empirically 0-hit.
@@ -62314,7 +62400,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         self.novares_ok_err(&inner_ty)
                             .or_else(|| self.infer_result_type_params(inner))
                             .map(|(ok, _)| ok)
-                            .unwrap_or_else(|| panic!("[P67-LEGACY] Try/Bang on Result: Ok type unknown for inner_ty={:?} — checker must annotate (compiler-conventions.md §0)", inner_ty))
+                            .unwrap_or_else(|| self.fatal_codegen_type_unknown(
+                                &format!("Try/Bang on Result: Ok type unknown for inner_ty={:?}", inner_ty),
+                                expr.span,
+                            ))
                     } else {
                         // Unknown — propagate inner type (strip pointer for consume outer)
                         inner_ty
