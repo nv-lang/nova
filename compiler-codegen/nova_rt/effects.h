@@ -75,6 +75,36 @@ typedef struct NovaFailFrame {
     struct NovaFailFrame* prev;
 } NovaFailFrame;
 
+/* [221.1 №431 остаток — окно p431b] FIBER-EXIT ANCHOR.
+ *
+ * A fiber cannot end itself from the middle of its body: `mco_yield` only
+ * SUSPENDS it (the scheduler keeps resuming a merely-yielded coroutine —
+ * that is the silent CPU-hang the p431 window measured and rejected), and
+ * a coroutine dies ONLY by returning from its entry function. So "retire
+ * exactly this fiber and let the program live" needs a return point
+ * established AT FIBER ENTRY that any point inside the body can jump to.
+ * That is this anchor: a `jmp_buf` living in the entry function's own
+ * frame (the outermost frame of the fiber's own stack — longjmp to it is
+ * an ordinary same-stack unwind, never a cross-coroutine jump), reached
+ * through a pointer parked in the fiber's `NovaSpawnCtxBase`
+ * (`_nova_fiber_anchor`, fibers.h) rather than in a TLS slot.
+ *
+ * Why the ctx and not TLS: the whole failure this mechanism exists for is
+ * `_nova_fail_top == NULL` — a TLS slot that the scheduler's per-fiber
+ * save/restore dance can legitimately be mid-swap on. The ctx pointer is
+ * reached from `mco_get_user_data(mco_running())`, i.e. from the running
+ * coroutine itself, and is therefore immune to exactly that race.
+ *
+ * Armed by every codegen fiber-entry function (emit_spawn,
+ * emit_parfor_drain_fiber, emit_detach) as its FIRST act — before even
+ * the prologue safepoint, which can itself throw a cancel while the
+ * fiber's root fail-frame is not yet pushed — and disarmed right before
+ * the entry's epilogue, so a late cancel arriving DURING the epilogue
+ * cannot jump back into an already-finished body. */
+typedef struct NovaFiberAnchor {
+    jmp_buf jmp;
+} NovaFiberAnchor;
+
 /* Thread-local fail stack */
 #ifdef _MSC_VER
 __declspec(thread) extern NovaFailFrame* _nova_fail_top;

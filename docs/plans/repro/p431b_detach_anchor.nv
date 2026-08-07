@@ -1,0 +1,36 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// №431 ОСТАТОК — окно p431b-fiber-anchor, вторая точка эмиссии.
+//
+// Тот же контракт, что и в `p431b_fiber_anchor.nv`, но для `detach {}`:
+// осиротевший файбер тоже обязан завершаться в одиночку. Отдельная фикстура
+// нужна потому, что entry-функция `detach` эмитится ДРУГИМ кодом
+// (`emit_c/emit_detach.rs`, своя раскладка ctx и свой эпилог с
+// `_nova_orphan_scope`), и якорь там — отдельный вызов, который легко
+// забыть. Третья точка эмиссии — drain-файбер `parallel for`
+// (`emit_parfor_drain_fiber`) — покрыта тем же кодом якоря; отдельного
+// стенда для неё нет, потому что форсировать её тело хуком нельзя (тело
+// генерируется целиком компилятором, пользовательского кода в нём нет).
+//
+// ДО ФИКСА: `exit(1)` — «main: alive» не печаталось.
+// ПОСЛЕ ФИКСА: «orphan: unreachable» не печатается, всё остальное — да,
+// код возврата 0.
+module nova_repro.p431b_detach_anchor
+
+extern "C" fn nova_p431b_fiber_repro() -> ()
+
+// D50: `detach { }` требует эффект `Detach` в сигнатуре объемлющей функции.
+fn detach_the_doomed_one() Detach -> () {
+    detach {
+        println("orphan: about to take a late cancel with no handler")
+        nova_p431b_fiber_repro()
+        println("orphan: unreachable")
+    }
+}
+
+fn main() {
+    println("main: detaching")
+    detach_the_doomed_one()
+    runtime.drain_orphans()
+    println("main: alive after the retired orphan")
+}

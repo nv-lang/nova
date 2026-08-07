@@ -13303,6 +13303,81 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
     }
 
+    // ── [221.1 №431 остаток] Fiber-exit anchor — the three-part protocol ──
+    //
+    // A coroutine dies ONLY by returning from its entry function; `mco_yield`
+    // merely suspends it, and a suspended-forever fiber is a silent CPU hang
+    // (measured and rejected by the p431 window). So "end exactly this fiber
+    // and leave the process alone" needs a return point established at fiber
+    // entry that any point inside the body can jump to. The runtime jumps
+    // here from `_nova_cancel_no_handler` (nova_rt/effects.c) when a cancel
+    // arrives with no fail-frame left to catch it — the D75 "token unbound or
+    // scope already ended" race, which used to end the whole process.
+    //
+    // All THREE codegen fiber-entry emitters must use all three helpers, in
+    // order: the layout field (`…_anchor_field`), the arm+setjmp opening
+    // (`…_anchor_arm`) as the entry's first act, and the close+disarm
+    // (`…_anchor_close`) immediately before the entry's epilogue. Those are
+    // `emit_spawn`, `emit_parfor_drain_fiber` (both below) and `emit_detach`
+    // (emit_detach.rs). Getting the set wrong is FATAL in the same way the
+    // `schedlink` mirror is: the runtime writes an anchor pointer through
+    // `NovaSpawnCtxBase`, so a layout without the field corrupts the first
+    // user-capture field instead.
+
+    /// Layout mirror of `NovaSpawnCtxBase::_nova_fiber_anchor` (fibers.h) —
+    /// the LAST base field, after `schedlink`, before any user capture.
+    fn emit_spawn_ctx_anchor_field(&mut self) {
+        let _ = writeln!(self.lambda_forward_decls,
+            "    NovaFiberAnchor* _nova_fiber_anchor;");
+    }
+
+    /// Arm the anchor and open the region it guards. Must be emitted right
+    /// after `_c` is fetched and BEFORE anything else — including the
+    /// prologue safepoint, which can itself deliver a cancel at a moment when
+    /// the fiber's root fail-frame has not been pushed yet.
+    ///
+    /// Only `_c` is read after the `setjmp`, and it is assigned once, before
+    /// it — so no object this branch depends on is modified inside the
+    /// guarded region (C11 7.13.2.1p3: otherwise its value after a longjmp
+    /// would be indeterminate).
+    fn emit_fiber_anchor_arm(&mut self) {
+        self.line("NovaFiberAnchor _nv_anchor;");
+        self.line("_c->_nova_fiber_anchor = &_nv_anchor;");
+        self.line("if (setjmp(_nv_anchor.jmp) == 0) {");
+        self.indent += 1;
+    }
+
+    /// Close the guarded region and disarm. The `else` arm is the retirement
+    /// landing pad, and NOTHING is reported to the parent scope — the
+    /// precondition for landing here is that the scope is already gone, so a
+    /// report would manufacture a failure out of a harmless race. Disarming
+    /// before the epilogue is what stops a second late cancel, arriving while
+    /// the epilogue runs, from jumping back into a body that has finished.
+    ///
+    /// The three TLS slots reset here are exactly the ones that hold pointers
+    /// INTO the frames the jump just skipped past — the same hazard, and the
+    /// same remedy, as `nova_runtime_reset` (fibers.h) applies after a panic
+    /// caught by a test-frame. `_nova_fail_top` / `_nova_interrupt_top` are
+    /// per-fiber save/restore'd by the scheduler and were NULL when this fiber
+    /// started (`nova_fiber_spawn_into` seeds both slots), so NULL restores
+    /// them exactly. `_nova_current_handler_iframe` is NOT per-fiber swapped —
+    /// a stale value left behind by a dying fiber would outlive it on this OS
+    /// thread and be dereferenced by the next `nova_interrupt` that reads it.
+    /// The per-fiber error/trace bucket needs no reset: it dies with the
+    /// fiber (`_nova_error_state_p`, effects.h).
+    fn emit_fiber_anchor_close(&mut self) {
+        self.indent -= 1;
+        self.line("} else {");
+        self.indent += 1;
+        self.line("/* [221.1 №431] late cancel with no handler — retire THIS fiber only */");
+        self.line("_nova_fail_top = NULL;");
+        self.line("_nova_interrupt_top = NULL;");
+        self.line("_nova_current_handler_iframe = NULL;");
+        self.indent -= 1;
+        self.line("}");
+        self.line("_c->_nova_fiber_anchor = NULL;");
+    }
+
     fn emit_spawn(&mut self, body: &Expr) -> Result<String, String> {
         // D50/D71: spawn разрешён только внутри structured-scope.
         // В bootstrap-codegen — только supervised. Вне scope — compile error.
@@ -13648,17 +13723,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             "    int64_t _nova_cancel_deadline_ns;");
         // Plan 83-go-cmn Ф.2: gopark/goready 4-state park-latch. MUST be in the
         // codegen layout (mirrors NovaSpawnCtxBase._nova_park_state in fibers.h)
-        // and MUST be inserted BEFORE schedlink (which stays the LAST base field
-        // per Ф.1). Zero-init = NOVA_PARK_NIL. Omitting it shifts schedlink onto
-        // a user capture field → silent corruption (same FATAL as Ф.1a).
+        // and MUST be inserted BEFORE schedlink (which stays second-to-last,
+        // ahead of the #431 fiber-anchor). Zero-init = NOVA_PARK_NIL. Omitting
+        // it shifts schedlink onto a user capture field → silent corruption
+        // (same FATAL as Ф.1a).
         let _ = writeln!(self.lambda_forward_decls,
             "    nova_atomic_int _nova_park_state;");
-        // Plan 83-go-cmn Ф.1: intrusive overflow link — MUST be the LAST base
-        // field, mirroring NovaSpawnCtxBase.schedlink in fibers.h. Without it
-        // the overflow path (nova_co_schedlink) would write onto the first user
-        // capture field → silent corruption / heap overflow past the pool class.
+        // Plan 83-go-cmn Ф.1: intrusive overflow link — mirrors
+        // NovaSpawnCtxBase.schedlink in fibers.h. Without it the overflow path
+        // (nova_co_schedlink) would write onto the first user capture field →
+        // silent corruption / heap overflow past the pool class.
         let _ = writeln!(self.lambda_forward_decls,
             "    mco_coro* schedlink;");
+        // [221.1 №431 остаток] Fiber-exit anchor — LAST base field. Same
+        // FATAL-if-omitted property as schedlink above.
+        self.emit_spawn_ctx_anchor_field();
         // User capture fields follow base fields.
         for (cap, ty, by_value) in &captures {
             if *by_value {
@@ -13724,16 +13803,24 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
 
         self.line(&format!("{}void {}(mco_coro* _co) {{", self.top_level_storage(), spawn_id));
         self.indent += 1;
-        // Plan 143.2: prologue safepoint — unconditional. This is a FIBER-ENTRY
-        // function reached indirectly via the scheduler; its body is user Nova
-        // code that may run straight-line work before the first loop/call. KEEP
-        // conservatively (no source FnDecl key for a spawn-body block).
-        self.emit_prologue_preempt_check_unconditional();
         // Plan 44.5 Layer 5: _c всегда нужен — entry function reads
         // _c->_nova_parent_scope для remote-fiber cleanup (decrement
         // pending_remote + signal_main). Раньше для empty-capture spawn
         // было `(void)_co;` — теперь _c always.
         self.line(&format!("{ctx}* _c = ({ctx}*)mco_get_user_data(_co);", ctx = ctx_ty));
+        // [221.1 №431 остаток] Arm this fiber's exit anchor — see
+        // `emit_fiber_anchor_arm` for the full rationale. FIRST act of the
+        // entry, ahead of even the prologue safepoint below: that safepoint
+        // can itself deliver a cancel, and at that moment the fiber's root
+        // fail-frame (`_ff`, pushed further down) does not exist yet — which
+        // is precisely the "nobody left to catch it" state this anchor
+        // exists to survive.
+        self.emit_fiber_anchor_arm();
+        // Plan 143.2: prologue safepoint — unconditional. This is a FIBER-ENTRY
+        // function reached indirectly via the scheduler; its body is user Nova
+        // code that may run straight-line work before the first loop/call. KEEP
+        // conservatively (no source FnDecl key for a spawn-body block).
+        self.emit_prologue_preempt_check_unconditional();
         // Plan 44.5 Layer 5 park/wake: alloc slot in worker scope on first resume.
         // Required so _nova_active_slot >= 0 (D92 invariant) when fiber calls
         // Time.sleep / Channel.recv in worker context.
@@ -13923,6 +14010,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.line("}");
         self.indent -= 1;
         self.line("}");
+        // [221.1 №431 остаток] Close the anchor region and disarm. Everything
+        // below is the epilogue, which every exit path — normal return,
+        // caught throw, interrupt, AND late-cancel retirement — shares.
+        self.emit_fiber_anchor_close();
 
         // Plan 173.1 Ф.2: the child OWNS its Sender clone — close it on EVERY
         // fiber-exit path (this point is reached on success, throw, cancel and
@@ -14713,7 +14804,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // mirror NovaSpawnCtxBase exactly — see emit_spawn for the per-field
         // rationale (parent_scope/parent_slot/worker_slot/fail-tops/fiber_scope/
         // init_snapshot/fiber_state/pool_size/cancel-shield pair/park_state/
-        // schedlink — schedlink LAST).
+        // schedlink/#431 fiber-anchor — the anchor LAST).
         let _ = writeln!(self.lambda_forward_decls, "typedef struct {{");
         let _ = writeln!(self.lambda_forward_decls,
             "    NovaFiberQueue* _nova_parent_scope;");
@@ -14741,6 +14832,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             "    nova_atomic_int _nova_park_state;");
         let _ = writeln!(self.lambda_forward_decls,
             "    mco_coro* schedlink;");
+        // [221.1 №431 остаток] Fiber-exit anchor — LAST base field.
+        self.emit_spawn_ctx_anchor_field();
         let _ = writeln!(self.lambda_forward_decls,
             "    Nova_ChanReader* _nova_pf_rx;");
         let _ = writeln!(self.lambda_forward_decls,
@@ -14792,8 +14885,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
         self.line(&format!("{}void {}(mco_coro* _co) {{", self.top_level_storage(), drain_id));
         self.indent += 1;
-        self.emit_prologue_preempt_check_unconditional();
         self.line(&format!("{ctx}* _c = ({ctx}*)mco_get_user_data(_co);", ctx = ctx_ty));
+        // [221.1 №431 остаток] Anchor first — see emit_spawn's identical
+        // ordering note (the prologue safepoint below can deliver a cancel
+        // before the root fail-frame exists).
+        self.emit_fiber_anchor_arm();
+        self.emit_prologue_preempt_check_unconditional();
         self.line("if (_c->_nova_parent_scope) {");
         self.indent += 1;
         self.line("_nova_active_slot = nova_scope_alloc_slot(_nova_active_scope, _co);");
@@ -14867,6 +14964,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.line("}");
         self.indent -= 1;
         self.line("}");
+        // [221.1 №431 остаток] Close the anchor region + disarm before the
+        // shared epilogue — identical protocol to emit_spawn.
+        self.emit_fiber_anchor_close();
         // Remote fiber post-completion cleanup — identical to emit_spawn.
         self.line("if (_c->_nova_parent_scope) {");
         self.indent += 1;

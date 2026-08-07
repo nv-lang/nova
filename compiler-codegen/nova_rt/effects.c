@@ -19,9 +19,20 @@ int nova_in_fiber(void) {
  * on _nova_cancel_no_handler's declaration). */
 static int32_t _nova_late_cancel_count = 0;
 
+/* [221.1 №431 остаток] Second counter, kept SEPARATE from the one above on
+ * purpose: it counts the late cancels that found no fiber-exit anchor and
+ * were therefore absorbed as a plain D75 no-op return rather than retiring
+ * a fiber. Every codegen-emitted fiber entry arms an anchor, so a non-zero
+ * value here means the cancel landed somewhere no fiber body owns (the root
+ * main-fiber, a runtime-internal coroutine, or no coroutine at all) — a
+ * genuinely different situation from "one child fiber was retired", and
+ * collapsing the two into one number would hide it. */
+static int32_t _nova_late_cancel_unanchored = 0;
+
 static void _nova_late_cancel_atexit_print(void) {
     int32_t n = __atomic_load_n(&_nova_late_cancel_count, __ATOMIC_RELAXED);
     if (n <= 0) return;
+    int32_t u = __atomic_load_n(&_nova_late_cancel_unanchored, __ATOMIC_RELAXED);
     fflush(stdout);
     fprintf(stderr,
         "nova: %d cancellation(s) arrived after their scope had already "
@@ -30,6 +41,13 @@ static void _nova_late_cancel_atexit_print(void) {
         "signal was delivered; see docs/dev/mn-coding-conventions.md §11 "
         "and 221.1 defect #431)\n",
         n);
+    if (u > 0) {
+        fprintf(stderr,
+            "nova:   of those, %d had no fiber-exit anchor to retire (root "
+            "main-fiber or runtime-internal coroutine) and were absorbed as "
+            "a plain no-op\n",
+            u);
+    }
 }
 
 /* [221.1 №431] `nova_throw_cancel`/`nova_throw_cancel_reason` (effects.h)
@@ -55,7 +73,40 @@ static void _nova_late_cancel_atexit_print(void) {
  * have that we don't" write-up in this window's report for the Go
  * comparison (Go's cancellation is a channel nobody has to read — Nova's
  * is a throw with nobody left to catch it; the counter is how the two
- * models end up equally harmless in this one corner). */
+ * models end up equally harmless in this one corner).
+ *
+ * [221.1 №431 ОСТАТОК — окно p431b] "Retires the current fiber" is now
+ * literally true. The p431 window could only APPROXIMATE it: it had no way
+ * to end one fiber from inside its body, so after three cooperative yields
+ * it fell back to `exit(1)` — a controlled process exit, but still the
+ * whole program dying over an event that contains no user error. The
+ * missing piece was a return point established at fiber entry; that is the
+ * `NovaFiberAnchor` (effects.h) parked in every fiber's
+ * `NovaSpawnCtxBase::_nova_fiber_anchor`. With it, this function longjmps
+ * into the fiber's OWN entry frame, which runs its normal epilogue (free
+ * the scheduler slot, close a parfor sender clone, release-decrement the
+ * parent's `pending_remote`, wake the scope owner) and returns — the
+ * coroutine reaches MCO_DEAD, the drain loop sees a finished child, and
+ * THE PROCESS KEEPS RUNNING. No `exit()` and no `abort()` remain on any
+ * path out of this function.
+ *
+ * Deliberately NOT reported upward: the D75 precondition for reaching here
+ * is that this fiber's scope is already gone, so there is nobody left to
+ * receive an error, and manufacturing one would turn a harmless race into
+ * a failed scope. The counter above is the signal instead.
+ *
+ * And nothing is skipped by jumping past the body's C frames: every
+ * `defer` / `errdefer` / consume-cleanup scope registers itself by PUSHING
+ * a fail-frame (codegen `enter_defer_scope`), so `_nova_fail_top == NULL`
+ * — this function's entry condition — is exactly the statement that no
+ * cleanup is currently armed on this fiber. The retirement cannot drop a
+ * cleanup that would otherwise have run; there are none to drop.
+ *
+ * The p431 window's three cooperative `mco_yield`s are gone with the
+ * `exit(1)` they were buying time for: their only purpose was to give a
+ * transient TLS-restore race a chance to settle before killing the
+ * process. Retiring the fiber needs no such grace period, and yielding
+ * here is exactly the resume-forever hang that window documented. */
 void _nova_cancel_no_handler(void) {
     int32_t prev = __atomic_fetch_add(&_nova_late_cancel_count, 1, __ATOMIC_RELAXED);
     if (prev == 0) {
@@ -89,45 +140,65 @@ void _nova_cancel_no_handler(void) {
     }
 
     mco_coro* co = mco_running();
-    if (!co) {
-        /* Should not happen — even main-body runs fiber-hosted post-D92 —
-         * but there is genuinely nothing safe left to do without a
-         * coroutine to park: no C stack to unwind and no fail-frame to
-         * catch on. Return is the least-bad remaining option (matches
-         * the pre-#431 fallback exactly for this one unreachable-in-
-         * practice edge). */
+
+    /* The root main-fiber (D92/#108: `main()`'s body is itself fiber-hosted)
+     * is deliberately NOT given an anchor, and this is the one case where
+     * the plain D75 no-op return is both correct and the BEST outcome.
+     *
+     * Correct, because main-body's own root fail-frame is pushed by
+     * `_nova_main_fiber_entry` before the body starts and popped only after
+     * it ends: there is no window inside main-body where `_nova_fail_top`
+     * is legitimately NULL, so a cancel that lands here from the main fiber
+     * did not come from a torn-down scope at all — it came from the
+     * temporary `nova_p431*_repro` hooks below, or from a runtime bug that
+     * clobbered TLS. Best, because the alternative — retiring the main
+     * fiber — would silently truncate the user's program and still exit 0,
+     * turning a diagnosable anomaly into a wrong answer.
+     *
+     * `co == NULL` (no coroutine at all) is folded into the same arm: also
+     * unreachable post-D92, and with no coroutine there is no stack to
+     * unwind and no anchor to reach — returning is all that is left. */
+    if (!co || (void*)co == _nova_main_fiber_co) {
+        __atomic_fetch_add(&_nova_late_cancel_unanchored, 1, __ATOMIC_RELAXED);
         return;
     }
-    /* [221.1 №431 — hang discriminator, empirically found in THIS window]
-     * An UNCONDITIONAL `for(;;) mco_yield(co);` was the first design here
-     * and was REJECTED after direct testing (`docs/plans/repro/
-     * p431_direct_repro.nv`, see PROGRESS-p431.md): a fiber that is still
-     * tracked by a LIVE scope's drain loop (bootstrap `nova_supervised_
-     * step` / the armed worker loop) keeps resuming a merely-yielded —
-     * not dead — coroutine forever, since neither loop has any OTHER
-     * signal that this fiber gave up. That trades the abort() this fix
-     * removes for an unbounded, CPU-spinning, silent hang — strictly
-     * worse for an operator to diagnose (no crash, no stack trace, just a
-     * process that never returns).
-     *
-     * A BOUNDED number of cooperative yields — long enough to let an
-     * in-flight dispatch/TLS-restore step (the transient race §10/§11 of
-     * mn-coding-conventions.md describe) settle, short enough to never
-     * look like a hang — then a plain, signal-free `exit()` (NOT
-     * `abort()`): no SIGABRT, no core dump, atexit hooks still run (the
-     * late-cancel summary above still prints). This remains the only
-     * place left in this function where the process can still end, and
-     * it is reached only after every safer option has been tried. */
-    for (int _nv_retry = 0; _nv_retry < 3; _nv_retry++) {
-        mco_yield(co);
+
+    /* The ordinary case: a spawned / parfor-drain / detached fiber. Its
+     * entry function armed an anchor in its own frame before running a
+     * single line of the body (including before the prologue safepoint,
+     * which can itself throw a cancel while the root fail-frame is not yet
+     * pushed — a genuine, non-hypothetical way to arrive here). Jump there:
+     * the entry's epilogue runs, the entry returns, the coroutine dies, and
+     * nothing else in the process is disturbed. */
+    NovaSpawnCtxBase* base = (NovaSpawnCtxBase*)mco_get_user_data(co);
+    NovaFiberAnchor* anchor = base ? base->_nova_fiber_anchor : NULL;
+    if (anchor) {
+        /* One-shot: the entry disarms the anchor itself before its
+         * epilogue, but clearing it HERE too means a second late cancel
+         * racing in during the unwind cannot jump into a frame that is
+         * already mid-retirement. */
+        base->_nova_fiber_anchor = NULL;
+        /* Restore the fiber-entry TLS state the longjmp is about to skip
+         * past. Both stacks are per-fiber and were empty when this fiber
+         * started (`nova_fiber_spawn_into` seeds fiber_fail_top/
+         * fiber_interrupt_top with NULL); every frame they could point at
+         * now lives BELOW the anchor frame and dies with this jump.
+         * `_nova_fail_top` is NULL already — that is this function's
+         * precondition — but stating both makes the post-jump state
+         * independent of how we got here. */
+        _nova_fail_top = NULL;
+        _nova_interrupt_top = NULL;
+        longjmp(anchor->jmp, 1);
+        /* unreachable */
     }
-    fflush(stdout);
-    fprintf(stderr,
-        "nova: cancel delivered to a fiber with no handler, still none "
-        "after 3 cooperative retries — exiting (not aborting) rather than "
-        "hang forever waiting for a live scope the evidence says is "
-        "already gone. See 221.1 defect #431.\n");
-    exit(1);
+
+    /* No anchor and not the main fiber: a coroutine with no Nova fiber body
+     * owning it (a runtime-internal one, or a ctx whose layout predates the
+     * anchor field). Nothing can be retired, so absorb the signal — never
+     * end the process over a cancel that carries no user error. Counted
+     * separately (see `_nova_late_cancel_unanchored`) precisely so this
+     * stays visible if it ever starts happening. */
+    __atomic_fetch_add(&_nova_late_cancel_unanchored, 1, __ATOMIC_RELAXED);
 }
 
 /* Plan 173 Ф.5 п.2 (D192-РЕТРАКТ): `_nova_throw_cleanup_timeout_fn` УДАЛЁН
@@ -446,4 +517,26 @@ void nova_p431_direct_repro(void) {
     _nova_fail_top = NULL;
     _nova_active_scope = NULL;
     nova_throw_cancel(nova_str_from_cstr("p431 direct repro: no handler, no scope"));
+}
+
+/* [221.1 №431 остаток — окно p431b] TEMPORARY repro hook, sibling of the
+ * one above and subject to the same "not part of the public runtime
+ * surface" note. The difference is deliberate and load-bearing: this one
+ * is meant to be called from INSIDE a `spawn`/`detach` body, so it forces
+ * ONLY the documented failure precondition (`_nova_fail_top == NULL`) and
+ * leaves `_nova_active_scope` intact — the fiber must keep its real scope
+ * so that the retirement path can run the entry's genuine epilogue
+ * (slot free / pending_remote decrement) exactly as a normally-finishing
+ * fiber would. Nulling the scope too (as the hook above does, to model
+ * "no scope at all") would instead exercise the п.3 debug arm and make the
+ * epilogue's slot bookkeeping meaningless.
+ *
+ * Expected observable behaviour, and the whole point of the remainder of
+ * #431: the CALLING FIBER never returns from this call and never reaches
+ * the statement after it, while the program around it — its siblings, its
+ * scope owner, `main` — runs to completion and exits 0. */
+void nova_p431b_fiber_repro(void) {
+    _nova_fail_top = NULL;
+    nova_throw_cancel(nova_str_from_cstr(
+        "p431b fiber repro: late cancel, no handler left"));
 }

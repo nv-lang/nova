@@ -192,13 +192,17 @@ impl CEmitter {
             "    int64_t _nova_cancel_deadline_ns;");
         // Plan 83-go-cmn Ф.2: gopark/goready 4-state park-latch — mirrors
         // NovaSpawnCtxBase._nova_park_state (fibers.h). MUST be BEFORE schedlink
-        // (schedlink stays LAST base field). Same FATAL as emit_spawn if omitted.
+        // (which stays second-to-last, ahead of the #431 fiber-anchor). Same
+        // FATAL as emit_spawn if omitted.
         let _ = writeln!(self.lambda_forward_decls,
             "    nova_atomic_int _nova_park_state;");
         // Plan 83-go-cmn Ф.1: intrusive overflow link — LAST base field,
         // mirrors NovaSpawnCtxBase.schedlink (fibers.h). See emit_spawn note.
         let _ = writeln!(self.lambda_forward_decls,
             "    mco_coro* schedlink;");
+        // [221.1 №431 остаток] Fiber-exit anchor — LAST base field. Same
+        // FATAL-if-omitted property as schedlink; see emit_spawn's helper.
+        self.emit_spawn_ctx_anchor_field();
         for (cap, ty, by_value) in &captures {
             if *by_value {
                 let _ = writeln!(self.lambda_forward_decls, "    {} {};", ty, cap);
@@ -231,6 +235,11 @@ impl CEmitter {
         self.line(&format!("{}void {}(mco_coro* _co) {{", self.top_level_storage(), detach_id));
         self.indent += 1;
         self.line(&format!("{ctx}* _c = ({ctx}*)mco_get_user_data(_co);", ctx = ctx_ty));
+        // [221.1 №431 остаток] Arm this fiber's exit anchor as the entry's
+        // first act — same protocol and rationale as emit_spawn's identical
+        // call (a late cancel that finds no fail-frame retires THIS orphan
+        // fiber instead of ending the process).
+        self.emit_fiber_anchor_arm();
 
         // Worker preamble (M:N path): alloc home scope slot + adopt init_snapshot.
         // Single-thread path: parent_scope == NULL → skip; orphan fiber's
@@ -295,6 +304,9 @@ impl CEmitter {
         self.line("fprintf(stderr, \"nova: detach orphan fiber error (LogAndDrop): %.*s\\n\", (int)_ff.error_msg.len, _ff.error_msg.ptr ? _ff.error_msg.ptr : \"<no message>\");");
         self.indent -= 1;
         self.line("}");
+        // [221.1 №431 остаток] Close the anchor region + disarm before the
+        // shared epilogue — identical protocol to emit_spawn.
+        self.emit_fiber_anchor_close();
 
         // Plan 83.4.5.8 (2026-05-24): orphan epilogue — dec pending_remote
         // + signal_main + free uncollectable slot (если был). Под armed
