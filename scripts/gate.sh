@@ -7,7 +7,9 @@
 #   1) cargo build --release (nova-cli)
 #   2) мега-CU spec_tests/conformance ОДНИМ CU: exit=0 И строка "PASS: N  FAIL: 0" присутствует
 #   3) nova check std/src (БЕЗ NOVA_STD_PATH): канон "PASS: 144  FAIL: 27  WARN: 1057"
-#   4) флагман examples/flagship/aggregator --strict-effects: строка "built:"
+#   4) nova lint --deny std/src: канон 0 находок
+#   5) nova lint --deny spec_tests: канон 0 находок (221.1 №416 хвост)
+#   6) флагман examples/flagship/aggregator --strict-effects: строка "built:"
 set -u
 ROOT="$(pwd)"
 MAIN_REPO="d:/Sources/nv-lang/nova"
@@ -181,6 +183,25 @@ echo "$LINT_LINE" | grep -qE "finding\(s\)" \
 echo "$LINT_LINE" | grep -qE ", 0 finding\(s\)" \
     || fail "nova lint std/src: находки > 0, ожидался канон 0 (см. $LINT_LOG): '$LINT_LINE'"
 [ "$LINT_EXIT" -eq 0 ] || fail "nova lint --deny std/src: exit=$LINT_EXIT (см. $LINT_LOG)"
+
+# Реестр 221.1 №416 (хвост, 2026-08-07, окно p416b): `.github/workflows/
+# nova-lint.yml` также гоняет `nova lint --deny spec_tests` (89 находок были
+# красными на CI, локальный gate.sh их не проверял вовсе — тот же класс
+# слепоты, что уже был закрыт для std/src выше в этом же гейте). spec_tests —
+# корпус ФИКСТУР: часть находок в исходных 83 была НАМЕРЕННОЙ (неканоничная
+# форма — сам предмет теста), закрыта через `// nova:allow RULE -- причина`
+# с обоснованием (PROGRESS-p416b.md), не игнором строки/файла целиком.
+echo "== gate: nova lint --deny spec_tests (0 findings — 221.1 №416 хвост) =="
+LINT_LOG2="${TMPDIR:-/tmp}/gate_lint_spec_$$.log"
+"$NOVA" lint --deny "$ROOT/spec_tests" >"$LINT_LOG2" 2>&1
+LINT_EXIT2=$?
+LINT_LINE2=$(sed -e "s/\[[0-9;]*m//g" "$LINT_LOG2" | grep -E "^lint: .* finding\(s\)" | tail -1)
+echo "lint spec_tests :: $LINT_LINE2"
+echo "$LINT_LINE2" | grep -qE "finding\(s\)" \
+    || fail "nova lint spec_tests: строки 'N finding(s)' нет вовсе (краш? см. $LINT_LOG2)"
+echo "$LINT_LINE2" | grep -qE ", 0 finding\(s\)" \
+    || fail "nova lint spec_tests: находки > 0, ожидался канон 0 (см. $LINT_LOG2): '$LINT_LINE2'"
+[ "$LINT_EXIT2" -eq 0 ] || fail "nova lint --deny spec_tests: exit=$LINT_EXIT2 (см. $LINT_LOG2)"
 
 echo "== gate: flagship aggregator --strict-effects =="
 FLAG_LINE=$("$NOVA" build "$ROOT/examples/flagship/aggregator/src/main.nv" --strict-effects 2>&1 | sed -e "s/\[[0-9;]*m//g" | tail -1)
