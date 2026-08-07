@@ -2015,10 +2015,23 @@ typedef struct {
     /* Plan 83-go-cmn Ф.1: intrusive overflow link. Used ONLY while this fiber
      * lives on the global overflow queue (NovaGlobalRunq) after a
      * nova_runq_put_slow spill; NULL otherwise. Accessed via nova_co_schedlink.
-     * MUST be mirrored as the LAST base field in the codegen SpawnCtx_N layouts
-     * (emit_c.rs emit_spawn + emit_detach) — else the overflow write lands on a
-     * user-capture field. Zero-init by nova_alloc / pool memset. */
+     * MUST be mirrored in the codegen SpawnCtx_N layouts (emit_c.rs
+     * emit_spawn / emit_parfor_drain_fiber + emit_detach) — else the overflow
+     * write lands on a user-capture field. Zero-init by nova_alloc / pool
+     * memset. */
     mco_coro*            schedlink;
+    /* [221.1 №431 остаток — окно p431b] Fiber-exit anchor (NovaFiberAnchor,
+     * effects.h) — points at a `jmp_buf` in THIS fiber's entry-function frame
+     * while the fiber's body is running; NULL outside that window (before the
+     * entry arms it, and again once the entry disarms it ahead of its
+     * epilogue). `_nova_cancel_no_handler` (effects.c) longjmps here to retire
+     * exactly this one fiber when a cancel arrives with no fail-frame left to
+     * catch it, instead of ending the whole process. LAST base field — MUST be
+     * mirrored as such in ALL THREE codegen SpawnCtx_N layouts (emit_c.rs
+     * emit_spawn + emit_parfor_drain_fiber, emit_detach/emit_detach.rs); same
+     * FATAL-if-forgotten discipline as schedlink above (a missing mirror makes
+     * the runtime's anchor write land on the first user-capture field). */
+    NovaFiberAnchor*     _nova_fiber_anchor;
 } NovaSpawnCtxBase;
 
 /* Plan 83.4.5.7: helper — CAS fiber state. Returns true if CAS succeeded.
