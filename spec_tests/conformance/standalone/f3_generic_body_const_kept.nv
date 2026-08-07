@@ -9,7 +9,7 @@
 // EXPECT_STDOUT 4242
 
 module standalone.f3_generic_body_const_kept
-const LOOKUP int = 4242
+const LOOKUP = 4242
 
 // Generic free fn whose body is the ONLY reader of LOOKUP.
 fn fetch[T](x T) -> int => LOOKUP

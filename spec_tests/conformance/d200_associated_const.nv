@@ -11,9 +11,9 @@ type D200Config {
     timeout int
 }
 
-const D200Config.VERSION int = 2
-const D200Config.PROTOCOL str = "v2"
-const D200Config.MAX_PEERS int = 1024
+const D200Config.VERSION = 2
+const D200Config.PROTOCOL = "v2"
+const D200Config.MAX_PEERS = 1024
 
 test "namespace access: Type.CONST резолвится к const-значению (D200)" {
     assert(D200Config.VERSION == 2)
