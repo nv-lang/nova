@@ -1,0 +1,146 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// №409 regression (221.1-bug-sweep, К1): field-cache × auto-`@cleanup`
+// (Plan 217) miscompile. NO channel, NO mutex, NO std sync types — a custom
+// local `@cleanup` type + a custom explicit consuming "release" method
+// reproduce it standalone, mirroring `std/src/concurrency/nvchan.nv`'s
+// (pre-workaround, commit `d8a0f8617`) `ChanTx[T].send` shape:
+//
+//   consume guard = @ch.mutex.lock()          <-> consume guard = @b.locker.acquire()
+//   while @ch.buf.len() == @ch.cap && ... {}  <-> while @b.buf.len() == @b.cap && !@b.closed {}
+//   if @ch.closed { return false }            <-> if @b.closed { guard.release(); return false }
+//   @ch.buf.push(v)                           <-> @b.buf.push(1)
+//   guard.unlock()  (explicit, non-`defer`)   <-> guard.release() (explicit, non-`defer`)
+//
+// Observed RED signal (BEFORE the fix, field-cache ON — the default):
+// `nv_panic("D188-on-exit-double-invocation")` — the built-in exactly-once
+// runtime guard trips because auto-cleanup dispatches TWICE. Deterministic
+// (5/5), not a flaky assert. GREEN with the fix (also GREEN with
+// `--no-field-cache` alone, without the fix — confirms field-cache as the
+// trigger).
+//
+// **ROOT CAUSE** (full trail — including the real `nvchan.nv`-shaped probe
+// this repro was reduced from, and byte-diffed field-cache-ON vs
+// `--no-field-cache` generated C — in `docs/plans/wip/PROGRESS-p409.md`):
+// `field_cache.rs`'s synthesized hoist statements (`build_at_field_let` /
+// `make_hoist_let` / the chain-prefix-sharing variants — ALL of them
+// hardcode `consume: false`) reuse the ENCLOSING statement's span for
+// their OWN `Stmt::Let.span` (`region.first_span` = `stmt_span(s)`,
+// `field_cache.rs:3040` — the span of the STATEMENT containing the first
+// repeated-field access). When that first access sits inside a bare
+// `consume X = …;` (a Plan 217 auto-cleanup arm site), the hoist statement
+// — prepended BEFORE the original in `b.stmts` — carries the EXACT SAME
+// `Span` as that `consume`-let. `emit_c.rs`'s Plan 217 machinery keyed its
+// auto-cleanup-arm bookkeeping (`auto_cleanup_arm_sites: HashMap<Span, _>`)
+// by `Span` ALONE — `emit_stmt`'s dispatch fired on the (unfiltered) HOIST
+// statement FIRST (textually first after prepending), extracting ITS
+// pattern name (the hoisted pointer, e.g. `_at_ch`) as "the" tracked
+// consume-binding instead of the real guard. Two consequences from this
+// ONE bug (not two independent layers): (a) the scope-exit auto-cleanup
+// dispatch calls `Nova_<T>_consume_cleanup(<wrong pointer>, …)` — a
+// type-confused pointer where the guard's own type is expected; (b) the
+// guard's own explicit disarming call (`guard.unlock()`/`.release()`)
+// never finds the guard's real name in the disarm registry, so the flag is
+// never cleared — cleanup fires a SECOND time on exit, through the wrong
+// pointer.
+//
+// **FIX** (`compiler-codegen/src/codegen/emit_c.rs`, `emit_stmt`): the
+// dispatch match now also requires `decl.consume` — true for the real
+// Plan 217 arm site (`auto_cleanup_qualifies` already requires it in the
+// prologue scan), false for EVERY field-cache hoist statement — so a
+// same-span synthetic neighbor can no longer steal the match. Emission-only
+// fix: no type information needed, purely an AST-node-identity discipline
+// gap between two AST-rewrite/emission passes (196-channel: legitimately
+// an emit_c.rs fix, not a checker-channel one — mirrors the p401
+// precedent).
+//
+// Trigger-shape notes (both REQUIRED — confirmed empirically, see
+// PROGRESS-p409.md's matrix for the negative variants that did NOT
+// reproduce):
+//   - `@b.locker.acquire()` — `@b` as the RECEIVER of a method-call chain
+//     (not merely a call ARGUMENT) inside the consume-let's own init
+//     expression. A version reading a field only as a plain call argument
+//     (e.g. `P409Res.new(@b.cap)`, no indirection) does NOT reproduce —
+//     field-cache picks VALUE chain-caching instead of the buggy POINTER
+//     region-prefix hoist for that shape.
+//   - `@b.buf.push(1)` inside the `while` body (a MUTATING METHOD CALL,
+//     not a plain field assignment) as the loop-body "barrier" that closes
+//     the region right after the consume-let. A version using
+//     `@b.n = @b.n` (plain assignment) instead did NOT reproduce.
+
+module spec_tests.conformance
+
+type P409Res consume {
+    ro id int
+}
+
+fn P409Res.new(id int) -> P409Res => { id }
+
+// Mirrors `Mutex`: a field-of-a-field whose OWN method is the consume-let's
+// init call receiver.
+type P409Locker {
+    ro id int
+}
+
+fn P409Locker @acquire() -> P409Res => P409Res.new(@id)
+
+type P409Box {
+    mut n int
+    cap int
+    mut closed bool
+    mut buf []int
+    locker P409Locker
+}
+
+fn P409Box.new(n int, cap int) -> P409Box =>
+    { n, cap, closed: false, buf: [], locker: P409Locker { id: 7 } }
+
+// Explicit, non-`defer` CONSUMING disarm call — mirrors `MutexGuard consume
+// @unlock()` (std/src/runtime/sync.nv:1484) exactly in shape.
+fn P409Res consume @release() -> () { () }
+
+fn P409Res consume @cleanup(_outcome ScopeOutcome) -> () {
+    // Pointer-identity probe: only reached if the bug is present (correct
+    // behavior never dispatches cleanup on this success path at all).
+    assert(@id == 7)
+    ()
+}
+
+export type P409Container value { b P409Box }
+
+// Mirrors `ChanTx[T].send` (pre-workaround nvchan.nv, commit `d8a0f8617`)
+// statement-for-statement.
+fn P409Container @run() -> bool {
+    consume guard = @b.locker.acquire()
+    while @b.buf.len() == @b.cap && !@b.closed {
+        @b.buf.push(1)
+    }
+    if @b.closed {
+        guard.release()
+        return false
+    }
+    ro _touch = @b.n
+    guard.release()
+    true
+}
+
+test "№409: field-cache x auto-@cleanup — guard.release() disarms, no double-fire" {
+    mut exit_calls = 0
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) -> () {
+            exit_calls += 1
+            return ()
+        }
+    } {
+        ro c = P409Container { b: P409Box.new(5, 10) }
+        ro ok = c.run()
+        assert(ok)
+    }
+    // CORRECT = 0: `release()` properly disarms auto-cleanup on both exits
+    // — the auto-cleanup dispatch itself never runs, so no exit event is
+    // ever emitted. Under the bug this was 1 (or the process panicked with
+    // `D188-on-exit-double-invocation` before this assert was even
+    // reached).
+    assert(exit_calls == 0)
+}

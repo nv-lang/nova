@@ -30762,9 +30762,33 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// wrapper (rather than inlining into the giant `Stmt::Let` match arm
     /// below, which has many early `return Ok(())`s) to avoid touching that
     /// arm's internals at all.
+    ///
+    /// №409 fix (span-collision guard): `field_cache.rs`'s synthesized hoist
+    /// lets (`build_at_field_let`/`make_hoist_let`/chain-prefix-sharing —
+    /// ALL of them, confirmed by grep, hardcode `consume: false`) deliberately
+    /// reuse the ENCLOSING statement's span for diagnostics (`region.
+    /// first_span` = `stmt_span(s)`, `field_cache.rs:3040`). When the first
+    /// repeated-field access sits inside a bare `consume X = …;` (Plan 217
+    /// auto-cleanup arm site), the hoist statement — prepended BEFORE the
+    /// original in `b.stmts` — carries the EXACT SAME `Span` as that
+    /// `consume`-let. `auto_cleanup_arm_sites` is keyed by `Span` alone, so
+    /// this match used to fire on the (unfiltered) hoist statement FIRST:
+    /// `emit_auto_cleanup_arm` ran on the hoist's own `LetDecl`, extracting
+    /// its hoisted-pointer NAME (e.g. `_at_ch`, not `guard`) as the tracked
+    /// consume-binding — the auto-cleanup dispatch and the `guard.unlock()`
+    /// disarm-lookup then both operated on the WRONG name: the scope-exit
+    /// cleanup called `Nova_MutexGuard_consume_cleanup(_at_ch, …)` (a
+    /// `Chan*` where `MutexGuard*` is expected — real wrong-pointer
+    /// miscompile) AND `guard.unlock()`'s disarm never matched (`guard` was
+    /// never registered), so cleanup fired a SECOND time on exit — the two
+    /// findings PROGRESS-p244.md reported as separate "layers" are this ONE
+    /// span-collision bug. `decl.consume` disambiguates: the hoist let
+    /// statements are never `consume`-bound (see the grep above), the REAL Plan 217 arm
+    /// site always is (`auto_cleanup_qualifies` requires it) — requiring it
+    /// here too makes this match immune to a same-span synthetic neighbor.
     fn emit_stmt(&mut self, stmt: &Stmt) -> Result<(), String> {
         let decl_span = match stmt {
-            Stmt::Let(decl) if self.auto_cleanup_arm_sites.contains_key(&decl.span) => Some(decl.span),
+            Stmt::Let(decl) if decl.consume && self.auto_cleanup_arm_sites.contains_key(&decl.span) => Some(decl.span),
             _ => None,
         };
         self.emit_stmt_inner(stmt)?;
