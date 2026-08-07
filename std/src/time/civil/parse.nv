@@ -89,6 +89,7 @@ fn time_at(s str, pos0 int) -> Result[(TimeOfDay, int), ParseDateTimeError] {
             mut got = 0
             while got < 9 && fpos < s.byte_len() {
                 ro c = s[fpos..fpos + 1]
+                // nova:allow W_MANUAL_COALESCE -- `?? break` does not parse (`break` is Stmt-only in Nova's grammar, not a valid `??` RHS expression — confirmed empirically: "unexpected `break` in expression"); the canon `X ?? D` only accepts value/panic/throw fallbacks, not loop-control statements
                 ro dv = match c.to_int() { Ok(x) => x, Err(_) => break }
                 nano += (dv as i64) * scale
                 scale /= 10
@@ -267,6 +268,7 @@ export fn str @to_period() -> Result[Period, ParseDateTimeError] {
         mut got = 0
         while got < 9 && pos < @byte_len() {
             ro c = @[pos..pos + 1]
+            // nova:allow W_MANUAL_COALESCE -- `?? break` does not parse (`break` is Stmt-only in Nova's grammar, not a valid `??` RHS expression — confirmed empirically: "unexpected `break` in expression"); the canon `X ?? D` only accepts value/panic/throw fallbacks, not loop-control statements
             ro dv = match c.to_int() { Ok(x) => x, Err(_) => break }
             v = v * 10 + (dv as i64)
             pos += 1
