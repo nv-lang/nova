@@ -1,0 +1,293 @@
+// std.concurrency.nvchan — Plan 244 Ф.1: `Chan[T]` implemented ENTIRELY in
+// Nova on top of `Mutex` + `Condvar` + `Vec[T]` (std.runtime.sync), replacing
+// the design of the compiler-intrinsic `Channel`/`ChanWriter`/`ChanReader`
+// with a genuine `.nv` type + method table.
+//
+// Lives ALONGSIDE the legacy channel (nothing removed, nothing switched —
+// Ф.5 does that, later, after Ф.3 proves parity). Deliberately named
+// `Chan`/`ChanTx`/`ChanRx` — NOT `Channel`/`ChanWriter`/`ChanReader` — to
+// avoid the ~50 exact-string-match special cases the legacy channel is
+// keyed off in the compiler (`compiler-codegen/src/lib.rs`,
+// `codegen/emit_c.rs`, `types/mod.rs`; confirmed by grep 2026-08-07,
+// 221.1-bug-sweep №143/№286/№407: "Channel" recognized by NAME, no `.nv`
+// declaration, four independent match forms). Reusing the exact names here
+// would recreate the exact "invisible second door" class of bug this plan
+// exists to retire — the two implementations would silently collide on
+// name resolution instead of living cleanly side by side.
+//
+// No `select` support (Plan 244 Ф.2, separate compiler-touching window).
+//
+// ── CODEGEN MISCOMPILE, WORKAROUND APPLIED (Ф.1 finding, №TBD, SERIOUS) —
+// every method below opens with `mut ch = @ch` and uses `ch.field`
+// throughout, NEVER repeating `@ch.field` two-or-more times in the same
+// method. This is not style — it works around a real miscompile. Root
+// cause, isolated via `--no-field-cache` (bisected through 8 probes,
+// 2026-08-07): a `consume`-bound guard (`consume guard = @ch.mutex.lock()`)
+// combines with Plan 217's auto-`@cleanup`-on-scope-exit (armed the moment
+// `MutexGuard` — which declares `@cleanup` — is bound) AND Plan 123's
+// field-cache optimization (hoists repeated `@ch.x` reads into a cached
+// pointer temp, `_at_ch`/`_at_ch_loop`/`_at_ch_n0` in the generated C).
+// The auto-cleanup codegen pass, when emitting the scope-exit cleanup call,
+// picks up the WRONG hoisted temp as the cleanup receiver — confirmed by
+// reading the generated C directly: `Nova_MutexGuard_consume_cleanup(_at_ch,
+// outcome)` is called with `_at_ch` (a `Nova_Chan____nova_int*`, the
+// CHANNEL pointer) where a `Nova_MutexGuard*` is expected. This fires
+// UNCONDITIONALLY after the method's OWN explicit `guard.unlock()` call
+// (the auto-cleanup arm flag is never disarmed by a plain, non-`defer`
+// unlock call), so every `recv`/`send` call double-cleans up through a
+// type-confused pointer — surfaces at runtime as
+// `Mutex.unlock() called on an unlocked mutex`, reproduced deterministically
+// (15/15) whenever the method is invoked. `nova build --no-field-cache`
+// makes it disappear (confirms field-cache as the trigger). Caching `@ch`
+// into a plain local (`mut ch = @ch`, then `ch.field`) starves the
+// field-cache heuristic of the repeated `@ch.x` chain it hoists, and the
+// bug does not reproduce (3/3 clean runs, with field-cache at its default
+// ON setting). This is a genuine compiler defect (wrong-pointer cleanup
+// call, not merely a false-positive diagnostic) — flagged prominently, not
+// fixed here (compiler-touching, out of Ф.1 scope; the workaround is
+// self-contained inside this module and does not touch shared code).
+//
+// ── D446 fiber-safety shape (Ф.1 finding, №TBD) — every method is
+// SINGLE-EXIT and calls `guard.unlock()` as the LAST statement, never via
+// `defer`. This is a SEPARATE finding from the miscompile above: `defer
+// guard.unlock(); ...; ch.buf.push(v)` fails `nova check` with
+// `[E_FIBER_UNSAFE_CALL]` — D446's guard-liveness approximation
+// (`compiler-codegen/src/types/fiber_safety.rs:45-58`) is SEQUENTIAL and
+// does not understand `defer`: it treats "the first call made directly on
+// the guard's name" as ending the guard's liveness at that TEXTUAL
+// position, so a `defer guard.unlock()` written right after `lock()` kills
+// guard-liveness immediately, before the mutations later in the body are
+// reached — even though `defer` actually runs it at scope exit. Writing
+// the unlock call textually LAST (single exit, `mut result` accumulator
+// instead of early `return`) keeps every mutating call inside the guard's
+// tracked live range. Confirmed empirically: the `defer` form fails on
+// `send`/`recv`/`try_send` (chain `ChanTx.send -> Vec.push`, `ChanRx.recv
+// -> Vec.remove`) when called from inside `spawn`; the single-exit form
+// below passes cleanly. NOTE: this is what FORCES the plain (non-`defer`)
+// `guard.unlock()` call that then triggers the miscompile above — the two
+// findings compound (D446 rules out `defer`, and non-`defer` + field-cache
+// is what the miscompile needs).
+//
+// ── KNOWN GAP (Ф.1 finding, №TBD) — `send`/`try_send` take a PLAIN `v T`,
+// NOT `consume v T` as the plan's design specifies. Verified empirically
+// (three independent probes, 2026-08-07): a `consume v T` PARAMETER has NO
+// legal discharge path into any container/buffer under the current
+// checker — `Vec[T].push(v)`, a raw-pointer `write_at(i, v)`, AND
+// record-literal construction (`Box { v }`) all reject the same way:
+// `[D133-not-consumed] переменная 'v' ... не consumed до scope-exit.
+// Добавьте вызов одного из: consume-метод, return v, либо consume-param`.
+// None of those three apply to "store into a generic container" — the
+// enumeration is exhaustive (spec/decisions/02-types.md:5922 confirms by
+// design there is no suppress/forget escape, unlike Rust's `mem::forget`).
+// This is DEEPER than what the plan's "БЛОКЕР" section anticipated: №309
+// and №325 (221.1-bug-sweep) are closed, but their fix is a LEAK DETECTOR
+// (correctly rejects the unsound "value lives in the container AND
+// outside" pattern) — it does not add the missing POSITIVE capability of
+// legally moving a consume-obligated value into a container. That
+// capability is plan 246's "шаг C" (drop-glue + effect-variable),
+// explicitly deferred post-tag as a separate feature.
+//
+// ── TUPLE-MONO CODEGEN BUG, WORKAROUND APPLIED (Ф.1 finding, №TBD) — the
+// plan's literal constructor signature `Chan[T].new(cap) -> (ChanTx[T],
+// ChanRx[T])` (a raw tuple of two DIFFERENT generic value-types) does not
+// build under the current compiler: mono emits the literal unsubstituted
+// type parameter name instead of the concrete instantiation
+// (`NovaValue_ChanTx____Nova_T_p` instead of `NovaValue_ChanTx____nova_int`
+// — confirmed minimal, four probes, 2026-08-07: reproduces for ANY tuple
+// return whose element type is a generic value-type parameterized by the
+// function's own type parameter, even a plain non-nested one-field wrapper
+// and even a 2-tuple of the SAME type repeated). A plain record (curly
+// braces) with the SAME two fields builds cleanly. `ChanPair[T]` below is
+// that workaround; field access is `.tx`/`.rx`, NOT the plan's `ro (tx,
+// rx) = …` destructuring sugar — that becomes available once the tuple-mono
+// defect is fixed upstream.
+//
+// This module implements everything ELSE from the plan's Ф.1 scope
+// faithfully: struct, `send`/`recv`/`try_send`/`try_recv`/`close`/
+// `is_closed`/`len`/`capacity`, FIFO ordering, blocking + non-blocking
+// paths, close-drains-before-None semantics (parity with the legacy
+// channel, `channel_closed_vs_value_test.nv`).
+
+module concurrency.nvchan
+
+import std.runtime.sync.{Mutex, Condvar}
+
+/// Shared channel state. `#share` (D415): deliberate — `ChanTx[T]`/
+/// `ChanRx[T]` both hold a reference to the SAME `Chan[T]` (heap record,
+/// reference semantics — D32/D123, NOT `value`), and are meant to be
+/// captured across a `spawn` boundary. Internal synchronization via
+/// `mutex`/`not_empty`/`not_full` is the vouch: every field read/write
+/// below happens under `mutex` held.
+#share
+type Chan[T] {
+    mutex     Mutex
+    not_empty Condvar
+    not_full  Condvar
+    mut buf   []T   // FIFO queue: @push at tail, @remove(0) at head.
+    cap       int       // Immutable after construction — no lock needed to read.
+    mut closed bool
+}
+
+/// Sending half. Value type (cheap to pass/capture): the payload is a
+/// reference to the shared `Chan[T]`, so a copy of `ChanTx[T]` aliases the
+/// SAME channel, not an independent one.
+#stable(since = "0.1")
+export type ChanTx[T] value { priv ch Chan[T] }
+
+/// Receiving half.
+#stable(since = "0.1")
+export type ChanRx[T] value { priv ch Chan[T] }
+
+/// Construction result of `Chan[T].new`. PROVISIONAL shape — see the
+/// module-header "TUPLE-MONO CODEGEN BUG" note. Field access is `.tx`/`.rx`.
+#stable(since = "0.1")
+export type ChanPair[T] { tx ChanTx[T], rx ChanRx[T] }
+
+// ── construction ─────────────────────────────────────────────────────────
+
+/// Create a bounded channel. `cap` must be >= 1 (parity with the legacy
+/// channel's `channel_zero_capacity_panic.nv`: capacity 0 is a reject, not
+/// a valid degenerate case — Ф.1 keeps that boundary rather than silently
+/// reinterpreting it).
+#stable(since = "0.1")
+export fn Chan[T].new(cap int) -> ChanPair[T]
+    requires cap >= 1
+{
+    ro ch Chan[T] = {
+        mutex: Mutex.new(),
+        not_empty: Condvar.new(),
+        not_full: Condvar.new(),
+        buf: []T.new(cap: cap),
+        cap,
+        closed: false,
+    }
+    ro tx ChanTx[T] = { ch }
+    ro rx ChanRx[T] = { ch }
+    ro pair ChanPair[T] = { tx, rx }
+    pair
+}
+
+// ── sending side ─────────────────────────────────────────────────────────
+
+/// Blocking send. `true` — accepted; `false` — channel already closed (not
+/// a panic). Provisional signature — see the module-header gap note: `v`
+/// is a plain (copying) parameter, not `consume`, until generic
+/// consume-sinks exist.
+#stable(since = "0.1")
+export fn ChanTx[T] @send(v T) -> bool {
+    mut ch = @ch
+    consume guard = ch.mutex.lock()
+    while ch.buf.len() == ch.cap && !ch.closed {
+        ch.not_full.wait(ch.mutex)
+    }
+    mut ok = false
+    if ch.closed {
+        ok = false
+    } else {
+        ch.buf.push(v)
+        ch.not_empty.notify_one()
+        ok = true
+    }
+    guard.unlock()
+    ok
+}
+
+/// Non-blocking send. `false` — buffer full OR channel closed (both are
+/// "not accepted right now"; distinguish via `is_closed()` if needed).
+#stable(since = "0.1")
+export fn ChanTx[T] @try_send(v T) -> bool {
+    mut ch = @ch
+    consume guard = ch.mutex.lock()
+    mut ok = false
+    if !ch.closed && ch.buf.len() < ch.cap {
+        ch.buf.push(v)
+        ch.not_empty.notify_one()
+        ok = true
+    }
+    guard.unlock()
+    ok
+}
+
+/// Close this write handle. Idempotent — a second (or Nth) call is a no-op
+/// beyond re-waking any waiters (harmless, they re-check the predicate).
+/// Wakes BOTH condvars: blocked senders must unblock with `false`, blocked
+/// receivers must unblock to drain-then-None.
+#stable(since = "0.1")
+export fn ChanTx[T] @close() -> () {
+    mut ch = @ch
+    consume guard = ch.mutex.lock()
+    ch.closed = true
+    ch.not_empty.notify_all()
+    ch.not_full.notify_all()
+    guard.unlock()
+}
+
+#stable(since = "0.1")
+export fn ChanTx[T] @is_closed() -> bool {
+    ro ch = @ch
+    consume guard = ch.mutex.lock()
+    ro result = ch.closed
+    guard.unlock()
+    result
+}
+
+// ── receiving side ───────────────────────────────────────────────────────
+
+/// Blocking receive. `None` — closed AND buffer empty. Buffer drains
+/// before `None` (parity with legacy channel semantics): a closed channel
+/// with buffered values still yields them via `Some` first.
+#stable(since = "0.1")
+export fn ChanRx[T] @recv() -> Option[T] {
+    mut ch = @ch
+    consume guard = ch.mutex.lock()
+    while ch.buf.is_empty() && !ch.closed {
+        ch.not_empty.wait(ch.mutex)
+    }
+    mut result Option[T] = None
+    if !ch.buf.is_empty() {
+        ro v = ch.buf.remove(0)
+        ch.not_full.notify_one()
+        result = Some(v)
+    }
+    guard.unlock()
+    result
+}
+
+/// Non-blocking receive. `None` — buffer empty right now. This does NOT
+/// imply closed — check `is_closed()` separately (parity with legacy
+/// `try_recv` semantics).
+#stable(since = "0.1")
+export fn ChanRx[T] @try_recv() -> Option[T] {
+    mut ch = @ch
+    consume guard = ch.mutex.lock()
+    mut result Option[T] = None
+    if !ch.buf.is_empty() {
+        ro v = ch.buf.remove(0)
+        ch.not_full.notify_one()
+        result = Some(v)
+    }
+    guard.unlock()
+    result
+}
+
+#stable(since = "0.1")
+export fn ChanRx[T] @len() -> int {
+    ro ch = @ch
+    consume guard = ch.mutex.lock()
+    ro result = ch.buf.len()
+    guard.unlock()
+    result
+}
+
+/// Fixed at construction — no lock needed.
+#stable(since = "0.1")
+export fn ChanRx[T] @capacity() -> int => @ch.cap
+
+#stable(since = "0.1")
+export fn ChanRx[T] @is_closed() -> bool {
+    ro ch = @ch
+    consume guard = ch.mutex.lock()
+    ro result = ch.closed
+    guard.unlock()
+    result
+}
