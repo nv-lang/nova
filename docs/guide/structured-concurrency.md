@@ -95,10 +95,16 @@ next line. To learn *how* the scope ended, ask the token:
 `cancel:` and `timeout:` compose — the earlier of the two wins. If the token
 fires first, no `TimeoutError` is raised; if the deadline fires first, it is.
 
-> **Current limitation (tracked, being fixed):** today `tok.cancel()` reliably
-> cancels **spawned children** of the scope, but does not interrupt a direct
-> blocking operation in the scope's own body. Until that is fixed, structure
-> cancellable work as `spawn`-children — exactly as in the snippet above.
+> **Direct blocking operations in the scope body** (fixed 2026-08-07, two
+> honest remainders). `cancel:` / `timeout:` / `deadline:` now correctly wake
+> a direct `Time.sleep` in the scope's own body — the scope wraps up on
+> time. Two narrow caveats remain open and tracked: (1) the interrupted
+> direct operation resumes **without a throw**, so statements between it and
+> the end of the block may still execute before the scope exits — the outer
+> observer sees correct timing, but don't put must-not-run-after-cancel code
+> there; (2) a direct `Channel.recv()` in the body under `cancel:` still
+> hangs. Both are avoided by the same structure: put cancellable work in
+> `spawn`-children, as in the snippet above.
 
 ## Network reads: always under a deadline
 
