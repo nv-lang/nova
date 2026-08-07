@@ -1,0 +1,41 @@
+// EXPECT_COMPILE_ERROR E_CODEGEN_TYPE_UNKNOWN
+//
+// Реестр 221.1 №401 ("ПЕРЕОТКРЫТ", окно p401b-p67-class): negative pin for
+// the `[P67-LEGACY]`→honest-error class. Стартовый носитель интегратора —
+// минута: `Io.write_out("")` bound to `ro`, БЕЗ `import std.io`.
+//
+// `nova check` PASSES this file (the checker's `Type.method(...)` Path-call
+// arm — `types/mod.rs` ~14625, gated on `method_overloads` — silently
+// `return`s when it finds no overload for an unimported receiver; the same
+// documented, deliberately-not-fixed gap as реестр №81, revert reason:
+// a blanket "type not imported" diagnostic there regressed `nova check
+// std/src` by 42 files on legitimate cross-module const/intrinsic-namespace
+// Path-calls). Before this window, codegen's legacy `infer_call_ret_c`
+// (`emit_c.rs`, Path-call branch) hit exactly that same silence — no
+// `resolved_types`/`resolved_callees` entry, no `effect_schemas["Io"]`
+// entry either (that registry is built ONLY from types actually present in
+// this compile unit, and `Io`'s declaration lives in `std.io`, never
+// imported here) — and PANICKED (`nova: internal error ... [P67-LEGACY]
+// Path call return type unknown for method=write_out ... This is a bug in
+// nova. Please report it.`), aborting the WHOLE process — fatal to a
+// `nova test <dir>` BATCH, not just this one file (реестр №401, "цена").
+//
+// This window did NOT resolve the underlying §0 gap (still requires
+// `import std.io` to actually compile — see the sibling POSITIVE case,
+// `spec_tests/conformance/standalone/…` for a WITH-import carrier of the
+// same Path-call channel). It replaced the internal-error PANIC with an
+// honest, coded compile-error (`fatal_codegen_type_unknown`, `emit_c.rs`)
+// that (a) does not claim "this is a bug in nova" for what is, in this
+// carrier's case, an ordinary missing import, and (b) is now caught by
+// `nova_codegen::test_runner::catch_unit_panic` (wraps both the `nova
+// test` per-unit compile call and `nova build`'s `emit_module_multi_tu`
+// call) — a panic here no longer kills a multi-file batch, it becomes an
+// ordinary per-unit `FAIL`/`error:` outcome. Ratchet: `nova check std/src`
+// FAIL count must not move (this class was already checker-silent before
+// this window; nothing here changes checker behavior).
+
+module neg.m221_401_path_call_unimported_effect_neg
+
+fn main() Io -> () {
+    ro _a = Io.write_out("")
+}
