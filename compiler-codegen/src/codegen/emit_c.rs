@@ -11439,7 +11439,33 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // normalization just because its declared return carries a `ro`
             // annotation the callable SIGNATURE itself doesn't care about.
             R::Readonly(inner) => self.resolved_type_to_typeref_named(inner, span),
-            _ => None,
+            // [№TBD, реестр 221.1 №403] The four arms above only ever covered the
+            // shapes a HOF-binding's OWN callable signature carried in the corpus this
+            // fn was ORIGINALLY written for (Named/Func/Unit/Readonly — see fn doc).
+            // `closure_channel_param_tys` reuses this SAME fn for a broader case (ANY
+            // let-annotated `ClosureLight`'s own param/return types, `f1_check_assign_
+            // let` — types/mod.rs — registers `resolved_types[closure_id]`
+            // unconditionally for every arity), where a bare primitive param/return
+            // (`fn(Req) -> int`/`-> bool`/`-> str`/...) is completely ordinary. The old
+            // catch-all `_ => None` bailed the instant `Func`'s own recursive per-
+            // param/per-return call (line ~11424/11426 above) hit a `R::Scalar`/`R::
+            // Bool`/`R::Float`/`R::Str` — the `?` on THAT recursive call then discarded
+            // the WHOLE surrounding `Func` conversion (params AND return), even when
+            // every OTHER piece resolved fine. `ResolvedType::resolved_to_typeref`
+            // (types/mod.rs — moved out of `TypeCheckCtx` for exactly this reuse) covers
+            // the full primitive/composite surface (Scalar/Bool/Float/Str/Named-with-
+            // generics/Array/Tuple/TypedPtr) this fn never did; falling back to it here
+            // fixes the closure-literal case without touching this fn's own Func/
+            // Readonly handling (which the general converter deliberately does NOT
+            // cover — `resolved_to_typeref` refuses `Func` outright). Confirmed via
+            // `spec_tests/conformance/standalone/
+            // m2217_26_generic_static_method_value_arg_addr_mismatch`'s `via_closure`
+            // test (Linux-only RUN-FAIL, PASS lines printed before the crash — the
+            // closure's OWN C parameter type silently fell to `nova_int` while the
+            // call site correctly built `NovaValue_Req`, an ABI-visible caller/callee
+            // signature mismatch that both x86-64 ABIs mis-execute, but only SysV's
+            // stack-vs-register split for oversized structs reliably segfaults).
+            _ => crate::types::ResolvedType::resolved_to_typeref(rt, span),
         }
     }
 
