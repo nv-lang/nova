@@ -1,0 +1,16 @@
+// №386 (Plan p386-bound-doors) — positive guard: an explicit turbofish
+// constructor whose type-arg DOES satisfy the type declaration's own bound
+// must keep compiling and running exactly as before.
+module spec_tests.conformance
+
+type NeedsFoo386TFPos protocol { @foo() -> int }
+type BoxTF386Pos[K NeedsFoo386TFPos] { ro k K }
+fn BoxTF386Pos[K].new(k K) -> Self => { k }
+
+type Fooable386TFPos { id int }
+fn Fooable386TFPos @foo() -> int => @id
+
+test "(386-pos) explicit turbofish constructor satisfying the type decl's OWN bound" {
+    ro b = BoxTF386Pos[Fooable386TFPos].new(Fooable386TFPos { id: 9 })
+    assert(b.k.id == 9)
+}

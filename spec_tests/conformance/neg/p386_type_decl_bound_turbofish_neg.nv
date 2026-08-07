@@ -1,0 +1,19 @@
+// EXPECT_COMPILE_ERROR does not satisfy `NeedsFoo386TF` bound
+module neg.p386_type_decl_bound_turbofish_neg
+// №386 (Plan p386-bound-doors) — "4th door", explicit-turbofish surface:
+// `BoxTF386[Widget386TF].new(...)` — the concrete type-arg is WRITTEN via
+// turbofish brackets, not inferred from a field literal. Own call site
+// (the `ExprKind::TurboFish` arm in `BoundCtx::walk_expr`, types/mod.rs) —
+// same `check_satisfaction` primitive as the record-lit door.
+
+type NeedsFoo386TF protocol { @foo() -> int }
+type BoxTF386[K NeedsFoo386TF] { ro k K }
+fn BoxTF386[K].new(k K) -> Self => { k }
+
+// Widget386TF does NOT implement NeedsFoo386TF — no @foo method.
+type Widget386TF { id int }
+
+test "(386-neg) explicit turbofish constructor violating the type decl's OWN bound" {
+    ro b = BoxTF386[Widget386TF].new(Widget386TF { id: 1 })
+    print(b.k.id)
+}

@@ -1,0 +1,19 @@
+// EXPECT_COMPILE_ERROR does not satisfy `NeedsFoo386Ann` bound
+module neg.p386_type_decl_bound_annotation_neg
+// №386 (Plan p386-bound-doors) — "4th door", written type-ANNOTATION
+// surface: `ro b BoxA386[Widget386Ann] = { ... }`. The concrete type-arg is
+// WRITTEN in a `let`-annotation (`Stmt::Let.ty`), not inferred and not
+// turbofish. Own call site: `BoundCtx::walk_stmt`'s `Stmt::Let` arm ->
+// `check_typeref_bounds` (types/mod.rs) — same `check_satisfaction`
+// primitive as every other door.
+
+type NeedsFoo386Ann protocol { @foo() -> int }
+type BoxA386[K NeedsFoo386Ann] { ro k K }
+
+// Widget386Ann does NOT implement NeedsFoo386Ann — no @foo method.
+type Widget386Ann { id int }
+
+test "(386-neg) let-annotation violating the type decl's OWN bound" {
+    ro b BoxA386[Widget386Ann] = { k: Widget386Ann { id: 1 } }
+    print(b.k.id)
+}

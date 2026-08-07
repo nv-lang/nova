@@ -1,0 +1,17 @@
+// №386 (Plan p386-bound-doors) — positive guard: a fn param/return type
+// whose type-arg DOES satisfy the type declaration's own bound must keep
+// compiling and running exactly as before.
+module spec_tests.conformance
+
+type NeedsFoo386FnPos protocol { @foo() -> int }
+type BoxFn386Pos[K NeedsFoo386FnPos] { ro k K }
+
+type Fooable386FnPos { id int }
+fn Fooable386FnPos @foo() -> int => @id
+
+fn take386fnpos(b BoxFn386Pos[Fooable386FnPos]) -> int => b.k.id
+
+test "(386-pos) fn param/return type satisfying the type decl's OWN bound" {
+    ro b = BoxFn386Pos { k: Fooable386FnPos { id: 5 } }
+    assert(take386fnpos(b) == 5)
+}

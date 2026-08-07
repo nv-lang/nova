@@ -1,0 +1,22 @@
+// EXPECT_COMPILE_ERROR does not satisfy `NeedsFoo386Fld` bound
+module neg.p386_type_decl_bound_field_neg
+// №386 (Plan p386-bound-doors) — "4th door", RECORD FIELD DECLARATION
+// surface: `type Wrapper386 { w BoxFld386[Widget386Fld] }` — a concrete
+// field type violating the wrapped generic's own bound. Own call site:
+// `BoundCtx::check_module`'s `Item::Type` arm -> `check_typeref_bounds`
+// (types/mod.rs) — checked ONCE at the declaration (a concrete field type
+// is a fixed fact independent of how many times `Wrapper386` itself gets
+// instantiated).
+
+type NeedsFoo386Fld protocol { @foo() -> int }
+type BoxFld386[K NeedsFoo386Fld] { ro k K }
+
+// Widget386Fld does NOT implement NeedsFoo386Fld — no @foo method.
+type Widget386Fld { id int }
+
+type Wrapper386Fld { w BoxFld386[Widget386Fld] }
+
+test "(386-neg) record field type violating the type decl's OWN bound" {
+    // Unreachable — the violation is in the FIELD DECLARATION, caught at
+    // check time regardless of whether `Wrapper386Fld` is ever constructed.
+}
