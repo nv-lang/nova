@@ -333,8 +333,7 @@ export fn str @equal(other str) -> bool {
 // idx==byte_len, или байт по idx НЕ continuation (`(b & 0xC0) != 0x80`). Для
 // безопасной нарезки: `s[a..b]` паникует при рассечении, `is_char_boundary` —
 // предварительная проверка без паники. O(1).
-// nova:allow W_PARAM_NO_CONTRACT -- намеренный total-предикат (false на любом
-// невалидном idx, включая отрицательные)
+// nova:allow W_PARAM_NO_CONTRACT -- намеренный total-предикат над ЛЮБЫМ idx (в т.ч. отрицательным/за-концом): именно на невалидном входе он обязан вернуть false, а не потребовать его валидность заранее — `requires` тут убил бы саму цель функции (safe pre-check перед `s[a..b]`)
 export fn str @is_char_boundary(idx int) -> bool {
     ro n = @byte_len()
     if idx == 0 || idx == n { return true }
