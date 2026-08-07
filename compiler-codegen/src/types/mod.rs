@@ -25198,7 +25198,7 @@ fn check_generic_bound_declarations(
     // members must be concrete types (not protocol/effect), OR another
     // type-set (nested — legalized by the D310 amendment: expanded on
     // declaration, dedup'd, cycle-guarded below). Signedness is UNRESTRICTED
-    // (the former partial-mix ban, `E_TYPE_SET_MIXED_SIGNEDNESS`, is REMOVED
+    // (the former partial-mix ban diagnostic, D310 amendment, is REMOVED
     // — it forbade a strictly WEAKER case of what D423 §R3 already mandates
     // be sound for the FULL `Ints` union: {i32,u32} ⊂ Ints, and a body that
     // monomorphizes soundly over all ten `Ints` members monomorphizes
