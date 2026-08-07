@@ -1461,10 +1461,18 @@ type-set** в списке bound'ов (`E_MULTIPLE_TYPE_SETS`) — проток�
 
 **Члены — только конкретные типы**, перечисленные по идентичности:
 newtype `type MyI8 i8` не входит в `{i8}` автоматически — нужен явный
-листинг (`E_TYPE_SET_MEMBER_NOT_CONCRETE` для protocol/effect/другого
-type-set как члена). **Один set не смешивает signed/unsigned целые**
-(`E_TYPE_SET_MIXED_SIGNEDNESS`) — готовые `SignedInt`/`UnsignedInt` в
-prelude (`std/prelude/protocols.nv`) разделены по этой оси.
+листинг (`E_TYPE_SET_MEMBER_NOT_CONCRETE` для protocol/effect как члена).
+**Член может сам быть другим type-set'ом** (`type Ints set SignedInt |
+UnsignedInt`) — на объявлении внешнего набора члены вложенного
+разворачиваются (flatten) в его список, рекурсивно и с дедупликацией
+(`set Ints | i32` не дублирует `i32`); цикл (`type A set B`, `type B set
+A`, либо прямая самоссылка) не имеет конечного разворачивания —
+`E_TYPE_SET_CYCLE`. Смешивать знаковые и беззнаковые целые в одном set'е
+разрешено как частично (`set i32 | u32`), так и полностью — прежний
+запрет частичной смеси снят (D310 amendment); `SignedInt`/`UnsignedInt` в
+prelude (`std/prelude/protocols.nv`) остаются полезны там, где нужна
+однородность по знаку, просто больше не обязательны для этого. `~` (repr/
+structural bound) type-set НЕ принимает.
 
 Подробно — [D72](decisions/02-types.md#d72), [D310](decisions/02-types.md#d310-type-set-bounds-plan-1723).
 

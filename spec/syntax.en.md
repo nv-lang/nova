@@ -1453,10 +1453,19 @@ are allowed in any amount.
 
 **Members — only concrete types**, listed by identity:
 a newtype `type MyI8 i8` does not enter `{i8}` automatically — an explicit
-listing is needed (`E_TYPE_SET_MEMBER_NOT_CONCRETE` for protocol/effect/another
-type-set as a member). **One set does not mix signed/unsigned integers**
-(`E_TYPE_SET_MIXED_SIGNEDNESS`) — the ready-made `SignedInt`/`UnsignedInt`
-in the prelude (`std/prelude/protocols.nv`) are split along this axis.
+listing is needed (`E_TYPE_SET_MEMBER_NOT_CONCRETE` for protocol/effect as
+a member). **A member may itself be another type-set**
+(`type Ints set SignedInt | UnsignedInt`) — declaring the outer set expands
+the nested set's members into it, recursively and with deduplication
+(`set Ints | i32` doesn't duplicate `i32`); a cycle (`type A set B`, `type
+B set A`, or direct self-reference) has no finite expansion —
+`E_TYPE_SET_CYCLE`. Mixing signed and unsigned integers in one set is
+allowed both partially (`set i32 | u32`) and fully — the former ban on a
+partial mix is REMOVED (D310 amendment); the ready-made
+`SignedInt`/`UnsignedInt` in the prelude (`std/prelude/protocols.nv`)
+remain useful wherever sign-homogeneity is actually needed, they are just
+no longer required for that. Type-set does NOT accept `~` (repr/structural
+bounds).
 
 Details — [D72](decisions/02-types.md#d72), [D310](decisions/02-types.md#d310-type-set-bounds-plan-1723).
 
