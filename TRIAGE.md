@@ -26,3 +26,6 @@ D — код-заглушка/пример.
 | E_CONST_FN_TRAMPOLINE_GENERIC | C | Норма о запрете generic в trampolines (03-syntax.md:8219) реализована семейством E_CONST_FN_TRAMPOLINE_GENERIC_* с суффиксами (ARITY/UNRESOLVED/INFER) | E_CONST_FN_TRAMPOLINE_GENERIC_* (const_fn_trampoline.rs:294,756,776) |
 | E_CONSUMED_AFTER_USE | A | Норма о double unlock (06-concurrency.md:5954, D133) не найдена в компиляторе; семейство E_CONSUME_* не включает этот код — требует ручной проверки | — |
 | E_CONSUME_CROSS_FIBER | A | Норма о утечке guard в другой fiber (06-concurrency.md:5955, D157) не найдена в компиляторе; семейство E_CONSUME_* не включает этот код — требует ручной проверки | — |
+| E_CONSUME_NOT_CONSUMED | A | Норма о забытом unlock (06-concurrency.md:5953, D133) не найдена в компиляторе; семейство E_CONSUME_* не включает этот код — требует ручной проверки | — |
+| E_DUPLICATE_LOCAL | B | Запрет рассмотрен как fallback (03-syntax.md:8682) и отвергнут — rebind-фича одобрена вместо запрета дублей имён | — |
+| E_DUP_DEFINITION | A | Ошибка конфликта имён в folder-module (02-types.md:15356) не найдена в компиляторе; решение — введение priv(file) устранило необходимость — требует ручной проверки | — |
