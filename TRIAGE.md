@@ -23,3 +23,6 @@ D — код-заглушка/пример.
 | E_COMPARISON_BOOL_OPERAND | B | Только вариант (a) в spec/open-questions.md:7862 — предложение, не действующая норма | — |
 | E_CONST_FN_GENERIC | C | V1-запрет generic-параметров снят (Ф.4 V2 generic const fn, 03-syntax.md:8004); остаточное ограничение T-reflection под именем E_CONST_FN_GENERIC_NEEDS_T_REFLECTION | E_CONST_FN_GENERIC_NEEDS_T_REFLECTION (const_fn_eval.rs:2079) |
 | E_CONST_FN_MUT_BINDING | B | V1-запрет снят в V3 (Plan 114.4.4 Ф.3) — mut-биндинги в const fn разрешены (types/mod.rs:2875) | — |
+| E_CONST_FN_TRAMPOLINE_GENERIC | C | Норма о запрете generic в trampolines (03-syntax.md:8219) реализована семейством E_CONST_FN_TRAMPOLINE_GENERIC_* с суффиксами (ARITY/UNRESOLVED/INFER) | E_CONST_FN_TRAMPOLINE_GENERIC_* (const_fn_trampoline.rs:294,756,776) |
+| E_CONSUMED_AFTER_USE | A | Норма о double unlock (06-concurrency.md:5954, D133) не найдена в компиляторе; семейство E_CONSUME_* не включает этот код — требует ручной проверки | — |
+| E_CONSUME_CROSS_FIBER | A | Норма о утечке guard в другой fiber (06-concurrency.md:5955, D157) не найдена в компиляторе; семейство E_CONSUME_* не включает этот код — требует ручной проверки | — |
