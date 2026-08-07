@@ -227,7 +227,9 @@ export unsafe fn int_fmt(v int, buf *mut u8, cap int, spec FmtSpec = FmtSpec.new
 
 /// `bool` → `"true"`/`"false"`, written directly into `buf[0..cap)`.
 /// Returns bytes written (`<= cap`; truncates defensively).
-export fn bool_fmt(v bool, buf *mut u8, cap int) -> int {
+export fn bool_fmt(v bool, buf *mut u8, cap int) -> int
+    requires cap >= 0
+{
     unsafe {
         if v {
             ro want = 4
@@ -254,7 +256,9 @@ export fn bool_fmt(v bool, buf *mut u8, cap int) -> int {
 /// Invalid codepoints (out of range / surrogate half) are replaced with
 /// U+FFFD, mirroring `nova_char_to_str` (conv.h). Returns bytes written
 /// (1..4; `<= cap`, truncates defensively).
-export fn char_fmt(v char, buf *mut u8, cap int) -> int {
+export fn char_fmt(v char, buf *mut u8, cap int) -> int
+    requires cap >= 0
+{
     mut cp = v as int
     if cp < 0 || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF) {
         cp = 0xFFFD
@@ -410,7 +414,9 @@ fn utf8_encode_at(cp int, buf *mut u8, cap int, pos int) -> int {
 /// `nova_str_to_debug_str` (conv.h:248) byte-for-byte: iterates the ALREADY
 /// UTF-8-encoded source bytes (multi-byte sequences pass through opaque —
 /// every continuation/lead byte is >= 0x80, so never matches a special case).
-export fn str_debug_fmt(s str, buf *mut u8, cap int) -> int {
+export fn str_debug_fmt(s str, buf *mut u8, cap int) -> int
+    requires cap >= 0
+{
     ro bytes = s.bytes()
     ro blen = bytes.len()
     mut pos = 0
@@ -439,7 +445,9 @@ export fn str_debug_fmt(s str, buf *mut u8, cap int) -> int {
 /// `buf[0..cap)`. Mirrors `nova_char_to_debug_str` (conv.h:317) byte-for-
 /// byte: escapes `\n`/`\t`/`\r`/NUL/`'`/`\`/other-control(<0x20)/DEL(0x7F);
 /// everything else passes through UTF-8-encoded (`utf8_encode_at` above).
-export fn char_debug_fmt(v char, buf *mut u8, cap int) -> int {
+export fn char_debug_fmt(v char, buf *mut u8, cap int) -> int
+    requires cap >= 0
+{
     mut cp = v as int
     if cp < 0 || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF) { cp = 0xFFFD }
     mut pos = 0
