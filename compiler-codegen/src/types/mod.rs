@@ -7617,6 +7617,40 @@ impl<'a> TypeCheckCtx<'a> {
         }
     }
 
+    // Plan p424 (D310 amendment §Синтаксис): a numeric-bounded generic param
+    // (172.1.2 Binary-bounds fast path below) requires EVERY member of its
+    // type-set bound to be a scalar int/uint primitive — transitively, now
+    // that nested type-sets are legal (`set SignedInts | UnsignedInts`).
+    // `self.types` here is the raw declaration registry (not `BoundCtx`'s
+    // separately-built `type_sets`, a different struct); recurse directly
+    // over `TypeDeclKind::TypeSet` members, expanding a nested member's own
+    // membership on the fly. `visited` guards a cyclic chain (already
+    // diagnosed as `E_TYPE_SET_CYCLE` by `check_generic_bound_declarations`,
+    // which runs before this ctx exists) — a revisit degrades to `false`
+    // (not-all-scalar) rather than infinite-recursing.
+    fn typeset_all_scalar(&self, name: &str, visited: &mut HashSet<String>) -> bool {
+        if !visited.insert(name.to_string()) {
+            return false;
+        }
+        let result = match self.types.get(name).map(|td| &td.kind) {
+            Some(TypeDeclKind::TypeSet(members)) => {
+                !members.is_empty()
+                    && members.iter().all(|m| {
+                        let TypeRef::Named { path: mp, generics: mg, .. } = m else { return false };
+                        if !mg.is_empty() || mp.len() != 1 {
+                            return false;
+                        }
+                        let mn = &mp[0];
+                        ResolvedType::scalar_from_int_name(mn).is_some()
+                            || self.typeset_all_scalar(mn, visited)
+                    })
+            }
+            _ => false,
+        };
+        visited.remove(name);
+        result
+    }
+
     // ================================================================
     // Ф.1 — assignability: arg↔param и annotation↔RHS.
     //
@@ -7679,15 +7713,10 @@ impl<'a> TypeCheckCtx<'a> {
                 let numeric = g.bounds.iter().any(|b| {
                     let TypeRef::Named { path, generics: bg, .. } = b else { return false };
                     if !bg.is_empty() || path.len() != 1 { return false; }
-                    self.types.get(&path[0]).map_or(false, |td| {
-                        if let TypeDeclKind::TypeSet(members) = &td.kind {
-                            !members.is_empty() && members.iter().all(|m| {
-                                matches!(m, TypeRef::Named { path: mp, generics: mg, .. }
-                                    if mg.is_empty() && mp.len() == 1
-                                        && ResolvedType::scalar_from_int_name(&mp[0]).is_some())
-                            })
-                        } else { false }
-                    })
+                    // Plan p424 (D310 amendment): recurse through nested type-sets
+                    // (`set SignedInts | UnsignedInts`), not just the direct member list.
+                    let mut visited = HashSet::new();
+                    self.typeset_all_scalar(&path[0], &mut visited)
                 });
                 if numeric {
                     nb.insert(g.name.clone());
@@ -25036,6 +25065,76 @@ fn check_protocol_embeds(
 /// `sig_table` — optional cross-module signature table (Plan 162.1 Step 3).
 /// When present, `E_BOUND_UNKNOWN` is suppressed for type names that are
 /// declared in a transitively-imported module captured in the sig_table.
+/// Plan p424 (D310 amendment §Синтаксис): flatten a type-set's OWN declared
+/// members, transparently expanding any member that is ITSELF another
+/// type-set (`type Q set SignedInts | UnsignedInts` — `SignedInts`'s five
+/// members become `Q`'s members too), deduplicating by member type-identity
+/// (last path segment) so `set Ints | i32` doesn't list `i32` twice.
+///
+/// `raw`: type-set name → its OWN declared members (pre-expansion), for
+/// EVERY type-set in scope (so a nested reference resolves). `memo` caches
+/// completed expansions across sibling calls (a shared name, e.g. `Ints`,
+/// nested by several sets, is only walked once). Returns each leaf member
+/// tagged with its immediate nesting origin — `None` when `name` lists the
+/// member directly, `Some(via)` when it arrived through nested set `via` —
+/// so callers can render `` member `i32` (via `SignedInts`) `` instead of
+/// pointing at a name absent from the set's own declaration text.
+///
+/// Returns `Err(cycle)` — the cyclic chain in traversal order, closing back
+/// to `name` — if expanding `name` revisits a set already on the current
+/// recursion stack. Caller owns `stack` (fresh empty `Vec` per TOP-level
+/// call) so a poisoned stack from an error never leaks into a sibling call.
+fn expand_type_set_members(
+    name: &str,
+    raw: &HashMap<String, Vec<TypeRef>>,
+    memo: &mut HashMap<String, Vec<(TypeRef, Option<String>)>>,
+    stack: &mut Vec<String>,
+) -> Result<Vec<(TypeRef, Option<String>)>, Vec<String>> {
+    if let Some(cached) = memo.get(name) {
+        return Ok(cached.clone());
+    }
+    if let Some(pos) = stack.iter().position(|s| s == name) {
+        let mut cycle: Vec<String> = stack[pos..].to_vec();
+        cycle.push(name.to_string());
+        return Err(cycle);
+    }
+    stack.push(name.to_string());
+    let mut out: Vec<(TypeRef, Option<String>)> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    if let Some(members) = raw.get(name) {
+        for m in members {
+            let TypeRef::Named { path, .. } = m else { continue; };
+            let Some(mname) = path.last() else { continue; };
+            if raw.contains_key(mname) {
+                // Nested type-set — expand it and pull its leaves in, tagged
+                // with THIS immediate nesting origin (overrides any deeper
+                // origin the nested set's own expansion already recorded —
+                // `Q`'s message should say "via SignedInts", not chase a
+                // three-level-deep grandparent).
+                let nested = expand_type_set_members(mname, raw, memo, stack)?;
+                for (nt, _deeper_origin) in nested {
+                    let key = match &nt {
+                        TypeRef::Named { path: np, .. } => np.last().cloned(),
+                        _ => None,
+                    };
+                    let is_new = match &key {
+                        Some(k) => seen.insert(k.clone()),
+                        None => true,
+                    };
+                    if is_new {
+                        out.push((nt, Some(mname.clone())));
+                    }
+                }
+            } else if seen.insert(mname.clone()) {
+                out.push((m.clone(), None));
+            }
+        }
+    }
+    stack.pop();
+    memo.insert(name.to_string(), out.clone());
+    Ok(out)
+}
+
 fn check_generic_bound_declarations(
     module: &Module,
     sig_table: Option<&crate::imports::ModuleSigTable>,
@@ -25074,62 +25173,66 @@ fn check_generic_bound_declarations(
         "u8", "u16", "u32", "u64", "uint",
         "f32", "f64", "bool", "char", "str", "any", "never",
     ];
-    // Plan 172.3 (D310): validate type-set DECLARATIONS — members must be concrete
-    // types (not protocol/effect/another type-set), and a single set must not mix
-    // signed/unsigned integers (u64.MAX ∉ i64; Q6). Membership/use-site checks live
-    // в BoundCtx.check_satisfaction; this is the declaration-time soundness lock (§5).
+    // Plan 172.3 (D310), amended by Plan p424: validate type-set DECLARATIONS —
+    // members must be concrete types (not protocol/effect), OR another
+    // type-set (nested — legalized by the D310 amendment: expanded on
+    // declaration, dedup'd, cycle-guarded below). Signedness is UNRESTRICTED
+    // (the former partial-mix ban, `E_TYPE_SET_MIXED_SIGNEDNESS`, is REMOVED
+    // — it forbade a strictly WEAKER case of what D423 §R3 already mandates
+    // be sound for the FULL `Ints` union: {i32,u32} ⊂ Ints, and a body that
+    // monomorphizes soundly over all ten `Ints` members monomorphizes
+    // soundly over any two of them). Membership/use-site checks live в
+    // BoundCtx.check_satisfaction; this is the declaration-time soundness
+    // lock (§5) plus the nested-set cycle guard.
     {
-        let signed_ints: &[&str] = &["i8", "i16", "i32", "i64", "int"];
-        let unsigned_ints: &[&str] = &["u8", "u16", "u32", "u64", "uint"];
+        let mut raw_type_sets: HashMap<String, Vec<TypeRef>> = HashMap::new();
+        for item in &module.items {
+            if let Item::Type(t) = item {
+                if let TypeDeclKind::TypeSet(members) = &t.kind {
+                    raw_type_sets.insert(t.name.clone(), members.clone());
+                }
+            }
+        }
         for item in &module.items {
             let Item::Type(t) = item else { continue; };
             let TypeDeclKind::TypeSet(members) = &t.kind else { continue; };
-            let mut signed_seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
-            let mut unsigned_seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
             for m in members {
                 let TypeRef::Named { path, span, .. } = m else { continue; };
                 let Some(mname) = path.last() else { continue; };
-                let mn = mname.as_str();
-                // Member-concreteness: reject protocol/effect/another type-set.
+                // Member-concreteness: reject protocol/effect. A nested
+                // type-set is legal (D310 amendment, expanded below).
                 if let Some(&kind) = type_kinds.get(mname) {
-                    if matches!(kind, "protocol" | "effect" | "type_set") {
+                    if matches!(kind, "protocol" | "effect") {
                         errors.push(Diagnostic::new(
                             format!(
                                 "[E_TYPE_SET_MEMBER_NOT_CONCRETE] member `{}` of type-set `{}` \
                                  is a {}, not a concrete type — type-set members must be concrete \
-                                 (primitives or declared record/newtype/named-tuple/sum types) (D310).",
-                                mn, t.name, kind
+                                 (primitives, declared record/newtype/named-tuple/sum types, or \
+                                 another type-set) (D310).",
+                                mname, t.name, kind
                             ),
                             *span,
                         ));
                     }
                 }
-                if let Some(&s) = signed_ints.iter().find(|&&s| s == mn) { signed_seen.insert(s); }
-                if let Some(&s) = unsigned_ints.iter().find(|&&s| s == mn) { unsigned_seen.insert(s); }
             }
-            // Signedness uniformity (Q6, D310) — amended by Plan 206 (D423):
-            // a PARTIAL signed/unsigned mix stays incompatible-value-domains
-            // unsound (`u64.MAX = 2^64-1 ∉ i64`). A FULL union (every signed
-            // member ∧ every unsigned member, no gaps — exactly `SignedInt ∪
-            // UnsignedInt`) is exempted: per-member monomorphization already
-            // resolves `T.MAX`/`T.MIN` per-instance (D310 §«Семантика тела»),
-            // and sign-agnostic comparisons (`rhs < 0`) are well-defined
-            // (constant-false) for every unsigned member — no cross-domain
-            // value ever needs to compare across the signed/unsigned split.
-            // This is the same case the D310 text's own illustrative
-            // `AnyNumber` example (02-types.md) assumed legal. `Ints`
-            // (protocols.nv) is the stdlib instance of this exemption.
-            let is_full_union = signed_seen.len() == signed_ints.len()
-                && unsigned_seen.len() == unsigned_ints.len();
-            if !signed_seen.is_empty() && !unsigned_seen.is_empty() && !is_full_union {
+            // D310 amendment: a type-set that (transitively, through nested
+            // members) contains itself has no finite expansion — diagnose
+            // BEFORE anything downstream (BoundCtx::build) tries to expand
+            // it (which degrades silently on a cycle; this is the source of
+            // truth for the diagnostic).
+            let mut memo: HashMap<String, Vec<(TypeRef, Option<String>)>> = HashMap::new();
+            let mut stack: Vec<String> = Vec::new();
+            if let Err(cycle) =
+                expand_type_set_members(&t.name, &raw_type_sets, &mut memo, &mut stack)
+            {
                 errors.push(Diagnostic::new(
                     format!(
-                        "[E_TYPE_SET_MIXED_SIGNEDNESS] type-set `{}` mixes signed and unsigned \
-                         integer members PARTIALLY — a single body cannot be sound for a partial mix \
-                         (u64.MAX = 2^64-1 ∉ i64). Split into separate signed/unsigned sets (e.g. \
-                         SignedInt / UnsignedInt), or list the FULL union (all of i8/i16/i32/i64/int \
-                         + all of u8/u16/u32/u64/uint — exempted, D310 amend D423).",
-                        t.name
+                        "[E_TYPE_SET_CYCLE] type-set `{}` has a cyclic member chain: {} — \
+                         nested type-set members are expanded on declaration (D310 amendment); \
+                         a set cannot (transitively) contain itself.",
+                        t.name,
+                        cycle.join(" -> "),
                     ),
                     t.span,
                 ));
@@ -25411,9 +25514,21 @@ struct BoundCtx<'a> {
     /// Plan 162 Ф.3: TypeMethodMap - type_name -> method_name ->
     /// list of module_names that declared this method.
     type_method_map: HashMap<String, HashMap<String, Vec<Vec<String>>>>,
-    /// Plan 172.3 (D310): type-set name → member type-refs. Used at instantiation
-    /// to check `T ∈ set` (E_TYPE_NOT_IN_SET). Built from module.items + peer_files.
-    type_sets: HashMap<String, Vec<TypeRef>>,
+    /// Plan 172.3 (D310): type-set name → EXPANDED member list. Used at
+    /// instantiation to check `T ∈ set` (E_TYPE_NOT_IN_SET). Built from
+    /// module.items + peer_files. Plan p424 (D310 amendment): a nested
+    /// type-set member (`set SignedInts | UnsignedInts`) is expanded HERE —
+    /// this map always holds the flattened, dedup'd LEAF members, never a
+    /// reference to another type-set. Each member is tagged with `Some(via)`
+    /// (the immediate nested set it arrived through) or `None` (declared
+    /// directly on this set) — `check_satisfaction`'s E_TYPE_NOT_IN_SET
+    /// message uses it so a member absent from the set's own declaration
+    /// text (e.g. `i32` on `Q set SignedInts | UnsignedInts`) still points
+    /// somewhere real. A cyclic chain is already diagnosed as
+    /// `E_TYPE_SET_CYCLE` by `check_generic_bound_declarations` (runs
+    /// earlier in the same `check_module` pipeline) — expansion here
+    /// degrades a cycle to an empty leaf list rather than looping forever.
+    type_sets: HashMap<String, Vec<(TypeRef, Option<String>)>>,
     /// Plan 180: type name → declared `#impl(...)` protocol list. Lets the bound
     /// checker accept `[T P]` for a `#impl(P)` auto-derivable type whose P-method
     /// is compiler-synthesized (absent from the base `sig.method_table`).
@@ -25550,7 +25665,7 @@ impl<'a> BoundCtx<'a> {
 
         let mut effect_decls: HashMap<String, &TypeDecl> = HashMap::new();
         // Plan 172.3 (D310): type-set name → member type-refs (membership at instantiation).
-        let mut type_sets: HashMap<String, Vec<TypeRef>> = HashMap::new();
+        let mut raw_type_sets: HashMap<String, Vec<TypeRef>> = HashMap::new();
         // Scan local items + peer files (so cross-module/stdlib type-sets like
         // SignedInt resolve when the generic fn lives in another file of the package).
         let type_set_scan = |items: &[Item], type_sets: &mut HashMap<String, Vec<TypeRef>>| {
@@ -25562,9 +25677,25 @@ impl<'a> BoundCtx<'a> {
                 }
             }
         };
-        type_set_scan(&module.items, &mut type_sets);
+        type_set_scan(&module.items, &mut raw_type_sets);
         for pf in &module.peer_files {
-            type_set_scan(&pf.items_here, &mut type_sets);
+            type_set_scan(&pf.items_here, &mut raw_type_sets);
+        }
+        // Plan p424 (D310 amendment): expand nested type-set members
+        // (`set SignedInts | UnsignedInts`) into flattened, dedup'd, origin-
+        // tagged leaves — see `expand_type_set_members` doc and the
+        // `type_sets` field doc. A cycle (already diagnosed elsewhere as
+        // `E_TYPE_SET_CYCLE`) degrades to an empty member list here, not a
+        // panic/infinite loop.
+        let mut type_sets: HashMap<String, Vec<(TypeRef, Option<String>)>> = HashMap::new();
+        {
+            let mut memo: HashMap<String, Vec<(TypeRef, Option<String>)>> = HashMap::new();
+            for name in raw_type_sets.keys() {
+                let mut stack: Vec<String> = Vec::new();
+                let expanded = expand_type_set_members(name, &raw_type_sets, &mut memo, &mut stack)
+                    .unwrap_or_default();
+                type_sets.insert(name.clone(), expanded);
+            }
         }
         // Plan 180: collect `#impl(...)` declarations per type (local + peers).
         let mut impl_protocol_types: HashMap<String, Vec<String>> = HashMap::new();
@@ -28461,6 +28592,10 @@ impl<'a> BoundCtx<'a> {
         // MUST run BEFORE the primitive early-return below (primitives ARE the
         // members we validate). Membership by type IDENTITY (last path segment).
         if let Some(members) = self.type_sets.get(&bound_name) {
+            // Plan p424 (D310 amendment): `members` is already the EXPANDED
+            // leaf list (nested type-sets flattened in `BoundCtx::build`) —
+            // each entry tagged with its immediate nesting origin, `None`
+            // when declared directly on `bound_name`.
             let member_name = |m: &TypeRef| -> Option<String> {
                 if let TypeRef::Named { path, .. } = m { path.last().cloned() } else { None }
             };
@@ -28470,7 +28605,7 @@ impl<'a> BoundCtx<'a> {
             };
             let is_member = concrete_nm
                 .as_ref()
-                .map(|cn| members.iter().any(|m| member_name(m).as_ref() == Some(cn)))
+                .map(|cn| members.iter().any(|(m, _)| member_name(m).as_ref() == Some(cn)))
                 .unwrap_or(false);
             if !is_member {
                 // Emit ONLY when the concrete is a KNOWN concrete type (primitive or
@@ -28486,9 +28621,19 @@ impl<'a> BoundCtx<'a> {
                     .map(|cn| is_primitive(cn) || self.type_defining_modules.contains_key(cn))
                     .unwrap_or(false);
                 if known_concrete {
+                    // Origin-annotate members pulled in through a nested
+                    // type-set — `i32` doesn't appear in `Q`'s own
+                    // declaration text (`set SignedInts | UnsignedInts`), so
+                    // the message says where it actually came from.
                     let member_list = members
                         .iter()
-                        .filter_map(member_name)
+                        .filter_map(|(m, origin)| {
+                            let mn = member_name(m)?;
+                            Some(match origin {
+                                Some(via) => format!("{} (via {})", mn, via),
+                                None => mn,
+                            })
+                        })
                         .collect::<Vec<_>>()
                         .join(", ");
                     let cn = concrete_nm.unwrap_or_else(|| "<complex type>".to_string());
