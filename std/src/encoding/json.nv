@@ -455,7 +455,17 @@ fn Lexer mut @advance() -> Option[u8] {
 // @peek()/@advance() шагов). O(1): срез `@input[p..]` + первый codepoint
 // публичного `chars()`-lens (НЕ приватные `decode_utf8`/`decode_at` из
 // runtime.string/std.unicode — folder-private, чужой модуль).
-fn Lexer @char_at(p int) -> char => @input[p..].chars().next()!!
+//
+// №433: возвращает `Option[char]`, НЕ `char` — `.chars().next()` даёт `None`
+// не только когда `p` уже за концом входа, но и когда на `p` начинается
+// ОБОРВАННАЯ multibyte UTF-8-последовательность (лид-байт есть, а
+// continuation-байтов до конца входа не хватает — обрыв ввода посреди
+// non-ASCII символа). Раньше здесь стоял `!!`: `Json.parse`/`try_from`
+// (`-> Result[...]`) на таком входе не возвращали `Err`, а роняли
+// программу — обман контракта Result. Каждый вызывающий теперь обязан
+// сам решить, в какую `ParseJsonError` превратить `None` (см. call sites
+// ниже) — это ОШИБКА РАЗБОРА, а не отказ рантайма.
+fn Lexer @char_at(p int) -> Option[char] => @input[p..].chars().next()
 
 fn Lexer mut @skip_whitespace() -> () {
     mut done = false
@@ -498,10 +508,16 @@ fn Lexer mut @next_token() -> Result[TokenWithPos, ParseJsonError] {
         // catch-all arms'ами парсера (таксономия неизменна).
         // Настоящий codepoint (не Latin-1-фантом) через @char_at — @pos ещё
         // не сдвинут (peek, не advance), позиция валидна.
-        Some(_) => {
-            ro bad_char = @char_at(@pos)
-            @advance()
-            Ok({ tok: BadTok(bad_char), line, col })
+        //
+        // №433: `@char_at` может дать `None` (оборванная multibyte-
+        // последовательность на этой позиции) — это ошибка разбора
+        // (`UnexpectedEof`), не отказ.
+        Some(_) => match @char_at(@pos) {
+            Some(bad_char) => {
+                @advance()
+                Ok({ tok: BadTok(bad_char), line, col })
+            }
+            None => Err(UnexpectedEof { @line, @col })
         }
     }
 }
@@ -536,8 +552,12 @@ fn Lexer mut @read_keyword(kw str, t Token, line int, col int) -> Result[TokenWi
         match @peek() {
             Some(b) if b == expected => { @advance() }
             // Настоящий codepoint байта-расхождения (не Latin-1-фантом);
-            // @pos ещё на байте (peek, не advance).
-            Some(_) => return Err(UnexpectedChar { @line, @col, found: @char_at(@pos) })
+            // @pos ещё на байте (peek, не advance). №433: `None` (обрыв
+            // multibyte-последовательности здесь) — тоже ошибка разбора.
+            Some(_) => return match @char_at(@pos) {
+                Some(c) => Err(UnexpectedChar { @line, @col, found: c })
+                None => Err(UnexpectedEof { @line, @col })
+            }
             // Реальный EOF — нет байта для диагностики; ' ' — placeholder
             // (не выбор этой правки: found:char требует значение, а
             // UnexpectedEof — отдельный вариант ошибки, вне текущего скоупа).
@@ -610,7 +630,13 @@ fn Lexer mut @read_escape() -> Result[str, ParseJsonError] {
         Some(b) if b == B_LOWER_U   => @read_unicode_escape()
         // Неизвестный escape — настоящий codepoint (не Latin-1-фантом);
         // @advance() уже сдвинул @pos на 1 байт, символ начинался на @pos-1.
-        Some(_) => Err(InvalidEscape { @line, @col, seq: "\\${@char_at(@pos - 1)}" })
+        // №433: `None` (обрыв multibyte-последовательности на этом байте,
+        // т.е. escape оборван посреди non-ASCII символа) — `UnexpectedEof`,
+        // не отказ.
+        Some(_) => match @char_at(@pos - 1) {
+            Some(c) => Err(InvalidEscape { @line, @col, seq: "\\${c}" })
+            None => Err(UnexpectedEof { @line, @col })
+        }
     }
 }
 
