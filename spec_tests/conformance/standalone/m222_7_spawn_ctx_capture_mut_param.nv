@@ -65,8 +65,7 @@ test "spawn consume ws = s.share() {} inline from a mut-param builds and runs" {
                     }
                     ro _ = port_tx.try_send(lst.local_port())
                     match lst.accept() {
-                        Ok(consume stream) => {
-                            consume s = stream
+                        Ok(consume s) => {
                             ro n = read_via_share(s)
                             s.close()
                             ro _ = got_tx.try_send(n)
@@ -78,8 +77,7 @@ test "spawn consume ws = s.share() {} inline from a mut-param builds and runs" {
                 spawn {
                     ro port = match port_rx.recv() { Some(p) => p, None => 0 as u16 }
                     match TcpStream.connect(SocketAddr.loopback(port)) {
-                        Ok(consume conn) => {
-                            consume cli = conn
+                        Ok(consume cli) => {
                             ro _ = cli.write_str("hi")
                             cli.close()
                         }
