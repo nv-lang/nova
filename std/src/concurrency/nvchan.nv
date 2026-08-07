@@ -123,7 +123,7 @@ type Chan[T] {
     mutex     Mutex
     not_empty Condvar
     not_full  Condvar
-    mut buf   Vec[T]   // FIFO queue: @push at tail, @remove(0) at head.
+    mut buf   []T   // FIFO queue: @push at tail, @remove(0) at head.
     cap       int       // Immutable after construction — no lock needed to read.
     mut closed bool
 }
@@ -157,7 +157,7 @@ export fn Chan[T].new(cap int) -> ChanPair[T]
         mutex: Mutex.new(),
         not_empty: Condvar.new(),
         not_full: Condvar.new(),
-        buf: Vec[T].new(cap: cap),
+        buf: []T.new(cap: cap),
         cap,
         closed: false,
     }
