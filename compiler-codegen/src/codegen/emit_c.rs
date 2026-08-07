@@ -28836,6 +28836,35 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.line("nova_supervised_drain_main_scope(&_nova_main_scope);");
         self.line("_nova_active_scope = NULL;");
         self.line("_nova_active_slot  = -1;");
+        // [p418, №418 корень A] explicit synchronous orphan-drain ДО
+        // runtime.shutdown/evloop.close — SAME class of hazard as the
+        // shutdown-ordering comment right below, just for `detach {}`
+        // fire-and-forget fibers instead of supervised children. Prior to
+        // this fix `nova_runtime_drain_orphans()` was ONLY reachable via
+        // `atexit(nova_runtime_drain_orphans)` (registered lazily on the
+        // first `detach`, runtime.c `_orphan_scope_ensure_init`) — atexit
+        // handlers run AFTER main()'s own body (including its OWN
+        // `nova_evloop_close()` two lines below) has already completed.
+        // An orphan still in flight (e.g. a `detach`-ed TcpStream.connect
+        // that hasn't finished when main-body returns) then gets drained
+        // by the atexit handler against an ALREADY-CLOSED event loop:
+        // `nova_supervised_drain_main_scope`'s `uv_run(nova_current_loop(),
+        // ...)` reads `nova_current_loop()`'s cached per-thread TLS pointer
+        // (set once in `nova_evloop_init`, never invalidated by `nova_
+        // evloop_close`) — a dangling `uv_loop_t*` — bypassing the
+        // `nova_evloop()` accessor's `_evloop_state == 2` guard entirely.
+        // SIGSEGV inside `uv_run`/`uv__run_pending`. Draining HERE (workers
+        // + event loop still alive) lets any in-flight orphan actually
+        // finish; the pending `atexit(nova_runtime_drain_orphans)` call
+        // then runs a no-op (`_nova_orphan_scope.count == 0` and
+        // `pending_remote/pending_sweeps == 0` already — the `alive==0 &&
+        // remote==0` branch in `nova_supervised_drain_main_scope` breaks
+        // BEFORE ever calling `uv_run`, so the second, atexit-driven call
+        // never touches the loop). Idempotent — a program with no `detach`
+        // never initialized `_nova_orphan_scope` and this is a cheap no-op
+        // (`nova_runtime_drain_orphans` returns immediately when `!_nova_
+        // orphan_scope_inited`).
+        self.line("nova_runtime_drain_orphans();");
         // Plan 83.4.5.7 Ф.4 (2026-05-23): explicit runtime.shutdown ДО
         // evloop.close. Под armed M:N worker'ы могут быть ещё активны после
         // drain (e.g. pending uv_async_send в полёте). evloop.close → close
