@@ -1,0 +1,41 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// №431 repro (окно p431-late-cancel-noabort): deterministic abort() BEFORE
+// the fix. See docs/plans/wip/PROGRESS-p431.md for the full trace and the
+// acceptance matrix.
+//
+// ROOT CAUSE (traced through emit_spawn / nova_cancel_token_bind — see the
+// report for the full derivation): `nova_preempt_check()` is the FIRST
+// statement `emit_spawn` emits for every fiber-entry function (Plan 143.2's
+// unconditional prologue safepoint, `compiler-codegen/src/codegen/
+// emit_c.rs`), running strictly BEFORE that same fiber's OWN `NovaFailFrame
+// _ff` / `nova_fail_push` (a few statements later, once ctx/captures are
+// set up). `supervised(cancel: tok)`'s `nova_cancel_token_bind`
+// (`compiler-codegen/nova_rt/fibers.h`) propagates a PRE-EXISTING cancel
+// intent (token already cancelled BEFORE the scope even starts) immediately
+// at bind time — `q->cancel_requested = true` fires BEFORE the first
+// `spawn{}` inside the block gets its first scheduling slice. That child's
+// very first statement (`nova_preempt_check`) observes
+// `cancel_requested==true` while `_nova_fail_top` is still NULL (its OWN
+// `_ff` has not been pushed yet) — `nova_throw_cancel_reason`
+// (`compiler-codegen/nova_rt/effects.h`) hits the "no active handler"
+// branch. Pre-fix: `abort()`. Per D75
+// (`spec/decisions/06-concurrency.md` #75) `tok.cancel()` MUST be a
+// harmless no-op regardless of timing — nothing here is a user error, no
+// concurrency/timing luck is involved.
+//
+// This is NOT a rare/racy trigger: sequential, single-threaded, 100%
+// deterministic — bootstrap (no armed M:N workers, no thread races) is
+// enough to hit it every single time, pre-fix.
+module nova_repro.p431_late_cancel_before_bind
+
+test "№431: tok.cancel() before supervised(cancel:) even starts is a harmless no-op (D75), not abort()" {
+    ro tok = CancelToken.new()
+    tok.cancel()
+    supervised(cancel: tok) {
+        spawn {
+            ()
+        }
+    }
+    assert(tok.is_cancelled())
+}
