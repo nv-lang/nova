@@ -1,0 +1,60 @@
+// №433 (реестр 221.1): поведенческая фикстура (правило 1) — Json.parse /
+// JsonValue.try_from обещают Result[JsonValue, ParseJsonError]; на битом
+// вводе они обязаны вернуть Err, а НЕ уронить программу необработанным
+// отказом (было: Lexer.@char_at делал `!!` на Option[char], а не отдавал
+// её вызывающему как ParseJsonError — обман контракта Result, невидимый до
+// ужесточения №428). Пять случаев ниже — ровно те, что использовались в
+// приёмке задачи: недописанная структура, пустой ввод, обрыв внутри
+// строкового литерала, обрыв внутри числа, обрыв внутри escape-
+// последовательности.
+
+module spec_tests.conformance
+import std.encoding.json.{Json, ParseJsonError}
+
+test "№433: '{ broken' -> Err, not crash" {
+    ro r = Json.parse("{ broken")
+    assert(match r {
+        Err(_) => true
+        Ok(_)  => false
+    })
+}
+
+test "№433: пустой ввод -> Err(UnexpectedEof), not crash" {
+    ro r = Json.parse("")
+    assert(match r {
+        Err(ParseJsonError.UnexpectedEof { .. }) => true
+        _                                        => false
+    })
+}
+
+test "№433: обрыв внутри строкового литерала -> Err(UnexpectedEof), not crash" {
+    ro r = Json.parse("\"unterminated string")
+    assert(match r {
+        Err(ParseJsonError.UnexpectedEof { .. }) => true
+        _                                        => false
+    })
+}
+
+test "№433: обрыв внутри числа -> Err(InvalidNumber), not crash" {
+    ro r = Json.parse("12.")
+    assert(match r {
+        Err(ParseJsonError.InvalidNumber { .. }) => true
+        _                                        => false
+    })
+}
+
+test "№433: обрыв внутри escape-последовательности (\\u с недостающими hex-цифрами) -> Err, not crash" {
+    ro r = Json.parse("\"\\u12")
+    assert(match r {
+        Err(ParseJsonError.UnexpectedEof { .. }) => true
+        _                                        => false
+    })
+}
+
+test "№433: обрыв сразу после '\\' на конце ввода -> Err(UnexpectedEof), not crash" {
+    ro r = Json.parse("\"bad escape \\")
+    assert(match r {
+        Err(ParseJsonError.UnexpectedEof { .. }) => true
+        _                                        => false
+    })
+}
