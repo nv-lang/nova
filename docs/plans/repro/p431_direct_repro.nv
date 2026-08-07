@@ -1,0 +1,38 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// №431 direct repro (окно p431-late-cancel-noabort): calls the runtime
+// function at the ACTUAL defect location (`nova_throw_cancel`,
+// `compiler-codegen/nova_rt/effects.h`) with `_nova_fail_top == NULL` —
+// the exact precondition documented for all 8 registry call sites — via a
+// TEMPORARY FFI hook (`nova_p431_direct_repro`, `compiler-codegen/nova_rt/
+// effects.c`), instead of trying to win an organic scheduler race.
+//
+// WHY a direct hook and not an organic .nv-level race: this window tried
+// two organic scenarios — (1) `tok.cancel()` called BEFORE `supervised
+// (cancel: tok) { spawn {...} }` even starts (a deterministic-looking
+// "cancel-before-bind" shape derived from reading `nova_cancel_token_bind`,
+// `fibers.h`), and (2) the historically-crashing mass-cancel fixture
+// (`spec_tests/conformance/standalone/pos_max_fibers_concurrent.nv`, the
+// `[fix-boehm-eager-cost]` wave's carrier, independently re-confirmed
+// clean 200/200 in `docs/plans/wip/PROGRESS-p427.md`). Neither reproduced
+// in THIS codebase (see PROGRESS-p431.md for the full trace of why —
+// `nova_preempt_check`, this window's first hypothesis for scenario 1,
+// turned out to gate on the sysmon overrun flag, not cancellation,
+// invalidating that specific mechanism). The registry's own framing (see
+// 221.1 №431) is itself a proactive code-audit finding — a discrepancy
+// with D75, not a live crash report — so a from-code, deterministic proof
+// of the exact documented failure state is the honest, defensible
+// evidence available within this window's budget.
+//
+// PRE-FIX:  process aborts — stderr prints "nova: cancel-throw outside
+//   any supervised scope: ...".
+// POST-FIX: process exits 0 — stderr prints the late-cancel summary line
+//   (`_nova_late_cancel_atexit_print`, effects.c).
+module nova_repro.p431_direct_repro
+
+extern "C" fn nova_p431_direct_repro() -> ()
+
+fn main() {
+    nova_p431_direct_repro()
+    println("harness: survived nova_throw_cancel with no handler")
+}

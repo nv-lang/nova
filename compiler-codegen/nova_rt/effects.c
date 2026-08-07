@@ -11,6 +11,125 @@ int nova_in_fiber(void) {
     return mco_running() != NULL ? 1 : 0;
 }
 
+/* [221.1 №431] Late-cancel counter — process-wide, not __thread: the whole
+ * point is a single end-of-run tally regardless of which worker observed
+ * it. Plain 32-bit int + __atomic builtins (no dependency on sync.h's
+ * nova_atomic_int/nova_aint_* — effects.c only needs the two builtins
+ * directly, and effects.h itself can't see sync.h at all, see the comment
+ * on _nova_cancel_no_handler's declaration). */
+static int32_t _nova_late_cancel_count = 0;
+
+static void _nova_late_cancel_atexit_print(void) {
+    int32_t n = __atomic_load_n(&_nova_late_cancel_count, __ATOMIC_RELAXED);
+    if (n <= 0) return;
+    fflush(stdout);
+    fprintf(stderr,
+        "nova: %d cancellation(s) arrived after their scope had already "
+        "unwound (harmless per D75 — supervised(cancel:)'s token was "
+        "either unbound or its scope had already ended by the time the "
+        "signal was delivered; see docs/dev/mn-coding-conventions.md §11 "
+        "and 221.1 defect #431)\n",
+        n);
+}
+
+/* [221.1 №431] `nova_throw_cancel`/`nova_throw_cancel_reason` (effects.h)
+ * land here when `_nova_fail_top == NULL` — no active fail-frame to catch
+ * the cancel. D75 promises this is a harmless no-op ("token not bound, or
+ * scope already ended"); the OLD behaviour (abort() the whole process,
+ * effects.h pre-#431) turned every instance of that harmless race into a
+ * hard crash. The rejected alternative — just returning normally so the
+ * caller (channels.h recv/send, fibers.h preempt-check, …) continues as if
+ * nothing happened — is WORSE than abort(): the fiber would keep executing
+ * its body against a scope that has already been torn down (writing into
+ * freed/reused structures, corrupting state silently instead of crashing
+ * loudly). So this function does neither: it quietly retires the CURRENT
+ * fiber — never resumes it with more work, does not report anything
+ * upward into parent-scope structures (nobody is waiting for this fiber's
+ * result — that is exactly the D75 precondition for this path to be
+ * reached at all).
+ *
+ * A counter + one end-of-run summary line (below, lazily atexit-
+ * registered on first occurrence) keeps this from silently swallowing a
+ * REAL bug's signal the way the toothless `nova:allow` hatch did (221.1
+ * #423) — see the mn-coding-conventions.md §0 "what does the reference
+ * have that we don't" write-up in this window's report for the Go
+ * comparison (Go's cancellation is a channel nobody has to read — Nova's
+ * is a throw with nobody left to catch it; the counter is how the two
+ * models end up equally harmless in this one corner). */
+void _nova_cancel_no_handler(void) {
+    int32_t prev = __atomic_fetch_add(&_nova_late_cancel_count, 1, __ATOMIC_RELAXED);
+    if (prev == 0) {
+        /* Lazy: only pay for atexit registration on the FIRST occurrence —
+         * the overwhelming common case (a whole clean run) never touches
+         * this function at all. `prev == 0` is true for EXACTLY ONE
+         * caller (the atomic fetch-add's return value is unique per
+         * increment), so this is race-free without a separate flag. */
+        atexit(_nova_late_cancel_atexit_print);
+    }
+
+    /* [221.1 №431 п.3] "No scope reference at all" (not even the orphan/
+     * detach pool) should be structurally impossible — D50 guarantees
+     * every fiber runs inside SOME scope, real supervised or orphan.
+     * Loud + stop in a debug build (genuinely new bug class, worth
+     * catching with a live debugger); the SAME quiet retirement as the
+     * ordinary case in release (never crash the process over a
+     * diagnostic — that is exactly the abort() this window removes). */
+    if (_nova_active_scope == NULL) {
+#ifdef NOVA_DEBUG
+        fflush(stdout);
+        fprintf(stderr,
+            "nova: FATAL: cancel delivered to a fiber with NO scope "
+            "reference at all — not even the orphan/detach pool "
+            "(nova_runtime_orphan_scope()). D50 guarantees every fiber "
+            "runs inside SOME scope; this is a structural-concurrency "
+            "invariant violation, not a late-cancel race. See 221.1 "
+            "defect #431 п.3.\n");
+        abort();
+#endif
+    }
+
+    mco_coro* co = mco_running();
+    if (!co) {
+        /* Should not happen — even main-body runs fiber-hosted post-D92 —
+         * but there is genuinely nothing safe left to do without a
+         * coroutine to park: no C stack to unwind and no fail-frame to
+         * catch on. Return is the least-bad remaining option (matches
+         * the pre-#431 fallback exactly for this one unreachable-in-
+         * practice edge). */
+        return;
+    }
+    /* [221.1 №431 — hang discriminator, empirically found in THIS window]
+     * An UNCONDITIONAL `for(;;) mco_yield(co);` was the first design here
+     * and was REJECTED after direct testing (`docs/plans/repro/
+     * p431_direct_repro.nv`, see PROGRESS-p431.md): a fiber that is still
+     * tracked by a LIVE scope's drain loop (bootstrap `nova_supervised_
+     * step` / the armed worker loop) keeps resuming a merely-yielded —
+     * not dead — coroutine forever, since neither loop has any OTHER
+     * signal that this fiber gave up. That trades the abort() this fix
+     * removes for an unbounded, CPU-spinning, silent hang — strictly
+     * worse for an operator to diagnose (no crash, no stack trace, just a
+     * process that never returns).
+     *
+     * A BOUNDED number of cooperative yields — long enough to let an
+     * in-flight dispatch/TLS-restore step (the transient race §10/§11 of
+     * mn-coding-conventions.md describe) settle, short enough to never
+     * look like a hang — then a plain, signal-free `exit()` (NOT
+     * `abort()`): no SIGABRT, no core dump, atexit hooks still run (the
+     * late-cancel summary above still prints). This remains the only
+     * place left in this function where the process can still end, and
+     * it is reached only after every safer option has been tried. */
+    for (int _nv_retry = 0; _nv_retry < 3; _nv_retry++) {
+        mco_yield(co);
+    }
+    fflush(stdout);
+    fprintf(stderr,
+        "nova: cancel delivered to a fiber with no handler, still none "
+        "after 3 cooperative retries — exiting (not aborting) rather than "
+        "hang forever waiting for a live scope the evidence says is "
+        "already gone. See 221.1 defect #431.\n");
+    exit(1);
+}
+
 /* Plan 173 Ф.5 п.2 (D192-РЕТРАКТ): `_nova_throw_cleanup_timeout_fn` УДАЛЁН
  * вместе с типом CleanupTimeoutError — force-прерывания cleanup'а не
  * существует. Превышение watchdog-порога = one-shot stderr-варн
@@ -310,3 +429,21 @@ void (*_nova_register_effects_fn)(void) = NULL;
 
 /* Plan 221.1 №108 followup — see effects.h doc comment. */
 void* _nova_main_fiber_co = NULL;
+
+/* [221.1 №431] TEMPORARY direct-repro hook — see docs/plans/repro/
+ * p431_direct_repro.nv and PROGRESS-p431.md's "почему прямой юнит-тест"
+ * section. Not part of the public runtime surface; removed once this
+ * window's acceptance is verified (kept only long enough for the
+ * before/after abort() proof, which an organic scheduler race could not
+ * reliably reproduce within this window's budget — the one historically-
+ * crashing fixture, `pos_max_fibers_concurrent.nv`, no longer reproduces
+ * either, see PROGRESS-p427.md's 200/200 clean runs).
+ *
+ * Forces the EXACT documented failure precondition all 8 registry call
+ * sites share (`_nova_fail_top == NULL`) and calls `nova_throw_cancel`
+ * directly — the real defect location, byte-for-byte, no race required. */
+void nova_p431_direct_repro(void) {
+    _nova_fail_top = NULL;
+    _nova_active_scope = NULL;
+    nova_throw_cancel(nova_str_from_cstr("p431 direct repro: no handler, no scope"));
+}
