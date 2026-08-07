@@ -29,3 +29,9 @@ D — код-заглушка/пример.
 | E_CONSUME_NOT_CONSUMED | A | Норма о забытом unlock (06-concurrency.md:5953, D133) не найдена в компиляторе; семейство E_CONSUME_* не включает этот код — требует ручной проверки | — |
 | E_DUPLICATE_LOCAL | B | Запрет рассмотрен как fallback (03-syntax.md:8682) и отвергнут — rebind-фича одобрена вместо запрета дублей имён | — |
 | E_DUP_DEFINITION | A | Ошибка конфликта имён в folder-module (02-types.md:15356) не найдена в компиляторе; решение — введение priv(file) устранило необходимость — требует ручной проверки | — |
+| E_EQ_CYCLIC_TYPE | A | Открытый вопрос в open-questions.md:7687 — запрет structural-== на циклических типах; статус «Открыт» (7696), out-of-scope V1 — не действующая норма | — |
+| E_FIELD_NOT_MUT | A | Норма о ro field (D175 invariant, 02-types.md:12453) не найдена в компиляторе — требует ручной проверки | — |
+| E_FLUENT_SELF | A | Норма о конфликте `-> Self` и `-> @` (03-syntax.md:6691) не найдена в компиляторе — требует ручной проверки | — |
+| E_GENERIC_CONST_CYCLE | A | Норма о cyclic type refs в generic const (02-types.md:8767) не найдена в компиляторе — требует ручной проверки | — |
+| E_GENERIC_CONST_REQUIRES_INSTANTIATION | A | Норма о generic const без instantiation (02-types.md:8755) не найдена в компиляторе — требует ручной проверки | — |
+| E_LITERAL_COMPOSITION_NOT_ALLOWED | A | Норма об отвергнутой literal-composition (02-types.md:7374) не найдена в компиляторе — требует ручной проверки | — |
