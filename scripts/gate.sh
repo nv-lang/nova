@@ -160,6 +160,28 @@ echo "std :: $STD_LINE"
 echo "$STD_LINE" | grep -qE "FAIL: 26\b" \
     || fail "check std: FAIL отклонился от канона 26 (все 26 — neg-фикстуры): '$STD_LINE'"
 
+# Реестр 221.1 №416 (2026-08-07): `.github/workflows/nova-lint.yml`
+# (`nova-lint-std-gate`) уже гоняет `nova lint --deny std` как ЖЁСТКИЙ
+# гейт на CI, но локальный gate.sh его не гонял вовсе — красный CI
+# оставался невидимым до самого PR (третий случай «локальный гейт слабее
+# внешнего», см. PROGRESS-p416.md). `--deny`: W→E, находки = exit≠0 самим
+# CLI (не парсингом кода возврата) — см. `nova-cli/src/main.rs::cmd_lint`.
+echo "== gate: nova lint --deny std/src (0 findings — 221.1 №416) =="
+LINT_LOG="${TMPDIR:-/tmp}/gate_lint_$$.log"
+"$NOVA" lint --deny "$ROOT/std/src" >"$LINT_LOG" 2>&1
+LINT_EXIT=$?
+LINT_LINE=$(sed -e "s/\[[0-9;]*m//g" "$LINT_LOG" | grep -E "^lint: .* finding\(s\)" | tail -1)
+echo "lint std/src :: $LINT_LINE"
+# Строка "lint: N file(s), M finding(s), K denied (--deny, exit 1)" ОБЯЗАНА
+# присутствовать — краш линтера её не печатает вовсе, и голая проверка
+# exit-кода молча считала бы такой прогон непроверенным «зелёным» (то же
+# правило, что у mega-CU выше: PASS/FAIL строка ассертится ЯВНО).
+echo "$LINT_LINE" | grep -qE "finding\(s\)" \
+    || fail "nova lint std/src: строки 'N finding(s)' нет вовсе (краш? см. $LINT_LOG)"
+echo "$LINT_LINE" | grep -qE ", 0 finding\(s\)" \
+    || fail "nova lint std/src: находки > 0, ожидался канон 0 (см. $LINT_LOG): '$LINT_LINE'"
+[ "$LINT_EXIT" -eq 0 ] || fail "nova lint --deny std/src: exit=$LINT_EXIT (см. $LINT_LOG)"
+
 echo "== gate: flagship aggregator --strict-effects =="
 FLAG_LINE=$("$NOVA" build "$ROOT/examples/flagship/aggregator/src/main.nv" --strict-effects 2>&1 | sed -e "s/\[[0-9;]*m//g" | tail -1)
 echo "flagship :: $FLAG_LINE"
