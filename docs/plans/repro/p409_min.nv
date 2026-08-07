@@ -1,0 +1,202 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// №409 minimal repro (окно p409-cleanup-miscompile): field-cache × auto-`@cleanup`
+// (Plan 217) miscompile. NO channel, NO mutex, NO std sync types — a custom
+// local `@cleanup` type + a custom explicit consuming "release" method
+// reproduce it standalone, mirroring `std/src/concurrency/nvchan.nv`'s
+// (pre-workaround) `ChanTx[T].send` shape:
+//
+//   consume guard = @ch.mutex.lock()          <-> consume guard = @b.locker.acquire()
+//   while @ch.buf.len() == @ch.cap && ... {}  <-> while @b.buf.len() == @b.cap && !@b.closed {}
+//   if @ch.closed { return false }            <-> if @b.closed { guard.release(); return false }
+//   @ch.buf.push(v)                           <-> @b.buf.push(1)
+//   guard.unlock()  (explicit, non-`defer`)   <-> guard.release() (explicit, non-`defer`)
+//
+// Observed RED signal: `nv_panic("D188-on-exit-double-invocation")` — the
+// built-in exactly-once runtime guard trips because auto-cleanup dispatches
+// TWICE (once through `guard.release()`'s wrongly-not-disarmed flag at
+// scope-exit, having ALSO already run once via a path below) — deterministic
+// crash, not a flaky assert. 5/5 with field-cache ON (default); 5/5 clean
+// with `--no-field-cache`.
+//
+// **CONFIRMED ROOT CAUSE** (traced through the real generated C for the
+// exact pre-workaround `nvchan.nv` shape, `docs/plans/wip/PROGRESS-p409.md`
+// has the full trail — diffed field-cache-ON vs `--no-field-cache` output
+// byte-for-byte, both from clean, cache-busted rebuilds):
+//
+// `field_cache.rs`'s synthesized hoist statements (`build_at_field_let` /
+// `make_hoist_let` / the chain-prefix-sharing variants — ALL of them,
+// confirmed by grep, hardcode `consume: false`) reuse the ENCLOSING
+// statement's span for their OWN `Stmt::Let.span`, for diagnostics:
+// `region.first_span` is set to `stmt_span(s)` (`field_cache.rs:3040`) — the
+// span of the STATEMENT containing the first repeated-field access, not a
+// narrower sub-expression span. When that first access sits inside a bare
+// `consume X = …;` (a Plan 217 auto-cleanup arm site — the LEGITIMATE case
+// is `@ch` read repeatedly INCLUDING inside `consume guard = @ch.mutex.
+// lock()`'s own init expression), the hoist statement — prepended BEFORE
+// the original in `b.stmts` — ends up carrying the EXACT SAME `Span` value
+// as that `consume`-let.
+//
+// `emit_c.rs`'s Plan 217 machinery keys its auto-cleanup-arm bookkeeping
+// (`auto_cleanup_arm_sites: HashMap<Span, _>`) by `Span` ALONE, implicitly
+// assuming span uniquely identifies "the one `Stmt::Let` the prologue scan
+// meant." `emit_stmt`'s dispatch (`Stmt::Let(decl) if self.
+// auto_cleanup_arm_sites.contains_key(&decl.span)`) had no other
+// discriminator, so it fired on the (unfiltered) HOIST statement FIRST,
+// since it's textually first after prepending: `emit_auto_cleanup_arm` ran
+// on the hoist's own `LetDecl`, extracting ITS pattern name (the hoisted
+// pointer, e.g. `_at_ch`) as "the" tracked consume-binding instead of
+// `guard`. Two consequences from this ONE bug (not two independent
+// "layers" — `guard`'s OWN arm-site match was then a no-op, since
+// `auto_cleanup_arm_sites.remove(&span)` had already been consumed by the
+// hoist statement):
+//   (a) the scope-exit auto-cleanup dispatch calls `Nova_<T>_consume_
+//       cleanup(_at_ch, …)` — a `Chan*`/`Box*` where the guard's own type
+//       is expected (the wrong-pointer miscompile itself);
+//   (b) `guard.unlock()`/`guard.release()`'s disarm-lookup (keyed by NAME,
+//       `auto_cleanup_active`) never finds `"guard"` (only the wrong name
+//       was ever registered there), so the auto-cleanup flag is never
+//       disarmed by the explicit call — cleanup fires a SECOND time on
+//       exit, through the wrong pointer.
+//
+// **FIX** (`compiler-codegen/src/codegen/emit_c.rs`, `emit_stmt`): the
+// dispatch match now also requires `decl.consume` — true for the real
+// Plan 217 arm site (`auto_cleanup_qualifies` already requires it in the
+// prologue scan), false for EVERY field-cache hoist statement (confirmed
+// by grep across all synthesis sites) — so a same-span synthetic neighbor
+// can no longer steal the match. Emission-only fix: no type information
+// needed, purely an AST-node-identity discipline gap between two
+// AST-rewrite/emission passes (196-channel: legitimately an emit_c.rs fix,
+// not a checker-channel one — mirrors the p401 precedent).
+//
+// Fidelity choices, each justified against the ORIGINAL (git `d8a0f8617`)
+// and WORKED-AROUND (`cafc372ed`) nvchan.nv:
+//   - `Container` is a `value` type (`export type ChanTx[T] value { priv ch
+//     Chan[T] }`) — NOT the default reference-semantics record.
+//   - `guard.release()` is `consume @release()` (a genuine CONSUMING
+//     receiver method, exactly `MutexGuard`'s `consume @unlock()` shape,
+//     `std/src/runtime/sync.nv:1484`) called as an explicit, non-`defer`
+//     statement — the shape `cafc372ed`'s commit message says is what
+//     "forces" the miscompile (D446 rules out `defer` in a fiber/spawn
+//     context; the single-exit, explicit-call form is what remains).
+//   - A `while` loop + an `if` both reading DIFFERENT `@b.*` fields, mirrors
+//     `send`'s control flow exactly.
+//   - `@b.locker.acquire()` — `@b` as the RECEIVER of a method call chain
+//     (not merely a call ARGUMENT) inside the consume-let's own init
+//     expression — this is the REQUIRED trigger shape (region-scanner's
+//     `region_first_span` must land on the consume-let statement itself).
+//     Confirmed empirically (see PROGRESS-p409.md matrix): a version
+//     reading `@b.cap` only as a plain call ARGUMENT (`Res.new(@b.cap)`,
+//     no `Locker` indirection) does NOT reproduce — field-cache picks a
+//     different caching strategy (VALUE chain-caching, not the buggy
+//     POINTER region-prefix hoist) for that shape.
+//   - `@b.buf.push(1)` inside the `while` body (not a plain field
+//     assignment) — ALSO required: a version using `@b.n = @b.n` (plain
+//     assignment, no mutating method call) as the loop-body "barrier"
+//     did NOT reproduce either (see same matrix entry).
+//
+// Probes (both live inside `Res`'s auto-`@cleanup` body, since that is the
+// ONLY code that runs with whatever pointer the miscompile substitutes):
+//   1. **Pointer-identity** — `assert(@id == 7)`. `Res{id}` vs `Box{n,cap,
+//      closed}` deliberately differ in layout/size — a wrong-pointer
+//      dispatch reads garbage instead of `7` (assert-fail) or crashes
+//      outright (an equally valid red signal).
+//   2. **Double-fire** — `exit_calls` via the `ResourceTrace` effect (idiom
+//      already used by `std/src/net/d432_cleanup_rollout_test.nv`). CORRECT
+//      behavior is `exit_calls == 0` on this success path (`guard.
+//      release()` properly disarms auto-cleanup on BOTH exits — the
+//      auto-cleanup dispatch itself never runs, so `on_resource_exit`
+//      never fires); under the bug, the wrong name is registered for
+//      disarm, so `release()`'s disarm silently no-ops and the scope-exit
+//      auto-cleanup dispatch runs anyway — `exit_calls == 1` (fires once,
+//      through the wrong pointer) is the RED signal here.
+//
+// Expected GREEN (`exit_calls == 0`, `assert(@id==7)` never even reached
+// since cleanup never dispatches) after the fix / with `--no-field-cache`;
+// expected RED (`exit_calls == 1`, or an outright crash/assert-fail inside
+// `@cleanup` if the wrong pointer's memory happens to fail the `@id==7`
+// check first) with field-cache ON before the fix.
+
+module nova_repro.p409_min
+
+type Res consume {
+    ro id int
+}
+
+fn Res.new(id int) -> Res => { id }
+
+// `Locker` mirrors `Mutex`: a field-of-a-field whose OWN method is the
+// consume-let's init call receiver — `@b.locker.acquire()` must be the
+// EXACT shape of `@ch.mutex.lock()` (receiver of a method call, not a call
+// ARGUMENT) for the region-scanner to record `region_first_span` against
+// the consume-let statement itself (confirmed empirically: `Res.new(@b.
+// cap)` — reading `@b.cap` as a call ARGUMENT — did NOT reproduce; this
+// receiver-chain shape does).
+type Locker {
+    ro id int
+}
+
+fn Locker @acquire() -> Res => Res.new(@id)
+
+type Box {
+    mut n int
+    cap int
+    mut closed bool
+    mut buf []int
+    locker Locker
+}
+
+fn Box.new(n int, cap int) -> Box => { n, cap, closed: false, buf: [], locker: Locker { id: 7 } }
+
+// Explicit, non-`defer` CONSUMING disarm call — mirrors `MutexGuard consume
+// @unlock()` (std/src/runtime/sync.nv:1484) exactly in shape (a
+// zero-effect, zero-arg, `consume`-receiver method distinct from
+// `@cleanup` itself).
+fn Res consume @release() -> () { () }
+
+fn Res consume @cleanup(_outcome ScopeOutcome) -> () {
+    // Pointer-identity probe (see file header, probe 1). Only reached if
+    // the bug is present (correct behavior never dispatches cleanup here).
+    assert(@id == 7)
+    ()
+}
+
+export type Container value { b Box }
+
+// Mirrors `ChanTx[T].send` (pre-workaround nvchan.nv, commit `d8a0f8617`)
+// statement-for-statement: consume-init through the repeatedly-read
+// receiver, a `while` guard reading two DISTINCT fields, an `if` early-exit
+// reading a third field with an explicit `release()` before `return`, a
+// mutating touch, then the FINAL explicit (non-`defer`) `release()`.
+fn Container @run() -> bool {
+    consume guard = @b.locker.acquire()
+    while @b.buf.len() == @b.cap && !@b.closed {
+        @b.buf.push(1)
+    }
+    if @b.closed {
+        guard.release()
+        return false
+    }
+    ro _touch = @b.n
+    guard.release()
+    true
+}
+
+test "№409 min repro: guard.release() disarms auto-cleanup — no double-fire" {
+    mut exit_calls = 0
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) -> () {
+            exit_calls += 1
+            return ()
+        }
+    } {
+        ro c = Container { b: Box.new(5, 10) }
+        ro ok = c.run()
+        assert(ok)
+    }
+    // Double-fire probe (see file header, probe 2). CORRECT = 0 (release()
+    // properly disarmed auto-cleanup; the auto-cleanup dispatch itself
+    // never ran, so no exit event was ever emitted).
+    assert(exit_calls == 0)
+}
