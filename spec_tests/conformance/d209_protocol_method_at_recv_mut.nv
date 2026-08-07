@@ -3,7 +3,7 @@
 // перед именем; receiver-модификатор (`mut`/`ro`/`consume`) опционален, default = ro;
 // visual distinction protocol (методы с @) vs effect (функции без @). Enforcement:
 // `#impl(P)` сверяет receiver-mutability каждого метода на сайте декларации типа.
-// Покрытие (позитив): (1) `mut @next()` + итерация for-in; (2) `consume @close()`;
+// Покрытие (позитив): (1) `mut @next()` + итерация for-in; (2) `consume @into_close()`;
 // (3) default-ro `@hash()` (без префикса ≡ ro); (4) `#impl` с несколькими методами
 // разных mutability. Негативы (parse + impl-mismatch) — neg/d209_*.nv. Шаблоны
 // сверены с nova_tests/plan108_4. Один folder-module `spec_tests.conformance`.
@@ -29,13 +29,13 @@ fn D209Counter mut @next() -> Option[int] {
 
 // (2) consume-receiver протокол-метод.
 type D209Closeable protocol {
-    consume @close() -> int
+    consume @into_close() -> int
 }
 
 #impl(D209Closeable)
 type D209Handle { fd int }
 
-fn D209Handle consume @close() -> int {
+fn D209Handle consume @into_close() -> int {
     @fd
 }
 
@@ -66,7 +66,7 @@ test "protocol mut @next: impl совпадает, for-in итерирует (D2
 
 test "protocol consume @close: impl совпадает, guard потреблён (D209)" {
     ro d209_h = D209Handle { fd: 42 }
-    ro d209_r = d209_h.close()
+    ro d209_r = d209_h.into_close()
     assert(d209_r == 42)
 }
 

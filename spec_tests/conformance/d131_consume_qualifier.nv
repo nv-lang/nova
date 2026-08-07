@@ -6,16 +6,16 @@ module spec_tests.conformance
 
 // Consume receiver: метод забирает значение целиком
 type D131Builder { data str }
-fn D131Builder consume @finish() -> str => @data
+fn D131Builder consume @into_finish() -> str => @data
 
 fn d131_make(s str) -> D131Builder => { data: s }
 
 // Consume parameter: функция забирает аргумент
-fn d131_extract(consume b D131Builder) -> str => b.finish()
+fn d131_extract(consume b D131Builder) -> str => b.into_finish()
 
 test "consume receiver: returns value and logically invalidates source (D131)" {
     ro b = d131_make("hello world")
-    ro result = b.finish()
+    ro result = b.into_finish()
     assert(result == "hello world")
 }
 
@@ -27,7 +27,7 @@ test "consume parameter: function takes ownership of argument (D131)" {
 
 test "consume method chaining (D131)" {
     ro b = d131_make("chain")
-    assert(b.finish() == "chain")
+    assert(b.into_finish() == "chain")
 }
 
 // D347 amend (Plan 181): same-scope rebind consume-family имени после
