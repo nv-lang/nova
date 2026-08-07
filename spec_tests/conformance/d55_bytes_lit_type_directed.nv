@@ -39,10 +39,7 @@ fn d55_bytes_ret_bytes_stmt() -> []u8 {
 
 // ─── decode helper ([]u8 → str, mirrors to_str_facade_collision.nv) ───
 
-fn d55_bytes_decode(bytes []u8) -> str => match bytes.to_str() {
-    Ok(s) => s
-    Err(_) => "ERR"
-}
+fn d55_bytes_decode(bytes []u8) -> str => bytes.to_str() ?? "ERR"
 
 test "D55 position 1a: free-fn []u8 param (not `write`) — str-литерал coerces (type-directed)" {
     assert(d55_bytes_free_len("hello") == 5)

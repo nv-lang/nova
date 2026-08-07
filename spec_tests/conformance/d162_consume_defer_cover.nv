@@ -54,6 +54,12 @@ test "failable + defer-cover — обязательство покрыто на 
 fn d162_failable_match_throw(n int) Fail -> int {
     consume d162_tx = d162_begin(n)
     d162_tx.commit()
+    // `throw` INSIDE a match-arm is the exact regression this fixture pins
+    // (see header: [M-d162-structural-throw-sibling], D162's expr_has_throw
+    // not descending into match arms). `"42".to_int() ?? throw "..."` would
+    // also hit the OPEN defect №417 (expr_has_throw does not descend into
+    // ExprKind::Coalesce either).
+    // nova:allow W_MANUAL_COALESCE -- see comment above
     match "42".to_int() {
         Ok(v)  => v
         Err(_) => throw "bad quantifier"

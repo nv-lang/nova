@@ -50,6 +50,12 @@ fn GmsgIter mut @next() -> Option[GmsgBox] {
 /// BARE (deliberately non-renamed) bind name) — the shape that originally
 /// surfaced the scope-gap.
 export fn[I Next[T], T Compare] I mut @gmsg_min() -> Option[T] {
+    // `match @next() { Some(x) => ... }` on a generic-param receiver bound
+    // to Next[T] IS the exact scope-gap shape this fixture pins (see header)
+    // — `@next() ?? return None` would route through Coalesce codegen
+    // instead, never touching the ExprKind::Match / match_arm_bindings
+    // fallback under test.
+    // nova:allow W_MANUAL_COALESCE -- see comment above
     mut best = match @next() {
         Some(first) => first,
         None => return None,

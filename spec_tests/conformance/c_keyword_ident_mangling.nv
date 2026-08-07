@@ -29,8 +29,12 @@ fn c_kw_concat_pw() -> int {
 fn c_kw_add_one(register int) -> int => register + 1
 
 // Position 3: match-arm binding named after a C keyword (`default`),
-// over a value-embedded `Option[int]` (NovaOpt_nova_int, dot-accessor).
+// over a value-embedded `Option[int]` (NovaOpt_nova_int, dot-accessor). The
+// manual `match` (not `o ?? 0`) is deliberate — the whole point of this case
+// is a match-arm BINDING literally named `default`, which `?? 0` would erase
+// entirely (no binding at all), defeating position 3.
 fn c_kw_unwrap_or_zero(o Option[int]) -> int {
+    // nova:allow W_MANUAL_COALESCE -- see comment above (keyword-named match-arm binding is the test subject)
     match o {
         Some(default) => default
         None => 0

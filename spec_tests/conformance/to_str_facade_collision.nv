@@ -18,20 +18,14 @@ type FacadeErr { code int }
 fn FacadeErr @to_str() -> str => "facadeerr(${@code})"
 
 // []u8 facade receiver via a LOCAL binding (channel path).
-fn decode_local(bytes []u8) -> str => match bytes.to_str() {
-    Ok(s) => s
-    Err(_) => "ERR"
-}
+fn decode_local(bytes []u8) -> str => bytes.to_str() ?? "ERR"
 
 // []u8 facade receiver via a PATTERN binding inside a nested match
 // (the receiver-inference gap the codegen receiver-type fallback covers).
 fn decode_pattern(src []u8) -> str {
     ro wrapped Result[[]u8, FacadeErr] = Ok(src)
     match wrapped {
-        Ok(bytes) => match bytes.to_str() {
-            Ok(s) => s
-            Err(_) => "ERR"
-        }
+        Ok(bytes) => bytes.to_str() ?? "ERR"
         Err(_) => "ERR"
     }
 }

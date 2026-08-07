@@ -56,7 +56,14 @@ test "match-arm width unify: bare literal arm adopts a concrete uint sibling (D4
     assert(d129_extract_payload(small) == 42)
 }
 
+// Both functions below keep the manual `match` deliberately — the fixture
+// pins a bug in the match-ARM width-unification machinery itself
+// (`infer_match_common_primitive` / `emit_match`'s arm-type loop, see file
+// header). `o ?? -1` would route through the Coalesce desugar instead,
+// which never touches that code path — a regression there would go
+// undetected.
 fn d129_pick_width(o Option[u32]) -> int {
+    // nova:allow W_MANUAL_COALESCE -- see comment above (match-arm width unification is the test subject, not value-fallback)
     match o {
         Some(v) => v,
         None => -1,
@@ -64,6 +71,7 @@ fn d129_pick_width(o Option[u32]) -> int {
 }
 
 fn d129_pick_width_via_local(o Option[u32]) -> int {
+    // nova:allow W_MANUAL_COALESCE -- see comment above (match-arm width unification is the test subject, not value-fallback)
     ro r = match o {
         Some(v) => v,
         None => -1,
