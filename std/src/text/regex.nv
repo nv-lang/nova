@@ -207,8 +207,7 @@ fn Parser mut @parse_quantifier_max(start int) Fail[CompileError] -> int {
     }
     ro m = m_str.into_str()
     if m.byte_len() == 0 { return -1 }        // {n,} — unbounded
-    // [M-d162-structural-throw-sibling] обход: естественная match-форма
-    // вместо `if parsed.is_err() { throw ... }` + `parsed!!`
+    // nova:allow W_MANUAL_COALESCE -- `?? throw D` here breaks D162 cleanup coverage: `check_d162_coverage`'s evidence walker `expr_has_throw` (compiler-codegen/src/types/mod.rs, [M-d162-structural-throw-sibling]) descends into Block/If/Match/IfLet/While/For/Loop looking for a nested `Throw`, but NOT into `ExprKind::Coalesce` — so a `throw` on the `??` RHS is invisible to it and the function is wrongly flagged D162-uncovered-error-path (confirmed empirically: swapping this match for `m.to_int() ?? throw ...` produces exactly that FAIL). Root cause for bug №394 follow-up; the match-form below is the only form the checker currently recognizes as "explicit error-branch handling".
     match m.to_int() {
         Ok(v)  => v
         Err(_) => throw InvalidQuantifier { position: start }
@@ -575,6 +574,7 @@ fn try_match(re Regex, tchars []char, start_pos int) -> Option[int] {
 
     mut pos = start_pos
     while pos < tchars.len() {
+        // nova:allow W_MANUAL_COALESCE -- `?? break` does not parse (`break` is Stmt-only in Nova's grammar, not a valid `??` RHS expression — confirmed empirically: "unexpected `break` in expression"); the canon `X ?? D` only accepts value/panic/throw fallbacks, not loop-control statements
         ro c = match tchars.get(pos) { Some(ch) => ch, None => break }
 
         // Reset next
