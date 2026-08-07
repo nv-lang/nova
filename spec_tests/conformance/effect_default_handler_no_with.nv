@@ -47,12 +47,12 @@ test "Os.arg_count() — explicit `with Os = real_os()` gives the SAME answer" {
 // ── Io: default (no `with`) vs explicit `with Io = real_io()` ──
 
 test "Io.write_out() — default-without-with auto-constructs real_io()" {
-    ro r = Io.write_out("".bytes())   // zero-length write — no visible stdout noise
+    ro r = Io.write_out("")   // zero-length write — no visible stdout noise
     assert(match r { Ok(_) => true, Err(_) => false })
 }
 
 test "Io.write_out() — explicit `with Io = real_io()` also succeeds" {
-    ro r = with Io = real_io() { Io.write_out("".bytes()) }
+    ro r = with Io = real_io() { Io.write_out("") }
     assert(match r { Ok(_) => true, Err(_) => false })
 }
 

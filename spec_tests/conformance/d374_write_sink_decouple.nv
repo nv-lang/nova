@@ -23,11 +23,11 @@ module spec_tests.conformance
 type D374Pair { lo int, hi int }
 
 fn D374Pair @display(mut w Fmt) -> () {
-    w.write("[".bytes())
-    w.write(@lo.to_str().bytes())
-    w.write("..".bytes())
-    w.write(@hi.to_str().bytes())
-    w.write("]".bytes())
+    w.write("[")
+    w.write(@lo.to_str())
+    w.write("..")
+    w.write(@hi.to_str())
+    w.write("]")
 }
 
 test "Display.@display routes through the Write sink — interpolation drives `w.write` (D374)" {
@@ -68,11 +68,12 @@ test "StringBuilder satisfies Write — same @display body driven by an explicit
 test "Write.@write appends in order — StringBuilder is a faithful Write sink (D374)" {
     // Drive the Write protocol method directly on the concrete sink: each `@write`
     // appends its argument in order, matching the byte-sink delegation in the norm.
-    // D422: `@write` now takes `[]u8`, not `str` — `.bytes()` on each literal.
+    // D422: `@write` now takes `[]u8`, not `str` — a bare str literal call-argument
+    // coerces to `[]u8` via `#coerce` (D429 R6/R9), no explicit `.bytes()` needed.
     consume sb = StringBuilder.new()
-    sb.write("a".bytes())
-    sb.write("bc".bytes())
-    sb.write("".bytes())
-    sb.write("d".bytes())
+    sb.write("a")
+    sb.write("bc")
+    sb.write("")
+    sb.write("d")
     assert(sb.into_str() == "abcd")
 }

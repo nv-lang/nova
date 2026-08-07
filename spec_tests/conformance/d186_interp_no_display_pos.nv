@@ -32,9 +32,9 @@ type D186InterpDisplay { label str }
 
 #impl(Display)
 fn D186InterpDisplay @display(mut f Fmt) -> () {
-    f.write("D186InterpDisplay(".bytes())
+    f.write("D186InterpDisplay(")
     f.write(@label.bytes())
-    f.write(")".bytes())
+    f.write(")")
 }
 
 // (2) explicit Debug opt-in — bare `${x:?}` dispatches to the compiler's

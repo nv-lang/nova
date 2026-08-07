@@ -62,7 +62,7 @@ export fn M248Frac @to_str() -> str {
     sb.append(@num)
     sb.append("/")
     sb.append(@den)
-    return sb.into_str()
+    return sb
 }
 
 type M248DivError enum ByZero
@@ -85,11 +85,11 @@ export type M248Vec2(x int, y int)
 
 #impl(Display)
 fn M248Vec2 @display(mut f Fmt) -> () {
-    f.write("(".bytes())
-    f.write(@x.to_str().bytes())
-    f.write(", ".bytes())
-    f.write(@y.to_str().bytes())
-    f.write(")".bytes())
+    f.write("(")
+    f.write(@x.to_str())
+    f.write(", ")
+    f.write(@y.to_str())
+    f.write(")")
 }
 
 test "named-tuple to_str() dispatches through bare ${x} interpolation (№248)" {

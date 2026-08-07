@@ -49,7 +49,7 @@ fn Wrap[R WSrc] mut @pull(buf mut []u8) -> Result[int, WErr] {
 }
 
 test "generic wrapper (value-record error) with explicit type-args" {
-    mut s = WMem.new("abcd".bytes())
+    mut s = WMem.new("abcd")
     mut w = Wrap[WMem].new(s)
     mut buf []u8 = []u8.new()
     buf.resize(2, 0 as u8)

@@ -49,7 +49,7 @@ fn drain_p176[R Src](mut r R) -> Result[int, VErr] {
 }
 
 test "value-record error flows through generic protocol helper" {
-    mut s = MemSrc.new("hello".bytes())
+    mut s = MemSrc.new("hello")
     match drain_p176(s) {
         Ok(n)  => assert(n == 5)
         Err(_) => assert(false)

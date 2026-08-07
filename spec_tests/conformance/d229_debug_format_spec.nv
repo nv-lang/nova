@@ -18,16 +18,16 @@ type D229Tagged { label str, value int }
 
 fn D229Tagged @display(mut w Fmt) -> () {
     w.write(@label.bytes())
-    w.write("=".bytes())
-    w.write(@value.to_str().bytes())
+    w.write("=")
+    w.write(@value.to_str())
 }
 
 fn D229Tagged @debug(mut w Fmt) -> () {
-    w.write("D229Tagged { label: ".bytes())
+    w.write("D229Tagged { label: ")
     @label.debug(w)
-    w.write(", value: ".bytes())
-    w.write(@value.to_str().bytes())
-    w.write(" }".bytes())
+    w.write(", value: ")
+    w.write(@value.to_str())
+    w.write(" }")
 }
 
 test "${x:?} routes to Debug, NOT Display: str quoted in debug, bare in display (D229)" {
