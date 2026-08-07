@@ -271,6 +271,21 @@ unitcraft, соло-автор) ведёт тебя как координато�
 
 ---
 
+## 8а. ВЕРНЫЙ РЕЦЕПТ СБОРКИ В WORKTREE (интегратор ошибался весь день 2026-08-07)
+
+Я во ВСЕХ сегодняшних брифах давал НЕВЕРНЫЕ переменные — окна выкручивались сами, но
+часть их мучений со сборкой была на моей совести. Правильно (сверено с `scripts/gate.sh:16-17`):
+
+```
+export NOVA_GC_LIB_DIR="D:/Sources/nv-lang/nova/compiler-codegen/vcpkg_installed/x64-windows-static/lib"
+export NOVA_INCLUDE_DIR="D:/Sources/nv-lang/nova/compiler-codegen/vcpkg_installed/x64-windows-static/include"
+```
+
+Три ошибки, которые я повторял: (1) переменная называется `NOVA_INCLUDE_DIR`, НЕ
+`NOVA_GC_INCLUDE_DIR`; (2) путь идёт через `compiler-codegen/vcpkg_installed/`, НЕ через
+корневой `vcpkg_installed/`; (3) заголовок `gc.h` лежит именно там. Симптом неверного
+рецепта — `fatal error C1083: gc.h: No such file`.
+
 ## 8. Правила работы (проверены этой сессией)
 
 - **Проба «подсунь заведомо негодное» — обязательный пункт КАЖДОГО брифа и приёмки**
