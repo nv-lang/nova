@@ -96,8 +96,8 @@ fn chain3(s str) -> int {
     ro v = parse(s)!!
     v
 }
-fn chain2(s str) -> int => chain3(s) + 1
-fn chain1(s str) -> int => chain2(s) + 1
+fn chain2(s str) -> int => chain3(s)
+fn chain1(s str) -> int => chain2(s)
 
 // (6) exported fn, three-hop private chain, Fail declared ONCE at the
 // boundary — none of `chain1`/`chain2`/`chain3` (private) needs it.
