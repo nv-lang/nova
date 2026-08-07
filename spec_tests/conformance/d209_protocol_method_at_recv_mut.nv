@@ -55,6 +55,11 @@ fn D209Box2 mut @bump() -> () {
 
 test "protocol mut @next: impl совпадает, for-in итерирует (D209)" {
     mut d209_c = D209Counter { cur: 0, end: 3 }
+    // `for-in` over a custom protocol `mut @next()` IS the test subject
+    // (coverage item (1) in the file header) — `.collect()` would exercise a
+    // different codegen entry point (generic Next[T] @collect()), not the
+    // for-in desugar this fixture pins.
+    // nova:allow W_MANUAL_COLLECT -- see comment above
     mut d209_results = []
     for d209_x in d209_c {
         d209_results.push(d209_x)

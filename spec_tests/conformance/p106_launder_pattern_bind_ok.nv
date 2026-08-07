@@ -17,7 +17,7 @@ type P106Basket value {
     mut items Vec[int]
 }
 
-fn P106Basket.new() -> P106Basket => { items: Vec[int].of(1, 2, 3) }
+fn P106Basket.new() -> P106Basket => { items: [1, 2, 3] }
 
 fn p106_source() -> Result[P106Basket, str] => Ok(P106Basket.new())
 

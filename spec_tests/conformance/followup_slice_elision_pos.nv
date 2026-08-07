@@ -7,6 +7,7 @@ module spec_tests.conformance
 import std.collections.vec.{Vec}
 
 fn slice_whole(v Vec[int]) -> int {
+    // nova:allow W_MANUAL_SLICE_TO_END -- `v[0..v.len()]` (not the open-range `v[..]`) IS the test subject: this fixture pins bounds-check elision for the EXPLICIT range form (see header); `v[..]` never goes through that provability path at all.
     ro s = v[0..v.len()]
     s.len()
 }
