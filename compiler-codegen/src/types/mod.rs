@@ -17234,14 +17234,46 @@ impl<'a> TypeCheckCtx<'a> {
                                 Some(r) => ResolvedType::from_type_ref(r),
                                 None => ResolvedType::Unit,
                             };
+                            // [№TBD, реестр 221.1 №403] `ConcreteNamedNoArgs` is PURELY
+                            // structural (`constraint_solver.rs`: any bare `Named{args:
+                            // []}` passes) — it cannot tell a genuinely declared type
+                            // apart from a leaked generic-scope letter (`T`/`U`/`E`/...)
+                            // that never went through `mark_type_params` before reaching
+                            // this ("172.1.2 АТОМ 3a") arm. Two OTHER `materialize_
+                            // literal_coercion` call sites already hit and fixed the SAME
+                            // class (`[196.5 closure-lowering fix]` ~L14269,
+                            // `[M-instance-method-closure-arg-generic-return]` ~L15162)
+                            // via `typeref_mentions_any` against the callee's generic
+                            // scope — this simpler, `expected`-only arm has no callee/`gs`
+                            // to consult, so it takes a cheaper, equally honest route:
+                            // require a bare Named name to be an ACTUAL declared type
+                            // (`self.types`) — a real record/sum/protocol always IS
+                            // one; a bare generic-parameter letter never is. Concretely:
+                            // `Option[T].filter(pred fn(T) -> bool)` called on a concrete
+                            // `Option[int]` (`a.filter(|x| x % 2 == 0)`) used to stamp raw
+                            // `Named{"T"}` straight into `resolved_types` here (`T` PASSES
+                            // `ConcreteNamedNoArgs` — indistinguishable from a real
+                            // no-generics record at this purely-structural layer) —
+                            // codegen's channel then mangled it to a bogus, never-defined
+                            // `Nova_T*` C type (CC-FAIL,
+                            // `plan200_14_option_result_flat_map_filter.nv`'s
+                            // `Option.filter` tests, only surfaced once a SEPARATE fix —
+                            // making the Func-return-type conversion succeed for a bare
+                            // `bool`/`int` — let this arm's registration reach codegen
+                            // instead of bailing earlier on the UNRELATED missing-primitive
+                            // gap it used to hit first). `char`, a `Named{args:[]}`-shaped
+                            // primitive (`constraint_solver.rs` `TypeSet::Primitive`'s own
+                            // special case), is checked FIRST and short-circuits before the
+                            // `type_decls` gate — never affected by this change.
                             let concrete = ps.iter().chain(std::iter::once(&ret_rt)).all(|r| {
-                                Self::ts_member(
-                                    r,
-                                    constraint_solver::TypeSet::Union(vec![
-                                        constraint_solver::TypeSet::Primitive,
-                                        constraint_solver::TypeSet::ConcreteNamedNoArgs,
-                                    ]),
-                                )
+                                if Self::ts_member(r, constraint_solver::TypeSet::Primitive) {
+                                    return true;
+                                }
+                                match r {
+                                    ResolvedType::Named { name, args, .. } if args.is_empty() =>
+                                        self.types.contains_key(name.as_str()),
+                                    _ => false,
+                                }
                             });
                             if concrete {
                                 self.resolved_types_buf.borrow_mut().insert(
@@ -18961,11 +18993,57 @@ impl<'a> TypeCheckCtx<'a> {
         }
     }
 
+}
+
+/// [№TBD, реестр 221.1 №403] `impl ResolvedType` block for `resolved_to_typeref` — see
+/// its own doc for why this lives here (split out of the single giant `impl<'a>
+/// TypeCheckCtx<'a>` block above/below) instead of alongside `from_type_ref` up at line
+/// ~207: keeping it textually adjacent to its OLD call sites (all still `Self::
+/// resolved_to_typeref(...)` inside `TypeCheckCtx`, now resolved via the one-line delegate
+/// right after this block) made the diff minimal and easy to audit — Rust does not require
+/// a type's `impl` blocks to be contiguous or singular.
+impl ResolvedType {
     /// Plan 172.1 §0a helper: convert a ResolvedType back to a TypeRef for use as the
     /// return value of `infer_expr_type`. This is a best-effort conversion — Ptr / Any /
     /// TypedPtr / Func → None (uncommon in field / return-type positions; not needed for
     /// the Coalesce/Binary/If consumer chain). Scalar and Named → concrete TypeRef.
-    fn resolved_to_typeref(rt: &ResolvedType, span: Span) -> Option<TypeRef> {
+    ///
+    /// [№TBD, реестр 221.1, окно p403-linux-runfail] Moved from a `TypeCheckCtx`-private
+    /// method to `impl ResolvedType` (mirrors `from_type_ref`'s own placement/naming
+    /// symmetry — this is its inverse) so `codegen/emit_c.rs`'s `resolved_type_to_typeref_
+    /// named` can reuse this FULL primitive/composite coverage (Scalar/Bool/Float/Str/
+    /// Named-with-generics/Array/Tuple/TypedPtr) instead of its own much narrower
+    /// Named/Func/Unit/Readonly-only base case. That narrower base case silently dropped
+    /// an entire `ResolvedType::Func{..}` conversion the moment EITHER its params OR its
+    /// return type was a bare primitive (`R::Scalar`/`R::Bool`/`R::Float`/`R::Str` — the
+    /// overwhelmingly common case for a closure's return type) — the `?`-propagation on
+    /// the recursive per-param/per-return call turned one missing primitive arm into a
+    /// `None` for the WHOLE surrounding `Func`, discarding an otherwise fully-resolved
+    /// signature. Concretely: a `ro f fn(Req) -> int = |r| { ... }` closure literal (`Req`
+    /// a >16-byte value-record past the auto-by-ref threshold, Plan 172.14) — the checker
+    /// DOES register `resolved_types[closure_id] = Func{params:[Named{Req}], ret:Scalar{
+    /// int64}}` (`f1_check_assign_let`, unconditionally, for ANY arity) — but `closure_
+    /// channel_param_tys` (emit_c.rs) peels it via `resolved_type_to_typeref_named`, whose
+    /// OLD `_ => None` catch-all bailed on the `int` return the instant it recursed into
+    /// it, so the closure's OWN C signature fell all the way to the hardcoded
+    /// `nova_int`-per-param bootstrap default while the CALL SITE (driven by a completely
+    /// separate, already-correct computation, the `Stmt::Let` `fn_param_sigs` registration
+    /// a few thousand lines away in emit_c.rs, which already knew to call `type_ref_to_c`
+    /// on the let's OWN annotation) built the correct `NovaValue_Req`-by-value cast — a
+    /// caller/callee C-signature MISMATCH (`nova_lambda_N_body(void*, nova_int)` declared,
+    /// `nova_bool(*)(void*, NovaValue_Req)` called through). Both x86-64 ABIs happen to
+    /// pass an oversized-struct differently (SysV: MEMORY-class push-to-stack; Microsoft
+    /// x64: always by hidden reference) — the SAME wrong C therefore silently reads
+    /// garbage register/stack content as if it were the intended arg on BOTH platforms
+    /// (confirmed by a byte-identical repro on Windows, wrong VALUE, no crash — `nova
+    /// build`), but only SysV's stack-vs-register split reliably corrupts far enough to
+    /// SEGV downstream (`spec_tests/conformance/standalone/m2217_26_generic_static_method_
+    /// value_arg_addr_mismatch`'s `via_closure` test, Linux-only RUN-FAIL after its first
+    /// two PASS lines — 221.1 №403). This function's OWN internal recursive calls (`Self::
+    /// resolved_to_typeref` → now `Self::resolved_to_typeref`, unchanged spelling, just a
+    /// different enclosing `impl` block) are untouched, so every EXISTING caller inside
+    /// `TypeCheckCtx` (now a one-line delegate, see below) keeps its exact prior behavior.
+    pub fn resolved_to_typeref(rt: &ResolvedType, span: Span) -> Option<TypeRef> {
         use ResolvedType as R;
         Some(match rt {
             // 172.1.2 Шаг 1: residual параметр без subst-контекста невосстановим — None.
@@ -19079,6 +19157,16 @@ impl<'a> TypeCheckCtx<'a> {
             R::Readonly(_)
             | R::Any | R::Ptr | R::Func { .. } => return None,
         })
+    }
+}
+
+impl<'a> TypeCheckCtx<'a> {
+    /// Thin delegate — the actual conversion now lives on `impl ResolvedType`
+    /// (see its doc, 221.1 №403) so `codegen/emit_c.rs` can reuse it too.
+    /// Kept here, same name/signature, so every pre-existing `Self::
+    /// resolved_to_typeref(...)` call site inside `TypeCheckCtx` stays byte-identical.
+    fn resolved_to_typeref(rt: &ResolvedType, span: Span) -> Option<TypeRef> {
+        ResolvedType::resolved_to_typeref(rt, span)
     }
 
     /// Ф.1: best-effort вывод типа выражения (для не-литералов).
