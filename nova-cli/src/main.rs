@@ -5385,7 +5385,16 @@ fn cmd_build(
                 // `emit_module` would have produced (Ф.1 A4 doc) — byte-
                 // identical default.
                 let cu_name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("cu").to_string();
-                emitter.emit_module_multi_tu(&module, &cu_name)
+                // Окно p401b-p67-class: same per-unit panic net test_runner.rs
+                // uses for `nova test` batches (`catch_unit_panic`) — a
+                // codegen internal-error panic (`[P67-LEGACY]` and any
+                // other) becomes an ordinary `Err(String)`, reported through
+                // the SAME `anyhow!("codegen error: ...")` path as a real
+                // compile error instead of the panic hook's "internal error
+                // / please report a bug" + exit(101).
+                nova_codegen::test_runner::catch_unit_panic(std::panic::AssertUnwindSafe(|| {
+                    emitter.emit_module_multi_tu(&module, &cu_name)
+                }))
                     .map_err(|e| anyhow!("codegen error: {}", e))?
             };
             for w in &warnings {
@@ -6746,16 +6755,52 @@ fn main() -> ExitCode {
     std::thread::Builder::new()
         .name("nova-main".to_string())
         .stack_size(64 * 1024 * 1024)
-        .spawn(run)
+        .spawn(run_catching)
         .expect("spawn main thread")
         .join()
         .unwrap_or(ExitCode::FAILURE)
 }
 
+/// Окно p401b-p67-class (реестр 221.1 №401, "ПЕРЕОТКРЫТ"): outer panic
+/// boundary. Wraps [`run`] in `catch_unwind` so a panic that escapes EVERY
+/// inner per-unit catcher (`nova_codegen::test_runner`'s `catch_unit_panic`,
+/// wrapping each compile-unit's `codegen_to_c` during a `nova test <dir>`
+/// batch) still terminates the process with the SAME `exit(101)` convention
+/// as before this window — the `exit()` call itself just moved HERE from the
+/// panic hook below, so the hook can stay silent (see
+/// `catching_panic_active`) when an inner catcher on the SAME thread is
+/// about to handle the panic instead of letting it kill the whole process.
+/// Byte-identical outcome for every path that has no inner catcher (`nova
+/// build` on one file, `nova check`, or a panic anywhere the flag is never
+/// set): hook prints the banner, panic unwinds all the way up, caught here,
+/// `exit(101)`.
+fn run_catching() -> ExitCode {
+    match std::panic::catch_unwind(run) {
+        Ok(code) => code,
+        Err(_) => {
+            // Hook already printed "nova: internal error ... / This is a bug
+            // in nova. Please report it." — this panic escaped every inner
+            // catcher (or there wasn't one), so terminate as before.
+            std::process::exit(101);
+        }
+    }
+}
+
 fn run() -> ExitCode {
     // Plan 36 R7: guarantee exit=101 on panic (cargo convention, cross-platform).
     // Без этого default Rust panic handler даёт 101 на Unix но 0xC0000409 на Windows.
+    // Окно p401b-p67-class: `process::exit` REMOVED from here — moved to
+    // `run_catching` above, so a `catch_unwind` up the SAME thread's stack
+    // (test_runner.rs's `catch_unit_panic`, per compile-unit) gets a chance
+    // to catch the unwind before the process dies. `catching_panic_active()`
+    // additionally silences the banner itself when such a catcher is active
+    // — the catcher reports the panic as an ordinary compile-error `FAIL`
+    // line instead, no "please report a bug" noise for what is usually a
+    // missing `import`, not a compiler defect.
     std::panic::set_hook(Box::new(|info| {
+        if nova_codegen::test_runner::catching_panic_active() {
+            return;
+        }
         let msg = info.payload().downcast_ref::<&str>().copied()
             .or_else(|| info.payload().downcast_ref::<String>().map(|s| s.as_str()))
             .unwrap_or("<no message>");
@@ -6769,7 +6814,6 @@ fn run() -> ExitCode {
             eprintln!("{}", std::backtrace::Backtrace::force_capture());
         }
         eprintln!("This is a bug in nova. Please report it.");
-        std::process::exit(101);
     }));
 
     fn apply_field_cache_cli_flags(cli: &Cli) {
