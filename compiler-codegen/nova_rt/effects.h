@@ -396,6 +396,38 @@ static inline void nova_throw_site_dump(void) {
  * (fibers.h) which HAS a suppressed chain to carry (scope MultiError
  * aggregate) and needs it threaded through without an ambient TLS relay.
  * `nova_throw` (below) is the ordinary zero-suppressed call site. */
+
+/* ─── №436: управляемый выход вместо аварии для ОШИБОК ПРОГРАММЫ ───────────
+ *
+ * Разделение, принятое интегратором 2026-08-07 (указание владельца: «краши мне
+ * крайне не нравятся в любом виде»):
+ *
+ *   ОШИБКА ПРОГРАММЫ  — необработанный `Fail`, `panic(...)` пользователя.
+ *       Ситуация законно фатальна: продолжать нельзя. Но это НЕ авария рантайма,
+ *       а результат работы пользовательского кода, и завершаться надо как
+ *       «программа сообщила об ошибке»: диагностика + управляемый выход.
+ *       `abort()` здесь даёт SIGABRT/core dump на POSIX и окно «программа
+ *       перестала работать» на Windows — пользователь читает это как крах
+ *       рантайма, хотя рантайм отработал корректно.
+ *
+ *   АВАРИЯ РАНТАЙМА  — нарушен наш инвариант (состояние испорчено, «этого не
+ *       может быть»). Здесь `abort()` ОСТАЁТСЯ: дамп полезен, и мы хотим
+ *       отличать свой баг от ошибки пользователя.
+ *
+ * Код возврата 101 — как у Rust при панике: отличим от обычного `1`
+ * (пользовательский `Os.exit(1)`) и от 0.
+ *
+ * ВАЖНО: диагностика и `fflush` уже выполнены ВЫШЕ каждого места вызова —
+ * этот помощник только завершает процесс, ничего не печатая сам. */
+#ifndef NOVA_PROGRAM_ERROR_EXIT_CODE
+#define NOVA_PROGRAM_ERROR_EXIT_CODE 101
+#endif
+static inline void nova_exit_program_error(void) {
+    fflush(stdout);
+    fflush(stderr);
+    exit(NOVA_PROGRAM_ERROR_EXIT_CODE);
+}
+
 static inline void nova_throw_ex(nova_str msg, NovaErrorChain* suppressed) {
     nova_last_error_set_ex(msg, NOVA_THROW_USER, NULL, NOVA_TID_NONE, suppressed);  /* Ф.4 #5 */
     if (_nova_fail_top) {
@@ -418,7 +450,7 @@ static inline void nova_throw_ex(nova_str msg, NovaErrorChain* suppressed) {
     fprintf(stderr, "nova: unhandled Fail: %.*s\n",
         (int)msg.len, msg.ptr);
     nova_throw_site_dump();  /* Plan 173 Ф.5 п.7 */
-    abort();
+    nova_exit_program_error();  /* №436: ошибка ПРОГРАММЫ — управляемый выход, не авария */
 }
 
 static inline void nova_throw(nova_str msg) {
@@ -1030,7 +1062,7 @@ static inline void nv_panic_ex(nova_str msg, NovaErrorChain* suppressed) {
     if (msg.len > 0) fwrite(msg.ptr, 1, msg.len, stderr);
     fwrite("\n", 1, 1, stderr);
     nova_throw_site_dump();  /* Plan 173 Ф.5 п.7 */
-    abort();
+    nova_exit_program_error();  /* №436: ошибка ПРОГРАММЫ — управляемый выход, не авария */
 }
 
 static inline void nv_panic(nova_str msg) {
@@ -1431,7 +1463,7 @@ static inline nova_unit nova_throw_typed_ex(nova_str msg_repr,
         nova_typeid_to_name(tid),
         (int)msg_repr.len, msg_repr.ptr);
     nova_throw_site_dump();  /* Plan 173 Ф.5 п.7 */
-    abort();
+    nova_exit_program_error();  /* №436: ошибка ПРОГРАММЫ — управляемый выход, не авария */
     return NOVA_UNIT;  /* unreachable */
 }
 
