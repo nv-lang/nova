@@ -182,3 +182,147 @@ Go-эквивалент (или обоснованное «Go-эквивален
 [№431](221.1-bug-sweep.md)/[№436](221.1-bug-sweep.md) (краши),
 план [224](224-vela-runtime-naming.md) (имена Vela),
 `docs/dev/mn-coding-conventions.md`, `docs/dev/debugging-races.md`.
+
+---
+
+## Ф.0 — Инвентарь (результат)
+
+> Окно `p250-design`, модель **opus**, только проектирование (компилятор и
+> рантайм не тронуты). Инвентарь снят чтением кода `compiler-codegen/nova_rt/`:
+> `fibers.h` (структуры `NovaFiberQueue` 309–650, `NovaSchedState` 711–729,
+> `NovaSpawnCtxBase` 1962–2022, `NovaSleepState` 3918–3942, `NovaEarlyDl`
+> 2974–2982, `NovaBlockingState` 4133–4143, `NovaCancelToken` 1457–1488),
+> `nova_sched.h`, `runtime.c` (`NovaWorker` 50–177), `runq.h`, `channels.h`.
+> Места записи/чтения — по грепу вызовов, не по памяти.
+
+### Методология счёта и честная оговорка
+
+Замер владельца — «28 отдельных атомарных полей состояния фибра». Я считаю
+**поле состояния = отдельный носитель, атомарно читаемый/пишущийся хотя бы
+двумя потоками и описывающий, ЧТО сейчас с фибром/слотом/областью** (жив/бежит/
+паркуется/отменяется/владеет детьми/ждёт I/O). Пер-слотовые каталоги
+(`*_chunks`) считаю как ОДНО поле каждый (это один логический массив-состояние,
+хоть и нарезан на чанки). Под этот критерий у меня вышло **28 строк** —
+совпадает с замером; если владелец считал иначе (например, разворачивал
+`first_error_atomic`+kind+reason+payload+tid в пять), итоговая арифметика
+категорий не меняется, меняется только нумерация строк. Помечаю это явно, а не
+подгоняю задним числом.
+
+### ГЛАВНАЯ НАХОДКА (то, ради чего снимался инвентарь)
+
+Состояние «фибр запаркован» в текущем коде хранится в **ЧЕТЫРЁх независимых
+местах одновременно**, и ни одно не является единственным источником правды:
+
+1. `_nova_fiber_state == NOVA_FIBER_STATE_PARKED` (per-fiber, SpawnCtxBase);
+2. `_nova_park_state == NOVA_PARK_WAIT` (per-fiber, SpawnCtxBase, «gopark/goready
+   handshake», объявлен ЯВНО ортогональным #1 — комментарий fibers.h:1944
+   «Orthogonal to `_nova_fiber_state`»);
+3. `parked_chunks[slot] == true` (per-slot, NovaSchedState);
+4. плюс канал отмены дублируется: `scope->cancel_requested` (области),
+   `token->cancel_requested` (токена), `w->cancelled` (воркера, channels.h:452) —
+   три флага «отменено» для одного логического события.
+
+Это ровно комбинаторное пространство из диагноза №438: «запаркован по #1, но не
+по #3», «WAIT по #2, но RUNNING по #1» — комбинации, которые НИКТО не
+проектировал, но которые физически достижимы и которые прямо породили классы
+STALE-slot (§4 конвенции) и потерянного wake. У Go это ОДНО слово `gstatus`;
+`_Gwaiting` — единственный ответ на вопрос «запаркован ли». Наличие двух
+ортогональных per-fiber слов (`_nova_fiber_state` И `_nova_park_state`) —
+само по себе признак того, что консолидация к «одному слову Go» ещё НЕ
+сделана, лишь начата (Plan 83-go-cmn переименовал park/wake в gopark/goready,
+но оставил ДВА слова вместо одного).
+
+### Полная таблица 28 полей
+
+Категории (по правилу паритета плана 250):
+**A** — автомат состояний (жизненный цикл) → в одно слово;
+**1** — охранник фрагментации (у Go нет; прикрывает гонку раздробленности) → умирает;
+**2** — цена фичи Nova (у Go нет, но фича остаётся) → сохраняется;
+**3** — наследие (задача есть и у Go, у нас сложнее) → упрощается.
+
+Пишет/читает — сокращённо (файл:строка ключевого места).
+
+#### Группа I — per-fiber автомат (SpawnCtxBase, живёт по указателю через `mco_get_user_data`)
+
+| # | поле | тип | ПИШЕТ | ЧИТАЕТ | смысл | Go-экв. | кат. |
+|---|---|---|---|---|---|---|---|
+| 1 | `_nova_fiber_state` | atomic_int (IDLE/RUNNING/PARKED/DEAD) | `nova_fiber_state_cas` — воркер IDLE→RUNNING перед resume (runtime.c:1342), wake PARKED→IDLE (runtime.c:1489) | воркер перед `mco_resume`, wake-путь | владение resume: кто имеет право сделать `mco_resume` | `g.atomicstatus` (`_Gidle/_Grunnable/_Grunning/_Gwaiting/_Gdead`) — **прямой эквивалент** | **A** (это и есть ядро будущего слова) |
+| 2 | `_nova_park_state` | atomic_int (NIL/WAIT/READY/DISPATCHED) | `gopark`: store WAIT (nova_sched.h:274); `goready`: CAS READY→DISPATCHED (nova_sched.h:282); reset NIL (nova_sched.h:312) | commit-recheck в gopark, liveness-гейты | handshake «ready-до-park»: кто пере-очередит фибр | у Go **НЕТ отдельного слова** — gopark/goready делают весь handshake через `casgstatus`(`_Grunning↔_Gwaiting↔_Grunnable`); отдельный latch — наш артефакт | **A** (сливается в слово; при переходах через casgstatus-аналог не нужен) |
+| 3 | `_nova_cancel_mask_count` | atomic_int (глубина) | `nv_consume_enter_shield` ++ / `nv_consume_leave_shield` -- (D188) | точки cancel-check (yield, вход в suspend) | глубина cancel-shield: >0 → отложить cancel-throw | у Go нет (нет принудительной отмены) | **2** (фича cancel-shield; НЕ влезает в слово — нужен счётчик вложенности, не бит) |
+
+#### Группа II — per-fiber хвостовые поля (SpawnCtxBase, не «состояние», но рядом)
+
+| # | поле | тип | ПИШЕТ | ЧИТАЕТ | смысл | Go-экв. | кат. |
+|---|---|---|---|---|---|---|---|
+| 4 | `_nova_park_state`-спутник `schedlink` | mco_coro* (интрузивная ссылка) | `nova_runq_put_slow` при спилле в global overflow | global runq drain | ссылка в overflow-очереди | `g.schedlink` — **прямой эквивалент** | 3 (паритет; остаётся как ссылка, не как состояние — в счёт «слова» не входит, показан для полноты) |
+
+*(строка 4 — единственная «не-состояние» строка в таблице; включена, потому что
+физически лежит в том же SpawnCtxBase; в консолидацию слова не входит,
+категорию считаю как наследие-паритет.)*
+
+#### Группа III — per-slot каталог парковки (NovaSchedState, chunked stable-address)
+
+| # | поле | тип | ПИШЕТ | ЧИТАЕТ | смысл | Go-экв. | кат. |
+|---|---|---|---|---|---|---|---|
+| 5 | `parked_chunks[slot]` | bool (atomic SEQ_CST) | `_nova_park_mark_slot` store true (nova_sched.h:335); wake store false | `nova_scope_alloc_slot` (§4 три условия), liveness-скан (fibers.h:1143) | «слот запаркован» — **ДУБЛИКАТ поля #1==PARKED** | у Go нет — Go спрашивает `g.atomicstatus`, а не пер-слот таблицу | **A** (это дубль слова; исчезает вместе с консолидацией) |
+| 6 | `parked_co_chunks[slot]` | mco_coro* (atomic) | `gopark` = mco_running() | cancel-walk (идентичность реально запаркованного, §5) | какой co реально запаркован в слоте | у Go нет пер-слот карты — `g` адресуется напрямую | **3** (идентичность co; у Go «объект знает себя» — упрощается: слово живёт на самом co) |
+| 7 | `pending_handle_chunks[slot]` | void* (atomic) | arm sleep/socket/file | stop_cb-путь при cancel/wake | uv-ручка, которую надо закрыть при отмене | Go: netpoll/`g.waiting`(sudog) держит ресурс у горутины | **3** (наследие; переезжает в per-fiber wait-дескриптор) |
+| 8 | `pending_stop_cb_chunks[slot]` | fn-ptr (atomic) | arm | cancel/wake | как гасить ручку (sync/async, NovaStopMode) | Go: фиксированный unpark netpoller'а, не пер-слот cb | **3** (наследие; в wait-дескриптор) |
+| 9 | `NovaSchedState.capacity` | int (atomic RELEASE/ACQUIRE) | `nova_sched_grow_state` | все аксессоры чанков (§2) | сколько слотов опубликовано | Go: длина `allgs` под `allglock` | **3** (наследие; при жизни слова на co каталог не нужен) |
+
+#### Группа IV — per-scope состояние области (NovaFiberQueue)
+
+| # | поле | тип | ПИШЕТ | ЧИТАЕТ | смысл | Go-экв. | кат. |
+|---|---|---|---|---|---|---|---|
+| 10 | `cancel_requested` | atomic_bool | `nova_cancel_token_*` store true (fibers.h:1551,1637) | каждый yield/select (channels.h:1096) | «этой области заказана отмена» (broadcast детям) | у Go нет области — ближайшее `context.Done()` (канал), не флаг на планировщике | **2** (structured concurrency: область владеет детьми и может их отменить) |
+| 11 | `pending_remote` | atomic_int | child epilogue release-dec; spawn inc | `supervised_run`/`drain` ждут ноль | счётчик живых удалённых детей | у Go нет (горутина не владеет детьми) | **2** (прямой пример владельца — цена structured concurrency, ОСТАЁТСЯ) |
+| 12 | `pending_sweeps` | atomic_int | worker post-mortem sweep dec; child epilogue inc | tail `supervised_run_impl` + `drain` | дети, чьё тело кончилось, но worker-side sweep ещё нет (защита stack-scope) | у Go нет: `g` в куче, sweep владеет планировщик, стек-области нет | **2** (цена «область на стеке + владение детьми»; см. вопрос владельцу Q3) |
+| 13 | `pending_driver_jobs` | atomic_int | inc перед submit cancel-job; dec в конце (fibers.h:521 контракт) | `supervised_run_impl` спин до нуля | outstanding CANCEL_SCOPE-джобы драйвера, держащие &scope | у Go нет: cancel не «джоб с указателем на стек» | **2** (цена cancel-via-driver+стек-область; тот же класс, что #12; см. Q3) |
+| 14 | `first_error_atomic` (+`_kind`/`_reason`/`_payload`/`_tid`) | atomic_ptr + спутники | worker throw: CAS NULL→msg (первый wins) | main после `pending_remote==0` | первая ошибка любого ребёнка (для re-throw/супервизии) | у Go нет агрегации ошибок детей | **2** (фича: распространение ошибок/супервизия) |
+| 15 | `slot_lock` | atomic_int (спинлок) | `nova_scope_alloc_slot`/`free_slot` CAS 0↔1 (fibers.h:505) | там же | сериализация выдачи слота против гонки раздробленности | у Go нет замка на горутину (замки на очередь P, не на каждую g) | **1** (ЭТАЛОННЫЙ охранник фрагментации — план стр.116; умирает) |
+| 16 | `child_lock` | atomic_int (спинлок) | `nova_scope_grow_children` copy+swap; `report_child_kinded` (fibers.h:612) | там же | сериализация grow-vs-report массива детей | у Go нет | **1** (охранник; комментарий кода сам зовёт его «same spinlock shape as slot_lock») |
+| 17 | `_drain_started` | nova_bool (R2-трипваер) | top of drain loop | `nova_scope_grow_children` assert | «drain начался» — ловит grow-during-drain | у Go нет (нет фазы drain стек-области) | **1** (латч-охранник; при заморозке capacity/консолидации беспредметен) |
+| 18 | `has_supervisor` | nova_bool | codegen на входе scope | drive-loop | режим отложенных решений супервизора | у Go нет | **2** (фича: supervision-as-effect) |
+| 19 | `_deciding` | nova_bool | `process_decisions` | там же | re-entrancy латч drive-машины супервизора | у Go нет | **2** (спутник супервизии; малый; остаётся с фичей) |
+| 20 | `interrupt_pending` (+`via_ptr`/`value`/`value_ptr`) | nova_bool + payload | handler-метод `interrupt v` через границу | `supervised_run` на main-flow re-issue | отложенный `interrupt` через mco-границу | у Go нет (нет алгебраических эффектов) | **2** (фича: эффекты/`interrupt`) |
+| 21 | `child_error[]`/`child_ctx[]` (+`child_count`/`child_capacity`) | массивы + int | worker report; owner grow | drive-loop, retention | пер-ребёнок retention ошибки/ctx | у Go нет | **2** (фича: супервизия хранит отказы детей) |
+| 22 | `bound_token` | void*→NovaCancelToken* | `nova_cancel_token_bind`/unbind | конструкторы ресурсов | обратная ссылка на связанный токен | у Go нет | **2** (фича: отмена) |
+| 23 | `deadline_ns` (+`early_deadline_timer`, +`saved_active_scope`, +`owner_scope`/`owner_slot`) | int64 + ptrs | codegen `supervised(deadline:)`; `scope_init` наследует min | `supervised_run_impl`, early-deadline arm | дедлайн области + идентичность владельца для доставки cancel в прямую блокирующую операцию | у Go есть, но в `context`, не на планировщике | **2** (фича: deadline/timeout структурированной области) |
+| 24 | `armed_sleeps_head` | list-head (driver-only) | driver insert/unlink | cancel-walk области | список armed-снов области для cancel | Go: таймеры в heap netpoller'а, не список на области | **3** (наследие; организация таймеров упрощается по Go-модели) |
+| 25 | `vclock_entries` (+`count`/`cap`) | массив (не атомик, single-thread by contract) | mut_clock virtual sleep | idle-advance | виртуальные часы для тестов | у Go нет | **2** (фича тестирования; NOVA_MAXPROCS=1 by contract) |
+
+#### Группа V — состояние под-объектов (спутники фибра/слота)
+
+| # | поле | тип | ПИШЕТ | ЧИТАЕТ | смысл | Go-экв. | кат. |
+|---|---|---|---|---|---|---|---|
+| 26 | `NovaSleepState.stage` | atomic_int (8 значений: PENDING/CLOSING/CLOSED + DRV_NEW/ARMED/FIRING/CANCEL_REQ/CLOSED) | timer_cb/close_cb/cancel-job (single-mutator driver) | park-predicate ACQUIRE | автомат ЖИЗНИ ТАЙМЕРА (не фибра!) | `timer.status` раннего Go (`timerWaiting/timerRunning/timerDeleted/...`) — **прямой эквивалент** | **3** (ВАЖНО: это состояние таймера, не фибра — паритет с Go; см. Q5. Плана стр.104 отнесла `stage` к автомату фибра — по коду это НЕ так) |
+| 27 | `NovaEarlyDl.fired` | atomic_int (CAS 0→1) | timer_cb или disarm | оба пути | one-shot claim: кто сделал fire-или-disarm early-дедлайна | Go: claim таймера при срабатывании | **2** (спутник фичи deadline; остаётся) |
+| 28 | `NovaBlockingState.done` | atomic_bool | `after_work_cb` (workpool/owner loop) RELEASE | park-predicate ACQUIRE | завершение блокирующей leaf-работы (uv_work) | Go: sysmon/netpoll-completion блокирующего syscall | **3** (наследие; тот же park/wake-класс — сливается в единый wait-протокол) |
+
+*(Спутники, НЕ вошедшие в 28, но замеченные — для честности: `NovaChildError.published`
+(atomic_bool, публикация пер-ребёнок слота — категория 2, с #21); `NovaCancelToken.cancel_requested`
+(atomic_bool — категория 2, сам токен); `w->cancelled`/`w->preempt_flag`/`w->stop`/`w->pending_count`
+(NovaWorker — это состояние P/M-воркера, НЕ фибра: `preempt_flag`≈`stackguard0`, `stop`≈остановка P,
+паритет с Go — вне мандата консолидации фибра); `NovaRunq.head/tail`, `NovaGlobalRunq.size/lock`
+(очереди планировщика — прямой паритет `P.runq`+`sched.runq`/`sched.lock`, остаются). Их отношу к
+инфраструктуре планировщика уровня Go-P/M, а не к «состоянию фибра», поэтому в счёт 28 не беру —
+но фиксирую, что `w->cancelled` — ЧЕТВЁРТЫЙ дубль флага отмены, кандидат на слияние с #10 в Ф.2.)*
+
+### Сводка по категориям (из 28)
+
+| Категория | Что | Строки | Кол-во | Судьба |
+|---|---|---|---|---|
+| **A** — автомат состояний | #1 `_nova_fiber_state`, #2 `_nova_park_state`, #5 `parked[]` | 3 | **3** | сливаются в ОДНО слово |
+| **1** — охранник фрагментации | #15 `slot_lock`, #16 `child_lock`, #17 `_drain_started` | 3 | **3** | умирают с консолидацией |
+| **2** — цена фичи Nova | #3, #10, #11, #12, #13, #14, #18, #19, #20, #21, #22, #23, #25, #27 | 14 | **14** | сохраняются (данные фич) |
+| **3** — наследие | #4 `schedlink`, #6 `parked_co[]`, #7 `pending_handle[]`, #8 `pending_stop_cb[]`, #9 `capacity`, #24 `armed_sleeps_head`, #26 `stage`, #28 `done` | 8 | **8** | упрощаются (переезд в wait-дескриптор / паритет-таймер) |
+
+**Итого 3(A) + 3(охр.) + 14(фича) + 8(наследие) = 28.** Ключевой вывод для Ф.1:
+из 28 полей ТОЛЬКО **3 (категория A)** — это собственно жизненный цикл фибра,
+и они уже сейчас дублируют друг друга. Ещё **3 (категория 1)** существуют лишь
+чтобы прикрыть гонки этого дубляжа. Значит «одно слово» устраняет **6 полей
+напрямую** (3 автомата + 3 охранника), а категория 3 (**8 полей**) упрощается
+следом (парковка/таймеры переезжают на модель Go). Категория 2 (**14 полей**) —
+это НЕ автомат состояний, а данные фич Nova (structured concurrency, отмена,
+супервизия, эффекты, deadline, тест-часы); они и не должны исчезать по правилу
+владельца, и «одно слово» их не касается.
