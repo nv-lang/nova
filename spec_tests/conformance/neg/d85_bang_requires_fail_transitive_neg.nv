@@ -1,0 +1,40 @@
+// EXPECT_COMPILE_ERROR E_BANG_REQUIRES_FAIL
+//
+// Plan 221.1 п.11 (№428, D62 §Правило 2 амендмент): the export-boundary
+// `Fail`-transitivity check is a PROPERTY of the resolved call graph, not
+// a syntax search for a literal `!!` token inside the `export fn`'s OWN
+// body. This fixture is the exact class the old (form-based) checker
+// missed — reported via `nova check` before this window's fix:
+//
+//   export fn api(x int) -> int => level1(x)   // PASS'd silently
+//
+// where `level1` calls `level2` calls `level3`, and only `level3` has a
+// literal `risky(x)!!` — none of `level1`/`level2`/`api` ever wrote `!!`
+// or declared `Fail`. See `docs/plans/wip/PROGRESS-p428.md` for the full
+// matrix (closure/method/generic/defer/handler cells) this class fix
+// covers; `d85_bang_requires_fail_pos.nv` is the regression-guard
+// companion (legitimate forms that must stay green).
+module neg.d85_bang_requires_fail_transitive_neg
+
+type ParseErr { msg str }
+
+fn parse(s str) -> Result[int, ParseErr] {
+    if s == "" { Err(ParseErr { msg: "empty" }) } else { Ok(1) }
+}
+
+// Private helper chain, three hops deep — only `level3` has the literal
+// `!!`. `level2`/`level1` never mention `Fail`/`!!` at all.
+fn level3(s str) -> int {
+    ro v = parse(s)!!
+    v
+}
+fn level2(s str) -> int => level3(s) + 1
+fn level1(s str) -> int => level2(s) + 1
+
+// ✗ exported fn, NO literal `!!`/`throw` anywhere in ITS OWN body, NO
+// `Fail` in its signature — but transitively reaches `level3`'s `!!`
+// through two intermediate private helpers, neither of which declares
+// `Fail` either.
+export fn bad_transitive_use(s str) -> int {
+    level1(s)                                    // ❌ [E_BANG_REQUIRES_FAIL]
+}
