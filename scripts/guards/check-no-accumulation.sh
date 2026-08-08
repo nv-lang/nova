@@ -48,31 +48,40 @@ CUTOFF=$(( NOW - STALE_DAYS * 86400 ))
 STALE_LIST=""
 STALE_N=0
 UNMERGED_N=0
-UNMERGED_COMMITS=0
 
-# Порог «перестала двигаться» берётся по КОММИТТЕР-дате последнего коммита:
-# автор-дата переживает rebase и cherry-pick, коммиттер-дата — нет, а нас
-# интересует, когда ветку трогали в последний раз, а не когда сочинили патч.
-while read -r br; do
+# СКОРОСТЬ — часть работоспособности стража, а не удобство. Первая редакция
+# звала `rev-list --count main..<ветка>` для КАЖДОЙ из 72 веток при 7851
+# несведённом коммите и шла больше двух минут; страж, тормозящий гейт, будет
+# отключён (ровно урок №475 — механизм энфорса без предела парализует то, что
+# охраняет). Здесь ОДИН запрос отдаёт и список несведённых веток, и дату
+# последнего коммита; дорогой подсчёт коммитов делается ТОЛЬКО для замерших,
+# которых на порядок меньше, и только ради текста сообщения.
+#
+# Порог «перестала двигаться» берётся по КОММИТТЕР-дате: автор-дата переживает
+# rebase и cherry-pick, коммиттер-дата — нет, а нас интересует, когда ветку
+# трогали в последний раз, а не когда сочинили патч.
+while read -r br ts; do
     [ -z "$br" ] && continue
     [ "$br" = "main" ] && continue
-    n=$(git rev-list --count "main..$br" 2>/dev/null) || continue
-    [ "${n:-0}" -eq 0 ] && continue
     UNMERGED_N=$(( UNMERGED_N + 1 ))
-    UNMERGED_COMMITS=$(( UNMERGED_COMMITS + n ))
-    ts=$(git log -1 --format=%ct "$br" 2>/dev/null)
-    [ -z "$ts" ] && continue
+    [ -z "${ts:-}" ] && continue
     if [ "$ts" -lt "$CUTOFF" ]; then
         STALE_N=$(( STALE_N + 1 ))
         age=$(( (NOW - ts) / 86400 ))
+        # `< /dev/null` ОБЯЗАТЕЛЕН: без него git внутри `while read` вычерпывает
+        # стандартный ввод цикла, и обход обрывается на первой же замершей
+        # ветке. Поймано сверкой — страж показывал 4 замерших там, где тот же
+        # обход без вызова git давал 48. Молчаливая недосчитанность у стража
+        # опаснее его отсутствия: зелёный вердикт на растущем долге.
+        n=$(git rev-list --count "main..$br" 2>/dev/null < /dev/null)
         STALE_LIST="$STALE_LIST
-    $br — $n коммит(ов), без движения $age дн."
+    $br — ${n:-?} коммит(ов), без движения $age дн."
     fi
 done <<EOF
-$(git for-each-ref --format='%(refname:short)' refs/heads/ 2>/dev/null)
+$(git for-each-ref --no-merged main --format='%(refname:short) %(committerdate:unix)' refs/heads/ 2>/dev/null)
 EOF
 
-echo "check-no-accumulation: несведённых веток $UNMERGED_N (коммитов $UNMERGED_COMMITS), из них замерших >${STALE_DAYS}дн: $STALE_N"
+echo "check-no-accumulation: несведённых веток $UNMERGED_N, из них замерших >${STALE_DAYS}дн: $STALE_N"
 
 BASE=0
 if [ -f "$BASELINE" ]; then

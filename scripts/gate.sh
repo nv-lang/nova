@@ -94,6 +94,10 @@ bash "$ROOT/scripts/guards/check-bug-number-sync.sh" "$ROOT" || fail "новый
 # мёртвого co). Страж ловит новый resume-сайт, открытый в обход
 # nova_resume_fiber (fibers.h).
 echo "== gate: expect-markers (неизвестный EXPECT_* раннер молча игнорирует — №453) =="
+echo "== gate: накопление несведённых веток (никогда не копи) =="
+bash "$ROOT/scripts/guards/check-no-accumulation.sh" "$ROOT" || fail "накопление выросло: замершие несведённые ветки"
+bash "$ROOT/scripts/guards/selftest/test-check-no-accumulation.sh" >/dev/null || fail "селфтест check-no-accumulation провален"
+
 bash "$ROOT/scripts/guards/check-expect-markers.sh" "$ROOT" || fail "неизвестный EXPECT_* в тесте"
 bash "$ROOT/scripts/guards/selftest/test-check-expect-markers.sh" >/dev/null || fail "селфтест expect-markers"
 
