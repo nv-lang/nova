@@ -44,13 +44,28 @@ if [ -z "$markers" ]; then
 fi
 
 # Один проход: склеиваем реестры и планы в память, дальше сверяем без пере-чтения.
-haystack=$(cat $REGISTRIES docs/plans/*.md 2>/dev/null)
+# СКОРОСТЬ — часть работоспособности. Прежняя редакция клала ВСЮ документацию
+# (16 МБ) в переменную оболочки и для КАЖДОГО из ~391 маркера сканировала её
+# целиком через `case "$haystack" in *"$m"*)`. Это ~6 ГБ работы в bash и 59
+# секунд из 150 всего гейта — замерено профилировщиком `gate-profile.sh` после
+# вопроса владельца «что сколько занимает». Здесь ОДИН проход `grep -F -f`:
+# шаблоны берутся файлом, документация читается один раз.
+PATFILE=$(mktemp) || exit 2
+trap 'rm -f "$PATFILE"' EXIT
+printf '%s
+' $markers > "$PATFILE"
+
+FOUND=$(cat $REGISTRIES docs/plans/*.md 2>/dev/null         | grep -ohFf "$PATFILE" 2>/dev/null | sort -u)
 
 missing=""
 n=0
 for m in $markers; do
-    case "$haystack" in
-        *"$m"*) : ;;
+    case "
+$FOUND
+" in
+        *"
+$m
+"*) : ;;
         *) missing="$missing$m
 "; n=$((n + 1)) ;;
     esac
