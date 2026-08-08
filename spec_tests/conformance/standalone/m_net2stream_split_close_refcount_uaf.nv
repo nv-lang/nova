@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 // Split-half twin of [M-net2stream-close-refcount-uaf]
 // (m_net2stream_close_refcount_uaf.nv) — 221.1 bug-sweep #12. Covers the
-// "complication" called out in the followup: TcpStream.split() shares ONE
+// "complication" called out in the followup: TcpStream.into_split() shares ONE
 // underlying NovaNet2Stream between TcpReadHalf/TcpWriteHalf via a C-side
 // `split_refcount` (net_tcp_mark_split/net_tcp_close in net.c), independent
 // of the [M-boehm-...] variant-(b) existence-refcount this fix adds. The two
@@ -54,7 +54,7 @@ test "supervised(timeout:) cancels a while-loop-retried split-half read(), both 
                         Ok(consume s) => s
                         Err(_) => panic("connect failed")
                     }
-                    mut (cli_rd, cli_wr) = conn.split()
+                    consume (cli_rd, cli_wr) = conn.into_split()
 
                     mut buf []u8 = []u8.new()
                     buf.resize(16, 0 as u8)
