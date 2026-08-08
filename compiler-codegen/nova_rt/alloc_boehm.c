@@ -73,6 +73,89 @@ static uint64_t _now_ns(void) {
 
 extern void _nova_install_segv_handler(void);  /* Plan 83.11 §12.31 — segv_diag.c */
 
+/* ─── 221.1 №474 (родитель №470): Boehm STW-пауза — гистограмма длительностей ───
+ *
+ * getenv-gated (`NOVA_GC_PAUSE_DIAG=1`) диагностика: колбэк
+ * `GC_set_on_collection_event` РЕГИСТРИРУЕТСЯ только когда флаг взведён (не
+ * getenv() на каждое событие — сам колбэк тоже холодный путь, STW-паузы редки
+ * по определению) — обычная сборка платит ровно ОДИН `getenv()` при
+ * `nova_gc_init()` и больше ничего. Бракетируем `GC_EVENT_PRE_STOP_WORLD`
+ * (мир вот-вот встанет) .. `GC_EVENT_POST_START_WORLD` (мир снова бежит) —
+ * это и есть интервал, в течение которого ВСЕ файберы/воркеры физически не
+ * могли продвинуться, включая cooperative-планировщик Vela и join-loop
+ * дедлайн-гейт `nova_supervised_run_impl` (см. реестр №470: дедлайн
+ * вычисляется и сравнивается корректно, но между arm и check реально
+ * проходит больше времени, чем запланировано — эта гистограмма даёт числа
+ * ДЛЯ ЭТОГО расхождения, а не гипотезу). Один активный STW за раз
+ * (Boehm сериализует запуск коллектора), поэтому `_stw_start_ns` — простая
+ * не-atomic переменная, без гонки писателей. */
+#define NOVA_GC_PAUSE_BUCKETS 10
+static const double _nova_gc_pause_bucket_ms[NOVA_GC_PAUSE_BUCKETS - 1] = {
+    1, 2, 5, 10, 25, 50, 100, 250, 500
+};
+static uint64_t _nova_gc_pause_hist[NOVA_GC_PAUSE_BUCKETS];
+static uint64_t _nova_gc_pause_count = 0;
+static uint64_t _nova_gc_pause_total_ns = 0;
+static uint64_t _nova_gc_pause_max_ns = 0;
+static uint64_t _nova_gc_pause_stw_start_ns = 0;
+
+static void _nova_gc_pause_event_cb(GC_EventType ev) {
+    if (ev == GC_EVENT_PRE_STOP_WORLD) {
+        _nova_gc_pause_stw_start_ns = _now_ns();
+    } else if (ev == GC_EVENT_POST_START_WORLD) {
+        uint64_t start = _nova_gc_pause_stw_start_ns;
+        if (start == 0) return;  /* defensive: mismatched event pair */
+        uint64_t dur_ns = _now_ns() - start;
+        double dur_ms = (double)dur_ns / 1e6;
+        int bucket = NOVA_GC_PAUSE_BUCKETS - 1;
+        for (int i = 0; i < NOVA_GC_PAUSE_BUCKETS - 1; i++) {
+            if (dur_ms < _nova_gc_pause_bucket_ms[i]) { bucket = i; break; }
+        }
+        __atomic_fetch_add(&_nova_gc_pause_hist[bucket], 1, __ATOMIC_RELAXED);
+        __atomic_fetch_add(&_nova_gc_pause_count, 1, __ATOMIC_RELAXED);
+        __atomic_fetch_add(&_nova_gc_pause_total_ns, dur_ns, __ATOMIC_RELAXED);
+        uint64_t cur_max = __atomic_load_n(&_nova_gc_pause_max_ns, __ATOMIC_RELAXED);
+        while (dur_ns > cur_max &&
+               !__atomic_compare_exchange_n(&_nova_gc_pause_max_ns, &cur_max, dur_ns,
+                                             0, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {}
+        _nova_gc_pause_stw_start_ns = 0;
+    }
+}
+
+static void _nova_gc_pause_diag_dump(void) {
+    if (_nova_gc_pause_count == 0) {
+        fprintf(stderr, "[gc-pause-diag] no STW pauses recorded\n");
+        return;
+    }
+    fprintf(stderr,
+        "[gc-pause-diag] count=%llu total_ms=%.2f max_ms=%.2f mean_ms=%.3f\n",
+        (unsigned long long)_nova_gc_pause_count,
+        (double)_nova_gc_pause_total_ns / 1e6,
+        (double)_nova_gc_pause_max_ns / 1e6,
+        (double)_nova_gc_pause_total_ns / 1e6 / (double)_nova_gc_pause_count);
+    static const char* labels[NOVA_GC_PAUSE_BUCKETS] = {
+        "<1ms", "<2ms", "<5ms", "<10ms", "<25ms", "<50ms", "<100ms", "<250ms",
+        "<500ms", ">=500ms"
+    };
+    for (int i = 0; i < NOVA_GC_PAUSE_BUCKETS; i++) {
+        if (_nova_gc_pause_hist[i] > 0) {
+            fprintf(stderr, "[gc-pause-diag]   %-8s %llu\n", labels[i],
+                    (unsigned long long)_nova_gc_pause_hist[i]);
+        }
+    }
+    fflush(stderr);
+}
+
+/* Cross-TU snapshot for correlating a specific event (e.g. a supervised
+ * deadline firing, fibers.h) against cumulative GC-pause stats AT THAT
+ * MOMENT. Cheap relaxed loads — safe to call even when NOVA_GC_PAUSE_DIAG
+ * was never set (all-zero in that case, since the callback never runs). */
+void nova_gc_pause_diag_snapshot(uint64_t* count, uint64_t* total_ns, uint64_t* max_ns) {
+    if (count)    *count    = __atomic_load_n(&_nova_gc_pause_count, __ATOMIC_RELAXED);
+    if (total_ns) *total_ns = __atomic_load_n(&_nova_gc_pause_total_ns, __ATOMIC_RELAXED);
+    if (max_ns)   *max_ns   = __atomic_load_n(&_nova_gc_pause_max_ns, __ATOMIC_RELAXED);
+}
+
 void nova_gc_init(void) {
     /* Plan 83.11 §12.31: install in-process SEGV localizer FIRST (before any
      * potentially-faulting init). Gated by NOVA_DIAG_SEGV env. No-op on Linux. */
@@ -92,6 +175,34 @@ void nova_gc_init(void) {
     GC_set_no_dls(1);
 
     GC_INIT();
+
+    /* 221.1 №474 (родитель №470): сократить сами STW-паузы, не подделывать
+     * дедлайн-часы (запрет интегратора — компенсация паузы в сравнении с
+     * `_dl_ns` прячет симптом, а не чинит его).
+     *
+     * (a) Инкрементальный сборщик — переключает Boehm на generational
+     * write-barrier mark вместо полного stop-the-world марка; каждая
+     * отдельная пауза короче (мельче инкременты), хотя пауз может стать
+     * больше числом. Замер (getenv A/B, `NOVA_GC_PAUSE_DIAG=1`) на этой же
+     * машине шумный (см. реестр №474 — параллельные cargo/rustc из других
+     * окон эту же машину постоянно грузят, `scripts/tools/measure.sh`
+     * отказывает мерить бОльшую часть сессии), но НЕ показал регресса ни на
+     * одной чистой выборке — включаем ПО УМОЛЧАНИЮ (не только для замера);
+     * `NOVA_GC_INCREMENTAL=0` — явный откат на полный сборщик, если для
+     * какой-то нагрузки инкрементальный вдруг окажется хуже.
+     *
+     * (b) Ранний прогрев кучи (`GC_expand_hp`) — избегает СЕРИИ мелких
+     * grow-and-collect циклов в начале процесса (типичны для supervised-
+     * timeout-тяжёлых тестов/серверов: Channel.new/AtomicBool.new/
+     * NovaEarlyDl на каждый scope). 4 МиБ — на два порядка больше типичной
+     * кучи маленькой тестовой программы, но пренебрежимо мало против
+     * серверного бюджета памяти; безопасный, обратимый параметр, НЕ меняет
+     * ничьё наблюдаемое поведение, кроме частоты триггера коллектора. */
+    if (!getenv("NOVA_GC_INCREMENTAL") || strcmp(getenv("NOVA_GC_INCREMENTAL"), "0") != 0) {
+        GC_enable_incremental();
+    }
+    GC_expand_hp(4 * 1024 * 1024);
+
     /* Allow GC to run finalisers / collect aggressively.
      *
      * [M-boehm-large-buffer-retention-fiber-reuse] DISCRIMINATOR (env-gated,
@@ -106,6 +217,14 @@ void nova_gc_init(void) {
     {
         const char* e = getenv("NOVA_GC_NO_INTERIOR");
         GC_set_all_interior_pointers((e && e[0] == '1') ? 0 : 1);
+    }
+
+    /* 221.1 №474: STW pause histogram — see comment above the callback.
+     * Registered ONLY when the env var is set; dump wired via atexit() so
+     * callers don't need a matching public shutdown hook. */
+    if (getenv("NOVA_GC_PAUSE_DIAG")) {
+        GC_set_on_collection_event(_nova_gc_pause_event_cb);
+        atexit(_nova_gc_pause_diag_dump);
     }
 }
 
