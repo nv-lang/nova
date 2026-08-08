@@ -6,7 +6,8 @@
 # Состав (CLAUDE.md/dev-workflow):
 #   1) cargo build --release (nova-cli)
 #   2) мега-CU spec_tests/conformance ОДНИМ CU: exit=0 И строка "PASS: N  FAIL: 0" присутствует
-#   3) nova check std/src (БЕЗ NOVA_STD_PATH): канон "PASS: 144  FAIL: 27  WARN: 1057"
+#   3) nova check std/src (БЕЗ NOVA_STD_PATH): канон "PASS: 147  FAIL: 26  WARN: 1078"
+#      (ассертится ТОЛЬКО FAIL — см. ~:212; PASS/WARN растут от новых файлов законно)
 #   4) nova lint --deny std/src: канон 0 находок
 #   5) nova lint --deny spec_tests: канон 0 находок (221.1 №416 хвост)
 #   6) флагман examples/flagship/aggregator --strict-effects: строка "built:"
