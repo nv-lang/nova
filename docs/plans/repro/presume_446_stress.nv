@@ -1,0 +1,46 @@
+// presume_446_stress.nv — stress repro for 221.1 registry entries №446/№447
+// (окно presume-cas-gate, 2026-08-08).
+//
+// GOAL: try to organically materialize the "duplicate pop of an already-
+// dead `co`" race described in №446 (runtime.c:1340-1350/1416-1454 pre-
+// fix) — many CONCURRENT fibers parked at once, woken by a SINGLE mass
+// `tok.cancel()` (the boehm-eager-cost trigger shape from mn-coding-
+// conventions.md §10: "массовый tok.cancel() будит 2000 запаркованных
+// файберов разом"), spread across MULTIPLE workers (NOVA_MAXPROCS>1) so
+// cross-worker steal / wake_pending duplicate-push races (runtime.c
+// :1327-1334) have real concurrency to race under, repeated across many
+// ROUNDS within a single process run to multiply attempts.
+//
+// Run under scripts/tools/stress_bisect.sh with NOVA_DIAG_446=1 set in the
+// environment (the direct-.exe path does NOT honour `// ENV` directives —
+// export NOVA_MAXPROCS by hand for a stress run, see debugging-races.md
+// §3.3). `nova test` (this file's own harness) DOES honour the ENV
+// directives below for a single run.
+//
+// ENV NOVA_MAXPROCS=8
+// ENV NOVA_MAX_FIBERS=4000
+
+module nova_repro.presume_446_stress
+
+import std.time.duration
+
+test "stress: repeated mass-cancel of many concurrently parked fibers, multi-worker (221.1 №446/№447 diagnosis)" {
+    for _round in 0..50 {
+        ro tok = CancelToken.new()
+        supervised(cancel: tok) {
+            for _ in 0..400 {
+                spawn { (2_000).to_millis().sleep() }
+            }
+            // A cluster of racing cancellers (not just one) — more chances
+            // for concurrent wake sources to collide on the same parked
+            // fiber (organic timer-fire vs mass-cancel wake).
+            for _ in 0..4 {
+                spawn {
+                    (0).to_millis().sleep()
+                    tok.cancel()
+                }
+            }
+        }
+    }
+    assert(true)
+}
