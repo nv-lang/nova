@@ -10,6 +10,8 @@
 #   4) nova lint --deny std/src: канон 0 находок
 #   5) nova lint --deny spec_tests: канон 0 находок (221.1 №416 хвост)
 #   6) флагман examples/flagship/aggregator --strict-effects: строка "built:"
+#   7) флагман examples/flagship/aggregator: nova test (тест-пиры + 8 regressions/**,
+#      --skip src/main — не тест, живой сервер): "PASS: N  FAIL: 0" (221.1 №454)
 set -u
 ROOT="$(pwd)"
 MAIN_REPO="d:/Sources/nv-lang/nova"
@@ -256,6 +258,38 @@ echo "== gate: flagship aggregator --strict-effects =="
 FLAG_LINE=$("$NOVA" build "$ROOT/examples/flagship/aggregator/src/main.nv" --strict-effects 2>&1 | sed -e "s/\[[0-9;]*m//g" | tail -1)
 echo "flagship :: $FLAG_LINE"
 echo "$FLAG_LINE" | grep -q "built:" || fail "flagship not built: '$FLAG_LINE'"
+
+# Реестр 221.1 №454 (аудит тестов, 2026-08-08): `nova build .../src/main.nv`
+# выше только СОБИРАЕТ — тест-пиры (`aggregate_test.nv`, `report_json_test.nv`,
+# `live_test.nv`) и 8 `regressions/**`-фикстур не входят в library-сборку и
+# жили НЕ ГОНЯЕМЫМИ никем; `aggregate_test.nv`'s "mixed fan-out" тест был
+# красным незамеченно. `src/main.nv` само — не тест (живой сервер, `fn main()`
+# без `test`-блоков блокируется навсегда) — `--skip src/main` держит его вне
+# `nova test`-скана; сборка main.nv уже проверена шагом выше.
+#
+# ИЗВЕСТНЫЙ ФЛЕЙК (не ослаблять/не ретраить здесь — тест авторитетен):
+# `[M-flagship-aggregate-mixed-fanout-flake]` (№20) — "mixed fan-out"
+# наблюдался КРАСНЫМ ~1/3 повторов на этой же машине НЕЗАВИСИМО от build
+# `--jobs` и от ширины бюджета (проверено: --jobs 1 НЕ даёт 100% зелёного).
+# Приёмкой №454 (2026-08-08) обнаружен ВТОРОЙ, более тяжёлый флейк того же
+# класса (spawn+supervised+channel) в `regressions/spawn_capture_value_struct`
+# — ~4/6 повторов КРАСНЫЕ уже на `main`, с щедрым запасом (timeout 200ms
+# против sleep 10ms) — margin явно не при чём, похоже на живую гонку в
+# рантайме (кандидат на тот же корень, что и К1 №446/№447 — dup mco_destroy/
+# sweep на resume/destroy/sweep сайтах spawn/supervised). Шаг НАМЕРЕННО не
+# смягчается retry/skip: он ОБЯЗАН ронять гейт при падении, чтобы гниль была
+# видна, а не тонула — расследование живой гонки вне мандата этого окна
+# (compiler/nova_rt), передано интегратору.
+echo "== gate: flagship aggregator tests + regressions (nova test, №454) =="
+FLAG_TEST_LOG="${TMPDIR:-/tmp}/gate_flagship_test_$$.log"
+"$NOVA" test "$ROOT/examples/flagship/aggregator" --skip src/main >"$FLAG_TEST_LOG" 2>&1
+FLAG_TEST_EXIT=$?
+FLAG_TEST_LINE=$(sed -e "s/\[[0-9;]*m//g" "$FLAG_TEST_LOG" | grep -E "^PASS: [0-9]+ +FAIL: [0-9]+" | tail -1)
+echo "flagship test :: $FLAG_TEST_LINE"
+echo "$FLAG_TEST_LINE" | grep -qE "^PASS: [0-9]+ +FAIL: [0-9]+" \
+    || fail "flagship test: строки PASS/FAIL нет вовсе (краш? см. $FLAG_TEST_LOG)"
+[ "$FLAG_TEST_EXIT" -eq 0 ] || { grep -E "RUN-FAIL|CC-FAIL|TIMEOUT" "$FLAG_TEST_LOG" | head -10 >&2; fail "flagship test exit=$FLAG_TEST_EXIT (см. $FLAG_TEST_LOG)"; }
+echo "$FLAG_TEST_LINE" | grep -qE "FAIL: 0([^0-9]|$)" || fail "flagship test: FAIL != 0 (см. $FLAG_TEST_LOG)"
 
 echo "== gate: D-number uniqueness =="
 # 2026-07-30: послабление под D431 СНЯТО — коллизия закрыта перенумерацией
