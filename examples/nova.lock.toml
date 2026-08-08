@@ -29,6 +29,14 @@ version = "0.1.0"
 commit = "30f32c9539c4423a633d6dcad343cc1020b61860"
 
 [[package]]
+name = "socks"
+source = "git"
+git = "https://github.com/nv-lang/nova-socks"
+pin = "version:>=0.1.0, <0.2.0"
+version = "0.1.0"
+commit = "37db315ba1b8e32727c2f2f6c1b22d37cc309eef"
+
+[[package]]
 name = "tls"
 source = "git"
 git = "https://github.com/nv-lang/nova-tls"

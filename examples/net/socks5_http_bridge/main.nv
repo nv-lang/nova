@@ -150,7 +150,11 @@ fn main() Net Os Time -> () {
                     // into `spawn consume` — an OUTER `consume conn = …`
                     // plus a bare `spawn` gives `E_LINEAR_CAPTURE_IN_FIBER`.
                     Ok(consume conn) => spawn consume conn { handle_client(conn, cfg) }
-                    Err(_)           => ()   // accept error: log-and-continue policy
+                    // Plan 249 Ф.2 policy: log and keep serving. One failed
+                    // accept (transient EMFILE, a client that vanished during
+                    // the handshake) must not take the whole bridge down —
+                    // the loop is the process's only reason to exist.
+                    Err(_)           => println("socks5_http_bridge: accept failed, continuing")
                 }
             }
         }
@@ -349,6 +353,7 @@ fn handle_connect(consume client TcpStream, host str, port int, cfg Config, left
                 // upstream connection is already broken — the immediately
                 // following `pipe_bidirectional` will observe that on its
                 // own next read/write and tear down cleanly either way.
+                // nova:allow W_RESULT_DISCARDED -- intentional: the very next statement (pipe_bidirectional) re-detects and handles a dead upstream; propagating here would only duplicate that teardown path
                 ro _ = upstream.write(leftover)
             }
             pipe_bidirectional(client, upstream)
