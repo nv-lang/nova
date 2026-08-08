@@ -55,4 +55,4 @@ tls = { git = "https://github.com/nv-lang/nova-tls", version = "0.1" }
 # Локальная разработка ведётся через `nova.override.toml` (не коммитится), а
 # манифест обязан ссылаться на ОПУБЛИКОВАННОЕ. У `nova-http` теги есть (v0.1.0…v0.1.2).
 http = { git = "https://github.com/nv-lang/nova-http", version = "0.1" }
-polaris = { path = "../../nova-polaris" }
+polaris = { git = "https://github.com/nv-lang/nova-polaris", version = "0.1" }

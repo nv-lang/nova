@@ -91,6 +91,9 @@ bash "$ROOT/scripts/guards/check-bug-number-sync.sh" "$ROOT" || fail "новый
 # два из которых несли живой дефект (двойной destroy+sweep дубликата
 # мёртвого co). Страж ловит новый resume-сайт, открытый в обход
 # nova_resume_fiber (fibers.h).
+echo "== gate: no-path-deps (D420 — path только под [replace]; №444) =="
+bash "$ROOT/scripts/guards/check-no-path-deps.sh" "$ROOT" || fail "path-зависимость в коммитящемся манифесте/локе (D420)"
+
 echo "== gate: single-mco-resume (№446/№447 — единственный resume-сайт в Vela) =="
 bash "$ROOT/scripts/guards/check-single-mco-resume.sh" "$ROOT" || fail "посторонний mco_resume() вне fibers.h::nova_resume_fiber (№446/№447)"
 
