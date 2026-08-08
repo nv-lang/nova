@@ -2004,10 +2004,19 @@ fn check_module_impl(
     // ПО УМОЛЧАНИЮ ВЫКЛЮЧЕНО. Включение: `nova build|check --verify`
     // (пробрасывается как `NOVA_VERIFY=1`).
     let verify_enabled = std::env::var("NOVA_VERIFY").ok().as_deref() == Some("1");
+
+    // ЗАМЕР: закрыть интервал ДО верификации ВСЕГДА, а не только когда она
+    // включена. Прежняя редакция ставила эту метку ВНУТРЬ if-блока — при
+    // пропуске верификации метка не срабатывала, и следующая (ниже) охватывала
+    // ВЕСЬ хвост, приписывая себе чужую работу. Интегратор прочитал это как
+    // «SMT = 47 % времени чекера» и доложил владельцу; честная проверка флагом
+    // дала совсем другой порядок. Метка, охватывающая больше, чем обещает её
+    // имя, — источник ложных выводов, а не измерение.
+    perf.mark("post-check passes (before verify)");
+
     if errors.is_empty() && verify_enabled {
         // Verify только если предыдущие фазы прошли (иначе encode на
         // невалидном AST может крашнуть).
-        perf.mark("post-check passes (before verify)");
         let report = crate::verify::verify_module(module);
         env.proven_contracts = report.proven;
         env.proven_index_sites = report.proven_index_sites;
@@ -2022,12 +2031,25 @@ fn check_module_impl(
         // Это будет уточнено когда добавится warning severity (Plan 36).
         let _ = report.warnings; // intentionally silent
     }
+    // ЗАМЕР: отдельная метка РОВНО на верификацию — интервал от метки выше и
+    // до этой строки содержит ТОЛЬКО `verify_module`, ничего больше. Когда
+    // верификация выключена (по умолчанию), интервал близок к нулю, и это
+    // честно видно в выводе `NOVA_PERF=1`, а не растворяется в соседней фазе.
+    perf.mark(if verify_enabled {
+        "verify_module (SMT) — ТОЛЬКО верификация, --verify включён"
+    } else {
+        "verify_module (SMT) — ПРОПУЩЕНА (--verify выключен, по умолчанию)"
+    });
 
     // Plan 118 D216 §8 (Ф.3.5): enforce E_UNSAFE_REQUIRED — `&value` /
     // `*expr` pointer ops require unsafe context (block.is_unsafe = true
     // OR enclosing #unsafe fn). Walks fn bodies + test bodies, maintains
     // depth counter, emits diagnostic при depth == 0.
-    perf.mark("verify_module (SMT) + tail of post-check passes");
+    // ПЕРЕИМЕНОВАНО 2026-08-08: было «verify_module (SMT) + tail of post-check
+    // passes» — имя приписывало верификации ЧУЖОЕ время (хвост пост-проходов),
+    // и это стоило владельцу ложного доклада «SMT = 47 %». Верификация теперь
+    // меряется своей меткой выше; здесь — только то, что здесь и происходит.
+    perf.mark("tail of post-check passes (после verify, до unsafe-context)");
     check_unsafe_context_in_module(module, &type_check_ctx.resolved_callees.borrow(), &mut errors);
     perf.mark("check_unsafe_context_in_module");
 
