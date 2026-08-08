@@ -6,18 +6,35 @@
 // `500.to_millis().sleep()` (реальная находка была в
 // std/src/concurrency/nvchan_test.nv).
 //
-// НЕ EXPECT_COMPILE_ERROR/EXPECT_COMPILE_WARNING: обе марки привязаны к
-// `nova build`/`nova test`-пайплайну (typecheck-error / lint_module —
-// см. compiler-codegen/src/test_runner.rs). W_REDUNDANT_PAREN — правило
-// реестра CONV_RULES (compiler-codegen/src/lints.rs), проверяется ТОЛЬКО
-// отдельным инструментом `nova lint` (nova-cli/src/main.rs::cmd_lint),
-// который эту фикстуру не сканирует директорийным обходом (`neg/`-компонент
-// пути — намеренное исключение, nova-cli/src/main.rs, "неканонический
-// код... конвенции к ним не применяются") — только явным
-// `nova lint spec_tests/conformance/neg/lint_redundant_paren_warns.nv`.
-// Файл при этом СИНТАКСИЧЕСКИ и СЕМАНТИЧЕСКИ валиден и просто
-// компилируется/выполняется как обычный позитивный тест — `neg/` + маркер
-// сигналят «намеренно неканонический код», а не «не компилируется».
+// `EXPECT_LINT_WARNING <rule_id>` — маркер реестра 221.1 №463 (владелец
+// поймал: первая версия этой фикстуры несла маркер, которого раннер НЕ
+// знал, — `parse_expect`/`detect_test_type` его молча игнорировали,
+// `nova test` гонял файл как обычный позитив и НИКОГДА не проверял
+// находку; страж `scripts/guards/check-expect-markers.sh` это ловит).
+// Маркер реализован по-настоящему в `compiler-codegen/src/test_runner.rs`
+// (`ExpectMarker::LintWarning` + `run_one`): вызывает
+// `lints::run_conv_rules` (ТОТ ЖЕ движок, что `nova lint`) и ассертит
+// точное совпадение rule id среди находок. ОТДЕЛЬНЫЙ канал от
+// `EXPECT_COMPILE_WARNING` — та сверяется только с `lints::lint_module`
+// (unconditional AST-lint pass, часть build/check pipeline), CONV_RULES
+// (`nova lint`-only опциональный реестр, куда входит W_REDUNDANT_PAREN)
+// туда не попадает — эмпирически проверено (см. коммит-сообщение):
+// подстановка `EXPECT_COMPILE_WARNING W_REDUNDANT_PAREN` даёт
+// `NEG-WRONG-WARN`.
+//
+// `neg/`-компонент пути дополнительно исключает файл из директорийного
+// обхода `nova lint <dir>` (nova-cli/src/main.rs, "неканонический
+// код... конвенции к ним не применяются") — поэтому фикстура не портит
+// канон `nova lint --deny spec_tests`. Файл при этом СИНТАКСИЧЕСКИ и
+// СЕМАНТИЧЕСКИ валиден и `nova test` компилирует/выполняет его как
+// обычный позитив (early-return Pass сразу после lint-сверки, без
+// отдельного CC+run — см. run_one) — `neg/` + маркер сигналят «намеренно
+// неканонический код», а не «не компилируется».
+//
+// Проба (владелец, обязательна): ConvRule-блок W_REDUNDANT_PAREN
+// закомментирован в lints.rs, release-пересборка, `nova test` на этом
+// файле -> `NEG-WRONG-LINT-WARN ... 0 findings` (красное). Восстановлено
+// байт-в-байт (`git diff` пуст), пересобрано — снова `PASS (lint-warning: 1)`.
 //
 // Дословный текст находок (compiler-codegen/src/lints.rs::conv_redundant_paren):
 //   "redundant parentheses around a bare literal `500` — canon drops them
@@ -33,7 +50,9 @@
 //
 // Прогон: `nova lint spec_tests/conformance/neg/lint_redundant_paren_warns.nv`
 // -> 3 finding(s) (литерал / идентификатор / двойные скобки), exit 1 под
-// `--deny`.
+// `--deny`. `nova test spec_tests/conformance/neg/lint_redundant_paren_warns.nv`
+// -> `PASS ... (lint-warning: 1)` (маркер требует лишь ПРИСУТСТВИЯ рано,
+// не count'а — 3 находки достаточно одной для ассерта).
 
 module neg.lint_redundant_paren_warns
 

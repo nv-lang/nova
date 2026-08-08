@@ -278,6 +278,18 @@ pub enum ExpectMarker {
     /// lint выдач, которые не error'ятся и не leak'ятся в stdout/stderr.
     /// Multi-pattern (как Stdout/Stderr) — несколько маркеров OK.
     CompileWarning(String),
+    /// №463 (owner review, p463 window, 2026-08-08): `nova lint`'s
+    /// CONV_RULES registry (`lints::run_conv_rules`) содержит правило с
+    /// этим ID (`W_...` rule id, ТОЧНОЕ совпадение, не substring сообщения)
+    /// среди находок. ОТДЕЛЬНЫЙ канал от `CompileWarning` — та сверяется
+    /// только с `lints::lint_module` (unconditional AST-lint pass, часть
+    /// build/check pipeline), а CONV_RULES (`nova lint`-only опциональный
+    /// реестр конвенций) туда НЕ попадает: `nova test` без этого маркера
+    /// вообще не вызывал `run_conv_rules` — фикстура на CONV_RULES-правило
+    /// не ассертила НИЧЕГО (обнаружено ревью владельца — `EXPECT_LINT_WARNING`
+    /// изобретён окном p463 и молча игнорировался раннером, страж
+    /// `check-expect-markers.sh` поймал). Multi-pattern (как CompileWarning).
+    LintWarning(String),
 }
 
 /// Парсит D89 EXPECT-маркеры из первых 30 строк.
@@ -327,6 +339,11 @@ pub fn parse_expect(src: &str) -> Vec<ExpectMarker> {
             // в одном литерале).
             let arg = rest.trim();
             (!arg.is_empty()).then(|| ExpectMarker::CompileWarning(arg.to_string()))
+        } else if let Some(rest) = body.strip_prefix("EXPECT_LINT_WARNING") {
+            // №463: `nova lint` CONV_RULES rule id (точное совпадение,
+            // напр. `W_REDUNDANT_PAREN`), multi-pattern как CompileWarning.
+            let arg = rest.trim();
+            (!arg.is_empty()).then(|| ExpectMarker::LintWarning(arg.to_string()))
         } else {
             None
         };
@@ -340,9 +357,9 @@ pub fn parse_expect(src: &str) -> Vec<ExpectMarker> {
                 ExpectMarker::CcError(_)      => found.iter().any(|m| matches!(m, ExpectMarker::CcError(_))),
                 ExpectMarker::RuntimePanic(_) => found.iter().any(|m| matches!(m, ExpectMarker::RuntimePanic(_))),
                 ExpectMarker::ExitCode(_)     => found.iter().any(|m| matches!(m, ExpectMarker::ExitCode(_))),
-                // STDOUT, STDERR, COMPILE_WARNING allow multiple patterns.
+                // STDOUT, STDERR, COMPILE_WARNING, LINT_WARNING allow multiple patterns.
                 ExpectMarker::Stdout(_) | ExpectMarker::Stderr(_)
-                | ExpectMarker::CompileWarning(_) => false,
+                | ExpectMarker::CompileWarning(_) | ExpectMarker::LintWarning(_) => false,
             };
             if is_dup {
                 eprintln!(
@@ -2557,6 +2574,9 @@ pub enum ExpectMismatch {
     WrongStderr { expected_pat: String, got: String },
     /// Plan 52 Ф.9: `EXPECT_COMPILE_WARNING <pat>` не найден среди lints.
     WrongCompileWarning { expected_pat: String, got: String },
+    /// №463: `EXPECT_LINT_WARNING <rule_id>` не найден среди находок
+    /// `nova lint` CONV_RULES-реестра (`lints::run_conv_rules`).
+    WrongLintWarning { expected_pat: String, got: String },
 }
 
 impl Outcome {
@@ -2612,6 +2632,7 @@ impl Outcome {
                     ExpectMismatch::WrongStdout { .. } => "NEG-WRONG-STDOUT",
                     ExpectMismatch::WrongStderr { .. } => "NEG-WRONG-STDERR",
                     ExpectMismatch::WrongCompileWarning { .. } => "NEG-WRONG-WARN",
+                    ExpectMismatch::WrongLintWarning { .. } => "NEG-WRONG-LINT-WARN",
                 },
             },
         }
@@ -2688,6 +2709,11 @@ impl ExpectMismatch {
             ExpectMismatch::WrongCompileWarning { expected_pat, got } => {
                 let snippet: String = got.chars().take(120).collect();
                 format!("expected compile warning pattern '{}' not found in lint output: {}",
+                    expected_pat, snippet)
+            }
+            ExpectMismatch::WrongLintWarning { expected_pat, got } => {
+                let snippet: String = got.chars().take(200).collect();
+                format!("expected `nova lint` rule '{}' not found among CONV_RULES findings: {}",
                     expected_pat, snippet)
             }
         }
@@ -2918,6 +2944,8 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
     // Plan 52 Ф.9: multi-pattern EXPECT_COMPILE_WARNING для NaN/dup-key
     // и других lint-warning сверок.
     let find_compile_warnings = || expect.iter().filter_map(|m| if let ExpectMarker::CompileWarning(p) = m { Some(p.as_str()) } else { None }).collect::<Vec<_>>();
+    // №463: multi-pattern EXPECT_LINT_WARNING (`nova lint` CONV_RULES rule id).
+    let find_lint_warnings = || expect.iter().filter_map(|m| if let ExpectMarker::LintWarning(p) = m { Some(p.as_str()) } else { None }).collect::<Vec<_>>();
 
     // Helper: build a Pass outcome with optional verbose capture.
     // codegen_warnings_str is prepended to err (if non-empty) so warnings appear
@@ -3071,6 +3099,59 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
         if !has_other_expectations {
             return make_pass_with_cg_warn(
                 format!("(warning: {})", expected_warnings.len()),
+                start.elapsed(),
+                None, None, &cg_warn_str);
+        }
+    }
+
+    // №463: EXPECT_LINT_WARNING — все ожидаемые CONV_RULES rule id'ы
+    // (`nova lint`-реестр, `lints::run_conv_rules`) должны присутствовать
+    // среди находок. ОТДЕЛЬНЫЙ канал от EXPECT_COMPILE_WARNING выше: та
+    // сверяется только с `lints::lint_module` (unconditional AST-lint pass,
+    // часть build/check pipeline) — CONV_RULES туда не попадает вообще
+    // (`nova lint`-only опциональный реестр конвенций, nova-cli::cmd_lint).
+    // Без ЭТОГО блока `EXPECT_LINT_WARNING` парсился (`parse_expect` уже
+    // знает про него), но НИКОГДА не проверялся — фикстура на CONV_RULES-
+    // правило (напр. W_REDUNDANT_PAREN, реестр 221.1 №463) не ассертила
+    // ничего и оставалась зелёной, даже если правило сломано целиком
+    // (обнаружено ревью владельца, страж `check-expect-markers.sh`).
+    // Точное совпадение rule id (`w.rule`), НЕ substring текста сообщения —
+    // устойчивее к правкам формулировки, симметрично `--deny=RULE_ID` в
+    // `nova lint`.
+    let expected_lint_warnings = find_lint_warnings();
+    if !expected_lint_warnings.is_empty() {
+        let conv_module = crate::parser::parse(&src).ok();
+        let conv_warnings = crate::lints::run_conv_rules(
+            conv_module.as_ref(), &src, &crate::lints::ConvLintOptions::default(), None,
+        );
+        let found_rules: Vec<&str> = conv_warnings.iter().map(|w| w.rule).collect();
+        for pat in &expected_lint_warnings {
+            if !found_rules.contains(pat) {
+                let got = if found_rules.is_empty() {
+                    "0 findings".to_string()
+                } else {
+                    found_rules.join(", ")
+                };
+                return Outcome::Fail {
+                    stage: Stage::Expectation {
+                        mismatch: ExpectMismatch::WrongLintWarning {
+                            expected_pat: pat.to_string(),
+                            got,
+                        },
+                    },
+                    elapsed: start.elapsed(),
+                };
+            }
+        }
+        // Как EXPECT_COMPILE_WARNING выше: если других expectation'ов нет —
+        // pure lint-test, early-return Pass без CC+run.
+        let has_other_lint_expectations = expect.iter().any(|m| matches!(m,
+            ExpectMarker::CcError(_) | ExpectMarker::RuntimePanic(_)
+            | ExpectMarker::ExitCode(_) | ExpectMarker::Stdout(_)
+            | ExpectMarker::Stderr(_) | ExpectMarker::CompileWarning(_)));
+        if !has_other_lint_expectations {
+            return make_pass_with_cg_warn(
+                format!("(lint-warning: {})", expected_lint_warnings.len()),
                 start.elapsed(),
                 None, None, &cg_warn_str);
         }
@@ -6290,6 +6371,14 @@ pub fn detect_test_type(path: &Path) -> TestType {
         if line.contains("EXPECT_TIMEOUT_MS")    { continue; }
         if line.contains("EXPECT_TIMEOUT")       { return TestType::Timeout; }
         if line.contains("EXPECT_EXIT")           { return TestType::Exit; }
+        // №463: `EXPECT_LINT_WARNING` (CONV_RULES rule id) — как
+        // `EXPECT_COMPILE_WARNING`, не заводит отдельную TestType-дорожку
+        // (файл остаётся Positive: компилируется/запускается штатно, лишь
+        // ДОПОЛНИТЕЛЬНО ассертит находку `nova lint`-реестра в run_one).
+        // Explicit `continue`, а не молчаливый fallthrough — тот же приём,
+        // что EXPECT_TIMEOUT_MS выше (№453): защищает от случайного
+        // будущего substring-перехвата другой веткой этого цикла.
+        if line.contains("EXPECT_LINT_WARNING")   { continue; }
     }
     TestType::Positive
 }
