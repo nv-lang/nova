@@ -1009,6 +1009,29 @@ pub fn check_module_with_expr_types_ide(module: &Module) -> ModuleEnv {
 ///   imported module not yet inline-merged.
 /// - `check_protocol_embeds` → suppresses `E_PROTOCOL_EMBED_UNKNOWN`.
 /// - `check_generic_bound_declarations` → suppresses `E_BOUND_UNKNOWN`.
+/// Coarse per-phase wall-clock instrumentation for `check_module_impl`
+/// (Plan 221.1 №437 — "the authoritative gate stopped finishing, find WHERE
+/// the time goes instead of guessing"). Disabled unless `NOVA_PERF` is set
+/// in the environment, so the release binary pays one `env::var` per
+/// compile unit and nothing else.
+struct PerfPhase {
+    on: bool,
+    t: std::time::Instant,
+}
+
+impl PerfPhase {
+    fn new() -> Self {
+        PerfPhase { on: std::env::var("NOVA_PERF").is_ok(), t: std::time::Instant::now() }
+    }
+    /// Print (and reset) the time spent since the previous mark.
+    fn mark(&mut self, label: &str) {
+        if self.on {
+            eprintln!("[perf] {:>12.1}ms  {}", self.t.elapsed().as_secs_f64() * 1000.0, label);
+        }
+        self.t = std::time::Instant::now();
+    }
+}
+
 fn check_module_impl(
     module: &Module,
     sig_table: Option<&crate::imports::ModuleSigTable>,
@@ -1017,6 +1040,7 @@ fn check_module_impl(
     let mut env = ModuleEnv::default();
     let mut errors = Vec::new();
     let mut names: HashSet<String> = HashSet::new();
+    let mut perf = PerfPhase::new();
 
     // D82: `external fn` whitelisted только в `std/runtime/*.nv`. User-код
     // не должен использовать external — это keyword для документирования
@@ -1651,7 +1675,9 @@ fn check_module_impl(
     //    spawn, supervised, select) — defer должен быть быстрым cleanup.
     //
     // Walks по всем bodies всех функций. Spec — D90.
+    perf.mark("pre-passes (decl scan .. before defer bodies)");
     check_defer_bodies(module, &mut errors);
+    perf.mark("check_defer_bodies (D90/D158)");
 
     // D61 §1430-1434 / D90 Ф.8 (1): handler-method для эффект-операции
     // с return type `never` ОБЯЗАН закончиться exit-control'ом
@@ -1666,10 +1692,12 @@ fn check_module_impl(
     // method'а, является ли соответствующая operation never-возврат-
     // ной, и если да — body должен diverge (static analysis).
     check_handler_never_ops(module, &mut errors);
+    perf.mark("check_handler_never_ops");
 
     // Plan 77 (D132): `-> @` fluent-return — тело метода обязано
     // вернуть `@`. Делает гарантию проверяемой для consume-checker.
     check_fluent_return(module, &mut errors);
+    perf.mark("check_fluent_return");
 
     // Plan 128 Ф.3: `fn <primitive> mut @method(...)` — E_PRIMITIVE_MUT_METHOD.
     // Primitive types (int/str/bool/f64/...) — immutable by design
@@ -1679,10 +1707,12 @@ fn check_module_impl(
     // pass rejects such declarations at type-check time so the misleading
     // pattern fails fast.
     check_primitive_mut_method(module, &mut errors);
+    perf.mark("check_primitive_mut_method");
 
     // Plan 73 (D131): consume-qualifier flow-sensitive check. Use-after-
     // consume и maybe-consumed (consume на части веток) → compile error.
     check_consume(module, &mut errors);
+    perf.mark("check_consume (D131)");
 
     // №325 Ш.0 barrier (hardcoded 8-name std collection list) REMOVED by
     // Ш.2 (D156-амендмент 2026-08-04, plan 246 step B): container-inherits-
@@ -1701,18 +1731,21 @@ fn check_module_impl(
     // specific message than generic D131 use-after-consume — helps user
     // понять value-record semantics.
     check_value_record_escape_after_consume(module, &mut errors);
+    perf.mark("check_value_record_escape_after_consume");
 
     // Plan 184 (Р8): `&@` (адрес value-приёмника = `ref Self`) эскейпящий
     // наружу (возврат / захват / поле) → E_REF_ESCAPE (авто-промоут D216 §4
     // не спасает — ref на чужой слот). Downward-заём `&@`/`&v` в вызов —
     // легален (не флагаем).
     check_ref_addr_escape(module, &mut errors);
+    perf.mark("check_ref_addr_escape");
 
     // Plan 248 (wave 2, D447): `#no_copy` — «второе имя запрещено» для
     // Affine-типов. Отдельный (не flow-sensitive) проход — Affine не несёт
     // consume-обязанности, поэтому не переиспользует `check_consume`'s
     // Live/Consumed машину. См. доккомментарий `check_no_copy_second_name`.
     check_no_copy_second_name(module, &mut errors);
+    perf.mark("check_no_copy_second_name");
 
     // Plan 91.10 (D163 retracted, 2026-05-30): check_external_fn_needs_caps
     // удалён. Capability tracking via отдельный syntax — redundant с effect
@@ -1724,12 +1757,14 @@ fn check_module_impl(
     // другой identifier (включая non-pure_view ops) → error. Это
     // фундамент SMT encoding (UF mapping в Ф.9.4).
     check_effect_axioms(module, &mut errors);
+    perf.mark("check_effect_axioms");
 
     // Plan 33.3 Ф.9.6: handler verification gate.
     // Если эффект имеет pure_view-ops, любая `with E = handler` для
     // этого эффекта обязана быть помечена `#verify_handler` или
     // `#trusted_handler`. Без атрибута — compile error.
     check_handler_verification_gate(module, &mut errors);
+    perf.mark("check_handler_verification_gate");
 
     // Name-resolution фаза: статический поиск undefined идентификаторов
     // в expr-position. Запускается ПОСЛЕ BoundCtx/CapabilityCtx, чтобы
@@ -1739,7 +1774,9 @@ fn check_module_impl(
     // typecheck и падал только на cc-этапе с малочитаемой ошибкой
     // "необъявленный идентификатор". См. NameResCtx ниже.
     let name_res = NameResCtx::build(module);
+    perf.mark("NameResCtx::build");
     name_res.check_module(module, &mut errors);
+    perf.mark("NameResCtx::check_module");
 
     // Plan 33.1 Ф.2 (D24): contract checking + purity inference.
     // Минимальный pass: проверка базовых правил для контрактов:
@@ -1748,13 +1785,16 @@ fn check_module_impl(
     // - composition (вызов другой fn в контракте) запрещён в 33.1
     //   (будет разрешён для #pure в 33.2).
     let contract_ctx = ContractCtx::build(module);
+    perf.mark("ContractCtx::build");
     contract_ctx.check_module(module, &mut errors);
+    perf.mark("ContractCtx::check_module");
 
     // Plan 33.3 Ф.9.7 (D24): ghost-var usage check.
     // Non-ghost код не может читать ghost-var (Verus/Dafny semantics).
     // До этого: catch'илось на C-level через «undeclared identifier»;
     // теперь — proper compile-error с понятным сообщением.
     check_ghost_usage(module, &mut errors);
+    perf.mark("check_ghost_usage");
 
     // Plan 52 Ф.2 (D108): map-литерал `[k: v]` type-checking.
     //
@@ -1767,7 +1807,9 @@ fn check_module_impl(
     // Не заменяет существующие walk'и — отдельный проход (как
     // NameResCtx / ContractCtx), минимум регрессий.
     let mut map_lit_ctx = MapLitCtx::build(module);
+    perf.mark("MapLitCtx::build");
     map_lit_ctx.check_module(module, &mut errors);
+    perf.mark("MapLitCtx::check_module");
 
     // Plan 79: type-checker hardening — «no silent fallback» на уровне
     // типов. Отдельный проход (паттерн NameResCtx / MapLitCtx): доводит
@@ -1787,14 +1829,17 @@ fn check_module_impl(
     // Plan 162.1 Step 3: when a sig_table is available, use
     // build_with_sig_table so that is_known_type / is_known_fn
     // can consult cross-module signatures during type-checking.
+    perf.mark("rest of mid-passes (hardening/sig-merge)");
     let mut type_check_ctx = match sig_table {
         Some(st) => TypeCheckCtx::build_with_sig_table(module, &synth_arena, st.clone(), &sig),
         None => TypeCheckCtx::build(module, &synth_arena, &sig),
     };
+    perf.mark("TypeCheckCtx::build");
     // Plan 104.10 Ф.2: opt-in per-expression type recording (IDE). Default path leaves this
     // false → the f1_expr walk never records → zero overhead for nova check/build/test.
     type_check_ctx.record_expr_types = record_expr_types;
     type_check_ctx.check_module(module, &mut errors);
+    perf.mark("TypeCheckCtx::check_module (main inference pass)");
 
     // **Plan 118.5 V3 Ф.2 / D216 V3 §V3.1 (2026-06-04):** ro+mut conflict
     // check (storage-class-aware). Walks all param types, return types,
@@ -1939,6 +1984,7 @@ fn check_module_impl(
     if errors.is_empty() {
         // Verify только если предыдущие фазы прошли (иначе encode на
         // невалидном AST может крашнуть).
+        perf.mark("post-check passes (before verify)");
         let report = crate::verify::verify_module(module);
         env.proven_contracts = report.proven;
         env.proven_index_sites = report.proven_index_sites;
@@ -1958,7 +2004,9 @@ fn check_module_impl(
     // `*expr` pointer ops require unsafe context (block.is_unsafe = true
     // OR enclosing #unsafe fn). Walks fn bodies + test bodies, maintains
     // depth counter, emits diagnostic при depth == 0.
+    perf.mark("verify_module (SMT) + tail of post-check passes");
     check_unsafe_context_in_module(module, &type_check_ctx.resolved_callees.borrow(), &mut errors);
+    perf.mark("check_unsafe_context_in_module");
 
     // Plan 221.1 п.11 №428 (D62/№113 "форма vs свойство"): `[E_BANG_
     // REQUIRES_FAIL]` at the `export fn` boundary, computed over the
@@ -1970,6 +2018,7 @@ fn check_module_impl(
     // requirement `fiber_safety`/`check_unsafe_context_in_module` already
     // have). See `fail_reach.rs`'s own module doc for the full design.
     fail_reach::run(module, &type_check_ctx.resolved_callees.borrow(), &mut errors);
+    perf.mark("fail_reach::run (№428)");
 
     // Plan 238 Ф.1 (D446 "Ф.8-НОВАЯ"): total per-fn/method M:N-safety tag,
     // built over the NOW-FINAL `resolved_callees` (must run after the main
@@ -1977,6 +2026,7 @@ fn check_module_impl(
     // module` above already has). Prints nothing unless
     // `NOVA_DEBUG_FIBER_SAFETY=1`.
     let fiber_safety_tags = fiber_safety::run(module, &type_check_ctx.resolved_callees.borrow());
+    perf.mark("fiber_safety::run (238 Ф.1)");
     // Plan 238 Ф.2 (D446 "Ф.8-НОВАЯ" П.2, seeding-point enforcement): every
     // call reached inside a `spawn`/`detach`/`parallel for` body must
     // resolve to a `Safe`-tagged fn/method — an indirect call (D446 §4) or
@@ -1986,6 +2036,7 @@ fn check_module_impl(
     // module already computed, emits into the SAME `errors` every other
     // checker pass in this fn writes to.
     fiber_safety::check_seed_points(module, &type_check_ctx.resolved_callees.borrow(), &fiber_safety_tags, &mut errors);
+    perf.mark("fiber_safety::check_seed_points (238 Ф.2)");
     // Plan 238 Ф.3 (D446 §4/§5 амендмент, owner decision 2026-08-06):
     // AUTOMATIC per-parameter safety-requirement inference + exact
     // enforcement at the PASSING site (`E_FIBER_UNSAFE_ARG`) — see
@@ -1994,6 +2045,7 @@ fn check_module_impl(
     // additive, reuses the SAME `resolved_callees`/`fiber_safety_tags`.
     let fiber_required_params =
         fiber_safety::compute_required_params(module, &type_check_ctx.resolved_callees.borrow());
+    perf.mark("fiber_safety::compute_required_params (238 Ф.3)");
     fiber_safety::check_param_passing(
         module,
         &type_check_ctx.resolved_callees.borrow(),
@@ -2002,6 +2054,7 @@ fn check_module_impl(
         &fiber_required_params,
         &mut errors,
     );
+    perf.mark("fiber_safety::check_param_passing (238 Ф.3)");
 
     // Plan 174.6 M1 (D282 rule 2 / D353): validate that `extern "C" fn`
     // signatures (params + return) — and every `*extern "C" fn` fn-pointer
@@ -2038,6 +2091,7 @@ fn check_module_impl(
     // guarantee for the normal compile path.
     env.expr_types = type_check_ctx.expr_types_buf.take();
 
+    perf.mark("tail passes (after fiber-safety .. end of check_module_impl)");
     // Return env + errors unconditionally; Result-returning public wrappers
     // convert (Ok/Err), while the lenient IDE entry point keeps the env.
     (env, errors)
@@ -46029,9 +46083,16 @@ impl MapLitCtx {
         // at `build()` time (R1/R2/R3/R11/R12/R14 — R15 is a parse-time reject,
         // never reaches here).
         errors.extend(self.coerce_errors.iter().cloned());
+        // Plan 221.1 №437 (temporary probe): attribute the pass's wall clock
+        // between "cloning the whole ctx once per fn" and "actually walking".
+        let perf_on = std::env::var("NOVA_PERF").is_ok();
+        let mut clone_ms = 0.0f64;
+        let mut fn_count = 0usize;
         for item in &module.items {
             match item {
                 Item::Fn(f) => {
+                    let __t0 = std::time::Instant::now();
+                    fn_count += 1;
                     // Generic-параметры функции — permissive scope для Hashable.
                     //
                     // ПЕРФ (реестр 221.1 №437): здесь на КАЖДУЮ функцию собирался
@@ -46060,6 +46121,7 @@ impl MapLitCtx {
                             }
                         }
                     }
+                    clone_ms += __t0.elapsed().as_secs_f64() * 1000.0;
                     match &f.body {
                         FnBody::Expr(e) => {
                             self.walk_expr(e, f.return_type.as_ref(), errors);
@@ -46094,6 +46156,15 @@ impl MapLitCtx {
                 // Plan 33.3 Ф.13: lemma — spec-only, эрейзится в codegen.
                 Item::Lemma(_) => {}
             }
+        }
+        if perf_on {
+            eprintln!(
+                "[perf]   MapLitCtx: items={} fns={} per-fn-ctx-clone={:.1}ms | maps: type_methods={} fn_param_types={} method_param_types={} unique_method_param_types={} method_receiver_generic_names={} record_field_types={} wrap_types={} coerce_pairs={}",
+                module.items.len(), fn_count, clone_ms,
+                self.type_methods.len(), self.fn_param_types.len(), self.method_param_types.len(),
+                self.unique_method_param_types.len(), self.method_receiver_generic_names.len(),
+                self.record_field_types.len(), self.wrap_types.len(), self.coerce_pairs.len(),
+            );
         }
     }
 
