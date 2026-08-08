@@ -95,6 +95,10 @@ bash "$ROOT/scripts/guards/check-bug-number-sync.sh" "$ROOT" || fail "новый
 # nova_resume_fiber (fibers.h).
 echo "== gate: expect-markers (неизвестный EXPECT_* раннер молча игнорирует — №453) =="
 echo "== gate: накопление несведённых веток (никогда не копи) =="
+echo "== gate: форма записей реестра (класс, приоритет, оговорка) =="
+bash "$ROOT/scripts/guards/check-registry-entry-shape.sh" "$ROOT" || fail "запись реестра без класса/приоритета/оговорки"
+bash "$ROOT/scripts/guards/selftest/test-check-registry-entry-shape.sh" >/dev/null || fail "селфтест check-registry-entry-shape провален"
+
 bash "$ROOT/scripts/guards/check-no-accumulation.sh" "$ROOT" || fail "накопление выросло: замершие несведённые ветки"
 bash "$ROOT/scripts/guards/selftest/test-check-no-accumulation.sh" >/dev/null || fail "селфтест check-no-accumulation провален"
 
