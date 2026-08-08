@@ -13,11 +13,20 @@ import ../domain.{Source, TaskResult, TaskStatus, Report}
 import std.net.{mock_net}
 import std.runtime.fibers
 
+// [M-flagship-aggregate-mixed-fanout-flake] (221.1 №20/№454): the fast lanes
+// (15ms/30ms) need to stay comfortably under the shared budget even when the
+// gate's OWN `nova test` build parallelism (`--jobs 16` compiling sibling
+// regressions/targets concurrently) delays this fiber's own scheduling —
+// reproduced empirically: `--jobs 1` (no sibling build contention) never
+// flaked, `--jobs 16` on the full `examples/flagship/aggregator` tree failed
+// the "mixed fan-out" assertion repeatably. `slow-late` is bumped alongside
+// the budget so it stays reliably past the deadline (cancelled), not just
+// past the OLD budget.
 fn tiny_sources() -> []Source {
     [
         Source.new("fast-a",     "", 1, 15,  false),
         Source.new("fast-b",     "", 1, 30,  false),
-        Source.new("slow-late",  "", 1, 500, false),   // > budget → cancelled
+        Source.new("slow-late",  "", 1, 700, false),   // > budget → cancelled
         Source.new("bad-upstream", "", 1, 10, true),   // fails fast
     ]
 }
@@ -39,7 +48,7 @@ fn status_of(results []TaskResult, id str) -> TaskStatus {
 test "aggregate: done/failed/cancelled settle correctly on a mixed fan-out" {
     with Net = mock_net() {
         with Emit = null_emit() {
-            ro report = aggregate(tiny_sources(), 120.to_millis())
+            ro report = aggregate(tiny_sources(), 300.to_millis())
             println("DEBUG len=${report.results.len()} done=${report.done} failed=${report.failed} cancelled=${report.cancelled} wall_ms=${report.wall_ms} seq_ms=${report.sequential_ms}")
             for r in report.results {
                 match r.status {
@@ -74,8 +83,8 @@ test "aggregate: done/failed/cancelled settle correctly on a mixed fan-out" {
 test "aggregate: wall time beats sequential sum (speedup > 1)" {
     with Net = mock_net() {
         with Emit = null_emit() {
-            ro report = aggregate(tiny_sources(), 120.to_millis())
-            // sequential_ms sums every lane's OWN elapsed time (~15+30+120+10ish);
+            ro report = aggregate(tiny_sources(), 300.to_millis())
+            // sequential_ms sums every lane's OWN elapsed time (~15+30+700+10ish);
             // wall_ms is bounded by the shared budget — must be clearly smaller.
             assert(report.wall_ms < report.sequential_ms)
         }
@@ -87,8 +96,8 @@ test "aggregate: wall time beats sequential sum (speedup > 1)" {
 test "aggregate: same code, two source lists (handler/source swap only)" {
     with Net = mock_net() {
         with Emit = null_emit() {
-            ro a = aggregate(tiny_sources(), 120.to_millis())
-            ro b = aggregate([Source.new("only-one", "", 1, 15, false)], 120.to_millis())
+            ro a = aggregate(tiny_sources(), 300.to_millis())
+            ro b = aggregate([Source.new("only-one", "", 1, 15, false)], 300.to_millis())
             assert(a.results.len() == 4)
             assert(b.results.len() == 1)
             assert(b.done == 1)
@@ -170,7 +179,7 @@ test "aggregate: 0 fiber-slot leak after cascading cancellation" {
         with Net = mock_net() {
             with Emit = null_emit() {
                 ro before = fibers.slots_active()
-                ro _ = aggregate(tiny_sources(), 120.to_millis())
+                ro _ = aggregate(tiny_sources(), 300.to_millis())
                 ro after = fibers.slots_active()
                 assert(after == before)
             }
@@ -200,7 +209,7 @@ test "aggregate: Emit fires lane_started exactly once per source" {
             lane_cancelled(_id str, _elapsed_ms int) -> () {}
             swarm_done(_fanout int, _done int, _failed int, _cancelled int, _wall_ms int, _sequential_ms int) -> () {}
         } {
-            ro _ = aggregate(tiny_sources(), 120.to_millis())
+            ro _ = aggregate(tiny_sources(), 300.to_millis())
         }
     }
     tx.close()
@@ -227,7 +236,7 @@ test "aggregate: Emit lane outcomes tally exactly like the settled Report" {
             lane_cancelled(_id str, _elapsed_ms int) -> () { ro _ = tx.try_send(3) }   // cancelled
             swarm_done(_fanout int, _done int, _failed int, _cancelled int, _wall_ms int, _sequential_ms int) -> () {}
         } {
-            ro report = aggregate(tiny_sources(), 120.to_millis())
+            ro report = aggregate(tiny_sources(), 300.to_millis())
             tx.close()
             mut done = 0
             mut failed = 0
@@ -279,7 +288,7 @@ test "aggregate: Emit swarm_done matches the returned Report, fires once" {
                 sequential_ms = s
             }
         } {
-            ro report = aggregate(tiny_sources(), 120.to_millis())
+            ro report = aggregate(tiny_sources(), 300.to_millis())
             assert(fired == 1)
             assert(fanout == report.results.len())
             assert(done == report.done)

@@ -171,7 +171,7 @@ GET + read, `src/app/live.nv`) — работает после закрытия 
 ```nova
 test "aggregate: done/failed/cancelled settle correctly on a mixed fan-out" {
     with Net = mock_net(), Emit = null_emit() {
-        ro report = aggregate(tiny_sources(), Duration.from_millis(120))
+        ro report = aggregate(tiny_sources(), Duration.from_millis(300))
         assert(report.done == 2)
     }
 }
