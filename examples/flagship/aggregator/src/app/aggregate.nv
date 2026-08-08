@@ -40,7 +40,7 @@ const BASE_PORT = 20000
 // spawn and captures only those.
 fn fetch_one(id str, latency_ms int, should_fail bool, idx int) Net Time -> Result[SourceData, AggError] {
     if latency_ms > 0 {
-        (latency_ms).to_millis().sleep()
+        latency_ms.to_millis().sleep()
     }
     if should_fail {
         return Err(AggError.Upstream(id))

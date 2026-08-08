@@ -26,10 +26,10 @@ test "NOVA_MAX_FIBERS=20000: 2000 concurrent fibers all woken by cancel" {
     ro tok = CancelToken.new()
     supervised(cancel: tok) {
         for _ in 0..2000 {
-            spawn { (10_000).to_millis().sleep() }   // 10s — never fires; held parked
+            spawn { 10_000.to_millis().sleep() }   // 10s — never fires; held parked
         }
         spawn {
-            (30).to_millis().sleep()
+            30.to_millis().sleep()
             tok.cancel()
         }
     }

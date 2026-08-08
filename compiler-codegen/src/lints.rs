@@ -3346,6 +3346,16 @@ pub const CONV_RULES: &[ConvRule] = &[
         ast: Some(conv_redundant_to_str_interp),
         text: None,
     },
+    ConvRule {
+        id: "W_REDUNDANT_PAREN",
+        summary: "parentheses around a bare literal/identifier primary \
+                  expression, or a doubled `((expr))` outer pair, where \
+                  precedence does not require them — `(500).to_millis()` \
+                  should be `500.to_millis()` (owner rule, repeated \
+                  verbally many times, nv-coding-style §39, registry №463)",
+        ast: None,
+        text: Some(conv_redundant_paren),
+    },
 ];
 
 /// id всех правил реестра (для валидации `--rule` и `--list-rules`).
@@ -8084,6 +8094,243 @@ fn conv_expr_is_bare_literal_of(e: &Expr, kind: &str) -> bool {
     }
 }
 
+// ---------------------------------------------------------------------------
+// W_REDUNDANT_PAREN — реестр №463 (owner rule, устно повторено много раз,
+// живой пример из свежего кода: `(500).to_millis().sleep()` вместо
+// `500.to_millis().sleep()`, найдено буквально в
+// std/src/concurrency/nvchan_test.nv).
+//
+// ПОЧЕМУ TEXT-правило, не AST: парсер (parser/mod.rs, `TokenKind::LParen`
+// arm в `parse_primary`, ветка "grouped expr") НЕ заводит отдельный
+// `ExprKind::Paren` узел — `(x)` парсится как `Ok(first)`, т.е. возвращает
+// ИМЕННО inner-expr с его ОРИГИНАЛЬНЫМ span'ом (без скобок). AST теряет сам
+// факт «были скобки» безвозвратно — постфактум по дереву различить `x` от
+// `(x)` невозможно. Единственный источник истины — токен-поток (`lex`).
+//
+// АЛГОРИТМ (консервативный, без семантики/типов):
+// Лексуем весь файл, для каждого `LParen` ищем парную `RParen` (глубина по
+// LParen/RParen, `Newline`-токены игнорируются при подсчёте глубины, но
+// исключаются из «контента» — многострочная запись `(\n  500\n)` всё ещё
+// «один токен внутри»). Затем:
+//
+//  1. ИСКЛЮЧЕНИЕ «это не группировка, это params/args-list»: если токен
+//     ПЕРЕД `(` — `Ident`/`RParen`/`RBracket` (вызов/индекс-хвост/
+//     turbofish-хвост) ИЛИ `KwFn` (сигнатура `fn(...)`/fn-указательный ТИП
+//     `fn(int)` — у него список параметров это ГОЛЫЕ типы без имён, `fn(int)`
+//     синтаксически неотличим по контенту от «(идентификатор)», но скобки
+//     там ОБЯЗАТЕЛЬНЫ) — пара пропускается целиком (ни один из пп. 2-4 не
+//     проверяется для НЕЁ; вложенные пары внутри проверяются независимо).
+//     `Newline` перед `(` тоже считается «не call»: постфиксный цикл
+//     парсера (`parse_postfix`) читает `self.peek().kind` без
+//     `skip_newlines()` — `Newline`-токен рвёт цепочку, значит `(` на
+//     новой строке НЕ может быть call-хвостом предыдущего token'а
+//     (совпадает с `foo\n(x)` парсящимся как два отдельных statement'а, не
+//     вызов).
+//  2. Контент (нормализованный, без `Newline`) — РОВНО один токен-литерал
+//     (`Int`/`Float`/`Str`/`Char`/`HexBlob`/`KwTrue`/`KwFalse`) → находка
+//     «bare literal».
+//  3. Контент — РОВНО один `Ident` → находка «bare identifier».
+//     Оба пункта 2/3 естественно НЕ ловят отрицательные литералы
+//     (`(-5).abs()` — контент это ДВА токена, `Minus Int`, унарный минус в
+//     Nova не сворачивается лексером в токен-литерал — см.
+//     `lexer/mod.rs`, там нет folding отрицательных чисел) и НЕ ловят
+//     любой multi-token контент (`(a + b)`, `(a ?? b)`, tuple `(a, b)` —
+//     comma есть в контенте, `match (a, b)`, `consume (r, w) = ...`).
+//  4. Контент — РОВНО одна вложенная пара `(...)`, целиком закрывающая
+//     контент (первый non-newline токен контента — `LParen`, и его
+//     собственная парная `RParen` — это ПОСЛЕДНИЙ non-newline токен
+//     контента) → находка «doubled outer parens», `((expr)) → (expr)`.
+//     Не путать с `f((x + y))` — там ВНЕШНЯЯ `(` это call-args-list (票
+//     token перед ней — `Ident`, исключение п.1), поэтому целиком
+//     пропускается на уровне ВНЕШНЕЙ пары; ВНУТРЕННЯЯ `(x + y)` сама по
+//     себе не однотокенная и не doubled — тоже не ловится (за пределами
+//     заявленного консервативного охвата, см. владельческий бриф п.
+//     «ЧТО НЕ ТРОГАТЬ»).
+//
+// Suggestion (MachineApplicable) убирает ИМЕННО внешнюю пару скобок,
+// оставляя контент как есть (байт-точная замена `src[open.start..close.end]`
+// → текст контента).
+// ---------------------------------------------------------------------------
+
+/// Первый non-`Newline` токен в `tokens[from..to]` (полуоткрытый диапазон,
+/// `to` не входит). `None`, если весь диапазон — только `Newline`.
+fn conv_first_nonnl(tokens: &[crate::lexer::Token], from: usize, to: usize) -> Option<usize> {
+    (from..to).find(|&k| !matches!(tokens[k].kind, crate::lexer::TokenKind::Newline))
+}
+
+/// Последний non-`Newline` токен в `tokens[from..to]`.
+fn conv_last_nonnl(tokens: &[crate::lexer::Token], from: usize, to: usize) -> Option<usize> {
+    (from..to).rev().find(|&k| !matches!(tokens[k].kind, crate::lexer::TokenKind::Newline))
+}
+
+/// Индекс токена, парного `tokens[open]` (который обязан быть `LParen`).
+/// Глубина считается только по `LParen`/`RParen` (остальные токены —
+/// включая `Newline`, `LBrace`/`LBracket` — на подсчёт не влияют, они не
+/// могут разбалансировать paren-глубину в синтаксически валидном файле).
+/// `None`, если до конца потока парная `RParen` не встретилась
+/// (незакрытый файл — parse fail где-то ещё, текст-правило просто молчит).
+fn conv_matching_rparen(tokens: &[crate::lexer::Token], open: usize) -> Option<usize> {
+    use crate::lexer::TokenKind;
+    let mut depth = 0i32;
+    for (k, t) in tokens.iter().enumerate().skip(open) {
+        match t.kind {
+            TokenKind::LParen => depth += 1,
+            TokenKind::RParen => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(k);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// `true`, если токен ПЕРЕД `tokens[open]` делает эту `(` частью
+/// call-args/params-list (а не группировкой первичного выражения) — см.
+/// п.1 алгоритма в блок-комментарии выше. `open == 0` (нет предыдущего
+/// токена — самое начало потока) трактуется как «не call».
+///
+/// `KwPriv` (найдено корпусным прогоном по `spec_tests/`, false positive
+/// на `priv(file)` — D307 top-level file-private модификатор, parser/mod.rs
+/// ~1401-1435: единственная валидная форма — РОВНО `priv(file)`, `(file)`
+/// не группировка, а обязательный marker-аргумент, синтаксически
+/// неотличимый по контенту от «(идентификатор)»). Систематическая сверка
+/// всех hard-keyword-перед-`LParen` сайтов `parser/mod.rs` (`parse_primary`
+/// keyword arms + top-level modifier parsing) на момент написания правила
+/// не нашла других таких «keyword + голый bare-word marker в скобках»
+/// конструкций, кроме `KwFn` (fn-указательный тип/closure-параметры) и
+/// `KwPriv`; `KwSupervised` — единственный keyword с СОБСТВЕННЫМ optional
+/// `(...)` списком аргументов — исключён БЕЗ добавления сюда: его
+/// аргументы `cancel:`/`deadline:`/`timeout:` ВСЕГДА именованные
+/// (`Ident Colon expr`), контент никогда не однотокенный (см.
+/// `parse_supervised`).
+///
+/// `At` (`@`, self-value, найдено ТЕМ ЖЕ корпусным прогоном): fn-newtype
+/// (`type Mid fn(H) -> H`) делает `self` НАПРЯМУЮ вызываемым — `@(next)`
+/// это `ExprKind::Call { func: SelfAccess, args: [next] }` (call-args),
+/// РОВНО как `f(next)` с `Ident`-receiver'ом (`parser/mod.rs` — `TokenKind::At`
+/// primary-arm production `SelfAccess`, дальше стандартный postfix `(`-call
+/// на ЛЮБОМ value-producing primary, `@` в их числе). Реальный прецедент:
+/// `spec_tests/conformance/nested_fn_newtype_method_return.nv:31`.
+fn conv_paren_is_call_or_paramlist(tokens: &[crate::lexer::Token], open: usize) -> bool {
+    use crate::lexer::TokenKind;
+    if open == 0 {
+        return false;
+    }
+    matches!(
+        tokens[open - 1].kind,
+        TokenKind::Ident(_)
+            | TokenKind::RParen
+            | TokenKind::RBracket
+            | TokenKind::KwFn
+            | TokenKind::KwPriv
+            | TokenKind::At
+    )
+}
+
+/// Токен-литерал/идентификатор, вокруг которого голые скобки избыточны
+/// (п.2/3 алгоритма).
+fn conv_is_redundant_atom(kind: &crate::lexer::TokenKind) -> bool {
+    use crate::lexer::TokenKind;
+    matches!(
+        kind,
+        TokenKind::Int(_)
+            | TokenKind::Float(_)
+            | TokenKind::Str(_)
+            | TokenKind::Char(_)
+            | TokenKind::HexBlob(_)
+            | TokenKind::KwTrue
+            | TokenKind::KwFalse
+            | TokenKind::Ident(_)
+    )
+}
+
+fn conv_redundant_paren(src: &str, _o: &ConvLintOptions, out: &mut Vec<LintWarning>) {
+    use crate::lexer::TokenKind;
+    // Парс-ошибка где-то в файле — не наша забота (это дело `nova check`);
+    // без токен-потока правило просто молчит на этом файле.
+    let Ok(tokens) = crate::lexer::lex(src) else { return };
+
+    for open in 0..tokens.len() {
+        if !matches!(tokens[open].kind, TokenKind::LParen) {
+            continue;
+        }
+        let Some(close) = conv_matching_rparen(&tokens, open) else { continue };
+        if conv_paren_is_call_or_paramlist(&tokens, open) {
+            continue;
+        }
+        let Some(first) = conv_first_nonnl(&tokens, open + 1, close) else {
+            // `()` — unit-литерал, не наша забота.
+            continue;
+        };
+        let last = conv_last_nonnl(&tokens, open + 1, close).unwrap();
+
+        let open_span = tokens[open].span;
+        let close_span = tokens[close].span;
+        let full_span = Span::new(open_span.start, close_span.end);
+        let content_text = &src[tokens[first].span.start..tokens[last].span.end];
+
+        if first == last {
+            // Пп. 2/3: ровно один содержательный токен.
+            if !conv_is_redundant_atom(&tokens[first].kind) {
+                continue;
+            }
+            let kind_word = if matches!(tokens[first].kind, TokenKind::Ident(_)) {
+                "identifier"
+            } else {
+                "literal"
+            };
+            out.push(LintWarning {
+                rule: "W_REDUNDANT_PAREN",
+                diag: Diagnostic::new(
+                    format!(
+                        "redundant parentheses around a bare {kind_word} `{content_text}` — \
+                         canon drops them (nv-coding-style §39, owner rule repeated \
+                         verbally): write `{content_text}` directly, not \
+                         `({content_text})` — e.g. `500.to_millis()`, not \
+                         `(500).to_millis()`."
+                    ),
+                    full_span,
+                )
+                .with_suggestion(Suggestion {
+                    message: format!("drop the redundant parentheses around `{content_text}`"),
+                    span: full_span,
+                    replacement: content_text.to_string(),
+                    applicability: Applicability::MachineApplicable,
+                }),
+            });
+            continue;
+        }
+
+        // П.4: doubled outer parens — контент это РОВНО одна вложенная
+        // parenthesized-группа, покрывающая ВЕСЬ контент целиком.
+        if matches!(tokens[first].kind, TokenKind::LParen) {
+            if let Some(inner_close) = conv_matching_rparen(&tokens, first) {
+                if inner_close == last {
+                    out.push(LintWarning {
+                        rule: "W_REDUNDANT_PAREN",
+                        diag: Diagnostic::new(
+                            "redundant outer parentheses: the expression is already fully \
+                             grouped by the inner pair — `((expr))` should be `(expr)` \
+                             (nv-coding-style §39, owner rule repeated verbally)."
+                                .to_string(),
+                            full_span,
+                        )
+                        .with_suggestion(Suggestion {
+                            message: "drop the redundant outer parentheses".to_string(),
+                            span: full_span,
+                            replacement: content_text.to_string(),
+                            applicability: Applicability::MachineApplicable,
+                        }),
+                    });
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -10728,5 +10975,169 @@ mod cancel_unsafe_tests {
             !ws.iter().any(|w| w.rule == "W_FFI_CANCEL_UNSAFE"),
             "plain Nova fn call from cleanup must be silent (not FFI)"
         );
+    }
+}
+
+// ============================================================================
+// Registry №463 — W_REDUNDANT_PAREN unit tests.
+// ============================================================================
+
+#[cfg(test)]
+mod redundant_paren_tests {
+    use super::*;
+    use crate::lexer::lex;
+    use crate::parser::Parser;
+
+    fn parse(src: &str) -> Module {
+        let toks = lex(src).unwrap();
+        let mut p = Parser::new(toks);
+        p.parse_module().unwrap()
+    }
+
+    fn hits(src: &str) -> Vec<LintWarning> {
+        let m = parse(src);
+        run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None)
+            .into_iter()
+            .filter(|w| w.rule == "W_REDUNDANT_PAREN")
+            .collect()
+    }
+
+    #[test]
+    fn warns_on_paren_int_literal_receiver() {
+        // Owner's living example: `(500).to_millis().sleep()`.
+        let src = "module foo\nfn run() -> () {\n    (500).sleep()\n}\n";
+        let ws = hits(src);
+        assert_eq!(ws.len(), 1, "got: {:?}", ws.iter().map(|w| &w.diag.message).collect::<Vec<_>>());
+        assert!(ws[0].diag.message.contains("500"), "got: {}", ws[0].diag.message);
+        assert!(ws[0].diag.message.contains("literal"), "got: {}", ws[0].diag.message);
+    }
+
+    #[test]
+    fn warns_on_paren_identifier_receiver() {
+        let src = "module foo\nfn run(x int) -> () {\n    (x).sleep()\n}\n";
+        let ws = hits(src);
+        assert_eq!(ws.len(), 1, "got: {:?}", ws.iter().map(|w| &w.diag.message).collect::<Vec<_>>());
+        assert!(ws[0].diag.message.contains("identifier"), "got: {}", ws[0].diag.message);
+    }
+
+    #[test]
+    fn warns_on_paren_str_literal() {
+        let src = "module foo\nfn run() -> int {\n    (\"x\").byte_len()\n}\n";
+        let ws = hits(src);
+        assert_eq!(ws.len(), 1, "got: {:?}", ws.iter().map(|w| &w.diag.message).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn warns_on_paren_bool_literal() {
+        let src = "module foo\nfn run() -> bool {\n    (true)\n}\n";
+        let ws = hits(src);
+        assert_eq!(ws.len(), 1, "got: {:?}", ws.iter().map(|w| &w.diag.message).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn warns_on_doubled_outer_parens() {
+        let src = "module foo\nfn run(a int, b int) -> int {\n    ((a + b))\n}\n";
+        let ws = hits(src);
+        assert_eq!(ws.len(), 1, "got: {:?}", ws.iter().map(|w| &w.diag.message).collect::<Vec<_>>());
+        assert!(ws[0].diag.message.contains("outer"), "got: {}", ws[0].diag.message);
+    }
+
+    #[test]
+    fn no_warning_on_precedence_grouping() {
+        let src = "module foo\nfn run(a int, b int, c int) -> int {\n    (a + b) * c\n}\n";
+        assert!(hits(src).is_empty(), "got: {:?}", hits(src));
+    }
+
+    #[test]
+    fn no_warning_on_coalesce_grouping_before_call() {
+        let src = "module foo\nfn run(a str, b str) -> int {\n    (a ?? b).byte_len()\n}\n";
+        assert!(hits(src).is_empty(), "got: {:?}", hits(src));
+    }
+
+    #[test]
+    fn no_warning_on_boolean_negation_grouping() {
+        let src = "module foo\nfn run(a bool, b bool) -> bool {\n    !(a && b)\n}\n";
+        assert!(hits(src).is_empty(), "got: {:?}", hits(src));
+    }
+
+    #[test]
+    fn no_warning_on_negative_literal_paren() {
+        // `(-5).abs()` — the parens ARE required here (unary minus is not
+        // folded into the literal token by the lexer, see `lexer/mod.rs`).
+        let src = "module foo\nfn run() -> int {\n    (-5).abs()\n}\n";
+        assert!(hits(src).is_empty(), "got: {:?}", hits(src));
+    }
+
+    #[test]
+    fn no_warning_on_tuple_literal() {
+        let src = "module foo\nfn run() -> (int, int) {\n    (1, 2)\n}\n";
+        assert!(hits(src).is_empty(), "got: {:?}", hits(src));
+    }
+
+    #[test]
+    fn no_warning_on_call_single_literal_arg() {
+        let src = "module foo\nfn take(n int) -> () {}\nfn run() -> () {\n    take(500)\n}\n";
+        assert!(hits(src).is_empty(), "got: {:?}", hits(src));
+    }
+
+    #[test]
+    fn no_warning_on_call_single_ident_arg() {
+        let src = "module foo\nfn take(n int) -> () {}\nfn run(x int) -> () {\n    take(x)\n}\n";
+        assert!(hits(src).is_empty(), "got: {:?}", hits(src));
+    }
+
+    #[test]
+    fn no_warning_on_match_tuple_scrutinee() {
+        let src = "module foo\nfn run(a int, b int) -> int {\n    \
+                    match (a, b) {\n        (1, 2) => 3,\n        _ => 0,\n    }\n}\n";
+        assert!(hits(src).is_empty(), "got: {:?}", hits(src));
+    }
+
+    #[test]
+    fn no_warning_on_self_fn_newtype_call() {
+        // `@(next)` — fn-newtype `self` is directly callable; this is a
+        // CALL (`Call { func: SelfAccess, args: [next] }`), not a grouped
+        // expression. Real corpus false positive found by the `spec_tests/`
+        // sweep (nested_fn_newtype_method_return.nv).
+        let src = "module foo\ntype Mid fn(int) -> int\nfn Mid @apply(next int) -> int => @(next)\n";
+        assert!(hits(src).is_empty(), "got: {:?}", hits(src));
+    }
+
+    #[test]
+    fn no_warning_on_priv_file_marker() {
+        // `priv(file)` (D307) — the parens are a mandatory single-word
+        // marker argument, not a grouped expression. Real corpus false
+        // positive found by the `spec_tests/` sweep (v43_mixed_length_chains_ok.nv).
+        let src = "module foo\npriv(file) type Widget { ro k int }\n";
+        assert!(hits(src).is_empty(), "got: {:?}", hits(src));
+    }
+
+    #[test]
+    fn no_warning_on_fn_pointer_type_single_arg() {
+        // `fn(int)` — fn-pointer TYPE param list is a bare type name, single
+        // token, but the parens are MANDATORY signature syntax, not a
+        // grouped primary expression.
+        let src = "module foo\ntype Widget { ro cb fn(int) -> int }\n";
+        assert!(hits(src).is_empty(), "got: {:?}", hits(src));
+    }
+
+    #[test]
+    fn warns_after_unrelated_newline_boundary() {
+        // Real-world shape (std/src/concurrency/nvchan_test.nv): the paren
+        // opens a NEW statement on its own line, preceded by an unrelated
+        // `}` from a prior block — must not be misread as that `}`'s call
+        // continuation (it is not: the parser's postfix loop breaks on a
+        // `Newline` token, see the block comment above `conv_redundant_paren`).
+        let src = "module foo\nfn run() -> () {\n    if true {\n    }\n    (5).sleep()\n}\n";
+        let ws = hits(src);
+        assert_eq!(ws.len(), 1, "got: {:?}", ws.iter().map(|w| &w.diag.message).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn suggestion_removes_parens_around_literal() {
+        let src = "module foo\nfn run() -> () {\n    (500).sleep()\n}\n";
+        let ws = hits(src);
+        let sug = ws[0].diag.suggestion.as_ref().expect("expected a suggestion");
+        assert_eq!(sug.replacement, "500");
     }
 }

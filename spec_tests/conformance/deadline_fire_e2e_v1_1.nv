@@ -30,7 +30,7 @@ fn SlowCleanup4 @exit_timeout_ms() -> int => 1
 // Медленный cleanup: 30ms >> 1ms порога. Time — ambient (D62).
 // D192-ретракт: НЕ прерывается — добегает до конца.
 fn SlowCleanup4 consume @cleanup(_outcome ScopeOutcome) -> () {
-    (30).to_millis().sleep()
+    30.to_millis().sleep()
     return ()
 }
 

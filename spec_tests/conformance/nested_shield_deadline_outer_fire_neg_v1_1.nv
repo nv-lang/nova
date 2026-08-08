@@ -37,7 +37,7 @@ fn run_nested_body_over_threshold() -> int {
         }
         // Body-сон 50ms >> outer-порога 10ms: watchdog НЕ армлен на body
         // (только вокруг cleanup) → ни варна, ни прерывания — добегаем.
-        (50).to_millis().sleep()
+        50.to_millis().sleep()
         counter = outer.id
     }
     return counter

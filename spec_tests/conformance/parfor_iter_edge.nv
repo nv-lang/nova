@@ -49,7 +49,7 @@ test "completion order: все результаты присутствуют, п
     // Разные yield-профили → completion order отличается от iteration order,
     // но сбор ПЛОТНЫЙ: ровно N элементов, ровно исходный мультисет.
     mut xs = parallel for i in 0..8 {
-        if i % 2 == 0 { (0).to_millis().sleep() }
+        if i % 2 == 0 { 0.to_millis().sleep() }
         i
     }
     assert(xs.len() == 8)

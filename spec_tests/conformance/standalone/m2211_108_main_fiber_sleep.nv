@@ -24,7 +24,7 @@ import std.time.duration
 
 fn main() Time {
     ro t0 = Monotonic.now()
-    (50).to_millis().sleep()
+    50.to_millis().sleep()
     ro elapsed = Monotonic.now().elapsed_since(t0)
     // Generous lower bound (slow/loaded CI machines) — just rules out a
     // no-op / near-zero busy-spin exit, not a precise timing assertion.

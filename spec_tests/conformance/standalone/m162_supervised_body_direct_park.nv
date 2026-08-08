@@ -35,7 +35,7 @@ import std.time.duration
 
 test "supervised body direct sleep (no spawn) parks and resumes instead of aborting" {
     // Pre-fix: aborts on start with "nova_sched_park: invalid scope/slot".
-    supervised { (5).to_millis().sleep() }
+    supervised { 5.to_millis().sleep() }
     assert(true)
 }
 
@@ -45,7 +45,7 @@ test "supervised body direct block coexists with a spawned child in the same sco
         spawn { child_ran.store(true) }
         // Self-slot (body) + child slot must coexist without aliasing —
         // the join loop below must still wait for the spawned child.
-        (5).to_millis().sleep()
+        5.to_millis().sleep()
     }
     assert(child_ran.load())
 }
@@ -58,7 +58,7 @@ test "supervised body direct channel recv (no spawn wrapping recv) parks until a
 
     supervised {
         spawn {
-            (5).to_millis().sleep()
+            5.to_millis().sleep()
             tx.send(42)
         }
         // Direct recv in the body — parks on the self-slot until the

@@ -1,0 +1,72 @@
+// EXPECT_LINT_WARNING W_REDUNDANT_PAREN
+//
+// Реестр 221.1 №463 — owner rule (повторено устно много раз): лишние
+// скобки вокруг ПЕРВИЧНОГО выражения запрещены. Живой пример из свежего
+// кода окна p390: `(500).to_millis().sleep()` вместо канона
+// `500.to_millis().sleep()` (реальная находка была в
+// std/src/concurrency/nvchan_test.nv).
+//
+// `EXPECT_LINT_WARNING <rule_id>` — маркер реестра 221.1 №463 (владелец
+// поймал: первая версия этой фикстуры несла маркер, которого раннер НЕ
+// знал, — `parse_expect`/`detect_test_type` его молча игнорировали,
+// `nova test` гонял файл как обычный позитив и НИКОГДА не проверял
+// находку; страж `scripts/guards/check-expect-markers.sh` это ловит).
+// Маркер реализован по-настоящему в `compiler-codegen/src/test_runner.rs`
+// (`ExpectMarker::LintWarning` + `run_one`): вызывает
+// `lints::run_conv_rules` (ТОТ ЖЕ движок, что `nova lint`) и ассертит
+// точное совпадение rule id среди находок. ОТДЕЛЬНЫЙ канал от
+// `EXPECT_COMPILE_WARNING` — та сверяется только с `lints::lint_module`
+// (unconditional AST-lint pass, часть build/check pipeline), CONV_RULES
+// (`nova lint`-only опциональный реестр, куда входит W_REDUNDANT_PAREN)
+// туда не попадает — эмпирически проверено (см. коммит-сообщение):
+// подстановка `EXPECT_COMPILE_WARNING W_REDUNDANT_PAREN` даёт
+// `NEG-WRONG-WARN`.
+//
+// `neg/`-компонент пути дополнительно исключает файл из директорийного
+// обхода `nova lint <dir>` (nova-cli/src/main.rs, "неканонический
+// код... конвенции к ним не применяются") — поэтому фикстура не портит
+// канон `nova lint --deny spec_tests`. Файл при этом СИНТАКСИЧЕСКИ и
+// СЕМАНТИЧЕСКИ валиден и `nova test` компилирует/выполняет его как
+// обычный позитив (early-return Pass сразу после lint-сверки, без
+// отдельного CC+run — см. run_one) — `neg/` + маркер сигналят «намеренно
+// неканонический код», а не «не компилируется».
+//
+// Проба (владелец, обязательна): ConvRule-блок W_REDUNDANT_PAREN
+// закомментирован в lints.rs, release-пересборка, `nova test` на этом
+// файле -> `NEG-WRONG-LINT-WARN ... 0 findings` (красное). Восстановлено
+// байт-в-байт (`git diff` пуст), пересобрано — снова `PASS (lint-warning: 1)`.
+//
+// Дословный текст находок (compiler-codegen/src/lints.rs::conv_redundant_paren):
+//   "redundant parentheses around a bare literal `500` — canon drops them
+//    (nv-coding-style §39, owner rule repeated verbally): write `500`
+//    directly, not `(500)` — e.g. `500.to_millis()`, not
+//    `(500).to_millis()`."
+//   "redundant parentheses around a bare identifier `n` — canon drops them
+//    (nv-coding-style §39, owner rule repeated verbally): write `n`
+//    directly, not `(n)` — e.g. `500.to_millis()`, not `(500).to_millis()`."
+//   "redundant outer parentheses: the expression is already fully grouped
+//    by the inner pair — `((expr))` should be `(expr)` (nv-coding-style
+//    §39, owner rule repeated verbally)."
+//
+// Прогон: `nova lint spec_tests/conformance/neg/lint_redundant_paren_warns.nv`
+// -> 3 finding(s) (литерал / идентификатор / двойные скобки), exit 1 под
+// `--deny`. `nova test spec_tests/conformance/neg/lint_redundant_paren_warns.nv`
+// -> `PASS ... (lint-warning: 1)` (маркер требует лишь ПРИСУТСТВИЯ рано,
+// не count'а — 3 находки достаточно одной для ассерта).
+
+module neg.lint_redundant_paren_warns
+
+fn double_ms(n int) -> int {
+    (n)
+}
+
+fn main() -> () {
+    // (1) литерал-приёмник — owner's living example shape.
+    ro a = (500).to_str()
+    // (2) идентификатор-приёмник.
+    ro b = double_ms(a.byte_len())
+    // (3) двойные скобки вокруг чего угодно — внешняя пара лишняя.
+    ro c = ((a.byte_len() + 1))
+    assert(b >= 0)
+    assert(c >= 0)
+}

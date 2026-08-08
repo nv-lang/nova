@@ -36,13 +36,13 @@ fn rec_job(i int, j int, mut acc Vec[int]) RecEffect -> () {
     with RecEffect = effect RecEffect {
         emit(v int) -> () { acc.push(v) }
     } {
-        (2).to_millis().sleep()
+        2.to_millis().sleep()
         if j < 3 {
             rec_job(i, j + 1, acc)
         }
-        (2).to_millis().sleep()
+        2.to_millis().sleep()
         RecEffect.emit(j)
-        (2).to_millis().sleep()
+        2.to_millis().sleep()
     }
 }
 

@@ -7,11 +7,11 @@
 module spec_tests.conformance
 test "f64.to_bits — known IEEE 754 patterns" {
     // 1.0 = 0x3FF0000000000000 (sign 0, exp 1023, mantissa 0).
-    assert((1.0).to_bits() == 0x3FF0000000000000)
+    assert(1.0.to_bits() == 0x3FF0000000000000)
     // 2.0 = 0x4000000000000000.
-    assert((2.0).to_bits() == 0x4000000000000000)
+    assert(2.0.to_bits() == 0x4000000000000000)
     // +0.0 = all zero bits.
-    assert((0.0).to_bits() == 0)
+    assert(0.0.to_bits() == 0)
 }
 
 test "f64.from_bits — восстановление из bit-pattern" {

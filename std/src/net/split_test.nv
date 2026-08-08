@@ -44,7 +44,7 @@ test "TCP split: TcpWriteHalf.close() alone delivers FIN, read half stays usable
             // echo read) would block forever — cancel at 2.5s so the test
             // FAILS observably instead of hanging the suite.
             spawn {
-                (2500).to_millis().sleep()
+                2500.to_millis().sleep()
                 tok.cancel()
             }
             spawn {

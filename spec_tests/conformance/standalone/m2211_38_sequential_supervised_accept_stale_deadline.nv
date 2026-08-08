@@ -100,7 +100,7 @@ test "instance A: accept-loop cancelled by real supervised(timeout:) — poisons
                                     stream.close()
                                 }
                             }
-                            Err(_) => { (20).to_millis().sleep() }
+                            Err(_) => { 20.to_millis().sleep() }
                         }
                     }
                     lst.close()

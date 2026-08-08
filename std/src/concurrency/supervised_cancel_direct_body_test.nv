@@ -80,7 +80,7 @@ test "direct-body sleep: no cancel — completes fully (negative)" {
     ro tok = CancelToken.new()
     ro t0 = Timestamp.now().unix_millis()
     supervised(cancel: tok) {
-        (150).to_millis().sleep()
+        150.to_millis().sleep()
     }
     ro elapsed = Timestamp.now().unix_millis() - t0
     // Досидело — elapsed примерно равен длительности сна, НЕ прервано рано.
@@ -95,7 +95,7 @@ test "direct-body sleep: within timeout budget — no TimeoutError (negative)" {
         0
     } {
         supervised(timeout: 2.to_seconds()) {
-            (20).to_millis().sleep()
+            20.to_millis().sleep()
         }
         7
     }
@@ -109,7 +109,7 @@ test "direct-body sleep: within timeout budget — no TimeoutError (negative)" {
 test "cancel() after scope already exited is a safe no-op (negative)" {
     ro tok = CancelToken.new()
     supervised(cancel: tok) {
-        (10).to_millis().sleep()
+        10.to_millis().sleep()
     }
     // Токен больше не привязан ни к какому живому scope — не должно падать.
     tok.cancel()
@@ -125,7 +125,7 @@ test "unrelated token cancel does not affect a different scope (negative)" {
     tok_foreign.cancel()
     ro t0 = Timestamp.now().unix_millis()
     supervised(cancel: tok_a) {
-        (150).to_millis().sleep()
+        150.to_millis().sleep()
     }
     ro elapsed = Timestamp.now().unix_millis() - t0
     assert(elapsed >= 140)
@@ -149,7 +149,7 @@ test "direct-body Channel.recv: value sent before cancel — no throw (negative)
 test "spawn-placed sleep: no cancel — completes fully (negative)" {
     ro t0 = Timestamp.now().unix_millis()
     supervised {
-        spawn { (150).to_millis().sleep() }
+        spawn { 150.to_millis().sleep() }
     }
     ro elapsed = Timestamp.now().unix_millis() - t0
     assert(elapsed >= 140)
@@ -172,10 +172,10 @@ test "direct-body sleep: cancel: wakes it early (#398)" {
     ro t0 = Timestamp.now().unix_millis()
     supervised(cancel: tok) {
         spawn {
-            (50).to_millis().sleep()
+            50.to_millis().sleep()
             tok.cancel()
         }
-        (3000).to_millis().sleep()
+        3000.to_millis().sleep()
     }
     ro elapsed = Timestamp.now().unix_millis() - t0
     assert(elapsed < 2000)
@@ -203,12 +203,12 @@ test "direct-body sleep: cancel: wakes it early (#398)" {
 test "direct-body sleep: timeout: wakes it early under M:N driver (#398)" {
     // Материализовать пул/driver ЗАРАНЕЕ — посторонний spawn, до измерения.
     supervised {
-        spawn { (1).to_millis().sleep() }
+        spawn { 1.to_millis().sleep() }
     }
     ro t0 = Timestamp.now().unix_millis()
     with Fail[TimeoutError] = |_e| { 0 } {
         supervised(timeout: 150.to_millis()) {
-            (3000).to_millis().sleep()
+            3000.to_millis().sleep()
         }
         1
     }
@@ -224,12 +224,12 @@ test "direct-body sleep: timeout: wakes it early under M:N driver (#398)" {
 // про ассерты, что у B2 — только elapsed, без «TimeoutError поймана».
 test "direct-body sleep: deadline: (absolute) wakes it early under M:N driver (#398)" {
     supervised {
-        spawn { (1).to_millis().sleep() }
+        spawn { 1.to_millis().sleep() }
     }
     ro t0 = Timestamp.now().unix_millis()
     with Fail[TimeoutError] = |_e| { 0 } {
         supervised(deadline: Monotonic.now() + 150.to_millis()) {
-            (3000).to_millis().sleep()
+            3000.to_millis().sleep()
         }
         9
     }
@@ -255,10 +255,10 @@ test "direct-body sleep: cancel:+timeout: — cancel fires first (#398)" {
     } {
         supervised(cancel: tok, timeout: 30.to_seconds()) {
             spawn {
-                (50).to_millis().sleep()
+                50.to_millis().sleep()
                 tok.cancel()
             }
-            (3000).to_millis().sleep()
+            3000.to_millis().sleep()
         }
         5
     }
@@ -277,7 +277,7 @@ test "direct-body sleep: cancel:+timeout: — timeout fires first (#398)" {
     ro t0 = Timestamp.now().unix_millis()
     with Fail[TimeoutError] = |_e| { 0 } {
         supervised(cancel: tok, timeout: 150.to_millis()) {
-            (3000).to_millis().sleep()
+            3000.to_millis().sleep()
         }
         5
     }
@@ -292,11 +292,11 @@ test "double cancel() is idempotent (#398 regression guard)" {
     ro t0 = Timestamp.now().unix_millis()
     supervised(cancel: tok) {
         spawn {
-            (50).to_millis().sleep()
+            50.to_millis().sleep()
             tok.cancel()
             tok.cancel()
         }
-        (3000).to_millis().sleep()
+        3000.to_millis().sleep()
     }
     ro elapsed = Timestamp.now().unix_millis() - t0
     assert(elapsed < 2000)
@@ -310,11 +310,11 @@ test "spawn-placed sleep: cancel: wakes it early (regression guard)" {
     ro t0 = Timestamp.now().unix_millis()
     supervised(cancel: tok) {
         spawn {
-            (50).to_millis().sleep()
+            50.to_millis().sleep()
             tok.cancel()
         }
         spawn {
-            (3000).to_millis().sleep()
+            3000.to_millis().sleep()
         }
     }
     ro elapsed = Timestamp.now().unix_millis() - t0
@@ -359,7 +359,7 @@ test "spawn-placed Channel.recv: cancel: wakes it early (regression guard)" {
     ro t0 = Timestamp.now().unix_millis()
     supervised(cancel: tok) {
         spawn {
-            (50).to_millis().sleep()
+            50.to_millis().sleep()
             tok.cancel()
         }
         spawn {
