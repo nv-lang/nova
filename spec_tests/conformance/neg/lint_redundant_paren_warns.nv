@@ -1,0 +1,53 @@
+// EXPECT_LINT_WARNING W_REDUNDANT_PAREN
+//
+// Реестр 221.1 №463 — owner rule (повторено устно много раз): лишние
+// скобки вокруг ПЕРВИЧНОГО выражения запрещены. Живой пример из свежего
+// кода окна p390: `(500).to_millis().sleep()` вместо канона
+// `500.to_millis().sleep()` (реальная находка была в
+// std/src/concurrency/nvchan_test.nv).
+//
+// НЕ EXPECT_COMPILE_ERROR/EXPECT_COMPILE_WARNING: обе марки привязаны к
+// `nova build`/`nova test`-пайплайну (typecheck-error / lint_module —
+// см. compiler-codegen/src/test_runner.rs). W_REDUNDANT_PAREN — правило
+// реестра CONV_RULES (compiler-codegen/src/lints.rs), проверяется ТОЛЬКО
+// отдельным инструментом `nova lint` (nova-cli/src/main.rs::cmd_lint),
+// который эту фикстуру не сканирует директорийным обходом (`neg/`-компонент
+// пути — намеренное исключение, nova-cli/src/main.rs, "неканонический
+// код... конвенции к ним не применяются") — только явным
+// `nova lint spec_tests/conformance/neg/lint_redundant_paren_warns.nv`.
+// Файл при этом СИНТАКСИЧЕСКИ и СЕМАНТИЧЕСКИ валиден и просто
+// компилируется/выполняется как обычный позитивный тест — `neg/` + маркер
+// сигналят «намеренно неканонический код», а не «не компилируется».
+//
+// Дословный текст находок (compiler-codegen/src/lints.rs::conv_redundant_paren):
+//   "redundant parentheses around a bare literal `500` — canon drops them
+//    (nv-coding-style §39, owner rule repeated verbally): write `500`
+//    directly, not `(500)` — e.g. `500.to_millis()`, not
+//    `(500).to_millis()`."
+//   "redundant parentheses around a bare identifier `n` — canon drops them
+//    (nv-coding-style §39, owner rule repeated verbally): write `n`
+//    directly, not `(n)` — e.g. `500.to_millis()`, not `(500).to_millis()`."
+//   "redundant outer parentheses: the expression is already fully grouped
+//    by the inner pair — `((expr))` should be `(expr)` (nv-coding-style
+//    §39, owner rule repeated verbally)."
+//
+// Прогон: `nova lint spec_tests/conformance/neg/lint_redundant_paren_warns.nv`
+// -> 3 finding(s) (литерал / идентификатор / двойные скобки), exit 1 под
+// `--deny`.
+
+module neg.lint_redundant_paren_warns
+
+fn double_ms(n int) -> int {
+    (n)
+}
+
+fn main() -> () {
+    // (1) литерал-приёмник — owner's living example shape.
+    ro a = (500).to_str()
+    // (2) идентификатор-приёмник.
+    ro b = double_ms(a.byte_len())
+    // (3) двойные скобки вокруг чего угодно — внешняя пара лишняя.
+    ro c = ((a.byte_len() + 1))
+    assert(b >= 0)
+    assert(c >= 0)
+}

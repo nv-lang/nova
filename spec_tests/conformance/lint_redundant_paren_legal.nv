@@ -1,0 +1,92 @@
+// Позитив-эталон для W_REDUNDANT_PAREN (реестр 221.1 №463): ЗАКОННЫЕ
+// скобки, перечисленные в задании владельца как "ЧТО НЕ ТРОГАТЬ" — этот
+// файл ОБЯЗАН давать 0 находок W_REDUNDANT_PAREN (часть канона
+// `nova lint --deny spec_tests` — gate.sh).
+//
+// Прогон: `nova lint --rule W_REDUNDANT_PAREN spec_tests/conformance/lint_redundant_paren_legal.nv`
+// -> 0 finding(s).
+
+module conformance.lint_redundant_paren_legal
+
+// fn-newtype — `self` напрямую вызываем: `@(x)` это CALL, не группировка
+// (реальный корпусный ложноположительный случай, пойман прогоном по
+// spec_tests/, см. conv_paren_is_call_or_paramlist в lints.rs).
+type Doubler fn(int) -> int
+fn Doubler.new(f fn(int) -> int) -> ro Doubler => f
+fn Doubler @apply(x int) -> int => @(x)
+
+// D307: `priv(file)` — обязательный marker-аргумент, не группировка
+// (второй реальный корпусный ложноположительный случай).
+priv(file) fn helper(x int) -> int => x * 2
+
+// fn-указательный ТИП с одним голым типом-параметром — скобки здесь
+// обязательный синтаксис сигнатуры, не группировка вокруг выражения.
+type IntOp fn(int) -> int
+fn apply_op(f IntOp, x int) -> int => f(x)
+
+fn priority_paren(a int, b int, c int) -> int {
+    // Приоритет — скобки МЕНЯЮТ порядок вычисления.
+    (a + b) * c
+}
+
+fn coalesce_before_call(o Option[int], d int) -> int {
+    // Coalesce перед method-call — без скобок `.abs()` привяжется не к
+    // тому операнду.
+    (o ?? d).abs()
+}
+
+fn negation_of_and(a int, b int) -> bool {
+    // Отрицание булева "И" — без скобок `!` привяжется не к тому.
+    !(a > 0 && b > 0)
+}
+
+fn negative_literal_receiver() -> int {
+    // Отрицательный литерал перед method-call — унарный минус НЕ
+    // сворачивается лексером в токен-литерал (Minus + Int, два токена) —
+    // скобки здесь ОБЯЗАТЕЛЬНЫ, иначе `-5.abs()` вызвал бы `abs()` на `5`
+    // раньше унарного минуса.
+    (-5).abs()
+}
+
+fn tuple_and_unit() -> (int, int) {
+    // Кортеж — запятая делает контент НЕ однотокенным.
+    ro pair = (1, 2)
+    // Unit-литерал (нет-op возврат ниже эту переменную не трогает).
+    ro _unit = ()
+    pair
+}
+
+fn match_tuple_scrutinee(a int, b int) -> int {
+    // match со scrutinee-кортежем + tuple-паттерном в arm'е.
+    match (a, b) {
+        (0, 0) => 0,
+        _ => a + b,
+    }
+}
+
+type Res { ro v int }
+fn Res consume @close() -> () => ()
+fn make_res_pair() -> (Res, Res) => (Res { v: 1 }, Res { v: 2 })
+
+fn consume_destructure() -> int {
+    // consume-деструктуризация: `(r, w)` — синтаксис биндинга, не
+    // группировка выражения.
+    consume (r, w) = make_res_pair()
+    r.close()
+    w.close()
+    3
+}
+
+test "W_REDUNDANT_PAREN legal-paren corpus stays green" {
+    assert(priority_paren(1, 2, 3) == 9)
+    assert(coalesce_before_call(None, -7) == 7)
+    assert(negation_of_and(1, 0) == true)
+    assert(negative_literal_receiver() == 5)
+    ro (x, y) = tuple_and_unit()
+    assert(x == 1 && y == 2)
+    assert(match_tuple_scrutinee(0, 0) == 0)
+    assert(consume_destructure() == 3)
+    assert(apply_op(fn(v int) -> int { v * v }, 4) == 16)
+    assert(Doubler.new(fn(v int) -> int { v * 2 }).apply(5) == 10)
+    assert(helper(3) == 6)
+}
