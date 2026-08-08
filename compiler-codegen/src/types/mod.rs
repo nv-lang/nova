@@ -6025,7 +6025,13 @@ impl<'a> TypeCheckCtx<'a> {
         let new_recv = fd.receiver.as_ref().map(|r| r.type_name.clone());
         *self.current_recv_type.borrow_mut() = new_recv;
         let prev_recv_mut = self.current_recv_is_mut.get();
-        self.current_recv_is_mut.set(fd.receiver.as_ref().map_or(false, |r| r.mutable));
+  // №462/№370: `consume` ТОЖЕ может мутировать — владеющий получатель
+        // имеет не меньше прав, чем `mut`. `mutable` и `consume`
+        // взаимоисключающие (parser enforce'ит), поэтому у `consume`
+        // `mutable == false`, и одиночное чтение считало владельца за `ro`.
+        // Закрыто здесь ПОСЛЕ того, как тот же промах в `ConsumeCtx` уже
+        // покраснел на законном коде nova-tls: №370 был закрыт наполовину.
+        self.current_recv_is_mut.set(fd.receiver.as_ref().map_or(false, |r| r.mutable || r.consume));
         let _recv_guard = PrivRecvGuard { ctx: self, prev: prev_recv, prev_mut: prev_recv_mut };
         // Plan 124.6 (D225): set current_fn_test_access — fn body gets priv
         // access к listed types (escape hatch для tests + helper fns).
@@ -7760,7 +7766,13 @@ impl<'a> TypeCheckCtx<'a> {
         let new_recv = fd.receiver.as_ref().map(|r| r.type_name.clone());
         *self.current_recv_type.borrow_mut() = new_recv;
         let prev_recv_mut = self.current_recv_is_mut.get();
-        self.current_recv_is_mut.set(fd.receiver.as_ref().map_or(false, |r| r.mutable));
+  // №462/№370: `consume` ТОЖЕ может мутировать — владеющий получатель
+        // имеет не меньше прав, чем `mut`. `mutable` и `consume`
+        // взаимоисключающие (parser enforce'ит), поэтому у `consume`
+        // `mutable == false`, и одиночное чтение считало владельца за `ro`.
+        // Закрыто здесь ПОСЛЕ того, как тот же промах в `ConsumeCtx` уже
+        // покраснел на законном коде nova-tls: №370 был закрыт наполовину.
+        self.current_recv_is_mut.set(fd.receiver.as_ref().map_or(false, |r| r.mutable || r.consume));
         let _recv_guard = PrivRecvGuard { ctx: self, prev: prev_recv, prev_mut: prev_recv_mut };
         // Plan 174.2 Ф.B: publish the enclosing fn's return type so the
         // `ExprKind::Try` arm can diagnose carrier-mismatched `?`. Restored on
