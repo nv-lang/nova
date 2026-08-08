@@ -7,6 +7,12 @@
 # повторяемым шагом, а не разовой настройкой в чьей-то голове.
 #
 # ЧТО СТАВИТСЯ:
+#   commit-msg       — гигиена коммита: маркеры конфликта в индексе, запрет
+#                      Co-Authored-By, сверка авторства
+#                      (scripts/guards/check-commit-hygiene.sh). Закрывает четыре
+#                      правила, которые интегратор выполнял РУКАМИ в каждом
+#                      коммите — замер 2026-08-08: из 74 правил в памяти у 57 не
+#                      было механизма вовсе.
 #   pre-merge-commit — отказ вливать в главную ветку при красном или
 #                      несвежем гейте (scripts/guards/check-merge-discipline.sh).
 #                      Причина — вопрос владельца 2026-08-08 «почему допускаешь
@@ -46,5 +52,20 @@ HOOK
 chmod +x "$H" 2>/dev/null
 
 echo "install-hooks: поставлен $H"
+
+H2="$HOOKS/commit-msg"
+cat > "$H2" <<'HOOK'
+#!/usr/bin/env bash
+# Поставлен scripts/tools/install-hooks.sh. Не редактировать здесь —
+# правь scripts/guards/check-commit-hygiene.sh и переустанови.
+set -u
+TOP=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+G="$TOP/scripts/guards/check-commit-hygiene.sh"
+[ -f "$G" ] || exit 0
+exec bash "$G" "$1" "$TOP"
+HOOK
+chmod +x "$H2" 2>/dev/null
+echo "install-hooks: поставлен $H2"
+
 echo "install-hooks: проверка — bash scripts/guards/selftest/test-check-merge-discipline.sh"
 exit 0
