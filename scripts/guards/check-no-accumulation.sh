@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# scripts/guards/check-no-accumulation.sh
+# Реестр 221.1 (класс «никогда не копи»), требование владельца 2026-08-08.
+#
+# ЗАЧЕМ. Владелец, дословно: «конечно, никогда не копи». Интегратор записал это
+# правилом в заметки — владелец ответил: «это не работает». Он прав: за одни
+# сутки заметками уже дважды не удержалось то, что держится стражем (маркеры
+# EXPECT_*, расхождение доки с кодом). Правило без механизма есть симптом, а не
+# фикс. Механизм — здесь.
+#
+# ЧТО СЧИТАЕМ НАКОПЛЕНИЕМ. Не «много веток» — рабочих веток окон много по
+# устройству процесса, и наказывать за них нельзя. Накопление — это ветка,
+# которая ПЕРЕСТАЛА ДВИГАТЬСЯ, но не влита: есть коммиты не в `main` И последний
+# коммит старше порога. Такая ветка либо забыта, либо потеряна; в обоих случаях
+# её надо разобрать, а не хранить.
+#
+# ПОЧЕМУ ХРАПОВИК, А НЕ НОЛЬ. На момент заведения таких веток уже больше
+# десятка, и обнулить их одним слиянием нельзя — по каждой нужно решение
+# владельца. Храповик фиксирует долг и запрещает РОСТ: новая брошенная ветка
+# краснит гейт немедленно, а разбор старых идёт своим порядком и опускает базу.
+#
+# ЧЕГО ЭТОТ СТРАЖ НЕ ЛОВИТ (сказано честно, чтобы не считали его полным):
+# живую ветку, по которой идёт работа, от брошенной он отличает только временем
+# последнего коммита. Ветка, куда раз в две недели падает пустой коммит,
+# пройдёт. Это осознанный предел: альтернатива — судить о живости по смыслу, а
+# это не машинная проверка.
+#
+# ИСПОЛЬЗОВАНИЕ:
+#   bash scripts/guards/check-no-accumulation.sh [КОРЕНЬ]
+# ПЕРЕМЕННЫЕ:
+#   NOVA_ACC_STALE_DAYS   — порог «перестала двигаться», по умолчанию 14
+#   NOVA_ACC_BASELINE     — путь к базе, по умолчанию scripts/guards/accumulation.baseline
+
+set -u
+export LC_ALL=C
+
+ROOT="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+STALE_DAYS="${NOVA_ACC_STALE_DAYS:-14}"
+BASELINE="${NOVA_ACC_BASELINE:-$ROOT/scripts/guards/accumulation.baseline}"
+
+cd "$ROOT" || { echo "check-no-accumulation: нет каталога $ROOT" >&2; exit 1; }
+git rev-parse --git-dir >/dev/null 2>&1 || {
+    echo "check-no-accumulation: $ROOT — не git-репозиторий" >&2; exit 1; }
+
+NOW=$(date +%s)
+CUTOFF=$(( NOW - STALE_DAYS * 86400 ))
+
+STALE_LIST=""
+STALE_N=0
+UNMERGED_N=0
+UNMERGED_COMMITS=0
+
+# Порог «перестала двигаться» берётся по КОММИТТЕР-дате последнего коммита:
+# автор-дата переживает rebase и cherry-pick, коммиттер-дата — нет, а нас
+# интересует, когда ветку трогали в последний раз, а не когда сочинили патч.
+while read -r br; do
+    [ -z "$br" ] && continue
+    [ "$br" = "main" ] && continue
+    n=$(git rev-list --count "main..$br" 2>/dev/null) || continue
+    [ "${n:-0}" -eq 0 ] && continue
+    UNMERGED_N=$(( UNMERGED_N + 1 ))
+    UNMERGED_COMMITS=$(( UNMERGED_COMMITS + n ))
+    ts=$(git log -1 --format=%ct "$br" 2>/dev/null)
+    [ -z "$ts" ] && continue
+    if [ "$ts" -lt "$CUTOFF" ]; then
+        STALE_N=$(( STALE_N + 1 ))
+        age=$(( (NOW - ts) / 86400 ))
+        STALE_LIST="$STALE_LIST
+    $br — $n коммит(ов), без движения $age дн."
+    fi
+done <<EOF
+$(git for-each-ref --format='%(refname:short)' refs/heads/ 2>/dev/null)
+EOF
+
+echo "check-no-accumulation: несведённых веток $UNMERGED_N (коммитов $UNMERGED_COMMITS), из них замерших >${STALE_DAYS}дн: $STALE_N"
+
+BASE=0
+if [ -f "$BASELINE" ]; then
+    BASE=$(sed -n 's/^stale_branches=\([0-9][0-9]*\).*/\1/p' "$BASELINE" | head -1)
+    BASE=${BASE:-0}
+else
+    echo "check-no-accumulation: базы нет ($BASELINE) — считаю базой 0" >&2
+fi
+
+if [ "$STALE_N" -gt "$BASE" ]; then
+    echo "check-no-accumulation: НАКОПЛЕНИЕ ВЫРОСЛО — $STALE_N > базы $BASE" >&2
+    echo "    Замершие ветки:$STALE_LIST" >&2
+    echo "    Ветка без движения >${STALE_DAYS}дн и не влитая — забыта или потеряна." >&2
+    echo "    Разбери её (слить/доделать/удалить) либо, если работа осознанно" >&2
+    echo "    заморожена, подними базу в $BASELINE строкой летописи — с причиной." >&2
+    echo "check-no-accumulation: FAIL" >&2
+    exit 1
+fi
+
+if [ "$STALE_N" -lt "$BASE" ]; then
+    echo "check-no-accumulation: долг СНИЗИЛСЯ ($STALE_N < базы $BASE) — опусти базу в $BASELINE"
+fi
+
+echo "check-no-accumulation ok: роста накопления нет ($STALE_N <= $BASE)"
+exit 0
