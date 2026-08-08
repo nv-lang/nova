@@ -27805,7 +27805,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // Plan 135 Ф.2: track whether current method has a mut receiver
             // so that SelfAccess call-sites can tiebreak __mut/__ro overloads.
             // №462/№370: владеющий (`consume`) получатель может мутировать —
-            // `mutable` и `consume` взаимоисключающие, поэтому одиночное чтение
+            // `mutable` и `consume` взаимоисключающие, поэтому одиночное чтение [INV-TODO: №462]
             // `.mutable` считало владельца за `ro`.
             self.current_receiver_is_mut = recv.mutable || recv.consume;
             // [M-static-selfreturn-value-mangle-conflict] (Plan 172.13): see

@@ -91,6 +91,12 @@ bash "$ROOT/scripts/guards/check-bug-number-sync.sh" "$ROOT" || fail "новый
 # два из которых несли живой дефект (двойной destroy+sweep дубликата
 # мёртвого co). Страж ловит новый resume-сайт, открытый в обход
 # nova_resume_fiber (fibers.h).
+echo "== gate: invariant-discipline (норма об инвариантах — всеобъемлюща) =="
+bash "$ROOT/scripts/guards/check-invariant-discipline.sh" "$ROOT" || fail "новый инвариант на честном слове (conventions-governance)"
+bash "$ROOT/scripts/guards/selftest/test-check-invariant-discipline.sh" >/dev/null || fail "селфтест стража инвариантов"
+echo "== gate: sync-guards (копии стражей в пакетных репах не разошлись) =="
+bash "$ROOT/scripts/tools/sync-guards-to-packages.sh" || fail "копии стражей в пакетных репах разошлись с эталоном"
+
 echo "== gate: no-path-deps (D420 — path только под [replace]; №444) =="
 bash "$ROOT/scripts/guards/check-no-path-deps.sh" "$ROOT" || fail "path-зависимость в коммитящемся манифесте/локе (D420)"
 

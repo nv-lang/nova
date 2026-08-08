@@ -6027,7 +6027,7 @@ impl<'a> TypeCheckCtx<'a> {
         let prev_recv_mut = self.current_recv_is_mut.get();
   // №462/№370: `consume` ТОЖЕ может мутировать — владеющий получатель
         // имеет не меньше прав, чем `mut`. `mutable` и `consume`
-        // взаимоисключающие (parser enforce'ит), поэтому у `consume`
+        // взаимоисключающие (parser enforce'ит), поэтому у `consume` [INV-TODO: №462]
         // `mutable == false`, и одиночное чтение считало владельца за `ro`.
         // Закрыто здесь ПОСЛЕ того, как тот же промах в `ConsumeCtx` уже
         // покраснел на законном коде nova-tls: №370 был закрыт наполовину.
@@ -7768,7 +7768,7 @@ impl<'a> TypeCheckCtx<'a> {
         let prev_recv_mut = self.current_recv_is_mut.get();
   // №462/№370: `consume` ТОЖЕ может мутировать — владеющий получатель
         // имеет не меньше прав, чем `mut`. `mutable` и `consume`
-        // взаимоисключающие (parser enforce'ит), поэтому у `consume`
+        // взаимоисключающие (parser enforce'ит), поэтому у `consume` [INV-TODO: №462]
         // `mutable == false`, и одиночное чтение считало владельца за `ro`.
         // Закрыто здесь ПОСЛЕ того, как тот же промах в `ConsumeCtx` уже
         // покраснел на законном коде nova-tls: №370 был закрыт наполовину.
@@ -37038,7 +37038,7 @@ fn check_linearity_markers(
         let Item::Type(td) = item else { continue; };
 
         // Plan 248 (wave 2, D447): `consume` + `#no_copy` на одном
-        // type-decl — два взаимоисключающих уровня строгости («обязан
+        // type-decl — два взаимоисключающих уровня строгости («обязан [INV-TODO: №462]
         // израсходовать» vs «расходовать не обязан»). Wave 1 разрешала
         // конфликт молча (`consume` побеждал, `no_copy` не регистрировался
         // в реестре) — интегратор решил (план 248, «ВОЛНА 1 ИСПОЛНЕНА»,
@@ -40797,7 +40797,7 @@ fn check_consume(module: &Module, errors: &mut Vec<Diagnostic>) {
                     // for the field-launder axis of `check_readonly_coerce_args`.
                     //
                     // ВАЖНО — `consume` ТОЖЕ считается: `mutable` и `consume`
-                    // взаимоисключающие (parser enforce'ит, см. `Receiver.consume`),
+                    // взаимоисключающие (parser enforce'ит, см. `Receiver.consume`), [INV-TODO: №462]
                     // поэтому у ВЛАДЕЮЩЕГО получателя `mutable == false`. Первая
                     // редакция №370 смотрела только на `mutable` и потому ложно
                     // краснела на законном коде: `export fn TlsStream consume
