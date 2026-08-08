@@ -31,13 +31,13 @@ After any change to Rust sources in `compiler-codegen/` or `nova-cli/`, rebuild 
 ## Test
 
 ```sh
-# Authoritative gate: the conformance suite (C-codegen pipeline).
-# A PATH IS REQUIRED — bare `nova test` exits with
-# "error: nova test requires at least one path".
-nova-cli/target/release/nova test spec_tests/conformance
+# Full test suite (C-codegen pipeline). A PATH IS REQUIRED (Plan 172.6) — a bare
+# `nova test` exits with "error: nova test requires at least one path".
+# Pass BOTH live suites explicitly (spec_tests alone silently skips std):
+nova-cli/target/release/nova test spec_tests std
 
-# Targeted: same path, narrowed by substring
-nova-cli/target/release/nova test spec_tests/conformance --filter closure
+# Targeted: run only tests matching a substring
+nova-cli/target/release/nova test spec_tests --filter syntax/closure
 
 # Single-file debug (no parallelism, keeps build artifacts)
 ./compiler-codegen/target/debug/nova-codegen test-build spec_tests/conformance/standalone/<fixture>.nv \
