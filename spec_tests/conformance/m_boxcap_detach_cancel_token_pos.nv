@@ -46,11 +46,11 @@ fn m_boxcap_serve(consume m_boxcap_listener TcpListener, m_boxcap_stop CancelTok
                     detach consume m_boxcap_stream {
                         match m_boxcap_inflight.try_acquire() {
                             Some(consume m_boxcap_permit) => {
-                                ro _ = m_boxcap_stream.write_str("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+                                ro _ = m_boxcap_stream.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
                                 m_boxcap_permit.release()
                             }
                             None => {
-                                ro _ = m_boxcap_stream.write_str("HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n")
+                                ro _ = m_boxcap_stream.write("HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n")
                             }
                         }
                     }
@@ -85,7 +85,7 @@ test "m_boxcap detach box-capture + reachable CancelToken: serve, respond, cance
                     ro m_boxcap_port = match m_boxcap_port_rx.recv() { Some(p) => p, None => 0 as u16 }
                     match TcpStream.connect(SocketAddr.loopback(m_boxcap_port)) {
                         Ok(consume m_boxcap_cli) => {
-                            ro _ = m_boxcap_cli.write_str("GET / HTTP/1.1\r\nHost: x\r\n\r\n")
+                            ro _ = m_boxcap_cli.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n")
                             match m_boxcap_cli.read_bytes(4096) {
                                 Ok(m_boxcap_chunk) => { ro _ = m_boxcap_got_tx.try_send(m_boxcap_chunk) }
                                 Err(_) => ()

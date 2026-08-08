@@ -354,7 +354,7 @@ fn rewrite_headers(request_line str, header_lines []str) -> str {
 }
 
 fn respond(mut client TcpStream, status_line str) -> () {
-    ro _ = client.write_str("${status_line}\r\n\r\n")
+    ro _ = client.write("${status_line}\r\n\r\n")
 }
 
 fn handle_client(consume client TcpStream, cfg Config) Net Time -> () {
@@ -462,7 +462,7 @@ fn handle_plain(consume client TcpStream, host str, port int, rewritten_head str
             // the immediately following pipe_bidirectional re-detects and
             // tears down cleanly on its own first read/write either way.
             // nova:allow W_RESULT_DISCARDED -- intentional: pipe_bidirectional re-detects a dead upstream on its own next read/write; propagating here would only duplicate that teardown path
-            ro _ = upstream.write_str("${rewritten_head}\r\n\r\n")
+            ro _ = upstream.write("${rewritten_head}\r\n\r\n")
             if leftover.len() > 0 {
                 // nova:allow W_RESULT_DISCARDED -- intentional: same reasoning as the write_str above
                 ro _ = upstream.write(leftover)

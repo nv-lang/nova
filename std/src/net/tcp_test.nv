@@ -144,7 +144,7 @@ test "net2/tcp: read_text / write_str text conveniences" {
             spawn {
                 ro port = match ch.rx.recv() { Some(x) => x  None => 0 as u16 }
                 mut conn = must(TcpStream.connect(SocketAddr.loopback(port)))
-                assert(must(conn.write_str("ping")) == 4)
+                assert(must(conn.write("ping")) == 4)
                 assert(must(conn.read_text(32)) == "pong")
                 conn.close()
             }
@@ -153,7 +153,7 @@ test "net2/tcp: read_text / write_str text conveniences" {
                 ch.tx.send(lst.local_port())
                 mut srv = must(lst.accept())
                 assert(must(srv.read_text(32)) == "ping")
-                assert(must(srv.write_str("pong")) == 4)
+                assert(must(srv.write("pong")) == 4)
                 srv.close()
                 lst.close()
             }

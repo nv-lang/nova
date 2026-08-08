@@ -36,7 +36,7 @@ fn main() {
                         println("Client connected from port ${s.peer_port()}")
                         match s.read_bytes(4096) {
                             Ok(_data) => {
-                                match s.write_str("echo_ok\n") {
+                                match s.write("echo_ok\n") {
                                     Ok(_)  => println("Echo sent")
                                     Err(_) => println("Write failed")
                                 }

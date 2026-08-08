@@ -251,12 +251,6 @@ export fn TcpStream mut @read_text(max int) Net -> Result[str, NetError] {
     }
 }
 
-/// Write text as its UTF-8 bytes; returns `Ok(n)` bytes accepted.
-#stable(since = "0.1")
-export fn TcpStream mut @write_str(s str) Net -> Result[int, NetError] {
-    Net.write(@, s.bytes())
-}
-
 /// Half-close the write side (TCP FIN); the read side stays open.
 #stable(since = "0.1")
 export fn TcpStream mut @shutdown() Net -> Result[(), NetError] { Net.shutdown(@) }

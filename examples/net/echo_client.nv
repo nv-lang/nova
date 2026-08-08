@@ -27,7 +27,7 @@ fn main() {
                     Ok(consume stream) => {
                         println("Connected to ${PORT}")
 
-                        match stream.write_str(MESSAGE) {
+                        match stream.write(MESSAGE) {
                             Err(_) => { println("Write failed"); stream.close() }
                             Ok(_) => {
                                 match stream.read_bytes(256) {
