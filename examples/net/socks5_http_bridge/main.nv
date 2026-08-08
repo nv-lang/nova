@@ -264,7 +264,8 @@ fn read_headers_guarded(mut client TcpStream, max_bytes int) Net Time -> Result[
     outcome
 }
 
-type ParsedRequest enum Connect { host str, port int }
+type ParsedRequest enum
+    | Connect { host str, port int }
     | Plain { host str, port int, rewritten_head str }
     | Invalid
 
