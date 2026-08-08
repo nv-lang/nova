@@ -72,6 +72,22 @@ struct Cli {
     #[arg(long = "strict-effects", global = true)]
     strict_effects: bool,
 
+    /// Включить SMT-верификацию контрактов (`requires`/`ensures`/`invariant`/
+    /// `axiom`) во время компиляции. **ВЫКЛЮЧЕНА ПО УМОЛЧАНИЮ** — решение
+    /// владельца 2026-08-08 (реестр 221.1 №437): пофазный замер показал, что
+    /// `verify_module` съедал **47 % всего времени чекера**, гоняясь на каждом
+    /// модуле, включая модули без единого контракта.
+    ///
+    /// БЕЗОПАСНОСТЬ НЕ СТРАДАЕТ: результат верификации используется ТОЛЬКО чтобы
+    /// УБРАТЬ рантайм-проверки (доказанные контракты, границы индексов,
+    /// переполнения → zero-cost release). Нет доказательств → ничего не
+    /// элидируется → ВСЁ проверяется на исполнении. Флаг влияет на скорость
+    /// компиляции и на скорость готовой программы, но не на её корректность.
+    ///
+    /// Включать для release-сборок, где нужна элизия проверок, и для замеров.
+    #[arg(long = "verify", global = true)]
+    verify: bool,
+
     // ─────────────────────────────────────────────────────────────────────
     // Plan 123.6.1 (V6.1): field-cache sugar CLI flags — global. Translate
     // to NOVA_FIELD_CACHE_* env vars before subcommand dispatch.
@@ -4974,6 +4990,10 @@ fn cmd_build(
         if let Some(m) = nova_codegen::manifest::parse_manifest(&toml_path, &pkg_dir) {
             nova_codegen::manifest::check_no_committed_replace(&m, &toml_path)
                 .map_err(|e| anyhow!("{}", e))?;
+            // №444: кросс-реповый `path` в [dependencies] — ЖЁСТКАЯ ошибка.
+            // Раньше был warning'ом и месяцами пролистывался, пока красил CI.
+            nova_codegen::manifest::check_no_cross_repo_path_deps(&m, &toml_path)
+                .map_err(|e| anyhow!("{}", e))?;
         }
         let _t = nova_codegen::perf_timer::PerfTimer::new("dep-lock");
         // Plan 219: демон подтвердил, что entry `nova.toml`+lockfile
@@ -6857,6 +6877,13 @@ fn run() -> ExitCode {
     // ~99 `check_module*` call-sites).
     if cli.strict_effects {
         std::env::set_var("NOVA_STRICT_EFFECTS", "1");
+    }
+
+    // №437: SMT-верификация ВЫКЛЮЧЕНА по умолчанию, включается `--verify`.
+    // Тот же идиом, что у `--strict-effects` выше: флаг → env, читается в
+    // `check_module_impl` (не протягиваем сигнатуру через ~99 call-site'ов).
+    if cli.verify {
+        std::env::set_var("NOVA_VERIFY", "1");
     }
 
     let result = match cli.cmd {

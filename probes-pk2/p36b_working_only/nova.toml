@@ -1,7 +1,0 @@
-[package]
-name = "p36b_working_only"
-version = "0.1.0"
-
-[[bin]]
-name = "p36bmain"
-path = "main.nv"

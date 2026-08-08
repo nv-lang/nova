@@ -1,7 +1,0 @@
-[package]
-name = "p39_effect_generic_value"
-version = "0.1.0"
-
-[[bin]]
-name = "p39main"
-path = "main.nv"

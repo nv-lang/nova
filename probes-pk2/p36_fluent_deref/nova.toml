@@ -1,7 +1,0 @@
-[package]
-name = "p36_fluent_deref"
-version = "0.1.0"
-
-[[bin]]
-name = "p36main"
-path = "main.nv"

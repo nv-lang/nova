@@ -1,7 +1,0 @@
-[package]
-name = "p39c_plain_type_generic"
-version = "0.1.0"
-
-[[bin]]
-name = "p39cmain"
-path = "main.nv"

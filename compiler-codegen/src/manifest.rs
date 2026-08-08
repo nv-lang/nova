@@ -741,6 +741,53 @@ pub fn check_no_committed_replace(m: &Manifest, toml_path: &Path) -> Result<(), 
     Ok(())
 }
 
+/// `E_DEP_PATH_OUTSIDE_REPO` — ЖЁСТКАЯ ошибка: зависимость объявлена голым
+/// `path`, ведущим ЗА границу git-репозитория манифеста.
+///
+/// **Почему ошибка, а не warning (решение владельца 2026-08-08, реестр 221.1
+/// №444).** Правило было и раньше — как `W_DEP_PATH_NO_RELEASE` в
+/// `manifest_warnings` ниже, с верным условием и точной подсказкой. Оно честно
+/// печаталось при КАЖДОЙ сборке… и месяцами пролистывалось в потоке вывода:
+/// `examples/nova.toml` держал `http = { path = "../../nova-http" }` и
+/// `polaris = { path = "../../nova-polaris" }`, из-за чего шаг «Flagship
+/// examples gate» на CI падал сообщением «резолюция зависимостей: зависимость
+/// polaris: path ../../nova-polaris», и этот красный маскировал всё остальное.
+/// Предупреждение, которое никто не читает, защитой не является.
+///
+/// Условие то же, что у warning'а, и оно НЕ стилистическое: путь, выходящий за
+/// границу репозитория, на чистом клоне не разрешится НИКОГДА — ни на CI, ни у
+/// пользователя. Это состояние «собрать невозможно», а не «оформлено не так».
+///
+/// Путь ВНУТРИ той же репы (workspace-член, вложенный тест-пакет) законен и
+/// ошибкой не считается — `git clone` приносит его вместе с манифестом.
+/// `path` в `[replace]` (только в НЕкоммитящемся `nova.override.toml`) законен
+/// по D420 и сюда не попадает: `[replace]` в коммитящемся манифесте ловит
+/// `check_no_committed_replace` выше.
+pub fn check_no_cross_repo_path_deps(m: &Manifest, toml_path: &Path) -> Result<(), String> {
+    for d in &m.dependencies {
+        if let DepSource::Path(rel) = &d.source {
+            let dep_dir = m.manifest_dir.join(rel);
+            let same_repo = match (git_repo_root(&m.manifest_dir), git_repo_root(&dep_dir)) {
+                (Some(a), Some(b)) => a == b,
+                _ => false,
+            };
+            if !same_repo {
+                return Err(format!(
+                    "[E_DEP_PATH_OUTSIDE_REPO] зависимость `{}` объявлена голым \
+                     `path = \"{}\"` в [dependencies] ({}) — путь выходит за \
+                     границу git-репозитория, на чистом клоне не разрешится\n  \
+                     fix: релизная форма — `{} = {{ git = \"...\", version = \
+                     \"x.y\" }}` в [dependencies]; локальный путь — в \
+                     `[replace] {} = {{ path = \"{}\" }}` внутри nova.override.toml \
+                     (не коммитится). См. D420 (spec/decisions/09-tooling.md).",
+                    d.name, rel, toml_path.display(), d.name, d.name, rel,
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Собрать warnings по манифесту `m` (путь к нему — `toml_path`, только
 /// для сообщения). Правила:
 ///   - `W_DEP_PATH_NO_RELEASE`: зависимость объявлена ГОЛЫМ `path = "..."`

@@ -1,9 +1,0 @@
-[package]
-name = "p135_leaf"
-version = "0.1.0"
-
-[lib]
-src = "src"
-
-[dependencies]
-bignum = { path = "../../../nova-bignum" }
