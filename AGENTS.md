@@ -31,11 +31,12 @@ After any change to Rust sources in `compiler-codegen/` or `nova-cli/`, rebuild 
 ## Test
 
 ```sh
-# Full test suite (C-codegen pipeline)
-nova-cli/target/release/nova test
+# Full test suite (C-codegen pipeline). A path is required (Plan 172.6) — pass
+# both live suites explicitly:
+nova-cli/target/release/nova test spec_tests std
 
 # Targeted: run only tests matching a substring
-nova-cli/target/release/nova test --filter syntax/closure
+nova-cli/target/release/nova test spec_tests --filter syntax/closure
 
 # Single-file debug (no parallelism, keeps build artifacts)
 ./compiler-codegen/target/debug/nova-codegen test-build spec_tests/conformance/standalone/<fixture>.nv \

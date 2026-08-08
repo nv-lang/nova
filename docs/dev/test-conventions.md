@@ -752,8 +752,8 @@ SKIP-строками, а НЕ голым «PASS: 0 FAIL: 0» (неотличи�
 # build nova CLI (one-time, or after changes to compiler)
 cd nova-cli && cargo build && cd ..
 
-# run all tests
-nova-cli/target/debug/nova test
+# run all tests (path required since Plan 172.6 — both live suites)
+nova-cli/target/debug/nova test spec_tests std
 ```
 
 Логика runner'а (детект toolchain'а, EXPECT-маркеры, parallel scheduler,
@@ -765,7 +765,7 @@ per-test timeout, JSON output) живёт в Rust в
 | Флаг | Что |
 |---|---|
 | `--filter <substr>` | Прогнать только тесты содержащие substring |
-| `[PATH]...` | Один или несколько путей к директориям с тестами (multi-path, Plan 36.D.1). Без аргументов — `nova_tests/`. Пример: `nova test nova_tests std` |
+| `[PATH]...` | Один или несколько путей к директориям с тестами (multi-path, Plan 36.D.1). **Обязателен** — без аргументов `nova test` завершается ошибкой (Plan 172.6, `nova test requires at least one path`). Пример: `nova test spec_tests std` |
 | `--mode dev\|release` | dev (default) или release с `-O3 -flto` |
 | `--toolchain auto\|clang\|msvc\|gcc` | Compiler. Default: auto (Clang → MSVC → GCC) |
 | `--timeout <secs>` | Per-test timeout. Default 60 |
@@ -781,28 +781,28 @@ per-test timeout, JSON output) живёт в Rust в
 
 **Дефолтный прогон** (всё параллельно через Clang):
 ```sh
-nova test
+nova test spec_tests std
 ```
 
 **Только подмножество** (TDD-loop):
 ```sh
-nova test --filter syntax/closure
-nova test --filter "negative_capability/"
+nova test spec_tests --filter syntax/closure
+nova test spec_tests --filter "negative_capability/"
 ```
 
 **Release-сборка** (с оптимизациями для perf-проверки):
 ```sh
-nova test --mode release
+nova test spec_tests --mode release
 ```
 
 **JSON output для custom CI parser'ов**:
 ```sh
-nova test --format json --results-file ci-results.jsonl
+nova test spec_tests --format json --results-file ci-results.jsonl
 ```
 
 **JUnit XML для CI** (GitHub Actions / GitLab CI / Jenkins / Azure DevOps):
 ```sh
-nova test --format junit --retries 2 > test-results.xml
+nova test spec_tests --format junit --retries 2 > test-results.xml
 ```
 Стандартный JUnit XML schema — нативно парсится всеми mainstream CI:
 ```xml
@@ -824,35 +824,35 @@ nova test --format junit --retries 2 > test-results.xml
 
 **TAP-13 output** (для legacy harnesses):
 ```sh
-nova test --format tap | tee results.tap
+nova test spec_tests --format tap | tee results.tap
 ```
 
 **TDD: перезапустить только упавшие**:
 ```sh
-nova test                     # первый прогон — результаты пишутся в target/last-test-results.json
-nova test --rerun-failed       # только бывшие fail-ы; намного быстрее
+nova test spec_tests std      # первый прогон — результаты пишутся в target/last-test-results.json
+nova test spec_tests std --rerun-failed       # только бывшие fail-ы; намного быстрее
 ```
 
 Явный путь к results-file:
 ```sh
-nova test --results-file target/last-test-results.json
+nova test spec_tests --results-file target/last-test-results.json
 # правишь код...
-nova test --results-file target/last-test-results.json --rerun-failed
+nova test spec_tests --results-file target/last-test-results.json --rerun-failed
 ```
 
 **Sequential** (для отладки race conditions):
 ```sh
-nova test --jobs 1
+nova test spec_tests --jobs 1
 ```
 
 **Долгие benchmark-тесты** (override default 60s timeout):
 ```sh
-nova test --timeout 300 --filter concurrency/sleep_leak
+nova test spec_tests --timeout 300 --filter concurrency/sleep_leak
 ```
 
 **Принудительный MSVC** (если хотите тестить под MSVC ABI):
 ```sh
-nova test --toolchain msvc
+nova test spec_tests --toolchain msvc
 ```
 
 ### Запуск одного теста

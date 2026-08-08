@@ -97,6 +97,10 @@ echo "== gate: expect-markers (неизвестный EXPECT_* раннер мо
 bash "$ROOT/scripts/guards/check-expect-markers.sh" "$ROOT" || fail "неизвестный EXPECT_* в тесте"
 bash "$ROOT/scripts/guards/selftest/test-check-expect-markers.sh" >/dev/null || fail "селфтест expect-markers"
 
+echo "== gate: doc-truth (нормативная дока врёт именем EXPECT_* или неисполнимой командой — №455) =="
+bash "$ROOT/scripts/guards/check-doc-truth.sh" "$ROOT" || fail "неизвестный EXPECT_* или неисполнимая команда nova в AGENTS.md/docs/dev(/docs/guide для маркеров)"
+bash "$ROOT/scripts/guards/selftest/test-check-doc-truth.sh" >/dev/null || fail "селфтест doc-truth"
+
 echo "== gate: invariant-discipline (норма об инвариантах — всеобъемлюща) =="
 bash "$ROOT/scripts/guards/check-invariant-discipline.sh" "$ROOT" || fail "новый инвариант на честном слове (conventions-governance)"
 bash "$ROOT/scripts/guards/selftest/test-check-invariant-discipline.sh" >/dev/null || fail "селфтест стража инвариантов"
