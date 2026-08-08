@@ -389,9 +389,27 @@ export fn TcpWriteHalf @local_port() Net -> u16 {
     Net.stream_local_port(TcpStream.from_raw(@handle))
 }
 
-/// Close the write half (consume). Closes the socket if the read half is gone.
+/// Close the write half (consume): sends a real TCP FIN (half-close,
+/// `shutdown(SHUT_WR)`) to the peer so it observes clean EOF on ITS read
+/// side, then releases this half's ownership unit. Closes the socket only
+/// once the read half is ALSO gone (split-refcounted, `net_tcp_close`).
+///
+/// Plan 249 Ф.0-а fix: before this, closing only the write half decremented
+/// the split refcount and returned WITHOUT touching the socket at all
+/// (`net_tcp_close`'s `if (left > 0) return;` early-out in
+/// `compiler-codegen/nova_rt/net.c`) — no `uv_shutdown` call anywhere on
+/// that path, so the peer's read half blocked forever waiting for a FIN
+/// that never came. `Net.shutdown` (wired to the separate `net_tcp_shutdown`
+/// C function) is now issued explicitly first; it is a plain `uv_shutdown`
+/// fire-and-forget (see net.c's `net_tcp_shutdown` doc comment — "half-close
+/// is already advisory") and does not affect the split-refcount teardown
+/// that follows.
 #stable(since = "0.1")
 export fn TcpWriteHalf consume @close() Net {
+    // Best-effort/advisory by design (mirrors net_tcp_shutdown's own doc
+    // comment): a shutdown failure here does not change what `close()` does
+    // next — the split-refcounted close below still runs either way.
+    ro _ = Net.shutdown(TcpStream.from_raw(@handle))
     Net.close_stream(TcpStream.from_raw(@handle))
 }
 

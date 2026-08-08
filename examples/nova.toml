@@ -56,3 +56,11 @@ tls = { git = "https://github.com/nv-lang/nova-tls", version = "0.1" }
 # манифест обязан ссылаться на ОПУБЛИКОВАННОЕ. У `nova-http` теги есть (v0.1.0…v0.1.2).
 http = { git = "https://github.com/nv-lang/nova-http", version = "0.1" }
 polaris = { git = "https://github.com/nv-lang/nova-polaris", version = "0.1" }
+# Plan 249 (examples/_wip/socks5_http_bridge): NOT wired here yet —
+# `socks` (nova-socks) has no published tag (D420 §4: lock RESOLUTION
+# reads the declared `[dependencies]` form regardless of any active
+# `[replace]`/override — a `version = "0.1"` git dep with zero matching
+# tags fails resolution for the WHOLE package, exactly the №444/CI
+# incident above, repeated). Adding it here before a tag exists would
+# break every example's build, not just the bridge's. See
+# examples/_wip/socks5_http_bridge/README.md for the blocker detail.

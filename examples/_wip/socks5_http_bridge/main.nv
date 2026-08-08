@@ -1,0 +1,418 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// examples/net/socks5_http_bridge/main.nv — local HTTP-to-SOCKS5 bridge.
+//
+// Motivation (plan 249 §0): some SOCKS5 proxies require a username/password
+// (RFC 1929) that Windows' system HTTP-proxy setting cannot carry. This
+// bridge listens as a plain HTTP proxy on 127.0.0.1 and re-packages traffic
+// into an authenticated SOCKS5 tunnel to the real proxy:
+//
+//   browser --HTTP--> 127.0.0.1:PORT --SOCKS5+auth--> upstream proxy --> internet
+//
+// Deliberately built straight over `std.net` (raw `TcpListener`/`TcpStream`),
+// NOT `nova-polaris`: polaris' server parser only understands ordinary
+// request URLs, not CONNECT's authority-form target (`host:port`, no
+// scheme/path, RFC 7230 §5.3.3) — see plan 249 §1 for the full trade-off.
+//
+// Scope (plan 249 §2, Ф.2 — this commit): CONNECT tunneling (HTTPS
+// proxying), the primary path. Plain HTTP-over-proxy (absolute-URI request
+// line, forwarded as an ordinary GET/POST/etc.) is a SEPARATE follow-up
+// commit (Ф.3) — a non-CONNECT request gets an honest `501 Not
+// Implemented` here, not a silent miscode.
+//
+// Configuration (`Os` effect):
+//   SOCKS5_PROXY   required, "host:port" of the upstream SOCKS5 proxy.
+//   SOCKS5_USER    optional, RFC 1929 username (paired with SOCKS5_PASS).
+//   SOCKS5_PASS    optional, RFC 1929 password.
+//   argv[1]        optional, local listen port (default 8899).
+//
+// Usage:
+//   SOCKS5_PROXY=proxy.example.com:1080 SOCKS5_USER=me SOCKS5_PASS=secret \
+//     nova build examples/net/socks5_http_bridge/main.nv -o bridge && ./bridge 8899
+//   # Point a browser's HTTPS proxy setting at 127.0.0.1:8899.
+//
+// See the module README for the full write-up, including the manual
+// end-to-end smoke test (NOT run in CI — needs a real external SOCKS5
+// proxy).
+//
+// STATUS (see examples/_wip/socks5_http_bridge/README.md — this file
+// currently lives THERE, not at the path in the header above, exactly
+// because of this): NOT wired into `examples/nova.toml` yet. Two open
+// blockers found this window — `nova-socks` has no published tag (lock
+// resolution would break the whole examples package), and
+// `pipe_bidirectional`'s relay pattern (into_split + cross-pump spawns +
+// shared CancelToken, exactly as designed below) reproducibly crashes the
+// native runtime (`Assertion failed: 0, .../libuv/src/win/core.c:694`) in
+// an isolated `nova test` repro with real data flowing + a real close —
+// independent of the bridge/SOCKS5 entirely. See the README for detail.
+
+module net.socks5_http_bridge
+
+import std.net.{TcpListener, TcpStream, TcpReadHalf, TcpWriteHalf, SocketAddr, real_net}
+import std.os.{args, env, real_os}
+import std.time.duration
+import socks.{socks5_connect}
+
+const DEFAULT_LISTEN_PORT = 8899
+
+// 64 KiB header cap (plan 249 §3.2 risk register): an unbounded
+// `read_headers` loop is a DoS vector (a client trickling bytes forever
+// grows this bridge's memory without limit) — exceeding this is a typed
+// `431 Request Header Fields Too Large`, not a silent hang or truncation.
+const MAX_HEADER_BYTES = 65536
+
+// Time bounds on the two blocking steps BEFORE the pipe starts (reading the
+// client's request headers, and the SOCKS5 handshake to the upstream
+// proxy). Implemented with a manual `CancelToken` + watchdog `spawn`, NOT
+// bare `supervised(timeout:)` — plan 249 Ф.0-б found `timeout:` does not
+// reach a `.read()` nested inside a SIBLING spawn body (see
+// `pipe_bidirectional`/`pump` below, and the plan's Ф.0 section); these two
+// guards run the guarded operation as a DIRECT body statement of its own
+// `supervised(cancel:)` block (no sibling spawn touches the guarded op
+// itself) — the shape confirmed to work.
+const HEADER_READ_TIMEOUT_MS int = 15000
+const UPSTREAM_CONNECT_TIMEOUT_MS int = 15000
+
+// The pipe stage itself (`pipe_bidirectional`) is intentionally left
+// UNBOUNDED (plan 249 §6 risk register: "known V1 limitation, no read
+// timeouts on the established tunnel" — accepted for an example; a
+// production bridge would want idle timeouts here too).
+
+type Config {
+    proxy_host str
+    proxy_port int
+    user Option[str]
+    pass Option[str]
+    listen_port int
+}
+
+fn parse_listen_port(argv []str) -> int {
+    if argv.len() <= 1 { return DEFAULT_LISTEN_PORT }
+    match argv[1].to_int() {
+        Ok(p) => {
+            if p < 1 || p > 65535 {
+                panic("socks5_http_bridge: listen port ${p} out of range 1..65535")
+            } else {
+                p
+            }
+        }
+        Err(_) => panic("socks5_http_bridge: invalid listen port argument '${argv[1]}'")
+    }
+}
+
+// `panic`s on malformed input — a separate, flat helper (not inlined into
+// `load_config`'s own match tree) so every arm's value type is unambiguous.
+fn parse_proxy_host_port(raw str) -> (str, int) {
+    match raw.rsplit_once(":") {
+        Some((h, p_str)) => {
+            match p_str.to_int() {
+                Ok(p) => {
+                    if p < 1 || p > 65535 {
+                        panic("socks5_http_bridge: SOCKS5_PROXY port ${p} out of range 1..65535")
+                    } else {
+                        (h, p)
+                    }
+                }
+                Err(_) => panic("socks5_http_bridge: SOCKS5_PROXY must be host:port, got '${raw}'")
+            }
+        }
+        None => panic("socks5_http_bridge: SOCKS5_PROXY must be host:port, got '${raw}'")
+    }
+}
+
+// Config validation happens ONCE at startup (plan 249 §3.2) — a malformed
+// `SOCKS5_PROXY` or out-of-range port is a fatal, loud `panic`, not a
+// silently-broken bridge that fails every connection later.
+fn load_config() Os -> Config {
+    ro proxy_raw = env("SOCKS5_PROXY") ?? ""
+    if proxy_raw == "" {
+        panic("socks5_http_bridge: SOCKS5_PROXY env var is required (host:port)")
+    }
+    ro (proxy_host, proxy_port) = parse_proxy_host_port(proxy_raw)
+    Config {
+        proxy_host,
+        proxy_port,
+        user: env("SOCKS5_USER"),
+        pass: env("SOCKS5_PASS"),
+        listen_port: parse_listen_port(args()),
+    }
+}
+
+fn main() Net Os Time -> () {
+    with Os = real_os(), Net = real_net() {
+        ro cfg = load_config()
+        consume listener = TcpListener.bind(SocketAddr.loopback(cfg.listen_port))!!
+        println("socks5_http_bridge: listening on 127.0.0.1:${listener.local_port()}, upstream SOCKS5 ${cfg.proxy_host}:${cfg.proxy_port}")
+        supervised {
+            loop {
+                match listener.accept() {
+                    // Form REQUIRED by plan 249 §3.2 (build-verified): the
+                    // binding comes from the match arm and moves straight
+                    // into `spawn consume` — an OUTER `consume conn = …`
+                    // plus a bare `spawn` gives `E_LINEAR_CAPTURE_IN_FIBER`.
+                    Ok(consume conn) => spawn consume conn { handle_client(conn, cfg) }
+                    Err(_)           => ()   // accept error: log-and-continue policy
+                }
+            }
+        }
+    }
+}
+
+// ─── Per-connection handling ───────────────────────────────────────────────
+
+type HeaderReadError enum TooLarge | ConnectionClosed | ReadFailed
+
+type HeadersRead { head str, leftover []u8 }
+
+// Byte-level "\r\n\r\n" scan — the header/body boundary (RFC 7230 §3).
+fn find_header_terminator(buf []u8) -> Option[int] {
+    if buf.len() < 4 { return None }
+    mut i = 0
+    while i <= buf.len() - 4 {
+        if buf[i] == (13 as u8) && buf[i + 1] == (10 as u8)
+            && buf[i + 2] == (13 as u8) && buf[i + 3] == (10 as u8) {
+            return Some(i)
+        }
+        i += 1
+    }
+    None
+}
+
+// Pure helper (no `Net`, no loop) — flat shape on purpose, tried against a
+// build error where a deeply-nested match inside a tail `loop` confused the
+// codegen's type inference for the loop's (never-taken) fallthrough value.
+// `None` = terminator not seen yet, keep reading.
+fn try_extract_headers(buf []u8) -> Option[Result[HeadersRead, HeaderReadError]] {
+    match find_header_terminator(buf) {
+        Some(end_idx) => {
+            ro head_bytes = buf[..end_idx]
+            ro leftover = buf[(end_idx + 4)..]
+            match head_bytes.to_str() {
+                Ok(s)  => Some(Ok(HeadersRead { head: s, leftover }))
+                Err(_) => Some(Err(ReadFailed))
+            }
+        }
+        None => None
+    }
+}
+
+// Reads raw bytes off `client` until the `\r\n\r\n` header terminator (or
+// `max_bytes` is exceeded, or the peer errs/closes). Returns the decoded
+// header text PLUS any bytes already read past the terminator (pipelined
+// body/next-request bytes) so a caller can forward them instead of
+// dropping them on the floor.
+fn read_headers(mut client TcpStream, max_bytes int) Net -> Result[HeadersRead, HeaderReadError] {
+    mut buf []u8 = []u8.new()
+    mut chunk []u8 = []u8.new()
+    chunk.resize(4096, 0 as u8)
+    while true {
+        match client.read(chunk) {
+            Ok(0) => return Err(ConnectionClosed)
+            Ok(n) => {
+                buf.append(chunk[..n])
+                if buf.len() > max_bytes { return Err(TooLarge) }
+                match try_extract_headers(buf) {
+                    Some(result) => return result
+                    None         => continue
+                }
+            }
+            Err(_) => return Err(ReadFailed)
+        }
+    }
+    // Every path through the loop body above `return`s or `continue`s — this
+    // is never reached. `while true {}` (unlike a bare `loop {}`) is NOT
+    // typed `Never` in tail position (a build error hit this window: the
+    // codegen's tmp for a bare `loop`'s tail-position fallthrough emitted
+    // `nova_unit` where a POINTER-typed `Result[HeadersRead, _]` (a record
+    // Ok-payload) was needed, `NovaRes_..._p* = nova_unit`, CC-FAIL — a
+    // primitive-typed `Result[int, _]`, like `std/src/io/buffered.nv`'s own
+    // tail `loop{}`, did not trip it). This line exists only to give the
+    // function an explicit, correctly-typed trailing value.
+    panic("read_headers: unreachable")
+}
+
+// Watchdog-guarded `read_headers`: the read itself is a DIRECT statement of
+// the `supervised(cancel:)` block (proven-working shape, plan 249 Ф.0-б) —
+// only the watchdog timer runs in a sibling `spawn`.
+fn read_headers_guarded(mut client TcpStream, max_bytes int) Net Time -> Result[HeadersRead, HeaderReadError] {
+    ro tok = CancelToken.new()
+    mut outcome = Err(ReadFailed)
+    supervised(cancel: tok) {
+        spawn {
+            (HEADER_READ_TIMEOUT_MS).to_millis().sleep()
+            tok.cancel()
+        }
+        outcome = read_headers(client, max_bytes)
+        // Self-cancel as soon as the read resolves — WITHOUT this, the
+        // (structured-concurrency) supervised block would still wait out
+        // the watchdog's full sleep on every fast/successful read
+        // (confirmed by a timing probe this window: an un-self-cancelled
+        // fast op measured ~15000ms; with the explicit `tok.cancel()`
+        // here, the same shape measured ~88ms).
+        tok.cancel()
+    }
+    outcome
+}
+
+type ParsedRequest enum Connect { host str, port int }
+    | NotConnect
+
+fn parse_request(head str) -> ParsedRequest {
+    ro lines []str = head.split("\r\n").collect()
+    if lines.len() == 0 { return NotConnect }
+    ro parts []str = lines[0].split(" ").collect()
+    if parts.len() != 3 { return NotConnect }
+    if parts[0] != "CONNECT" { return NotConnect }
+    match parts[1].rsplit_once(":") {
+        Some((host, port_str)) => match port_str.to_int() {
+            Ok(port) => Connect { host, port }
+            Err(_)   => NotConnect
+        }
+        None => NotConnect
+    }
+}
+
+fn respond(mut client TcpStream, status_line str) -> () {
+    ro _ = client.write_str("${status_line}\r\n\r\n")
+}
+
+fn handle_client(consume client TcpStream, cfg Config) Net Time -> () {
+    match read_headers_guarded(client, MAX_HEADER_BYTES) {
+        Ok(headers) => {
+            match parse_request(headers.head) {
+                Connect { host, port } => {
+                    handle_connect(client, host, port, cfg, headers.leftover)
+                }
+                NotConnect => {
+                    // Plain HTTP-over-proxy is a separate follow-up (Ф.3) —
+                    // an honest "not yet" instead of a silent miscode.
+                    respond(client, "HTTP/1.1 501 Not Implemented")
+                    client.close()
+                }
+            }
+        }
+        Err(TooLarge) => {
+            respond(client, "HTTP/1.1 431 Request Header Fields Too Large")
+            client.close()
+        }
+        Err(_) => {
+            // Peer closed / errored / watchdog-cancelled before sending a
+            // complete request — nothing useful to answer with, just close.
+            client.close()
+        }
+    }
+}
+
+// Watchdog-guarded SOCKS5 connect — mirrors `read_headers_guarded`'s shape,
+// EXTRACTING the live `upstream` `TcpStream` out of the `supervised(cancel:)`
+// block instead of running the (potentially hours-long) pipe stage nested
+// inside it. Build-verified reason this matters (this window): calling
+// `pipe_bidirectional` as a direct statement STILL INSIDE this scope, after
+// self-cancelling `tok` early, corrupted the tunnel — a live round-trip
+// test (CONNECT succeeded, `200` received) had its data-relay aborted
+// (`WSAECONNABORTED`) partway through. `pipe_bidirectional` opens its OWN
+// FRESH `supervised(cancel:)` scope with its OWN token — nesting it inside
+// an already-self-cancelled ancestor scope's still-open dynamic extent is
+// not the same as running it in a clean parent scope. Extracting `upstream`
+// here and calling `pipe_bidirectional` from `handle_connect`'s own
+// top-level body (this function's OUTER scope, entered fresh, uncancelled)
+// avoids the nesting entirely.
+fn connect_guarded(cfg Config, host str, port int) Net Time -> Result[TcpStream, ()] {
+    ro tok = CancelToken.new()
+    mut outcome = Err(())
+    supervised(cancel: tok) {
+        spawn {
+            (UPSTREAM_CONNECT_TIMEOUT_MS).to_millis().sleep()
+            tok.cancel()
+        }
+        match socks5_connect(cfg.proxy_host, cfg.proxy_port, cfg.user, cfg.pass, host, port) {
+            Ok(consume upstream) => { outcome = Ok(upstream) }
+            Err(_)                => { outcome = Err(()) }
+        }
+        // Self-cancel as soon as the connect resolves (same reasoning as
+        // `read_headers_guarded`) — otherwise this block waits out the
+        // watchdog's full sleep on every fast/successful connect.
+        tok.cancel()
+    }
+    outcome
+}
+
+// Connects to the SOCKS5 proxy, then either tunnels (`pipe_bidirectional`)
+// or answers `502 Bad Gateway`. Upstream connect happens BEFORE the `200`
+// response is sent — a failed upstream never leaves the client thinking a
+// tunnel it does not have was established (plan 249 §3.2).
+fn handle_connect(consume client TcpStream, host str, port int, cfg Config, leftover []u8) Net Time -> () {
+    match connect_guarded(cfg, host, port) {
+        Ok(consume upstream) => {
+            respond(client, "HTTP/1.1 200 Connection Established")
+            if leftover.len() > 0 {
+                // Best-effort: a write failure here just means the
+                // upstream connection is already broken — the immediately
+                // following `pipe_bidirectional` will observe that on its
+                // own next read/write and tear down cleanly either way.
+                ro _ = upstream.write(leftover)
+            }
+            pipe_bidirectional(client, upstream)
+        }
+        Err(_) => {
+            respond(client, "HTTP/1.1 502 Bad Gateway")
+            client.close()
+        }
+    }
+}
+
+// ─── Bidirectional byte relay ──────────────────────────────────────────────
+
+// The example's core (plan 249 §3.2): `a`'s and `b`'s halves cross-pump —
+// fiber #1 pumps `ar -> bw`, fiber #2 pumps `br -> aw`. Each fiber owns
+// exactly ONE read half and ONE write half — linear ownership holds without
+// any shared state.
+//
+// Ф.0-б finding: `supervised(timeout:)` does NOT reach a `.read()` nested
+// inside a SIBLING spawn body (confirmed hung past 30s in an isolated
+// probe this window) — so it cannot be the mechanism that stops fiber #2
+// once fiber #1 sees EOF and finishes. The mechanism used here instead: a
+// shared `CancelToken` (`supervised(cancel: tok)`) that EITHER pump calls
+// explicitly once its OWN read hits clean EOF or an error — waking the
+// sibling's blocked read via `Err(Cancelled)`. The pipe stage itself stays
+// otherwise unbounded (plan §6 risk register: accepted V1 limitation, no
+// idle/read timeout on an established tunnel).
+fn pipe_bidirectional(consume a TcpStream, consume b TcpStream) Net -> () {
+    consume (ar, aw) = a.into_split()
+    consume (br, bw) = b.into_split()
+    ro tok = CancelToken.new()
+    supervised(cancel: tok) {
+        spawn consume ar, bw { pump(ar, bw, tok) }
+        spawn consume br, aw { pump(br, aw, tok) }
+    }
+}
+
+fn write_all_half(mut w TcpWriteHalf, data []u8) Net -> bool {
+    mut off = 0
+    while off < data.len() {
+        match w.write(data[off..]) {
+            Ok(n)  => { if n <= 0 { return false } off += n }
+            Err(_) => return false
+        }
+    }
+    true
+}
+
+fn pump(consume r TcpReadHalf, consume w TcpWriteHalf, tok CancelToken) Net -> () {
+    mut buf []u8 = []u8.new()
+    buf.resize(8192, 0 as u8)
+    mut keep_going = true
+    while keep_going {
+        match r.read(buf) {
+            Ok(0) => { keep_going = false }            // clean EOF on this direction
+            Ok(n) => {
+                if !write_all_half(w, buf[..n]) { keep_going = false }
+            }
+            Err(_) => { keep_going = false }            // I/O error, or woken by the sibling's cancel
+        }
+    }
+    r.close()
+    w.close()
+    // Wake the SIBLING pump (blocked reading the other direction) — the
+    // mechanism established in plan 249 Ф.0-б, NOT `supervised(timeout:)`.
+    tok.cancel()
+}
