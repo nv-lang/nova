@@ -50,7 +50,7 @@ FAKE_DONE=0
 if [ -f "$TMPLOG" ] && [ ! -f "$TMPDONE" ]; then
     echo "RC=0 SEC=0 (selftest stub)" > "$TMPDONE"; FAKE_DONE=1
 fi
-out=$(NOVA_MEASURE_CPU_MAX=100 bash "$M" -n 2 -l selftest-free -- true 2>&1); rc=$?
+out=$(NOVA_MEASURE_SELFTEST_NO_GATES=1 NOVA_MEASURE_CPU_MAX=100 bash "$M" -n 2 -l selftest-free -- true 2>&1); rc=$?
 [ "$FAKE_DONE" -eq 1 ] && rm -f "$TMPDONE"
 if [ "$rc" -eq 0 ] && echo "$out" | grep -q 'замер ВАЛИДЕН'; then
     ok "не ложно-срабатывает на свободной машине (код 0)"
@@ -66,7 +66,7 @@ FAKE_DONE=0
 if [ -f "$TMPLOG" ] && [ ! -f "$TMPDONE" ]; then
     echo "RC=0 SEC=0 (selftest stub)" > "$TMPDONE"; FAKE_DONE=1
 fi
-out=$(NOVA_MEASURE_CPU_MAX=100 bash "$M" -n 3 -l selftest-spread -- \
+out=$(NOVA_MEASURE_SELFTEST_NO_GATES=1 NOVA_MEASURE_CPU_MAX=100 bash "$M" -n 3 -l selftest-spread -- \
       bash -c 'if [ ! -f /tmp/_ms ]; then touch /tmp/_ms; sleep 3; else sleep 0; fi' 2>&1)
 rc=$?; rm -f /tmp/_ms
 [ "$FAKE_DONE" -eq 1 ] && rm -f "$TMPDONE"
