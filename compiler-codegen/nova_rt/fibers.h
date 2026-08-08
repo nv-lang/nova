@@ -2962,6 +2962,14 @@ static inline int nova_supervised_step(NovaFiberQueue* q) {
  * Если fiber-error appears — printf to stderr (диагностика), но
  * нормальный exit. */
 static inline void nova_supervised_drain_main_scope(NovaFiberQueue* q) {
+    int _nv456_diag = getenv("NOVA_DIAG_M456") != NULL;
+    long long _nv456_iters = 0;
+    if (_nv456_diag) {
+        fprintf(stderr, "[m456] drain_main_scope ENTER q=%p remote=%d pending_sweeps=%d\n",
+                (void*)q, (int)nova_aint_load(&q->pending_remote),
+                (int)nova_aint_load(&q->pending_sweeps));
+        fflush(stderr);
+    }
     for (;;) {
         int alive = nova_supervised_step(q);
         if (alive == 0) {
@@ -2969,6 +2977,11 @@ static inline void nova_supervised_drain_main_scope(NovaFiberQueue* q) {
              * fiber'ы running на workers. Wait для них. */
             int remote = (int)nova_aint_load(&q->pending_remote);
             if (remote == 0) break;
+            if (_nv456_diag && (++_nv456_iters % 20000) == 0) {
+                fprintf(stderr, "[m456] drain_main_scope STILL WAITING remote loop q=%p remote=%d iters=%lld\n",
+                        (void*)q, remote, _nv456_iters);
+                fflush(stderr);
+            }
             uv_run(nova_current_loop(), UV_RUN_ONCE);
             continue;
         }
@@ -2977,15 +2990,32 @@ static inline void nova_supervised_drain_main_scope(NovaFiberQueue* q) {
             uv_run(nova_current_loop(), UV_RUN_ONCE);
         }
     }
+    if (_nv456_diag) {
+        fprintf(stderr, "[m456] drain_main_scope past-remote-loop q=%p pending_sweeps=%d\n",
+                (void*)q, (int)nova_aint_load(&q->pending_sweeps));
+        fflush(stderr);
+    }
     /* [196.6 / D228 §6 class]: wait for worker-side sweeps of this scope's
      * remote children (see pending_sweeps field doc / supervised_run_impl
      * tail). The orphan scope is static, but drain is also the pre-exit
      * fence — keep the sweep/ctx-pool accounting symmetric. */
-    while (nova_aint_load(&q->pending_sweeps) > 0) {
-        uv_run(nova_current_loop(), UV_RUN_NOWAIT);
-        if (nova_aint_load(&q->pending_sweeps) > 0) {
-            uv_sleep(1);
+    {
+        long long _nv456_iters2 = 0;
+        while (nova_aint_load(&q->pending_sweeps) > 0) {
+            uv_run(nova_current_loop(), UV_RUN_NOWAIT);
+            if (nova_aint_load(&q->pending_sweeps) > 0) {
+                uv_sleep(1);
+                if (_nv456_diag && (++_nv456_iters2 % 2000) == 0) {
+                    fprintf(stderr, "[m456] drain_main_scope STILL WAITING pending_sweeps q=%p val=%d iters=%lld\n",
+                            (void*)q, (int)nova_aint_load(&q->pending_sweeps), _nv456_iters2);
+                    fflush(stderr);
+                }
+            }
         }
+    }
+    if (_nv456_diag) {
+        fprintf(stderr, "[m456] drain_main_scope DONE q=%p\n", (void*)q);
+        fflush(stderr);
     }
     nova_sched_drop_state(q);
     /* Plan 44.5 Layer 5: cross-worker first_error_atomic check. */
@@ -3522,10 +3552,24 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
      * driver's deref reads garbage → SEGV in `_nova_driver_handle_cancel_scope`.
      * See §12.31 for VEH-localized crash analysis. ACQUIRE load synchronizes
      * with the driver's RELEASE decrement at end of handle_cancel_scope. */
-    while (nova_aint_load(&q->pending_driver_jobs) > 0) {
-        uv_run(nova_current_loop(), UV_RUN_NOWAIT);
-        if (nova_aint_load(&q->pending_driver_jobs) > 0) {
-            uv_sleep(1);  /* yield ~1ms; driver thread is independent of our loop */
+    {
+        int _nv456_diag = getenv("NOVA_DIAG_M456") != NULL;
+        long long _nv456_iters = 0;
+        if (_nv456_diag && nova_aint_load(&q->pending_driver_jobs) > 0) {
+            fprintf(stderr, "[m456] pending_driver_jobs wait ENTER q=%p val=%d\n",
+                    (void*)q, (int)nova_aint_load(&q->pending_driver_jobs));
+            fflush(stderr);
+        }
+        while (nova_aint_load(&q->pending_driver_jobs) > 0) {
+            uv_run(nova_current_loop(), UV_RUN_NOWAIT);
+            if (nova_aint_load(&q->pending_driver_jobs) > 0) {
+                uv_sleep(1);  /* yield ~1ms; driver thread is independent of our loop */
+                if (_nv456_diag && (++_nv456_iters % 2000) == 0) {
+                    fprintf(stderr, "[m456] pending_driver_jobs STILL WAITING q=%p val=%d iters=%lld\n",
+                            (void*)q, (int)nova_aint_load(&q->pending_driver_jobs), _nv456_iters);
+                    fflush(stderr);
+                }
+            }
         }
     }
     /* [196.6 / D228 §6 class]: same guarantee for the WORKER-side post-mortem
@@ -3540,10 +3584,24 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
      * sweep pairs with this acquire load). Typical wait: zero iterations —
      * the sweep is the very next thing the worker does after the fiber
      * returns. See pending_sweeps field doc. */
-    while (nova_aint_load(&q->pending_sweeps) > 0) {
-        uv_run(nova_current_loop(), UV_RUN_NOWAIT);
-        if (nova_aint_load(&q->pending_sweeps) > 0) {
-            uv_sleep(1);
+    {
+        int _nv456_diag = getenv("NOVA_DIAG_M456") != NULL;
+        long long _nv456_iters = 0;
+        if (_nv456_diag && nova_aint_load(&q->pending_sweeps) > 0) {
+            fprintf(stderr, "[m456] pending_sweeps wait ENTER q=%p val=%d\n",
+                    (void*)q, (int)nova_aint_load(&q->pending_sweeps));
+            fflush(stderr);
+        }
+        while (nova_aint_load(&q->pending_sweeps) > 0) {
+            uv_run(nova_current_loop(), UV_RUN_NOWAIT);
+            if (nova_aint_load(&q->pending_sweeps) > 0) {
+                uv_sleep(1);
+                if (_nv456_diag && (++_nv456_iters % 2000) == 0) {
+                    fprintf(stderr, "[m456] pending_sweeps STILL WAITING q=%p val=%d iters=%lld\n",
+                            (void*)q, (int)nova_aint_load(&q->pending_sweeps), _nv456_iters);
+                    fflush(stderr);
+                }
+            }
         }
     }
     /* Cleanup sched-state for этого scope'а (если был alloc'ом). */

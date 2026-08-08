@@ -1874,7 +1874,10 @@ void nova_runtime_shutdown(void) {
     /* Plan 83.11 Ф.2: stop driver thread BEFORE workers join — driver
      * routes wake-events to workers; if workers gone first, driver writes
      * to dead worker handles → UAF. */
+    int _nv456_diag = getenv("NOVA_DIAG_M456") != NULL;
+    if (_nv456_diag) { fprintf(stderr, "[m456] shutdown: before driver_shutdown n_workers=%d\n", _n_workers); fflush(stderr); }
     nova_driver_shutdown();
+    if (_nv456_diag) { fprintf(stderr, "[m456] shutdown: after driver_shutdown\n"); fflush(stderr); }
 
     /* Plan 44.7: stop sysmon ПЕРВЫМ — до free(_workers), чтобы sysmon
      * не читал освобождённую память. join гарантирует тред вышел. */
@@ -1883,6 +1886,7 @@ void nova_runtime_shutdown(void) {
         uv_thread_join(&_sysmon_thread);
         _sysmon_started = false;
     }
+    if (_nv456_diag) { fprintf(stderr, "[m456] shutdown: after sysmon join\n"); fflush(stderr); }
 
     /* Signal stop + wake workers. */
     for (int i = 0; i < _n_workers; i++) {
@@ -1890,10 +1894,13 @@ void nova_runtime_shutdown(void) {
         nova_abool_store(&w->stop, true);
         uv_async_send(&w->wake_handle);
     }
+    if (_nv456_diag) { fprintf(stderr, "[m456] shutdown: signaled stop to %d workers\n", _n_workers); fflush(stderr); }
 
     /* Join. */
     for (int i = 0; i < _n_workers; i++) {
+        if (_nv456_diag) { fprintf(stderr, "[m456] shutdown: joining worker %d...\n", i); fflush(stderr); }
         uv_thread_join(&_workers[i].thread);
+        if (_nv456_diag) { fprintf(stderr, "[m456] shutdown: joined worker %d\n", i); fflush(stderr); }
     }
 
     /* Plan 82 Ф.3: worker-потоки join'нуты (мертвы) — освободить их
@@ -1906,6 +1913,7 @@ void nova_runtime_shutdown(void) {
     /* Cleanup. */
     for (int i = 0; i < _n_workers; i++) {
         NovaWorker* w = &_workers[i];
+        if (_nv456_diag) { fprintf(stderr, "[m456] shutdown: cleanup worker %d begin loop_alive=%d\n", i, uv_loop_alive(&w->loop)); fflush(stderr); }
         uv_close((uv_handle_t*)&w->wake_handle, NULL);
         /* Run one more tick to process close. */
         uv_run(&w->loop, UV_RUN_NOWAIT);
@@ -1942,7 +1950,8 @@ void nova_runtime_shutdown(void) {
             nova_loop_drain_calls(&w->call_queue);
             nova_loop_drain_closes(&w->close_queue);
         }
-        uv_loop_close(&w->loop);
+        int _nv456_lc = uv_loop_close(&w->loop);
+        if (_nv456_diag) { fprintf(stderr, "[m456] shutdown: cleanup worker %d uv_loop_close=%d\n", i, _nv456_lc); fflush(stderr); }
         /* Plan 83-go-cmn Ф.1: runq is inline (no heap) → nothing to destroy. */
         free(w->wake_pending);
         w->wake_pending = NULL;
@@ -1955,7 +1964,9 @@ void nova_runtime_shutdown(void) {
          * actually get pumped) — just tear down the now-empty structures. */
         nova_close_queue_destroy(&w->close_queue);
         nova_call_queue_destroy(&w->call_queue);
+        if (_nv456_diag) { fprintf(stderr, "[m456] shutdown: cleanup worker %d done\n", i); fflush(stderr); }
     }
+    if (_nv456_diag) { fprintf(stderr, "[m456] shutdown: all worker cleanup done, freeing _workers\n"); fflush(stderr); }
 
 #ifdef NOVA_GC_BOEHM
     /* Plan 82 Ф.3: снять GC-root worker-массива до его free. */
@@ -1970,6 +1981,7 @@ void nova_runtime_shutdown(void) {
     _target_workers = 0;
 
     nova_mutex_unlock(&_init_mu);
+    if (_nv456_diag) { fprintf(stderr, "[m456] shutdown: nova_runtime_shutdown RETURNING\n"); fflush(stderr); }
 }
 
 /* ── Spawn ────────────────────────────────────────────────────── */

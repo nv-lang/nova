@@ -846,6 +846,12 @@ static NovaStopMode _nn2_stream_stop_cb(void* handle) {
 
 static void _nn2_stream_close_cb(uv_handle_t* h) {
     NovaNet2Stream* s = (NovaNet2Stream*)h->data;
+    if (getenv("NOVA_DIAG_M456") != NULL) {
+        fprintf(stderr, "[m456] _nn2_stream_close_cb ENTER s=%p tid=%lu refcount=%d\n",
+                (void*)s, (unsigned long)(uintptr_t)uv_thread_self(),
+                (int)nova_aint_load(&s->refcount));
+        fflush(stderr);
+    }
     nova_aint_store(&s->stage, NN2_CLOSED);
     /* Wake every parked waiter so each unwinds with "closed". */
     if (s->op_scope)    { NovaFiberQueue* sc = s->op_scope;    int sl = s->op_slot;    s->op_scope = NULL;    nova_sched_wake(sc, sl); }
@@ -1125,6 +1131,12 @@ static void _nn2_do_write_issue_deferred(void* argp) {
 nova_int net_tcp_write(void* sv, const uint8_t* buf, nova_int len) {
     NovaNet2Stream* s = (NovaNet2Stream*)sv;
     nova_int result;
+    if (getenv("NOVA_DIAG_M456") != NULL) {
+        fprintf(stderr, "[m456] net_tcp_write ENTER s=%p tid=%lu stage=%d len=%lld\n",
+                (void*)s, (unsigned long)(uintptr_t)uv_thread_self(),
+                (int)nova_aint_load(&s->stage), (long long)len);
+        fflush(stderr);
+    }
     /* [M-boehm-large-buffer-retention-fiber-reuse] variant (b): op-in-flight
      * unit for the WHOLE call — same rationale as net_tcp_read above.
      * Released exactly once at every exit via `out:`. */
@@ -1284,6 +1296,14 @@ void net_tcp_mark_split(void* sv) {
 
 void net_tcp_close(void* sv) {
     NovaNet2Stream* s = (NovaNet2Stream*)sv;
+    int _nv456_diag = getenv("NOVA_DIAG_M456") != NULL;
+    if (_nv456_diag) {
+        fprintf(stderr, "[m456] net_tcp_close ENTER s=%p tid=%lu split_rc=%d stage=%d refcount=%d\n",
+                (void*)s, (unsigned long)(uintptr_t)uv_thread_self(),
+                (int)nova_aint_load(&s->split_refcount), (int)nova_aint_load(&s->stage),
+                (int)nova_aint_load(&s->refcount));
+        fflush(stderr);
+    }
     /* Split streams: only the last half actually closes the handle. Each
      * half's own `consume @close()` (std/src/net/tcp.nv TcpReadHalf/
      * TcpWriteHalf) calls this exactly once, but only ONE extra "user owns
@@ -1297,8 +1317,14 @@ void net_tcp_close(void* sv) {
         if (left > 0) return;
     }
     int32_t expected = NN2_IDLE;
-    if (__atomic_compare_exchange_n((volatile int32_t*)&s->stage,
-            &expected, NN2_CLOSING, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+    nova_bool _nv456_won_cas = __atomic_compare_exchange_n((volatile int32_t*)&s->stage,
+            &expected, NN2_CLOSING, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+    if (_nv456_won_cas) {
+        if (_nv456_diag) {
+            fprintf(stderr, "[m456] net_tcp_close s=%p tid=%lu TRIGGERING REAL CLOSE (won stage CAS)\n",
+                    (void*)s, (unsigned long)(uintptr_t)uv_thread_self());
+            fflush(stderr);
+        }
         nova_loop_defer_close(s->loop, (uv_handle_t*)&s->handle,
                               _nn2_stream_close_cb);
     }

@@ -110,6 +110,8 @@ void nova_gc_init(void) {
 }
 
 void nova_gc_shutdown(void) {
+    int _nv456_diag = getenv("NOVA_DIAG_M456") != NULL;
+    if (_nv456_diag) { fprintf(stderr, "[m456] gc_shutdown ENTER\n"); fflush(stderr); }
     /* Plan 44.2 Etap 1 (2026-05-12): skip final GC_gcollect on Linux only.
      *
      * Under Ubuntu 22.04 system libgc (built с PARALLEL_MARK), GC_gcollect
@@ -123,8 +125,11 @@ void nova_gc_shutdown(void) {
 #if defined(__linux__)
     /* GC_gcollect(); — disabled под Linux Docker */
 #else
+    if (_nv456_diag) { fprintf(stderr, "[m456] gc_shutdown before GC_gcollect\n"); fflush(stderr); }
     GC_gcollect();
+    if (_nv456_diag) { fprintf(stderr, "[m456] gc_shutdown after GC_gcollect\n"); fflush(stderr); }
 #endif
+    if (_nv456_diag) { fprintf(stderr, "[m456] gc_shutdown RETURNING\n"); fflush(stderr); }
 }
 
 void* nova_alloc(size_t size) {
