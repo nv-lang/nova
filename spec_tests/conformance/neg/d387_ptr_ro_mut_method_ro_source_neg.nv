@@ -1,0 +1,23 @@
+// №387 companion (221.1, window pptr-ro-guard) — the UNANNOTATED form: `&x`
+// from a `ro`-bound source infers a bare `*T` (readonly pointee, restored
+// 118.6 / D246 variant Б, №375) — calling a mut-receiver method through
+// THAT pointer is the same violation as the explicitly-annotated form in
+// d387_ptr_ro_mut_method_neg.nv, just reached via inference instead of an
+// explicit `*T` annotation. Distinct code path worth its own fixture: the
+// enforcement point (`pointee_is_writable` on the CALL-site receiver's
+// inferred type) does not care HOW the pointer's type was arrived at.
+
+// EXPECT_COMPILE_ERROR E_POINTER_RO_MUT_METHOD
+
+module neg.d387_ptr_ro_mut_method_ro_source_neg
+
+type D387RoSrcCounter { n int }
+
+fn D387RoSrcCounter mut @bump() -> () { @n += 1 }
+
+test "rejects a mut-receiver method through an unannotated pointer inferred from a ro source" {
+    ro c = D387RoSrcCounter { n: 0 }
+    ro p = &c
+    p.bump()
+    assert(c.n == 1)
+}

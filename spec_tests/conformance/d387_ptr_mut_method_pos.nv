@@ -1,0 +1,43 @@
+// №387 (221.1, window pptr-ro-guard) — POS boundary for the neg family
+// (neg/d387_ptr_ro_mut_method_neg.nv, neg/d387_ptr_ro_mut_method_ro_source_
+// neg.nv, neg/d387_ptr_ro_mut_method_overload_arity_neg.nv): calling a
+// mut-receiver method through a pointer whose pointee IS writable (`*mut
+// T`, opted in either via inference from a `mut` source — restored 118.6 /
+// D246 variant Б, №375 — or via an explicit `*mut T` annotation) stays
+// fully legal, and the mutation is actually OBSERVED on the original
+// binding (value-checking, not just "compiles"). Also covers the ro-arity
+// arm of a Plan 135 ro/mut overload pair reached through a readonly
+// pointer — legal, since it resolves to the RO overload, not the mut one.
+// Part of the single conformance folder-module (D387-prefixed names avoid
+// collisions with any other file in this folder, per the sibling №375 POS
+// fixture's own convention).
+module spec_tests.conformance
+
+type D387PosCounter { n int }
+
+fn D387PosCounter mut @bump() -> () { @n += 1 }
+
+test "mut-receiver method through an unannotated pointer inferred *mut from a mut source" {
+    mut c = D387PosCounter { n: 0 }
+    ro p = &c
+    p.bump()
+    assert(c.n == 1)
+}
+
+test "mut-receiver method through an explicitly `*mut T`-annotated pointer" {
+    mut c = D387PosCounter { n: 10 }
+    mut p *mut D387PosCounter = &c
+    p.bump()
+    assert(c.n == 11)
+}
+
+type D387PosBox { n int }
+
+fn D387PosBox @peek() -> int => @n
+fn D387PosBox mut @peek(v int) -> () { @n = v }
+
+test "ro-arity overload of a ro/mut pair stays legal through a readonly pointer" {
+    mut b = D387PosBox { n: 5 }
+    ro p *D387PosBox = &b
+    assert(p.peek() == 5)
+}
