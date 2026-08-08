@@ -1766,7 +1766,7 @@ fn check_module_impl(
     // `HashMap` — валиден; неоднозначный `[]` без типа — error.
     // Не заменяет существующие walk'и — отдельный проход (как
     // NameResCtx / ContractCtx), минимум регрессий.
-    let map_lit_ctx = MapLitCtx::build(module);
+    let mut map_lit_ctx = MapLitCtx::build(module);
     map_lit_ctx.check_module(module, &mut errors);
 
     // Plan 79: type-checker hardening — «no silent fallback» на уровне
@@ -46024,7 +46024,7 @@ impl MapLitCtx {
         }
     }
 
-    fn check_module(&self, module: &Module, errors: &mut Vec<Diagnostic>) {
+    fn check_module(&mut self, module: &Module, errors: &mut Vec<Diagnostic>) {
         // Plan 214 (D429): surface `#coerce` validation diagnostics collected
         // at `build()` time (R1/R2/R3/R11/R12/R14 — R15 is a parse-time reject,
         // never reaches here).
@@ -46033,39 +46033,42 @@ impl MapLitCtx {
             match item {
                 Item::Fn(f) => {
                     // Generic-параметры функции — permissive scope для Hashable.
-                    let mut ctx = MapLitCtx {
-                        type_methods: self.type_methods.clone(),
-                        known_types: self.known_types.clone(),
-                        from_fields_types: self.from_fields_types.clone(),
-                        fn_param_types: self.fn_param_types.clone(),
-                        method_param_types: self.method_param_types.clone(),
-                        unique_method_param_types: self.unique_method_param_types.clone(),
-                        method_receiver_generic_names: self.method_receiver_generic_names.clone(),
-                        fn_generics: f.generics.iter().map(|g| g.name.clone()).collect(),
-                        from_pairs_types: self.from_pairs_types.clone(),
-                        record_field_types: self.record_field_types.clone(),
-                        wrap_types: self.wrap_types.clone(),
-                        coerce_pairs: self.coerce_pairs.clone(),
-                        generic_coerce_patterns: self.generic_coerce_patterns.clone(),
-                        coerce_errors: Vec::new(),
-                    };
+                    //
+                    // ПЕРФ (реестр 221.1 №437): здесь на КАЖДУЮ функцию собирался
+                    // новый `MapLitCtx` с глубоким клоном ДВЕНАДЦАТИ корпусных карт
+                    // (`type_methods`/`known_types`/`fn_param_types`/
+                    // `record_field_types`/`coerce_pairs`/…), хотя отличается ровно
+                    // ОДНО поле — `fn_generics`. При 4149 функциях на compile-unit
+                    // (prelude+std влиты в каждый CU) это давало O(функции × корпус)
+                    // и 85 % всего времени чекера — замер окна `p437-checker-perf`
+                    // (`MapLitCtx::check_module` 484 310 мс из ~570 000 мс на 10 CU).
+                    // Теперь — save/restore ОДНОГО поля; тот же приём уже применён
+                    // в `TypeCheckCtx` (`current_fn_generics` + RAII-страж
+                    // `FnGenericsGuard`), это не новая идея, а выравнивание по
+                    // существующему прецеденту в этом же файле.
+                    let prev_generics = std::mem::replace(
+                        &mut self.fn_generics,
+                        f.generics.iter().map(|g| g.name.clone()).collect(),
+                    );
                     // Generic-параметры receiver-типа тоже видимы.
                     if let Some(recv) = &f.receiver {
                         for g in &recv.generics {
                             if let TypeRef::Named { path, .. } = g {
                                 if path.len() == 1 {
-                                    ctx.fn_generics.insert(path[0].clone());
+                                    self.fn_generics.insert(path[0].clone());
                                 }
                             }
                         }
                     }
                     match &f.body {
                         FnBody::Expr(e) => {
-                            ctx.walk_expr(e, f.return_type.as_ref(), errors);
+                            self.walk_expr(e, f.return_type.as_ref(), errors);
                         }
-                        FnBody::Block(b) => ctx.walk_block(b, errors),
+                        FnBody::Block(b) => self.walk_block(b, errors),
                         FnBody::External => {}
                     }
+                    // Восстановить область видимости generic-имён вызывающего.
+                    self.fn_generics = prev_generics;
                 }
                 Item::Test(t) => {
                     self.walk_block(&t.body, errors);
