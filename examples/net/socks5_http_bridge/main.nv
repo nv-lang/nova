@@ -460,7 +460,12 @@ fn handle_plain(consume client TcpStream, host str, port int, rewritten_head str
             // write failure here just means upstream is already broken —
             // the immediately following pipe_bidirectional re-detects and
             // tears down cleanly on its own first read/write either way.
-            println("DEBUG entering pipe_bidirectional directly, no pre-write")
+            // nova:allow W_RESULT_DISCARDED -- intentional: pipe_bidirectional re-detects a dead upstream on its own next read/write; propagating here would only duplicate that teardown path
+            ro _ = upstream.write_str("${rewritten_head}\r\n\r\n")
+            if leftover.len() > 0 {
+                // nova:allow W_RESULT_DISCARDED -- intentional: same reasoning as the write_str above
+                ro _ = upstream.write(leftover)
+            }
             pipe_bidirectional(client, upstream)
         }
         Err(_) => {
