@@ -6187,6 +6187,21 @@ pub enum LaneExclusion {
     /// `Type` because slow-ness is an orthogonal per-file suffix, not an
     /// `EXPECT_*` marker — a slow file can be any `TestType`.
     Slow,
+    /// №453(а): confirmed folder-module (2+ peers, same `module X` decl —
+    /// `is_folder_module_dir`) where NO peer contains a local `test "..."`
+    /// block (`folder_module_has_tests` == false) — nothing to run
+    /// standalone. Before this arm, the `is_folder_module` branch had no
+    /// `else`: the directory was silently dropped, unlike the sibling
+    /// checks for single files (`Type`, below at `:6507`-era) and `_slow`
+    /// (`Slow`, above) which both honestly land in `excluded`. Measured
+    /// fallout: 31 directories vanished with zero SKIP row (26
+    /// `nova_tests.old`, 3 `spec_tests/conformance`, 2 `std/src` —
+    /// `runtime/string`/`unicode`, by-design testless but still owed a
+    /// visible SKIP per `test-conventions.md:670-680`). Distinct from
+    /// `Type`/`Slow`: there is no `TestSelection` flag that unlocks this —
+    /// the fix is adding a test to the module, not passing `--full` or
+    /// `--include-slow`.
+    NoLocalTests,
 }
 
 impl LaneExclusion {
@@ -6199,14 +6214,19 @@ impl LaneExclusion {
             LaneExclusion::Type(TestType::Timeout) => "timeout",
             LaneExclusion::Type(TestType::Exit) => "exit",
             LaneExclusion::Slow => "slow",
+            LaneExclusion::NoLocalTests => "no-tests",
         }
     }
 
     /// Flag that unlocks the lane — the fix for "this SKIP" the row names.
+    /// `NoLocalTests` has no unlocking flag (nothing is selectable — there's
+    /// no test to run); the text still slots into the same "requires <hint>"
+    /// sentence as the flag-shaped hints.
     pub fn hint(self) -> &'static str {
         match self {
             LaneExclusion::Slow => "--include-slow/--slow-only",
             LaneExclusion::Type(_) => "--full",
+            LaneExclusion::NoLocalTests => "a local `test \"...\"` block (nothing to run standalone)",
         }
     }
 }
@@ -6510,6 +6530,18 @@ pub fn walk_nv_selected_ex(
                 } else {
                     excluded.push((entry, LaneExclusion::Type(test_type)));
                 }
+            }
+        } else {
+            // №453(а): confirmed folder-module, but no peer has a local
+            // `test "..."` block — previously fell through with no `else`
+            // and vanished with zero SKIP row (see `LaneExclusion::NoLocalTests`
+            // doc-comment for the measured 31-directory fallout). Report the
+            // same alphabetically-first peer used as the "entry" in the
+            // has-tests branch above, so the SKIP row names a real file.
+            let mut sorted = direct_nv.clone();
+            sorted.sort();
+            if let Some(entry) = sorted.into_iter().next() {
+                excluded.push((entry, LaneExclusion::NoLocalTests));
             }
         }
     } else {
