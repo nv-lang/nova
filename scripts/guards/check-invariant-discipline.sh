@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # scripts/guards/check-invariant-discipline.sh
-# Реестр: 221.1 №462/№459/№453. План: 221 (релиз v0.1). Норма: docs/dev/conventions-governance.md.
+# Реестр 221.1 №462/№459/№453, план 221 (docs/plans/221-release-v0-1.md).
 #
 # ЭНФОРС НОРМЫ ОБ ИНВАРИАНТАХ — `docs/dev/conventions-governance.md`,
 # раздел «Инварианты: как можно меньше, и ни одного на честном слове».
