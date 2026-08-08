@@ -1,0 +1,12 @@
+// Ф.1 ось «обёртка `unsafe { }` прозрачна»: хвост спрятан под unsafe.
+// Владелец: «это вообще не должно никак влиять».
+type Holder { s str }
+fn Holder @view() -> ro []u8 => unsafe { []u8.new(@s.ptr(), @s.byte_len()) }
+fn use_view() -> int {
+    ro h = Holder { s: "hello" }
+    ro v = h.view()
+    v.len()
+}
+fn main() -> () {
+    assert(use_view() == 5)
+}

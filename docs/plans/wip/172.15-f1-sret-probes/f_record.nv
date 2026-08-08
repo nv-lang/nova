@@ -1,0 +1,10 @@
+// Ф.1 ось «имя C-типа»: НЕ-Vec кучевая запись получает `__sret`-вариант.
+type Pair { a int, b int }
+fn Pair.of2(x int) -> Self => { a: x, b: x + 1 }
+fn use_pair() -> int {
+    ro p = Pair.of2(7)
+    p.a + p.b
+}
+fn main() -> () {
+    assert(use_pair() == 15)
+}
