@@ -285,6 +285,75 @@ fn handle_client(consume client TcpStream, cfg Config) Net Time -> () {
     `E_LINEAR_CAPTURE_IN_FIBER` (обновить комментарий §3.2, если текст
     диагностики другой). Судьба `[M-consume-param-spawn-defer-active]` — по
     отчёту окна p364.
+
+  **Ф.0 — ✅ ИСПОЛНЕНО (2026-08-08, окно p249-socks-bridge). Вердикт (а):
+  FIN НЕ уходил.** Прочтением `net_tcp_close` (`compiler-codegen/nova_rt/net.c:1264-1277`)
+  установлено: split-стрим close рефкаунтится (`net_tcp_mark_split`
+  выставляет `split_refcount=2`); закрытие ОДНОЙ половины лишь декрементит
+  счётчик и **уходит `if (left > 0) return;` — БЕЗ единого касания сокета**,
+  `uv_shutdown` на этом пути не вызывается вовсе. `net_tcp_shutdown`
+  (`net.c:1204-1213`, реальный `SHUT_WR`) — ОТДЕЛЬНАЯ C-функция, до фикса
+  подключённая ТОЛЬКО к целому `Net.shutdown`/`TcpStream mut @shutdown()`
+  (`tcp.nv:262`), а не к `TcpWriteHalf.consume @close()`
+  (`tcp.nv:394` дo фикса). Эмпирически подтверждено отдельной программой
+  (см. отчёт волны — не закоммичена, изолированный `fn main()` вне
+  `std/src/net`, чтобы обойти несвязанный CC-FAIL ниже): ДО фикса —
+  A закрывает только write-половину, читает-половину держит открытой; B
+  делает второй `read()` — виснет, сторож (ручной `CancelToken`, 2.5с)
+  срабатывает вместо естественного EOF. **Фикс — `std/src/net/tcp.nv`,
+  `TcpWriteHalf consume @close()`: явный `Net.shutdown(...)` ПЕРЕД
+  `Net.close_stream(...)`** (3 строки + докоммент). ПОСЛЕ фикса та же
+  программа: `r1=1052 r2=100` — второй `read()` у B видит чистый EOF
+  (`n2=0`), А получает эхо на всё ещё открытой `ar` (доказывает: закрыта
+  ИМЕННО write-половина, чтения не затронуты). Регресс-фикстура —
+  `std/src/net/split_test.nv` (новый тест «TcpWriteHalf.close() alone
+  delivers FIN, read half stays usable (#Ф.0-а)»).
+
+  **Вердикт (б): механизм — РУЧНОЙ `CancelToken`, НЕ `supervised(timeout:)`.**
+  Отдельным изолированным пробоем (два sibling-`spawn`, каждый блокируется
+  на `TcpReadHalf.read()` прямым top-level statement'ом своего тела, БЕЗ
+  собственного вложенного `supervised`) установлено: **`supervised(timeout:)`
+  НЕ добивает до чтения, вложенного в тело sibling-spawn'а** — процесс
+  висел ПОДТВЕРЖДЁННО дольше 33с при заявленном таймауте 2с (внешний
+  `test-build --timeout 30` убил его сам). ТА ЖЕ форма с ручным
+  `CancelToken` + `supervised(cancel: tok)`, где третий watchdog-`spawn`
+  зовёт `tok.cancel()` после сна — отработала за ~3.5с, оба sibling-чтения
+  корректно вернули `Err(Cancelled)`. Т.е. `[M-supervised-timeout-covers-
+  whole-block]`/№165 (`std/src/net/supervised_cancel_accept_test.nv`)
+  чинил ТОЛЬКО «direct body statement без обёртки spawn» и ручной
+  `cancel:`-путь — таймаут-путь для чтения, вложенного В spawn-тело, остался
+  небитым. **Практическое следствие для §3.2/Ф.2: `pipe_bidirectional`
+  НЕ может полагаться на `supervised(timeout:)` вокруг двух качалок как на
+  общую защиту от зависания — обязательный по плану `supervised(timeout:)`
+  на каждом чтении не спасёт пару файберов друг от друга.** Рабочий
+  механизм терминации файбера-2: файбер-1, увидев `Ok(0)` (чистый EOF) на
+  своём направлении, обязан явно позвать `tok.cancel()` на РАЗДЕЛЯЕМОМ
+  `CancelToken`, под которым качалки запущены (`supervised(cancel: tok)`);
+  `supervised(timeout:)` в мосте остаётся как отдельная, самостоятельная
+  защита ВЕРХНЕГО accept-уровня (жизнь handle_client целиком), не как
+  средство межфайберной синхронизации качалок. Это НОВАЯ находка этого
+  окна, отдельная от №390 — маркер и место фикса (если чиниться) решает
+  владелец, здесь только зафиксирован факт и обходной путь (не обход
+  бага в коде примера, а КОРРЕКТНЫЙ, ДРУГОЙ примитив синхронизации).
+
+  Из-за пере-пина Ф.0-г и Ф.П/Ф.1/Ф.4 форма §3.2 обновлена: `handle_client`
+  и `pipe_bidirectional` используют `consume (ar, aw) = a.into_split()` +
+  `supervised(cancel: tok)` (не голый `supervised {}`/`timeout:`) — см. Ф.2.
+
+  **Побочная находка (не в объёме фикса): `nova test std --filter net` /
+  `nova test std/src/net/split_test.nv` красные УЖЕ на немодифицированном
+  `main` HEAD `8efcd9f13`** — `CC-FAIL`, `nova_unit` vs
+  `NovaRes_nova_int_NovaValue_IoError` (`initializing 'nova_unit' with an
+  expression of incompatible type`), похоже на класс P67-LEGACY
+  (`docs/plans/221.1-bug-sweep.md` №81-тред; тот же класс словил Ф.1-пакет
+  `nova-socks` на `Result[SocketAddr, SocksError]?`). Подтверждено
+  сравнением до/после моих правок — идентичная ошибка И БЕЗ них. Блокирует
+  ВЕСЬ std/net test-suite целиком (не только новую фикстуру), вне объёма
+  этого окна (компиляторный дефект, легаси-emit_c-канал по
+  feedback-compiler-fixes-checker-channel-196 — не чинить впопыхах).
+  Фикс Ф.0-а подтверждён ОБХОДНЫМ путём (отдельная non-std программа,
+  не закоммичена) — см. значения `r1=1052 r2=100` выше.
+
 - **Ф.П — ✅ ИСПОЛНЕНО (2026-08-06, окно p249-socks-package, коммит `35f45c2`).**
   Скелет по образцу `nova-compress` (§3.1): `nova.toml`, лицензии MIT/Apache-2.0,
   `.gitignore`, `scripts/githooks/pre-commit`. Три remote'а (github/gitverse/

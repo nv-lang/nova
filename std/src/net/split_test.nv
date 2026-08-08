@@ -9,6 +9,96 @@
 
 module std.net
 
+import std.time.duration
+
+fn split_test_one_byte(v int) -> []u8 {
+    mut out []u8 = []u8.new()
+    out.push(v as u8)
+    out
+}
+
+// Plan 249 Ф.0-а regression: `TcpWriteHalf consume @close()` must send a
+// real TCP FIN (half-close) to the peer, WHILE the read half stays
+// genuinely open/usable — this is the exact shape a bidirectional relay
+// (`pipe_bidirectional`) needs when one direction sees EOF.
+//
+// Before the fix, closing the write half alone only decremented net.c's
+// internal split-refcount and returned WITHOUT calling `uv_shutdown` (see
+// `TcpWriteHalf consume @close()`'s doc comment above, this module) — the
+// peer's second read blocked forever. Guarded by a manual `CancelToken` +
+// `supervised(cancel:)` watchdog, NOT `supervised(timeout:)`: a separate,
+// distinct finding from this same plan window is that `timeout:` does not
+// reach a `.read()` nested inside a sibling `spawn` body (confirmed hung
+// past 30s in an isolated probe; manual `CancelToken.cancel()` from a
+// third watchdog spawn DOES reach it, in ~3s) — using `timeout:` here would
+// make a REGRESSION of this very fix hang the whole `nova test` run instead
+// of failing it.
+test "TCP split: TcpWriteHalf.close() alone delivers FIN, read half stays usable (#Ф.0-а)" {
+    with Net = real_net() {
+        ro ch_port = Channel.new(1)
+        ro ch_result_a = Channel.new(1)
+        ro ch_result_b = Channel.new(1)
+        ro tok = CancelToken.new()
+        supervised(cancel: tok) {
+            // Watchdog: if this regresses, B's second read (and then A's
+            // echo read) would block forever — cancel at 2.5s so the test
+            // FAILS observably instead of hanging the suite.
+            spawn {
+                (2500).to_millis().sleep()
+                tok.cancel()
+            }
+            spawn {
+                consume lst = TcpListener.bind(SocketAddr.loopback(0))!!
+                ch_port.tx.send(lst.local_port())
+                ro accepted = lst.accept()
+                lst.close()
+                match accepted {
+                    Ok(consume conn) => {
+                        consume (ar, aw) = conn.into_split()
+                        ro _ = aw.write(split_test_one_byte(0x2A))
+                        aw.close()          // write-half close ONLY — pin under test
+                        mut echo_buf []u8 = []u8.new()
+                        echo_buf.resize(1, 0 as u8)
+                        ro echoed = ar.read(echo_buf)   // ar stays genuinely open/parked here
+                        ar.close()
+                        match echoed {
+                            Ok(n) => ch_result_a.tx.send(1000 + n * 10 + (echo_buf[0] as int))
+                            Err(_) => ch_result_a.tx.send(-1001)
+                        }
+                    }
+                    Err(_) => ch_result_a.tx.send(-1002)
+                }
+            }
+            spawn {
+                ro port = match ch_port.rx.recv() { Some(p) => p  None => 0 as u16 }
+                match TcpStream.connect(SocketAddr.loopback(port as int)) {
+                    Ok(consume conn) => {
+                        consume (br, bw) = conn.into_split()
+                        mut buf1 []u8 = []u8.new()
+                        buf1.resize(1, 0 as u8)
+                        ro n1 = match br.read(buf1) { Ok(k) => k  Err(_) => -1 }
+                        mut buf2 []u8 = []u8.new()
+                        buf2.resize(1, 0 as u8)
+                        ro n2 = match br.read(buf2) { Ok(k) => k  Err(_) => -2 }
+                        ro _ = bw.write(split_test_one_byte(0x2A))
+                        br.close()
+                        bw.close()
+                        ch_result_b.tx.send(n1 * 100 + n2)
+                    }
+                    Err(_) => ch_result_b.tx.send(-999)
+                }
+            }
+        }
+        ro r1 = match ch_result_a.rx.recv() { Some(v) => v  None => -998 }
+        ro r2 = match ch_result_b.rx.recv() { Some(v) => v  None => -998 }
+        // Healthy: r2 == 100 (n1=1 byte, n2=0 EOF); r1 == 1052 (A's
+        // ar.read got the 1-byte echo back). Broken: watchdog cancels ->
+        // r1 == -1001, r2 == 98.
+        assert(r1 == 1052)
+        assert(r2 == 100)
+    }
+}
+
 test "TCP split: server + client exchange via read/write halves _slow" {
     with Net = real_net() {
         // D415 (E_CONCURRENT_MUT_CAPTURE): listener живёт ЦЕЛИКОМ в server-
