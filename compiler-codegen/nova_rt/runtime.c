@@ -1338,7 +1338,15 @@ static void _worker_main(void* arg) {
          * CAS трivially succeeds. Race materialization только для re-pop'ов
          * (wake + wake = double-push, или steal race на edge-case). */
         bool _nova_state_owned = true;  /* default — non-MCO_SUSPENDED branch */
+        /* [TEMP-TRIPWIRE-446] did we actually attempt the CAS this
+         * iteration? If co was NOT MCO_SUSPENDED when checked, the CAS is
+         * never attempted and `_nova_state_owned` above is a bare default —
+         * see registry 221.1 №446. Checked right before the dead-fiber
+         * destroy/sweep below; NOVA_DIAG_446=1-gated, remove before merge
+         * (or keep — see window report). */
+        bool _nova_446_cas_attempted = false;
         if (mco_status(co) == MCO_SUSPENDED) {
+            _nova_446_cas_attempted = true;
             _nova_state_owned = (bool)nova_fiber_state_cas(
                 co, NOVA_FIBER_STATE_IDLE, NOVA_FIBER_STATE_RUNNING);
             if (_nova_state_owned) {
@@ -1414,6 +1422,18 @@ static void _worker_main(void* arg) {
         }
 
         if (mco_status(co) == MCO_DEAD) {
+            /* [TEMP-TRIPWIRE-446] we are about to mco_destroy + sweep `co`.
+             * If the CAS was never attempted this iteration (co was NOT
+             * MCO_SUSPENDED when we checked above), this destroy is the
+             * SECOND destroy of a duplicate-popped already-dead co — the
+             * exact live-defect path from registry 221.1 №446. */
+            if (!_nova_446_cas_attempted && getenv("NOVA_DIAG_446")) {
+                fprintf(stderr,
+                    "[TRIPWIRE-446] destroy/sweep WITHOUT won CAS this "
+                    "iteration (co=%p) — duplicate-dead-pop confirmed LIVE "
+                    "(main loop)\n", (void*)co);
+                fflush(stderr);
+            }
             /* Plan 83.4.5.8 (2026-05-24): grab ctx pointer ДО mco_destroy
              * (destroy frees co, не ctx — separate allocations). All ctx
              * allocated через nova_alloc_uncollectable под armed M:N
@@ -1485,7 +1505,12 @@ static void _worker_main(void* arg) {
         if (!co) co = _worker_yielded_pop(w);
         if (!co) co = nova_globrunq_get_one(&_nova_global_runq); /* Ф.1: drain overflow */
         if (!co) break;
+        /* [TEMP-TRIPWIRE-446] same pattern as the main loop above: the
+         * dead-check below is NOT gated on "did we actually win the CAS
+         * this iteration" — only on mco_status. Track it explicitly. */
+        bool _nova_446_drain_cas_attempted = false;
         if (mco_status(co) == MCO_SUSPENDED) {
+            _nova_446_drain_cas_attempted = true;
             if (nova_fiber_state_cas(co, NOVA_FIBER_STATE_IDLE,
                                           NOVA_FIBER_STATE_RUNNING)) {
                 mco_resume(co);
@@ -1498,6 +1523,13 @@ static void _worker_main(void* arg) {
             /* else: другой owner. Skip. */
         }
         if (mco_status(co) == MCO_DEAD) {
+            if (!_nova_446_drain_cas_attempted && getenv("NOVA_DIAG_446")) {
+                fprintf(stderr,
+                    "[TRIPWIRE-446] destroy/sweep WITHOUT won CAS this "
+                    "iteration (co=%p) — duplicate-dead-pop confirmed LIVE "
+                    "(cleanup-drain)\n", (void*)co);
+                fflush(stderr);
+            }
             NovaSpawnCtxBase* dead_ctx = (NovaSpawnCtxBase*)mco_get_user_data(co);
             mco_destroy(co);
             if (dead_ctx) {
@@ -2230,7 +2262,10 @@ static void _worker_run_one_fiber(NovaWorker* w, mco_coro* co) {
     __atomic_store_n(&w->current_fiber_start, uv_hrtime(), __ATOMIC_RELAXED);
 
     bool _nova_state_owned = true;
+    /* [TEMP-TRIPWIRE-446] see _worker_main for rationale. */
+    bool _nova_446_run1_cas_attempted = false;
     if (mco_status(co) == MCO_SUSPENDED) {
+        _nova_446_run1_cas_attempted = true;
         _nova_state_owned = (bool)nova_fiber_state_cas(
             co, NOVA_FIBER_STATE_IDLE, NOVA_FIBER_STATE_RUNNING);
         if (_nova_state_owned) {
@@ -2279,6 +2314,13 @@ static void _worker_run_one_fiber(NovaWorker* w, mco_coro* co) {
     if (!_nova_state_owned) return;  /* другой owner: skip dispose */
 
     if (mco_status(co) == MCO_DEAD) {
+        if (!_nova_446_run1_cas_attempted && getenv("NOVA_DIAG_446")) {
+            fprintf(stderr,
+                "[TRIPWIRE-446] destroy/sweep WITHOUT won CAS this "
+                "iteration (co=%p) — duplicate-dead-pop confirmed LIVE "
+                "(_worker_run_one_fiber)\n", (void*)co);
+            fflush(stderr);
+        }
         NovaSpawnCtxBase* dead_ctx = (NovaSpawnCtxBase*)mco_get_user_data(co);
         nova_fiber_state_store(co, NOVA_FIBER_STATE_DEAD);
         mco_destroy(co);

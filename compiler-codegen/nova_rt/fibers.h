@@ -2620,7 +2620,26 @@ static inline void nova_scope_sweep_dead_child(NovaSpawnCtxBase* dead_ctx) {
         nova_spawn_pool_release(dead_ctx, dead_ctx->_nova_pool_size);
     }
     if (parent_snapshot) {
-        (void)nova_aint_fetch_sub_release(&parent_snapshot->pending_sweeps);
+        /* [TEMP-TRIPWIRE-446] 221.1 №446 diagnosis (presume-cas-gate window):
+         * fetch_sub returns the PRE-decrement value. If it is <= 0, this
+         * decrement is a DUPLICATE sweep of the same child — the two spins
+         * that gate on `pending_sweeps > 0` (fibers.h §nova_supervised_
+         * drain_main_scope, runtime.c supervised_run_impl tail) cannot hold
+         * a negative counter, so a real duplicate sweep here proves the
+         * "second mco_destroy + second sweep on a duplicate-popped dead co"
+         * path described in the bug-sweep registry is LIVE, not theoretical.
+         * NOVA_DIAG_446=1-gated per debugging-races.md (default disabled,
+         * zero overhead). REMOVE before final merge (or keep permanently —
+         * see window's report for the decision). */
+        int32_t _nova_446_prev = nova_aint_fetch_sub_release(&parent_snapshot->pending_sweeps);
+        if (_nova_446_prev <= 0 && getenv("NOVA_DIAG_446")) {
+            fprintf(stderr,
+                "[TRIPWIRE-446] pending_sweeps DUPLICATE decrement: prev=%d "
+                "(scope=%p, dead_ctx=%p) — duplicate sweep of an already-"
+                "dead child confirmed LIVE\n",
+                (int)_nova_446_prev, (void*)parent_snapshot, (void*)dead_ctx);
+            fflush(stderr);
+        }
     }
 }
 
