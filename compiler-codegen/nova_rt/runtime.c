@@ -1011,6 +1011,78 @@ static void _worker_dispatch_ready(void* ctx, mco_coro* co) {
     }
 }
 
+/* ─── presume-cas-gate window (221.1 №446/№447): shared TLS restore/save
+ * hooks for `nova_resume_fiber` (fibers.h) — the ctx-based (`NovaSpawnCtxBase*`)
+ * flavor, shared by all THREE ctx-based resume sites: the main loop below,
+ * the cleanup-drain tail of the same function, and `_worker_run_one_fiber`.
+ * `nova_supervised_step` (fibers.h) uses its OWN array-based hooks instead —
+ * its fibers are indexed by (queue, slot), not by a NovaSpawnCtxBase*.
+ *
+ * This is the exact 3-branch restore that `_worker_main`'s main loop always
+ * had (Plan 44.5/83.11/83.10.4) — including the "displaced fiber" branch
+ * (`_nova_worker_slot <= -2`, Plan 83.11 STALE-slot fix) that
+ * `_worker_run_one_fiber` was previously MISSING (a second, narrower
+ * instance of the "convention on N sites, not structure" pattern found
+ * while unifying — that call site now gets the full, correct restore too). */
+static void _nova_resume_restore_ctx_tls(void* vctx) {
+    NovaSpawnCtxBase* base = (NovaSpawnCtxBase*)vctx;
+    if (base && base->_nova_worker_slot >= 0 && base->_nova_fiber_scope) {
+        /* Preamble already ran: restore home scope + saved TLS. */
+        _nova_active_scope  = base->_nova_fiber_scope;
+        _nova_active_slot   = base->_nova_worker_slot;
+        _nova_fail_top      = base->_nova_saved_fail_top;
+        _nova_interrupt_top = base->_nova_saved_interrupt_top;
+        NovaFiberQueue* fscope = base->_nova_fiber_scope;
+        int fslot = base->_nova_worker_slot;
+        if (fslot < fscope->count && fscope->fiber_effect_snapshot[fslot]) {
+            nova_effect_snapshot_restore(fscope->fiber_effect_snapshot[fslot]);
+        }
+        /* Plan 201 trace-per-fiber: point at this fiber's OWN persistent
+         * error-diag bucket regardless of which OS thread resumes it. */
+        if (fslot < fscope->count && fscope->fiber_error_state[fslot]) {
+            _nova_error_state_p = fscope->fiber_error_state[fslot];
+        }
+    } else if (base && base->_nova_worker_slot <= -2 && base->_nova_fiber_scope) {
+        /* Plan 83.11 fix: displaced fiber (slot=-2 sentinel set by close_cb
+         * Fix B). Preamble ran, but slot was invalidated (STALE race).
+         * Restore home scope + TLS so the fiber sees the correct scope when
+         * it finishes sleeping and exits. */
+        _nova_active_scope  = base->_nova_fiber_scope;
+        _nova_active_slot   = -1;  /* slot is invalidated — no valid slot */
+        _nova_fail_top      = base->_nova_saved_fail_top;
+        _nova_interrupt_top = base->_nova_saved_interrupt_top;
+        /* Effect snapshot: slot is -1, skip snapshot restore (fiber is exiting soon). */
+    } else if (base) {
+        /* Before preamble (first run): restore saved fail/interrupt but
+         * leave _nova_active_scope as this worker's scope (preamble will
+         * allocate the home slot + set _nova_fiber_scope on first resume). */
+        _nova_fail_top      = base->_nova_saved_fail_top;
+        _nova_interrupt_top = base->_nova_saved_interrupt_top;
+        /* Plan 83.10.4 Ф.3: restore spawn-time handler snapshot so fiber
+         * sees parent's effect handlers on its FIRST run (before preamble). */
+        if (base->_nova_init_snapshot) {
+            nova_effect_snapshot_restore(base->_nova_init_snapshot);
+        }
+    }
+}
+
+static void _nova_resume_save_ctx_tls(void* vctx) {
+    NovaSpawnCtxBase* base = (NovaSpawnCtxBase*)vctx;
+    if (!base) return;
+    base->_nova_saved_fail_top      = _nova_fail_top;
+    base->_nova_saved_interrupt_top = _nova_interrupt_top;
+    /* Plan 83.4.2 Ф.2: save fiber's current handler-state (с учётом
+     * with-блоков push/pop сделанных fiber'ом во время выполнения) обратно
+     * в home scope's snapshot. */
+    if (base->_nova_fiber_scope && base->_nova_worker_slot >= 0) {
+        NovaFiberQueue* fscope = base->_nova_fiber_scope;
+        int fslot = base->_nova_worker_slot;
+        if (fslot < fscope->count && fscope->fiber_effect_snapshot[fslot]) {
+            nova_effect_snapshot_save(fscope->fiber_effect_snapshot[fslot]);
+        }
+    }
+}
+
 static void _worker_main(void* arg) {
     NovaWorker* w = (NovaWorker*)arg;
     _current_worker_id = w->id;
@@ -1229,93 +1301,6 @@ static void _worker_main(void* arg) {
             nova_spawn_ctx_diag_check_live(base, "worker-main resume");
         }
 
-        /* Restore fiber's TLS snapshot (fail-top chain + active scope/slot).
-         *
-         * Plan 44.5 deadlock fix (work-stealing): a fiber's home scope
-         * (_nova_fiber_scope) is fixed to the worker that ran its preamble.
-         * If stolen by another worker, we MUST restore _nova_active_scope to
-         * the home scope so channel ops capture the correct scope/slot.
-         * Without this, the channel waiter records the stealer's scope, and
-         * nova_sched_wake finds scope->fibers[slot]=NULL → dispatch_ready not
-         * called → fiber never re-queued → permanent hang (deadlock). */
-        NovaFiberQueue*     outer_scope     = _nova_active_scope;
-        NovaFailFrame*      outer_fail      = _nova_fail_top;
-        NovaInterruptFrame* outer_interrupt = _nova_interrupt_top;
-        /* Plan 201 trace-per-fiber: save outer active error-state pointer
-         * (getter self-heals to the native per-thread bucket on first
-         * touch). Restored unconditionally below, after mco_resume — no
-         * "save fiber's current value back" needed: unlike fail/interrupt,
-         * this pointer is never reassigned by ordinary throw/catch code
-         * during the fiber's run, only by this wrapper + the one-time
-         * slot-creation hook (nova_scope_alloc_slot, fibers.h), so the
-         * fiber's bucket contents mutate in-place through the pointer —
-         * see effects.h NovaFiberErrorState doc-comment for the full
-         * rationale (pointer-swap chosen over per-resume struct copy). */
-        NovaFiberErrorState* outer_error_state = nova_error_state_active();
-        /* Plan 83.4.2 Ф.2 (2026-05-23): per-fiber handler-snapshot
-         * save/restore на worker (A3+B2 fix). Раньше worker НЕ менял
-         * TLS handler-state перед mco_resume — fiber видел handler'ы
-         * предыдущего fiber'а / worker'а. Аналог tokio TaskLocal
-         * restore on poll / Node AsyncLocalStorage context-switch. */
-        NovaEffectSnapshot outer_effects;
-        nova_effect_snapshot_save(&outer_effects);
-        if (base && base->_nova_worker_slot >= 0 && base->_nova_fiber_scope) {
-            /* Preamble already ran: restore home scope + saved TLS. */
-            _nova_active_scope  = base->_nova_fiber_scope;
-            _nova_active_slot   = base->_nova_worker_slot;
-            _nova_fail_top      = base->_nova_saved_fail_top;
-            _nova_interrupt_top = base->_nova_saved_interrupt_top;
-            /* Plan 83.4.2 Ф.2: restore fiber's handler-snapshot из home
-             * scope (parallel array). Codegen эмитит snapshot init на
-             * spawn (nova_alloc'нутый NovaEffectSnapshot). */
-            NovaFiberQueue* fscope = base->_nova_fiber_scope;
-            int fslot = base->_nova_worker_slot;
-            if (fslot < fscope->count && fscope->fiber_effect_snapshot[fslot]) {
-                nova_effect_snapshot_restore(fscope->fiber_effect_snapshot[fslot]);
-            }
-            /* Plan 201 trace-per-fiber: point at this fiber's OWN
-             * persistent error-diag bucket (allocated once at slot
-             * creation — nova_scope_alloc_slot, fibers.h). This is the
-             * fix for the cross-fiber trace corruption: a stolen fiber
-             * carries its own bucket regardless of which OS thread (and
-             * therefore which native/ambient bucket) resumes it. */
-            if (fslot < fscope->count && fscope->fiber_error_state[fslot]) {
-                _nova_error_state_p = fscope->fiber_error_state[fslot];
-            }
-        } else if (base && base->_nova_worker_slot <= -2 && base->_nova_fiber_scope) {
-            /* Plan 83.11 fix: displaced fiber (slot=-2 sentinel set by close_cb Fix B).
-             * Preamble ran (fiber_scope is set), but slot was invalidated because the
-             * fiber's slot was overwritten (STALE race). Restore home scope + TLS
-             * so the fiber sees the correct scope when it finishes sleeping and exits. */
-            _nova_active_scope  = base->_nova_fiber_scope;
-            _nova_active_slot   = -1;  /* slot is invalidated — no valid slot */
-            _nova_fail_top      = base->_nova_saved_fail_top;
-            _nova_interrupt_top = base->_nova_saved_interrupt_top;
-            /* Effect snapshot: slot is -1, skip snapshot restore (fiber is exiting soon). */
-        } else if (base) {
-            /* Before preamble (first run): restore saved fail/interrupt but
-             * leave _nova_active_scope as this worker's scope (preamble will
-             * allocate the home slot + set _nova_fiber_scope on first resume). */
-            _nova_fail_top      = base->_nova_saved_fail_top;
-            _nova_interrupt_top = base->_nova_saved_interrupt_top;
-            /* Plan 83.10.4 Ф.3 [M-83.10.1-per-fiber-handler-tls-race]: restore
-             * spawn-time handler snapshot so fiber sees parent's effect handlers
-             * on its FIRST run (before preamble). Without this, the fiber
-             * inherits the worker's current effect state (from the previously
-             * scheduled fiber) instead of its own inherited parent snapshot.
-             *
-             * Lifecycle: codegen allocs + saves init_snapshot at spawn site;
-             * preamble adopts it:
-             *   scope->fiber_effect_snapshot[slot] = _c->_nova_init_snapshot;
-             *   _c->_nova_init_snapshot = NULL;
-             * So _nova_init_snapshot is non-NULL exactly during this one first-
-             * run window, then NULL from preamble onwards (post-preamble path
-             * restores from scope->fiber_effect_snapshot[slot] instead). */
-            if (base->_nova_init_snapshot) {
-                nova_effect_snapshot_restore(base->_nova_init_snapshot);
-            }
-        }
-
         /* Plan 44.7: preemption hand-off. Clear the preempt flag so each
          * fiber starts its slice clean, and stamp `current_fiber_start` so
          * sysmon can detect an overrun. The running fiber reads the LIVE
@@ -1324,140 +1309,45 @@ static void _worker_main(void* arg) {
         __atomic_store_n(&w->preempt_flag, 0, __ATOMIC_RELAXED);  /* [M-211-preempt-flag-plain-race] */
         __atomic_store_n(&w->current_fiber_start, uv_hrtime(), __ATOMIC_RELAXED);
 
-        /* Plan 83.4.5.7 (2026-05-23): atomic state guard для double-resume race.
-         * CAS IDLE→RUNNING — winner runs mco_resume, loser skips. Loser case:
-         * cross-worker steal race (one worker stole, owner также пытается popнуть
-         * через wake_pending duplicate-push race) или concurrent wake-during-running
-         * (см. NovaSpawnCtxBase doc выше). Без guard'а — TIB swap conflict
-         * (Windows) / context corruption (POSIX) → access violation в fiber arena.
-         *
-         * Loser обязан НЕ trogать co (другой thread держит контекст). Restore
-         * outer TLS, continue loop.
-         *
-         * NB: для FIRST RUN — fiber's state IDLE (from nova_alloc zero-init),
-         * CAS трivially succeeds. Race materialization только для re-pop'ов
-         * (wake + wake = double-push, или steal race на edge-case). */
-        bool _nova_state_owned = true;  /* default — non-MCO_SUSPENDED branch */
-        /* [TEMP-TRIPWIRE-446] did we actually attempt the CAS this
-         * iteration? If co was NOT MCO_SUSPENDED when checked, the CAS is
-         * never attempted and `_nova_state_owned` above is a bare default —
-         * see registry 221.1 №446. Checked right before the dead-fiber
-         * destroy/sweep below; NOVA_DIAG_446=1-gated, remove before merge
-         * (or keep — see window report). */
-        bool _nova_446_cas_attempted = false;
-        if (mco_status(co) == MCO_SUSPENDED) {
-            _nova_446_cas_attempted = true;
-            _nova_state_owned = (bool)nova_fiber_state_cas(
-                co, NOVA_FIBER_STATE_IDLE, NOVA_FIBER_STATE_RUNNING);
-            if (_nova_state_owned) {
-                mco_resume(co);
-            }
-            /* else: другой thread держит RUNNING. Skip mco_resume — но всё
-             * равно нужно restore outer TLS ниже + дать другому owner'у
-             * dispose'нуть fiber. Don't touch co. */
-        }
+        /* presume-cas-gate (221.1 №446/№447): THE single resume call in the
+         * runtime — restores this fiber's own TLS (fail-top chain, active
+         * scope/slot incl. Plan 44.5 work-stealing home-scope fix, Plan
+         * 201 error-diag bucket, Plan 83.4.2 handler-snapshot), CAS-gates
+         * IDLE→RUNNING (Plan 83.4.5.7 double-resume guard), calls
+         * mco_resume exactly once, restores the outer (worker-loop) TLS,
+         * and classifies dead/parked — all inside fibers.h::nova_resume_fiber.
+         * `ro.owned == false` covers BOTH the CAS-loser case (another
+         * thread holds RUNNING right now) AND the №446 case (co was not
+         * even MCO_SUSPENDED at entry — a duplicate pop of an already-dead
+         * co, source: wake_pending duplicate-push / cross-worker steal
+         * races documented at `_worker_dispatch_ready` above): either way
+         * the caller MUST NOT touch `co` again — no destroy, no sweep, no
+         * state-store, no further mco_status read. */
+        NovaResumeOutcome ro = nova_resume_fiber(co, base,
+            _nova_resume_restore_ctx_tls, _nova_resume_save_ctx_tls);
 
         /* Fiber returned to the loop — clear the overrun timestamp so an
          * idle worker is never marked for preemption. */
         __atomic_store_n(&w->current_fiber_start, 0, __ATOMIC_RELAXED);
 
-        /* Save fiber's current TLS state back; restore outer worker state. */
-        if (base) {
-            base->_nova_saved_fail_top      = _nova_fail_top;
-            base->_nova_saved_interrupt_top = _nova_interrupt_top;
-            /* Plan 83.4.2 Ф.2: save fiber's current handler-state (с учётом
-             * with-блоков push/pop сделанных fiber'ом во время выполнения)
-             * обратно в home scope's snapshot. */
-            if (base->_nova_fiber_scope && base->_nova_worker_slot >= 0) {
-                NovaFiberQueue* fscope = base->_nova_fiber_scope;
-                int fslot = base->_nova_worker_slot;
-                if (fslot < fscope->count && fscope->fiber_effect_snapshot[fslot]) {
-                    nova_effect_snapshot_save(fscope->fiber_effect_snapshot[fslot]);
-                }
-            }
-        }
-        _nova_active_scope  = outer_scope;
-        _nova_fail_top      = outer_fail;
-        _nova_interrupt_top = outer_interrupt;
-        _nova_error_state_p = outer_error_state;  /* Plan 201 trace-per-fiber */
-        /* Plan 83.4.2 Ф.2: restore outer worker's effect state (для следующего
-         * fiber'а или idle worker loop'а). */
-        nova_effect_snapshot_restore(&outer_effects);
-
-        /* Plan 83-go-cmn Ф.2: determine "is this fiber parked?" by the per-fiber
-         * park_state (by-pointer, no (scope,slot) lookup) instead of the deleted
-         * nova_sched_is_parked gate. gopark committed park_state=WAIT (SEQ_CST)
-         * BEFORE the fiber yielded, so a WAIT/DISPATCHED state here means the
-         * fiber genuinely parked (DISPATCHED = a waker already won the election +
-         * re-queued it — still "parked, requeue-in-flight", NOT a cooperative
-         * yield). The deferred unlock is now run UNCONDITIONALLY after the yield:
-         * the WAIT commit (not parked[]) is what serializes against a racing
-         * goready, so no is_parked probe is needed (design step 6 / correction #5). */
-        bool fiber_is_parked = false;
-        if (_nova_state_owned && mco_status(co) == MCO_SUSPENDED) {
-            int32_t ps = nova_park_state_load(co);
-            fiber_is_parked = (ps == NOVA_PARK_WAIT || ps == NOVA_PARK_DISPATCHED);
-        }
-        if (_nova_park_unlock_fn) {
-            void (*fn)(void*) = _nova_park_unlock_fn;
-            void* arg = _nova_park_unlock_arg;
-            _nova_park_unlock_fn  = NULL;
-            _nova_park_unlock_arg = NULL;
-            fn(arg);
-        }
-
-        /* Plan 83.4.5.7 (2026-05-23): state transitions для current owner.
-         * Если мы НЕ owned (CAS lost) — другой thread сейчас держит RUNNING,
-         * он сам сделает dispose. Просто continue.
-         *
-         * EXCEPTION: co already DEAD upon worker pop (rare — re-popped after
-         * mco_destroy by some path). Still need to skip — base может быть
-         * освобождён GC'ем уже. */
-        if (!_nova_state_owned) {
-            if (mco_status(co) == MCO_DEAD) {
-                /* Co was DEAD before we even tried CAS. mco_resume не вызван,
-                 * другой thread уже destroyed. Skip. */
-            }
+        if (!ro.owned) {
+            /* Not ours to dispose (CAS lost, or co wasn't even SUSPENDED —
+             * see doc-comment above). Don't touch co further. */
             continue;
         }
 
-        if (mco_status(co) == MCO_DEAD) {
-            /* [TEMP-TRIPWIRE-446] we are about to mco_destroy + sweep `co`.
-             * If the CAS was never attempted this iteration (co was NOT
-             * MCO_SUSPENDED when we checked above), this destroy is the
-             * SECOND destroy of a duplicate-popped already-dead co — the
-             * exact live-defect path from registry 221.1 №446. */
-            if (!_nova_446_cas_attempted && getenv("NOVA_DIAG_446")) {
-                fprintf(stderr,
-                    "[TRIPWIRE-446] destroy/sweep WITHOUT won CAS this "
-                    "iteration (co=%p) — duplicate-dead-pop confirmed LIVE "
-                    "(main loop)\n", (void*)co);
-                fflush(stderr);
-            }
+        if (ro.dead) {
             /* Plan 83.4.5.8 (2026-05-24): grab ctx pointer ДО mco_destroy
              * (destroy frees co, не ctx — separate allocations). All ctx
              * allocated через nova_alloc_uncollectable под armed M:N
              * (codegen emit_spawn / emit_detach choice based on
              * nova_runtime_is_initialized()). Free здесь — гарантирует
-             * lifecycle ends точно когда fiber finishes. */
-            NovaSpawnCtxBase* dead_ctx = (NovaSpawnCtxBase*)mco_get_user_data(co);
-            /* Also grab init_snapshot pointer (may be NULL — already consumed
-             * by preamble OR cooperative path). Snapshot moved в
-             * scope->fiber_effect_snapshot[slot] которое GC-managed (под
-             * armed scope's fiber_effect_snapshot array — nova_alloc'd),
-             * но snapshot itself был nova_alloc_uncollectable. После
-             * fiber DEAD никто не держит ссылку, можно free.
+             * lifecycle ends точно когда fiber finishes.
              *
-             * Snapshot adoption: codegen preamble делает
-             *   scope->fiber_effect_snapshot[slot] = _c->_nova_init_snapshot;
-             *   _c->_nova_init_snapshot = NULL;
-             * Так что _c->_nova_init_snapshot читается NULL здесь
-             * (already transferred). Snapshot живёт в scope's array
-             * пока scope alive → eventually freed когда scope's
-             * uncollectable count reaches zero. К сожалению snapshot
-             * никто не free'ит explicitly — it would leak under armed.
-             * V1 tradeoff: snapshots leak per fiber. V2 followup —
-             * хранить параллельный массив "uncollectable" в scope. */
+             * Snapshot adoption note (init_snapshot): moved to
+             * scope->fiber_effect_snapshot[slot] by the preamble; nothing
+             * to free here (see nova_scope_sweep_dead_child doc). */
+            NovaSpawnCtxBase* dead_ctx = (NovaSpawnCtxBase*)mco_get_user_data(co);
             nova_fiber_state_store(co, NOVA_FIBER_STATE_DEAD);
             mco_destroy(co);
             if (dead_ctx) {
@@ -1473,13 +1363,15 @@ static void _worker_main(void* arg) {
                  * pending_sweeps release-decrement (scope-lifetime fence). */
                 nova_scope_sweep_dead_child(dead_ctx);
             }
-        } else if (mco_status(co) == MCO_SUSPENDED) {
-            /* Yielded: if parked (timer/channel wait) → dispatch_ready re-queues.
-             * If not parked (cooperative yield via preemption or runtime.yield)
-             * → yielded-FIFO, NOT the deque. Re-pushing to the LIFO deque would
-             * make the worker immediately re-pop the same fiber, starving every
-             * peer below it (Plan 44.7). */
-            if (fiber_is_parked) {
+        } else {
+            /* Yielded (mco_status is MCO_SUSPENDED — the only other
+             * possibility for a fiber we just resumed ourselves): if
+             * parked (timer/channel wait) → dispatch_ready re-queues. If
+             * not parked (cooperative yield via preemption or
+             * runtime.yield) → yielded-FIFO, NOT the deque. Re-pushing to
+             * the LIFO deque would make the worker immediately re-pop the
+             * same fiber, starving every peer below it (Plan 44.7). */
+            if (ro.parked) {
                 /* Parked: nova_sched_park уже store'ил PARKED state. dispatch_ready
                  * (через wake CAS PARKED→IDLE) handle'ит requeue + state-transition. */
             } else {
@@ -1505,32 +1397,31 @@ static void _worker_main(void* arg) {
         if (!co) co = _worker_yielded_pop(w);
         if (!co) co = nova_globrunq_get_one(&_nova_global_runq); /* Ф.1: drain overflow */
         if (!co) break;
-        /* [TEMP-TRIPWIRE-446] same pattern as the main loop above: the
-         * dead-check below is NOT gated on "did we actually win the CAS
-         * this iteration" — only on mco_status. Track it explicitly. */
-        bool _nova_446_drain_cas_attempted = false;
-        if (mco_status(co) == MCO_SUSPENDED) {
-            _nova_446_drain_cas_attempted = true;
-            if (nova_fiber_state_cas(co, NOVA_FIBER_STATE_IDLE,
-                                          NOVA_FIBER_STATE_RUNNING)) {
-                mco_resume(co);
-                if (mco_status(co) == MCO_DEAD) {
-                    nova_fiber_state_store(co, NOVA_FIBER_STATE_DEAD);
-                } else {
-                    nova_fiber_state_store(co, NOVA_FIBER_STATE_IDLE);
-                }
-            }
-            /* else: другой owner. Skip. */
+        /* presume-cas-gate (221.1 №446/№447): same unified resume as the
+         * main loop above — this closes TWO bugs this drain tail used to
+         * have on its own:
+         *  №446 — the old code's dead-check was gated on `mco_status(co)`
+         *    alone, not on "did we actually win the CAS this iteration",
+         *    so a duplicate pop of an already-dead co (same source as the
+         *    main-loop bug) fell through to a SECOND mco_destroy + sweep.
+         *  №447 — the old code restored NO TLS at all before mco_resume
+         *    (fail_top/interrupt_top/active_scope+slot/effect-snapshot —
+         *    §10 mn-coding-conventions.md) and unconditionally overwrote
+         *    PARKED with IDLE post-resume; `nova_resume_fiber` restores
+         *    the fiber's own TLS via the SAME ctx-based hooks the main
+         *    loop uses, and `ro.parked` here gates the state-store exactly
+         *    like the main loop and `_worker_run_one_fiber` already did. */
+        NovaSpawnCtxBase* drain_base = (NovaSpawnCtxBase*)mco_get_user_data(co);
+        NovaResumeOutcome ro = nova_resume_fiber(co, drain_base,
+            _nova_resume_restore_ctx_tls, _nova_resume_save_ctx_tls);
+        if (!ro.owned) {
+            /* CAS lost, or co wasn't even SUSPENDED (duplicate pop) — not
+             * ours to dispose. Don't touch co further. */
+            continue;
         }
-        if (mco_status(co) == MCO_DEAD) {
-            if (!_nova_446_drain_cas_attempted && getenv("NOVA_DIAG_446")) {
-                fprintf(stderr,
-                    "[TRIPWIRE-446] destroy/sweep WITHOUT won CAS this "
-                    "iteration (co=%p) — duplicate-dead-pop confirmed LIVE "
-                    "(cleanup-drain)\n", (void*)co);
-                fflush(stderr);
-            }
+        if (ro.dead) {
             NovaSpawnCtxBase* dead_ctx = (NovaSpawnCtxBase*)mco_get_user_data(co);
+            nova_fiber_state_store(co, NOVA_FIBER_STATE_DEAD);
             mco_destroy(co);
             if (dead_ctx) {
                 /* Plan 83.6: pool release.
@@ -1541,6 +1432,14 @@ static void _worker_main(void* arg) {
                  * pending_sweeps release-decrement (scope-lifetime fence). */
                 nova_scope_sweep_dead_child(dead_ctx);
             }
+        } else if (!ro.parked) {
+            /* Cooperative yield (not a genuine park) — §447: only store
+             * IDLE when NOT parked, mirroring the main loop / gopark
+             * protocol (runtime.c §1462-1469-equivalent, fibers.h). A
+             * genuinely parked fiber's PARKED state must survive untouched
+             * — the waker's CAS PARKED→IDLE is the only legal transition
+             * out of it. */
+            nova_fiber_state_store(co, NOVA_FIBER_STATE_IDLE);
         }
     }
     _nova_active_slot = -1;
@@ -2217,110 +2116,27 @@ static void _worker_run_one_fiber(NovaWorker* w, mco_coro* co) {
         nova_spawn_ctx_diag_check_live(base, "run-one-fiber resume");
     }
 
-    /* Save outer TLS state (we may be inside a fiber — e.g. F_outer). */
-    NovaFiberQueue*     outer_scope     = _nova_active_scope;
-    int                 outer_slot      = _nova_active_slot;
-    NovaFailFrame*      outer_fail      = _nova_fail_top;
-    NovaInterruptFrame* outer_interrupt = _nova_interrupt_top;
-    /* Plan 201 trace-per-fiber: see _worker_main for full rationale. */
-    NovaFiberErrorState* outer_error_state = nova_error_state_active();
-    NovaEffectSnapshot  outer_effects;
-    nova_effect_snapshot_save(&outer_effects);
-
-    if (base && base->_nova_worker_slot >= 0 && base->_nova_fiber_scope) {
-        /* Preamble already ran: restore home scope + saved TLS. */
-        _nova_active_scope  = base->_nova_fiber_scope;
-        _nova_active_slot   = base->_nova_worker_slot;
-        _nova_fail_top      = base->_nova_saved_fail_top;
-        _nova_interrupt_top = base->_nova_saved_interrupt_top;
-        NovaFiberQueue* fscope = base->_nova_fiber_scope;
-        int fslot = base->_nova_worker_slot;
-        if (fslot < fscope->count && fscope->fiber_effect_snapshot[fslot]) {
-            nova_effect_snapshot_restore(fscope->fiber_effect_snapshot[fslot]);
-        }
-        /* Plan 201 trace-per-fiber: point at this fiber's own bucket. */
-        if (fslot < fscope->count && fscope->fiber_error_state[fslot]) {
-            _nova_error_state_p = fscope->fiber_error_state[fslot];
-        }
-    } else if (base) {
-        /* Before preamble (first run): restore saved fail/interrupt frames.
-         * Set _nova_active_scope to THIS WORKER's own scope so preamble
-         * registers the fiber correctly in w->scope (mirrors _worker_main
-         * behavior — preamble uses _nova_active_scope to alloc home slot). */
-        _nova_fail_top      = base->_nova_saved_fail_top;
-        _nova_interrupt_top = base->_nova_saved_interrupt_top;
-        _nova_active_scope  = &w->scope;   /* ← critical: match _worker_main */
-        _nova_active_slot   = -1;
-        /* Plan 83.10.4 Ф.3 [M-83.10.1-per-fiber-handler-tls-race]: mirrors
-         * the _worker_main fix — restore init snapshot on first run. */
-        if (base->_nova_init_snapshot) {
-            nova_effect_snapshot_restore(base->_nova_init_snapshot);
-        }
-    }
-
     __atomic_store_n(&w->preempt_flag, 0, __ATOMIC_RELAXED);  /* [M-211-preempt-flag-plain-race] */
     __atomic_store_n(&w->current_fiber_start, uv_hrtime(), __ATOMIC_RELAXED);
 
-    bool _nova_state_owned = true;
-    /* [TEMP-TRIPWIRE-446] see _worker_main for rationale. */
-    bool _nova_446_run1_cas_attempted = false;
-    if (mco_status(co) == MCO_SUSPENDED) {
-        _nova_446_run1_cas_attempted = true;
-        _nova_state_owned = (bool)nova_fiber_state_cas(
-            co, NOVA_FIBER_STATE_IDLE, NOVA_FIBER_STATE_RUNNING);
-        if (_nova_state_owned) {
-            mco_resume(co);
-        }
-    }
+    /* presume-cas-gate (221.1 №446/№447): THE single resume call — see
+     * _worker_main for the full rationale. This call site used to be
+     * MISSING the "displaced fiber" restore branch (`_nova_worker_slot <=
+     * -2`) that the main loop had — a second, narrower instance of the
+     * "convention on N sites, not structure" pattern found while
+     * unifying; `_nova_resume_restore_ctx_tls` (the SAME hook the main
+     * loop and cleanup-drain use) now gives this call site the complete,
+     * correct 3-branch restore too. `ro.owned == false` covers CAS-loser
+     * AND №446 (co not SUSPENDED — duplicate pop of an already-dead co):
+     * caller must not touch co further either way. */
+    NovaResumeOutcome ro = nova_resume_fiber(co, base,
+        _nova_resume_restore_ctx_tls, _nova_resume_save_ctx_tls);
 
     __atomic_store_n(&w->current_fiber_start, 0, __ATOMIC_RELAXED);
 
-    /* Save fiber's current TLS state back. */
-    if (base) {
-        base->_nova_saved_fail_top      = _nova_fail_top;
-        base->_nova_saved_interrupt_top = _nova_interrupt_top;
-        if (base->_nova_fiber_scope && base->_nova_worker_slot >= 0) {
-            NovaFiberQueue* fscope = base->_nova_fiber_scope;
-            int fslot = base->_nova_worker_slot;
-            if (fslot < fscope->count && fscope->fiber_effect_snapshot[fslot]) {
-                nova_effect_snapshot_save(fscope->fiber_effect_snapshot[fslot]);
-            }
-        }
-    }
-    /* Restore outer TLS. */
-    _nova_active_scope  = outer_scope;
-    _nova_active_slot   = outer_slot;
-    _nova_fail_top      = outer_fail;
-    _nova_interrupt_top = outer_interrupt;
-    _nova_error_state_p = outer_error_state;  /* Plan 201 trace-per-fiber */
-    nova_effect_snapshot_restore(&outer_effects);
+    if (!ro.owned) return;  /* другой owner, или co не был SUSPENDED: skip dispose */
 
-    /* Parked check + deferred unlock (mirrors _worker_main). Plan 83-go-cmn Ф.2:
-     * park_state-by-pointer replaces the deleted nova_sched_is_parked gate; the
-     * unlock runs unconditionally after the yield (WAIT commit serializes). */
-    bool fiber_is_parked = false;
-    if (_nova_state_owned && mco_status(co) == MCO_SUSPENDED) {
-        int32_t ps = nova_park_state_load(co);
-        fiber_is_parked = (ps == NOVA_PARK_WAIT || ps == NOVA_PARK_DISPATCHED);
-    }
-    if (_nova_park_unlock_fn) {
-        void (*fn)(void*) = _nova_park_unlock_fn;
-        void* arg         = _nova_park_unlock_arg;
-        _nova_park_unlock_fn  = NULL;
-        _nova_park_unlock_arg = NULL;
-        fn(arg);
-    }
-
-    if (!_nova_state_owned) return;  /* другой owner: skip dispose */
-
-    if (mco_status(co) == MCO_DEAD) {
-        if (!_nova_446_run1_cas_attempted && getenv("NOVA_DIAG_446")) {
-            fprintf(stderr,
-                "[TRIPWIRE-446] destroy/sweep WITHOUT won CAS this "
-                "iteration (co=%p) — duplicate-dead-pop confirmed LIVE "
-                "(_worker_run_one_fiber)\n", (void*)co);
-            fflush(stderr);
-        }
+    if (ro.dead) {
         NovaSpawnCtxBase* dead_ctx = (NovaSpawnCtxBase*)mco_get_user_data(co);
         nova_fiber_state_store(co, NOVA_FIBER_STATE_DEAD);
         mco_destroy(co);
@@ -2331,8 +2147,9 @@ static void _worker_run_one_fiber(NovaWorker* w, mco_coro* co) {
             /* [196.6 / D228 §6 class]: unified sweep — see nova_scope_sweep_dead_child. */
             nova_scope_sweep_dead_child(dead_ctx);
         }
-    } else if (mco_status(co) == MCO_SUSPENDED) {
-        if (fiber_is_parked) {
+    } else {
+        /* Yielded (the only other possibility post-resume): */
+        if (ro.parked) {
             /* Parked: dispatch_ready (via nova_sched_wake timer/channel cb)
              * will re-queue when ready. No action here. */
         } else {
@@ -2342,6 +2159,72 @@ static void _worker_run_one_fiber(NovaWorker* w, mco_coro* co) {
             _worker_yielded_push(w, co);
         }
     }
+}
+
+/* [PERMANENT REGRESSION PROBE — 221.1 №446] trivial fiber body — returns
+ * immediately so the coro reaches MCO_DEAD after exactly one resume. */
+static void _nova_p446_probe_entry(mco_coro* co) {
+    (void)co;
+}
+
+/* [PERMANENT REGRESSION PROBE — 221.1 №446] presume-cas-gate window:
+ * deterministic, timing-INDEPENDENT proof of `nova_resume_fiber`'s core
+ * contract — "a duplicate resume attempt on a co that is NOT MCO_SUSPENDED
+ * (already DEAD, in this probe) must return owned=false" — the exact
+ * structural invariant that closes №446 (a duplicate pop of an
+ * already-dead co used to default to owned=true and fall through to a
+ * SECOND mco_destroy + sweep).
+ *
+ * KEPT PERMANENTLY (not removed post-window): does NOT depend on winning
+ * the organic wake_pending-duplicate-push race (which this window's stress
+ * fixture — docs/plans/repro/presume_446_stress.nv — did NOT reproduce in
+ * ~180 attempts, ~2M+ fiber lifecycles — see that file's header and the
+ * window's commit log for the honest result). A probability-based stress
+ * test can silently stop catching a future regression if the race window
+ * narrows; this probe calls the single resume function twice on the same
+ * co directly — exactly the "duplicate pop" shape — and is deterministic
+ * pass/fail on every single run. Doubled as the "подсунь негодное"
+ * fault-injection proof: with the CAS gate deliberately reverted to the
+ * pre-fix default (`out.owned = true` outside the MCO_SUSPENDED branch),
+ * this probe's assertion goes red immediately (`ro2.owned=1` instead of
+ * `0`) — see window report for the exact captured output.
+ *
+ * Returns 1 iff the CORRECT (fixed) behavior held for all three checks;
+ * 0 if ANY check failed (i.e. the №446 defect is present). */
+nova_int nova_p446_sabotage_probe(void) {
+    static NovaSpawnCtxBase probe_ctx;
+    memset(&probe_ctx, 0, sizeof(probe_ctx));
+
+    mco_desc desc = _NOVA_MCO_DESC_INIT(_nova_p446_probe_entry);
+    desc.user_data = &probe_ctx;
+    mco_coro* co = NULL;
+    mco_result r = mco_create(&co, &desc);
+    if (r != MCO_SUCCESS || co == NULL) {
+        fprintf(stderr, "nova: p446 probe fiber create failed (%d)\n", (int)r);
+        abort();
+    }
+
+    /* First "pop": fresh, MCO_SUSPENDED, state IDLE (zero-init) — must WIN
+     * the CAS and run the trivial entry to completion (MCO_DEAD). */
+    NovaResumeOutcome ro1 = nova_resume_fiber(co, NULL, NULL, NULL);
+
+    /* Second "pop" of the SAME co pointer — the duplicate-push shape from
+     * registry №446. co is now MCO_DEAD, not MCO_SUSPENDED. The correct
+     * (fixed) contract: owned=false, untouched. The pre-fix contract
+     * (sabotage target): `_nova_state_owned` defaulted true here, and the
+     * caller would go on to mco_destroy(co) A SECOND TIME. */
+    NovaResumeOutcome ro2 = nova_resume_fiber(co, NULL, NULL, NULL);
+
+    int ok = ro1.owned && ro1.dead && !ro2.owned;
+    fprintf(stderr,
+        "[p446-probe] ro1.owned=%d ro1.dead=%d ro2.owned=%d ro2.dead=%d "
+        "→ %s\n",
+        (int)ro1.owned, (int)ro1.dead, (int)ro2.owned, (int)ro2.dead,
+        ok ? "CORRECT (№446 closed)" : "DEFECT REPRODUCED (№446 live)");
+    fflush(stderr);
+
+    mco_destroy(co);  /* the ONE legitimate destroy, done by the probe itself */
+    return ok ? 1 : 0;
 }
 
 /* ── Plan 83.10.2 (2026-05-26): nova_runtime_cancel_worker_fibers ───
