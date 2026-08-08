@@ -150,6 +150,43 @@ ro captured = Db                      // 3. позиция выражения = 
 
 The parser distinguishes by position.
 
+## An effect list is a lower bound, not an exact description
+
+Effects on a function declaration read as **"can do at least this"**. Hence the
+substitution rule: a function may be passed wherever **no more** effects are
+required than it declares. Extra effects beyond the requirement are not an
+obstacle.
+
+```nova
+fn run_handler[T, E](body fn() Fail[E] -> T) Fail[E] -> T => body()
+
+fn user_handler() Time Fail[FwErr] -> int => 42   // does MORE than the parameter requires
+ro v = run_handler(user_handler)                  // legal
+```
+
+Special case: `fn() -> T` requires nothing and therefore accepts a function with
+any effects.
+
+**Why.** A library that takes user code — an HTTP router, a scheduler, a test
+runner, a retry policy, an iterator with a callback — cannot know its effects:
+a handler may touch the database, files, the network, sleep and log, in any
+combination. Under an "exactly this and nothing more" reading, the library would
+reject user code for doing more than its author foresaw. Foreseeing is
+impossible, so frameworks would be inexpressible under that rule.
+
+**Guarantees are not weakened.** "Nothing beyond" is expressed separately, by
+`forbid E1, E2 { … }`. The two sides are kept apart:
+
+| construct | meaning | bound |
+|---|---|---|
+| effects in a signature | "can do at least this" | lower |
+| `forbid E1, E2 { … }` | "this is not allowed here" | upper |
+
+`--strict-effects` checks that a function declares **no less** than it uses —
+the same lower bound, seen from the definition side.
+
+Normative: [D448](decisions/04-effects.md).
+
 ## Standard effects
 
 | Effect | What it describes |
