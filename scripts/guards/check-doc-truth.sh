@@ -96,8 +96,15 @@ unrunnable_commands=0
 if [ -z "$BIN" ]; then
     echo "check-doc-truth: бинаря $ROOT/nova-cli/target/release/nova(.exe) нет — ОСЬ 2 (исполнимость команд) ПРОПУЩЕНА (собери релиз шагом 1 gate.sh)" >&2
 else
-    CACHE_DIR=$(mktemp -d)
-    trap 'rm -rf "$CACHE_DIR"' EXIT
+    # КЭШ МЕЖДУ ПРОГОНАМИ (2026-08-09). Прежняя редакция брала `mktemp -d` и
+    # стирала кэш на выходе — то есть каждый прогон гейта заново дёргал
+    # `nova <sub> --help` для всех 25 подкоманд, хотя справка меняется ТОЛЬКО
+    # при пересборке бинаря. Профилировщик показал 66с из 142с всего гейта.
+    # Ключ кэша — время бинаря: пересобрали компилятор, ключ сменился, кэш
+    # построился заново; не пересобирали — прогон почти бесплатен.
+    BIN_TS=$(stat -c %Y "$BIN" 2>/dev/null || echo 0)
+    CACHE_DIR="${TMPDIR:-/tmp}/nova-doctruth-help-$BIN_TS"
+    mkdir -p "$CACHE_DIR" 2>/dev/null
 
     help_for() { # subcommand -> stdout: help text; сохраняет exit-код в parallel-файл
         local sub="$1" key

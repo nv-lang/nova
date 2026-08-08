@@ -18,7 +18,32 @@ export NOVA_GC_LIB_DIR="D:\\Sources\\nv-lang\\nova\\compiler-codegen\\vcpkg_inst
 export NOVA_INCLUDE_DIR="D:\\Sources\\nv-lang\\nova\\compiler-codegen\\vcpkg_installed\\x64-windows-static\\include"
 unset NOVA_STD_PATH 2>/dev/null || true
 
-fail() { echo "GATE FAIL: $1" >&2; exit 1; }
+# КОПИМ отказы вместо выхода на первом (2026-08-09, требование владельца
+# «почти каждый шаг можно делать в фоне» + наблюдение: гейт падал на ПЕРВОМ же
+# страже и не доходил до остальных, из-за чего интегратор четырежды подряд
+# чинил по одной находке, тратя по 40-минутному прогону на каждую).
+#
+# Теперь стражи-проверки копят ошибки и гейт сообщает ВСЕ разом; выход
+# происходит один раз, перед дорогими шагами (мега-CU) — незачем тратить
+# 37 минут, если дерево уже не проходит дешёвые проверки.
+GATE_FAILS=""
+GATE_FAIL_N=0
+fail() {
+    echo "GATE FAIL: $1" >&2
+    GATE_FAILS="$GATE_FAILS
+  * $1"
+    GATE_FAIL_N=$((GATE_FAIL_N + 1))
+}
+# Барьер: вызывается там, где продолжать бессмысленно либо дорого.
+gate_barrier() {
+    if [ "$GATE_FAIL_N" -gt 0 ]; then
+        echo "" >&2
+        echo "GATE: отказов на этом рубеже — $GATE_FAIL_N:$GATE_FAILS" >&2
+        exit 1
+    fi
+}
+# `fatal` — для случаев, где продолжать НЕЛЬЗЯ (нет бинаря, сломано окружение).
+fatal() { echo "GATE FATAL: $1" >&2; exit 1; }
 
 # --- gate: dev-override visibility (221.1 №283, владелец 2026-08-04) -------
 # `nova.override.toml`/`nova.local.toml` ([replace], D420) — gitignored,
@@ -162,6 +187,11 @@ echo "== gate: cargo build --release =="
 ( cd "$ROOT/nova-cli" && cargo build --release ) || fail "cargo build"
 NOVA="$ROOT/nova-cli/target/release/nova.exe"
 [ -x "$NOVA" ] || fail "nova.exe not found: $NOVA"
+
+# РУБЕЖ ПЕРЕД ДОРОГИМ ШАГОМ. Всё выше — дешёвые стражи (секунды); мега-CU
+# идёт около 37 минут. Если дерево не прошло дешёвое, тратить их незачем,
+# но и обрывать на ПЕРВОЙ находке незачем тоже — здесь сообщаются ВСЕ.
+gate_barrier
 
 echo "== gate: mega-CU (spec_tests/conformance, one CU) =="
 MEGA_LOG="${TMPDIR:-/tmp}/gate_mega_$$.log"
@@ -317,3 +347,6 @@ if [ -n "$OVERRIDE_FILES" ]; then
 else
     echo "GATE OK (final)"
 fi
+
+# Итоговый рубеж: сюда доходим, если мега-CU прошёл.
+gate_barrier
