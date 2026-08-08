@@ -9705,6 +9705,37 @@ unsafe {
 `(*p).field` chain. **Только в unsafe context** — все pointer ops gated.
 Pattern match `Option[*T]` — safe outside unsafe (inspection, не deref).
 
+> **`E_POINTER_RO_MUT_METHOD` ENFORCED (2026-08-08, Plan 221.1 №387, window
+> pptr-ro-guard).** The row above (`p.method()` (mut recv) → ❌
+> `E_POINTER_RO_MUT_METHOD`) documented the rule since Plan 118 but the
+> checker never enforced it — a mut-receiver method (`fn T mut @m(...)`)
+> called through a readonly-pointee pointer (`*T`) compiled clean and
+> mutated the pointee at runtime (221.1 №387 registry). Same class as №375
+> (`E_POINTER_MUT_FROM_RO_SOURCE`, which closed *materializing* a writable
+> `*mut T` from a `ro`-bound SOURCE) but a distinct gap: this closes the
+> call-site *use* of an already-existing readonly-typed pointer to reach a
+> mut method — orthogonal to where or how that pointer's type was arrived
+> at. Gated purely on the CALL-SITE receiver's own pointee-writability type
+> (`*T` vs `*mut T`, `pointee_is_writable`) — irrelevant whether the
+> pointer's SOURCE binding is `mut` or `ro`, or whether the pointer's OWN
+> local binding is `mut` or `ro` (only the pointee axis matters, same as
+> `E_POINTER_RO_ASSIGN`'s existing `.write()`/`*p = v` gate, whose call-site
+> shape this enforcement mirrors exactly). Arity-scoped against a Plan 135
+> ro/mut overload PAIR at the same method name (`@peek() -> int` ro-getter
+> vs `mut @peek(v int) -> ()` mut-setter, D117 amend fluent idiom) — a
+> readonly pointer may still call the RO-arity overload; only an
+> arity-matched mut-receiver candidate (with no ro-arity sibling at THAT
+> arity) is rejected. **Not a new rule** — closes an enforcement gap of an
+> ALREADY-declared rule (same posture as №367/№368 in the same registry
+> window: the diagnostic code and its semantics were already documented
+> here and in Plan 118; no new D-number, no semantics change — programs
+> that were always meant to be rejected are now actually rejected). Neg
+> fixtures: `spec_tests/conformance/neg/d387_ptr_ro_mut_method_neg.nv`
+> (explicit `*T` annotation), `neg/d387_ptr_ro_mut_method_ro_source_neg.nv`
+> (unannotated, inferred from a `ro` source), `neg/d387_ptr_ro_mut_method_
+> overload_arity_neg.nv` (arity-aware regression guard). POS boundary:
+> `spec_tests/conformance/d387_ptr_mut_method_pos.nv`.
+
 ### §6. Pointer arithmetic + order comparison
 
 ```nova
@@ -10494,7 +10525,9 @@ Closes [M-118.1-cstr-runtime-wiring] (was: «C primitive ABI wiring»; pure-Nova
 - `E_EXTERNAL_FN_FAIL_EFFECT` — external fn declaration с Fail
 - `E_PTR_ARITHMETIC_INVALID` — `p * 2`, `p / 4`, etc.
 - `E_POINTER_RO_ASSIGN` — `*p = v` / `p.field = v` где p ro
-- `E_POINTER_RO_MUT_METHOD` — `p.mut_method()` где p ro
+- `E_POINTER_RO_MUT_METHOD` — `p.mut_method()` где pointee readonly (`*T`).
+  **ENFORCED 2026-08-08 (Plan 221.1 №387, window pptr-ro-guard)** — see §5
+  amendment above (was declared-but-toothless since Plan 118).
 - `E_PTR_CAST_INVALID_TARGET` — `p as bool / f64 / ...`
 - `E_INVALID_POINTER_MODIFIER` — `*const T` и др.
 - `E_POINTER_PREFIX_MODIFIER` — `ro`/`mut`/`unsafe` перед `*` в type-position

@@ -9111,6 +9111,104 @@ impl<'a> TypeCheckCtx<'a> {
                         }
                     }
                 }
+                // №387 (221.1, окно pptr-ro-guard): `E_POINTER_RO_MUT_METHOD`
+                // was DECLARED (02-types.md, Plan 118) but never enforced —
+                // a mut-receiver method (`fn T mut @m(...)`) called through a
+                // pointer whose POINTEE is readonly (`*T`, not opted into
+                // `*mut T`) compiled clean and, on the forms that codegen
+                // happens to emit correctly, silently mutated the pointee
+                // (repro: `mut c; ro p *Counter = &c; p.bump()` — check PASS,
+                // build+run mutates `c`; see 221.1 №387 registry / PROGRESS
+                // report for the two textual forms probed). NOT the same gap
+                // as №375 (which closed *mut T MATERIALIZATION from a ro
+                // SOURCE binding, `check_addrof_mut_from_ro_source` above) —
+                // this is the pointee's OWN writability (independent of
+                // where the pointer came from: an explicit `*T` annotation
+                // over a genuinely `mut` source is legal Nova and #375 does
+                // not touch it, see `d375_ptr_mut_from_mut_source_pos.nv`)
+                // gating METHOD CALLS, mirroring the `.write()`-family gate
+                // immediately above but keyed off "is `name` a REGISTERED
+                // mut-receiver method of the pointee's nominal type" instead
+                // of the fixed pointer-builtin name list — closes the gap for
+                // ANY user/std mut-method reached through a raw-pointer
+                // receiver, not just the built-in memory-write family.
+                //
+                // Scope: direct `p.method()` where `p`'s OWN inferred type is
+                // a pointer (`pointee_is_writable`/`pointee_named_type` both
+                // return `Some` only for `TypeRef::Pointer`) — a bare record
+                // receiver (`c.method()`) is untouched here (`pointee_is_
+                // writable` returns `None`, no double-fire with the pre-
+                // existing `E_LOCAL_NOT_MUT`/`E_PARAM_NOT_MUT` ConsumeCtx
+                // checks for non-pointer receivers). A ro/mut OVERLOAD PAIR
+                // on the pointee type (Plan 135 — a genuine ro-callable
+                // overload exists at the same name) is NOT rejected — mirrors
+                // `consume_walk_expr`'s `has_ro_overload` escape hatch for
+                // the very same reason (an ro-source can still legally call
+                // the RO overload of an overloaded pair). `(*p).method()`
+                // (explicit deref) and a pointer reached through a field/
+                // index chain are OUT OF SCOPE (родня, not this fix — same
+                // "not this window" split as №377/№349/№353/№35x in the
+                // registry).
+                if let ExprKind::Member { obj, name } = &func.kind {
+                    if !matches!(
+                        name.as_str(),
+                        "write" | "write_at" | "write_unaligned" | "write_volatile"
+                            | "copy_from" | "copy_from_nonoverlapping"
+                    ) {
+                        if let Some(ty) = self.infer_expr_type(obj, scope) {
+                            if let Some(false) = pointee_is_writable(&ty) {
+                                if let Some(TypeRef::Named { path, .. }) = pointee_named_type(&ty) {
+                                    if let Some(pointee_name) = path.last() {
+                                        if let Some(overloads) = self.method_overloads(pointee_name, name) {
+                                            // Arity-scoped, NOT name-only: a Plan 135 ro/mut
+                                            // OVERLOAD PAIR at the SAME name but DIFFERENT
+                                            // arity (`@peek() -> int` ro-getter vs `mut
+                                            // @peek(v int) -> ()` mut-setter — the pervasive
+                                            // std fluent-getter/setter idiom, D117 amend) must
+                                            // not blanket-suppress the mut arm just because a
+                                            // ro sibling exists at another arity — that would
+                                            // let `p.peek(99)` (the mut-arity call) through a
+                                            // readonly pointer slip past silently. Mirrors
+                                            // `consume_walk_expr`'s `mut_methods_arity`/
+                                            // `ro_methods_arity` (same file) and the
+                                            // `outer_arity`/`inner_arity` matching a few
+                                            // hundred lines below (~L43116) — arity is the
+                                            // established overload-pair discriminator
+                                            // throughout this checker, not just here.
+                                            let same_arity: Vec<&&FnDecl> = overloads.iter()
+                                                .filter(|f| f.params.len() == args.len())
+                                                .collect();
+                                            let any_mut = same_arity.iter().any(|f| {
+                                                f.receiver.as_ref().map_or(false, |r| r.mutable)
+                                            });
+                                            let any_ro = same_arity.iter().any(|f| {
+                                                f.receiver.as_ref().map_or(false, |r| !r.mutable)
+                                            });
+                                            if any_mut && !any_ro {
+                                                errors.push(Diagnostic::new(
+                                                    format!(
+                                                        "[E_POINTER_RO_MUT_METHOD] cannot call \
+                                                         mut-receiver method `.{name}()` through a \
+                                                         readonly pointer — `*{pointee}` is a readonly \
+                                                         pointee (the L3 default is `ro`: `*T ≡ *ro T`, \
+                                                         Plan 147 / D246 / 174.5 §4; declared as \
+                                                         `E_POINTER_RO_MUT_METHOD` since Plan 118, now \
+                                                         enforced — 221.1 №387). A writable pointee \
+                                                         requires the `*mut T` opt-in on the pointer's \
+                                                         type (annotation or inference from a `mut` \
+                                                         source, D216/D246 variant Б, 221.1 №375).",
+                                                        name = name, pointee = pointee_name,
+                                                    ),
+                                                    e.span,
+                                                ));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 // Plan 221.1 №286/№143 (окно p-chan, real Channel[T] mono):
                 // `ChanWriter[T].send(v)`/`.try_send(v)` — when `T` is
                 // STATICALLY known (`channel_elem_type` — turbofish-declared

@@ -1,0 +1,29 @@
+// №387 companion (221.1, window pptr-ro-guard) — ARITY-AWARE regression
+// guard. A Plan 135 ro/mut OVERLOAD PAIR at the SAME method name but
+// DIFFERENT arity (`@peek() -> int` ro-getter vs `mut @peek(v int) -> ()`
+// mut-setter, the pervasive std fluent getter/setter idiom, D117 amend)
+// must NOT blanket-suppress the enforcement just because a ro-arity sibling
+// exists — the first working version of this fix keyed off METHOD NAME
+// alone and let `p.peek(99)` (the mut-ARITY overload) through a readonly
+// pointer slip past silently, because the ro-arity `peek()` sibling made
+// the name-only check think "an ro overload exists, don't reject". The
+// fixed version filters candidate overloads by `args.len()` BEFORE deciding
+// mut/ro — this fixture is the regression guard for that arity mismatch.
+// (The ro-arity call `p.peek()` through the SAME pointer stays legal — see
+// the sibling POS fixture in this folder-module.)
+
+// EXPECT_COMPILE_ERROR E_POINTER_RO_MUT_METHOD
+
+module neg.d387_ptr_ro_mut_method_overload_arity_neg
+
+type D387Box { n int }
+
+fn D387Box @peek() -> int => @n
+fn D387Box mut @peek(v int) -> () { @n = v }
+
+test "rejects the mut-arity overload of a ro/mut overload pair through a readonly pointer" {
+    mut b = D387Box { n: 5 }
+    ro p *D387Box = &b
+    p.peek(99)
+    assert(b.n == 99)
+}

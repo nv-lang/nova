@@ -1,0 +1,26 @@
+// №387 (221.1, window pptr-ro-guard) — `E_POINTER_RO_MUT_METHOD` was
+// DECLARED (spec/decisions/02-types.md, Plan 118 §21) but never enforced: a
+// mut-receiver method (`fn T mut @m(...)`) called through a pointer whose
+// pointee is explicitly annotated readonly (`*T`, no `*mut` opt-in) used to
+// pass `nova check` clean, build, and mutate the pointee at runtime — the
+// same ro-guarantee bypass class as №375 (which closed *mut T
+// MATERIALIZATION from a ro source; this closes the call-site USE of an
+// already-readonly pointer to reach a mut method). NOT gated by whether the
+// pointer's SOURCE binding is `mut`/`ro` (`c` below is `mut`, `p`'s own
+// binding qualifier is irrelevant) — gated purely by the pointer's own
+// pointee-writability TYPE, exactly like `.write()`/E_POINTER_RO_ASSIGN.
+
+// EXPECT_COMPILE_ERROR E_POINTER_RO_MUT_METHOD
+
+module neg.d387_ptr_ro_mut_method_neg
+
+type D387Counter { n int }
+
+fn D387Counter mut @bump() -> () { @n += 1 }
+
+test "rejects a mut-receiver method called through an explicitly readonly pointer" {
+    mut c = D387Counter { n: 0 }
+    ro p *D387Counter = &c
+    p.bump()
+    assert(c.n == 1)
+}
