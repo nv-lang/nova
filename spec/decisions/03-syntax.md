@@ -5072,7 +5072,7 @@ Plan 49 multi-error infrastructure. Enclosing fn-sig **обязан** declare
 `Fail[E']` с совместимым `E ⊆ E'`.
 
 ```nova
-fn process() Fail[CommitErr] -> () {
+fn process() Fail[WorkErr] -> () {
     consume tx = begin()
     defer { tx.commit() }                       // ✅ Fail[CommitErr] body
     do_work()?                                   // throws WorkErr
