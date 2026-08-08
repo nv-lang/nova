@@ -3113,7 +3113,7 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
     // Без ЭТОГО блока `EXPECT_LINT_WARNING` парсился (`parse_expect` уже
     // [INV-GUARD: check-expect-markers.sh] — описание УСТРАНЁННОГО дефекта,
     // а не живого инварианта: сегодня неизвестный маркер ловит страж.
-    // знает про него), но НИКОГДА не проверялся — фикстура на CONV_RULES-
+    // знает про него), но НИКОГДА не проверялся — фикстура на CONV_RULES- [INV-GUARD: check-expect-markers.sh]
     // правило (напр. W_REDUNDANT_PAREN, реестр 221.1 №463) не ассертила
     // ничего и оставалась зелёной, даже если правило сломано целиком
     // (обнаружено ревью владельца, страж `check-expect-markers.sh`).

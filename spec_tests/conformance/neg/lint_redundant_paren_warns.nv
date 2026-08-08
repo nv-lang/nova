@@ -10,7 +10,7 @@
 // поймал: первая версия этой фикстуры несла маркер, которого раннер НЕ
 // знал, — `parse_expect`/`detect_test_type` его молча игнорировали,
 // [INV-GUARD: check-expect-markers.sh] — описание УСТРАНЁННОГО дефекта.
-// `nova test` гонял файл как обычный позитив и НИКОГДА не проверял
+// `nova test` гонял файл как обычный позитив и НИКОГДА не проверял [INV-GUARD: check-expect-markers.sh]
 // находку; страж `scripts/guards/check-expect-markers.sh` это ловит).
 // Маркер реализован по-настоящему в `compiler-codegen/src/test_runner.rs`
 // (`ExpectMarker::LintWarning` + `run_one`): вызывает
