@@ -123,15 +123,29 @@ static void _evloop_close_walk_cb(uv_handle_t* handle, void* arg) {
     }
 }
 
+static void _nv456_walk_dump_cb(uv_handle_t* handle, void* arg) {
+    (void)arg;
+    fprintf(stderr, "[m456] evloop_close: handle=%p type=%d closing=%d active=%d\n",
+            (void*)handle, (int)handle->type, uv_is_closing(handle), uv_is_active(handle));
+    fflush(stderr);
+}
+
 void nova_evloop_close(void) {
     if (_evloop_state != 1) return;  /* not active, no-op */
+    int _nv456_diag = getenv("NOVA_DIAG_M456") != NULL;
 
     /* Попытка close — если active handles остались, walk-and-close,
      * затем drain pending callbacks через uv_run, повторить. Max 100
      * iterations против infinite loop. */
     int attempts = 0;
     while (attempts < 100) {
+        if (_nv456_diag) {
+            fprintf(stderr, "[m456] evloop_close: attempt=%d entering uv_loop_close\n", attempts);
+            uv_walk(_evloop, _nv456_walk_dump_cb, NULL);
+            fflush(stderr);
+        }
         int rc = uv_loop_close(_evloop);
+        if (_nv456_diag) { fprintf(stderr, "[m456] evloop_close: attempt=%d uv_loop_close rc=%d\n", attempts, rc); fflush(stderr); }
         if (rc == 0) {
             /* Чистый close. */
             _evloop_state = 2;
@@ -148,7 +162,9 @@ void nova_evloop_close(void) {
         }
         /* UV_EBUSY — есть active handles. Закрыть все, drain. */
         uv_walk(_evloop, _evloop_close_walk_cb, NULL);
+        if (_nv456_diag) { fprintf(stderr, "[m456] evloop_close: attempt=%d before uv_run(DEFAULT)\n", attempts); fflush(stderr); }
         uv_run(_evloop, UV_RUN_DEFAULT);
+        if (_nv456_diag) { fprintf(stderr, "[m456] evloop_close: attempt=%d after uv_run(DEFAULT)\n", attempts); fflush(stderr); }
         attempts++;
     }
 
