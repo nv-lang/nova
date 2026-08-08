@@ -698,6 +698,22 @@ impl<'a> EscapeCtx<'a> {
     /// Best-effort infer: if `value` is a record-literal `X { ... }` where
     /// X is a value-record, return X. (Allows let-without-annotation
     /// `let v = Vec3 { x:1, y:2, z:3 }` to register as value-record local.)
+    ///
+    /// №390 fix: ALSO recognizes the canonical `X.new(...)` constructor-call
+    /// idiom (`Type.new(...)` — the convention enforced project-wide, see
+    /// `feedback-ctor-new-not-of`) as a value-record source when `X` is a
+    /// known value-record type. Before this, a binding like
+    /// `mut counter = AtomicInt.new(1)` (no type annotation, RHS is a Call —
+    /// NOT a RecordLit) was never registered as a value-record local, so a
+    /// later escaping `&counter` (e.g. stored into a returned record field,
+    /// `Holder { cell: &counter }`) silently failed to promote: `counter`
+    /// stayed stack-allocated, and `&counter` became a dangling pointer the
+    /// moment the constructing fn returned — confirmed root cause of №390
+    /// (docs/plans/221.1-bug-sweep.md): `std/src/net/tcp.nv::TcpStream.from_raw`
+    /// builds its `rc *mut AtomicInt` field via exactly this pattern, so
+    /// `TcpStream.@close()`'s `@rc.fetch_sub(1) == 1` gate silently reads
+    /// garbage and skips the real `net_tcp_close()` call — the peer's FIN
+    /// then never gets sent, and `libuv`/Vela were never at fault.
     fn infer_value_record_from_expr(&self, value: &Expr) -> Option<String> {
         match &value.kind {
             ExprKind::RecordLit { type_name: Some(path), .. } => {
@@ -707,6 +723,31 @@ impl<'a> EscapeCtx<'a> {
                 } else {
                     None
                 }
+            }
+            ExprKind::Call { func, .. } => {
+                if let ExprKind::Path(segs) = &func.kind {
+                    if segs.len() >= 2 && segs.last().map(String::as_str) == Some("new") {
+                        // Any earlier segment naming a known value-record type
+                        // covers both the bare `X.new(...)` form and a
+                        // module-qualified `mod.X.new(...)` path. Falls back
+                        // to RUNTIME_VALUE_RECORD_CTOR_TYPES (№390 fix) for
+                        // hand-C-backed sync primitives (AtomicInt & co.),
+                        // which are RUNTIME_DEFINED_TYPES-gated and so do NOT
+                        // reliably appear in `self.value_records` (built from
+                        // `module.items`/`peer_files`, which skip these types'
+                        // TypeDecl when their home module isn't a *direct*
+                        // peer of the entry file — see the const's own doc).
+                        for seg in &segs[..segs.len() - 1] {
+                            if self.value_records.contains(seg)
+                                || crate::codegen::emit_c::RUNTIME_VALUE_RECORD_CTOR_TYPES
+                                    .contains(&seg.as_str())
+                            {
+                                return Some(seg.clone());
+                            }
+                        }
+                    }
+                }
+                None
             }
             _ => None,
         }

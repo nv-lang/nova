@@ -1,0 +1,36 @@
+// SCRATCH (p390 diagnosis, NOT a committed repro): isolates whether the
+// "heap-escape-promoted counter cell" pattern used by
+// `std/src/net/tcp.nv::TcpStream.from_raw` (`mut counter = AtomicInt.new(1);
+// TcpStream { handle: h, rc: &counter }`) actually keeps the pointee alive
+// past the constructing function's return. If escape analysis wrongly
+// leaves `counter` on `from_raw`'s stack frame, `&counter` is a dangling
+// pointer the instant `from_raw` returns, and `rc.fetch_sub(1)` on the
+// caller side reads/writes garbage — which would explain why
+// `TcpStream.@close()`'s `@rc.fetch_sub(1) == 1` gate can fail for a
+// legitimately-fresh (never-shared) stream, silently skipping the real
+// `net_tcp_close()` call (№390 root, see docs/plans/221.1-bug-sweep.md).
+
+module scratch390.escaperc
+
+import std.runtime.sync.{AtomicInt}
+
+type Holder value { cell *mut AtomicInt }
+
+fn make_holder() -> Holder {
+    mut counter = AtomicInt.new(1)
+    Holder { cell: &counter }
+}
+
+test "escape-promoted AtomicInt cell survives the constructing fn's return" {
+    mut h = make_holder()
+    ro before = h.cell.load()
+    println("before fetch_sub: ${before.to_str()}")
+    ro witnessed = h.cell.fetch_sub(1)
+    println("fetch_sub witnessed: ${witnessed.to_str()}")
+    ro after = h.cell.load()
+    println("after fetch_sub: ${after.to_str()}")
+    // Expected (if escape-promotion is sound): before=1, witnessed=1, after=0.
+    assert(before == 1)
+    assert(witnessed == 1)
+    assert(after == 0)
+}
