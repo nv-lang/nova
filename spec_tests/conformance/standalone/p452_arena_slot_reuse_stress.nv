@@ -1,0 +1,79 @@
+// p452_arena_slot_reuse_stress.nv — regression fixture for 221.1 №452
+// ("fiber stack overflow in slot 501 под нагрузкой").
+//
+// ## Finding (see docs/plans/221.1-bug-sweep.md №452 for the full writeup)
+//
+// Reported config: 800 fibers + 8 clusters of 60, NOVA_MAXPROCS=16 — runtime
+// aborted with "nova: fiber stack overflow in slot 501" (VEH handler in
+// fiber_arena_win.c, `_nova_fw_report_overflow`).
+//
+// Root-cause investigation (this fixture's originating window, p452-stack-
+// overflow, 2026-08-08) did NOT reproduce the literal crash — 110+ clean
+// runs of this exact stress shape on current `main` (post-#446/#447 fix).
+// It instead found a DIFFERENT but revealing result: reverting
+// `runtime.c`/`fibers.h` to the commit just BEFORE the №446/№447 fix
+// (`50ad6f04f` — unify all resume sites through `nova_resume_fiber`, resume
+// only under a WON `casgstatus`) makes this exact fixture unstable — one
+// hang out of 45 pre-fix runs under NOVA_MAXPROCS=16, where the post-fix
+// runtime ran clean 110+/110+. Static reading of `fiber_arena_win.c`'s
+// alloc/dealloc/dirty-bit-reset path did not turn up an independent bounds
+// or reset defect (dirty slots are fully MEM_DECOMMIT'd and recommitted on
+// reuse; `dealloc_stack`/`stack_limit` are reset per-mco_create; cross-
+// thread dealloc only clears the atomic used-bit, never touches the owner-
+// only dirty_bits — no cross-thread race there either).
+//
+// Working theory (NOT proven to the same evidentiary standard as the A/B
+// instability test above — the exact "slot 501" wording was never
+// reproduced in this window): №452 was a DOWNSTREAM SYMPTOM of the №446
+// double-`mco_destroy` / double-sweep race, not an independent
+// fiber_arena defect. §446 documents `mco_status(co)` being read through
+// ALREADY-FREED memory on the duplicate-pop path — a classic UAF that can
+// return garbage and, depending on what now occupies that memory (e.g. a
+// DIFFERENT fiber's freshly-`calloc`'d `mco_coro` sharing the same arena
+// slot after a spurious double-free), can make two live fibers alias the
+// same stack slot. Ordinary, legitimate stack growth by either fiber would
+// then hit a guard page whose bookkeeping belongs to the OTHER occupant —
+// reported by the VEH handler as "stack overflow" in whatever slot the
+// corruption happened to land on that run. §446/§447 were fixed by
+// `50ad6f04f` (unify resume/destroy/sweep on every `co` behind a single won
+// CAS) BEFORE this fixture's window branched from main, which is consistent
+// with why the crash no longer reproduces here.
+//
+// This fixture is kept as a REGRESSION GUARD for that instability class: a
+// large single-arena burst (many fibers created back-to-back on the SAME
+// calling thread — see `nova_runtime_spawn_global`, `mco_create` runs
+// eagerly and synchronously on the calling thread's own `_t_arena`, so a
+// tight spawn loop drives that ONE arena's slot index deep) combined with
+// a many-cancellers-racing-one-token shape (the №446 trigger — mass
+// `tok.cancel()` waking hundreds of parked fibers at once — see
+// mn-coding-conventions.md §10) repeated across several ROUNDS so slots
+// get reused, not just freshly allocated. If either the №446/№447 fix or
+// the arena's own reset/reuse path ever regresses, this is one of the
+// fixtures likely to catch it (stochastically — see the A/B note above,
+// this is NOT a deterministic reproducer).
+//
+// ENV NOVA_MAXPROCS=16
+
+module standalone.p452_arena_slot_reuse_stress
+
+import std.time.duration
+
+test "p452: single-arena burst past slot 501 + 8x80 racing cancellers, MAXPROCS=16, 20 rounds (slot reuse)" {
+    for _round in 0..20 {
+        ro tok = CancelToken.new()
+        supervised(cancel: tok) {
+            for _ in 0..1000 {
+                spawn { 200.to_millis().sleep() }
+            }
+            for _cluster in 0..8 {
+                for _ in 0..80 {
+                    spawn {
+                        0.to_millis().sleep()
+                        tok.cancel()
+                    }
+                }
+            }
+        }
+    }
+    assert(true)
+}
