@@ -1106,6 +1106,11 @@ pub struct CEmitter {
     /// failed: <msg> (<expr>)`); `debug_only` (Plan 194 A2.2, D421 §3) marks a
     /// `#debug invariant` clause — erased outside `checked` mode.
     record_invariants: HashMap<String, Vec<(Expr, Span, Option<String>, Option<Expr>, bool)>>,
+    /// №466 Ф.1: сколько `#debug`-контрактов стёр режим сборки. Cell, потому
+    /// что `mode_erases_debug` вызывается из &self-контекстов. Сообщается один
+    /// раз в конце эмиссии (`report_debug_erasure`) — молчаливое стирание
+    /// защиты в release было ложным обещанием безопасности.
+    debug_contracts_erased: std::cell::Cell<usize>,
     /// Plan 33.1 Ф.4 (D24): если установлено — функция имеет ensures-контракты,
     /// и все `Stmt::Return X` подменяются на `{ _nova_result = X; goto <label>; }`.
     /// Trailing block-expression также. После label эмитятся ensures-checks
@@ -2502,6 +2507,7 @@ impl CEmitter {
             proven_overflow_sites_contract: std::collections::HashSet::new(),
             contracts_mode: crate::ast::ContractsMode::Checked,
             record_invariants: HashMap::new(),
+            debug_contracts_erased: std::cell::Cell::new(0),
             array_element_types: HashMap::new(),
             option_inner_types: HashMap::new(),
             pending_option_inner_type: None,
@@ -4995,7 +5001,34 @@ impl CEmitter {
     /// предикатом НЕ гейтятся — они always-on независимо от режима (сайт-
     /// specific sound-элизия идёт отдельно через `proven_contracts`).
     fn mode_erases_debug(&self) -> bool {
-        matches!(self.contracts_mode, crate::ast::ContractsMode::Optimized)
+        let erases = matches!(self.contracts_mode, crate::ast::ContractsMode::Optimized);
+        if erases {
+            // №466 Ф.1 (решение владельца 2026-08-08 «исправить до тега»):
+            // МОЛЧАЛИВОЕ стирание `#debug`-контрактов в release — ложное
+            // обещание защиты. Разведка дверей контрактов показала: в dev
+            // `panic: invariant failed`, в release то же значение живёт с
+            // exit 0 и БЕЗ ЕДИНОГО предупреждения — притом что CLAUDE.md
+            // требует release-сборку как ОБЯЗАТЕЛЬНЫЙ авторитетный гейт, то
+            // есть защита исчезает ровно там, где её считают включённой.
+            // Считаем стёртое и сообщаем ОДИН раз за сборку (см. вызов
+            // `report_debug_erasure` в конце эмиссии модуля).
+            self.debug_contracts_erased.set(self.debug_contracts_erased.get() + 1);
+        }
+        erases
+    }
+
+    /// №466 Ф.1: сообщить пользователю, что часть проверок выключена режимом.
+    /// Печатается ОДИН раз за компиляцию и только когда действительно стёрли —
+    /// молчание при нулевом счётчике, чтобы не шуметь на обычных сборках.
+    fn report_debug_erasure(&self) {
+        let n = self.debug_contracts_erased.get();
+        if n == 0 {
+            return;
+        }
+        eprintln!(
+            "note: режим сборки выключил {} проверок(и) `#debug` (контракты/инварианты).              В этой сборке они НЕ проверяются. Соберите с `--mode dev` (или `checked`),              если нужна их проверка. См. реестр 221.1 №466.",
+            n
+        );
     }
 
     /// Plan 140 Ф.2 / Plan 194 A4 (ретракт `#unchecked`): контракт-проверки
@@ -9163,6 +9196,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // этого они push'ат E7001 в `strict_errors`. Здесь aggregate'им и failim
         // codegen pass если non-empty. Production-grade strict mode: ANY silent
         // fallback = build failure (default, no opt-out env var).
+        // №466 Ф.1: сообщить, если режим сборки выключил `#debug`-проверки.
+        // Вызов стоит ДО частичного move `self` ниже. Молчание здесь и было
+        // ложным обещанием защиты в release-сборке.
+        self.report_debug_erasure();
         let strict_errors = self.strict_errors.into_inner();
         let warnings = self.warnings.into_inner();
         if !strict_errors.is_empty() {
