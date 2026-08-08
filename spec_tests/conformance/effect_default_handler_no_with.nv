@@ -47,13 +47,17 @@ test "Os.arg_count() — explicit `with Os = real_os()` gives the SAME answer" {
 // ── Io: default (no `with`) vs explicit `with Io = real_io()` ──
 
 test "Io.write_out() — default-without-with auto-constructs real_io()" {
-    // nova:allow W_COERCE_EXPLICIT_REDUNDANT -- реестр 221.1 №426: без `.bytes()`
-    // компилятор падает internal error [P67-LEGACY] method=write_out (check при этом PASS).
+    // Реестр 221.1 №426: без `.bytes()` компилятор падает internal error
+    // [P67-LEGACY] method=write_out (check при этом PASS). Подавление обязано
+    // стоять НЕПОСРЕДСТВЕННО перед строкой находки (line-1, см. lints.rs:3411) —
+    // пояснение выносим ВЫШЕ, иначе suppression не достаёт до кода.
+    // nova:allow W_COERCE_EXPLICIT_REDUNDANT -- №426: обход падения компилятора
     ro r = Io.write_out("".bytes())   // zero-length write — no visible stdout noise
     assert(match r { Ok(_) => true, Err(_) => false })
 }
 
 test "Io.write_out() — explicit `with Io = real_io()` also succeeds" {
+    // nova:allow W_COERCE_EXPLICIT_REDUNDANT -- №426: обход падения компилятора
     ro r = with Io = real_io() { Io.write_out("".bytes()) }
     assert(match r { Ok(_) => true, Err(_) => false })
 }
