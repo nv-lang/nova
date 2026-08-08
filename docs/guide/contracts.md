@@ -34,6 +34,48 @@ Spec: [D24](../../spec/decisions/09-tooling.md#d24-стратегия-smt-про
 
 ---
 
+
+## When contracts are checked: at compile time and at run time
+
+A contract has two independent lines of defence.
+
+**At run time — always.** `requires`, `ensures` and `invariant` are checked while
+the program runs. This needs no flags and cannot be turned off: a violated
+contract stops the program with a diagnostic.
+
+**At compile time — on request.** The compiler can PROVE a contract via an SMT
+solver. A proven contract buys exactly one thing: its run-time check can be
+**removed** from the finished program — it is true by construction, so there is
+nothing left to check.
+
+As of 0.1 proving is **off by default** and is enabled by a flag:
+
+```bash
+nova check --verify   # prove contracts while checking
+nova build --verify   # prove, and drop proven checks from the binary
+```
+
+### Why it is off by default
+
+Proving is expensive work, and paying for it on every build is pointless: on
+ordinary code without contracts it finds nothing and still costs time. Turn it on
+where it pays off — in release builds where the finished program's speed matters,
+and when you want to confirm a contract is genuinely provable rather than merely
+"has not failed yet".
+
+### What this means for safety
+
+**Nothing.** The flag affects compile speed and the speed of the finished
+program, not its correctness:
+
+- **without `--verify`** — no contract is proven, so **every** check stays in the
+  program and runs at execution time;
+- **with `--verify`** — proven checks are dropped as true by construction,
+  unproven ones remain.
+
+So omitting the flag makes the program slower, never less safe. The converse does
+not hold either: the flag cannot "miss" a violation — whatever is not proven is
+checked at run time.
 ## Contents
 
 - [Quickstart](#quickstart)
@@ -1023,5 +1065,5 @@ result-ref       = 'result'                  // only in ensures
   inferred contracts doc-example
 - [`nova_tests/doc/f25_mutation_contracts_positive.nv`](../nova_tests/doc/f25_mutation_contracts_positive.nv) —
   mutation contracts doc-example
-- [`nova_tests/expected_runtime/`](../nova_tests/expected_runtime/) —
+- [`nova_tests/expected_runtime/`](../nova_tests.old/expected_runtime/) —
   runtime contract violation tests (`contracts_*.nv`)
