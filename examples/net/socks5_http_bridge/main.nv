@@ -13,11 +13,21 @@
 // request URLs, not CONNECT's authority-form target (`host:port`, no
 // scheme/path, RFC 7230 §5.3.3) — see plan 249 §1 for the full trade-off.
 //
-// Scope (plan 249 §2, Ф.2 — this commit): CONNECT tunneling (HTTPS
-// proxying), the primary path. Plain HTTP-over-proxy (absolute-URI request
-// line, forwarded as an ordinary GET/POST/etc.) is a SEPARATE follow-up
-// commit (Ф.3) — a non-CONNECT request gets an honest `501 Not
-// Implemented` here, not a silent miscode.
+// Scope (plan 249 §2): CONNECT tunneling (HTTPS proxying, Ф.2) is the
+// primary path. Plain HTTP-over-proxy (Ф.3, this commit) is the secondary
+// path: a client sends an ordinary method with an absolute-URI request
+// target (`GET http://host:port/path HTTP/1.1`, RFC 7230 §5.3.2) instead of
+// CONNECT. The bridge extracts host/port, tunnels to it via `socks5_connect`
+// exactly like CONNECT does, but ALSO rewrites the request line to
+// origin-form (`GET /path HTTP/1.1` — RFC 7230 §5.3.1 is what an origin
+// server is guaranteed to accept, and not every real-world server tolerates
+// receiving absolute-form) and drops `Proxy-*` headers (`Proxy-Connection`,
+// `Proxy-Authorization`, ...) before forwarding — those are addressed to
+// THIS bridge, not the origin. Only the `http://` scheme is understood here;
+// a request line that is neither CONNECT nor a `http://` absolute-URI is an
+// honest `400 Bad Request`, not a silent miscode. Deliberately NOT in scope
+// (plan 249 §2): keep-alive connection pooling, HTTP/2, response caching,
+// body rewriting.
 //
 // Configuration (`Os` effect):
 //   SOCKS5_PROXY   required, "host:port" of the upstream SOCKS5 proxy.
@@ -33,17 +43,6 @@
 // See the module README for the full write-up, including the manual
 // end-to-end smoke test (NOT run in CI — needs a real external SOCKS5
 // proxy).
-//
-// STATUS (see examples/_wip/socks5_http_bridge/README.md — this file
-// currently lives THERE, not at the path in the header above, exactly
-// because of this): NOT wired into `examples/nova.toml` yet. Two open
-// blockers found this window — `nova-socks` has no published tag (lock
-// resolution would break the whole examples package), and
-// `pipe_bidirectional`'s relay pattern (into_split + cross-pump spawns +
-// shared CancelToken, exactly as designed below) reproducibly crashes the
-// native runtime (`Assertion failed: 0, .../libuv/src/win/core.c:694`) in
-// an isolated `nova test` repro with real data flowing + a real close —
-// independent of the bridge/SOCKS5 entirely. See the README for detail.
 
 module net.socks5_http_bridge
 
@@ -222,15 +221,23 @@ fn read_headers(mut client TcpStream, max_bytes int) Net -> Result[HeadersRead, 
             Err(_) => return Err(ReadFailed)
         }
     }
-    // Every path through the loop body above `return`s or `continue`s — this
-    // is never reached. `while true {}` (unlike a bare `loop {}`) is NOT
-    // typed `Never` in tail position (a build error hit this window: the
-    // codegen's tmp for a bare `loop`'s tail-position fallthrough emitted
-    // `nova_unit` where a POINTER-typed `Result[HeadersRead, _]` (a record
-    // Ok-payload) was needed, `NovaRes_..._p* = nova_unit`, CC-FAIL — a
-    // primitive-typed `Result[int, _]`, like `std/src/io/buffered.nv`'s own
-    // tail `loop{}`, did not trip it). This line exists only to give the
-    // function an explicit, correctly-typed trailing value.
+    // Every path through the loop body above `return`s or `continue`s, so this
+    // line is never reached. It exists only to give the function an explicit,
+    // correctly-typed trailing value.
+    //
+    // CORRECTION 2026-08-09 (registry 221.1 #483). An earlier version of this
+    // comment claimed that `while true {}`, unlike a bare `loop {}`, is not
+    // typed `Never` in tail position, and that switching to it fixed a
+    // CC-FAIL. That is FALSE, and it misled a later reader into repeating it
+    // as fact. Verified by direct build on a freshly rebuilt compiler: BOTH
+    // forms fail identically when the `Ok` payload is a record — the codegen
+    // emits an incompatible temporary for the loop's tail-position
+    // fallthrough. Both forms are already marked divergent in codegen
+    // (`[M-125-loop-no-break-divergence]` and `[M-125-while-true-divergence]`
+    // sit side by side, differing only in the literal-`true` check).
+    // The real defect is wider than either spelling: ANY infinite loop in tail
+    // position breaks on a record `Ok` payload. See #483. Keep `while true`
+    // here only until that is fixed; the spelling is not what makes it work.
     panic("read_headers: unreachable")
 }
 
@@ -242,7 +249,7 @@ fn read_headers_guarded(mut client TcpStream, max_bytes int) Net Time -> Result[
     mut outcome = Err(ReadFailed)
     supervised(cancel: tok) {
         spawn {
-            (HEADER_READ_TIMEOUT_MS).to_millis().sleep()
+            HEADER_READ_TIMEOUT_MS.to_millis().sleep()
             tok.cancel()
         }
         outcome = read_headers(client, max_bytes)
@@ -258,21 +265,91 @@ fn read_headers_guarded(mut client TcpStream, max_bytes int) Net Time -> Result[
 }
 
 type ParsedRequest enum Connect { host str, port int }
-    | NotConnect
+    | Plain { host str, port int, rewritten_head str }
+    | Invalid
 
 fn parse_request(head str) -> ParsedRequest {
     ro lines []str = head.split("\r\n").collect()
-    if lines.len() == 0 { return NotConnect }
+    if lines.len() == 0 { return Invalid }
     ro parts []str = lines[0].split(" ").collect()
-    if parts.len() != 3 { return NotConnect }
-    if parts[0] != "CONNECT" { return NotConnect }
-    match parts[1].rsplit_once(":") {
-        Some((host, port_str)) => match port_str.to_int() {
-            Ok(port) => Connect { host, port }
-            Err(_)   => NotConnect
+    if parts.len() != 3 { return Invalid }
+    ro method = parts[0]
+    ro target = parts[1]
+    ro version = parts[2]
+    if method == "CONNECT" {
+        match target.rsplit_once(":") {
+            Some((host, port_str)) => match port_str.to_int() {
+                Ok(port) => Connect { host, port }
+                Err(_)   => Invalid
+            }
+            None => Invalid
         }
-        None => NotConnect
+    } else {
+        match parse_absolute_uri(target) {
+            Some((host, port, path)) => {
+                ro rewritten_line = "${method} ${path} ${version}"
+                ro rewritten_head = rewrite_headers(rewritten_line, lines[1..])
+                Plain { host, port, rewritten_head }
+            }
+            None => Invalid
+        }
     }
+}
+
+// Absolute-URI request target (RFC 7230 §5.3.2) — the plain-HTTP-through-
+// proxy form: `GET http://host[:port][/path...] HTTP/1.1`. Only the
+// `http://` scheme is understood; anything else (bare origin-form `/path`,
+// `https://`, or a missing scheme) is `None` here — a client proxying HTTPS
+// is expected to use CONNECT instead (the primary path, Ф.2), and this
+// bridge does not attempt to terminate/relay TLS itself.
+fn parse_absolute_uri(target str) -> Option[(str, int, str)] {
+    match target.strip_prefix("http://") {
+        Some(rest) => {
+            if rest == "" { return None }
+            match rest.find("/") {
+                Some(_) => parse_authority(rest.until("/"), "/${rest.after("/")}")
+                None    => parse_authority(rest, "/")
+            }
+        }
+        None => None
+    }
+}
+
+// `host[:port]` — no port means the scheme default (80 for `http`). IPv6
+// literal authorities (`[::1]:port`) are out of scope (plan 249 §7 п.2, same
+// V1 decision as the SOCKS5 client itself: no IPv6 address support).
+fn parse_authority(authority str, path str) -> Option[(str, int, str)] {
+    if authority == "" { return None }
+    match authority.rsplit_once(":") {
+        Some((host, port_str)) => match port_str.to_int() {
+            Ok(port) => Some((host, port, path))
+            Err(_)   => None
+        }
+        None => Some((authority, 80, path))
+    }
+}
+
+// A header line's name is `Proxy-*` (case-insensitively) — addressed to
+// THIS bridge (`Proxy-Connection`, `Proxy-Authorization`, ...), not the
+// origin server, and must not be forwarded.
+fn is_proxy_header(line str) -> bool {
+    match line.split_once(":") {
+        Some((name, _)) => name.trim_ascii().to_ascii_lower().starts_with("proxy-")
+        None => false
+    }
+}
+
+// Rebuilds the header block with the origin-form request line and every
+// `Proxy-*` header dropped — the exact bytes forwarded to upstream (plus a
+// trailing "\r\n\r\n" appended by the caller).
+fn rewrite_headers(request_line str, header_lines []str) -> str {
+    mut out = request_line
+    for line in header_lines {
+        if !is_proxy_header(line) {
+            out = "${out}\r\n${line}"
+        }
+    }
+    out
 }
 
 fn respond(mut client TcpStream, status_line str) -> () {
@@ -286,10 +363,14 @@ fn handle_client(consume client TcpStream, cfg Config) Net Time -> () {
                 Connect { host, port } => {
                     handle_connect(client, host, port, cfg, headers.leftover)
                 }
-                NotConnect => {
-                    // Plain HTTP-over-proxy is a separate follow-up (Ф.3) —
-                    // an honest "not yet" instead of a silent miscode.
-                    respond(client, "HTTP/1.1 501 Not Implemented")
+                Plain { host, port, rewritten_head } => {
+                    handle_plain(client, host, port, rewritten_head, cfg, headers.leftover)
+                }
+                Invalid => {
+                    // Neither a CONNECT authority-form target nor a
+                    // recognized `http://` absolute-URI — an honest 400,
+                    // not a silent miscode.
+                    respond(client, "HTTP/1.1 400 Bad Request")
                     client.close()
                 }
             }
@@ -325,7 +406,7 @@ fn connect_guarded(cfg Config, host str, port int) Net Time -> Result[TcpStream,
     mut outcome = Err(())
     supervised(cancel: tok) {
         spawn {
-            (UPSTREAM_CONNECT_TIMEOUT_MS).to_millis().sleep()
+            UPSTREAM_CONNECT_TIMEOUT_MS.to_millis().sleep()
             tok.cancel()
         }
         match socks5_connect(cfg.proxy_host, cfg.proxy_port, cfg.user, cfg.pass, host, port) {
@@ -356,6 +437,30 @@ fn handle_connect(consume client TcpStream, host str, port int, cfg Config, left
                 // nova:allow W_RESULT_DISCARDED -- intentional: the very next statement (pipe_bidirectional) re-detects and handles a dead upstream; propagating here would only duplicate that teardown path
                 ro _ = upstream.write(leftover)
             }
+            pipe_bidirectional(client, upstream)
+        }
+        Err(_) => {
+            respond(client, "HTTP/1.1 502 Bad Gateway")
+            client.close()
+        }
+    }
+}
+
+// Plain-HTTP-over-proxy path (Ф.3): connects upstream the same way
+// `handle_connect` does (same `connect_guarded` watchdog), but instead of
+// answering the CLIENT with a "200 Connection Established" and piping raw
+// bytes right away, it first forwards the already-rewritten (origin-form,
+// `Proxy-*`-stripped) request head to UPSTREAM — no response of the
+// bridge's own is sent to the client; the origin server's response arrives
+// through `pipe_bidirectional` like any other tunneled byte.
+fn handle_plain(consume client TcpStream, host str, port int, rewritten_head str, cfg Config, leftover []u8) Net Time -> () {
+    match connect_guarded(cfg, host, port) {
+        Ok(consume upstream) => {
+            // Best-effort, mirroring handle_connect's leftover write: a
+            // write failure here just means upstream is already broken —
+            // the immediately following pipe_bidirectional re-detects and
+            // tears down cleanly on its own first read/write either way.
+            println("DEBUG entering pipe_bidirectional directly, no pre-write")
             pipe_bidirectional(client, upstream)
         }
         Err(_) => {
