@@ -49354,21 +49354,56 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// Self-литерала в теле; (b) ЦЕПОЧКА — tail = static-вызов `Vec[..].<m>`,
     /// где m — лист (fixpoint глубиной 1: bytes→from_raw_parts).
     fn sret_fn_eligible(&self, f: &FnDecl, ret_c: &str) -> bool {
+        // ВРЕМЯНКА (план 253.3 Ф.0, снять до финального коммита): диагностика
+        // причины отказа sret_fn_eligible для отладки bytes()-кейса.
+        if f.name == "bytes" {
+            fn kind_tag(e: &Expr) -> String {
+                let full = format!("{:?}", e.kind);
+                full.chars().take(200).collect()
+            }
+            let body_shape = match &f.body {
+                FnBody::Expr(e) => format!("Expr(tail_kind={})", kind_tag(e)),
+                FnBody::Block(b) => format!(
+                    "Block(is_unsafe={}, stmts={}, trailing_kind={})",
+                    b.is_unsafe,
+                    b.stmts.len(),
+                    b.trailing.as_deref().map_or("None".to_string(), kind_tag)
+                ),
+                FnBody::External => "External".to_string(),
+            };
+            eprintln!("SRET_DEBUG: fn={} ret_c={:?} body_shape={}", f.name, ret_c, body_shape);
+        }
         if !ret_c.starts_with("Nova_Vec____")
             || !ret_c.ends_with('*')
             || ret_c.ends_with("**")
         {
+            if f.name == "bytes" {
+                eprintln!("SRET_DEBUG: fn={} REJECTED at filter (1) ret_c shape", f.name);
+            }
             return false;
         }
-        Self::sret_body_form(f).is_some()
-            && match Self::sret_body_form(f) {
+        let form = Self::sret_body_form(f);
+        if f.name == "bytes" {
+            let form_desc = match &form {
+                Some(SretBodyForm::Leaf) => "Some(Leaf)".to_string(),
+                Some(SretBodyForm::ChainTo(m)) => format!("Some(ChainTo({m}))"),
+                None => "None".to_string(),
+            };
+            eprintln!("SRET_DEBUG: fn={} passed filter (1); body_form={}", f.name, form_desc);
+        }
+        form.is_some()
+            && match form {
                 Some(SretBodyForm::Leaf) => true,
                 Some(SretBodyForm::ChainTo(callee_name)) => {
                     // Цепочка на static Vec-метод: он должен быть листом.
-                    self.generic_type_methods.get("Vec")
+                    let inner = self.generic_type_methods.get("Vec")
                         .and_then(|ms| ms.iter().find(|m| m.name == callee_name))
                         .map_or(false, |m| matches!(
-                            Self::sret_body_form(m), Some(SretBodyForm::Leaf)))
+                            Self::sret_body_form(m), Some(SretBodyForm::Leaf)));
+                    if f.name == "bytes" {
+                        eprintln!("SRET_DEBUG: fn={} ChainTo target eligible={}", f.name, inner);
+                    }
+                    inner
                 }
                 None => false,
             }
