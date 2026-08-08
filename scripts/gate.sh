@@ -91,6 +91,10 @@ bash "$ROOT/scripts/guards/check-bug-number-sync.sh" "$ROOT" || fail "новый
 # два из которых несли живой дефект (двойной destroy+sweep дубликата
 # мёртвого co). Страж ловит новый resume-сайт, открытый в обход
 # nova_resume_fiber (fibers.h).
+echo "== gate: expect-markers (неизвестный EXPECT_* раннер молча игнорирует — №453) =="
+bash "$ROOT/scripts/guards/check-expect-markers.sh" "$ROOT" || fail "неизвестный EXPECT_* в тесте"
+bash "$ROOT/scripts/guards/selftest/test-check-expect-markers.sh" >/dev/null || fail "селфтест expect-markers"
+
 echo "== gate: invariant-discipline (норма об инвариантах — всеобъемлюща) =="
 bash "$ROOT/scripts/guards/check-invariant-discipline.sh" "$ROOT" || fail "новый инвариант на честном слове (conventions-governance)"
 bash "$ROOT/scripts/guards/selftest/test-check-invariant-discipline.sh" >/dev/null || fail "селфтест стража инвариантов"

@@ -6279,6 +6279,15 @@ pub fn detect_test_type(path: &Path) -> TestType {
         let Ok(line) = line else { break };
         if line.contains("EXPECT_COMPILE_ERROR") { return TestType::CompileError; }
         if line.contains("EXPECT_RUNTIME_PANIC") { return TestType::Panic; }
+        // №453: `EXPECT_TIMEOUT_MS` — это ПЕР-ТЕСТОВЫЙ БЮДЖЕТ ВРЕМЕНИ
+        // (`parse_timeout_ms`), а НЕ дорожка «ожидается зависание». Подстрочный
+        // матч ниже уносил такие фикстуры в timeout-лейн, которого авторитетный
+        // гейт (`--positive --compile-error`) не берёт, — и они молча выпадали из
+        // проверки. Так выпало СЕМЬ фикстур, все про конкурентность и сеть, среди
+        // них регресс на use-after-free, успевший перестать компилироваться
+        // незамеченным. Гейт этого поймать не мог: уехавшая фикстура не даёт ни
+        // PASS, ни FAIL, а число SKIP не ассертится (см. №453).
+        if line.contains("EXPECT_TIMEOUT_MS")    { continue; }
         if line.contains("EXPECT_TIMEOUT")       { return TestType::Timeout; }
         if line.contains("EXPECT_EXIT")           { return TestType::Exit; }
     }

@@ -1,6 +1,6 @@
 // Plan 180 — typed DeError on malformed / mismatched JSON (D325, §3.7).
 // Runtime Err-kind checks are POSITIVE test blocks (test-conventions: no
-// EXPECT_RUNTIME marker) — decode must return `Err(DeError)`, never throw/panic.
+// runtime-panic marker) — decode must return `Err(DeError)`, never throw/panic.
 // Migrated from nova_tests/serde/errors.nv (Plan 182 Ф.2).
 module encoding.serde
 

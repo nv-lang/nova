@@ -1,6 +1,5 @@
 module spec_tests.conformance
 // Plan 172.3 Ф.4 — use stdlib SignedInts (from prelude) WITHOUT local declaration.
-// EXPECT_RUN_OK
 // D246-амендмент ([M-ro-launder-via-mut-binding], Ф.2 миграция, 2026-07-23).
 priv(file) fn[T SignedInts] pick(mut x T) -> T => x
 test "stdlib_use smoke" { ro _ = pick(5) }

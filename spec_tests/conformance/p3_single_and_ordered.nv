@@ -1,6 +1,6 @@
 // Plan 150 / D248 — single (unchained) comparisons on ordered types stay legal.
 //
-// EXPECT_OUTPUT: ok
+// EXPECT_STDOUT: ok
 
 module spec_tests.conformance
 test "p3_single_and_ordered smoke" {

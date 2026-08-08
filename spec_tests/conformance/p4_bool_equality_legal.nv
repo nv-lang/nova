@@ -1,7 +1,7 @@
 // Plan 150 / D248 — `==`/`!=` on bool stay legal; only relational < <= > >= are
 // banned for bool operands.
 //
-// EXPECT_OUTPUT: ok
+// EXPECT_STDOUT: ok
 
 module spec_tests.conformance
 test "p4_bool_equality_legal smoke" {

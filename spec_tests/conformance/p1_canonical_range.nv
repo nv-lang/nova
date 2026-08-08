@@ -1,7 +1,7 @@
 // Plan 150 / D248 — canonical range form `a <= b && b < c` works (the
 // replacement for the rejected `a <= b < c` chain).
 //
-// EXPECT_OUTPUT: ok
+// EXPECT_STDOUT: ok
 
 module spec_tests.conformance
 

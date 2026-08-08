@@ -1,6 +1,5 @@
 module spec_tests.conformance
 // Plan 172.3 Ф.2 Q4 — composition: type-set ∧ protocol via D145 `+`.
-// EXPECT_RUN_OK
 // D246-амендмент ([M-ro-launder-via-mut-binding], Ф.2 миграция, 2026-07-23):
 // `mut x` — generic `T` не статически доказан scalar-safe (даже с этим
 // bound'ом) — in-out, вызывающий передаёт rvalue/mut-источник.

@@ -2,7 +2,7 @@
 // contract: the `&&` form actually constrains both ends (unlike the vacuous
 // `lo <= i < hi` chain it replaces). A valid call passes.
 //
-// EXPECT_OUTPUT: ok
+// EXPECT_STDOUT: ok
 
 module spec_tests.conformance
 fn offset(i int, lo int, hi int) -> int

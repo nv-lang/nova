@@ -2,7 +2,7 @@
 // intentional comparison of a bool result and stays legal (paren-aware
 // detection — the inner `<` is consumed inside the parentheses).
 //
-// EXPECT_OUTPUT: ok
+// EXPECT_STDOUT: ok
 
 module spec_tests.conformance
 test "p5_paren_not_chain smoke" {
