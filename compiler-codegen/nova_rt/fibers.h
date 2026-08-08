@@ -3445,6 +3445,30 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
         if (_dl_ns != 0 && !_dl_fired
             && !nova_abool_load(&q->cancel_requested)
             && time_monotonic_ns() >= _dl_ns) {
+            /* 221.1 №470/№474: permanent, getenv-gated point-probe (cold path
+             * — only the RARE branch where a deadline actually fires, zero
+             * cost otherwise). Shows how far past the deadline `now` already
+             * is, correlated against the GC-pause counters AT THAT MOMENT —
+             * this is what separated «GC stop-the-world pause» from «OS
+             * thread-scheduling contention external to Nova» during the
+             * №470 investigation: if `gc_pause_count_so_far` jumps right at
+             * this fire, blame Boehm; if it stays flat across many
+             * consecutive fires while `over_by_ns` stays large, the delay is
+             * NOT GC — look at scheduling/contention instead. */
+            if (getenv("NOVA_DIAG_DEADLINE_OVERRUN")) {
+                extern void nova_gc_pause_diag_snapshot(uint64_t* count, uint64_t* total_ns, uint64_t* max_ns);
+                uint64_t gc_count = 0, gc_total_ns = 0, gc_max_ns = 0;
+                nova_gc_pause_diag_snapshot(&gc_count, &gc_total_ns, &gc_max_ns);
+                int64_t now = time_monotonic_ns();
+                fprintf(stderr,
+                    "[deadline-overrun-diag] q=%p dl_ns=%lld now=%lld over_by_ns=%lld "
+                    "gc_pause_count_so_far=%llu gc_pause_total_ns_so_far=%llu gc_pause_max_ns_so_far=%llu\n",
+                    (void*)q, (long long)_dl_ns, (long long)now,
+                    (long long)(now - _dl_ns),
+                    (unsigned long long)gc_count, (unsigned long long)gc_total_ns,
+                    (unsigned long long)gc_max_ns);
+                fflush(stderr);
+            }
             _dl_fired = true;
             nova_scope_deliver_cancel(q, NULL);
         }
