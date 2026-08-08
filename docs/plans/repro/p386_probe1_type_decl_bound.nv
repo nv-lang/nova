@@ -1,6 +1,0 @@
-type Box[K Equal + Hash] { ro k K }
-type NoMethods { ro x int }
-fn main() -> () {
-    ro b = Box[NoMethods] { k: NoMethods { x: 1 } }
-    print(b.k.x)
-}

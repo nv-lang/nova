@@ -1,9 +1,0 @@
-// Repro: map_err on Result[str, Utf8Error] returned by []u8.to_str()
-// (jwt.nv had to fall back to a manual match — checker-gap candidate).
-module main
-
-fn main() {
-    ro bytes = "hi".bytes()
-    ro s = bytes.to_str().map_err(|_| 1)
-    println("${s.is_ok()}")
-}

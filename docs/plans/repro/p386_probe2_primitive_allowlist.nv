@@ -1,4 +1,0 @@
-fn main() -> () {
-    mut v = []u8.new()
-    v.append(42)
-}
