@@ -6187,6 +6187,21 @@ pub enum LaneExclusion {
     /// `Type` because slow-ness is an orthogonal per-file suffix, not an
     /// `EXPECT_*` marker — a slow file can be any `TestType`.
     Slow,
+    /// №453(а): confirmed folder-module (2+ peers, same `module X` decl —
+    /// `is_folder_module_dir`) where NO peer contains a local `test "..."`
+    /// block (`folder_module_has_tests` == false) — nothing to run
+    /// standalone. Before this arm, the `is_folder_module` branch had no
+    /// `else`: the directory was silently dropped, unlike the sibling
+    /// checks for single files (`Type`, below at `:6507`-era) and `_slow`
+    /// (`Slow`, above) which both honestly land in `excluded`. Measured
+    /// fallout: 31 directories vanished with zero SKIP row (26
+    /// `nova_tests.old`, 3 `spec_tests/conformance`, 2 `std/src` —
+    /// `runtime/string`/`unicode`, by-design testless but still owed a
+    /// visible SKIP per `test-conventions.md:670-680`). Distinct from
+    /// `Type`/`Slow`: there is no `TestSelection` flag that unlocks this —
+    /// the fix is adding a test to the module, not passing `--full` or
+    /// `--include-slow`.
+    NoLocalTests,
 }
 
 impl LaneExclusion {
@@ -6199,14 +6214,19 @@ impl LaneExclusion {
             LaneExclusion::Type(TestType::Timeout) => "timeout",
             LaneExclusion::Type(TestType::Exit) => "exit",
             LaneExclusion::Slow => "slow",
+            LaneExclusion::NoLocalTests => "no-tests",
         }
     }
 
     /// Flag that unlocks the lane — the fix for "this SKIP" the row names.
+    /// `NoLocalTests` has no unlocking flag (nothing is selectable — there's
+    /// no test to run); the text still slots into the same "requires <hint>"
+    /// sentence as the flag-shaped hints.
     pub fn hint(self) -> &'static str {
         match self {
             LaneExclusion::Slow => "--include-slow/--slow-only",
             LaneExclusion::Type(_) => "--full",
+            LaneExclusion::NoLocalTests => "a local `test \"...\"` block (nothing to run standalone)",
         }
     }
 }
@@ -6510,6 +6530,18 @@ pub fn walk_nv_selected_ex(
                 } else {
                     excluded.push((entry, LaneExclusion::Type(test_type)));
                 }
+            }
+        } else {
+            // №453(а): confirmed folder-module, but no peer has a local
+            // `test "..."` block — previously fell through with no `else`
+            // and vanished with zero SKIP row (see `LaneExclusion::NoLocalTests`
+            // doc-comment for the measured 31-directory fallout). Report the
+            // same alphabetically-first peer used as the "entry" in the
+            // has-tests branch above, so the SKIP row names a real file.
+            let mut sorted = direct_nv.clone();
+            sorted.sort();
+            if let Some(entry) = sorted.into_iter().next() {
+                excluded.push((entry, LaneExclusion::NoLocalTests));
             }
         }
     } else {
@@ -8357,6 +8389,39 @@ mod plan156_slow_lane_tests {
         walk_nv_selected_ex(&root, &mut out_full, &mut excluded_full, &sel_full).unwrap();
         assert_eq!(out_full.len(), 6);
         assert!(excluded_full.is_empty(), "full selection must exclude nothing: {:?}", excluded_full);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// №453(а): a confirmed folder-module (2+ peers declaring the same
+    /// `module X`) with NO local `test "..."` block must show up as a
+    /// visible SKIP row, not vanish. Before the `else` branch was added to
+    /// `walk_nv_selected_ex`'s `is_folder_module` check, this directory
+    /// produced zero entries in both `out` and `excluded` — indistinguishable
+    /// from an empty/typo'd path (measured fallout: 31 real directories).
+    #[test]
+    fn walk_nv_selected_ex_reports_testless_folder_module() {
+        use super::{walk_nv_selected_ex, LaneExclusion, TestSelection};
+        use std::fs;
+        let root = std::env::temp_dir().join(format!("nova_p453_notest_fm_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("create temp root");
+        // Two co-equal peers declaring the SAME module, neither with a
+        // `test "..."` block — a real folder-module, just untested.
+        fs::write(root.join("a.nv"), "module notest_mod\n\npub fn helper() -> int {\n    return 1\n}\n").unwrap();
+        fs::write(root.join("b.nv"), "module notest_mod\n\npub fn helper2() -> int {\n    return 2\n}\n").unwrap();
+
+        let sel = TestSelection::default();
+        let mut out = vec![];
+        let mut excluded = vec![];
+        walk_nv_selected_ex(&root, &mut out, &mut excluded, &sel).unwrap();
+        assert!(out.is_empty(), "nothing runnable in a testless folder-module: {:?}", out);
+        assert_eq!(excluded.len(), 1, "the folder-module must show up ONCE in excluded, not vanish: {:?}", excluded);
+        let (path, reason) = &excluded[0];
+        assert!(path.ends_with("a.nv"), "reports the alphabetically-first peer: {:?}", path);
+        assert_eq!(*reason, LaneExclusion::NoLocalTests);
+        assert_eq!(reason.lane_name(), "no-tests");
+        assert_eq!(reason.hint(), "a local `test \"...\"` block (nothing to run standalone)");
 
         let _ = std::fs::remove_dir_all(&root);
     }

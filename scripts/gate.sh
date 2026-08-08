@@ -187,6 +187,28 @@ else
 fi
 MEGA_LINE=$(sed -e "s/\[[0-9;]*m//g" "$MEGA_LOG" | grep -E "PASS: [0-9]+ +FAIL: [0-9]+" | tail -1)
 echo "mega-CU exit=$MEGA_EXIT :: $MEGA_LINE"
+# -- Храповик ЧИСЛА SKIP мега-CU (реестр 221.1 №453б) -------------------------
+# ЗАЧЕМ: гейт ассертил только PASS/FAIL -- уехавшая из корпуса фикстура (не
+# компилируется вовсе, лейн-исключена без видимой строки, неизвестный
+# EXPECT_* тихо не проверяет ничего) не даёт ни PASS, ни FAIL и была НЕВИДИМА
+# ПРИНЦИПИАЛЬНО (№453). SKIP-строка печатается ("PASS: N  FAIL: M  SKIP: K
+# (skipped)") ТОЛЬКО когда K>0 -- при K==0 хвост "SKIP: ..." в строке
+# отсутствует вовсе, поэтому явно дефолтим на 0, а не считаем это ошибкой.
+# В ОТЛИЧИЕ от mega-cu-time.baseline (шум машины -> только предупреждение) --
+# рост SKIP ЖЁСТКО роняет гейт: снижение (фикстуру осознанно убрали/перевели
+# лейн) принимается, база обновляется вручную с летописью в baseline-файле.
+_MEGA_SKIP=$(echo "$MEGA_LINE" | grep -oE "SKIP: [0-9]+" | grep -oE "[0-9]+" | head -1)
+[ -n "$_MEGA_SKIP" ] || _MEGA_SKIP=0
+_MEGA_SKIP_BASE_FILE="$ROOT/scripts/guards/mega-cu-skip.baseline"
+_MEGA_SKIP_BASE=$(grep -E '^skips=' "$_MEGA_SKIP_BASE_FILE" 2>/dev/null | head -1 | cut -d= -f2)
+if [ -n "$_MEGA_SKIP_BASE" ] && [ "$_MEGA_SKIP_BASE" -ge 0 ] 2>/dev/null; then
+    echo "mega-CU SKIP: ${_MEGA_SKIP} (baseline ${_MEGA_SKIP_BASE})"
+    if [ "$_MEGA_SKIP" -gt "$_MEGA_SKIP_BASE" ]; then
+        fail "mega-CU SKIP вырос: ${_MEGA_SKIP} > baseline ${_MEGA_SKIP_BASE} (№453-класс -- фикстуры молча уехали из гейта; см. $_MEGA_SKIP_BASE_FILE и $MEGA_LOG). Если рост осознанный (лейн/маркер сменился законно) -- обнови skips= в baseline-файле с летописью."
+    fi
+else
+    fail "mega-CU SKIP: baseline не задан или некорректен ($_MEGA_SKIP_BASE_FILE) -- храповик №453(б) не может проверить рост SKIP"
+fi
 # Строка PASS/FAIL ОБЯЗАНА присутствовать: краш компилятора её не печатает вовсе,
 # и наивный фильтр молча роняет — тогда «зелено» означает «ничего не увидел».
 echo "$MEGA_LINE" | grep -qE "PASS: [0-9]+ +FAIL: [0-9]+" \
