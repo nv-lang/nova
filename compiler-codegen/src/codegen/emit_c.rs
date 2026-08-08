@@ -33053,6 +33053,43 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // при санкционированном выносе владения голым `return X`).
                 if *re_consume {
                     self.reconsume_scopes.push((binding.clone(), consume_block_id));
+                } else {
+                    // 221.1 №456 (`[M-consume-scope-cleanup-not-disarmable]`,
+                    // D415 §4 амендмент 2026-08-08): у форм с
+                    // `re_consume=false` — `spawn`/`detach consume c { … }`,
+                    // их мульти-var зеркало (`parse_spawn_detach_consume_
+                    // multivar`) и D188 binding-форма `consume c = e { … }` —
+                    // тело ВЛАДЕЕТ биндингом по-настоящему и вправе потребить
+                    // его ЯВНО (D415 §4: «move-out изнутри тела разрешён …
+                    // move-out-запрет не вводился» — в отличие от Plan-201
+                    // re-consume формы, где то же самое ловится как
+                    // `E_CONSUME_BLOCK_MOVE_OUT`). Флаг `_active` взводился,
+                    // но НИ ОДНА дизарм-точка не могла его найти:
+                    // `disarm_var_for` ищет имя в `reconsume_scopes` (сюда
+                    // клали только `re_consume=true`) и в
+                    // `auto_cleanup_active` (туда кладёт только bare
+                    // consume-let, `emit_auto_cleanup_arm`) — эта форма не
+                    // попадала никуда. Итог: `spawn consume r, w { …
+                    // r.close(); w.close() }` потреблял каждую половину
+                    // ДВАЖДЫ (явный `close` + авто-`@cleanup` на выходе тела)
+                    // — прямое нарушение exactly-once (D131/D133) и, на
+                    // разделённом TCP-потоке, use-after-free по
+                    // `split_refcount` (2→1→0 одной фиброй) с последующим
+                    // зависанием в `GC_gcollect()`.
+                    //
+                    // Регистрация в ТОМ ЖЕ реестре, что и bare-биндинги,
+                    // включает для этой формы штатную D432 §4/§5 drop-флаг
+                    // механику (дизарм на consuming-вызове по receiver'у, на
+                    // передаче в consume-параметр, на `return X`) — новых
+                    // правил и таблиц не вводится, все решения о том, ЧТО
+                    // считать потреблением, по-прежнему принимает канал
+                    // чекера (`consume_receiver_methods`,
+                    // `*_consume_param_positions`, `resolved_callees`).
+                    // Entry-индекс у consume-scope всегда 0 (см.
+                    // `enter_consume_defer_scope`); снимается автоматически
+                    // в `leave_defer_scope(consume_block_id)`.
+                    self.auto_cleanup_active
+                        .push((binding.clone(), consume_block_id, 0));
                 }
 
                 // Body in its OWN nested defer-scope so body-defers run BEFORE the

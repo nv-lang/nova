@@ -1,0 +1,145 @@
+// 221.1 №456 (`[M-consume-scope-cleanup-not-disarmable]`, D415 §4 амендмент
+// 2026-08-08) — ДЕТЕРМИНИРОВАННЫЙ страж класса: тело формы с
+// `re_consume=false` (`spawn`/`detach consume …`) вправе потребить биндинг
+// ЯВНО (D415 §4: «move-out изнутри тела разрешён»), и на таком пути
+// авто-`@cleanup` этого биндинга обязан быть ДИЗАРМЛЕН — иначе значение
+// потребляется ДВАЖДЫ (нарушение exactly-once, D131/D133).
+//
+// Носитель дефекта — `standalone/m456_crisscross_split_evloop_crash.nv`
+// (split TCP-поток: двойное потребление гонит `split_refcount` 2→1→0 одной
+// фиброй → use-after-free → зависание в `GC_gcollect()`), но он
+// стохастический (~1 % прогонов) и гейтом класса служить не может. Здесь то
+// же самое проверяется счётчиком `ResourceTrace.on_resource_exit` —
+// детерминированно, без сети и без таймингов; идиома взята из
+// `d432_auto_cleanup_hybrid_c.nv` (включая `AtomicInt` вместо `mut`-счётчика:
+// D441 §3, хендлер исполняется в файбере ребёнка).
+//
+// `detach consume …` идёт ТЕМ ЖЕ `Stmt::ConsumeScope`-путём (D415 §4
+// амендмент 2026-07-22) и отдельного счётного теста не требует —
+// детерминированно счётчик у orphan-файбера не снять (родитель его не ждёт);
+// компиляционное покрытие формы — `spawn_detach_consume_multivar_ok.nv`.
+//
+// Часть ЕДИНОГО folder-модуля `spec_tests.conformance`.
+module spec_tests.conformance
+
+type M456Half consume { id int }
+
+fn M456Half.new(id int) -> M456Half => { id }
+
+fn M456Half consume @cleanup(_outcome ScopeOutcome) -> () => ()
+
+fn M456Half consume @close() -> () => ()
+
+// Зеркало `pump()` моста плана 249 Ф.2
+// (`examples/_wip/socks5_http_bridge/main.nv`): обе половины приходят
+// consume-параметрами и закрываются явно ВНУТРИ хелпера. Для тела файбера
+// это ВТОРАЯ форма потребления — передача в consume-параметр вызова, не
+// receiver-вызов.
+fn m456_pump(consume r M456Half, consume w M456Half) -> () {
+    ro _a = r.id
+    ro _b = w.id
+    r.close()
+    w.close()
+}
+
+test "№456: spawn consume a, b { a.close(); b.close() } — явный receiver-close дизармит авто-cleanup обеих половин" {
+    mut m456_exits = AtomicInt.new(0)
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) -> () {
+            m456_exits.fetch_add(1)
+            return ()
+        }
+    } {
+        consume m456_a = M456Half.new(1)
+        consume m456_b = M456Half.new(2)
+        supervised {
+            spawn consume m456_a, m456_b {
+                m456_a.close()
+                m456_b.close()
+            }
+        }
+    }
+    // Обе половины потреблены явно — ни одного cleanup-dispatch'а.
+    assert(m456_exits.load() == 0)
+}
+
+test "№456: spawn consume a, b { pump(a, b) } — потребление через consume-параметр хелпера (форма моста 249)" {
+    mut m456_exits = AtomicInt.new(0)
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) -> () {
+            m456_exits.fetch_add(1)
+            return ()
+        }
+    } {
+        consume m456_c = M456Half.new(3)
+        consume m456_d = M456Half.new(4)
+        supervised {
+            spawn consume m456_c, m456_d { m456_pump(m456_c, m456_d) }
+        }
+    }
+    assert(m456_exits.load() == 0)
+}
+
+test "№456 контроль (анти-передизарм): тело НЕ потребляет — авто-cleanup обязан сработать по разу на половину" {
+    mut m456_exits = AtomicInt.new(0)
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) -> () {
+            m456_exits.fetch_add(1)
+            return ()
+        }
+    } {
+        consume m456_g = M456Half.new(7)
+        consume m456_h = M456Half.new(8)
+        supervised {
+            spawn consume m456_g, m456_h {
+                ro _x = m456_g.id
+                ro _y = m456_h.id
+            }
+        }
+    }
+    assert(m456_exits.load() == 2)
+}
+
+test "№456 контроль (MaybeConsumed): потребление в ОДНОЙ ветке — вторая половина чистится штатно" {
+    mut m456_exits = AtomicInt.new(0)
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) -> () {
+            m456_exits.fetch_add(1)
+            return ()
+        }
+    } {
+        consume m456_i = M456Half.new(9)
+        consume m456_j = M456Half.new(10)
+        supervised {
+            spawn consume m456_i, m456_j {
+                if true {
+                    m456_i.close()
+                }
+                ro _y = m456_j.id
+            }
+        }
+    }
+    // `m456_i` потреблён явно (дизарм), `m456_j` — нет (штатный cleanup).
+    assert(m456_exits.load() == 1)
+}
+
+test "№456: single-var spawn consume c { c.close() } — та же дыра у одно-идентной формы" {
+    mut m456_exits = AtomicInt.new(0)
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) -> () {
+            m456_exits.fetch_add(1)
+            return ()
+        }
+    } {
+        consume m456_k = M456Half.new(11)
+        supervised {
+            spawn consume m456_k { m456_k.close() }
+        }
+    }
+    assert(m456_exits.load() == 0)
+}
