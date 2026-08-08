@@ -59,9 +59,17 @@ else
 fi
 
 # 4. Ловит слишком большой разброс (код 2).
+#    Как и случай 3: селфтест запускается ИЗНУТРИ гейта, поэтому глушим ворота
+#    «гейт идёт» на время проверки — иначе measure.sh справедливо откажет ещё до
+#    подсчёта разброса, и тест провалится не по своей теме.
+FAKE_DONE=0
+if [ -f "$TMPLOG" ] && [ ! -f "$TMPDONE" ]; then
+    echo "RC=0 SEC=0 (selftest stub)" > "$TMPDONE"; FAKE_DONE=1
+fi
 out=$(NOVA_MEASURE_CPU_MAX=100 bash "$M" -n 3 -l selftest-spread -- \
       bash -c 'if [ ! -f /tmp/_ms ]; then touch /tmp/_ms; sleep 3; else sleep 0; fi' 2>&1)
 rc=$?; rm -f /tmp/_ms
+[ "$FAKE_DONE" -eq 1 ] && rm -f "$TMPDONE"
 if [ "$rc" -eq 2 ] && echo "$out" | grep -q 'РАЗБРОС'; then
     ok "ловит большой разброс (код 2)"
 else
