@@ -345,6 +345,7 @@ typedef struct NovaNet2Listener {
     int             accept_slot;
     nova_atomic_int pending_conns; /* incremented by connection_cb (loop thread) */
     nova_atomic_int refcount;      /* [M-boehm-...] variant (b), see below */
+    nova_atomic_int close_release_done; /* [#456] one-shot release guard, see below */
 } NovaNet2Listener;
 
 typedef struct NovaNet2Stream {
@@ -382,6 +383,7 @@ typedef struct NovaNet2Stream {
     uv_shutdown_t   shutdown_req;
 
     volatile int32_t split_refcount; /* 0 = unsplit / 2 / 1 */
+    nova_atomic_int  close_release_done; /* [#456] one-shot release guard, see below */
 } NovaNet2Stream;
 
 /* ─── [M-boehm-large-buffer-retention-fiber-reuse] variant (b): free-on-close
@@ -510,6 +512,7 @@ void* net_tcp_listen(const NovaNetAddr* addr, nova_int backlog, nova_int* out_er
     memset(lst, 0, sizeof(*lst));
     nova_aint_init(&lst->stage, NN2_IDLE);
     nova_aint_init(&lst->refcount, 1);   /* [M-boehm-...] variant (b): existence unit */
+    nova_aint_init(&lst->close_release_done, 0);  /* [#456] one-shot release guard */
     lst->loop = loop;
     lst->handle.data = lst;
 
@@ -706,6 +709,7 @@ void* net_tcp_accept(void* lstv, nova_int* out_err) {
     memset(st, 0, sizeof(*st));
     nova_aint_init(&st->stage, NN2_IDLE);
     nova_aint_init(&st->refcount, 1);   /* [M-boehm-...] variant (b): existence unit */
+    nova_aint_init(&st->close_release_done, 0);  /* [#456] one-shot release guard */
     /* Accepted stream inherits the LISTENER's loop (see Nn2AcceptIssueCtx
      * comment) — not nova_current_loop(), which may now be a different
      * worker than the one lst was created/bound on. */
@@ -786,15 +790,31 @@ void net_listener_close(void* lstv) {
     }
     /* [M-nv-cancel-loop-accept-swallowed] fix (222.7): release the Nova-
      * level "user owns me" unit acquired at the end of `net_tcp_listen`
-     * — UNCONDITIONALLY, regardless of whether THIS call won the CAS
-     * above (ordinary user-driven close) or the listener was already
-     * cancelled/closed internally by `_nn2_listener_stop_cb` (the CAS
-     * lost the race). `TcpListener consume @close()`/its D432 auto-
-     * `@cleanup` calls this exactly once per listener (linear-consume
-     * discipline) — independent of which side actually won the OS-level
-     * close race. See `net_tcp_listen`'s matching `nova_aint_inc` for the
-     * full root-cause note. */
-    _nn2_listener_release(lst);
+     * — regardless of whether THIS call won the CAS above (ordinary
+     * user-driven close) or the listener was already cancelled/closed
+     * internally by `_nn2_listener_stop_cb` (the CAS lost the race).
+     * `TcpListener consume @close()`/its D432 auto-`@cleanup` is INTENDED
+     * to call this exactly once per listener (linear-consume discipline)
+     * — independent of which side actually won the OS-level close race.
+     * See `net_tcp_listen`'s matching `nova_aint_inc` for the full
+     * root-cause note.
+     *
+     * [#456] one-shot guard, ADDED: same defensive fix as
+     * `net_tcp_close`'s matching guard above — see that comment for the
+     * full root-cause (compiler-generated redundant `@cleanup` calls from
+     * the `spawn`/`detach consume`-multivar desugar). `TcpListener` is not
+     * split-able, so this repo's #456 repro does not exercise this exact
+     * function, but the vulnerability is IDENTICAL: an unconditional
+     * release here is exactly as unsafe against a redundant extra call as
+     * it was in `net_tcp_close`, for the same reason (frees `lst`,
+     * embedding the `uv_tcp_t` handle, while its deferred `uv_close` may
+     * still be in flight). Fixed symmetrically rather than left latent. */
+    {
+        int32_t expected_rd = 0;
+        if (nova_aint_cas(&lst->close_release_done, &expected_rd, 1)) {
+            _nn2_listener_release(lst);
+        }
+    }
 }
 
 /* ─── TcpStream ────────────────────────────────────────────────────────────── */
@@ -845,6 +865,7 @@ void* net_tcp_connect(const NovaNetAddr* addr, nova_int* out_err) {
     memset(s, 0, sizeof(*s));
     nova_aint_init(&s->stage, NN2_IDLE);
     nova_aint_init(&s->refcount, 1);   /* [M-boehm-...] variant (b): existence unit */
+    nova_aint_init(&s->close_release_done, 0);  /* [#456] one-shot release guard */
     s->loop = loop;
     s->handle.data = s;
     s->connect_req.data = s;
@@ -1283,18 +1304,57 @@ void net_tcp_close(void* sv) {
     }
     /* [M-net2stream-close-refcount-uaf] fix: release the Nova-level "user
      * owns me" unit acquired once at net_tcp_connect/net_tcp_accept success
-     * — UNCONDITIONALLY, regardless of whether THIS call won the CAS above
-     * (ordinary user-driven close) or the stream was already cancelled/
-     * closed internally by `_nn2_stream_stop_cb` (the CAS lost the race,
-     * an internal supervised(timeout:)/(deadline:) auto-close already fired
+     * — regardless of whether THIS call won the CAS above (ordinary
+     * user-driven close) or the stream was already cancelled/closed
+     * internally by `_nn2_stream_stop_cb` (the CAS lost the race, an
+     * internal supervised(timeout:)/(deadline:) auto-close already fired
      * it). `TcpStream consume @close()`/its D432 auto-`@cleanup` (or, for a
      * split stream, whichever half's close() drives split_refcount to 0
-     * above) calls this exactly once per underlying stream — mirrors
-     * net_listener_close's identical unconditional release. See
+     * above) is INTENDED to call this exactly once per underlying stream
+     * — mirrors net_listener_close's identical release. See
      * net_tcp_connect's matching `nova_aint_inc` for the full root-cause
      * note (same UAF class as the already-fixed
-     * `[M-nv-cancel-loop-accept-swallowed]` on TcpListener). */
-    _nn2_stream_release(s);
+     * `[M-nv-cancel-loop-accept-swallowed]` on TcpListener).
+     *
+     * [#456] one-shot guard, ADDED: "exactly once" above is an intent, not
+     * an enforced invariant — `net_tcp_close` (this C function) can be
+     * reached MORE than once per split half. Proven root cause: the
+     * `spawn consume a, b { … }` / `detach consume a, b { … }` desugar
+     * (parser `parse_spawn_detach_consume_multivar`, D415 §4) wraps each
+     * captured half in a `Stmt::ConsumeScope` with `re_consume` hardcoded
+     * `false` ("spawn-form has its own rules, move-out tracking was not
+     * introduced" — see parser/mod.rs comment at the call site) — so the
+     * auto-`@cleanup` at fiber-body-exit fires UNCONDITIONALLY even when
+     * the body already explicitly called `.close()` on that half earlier
+     * (a legitimate, existing pattern — see `examples/_wip/
+     * socks5_http_bridge/main.nv`'s `pipe_bidirectional`/`pump`). Each
+     * split half then drives 2 calls into this function instead of 1 (4
+     * per underlying stream instead of 2): the first of the pair still
+     * early-returns via `split_refcount`/loses the `stage` CAS exactly as
+     * before, but with the OLD unconditional release below, EVERY such
+     * redundant call still executed `_nn2_stream_release(s)` — an extra
+     * release past the ONE unit this function is entitled to, freeing `s`
+     * (and its embedded `uv_tcp_t handle`, first member) while the real,
+     * already-deferred `uv_close` for it is still in flight. libuv's
+     * endgame dispatcher later dereferences that freed memory's `->type`
+     * field and hits `default: assert(0)` (`libuv/src/win/core.c:694`).
+     * This is NOT a data race — reproduces identically under
+     * `NOVA_MAXPROCS=1` — and is a DIFFERENT class from №390 (escape
+     * analysis / stack-lifetime): here the compiler-emitted call count
+     * itself is wrong. The proper fix belongs in the `spawn`/`detach
+     * consume`-multivar desugar's linear tracking (parser + checker); this
+     * runtime-side guard is the narrow, defensive fix — make the ONE
+     * legitimate release idempotent against ANY number of extra calls,
+     * gated independently of `split_refcount`/`stage` (both already
+     * saturated by the time a redundant call arrives, so neither can tell
+     * "the" real call apart from a redundant one). Mirrors the equivalent
+     * guard added to `net_listener_close` below for the same class. */
+    {
+        int32_t expected_rd = 0;
+        if (nova_aint_cas(&s->close_release_done, &expected_rd, 1)) {
+            _nn2_stream_release(s);
+        }
+    }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

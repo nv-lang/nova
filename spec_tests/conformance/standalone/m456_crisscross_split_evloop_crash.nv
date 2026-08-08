@@ -1,0 +1,137 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// 221.1 bug-sweep #456: native event-loop crash
+// `Assertion failed: 0, nova_rt/libuv/src/win/core.c:694` under crisscross
+// split-stream pumping. Two REAL TCP connections, `into_split()` on both,
+// two pump fibers crisscrossing the halves (fiber A: read conn-1 -> write
+// conn-2; fiber B: read conn-2 -> write conn-1) — no bridge, no SOCKS5.
+// Mirrors the crisscross-pump SHAPE of `examples/_wip/socks5_http_bridge`'s
+// `pipe_bidirectional`/`pump` (spawn-capture syntax `spawn consume a, b {}`,
+// helper fn with its OWN `supervised { }` + two sibling spawns, called from
+// a function body rather than lexically nested inside another `spawn {}` —
+// a lexically nested `spawn { spawn {} }` hits an UNRELATED compiler capture-
+// analysis bug (locals of the inner spawn get hoisted into the outer spawn's
+// capture struct) — this fixture avoids that entirely, it is not what #456
+// is about) without depending on that (unmerged, `_wip`) code.
+//
+// EXPECT_TIMEOUT_MS 30000
+
+module standalone.m456_crisscross_split_evloop_crash
+
+import std.net.{TcpStream, TcpListener, SocketAddr, real_net}
+import std.time.duration
+
+// Splits both connections and crisscross-pumps: conn-1's read half feeds
+// conn-2's write half (fiber A), conn-2's read half feeds conn-1's write
+// half (fiber B, mirror) — until each direction hits EOF or an error.
+fn crisscross_relay(consume conn1 TcpStream, consume conn2 TcpStream) Net -> (int, int) {
+    consume (r1, w1) = conn1.into_split()
+    consume (r2, w2) = conn2.into_split()
+    ro ch_a = Channel.new(1)
+    ro ch_b = Channel.new(1)
+    supervised {
+        spawn consume r1, w2 {
+            mut buf []u8 = []u8.new()
+            buf.resize(256, 0 as u8)
+            mut total = 0
+            mut keep_going = true
+            while keep_going {
+                match r1.read(buf) {
+                    Ok(0) => { keep_going = false }
+                    Ok(n) => { ro _ = w2.write(buf[0..n]); total = total + n }
+                    Err(_) => { keep_going = false }
+                }
+            }
+            r1.close()
+            w2.close()
+            ch_a.tx.send(total)
+        }
+        spawn consume r2, w1 {
+            mut buf []u8 = []u8.new()
+            buf.resize(256, 0 as u8)
+            mut total = 0
+            mut keep_going = true
+            while keep_going {
+                match r2.read(buf) {
+                    Ok(0) => { keep_going = false }
+                    Ok(n) => { ro _ = w1.write(buf[0..n]); total = total + n }
+                    Err(_) => { keep_going = false }
+                }
+            }
+            r2.close()
+            w1.close()
+            ch_b.tx.send(total)
+        }
+    }
+    ro total_a = match ch_a.rx.recv() { Some(v) => v  None => -1 }
+    ro total_b = match ch_b.rx.recv() { Some(v) => v  None => -1 }
+    (total_a, total_b)
+}
+
+test "crisscross split-stream pump on two real TCP connections does not crash the event loop (#456)" {
+    with Net = real_net() {
+        ro ch_port = Channel.new(1)
+        ro ch_relay_done = Channel.new(1)
+        ro ch_client_done = Channel.new(1)
+
+        supervised {
+            // Server: accepts TWO connections, then hands them to the
+            // crisscross relay (split + cross-pump, see above).
+            spawn {
+                consume lst = match TcpListener.bind(SocketAddr.loopback(0)) {
+                    Ok(consume l) => l
+                    Err(_) => panic("bind failed")
+                }
+                ch_port.tx.send(lst.local_port())
+
+                consume conn1 = match lst.accept() {
+                    Ok(consume s) => s
+                    Err(_) => { lst.close(); panic("accept1 failed") }
+                }
+                consume conn2 = match lst.accept() {
+                    Ok(consume s) => s
+                    Err(_) => { lst.close(); panic("accept2 failed") }
+                }
+                lst.close()
+
+                ro (total_a, total_b) = crisscross_relay(conn1, conn2)
+                ch_relay_done.tx.send(total_a * 1000 + total_b)
+            }
+
+            // Client: opens the two real connections and drives traffic
+            // through the cross-wired relay: bytes written on conn-1 come
+            // back out on conn-2 and vice versa.
+            spawn {
+                ro port = match ch_port.rx.recv() { Some(p) => p  None => 0 as u16 }
+
+                consume c1 = match TcpStream.connect(SocketAddr.loopback(port)) {
+                    Ok(consume s) => s
+                    Err(_) => panic("client connect1 failed")
+                }
+                consume c2 = match TcpStream.connect(SocketAddr.loopback(port)) {
+                    Ok(consume s) => s
+                    Err(_) => panic("client connect2 failed")
+                }
+
+                ro _ = c1.write("hello-via-1")
+                ro _ = c2.write("hello-via-2")
+
+                mut buf1 []u8 = []u8.new()
+                buf1.resize(32, 0 as u8)
+                ro n1 = match c2.read(buf1) { Ok(k) => k  Err(_) => -1 }
+
+                mut buf2 []u8 = []u8.new()
+                buf2.resize(32, 0 as u8)
+                ro n2 = match c1.read(buf2) { Ok(k) => k  Err(_) => -1 }
+
+                c1.close()
+                c2.close()
+                ch_client_done.tx.send(n1 * 1000 + n2)
+            }
+        }
+
+        ro client_result = match ch_client_done.rx.recv() { Some(v) => v  None => -999 }
+        ro relay_result = match ch_relay_done.rx.recv() { Some(v) => v  None => -999 }
+        assert(client_result > 0)
+        assert(relay_result >= 0)
+    }
+}
