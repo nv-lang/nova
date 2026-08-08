@@ -87,7 +87,7 @@ test "MultiError: Stop-решённые ошибки retained, но в suppresse
         supervised {
             spawn { throw 333 }
             spawn {
-                (5).to_millis().sleep()
+                5.to_millis().sleep()
                 done.fetch_add(1)
             }
         }

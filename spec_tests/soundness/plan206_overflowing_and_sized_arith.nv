@@ -34,7 +34,7 @@ test "overflowing_add on int — (wrapped, overflowed) pair (Ф.1)" {
     assert(ovf1)
     assert(v1 == int.MIN)
 
-    ro (v2, ovf2) = (41).overflowing_add(1)
+    ro (v2, ovf2) = 41.overflowing_add(1)
     assert(!ovf2)
     assert(v2 == 42)
 }

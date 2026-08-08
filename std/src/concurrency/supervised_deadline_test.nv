@@ -42,7 +42,7 @@ fn is_timeout_error(e any) -> bool => e is TimeoutError
 test "within-budget: тело успевает — срок не срабатывает" {
     mut done = false
     supervised(timeout: 30.to_seconds()) {
-        spawn { (5).to_millis().sleep() }
+        spawn { 5.to_millis().sleep() }
     }
     done = true
     assert(done)
@@ -67,7 +67,7 @@ test "timeout fires: TimeoutError caught, sleep interrupted early" {
         0
     } {
         supervised(timeout: 100.to_millis()) {
-            spawn { (5000).to_millis().sleep() }
+            spawn { 5000.to_millis().sleep() }
         }
         99
     }
@@ -90,7 +90,7 @@ test "deadline (absolute Monotonic) fires TimeoutError" {
         0
     } {
         supervised(deadline: Monotonic.now() + 100.to_millis()) {
-            spawn { (5000).to_millis().sleep() }
+            spawn { 5000.to_millis().sleep() }
         }
         7
     }
@@ -111,7 +111,7 @@ test "nested: inner deadline cannot extend outer" {
     } {
         supervised(timeout: 100.to_millis()) {
             supervised(timeout: 30.to_seconds()) {
-                spawn { (5000).to_millis().sleep() }
+                spawn { 5000.to_millis().sleep() }
             }
         }
         1
@@ -134,8 +134,8 @@ test "deadline+cancel: cancel earlier — no TimeoutError" {
         0
     } {
         supervised(cancel: tok, timeout: 30.to_seconds()) {
-            spawn { (20).to_millis().sleep(); tok.cancel() }
-            spawn { (5000).to_millis().sleep() }
+            spawn { 20.to_millis().sleep(); tok.cancel() }
+            spawn { 5000.to_millis().sleep() }
         }
         5
     }
@@ -155,7 +155,7 @@ test "deadline+cancel: deadline earlier — TimeoutError" {
         0
     } {
         supervised(cancel: tok, timeout: 100.to_millis()) {
-            spawn { (5000).to_millis().sleep(); tok.cancel() }
+            spawn { 5000.to_millis().sleep(); tok.cancel() }
         }
         5
     }
@@ -174,7 +174,7 @@ test "zero timeout: immediate TimeoutError" {
         0
     } {
         supervised(timeout: 0.to_millis()) {
-            spawn { (5000).to_millis().sleep() }
+            spawn { 5000.to_millis().sleep() }
         }
         3
     }
@@ -203,7 +203,7 @@ test "deadline cancels a spawned child's in-flight sleep (no leaked marker)" {
     } {
         supervised(timeout: 100.to_millis()) {
             spawn {
-                (3000).to_millis().sleep()
+                3000.to_millis().sleep()
                 // Reachable only if the child was NOT actually cancelled.
                 tx.try_send(true)
             }
@@ -213,7 +213,7 @@ test "deadline cancels a spawned child's in-flight sleep (no leaked marker)" {
     assert(r == 0)
     assert(caught.load())
     // Grace window past the child's full (uncancelled) sleep duration.
-    (3200).to_millis().sleep()
+    3200.to_millis().sleep()
     ro leaked = rx.try_recv()
     assert(leaked == None)
 }

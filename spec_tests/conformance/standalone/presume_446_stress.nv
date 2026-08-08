@@ -29,14 +29,14 @@ test "stress: repeated mass-cancel of many concurrently parked fibers, multi-wor
         ro tok = CancelToken.new()
         supervised(cancel: tok) {
             for _ in 0..400 {
-                spawn { (2_000).to_millis().sleep() }
+                spawn { 2_000.to_millis().sleep() }
             }
             // A cluster of racing cancellers (not just one) — more chances
             // for concurrent wake sources to collide on the same parked
             // fiber (organic timer-fire vs mass-cancel wake).
             for _ in 0..4 {
                 spawn {
-                    (0).to_millis().sleep()
+                    0.to_millis().sleep()
                     tok.cancel()
                 }
             }

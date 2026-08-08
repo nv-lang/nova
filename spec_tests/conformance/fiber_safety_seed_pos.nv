@@ -61,7 +61,7 @@ test "spawn calling Atomic*'s own extern methods — легально (share_ver
 test "spawn calling a pure generic-leaf arithmetic method — легально (generic_leaf_no_op)" {
     supervised {
         spawn {
-            ro _r = (21).doubled()
+            ro _r = 21.doubled()
         }
     }
 }

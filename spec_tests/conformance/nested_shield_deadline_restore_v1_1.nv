@@ -46,7 +46,7 @@ fn run_nested() -> int {
         // Inner deadline pre-fix would still be active here.
         // Outer body now sleeps 50ms — pre-fix this would fire
         // bogus watchdog-варн (ист. CleanupTimeoutError; 50ms > 5ms inner's stale budget).
-        (50).to_millis().sleep()
+        50.to_millis().sleep()
         result += outer.id
     }
     return result

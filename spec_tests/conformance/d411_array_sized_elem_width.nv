@@ -58,7 +58,7 @@ test "[N]uint fixed-array element compares UNSIGNED against a uint value (D411)"
     ro big = d411w_hibit()                       // also 2^63, from a `-> uint` fn (unsigned source)
     assert(x == big)                             // both 2^63 — equal regardless of signedness (sanity)
     assert(x > 100)                              // discriminator: positive only if width preserved
-    assert(big > x - ((1 as uint)))              // unsigned: 2^63 > 2^63-1 ✓ ; signed wrap would flip
+    assert(big > x - (1 as uint))              // unsigned: 2^63 > 2^63-1 ✓ ; signed wrap would flip
 }
 
 test "[N]int fixed-array — genuinely signed elements still round-trip (control) (D411)" {

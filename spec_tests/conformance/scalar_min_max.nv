@@ -3,12 +3,12 @@
 
 module spec_tests.conformance
 test "int min / max basic" {
-    assert((5).max(3) == 5)
-    assert((5).min(3) == 3)
-    assert((3).max(5) == 5)
-    assert((3).min(5) == 3)
-    assert((7).max(7) == 7)
-    assert((7).min(7) == 7)
+    assert(5.max(3) == 5)
+    assert(5.min(3) == 3)
+    assert(3.max(5) == 5)
+    assert(3.min(5) == 3)
+    assert(7.max(7) == 7)
+    assert(7.min(7) == 7)
 }
 
 test "int min / max negative values" {
@@ -19,9 +19,9 @@ test "int min / max negative values" {
 }
 
 test "int min / max chaining" {
-    ro a = (10).min(20).min(5)
+    ro a = 10.min(20).min(5)
     assert(a == 5)
-    ro b = (1).max(3).max(2)
+    ro b = 1.max(3).max(2)
     assert(b == 3)
 }
 

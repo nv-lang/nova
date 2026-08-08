@@ -20,7 +20,7 @@
 module spec_tests.conformance
 
 test "f64 full math-intrinsic set resolves + computes (D109/D74 wave-2)" {
-    assert((9.0).sqrt() == 3.0)
+    assert(9.0.sqrt() == 3.0)
     // [M-linux-mn-conformance-red] (2026-07-20): unlike sqrt (IEEE-754
     // requires correctly-rounded results), cbrt has NO such guarantee —
     // glibc's runtime cbrt(27.0) on some libm versions/platforms returns
@@ -33,32 +33,32 @@ test "f64 full math-intrinsic set resolves + computes (D109/D74 wave-2)" {
     // fail deterministically (100% of runs) on Linux+clang. Epsilon
     // comparison keeps the intent (cbrt resolves + computes correctly)
     // without depending on a specific libm's rounding behavior.
-    assert(((27.0).cbrt() - 3.0).abs() < 1e-9)
+    assert((27.0.cbrt() - 3.0).abs() < 1e-9)
     assert((-4.5).abs() == 4.5)
-    assert((3.1).ceil() == 4.0)
-    assert((3.9).floor() == 3.0)
-    assert((3.5).round() == 4.0)
-    assert((3.9).trunc() == 3.0)
-    assert((0.0).sin() == 0.0)
-    assert((0.0).cos() == 1.0)
-    assert((0.0).tan() == 0.0)
-    assert((0.0).asin() == 0.0)
-    assert((1.0).acos() == 0.0)
-    assert((0.0).atan() == 0.0)
-    assert((0.0).atan2(1.0) == 0.0)
-    assert((0.0).sinh() == 0.0)
-    assert((0.0).cosh() == 1.0)
-    assert((0.0).tanh() == 0.0)
-    assert((0.0).exp() == 1.0)
-    assert((0.0).exp2() == 1.0)
-    assert((1.0).ln() == 0.0)
-    assert((1.0).log2() == 0.0)
-    assert((1.0).log10() == 0.0)
-    assert((2.0).pow(10.0) == 1024.0)
-    assert((3.0).hypot(4.0) == 5.0)
-    assert(!((1.0).is_nan()))
-    assert((1.0).is_finite())
-    assert(!((1.0).is_infinite()))
+    assert(3.1.ceil() == 4.0)
+    assert(3.9.floor() == 3.0)
+    assert(3.5.round() == 4.0)
+    assert(3.9.trunc() == 3.0)
+    assert(0.0.sin() == 0.0)
+    assert(0.0.cos() == 1.0)
+    assert(0.0.tan() == 0.0)
+    assert(0.0.asin() == 0.0)
+    assert(1.0.acos() == 0.0)
+    assert(0.0.atan() == 0.0)
+    assert(0.0.atan2(1.0) == 0.0)
+    assert(0.0.sinh() == 0.0)
+    assert(0.0.cosh() == 1.0)
+    assert(0.0.tanh() == 0.0)
+    assert(0.0.exp() == 1.0)
+    assert(0.0.exp2() == 1.0)
+    assert(1.0.ln() == 0.0)
+    assert(1.0.log2() == 0.0)
+    assert(1.0.log10() == 0.0)
+    assert(2.0.pow(10.0) == 1024.0)
+    assert(3.0.hypot(4.0) == 5.0)
+    assert(!(1.0.is_nan()))
+    assert(1.0.is_finite())
+    assert(!(1.0.is_infinite()))
 }
 
 test "f32 full math-intrinsic set resolves + computes (D109 wave-2, previously uncovered)" {

@@ -129,7 +129,7 @@ test "recv блокируется на пустом канале, будится
             }
         }
         spawn {
-            (5).to_millis().sleep()        // дать recv() время припарковаться
+            5.to_millis().sleep()        // дать recv() время припарковаться
             ro _ = tx.send(42)
         }
     }
@@ -150,7 +150,7 @@ test "send блокируется на полном канале, будится
             sent_ok.store(ok)
         }
         spawn {
-            (5).to_millis().sleep()        // дать send() время припарковаться
+            5.to_millis().sleep()        // дать send() время припарковаться
             match rx.recv() {              // освобождает слот -> будит send()
                 Some(v) => second.store(v),
                 None => second.store(-2),

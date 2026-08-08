@@ -49,7 +49,7 @@ test "supervised(timeout:) cancels a while-loop-retried stream read() (no UAF/ha
                         Ok(consume s) => s
                         Err(_) => { lst.close(); panic("accept failed") }
                     }
-                    (5000).to_millis().sleep()
+                    5000.to_millis().sleep()
                     srv.close()
                     lst.close()
                 }

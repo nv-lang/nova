@@ -65,7 +65,7 @@ test "cancel: wakes a directly-parked accept() with no inner spawn (#165)" {
         ro t0 = Timestamp.now().unix_millis()
         supervised(cancel: tok) {
             spawn {
-                (50).to_millis().sleep()
+                50.to_millis().sleep()
                 tok.cancel()
             }
             match lst.accept() {

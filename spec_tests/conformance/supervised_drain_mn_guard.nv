@@ -20,12 +20,12 @@ test "supervised drain: 6 armed M:N блоков с растущими sched-sta
     // Профиль роста sched-state (3/1/6/4/8/5) под armed M:N: повторные grow
     // конкурентно с wake'ами (каждый ребёнок паркуется в Time.sleep, driver
     // будит через close_cb) — воспроизводит grow-vs-wake окно на supervised-drain.
-    supervised { for _ in 0..3 { spawn { (5).to_millis().sleep() } } }
-    supervised { for _ in 0..1 { spawn { (5).to_millis().sleep() } } }
-    supervised { for _ in 0..6 { spawn { (5).to_millis().sleep() } } }
-    supervised { for _ in 0..4 { spawn { (5).to_millis().sleep() } } }
-    supervised { for _ in 0..8 { spawn { (5).to_millis().sleep() } } }
-    supervised { for _ in 0..5 { spawn { (5).to_millis().sleep() } } }
+    supervised { for _ in 0..3 { spawn { 5.to_millis().sleep() } } }
+    supervised { for _ in 0..1 { spawn { 5.to_millis().sleep() } } }
+    supervised { for _ in 0..6 { spawn { 5.to_millis().sleep() } } }
+    supervised { for _ in 0..4 { spawn { 5.to_millis().sleep() } } }
+    supervised { for _ in 0..8 { spawn { 5.to_millis().sleep() } } }
+    supervised { for _ in 0..5 { spawn { 5.to_millis().sleep() } } }
 
     ro elapsed = Timestamp.now().unix_millis() - t0
     // Все 27 детей спят по 5мс параллельно; при отсутствии зависания общий
@@ -40,7 +40,7 @@ test "supervised drain: вложенные supervised под armed M:N дрен�
         for _ in 0..4 {
             spawn {
                 supervised {
-                    for _ in 0..3 { spawn { (5).to_millis().sleep() } }
+                    for _ in 0..3 { spawn { 5.to_millis().sleep() } }
                 }
             }
         }

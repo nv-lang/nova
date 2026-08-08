@@ -58,7 +58,7 @@ fn m_boxcap_serve(consume m_boxcap_listener TcpListener, m_boxcap_stop CancelTok
                 Err(m_boxcap_e) => {
                     match m_boxcap_e {
                         NetError.Cancelled => { m_boxcap_running = false }
-                        _ => { (20).to_millis().sleep() }
+                        _ => { 20.to_millis().sleep() }
                     }
                 }
             }

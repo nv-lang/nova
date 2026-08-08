@@ -20,7 +20,7 @@ fn dmc_kick(mut n AtomicInt) Detach Time -> () {
     detach {
         // Sleep past the caller's return + stack clobber — guarantees the
         // orphan touches the capture only after dmc_kick's frame is gone.
-        (60).to_millis().sleep()
+        60.to_millis().sleep()
         ro _ = n.fetch_add(1)
     }
 }
@@ -56,7 +56,7 @@ test "detach mut-capture survives caller frame death (heap-box, not &stack)" {
 test "detach mut-capture: orphan outliving the test frame must not corrupt (crash-repro)" {
     mut lost = AtomicInt.new(0)
     detach {
-        (60).to_millis().sleep()
+        60.to_millis().sleep()
         ro _ = lost.fetch_add(1)
     }
 }

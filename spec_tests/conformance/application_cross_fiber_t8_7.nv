@@ -24,7 +24,7 @@ type Res3 {
 fn Res3.new(id int) -> Res3 => { id }
 // 30ms-cleanup: превышает Application-порог 1ms, но НЕ Level-3 5000ms.
 fn Res3 consume @cleanup(_outcome ScopeOutcome) -> () {
-    (30).to_millis().sleep()
+    30.to_millis().sleep()
     return ()
 }
 
