@@ -1,8 +1,0 @@
-module known_red.local_shadows_topfn
-
-fn helper(x int) -> int => x * 2
-
-test "b: local ro f shadows sibling file's top-level f" {
-    ro f = helper
-    assert(f(21) == 42)
-}

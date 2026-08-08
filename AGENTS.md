@@ -38,11 +38,11 @@ nova-cli/target/release/nova test
 nova-cli/target/release/nova test --filter syntax/closure
 
 # Single-file debug (no parallelism, keeps build artifacts)
-./compiler-codegen/target/debug/nova-codegen test-build nova_tests/basics/literals.nv \
+./compiler-codegen/target/debug/nova-codegen test-build spec_tests/conformance/standalone/<fixture>.nv \
     --toolchain clang --keep-artifacts
 
 # Interpreter pipeline (no C compilation)
-./compiler-codegen/target/debug/nova-codegen test-interp nova_tests/basics/literals.nv
+./compiler-codegen/target/debug/nova-codegen test-interp spec_tests/conformance/standalone/<fixture>.nv
 ```
 
 Common flags for `nova test`:
@@ -65,7 +65,9 @@ nova/
 ├── nova-cli/            # User-facing CLI: nova build/run/test/check/doc
 ├── compiler-codegen/    # Rust compiler: parser, type-checker, C-backend codegen, runtime
 │   └── nova_rt/         # C runtime: effects, fibers, GC, libuv scheduler
-├── nova_tests/          # Test fixtures (.nv files with EXPECT markers)
+├── spec_tests/          # THE authoritative corpus: conformance/ (+neg/, standalone/)
+├── nova_tests/          # NOT tests: CI inputs only (contracts/, doc/fixtures/)
+├── nova_tests.old/      # FROZEN ARCHIVE — nothing runs it, never add
 ├── std/                 # Nova standard library source
 ├── spec/                # Language specification
 │   ├── decisions/       # Design decisions (D-blocks) — READ BEFORE CHANGING SEMANTICS
@@ -89,7 +91,7 @@ Nova's design is recorded in **D-blocks** in [spec/decisions/](spec/decisions/).
 
 ## Writing tests
 
-Test files live in `nova_tests/`. Each `.nv` file uses `EXPECT` markers to declare expected output or error:
+**Test files live in `spec_tests/conformance/` (language, diagnostics in `neg/`, runtime in `standalone/`) or next to the std module as `std/src/<module>/*_test.nv`.** These are the ONLY two places tests live — a test lives where it is run. `nova_tests.old/` is a FROZEN ARCHIVE: nothing runs it, never add to it. (Registry 221.1 #455: this file used to say the opposite and taught agents to write into the frozen corpus.)
 
 ```nova
 // EXPECT: hello

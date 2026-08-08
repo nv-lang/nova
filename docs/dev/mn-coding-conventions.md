@@ -543,7 +543,7 @@ nova_sched_park(co);                 /* теперь безопасно wake-abl
 ARMED, под `NOVA_WATCHDOG_DUMP_SECS=5`. Дискриминатор — сообщение
 `cancel-throw outside any supervised scope` (`effects.h::nova_throw_cancel`) в
 stderr = сработал §11-инвариант. Дополнительно (№446/№447): детерминированная
-регресс-проба `docs/plans/repro/presume_446_sabotage_probe.nv` (не зависит от
+регресс-проба `spec_tests/conformance/standalone/presume_446_sabotage_probe.nv` (не зависит от
 выигрыша гонки — резюмит один `co` дважды напрямую и проверяет, что второй
 вызов получает `owned=false`); страж `check-single-mco-resume.sh` держит
 число `mco_resume()` вне `nova_resume_fiber` на нуле.
