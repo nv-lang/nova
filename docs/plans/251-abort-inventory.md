@@ -1,0 +1,369 @@
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
+
+# План 251 Ф.0 — инвентарь точек abort() в рантайме (сырое перечисление)
+
+**Статус:** 📋 СЫРОЙ ИНВЕНТАРЬ (Ф.0 плана 251), составлен 2026-08-08 автоматическим перечислением (opencode). Только факты из кода: место, функция, печатаемое сообщение, условие, соседние вызовы. **Классификации по матрице политики завершения здесь НЕТ намеренно** — её делает интегратор в Ф.1–Ф.3 плана [251](251-runtime-termination-audit.md).
+
+Составлено автоматическим перечислением. Только факты из кода: место, функция, печатаемое сообщение, условие, соседние вызовы. Классификация по матрице политики завершения в этом файле ОТСУТСТВУЕТ намеренно — её делает интегратор.
+
+| # | Файл:строка | Функция | Сообщение | Условие | Соседи |
+|---|---|---|---|---|---|
+| 1 | compiler-codegen/nova_rt/libuv/docs/code/udp-dhcp/main.c:57 | make_discover_msg | сообщения нет | if (uv_random(NULL, NULL, &buffer.base[4], 4, 0, NULL)) | — |
+| 2 | compiler-codegen/nova_rt/libuv/docs/code/uvwget/main.c:76 | check_multi_info | "CURLMSG default\n" | default: (в switch message->msg) | — |
+| 3 | compiler-codegen/nova_rt/libuv/docs/code/uvwget/main.c:136 | handle_socket | сообщения нет | default: (в switch action) | — |
+| 4 | compiler-codegen/nova_rt/libuv/docs/src/guide/threads.rst:94 | не установлено | сообщения нет | не установлено | — |
+| 5 | compiler-codegen/nova_rt/libuv/docs/src/signal.rst:36 | не установлено | сообщения нет | не установлено | — |
+| 6 | compiler-codegen/nova_rt/libuv/docs/src/signal.rst:50 | не установлено | сообщения нет | не установлено | — |
+| 7 | compiler-codegen/nova_rt/libuv/src/fs-poll.c:184 | timer_cb | сообщения нет | if (uv_fs_stat(ctx->loop, &ctx->fs_req, ctx->path, poll_cb)) | — |
+| 8 | compiler-codegen/nova_rt/libuv/src/fs-poll.c:233 | poll_cb | сообщения нет | if (uv_timer_start(&ctx->timer_handle, timer_cb, interval, 0)) | — |
+| 9 | compiler-codegen/nova_rt/libuv/src/thread-common.c:139 | uv_barrier_destroy | сообщения нет | if (b->in != 0) | — |
+| 10 | compiler-codegen/nova_rt/libuv/src/thread-common.c:164 | uv_barrier_wait | сообщения нет | if (rc != PTHREAD_BARRIER_SERIAL_THREAD) (вложено в if (rc != 0)) | — |
+| 11 | compiler-codegen/nova_rt/libuv/src/thread-common.c:172 | uv_barrier_destroy | сообщения нет | if (pthread_barrier_destroy(barrier)) | — |
+| 12 | compiler-codegen/nova_rt/libuv/src/threadpool.c:50 | uv__cancelled | сообщения нет | безусловный | — |
+| 13 | compiler-codegen/nova_rt/libuv/src/threadpool.c:181 | uv__threadpool_cleanup | сообщения нет | if (uv_thread_join(threads + i)) | — |
+| 14 | compiler-codegen/nova_rt/libuv/src/threadpool.c:229 | init_threads | сообщения нет | if (uv_cond_init(&cond)) | — |
+| 15 | compiler-codegen/nova_rt/libuv/src/threadpool.c:232 | init_threads | сообщения нет | if (uv_mutex_init(&mutex)) | — |
+| 16 | compiler-codegen/nova_rt/libuv/src/threadpool.c:239 | init_threads | сообщения нет | if (uv_sem_init(&sem, 0)) | — |
+| 17 | compiler-codegen/nova_rt/libuv/src/threadpool.c:246 | init_threads | сообщения нет | if (uv_thread_create_ex(threads + i, &config, worker, &sem)) | — |
+| 18 | compiler-codegen/nova_rt/libuv/src/threadpool.c:270 | init_once | сообщения нет | if (pthread_atfork(NULL, NULL, &reset_once)) | — |
+| 19 | compiler-codegen/nova_rt/libuv/src/unix/aix.c:127 | uv__io_check_fd | сообщения нет | if (pollset_ctl(loop->backend_fd, &pc, 1)) | — |
+| 20 | compiler-codegen/nova_rt/libuv/src/unix/aix.c:179 | uv__io_poll | assert(0 && "Failed to add file descriptor (pc.fd) to pollset") | if (errno != EINVAL) (вложено в if (pollset_ctl(...))) | — |
+| 21 | compiler-codegen/nova_rt/libuv/src/unix/aix.c:187 | uv__io_poll | assert(0 && "Failed to query pollset for file descriptor") | case -1: (в switch (rc)) | — |
+| 22 | compiler-codegen/nova_rt/libuv/src/unix/aix.c:190 | uv__io_poll | assert(0 && "Pollset does not contain file descriptor") | case 0: (в switch (rc)) | — |
+| 23 | compiler-codegen/nova_rt/libuv/src/unix/aix.c:207 | uv__io_poll | assert(0 && "Failed to delete file descriptor (pc.fd) from pollset") | if (pollset_ctl(loop->backend_fd, &pc, 1)) | — |
+| 24 | compiler-codegen/nova_rt/libuv/src/unix/aix.c:212 | uv__io_poll | assert(0 && "Failed to add file descriptor (pc.fd) to pollset") | if (pollset_ctl(loop->backend_fd, &pc, 1)) | — |
+| 25 | compiler-codegen/nova_rt/libuv/src/unix/aix.c:255 | uv__io_poll | сообщения нет | if (errno != EINTR) (вложено в if (nfds == -1)) | — |
+| 26 | compiler-codegen/nova_rt/libuv/src/unix/bsd-proctitle.c:36 | init_process_title_mutex_once | сообщения нет | if (uv_mutex_init(&process_title_mutex)) | — |
+| 27 | compiler-codegen/nova_rt/libuv/src/unix/core.c:1077 | uv__io_poll_prepare | сообщения нет | if (pthread_sigmask(SIG_BLOCK, pset, NULL)) (вложено в if (pset != NULL)) | — |
+| 28 | compiler-codegen/nova_rt/libuv/src/unix/core.c:1083 | uv__io_poll_check | сообщения нет | if (pthread_sigmask(SIG_UNBLOCK, pset, NULL)) (вложено в if (pset != NULL)) | — |
+| 29 | compiler-codegen/nova_rt/libuv/src/unix/core.c:1226 | uv__slurp | сообщения нет | if (uv__close_nocheckstdio(fd)) | — |
+| 30 | compiler-codegen/nova_rt/libuv/src/unix/darwin.c:56 | uv__hrtime_init_once | сообщения нет | if (KERN_SUCCESS != mach_timebase_info(&timebase)) | — |
+| 31 | compiler-codegen/nova_rt/libuv/src/unix/fsevents.c:629 | uv__fsevents_loop_init | сообщения нет | if (pthread_attr_init(&attr)) | — |
+| 32 | compiler-codegen/nova_rt/libuv/src/unix/fsevents.c:632 | uv__fsevents_loop_init | сообщения нет | if (pthread_attr_setstacksize(&attr, uv__thread_stack_size())) | — |
+| 33 | compiler-codegen/nova_rt/libuv/src/unix/fsevents.c:640 | uv__fsevents_loop_init | сообщения нет | if (pthread_attr_destroy(&attr)) | — |
+| 34 | compiler-codegen/nova_rt/libuv/src/unix/fsevents.c:680 | uv__fsevents_loop_delete | сообщения нет | if (uv__cf_loop_signal(loop, NULL, kUVCFLoopSignalRegular) != 0) | — |
+| 35 | compiler-codegen/nova_rt/libuv/src/unix/getaddrinfo.c:91 | uv__getaddrinfo_translate_error | assert(!"unknown EAI_* error code") | безусловный (после switch) | — |
+| 36 | compiler-codegen/nova_rt/libuv/src/unix/getnameinfo.c:43 | uv__getnameinfo_work | сообщения нет | else-ветка (после if AF_INET / else if AF_INET6) | — |
+| 37 | compiler-codegen/nova_rt/libuv/src/unix/internal.h:117 | не установлено (макрос UNREACHABLE) | assert(0 && "unreachable code") | безусловный (макрос) | — |
+| 38 | compiler-codegen/nova_rt/libuv/src/unix/os390-syscalls.c:127 | maybe_resize | сообщения нет | if (newlst == NULL) | — |
+| 39 | compiler-codegen/nova_rt/libuv/src/unix/os390-syscalls.c:153 | init_message_queue | сообщения нет | if (lst->msg_queue == -1) | — |
+| 40 | compiler-codegen/nova_rt/libuv/src/unix/os390-syscalls.c:162 | init_message_queue | сообщения нет | if (msgsnd(lst->msg_queue, &msg, sizeof(msg.body), 0) != 0) | — |
+| 41 | compiler-codegen/nova_rt/libuv/src/unix/os390-syscalls.c:166 | init_message_queue | сообщения нет | if (msgrcv(lst->msg_queue, &msg, sizeof(msg.body), 0, 0) != sizeof(msg.body)) | — |
+| 42 | compiler-codegen/nova_rt/libuv/src/unix/os390-syscalls.c:206 | epoll_init | сообщения нет | if (uv_mutex_init(&global_epoll_lock)) | — |
+| 43 | compiler-codegen/nova_rt/libuv/src/unix/os390-syscalls.c:209 | epoll_init | сообщения нет | if (pthread_atfork(&before_fork, &after_fork, &child_fork)) | — |
+| 44 | compiler-codegen/nova_rt/libuv/src/unix/os390-syscalls.c:273 | epoll_ctl | сообщения нет | else-ветка (после if/else if по op) | — |
+| 45 | compiler-codegen/nova_rt/libuv/src/unix/os390.c:633 | uv__io_check_fd | сообщения нет | if (rv == -1) | — |
+| 46 | compiler-codegen/nova_rt/libuv/src/unix/os390.c:722 | uv__fs_event_stop | сообщения нет | if (rc != 0 && errno != EALREADY && errno != ENOENT) | — |
+| 47 | compiler-codegen/nova_rt/libuv/src/unix/os390.c:773 | os390_message_queue_handler | сообщения нет | if (msglen == -1) | — |
+| 48 | compiler-codegen/nova_rt/libuv/src/unix/os390.c:877 | uv__io_poll | сообщения нет | if (errno != EEXIST) (вложено в if (epoll_ctl(...))) | — |
+| 49 | compiler-codegen/nova_rt/libuv/src/unix/os390.c:883 | uv__io_poll | сообщения нет | if (epoll_ctl(loop->ep, EPOLL_CTL_MOD, w->fd, &e)) | — |
+| 50 | compiler-codegen/nova_rt/libuv/src/unix/os390.c:938 | uv__io_poll | сообщения нет | if (errno != EINTR) (вложено в if (nfds == -1)) | — |
+| 51 | compiler-codegen/nova_rt/libuv/src/unix/posix-hrtime.c:33 | uv__hrtime | сообщения нет | if (clock_gettime(CLOCK_MONOTONIC, &t)) | — |
+| 52 | compiler-codegen/nova_rt/libuv/src/unix/posix-poll.c:66 | uv__pollfds_maybe_resize | сообщения нет | if (p == NULL) | — |
+| 53 | compiler-codegen/nova_rt/libuv/src/unix/posix-poll.c:218 | uv__io_poll | сообщения нет | if (errno != EINTR) (вложено в if (nfds == -1)) | — |
+| 54 | compiler-codegen/nova_rt/libuv/src/unix/signal.c:73 | uv__signal_global_init | сообщения нет | if (pthread_atfork(NULL, NULL, &uv__signal_global_reinit)) (вложено в if (uv__signal_lock_pipefd[0] == -1)) | — |
+| 55 | compiler-codegen/nova_rt/libuv/src/unix/signal.c:103 | uv__signal_global_reinit | сообщения нет | if (uv__make_pipe(uv__signal_lock_pipefd, 0)) | — |
+| 56 | compiler-codegen/nova_rt/libuv/src/unix/signal.c:106 | uv__signal_global_reinit | сообщения нет | if (uv__signal_unlock()) | — |
+| 57 | compiler-codegen/nova_rt/libuv/src/unix/signal.c:143 | uv__signal_block_and_lock | сообщения нет | if (sigfillset(&new_mask)) | — |
+| 58 | compiler-codegen/nova_rt/libuv/src/unix/signal.c:148 | uv__signal_block_and_lock | сообщения нет | if (pthread_sigmask(SIG_SETMASK, &new_mask, saved_sigmask)) | — |
+| 59 | compiler-codegen/nova_rt/libuv/src/unix/signal.c:151 | uv__signal_block_and_lock | сообщения нет | if (uv__signal_lock()) | — |
+| 60 | compiler-codegen/nova_rt/libuv/src/unix/signal.c:157 | uv__signal_unlock_and_unblock | сообщения нет | if (uv__signal_unlock()) | — |
+| 61 | compiler-codegen/nova_rt/libuv/src/unix/signal.c:160 | uv__signal_unlock_and_unblock | сообщения нет | if (pthread_sigmask(SIG_SETMASK, saved_sigmask, NULL)) | — |
+| 62 | compiler-codegen/nova_rt/libuv/src/unix/signal.c:230 | uv__signal_register_handler | сообщения нет | if (sigfillset(&sa.sa_mask)) | — |
+| 63 | compiler-codegen/nova_rt/libuv/src/unix/signal.c:256 | uv__signal_unregister_handler | сообщения нет | if (sigaction(signum, &sa, NULL)) | — |
+| 64 | compiler-codegen/nova_rt/libuv/src/unix/signal.c:468 | uv__signal_event | сообщения нет | if (r == -1) (после обработки EINTR/EAGAIN) | — |
+| 65 | compiler-codegen/nova_rt/libuv/src/unix/sunos.c:140 | uv__io_check_fd | perror("(libuv) port_dissociate()") | if (port_dissociate(loop->backend_fd, PORT_SOURCE_FD, fd)) | — |
+| 66 | compiler-codegen/nova_rt/libuv/src/unix/sunos.c:187 | uv__io_poll | perror("(libuv) port_associate()") | if (port_associate(loop->backend_fd, PORT_SOURCE_FD, w->fd, w->pevents, 0)) | — |
+| 67 | compiler-codegen/nova_rt/libuv/src/unix/sunos.c:240 | uv__io_poll | perror("(libuv) port_getn()") | else-ветка (errno != EINTR && errno != ETIME) | — |
+| 68 | compiler-codegen/nova_rt/libuv/src/unix/thread.c:174 | uv_thread_create_ex | сообщения нет | if (pthread_attr_init(attr)) | — |
+| 69 | compiler-codegen/nova_rt/libuv/src/unix/thread.c:177 | uv_thread_create_ex | сообщения нет | if (pthread_attr_setstacksize(attr, stack_size)) | — |
+| 70 | compiler-codegen/nova_rt/libuv/src/unix/thread.c:324 | uv_mutex_init | сообщения нет | if (pthread_mutexattr_init(&attr)) | — |
+| 71 | compiler-codegen/nova_rt/libuv/src/unix/thread.c:327 | uv_mutex_init | сообщения нет | if (pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ERRORCHECK)) | — |
+| 72 | compiler-codegen/nova_rt/libuv/src/unix/thread.c:332 | uv_mutex_init | сообщения нет | if (pthread_mutexattr_destroy(&attr)) | — |
+| 73 | compiler-codegen/nova_rt/libuv/src/unix/thread.c:344 | uv_mutex_init_recursive | сообщения нет | if (pthread_mutexattr_init(&attr)) | — |
+| 74 | compiler-codegen/nova_rt/libuv/src/unix/thread.c:347 | uv_mutex_init_recursive | сообщения нет | if (pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE)) | — |
+| 75 | compiler-codegen/nova_rt/libuv/src/unix/thread.c:352 | uv_mutex_init_recursive | сообщения нет | if (pthread_mutexattr_destroy(&attr)) | — |
+| 76 | compiler-codegen/nova_rt/libuv/src/unix/thread.c:360 | uv_mutex_destroy | сообщения нет | if (pthread_mutex_destroy(mutex)) | — |
+| 77 | compiler-codegen/nova_rt/libuv/src/unix/thread.c:366 | uv_mutex_lock | сообщения нет | if (pthread_mutex_lock(mutex)) | — |
+| 78 | compiler-codegen/nova_rt/libuv/src/unix/thread.c:376 | uv_mutex_trylock | сообщения нет | if (err != EBUSY && err != EAGAIN) (вложено в if (err)) | — |
+| 79 | compiler-codegen/nova_rt/libuv/src/unix/thread.c:386 | uv_mutex_unlock | сообщения нет | if (pthread_mutex_unlock(mutex)) | — |
+| 80 | compiler-codegen/nova_rt/libuv/src/unix/thread.c:397 | uv_rwlock_destroy | сообщения нет | if (pthread_rwlock_destroy(rwlock)) | — |
+| 81 | compiler-codegen/nova_rt/libuv/src/unix/thread.c:403 | uv_rwlock_rdlock | сообщения нет | if (pthread_rwlock_rdlock(rwlock)) | — |
+| 82 | compiler-codegen/nova_rt/libuv/src/unix/thread.c:413 | uv_rwlock_tryrdlock | сообщения нет | if (err != EBUSY && err != EAGAIN) (вложено в if (err)) | — |
+| 83 | compiler-codegen/nova_rt/libuv/src/unix/thread.c:423 | uv_rwlock_rdunlock | сообщения нет | if (pthread_rwlock_unlock(rwlock)) | — |
+| 84 | compiler-codegen/nova_rt/libuv/src/unix/thread.c:429 | uv_rwlock_wrlock | сообщения нет | if (pthread_rwlock_wrlock(rwlock)) | — |
+| 85 | compiler-codegen/nova_rt/libuv/src/unix/thread.c:439 | uv_rwlock_trywrlock | сообщения нет | if (err != EBUSY && err != EAGAIN) (вложено в if (err)) | — |
+| 86 | compiler-codegen/nova_rt/libuv/src/unix/thread.c:449 | uv_rwlock_wrunlock | сообщения нет | if (pthread_rwlock_unlock(rwlock)) | — |
+| 87 | compiler-codegen/nova_rt/libuv/src/unix/thread.c:455 | uv_once | сообщения нет | if (pthread_once(guard, callback)) | — |
+| 88 | compiler-codegen/nova_rt/libuv/src/unix/thread.c:471 | uv_sem_init | сообщения нет | безусловный (после веток err == KERN_...) | — |
+| 89 | compiler-codegen/nova_rt/libuv/src/unix/thread.c:478 | uv_sem_destroy | сообщения нет | if (semaphore_destroy(mach_task_self(), *sem)) | — |
+| 90 | compiler-codegen/nova_rt/libuv/src/unix/thread.c:484 | uv_sem_post | сообщения нет | if (semaphore_signal(*sem)) | — |
+| 91 | compiler-codegen/nova_rt/libuv/src/unix/thread.c:496 | uv_sem_wait | сообщения нет | if (r != KERN_SUCCESS) | — |
+| 92 | compiler-codegen/nova_rt/libuv/src/unix/thread.c:513 | uv_sem_trywait | сообщения нет | безусловный (после веток err == KERN_...) | — |
+| 93 | compiler-codegen/nova_rt/libuv/src/unix/thread.c:646 | uv__sem_destroy | сообщения нет | if (sem_destroy(sem)) | — |
+| 94 | compiler-codegen/nova_rt/libuv/src/unix/thread.c:652 | uv__sem_post | сообщения нет | if (sem_post(sem)) | — |
+| 95 | compiler-codegen/nova_rt/libuv/src/unix/thread.c:664 | uv__sem_wait | сообщения нет | if (r) | — |
+| 96 | compiler-codegen/nova_rt/libuv/src/unix/thread.c:678 | uv__sem_trywait | сообщения нет | безусловный (внутри if (r), после проверки errno == EAGAIN) | — |
+| 97 | compiler-codegen/nova_rt/libuv/src/unix/thread.c:780 | uv_cond_destroy | сообщения нет | if (pthread_mutex_init(&mutex, NULL)) | — |
+| 98 | compiler-codegen/nova_rt/libuv/src/unix/thread.c:783 | uv_cond_destroy | сообщения нет | if (pthread_mutex_lock(&mutex)) | — |
+| 99 | compiler-codegen/nova_rt/libuv/src/unix/thread.c:790 | uv_cond_destroy | сообщения нет | if (err != 0 && err != ETIMEDOUT) | — |
+| 100 | compiler-codegen/nova_rt/libuv/src/unix/thread.c:793 | uv_cond_destroy | сообщения нет | if (pthread_mutex_unlock(&mutex)) | — |
+| 101 | compiler-codegen/nova_rt/libuv/src/unix/thread.c:796 | uv_cond_destroy | сообщения нет | if (pthread_mutex_destroy(&mutex)) | — |
+| 102 | compiler-codegen/nova_rt/libuv/src/unix/thread.c:800 | uv_cond_destroy | сообщения нет | if (pthread_cond_destroy(cond)) | — |
+| 103 | compiler-codegen/nova_rt/libuv/src/unix/thread.c:805 | uv_cond_signal | сообщения нет | if (pthread_cond_signal(cond)) | — |
+| 104 | compiler-codegen/nova_rt/libuv/src/unix/thread.c:810 | uv_cond_broadcast | сообщения нет | if (pthread_cond_broadcast(cond)) | — |
+| 105 | compiler-codegen/nova_rt/libuv/src/unix/thread.c:829 | uv_cond_wait | сообщения нет | if (r) | — |
+| 106 | compiler-codegen/nova_rt/libuv/src/unix/thread.c:836 | uv_cond_wait | сообщения нет | if (pthread_cond_wait(cond, mutex)) | — |
+| 107 | compiler-codegen/nova_rt/libuv/src/unix/thread.c:855 | uv_cond_timedwait | сообщения нет | if (gettimeofday(&tv, NULL)) | — |
+| 108 | compiler-codegen/nova_rt/libuv/src/unix/thread.c:872 | uv_cond_timedwait | сообщения нет | безусловный (после проверок r == 0 / r == ETIMEDOUT) | — |
+| 109 | compiler-codegen/nova_rt/libuv/src/unix/thread.c:884 | uv_key_delete | сообщения нет | if (pthread_key_delete(*key)) | — |
+| 110 | compiler-codegen/nova_rt/libuv/src/unix/thread.c:895 | uv_key_set | сообщения нет | if (pthread_setspecific(*key, value)) | — |
+| 111 | compiler-codegen/nova_rt/libuv/src/unix/async.c:189 | uv__async_io | сообщения нет | безусловный (после обработки EAGAIN/EWOULDBLOCK/EINTR) | — |
+| 112 | compiler-codegen/nova_rt/libuv/src/unix/async.c:239 | uv__async_send | сообщения нет | безусловный (в if (kqueue_evfilt_user_support), после if (r == 0) return) | — |
+| 113 | compiler-codegen/nova_rt/libuv/src/unix/async.c:254 | uv__async_send | сообщения нет | безусловный (после обработки EAGAIN/EWOULDBLOCK) | — |
+| 114 | compiler-codegen/nova_rt/libuv/src/unix/fs.c:348 | uv__fs_mkstemp | сообщения нет | if (r != 0) (вложено в if (r >= 0 && uv__cloexec(r, 1) != 0)) | — |
+| 115 | compiler-codegen/nova_rt/libuv/src/unix/fs.c:379 | uv__fs_open | сообщения нет | if (r != 0) (вложено в if (r >= 0 && uv__cloexec(r, 1) != 0)) | — |
+| 116 | compiler-codegen/nova_rt/libuv/src/unix/fs.c:1735 | uv__fs_work | сообщения нет | default: (в switch по типу запроса) | — |
+| 117 | compiler-codegen/nova_rt/libuv/src/unix/kqueue.c:153 | uv__kqueue_delete | сообщения нет | безусловный (после проверок EBADF/ENOENT) | — |
+| 118 | compiler-codegen/nova_rt/libuv/src/unix/kqueue.c:216 | uv__io_poll | сообщения нет | if (kevent(loop->backend_fd, events, nevents, NULL, 0, NULL)) | — |
+| 119 | compiler-codegen/nova_rt/libuv/src/unix/kqueue.c:226 | uv__io_poll | сообщения нет | if (kevent(loop->backend_fd, events, nevents, NULL, 0, NULL)) | — |
+| 120 | compiler-codegen/nova_rt/libuv/src/unix/kqueue.c:236 | uv__io_poll | сообщения нет | if (kevent(loop->backend_fd, events, nevents, NULL, 0, NULL)) | — |
+| 121 | compiler-codegen/nova_rt/libuv/src/unix/kqueue.c:533 | uv__fs_event | сообщения нет | if (kevent(loop->backend_fd, &ev, 1, NULL, 0, NULL)) | — |
+| 122 | compiler-codegen/nova_rt/libuv/src/unix/linux.c:747 | uv__io_check_fd | сообщения нет | if (epoll_ctl(loop->backend_fd, EPOLL_CTL_DEL, fd, &e)) (вложено в if (rc == 0)) | — |
+| 123 | compiler-codegen/nova_rt/libuv/src/unix/linux.c:1304 | uv__epoll_ctl_flush | сообщения нет | if (rc != (int) n) | — |
+| 124 | compiler-codegen/nova_rt/libuv/src/unix/linux.c:1332 | uv__epoll_ctl_flush | сообщения нет | if (op != EPOLL_CTL_ADD) | — |
+| 125 | compiler-codegen/nova_rt/libuv/src/unix/linux.c:1335 | uv__epoll_ctl_flush | сообщения нет | if (cqe->res != -EEXIST) | — |
+| 126 | compiler-codegen/nova_rt/libuv/src/unix/linux.c:1431 | uv__io_poll | сообщения нет | if (epoll_ctl(epollfd, EPOLL_CTL_MOD, fd, &e)) | — |
+| 127 | compiler-codegen/nova_rt/libuv/src/unix/linux.c:1777 | uv_cpu_info | сообщения нет | if (NULL == fgets(buf, sizeof(buf), fp)) | — |
+| 128 | compiler-codegen/nova_rt/libuv/src/unix/linux.c:1789 | uv_cpu_info | сообщения нет | if (NULL == fgets(buf, sizeof(buf), fp)) | — |
+| 129 | compiler-codegen/nova_rt/libuv/src/unix/linux.c:1878 | uv_cpu_info | сообщения нет | if (1 != fscanf(fp, "%llu", &(*cpus)[cpu].freq)) | — |
+| 130 | compiler-codegen/nova_rt/libuv/src/unix/process.c:141 | uv__wait_children | сообщения нет | if (errno != ECHILD) (вложено в if (pid == -1)) | — |
+| 131 | compiler-codegen/nova_rt/libuv/src/unix/process.c:248 | uv__process_open_stream | сообщения нет | if (err != 0) | — |
+| 132 | compiler-codegen/nova_rt/libuv/src/unix/process.c:408 | uv__process_child_init | сообщения нет | if (sigprocmask(SIG_SETMASK, &signewset, NULL) != 0) | — |
+| 133 | compiler-codegen/nova_rt/libuv/src/unix/process.c:839 | uv__spawn_and_init_child_fork | сообщения нет | if (pthread_sigmask(SIG_BLOCK, &signewset, &sigoldset) != 0) | — |
+| 134 | compiler-codegen/nova_rt/libuv/src/unix/process.c:846 | uv__spawn_and_init_child_fork | сообщения нет | безусловный (в ветке if (*pid == 0), после uv__process_child_init) | — |
+| 135 | compiler-codegen/nova_rt/libuv/src/unix/process.c:850 | uv__spawn_and_init_child_fork | сообщения нет | if (pthread_sigmask(SIG_SETMASK, &sigoldset, NULL) != 0) | — |
+| 136 | compiler-codegen/nova_rt/libuv/src/unix/process.c:957 | uv__spawn_and_init_child | сообщения нет | else-ветка (после r == 0 / r == sizeof(exec_errorno) / r == -1 && errno == EPIPE) | — |
+| 137 | compiler-codegen/nova_rt/libuv/src/unix/process.c:1042 | uv_spawn | сообщения нет | if (errno != ESRCH) (вложено в if (kevent(...))) | — |
+| 138 | compiler-codegen/nova_rt/libuv/src/unix/stream.c:185 | uv__stream_osx_select | сообщения нет | безусловный (в if (r == -1), после обработки EINTR) | — |
+| 139 | compiler-codegen/nova_rt/libuv/src/unix/stream.c:209 | uv__stream_osx_select | сообщения нет | безусловный (после обработки EAGAIN/EWOULDBLOCK/EINTR) | — |
+| 140 | compiler-codegen/nova_rt/libuv/src/unix/tty.c:112 | uv__tty_is_slave | сообщения нет | if (pts == NODEVMAJOR) | — |
+| 141 | compiler-codegen/nova_rt/libuv/src/unix/tty.c:117 | uv__tty_is_slave | сообщения нет | if (uv__fstat(fd, &sb) != 0) | — |
+| 142 | compiler-codegen/nova_rt/libuv/src/unix/tty.c:121 | uv__tty_is_slave | сообщения нет | if (!S_ISCHR(sb.st_mode)) | — |
+| 143 | compiler-codegen/nova_rt/libuv/src/unix/tty.c:125 | uv__tty_is_slave | сообщения нет | if (major(sb.st_rdev) == NODEVMAJOR) | — |
+| 144 | compiler-codegen/nova_rt/libuv/src/unix/udp.c:548 | uv__udp_maybe_deferred_bind | assert(0 && "unsupported address family") | default: (в switch по семейству) | — |
+| 145 | compiler-codegen/nova_rt/libuv/src/unix/udp.c:1278 | uv_udp_set_multicast_interface | assert(0 && "unexpected address family") | else-ветка (после if AF_INET / else if AF_INET6) | — |
+| 146 | compiler-codegen/nova_rt/libuv/src/win/error.c:62 | uv_fatal_error | "%s: (%d) %s" (при syscall) / "(%d) %s" (иначе) | безусловный (конец функции) | — |
+| 147 | compiler-codegen/nova_rt/libuv/src/win/handle.c:146 | uv_close | сообщения нет | default: (в switch по типу) | — |
+| 148 | compiler-codegen/nova_rt/libuv/src/win/internal.h:171 | не установлено (макрос uv__process_tty_accept_req) | сообщения нет | безусловный (макрос) | — |
+| 149 | compiler-codegen/nova_rt/libuv/src/win/internal.h:172 | не установлено (макрос uv__process_tty_connect_req) | сообщения нет | безусловный (макрос) | — |
+| 150 | compiler-codegen/nova_rt/libuv/src/win/signal.c:45 | uv__signals_init | сообщения нет | if (!SetConsoleCtrlHandler(uv__signal_control_handler, TRUE)) | — |
+| 151 | compiler-codegen/nova_rt/libuv/src/win/thread.c:67 | uv__init_current_thread_key | сообщения нет | if (uv_key_create(&uv__current_thread_key)) | — |
+| 152 | compiler-codegen/nova_rt/libuv/src/win/thread.c:471 | uv_sem_destroy | сообщения нет | if (!CloseHandle(*sem)) | — |
+| 153 | compiler-codegen/nova_rt/libuv/src/win/thread.c:477 | uv_sem_post | сообщения нет | if (!ReleaseSemaphore(*sem, 1, NULL)) | — |
+| 154 | compiler-codegen/nova_rt/libuv/src/win/thread.c:483 | uv_sem_wait | сообщения нет | if (WaitForSingleObject(*sem, INFINITE) != WAIT_OBJECT_0) | — |
+| 155 | compiler-codegen/nova_rt/libuv/src/win/thread.c:496 | uv_sem_trywait | сообщения нет | безусловный (после WAIT_OBJECT_0/WAIT_TIMEOUT) | — |
+| 156 | compiler-codegen/nova_rt/libuv/src/win/thread.c:525 | uv_cond_wait | сообщения нет | if (!SleepConditionVariableCS(&cond->cond_var, mutex, INFINITE)) | — |
+| 157 | compiler-codegen/nova_rt/libuv/src/win/thread.c:533 | uv_cond_timedwait | сообщения нет | if (GetLastError() != ERROR_TIMEOUT) | — |
+| 158 | compiler-codegen/nova_rt/libuv/src/win/thread.c:548 | uv_key_delete | сообщения нет | if (TlsFree(key->tls_index) == FALSE) | — |
+| 159 | compiler-codegen/nova_rt/libuv/src/win/thread.c:559 | uv_key_get | сообщения нет | if (GetLastError() != ERROR_SUCCESS) (вложено в if (value == NULL)) | — |
+| 160 | compiler-codegen/nova_rt/libuv/src/win/thread.c:567 | uv_key_set | сообщения нет | if (TlsSetValue(key->tls_index, value) == FALSE) | — |
+| 161 | compiler-codegen/nova_rt/libuv/src/win/tcp.c:849 | uv__tcp_try_connect | сообщения нет | else-ветка (после if addrlen == ip4_any / else if addrlen == ip6_any) | — |
+| 162 | compiler-codegen/nova_rt/libuv/src/win/tty.c:171 | uv__console_init | сообщения нет | if (uv_sem_init(&uv_tty_output_lock, 1)) | — |
+| 163 | compiler-codegen/nova_rt/libuv/src/win/tty.c:2140 | uv__tty_emit_text | сообщения нет | else-ветка («Inconsistent state» парсера ANSI) | — |
+| 164 | compiler-codegen/nova_rt/libuv/src/win/udp.c:874 | uv_udp_set_multicast_interface | assert(0 && "unexpected address family") | else-ветка (после if AF_INET / else if AF_INET6) | — |
+| 165 | compiler-codegen/nova_rt/libuv/src/win/winsock.c:87 | uv__winsock_init | сообщения нет | if (uv_ip4_addr("0.0.0.0", 0, &uv_addr_ip4_any_)) | — |
+| 166 | compiler-codegen/nova_rt/libuv/src/win/winsock.c:91 | uv__winsock_init | сообщения нет | if (uv_ip6_addr("::", 0, &uv_addr_ip6_any_)) | — |
+| 167 | compiler-codegen/nova_rt/libuv/test/benchmark-loop-count.c:47 | idle_alive_cb | сообщения нет | if (r == 0) | — |
+| 168 | compiler-codegen/nova_rt/libuv/test/echo-server.c:195 | on_connection | assert(0 && "Bad serverType") | default: (в switch по типу) | — |
+| 169 | compiler-codegen/nova_rt/libuv/test/runner-unix.c:54 | closefd | perror("close") | безусловный (после проверки close()/errno) | — |
+| 170 | compiler-codegen/nova_rt/libuv/test/runner-unix.c:273 | process_wait | сообщения нет | if (pthread_attr_init(&attr)) | — |
+| 171 | compiler-codegen/nova_rt/libuv/test/runner-unix.c:280 | process_wait | сообщения нет | if (pthread_attr_setstacksize(&attr, 256 * 1024)) | — |
+| 172 | compiler-codegen/nova_rt/libuv/test/runner-unix.c:285 | process_wait | сообщения нет | if (pthread_attr_destroy(&attr)) | — |
+| 173 | compiler-codegen/nova_rt/libuv/test/runner-unix.c:294 | process_wait | сообщения нет | if (gettimeofday(&timebase, NULL)) | — |
+| 174 | compiler-codegen/nova_rt/libuv/test/runner-unix.c:322 | process_wait | сообщения нет | if (gettimeofday(&tv, NULL)) | — |
+| 175 | compiler-codegen/nova_rt/libuv/test/runner-unix.c:343 | process_wait | сообщения нет | if (pthread_join(tid, NULL)) | — |
+| 176 | compiler-codegen/nova_rt/libuv/test/test-ipc-send-recv.c:128 | recv_cb | сообщения нет | else-ветка (после if pending == UV_NAMED_PIPE / else if UV_TCP) | — |
+| 177 | compiler-codegen/nova_rt/libuv/test/test-ipc-send-recv.c:339 | read_cb | сообщения нет | else-ветка (после if pending == UV_NAMED_PIPE / else if UV_TCP) | — |
+| 178 | compiler-codegen/nova_rt/libuv/test/test-ipc.c:166 | on_read | printf("error recving on channel: %s\n", uv_strerror(nread)) | безусловный (в if (nread < 0), после nread == UV_EOF) | — |
+| 179 | compiler-codegen/nova_rt/libuv/test/test-ipc.c:235 | on_read_listen_after_bound_twice | printf("error recving on channel: %s\n", uv_strerror(nread)) | безусловный (в if (nread < 0), после nread == UV_EOF) | — |
+| 180 | compiler-codegen/nova_rt/libuv/test/test-ipc.c:372 | on_read_connection | printf("error recving on channel: %s\n", uv_strerror(nread)) | безусловный (в if (nread < 0), после nread == UV_EOF) | — |
+| 181 | compiler-codegen/nova_rt/libuv/test/test-ipc.c:583 | on_tcp_child_process_read | printf("error recving on tcp connection: %s\n", uv_strerror(nread)) | безусловный (в if (nread < 0), после nread == UV_EOF) | — |
+| 182 | compiler-codegen/nova_rt/libuv/test/task.h:92 | не установлено (макрос FATAL) | "Fatal error in %s on line %d: %s\n" | безусловный (макрос) | fflush |
+| 183 | compiler-codegen/nova_rt/libuv/test/task.h:106 | не установлено (макрос ASSERT) | "Assertion failed in %s on line %d: %s\n" | if (!(expr)) | — |
+| 184 | compiler-codegen/nova_rt/libuv/test/task.h:126 | не установлено (макрос ASSERT_BASE) | "Assertion failed in %s on line %d: `%s %s %s` (%"conv" %s %"conv")\n" | if (!(eval_a operator eval_b)) | — |
+| 185 | compiler-codegen/nova_rt/libuv/test/task.h:141 | не установлено (макрос ASSERT_OK) | "Assertion failed in %s on line %d: `%s` okay (error: %"PRId64")\n" | if (eval_a) | — |
+| 186 | compiler-codegen/nova_rt/libuv/test/task.h:159 | не установлено (макрос ASSERT_BASE_STR) | "Assertion failed in %s on line %d: `%s %s %s` (%"conv" %s %"conv")\n" | if (!(expr)) | — |
+| 187 | compiler-codegen/nova_rt/libuv/test/task.h:179 | не установлено (макрос ASSERT_BASE_LEN) | "Assertion failed in %s on line %d: `%s %s %s` (%.*"#conv" %s %.*"#conv")\n" | if (!(expr)) | — |
+| 188 | compiler-codegen/nova_rt/libuv/test/task.h:206 | не установлено (макрос ASSERT_BASE_HEX) | "Assertion failed in %s on line %d: `%s %s %s` (...)\n" | if (!(expr)) | — |
+| 189 | compiler-codegen/nova_rt/libuv/ChangeLog:2734 | не установлено | сообщения нет | не установлено | — |
+| 190 | compiler-codegen/nova_rt/libuv/ChangeLog:4469 | не установлено | сообщения нет | не установлено | — |
+| 191 | compiler-codegen/nova_rt/alloc_rc.c:39 | nova_alloc | "nova: out of memory\n" | if (!h) | — |
+| 192 | compiler-codegen/nova_rt/alloc_rc.c:69 | nova_alloc_uncollectable | "nova: out of memory (uncollectable)\n" | if (!h) | — |
+| 193 | compiler-codegen/nova_rt/contracts.h:14 | не установлено (комментарий) | сообщения нет | не установлено | — |
+| 194 | compiler-codegen/nova_rt/contracts.h:94 | nova_contract_violation | "%s\n" (динамический buf, собран snprintf) | безусловный | — |
+| 195 | compiler-codegen/nova_rt/contracts.h:136 | nova_contract_violation_dyn | "%s\n" (динамический buf, собран snprintf) | безусловный | — |
+| 196 | compiler-codegen/nova_rt/fs.c:103 | _fs_begin | "nova/fs: filesystem op outside a supervised scope\n" | if (!fr->scope) | — |
+| 197 | compiler-codegen/nova_rt/sync_condvar.h:356 | Nova_Condvar_method_wait_for | "nova: Condvar.wait_for: malloc failed\n" | if (!handle) | — |
+| 198 | compiler-codegen/nova_rt/sync_countdown_latch.h:307 | Nova_CountDownLatch_method_await_for | "nova: CountDownLatch.await_for: malloc failed\n" | if (!handle) | — |
+| 199 | compiler-codegen/nova_rt/sync_semaphore.h:287 | Nova_Semaphore_method_acquire_for | "nova: Semaphore.acquire_for: malloc failed\n" | if (!handle) | — |
+| 200 | compiler-codegen/nova_rt/nova_sched.h:75 | nova_sched_grow_state | "nova: nova_sched_grow_state: scope slot count exceeds ceiling (%d chunks > %d max = %d slots)\n" | if (needed_chunks > NOVA_SCHED_MAX_CHUNKS) | — |
+| 201 | compiler-codegen/nova_rt/nova_sched.h:92 | nova_sched_grow_state | "nova: nova_sched_grow_state: nova_alloc failed\n" | if (!nc_parked \|\| !nc_handle \|\| !nc_stop_cb \|\| !nc_pco) | — |
+| 202 | compiler-codegen/nova_rt/nova_sched.h:135 | nova_sched_get_state | "nova: nova_sched_get_state: nova_alloc failed\n" | if (!st) | — |
+| 203 | compiler-codegen/nova_rt/nova_sched.h:265 | nova_gopark | "nova: nova_gopark: not in fiber context\n" | if (!co) | — |
+| 204 | compiler-codegen/nova_rt/nova_sched.h:375 | nova_sched_park | "nova: blocking operation attempted with no reserved fiber-slot in this scope (scope=%p count=%d slot=%d) -- a scope only has slots for its self-registered body (nova_scope_alloc_body_self_slot) and for spawn'd children; this pair is neither, which means the TLS (_nova_active_scope,_nova_active_slot) is stale for the scope actually being blocked in. See Plan 221.1 #162 / spec/decisions/06-concurrency.md.\n" | if (!scope \|\| slot < 0 \|\| slot >= scope->count) | — |
+| 205 | compiler-codegen/nova_rt/nova_sched.h:380 | nova_sched_park | "nova: nova_sched_park: not in fiber context\n" | if (!co) | — |
+| 206 | compiler-codegen/nova_rt/nova_sched.h:424 | nova_sched_park_with_unlock | "nova: blocking operation attempted with no reserved fiber-slot in this scope (scope=%p count=%d slot=%d) -- a scope only has slots for its self-registered body (nova_scope_alloc_body_self_slot) and for spawn'd children; this pair is neither, which means the TLS (_nova_active_scope,_nova_active_slot) is stale for the scope actually being blocked in. See Plan 221.1 #162 / spec/decisions/06-concurrency.md.\n" | if (!scope \|\| slot < 0 \|\| slot >= scope->count) | — |
+| 207 | compiler-codegen/nova_rt/nova_sched.h:429 | nova_sched_park_with_unlock | "nova: nova_sched_park_with_unlock: not in fiber context\n" | if (!co) | — |
+| 208 | compiler-codegen/nova_rt/channels.h:1034 | nova_select_park | "nova: nova_select_park: scope/slot not set\n" | if (!scope \|\| slot < 0) | — |
+| 209 | compiler-codegen/nova_rt/channels.h:1376 | Nova_Time_after | "nova: Nova_Time_after: malloc failed\n" | if (!st) | — |
+| 210 | compiler-codegen/nova_rt/channels.h:1387 | Nova_Time_after | "nova: Nova_Time_after: uv_timer_init failed: %s\n" | if (rc != 0) | — |
+| 211 | compiler-codegen/nova_rt/channels.h:1422 | Nova_Time_after | "nova: Nova_Time_after: uv_timer_start failed: %s\n" | if (rc != 0) | — |
+| 212 | compiler-codegen/nova_rt/channels.h:1452 | nova_chan_reader_close_after_ns | "nova: ChanReader.close_after: negative duration %lld ns\n" | if (nanos < 0) | — |
+| 213 | compiler-codegen/nova_rt/channels.h:1552 | nova_chan_reader_close_at_mono_ns | "nova: ChanReader.close_at: deadline overflow (deadline=%lld ns, now=%lld ns, delta=%lld)\n" | if (delta < 0) | — |
+| 214 | compiler-codegen/nova_rt/eventloop.c:84 | nova_evloop_init | "nova: uv_default_loop() returned NULL\n" | if (!_evloop) | — |
+| 215 | compiler-codegen/nova_rt/alloc.c:23 | не установлено (комментарий) | сообщения нет | не установлено | — |
+| 216 | compiler-codegen/nova_rt/alloc.c:26 | не установлено (комментарий) | сообщения нет | не установлено | — |
+| 217 | compiler-codegen/nova_rt/alloc.c:31 | nova_alloc | "nova: out of memory\n" | if (!p) | fflush(stdout), fflush(stderr) |
+| 218 | compiler-codegen/nova_rt/alloc.c:46 | nova_alloc_uncollectable | "nova: out of memory (uncollectable)\n" | if (!p) | fflush(stdout), fflush(stderr) |
+| 219 | compiler-codegen/nova_rt/alloc_boehm.c:135 | не установлено (комментарий) | сообщения нет | не установлено | — |
+| 220 | compiler-codegen/nova_rt/alloc_boehm.c:139 | nova_alloc | "nova: out of memory\n" | if (!p) | fflush(stdout), fflush(stderr) |
+| 221 | compiler-codegen/nova_rt/alloc_boehm.c:167 | nova_alloc_uncollectable | "nova: out of memory (uncollectable)\n" | if (!p) | fflush(stdout), fflush(stderr) |
+| 222 | compiler-codegen/nova_rt/sync_primitives.h:48 | не установлено (макрос NOVA_SYNC_ASSERT, в #ifdef NOVA_DEBUG) | "[nova sync] FATAL: " msg "\n" (msg — аргумент макроса) | if (!(cond)) (cond — аргумент макроса) | — |
+| 223 | compiler-codegen/nova_rt/sync_primitives.h:1034 | Nova_Mutex_method_lock_for | "nova: Mutex.lock_for: malloc failed\n" | if (!handle) | — |
+| 224 | compiler-codegen/nova_rt/sync_primitives.h:2232 | не установлено (комментарий про метод OnceGuard.abort()) | сообщения нет | не установлено | — |
+| 225 | compiler-codegen/nova_rt/driver.c:50 | nova_driver_init | "nova: driver uv_loop_init failed: %s\n" | if (rc != 0) | — |
+| 226 | compiler-codegen/nova_rt/driver.c:59 | nova_driver_init | "nova: driver job_async init failed: %s\n" | if (rc != 0) | — |
+| 227 | compiler-codegen/nova_rt/driver.c:65 | nova_driver_init | "nova: driver shutdown_async init failed: %s\n" | if (rc != 0) | — |
+| 228 | compiler-codegen/nova_rt/driver.c:76 | nova_driver_init | "nova: driver uv_thread_create failed: %s\n" | if (rc != 0) | — |
+| 229 | compiler-codegen/nova_rt/fiber_arena.c:671 | не установлено (комментарий) | сообщения нет | не установлено | — |
+| 230 | compiler-codegen/nova_rt/fiber_arena.c:677 | не установлено (комментарий) | сообщения нет | не установлено | — |
+| 231 | compiler-codegen/nova_rt/fiber_arena.c:765 | не установлено (комментарий) | сообщения нет | не установлено | — |
+| 232 | compiler-codegen/nova_rt/fiber_arena.c:806 | nova_fiber_arena_init | "nova: fiber_arena mmap failed (%zu bytes)\n" | if (p == MAP_FAILED) | — |
+| 233 | compiler-codegen/nova_rt/fiber_arena.c:821 | не установлено (комментарий) | сообщения нет | не установлено | — |
+| 234 | compiler-codegen/nova_rt/fiber_arena.c:849 | не установлено (комментарий) | сообщения нет | не установлено | — |
+| 235 | compiler-codegen/nova_rt/fiber_arena.c:856 | nova_fiber_arena_init | "nova: fiber_arena unusable (<%d slots guarded of %zu requested) — aborting\n" | if (slot_count < (size_t)NOVA_FIBER_SLOT_COUNT_MIN) | — |
+| 236 | compiler-codegen/nova_rt/fiber_arena.c:873 | nova_fiber_arena_init | "nova: fiber_arena state alloc failed\n" | if (!a) | — |
+| 237 | compiler-codegen/nova_rt/fiber_arena.c:972 | nova_fiber_alloc | "nova: fiber_arena exhausted (%zu slots used)\n" | if (slot == SIZE_MAX) | — |
+| 238 | compiler-codegen/nova_rt/effects.c:56 | не установлено (комментарий к _nova_cancel_no_handler) | сообщения нет | не установлено | — |
+| 239 | compiler-codegen/nova_rt/effects.c:60 | не установлено (комментарий к _nova_cancel_no_handler) | сообщения нет | не установлено | — |
+| 240 | compiler-codegen/nova_rt/effects.c:90 | не установлено (комментарий к _nova_cancel_no_handler) | сообщения нет | не установлено | — |
+| 241 | compiler-codegen/nova_rt/effects.c:127 | не установлено (комментарий к _nova_cancel_no_handler) | сообщения нет | не установлено | — |
+| 242 | compiler-codegen/nova_rt/effects.c:138 | _nova_cancel_no_handler | "nova: FATAL: cancel delivered to a fiber with NO scope reference at all — not even the orphan/detach pool (nova_runtime_orphan_scope()). D50 guarantees every fiber runs inside SOME scope; this is a structural-concurrency invariant violation, not a late-cancel race. See 221.1 defect #431 п.3.\n" | if (_nova_active_scope == NULL) (в #ifdef NOVA_DEBUG) | fflush(stdout) |
+| 243 | compiler-codegen/nova_rt/effects.c:508 | не установлено (комментарий) | сообщения нет | не установлено | — |
+| 244 | compiler-codegen/nova_rt/effects.h:439 | не установлено (комментарий) | сообщения нет | не установлено | — |
+| 245 | compiler-codegen/nova_rt/effects.h:444 | не установлено (комментарий) | сообщения нет | не установлено | — |
+| 246 | compiler-codegen/nova_rt/effects.h:491 | не установлено (комментарий к nova_throw_cancel) | сообщения нет | не установлено | — |
+| 247 | compiler-codegen/nova_rt/effects.h:516 | не установлено (комментарий к nova_throw_cancel) | сообщения нет | не установлено | — |
+| 248 | compiler-codegen/nova_rt/effects.h:651 | nova_rethrow_with_suppressed | "nova: unhandled Fail (D158 composite): %.*s\n" + список "suppressed [%d]: %.*s" | безусловный (ветка else, _nova_fail_top == NULL) | fflush(stdout) |
+| 249 | compiler-codegen/nova_rt/effects.h:1040 | nova_assert_loc | "%s\n" (buf: "<file>:<line>: assert failed: ...") | if (!cond) | — |
+| 250 | compiler-codegen/nova_rt/effects.h:1745 | nova_register_effect_storage | "nova: effect-registry overflow (count=%d, max=%d) — codegen bug: NOVA_MAX_EFFECT_STORAGES не покрывает число зарегистрированных эффектов\n" | if (_nova_effect_registry.count >= NOVA_MAX_EFFECT_STORAGES) | — |
+| 251 | compiler-codegen/nova_rt/net.c:665 | net_tcp_accept | "nova/net: accept outside scope\n" | if (!scope) | — |
+| 252 | compiler-codegen/nova_rt/net.c:866 | net_tcp_connect | "nova/net: connect outside scope\n" | if (!scope) | — |
+| 253 | compiler-codegen/nova_rt/net.c:1005 | net_tcp_read | "nova/net: read outside scope\n" | if (!scope) | — |
+| 254 | compiler-codegen/nova_rt/net.c:1118 | net_tcp_write | "nova/net: write outside scope\n" | if (!scope) | — |
+| 255 | compiler-codegen/nova_rt/net.c:1433 | net_udp_send_to | "nova/net: send_to outside scope\n" | if (!scope) | — |
+| 256 | compiler-codegen/nova_rt/net.c:1564 | net_udp_recv_from | "nova/net: recv_from outside scope\n" | if (!scope) | — |
+| 257 | compiler-codegen/nova_rt/net.c:1697 | net_dns_lookup | "nova/net: dns outside scope\n" | if (!scope) | — |
+| 258 | compiler-codegen/nova_rt/fibers.h:151 | nova_fiber_run | "nova: fiber create failed (%d)\n" | if (r != MCO_SUCCESS \|\| co == NULL) | — |
+| 259 | compiler-codegen/nova_rt/fibers.h:161 | nova_fiber_run | "nova: fiber resume failed (%d)\n" | if (r != MCO_SUCCESS) | — |
+| 260 | compiler-codegen/nova_rt/fibers.h:1530 | nova_cancel_token_bind | "nova: panic: token already bound to a live scope\n" | if (t->bound_scope != NULL) | — |
+| 261 | compiler-codegen/nova_rt/fibers.h:2259 | nova_fiber_spawn_into | "nova: fiber create failed (%d)\n" | if (r != MCO_SUCCESS \|\| co == NULL) | — |
+| 262 | compiler-codegen/nova_rt/fibers.h:2435 | не установлено (комментарий к nova_resume_fiber) | сообщения нет | не установлено | — |
+| 263 | compiler-codegen/nova_rt/fibers.h:2437 | не установлено (комментарий к nova_resume_fiber) | сообщения нет | не установлено | — |
+| 264 | compiler-codegen/nova_rt/fibers.h:2441 | nova_resume_fiber | "nova: fiber resume failed (%d)\n" | if (_nova_resume_r != MCO_SUCCESS) | — |
+| 265 | compiler-codegen/nova_rt/fibers.h:4213 | _nova_sleep_via_libuv | "nova: FATAL uv_timer_init failed: %s\n" | if (rc != 0) | — |
+| 266 | compiler-codegen/nova_rt/fibers.h:4221 | _nova_sleep_via_libuv | "nova: FATAL uv_timer_start failed: %s\n" | if (rc != 0) | — |
+| 267 | compiler-codegen/nova_rt/fibers.h:4379 | nova_blocking_offload | "nova: FATAL nova_blocking_offload: malloc job failed\n" | if (!job) | — |
+| 268 | compiler-codegen/nova_rt/fibers.h:4388 | nova_blocking_offload | "nova: FATAL nova_blocking_offload: submit_job failed\n" | if (nova_driver_submit_job(job) != 0) | — |
+| 269 | compiler-codegen/nova_rt/fibers.h:4397 | nova_blocking_offload | "nova: FATAL uv_queue_work failed: %s\n" | if (rc != 0) | — |
+| 270 | compiler-codegen/nova_rt/fibers.h:4713 | time_sleep_ms | "nova: FATAL Time.sleep called in fiber without active scope (D92 invariant violated)\n" | if (!_nova_active_scope \|\| _nova_active_slot < 0) | — |
+| 271 | compiler-codegen/nova_rt/fibers.h:4800 | time_sleep_ms | "nova: FATAL Time.sleep called outside any scope — D92 invariant violated. _nova_active_scope == NULL in user-code.\n" | безусловный (ветка else) | — |
+| 272 | compiler-codegen/nova_rt/runtime.c:221 | _worker_yielded_push | сообщения нет | if (!w->yielded) | — |
+| 273 | compiler-codegen/nova_rt/runtime.c:664 | не установлено (комментарий) | сообщения нет | не установлено | — |
+| 274 | compiler-codegen/nova_rt/runtime.c:737 | _nova_pool_diag_verify_free | "[R1-TRIPWIRE] WRITE-AFTER-FREE (magic clobbered)" (через _nova_pool_diag_dump, с hex-дампом) | if (magic != NOVA_POOL_DIAG_MAGIC) | — |
+| 275 | compiler-codegen/nova_rt/runtime.c:742 | _nova_pool_diag_verify_free | "[R1-TRIPWIRE] WRITE-AFTER-FREE (size clobbered)" (через _nova_pool_diag_dump, с hex-дампом) | if (size < 32 \|\| size > 4096) | — |
+| 276 | compiler-codegen/nova_rt/runtime.c:749 | _nova_pool_diag_verify_free | "nova: [R1-TRIPWIRE] first poison diff at +%llu\n" + "[R1-TRIPWIRE] WRITE-AFTER-FREE (poison diff)" (через dump) | if ((unsigned char)p[i] != NOVA_POOL_DIAG_POISON) | — |
+| 277 | compiler-codegen/nova_rt/runtime.c:774 | _nova_pool_diag_release_entry | "[R1-TRIPWIRE] DOUBLE-RELEASE (freed magic already present)" (через _nova_pool_diag_dump, с hex-дампом) | if (*(uint64_t*)((char*)ctx + 8) == NOVA_POOL_DIAG_MAGIC) | — |
+| 278 | compiler-codegen/nova_rt/runtime.c:795 | nova_spawn_ctx_diag_check_live | "[R1-TRIPWIRE] <why>" (USE-AFTER-RELEASE / CTX GARBAGE, через _nova_pool_diag_dump) | if (why) | — |
+| 279 | compiler-codegen/nova_rt/runtime.c:1005 | _worker_dispatch_ready | сообщения нет | if (!w->wake_pending) | — |
+| 280 | compiler-codegen/nova_rt/runtime.c:1494 | _nova_hash_seed_init | "nova: BCryptGenRandom failed для hash-seed init: 0x%lx\n" | if (rc != 0) | — |
+| 281 | compiler-codegen/nova_rt/runtime.c:1508 | _nova_hash_seed_init | "nova: getrandom failed для hash-seed init: %s\n" | if (n != (ssize_t)sizeof(buf)) | — |
+| 282 | compiler-codegen/nova_rt/runtime.c:1702 | nova_runtime_init | "nova: uv_async_init main_wake failed: %s\n" | if (rc != 0) | — |
+| 283 | compiler-codegen/nova_rt/runtime.c:1720 | nova_runtime_init | "nova: runtime_init OOM (%d workers)\n" | if (!_workers) | — |
+| 284 | compiler-codegen/nova_rt/runtime.c:1798 | nova_runtime_init | "nova: uv_loop_init failed: %s\n" | if (rc != 0) | — |
+| 285 | compiler-codegen/nova_rt/runtime.c:1803 | nova_runtime_init | "nova: uv_async_init failed: %s\n" | if (rc != 0) | — |
+| 286 | compiler-codegen/nova_rt/runtime.c:1820 | nova_runtime_init | "nova: uv_thread_create failed: %s\n" | if (rc != 0) | — |
+| 287 | compiler-codegen/nova_rt/runtime.c:1990 | nova_runtime_spawn_global | "nova: runtime_spawn_global: not armed + no active scope\n" | безусловный (ветка else, _nova_active_scope == NULL) | — |
+| 288 | compiler-codegen/nova_rt/runtime.c:2009 | nova_runtime_spawn_global | "nova: runtime_spawn_global: mco_create failed (%d)\n" | if (r != MCO_SUCCESS \|\| co == NULL) | — |
+| 289 | compiler-codegen/nova_rt/runtime.c:2032 | nova_runtime_spawn_global | сообщения нет | if (!target->wake_pending) | — |
+| 290 | compiler-codegen/nova_rt/runtime.c:2054 | nova_runtime_spawn_into | "nova: runtime_spawn_into: NULL scope\n" | if (!scope) | — |
+| 291 | compiler-codegen/nova_rt/runtime.c:2204 | nova_p446_sabotage_probe | "nova: p446 probe fiber create failed (%d)\n" | if (r != MCO_SUCCESS \|\| co == NULL) | — |
+
+## Сводка по файлам
+- compiler-codegen/nova_rt/alloc.c — 4 точек
+- compiler-codegen/nova_rt/alloc_boehm.c — 3 точек
+- compiler-codegen/nova_rt/alloc_rc.c — 2 точек
+- compiler-codegen/nova_rt/channels.h — 6 точек
+- compiler-codegen/nova_rt/contracts.h — 3 точек
+- compiler-codegen/nova_rt/driver.c — 4 точек
+- compiler-codegen/nova_rt/effects.c — 6 точек
+- compiler-codegen/nova_rt/effects.h — 7 точек
+- compiler-codegen/nova_rt/eventloop.c — 1 точек
+- compiler-codegen/nova_rt/fiber_arena.c — 9 точек
+- compiler-codegen/nova_rt/fibers.h — 14 точек
+- compiler-codegen/nova_rt/fs.c — 1 точек
+- compiler-codegen/nova_rt/libuv/ChangeLog — 2 точек
+- compiler-codegen/nova_rt/libuv/docs/code/udp-dhcp/main.c — 1 точек
+- compiler-codegen/nova_rt/libuv/docs/code/uvwget/main.c — 2 точек
+- compiler-codegen/nova_rt/libuv/docs/src/guide/threads.rst — 1 точек
+- compiler-codegen/nova_rt/libuv/docs/src/signal.rst — 2 точек
+- compiler-codegen/nova_rt/libuv/src/fs-poll.c — 2 точек
+- compiler-codegen/nova_rt/libuv/src/thread-common.c — 3 точек
+- compiler-codegen/nova_rt/libuv/src/threadpool.c — 7 точек
+- compiler-codegen/nova_rt/libuv/src/unix/aix.c — 7 точек
+- compiler-codegen/nova_rt/libuv/src/unix/async.c — 3 точек
+- compiler-codegen/nova_rt/libuv/src/unix/bsd-proctitle.c — 1 точек
+- compiler-codegen/nova_rt/libuv/src/unix/core.c — 3 точек
+- compiler-codegen/nova_rt/libuv/src/unix/darwin.c — 1 точек
+- compiler-codegen/nova_rt/libuv/src/unix/fs.c — 3 точек
+- compiler-codegen/nova_rt/libuv/src/unix/fsevents.c — 4 точек
+- compiler-codegen/nova_rt/libuv/src/unix/getaddrinfo.c — 1 точек
+- compiler-codegen/nova_rt/libuv/src/unix/getnameinfo.c — 1 точек
+- compiler-codegen/nova_rt/libuv/src/unix/internal.h — 1 точек
+- compiler-codegen/nova_rt/libuv/src/unix/kqueue.c — 5 точек
+- compiler-codegen/nova_rt/libuv/src/unix/linux.c — 8 точек
+- compiler-codegen/nova_rt/libuv/src/unix/os390-syscalls.c — 7 точек
+- compiler-codegen/nova_rt/libuv/src/unix/os390.c — 6 точек
+- compiler-codegen/nova_rt/libuv/src/unix/posix-hrtime.c — 1 точек
+- compiler-codegen/nova_rt/libuv/src/unix/posix-poll.c — 2 точек
+- compiler-codegen/nova_rt/libuv/src/unix/process.c — 8 точек
+- compiler-codegen/nova_rt/libuv/src/unix/signal.c — 11 точек
+- compiler-codegen/nova_rt/libuv/src/unix/stream.c — 2 точек
+- compiler-codegen/nova_rt/libuv/src/unix/sunos.c — 3 точек
+- compiler-codegen/nova_rt/libuv/src/unix/thread.c — 43 точек
+- compiler-codegen/nova_rt/libuv/src/unix/tty.c — 4 точек
+- compiler-codegen/nova_rt/libuv/src/unix/udp.c — 2 точек
+- compiler-codegen/nova_rt/libuv/src/win/error.c — 1 точек
+- compiler-codegen/nova_rt/libuv/src/win/handle.c — 1 точек
+- compiler-codegen/nova_rt/libuv/src/win/internal.h — 2 точек
+- compiler-codegen/nova_rt/libuv/src/win/signal.c — 1 точек
+- compiler-codegen/nova_rt/libuv/src/win/tcp.c — 1 точек
+- compiler-codegen/nova_rt/libuv/src/win/thread.c — 10 точек
+- compiler-codegen/nova_rt/libuv/src/win/tty.c — 2 точек
+- compiler-codegen/nova_rt/libuv/src/win/udp.c — 1 точек
+- compiler-codegen/nova_rt/libuv/src/win/winsock.c — 2 точек
+- compiler-codegen/nova_rt/libuv/test/benchmark-loop-count.c — 1 точек
+- compiler-codegen/nova_rt/libuv/test/echo-server.c — 1 точек
+- compiler-codegen/nova_rt/libuv/test/runner-unix.c — 7 точек
+- compiler-codegen/nova_rt/libuv/test/task.h — 7 точек
+- compiler-codegen/nova_rt/libuv/test/test-ipc-send-recv.c — 2 точек
+- compiler-codegen/nova_rt/libuv/test/test-ipc.c — 4 точек
+- compiler-codegen/nova_rt/net.c — 7 точек
+- compiler-codegen/nova_rt/nova_sched.h — 8 точек
+- compiler-codegen/nova_rt/runtime.c — 20 точек
+- compiler-codegen/nova_rt/sync_condvar.h — 1 точек
+- compiler-codegen/nova_rt/sync_countdown_latch.h — 1 точек
+- compiler-codegen/nova_rt/sync_primitives.h — 3 точек
+- compiler-codegen/nova_rt/sync_semaphore.h — 1 точек
+- ВСЕГО: 291 точек
