@@ -5839,7 +5839,26 @@ fn cmd_test(
 
     if aggregate {
         let table = nova_codegen::perf_timer::dump_aggregated();
-        if !table.is_empty() { eprintln!("{}", table); }
+        if !table.is_empty() {
+            eprintln!("{}", table);
+            // Plan 255 Ф.0: `scripts/tools/measure.sh` — the ONLY sanctioned
+            // way to take a timing measurement — redirects the measured
+            // command's stdout+stderr to /dev/null (so N repeated runs stay
+            // quiet), which would otherwise swallow this table entirely.
+            // NOVA_PERF_TIMER_LOG lets the SAME measure.sh-validated run
+            // also persist the breakdown to a file. Off by default (empty
+            // env var => no-op); appends (not truncates) so every run in a
+            // `-n N` series is visible for a spread sanity-check.
+            if let Ok(path) = std::env::var("NOVA_PERF_TIMER_LOG") {
+                if !path.is_empty() {
+                    use std::io::Write;
+                    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+                        let _ = writeln!(f, "=== run @ {:?} ===", std::time::SystemTime::now());
+                        let _ = writeln!(f, "{}", table);
+                    }
+                }
+            }
+        }
     }
 
     if summary.fail > 0 {

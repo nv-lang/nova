@@ -3314,6 +3314,14 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
     const CC_LOCK_RETRIES: u32 = 3;
     const CC_LOCK_DELAY_MS: u64 = 250;
 
+    // Plan 255 Ф.0: `nova test`'s cc invocation (single-TU clang compile+
+    // link, OR multi-TU compile_multi_tu_to_exe) had NO PerfTimer wrap —
+    // `cmd_build`'s "c-compile" marker (nova-cli/src/main.rs) only fires for
+    // `nova build`, never for `nova test` (which is what the mega-CU gate
+    // step actually runs). Same name ("c-compile") so both commands land in
+    // the same NOVA_PERF_TIMER_AGGREGATE=1 bucket. Zero overhead when the
+    // env switch is unset (see perf_timer.rs doc).
+    let _t_cc = crate::perf_timer::PerfTimer::new("c-compile");
     let (cc_captured, cc_status) = 'cc: {
         // Plan 209 Ф.2: multi-TU path — parallel per-part compile + link
         // (`compile_multi_tu_to_exe`), folded into the SAME
@@ -3373,6 +3381,7 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
             break 'cc (last_captured, last_status);
         }
     };
+    _t_cc.stop();
 
     if !cc_status.success() {
         let combined = format!(
@@ -3449,6 +3458,13 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
 
     // Step 3 — run с timeout.
     let run_start = Instant::now();
+    // Plan 255 Ф.0: execution stage — was entirely absent from the
+    // PerfTimer picture (compile_ms/run_ms JSON split existed since Plan
+    // 169.1, but not in the same NOVA_PERF_TIMER_AGGREGATE=1 table as the
+    // codegen/cc passes). Stopped explicitly at the same point `run_ms` is
+    // captured below — NOT at fn-scope drop, which would also swallow the
+    // post-run stdout/stderr/expectation-matching work.
+    let _t_run = crate::perf_timer::PerfTimer::new("run");
     // Plan 221.1 №158: peer set for this CU (entry + any same-module
     // folder-peers, same predicate `walk_nv_filtered_ex`/`collect_marker_sources`
     // use) — needed for two things below: (a) force `NOVA_DIAG_SEGV=1` for
@@ -3526,6 +3542,7 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
     };
     // Plan 169.1 Ф.1: capture run_ms immediately after execution completes.
     let run_ms = run_start.elapsed().as_millis();
+    _t_run.stop();
     let stdout = bytes_to_string(&run_captured.stdout);
     let stderr = bytes_to_string(&run_captured.stderr);
     let run_status = match run_captured.status {
