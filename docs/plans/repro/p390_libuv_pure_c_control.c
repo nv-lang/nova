@@ -20,6 +20,9 @@ static uv_tcp_t    server, client, incoming;
 static uv_connect_t connect_req;
 static uv_write_t  write_req;
 static uv_timer_t  bail_timer;
+static uv_idle_t   restart_idle;
+static int   mode_deferred  = 0;
+static void  restart_cb(uv_idle_t* h);
 
 static char  scratch[64];
 static int   mode_stopstart = 1;   /* 1 = наш узор, 0 = непрерывный */
@@ -62,6 +65,16 @@ static void read_cb(uv_stream_t* s, ssize_t nread, const uv_buf_t* buf) {
     printf("[cli] получено %lld байт (чтение №%d)\n", (long long)nread, reads_done);
     fflush(stdout);
 
+    if (mode_deferred) {
+        /* ТОЧНАЯ модель Nova: стоп внутри колбэка, а перезапуск — ПОЗЖЕ,
+         * вне контекста колбэка (у нас между ними файбер паркуется/просыпается).
+         * Идл-хендл даёт ровно это: следующая итерация цикла. */
+        uv_read_stop(s);
+        printf("[cli] uv_read_stop; перезапуск ОТЛОЖЕН на следующую итерацию "
+               "(модель парковки файбера)\n"); fflush(stdout);
+        uv_idle_start(&restart_idle, restart_cb);
+        return;
+    }
     if (mode_stopstart) {
         uv_read_stop(s);
         printf("[cli] uv_read_stop -> и сразу uv_read_start (наш узор)\n"); fflush(stdout);
@@ -69,6 +82,15 @@ static void read_cb(uv_stream_t* s, ssize_t nread, const uv_buf_t* buf) {
         printf("[cli] uv_read_start rc=%d (%s)\n", rc, rc ? uv_strerror(rc) : "ok");
         fflush(stdout);
     }
+}
+
+/* Перезапуск чтения ВНЕ контекста read_cb — модель «файбер проснулся». */
+static void restart_cb(uv_idle_t* h) {
+    uv_idle_stop(h);
+    int rc = uv_read_start((uv_stream_t*)&client, alloc_cb, read_cb);
+    printf("[cli] ОТЛОЖЕННЫЙ uv_read_start rc=%d (%s)\n",
+           rc, rc ? uv_strerror(rc) : "ok");
+    fflush(stdout);
 }
 
 static void on_connect(uv_connect_t* req, int status) {
@@ -101,11 +123,15 @@ static void on_bail(uv_timer_t* t) {
 
 int main(int argc, char** argv) {
     if (argc > 1 && strcmp(argv[1], "continuous") == 0) mode_stopstart = 0;
+    if (argc > 1 && strcmp(argv[1], "deferred") == 0)   mode_deferred  = 1;
     printf("=== режим: %s ===\n",
-           mode_stopstart ? "stopstart (узор нашего net.c)" : "continuous (узор Node)");
+           mode_deferred  ? "deferred (ТОЧНАЯ модель Nova: стоп в колбэке, старт позже)"
+         : mode_stopstart ? "stopstart (стоп и старт внутри колбэка)"
+                          : "continuous (узор Node)");
     fflush(stdout);
 
     loop = uv_default_loop();
+    uv_idle_init(loop, &restart_idle);
 
     struct sockaddr_in addr;
     uv_ip4_addr("127.0.0.1", 0, &addr);
