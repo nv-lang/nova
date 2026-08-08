@@ -49,5 +49,10 @@ src = "."
 # `imports.rs::lookup_dependency` / D420 (09-tooling.md).
 [dependencies]
 tls = { git = "https://github.com/nv-lang/nova-tls", version = "0.1" }
-http = { path = "../../nova-http" }
+# №444/CI: `path`-зависимость в КОММИТИМОМ манифесте нерезолвима на CI (там нет
+# соседних реп) — именно она красила `nova-gate` на шаге «Flagship examples gate»
+# сообщением «резолюция зависимостей: зависимость `http`: path ../../nova-http».
+# Локальная разработка ведётся через `nova.override.toml` (не коммитится), а
+# манифест обязан ссылаться на ОПУБЛИКОВАННОЕ. У `nova-http` теги есть (v0.1.0…v0.1.2).
+http = { git = "https://github.com/nv-lang/nova-http", version = "0.1" }
 polaris = { path = "../../nova-polaris" }

@@ -9,18 +9,15 @@ name = "compress"
 source = "git"
 git = "https://github.com/nv-lang/nova-compress"
 pin = "version:>=0.1.0, <0.2.0"
+version = "0.1.1"
 commit = "75919d9c89a0d52767d2d20ff342e69f50b6ad53"
-
-[[package]]
-name = "http"
-source = "path"
-path = "../../nova-http"
 
 [[package]]
 name = "http"
 source = "git"
 git = "https://github.com/nv-lang/nova-http"
 pin = "version:>=0.1.0, <0.2.0"
+version = "0.1.2"
 commit = "1af06c18af0039a9afe0d6ee39a344ef877ebb29"
 
 [[package]]
