@@ -11672,6 +11672,26 @@ impl<'a> TypeCheckCtx<'a> {
                         self.t_provides_method(tn, "clone")
                             || self.protocol_method_satisfiable_for(tn, "clone")
                     });
+                    // №370 (p-diag, 2026-08-08, found by window p362-advice
+                    // 2026-08-06 as Finding B): the EARLIER text here (before
+                    // this fix) told the reader "вынеси код в приватный
+                    // хелпер с `mut`-параметром напрямую... передача поля
+                    // АРГУМЕНТОМ уже даёт независимую копию на границе
+                    // вызова" — that claim is FALSE. A `mut`-parameter is
+                    // ALWAYS by-pointer in-out (D326 R3, Plan 184 Р10;
+                    // solution (a) two lines below says the exact same thing
+                    // for THIS function's own params — "вызывающий увидит
+                    // изменения после вызова"), so extracting to a NEW
+                    // helper function changes nothing: the callee still
+                    // writes through a pointer to the SAME caller storage.
+                    // Confirmed by generated C + a run (nova-bignum-shaped
+                    // repro): `original.limbs.len()` and `copy.limbs.len()`
+                    // both moved from 3 to 4 after the "copy" helper pushed
+                    // once — there never was a second buffer. `nova check`
+                    // now rejects the call-argument shape too (see
+                    // `check_ro_field_into_mut_inout_arg`, same file), so
+                    // this text no longer points at a silently-broken
+                    // workaround.
                     let solution_b = if clone_available {
                         "(b) скопируй явно — `.clone()` (D230) — если нужна \
                          НЕЗАВИСИМАЯ mutable-копия; ".to_string()
@@ -11679,12 +11699,12 @@ impl<'a> TypeCheckCtx<'a> {
                         format!(
                             "(b) поле не реализует `Clone` (нет `#impl(Clone)` на \
                              `{}`) — `.clone()` здесь НЕ сработает (D230 — auto-\
-                             derive только opt-in); либо добавь `#impl(Clone)` на \
-                             саму декларацию типа, либо вынеси код в приватный \
-                             хелпер с `mut`-параметром напрямую (`fn helper(mut x \
-                             T) -> T`, D326 in-out — передача поля АРГУМЕНТОМ уже \
-                             даёт независимую копию на границе вызова, `.clone()` \
-                             не нужен); ",
+                             derive только opt-in) — добавь `#impl(Clone)` на саму \
+                             декларацию типа, если нужна НЕЗАВИСИМАЯ mutable-копия; \
+                             приватный хелпер с `mut`-параметром НЕ ЗАМЕНЯЕТ \
+                             `.clone()` — `mut`-параметр всегда by-pointer in-out \
+                             (D326 R3), передача поля АРГУМЕНТОМ пишет через адрес \
+                             в ТО ЖЕ хранилище, копии не даёт (№370); ",
                             clone_tname.as_deref().unwrap_or("поля"),
                         )
                     };
@@ -18575,6 +18595,41 @@ impl<'a> TypeCheckCtx<'a> {
                         }
                     }
                     return Compat::Ok;
+                }
+            }
+            // №373 (p-diag, 2026-08-08, `[M-ctor-payload-lit-out-of-range-no-diag]`):
+            // `ro a Option[u8] = Some(300)` used to type-check silently and wrap
+            // (300 -> 44), asymmetric with the DIRECT `ro a u8 = 300` position two
+            // arms below, which correctly hard-errors `[E_LIT_OUT_OF_RANGE]`.
+            // Root: `materialize_literal_coercion`'s OWN ctor arm (same file,
+            // `Some`/`Ok`/`Err` against `Option[T]`/`Result[T,E]`) already threads
+            // the literal's TYPE through this exact position — the literal really
+            // IS typed `u8` here — it just never VALIDATED the range while doing
+            // so; `assignable_direct` had no ctor-payload arm at all, so the
+            // range-check two arms below was simply never reached for this shape.
+            // Recurses the FULL `assignable` (reusing that exact same range-check
+            // logic, hex-reinterpret and all — no duplicated arithmetic) ONLY on a
+            // syntactically bare literal payload, and ONLY acts on its
+            // `Compat::OutOfRange` result — any other outcome (in-range literal,
+            // non-scalar elem, non-ctor call, a variable/expr payload) falls
+            // through unchanged to the pre-existing structural check below, so
+            // this cannot narrow what already type-checks, only add the missing
+            // diagnostic for a shape that used to pass silently.
+            ExprKind::Call { func, args, .. } if args.len() == 1 => {
+                if let ExprKind::Ident(ctor) = &func.kind {
+                    if let Some(elem) = ctor_payload_expected(ctor, expected) {
+                        let payload = args[0].expr();
+                        let is_bare_lit = matches!(&payload.kind, ExprKind::IntLit(_))
+                            || matches!(&payload.kind, ExprKind::Unary { op: UnOp::Neg, operand }
+                                if matches!(operand.kind, ExprKind::IntLit(_)));
+                        if is_bare_lit {
+                            if let Compat::OutOfRange { msg } =
+                                self.assignable(payload, elem, expr_gs, exp_gs, scope)
+                            {
+                                return Compat::OutOfRange { msg };
+                            }
+                        }
+                    }
                 }
             }
             ExprKind::IntLit(v) => {
@@ -27959,7 +28014,13 @@ impl<'a> BoundCtx<'a> {
                 // `BoundCtx`, so binding-immutability of an lvalue is enforced by
                 // the assignment-target checker on the write side, not here.
                 // [M-184-mut-arg-ro-binding] — follow-up: reject `ro`-bound
-                // lvalues at the call site too.
+                // lvalues at the call site too. №370 (p-diag, 2026-08-08):
+                // the `@field`/`ident.field` axis of that follow-up is now
+                // covered — NOT here (`BoundCtx` has no ro-binding/receiver-
+                // mutability tracking at all, adding it would duplicate
+                // `TypeCheckCtx`/`ConsumeCtx` state a third time), but in
+                // `check_readonly_coerce_args` (D246-амендмент Ф.1 sibling,
+                // same file, `ConsumeCtx`-based) — see its own doc.
                 true
             }
             crate::ast::AddrChainRoot::IndexInChain
@@ -38098,6 +38159,19 @@ struct ConsumeCtx<'a> {
     /// Plan 103.9 (D174): тип receiver'а текущего метода. Используется для
     /// инференса типа при `consume g = self.method()` — `self` это SelfAccess.
     self_type: Option<String>,
+    /// №370 (p-diag, 2026-08-08): companion of `self_type` — is the CURRENT
+    /// method's receiver `mut @` (D176-дефолт: bare `@method()` is ro).
+    /// `false` for a free-fn body (no receiver at all — `self_type` is
+    /// `None` there too, this field is simply unread). Used ONLY by
+    /// `check_readonly_coerce_args`'s field-launder axis
+    /// (`[M-ro-launder-via-mut-binding]`, call-argument position) to decide
+    /// whether `@field` reads through a RO or mut receiver — mirrors
+    /// `TypeCheckCtx.current_recv_is_mut`, kept as an independent
+    /// tracker here rather than threading `TypeCheckCtx` through the
+    /// separate D131 consume-walk pass (same existing-precedent split as
+    /// `readonly_locals` vs `TypeCheckCtx.ro_binding_names` — two passes,
+    /// two small trackers of the same fact, not shared state).
+    self_recv_is_mut: bool,
     /// Plan 108.1 (D176 amend): параметры функции с `is_mut: bool`.
     /// HashMap<param_name, is_mut>.  Используется для проверки
     /// `param.mut_method(...)` → E_PARAM_NOT_MUT при is_mut=false.
@@ -38195,6 +38269,7 @@ impl<'a> ConsumeCtx<'a> {
             view_params: HashSet::new(),
             consume_closures: HashMap::new(),
             self_type: None,
+            self_recv_is_mut: false,
             param_mut: HashMap::new(),
             local_mut: HashMap::new(),
             readonly_locals: HashSet::new(),
@@ -40661,6 +40736,9 @@ fn check_consume(module: &Module, errors: &mut Vec<Diagnostic>) {
                     // Plan 103.9 (D174): track self-type for method call inference.
                     // `consume g = self.lock()` needs to know `self` is `Mutex`.
                     ctx.self_type = Some(recv.type_name.clone());
+                    // №370 companion (see field doc): receiver mutability,
+                    // for the field-launder axis of `check_readonly_coerce_args`.
+                    ctx.self_recv_is_mut = recv.mutable;
                     for it in &module.items {
                         if let Item::Type(td) = it {
                             if td.name == recv.type_name {
@@ -40996,6 +41074,56 @@ fn check_unsafe_coerce_args(
     }
 }
 
+/// №370 (p-diag, 2026-08-08) helper: best-effort bare TypeRef-name of field
+/// `field_name` on a LOCALLY-declared (`module.items` only — same "sourced
+/// from module.items ONLY, conservative false-negative for cross-file"
+/// scope caveat as `ConsumeRegistry.stack_value_type_names`/`record_field_types`
+/// next to it) `Record`/`NamedTuple` type named `type_name`. `None` when the
+/// type isn't found locally (import/external — sound false-negative, NOT a
+/// false-positive risk: the caller only fires on a positive `Some`) or the
+/// field's own type isn't a single-segment `Named` (generic/tuple/etc).
+fn local_field_type_name(module: &Module, type_name: &str, field_name: &str) -> Option<String> {
+    let field_ty = module.items.iter().find_map(|it| {
+        let Item::Type(td) = it else { return None };
+        if td.name != type_name {
+            return None;
+        }
+        match &td.kind {
+            TypeDeclKind::Record(fields) => fields.iter()
+                .find(|f| f.name == field_name)
+                .map(|f| f.ty.clone()),
+            TypeDeclKind::NamedTuple(fields) => fields.iter()
+                .find(|f| f.name == field_name)
+                .map(|f| f.ty.clone()),
+            _ => None,
+        }
+    })?;
+    match field_ty.strip_readonly() {
+        TypeRef::Named { path, .. } => path.last().cloned(),
+        _ => None,
+    }
+}
+
+/// №370 companion of `local_field_type_name`: does the LOCALLY-declared type
+/// `type_name` carry `#share` (D415) directly? Shallow — does NOT walk the
+/// memberwise share auto-derive chain (that needs the cross-module `types`
+/// map `TypeCheckCtx` builds, unavailable to this module-only D131 consume
+/// pass — see `ConsumeCtx.module`'s own doc for why threading that through
+/// is out of scope). `false` (not exempt) for a type not found locally —
+/// same conservative-false-negative-on-lookup, but note this is the ONE
+/// place that direction is NOT automatically safe: an imported type that IS
+/// transitively share-safe without its own `#share` attr would be a false
+/// POSITIVE here. Accepted narrow residual risk (documented, not silent) —
+/// `#share` types in the corpus today are exactly the small `std.sync.atomic`
+/// set, always used bare (never re-wrapped in a further local carrier type
+/// without their own `#share`), so this has no known false-positive site.
+fn local_type_is_share(module: &Module, type_name: &str) -> bool {
+    module.items.iter().any(|it| {
+        matches!(it, Item::Type(td) if td.name == type_name
+            && td.attrs.contains(&crate::ast::TypeAttr::Share))
+    })
+}
+
 fn check_readonly_coerce_args(
     ctx: &ConsumeCtx,
     args: &[CallArg],
@@ -41032,6 +41160,76 @@ fn check_readonly_coerce_args(
                          или явный `ro T`."
                             .to_string(),
                     ));
+                }
+            } else if let ExprKind::Member { obj, name: field_name } = &arg.kind {
+                // №370 (p-diag, 2026-08-08, `[M-ro-launder-via-mut-binding]`
+                // call-argument axis — found by window p362-advice
+                // 2026-08-06 as Finding B while auditing #362's own advice
+                // text): a `mut`-parameter is ALWAYS by-pointer in-out
+                // (D326 R3 — see solution (a) above, same fact stated for
+                // THIS function's own params). `helper(@mant)`/`helper
+                // (local.mant)` therefore does NOT "make a copy at the call
+                // boundary" — it writes straight through to the ro-rooted
+                // field's storage. Confirmed via generated C
+                // (`helper((&(((*nova_self).mant))))`) and a run where BOTH
+                // the "original" and the supposed "copy" moved from len 3
+                // to len 4 after one push through the helper. Mirrors
+                // `check_readonly_source_coerce`'s field-launder branch
+                // (`types/mod.rs`, `TypeCheckCtx`) one AST-shape over —
+                // that one catches the LOCAL-rebind form (`mut x = @field`),
+                // this one catches the call-ARGUMENT form.
+                let (root_type_name, root_is_ro, root_desc): (Option<&String>, bool, String) =
+                    match &obj.kind {
+                        ExprKind::SelfAccess => (
+                            ctx.self_type.as_ref(),
+                            !ctx.self_recv_is_mut,
+                            "receiver `@` (ro — метод объявлен без `mut @`, D176-дефолт)"
+                                .to_string(),
+                        ),
+                        ExprKind::Ident(root_name) => (
+                            ctx.var_types.get(root_name),
+                            ctx.readonly_locals.contains(root_name),
+                            format!("`{root_name}` (ro — L1-binding или явный `ro T`, L2)"),
+                        ),
+                        _ => (None, false, String::new()),
+                    };
+                if root_is_ro {
+                    if let Some(root_type_name) = root_type_name {
+                        if !local_type_is_share(ctx.module, root_type_name) {
+                            if let Some(field_type) =
+                                local_field_type_name(ctx.module, root_type_name, field_name)
+                            {
+                                let field_is_stack = is_fully_stack_value_name(
+                                    &field_type, &ctx.reg.stack_value_type_names);
+                                if !field_is_stack {
+                                    errors.push(Diagnostic::new(
+                                        format!(
+                                            "[E_READONLY_COERCE] поле `{field_name}`, \
+                                             прочитанное с {root_desc}, передаётся в \
+                                             `mut`-параметр — это by-pointer in-out (Plan 184 \
+                                             Р10, D326 R3), НЕ копия: callee пишет прямо в \
+                                             хранилище оригинала, запись видна оригиналу/\
+                                             вызывающему — тот же класс нарушения, что и \
+                                             field-launder через локальный `mut`-ребиндинг \
+                                             ([M-ro-launder-via-mut-binding], №370 — \
+                                             «санкционированный» обход через приватный хелпер \
+                                             с `mut`-параметром сам оказался этим же \
+                                             нарушением, найдено окном p362-advice \
+                                             2026-08-06). Решения: (a) сделай метод \
+                                             `mut @method` (receiver уже mut — можно писать \
+                                             через поле напрямую, дополнительный вызов не \
+                                             нужен); (b) скопируй поле явно через `.clone()` \
+                                             (D230), если поле реализует `Clone` \
+                                             (`#impl(Clone)`) — извлечение в отдельную \
+                                             функцию с `mut`-параметром копии НЕ даёт; \
+                                             (c) оставь цель тоже `ro`, если запись не нужна."
+                                        ),
+                                        arg.span,
+                                    ));
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
