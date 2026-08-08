@@ -1,0 +1,41 @@
+// №370 (p-diag, 2026-08-08, `[M-ro-launder-via-mut-binding]` call-argument
+// axis): found by window p362-advice 2026-08-06 as Finding B while auditing
+// #362's own advice text — the "sanctioned" workaround THAT diagnostic used
+// to recommend (extract to a private helper with a `mut`-parameter,
+// `fn helper(mut x T) -> T`) does NOT give an independent copy of a
+// heap-backed field. A `mut`-parameter is ALWAYS by-pointer in-out (D326
+// R3, Plan 184 Р10) — `helper(@mant)` writes straight through to the
+// ro-receiver's own storage. Confirmed via generated C
+// (`helper((&(((*nova_self).mant))))`) and a run where BOTH the "original"
+// and the supposed "copy" moved from len 3 to len 4 after one push.
+//
+// `nova check` must reject the call-argument shape honestly instead of
+// silently accepting it (the pre-fix behavior) — same class as
+// `check_readonly_source_coerce`'s field-launder branch (local `let`
+// rebind), one AST-shape over (call argument instead of rebind).
+//
+// EXPECT_COMPILE_ERROR это by-pointer in-out (Plan 184 Р10, D326 R3), НЕ копия
+
+module neg.p370_mut_param_helper_aliases_neg
+
+import std.collections.vec.{Vec}
+
+type P370Int(sign int, limbs Vec[u32])
+type P370Dec(mant P370Int, scale int)
+
+fn p370_helper(mut mant P370Int) -> P370Int {
+    mant.limbs.push(999)
+    mant
+}
+
+// RO-receiver method: `@mant` is not fully-stack (heap `Vec[u32]` field), so
+// passing it to `p370_helper`'s `mut`-parameter aliases the receiver's own
+// storage instead of copying it.
+fn P370Dec @normalize() -> P370Int {
+    p370_helper(@mant)
+}
+
+fn main() -> () {
+    ro d = P370Dec(P370Int(1, Vec[u32].of(1, 2, 3)), 0)
+    print(d.normalize().sign)
+}

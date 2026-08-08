@@ -1,0 +1,29 @@
+// №362/№370 (p-diag, 2026-08-08) — wording pin: `E_READONLY_COERCE`'s
+// field-launder advice used to claim (when the field's type has no `Clone`)
+// that extracting the write into a private helper with a `mut`-parameter
+// "передача поля АРГУМЕНТОМ уже даёт независимую копию на границе вызова" —
+// FALSE (a `mut`-parameter is always by-pointer in-out, D326 R3; see №370).
+// Pins the CORRECTED text so a future edit can't silently reintroduce that
+// claim. Standalone from `p362_clone_advice_no_impl_neg.nv` (which only pins
+// the downstream `E7320` code, not this specific advice wording).
+//
+// EXPECT_COMPILE_ERROR приватный хелпер с `mut`-параметром НЕ ЗАМЕНЯЕТ `.clone()`
+
+module neg.p362_no_clone_mut_helper_not_a_copy_neg
+
+import std.collections.vec.{Vec}
+
+type P362PInt(sign int, limbs Vec[u32])
+type P362PDec(mant P362PInt, scale int)
+
+fn P362PDec.new(mant P362PInt, scale int) -> P362PDec => P362PDec(mant, scale)
+
+fn P362PDec @normalize() -> P362PInt {
+    mut mant = @mant
+    mant
+}
+
+fn main() -> () {
+    ro d = P362PDec.new(P362PInt(1, Vec[u32].of(1, 2, 3)), 0)
+    print(d.normalize().sign)
+}
