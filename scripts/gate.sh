@@ -65,6 +65,7 @@ fi
 
 echo "== gate: arch-ratchet =="
 bash "$ROOT/scripts/guards/arch-ratchet.sh" || fail "arch-ratchet (emit_c growth)"
+bash "$ROOT/scripts/guards/selftest/test-arch-ratchet.sh" >/dev/null || fail "селфтест arch-ratchet (аудит стражей 2026-08-08 — был единственным без селфтеста)"
 
 # Реестр 221.1 №138 (урок 2026-07-27): копия рантайма внутри пакетной репы/
 # worktree не под git → её протухание невидимо, и она ШАДОВИТ настоящий
