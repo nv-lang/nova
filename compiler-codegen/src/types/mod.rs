@@ -40783,7 +40783,17 @@ fn check_consume(module: &Module, errors: &mut Vec<Diagnostic>) {
                     ctx.self_type = Some(recv.type_name.clone());
                     // №370 companion (see field doc): receiver mutability,
                     // for the field-launder axis of `check_readonly_coerce_args`.
-                    ctx.self_recv_is_mut = recv.mutable;
+                    //
+                    // ВАЖНО — `consume` ТОЖЕ считается: `mutable` и `consume`
+                    // взаимоисключающие (parser enforce'ит, см. `Receiver.consume`),
+                    // поэтому у ВЛАДЕЮЩЕГО получателя `mutable == false`. Первая
+                    // редакция №370 смотрела только на `mutable` и потому ложно
+                    // краснела на законном коде: `export fn TlsStream consume
+                    // @close()` передавал `@tcp` в `mut`-параметр — это не отмывание
+                    // `ro`, а распоряжение СВОИМ значением. Поймано на сборке
+                    // флагман-примеров против `nova-tls` (`stream.nv:376`) уже ПОСЛЕ
+                    // слияния — приёмка окна этого не проверила.
+                    ctx.self_recv_is_mut = recv.mutable || recv.consume;
                     for it in &module.items {
                         if let Item::Type(td) = it {
                             if td.name == recv.type_name {

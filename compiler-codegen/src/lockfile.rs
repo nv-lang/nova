@@ -502,7 +502,25 @@ fn walk_replace_scope(
 ///   3. записать `nova.lock.toml`.
 ///
 /// Вызывается из `nova build`. Возвращает собранный граф.
+/// №460: энфорс D420 в ЕДИНОЙ точке резолюции зависимостей.
+///
+/// Первая редакция (№444) ставила `check_no_cross_repo_path_deps` рядом с
+/// `check_no_committed_replace` в `nova-cli/src/main.rs` — этот участок
+/// исполняется НЕ на всех командах, и проба показала ноль срабатываний на
+/// `nova check` и `nova test`. То есть защита от дефекта, месяцами красившего
+/// CI, не работала на двух самых частых командах. Здесь — общий вход: всё, что
+/// вообще резолвит зависимости, проходит через `sync`/`load_pins`.
+fn enforce_no_cross_repo_paths(entry_pkg_dir: &Path) -> Result<()> {
+    let toml_path = entry_pkg_dir.join("nova.toml");
+    if let Some(m) = crate::manifest::parse_manifest(&toml_path, entry_pkg_dir) {
+        crate::manifest::check_no_cross_repo_path_deps(&m, &toml_path)
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
+    }
+    Ok(())
+}
+
 pub fn sync(entry_pkg_dir: &Path) -> Result<Vec<LockedDep>> {
+    enforce_no_cross_repo_paths(entry_pkg_dir)?;
     sync_ex(entry_pkg_dir, &[])
 }
 
@@ -547,6 +565,7 @@ fn sync_ex(
 /// перезаписи файла. Для read-only потребителей (например `nova run`
 /// уже собранного проекта).
 pub fn load_pins(entry_pkg_dir: &Path) -> Result<()> {
+    enforce_no_cross_repo_paths(entry_pkg_dir)?;
     if let Some(existing) = load(entry_pkg_dir)? {
         git_cache::install_lock_entries(existing.git_pins());
     }
