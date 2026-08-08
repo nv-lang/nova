@@ -18,7 +18,7 @@
 //   probe returns 0, assert fails.
 // POST-FIX (this window's committed state): prints "CORRECT (№446 closed)"
 //   to stderr, probe returns 1, assert passes.
-module nova_repro.presume_446_sabotage_probe
+module standalone.presume_446_sabotage_probe
 
 extern "C" fn nova_p446_sabotage_probe() -> int
 

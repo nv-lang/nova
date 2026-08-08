@@ -20,7 +20,7 @@
 // ENV NOVA_MAXPROCS=8
 // ENV NOVA_MAX_FIBERS=4000
 
-module nova_repro.presume_446_stress
+module standalone.presume_446_stress
 
 import std.time.duration
 

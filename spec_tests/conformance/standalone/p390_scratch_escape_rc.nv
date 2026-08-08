@@ -10,7 +10,7 @@
 // legitimately-fresh (never-shared) stream, silently skipping the real
 // `net_tcp_close()` call (№390 root, see docs/plans/221.1-bug-sweep.md).
 
-module scratch390.escaperc
+module standalone.p390_scratch_escape_rc
 
 import std.runtime.sync.{AtomicInt}
 
