@@ -8393,6 +8393,39 @@ mod plan156_slow_lane_tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// №453(а): a confirmed folder-module (2+ peers declaring the same
+    /// `module X`) with NO local `test "..."` block must show up as a
+    /// visible SKIP row, not vanish. Before the `else` branch was added to
+    /// `walk_nv_selected_ex`'s `is_folder_module` check, this directory
+    /// produced zero entries in both `out` and `excluded` — indistinguishable
+    /// from an empty/typo'd path (measured fallout: 31 real directories).
+    #[test]
+    fn walk_nv_selected_ex_reports_testless_folder_module() {
+        use super::{walk_nv_selected_ex, LaneExclusion, TestSelection};
+        use std::fs;
+        let root = std::env::temp_dir().join(format!("nova_p453_notest_fm_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("create temp root");
+        // Two co-equal peers declaring the SAME module, neither with a
+        // `test "..."` block — a real folder-module, just untested.
+        fs::write(root.join("a.nv"), "module notest_mod\n\npub fn helper() -> int {\n    return 1\n}\n").unwrap();
+        fs::write(root.join("b.nv"), "module notest_mod\n\npub fn helper2() -> int {\n    return 2\n}\n").unwrap();
+
+        let sel = TestSelection::default();
+        let mut out = vec![];
+        let mut excluded = vec![];
+        walk_nv_selected_ex(&root, &mut out, &mut excluded, &sel).unwrap();
+        assert!(out.is_empty(), "nothing runnable in a testless folder-module: {:?}", out);
+        assert_eq!(excluded.len(), 1, "the folder-module must show up ONCE in excluded, not vanish: {:?}", excluded);
+        let (path, reason) = &excluded[0];
+        assert!(path.ends_with("a.nv"), "reports the alphabetically-first peer: {:?}", path);
+        assert_eq!(*reason, LaneExclusion::NoLocalTests);
+        assert_eq!(reason.lane_name(), "no-tests");
+        assert_eq!(reason.hint(), "a local `test \"...\"` block (nothing to run standalone)");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     /// The exact SKIP detail string a user sees for a runtime-panic trap
     /// test excluded from the default lane (the owner-reported symptom:
     /// `std/src/time/rt/*_trap_test.nv` PASS 0 FAIL 0, no SKIP visible).
