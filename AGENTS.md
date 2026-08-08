@@ -65,16 +65,16 @@ nova/
 ├── nova-cli/            # User-facing CLI: nova build/run/test/check/doc
 ├── compiler-codegen/    # Rust compiler: parser, type-checker, C-backend codegen, runtime
 │   └── nova_rt/         # C runtime: effects, fibers, GC, libuv scheduler
-├── spec_tests/          # THE authoritative corpus: conformance/ (+neg/, standalone/)
+├── spec_tests/          # THE authoritative corpus: conformance/ (+neg/, standalone/), soundness/, strict_effects/
 ├── nova_tests/          # NOT tests: CI inputs only (contracts/, doc/fixtures/)
 ├── nova_tests.old/      # FROZEN ARCHIVE — nothing runs it, never add
-├── std/                 # Nova standard library source
+├── std/                 # Nova standard library source (tests: std/src/<module>/*_test.nv, peer files)
 ├── spec/                # Language specification
 │   ├── decisions/       # Design decisions (D-blocks) — READ BEFORE CHANGING SEMANTICS
 │   └── effects.md       # Effect system intro
 ├── docs/                # Developer guides
-│   ├── test-conventions.md   # Test authoring and EXPECT markers
-│   └── simplifications.md    # Running list of removed complexity
+│   ├── dev/test-conventions.md   # Test authoring and EXPECT markers
+│   └── dev/simplifications.md    # Running list of removed complexity
 ├── editors/             # Syntax highlighting plugins (VSCode, Vim, Emacs, Sublime)
 └── examples/            # Nova code examples
 ```
@@ -94,19 +94,21 @@ Nova's design is recorded in **D-blocks** in [spec/decisions/](spec/decisions/).
 **Test files live in `spec_tests/conformance/` (language, diagnostics in `neg/`, runtime in `standalone/`) or next to the std module as `std/src/<module>/*_test.nv`.** These are the ONLY two places tests live — a test lives where it is run. `nova_tests.old/` is a FROZEN ARCHIVE: nothing runs it, never add to it. (Registry 221.1 #455: this file used to say the opposite and taught agents to write into the frozen corpus.)
 
 ```nova
-// EXPECT: hello
+// EXPECT_STDOUT hello
 fn main() Io -> () => print("hello")
 ```
 
 Error tests declare the expected failure with an `EXPECT_*` marker, matched as a substring against the first ~30 lines:
 
 ```nova
-// EXPECT_COMPILE_ERROR: type mismatch
+// EXPECT_COMPILE_ERROR type mismatch
 ```
 
-Other markers: `EXPECT_RUNTIME_PANIC`, `EXPECT_EXIT` / `EXPECT_EXIT_CODE`, `EXPECT_STDOUT`, `EXPECT_STDERR`, `EXPECT_TIMEOUT`, `EXPECT_LINT_WARNING`. The runner classifies a test by its marker (not by folder or filename suffix), so `neg/` and `_neg` are human signals only. Full list: [docs/dev/test-conventions.md](docs/dev/test-conventions.md).
+(No colon after the marker name — the colon would become part of the matched substring; the corpus never uses that form.)
 
-A test file for a new feature `X` goes in `nova_tests/<category>/X.nv`. For a soundness regression, add `// SOUNDNESS_REGRESSION` in the first lines.
+Other markers: `EXPECT_RUNTIME_PANIC`, `EXPECT_EXIT` / `EXPECT_EXIT_CODE`, `EXPECT_STDOUT`, `EXPECT_STDERR`, `EXPECT_TIMEOUT`, `EXPECT_COMPILE_WARNING`. The runner classifies a test by its marker (not by folder or filename suffix), so `neg/` and `_neg` are human signals only. Full list: [docs/dev/test-conventions.md](docs/dev/test-conventions.md).
+
+A test file for a new feature `X` goes in `spec_tests/conformance/` (language semantics; negatives in `neg/`, runtime in `standalone/`) or as a peer file next to the std module, `std/src/<module>/X_test.nv`. `SOUNDNESS_REGRESSION` is not a marker the runner recognizes — it is a counter tracked only in `contracts-z3.yml`.
 
 Full marker reference: [docs/dev/test-conventions.md](docs/dev/test-conventions.md).
 
