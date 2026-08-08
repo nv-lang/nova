@@ -34,7 +34,14 @@ def main():
     ap.add_argument('document')
     ap.add_argument('note_file')
     ap.add_argument('--anchor', required=True)
-    ap.add_argument('--after', action='store_true')
+    # `--before` — поведение по умолчанию; объявлен ЯВНО, потому что документация
+    # его упоминала, а парсер не знал: первый же реальный вызов упал на
+    # `unrecognized arguments: --before`. Инструмент обязан принимать то, что
+    # обещает его собственная справка.
+    ap.add_argument('--before', action='store_true',
+                    help='вставить ПЕРЕД якорем (по умолчанию)')
+    ap.add_argument('--after', action='store_true',
+                    help='вставить ПОСЛЕ якоря')
     ap.add_argument('--marker')
     a = ap.parse_args()
 
