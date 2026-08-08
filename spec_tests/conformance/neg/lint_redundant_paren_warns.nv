@@ -9,6 +9,7 @@
 // `EXPECT_LINT_WARNING <rule_id>` — маркер реестра 221.1 №463 (владелец
 // поймал: первая версия этой фикстуры несла маркер, которого раннер НЕ
 // знал, — `parse_expect`/`detect_test_type` его молча игнорировали,
+// [INV-GUARD: check-expect-markers.sh] — описание УСТРАНЁННОГО дефекта.
 // `nova test` гонял файл как обычный позитив и НИКОГДА не проверял
 // находку; страж `scripts/guards/check-expect-markers.sh` это ловит).
 // Маркер реализован по-настоящему в `compiler-codegen/src/test_runner.rs`

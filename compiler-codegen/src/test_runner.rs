@@ -3111,6 +3111,8 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
     // часть build/check pipeline) — CONV_RULES туда не попадает вообще
     // (`nova lint`-only опциональный реестр конвенций, nova-cli::cmd_lint).
     // Без ЭТОГО блока `EXPECT_LINT_WARNING` парсился (`parse_expect` уже
+    // [INV-GUARD: check-expect-markers.sh] — описание УСТРАНЁННОГО дефекта,
+    // а не живого инварианта: сегодня неизвестный маркер ловит страж.
     // знает про него), но НИКОГДА не проверялся — фикстура на CONV_RULES-
     // правило (напр. W_REDUNDANT_PAREN, реестр 221.1 №463) не ассертила
     // ничего и оставалась зелёной, даже если правило сломано целиком

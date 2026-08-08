@@ -8163,7 +8163,9 @@ fn conv_last_nonnl(tokens: &[crate::lexer::Token], from: usize, to: usize) -> Op
     (from..to).rev().find(|&k| !matches!(tokens[k].kind, crate::lexer::TokenKind::Newline))
 }
 
-/// Индекс токена, парного `tokens[open]` (который обязан быть `LParen`).
+/// Индекс токена, парного `tokens[open]` (который обязан быть `LParen`). [INV-PROPERTY]
+/// Не инвариант: единственный вызов стоит внутри ветки `TokenKind::LParen`,
+/// то есть другой токен сюда невыразим — нарушить условие некому.
 /// Глубина считается только по `LParen`/`RParen` (остальные токены —
 /// включая `Newline`, `LBrace`/`LBracket` — на подсчёт не влияют, они не
 /// могут разбалансировать paren-глубину в синтаксически валидном файле).
