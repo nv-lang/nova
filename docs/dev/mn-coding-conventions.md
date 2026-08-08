@@ -502,6 +502,28 @@ fail-frame, потом исполняется тело. Порядок «arm sle
 supervised-scope), порядок unwind/restore путается → `abort()`. STW-пауза Boehm
 растягивает окно. См. §11 — прямое следствие.
 
+**ОБНОВЛЕНО 2026-08-08 (окно presume-cas-gate, реестр 221.1 №446/№447):
+инвариант держится СТРУКТУРНО, а не соглашением на N сайтах.** До этого
+окна restore/CAS-гейт/resume/классификация были открытым кодом на ЧЕТЫРЁХ
+независимых resume-сайтах (`_worker_main` главный цикл, `_worker_main`
+cleanup-дренаж, `_worker_run_one_fiber`, `nova_supervised_step`) — и
+ревизия плана 250 нашла ЖИВОЙ дефект №447: cleanup-дренаж резюмил файбер
+**вообще без restore** TLS (не только с опозданием — с полным отсутствием),
+плюс безусловно затирал `PARKED` на `IDLE`. Вердикт «§10 держится
+структурно», данный на более ранней фазе, оказался ложным — проверка
+смотрела только главный цикл.
+
+Фикс: ОДНА функция `nova_resume_fiber(co, tls_ctx, restore_inner,
+save_inner)` (`fibers.h`) — единственный вызов `mco_resume` в рантайме,
+держит `scripts/guards/check-single-mco-resume.sh` (реестр 221.1
+№446/№447). Restore/save для файбера — через хук (`_nova_resume_restore_ctx_tls`/
+`_nova_resume_save_ctx_tls` для трёх ctx-based сайтов в `runtime.c`,
+`_nova_resume_restore_step_tls`/`_nova_resume_save_step_tls` для
+array-based `nova_supervised_step`), но порядок restore→CAS→resume→
+restore-outer→классификация — ОДИН код, а не N копий. Новый resume-сайт
+физически не может забыть restore — он обязан пройти через
+`nova_resume_fiber`.
+
 **ПЛОХО**
 ```c
 nova_sched_park(co);                 /* уже wake-able */
@@ -513,13 +535,18 @@ _nova_fail_top = &frame;             /* fail-frame опоздал: cancel мог
 _nova_fail_top = &frame;             /* публикуем fail-frame ПЕРВЫМ */
 nova_effect_snapshot_save(&outer_effects);
 nova_sched_park(co);                 /* теперь безопасно wake-able */
-/* при resume — restore ПЕРЕД телом (см. _worker_run_one_fiber, runtime.c) */
+/* при resume — restore ПЕРЕД телом ЕДИНСТВЕННЫМ путём — см.
+ * fibers.h::nova_resume_fiber, не открывай свой mco_resume() */
 ```
 
 **ПРОВЕРКА.** Фикстура: N запаркованных файберов + один `tok.cancel()` всех разом,
 ARMED, под `NOVA_WATCHDOG_DUMP_SECS=5`. Дискриминатор — сообщение
 `cancel-throw outside any supervised scope` (`effects.h::nova_throw_cancel`) в
-stderr = сработал §11-инвариант.
+stderr = сработал §11-инвариант. Дополнительно (№446/№447): детерминированная
+регресс-проба `docs/plans/repro/presume_446_sabotage_probe.nv` (не зависит от
+выигрыша гонки — резюмит один `co` дважды напрямую и проверяет, что второй
+вызов получает `owned=false`); страж `check-single-mco-resume.sh` держит
+число `mco_resume()` вне `nova_resume_fiber` на нуле.
 
 ---
 

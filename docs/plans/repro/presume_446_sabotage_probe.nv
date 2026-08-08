@@ -1,0 +1,28 @@
+// presume_446_sabotage_probe.nv — deterministic, timing-independent proof
+// of the 221.1 №446 fix (окно presume-cas-gate, 2026-08-08).
+//
+// KEPT PERMANENTLY as a regression test (not a one-off window artifact):
+// a probability-based stress test (presume_446_stress.nv, same directory)
+// can silently stop catching a future regression if the race window
+// narrows; this probe is deterministic pass/fail on every run.
+//
+// Calls the PERMANENT FFI hook `nova_p446_sabotage_probe` (runtime.c),
+// which directly exercises `nova_resume_fiber`'s core contract: a
+// duplicate resume attempt on a co that is NOT MCO_SUSPENDED (already
+// DEAD — the exact "duplicate pop of an already-dead co" shape from the
+// registry) must return owned=false. This does NOT depend on winning the
+// organic wake_pending-duplicate-push scheduler race — it calls the single
+// resume function twice on the same co directly.
+//
+// PRE-FIX / SABOTAGED: prints "DEFECT REPRODUCED (№446 live)" to stderr,
+//   probe returns 0, assert fails.
+// POST-FIX (this window's committed state): prints "CORRECT (№446 closed)"
+//   to stderr, probe returns 1, assert passes.
+module nova_repro.presume_446_sabotage_probe
+
+extern "C" fn nova_p446_sabotage_probe() -> int
+
+test "presume-cas-gate: nova_resume_fiber refuses ownership of a duplicate-popped dead co (221.1 №446)" {
+    ro result = nova_p446_sabotage_probe()
+    assert(result == 1)
+}

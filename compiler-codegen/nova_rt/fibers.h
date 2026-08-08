@@ -2319,6 +2319,158 @@ extern __thread volatile int*   _nova_preempt_ptr;
 #  define NOVA_UNLIKELY(x) (x)
 #endif
 
+/* ─── presume-cas-gate window (221.1 №446/№447, revision plan 250, 2026-08-08):
+ * THE single `mco_resume` call-site in the whole runtime ──────────────────
+ *
+ * BEFORE this function existed, four sites each open-coded "restore TLS →
+ * CAS-gate → mco_resume → classify" independently (_worker_main main loop,
+ * _worker_main cleanup-drain, _worker_run_one_fiber, nova_supervised_step).
+ * Two of the four copies had the SAME latent bug (№446): `_nova_state_owned`
+ * defaulted to `true` OUTSIDE the `mco_status(co) == MCO_SUSPENDED` branch,
+ * so a duplicate pop of an already-DEAD `co` (source: the wake_pending
+ * duplicate-push race the code itself documents, runtime.c) skipped the CAS
+ * entirely yet still reached the dead-fiber destroy/sweep path — a SECOND
+ * `mco_destroy` + a SECOND `nova_scope_sweep_dead_child` on the same `co`,
+ * which (a) drives `pending_sweeps` negative (the `> 0` spins in this file
+ * and in runtime.c can't observe a negative counter, so
+ * `supervised_run_impl` returns without having actually waited for the
+ * sweep) and (b) reads `co` after it has ALREADY been freed by the first
+ * destroy. The cleanup-drain site had the identical shape (found by this
+ * window while instrumenting — see `docs/plans/221.1-bug-sweep.md` №446
+ * marker text; that entry names only two of the three ctx-based sites
+ * explicitly, but the drain loop, `runtime.c` `_worker_main` cleanup tail,
+ * duplicates the exact same "destroy gated on mco_status only" shape and is
+ * closed by this same unification). Separately (№447), the drain site
+ * resumed WITHOUT restoring `_nova_fail_top`/`_nova_interrupt_top`/
+ * `_nova_active_scope`/`_nova_active_slot`/effect-snapshot at all (§10 of
+ * `docs/dev/mn-coding-conventions.md`), and unconditionally overwrote
+ * PARKED with IDLE post-resume.
+ *
+ * Structural fix (mn-coding-conventions.md §0.5 — consolidation, not another
+ * guard): ONE function owns "outer TLS save → CAS gate → resume → outer TLS
+ * restore → classify → deferred park-unlock". Every call site gets an
+ * `owned=false` outcome whenever co was not SUSPENDED at entry OR the CAS
+ * was lost — in BOTH cases the caller MUST NOT touch `co` again (no
+ * destroy, no sweep, no state-store): the structural invariant this closes
+ * is "no action over `co` outside a WON CAS", enforced by construction
+ * (single call site, guarded by `scripts/guards/check-single-mco-resume.sh`)
+ * rather than by convention repeated at N call sites.
+ *
+ * `tls_ctx` + the `restore_inner`/`save_inner` hooks let each of the four
+ * call sites install/save ITS OWN notion of "the fiber's saved TLS" (a
+ * `NovaSpawnCtxBase*` for the three ctx-based sites vs a `(queue, slot)`
+ * pair for `nova_supervised_step`'s array-based bookkeeping) while sharing
+ * the "outer" (caller's) TLS save/restore, the CAS gate, the ONE
+ * `mco_resume`, the dead/parked classification, and the deferred park-
+ * unlock — all of which ARE identical across every site (they were already
+ * textually near-identical copies before this window; that duplication is
+ * exactly the "convention on N sites, not structure" pattern §11 of the
+ * same convention doc warns about). */
+typedef struct NovaResumeOutcome {
+    /* CAS won this call: `co` was resumed under this call, and the caller
+     * is now the SOLE owner — it MUST classify/dispose `co` (dead → destroy
+     * + sweep; parked → leave to the waker; yielded → requeue).
+     * false: `co` was NOT MCO_SUSPENDED at entry (already DEAD — duplicate
+     * pop, or transiently RUNNING/NORMAL on another thread) OR the CAS was
+     * lost to a concurrent resumer. Either way `co` was NOT resumed by this
+     * call and the caller MUST NOT touch it further — no destroy, no sweep,
+     * no state-store, no further mco_status read (it may already be freed
+     * by whoever legitimately owns it). */
+    bool owned;
+    /* Valid iff owned: mco_status(co) == MCO_DEAD immediately after resume. */
+    bool dead;
+    /* Valid iff owned && !dead: park_state is WAIT/DISPATCHED — the fiber
+     * genuinely parked (timer/channel wait), as opposed to a cooperative
+     * yield (preemption / runtime.yield). */
+    bool parked;
+} NovaResumeOutcome;
+
+/* Caller-supplied hooks: install (`restore_inner`) the fiber's own saved
+ * TLS into the global TLS slots before resume, and save (`save_inner`) the
+ * fiber's TLS back into its own storage after resume — BEFORE this function
+ * restores the caller's ("outer") TLS. NULL is a valid no-op (legacy
+ * one-shot fibers with no ctx, and — defensively — array-based callers that
+ * choose to inline their own restore instead). */
+typedef void (*NovaFiberTlsHook)(void* ctx);
+
+static inline NovaResumeOutcome nova_resume_fiber(mco_coro* co, void* tls_ctx,
+                                                    NovaFiberTlsHook restore_inner,
+                                                    NovaFiberTlsHook save_inner) {
+    NovaResumeOutcome out;
+    out.owned  = false;
+    out.dead   = false;
+    out.parked = false;
+
+    if (mco_status(co) != MCO_SUSPENDED) {
+        /* №446: default is NOT owned. A duplicate pop of an already-DEAD
+         * (or otherwise non-SUSPENDED) co must never fall through to
+         * destroy/sweep in the caller — gated on `out.owned` there. */
+        return out;
+    }
+    out.owned = (bool)nova_fiber_state_cas(co, NOVA_FIBER_STATE_IDLE,
+                                                NOVA_FIBER_STATE_RUNNING);
+    if (!out.owned) {
+        /* Lost the CAS: another thread holds RUNNING right now. Do not
+         * touch co in any way — no resume, no TLS restore, no further
+         * mco_status read past this point (the winner may finish and
+         * destroy it at any moment). */
+        return out;
+    }
+
+    /* Save the caller's ("outer") TLS, install the fiber's own. */
+    NovaFiberQueue*      outer_scope     = _nova_active_scope;
+    int                  outer_slot      = _nova_active_slot;
+    NovaFailFrame*       outer_fail      = _nova_fail_top;
+    NovaInterruptFrame*  outer_interrupt = _nova_interrupt_top;
+    NovaFiberErrorState* outer_error     = nova_error_state_active();
+    NovaEffectSnapshot   outer_effects;
+    nova_effect_snapshot_save(&outer_effects);
+
+    if (restore_inner) restore_inner(tls_ctx);
+
+    /* ← THE single mco_resume call-site in the runtime. Return checked
+     * (only `nova_supervised_step` used to check this pre-unification) —
+     * a non-SUCCESS result means minicoro itself rejected the resume
+     * (API misuse / corrupted coro), an unrecoverable runtime invariant
+     * violation, not a Nova-level error — `abort()` is the correct
+     * reaction per mn-coding-conventions.md §0.6 ("нарушен инвариант
+     * рантайма — abort() с дампом"). */
+    mco_result _nova_resume_r = mco_resume(co);
+    if (_nova_resume_r != MCO_SUCCESS) {
+        fprintf(stderr, "nova: fiber resume failed (%d)\n", (int)_nova_resume_r);
+        abort();
+    }
+
+    if (save_inner) save_inner(tls_ctx);
+
+    /* Restore the caller's TLS. */
+    _nova_active_scope  = outer_scope;
+    _nova_active_slot   = outer_slot;
+    _nova_fail_top      = outer_fail;
+    _nova_interrupt_top = outer_interrupt;
+    _nova_error_state_p = outer_error;
+    nova_effect_snapshot_restore(&outer_effects);
+
+    if (mco_status(co) == MCO_DEAD) {
+        out.dead = true;
+    } else {
+        int32_t ps = nova_park_state_load(co);
+        out.parked = (ps == NOVA_PARK_WAIT || ps == NOVA_PARK_DISPATCHED);
+    }
+
+    /* Deferred park-unlock: same ordering every pre-unification call site
+     * used — after classification, before returning to the caller. */
+    if (_nova_park_unlock_fn) {
+        void (*fn)(void*) = _nova_park_unlock_fn;
+        void* arg = _nova_park_unlock_arg;
+        _nova_park_unlock_fn  = NULL;
+        _nova_park_unlock_arg = NULL;
+        fn(arg);
+    }
+
+    return out;
+}
+
 /* Called from spawn-entry's catch block when the body threw.
  * Records the error message into the scope queue's slot.
  * Also signals cancellation to remaining live fibers (cooperative).
@@ -2643,6 +2795,59 @@ static inline bool _nova_on_worker_thread(void) {
     return nova_runtime_current_worker_id() >= 0;
 }
 
+/* presume-cas-gate (221.1 №446/№447): array-based TLS hooks for
+ * `nova_resume_fiber`, the flavor `nova_supervised_step` uses — its fibers
+ * are addressed by `(queue, slot)` (parallel arrays: `fiber_fail_top[i]`,
+ * `fiber_effect_snapshot[i]`, …), not by a `NovaSpawnCtxBase*` like the
+ * three worker-side ctx-based sites (runtime.c — see
+ * `_nova_resume_restore_ctx_tls` there). Bundled into a tiny on-stack
+ * struct so `nova_resume_fiber`'s single `void* tls_ctx` parameter can
+ * carry both `q` and the slot index `i`. */
+typedef struct NovaStepTlsCtx {
+    NovaFiberQueue* q;
+    int             i;
+} NovaStepTlsCtx;
+
+static void _nova_resume_restore_step_tls(void* vctx) {
+    NovaStepTlsCtx* c = (NovaStepTlsCtx*)vctx;
+    NovaFiberQueue* q = c->q;
+    int i = c->i;
+    /* Switch fail-top + interrupt-top to fiber's saved chains. Outer
+     * with-frames live on main-stack — must NOT be visible to code running
+     * on fiber-stack (longjmp across mco-boundary = UB). */
+    _nova_fail_top      = q->fiber_fail_top[i];
+    _nova_interrupt_top = q->fiber_interrupt_top[i];
+    _nova_active_scope  = q;
+    _nova_active_slot   = i;
+    /* Plan 201 trace-per-fiber: point the active error-state pointer at
+     * THIS fiber's own bucket (allocated once at slot-creation —
+     * nova_fiber_spawn_into). Falls back to outer if somehow NULL
+     * (defensive; should not happen post slot-creation). */
+    if (q->fiber_error_state[i]) {
+        _nova_error_state_p = q->fiber_error_state[i];
+    }
+    /* Per-fiber handler scoping: install fiber's saved handler-snapshot
+     * before resume. Каждый fiber видит свои `with X = h` биндинги, не
+     * handlers других fibers. */
+    if (q->fiber_effect_snapshot[i]) {
+        nova_effect_snapshot_restore(q->fiber_effect_snapshot[i]);
+    }
+}
+
+static void _nova_resume_save_step_tls(void* vctx) {
+    NovaStepTlsCtx* c = (NovaStepTlsCtx*)vctx;
+    NovaFiberQueue* q = c->q;
+    int i = c->i;
+    /* Save fiber's current handler state back (с учётом изменений сделанных
+     * fiber'ом во время выполнения — `with`-блоков push/pop). */
+    if (q->fiber_effect_snapshot[i]) {
+        nova_effect_snapshot_save(q->fiber_effect_snapshot[i]);
+    }
+    /* Save fiber's current fail/interrupt state back into its slot. */
+    q->fiber_fail_top[i]      = _nova_fail_top;
+    q->fiber_interrupt_top[i] = _nova_interrupt_top;
+}
+
 /* Single round-robin pass: resume each live fiber in the queue ONCE.
  * Returns the number of still-live fibers after the pass.
  *
@@ -2654,24 +2859,6 @@ static inline bool _nova_on_worker_thread(void) {
  */
 static inline int nova_supervised_step(NovaFiberQueue* q) {
     int alive = 0;
-    NovaFiberQueue* outer_scope = _nova_active_scope;
-    int             outer_slot  = _nova_active_slot;
-    NovaFailFrame*  outer_fail_top = _nova_fail_top;
-    NovaInterruptFrame* outer_interrupt_top = _nova_interrupt_top;
-    /* Plan 201 trace-per-fiber: save outer active error-state pointer
-     * (getter self-heals to the native per-thread bucket if never touched
-     * on this thread). Restored after each fiber's resume below — no
-     * "save fiber's current value back" step needed (the fiber's bucket
-     * is fixed for its whole lifetime; mutations already land in it
-     * in-place through the pointer, see effects.h NovaFiberErrorState). */
-    NovaFiberErrorState* outer_error_state = nova_error_state_active();
-    /* Save outer effect-handler-snapshot before scheduling fibers — после
-     * resume каждого fiber'а handlers будут восстановлены к состоянию
-     * outer flow. Фибры могут устанавливать собственные `with X = h`
-     * внутри своего тела — те состояния хранятся per-fiber, не утекают
-     * наружу. */
-    NovaEffectSnapshot outer_effects;
-    nova_effect_snapshot_save(&outer_effects);
     /* Plan 22 Ф.3/Ф.4: lookup sched-state (если есть parked fiber'ы).
      * NULL значит никто не park'ился — старая логика unchanged. */
     NovaSchedState* sched_st = nova_sched_find_state(q);
@@ -2717,79 +2904,44 @@ static inline int nova_supervised_step(NovaFiberQueue* q) {
             alive++;
             continue;
         }
-        /* Switch fail-top + interrupt-top to fiber's saved chains.
-         * Outer with-frames live on main-stack — must NOT be visible to
-         * code running on fiber-stack (longjmp across mco-boundary = UB). */
-        _nova_fail_top      = q->fiber_fail_top[i];
-        _nova_interrupt_top = q->fiber_interrupt_top[i];
-        _nova_active_scope  = q;
-        _nova_active_slot   = i;
-        /* Plan 201 trace-per-fiber: point the active error-state pointer at
-         * THIS fiber's own bucket (allocated once at slot-creation —
-         * nova_fiber_spawn_into). Falls back to outer if somehow NULL
-         * (defensive; should not happen post slot-creation). */
-        if (q->fiber_error_state[i]) {
-            _nova_error_state_p = q->fiber_error_state[i];
+        /* presume-cas-gate (221.1 №446/№447): THE single resume call — see
+         * _worker_main (runtime.c) for the full rationale. supervised_step
+         * runs under bootstrap (single thread, no concurrent resumer for
+         * THESE fibers — worker-owned ones are already filtered above), so
+         * the CAS trivially succeeds every time; it is still routed through
+         * the SAME gate for structural uniformity (mn-coding-conventions.md
+         * §0.5 — the invariant "no action over co outside a WON CAS" holds
+         * by construction across ALL FOUR sites, not by "this call site
+         * happens to be single-threaded" reasoning at one of them). */
+        NovaStepTlsCtx step_ctx = { q, i };
+        NovaResumeOutcome ro = nova_resume_fiber(co, &step_ctx,
+            _nova_resume_restore_step_tls, _nova_resume_save_step_tls);
+        if (!ro.owned) {
+            /* Should not happen under bootstrap's single-thread guarantee;
+             * defensive fallback — don't touch co, still count it alive so
+             * the drain loop doesn't exit early. */
+            alive++;
+            continue;
         }
-        /* Per-fiber handler scoping: install fiber's saved handler-snapshot
-         * before resume. Каждый fiber видит свои `with X = h` биндинги,
-         * не handlers других fibers. */
-        if (q->fiber_effect_snapshot[i]) {
-            nova_effect_snapshot_restore(q->fiber_effect_snapshot[i]);
-        }
-        /* Plan 83.4.5.7 (2026-05-23): supervised_step под bootstrap — single
-         * thread, no concurrent mco_resume race. CAS guard НЕ нужен здесь.
-         * Под armed M:N main thread СКИПАЕТ worker-owned fibers (A2 fix
-         * выше: parent_scope != NULL → continue), так что mco_resume here
-         * РЕДКАЯ ветка (только для non-worker-owned fibers — главным
-         * образом single-thread fallback фaйберы).
-         *
-         * Still need state-store post-resume для PARKED transition viability
-         * (wake's CAS PARKED→IDLE требует видимое PARKED state'а). */
-        mco_result r = mco_resume(co);
         /* Plan 83.4.5.7: state restore. DEAD если mco terminated, иначе
          * IDLE (готов к next resume). RELEASE-store видим через ACQUIRE-load
          * на следующий wake/resume. */
-        if (mco_status(co) == MCO_DEAD) {
+        if (ro.dead) {
             nova_fiber_state_store(co, NOVA_FIBER_STATE_DEAD);
         } else if (sched_st && i < sched_st->capacity && *nova_sched_parked_at(sched_st, i)
                    && nova_park_state_load(co) == NOVA_PARK_WAIT) {
             /* Fiber запарковался во время resume'а (park_state==WAIT). gopark уже
              * store'ил PARKED — НЕ overwrite'ить здесь (correction #4: only WAIT
-             * means genuinely-parked; DISPATCHED/NIL = ready → fall to IDLE). */
+             * means genuinely-parked; DISPATCHED/NIL = ready → fall to IDLE).
+             * NB: deliberately NOT `ro.parked` here — that flag treats
+             * WAIT/DISPATCHED alike (right for the worker-side ctx sites,
+             * where DISPATCHED means "requeue already in flight elsewhere");
+             * this site's own correction #4 predates unification and is
+             * WAIT-only by design — preserved exactly, not generalized. */
         } else {
             nova_fiber_state_store(co, NOVA_FIBER_STATE_IDLE);
         }
-        /* Save fiber's current handler state back (с учётом изменений
-         * сделанных fiber'ом во время выполнения — `with`-блоков push/pop). */
-        if (q->fiber_effect_snapshot[i]) {
-            nova_effect_snapshot_save(q->fiber_effect_snapshot[i]);
-        }
-        /* Save fiber's current state back; restore outer state. */
-        q->fiber_fail_top[i]      = _nova_fail_top;
-        q->fiber_interrupt_top[i] = _nova_interrupt_top;
-        _nova_fail_top      = outer_fail_top;
-        _nova_interrupt_top = outer_interrupt_top;
-        _nova_active_scope  = outer_scope;
-        _nova_active_slot   = outer_slot;
-        _nova_error_state_p = outer_error_state;  /* Plan 201 trace-per-fiber */
-        /* Restore outer handlers (clean state для следующего fiber'а
-         * или main-flow после step). */
-        nova_effect_snapshot_restore(&outer_effects);
-        /* Plan 44.5 Layer 5 deferred-unlock: call if fiber used park_with_unlock.
-         * Single-thread: no race (no concurrent wakers), just maintain protocol. */
-        if (_nova_park_unlock_fn) {
-            void (*_pufn)(void*) = _nova_park_unlock_fn;
-            void* _puarg = _nova_park_unlock_arg;
-            _nova_park_unlock_fn  = NULL;
-            _nova_park_unlock_arg = NULL;
-            _pufn(_puarg);
-        }
-        if (r != MCO_SUCCESS) {
-            fprintf(stderr, "nova: fiber resume failed (%d)\n", (int)r);
-            abort();
-        }
-        if (mco_status(co) == MCO_DEAD) {
+        if (ro.dead) {
             _nova_gc_remove_fiber_roots(co);
             mco_destroy(co);
             q->fibers[i]    = NULL;

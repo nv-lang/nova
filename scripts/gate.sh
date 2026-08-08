@@ -85,6 +85,15 @@ bash "$ROOT/scripts/guards/check-marker-registry-sync.sh" "$ROOT" || fail "ма�
 echo "== gate: bug-number-sync (№217 — каждый новый маркер нумерован в 221.1) =="
 bash "$ROOT/scripts/guards/check-bug-number-sync.sh" "$ROOT" || fail "новый маркер без № в 221.1 (правило владельца №217)"
 
+# Реестр 221.1 №446/№447 (окно presume-cas-gate, 2026-08-08): единственный
+# mco_resume в рантайме держит структурный инвариант «ни одно действие над
+# co не выполняется вне выигранного CAS» — было соглашением на 4 сайтах,
+# два из которых несли живой дефект (двойной destroy+sweep дубликата
+# мёртвого co). Страж ловит новый resume-сайт, открытый в обход
+# nova_resume_fiber (fibers.h).
+echo "== gate: single-mco-resume (№446/№447 — единственный resume-сайт в Vela) =="
+bash "$ROOT/scripts/guards/check-single-mco-resume.sh" "$ROOT" || fail "посторонний mco_resume() вне fibers.h::nova_resume_fiber (№446/№447)"
+
 
 echo "== gate: selftests стражей =="
 
