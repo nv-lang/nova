@@ -6,7 +6,8 @@
 # Состав (CLAUDE.md/dev-workflow):
 #   1) cargo build --release (nova-cli)
 #   2) мега-CU spec_tests/conformance ОДНИМ CU: exit=0 И строка "PASS: N  FAIL: 0" присутствует
-#   3) nova check std/src (БЕЗ NOVA_STD_PATH): канон "PASS: 144  FAIL: 27  WARN: 1057"
+#   3) nova check std/src (БЕЗ NOVA_STD_PATH): канон "PASS: 147  FAIL: 26  WARN: 1078"
+#      (ассертится ТОЛЬКО FAIL — см. ~:212; PASS/WARN растут от новых файлов законно)
 #   4) nova lint --deny std/src: канон 0 находок
 #   5) nova lint --deny spec_tests: канон 0 находок (221.1 №416 хвост)
 #   6) флагман examples/flagship/aggregator --strict-effects: строка "built:"
@@ -95,6 +96,10 @@ bash "$ROOT/scripts/guards/check-bug-number-sync.sh" "$ROOT" || fail "новый
 echo "== gate: expect-markers (неизвестный EXPECT_* раннер молча игнорирует — №453) =="
 bash "$ROOT/scripts/guards/check-expect-markers.sh" "$ROOT" || fail "неизвестный EXPECT_* в тесте"
 bash "$ROOT/scripts/guards/selftest/test-check-expect-markers.sh" >/dev/null || fail "селфтест expect-markers"
+
+echo "== gate: doc-truth (нормативная дока врёт именем EXPECT_* или неисполнимой командой — №455) =="
+bash "$ROOT/scripts/guards/check-doc-truth.sh" "$ROOT" || fail "неизвестный EXPECT_* или неисполнимая команда nova в AGENTS.md/docs/dev(/docs/guide для маркеров)"
+bash "$ROOT/scripts/guards/selftest/test-check-doc-truth.sh" >/dev/null || fail "селфтест doc-truth"
 
 echo "== gate: invariant-discipline (норма об инвариантах — всеобъемлюща) =="
 bash "$ROOT/scripts/guards/check-invariant-discipline.sh" "$ROOT" || fail "новый инвариант на честном слове (conventions-governance)"

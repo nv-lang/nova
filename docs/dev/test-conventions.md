@@ -167,8 +167,10 @@ sentences 512, collation 227800). Размер коммит-фикстуры р�
   (C-codegen pipeline), не интерпретатор.
 - **Размещение — ДВА яруса (директива владельца 2026-06-28; уточнена 2026-07-06 дважды —
   действует ЭТА редакция):**
-  1. **`spec_tests/conformance/` — ЯЗЫК + ПРЕЛЮДИЯ, и НИЧЕГО кроме** (в `spec_tests/` НЕТ других
-     каталогов). Один folder-module = ОДИН compile unit = один std-parse → быстрый регресс. Сюда
+  1. **`spec_tests/conformance/` — ЯЗЫК + ПРЕЛЮДИЯ** (внутри `conformance/` — 34 тематических
+     подкаталога, включая `neg/` и `standalone/`; рядом с `conformance/` в `spec_tests/` есть ещё
+     `soundness/` и `strict_effects/` — отдельные наборы, не входят в мега-CU conformance). Один
+     folder-module `conformance/` = ОДИН compile unit = один std-parse → быстрый регресс. Сюда
      идут ТОЛЬКО тесты **семантики самого языка**: D-блоки синтаксиса, типов, эффектов,
      консьюм-модели, дженериков, паттернов, FFI-ABI, прелюдии (`Vec`/`str`/`Option`/`Result`/
      числовые ширины и т.п.). Пример язык-D: d54 (as-cast), d85 (`?`-return), d102 (named args),
@@ -190,12 +192,11 @@ sentences 512, collation 227800). Размер коммит-фикстуры р�
        ломает компиляцию ВСЕГО модульного CU. Подпапка `neg/` — отдельные CU, модуль не трогают.
      - Прогон: `nova test std` (или таргетно `nova test std/src/<модуль>`); негативы подхватываются
        тем же обходом (`--compile-error`).
-     - **Известный гейт (2026-07-06):** whole-module test-CU `std/src/http` пока НЕ компилируется —
-       cross-module коллизия имён sum-типов (`ErrorKind` есть и в `std.http`, и в
-       `encoding.compress`; name-keyed `sum_schema_registry` берёт не ту схему → P67-LEGACY panic
-       в `emit_match`). Семейство [M-172.1-var-types-cu-name-leak]. До фикса позитивный
-       http-тест (d358) временно живёт в `nova_tests/http` (library-mode import не триггерит баг);
-       миграция — Plan 182.
+     - **(ЗАКРЫТО, историческое):** известный гейт 2026-07-06 — whole-module test-CU `std/src/http`
+       не компилировался (cross-module коллизия имён sum-типов `ErrorKind`, [M-172.1-var-types-cu-name-leak]),
+       позитивный http-тест `d358` временно жил в `nova_tests/http`. Закрыт по Plan 182: `d358` слит
+       в `model_test` (коммит `b3d49c3a9`). `nova_tests/http` больше не существует; `std.http` с тех
+       пор вынесен в отдельный пакет-репозиторий (`nova-http`), в этой репе `std/src/http` нет.
   3. **В `nova_tests/` НОВЫЕ тесты НЕ пишутся** (корпус заморожен; судьба — Plan 182 санация).
 
 - **Линт-гейт CI — жёсткий deny (Plan 185 Ф.3-хвост / Plan 212 №6, включён 2026-07-18):**
@@ -272,19 +273,11 @@ test "insert and get" {
 }
 ```
 
-Запуск: `nova test nova_tests std` — stdlib-файлы проходят через тот же pipeline что и `nova_tests/` (folder_module, slow-lane, EXPECT-маркеры).
+Запуск: `nova test std` — stdlib-файлы (inline `test`-блоки и пир-файлы `*_test.nv`) проходят через folder_module-обход (slow-lane, EXPECT-маркеры); `nova_tests/` в прогоне НЕ участвует (ЗАМОРОЖЕН, см. «ГДЕ ЖИВУТ ТЕСТЫ — ПРОСТАЯ СХЕМА» в начале документа).
 
-**Тесты в `nova_tests/`** — для интеграционных сценариев, проверки публичного API снаружи, тестов взаимодействия нескольких модулей:
+**(ИСТОРИЧЕСКОЕ, для контекста — так это было устроено ДО решения владельца 2026-08-08.)** Интеграционные сценарии, проверка публичного API снаружи, тесты взаимодействия нескольких модулей раньше жили в `nova_tests/` (`str/` — публичный API str снаружи, `plan91/` — stdlib API, `plan103_*/` — sync-примитивы, `plan91_12/` — net). Эта роль сегодня — `spec_tests/conformance/standalone/` (языковые/рантайм-сценарии) либо пир-файл `std/src/<модуль>/<имя>_test.nv` (cross-module использование всё ещё в контракте модуля).
 
-```
-nova_tests/
-├── str/          ← публичный API str снаружи (char_at, split, conversions…)
-├── plan91/       ← stdlib API (sort, text methods…)
-├── plan103_*/    ← sync-примитивы (Mutex, Channel…)
-└── plan91_12/    ← net (TcpListener, UdpSocket…)
-```
-
-**Правило выбора:** если тест проверяет *реализацию* модуля — inline в `std/`. Если проверяет *использование* — в `nova_tests/`.
+**Правило выбора (актуальное):** тест проверяет *реализацию* модуля — inline `test`-блок в `std/`. Тест проверяет *публичный контракт* модуля — пир-файл `std/src/<модуль>/<имя>_test.nv`. Новых тестов в `nova_tests/` не пишем (ЗАМОРОЖЕН).
 
 ---
 
@@ -737,14 +730,17 @@ SKIP-строками, а НЕ голым «PASS: 0 FAIL: 0» (неотличи�
 
 ### Полный checklist для агента при написании тестов
 
+> Цели: `spec_tests/conformance/` (язык) или `std/src/<модуль>/*_test.nv` (stdlib-контракт)
+> — см. «ГДЕ ЖИВУТ ТЕСТЫ» в начале документа. `nova_tests/` ЗАМОРОЖЕН, новый тест туда не идёт.
+
 1. **Определи категорию**: позитивный / compile-error / runtime-panic (канон — `panics`-клаузула peer-файлом, D348) / stdout/stderr.
 2. **Выбери директорию — СНАЧАЛА ищи существующий folder-module темы** (приоритет: минимум CU). Новая папка/модуль — только если folder-module невозможен (исключения выше).
-3. **Добавляй ПИР-ФАЙЛОМ в существующий folder-module** (тот же `module nova_tests.<тема>`); НЕ создавай standalone-модуль на задачу. Конфликт имён → `priv(file)`/префикс, НЕ новый модуль. Имя файла — **описательное** `<ссылка>_<что_тестирует>.nv` (не только код-ссылка).
+3. **Добавляй ПИР-ФАЙЛОМ в существующий folder-module** (тот же `module spec_tests.conformance` в `conformance/`, либо `module` целевого stdlib-модуля в `std/src/<модуль>/`); НЕ создавай standalone-модуль на задачу. Конфликт имён → `priv(file)`/префикс, НЕ новый модуль. Имя файла — **описательное** `<ссылка>_<что_тестирует>.nv` (не только код-ссылка).
 4. **Негативные → `neg/`**: EXPECT_COMPILE_ERROR → `neg/<name>.nv`, `module neg.<name>` (суффикс `_neg` обязателен только ВНЕ `neg/`; контейнер `test`/`fn` — любой, не исполняется).
 5. **Медленные → `_slow.nv`**: по бюджету [D298](../../spec/decisions/09-tooling.md#d298-test-suite-time-budget) (единственная точка правды; локальный порог «run > 2s» ретирован · согласовано); создай fast-variant.
 6. **Проверь полноту**: happy path + edge cases + взаимодействие фич.
 7. **Проверь детерминизм**: `assert` проверяет гарантированный контракт, не эвристику планировщика.
-8. **Запусти**: `nova test nova_tests/<dir>/` — все PASS перед коммитом.
+8. **Запусти**: `nova test spec_tests/conformance` (язык) или `nova test std` (stdlib) — все PASS перед коммитом.
 
 ---
 
@@ -756,8 +752,8 @@ SKIP-строками, а НЕ голым «PASS: 0 FAIL: 0» (неотличи�
 # build nova CLI (one-time, or after changes to compiler)
 cd nova-cli && cargo build && cd ..
 
-# run all tests
-nova-cli/target/debug/nova test
+# run all tests (path required since Plan 172.6 — both live suites)
+nova-cli/target/debug/nova test spec_tests std
 ```
 
 Логика runner'а (детект toolchain'а, EXPECT-маркеры, parallel scheduler,
@@ -769,7 +765,7 @@ per-test timeout, JSON output) живёт в Rust в
 | Флаг | Что |
 |---|---|
 | `--filter <substr>` | Прогнать только тесты содержащие substring |
-| `[PATH]...` | Один или несколько путей к директориям с тестами (multi-path, Plan 36.D.1). Без аргументов — `nova_tests/`. Пример: `nova test nova_tests std` |
+| `[PATH]...` | Один или несколько путей к директориям с тестами (multi-path, Plan 36.D.1). **Обязателен** — без аргументов `nova test` завершается ошибкой (Plan 172.6, `nova test requires at least one path`). Пример: `nova test spec_tests std` |
 | `--mode dev\|release` | dev (default) или release с `-O3 -flto` |
 | `--toolchain auto\|clang\|msvc\|gcc` | Compiler. Default: auto (Clang → MSVC → GCC) |
 | `--timeout <secs>` | Per-test timeout. Default 60 |
@@ -785,28 +781,28 @@ per-test timeout, JSON output) живёт в Rust в
 
 **Дефолтный прогон** (всё параллельно через Clang):
 ```sh
-nova test
+nova test spec_tests std
 ```
 
 **Только подмножество** (TDD-loop):
 ```sh
-nova test --filter syntax/closure
-nova test --filter "negative_capability/"
+nova test spec_tests --filter syntax/closure
+nova test spec_tests --filter "negative_capability/"
 ```
 
 **Release-сборка** (с оптимизациями для perf-проверки):
 ```sh
-nova test --mode release
+nova test spec_tests --mode release
 ```
 
 **JSON output для custom CI parser'ов**:
 ```sh
-nova test --format json --results-file ci-results.jsonl
+nova test spec_tests --format json --results-file ci-results.jsonl
 ```
 
 **JUnit XML для CI** (GitHub Actions / GitLab CI / Jenkins / Azure DevOps):
 ```sh
-nova test --format junit --retries 2 > test-results.xml
+nova test spec_tests --format junit --retries 2 > test-results.xml
 ```
 Стандартный JUnit XML schema — нативно парсится всеми mainstream CI:
 ```xml
@@ -828,35 +824,35 @@ nova test --format junit --retries 2 > test-results.xml
 
 **TAP-13 output** (для legacy harnesses):
 ```sh
-nova test --format tap | tee results.tap
+nova test spec_tests --format tap | tee results.tap
 ```
 
 **TDD: перезапустить только упавшие**:
 ```sh
-nova test                     # первый прогон — результаты пишутся в target/last-test-results.json
-nova test --rerun-failed       # только бывшие fail-ы; намного быстрее
+nova test spec_tests std      # первый прогон — результаты пишутся в target/last-test-results.json
+nova test spec_tests std --rerun-failed       # только бывшие fail-ы; намного быстрее
 ```
 
 Явный путь к results-file:
 ```sh
-nova test --results-file target/last-test-results.json
+nova test spec_tests --results-file target/last-test-results.json
 # правишь код...
-nova test --results-file target/last-test-results.json --rerun-failed
+nova test spec_tests --results-file target/last-test-results.json --rerun-failed
 ```
 
 **Sequential** (для отладки race conditions):
 ```sh
-nova test --jobs 1
+nova test spec_tests --jobs 1
 ```
 
 **Долгие benchmark-тесты** (override default 60s timeout):
 ```sh
-nova test --timeout 300 --filter concurrency/sleep_leak
+nova test spec_tests --timeout 300 --filter concurrency/sleep_leak
 ```
 
 **Принудительный MSVC** (если хотите тестить под MSVC ABI):
 ```sh
-nova test --toolchain msvc
+nova test spec_tests --toolchain msvc
 ```
 
 ### Запуск одного теста
@@ -1202,8 +1198,8 @@ Multi-line patterns не поддерживаются. Runner склеивает
 
 ## Расширения для своего проекта
 
-Если в твоём проекте появился use-case для нового маркера (например
-`EXPECT_LINT_WARNING`) — **сначала** проверь, не покроет ли существующий
+Если в твоём проекте появился use-case для нового маркера вида `EXPECT_<ИМЯ>`
+(гипотетический пример, не имя из этого документа) — **сначала** проверь, не покроет ли существующий
 один из стандартных (D89/D348). Если нужен новый — обсуди с авторами Nova
 (возможно, маркер должен быть стандартизирован через D-block).
 
