@@ -1,0 +1,20 @@
+// №373 (p-diag, 2026-08-08, `[M-ctor-payload-lit-out-of-range-no-diag]`):
+// found by window p172-lit-ctor-eq 2026-08-06 while working on #364. A literal
+// out of range for the target scalar inside a `Some(..)`/`Ok(..)`/`Err(..)`
+// ctor payload used to type-check silently and WRAP at runtime (300 -> 44 for
+// `u8`) — asymmetric with the direct `let`-position (`ro a u8 = 300`), which
+// correctly hard-errors `[E_LIT_OUT_OF_RANGE]`. Root: `assignable_direct` had
+// no ctor-payload arm at all recursing the range-check into `Some`/`Ok`/`Err`'s
+// single argument, even though `materialize_literal_coercion`'s OWN ctor arm
+// (same file) already threads the literal's TYPE through this exact position
+// (the literal really IS typed `u8` here) — it just never validated the range
+// while doing so.
+//
+// EXPECT_COMPILE_ERROR [E_LIT_OUT_OF_RANGE] 300 > u8.MAX (255)
+
+module neg.p373_ctor_payload_lit_out_of_range_neg
+
+fn main() -> () {
+    ro a Option[u8] = Some(300)
+    print(a)
+}

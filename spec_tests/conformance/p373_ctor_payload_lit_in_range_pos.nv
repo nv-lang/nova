@@ -1,0 +1,25 @@
+// №373 (p-diag, 2026-08-08) — positive counterpart to
+// `neg/p373_ctor_payload_lit_out_of_range_neg.nv`: the new ctor-payload
+// range-check arm in `assignable_direct` (`compiler-codegen/src/types/mod.rs`)
+// must fire ONLY on an out-of-range literal — an IN-range literal payload
+// (`Some(200)` against `Option[u8]`) must still type-check AND carry the
+// correct element type through (no silent wraparound; the value read back
+// out must be exactly what was written in). Part of the SINGLE
+// `spec_tests.conformance` folder-module.
+module spec_tests.conformance
+
+test "373: Some(200) against Option[u8] — in-range literal still accepted" {
+    ro a Option[u8] = Some(200)
+    match a {
+        Some(v) => assert(v == 200)
+        None => assert(false)
+    }
+}
+
+test "373: Err(200) against Result[str,u8] — in-range literal in Err slot" {
+    ro r Result[str, u8] = Err(200)
+    match r {
+        Ok(_) => assert(false)
+        Err(e) => assert(e == 200)
+    }
+}

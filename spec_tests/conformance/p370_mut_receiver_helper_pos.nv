@@ -1,0 +1,25 @@
+// №370 (p-diag, 2026-08-08) — positive counterpart to
+// `neg/p370_mut_param_helper_aliases_neg.nv`: the new
+// `check_readonly_coerce_args` field-launder axis (call-argument →
+// by-pointer in-out `mut`-parameter, `compiler-codegen/src/types/mod.rs`)
+// must fire ONLY when the field is read off a RO root. The exact same
+// `helper(@field)` shape from a `mut @`-receiver method is legitimate —
+// the receiver is already mutable, so aliasing its own storage through the
+// helper call is exactly what the caller asked for, not a readonly-freeze
+// escape. Pins that the fix doesn't over-broaden into rejecting the sound
+// case. Part of the SINGLE `spec_tests.conformance` folder-module.
+module spec_tests.conformance
+
+import std.collections.vec.{Vec}
+
+export type P370QInt(sign int, limbs Vec[u32])
+export type P370QDec(mant P370QInt, scale int)
+
+export fn p370q_helper(mut mant P370QInt) -> P370QInt {
+    mant.limbs.push(999)
+    mant
+}
+
+export fn P370QDec mut @normalize() -> P370QInt {
+    p370q_helper(@mant)
+}
