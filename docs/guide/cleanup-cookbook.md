@@ -33,7 +33,7 @@ fn File consume @cleanup(_outcome ScopeOutcome) -> () => @do_close()
 
 fn read(path str) Fail[IoError] -> str {
     consume f = File.open(path)? {
-        f.read_all()?    // @cleanup fires explicitly
+        f.read_all()!!    // @cleanup fires explicitly
     }
 }
 ```
@@ -67,15 +67,15 @@ func process(db *DB) error {
 // Nova:
 fn Transaction consume @cleanup(outcome ScopeOutcome) Fail[DbError] -> () {
     match outcome {
-        Success   => @commit()?
-        Failure(_) => @rollback()?
+        Success   => @commit()!!
+        Failure(_) => @rollback()!!
         Panic(_)  => @rollback_emergency()
     }
 }
 
 fn process(db Db) Fail[DbError] -> () {
     consume tx = db.begin()? {
-        do_work()?
+        do_work()!!
     }
     // commit/rollback based on outcome — automatic.
 }
@@ -96,7 +96,7 @@ try (Transaction tx = db.begin()) {
 ```nova
 // Nova:
 consume tx = db.begin()? {
-    do_work()?
+    do_work()!!
 }
 // outcome routing is built into Cleanup.@cleanup
 ```
@@ -119,7 +119,7 @@ Nova, outcome is first-class.
 ```nova
 // Nova:
 consume tx = await db.begin()? {
-    await do_work()?
+    await do_work()!!
 }
 ```
 
@@ -138,7 +138,7 @@ file.use { f ->
 ```nova
 // Nova:
 consume f = file {
-    f.read_text()?
+    f.read_text()!!
 }
 ```
 
@@ -154,12 +154,12 @@ type Transaction { conn Connection, id int }
 
 fn Transaction consume @cleanup(outcome ScopeOutcome) Fail[DbError] -> () {
     match outcome {
-        Success      => @conn.commit(@id)?
+        Success      => @conn.commit(@id)!!
         Failure(err) => {
             if err is DbError.Deadlock {
-                @conn.rollback(@id)?           // graceful, retry-friendly
+                @conn.rollback(@id)!!           // graceful, retry-friendly
             } else {
-                @conn.rollback_force(@id)?     // hard rollback
+                @conn.rollback_force(@id)!!     // hard rollback
             }
         }
         Panic(_) => @conn.rollback_force(@id)
@@ -171,8 +171,8 @@ fn Transaction @exit_timeout_ms() -> int => @conn.config.tx_timeout_ms
 
 fn process_order(db Db, order Order) Fail[OrderError] Db -> Receipt {
     consume tx = db.begin()? {
-        ro id = db.insert_order(order)?
-        db.notify_warehouse(id)?
+        ro id = db.insert_order(order)!!
+        db.notify_warehouse(id)!!
         return Receipt { order_id: id }
     }
 }
@@ -184,12 +184,12 @@ fn process_order(db Db, order Order) Fail[OrderError] Db -> Receipt {
 type File { fd int }
 
 fn File consume @cleanup(_outcome ScopeOutcome) Fail[IoError] -> () =>
-    @do_close()?
+    @do_close()!!
 
 fn read_config(path str) Fail[IoError] -> Config {
     consume f = File.open(path, mode: ReadOnly)? {
-        ro raw = f.read_all()?
-        Config.parse(raw)?
+        ro raw = f.read_all()!!
+        Config.parse(raw)!!
     }
 }
 ```
@@ -222,11 +222,11 @@ type TcpStream { /* opaque */ }
 fn TcpStream consume @cleanup(outcome ScopeOutcome) Fail[IoError] -> () {
     match outcome {
         Success => {
-            @send_eof()?
-            @wait_for_ack(timeout_ms: 1000)?
-            @close()?
+            @send_eof()!!
+            @wait_for_ack(timeout_ms: 1000)!!
+            @close()!!
         }
-        Failure(_) => @close()?         // abort cleanup, no graceful
+        Failure(_) => @close()!!         // abort cleanup, no graceful
         Panic(_)   => @close()
     }
 }
@@ -235,8 +235,8 @@ fn TcpStream @exit_timeout_ms() -> int => 5000   // a grace close can take time
 
 fn handle_request(addr str) Fail[IoError] Net -> () {
     consume sock = TcpStream.connect(addr)? {
-        sock.write_all(request)?
-        sock.read_all()?
+        sock.write_all(request)!!
+        sock.read_all()!!
     }
 }
 ```
@@ -252,7 +252,7 @@ fn PooledConn consume @cleanup(_outcome ScopeOutcome) -> () => {
 
 fn query(pool ConnPool, sql str) Fail[DbError] -> Rows {
     consume conn = pool.acquire()? {
-        conn.execute(sql)?
+        conn.execute(sql)!!
     }
 }
 ```
@@ -282,15 +282,15 @@ Don't use `consume X = ... { }` for transfer patterns — there is no cleanup.
 ## Section 3 — Application lifecycle pattern
 
 ```nova
-fn main() Io -> () {
+fn main() Io Fail[IoError] -> () {
     with Application = Application.handler(default_exit_timeout_ms: 10_000) {
         // setup phase
-        ro server = HttpServer.bind(":8080")?
+        ro server = HttpServer.bind(":8080")!!
 
         // deep inside some constructor:
         // Application.register_finalizer(|| metrics.flush())
 
-        server.serve()?
+        server.serve()!!
     }
     // handler.on_exit fires finalizers in reverse-order (LIFO topo)
 }
@@ -327,11 +327,11 @@ extern "C" fn sqlite_close(conn SqliteConn) Fail[IoError] -> ()
 
 // Wrap external resource in Cleanup:
 fn SqliteConn consume @cleanup(_outcome ScopeOutcome) Fail[IoError] -> () =>
-    sqlite_close(@)?
+    sqlite_close(@)!!
 
 fn query_users(db_path str) Fail[IoError] -> []User {
     consume conn = sqlite_open(db_path) {
-        conn.query("SELECT * FROM users")?
+        conn.query("SELECT * FROM users")!!
     }
 }
 ```
@@ -351,7 +351,7 @@ fn CurlHandle consume @cleanup(_outcome ScopeOutcome) -> () => curl_cleanup(@)
 fn fetch(url str) Fail[NetError] -> []byte {
     consume h = curl_init() {
         h.set_url(url)
-        h.perform()?
+        h.perform()!!
     }
 }
 ```

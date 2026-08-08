@@ -59,8 +59,8 @@ SMT-решатель. Модель — **enforce-with-elision** (D24 / Plan 140)
 С версии 0.1 доказательство **выключено по умолчанию** и включается флагом:
 
 ```bash
-nova check --verify   # доказать контракты при проверке
-nova build --verify   # доказать и убрать доказанные проверки из бинаря
+nova check --verify   # prove contracts while checking
+nova build --verify   # prove, and drop proven checks from the binary
 ```
 
 ### Почему выключено по умолчанию
