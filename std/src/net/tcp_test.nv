@@ -98,6 +98,44 @@ test "net2/tcp: read observes clean EOF as Ok(0)" {
     }
 }
 
+test "net2/tcp: second read() after partial data + close observes clean EOF (№390 regression)" {
+    // №390 (docs/plans/221.1-bug-sweep.md): a SECOND read() on a stream
+    // that already delivered a partial chunk, after the peer closes, used
+    // to hang forever — root cause was a compiler escape-analysis gap
+    // (X.new(...) constructor-call RHS never heap-promoted without an
+    // explicit type annotation), NOT libuv/Windows/Vela. TcpStream.from_raw
+    // builds its `rc *mut AtomicInt` refcount cell via exactly this
+    // pattern; the dangling pointer made TcpStream.@close()'s refcount
+    // gate silently skip the real socket close, so the peer's FIN never
+    // got sent and the second read waited on a connection that was never
+    // actually closed.
+    with Net = real_net() {
+        ro ch = Channel.new(1)   // server port → client
+
+        supervised {
+            spawn {
+                ro port = match ch.rx.recv() { Some(x) => x  None => 0 as u16 }
+                mut conn = must(TcpStream.connect(SocketAddr.loopback(port)))
+                mut buf []u8 = []u8.new()
+                buf.resize(1, 0 as u8)
+                ro n1 = must_io(conn.read(buf))
+                assert(n1 == 1)
+                ro n2 = must_io(conn.read(buf))
+                assert(n2 == 0)   // clean EOF on the SECOND read — used to hang
+                conn.close()
+            }
+            spawn {
+                mut lst = must(TcpListener.bind(SocketAddr.loopback(0)))
+                ch.tx.send(lst.local_port())
+                mut srv = must(lst.accept())
+                assert(must_io(srv.write("X")) == 1)
+                srv.close()
+                lst.close()
+            }
+        }
+    }
+}
+
 test "net2/tcp: read_text / write_str text conveniences" {
     with Net = real_net() {
         ro ch = Channel.new(1)   // server port → client (D415: без mut-захвата lst)

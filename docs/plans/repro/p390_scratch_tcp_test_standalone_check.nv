@@ -1,0 +1,57 @@
+// SCRATCH (p390 diagnosis, NOT a committed repro): standalone byte-for-byte
+// mirror of the new regression fixture added to std/src/net/tcp_test.nv
+// ("second read() after partial data + close observes clean EOF (№390
+// regression)"). std/src/net is a folder-module — any `nova test`/`nova
+// test-build` invocation there merges ALL files into one compile unit,
+// which hits a pre-existing, unrelated CC-FAIL in addr.c
+// (`NovaRes_nova_int_NovaValue_IoError *` / `nova_unit` mismatch,
+// confirmed present identically with AND without the №390 fix — not
+// caused by this window). This standalone copy proves the FIXTURE's own
+// logic is sound, independent of that pre-existing gate.
+
+module scratch390.tcptestcheck
+
+import std.net.{TcpListener, TcpStream, SocketAddr, real_net}
+import std.io.{IoError}
+
+fn must[T](r Result[T, NetError]) -> T {
+    match r {
+        Ok(v)  => v
+        Err(e) => panic("check: unexpected Err: ${e}")
+    }
+}
+
+fn must_io[T](r Result[T, IoError]) -> T {
+    match r {
+        Ok(v)  => v
+        Err(e) => panic("check: unexpected Err: ${e}")
+    }
+}
+
+test "net2/tcp: second read() after partial data + close observes clean EOF (№390 regression)" {
+    with Net = real_net() {
+        ro ch = Channel.new(1)
+
+        supervised {
+            spawn {
+                ro port = match ch.rx.recv() { Some(x) => x  None => 0 as u16 }
+                mut conn = must(TcpStream.connect(SocketAddr.loopback(port)))
+                mut buf []u8 = []u8.new()
+                buf.resize(1, 0 as u8)
+                ro n1 = must_io(conn.read(buf))
+                assert(n1 == 1)
+                ro n2 = must_io(conn.read(buf))
+                assert(n2 == 0)
+                conn.close()
+            }
+            spawn {
+                mut lst = must(TcpListener.bind(SocketAddr.loopback(0)))
+                ch.tx.send(lst.local_port())
+                mut srv = must(lst.accept())
+                assert(must_io(srv.write("X")) == 1)
+                srv.close()
+                lst.close()
+            }
+        }
+    }
+}

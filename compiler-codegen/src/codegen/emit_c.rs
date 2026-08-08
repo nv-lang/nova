@@ -116,6 +116,34 @@ pub(crate) const RUNTIME_DEFINED_TYPES: &[&str] = &[
     "CancelError",
 ];
 
+/// №390 fix: the subset of `RUNTIME_DEFINED_TYPES` that are confirmed
+/// `AllocKind::Value` records with a hand-written `NovaValue_<Name>` C
+/// struct (`sync_primitives.h`) — needed by `escape_analyze`'s `X.new(...)`
+/// constructor-call inference (`infer_value_record_from_expr`), which
+/// otherwise only sees types reachable via `module.items`/`peer_files`.
+/// These sync-primitive types are RUNTIME_DEFINED_TYPES-gated (their
+/// TypeDecl is skipped for forward-decl emission — "the header owns the
+/// struct", see the `RUNTIME_DEFINED_TYPES.contains` branch a few hundred
+/// lines below) and consequently do NOT reliably appear in the flattened
+/// `Module` escape_analyze receives whenever their home module
+/// (`std/src/runtime/sync.nv`) isn't a *direct* peer of the entry file
+/// (only transitively reached, e.g. via `std.net`'s own internal use) —
+/// confirmed empirically: `docs/plans/221.1-bug-sweep.md` №390 root cause,
+/// `std/src/net/tcp.nv::TcpStream.from_raw`'s `mut counter = AtomicInt.new(1)`
+/// silently failed to heap-promote for exactly this reason, leaving `&counter`
+/// dangling once `from_raw` returned.
+///
+/// Deliberately NARROWER than the full `RUNTIME_DEFINED_TYPES` list: entries
+/// like `Option`/`Result`/`Error` are NOT plain value-records in this sense
+/// (generic/tagged, no address-escaping `X.new(...)` pattern used against
+/// them by user `.nv` code the way `AtomicInt`/`AtomicBool`/etc. are) — only
+/// list types actually safe to treat this way.
+pub(crate) const RUNTIME_VALUE_RECORD_CTOR_TYPES: &[&str] = &[
+    "AtomicI8", "AtomicI16", "AtomicI32", "AtomicI64",
+    "AtomicU8", "AtomicU16", "AtomicU32", "AtomicU64",
+    "AtomicInt", "AtomicUint", "AtomicBool",
+];
+
 /// Plan 39 Issue A: classification of `with`-block trail type for
 /// choosing which NovaInterruptFrame slot to use.
 ///
@@ -31316,7 +31344,16 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         if let Some(type_name) = type_name_opt {
                             // Only switch if this is actually a known value-record
                             // declared в this module (i.e. NovaValue_<X>-style C ty).
-                            if self.value_record_names.contains(&type_name) {
+                            // №390 fix: OR one of the RUNTIME_DEFINED_TYPES sync
+                            // primitives (AtomicInt & co.) — these are hand-C-
+                            // backed and consequently don't always populate
+                            // `value_record_names` via the module.items forward-
+                            // decl loop (see RUNTIME_VALUE_RECORD_CTOR_TYPES's own
+                            // doc comment for why); escape_analyze already applied
+                            // the same fallback when it flagged `binding` promoted.
+                            if self.value_record_names.contains(&type_name)
+                                || RUNTIME_VALUE_RECORD_CTOR_TYPES.contains(&type_name.as_str())
+                            {
                                 self.pending_value_record_heap_promote = Some(type_name.clone());
                                 self.promoted_value_record_locals.insert(binding.clone());
                                 // Override binding C-type к pointer (NovaValue_X*).
@@ -31395,10 +31432,26 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 } else {
                     val
                 };
-                // Plan 127 Ф.3: clear the transient signal на случай если
-                // emit_record_lit не consumed его (defensive — emit_record_lit
-                // должен take() его на entry в value-record path).
-                self.pending_value_record_heap_promote = None;
+                // №390 fix: if this binding was flagged value-record-promoted
+                // (line ~31314 above) but the RHS was NOT a RecordLit —
+                // e.g. `mut counter = AtomicInt.new(1)`, a constructor CALL
+                // recognized by escape_analyze's `infer_value_record_from_expr`
+                // `X.new(...)` arm — `emit_record_lit`'s heap-promote
+                // consumption (which only fires for an actual RecordLit expr)
+                // never ran, so the signal survives to here unconsumed: `val`
+                // is the PLAIN by-value call result, but `ty_c` was already
+                // overridden to the pointer type above. `.take()` (not a
+                // plain reset) lets us detect this leak and wrap the value
+                // ourselves — same alloc+copy shape as `primitive_heap_promoted`
+                // below. Root cause: docs/plans/221.1-bug-sweep.md №390 —
+                // without this, either a compile-time type mismatch (caught by
+                // docs/plans/repro/p390_scratch_escape_rc.nv) or, if types
+                // happened to coincide, a binding that LOOKS promoted
+                // (pointer-typed) but whose pointee is still stack-allocated —
+                // `&binding`-derived pointers stored elsewhere (e.g. a
+                // returned record's field) go dangling the instant the
+                // constructing fn returns.
+                let value_record_call_leaked = self.pending_value_record_heap_promote.take().is_some();
                 self.expected_record_type = saved_expected;
                 // Plan 91.8a.2 followup: restore protocol-box hint after array
                 // literal emission consumed it.
@@ -31670,6 +31723,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             box_c_type, binding_c, val, vtable_instance
                         ));
                     }
+                } else if value_record_call_leaked {
+                    // №390 fix: value-record-promoted binding whose RHS was a
+                    // constructor CALL (`X.new(...)`), not a RecordLit — see
+                    // the comment at the `.take()` site above. `ty_c` is
+                    // already the pointer type (`NovaValue_X*`, set at the
+                    // promotion-detection site); allocate storage for the
+                    // POINTEE and copy the plain by-value call result in.
+                    let base_ty = ty_c.trim_end_matches('*');
+                    self.line(&format!(
+                        "{} {} = ({})nova_alloc(sizeof({}));",
+                        ty_c, binding_c, ty_c, base_ty
+                    ));
+                    self.line(&format!("*{} = {};", binding_c, val));
                 } else if primitive_heap_promoted {
                     // Plan 118 Ф.1: heap-promote primitive local.
                     // Emit: `C_ty* name = (C_ty*)nova_alloc(sizeof(C_ty));`
