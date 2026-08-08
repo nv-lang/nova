@@ -1,0 +1,12 @@
+// Ф.1 ось «алиас `[]T` ≡ `Vec[T]`»: спеллинг `[]T`.
+// Близнец — f2_vec.nv, тот же метод спеллингом `Vec[T]`. C обязан совпасть.
+type Src { n int }
+fn Src @view() -> []int => []int.new(4)
+fn use_view() -> int {
+    ro s = Src { n: 1 }
+    ro v = s.view()
+    v.cap()
+}
+fn main() -> () {
+    assert(use_view() == 4)
+}

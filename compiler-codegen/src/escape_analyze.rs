@@ -1119,6 +1119,208 @@ fn expr_is_member_chain(e: &Expr) -> bool {
 }
 
 // =============================================================================
+// Plan 172.15 Ф.1 — условия (2)+(3) свойства `__sret`
+// =============================================================================
+//
+// `__sret` (план 172.14) — КЛАСС оптимизации: возврат составного значения в
+// буфер вызывающего вместо `nova_alloc`. Решение владельца 2026-08-08 —
+// периметр задаётся СВОЙСТВОМ из трёх обязательных условий, а не перечнем
+// форм:
+//
+//   (1) значение read-only — от записи до возврата не мутируется;
+//   (2) строится ВНУТРИ функции и записывается РОВНО ОДИН раз;
+//   (3) не покидает функцию иначе как через возврат.
+//
+// Условия (2)+(3) живут ЗДЕСЬ, а не в кодогене, потому что это тот же вопрос
+// о путях значения, на который отвечает анализ убегания плана 127 (модуль
+// целиком), и обход должен быть ПОЛНЫМ по формам выражений — ровно как
+// `ie_mark_all`. Третьего разбора не заводится: кодоген (`emit_c.rs`,
+// `sret_fn_eligible`) спрашивает отсюда, а сторону ВЫЗЫВАЮЩЕГО (можно ли
+// отдать стек-слот) по-прежнему решает `EscapeResult::ident_escapes`.
+
+/// Plan 172.15 Ф.1: хвостовое выражение тела `fd` — единственная точка, где
+/// строится возвращаемое значение, — или `None`, если свойство не выполнено.
+///
+/// «Единственная» проверяется буквально: во всём теле ВНЕ хвоста не должно
+/// быть ни одного производителя значения (record-литерала) и ни одного
+/// раннего выхода (`return`/`throw`). Тогда:
+///
+/// * условие (2) выполнено — запись ровно одна, в хвосте;
+/// * условие (3) выполнено СТРУКТУРНО: производитель — временное хвостового
+///   выражения, у него нет имени, через которое значение могло бы уйти
+///   куда-то кроме `return`;
+/// * условие (1) на участке «запись → возврат» выполнено пусто: между ними
+///   нет ни одной программной точки. Объявленную часть условия (1)
+///   (`-> mut`, fluent `-> @`) проверяет кодоген — она о сигнатуре, не о теле.
+///
+/// Блок-обёртки прозрачны: `unsafe { … }` (и любой блок-выражение) не меняет
+/// ни значения, ни момента записи, поэтому на применимость оптимизации влиять
+/// не должен — прямое решение владельца 2026-08-08.
+pub fn sret_sole_tail_producer(fd: &FnDecl) -> Option<&Expr> {
+    match &fd.body {
+        FnBody::Expr(e) => sret_unwrap_tail(e),
+        FnBody::Block(b) => {
+            if !sret_stmts_are_producer_free(&b.stmts) {
+                return None;
+            }
+            sret_unwrap_tail(b.trailing.as_deref()?)
+        }
+        FnBody::External => None,
+    }
+}
+
+/// Plan 172.15 Ф.1: хвост сквозь прозрачные блок-обёртки, БЕЗ проверок —
+/// для эмиссии, когда свойство уже установлено `sret_sole_tail_producer`.
+/// Обёртка `unsafe { … }` на применимость оптимизаций влиять не должна
+/// (решение владельца 2026-08-08), поэтому взводить проброс `_out` надо на
+/// том выражении, которое значение действительно СТРОИТ, а не на обёртке.
+pub fn sret_tail_expr(e: &Expr) -> &Expr {
+    match &e.kind {
+        ExprKind::Block(b) => match b.trailing.as_deref() {
+            Some(t) => sret_tail_expr(t),
+            None => e,
+        },
+        _ => e,
+    }
+}
+
+/// Разворачивает прозрачные блок-обёртки хвоста (в т.ч. `unsafe { … }`),
+/// проверяя, что их собственные стейтменты производителей не содержат.
+fn sret_unwrap_tail(e: &Expr) -> Option<&Expr> {
+    match &e.kind {
+        ExprKind::Block(b) => {
+            if !sret_stmts_are_producer_free(&b.stmts) {
+                return None;
+            }
+            sret_unwrap_tail(b.trailing.as_deref()?)
+        }
+        _ => Some(e),
+    }
+}
+
+/// Ни один стейтмент не строит значение и не выходит из функции раньше.
+fn sret_stmts_are_producer_free(stmts: &[Stmt]) -> bool {
+    !stmts.iter().any(sret_stmt_builds_or_exits)
+}
+
+fn sret_stmt_builds_or_exits(stmt: &Stmt) -> bool {
+    match stmt {
+        // Ранний выход — вторая точка возврата: под `__sret` он записал бы
+        // буфер вызывающего второй раз (`return Self{…}`) либо оставил бы его
+        // недописанным. Оба исхода — нарушение (2).
+        Stmt::Return { .. } | Stmt::Throw { .. } => true,
+        Stmt::Let(d) => sret_expr_builds(&d.value),
+        Stmt::Expr(e) => sret_expr_builds(e),
+        Stmt::Assign { target, value, .. } => {
+            sret_expr_builds(target) || sret_expr_builds(value)
+        }
+        Stmt::TupleAssign { lhs, rhs, .. } => {
+            lhs.iter().any(sret_expr_builds) || rhs.iter().any(sret_expr_builds)
+        }
+        Stmt::Defer { body, .. } => sret_expr_builds(body),
+        Stmt::ConsumeScope { init, body, .. } => {
+            sret_expr_builds(init) || sret_block_builds(body)
+        }
+        Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => sret_expr_builds(expr),
+        Stmt::Const(_) | Stmt::Break(_) | Stmt::Continue(_) => false,
+        Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => false,
+    }
+}
+
+fn sret_block_builds(b: &Block) -> bool {
+    b.stmts.iter().any(sret_stmt_builds_or_exits)
+        || b.trailing.as_deref().map_or(false, sret_expr_builds)
+}
+
+/// Полный обход по формам выражений (тот же периметр, что `ie_mark_all`):
+/// содержит ли выражение производителя значения — record-литерал — либо
+/// ранний выход. Умолчание `_ => false` достижимо только для листовых форм
+/// (литералы, идентификаторы, пути), которые значений-записей не строят.
+fn sret_expr_builds(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::RecordLit { .. } => true,
+        ExprKind::Call { func, args, .. } => {
+            sret_expr_builds(func) || args.iter().any(|a| sret_expr_builds(a.expr()))
+        }
+        ExprKind::Member { obj, .. } => sret_expr_builds(obj),
+        ExprKind::Index { obj, index } => sret_expr_builds(obj) || sret_expr_builds(index),
+        ExprKind::Unary { operand, .. } => sret_expr_builds(operand),
+        ExprKind::Binary { left, right, .. } => {
+            sret_expr_builds(left) || sret_expr_builds(right)
+        }
+        ExprKind::Block(b) => sret_block_builds(b),
+        ExprKind::If { cond, then, else_ } => {
+            sret_expr_builds(cond)
+                || sret_block_builds(then)
+                || else_.as_ref().map_or(false, sret_else_builds)
+        }
+        ExprKind::IfLet { scrutinee, then, else_, .. } => {
+            sret_expr_builds(scrutinee)
+                || sret_block_builds(then)
+                || else_.as_ref().map_or(false, sret_else_builds)
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            sret_expr_builds(scrutinee)
+                || arms.iter().any(|arm| {
+                    arm.guard.as_ref().map_or(false, sret_expr_builds)
+                        || match &arm.body {
+                            MatchArmBody::Expr(e2) => sret_expr_builds(e2),
+                            MatchArmBody::Block(b) => sret_block_builds(b),
+                        }
+                })
+        }
+        ExprKind::While { cond, body, .. } => {
+            sret_expr_builds(cond) || sret_block_builds(body)
+        }
+        ExprKind::WhileLet { scrutinee, body, .. } => {
+            sret_expr_builds(scrutinee) || sret_block_builds(body)
+        }
+        ExprKind::Loop { body, .. } => sret_block_builds(body),
+        ExprKind::For { iter, body, .. } | ExprKind::ParallelFor { iter, body, .. } => {
+            sret_expr_builds(iter) || sret_block_builds(body)
+        }
+        ExprKind::ClosureLight { body, .. } => match body {
+            ClosureBody::Expr(e2) => sret_expr_builds(e2),
+            ClosureBody::Block(b) => sret_block_builds(b),
+        },
+        ExprKind::ClosureFull(sig) => match &sig.body {
+            FnBody::Block(b) => sret_block_builds(b),
+            FnBody::Expr(e2) => sret_expr_builds(e2),
+            FnBody::External => false,
+        },
+        ExprKind::Lambda { body, .. } => sret_expr_builds(body),
+        ExprKind::Spawn(inner) => sret_expr_builds(inner),
+        ExprKind::Supervised { body, cancel, .. } => {
+            cancel.as_ref().map_or(false, |c| sret_expr_builds(c)) || sret_block_builds(body)
+        }
+        ExprKind::Detach(b) | ExprKind::Blocking(b) => sret_block_builds(b),
+        ExprKind::TupleLit(elems) => elems.iter().any(sret_expr_builds),
+        ExprKind::ArrayLit(elems) => elems.iter().any(|elem| match elem {
+            ArrayElem::Item(e2) | ArrayElem::Spread(e2) => sret_expr_builds(e2),
+        }),
+        ExprKind::InterpolatedStr { parts } => parts.iter().any(|p| match p {
+            InterpStrPart::Expr { expr, .. } => sret_expr_builds(expr),
+            _ => false,
+        }),
+        ExprKind::Try(inner) | ExprKind::Bang(inner) => sret_expr_builds(inner),
+        ExprKind::Coalesce(a, b) => sret_expr_builds(a) || sret_expr_builds(b),
+        ExprKind::As(inner, _) | ExprKind::Is(inner, _) => sret_expr_builds(inner),
+        ExprKind::TurboFish { base, .. } => sret_expr_builds(base),
+        ExprKind::With { bindings, body } => {
+            bindings.iter().any(|b| sret_expr_builds(&b.handler)) || sret_block_builds(body)
+        }
+        _ => false,
+    }
+}
+
+fn sret_else_builds(eb: &ElseBranch) -> bool {
+    match eb {
+        ElseBranch::Block(b) => sret_block_builds(b),
+        ElseBranch::If(e2) => sret_expr_builds(e2),
+    }
+}
+
+// =============================================================================
 // Tests
 // =============================================================================
 
