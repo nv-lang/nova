@@ -1,0 +1,18 @@
+// №534 companion fixture (owner correction 2026-08-10): proves the
+// bare-name free-fn resolution fix does NOT break LEGAL same-module,
+// cross-file overloading. `10-overloading.md` §"LLM-критерий": all
+// overloads of one name must live in one MODULE (folder of co-equal
+// files) — NOT necessarily one file. A file-level shadow (an earlier,
+// wrong version of the №534 fix) would have hidden `describe(str)`
+// (declared in the sibling co-equal file `p534_legal_overload_b.nv`,
+// same `module p534_legal_overload`) from this file's own call —
+// exactly the regression the spec forbids.
+module standalone.p534_legal_overload
+
+fn describe(x int) -> str => "int:${x}"
+
+export fn call_str_from_a() -> str => describe("hi")
+
+test "same-module cross-file overload: file A's call reaches file B's sibling overload (534 companion)" {
+    assert(call_str_from_a() == "str:hi")
+}

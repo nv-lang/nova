@@ -1,0 +1,6 @@
+// №534 companion — see `p534_legal_overload_a.nv` header. Same module as
+// its co-equal peer, DIFFERENT file: declares the `str` overload of
+// `describe`, called from `a.nv`'s `call_str_from_a`.
+module standalone.p534_legal_overload
+
+fn describe(x str) -> str => "str:${x}"

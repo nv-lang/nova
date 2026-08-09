@@ -1,0 +1,15 @@
+// №534: a SECOND decoy — bare-name `routes`, but 1-arg (different arity
+// than the caller's own 0-arg `routes()`), in yet another unrelated module.
+// Mirrors nova-polaris's real carrier: `rt.background_tasks_smoke.nv` /
+// `rt.background_tasks_serve_router_smoke.nv` both declare
+// `fn routes(ran_tx ChanWriter[bool]) -> Router` alongside
+// `rt.handle_connection_smoke.nv`'s unrelated 0-arg `fn routes() -> Router`
+// and `polaris` (mux_test.nv)'s own 0-arg `fn routes() -> Router` — FOUR
+// same-bare-name candidates total is what the real CU carries.
+module p534_routes_bare_name.p534_routes_3_shadow_arity1
+
+fn routes(seed int) -> []int {
+    [seed]
+}
+
+export fn touch_routes_arity1() -> int => routes(7).len()

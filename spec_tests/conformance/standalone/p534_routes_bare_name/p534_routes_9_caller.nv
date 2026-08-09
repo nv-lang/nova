@@ -1,0 +1,19 @@
+module p534_routes_bare_name.p534_routes_9_caller
+
+fn routes() -> []int {
+    [1, 2, 3]
+}
+
+fn sum_len(prefix int, xs []int) -> int => prefix + xs.len()
+
+export fn call_routes_in_spawn() -> int {
+    ro (tx, rx) = Channel[int].new(1)
+    supervised {
+        spawn {
+            match sum_len(10, routes()) {
+                n => tx.try_send(n)
+            }
+        }
+    }
+    rx.try_recv() ?? -1
+}

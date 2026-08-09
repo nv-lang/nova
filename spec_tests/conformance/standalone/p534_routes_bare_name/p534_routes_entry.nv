@@ -1,0 +1,15 @@
+module p534_routes_bare_name.p534_routes_entry
+
+import ./p534_routes_9_caller.{call_routes_in_spawn}
+import ./p534_routes_1_param.{use_routes}
+import ./p534_routes_2_shadow.{touch_routes_c}
+import ./p534_routes_3_shadow_arity1.{touch_routes_arity1}
+import ./p534_routes_4_shadow_arity1b.{touch_routes_arity1b}
+
+test "routes call inside spawn, param 'routes' in peer module (534 repro)" {
+    assert(call_routes_in_spawn() == 13)
+    assert(use_routes(["a", "b"]) == 2)
+    assert(touch_routes_c() == 2)
+    assert(touch_routes_arity1() == 1)
+    assert(touch_routes_arity1b() == 2)
+}

@@ -1,0 +1,15 @@
+// №534: a same-arity, same-named (bare `routes`) free fn in a totally
+// UNRELATED file/module, never imported by `p534_routes_a` — a plain
+// (non-exported, non-`priv(file)`) top-level `fn` was CU-wide visible to
+// the checker's bare-Ident free-fn resolver (`self.sig.fn_decls`, filtered
+// ONLY by `file_private`), competing on equal footing with
+// `p534_routes_a::routes()` for an UNQUALIFIED call `routes()` made from
+// `p534_routes_a.nv` — landing on 0/2+ arity-compatible candidates
+// (ambiguous) and silently dropping the call from `resolved_callees`.
+module p534_routes_bare_name.p534_routes_2_shadow
+
+fn routes() -> []int {
+    [9, 9]
+}
+
+export fn touch_routes_c() -> int => routes().len()
