@@ -336,21 +336,37 @@ export fn TcpStream consume @cleanup(_outcome ScopeOutcome) -> () {
 /// C-side split-refcount, and a live share-copy would break the
 /// "last-owner-closes" invariant.
 ///
-/// №498 fix (Plan 258 Ф.1): the sole-ownership check and the rc mutation are
-/// ONE atomic `compare_exchange(1, 0)` — a live share()-copy (rc != 1) makes
-/// the CAS fail WITHOUT touching `rc`, so the panic path leaves the counter
-/// exactly as the surviving copies last saw it. The previous
-/// `fetch_sub(1) != 1` form decremented rc UNCONDITIONALLY, before checking
-/// whether the precondition held — on the panic path the copies that
-/// survived the panicking fiber were left owning a permanently-decremented
+/// №498 fix (Plan 258 Ф.1): check BEFORE mutate — `@rc.load()` is read first,
+/// and `@rc.fetch_sub(1)` runs ONLY when it reads exactly 1. A live
+/// share()-copy (rc != 1) panics WITHOUT ever touching `rc`, so the copies
+/// that survive the panicking fiber see the counter exactly as they last
+/// left it. The previous `fetch_sub(1) != 1` form decremented rc
+/// UNCONDITIONALLY, before checking whether the precondition held — on the
+/// panic path the survivors were left owning a permanently-decremented
 /// shared counter (state changed ahead of a check that can fail, with no
 /// rollback on failure).
+///
+/// `load()` then `fetch_sub()` (two ops, not one CAS instruction — `@rc`'s
+/// `compare_exchange` hits an unrelated, pre-existing codegen gap through a
+/// `*mut AtomicInt` receiver, `[E_CODEGEN_TYPE_UNKNOWN]`; №TBD, reported
+/// separately) is race-free HERE specifically because `@` (`s`, the value
+/// `into_split()` consumes) is Nova's ONLY handle that can ever increment
+/// this `rc` — `@share()` requires possessing `s` itself, and `s` is a
+/// linear value with exactly one owner at a time. So `rc == 1` observed by
+/// `load()` means "no other live share()-copy exists at this instant", and
+/// nothing else can create one before our own `fetch_sub` runs; any
+/// concurrent `fetch_sub` from an ALREADY-live copy's own `close()` is
+/// self-contained (each copy accounts for its own unit) and cannot make our
+/// observed precondition stale. A live copy CAN concurrently decrement `rc`
+/// down to 1 as part of ITS OWN close — that only means it released its
+/// unit before we observed sole ownership, which is a legal interleaving,
+/// not a race on the invariant we depend on.
 #stable(since = "0.1")
 export fn TcpStream consume @into_split() Net -> (TcpReadHalf, TcpWriteHalf) {
-    match @rc.compare_exchange(1, 0) {
-        Ok(())  => {}
-        Err(_n) => panic("TcpStream.into_split(): stream has live share()-copies — split requires sole ownership (close the copies first)")
+    if @rc.load() != 1 {
+        panic("TcpStream.into_split(): stream has live share()-copies — split requires sole ownership (close the copies first)")
     }
+    @rc.fetch_sub(1)
     ro h = @handle
     Net.mark_split(TcpStream.from_raw(h))
     split_pair(TcpReadHalf.from_raw(h), TcpWriteHalf.from_raw(h))
