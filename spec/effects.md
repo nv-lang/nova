@@ -178,8 +178,8 @@ ro captured = Db                      // 3. позиция выражения = 
 ```nova
 fn run_handler[T, E](body fn() Fail[E] -> T) Fail[E] -> T => body()
 
-fn user_handler() Time Fail[FwErr] -> int => 42   // умеет БОЛЬШЕ, чем требует параметр
-ro v = run_handler(user_handler)                  // законно
+fn user_handler() Time Fail[FwErr] -> int => 42
+ro v = run_handler(user_handler)
 ```
 
 Частный случай: `fn() -> T` не предъявляет требований и потому принимает функцию

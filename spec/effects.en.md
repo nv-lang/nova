@@ -160,8 +160,8 @@ obstacle.
 ```nova
 fn run_handler[T, E](body fn() Fail[E] -> T) Fail[E] -> T => body()
 
-fn user_handler() Time Fail[FwErr] -> int => 42   // does MORE than the parameter requires
-ro v = run_handler(user_handler)                  // legal
+fn user_handler() Time Fail[FwErr] -> int => 42
+ro v = run_handler(user_handler)
 ```
 
 Special case: `fn() -> T` requires nothing and therefore accepts a function with
