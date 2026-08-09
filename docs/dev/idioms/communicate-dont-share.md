@@ -31,7 +31,7 @@ join'ится с родителем, та же гонка.)
 ### 1. Канал — передать значение (предпочтительный путь)
 
 ```nova
-ro (tx, rx) = Channel.new(1)
+ro (tx, rx) = Channel[int].new(1)
 supervised {
     spawn { tx.try_send(compute()) }
 }
