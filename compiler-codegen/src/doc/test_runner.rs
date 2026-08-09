@@ -138,6 +138,27 @@ fn run_one(t: &DocTest, original_source: Option<&str>, entry_path: Option<&Path>
         }
     }
 
+    // №TBD (nova-doc gate): mirror `cmd_check`'s pipeline order EXACTLY
+    // (nova-cli/src/main.rs, [M-per-file-check-no-prelude-protocol-scope]
+    // marker) — `alpha_rename` then `number_exprs` MUST run on the
+    // fully-assembled (post-import-inline) module BEFORE `check_module`.
+    // Without the `ExprId` stamp from `number_exprs`, the checker's own
+    // `resolved_types_buf` channel is inert (every id reads back as
+    // `ExprId::UNSET`) and `infer_expr_type` silently degrades to `None`
+    // for exprs that depend on it — which made `check_readonly_source_
+    // coerce`'s scalar-primitive exemption (`is_fully_stack_value`) treat
+    // an untyped `ro int` local as non-scalar and false-fire
+    // `E_READONLY_COERCE` on legal code (repro: any doc-test on a fixture
+    // living inside a real repo — the injected `std/prelude` merge pulls
+    // in `Vec::@msort`'s `ro mid = ...; mut b = mid`, which only
+    // type-checks cleanly through `nova check`/`nova build` because THOSE
+    // pipelines stamp ids first). The return value (a resolved-types seed
+    // for codegen) is intentionally discarded here — doc-tests have no
+    // codegen stage; only the ID-stamping side effect on `module` matters,
+    // same as `cmd_check`'s own discard.
+    crate::alpha_rename::alpha_rename(&mut module);
+    let _ = crate::number_exprs::number_exprs(&mut module);
+
     // 2. Type-check.
     if let Err(errs) = crate::types::check_module(&module) {
         if compile_fail {
