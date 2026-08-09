@@ -1,0 +1,125 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// examples/flagship/http_proxy_chain/upstream.nv — the upstream proxy
+// abstraction: what the bridge dials through to reach the real internet,
+// and the `all_proxy`-compatible URL form it can be configured from
+// (plan 249 §8/§9).
+
+module flagship.http_proxy_chain
+
+import std.net.{TcpStream}
+
+type UpstreamError enum
+    | ConnectFailed { reason str }
+    | UnsupportedScheme { scheme str }
+    | BadUrl { detail str }
+
+export fn UpstreamError @to_str() -> str {
+    match @ {
+        ConnectFailed { reason }     => "upstream connect failed: ${reason}"
+        UnsupportedScheme { scheme } => "unsupported upstream URL scheme '${scheme}' (supported: socks5, socks5h)"
+        BadUrl { detail }            => "malformed upstream URL: ${detail}"
+    }
+}
+
+// WORKAROUND FOR A LIVE COMPILER DEFECT, NOT THE RECOMMENDED SHAPE — see
+// plan 249 §9 for the full write-up.
+//
+// The right shape here is a protocol interface (`type Dialer protocol {
+// @dial(host str, port int) -> ... }`) with one record-per-proxy-protocol
+// implementation and a `scheme -> implementation` factory function: adding
+// SOCKS4 would then be a NEW FILE plus one line in the factory, and no
+// existing implementation would need to change at all. `spec/decisions/
+// 02-types.md:4156` promises exactly this (existential + dynamic vtable
+// dispatch, plan 56).
+//
+// That shape does not compile TODAY: a protocol-typed factory that returns
+// different concrete implementations from different branches — exactly what
+// a `scheme -> implementation` factory needs — hits a C-stage failure
+// (`used type 'NovaBox_Dialer' where arithmetic or pointer type is
+// required`) at the merge point of the branches. Boxing a SINGLE
+// implementation works; boxing a MERGE of branches with different
+// implementations does not. Filed as defect К1 in
+// `docs/plans/221.1-bug-sweep.md` (found designing this example).
+//
+// So V1 uses a closed sum instead: one variant today (`Socks5`), one arm in
+// `@dial` below per variant. D406: no leading `|` for a single-variant sum.
+// Adding a second protocol (e.g. `Socks4`) costs TWO shared edit sites under
+// this workaround — a new variant here, plus a new arm in `@dial` — instead
+// of the target shape's ONE (a line in the factory). That is a known,
+// accepted cost until К1 is fixed, not a design recommendation.
+//
+// MANDATORY FOLLOW-UP: once К1 closes, migrate this type to the
+// protocol-interface shape described above. This sum is a workaround to be
+// read past, not a pattern to copy elsewhere in new code.
+type Upstream enum Socks5 { host str, port int, user Option[str], pass Option[str] }
+
+// Dials `target_host:target_port` THROUGH this upstream. Matches on the
+// variant and delegates to that protocol's own file (`upstream_socks5.nv`
+// for `Socks5`) — the ONE dispatch point a second protocol variant would
+// also need an arm in.
+export fn Upstream @dial(target_host str, target_port int) Net -> Result[TcpStream, UpstreamError] {
+    match @ {
+        Socks5 { host, port, user, pass } => dial_socks5(host, port, user, pass, target_host, target_port)
+    }
+}
+
+// Short, human-readable description for the startup log line — NOT a
+// canonical URL round-trip (credentials are deliberately never echoed back).
+export fn Upstream @describe() -> str {
+    match @ {
+        Socks5 { host, port, .. } => "SOCKS5 ${host}:${port}"
+    }
+}
+
+// Parses an `all_proxy`-compatible URL (curl/git/docker convention):
+// `socks5://[user:pass@]host:port` or `socks5h://[user:pass@]host:port`.
+// Both scheme suffixes are accepted and treated identically: the distinction
+// curl draws between them is WHO resolves the target hostname (`socks5` —
+// the client, locally; `socks5h` — the proxy, itself) — but `nova-socks`'
+// `socks5_connect` (a separate, already-published package, out of scope
+// here) always sends the target as a SOCKS5 domain-name address (RFC 1928
+// address type `0x03`), i.e. always proxy-side resolution. Rejecting
+// `socks5://` as "not what we do" would only make this bridge less
+// drop-in-compatible with an already-set `all_proxy`, for a distinction this
+// bridge has no way to honor either way.
+//
+// An unrecognized scheme is a typed `UnsupportedScheme`, not a silent
+// fallback or panic here — `config.nv`'s caller decides how loud to be.
+export fn Upstream.parse(url str) -> Result[Upstream, UpstreamError] {
+    match url.split_once("://") {
+        Some((scheme, rest)) => {
+            if scheme != "socks5" && scheme != "socks5h" {
+                return Err(UnsupportedScheme { scheme })
+            }
+            parse_socks5_authority(rest)
+        }
+        None => Err(BadUrl { detail: "missing '://' scheme separator in '${url}'" })
+    }
+}
+
+// `rest` is everything after `scheme://`: `[user[:pass]@]host:port`.
+fn parse_socks5_authority(rest str) -> Result[Upstream, UpstreamError] {
+    match rest.rsplit_once("@") {
+        Some((userinfo, hostport)) => match userinfo.split_once(":") {
+            Some((u, p)) => parse_socks5_hostport(hostport, Some(u), Some(p))
+            None         => parse_socks5_hostport(hostport, Some(userinfo), None)
+        }
+        None => parse_socks5_hostport(rest, None, None)
+    }
+}
+
+fn parse_socks5_hostport(hostport str, user Option[str], pass Option[str]) -> Result[Upstream, UpstreamError] {
+    match hostport.rsplit_once(":") {
+        Some((host, port_str)) => match port_str.to_int() {
+            Ok(port) => {
+                if port < 1 || port > 65535 {
+                    Err(BadUrl { detail: "port ${port} out of range 1..65535" })
+                } else {
+                    Ok(Socks5 { host, port, user, pass })
+                }
+            }
+            Err(_) => Err(BadUrl { detail: "invalid port in '${hostport}'" })
+        }
+        None => Err(BadUrl { detail: "missing ':port' in '${hostport}'" })
+    }
+}

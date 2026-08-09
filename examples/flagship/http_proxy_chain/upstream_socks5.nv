@@ -1,0 +1,23 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// examples/flagship/http_proxy_chain/upstream_socks5.nv — the `Socks5`
+// variant's own dial implementation, over the separately-published `socks`
+// package. This is the file a second protocol (e.g. `upstream_socks4.nv`)
+// would sit beside — see `upstream.nv`'s `Upstream` sum for why it is a
+// sum-of-files-per-protocol today, not a protocol-interface-of-
+// implementations (plan 249 §9, defect К1).
+
+module flagship.http_proxy_chain
+
+import std.net.{TcpStream}
+import socks.{socks5_connect}
+
+// Thin adapter: `socks5_connect`'s own `SocksError` becomes this module's
+// `UpstreamError` so `Upstream.dial`'s return type does not leak a
+// protocol-specific error type to its caller — a second protocol's dial
+// function maps its own error type the same way.
+fn dial_socks5(proxy_host str, proxy_port int, user Option[str], pass Option[str], target_host str, target_port int) Net -> Result[TcpStream, UpstreamError] {
+    match socks5_connect(proxy_host, proxy_port, user, pass, target_host, target_port) {
+        Ok(consume stream) => Ok(stream)
+        Err(e)              => Err(ConnectFailed { reason: e.to_str() })
+    }
+}
