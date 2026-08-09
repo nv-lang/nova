@@ -1,0 +1,69 @@
+// реестр 221.1 №502 — companion to m510_generic_record_vec_element_
+// access_forms.nv (same 3 access forms + len()-only, mirrored 1:1),
+// named-tuple sibling. Named tuple needs the SAME checker predicate
+// (`Vec[T]` explicit generic syntax in `infer_expr_type`'s
+// `ExprKind::Index` arm, реестр №510-class root) PLUS two additional,
+// named-tuple-SPECIFIC codegen fixes Record never needed: a
+// `TypeDeclKind::NamedTuple` arm in `emit_generic_type_instance_body`
+// (struct body + `nova_ctor_<short>` constructor — Record already had
+// this) and `try_infer_named_tuple_mono_args` + its `emit_call` routing
+// (bare `Ent(k, v)` constructor dispatch — Record has no equivalent
+// call-form, it always uses `{ field: val }` record-literal syntax).
+//
+// Explicit `Vec[T]` syntax throughout (not `[]T.new()` sugar) — same
+// reasoning as the Record sibling: the sugar form with a turbofished
+// element type hits an unrelated, separate parser gap.
+module standalone.m502_generic_named_tuple_vec_element_access_forms
+
+type M502vEnt[K, V](key K, value V)
+
+type M502vBox[K, V] priv { xs Vec[M502vEnt[K, V]] }
+
+export fn M502vBox[K, V].new() -> Self => { xs: Vec[M502vEnt[K, V]].new() }
+
+export fn M502vBox[K, V] mut @push(k K, v V) {
+    @xs.push(M502vEnt(k, v))
+}
+
+export fn M502vBox[K, V] @direct_index_key() -> K {
+    @xs[0].key
+}
+
+export fn M502vBox[K, V] @bind_then_access_key() -> K {
+    ro e = @xs[0]
+    e.key
+}
+
+export fn M502vBox[K, V] @for_loop_sum_values() -> int {
+    mut total = 0
+    for e in @xs {
+        total = total + e.value
+    }
+    total
+}
+
+export fn M502vBox[K, V] @len_only() -> int => @xs.len()
+
+test "№502: generic named tuple element in Vec[T] — direct index access" {
+    mut b = M502vBox[str, int].new()
+    b.push("a", 1)
+    assert(b.direct_index_key() == "a")
+}
+
+test "№502: generic named tuple element in Vec[T] — bind then access" {
+    mut b = M502vBox[str, int].new()
+    b.push("b", 2)
+    assert(b.bind_then_access_key() == "b")
+}
+
+test "№502: generic named tuple element in Vec[T] — for-loop access" {
+    mut b = M502vBox[str, int].new()
+    b.push("a", 1)
+    b.push("b", 2)
+    assert(b.for_loop_sum_values() == 3)
+}
+
+test "№502: generic named tuple element in Vec[T] — len() only, no field access" {
+    ro b = M502vBox[str, int].new()
+    assert(b.len_only() == 0)
+}

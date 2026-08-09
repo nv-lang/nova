@@ -1,0 +1,76 @@
+// реестр 221.1 №510 (интегратор): «Vec над обобщённой записью теряет тип
+// элемента». Тот же корень, что и №502 (generic именованный кортёж), но
+// носитель — обычная generic-запись (`type X[K, V] { ... }`, curly
+// braces), а не именованный кортеж. Корень общий: `types/mod.rs`
+// `infer_expr_type`, ветка `ExprKind::Index` — `TypeRef::Named{path:
+// ["Vec"], generics:[T]}` (явный `Vec[T]`-синтаксис контейнера) падал в
+// ветку "user-defined @index method", чей `recv_is_generic`-гейт
+// возвращает `None` БЕЗУСЛОВНО (Vec всегда generic) — аннотация типа
+// поля для `<Vec[T]-expr>[i].field` терялась ДО того, как чекер вообще
+// доходил до резолва поля. В отличие от именованного кортежа, Record уже
+// имел ПОЛНУЮ поддержку мономорфизации (тело struct + конструктор
+// эмитятся штатно) — ему не хватало ТОЛЬКО этой чекер-правки, без
+// доп. кодоген-изменений.
+//
+// ВАЖНО: конструкция через сахар `[]T[Args].new()` (турбофиш-аргументы
+// сразу за `[]`) здесь НЕ используется — это отдельный, третий баг в
+// парсере (`parse_array_lit`, ветка `[]T.method()` смотрит только на
+// голый identifier перед `.`, турбофиш `[Args]` перед `.` не распознаёт
+// и вся `[]` трактуется как ЗАВЕРШЁННЫЙ пустой array-литерал; см. запись
+// интегратора про `Nova_EmbeddedDir_static_new`). Фикстуры ниже — явным
+// `Vec[T]`-синтаксисом, чтобы проверять именно чекер-предикат этой
+// правки, а не парсер.
+module standalone.m510_generic_record_vec_element_access_forms
+
+type R510Ent[K, V] { key K, value V }
+
+type R510Box[K, V] priv { xs Vec[R510Ent[K, V]] }
+
+export fn R510Box[K, V].new() -> Self => { xs: Vec[R510Ent[K, V]].new() }
+
+export fn R510Box[K, V] mut @push(k K, v V) {
+    @xs.push(R510Ent{key: k, value: v})
+}
+
+export fn R510Box[K, V] @direct_index_key() -> K {
+    @xs[0].key
+}
+
+export fn R510Box[K, V] @bind_then_access_key() -> K {
+    ro e = @xs[0]
+    e.key
+}
+
+export fn R510Box[K, V] @for_loop_sum_values() -> int {
+    mut total = 0
+    for e in @xs {
+        total = total + e.value
+    }
+    total
+}
+
+export fn R510Box[K, V] @len_only() -> int => @xs.len()
+
+test "№510: generic Record element in Vec[T] — direct index access" {
+    mut b = R510Box[str, int].new()
+    b.push("a", 1)
+    assert(b.direct_index_key() == "a")
+}
+
+test "№510: generic Record element in Vec[T] — bind then access" {
+    mut b = R510Box[str, int].new()
+    b.push("b", 2)
+    assert(b.bind_then_access_key() == "b")
+}
+
+test "№510: generic Record element in Vec[T] — for-loop access" {
+    mut b = R510Box[str, int].new()
+    b.push("a", 1)
+    b.push("b", 2)
+    assert(b.for_loop_sum_values() == 3)
+}
+
+test "№510: generic Record element in Vec[T] — len() only, no field access (интегратор's tail case)" {
+    ro b = R510Box[str, int].new()
+    assert(b.len_only() == 0)
+}
