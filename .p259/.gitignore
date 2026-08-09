@@ -1,3 +1,5 @@
 .p259/nova.exe
 .p259/tmp/
 .p259/corpus/
+.p259/o_*
+.p259/e_*
