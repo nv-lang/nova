@@ -17,7 +17,7 @@
 // primary path. Plain HTTP-over-proxy (Ф.3, this commit) is the secondary
 // path: a client sends an ordinary method with an absolute-URI request
 // target (`GET http://host:port/path HTTP/1.1`, RFC 7230 §5.3.2) instead of
-// CONNECT. The bridge extracts host/port, tunnels to it via `socks5_connect`
+// CONNECT. The bridge extracts host/port, tunnels to it via `Upstream.dial`
 // exactly like CONNECT does, but ALSO rewrites the request line to
 // origin-form (`GET /path HTTP/1.1` — RFC 7230 §5.3.1 is what an origin
 // server is guaranteed to accept, and not every real-world server tolerates
@@ -29,11 +29,22 @@
 // (plan 249 §2): keep-alive connection pooling, HTTP/2, response caching,
 // body rewriting.
 //
-// Configuration (`Os` effect):
-//   SOCKS5_PROXY   required, "host:port" of the upstream SOCKS5 proxy.
-//   SOCKS5_USER    optional, RFC 1929 username (paired with SOCKS5_PASS).
-//   SOCKS5_PASS    optional, RFC 1929 password.
-//   argv[1]        optional, local listen port (default 8899).
+// File layout (plan 249 §9 — one module, equal-standing files, all
+// declaring `module flagship.http_proxy_chain`):
+//   config.nv           — Config, load_config, LISTEN_PORT/upstream selection
+//   http.nv             — request-head reading + parsing
+//   relay.nv            — pipe_bidirectional/pump (the tunnel stage)
+//   upstream.nv         — Upstream sum, @dial, @describe, Upstream.parse
+//   upstream_socks5.nv  — the Socks5 variant's own dial implementation
+//   main.nv (this file) — accept loop, per-connection dispatch, responses
+//
+// Configuration (`Os` effect) — canon per plan 249 §8, see config.nv/README:
+//   argv[1] / LISTEN_PORT   optional, local listen port (default 8899).
+//   SOCKS5_PROXY/_USER/_PASS  explicit upstream override ("host:port" + RFC
+//                             1929 creds), takes priority over ALL_PROXY.
+//   ALL_PROXY / all_proxy   optional, `all_proxy`-compatible URL
+//                           (socks5://[user:pass@]host:port), used when no
+//                           explicit SOCKS5_PROXY is set.
 //
 // Usage:
 //   SOCKS5_PROXY=proxy.example.com:1080 SOCKS5_USER=me SOCKS5_PASS=secret \
@@ -46,18 +57,9 @@
 
 module flagship.http_proxy_chain
 
-import std.net.{TcpListener, TcpStream, TcpReadHalf, TcpWriteHalf, SocketAddr, real_net}
-import std.os.{args, env, real_os}
+import std.net.{TcpListener, TcpStream, SocketAddr, real_net}
+import std.os.{real_os}
 import std.time.duration
-import socks.{socks5_connect}
-
-const DEFAULT_LISTEN_PORT = 8899
-
-// 64 KiB header cap (plan 249 §3.2 risk register): an unbounded
-// `read_headers` loop is a DoS vector (a client trickling bytes forever
-// grows this bridge's memory without limit) — exceeding this is a typed
-// `431 Request Header Fields Too Large`, not a silent hang or truncation.
-const MAX_HEADER_BYTES = 65536
 
 // Time bounds on the two blocking steps BEFORE the pipe starts (reading the
 // client's request headers, and the SOCKS5 handshake to the upstream
@@ -83,71 +85,11 @@ const UPSTREAM_CONNECT_TIMEOUT_MS int = 15000
 // timeouts on the established tunnel" — accepted for an example; a
 // production bridge would want idle timeouts here too).
 
-type Config {
-    proxy_host str
-    proxy_port int
-    user Option[str]
-    pass Option[str]
-    listen_port int
-}
-
-fn parse_listen_port(argv []str) -> int {
-    if argv.len() <= 1 { return DEFAULT_LISTEN_PORT }
-    match argv[1].to_int() {
-        Ok(p) => {
-            if p < 1 || p > 65535 {
-                panic("http_proxy_chain: listen port ${p} out of range 1..65535")
-            } else {
-                p
-            }
-        }
-        Err(_) => panic("http_proxy_chain: invalid listen port argument '${argv[1]}'")
-    }
-}
-
-// `panic`s on malformed input — a separate, flat helper (not inlined into
-// `load_config`'s own match tree) so every arm's value type is unambiguous.
-fn parse_proxy_host_port(raw str) -> (str, int) {
-    match raw.rsplit_once(":") {
-        Some((h, p_str)) => {
-            match p_str.to_int() {
-                Ok(p) => {
-                    if p < 1 || p > 65535 {
-                        panic("http_proxy_chain: SOCKS5_PROXY port ${p} out of range 1..65535")
-                    } else {
-                        (h, p)
-                    }
-                }
-                Err(_) => panic("http_proxy_chain: SOCKS5_PROXY must be host:port, got '${raw}'")
-            }
-        }
-        None => panic("http_proxy_chain: SOCKS5_PROXY must be host:port, got '${raw}'")
-    }
-}
-
-// Config validation happens ONCE at startup (plan 249 §3.2) — a malformed
-// `SOCKS5_PROXY` or out-of-range port is a fatal, loud `panic`, not a
-// silently-broken bridge that fails every connection later.
-fn load_config() Os -> Config {
-    ro proxy_raw = env("SOCKS5_PROXY") ?? ""
-    if proxy_raw == "" {
-        panic("http_proxy_chain: SOCKS5_PROXY env var is required (host:port)")
-    }
-    ro (proxy_host, proxy_port) = parse_proxy_host_port(proxy_raw)
-    Config {
-        proxy_host,
-        proxy_port,
-        user: env("SOCKS5_USER"),
-        pass: env("SOCKS5_PASS"),
-        listen_port: parse_listen_port(args()),
-    }
-}
-
 fn main() Net Os Time -> () {
     with Os = real_os(), Net = real_net() {
         ro cfg = load_config()
         consume listener = TcpListener.bind(SocketAddr.loopback(cfg.listen_port))!!
-        println("http_proxy_chain: listening on 127.0.0.1:${listener.local_port()}, upstream SOCKS5 ${cfg.proxy_host}:${cfg.proxy_port}")
+        println("http_proxy_chain: listening on 127.0.0.1:${listener.local_port()}, upstream ${cfg.upstream.describe()}")
         supervised {
             loop {
                 match listener.accept() {
@@ -168,188 +110,6 @@ fn main() Net Os Time -> () {
 }
 
 // ─── Per-connection handling ───────────────────────────────────────────────
-
-type HeaderReadError enum TooLarge | ConnectionClosed | ReadFailed
-
-type HeadersRead { head str, leftover []u8 }
-
-// Byte-level "\r\n\r\n" scan — the header/body boundary (RFC 7230 §3).
-fn find_header_terminator(buf []u8) -> Option[int] {
-    if buf.len() < 4 { return None }
-    mut i = 0
-    while i <= buf.len() - 4 {
-        if buf[i] == (13 as u8) && buf[i + 1] == (10 as u8)
-            && buf[i + 2] == (13 as u8) && buf[i + 3] == (10 as u8) {
-            return Some(i)
-        }
-        i += 1
-    }
-    None
-}
-
-// Pure helper (no `Net`, no loop) — flat shape on purpose, tried against a
-// build error where a deeply-nested match inside a tail `loop` confused the
-// codegen's type inference for the loop's (never-taken) fallthrough value.
-// `None` = terminator not seen yet, keep reading.
-fn try_extract_headers(buf []u8) -> Option[Result[HeadersRead, HeaderReadError]] {
-    match find_header_terminator(buf) {
-        Some(end_idx) => {
-            ro head_bytes = buf[..end_idx]
-            ro leftover = buf[(end_idx + 4)..]
-            match head_bytes.to_str() {
-                Ok(s)  => Some(Ok(HeadersRead { head: s, leftover }))
-                Err(_) => Some(Err(ReadFailed))
-            }
-        }
-        None => None
-    }
-}
-
-// Reads raw bytes off `client` until the `\r\n\r\n` header terminator (or
-// `max_bytes` is exceeded, or the peer errs/closes). Returns the decoded
-// header text PLUS any bytes already read past the terminator (pipelined
-// body/next-request bytes) so a caller can forward them instead of
-// dropping them on the floor.
-fn read_headers(mut client TcpStream, max_bytes int) Net -> Result[HeadersRead, HeaderReadError] {
-    mut buf []u8 = []u8.new()
-    mut chunk []u8 = []u8.new()
-    chunk.resize(4096, 0 as u8)
-    while true {
-        match client.read(chunk) {
-            Ok(0) => return Err(ConnectionClosed)
-            Ok(n) => {
-                buf.append(chunk[..n])
-                if buf.len() > max_bytes { return Err(TooLarge) }
-                match try_extract_headers(buf) {
-                    Some(result) => return result
-                    None         => continue
-                }
-            }
-            Err(_) => return Err(ReadFailed)
-        }
-    }
-    // Every path through the loop body above `return`s or `continue`s, so this
-    // line is never reached. It exists only to give the function an explicit,
-    // correctly-typed trailing value.
-    //
-    // CORRECTION 2026-08-09 (registry 221.1 #483). An earlier version of this
-    // comment claimed that `while true {}`, unlike a bare `loop {}`, is not
-    // typed `Never` in tail position, and that switching to it fixed a
-    // CC-FAIL. That is FALSE, and it misled a later reader into repeating it
-    // as fact. Verified by direct build on a freshly rebuilt compiler: BOTH
-    // forms fail identically when the `Ok` payload is a record — the codegen
-    // emits an incompatible temporary for the loop's tail-position
-    // fallthrough. Both forms are already marked divergent in codegen
-    // (`[M-125-loop-no-break-divergence]` and `[M-125-while-true-divergence]`
-    // sit side by side, differing only in the literal-`true` check).
-    // The real defect is wider than either spelling: ANY infinite loop in tail
-    // position breaks on a record `Ok` payload. See #483. Keep `while true`
-    // here only until that is fixed; the spelling is not what makes it work.
-    panic("read_headers: unreachable")
-}
-
-// Timeout-guarded `read_headers`: `read_headers` is a DIRECT body statement
-// of `supervised(timeout:)` (no `spawn`) — the scope's own deadline gate
-// interrupts it on time (registry №457), no manual watchdog/self-cancel
-// needed. `TimeoutError` is delivered as the `Fail[TimeoutError]` effect
-// (D408/D449), not as a `Result` — the handler below converts it to this
-// function's own `Err(ReadFailed)`.
-fn read_headers_guarded(mut client TcpStream, max_bytes int) Net Time -> Result[HeadersRead, HeaderReadError] {
-    with Fail[TimeoutError] = |_e| { Err(ReadFailed) } {
-        supervised(timeout: HEADER_READ_TIMEOUT_MS.to_millis()) {
-            read_headers(client, max_bytes)
-        }
-    }
-}
-
-type ParsedRequest enum
-    | Connect { host str, port int }
-    | Plain { host str, port int, rewritten_head str }
-    | Invalid
-
-fn parse_request(head str) -> ParsedRequest {
-    ro lines []str = head.split("\r\n").collect()
-    if lines.len() == 0 { return Invalid }
-    ro parts []str = lines[0].split(" ").collect()
-    if parts.len() != 3 { return Invalid }
-    ro method = parts[0]
-    ro target = parts[1]
-    ro version = parts[2]
-    if method == "CONNECT" {
-        match target.rsplit_once(":") {
-            Some((host, port_str)) => match port_str.to_int() {
-                Ok(port) => Connect { host, port }
-                Err(_)   => Invalid
-            }
-            None => Invalid
-        }
-    } else {
-        match parse_absolute_uri(target) {
-            Some((host, port, path)) => {
-                ro rewritten_line = "${method} ${path} ${version}"
-                ro rewritten_head = rewrite_headers(rewritten_line, lines[1..])
-                Plain { host, port, rewritten_head }
-            }
-            None => Invalid
-        }
-    }
-}
-
-// Absolute-URI request target (RFC 7230 §5.3.2) — the plain-HTTP-through-
-// proxy form: `GET http://host[:port][/path...] HTTP/1.1`. Only the
-// `http://` scheme is understood; anything else (bare origin-form `/path`,
-// `https://`, or a missing scheme) is `None` here — a client proxying HTTPS
-// is expected to use CONNECT instead (the primary path, Ф.2), and this
-// bridge does not attempt to terminate/relay TLS itself.
-fn parse_absolute_uri(target str) -> Option[(str, int, str)] {
-    match target.strip_prefix("http://") {
-        Some(rest) => {
-            if rest == "" { return None }
-            match rest.find("/") {
-                Some(_) => parse_authority(rest.until("/"), "/${rest.after("/")}")
-                None    => parse_authority(rest, "/")
-            }
-        }
-        None => None
-    }
-}
-
-// `host[:port]` — no port means the scheme default (80 for `http`). IPv6
-// literal authorities (`[::1]:port`) are out of scope (plan 249 §7 п.2, same
-// V1 decision as the SOCKS5 client itself: no IPv6 address support).
-fn parse_authority(authority str, path str) -> Option[(str, int, str)] {
-    if authority == "" { return None }
-    match authority.rsplit_once(":") {
-        Some((host, port_str)) => match port_str.to_int() {
-            Ok(port) => Some((host, port, path))
-            Err(_)   => None
-        }
-        None => Some((authority, 80, path))
-    }
-}
-
-// A header line's name is `Proxy-*` (case-insensitively) — addressed to
-// THIS bridge (`Proxy-Connection`, `Proxy-Authorization`, ...), not the
-// origin server, and must not be forwarded.
-fn is_proxy_header(line str) -> bool {
-    match line.split_once(":") {
-        Some((name, _)) => name.trim_ascii().to_ascii_lower().starts_with("proxy-")
-        None => false
-    }
-}
-
-// Rebuilds the header block with the origin-form request line and every
-// `Proxy-*` header dropped — the exact bytes forwarded to upstream (plus a
-// trailing "\r\n\r\n" appended by the caller).
-fn rewrite_headers(request_line str, header_lines []str) -> str {
-    mut out = request_line
-    for line in header_lines {
-        if !is_proxy_header(line) {
-            out = "${out}\r\n${line}"
-        }
-    }
-    out
-}
 
 // Effects are inferred here, not declared: `Net` reaches this body through
 // `client.write`, and D28 ("вывод эффектов: private выводится, public
@@ -391,8 +151,8 @@ fn handle_client(consume client TcpStream, cfg Config) Net Time -> () {
     }
 }
 
-// Timeout-guarded SOCKS5 connect — mirrors `read_headers_guarded`'s shape
-// (registry №457): `socks5_connect` runs as a DIRECT body statement of its
+// Timeout-guarded upstream dial — mirrors `read_headers_guarded`'s shape
+// (registry №457): `Upstream.dial` runs as a DIRECT body statement of its
 // own `supervised(timeout:)`, no `spawn`, no shared `CancelToken`. Still
 // returns the live `upstream` `TcpStream` OUT to the caller (as
 // `supervised`'s own tail value) rather than piping from inside this
@@ -402,7 +162,7 @@ fn handle_client(consume client TcpStream, cfg Config) Net Time -> () {
 fn connect_guarded(cfg Config, host str, port int) Net Time -> Result[TcpStream, ()] {
     with Fail[TimeoutError] = |_e| { Err(()) } {
         supervised(timeout: UPSTREAM_CONNECT_TIMEOUT_MS.to_millis()) {
-            match socks5_connect(cfg.proxy_host, cfg.proxy_port, cfg.user, cfg.pass, host, port) {
+            match cfg.upstream.dial(host, port) {
                 Ok(consume upstream) => Ok(upstream)
                 Err(_)                => Err(())
             }
@@ -410,7 +170,7 @@ fn connect_guarded(cfg Config, host str, port int) Net Time -> Result[TcpStream,
     }
 }
 
-// Connects to the SOCKS5 proxy, then either tunnels (`pipe_bidirectional`)
+// Connects to the upstream proxy, then either tunnels (`pipe_bidirectional`)
 // or answers `502 Bad Gateway`. Upstream connect happens BEFORE the `200`
 // response is sent — a failed upstream never leaves the client thinking a
 // tunnel it does not have was established (plan 249 §3.2).
@@ -462,104 +222,4 @@ fn handle_plain(consume client TcpStream, host str, port int, rewritten_head str
             client.close()
         }
     }
-}
-
-// ─── Bidirectional byte relay ──────────────────────────────────────────────
-
-// The example's core (plan 249 §3.2): `a`'s and `b`'s halves cross-pump —
-// fiber #1 pumps `ar -> bw`, fiber #2 pumps `br -> aw`. Each fiber owns
-// exactly ONE read half and ONE write half — linear ownership holds without
-// any shared state.
-//
-// `CancelToken` here is NOT a `supervised(timeout:)` workaround — it is the
-// only mechanism that fits the actual requirement: wake the SIBLING pump the
-// instant THIS pump sees clean EOF/error, with no fixed duration at all (the
-// pipe stage is deliberately unbounded, plan §6 risk register: no idle/read
-// timeout on an established tunnel). `timeout:` bounds a duration; it has no
-// way to express "stop when your sibling stops," so this shared-token shape
-// stays regardless of the direct-body `timeout:` mechanism's own health
-// (registry №457).
-//
-// Historical note: window 249 (Ф.0-б, 2026-08-08) reported that
-// `supervised(timeout:)` does NOT reach a `.read()` nested inside a SIBLING
-// spawn body (an isolated probe of exactly this shape hung past 30s) and
-// built this CancelToken relay partly on that premise. Window p457-timeout's
-// re-test of that same two-sibling-spawn shape (~1080 runs, several timeout
-// durations and parallelism levels) reproduced a hang only once, without
-// diagnostics, and never again — inconclusive either way; see
-// `docs/plans/221.1-bug-sweep.md` №457. Left as an open question for the
-// owner: whichever way it resolves, this function keeps its `CancelToken`
-// for the EOF-relay reason above, independent of that mechanism's fate.
-fn pipe_bidirectional(consume a TcpStream, consume b TcpStream) Net -> () {
-    consume (ar, aw) = a.into_split()
-    consume (br, bw) = b.into_split()
-    ro tok = CancelToken.new()
-    supervised(cancel: tok) {
-        spawn consume ar, bw { pump(ar, bw, tok) }
-        spawn consume br, aw { pump(br, aw, tok) }
-    }
-}
-
-fn write_all_half(mut w TcpWriteHalf, data []u8) Net -> bool {
-    mut off = 0
-    while off < data.len() {
-        match w.write(data[off..]) {
-            // Wrote nothing: the peer is gone. A pattern, not an `if n <= 0`
-            // inside the arm — the same shape `pump` uses for `Ok(0)`, and it
-            // keeps the two outcomes visible side by side instead of hiding
-            // one behind a guard.
-            Ok(0) => return false
-            // `n < 0` is not a case: `Net.write` returns bytes written or
-            // `Err`. The old `n <= 0` guard silently absorbed a negative as
-            // "peer gone", which would have turned a std.net contract
-            // violation into an invisible early return. Assert it instead —
-            // if it ever fires, the bug is in `std.net`, not here.
-            Ok(n) => {
-                assert(n > 0)
-                off += n
-            }
-            Err(_) => return false
-        }
-    }
-    true
-}
-
-fn pump(consume r TcpReadHalf, consume w TcpWriteHalf, tok CancelToken) Net -> () {
-    mut buf []u8 = []u8.new()
-    buf.resize(8192, 0 as u8)
-    loop {
-        match r.read(buf) {
-            Ok(0) => break                             // clean EOF on this direction
-            Ok(n) => {
-                if !write_all_half(w, buf[..n]) { break }
-            }
-            Err(_) => break                            // I/O error, or woken by the sibling's cancel
-        }
-    }
-    // Canonical explicit-close form (registry №456): both halves ALSO
-    // declare `consume @cleanup` (`std/src/net/tcp.nv:402`/`:448`), so the
-    // disarm here matters — the caller's `spawn consume ar, bw { pump(ar,
-    // bw, tok) }` must NOT also auto-`@cleanup` `ar`/`bw` after this
-    // explicit close, or the underlying split-refcounted stream gets a
-    // redundant `net_tcp_close` call (root cause history: №456 first
-    // surfaced as a crash — UAF in `net_tcp_close`'s split-refcount path,
-    // `nova_rt/libuv/src/win/core.c:694` — fixed at the runtime level by an
-    // idempotent release guard, `b46d4584e`; that made the redundant call
-    // SAFE but the compiler was still emitting it, which is what later
-    // manifested as this function's hang under real blocking I/O — the
-    // caller-side disarm was keyed off two separate, incompletely-populated
-    // registries that the `spawn consume a, b { … }` desugar fell through
-    // entirely, D415 §4). Plan 253.4 Ф.1 (№480, `318334eea`) replaced both
-    // registries with a single defer-scope-owned flag (`disarm_var_for`,
-    // `emit_c.rs`), closing the gap: the caller now correctly disarms
-    // `ar`/`bw` right before this call, so `r.close()`/`w.close()` below are
-    // each the ONLY close their half ever sees. Regression coverage for
-    // exactly this shape (canonical `close()` + real blocking I/O +
-    // cross-fiber cancel-while-parked, not just the no-I/O disarm bookkeeping):
-    // `spec_tests/conformance/standalone/m456_pump_helper_close_real_io.nv`.
-    r.close()
-    w.close()
-    // Wake the SIBLING pump (blocked reading the other direction) — the
-    // mechanism established in plan 249 Ф.0-б, NOT `supervised(timeout:)`.
-    tok.cancel()
 }
