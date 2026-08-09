@@ -41,7 +41,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 /// Отпечаток источника. Для файла — время правки и размер, для каталога —
 /// только время правки (NTFS/ext обновляют его при добавлении, удалении и
 /// переименовании записей, а от содержимого файлов список имён не зависит).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 struct Stamp {
     mtime_ns: u128,
     len: u64,
@@ -153,6 +153,86 @@ pub fn dir_nv_files(dir: &Path) -> Arc<Vec<PathBuf>> {
     listing
 }
 
+/// Снимок каталога: `(путь, отпечаток)` для каждого обычного `.nv`,
+/// отсортирован по пути. **Всегда свежий** — это ключ проверки, а не кэш.
+///
+/// Один `read_dir`: на Windows `DirEntry::metadata()` отдаёт данные из
+/// `WIN32_FIND_DATA`, полученной вместе с именем, без отдельного сисвызова —
+/// то есть отпечатки всех файлов каталога достаются за одно обращение к ФС
+/// вместо N вызовов `stat`.
+fn dir_snapshot(dir: &Path) -> Vec<(PathBuf, Stamp)> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return Vec::new(),
+    };
+    let mut out: Vec<(PathBuf, Stamp)> = Vec::new();
+    for e in entries.filter_map(|e| e.ok()) {
+        let p = e.path();
+        if p.extension().and_then(|s| s.to_str()) != Some("nv") {
+            continue;
+        }
+        let md = match e.metadata() {
+            Ok(m) => m,
+            Err(_) => return Vec::new(),
+        };
+        if !md.is_file() {
+            continue;
+        }
+        match stamp_of(&md) {
+            Some(s) => out.push((p, s)),
+            // Без отпечатка проверять нечем — возвращаем пустой снимок,
+            // он никогда не совпадёт с сохранённым, и вывод пересчитается.
+            None => return Vec::new(),
+        }
+    }
+    out.sort();
+    out
+}
+
+type DerivedMap = HashMap<(PathBuf, &'static str), (Vec<(PathBuf, Stamp)>, Arc<dyn std::any::Any + Send + Sync>)>;
+static DERIVED: OnceLock<Vec<Mutex<DerivedMap>>> = OnceLock::new();
+
+fn derived() -> &'static Vec<Mutex<DerivedMap>> {
+    DERIVED.get_or_init(|| (0..SHARDS).map(|_| Mutex::new(HashMap::new())).collect())
+}
+
+/// Кэш вывода, зависящего ТОЛЬКО от содержимого каталога (имена + содержимое
+/// его `.nv`-файлов). `tag` разделяет разные выводы по одному каталогу.
+///
+/// Проверка актуальности — сравнение со свежим [`dir_snapshot`]: он ловит и
+/// добавление/удаление/переименование файла (имена), и правку любого из них
+/// (отпечаток). Расхождение → `compute` считает заново.
+pub fn dir_derived<T, F>(dir: &Path, tag: &'static str, compute: F) -> Arc<T>
+where
+    T: Send + Sync + 'static,
+    F: FnOnce() -> T,
+{
+    if !enabled() {
+        return Arc::new(compute());
+    }
+    let snap = dir_snapshot(dir);
+    let key = (dir.to_path_buf(), tag);
+    let shard = &derived()[shard_idx(dir)];
+    if let Ok(g) = shard.lock() {
+        if let Some((s, v)) = g.get(&key) {
+            if *s == snap {
+                if let Ok(t) = Arc::clone(v).downcast::<T>() {
+                    return t;
+                }
+            }
+        }
+    }
+    let value: Arc<T> = Arc::new(compute());
+    // Пересняли после вычисления: если каталог менялся под нами, в кэш не
+    // кладём — иначе туда залипнет вывод, посчитанный на рваном состоянии.
+    if dir_snapshot(dir) == snap {
+        if let Ok(mut g) = shard.lock() {
+            g.insert(key, (snap, Arc::clone(&value) as Arc<dyn std::any::Any + Send + Sync>));
+        }
+    }
+    value
+}
+
 fn scan_dir_nv(dir: &Path) -> Vec<PathBuf> {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
@@ -179,6 +259,13 @@ pub fn clear() {
         }
     }
     if let Some(sh) = DIRS.get() {
+        for s in sh {
+            if let Ok(mut g) = s.lock() {
+                g.clear();
+            }
+        }
+    }
+    if let Some(sh) = DERIVED.get() {
         for s in sh {
             if let Ok(mut g) = s.lock() {
                 g.clear();

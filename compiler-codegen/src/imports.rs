@@ -885,10 +885,14 @@ pub fn resolve_imports_inline_ex(
             .unwrap_or(false)
             || crate::test_runner::test_run_include_slow();
         {
-            // План 252: перечисление через кэш с проверкой отпечатка.
-            let mut sib_paths: Vec<PathBuf> = crate::source_cache::dir_nv_files(&entry_dir)
+            // План 252: имена + объявления соседей — из кэша по каталогу.
+            // Отбор по объявлению стоит ПЕРВЫМ: в каталогах вроде
+            // `spec_tests/conformance/neg` (568 файлов) он отсекает почти всё
+            // до дорогой `canonicalize` в следующем фильтре.
+            let mut sib_paths: Vec<PathBuf> = dir_module_decls(&entry_dir)
                 .iter()
-                .cloned()
+                .filter(|(_, decl)| decl.as_deref() == Some(module.name.as_slice()))
+                .map(|(p, _)| p.clone())
                 .filter(|p| {
                     // Exclude the entry file itself.
                     match (p.canonicalize().ok(), &entry_canon) {
@@ -905,10 +909,6 @@ pub fn resolve_imports_inline_ex(
                         return peer_file_included(stem, include_test_peers, entry_is_slow, target);
                     }
                     true
-                })
-                .filter(|p| {
-                    // Sibling = declares the SAME module path as the entry.
-                    read_module_decl(p).as_deref() == Some(module.name.as_slice())
                 })
                 .collect();
             // Alphabetical → deterministic file_id assignment.
@@ -2329,6 +2329,35 @@ fn read_module_decl(path: &Path) -> Option<Vec<String>> {
     scan_module_decl(&src)
 }
 
+/// План 252: объявления `module` всех обычных `.nv` каталога, посчитанные
+/// один раз на каталог и сверяемые свежим снимком (`dir_derived`).
+///
+/// Зачем: `resolve_module_paths` и entry-sibling-скан спрашивают «что
+/// объявляет вон тот сосед» для КАЖДОГО файла каталога и делают это на
+/// каждый импорт каждого компилируемого файла. По отдельности это N чтений
+/// (или, с кэшем содержимого, N вызовов `stat`); здесь — один `read_dir`.
+/// Порядок — как у [`crate::source_cache::dir_nv_files`] (сортировка по пути).
+fn dir_module_decls(dir: &Path) -> std::sync::Arc<Vec<(PathBuf, Option<Vec<String>>)>> {
+    crate::source_cache::dir_derived(dir, "module-decls", || {
+        crate::source_cache::dir_nv_files(dir)
+            .iter()
+            .map(|p| (p.clone(), read_module_decl(p)))
+            .collect()
+    })
+}
+
+/// То же для «точечной» формы объявления (`std.prelude.core`), которую
+/// использует [`extract_declared_module`] — у неё СВОЙ сканер, поэтому
+/// результат отдельный, а не производный от [`dir_module_decls`].
+fn dir_declared_dotted(dir: &Path) -> std::sync::Arc<Vec<(PathBuf, Option<String>)>> {
+    crate::source_cache::dir_derived(dir, "module-decls-dotted", || {
+        crate::source_cache::dir_nv_files(dir)
+            .iter()
+            .map(|p| (p.clone(), extract_declared_module(p)))
+            .collect()
+    })
+}
+
 /// Plan 202 Ф.1 (D78 rev-4): module-registry identity key — canonical
 /// **filesystem path**, NOT declaration.
 ///
@@ -2394,10 +2423,18 @@ pub fn is_folder_module_peer(path: &Path) -> bool {
         Some(p) => p,
         None => return false,
     };
+    // План 252: вердикт зависит ТОЛЬКО от содержимого каталога (имена его
+    // `.nv`-файлов + их строки `module`), поэтому кэшируется целиком и
+    // сверяется свежим снимком каталога — один `read_dir` вместо N чтений.
+    // `current_target_os()` в ключ не входит: он неизменен в пределах
+    // процесса (переменная окружения читается один раз).
+    *crate::source_cache::dir_derived(parent, "folder-module-peer", || {
+        compute_is_folder_module_peer(parent)
+    })
+}
+
+fn compute_is_folder_module_peer(parent: &Path) -> bool {
     let target = current_target_os();
-    // План 252: перечисление каталога — через кэш с проверкой отпечатка
-    // (`.nv`-файлы, обычные, отсортированы); фильтр по цели применяется
-    // поверх — он зависит от окружения, а не от диска.
     // Пустой список (каталога нет / в нём нет `.nv`) даёт пустой `decls` и
     // тот же `false`, что старая ветка `Err(_) => return false`.
     let listing = crate::source_cache::dir_nv_files(parent);
@@ -2502,11 +2539,12 @@ fn collect_root_peers(
     let target = current_target_os();
     // План 252: перечисление через кэш с проверкой отпечатка. Отсутствующий
     // каталог даёт пустой список и тот же `None`, что старое `.ok()?`.
-    let listing = crate::source_cache::dir_nv_files(source_root);
+    let listing = dir_module_decls(source_root);
     let root_decl = [package_name.to_string()];
     let mut peers: Vec<PathBuf> = listing
         .iter()
-        .cloned()
+        .filter(|(_, decl)| decl.as_deref() == Some(&root_decl[..]))
+        .map(|(p, _)| p.clone())
         .filter(|p| {
             if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
                 // [M-d376-slow-suffix-folder-module-peer-merge]: this
@@ -2522,7 +2560,6 @@ fn collect_root_peers(
             }
             true
         })
-        .filter(|p| read_module_decl(p).as_deref() == Some(&root_decl[..]))
         .collect();
     if peers.is_empty() {
         return None;
@@ -2848,6 +2885,7 @@ pub(crate) enum ResolveErr {
 /// если совпало или проверить нельзя (canonicalize не удался, путь
 /// короче запрошенного — консервативно: не ошибка).
 fn verify_case(path: &Path, parts: &[String], is_file: bool) -> Option<(String, String)> {
+    let _t = crate::perf_timer::PerfTimer::new("imports-verify-case");
     let canon = std::fs::canonicalize(path).ok()?;
     let comps: Vec<String> = canon
         .components()
@@ -3393,9 +3431,10 @@ fn resolve_module_paths_inner(
                 let mut all_children = true;
                 let mut any_peer = false;
                 {
-                    for p in crate::source_cache::dir_nv_files(&folder).iter() {
+                    // План 252: объявления соседей — из кэша по каталогу.
+                    for (_p, decl) in dir_declared_dotted(&folder).iter() {
                         any_peer = true;
-                        let declared = match extract_declared_module(p) {
+                        let declared = match decl.clone() {
                             Some(d) => d,
                             None => {
                                 // Не удалось извлечь module declaration —
@@ -3458,12 +3497,14 @@ fn resolve_module_paths_inner(
             if let Some(dir) = single_file.parent() {
                 {
                     let target = current_target_os();
-                    // План 252: перечисление через кэш с проверкой отпечатка.
-                    let listing = crate::source_cache::dir_nv_files(dir);
+                    // План 252: имена + объявления соседей — из кэша по
+                    // каталогу (один `read_dir` на проверку вместо N чтений).
+                    let listing = dir_module_decls(dir);
                     let mut orphans: Vec<PathBuf> = listing
                         .iter()
-                        .cloned()
-                        .filter(|p| p != &single_file)
+                        .filter(|(p, _)| p != &single_file)
+                        .filter(|(_, decl)| decl.as_deref() == Some(verify_parts))
+                        .map(|(p, _)| p.clone())
                         .filter(|p| {
                             // [M-d376-slow-suffix-folder-module-peer-merge]:
                             // external import resolve (per comment above) —
@@ -3475,7 +3516,6 @@ fn resolve_module_paths_inner(
                             }
                             true
                         })
-                        .filter(|p| read_module_decl(p).as_deref() == Some(verify_parts))
                         .collect();
                     if !orphans.is_empty() {
                         orphans.sort();
