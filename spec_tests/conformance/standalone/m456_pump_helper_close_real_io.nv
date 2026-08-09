@@ -7,7 +7,7 @@
 // a REAL TCP half performing BLOCKING I/O and gets woken via a cross-fiber
 // `CancelToken` while genuinely PARKED in a read. That combination —
 // linear+auto-cleanup+manual-close+spawn-consume-param+blocking-I/O+park —
-// is exactly the shape of `examples/flagship/socks5_http_bridge/main.nv`'s
+// is exactly the shape of `examples/flagship/http_socks5_bridge/main.nv`'s
 // `pipe_bidirectional`/`pump`, reproduced HERE 1:1 (same two helper
 // functions, byte-for-byte) over two real loopback TCP connections instead
 // of a live SOCKS5 tunnel, so the compile→run cycle is a single-digit
@@ -51,7 +51,7 @@ module standalone.m456_pump_helper_close_real_io
 import std.net.{TcpStream, TcpListener, TcpReadHalf, TcpWriteHalf, SocketAddr, real_net}
 import std.time.duration
 
-// Mirrors `write_all_half` from `examples/flagship/socks5_http_bridge/main.nv`.
+// Mirrors `write_all_half` from `examples/flagship/http_socks5_bridge/main.nv`.
 fn m456_write_all_half(mut w TcpWriteHalf, data []u8) Net -> bool {
     mut off = 0
     while off < data.len() {
@@ -63,7 +63,7 @@ fn m456_write_all_half(mut w TcpWriteHalf, data []u8) Net -> bool {
     true
 }
 
-// Mirrors `pump` from `examples/flagship/socks5_http_bridge/main.nv` byte-for-
+// Mirrors `pump` from `examples/flagship/http_socks5_bridge/main.nv` byte-for-
 // byte: consume-param helper (the SECOND form of consumption inside a
 // `spawn consume a, b { … }` body, D415 §4), explicit receiver-close on
 // BOTH linear halves after the blocking read loop, then wakes the sibling.

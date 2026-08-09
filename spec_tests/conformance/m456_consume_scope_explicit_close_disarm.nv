@@ -31,7 +31,7 @@ fn M456Half consume @cleanup(_outcome ScopeOutcome) -> () => ()
 fn M456Half consume @close() -> () => ()
 
 // Зеркало `pump()` моста плана 249 Ф.2
-// (`examples/_wip/socks5_http_bridge/main.nv`): обе половины приходят
+// (`examples/_wip/http_socks5_bridge/main.nv`): обе половины приходят
 // consume-параметрами и закрываются явно ВНУТРИ хелпера. Для тела файбера
 // это ВТОРАЯ форма потребления — передача в consume-параметр вызова, не
 // receiver-вызов.

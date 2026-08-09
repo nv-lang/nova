@@ -57,7 +57,7 @@ tls = { git = "https://github.com/nv-lang/nova-tls", version = "0.1" }
 # манифест обязан ссылаться на ОПУБЛИКОВАННОЕ. У `nova-http` теги есть (v0.1.0…v0.1.2).
 http = { git = "https://github.com/nv-lang/nova-http", version = "0.1" }
 polaris = { git = "https://github.com/nv-lang/nova-polaris", version = "0.1" }
-# Plan 249 (examples/flagship/socks5_http_bridge). Wired 2026-08-09: both blockers
+# Plan 249 (examples/flagship/http_socks5_bridge). Wired 2026-08-09: both blockers
 # are gone — `nova-socks` now publishes `v0.1.0` on all three mirrors (verified
 # with `git ls-remote --tags`, so D420 §4 lock RESOLUTION has a matching tag and
 # cannot fail the way №444/CI did), and the native crash that made the bridge's

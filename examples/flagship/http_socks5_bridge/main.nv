@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// examples/flagship/socks5_http_bridge/main.nv — local HTTP-to-SOCKS5 bridge.
+// examples/flagship/http_socks5_bridge/main.nv — local HTTP-to-SOCKS5 bridge.
 //
 // Motivation (plan 249 §0): some SOCKS5 proxies require a username/password
 // (RFC 1929) that Windows' system HTTP-proxy setting cannot carry. This
@@ -37,14 +37,14 @@
 //
 // Usage:
 //   SOCKS5_PROXY=proxy.example.com:1080 SOCKS5_USER=me SOCKS5_PASS=secret \
-//     nova build examples/flagship/socks5_http_bridge/main.nv -o bridge && ./bridge 8899
+//     nova build examples/flagship/http_socks5_bridge/main.nv -o bridge && ./bridge 8899
 //   # Point a browser's HTTPS proxy setting at 127.0.0.1:8899.
 //
 // See the module README for the full write-up, including the manual
 // end-to-end smoke test (NOT run in CI — needs a real external SOCKS5
 // proxy).
 
-module flagship.socks5_http_bridge
+module flagship.http_socks5_bridge
 
 import std.net.{TcpListener, TcpStream, TcpReadHalf, TcpWriteHalf, SocketAddr, real_net}
 import std.os.{args, env, real_os}
@@ -96,12 +96,12 @@ fn parse_listen_port(argv []str) -> int {
     match argv[1].to_int() {
         Ok(p) => {
             if p < 1 || p > 65535 {
-                panic("socks5_http_bridge: listen port ${p} out of range 1..65535")
+                panic("http_socks5_bridge: listen port ${p} out of range 1..65535")
             } else {
                 p
             }
         }
-        Err(_) => panic("socks5_http_bridge: invalid listen port argument '${argv[1]}'")
+        Err(_) => panic("http_socks5_bridge: invalid listen port argument '${argv[1]}'")
     }
 }
 
@@ -113,15 +113,15 @@ fn parse_proxy_host_port(raw str) -> (str, int) {
             match p_str.to_int() {
                 Ok(p) => {
                     if p < 1 || p > 65535 {
-                        panic("socks5_http_bridge: SOCKS5_PROXY port ${p} out of range 1..65535")
+                        panic("http_socks5_bridge: SOCKS5_PROXY port ${p} out of range 1..65535")
                     } else {
                         (h, p)
                     }
                 }
-                Err(_) => panic("socks5_http_bridge: SOCKS5_PROXY must be host:port, got '${raw}'")
+                Err(_) => panic("http_socks5_bridge: SOCKS5_PROXY must be host:port, got '${raw}'")
             }
         }
-        None => panic("socks5_http_bridge: SOCKS5_PROXY must be host:port, got '${raw}'")
+        None => panic("http_socks5_bridge: SOCKS5_PROXY must be host:port, got '${raw}'")
     }
 }
 
@@ -131,7 +131,7 @@ fn parse_proxy_host_port(raw str) -> (str, int) {
 fn load_config() Os -> Config {
     ro proxy_raw = env("SOCKS5_PROXY") ?? ""
     if proxy_raw == "" {
-        panic("socks5_http_bridge: SOCKS5_PROXY env var is required (host:port)")
+        panic("http_socks5_bridge: SOCKS5_PROXY env var is required (host:port)")
     }
     ro (proxy_host, proxy_port) = parse_proxy_host_port(proxy_raw)
     Config {
@@ -147,7 +147,7 @@ fn main() Net Os Time -> () {
     with Os = real_os(), Net = real_net() {
         ro cfg = load_config()
         consume listener = TcpListener.bind(SocketAddr.loopback(cfg.listen_port))!!
-        println("socks5_http_bridge: listening on 127.0.0.1:${listener.local_port()}, upstream SOCKS5 ${cfg.proxy_host}:${cfg.proxy_port}")
+        println("http_socks5_bridge: listening on 127.0.0.1:${listener.local_port()}, upstream SOCKS5 ${cfg.proxy_host}:${cfg.proxy_port}")
         supervised {
             loop {
                 match listener.accept() {
@@ -160,7 +160,7 @@ fn main() Net Os Time -> () {
                     // accept (transient EMFILE, a client that vanished during
                     // the handshake) must not take the whole bridge down —
                     // the loop is the process's only reason to exist.
-                    Err(_)           => println("socks5_http_bridge: accept failed, continuing")
+                    Err(_)           => println("http_socks5_bridge: accept failed, continuing")
                 }
             }
         }
