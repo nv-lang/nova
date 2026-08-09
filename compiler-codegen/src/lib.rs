@@ -22,7 +22,7 @@ pub mod field_cache;
 pub mod git_cache;
 pub mod imports;
 pub mod imports_stats;
-pub mod source_cache;
+pub mod source_index;
 pub mod interp;
 pub mod lexer;
 pub mod link_prep;
