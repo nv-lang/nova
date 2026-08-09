@@ -514,7 +514,10 @@ fn write_all_half(mut w TcpWriteHalf, data []u8) Net -> bool {
             // "peer gone", which would have turned a std.net contract
             // violation into an invisible early return. Assert it instead —
             // if it ever fires, the bug is in `std.net`, not here.
-            Ok(n) => { assert(n > 0)  off += n }
+            Ok(n) => {
+                assert(n > 0)
+                off += n
+            }
             Err(_) => return false
         }
     }
