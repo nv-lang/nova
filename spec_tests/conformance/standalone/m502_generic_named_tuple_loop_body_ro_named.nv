@@ -19,8 +19,8 @@ export fn M502GlrBox[K, V] @sum_values() -> int {
     mut i = 0
     while i < @xs.len() {
         ro cur = @xs[i].value
-        total = total + cur
-        i = i + 1
+        total += cur
+        i += 1
     }
     total
 }

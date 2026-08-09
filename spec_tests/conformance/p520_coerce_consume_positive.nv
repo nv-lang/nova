@@ -102,7 +102,7 @@ type P520Res consume { ro tag str, mut counter P520Counter }
 fn P520Res.new(tag str, counter P520Counter) -> P520Res => { tag, counter }
 
 #coerce
-export fn P520Res consume @finish() -> str => @tag
+export fn P520Res consume @into_finish() -> str => @tag
 
 fn P520Res consume @cleanup(_outcome ScopeOutcome) -> () {
     @counter.n += 1
@@ -119,7 +119,7 @@ test "#520: implicit #coerce finalize auto-disarms cleanup (counter stays 0)" {
 test "#520: explicit finalize call also disarms cleanup (baseline, same mechanism)" {
     mut c2 = P520Counter { n: 0 }
     consume r2 = P520Res.new("hi2", c2)
-    ro s2 = r2.finish()
+    ro s2 = r2.into_finish()
     assert(s2 == "hi2")
     assert(c2.n == 0)
 }

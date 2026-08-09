@@ -18,8 +18,8 @@ export fn M502NlmBox @sum_values() -> int {
     mut i = 0
     while i < @xs.len() {
         mut cur = @xs[i].value
-        total = total + cur
-        i = i + 1
+        total += cur
+        i += 1
     }
     total
 }

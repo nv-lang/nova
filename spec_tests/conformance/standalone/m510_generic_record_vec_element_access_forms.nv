@@ -49,7 +49,7 @@ export fn R510Box[K, V] @bind_then_access_key() -> K {
 export fn R510Box[K, V] @for_loop_sum_values() -> int {
     mut total = 0
     for e in @xs {
-        total = total + e.value
+        total += e.value
     }
     total
 }
