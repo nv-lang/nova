@@ -1,11 +1,14 @@
 // EXPECT_RUNTIME_PANIC Channel.new: capacity must be >= 1
 //
-// Plan 40 Ф.3 B9: Channel.new(0) should panic.  Prior to B9 ordering
+// Plan 40 Ф.3 B9: Channel[int].new(0) should panic.  Prior to B9 ordering
 // fix the allocation happened first and only then the check fired,
 // so the buffer leaked through GC pressure until the next collect.
 // Functional behaviour is identical; this test pins the contract.
+// №513 (D79-амендмент 2026-08-09): call site updated to the canonical
+// `Channel[T].new` form — the runtime panic text (marker above) is
+// unrelated to source syntax and stays verbatim.
 
 module standalone.channel_zero_capacity_panic
 fn main() {
-    ro _ = Channel.new(0)
+    ro _ = Channel[int].new(0)
 }

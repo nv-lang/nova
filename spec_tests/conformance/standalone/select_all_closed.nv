@@ -10,10 +10,10 @@
 
 module standalone.select_all_closed
 fn main() Io -> () {
-    ro ch1 = Channel.new(1)
+    ro ch1 = Channel[int].new(1)
     ro tx1 = ch1.tx
     ro rx1 = ch1.rx
-    ro ch2 = Channel.new(1)
+    ro ch2 = Channel[int].new(1)
     ro tx2 = ch2.tx
     ro rx2 = ch2.rx
     tx1.close()

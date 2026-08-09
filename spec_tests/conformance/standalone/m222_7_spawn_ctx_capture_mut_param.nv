@@ -39,7 +39,7 @@ import std.net.{TcpStream, TcpListener, SocketAddr, real_net}
 import std.time.duration
 
 fn read_via_share(s mut TcpStream) Net -> int {
-    ro (tx, rx) = Channel.new(1)
+    ro (tx, rx) = Channel[int].new(1)
     supervised {
         spawn consume ws = s.share() {
             match ws.read_bytes(64) {
@@ -54,8 +54,8 @@ fn read_via_share(s mut TcpStream) Net -> int {
 
 test "spawn consume ws = s.share() {} inline from a mut-param builds and runs" {
     with Net = real_net() {
-        ro (port_tx, port_rx) = Channel.new(1)
-        ro (got_tx, got_rx) = Channel.new(1)
+        ro (port_tx, port_rx) = Channel[u16].new(1)
+        ro (got_tx, got_rx) = Channel[int].new(1)
         with Fail[TimeoutError] = |_e| {} {
             supervised(timeout: 3.to_seconds()) {
                 spawn {

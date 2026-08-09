@@ -29,7 +29,7 @@ import std.time.duration
 test "supervised(timeout:) cancels a while-loop-retried split-half read(), both halves close (no UAF/hang)" {
     with Net = real_net() {
         with Fail[TimeoutError] = |_e| {} {
-            ro ch = Channel.new(1)   // server port → client
+            ro ch = Channel[u16].new(1)   // server port → client
             supervised(timeout: 300.to_millis()) {
                 spawn {
                     // Server: bind + accept, hold the connection open (a

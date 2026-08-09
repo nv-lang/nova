@@ -8,7 +8,7 @@
 
 module spec_tests.conformance
 test "recv distinguishes value (Some) from open-buffered channel" {
-    ro ch = Channel.new(2)
+    ro ch = Channel[int].new(2)
     ro tx = ch.tx
     ro rx = ch.rx
     tx.send(7)
@@ -22,7 +22,7 @@ test "recv distinguishes value (Some) from open-buffered channel" {
 }
 
 test "recv distinguishes closed (None) from value; buffer drains before None" {
-    ro ch = Channel.new(2)
+    ro ch = Channel[int].new(2)
     ro tx = ch.tx
     ro rx = ch.rx
     tx.send(11)
@@ -44,7 +44,7 @@ test "recv distinguishes closed (None) from value; buffer drains before None" {
 }
 
 test "empty-open channel: is_closed false (None ≠ closed без close)" {
-    ro ch = Channel.new(1)
+    ro ch = Channel[int].new(1)
     ro rx = ch.rx
     // Не читаем (recv заблокировал бы) — только проверяем closed-статус.
     assert(!rx.is_closed())     // открыт, пуст — НЕ closed

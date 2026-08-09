@@ -70,8 +70,8 @@ fn m_boxcap_serve(consume m_boxcap_listener TcpListener, m_boxcap_stop CancelTok
 
 test "m_boxcap detach box-capture + reachable CancelToken: serve, respond, cancel-shutdown (regression guard)" {
     with Net = real_net() {
-        ro (m_boxcap_port_tx, m_boxcap_port_rx) = Channel.new(1)
-        ro (m_boxcap_got_tx, m_boxcap_got_rx) = Channel.new(1)
+        ro (m_boxcap_port_tx, m_boxcap_port_rx) = Channel[u16].new(1)
+        ro (m_boxcap_got_tx, m_boxcap_got_rx) = Channel[[]u8].new(1)
         ro m_boxcap_stop = CancelToken.new()
         with Fail[TimeoutError] = |_e| {} {
             supervised(timeout: 5.to_seconds()) {

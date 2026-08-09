@@ -26,8 +26,8 @@ import std.time.duration
 fn crisscross_relay(consume conn1 TcpStream, consume conn2 TcpStream) Net -> (int, int) {
     consume (r1, w1) = conn1.into_split()
     consume (r2, w2) = conn2.into_split()
-    ro ch_a = Channel.new(1)
-    ro ch_b = Channel.new(1)
+    ro ch_a = Channel[int].new(1)
+    ro ch_b = Channel[int].new(1)
     supervised {
         spawn consume r1, w2 {
             mut buf []u8 = []u8.new()
@@ -77,9 +77,9 @@ fn crisscross_relay(consume conn1 TcpStream, consume conn2 TcpStream) Net -> (in
 
 test "crisscross split-stream pump on two real TCP connections does not crash the event loop (#456)" {
     with Net = real_net() {
-        ro ch_port = Channel.new(1)
-        ro ch_relay_done = Channel.new(1)
-        ro ch_client_done = Channel.new(1)
+        ro ch_port = Channel[u16].new(1)
+        ro ch_relay_done = Channel[int].new(1)
+        ro ch_client_done = Channel[int].new(1)
 
         supervised {
             // Server: accepts TWO connections, then hands them to the
