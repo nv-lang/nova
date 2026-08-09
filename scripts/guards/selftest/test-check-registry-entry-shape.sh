@@ -60,6 +60,13 @@ mk "$GOOD"
 out=$(NOVA_REGSHAPE_BASELINE="$BASE" bash "$G" "$TMP" 2>&1); rc=$?
 if [ "$rc" -eq 0 ] && echo "$out" | grep -q 'СНИЗИЛСЯ'; then ok "сообщает о снижении долга"; else bad "не сообщил о снижении (код $rc): $out"; fi
 
-if [ "$FAILED" -eq 0 ]; then echo "селфтест check-registry-entry-shape: 7/7 ok"; exit 0; fi
+# 8. К3 — тоже приоритет. Проверка появилась после того, как страж считал
+#    двенадцать записей с К3 неоформленными и держал их в базе долга.
+mk '| 907 | 🟢 К3 | **Заголовок.** **КЛАСС: что-то.** Фикс носителя приёмкой НЕ считается. |'
+echo 'incomplete_entries=0' > "$BASE"
+out=$(NOVA_REGSHAPE_BASELINE="$BASE" bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -eq 0 ]; then ok "К3 считается приоритетом"; else bad "ложный отказ на записи с К3 (код $rc): $out"; fi
+
+if [ "$FAILED" -eq 0 ]; then echo "селфтест check-registry-entry-shape: 8/8 ok"; exit 0; fi
 echo "селфтест check-registry-entry-shape: ЕСТЬ ПРОВАЛЫ" >&2
 exit 1
