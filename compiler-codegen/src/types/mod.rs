@@ -7979,6 +7979,12 @@ impl<'a> TypeCheckCtx<'a> {
                     self.materialize_returns_in_block(b, ret);
                     self.check_closure_scalar_return_in_block(b, ret, errors);
                     self.check_ro_launder_return_in_block(b, ret, &scope, errors);
+                } else {
+                    // [реестр 221.1 №493, K1] no annotation at all — D45's other
+                    // half (see `check_missing_return_annotation`'s own doc):
+                    // a non-unit trailing here is a forgotten `-> T`, not a
+                    // legitimate `()`.
+                    self.check_missing_return_annotation(fd, b, &scope, errors);
                 }
             }
             FnBody::External => {}
@@ -8041,6 +8047,92 @@ impl<'a> TypeCheckCtx<'a> {
         }
         *self.ro_binding_names.borrow_mut() = ro_snapshot;
         *self.consume_binding_names.borrow_mut() = consume_snapshot;
+    }
+
+    /// [реестр 221.1 №493] Reconstruct the `TypeRef` scope a block's OWN
+    /// top-level `let`/`ro`/`mut` bindings contribute, layered onto the
+    /// (already-restored) outer `scope` passed in. `f1_block` above
+    /// snapshots exactly these entries at block-entry and restores them at
+    /// block-exit (block-out shadowing, ~L8003-8012/8036-8041) — by the
+    /// time `f1_check_fn`'s `FnBody::Block` arm can react to a missing
+    /// `-> T` (right after `f1_block` returns), the block's own locals are
+    /// gone from `scope` again. This is a pure, side-effect-free
+    /// re-derivation (no diagnostics, no `ro_binding_names`/channel
+    /// writes) — it exists ONLY so `infer_expr_type` can see the same
+    /// names `f1_block` saw while it ran, when re-typing the trailing
+    /// expression for `check_missing_return_annotation`.
+    fn scope_with_block_lets(
+        &self,
+        b: &Block,
+        scope: &HashMap<String, TypeRef>,
+    ) -> HashMap<String, TypeRef> {
+        let mut s = scope.clone();
+        for stmt in &b.stmts {
+            if let Stmt::Let(d) = stmt {
+                if let Some(name) = pattern_simple_name(&d.pattern) {
+                    match d.ty.clone().or_else(|| self.infer_expr_type(&d.value, &s)) {
+                        Some(t) => { s.insert(name, t); }
+                        None => { s.remove(&name); }
+                    }
+                }
+            }
+        }
+        s
+    }
+
+    /// [реестр 221.1 №493, K1] D45 (`03-syntax.md`): "block-body — `-> T`
+    /// обязателен, если тип не unit". Before this fix that half of D45 was
+    /// NOT enforced anywhere: a block-body function with no `-> T` at all
+    /// compiled cleanly regardless of what its trailing expression
+    /// produced — codegen's `return_type_c` (emit_c.rs) treats ANY
+    /// annotation-less block-body as `nova_unit`, so the actual trailing
+    /// value is silently discarded (never returned to the caller) with
+    /// zero diagnostic at any stage — the caller either gets a confusing
+    /// raw C compile error (if it tries to use the "returned" value) or,
+    /// if it ignores the return value (legal for any call), nothing at
+    /// all indicates the value was lost. Fixes docs/plans/221.1-bug-
+    /// sweep.md №493.
+    ///
+    /// Deliberately conservative: fires ONLY when `infer_expr_type` (the
+    /// same best-effort inferer the ro-launder/literal-coercion channels
+    /// above already rely on) can CONFIDENTLY resolve the trailing
+    /// expression's type AND that type is not `Unit`. `None` (type not
+    /// inferable by this best-effort pass) or an already-`Unit` trailing
+    /// stay silent on purpose — a false positive here (flagging a
+    /// legitimate void procedure) is strictly worse than under-catching:
+    /// it would force `-> ()` noise across the tree, which D45 explicitly
+    /// rejects ("`-> ()` опускается всегда", D20). A block with NO
+    /// trailing expression at all (`b.trailing.is_none()` — the body's
+    /// last construct is a genuine statement: `let`/`return`/loop/
+    /// assignment) is unconditionally unit and never reaches this check.
+    fn check_missing_return_annotation(
+        &self,
+        fd: &FnDecl,
+        b: &Block,
+        scope: &HashMap<String, TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        let Some(trailing) = &b.trailing else { return };
+        let infer_scope = self.scope_with_block_lets(b, scope);
+        let Some(ty) = self.infer_expr_type(trailing, &infer_scope) else { return };
+        if matches!(ty, TypeRef::Unit(_)) {
+            return;
+        }
+        let ty_str = render_type_ref(&ty);
+        errors.push(Diagnostic::new(
+            format!(
+                "[E_MISSING_RETURN_TYPE] function `{name}` has a block-body (`{{ … }}`) \
+                 ending in a non-unit expression of type `{ty}`, but declares no `-> T` \
+                 return type. D45 requires an explicit return type for a block-body \
+                 function whenever the result is not unit — omitting `-> T` here silently \
+                 changes the function's return type to `()`, discarding this value. Add \
+                 `-> {ty}` to the function signature, or turn the trailing expression into \
+                 a statement (drop the last value) if nothing should be returned.",
+                name = fd.name,
+                ty = ty_str,
+            ),
+            trailing.span,
+        ));
     }
 
     fn f1_stmt(
