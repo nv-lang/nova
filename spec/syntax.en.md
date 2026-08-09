@@ -88,18 +88,46 @@ escape: `"\${name}"`.
 
 Details — [D44 — string literals and interpolation](decisions/03-syntax.md#d44).
 
-## Statement separator: newline or `;`
+## Separators: newline, `;` and `,`
 
-A **newline** separates statements. **`;` is optional** —
-needed only for several statements on one line:
+The separator follows the **nature of the construct**, not its place
+([D452](decisions/03-syntax.md#d452)):
+
+| what is separated | meaning | multi-line | on one line |
+|---|---|---|---|
+| statements | a sequence, "then" | newline | `;` |
+| `match` arms | alternatives, "or" | newline | `,` |
+| record fields, arguments, imports, elements | a list, "and also" | `,` | `,` |
+
+A **newline** separates statements. **`;` is required** for several statements
+on one line — and only there:
 
 ```nova
-ro x = 1                        // newline разделяет
+ro x = 1                        // newline separates
 ro y = 2
 foo(x, y)
 
-ro a = 1; ro b = 2; foo(a, b)  // ; для одной строки
+ro a = 1; ro b = 2; foo(a, b)  // ; for a single line
 ```
+
+Multi-line `match` arms are separated by a newline **only**; single-line arms by
+a comma. `;` between arms is rejected (it promises a sequence where the arms are
+mutually exclusive — exactly one runs), and so is a comma in the multi-line form
+(the newline has already separated them):
+
+```nova
+match code {                    // multi-line — no commas
+    200 => "ok"
+    404 => "not found"
+}
+
+ro s = match code { 200 => "ok", 404 => "not found" }   // one line — comma
+```
+
+In argument lists, record fields, imports and array elements the comma is
+required in **both** forms: inside brackets a newline is a legal continuation of
+the expression (see below), so without a comma an element boundary is
+indistinguishable from a wrapped long line.
 
 A newline is **ignored** in positions where the statement continues:
 
