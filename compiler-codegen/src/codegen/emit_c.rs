@@ -1763,12 +1763,14 @@ pub struct CEmitter {
     /// Plan 20 Ф.4: monotonic block-ID counter for stable, unique C names
     /// (`_defer_<BLKID>_<N>_active`, `_defer_cleanup_<BLKID>`, etc.).
     defer_block_counter: usize,
-    /// Plan 201 (D188-амендмент): стек активных re-consume блоков
-    /// `consume X { … }` во время эмита их тел: (binding, consume defer
-    /// block-id). `return X` голым идентификатором из-под такого блока —
-    /// санкционированный вынос владения: Return-эмит гасит cleanup
-    /// (`_defer_<id>_0_active = 0;`) ПЕРЕД прогоном early-exit cleanup'ов.
-    reconsume_scopes: Vec<(String, usize)>,
+    // План 253.4 Ф.1 (№480, 2026-08-08): ПОЛЕ `reconsume_scopes` СНЯТО.
+    // Это был реестр №1 из двух: стек активных re-consume блоков
+    // `consume X { … }` — (binding, consume defer block-id) — который
+    // `disarm_var_for` опрашивал первым, чтобы ВЫЧИСЛИТЬ имя флага
+    // `_defer_<id>_0_active` по номеру блока. Имя флага теперь выводится из
+    // C-идентификатора переменной и живёт в самой defer-записи; обе роли
+    // реестра (резолв дизарма, множество активных guard'ов) читаются из
+    // `defer_scopes` — см. `disarm_var_for` / `reconsume_active_names`.
     /// Plan 217 (D-новый, гибрид C): имена типов (plain Nova, НЕ C-ident) с
     /// эффект-чистым `@cleanup` (`f.effects.is_empty()`) — extern И user-
     /// defined ОБА считаются (в отличие от `consume_cleanup_types`, который
@@ -1810,17 +1812,15 @@ pub struct CEmitter {
     /// call on the same tracked binding must NOT falsely disarm it (that
     /// would leak the resource by skipping the real cleanup at scope-exit).
     consume_receiver_methods: HashMap<String, HashSet<String>>,
-    /// Plan 217: currently-armed auto-cleanup bindings — `(name, block_id,
-    /// entry_idx)`, most-recently-armed last. Consulted by the disarm sites
-    /// (`return X` bare/non-bare, direct call-arg, bare-statement consuming
-    /// method call on the receiver) to zero the matching `_active` flag —
-    /// this IS the runtime drop-flag (§8а п.6(а)): the flag is read only at
-    /// scope-exit, so a branch that disarmed it skips cleanup while a
-    /// sibling branch that didn't still runs it (MaybeConsumed-safe).
-    /// Entries for a block are dropped in `leave_defer_scope` (retain by
-    /// block_id) — the single choke-point every block already passes
-    /// through, so no per-call-site bookkeeping is needed.
-    auto_cleanup_active: Vec<(String, usize, usize)>,
+    // План 253.4 Ф.1 (№480, 2026-08-08): ПОЛЕ `auto_cleanup_active` СНЯТО.
+    // Это был реестр №2 из двух: `(name, block_id, entry_idx)` взведённых
+    // auto-cleanup-биндингов, наполнявшийся ОТДЕЛЬНЫМ третьим шагом
+    // (`emit_auto_cleanup_arm`) — тем самым, который форма
+    // `spawn consume a, b { … }` пропускала (№456). Сам drop-флаг
+    // (§8а п.6(а): читается только на выходе из скоупа, ветка-потребитель
+    // гасит, ветка-непотребитель оставляет — MaybeConsumed-safe) НИКУДА не
+    // делся: это и есть C-переменная `_defer_<c-имя>_active`, объявляемая
+    // рядом с переменной. Ушёл только реестр, который её РАЗЫСКИВАЛ.
     /// [M-217-break-continue-loop-boundary-bleed] BUGFIX: one entry per
     /// currently-open loop body (`for`/`while`/bare `loop`), pushed/popped by
     /// `emit_loop_body_inline_ex` alongside its own `enter_defer_scope`/
@@ -2284,6 +2284,22 @@ struct ConsumePolicy {
     /// (`nv_cleanup_watchdog_arm/disarm`) and compared against the measured
     /// cleanup duration for the ResourceTrace exit-event `overrun` flag.
     threshold_var: String,
+    /// План 253.4 Ф.1 (решение владельца 2026-08-08): NOVA-имя биндинга,
+    /// которое эта запись сторожит. Обязательное поле конструктора — завести
+    /// consume-запись, не назвав её биндинг, СИНТАКСИЧЕСКИ невозможно (тип
+    /// не построится), поэтому «забыть зарегистрировать» больше нечего:
+    /// регистрации нет, есть сам объект. `None` = владение УШЛО из этого
+    /// кадра насовсем (`spawn`/`detach consume` передаёт биндинг файберу,
+    /// см. `disarm_outer_auto_cleanup_for_fiber_body`) — запись остаётся в
+    /// стеке ради своего run-site'а, но по имени больше не находится.
+    /// Единственный ключ дизарм-резолва (`disarm_var_for`); прежние два
+    /// РЕЕСТРА (`reconsume_scopes`, `auto_cleanup_active`) сняты целиком.
+    nova_binding: Option<String>,
+    /// План 253.4 Ф.1: это Plan-201 re-consume-скоуп (`consume X { … }`)?
+    /// Заменяет прежний реестр `reconsume_scopes` в его ВТОРОЙ роли —
+    /// построении множества «активных guard'ов» для
+    /// `emit_expr_with_reconsume_disarm` (см. `reconsume_active_names`).
+    re_consume: bool,
 }
 
 /// Plan 173.1 Ф.2 (D71): element transport representation over the mono
@@ -2612,13 +2628,11 @@ impl CEmitter {
             novares_value_types: std::cell::RefCell::new(std::collections::HashMap::new()),
             defer_scopes: Vec::new(),
             defer_block_counter: 0,
-            reconsume_scopes: Vec::new(),
             auto_cleanup_types: HashSet::new(),
             auto_cleanup_arm_sites: HashMap::new(),
             free_fn_consume_param_positions: HashMap::new(),
             method_consume_param_positions: HashMap::new(),
             consume_receiver_methods: HashMap::new(),
-            auto_cleanup_active: Vec::new(),
             loop_body_has_scope: Vec::new(),
             var_boxed: HashMap::new(),
             detach_box_hoist: None,
@@ -29258,9 +29272,26 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             self.var_types.insert(name.clone(), init_c_type.clone());
                         }
                     }
-                    let active_var = format!("_defer_{}_{}_active", block_id, idx);
-                    let prevdl_var = format!("_defer_{}_{}_prevdl", block_id, idx);
-                    let ccount_var = format!("_defer_{}_{}_ccount", block_id, idx);
+                    // План 253.4 Ф.1: NOVA-имя биндинга берётся РОВНО ОДИН
+                    // раз (прежде `pattern_binding` звался дважды — здесь и
+                    // в `emit_auto_cleanup_arm`; для `Pattern::Wildcard` он
+                    // выдаёт СВЕЖИЙ `fresh_tmp` на каждый вызов, то есть два
+                    // разных имени на одну переменную — ещё одна расхождение-
+                    // точка, снятая заодно).
+                    let nova_binding = self.pattern_binding(&decl.pattern).unwrap_or_default();
+                    // План 253.4 Ф.1 (решение владельца 2026-08-08, уточнение
+                    // №2): имя флага строится из C-ИДЕНТИФИКАТОРА переменной
+                    // (`mangle_field_name` — то же отображение, которым
+                    // объявляется сама переменная выше), а НЕ из номера блока
+                    // и порядкового номера. Прежнее `_defer_<bid>_<idx>_active`
+                    // из имени переменной не выводилось — именно это и
+                    // вынуждало вести реестр (№480). Теневание разрешает сам
+                    // C: вложенный блок объявит свой флаг рядом со своей
+                    // одноимённой переменной и затенит внешний ровно так же,
+                    // как затеняет переменную.
+                    let active_var = format!("_defer_{}_active", Self::mangle_field_name(&nova_binding));
+                    let prevdl_var = format!("_defer_{}_prevdl", Self::mangle_field_name(&nova_binding));
+                    let ccount_var = format!("_defer_{}_ccount", Self::mangle_field_name(&nova_binding));
                     let type_name = {
                         let t = self.debt_strip_nova_trim_start(&init_c_type);
                         t.strip_prefix("NovaValue_").map(|s| s.to_string()).unwrap_or(t)
@@ -29278,11 +29309,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // AST + `init_c_type` ALREADY, so compute it now instead;
                     // `emit_auto_cleanup_arm` no longer needs to patch it
                     // (kept as a defensive no-op re-assignment there).
-                    let c_binding = self.pattern_binding(&decl.pattern).unwrap_or_default();
                     let c_binding = if init_c_type.starts_with("NovaValue_") && !init_c_type.ends_with('*') {
-                        format!("(&{})", c_binding)
+                        format!("(&{})", nova_binding)
                     } else {
-                        c_binding
+                        nova_binding.clone()
                     };
                     entries.push(DeferEntry {
                         active_var: active_var.clone(),
@@ -29307,6 +29337,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // disarmed watchdog, harmless literal per
                             // `nv_cleanup_watchdog_arm`).
                             threshold_var: "0".to_string(),
+                            // План 253.4 Ф.1: связь «переменная → её флаг →
+                            // её defer» существует ПО ПОСТРОЕНИЮ — одна
+                            // запись несёт всё трое. Реестра нет.
+                            nova_binding: Some(nova_binding.clone()),
+                            re_consume: false,
                         }),
                     });
                     self.line(&format!("int {} = 0;", active_var));
@@ -29641,7 +29676,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // calls `leave_defer_scope` exactly once) — no per-call-site
         // bookkeeping needed for the (name, block_id, idx) triples pushed
         // by `emit_auto_cleanup_arm`.
-        self.auto_cleanup_active.retain(|(_, bid, _)| *bid != block_id);
         // Plan 100.4.4 (D161): Per-defer NovaFailFrame wrap — каждый defer body
         // в своём setjmp envelope. LIFO continues despite individual failures;
         // failures accumulate в local compose-state, re-throw at end если any.
@@ -30361,10 +30395,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// The caller emits the wrapper prologue (capture + shield-enter + RT-enter)
     /// BEFORE this, sets the entry active AFTER it, emits the body, then calls
     /// `leave_defer_scope` (LEAVE run-site handles the consume-entry via its branch).
-    fn enter_consume_defer_scope(&mut self, policy: ConsumePolicy, is_loop_body: bool) -> usize {
+    /// План 253.4 Ф.1: возвращает `(block_id, имя флага)` — прежде вызывающий
+    /// пересобирал `_defer_<bid>_0_active` строкой у себя (две реконструкции
+    /// одного имени, классическая точка расхождения).
+    fn enter_consume_defer_scope(&mut self, policy: ConsumePolicy, is_loop_body: bool) -> (usize, String) {
         self.defer_block_counter += 1;
         let block_id = self.defer_block_counter;
-        let active = format!("_defer_{}_0_active", block_id);
+        // План 253.4 Ф.1 (уточнение №2): имя флага — из C-ИДЕНТИФИКАТОРА
+        // переменной, которую он сторожит (`_consume_<binding>_<id>`), а не
+        // из номера блока. `c_binding` у value-record'ов обёрнут в `(&…)`
+        // для передачи в cleanup — берём голый идентификатор.
+        let c_ident = policy.c_binding
+            .trim_start_matches("(&")
+            .trim_end_matches(')')
+            .to_string();
+        let active = format!("_defer_{}_active", c_ident);
         // Exactly-once + partial-init: 0 until the caller captures the resource.
         self.line(&format!("int {} = 0;", active));
         // Plan 173 Ф.5 (#8, D188 R2): runtime exactly-once counter — genuine
@@ -30431,7 +30476,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.defer_scopes.push(DeferScope {
             block_id,
             entries: vec![DeferEntry {
-                active_var: active,
+                active_var: active.clone(),
                 body: Expr::new(ExprKind::UnitLit, Span::default()),
                 outcome_binding: None,
                 consume_policy: Some(policy),
@@ -30444,7 +30489,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             intframe_popped_var,
             is_loop_body,
         });
-        block_id
+        (block_id, active)
     }
 
     fn emit_block_stmts(&mut self, block: &Block, ret_ty: &str) -> Result<(), String> {
@@ -30827,14 +30872,66 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// index within their block). Most-recently-armed wins (`.rev()`),
     /// mirroring shadowing semantics already used by `reconsume_scopes`
     /// alone before 217.
+    /// План 253.4 Ф.1 (№480, решение владельца 2026-08-08): дизарм-резолв
+    /// БЕЗ РЕЕСТРОВ. Прежде здесь искались два независимых стека
+    /// (`reconsume_scopes`, `auto_cleanup_active`), наполнявшихся в двух
+    /// РАЗНЫХ местах, каждое под свою форму объявления — и форма
+    /// `spawn consume a, b { … }` не попадала ни в один (№456: двойное
+    /// потребление, use-after-free, зависание в `GC_gcollect()`).
+    ///
+    /// Теперь спрашивается ровно та структура, которая ВЛАДЕЕТ флагом и его
+    /// `defer`'ом — стек defer-скоупов. Запись (`DeferEntry` +
+    /// `ConsumePolicy`) несёт имя переменной, имя флага и политику очистки
+    /// ОДНИМ объектом, созданным одной операцией: завести флаг и «забыть
+    /// зарегистрировать» его теперь невыразимо — регистрации нет.
+    /// Теневание — обход стека с конца (внутренний скоуп раньше внешнего),
+    /// в точности как у самих C-областей видимости.
     fn disarm_var_for(&self, name: &str) -> Option<String> {
-        if let Some((_, bid)) = self.reconsume_scopes.iter().rev().find(|(n, _)| n == name) {
-            return Some(format!("_defer_{}_0_active", bid));
-        }
-        if let Some((_, bid, idx)) = self.auto_cleanup_active.iter().rev().find(|(n, _, _)| n == name) {
-            return Some(format!("_defer_{}_{}_active", bid, idx));
+        for scope in self.defer_scopes.iter().rev() {
+            for entry in scope.entries.iter().rev() {
+                let Some(policy) = &entry.consume_policy else { continue };
+                if policy.nova_binding.as_deref() == Some(name) {
+                    return Some(entry.active_var.clone());
+                }
+            }
         }
         None
+    }
+
+    /// План 253.4 Ф.1: множество имён активных Plan-201 re-consume-guard'ов
+    /// (`consume X { … }`) — вторая роль снятого реестра `reconsume_scopes`.
+    /// Читается из того же стека defer-скоупов.
+    fn reconsume_active_names(&self) -> std::collections::HashSet<String> {
+        let mut out = std::collections::HashSet::new();
+        for scope in &self.defer_scopes {
+            for entry in &scope.entries {
+                if let Some(policy) = &entry.consume_policy {
+                    if policy.re_consume {
+                        if let Some(n) = &policy.nova_binding {
+                            out.insert(n.clone());
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// План 253.4 Ф.1: владение биндингом ушло из этого кадра насовсем
+    /// (`spawn`/`detach consume` передаёт его файберу) — запись остаётся
+    /// ради своего run-site'а, но по имени больше не находится. Замена
+    /// прежнему `auto_cleanup_active.retain(…)`.
+    fn drop_disarm_binding(&mut self, name: &str) {
+        for scope in self.defer_scopes.iter_mut().rev() {
+            for entry in scope.entries.iter_mut().rev() {
+                if let Some(policy) = &mut entry.consume_policy {
+                    if policy.nova_binding.as_deref() == Some(name) {
+                        policy.nova_binding = None;
+                        return;
+                    }
+                }
+            }
+        }
     }
 
     /// Plan 217: if `e` is a Call, disarm auto-cleanup/re-consume bindings
@@ -31015,7 +31112,23 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             Some(v) => v,
             None => return Ok(()),
         };
-        let binding = self.pattern_binding(&decl.pattern)?;
+        // План 253.4 Ф.1: биндинг и имя флага БОЛЬШЕ НЕ ВЫЧИСЛЯЮТСЯ здесь
+        // заново — оба уже лежат в записи, заведённой прологом вместе с
+        // самой переменной. Прежде это место звало `pattern_binding` второй
+        // раз и пересобирало `_defer_<bid>_<idx>_active` по номерам: две
+        // независимые реконструкции одного и того же, каждая — точка
+        // расхождения.
+        let (binding, active_var) = {
+            let scope = self.defer_scopes.iter().rev().find(|s| s.block_id == block_id);
+            let entry = scope.and_then(|s| s.entries.get(idx));
+            match entry {
+                Some(e) => (
+                    e.consume_policy.as_ref().and_then(|p| p.nova_binding.clone()).unwrap_or_default(),
+                    e.active_var.clone(),
+                ),
+                None => return Ok(()),
+            }
+        };
         let c_binding_arg = if init_c_type.starts_with("NovaValue_") && !init_c_type.ends_with('*') {
             format!("(&{})", binding)
         } else {
@@ -31025,7 +31138,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             let t = self.debt_strip_nova_trim_start(&init_c_type);
             t.strip_prefix("NovaValue_").map(|s| s.to_string()).unwrap_or(t)
         };
-        let active_var = format!("_defer_{}_{}_active", block_id, idx);
+        let _ = &decl.pattern;
         // [M-cancel-loop-accept-swallowed-residual] (221.1 №15, D188 R3
         // amendment, ОКНО-3 2026-07-23, владелец-решение (б)): the shield is
         // NO LONGER armed here at resource-capture time — that held the
@@ -31054,7 +31167,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 }
             }
         }
-        self.auto_cleanup_active.push((binding, block_id, idx));
+        // План 253.4 Ф.1: РЕГИСТРАЦИИ БОЛЬШЕ НЕТ. Прежде здесь стояло
+        // `self.auto_cleanup_active.push((binding, block_id, idx))` — третий,
+        // отдельный от заведения флага и от постановки defer'а шаг, который
+        // форма `spawn consume a, b { … }` и пропустила (№456/№480).
         Ok(())
     }
 
@@ -32282,11 +32398,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // NOT disarmed here without callee param-mode resolution. The
                 // receiver-call case just above (`g.method()`) is the one
                 // shape proven safe (gated on `consume_receiver_methods`).
-                let val = if self.reconsume_scopes.is_empty() {
+                let active = self.reconsume_active_names();
+                let val = if active.is_empty() {
                     self.emit_expr(e)?
                 } else {
-                    let active: std::collections::HashSet<String> =
-                        self.reconsume_scopes.iter().map(|(b, _)| b.clone()).collect();
                     self.emit_expr_with_reconsume_disarm(e, &active)?
                 };
                 // Plan 55 Ф.3: nova_unit — struct{}; `_tmp;` invalid C для struct.
@@ -32686,12 +32801,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // `consume_receiver_methods`) are the two disarm paths
                     // proven safe without this extra machinery.
                     let reconsume_disarm_names: std::collections::HashSet<String> =
-                        if matches!(&v.kind, ExprKind::Ident(_)) || self.reconsume_scopes.is_empty() {
+                        if matches!(&v.kind, ExprKind::Ident(_)) {
                             std::collections::HashSet::new()
                         } else {
-                            let active: std::collections::HashSet<String> =
-                                self.reconsume_scopes.iter().map(|(b, _)| b.clone()).collect();
-                            self.collect_reconsume_disarm_names(v, &active)
+                            let active = self.reconsume_active_names();
+                            if active.is_empty() {
+                                std::collections::HashSet::new()
+                            } else {
+                                self.collect_reconsume_disarm_names(v, &active)
+                            }
                         };
                     let val = if !reconsume_disarm_names.is_empty() {
                         self.emit_expr_with_reconsume_disarm(v, &reconsume_disarm_names)?
@@ -33042,55 +33160,44 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     has_resource_trace,
                     count_var,
                     threshold_var: timeout_var.clone(),
+                    // План 253.4 Ф.1: ОБЕ прежние «регистрации» (ветка
+                    // `re_consume=true` в `reconsume_scopes` и ветка
+                    // `re_consume=false` в `auto_cleanup_active`, добавленная
+                    // фиксом №456) сведены в ДВА ПОЛЯ КОНСТРУКТОРА. Забыть
+                    // зарегистрировать форму больше нельзя: без этих полей
+                    // `ConsumePolicy` не собирается.
+                    nova_binding: Some(binding.clone()),
+                    re_consume: *re_consume,
                 };
-                let consume_block_id = self.enter_consume_defer_scope(policy, false);
+                let (consume_block_id, consume_active_var) =
+                    self.enter_consume_defer_scope(policy, false);
                 // Partial-init + exactly-once: arm the cleanup only now that the
                 // resource is captured (init above cannot have thrown past here).
-                self.line(&format!("_defer_{}_0_active = 1;", consume_block_id));
-
-                // Plan 201: re-consume блок — регистрируем в стеке для
-                // `return X`-дизарма (Return-эмит гасит _active этого скоупа
-                // при санкционированном выносе владения голым `return X`).
-                if *re_consume {
-                    self.reconsume_scopes.push((binding.clone(), consume_block_id));
-                } else {
-                    // 221.1 №456 (`[M-consume-scope-cleanup-not-disarmable]`,
-                    // D415 §4 амендмент 2026-08-08): у форм с
-                    // `re_consume=false` — `spawn`/`detach consume c { … }`,
-                    // их мульти-var зеркало (`parse_spawn_detach_consume_
-                    // multivar`) и D188 binding-форма `consume c = e { … }` —
-                    // тело ВЛАДЕЕТ биндингом по-настоящему и вправе потребить
-                    // его ЯВНО (D415 §4: «move-out изнутри тела разрешён …
-                    // move-out-запрет не вводился» — в отличие от Plan-201 [INV-TODO: №480]
-                    // re-consume формы, где то же самое ловится как
-                    // `E_CONSUME_BLOCK_MOVE_OUT`). Флаг `_active` взводился,
-                    // но НИ ОДНА дизарм-точка не могла его найти:
-                    // `disarm_var_for` ищет имя в `reconsume_scopes` (сюда
-                    // клали только `re_consume=true`) и в
-                    // `auto_cleanup_active` (туда кладёт только bare
-                    // consume-let, `emit_auto_cleanup_arm`) — эта форма не
-                    // попадала никуда. Итог: `spawn consume r, w { …
-                    // r.close(); w.close() }` потреблял каждую половину
-                    // ДВАЖДЫ (явный `close` + авто-`@cleanup` на выходе тела)
-                    // — прямое нарушение exactly-once (D131/D133) и, на
-                    // разделённом TCP-потоке, use-after-free по
-                    // `split_refcount` (2→1→0 одной фиброй) с последующим
-                    // зависанием в `GC_gcollect()`.
-                    //
-                    // Регистрация в ТОМ ЖЕ реестре, что и bare-биндинги,
-                    // включает для этой формы штатную D432 §4/§5 drop-флаг
-                    // механику (дизарм на consuming-вызове по receiver'у, на
-                    // передаче в consume-параметр, на `return X`) — новых
-                    // правил и таблиц не вводится, все решения о том, ЧТО
-                    // считать потреблением, по-прежнему принимает канал
-                    // чекера (`consume_receiver_methods`,
-                    // `*_consume_param_positions`, `resolved_callees`).
-                    // Entry-индекс у consume-scope всегда 0 (см.
-                    // `enter_consume_defer_scope`); снимается автоматически
-                    // в `leave_defer_scope(consume_block_id)`.
-                    self.auto_cleanup_active
-                        .push((binding.clone(), consume_block_id, 0));
-                }
+                self.line(&format!("{} = 1;", consume_active_var));
+                // 221.1 №456/№480 (`[M-consume-scope-cleanup-not-disarmable]`,
+                // D415 §4 амендмент 2026-08-08) — ИСТОРИЯ МЕСТА: у форм с
+                // `re_consume=false` (`spawn`/`detach consume c { … }`, их
+                // мульти-var зеркало `parse_spawn_detach_consume_multivar` и
+                // D188 binding-форма `consume c = e { … }`) тело ВЛАДЕЕТ
+                // биндингом по-настоящему и вправе потребить его ЯВНО
+                // (D415 §4: «move-out изнутри тела разрешён … move-out-запрет
+                // не вводился»). Флаг `_active` взводился, но НИ ОДНА
+                // дизарм-точка не могла его найти — форма не попадала ни в
+                // `reconsume_scopes`, ни в `auto_cleanup_active`. Итог:
+                // `spawn consume r, w { … r.close(); w.close() }` потреблял
+                // каждую половину ДВАЖДЫ (явный `close` + авто-`@cleanup` на
+                // выходе тела) — нарушение exactly-once (D131/D133) и, на
+                // разделённом TCP-потоке, use-after-free по `split_refcount`
+                // с зависанием в `GC_gcollect()`.
+                //
+                // План 253.4 Ф.1: ветвления «куда зарегистрировать» здесь
+                // БОЛЬШЕ НЕТ — регистрации нет вовсе. Обе формы описаны
+                // одними и теми же полями `ConsumePolicy` выше, и обе
+                // находятся одним и тем же обходом `defer_scopes`. Решения о
+                // том, ЧТО считать потреблением, по-прежнему принимает канал
+                // чекера (`consume_receiver_methods`,
+                // `*_consume_param_positions`, `resolved_callees`).
+                let _ = consume_block_id;
 
                 // Body in its OWN nested defer-scope so body-defers run BEFORE the
                 // consume-cleanup (LIFO). enter/leave are no-ops when body has none.
@@ -33121,12 +33228,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // выше `emit_stmt`). Гейт `result.is_some()` зеркалит
                     // checker'а (ConsumeCtx `walk_guarded_escape_expr_multi`
                     // вызывается ТОЛЬКО при наличии result-приёмника).
-                    let v = if tail_escape || result.is_none() || self.reconsume_scopes.is_empty() {
+                    let reconsume_active = self.reconsume_active_names();
+                    let v = if tail_escape || result.is_none() || reconsume_active.is_empty() {
                         self.emit_expr(t)?
                     } else {
-                        let active: std::collections::HashSet<String> =
-                            self.reconsume_scopes.iter().map(|(b, _)| b.clone()).collect();
-                        let disarm_names = self.collect_reconsume_disarm_names(t, &active);
+                        let disarm_names = self.collect_reconsume_disarm_names(t, &reconsume_active);
                         if disarm_names.is_empty() {
                             self.emit_expr(t)?
                         } else {
@@ -33134,18 +33240,20 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                     };
                     if tail_escape {
+                        // План 253.4 Ф.1: имя флага берётся у скоупа, а не
+                        // пересобирается строкой по номеру блока.
                         self.line(&format!(
-                            "_defer_{}_0_active = 0;  /* Plan 201: tail-вынос — cleanup дизармлен */",
-                            consume_block_id));
+                            "{} = 0;  /* Plan 201: tail-вынос — cleanup дизармлен */",
+                            consume_active_var));
                     }
                     match result {
                         Some(r) => self.line(&format!("{} = {};", r.name, v)),
                         None => self.line(&format!("(void)({});", v)),
                     }
                 }
-                if *re_consume {
-                    self.reconsume_scopes.pop();
-                }
+                // План 253.4 Ф.1: снимать запись отдельным `pop` больше не
+                // нужно — она уходит вместе со своим скоупом в
+                // `leave_defer_scope(consume_block_id)` ниже.
                 self.leave_defer_scope(body_defer_id);
                 if suspended_capture {
                     if let Some(s) = self.current_spawn_captures.as_mut() { s.insert(binding.clone()); }

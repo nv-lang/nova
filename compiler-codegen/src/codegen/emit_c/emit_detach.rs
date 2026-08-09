@@ -56,7 +56,10 @@ impl CEmitter {
                     "{} = 0;  /* №379: spawn/detach-consume — outer auto-cleanup дизармлен перед файбером */",
                     var));
             }
-            self.auto_cleanup_active.retain(|(n, _, _)| n != binding);
+            // План 253.4 Ф.1: реестра `auto_cleanup_active` больше нет —
+            // владение помечается ушедшим прямо в записи, которая владеет
+            // флагом и его `defer`'ом (см. `drop_disarm_binding`).
+            self.drop_disarm_binding(binding);
             let single_stmt_no_trailing = cur.stmts.len() == 1 && cur.trailing.is_none();
             if !single_stmt_no_trailing { break; }
             cur = inner;

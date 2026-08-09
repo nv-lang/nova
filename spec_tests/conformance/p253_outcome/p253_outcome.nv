@@ -1,0 +1,147 @@
+// План 253.4 Ф.1 (№480) — СТРАЖ ИСХОДА: авто-`@cleanup` обязан получить
+// НАСТОЯЩИЙ `ScopeOutcome` блока, а не константу.
+//
+// Зачем отдельная фикстура. Реестр дизарма снят, и флаг с его `defer`'ом
+// теперь заводятся рядом с самой consume-переменной. `defer` вызывает
+// `@cleanup(outcome)`, и исход берётся из run-site'а, через который вышли:
+// нормальный выход → `Success`, раскрутка через ошибку → `Failure(e)`.
+// Ни одна существующая фикстура НЕ проверяет ЗНАЧЕНИЕ исхода — `f5_consume_
+// exactly_once.nv` считает только ЧИСЛО dispatch'ей и принимает
+// `_outcome` без разбора, `codegen_typed_error_dispatch_t2_11.nv` матчит
+// исход, но ничего о нём не утверждает. Потерянный исход (всегда `Success`)
+// прошёл бы весь позитивный корпус молча — тихая регрессия поведения
+// ровно того класса, который этот план и закрывает.
+//
+// Наблюдаемость — `ResourceTrace.on_resource_exit(label, outcome, …)`:
+// эмиссия передаёт туда ТОТ ЖЕ материализованный `ScopeOutcome`, что и в
+// `@cleanup` (`emit_consume_entry_cleanup`, один `o_local` на оба вызова),
+// поэтому разбор исхода в хендлере — прямое свидетельство о том, что
+// получила очистка.
+//
+// Свой CU (подкаталог), а не общий folder-модуль `spec_tests.conformance`:
+// страж обязан быть запускаемым в изоляции — целевой `--filter` по общему
+// folder-CU архитектурно невозможен (лавина `E_D78_MODULE_PATH_MISMATCH`).
+
+module conformance.p253_outcome
+
+type P253Res consume { id int }
+
+fn P253Res.new(id int) -> P253Res => { id }
+
+fn P253Res consume @cleanup(_o ScopeOutcome) -> () => ()
+
+type P253Err { msg str }
+
+fn p253_throws() Fail[P253Err] -> () {
+    throw P253Err { msg: "boom" }
+}
+
+// (1) `consume X = e { … }` — нормальный выход: исход обязан быть Success.
+test "253.4: consume-блок, штатный выход — cleanup получает Success" {
+    mut n_success = 0
+    mut n_failure = 0
+    mut n_panic = 0
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(_label, outcome, _duration_ms, _overrun) -> () {
+            match outcome {
+                Success => { n_success += 1 }
+                Failure(_e) => { n_failure += 1 }
+                Panic(_m) => { n_panic += 1 }
+            }
+            return ()
+        }
+    } {
+        consume r = P253Res.new(1) {
+            ro _x = r.id
+        }
+    }
+    assert(n_success == 1)
+    assert(n_failure == 0)
+    assert(n_panic == 0)
+}
+
+// (2) `consume X = e { … }` — выход через ошибку: исход обязан быть Failure.
+// Подмена исхода на константный Success краснит ИМЕННО этот кейс.
+test "253.4: consume-блок, выход через ошибку — cleanup получает Failure" {
+    mut n_success = 0
+    mut n_failure = 0
+    mut n_panic = 0
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(_label, outcome, _duration_ms, _overrun) -> () {
+            match outcome {
+                Success => { n_success += 1 }
+                Failure(_e) => { n_failure += 1 }
+                Panic(_m) => { n_panic += 1 }
+            }
+            return ()
+        }
+    } {
+        with Fail = effect Fail { fail(_m) -> never { interrupt () } } {
+            consume r = P253Res.new(2) { p253_throws() }
+        }
+    }
+    assert(n_success == 0)
+    assert(n_failure == 1)
+    assert(n_panic == 0)
+}
+
+// (3) bare consume-let (D432 §2) — та же проверка на ДРУГОЙ форме
+// заведения флага: авто-очистка непотреблённого биндинга на штатном выходе.
+test "253.4: bare consume-let, штатный выход — cleanup получает Success" {
+    mut n_success = 0
+    mut n_failure = 0
+    mut n_panic = 0
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(_label, outcome, _duration_ms, _overrun) -> () {
+            match outcome {
+                Success => { n_success += 1 }
+                Failure(_e) => { n_failure += 1 }
+                Panic(_m) => { n_panic += 1 }
+            }
+            return ()
+        }
+    } {
+        consume r = P253Res.new(3)
+        ro _x = r.id
+    }
+    assert(n_success == 1)
+    assert(n_failure == 0)
+    assert(n_panic == 0)
+}
+
+fn p253_bare_let_throws() Fail[P253Err] -> () {
+    consume r = P253Res.new(4)
+    ro _x = r.id
+    p253_throws()
+}
+
+// (4) bare consume-let (D432 §2) — выход через ошибку: FAIL-run-site
+// авто-очистки обязан донести Failure. Это ОТДЕЛЬНЫЙ run-site от (2)
+// (`enter_defer_scope`'s setjmp-обработчик, не `enter_consume_defer_scope`),
+// и до 253.4 у него не было ни одной проверки исхода.
+test "253.4: bare consume-let, выход через ошибку — cleanup получает Failure" {
+    mut n_success = 0
+    mut n_failure = 0
+    mut n_panic = 0
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(_label, outcome, _duration_ms, _overrun) -> () {
+            match outcome {
+                Success => { n_success += 1 }
+                Failure(_e) => { n_failure += 1 }
+                Panic(_m) => { n_panic += 1 }
+            }
+            return ()
+        }
+    } {
+        with Fail = effect Fail { fail(_m) -> never { interrupt () } } {
+            p253_bare_let_throws()
+        }
+    }
+    assert(n_success == 0)
+    assert(n_failure == 1)
+    assert(n_panic == 0)
+}
