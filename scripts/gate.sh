@@ -180,6 +180,9 @@ step "ci-status (внешний авторитетный гейт — GitHub Act
 bash "$ROOT/scripts/tools/with-deadline.sh" 120 \
     bash "$ROOT/scripts/guards/check-ci-status.sh" || true
 
+step "язык сообщений коммитов (норма 2026-08-09 — по-английски)"
+bash "$ROOT/scripts/tools/with-deadline.sh" 60 \n    bash "$ROOT/scripts/guards/check-commit-language.sh" "$ROOT" \n    || fail "кириллица в сообщениях коммитов после точки перехода"
+
 step "самотесты стражей (все из каталога, по одному разу)"
 # ЕДИНСТВЕННОЕ место, где они запускаются. Каталог обходится целиком,
 # поэтому новый самотест подхватывается сам — дописывать его в gate.sh
@@ -326,10 +329,37 @@ echo "$LINT_LINE2" | grep -qE ", 0 finding\(s\)" \
     || fail "nova lint spec_tests: находки > 0, ожидался канон 0 (см. $LINT_LOG2): '$LINT_LINE2'"
 [ "$LINT_EXIT2" -eq 0 ] || fail "nova lint --deny spec_tests: exit=$LINT_EXIT2 (см. $LINT_LOG2)"
 
-step "flagship aggregator --strict-effects"
-FLAG_LINE=$("$NOVA" build "$ROOT/examples/flagship/aggregator/src/main.nv" --strict-effects 2>&1 | sed -e "s/\[[0-9;]*m//g" | tail -1)
-echo "flagship :: $FLAG_LINE"
-echo "$FLAG_LINE" | grep -q "built:" || fail "flagship not built: '$FLAG_LINE'"
+step "flagship examples --strict-effects (все 5 целей, как в CI)"
+# ПЯТЬ целей, а не одна. 2026-08-09: локальный гейт собирал только aggregator,
+# CI собирает пять — и первым же прогоном покраснел на examples/tls/echo_server.nv
+# (`undefined identifier session`, остаток переименования). Гейт, который слабее
+# внешнего, не гейт: 147 коммитов ушли «на зелёном».
+#
+# Проверка — по КОДУ ВОЗВРАТА. Прежняя искала подстроку `built:` в ПОСЛЕДНЕЙ
+# строке вывода, а вывод кончается предупреждениями чаще, чем строкой сборки.
+# Та же ловушка стоила интегратору ложного «все четыре ОК»: `rc=$?` после
+# конвейера с `sed` возвращает код sed, а не компилятора.
+FLAGSHIP_TARGETS="
+examples/flagship/aggregator/src/main.nv
+examples/net/echo_client.nv
+examples/net/echo_server.nv
+examples/tls/echo_client.nv
+examples/tls/echo_server.nv
+"
+FLAG_FAILED=""
+for _t in $FLAGSHIP_TARGETS; do
+    _flog="${TMPDIR:-/tmp}/gate_flagship_$$.log"
+    "$NOVA" build "$ROOT/$_t" --strict-effects >"$_flog" 2>&1
+    if [ $? -eq 0 ]; then
+        echo "flagship ok :: $_t"
+    else
+        echo "flagship FAIL :: $_t"
+        grep -m3 "error:" "$_flog" | sed 's/^/    /'
+        FLAG_FAILED="$FLAG_FAILED $_t"
+    fi
+    rm -f "$_flog"
+done
+[ -z "$FLAG_FAILED" ] || fail "flagship examples не собрались:$FLAG_FAILED"
 
 step "D-number uniqueness"
 # 2026-07-30: послабление под D431 СНЯТО — коллизия закрыта перенумерацией
