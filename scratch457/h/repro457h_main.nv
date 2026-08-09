@@ -1,0 +1,27 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Standalone form of supervised_timeout_nested_spawn_test.nv's test 1
+// (no-false-positive) for fast repeated external stress-looping.
+
+module scratch457.repro457h_main
+
+import std.time.duration
+
+fn main() Time -> () {
+    ro (tx, rx) = Channel.new(1)
+    mut caught = AtomicBool.new(false)
+    ro t0 = Timestamp.now().unix_millis()
+    ro r = with Fail[TimeoutError] = |_e| {
+        caught.store(true)
+        0
+    } {
+        supervised(timeout: 2.to_seconds()) {
+            spawn {
+                tx.send(true)
+            }
+        }
+        ro got = rx.recv()
+        match got { Some(_) => 1  None => 0 }
+    }
+    ro elapsed = Timestamp.now().unix_millis() - t0
+    println("repro457h: caught=${caught.load()} r=${r} elapsed_ms=${elapsed}")
+}

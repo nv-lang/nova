@@ -1,0 +1,47 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Scratch repro #457, v6 — TRUE double nesting: `spawn { spawn { .read() } }`
+// under a single `supervised(timeout:)` — a grandchild fiber, not just a
+// child. This is the one matrix cell (операция × spawn-в-spawn) not yet
+// isolated by v1-v5, all of which used exactly one level of `spawn`.
+
+module scratch457.repro457f_main
+
+import std.net.{TcpListener, TcpStream, SocketAddr, NetError, real_net}
+import std.time.duration
+
+fn must[T](r Result[T, NetError]) -> T {
+    match r {
+        Ok(v)  => v
+        Err(e) => panic("repro457f: unexpected Err: ${e}")
+    }
+}
+
+fn main() Net Time -> () {
+    with Net = real_net() {
+        mut lst = must(TcpListener.bind(SocketAddr.loopback(0)))
+        ro port = lst.local_port()
+        mut conn = must(TcpStream.connect(SocketAddr.loopback(port)))
+        mut srv = must(lst.accept())
+
+        ro t0 = Timestamp.now().unix_millis()
+        ro r = with Fail[TimeoutError] = |_e| { 99 } {
+            supervised(timeout: 2.to_seconds()) {
+                spawn consume srv {
+                    spawn consume srv {
+                        mut buf []u8 = []u8.new()
+                        buf.resize(64, 0 as u8)
+                        match srv.read(buf) {
+                            Ok(n)  => println("repro457f: UNEXPECTED read Ok(${n})")
+                            Err(e) => println("repro457f: read Err inside grandchild spawn: ${e}")
+                        }
+                    }
+                }
+            }
+            7
+        }
+        ro elapsed = Timestamp.now().unix_millis() - t0
+        println("repro457f: r=${r} elapsed_ms=${elapsed}")
+        conn.close()
+        lst.close()
+    }
+}

@@ -1,0 +1,66 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Scratch repro #457, v5 — matches the EXACT shape window 249 used to
+// establish the defect (plan 249, Ф.0 вердикт (б)): TWO SIBLING spawns
+// under ONE `supervised(timeout:)`, each blocking on a split
+// `TcpReadHalf.read()` as a DIRECT top-level statement of its own body (no
+// nested inner `supervised`) — the `pipe_bidirectional`-style shape.
+// v1-v4 all used a SINGLE spawn/single read and all correctly honored the
+// timeout; this is the one dimension not yet tried.
+
+module scratch457.repro457e_main
+
+import std.net.{TcpListener, TcpStream, SocketAddr, NetError, real_net}
+import std.time.duration
+
+fn must[T](r Result[T, NetError]) -> T {
+    match r {
+        Ok(v)  => v
+        Err(e) => panic("repro457e: unexpected Err: ${e}")
+    }
+}
+
+fn main() Net Time -> () {
+    with Net = real_net() {
+        mut lst = must(TcpListener.bind(SocketAddr.loopback(0)))
+        ro port = lst.local_port()
+
+        mut connA = must(TcpStream.connect(SocketAddr.loopback(port)))
+        mut srvA = must(lst.accept())
+        mut connB = must(TcpStream.connect(SocketAddr.loopback(port)))
+        mut srvB = must(lst.accept())
+        // Both conn* stay alive, idle, entirely outside any spawn/supervised.
+
+        consume (arA, awA) = srvA.into_split()
+        consume (arB, awB) = srvB.into_split()
+
+        ro t0 = Timestamp.now().unix_millis()
+        ro r = with Fail[TimeoutError] = |_e| { 99 } {
+            supervised(timeout: 30.to_millis()) {
+                spawn consume arA {
+                    mut buf []u8 = []u8.new()
+                    buf.resize(64, 0 as u8)
+                    match arA.read(buf) {
+                        Ok(n)  => println("repro457e: UNEXPECTED A read Ok(${n})")
+                        Err(e) => println("repro457e: A read Err: ${e}")
+                    }
+                }
+                spawn consume arB {
+                    mut buf []u8 = []u8.new()
+                    buf.resize(64, 0 as u8)
+                    match arB.read(buf) {
+                        Ok(n)  => println("repro457e: UNEXPECTED B read Ok(${n})")
+                        Err(e) => println("repro457e: B read Err: ${e}")
+                    }
+                }
+            }
+            7
+        }
+        ro elapsed = Timestamp.now().unix_millis() - t0
+        println("repro457e: r=${r} elapsed_ms=${elapsed}")
+        connA.close()
+        connB.close()
+        awA.close()
+        awB.close()
+        lst.close()
+    }
+}

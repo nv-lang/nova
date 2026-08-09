@@ -1,0 +1,64 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Scratch repro #457, v4 — the SECOND `.read()` in a loop (first read
+// succeeds with partial data, second read blocks) inside a child spawn
+// under `supervised(timeout:)`. Mirrors `read_headers`'s actual loop shape
+// (multiple `client.read(chunk)` calls) rather than a single read call,
+// in case the defect is specific to a read AFTER a prior successful read
+// on the same handle (same family as the historically-tricky #390 area,
+// though #390 itself was a compiler escape-analysis bug, already fixed,
+// unrelated to cancellation).
+
+module scratch457.repro457d_main
+
+import std.net.{TcpListener, TcpStream, SocketAddr, NetError, real_net}
+import std.io.{IoError}
+import std.time.duration
+
+fn must[T](r Result[T, NetError]) -> T {
+    match r {
+        Ok(v)  => v
+        Err(e) => panic("repro457d: unexpected Err: ${e}")
+    }
+}
+
+fn main() Net Time -> () {
+    with Net = real_net() {
+        mut lst = must(TcpListener.bind(SocketAddr.loopback(0)))
+        ro port = lst.local_port()
+        mut conn = must(TcpStream.connect(SocketAddr.loopback(port)))
+        mut srv = must(lst.accept())
+        // Send ONE byte (no CRLFCRLF terminator) so the reading loop's
+        // FIRST read succeeds, then parks on a SECOND read that never
+        // completes without cancellation. `conn` then stays alive, idle,
+        // outside any spawn/supervised for the rest of the run.
+        conn.write("X")
+
+        ro t0 = Timestamp.now().unix_millis()
+        ro r = with Fail[TimeoutError] = |_e| { 99 } {
+            supervised(timeout: 2.to_seconds()) {
+                spawn consume srv {
+                    mut buf []u8 = []u8.new()
+                    buf.resize(64, 0 as u8)
+                    ro n1 = must_io(srv.read(buf))
+                    println("repro457d: first read n=${n1}")
+                    match srv.read(buf) {
+                        Ok(n2) => println("repro457d: UNEXPECTED second read Ok(${n2})")
+                        Err(e) => println("repro457d: second read Err inside spawn: ${e}")
+                    }
+                }
+            }
+            7
+        }
+        ro elapsed = Timestamp.now().unix_millis() - t0
+        println("repro457d: r=${r} elapsed_ms=${elapsed}")
+        conn.close()
+        lst.close()
+    }
+}
+
+fn must_io[T](r Result[T, IoError]) -> T {
+    match r {
+        Ok(v)  => v
+        Err(e) => panic("repro457d: unexpected first-read IoError: ${e}")
+    }
+}
