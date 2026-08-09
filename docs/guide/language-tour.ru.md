@@ -393,7 +393,7 @@ explicit-consume demo below
 даёт блоку общий дедлайн, и spawn, не уложившийся в него, по-настоящему
 отменяется, а не остаётся работать с выброшенным результатом.
 `parallel for` разворачивает однородную работу и собирает результаты в
-`[]T` по порядку. `Channel.new(cap)` возвращает пару с разделёнными
+`[]T` по порядку. `Channel[T].new(cap)` возвращает пару с разделёнными
 капабилити `{ tx, rx }`. Это та же форма, что в
 [`examples/mini_aggregator.nv`](../../examples/mini_aggregator.nv) (см.
 [quickstart.md](quickstart.md)) и флагманском демо
@@ -406,7 +406,7 @@ module tour.concurrency
 import std.time.duration
 
 fn probe(latency_ms int, deadline Monotonic) Time -> str {
-    ro { tx, rx } = Channel.new(1)
+    ro { tx, rx } = Channel[bool].new(1)
     // A `with Fail[T]` handler runs IN THE FIBER of the failing operation,
     // not the installing scope's fiber (D441, spec/decisions/06-concurrency.md)
     // — a bare `mut` flag captured there is a data race under M:N.
