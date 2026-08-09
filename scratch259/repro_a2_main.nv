@@ -1,0 +1,26 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Isolated repro of std/src/concurrency/supervised_cancel_direct_body_test.nv
+// test A2 ("direct-body sleep: within timeout budget — no TimeoutError"),
+// which fails deterministically under Plan 259 Layer 2 (pool materializes
+// at process start) but passes under the pre-259 lazy-materialization
+// baseline. Standalone fn main() so it can be built + timed directly.
+
+module scratch259.repro_a2
+
+import std.time.duration
+
+fn main() {
+    ro t0 = Timestamp.now().unix_millis()
+    mut caught = AtomicBool.new(false)
+    ro r = with Fail[TimeoutError] = |_e| {
+        caught.store(true)
+        0
+    } {
+        supervised(timeout: 2.to_seconds()) {
+            20.to_millis().sleep()
+        }
+        7
+    }
+    ro elapsed = Timestamp.now().unix_millis() - t0
+    println("elapsed_ms=${elapsed} caught=${caught.load()} r=${r}")
+}

@@ -1188,13 +1188,59 @@ static void _worker_main(void* arg) {
      * index assignment single-sourced and consistent everywhere. */
     nova_register_effect_storage((void**)&_nova_handler_Fail);
     /* User-defined effects (and now Time) registered via function pointer
-     * set by generated code in nova_fn_main. If NULL (bootstrap / missing
-     * generated fn) — only Fail is registered (sufficient for current test
-     * suite — no CU exists without SOME effect_schemas entry beyond Fail,
-     * since Time/prelude is always present, so this should always be set
-     * in practice; NULL-guard kept for defensive bootstrap safety). */
-    if (_nova_register_effects_fn) {
-        _nova_register_effects_fn();
+     * set by generated code in nova_fn_main.
+     *
+     * [M-worker-effects-fn-startup-race] (Plan 259 Слой 2, 2026-08-09):
+     * `_nova_register_effects_fn` is assigned by a PLAIN C statement emitted
+     * a few lines AFTER `nova_runtime_auto_arm()` in the generated main()
+     * (emit_c.rs::emit_main_wrapper — `nova_evloop_init(); ...;
+     * _nova_register_effects_fn = _nova_register_all_effects_;`). Before
+     * Плана 259 Слой 2 this was always safely set by the time ANY worker
+     * thread could exist (materialize_pool ran lazily, on the first
+     * user-level spawn — necessarily long after that assignment executed).
+     * Слой 2 moves materialize_pool INSIDE `nova_runtime_auto_arm()` itself,
+     * so worker threads (this function) now start running BEFORE main
+     * thread reaches that assignment line — a worker could reach here while
+     * `_nova_register_effects_fn` is still NULL, silently register only
+     * `Fail` for its own TLS effect-storage table, and later mis-resolve
+     * (or drop) any user effect handler (`ResourceTrace`, `Fail[TimeoutError]`,
+     * etc.) inherited by a fiber that lands on that worker — reproduced via
+     * spec_tests/conformance/standalone/m2217_15b_cancel_consume_shield_narrowed
+     * going from deterministic PASS to deterministic FAIL under Слой 2
+     * (exit_calls never reaching 1 — the ResourceTrace handler silently not
+     * firing on the worker the child fiber happened to land on).
+     *
+     * Fix: this is a one-time, sub-millisecond startup rendezvous (main sets
+     * the pointer within microseconds of returning from auto_arm — a few
+     * more prelude lines), so a short ACQUIRE spin-wait is correct AND
+     * effectively free — a bounded upper limit (2s) guards against ever
+     * hard-hanging worker startup if the plain (non-atomic, codegen-emitted,
+     * can't be changed from nova_rt) write side is somehow never observed;
+     * that upper bound should never be hit in practice and is defensive
+     * only. `__atomic_load_n(..., ACQUIRE)` forces re-read every iteration
+     * (not hoisted out of the loop) and is what actually gives the SECOND
+     * (this) thread a chance to observe the plain store promptly — a bare
+     * non-atomic re-read in a tight loop is legal for the compiler to hoist
+     * into a one-time read outside the loop, which would spin forever on a
+     * stale cached NULL. */
+    {
+        void (*fn)(void) = NULL;
+        for (int _wait_iters = 0; _wait_iters < 2000; _wait_iters++) {
+            fn = __atomic_load_n(&_nova_register_effects_fn, __ATOMIC_ACQUIRE);
+            if (fn) break;
+            uv_sleep(1);
+        }
+        if (fn) {
+            fn();
+        } else {
+            /* Should never happen in practice (see comment above) — degrade
+             * the same way the pre-259 NULL-guard always did: only Fail is
+             * registered, loudly, not silently (bootstrap safety net). */
+            fprintf(stderr,
+                "nova: worker effects registration timed out waiting for "
+                "_nova_register_effects_fn (2s) — only Fail registered for "
+                "this worker; user effect handlers may misresolve on it.\n");
+        }
     }
 
     /* Plan 44.7: point this worker thread's preemption TLS at its own

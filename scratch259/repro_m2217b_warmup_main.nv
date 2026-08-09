@@ -1,0 +1,42 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Decisive experiment: does m2217_15b's failure mode reproduce under an
+// explicit warm-up spawn (forcing the M:N driver to start BEFORE the
+// measured block) even WITHOUT Plan 259's Layer 2 change?
+
+module scratch259.repro_m2217b_warmup
+
+import std.time.duration
+
+type M2217BRes consume { tag int }
+
+fn M2217BRes consume @cleanup(_outcome ScopeOutcome) -> () { () }
+
+fn m2217b_make(tag int) -> M2217BRes => { tag }
+
+fn main() {
+    supervised {
+        spawn { 1.to_millis().sleep() }
+    }
+
+    mut exit_calls = AtomicInt.new(0)
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(_label) -> () { return () }
+        on_resource_exit(_label, _outcome, _duration_ms, _overrun) -> () {
+            exit_calls.fetch_add(1)
+            return ()
+        }
+    } {
+        with Fail[TimeoutError] = |_e| {} {
+            supervised(timeout: 300.to_millis()) {
+                spawn {
+                    consume res = m2217b_make(1)
+                    mut n = 0
+                    while true {
+                        n = n + 1
+                    }
+                }
+            }
+        }
+    }
+    println("exit_calls=${exit_calls.load()}")
+}
