@@ -5769,8 +5769,10 @@ fn conv_result_discarded(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWar
                     "discard",
                     "`ro _ = <call>` — a discard binding silently swallows the result \
                      (including a possible Result error) (nv-coding-style §4). Handle \
-                     the error (`?` / `!!` / match) or document the intentional drop \
-                     with a comment at the site."
+                     the error (`?` / `!!` / match), or, if the drop is deliberate, \
+                     suppress it explicitly with `// nova:allow W_RESULT_DISCARDED -- \
+                     <reason>` on the line ABOVE. A prose comment is NOT read by the \
+                     linter — `nova:allow` is the only mechanism that exists."
                         .to_string(),
                     sp,
                 ));
@@ -5779,8 +5781,11 @@ fn conv_result_discarded(m: &Module, _o: &ConvLintOptions, out: &mut Vec<LintWar
                 found.push((
                     "swallow",
                     "swallow-match: arm `Err(_) => ()` silently swallows the error \
-                     (nv-coding-style §4). Handle it (log/propagate/`?`) or \
-                     document the intentional ignore."
+                     (nv-coding-style §4). Handle it (log/propagate/`?`), or, if the \
+                     ignore is deliberate, suppress it explicitly with \
+                     `// nova:allow W_RESULT_DISCARDED -- <reason>` on the line ABOVE. \
+                     A prose comment is NOT read by the linter — `nova:allow` is the \
+                     only mechanism that exists."
                         .to_string(),
                     sp,
                 ));
