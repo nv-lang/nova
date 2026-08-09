@@ -61,3 +61,63 @@ sig_table» и «нужны ли expr_types для IDE hover/inlay»).
 
 Следующий шаг: дочитать по одному, обновляя таблицу, коммитить после каждого
 факта.
+
+---
+
+## ИТОГ (закрытие recon, окно `p262-a-pipeline`)
+
+Общая функция: `compiler-codegen/src/check_pipeline.rs` —
+`prepare_module_for_check` / `prepare_module_for_check_with` (resolve
+imports+test-peers → collect_all_signatures → resolve_embeds → alpha_rename
+→ number_exprs, ОДНИМ вызовом).
+
+**Сведены (зовут `prepare_module_for_check[_with]`):**
+1. `nova check` — `nova-cli/src/main.rs::check_one_file`
+2. `nova build` — `nova-cli/src/main.rs::cmd_build` (extension point: serde-derive injection между embed и alpha_rename)
+3. `nova test` — `compiler-codegen/src/test_runner.rs::codegen_to_c` (тот же extension point)
+4. доктест-раннер — `compiler-codegen/src/doc/test_runner.rs::run_one`
+5. LSP-диагностика — `nova-lsp/src/compiler.rs::check_source_inner` (ГЛАВНЫЙ носитель №531)
+6. LSP-provenance (hover/goto-def/type-driven completion) — `nova-lsp/src/provenance.rs::resolve_module_impl`
+
+**Законные различия, оставлены параметром, НЕ уравнены:**
+- `include_test_peers`: `true` у check/test/LSP (безопасно даже для не-теста —
+  только ДОБАВЛЯЕТ `*_test.nv` соседей), `false` у build (production-артефакт,
+  тестовые хелперы не должны течь в бинарь).
+- `between_embed_and_rename` extension point: ТОЛЬКО build/test инжектят
+  Serialize/Deserialize synthesized methods здесь — LSP/check это не нужно
+  (у чекера свой `synthesize_method` bridge).
+- `desugar_module` НЕ включён в prepare — это pre-CODEGEN пасс (MapLit
+  сахар), не pre-CHECK: у чекера свой `MapLitCtx`, десугаринг везде, где он
+  реально нужен (build/test), стоит ПОСЛЕ `check_module`, перед codegen.
+  Гипотеза плана про «нехватку desugar_module → unexpected consume» НЕ
+  подтверждена чтением кода — вероятно неточная формулировка исходной
+  диагностики; исправлено фактическим фиксом embed+test-peers, который и
+  дал полную парность (см. 9-файловая проверка в отчёте).
+- `check_module_path` (D78) НЕ включён — работает по on-disk пути ДО парсинга,
+  LSP намеренно его не гоняет (буфер редактора не обязан лежать в финальном пути).
+
+**НЕ сведены, задокументированы в `check-checker-entrypoints.baseline` с причиной:**
+- `compiler-codegen/src/main.rs` (легаси `nova-codegen` binary) — не резолвит
+  импорты вообще (больший разрыв, чем этот план); живой потребитель только
+  `scripts/tools/setup_worktree_p118.sh`. Решение (чинить/списать) — за
+  владельцем/интегратором.
+- `compiler-codegen/tests/doc_*.rs` (19 файлов) + `doc/watch_cache.rs` —
+  probe-only `let _ = check_module(...)`, не диагностический путь.
+- `compiler-codegen/tests/p131_raw_effect_op_enforce.rs`,
+  `strict_effects_flag.rs` — юнит-тесты самого чекера.
+- `nova-cli/src/bench/{run,field_cache_wallclock}.rs` — перфоманс-замеры.
+- `nova-lsp/src/{semantic_tokens,server}.rs` — 5 копий одного и того же
+  best-effort field-cache IDE-эвристики (semantic tokens "cached" modifier,
+  code lenses, pure-annotation actions): намеренно single-file БЕЗ резолва
+  импортов вовсе, деградируют молча (`None`/empty), никогда не показываются
+  как ошибка — другой класс риска, не №531. Сама пятикратная копипаста —
+  отдельный повод для рефакторинга, вне периметра этого плана.
+
+**Побочная находка при сведении:** `nova-lsp/tests/diagnostic_pipeline.rs`'s
+`reference_check_messages` САМА была вторым носителем того же класса (свой
+ручной список проходов, устаревший) — переписана на `prepare_module_for_check`.
+Ещё одна побочная находка: heavier pipeline (`collect_all_signatures` гуляет
+по всему `std.prelude`) переполняет стек по умолчанию на Windows — поймано
+прогоном тестов `provenance::tests` и `diagnostic_pipeline.rs` (оба падали
+STATUS_STACK_OVERFLOW), пофикшено обёрткой в `run_with_large_stack`
+(64 MiB-поток) — тот же паттерн, каким уже пользуется `server.rs`.
