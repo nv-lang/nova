@@ -44,6 +44,12 @@ import std.collections.vec.{Vec}
 /// O(1) lookup. See the module doc comment for the precise
 /// "values deduped, keys not yet" boundary this type draws today.
 ///
+/// The `map-literal` syntax `[k: v, ...]` desugars into `IndexMap` via the
+/// `#from_pairs` attribute (D108/D450) — same as `HashMap`, but the ORDER
+/// of the literal is the guarantee this type exists for: it is preserved.
+/// A record-literal `{field: val}` coerces into `IndexMap[str, V]` via
+/// `#from_fields` (D55/D450), same order rule.
+///
 /// # Examples
 ///
 /// ```nova
@@ -53,6 +59,8 @@ import std.collections.vec.{Vec}
 /// assert(m.keys().collect() == ["b", "a"])   // insertion order, NOT sorted/hash order
 /// ```
 #stable(since = "0.1")
+#from_fields
+#from_pairs
 export type IndexMap[K Equal + Hash, V] priv {
     // entries — dense storage, insertion order. Internal: layout may change,
     // do not access directly. Use @len() / @get() / @insert() / @iter().
@@ -62,7 +70,14 @@ export type IndexMap[K Equal + Hash, V] priv {
     index HashMap[K, int]
 }
 
-/// Create an empty `IndexMap`.
+/// Create an empty `IndexMap` with room for `cap` entries without a rehash.
+///
+/// D450 (реестр 221.1 №503): the `#from_fields`/`#from_pairs` contract
+/// requires exactly ONE static constructor of this shape,
+/// `IndexMap[K, V].new(cap int = ...)` — the map-/record-literal desugar
+/// calls it as `IndexMap.new(cap: <literal's pair count>)`. `insert_new` is
+/// NOT implemented here — it's an OPTIONAL desugar optimization (D450), and
+/// the plain `@insert` this type already has is enough.
 ///
 /// # Examples
 ///
@@ -71,9 +86,13 @@ export type IndexMap[K Equal + Hash, V] priv {
 /// assert(m.is_empty())
 /// ```
 #stable(since = "0.1")
-export fn IndexMap[K, V].new() -> Self => {
-    entries: [](K, V).new(),
-    index: HashMap[K, int].new(),
+export fn IndexMap[K, V].new(cap int = 0) -> IndexMap[K, V]
+    requires cap >= 0
+{
+    IndexMap {
+        entries: [](K, V).new(cap: cap),
+        index: HashMap[K, int].new(cap: cap),
+    }
 }
 
 /// Number of key/value pairs in the map.

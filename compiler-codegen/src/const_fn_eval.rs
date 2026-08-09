@@ -144,6 +144,7 @@ impl ConstValue {
                     type_name: None,
                     fields: lit_fields,
                     inferred_map_v: None,
+                    inferred_target_type: None,
                 }
             }
         };

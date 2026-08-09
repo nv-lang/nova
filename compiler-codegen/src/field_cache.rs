@@ -8471,7 +8471,7 @@ fn canonical_literal_repr(e: &Expr) -> Option<String> {
         }
         // Plan 123.3.2 (V3.2): record literal — explicit fields only,
         // sorted by name. Spread / shorthand / map-coercion → bail.
-        ExprKind::RecordLit { type_name, fields, inferred_map_v } => {
+        ExprKind::RecordLit { type_name, fields, inferred_map_v, .. } => {
             if inferred_map_v.is_some() { return None; }
             // Collect (name, value-expr) pairs; reject any spread / no-value.
             let mut pairs: Vec<(&str, &Expr)> = Vec::with_capacity(fields.len());

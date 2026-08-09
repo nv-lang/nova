@@ -6,16 +6,16 @@
 //! в AST больше не встречается (codegen/interp заглушки остаются как
 //! safety-net на случай нового непокрытого вызова).
 //!
-//! Десугаринг (D108; D372 amend 2026-07-06 — `with_capacity` removed,
-//! construction is `new()` + the D117 `mut @cap(n)` setter):
+//! Десугаринг (D450, реестр 221.1 №503, supersedes D372 amend 2026-07-06):
+//! construction is a SINGLE `new(cap:)` call — the contract's ONE required
+//! constructor, `T[K, V].new(cap int = <default>)`:
 //! ```text
 //! [k1: v1, k2: v2]
 //! // →
 //! {
-//!     let mut _m0 = HashMap.new()
-//!     _m0.cap(2)
-//!     let _ = _m0.insert(k1, v1)
-//!     let _ = _m0.insert(k2, v2)
+//!     let mut _m0 = HashMap.new(cap: 2)
+//!     let _ = _m0.insert_new(k1, v1)   // or .insert(...) — see below
+//!     let _ = _m0.insert_new(k2, v2)
 //!     _m0
 //! }
 //! ```
@@ -23,26 +23,57 @@
 //! - Порядок вычисления нормативный: `k1, v1, k2, v2, ...` — пары слева
 //!   направо, ключ перед значением (D108). Block-statements эмитятся в
 //!   этом порядке естественно.
-//! - `cap(n)` несёт контракт «n вставок без rehash» (Ф.6).
-//! - `@insert` возвращает `Option[V]`; возврат отбрасывается через
-//!   `let _ = ...` (защита от будущего lint «discarded non-unit»).
+//! - `cap:` несёт контракт «n вставок без rehash», n = число пар литерала.
+//! - `insert_new` — OPTIONAL оптимизация (D450): если target-тип имеет
+//!   метод `insert_new` — используется он (никогда не Option-возврат, мапа
+//!   только что создана — дубликатов быть не может); иначе — обычный
+//!   `insert`. Определяется per-target-type prepass'ом ниже
+//!   (`types_with_insert_new`), НЕ хардкод.
+//! - `@insert`/`@insert_new` возвращает `Option[V]`; возврат отбрасывается
+//!   через `let _ = ...` (защита от будущего lint «discarded non-unit»).
 //! - Temp-переменная `_m0`, `_m1`, ... — per-module счётчик, valid ISO
 //!   C11 (без `$`); вложенные литералы не конфликтуют именами.
 //! - Пустой `[]` НЕ доходит сюда как `MapLit` — он остаётся
 //!   `ArrayLit(vec![])` и резолвится по ожидаемому типу отдельно.
-//! - `HashMap.new` / `.cap` / `.insert` вызываются **без turbofish** —
-//!   мономорфизация codegen/interp выводит `K`/`V` из аргументов.
+//! - `<Target>.new` / `.insert`/`.insert_new` вызываются **без turbofish**
+//!   на call-site (turbofish идёт на САМ `<Target>[K, V]`) —
+//!   мономорфизация codegen/interp выводит `K`/`V` из turbofish/аргументов.
 //!
-//! Bootstrap: десугаринг захардкожен на `HashMap`. Точка расширения —
-//! протокол `FromPairs[K, V]` (`BTreeMap`, `OrderedMap`) — позже.
+//! Target-тип — `HashMap` по умолчанию (legacy fallback), либо любой
+//! `#from_pairs`/`#from_fields` тип, определённый type-checker'ом
+//! (`inferred_target_type`, Plan 52 Ф.23 / D450) — например `IndexMap`.
 
 use crate::ast::*;
 use crate::diag::Span;
+use std::collections::HashSet;
 
 /// Прогоняет десугаринг map-литералов по всему модулю. После вызова
 /// `ExprKind::MapLit` в AST больше не встречается.
 pub fn desugar_module(module: &mut Module) {
-    let mut ctx = DesugarCtx { counter: 0 };
+    // D450 (реестр 221.1 №503): `insert_new` — optional per-type
+    // optimization (used by `build_map_block`/`build_record_map_block`
+    // below if the TARGET type has it, plain `insert` otherwise). A
+    // name-only prepass (mirrors `types/mod.rs`'s own
+    // `prepass_type_methods`) — desugar runs on the FULLY-merged
+    // `module.items` + `peer_files` (folder-module) view, same shape as
+    // the type-checker's own scan.
+    let mut types_with_insert_new: HashSet<String> = HashSet::new();
+    let mut collect_insert_new = |items: &[Item], out: &mut HashSet<String>| {
+        for item in items {
+            if let Item::Fn(f) = item {
+                if f.name == "insert_new" {
+                    if let Some(recv) = &f.receiver {
+                        out.insert(recv.type_name.clone());
+                    }
+                }
+            }
+        }
+    };
+    collect_insert_new(&module.items, &mut types_with_insert_new);
+    for pf in &module.peer_files {
+        collect_insert_new(&pf.items_here, &mut types_with_insert_new);
+    }
+    let mut ctx = DesugarCtx { counter: 0, types_with_insert_new };
     for item in &mut module.items {
         ctx.desugar_item(item);
     }
@@ -60,6 +91,10 @@ pub fn desugar_module(module: &mut Module) {
 struct DesugarCtx {
     /// Монотонный счётчик для temp-имён `_m0`, `_m1`, ... (per-module).
     counter: usize,
+    /// D450 (реестр 221.1 №503): type names (по всему модулю) с методом
+    /// `insert_new` — используется `build_map_block`/`build_record_map_block`
+    /// чтобы решить, звать ли оптимизацию или обычный `insert`.
+    types_with_insert_new: HashSet<String>,
 }
 
 impl DesugarCtx {
@@ -173,20 +208,25 @@ impl DesugarCtx {
         // обычный MapLit с K=str, V=inferred_map_v.
         else if let ExprKind::RecordLit { type_name: None, inferred_map_v: Some(_), .. } = &e.kind {
             let span = e.span;
-            let (fields, v_ty) =
+            let (fields, v_ty, target_type) =
                 match std::mem::replace(&mut e.kind, ExprKind::UnitLit) {
-                    ExprKind::RecordLit { fields, inferred_map_v: Some(v_ty), .. } => {
-                        (fields, v_ty)
+                    ExprKind::RecordLit { fields, inferred_map_v: Some(v_ty), inferred_target_type, .. } => {
+                        (fields, v_ty, inferred_target_type)
                     }
                     _ => unreachable!(),
                 };
-            e.kind = self.build_record_map_block(fields, v_ty, span);
+            e.kind = self.build_record_map_block(fields, v_ty, target_type, span);
         }
     }
 
-    /// Plan 52 Ф.10: десугаринг D55 map-coercion `{field: v}` →
-    /// `HashMap[str, V].new().cap(n) + n × insert("field", v)`
+    /// Plan 52 Ф.10 / D450 (реестр 221.1 №503): десугаринг D55 map-coercion
+    /// `{field: v}` → `<Target>[str, V].new(cap: n) + n × insert("field", v)`
     /// block-expression. Mirror MapLit-десугаринга для consistency.
+    ///
+    /// `target_type` — имя `#from_fields`-типа, определённое type-checker'ом
+    /// (`RecordLit.inferred_target_type`); `None` → legacy fallback
+    /// `HashMap` (единственный target до D450, когда `#from_fields` не
+    /// пропагировал имя типа за пределы `HashMap[str, V]`).
     ///
     /// Spread (`...src`) уже отвергнут type-checker'ом (Plan 52 Ф.3);
     /// здесь молча пропускаем (panic если встретится — bug type-check'а).
@@ -195,43 +235,40 @@ impl DesugarCtx {
         &mut self,
         fields: Vec<RecordLitField>,
         v_ty: TypeRef,
+        target_type: Option<Vec<String>>,
         span: Span,
     ) -> ExprKind {
+        let target_type_name: String = target_type
+            .as_ref()
+            .and_then(|path| path.last().cloned())
+            .unwrap_or_else(|| "HashMap".to_string());
         let tmp = self.fresh_map_tmp();
         let n = fields.len();
         let mut stmts: Vec<Stmt> = Vec::with_capacity(n + 1);
 
-        // Callee: HashMap[str, V].new (mirror MapLit с
+        // Callee: `<Target>[str, V].new` (mirror MapLit с
         // turbofish — codegen mono требует Ident-based callee, не Path).
         let str_ty = TypeRef::Named {
             path: vec!["str".to_string()],
             generics: Vec::new(),
             span,
         };
-        let hashmap_ident = Expr::new(ExprKind::Ident("HashMap".to_string()), span);
+        let target_ident = Expr::new(ExprKind::Ident(target_type_name.clone()), span);
         let turbofish = Expr::new(
             ExprKind::TurboFish {
-                base: Box::new(hashmap_ident),
+                base: Box::new(target_ident),
                 type_args: vec![str_ty, v_ty],
             },
             span,
         );
-        // D372 amend (vec-sweep, 2026-07-06): `with_capacity` removed —
-        // construction is now `new()`. [M-vec-spelling-maplit-desugar-cap-ice]
-        // (compiler gap, reported): chaining an EXTRA `.cap(n)` statement
-        // here (before the insert_new calls below) reproducibly CRASHED the
-        // compiler on the very next statement (ICE: "method call
-        // `.insert_new` return type unknown") — the D117 setter's presence
-        // in this exact position desyncs the checker's per-statement `_mN`
-        // type-inference cache. Conservative fix (mirrors the analogous
-        // array-literal ctor fix in emit_c.rs `register_vec_mono_method`):
-        // drop the pre-sizing optimization entirely, rely on normal
-        // amortized (×2) growth during the insert_new loop below.
-        // Correctness-preserving; perf-only regression (an occasional extra
-        // rehash for large map literals) — and changes the map literal's
-        // `@capacity()` value right after construction (was pre-sized via
-        // `with_capacity(n)`; now whatever `HashMap[K,V].new()`'s own
-        // default is, possibly followed by ordinary growth rehashes).
+        // D450: construction is a SINGLE `new(cap: n)` call — the
+        // contract's one required constructor. `n` = field count (known
+        // statically). [M-vec-spelling-maplit-desugar-cap-ice] (compiler
+        // gap, historical): chaining an EXTRA `.cap(n)` STATEMENT after a
+        // bare `.new()` used to crash the compiler on the NEXT statement;
+        // passing `cap:` as a named ARGUMENT to `.new()` itself (not a
+        // separate statement) sidesteps that entirely — one call, no
+        // desync of the per-statement type-inference cache.
         let new_callee = Expr::new(
             ExprKind::Member {
                 obj: Box::new(turbofish),
@@ -242,7 +279,10 @@ impl DesugarCtx {
         let new_call = Expr::new(
             ExprKind::Call {
                 func: Box::new(new_callee),
-                args: vec![],
+                args: vec![CallArg::Named {
+                    name: "cap".to_string(),
+                    value: Expr::new(ExprKind::IntLit(n as i64), span),
+                }],
                 trailing: None,
             },
             span,
@@ -256,7 +296,18 @@ impl DesugarCtx {
             is_ghost: false,
             consume: false,
         }));
-        let _ = n; // pre-sizing dropped (see comment above) — `n` no longer used here.
+
+        // D450: `insert_new` — optional per-target-type optimization (no
+        // return, мапа только что создана через `new(cap:)`, дубликатов
+        // быть не может — см. `std/collections/hashmap.nv::@insert_new`).
+        // Used ONLY if the target type actually has it; иначе — обычный
+        // `insert`, который есть у ЛЮБОГО `#from_fields`/`#from_pairs`
+        // типа по построению (иначе литерал не типизировался бы).
+        let insert_method = if self.types_with_insert_new.contains(&target_type_name) {
+            "insert_new"
+        } else {
+            "insert"
+        };
 
         // Для каждого поля: `let _ = _mN.insert("name", value_expr)`
         for f in fields {
@@ -270,15 +321,12 @@ impl DesugarCtx {
                 Some(v) => v,
                 None => Expr::new(ExprKind::Ident(f.name.clone()), span),
             };
-            // Plan 52 Ф.21: используем `insert_new` (нет возврата Option) —
-            // мапа только что создана через new().cap(n), дубликатов
-            // быть не может. См. std/collections/hashmap.nv::@insert_new.
             let insert_call = Expr::new(
                 ExprKind::Call {
                     func: Box::new(Expr::new(
                         ExprKind::Member {
                             obj: Box::new(Expr::new(ExprKind::Ident(tmp.clone()), span)),
-                            name: "insert_new".to_string(),
+                            name: insert_method.to_string(),
                         },
                         span,
                     )),
@@ -298,7 +346,7 @@ impl DesugarCtx {
         })
     }
 
-    /// Строит block-expression `{ let mut _mN = HashMap[K,V].new(); _mN.cap(n);
+    /// Строит block-expression `{ let mut _mN = HashMap[K,V].new(cap: n);
     /// let _ = _mN.insert(k, v); ...; _mN }` из пар map-литерала.
     ///
     /// Plan 52 Ф.7 production-fix: если `inferred_key`/`inferred_value`
@@ -312,9 +360,12 @@ impl DesugarCtx {
     /// упасть в codegen без аннотации; type-checker эмитит «cannot infer»
     /// до десугаринга если контекст не даёт K/V.
     ///
-    /// D372 amend (vec-sweep, 2026-07-06): `with_capacity(n)` заменён на
-    /// `new()` + отдельный statement `_mN.cap(n)` (D117 setter) — `with_capacity`
-    /// как static-метод удалён из `HashMap`/`Vec`/`Set`.
+    /// D450 (реестр 221.1 №503, supersedes D372 amend 2026-07-06):
+    /// construction is a SINGLE `new(cap: n)` call — the contract's one
+    /// required constructor (`T[K, V].new(cap int = <default>)`). The old
+    /// two-step `new()` + separate `.cap(n)` STATEMENT is gone (it was a
+    /// workaround for `with_capacity`'s removal, and had its own compiler
+    /// ICE — see the `[M-vec-spelling-maplit-desugar-cap-ice]` note below).
     fn build_map_block(
         &mut self,
         elems: Vec<MapElem>,
@@ -350,14 +401,12 @@ impl DesugarCtx {
         let mut stmts: Vec<Stmt> = Vec::with_capacity(elems.len() + 1);
 
         // Callee: `<TargetType>.new` (Path) или `<TargetType>[K, V].new`
-        // (TurboFish + Member). D372 amend (vec-sweep, 2026-07-06):
-        // `with_capacity` removed — construction is `new()` only.
-        // [M-vec-spelling-maplit-desugar-cap-ice] (compiler gap, reported):
-        // an extra `.cap(n)` statement here (before the insert_new/insert
-        // calls below) reproducibly CRASHED the compiler on the next
-        // statement (ICE: "method call `.insert_new` return type unknown").
-        // Conservative fix: drop the pre-sizing optimization, rely on normal
-        // amortized growth. Correctness-preserving; perf-only regression.
+        // (TurboFish + Member). D450: construction passes `cap: n` as a
+        // named ARGUMENT to this SAME `.new(...)` call below — no separate
+        // `.cap(n)` statement (historical `[M-vec-spelling-maplit-desugar-
+        // cap-ice]`: an EXTRA statement in this position used to crash the
+        // compiler on the next one; a named arg on the constructor call
+        // itself doesn't hit that path).
         let new_callee: Expr = match (inferred_key, inferred_value) {
             (Some(k_ty), Some(v_ty)) => {
                 // TurboFish: `<TargetType>[K, V]` затем `.new`.
@@ -396,10 +445,17 @@ impl DesugarCtx {
                 )
             }
         };
+        // D450 (реестр 221.1 №503): construction is a SINGLE `new(cap: n)`
+        // call — the contract's one required constructor. Passing `cap:`
+        // as a named ARGUMENT (not a separate `.cap(n)` statement, see the
+        // now-historical ICE note above) sidesteps the old crash entirely.
         let new_call = Expr::new(
             ExprKind::Call {
                 func: Box::new(new_callee),
-                args: vec![],
+                args: vec![CallArg::Named {
+                    name: "cap".to_string(),
+                    value: Expr::new(ExprKind::IntLit(n as i64), span),
+                }],
                 trailing: None,
             },
             span,
@@ -413,7 +469,12 @@ impl DesugarCtx {
             is_ghost: false,
             consume: false,
         }));
-        let _ = n; // pre-sizing dropped (see comment above) — `n` no longer used here.
+
+        // D450: `insert_new` — optional per-target-type optimization (used
+        // ONLY if the target type actually has it; plain `insert`
+        // otherwise — every `#from_pairs` type has `insert` by
+        // construction, or the literal wouldn't have type-checked).
+        let use_insert_new = self.types_with_insert_new.contains(&target_type_name);
 
         // Plan 52 Ф.13 production-fix: explicit temp-bindings для
         // гарантированного нормативного eval-order (D108 §4748:
@@ -454,11 +515,13 @@ impl DesugarCtx {
                         is_ghost: false,
                         consume: false,
                     }));
-                    // Plan 52 Ф.21: insert_new — мапа только что создана.
-                    // Plan 55 followup: если уже был spread выше, ключ мог
-                    // быть уже добавлен через spread → используем insert
-                    // (override semantics), не insert_new.
-                    let method = if has_spreads_any { "insert" } else { "insert_new" };
+                    // Plan 52 Ф.21 / D450 (реестр 221.1 №503): insert_new —
+                    // ТОЛЬКО если (а) мапа только что создана (нет spread
+                    // выше — Plan 55 followup: spread мог уже добавить этот
+                    // ключ → нужен `insert`, override semantics) И (б)
+                    // target-тип реально имеет `insert_new` (optional
+                    // optimization, не часть контракта — `use_insert_new`).
+                    let method = if has_spreads_any || !use_insert_new { "insert" } else { "insert_new" };
                     let insert_call = Expr::new(
                         ExprKind::Call {
                             func: Box::new(Expr::new(

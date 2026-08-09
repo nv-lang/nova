@@ -43137,7 +43137,7 @@ fn scan_guard_rec(
                 }
             }
         }
-        ExprKind::RecordLit { type_name, fields, inferred_map_v } => {
+        ExprKind::RecordLit { type_name, fields, inferred_map_v, .. } => {
             // `[M-178-consume-field-ctor-from-var]` × D188 v3 (2026-07-13):
             // consume-поле record-литерала — тоже consume-позиция (дизарм в
             // момент конструирования литерала), симметрично consume-аргументу
@@ -44394,7 +44394,7 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                 }
             }
         }
-        ExprKind::RecordLit { type_name, fields, inferred_map_v } => {
+        ExprKind::RecordLit { type_name, fields, inferred_map_v, .. } => {
             // `[M-178-consume-field-ctor-from-var]` fix: consume-поля этого
             // типа литерала. Типизированный — прямой lookup; анонимный
             // (`=> { tcp: stream, session }`, тип из контекста) — структурный
@@ -46091,6 +46091,10 @@ struct MapLitCtx {
     /// `build()` cannot take a `&mut Vec<Diagnostic>` — see the `from_pairs`
     /// comment above — so validation output is stashed here and drained later).
     coerce_errors: Vec<Diagnostic>,
+    /// D450 (реестр 221.1 №503): diagnostics for `#from_pairs`/`#from_fields`
+    /// user-types missing the required `new(cap:)` constructor. Same
+    /// stash-then-drain shape as `coerce_errors` (see that field's doc).
+    from_pairs_errors: Vec<Diagnostic>,
 }
 
 impl MapLitCtx {
@@ -46098,6 +46102,11 @@ impl MapLitCtx {
         let mut type_methods: HashMap<String, HashSet<String>> = HashMap::new();
         let mut known_types: HashSet<String> = HashSet::new();
         let mut from_fields_types: HashSet<String> = HashSet::new();
+        // D450 (реестр 221.1 №503): diagnostics for `#from_pairs` types
+        // missing the required `new(cap:)` constructor — same stash-then-
+        // drain shape as `coerce_errors` below (`build()` can't take a
+        // `&mut Vec<Diagnostic>` — see `coerce_errors`'s own doc for why).
+        let mut from_pairs_errors: Vec<Diagnostic> = Vec::new();
         // Plan 52 Ф.3a: сначала собираем все overload-группы, потом
         // оставляем только уникальные (single-candidate) для резолва
         // argument-позиций — overload без type-inference резолвить нельзя.
@@ -46177,6 +46186,12 @@ impl MapLitCtx {
         // type'ы обрабатываются до своих fn-методов → method-check
         // упирается в пустой type_methods.
         let mut prepass_type_methods: HashMap<String, HashSet<String>> = HashMap::new();
+        // D450 (реестр 221.1 №503): full `FnDecl` for each type's static
+        // `new` overload(s) — needed to verify the `cap` param (name +
+        // default), which a bare name-set (`prepass_type_methods` above)
+        // can't express. Same pre-pass loop, filtered to `name == "new"`
+        // + static receiver (constructors are `.new(...)`, not `@new(...)`).
+        let mut prepass_new_fns: HashMap<String, Vec<&FnDecl>> = HashMap::new();
         for item in &module.items {
             if let Item::Fn(f) = item {
                 if let Some(recv) = &f.receiver {
@@ -46184,9 +46199,30 @@ impl MapLitCtx {
                         .entry(recv.type_name.clone())
                         .or_default()
                         .insert(f.name.clone());
+                    if f.name == "new" && recv.kind == ReceiverKind::Static {
+                        prepass_new_fns.entry(recv.type_name.clone()).or_default().push(f);
+                    }
                 }
             }
         }
+        // D450: `T[K, V].new(cap int = <default>)` — a `new` overload with
+        // an OPTIONAL (`default.is_some()`) `int`-typed param named `cap`.
+        // This is the ONE thing the `#from_fields`/`#from_pairs` contract
+        // requires; `insert_new`/setter-`cap` are optional optimizations,
+        // not requirements (D450 supersedes the old has_new && has_cap &&
+        // has_insert_new check below).
+        let has_from_pairs_ctor = |type_name: &str| -> bool {
+            prepass_new_fns.get(type_name).map_or(false, |fns| {
+                fns.iter().any(|f| {
+                    f.params.iter().any(|p| {
+                        p.name == "cap"
+                            && p.default.is_some()
+                            && matches!(&p.ty, TypeRef::Named { path, .. }
+                                if path.last().map(|s| s == "int").unwrap_or(false))
+                    })
+                })
+            })
+        };
 
         // Plan 200 (sql-autoconv) D55 amend: type name → kind, for wrap
         // candidates. Scanned across `module.items` AND `peer_files` (folder
@@ -46215,46 +46251,42 @@ impl MapLitCtx {
                             from_fields_types.insert(t.name.clone());
                         }
                     }
-                    // Plan 52.1 Ф.4: from_pairs canonical-check с
-                    // method-validation. User-локальный `type #from_pairs`
-                    // honored ЕСЛИ имеет требуемые методы
-                    // (`new() -> Self`, `mut cap(n int) -> @` и
-                    // `insert_new(K, V)` — D372 amend 2026-07-06:
-                    // `with_capacity(int) -> Self` removed, construction is
-                    // now `new()` + the D117 `cap(n)` setter; desugar (см.
-                    // desugar.rs::build_map_block) эмитит `new()`+`.cap(n)`
-                    // вместо единого `with_capacity(n)`).
-                    // Это безопасно: codegen эмитит вызовы этих методов,
-                    // и они существуют.
+                    // D450 (реестр 221.1 №503, supersedes Plan 52.1 Ф.4):
+                    // from_pairs canonical-check с method-validation.
+                    // Canonical stdlib types (`is_canonical`) are trusted
+                    // unconditionally, same as before — no change there.
+                    // User-местный `type #from_pairs` honored ЕСЛИ имеет
+                    // ОДИН конструктор `T[K, V].new(cap int = …)`
+                    // (`has_from_pairs_ctor`, built above from
+                    // `prepass_new_fns`). `insert_new`/setter-`cap` are
+                    // NO LONGER required — optional optimizations the
+                    // desugar uses when present (see desugar.rs).
                     //
-                    // Без validation user мог бы получить codegen-fail
-                    // ('no method new' / 'no method cap' / 'no method insert_new')
-                    // — confusing. Validation даёт actionable error
-                    // через type-check ('type X #from_pairs but missing
-                    // new/cap method').
+                    // №503: silently dropping a mismatched type used to be
+                    // the bug — the type just vanished from
+                    // `from_pairs_types` with zero diagnostic, and literals
+                    // stopped coercing into it with no explanation. Now a
+                    // missing ctor is a compile error instead of silence.
                     if t.attrs.contains(&TypeAttr::FromPairs) {
                         let is_canonical = canonical_from_pairs_types.contains(&t.name);
-                        let is_user = !is_canonical;
                         if is_canonical {
                             from_pairs_types.insert(t.name.clone());
-                        } else if is_user {
-                            // User-локальный тип — проверяем методы через
-                            // prepass_type_methods (собран до этого цикла,
-                            // т.к. types и fns могут идти в любом порядке).
-                            let methods = prepass_type_methods.get(&t.name);
-                            let has_new = methods
-                                .map_or(false, |m| m.contains("new"));
-                            let has_cap = methods
-                                .map_or(false, |m| m.contains("cap"));
-                            let has_insert_new = methods
-                                .map_or(false, |m| m.contains("insert_new"));
-                            if has_new && has_cap && has_insert_new {
-                                from_pairs_types.insert(t.name.clone());
-                            }
-                            // Если методов нет — silently ignore. Better-error
-                            // diagnostic — отдельная фаза (требует mutable
-                            // errors vec в build, что нарушает текущую сигнатуру).
-                            // Без validation user получит CC-error при использовании.
+                        } else if has_from_pairs_ctor(&t.name) {
+                            from_pairs_types.insert(t.name.clone());
+                        } else {
+                            from_pairs_errors.push(Diagnostic::new(
+                                format!(
+                                    "[E_FROM_PAIRS_NO_CTOR] type `{}` is marked `#from_pairs` \
+                                     but has no constructor `{}[K, V].new(cap int = ...)` (D450) \
+                                     — map-literal coercion into this type requires exactly ONE \
+                                     static constructor with an optional `cap` parameter of type \
+                                     `int`. Add the constructor, or remove the `#from_pairs` \
+                                     attribute (`insert_new` is an optional optimization, not \
+                                     part of the contract).",
+                                    t.name, t.name
+                                ),
+                                t.span,
+                            ));
                         }
                     }
                 }
@@ -46340,6 +46372,7 @@ impl MapLitCtx {
             coerce_pairs,
             generic_coerce_patterns,
             coerce_errors,
+            from_pairs_errors,
         }
     }
 
@@ -46348,6 +46381,10 @@ impl MapLitCtx {
         // at `build()` time (R1/R2/R3/R11/R12/R14 — R15 is a parse-time reject,
         // never reaches here).
         errors.extend(self.coerce_errors.iter().cloned());
+        // D450 (реестр 221.1 №503): surface `#from_pairs` ctor-contract
+        // diagnostics collected at `build()` time (same drain shape as
+        // `coerce_errors` just above).
+        errors.extend(self.from_pairs_errors.iter().cloned());
         // Plan 221.1 №437 (temporary probe): attribute the pass's wall clock
         // between "cloning the whole ctx once per fn" and "actually walking".
         let perf_on = std::env::var("NOVA_PERF").is_ok();
@@ -47960,11 +47997,15 @@ impl MapLitAnnotator {
                 (None, None)
             };
         // Plan 52 Ф.10: D55 map-coercion для `{field: v}` в позиции
-        // `#from_fields`-типа (= HashMap[str, V]). Если expected —
-        // HashMap-with-#from_fields-маркер И литерал анонимный,
-        // записываем V в `inferred_map_v`. Codegen `emit_record_as_map`
-        // эмитит как `HashMap[str,V].with_capacity + insert("field", v)`.
-        if let ExprKind::RecordLit { type_name: None, inferred_map_v, .. } = &mut e.kind {
+        // `#from_fields`-типа (= `<Target>[str, V]`, где `<Target>` —
+        // произвольный `#from_fields`-тип, не только `HashMap` — D450,
+        // реестр 221.1 №503). Если expected несёт `#from_fields`-маркер И
+        // литерал анонимный, записываем V в `inferred_map_v` И имя
+        // target-типа в `inferred_target_type` (mirror `MapLit`'s Ф.23
+        // target-type propagation чуть выше — без него desugar раньше
+        // ХАРДКОДИЛ `HashMap`, и `{...}` в позиции `IndexMap[str, V]`
+        // строил бы `HashMap`, не `IndexMap`).
+        if let ExprKind::RecordLit { type_name: None, inferred_map_v, inferred_target_type, .. } = &mut e.kind {
             if let Some(exp) = expected {
                 if self.ctx.expected_is_from_fields(exp) {
                     // Уже в ветке #from_fields (KV-тип с 2 generics,
@@ -47972,6 +48013,9 @@ impl MapLitAnnotator {
                     let (_, exp_v) = extract_hashmap_kv(Some(exp), true);
                     if let Some(v) = exp_v {
                         *inferred_map_v = Some(v.clone());
+                    }
+                    if let TypeRef::Named { path, .. } = exp {
+                        *inferred_target_type = Some(path.clone());
                     }
                 }
             }

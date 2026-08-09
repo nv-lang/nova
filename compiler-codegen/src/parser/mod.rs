@@ -9831,6 +9831,9 @@ impl Parser {
                 // Plan 52 Ф.10: заполняется type-checker'ом (MapLitAnnotator)
                 // если запись стоит в позиции #from_fields-типа.
                 inferred_map_v: None,
+                // D450 (реестр 221.1 №503): заполняется той же точкой,
+                // что и `inferred_map_v` — см. `MapLitAnnotator`.
+                inferred_target_type: None,
             },
             start.merge(end),
         ))
