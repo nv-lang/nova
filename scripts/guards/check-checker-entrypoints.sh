@@ -190,6 +190,11 @@ if [ "$ROOT_ARG" = "--selftest" ]; then
     exit $?
 fi
 
+# Второй позиционный аргумент — необязательный override пути к baseline
+# (нужен внешнему селфтесту scripts/guards/selftest/test-check-checker-
+# entrypoints.sh, который натравливает страж на игрушечные фикстуры со СВОИМ
+# baseline, не трогая реальный). Без аргумента — baseline самого стража.
 ROOT="${ROOT_ARG:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
-run_check "$ROOT" "$BASELINE_FILE"
+BASELINE_ARG="${2:-$BASELINE_FILE}"
+run_check "$ROOT" "$BASELINE_ARG"
 exit $?
