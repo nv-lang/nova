@@ -8992,6 +8992,73 @@ mod tests {
         );
     }
 
+    // Plan 262 Part Б (owner decision 2026-08-09): `// nova:expect E_CODE --
+    // причина` twin of `nova:allow` — pins a HARD compile error to a line
+    // (test_runner.rs), but the only thing THIS module (`lints.rs`) does
+    // with it is the no-reason check (compile errors never become a
+    // `LintWarning`, so there's nothing here to suppress — see doc comment
+    // on `apply_nova_expect_no_reason_check`).
+
+    #[test]
+    fn nova_expect_with_reason_parses_and_does_not_warn() {
+        let src = "module foo\n\
+             fn main() {\n\
+             // nova:expect E_CONSUME_KEYWORD_MISSING -- test reason\n\
+             ro x = 1\n\
+             }\n";
+        let entries = parse_nova_expect_comments(src);
+        assert_eq!(entries.len(), 1, "must parse exactly one nova:expect entry, got: {:?}", entries);
+        assert!(entries[0].has_reason, "entry must have a reason");
+        assert!(entries[0].rule_ids.contains("E_CONSUME_KEYWORD_MISSING"));
+        // Well-formed nova:expect must not itself become a finding — the
+        // no-reason check is the ONLY thing this module does with it.
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            !ws.iter().any(|w| w.rule == "E_LINT_EXPECT_NO_REASON"),
+            "well-formed nova:expect must not itself be a finding, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn nova_expect_without_reason_is_inert_and_errors() {
+        let src = "module foo\n\
+             fn main() {\n\
+             // nova:expect E_CONSUME_KEYWORD_MISSING\n\
+             ro x = 1\n\
+             }\n";
+        let entries = parse_nova_expect_comments(src);
+        assert_eq!(entries.len(), 1);
+        assert!(!entries[0].has_reason, "no `--` -> has_reason must be false");
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            ws.iter().any(|w| w.rule == "E_LINT_EXPECT_NO_REASON"),
+            "no-reason nova:expect must itself be a finding, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn nova_expect_multiple_codes_comma_separated() {
+        let src = "// nova:expect E_A, E_B -- reason\nsite\n";
+        let entries = parse_nova_expect_comments(src);
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].rule_ids.contains("E_A"));
+        assert!(entries[0].rule_ids.contains("E_B"));
+        assert!(entries[0].has_reason);
+    }
+
+    #[test]
+    fn nova_expect_accidental_text_without_rule_id_is_ignored() {
+        // "nova:expect" appearing in prose with no rule-id after it must not
+        // be treated as a directive (same rule as `parse_nova_allow_comments`).
+        let src = "// nova:expect -- this is just prose, no rule id\nsite\n";
+        let entries = parse_nova_expect_comments(src);
+        assert!(entries.is_empty(), "prose mention without rule id must be ignored, got: {:?}", entries);
+    }
+
     // [M-from-str-static-conversion-lint-gap] (2026-07-30): детектор был
     // слеп к `from_str`-морфологии (матчил только буквальные `from`/`parse`).
 
