@@ -1,0 +1,42 @@
+// №514 — std.io.write_all[W Write] on a File conformer (not TcpStream): the
+// generic bound `Write` (std.io.core.nv) collides in name with the prelude
+// text-sink protocol `Write` (std.prelude.protocols.nv, `-> ()`). The
+// checker's generic-bound-receiver method resolution used to look the bound
+// up via a collision-blind global type-name slot and could silently land on
+// the WRONG same-named `Write` — channeling `w.write(rest)`'s match-scrutinee
+// as `()` instead of `Result[int, IoError]`, invalid C at the call site
+// (`nova_unit tmp = Nova_File_method_write(...)`). Root cause + fix:
+// resolve_generic_bound_receiver_method / resolve_generic_bound_method_return
+// (compiler-codegen/src/types/mod.rs) now resolve the bound's protocol name
+// via the collision-aware `types_get_for_file`, keyed by the bound's own
+// declaration file, instead of the global `self.types.get(name)` slot.
+//
+// This fixture proves the class is NOT net-specific: `File` (std.fs), a
+// completely different `io.Write` conformer than `TcpStream`, hits the exact
+// same generic mono-dispatch path through the exact same colliding bound.
+module spec_tests.conformance
+
+import std.io.{write_all}
+import std.fs.{File, mock_fs, MemFs}
+import std.fs.{Path}
+
+test "write_all[W Write] on a File conformer — generic bound resolves to the byte-sink Write, not the prelude text-sink (№514)" {
+    mut memfs = MemFs.new()
+    ro p = Path.posix("/514.bin")
+    with Fs = mock_fs(memfs) {
+        match File.create(p) {
+            Err(_) => assert(false)
+            Ok(consume f) => {
+                consume w = f
+                ro data = [1 as u8, 2 as u8, 3 as u8]
+                // THIS call's result, used as a match scrutinee, is exactly
+                // the shape №514 broke: a generic-bound `Write` conformer's
+                // `Result[int, IoError]` — not `()` — must reach here intact.
+                match write_all(w, data) {
+                    Ok(()) => assert(true)
+                    Err(_) => assert(false)
+                }
+            }
+        }
+    }
+}
