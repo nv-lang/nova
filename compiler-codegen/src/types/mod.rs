@@ -15052,10 +15052,49 @@ impl<'a> TypeCheckCtx<'a> {
                 // (folder-CU bleed).
                 let caller_file_id = base.span.file_id;
                 let visible: Option<Vec<&FnDecl>> = self.sig.fn_decls.get(n).map(|v| {
-                    v.iter()
+                    let filtered: Vec<&FnDecl> = v.iter()
                         .filter(|c| !c.file_private || c.span.file_id == caller_file_id)
                         .copied()
-                        .collect()
+                        .collect();
+                    // №534 (class of №514 `types_get_for_file`, W2 specificity
+                    // principle "собственный носитель > делегат"): `fn_decls` is
+                    // a BARE-NAME, CU-wide table — an unqualified bare-Ident call
+                    // must NOT let an unrelated candidate declared in a DIFFERENT
+                    // file/module dilute resolution of a same-named function the
+                    // CALLER'S OWN FILE declares. Before this, a same-arity
+                    // same-named `fn` in a totally unrelated file (never
+                    // imported, no lexical relationship to the caller) competed
+                    // on equal footing via `overload_applicability` — landing on
+                    // 0-or-≥2 "compatible" candidates (arity ties) more easily,
+                    // which silently DROPS the call from `resolved_callees`
+                    // (checker gives up, gap → codegen-resolved). Codegen's own
+                    // call-emission mangles the SAME-FILE callee correctly
+                    // regardless (unaffected), but `resolved_callees`'
+                    // ABSENCE was consumed downstream by
+                    // `collect_resolved_call_target_names_expr` (emit_c.rs) to
+                    // decide "is this bare Ident inside a `spawn` body a call
+                    // target (skip) or a variable (maybe capture)?" — an
+                    // unresolved call fell through to the flat, CU-wide
+                    // `var_types` slot and could pick up a COMPLETELY UNRELATED
+                    // same-named PARAMETER's type from yet another module,
+                    // emitting a spurious ctx-capture field assigned from the
+                    // (unmangled, nonexistent-as-a-value) bare call-target name
+                    // — C `use of undeclared identifier` (repro:
+                    // spec_tests/conformance/standalone/p534_routes_bare_name/).
+                    // Fix: a same-file declaration SHADOWS every other-file
+                    // candidate outright — standard lexical-scoping "innermost
+                    // wins", mirroring `file_private`'s own caller-file
+                    // preference one step further. Cross-module genuine
+                    // multi-overload resolution (imported free-fn) is
+                    // untouched — this only narrows the set when the caller's
+                    // OWN file is itself among the candidates.
+                    if filtered.iter().any(|c| c.span.file_id == caller_file_id) {
+                        filtered.into_iter()
+                            .filter(|c| c.span.file_id == caller_file_id)
+                            .collect()
+                    } else {
+                        filtered
+                    }
                 });
                 match visible.as_deref() {
                     Some([single]) => single,

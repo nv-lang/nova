@@ -1,0 +1,6 @@
+module p534_routes_bare_name.p534_routes_1_param
+
+export fn use_routes(routes []str) -> int {
+    ro n = routes.len()
+    n
+}

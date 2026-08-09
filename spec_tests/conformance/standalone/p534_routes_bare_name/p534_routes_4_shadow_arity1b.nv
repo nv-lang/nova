@@ -1,0 +1,8 @@
+// №534: a THIRD decoy, mirrors the real CU's duplicate 1-arg `routes` carrier.
+module p534_routes_bare_name.p534_routes_4_shadow_arity1b
+
+fn routes(seed int) -> []int {
+    [seed, seed]
+}
+
+export fn touch_routes_arity1b() -> int => routes(3).len()
