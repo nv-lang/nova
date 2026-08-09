@@ -154,7 +154,7 @@ export fn Period @to_str() -> str => @to_iso()
 fn date_plus_period(d Date, p Period) -> Result[Date, DateError] {
     // 1) biggest-unit: годы+месяцы одним сдвигом месяцев.
     ro total_months = (p.years as i64) * 12 + (p.months as i64)
-    mut ed = d.to_epoch_day()
+    mut ed = d.epoch_day()
     if total_months != 0 {
         ro y0 = d.year() as i64
         ro m0 = d.month().number() as i64
@@ -172,11 +172,11 @@ fn date_plus_period(d Date, p Period) -> Result[Date, DateError] {
         ro dim = m1_month.length(leap) as i64
         ro day1 = day0.min(dim)
         ro base = Date.new(y1 as i32, m1_month, day1 as i32).map_err(|_| RangeOverflow("Date + Period: month-add out of range"))?
-        ed = base.to_epoch_day()
+        ed = base.epoch_day()
     }
     // 3) days — exact, через epoch-day.
     ro ed2 = ed + (p.days as i64)
-    if ed2 < Date.min_value().to_epoch_day() || ed2 > Date.max_value().to_epoch_day() {
+    if ed2 < Date.min_value().epoch_day() || ed2 > Date.max_value().epoch_day() {
         return Err(RangeOverflow("Date + Period: day-add out of civil range"))
     }
     Ok(Date.from_epoch_day(ed2))

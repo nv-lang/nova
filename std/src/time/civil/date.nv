@@ -197,7 +197,7 @@ export fn Date @day() -> i32 {
 
 /// Raw epoch-day (days since 1970-01-01; negative before the epoch).
 #stable(since = "0.1")
-export fn Date @to_epoch_day() -> i64 => @epoch_day
+export fn Date @epoch_day() -> i64 => @epoch_day
 
 /// Weekday (ISO Mon=1..Sun=7). 1970-01-01 is a Thursday.
 #stable(since = "0.1")
@@ -310,7 +310,7 @@ export fn Date @nth_weekday(n int, w Weekday) -> Result[Date, DateError] {
     if offset >= days_in_month(y, m) {
         return Err(InvalidField(FieldKind.Day, n as i64, 1, 4))
     }
-    Ok({ epoch_day: first.to_epoch_day() + offset })
+    Ok({ epoch_day: first.epoch_day() + offset })
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -320,7 +320,7 @@ export fn Date @nth_weekday(n int, w Weekday) -> Result[Date, DateError] {
 /// Exact number of days from `self` to `other` (positive if `other` is later).
 #stable(since = "0.1")
 export fn Date @days_until(other Date) -> int =>
-    (other.to_epoch_day() - @epoch_day) as int
+    (other.epoch_day() - @epoch_day) as int
 
 // ──────────────────────────────────────────────────────────────────────────
 // Compare (операторы синтезируются из @compare)

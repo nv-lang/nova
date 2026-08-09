@@ -83,7 +83,7 @@ export fn Offset.local() Time -> Offset => { seconds: Time.local_offset_sec() as
 
 /// Full offset in seconds (canon).
 #stable(since = "0.1")
-export fn Offset @to_seconds() -> i32 => @seconds
+export fn Offset @seconds() -> i32 => @seconds
 
 /// Whether the offset is zero (UTC).
 #stable(since = "0.1")
