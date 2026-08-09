@@ -1,0 +1,24 @@
+// EXPECT_COMPILE_ERROR E_CONST_NOT_MUT
+//
+// №468 follow-up (owner 2026-08-09): once a mut-method on a primitive
+// really writes through a pointer (R5, closes E_PRIMITIVE_MUT_METHOD),
+// calling it on a `const` receiver would take the address of the const's
+// `static const` C storage and write through it -- undefined behaviour,
+// observed as an access violation at runtime before this diagnostic
+// existed. `CONST.method()` with an UPPERCASE receiver identifier parses
+// as `ExprKind::Path(["CONST", "method"])`, a different AST shape from a
+// lowercase local/const (`ExprKind::Member`) -- this fixture pins the
+// Path-shaped code path specifically (see the lowercase sibling fixture
+// for the Member-shaped path).
+module neg.p468_const_receiver_uppercase_neg
+
+fn int mut @p468_inc(by int) -> () {
+    @ = @ + by
+}
+
+const N = 5
+
+test "mut-method call on an UPPERCASE const receiver is rejected" {
+    N.p468_inc(10)
+    assert(true)
+}

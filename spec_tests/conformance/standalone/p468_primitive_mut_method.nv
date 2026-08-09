@@ -1,0 +1,108 @@
+// №468 (owner 2026-08-08/09): `mut @` receiver ABI is R5-compliant for
+// primitives now — codegen passes int/bool/f64/str `mut @` receivers
+// BY POINTER (spec/decisions/02-types.md:16101), same as every other
+// receiver family. `E_PRIMITIVE_MUT_METHOD` (Plan 128 Ф.3) used to ban
+// the declaration outright because codegen silently dropped the
+// mutation (by-value copy) — that was an implementation limitation
+// promoted to a language rule; the diagnostic is retired, this fixture
+// pins the real, working behaviour: the mutation IS observable to the
+// caller, not just "compiles". Filed under standalone/ (own compile
+// unit) rather than the shared root CU — unrelated to any isolation
+// need of its own (no panic/timeout), purely to keep it independently
+// runnable/reviewable next to its neg siblings.
+//
+// Boundary cases covered here (all expected to COMPILE and RUN safely,
+// verified in docs/plans/221.1-bug-sweep.md §468's boundary table):
+//   - plain mut-binding receiver: mutation observed (the core fix).
+//   - literal receiver (`5.p468_inc(...)`): compiles, mutates an ephemeral
+//     C temp, discarded at end of statement — same rvalue-receiver rule
+//     R8 already gives value-record `mut @` calls, no persisted observer
+//     so nothing is "silently lost".
+//   - parenthesized rvalue-expression receiver: same rvalue rule.
+//   - rvalue chain (`n.p468_double().p468_inc(...)`): the inner call
+//     returns a FRESH int (not `@`), so the outer mut call's receiver is
+//     again a temp — same rvalue rule, `n` itself is untouched.
+//   - mut int FIELD receiver, called twice in a row: stresses the
+//     field-cache fix (`field_cache.rs::classify_named_leaf`) — before
+//     that fix a primitive field was wrongly classified slot-stable and
+//     a cached read could have missed the first mutation.
+// Receivers that must be REJECTED at compile time (const / ro-local) are
+// covered by dedicated neg fixtures: p468_const_receiver_uppercase_neg,
+// p468_const_receiver_lowercase_neg, p468_ro_local_receiver_neg.
+
+module standalone.p468_primitive_mut_method
+
+fn int mut @p468_inc(by int) -> () {
+    @ = @ + by
+}
+
+fn bool mut @p468_flip() -> () {
+    @ = !@
+}
+
+fn f64 mut @p468_scale(k f64) -> () {
+    @ = @ * k
+}
+
+fn str mut @p468_hack() -> () {
+    @ = "x"
+}
+
+fn int @p468_double() -> int {
+    @ * 2
+}
+
+type P468Counter {
+    mut count int
+}
+
+fn P468Counter mut @p468_bump_twice() -> () {
+    @count.p468_inc(1)
+    @count.p468_inc(1)
+}
+
+test "p468: int mut @ method observably mutates the caller's binding" {
+    mut n = 5
+    n.p468_inc(10)
+    assert(n == 15)
+}
+
+test "p468: bool mut @ method observably mutates the caller's binding" {
+    mut b = true
+    b.p468_flip()
+    assert(b == false)
+}
+
+test "p468: f64 mut @ method observably mutates the caller's binding" {
+    mut x = 2.0
+    x.p468_scale(3.0)
+    assert(x == 6.0)
+}
+
+test "p468: str mut @ method observably mutates the caller's binding" {
+    mut s = "abc"
+    s.p468_hack()
+    assert(s == "x")
+}
+
+test "p468: literal receiver compiles and runs (rvalue temp, no persisted observer)" {
+    5.p468_inc(10)
+    assert(true)
+}
+
+test "p468: parenthesized rvalue-expression receiver compiles and runs" {
+    (2 + 3).p468_inc(10)
+    assert(true)
+}
+
+test "p468: rvalue chain receiver leaves the original binding untouched" {
+    mut n = 5
+    n.p468_double().p468_inc(1)
+    assert(n == 5)
+}
+
+test "p468: field-cache — two mut-method calls on the same mut int field both observed" {
+    mut c = P468Counter{count: 10}
+    c.p468_bump_twice()
+    assert(c.count == 12)
+}
