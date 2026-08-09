@@ -39,10 +39,10 @@ export type Net effect {
     close_stream(stream TcpStream) -> ()
     close_listener(listener TcpListener) -> ()
     mark_split(stream TcpStream) -> ()
-    listener_local_port(listener TcpListener) -> u16
+    listener_local_port(listener TcpListener) -> int
     listener_local_addr(listener TcpListener, out mut []u8) -> ()
-    stream_local_port(stream TcpStream) -> u16
-    stream_peer_port(stream TcpStream) -> u16
+    stream_local_port(stream TcpStream) -> int
+    stream_peer_port(stream TcpStream) -> int
     stream_local_addr(stream TcpStream, out mut []u8) -> ()
     stream_peer_addr(stream TcpStream, out mut []u8) -> ()
     set_nodelay(stream TcpStream, on bool) -> ()
@@ -55,7 +55,7 @@ export type Net effect {
     // Datagram into buf[0..n]; sender's 20-byte image into `sender`.
     recv_from(sock UdpSocket, buf mut []u8, sender mut []u8) -> Result[int, NetError]
     close_socket(sock UdpSocket) -> ()
-    socket_local_port(sock UdpSocket) -> u16
+    socket_local_port(sock UdpSocket) -> int
     socket_local_addr(sock UdpSocket, out mut []u8) -> ()
 
     // ── DNS ──────────────────────────────────────────────────────────────────
@@ -64,5 +64,5 @@ export type Net effect {
     // (dns.nv) builds the owned []SocketAddr from it OUTSIDE the vtable (a
     // Vec-of-value-records Ok payload does not survive the effect vtable's GC
     // tracing — the scalar pair does; the array stays live via `array_base`).
-    lookup(host []u8, port u16) -> Result[(int, int), NetError]
+    lookup(host []u8, port int) -> Result[(int, int), NetError]
 }

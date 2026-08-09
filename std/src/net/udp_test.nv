@@ -28,8 +28,8 @@ module std.net
 
 test "net2/udp: loopback datagram + value-SocketAddr sender via out-param" {
     with Net = real_net() {
-        ro ch_a = Channel[u16].new(1)   // a_port: receiver -> sender
-        ro ch_b = Channel[u16].new(1)   // b_port: sender   -> receiver (for sender-port assert)
+        ro ch_a = Channel[int].new(1)   // a_port: receiver -> sender
+        ro ch_b = Channel[int].new(1)   // b_port: sender   -> receiver (for sender-port assert)
         supervised {
             spawn {
                 mut a = must(UdpSocket.bind(SocketAddr.loopback(0)))
@@ -41,7 +41,7 @@ test "net2/udp: loopback datagram + value-SocketAddr sender via out-param" {
                 // Tuple carrying a value SocketAddr → direct match (see dns_test.nv).
                 match a.recv_from(buf) {
                     Ok((n, sender)) => {
-                        ro b_port = match ch_b.rx.recv() { Some(x) => x  None => 0 as u16 }
+                        ro b_port = match ch_b.rx.recv() { Some(x) => x  None => 0 }
                         assert(n == 9)
                         assert(unsafe { buf[0..n].to_str_unchecked() } == "ping net2")
                         // The out-param sender must carry b's real port.
@@ -53,7 +53,7 @@ test "net2/udp: loopback datagram + value-SocketAddr sender via out-param" {
                 a.close()
             }
             spawn {
-                ro a_port = match ch_a.rx.recv() { Some(x) => x  None => 0 as u16 }
+                ro a_port = match ch_a.rx.recv() { Some(x) => x  None => 0 }
                 mut b = must(UdpSocket.bind(SocketAddr.loopback(0)))
                 ro b_port = b.local_port()
                 assert(b_port > 0)
@@ -67,7 +67,7 @@ test "net2/udp: loopback datagram + value-SocketAddr sender via out-param" {
 
 test "net2/udp: recv_from_vec returns owned bytes + sender" {
     with Net = real_net() {
-        ro ch_a = Channel[u16].new(1)   // a_port: receiver -> sender
+        ro ch_a = Channel[int].new(1)   // a_port: receiver -> sender
         supervised {
             spawn {
                 mut a = must(UdpSocket.bind(SocketAddr.loopback(0)))
@@ -85,7 +85,7 @@ test "net2/udp: recv_from_vec returns owned bytes + sender" {
                 a.close()
             }
             spawn {
-                ro a_port = match ch_a.rx.recv() { Some(x) => x  None => 0 as u16 }
+                ro a_port = match ch_a.rx.recv() { Some(x) => x  None => 0 }
                 mut b = must(UdpSocket.bind(SocketAddr.loopback(0)))
                 assert(must(b.send_str("hello", SocketAddr.loopback(a_port))) == 5)
                 b.close()

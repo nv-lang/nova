@@ -41,11 +41,11 @@ test "net2/tcp: two-fiber loopback echo through the Net effect" {
     with Net = real_net() {
         // D415 (E_CONCURRENT_MUT_CAPTURE): listener целиком в server-файбере,
         // порт — каналом (и канонический M:N loop-pinning, см. udp_test.nv).
-        ro ch = Channel[u16].new(1)   // server port → client
+        ro ch = Channel[int].new(1)   // server port → client
 
         supervised {
             spawn {
-                ro port = match ch.rx.recv() { Some(x) => x  None => 0 as u16 }
+                ro port = match ch.rx.recv() { Some(x) => x  None => 0 }
                 mut conn = must(TcpStream.connect(SocketAddr.loopback(port)))
                 assert(must_io(conn.write("hello net2")) == 10)
                 mut buf []u8 = []u8.new()
@@ -76,11 +76,11 @@ test "net2/tcp: two-fiber loopback echo through the Net effect" {
 
 test "net2/tcp: read observes clean EOF as Ok(0)" {
     with Net = real_net() {
-        ro ch = Channel[u16].new(1)   // server port → client (D415: без mut-захвата lst)
+        ro ch = Channel[int].new(1)   // server port → client (D415: без mut-захвата lst)
 
         supervised {
             spawn {
-                ro port = match ch.rx.recv() { Some(x) => x  None => 0 as u16 }
+                ro port = match ch.rx.recv() { Some(x) => x  None => 0 }
                 mut conn = must(TcpStream.connect(SocketAddr.loopback(port)))
                 conn.close()
             }
@@ -110,11 +110,11 @@ test "net2/tcp: second read() after partial data + close observes clean EOF (№
     // got sent and the second read waited on a connection that was never
     // actually closed.
     with Net = real_net() {
-        ro ch = Channel[u16].new(1)   // server port → client
+        ro ch = Channel[int].new(1)   // server port → client
 
         supervised {
             spawn {
-                ro port = match ch.rx.recv() { Some(x) => x  None => 0 as u16 }
+                ro port = match ch.rx.recv() { Some(x) => x  None => 0 }
                 mut conn = must(TcpStream.connect(SocketAddr.loopback(port)))
                 mut buf []u8 = []u8.new()
                 buf.resize(1, 0 as u8)
@@ -138,11 +138,11 @@ test "net2/tcp: second read() after partial data + close observes clean EOF (№
 
 test "net2/tcp: read_text / write_str text conveniences" {
     with Net = real_net() {
-        ro ch = Channel[u16].new(1)   // server port → client (D415: без mut-захвата lst)
+        ro ch = Channel[int].new(1)   // server port → client (D415: без mut-захвата lst)
 
         supervised {
             spawn {
-                ro port = match ch.rx.recv() { Some(x) => x  None => 0 as u16 }
+                ro port = match ch.rx.recv() { Some(x) => x  None => 0 }
                 mut conn = must(TcpStream.connect(SocketAddr.loopback(port)))
                 assert(must_io(conn.write("ping")) == 4)
                 assert(must(conn.read_text(32)) == "pong")

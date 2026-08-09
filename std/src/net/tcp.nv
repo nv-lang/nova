@@ -128,9 +128,11 @@ export fn TcpListener mut @accept() Net -> Result[TcpStream, NetError] {
     Net.accept(@)
 }
 
-/// Local port this listener is bound to.
+/// Local port this listener is bound to. `int`, not `u16` — see
+/// [`SocketAddr.loopback`] (addr.nv) for why the port type is `int` on the
+/// whole public surface.
 #stable(since = "0.1")
-export fn TcpListener @local_port() Net -> u16 { Net.listener_local_port(@) }
+export fn TcpListener @local_port() Net -> int { Net.listener_local_port(@) }
 
 /// Local address this listener is bound to.
 #stable(since = "0.1")
@@ -255,13 +257,15 @@ export fn TcpStream mut @read_text(max int) Net -> Result[str, NetError] {
 #stable(since = "0.1")
 export fn TcpStream mut @shutdown() Net -> Result[(), NetError] { Net.shutdown(@) }
 
-/// Local port of this stream.
+/// Local port of this stream. `int`, not `u16` — see [`SocketAddr.loopback`]
+/// (addr.nv) for why the port type is `int` on the whole public surface.
 #stable(since = "0.1")
-export fn TcpStream @local_port() Net -> u16 { Net.stream_local_port(@) }
+export fn TcpStream @local_port() Net -> int { Net.stream_local_port(@) }
 
-/// Remote peer port of this stream.
+/// Remote peer port of this stream. `int`, not `u16` — see
+/// [`SocketAddr.loopback`] (addr.nv).
 #stable(since = "0.1")
-export fn TcpStream @peer_port() Net -> u16 { Net.stream_peer_port(@) }
+export fn TcpStream @peer_port() Net -> int { Net.stream_peer_port(@) }
 
 /// Local address of this stream.
 #stable(since = "0.1")
@@ -380,9 +384,10 @@ export fn TcpReadHalf mut @read(buf mut []u8) Net -> Result[int, NetError] {
     Net.read(TcpStream.from_raw(@handle), buf)
 }
 
-/// Local port of this read half.
+/// Local port of this read half. `int`, not `u16` — see
+/// [`SocketAddr.loopback`] (addr.nv).
 #stable(since = "0.1")
-export fn TcpReadHalf @local_port() Net -> u16 {
+export fn TcpReadHalf @local_port() Net -> int {
     Net.stream_local_port(TcpStream.from_raw(@handle))
 }
 
@@ -404,9 +409,10 @@ export fn TcpWriteHalf mut @write(data []u8) Net -> Result[int, NetError] {
     Net.write(TcpStream.from_raw(@handle), data)
 }
 
-/// Local port of this write half.
+/// Local port of this write half. `int`, not `u16` — see
+/// [`SocketAddr.loopback`] (addr.nv).
 #stable(since = "0.1")
-export fn TcpWriteHalf @local_port() Net -> u16 {
+export fn TcpWriteHalf @local_port() Net -> int {
     Net.stream_local_port(TcpStream.from_raw(@handle))
 }
 
@@ -488,12 +494,12 @@ export fn real_net() -> Effect[Net] => effect Net {
     close_stream(stream TcpStream) -> () { unsafe { net_tcp_close(stream.handle) } }
     close_listener(listener TcpListener) -> () { unsafe { net_listener_close(listener.handle) } }
     mark_split(stream TcpStream) -> () { unsafe { net_tcp_mark_split(stream.handle) } }
-    listener_local_port(listener TcpListener) -> u16 => unsafe { net_listener_local_port(listener.handle) }
+    listener_local_port(listener TcpListener) -> int => unsafe { net_listener_local_port(listener.handle) as int }
     listener_local_addr(listener TcpListener, out mut []u8) -> () {
         unsafe { net_listener_local_addr(listener.handle, out.ptr()) }
     }
-    stream_local_port(stream TcpStream) -> u16 => unsafe { net_tcp_local_port(stream.handle) }
-    stream_peer_port(stream TcpStream) -> u16 => unsafe { net_tcp_peer_port(stream.handle) }
+    stream_local_port(stream TcpStream) -> int => unsafe { net_tcp_local_port(stream.handle) as int }
+    stream_peer_port(stream TcpStream) -> int => unsafe { net_tcp_peer_port(stream.handle) as int }
     stream_local_addr(stream TcpStream, out mut []u8) -> () {
         unsafe { net_tcp_local_addr(stream.handle, out.ptr()) }
     }
@@ -519,16 +525,19 @@ export fn real_net() -> Effect[Net] => effect Net {
         if n < 0 { int_err(n) } else { int_ok(n) }
     }
     close_socket(sock UdpSocket) -> () { unsafe { net_udp_close(sock.handle) } }
-    socket_local_port(sock UdpSocket) -> u16 => unsafe { net_udp_local_port(sock.handle) }
+    socket_local_port(sock UdpSocket) -> int => unsafe { net_udp_local_port(sock.handle) as int }
     socket_local_addr(sock UdpSocket, out mut []u8) -> () {
         unsafe { net_udp_local_addr(sock.handle, out.ptr()) }
     }
 
     // ── DNS ──────────────────────────────────────────────────────────────────
-    lookup(host []u8, port u16) -> Result[(int, int), NetError] {
+    // `port` is `int` on the Net effect surface (see resolve()'s doc comment,
+    // dns.nv); resolve()'s own `requires` already bounds it to a legal u16
+    // range before it ever reaches here, so the narrowing cast below is safe.
+    lookup(host []u8, port int) -> Result[(int, int), NetError] {
         mut base int = 0    // C writes the GC-array base pointer here (via &base)
         mut err int = 0
-        ro count = unsafe { net_dns_lookup(host.ptr(), host.len(), port, (&base) as *(), &err) }
+        ro count = unsafe { net_dns_lookup(host.ptr(), host.len(), port as u16, (&base) as *(), &err) }
         if count < 0 { err_lookup(err) } else { lookup_ok(base, count) }
     }
 }

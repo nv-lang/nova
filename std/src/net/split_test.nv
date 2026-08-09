@@ -35,7 +35,7 @@ fn split_test_one_byte(v int) -> []u8 {
 // of failing it.
 test "TCP split: TcpWriteHalf.close() alone delivers FIN, read half stays usable (#Ф.0-а)" {
     with Net = real_net() {
-        ro ch_port = Channel[u16].new(1)
+        ro ch_port = Channel[int].new(1)
         ro ch_result_a = Channel[int].new(1)
         ro ch_result_b = Channel[int].new(1)
         ro tok = CancelToken.new()
@@ -70,8 +70,8 @@ test "TCP split: TcpWriteHalf.close() alone delivers FIN, read half stays usable
                 }
             }
             spawn {
-                ro port = match ch_port.rx.recv() { Some(p) => p  None => 0 as u16 }
-                match TcpStream.connect(SocketAddr.loopback(port as int)) {
+                ro port = match ch_port.rx.recv() { Some(p) => p  None => 0 }
+                match TcpStream.connect(SocketAddr.loopback(port)) {
                     Ok(consume conn) => {
                         consume (br, bw) = conn.into_split()
                         mut buf1 []u8 = []u8.new()
@@ -104,12 +104,12 @@ test "TCP split: server + client exchange via read/write halves _slow" {
         // D415 (E_CONCURRENT_MUT_CAPTURE): listener живёт ЦЕЛИКОМ в server-
         // файбере, порт публикуется каналом — mut-захвата нет; заодно это
         // канонический M:N-паттерн (bind внутри файбера его I/O, см. udp_test.nv).
-        ro ch = Channel[u16].new(1)   // server port → client
+        ro ch = Channel[int].new(1)   // server port → client
 
         supervised {
             // Client fiber: connect, split, write request, read reply.
             spawn {
-                ro port = match ch.rx.recv() { Some(x) => x  None => 0 as u16 }
+                ro port = match ch.rx.recv() { Some(x) => x  None => 0 }
                 consume conn = match TcpStream.connect(SocketAddr.loopback(port)) {
                     Ok(consume s) => s
                     Err(_) => panic("connect failed")

@@ -22,7 +22,7 @@ test "net2/dns: resolve localhost yields at least one loopback address" {
                 }
                 ro n = addrs.len()
                 ro p0 = addrs[0].port()
-                ro p1 = if n > 1 { addrs[1].port() } else { 80 as u16 }
+                ro p1 = if n > 1 { addrs[1].port() } else { 80 }
                 assert(n >= 1)
                 assert(p0 == 80)
                 assert(p1 == 80)

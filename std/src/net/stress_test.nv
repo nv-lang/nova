@@ -34,7 +34,7 @@ import std.time.duration
 
 test "net2/stress: 8 fibers × concurrent echo through one listener, per-fiber pattern integrity" {
     with Net = real_net() {
-        ro ch_port = Channel[u16].new(8)
+        ro ch_port = Channel[int].new(8)
         supervised {
             // Server: bind in-fiber, publish the port 8×, then serve 8
             // connections sequentially (each echo runs to completion; client
@@ -66,7 +66,7 @@ test "net2/stress: 8 fibers × concurrent echo through one listener, per-fiber p
             // pattern, and byte-verifies the echo.
             for fid in 0..8 {
                 spawn {
-                    ro port = match ch_port.rx.recv() { Some(p) => p  None => 0 as u16 }
+                    ro port = match ch_port.rx.recv() { Some(p) => p  None => 0 }
                     assert(port > 0)
                     mut data []u8 = []u8.new()
                     data.resize(8192, 0 as u8)
@@ -102,7 +102,7 @@ test "net2/stress: 8 fibers × concurrent echo through one listener, per-fiber p
 
 test "net2/stress: throughput baseline — 8 MiB echo in 64 KiB chunks" {
     with Net = real_net() {
-        ro ch_port = Channel[u16].new(1)
+        ro ch_port = Channel[int].new(1)
         supervised {
             // Echo server: one connection, echo chunks until 8 MiB total.
             spawn {
@@ -124,7 +124,7 @@ test "net2/stress: throughput baseline — 8 MiB echo in 64 KiB chunks" {
             }
             // Client: ping-pong 128 × 64 KiB, timed.
             spawn {
-                ro port = match ch_port.rx.recv() { Some(p) => p  None => 0 as u16 }
+                ro port = match ch_port.rx.recv() { Some(p) => p  None => 0 }
                 mut chunk []u8 = []u8.new()
                 chunk.resize(65536, 171 as u8)      // 0xAB fill
                 mut back []u8 = []u8.new()
