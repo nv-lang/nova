@@ -71,7 +71,20 @@ The owner asked for this:
         fails=$((fails + 1))
     fi
 
-    # 4. Коммиты ДО точки перехода не проверяются вовсе.
+    # 4. Английское сообщение С ДЛИННЫМ ТИРЕ — ПРОХОДИТ. Регрессия на реальный
+    #    промах: байтовый диапазон [А-Яа-я] под LC_ALL=C ловил тире как
+    #    кириллицу, и страж краснел на собственных английских коммитах.
+    git -C "$TMP" reset -q --hard "$BASE"
+    echo e >> "$TMP/f"; git -C "$TMP" add f >/dev/null 2>&1
+    git -C "$TMP" commit -q -m "english subject with an em-dash — like this
+
+Body also has a dash — and a quote character 'x'." 2>/dev/null
+    if ! bash "$SELF" "$TMP" >/dev/null 2>&1; then
+        echo "selftest FAIL: английское сообщение с тире сочтено кириллицей" >&2
+        fails=$((fails + 1))
+    fi
+
+    # 5. Коммиты ДО точки перехода не проверяются вовсе.
     git -C "$TMP" reset -q --hard "$BASE"
     echo d >> "$TMP/f"; git -C "$TMP" add f >/dev/null 2>&1
     git -C "$TMP" commit -q -m "русский до перехода" 2>/dev/null
@@ -83,7 +96,7 @@ The owner asked for this:
     fi
 
     if [ "$fails" -eq 0 ]; then
-        echo "check-commit-language selftest: OK (4 проверки)"
+        echo "check-commit-language selftest: OK (5 проверок)"
         exit 0
     fi
     echo "check-commit-language selftest: ПРОВАЛ, отказов $fails" >&2
@@ -107,12 +120,28 @@ git -C "$ROOT" rev-parse --verify -q "$BASE" >/dev/null 2>&1 || {
     exit 1
 }
 
+# Норма применяется по ДАТЕ АВТОРСТВА, а не по достижимости от точки перехода.
+# Иначе ветка, начатая ДО нормы и влитая ПОСЛЕ, краснит гейт задним числом —
+# и единственным выходом становится переписывание чужой истории. Дата — это
+# «когда правило действовало», достижимость — «когда ветку влили»; правило
+# привязано к первому.
+CUT_TS=$(git -C "$ROOT" log -1 --format='%at' "$BASE")
+
 BAD=""
 for sha in $(git -C "$ROOT" rev-list "$BASE..HEAD" --no-merges 2>/dev/null); do
+    ats=$(git -C "$ROOT" log -1 --format='%at' "$sha")
+    [ "$ats" -ge "$CUT_TS" ] 2>/dev/null || continue
     msg=$(git -C "$ROOT" log -1 --format='%B' "$sha")
     # Цитаты и отступ-блоки исключаем: чужой текст переводить нельзя.
     stripped=$(printf '%s\n' "$msg" | grep -v '^>' | grep -v '^    ')
-    if printf '%s' "$stripped" | grep -q '[А-Яа-яЁё]'; then
+    # ВАЖНО: класс Юникода, а НЕ байтовый диапазон `[А-Яа-я]`. Под LC_ALL=C
+    # диапазон сравнивает БАЙТЫ, и длинное тире `—` (U+2014, байты E2 80 94)
+    # попадает в те же границы — английское сообщение с тире объявлялось
+    # кириллицей. Поймано 2026-08-09 на двух собственных коммитах интегратора.
+    # Префикс `(*UTF8)` обязателен: страж работает под LC_ALL=C, и без него
+    # PCRE не включает UTF-8 — класс молча не находит НИЧЕГО, то есть страж
+    # пропускает всё. Ровно это и показала самопроверка сразу после правки.
+    if printf '%s' "$stripped" | grep -Pq '(*UTF8)\p{Cyrillic}'; then
         subj=$(git -C "$ROOT" log -1 --format='%s' "$sha")
         BAD="$BAD
   ${sha%${sha#?????????}}  $subj"
