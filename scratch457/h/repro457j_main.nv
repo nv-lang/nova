@@ -1,0 +1,34 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Warmup-first variant of repro457i: does a throwaway spawn BEFORE the
+// timed section, to test the hypothesis that the "late timeout" observed
+// is lazy _materialize_pool() (worker-pool + GC thread registration,
+// runtime.c:1668) one-time cost, not a cancellation-delivery race.
+
+module scratch457.repro457j_main
+
+import std.time.duration
+
+fn main() Time -> () {
+    // Warmup: absorb the one-time worker-pool materialization cost here,
+    // outside the timed measurement.
+    supervised {
+        spawn { }
+    }
+
+    ro (_tx, rx) = Channel.new(1) // never sent to
+    mut caught = AtomicBool.new(false)
+    ro t0 = Timestamp.now().unix_millis()
+    ro r = with Fail[TimeoutError] = |_e| {
+        caught.store(true)
+        0
+    } {
+        supervised(timeout: 200.to_millis()) {
+            spawn {
+                ro _v = rx.recv()
+            }
+        }
+        1
+    }
+    ro elapsed = Timestamp.now().unix_millis() - t0
+    println("repro457j: caught=${caught.load()} r=${r} elapsed_ms=${elapsed}")
+}
