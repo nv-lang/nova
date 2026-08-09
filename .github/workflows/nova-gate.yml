@@ -231,17 +231,23 @@ jobs:
           set -uo pipefail
           set +e
           mkdir -p /tmp/nova-gate-bin
-          targets=(
-            "aggregator|examples/flagship/aggregator/src/main.nv"
-            "echo_server_net|examples/net/echo_server.nv"
-            "echo_client_net|examples/net/echo_client.nv"
-            "echo_server_tls|examples/tls/echo_server.nv"
-            "echo_client_tls|examples/tls/echo_client.nv"
-          )
+          # Список целей — ФАЙЛОМ, общим с scripts/gate.sh (2026-08-10).
+          # До этого он жил здесь и там двумя копиями, и ничто не проверяло,
+          # что они совпадают: тот же класс, что №509/№524 — перечисление,
+          # которое надо помнить в двух местах, протекает.
+          list="scripts/guards/flagship-targets.txt"
+          if [ ! -f "${list}" ]; then
+            echo "::error::нет списка флагман-целей ${list}"
+            exit 1
+          fi
           failed=""
-          for entry in "${targets[@]}"; do
-            name="${entry%%|*}"
-            src="${entry#*|}"
+          while read -r name src rest; do
+            case "${name}" in ''|\#*) continue ;; esac
+            if [ -z "${src}" ] || [ ! -f "${src}" ]; then
+              echo "::error::флагман-цель не найдена: ${name} ${src}"
+              failed="${failed} ${name}"
+              continue
+            fi
             echo "::group::build ${name} (${src})"
             log="/tmp/nova-gate-bin/${name}.log"
             ./nova-cli/target/release/nova build "${src}" --strict-effects \
@@ -258,7 +264,7 @@ jobs:
                 echo '```'
               } >> "${GITHUB_STEP_SUMMARY}"
             fi
-          done
+          done < "${list}"
           if [ -n "${failed}" ]; then
             echo "::error::flagship examples build failed for:${failed}"
             exit 1

@@ -348,7 +348,7 @@ echo "$LINT_LINE2" | grep -qE ", 0 finding\(s\)" \
     || fail "nova lint spec_tests: находки > 0, ожидался канон 0 (см. $LINT_LOG2): '$LINT_LINE2'"
 [ "$LINT_EXIT2" -eq 0 ] || fail "nova lint --deny spec_tests: exit=$LINT_EXIT2 (см. $LINT_LOG2)"
 
-step "flagship examples --strict-effects (все 5 целей, как в CI)"
+step "flagship examples --strict-effects (цели из общего с CI списка)"
 # ПЯТЬ целей, а не одна. 2026-08-09: локальный гейт собирал только aggregator,
 # CI собирает пять — и первым же прогоном покраснел на examples/tls/echo_server.nv
 # (`undefined identifier session`, остаток переименования). Гейт, который слабее
@@ -358,15 +358,19 @@ step "flagship examples --strict-effects (все 5 целей, как в CI)"
 # строке вывода, а вывод кончается предупреждениями чаще, чем строкой сборки.
 # Та же ловушка стоила интегратору ложного «все четыре ОК»: `rc=$?` после
 # конвейера с `sed` возвращает код sed, а не компилятора.
-FLAGSHIP_TARGETS="
-examples/flagship/aggregator/src/main.nv
-examples/net/echo_client.nv
-examples/net/echo_server.nv
-examples/tls/echo_client.nv
-examples/tls/echo_server.nv
-"
+# Список — ФАЙЛОМ, общим с CI (2026-08-10). До этого он был записан дважды —
+# здесь и в workflow — и ничто не проверяло совпадение копий; тот же класс, что
+# №509/№524. Теперь добавление цели — одна строка в одном файле.
+FLAGSHIP_LIST="$ROOT/scripts/guards/flagship-targets.txt"
+[ -f "$FLAGSHIP_LIST" ] || fail "нет списка флагман-целей $FLAGSHIP_LIST"
 FLAG_FAILED=""
-for _t in $FLAGSHIP_TARGETS; do
+FLAG_N=0
+tr -d "$(printf '\r')" < "$FLAGSHIP_LIST" > "${TMPDIR:-/tmp}/gate_flagship_list_$$.txt"
+while read -r _fname _t _rest; do
+    case "$_fname" in ''|\#*) continue ;; esac
+    [ -n "$_t" ] || { echo "flagship :: строка без пути: $_fname"; FLAG_FAILED="$FLAG_FAILED $_fname"; continue; }
+    [ -f "$ROOT/$_t" ] || { echo "flagship :: НЕТ ФАЙЛА $_t"; FLAG_FAILED="$FLAG_FAILED $_fname"; continue; }
+    FLAG_N=$((FLAG_N + 1))
     _flog="${TMPDIR:-/tmp}/gate_flagship_$$.log"
     "$NOVA" build "$ROOT/$_t" --strict-effects >"$_flog" 2>&1
     if [ $? -eq 0 ]; then
@@ -377,7 +381,9 @@ for _t in $FLAGSHIP_TARGETS; do
         FLAG_FAILED="$FLAG_FAILED $_t"
     fi
     rm -f "$_flog"
-done
+done < "${TMPDIR:-/tmp}/gate_flagship_list_$$.txt"
+rm -f "${TMPDIR:-/tmp}/gate_flagship_list_$$.txt"
+echo "flagship :: собрано $FLAG_N"
 [ -z "$FLAG_FAILED" ] || fail "flagship examples не собрались:$FLAG_FAILED"
 
 # ── ПАРИТЕТ С CI (реестр 221.1 №516) ────────────────────────────────────────
