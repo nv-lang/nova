@@ -28,7 +28,7 @@ fn d493_greet1() {
 // (2) preceding stmts + trailing call to a void fn.
 fn d493_greet2() {
     mut n = 0
-    n = n + 1
+    n += 1
     println("n=${n}")
 }
 
@@ -52,7 +52,7 @@ fn d493_greet4(n int) {
 // (5) block ends with a statement — no trailing expression at all.
 fn d493_greet5() {
     mut n = 0
-    n = n + 1
+    n += 1
 }
 
 test "single trailing call to a void fn, no preceding stmts" {
