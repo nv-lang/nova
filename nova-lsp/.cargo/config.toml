@@ -1,0 +1,24 @@
+# Plan 262 Ф.А.1 (registry №531): the editor extensions (VS Code / Neovim /
+# Helix — see editors/vscode/client/extension.ts's `findNovaLsp`,
+# editors/neovim/lspconfig.lua) fall back to `<workspace_root>/target/{release,
+# debug}/nova-lsp[.exe]` when no explicit `nova.lsp.path` is configured and the
+# binary is not on `PATH`. `<workspace_root>` is the repo root the editor has
+# open (e.g. `d:/Sources/nv-lang/nova`), NOT this crate's own directory.
+#
+# Without this file, `cargo build [--release]` run from `nova-lsp/` (the
+# documented way to build this crate — CLAUDE.md: "LSP — из nova-lsp")
+# defaults to `nova-lsp/target/...`, a DIFFERENT path than the one above.
+# That mismatch is registry №531's second, more dangerous cause: rebuilding
+# nova-lsp changes `nova-lsp/target/release/nova-lsp.exe`, but the editor
+# keeps running whatever stale binary it already found at
+# `<repo_root>/target/release/nova-lsp.exe` (or never finds one at all) — "I
+# rebuilt the LSP" silently does nothing.
+#
+# Redirecting this crate's own target-dir one level up makes `cargo build`'s
+# output land exactly where every editor already looks, with no change to
+# the editor extensions or to how the compiler (`nova-cli`) builds — gate.sh
+# and `nova-cli`'s own target dir (`nova-cli/target/release/nova.exe`) are
+# untouched by this file (it only affects `cargo` invocations run from
+# *this* crate's directory).
+[build]
+target-dir = "../target"

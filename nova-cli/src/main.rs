@@ -2346,24 +2346,25 @@ fn check_one_file(path: &Path, verbose: bool, conv_lint: bool) -> CheckResult {
         };
     }
 
-    // 2.5 Plan 35 R31: cross-file resolve через inline expansion.
-    // Безопасно для check: type-check merged AST — same correctness как
-    // cmd_build. Закрывает Plan 35 R19 (nova check parity).
-    // Plan 35 sub-plan 35.A R27: вызываем безусловно (resolver auto-добавит
-    // prelude если std/prelude.nv существует, даже без explicit imports).
-    // [M-tls-cert-modes-test-undefined-helpers] (2026-07-11): `include_test_peers=true`
-    // — `path` came from `walk_nv` (test_runner), which for a folder-module WITH
-    // test-блоки already collapsed the whole folder to ONE representative entry
-    // (often itself a `*_test.nv` peer, e.g. `cert_modes_test.nv` for `std/tls`,
-    // picked as first-alphabetical — see `folder_module_has_tests` in
-    // test_runner.rs). That entry's sibling `*_test.nv` peers (e.g.
-    // `handshake_test.nv`, defining `fixture_cert`/`must_tls`/…) MUST merge into
-    // the same compile unit exactly like `nova test`'s `codegen_to_c` does
-    // (`resolve_imports_inline_ex(.., true)`), or peer-only helpers spuriously
-    // read as `undefined identifier`. `false` (build mode) was a latent parity
-    // bug vs `cmd_check_explain_cache`/`cmd_check_telemetry_cache` below, which
-    // already pass `true` with the same "mirror test_runner pipeline" rationale.
+    // 2.5 Plan 35 R31 / Plan 262 Ф.А.1-bis (registry №531): cross-file
+    // resolve + sig-table + embed-resolve + alpha_rename + number_exprs, all
+    // via `nova_codegen::check_pipeline::prepare_module_for_check` — the ONE
+    // function every entry point (`nova build`, `nova test`, the doc-test
+    // runner, nova-lsp) now calls instead of re-listing these five passes
+    // itself (see that module's doc comment for the full rationale, and for
+    // why `desugar_module`/`check_module_path` are deliberately excluded).
+    // `include_test_peers=true` unconditionally —
+    // [M-tls-cert-modes-test-undefined-helpers] (2026-07-11): `path` came
+    // from `walk_nv` (test_runner), which for a folder-module WITH
+    // test-блоки already collapsed the whole folder to ONE representative
+    // entry (often itself a `*_test.nv` peer, e.g. `cert_modes_test.nv` for
+    // `std/tls`, picked as first-alphabetical — see `folder_module_has_tests`
+    // in test_runner.rs). That entry's sibling `*_test.nv` peers (e.g.
+    // `handshake_test.nv`, defining `fixture_cert`/`must_tls`/…) MUST merge
+    // into the same compile unit exactly like `nova test`'s `codegen_to_c`
+    // does, or peer-only helpers spuriously read as `undefined identifier`.
     let mut sig_table_opt: Option<nova_codegen::imports::ModuleSigTable> = None;
+    let embed_warnings: Vec<String>;
     {
         // [M-104.10-diag-pipeline-correctness] (CLI degraded-CU parity with
         // nova-lsp's already-fixed `[M-104.10-degraded-cu-red]`): the old
@@ -2384,117 +2385,78 @@ fn check_one_file(path: &Path, verbose: bool, conv_lint: bool) -> CheckResult {
         // Fix: best-effort repo anchor, mirroring the LSP's fallback chain
         // (nearest ancestor `nova.toml` -> ... -> entry-dir): try the
         // CWD-anchored root first (unchanged common case), then the entry
-        // file's OWN ancestor `nova.toml` (`find_repo_root_from`, already
-        // used a few lines below for embed-resolve — same helper, now
-        // reused here too), then finally the entry file's own directory so
-        // `NOVA_STD_PATH` (absolute) or a sibling `std/` still resolve for
-        // a genuinely standalone probe. `resolve_imports_inline_ex` is safe
-        // to call even when the resulting `stdlib_dir` does not exist — the
-        // prelude auto-import is a no-op then (see `imports.rs` prelude
-        // guard), identical to today's skip-everything behavior — so this
-        // can only IMPROVE resolution, never regress it.
+        // file's OWN ancestor `nova.toml` (`find_repo_root_from`), then
+        // finally the entry file's own directory so `NOVA_STD_PATH`
+        // (absolute) or a sibling `std/` still resolve for a genuinely
+        // standalone probe. `prepare_module_for_check` is safe to call even
+        // when the resulting `stdlib_dir` does not exist — the prelude
+        // auto-import is a no-op then (see `imports.rs` prelude guard),
+        // identical to today's skip-everything behavior — so this can only
+        // IMPROVE resolution, never regress it.
         let repo_for_imports = find_repo_root()
             .ok()
             .or_else(|| nova_codegen::test_runner::find_repo_root_from(path))
             .or_else(|| path.parent().map(|p| p.to_path_buf()));
-        if let Some(repo) = repo_for_imports {
-            let paths = resolve_paths(&repo);
-            if let Err(e) = nova_codegen::imports::resolve_imports_inline_ex(
-                path, &mut module, &repo, &paths.stdlib_dir, true,
-            ) {
-                return CheckResult {
-                    file: path.to_path_buf(),
-                    error: Some(format!("import resolution: {}", e)),
-                    warnings: Vec::new(),
-                    elapsed_ms: measure(t0),
-                };
+        match repo_for_imports {
+            Some(repo) => {
+                let paths = resolve_paths(&repo);
+                match nova_codegen::check_pipeline::prepare_module_for_check(
+                    path, &mut module, &repo, &paths.stdlib_dir, true,
+                ) {
+                    Ok(prepared) => {
+                        sig_table_opt = prepared.sig_table;
+                        embed_warnings = prepared.embed_warnings
+                            .into_iter()
+                            .map(|w| {
+                                let (line, col) =
+                                    nova_codegen::diag::byte_to_line_col(&src, w.diag.span.start);
+                                format!("{}:{}:{}: {} [{}]", path.display(), line, col, w.diag.message, w.rule)
+                            })
+                            .collect();
+                    }
+                    Err(nova_codegen::check_pipeline::PrepareError::Import(e)) => {
+                        return CheckResult {
+                            file: path.to_path_buf(),
+                            error: Some(format!("import resolution: {}", e)),
+                            warnings: Vec::new(),
+                            elapsed_ms: measure(t0),
+                        };
+                    }
+                    Err(nova_codegen::check_pipeline::PrepareError::Embed(diags)) => {
+                        return CheckResult {
+                            file: path.to_path_buf(),
+                            error: Some(
+                                diags
+                                    .iter()
+                                    .map(|d| d.render(&src, &path.to_string_lossy()))
+                                    .collect::<Vec<_>>()
+                                    .join("\n"),
+                            ),
+                            warnings: Vec::new(),
+                            elapsed_ms: measure(t0),
+                        };
+                    }
+                }
             }
-            // [M-per-file-check-no-prelude-protocol-scope] parity: collect the
-            // same cross-module signature pre-pass `codegen_to_c` (test_runner.rs)
-            // feeds into `check_module_with_sig_table` below. Enabling
-            // `include_test_peers=true` above (this marker) merges MORE
-            // sibling `*_test.nv` peers into the checked CU than before, which
-            // previously never reached it (e.g. `std/net/addr.nv` merging
-            // `error_test.nv`'s `ro io = NetError.IoError(..)` local shadowing
-            // the `io` module name — misresolved as a module-call E7401
-            // without the sig-table channel). Best-effort: a failure here
-            // degrades to `check_module`'s no-sig-table behavior, same as
-            // `codegen_to_c`'s `unwrap_or_else`.
-            sig_table_opt = Some(
-                nova_codegen::imports::collect_all_signatures(path, &module, &repo, &paths.stdlib_dir)
-                    .unwrap_or_else(|_| nova_codegen::imports::ModuleSigTable::new()),
-            );
-        }
-        // A `.nv` file with NO discoverable repo root at all (no ancestor
-        // `nova.toml` from CWD or from the file itself, and no parent
-        // directory — i.e. a filesystem root entry) has no anchor to
-        // resolve even a `NOVA_STD_PATH`-relative override against; imports
-        // stay skipped in that unreachable-in-practice corner case.
-    }
-
-    // Plan 186 (D412): `embed("path")` -> HexBlobLit до type-check (parity
-    // с `nova build`/`nova test`; чекер не знает fn `embed`). Plan 210:
-    // `embed_dir("dir")` resolves alongside it; embed_warnings (§9.1
-    // warning-канал W_EMBED_DIR_*) merged into the final `warnings` field
-    // below (embed-resolve runs before `lint_warnings` exists yet).
-    let embed_warnings: Vec<String>;
-    {
-        let root = nova_codegen::test_runner::find_repo_root_from(path)
-            .unwrap_or_else(|| path.parent().map(|p| p.to_path_buf()).unwrap_or_default());
-        match nova_codegen::embed_resolve::resolve_embeds(&mut module, path, &root) {
-            Ok((_files, warns)) => {
-                embed_warnings = warns
-                    .into_iter()
-                    .map(|w| {
-                        let (line, col) =
-                            nova_codegen::diag::byte_to_line_col(&src, w.diag.span.start);
-                        format!("{}:{}:{}: {} [{}]", path.display(), line, col, w.diag.message, w.rule)
-                    })
-                    .collect();
-            }
-            Err(diags) => {
-                return CheckResult {
-                    file: path.to_path_buf(),
-                    error: Some(
-                        diags
-                            .iter()
-                            .map(|d| d.render(&src, &path.to_string_lossy()))
-                            .collect::<Vec<_>>()
-                            .join("
-"),
-                    ),
-                    warnings: Vec::new(),
-                    elapsed_ms: measure(t0),
-                };
+            None => {
+                // A `.nv` file with NO discoverable repo root at all (no
+                // ancestor `nova.toml` from CWD or from the file itself, and
+                // no parent directory — i.e. a filesystem root entry) has no
+                // anchor to resolve even a `NOVA_STD_PATH`-relative override
+                // against; imports/embeds stay skipped in that
+                // unreachable-in-practice corner case. `alpha_rename` /
+                // `number_exprs` still need to run on the as-parsed module
+                // so the checker sees the same shape every other path gives
+                // it (both are no-ops here: no rebinds/imports to rename,
+                // and numbering the entry file's own exprs is harmless and
+                // matches what `prepare_module_for_check` would have done
+                // anyway on the Some(repo) branch).
+                nova_codegen::alpha_rename::alpha_rename(&mut module);
+                let _ = nova_codegen::number_exprs::number_exprs(&mut module);
+                embed_warnings = Vec::new();
             }
         }
     }
-
-    // Plan 181 (D347): same-scope re-binding alpha-rename before type-check so
-    // `nova check` reports the same result as `nova build`/`nova test`
-    // (populates `module.rebind_shadows` for R2). No-op without a rebind.
-    nova_codegen::alpha_rename::alpha_rename(&mut module);
-
-    // [M-per-file-check-no-prelude-protocol-scope] follow-on (Plan 172.13
-    // batch 4): stamp a stable `ExprId` on every expr (post-import-inline,
-    // post-alpha-rename, pre-check) — mirrors the `nova build`/`nova test`
-    // pipeline (`test_runner.rs` / `compiler-codegen/src/main.rs`) EXACTLY,
-    // same call position. Without this, `expr.id` stays `ExprId::UNSET` for
-    // every node under `nova check`, so the entire `resolved_types_buf`
-    // checker→checker "channel" (`f1_check_call` writes a call's resolved
-    // return type keyed by `expr.id`; `infer_expr_type`'s Call/Ident/Member
-    // fallbacks read it back) was COMPLETELY INERT for `nova check` — any
-    // inference that depends on the channel (e.g. a static-method call
-    // returning a raw pointer, `RawMem.alloc(n) -> *mut u8`, feeding an
-    // un-annotated `ro buf = ...` local) silently degraded to `None` and
-    // fell through to a stricter fallback rule, producing per-file-check-only
-    // false positives (E_READONLY_CONTENT et al.) invisible to `nova build`/
-    // `nova test` on the very same file. `number_exprs`'s returned seed map
-    // is for the build pipeline's own resolved-types env bootstrap
-    // (`_seed` pattern elsewhere); `nova check` has no codegen stage to feed,
-    // so the return value is intentionally discarded here — only the
-    // ID-stamping side effect on `module` matters.
-    let _ = nova_codegen::number_exprs::number_exprs(&mut module);
 
     // 3. types::check_module — use sig-table variant when the pre-pass above
     // succeeded (parity with `codegen_to_c`'s `sig_table_opt` dispatch,
@@ -5040,43 +5002,101 @@ fn cmd_build(
         }
     }
 
-    // Plan 35 Ф.1 MVP: cross-file resolve через inline expansion.
+    // Plan 35 Ф.1 MVP / Plan 262 Ф.А.1-bis (registry №531): cross-file
+    // resolve + embed-resolve + alpha_rename + number_exprs, all via
+    // `nova_codegen::check_pipeline::prepare_module_for_check_with` — the
+    // same shared function `nova check`/`nova test`/the doc-test runner/
+    // nova-lsp use (see that module's doc comment). `include_test_peers=
+    // false` — production artifact, test-only `*_test.nv` helper files must
+    // not leak into the compiled binary (unlike `nova check`/`nova test`,
+    // which pass `true`). `sig_table` is discarded below: `nova build`
+    // type-checks the whole merged compile unit directly (`check_module`,
+    // not `check_module_with_sig_table` — every symbol is already visible,
+    // no partial cross-file lookup needed the way a per-file `nova check` /
+    // nova-lsp buffer check does).
+    //
+    // The `Serialize`/`Deserialize` synthesized-method injection
+    // ([M-187-http-serde-setcookie-serialize-collision]) is the one pass
+    // that must run BETWEEN embed-resolve and alpha-rename (synthesized
+    // bodies share the alpha-rename uniquify invariant, so injection cannot
+    // run after it) — `prepare_module_for_check_with`'s extension point
+    // exists for exactly this.
+    //
+    // Trade-off, disclosed: before this, `number_exprs` ran only on a build
+    // cache MISS (deferred past the cache-key computation below); folding it
+    // into the shared function makes it run unconditionally, same as
+    // `alpha_rename` already did. Extra cost on a cache HIT is one more
+    // O(module size) AST walk — bounded by the same order as the
+    // `alpha_rename` pass the cache-hit path already paid for. Correctness
+    // is unaffected either way (`number_exprs`'s only observable effect
+    // besides its returned seed map is stamping `ExprId`s, which is
+    // idempotent).
+    let embed_files: Vec<std::path::PathBuf>;
+    let resolved_seed;
     {
         let _t = nova_codegen::perf_timer::PerfTimer::new("imports-resolve");
-        nova_codegen::imports::resolve_imports_inline(&path, &mut module, &repo, &paths.stdlib_dir)?;
-    }
-
-    // Plan 186 (D412): `embed("path")` -> HexBlobLit (байты файла в AST).
-    // После import-inline (пути peer-файлов известны), ДО ключа кэша и
-    // type-check. Список встроенных файлов уходит в fingerprint кэша ниже -
-    // правка встроенного файла инвалидирует кэш пересборки. Plan 210:
-    // `embed_dir("dir")` resolves alongside it; W_EMBED_DIR_* warnings
-    // (§9.1 warning-канал) printed here — same style as manifest_warnings
-    // above (non-fatal, doesn't block the build).
-    let embed_files: Vec<std::path::PathBuf> = {
-        let _t = nova_codegen::perf_timer::PerfTimer::new("embed-resolve");
-        let (files, embed_warnings) = nova_codegen::embed_resolve::resolve_embeds(&mut module, &path, &repo).map_err(
-            |diags| {
+        let prepared = nova_codegen::check_pipeline::prepare_module_for_check_with(
+            &path, &mut module, &repo, &paths.stdlib_dir, /* include_test_peers */ false,
+            |m| {
+                // [M-187-http-serde-setcookie-serialize-collision] fix: inject
+                // SERDE synthesized methods (`#impl(Serialize/Deserialize)`)
+                // BEFORE numbering + type-check — mirrors `test_runner.rs`'s
+                // `codegen_to_c` (the `nova test` path), which already does
+                // this. `cmd_build` (`nova build`) had silently OMITTED this
+                // pass entirely (same class of `nova build`-lags-behind-
+                // `test_runner.rs` gap already fixed for the resolved_types/
+                // resolved_callees channels below, per the Ф.4c comment) — a
+                // `#impl(Serialize)` record's `@serialize` was NEVER a real
+                // `FnDecl` in `module.items` on this path, only virtually
+                // satisfied by the checker's on-demand `synthesize_method`
+                // bridge (`types/mod.rs` `AutoDeriveQueryBridge`), which
+                // type-checks the call but adds nothing for codegen's
+                // method-registration scan (`method_overloads`/
+                // `mono_method_decls`) to find. A generic `json_encode[T
+                // Serialize](v T)`'s `v.serialize(s)` therefore had ZERO
+                // type-directed candidates and fell through every receiver-
+                // typed dispatch window all the way to the single-key,
+                // name-only `method_receivers` last-wins fallback — silently
+                // mis-dispatching to WHATEVER OTHER type's concrete
+                // `@serialize` was registered last in the compile unit
+                // (`http`'s `SetCookie @serialize() -> str`, when `http` is
+                // in the CU — an unrelated 0-arg method, arity/type-
+                // incompatible with the Serialize contract's `@serialize(s
+                // Serializer)`). Injecting here gives `Dto`/`SnapshotDto`'s
+                // own derived method a real `FnDecl` + span, so the EXISTING
+                // type-keyed dispatch (`method_overloads.get(&(recv_type,
+                // method))`, `has_sentinel_here` → `mono_method_decls` mono)
+                // finds and monomorphizes the CORRECT receiver-typed callee
+                // — no emit_c.rs dispatch-heuristic change needed; the
+                // family fix (196.7/98e3663cc) is "route by the checker's/
+                // registry's fact instead of by name", but here the fact was
+                // simply never registered on this build path.
+                nova_codegen::protocols::auto_derive::inject_synthesized_methods_filtered(
+                    m, |p| p == "Serialize" || p == "Deserialize");
+            },
+        )
+        .map_err(|e| match e {
+            nova_codegen::check_pipeline::PrepareError::Import(e) => e,
+            nova_codegen::check_pipeline::PrepareError::Embed(diags) => {
                 // [M-diag-dep-file-span-misattribution]: same file_id-aware
                 // fix as the type-check error path below — an `embed(...)`
-                // diagnostic's span may belong to a peer/dependency file, not
-                // the entry file.
+                // diagnostic's span may belong to a peer/dependency file,
+                // not the entry file.
                 let smap = build_source_map(&module, &src, &path);
                 let msgs: Vec<String> = diags
                     .iter()
                     .map(|d| d.render_with_map(&smap))
                     .collect();
-                anyhow!("{}", msgs.join("
-"))
-            },
-        )?;
-        if !embed_warnings.is_empty() {
+                anyhow!("{}", msgs.join("\n"))
+            }
+        })?;
+        if !prepared.embed_warnings.is_empty() {
             // [M-diag-dep-file-span-misattribution]: resolve each warning's
             // own file_id instead of assuming it always belongs to the entry
             // file (mirrors the diags fix above). Built once, outside the
             // loop — `build_source_map` re-reads every peer file from disk.
             let smap = build_source_map(&module, &src, &path);
-            for w in &embed_warnings {
+            for w in &prepared.embed_warnings {
                 let wpath = smap.path_for(w.diag.span.file_id).to_string();
                 let (line, col) = nova_codegen::diag::byte_to_line_col(
                     smap.source_for(w.diag.span.file_id), w.diag.span.start);
@@ -5086,49 +5106,8 @@ fn cmd_build(
                 );
             }
         }
-        files
-    };
-
-    // [M-187-http-serde-setcookie-serialize-collision] fix: inject SERDE
-    // synthesized methods (`#impl(Serialize/Deserialize)`) BEFORE numbering +
-    // type-check — mirrors `test_runner.rs`'s `codegen_to_c` (the `nova test`
-    // path), which already does this. `cmd_build` (`nova build`) had silently
-    // OMITTED this pass entirely (same class of `nova build`-lags-behind-
-    // `test_runner.rs` gap already fixed for the resolved_types/resolved_
-    // callees channels below, per the Ф.4c comment) — a `#impl(Serialize)`
-    // record's `@serialize` was NEVER a real `FnDecl` in `module.items` on
-    // this path, only virtually satisfied by the checker's on-demand
-    // `synthesize_method` bridge (`types/mod.rs` `AutoDeriveQueryBridge`),
-    // which type-checks the call but adds nothing for codegen's method-
-    // registration scan (`method_overloads`/`mono_method_decls`) to find.
-    // A generic `json_encode[T Serialize](v T)`'s `v.serialize(s)` therefore
-    // had ZERO type-directed candidates and fell through every receiver-
-    // typed dispatch window all the way to the single-key, name-only
-    // `method_receivers` last-wins fallback — silently mis-dispatching to
-    // WHATEVER OTHER type's concrete `@serialize` was registered last in the
-    // compile unit (`http`'s `SetCookie @serialize() -> str`, when `http` is
-    // in the CU — an unrelated 0-arg method, arity/type-incompatible with
-    // the Serialize contract's `@serialize(s Serializer)`). Injecting here
-    // gives `Dto`/`SnapshotDto`'s own derived method a real `FnDecl` + span,
-    // so the EXISTING type-keyed dispatch (`method_overloads.get(&(recv_
-    // type, method))`, `has_sentinel_here` → `mono_method_decls` mono) finds
-    // and monomorphizes the CORRECT receiver-typed callee — no emit_c.rs
-    // dispatch-heuristic change needed; the family fix (196.7/98e3663cc) is
-    // "route by the checker's/registry's fact instead of by name", but here
-    // the fact was simply never registered on this build path. Must run
-    // BEFORE alpha-rename (synthesized bodies share the uniquify invariant,
-    // same ordering `test_runner.rs` uses).
-    nova_codegen::protocols::auto_derive::inject_synthesized_methods_filtered(
-        &mut module, |p| p == "Serialize" || p == "Deserialize");
-
-    // Plan 181 (D347): same-scope re-binding alpha-rename on the fully-assembled
-    // module (post import-inline), BEFORE the build cache key / type-check /
-    // codegen — so cached `.c` and the checked module agree on unique C-names
-    // and the consume-checker can read `module.rebind_shadows` for R2. No-op
-    // (byte-identical) for modules without a same-scope rebind.
-    {
-        let _t = nova_codegen::perf_timer::PerfTimer::new("alpha-rename");
-        nova_codegen::alpha_rename::alpha_rename(&mut module);
+        embed_files = prepared.embed_files;
+        resolved_seed = prepared.resolved_types_seed;
     }
 
     // Plan 81 Ф.9: content-addressed build cache. После резолва импортов
@@ -5183,8 +5162,12 @@ fn cmd_build(
             // for its value-root guard, else the copy-loss fix is silently
             // disabled on the `nova build` path. Mirrors test_runner /
             // nova-codegen check: number_exprs seed merged UNDER checker
-            // annotations (checker wins on collision).
-            let resolved_seed = nova_codegen::number_exprs::number_exprs(&mut module);
+            // annotations (checker wins on collision). `number_exprs` itself
+            // already ran unconditionally above, inside
+            // `prepare_module_for_check_with` (Plan 262 Ф.А.1-bis) — `resolved_
+            // seed` here is that call's returned seed map, captured before the
+            // cache-hit/-miss branch so it is available on this (cache-miss)
+            // path without a second AST walk.
             let mut build_env = {
                 let _t = nova_codegen::perf_timer::PerfTimer::new("type-check");
                 nova_codegen::types::check_module(&module).map_err(|errs| {

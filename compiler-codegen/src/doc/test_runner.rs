@@ -125,24 +125,27 @@ fn run_one(t: &DocTest, original_source: Option<&str>, entry_path: Option<&Path>
         }
     };
 
-    // Plan 45 / Plan 62: inject prelude + imports так, чтобы prelude-функции
-    // (`assert`/`println`/...) и items документируемого модуля резолвились в
-    // type-check. После Plan 62 prelude — file-based `std/prelude.nv` (не
-    // hardcode в чекере), поэтому isolated `check_module` без инъекции даёт
-    // `undefined identifier assert`. Soft-fail: ошибка резолва не фатальна —
-    // проваливаемся в обычный check (поведение как до фикса).
-    if let Some(ep) = entry_path {
-        if let Some(repo) = crate::test_runner::find_repo_root_from(ep) {
-            let stdlib = crate::manifest::resolve_std_path(repo.as_ref());
-            let _ = crate::imports::resolve_imports_inline_ex(ep, &mut module, &repo, &stdlib, false);
-        }
-    }
-
-    // №TBD (nova-doc gate): mirror `cmd_check`'s pipeline order EXACTLY
-    // (nova-cli/src/main.rs, [M-per-file-check-no-prelude-protocol-scope]
-    // marker) — `alpha_rename` then `number_exprs` MUST run on the
-    // fully-assembled (post-import-inline) module BEFORE `check_module`.
-    // Without the `ExprId` stamp from `number_exprs`, the checker's own
+    // Plan 45 / Plan 62 / Plan 262 Ф.А.1-bis (registry №531, unified
+    // pipeline): inject prelude + imports + embeds + alpha_rename +
+    // number_exprs via `crate::check_pipeline::prepare_module_for_check`,
+    // the same shared function `nova check`/`nova build`/`nova test`/
+    // nova-lsp use — so prelude-функции (`assert`/`println`/...) и items
+    // документируемого модуля резолвятся в type-check (после Plan 62
+    // prelude — file-based `std/prelude.nv`, не hardcode в чекере,
+    // поэтому isolated `check_module` без инъекции даёт `undefined
+    // identifier assert`). `include_test_peers=false` — a doc-test
+    // snippet is not itself a `*_test.nv` file. Soft-fail: an error here
+    // is not fatal — falls through to isolated `check_module` below
+    // (behavior unchanged from before this fix: a resolve/embed failure
+    // just means the module keeps whatever `resolve_imports_inline_ex`
+    // partially populated, or nothing at all).
+    //
+    // №TBD (nova-doc gate): `alpha_rename` then `number_exprs` (both now
+    // inside `prepare_module_for_check`) MUST run on the fully-assembled
+    // (post-import-inline) module BEFORE `check_module` — mirrors
+    // `cmd_check`'s pipeline order EXACTLY (nova-cli/src/main.rs,
+    // [M-per-file-check-no-prelude-protocol-scope] marker). Without the
+    // `ExprId` stamp from `number_exprs`, the checker's own
     // `resolved_types_buf` channel is inert (every id reads back as
     // `ExprId::UNSET`) and `infer_expr_type` silently degrades to `None`
     // for exprs that depend on it — which made `check_readonly_source_
@@ -152,12 +155,30 @@ fn run_one(t: &DocTest, original_source: Option<&str>, entry_path: Option<&Path>
     // living inside a real repo — the injected `std/prelude` merge pulls
     // in `Vec::@msort`'s `ro mid = ...; mut b = mid`, which only
     // type-checks cleanly through `nova check`/`nova build` because THOSE
-    // pipelines stamp ids first). The return value (a resolved-types seed
-    // for codegen) is intentionally discarded here — doc-tests have no
-    // codegen stage; only the ID-stamping side effect on `module` matters,
-    // same as `cmd_check`'s own discard.
-    crate::alpha_rename::alpha_rename(&mut module);
-    let _ = crate::number_exprs::number_exprs(&mut module);
+    // pipelines stamp ids first). The returned seed map / sig-table are
+    // intentionally discarded here — doc-tests have no codegen stage and
+    // use the plain `check_module` below (not the sig-table variant),
+    // same as before this fix; only the ID-stamping side effect on
+    // `module` matters.
+    // `prepare_module_for_check` already runs `alpha_rename`/`number_exprs`
+    // as its last two steps (see above), so the fallback branches below
+    // (no `entry_path`, or no discoverable repo root) must run them
+    // directly — same as before this fix, when they ran unconditionally
+    // regardless of whether the resolve step above even attempted anything.
+    let mut prepared_ok = false;
+    if let Some(ep) = entry_path {
+        if let Some(repo) = crate::test_runner::find_repo_root_from(ep) {
+            let stdlib = crate::manifest::resolve_std_path(repo.as_ref());
+            prepared_ok = crate::check_pipeline::prepare_module_for_check(
+                ep, &mut module, &repo, &stdlib, /* include_test_peers */ false,
+            )
+            .is_ok();
+        }
+    }
+    if !prepared_ok {
+        crate::alpha_rename::alpha_rename(&mut module);
+        let _ = crate::number_exprs::number_exprs(&mut module);
+    }
 
     // 2. Type-check.
     if let Err(errs) = crate::types::check_module(&module) {

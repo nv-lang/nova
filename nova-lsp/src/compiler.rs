@@ -205,18 +205,31 @@ fn check_source(src: &str, path: Option<&Path>, workspace_root: Option<&Path>) -
 /// are byte-parity with the CLI ([M-104.10-lsp-cmd-check-drift]):
 ///
 /// 1. parse
-/// 2. resolve imports (prelude + folder-module peers merged into the module)
-///    **and** collect the cross-module signature table (Plan 162.2); import
+/// 2. `nova_codegen::check_pipeline::prepare_module_for_check` (Plan 262
+///    Ф.А.1-bis, registry №531) — resolve imports **with `*_test.nv` peers**
+///    + collect the cross-module signature table (Plan 162.2) + resolve
+///    `embed(...)`/`embed_dir(...)` + `alpha_rename` (Plan 181/D347) +
+///    `number_exprs`, in the one order `nova check` runs them. Import/embed
 ///    errors are surfaced, not swallowed ([M-104.10-import-diag-swallowed]),
 ///    and degraded contexts fall back to a best-effort root
-///    ([M-104.10-degraded-cu-red])
-/// 3. `alpha_rename` (Plan 181/D347) over the fully-assembled module — same as
-///    `nova check`, so `module.rebind_shadows` is populated and R2
-///    `E_REBIND_LIVE_CONSUME` fires in the IDE (without it R2 early-returns →
-///    the diagnostic would never appear in the editor)
-/// 4. `number_exprs` over the fully-assembled module (post-inline, pre-check)
-/// 5. `check_module_with_sig_table` (162.2 suppression) — identical to
+///    ([M-104.10-degraded-cu-red]).
+/// 3. `check_module_with_sig_table` (162.2 suppression) — identical to
 ///    `nova check`, so transitively-imported symbols do not false-red.
+///
+/// Before this used [`prepare_module_for_check`], this function called
+/// `resolve_imports_inline` (hardcoded `include_test_peers=false`) and never
+/// called `resolve_embeds` at all — two of the passes `nova check` runs were
+/// silently missing, so files whose test helpers live in a sibling
+/// `*_test.nv` peer (`undefined identifier` for those helpers) or that use
+/// `embed(...)` (`undefined identifier embed`) false-reddened in the editor
+/// while `nova check` passed them with `rc=0` (registry №531). Both passes
+/// now come from the same function `nova check` uses, so the two pipelines
+/// cannot drift apart pass-by-pass again — a guard
+/// (`scripts/guards/check-checker-entrypoints.sh`) greps for direct
+/// `resolve_imports_inline`/`resolve_embeds` calls made outside
+/// `check_pipeline.rs` to keep it that way.
+///
+/// [`prepare_module_for_check`]: nova_codegen::check_pipeline::prepare_module_for_check
 pub fn check_source_inner(
     src: &str,
     path: Option<&Path>,
@@ -228,24 +241,13 @@ pub fn check_source_inner(
         Err(diag) => return vec![diag],
     };
 
-    // Step 2: resolve imports + collect the signature table. Import errors go
-    // into `import_diags` (surfaced first as the real root cause).
+    // Step 2: prepare (resolve imports + sig-table + embeds + alpha_rename +
+    // number_exprs) — see the pipeline doc above. Errors go into
+    // `import_diags` (surfaced first as the real root cause).
     let mut import_diags: Vec<Diagnostic> = Vec::new();
     let sig_table = resolve_for_check(path, workspace_root, &mut module, &mut import_diags);
 
-    // Step 3: same-scope re-binding alpha-rename (Plan 181/D347) — parity with
-    // `cmd_check` (nova-cli/src/main.rs:2125). Populates `module.rebind_shadows`
-    // so the consume-checker fires R2 `E_REBIND_LIVE_CONSUME` in the IDE (it
-    // early-returns on an empty map) and B1's distinct obligation keys agree
-    // with the CLI. No-op for a module without a same-scope rebind.
-    nova_codegen::alpha_rename::alpha_rename(&mut module);
-
-    // Step 4: number every expr of the fully-assembled module (post-inline,
-    // pre-check) — parity with `cmd_check` / `test_runner` so the checker sees
-    // the same ExprId-stamped AST.
-    let _ = nova_codegen::number_exprs::number_exprs(&mut module);
-
-    // Step 4: type-check. Use the signature table when available (Plan 162.2)
+    // Step 3: type-check. Use the signature table when available (Plan 162.2)
     // so symbols from transitively-imported modules are not reported as unknown.
     let check_result = match sig_table {
         Some(st) => nova_codegen::types::check_module_with_sig_table(&module, st),
@@ -260,7 +262,7 @@ pub fn check_source_inner(
 }
 
 /// Resolve imports and collect the Plan 162.2 signature table for `module`,
-/// pushing any import-resolution error into `import_diags`.
+/// pushing any import/embed-resolution error into `import_diags`.
 ///
 /// Returns the signature table when a resolution context could be established
 /// (so the caller uses `check_module_with_sig_table`), or `None` for a truly
@@ -277,6 +279,13 @@ pub fn check_source_inner(
 /// This guarantees `module.peer_files` is populated (prelude + peers) instead
 /// of leaving the checker to see only the entry file, which previously made
 /// prelude symbols (`print`/`Vec`) and peer symbols false-red.
+///
+/// `include_test_peers=true` is passed unconditionally to
+/// `prepare_module_for_check` — same choice `nova check` makes
+/// (nova-cli/src/main.rs, [M-tls-cert-modes-test-undefined-helpers]): it can
+/// only ever *add* `*_test.nv` siblings to the merged compile unit, so it is
+/// safe for a non-test file too and is what makes a `_test.nv` file's own
+/// sibling test-helper peers resolve in the editor (registry №531).
 fn resolve_for_check(
     path: Option<&Path>,
     workspace_root: Option<&Path>,
@@ -296,15 +305,23 @@ fn resolve_for_check(
         .or_else(|| entry.parent().map(|p| p.to_path_buf()))?;
     let stdlib_dir = resolve_std_path(&repo);
 
-    // Merge prelude + folder-module peers into `module` (populates peer_files).
-    // Guarded so a malformed peer cannot crash the whole check (matches the
-    // resolve guard in `provenance.rs`).
-    let resolve_res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        nova_codegen::imports::resolve_imports_inline(&entry, module, &repo, &stdlib_dir)
+    // Guarded so a malformed peer / embed / cycle cannot crash the whole
+    // check (matches the resolve guard `provenance.rs` uses for its own,
+    // narrower import-only call).
+    let prepare_res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        nova_codegen::check_pipeline::prepare_module_for_check(
+            &entry, module, &repo, &stdlib_dir, /* include_test_peers */ true,
+        )
     }));
-    match resolve_res {
-        Ok(Ok(())) => {}
-        Ok(Err(e)) => {
+
+    match prepare_res {
+        Ok(Ok(prepared)) => {
+            for w in &prepared.embed_warnings {
+                import_diags.push(w.diag.clone());
+            }
+            prepared.sig_table
+        }
+        Ok(Err(nova_codegen::check_pipeline::PrepareError::Import(e))) => {
             // [M-104.10-import-diag-swallowed]: surface the real import cause
             // (cycle / missing / unreadable peer) instead of discarding it, so
             // the user sees why — not downstream "unknown type" noise.
@@ -312,24 +329,20 @@ fn resolve_for_check(
                 format!("import resolution: {e}"),
                 Span::new(0, 0),
             ));
+            None
+        }
+        Ok(Err(nova_codegen::check_pipeline::PrepareError::Embed(diags))) => {
+            import_diags.extend(diags);
+            None
         }
         Err(_) => {
             import_diags.push(Diagnostic::new(
                 "import resolution panicked".to_string(),
                 Span::new(0, 0),
             ));
+            None
         }
     }
-
-    // Plan 162.2: cross-module signature table, collected AFTER imports are
-    // merged so it sees all imported items. Non-fatal on failure (empty table).
-    let sig_table = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        nova_codegen::imports::collect_all_signatures(&entry, module, &repo, &stdlib_dir)
-            .unwrap_or_else(|_| ModuleSigTable::new())
-    }))
-    .unwrap_or_else(|_| ModuleSigTable::new());
-
-    Some(sig_table)
 }
 
 /// Directory names that are never part of a Nova module graph: build output

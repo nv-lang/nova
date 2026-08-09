@@ -134,12 +134,13 @@ fn resolve_module_impl(path: &Path, src: &str, record_expr_types: bool) -> Resol
     // different id (or never ran at all).
     file_map.entry(MAIN_FILE_ID).or_insert_with(|| entry_path.clone());
 
-    // Plan 181 (D347): same-scope re-binding alpha-rename before the check —
-    // parity with `nova check` so the checker sees the same unique-named AST
-    // (`module.rebind_shadows` populated; R2/B1 consistent with the CLI). Renames
-    // identifiers only — item count and spans are unchanged, so the provenance
-    // `file_map` / span mapping built above still resolves. No-op without rebind.
-    nova_codegen::alpha_rename::alpha_rename(&mut module);
+    // Plan 181 (D347) / Plan 262 Ф.А.1-bis: same-scope re-binding alpha-rename
+    // (and `number_exprs`, needed for hover/typeDefinition's expr-type lookups
+    // to work at all) already ran as the last two steps inside
+    // `prepare_module_for_check` (`resolve_imports_inline_guarded` above) —
+    // parity with `nova check` so the checker sees the same unique-named,
+    // ExprId-stamped AST (`module.rebind_shadows` populated; R2/B1 consistent
+    // with the CLI). No separate call needed here.
 
     // Type-check the entry module for downstream type resolution (Ф.4/Ф.5).
     // Contained so a checker panic never takes down the request. When
@@ -185,10 +186,18 @@ pub fn span_to_location(span: Span, file_map: &HashMap<FileId, PathBuf>, fallbac
 // Internal helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Inline imports into `module`, mirroring `hover.rs::resolve_imports_for_hover`:
+/// Prepare `module` for the checker, mirroring `compiler.rs::check_source_inner`:
 /// resolve the repo root + stdlib from `path`, then call
-/// `resolve_imports_inline` under `catch_unwind` so a resolver panic (malformed
-/// import, cycle, unreadable peer) degrades to "entry-only" instead of crashing.
+/// `prepare_module_for_check` (Plan 262 Ф.А.1-bis) under `catch_unwind` so a
+/// resolver/embed panic (malformed import, cycle, unreadable peer, bad
+/// `embed(...)`) degrades to "entry-only" instead of crashing.
+///
+/// Before this used the shared function, this called the bare
+/// `resolve_imports_inline` (no `*_test.nv` peers, no `embed(...)` resolution)
+/// — the same gap registry №531 found in `compiler.rs`'s diagnostics path.
+/// Hover/goto-definition/type-driven completion built on this `ResolvedModule`
+/// could therefore show a wrong or missing type for a symbol defined in a
+/// sibling `*_test.nv` peer, or for an `embed(...)` call's synthesized type.
 fn resolve_imports_inline_guarded(path: &Path, module: &mut Module) {
     use nova_codegen::test_runner::find_repo_root_from;
     let Some(repo) = find_repo_root_from(path) else {
@@ -197,10 +206,12 @@ fn resolve_imports_inline_guarded(path: &Path, module: &mut Module) {
     };
     let stdlib_dir = nova_codegen::manifest::resolve_std_path(repo.as_ref());
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _ = nova_codegen::imports::resolve_imports_inline(path, module, &repo, &stdlib_dir);
+        let _ = nova_codegen::check_pipeline::prepare_module_for_check(
+            path, module, &repo, &stdlib_dir, /* include_test_peers */ true,
+        );
     }));
     if result.is_err() {
-        tracing::warn!("provenance: resolve_imports_inline panicked for {:?}", path);
+        tracing::warn!("provenance: prepare_module_for_check panicked for {:?}", path);
     }
 }
 
@@ -300,6 +311,25 @@ mod tests {
         path
     }
 
+    /// Test-only wrapper: runs `resolve_module_for` on a large-stack thread.
+    ///
+    /// Plan 262 Ф.А.1-bis: `resolve_module_for` now goes through
+    /// `prepare_module_for_check`, which adds `collect_all_signatures` (walks
+    /// the fully-imported module graph, incl. `std.prelude`'s own transitive
+    /// imports) on top of the plain import-inline this used to do. That is
+    /// enough recursion to overflow the DEFAULT test-harness stack on Windows
+    /// (confirmed: `neg2_no_imports_still_maps_entry` — STATUS_STACK_OVERFLOW
+    /// before this wrapper existed). Every real (non-test) caller already runs
+    /// through `run_with_large_stack` at the `server.rs` request-handling
+    /// layer (hover/goto-definition/completion/etc. — see that module), so
+    /// this wrapper only closes the gap for the unit tests below, which call
+    /// `resolve_module_for` directly on the harness's own thread.
+    fn resolve_module_for_test(path: &Path, src: &str) -> ResolvedModule {
+        let path = path.to_path_buf();
+        let src = src.to_string();
+        crate::compiler::run_with_large_stack(move || resolve_module_for(&path, &src))
+    }
+
     // ── POS ──────────────────────────────────────────────────────────────────
 
     /// POS: a file with an import yields ≥2 provenance entries (entry + at least
@@ -307,7 +337,7 @@ mod tests {
     #[test]
     fn pos1_file_with_import_maps_multiple_files() {
         let path = write_temp("pos1.nv", SRC_WITH_IMPORT);
-        let resolved = resolve_module_for(&path, SRC_WITH_IMPORT);
+        let resolved = resolve_module_for_test(&path, SRC_WITH_IMPORT);
         assert!(
             resolved.file_map.len() >= 2,
             "expected ≥2 file_map entries (entry + prelude/import), got {}: {:?}",
@@ -323,7 +353,7 @@ mod tests {
     #[test]
     fn pos2_foreign_file_id_yields_different_uri() {
         let path = write_temp("pos2.nv", SRC_WITH_IMPORT);
-        let resolved = resolve_module_for(&path, SRC_WITH_IMPORT);
+        let resolved = resolve_module_for_test(&path, SRC_WITH_IMPORT);
         let fallback = Url::from_file_path(&path).unwrap();
 
         // Find a peer whose id is NOT the entry and whose path differs.
@@ -345,7 +375,7 @@ mod tests {
     #[test]
     fn pos3_entry_file_id_yields_same_uri() {
         let path = write_temp("pos3.nv", SRC_WITH_IMPORT);
-        let resolved = resolve_module_for(&path, SRC_WITH_IMPORT);
+        let resolved = resolve_module_for_test(&path, SRC_WITH_IMPORT);
         let fallback = Url::from_file_path(&path).unwrap();
 
         let span = Span::with_file(0, 1, MAIN_FILE_ID);
@@ -362,7 +392,7 @@ mod tests {
     #[test]
     fn neg1_unknown_file_id_falls_back() {
         let path = write_temp("neg1.nv", SRC_WITH_IMPORT);
-        let resolved = resolve_module_for(&path, SRC_WITH_IMPORT);
+        let resolved = resolve_module_for_test(&path, SRC_WITH_IMPORT);
         let fallback = Url::parse("file:///unsaved.nv").unwrap();
 
         let span = Span::with_file(0, 1, 9_999_999);
@@ -376,7 +406,7 @@ mod tests {
         // `#no_prelude` avoids the auto prelude import so peer_files is minimal.
         let src = "#no_prelude\nmodule basics.lsp\nfn f() => ()\n";
         let path = write_temp("neg2.nv", src);
-        let resolved = resolve_module_for(&path, src);
+        let resolved = resolve_module_for_test(&path, src);
         assert!(
             !resolved.file_map.is_empty(),
             "no-import file must still map the entry"
@@ -392,7 +422,7 @@ mod tests {
     fn edge1_broken_import_no_panic() {
         let src = "module basics.lsp\nimport this.module.does.not.exist.anywhere\nfn f() => ()\n";
         let path = write_temp("edge1.nv", src);
-        let resolved = resolve_module_for(&path, src);
+        let resolved = resolve_module_for_test(&path, src);
         assert!(
             resolved.file_map.contains_key(&MAIN_FILE_ID),
             "entry must be mapped even when import resolution fails"
@@ -404,7 +434,7 @@ mod tests {
     fn edge2_parse_error_entry_only() {
         let src = "module basics.lsp\nfn broken(@@@@) =>";
         let path = write_temp("edge2.nv", src);
-        let resolved = resolve_module_for(&path, src);
+        let resolved = resolve_module_for_test(&path, src);
         assert!(resolved.file_map.contains_key(&MAIN_FILE_ID));
         assert_eq!(resolved.items_start, 0, "parse-error module has no entry items");
     }
