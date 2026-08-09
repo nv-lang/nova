@@ -5169,7 +5169,12 @@ impl CEmitter {
     /// памяти правящего (реестр 221.1 №522).
     fn register_method_overload(&mut self, key: (String, String), sig: MethodSig) {
         self.method_overload_types.insert(key.0.clone());
-        self.register_method_overload(key, sig);
+        // NB: обращаемся к карте НАПРЯМУЮ. Здесь единственное место, где это
+        // законно, — и единственное, где легко получить бесконечную рекурсию:
+        // глобальная замена «прямая вставка → вызов этого метода» попадает и
+        // сюда, если тело написано той же строкой. Получено 2026-08-09, стоило
+        // stack overflow на КАЖДОМ `nova test`.
+        self.method_overloads.entry(key).or_default().push(sig);
     }
 
     pub fn emit_module(mut self, module: &Module) -> Result<(String, Vec<String>), String> {
