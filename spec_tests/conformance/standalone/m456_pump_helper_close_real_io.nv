@@ -1,0 +1,168 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// 221.1 №456 remainder — the CANONICAL form the deterministic no-I/O
+// fixture (`m456_consume_scope_explicit_close_disarm.nv`) could NOT cover:
+// an explicit `consume @close()` on a linear value that ALSO declares
+// `consume @cleanup`, inside a fiber body reached via `spawn consume a, b
+// { helper(a, b) } ` (consume-param call-arg, D415 §4), where the value is
+// a REAL TCP half performing BLOCKING I/O and gets woken via a cross-fiber
+// `CancelToken` while genuinely PARKED in a read. That combination —
+// linear+auto-cleanup+manual-close+spawn-consume-param+blocking-I/O+park —
+// is exactly the shape of `examples/net/socks5_http_bridge/main.nv`'s
+// `pipe_bidirectional`/`pump`, reproduced HERE 1:1 (same two helper
+// functions, byte-for-byte) over two real loopback TCP connections instead
+// of a live SOCKS5 tunnel, so the compile→run cycle is a single-digit
+// number of seconds instead of needing a live proxy.
+//
+// History: first surfaced as a NATIVE CRASH (`Assertion failed: 0,
+// nova_rt/libuv/src/win/core.c:694`, see standalone/
+// m456_crisscross_split_evloop_crash.nv next to this file) — a UAF in
+// `net_tcp_close`'s split-refcount accounting, root-caused to the compiler
+// emitting a REDUNDANT `net_tcp_close` call per half: `spawn consume a, b
+// { … }`'s desugar (`parse_spawn_detach_consume_multivar`) registered each
+// captured half's auto-`@cleanup` in a registry the disarm-lookup never
+// consulted for this exact spawn shape (`re_consume=false`), so an explicit
+// `.close()` inside the body did NOT disarm it — D415 §4. Fixed in two
+// layers: (1) `nova_rt/net.c`'s `net_tcp_close`/`net_listener_close` made
+// idempotent (`b46d4584e`) — turned the redundant call from a crash into a
+// silent no-op, which is what THIS fixture would have caught as a HANG had
+// it existed at the time (a redundant call that arrives AFTER the real
+// `uv_close` was already dispatched leaves nothing dangling, but the
+// compiler was still emitting two calls per half instead of one, and nobody
+// had a fixture with real parked I/O to notice); (2) the actual compiler
+// fix, plan 253.4 Ф.1 (№480, `318334eea`) — replaced the two independent,
+// incompletely-populated disarm registries (`reconsume_scopes`,
+// `auto_cleanup_active`) with a single defer-scope-owned flag
+// (`disarm_var_for` in `emit_c.rs`), closing the `spawn consume a, b { … }`
+// gap directly: the caller now disarms `ar`/`bw` right before calling
+// `pump(ar, bw, tok)`, so `pump`'s own explicit `r.close()`/`w.close()` is
+// the ONLY close each half ever sees, even when `pump` gets interrupted by
+// the sibling's `tok.cancel()` while genuinely blocked in `r.read()`.
+//
+// Client fiber deliberately writes on ONE direction only, then closes that
+// connection FIRST and sleeps before closing the second — this forces the
+// SIBLING pump (parked in a real, otherwise-idle `r.read()`) onto the
+// cancellation-while-parked path specifically, not a natural-EOF path that
+// would sidestep the mechanism entirely.
+//
+// EXPECT_TIMEOUT_MS 20000
+
+module standalone.m456_pump_helper_close_real_io
+
+import std.net.{TcpStream, TcpListener, TcpReadHalf, TcpWriteHalf, SocketAddr, real_net}
+import std.time.duration
+
+// Mirrors `write_all_half` from `examples/net/socks5_http_bridge/main.nv`.
+fn m456_write_all_half(mut w TcpWriteHalf, data []u8) Net -> bool {
+    mut off = 0
+    while off < data.len() {
+        match w.write(data[off..]) {
+            Ok(n)  => { if n <= 0 { return false } off += n }
+            Err(_) => return false
+        }
+    }
+    true
+}
+
+// Mirrors `pump` from `examples/net/socks5_http_bridge/main.nv` byte-for-
+// byte: consume-param helper (the SECOND form of consumption inside a
+// `spawn consume a, b { … }` body, D415 §4), explicit receiver-close on
+// BOTH linear halves after the blocking read loop, then wakes the sibling.
+fn m456_pump(consume r TcpReadHalf, consume w TcpWriteHalf, tok CancelToken) Net -> () {
+    mut buf []u8 = []u8.new()
+    buf.resize(8192, 0 as u8)
+    mut keep_going = true
+    while keep_going {
+        match r.read(buf) {
+            Ok(0) => { keep_going = false }
+            Ok(n) => {
+                if !m456_write_all_half(w, buf[..n]) { keep_going = false }
+            }
+            Err(_) => { keep_going = false }
+        }
+    }
+    r.close()
+    w.close()
+    tok.cancel()
+}
+
+// Mirrors `pipe_bidirectional`: split both streams, cross-wire the halves
+// into two sibling fibers via `spawn consume a, b { helper(a, b) }`, shared
+// `CancelToken` wakes whichever sibling is still parked once the other
+// finishes.
+fn m456_pipe_bidirectional(consume a TcpStream, consume b TcpStream) Net -> () {
+    consume (ar, aw) = a.into_split()
+    consume (br, bw) = b.into_split()
+    ro tok = CancelToken.new()
+    supervised(cancel: tok) {
+        spawn consume ar, bw { m456_pump(ar, bw, tok) }
+        spawn consume br, aw { m456_pump(br, aw, tok) }
+    }
+}
+
+test "#456: spawn consume a, b { helper(a, b) } with explicit close() on real blocking TCP I/O, sibling woken while parked" {
+    with Net = real_net() {
+        ro ch_port = Channel[u16].new(1)
+        ro ch_relay_done = Channel[int].new(1)
+        ro ch_client_done = Channel[int].new(1)
+
+        supervised {
+            // Relay/server: accepts two connections, wires them crosswise
+            // exactly like the bridge's pipe_bidirectional.
+            spawn {
+                consume lst = match TcpListener.bind(SocketAddr.loopback(0)) {
+                    Ok(consume l) => l
+                    Err(_) => panic("m456: bind failed")
+                }
+                ch_port.tx.send(lst.local_port())
+
+                consume conn1 = match lst.accept() {
+                    Ok(consume s) => s
+                    Err(_) => { lst.close(); panic("m456: accept1 failed") }
+                }
+                consume conn2 = match lst.accept() {
+                    Ok(consume s) => s
+                    Err(_) => { lst.close(); panic("m456: accept2 failed") }
+                }
+                lst.close()
+
+                m456_pipe_bidirectional(conn1, conn2)
+                ch_relay_done.tx.send(1)
+            }
+
+            // Client: opens c1, c2. Writes on c1 (pumped -> arrives on c2).
+            // Deliberately NEVER writes on c2 — the c2->c1 pump direction
+            // (relay's r2/w1 pair) has nothing to read and blocks for real.
+            // Closes c1 first, then sleeps before closing c2, so the
+            // relay's ar/bw pump finishes and `tok.cancel()`s well ahead of
+            // any natural EOF signal reaching the still-parked sibling.
+            spawn {
+                ro port = match ch_port.rx.recv() { Some(p) => p  None => 0 as u16 }
+
+                consume c1 = match TcpStream.connect(SocketAddr.loopback(port)) {
+                    Ok(consume s) => s
+                    Err(_) => panic("m456: client connect1 failed")
+                }
+                consume c2 = match TcpStream.connect(SocketAddr.loopback(port)) {
+                    Ok(consume s) => s
+                    Err(_) => panic("m456: client connect2 failed")
+                }
+
+                ro _ = c1.write("hello-via-1")
+
+                mut buf1 []u8 = []u8.new()
+                buf1.resize(32, 0 as u8)
+                ro n1 = match c2.read(buf1) { Ok(k) => k  Err(_) => -1 }
+
+                c1.close()
+                Time.sleep(300.to_millis())
+                c2.close()
+                ch_client_done.tx.send(n1)
+            }
+        }
+
+        ro client_result = match ch_client_done.rx.recv() { Some(v) => v  None => -999 }
+        ro relay_result = match ch_relay_done.rx.recv() { Some(v) => v  None => -999 }
+        assert(client_result > 0)
+        assert(relay_result == 1)
+    }
+}

@@ -536,15 +536,29 @@ fn pump(consume r TcpReadHalf, consume w TcpWriteHalf, tok CancelToken) Net -> (
             Err(_) => break                            // I/O error, or woken by the sibling's cancel
         }
     }
-    // No explicit `r.close()`/`w.close()`: both halves declare `consume
-    // @cleanup` (`std/src/net/tcp.nv:402`/`:448`), so D432 auto-cleanup
-    // releases them at this function's exit — the very same point an explicit
-    // close would run. Calling `close()` by hand would only route the pair
-    // through the auto-cleanup DISARM path (a manual `consume` must disarm
-    // the automatic one to avoid a double close) — the exact mechanism that
-    // produced the crash, then the hang, of registry #456. Fewer moving
-    // parts, and the linear type system still guarantees the release.
-    //
+    // Canonical explicit-close form (registry №456): both halves ALSO
+    // declare `consume @cleanup` (`std/src/net/tcp.nv:402`/`:448`), so the
+    // disarm here matters — the caller's `spawn consume ar, bw { pump(ar,
+    // bw, tok) }` must NOT also auto-`@cleanup` `ar`/`bw` after this
+    // explicit close, or the underlying split-refcounted stream gets a
+    // redundant `net_tcp_close` call (root cause history: №456 first
+    // surfaced as a crash — UAF in `net_tcp_close`'s split-refcount path,
+    // `nova_rt/libuv/src/win/core.c:694` — fixed at the runtime level by an
+    // idempotent release guard, `b46d4584e`; that made the redundant call
+    // SAFE but the compiler was still emitting it, which is what later
+    // manifested as this function's hang under real blocking I/O — the
+    // caller-side disarm was keyed off two separate, incompletely-populated
+    // registries that the `spawn consume a, b { … }` desugar fell through
+    // entirely, D415 §4). Plan 253.4 Ф.1 (№480, `318334eea`) replaced both
+    // registries with a single defer-scope-owned flag (`disarm_var_for`,
+    // `emit_c.rs`), closing the gap: the caller now correctly disarms
+    // `ar`/`bw` right before this call, so `r.close()`/`w.close()` below are
+    // each the ONLY close their half ever sees. Regression coverage for
+    // exactly this shape (canonical `close()` + real blocking I/O +
+    // cross-fiber cancel-while-parked, not just the no-I/O disarm bookkeeping):
+    // `spec_tests/conformance/standalone/m456_pump_helper_close_real_io.nv`.
+    r.close()
+    w.close()
     // Wake the SIBLING pump (blocked reading the other direction) — the
     // mechanism established in plan 249 Ф.0-б, NOT `supervised(timeout:)`.
     tok.cancel()
