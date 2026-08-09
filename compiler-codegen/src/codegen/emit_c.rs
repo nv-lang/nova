@@ -60783,9 +60783,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         let is_fn_newtype_recv = self.current_receiver_type.as_deref()
                             .map(|t| self.fn_newtype_sigs.contains_key(t))
                             .unwrap_or(false);
+                        // Owner fix 2026-08-09 (closes №468): a `mut @`
+                        // PRIMITIVE receiver's `nova_self` is ALSO a
+                        // pointer now (R5) — `@`'s INFERRED type must stay
+                        // the base value type (`nova_int`, not
+                        // `nova_int*`), same as the value-struct case,
+                        // else callers of this (e.g. `prepare_method_recv`
+                        // deciding whether a chained `@.other_mut()` needs
+                        // address-of) would see the already-pointer type
+                        // and skip re-addressing.
                         return if is_fn_newtype_recv {
                             "void*".to_string()
-                        } else if Self::is_value_struct_ptr(&raw) {
+                        } else if Self::is_value_struct_ptr(&raw) || Self::is_primitive_mut_recv_ptr(&raw) {
                             raw.trim_end_matches('*').trim().to_string()
                         } else {
                             raw
@@ -60919,9 +60928,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     let is_fn_newtype_recv = self.current_receiver_type.as_deref()
                         .map(|t| self.fn_newtype_sigs.contains_key(t))
                         .unwrap_or(false);
+                    // Owner fix 2026-08-09 (closes №468): mirror of the
+                    // Channel-1 copy above — a by-pointer `mut @` primitive
+                    // receiver must also report its base (deref'd) type here.
                     return if is_fn_newtype_recv {
                         "void*".to_string()
-                    } else if Self::is_value_struct_ptr(&raw) {
+                    } else if Self::is_value_struct_ptr(&raw) || Self::is_primitive_mut_recv_ptr(&raw) {
                         raw.trim_end_matches('*').trim().to_string()
                     } else {
                         raw
