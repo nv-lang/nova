@@ -384,7 +384,7 @@ ANTIROT_LIST="$ROOT/docs/plans/wip/197-f5-gate-list.txt"
 if [ ! -f "$ANTIROT_LIST" ]; then
     fail "нет списка anti-rot $ANTIROT_LIST (CI читает его же)"
 else
-    tr -d "" < "$ANTIROT_LIST" > "${TMPDIR:-/tmp}/gate_antirot_list_$$.txt"
+    tr -d "$(printf '\r')" < "$ANTIROT_LIST" > "${TMPDIR:-/tmp}/gate_antirot_list_$$.txt"
     ANTIROT_FAILED=""
     ANTIROT_N=0
     while read -r _kind _path; do
