@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR E_ZERO_ON_MOVE_REQUIRES_CONSUME
+// 221.1 №465 — `#zero_on_move` without `consume` has NO tracked
+// ownership-transfer site to auto-inject at (D432 §4 disarm points are
+// keyed off `consume`) — would stay the exact silent no-op #465 reported,
+// just narrower. Checker rejects the combination outright. Companion
+// positive: spec_tests/conformance/standalone/m465_zero_on_move_autoinject_pos.nv.
+// Spec: spec/decisions/02-types.md D-amendment for #465.
+module neg.m465_zero_on_move_requires_consume_neg
+
+#zero_on_move
+type M465NotConsumed value {
+    data int
+}
+
+fn m465_requires_consume_touch() -> int { 0 }

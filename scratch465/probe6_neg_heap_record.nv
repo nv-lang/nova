@@ -1,0 +1,8 @@
+#zero_on_move
+export type HeapSecret consume {
+    data int
+}
+
+fn HeapSecret consume @finish() {
+    ()
+}

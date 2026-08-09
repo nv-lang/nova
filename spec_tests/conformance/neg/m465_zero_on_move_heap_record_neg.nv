@@ -1,0 +1,20 @@
+// EXPECT_COMPILE_ERROR E_ZERO_ON_MOVE_ALIASED_STORAGE
+// 221.1 №465 — `#zero_on_move` on a heap-allocated record (no `value`
+// modifier) is rejected: Nova's ownership transfer for `AllocKind::Heap`
+// records is pointer-aliasing (moved-from and moved-to binding reference
+// the IDENTICAL heap block, `consume` never deep-copies a heap record).
+// Auto-zeroing the storage at a consume call site would corrupt the value
+// for the new owner (same memory), not scrub a stale copy — confirmed
+// empirically via generated-C inspection (scratch465/probe1-3.nv). Only
+// copy-semantics storage (value record / named tuple / newtype) is
+// supported. Companion positive:
+// spec_tests/conformance/standalone/m465_zero_on_move_autoinject_pos.nv.
+// Spec: spec/decisions/02-types.md D-amendment for #465.
+module neg.m465_zero_on_move_heap_record_neg
+
+#zero_on_move
+type M465HeapSecret consume {
+    data int
+}
+
+fn M465HeapSecret consume @finish() -> () => ()

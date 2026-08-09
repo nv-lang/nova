@@ -1,0 +1,24 @@
+#zero_on_move
+export type Secret consume value {
+    data int
+}
+
+fn make_it(consume s Secret) -> consume Secret {
+    return s
+}
+
+fn Secret consume @finish() {
+    ()
+}
+
+export fn main() {
+    consume a = Secret { data: 77 }
+    unsafe {
+        ro raw_p = raw &a
+        consume b = make_it(a)
+        ro after = raw_p.read()
+        print(after.data)
+        print(b.data)
+        b.finish()
+    }
+}

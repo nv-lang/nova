@@ -1,0 +1,25 @@
+export type Secret consume value {
+    data int
+}
+
+fn Secret @peek() -> int {
+    return self.data
+}
+
+fn Secret consume @finish() {
+    ()
+}
+
+fn helper(consume s Secret) -> int {
+    ro d = s.data
+    s.finish()
+    return d
+}
+
+export fn main() {
+    consume a = Secret { data: 42 }
+    ro x = a.peek()
+    print(x)
+    ro y = helper(a)
+    print(y)
+}
