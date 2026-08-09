@@ -15051,6 +15051,29 @@ impl<'a> TypeCheckCtx<'a> {
                 // file-private overload участвует в резолве call-site другого файла
                 // (folder-CU bleed).
                 let caller_file_id = base.span.file_id;
+                // №534-фикс, ред. по замечанию координатора: единица
+                // "своего" — МОДУЛЬ (folder co-equal files), а не файл.
+                // `10-overloading.md` §«LLM-критерий»: «все перегрузки
+                // имени должны быть в одном модуле» — это УЖЕ спека, не
+                // новое правило; резолвер обязан её соблюдать, а не
+                // изобретать file-level shadow (та черновая версия этой
+                // правки ломала ЗАКОННУЮ перегрузку одного имени между
+                // co-equal файлами ОДНОГО folder-модуля: `f(int)` в
+                // `a.nv` + `f(str)` в `b.nv` того же `module foo` —
+                // вызов из `a.nv` перестал бы видеть `f(str)` из `b.nv`).
+                let caller_module: Option<Vec<String>> = self.file_modules.borrow()
+                    .get(&caller_file_id).cloned();
+                let is_own = |c: &&FnDecl| -> bool {
+                    if c.span.file_id == caller_file_id {
+                        return true;
+                    }
+                    match &caller_module {
+                        Some(cm) => self.file_modules.borrow()
+                            .get(&c.span.file_id)
+                            .map_or(false, |dm| dm == cm),
+                        None => false, // модуль неизвестен → падаем на file_id (уже false здесь)
+                    }
+                };
                 let visible: Option<Vec<&FnDecl>> = self.sig.fn_decls.get(n).map(|v| {
                     let filtered: Vec<&FnDecl> = v.iter()
                         .filter(|c| !c.file_private || c.span.file_id == caller_file_id)
@@ -15060,15 +15083,15 @@ impl<'a> TypeCheckCtx<'a> {
                     // principle "собственный носитель > делегат"): `fn_decls` is
                     // a BARE-NAME, CU-wide table — an unqualified bare-Ident call
                     // must NOT let an unrelated candidate declared in a DIFFERENT
-                    // file/module dilute resolution of a same-named function the
-                    // CALLER'S OWN FILE declares. Before this, a same-arity
-                    // same-named `fn` in a totally unrelated file (never
+                    // MODULE dilute resolution of a same-named function the
+                    // CALLER'S OWN MODULE declares. Before this, a same-arity
+                    // same-named `fn` in a totally unrelated module (never
                     // imported, no lexical relationship to the caller) competed
                     // on equal footing via `overload_applicability` — landing on
                     // 0-or-≥2 "compatible" candidates (arity ties) more easily,
                     // which silently DROPS the call from `resolved_callees`
                     // (checker gives up, gap → codegen-resolved). Codegen's own
-                    // call-emission mangles the SAME-FILE callee correctly
+                    // call-emission mangles the SAME-MODULE callee correctly
                     // regardless (unaffected), but `resolved_callees`'
                     // ABSENCE was consumed downstream by
                     // `collect_resolved_call_target_names_expr` (emit_c.rs) to
@@ -15081,17 +15104,20 @@ impl<'a> TypeCheckCtx<'a> {
                     // (unmangled, nonexistent-as-a-value) bare call-target name
                     // — C `use of undeclared identifier` (repro:
                     // spec_tests/conformance/standalone/p534_routes_bare_name/).
-                    // Fix: a same-file declaration SHADOWS every other-file
+                    // Fix: a same-MODULE declaration SHADOWS every other-module
                     // candidate outright — standard lexical-scoping "innermost
                     // wins", mirroring `file_private`'s own caller-file
-                    // preference one step further. Cross-module genuine
-                    // multi-overload resolution (imported free-fn) is
-                    // untouched — this only narrows the set when the caller's
-                    // OWN file is itself among the candidates.
-                    if filtered.iter().any(|c| c.span.file_id == caller_file_id) {
-                        filtered.into_iter()
-                            .filter(|c| c.span.file_id == caller_file_id)
-                            .collect()
+                    // preference one level up (file → module, per D78/co-equal
+                    // files). Cross-module genuine multi-overload resolution
+                    // (imported free-fn) is untouched — this only narrows the
+                    // set when the caller's OWN module is itself among the
+                    // candidates. Within-module multi-file overloading
+                    // (`f(int)` in `a.nv` + `f(str)` in `b.nv`, same `module
+                    // foo`, per `10-overloading.md` §«LLM-критерий») stays
+                    // fully visible — `is_own` is true for BOTH declaring
+                    // files, so neither is filtered out.
+                    if filtered.iter().any(is_own) {
+                        filtered.into_iter().filter(|c| is_own(c)).collect()
                     } else {
                         filtered
                     }
