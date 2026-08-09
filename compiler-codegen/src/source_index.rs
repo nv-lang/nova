@@ -659,6 +659,16 @@ where
 mod tests {
     use super::*;
 
+    /// Тесты правят ГЛОБАЛЬНЫЙ режим снимка и общий индекс, поэтому идут по
+    /// одному: без этого `cargo test` (многопоточный по умолчанию) сбрасывал
+    /// бы индекс из-под соседнего теста.
+    fn serial() -> std::sync::MutexGuard<'static, ()> {
+        static L: OnceLock<Mutex<()>> = OnceLock::new();
+        L.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+    }
+
     fn tmp_dir(tag: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!(
             "nova_p252_index_{}_{}",
@@ -674,6 +684,7 @@ mod tests {
     /// диске не видна — и это заявленное свойство, а не дефект.
     #[test]
     fn snapshot_is_immutable_within_a_run() {
+        let _s = serial();
         let d = tmp_dir("immutable");
         let f = d.join("a.nv");
         std::fs::write(&f, "module a\n").unwrap();
@@ -696,6 +707,7 @@ mod tests {
     /// `is_file`/`is_dir`/`nv_files` не стоят НИ ОДНОГО обращения к ФС.
     #[test]
     fn zero_fs_calls_after_index_is_built() {
+        let _s = serial();
         let d = tmp_dir("zerofs");
         std::fs::write(d.join("a.nv"), "module a\n").unwrap();
         std::fs::create_dir_all(d.join("sub")).unwrap();
@@ -725,6 +737,7 @@ mod tests {
     /// негодное» в её машинной части.
     #[test]
     fn missing_file_is_missing() {
+        let _s = serial();
         let d = tmp_dir("missing");
         std::fs::write(d.join("a.nv"), "module a\n").unwrap();
         reset();
@@ -742,6 +755,7 @@ mod tests {
     /// а не с `cfg!`.
     #[test]
     fn case_lookup_matches_the_os() {
+        let _s = serial();
         let d = tmp_dir("case");
         let f = d.join("abc.nv");
         std::fs::write(&f, "module abc\n").unwrap();
@@ -762,6 +776,7 @@ mod tests {
     /// Выключенный снимок — сквозной проход: правки видны сразу.
     #[test]
     fn pass_through_sees_edits() {
+        let _s = serial();
         let d = tmp_dir("passthru");
         let f = d.join("a.nv");
         std::fs::write(&f, "one\n").unwrap();
@@ -776,6 +791,7 @@ mod tests {
     /// Вывод по каталогу считается один раз.
     #[test]
     fn derived_computed_once() {
+        let _s = serial();
         let d = tmp_dir("derived");
         std::fs::write(d.join("a.nv"), "module a\n").unwrap();
         reset();
