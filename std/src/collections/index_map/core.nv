@@ -230,13 +230,23 @@ export fn IndexMap[K Equal + Hash, V] mut @clear() {
 /// assert(m.keys() == ["b", "a"])
 /// ```
 #stable(since = "0.1")
-export fn IndexMap[K Equal + Hash, V] @keys() -> []K {
-    mut out = []K.new(cap: @entries.len())
-    for pair in @entries {
-        out.push(pair.0)
+export fn IndexMap[K Equal + Hash, V] @keys() -> IndexKeysIter[K, V] =>
+    { inner: @iter() }
+
+/// Lazy view over the keys; mirrors `HashMap.@keys()` in shape, and this one
+/// yields them IN INSERTION ORDER.
+///
+/// Returning an iterator rather than a fresh `[]K` is the point: the previous
+/// version allocated a full vector on every call, so even `for k in m.keys()`
+/// built and threw away a copy of every key (registry 221.1 #506).
+type IndexKeysIter[K, V] { inner IndexMapIter[K, V] }
+
+#impl(Next[K])
+export fn IndexKeysIter[K, V] mut @next() -> Option[K] =>
+    match @inner.next() {
+        None => None
+        Some(pair) => Some(pair.0)
     }
-    out
-}
 
 /// Order-independent structural equality (D109/D237 `Equal`-impl) — mirrors
 /// `HashMap[K, V] @equal` / `JsonObject @equal`. Two `IndexMap`s are equal
