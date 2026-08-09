@@ -3395,6 +3395,13 @@ pub fn run_conv_rules(
     // «пока не готово»; `nova:allow` — «читал, оставляю НАМЕРЕННО», causa
     // обязательна и грепаема).
     apply_nova_allow_suppressions(src, &mut out);
+    // Plan 262 Part Б (owner decision 2026-08-09): `nova:expect`'s
+    // no-reason check surfaces through the SAME `nova lint` channel as
+    // `nova:allow`'s own `E_LINT_ALLOW_NO_REASON` — see doc comment on
+    // `apply_nova_expect_no_reason_check` (below `apply_nova_allow_
+    // suppressions`) for why the reasoned form of `nova:expect` is NOT
+    // handled here.
+    apply_nova_expect_no_reason_check(src, &mut out);
     out
 }
 
@@ -3511,6 +3518,114 @@ fn apply_nova_allow_suppressions(src: &str, out: &mut Vec<LintWarning>) {
             a.has_reason && a.line + 1 == line && a.rule_ids.contains(w.rule)
         })
     });
+}
+
+// ---------------------------------------------------------------------------
+// `nova:expect` — twin of `nova:allow` (Plan 262 Part Б, owner decision
+// 2026-08-09). Negative fixtures carry a FILE-level `// EXPECT_COMPILE_ERROR
+// E_X` marker (`test_runner.rs::parse_expect`) that accepts `E_X` occurring
+// ANYWHERE in the file — nothing to key editor-side suppression off of, and
+// the "anywhere" match let `m510_vec_generic_bracket_sugar_turbofish_neg`
+// silently start passing for the WRONG reason (error moved to a different
+// line) with no signal until a human noticed (2026-08-09 postmortem).
+//
+// `// nova:expect E_CODE -- причина` marks the SPECIFIC line where a HARD
+// compile error (a checker/parser `Diagnostic` that ABORTS codegen — the
+// `Err(String)` arm of `codegen_to_c`, never a `lints::lint_module`
+// `LintWarning`) is expected on purpose. Unlike `nova:allow`, it does not
+// suppress anything IN THIS FILE's pipeline (compile errors never become a
+// `LintWarning` here — there is nothing to suppress); its two effects are
+// both external to this function:
+//   1. `test_runner.rs`'s `EXPECT_COMPILE_ERROR` matching (`run_one`) calls
+//      `parse_nova_expect_comments` to additionally pin the match to the
+//      comment's OWN line (`entry.line + 1`), not "anywhere in file".
+//   2. (Out of scope for THIS window — p262-a-pipeline, Plan 262 Part А)
+//      the LSP is expected to read the same parser to stop reddening a line
+//      the fixture says is intentional.
+// The one thing that DOES belong in this pipeline is the no-reason check
+// right below — same visibility surface (`nova lint`) and same rule shape
+// as `nova:allow`'s `E_LINT_ALLOW_NO_REASON`.
+//
+// Syntax (СТРОГО, дословно, идентично nova:allow):
+//
+//     // nova:expect E_CODE -- причина
+//     <строка с ожидаемой ошибкой — на СЛЕДУЮЩЕЙ строке>
+// ---------------------------------------------------------------------------
+
+/// Один разобранный `// nova:expect` комментарий. Twin of `NovaAllowEntry`.
+#[derive(Debug, Clone)]
+pub struct NovaExpectEntry {
+    /// Строка комментария, 1-based (ожидаемая ошибка — на `line + 1`).
+    pub line: usize,
+    pub rule_ids: HashSet<String>,
+    pub has_reason: bool,
+}
+
+/// Разобрать все `// nova:expect ...` строки исходника. Same rule as
+/// `parse_nova_allow_comments`: a line with no rule-id after `nova:expect`
+/// (accidental text match) is silently ignored — not a directive.
+///
+/// `pub` (not `pub(crate)`): `test_runner.rs` (same crate, different
+/// module) is the primary consumer for line-pinned `EXPECT_COMPILE_ERROR`
+/// matching; kept public so a future LSP-side consumer (Plan 262 Part А,
+/// window p262-a-pipeline — NOT wired here) can reuse it without
+/// duplicating the parse rules.
+pub fn parse_nova_expect_comments(src: &str) -> Vec<NovaExpectEntry> {
+    let mut out = Vec::new();
+    for (idx, line) in src.lines().enumerate() {
+        let trimmed = line.trim_start();
+        if !trimmed.starts_with("//") {
+            continue;
+        }
+        let after_slashes = trimmed.trim_start_matches('/').trim_start();
+        let Some(rest) = after_slashes.strip_prefix("nova:expect") else { continue };
+        let rest = rest.trim_start();
+        let (ids_part, reason_part): (&str, Option<&str>) = match rest.find("--") {
+            Some(p) => (rest[..p].trim(), Some(rest[p + 2..].trim())),
+            None => (rest.trim(), None),
+        };
+        let rule_ids: HashSet<String> = ids_part
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if rule_ids.is_empty() {
+            continue;
+        }
+        let has_reason = reason_part.is_some_and(|r| !r.is_empty());
+        out.push(NovaExpectEntry { line: idx + 1, rule_ids, has_reason });
+    }
+    out
+}
+
+/// Добавляет `E_LINT_EXPECT_NO_REASON` находки для `// nova:expect` без
+/// причины — twin of `apply_nova_allow_suppressions`'s no-reason arm.
+/// Не суппрессирует ничего в `out` (compile errors не текут через
+/// `Vec<LintWarning>` — `nova:expect`'s actual pinning effect lives in
+/// `test_runner.rs`, see module doc comment above).
+fn apply_nova_expect_no_reason_check(src: &str, out: &mut Vec<LintWarning>) {
+    for e in &parse_nova_expect_comments(src) {
+        if e.has_reason {
+            continue;
+        }
+        let offset = conv_line_start_offset(src, e.line);
+        let mut ids: Vec<&String> = e.rule_ids.iter().collect();
+        ids.sort();
+        let ids_disp = ids.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ");
+        out.push(LintWarning {
+            rule: "E_LINT_EXPECT_NO_REASON",
+            diag: Diagnostic::new(
+                format!(
+                    "`nova:expect {}` without a reason: canon is `// nova:expect {} -- \
+                     reason` (a reason is mandatory, same rule as `nova:allow` — the \
+                     line-pin must stay greppable, and an unreasoned `nova:expect` is \
+                     ignored for pinning purposes, which is a silent no-op worth flagging).",
+                    ids_disp, ids_disp
+                ),
+                Span::new(offset, offset),
+            ),
+        });
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -8875,6 +8990,73 @@ mod tests {
             "nova:allow must only suppress the very next line, got: {:?}",
             ws.iter().map(|w| w.rule).collect::<Vec<_>>()
         );
+    }
+
+    // Plan 262 Part Б (owner decision 2026-08-09): `// nova:expect E_CODE --
+    // причина` twin of `nova:allow` — pins a HARD compile error to a line
+    // (test_runner.rs), but the only thing THIS module (`lints.rs`) does
+    // with it is the no-reason check (compile errors never become a
+    // `LintWarning`, so there's nothing here to suppress — see doc comment
+    // on `apply_nova_expect_no_reason_check`).
+
+    #[test]
+    fn nova_expect_with_reason_parses_and_does_not_warn() {
+        let src = "module foo\n\
+             fn main() {\n\
+             // nova:expect E_CONSUME_KEYWORD_MISSING -- test reason\n\
+             ro x = 1\n\
+             }\n";
+        let entries = parse_nova_expect_comments(src);
+        assert_eq!(entries.len(), 1, "must parse exactly one nova:expect entry, got: {:?}", entries);
+        assert!(entries[0].has_reason, "entry must have a reason");
+        assert!(entries[0].rule_ids.contains("E_CONSUME_KEYWORD_MISSING"));
+        // Well-formed nova:expect must not itself become a finding — the
+        // no-reason check is the ONLY thing this module does with it.
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            !ws.iter().any(|w| w.rule == "E_LINT_EXPECT_NO_REASON"),
+            "well-formed nova:expect must not itself be a finding, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn nova_expect_without_reason_is_inert_and_errors() {
+        let src = "module foo\n\
+             fn main() {\n\
+             // nova:expect E_CONSUME_KEYWORD_MISSING\n\
+             ro x = 1\n\
+             }\n";
+        let entries = parse_nova_expect_comments(src);
+        assert_eq!(entries.len(), 1);
+        assert!(!entries[0].has_reason, "no `--` -> has_reason must be false");
+        let m = parse(src);
+        let ws = run_conv_rules(Some(&m), src, &ConvLintOptions::default(), None);
+        assert!(
+            ws.iter().any(|w| w.rule == "E_LINT_EXPECT_NO_REASON"),
+            "no-reason nova:expect must itself be a finding, got: {:?}",
+            ws.iter().map(|w| w.rule).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn nova_expect_multiple_codes_comma_separated() {
+        let src = "// nova:expect E_A, E_B -- reason\nsite\n";
+        let entries = parse_nova_expect_comments(src);
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].rule_ids.contains("E_A"));
+        assert!(entries[0].rule_ids.contains("E_B"));
+        assert!(entries[0].has_reason);
+    }
+
+    #[test]
+    fn nova_expect_accidental_text_without_rule_id_is_ignored() {
+        // "nova:expect" appearing in prose with no rule-id after it must not
+        // be treated as a directive (same rule as `parse_nova_allow_comments`).
+        let src = "// nova:expect -- this is just prose, no rule id\nsite\n";
+        let entries = parse_nova_expect_comments(src);
+        assert!(entries.is_empty(), "prose mention without rule id must be ignored, got: {:?}", entries);
     }
 
     // [M-from-str-static-conversion-lint-gap] (2026-07-30): детектор был
