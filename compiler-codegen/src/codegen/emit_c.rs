@@ -5169,7 +5169,7 @@ impl CEmitter {
     /// памяти правящего (реестр 221.1 №522).
     fn register_method_overload(&mut self, key: (String, String), sig: MethodSig) {
         self.method_overload_types.insert(key.0.clone());
-        self.register_method_overload(key, sig);
+        self.method_overloads.entry(key).or_default().push(sig);
     }
 
     pub fn emit_module(mut self, module: &Module) -> Result<(String, Vec<String>), String> {
