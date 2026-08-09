@@ -1,10 +1,17 @@
-// Plan 128 Ф.4 T6 — primitive `str` cannot have mut-methods.
-//
-// EXPECT_COMPILE_ERROR E_PRIMITIVE_MUT_METHOD
-//
-// Verifies Ф.3 diagnostic rejects `fn str mut @method`. Primitives are
-// immutable by design; allowing this would silently no-op (codegen
-// dropped the mutation pre-Ф.3 — a footgun).
+// RETRACTED 2026-08-09 (closes №468, owner decision 2026-08-08/09):
+// `E_PRIMITIVE_MUT_METHOD` (Plan 128 Ф.3) is RETIRED — it banned
+// `fn str mut @method` because codegen used to pass the receiver by
+// value and silently drop the mutation. That was an implementation
+// limitation promoted into a language rule instead of being fixed. The
+// real fix (R5, `spec/decisions/02-types.md:16101`: `mut @` is ALWAYS
+// by-pointer, any size) landed in `emit_c.rs::receiver_c_type`/
+// `prepare_method_recv` — the mutation IS now observable, which is
+// exactly what this file's own `assert(s == "x")` always expected (it
+// was unreachable dead code under the old ban). No longer EXPECT_*
+// anything — this is a plain positive test now. Superseded by
+// `spec_tests/conformance/standalone/p468_primitive_mut_method.nv`
+// (the live gate); this file is archival (`nova_tests.old`, not run by
+// any tooling) and kept flipped rather than deleted for history.
 
 module neg.t6_primitive_str_mut_method_neg
 
@@ -12,7 +19,7 @@ fn str mut @hack() -> () {
     @ = "x"
 }
 
-test "should not compile: fn str mut @hack" {
+test "fn str mut @hack observably mutates the caller's binding" {
     mut s = "abc"
     s.hack()
     assert(s == "x")

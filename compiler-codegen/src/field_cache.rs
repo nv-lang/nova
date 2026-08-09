@@ -377,11 +377,6 @@ fn collect_type_kinds(items: &[Item], out: &mut TypeKindRegistry) {
 ///   `*NovaArray` (heap), pointer константен (D52).
 /// - `*T` / `ptr` — pointer value 8B inline; methods operate on
 ///   pointee, не reassign slot (D216 §11).
-/// - `str` — inline `{ data ptr; len u64 }` 16B; **immutable** — no
-///   mut-methods exist that could modify slot bits (D32 §strings).
-/// - Primitives `int`/`bool`/`f64`/...— inline value; no mut-method-
-///   modify-slot pattern в Nova (`i.set(5)` не существует — assignment
-///   is statement, не method-call).
 /// - Heap-record `type X { ... }` (default `AllocKind::Heap`) — slot
 ///   holds `Nova_X*` pointer; methods modify `*X`, ptr константен (D52).
 /// - Sum-type `type X | A | B` — slot holds tagged-union pointer; stable.
@@ -395,6 +390,19 @@ fn collect_type_kinds(items: &[Item], out: &mut TypeKindRegistry) {
 /// - NamedTuple `type X(a A, b B)` (D215) — inline; mut-method modify slot.
 /// - Value-record `type X value { ... }` (D228) — inline `NovaValue_X`
 ///   struct bytes; mut-method modify slot directly.
+/// - `str` — inline `{ data ptr; len u64 }` 16B. Owner fix 2026-08-09
+///   (closes №468, R5): a user `fn str mut @hack()` now writes the WHOLE
+///   handle (ptr+len) through a real pointer — same slot-rewrite hazard
+///   as value-record/tuple. (Buffer-content immutability, D26/D73, is
+///   untouched — this is about the `nova_str` struct's own slot bits.)
+/// - Primitives `int`/`bool`/`f64`/… — inline value. Owner fix 2026-08-09
+///   (closes №468, R5): `fn <primitive> mut @method(...)` now compiles and
+///   codegen passes the receiver by pointer (`emit_c.rs::receiver_c_type`/
+///   `prepare_method_recv`) — a call like `n.inc(10)` genuinely rewrites
+///   the caller's slot bits, same as value-record/tuple above. (Before
+///   this fix E_PRIMITIVE_MUT_METHOD banned the declaration, so the
+///   by-value mutation-drop this classification relied on could never be
+///   observed through a REAL mut-method — that invariant no longer holds.)
 ///
 /// Recursive:
 /// - `ro T` / `mut T` / `unsafe T` wrappers → recurse inner.
@@ -465,32 +473,32 @@ fn classify_named_leaf(
     depth: usize,
 ) -> bool {
     if is_primitive_leaf(leaf) {
-        // Primitives (`int`, `bool`, `f64`, ...) have no slot-mutating
-        // method pattern в Nova:
-        //   - canonical assignment `n = 5` — statement, не method call
-        //     (handled by V1 region-write detection, не V7.6)
-        //   - hypothetical user `fn int mut @inc(self mut)` —
-        //     parser/checker permissive (no E_PRIMITIVE_MUT_METHOD yet),
-        //     но codegen passes primitive receivers **by value**
-        //     (`emit_c.rs::prepare_method_recv` takes `&obj` only для
-        //     `NovaValue_*`), so mutation silently no-ops — slot bits
-        //     in caller's struct stay unchanged. Cache survives.
-        // Safe ⇒ true.
-        return true;
+        // Owner fix 2026-08-09 (closes №468, R5 `02-types.md:16101`): a
+        // user `fn <primitive> mut @method(...)` now compiles AND
+        // genuinely rewrites the caller's slot through a real pointer
+        // (`emit_c.rs::receiver_c_type`/`prepare_method_recv`) — same
+        // slot-mutating-in-place hazard as value-record/tuple below
+        // (`Some(TypeKindEntry::ValueRecord) => false`). Flipped from
+        // `true`: the by-value-copy invariant this used to rely on
+        // (E_PRIMITIVE_MUT_METHOD banned the only path that could ever
+        // observe the drop) no longer holds. `n = 5` plain assignment is
+        // still a statement (unaffected, handled by V1 region-write
+        // detection, not this classifier) — this is only about a call to
+        // a real `mut @` method on the field's value. Conservative
+        // `false` is always sound (module doc above): unlike the old
+        // `true`, it needs no by-value-receiver assumption to hold.
+        return false;
     }
-    // `str` — immutable inline `{ data ptr; len u64 }` handle (Plan 115
-    // §15 / `02-types.md:7060`). Immutability is a **hard spec contract**
-    // (08-runtime.md:658 D26: "str — immutable"; 08-runtime.md:823-825
-    // D73: O(n) copy at `str↔[]u8` justified because shared mutable view
-    // would "испортил бы immutability str"; Plan 91 §"Принцип: Nova-first"
-    // lines 196-199: "сознательный дизайн, как в Rust"). Stdlib `str`
-    // surface — 0 mut-methods (runtime_registry.rs::str_runtime() all
-    // `is_mut: false`). User-defined `fn str mut @hack(...)` is currently
-    // parser-permissive (missing E_PRIMITIVE_MUT_METHOD diagnostic —
-    // followup) but silently no-ops в codegen due to by-value primitive
-    // receiver passing. Cache survives in all three scenarios ⇒ true.
+    // `str` — inline `{ data ptr; len u64 }` handle (Plan 115 §15 /
+    // `02-types.md:7060`). Buffer-content immutability (D26/D73) is
+    // untouched by this fix — no mut-method can rewrite the BYTES a
+    // `nova_str` points to. But owner fix 2026-08-09 (closes №468, R5)
+    // means a user `fn str mut @hack()` now writes the WHOLE `nova_str`
+    // handle (ptr+len) into the caller's slot through a real pointer
+    // (was a by-value no-op before) — same slot-rewrite hazard as the
+    // primitive branch above, for the same reason. Flipped to false.
     if leaf == "str" {
-        return true;
+        return false;
     }
     // Plan 134: `ptr` builtin removed; `*()` = void* is TypeRef::Pointer(Unit),
     // not a Named leaf — field_cache never sees it here. "nova_ptr" gone too.
@@ -10667,16 +10675,18 @@ fn C mut @do() -> int {
         assert!(is_reference_type_ref(&ptr_int, &reg));
     }
 
-    /// V7.6.6 unit: builtin `str` + unknown collections классифицируются
-    /// как ref-type (conservative). V7.6 V2 (2026-06-05): `String`/`Map`/
-    /// `Vec`/etc — больше не hardcoded; в empty registry падают в `None
-    /// => true` (conservative); в реальном module-build их TypeDecl
-    /// driver классификацию.
+    /// V7.6.6 unit: unknown collections классифицируются как ref-type
+    /// (conservative). V7.6 V2 (2026-06-05): `String`/`Map`/`Vec`/etc —
+    /// больше не hardcoded; в empty registry падают в `None => true`
+    /// (conservative); в реальном module-build их TypeDecl driver
+    /// классификацию. `str` is asserted SEPARATELY below (owner fix
+    /// 2026-08-09, closes №468, flips it to false — it is no longer
+    /// unconditionally ref-type, unlike this loop's genuinely-unknown names).
     #[test]
     fn v7_6_is_ref_type_named_collections() {
         let span = crate::diag::Span { start: 0, end: 0, file_id: 0 };
         let reg = TypeKindRegistry::new();
-        for name in &["str", "String", "Map", "HashMap", "Set", "Vec",
+        for name in &["String", "Map", "HashMap", "Set", "Vec",
                        "StringBuilder", "WriteBuffer", "ReadBuffer"] {
             let ty = TypeRef::Named {
                 path: vec![name.to_string()],
@@ -10684,15 +10694,25 @@ fn C mut @do() -> int {
                 span,
             };
             assert!(is_reference_type_ref(&ty, &reg),
-                "expected {} to be ref-type (str builtin OR registry-None conservative)",
+                "expected {} to be ref-type (registry-None conservative)",
                 name);
         }
+        // Owner fix 2026-08-09 (closes №468, R5): `str` → FALSE now — a
+        // user `fn str mut @hack()` compiles and writes the whole
+        // `nova_str` handle through a real pointer, so the field cache
+        // can no longer assume the slot survives an intervening call.
+        let str_ty = TypeRef::Named { path: vec!["str".to_string()], generics: vec![], span };
+        assert!(!is_reference_type_ref(&str_ty, &reg),
+            "post-№468: str → FALSE (mut @ method can now rewrite the slot)");
     }
 
     /// V7.6.7 unit (V2 refactor, 2026-06-05): value-only types classify
     /// as FALSE. Per V2 semantics:
-    /// - `int` primitive → **TRUE** (safe — no slot-mutating methods,
-    ///   primitive by-value receiver passing).
+    /// - `int` primitive → **FALSE** since owner fix 2026-08-09 (closes
+    ///   №468, R5): `fn int mut @inc()` now compiles and genuinely writes
+    ///   the caller's slot through a real pointer — same slot-mutating
+    ///   hazard as tuple/FixedArray below (was TRUE pre-fix, when
+    ///   E_PRIMITIVE_MUT_METHOD made the mutating call unreachable).
     /// - Tuple `(int,)` → **FALSE** (inline slot, mut-method writes).
     /// - FixedArray `[8]int` → **FALSE** (inline N×T bytes).
     /// - Unknown Named `Counter` → **TRUE** (conservative cross-module).
@@ -10705,11 +10725,12 @@ fn C mut @do() -> int {
             generics: vec![],
             span,
         };
-        // V2 semantic change: primitives → TRUE (no slot-mutating
-        // method pattern; even hypothetical user `fn int mut @inc()`
-        // silently no-ops in codegen — by-value receiver).
-        assert!(is_reference_type_ref(&int_ty, &reg),
-            "V2: int → TRUE (primitive safe-slot)");
+        // Owner fix 2026-08-09 (closes №468): primitives → FALSE now —
+        // `fn int mut @inc()` compiles (E_PRIMITIVE_MUT_METHOD retired)
+        // and writes through a real pointer, so the field cache can no
+        // longer assume the slot is stable across an intervening call.
+        assert!(!is_reference_type_ref(&int_ty, &reg),
+            "post-№468: int → FALSE (mut @ method can now rewrite the slot)");
         let tuple_ty = TypeRef::Tuple(vec![int_ty.clone()], span);
         assert!(!is_reference_type_ref(&tuple_ty, &reg),
             "tuple → FALSE (inline mut-method writes slot)");

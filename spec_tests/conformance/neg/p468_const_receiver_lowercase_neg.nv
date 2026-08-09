@@ -1,0 +1,22 @@
+// EXPECT_COMPILE_ERROR E_CONST_NOT_MUT
+//
+// №468 follow-up (owner 2026-08-09): sibling of
+// `p468_const_receiver_uppercase_neg` -- a lowercase-named `const`
+// receiver parses as `ExprKind::Member{obj: Ident, name}`, NOT
+// `ExprKind::Path`, and reaches the check through a different branch of
+// `consume_walk_expr` in `compiler-codegen/src/types/mod.rs`. Both
+// shapes must be covered: without this fixture the Path-arm fix alone
+// would leave a lowercase `const n = 5; n.p468_inc(10)` free to take the
+// address of read-only const storage and write through it.
+module neg.p468_const_receiver_lowercase_neg
+
+fn int mut @p468_inc(by int) -> () {
+    @ += by
+}
+
+const n = 5
+
+test "mut-method call on a lowercase const receiver is rejected" {
+    n.p468_inc(10)
+    assert(true)
+}

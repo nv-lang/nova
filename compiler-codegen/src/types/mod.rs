@@ -1699,15 +1699,15 @@ fn check_module_impl(
     check_fluent_return(module, &mut errors);
     perf.mark("check_fluent_return");
 
-    // Plan 128 Ф.3: `fn <primitive> mut @method(...)` — E_PRIMITIVE_MUT_METHOD.
-    // Primitive types (int/str/bool/f64/...) — immutable by design
-    // (Plan 91 §«Nova-first»: scalars copy-by-value, no in-place
-    // mutation through receiver). Plan 134: ptr removed; *() = TypeRef::Pointer. Parser permits the form syntactically but
-    // codegen silently no-ops the mutation — caller sees no change. This
-    // pass rejects such declarations at type-check time so the misleading
-    // pattern fails fast.
-    check_primitive_mut_method(module, &mut errors);
-    perf.mark("check_primitive_mut_method");
+    // Plan 128 Ф.3 → RETIRED 2026-08-09 (owner decision, closes №468):
+    // `check_primitive_mut_method`/E_PRIMITIVE_MUT_METHOD used to reject
+    // `fn <primitive> mut @method(...)` because codegen passed the receiver
+    // by value and silently dropped the mutation — R5 (`02-types.md:16101`)
+    // says `mut @` is ALWAYS by-pointer regardless of size, so the ban was
+    // an implementation limitation promoted to a language rule instead of
+    // being fixed. `emit_c.rs::receiver_c_type`/`prepare_method_recv` now
+    // pass primitive `mut @` receivers by pointer like every other type —
+    // the form is legal and observably mutates the caller's binding.
 
     // Plan 73 (D131): consume-qualifier flow-sensitive check. Use-after-
     // consume и maybe-consumed (consume на части веток) → compile error.
@@ -38811,6 +38811,28 @@ impl<'a> ConsumeCtx<'a> {
     /// Best-effort тип выражения — только синтаксически очевидные формы.
     fn infer_value_type(&self, e: &Expr) -> Option<String> {
         match &e.kind {
+            // Owner fix 2026-08-09 (closes №468): bare primitive literals —
+            // the MOST syntactically obvious form this function's own doc
+            // asks for, yet previously absent. Before this fix `ro n = 5`
+            // left `var_types` without an entry for `n`, so the (type,
+            // method) registry lookup in the E_LOCAL_NOT_MUT/E_PARAM_NOT_MUT
+            // gate (and its new const sibling, E_CONST_NOT_MUT) silently
+            // found no type and skipped — harmless while primitives could
+            // never have a REGISTERED mut-method (E_PRIMITIVE_MUT_METHOD
+            // banned every declaration), now a real gap: `fn int mut
+            // @inc(...)` compiles and a `ro n = 5; n.inc(10)` call reached
+            // codegen unrejected (repro: `probe4_ro_local`, confirmed via
+            // the record-receiver sibling `probe7_record_ro_local` already
+            // firing E_LOCAL_NOT_MUT correctly — the gap was primitive-
+            // literal-specific, not a general check failure). Consume-
+            // obligation logic is unaffected: `is_must_consume_name` is
+            // always false for these leaf names, so this only ADDS
+            // information, no new consume-tracking behaviour.
+            ExprKind::IntLit(_) => Some("int".to_string()),
+            ExprKind::FloatLit(_) => Some("f64".to_string()),
+            ExprKind::BoolLit(_) => Some("bool".to_string()),
+            ExprKind::StrLit(_) => Some("str".to_string()),
+            ExprKind::CharLit(_) => Some("char".to_string()),
             // Конструктор `Type.new(...)` / `.with_capacity` / `.from` и т.п.
             ExprKind::Call { func, .. } => {
                 if let ExprKind::Path(parts) = &func.kind {
@@ -39812,86 +39834,6 @@ fn check_fluent_return(module: &Module, errors: &mut Vec<Diagnostic>) {
                 }
             }
         }
-    }
-}
-
-/// Plan 128 Ф.3: returns `true` iff `name` is the canonical name of a
-/// Nova primitive (leaf) type — one that cannot carry mut-receiver methods.
-///
-/// Coverage mirrors the prelude primitive set: integer family
-/// (`int`, signed `i8..i64`, unsigned `u8..u64`, `uint`), floats (`f32`,
-/// `f64`), `bool`, `char`, `str`, and unit (`()`, which appears as the
-/// canonical name `Unit`).
-///
-/// Plan 134: `ptr` removed from primitives — use `*()` (TypeRef::Pointer(Unit)).
-/// `*()` receivers are TypeRef::Pointer, not Named, so check_primitive_mut_method
-/// handles them via the TypeRef::Pointer arm, not via this leaf check.
-///
-/// Used by `check_primitive_mut_method` to flag declarations like
-/// `fn str mut @hack(...)` — the parser permits the form, but codegen
-/// silently no-ops the mutation; receiver-as-value primitives have no
-/// in-place semantics by D215/D226 design.
-fn is_primitive_leaf(name: &str) -> bool {
-    // Plan 133: usize/isize removed from primitives.
-    // Plan 134: ptr/nova_ptr removed — *() is TypeRef::Pointer, not Named leaf.
-    matches!(name,
-        "int" | "uint"
-        | "i8" | "i16" | "i32" | "i64"
-        | "u8" | "u16" | "u32" | "u64"
-        | "f32" | "f64"
-        | "bool" | "char" | "str"
-        | "Unit"
-    )
-}
-
-/// Plan 128 Ф.3: reject `fn <primitive> mut @method(...)` declarations.
-///
-/// Primitives are immutable by design (Plan 91 §«Nova-first»). A receiver
-/// of a primitive type is passed by value — the only place where `mut` on
-/// such a receiver could have meaning is in-place mutation of the caller's
-/// binding, which Nova does not support for scalars. The parser currently
-/// accepts the syntax, and codegen silently drops the mutation, so the
-/// method LOOKS like it works but produces no observable effect. This pass
-/// turns the silent footgun into a type-check error:
-///
-///   * `fn str mut @hack() => @ = "x"`           → E_PRIMITIVE_MUT_METHOD
-///   * `fn int mut @inc(by int) => @ = @ + by`   → E_PRIMITIVE_MUT_METHOD
-///   * `fn bool mut @flip() => @ = !@`           → E_PRIMITIVE_MUT_METHOD
-///
-/// Accepted (NOT flagged here):
-///
-///   * `fn str @len() -> int`                    — read-only method, no `mut`.
-///   * `fn UserType mut @method()`               — non-primitive receiver
-///     (record/named-tuple) — D215/D226 path handles mut-receiver pointer ABI.
-///
-/// Suggestion in the error message points users to the canonical
-/// alternative: write a pure function returning a new value
-/// (`fn name(x T) -> T`).
-fn check_primitive_mut_method(module: &Module, errors: &mut Vec<Diagnostic>) {
-    for item in &module.items {
-        let Item::Fn(f) = item else { continue; };
-        let Some(recv) = &f.receiver else { continue; };
-        // Only instance methods take `@`; static methods (`.`) can't carry
-        // `mut` on the receiver in the first place. Guard anyway in case
-        // future parser changes lift that restriction.
-        if recv.kind != ReceiverKind::Instance { continue; }
-        if !recv.mutable { continue; }
-        if !is_primitive_leaf(&recv.type_name) { continue; }
-        errors.push(Diagnostic::new(
-            format!(
-                "[E_PRIMITIVE_MUT_METHOD] primitive type `{ty}` cannot have \
-                 mut-methods (`fn {ty} mut @{name}(...)`): primitives are \
-                 immutable by design — receiver is passed by value, so \
-                 in-place mutation through `@` has no observable effect \
-                 on the caller. Use a pure function returning a new value \
-                 instead, e.g. `fn {name}(x {ty}) -> {ty}` (or a method \
-                 returning a new {ty}). See Plan 91 §«Nova-first», \
-                 Plan 128 Ф.3.",
-                ty = recv.type_name,
-                name = f.name,
-            ),
-            recv.span,
-        ));
     }
 }
 
@@ -43698,6 +43640,28 @@ fn walk_guarded_escape_expr_multi(
     to_disarm.into_iter().collect()
 }
 
+/// Owner fix 2026-08-09 (closes №468): best-effort primitive type name for
+/// a module-level `const NAME = expr` — used ONLY to gate the const-mut-
+/// method check below (`E_CONST_NOT_MUT`), not a general const-type
+/// resolver. An explicit `const NAME T = expr` annotation wins; otherwise
+/// falls back to classifying the literal RHS. `None` for anything else
+/// (non-primitive/non-literal const value) — sound as a false-negative:
+/// the check this feeds simply won't fire, same conservative posture as
+/// `recv_ty` being `None` in the sibling param/local checks above.
+fn const_primitive_type_name(c: &ConstDecl) -> Option<String> {
+    if let Some(TypeRef::Named { path, .. }) = &c.ty {
+        return path.last().cloned();
+    }
+    match &c.value.kind {
+        ExprKind::IntLit(_) => Some("int".to_string()),
+        ExprKind::FloatLit(_) => Some("f64".to_string()),
+        ExprKind::BoolLit(_) => Some("bool".to_string()),
+        ExprKind::StrLit(_) => Some("str".to_string()),
+        ExprKind::CharLit(_) => Some("char".to_string()),
+        _ => None,
+    }
+}
+
 fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic>) {
     match &e.kind {
         // ─── Листья ───
@@ -44055,6 +44019,66 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                                 }
                             }
                         }
+                        // Owner fix 2026-08-09 (closes №468): mut-method on a
+                        // module-level `const` → E_CONST_NOT_MUT. Neither
+                        // `param_mut` nor `local_mut` carries const names (a
+                        // const is neither a param nor a `let`/`mut` local),
+                        // so the two checks above silently skip it — before
+                        // this fix that was harmless because
+                        // E_PRIMITIVE_MUT_METHOD banned every primitive
+                        // mut-method declaration outright. Now that a real
+                        // by-pointer `fn <primitive> mut @method` exists,
+                        // `n.inc(10)` on `const n = 5` reaches codegen, which
+                        // takes the address of the const's C storage
+                        // (`static const nova_int`) and writes through it —
+                        // undefined behaviour (observed: access violation at
+                        // runtime, `probe3_const` repro). Reject at
+                        // type-check time instead, parallel to the param/
+                        // local checks (same registry, same builtin list).
+                        // NB: this arm only ever sees a LOWERCASE-named const
+                        // receiver — `CONST.method()` with an uppercase
+                        // identifier parses as `ExprKind::Path`, not `Member`
+                        // (confirmed via instrumentation), and needs the
+                        // sibling check in the `Path` arm below (same fix).
+                        if !ctx.param_mut.contains_key(&recv) && !ctx.local_mut.contains_key(&recv) {
+                            if let Some(c) = ctx.module.items.iter().find_map(|it| match it {
+                                Item::Const(c) if c.name == recv => Some(c),
+                                _ => None,
+                            }) {
+                                let recv_ty = const_primitive_type_name(c);
+                                let registered = recv_ty.as_ref()
+                                    .map(|rty| ctx.reg.mut_methods.contains(&(rty.clone(), method.clone())))
+                                    .unwrap_or(false);
+                                let has_ro_overload = recv_ty.as_ref()
+                                    .map(|rty| ctx.reg.ro_methods.contains(&(rty.clone(), method.clone())))
+                                    .unwrap_or(false);
+                                let builtin_mut_method = matches!(
+                                    method.as_str(),
+                                    "push" | "pop" | "append" | "append_zero" | "insert" | "remove"
+                                    | "clear" | "truncate" | "reserve" | "swap"
+                                    | "sort" | "sort_by" | "set" | "extend" | "extend_from"
+                                    | "copy_from" | "copy_within" | "shrink_to_fit" | "fill"
+                                    | "drain" | "dedup" | "reverse" | "shuffle"
+                                    | "as_mut_ptr"
+                                );
+                                if (registered && !has_ro_overload) || builtin_mut_method {
+                                    let ty_str = recv_ty.as_deref().unwrap_or("?");
+                                    errors.push(Diagnostic::new(
+                                        format!(
+                                            "[E_CONST_NOT_MUT] `const {}` не может быть receiver'ом \
+                                             mut-метода `{}` (тип `{}`): константы неизменяемы by \
+                                             design, вызов записал бы через указатель в read-only \
+                                             хранилище (UB/крэш в рантайме).",
+                                            recv, method, ty_str),
+                                        e.span,
+                                    ).with_note(
+                                        "сохрани значение в `mut`-локал перед вызовом mut-метода: \
+                                         `mut tmp = {const}; tmp.{method}(...)`."
+                                            .to_string(),
+                                    ));
+                                }
+                            }
+                        }
                         // consume-метод → receiver (весь alias-класс)
                         // потребляется.
                         if ctx.is_consume_method(&recv, method) {
@@ -44385,6 +44409,51 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                             .get(&(parts[0].clone(), parts[1].clone())).cloned()
                         {
                             ctx.consume_args(args, &idxs, e.span);
+                        }
+                        // Owner fix 2026-08-09 (closes №468): `CONST.method(...)`
+                        // — an UPPERCASE-named receiver (the conventional const
+                        // naming style) parses as `Path(["CONST","method"])`,
+                        // NOT `Member{obj: Ident, name}` — a completely
+                        // different AST shape from the sibling Ident-receiver
+                        // check in the `Member` arm above (which only ever
+                        // sees a lowercase-named const, e.g. `const n = 5`).
+                        // Both shapes need the same E_CONST_NOT_MUT guard:
+                        // `parts[0]` may name a module-level `const`, and a
+                        // real by-pointer `mut @` primitive method (this fix)
+                        // would take the address of its `static const` C
+                        // storage and write through it — UB/crash, exactly
+                        // the `N.inc(10)` repro this closes (`probe3_const`/
+                        // `probe3b_const_fn`; confirmed via debug instrumentation
+                        // that the Member-arm's Ident-receiver check, which this
+                        // mirrors, is simply unreached for uppercase names).
+                        if let Some(c) = ctx.module.items.iter().find_map(|it| match it {
+                            Item::Const(c) if c.name == parts[0] => Some(c),
+                            _ => None,
+                        }) {
+                            let recv_ty = const_primitive_type_name(c);
+                            let method = &parts[1];
+                            let registered = recv_ty.as_ref()
+                                .map(|rty| ctx.reg.mut_methods.contains(&(rty.clone(), method.clone())))
+                                .unwrap_or(false);
+                            let has_ro_overload = recv_ty.as_ref()
+                                .map(|rty| ctx.reg.ro_methods.contains(&(rty.clone(), method.clone())))
+                                .unwrap_or(false);
+                            if registered && !has_ro_overload {
+                                let ty_str = recv_ty.as_deref().unwrap_or("?");
+                                errors.push(Diagnostic::new(
+                                    format!(
+                                        "[E_CONST_NOT_MUT] `const {}` не может быть receiver'ом \
+                                         mut-метода `{}` (тип `{}`): константы неизменяемы by \
+                                         design, вызов записал бы через указатель в read-only \
+                                         хранилище (UB/крэш в рантайме).",
+                                        parts[0], method, ty_str),
+                                    e.span,
+                                ).with_note(
+                                    "сохрани значение в `mut`-локал перед вызовом mut-метода: \
+                                     `mut tmp = {const}; tmp.{method}(...)`."
+                                        .to_string(),
+                                ));
+                            }
                         }
                     }
                     if let Some(last) = parts.last() {
@@ -52123,240 +52192,6 @@ mod p248_mech_no_copy_tests {
         );
         // And the collapsed bool must ALSO see it (Rule 1/2 read this path).
         assert!(reg.type_is_consume(&named("Mixed"), &module));
-    }
-}
-
-#[cfg(test)]
-mod primitive_mut_method_tests {
-    //! Plan 128 Ф.3: `E_PRIMITIVE_MUT_METHOD` rejects `fn <primitive> mut
-    //! @method(...)` declarations. Parser permits the form; codegen would
-    //! silently no-op the mutation (primitive receiver passed by value).
-    //! Type-checker pass turns the silent footgun into a hard error.
-    //!
-    //! Coverage:
-    //!   1. `fn str  mut @hack`  → E_PRIMITIVE_MUT_METHOD (str).
-    //!   2. `fn int  mut @inc`   → E_PRIMITIVE_MUT_METHOD (int).
-    //!   3. `fn bool mut @flip`  → E_PRIMITIVE_MUT_METHOD (bool).
-    //!   4. `fn f64  mut @scale` → E_PRIMITIVE_MUT_METHOD (f64).
-    //!   5. `fn str      @len`        — accepted (ro method on primitive).
-    //!   6. `fn UserType mut @method` — accepted (non-primitive receiver).
-    //!
-    //! Tests work directly on the AST level via `is_primitive_leaf` +
-    //! `check_primitive_mut_method` to stay independent of parser/lexer
-    //! evolution. Receiver/FnDecl/Module are built by hand using
-    //! `Default` impls (`FnDecl: Default`, `FnBody: Default = External`),
-    //! mirroring the helper-construction pattern used by `name_res_tests`
-    //! and other in-mod test bundles.
-    use super::*;
-    use crate::ast::{FnBody, FnDecl, Item, Module, Receiver, ReceiverKind};
-    use crate::diag::Span;
-
-    fn dummy_span() -> Span {
-        Span { start: 0, end: 0, file_id: MAIN_FILE_ID }
-    }
-
-    fn make_recv(type_name: &str, mutable: bool, kind: ReceiverKind) -> Receiver {
-        Receiver {
-            type_name: type_name.to_string(),
-            generics: Vec::new(),
-            carrier_bounds: Vec::new(),
-            receiver_ty: None,
-            kind,
-            mutable,
-            consume: false,
-            span: dummy_span(),
-        }
-    }
-
-    fn make_method(name: &str, recv: Receiver) -> FnDecl {
-        FnDecl {
-            name: name.to_string(),
-            receiver: Some(recv),
-            body: FnBody::External,
-            span: dummy_span(),
-            ..Default::default()
-        }
-    }
-
-    fn make_module(fns: Vec<FnDecl>) -> Module {
-        Module {
-            name: vec!["test".to_string()],
-            imports: Vec::new(),
-            items: fns.into_iter().map(Item::Fn).collect(),
-            attrs: Vec::new(),
-            doc_attrs: Vec::new(),
-            span: dummy_span(),
-            peer_files: Vec::new(),
-            doc: None,
-            rebind_shadows: std::collections::HashMap::new(),
-            consume_reuse_spans: std::collections::HashSet::new(),
-        }
-    }
-
-    fn run_check(module: &Module) -> Vec<Diagnostic> {
-        let mut errors = Vec::new();
-        check_primitive_mut_method(module, &mut errors);
-        errors
-    }
-
-    fn assert_rejected(diags: &[Diagnostic], ty: &str, method: &str) {
-        assert_eq!(diags.len(), 1,
-            "expected exactly one E_PRIMITIVE_MUT_METHOD for `fn {} mut @{}`, \
-             got {} diags: {:#?}", ty, method, diags.len(), diags);
-        let msg = &diags[0].message;
-        assert!(msg.contains("E_PRIMITIVE_MUT_METHOD"),
-            "diag must carry E_PRIMITIVE_MUT_METHOD tag; got: {}", msg);
-        assert!(msg.contains(ty),
-            "diag must mention primitive name `{}`; got: {}", ty, msg);
-        assert!(msg.contains(method),
-            "diag must mention method name `{}`; got: {}", method, msg);
-        // Suggestion must point users to the pure-function alternative
-        // (`fn name(x T) -> T`), not silently leave them stuck.
-        assert!(msg.contains("pure function") || msg.contains("returning a new value"),
-            "diag must include the pure-function suggestion; got: {}", msg);
-    }
-
-    // ─── Negative cases: primitives reject mut-methods ────────────────────
-
-    #[test]
-    fn rejects_str_mut_method() {
-        let m = make_module(vec![make_method(
-            "hack",
-            make_recv("str", true, ReceiverKind::Instance),
-        )]);
-        let diags = run_check(&m);
-        assert_rejected(&diags, "str", "hack");
-    }
-
-    #[test]
-    fn rejects_int_mut_method() {
-        let m = make_module(vec![make_method(
-            "inc",
-            make_recv("int", true, ReceiverKind::Instance),
-        )]);
-        let diags = run_check(&m);
-        assert_rejected(&diags, "int", "inc");
-    }
-
-    #[test]
-    fn rejects_bool_mut_method() {
-        let m = make_module(vec![make_method(
-            "flip",
-            make_recv("bool", true, ReceiverKind::Instance),
-        )]);
-        let diags = run_check(&m);
-        assert_rejected(&diags, "bool", "flip");
-    }
-
-    #[test]
-    fn rejects_f64_mut_method() {
-        let m = make_module(vec![make_method(
-            "scale",
-            make_recv("f64", true, ReceiverKind::Instance),
-        )]);
-        let diags = run_check(&m);
-        assert_rejected(&diags, "f64", "scale");
-    }
-
-    // ─── Positive cases: legal method declarations pass through ───────────
-
-    #[test]
-    fn accepts_str_ro_method() {
-        // `fn str @len() -> int` — no `mut` on receiver, just an instance
-        // method on a primitive. Plan 91 explicitly permits this shape
-        // (see nova_tests/syntax/methods_on_primitives.nv).
-        let m = make_module(vec![make_method(
-            "len",
-            make_recv("str", false, ReceiverKind::Instance),
-        )]);
-        let diags = run_check(&m);
-        assert!(diags.is_empty(),
-            "ro instance method on primitive must NOT trigger \
-             E_PRIMITIVE_MUT_METHOD; got: {:#?}", diags);
-    }
-
-    #[test]
-    fn accepts_user_type_mut_method() {
-        // `fn UserType mut @method()` — non-primitive receiver. D215/D226
-        // path is responsible for the pointer-ABI plumbing; this pass
-        // must stay out of its way.
-        let m = make_module(vec![make_method(
-            "method",
-            make_recv("UserType", true, ReceiverKind::Instance),
-        )]);
-        let diags = run_check(&m);
-        assert!(diags.is_empty(),
-            "mut-receiver method on user-defined type must NOT trigger \
-             E_PRIMITIVE_MUT_METHOD; got: {:#?}", diags);
-    }
-
-    // ─── is_primitive_leaf classifier — coverage of the full primitive set ─
-
-    #[test]
-    fn is_primitive_leaf_covers_full_primitive_set() {
-        // Sweep the entire primitive family — any gap here = silent escape
-        // hatch for the mut-method footgun.
-        // Plan 133: usize/isize removed from primitives.
-        // Plan 134: "ptr" and "nova_ptr" removed from primitive leaf set.
-        for ty in &[
-            "int", "uint",
-            "i8", "i16", "i32", "i64",
-            "u8", "u16", "u32", "u64",
-            "f32", "f64",
-            "bool", "char", "str",
-            "Unit",
-        ] {
-            assert!(is_primitive_leaf(ty),
-                "expected `{}` to be classified as primitive leaf", ty);
-        }
-    }
-
-    #[test]
-    fn is_primitive_leaf_rejects_user_and_generic_names() {
-        for ty in &["UserType", "T", "Option", "Result", "List", "Map",
-                    "INT", "Str", "Bool", ""] {
-            assert!(!is_primitive_leaf(ty),
-                "expected `{}` to NOT be classified as primitive leaf", ty);
-        }
-    }
-
-    // ─── Edge cases ───────────────────────────────────────────────────────
-
-    #[test]
-    fn ignores_static_method_even_if_mutable_flag_set() {
-        // Static methods (`fn T.foo()`) can't legitimately carry `mut` on
-        // the receiver — there's no receiver value. Guard against accidental
-        // future parser changes that might leak the flag onto Static; the
-        // check should simply not fire (other passes handle the structural
-        // error).
-        let m = make_module(vec![make_method(
-            "ctor",
-            make_recv("str", true, ReceiverKind::Static),
-        )]);
-        let diags = run_check(&m);
-        assert!(diags.is_empty(),
-            "static-kind receiver must be skipped even if `mutable` is set; \
-             got: {:#?}", diags);
-    }
-
-    #[test]
-    fn reports_each_offending_method_independently() {
-        // Two illegal methods in the same module must each get their own
-        // diagnostic — no dedup/coalesce.
-        let m = make_module(vec![
-            make_method("hack",  make_recv("str", true, ReceiverKind::Instance)),
-            make_method("inc",   make_recv("int", true, ReceiverKind::Instance)),
-            make_method("len",   make_recv("str", false, ReceiverKind::Instance)),
-        ]);
-        let diags = run_check(&m);
-        assert_eq!(diags.len(), 2,
-            "expected 2 diagnostics (str-hack + int-inc), str-len accepted; \
-             got: {:#?}", diags);
-        let joined = diags.iter().map(|d| d.message.as_str())
-            .collect::<Vec<_>>().join("\n");
-        assert!(joined.contains("hack"), "missing hack diag: {}", joined);
-        assert!(joined.contains("inc"),  "missing inc diag: {}", joined);
-        assert!(!joined.contains("len"), "len must NOT be flagged: {}", joined);
     }
 }
 

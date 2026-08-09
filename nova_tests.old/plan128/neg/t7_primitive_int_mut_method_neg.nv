@@ -1,17 +1,18 @@
-// Plan 128 Ф.4 T7 — primitive `int` cannot have mut-methods.
-//
-// EXPECT_COMPILE_ERROR E_PRIMITIVE_MUT_METHOD
-//
-// Same rationale as T6: `int` is a scalar, by-value receiver, no
-// observable in-place mutation possible.
+// RETRACTED 2026-08-09 (closes №468, owner decision 2026-08-08/09):
+// `E_PRIMITIVE_MUT_METHOD` (Plan 128 Ф.3) is RETIRED — see T6's header
+// for the full rationale. `int` mut @ methods now pass the receiver
+// by-pointer (R5) and the mutation IS observable — `assert(n == 15)`
+// below was always the intended behaviour, just unreachable under the
+// old ban. Superseded by
+// `spec_tests/conformance/standalone/p468_primitive_mut_method.nv`.
 
 module neg.t7_primitive_int_mut_method_neg
 
 fn int mut @inc(by int) -> () {
-    @ = @ + by
+    @ += by
 }
 
-test "should not compile: fn int mut @inc" {
+test "fn int mut @inc observably mutates the caller's binding" {
     mut n = 5
     n.inc(10)
     assert(n == 15)
