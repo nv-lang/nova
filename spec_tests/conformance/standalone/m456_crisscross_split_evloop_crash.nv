@@ -4,7 +4,7 @@
 // split-stream pumping. Two REAL TCP connections, `into_split()` on both,
 // two pump fibers crisscrossing the halves (fiber A: read conn-1 -> write
 // conn-2; fiber B: read conn-2 -> write conn-1) — no bridge, no SOCKS5.
-// Mirrors the crisscross-pump SHAPE of `examples/_wip/http_socks5_bridge`'s
+// Mirrors the crisscross-pump SHAPE of `examples/_wip/http_proxy_chain`'s
 // `pipe_bidirectional`/`pump` (spawn-capture syntax `spawn consume a, b {}`,
 // helper fn with its OWN `supervised { }` + two sibling spawns, called from
 // a function body rather than lexically nested inside another `spawn {}` —

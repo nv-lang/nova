@@ -1353,7 +1353,7 @@ void net_tcp_close(void* sv) {
      * auto-`@cleanup` at fiber-body-exit fires UNCONDITIONALLY even when
      * the body already explicitly called `.close()` on that half earlier
      * (a legitimate, existing pattern — see `examples/_wip/
-     * http_socks5_bridge/main.nv`'s `pipe_bidirectional`/`pump`). Each
+     * http_proxy_chain/main.nv`'s `pipe_bidirectional`/`pump`). Each
      * split half then drives 2 calls into this function instead of 1 (4
      * per underlying stream instead of 2): the first of the pair still
      * early-returns via `split_refcount`/loses the `stage` CAS exactly as

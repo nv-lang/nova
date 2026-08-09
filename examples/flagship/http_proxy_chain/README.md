@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
-# `http_socks5_bridge` — a local HTTP-to-SOCKS5 bridge
+# `http_proxy_chain` — a local HTTP-to-SOCKS5 bridge
 
 `main.nv` here is Plan 249's HTTP-to-SOCKS5 bridge
 (`docs/plans/249-socks5-http-bridge-example.md`): some SOCKS5 proxies
@@ -68,7 +68,7 @@ scheme/path, RFC 7230 §5.3.3).
 
 ```sh
 SOCKS5_PROXY=proxy.example.com:1080 SOCKS5_USER=me SOCKS5_PASS=secret \
-  nova build examples/flagship/http_socks5_bridge/main.nv -o bridge && ./bridge 8899
+  nova build examples/flagship/http_proxy_chain/main.nv -o bridge && ./bridge 8899
 # Point a browser's HTTP *and* HTTPS proxy settings at 127.0.0.1:8899.
 ```
 
@@ -99,12 +99,12 @@ Credentials live in a git-ignored `.env` next to this README; copy the
 committed template and fill it in:
 
 ```sh
-cp examples/flagship/http_socks5_bridge/.env.example \
-   examples/flagship/http_socks5_bridge/.env
-$EDITOR examples/flagship/http_socks5_bridge/.env
+cp examples/flagship/http_proxy_chain/.env.example \
+   examples/flagship/http_proxy_chain/.env
+$EDITOR examples/flagship/http_proxy_chain/.env
 
-set -a && . examples/flagship/http_socks5_bridge/.env && set +a
-nova build examples/flagship/http_socks5_bridge/main.nv --strict-effects -o bridge
+set -a && . examples/flagship/http_proxy_chain/.env && set +a
+nova build examples/flagship/http_proxy_chain/main.nv --strict-effects -o bridge
 ./bridge "${LISTEN_PORT:-8899}"
 ```
 

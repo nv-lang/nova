@@ -77,6 +77,6 @@ test_out.txt
 *.ilk
 scratch38/
 
-# Local secrets for the manual smoke test of examples/flagship/http_socks5_bridge
+# Local secrets for the manual smoke test of examples/flagship/http_proxy_chain
 # (plan 249 §5). The committed template is `.env.example`.
 .env

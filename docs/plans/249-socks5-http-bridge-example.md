@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
-# План 249 — пакет `nova-socks` + пример `examples/flagship/http_socks5_bridge/`
+# План 249 — пакет `nova-socks` + пример `examples/flagship/http_proxy_chain/`
 
 **Статус:** 🚧 ЧАСТИЧНО ИСПОЛНЕН. Ф.П/Ф.1/Ф.4 ГОТОВЫ (пакет `nova-socks`
 опубликован на трёх зеркалах), Ф.0 готова (half-close с реальным FIN, №458).
@@ -31,7 +31,7 @@ FIN — был реально сломан, зафикшено `8ea6472b9`; ме
 УСТАРЕЛ, актуальный статус и ДВА НОВЫХ блокера (нет тега `nova-socks`;
 воспроизводимый native-крash `pipe_bidirectional` в
 `nova_rt/libuv/src/win/core.c:694`) — в §4 «Ф.2» ниже и
-`examples/flagship/http_socks5_bridge/README.md`.**
+`examples/flagship/http_proxy_chain/README.md`.**
 
 **Статус: ❌ НЕ ИСПОЛНЕН — приёмочный смоук ПРОВАЛЕН 2026-08-09 на ЖИВОМ прокси.**
 Прежняя пометка «✅ ИСПОЛНЕН» (интегратор, того же дня) была преждевременной:
@@ -231,7 +231,7 @@ Windows принимают только **HTTP-прокси** и не умеют
      принципу, обоснование в манифесте `nova-http`), поэтому std отпадает.
      SOCKS5 проксирует ЛЮБОЙ TCP, не только HTTP — класть в `nova-http` значило бы
      тащить весь HTTP тому, кому нужен голый туннель.
-  2. **Пример** — под-папка `examples/flagship/http_socks5_bridge/` (репа `nova`):
+  2. **Пример** — под-папка `examples/flagship/http_proxy_chain/` (репа `nova`):
      `main.nv` + `README.md`/`README.ru.md`; зависит от пакета `nova-socks`.
      Соседние `echo_client.nv`/`echo_server.nv` остаются одиночными файлами —
      прецедент оформления README, не структуры. **НЕ** `nova-polaris/examples/`.
@@ -480,8 +480,8 @@ fn handle_client(consume client TcpStream, cfg Config) Net Time -> () {
   CONNECT-путь/`pipe_bidirectional` написаны, компилируются, вручную
   smoke-тестированы (`config`-валидация, accept, `501`/`502`/`431` —
   подтверждены на реальном бинаре через curl/PowerShell-клиент). Файл лежит
-  в `examples/flagship/http_socks5_bridge/main.nv` (НЕ в
-  `examples/flagship/http_socks5_bridge/`, НЕ подключён в `examples/nova.toml`)
+  в `examples/flagship/http_proxy_chain/main.nv` (НЕ в
+  `examples/flagship/http_proxy_chain/`, НЕ подключён в `examples/nova.toml`)
   — **ДВА НОВЫХ блокера**, оба найдены этим окном, ни один не был предвиден
   планом:
   1. **У `nova-socks` нет опубликованного тега.** `socks = { git = …,
@@ -510,7 +510,7 @@ fn handle_client(consume client TcpStream, cfg Config) Net Time -> () {
      C-крашем) — новая, отдельная находка, вероятно класс Vela/M:N
      concurrency (`docs/dev/mn-coding-conventions.md`), не для этого окна.
   Детали, дословный вывод ассерта, ссылки на репро-варианты —
-  `examples/flagship/http_socks5_bridge/README.md`. **Механизм терминации
+  `examples/flagship/http_proxy_chain/README.md`. **Механизм терминации
   файбера-2 (Ф.0-б: разделяемый `CancelToken`, НЕ `supervised(timeout:)`) —
   ОТДЕЛЬНО ПОДТВЕРЖДЁН РАБОЧИМ** тремя изолированными пробоями БЕЗ
   реального I/O-потока данных через relay (только блокировка+cancel); крash
