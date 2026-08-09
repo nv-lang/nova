@@ -446,6 +446,45 @@ step "lint W_LEADING_BINOP_CONTINUATION по nova_tests (как в CI)"
 # краснеет по чужому долгу и перестаёт быть сигналом. Записано в
 # docs/dev/promts/integrator-queue.md.
 
+step "пакетные репозитории (план 261 Ф.3 — №524)"
+# Список — ФАЙЛОМ, общим с CI. Перечисление в скрипте
+# протекает (№509).
+PKG_LIST="$ROOT/scripts/guards/package-repos.txt"
+if [ ! -f "$PKG_LIST" ]; then
+    fail "нет списка пакетов $PKG_LIST (план 261 Ф.0)"
+else
+    # Окружение задаётся ЯВНО: установка компилятора НЕ
+    # самодостаточна — он выводит пути к std и рантайму из
+    # каталога проекта (№530). Когда №530 закроется — снять
+    # эти три строки и убедиться, что шаг всё ещё зелёный.
+    PKG_ENV_STD="$ROOT/std/src"
+    PKG_ENV_RT="$ROOT/compiler-codegen/nova_rt"
+    PKG_ENV_CG="$ROOT/compiler-codegen"
+    PKG_FAILED=""
+    PKG_N=0
+    tr -d "$(printf '\r')" < "$PKG_LIST" > "${TMPDIR:-/tmp}/gate_pkg_list_$$.txt"
+    while read -r _pname _ppath _pcmd; do
+        case "$_pname" in ''|\#*) continue ;; esac
+        [ -d "$_ppath" ] || { echo "пакеты :: НЕТ КАТАЛОГА $_pname ($_ppath)"; PKG_FAILED="$PKG_FAILED $_pname"; continue; }
+        PKG_N=$((PKG_N + 1))
+        _plog="${TMPDIR:-/tmp}/gate_pkg_$$.log"
+        ( cd "$_ppath" \
+          && NOVA_STD_PATH="$PKG_ENV_STD" NOVA_RT_DIR="$PKG_ENV_RT" NOVA_CG_INCLUDE="$PKG_ENV_CG" \
+             "$NOVA" test src ) >"$_plog" 2>&1
+        if [ $? -eq 0 ]; then
+            echo "пакеты ok :: $_pname"
+        else
+            echo "пакеты FAIL :: $_pname"
+            grep -m2 -E "PASS:|error" "$_plog" | sed 's/^/    /'
+            PKG_FAILED="$PKG_FAILED $_pname"
+        fi
+        rm -f "$_plog"
+    done < "${TMPDIR:-/tmp}/gate_pkg_list_$$.txt"
+    rm -f "${TMPDIR:-/tmp}/gate_pkg_list_$$.txt"
+    echo "пакеты :: проверено $PKG_N"
+    [ -z "$PKG_FAILED" ] || fail "пакетные репозитории красные:$PKG_FAILED"
+fi
+
 step "D-number uniqueness"
 # 2026-07-30: послабление под D431 СНЯТО — коллизия закрыта перенумерацией
 # FixedArray-блока в D440 (реестр 221.1 №123).

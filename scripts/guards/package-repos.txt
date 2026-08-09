@@ -4,7 +4,13 @@
 # надо помнить и дописывать, протекает (реестр 221.1 №509 — правило игнорирования
 # .c велось перечислением каталогов и молча пропустило 172 файла).
 #
-# Формат строки:  <имя> <путь> <команда тестов>
+# Формат строки:  <имя> <путь>
+#
+# Команды тестов в списке НЕТ намеренно. Шаг гейта задаёт окружение явно
+# (NOVA_STD_PATH / NOVA_RT_DIR / NOVA_CG_INCLUDE — №530) и зовёт компилятор
+# одинаково для всех: `nova test src`. Обёртка `nova.sh` при этом не нужна,
+# и расхождение «у nova-http обёртки нет» перестаёт быть долгом — оно было
+# следствием того, что окружение задавала обёртка, а не вызывающий.
 # Строки с # и пустые пропускаются.
 #
 # Отбор сделан по признакам, а не по имени: каталог с `.git`-КАТАЛОГОМ (не
@@ -20,12 +26,10 @@
 #   tree-sitter-nova              — грамматика для редакторов, своя сборка
 #   www, www.nv-lang.ru           — сайт, компилятором не собирается
 #
-# У nova-http нет `nova.sh` — вызывается напрямую бинарём. Это расхождение
-# между пакетами само по себе долг: команда запуска должна быть одинаковой.
 
-nova-bignum    d:/Sources/nv-lang/nova-bignum    ./nova.sh test src
-nova-compress  d:/Sources/nv-lang/nova-compress  ./nova.sh test src
-nova-http      d:/Sources/nv-lang/nova-http      NOVA test src
-nova-polaris   d:/Sources/nv-lang/nova-polaris   ./nova.sh test src
-nova-socks     d:/Sources/nv-lang/nova-socks     ./nova.sh test src
-nova-tls       d:/Sources/nv-lang/nova-tls       ./nova.sh test src
+nova-bignum    d:/Sources/nv-lang/nova-bignum
+nova-compress  d:/Sources/nv-lang/nova-compress
+nova-http      d:/Sources/nv-lang/nova-http
+nova-polaris   d:/Sources/nv-lang/nova-polaris
+nova-socks     d:/Sources/nv-lang/nova-socks
+nova-tls       d:/Sources/nv-lang/nova-tls
