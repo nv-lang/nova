@@ -113,6 +113,10 @@ pub fn stats_line() -> String {
     } else {
         "n/a".to_string()
     };
+    let n_dirs = map_len(&DIRS);
+    let n_head = map_len(&HEADERS);
+    let n_full = map_len(&FILES);
+    let n_canon = map_len(&CANON);
     format!(
         "\n===== source_index (план 252 Ф.2) =====\n\
          режим снимка                      : {}\n\
@@ -122,10 +126,22 @@ pub fn stats_line() -> String {
          stat (симлинки + проба регистра)  : {}\n\
          ВСЕГО обращений к ФС              : {}\n\
          разрешений импорта                : {}\n\
-         обращений к ФС НА ИМПОРТ          : {}\n",
+         обращений к ФС НА ИМПОРТ          : {}\n\
+         в индексе: каталогов              : {}\n\
+         в индексе: заголовков             : {}\n\
+         в индексе: файлов целиком         : {}\n\
+         в индексе: канонических путей     : {}\n",
         if on() { "включён" } else { "ВЫКЛЮЧЕН (сквозной проход)" },
-        rd, rf, cn, st, total, imports, per_import
+        rd, rf, cn, st, total, imports, per_import,
+        n_dirs, n_head, n_full, n_canon
     )
+}
+
+fn map_len<T: 'static + Send>(cell: &'static OnceLock<Vec<Mutex<HashMap<PathBuf, T>>>>) -> usize {
+    match cell.get() {
+        Some(sh) => sh.iter().map(|s| s.lock().map(|g| g.len()).unwrap_or(0)).sum(),
+        None => 0,
+    }
 }
 
 // ─── Хранилище ───────────────────────────────────────────────────────────
@@ -342,20 +358,26 @@ fn build_dir_index(dir: &Path) -> DirIndex {
     }
 }
 
+/// **Одна работа на ключ.** Замок шарда держится НА ВРЕМЯ чтения, а не
+/// только на время вставки. Иначе 16 воркеров `nova test`, стартуя
+/// одновременно, промахиваются мимо пустой карты каждый сам и читают один и
+/// тот же каталог по 3-4 раза — замерено счётчиком: 238 `read_dir` на 87
+/// каталогов. Работы это не портило, но обращения к ФС множило, а мерило
+/// Ф.2 — именно они. Вложенных обращений под этим замком нет (только вызовы
+/// `std::fs`), поэтому взаимоблокировка невозможна; шардов 32.
 fn dir_index(dir: &Path) -> Arc<DirIndex> {
     let sh = &shards(&DIRS)[shard_of(dir)];
-    if let Ok(g) = sh.lock() {
-        if let Some(v) = g.get(dir) {
-            return Arc::clone(v);
+    match sh.lock() {
+        Ok(mut g) => {
+            if let Some(v) = g.get(dir) {
+                return Arc::clone(v);
+            }
+            let built = Arc::new(build_dir_index(dir));
+            g.insert(dir.to_path_buf(), Arc::clone(&built));
+            built
         }
+        Err(_) => Arc::new(build_dir_index(dir)),
     }
-    let built = Arc::new(build_dir_index(dir));
-    if let Ok(mut g) = sh.lock() {
-        // Гонка двух потоков на один каталог: победитель уже в карте —
-        // отдаём его, чтобы `Arc` был общим (содержимое идентично).
-        return Arc::clone(g.entry(dir.to_path_buf()).or_insert(built));
-    }
-    built
 }
 
 /// Родитель для поиска по имени. Пустой родитель (`"a.nv"`) — текущий каталог.
@@ -478,18 +500,23 @@ pub fn file_text(path: &Path) -> Option<Arc<String>> {
         FS_READ_FILE.fetch_add(1, Ordering::Relaxed);
         return std::fs::read_to_string(path).ok().map(Arc::new);
     }
+    // Одна работа на ключ — см. `dir_index`.
     let sh = &shards(&FILES)[shard_of(path)];
-    if let Ok(g) = sh.lock() {
-        if let Some(v) = g.get(path) {
-            return v.clone();
+    match sh.lock() {
+        Ok(mut g) => {
+            if let Some(v) = g.get(path) {
+                return v.clone();
+            }
+            FS_READ_FILE.fetch_add(1, Ordering::Relaxed);
+            let text = std::fs::read_to_string(path).ok().map(Arc::new);
+            g.insert(path.to_path_buf(), text.clone());
+            text
+        }
+        Err(_) => {
+            FS_READ_FILE.fetch_add(1, Ordering::Relaxed);
+            std::fs::read_to_string(path).ok().map(Arc::new)
         }
     }
-    FS_READ_FILE.fetch_add(1, Ordering::Relaxed);
-    let text = std::fs::read_to_string(path).ok().map(Arc::new);
-    if let Ok(mut g) = sh.lock() {
-        g.insert(path.to_path_buf(), text.clone());
-    }
-    text
 }
 
 /// Сколько байт файла достаточно, чтобы увидеть объявление `module`.
@@ -511,13 +538,20 @@ const HEADER_BYTES: usize = 64 * 1024;
 /// доказуемо, а не «на практике хватает».
 pub fn header_text(path: &Path) -> Option<(Arc<String>, bool)> {
     use std::io::Read;
-    if on() {
-        if let Ok(g) = shards(&HEADERS)[shard_of(path)].lock() {
-            if let Some(v) = g.get(path) {
-                return v.clone();
+    // Одна работа на ключ — см. `dir_index`.
+    let guard = if on() {
+        match shards(&HEADERS)[shard_of(path)].lock() {
+            Ok(mut g) => {
+                if let Some(v) = g.get(path) {
+                    return v.clone();
+                }
+                Some(g)
             }
+            Err(_) => None,
         }
-    }
+    } else {
+        None
+    };
     FS_READ_FILE.fetch_add(1, Ordering::Relaxed);
     let res = (|| {
         let mut f = std::fs::File::open(path).ok()?;
@@ -547,10 +581,8 @@ pub fn header_text(path: &Path) -> Option<(Arc<String>, bool)> {
         };
         Some((Arc::new(s), truncated))
     })();
-    if on() {
-        if let Ok(mut g) = shards(&HEADERS)[shard_of(path)].lock() {
-            g.insert(path.to_path_buf(), res.clone());
-        }
+    if let Some(mut g) = guard {
+        g.insert(path.to_path_buf(), res.clone());
     }
     res
 }
@@ -561,18 +593,23 @@ pub fn canonicalize(path: &Path) -> Option<PathBuf> {
         FS_CANON.fetch_add(1, Ordering::Relaxed);
         return std::fs::canonicalize(path).ok();
     }
+    // Одна работа на ключ — см. `dir_index`.
     let sh = &shards(&CANON)[shard_of(path)];
-    if let Ok(g) = sh.lock() {
-        if let Some(v) = g.get(path) {
-            return v.clone();
+    match sh.lock() {
+        Ok(mut g) => {
+            if let Some(v) = g.get(path) {
+                return v.clone();
+            }
+            FS_CANON.fetch_add(1, Ordering::Relaxed);
+            let canon = std::fs::canonicalize(path).ok();
+            g.insert(path.to_path_buf(), canon.clone());
+            canon
+        }
+        Err(_) => {
+            FS_CANON.fetch_add(1, Ordering::Relaxed);
+            std::fs::canonicalize(path).ok()
         }
     }
-    FS_CANON.fetch_add(1, Ordering::Relaxed);
-    let canon = std::fs::canonicalize(path).ok();
-    if let Ok(mut g) = sh.lock() {
-        g.insert(path.to_path_buf(), canon.clone());
-    }
-    canon
 }
 
 /// Вывод, зависящий только от содержимого каталога (объявления `module`
