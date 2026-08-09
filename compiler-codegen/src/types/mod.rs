@@ -6535,6 +6535,63 @@ impl<'a> TypeCheckCtx<'a> {
                     ),
                     td.span,
                 ));
+            } else {
+                // №465 (D-amendment, [M-124.8-zero-on-move-auto-inject] V2):
+                // auto-inject only fires at consume-tracked call sites (D432
+                // §4 — receiver-consuming-call/consume-param-arg/bare
+                // consume-return, keyed off `consume_receiver_methods`/
+                // `*_consume_param_positions`, which are themselves keyed
+                // off `consume`). A `#zero_on_move` type without `consume`
+                // has NO tracked ownership-transfer point to hook into — it
+                // would stay the exact silent no-op #465 reported, just
+                // narrower. Require `consume` explicitly rather than let it
+                // compile to an inert attribute.
+                if !td.consume {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E_ZERO_ON_MOVE_REQUIRES_CONSUME] `#zero_on_move` on \
+                             `{}` has no effect without `consume` — the \
+                             auto-inject hooks into consume-tracked ownership- \
+                             transfer sites only (D432 §4); a non-`consume` \
+                             type has none. Add `consume` to `{}`'s \
+                             declaration. Plan 124.8 [M-124.8-zero-on-move-auto-inject].",
+                            td.name, td.name
+                        ),
+                        td.span,
+                    ));
+                }
+                // №465 (D-amendment): heap-allocated Record rejected —
+                // Nova's ownership-transfer for `AllocKind::Heap` records is
+                // pointer-ALIASING (the moved-to binding and the moved-from
+                // binding reference the IDENTICAL heap block; `consume`
+                // never deep-copies a heap record). Zeroing the pointee at a
+                // consume call site would zero the value for the NEW owner
+                // too — the same memory, not a stale copy. Only genuine
+                // copy-semantics storage (value record / named tuple /
+                // newtype) can be safely auto-zeroed on move. See
+                // spec/decisions/02-types.md D-amendment for #465 for the
+                // full analysis (probed empirically via generated-C
+                // inspection, scratch465/probe1-3.nv).
+                if let TypeDeclKind::Record(_) = &td.kind {
+                    if td.allocation == AllocKind::Heap {
+                        errors.push(Diagnostic::new(
+                            format!(
+                                "[E_ZERO_ON_MOVE_ALIASED_STORAGE] `#zero_on_move` \
+                                 cannot be applied to `{}` — it is a heap-allocated \
+                                 record (`type {} {{ ... }}`, no `value` modifier). \
+                                 Ownership transfer for heap records is pointer- \
+                                 aliasing, not a byte copy: zeroing the storage \
+                                 after a move would corrupt the value for the new \
+                                 owner (same memory). Only `value`-allocated \
+                                 records, named tuples, and newtypes (byte-copy \
+                                 storage) support `#zero_on_move`. Plan 124.8 \
+                                 [M-124.8-zero-on-move-auto-inject].",
+                                td.name, td.name
+                            ),
+                            td.span,
+                        ));
+                    }
+                }
             }
         }
         // Q-infinite-value-type (D280 §4): genuinely-infinite VALUE types —
