@@ -58,4 +58,21 @@ without a `#zero_on_move` declaration, and grep confirms none exists in
 std/src).
 
 === concurrency + net (targeted, per task brief) ===
-PENDING
+concurrency (nova test std/src/concurrency): PASS: 7  FAIL: 0  SKIP: 6 — clean.
+net (nova test std/src/net): PASS: 0  FAIL: 1  SKIP: 3
+  CC-FAIL std/src/net/addr — PRE-EXISTING, unrelated to #465: C type
+  mismatch `initializing 'nova_unit' with an expression of incompatible
+  type 'NovaRes_nova_int_NovaValue_IoError *'` (Result<..,IoError> vs
+  nova_unit) — SAME error text/line (addr.c:20708) as in the whole-std run
+  above. `std/src/net` is one folder-module (co-equal files compiled as a
+  single unit), so addr.nv's pre-existing compile error cascades to fail
+  the WHOLE net module compile, blocking every net test (split/tcp/udp)
+  from running in this targeted invocation — not something #465 touches
+  (addr.nv has no consume/value-record/zero_on_move machinery in it) and
+  not something this window's scope covers fixing (separate pre-existing
+  defect). Concurrency-relevant conclusion for #465 specifically: `Mutex`/
+  `AtomicInt`/etc (std/src/runtime/sync.nv, exercised via
+  std/src/concurrency + spec_tests/conformance's guard_cross_scope_
+  transfer.nv/d432_auto_cleanup_hybrid_c.nv, both green in the neg/pos
+  batches above) never reach the new auto-inject code at all — see the
+  named per-primitive risk breakdown in the final report.
