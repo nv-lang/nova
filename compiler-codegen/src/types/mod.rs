@@ -13364,11 +13364,16 @@ impl<'a> TypeCheckCtx<'a> {
         let fn_generics = self.current_fn_generics.borrow();
         let gp = fn_generics.iter().find(|g| g.name == param_name)?;
         for bound in &gp.bounds {
-            let TypeRef::Named { path: bpath, generics: bargs, .. } = bound else { continue };
+            let TypeRef::Named { path: bpath, generics: bargs, span: bspan } = bound else { continue };
             if bpath.len() != 1 {
                 continue;
             }
-            let Some(td) = self.types.get(bpath[0].as_str()) else { continue };
+            // №514 fix: collision-aware lookup — see the sibling
+            // `resolve_generic_bound_receiver_method`'s identical fix for the
+            // full root-cause (a bound name like `Write` colliding across
+            // modules; the collision-blind `self.types.get` silently picked
+            // whichever same-named decl landed LAST in merge order).
+            let Some(td) = self.types_get_for_file(bpath[0].as_str(), bspan.file_id) else { continue };
             let TypeDeclKind::Protocol { methods, .. } = &td.kind else { continue };
             let Some(m) = methods.iter().find(|m| {
                 m.name == method || m.name.trim_start_matches('@') == method
@@ -21942,11 +21947,29 @@ impl<'a> TypeCheckCtx<'a> {
         }
         let gp = gs.get(path[0].as_str())?;
         for bound in &gp.bounds {
-            let TypeRef::Named { path: bpath, generics: bargs, .. } = bound else { continue };
+            let TypeRef::Named { path: bpath, generics: bargs, span: bspan } = bound else { continue };
             if bpath.len() != 1 {
                 continue;
             }
-            let Some(td) = self.types.get(bpath[0].as_str()) else { continue };
+            // №514 fix: a bound name like `Write` can collide across modules
+            // (`std.io.Write` — byte-sink, `Result`-returning — vs
+            // `std.prelude.protocols.Write` — text-sink, `()`-returning; same
+            // collision class as `[M-fmt-write-protocol-collision-cycle-adjacent]`,
+            // `file_local_types`'s own doc a few hundred lines above). The bare
+            // `self.types.get(name)` global slot silently picks whichever same-
+            // named decl landed LAST in the merged transitive-import order —
+            // observed live: `write_all[W Write]`'s own bound resolved to the
+            // WRONG `Write` (the prelude text-sink, `-> ()`), so `w.write(rest)`
+            // used as a match scrutinee got typed `nova_unit` instead of
+            // `Result[int, IoError]` — invalid C at the mono call site
+            // (`nova_unit tmp = Nova_TcpStream_method_write(...)`). Resolve via
+            // the collision-aware `types_get_for_file`, keyed by the BOUND's own
+            // declaration file (`bspan.file_id` — the file that WROTE `[W Write]`,
+            // where the intended `Write` is unambiguously in scope, imported or
+            // same-module) — mirrors every other bound-name resolution in this
+            // checker (`f3_check_member_ctx` et al.) instead of the collision-
+            // blind global slot.
+            let Some(td) = self.types_get_for_file(bpath[0].as_str(), bspan.file_id) else { continue };
             let TypeDeclKind::Protocol { methods, .. } = &td.kind else { continue };
             // [M-196-gs-bounds-parametric-bound-hazard] a PARAMETRIC protocol bound
             // (`D355Source[T]` — Plan 161/D355 blanket dispatch,

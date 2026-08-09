@@ -35,14 +35,25 @@
 
 ### Ф.0 — вернуть покрытие (№471). ПЕРВОЕ, до любых правок владения
 
-Сегодня `nova test std/src/net` даёт `CC-FAIL` на `addr`: сгенерированный C не
-компилируется (`initializing 'nova_unit' with an expression of incompatible type
-'NovaRes_nova_int_NovaValue_IoError *'`), при том что `nova check` проходит.
-Значит **весь модуль без единого проходящего теста**, включая регресс-фикстуру
-№458 на FIN.
+**ОБНОВЛЕНО 2026-08-09 (окно `p514-effect-generic`): CC-FAIL снят.** Было:
+`nova test std/src/net` давал `CC-FAIL` на `addr` (`initializing 'nova_unit' with
+an expression of incompatible type 'NovaRes_nova_int_NovaValue_IoError *'`) —
+№514 (`docs/plans/221.1-bug-sweep.md`), корень — коллизия имён протоколов
+`std.io.Write`/`std.prelude.protocols.Write`, фикс в
+`compiler-codegen/src/types/mod.rs` (`resolve_generic_bound_receiver_method`/
+`resolve_generic_bound_method_return`), ЗАКРЫТ. `nova test std/src/net --full`
+теперь: `PASS: 3 FAIL: 1` — `addr` компилируется и линкуется (был CC-FAIL, стал
+RUN-FAIL). **Покрытие ЧАСТИЧНО вернулось, но не полностью:** оставшийся
+`RUN-FAIL` — НОВАЯ, ранее невидимая находка, никак не связанная с №514/владением:
+`net2/mock`-тесты (`std/src/net/mock_test.nv`) — `TcpListener.bind("0.0.0.0:0")`/
+`UdpSocket.bind(...)` дают `unexpected Err: invalid port` (мок str-адреса не
+парсит валидный адрес с портом 0). Нужен свой номер (№TBD) и отдельное окно —
+до него регресс-фикстура №458 (FIN) исполняется (не блокирована этим), но
+Ф.0 в исходной формулировке («ненулевой PASS, FAIL: 0») не достигнута.
 
-Чинить владение, не имея тестов, — вслепую: любая правка счётчиков не будет ничем
-проверена. Поэтому Ф.0 идёт первой, хотя по природе это дефект кодогена
+До фикса №514 чинить владение, не имея тестов, было бы вслепую: любая правка
+счётчиков не проверялась бы ничем. Поэтому Ф.0 шла первой, хотя по природе это
+был дефект кодогена
 (класс [№476](221.1-bug-sweep.md): компилятор принимает, порождённый C не
 компилируется).
 
