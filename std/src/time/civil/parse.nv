@@ -178,12 +178,12 @@ export fn str @to_timestamp() -> Result[Timestamp, ParseDateTimeError] {
     ro (t, p3) = time_at(@, p2)?
     ro (off, p4) = offset_at_pos(@, p3)?
     expect_end(@, p4)?
-    ro l = d.to_epoch_day() * 86_400 + t.to_nanos_of_day() / 1_000_000_000
+    ro l = d.epoch_day() * 86_400 + t.nanos_of_day() / 1_000_000_000
     ro inst_sec = l - (off as i64)
     if inst_sec > 9_223_372_035 || inst_sec < -9_223_372_036 {
         return Err(InvalidValue(0, FieldKind.Year, d.year() as i64))
     }
-    ro nano = t.to_nanos_of_day() % 1_000_000_000
+    ro nano = t.nanos_of_day() % 1_000_000_000
     Ok((inst_sec * 1_000_000_000 + nano).to_unix_nanos())
 }
 

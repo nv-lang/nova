@@ -88,7 +88,7 @@ export fn TimeOfDay @nano() -> int => (@nanos_of_day % 1_000_000_000) as int
 
 /// Raw nanoseconds since midnight.
 #stable(since = "0.1")
-export fn TimeOfDay @to_nanos_of_day() -> i64 => @nanos_of_day
+export fn TimeOfDay @nanos_of_day() -> i64 => @nanos_of_day
 
 // ──────────────────────────────────────────────────────────────────────────
 // Арифметика (TimeBased ONLY — Period здесь НЕ принимается)

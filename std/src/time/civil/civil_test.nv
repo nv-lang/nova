@@ -49,19 +49,19 @@ test "Date.new: month-13 недостижим по типам, day 0/32 → Err"
 // ── Hinnant epoch-day: канон + round-trip ──
 
 test "epoch-day канон: 1970-01-01 = 0, 2000-03-01 = 11017 (Hinnant)" {
-    assert(Date.new(1970, Jan, 1)!!.to_epoch_day() == 0)
-    assert(Date.new(2000, Mar, 1)!!.to_epoch_day() == 11017)
-    assert(Date.new(1969, Dec, 31)!!.to_epoch_day() == -1)
+    assert(Date.new(1970, Jan, 1)!!.epoch_day() == 0)
+    assert(Date.new(2000, Mar, 1)!!.epoch_day() == 11017)
+    assert(Date.new(1969, Dec, 31)!!.epoch_day() == -1)
 }
 
 test "epoch-day round-trip по сетке (включая границы месяцев/лет)" {
     // Плотная сетка вокруг переходов век/високосность.
-    mut ed = Date.new(1896, Feb, 25)!!.to_epoch_day()
-    ro end = Date.new(1904, Mar, 5)!!.to_epoch_day()
+    mut ed = Date.new(1896, Feb, 25)!!.epoch_day()
+    ro end = Date.new(1904, Mar, 5)!!.epoch_day()
     while ed <= end {
         ro d = Date.from_epoch_day(ed)
         ro back = Date.new(d.year(), d.month(), d.day())!!
-        assert(back.to_epoch_day() == ed)
+        assert(back.epoch_day() == ed)
         ed += 97   // взаимно-просто с 7 и длинами месяцев
     }
 }
@@ -201,7 +201,7 @@ test "TimeOfDay @plus: явный day-carry (не молчит)" {
 
 test "TimeOfDay compare + midnight" {
     assert(TimeOfDay.midnight() < TimeOfDay.new(0, 0, s: 1)!!)
-    assert(TimeOfDay.midnight().to_nanos_of_day() == 0)
+    assert(TimeOfDay.midnight().nanos_of_day() == 0)
 }
 
 // ── DateTime ──

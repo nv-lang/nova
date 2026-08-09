@@ -29,15 +29,15 @@ export fn tzdb_version() -> str => "nova-curated-2026a"
 fn nth_sunday_epoch_day(y i32, m Month, n int) -> i64 {
     ro first = Date.new(y, m, 1) ?? panic("tz: nth_sunday unreachable (curated years valid)")
     ro d = first.nth_weekday(n, Sun) ?? panic("tz: nth_sunday out of month (curated rules valid)")
-    d.to_epoch_day()
+    d.epoch_day()
 }
 
 // Последнее воскресенье месяца года y как epoch-day.
 fn last_sunday_epoch_day(y i32, m Month) -> i64 {
     ro first = Date.new(y, m, 1) ?? panic("tz: last_sunday unreachable")
     ro last = first.last_day_of_month()
-    if last.weekday() == Sun { last.to_epoch_day() }
-    else { last.prev(Sun).to_epoch_day() }
+    if last.weekday() == Sun { last.epoch_day() }
+    else { last.prev(Sun).epoch_day() }
 }
 
 // America/New_York (правила 2007+, Energy Policy Act):

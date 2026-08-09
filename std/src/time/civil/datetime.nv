@@ -128,7 +128,7 @@ export fn DateTime @weekday() -> Weekday => @date.weekday()
 #stable(since = "0.1")
 export fn DateTime @plus(d Duration) -> DateTime {
     ro (t, carry) = @time.plus(d)
-    { date: Date.from_epoch_day(@date.to_epoch_day() + carry), time: t }
+    { date: Date.from_epoch_day(@date.epoch_day() + carry), time: t }
 }
 
 /// Shift backward by a Duration.
@@ -143,8 +143,8 @@ export fn DateTime @minus(d Duration) -> DateTime =>
 /// transition between them — plain types know no offset jumps (D319).
 #stable(since = "0.1")
 export fn DateTime @duration_until(other DateTime) -> Duration {
-    ro day_diff = other.date().to_epoch_day() - @date.to_epoch_day()
-    ro nano_diff = other.time().to_nanos_of_day() - @time.to_nanos_of_day()
+    ro day_diff = other.date().epoch_day() - @date.epoch_day()
+    ro nano_diff = other.time().nanos_of_day() - @time.nanos_of_day()
     day_diff.to_days() + nano_diff.to_nanos()
 }
 
