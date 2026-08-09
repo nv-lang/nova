@@ -38505,6 +38505,28 @@ impl<'a> ConsumeCtx<'a> {
     /// Best-effort тип выражения — только синтаксически очевидные формы.
     fn infer_value_type(&self, e: &Expr) -> Option<String> {
         match &e.kind {
+            // Owner fix 2026-08-09 (closes №468): bare primitive literals —
+            // the MOST syntactically obvious form this function's own doc
+            // asks for, yet previously absent. Before this fix `ro n = 5`
+            // left `var_types` without an entry for `n`, so the (type,
+            // method) registry lookup in the E_LOCAL_NOT_MUT/E_PARAM_NOT_MUT
+            // gate (and its new const sibling, E_CONST_NOT_MUT) silently
+            // found no type and skipped — harmless while primitives could
+            // never have a REGISTERED mut-method (E_PRIMITIVE_MUT_METHOD
+            // banned every declaration), now a real gap: `fn int mut
+            // @inc(...)` compiles and a `ro n = 5; n.inc(10)` call reached
+            // codegen unrejected (repro: `probe4_ro_local`, confirmed via
+            // the record-receiver sibling `probe7_record_ro_local` already
+            // firing E_LOCAL_NOT_MUT correctly — the gap was primitive-
+            // literal-specific, not a general check failure). Consume-
+            // obligation logic is unaffected: `is_must_consume_name` is
+            // always false for these leaf names, so this only ADDS
+            // information, no new consume-tracking behaviour.
+            ExprKind::IntLit(_) => Some("int".to_string()),
+            ExprKind::FloatLit(_) => Some("f64".to_string()),
+            ExprKind::BoolLit(_) => Some("bool".to_string()),
+            ExprKind::StrLit(_) => Some("str".to_string()),
+            ExprKind::CharLit(_) => Some("char".to_string()),
             // Конструктор `Type.new(...)` / `.with_capacity` / `.from` и т.п.
             ExprKind::Call { func, .. } => {
                 if let ExprKind::Path(parts) = &func.kind {
@@ -43312,6 +43334,28 @@ fn walk_guarded_escape_expr_multi(
     to_disarm.into_iter().collect()
 }
 
+/// Owner fix 2026-08-09 (closes №468): best-effort primitive type name for
+/// a module-level `const NAME = expr` — used ONLY to gate the const-mut-
+/// method check below (`E_CONST_NOT_MUT`), not a general const-type
+/// resolver. An explicit `const NAME T = expr` annotation wins; otherwise
+/// falls back to classifying the literal RHS. `None` for anything else
+/// (non-primitive/non-literal const value) — sound as a false-negative:
+/// the check this feeds simply won't fire, same conservative posture as
+/// `recv_ty` being `None` in the sibling param/local checks above.
+fn const_primitive_type_name(c: &ConstDecl) -> Option<String> {
+    if let Some(TypeRef::Named { path, .. }) = &c.ty {
+        return path.last().cloned();
+    }
+    match &c.value.kind {
+        ExprKind::IntLit(_) => Some("int".to_string()),
+        ExprKind::FloatLit(_) => Some("f64".to_string()),
+        ExprKind::BoolLit(_) => Some("bool".to_string()),
+        ExprKind::StrLit(_) => Some("str".to_string()),
+        ExprKind::CharLit(_) => Some("char".to_string()),
+        _ => None,
+    }
+}
+
 fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic>) {
     match &e.kind {
         // ─── Листья ───
@@ -43669,6 +43713,66 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                                 }
                             }
                         }
+                        // Owner fix 2026-08-09 (closes №468): mut-method on a
+                        // module-level `const` → E_CONST_NOT_MUT. Neither
+                        // `param_mut` nor `local_mut` carries const names (a
+                        // const is neither a param nor a `let`/`mut` local),
+                        // so the two checks above silently skip it — before
+                        // this fix that was harmless because
+                        // E_PRIMITIVE_MUT_METHOD banned every primitive
+                        // mut-method declaration outright. Now that a real
+                        // by-pointer `fn <primitive> mut @method` exists,
+                        // `n.inc(10)` on `const n = 5` reaches codegen, which
+                        // takes the address of the const's C storage
+                        // (`static const nova_int`) and writes through it —
+                        // undefined behaviour (observed: access violation at
+                        // runtime, `probe3_const` repro). Reject at
+                        // type-check time instead, parallel to the param/
+                        // local checks (same registry, same builtin list).
+                        // NB: this arm only ever sees a LOWERCASE-named const
+                        // receiver — `CONST.method()` with an uppercase
+                        // identifier parses as `ExprKind::Path`, not `Member`
+                        // (confirmed via instrumentation), and needs the
+                        // sibling check in the `Path` arm below (same fix).
+                        if !ctx.param_mut.contains_key(&recv) && !ctx.local_mut.contains_key(&recv) {
+                            if let Some(c) = ctx.module.items.iter().find_map(|it| match it {
+                                Item::Const(c) if c.name == recv => Some(c),
+                                _ => None,
+                            }) {
+                                let recv_ty = const_primitive_type_name(c);
+                                let registered = recv_ty.as_ref()
+                                    .map(|rty| ctx.reg.mut_methods.contains(&(rty.clone(), method.clone())))
+                                    .unwrap_or(false);
+                                let has_ro_overload = recv_ty.as_ref()
+                                    .map(|rty| ctx.reg.ro_methods.contains(&(rty.clone(), method.clone())))
+                                    .unwrap_or(false);
+                                let builtin_mut_method = matches!(
+                                    method.as_str(),
+                                    "push" | "pop" | "append" | "append_zero" | "insert" | "remove"
+                                    | "clear" | "truncate" | "reserve" | "swap"
+                                    | "sort" | "sort_by" | "set" | "extend" | "extend_from"
+                                    | "copy_from" | "copy_within" | "shrink_to_fit" | "fill"
+                                    | "drain" | "dedup" | "reverse" | "shuffle"
+                                    | "as_mut_ptr"
+                                );
+                                if (registered && !has_ro_overload) || builtin_mut_method {
+                                    let ty_str = recv_ty.as_deref().unwrap_or("?");
+                                    errors.push(Diagnostic::new(
+                                        format!(
+                                            "[E_CONST_NOT_MUT] `const {}` не может быть receiver'ом \
+                                             mut-метода `{}` (тип `{}`): константы неизменяемы by \
+                                             design, вызов записал бы через указатель в read-only \
+                                             хранилище (UB/крэш в рантайме).",
+                                            recv, method, ty_str),
+                                        e.span,
+                                    ).with_note(
+                                        "сохрани значение в `mut`-локал перед вызовом mut-метода: \
+                                         `mut tmp = {const}; tmp.{method}(...)`."
+                                            .to_string(),
+                                    ));
+                                }
+                            }
+                        }
                         // consume-метод → receiver (весь alias-класс)
                         // потребляется.
                         if ctx.is_consume_method(&recv, method) {
@@ -43999,6 +44103,51 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                             .get(&(parts[0].clone(), parts[1].clone())).cloned()
                         {
                             ctx.consume_args(args, &idxs, e.span);
+                        }
+                        // Owner fix 2026-08-09 (closes №468): `CONST.method(...)`
+                        // — an UPPERCASE-named receiver (the conventional const
+                        // naming style) parses as `Path(["CONST","method"])`,
+                        // NOT `Member{obj: Ident, name}` — a completely
+                        // different AST shape from the sibling Ident-receiver
+                        // check in the `Member` arm above (which only ever
+                        // sees a lowercase-named const, e.g. `const n = 5`).
+                        // Both shapes need the same E_CONST_NOT_MUT guard:
+                        // `parts[0]` may name a module-level `const`, and a
+                        // real by-pointer `mut @` primitive method (this fix)
+                        // would take the address of its `static const` C
+                        // storage and write through it — UB/crash, exactly
+                        // the `N.inc(10)` repro this closes (`probe3_const`/
+                        // `probe3b_const_fn`; confirmed via debug instrumentation
+                        // that the Member-arm's Ident-receiver check, which this
+                        // mirrors, is simply unreached for uppercase names).
+                        if let Some(c) = ctx.module.items.iter().find_map(|it| match it {
+                            Item::Const(c) if c.name == parts[0] => Some(c),
+                            _ => None,
+                        }) {
+                            let recv_ty = const_primitive_type_name(c);
+                            let method = &parts[1];
+                            let registered = recv_ty.as_ref()
+                                .map(|rty| ctx.reg.mut_methods.contains(&(rty.clone(), method.clone())))
+                                .unwrap_or(false);
+                            let has_ro_overload = recv_ty.as_ref()
+                                .map(|rty| ctx.reg.ro_methods.contains(&(rty.clone(), method.clone())))
+                                .unwrap_or(false);
+                            if registered && !has_ro_overload {
+                                let ty_str = recv_ty.as_deref().unwrap_or("?");
+                                errors.push(Diagnostic::new(
+                                    format!(
+                                        "[E_CONST_NOT_MUT] `const {}` не может быть receiver'ом \
+                                         mut-метода `{}` (тип `{}`): константы неизменяемы by \
+                                         design, вызов записал бы через указатель в read-only \
+                                         хранилище (UB/крэш в рантайме).",
+                                        parts[0], method, ty_str),
+                                    e.span,
+                                ).with_note(
+                                    "сохрани значение в `mut`-локал перед вызовом mut-метода: \
+                                     `mut tmp = {const}; tmp.{method}(...)`."
+                                        .to_string(),
+                                ));
+                            }
                         }
                     }
                     if let Some(last) = parts.last() {
