@@ -335,10 +335,21 @@ export fn TcpStream consume @cleanup(_outcome ScopeOutcome) -> () {
 /// `share()`-ed stream (rc > 1) = runtime panic: the halves are counted by a
 /// C-side split-refcount, and a live share-copy would break the
 /// "last-owner-closes" invariant.
+///
+/// №498 fix (Plan 258 Ф.1): the sole-ownership check and the rc mutation are
+/// ONE atomic `compare_exchange(1, 0)` — a live share()-copy (rc != 1) makes
+/// the CAS fail WITHOUT touching `rc`, so the panic path leaves the counter
+/// exactly as the surviving copies last saw it. The previous
+/// `fetch_sub(1) != 1` form decremented rc UNCONDITIONALLY, before checking
+/// whether the precondition held — on the panic path the copies that
+/// survived the panicking fiber were left owning a permanently-decremented
+/// shared counter (state changed ahead of a check that can fail, with no
+/// rollback on failure).
 #stable(since = "0.1")
 export fn TcpStream consume @into_split() Net -> (TcpReadHalf, TcpWriteHalf) {
-    if @rc.fetch_sub(1) != 1 {
-        panic("TcpStream.into_split(): stream has live share()-copies — split requires sole ownership (close the copies first)")
+    match @rc.compare_exchange(1, 0) {
+        Ok(())  => {}
+        Err(_n) => panic("TcpStream.into_split(): stream has live share()-copies — split requires sole ownership (close the copies first)")
     }
     ro h = @handle
     Net.mark_split(TcpStream.from_raw(h))

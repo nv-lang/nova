@@ -196,3 +196,26 @@ test "split mock stream — read half + write half" {
         }
     }
 }
+
+// №498 fix (Plan 258 Ф.1, registry docs/plans/221.1-bug-sweep.md): `into_split()`
+// on a stream with a LIVE `share()`-copy must panic (sole ownership required —
+// see `into_split()`'s own doc comment, tcp.nv) WITHOUT mutating `rc` on the way
+// there. Before the fix, `@rc.fetch_sub(1) != 1` decremented the shared counter
+// UNCONDITIONALLY, ahead of the check that can fail — the copy that survives the
+// panicking fiber (`s2` below) would have been left owning a permanently-wrong
+// counter (a real close from `s2` afterwards would either double-release or
+// never trigger the underlying extern-close). This path had NO coverage before
+// this fixture. The fix (tcp.nv `@into_split()`) makes the check-and-mutate ONE
+// atomic `compare_exchange(1, 0)`: on failure the CAS is a no-op by construction
+// (hardware/runtime CAS contract, exercised generically by
+// std/src/runtime/sync_test.nv — not re-proven here), so `s2.rc` is unaffected
+// by the panicking attempt; this fixture's job is only to pin that the
+// precondition violation actually panics (previously unverified).
+test "into_split panics on a live share()-copy (rc != 1, #498)" panics "sole ownership" {
+    with Net = mock_net() {
+        mut s = must(TcpStream.connect(SocketAddr.loopback(0)))
+        mut s2 = s.share()
+        assert(s2.rc.load() == 2)
+        ro _pair = s.into_split()   // must panic: rc == 2, not 1 — s2 is a live copy
+    }
+}
