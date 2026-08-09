@@ -4201,25 +4201,54 @@ fn codegen_to_c(
     // which returned `None` — silently skipping this entire block, INCLUDING
     // the implicit `std.prelude` auto-import — for any `.nv` file living
     // outside a `nova.toml` tree.
-    let sig_table_opt: Option<crate::imports::ModuleSigTable> = {
+    // Plan 35 R31 / Plan 262 Ф.А.1-bis (registry №531, unified pipeline):
+    // cross-file resolve + sig-table + embed-resolve + serde-derive
+    // injection + alpha_rename + number_exprs, all via
+    // `crate::check_pipeline::prepare_module_for_check_with` — the same
+    // shared function `nova check`/`nova build`/the doc-test runner/
+    // nova-lsp use (see that module's doc comment for the full rationale).
+    // `include_test_peers=true` — Plan 42 правило F: test mode includes
+    // `*_test.nv` peers.
+    // [M-standalone-out-of-tree-interp-sb-typedef]: `repo`/`stdlib_dir` are
+    // the caller's CWD-resolved project root (see fn doc-comment above) —
+    // used unconditionally, same as `nova build`.
+    let (embed_dir_warnings, sig_table_opt, resolved_types) = {
         let _t = crate::perf_timer::PerfTimer::new("imports-resolve");
-        // План 252 Ф.0: под-таймеры двух половин стадии. ВНИМАНИЕ: они
-        // ВЛОЖЕНЫ в `imports-resolve`, поэтому в агрегированной таблице их
-        // время учтено дважды — доли читать относительно `imports-resolve`,
-        // а не относительно grand total.
-        {
-            let _ti = crate::perf_timer::PerfTimer::new("imports-inline");
-            // Plan 42 правило F: test mode = include `*_test.nv` peers.
-            crate::imports::resolve_imports_inline_ex(path, &mut module, repo, stdlib_dir, true)
-                .map_err(|e| format!("import resolution: {}", e))?;
-        }
-        // Collect signatures AFTER imports are resolved so all imported
-        // items are present in module.imports for the sig-walk.
-        let _ts = crate::perf_timer::PerfTimer::new("imports-sigs");
-        Some(
-            crate::imports::collect_all_signatures(path, &module, repo, stdlib_dir)
-                .unwrap_or_else(|_| crate::imports::ModuleSigTable::new()),
+        let prepared = crate::check_pipeline::prepare_module_for_check_with(
+            path, &mut module, repo, stdlib_dir, /* include_test_peers */ true,
+            |m| {
+                // Plan 180: inject SERDE synthesized methods
+                // (`#impl(Serialize/Deserialize)`) BEFORE numbering +
+                // type-check so their bodies are type-checked + annotated
+                // (codegen's annotation-free infer cannot resolve serde's
+                // cross-method return types). Non-serde protocols
+                // (Equal/…/Display/Debug) inject AFTER check (below) —
+                // some of their bodies are intentionally not
+                // type-checkable. Must run between embed-resolve and
+                // alpha-rename (synthesized bodies share the uniquify
+                // invariant) — `prepare_module_for_check_with`'s extension
+                // point exists for exactly this, same as `nova build`'s use.
+                crate::protocols::auto_derive::inject_synthesized_methods_filtered(
+                    m, |p| p == "Serialize" || p == "Deserialize");
+            },
         )
+        .map_err(|e| match e {
+            crate::check_pipeline::PrepareError::Import(e) => format!("import resolution: {}", e),
+            crate::check_pipeline::PrepareError::Embed(diags) => {
+                // module.peer_files is already populated (import-resolve —
+                // step 1 of `prepare_module_for_check_with` — succeeded
+                // before embed-resolve failed), so a SourceMap built from
+                // it here still attributes each diagnostic's span to the
+                // right peer file, same as the success path below.
+                let source_map = crate::diag::SourceMap::from_peer_files(&module.peer_files, path, src);
+                diags
+                    .iter()
+                    .map(|d| d.render_with_map(&source_map))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            }
+        })?;
+        (prepared.embed_warnings, prepared.sig_table, prepared.resolved_types_seed)
     };
 
     // [M-vec-access-e7320-as-bytes-str] variant D (span-misrender fix,
@@ -4255,57 +4284,6 @@ fn codegen_to_c(
     // text isn't kept post-parse, so non-entry files are re-read from disk
     // (diagnostic path only — no perf concern).
     let source_map = crate::diag::SourceMap::from_peer_files(&module.peer_files, path, src);
-
-    // Plan 186 (D412): `embed("path")` → HexBlobLit. После import-inline
-    // (пути peer-файлов известны через span.file_id → peer_files), ДО
-    // type-check — чекер никогда не видит вызов неизвестной fn `embed`.
-    // Plan 210: `embed_dir("dir")` resolves alongside it; its W_EMBED_DIR_*
-    // warnings are captured here and merged into `lint_warnings` below
-    // (this is the ONLY channel `nova test`'s EXPECT_COMPILE_WARNING
-    // matcher reads — see doc-comment above `codegen_to_c`).
-    let embed_dir_warnings: Vec<crate::lints::LintWarning> = {
-        let _t = crate::perf_timer::PerfTimer::new("embed-resolve");
-        // [M-standalone-out-of-tree-interp-sb-typedef]: same `repo` as the
-        // import-resolve block above (was `find_repo_root_from(path)`,
-        // falling back to `path`'s own directory for out-of-tree files —
-        // `nova build`'s `cmd_build` already uses its CWD-resolved `repo`
-        // here unconditionally, see `nova-cli::main.rs` `resolve_embeds` call).
-        match crate::embed_resolve::resolve_embeds(&mut module, path, repo) {
-            Ok((_files, warns)) => warns,
-            Err(diags) => {
-                return Err(diags
-                    .iter()
-                    .map(|d| d.render_with_map(&source_map))
-                    .collect::<Vec<_>>()
-                    .join("\n"));
-            }
-        }
-    };
-
-    // Plan 180: inject SERDE synthesized methods (`#impl(Serialize/Deserialize)`)
-    // BEFORE numbering + type-check so their bodies are type-checked + annotated
-    // (codegen's annotation-free infer cannot resolve serde's cross-method return
-    // types). Non-serde protocols (Equal/…/Display/Debug) inject AFTER check
-    // (below) — some of their bodies are intentionally not type-checkable.
-    crate::protocols::auto_derive::inject_synthesized_methods_filtered(
-        &mut module, |p| p == "Serialize" || p == "Deserialize");
-
-    // Plan 181 (D347): same-scope re-binding alpha-rename. Runs on the
-    // FULLY-ASSEMBLED module (post import-inline, AFTER serde-inject so
-    // synthesized bodies share the uniquify invariant) so every function body —
-    // incl. folder-module peers — is uniquified before numbering / check /
-    // codegen (§2). No-op for modules without a same-scope rebind.
-    {
-        let _t = crate::perf_timer::PerfTimer::new("alpha-rename");
-        crate::alpha_rename::alpha_rename(&mut module);
-    }
-    // Plan 172.1 U.4.1: number every expr of the FULLY-ASSEMBLED module
-    // (after import inlining via resolve_imports_inline_ex above, before
-    // type-check) so check_module can annotate ModuleEnv.resolved_types and
-    // codegen READS it instead of re-deriving (`infer_expr_c_type`, §0/§1).
-    // Must run post-inline: numbering the merged module once yields globally
-    // unique ids (per-peer parse would restart at 1 → folder-module collisions).
-    let resolved_types = crate::number_exprs::number_exprs(&mut module);
 
     // Plan 140 Ф.3 (D24 amend): capture ModuleEnv. `check_module` runs the
     // VerificationPipeline (types/mod.rs `env.proven_contracts = report.proven`)
