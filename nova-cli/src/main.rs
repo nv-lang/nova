@@ -5002,43 +5002,101 @@ fn cmd_build(
         }
     }
 
-    // Plan 35 Ф.1 MVP: cross-file resolve через inline expansion.
+    // Plan 35 Ф.1 MVP / Plan 262 Ф.А.1-bis (registry №531): cross-file
+    // resolve + embed-resolve + alpha_rename + number_exprs, all via
+    // `nova_codegen::check_pipeline::prepare_module_for_check_with` — the
+    // same shared function `nova check`/`nova test`/the doc-test runner/
+    // nova-lsp use (see that module's doc comment). `include_test_peers=
+    // false` — production artifact, test-only `*_test.nv` helper files must
+    // not leak into the compiled binary (unlike `nova check`/`nova test`,
+    // which pass `true`). `sig_table` is discarded below: `nova build`
+    // type-checks the whole merged compile unit directly (`check_module`,
+    // not `check_module_with_sig_table` — every symbol is already visible,
+    // no partial cross-file lookup needed the way a per-file `nova check` /
+    // nova-lsp buffer check does).
+    //
+    // The `Serialize`/`Deserialize` synthesized-method injection
+    // ([M-187-http-serde-setcookie-serialize-collision]) is the one pass
+    // that must run BETWEEN embed-resolve and alpha-rename (synthesized
+    // bodies share the alpha-rename uniquify invariant, so injection cannot
+    // run after it) — `prepare_module_for_check_with`'s extension point
+    // exists for exactly this.
+    //
+    // Trade-off, disclosed: before this, `number_exprs` ran only on a build
+    // cache MISS (deferred past the cache-key computation below); folding it
+    // into the shared function makes it run unconditionally, same as
+    // `alpha_rename` already did. Extra cost on a cache HIT is one more
+    // O(module size) AST walk — bounded by the same order as the
+    // `alpha_rename` pass the cache-hit path already paid for. Correctness
+    // is unaffected either way (`number_exprs`'s only observable effect
+    // besides its returned seed map is stamping `ExprId`s, which is
+    // idempotent).
+    let embed_files: Vec<std::path::PathBuf>;
+    let resolved_seed;
     {
         let _t = nova_codegen::perf_timer::PerfTimer::new("imports-resolve");
-        nova_codegen::imports::resolve_imports_inline(&path, &mut module, &repo, &paths.stdlib_dir)?;
-    }
-
-    // Plan 186 (D412): `embed("path")` -> HexBlobLit (байты файла в AST).
-    // После import-inline (пути peer-файлов известны), ДО ключа кэша и
-    // type-check. Список встроенных файлов уходит в fingerprint кэша ниже -
-    // правка встроенного файла инвалидирует кэш пересборки. Plan 210:
-    // `embed_dir("dir")` resolves alongside it; W_EMBED_DIR_* warnings
-    // (§9.1 warning-канал) printed here — same style as manifest_warnings
-    // above (non-fatal, doesn't block the build).
-    let embed_files: Vec<std::path::PathBuf> = {
-        let _t = nova_codegen::perf_timer::PerfTimer::new("embed-resolve");
-        let (files, embed_warnings) = nova_codegen::embed_resolve::resolve_embeds(&mut module, &path, &repo).map_err(
-            |diags| {
+        let prepared = nova_codegen::check_pipeline::prepare_module_for_check_with(
+            &path, &mut module, &repo, &paths.stdlib_dir, /* include_test_peers */ false,
+            |m| {
+                // [M-187-http-serde-setcookie-serialize-collision] fix: inject
+                // SERDE synthesized methods (`#impl(Serialize/Deserialize)`)
+                // BEFORE numbering + type-check — mirrors `test_runner.rs`'s
+                // `codegen_to_c` (the `nova test` path), which already does
+                // this. `cmd_build` (`nova build`) had silently OMITTED this
+                // pass entirely (same class of `nova build`-lags-behind-
+                // `test_runner.rs` gap already fixed for the resolved_types/
+                // resolved_callees channels below, per the Ф.4c comment) — a
+                // `#impl(Serialize)` record's `@serialize` was NEVER a real
+                // `FnDecl` in `module.items` on this path, only virtually
+                // satisfied by the checker's on-demand `synthesize_method`
+                // bridge (`types/mod.rs` `AutoDeriveQueryBridge`), which
+                // type-checks the call but adds nothing for codegen's
+                // method-registration scan (`method_overloads`/
+                // `mono_method_decls`) to find. A generic `json_encode[T
+                // Serialize](v T)`'s `v.serialize(s)` therefore had ZERO
+                // type-directed candidates and fell through every receiver-
+                // typed dispatch window all the way to the single-key,
+                // name-only `method_receivers` last-wins fallback — silently
+                // mis-dispatching to WHATEVER OTHER type's concrete
+                // `@serialize` was registered last in the compile unit
+                // (`http`'s `SetCookie @serialize() -> str`, when `http` is
+                // in the CU — an unrelated 0-arg method, arity/type-
+                // incompatible with the Serialize contract's `@serialize(s
+                // Serializer)`). Injecting here gives `Dto`/`SnapshotDto`'s
+                // own derived method a real `FnDecl` + span, so the EXISTING
+                // type-keyed dispatch (`method_overloads.get(&(recv_type,
+                // method))`, `has_sentinel_here` → `mono_method_decls` mono)
+                // finds and monomorphizes the CORRECT receiver-typed callee
+                // — no emit_c.rs dispatch-heuristic change needed; the
+                // family fix (196.7/98e3663cc) is "route by the checker's/
+                // registry's fact instead of by name", but here the fact was
+                // simply never registered on this build path.
+                nova_codegen::protocols::auto_derive::inject_synthesized_methods_filtered(
+                    m, |p| p == "Serialize" || p == "Deserialize");
+            },
+        )
+        .map_err(|e| match e {
+            nova_codegen::check_pipeline::PrepareError::Import(e) => e,
+            nova_codegen::check_pipeline::PrepareError::Embed(diags) => {
                 // [M-diag-dep-file-span-misattribution]: same file_id-aware
                 // fix as the type-check error path below — an `embed(...)`
-                // diagnostic's span may belong to a peer/dependency file, not
-                // the entry file.
+                // diagnostic's span may belong to a peer/dependency file,
+                // not the entry file.
                 let smap = build_source_map(&module, &src, &path);
                 let msgs: Vec<String> = diags
                     .iter()
                     .map(|d| d.render_with_map(&smap))
                     .collect();
-                anyhow!("{}", msgs.join("
-"))
-            },
-        )?;
-        if !embed_warnings.is_empty() {
+                anyhow!("{}", msgs.join("\n"))
+            }
+        })?;
+        if !prepared.embed_warnings.is_empty() {
             // [M-diag-dep-file-span-misattribution]: resolve each warning's
             // own file_id instead of assuming it always belongs to the entry
             // file (mirrors the diags fix above). Built once, outside the
             // loop — `build_source_map` re-reads every peer file from disk.
             let smap = build_source_map(&module, &src, &path);
-            for w in &embed_warnings {
+            for w in &prepared.embed_warnings {
                 let wpath = smap.path_for(w.diag.span.file_id).to_string();
                 let (line, col) = nova_codegen::diag::byte_to_line_col(
                     smap.source_for(w.diag.span.file_id), w.diag.span.start);
@@ -5048,49 +5106,8 @@ fn cmd_build(
                 );
             }
         }
-        files
-    };
-
-    // [M-187-http-serde-setcookie-serialize-collision] fix: inject SERDE
-    // synthesized methods (`#impl(Serialize/Deserialize)`) BEFORE numbering +
-    // type-check — mirrors `test_runner.rs`'s `codegen_to_c` (the `nova test`
-    // path), which already does this. `cmd_build` (`nova build`) had silently
-    // OMITTED this pass entirely (same class of `nova build`-lags-behind-
-    // `test_runner.rs` gap already fixed for the resolved_types/resolved_
-    // callees channels below, per the Ф.4c comment) — a `#impl(Serialize)`
-    // record's `@serialize` was NEVER a real `FnDecl` in `module.items` on
-    // this path, only virtually satisfied by the checker's on-demand
-    // `synthesize_method` bridge (`types/mod.rs` `AutoDeriveQueryBridge`),
-    // which type-checks the call but adds nothing for codegen's method-
-    // registration scan (`method_overloads`/`mono_method_decls`) to find.
-    // A generic `json_encode[T Serialize](v T)`'s `v.serialize(s)` therefore
-    // had ZERO type-directed candidates and fell through every receiver-
-    // typed dispatch window all the way to the single-key, name-only
-    // `method_receivers` last-wins fallback — silently mis-dispatching to
-    // WHATEVER OTHER type's concrete `@serialize` was registered last in the
-    // compile unit (`http`'s `SetCookie @serialize() -> str`, when `http` is
-    // in the CU — an unrelated 0-arg method, arity/type-incompatible with
-    // the Serialize contract's `@serialize(s Serializer)`). Injecting here
-    // gives `Dto`/`SnapshotDto`'s own derived method a real `FnDecl` + span,
-    // so the EXISTING type-keyed dispatch (`method_overloads.get(&(recv_
-    // type, method))`, `has_sentinel_here` → `mono_method_decls` mono) finds
-    // and monomorphizes the CORRECT receiver-typed callee — no emit_c.rs
-    // dispatch-heuristic change needed; the family fix (196.7/98e3663cc) is
-    // "route by the checker's/registry's fact instead of by name", but here
-    // the fact was simply never registered on this build path. Must run
-    // BEFORE alpha-rename (synthesized bodies share the uniquify invariant,
-    // same ordering `test_runner.rs` uses).
-    nova_codegen::protocols::auto_derive::inject_synthesized_methods_filtered(
-        &mut module, |p| p == "Serialize" || p == "Deserialize");
-
-    // Plan 181 (D347): same-scope re-binding alpha-rename on the fully-assembled
-    // module (post import-inline), BEFORE the build cache key / type-check /
-    // codegen — so cached `.c` and the checked module agree on unique C-names
-    // and the consume-checker can read `module.rebind_shadows` for R2. No-op
-    // (byte-identical) for modules without a same-scope rebind.
-    {
-        let _t = nova_codegen::perf_timer::PerfTimer::new("alpha-rename");
-        nova_codegen::alpha_rename::alpha_rename(&mut module);
+        embed_files = prepared.embed_files;
+        resolved_seed = prepared.resolved_types_seed;
     }
 
     // Plan 81 Ф.9: content-addressed build cache. После резолва импортов
@@ -5145,8 +5162,12 @@ fn cmd_build(
             // for its value-root guard, else the copy-loss fix is silently
             // disabled on the `nova build` path. Mirrors test_runner /
             // nova-codegen check: number_exprs seed merged UNDER checker
-            // annotations (checker wins on collision).
-            let resolved_seed = nova_codegen::number_exprs::number_exprs(&mut module);
+            // annotations (checker wins on collision). `number_exprs` itself
+            // already ran unconditionally above, inside
+            // `prepare_module_for_check_with` (Plan 262 Ф.А.1-bis) — `resolved_
+            // seed` here is that call's returned seed map, captured before the
+            // cache-hit/-miss branch so it is available on this (cache-miss)
+            // path without a second AST walk.
             let mut build_env = {
                 let _t = nova_codegen::perf_timer::PerfTimer::new("type-check");
                 nova_codegen::types::check_module(&module).map_err(|errs| {
