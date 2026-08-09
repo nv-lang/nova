@@ -1,0 +1,80 @@
+# scripts/guards/check-checker-entrypoints.baseline
+#
+# Plan 262 Ф.А.1-bis (registry №531). Files that call `check_module(` /
+# `check_module_with_sig_table(` / `check_module_with_expr_types(` /
+# `check_module_with_expr_types_ide(` directly WITHOUT also calling
+# `check_pipeline::prepare_module_for_check[_with]` in the same file —
+# accepted as of this plan, for the reason next to each. A file NOT in this
+# list that starts doing the same thing is a NEW unguarded direct call and
+# reds the gate (that is the whole point of the guard).
+#
+# This is a RATCHET, not a design goal: every line here is a candidate for
+# being wired into prepare_module_for_check by a later window, not a
+# permanent exemption. Removing a line because the file now calls
+# prepare_module_for_check is always welcome and never breaks this guard.
+#
+# format: one path per line, relative to repo root, forward slashes.
+
+# Legacy/orphan binary (`nova-codegen`, built from compiler-codegen/Cargo.toml's
+# own [[bin]]) — parallel to nova-cli's `nova`, but does not even call
+# resolve_imports_inline at all today (see cmd_check/cmd_compile in this
+# file), so it is not "missing prepare_module_for_check" so much as "missing
+# import resolution entirely" — a pre-existing, larger gap than this plan's
+# scope. Its only known live consumer is scripts/tools/setup_worktree_p118.sh
+# (a historical, single-plan setup script). Flagged for the owner to decide:
+# wire it up, or retire it — not decided by this window.
+compiler-codegen/src/main.rs
+
+# Doc-test / doc-render probes: `let _ = check_module(&module)` used only to
+# trigger the checker's annotation side-effects for doc-rendering purposes
+# (inferred types shown in generated docs), never to produce user-facing
+# diagnostics. A wrong/missing import here degrades doc-rendering fidelity,
+# not correctness — different risk class than registry #531's LSP false-red.
+compiler-codegen/src/doc/watch_cache.rs
+compiler-codegen/tests/doc_allow_transit.rs
+compiler-codegen/tests/doc_expect_output.rs
+compiler-codegen/tests/doc_extern_links.rs
+compiler-codegen/tests/doc_golden.rs
+compiler-codegen/tests/doc_handler_matrix.rs
+compiler-codegen/tests/doc_handler_matrix_workspace.rs
+compiler-codegen/tests/doc_html_multipage.rs
+compiler-codegen/tests/doc_html_render.rs
+compiler-codegen/tests/doc_mcp.rs
+compiler-codegen/tests/doc_mutation.rs
+compiler-codegen/tests/doc_mutation_exec.rs
+compiler-codegen/tests/doc_mutation_workspace.rs
+compiler-codegen/tests/doc_newtype.rs
+compiler-codegen/tests/doc_perf.rs
+compiler-codegen/tests/doc_query.rs
+compiler-codegen/tests/doc_render_expr.rs
+compiler-codegen/tests/doc_source_url.rs
+compiler-codegen/tests/doc_warnings.rs
+compiler-codegen/tests/doc_workspace_determinism.rs
+
+# Unit tests of the checker itself (e.g. strict-effects flag behavior, a
+# specific raw-effect-op diagnostic) — deliberately single-file, no imports
+# to resolve, testing check_module's own logic rather than simulating a real
+# entry point's pipeline.
+compiler-codegen/tests/p131_raw_effect_op_enforce.rs
+compiler-codegen/tests/strict_effects_flag.rs
+
+# Performance benchmarks (`nova bench`) — measure the type-checker's own
+# wall-clock cost on an already-prepared module; not a diagnostics-producing
+# entry point a user sees, and re-routing it through prepare_module_for_check
+# would fold unrelated pass costs into what the benchmark is trying to
+# isolate.
+nova-cli/src/bench/field_cache_wallclock.rs
+nova-cli/src/bench/run.rs
+
+# nova-lsp field-cache IDE decoration heuristics (semantic-token "cached"
+# modifier, code lenses, pure-annotation code actions): five near-identical
+# best-effort passes, each on a FRESH single-file parse with NO cross-file
+# import resolution at all (deliberate — this is a fast local heuristic, not
+# a diagnostics path). On any check_module failure they degrade to "no
+# decoration" (return None / empty), never surfaced to the user as an error.
+# Missing imports/embeds here means missed decoration, not false-red —
+# different risk class than registry #531. The five copies are themselves a
+# duplication worth extracting into one shared helper, but that is a
+# separate cleanup from this plan's diagnostic-parity fix.
+nova-lsp/src/semantic_tokens.rs
+nova-lsp/src/server.rs
