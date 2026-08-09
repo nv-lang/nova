@@ -58,11 +58,15 @@ nova.local.toml
 *.exe
 *.pdb
 *.ilk
-examples/**/*.c
-nova_tests/**/*.c
-std/**/*.c
-bench/**/*.c
-detect172/**/*.c
+# Сгенерированный C ложится РЯДОМ с .nv, поэтому правило перевёрнуто: игнорируем
+# весь *.c и возвращаем два каталога, где C — настоящий исходник. Прежде здесь
+# шло перечисление каталогов (examples/nova_tests/std/bench/detect172), и оно
+# протекало при каждом новом каталоге: spec_tests добавили только 2026-07-14,
+# nova_tests.old не добавили вовсе — 172 файла копились неотслеживаемыми.
+# Инвариант «список каталогов полон» держался памятью; теперь его нет.
+*.c
+!compiler-codegen/nova_rt/**/*.c
+!scripts/tools/**/*.c
 
 # Plan 156 (rev-3): full Unicode conformance corpora are regenerated on-demand
 # from pinned UCD into the slow-lane, NOT committed (only the fast *_conformance.nv
@@ -70,8 +74,6 @@ detect172/**/*.c
 nova_tests/**/*_conformance_slow.nv
 test_out.txt
 
-# spec_tests: codegen-артефакты рядом с .nv (пробел закрыт 2026-07-14 — spec_tests не было в списке)
-spec_tests/**/*.c
 *.ilk
 scratch38/
 
