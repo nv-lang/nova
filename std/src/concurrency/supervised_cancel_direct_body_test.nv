@@ -134,7 +134,7 @@ test "unrelated token cancel does not affect a different scope (negative)" {
 // A5 (негатив, Channel.recv): значение уже в канале — recv не парковался
 // вовсе, cancel() снаружи никогда не проверяется — не throw'ит.
 test "direct-body Channel.recv: value sent before cancel — no throw (negative)" {
-    ro (tx, rx) = Channel.new(1)
+    ro (tx, rx) = Channel[int].new(1)
     ro tok = CancelToken.new()
     tx.try_send(42)
     supervised(cancel: tok) {
@@ -354,7 +354,7 @@ test "spawn-placed sleep: cancel: wakes it early (regression guard)" {
 // does NOT hang when `rx.recv()` is itself wrapped in its own `spawn`;
 // confirmed via standalone probe, `docs/plans/wip/PROGRESS-p398.md`).
 test "spawn-placed Channel.recv: cancel: wakes it early (regression guard)" {
-    ro (_tx, rx) = Channel.new(1)
+    ro (_tx, rx) = Channel[int].new(1)
     ro tok = CancelToken.new()
     ro t0 = Timestamp.now().unix_millis()
     supervised(cancel: tok) {
