@@ -1,0 +1,34 @@
+№465 zero-on-move auto-inject — regression log (nova-p465 worktree binary, unless noted).
+Batches of ~95 files per instruction, one `nova test` command per batch.
+
+=== spec_tests/conformance/standalone (140 files, single command) ===
+PASS: 122  FAIL: 0  SKIP: 18
+
+=== spec_tests/conformance/neg (566 files, 6 batches of ~95) ===
+batch aa (91 files): PASS: 91  FAIL: 0
+batch ab (95 files): PASS: 95  FAIL: 0
+batch ac (93 files): PASS: 88  FAIL: 3  SKIP: 2
+  3 FAILs — all PRE-EXISTING, on the known-red list from the task brief:
+    NEG-WRONG-PANIC f5_propagation_trace_full  (expected 'propagation trace', got 'unhandled Fail: leaf-error')
+    NEG-WRONG-PANIC f5_uncaught_trace_panic    (expected '(throw site)', got 'panic: trace-me')
+    NEG-WRONG-PANIC f5_uncaught_trace_throw    (expected '(throw site)', got 'unhandled Fail: uncaught-from-main')
+batch ad (96 files): PENDING
+batch ae (96 files): PENDING
+batch af (95 files): PENDING
+
+=== main-binary comparison column ===
+d:/Sources/nv-lang/nova/nova-cli/target/release/nova.exe (rebuilt today ~16:52 by
+integrator, mid-edit O(1) refactor of emit_c.rs per integrator's own message)
+crashes with "thread '<unknown>' has overflowed its stack" on `nova test` for
+ANY input, including a single trivial file (spec_tests/conformance/standalone/
+e2e_collate.nv) and even when run from ITS OWN repo directory against its OWN
+unmodified spec_tests — i.e. this is NOT caused by anything in the p465
+worktree or by #465's changes. `nova check` (typecheck-only, no test-runner)
+on the same main binary works fine. Root cause not investigated (out of scope
+for #465, different window's concurrent WIP edit) — flagged to integrator.
+Regression evidence for #465 therefore rests on: (a) the p465 binary's own
+before/after via the sabotage probe (injection code removed → new fixtures
+go red; code restored via `git checkout --` → green again, `git diff` empty),
+and (b) the full corpus run below, which never touches the new codegen path
+for any PRE-EXISTING file (zero_on_move_types is empty unless a file declares
+`#zero_on_move`, and none in std/examples/spec_tests do yet).
