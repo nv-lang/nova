@@ -5,7 +5,7 @@
 
 Задача: новая репа `nova-socks` — скелет пакета + SOCKS5-клиент (RFC 1928
 CONNECT + RFC 1929 username/password auth) + README-пара. Ф.2 (мост
-`examples/net/socks5_http_bridge/`) и Ф.3 (plain-HTTP-путь) — вне объёма этого
+`examples/flagship/socks5_http_bridge/`) и Ф.3 (plain-HTTP-путь) — вне объёма этого
 окна, НЕ тронуты.
 
 ## Добавление — раунд аудита-ревью (тот же день, 2026-08-06)
@@ -300,7 +300,7 @@ doc-conventions ok: mixed_language — русской прозы в англий
 
 ## Подтверждение границ окна
 
-- **Ф.2/Ф.3 НЕ тронуты**: `examples/net/socks5_http_bridge/` не создан,
+- **Ф.2/Ф.3 НЕ тронуты**: `examples/flagship/socks5_http_bridge/` не создан,
   `examples/nova.toml` не менялся, никакой мост-код не писался.
 - **Компиляторные файлы репы nova не касались вообще** — только 4 обхода в
   `.nv`-коде пакета (см. выше) + чтение (не правка) компиляторных диагностик

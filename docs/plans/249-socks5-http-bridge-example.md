@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
-# План 249 — пакет `nova-socks` + пример `examples/net/socks5_http_bridge/`
+# План 249 — пакет `nova-socks` + пример `examples/flagship/socks5_http_bridge/`
 
 **Статус:** 🚧 ЧАСТИЧНО ИСПОЛНЕН. Ф.П/Ф.1/Ф.4 ГОТОВЫ (пакет `nova-socks`
 опубликован на трёх зеркалах), Ф.0 готова (half-close с реальным FIN, №458).
@@ -231,7 +231,7 @@ Windows принимают только **HTTP-прокси** и не умеют
      принципу, обоснование в манифесте `nova-http`), поэтому std отпадает.
      SOCKS5 проксирует ЛЮБОЙ TCP, не только HTTP — класть в `nova-http` значило бы
      тащить весь HTTP тому, кому нужен голый туннель.
-  2. **Пример** — под-папка `examples/net/socks5_http_bridge/` (репа `nova`):
+  2. **Пример** — под-папка `examples/flagship/socks5_http_bridge/` (репа `nova`):
      `main.nv` + `README.md`/`README.ru.md`; зависит от пакета `nova-socks`.
      Соседние `echo_client.nv`/`echo_server.nv` остаются одиночными файлами —
      прецедент оформления README, не структуры. **НЕ** `nova-polaris/examples/`.
@@ -481,7 +481,7 @@ fn handle_client(consume client TcpStream, cfg Config) Net Time -> () {
   smoke-тестированы (`config`-валидация, accept, `501`/`502`/`431` —
   подтверждены на реальном бинаре через curl/PowerShell-клиент). Файл лежит
   в `examples/_wip/socks5_http_bridge/main.nv` (НЕ в
-  `examples/net/socks5_http_bridge/`, НЕ подключён в `examples/nova.toml`)
+  `examples/flagship/socks5_http_bridge/`, НЕ подключён в `examples/nova.toml`)
   — **ДВА НОВЫХ блокера**, оба найдены этим окном, ни один не был предвиден
   планом:
   1. **У `nova-socks` нет опубликованного тега.** `socks = { git = …,

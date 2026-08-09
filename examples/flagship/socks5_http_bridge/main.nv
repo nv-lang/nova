@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// examples/net/socks5_http_bridge/main.nv — local HTTP-to-SOCKS5 bridge.
+// examples/flagship/socks5_http_bridge/main.nv — local HTTP-to-SOCKS5 bridge.
 //
 // Motivation (plan 249 §0): some SOCKS5 proxies require a username/password
 // (RFC 1929) that Windows' system HTTP-proxy setting cannot carry. This
@@ -37,14 +37,14 @@
 //
 // Usage:
 //   SOCKS5_PROXY=proxy.example.com:1080 SOCKS5_USER=me SOCKS5_PASS=secret \
-//     nova build examples/net/socks5_http_bridge/main.nv -o bridge && ./bridge 8899
+//     nova build examples/flagship/socks5_http_bridge/main.nv -o bridge && ./bridge 8899
 //   # Point a browser's HTTPS proxy setting at 127.0.0.1:8899.
 //
 // See the module README for the full write-up, including the manual
 // end-to-end smoke test (NOT run in CI — needs a real external SOCKS5
 // proxy).
 
-module net.socks5_http_bridge
+module flagship.socks5_http_bridge
 
 import std.net.{TcpListener, TcpStream, TcpReadHalf, TcpWriteHalf, SocketAddr, real_net}
 import std.os.{args, env, real_os}

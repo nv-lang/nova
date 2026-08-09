@@ -21,6 +21,7 @@
 # ДОБАВЛЯЯ ЦЕЛЬ: одной строкой здесь — и она подхватится обоими гейтами.
 
 aggregator       examples/flagship/aggregator/src/main.nv
+socks5_bridge    examples/flagship/socks5_http_bridge/main.nv
 echo_client_net  examples/net/echo_client.nv
 echo_server_net  examples/net/echo_server.nv
 echo_client_tls  examples/tls/echo_client.nv
