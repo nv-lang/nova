@@ -1,0 +1,38 @@
+// EXPECT_COMPILE_ERROR is not a recognized array-type static-method call
+//
+// [221.1 #510] Lineage note: the ORIGINAL p502-named-tuple fixture at this
+// slug (`m510_vec_generic_bracket_sugar_turbofish_neg.nv`) asserted
+// `EXPECT_COMPILE_ERROR E_ARRAY_SUGAR_TRAILING_TYPE_ARGS` on
+// `[]M510NegEnt[str, int].new()` — i.e. that turbofish args on `T` inside
+// `[]T.method(...)` were illegal. That assumption was WRONG: D38
+// (spec/decisions/03-syntax.md) already documents `[]Slot[K, V].with_capacity(cap)`
+// as the CANONICAL example of this sugar — turbofish-on-`T` was always
+// supposed to work, the parser's `parse_array_lit` (D38 array-type-static-
+// method branch, `compiler-codegen/src/parser/mod.rs`) just had a one-token
+// lookahead bug that silently mis-split it into two unrelated expressions
+// instead. The fix makes `[]T[Args].method(...)` desugar to
+// `Vec[T[Args]].method(...)` (see the now-PASSING positive fixture
+// `standalone/m510_array_type_static_method_turbofish.nv`, which covers
+// exactly the scenario this file used to reject) — so that scenario is
+// retired from `neg/` entirely, not merely renamed.
+//
+// This file is repurposed to pin the actual SURVIVING edge of the D38
+// grammar: statements are always Newline/Semicolon-separated
+// (`parse_stmt_or_expr`), so an `Ident` sitting immediately after an empty
+// `[]` (no separator token before it) can ONLY be an attempt at this
+// sugar — there is no other legal Nova construct it could start. Per D38
+// the sugar ALWAYS ends in `.method(...)`; `[]Ent[str, int]` with no
+// trailing `.method(...)` at all is not a legal program. Before #510 this
+// would have silently degraded to an empty `[]` literal (typed from
+// context) followed by an unrelated sibling expression-statement
+// `M510NegEnt[str, int]` — exactly the bug class #510 closes. Now it is a
+// hard parse error instead of a silent split.
+
+module neg.m510_array_sugar_unrecognized_continuation_neg
+
+type M510NegEnt[K, V] { key K, value V }
+
+fn bad() -> int {
+    mut xs = []M510NegEnt[str, int]
+    xs.len()
+}

@@ -9868,6 +9868,78 @@ impl Parser {
                         start.merge(ty_span),
                     ));
                 }
+                // [221.1 №510] `[]T[Args].method(...)` — `T` carries its own
+                // turbofish type-args (`[]Ent[str, int].new()`). The bare-
+                // Ident branch above only looks ONE token ahead (`Ident`
+                // then `Dot`); with turbofish args the next token is `[`,
+                // so that branch never fired. The already-consumed `]`
+                // then fell through to the plain "empty array literal"
+                // return below, and `Ent[str, int].new()` was left to be
+                // parsed as an unrelated SIBLING statement/expression —
+                // silently wrong code, not a parse error (see the bug
+                // record for the `Nova_EmbeddedDir_static_new()` symptom).
+                //
+                // Fix: desugar to `Vec[T[Args]].method(...)` — reuses the
+                // already-working explicit `Vec[...]` static-dispatch
+                // machinery (D27 `[]T ≡ Vec[T]`), the same trick the
+                // `[](T1, T2)` tuple-type amendment right below already
+                // uses. Speculative + rollback: if `T[Args]` doesn't parse
+                // as a type, or isn't followed by a genuine `.method(`
+                // continuation, fall through to the hard error a few
+                // lines down — per D38 this sugar is ALWAYS followed by
+                // `.method(...)`, so a bare `[]Ident` with no recognized
+                // continuation is never a legal program; there is nothing
+                // legitimate left to silently drop.
+                if matches!(self.peek_at(1).kind, TokenKind::LBracket) {
+                    let saved_pos = self.pos;
+                    if let Ok(ty) = self.parse_type() {
+                        if matches!(self.peek().kind, TokenKind::Dot)
+                            && matches!(self.peek_at(1).kind, TokenKind::Ident(_))
+                            && matches!(self.peek_at(2).kind, TokenKind::LParen)
+                        {
+                            let ty_span = ty.span();
+                            return Ok(Expr::new(
+                                ExprKind::TurboFish {
+                                    base: Box::new(Expr::new(
+                                        ExprKind::Ident("Vec".to_string()),
+                                        start,
+                                    )),
+                                    type_args: vec![ty],
+                                },
+                                start.merge(ty_span),
+                            ));
+                        }
+                    }
+                    self.pos = saved_pos;
+                }
+                // [221.1 №510] Insurance against the whole bug CLASS, not
+                // just the turbofish carrier: statements are always
+                // Newline/Semicolon-separated (`parse_stmt_or_expr`), so an
+                // `Ident` sitting immediately after `]` with NO separator
+                // token in between can only be an attempt at this `[]T...`
+                // sugar — there is no other legal Nova construct it could
+                // start. Silently falling through to the empty-array-
+                // literal return below would reopen exactly the class this
+                // record closes: the `]` gets read as a COMPLETE
+                // expression and the Ident starts an unrelated sibling
+                // statement, changing the program's meaning without a
+                // diagnostic. Refuse instead of guessing.
+                let bad_span = self.peek().span;
+                let ident_preview = if let TokenKind::Ident(n) = &self.peek().kind {
+                    n.clone()
+                } else {
+                    String::new()
+                };
+                return Err(Diagnostic::new(
+                    format!(
+                        "`[]{ident_preview}...` is not a recognized array-type \
+                         static-method call — expected `[]T.method(...)` or \
+                         `[]T[Args].method(...)` (D38); an identifier \
+                         immediately after `[]` can never start a separate \
+                         statement here"
+                    ),
+                    bad_span,
+                ));
             }
             // [221.1 №24 / D-amend D27] `[](T1, T2, ...)` — a parenthesized
             // TYPE form (tuple-type shape, D27 `[]T ≡ Vec[T]` alias)
