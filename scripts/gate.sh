@@ -137,6 +137,14 @@ bash "$ROOT/scripts/guards/check-no-accumulation.sh" "$ROOT" || fail "накоп
 
 bash "$ROOT/scripts/guards/check-expect-markers.sh" "$ROOT" || fail "неизвестный EXPECT_* в тесте"
 
+step "nova:expect — храповик разметки негативных фикстур (план 262 Б)"
+# Файловый EXPECT_COMPILE_ERROR говорит «где-то в этом файле ошибка», и
+# фикстура остаётся зелёной, даже когда ошибка переехала на другую строку
+# по другой причине. `nova:expect` пришпиливает ожидание к МЕСТУ. Разом
+# разметить 550 фикстур нельзя — храповик не даёт их числу расти.
+bash "$ROOT/scripts/guards/check-nova-expect-ratchet.sh" "$ROOT" \
+    || fail "неразмеченных негативных фикстур стало больше (план 262 Б)"
+
 step "doc-truth (нормативная дока врёт именем EXPECT_* или неисполнимой командой — №455)"
 bash "$ROOT/scripts/guards/check-doc-truth.sh" "$ROOT" || fail "неизвестный EXPECT_* или неисполнимая команда nova в AGENTS.md/docs/dev(/docs/guide для маркеров)"
 
