@@ -2931,7 +2931,7 @@ fn verify_case(path: &Path, parts: &[String], is_file: bool) -> Option<(String, 
 /// `Some(ответ)` — индекс дал имена всех сравниваемых сегментов и ни один из
 /// каталогов цепочки не содержит символических ссылок. `None` — вопрос
 /// индексу не адресуется (снимок выключен, путь вне индекса, есть ссылка):
-/// вызывающий обязан спросить `fs::canonicalize`, как раньше.
+/// [INV-TODO: №523] вызывающий обязан спросить `fs::canonicalize`, как раньше.
 #[allow(clippy::type_complexity)]
 fn verify_case_from_index(
     path: &Path,

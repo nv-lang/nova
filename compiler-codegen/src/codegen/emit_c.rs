@@ -15695,7 +15695,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 self.line(&format!("{}void {}(mco_coro* _co);", self.top_level_storage(), spawn_id));
                 // Plan 47: рекурсия в тело spawn'а — вложенные spawn'ы
                 // (`spawn { supervised { spawn {...} } }`) тоже нуждаются в
-                // forward-decl, и `*s` counter обязан совпадать с emit'овским
+                // [INV-TODO: №523] forward-decl, и `*s` counter обязан совпадать с emit'овским
+                // [INV-TODO: №523] — совпадение держится тем, что обе стороны
+                // читают один и тот же счётчик, но проверки на расхождение нет.
                 // (emit_spawn инкрементит spawn_counter, затем эмитит тело →
                 // depth-first). Без рекурсии scan/emit рассинхронизировались
                 // и вложенные entry-функции оставались undeclared.
@@ -36364,7 +36366,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             ExprKind::MapLit { .. } => {
                 Err("compiler bug: map literal `[k: v]` reached codegen без \
                      desugar pass — нарушение pipeline invariant. \
-                     desugar_module() обязан быть вызван до codegen. \
+                     desugar_module() обязан быть вызван до codegen. \  // [INV-TODO: №523]
                      Report issue: https://github.com/nv-lang/nova/issues".into())
             }
 
@@ -44870,7 +44872,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                     // Plan 82 followup (2026-05-23, fail-loudly): single-key
                     // method_receivers — last-wins fallback. Для STATIC-метода
-                    // (`Type.m(...)`) обязана быть проверка, что зарегистрированный
+                    // [INV-TODO: №523] (`Type.m(...)`) обязана быть проверка, что зарегистрированный
                     // type_name совпадает с тем, что НА КОЛЛ-САЙТЕ. Иначе
                     // missing-import-вариант `HashMap[T,T].new()` (HashMap
                     // неизвестен codegen'у) ТИХО роутится в `Nova_Error_static_new`
@@ -46955,7 +46957,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         else_: Option<&ElseBranch>,
         if_id: crate::ast::ExprId,
     ) -> Result<String, String> {
-        // Plan 08 Ф.4: strict `if cond: bool`. Spec D54: cond обязан быть
+        // [INV-TODO: №523] Plan 08 Ф.4: strict `if cond: bool`. Spec D54: cond обязан быть
         // bool, не truthy-int (Rust/Swift/Kotlin прецедент). Закрывает
         // silent-bug class. Conservative — error только если ОЧЕВИДНО
         // non-bool (numeric/str). type-neutral (void*) — пропускаем.
@@ -57708,7 +57710,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// typed-closure аргумента (`ClosureFull` — `fn(x T) -> U`). Нужно
     /// для Result.map: bootstrap-лямбды используют distinct typedef'ы
     /// (`nova_bool`/`nova_char`, Plan 70.3), и fn-pointer cast при
-    /// closure-вызове обязан совпадать с фактической сигнатурой лямбды —
+    /// [INV-TODO: №523] closure-вызове обязан совпадать с фактической сигнатурой лямбды —
     /// иначе `NOVA_CLOS_CALL_ii` (int-layout) на nova_bool-closure даёт
     /// calling-convention mismatch (garbage в верхних байтах результата).
     /// `ClosureLight` (`|x| ...`) — untyped → None (caller фоллбэчится
