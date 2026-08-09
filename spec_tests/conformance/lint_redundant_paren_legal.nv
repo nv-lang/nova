@@ -6,7 +6,7 @@
 // Прогон: `nova lint --rule W_REDUNDANT_PAREN spec_tests/conformance/lint_redundant_paren_legal.nv`
 // -> 0 finding(s).
 
-module conformance.lint_redundant_paren_legal
+module spec_tests.conformance
 
 // fn-newtype — `self` напрямую вызываем: `@(x)` это CALL, не группировка
 // (реальный корпусный ложноположительный случай, пойман прогоном по
