@@ -67,7 +67,7 @@ export fn race2[T](a fn() -> T, b fn() -> T) -> T {
     // is_cancelled()-проверкой) был настоящим TOCTOU-race: оба могли
     // пройти проверку и писать одновременно. Канал cap 2 (оба могут
     // успеть try_send без блокировки); FIFO-порядок канала = first-wins.
-    ro (tx, rx) = Channel.new(2)
+    ro (tx, rx) = Channel[T].new(2)
 
     supervised(cancel: tok) {
         spawn {

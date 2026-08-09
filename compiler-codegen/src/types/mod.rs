@@ -43419,6 +43419,30 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
 
         // ─── Вызовы — точки consume ───
         ExprKind::Call { func, args, trailing } => {
+            // №513 (D79-амендмент 2026-08-09): bare `Channel.new(cap)` —
+            // no explicit element type — REJECTED. Canon is
+            // `Channel[T].new(cap)` (D79, spec/decisions/06-concurrency.md
+            // §Channel.new). `is_channel_new_call`/`channel_new_turbofish_elem`
+            // already recognise every AST shape the parser produces for
+            // `Channel.new` (bare Member, bare Path, `Channel[T].new`,
+            // `Channel.new[T]`) — reuse them here rather than re-deriving
+            // the match. This `ExprKind::Call` arm is reached for EVERY
+            // call expression in EVERY fn/method body (`check_consume`
+            // drives `consume_walk_block` over every `Item::Fn`, unconditio-
+            // nally, module.rs:1714) — the single earliest, complete gate,
+            // before codegen ever sees the bare form (closing the special
+            // case in `emit_c.rs` that used to accept it silently).
+            if is_channel_new_call(e) && channel_new_turbofish_elem(e).is_none() {
+                errors.push(Diagnostic::new(
+                    "[E_CHANNEL_NEW_BARE] `Channel.new(cap)` is missing its \
+                     explicit element type — the canonical form is \
+                     `Channel[T].new(cap)` (D79, \
+                     spec/decisions/06-concurrency.md). Example: \
+                     `ro (tx, rx) = Channel[int].new(8)`."
+                        .to_string(),
+                    e.span,
+                ));
+            }
             // [M-codegen-method-return-turbofish] A turbofish method call
             // (`resp.json_as[T]()`) parses as `Call{func: TurboFish{base: Member}}`
             // — unwrap the turbofish so the `Member` arm below fires and the

@@ -10,7 +10,7 @@ import std.time.duration
 type PSource { id str, host str, latency_ms int, port int, flag bool }
 
 fn guarded(source PSource) Time -> int {
-    ro { tx, rx } = Channel.new(1)
+    ro { tx, rx } = Channel[int].new(1)
     // Plan 238 (D441 §3): `with Fail[T]` handler исполняется В ФАЙБЕРЕ
     // падающей операции — AtomicBool вместо mut-флага
     // (E_HANDLER_MUT_CAPTURE_IN_FIBER).

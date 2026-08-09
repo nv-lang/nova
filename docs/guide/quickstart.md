@@ -110,7 +110,7 @@ const BUDGET_MS int = 120   // total budget for the whole run, ms
 // genuinely cancelled — not left running in the background with its
 // result thrown away.
 fn probe(latency_ms int, deadline Monotonic) Time -> str {
-    ro { tx, rx } = Channel.new(1)
+    ro { tx, rx } = Channel[bool].new(1)
     // A `with Fail[T]` handler runs IN THE FIBER of the failing operation,
     // not the installing scope's fiber (see spec/decisions/06-concurrency.md
     // D441) — a bare `mut` flag captured there is a data race under M:N.

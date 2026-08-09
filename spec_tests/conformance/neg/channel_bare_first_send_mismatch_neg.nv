@@ -1,20 +1,21 @@
-// Plan 221.1 №286 residual gap (window p286, follow-up to window p-chan's
-// №143/№286 core fix). p-chan's `E_CHANNEL_ELEM_TYPE_MISMATCH` only fired
-// when `T` was declared explicitly (turbofish/annotation) — a BARE
-// `Channel.new(cap)` was fully permissive, including mixing types on the
-// SAME writer within the same block, because `T` was never tracked at
-// all. This window infers `T` from the writer's first `.send` call in the
-// same block (see `pos_channel_bare_first_send_infer.nv`); this fixture
-// pins that inference now also protects a SECOND, mismatched `send` on
-// the same writer — the same soundness guarantee the turbofish-declared
-// form already had, extended to the common undeclared-but-consistently-
-// typed-in-practice shape.
+// №513 (D79-амендмент 2026-08-09): канон — `Channel[T].new(cap)`, ОБЯЗАН
+// нести явный тип элемента. Прежняя история этой фикстуры (Plan 221.1
+// №286, window p286): p-chan's `E_CHANNEL_ELEM_TYPE_MISMATCH` только
+// срабатывал при явном `T` (turbofish/annotation) — BARE `Channel.new`
+// был полностью permissive (включая mismatch двух `send` на одном
+// writer'е), и то окно закрыло permissiveness через first-send-inference
+// (`seed_channel_bare_send_hints`, types/mod.rs). №513 отменяет саму
+// first-send-inference-модель: `T`-с-первого-send больше не «доверенный»
+// источник типа — единственный источник теперь явная аннотация. Голая
+// форма отклоняется РАНЬШЕ, чем инференс успевает что-либо вывести
+// (`E_CHANNEL_NEW_BARE`, consume-walk gate) — mismatch на второй строке
+// этого файла никогда не достигается.
 //
-// EXPECT_COMPILE_ERROR E_CHANNEL_ELEM_TYPE_MISMATCH
+// EXPECT_COMPILE_ERROR E_CHANNEL_NEW_BARE
 
 module neg.channel_bare_first_send_mismatch_neg
 
-test "bare channel.new: T inferred from first send rejects a mismatched second send" {
+test "bare Channel.new (no explicit T) is rejected outright — D79 канон" {
     ro (tx, rx) = Channel.new(2)
     tx.send(10)
     tx.send("oops")

@@ -73,7 +73,7 @@ fn fetch_guarded(source Source, shared_deadline Monotonic, idx int) Net Time Emi
     // destructure `source` into scalar/`str` locals before the spawn.
     ro slatency = source.latency_ms
     ro sfail = source.should_fail
-    ro { tx, rx } = Channel.new(1)
+    ro { tx, rx } = Channel[TaskStatus].new(1)
     // Plan 238 (D441 §3, модель памяти между файберами): `with Fail[T]`
     // handler исполняется В ФАЙБЕРЕ падающей операции, не вызывающего
     // scope'а — mut-флаг там был бы гонкой (E_HANDLER_MUT_CAPTURE_IN_FIBER).

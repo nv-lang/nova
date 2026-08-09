@@ -34,7 +34,7 @@ type ReadAttempt enum
     | Errored
 
 fn read_attempt(s mut TcpStream, deadline Monotonic) Net Time -> ReadAttempt {
-    ro (tx, rx) = Channel.new(1)
+    ro (tx, rx) = Channel[[]u8].new(1)
     // Plan 238 Ф.4 (D441 §3): `with Fail[TimeoutError]` handler исполняется
     // в файбере падающей операции — AtomicBool вместо mut-флага
     // (E_HANDLER_MUT_CAPTURE_IN_FIBER).
@@ -82,8 +82,8 @@ fn handle_one(stream mut TcpStream) Net Time -> bool {
 
 test "instance A: accept-loop cancelled by real supervised(timeout:) — poisons nothing" {
     with Net = real_net() {
-        ro (port_tx, port_rx) = Channel.new(1)
-        ro (got_tx, got_rx) = Channel.new(1)
+        ro (port_tx, port_rx) = Channel[u16].new(1)
+        ro (got_tx, got_rx) = Channel[[]u8].new(1)
         with Fail[TimeoutError] = |_e| {} {
             supervised(timeout: 3.to_seconds()) {
                 spawn {
@@ -131,8 +131,8 @@ test "instance A: accept-loop cancelled by real supervised(timeout:) — poisons
 
 test "instance B: later supervised(deadline:) in same process gets a FRESH deadline" {
     with Net = real_net() {
-        ro (port_tx, port_rx) = Channel.new(1)
-        ro (got_tx, got_rx) = Channel.new(1)
+        ro (port_tx, port_rx) = Channel[u16].new(1)
+        ro (got_tx, got_rx) = Channel[[]u8].new(1)
         supervised {
             spawn {
                 consume lst = match TcpListener.bind(SocketAddr.loopback(0)) {

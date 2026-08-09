@@ -12,7 +12,7 @@
 module spec_tests.conformance
 test "consecutive wakes — both fibers run, no loss" {
     ro n = 100
-    ro ch = Channel.new(1)
+    ro ch = Channel[int].new(1)
     // Plan 173.3 (D415 §2): Atomic* вместо mut-захвата (E_CONCURRENT_MUT_CAPTURE).
     mut received = AtomicInt.new(0)
     supervised {

@@ -9,7 +9,7 @@
 module spec_tests.conformance
 
 test "chan: fan-in — два writer'а через share(), закрывает последний" {
-    ro { tx, rx } = Channel.new(8)
+    ro { tx, rx } = Channel[int].new(8)
     ro tx2 = tx.share()                // writer_count = 2
     mut sum = AtomicInt.new(0)         // #share — легальный капчур (D415 §2)
     supervised {
@@ -23,7 +23,7 @@ test "chan: fan-in — два writer'а через share(), закрывает �
 }
 
 test "chan: share() per-fiber — канал жив до закрытия последнего writer'а" {
-    ro { tx, rx } = Channel.new(4)
+    ro { tx, rx } = Channel[int].new(4)
     mut got = AtomicInt.new(0)         // #share — легальный капчур (D415 §2)
     supervised {
         ro w1 = tx.share()

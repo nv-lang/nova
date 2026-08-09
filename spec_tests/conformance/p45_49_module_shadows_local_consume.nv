@@ -72,7 +72,7 @@ test "consume binding whose name shadows an imported module resolves to the LOCA
 }
 
 test "spawn consume binding whose name shadows an imported module resolves to the LOCAL binding's method" {
-    ro (tx, rx) = Channel.new(1)
+    ro (tx, rx) = Channel[int].new(1)
     supervised {
         spawn consume ws = P4549Guard { id: 100 } {
             ro _ = tx.try_send(ws.p4549_marker())

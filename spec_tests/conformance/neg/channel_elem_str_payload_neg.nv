@@ -8,7 +8,7 @@
 module neg.channel_elem_str_payload_neg
 
 fn channel_elem_str_payload_neg_use() {
-    ro { tx, rx } = Channel.new(4)
+    ro { tx, rx } = Channel[str].new(4)
     tx.send("first")
     ro _v = rx.recv()
 }

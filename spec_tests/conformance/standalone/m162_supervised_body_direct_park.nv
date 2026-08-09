@@ -51,7 +51,7 @@ test "supervised body direct block coexists with a spawned child in the same sco
 }
 
 test "supervised body direct channel recv (no spawn wrapping recv) parks until a spawned sender fires" {
-    ro ch = Channel.new(1)
+    ro ch = Channel[int].new(1)
     ro tx = ch.tx
     ro rx = ch.rx
     mut got = -1

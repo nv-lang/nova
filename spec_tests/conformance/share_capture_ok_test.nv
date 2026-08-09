@@ -78,7 +78,7 @@ test "#share primitives: Mutex/AtomicInt/WaitGroup captured mut by siblings" {
 }
 
 test "spawn consume: explicit move into child ownership (D415 §4)" {
-    ro (tx, rx) = Channel.new(1)
+    ro (tx, rx) = Channel[int].new(1)
     supervised {
         spawn consume j = Job.new(7) {
             // `j` принадлежит ребёнку; cleanup сработает на выходе ЭТОГО
@@ -97,7 +97,7 @@ test "spawn consume: re-give form moves existing binding (D415 §4)" {
     // identifier; затем тело било в `_c->h` мимо `#define`). Тип — не
     // consume-обязательный (класс TcpListener: consume-метод есть, маркер нет),
     // иначе внешний биндинг сам потребовал бы consume-scope (D180).
-    ro (tx, rx) = Channel.new(1)
+    ro (tx, rx) = Channel[int].new(1)
     mut h = Handle1.new(9)
     supervised {
         spawn consume h {

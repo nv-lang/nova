@@ -22,7 +22,7 @@ const BUDGET_MS int = 120   // общий бюджет на весь забег,
 // ланов не размывает общий бюджет. Опоздавший spawn честно обрывается
 // (его Time.sleep прерывается), канал остаётся пуст, исход — "cancelled".
 fn probe(latency_ms int, deadline Monotonic) Time -> str {
-    ro { tx, rx } = Channel.new(1)
+    ro { tx, rx } = Channel[bool].new(1)
     // Plan 238 (D441 §3): `with Fail[T]` handler исполняется В ФАЙБЕРЕ
     // падающей операции — AtomicBool вместо mut-флага
     // (E_HANDLER_MUT_CAPTURE_IN_FIBER, D415 белый список).

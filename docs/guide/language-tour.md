@@ -385,7 +385,7 @@ concurrency is structured, not a separate async dialect. `spawn` inside a
 gives that block a shared deadline, and a spawn that misses it is
 genuinely cancelled, not left running with its result discarded.
 `parallel for` fans out homogeneous work and collects results into a
-`[]T` in order. `Channel.new(cap)` returns a capability-split
+`[]T` in order. `Channel[T].new(cap)` returns a capability-split
 `{ tx, rx }` pair. This is the same shape as
 [`examples/mini_aggregator.nv`](../../examples/mini_aggregator.nv) (see
 [quickstart.md](quickstart.md)) and the flagship
@@ -398,7 +398,7 @@ module tour.concurrency
 import std.time.duration
 
 fn probe(latency_ms int, deadline Monotonic) Time -> str {
-    ro { tx, rx } = Channel.new(1)
+    ro { tx, rx } = Channel[bool].new(1)
     // A `with Fail[T]` handler runs IN THE FIBER of the failing operation,
     // not the installing scope's fiber (D441, spec/decisions/06-concurrency.md)
     // — a bare `mut` flag captured there is a data race under M:N.

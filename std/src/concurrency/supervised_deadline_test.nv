@@ -194,7 +194,7 @@ test "zero timeout: immediate TimeoutError" {
 //    checked what the child did AFTER the sleep call.
 
 test "deadline cancels a spawned child's in-flight sleep (no leaked marker)" {
-    ro (tx, rx) = Channel.new(1)
+    ro (tx, rx) = Channel[bool].new(1)
     // Plan 238 Ф.4 (D441 §3): AtomicBool вместо mut-флага.
     mut caught = AtomicBool.new(false)
     ro r = with Fail[TimeoutError] = |_e| {

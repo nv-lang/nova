@@ -26,8 +26,8 @@
 
 module spec_tests.conformance
 
-test "channel_elem_type: int payload — bare Channel.new, unaffected baseline" {
-    ro { tx, rx } = Channel.new(4)
+test "channel_elem_type: int payload — Channel[int].new, unaffected baseline" {
+    ro { tx, rx } = Channel[int].new(4)
     tx.send(10)
     tx.send(20)
     ro a = rx.recv()
@@ -38,7 +38,7 @@ test "channel_elem_type: int payload — bare Channel.new, unaffected baseline" 
 }
 
 test "channel_elem_type: bool payload — word-safe, still compiles/runs" {
-    ro { tx, rx } = Channel.new(2)
+    ro { tx, rx } = Channel[bool].new(2)
     tx.send(true)
     tx.send(false)
     ro a = rx.recv()
@@ -49,7 +49,7 @@ test "channel_elem_type: bool payload — word-safe, still compiles/runs" {
 }
 
 test "channel_elem_type: []u8 payload — pointer-sized, honest gate accepts send" {
-    ro { tx, rx } = Channel.new(2)
+    ro { tx, rx } = Channel[[]u8].new(2)
     mut v []u8 = []u8.new()
     v.push(1)
     v.push(2)
@@ -61,7 +61,7 @@ test "channel_elem_type: []u8 payload — pointer-sized, honest gate accepts sen
 }
 
 test "channel_elem_type: try_send honors the same word-safe gate as send" {
-    ro { tx, rx } = Channel.new(2)
+    ro { tx, rx } = Channel[int].new(2)
     assert(tx.try_send(5))
     ro v = rx.recv()
     assert(v ?? -1 == 5)
