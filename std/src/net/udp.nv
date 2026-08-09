@@ -24,7 +24,7 @@ module std.net
 /// }
 /// ```
 #stable(since = "0.1")
-export type UdpSocket consume value { priv handle *() }
+export type UdpSocket consume value priv { handle *() }
 
 fn UdpSocket.from_raw(h *()) -> UdpSocket => { handle: h }
 

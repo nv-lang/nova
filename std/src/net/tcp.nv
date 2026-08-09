@@ -25,7 +25,7 @@ import std.io.{IoError}
 /// Async TCP listener (server socket). `bind`/`accept`/`close` carry `Net`
 /// (accept parks the fiber). `close()` consumes.
 #stable(since = "0.1")
-export type TcpListener consume value { priv handle *() }
+export type TcpListener consume value priv { handle *() }
 
 /// Connected async TCP stream. `connect`/`read`/`write`/`close` carry `Net`.
 /// `close()` consumes (use-after-close is a compile error).
@@ -46,17 +46,17 @@ export type TcpListener consume value { priv handle *() }
 /// copies the pointer itself (cheap, and correctly aliases the same cell —
 /// pointers are ordinary Copy values, `#no_copy` does not apply to them).
 #stable(since = "0.1")
-export type TcpStream consume value { priv handle *(), priv rc *mut AtomicInt }
+export type TcpStream consume value priv { handle *(), rc *mut AtomicInt }
 
 /// Read half of a split `TcpStream`. Shares the connection with its
 /// sibling `TcpWriteHalf`; the two may run in separate fibers (independent
 /// C-side park slots). The socket closes only after BOTH halves close.
 #stable(since = "0.1")
-export type TcpReadHalf consume value { priv handle *() }
+export type TcpReadHalf consume value priv { handle *() }
 
 /// Write half of a split `TcpStream`. See `[TcpReadHalf]`.
 #stable(since = "0.1")
-export type TcpWriteHalf consume value { priv handle *() }
+export type TcpWriteHalf consume value priv { handle *() }
 
 // ─── Package-private factories / helpers ──────────────────────────────────────
 

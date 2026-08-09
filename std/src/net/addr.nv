@@ -27,7 +27,7 @@ module std.net
 /// let aw = SocketAddr.any(8080)            // 0.0.0.0:8080, ALL interfaces
 /// ```
 #stable(since = "0.1")
-export type SocketAddr value { priv raw []u8 }
+export type SocketAddr value priv { raw []u8 }
 
 // Byte size of the C `NovaNetAddr` POD image the value wraps:
 //   bytes[16] (IPv6, or IPv4 in the first 4) + port u16 + family u8 + pad u8.
