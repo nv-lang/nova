@@ -8114,9 +8114,26 @@ impl<'a> TypeCheckCtx<'a> {
     ) {
         let Some(trailing) = &b.trailing else { return };
         let infer_scope = self.scope_with_block_lets(b, scope);
-        let Some(ty) = self.infer_expr_type(trailing, &infer_scope) else { return };
+        let Some(mut ty) = self.infer_expr_type(trailing, &infer_scope) else { return };
         if matches!(ty, TypeRef::Unit(_)) {
             return;
+        }
+        // [реестр 221.1 №493] "every branch ends in an explicit `return`"
+        // (task's own required boundary case): `infer_expr_type`'s If/Match
+        // divergence handling (~L19801 `then_div && else_div`) truthfully
+        // reports the TRAILING POSITION's type as `never` here — no branch
+        // ever falls through to hand the if/match a value. `never` is a
+        // useless `-> T` suggestion (and arguably not even what D45 means
+        // by "unit" vs "not unit" — the fn DOES return a value, just always
+        // via an explicit `return`). Recover the real payload type from the
+        // `return <expr>` statements themselves; if they don't all agree on
+        // one concrete type, stay silent rather than suggest something
+        // possibly wrong (same conservative bias as the rest of this check).
+        if type_ref_is_never(&ty) {
+            match self.resolve_never_trailing_return_type(trailing, &infer_scope) {
+                Some(t) => ty = t,
+                None => return,
+            }
         }
         let ty_str = render_type_ref(&ty);
         errors.push(Diagnostic::new(
@@ -8133,6 +8150,95 @@ impl<'a> TypeCheckCtx<'a> {
             ),
             trailing.span,
         ));
+    }
+
+    /// [реестр 221.1 №493] All `return <expr>` values reachable from `e`
+    /// WITHOUT crossing into a different execution context — same
+    /// reachable-position set as `materialize_returns_in_expr`/`_in_block`
+    /// above (If/IfLet/Match/While/WhileLet/Loop/For/Block; deliberately
+    /// NOT `detach`/`spawn`/`parallel for`/closures, whose `return`
+    /// belongs to a different fn). If every value that resolved agrees on
+    /// one concrete type, that's the fn's real return type; otherwise
+    /// (mixed, or none resolved) `None` — the caller stays silent.
+    fn resolve_never_trailing_return_type(
+        &self,
+        e: &Expr,
+        scope: &HashMap<String, TypeRef>,
+    ) -> Option<TypeRef> {
+        let mut out: Vec<TypeRef> = Vec::new();
+        self.collect_return_value_types_expr(e, scope, &mut out);
+        let first = out.first()?;
+        let first_r = ResolvedType::from_type_ref(first);
+        if out.iter().all(|t| ResolvedType::from_type_ref(t) == first_r) {
+            Some(first.clone())
+        } else {
+            None
+        }
+    }
+
+    fn collect_return_value_types_block(
+        &self,
+        b: &Block,
+        scope: &HashMap<String, TypeRef>,
+        out: &mut Vec<TypeRef>,
+    ) {
+        for s in &b.stmts {
+            self.collect_return_value_types_stmt(s, scope, out);
+        }
+        if let Some(t) = &b.trailing {
+            self.collect_return_value_types_expr(t, scope, out);
+        }
+    }
+
+    fn collect_return_value_types_stmt(
+        &self,
+        s: &Stmt,
+        scope: &HashMap<String, TypeRef>,
+        out: &mut Vec<TypeRef>,
+    ) {
+        match s {
+            Stmt::Return { value: Some(e), .. } => {
+                if let Some(t) = self.infer_expr_type(e, scope) {
+                    out.push(t);
+                }
+            }
+            Stmt::Expr(e) => self.collect_return_value_types_expr(e, scope, out),
+            Stmt::ConsumeScope { body, .. } => self.collect_return_value_types_block(body, scope, out),
+            _ => {}
+        }
+    }
+
+    fn collect_return_value_types_expr(
+        &self,
+        e: &Expr,
+        scope: &HashMap<String, TypeRef>,
+        out: &mut Vec<TypeRef>,
+    ) {
+        match &e.kind {
+            ExprKind::If { then, else_, .. } | ExprKind::IfLet { then, else_, .. } => {
+                self.collect_return_value_types_block(then, scope, out);
+                if let Some(eb) = else_ {
+                    match eb {
+                        ElseBranch::Block(b) => self.collect_return_value_types_block(b, scope, out),
+                        ElseBranch::If(x) => self.collect_return_value_types_expr(x, scope, out),
+                    }
+                }
+            }
+            ExprKind::Match { arms, .. } => {
+                for arm in arms {
+                    match &arm.body {
+                        MatchArmBody::Expr(x) => self.collect_return_value_types_expr(x, scope, out),
+                        MatchArmBody::Block(b) => self.collect_return_value_types_block(b, scope, out),
+                    }
+                }
+            }
+            ExprKind::While { body, .. }
+            | ExprKind::WhileLet { body, .. }
+            | ExprKind::Loop { body, .. }
+            | ExprKind::For { body, .. } => self.collect_return_value_types_block(body, scope, out),
+            ExprKind::Block(b) => self.collect_return_value_types_block(b, scope, out),
+            _ => {}
+        }
     }
 
     fn f1_stmt(
