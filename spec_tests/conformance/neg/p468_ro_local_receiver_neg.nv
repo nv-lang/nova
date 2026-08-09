@@ -14,7 +14,7 @@
 module neg.p468_ro_local_receiver_neg
 
 fn int mut @p468_inc(by int) -> () {
-    @ = @ + by
+    @ += by
 }
 
 test "mut-method call on a ro-bound primitive local is rejected" {

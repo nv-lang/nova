@@ -33,7 +33,7 @@
 module standalone.p468_primitive_mut_method
 
 fn int mut @p468_inc(by int) -> () {
-    @ = @ + by
+    @ += by
 }
 
 fn bool mut @p468_flip() -> () {

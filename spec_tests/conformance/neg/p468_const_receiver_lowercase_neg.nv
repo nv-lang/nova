@@ -11,7 +11,7 @@
 module neg.p468_const_receiver_lowercase_neg
 
 fn int mut @p468_inc(by int) -> () {
-    @ = @ + by
+    @ += by
 }
 
 const n = 5

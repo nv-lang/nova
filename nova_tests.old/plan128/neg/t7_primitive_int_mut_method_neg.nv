@@ -9,7 +9,7 @@
 module neg.t7_primitive_int_mut_method_neg
 
 fn int mut @inc(by int) -> () {
-    @ = @ + by
+    @ += by
 }
 
 test "fn int mut @inc observably mutates the caller's binding" {
