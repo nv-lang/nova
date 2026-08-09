@@ -173,9 +173,21 @@ fn pos_missing_import_surfaces_real_diagnostic() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Reference implementation of the `nova check` pipeline (mirrors
-/// `compiler-codegen::main::cmd_check` / `test_runner`): parse → resolve
-/// imports → number_exprs → collect_all_signatures → check_module_with_sig_table.
-/// Returns the diagnostic messages.
+/// `nova-cli::main::check_one_file` / `test_runner`): parse →
+/// `prepare_module_for_check` (Plan 262 Ф.А.1-bis: resolve imports incl.
+/// `*_test.nv` peers + sig-table + `embed(...)` + alpha_rename + number_exprs)
+/// → `check_module_with_sig_table`. Returns the diagnostic messages.
+///
+/// Before Plan 262, this duplicated the pass list by hand (bare
+/// `resolve_imports_inline`, no `embed(...)` resolution) — the SAME class of
+/// bug registry №531 found in `compiler.rs` itself: a second, independently
+/// maintained copy of "what passes does the checker need" that had already
+/// drifted from what `nova check` actually runs. Now both this reference and
+/// `check_source_inner` call the same shared function, so this test still
+/// catches the class of regression it exists for (a future entry point
+/// skipping `prepare_module_for_check` and hand-rolling the list again would
+/// diverge from `nova check`, not from this reference — the class guard is
+/// `check-checker-entrypoints.sh`, this test is the semantic parity guard).
 fn reference_check_messages(path: &Path, src: &str) -> Vec<String> {
     let mut module = match nova_codegen::parser::parse(src) {
         Ok(m) => m,
@@ -184,15 +196,14 @@ fn reference_check_messages(path: &Path, src: &str) -> Vec<String> {
     let repo = nova_codegen::test_runner::find_repo_root_from(path);
     let sig_table = if let Some(repo) = &repo {
         let stdlib = nova_codegen::manifest::resolve_std_path(repo);
-        let _ = nova_codegen::imports::resolve_imports_inline(path, &mut module, repo, &stdlib);
-        Some(
-            nova_codegen::imports::collect_all_signatures(path, &module, repo, &stdlib)
-                .unwrap_or_else(|_| nova_codegen::imports::ModuleSigTable::new()),
+        nova_codegen::check_pipeline::prepare_module_for_check(
+            path, &mut module, repo, &stdlib, /* include_test_peers */ true,
         )
+        .ok()
+        .and_then(|p| p.sig_table)
     } else {
         None
     };
-    let _ = nova_codegen::number_exprs::number_exprs(&mut module);
     let res = match sig_table {
         Some(st) => nova_codegen::types::check_module_with_sig_table(&module, st),
         None => nova_codegen::types::check_module(&module),
@@ -201,6 +212,29 @@ fn reference_check_messages(path: &Path, src: &str) -> Vec<String> {
         Ok(_) => vec![],
         Err(errs) => errs.into_iter().map(|d| d.message).collect(),
     }
+}
+
+/// Run `f` on a 64 MiB-stack thread — `prepare_module_for_check`'s
+/// `collect_all_signatures` step walks the whole imported module graph
+/// (incl. `std.prelude`'s own transitive imports), which is enough recursion
+/// to overflow the default test-harness stack on Windows (confirmed:
+/// `parity_lsp_matches_nova_check_pipeline` — STATUS_STACK_OVERFLOW before
+/// this wrapper existed). The production LSP already runs everything through
+/// `run_with_large_stack` at the `server.rs` request-handling layer; this
+/// helper is the test-only equivalent for call sites in this file that use
+/// `check_source_inner`/`reference_check_messages` directly, bypassing that
+/// layer.
+fn run_large_stack<F, T>(f: F) -> T
+where
+    F: FnOnce() -> T + Send + 'static,
+    T: Send + 'static,
+{
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(f)
+        .expect("spawn large-stack thread")
+        .join()
+        .expect("large-stack thread panicked")
 }
 
 /// PARITY: for a valid in-repo fixture, the LSP produces exactly the same
@@ -216,9 +250,14 @@ fn parity_lsp_matches_nova_check_pipeline() {
     std::fs::write(&main, src).unwrap();
 
     // Type-check errors (import diagnostics excluded) must match the reference.
-    let lsp = check_source_inner(src, Some(&main), None);
+    // Both run on a large-stack thread — see `run_large_stack`'s doc comment.
+    let src_owned = src.to_string();
+    let main_owned = main.clone();
+    let lsp = run_large_stack(move || check_source_inner(&src_owned, Some(&main_owned), None));
     let lsp_msgs: Vec<String> = lsp.iter().map(|d| d.message.clone()).collect();
-    let reference = reference_check_messages(&main, src);
+    let main_owned2 = main.clone();
+    let src_owned2 = src.to_string();
+    let reference = run_large_stack(move || reference_check_messages(&main_owned2, &src_owned2));
     assert_eq!(
         lsp_msgs, reference,
         "LSP diagnostics must equal the `nova check` sig-table pipeline"
@@ -254,12 +293,7 @@ test \"r2\" {\n\
     // not depend on `RUST_MIN_STACK` being set on the harness thread.
     let src_owned = src.to_string();
     let main_owned = main.clone();
-    let diags = std::thread::Builder::new()
-        .stack_size(64 * 1024 * 1024)
-        .spawn(move || check_source_inner(&src_owned, Some(&main_owned), None))
-        .expect("spawn large-stack thread")
-        .join()
-        .expect("check thread");
+    let diags = run_large_stack(move || check_source_inner(&src_owned, Some(&main_owned), None));
     assert!(
         diags.iter().any(|d| d.message.contains("E_REBIND_LIVE_CONSUME")),
         "R2 must fire in the LSP pipeline (alpha_rename wired); got: {:?}",
