@@ -1,0 +1,64 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Scratch repro for bug #457: supervised(timeout:) does not reach a
+// .read() nested in the body of a CHILD spawn. Real TCP loopback,
+// matching the shape found by window 249 in the socks5_http_bridge.
+// No panics on the hot path — every outcome is recorded via atomics so the
+// actual timing is visible regardless of which branch fires.
+
+module scratch457.repro457
+
+import std.net.{TcpListener, TcpStream, SocketAddr, NetError, real_net}
+import std.time.duration
+
+fn must[T](r Result[T, NetError]) -> T {
+    match r {
+        Ok(v)  => v
+        Err(e) => panic("repro457: unexpected Err: ${e}")
+    }
+}
+
+test "supervised timeout must reach .read() nested in child spawn body" {
+    with Net = real_net() {
+        ro ch = Channel.new(1)
+        ro t0 = Timestamp.now().unix_millis()
+        mut read_done_elapsed = AtomicInt.new(-1)
+        mut read_outcome = AtomicInt.new(0) // 0=not-done 1=ok 2=err
+        ro r = with Fail[TimeoutError] = |_e| { 99 } {
+            supervised(timeout: 2.to_seconds()) {
+                spawn {
+                    ro port = match ch.rx.recv() { Some(x) => x  None => 0 as u16 }
+                    mut conn = must(TcpStream.connect(SocketAddr.loopback(port)))
+                    // client never writes anything — keeps the connection open
+                    // and idle so the server's read() blocks forever without
+                    // an external interrupt.
+                    30.to_seconds().sleep()
+                    conn.close()
+                }
+                spawn {
+                    mut lst = must(TcpListener.bind(SocketAddr.loopback(0)))
+                    ch.tx.send(lst.local_port())
+                    mut srv = must(lst.accept())
+                    mut buf []u8 = []u8.new()
+                    buf.resize(64, 0 as u8)
+                    // THIS is the blocking read nested in the child spawn's body.
+                    match srv.read(buf) {
+                        Ok(_n) => {
+                            read_done_elapsed.store((Timestamp.now().unix_millis() - t0) as int)
+                            read_outcome.store(1)
+                        }
+                        Err(_e) => {
+                            read_done_elapsed.store((Timestamp.now().unix_millis() - t0) as int)
+                            read_outcome.store(2)
+                        }
+                    }
+                }
+            }
+            7
+        }
+        ro elapsed = Timestamp.now().unix_millis() - t0
+        println("repro457: r=${r} elapsed_ms=${elapsed} read_done_elapsed=${read_done_elapsed.load()} read_outcome=${read_outcome.load()}")
+        // Declared timeout is 2000ms — a generous ceiling proves the defect
+        // (window 249 observed >33000ms actual on the broken path).
+        assert(elapsed < 4000)
+    }
+}

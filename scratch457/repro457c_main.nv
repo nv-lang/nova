@@ -1,0 +1,64 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Scratch repro #457, v3 — matches the REAL socks5_http_bridge nesting
+// depth: an untimed OUTER `supervised` spawns a per-connection handler
+// fiber; THAT fiber calls a helper containing its OWN
+// `supervised(timeout:) { spawn { .read() } }`. v1/v2 ran the timed
+// supervised directly at the fiber root (main()'s own top-level flow) and
+// the timeout worked fine — this version puts the timed supervised inside
+// an already-spawned fiber, exactly the shape `read_headers_guarded` would
+// have without its manual CancelToken workaround.
+
+module scratch457.repro457c_main
+
+import std.net.{TcpListener, TcpStream, SocketAddr, NetError, real_net}
+import std.time.duration
+
+fn must[T](r Result[T, NetError]) -> T {
+    match r {
+        Ok(v)  => v
+        Err(e) => panic("repro457c: unexpected Err: ${e}")
+    }
+}
+
+// Mirrors `read_headers_guarded`'s shape MINUS the manual watchdog: bare
+// `supervised(timeout:) { spawn { .read() } }`, called from inside an
+// already-spawned handler fiber.
+fn guarded_read(consume srv TcpStream, t0 i64) Net Time -> () {
+    ro r = with Fail[TimeoutError] = |_e| { 99 } {
+        supervised(timeout: 2.to_seconds()) {
+            spawn consume srv {
+                mut buf []u8 = []u8.new()
+                buf.resize(64, 0 as u8)
+                match srv.read(buf) {
+                    Ok(n)  => println("repro457c: UNEXPECTED read Ok(${n})")
+                    Err(e) => println("repro457c: read Err inside inner spawn: ${e}")
+                }
+            }
+        }
+        7
+    }
+    ro elapsed = Timestamp.now().unix_millis() - t0
+    println("repro457c: r=${r} elapsed_ms=${elapsed}")
+}
+
+fn main() Net Time -> () {
+    with Net = real_net() {
+        mut lst = must(TcpListener.bind(SocketAddr.loopback(0)))
+        ro port = lst.local_port()
+        mut conn = must(TcpStream.connect(SocketAddr.loopback(port)))
+        mut srv = must(lst.accept())
+        // `conn` stays alive, idle, entirely outside any spawn/supervised —
+        // the only way `srv.read()` completes is genuine cancellation.
+
+        ro t0 = Timestamp.now().unix_millis()
+        supervised {
+            spawn consume srv {
+                guarded_read(srv, t0)
+            }
+        }
+        ro total_elapsed = Timestamp.now().unix_millis() - t0
+        println("repro457c: total_elapsed_ms=${total_elapsed}")
+        conn.close()
+        lst.close()
+    }
+}

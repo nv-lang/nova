@@ -1,0 +1,54 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Scratch repro for bug #457 — standalone binary form (so stdout is visible
+// directly, unlike `nova test`'s harness which swallows it).
+
+module scratch457.repro457_main
+
+import std.net.{TcpListener, TcpStream, SocketAddr, NetError, real_net}
+import std.time.duration
+
+fn must[T](r Result[T, NetError]) -> T {
+    match r {
+        Ok(v)  => v
+        Err(e) => panic("repro457: unexpected Err: ${e}")
+    }
+}
+
+fn main() Net Time -> () {
+    with Net = real_net() {
+        ro ch = Channel.new(1)
+        ro t0 = Timestamp.now().unix_millis()
+        mut read_done_elapsed = AtomicInt.new(-1)
+        mut read_outcome = AtomicInt.new(0) // 0=not-done 1=ok 2=err
+        ro r = with Fail[TimeoutError] = |_e| { 99 } {
+            supervised(timeout: 2.to_seconds()) {
+                spawn {
+                    ro port = match ch.rx.recv() { Some(x) => x  None => 0 as u16 }
+                    mut conn = must(TcpStream.connect(SocketAddr.loopback(port)))
+                    30.to_seconds().sleep()
+                    conn.close()
+                }
+                spawn {
+                    mut lst = must(TcpListener.bind(SocketAddr.loopback(0)))
+                    ch.tx.send(lst.local_port())
+                    mut srv = must(lst.accept())
+                    mut buf []u8 = []u8.new()
+                    buf.resize(64, 0 as u8)
+                    match srv.read(buf) {
+                        Ok(_n) => {
+                            read_done_elapsed.store((Timestamp.now().unix_millis() - t0) as int)
+                            read_outcome.store(1)
+                        }
+                        Err(_e) => {
+                            read_done_elapsed.store((Timestamp.now().unix_millis() - t0) as int)
+                            read_outcome.store(2)
+                        }
+                    }
+                }
+            }
+            7
+        }
+        ro elapsed = Timestamp.now().unix_millis() - t0
+        println("repro457: r=${r} elapsed_ms=${elapsed} read_done_elapsed=${read_done_elapsed.load()} read_outcome=${read_outcome.load()}")
+    }
+}

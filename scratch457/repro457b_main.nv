@@ -1,0 +1,55 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Scratch repro #457, v2 — isolates the mechanism: the client connection is
+// established and kept alive OUTSIDE the `supervised` scope entirely (plain
+// sequential code, no spawn, no cancellation exposure), so the ONLY possible
+// source of interruption for the child spawn's blocked `.read()` is genuine
+// scope-timeout cooperative cancellation reaching into it. v1
+// (repro457_main.nv) had both sides spawned as SIBLINGS under the same
+// scope, so cancelling the client's sleep()-then-close() could have closed
+// the socket and given the server's read() an indirect EOF wakeup that
+// LOOKS like the timeout worked without actually exercising the mechanism
+// bug #457 describes.
+
+module scratch457.repro457b_main
+
+import std.net.{TcpListener, TcpStream, SocketAddr, NetError, real_net}
+import std.time.duration
+
+fn must[T](r Result[T, NetError]) -> T {
+    match r {
+        Ok(v)  => v
+        Err(e) => panic("repro457b: unexpected Err: ${e}")
+    }
+}
+
+fn main() Net Time -> () {
+    with Net = real_net() {
+        mut lst = must(TcpListener.bind(SocketAddr.loopback(0)))
+        ro port = lst.local_port()
+        mut conn = must(TcpStream.connect(SocketAddr.loopback(port)))
+        mut srv = must(lst.accept())
+        // `conn` is now a live, idle peer, entirely OUTSIDE the supervised
+        // scope below — it never writes, never closes, is never touched by
+        // any spawn/cancel. `srv.read()` below has no way to complete except
+        // via genuine scope-cancellation reaching into the child spawn.
+
+        ro t0 = Timestamp.now().unix_millis()
+        ro r = with Fail[TimeoutError] = |_e| { 99 } {
+            supervised(timeout: 2.to_seconds()) {
+                spawn consume srv {
+                    mut buf []u8 = []u8.new()
+                    buf.resize(64, 0 as u8)
+                    match srv.read(buf) {
+                        Ok(n)  => println("repro457b: UNEXPECTED read Ok(${n})")
+                        Err(e) => println("repro457b: read Err inside spawn: ${e}")
+                    }
+                }
+            }
+            7
+        }
+        ro elapsed = Timestamp.now().unix_millis() - t0
+        println("repro457b: r=${r} elapsed_ms=${elapsed}")
+        conn.close()
+        lst.close()
+    }
+}
