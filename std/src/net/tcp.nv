@@ -25,7 +25,7 @@ import std.io.{IoError}
 /// Async TCP listener (server socket). `bind`/`accept`/`close` carry `Net`
 /// (accept parks the fiber). `close()` consumes.
 #stable(since = "0.1")
-export type TcpListener consume value { priv handle *() }
+export type TcpListener consume value priv { handle *() }
 
 /// Connected async TCP stream. `connect`/`read`/`write`/`close` carry `Net`.
 /// `close()` consumes (use-after-close is a compile error).
@@ -46,17 +46,17 @@ export type TcpListener consume value { priv handle *() }
 /// copies the pointer itself (cheap, and correctly aliases the same cell —
 /// pointers are ordinary Copy values, `#no_copy` does not apply to them).
 #stable(since = "0.1")
-export type TcpStream consume value { priv handle *(), priv rc *mut AtomicInt }
+export type TcpStream consume value priv { handle *(), rc *mut AtomicInt }
 
 /// Read half of a split `TcpStream`. Shares the connection with its
 /// sibling `TcpWriteHalf`; the two may run in separate fibers (independent
 /// C-side park slots). The socket closes only after BOTH halves close.
 #stable(since = "0.1")
-export type TcpReadHalf consume value { priv handle *() }
+export type TcpReadHalf consume value priv { handle *() }
 
 /// Write half of a split `TcpStream`. See `[TcpReadHalf]`.
 #stable(since = "0.1")
-export type TcpWriteHalf consume value { priv handle *() }
+export type TcpWriteHalf consume value priv { handle *() }
 
 // ─── Package-private factories / helpers ──────────────────────────────────────
 
@@ -128,9 +128,11 @@ export fn TcpListener mut @accept() Net -> Result[TcpStream, NetError] {
     Net.accept(@)
 }
 
-/// Local port this listener is bound to.
+/// Local port this listener is bound to. `int`, not `u16` — see
+/// [`SocketAddr.loopback`] (addr.nv) for why the port type is `int` on the
+/// whole public surface.
 #stable(since = "0.1")
-export fn TcpListener @local_port() Net -> u16 { Net.listener_local_port(@) }
+export fn TcpListener @local_port() Net -> int { Net.listener_local_port(@) }
 
 /// Local address this listener is bound to.
 #stable(since = "0.1")
@@ -255,13 +257,15 @@ export fn TcpStream mut @read_text(max int) Net -> Result[str, NetError] {
 #stable(since = "0.1")
 export fn TcpStream mut @shutdown() Net -> Result[(), NetError] { Net.shutdown(@) }
 
-/// Local port of this stream.
+/// Local port of this stream. `int`, not `u16` — see [`SocketAddr.loopback`]
+/// (addr.nv) for why the port type is `int` on the whole public surface.
 #stable(since = "0.1")
-export fn TcpStream @local_port() Net -> u16 { Net.stream_local_port(@) }
+export fn TcpStream @local_port() Net -> int { Net.stream_local_port(@) }
 
-/// Remote peer port of this stream.
+/// Remote peer port of this stream. `int`, not `u16` — see
+/// [`SocketAddr.loopback`] (addr.nv).
 #stable(since = "0.1")
-export fn TcpStream @peer_port() Net -> u16 { Net.stream_peer_port(@) }
+export fn TcpStream @peer_port() Net -> int { Net.stream_peer_port(@) }
 
 /// Local address of this stream.
 #stable(since = "0.1")
@@ -335,11 +339,38 @@ export fn TcpStream consume @cleanup(_outcome ScopeOutcome) -> () {
 /// `share()`-ed stream (rc > 1) = runtime panic: the halves are counted by a
 /// C-side split-refcount, and a live share-copy would break the
 /// "last-owner-closes" invariant.
+///
+/// №498 fix (Plan 258 Ф.1): check BEFORE mutate — `@rc.load()` is read first,
+/// and `@rc.fetch_sub(1)` runs ONLY when it reads exactly 1. A live
+/// share()-copy (rc != 1) panics WITHOUT ever touching `rc`, so the copies
+/// that survive the panicking fiber see the counter exactly as they last
+/// left it. The previous `fetch_sub(1) != 1` form decremented rc
+/// UNCONDITIONALLY, before checking whether the precondition held — on the
+/// panic path the survivors were left owning a permanently-decremented
+/// shared counter (state changed ahead of a check that can fail, with no
+/// rollback on failure).
+///
+/// `load()` then `fetch_sub()` (two ops, not one CAS instruction — `@rc`'s
+/// `compare_exchange` hits an unrelated, pre-existing codegen gap through a
+/// `*mut AtomicInt` receiver, `[E_CODEGEN_TYPE_UNKNOWN]`; №TBD, reported
+/// separately) is race-free HERE specifically because `@` (`s`, the value
+/// `into_split()` consumes) is Nova's ONLY handle that can ever increment
+/// this `rc` — `@share()` requires possessing `s` itself, and `s` is a
+/// linear value with exactly one owner at a time. So `rc == 1` observed by
+/// `load()` means "no other live share()-copy exists at this instant", and
+/// nothing else can create one before our own `fetch_sub` runs; any
+/// concurrent `fetch_sub` from an ALREADY-live copy's own `close()` is
+/// self-contained (each copy accounts for its own unit) and cannot make our
+/// observed precondition stale. A live copy CAN concurrently decrement `rc`
+/// down to 1 as part of ITS OWN close — that only means it released its
+/// unit before we observed sole ownership, which is a legal interleaving,
+/// not a race on the invariant we depend on.
 #stable(since = "0.1")
 export fn TcpStream consume @into_split() Net -> (TcpReadHalf, TcpWriteHalf) {
-    if @rc.fetch_sub(1) != 1 {
+    if @rc.load() != 1 {
         panic("TcpStream.into_split(): stream has live share()-copies — split requires sole ownership (close the copies first)")
     }
+    @rc.fetch_sub(1)
     ro h = @handle
     Net.mark_split(TcpStream.from_raw(h))
     split_pair(TcpReadHalf.from_raw(h), TcpWriteHalf.from_raw(h))
@@ -353,9 +384,10 @@ export fn TcpReadHalf mut @read(buf mut []u8) Net -> Result[int, NetError] {
     Net.read(TcpStream.from_raw(@handle), buf)
 }
 
-/// Local port of this read half.
+/// Local port of this read half. `int`, not `u16` — see
+/// [`SocketAddr.loopback`] (addr.nv).
 #stable(since = "0.1")
-export fn TcpReadHalf @local_port() Net -> u16 {
+export fn TcpReadHalf @local_port() Net -> int {
     Net.stream_local_port(TcpStream.from_raw(@handle))
 }
 
@@ -377,9 +409,10 @@ export fn TcpWriteHalf mut @write(data []u8) Net -> Result[int, NetError] {
     Net.write(TcpStream.from_raw(@handle), data)
 }
 
-/// Local port of this write half.
+/// Local port of this write half. `int`, not `u16` — see
+/// [`SocketAddr.loopback`] (addr.nv).
 #stable(since = "0.1")
-export fn TcpWriteHalf @local_port() Net -> u16 {
+export fn TcpWriteHalf @local_port() Net -> int {
     Net.stream_local_port(TcpStream.from_raw(@handle))
 }
 
@@ -461,12 +494,12 @@ export fn real_net() -> Effect[Net] => effect Net {
     close_stream(stream TcpStream) -> () { unsafe { net_tcp_close(stream.handle) } }
     close_listener(listener TcpListener) -> () { unsafe { net_listener_close(listener.handle) } }
     mark_split(stream TcpStream) -> () { unsafe { net_tcp_mark_split(stream.handle) } }
-    listener_local_port(listener TcpListener) -> u16 => unsafe { net_listener_local_port(listener.handle) }
+    listener_local_port(listener TcpListener) -> int => unsafe { net_listener_local_port(listener.handle) as int }
     listener_local_addr(listener TcpListener, out mut []u8) -> () {
         unsafe { net_listener_local_addr(listener.handle, out.ptr()) }
     }
-    stream_local_port(stream TcpStream) -> u16 => unsafe { net_tcp_local_port(stream.handle) }
-    stream_peer_port(stream TcpStream) -> u16 => unsafe { net_tcp_peer_port(stream.handle) }
+    stream_local_port(stream TcpStream) -> int => unsafe { net_tcp_local_port(stream.handle) as int }
+    stream_peer_port(stream TcpStream) -> int => unsafe { net_tcp_peer_port(stream.handle) as int }
     stream_local_addr(stream TcpStream, out mut []u8) -> () {
         unsafe { net_tcp_local_addr(stream.handle, out.ptr()) }
     }
@@ -492,16 +525,19 @@ export fn real_net() -> Effect[Net] => effect Net {
         if n < 0 { int_err(n) } else { int_ok(n) }
     }
     close_socket(sock UdpSocket) -> () { unsafe { net_udp_close(sock.handle) } }
-    socket_local_port(sock UdpSocket) -> u16 => unsafe { net_udp_local_port(sock.handle) }
+    socket_local_port(sock UdpSocket) -> int => unsafe { net_udp_local_port(sock.handle) as int }
     socket_local_addr(sock UdpSocket, out mut []u8) -> () {
         unsafe { net_udp_local_addr(sock.handle, out.ptr()) }
     }
 
     // ── DNS ──────────────────────────────────────────────────────────────────
-    lookup(host []u8, port u16) -> Result[(int, int), NetError] {
+    // `port` is `int` on the Net effect surface (see resolve()'s doc comment,
+    // dns.nv); resolve()'s own `requires` already bounds it to a legal u16
+    // range before it ever reaches here, so the narrowing cast below is safe.
+    lookup(host []u8, port int) -> Result[(int, int), NetError] {
         mut base int = 0    // C writes the GC-array base pointer here (via &base)
         mut err int = 0
-        ro count = unsafe { net_dns_lookup(host.ptr(), host.len(), port, (&base) as *(), &err) }
+        ro count = unsafe { net_dns_lookup(host.ptr(), host.len(), port as u16, (&base) as *(), &err) }
         if count < 0 { err_lookup(err) } else { lookup_ok(base, count) }
     }
 }

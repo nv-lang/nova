@@ -16,7 +16,7 @@ module std.net
 
 test "net2/pingpong: плотное чередование write→read на одном сокете (TLS-pump паттерн)" {
     with Net = real_net() {
-        ro ch_port = Channel.new(1)
+        ro ch_port = Channel[int].new(1)
         supervised {
             // Сервер: на каждый принятый байтовый пакет отвечает пакетом —
             // строгий ping-pong, каждый цикл = write и read впритык.
@@ -45,7 +45,7 @@ test "net2/pingpong: плотное чередование write→read на о�
             // Клиент: 64 цикла write(8)→read(8) — каждый read паркуется
             // сразу после write на том же хендле (окно миграции).
             spawn {
-                ro port = match ch_port.rx.recv() { Some(p) => p  None => 0 as u16 }
+                ro port = match ch_port.rx.recv() { Some(p) => p  None => 0 }
                 assert(port > 0)
                 mut conn = must(TcpStream.connect(SocketAddr.loopback(port)))
                 mut back []u8 = []u8.new()
@@ -71,8 +71,8 @@ test "net2/pingpong: плотное чередование write→read на о�
 
 test "net2/pingpong: две независимые пары пинг-понгуют конкурентно (4 фибры)" {
     with Net = real_net() {
-        ro ch_a = Channel.new(1)
-        ro ch_b = Channel.new(1)
+        ro ch_a = Channel[int].new(1)
+        ro ch_b = Channel[int].new(1)
         supervised {
             // Пара A: сервер (bind+accept+echo-loop в своей фибре).
             spawn {
@@ -118,7 +118,7 @@ test "net2/pingpong: две независимые пары пинг-понгу�
             }
             // Клиент A.
             spawn {
-                ro port = match ch_a.rx.recv() { Some(p) => p  None => 0 as u16 }
+                ro port = match ch_a.rx.recv() { Some(p) => p  None => 0 }
                 assert(port > 0)
                 mut conn = must(TcpStream.connect(SocketAddr.loopback(port)))
                 mut back []u8 = []u8.new()
@@ -139,7 +139,7 @@ test "net2/pingpong: две независимые пары пинг-понгу�
             }
             // Клиент B.
             spawn {
-                ro port = match ch_b.rx.recv() { Some(p) => p  None => 0 as u16 }
+                ro port = match ch_b.rx.recv() { Some(p) => p  None => 0 }
                 assert(port > 0)
                 mut conn = must(TcpStream.connect(SocketAddr.loopback(port)))
                 mut back []u8 = []u8.new()

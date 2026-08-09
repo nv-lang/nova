@@ -28,8 +28,14 @@ module std.net
 ///     }
 /// }
 /// ```
+/// `port` is `int`, not `u16` — same rationale as [`SocketAddr.loopback`]
+/// (std/src/net/addr.nv): a `u16` parameter would let an out-of-range value
+/// truncate silently. `requires` fails loudly at the call site instead; for a
+/// literal port the contract is proved statically, zero runtime cost.
 #stable(since = "0.1")
-export fn resolve(host str, port u16) Net -> Result[[]SocketAddr, NetError] {
+export fn resolve(host str, port int) Net -> Result[[]SocketAddr, NetError]
+    requires port >= 0 && port <= 0xffff
+{
     // The []SocketAddr is built HERE (a plain fn, no effect vtable) so its images
     // survive GC; the effect only carries the (base, count) scalar pair.
     match Net.lookup(host.bytes(), port) {

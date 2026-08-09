@@ -37,12 +37,12 @@ export fn mock_net() -> Effect[Net] => effect Net {
     close_stream(_stream TcpStream) -> () {}
     close_listener(_listener TcpListener) -> () {}
     mark_split(_stream TcpStream) -> () {}
-    listener_local_port(_listener TcpListener) -> u16 => 4242
+    listener_local_port(_listener TcpListener) -> int => 4242
     listener_local_addr(_listener TcpListener, out mut []u8) -> () {
         unsafe { net_addr_loopback_into(4242, out.ptr()) }
     }
-    stream_local_port(_stream TcpStream) -> u16 => 5050
-    stream_peer_port(_stream TcpStream) -> u16 => 6060
+    stream_local_port(_stream TcpStream) -> int => 5050
+    stream_peer_port(_stream TcpStream) -> int => 6060
     stream_local_addr(_stream TcpStream, out mut []u8) -> () {
         unsafe { net_addr_loopback_into(5050, out.ptr()) }
     }
@@ -62,13 +62,13 @@ export fn mock_net() -> Effect[Net] => effect Net {
         int_ok(0)
     }
     close_socket(_sock UdpSocket) -> () {}
-    socket_local_port(_sock UdpSocket) -> u16 => 7070
+    socket_local_port(_sock UdpSocket) -> int => 7070
     socket_local_addr(_sock UdpSocket, out mut []u8) -> () {
         unsafe { net_addr_loopback_into(7070, out.ptr()) }
     }
 
     // ── DNS ──────────────────────────────────────────────────────────────────
-    lookup(_host []u8, _port u16) -> Result[(int, int), NetError] => mock_lookup()
+    lookup(_host []u8, _port int) -> Result[(int, int), NetError] => mock_lookup()
 }
 
 // A single-element loopback "array" (a nova_alloc'd POD) for the mock DNS stub,

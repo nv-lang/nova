@@ -24,7 +24,7 @@ module std.net
 /// }
 /// ```
 #stable(since = "0.1")
-export type UdpSocket consume value { priv handle *() }
+export type UdpSocket consume value priv { handle *() }
 
 fn UdpSocket.from_raw(h *()) -> UdpSocket => { handle: h }
 
@@ -91,9 +91,11 @@ export fn UdpSocket mut @recv_from_vec(max int) Net -> Result[([]u8, SocketAddr)
     }
 }
 
-/// Local port this socket is bound to.
+/// Local port this socket is bound to. `int`, not `u16` — see
+/// [`SocketAddr.loopback`] (addr.nv) for why the port type is `int` on the
+/// whole public surface.
 #stable(since = "0.1")
-export fn UdpSocket @local_port() Net -> u16 { Net.socket_local_port(@) }
+export fn UdpSocket @local_port() Net -> int { Net.socket_local_port(@) }
 
 /// Local address this socket is bound to.
 #stable(since = "0.1")

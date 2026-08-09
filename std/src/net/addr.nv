@@ -27,7 +27,7 @@ module std.net
 /// let aw = SocketAddr.any(8080)            // 0.0.0.0:8080, ALL interfaces
 /// ```
 #stable(since = "0.1")
-export type SocketAddr value { priv raw []u8 }
+export type SocketAddr value priv { raw []u8 }
 
 // Byte size of the C `NovaNetAddr` POD image the value wraps:
 //   bytes[16] (IPv6, or IPv4 in the first 4) + port u16 + family u8 + pad u8.
@@ -127,9 +127,12 @@ export fn str @to_socket_addr() -> Result[SocketAddr, NetError] {
     else { Ok(SocketAddr.from_image(b)) }
 }
 
-/// Get the port number.
+/// Get the port number. `int`, not `u16` — see [`SocketAddr.loopback`] for why
+/// the port type is `int` on the whole public surface (the `u16` C image is
+/// an FFI-boundary detail, widened here on the way out; no truncation risk
+/// widening `u16` -> `int`).
 #stable(since = "0.1")
-export fn SocketAddr @port() -> u16 => unsafe { net_addr_port(@ptr()) }
+export fn SocketAddr @port() -> int => unsafe { net_addr_port(@ptr()) as int }
 
 /// Return `true` if this is an IPv4 address.
 #stable(since = "0.1")
