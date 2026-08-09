@@ -1847,9 +1847,12 @@ static void _materialize_pool(void) {
 
     /* Фаза 2: только теперь стартуют OS-потоки — каждый _workers[i] уже
      * полностью инициализирован (см. комментарий выше). */
+    bool _nv259_diag = getenv("NOVA_DIAG_P259") != NULL;  /* Plan 259 point-probe */
     for (int i = 0; i < n_workers; i++) {
+        if (_nv259_diag) { fprintf(stderr, "[p259] phase2 before uv_thread_create i=%d/%d\n", i, n_workers); fflush(stderr); }
         NovaWorker* w = &_workers[i];
         int rc = uv_thread_create(&w->thread, _worker_main, w);
+        if (_nv259_diag) { fprintf(stderr, "[p259] phase2 after uv_thread_create i=%d rc=%d\n", i, rc); fflush(stderr); }
         if (rc != 0) {
             fprintf(stderr, "nova: uv_thread_create failed: %s\n", uv_strerror(rc));
             abort();
@@ -1860,6 +1863,7 @@ static void _materialize_pool(void) {
      * workers (sysmon читает _workers/_n_workers), остановлен ПЕРВЫМ в
      * shutdown (до free(_workers)). */
     nova_abool_init(&_sysmon_running, true);
+    if (_nv259_diag) { fprintf(stderr, "[p259] before sysmon uv_thread_create\n"); fflush(stderr); }
     if (uv_thread_create(&_sysmon_thread, _sysmon_main, NULL) == 0) {
         _sysmon_started = true;
     } else {
@@ -1868,13 +1872,16 @@ static void _materialize_pool(void) {
         _sysmon_started = false;
         nova_abool_store(&_sysmon_running, false);
     }
+    if (_nv259_diag) { fprintf(stderr, "[p259] after sysmon started=%d\n", (int)_sysmon_started); fflush(stderr); }
 
     _materialized = true;
 
+    if (_nv259_diag) { fprintf(stderr, "[p259] before nova_driver_init\n"); fflush(stderr); }
     /* Plan 83.11 Ф.2: start driver thread AFTER worker pool materialization.
      * Workers must exist before driver routes wake events to them
      * (home_worker_id references _workers[]). */
     nova_driver_init();
+    if (_nv259_diag) { fprintf(stderr, "[p259] after nova_driver_init -- materialize_pool done\n"); fflush(stderr); }
 }
 
 /* Plan 83.1 Ф.4: гарантирует, что пул материализован. Fast-path без

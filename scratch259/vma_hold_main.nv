@@ -1,0 +1,17 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Plan 259 measurement fixture: holds the process alive for 3s right
+// after process start (pool materialization, per D451, already happened
+// before this main-body runs) so an external script can read
+// /proc/<pid>/maps and count VMAs while nothing else is happening --
+// isolating the pool-startup VMA cost from NOVA_MAX_FIBERS.
+
+module scratch259.vma_hold
+
+import std.time.duration
+import std.os
+
+fn main() {
+    println("pid=${Os.pid()}")
+    3.to_seconds().sleep()
+    println("done")
+}

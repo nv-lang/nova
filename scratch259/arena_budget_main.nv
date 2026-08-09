@@ -6,17 +6,19 @@
 // worker pool (N threads) AND punches NOVA_MAX_FIBERS guard pages per
 // worker arena -- all of that cost lands inside THIS timeout budget.
 // Post-259: guard pages are lazy (fiber_arena.c) and the pool materializes
-// at process start inside nova_runtime_auto_arm(), before this test body
-// ever runs -- so elapsed_ms should sit on the declared budget regardless
-// of NOVA_MAXPROCS / NOVA_MAX_FIBERS.
+// at process start inside nova_runtime_auto_arm(), before this program's
+// main() body ever runs -- so elapsed_ms should sit on the declared budget
+// regardless of NOVA_MAXPROCS / NOVA_MAX_FIBERS.
 //
-// Single test in the compiled unit on purpose: this MUST be the process's
-// first spawn to reproduce #457 faithfully (a prior spawn in the same
-// binary would already have paid the materialization cost).
+// Plain `fn main` (not a `test` block) on purpose: this MUST be the
+// process's first spawn to reproduce #457 faithfully, and `nova build`
+// gives a persistent binary to run standalone under varying env.
 
 module scratch259.arena_budget
 
-test "supervised(timeout:) budget excludes worker-pool + arena init cost" {
+import std.time.duration
+
+fn main() {
     ro t0 = Timestamp.now().unix_millis()
     ro r = with Fail[TimeoutError] = |_e| { -1 } {
         supervised(timeout: 200.to_millis()) {
