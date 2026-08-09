@@ -19571,8 +19571,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     }
 
     /// C type for receiver-typed parameter (D35 v2: receiver may be a primitive).
-    /// Returns the C type to use for `nova_self`. Primitives are passed by value;
-    /// records/sums by pointer.
+    /// Returns the C type to use for `nova_self`.
     ///
     /// Plan 128 Ф.1: `recv_mutable` carries the AST `Receiver.mutable` flag
     /// (`fn Type mut @method` vs `fn Type @method`).
@@ -19581,8 +19580,16 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// now branches on `recv_mutable` — `mut` methods take `NovaTuple_X*`
     /// (pointer to caller's stack slot, in-place @field mutation propagates);
     /// `ro` methods keep value ABI (`NovaTuple_X`, immutable copy). Mirrors
-    /// the NovaValue_X* pattern (D226). Other receivers (heap `Nova_X*`,
-    /// primitives) are unaffected — they already have a single ABI form.
+    /// the NovaValue_X* pattern (D226).
+    ///
+    /// Owner fix 2026-08-09 (closes №468, R5 `02-types.md:16101`): primitives
+    /// are NO LONGER unconditionally by-value. `mut @` ≡ `mut ref @` is
+    /// ALWAYS by-pointer per R5, "any size" including scalars — this was the
+    /// one receiver family where codegen silently dropped the mutation
+    /// (E_PRIMITIVE_MUT_METHOD existed to forbid it instead of fixing the
+    /// ABI). `recv_mutable` now selects the pointer form for primitives too;
+    /// `ro @` keeps the existing by-value form unchanged (R5: ro is
+    /// size-discretionary/invisible, no observable-mutation contract to honour).
     fn receiver_c_type(&self, type_name: &str, recv_mutable: bool) -> String {
         match type_name {
             // Plan 172.1-K1 (int-de-collapse): a primitive receiver lowers through the SINGLE
@@ -19595,18 +19602,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // itself is retired into a receiver-aware `resolved_type_to_c` in the U.4.5/FIN
             // endgame — this routes its scalar case to the single source NOW (behavioural fix,
             // NOT a redone patch: the mapping is byte-identical to what the unified lowering emits).
-            "int" | "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" | "uint" =>
-                Self::primitive_name_to_c(type_name)
-                    .expect("int-family primitive always present in primitive_name_to_c")
-                    .to_string(),
+            "int" | "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" | "uint" => {
+                let base = Self::primitive_name_to_c(type_name)
+                    .expect("int-family primitive always present in primitive_name_to_c");
+                if recv_mutable { format!("{}*", base) } else { base.to_string() }
+            }
             // `size` (usize-like) has NO `primitive_name_to_c` entry — its width/sign model is
             // unpinned (separate concern, not in the carrier). Preserved as `nova_int` pending that.
-            "size" => "nova_int".to_string(),
-            "f32" => "nova_f32".to_string(),
-            "f64" => "nova_f64".to_string(),
-            "bool" => "nova_bool".to_string(),
-            "char" => "nova_char".to_string(),
-            "str" => "nova_str".to_string(),
+            "size" => if recv_mutable { "nova_int*".to_string() } else { "nova_int".to_string() },
+            "f32" => if recv_mutable { "nova_f32*".to_string() } else { "nova_f32".to_string() },
+            "f64" => if recv_mutable { "nova_f64*".to_string() } else { "nova_f64".to_string() },
+            "bool" => if recv_mutable { "nova_bool*".to_string() } else { "nova_bool".to_string() },
+            "char" => if recv_mutable { "nova_char*".to_string() } else { "nova_char".to_string() },
+            "str" => if recv_mutable { "nova_str*".to_string() } else { "nova_str".to_string() },
             // Plan 95 Ф.2.1: builtin sum-types (`Option`/`Result`) с
             // method-mono каналом — value-тип `NovaOpt_<T>` / pointer
             // `NovaRes_<ok>_<err>*` (см. `builtin_sum_receiver_c_type`).
@@ -34094,8 +34102,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // `self` is reserved (never a user variable), so this is unambiguous. The
                 // value-record-by-pointer deref mirrors the SelfAccess arm exactly.
                 if name == "self" {
+                    // Owner fix 2026-08-09 (closes №468): `nova_self` is
+                    // ALSO a pointer for a `mut @` PRIMITIVE receiver now
+                    // (`is_primitive_mut_recv_ptr`) — deref it the same way
+                    // as the value-struct pointer case.
                     let self_by_ptr_value_record = self.var_types.get("nova_self")
-                        .map(|c| Self::is_value_struct_ptr(c))
+                        .map(|c| Self::is_value_struct_ptr(c) || Self::is_primitive_mut_recv_ptr(c))
                         .unwrap_or(false)
                         || self.current_receiver_type.as_deref()
                             .map(|t| t != "str" && self.value_record_names.contains(t))
@@ -37105,8 +37117,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // `@method(...)` / `@[i]` never reach here — their SelfAccess
                 // special-cases emit `nova_self->…` directly. `str` (and other
                 // by-value receivers) stay `nova_self` (already a value).
+                //
+                // Owner fix 2026-08-09 (closes №468): a `mut @` PRIMITIVE
+                // receiver is ALSO by-pointer now (R5) — `nova_self`'s C
+                // type is `nova_int*`/`nova_bool*`/`nova_str*`/… in that
+                // case (`is_primitive_mut_recv_ptr`), so a bare `@` read
+                // (e.g. `@ = @ + by`'s RHS) must deref it too, exactly like
+                // the value-struct pointer case.
                 let self_by_ptr_value_record = self.var_types.get("nova_self")
-                    .map(|c| Self::is_value_struct_ptr(c))
+                    .map(|c| Self::is_value_struct_ptr(c) || Self::is_primitive_mut_recv_ptr(c))
                     .unwrap_or(false)
                     || self.current_receiver_type.as_deref()
                         .map(|t| t != "str" && self.value_record_names.contains(t))
@@ -56485,6 +56504,22 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 self.line(&format!("{} {} = {};", obj_ty, tmp, obj_c));
                 format!("&{}", tmp)
             }
+        } else if recv_mutable && Self::is_primitive_mut_recv_base(obj_ty) {
+            // Owner fix 2026-08-09 (closes №468, R5 `02-types.md:16101`):
+            // `mut @` on a primitive is now by-pointer too (mirrors the
+            // value-struct branch above), UNLIKE the primitive's `ro`
+            // form which stays plain by-value (unaffected, falls to the
+            // final `else`). `recv_mutable` — unlike the value-struct arm —
+            // IS the gate here: a primitive's `ro`-method C signature never
+            // takes a pointer, so passing `&obj` there would be an ABI
+            // mismatch, not just a redundant address.
+            if addressable {
+                format!("&({})", obj_c.trim())
+            } else {
+                let tmp = self.fresh_tmp();
+                self.line(&format!("{} {} = {};", obj_ty, tmp, obj_c));
+                format!("&{}", tmp)
+            }
         } else {
             obj_c.to_string()
         }
@@ -56507,6 +56542,32 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// by-value форма (`NovaValue_X` / `NovaTuple_X`) — local/binding value-позиция.
     fn is_value_struct_val(c: &str) -> bool {
         Self::is_value_struct(c) && !c.ends_with('*')
+    }
+
+    /// Owner fix 2026-08-09 (closes №468, R5): recognizes `nova_self`'s C
+    /// type as a BY-POINTER mutable-PRIMITIVE receiver (`nova_int*`,
+    /// `nova_bool*`, `nova_str*`, …) — the primitive counterpart of
+    /// `is_value_struct_ptr` for the NovaValue_/NovaTuple_ family. Kept as
+    /// an explicit literal list (not reverse-derived from
+    /// `primitive_name_to_c`, which maps Nova-level names, not C-level
+    /// ones) — this is the exact enumeration `receiver_c_type`'s primitive
+    /// arms already hardcode, so it stays in lockstep by construction (same
+    /// small closed set, not duplicated mapping logic).
+    fn is_primitive_mut_recv_ptr(c: &str) -> bool {
+        matches!(c,
+            "nova_int*" | "int8_t*" | "int16_t*" | "int32_t*"
+            | "nova_byte*" | "uint16_t*" | "uint32_t*" | "uint64_t*" | "nova_uint*"
+            | "nova_f32*" | "nova_f64*" | "nova_bool*" | "nova_char*" | "nova_str*")
+    }
+
+    /// By-value counterpart of [`Self::is_primitive_mut_recv_ptr`] — the C
+    /// type of a call-site receiver EXPRESSION (before `prepare_method_recv`
+    /// decides whether to take its address). Same closed set, no `*`.
+    fn is_primitive_mut_recv_base(c: &str) -> bool {
+        matches!(c,
+            "nova_int" | "int8_t" | "int16_t" | "int32_t"
+            | "nova_byte" | "uint16_t" | "uint32_t" | "uint64_t" | "nova_uint"
+            | "nova_f32" | "nova_f64" | "nova_bool" | "nova_char" | "nova_str")
     }
 
     /// Plan 172.14 Ф.1: (size, align) ЛИСТОВОГО C-типа поля value-struct'а.
