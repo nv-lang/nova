@@ -1,0 +1,22 @@
+// EXPECT_COMPILE_ERROR E_MISSING_RETURN_TYPE
+//
+// Реестр 221.1 №493 (K1): the ORIGINAL manifestation — block-body with
+// preceding statements (`mut p = 1` / `p = p + 41`) before the trailing
+// value. Before this fix, this exact shape compiled clean: codegen's
+// `return_type_c` treats ANY block-body without preceding-statement-free
+// trailing as `nova_unit` when no `-> T` is given, silently discarding the
+// computed value with zero diagnostic (a caller ignoring the return value —
+// legal for any call — never sees so much as a warning).
+
+module neg.d45_missing_return_type_call_neg
+
+fn compute_result() {
+    mut p = 1
+    p = p + 41
+    p
+}
+
+test "should not compile" {
+    ro x = compute_result()
+    assert(x == 42)
+}

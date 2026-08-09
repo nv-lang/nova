@@ -1,0 +1,19 @@
+// EXPECT_COMPILE_ERROR E_MISSING_RETURN_TYPE
+//
+// Реестр 221.1 №493 (K1): block-body с preceding statement + trailing
+// MATCH-expression producing a non-unit value in every arm.
+
+module neg.d45_missing_return_type_match_neg
+
+fn name_of(n int) {
+    println("matching")
+    match n {
+        0 => "zero"
+        _ => "other"
+    }
+}
+
+test "should not compile" {
+    ro s = name_of(3)
+    assert(s == "other")
+}

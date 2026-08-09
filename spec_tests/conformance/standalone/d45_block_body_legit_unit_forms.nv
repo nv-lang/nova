@@ -1,0 +1,87 @@
+// Реестр 221.1 №493 (K1) — positive boundary coverage for
+// E_MISSING_RETURN_TYPE (types/mod.rs `check_missing_return_annotation`):
+// every one of these forms is a LEGITIMATE `()` block-body function
+// without `-> T` and must NOT be flagged. A diagnostic firing on any of
+// these would be worse than no diagnostic at all — it would force `-> ()`
+// noise across otherwise-idiomatic code (D20: "`-> ()` опускается всегда").
+// Negative counterparts (forgotten annotation, non-unit trailing) live in
+// neg/d45_missing_return_type_{literal,call,if,match,all_branches_return}
+// _neg.nv.
+
+module standalone.d45_block_body_legit_unit_forms
+
+type D493Counter { n int }
+
+fn D493Counter @bump() {
+    println("bump")
+}
+
+fn d493_noop[T](x T) {
+    println("noop")
+}
+
+// (1) single trailing call to a void fn, no preceding stmts.
+fn d493_greet1() {
+    println("hi")
+}
+
+// (2) preceding stmts + trailing call to a void fn.
+fn d493_greet2() {
+    mut n = 0
+    n = n + 1
+    println("n=${n}")
+}
+
+// (3) if/else, both branches unit.
+fn d493_greet3(flag bool) {
+    if flag {
+        println("yes")
+    } else {
+        println("no")
+    }
+}
+
+// (4) match, all arms unit.
+fn d493_greet4(n int) {
+    match n {
+        0 => println("zero")
+        _ => println("other")
+    }
+}
+
+// (5) block ends with a statement — no trailing expression at all.
+fn d493_greet5() {
+    mut n = 0
+    n = n + 1
+}
+
+test "single trailing call to a void fn, no preceding stmts" {
+    d493_greet1()
+}
+
+test "preceding stmts + trailing call to a void fn" {
+    d493_greet2()
+}
+
+test "if/else, both branches unit" {
+    d493_greet3(true)
+    d493_greet3(false)
+}
+
+test "match, all arms unit" {
+    d493_greet4(0)
+    d493_greet4(3)
+}
+
+test "block ends with a statement — no trailing expression at all" {
+    d493_greet5()
+}
+
+test "method (receiver), no annotation" {
+    ro c = D493Counter { n: 0 }
+    c.bump()
+}
+
+test "generic fn, no annotation" {
+    d493_noop(5)
+}
