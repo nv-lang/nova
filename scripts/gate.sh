@@ -28,6 +28,17 @@ unset NOVA_STD_PATH 2>/dev/null || true
 # 37 минут, если дерево уже не проходит дешёвые проверки.
 GATE_FAILS=""
 GATE_FAIL_N=0
+
+# ОТМЕТКИ ВРЕМЕНИ — свойство ГЕЙТА, а не способа запуска (2026-08-09).
+#
+# Раньше время в лог ставила обёртка gate-bg.sh, и прогон, запущенный напрямую,
+# оказывался непрофилируемым: владелец просил профиль, а данных не было вовсе.
+# Профиль не должен зависеть от того, кто как позвал скрипт, поэтому отметку
+# ставит сам шаг. Формат читает scripts/tools/gate-profile.sh.
+GATE_T0=$(date +%s)
+step() {
+    printf '[%5ds] == gate: %s ==\n' "$(( $(date +%s) - GATE_T0 ))" "$1"
+}
 fail() {
     echo "GATE FAIL: $1" >&2
     GATE_FAILS="$GATE_FAILS
@@ -89,7 +100,7 @@ if [ -n "$OVERRIDE_FILES" ]; then
     print_override_warning
 fi
 
-echo "== gate: arch-ratchet =="
+step "arch-ratchet"
 bash "$ROOT/scripts/guards/arch-ratchet.sh" || fail "arch-ratchet (emit_c growth)"
 bash "$ROOT/scripts/guards/selftest/test-arch-ratchet.sh" >/dev/null || fail "селфтест arch-ratchet (аудит стражей 2026-08-08 — был единственным без селфтеста)"
 
@@ -99,7 +110,7 @@ bash "$ROOT/scripts/guards/selftest/test-arch-ratchet.sh" >/dev/null || fail "с
 # компилятора» в nova-http, которой не было (устаревшие заголовки копии не
 # объявляли символ из фикса №108), плюс >1 ГБ мусора по репам. Копия НЕ нужна —
 # есть штатные NOVA_RT_DIR/NOVA_CG_INCLUDE (см. шапку самого стража).
-echo "== gate: no-runtime-copy =="
+step "no-runtime-copy"
 bash "$ROOT/scripts/guards/check-no-runtime-copy.sh" || fail "копия рантайма в пакетной репе/worktree (№138)"
 
 # Трек Ж (231): страж без самотеста — доверие на слово. Самотесты дешёвые
@@ -107,9 +118,9 @@ bash "$ROOT/scripts/guards/check-no-runtime-copy.sh" || fail "копия ран�
 # Реестр 221.1 №155/№161 (урок повторился ДВАЖДЫ за день): маркер [M-...] в коде без
 # записи в реестре = невидимый долг — обход живёт, а дефекта для планирования нет.
 # Первый прогон стража нашёл 59 таких; ручные аудиты видели 8. Храповик: расти нельзя.
-echo "== gate: marker-registry-sync =="
+step "marker-registry-sync"
 bash "$ROOT/scripts/guards/check-marker-registry-sync.sh" "$ROOT" || fail "маркеры в коде без записи в реестре (№155/№161)"
-echo "== gate: bug-number-sync (№217 — каждый новый маркер нумерован в 221.1) =="
+step "bug-number-sync (№217 — каждый новый маркер нумерован в 221.1)"
 bash "$ROOT/scripts/guards/check-bug-number-sync.sh" "$ROOT" || fail "новый маркер без № в 221.1 (правило владельца №217)"
 
 # Реестр 221.1 №446/№447 (окно presume-cas-gate, 2026-08-08): единственный
@@ -118,9 +129,9 @@ bash "$ROOT/scripts/guards/check-bug-number-sync.sh" "$ROOT" || fail "новый
 # два из которых несли живой дефект (двойной destroy+sweep дубликата
 # мёртвого co). Страж ловит новый resume-сайт, открытый в обход
 # nova_resume_fiber (fibers.h).
-echo "== gate: expect-markers (неизвестный EXPECT_* раннер молча игнорирует — №453) =="
-echo "== gate: накопление несведённых веток (никогда не копи) =="
-echo "== gate: форма записей реестра (класс, приоритет, оговорка) =="
+step "expect-markers (неизвестный EXPECT_* раннер молча игнорирует — №453)"
+step "накопление несведённых веток (никогда не копи)"
+step "форма записей реестра (класс, приоритет, оговорка)"
 bash "$ROOT/scripts/guards/check-registry-entry-shape.sh" "$ROOT" || fail "запись реестра без класса/приоритета/оговорки"
 bash "$ROOT/scripts/guards/selftest/test-check-registry-entry-shape.sh" >/dev/null || fail "селфтест check-registry-entry-shape провален"
 
@@ -130,30 +141,30 @@ bash "$ROOT/scripts/guards/selftest/test-check-no-accumulation.sh" >/dev/null ||
 bash "$ROOT/scripts/guards/check-expect-markers.sh" "$ROOT" || fail "неизвестный EXPECT_* в тесте"
 bash "$ROOT/scripts/guards/selftest/test-check-expect-markers.sh" >/dev/null || fail "селфтест expect-markers"
 
-echo "== gate: doc-truth (нормативная дока врёт именем EXPECT_* или неисполнимой командой — №455) =="
+step "doc-truth (нормативная дока врёт именем EXPECT_* или неисполнимой командой — №455)"
 bash "$ROOT/scripts/guards/check-doc-truth.sh" "$ROOT" || fail "неизвестный EXPECT_* или неисполнимая команда nova в AGENTS.md/docs/dev(/docs/guide для маркеров)"
 bash "$ROOT/scripts/guards/selftest/test-check-doc-truth.sh" >/dev/null || fail "селфтест doc-truth"
 
-echo "== gate: invariant-discipline (норма об инвариантах — всеобъемлюща) =="
+step "invariant-discipline (норма об инвариантах — всеобъемлюща)"
 bash "$ROOT/scripts/guards/check-invariant-discipline.sh" "$ROOT" || fail "новый инвариант на честном слове (conventions-governance)"
 bash "$ROOT/scripts/guards/selftest/test-check-invariant-discipline.sh" >/dev/null || fail "селфтест стража инвариантов"
-echo "== gate: sync-guards (копии стражей в пакетных репах не разошлись) =="
+step "sync-guards (копии стражей в пакетных репах не разошлись)"
 bash "$ROOT/scripts/tools/sync-guards-to-packages.sh" || fail "копии стражей в пакетных репах разошлись с эталоном"
 
-echo "== gate: no-path-deps (D420 — path только под [replace]; №444) =="
+step "no-path-deps (D420 — path только под [replace]; №444)"
 bash "$ROOT/scripts/guards/check-no-path-deps.sh" "$ROOT" || fail "path-зависимость в коммитящемся манифесте/локе (D420)"
 
-echo "== gate: single-mco-resume (№446/№447 — единственный resume-сайт в Vela) =="
+step "single-mco-resume (№446/№447 — единственный resume-сайт в Vela)"
 bash "$ROOT/scripts/guards/check-single-mco-resume.sh" "$ROOT" || fail "посторонний mco_resume() вне fibers.h::nova_resume_fiber (№446/№447)"
 
 
-echo "== gate: selftests стражей =="
+step "selftests стражей"
 
-echo "== gate: doc-hygiene (язык/чистота публичной доки, правило владельца 2026-07-31) =="
+step "doc-hygiene (язык/чистота публичной доки, правило владельца 2026-07-31)"
 bash "$ROOT/scripts/guards/check-doc-hygiene.sh" "$ROOT" || fail "doc-hygiene (кириллица/внутренние ссылки в /// или линте — рост запрещён)"
 bash "$ROOT/scripts/guards/selftest/test-check-doc-hygiene.sh" || fail "doc-hygiene selftest"
 
-echo "== gate: doc-conventions (docs/dev/doc-conventions.md enforcement, Plan 242) =="
+step "doc-conventions (docs/dev/doc-conventions.md enforcement, Plan 242)"
 # №322: вторым аргументом — база сравнения для подпроверки same-commit
 # pairing (без неё она физически не выполняется). Локально берём
 # предыдущий коммит; в CI база передаётся явно (PR base / event.before).
@@ -162,16 +173,16 @@ bash "$ROOT/scripts/guards/check-doc-conventions.sh" "$ROOT" "$DOC_GUARD_BASE" |
 bash "$ROOT/scripts/guards/selftest/test-check-doc-conventions.sh" || fail "doc-conventions selftest"
 bash "$ROOT/scripts/guards/selftest/test-doc-conventions-determinism.sh" || fail "doc-conventions determinism selftest (№321)"
 
-echo "== gate: doc-examples (снятые формы в nova-примерах публикуемой доки, окно p-example-guard) =="
+step "doc-examples (снятые формы в nova-примерах публикуемой доки, окно p-example-guard)"
 DOC_EXAMPLES_SHOW_MATCHES=0 bash "$ROOT/scripts/guards/check-doc-examples.sh" "$ROOT" || fail "doc-examples (дока учит снятому синтаксису — let/readonly/*ro T/*unsafe T/постфикс-!/trait-impl-throws/ref-формы/external fn/addr_of/null <тип>/#impl(<старое имя>) — см. вывод выше)"
 bash "$ROOT/scripts/guards/selftest/test-check-doc-examples.sh" || fail "doc-examples selftest"
 
-echo "== gate: test-fixture-coverage (правила 1/5 test-conventions.md — neg-фикстура на новый E_*/W_*, регресс-фикстура на закрытие маркера; реестр 221.1 №399) =="
+step "test-fixture-coverage (правила 1/5 test-conventions.md — neg-фикстура на новый E_*/W_*, регресс-фикстура на закрытие маркера; реестр 221.1 №399)"
 TFC_BASE="$(git -C "$ROOT" rev-parse --verify -q HEAD~1 2>/dev/null || true)"
 bash "$ROOT/scripts/guards/check-test-fixture-coverage.sh" "$ROOT" "$TFC_BASE" || fail "test-fixture-coverage (новый E_*/W_*-код без neg-фикстуры, ИЛИ строка реестра 221.1 закрыта без .nv-ссылки — см. вывод выше; WARN про registry/backlog-расхождение НЕ роняет гейт)"
 bash "$ROOT/scripts/guards/selftest/test-check-test-fixture-coverage.sh" || fail "test-fixture-coverage selftest"
 
-echo "== gate: ci-status (внешний авторитетный гейт — GitHub Actions; реестр 221.1 №395/№401/№402) =="
+step "ci-status (внешний авторитетный гейт — GitHub Actions; реестр 221.1 №395/№401/№402)"
 # НЕ блокирующий: внешний сервис бывает недоступен, и падение сети не должно
 # ронять локальный гейт. Блокирует отправку хук `pre-push` (--strict).
 # Смысл шага — чтобы «локально зелено» и «снаружи красно» не могли разойтись
@@ -183,7 +194,7 @@ for st in "$ROOT"/scripts/guards/selftest/test-*.sh; do
     bash "$st" || fail "самотест стража: $(basename "$st")"
 done
 
-echo "== gate: cargo build --release =="
+step "cargo build --release"
 ( cd "$ROOT/nova-cli" && cargo build --release ) || fail "cargo build"
 NOVA="$ROOT/nova-cli/target/release/nova.exe"
 [ -x "$NOVA" ] || fail "nova.exe not found: $NOVA"
@@ -193,7 +204,7 @@ NOVA="$ROOT/nova-cli/target/release/nova.exe"
 # но и обрывать на ПЕРВОЙ находке незачем тоже — здесь сообщаются ВСЕ.
 gate_barrier
 
-echo "== gate: mega-CU (spec_tests/conformance, one CU) =="
+step "mega-CU (spec_tests/conformance, one CU)"
 MEGA_LOG="${TMPDIR:-/tmp}/gate_mega_$$.log"
 _MEGA_T0=$(date +%s)
 "$NOVA" test --positive --compile-error "$ROOT/spec_tests/conformance" >"$MEGA_LOG" 2>&1
@@ -263,7 +274,7 @@ echo "$MEGA_LINE" | grep -qE "PASS: [0-9]+ +FAIL: [0-9]+" \
 [ "$MEGA_EXIT" -eq 0 ] || { grep -E "FAIL|TIMEOUT" "$MEGA_LOG" | grep -v "FAIL: 0" | head -10 >&2; fail "mega-CU exit=$MEGA_EXIT"; }
 echo "$MEGA_LINE" | grep -qE "PASS: [0-9]+ +FAIL: 0([^0-9]|$)" || fail "mega-CU: FAIL != 0 (см. $MEGA_LOG)"
 
-echo "== gate: check std/src (byte-canon) =="
+step "check std/src (byte-canon)"
 STD_LINE=$("$NOVA" check "$ROOT/std/src" 2>&1 | sed -e "s/\[[0-9;]*m//g" | grep -E "^PASS" | tail -1)
 echo "std :: $STD_LINE"
 # Канон 2026-07-29: PASS 147 / FAIL 26 / WARN 1078. Прежний «144/27/1057» устарел
@@ -282,7 +293,7 @@ echo "$STD_LINE" | grep -qE "FAIL: 26\b" \
 # оставался невидимым до самого PR (третий случай «локальный гейт слабее
 # внешнего», см. PROGRESS-p416.md). `--deny`: W→E, находки = exit≠0 самим
 # CLI (не парсингом кода возврата) — см. `nova-cli/src/main.rs::cmd_lint`.
-echo "== gate: nova lint --deny std/src (0 findings — 221.1 №416) =="
+step "nova lint --deny std/src (0 findings — 221.1 №416)"
 LINT_LOG="${TMPDIR:-/tmp}/gate_lint_$$.log"
 "$NOVA" lint --deny "$ROOT/std/src" >"$LINT_LOG" 2>&1
 LINT_EXIT=$?
@@ -305,7 +316,7 @@ echo "$LINT_LINE" | grep -qE ", 0 finding\(s\)" \
 # корпус ФИКСТУР: часть находок в исходных 83 была НАМЕРЕННОЙ (неканоничная
 # форма — сам предмет теста), закрыта через `// nova:allow RULE -- причина`
 # с обоснованием (PROGRESS-p416b.md), не игнором строки/файла целиком.
-echo "== gate: nova lint --deny spec_tests (0 findings — 221.1 №416 хвост) =="
+step "nova lint --deny spec_tests (0 findings — 221.1 №416 хвост)"
 LINT_LOG2="${TMPDIR:-/tmp}/gate_lint_spec_$$.log"
 "$NOVA" lint --deny "$ROOT/spec_tests" >"$LINT_LOG2" 2>&1
 LINT_EXIT2=$?
@@ -317,12 +328,12 @@ echo "$LINT_LINE2" | grep -qE ", 0 finding\(s\)" \
     || fail "nova lint spec_tests: находки > 0, ожидался канон 0 (см. $LINT_LOG2): '$LINT_LINE2'"
 [ "$LINT_EXIT2" -eq 0 ] || fail "nova lint --deny spec_tests: exit=$LINT_EXIT2 (см. $LINT_LOG2)"
 
-echo "== gate: flagship aggregator --strict-effects =="
+step "flagship aggregator --strict-effects"
 FLAG_LINE=$("$NOVA" build "$ROOT/examples/flagship/aggregator/src/main.nv" --strict-effects 2>&1 | sed -e "s/\[[0-9;]*m//g" | tail -1)
 echo "flagship :: $FLAG_LINE"
 echo "$FLAG_LINE" | grep -q "built:" || fail "flagship not built: '$FLAG_LINE'"
 
-echo "== gate: D-number uniqueness =="
+step "D-number uniqueness"
 # 2026-07-30: послабление под D431 СНЯТО — коллизия закрыта перенумерацией
 # FixedArray-блока в D440 (реестр 221.1 №123).
 #
