@@ -1,0 +1,104 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// examples/flagship/http_proxy_chain/config.nv — configuration: listen port
+// and upstream selection (plan 249 §8, Ф.5).
+//
+// Priority, most specific wins (§8 canon):
+//   listen port  argv[1] -> env("LISTEN_PORT") -> DEFAULT_LISTEN_PORT
+//   upstream     SOCKS5_PROXY/USER/PASS (explicit override) -> ALL_PROXY /
+//                all_proxy URL -> fatal error (no silent default — an
+//                upstream proxy is not optional for this bridge to do
+//                anything useful).
+//
+// `SOCKS5_PROXY`/`SOCKS5_USER`/`SOCKS5_PASS` stay as an explicit override
+// precisely BECAUSE they are more specific than a shared `ALL_PROXY` the
+// whole machine may already have set for other tools (curl, git, docker) —
+// same "argv beats env, explicit beats shared" shape as the listen port.
+
+module flagship.http_proxy_chain
+
+import std.os.{args, env}
+
+const DEFAULT_LISTEN_PORT = 8899
+
+type Config {
+    upstream Upstream
+    listen_port int
+}
+
+// Chain: argv[1] -> env("LISTEN_PORT") -> DEFAULT_LISTEN_PORT (§8 work item
+// 1). Previously ONLY argv[1] was read while `.env.example` advertised
+// `LISTEN_PORT` as an environment variable — a silent trap: the typical
+// `set -a && . .env && ./bridge` looked like it worked because the env
+// default (8899) happened to match the hardcoded default.
+fn parse_listen_port(argv []str) Os -> int {
+    if argv.len() > 1 { return parse_port_str(argv[1], "listen port argument '${argv[1]}'") }
+    ro from_env = env("LISTEN_PORT") ?? ""
+    if from_env != "" { return parse_port_str(from_env, "LISTEN_PORT env var '${from_env}'") }
+    DEFAULT_LISTEN_PORT
+}
+
+fn parse_port_str(raw str, ctx str) -> int {
+    match raw.to_int() {
+        Ok(p) => {
+            if p < 1 || p > 65535 {
+                panic("http_proxy_chain: ${ctx} out of range 1..65535 (got ${p})")
+            } else {
+                p
+            }
+        }
+        Err(_) => panic("http_proxy_chain: invalid ${ctx}")
+    }
+}
+
+// `panic`s on malformed input — a separate, flat helper (not inlined into
+// `load_upstream`'s own match tree) so every arm's value type is unambiguous.
+fn parse_proxy_host_port(raw str) -> (str, int) {
+    match raw.rsplit_once(":") {
+        Some((h, p_str)) => {
+            match p_str.to_int() {
+                Ok(p) => {
+                    if p < 1 || p > 65535 {
+                        panic("http_proxy_chain: SOCKS5_PROXY port ${p} out of range 1..65535")
+                    } else {
+                        (h, p)
+                    }
+                }
+                Err(_) => panic("http_proxy_chain: SOCKS5_PROXY must be host:port, got '${raw}'")
+            }
+        }
+        None => panic("http_proxy_chain: SOCKS5_PROXY must be host:port, got '${raw}'")
+    }
+}
+
+// Upstream selection (§8 work item 2): `SOCKS5_PROXY` (plus optional
+// `SOCKS5_USER`/`SOCKS5_PASS`) is an explicit override; failing that, an
+// `all_proxy`-compatible URL (`ALL_PROXY` env, checked uppercase-first like
+// Go's `httpproxy` package, then the lowercase `all_proxy` curl/git/docker
+// convention) is parsed via `Upstream.parse` (upstream.nv). Neither present
+// is a fatal, loud `panic` at startup (plan 249 §3.2 policy: config
+// validation happens ONCE at startup, not as a silently-broken bridge that
+// fails every connection later).
+fn load_upstream() Os -> Upstream {
+    ro explicit_proxy = env("SOCKS5_PROXY") ?? ""
+    if explicit_proxy != "" {
+        ro (host, port) = parse_proxy_host_port(explicit_proxy)
+        return Socks5 { host, port, user: env("SOCKS5_USER"), pass: env("SOCKS5_PASS") }
+    }
+    match env("ALL_PROXY").or(env("all_proxy")) {
+        Some(url) => match Upstream.parse(url) {
+            Ok(u)  => u
+            Err(e) => panic("http_proxy_chain: ${e.to_str()}")
+        }
+        None => panic("http_proxy_chain: no upstream configured — set SOCKS5_PROXY=host:port (optionally with SOCKS5_USER/SOCKS5_PASS) or ALL_PROXY=socks5://[user:pass@]host:port")
+    }
+}
+
+// Config validation happens ONCE at startup (plan 249 §3.2) — a malformed
+// upstream or out-of-range port is a fatal, loud `panic`, not a
+// silently-broken bridge that fails every connection later.
+fn load_config() Os -> Config {
+    Config {
+        upstream: load_upstream(),
+        listen_port: parse_listen_port(args()),
+    }
+}
