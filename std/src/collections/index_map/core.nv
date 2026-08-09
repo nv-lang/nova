@@ -50,7 +50,7 @@ import std.collections.vec.{Vec}
 /// let mut m = IndexMap[str, int].new()
 /// m.insert("b", 2)
 /// m.insert("a", 1)
-/// assert(m.keys() == ["b", "a"])   // insertion order, NOT sorted/hash order
+/// assert(m.keys().collect() == ["b", "a"])   // insertion order, NOT sorted/hash order
 /// ```
 #stable(since = "0.1")
 export type IndexMap[K Equal + Hash, V] priv {
@@ -191,7 +191,7 @@ export fn IndexMap[K Equal + Hash, V] mut @remove(key K) -> Option[V] {
 /// m.insert("b", 2)
 /// m.insert("c", 3)
 /// assert(m.swap_remove("a") == Some(1))
-/// assert(m.keys() == ["c", "b"])   // "c" took "a"'s slot
+/// assert(m.keys().collect() == ["c", "b"])   // "c" took "a"'s slot
 /// ```
 #stable(since = "0.1")
 export fn IndexMap[K Equal + Hash, V] mut @swap_remove(key K) -> Option[V] {
@@ -227,7 +227,7 @@ export fn IndexMap[K Equal + Hash, V] mut @clear() {
 /// let mut m = IndexMap[str, int].new()
 /// m.insert("b", 2)
 /// m.insert("a", 1)
-/// assert(m.keys() == ["b", "a"])
+/// assert(m.keys().collect() == ["b", "a"])
 /// ```
 #stable(since = "0.1")
 export fn IndexMap[K Equal + Hash, V] @keys() -> IndexKeysIter[K, V] =>
@@ -248,11 +248,15 @@ export fn IndexKeysIter[K, V] mut @next() -> Option[K] =>
         Some(pair) => Some(pair.0)
     }
 
-/// Order-independent structural equality (D109/D237 `Equal`-impl) — mirrors
-/// `HashMap[K, V] @equal` / `JsonObject @equal`. Two `IndexMap`s are equal
-/// iff they hold the same set of `(key, value)` pairs, REGARDLESS of
-/// insertion order (only iteration/serialization order is
-/// insertion-order-dependent — a separate property from equality).
+/// Structural equality that INCLUDES the insertion order (D109/D237 `Equal`-impl).
+/// Two `IndexMap`s are equal iff they hold the same `(key, value)` pairs **in the
+/// same order**.
+///
+/// This deliberately differs from `HashMap[K, V] @equal` / `JsonObject @equal`,
+/// which have no order to compare. Here the order is the guarantee the type
+/// exists for (see `@remove` vs `@swap_remove`), so it is part of the value:
+/// two maps that iterate differently are different. Decision by the owner,
+/// registry 221.1 #507.
 ///
 /// # Examples
 ///
@@ -263,25 +267,11 @@ export fn IndexKeysIter[K, V] mut @next() -> Option[K] =>
 /// let mut b = IndexMap[str, int].new()
 /// b.insert("y", 2)
 /// b.insert("x", 1)
-/// assert(a.equal(b))   // order-independent
+/// assert(!a.equal(b))    // same pairs, different order — not equal
 /// ```
 #stable(since = "0.1")
-export fn IndexMap[K Equal + Hash, V] @equal(other IndexMap[K, V]) -> bool {
-    if @len() != other.len() {
-        return false
-    }
-    for (k, v) in @iter() {
-        match other.get(k) {
-            Some(ov) => {
-                if v != ov {
-                    return false
-                }
-            }
-            None => return false
-        }
-    }
-    true
-}
+export fn IndexMap[K Equal + Hash, V] @equal(other IndexMap[K, V]) -> bool =>
+    @entries == other.entries
 
 // ──────────────────────────────────────────────────────────────────────────
 // Iteration

@@ -70,7 +70,7 @@ test "re-insert of an EXISTING key does NOT move its position (core IndexMap pro
     m.insert("third", 3)
     // Re-insert "first" with a new value — position must stay at index 0.
     assert(m.insert("first", 100) == Some(1))
-    assert(m.keys() == ["first", "second", "third"])
+    assert(m.keys().collect() == ["first", "second", "third"])
     assert(m.get("first") == Some(100))
 }
 
@@ -95,7 +95,7 @@ test "keys() returns keys in insertion order" {
     m.insert("b", 2)
     m.insert("a", 1)
     m.insert("c", 3)
-    assert(m.keys() == ["b", "a", "c"])
+    assert(m.keys().collect() == ["b", "a", "c"])
 }
 
 test "iter() yields (key, value) pairs in insertion order" {
@@ -112,9 +112,9 @@ test "iter() yields (key, value) pairs in insertion order" {
     assert(pairs[1].0 == "y" && pairs[1].1 == 20)
 }
 
-// ─── equal() is order-independent (structural equality, separate from iteration order) ───
+// ─── equal() INCLUDES the order: it is part of the value (registry 221.1 #507) ───
 
-test "equal() is order-independent (D109/D237 Equal protocol)" {
+test "equal() distinguishes maps that differ only in order" {
     mut a = IndexMap[str, int].new()
     a.insert("x", 1)
     a.insert("y", 2)
@@ -122,6 +122,20 @@ test "equal() is order-independent (D109/D237 Equal protocol)" {
     mut b = IndexMap[str, int].new()
     b.insert("y", 2)
     b.insert("x", 1)
+
+    // Same pairs, different insertion order. The order is the guarantee this
+    // type exists for, so these are NOT the same value.
+    assert(!a.equal(b))
+}
+
+test "equal() holds for the same pairs in the same order" {
+    mut a = IndexMap[str, int].new()
+    a.insert("x", 1)
+    a.insert("y", 2)
+
+    mut b = IndexMap[str, int].new()
+    b.insert("x", 1)
+    b.insert("y", 2)
 
     assert(a.equal(b))
 }
@@ -157,7 +171,7 @@ test "remove of a middle entry preserves the insertion order of the rest" {
     assert(m.remove("a") == Some(1))
     // The remaining entries keep the order they were inserted in — that is the
     // single guarantee this type exists for.
-    assert(m.keys() == ["b", "c"])
+    assert(m.keys().collect() == ["b", "c"])
     assert(m.get("b") == Some(2))
     assert(m.get("c") == Some(3))
 }
@@ -169,7 +183,7 @@ test "swap_remove trades the order away, and says so in its name" {
     m.insert("c", 3)
     assert(m.swap_remove("a") == Some(1))
     // "c" (the last entry) was moved into "a"'s slot.
-    assert(m.keys() == ["c", "b"])
+    assert(m.keys().collect() == ["c", "b"])
     assert(m.get("b") == Some(2))
     assert(m.get("c") == Some(3))
 }
@@ -179,7 +193,7 @@ test "remove of the last entry needs no swap" {
     m.insert("a", 1)
     m.insert("b", 2)
     assert(m.remove("b") == Some(2))
-    assert(m.keys() == ["a"])
+    assert(m.keys().collect() == ["a"])
 }
 
 // ─── int keys — a second concrete K instantiation, per Nova's own mono model ───
@@ -189,5 +203,5 @@ test "works with int keys (second K instantiation)" {
     m.insert(3, "three")
     m.insert(1, "one")
     assert(m.get(1) == Some("one"))
-    assert(m.keys() == [3, 1])
+    assert(m.keys().collect() == [3, 1])
 }
