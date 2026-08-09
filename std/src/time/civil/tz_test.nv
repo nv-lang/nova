@@ -24,15 +24,15 @@ test "tz_load: UTC-алиасы и offset-формы" {
     assert(match "UTC".to_timezone() { Ok(Utc) => true, _ => false })
     assert(match "Z".to_timezone() { Ok(Utc) => true, _ => false })
     assert(match "+05:30".to_timezone() {
-        Ok(Fixed(off)) => off.to_seconds() == 19_800
+        Ok(Fixed(off)) => off.seconds() == 19_800
         _ => false
     })
     assert(match "-08:00".to_timezone() {
-        Ok(Fixed(off)) => off.to_seconds() == -28_800
+        Ok(Fixed(off)) => off.seconds() == -28_800
         _ => false
     })
     assert(match "+02:30:17".to_timezone() {
-        Ok(Fixed(off)) => off.to_seconds() == 9_017
+        Ok(Fixed(off)) => off.seconds() == 9_017
         _ => false
     })
     assert(!"+29:00".to_timezone().is_ok())    // за ±18h
@@ -52,7 +52,7 @@ test "dst_gap_named: NY 02:30 → push 03:30 EDT (Compatible)" {
     assert(ny.resolve_local(in_gap).is_gap())
     ro z = in_gap.to_zoned(ny)!!
     assert(z.datetime().hour() == 3 && z.datetime().minute() == 30)
-    assert(z.offset().to_seconds() == -14_400)
+    assert(z.offset().seconds() == -14_400)
     // Reject → Ambiguous
     ro rej Disambiguation = Reject
     assert(match in_gap.to_zoned(ny, rej) {
@@ -66,10 +66,10 @@ test "dst_overlap_named: NY fall-back 2026-11-01 01:30 → earlier -04:00" {
     ro in_ovl = Date.new(2026, Nov, 1)!!.at(TimeOfDay.new(1, 30)!!)
     assert(ny.resolve_local(in_ovl).is_overlap())
     ro z = in_ovl.to_zoned(ny)!!                    // Compatible → earlier
-    assert(z.offset().to_seconds() == -14_400)
+    assert(z.offset().seconds() == -14_400)
     ro later Disambiguation = Later
     ro zl = in_ovl.to_zoned(ny, later)!!
-    assert(zl.offset().to_seconds() == -18_000)
+    assert(zl.offset().seconds() == -18_000)
     assert(zl.to_timestamp()!! - z.to_timestamp()!! == 1.to_hours())
 }
 
@@ -80,12 +80,12 @@ test "London BST: последнее воскресенье марта 2026 (29-
     assert(lon.resolve_local(in_gap).is_gap())
     ro z = in_gap.to_zoned(lon)!!
     assert(z.datetime().hour() == 2 && z.datetime().minute() == 30)
-    assert(z.offset().to_seconds() == 3_600)
+    assert(z.offset().seconds() == 3_600)
     // Лето — BST, зима — GMT
     ro summer = Date.new(2026, Jul, 1)!!.at(TimeOfDay.new(12, 0)!!).to_zoned(lon)!!
-    assert(summer.offset().to_seconds() == 3_600)
+    assert(summer.offset().seconds() == 3_600)
     ro winter = Date.new(2026, Jan, 1)!!.at(TimeOfDay.new(12, 0)!!).to_zoned(lon)!!
-    assert(winter.offset().to_seconds() == 0)
+    assert(winter.offset().seconds() == 0)
 }
 
 test "Moscow: фикс +03:00 без DST (2015+)" {
@@ -93,8 +93,8 @@ test "Moscow: фикс +03:00 без DST (2015+)" {
     // NB: имя локала `s` ломает эмиссию receiver'а (теряется `&`) — не использовать
     ro zsum = Date.new(2026, Jul, 10)!!.at(TimeOfDay.new(12, 0)!!).to_zoned(msk)!!
     ro zwin = Date.new(2026, Jan, 10)!!.at(TimeOfDay.new(12, 0)!!).to_zoned(msk)!!
-    assert(zsum.offset().to_seconds() == 10_800)
-    assert(zwin.offset().to_seconds() == 10_800)
+    assert(zsum.offset().seconds() == 10_800)
+    assert(zwin.offset().seconds() == 10_800)
     assert(!msk.resolve_local(Date.new(2026, Mar, 29)!!.at(TimeOfDay.new(2, 30)!!)).is_gap())
 }
 
@@ -102,9 +102,9 @@ test "Sydney (южное полушарие): DST октябрь→апрель"
     ro syd = "Australia/Sydney".to_timezone()!!
     // Январь — лето (AEDT +11), июль — зима (AEST +10)
     ro jan = Date.new(2026, Jan, 15)!!.at(TimeOfDay.new(12, 0)!!).to_zoned(syd)!!
-    assert(jan.offset().to_seconds() == 39_600)
+    assert(jan.offset().seconds() == 39_600)
     ro jul = Date.new(2026, Jul, 15)!!.at(TimeOfDay.new(12, 0)!!).to_zoned(syd)!!
-    assert(jul.offset().to_seconds() == 36_000)
+    assert(jul.offset().seconds() == 36_000)
     // Gap: 1-е воскресенье октября 2026 (4-е), 02:30 local
     ro gap = Date.new(2026, Oct, 4)!!.at(TimeOfDay.new(2, 30)!!)
     assert(syd.resolve_local(gap).is_gap())
@@ -126,7 +126,7 @@ test "dst_roundtrip: instant-переход через wall-арифметику
     assert(before.to_iso() == "2026-03-07T12:00:00-05:00[America/New_York]")
     assert(after.to_iso() == "2026-03-08T12:00:00-04:00[America/New_York]")
     // офсеты по инстанту согласованы с offset_at
-    assert(ny.offset_at(after.to_timestamp()!!).to_seconds() == -14_400)
+    assert(ny.offset_at(after.to_timestamp()!!).seconds() == -14_400)
 }
 
 // ── TZif-парсер: синтетические байты (мокабельно, без ОС) ──
@@ -186,9 +186,9 @@ fn push_i64(b mut []u8, v i64) {
 test "TZif v2: parse синтетических байт → корректные rules" {
     ro tz = TimeZone.from_tzif("Test/Zone", build_tzif_v2())!!
     // До перехода (instant < 1_000_000) — std -18000
-    assert(tz.offset_at(999_999.to_unix_seconds()).to_seconds() == -18_000)
+    assert(tz.offset_at(999_999.to_unix_seconds()).seconds() == -18_000)
     // После — dst -14400
-    assert(tz.offset_at(1_000_000.to_unix_seconds()).to_seconds() == -14_400)
+    assert(tz.offset_at(1_000_000.to_unix_seconds()).seconds() == -14_400)
     assert(tz.to_str() == "Test/Zone")
 }
 

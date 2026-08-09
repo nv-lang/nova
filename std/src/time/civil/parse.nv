@@ -218,8 +218,8 @@ export fn str @to_zoned_datetime(conflict OffsetConflict) -> Result[ZonedDateTim
     // Валиден ли сохранённый offset для этой wall-time в зоне?
     ro res = tz.resolve_local(dt)
     ro stored_valid = match res {
-        Unique(o) => o.to_seconds() == stored.to_seconds(),
-        Overlap(a, b) => a.to_seconds() == stored.to_seconds() || b.to_seconds() == stored.to_seconds(),
+        Unique(o) => o.seconds() == stored.seconds(),
+        Overlap(a, b) => a.seconds() == stored.seconds() || b.seconds() == stored.seconds(),
         Gap(_, _) => false,
     }
 

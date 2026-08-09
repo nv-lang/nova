@@ -119,12 +119,12 @@ test "OffsetConflict: рассогласованный offset — RejectMismatch
     })
     // Use: доверять сохранённому (инстант как записан)
     ro used = drifted.to_zoned_datetime(Use)!!
-    assert(used.offset().to_seconds() == -18_000)
+    assert(used.offset().seconds() == -18_000)
     ro canon = "2026-07-10T14:30:00-04:00[America/New_York]".to_zoned_datetime()!!
     assert(used.to_timestamp()!! - canon.to_timestamp()!! == 1.to_hours())
     // Ignore: пересчитать по правилам зоны (wall та же, offset корректный)
     ro ignored = drifted.to_zoned_datetime(Ignore)!!
-    assert(ignored.offset().to_seconds() == -14_400)
+    assert(ignored.offset().seconds() == -14_400)
     assert(ignored.compare(canon) == 0)
     // Prefer: stored невалиден → как Ignore
     ro preferred = drifted.to_zoned_datetime(Prefer)!!

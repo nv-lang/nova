@@ -231,13 +231,13 @@ export fn DateTime @to_zoned(tz TimeZone, disamb Disambiguation) -> Result[Zoned
                 Reject => Err(Ambiguous("gap: wall-time does not exist in zone")),
                 Earlier => {
                     // Назад на длину gap, интерпретация before-offset.
-                    ro gap_len = (after.to_seconds() - before.to_seconds()) as i64
+                    ro gap_len = (after.seconds() - before.seconds()) as i64
                     ro shifted = @minus(gap_len.to_seconds())
                     Ok({ dt: shifted, offset: before, zone: tz })
                 }
                 _ => {
                     // Compatible | Later: push-forward, after-offset.
-                    ro gap_len = (after.to_seconds() - before.to_seconds()) as i64
+                    ro gap_len = (after.seconds() - before.seconds()) as i64
                     ro shifted = @plus(gap_len.to_seconds())
                     Ok({ dt: shifted, offset: after, zone: tz })
                 }
@@ -280,7 +280,7 @@ export fn Timestamp @to_zoned(tz TimeZone) -> ZonedDateTime {
     ro rem0 = total_ns % 1_000_000_000
     ro sec = if rem0 < 0 { sec0 - 1 } else { sec0 }
     ro subnano = if rem0 < 0 { rem0 + 1_000_000_000 } else { rem0 }
-    ro local = sec + (off.to_seconds() as i64)
+    ro local = sec + (off.seconds() as i64)
     ro day0 = local / 86_400
     ro remd = local % 86_400
     ro day = if remd < 0 { day0 - 1 } else { day0 }
@@ -295,7 +295,7 @@ export fn Timestamp @to_zoned(tz TimeZone) -> ZonedDateTime {
 #stable(since = "0.1")
 export fn ZonedDateTime @to_timestamp() -> Result[Timestamp, DateError] {
     ro l = local_seconds(@dt)
-    ro inst_sec = l - (@offset.to_seconds() as i64)
+    ro inst_sec = l - (@offset.seconds() as i64)
     ro nano = @dt.time().nanos_of_day() % 1_000_000_000
     // Окно i64-ns: ±9_223_372_036 секунд (≈±292y).
     if inst_sec > 9_223_372_035 || inst_sec < -9_223_372_036 {
@@ -358,8 +358,8 @@ export fn ZonedDateTime @minus_duration(d Duration) -> ZonedDateTime =>
 /// they denote the same instant (regardless of the representation zone).
 #stable(since = "0.1")
 export fn ZonedDateTime @compare(other ZonedDateTime) -> int {
-    ro a = local_seconds(@dt) - (@offset.to_seconds() as i64)
-    ro b = local_seconds(other.datetime()) - (other.offset().to_seconds() as i64)
+    ro a = local_seconds(@dt) - (@offset.seconds() as i64)
+    ro b = local_seconds(other.datetime()) - (other.offset().seconds() as i64)
     if a < b { return -1 }
     if a > b { return 1 }
     ro an = @dt.time().nanos_of_day() % 1_000_000_000
