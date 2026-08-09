@@ -191,7 +191,7 @@ test "aggregate: 0 fiber-slot leak after cascading cancellation" {
 // ── POS: a start event fires for every source, exactly once each ─────────
 
 test "aggregate: Emit fires lane_started exactly once per source" {
-    ro { tx, rx } = Channel.new(16)
+    ro { tx, rx } = Channel[int].new(16)
     with Net = mock_net() {
         with Emit = effect Emit {
             lane_started(_id str, _idx int) -> () { ro _ = tx.try_send(1) }
@@ -218,7 +218,7 @@ test "aggregate: Emit fires lane_started exactly once per source" {
 // ── POS: per-lane terminal events tally exactly like the settled Report ───
 
 test "aggregate: Emit lane outcomes tally exactly like the settled Report" {
-    ro { tx, rx } = Channel.new(16)
+    ro { tx, rx } = Channel[int].new(16)
     with Net = mock_net() {
         with Emit = effect Emit {
             lane_started(_id str, _idx int) -> () {}
@@ -294,7 +294,7 @@ test "aggregate: Emit swarm_done matches the returned Report, fires once" {
 // ── NEG: a cancelled lane fires lane_cancelled, not lane_done/lane_failed ─
 
 test "aggregate: source past deadline fires lane_cancelled, nothing else" {
-    ro { tx, rx } = Channel.new(4)
+    ro { tx, rx } = Channel[int].new(4)
     with Net = mock_net() {
         with Emit = effect Emit {
             lane_started(_id str, _idx int) -> () {}

@@ -113,7 +113,7 @@ fn live_fetch_weather(id str, lat f64, lon f64) Net Time -> Result[SourceData, A
 fn live_lane_tcp(host str, shared_deadline Monotonic, idx int) Net Time Emit -> TaskResult {
     ro t0 Monotonic = Monotonic.now()
     Emit.lane_started(host, idx)
-    ro { tx, rx } = Channel.new(1)
+    ro { tx, rx } = Channel[TaskStatus].new(1)
     // Plan 238 (D441 §3): `with Fail[T]` handler исполняется В ФАЙБЕРЕ
     // падающей операции — AtomicBool вместо mut-флага
     // (E_HANDLER_MUT_CAPTURE_IN_FIBER).
@@ -148,7 +148,7 @@ fn live_lane_tcp(host str, shared_deadline Monotonic, idx int) Net Time Emit -> 
 fn live_lane_weather(id str, lat f64, lon f64, shared_deadline Monotonic, idx int) Net Time Emit -> TaskResult {
     ro t0 Monotonic = Monotonic.now()
     Emit.lane_started(id, idx)
-    ro { tx, rx } = Channel.new(1)
+    ro { tx, rx } = Channel[TaskStatus].new(1)
     // Plan 238 (D441 §3): `with Fail[T]` handler исполняется В ФАЙБЕРЕ
     // падающей операции — AtomicBool вместо mut-флага
     // (E_HANDLER_MUT_CAPTURE_IN_FIBER).
