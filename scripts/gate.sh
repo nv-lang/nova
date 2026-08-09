@@ -102,7 +102,6 @@ fi
 
 step "arch-ratchet"
 bash "$ROOT/scripts/guards/arch-ratchet.sh" || fail "arch-ratchet (emit_c growth)"
-bash "$ROOT/scripts/guards/selftest/test-arch-ratchet.sh" >/dev/null || fail "селфтест arch-ratchet (аудит стражей 2026-08-08 — был единственным без селфтеста)"
 
 # Реестр 221.1 №138 (урок 2026-07-27): копия рантайма внутри пакетной репы/
 # worktree не под git → её протухание невидимо, и она ШАДОВИТ настоящий
@@ -133,21 +132,16 @@ step "expect-markers (неизвестный EXPECT_* раннер молча и
 step "накопление несведённых веток (никогда не копи)"
 step "форма записей реестра (класс, приоритет, оговорка)"
 bash "$ROOT/scripts/guards/check-registry-entry-shape.sh" "$ROOT" || fail "запись реестра без класса/приоритета/оговорки"
-bash "$ROOT/scripts/guards/selftest/test-check-registry-entry-shape.sh" >/dev/null || fail "селфтест check-registry-entry-shape провален"
 
 bash "$ROOT/scripts/guards/check-no-accumulation.sh" "$ROOT" || fail "накопление выросло: замершие несведённые ветки"
-bash "$ROOT/scripts/guards/selftest/test-check-no-accumulation.sh" >/dev/null || fail "селфтест check-no-accumulation провален"
 
 bash "$ROOT/scripts/guards/check-expect-markers.sh" "$ROOT" || fail "неизвестный EXPECT_* в тесте"
-bash "$ROOT/scripts/guards/selftest/test-check-expect-markers.sh" >/dev/null || fail "селфтест expect-markers"
 
 step "doc-truth (нормативная дока врёт именем EXPECT_* или неисполнимой командой — №455)"
 bash "$ROOT/scripts/guards/check-doc-truth.sh" "$ROOT" || fail "неизвестный EXPECT_* или неисполнимая команда nova в AGENTS.md/docs/dev(/docs/guide для маркеров)"
-bash "$ROOT/scripts/guards/selftest/test-check-doc-truth.sh" >/dev/null || fail "селфтест doc-truth"
 
 step "invariant-discipline (норма об инвариантах — всеобъемлюща)"
 bash "$ROOT/scripts/guards/check-invariant-discipline.sh" "$ROOT" || fail "новый инвариант на честном слове (conventions-governance)"
-bash "$ROOT/scripts/guards/selftest/test-check-invariant-discipline.sh" >/dev/null || fail "селфтест стража инвариантов"
 step "sync-guards (копии стражей в пакетных репах не разошлись)"
 bash "$ROOT/scripts/tools/sync-guards-to-packages.sh" || fail "копии стражей в пакетных репах разошлись с эталоном"
 
@@ -158,11 +152,9 @@ step "single-mco-resume (№446/№447 — единственный resume-са�
 bash "$ROOT/scripts/guards/check-single-mco-resume.sh" "$ROOT" || fail "посторонний mco_resume() вне fibers.h::nova_resume_fiber (№446/№447)"
 
 
-step "selftests стражей"
 
 step "doc-hygiene (язык/чистота публичной доки, правило владельца 2026-07-31)"
 bash "$ROOT/scripts/guards/check-doc-hygiene.sh" "$ROOT" || fail "doc-hygiene (кириллица/внутренние ссылки в /// или линте — рост запрещён)"
-bash "$ROOT/scripts/guards/selftest/test-check-doc-hygiene.sh" || fail "doc-hygiene selftest"
 
 step "doc-conventions (docs/dev/doc-conventions.md enforcement, Plan 242)"
 # №322: вторым аргументом — база сравнения для подпроверки same-commit
@@ -170,28 +162,34 @@ step "doc-conventions (docs/dev/doc-conventions.md enforcement, Plan 242)"
 # предыдущий коммит; в CI база передаётся явно (PR base / event.before).
 DOC_GUARD_BASE="$(git -C "$ROOT" rev-parse --verify -q HEAD~1 2>/dev/null || true)"
 bash "$ROOT/scripts/guards/check-doc-conventions.sh" "$ROOT" "$DOC_GUARD_BASE" || fail "doc-conventions (шапка/frontmatter spec en, guide-парность, статус-строка плана, dev-ссылки, код-блоки пар — см. вывод выше)"
-bash "$ROOT/scripts/guards/selftest/test-check-doc-conventions.sh" || fail "doc-conventions selftest"
-bash "$ROOT/scripts/guards/selftest/test-doc-conventions-determinism.sh" || fail "doc-conventions determinism selftest (№321)"
 
 step "doc-examples (снятые формы в nova-примерах публикуемой доки, окно p-example-guard)"
 DOC_EXAMPLES_SHOW_MATCHES=0 bash "$ROOT/scripts/guards/check-doc-examples.sh" "$ROOT" || fail "doc-examples (дока учит снятому синтаксису — let/readonly/*ro T/*unsafe T/постфикс-!/trait-impl-throws/ref-формы/external fn/addr_of/null <тип>/#impl(<старое имя>) — см. вывод выше)"
-bash "$ROOT/scripts/guards/selftest/test-check-doc-examples.sh" || fail "doc-examples selftest"
 
 step "test-fixture-coverage (правила 1/5 test-conventions.md — neg-фикстура на новый E_*/W_*, регресс-фикстура на закрытие маркера; реестр 221.1 №399)"
 TFC_BASE="$(git -C "$ROOT" rev-parse --verify -q HEAD~1 2>/dev/null || true)"
 bash "$ROOT/scripts/guards/check-test-fixture-coverage.sh" "$ROOT" "$TFC_BASE" || fail "test-fixture-coverage (новый E_*/W_*-код без neg-фикстуры, ИЛИ строка реестра 221.1 закрыта без .nv-ссылки — см. вывод выше; WARN про registry/backlog-расхождение НЕ роняет гейт)"
-bash "$ROOT/scripts/guards/selftest/test-check-test-fixture-coverage.sh" || fail "test-fixture-coverage selftest"
 
 step "ci-status (внешний авторитетный гейт — GitHub Actions; реестр 221.1 №395/№401/№402)"
 # НЕ блокирующий: внешний сервис бывает недоступен, и падение сети не должно
 # ронять локальный гейт. Блокирует отправку хук `pre-push` (--strict).
 # Смысл шага — чтобы «локально зелено» и «снаружи красно» не могли разойтись
 # молча, как расходились сутки 2026-08-05/06 (24 слияния подряд без взгляда в CI).
-bash "$ROOT/scripts/guards/check-ci-status.sh" || true
+# Предел 120с: это сетевой запрос, а не вычисление. Недоступный GitHub не
+# должен превращаться в зависший гейт.
+bash "$ROOT/scripts/tools/with-deadline.sh" 120 \
+    bash "$ROOT/scripts/guards/check-ci-status.sh" || true
 
+step "самотесты стражей (все из каталога, по одному разу)"
+# ЕДИНСТВЕННОЕ место, где они запускаются. Каталог обходится целиком,
+# поэтому новый самотест подхватывается сам — дописывать его в gate.sh
+# не нужно и, значит, нельзя забыть.
 for st in "$ROOT"/scripts/guards/selftest/test-*.sh; do
     [ -e "$st" ] || continue
-    bash "$st" || fail "самотест стража: $(basename "$st")"
+    # Самотест — проверка проверки. Не уложился в три минуты — он не
+    # медленный, он сломан (№475).
+    bash "$ROOT/scripts/tools/with-deadline.sh" 180 bash "$st" \
+        || fail "самотест стража: $(basename "$st")"
 done
 
 step "cargo build --release"
