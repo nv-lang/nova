@@ -94,11 +94,11 @@ escape: `"\${name}"`.
 statement'ов на одной строке — и только там:
 
 ```nova
-ro x = 1                        // newline разделяет
+ro x = 1                        // newline separates
 ro y = 2
 foo(x, y)
 
-ro a = 1; ro b = 2; foo(a, b)  // ; для одной строки
+ro a = 1; ro b = 2; foo(a, b)  // ; for a single line
 ```
 
 Арма́ `match` в многострочной форме разделяются **только** переносом строки, в
@@ -107,12 +107,12 @@ ro a = 1; ro b = 2; foo(a, b)  // ; для одной строки
 форме — тоже (перенос строки уже разделил):
 
 ```nova
-match code {                    // многострочно — без запятых
+match code {                    // multi-line — no commas
     200 => "ok"
     404 => "not found"
 }
 
-ro s = match code { 200 => "ok", 404 => "not found" }   // одна строка — запятая
+ro s = match code { 200 => "ok", 404 => "not found" }   // one line — comma
 ```
 
 В списках аргументов, полей записи, импортов и элементов массива запятая
