@@ -26,7 +26,7 @@ import std.time.duration
 //    finishes well within the budget — `timeout:` must NOT fire.
 
 test "no false positive: fast op nested in child spawn body completes within budget" {
-    ro (tx, rx) = Channel.new(1)
+    ro (tx, rx) = Channel[bool].new(1)
     mut caught = AtomicBool.new(false)
     ro r = with Fail[TimeoutError] = |_e| {
         caught.store(true)
@@ -49,7 +49,7 @@ test "no false positive: fast op nested in child spawn body completes within bud
 //    `timeout:` — this is the literal shape №457 describes.
 
 test "timeout fires through a blocking recv nested in ONE child spawn" {
-    ro (_tx, rx) = Channel.new(1) // never sent to — rx.recv() blocks forever
+    ro (_tx, rx) = Channel[bool].new(1) // never sent to — rx.recv() blocks forever
     mut caught = AtomicBool.new(false)
     ro t0 = Timestamp.now().unix_millis()
     ro r = with Fail[TimeoutError] = |_e| {
@@ -79,8 +79,8 @@ test "timeout fires through a blocking recv nested in ONE child spawn" {
 //    kept here as a permanent, cheap (no network) regression probe for it.
 
 test "timeout fires through two sibling spawns, each blocked on its own recv" {
-    ro (_txA, rxA) = Channel.new(1)
-    ro (_txB, rxB) = Channel.new(1)
+    ro (_txA, rxA) = Channel[bool].new(1)
+    ro (_txB, rxB) = Channel[bool].new(1)
     mut caught = AtomicBool.new(false)
     ro t0 = Timestamp.now().unix_millis()
     ro r = with Fail[TimeoutError] = |_e| {
