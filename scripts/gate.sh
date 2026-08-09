@@ -181,7 +181,9 @@ bash "$ROOT/scripts/tools/with-deadline.sh" 120 \
     bash "$ROOT/scripts/guards/check-ci-status.sh" || true
 
 step "язык сообщений коммитов (норма 2026-08-09 — по-английски)"
-bash "$ROOT/scripts/tools/with-deadline.sh" 60 \n    bash "$ROOT/scripts/guards/check-commit-language.sh" "$ROOT" \n    || fail "кириллица в сообщениях коммитов после точки перехода"
+bash "$ROOT/scripts/tools/with-deadline.sh" 60 \
+    bash "$ROOT/scripts/guards/check-commit-language.sh" "$ROOT" \
+    || fail "кириллица в сообщениях коммитов после точки перехода"
 
 step "самотесты стражей (все из каталога, по одному разу)"
 # ЕДИНСТВЕННОЕ место, где они запускаются. Каталог обходится целиком,

@@ -36366,7 +36366,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             ExprKind::MapLit { .. } => {
                 Err("compiler bug: map literal `[k: v]` reached codegen без \
                      desugar pass — нарушение pipeline invariant. \
-                     desugar_module() обязан быть вызван до codegen. \  // [INV-TODO: №523]
+                     [INV-TODO: №523] desugar_module() обязан быть вызван до codegen. \
                      Report issue: https://github.com/nv-lang/nova/issues".into())
             }
 
