@@ -274,6 +274,19 @@ pub fn clear() {
     }
 }
 
+/// ТОЛЬКО для проб: положить в кэш заведомо негодную запись с чужим
+/// отпечатком. Проверяет свойство «устаревшая запись не может быть выдана»:
+/// после такой подмены следующее обращение обязано увидеть расхождение
+/// отпечатка и перечитать файл, а не отдать подсунутое.
+#[cfg(test)]
+fn poison_file_entry(path: &Path, text: &str) {
+    let shard = &files()[shard_idx(path)];
+    let bogus = Stamp { mtime_ns: 1, len: 1 };
+    if let Ok(mut g) = shard.lock() {
+        g.insert(path.to_path_buf(), (bogus, Arc::new(text.to_string())));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -319,6 +332,55 @@ mod tests {
             clear();
             assert_eq!(dir_nv_files(&d).len(), 2);
         }
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// Проба «подсунь негодное»: устаревшая запись в кэше не может быть
+    /// выдана — расхождение отпечатка перечитывает файл.
+    #[test]
+    fn stale_entry_is_never_served() {
+        let d = tmp_dir("poison");
+        let f = d.join("a.nv");
+        std::fs::write(&f, "module a\nfn real() -> int => 1\n").unwrap();
+        // Прогреваем кэш законным чтением.
+        assert!(file_text(&f).unwrap().contains("real"));
+        // Подсовываем негодное с чужим отпечатком.
+        poison_file_entry(&f, "module a\nfn STALE() -> int => 0\n");
+        let got = file_text(&f).unwrap();
+        assert!(
+            got.contains("real") && !got.contains("STALE"),
+            "устаревшая запись выдана молча: {:?}",
+            got
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// Правка файла обязана менять вывод, посчитанный по каталогу
+    /// (`dir_derived`), — иначе «посчитали один раз и забыли».
+    #[test]
+    fn dir_derived_follows_peer_edit() {
+        let d = tmp_dir("derived");
+        let f = d.join("a.nv");
+        std::fs::write(&f, "module aaa\n").unwrap();
+        let first: Arc<String> = dir_derived(&d, "probe", || {
+            dir_nv_files(&d)
+                .iter()
+                .filter_map(|p| file_text(p))
+                .map(|t| t.trim().to_string())
+                .collect::<Vec<_>>()
+                .join("|")
+        });
+        assert_eq!(first.as_str(), "module aaa");
+        std::fs::write(&f, "module bbbbbb\n").unwrap();
+        let second: Arc<String> = dir_derived(&d, "probe", || {
+            dir_nv_files(&d)
+                .iter()
+                .filter_map(|p| file_text(p))
+                .map(|t| t.trim().to_string())
+                .collect::<Vec<_>>()
+                .join("|")
+        });
+        assert_eq!(second.as_str(), "module bbbbbb", "вывод по каталогу залип");
         let _ = std::fs::remove_dir_all(&d);
     }
 
