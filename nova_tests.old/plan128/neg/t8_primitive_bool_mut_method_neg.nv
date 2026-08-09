@@ -1,6 +1,8 @@
-// Plan 128 Ф.4 T8 — primitive `bool` cannot have mut-methods.
-//
-// EXPECT_COMPILE_ERROR E_PRIMITIVE_MUT_METHOD
+// RETRACTED 2026-08-09 (closes №468, owner decision 2026-08-08/09):
+// `E_PRIMITIVE_MUT_METHOD` (Plan 128 Ф.3) is RETIRED — see T6's header
+// for the full rationale. `bool` mut @ methods now pass the receiver
+// by-pointer (R5) and the mutation IS observable. Superseded by
+// `spec_tests/conformance/standalone/p468_primitive_mut_method.nv`.
 
 module neg.t8_primitive_bool_mut_method_neg
 
@@ -8,7 +10,7 @@ fn bool mut @flip() -> () {
     @ = !@
 }
 
-test "should not compile: fn bool mut @flip" {
+test "fn bool mut @flip observably mutates the caller's binding" {
     mut b = true
     b.flip()
     assert(b == false)
