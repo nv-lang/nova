@@ -39,3 +39,23 @@ go red; code restored via `git checkout --` → green again, `git diff` empty),
 and (b) the full corpus run below, which never touches the new codegen path
 for any PRE-EXISTING file (zero_on_move_types is empty unless a file declares
 `#zero_on_move`, and none in std/examples/spec_tests do yet).
+
+=== std (whole `nova test std`, single command, 308 raw .nv files / folder-modules) ===
+PASS: 66  FAIL: 7  SKIP: 106
+`grep -rl zero_on_move std/src` → EMPTY: no std file uses the attribute, so
+both new checker diagnostics (gated on `td.zero_on_move`) and both new
+codegen injection sites (gated on `zero_on_move_types` — populated ONLY from
+`#zero_on_move`-marked type decls, and the call-site rewrite additionally
+fast-bails via `.is_empty()`) are structurally unreachable for the entire
+std/src compile — the 7 FAILs (civil_arith_test integer-overflow asserts,
+json_test key-order asserts, and CC-FAILs in decode_errors_test/uuid_test/
+uuid_namespace_test/net::addr/cron_test — designated-initializer and enum-
+payload-type C mismatches) are PRE-EXISTING, unrelated to #465. Not
+independently re-verified against a pre-#465 binary (main's own `nova test`
+is currently broken — see note above; the structural unreachability
+argument is definitive on its own: the new code paths cannot execute
+without a `#zero_on_move` declaration, and grep confirms none exists in
+std/src).
+
+=== concurrency + net (targeted, per task brief) ===
+PENDING
