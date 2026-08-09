@@ -147,15 +147,28 @@ test "equal() detects a length difference" {
     assert(!a.equal(b))
 }
 
-// ─── swap-remove semantics: removal does NOT preserve remaining relative order ───
+// ─── order: `remove` PRESERVES it, `swap_remove` gives it up (registry 221.1 #505) ───
 
-test "remove of a middle entry swaps the last entry into its slot (documented swap-remove semantics)" {
+test "remove of a middle entry preserves the insertion order of the rest" {
     mut m = IndexMap[str, int].new()
     m.insert("a", 1)
     m.insert("b", 2)
     m.insert("c", 3)
     assert(m.remove("a") == Some(1))
-    // "c" (the last entry) was swapped into "a"'s slot.
+    // The remaining entries keep the order they were inserted in — that is the
+    // single guarantee this type exists for.
+    assert(m.keys() == ["b", "c"])
+    assert(m.get("b") == Some(2))
+    assert(m.get("c") == Some(3))
+}
+
+test "swap_remove trades the order away, and says so in its name" {
+    mut m = IndexMap[str, int].new()
+    m.insert("a", 1)
+    m.insert("b", 2)
+    m.insert("c", 3)
+    assert(m.swap_remove("a") == Some(1))
+    // "c" (the last entry) was moved into "a"'s slot.
     assert(m.keys() == ["c", "b"])
     assert(m.get("b") == Some(2))
     assert(m.get("c") == Some(3))
