@@ -1,18 +1,26 @@
 // реестр 221.1 №502 — companion to m510_generic_record_vec_element_
 // access_forms.nv (same 3 access forms + len()-only, mirrored 1:1),
-// named-tuple sibling. Named tuple needs the SAME checker predicate
-// (`Vec[T]` explicit generic syntax in `infer_expr_type`'s
-// `ExprKind::Index` arm, реестр №510-class root) PLUS two additional,
-// named-tuple-SPECIFIC codegen fixes Record never needed: a
-// `TypeDeclKind::NamedTuple` arm in `emit_generic_type_instance_body`
-// (struct body + `nova_ctor_<short>` constructor — Record already had
-// this) and `try_infer_named_tuple_mono_args` + its `emit_call` routing
-// (bare `Ent(k, v)` constructor dispatch — Record has no equivalent
-// call-form, it always uses `{ field: val }` record-literal syntax).
+// named-tuple sibling. Pinned down by direct verification (build WITHOUT
+// the checker change vs WITH it — see revert commit for the exact test):
+// named tuple needs ONLY the codegen fix, not any checker change. Record
+// (m510 sibling) needed NEITHER — it already worked via explicit `Vec[T]`
+// syntax before this window (see that file's header for the retracted
+// "shared checker root" hypothesis). Named tuple's actual gap is codegen-
+// only: `TypeDeclKind::NamedTuple` had NO arm in
+// `emit_generic_type_instance_body` (struct body + `nova_ctor_<short>`
+// constructor never emitted — Record already had a `TypeDeclKind::Record`
+// arm there) plus `try_infer_named_tuple_mono_args` + its `emit_call`
+// routing (bare `Ent(k, v)` constructor dispatch — Record has no
+// equivalent call-form, it always uses `{ field: val }` record-literal
+// syntax, which already worked). Once the codegen fix populates
+// `record_schemas`/`generic_type_instance_info` for the mono instance,
+// the pre-existing LEGACY codegen fallback resolves field types on its
+// own — no checker-channel change needed.
 //
 // Explicit `Vec[T]` syntax throughout (not `[]T.new()` sugar) — same
 // reasoning as the Record sibling: the sugar form with a turbofished
-// element type hits an unrelated, separate parser gap.
+// element type hits an unrelated, separate parser gap (№510, see
+// m510_vec_generic_bracket_sugar_turbofish_neg.nv).
 module standalone.m502_generic_named_tuple_vec_element_access_forms
 
 type M502vEnt[K, V](key K, value V)
