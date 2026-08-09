@@ -504,7 +504,17 @@ fn write_all_half(mut w TcpWriteHalf, data []u8) Net -> bool {
     mut off = 0
     while off < data.len() {
         match w.write(data[off..]) {
-            Ok(n)  => { if n <= 0 { return false } off += n }
+            // Wrote nothing: the peer is gone. A pattern, not an `if n <= 0`
+            // inside the arm — the same shape `pump` uses for `Ok(0)`, and it
+            // keeps the two outcomes visible side by side instead of hiding
+            // one behind a guard.
+            Ok(0) => return false
+            // `n < 0` is not a case: `Net.write` returns bytes written or
+            // `Err`. The old `n <= 0` guard silently absorbed a negative as
+            // "peer gone", which would have turned a std.net contract
+            // violation into an invisible early return. Assert it instead —
+            // if it ever fires, the bug is in `std.net`, not here.
+            Ok(n) => { assert(n > 0)  off += n }
             Err(_) => return false
         }
     }
