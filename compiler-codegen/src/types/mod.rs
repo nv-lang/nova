@@ -37688,6 +37688,16 @@ struct ConsumeRegistry {
     /// imprecise (last-decl-wins per name) — mirrors this registry's existing
     /// `fn_return_types`/`fn_view_params` precision level, not a NEW gap.
     fn_param_output_keys: HashMap<String, Vec<String>>,
+    /// Plan 214 (D429) amend (№520, owner's ruling 2026-08-09): method
+    /// sibling of `fn_param_output_keys` above — (receiver type, method
+    /// name) → per-position canonical `coerce_type_key` of each declared
+    /// param's type. The free-fn credit above only ever covered
+    /// `f(sb)`-shaped calls; an instance/static method call
+    /// (`h.accept(sb)`, `Type.of(sb)`) needs the SAME "declared param key ∈
+    /// `coerce_finalize_output_keys[arg's type]`" test but keyed by
+    /// (type, method) instead of by bare fn name — same overload-imprecise
+    /// (last-decl-wins) precision as the free-fn map.
+    method_param_output_keys: HashMap<(String, String), Vec<String>>,
     /// Plan 214 (D429): I type name → (O canonical key → method name) for
     /// FINALIZE-lane `#coerce` pairs only (view-lane pairs never consume
     /// anything — their I is never `MustConsume` in
@@ -37801,6 +37811,8 @@ impl ConsumeRegistry {
         let mut fn_params: HashMap<String, Vec<usize>> = HashMap::new();
         // Plan 214 (D429): see field doc.
         let mut fn_param_output_keys: HashMap<String, Vec<String>> = HashMap::new();
+        // Plan 214 (D429) amend (№520): see field doc.
+        let mut method_param_output_keys: HashMap<(String, String), Vec<String>> = HashMap::new();
         let mut method_params: HashMap<(String, String), Vec<usize>> = HashMap::new();
         let mut fn_return_types: HashMap<String, String> = HashMap::new();
         // D86-followup: unwrapped (Ok/Some-inner) companion maps — see field docs.
@@ -38100,6 +38112,15 @@ impl ConsumeRegistry {
                             recv_returning_arity.insert(
                                 (r.type_name.clone(), fd.name.clone(), fd.params.len()));
                         }
+                        // Plan 214 (D429) amend (№520): per-position canonical
+                        // param-type key, method sibling of
+                        // `fn_param_output_keys` (see field doc) — unconditional
+                        // (every method, not just consume-touching ones), same
+                        // rationale as the free-fn twin.
+                        method_param_output_keys.insert(
+                            (r.type_name.clone(), fd.name.clone()),
+                            fd.params.iter().map(|p| coerce_type_key(&p.ty)).collect(),
+                        );
                         if !consume_idx.is_empty() {
                             method_params.insert(
                                 (r.type_name.clone(), fd.name.clone()), consume_idx);
@@ -38239,6 +38260,7 @@ impl ConsumeRegistry {
         };
 
         ConsumeRegistry {
+            method_param_output_keys,
             methods, fn_params, method_params, fn_return_types, recv_returning,
             fn_view_params, method_return_types, mut_methods, ro_methods,
             mut_methods_arity, ro_methods_arity, recv_returning_arity,
@@ -38674,6 +38696,43 @@ impl<'a> ConsumeCtx<'a> {
         if self.states.contains_key(&canon) {
             self.states.insert(canon, VarState::Consumed(span));
         }
+    }
+
+    /// Plan 214 (D429) amend (№520, owner's ruling 2026-08-09): **the**
+    /// implicit-`#coerce`-is-consumption credit, factored out of the
+    /// existing free-fn call-arg site so every OTHER expected-type
+    /// position (annotated `let` RHS, record-literal field, method-call
+    /// arg) can call the SAME check instead of re-deriving it. `expr` —
+    /// the leaf AST node (Ident-only, mirroring `MapLitAnnotator::
+    /// try_coerce_leaf`'s own leaf-only scope — that pass is what actually
+    /// splices `sb` → `sb.into_str()` later; this only needs to recognize
+    /// the SAME shape early enough to credit it before the pre-rewrite
+    /// diagnostics run); `expected_key` — `coerce_type_key` of the
+    /// position's declared/expected type. Returns `true` (and credits —
+    /// disarms the drop flag / obligation, records `coerce_consumed_via`
+    /// for the R7 use-after-consume note) only when `expr` is a bare Ident
+    /// whose OWN var type registers a `#coerce` FINALIZE pair (consume
+    /// receiver) matching `expected_key`; `false` (no-op) otherwise —
+    /// sound: false-negative, never false-positive. An uncredited position
+    /// simply falls back to the pre-existing D133/D180 diagnostics, same
+    /// as before this amendment.
+    fn credit_coerce_finalize_by_key(&mut self, expr: &Expr, expected_key: &str) -> bool {
+        let ExprKind::Ident(name) = &expr.kind else { return false };
+        let name = name.clone();
+        let Some(var_ty) = self.var_types.get(&name).cloned() else { return false };
+        let Some(finalize_keys) = self.reg.coerce_finalize_output_keys.get(&var_ty) else { return false };
+        let Some(method_name) = finalize_keys.get(expected_key).cloned() else { return false };
+        let span = expr.span;
+        self.coerce_consumed_via.insert(span, method_name);
+        self.mark_consumed(&name, span);
+        true
+    }
+
+    /// `TypeRef`-typed sibling of `credit_coerce_finalize_by_key` — for call
+    /// sites that already have the position's full expected `TypeRef`
+    /// (annotated `let`) rather than just its bare `coerce_type_key`.
+    fn credit_coerce_finalize(&mut self, expr: &Expr, expected: &TypeRef) -> bool {
+        self.credit_coerce_finalize_by_key(expr, &coerce_type_key(expected))
     }
 
     /// Plan 201: санкционированный consume guarded-биндинга — tail-значение
@@ -42020,12 +42079,47 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
                     }
                 }
             }
+            // Plan 214 (D429) amend (№520, owner's ruling 2026-08-09): a
+            // single-name binding with an EXPLICIT type annotation whose RHS
+            // is a bare `#coerce`-input Ident (`ro s str = sb`, `sb`'s own
+            // type StringBuilder registers a `#coerce` finalize pair to
+            // `str`) is NEITHER an alias (below — that check doesn't compare
+            // types at all, so it would otherwise misfire E_VIEW_BINDING_
+            // FORBIDDEN here) NOR a consume-obligated binding of `sb`'s OWN
+            // type (`infer_let_type` already prefers the annotation, "str",
+            // so Rule 1 below was never actually the failure mode): the
+            // annotation forces `MapLitAnnotator::try_coerce_leaf` to splice
+            // in the finalize call later (`sb` → `sb.into_str()`), so THIS
+            // is the implicit-coerce consuming use — credited now, on the
+            // pre-rewrite tree, same as the pre-existing free-fn call-arg /
+            // return-position credits.
+            let coerce_credited = names.len() == 1
+                && decl.ty.as_ref()
+                    .map_or(false, |ty| ctx.credit_coerce_finalize(&decl.value, ty));
+            // Plan 214 (D429) amend (№520): collection-element sibling of the
+            // annotated-`let` credit right above — `ro arr []str = [sb]`
+            // (element position, not the whole binding). Same annotation-
+            // driven expected type, distributed per-element instead of once;
+            // same pre-rewrite credit `MapLitAnnotator`'s per-element walk
+            // (`try_coerce_leaf` on EACH array-literal element, doc at that
+            // walk's own call site) will later match with its OWN splice.
+            if let Some(elem_ty) = decl.ty.as_ref().and_then(array_elem_type) {
+                if let ExprKind::ArrayLit(elems) = &decl.value.kind {
+                    for el in elems {
+                        if let ArrayElem::Item(ex) | ArrayElem::Spread(ex) = el {
+                            ctx.credit_coerce_finalize(ex, elem_ty);
+                        }
+                    }
+                }
+            }
             // alias-форма `let <name> = <rhs>` — `name` ссылается на тот
             // же объект:
             //   (a) Plan 73 followup: `let a = b` — RHS голый идентификатор.
             //   (b) Plan 77 (D132): `let x = recv.fluent()` — fluent-метод
             //       `-> @` гарантированно возвращает сам receiver.
-            let alias_src: Option<String> = if names.len() == 1 {
+            let alias_src: Option<String> = if coerce_credited {
+                None
+            } else if names.len() == 1 {
                 match &decl.value.kind {
                     ExprKind::Ident(src) => {
                         let canon = ctx.canonical(src);
@@ -44128,9 +44222,32 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                             // E_UNSAFE_ARG_REQUIRES_WRAP — передача unsafe-T-
                             // binding в non-unsafe param метода.
                             if let Some(non_unsafe_idxs) = ctx.reg
-                                .method_non_unsafe_params.get(&(ty, method.clone())).cloned()
+                                .method_non_unsafe_params.get(&(ty.clone(), method.clone())).cloned()
                             {
                                 check_unsafe_coerce_args(ctx, args, &non_unsafe_idxs, errors);
+                            }
+                            // Plan 214 (D429) amend (№520): method-call sibling
+                            // of the free-fn call-arg credit further below
+                            // (`fn_param_output_keys`/`coerce_finalize_output_keys`
+                            // doc) — an instance/static method call
+                            // (`h.accept(sb)`) needs the SAME "declared param
+                            // key ∈ arg's finalize-output-keys" credit, keyed
+                            // by (type, method) via `method_param_output_keys`
+                            // instead of by bare fn name.
+                            let already_consumed_idxs = ctx.reg
+                                .method_params.get(&(ty.clone(), method.clone())).cloned()
+                                .unwrap_or_default();
+                            if let Some(param_keys) = ctx.reg
+                                .method_param_output_keys.get(&(ty, method.clone())).cloned()
+                            {
+                                for (i, a) in args.iter().enumerate() {
+                                    if already_consumed_idxs.contains(&i) {
+                                        continue; // already credited via consume_args above
+                                    }
+                                    if let Some(pk) = param_keys.get(i) {
+                                        ctx.credit_coerce_finalize_by_key(a.expr(), pk);
+                                    }
+                                }
                             }
                         }
                     } else if let ExprKind::Member {
@@ -44846,6 +44963,23 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
                             // этого биндинга (как передача в consume-параметр
                             // вызова, см. `consume_args`).
                             ctx.mark_consumed(vn, v.span);
+                        } else if let Some(field_ty) = type_name.as_ref()
+                            .and_then(|tn| tn.last())
+                            .and_then(|tn| ctx.reg.record_field_types.get(tn))
+                            .and_then(|fs| fs.get(f.name.as_str()))
+                            .cloned()
+                        {
+                            // Plan 214 (D429) amend (№520): field VALUE isn't
+                            // itself a consume-field of ITS OWN type (the
+                            // branch above) — but the field's DECLARED type
+                            // may still differ from the value's type via a
+                            // registered `#coerce` finalize pair (`Rec { s:
+                            // sb }` where `s str` and `sb StringBuilder`).
+                            // Same implicit-coerce-is-consumption credit as
+                            // the annotated-`let`/call-arg sites. `.cloned()`
+                            // ends the `ctx.reg` borrow before the `&mut ctx`
+                            // credit call below.
+                            ctx.credit_coerce_finalize_by_key(v, &field_ty);
                         }
                     }
                 } else if !f.is_spread {
