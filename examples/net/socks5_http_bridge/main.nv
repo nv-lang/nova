@@ -351,7 +351,12 @@ fn rewrite_headers(request_line str, header_lines []str) -> str {
     out
 }
 
+// Effects are inferred here, not declared: `Net` reaches this body through
+// `client.write`, and D28 ("вывод эффектов: private выводится, public
+// обязательно явно") infers it for a private function. An exported one would
+// have to spell `Net` out.
 fn respond(mut client TcpStream, status_line str) -> () {
+    // nova:allow W_RESULT_DISCARDED -- every caller is already on a terminal path (400/431/502, or the 200 immediately before the pipe): if writing the status line fails, the peer is gone and there is nothing left to report it to. Propagating would only replace one dead connection with a second error nobody reads.
     ro _ = client.write("${status_line}\r\n\r\n")
 }
 
