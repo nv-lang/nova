@@ -514,14 +514,13 @@ fn write_all_half(mut w TcpWriteHalf, data []u8) Net -> bool {
 fn pump(consume r TcpReadHalf, consume w TcpWriteHalf, tok CancelToken) Net -> () {
     mut buf []u8 = []u8.new()
     buf.resize(8192, 0 as u8)
-    mut keep_going = true
-    while keep_going {
+    loop {
         match r.read(buf) {
-            Ok(0) => { keep_going = false }            // clean EOF on this direction
+            Ok(0) => break                             // clean EOF on this direction
             Ok(n) => {
-                if !write_all_half(w, buf[..n]) { keep_going = false }
+                if !write_all_half(w, buf[..n]) { break }
             }
-            Err(_) => { keep_going = false }            // I/O error, or woken by the sibling's cancel
+            Err(_) => break                            // I/O error, or woken by the sibling's cancel
         }
     }
     // No explicit `r.close()`/`w.close()`: both halves declare `consume
