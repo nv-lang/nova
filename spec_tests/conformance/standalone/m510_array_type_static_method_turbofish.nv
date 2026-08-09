@@ -1,0 +1,66 @@
+// [221.1 #510] `[]T[Args].method(...)` — the array-type-static-method
+// sugar (D38) where `T` itself carries turbofish type-args
+// (`[]Ent[str, int].new()`). Before the fix `parse_array_lit`
+// (compiler-codegen/src/parser/mod.rs, D38 array-type-static-method
+// branch) only looked ONE token ahead past `[]` (`Ident` then `Dot`) —
+// with turbofish args the next token is `[`, not `.`, so the branch
+// never fired. The already-consumed `]` then fell through to the plain
+// "empty array literal" return, and `Ent[str, int].new()` was parsed as
+// an UNRELATED sibling expression-statement — silently wrong code (the
+// first `.new()` of matching arity in the static-dispatch table got
+// called instead), not a parse error.
+//
+// Fix: this shape now desugars to `Vec[T[Args]].method(...)` — the
+// already-working explicit-`Vec[...]` static-dispatch path (D27:
+// `[]T ≡ Vec[T]`). This fixture pins that both spellings produce
+// identical behavior, and that the ORIGINAL symptom (push/index after
+// the sugar form) now works instead of silently corrupting the vector's
+// element type.
+
+module standalone.m510_array_type_static_method_turbofish
+
+type M510Ent[K, V] { key K, value V }
+
+test "[]T[Args].new() behaves exactly like Vec[T[Args]].new()" {
+    mut sugar = []M510Ent[str, int].new()
+    mut explicit = Vec[M510Ent[str, int]].new()
+    assert(sugar.len() == 0)
+    assert(explicit.len() == 0)
+    assert(sugar.is_empty())
+    assert(explicit.is_empty())
+
+    sugar.push(M510Ent { key: "a", value: 1 })
+    explicit.push(M510Ent { key: "a", value: 1 })
+    assert(sugar.len() == 1)
+    assert(explicit.len() == 1)
+    assert(sugar[0].key == explicit[0].key)
+    assert(sugar[0].value == explicit[0].value)
+    assert(sugar[0].key == "a")
+    assert(sugar[0].value == 1)
+}
+
+// `.filled(...)` intentionally NOT covered here: it hits a PRE-EXISTING,
+// unrelated codegen gap in the `Vec[T].method()` generic-static dispatch
+// (emits a bare `Vec->filled(...)` — undeclared-identifier `Vec` in the
+// generated C — for BOTH the `[]T[Args].filled(...)` sugar AND the
+// explicit `Vec[T[Args]].filled(...)` spelling equally). Confirmed
+// pre-existing by reproducing it through the explicit form alone; out of
+// #510's scope (parser, not `compiler-codegen/src/codegen/emit_c.rs`,
+// which this window must not touch) and not part of the K1 class (both
+// spellings fail the SAME loud C-compile error — no silent misparse).
+
+// Original №510 symptom, reproduced close to verbatim: before the fix
+// `mut xs = []M510Ent2[str, int].new()` typed `xs` as `Vec[int]` (from
+// the misread empty `[]`), and `xs.push(a)` pushed a record pointer into
+// what the compiler believed was a `Vec[int]` — `nova check` did not
+// catch it, and reading `xs[0].key` back read garbage.
+type M510Ent2[K, V] { key K, value V }
+
+test "[]Ent[str, int].new(); xs.push(a); xs[0].key — original symptom" {
+    mut xs = []M510Ent2[str, int].new()
+    ro a = M510Ent2 { key: "k", value: 42 }
+    xs.push(a)
+    assert(xs.len() == 1)
+    assert(xs[0].key == "k")
+    assert(xs[0].value == 42)
+}
