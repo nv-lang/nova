@@ -3225,6 +3225,21 @@ static void _nova_early_dl_timer_cb(uv_timer_t* h) {
     uv_close((uv_handle_t*)&dl->timer, _nova_early_dl_close_cb);
 }
 
+/* Plan 259 diag helper: portable OS-thread-id for [p259-dl] tracing —
+ * `pthread_self()` doesn't exist on the MSVC/clang-cl Windows toolchain
+ * (fibers.h is a single cross-platform TU). Diagnostic-only, never on a
+ * hot path (guarded by getenv checks at each call site). */
+#if defined(_WIN32)
+#include <windows.h>
+#endif
+static inline unsigned long _nova_p259_diag_tid(void) {
+#if defined(_WIN32)
+    return (unsigned long)GetCurrentThreadId();
+#else
+    return (unsigned long)(uintptr_t)pthread_self();
+#endif
+}
+
 /* Arms the early-deadline timer for `q` (no-op, returns NULL, when `q` has
  * no deadline). Call once, at scope entry, AFTER `q->deadline_ns` has its
  * final (inherited + locally combined) value. Returns the opaque handle to
@@ -3250,7 +3265,7 @@ static inline void* nova_scope_arm_early_deadline(NovaFiberQueue* q) {
         fprintf(stderr, "[p259-dl] ARM dl=%p scope=%p slot=%d loop=%p current_loop=%p remaining_ms=%llu t=%lldns tid=%lu\n",
                 (void*)dl, (void*)q->owner_scope, q->owner_slot, (void*)dl->timer.loop,
                 (void*)nova_current_loop(), (unsigned long long)remaining_ms,
-                (long long)time_monotonic_ns(), (unsigned long)(uintptr_t)pthread_self());
+                (long long)time_monotonic_ns(), _nova_p259_diag_tid());
         fflush(stderr);
     }
     return dl;
@@ -3269,7 +3284,7 @@ static inline void nova_scope_disarm_early_deadline(void* handle) {
     if (getenv("NOVA_DIAG_P259_DL")) {
         fprintf(stderr, "[p259-dl] DISARM CALLED dl=%p loop=%p current_loop=%p t=%lldns tid=%lu\n",
                 (void*)dl, (void*)dl->timer.loop, (void*)nova_current_loop(),
-                (long long)time_monotonic_ns(), (unsigned long)(uintptr_t)pthread_self());
+                (long long)time_monotonic_ns(), _nova_p259_diag_tid());
         fflush(stderr);
     }
     int32_t expect = 0;
