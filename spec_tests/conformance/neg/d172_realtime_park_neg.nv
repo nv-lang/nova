@@ -3,7 +3,12 @@
 // никакого scheduler-взаимодействия внутри realtime-тела).
 module neg.d172_realtime_park_neg
 
-#realtime fn rt_lock(mut m Mutex) {
+// [реестр 221.1 №493] `-> consume MutexGuard` added: `m.lock()`'s real
+// return type (Mutex.lock() -> consume MutexGuard, std/runtime/sync.nv)
+// -- carrier scan hit for E_MISSING_RETURN_TYPE (incidental to this
+// fixture's actual point, E_REALTIME_SYNC_PARK; kept annotated so the
+// two diagnostics don't co-occur).
+#realtime fn rt_lock(mut m Mutex) -> consume MutexGuard {
     m.lock()
 }
 

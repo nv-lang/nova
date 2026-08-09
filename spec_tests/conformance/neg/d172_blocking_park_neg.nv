@@ -3,7 +3,12 @@
 // threadpool-worker недопустим — worker не участвует в M:N-планировании).
 module neg.d172_blocking_park_neg
 
-#blocking fn blk_lock(mut m Mutex) {
+// [реестр 221.1 №493] `-> consume MutexGuard` added: `m.lock()`'s real
+// return type (Mutex.lock() -> consume MutexGuard, std/runtime/sync.nv)
+// -- carrier scan hit for E_MISSING_RETURN_TYPE (incidental to this
+// fixture's actual point, E_BLOCKING_SYNC_PARK; kept annotated so the
+// two diagnostics don't co-occur).
+#blocking fn blk_lock(mut m Mutex) -> consume MutexGuard {
     m.lock()
 }
 
