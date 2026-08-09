@@ -196,6 +196,66 @@ test "remove of the last entry needs no swap" {
     assert(m.keys().collect() == ["a"])
 }
 
+// ─── D450 (реестр 221.1 №503): map-/record-literal coercion into IndexMap ───
+//
+// `IndexMap` is the D450 live carrier: `#from_fields`/`#from_pairs` now
+// require exactly ONE constructor, `IndexMap[K, V].new(cap int = ...)`
+// (`core.nv`), and desugar calls it directly — no `insert_new` on this
+// type, plain `@insert` is used. The point of THESE tests specifically is
+// the order guarantee: a literal's coercion must preserve WRITTEN order,
+// not just produce a map with the right pairs.
+
+test "map-literal coerces into IndexMap, insertion order == literal order" {
+    ro m IndexMap[str, int] = [ "b": 2, "a": 1 ]
+    assert(m.len() == 2)
+    assert(m.keys().collect() == ["b", "a"])
+    assert(m.get("b") == Some(2))
+    assert(m.get("a") == Some(1))
+}
+
+test "record-literal coerces into IndexMap (not HashMap), insertion order == field order" {
+    // Regression guard for the D450 side-finding: `build_record_map_block`
+    // used to be hardcoded to emit `HashMap` regardless of the actual
+    // `#from_fields` target type — `RecordLit` carried no target-type name
+    // at all until `inferred_target_type` was added (mirroring
+    // `MapLit.inferred_target_type`). If that regresses, codegen builds a
+    // `Nova_HashMap*` and assigns it into a `Nova_IndexMap*`-typed slot —
+    // different C struct layouts (`buckets/count/tombstones` vs
+    // `entries/index`) — so this either fails to COMPILE, or (if it somehow
+    // slipped past) `.swap_remove()`/`.keys()` below observe the wrong
+    // shape entirely.
+    mut r IndexMap[str, int] = { b: 2, a: 1 }
+    assert(r.len() == 2)
+    assert(r.keys().collect() == ["b", "a"])
+    assert(r.get("b") == Some(2))
+    assert(r.get("a") == Some(1))
+    // IndexMap-only method (not on HashMap) — proves the object built here
+    // really is an IndexMap, not a HashMap wearing an IndexMap's static type.
+    assert(r.swap_remove("b") == Some(2))
+    assert(r.keys().collect() == ["a"])
+}
+
+test "empty map-literal coerces into an empty IndexMap" {
+    ro m IndexMap[str, int] = []
+    assert(m.is_empty())
+    assert(m.len() == 0)
+}
+
+test "map-literal with a duplicate key: last value wins, first occurrence keeps its position" {
+    // Documents the ACTUAL behavior (D108 §duplicate keys): the literal
+    // desugars to a sequence of `@insert` calls (IndexMap has no
+    // `insert_new` — plain `insert` is used for every pair, D450), and
+    // `IndexMap.insert` on an EXISTING key overwrites the value WITHOUT
+    // moving its position — so the FIRST occurrence's slot wins the
+    // position, the LAST occurrence's value wins the value. Flagged by the
+    // `duplicate-map-key` lint (compile-time warning, not an error).
+    // nova:allow duplicate-map-key -- intentional: this test exists to pin the actual last-wins-value/first-keeps-position behavior
+    ro m IndexMap[str, int] = [ "a": 1, "b": 2, "a": 3 ]
+    assert(m.len() == 2)
+    assert(m.get("a") == Some(3))
+    assert(m.keys().collect() == ["a", "b"])
+}
+
 // ─── int keys — a second concrete K instantiation, per Nova's own mono model ───
 
 test "works with int keys (second K instantiation)" {
