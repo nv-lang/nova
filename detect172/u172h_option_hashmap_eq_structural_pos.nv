@@ -10,7 +10,7 @@
 // are u172h-prefixed. HashMap needs an explicit import in a bare module.
 module detect172
 
-import std.collections.hashmap.{HashMap}
+import std.collections.hash_map.{HashMap}
 
 type U172hBox
     | U172hObj(HashMap[str, int])

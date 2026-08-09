@@ -67,6 +67,18 @@ echo 'incomplete_entries=0' > "$BASE"
 out=$(NOVA_REGSHAPE_BASELINE="$BASE" bash "$G" "$TMP" 2>&1); rc=$?
 if [ "$rc" -eq 0 ]; then ok "К3 считается приоритетом"; else bad "ложный отказ на записи с К3 (код $rc): $out"; fi
 
-if [ "$FAILED" -eq 0 ]; then echo "селфтест check-registry-entry-shape: 8/8 ok"; exit 0; fi
+# 9. Запись без номера (TBD) — красно. Она невидима проверке формы, значит
+#    «оформлено» считалось бы по неполному множеству.
+mk "$GOOD" '| TBD | 🔴 К1 | **Заголовок.** **КЛАСС: что-то.** Фикс носителя приёмкой НЕ считается. |'
+echo 'incomplete_entries=0' > "$BASE"
+out=$(NOVA_REGSHAPE_BASELINE="$BASE" bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && echo "$out" | grep -q 'без номера'; then ok "ловит запись с TBD вместо номера"; else bad "не поймал TBD (код $rc): $out"; fi
+
+# 10. И обратно: полностью оформленные записи БЕЗ TBD — зелено (не ложняк).
+mk "$GOOD"
+out=$(NOVA_REGSHAPE_BASELINE="$BASE" bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -eq 0 ]; then ok "без TBD ложняка нет"; else bad "ложный отказ после проверки TBD (код $rc): $out"; fi
+
+if [ "$FAILED" -eq 0 ]; then echo "селфтест check-registry-entry-shape: 10/10 ok"; exit 0; fi
 echo "селфтест check-registry-entry-shape: ЕСТЬ ПРОВАЛЫ" >&2
 exit 1
