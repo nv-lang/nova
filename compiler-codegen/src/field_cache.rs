@@ -12212,6 +12212,7 @@ fn P @sum() -> int { @c + @b + @a + @c + @b + @a }
                     },
                 ],
                 inferred_map_v: None,
+                inferred_target_type: None,
             },
             s,
         );
@@ -12239,6 +12240,7 @@ fn P @sum() -> int { @c + @b + @a + @c + @b + @a }
                     },
                 ],
                 inferred_map_v: None,
+                inferred_target_type: None,
             },
             s,
         );
@@ -12265,6 +12267,7 @@ fn P @sum() -> int { @c + @b + @a + @c + @b + @a }
                     },
                 ],
                 inferred_map_v: None,
+                inferred_target_type: None,
             },
             s,
         );
@@ -12291,6 +12294,7 @@ fn P @sum() -> int { @c + @b + @a + @c + @b + @a }
                     },
                 ],
                 inferred_map_v: None,
+                inferred_target_type: None,
             },
             s,
         );
@@ -13312,6 +13316,7 @@ type C { mut xs ListInt }
                     },
                 ],
                 inferred_map_v: Some(TypeRef::Unit(s)),
+                inferred_target_type: None,
             },
             s,
         );

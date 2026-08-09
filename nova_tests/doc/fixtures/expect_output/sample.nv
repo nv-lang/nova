@@ -18,4 +18,4 @@ export fn add(a int, b int) -> int => a + b
 /// println(greet("Nova"))
 /// // Output: Hello, Nova!
 /// ```
-export fn greet(name str) -> str => "Hello, " + name + "!"
+export fn greet(name str) -> str => "Hello, ${name}!"

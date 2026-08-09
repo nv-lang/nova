@@ -65556,6 +65556,7 @@ mod nested_record_lit_tests {
                 type_name: Some(vec![name.to_string()]),
                 fields,
                 inferred_map_v: None,
+                inferred_target_type: None,
             },
             span(),
         )
@@ -65567,6 +65568,7 @@ mod nested_record_lit_tests {
                 type_name: None,
                 fields,
                 inferred_map_v: None,
+                inferred_target_type: None,
             },
             span(),
         )
