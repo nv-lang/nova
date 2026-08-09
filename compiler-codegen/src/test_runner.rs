@@ -4143,11 +4143,19 @@ fn codegen_to_c(
     // outside a `nova.toml` tree.
     let sig_table_opt: Option<crate::imports::ModuleSigTable> = {
         let _t = crate::perf_timer::PerfTimer::new("imports-resolve");
-        // Plan 42 правило F: test mode = include `*_test.nv` peers.
-        crate::imports::resolve_imports_inline_ex(path, &mut module, repo, stdlib_dir, true)
-            .map_err(|e| format!("import resolution: {}", e))?;
+        // План 252 Ф.0: под-таймеры двух половин стадии. ВНИМАНИЕ: они
+        // ВЛОЖЕНЫ в `imports-resolve`, поэтому в агрегированной таблице их
+        // время учтено дважды — доли читать относительно `imports-resolve`,
+        // а не относительно grand total.
+        {
+            let _ti = crate::perf_timer::PerfTimer::new("imports-inline");
+            // Plan 42 правило F: test mode = include `*_test.nv` peers.
+            crate::imports::resolve_imports_inline_ex(path, &mut module, repo, stdlib_dir, true)
+                .map_err(|e| format!("import resolution: {}", e))?;
+        }
         // Collect signatures AFTER imports are resolved so all imported
         // items are present in module.imports for the sig-walk.
+        let _ts = crate::perf_timer::PerfTimer::new("imports-sigs");
         Some(
             crate::imports::collect_all_signatures(path, &module, repo, stdlib_dir)
                 .unwrap_or_else(|_| crate::imports::ModuleSigTable::new()),

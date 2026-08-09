@@ -194,6 +194,7 @@ fn compute_prelude_imports(
     stdlib_dir: &Path,
     entry_path: &Path,
 ) -> Result<Vec<Import>> {
+    let _t = crate::perf_timer::PerfTimer::new("imports-prelude-compute");
     let is_prelude_self = crate::manifest::is_prelude_self_module(&module.name);
     let has_no_prelude = module
         .attrs
@@ -226,7 +227,7 @@ fn compute_prelude_imports(
         let prelude_subdir = stdlib_dir.join("prelude");
         for name in &names {
             let sub_path = prelude_subdir.join(format!("{}.nv", name));
-            if !sub_path.exists() || !sub_path.is_file() {
+            if !crate::source_index::is_file(&sub_path) {
                 return Err(anyhow!(
                     "`partial_prelude({})`: unknown prelude sub-module `{}`\n  \
                      in module `{}`\n  \
@@ -255,7 +256,7 @@ fn compute_prelude_imports(
                     let pin_path = stdlib_dir
                         .join("prelude")
                         .join(format!("{}.nv", sanitized));
-                    if pin_path.exists() && pin_path.is_file() {
+                    if crate::source_index::is_file(&pin_path) {
                         prelude_imports.push(prelude_import(Some(&sanitized)));
                         edition_pin_used = true;
                     }
@@ -264,7 +265,7 @@ fn compute_prelude_imports(
         }
         if !edition_pin_used {
             let prelude_path = stdlib_dir.join("prelude.nv");
-            if prelude_path.exists() && prelude_path.is_file() {
+            if crate::source_index::is_file(&prelude_path) {
                 prelude_imports.push(prelude_import(None));
             }
         }
@@ -293,6 +294,7 @@ pub fn collect_all_signatures(
     repo: &Path,
     stdlib_dir: &Path,
 ) -> Result<ModuleSigTable> {
+    crate::imports_stats::note_sig_call();
     let entry_dir = entry_path.parent().unwrap_or(repo).to_path_buf();
     let mut table = ModuleSigTable::new();
     let mut visited: HashSet<Vec<String>> = HashSet::new();
@@ -429,13 +431,20 @@ fn collect_sigs_one(
     in_progress.insert(module_key.clone());
 
     for peer_path in &resolved_paths {
-        let peer_src = match std::fs::read_to_string(peer_path) {
-            Ok(s) => s,
-            Err(_) => continue,
+        let peer_src = {
+            let _t = crate::perf_timer::PerfTimer::new("imports-peer-io");
+            match crate::source_index::file_text(peer_path) {
+                Some(s) => s,
+                None => continue,
+            }
         };
-        let peer_module = match crate::parser::parse(&peer_src) {
-            Ok(m) => m,
-            Err(_) => continue,
+        crate::imports_stats::note_parse(peer_path, peer_src.len(), true);
+        let peer_module = {
+            let _tp = crate::perf_timer::PerfTimer::new("imports-peer-parse");
+            match crate::parser::parse(&peer_src) {
+                Ok(m) => m,
+                Err(_) => continue,
+            }
         };
         if !cfg_active(&peer_module) {
             continue;
@@ -497,8 +506,8 @@ fn collect_sigs_one(
 fn preload_module_nv_prelude_attrs(entry_path: &Path) -> Vec<crate::ast::ModuleAttr> {
     let dir = match entry_path.parent() { Some(d) => d, None => return vec![] };
     let module_nv = dir.join("_module.nv");
-    if !module_nv.exists() { return vec![]; }
-    let src = match std::fs::read_to_string(&module_nv) { Ok(s) => s, Err(_) => return vec![] };
+    if !crate::source_index::exists(&module_nv) { return vec![]; }
+    let src = match crate::source_index::file_text(&module_nv) { Some(s) => s, None => return vec![] };
     // Fast path: skip full parse если нет prelude-управляющих атрибутов в тексте.
     if !src.contains("#no_prelude") && !src.contains("#prelude") { return vec![]; }
     // Full parse через публичный API.
@@ -737,6 +746,7 @@ pub fn resolve_imports_inline_ex(
     stdlib_dir: &Path,
     include_test_peers: bool,
 ) -> Result<()> {
+    crate::imports_stats::note_resolve_call();
     let entry_dir = entry_path.parent().unwrap_or(repo).to_path_buf();
     // Plan 42.14 Ф.3 ([M11]): cycle detection keyed by declared module
     // name (Vec<String>), не canonical PathBuf — symlink-safe.
@@ -755,7 +765,8 @@ pub fn resolve_imports_inline_ex(
     // Note: entry parsed parent caller'ом через `parser::parse(src)` который
     // использует MAIN_FILE_ID, так что entry's spans уже file_id=0. Сейчас
     // лишь регистрируем PeerFile для type-checker'а.
-    let entry_canon_for_peer = entry_path.canonicalize().unwrap_or_else(|_| entry_path.to_path_buf());
+    let entry_canon_for_peer = crate::source_index::canonicalize(entry_path)
+        .unwrap_or_else(|| entry_path.to_path_buf());
     let entry_peer_file = PeerFile {
         path: entry_canon_for_peer,
         file_id: MAIN_FILE_ID,
@@ -853,7 +864,7 @@ pub fn resolve_imports_inline_ex(
     }
     let mut siblings: Vec<SiblingPeer> = Vec::new();
     {
-        let entry_canon = entry_path.canonicalize().ok();
+        let entry_canon = crate::source_index::canonicalize(entry_path);
         let target = current_target_os();
         // [M-d376-slow-suffix-folder-module-peer-merge]: `_slow` siblings
         // merge iff EITHER (a) the entry ITSELF is a `_slow` file (the shape
@@ -874,17 +885,18 @@ pub fn resolve_imports_inline_ex(
             .map(crate::test_runner::is_slow_file_stem)
             .unwrap_or(false)
             || crate::test_runner::test_run_include_slow();
-        if let Ok(entries) = std::fs::read_dir(&entry_dir) {
-            let mut sib_paths: Vec<PathBuf> = entries
-                .filter_map(|e| e.ok())
-                .map(|e| e.path())
-                .filter(|p| {
-                    p.is_file()
-                        && p.extension().and_then(|s| s.to_str()) == Some("nv")
-                })
+        {
+            // План 252: имена + объявления соседей — из кэша по каталогу.
+            // Отбор по объявлению стоит ПЕРВЫМ: в каталогах вроде
+            // `spec_tests/conformance/neg` (568 файлов) он отсекает почти всё
+            // до дорогой `canonicalize` в следующем фильтре.
+            let mut sib_paths: Vec<PathBuf> = dir_module_decls(&entry_dir)
+                .iter()
+                .filter(|(_, decl)| decl.as_deref() == Some(module.name.as_slice()))
+                .map(|(p, _)| p.clone())
                 .filter(|p| {
                     // Exclude the entry file itself.
-                    match (p.canonicalize().ok(), &entry_canon) {
+                    match (crate::source_index::canonicalize(p), &entry_canon) {
                         (Some(pc), Some(ec)) => &pc != ec,
                         _ => p.as_path() != entry_path,
                     }
@@ -899,16 +911,12 @@ pub fn resolve_imports_inline_ex(
                     }
                     true
                 })
-                .filter(|p| {
-                    // Sibling = declares the SAME module path as the entry.
-                    read_module_decl(p).as_deref() == Some(module.name.as_slice())
-                })
                 .collect();
             // Alphabetical → deterministic file_id assignment.
             sib_paths.sort();
             for sp in sib_paths {
-                let src = std::fs::read_to_string(&sp).map_err(|e| {
-                    anyhow!("failed to read entry-folder peer {}: {}", sp.display(), e)
+                let src = crate::source_index::file_text(&sp).ok_or_else(|| {
+                    anyhow!("failed to read entry-folder peer {}", sp.display())
                 })?;
                 // Skip peer that requires a specific SMT backend not currently active.
                 // (Same logic as test_runner's REQUIRES_SMT_BACKEND check, but applied
@@ -926,6 +934,7 @@ pub fn resolve_imports_inline_ex(
                 }
                 let fid = next_file_id;
                 next_file_id += 1;
+                crate::imports_stats::note_parse(&sp, src.len(), false);
                 let sib_mod = parser::parse_with_file_id(&src, fid).map_err(|d| {
                     let (line, col) = byte_to_line_col(&src, d.span.start);
                     anyhow!(
@@ -941,7 +950,7 @@ pub fn resolve_imports_inline_ex(
                 if !cfg_active(&sib_mod) {
                     continue;
                 }
-                let canon = sp.canonicalize().unwrap_or(sp);
+                let canon = crate::source_index::canonicalize(&sp).unwrap_or(sp);
                 siblings.push(SiblingPeer { path: canon, file_id: fid, module: sib_mod });
             }
         }
@@ -1431,8 +1440,8 @@ fn resolve_one(
                     )),
                 }
             }
-            let dir_canon = dir.canonicalize().unwrap_or_else(|_| dir.clone());
-            let pkg_canon = pkg_root.canonicalize().unwrap_or_else(|_| pkg_root.clone());
+            let dir_canon = crate::source_index::canonicalize(&dir).unwrap_or_else(|| dir.clone());
+            let pkg_canon = crate::source_index::canonicalize(&pkg_root).unwrap_or_else(|| pkg_root.clone());
             if !dir_canon.starts_with(&pkg_canon) {
                 return Err(anyhow!(
                     "relative import `{}{}` выходит за границу пакета\n  \
@@ -1717,8 +1726,8 @@ fn resolve_one(
             package_root_of(importer_path),
             package_root_of(&resolved_paths[0]),
         ) {
-            let ip_c = ip.canonicalize().unwrap_or_else(|_| ip.clone());
-            let rp_c = rp.canonicalize().unwrap_or_else(|_| rp.clone());
+            let ip_c = crate::source_index::canonicalize(&ip).unwrap_or_else(|| ip.clone());
+            let rp_c = crate::source_index::canonicalize(&rp).unwrap_or_else(|| rp.clone());
             if ip_c != rp_c {
                 let importing = import_chain.last()
                     .map(|m| m.join("."))
@@ -1774,10 +1783,10 @@ fn resolve_one(
     // (`export import`) и alias обойти boundary не могут: проверяется
     // фактическое расположение файлов, а не путь, по которому дошли.
     if let Some(owner_dir) = find_internal_owner_dir(&resolved_paths[0]) {
-        let importer_canon = importer_path.canonicalize()
-            .unwrap_or_else(|_| importer_path.to_path_buf());
-        let owner_canon = owner_dir.canonicalize()
-            .unwrap_or_else(|_| owner_dir.clone());
+        let importer_canon = crate::source_index::canonicalize(importer_path)
+            .unwrap_or_else(|| importer_path.to_path_buf());
+        let owner_canon = crate::source_index::canonicalize(&owner_dir)
+            .unwrap_or_else(|| owner_dir.clone());
         if !importer_canon.starts_with(&owner_canon) {
             let importing = import_chain.last()
                 .map(|m| m.join("."))
@@ -1931,11 +1940,34 @@ fn resolve_one(
 
     // ─── PASS 1: parse every peer, seed the FULL provisional export cache ───
     for peer_path in &resolved_paths {
-        let peer_canon = peer_path.canonicalize()
-            .map_err(|e| anyhow!("canonicalize {}: {}", peer_path.display(), e))?;
+        let peer_canon = {
+            let _t = crate::perf_timer::PerfTimer::new("imports-peer-canon");
+            // План 252 Ф.2: канонизация — по разу на файл (шаг 1), не на
+            // каждый резолв. Текст ошибки сохранён: единственная причина
+            // отказа здесь — путь недоступен, и его же печатал `io::Error`.
+            match crate::source_index::canonicalize(peer_path) {
+                Some(p) => p,
+                None => {
+                    // Отказ — редчайший путь; текст ошибки берём у ОС ровно
+                    // так же, как раньше.
+                    return Err(peer_path
+                        .canonicalize()
+                        .map_err(|e| {
+                            anyhow!("canonicalize {}: {}", peer_path.display(), e)
+                        })
+                        .err()
+                        .unwrap_or_else(|| {
+                            anyhow!("canonicalize {}: unavailable", peer_path.display())
+                        }));
+                }
+            }
+        };
 
-        let peer_src = std::fs::read_to_string(peer_path)
-            .map_err(|e| anyhow!("failed to read imported module {}: {}", peer_path.display(), e))?;
+        let peer_src = {
+            let _t = crate::perf_timer::PerfTimer::new("imports-peer-io");
+            crate::source_index::file_text(peer_path)
+                .ok_or_else(|| anyhow!("failed to read imported module {}", peer_path.display()))?
+        };
         let peer_path_str = peer_path.to_string_lossy().to_string();
 
         // Plan 42 Sub-plan 42.4 шаг 2: allocate unique FileId для этого peer
@@ -1944,13 +1976,17 @@ fn resolve_one(
         let peer_file_id = *next_file_id;
         *next_file_id += 1;
 
-        let peer_module = parser::parse_with_file_id(&peer_src, peer_file_id)
-            .map_err(|d| {
-                let (line, col) = byte_to_line_col(&peer_src, d.span.start);
-                anyhow!(
-                    "in imported module '{}' ({}): {}:{}: {}",
-                    imp.path.join("."), peer_path_str, line, col, d.message)
-            })?;
+        crate::imports_stats::note_parse(peer_path, peer_src.len(), false);
+        let peer_module = {
+            let _tp = crate::perf_timer::PerfTimer::new("imports-peer-parse");
+            parser::parse_with_file_id(&peer_src, peer_file_id)
+                .map_err(|d| {
+                    let (line, col) = byte_to_line_col(&peer_src, d.span.start);
+                    anyhow!(
+                        "in imported module '{}' ({}): {}:{}: {}",
+                        imp.path.join("."), peer_path_str, line, col, d.message)
+                })?
+        };
 
         // Plan 42.12 Ф.2: проверка module-level `#cfg(feature/target_os)`.
         // Если peer объявил inactive cfg — skip целиком (не merge items,
@@ -1998,6 +2034,7 @@ fn resolve_one(
         // module finishes — same content, just recomputed via the merge
         // loop's identical `module_has_exports`/`is_export` filter.
         {
+            let _t = crate::perf_timer::PerfTimer::new("imports-exports-scan");
             let peer_export_names = exported_names_from_items(&peer_module.items);
             visited.entry(module_key.clone())
                 .or_insert_with(Vec::new)
@@ -2024,16 +2061,19 @@ fn resolve_one(
         // Plan 42.15: imported_item_names заполняется ниже после resolve.
         // is_entry_module = false — это peer ИМПОРТИРОВАННОГО модуля,
         // его items_here НЕ должны протекать в entry's shared_decls.
-        peer_files.push(PeerFile {
-            path: peer_canon,
-            file_id: peer_file_id,
-            imports: peer_module.imports.clone(),
-            items_here: peer_module.items.clone(),
-            imported_item_names: HashSet::new(),
-            is_entry_module: false,
-            // Plan 81 Ф.1: declared module name для group-isolation.
-            module_name: peer_module.name.clone(),
-        });
+        {
+            let _t = crate::perf_timer::PerfTimer::new("imports-peerfile-clone");
+            peer_files.push(PeerFile {
+                path: peer_canon,
+                file_id: peer_file_id,
+                imports: peer_module.imports.clone(),
+                items_here: peer_module.items.clone(),
+                imported_item_names: HashSet::new(),
+                is_entry_module: false,
+                // Plan 81 Ф.1: declared module name для group-isolation.
+                module_name: peer_module.name.clone(),
+            });
+        }
 
         // Plan 42.15: accumulator имён items видимых ЭТОМУ peer'у через
         // его прямые imports. Передаётся в resolve_one для каждого sub —
@@ -2144,6 +2184,7 @@ fn resolve_one(
         // Plan 42.15: имена merged items пишутся в `visible_acc` —
         // caller (peer/entry который написал `imp`) получает их в свой
         // visible scope. Это и есть «import притащил эти имена».
+        let _tmerge = crate::perf_timer::PerfTimer::new("imports-merge");
         for item in peer_module.items {
             // Plan 81 Ф.1: извлекаем is_export вместе с именем.
             let (name, is_export) = match &item {
@@ -2300,8 +2341,45 @@ pub fn scan_module_decl(src: &str) -> Option<Vec<String>> {
 /// Plan 42.14 Ф.3 ([M11]): cycle-detection key — declared module name
 /// (не canonical path). Тонкая обёртка над `scan_module_decl`.
 fn read_module_decl(path: &Path) -> Option<Vec<String>> {
-    let src = std::fs::read_to_string(path).ok()?;
-    scan_module_decl(&src)
+    // План 252 Ф.2 шаг 1: читается ТОЛЬКО заголовок. Чтение файла целиком
+    // ради одной строки `module` и стоило 2459 с в замере Ф.1.
+    let (head, truncated) = crate::source_index::header_text(path)?;
+    match scan_module_decl(&head) {
+        Some(d) => Some(d),
+        // Заголовок оборван, а объявление не найдено — единственный случай,
+        // когда ответ мог бы разойтись с полным чтением. Дочитываем.
+        None if truncated => scan_module_decl(&crate::source_index::file_text(path)?),
+        None => None,
+    }
+}
+
+/// План 252: объявления `module` всех обычных `.nv` каталога, посчитанные
+/// один раз на каталог и сверяемые свежим снимком (`dir_derived`).
+///
+/// Зачем: `resolve_module_paths` и entry-sibling-скан спрашивают «что
+/// объявляет вон тот сосед» для КАЖДОГО файла каталога и делают это на
+/// каждый импорт каждого компилируемого файла. По отдельности это N чтений
+/// (или, с кэшем содержимого, N вызовов `stat`); здесь — один `read_dir`.
+/// Порядок — как у [`crate::source_index::nv_files`] (сортировка по пути).
+fn dir_module_decls(dir: &Path) -> std::sync::Arc<Vec<(PathBuf, Option<Vec<String>>)>> {
+    crate::source_index::derived(dir, "module-decls", || {
+        crate::source_index::nv_files(dir)
+            .iter()
+            .map(|p| (p.clone(), read_module_decl(p)))
+            .collect()
+    })
+}
+
+/// То же для «точечной» формы объявления (`std.prelude.core`), которую
+/// использует [`extract_declared_module`] — у неё СВОЙ сканер, поэтому
+/// результат отдельный, а не производный от [`dir_module_decls`].
+fn dir_declared_dotted(dir: &Path) -> std::sync::Arc<Vec<(PathBuf, Option<String>)>> {
+    crate::source_index::derived(dir, "module-decls-dotted", || {
+        crate::source_index::nv_files(dir)
+            .iter()
+            .map(|p| (p.clone(), extract_declared_module(p)))
+            .collect()
+    })
 }
 
 /// Plan 202 Ф.1 (D78 rev-4): module-registry identity key — canonical
@@ -2333,20 +2411,26 @@ fn read_module_decl(path: &Path) -> Option<Vec<String>> {
 /// path collapse to one key — this mirrors the fallback branch this
 /// function replaces (used historically only when the decl-scan failed).
 pub(crate) fn canonical_module_key(resolved_paths: &[PathBuf]) -> Vec<String> {
+    let _t = crate::perf_timer::PerfTimer::new("imports-canonkey");
     debug_assert!(!resolved_paths.is_empty(), "caller must guard empty resolved_paths");
     if resolved_paths.is_empty() {
         return Vec::new();
     }
-    let anchor: PathBuf = if is_peer_group_member(&resolved_paths[0]) {
-        resolved_paths[0]
-            .parent()
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| resolved_paths[0].clone())
-    } else {
-        resolved_paths[0].clone()
-    };
-    let canon = anchor.canonicalize().unwrap_or(anchor);
-    vec![canon.to_string_lossy().to_string()]
+    // План 252 Ф.2: ключ зависит ТОЛЬКО от `resolved_paths[0]` (см. doc выше:
+    // якорь берётся от него одного), поэтому считается по разу на файл, а не
+    // на каждый импорт. Это перенос `imports-canonkey` в шаг 1 алгоритма.
+    let head = &resolved_paths[0];
+    crate::source_index::derived_for_path(head, "canonical-module-key", || {
+        let anchor: PathBuf = if is_peer_group_member(head) {
+            head.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| head.clone())
+        } else {
+            head.clone()
+        };
+        let canon = crate::source_index::canonicalize(&anchor).unwrap_or(anchor);
+        vec![canon.to_string_lossy().to_string()]
+    })
+    .as_ref()
+    .clone()
 }
 
 /// Plan 42 D29 rev-3 / Plan 81 Ф.10: is `path` a peer of a folder-module?
@@ -2363,22 +2447,31 @@ pub(crate) fn canonical_module_key(resolved_paths: &[PathBuf]) -> Vec<String> {
 /// a folder-module *entry* against the folder-module D29 rule rather than
 /// the single-file rule — and by the test-runner directory walk.
 pub fn is_folder_module_peer(path: &Path) -> bool {
+    let _t = crate::perf_timer::PerfTimer::new("imports-folder-detect");
     let parent = match path.parent() {
         Some(p) => p,
         None => return false,
     };
+    // План 252: вердикт зависит ТОЛЬКО от содержимого каталога (имена его
+    // `.nv`-файлов + их строки `module`), поэтому кэшируется целиком и
+    // сверяется свежим снимком каталога — один `read_dir` вместо N чтений.
+    // `current_target_os()` в ключ не входит: он неизменен в пределах
+    // процесса (переменная окружения читается один раз).
+    *crate::source_index::derived(parent, "folder-module-peer", || {
+        compute_is_folder_module_peer(parent)
+    })
+}
+
+fn compute_is_folder_module_peer(parent: &Path) -> bool {
     let target = current_target_os();
-    let entries: Vec<PathBuf> = match std::fs::read_dir(parent) {
-        Ok(it) => it
-            .filter_map(|e| e.ok())
-            .map(|e| e.path())
+    // Пустой список (каталога нет / в нём нет `.nv`) даёт пустой `decls` и
+    // тот же `false`, что старая ветка `Err(_) => return false`.
+    let listing = crate::source_index::nv_files(parent);
+    let entries: Vec<PathBuf> = {
+        listing
+            .iter()
+            .cloned()
             .filter(|p| {
-                if !p.is_file() {
-                    return false;
-                }
-                if p.extension().and_then(|s| s.to_str()) != Some("nv") {
-                    return false;
-                }
                 if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
                     // [M-d376-slow-suffix-folder-module-peer-merge]: peel
                     // `_slow` too (canonical order) before the OS-target
@@ -2392,8 +2485,7 @@ pub fn is_folder_module_peer(path: &Path) -> bool {
                 }
                 true
             })
-            .collect(),
-        Err(_) => return false,
+            .collect()
     };
     let folder_name = match parent.file_name().and_then(|s| s.to_str()) {
         Some(n) => n,
@@ -2402,9 +2494,9 @@ pub fn is_folder_module_peer(path: &Path) -> bool {
     // Read all peer declarations.
     let mut decls: Vec<Vec<String>> = Vec::with_capacity(entries.len());
     for entry in &entries {
-        let src = match std::fs::read_to_string(entry) {
-            Ok(s) => s,
-            Err(_) => return false,
+        let src = match crate::source_index::file_text(entry) {
+            Some(s) => s,
+            None => return false,
         };
         match scan_module_decl(&src) {
             Some(d) => decls.push(d),
@@ -2453,8 +2545,11 @@ fn is_peer_group_member(path: &Path) -> bool {
     if decl[0] != manifest.package_name {
         return false;
     }
-    match (parent.canonicalize(), manifest.source_root.canonicalize()) {
-        (Ok(p), Ok(r)) => p == r,
+    match (
+        crate::source_index::canonicalize(parent),
+        crate::source_index::canonicalize(&manifest.source_root),
+    ) {
+        (Some(p), Some(r)) => p == r,
         _ => false,
     }
 }
@@ -2474,18 +2569,15 @@ fn collect_root_peers(
     include_test_peers: bool,
 ) -> Option<Vec<PathBuf>> {
     let target = current_target_os();
-    let entries = std::fs::read_dir(source_root).ok()?;
+    // План 252: перечисление через кэш с проверкой отпечатка. Отсутствующий
+    // каталог даёт пустой список и тот же `None`, что старое `.ok()?`.
+    let listing = dir_module_decls(source_root);
     let root_decl = [package_name.to_string()];
-    let mut peers: Vec<PathBuf> = entries
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
+    let mut peers: Vec<PathBuf> = listing
+        .iter()
+        .filter(|(_, decl)| decl.as_deref() == Some(&root_decl[..]))
+        .map(|(p, _)| p.clone())
         .filter(|p| {
-            if !p.is_file() {
-                return false;
-            }
-            if p.extension().and_then(|s| s.to_str()) != Some("nv") {
-                return false;
-            }
             if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
                 // [M-d376-slow-suffix-folder-module-peer-merge]: this
                 // collects root-peers for an IMPORTED package (never for
@@ -2500,7 +2592,6 @@ fn collect_root_peers(
             }
             true
         })
-        .filter(|p| read_module_decl(p).as_deref() == Some(&root_decl[..]))
         .collect();
     if peers.is_empty() {
         return None;
@@ -2775,7 +2866,7 @@ fn peer_file_included(
 ///
 /// Каждый search root (entry_dir / repo / stdlib_dir) проверяется в
 /// порядке.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) enum ResolveErr {
     /// Не найдено — caller emit'ит «cannot find module» с suggestions.
     NotFound,
@@ -2826,7 +2917,58 @@ pub(crate) enum ResolveErr {
 /// если совпало или проверить нельзя (canonicalize не удался, путь
 /// короче запрошенного — консервативно: не ошибка).
 fn verify_case(path: &Path, parts: &[String], is_file: bool) -> Option<(String, String)> {
-    let canon = std::fs::canonicalize(path).ok()?;
+    let _t = crate::perf_timer::PerfTimer::new("imports-verify-case");
+    // План 252 Ф.2 шаг 3: имя на диске берётся ИЗ ЗАПИСИ ИНДЕКСА, а не
+    // добывается `fs::canonicalize` на каждый импорт. Индекс хранит имена
+    // ровно так, как их вернул `read_dir`, — то же, что показывает
+    // `canonicalize` на пути без символических ссылок.
+    if let Some(found) = verify_case_from_index(path, parts, is_file) {
+        return found.0;
+    }
+    verify_case_via_canonicalize(path, parts, is_file)
+}
+
+/// `Some(ответ)` — индекс дал имена всех сравниваемых сегментов и ни один из
+/// каталогов цепочки не содержит символических ссылок. `None` — вопрос
+/// индексу не адресуется (снимок выключен, путь вне индекса, есть ссылка):
+/// вызывающий обязан спросить `fs::canonicalize`, как раньше.
+#[allow(clippy::type_complexity)]
+fn verify_case_from_index(
+    path: &Path,
+    parts: &[String],
+    is_file: bool,
+) -> Option<(Option<(String, String)>,)> {
+    let mut cur = path.to_path_buf();
+    let mut on_disk: Vec<String> = Vec::with_capacity(parts.len());
+    for _ in 0..parts.len() {
+        let parent = cur.parent()?;
+        if crate::source_index::dir_has_symlink(parent) {
+            return None;
+        }
+        on_disk.push(crate::source_index::on_disk_name(&cur)?);
+        cur = parent.to_path_buf();
+    }
+    on_disk.reverse();
+    for (i, part) in parts.iter().enumerate() {
+        let d = &on_disk[i];
+        let actual: &str = if is_file && i == parts.len() - 1 {
+            d.strip_suffix(".nv").unwrap_or(d)
+        } else {
+            d.as_str()
+        };
+        if actual != part {
+            return Some((Some((part.clone(), actual.to_string())),));
+        }
+    }
+    Some((None,))
+}
+
+fn verify_case_via_canonicalize(
+    path: &Path,
+    parts: &[String],
+    is_file: bool,
+) -> Option<(String, String)> {
+    let canon = crate::source_index::canonicalize(path)?;
     let comps: Vec<String> = canon
         .components()
         .filter_map(|c| match c {
@@ -2862,7 +3004,7 @@ fn verify_case(path: &Path, parts: &[String], is_file: bool) -> Option<(String, 
 pub(crate) fn package_root_of(file: &Path) -> Option<PathBuf> {
     let mut dir = file.parent()?;
     loop {
-        if dir.join("nova.toml").is_file() {
+        if crate::source_index::is_file(&dir.join("nova.toml")) {
             return Some(dir.to_path_buf());
         }
         dir = dir.parent()?;
@@ -2925,8 +3067,8 @@ fn is_root_package(pkg_dir: &Path, entry_dir: &Path) -> bool {
     let Some(root) = find_root_package_dir(entry_dir) else {
         return false;
     };
-    let a = pkg_dir.canonicalize().unwrap_or_else(|_| pkg_dir.to_path_buf());
-    let b = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let a = crate::source_index::canonicalize(pkg_dir).unwrap_or_else(|| pkg_dir.to_path_buf());
+    let b = crate::source_index::canonicalize(&root).unwrap_or_else(|| root.to_path_buf());
     a == b
 }
 
@@ -2936,7 +3078,7 @@ fn is_root_package(pkg_dir: &Path, entry_dir: &Path) -> bool {
 fn find_root_package_dir(dir: &Path) -> Option<PathBuf> {
     let mut d = dir.to_path_buf();
     loop {
-        if d.join("nova.toml").is_file() {
+        if crate::source_index::is_file(&d.join("nova.toml")) {
             return Some(d);
         }
         if !d.pop() {
@@ -3073,7 +3215,7 @@ fn lookup_dependency(importer_path: &Path, dep_name: &str, entry_dir: &Path) -> 
     match &effective {
         crate::manifest::DepSource::Path(rel) => {
             let dep_dir = base_dir.join(rel);
-            if !dep_dir.is_dir() {
+            if !crate::source_index::is_dir(&dep_dir) {
                 // Plan 204 дофикс №2/№3: честная ошибка (не тихий откат на
                 // git/declared источник) когда путь пришёл из АКТИВНОГО
                 // корневого [replace]-override.
@@ -3105,7 +3247,7 @@ fn lookup_dependency(importer_path: &Path, dep_name: &str, entry_dir: &Path) -> 
 /// его и сверить `[package].name` с именем-ключом зависимости.
 fn finalize_dep_pkg(dep_dir: &Path, dep_name: &str) -> DepLookup {
     let dep_toml = dep_dir.join("nova.toml");
-    if !dep_toml.is_file() {
+    if !crate::source_index::is_file(&dep_toml) {
         return DepLookup::NoManifest(dep_dir.display().to_string());
     }
     let Some(dep_manifest) = crate::manifest::parse_manifest(&dep_toml, dep_dir) else {
@@ -3177,7 +3319,7 @@ pub fn resolved_dependency_roots(pkg_dir: &Path) -> Vec<PathBuf> {
         let dep_dir = match &effective {
             crate::manifest::DepSource::Path(rel) => {
                 let dir = pkg_dir.join(rel);
-                if dir.is_dir() { Some(dir) } else { None }
+                if crate::source_index::is_dir(&dir) { Some(dir) } else { None }
             }
             crate::manifest::DepSource::Git { url, pin } => {
                 crate::git_cache::resolve_git_dep(url, pin, None)
@@ -3201,7 +3343,95 @@ pub fn resolved_dependency_roots(pkg_dir: &Path) -> Vec<PathBuf> {
     roots
 }
 
+/// План 252 Ф.2 шаг 3 — **КАРТА МОДУЛЕЙ**: ключ запроса → разрешённые пути.
+///
+/// **Почему ключ такой, а не «имя модуля».** Шаг 3 плана описан как «один
+/// поиск по ключу — имени модуля». Глобальная карта «имя → путь» тут была бы
+/// НЕ ускорением, а сменой семантики импорта, что тот же раздел запрещает:
+///
+/// * резолв идёт **по пути, а не по объявлению**. Объявление `module` —
+///   чистая сверка тождества (D78 rev-3 «Свойства» п.4, `check_module_path`),
+///   никогда не ключ маршрутизации;
+/// * одно и то же имя модуля законно объявляют РАЗНЫЕ физические модули
+///   (D78 rev-4, исследование 2026-07-13 §2а: `src/a/neg/x.nv` и
+///   `src/b/neg/x.nv` оба обязаны объявлять `module neg.x`). Карта по имени
+///   схлопнула бы их — ровно дефект `[M-d78-duplicate-decl-module-swallow]`,
+///   починенный планом 202;
+/// * один и тот же `import X.Y` из разных файлов резолвится в РАЗНОЕ:
+///   якорь `./`/`../`, корень пакета-зависимости и `entry_dir` входят в
+///   ответ. Имя модуля этого не выражает.
+///
+/// Поэтому ключ карты — весь запрос резолва (сегменты импорта + якоря +
+/// режим peer'ов), а значение — его ответ. Свойство, которого требует
+/// приёмка, при этом выполняется буквально: повторный импорт — один поиск в
+/// хэш-таблице и НОЛЬ обращений к ФС.
+type ModPathKey = (
+    Vec<String>,
+    PathBuf,
+    PathBuf,
+    PathBuf,
+    bool,
+    Option<PathBuf>,
+    Option<PathBuf>,
+);
+type ModPathVal = std::sync::Arc<Result<Vec<PathBuf>, ResolveErr>>;
+
+fn modpath_map() -> &'static std::sync::Mutex<HashMap<ModPathKey, ModPathVal>> {
+    static MAP: std::sync::OnceLock<std::sync::Mutex<HashMap<ModPathKey, ModPathVal>>> =
+        std::sync::OnceLock::new();
+    MAP.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+}
+
+/// Сбросить карту модулей. Симметрично [`crate::source_index::reset`] — обе
+/// живут ровно один прогон.
+pub fn reset_module_map() {
+    if let Ok(mut g) = modpath_map().lock() {
+        g.clear();
+    }
+}
+
 fn resolve_module_paths(
+    parts: &[String],
+    entry_dir: &Path,
+    repo: &Path,
+    stdlib_dir: &Path,
+    include_test_peers: bool,
+    rel_root: Option<&Path>,
+    dep_root: Option<&Path>,
+) -> Result<Vec<PathBuf>, ResolveErr> {
+    // План 252 Ф.0: под-таймер (вложен в `imports-resolve`, время учтено
+    // дважды — доли читать относительно родителя).
+    let _t = crate::perf_timer::PerfTimer::new("imports-modpaths");
+    crate::source_index::note_import_resolve();
+    if !crate::source_index::snapshot_enabled() {
+        return resolve_module_paths_inner(
+            parts, entry_dir, repo, stdlib_dir, include_test_peers, rel_root, dep_root,
+        );
+    }
+    let key: ModPathKey = (
+        parts.to_vec(),
+        entry_dir.to_path_buf(),
+        repo.to_path_buf(),
+        stdlib_dir.to_path_buf(),
+        include_test_peers,
+        rel_root.map(|p| p.to_path_buf()),
+        dep_root.map(|p| p.to_path_buf()),
+    );
+    if let Ok(g) = modpath_map().lock() {
+        if let Some(v) = g.get(&key) {
+            return (**v).clone();
+        }
+    }
+    let val: ModPathVal = std::sync::Arc::new(resolve_module_paths_inner(
+        parts, entry_dir, repo, stdlib_dir, include_test_peers, rel_root, dep_root,
+    ));
+    if let Ok(mut g) = modpath_map().lock() {
+        return (**g.entry(key).or_insert(val)).clone();
+    }
+    (*val).clone()
+}
+
+fn resolve_module_paths_inner(
     parts: &[String],
     entry_dir: &Path,
     repo: &Path,
@@ -3311,21 +3541,15 @@ fn resolve_module_paths(
         let single_file = root.join(local_rel.with_extension("nv"));
         let folder = root.join(&local_rel);
 
-        let file_exists = single_file.is_file();
-        let folder_exists = folder.is_dir();
+        let file_exists = crate::source_index::is_file(&single_file);
+        let folder_exists = crate::source_index::is_dir(&folder);
 
         if file_exists && folder_exists {
             // Check folder has direct .nv files — only then it's ambiguous.
             // If folder только contains sub-folders without direct .nv,
             // we treat it as namespace-container (rule E).
-            let has_direct_nv = std::fs::read_dir(&folder)
-                .ok()
-                .map(|entries| {
-                    entries.filter_map(|e| e.ok()).any(|e| {
-                        e.path().extension().and_then(|s| s.to_str()) == Some("nv")
-                    })
-                })
-                .unwrap_or(false);
+            // План 252: перечисление через кэш с проверкой отпечатка.
+            let has_direct_nv = !crate::source_index::nv_files(&folder).is_empty();
             if has_direct_nv {
                 // Plan 62.A: разрешённый pattern — facade file `X.nv` +
                 // child-namespace folder `X/<sub>.nv` (where каждый sub
@@ -3359,17 +3583,11 @@ fn resolve_module_paths(
                 let short_prefix = format!("{}.", file_target);
                 let mut all_children = true;
                 let mut any_peer = false;
-                if let Ok(entries) = std::fs::read_dir(&folder) {
-                    for entry in entries.filter_map(|e| e.ok()) {
-                        let p = entry.path();
-                        if !p.is_file() {
-                            continue;
-                        }
-                        if p.extension().and_then(|s| s.to_str()) != Some("nv") {
-                            continue;
-                        }
+                {
+                    // План 252: объявления соседей — из кэша по каталогу.
+                    for (_p, decl) in dir_declared_dotted(&folder).iter() {
                         any_peer = true;
-                        let declared = match extract_declared_module(&p) {
+                        let declared = match decl.clone() {
                             Some(d) => d,
                             None => {
                                 // Не удалось извлечь module declaration —
@@ -3430,16 +3648,16 @@ fn resolve_module_paths(
             // (после отменённого маскирующего фикса) молча подмешивало их
             // без диагностики. Громкая ошибка вместо обоих тихих исходов.
             if let Some(dir) = single_file.parent() {
-                if let Ok(entries) = std::fs::read_dir(dir) {
+                {
                     let target = current_target_os();
-                    let mut orphans: Vec<PathBuf> = entries
-                        .filter_map(|e| e.ok())
-                        .map(|e| e.path())
-                        .filter(|p| {
-                            p.is_file()
-                                && p.extension().and_then(|s| s.to_str()) == Some("nv")
-                                && p != &single_file
-                        })
+                    // План 252: имена + объявления соседей — из кэша по
+                    // каталогу (один `read_dir` на проверку вместо N чтений).
+                    let listing = dir_module_decls(dir);
+                    let mut orphans: Vec<PathBuf> = listing
+                        .iter()
+                        .filter(|(p, _)| p != &single_file)
+                        .filter(|(_, decl)| decl.as_deref() == Some(verify_parts))
+                        .map(|(p, _)| p.clone())
                         .filter(|p| {
                             // [M-d376-slow-suffix-folder-module-peer-merge]:
                             // external import resolve (per comment above) —
@@ -3451,7 +3669,6 @@ fn resolve_module_paths(
                             }
                             true
                         })
-                        .filter(|p| read_module_decl(p).as_deref() == Some(verify_parts))
                         .collect();
                     if !orphans.is_empty() {
                         orphans.sort();
@@ -3478,20 +3695,11 @@ fn resolve_module_paths(
             // `_slow` peers are always excluded, mirroring how `_test` peers
             // are excluded in build mode.
             let target = current_target_os();
-            let entries = match std::fs::read_dir(&folder) {
-                Ok(e) => e,
-                Err(_) => continue,
-            };
-            let mut peers: Vec<PathBuf> = entries
-                .filter_map(|e| e.ok())
-                .map(|e| e.path())
+            // План 252: перечисление через кэш с проверкой отпечатка.
+            let mut peers: Vec<PathBuf> = crate::source_index::nv_files(&folder)
+                .iter()
+                .cloned()
                 .filter(|p| {
-                    if !p.is_file() {
-                        return false;
-                    }
-                    if p.extension().and_then(|s| s.to_str()) != Some("nv") {
-                        return false;
-                    }
                     if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
                         return peer_file_included(stem, include_test_peers, false, target);
                     }
@@ -3530,7 +3738,19 @@ fn resolve_module_paths(
 /// Скан: skip blank lines, line/block comments, attrs (`#stable(...)`).
 /// Останавливается на первой строке начинающейся с `module `.
 fn extract_declared_module(path: &Path) -> Option<String> {
-    let content = std::fs::read_to_string(path).ok()?;
+    // План 252 Ф.2 шаг 1: только заголовок; при обрыве без находки — дочитать
+    // (см. `read_module_decl`), чтобы ответ совпадал с полным чтением.
+    let (head, truncated) = crate::source_index::header_text(path)?;
+    match extract_declared_module_from(&head) {
+        Some(d) => Some(d),
+        None if truncated => {
+            extract_declared_module_from(&crate::source_index::file_text(path)?)
+        }
+        None => None,
+    }
+}
+
+fn extract_declared_module_from(content: &str) -> Option<String> {
     let mut in_block_comment = false;
     let mut lines_seen = 0;
     for raw_line in content.lines() {

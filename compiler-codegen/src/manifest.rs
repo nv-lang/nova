@@ -410,10 +410,10 @@ fn parse_override_toml(path: &Path) -> (HashMap<String, DepSource>, Vec<String>)
 /// корень пакета, которому принадлежит `file`. `None` — файл не входит
 /// ни в один пакет.
 pub fn find_package_dir(file: &Path) -> Option<PathBuf> {
-    let abs = std::fs::canonicalize(file).ok()?;
+    let abs = crate::source_index::canonicalize(file)?;
     let mut dir = abs.parent()?.to_path_buf();
     loop {
-        if dir.join("nova.toml").is_file() {
+        if crate::source_index::is_file(&dir.join("nova.toml")) {
             return Some(dir);
         }
         if !dir.pop() {
@@ -426,17 +426,26 @@ pub fn find_package_dir(file: &Path) -> Option<PathBuf> {
 /// Возвращает None если nova.toml не найден ни в одной parent dir
 /// (значит файл не часть пакета — без enforcement).
 pub fn find_manifest(file: &Path) -> Option<Manifest> {
-    let abs = std::fs::canonicalize(file).ok()?;
-    let mut dir = abs.parent()?.to_path_buf();
-    loop {
-        let toml = dir.join("nova.toml");
-        if toml.is_file() {
-            return parse_manifest(&toml, &dir);
+    // План 252 Ф.2 шаг 4: манифест ищется ОДИН раз и лежит рядом с индексом.
+    // `find_manifest` звался на каждый peer каждого импорта
+    // (`imports-prelude-compute` = 124 с на корпусе `neg`); ответ зависит
+    // только от каталога, в котором лежит файл.
+    let abs = crate::source_index::canonicalize(file)?;
+    let dir0 = abs.parent()?.to_path_buf();
+    crate::source_index::derived_for_path(&dir0, "find-manifest", || {
+        let mut dir = dir0.clone();
+        loop {
+            let toml = dir.join("nova.toml");
+            if crate::source_index::is_file(&toml) {
+                return parse_manifest(&toml, &dir);
+            }
+            if !dir.pop() {
+                return None;
+            }
         }
-        if !dir.pop() {
-            return None;
-        }
-    }
+    })
+    .as_ref()
+    .clone()
 }
 
 /// Parse a `nova.toml` directly from `toml_path`, with `dir` as the
@@ -469,7 +478,43 @@ fn parse_toml_string_array(raw_val: &str) -> Vec<String> {
         .collect()
 }
 
+/// План 252 Ф.2 шаг 4: разбор `nova.toml` — по разу на манифест за прогон.
+/// Ответ зависит только от содержимого файла и каталога-якоря, а дерево в
+/// пределах прогона неизменно по построению (см. `source_index`).
 pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
+    if !crate::source_index::snapshot_enabled() {
+        return parse_manifest_uncached(toml_path, dir);
+    }
+    let key = toml_path.to_path_buf();
+    if let Ok(g) = manifest_cache().lock() {
+        if let Some(v) = g.get(&key) {
+            if v.0 == dir {
+                return v.1.as_ref().clone();
+            }
+        }
+    }
+    let parsed = parse_manifest_uncached(toml_path, dir);
+    if let Ok(mut g) = manifest_cache().lock() {
+        g.insert(key, (dir.to_path_buf(), std::sync::Arc::new(parsed.clone())));
+    }
+    parsed
+}
+
+type ManifestCache = HashMap<PathBuf, (PathBuf, std::sync::Arc<Option<Manifest>>)>;
+
+fn manifest_cache() -> &'static std::sync::Mutex<ManifestCache> {
+    static C: std::sync::OnceLock<std::sync::Mutex<ManifestCache>> = std::sync::OnceLock::new();
+    C.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+}
+
+/// Сбросить разобранные манифесты. Симметрично `source_index::reset`.
+pub fn reset_manifest_cache() {
+    if let Ok(mut g) = manifest_cache().lock() {
+        g.clear();
+    }
+}
+
+fn parse_manifest_uncached(toml_path: &Path, dir: &Path) -> Option<Manifest> {
     let text = std::fs::read_to_string(toml_path).ok()?;
     let mut package_name: Option<String> = None;
     let mut lib_src: Option<String> = None;
@@ -633,9 +678,9 @@ pub fn parse_manifest(toml_path: &Path, dir: &Path) -> Option<Manifest> {
     let legacy_override_toml_path = dir.join("nova.local.toml");
     let mut override_toml_unsupported: Vec<String> = Vec::new();
     let mut override_legacy_name_used = false;
-    let effective_override_path: Option<PathBuf> = if override_toml_path.is_file() {
+    let effective_override_path: Option<PathBuf> = if crate::source_index::is_file(&override_toml_path) {
         Some(override_toml_path)
-    } else if legacy_override_toml_path.is_file() {
+    } else if crate::source_index::is_file(&legacy_override_toml_path) {
         override_legacy_name_used = true;
         Some(legacy_override_toml_path)
     } else {

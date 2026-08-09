@@ -3778,6 +3778,10 @@ fn cmd_doc_watch(
         let mtime = std::fs::metadata(path).and_then(|m| m.modified()).ok();
         if mtime != last_mtime {
             last_mtime = mtime;
+            // План 252 Ф.2: watch — не один прогон, а много. Снимок дерева
+            // пересобирается на каждой итерации, иначе `--watch` показывал бы
+            // содержимое, снятое при запуске.
+            nova_codegen::source_index::reset();
             // Очистка экрана + cursor home (ANSI). Сохраняем scrollback.
             eprint!("\x1b[2J\x1b[H");
             eprintln!(
@@ -5840,6 +5844,25 @@ fn cmd_test(
     if aggregate {
         let table = nova_codegen::perf_timer::dump_aggregated();
         if !table.is_empty() { eprintln!("{}", table); }
+        // План 252 Ф.0: счётчики стадии `imports-resolve` (молчат без
+        // NOVA_IMPORTS_STATS=1).
+        let stats = format!(
+            "{}{}",
+            nova_codegen::imports_stats::dump_stats(),
+            nova_codegen::source_index::stats_line()
+        );
+        eprintln!("{}", stats);
+        // `measure.sh` глушит stdout/stderr измеряемой команды, поэтому без
+        // файлового стока таблицу с валидного (прошедшего вороты занятости)
+        // прогона забрать нечем. Аппендит — виден каждый прогон серии.
+        if let Ok(log_path) = std::env::var("NOVA_PERF_TIMER_LOG") {
+            use std::io::Write;
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true).append(true).open(&log_path)
+            {
+                let _ = writeln!(f, "{}{}", table, stats);
+            }
+        }
     }
 
     if summary.fail > 0 {
@@ -6772,6 +6795,13 @@ fn cmd_contracts_counterexample(file: &std::path::Path, fn_name: &str, contract_
 /// (особенно в debug-сборке) этого недостаточно. Spawn с explicit
 /// stack_size — тот же паттерн, что в `nova-codegen/src/main.rs`.
 fn main() -> ExitCode {
+    // План 252 Ф.2: процесс `nova` — ОДИН прогон компиляции, поэтому снимок
+    // дерева исходников снимается один раз и дальше неизменен (решение
+    // владельца 2026-08-09: правка исходников посреди сборки согласованности
+    // не даёт в любом случае, а посделочная сверка отпечатка её не создаёт).
+    // Резидентные режимы снимок снимают заново на каждой итерации — см.
+    // `cmd_doc_watch`; `nova-lsp` — отдельный бинарь, он его не включает.
+    nova_codegen::source_index::enable_snapshot();
     std::thread::Builder::new()
         .name("nova-main".to_string())
         .stack_size(64 * 1024 * 1024)
