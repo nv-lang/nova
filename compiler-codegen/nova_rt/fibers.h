@@ -3199,8 +3199,15 @@ static void _nova_early_dl_close_cb(uv_handle_t* h) {
 static void _nova_early_dl_timer_cb(uv_timer_t* h) {
     NovaEarlyDl* dl = (NovaEarlyDl*)h;
     int32_t expect = 0;
+    if (getenv("NOVA_DIAG_P259_DL")) {
+        fprintf(stderr, "[p259-dl] TIMER FIRED dl=%p scope=%p slot=%d loop=%p current_loop=%p t=%lldns\n",
+                (void*)dl, (void*)dl->owner_scope, dl->owner_slot, (void*)dl->timer.loop,
+                (void*)nova_current_loop(), (long long)time_monotonic_ns());
+        fflush(stderr);
+    }
     if (__atomic_compare_exchange_n(&dl->fired, &expect, 1, 0,
                                      __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        if (getenv("NOVA_DIAG_P259_DL")) { fprintf(stderr, "[p259-dl] TIMER WON CAS -- delivering cancel\n"); fflush(stderr); }
         nova_sched_cancel_pending_slot(dl->owner_scope, dl->owner_slot);
         /* №398 (same gap as nova_scope_deliver_cancel — see
          * _nova_cancel_via_driver_slot's doc comment): the call above only
@@ -3216,6 +3223,21 @@ static void _nova_early_dl_timer_cb(uv_timer_t* h) {
         _nova_cancel_via_driver_slot(dl->owner_scope, dl->owner_slot);
     }
     uv_close((uv_handle_t*)&dl->timer, _nova_early_dl_close_cb);
+}
+
+/* Plan 259 diag helper: portable OS-thread-id for [p259-dl] tracing —
+ * `pthread_self()` doesn't exist on the MSVC/clang-cl Windows toolchain
+ * (fibers.h is a single cross-platform TU). Diagnostic-only, never on a
+ * hot path (guarded by getenv checks at each call site). */
+#if defined(_WIN32)
+#include <windows.h>
+#endif
+static inline unsigned long _nova_p259_diag_tid(void) {
+#if defined(_WIN32)
+    return (unsigned long)GetCurrentThreadId();
+#else
+    return (unsigned long)(uintptr_t)pthread_self();
+#endif
 }
 
 /* Arms the early-deadline timer for `q` (no-op, returns NULL, when `q` has
@@ -3239,6 +3261,13 @@ static inline void* nova_scope_arm_early_deadline(NovaFiberQueue* q) {
         ? (uint64_t)(remaining_ns / 1000000LL) : 0;
     uv_timer_start(&dl->timer, _nova_early_dl_timer_cb, remaining_ms, 0);
     q->early_deadline_timer = dl;
+    if (getenv("NOVA_DIAG_P259_DL")) {
+        fprintf(stderr, "[p259-dl] ARM dl=%p scope=%p slot=%d loop=%p current_loop=%p remaining_ms=%llu t=%lldns tid=%lu\n",
+                (void*)dl, (void*)q->owner_scope, q->owner_slot, (void*)dl->timer.loop,
+                (void*)nova_current_loop(), (unsigned long long)remaining_ms,
+                (long long)time_monotonic_ns(), _nova_p259_diag_tid());
+        fflush(stderr);
+    }
     return dl;
 }
 
@@ -3252,9 +3281,16 @@ static inline void* nova_scope_arm_early_deadline(NovaFiberQueue* q) {
 static inline void nova_scope_disarm_early_deadline(void* handle) {
     if (!handle) return;
     NovaEarlyDl* dl = (NovaEarlyDl*)handle;
+    if (getenv("NOVA_DIAG_P259_DL")) {
+        fprintf(stderr, "[p259-dl] DISARM CALLED dl=%p loop=%p current_loop=%p t=%lldns tid=%lu\n",
+                (void*)dl, (void*)dl->timer.loop, (void*)nova_current_loop(),
+                (long long)time_monotonic_ns(), _nova_p259_diag_tid());
+        fflush(stderr);
+    }
     int32_t expect = 0;
     if (__atomic_compare_exchange_n(&dl->fired, &expect, 1, 0,
                                      __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        if (getenv("NOVA_DIAG_P259_DL")) { fprintf(stderr, "[p259-dl] DISARM WON CAS -- stopping timer\n"); fflush(stderr); }
         uv_timer_stop(&dl->timer);
         uv_close((uv_handle_t*)&dl->timer, _nova_early_dl_close_cb);
     }
@@ -4583,6 +4619,11 @@ static inline void _nova_sleep_via_driver(NovaFiberQueue* scope, int slot,
     job->kind = NOVA_DRV_JOB_ARM_SLEEP;
     job->u.arm_sleep.st = &st;
     job->u.arm_sleep.ms = (uint64_t)ms;
+    if (getenv("NOVA_DIAG_P259_DL")) {
+        fprintf(stderr, "[p259-dl] SUBMIT ARM_SLEEP st=%p scope=%p slot=%d ms=%d expected_co=%p\n",
+                (void*)&st, (void*)scope, slot, (int)ms, (void*)st.expected_co);
+        fflush(stderr);
+    }
     if (nova_driver_submit_job(job) != 0) {
         /* Driver not started or shutting down — degrade gracefully. */
         free(job);

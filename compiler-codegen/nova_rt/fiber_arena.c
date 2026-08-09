@@ -24,10 +24,10 @@
  * для cross-thread safety. Паритет с Windows fiber_arena_win.c. */
 
 #include "fiber_arena.h"
-#include "runtime.h"    /* [M-187-docker-linux-runtime-hang] Ф.1: nova_runtime_maxprocs()
-                         * для VMA-бюджета арены (см. _nova_vma_slot_budget). Без
-                         * циклической зависимости — runtime.h не инклудит
-                         * fiber_arena.h. */
+/* Plan 259 Слой 1: runtime.h больше не нужен — единственный потребитель
+ * (nova_runtime_maxprocs() для VMA-бюджета, _nova_vma_slot_budget) снят
+ * вместе с зажимом NOVA_ARENA_VMA_* (см. комментарий у
+ * nova_fiber_arena_init ниже, D97 Ред.3 / D451). */
 
 /* Plan 82 Ф.1: внутренний guard сужен с NOVA_FIBER_ARENA_ENABLED до
  * явного POSIX-условия. NOVA_FIBER_ARENA_ENABLED теперь true и на
@@ -635,98 +635,21 @@ static void _nova_mark_tail_used(struct NovaFiberArena* a, size_t from) {
     }
 }
 
-/* ── Plan [M-187-docker-linux-runtime-hang] Ф.1: vm.max_map_count
- * auto-detect + arena slot-count clamp ──────────────────────────
+/* ── [RETIRED] Plan [M-187-docker-linux-runtime-hang] Ф.1: vm.max_map_count
+ * clamp — Plan 259 Слой 1 (2026-08-09) ─────────────────────────────
  *
- * Root cause (Docker-волна 2026-07-17, docs/dev/simplifications.md
- * [M-187-docker-linux-runtime-hang]): the guard-page loop below calls
- * mprotect() PER SLOT to punch a PROT_NONE hole at the bottom of an
- * otherwise-uniform mmap() region. Each such call SPLITS the kernel's
- * single VMA into guard (PROT_NONE) + usable (PROT_READ|WRITE) pieces —
- * 2 VMAs per slot instead of 1, and Linux caps total VMAs per process at
- * /proc/sys/vm/max_map_count (default 65530). Multi-worker M:N
- * multiplies this by the worker count: default NOVA_MAX_FIBERS=16384 ×
- * 2 VMAs × 8 workers = 262144 VMAs — blows straight through the default
- * limit long before any single arena's own slot_count looks unreasonable.
- * Observed as a storm of "fiber_arena guard page mprotect failed"
- * aborts at process boot inside the aggregator-demo Docker image;
- * NOVA_MAX_FIBERS=2048 (manual workaround) confirmed the hypothesis
- * (2048×2×8=32768 < 65530 → 0 failures).
- *
- * Fix, two layers:
- *  1. BEFORE mmap/mprotect: read the kernel's actual limit once
- *     (process-wide, cached) and derive a conservative per-arena slot
- *     budget, accounting for how many arenas this process will create
- *     (nova_runtime_maxprocs() workers + the main thread's own arena)
- *     and reserving headroom for the rest of the process's VMAs
- *     (binary/shared-libs/heap/malloc arenas/libuv internal maps/Boehm
- *     GC). If /proc is unreadable (non-Linux, sandboxed, or the file
- *     simply doesn't exist — e.g. macOS) the limit is UNKNOWN and no
- *     clamp is applied (old behavior, unaffected — this is a Linux-
- *     specific kernel-accounting limit, not a portable one).
- *  2. IN the mprotect loop: if it still fails mid-way despite the
- *     pre-clamp (concurrent unrelated mmap pressure from the rest of
- *     the process, e.g. other threads racing to init their own arenas
- *     at the same time before this thread's pre-clamp accounted for
- *     them), degrade honestly instead of abort()'ing the whole server:
- *     truncate slot_count to whatever was already guarded, warn ONCE
- *     per process (not a storm), and keep running with reduced
- *     concurrent fiber capacity for this worker's arena rather than
- *     crashing. Only if the degraded capacity is unusably small (below
- *     the bitmap's 64-slot floor) do we fall back to the historical
- *     abort() — at that point there is truly no safe smaller step. */
-
-#define NOVA_ARENA_VMA_RESERVE      4096  /* headroom for non-arena process VMAs */
-#define NOVA_ARENA_VMA_SAFETY_PCT     75  /* use only 75% of the computed remainder */
-
-/* Reads /proc/sys/vm/max_map_count. Returns the limit, or -1 if unknown
- * (file absent/unreadable — non-Linux or restricted sandbox). */
-static long _nova_read_max_map_count(void) {
-    FILE* f = fopen("/proc/sys/vm/max_map_count", "r");
-    if (!f) return -1;
-    long v = -1;
-    if (fscanf(f, "%ld", &v) != 1) v = -1;
-    fclose(f);
-    return (v > 0) ? v : -1;
-}
-
-/* Process-wide cache — the kernel limit doesn't change at runtime, and
- * every worker thread calls this at its own arena init. Mutex-guarded
- * (not a hot path — once per thread, at startup). */
-static pthread_mutex_t _nova_maxmap_mu = PTHREAD_MUTEX_INITIALIZER;
-static long _nova_maxmap_cache = -2;  /* -2 = not yet read; -1 = unknown; >0 = limit */
-static bool _nova_arena_clamp_warned = false;  /* one-time notice, not a storm */
-
-static long _nova_cached_max_map_count(void) {
-    pthread_mutex_lock(&_nova_maxmap_mu);
-    if (_nova_maxmap_cache == -2) {
-        _nova_maxmap_cache = _nova_read_max_map_count();
-    }
-    long v = _nova_maxmap_cache;
-    pthread_mutex_unlock(&_nova_maxmap_mu);
-    return v;
-}
-
-/* Computes a safe per-arena slot_count ceiling from vm.max_map_count, or
- * SIZE_MAX (no clamp) if the limit is unknown. 2 VMAs per slot (guard +
- * usable — see comment above). thread_count = expected number of arenas
- * this process will create (workers + main thread), never < 1. */
-static size_t _nova_vma_slot_budget(void) {
-    long max_map = _nova_cached_max_map_count();
-    if (max_map <= 0) return SIZE_MAX;  /* unknown limit — don't clamp */
-
-    int workers = nova_runtime_maxprocs();
-    if (workers < 1) workers = 1;
-    long thread_count = (long)workers + 1;  /* +1: main thread's own arena */
-
-    long usable = max_map - NOVA_ARENA_VMA_RESERVE;
-    if (usable <= 0) return (size_t)NOVA_FIBER_SLOT_COUNT_MIN;  /* degenerate — floor */
-    usable = usable * NOVA_ARENA_VMA_SAFETY_PCT / 100;
-    long per_thread_vmas = usable / thread_count;
-    long slots = per_thread_vmas / 2;  /* guard + usable per slot */
-    if (slots < (long)NOVA_FIBER_SLOT_COUNT_MIN) slots = (long)NOVA_FIBER_SLOT_COUNT_MIN;
-    return (size_t)slots;
-}
+ * This clamp (NOVA_ARENA_VMA_RESERVE/NOVA_ARENA_VMA_SAFETY_PCT + the
+ * /proc/sys/vm/max_map_count pre-budget helpers that used to live here)
+ * treated the SYMPTOM of eager per-slot mprotect() at arena init — it
+ * shrank slot_count so the eager guard-page loop wouldn't blow past the
+ * kernel's VMA limit. Plan 259 Слой 1 removes the CAUSE instead: guard
+ * pages are now punched lazily, one mprotect() per slot the first time
+ * (and only the first time — see nova_fiber_alloc below) that slot
+ * index is ever handed out, not all NOVA_MAX_FIBERS of them upfront.
+ * VMA count now tracks live fiber count, not the configured ceiling, so
+ * the clamp has nothing left to protect against. See D97 Ред.3 / D451
+ * (spec/decisions/06-concurrency.md) for the full rationale and the
+ * №457 timeout-hang this closes. */
 
 /* ── Init ──────────────────────────────────────────────────────── */
 
@@ -767,30 +690,6 @@ void nova_fiber_arena_init(void) {
         slot_count = (size_t)NOVA_FIBER_BITMAP_WORDS * 64;
     }
 
-    /* [M-187-docker-linux-runtime-hang] Ф.1: pre-clamp against the actual
-     * kernel vm.max_map_count BEFORE mmap/mprotect — see the big comment
-     * above _nova_vma_slot_budget(). No-op (SIZE_MAX) if the limit is
-     * unknown (non-Linux). */
-    size_t vma_budget = _nova_vma_slot_budget();
-    if (slot_count > vma_budget) {
-        size_t clamped = (vma_budget / 64) * 64;  /* floor to ×64 — stay ≤ budget */
-        if (clamped < (size_t)NOVA_FIBER_SLOT_COUNT_MIN) clamped = (size_t)NOVA_FIBER_SLOT_COUNT_MIN;
-        pthread_mutex_lock(&_nova_maxmap_mu);
-        bool should_warn = !_nova_arena_clamp_warned;
-        _nova_arena_clamp_warned = true;
-        pthread_mutex_unlock(&_nova_maxmap_mu);
-        if (should_warn) {
-            fprintf(stderr,
-                "nova: fiber arena slot_count %zu clamped to %zu — "
-                "vm.max_map_count=%ld limits concurrent VMAs (guard pages cost "
-                "2 VMAs/slot x N arenas). Raise the limit "
-                "(sysctl -w vm.max_map_count=1048576) or lower NOVA_MAX_FIBERS "
-                "to silence this notice. See docs/guide/linux-build.md.\n",
-                slot_count, clamped, _nova_cached_max_map_count());
-        }
-        slot_count = clamped;
-    }
-
     size_t virtual_size = slot_size * slot_count;
 
     int prot = PROT_READ | PROT_WRITE;
@@ -811,58 +710,28 @@ void nova_fiber_arena_init(void) {
     madvise(p, virtual_size, MADV_NOHUGEPAGE);
 #endif
 
-    /* Plan 44.2 P41-5: guard page (PROT_NONE) at bottom of every slot.
+    /* Plan 259 Слой 1 (2026-08-09, №457 / D97 Ред.3): guard pages are
+     * NOT punched here anymore. The old code called mprotect(PROT_NONE)
+     * PER SLOT for all `slot_count` slots (16384 by default) right here
+     * — a typical program uses a handful of fibers, so that eager loop
+     * paid for slots that would never be touched. Worse, each mprotect()
+     * SPLITS the kernel's single mmap() VMA into guard+usable pieces AND
+     * serializes on the process-wide mmap_lock (write side): 16 workers
+     * × 16384 slots = 262144 calls was a syscall storm that alone blew
+     * past a `supervised(timeout:)` budget (№457) and separately hit
+     * /proc/sys/vm/max_map_count in Docker
+     * ([M-187-docker-linux-runtime-hang], the NOVA_ARENA_VMA_* clamp
+     * this retires).
      *
-     * [M-187-docker-linux-runtime-hang] Ф.1: the pre-clamp above should
-     * make this loop succeed to completion in the common case, but it's
-     * a heuristic (other threads' arenas may init concurrently, other
-     * subsystems may be growing their own VMA count at the same time) —
-     * belt-and-suspenders: if mprotect STILL fails partway, degrade
-     * honestly instead of abort()'ing the whole server. Truncate
-     * slot_count to what's already guarded (a real, safe, smaller
-     * arena) and warn once — never a storm, and never a silent lie
-     * either. */
-    size_t requested_slot_count = slot_count;
-    for (size_t i = 0; i < slot_count; i++) {
-        char* slot_base = (char*)p + i * slot_size;
-        if (mprotect(slot_base, NOVA_FIBER_GUARD_SIZE, PROT_NONE) != 0) {
-            int mprotect_errno = errno;
-            pthread_mutex_lock(&_nova_maxmap_mu);
-            bool should_warn = !_nova_arena_clamp_warned;
-            _nova_arena_clamp_warned = true;
-            pthread_mutex_unlock(&_nova_maxmap_mu);
-            if (should_warn) {
-                fprintf(stderr,
-                    "nova: fiber_arena guard page mprotect failed at slot %zu/%zu "
-                    "(errno=%d) — degrading this worker's arena to %zu slots "
-                    "instead of aborting. Raise vm.max_map_count (see "
-                    "docs/guide/linux-build.md) to recover full capacity.\n",
-                    i, slot_count, mprotect_errno, i);
-            }
-            slot_count = i;
-            break;
-        }
-    }
-
-    /* Degraded capacity below the bitmap's floor (64 slots) is not a
-     * "reduced but usable" arena — there is no safe smaller step left.
-     * Preserve the historical abort() only for this genuinely unusable
-     * case. */
-    if (slot_count < (size_t)NOVA_FIBER_SLOT_COUNT_MIN) {
-        fprintf(stderr,
-            "nova: fiber_arena unusable (<%d slots guarded of %zu requested) — "
-            "aborting\n", NOVA_FIBER_SLOT_COUNT_MIN, requested_slot_count);
-        munmap(p, virtual_size);
-        abort();
-    }
-
-    /* Release the unguarded tail beyond the degraded slot_count — not
-     * tracked by the bitmap, no reason to keep it mapped. */
-    if (slot_count < requested_slot_count) {
-        size_t new_virtual_size = slot_count * slot_size;
-        munmap((char*)p + new_virtual_size, virtual_size - new_virtual_size);
-        virtual_size = new_virtual_size;
-    }
+     * The single `mmap` above is exactly ONE VMA regardless of
+     * slot_count — O(1) syscalls for the whole arena. Each slot's guard
+     * page is punched lazily, exactly once, the first time that slot
+     * index is ever handed out by nova_fiber_alloc (the
+     * `slot >= a->high_water` branch below); a REUSED slot already has
+     * its guard from the first time, so reuse costs zero extra
+     * mprotect() calls. VMA count now tracks the number of fibers that
+     * actually LIVED, not NOVA_MAX_FIBERS. See D97 Ред.3 / D451
+     * (spec/decisions/06-concurrency.md) for the full writeup. */
 
     /* Plan 82.2: heap-allocate arena struct. calloc zero-инициализирует;
      * никогда не free'ится — живёт в global list до конца процесса. */
@@ -970,6 +839,33 @@ void* nova_fiber_alloc(size_t size, void* allocator_data) {
         fprintf(stderr, "nova: fiber_arena exhausted (%zu slots used)\n",
                 __atomic_load_n(&a->slots_active, __ATOMIC_RELAXED));
         abort();
+    }
+
+    /* Plan 259 Слой 1 (2026-08-09, №457 / D97 Ред.3): punch this slot's
+     * guard page lazily, on its FIRST-EVER use. `_arena_find_free_slot`
+     * always returns the lowest free index, so slot indices are handed
+     * out in strictly increasing order the first time each is used —
+     * `slot >= a->high_water` is true iff no fiber has EVER occupied
+     * this index before (a slot `< high_water` was guarded the first
+     * time IT was the high-water slot; freeing and reusing it below
+     * high_water does NOT re-enter this branch, so a reused slot costs
+     * zero extra mprotect() calls — the guard from its first use still
+     * stands, `nova_fiber_dealloc`'s MADV_DONTNEED never touches the
+     * guard range). This is what makes VMA count track live fiber
+     * count instead of NOVA_MAX_FIBERS — see the big comment in
+     * nova_fiber_arena_init above and D451. */
+    if (slot >= a->high_water) {
+        char* slot_base = a->base + slot * a->slot_size;
+        if (mprotect(slot_base, NOVA_FIBER_GUARD_SIZE, PROT_NONE) != 0) {
+            fprintf(stderr,
+                "nova: fiber_arena guard page mprotect failed for slot %zu "
+                "(errno=%d) — %zu fiber slots already live in this arena; "
+                "the OS is out of VMA/mmap capacity for this process. Raise "
+                "vm.max_map_count (sysctl -w vm.max_map_count=1048576) or "
+                "reduce concurrent fiber count.\n",
+                slot, errno, a->high_water);
+            abort();
+        }
     }
 
     _arena_mark_slot_used(a, slot);

@@ -499,10 +499,28 @@ static bool            _atexit_registered = false;
  * + защитный auto-arm на каждом spawn-входе. Эквивалент
  * `nova_runtime_init(0)`: резолв maxprocs (NOVA_MAXPROCS env →
  * uv_available_parallelism), _armed=true, atexit-регистрация.
- * Hello-world без spawn — `_armed=true`, но `_materialized=false`
- * (пул не поднят) → 0 worker-потоков (Plan 83.2 §4 acceptance).
+ *
+ * [ИЗМЕНЕНО Plan 259 Слой 2, 2026-08-09, D451]: раньше здесь стояло
+ * «Hello-world без spawn — _armed=true, но _materialized=false (пул не
+ * поднят) → 0 worker-потоков» — верно ДО этого амендмента (D137/D138
+ * lazy pool). Причина смены — №457: ленивая материализация «на первом
+ * spawn» списывала цену старта пула (потоки + sysmon + per-worker
+ * libuv loop) на того, кто СЛУЧАЙНО оказался первым, кто спавнит — что
+ * могло быть внутри пользовательского `supervised(timeout:)`-бюджета
+ * (тот же класс запрета, что №470/№474: не компенсировать дедлайн
+ * длительностью инициализации). Теперь `nova_runtime_auto_arm()` сам
+ * материализует пул сразу после arm (см. ниже) — ЛЮБАЯ armed-программа
+ * (default-on M:N, без `NOVA_AUTOARM=0`) поднимает `maxprocs()`
+ * worker-потоков на старте, даже hello-world без единого `spawn`.
+ * Полностью ленивая материализация (0 threads без spawn) остаётся
+ * достижимой ТОЛЬКО через `NOVA_AUTOARM=0` (без M:N вовсе). Подробности
+ * и обоснование — D451 (spec/decisions/06-concurrency.md).
  * Идемпотентно, thread-safe через _init_mu. */
 static bool _nova_autoarm_env_disabled(void);  /* fwd-decl, def ниже */
+/* Plan 259 Слой 2 (D451): fwd-decl — nova_runtime_auto_arm() (ниже) теперь
+ * материализует пул сразу после arm; полное определение _ensure_materialized
+ * ближе к _materialize_pool (после nova_runtime_init), где ему самое место. */
+static void _ensure_materialized(void);
 
 static void _auto_arm_if_needed(void) {
     if (_armed) return;
@@ -571,10 +589,27 @@ static bool _nova_autoarm_env_disabled(void) {
 
 /* Public entry — Plan 83.2 Ф.1 codegen-emit'нутый вызов в main().
  * Plan 83.4.5.9: respect `NOVA_AUTOARM=0` escape hatch (positive
- * env-name; replaces legacy `NOVA_NO_AUTOARM=1`). */
+ * env-name; replaces legacy `NOVA_NO_AUTOARM=1`).
+ *
+ * Plan 259 Слой 2 (2026-08-09, №457, D451): материализует пул СРАЗУ
+ * после arm — было отложено до первого worker-bound spawn (D137 lazy
+ * pool), что рисковало списать цену старта (потоки + sysmon +
+ * per-worker libuv loop + per-worker fiber-арена) на произвольный
+ * spawn, включая spawn ВНУТРИ пользовательского
+ * `supervised(timeout:)`-бюджета. Этот вызов — первая содержательная
+ * строка эмитируемого `main()` (emit_c.rs::emit_main_wrapper, до тела
+ * программы), поэтому вся цена материализации оплачивается ДО того,
+ * как какой-либо пользовательский таймер мог начать отсчёт. Слой 1
+ * этого же плана (fiber_arena.c: ленивые guard-страницы) — предпосылка:
+ * без него материализация пула здесь была бы такой же дорогой, как
+ * была, просто раньше по времени. `NOVA_AUTOARM=0` (`_nova_autoarm_
+ * env_disabled` возвращает true и функция не арм'ит вовсе) остаётся
+ * единственным способом получить 0 worker-потоков — материализация
+ * достижима только через arm. */
 void nova_runtime_auto_arm(void) {
     if (_nova_autoarm_env_disabled()) return;
     _auto_arm_if_needed();
+    _ensure_materialized();
 }
 
 /* Plan 44.5 Layer 5: main wake handle для cross-thread signal'а из
@@ -1153,13 +1188,59 @@ static void _worker_main(void* arg) {
      * index assignment single-sourced and consistent everywhere. */
     nova_register_effect_storage((void**)&_nova_handler_Fail);
     /* User-defined effects (and now Time) registered via function pointer
-     * set by generated code in nova_fn_main. If NULL (bootstrap / missing
-     * generated fn) — only Fail is registered (sufficient for current test
-     * suite — no CU exists without SOME effect_schemas entry beyond Fail,
-     * since Time/prelude is always present, so this should always be set
-     * in practice; NULL-guard kept for defensive bootstrap safety). */
-    if (_nova_register_effects_fn) {
-        _nova_register_effects_fn();
+     * set by generated code in nova_fn_main.
+     *
+     * [M-worker-effects-fn-startup-race] (Plan 259 Слой 2, 2026-08-09):
+     * `_nova_register_effects_fn` is assigned by a PLAIN C statement emitted
+     * a few lines AFTER `nova_runtime_auto_arm()` in the generated main()
+     * (emit_c.rs::emit_main_wrapper — `nova_evloop_init(); ...;
+     * _nova_register_effects_fn = _nova_register_all_effects_;`). Before
+     * Плана 259 Слой 2 this was always safely set by the time ANY worker
+     * thread could exist (materialize_pool ran lazily, on the first
+     * user-level spawn — necessarily long after that assignment executed).
+     * Слой 2 moves materialize_pool INSIDE `nova_runtime_auto_arm()` itself,
+     * so worker threads (this function) now start running BEFORE main
+     * thread reaches that assignment line — a worker could reach here while
+     * `_nova_register_effects_fn` is still NULL, silently register only
+     * `Fail` for its own TLS effect-storage table, and later mis-resolve
+     * (or drop) any user effect handler (`ResourceTrace`, `Fail[TimeoutError]`,
+     * etc.) inherited by a fiber that lands on that worker — reproduced via
+     * spec_tests/conformance/standalone/m2217_15b_cancel_consume_shield_narrowed
+     * going from deterministic PASS to deterministic FAIL under Слой 2
+     * (exit_calls never reaching 1 — the ResourceTrace handler silently not
+     * firing on the worker the child fiber happened to land on).
+     *
+     * Fix: this is a one-time, sub-millisecond startup rendezvous (main sets
+     * the pointer within microseconds of returning from auto_arm — a few
+     * more prelude lines), so a short ACQUIRE spin-wait is correct AND
+     * effectively free — a bounded upper limit (2s) guards against ever
+     * hard-hanging worker startup if the plain (non-atomic, codegen-emitted,
+     * can't be changed from nova_rt) write side is somehow never observed;
+     * that upper bound should never be hit in practice and is defensive
+     * only. `__atomic_load_n(..., ACQUIRE)` forces re-read every iteration
+     * (not hoisted out of the loop) and is what actually gives the SECOND
+     * (this) thread a chance to observe the plain store promptly — a bare
+     * non-atomic re-read in a tight loop is legal for the compiler to hoist
+     * into a one-time read outside the loop, which would spin forever on a
+     * stale cached NULL. */
+    {
+        void (*fn)(void) = NULL;
+        for (int _wait_iters = 0; _wait_iters < 2000; _wait_iters++) {
+            fn = __atomic_load_n(&_nova_register_effects_fn, __ATOMIC_ACQUIRE);
+            if (fn) break;
+            uv_sleep(1);
+        }
+        if (fn) {
+            fn();
+        } else {
+            /* Should never happen in practice (see comment above) — degrade
+             * the same way the pre-259 NULL-guard always did: only Fail is
+             * registered, loudly, not silently (bootstrap safety net). */
+            fprintf(stderr,
+                "nova: worker effects registration timed out waiting for "
+                "_nova_register_effects_fn (2s) — only Fail registered for "
+                "this worker; user effect handlers may misresolve on it.\n");
+        }
     }
 
     /* Plan 44.7: point this worker thread's preemption TLS at its own
@@ -1812,9 +1893,12 @@ static void _materialize_pool(void) {
 
     /* Фаза 2: только теперь стартуют OS-потоки — каждый _workers[i] уже
      * полностью инициализирован (см. комментарий выше). */
+    bool _nv259_diag = getenv("NOVA_DIAG_P259") != NULL;  /* Plan 259 point-probe */
     for (int i = 0; i < n_workers; i++) {
+        if (_nv259_diag) { fprintf(stderr, "[p259] phase2 before uv_thread_create i=%d/%d\n", i, n_workers); fflush(stderr); }
         NovaWorker* w = &_workers[i];
         int rc = uv_thread_create(&w->thread, _worker_main, w);
+        if (_nv259_diag) { fprintf(stderr, "[p259] phase2 after uv_thread_create i=%d rc=%d\n", i, rc); fflush(stderr); }
         if (rc != 0) {
             fprintf(stderr, "nova: uv_thread_create failed: %s\n", uv_strerror(rc));
             abort();
@@ -1825,6 +1909,7 @@ static void _materialize_pool(void) {
      * workers (sysmon читает _workers/_n_workers), остановлен ПЕРВЫМ в
      * shutdown (до free(_workers)). */
     nova_abool_init(&_sysmon_running, true);
+    if (_nv259_diag) { fprintf(stderr, "[p259] before sysmon uv_thread_create\n"); fflush(stderr); }
     if (uv_thread_create(&_sysmon_thread, _sysmon_main, NULL) == 0) {
         _sysmon_started = true;
     } else {
@@ -1833,13 +1918,16 @@ static void _materialize_pool(void) {
         _sysmon_started = false;
         nova_abool_store(&_sysmon_running, false);
     }
+    if (_nv259_diag) { fprintf(stderr, "[p259] after sysmon started=%d\n", (int)_sysmon_started); fflush(stderr); }
 
     _materialized = true;
 
+    if (_nv259_diag) { fprintf(stderr, "[p259] before nova_driver_init\n"); fflush(stderr); }
     /* Plan 83.11 Ф.2: start driver thread AFTER worker pool materialization.
      * Workers must exist before driver routes wake events to them
      * (home_worker_id references _workers[]). */
     nova_driver_init();
+    if (_nv259_diag) { fprintf(stderr, "[p259] after nova_driver_init -- materialize_pool done\n"); fflush(stderr); }
 }
 
 /* Plan 83.1 Ф.4: гарантирует, что пул материализован. Fast-path без

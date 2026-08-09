@@ -251,6 +251,11 @@ static void _nova_driver_arm_list_unlink(NovaSleepState* st) {
 /* ARM_SLEEP job handler — driver thread. */
 static void _nova_driver_handle_arm_sleep(NovaSleepState* st, uint64_t ms) {
     if (!st) return;
+    if (getenv("NOVA_DIAG_P259_DL")) {
+        fprintf(stderr, "[p259-dl] ARM_SLEEP recv st=%p scope=%p slot=%d ms=%llu expected_co=%p\n",
+                (void*)st, (void*)st->scope, st->slot, (unsigned long long)ms, (void*)st->expected_co);
+        fflush(stderr);
+    }
 
     /* Init timer on driver's loop. */
     int rc = uv_timer_init(&_nova_driver.loop, &st->timer);
@@ -395,6 +400,13 @@ static void _nova_driver_sleep_close_cb(uv_handle_t* h) {
 
     NovaFiberQueue* sc = st->scope;
     int sl = st->slot;
+    if (getenv("NOVA_DIAG_P259_DL")) {
+        int dbg_count = sc ? __atomic_load_n(&sc->count, __ATOMIC_ACQUIRE) : -1;
+        mco_coro* dbg_actual = (sc && sl >= 0 && sl < dbg_count) ? sc->fibers[sl] : NULL;
+        fprintf(stderr, "[p259-dl] CLOSE_CB st=%p scope=%p slot=%d count=%d actual_co=%p expected_co=%p\n",
+                (void*)st, (void*)sc, sl, dbg_count, (void*)dbg_actual, (void*)st->expected_co);
+        fflush(stderr);
+    }
     /* [M-mn-spawnctx-corruption-cancel-wake] fix (Plan 211 family): ACQUIRE-load
      * `count` BEFORE indexing `fibers[]`. This driver-thread read raced against
      * the WORKER thread's nova_scope_grow (fibers.h) — an unsynchronized
@@ -473,6 +485,10 @@ static void _nova_driver_sleep_close_cb(uv_handle_t* h) {
              * PARKED->IDLE, clears parked[slot]/parked_co[slot], and dispatches
              * expected_co to its home worker. */
             nova_goready(expected_co);
+            /* [M-driver-sleep-main-thread-wake-gap] — see the doc comment on
+             * the "Normal path" call below for the full writeup; same gap
+             * applies to this sub-case A resolution. */
+            if (st->home_worker_id < 0) nova_runtime_signal_main();
         } else {
             /* Sub-case B: expected_co is dead — slot was legitimately reused. */
             __atomic_store_n(&st->stage, NOVA_SLEEP_DRV_CLOSED, __ATOMIC_SEQ_CST);
@@ -486,6 +502,52 @@ static void _nova_driver_sleep_close_cb(uv_handle_t* h) {
     /* Generic wake — resolves parked_co[slot] and funnels through nova_goready;
      * the WAIT->DISPATCHED latch handles the wake-before-park race. */
     nova_sched_wake(st->scope, st->slot);
+
+    /* [M-driver-sleep-main-thread-wake-gap] (found investigating Plan 259
+     * regression in std/src/concurrency/supervised_cancel_direct_body_test.nv
+     * test A2 — a direct-body `Time.sleep()` inside `supervised(timeout:)`
+     * that should complete NATURALLY within budget was instead blocking for
+     * the FULL outer timeout, ~100x its own duration).
+     *
+     * Root cause: `st->scope` for a direct-body sleep is the OWNER's real
+     * (scope,slot) — e.g. `_nova_main_scope` for main-body — which always has
+     * `dispatch_ready == NULL` (only an actual `NovaWorker.scope` gets that
+     * hook wired, `runtime.c::_materialize_pool`). `nova_goready`'s bootstrap
+     * branch (nova_sched.h, `dispatch_ready == NULL`) documents its own
+     * contract as "supervised_step sees parked[slot] cleared... and resumes
+     * the fiber itself" — true ONLY if whatever drives that fiber is about to
+     * poll again SOON. For main-body specifically that driver is main's own
+     * `uv_run(nova_current_loop(), UV_RUN_ONCE)` wait loop, which is a REAL
+     * blocking syscall wait — it does not "poll again soon" on its own; it
+     * only returns when AN EVENT FIRES ON MAIN'S OWN LOOP. This close_cb runs
+     * on the DRIVER thread (a different OS thread/loop) — the wake above only
+     * flips flags this coroutine's owner reads AFTER it wakes; nothing pokes
+     * main's blocked loop to make it check sooner. The fiber is truly ready
+     * within `ms` but is not actually resumed until something ELSE
+     * independently wakes main's loop — in A2's case, the OUTER
+     * `supervised(timeout:)`'s own early-deadline timer (armed directly on
+     * `nova_current_loop()`, D451/Plan 221.1 №165), which is what finally let
+     * the sleep "return" ~2s late, indistinguishable from a spurious timeout
+     * because nothing threw.
+     *
+     * Fix: `home_worker_id` (captured on the sleep's own fiber thread before
+     * submitting ARM_SLEEP, `_nova_sleep_via_driver`) already tells us whether
+     * the sleeper's home is a NovaWorker (>=0, whose own loop uses NOWAIT
+     * polling — no gap, see `_worker_main`) or the main OS thread (-1, the
+     * ONLY genuinely-blocking pump in this runtime). `nova_runtime_signal_main`
+     * is the SAME cross-thread poke workers already use for this exact
+     * purpose (`nova_runtime_signal_main` doc comment, `runtime.c`) — reuse
+     * it here instead of leaving main to depend on an unrelated timer to
+     * eventually notice. No-op (checks `_main_wake_inited`) before the pool
+     * materializes or after shutdown. Verified: this exact fixture went from
+     * a deterministic ~2000ms/spurious-timeout to ~20ms/no-timeout with this
+     * one-line addition, reproduced BOTH on this branch and on pristine
+     * `main` (pre-existing, driver-mode-only latent bug — merely undetected
+     * before because no prior regression test combined driver-already-
+     * started + direct-body-sleep + an enclosing timeout/deadline + natural
+     * completion; Plan 259 Layer 2 makes driver-mode universal from process
+     * start, so this is the first wave where it fires deterministically). */
+    if (st->home_worker_id < 0) nova_runtime_signal_main();
 }
 
 /* ── Plan 83.11 Ф.4: blocking offload via driver UV loop ──────────

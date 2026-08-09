@@ -1,0 +1,33 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Decisive experiment: does test A2's failure mode reproduce under a
+// warm-up spawn (forcing the M:N driver to start BEFORE the measured
+// block) even WITHOUT Plan 259's Layer 2 change? If yes, this proves the
+// bug is pre-existing (latent, never covered by a regression test that
+// combines driver-mode + direct-body sleep + timeout: + natural
+// completion) rather than something Layer 2 introduces.
+
+module scratch259.repro_a2_warmup
+
+import std.time.duration
+
+fn main() {
+    // Force driver + pool materialization EARLY, same trick B2/B3 use in
+    // std/src/concurrency/supervised_cancel_direct_body_test.nv.
+    supervised {
+        spawn { 1.to_millis().sleep() }
+    }
+
+    ro t0 = Timestamp.now().unix_millis()
+    mut caught = AtomicBool.new(false)
+    ro r = with Fail[TimeoutError] = |_e| {
+        caught.store(true)
+        0
+    } {
+        supervised(timeout: 2.to_seconds()) {
+            20.to_millis().sleep()
+        }
+        7
+    }
+    ro elapsed = Timestamp.now().unix_millis() - t0
+    println("elapsed_ms=${elapsed} caught=${caught.load()} r=${r}")
+}
