@@ -47,10 +47,15 @@ authorial mistakes — documented in full in
   runtime bootstrap (`orm_decorators.nv`), and `Repo[T].bulk_load[K]` +
   `Vec[K].map(function_value)` can't infer a C type for the closure return
   (`E7001`, class `M-196.5-b3-closure-param-bind`, `orm_demo.nv`). Neither
-  file was moved to `_wip/` — `_wip/` is for concepts that need a from-scratch
-  rewrite; these two are finished content waiting on a compiler/std fix.
+  file was quarantined; both are finished content waiting on a compiler/std
+  fix.
 
-`_wip/` holds a further six files with concepts worth keeping but content
-that needs a clean rewrite (retracted import syntax, stale unsafe-trigger
-assumptions) — see [`_wip/README.md`](_wip/README.md). None of the above
-appear in the showcase table; none are part of the CI compile gate.
+There is no quarantine directory any more. `_wip/` held six files whose
+concepts were worth keeping but whose content needed a clean rewrite; it
+was removed on 2026-08-10 (registry #533). An exclusion with no expiry
+and no owner does not preserve a concept — it hides rot behind a name.
+The two concepts it held (effect density across a service's signatures,
+and an unsafe-block demo) are described in the commit that removed them
+and can be rewritten from that description whenever they earn the work.
+Every `.nv` under `examples/` is now inside the compile gate: there is no
+place left to put code that is exempt from compiling.
