@@ -43,7 +43,12 @@ fn join(parts []str) -> str {
         sb.append(p)
         first = false
     }
-    sb.into_str()
+    // №520: implicit #coerce finalization now counts as a consumption, so the
+    // bare value is the canonical form here and the explicit call would be
+    // genuinely redundant. This file is the no-false-positives reference, so it
+    // must show the canonical form — the finding on the old line was TRUE, not
+    // false.
+    sb
 }
 
 // Канон nv-coding-style §27: TRAILING-оператор в конце строки (не ведущий на
