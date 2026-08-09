@@ -1539,6 +1539,7 @@ mod tests {
                     span: sp(),
                 }],
                 inferred_map_v: None,
+                inferred_target_type: None,
             }),
         );
         let fns: Vec<&FnDecl> = vec![&mk];
