@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR E_MISSING_RETURN_TYPE
+//
+// Реестр 221.1 №493 (K1): block-body функция без `-> T`, чьё завершающее
+// выражение — голый ЛИТЕРАЛ ненулевого (не unit) типа. D45 требует явную
+// `-> T` всегда, когда результат не unit (spec/decisions/03-syntax.md D45)
+// — до фикса пропуск НЕ диагностировался НИЧЕМ: `magic()` молча становился
+// unit-функцией, значение `42` терялось без единого предупреждения.
+
+module neg.d45_missing_return_type_literal_neg
+
+fn magic() {
+    42
+}
+
+test "should not compile" {
+    ro x = magic()
+    assert(x == 42)
+}

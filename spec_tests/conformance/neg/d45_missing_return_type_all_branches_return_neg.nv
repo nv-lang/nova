@@ -1,0 +1,25 @@
+// EXPECT_COMPILE_ERROR E_MISSING_RETURN_TYPE
+//
+// Реестр 221.1 №493 (K1): a block-body whose trailing if/else has EVERY
+// branch ending in an explicit `return <value>` — no branch falls through
+// to hand the if a value, so the checker's best-effort inferer reports the
+// trailing POSITION's own type as `never` (correct — divergence). The
+// diagnostic recovers the REAL payload type (`int`) from the `return`
+// statements themselves rather than suggesting the useless `-> never`
+// (see `resolve_never_trailing_return_type`, types/mod.rs).
+
+module neg.d45_missing_return_type_all_branches_return_neg
+
+fn branchy(flag bool) {
+    println("computing")
+    if flag {
+        return 1
+    } else {
+        return 2
+    }
+}
+
+test "should not compile" {
+    ro x = branchy(true)
+    assert(x == 1)
+}

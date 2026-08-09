@@ -1,0 +1,21 @@
+// EXPECT_COMPILE_ERROR E_MISSING_RETURN_TYPE
+//
+// Реестр 221.1 №493 (K1): block-body с preceding statement + trailing
+// if/else-EXPRESSION, both branches produce a non-unit value (neither
+// branch diverges via `return`/`throw`) — D45 requires `-> T` here too.
+
+module neg.d45_missing_return_type_if_neg
+
+fn classify(n int) {
+    println("classifying")
+    if n > 0 {
+        "positive"
+    } else {
+        "non-positive"
+    }
+}
+
+test "should not compile" {
+    ro s = classify(5)
+    assert(s == "positive")
+}

@@ -7979,6 +7979,12 @@ impl<'a> TypeCheckCtx<'a> {
                     self.materialize_returns_in_block(b, ret);
                     self.check_closure_scalar_return_in_block(b, ret, errors);
                     self.check_ro_launder_return_in_block(b, ret, &scope, errors);
+                } else {
+                    // [реестр 221.1 №493, K1] no annotation at all — D45's other
+                    // half (see `check_missing_return_annotation`'s own doc):
+                    // a non-unit trailing here is a forgotten `-> T`, not a
+                    // legitimate `()`.
+                    self.check_missing_return_annotation(fd, b, &scope, errors);
                 }
             }
             FnBody::External => {}
@@ -8041,6 +8047,218 @@ impl<'a> TypeCheckCtx<'a> {
         }
         *self.ro_binding_names.borrow_mut() = ro_snapshot;
         *self.consume_binding_names.borrow_mut() = consume_snapshot;
+    }
+
+    /// [реестр 221.1 №493] Reconstruct the `TypeRef` scope a block's OWN
+    /// top-level `let`/`ro`/`mut` bindings contribute, layered onto the
+    /// (already-restored) outer `scope` passed in. `f1_block` above
+    /// snapshots exactly these entries at block-entry and restores them at
+    /// block-exit (block-out shadowing, ~L8003-8012/8036-8041) — by the
+    /// time `f1_check_fn`'s `FnBody::Block` arm can react to a missing
+    /// `-> T` (right after `f1_block` returns), the block's own locals are
+    /// gone from `scope` again. This is a pure, side-effect-free
+    /// re-derivation (no diagnostics, no `ro_binding_names`/channel
+    /// writes) — it exists ONLY so `infer_expr_type` can see the same
+    /// names `f1_block` saw while it ran, when re-typing the trailing
+    /// expression for `check_missing_return_annotation`.
+    fn scope_with_block_lets(
+        &self,
+        b: &Block,
+        scope: &HashMap<String, TypeRef>,
+    ) -> HashMap<String, TypeRef> {
+        let mut s = scope.clone();
+        for stmt in &b.stmts {
+            if let Stmt::Let(d) = stmt {
+                if let Some(name) = pattern_simple_name(&d.pattern) {
+                    match d.ty.clone().or_else(|| self.infer_expr_type(&d.value, &s)) {
+                        Some(t) => { s.insert(name, t); }
+                        None => { s.remove(&name); }
+                    }
+                }
+            }
+        }
+        s
+    }
+
+    /// [реестр 221.1 №493, K1] D45 (`03-syntax.md`): "block-body — `-> T`
+    /// обязателен, если тип не unit". Before this fix that half of D45 was
+    /// NOT enforced anywhere: a block-body function with no `-> T` at all
+    /// compiled cleanly regardless of what its trailing expression
+    /// produced — codegen's `return_type_c` (emit_c.rs) treats ANY
+    /// annotation-less block-body as `nova_unit`, so the actual trailing
+    /// value is silently discarded (never returned to the caller) with
+    /// zero diagnostic at any stage — the caller either gets a confusing
+    /// raw C compile error (if it tries to use the "returned" value) or,
+    /// if it ignores the return value (legal for any call), nothing at
+    /// all indicates the value was lost. Fixes docs/plans/221.1-bug-
+    /// sweep.md №493.
+    ///
+    /// Deliberately conservative: fires ONLY when `infer_expr_type` (the
+    /// same best-effort inferer the ro-launder/literal-coercion channels
+    /// above already rely on) can CONFIDENTLY resolve the trailing
+    /// expression's type AND that type is not `Unit`. `None` (type not
+    /// inferable by this best-effort pass) or an already-`Unit` trailing
+    /// stay silent on purpose — a false positive here (flagging a
+    /// legitimate void procedure) is strictly worse than under-catching:
+    /// it would force `-> ()` noise across the tree, which D45 explicitly
+    /// rejects ("`-> ()` опускается всегда", D20). A block with NO
+    /// trailing expression at all (`b.trailing.is_none()` — the body's
+    /// last construct is a genuine statement: `let`/`return`/loop/
+    /// assignment) is unconditionally unit and never reaches this check.
+    fn check_missing_return_annotation(
+        &self,
+        fd: &FnDecl,
+        b: &Block,
+        scope: &HashMap<String, TypeRef>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        let Some(trailing) = &b.trailing else { return };
+        // [реестр 221.1 №493] carrier scan finding (std/src/time/civil/
+        // tz_test.nv `push_u32`, std/src/unicode/collate.nv
+        // `push_implicit`): a trailing call to a `mut`-receiver FLUENT
+        // mutator (`b.push(x)` — `[]T`/`WriteBuffer`/`StringBuilder`
+        // core mutators, `push`/`append`/`insert`/… — chain_norm.rs's
+        // `FLUENT_BUILTIN_METHODS`, always reference-type buffers that
+        // mutate in place) is NOT a forgotten annotation: the call's
+        // effect already landed through the mutated (aliased) receiver
+        // — the `@`-fluent return is a redundant handle to the SAME
+        // object, so discarding it (no `-> T`) loses nothing, unlike a
+        // genuinely fresh value a pure computation hands back only
+        // through its return. Contrast with value-type `with_*`
+        // builders (D-with-star: "with_* всегда новое значение") — those
+        // do NOT mutate their receiver, so dropping their return WOULD
+        // be the real K1 bug; this exemption is syntactically scoped to
+        // the known-mutating builtin list only, not to fluent calls in
+        // general.
+        if trailing_is_fluent_mutator_call(trailing) {
+            return;
+        }
+        let infer_scope = self.scope_with_block_lets(b, scope);
+        let Some(mut ty) = self.infer_expr_type(trailing, &infer_scope) else { return };
+        if matches!(ty, TypeRef::Unit(_)) {
+            return;
+        }
+        // [реестр 221.1 №493] "every branch ends in an explicit `return`"
+        // (task's own required boundary case): `infer_expr_type`'s If/Match
+        // divergence handling (~L19801 `then_div && else_div`) truthfully
+        // reports the TRAILING POSITION's type as `never` here — no branch
+        // ever falls through to hand the if/match a value. `never` is a
+        // useless `-> T` suggestion (and arguably not even what D45 means
+        // by "unit" vs "not unit" — the fn DOES return a value, just always
+        // via an explicit `return`). Recover the real payload type from the
+        // `return <expr>` statements themselves; if they don't all agree on
+        // one concrete type, stay silent rather than suggest something
+        // possibly wrong (same conservative bias as the rest of this check).
+        if type_ref_is_never(&ty) {
+            match self.resolve_never_trailing_return_type(trailing, &infer_scope) {
+                Some(t) => ty = t,
+                None => return,
+            }
+        }
+        let ty_str = render_type_ref(&ty);
+        errors.push(Diagnostic::new(
+            format!(
+                "[E_MISSING_RETURN_TYPE] function `{name}` has a block-body (`{{ … }}`) \
+                 ending in a non-unit expression of type `{ty}`, but declares no `-> T` \
+                 return type. D45 requires an explicit return type for a block-body \
+                 function whenever the result is not unit — omitting `-> T` here silently \
+                 changes the function's return type to `()`, discarding this value. Add \
+                 `-> {ty}` to the function signature, or turn the trailing expression into \
+                 a statement (drop the last value) if nothing should be returned.",
+                name = fd.name,
+                ty = ty_str,
+            ),
+            trailing.span,
+        ));
+    }
+
+    /// [реестр 221.1 №493] All `return <expr>` values reachable from `e`
+    /// WITHOUT crossing into a different execution context — same
+    /// reachable-position set as `materialize_returns_in_expr`/`_in_block`
+    /// above (If/IfLet/Match/While/WhileLet/Loop/For/Block; deliberately
+    /// NOT `detach`/`spawn`/`parallel for`/closures, whose `return`
+    /// belongs to a different fn). If every value that resolved agrees on
+    /// one concrete type, that's the fn's real return type; otherwise
+    /// (mixed, or none resolved) `None` — the caller stays silent.
+    fn resolve_never_trailing_return_type(
+        &self,
+        e: &Expr,
+        scope: &HashMap<String, TypeRef>,
+    ) -> Option<TypeRef> {
+        let mut out: Vec<TypeRef> = Vec::new();
+        self.collect_return_value_types_expr(e, scope, &mut out);
+        let first = out.first()?;
+        let first_r = ResolvedType::from_type_ref(first);
+        if out.iter().all(|t| ResolvedType::from_type_ref(t) == first_r) {
+            Some(first.clone())
+        } else {
+            None
+        }
+    }
+
+    fn collect_return_value_types_block(
+        &self,
+        b: &Block,
+        scope: &HashMap<String, TypeRef>,
+        out: &mut Vec<TypeRef>,
+    ) {
+        for s in &b.stmts {
+            self.collect_return_value_types_stmt(s, scope, out);
+        }
+        if let Some(t) = &b.trailing {
+            self.collect_return_value_types_expr(t, scope, out);
+        }
+    }
+
+    fn collect_return_value_types_stmt(
+        &self,
+        s: &Stmt,
+        scope: &HashMap<String, TypeRef>,
+        out: &mut Vec<TypeRef>,
+    ) {
+        match s {
+            Stmt::Return { value: Some(e), .. } => {
+                if let Some(t) = self.infer_expr_type(e, scope) {
+                    out.push(t);
+                }
+            }
+            Stmt::Expr(e) => self.collect_return_value_types_expr(e, scope, out),
+            Stmt::ConsumeScope { body, .. } => self.collect_return_value_types_block(body, scope, out),
+            _ => {}
+        }
+    }
+
+    fn collect_return_value_types_expr(
+        &self,
+        e: &Expr,
+        scope: &HashMap<String, TypeRef>,
+        out: &mut Vec<TypeRef>,
+    ) {
+        match &e.kind {
+            ExprKind::If { then, else_, .. } | ExprKind::IfLet { then, else_, .. } => {
+                self.collect_return_value_types_block(then, scope, out);
+                if let Some(eb) = else_ {
+                    match eb {
+                        ElseBranch::Block(b) => self.collect_return_value_types_block(b, scope, out),
+                        ElseBranch::If(x) => self.collect_return_value_types_expr(x, scope, out),
+                    }
+                }
+            }
+            ExprKind::Match { arms, .. } => {
+                for arm in arms {
+                    match &arm.body {
+                        MatchArmBody::Expr(x) => self.collect_return_value_types_expr(x, scope, out),
+                        MatchArmBody::Block(b) => self.collect_return_value_types_block(b, scope, out),
+                    }
+                }
+            }
+            ExprKind::While { body, .. }
+            | ExprKind::WhileLet { body, .. }
+            | ExprKind::Loop { body, .. }
+            | ExprKind::For { body, .. } => self.collect_return_value_types_block(body, scope, out),
+            ExprKind::Block(b) => self.collect_return_value_types_block(b, scope, out),
+            _ => {}
+        }
     }
 
     fn f1_stmt(
@@ -35771,6 +35989,37 @@ fn type_ref_is_never(t: &TypeRef) -> bool {
         }
     }
     false
+}
+
+/// [реестр 221.1 №493] Same builtin list as `chain_norm.rs`'s
+/// `FLUENT_BUILTIN_METHODS` (kept as an independent literal — that list
+/// is private to `chain_norm`, and duplicating a dozen string literals
+/// is cheaper than exporting cross-module coupling for one call site).
+/// Every name here is a `[]T`/`WriteBuffer`/`StringBuilder` core mutator:
+/// reference-type buffer, mutates through the receiver in place, `@`-
+/// fluent return is always a redundant alias of the SAME object.
+const D493_FLUENT_MUTATOR_METHODS: &[&str] = &[
+    "push", "append", "extend_from", "copy_from", "insert",
+    "reserve", "fill", "clear", "extend_zero", "append_zero",
+    "write_byte", "write_bytes", "write_zero", "write_char", "write_str",
+    "write_u8", "write_i8",
+    "write_u16_le", "write_u16_be", "write_i16_le", "write_i16_be",
+    "write_u32_le", "write_u32_be", "write_i32_le", "write_i32_be",
+    "write_u64_le", "write_u64_be", "write_i64_le", "write_i64_be",
+    "write_f32_le", "write_f32_be", "write_f64_le", "write_f64_be",
+];
+
+/// [реестр 221.1 №493] Is `e` a bare `<receiver>.<method>(...)` call whose
+/// method is a known in-place fluent mutator (see
+/// `D493_FLUENT_MUTATOR_METHODS`)? Used by `check_missing_return_annotation`
+/// to exempt this one syntactic shape from `E_MISSING_RETURN_TYPE` — NOT a
+/// general "any fluent call is exempt" rule (value-type `with_*` builders
+/// stay covered, since dropping THEIR return genuinely loses the only copy
+/// of the new value).
+fn trailing_is_fluent_mutator_call(e: &Expr) -> bool {
+    let ExprKind::Call { func, .. } = &e.kind else { return false };
+    let func = func.unwrap_turbofish();
+    matches!(&func.kind, ExprKind::Member { name, .. } if D493_FLUENT_MUTATOR_METHODS.contains(&name.as_str()))
 }
 
 /// Plan 33.3 Ф.9 (D24): валидация axiom-формул внутри effect-блоков.
