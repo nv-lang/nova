@@ -24,11 +24,11 @@ fn make_holder() -> Holder {
 test "escape-promoted AtomicInt cell survives the constructing fn's return" {
     mut h = make_holder()
     ro before = h.cell.load()
-    println("before fetch_sub: ${before.to_str()}")
+    println("before fetch_sub: ${before}")
     ro witnessed = h.cell.fetch_sub(1)
-    println("fetch_sub witnessed: ${witnessed.to_str()}")
+    println("fetch_sub witnessed: ${witnessed}")
     ro after = h.cell.load()
-    println("after fetch_sub: ${after.to_str()}")
+    println("after fetch_sub: ${after}")
     // Expected (if escape-promotion is sound): before=1, witnessed=1, after=0.
     assert(before == 1)
     assert(witnessed == 1)

@@ -46,10 +46,12 @@ fn m_boxcap_serve(consume m_boxcap_listener TcpListener, m_boxcap_stop CancelTok
                     detach consume m_boxcap_stream {
                         match m_boxcap_inflight.try_acquire() {
                             Some(consume m_boxcap_permit) => {
+                                // nova:allow W_RESULT_DISCARDED -- фикстура проверяет поведение цикла событий, не результат записи
                                 ro _ = m_boxcap_stream.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
                                 m_boxcap_permit.release()
                             }
                             None => {
+                                // nova:allow W_RESULT_DISCARDED -- фикстура проверяет поведение цикла событий, не результат записи
                                 ro _ = m_boxcap_stream.write("HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n")
                             }
                         }

@@ -71,6 +71,7 @@ fn handle_one(stream mut TcpStream) Net Time -> bool {
     ro result = read_attempt(stream, idle_dl)
     match result {
         ReadAttempt.Bytes(chunk) => {
+            // nova:allow W_RESULT_DISCARDED -- фикстура проверяет поведение цикла событий, не результат записи
             ro _ = stream.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
             true
         }

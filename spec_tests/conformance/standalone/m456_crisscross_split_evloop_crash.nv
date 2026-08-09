@@ -37,7 +37,11 @@ fn crisscross_relay(consume conn1 TcpStream, consume conn2 TcpStream) Net -> (in
             while keep_going {
                 match r1.read(buf) {
                     Ok(0) => { keep_going = false }
-                    Ok(n) => { ro _ = w2.write(buf[0..n]); total = total + n }
+                    Ok(n) => {
+                        // nova:allow W_RESULT_DISCARDED -- фикстура проверяет поведение цикла событий, не результат записи
+                        ro _ = w2.write(buf[..n])
+                        total += n
+                    }
                     Err(_) => { keep_going = false }
                 }
             }
@@ -53,7 +57,11 @@ fn crisscross_relay(consume conn1 TcpStream, consume conn2 TcpStream) Net -> (in
             while keep_going {
                 match r2.read(buf) {
                     Ok(0) => { keep_going = false }
-                    Ok(n) => { ro _ = w1.write(buf[0..n]); total = total + n }
+                    Ok(n) => {
+                        // nova:allow W_RESULT_DISCARDED -- фикстура проверяет поведение цикла событий, не результат записи
+                        ro _ = w1.write(buf[..n])
+                        total += n
+                    }
                     Err(_) => { keep_going = false }
                 }
             }
@@ -62,8 +70,8 @@ fn crisscross_relay(consume conn1 TcpStream, consume conn2 TcpStream) Net -> (in
             ch_b.tx.send(total)
         }
     }
-    ro total_a = match ch_a.rx.recv() { Some(v) => v  None => -1 }
-    ro total_b = match ch_b.rx.recv() { Some(v) => v  None => -1 }
+    ro total_a = ch_a.rx.recv() ?? -1
+    ro total_b = ch_b.rx.recv() ?? -1
     (total_a, total_b)
 }
 

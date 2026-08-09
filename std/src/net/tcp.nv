@@ -403,6 +403,9 @@ export fn TcpWriteHalf consume @close() Net {
     // Best-effort/advisory by design (mirrors net_tcp_shutdown's own doc
     // comment): a shutdown failure here does not change what `close()` does
     // next — the split-refcounted close below still runs either way.
+    // Правило не читает поясняющий комментарий, хотя его текст это обещает
+    // (реестр 221.1 №504); подавление обязано стоять СТРОКОЙ ВЫШЕ находки.
+    // nova:allow W_RESULT_DISCARDED -- best-effort/advisory по замыслу: отказ shutdown не меняет того, что делает close() дальше
     ro _ = Net.shutdown(TcpStream.from_raw(@handle))
     Net.close_stream(TcpStream.from_raw(@handle))
 }
