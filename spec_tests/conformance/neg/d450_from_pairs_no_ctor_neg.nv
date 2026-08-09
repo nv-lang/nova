@@ -1,0 +1,24 @@
+// EXPECT_COMPILE_ERROR E_FROM_PAIRS_NO_CTOR
+//
+// D450 (spec/decisions/02-types.md) / реестр 221.1 №503: `#from_pairs` (and
+// `#from_fields`) requires exactly ONE static constructor,
+// `T[K, V].new(cap int = <default>)`. Before D450 a type marked with the
+// attribute but missing that constructor was silently dropped from
+// `from_pairs_types` — map-literal coercion into it just stopped working,
+// with zero diagnostic (the bug this fixture guards against). `NoCapCtor`
+// below has a `new` — but WITHOUT the required `cap` param — so it must
+// fail to compile with an actionable error, not silently ignore the
+// attribute.
+module neg.d450_from_pairs_no_ctor_neg
+
+#from_pairs
+type NoCapCtor[K, V] { entries [](K, V) }
+
+fn NoCapCtor[K, V].new() -> Self => { entries: [](K, V).new() }
+
+fn NoCapCtor[K, V] @insert(key K, value V) -> Option[V] => None
+
+fn main() {
+    ro m NoCapCtor[str, int] = [ "a": 1 ]
+    print(m.entries.len())
+}

@@ -2516,6 +2516,14 @@ pub enum ExprKind {
         /// «no member named 'debug' in 'struct Nova_HashMap'».
         /// `None` для обычного record-литерала или type_name = Some.
         inferred_map_v: Option<TypeRef>,
+        /// D450 (реестр 221.1 №503): target-type name for the `#from_fields`
+        /// coercion, mirroring `MapLit.inferred_target_type` (Plan 52 Ф.23).
+        /// Populated ALONGSIDE `inferred_map_v` at the same annotate site
+        /// (`types/mod.rs`, `MapLitAnnotator`), from the expected type's own
+        /// path — so a `#from_fields` type OTHER than `HashMap` (e.g.
+        /// `IndexMap`) desugars into ITSELF, not a hardcoded `HashMap`.
+        /// `None` → fallback `HashMap` (legacy / `inferred_map_v: None`).
+        inferred_target_type: Option<Vec<String>>,
     },
     /// `(a, b, c)` кортеж
     TupleLit(Vec<Expr>),

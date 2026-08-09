@@ -1454,6 +1454,7 @@ fn synth_clone_record_body(type_name: &str, fields: &[DerivedField]) -> Expr {
         type_name: Some(vec![type_name.to_string()]),
         fields: lit_fields,
         inferred_map_v: None,
+        inferred_target_type: None,
     })
 }
 
@@ -1898,6 +1899,7 @@ fn variant_construct(v: &SumVariant, values: Vec<Expr>) -> Expr {
                 })
                 .collect(),
             inferred_map_v: None,
+            inferred_target_type: None,
         }),
     }
 }
@@ -2834,6 +2836,7 @@ fn deerror_unknown_variant(tag_local: &str, variant_names: &[String]) -> Expr {
                 is_spread: false, at_shorthand: false, span: span_dummy() },
         ],
         inferred_map_v: None,
+        inferred_target_type: None,
     });
     let de = ex(ExprKind::Call {
         func: Box::new(ex(ExprKind::Path(vec!["DeError".to_string(), "new".to_string()]))),
@@ -2919,6 +2922,7 @@ fn variant_ctor_expr(v: &SumVariant) -> Expr {
                 at_shorthand: false, span: span_dummy(),
             }).collect(),
             inferred_map_v: None,
+            inferred_target_type: None,
         }),
     }
 }
@@ -3339,6 +3343,7 @@ pub fn synthesize_deserialize<Q: DeriveQuery>(
         type_name: Some(vec![type_decl.name.clone()]),
         fields: lit_fields,
         inferred_map_v: None,
+        inferred_target_type: None,
     });
     let ok = call(ident("Ok"), vec![record_lit]);
         FnBody::Block(block_with_trailing(stmts, ok))

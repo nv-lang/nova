@@ -946,6 +946,7 @@ impl EmbedCtx {
                         type_name: Some(vec!["EmbeddedEntry".to_string()]),
                         fields: vec![path_field, data_field],
                         inferred_map_v: None,
+                        inferred_target_type: None,
                     },
                     span,
                 ))

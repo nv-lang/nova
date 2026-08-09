@@ -10102,7 +10102,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // the runtime RecordLit arm — a D55 map-coercion literal never reaches
             // here (desugared to a HashMap-builder call long before const codegen,
             // which would fail check_const_constexpr_ex upstream anyway).
-            ExprKind::RecordLit { type_name, fields, inferred_map_v: None } => {
+            ExprKind::RecordLit { type_name, fields, inferred_map_v: None, .. } => {
                 self.emit_const_record_lit(type_name.as_deref(), fields, target_ty_c)
             }
             _ => self.emit_const_expr(expr),
@@ -30774,7 +30774,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // checker'ского `scan_guard_rec`). Инициализация consume-поля
             // guarded-биндингом в tail/return EXPR — санкционированный
             // вынос: дизарм при конструировании литерала.
-            ExprKind::RecordLit { type_name, fields, inferred_map_v } => {
+            ExprKind::RecordLit { type_name, fields, inferred_map_v, .. } => {
                 let consume_field_names: Option<&HashSet<String>> =
                     if inferred_map_v.is_some() {
                         None
@@ -38034,7 +38034,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// record параметр) — оригинальный fallback-путь (и его error)
     /// остаётся нетронутым.
     fn try_type_anon_record_lit(&self, inner: &Expr, param_c_ty: Option<&String>) -> Option<Expr> {
-        let ExprKind::RecordLit { type_name: None, fields, inferred_map_v: None } = &inner.kind
+        let ExprKind::RecordLit { type_name: None, fields, inferred_map_v: None, .. } = &inner.kind
         else {
             return None;
         };
@@ -38050,6 +38050,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 type_name: Some(vec![struct_name]),
                 fields: fields.clone(),
                 inferred_map_v: None,
+                inferred_target_type: None,
             },
             inner.span,
         ))
