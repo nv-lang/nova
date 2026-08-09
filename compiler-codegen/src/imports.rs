@@ -194,6 +194,7 @@ fn compute_prelude_imports(
     stdlib_dir: &Path,
     entry_path: &Path,
 ) -> Result<Vec<Import>> {
+    let _t = crate::perf_timer::PerfTimer::new("imports-prelude-compute");
     let is_prelude_self = crate::manifest::is_prelude_self_module(&module.name);
     let has_no_prelude = module
         .attrs
@@ -293,6 +294,7 @@ pub fn collect_all_signatures(
     repo: &Path,
     stdlib_dir: &Path,
 ) -> Result<ModuleSigTable> {
+    crate::imports_stats::note_sig_call();
     let entry_dir = entry_path.parent().unwrap_or(repo).to_path_buf();
     let mut table = ModuleSigTable::new();
     let mut visited: HashSet<Vec<String>> = HashSet::new();
@@ -429,13 +431,20 @@ fn collect_sigs_one(
     in_progress.insert(module_key.clone());
 
     for peer_path in &resolved_paths {
-        let peer_src = match std::fs::read_to_string(peer_path) {
-            Ok(s) => s,
-            Err(_) => continue,
+        let peer_src = {
+            let _t = crate::perf_timer::PerfTimer::new("imports-peer-io");
+            match std::fs::read_to_string(peer_path) {
+                Ok(s) => s,
+                Err(_) => continue,
+            }
         };
-        let peer_module = match crate::parser::parse(&peer_src) {
-            Ok(m) => m,
-            Err(_) => continue,
+        crate::imports_stats::note_parse(peer_path, peer_src.len(), true);
+        let peer_module = {
+            let _tp = crate::perf_timer::PerfTimer::new("imports-peer-parse");
+            match crate::parser::parse(&peer_src) {
+                Ok(m) => m,
+                Err(_) => continue,
+            }
         };
         if !cfg_active(&peer_module) {
             continue;
@@ -737,6 +746,7 @@ pub fn resolve_imports_inline_ex(
     stdlib_dir: &Path,
     include_test_peers: bool,
 ) -> Result<()> {
+    crate::imports_stats::note_resolve_call();
     let entry_dir = entry_path.parent().unwrap_or(repo).to_path_buf();
     // Plan 42.14 Ф.3 ([M11]): cycle detection keyed by declared module
     // name (Vec<String>), не canonical PathBuf — symlink-safe.
@@ -926,6 +936,7 @@ pub fn resolve_imports_inline_ex(
                 }
                 let fid = next_file_id;
                 next_file_id += 1;
+                crate::imports_stats::note_parse(&sp, src.len(), false);
                 let sib_mod = parser::parse_with_file_id(&src, fid).map_err(|d| {
                     let (line, col) = byte_to_line_col(&src, d.span.start);
                     anyhow!(
@@ -1931,11 +1942,17 @@ fn resolve_one(
 
     // ─── PASS 1: parse every peer, seed the FULL provisional export cache ───
     for peer_path in &resolved_paths {
-        let peer_canon = peer_path.canonicalize()
-            .map_err(|e| anyhow!("canonicalize {}: {}", peer_path.display(), e))?;
+        let peer_canon = {
+            let _t = crate::perf_timer::PerfTimer::new("imports-peer-canon");
+            peer_path.canonicalize()
+                .map_err(|e| anyhow!("canonicalize {}: {}", peer_path.display(), e))?
+        };
 
-        let peer_src = std::fs::read_to_string(peer_path)
-            .map_err(|e| anyhow!("failed to read imported module {}: {}", peer_path.display(), e))?;
+        let peer_src = {
+            let _t = crate::perf_timer::PerfTimer::new("imports-peer-io");
+            std::fs::read_to_string(peer_path)
+                .map_err(|e| anyhow!("failed to read imported module {}: {}", peer_path.display(), e))?
+        };
         let peer_path_str = peer_path.to_string_lossy().to_string();
 
         // Plan 42 Sub-plan 42.4 шаг 2: allocate unique FileId для этого peer
@@ -1944,13 +1961,17 @@ fn resolve_one(
         let peer_file_id = *next_file_id;
         *next_file_id += 1;
 
-        let peer_module = parser::parse_with_file_id(&peer_src, peer_file_id)
-            .map_err(|d| {
-                let (line, col) = byte_to_line_col(&peer_src, d.span.start);
-                anyhow!(
-                    "in imported module '{}' ({}): {}:{}: {}",
-                    imp.path.join("."), peer_path_str, line, col, d.message)
-            })?;
+        crate::imports_stats::note_parse(peer_path, peer_src.len(), false);
+        let peer_module = {
+            let _tp = crate::perf_timer::PerfTimer::new("imports-peer-parse");
+            parser::parse_with_file_id(&peer_src, peer_file_id)
+                .map_err(|d| {
+                    let (line, col) = byte_to_line_col(&peer_src, d.span.start);
+                    anyhow!(
+                        "in imported module '{}' ({}): {}:{}: {}",
+                        imp.path.join("."), peer_path_str, line, col, d.message)
+                })?
+        };
 
         // Plan 42.12 Ф.2: проверка module-level `#cfg(feature/target_os)`.
         // Если peer объявил inactive cfg — skip целиком (не merge items,
@@ -1998,6 +2019,7 @@ fn resolve_one(
         // module finishes — same content, just recomputed via the merge
         // loop's identical `module_has_exports`/`is_export` filter.
         {
+            let _t = crate::perf_timer::PerfTimer::new("imports-exports-scan");
             let peer_export_names = exported_names_from_items(&peer_module.items);
             visited.entry(module_key.clone())
                 .or_insert_with(Vec::new)
@@ -2024,16 +2046,19 @@ fn resolve_one(
         // Plan 42.15: imported_item_names заполняется ниже после resolve.
         // is_entry_module = false — это peer ИМПОРТИРОВАННОГО модуля,
         // его items_here НЕ должны протекать в entry's shared_decls.
-        peer_files.push(PeerFile {
-            path: peer_canon,
-            file_id: peer_file_id,
-            imports: peer_module.imports.clone(),
-            items_here: peer_module.items.clone(),
-            imported_item_names: HashSet::new(),
-            is_entry_module: false,
-            // Plan 81 Ф.1: declared module name для group-isolation.
-            module_name: peer_module.name.clone(),
-        });
+        {
+            let _t = crate::perf_timer::PerfTimer::new("imports-peerfile-clone");
+            peer_files.push(PeerFile {
+                path: peer_canon,
+                file_id: peer_file_id,
+                imports: peer_module.imports.clone(),
+                items_here: peer_module.items.clone(),
+                imported_item_names: HashSet::new(),
+                is_entry_module: false,
+                // Plan 81 Ф.1: declared module name для group-isolation.
+                module_name: peer_module.name.clone(),
+            });
+        }
 
         // Plan 42.15: accumulator имён items видимых ЭТОМУ peer'у через
         // его прямые imports. Передаётся в resolve_one для каждого sub —
@@ -2144,6 +2169,7 @@ fn resolve_one(
         // Plan 42.15: имена merged items пишутся в `visible_acc` —
         // caller (peer/entry который написал `imp`) получает их в свой
         // visible scope. Это и есть «import притащил эти имена».
+        let _tmerge = crate::perf_timer::PerfTimer::new("imports-merge");
         for item in peer_module.items {
             // Plan 81 Ф.1: извлекаем is_export вместе с именем.
             let (name, is_export) = match &item {
@@ -2333,6 +2359,7 @@ fn read_module_decl(path: &Path) -> Option<Vec<String>> {
 /// path collapse to one key — this mirrors the fallback branch this
 /// function replaces (used historically only when the decl-scan failed).
 pub(crate) fn canonical_module_key(resolved_paths: &[PathBuf]) -> Vec<String> {
+    let _t = crate::perf_timer::PerfTimer::new("imports-canonkey");
     debug_assert!(!resolved_paths.is_empty(), "caller must guard empty resolved_paths");
     if resolved_paths.is_empty() {
         return Vec::new();
@@ -2363,6 +2390,7 @@ pub(crate) fn canonical_module_key(resolved_paths: &[PathBuf]) -> Vec<String> {
 /// a folder-module *entry* against the folder-module D29 rule rather than
 /// the single-file rule — and by the test-runner directory walk.
 pub fn is_folder_module_peer(path: &Path) -> bool {
+    let _t = crate::perf_timer::PerfTimer::new("imports-folder-detect");
     let parent = match path.parent() {
         Some(p) => p,
         None => return false,
@@ -3202,6 +3230,23 @@ pub fn resolved_dependency_roots(pkg_dir: &Path) -> Vec<PathBuf> {
 }
 
 fn resolve_module_paths(
+    parts: &[String],
+    entry_dir: &Path,
+    repo: &Path,
+    stdlib_dir: &Path,
+    include_test_peers: bool,
+    rel_root: Option<&Path>,
+    dep_root: Option<&Path>,
+) -> Result<Vec<PathBuf>, ResolveErr> {
+    // План 252 Ф.0: под-таймер (вложен в `imports-resolve`, время учтено
+    // дважды — доли читать относительно родителя).
+    let _t = crate::perf_timer::PerfTimer::new("imports-modpaths");
+    resolve_module_paths_inner(
+        parts, entry_dir, repo, stdlib_dir, include_test_peers, rel_root, dep_root,
+    )
+}
+
+fn resolve_module_paths_inner(
     parts: &[String],
     entry_dir: &Path,
     repo: &Path,

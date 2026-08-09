@@ -5840,6 +5840,21 @@ fn cmd_test(
     if aggregate {
         let table = nova_codegen::perf_timer::dump_aggregated();
         if !table.is_empty() { eprintln!("{}", table); }
+        // План 252 Ф.0: счётчики стадии `imports-resolve` (молчат без
+        // NOVA_IMPORTS_STATS=1).
+        let stats = nova_codegen::imports_stats::dump_stats();
+        if !stats.is_empty() { eprintln!("{}", stats); }
+        // `measure.sh` глушит stdout/stderr измеряемой команды, поэтому без
+        // файлового стока таблицу с валидного (прошедшего вороты занятости)
+        // прогона забрать нечем. Аппендит — виден каждый прогон серии.
+        if let Ok(log_path) = std::env::var("NOVA_PERF_TIMER_LOG") {
+            use std::io::Write;
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true).append(true).open(&log_path)
+            {
+                let _ = writeln!(f, "{}{}", table, stats);
+            }
+        }
     }
 
     if summary.fail > 0 {
