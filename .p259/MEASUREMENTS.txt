@@ -1,0 +1,46 @@
+p259-gate-speed — журнал замеров (чекпоинт-файл окна, не отчёт)
+==============================================================
+Бинарь: копия nova.exe из главной репы (коммит 8e4038cbe, 2026-08-09 13:20),
+        лежит в .p259/nova.exe — чтобы пересборка гейтом не подменила его в
+        середине замера.
+Рантайм/GC: NOVA_CG_INCLUDE/NOVA_RT_DIR/NOVA_GC_* -> главная репа (.p259/env.sh).
+НАГРУЗКА МАШИНЫ: в момент всех замеров идёт гейт (есть /tmp/gate_full.log без
+        .done) + 4 параллельных окна; wmic loadpercentage 50% при 16 логич.
+        ядрах. measure.sh ОТКАЗЫВАЕТСЯ мерить в таких условиях (ворота 1) —
+        поэтому замеры сняты напрямую, и КАЖДАЯ цифра ниже помечена нагрузкой.
+
+--------------------------------------------------------------------------
+[1] СТРУКТУРА ГЕЙТОВОГО ШАГА "мега-CU"
+    Команда: nova test --positive --compile-error spec_tests/conformance
+    --list даёт 781 РАБОТУ (job), а не одну:
+      * 1 job  = folder-module spec_tests.conformance -> ОДИН слитый CU из
+                 1161 top-level .nv (все объявляют `module spec_tests.conformance`),
+                 entry = алфавитно первый peer `a_q3_println_debug_record`;
+      * 6 job  = top-level `*_slow.nv` (отдельные CU);
+      * 774 job= подкаталоги spec_tests/conformance/*/ (каждый — свой CU).
+    Время самого `--list` (только обход+чтение заголовков): 28.9 с (1 прогон,
+    под нагрузкой).
+
+[2] МЕГА-CU (job a_q3_println_debug_record), --jobs 1, NOVA_PERF_TIMER=1
+    Прогон ОБОРВАН по 10-мин потолку команды -> сам job > 600 с.
+    Маркеры __PERF__, успевшие напечататься (ns -> с):
+       imports-resolve          99.066 с   <-- доминирует фронтенд
+       field-cache               3.087 с
+       embed-resolve             3.076 с
+       type-check                2.507 с
+       post-normalize-annotate   2.363 с
+       verify                    2.248 с
+       const-fn-rewrite          0.100 с
+       lints                     0.063 с
+       alpha-rename              0.055 с
+       callnorm                  0.049 с
+       annotate-maps             0.077 с
+       auto-derive-inject        0.015 с
+       desugar                   0.016 с
+       effects-infer             0.002 с
+       const-fn-mono             0.0002 с
+       parse                     0.0005 с (только entry-файл; peers парсятся
+                                          внутри imports-resolve)
+       ИТОГО фронтенд до codegen  ~112.7 с
+    Маркер `codegen` НЕ напечатан за оставшиеся ~480 с -> кодогенерация
+    мега-CU идёт БОЛЬШЕ 8 минут. Файл .c на диск не лёг (проверено).
