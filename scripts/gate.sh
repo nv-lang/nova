@@ -384,6 +384,7 @@ ANTIROT_LIST="$ROOT/docs/plans/wip/197-f5-gate-list.txt"
 if [ ! -f "$ANTIROT_LIST" ]; then
     fail "нет списка anti-rot $ANTIROT_LIST (CI читает его же)"
 else
+    tr -d "" < "$ANTIROT_LIST" > "${TMPDIR:-/tmp}/gate_antirot_list_$$.txt"
     ANTIROT_FAILED=""
     ANTIROT_N=0
     while read -r _kind _path; do
@@ -402,7 +403,13 @@ else
             ANTIROT_FAILED="$ANTIROT_FAILED $_path"
         fi
         rm -f "$_alog"
-    done < "$ANTIROT_LIST"
+    # `tr -d` обязателен: у списка СМЕШАННЫЕ окончания строк, и без очистки
+    # `$_path` приходит с невидимым возвратом каретки — nova отвечает
+    # `path not found` на путь, который в выводе выглядит совершенно верным.
+    # Поймано 2026-08-09: все 32 цели падали в гейте и проходили вручную,
+    # потому что вручную я читал грепнутое подмножество, а не файл целиком.
+    done < "${TMPDIR:-/tmp}/gate_antirot_list_$$.txt"
+    rm -f "${TMPDIR:-/tmp}/gate_antirot_list_$$.txt"
     echo "anti-rot :: целей проверено $ANTIROT_N"
     [ -z "$ANTIROT_FAILED" ] || fail "examples anti-rot:$ANTIROT_FAILED"
 fi
