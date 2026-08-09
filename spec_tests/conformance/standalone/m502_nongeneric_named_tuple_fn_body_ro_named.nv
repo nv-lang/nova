@@ -1,0 +1,25 @@
+// реестр 221.1 №502 — regression guard: NON-generic named tuple element,
+// `ro`-binding of a NAMED field access (`.key`) in a plain fn body (no
+// match, no loop). Must stay green after the fix.
+module standalone.m502_nongeneric_named_tuple_fn_body_ro_named
+
+type M502NfrPair(key str, value int)
+
+type M502NfrBox priv { xs Vec[M502NfrPair] }
+
+export fn M502NfrBox.new() -> Self => { xs: Vec[M502NfrPair].new() }
+
+export fn M502NfrBox mut @push(k str, v int) {
+    @xs.push(M502NfrPair(k, v))
+}
+
+export fn M502NfrBox @first_key() -> str {
+    ro fk = @xs[0].key
+    fk
+}
+
+test "№502 regression: non-generic named tuple, ro + plain fn body + named access" {
+    mut b = M502NfrBox.new()
+    b.push("hello", 7)
+    assert(b.first_key() == "hello")
+}

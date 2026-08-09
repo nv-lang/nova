@@ -1,0 +1,24 @@
+// реестр 221.1 №502 — generic named tuple element, `mut`-binding of a
+// NAMED field access (`.key`) in a plain fn body (no match, no loop).
+module standalone.m502_generic_named_tuple_fn_body_mut_named
+
+type M502GfmEnt[K, V](key K, value V)
+
+type M502GfmBox[K, V] priv { xs Vec[M502GfmEnt[K, V]] }
+
+export fn M502GfmBox[K, V].new() -> Self => { xs: Vec[M502GfmEnt[K, V]].new() }
+
+export fn M502GfmBox[K, V] mut @push(k K, v V) {
+    @xs.push(M502GfmEnt(k, v))
+}
+
+export fn M502GfmBox[K, V] @first_key() -> K {
+    mut fk = @xs[0].key
+    fk
+}
+
+test "№502: generic named tuple, mut + plain fn body + named access" {
+    mut b = M502GfmBox[str, int].new()
+    b.push("hello", 7)
+    assert(b.first_key() == "hello")
+}

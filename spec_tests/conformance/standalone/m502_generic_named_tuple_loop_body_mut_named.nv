@@ -1,0 +1,31 @@
+// реестр 221.1 №502 — generic named tuple element, `mut`-binding of a
+// NAMED field access (`.value`) inside a `while` loop body.
+module standalone.m502_generic_named_tuple_loop_body_mut_named
+
+type M502GlmEnt[K, V](key K, value V)
+
+type M502GlmBox[K, V] priv { xs Vec[M502GlmEnt[K, V]] }
+
+export fn M502GlmBox[K, V].new() -> Self => { xs: Vec[M502GlmEnt[K, V]].new() }
+
+export fn M502GlmBox[K, V] mut @push(k K, v V) {
+    @xs.push(M502GlmEnt(k, v))
+}
+
+export fn M502GlmBox[K, V] @sum_values() -> int {
+    mut total = 0
+    mut i = 0
+    while i < @xs.len() {
+        mut cur = @xs[i].value
+        total = total + cur
+        i = i + 1
+    }
+    total
+}
+
+test "№502: generic named tuple, mut + loop body + named access" {
+    mut b = M502GlmBox[str, int].new()
+    b.push("a", 10)
+    b.push("b", 20)
+    assert(b.sum_values() == 30)
+}

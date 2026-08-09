@@ -1,0 +1,32 @@
+// реестр 221.1 №502 — regression guard: NON-generic named tuple element,
+// `mut`-binding of a NAMED field access (`.value`) inside a `while` loop
+// body. Must stay green after the fix.
+module standalone.m502_nongeneric_named_tuple_loop_body_mut_named
+
+type M502NlmPair(key str, value int)
+
+type M502NlmBox priv { xs Vec[M502NlmPair] }
+
+export fn M502NlmBox.new() -> Self => { xs: Vec[M502NlmPair].new() }
+
+export fn M502NlmBox mut @push(k str, v int) {
+    @xs.push(M502NlmPair(k, v))
+}
+
+export fn M502NlmBox @sum_values() -> int {
+    mut total = 0
+    mut i = 0
+    while i < @xs.len() {
+        mut cur = @xs[i].value
+        total = total + cur
+        i = i + 1
+    }
+    total
+}
+
+test "№502 regression: non-generic named tuple, mut + loop body + named access" {
+    mut b = M502NlmBox.new()
+    b.push("a", 10)
+    b.push("b", 20)
+    assert(b.sum_values() == 30)
+}

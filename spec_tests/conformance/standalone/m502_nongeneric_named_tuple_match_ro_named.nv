@@ -1,0 +1,34 @@
+// реестр 221.1 №502 — regression guard: NON-generic named tuple element
+// (the boundary probe from the bug's own writeup, "собирается и
+// работает" BEFORE the fix) — same shape (Vec[T]-field, ro-binding,
+// match arm, named access) as the generic canonical fixture, minus
+// generics. Must stay green after the fix (Vec[T]-index-arm change in
+// types/mod.rs and the new NamedTuple mono-arm in emit_c.rs are both
+// gated so a fully-concrete named tuple is unaffected — this fixture is
+// the executable proof).
+module standalone.m502_nongeneric_named_tuple_match_ro_named
+
+type M502NmrPair(key str, value int)
+
+type M502NmrBox priv { xs Vec[M502NmrPair] }
+
+export fn M502NmrBox.new() -> Self => { xs: Vec[M502NmrPair].new() }
+
+export fn M502NmrBox mut @put(k str, v int) -> Option[int] {
+    match @xs.len() {
+        0 => { @xs.push(M502NmrPair(k, v))  None }
+        _ => {
+            ro old = @xs[0].value
+            @xs[0] = M502NmrPair(k, v)
+            Some(old)
+        }
+    }
+}
+
+test "№502 regression: non-generic named tuple, ro + match + named access" {
+    mut b = M502NmrBox.new()
+    ro first = b.put("a", 1)
+    assert(first == None)
+    ro second = b.put("a", 2)
+    assert(second == Some(1))
+}

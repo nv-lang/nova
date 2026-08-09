@@ -1,0 +1,26 @@
+// реестр 221.1 №502 — generic named tuple element, `ro`-binding of a
+// NAMED field access in a plain fn body (no `match` involved at all —
+// confirms the bug is not match-specific, just any statement-position
+// `let`/`ro`/`mut` binding of `<Vec[Generic[..]]-expr>[i].field`).
+module standalone.m502_generic_named_tuple_fn_body_ro_named
+
+type M502GfrEnt[K, V](key K, value V)
+
+type M502GfrBox[K, V] priv { xs Vec[M502GfrEnt[K, V]] }
+
+export fn M502GfrBox[K, V].new() -> Self => { xs: Vec[M502GfrEnt[K, V]].new() }
+
+export fn M502GfrBox[K, V] mut @push(k K, v V) {
+    @xs.push(M502GfrEnt(k, v))
+}
+
+export fn M502GfrBox[K, V] @first_value() -> V {
+    ro fv = @xs[0].value
+    fv
+}
+
+test "№502: generic named tuple, ro + plain fn body + named access" {
+    mut b = M502GfrBox[str, int].new()
+    b.push("a", 7)
+    assert(b.first_value() == 7)
+}
