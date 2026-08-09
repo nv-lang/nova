@@ -1831,6 +1831,30 @@ pub struct CEmitter {
     /// call on the same tracked binding must NOT falsely disarm it (that
     /// would leak the resource by skipping the real cleanup at scope-exit).
     consume_receiver_methods: HashMap<String, HashSet<String>>,
+    /// №465 (A8.29, [M-124.8-zero-on-move-auto-inject]): source type name →
+    /// `true` if `AllocKind::Value` record (needs the promotion guard — a
+    /// PARTICULAR binding may have been heap-promoted by escape analysis,
+    /// in which case its C type is `Nova_<X>*`, not `NovaValue_<X>`, and
+    /// zeroing it would alias the new owner's storage), `false` if named
+    /// tuple / ordinary newtype (no promotion concept — `NovaTuple_<X>` /
+    /// `Nova_<X>` scalar-or-pointer typedef is ALWAYS an independent
+    /// byte-copy on move, safe unconditionally). Only populated for types
+    /// that ALSO have `consume` (checker `E_ZERO_ON_MOVE_REQUIRES_CONSUME`)
+    /// and are NOT heap-allocated records (checker
+    /// `E_ZERO_ON_MOVE_ALIASED_STORAGE`) — heap records move by pointer-
+    /// aliasing (old/new binding share the identical block); zeroing the
+    /// pointee would corrupt the value for the new owner, so they are never
+    /// inserted here even defensively (see `debt_is_runtime_backed_newtype`
+    /// guard at the populate site for the Newtype sync-primitive case).
+    /// Consulted by `zero_on_move_rewrite_call` (consume-param-arg sites)
+    /// and the `Stmt::Return` bare-Ident disarm block (consume-return
+    /// site). Receiver-consuming-call sites (`x.method()`) are NOT covered
+    /// — `prepare_method_recv` passes `&x` (alias, not copy) even for
+    /// `AllocKind::Value`, and escape_analyze.rs deliberately excludes the
+    /// method-call receiver position from its escape-sink tracking, so
+    /// there is no compiler-verified guarantee the callee doesn't stash
+    /// the pointer. Empirically confirmed via scratch465/probe1-3.nv.
+    zero_on_move_types: HashMap<String, bool>,
     // План 253.4 Ф.1 (№480, 2026-08-08): ПОЛЕ `auto_cleanup_active` СНЯТО.
     // Это был реестр №2 из двух: `(name, block_id, entry_idx)` взведённых
     // auto-cleanup-биндингов, наполнявшийся ОТДЕЛЬНЫМ третьим шагом
@@ -2654,6 +2678,7 @@ impl CEmitter {
             free_fn_consume_param_positions: HashMap::new(),
             method_consume_param_positions: HashMap::new(),
             consume_receiver_methods: HashMap::new(),
+            zero_on_move_types: HashMap::new(),
             loop_body_has_scope: Vec::new(),
             var_boxed: HashMap::new(),
             detach_box_hoist: None,
@@ -5384,6 +5409,50 @@ impl CEmitter {
                             {
                                 self.auto_cleanup_types.insert(recv.type_name.clone());
                             }
+                        }
+                    }
+                }
+            };
+            collect(&module.items);
+            for pf in &module.peer_files {
+                collect(&pf.items_here);
+            }
+        }
+
+        // №465 (A8.29): pre-pass — collect `#zero_on_move` types eligible for
+        // auto-inject. Re-derives the safe-kind classification independently
+        // of the checker (defensive — codegen doesn't blindly trust an
+        // external invariant, same posture as the other pre-passes here):
+        // `AllocKind::Value` record → `true` (needs the per-binding
+        // promotion guard at the injection site); `NamedTuple` / ordinary
+        // (non-runtime-backed) `Newtype` → `false` (always safe, no
+        // promotion concept). Heap-allocated records and runtime-backed
+        // newtypes (Mutex/Condvar/Atomic*/…, `debt_is_runtime_backed_newtype`
+        // — checker rejects heap records via `E_ZERO_ON_MOVE_ALIASED_STORAGE`
+        // and rejects non-`consume` types via
+        // `E_ZERO_ON_MOVE_REQUIRES_CONSUME`, which already excludes today's
+        // std runtime-backed types since none of them are `consume`) are
+        // never inserted — see `zero_on_move_types` field doc.
+        {
+            let mut collect = |items: &[Item]| {
+                for item in items {
+                    if let Item::Type(t) = item {
+                        if !t.zero_on_move || !t.consume {
+                            continue;
+                        }
+                        match &t.kind {
+                            TypeDeclKind::Record(_) if t.allocation == AllocKind::Value => {
+                                self.zero_on_move_types.insert(t.name.clone(), true);
+                            }
+                            TypeDeclKind::NamedTuple(_) => {
+                                self.zero_on_move_types.insert(t.name.clone(), false);
+                            }
+                            TypeDeclKind::Newtype(_)
+                                if !Self::debt_is_runtime_backed_newtype(t.name.as_str()) =>
+                            {
+                                self.zero_on_move_types.insert(t.name.clone(), false);
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -31195,6 +31264,128 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
     }
 
+    /// №465 (A8.29): given a C type string (`self.var_types` value) for a
+    /// bare-Ident binding, return its source `#zero_on_move` type name IFF
+    /// zeroing that binding's storage right now is proven safe by
+    /// `zero_on_move_types`'s registration invariant (see that field's
+    /// doc). The prefix match doubles as the promotion guard: a
+    /// `AllocKind::Value` local that escape-analysis promoted to heap has
+    /// C type `Nova_<X>*` (not `NovaValue_<X>`), which only matches the
+    /// `Nova_` arm below — but `Nova_` only resolves when the type was
+    /// registered `false` (named-tuple/newtype), so a promoted Value
+    /// binding (registered `true`) fails BOTH arms and correctly returns
+    /// `None`.
+    fn zero_on_move_safe_source_name<'a>(&self, c_ty: &'a str) -> Option<&'a str> {
+        if let Some(name) = c_ty.strip_prefix("NovaValue_") {
+            if self.zero_on_move_types.get(name) == Some(&true) {
+                return Some(name);
+            }
+        } else if let Some(name) = c_ty.strip_prefix("NovaTuple_") {
+            if self.zero_on_move_types.get(name) == Some(&false) {
+                return Some(name);
+            }
+        } else if let Some(name) = c_ty.strip_prefix("Nova_") {
+            if self.zero_on_move_types.get(name) == Some(&false) {
+                return Some(name);
+            }
+        }
+        None
+    }
+
+    /// №465 (A8.29): emit `T __tmp = <val>; Nova_<X>_zero_storage(&(<ident>));`
+    /// and return `__tmp` — the copy-out-then-zero-source pattern shared by
+    /// both safe auto-inject sites (bare consume-return, consume-param-arg).
+    /// MUST be called with `val` already the fully-computed RHS text for
+    /// `ident_name` (so the temp captures the value BEFORE the source is
+    /// zeroed) — callers hoist through this rather than zeroing in place,
+    /// because in both call sites the zero call's target storage (`ident_
+    /// name`) is still needed downstream in the SAME C statement/expression
+    /// (`return <val>;` reads `val` after; a call argument list still
+    /// textually contains the original expression unless replaced).
+    fn zero_on_move_hoist_and_zero(&mut self, ident_name: &str, zom_ty_name: &str, val: &str) -> String {
+        let c_ty = self.var_types.get(ident_name).cloned().unwrap_or_default();
+        let tmp = self.fresh_tmp();
+        self.line(&format!("{} {} = {};", c_ty, tmp, val));
+        self.var_types.insert(tmp.clone(), c_ty);
+        self.line(&format!(
+            "Nova_{}_zero_storage(&({}));  /* №465: zero-on-move — исходное хранилище занулено */",
+            zom_ty_name, ident_name));
+        tmp
+    }
+
+    /// №465 (A8.29): consume-param-arg auto-inject. Mirrors the position-
+    /// detection in `disarm_auto_cleanup_receiver_call` branch (b) — same
+    /// `free_fn_consume_param_positions` / `method_consume_param_positions`
+    /// channels — but REWRITES the call's arg list (copy-out-then-zero-
+    /// source, see `zero_on_move_hoist_and_zero`) instead of just emitting a
+    /// disarm flag-write, since the zero call must land strictly AFTER an
+    /// independent copy of the argument's value exists (zeroing in place
+    /// BEFORE the call would hand the callee already-zeroed data — the
+    /// call's own by-value copy happens at the call, not before it).
+    /// Returns `None` when no arg needed rewriting (the overwhelmingly
+    /// common case — `zero_on_move_types` is empty for any module that
+    /// doesn't declare a `#zero_on_move` type at all).
+    fn zero_on_move_rewrite_call(&mut self, e: &Expr) -> Option<Expr> {
+        if self.zero_on_move_types.is_empty() {
+            return None;
+        }
+        let ExprKind::Call { func, args, trailing } = &e.kind else { return None };
+        let consume_positions: Option<HashSet<usize>> = match &func.kind {
+            ExprKind::Ident(name) => self.free_fn_consume_param_positions.get(name).cloned(),
+            ExprKind::Path(path) => path.last()
+                .and_then(|name| self.free_fn_consume_param_positions.get(name))
+                .cloned(),
+            ExprKind::Member { obj, name: method_name } => {
+                let recv_ty = self.infer_expr_c_type(obj);
+                let recv_ty_name = {
+                    let t = self.debt_strip_nova_trim_start(&recv_ty);
+                    t.strip_prefix("NovaValue_").map(|s| s.to_string()).unwrap_or(t)
+                };
+                self.method_consume_param_positions
+                    .get(&(recv_ty_name, method_name.clone()))
+                    .cloned()
+            }
+            _ => None,
+        };
+        let positions = consume_positions?;
+        let mut new_args: Vec<CallArg> = Vec::with_capacity(args.len());
+        let mut rewrote = false;
+        for (i, a) in args.iter().enumerate() {
+            if positions.contains(&i) {
+                if let ExprKind::Ident(arg_name) = &a.expr().kind {
+                    let c_ty = self.var_types.get(arg_name).cloned().unwrap_or_default();
+                    if let Some(zom_name) = self.zero_on_move_safe_source_name(&c_ty) {
+                        let zom_name = zom_name.to_string();
+                        let tmp = self.zero_on_move_hoist_and_zero(arg_name, &zom_name, arg_name);
+                        let tmp_expr = Expr::new(ExprKind::Ident(tmp), a.expr().span);
+                        new_args.push(match a {
+                            CallArg::Item(_) => CallArg::Item(tmp_expr),
+                            CallArg::Spread(_) => CallArg::Spread(tmp_expr),
+                            CallArg::Named { name, .. } =>
+                                CallArg::Named { name: name.clone(), value: tmp_expr },
+                        });
+                        rewrote = true;
+                        continue;
+                    }
+                }
+            }
+            new_args.push(a.clone());
+        }
+        if !rewrote {
+            return None;
+        }
+        Some(Expr {
+            kind: ExprKind::Call {
+                func: func.clone(),
+                args: new_args,
+                trailing: trailing.clone(),
+            },
+            span: e.span,
+            id: e.id,
+            debug_only: e.debug_only,
+        })
+    }
+
     fn emit_expr_with_reconsume_disarm(
         &mut self,
         e: &Expr,
@@ -33032,6 +33223,26 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 var));
                         }
                     }
+                    // №465 (A8.29): bare `return X` consume-return site —
+                    // `val` is currently just `X`'s C text (a plain Ident
+                    // read, the wraps above are no-ops for a bare
+                    // zero_on_move-eligible ident). Hoist through a temp
+                    // (captures the value BEFORE zeroing) so the eventual
+                    // `return <val>;` below returns the intact copy while
+                    // `X`'s own storage is left zeroed — the copy-out
+                    // happens here, in THIS statement's temp-decl line, not
+                    // as part of the `return` statement itself (which
+                    // cannot sequence "copy, then zero, then return" on its
+                    // own).
+                    let val = if let ExprKind::Ident(ret_name) = &v.kind {
+                        let c_ty = self.var_types.get(ret_name).cloned().unwrap_or_default();
+                        match self.zero_on_move_safe_source_name(&c_ty).map(|s| s.to_string()) {
+                            Some(zom_name) => self.zero_on_move_hoist_and_zero(ret_name, &zom_name, &val),
+                            None => val,
+                        }
+                    } else {
+                        val
+                    };
                     if let Some(label) = post_label {
                         // Contracts mode: stash в _nova_result, defer cleanup,
                         // потом goto. Если defers пустой — просто assign + goto.
@@ -34015,7 +34226,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// node).
     fn emit_expr(&mut self, expr: &Expr) -> Result<String, String> {
         self.disarm_auto_cleanup_receiver_call(expr);
-        self.emit_expr_inner(expr)
+        // №465 (A8.29): same choke-point rationale as the disarm above —
+        // every consume-param-arg Call is emitted via `emit_expr` somewhere,
+        // regardless of nesting. Unlike the disarm (a pure flag-write, order
+        // w.r.t. the call doesn't matter), the zero-storage call MUST run
+        // after an independent copy of the arg's value exists, so this
+        // REWRITES the Call (arg → hoisted temp) rather than just emitting a
+        // preceding line — see `zero_on_move_rewrite_call` doc.
+        match self.zero_on_move_rewrite_call(expr) {
+            Some(rewritten) => self.emit_expr_inner(&rewritten),
+            None => self.emit_expr_inner(expr),
+        }
     }
 
     fn emit_expr_inner(&mut self, expr: &Expr) -> Result<String, String> {

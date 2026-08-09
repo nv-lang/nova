@@ -1,0 +1,4 @@
+#zero_on_move
+export type NotConsumed value {
+    data int
+}

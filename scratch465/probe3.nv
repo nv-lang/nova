@@ -1,0 +1,17 @@
+export type Secret consume value {
+    data int
+}
+
+fn make_it(consume s Secret) -> consume Secret {
+    return s
+}
+
+fn Secret consume @finish() {
+    ()
+}
+
+export fn main() {
+    consume a = Secret { data: 42 }
+    consume b = make_it(a)
+    b.finish()
+}

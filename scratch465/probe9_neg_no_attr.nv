@@ -1,0 +1,24 @@
+export type Plain consume value {
+    data int
+}
+
+fn helper2(consume s Plain) -> int {
+    ro d = s.data
+    s.finish()
+    return d
+}
+
+fn Plain consume @finish() {
+    ()
+}
+
+export fn main() {
+    consume a = Plain { data: 55 }
+    unsafe {
+        ro raw_p = raw &a
+        ro y = helper2(a)
+        ro after = raw_p.read()
+        print(y)
+        print(after.data)
+    }
+}

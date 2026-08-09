@@ -1,0 +1,78 @@
+№465 zero-on-move auto-inject — regression log (nova-p465 worktree binary, unless noted).
+Batches of ~95 files per instruction, one `nova test` command per batch.
+
+=== spec_tests/conformance/standalone (140 files, single command) ===
+PASS: 122  FAIL: 0  SKIP: 18
+
+=== spec_tests/conformance/neg (566 files, 6 batches of ~95) ===
+batch aa (91 files): PASS: 91  FAIL: 0
+batch ab (95 files): PASS: 95  FAIL: 0
+batch ac (93 files): PASS: 88  FAIL: 3  SKIP: 2
+  3 FAILs — all PRE-EXISTING, on the known-red list from the task brief:
+    NEG-WRONG-PANIC f5_propagation_trace_full  (expected 'propagation trace', got 'unhandled Fail: leaf-error')
+    NEG-WRONG-PANIC f5_uncaught_trace_panic    (expected '(throw site)', got 'panic: trace-me')
+    NEG-WRONG-PANIC f5_uncaught_trace_throw    (expected '(throw site)', got 'unhandled Fail: uncaught-from-main')
+batch ad (96 files): PASS: 96  FAIL: 0
+batch ae (96 files): PASS: 94  FAIL: 1  SKIP: 1
+  1 FAIL — PRE-EXISTING, known-red: NEG-WRONG-PANIC neg_read_oob
+    (expected 'unhandled typed Fail', got 'unhandled Fail: <typed err>')
+batch af (95 files): PASS: 95  FAIL: 0
+
+TOTAL neg (566 files): PASS 559 / FAIL 4 / SKIP 3 — all 4 FAILs are on the
+task brief's known-pre-existing-red list (f5_propagation_trace_full,
+f5_uncaught_trace_panic, f5_uncaught_trace_throw, neg_read_oob). No new
+failures introduced by #465.
+
+=== main-binary comparison column ===
+d:/Sources/nv-lang/nova/nova-cli/target/release/nova.exe (rebuilt today ~16:52 by
+integrator, mid-edit O(1) refactor of emit_c.rs per integrator's own message)
+crashes with "thread '<unknown>' has overflowed its stack" on `nova test` for
+ANY input, including a single trivial file (spec_tests/conformance/standalone/
+e2e_collate.nv) and even when run from ITS OWN repo directory against its OWN
+unmodified spec_tests — i.e. this is NOT caused by anything in the p465
+worktree or by #465's changes. `nova check` (typecheck-only, no test-runner)
+on the same main binary works fine. Root cause not investigated (out of scope
+for #465, different window's concurrent WIP edit) — flagged to integrator.
+Regression evidence for #465 therefore rests on: (a) the p465 binary's own
+before/after via the sabotage probe (injection code removed → new fixtures
+go red; code restored via `git checkout --` → green again, `git diff` empty),
+and (b) the full corpus run below, which never touches the new codegen path
+for any PRE-EXISTING file (zero_on_move_types is empty unless a file declares
+`#zero_on_move`, and none in std/examples/spec_tests do yet).
+
+=== std (whole `nova test std`, single command, 308 raw .nv files / folder-modules) ===
+PASS: 66  FAIL: 7  SKIP: 106
+`grep -rl zero_on_move std/src` → EMPTY: no std file uses the attribute, so
+both new checker diagnostics (gated on `td.zero_on_move`) and both new
+codegen injection sites (gated on `zero_on_move_types` — populated ONLY from
+`#zero_on_move`-marked type decls, and the call-site rewrite additionally
+fast-bails via `.is_empty()`) are structurally unreachable for the entire
+std/src compile — the 7 FAILs (civil_arith_test integer-overflow asserts,
+json_test key-order asserts, and CC-FAILs in decode_errors_test/uuid_test/
+uuid_namespace_test/net::addr/cron_test — designated-initializer and enum-
+payload-type C mismatches) are PRE-EXISTING, unrelated to #465. Not
+independently re-verified against a pre-#465 binary (main's own `nova test`
+is currently broken — see note above; the structural unreachability
+argument is definitive on its own: the new code paths cannot execute
+without a `#zero_on_move` declaration, and grep confirms none exists in
+std/src).
+
+=== concurrency + net (targeted, per task brief) ===
+concurrency (nova test std/src/concurrency): PASS: 7  FAIL: 0  SKIP: 6 — clean.
+net (nova test std/src/net): PASS: 0  FAIL: 1  SKIP: 3
+  CC-FAIL std/src/net/addr — PRE-EXISTING, unrelated to #465: C type
+  mismatch `initializing 'nova_unit' with an expression of incompatible
+  type 'NovaRes_nova_int_NovaValue_IoError *'` (Result<..,IoError> vs
+  nova_unit) — SAME error text/line (addr.c:20708) as in the whole-std run
+  above. `std/src/net` is one folder-module (co-equal files compiled as a
+  single unit), so addr.nv's pre-existing compile error cascades to fail
+  the WHOLE net module compile, blocking every net test (split/tcp/udp)
+  from running in this targeted invocation — not something #465 touches
+  (addr.nv has no consume/value-record/zero_on_move machinery in it) and
+  not something this window's scope covers fixing (separate pre-existing
+  defect). Concurrency-relevant conclusion for #465 specifically: `Mutex`/
+  `AtomicInt`/etc (std/src/runtime/sync.nv, exercised via
+  std/src/concurrency + spec_tests/conformance's guard_cross_scope_
+  transfer.nv/d432_auto_cleanup_hybrid_c.nv, both green in the neg/pos
+  batches above) never reach the new auto-inject code at all — see the
+  named per-primitive risk breakdown in the final report.

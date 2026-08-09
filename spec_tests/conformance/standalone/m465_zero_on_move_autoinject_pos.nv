@@ -1,0 +1,95 @@
+// 221.1 №465 — `#zero_on_move` auto-inject (A8.29, [M-124.8-zero-on-move-
+// auto-inject]). Was DEFERRED: the type-decl attribute parsed (A8.25),
+// checked (A8.27), and the per-type `Nova_T_zero_storage` helper was
+// EMITTED (A8.28) — but never CALLED anywhere, a silent false safety
+// promise. This closes it for the two consume call sites where
+// auto-injection is provably correct given Nova's actual move semantics:
+// consume-param-arg pass and bare `return X` (consume-return) — both a
+// genuine independent C struct-copy for `value`-allocated records/named
+// tuples/newtypes (confirmed via generated-C inspection, scratch465/
+// probe1-3.nv). Receiver-consuming-call (`x.method()`) and heap-allocated
+// records are deliberately NOT covered (see the two neg/m465_* fixtures
+// for the checker guards that keep the latter from compiling at all) —
+// `x.method()` passes `&x` (alias, not copy) even for value types, and
+// escape_analyze.rs explicitly excludes the method-receiver position from
+// its escape-sink tracking, so there is no compiler-verified guarantee the
+// callee doesn't stash the pointer past its own call.
+//
+// Observability: `unsafe { raw &x }` captures a raw pointer to the
+// binding's OWN stack storage BEFORE the move; `.read()` through that
+// pointer after the move observes the storage directly (bypassing the
+// checker's normal "binding is Consumed, can't read it" rule, which is
+// exactly the D216 §21 unsafe-escape-hatch idiom used elsewhere in this
+// suite for the same purpose, e.g. d216_unused_unsafe_pos.nv).
+module standalone.m465_zero_on_move_autoinject_pos
+
+#zero_on_move
+type M465Secret consume value {
+    data int
+}
+
+fn M465Secret consume @finish() -> () => ()
+
+fn m465_consume_param_helper(consume s M465Secret) -> int {
+    ro d = s.data
+    s.finish()
+    return d
+}
+
+fn m465_return_passthrough(consume s M465Secret) -> consume M465Secret {
+    return s
+}
+
+// No `#zero_on_move` — control type for the "no attribute → untouched"
+// negative below. Otherwise byte-identical shape to `M465Secret`.
+type M465Plain consume value {
+    data int
+}
+
+fn M465Plain consume @finish() -> () => ()
+
+fn m465_plain_consume_param_helper(consume s M465Plain) -> int {
+    ro d = s.data
+    s.finish()
+    return d
+}
+
+test "№465 consume-param-arg site: source storage zeroed after transfer, callee still sees the original value" {
+    consume secret = M465Secret { data: 99 }
+    unsafe {
+        ro raw_p = raw &secret
+        // Live/not-yet-consumed: storage is the original value, not zeroed.
+        assert(raw_p.read().data == 99)
+        ro returned = m465_consume_param_helper(secret)
+        // Callee received an intact independent copy (99), not zeroed data.
+        assert(returned == 99)
+        // Caller's OWN storage is now zeroed — the copy-out-then-zero-
+        // source pattern (zero_on_move_hoist_and_zero) ran at the call site.
+        assert(raw_p.read().data == 0)
+    }
+}
+
+test "№465 bare consume-return site: source storage zeroed after being copied into the return slot" {
+    consume a = M465Secret { data: 77 }
+    unsafe {
+        ro raw_p = raw &a
+        assert(raw_p.read().data == 77)
+        consume b = m465_return_passthrough(a)
+        // The returned value is intact (copied out before `a` was zeroed).
+        assert(b.data == 77)
+        // `a`'s own storage is zeroed post-move.
+        assert(raw_p.read().data == 0)
+        b.finish()
+    }
+}
+
+test "№465 control: same shape WITHOUT #zero_on_move — consume-param transfer does NOT zero the source" {
+    consume plain = M465Plain { data: 55 }
+    unsafe {
+        ro raw_p = raw &plain
+        ro returned = m465_plain_consume_param_helper(plain)
+        assert(returned == 55)
+        // No `#zero_on_move` on `M465Plain` — storage is left as-is.
+        assert(raw_p.read().data == 55)
+    }
+}
