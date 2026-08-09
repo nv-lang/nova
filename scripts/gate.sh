@@ -361,6 +361,73 @@ for _t in $FLAGSHIP_TARGETS; do
 done
 [ -z "$FLAG_FAILED" ] || fail "flagship examples не собрались:$FLAG_FAILED"
 
+# ── ПАРИТЕТ С CI (реестр 221.1 №516) ────────────────────────────────────────
+# Ниже — шаги, которые CI считает блокирующими, а локальный гейт не делал.
+# Пока их не было, «локально зелено» означало меньше, чем выглядело: 147
+# коммитов ушли на зелёном локальном гейте и покраснели в CI первым прогоном.
+
+step "examples anti-rot (весь examples/** по списку 197 Ф.5, как в CI)"
+# Список целей читается ИЗ ТОГО ЖЕ файла, что использует CI, — иначе гейт и CI
+# разойдутся молча, а это ровно тот дефект, который здесь и чинится.
+ANTIROT_LIST="$ROOT/docs/plans/wip/197-f5-gate-list.txt"
+if [ ! -f "$ANTIROT_LIST" ]; then
+    fail "нет списка anti-rot $ANTIROT_LIST (CI читает его же)"
+else
+    ANTIROT_FAILED=""
+    ANTIROT_N=0
+    while read -r _kind _path; do
+        case "$_kind" in BUILD|CHECK) ;; *) continue ;; esac
+        ANTIROT_N=$((ANTIROT_N + 1))
+        _alog="${TMPDIR:-/tmp}/gate_antirot_$$.log"
+        if [ "$_kind" = "BUILD" ]; then
+            "$NOVA" build "$ROOT/$_path" --strict-effects \
+                -o "${TMPDIR:-/tmp}/ex_$(basename "$_path" .nv).exe" >"$_alog" 2>&1
+        else
+            "$NOVA" check "$ROOT/$_path" --strict-effects >"$_alog" 2>&1
+        fi
+        if [ $? -ne 0 ]; then
+            echo "anti-rot FAIL :: $_kind $_path"
+            grep -m2 "error:" "$_alog" | sed 's/^/    /'
+            ANTIROT_FAILED="$ANTIROT_FAILED $_path"
+        fi
+        rm -f "$_alog"
+    done < "$ANTIROT_LIST"
+    echo "anti-rot :: целей проверено $ANTIROT_N"
+    [ -z "$ANTIROT_FAILED" ] || fail "examples anti-rot:$ANTIROT_FAILED"
+fi
+
+step "lint registry self-test (правило срабатывает И не даёт ложняка, как в CI)"
+# ДВЕ стороны, и вторая важнее: страж, переставший ловить, выглядит так же,
+# как страж, которому нечего ловить.
+# `--deny` ОБЯЗАТЕЛЕН: без него находки информационные и код возврата 0 — так
+# устроен инструмент (nova-cli/src/main.rs:2866). Шаг CI требовал код 1 от
+# команды БЕЗ `--deny` и потому был красным с самого введения флага: самотест
+# реестра не проверял ничего, и под ним спокойно жило ложное срабатывание
+# (реестр 221.1 №519 и №520).
+"$NOVA" lint --deny "$ROOT/spec_tests/conformance/lint/conv_pos.nv" >/dev/null 2>&1
+if [ $? -eq 0 ]; then
+    fail "conv_pos.nv БОЛЬШЕ НЕ даёт находок — conv-правило перестало срабатывать"
+fi
+"$NOVA" lint --deny "$ROOT/spec_tests/conformance/lint/conv_clean.nv" >/dev/null 2>&1 \
+    || fail "conv_clean.nv даёт находки — ложное срабатывание conv-правила (№520)"
+
+step "nova build smoke (ICE-храповик плана 196, как в CI)"
+SMOKE_NV="${TMPDIR:-/tmp}/nova_build_smoke_$$.nv"
+printf 'fn main() {\n    println("hello, nova build")\n}\n' > "$SMOKE_NV"
+"$NOVA" build "$SMOKE_NV" -o "${TMPDIR:-/tmp}/nova_build_smoke_$$.exe" >/dev/null 2>&1 \
+    || fail "nova build smoke не собрался (ICE-регресс, план 196)"
+rm -f "$SMOKE_NV" "${TMPDIR:-/tmp}/nova_build_smoke_$$.exe"
+
+step "lint W_LEADING_BINOP_CONTINUATION по nova_tests (как в CI)"
+"$NOVA" lint --rule W_LEADING_BINOP_CONTINUATION "$ROOT/nova_tests" >/dev/null 2>&1 \
+    || fail "W_LEADING_BINOP_CONTINUATION даёт находки в nova_tests"
+
+# ОСТАВШИЙСЯ ПРОБЕЛ, названный вслух: `nova doc --check` / `nova doc --test`
+# (workflow nova-doc.yml) локально НЕ прогоняются. Этот job в CI сейчас красный,
+# и прежде чем ставить его в гейт, надо разобрать его отказ — иначе гейт
+# краснеет по чужому долгу и перестаёт быть сигналом. Записано в
+# docs/dev/promts/integrator-queue.md.
+
 step "D-number uniqueness"
 # 2026-07-30: послабление под D431 СНЯТО — коллизия закрыта перенумерацией
 # FixedArray-блока в D440 (реестр 221.1 №123).

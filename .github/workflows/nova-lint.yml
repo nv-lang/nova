@@ -111,7 +111,7 @@ jobs:
       - name: conv_pos.nv must still trigger findings (registry fires)
         run: |
           set +e
-          ./nova-cli/target/release/nova lint spec_tests/conformance/lint/conv_pos.nv
+          ./nova-cli/target/release/nova lint --deny spec_tests/conformance/lint/conv_pos.nv
           code=$?
           set -e
           if [ "$code" -eq 0 ]; then
@@ -119,7 +119,7 @@ jobs:
             exit 1
           fi
       - name: conv_clean.nv must stay clean (no false positives)
-        run: ./nova-cli/target/release/nova lint spec_tests/conformance/lint/conv_clean.nv
+        run: ./nova-cli/target/release/nova lint --deny spec_tests/conformance/lint/conv_clean.nv
 
   nova-lint-nova-tests-full-debt:
     name: nova lint nova_tests full (informational — legacy corpus debt, non-blocking)
