@@ -989,6 +989,11 @@ pub struct CEmitter {
     /// Используется в for-in для Iter[T] dispatch: проверяем
     /// `all_methods.contains((iter_struct, "next"))`.
     all_methods: HashSet<(String, String)>,
+    /// Типы-ресиверы, у которых есть ХОТЬ ОДИН метод. `all_methods`
+    /// ключуется парой, поэтому вопрос «есть ли у типа методы вообще»
+    /// отвечался перебором всего множества — на каждом сайте вызова
+    /// (реестр 221.1 №522).
+    all_method_recv_types: HashSet<String>,
     /// Plan 11 Ф.1: multi-overload registry. Key = `(type_name, method_name)`,
     /// value = list of overloaded signatures (param C types, is_instance,
     /// is_external). Используется на call-site для resolve по arg-types
@@ -1647,6 +1652,11 @@ pub struct CEmitter {
     /// (symbol, escaped_c_string, byte_len). Ordered (not just the HashMap)
     /// for deterministic emitted-C output.
     interned_str_emit: Vec<(String, String, usize)>,
+    /// Имена, уже занятые в `interned_str_emit`. Нужно РОВНО для
+    /// защиты от коллизии имён: без него она перебирала весь Vec на
+    /// каждый новый литерал, то есть O(N²) по числу различных
+    /// литералов (реестр 221.1 №522).
+    interned_str_syms: std::collections::HashSet<String>,
     /// Plan 186 (D412): blob-literal interning. Maps blob CONTENT (raw
     /// bytes of `x"..."` / `embed(...)`) -> the C symbol of its single shared
     /// `static const uint8_t nova_blob_<hash>[]` rodata buffer. Identical
@@ -1656,6 +1666,8 @@ pub struct CEmitter {
     /// `/*__INTERNED_STR_LITERALS__*/` preamble marker (appended after the
     /// str literals). Ordered for deterministic emitted-C output.
     interned_blob_emit: Vec<(String, Vec<u8>)>,
+    /// Близнец `interned_str_syms` для блобов — та же квадратичность.
+    interned_blob_syms: std::collections::HashSet<String>,
     /// Plan 210 Ф.8 (Go-паритет+, 2026-07-17, OPT-IN): when `Some(dir)`, blob
     /// statics are emitted as C23 `#embed "<sym>.bin"` (sidecar file written
     /// under `dir`) instead of the default `0x%02X,` hex-text array (~5.3x
@@ -2499,6 +2511,7 @@ impl CEmitter {
             c_literal_extern_fns: HashSet::new(),
             embed_fields: BTreeMap::new(),
             all_methods: HashSet::new(),
+            all_method_recv_types: HashSet::new(),
             iter_returns: HashMap::new(),
             from_targets: HashMap::new(),
             tuple_element_types: HashMap::new(),
@@ -2640,8 +2653,10 @@ impl CEmitter {
             strict_errors: std::cell::RefCell::new(Vec::new()),
             interned_str_literals: HashMap::new(),
             interned_str_emit: Vec::new(),
+            interned_str_syms: std::collections::HashSet::new(),
             interned_blob_literals: HashMap::new(),
             interned_blob_emit: Vec::new(),
+            interned_blob_syms: std::collections::HashSet::new(),
             blob_sidecar_dir: None,
             imported_modules: HashSet::new(),
             fn_module_map: HashMap::new(),
@@ -8011,6 +8026,7 @@ impl CEmitter {
                     );
                     // Plan 06 Ф.1: multi-key для for-in Iter[T] dispatch.
                     self.all_methods.insert((recv.type_name.clone(), f.name.clone()));
+                    self.all_method_recv_types.insert(recv.type_name.clone());
                     // Plan 11 Ф.1: register signature в multi-overload registry.
                     // param_c_types — C-типы параметров без receiver'а.
                     // Plan 48 Ф.3: for generic receiver types, use erased types so
@@ -44982,7 +44998,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     && !recv_is_typevar
                                     && recv_base != type_name
                                     && !self.all_methods.contains(&(recv_base.clone(), method.to_string()))
-                                    && self.all_methods.iter().any(|(t, _)| t == &recv_base)
+                                    && self.all_method_recv_types.contains(&recv_base)
                                 {
                                     return Err(format!(
                                         "[E_RECV_METHOD_MISMATCH] `.{m}(...)` на ресивере \
@@ -63458,11 +63474,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let mut sym = format!("_nova_strlit_{:016x}", hash);
         // Collision guard: if this symbol is already bound to a DIFFERENT
         // content, append a disambiguating sequence suffix until unique.
-        if self.interned_str_emit.iter().any(|(existing, _, _)| existing == &sym) {
+        if self.interned_str_syms.contains(&sym) {
             let mut seq = 1usize;
             loop {
                 let candidate = format!("_nova_strlit_{:016x}_{}", hash, seq);
-                if !self.interned_str_emit.iter().any(|(existing, _, _)| existing == &candidate) {
+                if !self.interned_str_syms.contains(&candidate) {
                     sym = candidate;
                     break;
                 }
@@ -63470,6 +63486,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
         }
         let escaped = Self::escape_c_str(s);
+        self.interned_str_syms.insert(sym.clone());
         self.interned_str_emit.push((sym.clone(), escaped, s.len()));
         self.interned_str_literals.insert(s.to_string(), sym.clone());
         sym
@@ -63491,17 +63508,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             hash = hash.wrapping_mul(0x100000001b3);
         }
         let mut sym = format!("nova_blob_{:016x}", hash);
-        if self.interned_blob_emit.iter().any(|(existing, _)| existing == &sym) {
+        if self.interned_blob_syms.contains(&sym) {
             let mut seq = 1usize;
             loop {
                 let candidate = format!("nova_blob_{:016x}_{}", hash, seq);
-                if !self.interned_blob_emit.iter().any(|(existing, _)| existing == &candidate) {
+                if !self.interned_blob_syms.contains(&candidate) {
                     sym = candidate;
                     break;
                 }
                 seq += 1;
             }
         }
+        self.interned_blob_syms.insert(sym.clone());
         self.interned_blob_emit.push((sym.clone(), bytes.to_vec()));
         self.interned_blob_literals.insert(bytes.to_vec(), sym.clone());
         sym

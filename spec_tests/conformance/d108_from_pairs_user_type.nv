@@ -22,7 +22,11 @@ type D108Bag[K, V] {
     count int
 }
 
-export fn D108Bag[K, V].new() -> D108Bag[K, V] {
+// D450 (2026-08-09): the contract is now ONE constructor with an optional
+// capacity — the former trio (new / cap / insert_new) is retired. The `cap`
+// parameter is accepted and ignored here; this type only counts insertions.
+export fn D108Bag[K, V].new(cap int = 0) -> D108Bag[K, V] {
+    ro _ = cap
     D108Bag { count: 0 }
 }
 
