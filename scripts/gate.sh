@@ -208,7 +208,16 @@ gate_barrier
 step "mega-CU (spec_tests/conformance, one CU)"
 MEGA_LOG="${TMPDIR:-/tmp}/gate_mega_$$.log"
 _MEGA_T0=$(date +%s)
-"$NOVA" test --positive --compile-error "$ROOT/spec_tests/conformance" >"$MEGA_LOG" 2>&1
+# `--jobs` = половина ядер, а НЕ все (разведка p259-gate-speed, 2026-08-09).
+# Замер на одном и том же чанке из 193 работ: `--jobs 8` — стенка 160 с при
+# сумме занятости 1049 с; `--jobs 16` — стенка 154 с при сумме 2054 с. То есть
+# удвоение воркеров даёт +4% пропускной способности и РОВНО ВДВОЕ худшую
+# латентность каждой работы. А длительность шага определяется длинным полюсом —
+# одной работой, — и его шестнадцать воркеров тормозят вдвое ни за что.
+MEGA_JOBS="${NOVA_GATE_JOBS:-$(( $(nproc 2>/dev/null || echo 8) / 2 ))}"
+[ "$MEGA_JOBS" -ge 1 ] 2>/dev/null || MEGA_JOBS=4
+echo "mega-CU :: --jobs $MEGA_JOBS"
+"$NOVA" test --positive --compile-error --jobs "$MEGA_JOBS" "$ROOT/spec_tests/conformance" >"$MEGA_LOG" 2>&1
 MEGA_EXIT=$?
 _MEGA_SEC=$(( $(date +%s) - _MEGA_T0 ))
 # ── Храповик ВРЕМЕНИ мега-CU (реестр 221.1 №437) ─────────────────────────────
