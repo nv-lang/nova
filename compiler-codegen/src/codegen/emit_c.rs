@@ -1005,6 +1005,13 @@ pub struct CEmitter {
     // (рандом per-run) делал эмиссию недетерминированной и обнажал латентные
     // order-зависимые баги prelude (init-order OOB, var_boxed leak). Ключ Ord.
     method_overloads: BTreeMap<(String, String), Vec<MethodSig>>,
+    /// Типы, у которых есть ХОТЬ ОДНА перегрузка. `method_overloads`
+    /// ключуется парой (тип, метод), поэтому вопрос «есть ли у типа
+    /// перегрузки вообще» отвечался перебором ВСЕХ ключей — на шести
+    /// сайтах в горячем пути резолва имени (реестр 221.1 №522).
+    /// Наполняется ТОЛЬКО через `register_method_overload`, чтобы не
+    /// заводить инвариант «не забудь обновить оба».
+    method_overload_types: HashSet<String>,
     /// Plan 125 followup `[M-125-method-call-never-detection]`: set of
     /// (receiver_c_type, method_name) pairs OR (`"<free>"`, fn_name) where
     /// the declared AST return type is `never`. Populated during method/fn
@@ -2505,6 +2512,7 @@ impl CEmitter {
             effect_schemas: HashMap::new(),
             method_receivers: HashMap::new(),
             method_overloads: BTreeMap::new(),
+            method_overload_types: HashSet::new(),
             never_returning_methods: HashSet::new(),
             external_registry: super::external_registry::ExternalRegistry::load_builtins()
                 .expect("failed to load std/runtime/*.nv (Plan 13 Ф.8)"),
@@ -5156,6 +5164,14 @@ impl CEmitter {
         self.line(&format!("/* SRC: {}{} */", safe, suffix));
     }
 
+    /// Единственная точка наполнения `method_overloads`: держит
+    /// `method_overload_types` в согласии с картой по построению, а не по
+    /// памяти правящего (реестр 221.1 №522).
+    fn register_method_overload(&mut self, key: (String, String), sig: MethodSig) {
+        self.method_overload_types.insert(key.0.clone());
+        self.register_method_overload(key, sig);
+    }
+
     pub fn emit_module(mut self, module: &Module) -> Result<(String, Vec<String>), String> {
         // [M-consume-rebind-nested-block-shadow] (Plan 172.13): copy the
         // alpha_rename-computed span set so `Stmt::Let` can look up its own
@@ -6632,7 +6648,7 @@ impl CEmitter {
                     // U.4.3 c2.2: external-registry entries have no single source FnDecl.
                     fn_span: None,
                 };
-                self.method_overloads.entry(key.clone()).or_default().push(sig);
+                self.register_method_overload(key.clone(), sig);
                 // Plan 83.12: register novares struct for non-trivial Result returns
                 // (e.g. Result[TcpListener,str] → NovaRes_Nova_TcpListener_p_nova_str*).
                 // Must happen before any code is emitted so that novares_value_types
@@ -7993,7 +8009,7 @@ impl CEmitter {
                         // U.4.3 c2.2: source FnDecl identity for the dispatch consume.
                         fn_span: Some(f.span),
                     };
-                    self.method_overloads.entry(key.clone()).or_default().push(sig);
+                    self.register_method_overload(key.clone(), sig);
                     // Plan 125 followup [M-125-method-call-never-detection]:
                     // free-fn `-> never` registry (key.0 = "" for free fns).
                     if Self::fn_return_is_never_125(f) {
@@ -8233,7 +8249,7 @@ impl CEmitter {
                     if Self::fn_return_is_never_125(f) {
                         self.never_returning_methods.insert(key.clone());
                     }
-                    self.method_overloads.entry(key).or_default().push(sig);
+                    self.register_method_overload(key, sig);
                     // `T.from(v V)` → from_targets[T] += V. [D73/D77 retraction
                     // 2026-07-06]: the `.into()`-side registry (`into_targets`)
                     // and its auto-derive consumers were removed; `from_targets`
@@ -8325,7 +8341,7 @@ impl CEmitter {
                         // U.4.3 c2.2: D39 embed proxy is synthesized (no single FnDecl).
                         fn_span: None,
                     };
-                    self.method_overloads.entry(key).or_default().push(proxy_sig);
+                    self.register_method_overload(key, proxy_sig);
                     // all_methods (для Plan 06 Iter[T] dispatch).
                     self.all_methods.insert((wrapper_type.clone(), method_name.clone()));
                     // method_receivers backward compat — single-key, last-wins
@@ -16515,7 +16531,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     fn_span: None,
                 };
                 let key = (recv.type_name.clone(), f.name.clone());
-                self.method_overloads.entry(key).or_default().push(sig);
+                self.register_method_overload(key, sig);
                 return Ok(());
             } else {
                 // Free generic fn: already handled above.
@@ -42794,7 +42810,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // Без этого emit'ился литеральный
                             // `nova_fn_<n>_<method>` → undefined symbol.
                             Some(Self::debt_nova_type_name_from_c(&c_ty))
-                        } else if self.method_overloads.keys().any(|(t, _)| t == n) {
+                        } else if self.method_overload_types.contains(n) {
                             // Static call.
                             Some(n.clone())
                         } else {
@@ -42825,7 +42841,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // Ф.1.2: резолвленный typevar — это static-вызов.
                         let want_instance = !matches!(&obj.kind, ExprKind::Ident(n)
                             if self.current_type_subst.contains_key(n)
-                               || self.method_overloads.keys().any(|(t, _)| t == n));
+                               || self.method_overload_types.contains(n));
                         let key = (rt.clone(), method.clone());
                         // Plan 138.2 Ф.0-final: under the universal `[]T` ≡
                         // `Vec[T]` flip, an array-extension method call
@@ -54574,7 +54590,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
             ExprKind::Member { obj, name } => {
                 match &obj.kind {
-                    ExprKind::Ident(n) if self.method_overloads.keys().any(|(t, _)| t == n) => {
+                    ExprKind::Ident(n) if self.method_overload_types.contains(n) => {
                         Some((n.clone(), name.clone()))
                     }
                     // Plan 63 Fix B: nested Member chain `<alias>.Type.method`.
@@ -54584,7 +54600,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // меняет registered method signature.
                     ExprKind::Member { obj: inner_obj, name: type_name }
                         if matches!(&inner_obj.kind, ExprKind::Ident(_))
-                            && self.method_overloads.keys().any(|(t, _)| t == type_name) =>
+                            && self.method_overload_types.contains(type_name) =>
                     {
                         Some((type_name.clone(), name.clone()))
                     }
@@ -54599,7 +54615,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         if matches!(&base.kind, ExprKind::Ident(_)) =>
                     {
                         if let ExprKind::Ident(n) = &base.kind {
-                            if self.method_overloads.keys().any(|(t, _)| t == n) {
+                            if self.method_overload_types.contains(n) {
                                 Some((n.clone(), name.clone()))
                             } else {
                                 None
@@ -58340,7 +58356,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                             None
                                         }
                                     }
-                                    ExprKind::Ident(n) if self.method_overloads.keys().any(|(t, _)| t == n) => {
+                                    ExprKind::Ident(n) if self.method_overload_types.contains(n) => {
                                         Some((n.clone(), name.clone(), false, false))
                                     }
                                     // [M-172.1-d174] phase-safe: Ident-ресивер без
