@@ -3891,6 +3891,59 @@ fn is_folder_module_peer(path: &Path) -> bool {
 /// peers found, callers observe byte-identical behavior to before this fix.
 /// Codegen/compilation still use the original `entry_src`/`path` directly —
 /// this helper's output is ONLY fed to the marker scan.
+/// Снимок каталога: `(путь, исходник, объявление модуля)` по каждому `.nv`.
+///
+/// ЗАЧЕМ (реестр 221.1 №521). `collect_marker_sources` и `collect_peer_paths`
+/// спрашивают у каталога одно и то же и делали это заново на КАЖДОЙ работе:
+/// для `neg/` — 2×561 чтение на работу × 551 работа ≈ 618 000 чтений файлов,
+/// 21 % работы шага мега-CU (замер окна `p259-gate-speed`, 2026-08-09). Та же
+/// фикстура стоила 6,53 с среди 561 соседа и 0,83 с в своём каталоге — то есть
+/// корпус штрафовал сам себя за рост.
+///
+/// Снимок берётся ОДИН РАЗ за процесс, по тому же доводу, что и индекс модулей
+/// в плане 252: дерево не меняется во время прогона, а если бы менялось —
+/// результат прогона был бы бессмыслен независимо от кэша.
+struct NvDirEntry {
+    path: PathBuf,
+    src: String,
+    decl: Option<Vec<String>>,
+}
+
+fn nv_dir_index(dir: &Path) -> std::sync::Arc<Vec<NvDirEntry>> {
+    use std::sync::{Arc, Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<std::collections::HashMap<PathBuf, Arc<Vec<NvDirEntry>>>>> =
+        OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
+
+    if let Ok(guard) = cache.lock() {
+        if let Some(hit) = guard.get(dir) {
+            return Arc::clone(hit);
+        }
+    }
+
+    let mut entries: Vec<NvDirEntry> = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        let mut paths: Vec<PathBuf> = rd
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("nv"))
+            .collect();
+        paths.sort();
+        for p in paths {
+            let Ok(src) = std::fs::read_to_string(&p) else { continue };
+            let decl = crate::imports::scan_module_decl(&src);
+            entries.push(NvDirEntry { path: p, src, decl });
+        }
+    }
+    let arc = Arc::new(entries);
+    if let Ok(mut guard) = cache.lock() {
+        // Гонка двух потоков на один каталог безвредна: снимок один и тот же,
+        // побеждает любой — важно лишь, что читаем мы его после этого из кэша.
+        guard.insert(dir.to_path_buf(), Arc::clone(&arc));
+    }
+    arc
+}
+
 fn collect_marker_sources(entry_src: &str, entry_path: &Path) -> Vec<String> {
     let mut sources = vec![entry_src.to_string()];
     let Some(dir) = entry_path.parent() else {
@@ -3899,24 +3952,14 @@ fn collect_marker_sources(entry_src: &str, entry_path: &Path) -> Vec<String> {
     let Some(my_decl) = crate::imports::scan_module_decl(entry_src) else {
         return sources;
     };
-    let Ok(rd) = std::fs::read_dir(dir) else {
-        return sources;
-    };
-    let mut peers: Vec<PathBuf> = rd
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("nv"))
-        .filter(|p| p.as_path() != entry_path)
-        .collect();
-    peers.sort();
-    for peer in peers {
-        let Ok(peer_src) = std::fs::read_to_string(&peer) else {
-            continue;
-        };
-        if crate::imports::scan_module_decl(&peer_src).as_ref() != Some(&my_decl) {
+    for e in nv_dir_index(dir).iter() {
+        if e.path.as_path() == entry_path {
             continue;
         }
-        sources.push(peer_src);
+        if e.decl.as_ref() != Some(&my_decl) {
+            continue;
+        }
+        sources.push(e.src.clone());
     }
     sources
 }
@@ -3937,22 +3980,22 @@ fn collect_marker_sources(entry_src: &str, entry_path: &Path) -> Vec<String> {
 fn collect_peer_paths(entry_path: &Path) -> Vec<PathBuf> {
     let mut out = vec![entry_path.to_path_buf()];
     let Some(dir) = entry_path.parent() else { return out; };
-    let Ok(entry_src) = std::fs::read_to_string(entry_path) else { return out; };
-    let Some(my_decl) = crate::imports::scan_module_decl(&entry_src) else { return out; };
-    let Ok(rd) = std::fs::read_dir(dir) else { return out; };
-    let mut peers: Vec<PathBuf> = rd
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("nv"))
-        .filter(|p| p.as_path() != entry_path)
-        .collect();
-    peers.sort();
-    for peer in peers {
-        let Ok(peer_src) = std::fs::read_to_string(&peer) else { continue; };
-        if crate::imports::scan_module_decl(&peer_src).as_ref() != Some(&my_decl) {
+    let index = nv_dir_index(dir);
+    let Some(my_decl) = index
+        .iter()
+        .find(|e| e.path.as_path() == entry_path)
+        .and_then(|e| e.decl.clone())
+    else {
+        return out;
+    };
+    for e in index.iter() {
+        if e.path.as_path() == entry_path {
             continue;
         }
-        out.push(peer);
+        if e.decl.as_ref() != Some(&my_decl) {
+            continue;
+        }
+        out.push(e.path.clone());
     }
     out
 }
