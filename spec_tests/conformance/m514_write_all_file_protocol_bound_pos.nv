@@ -26,8 +26,7 @@ test "write_all[W Write] on a File conformer — generic bound resolves to the b
     with Fs = mock_fs(memfs) {
         match File.create(p) {
             Err(_) => assert(false)
-            Ok(consume f) => {
-                consume w = f
+            Ok(consume w) => {
                 ro data = [1 as u8, 2 as u8, 3 as u8]
                 // THIS call's result, used as a match scrutinee, is exactly
                 // the shape №514 broke: a generic-bound `Write` conformer's
