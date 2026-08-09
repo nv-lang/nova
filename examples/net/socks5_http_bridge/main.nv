@@ -519,8 +519,15 @@ fn pump(consume r TcpReadHalf, consume w TcpWriteHalf, tok CancelToken) Net -> (
             Err(_) => { keep_going = false }            // I/O error, or woken by the sibling's cancel
         }
     }
-    r.close()
-    w.close()
+    // No explicit `r.close()`/`w.close()`: both halves declare `consume
+    // @cleanup` (`std/src/net/tcp.nv:402`/`:448`), so D432 auto-cleanup
+    // releases them at this function's exit — the very same point an explicit
+    // close would run. Calling `close()` by hand would only route the pair
+    // through the auto-cleanup DISARM path (a manual `consume` must disarm
+    // the automatic one to avoid a double close) — the exact mechanism that
+    // produced the crash, then the hang, of registry #456. Fewer moving
+    // parts, and the linear type system still guarantees the release.
+    //
     // Wake the SIBLING pump (blocked reading the other direction) — the
     // mechanism established in plan 249 Ф.0-б, NOT `supervised(timeout:)`.
     tok.cancel()
