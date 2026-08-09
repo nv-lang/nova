@@ -28,7 +28,7 @@ test "tcp/share: rc-семантика — share() инкрементит, за�
 
 test "tcp/share: real loopback — копия живёт после close оригинала" {
     with Net = real_net() {
-        ro ch = Channel.new(1)   // server port → client
+        ro ch = Channel[u16].new(1)   // server port → client
         supervised {
             spawn {
                 ro port = match ch.rx.recv() { Some(x) => x  None => 0 as u16 }
@@ -70,7 +70,7 @@ test "tcp/share: real loopback — копия живёт после close ори
 
 test "tcp/share: конкурентные share-копии per-fiber, авто-cleanup закрывает долю" {
     with Net = real_net() {
-        ro ch = Channel.new(1)
+        ro ch = Channel[u16].new(1)
         supervised {
             spawn {
                 ro port = match ch.rx.recv() { Some(x) => x  None => 0 as u16 }

@@ -41,7 +41,7 @@ test "net2/tcp: two-fiber loopback echo through the Net effect" {
     with Net = real_net() {
         // D415 (E_CONCURRENT_MUT_CAPTURE): listener целиком в server-файбере,
         // порт — каналом (и канонический M:N loop-pinning, см. udp_test.nv).
-        ro ch = Channel.new(1)   // server port → client
+        ro ch = Channel[u16].new(1)   // server port → client
 
         supervised {
             spawn {
@@ -76,7 +76,7 @@ test "net2/tcp: two-fiber loopback echo through the Net effect" {
 
 test "net2/tcp: read observes clean EOF as Ok(0)" {
     with Net = real_net() {
-        ro ch = Channel.new(1)   // server port → client (D415: без mut-захвата lst)
+        ro ch = Channel[u16].new(1)   // server port → client (D415: без mut-захвата lst)
 
         supervised {
             spawn {
@@ -110,7 +110,7 @@ test "net2/tcp: second read() after partial data + close observes clean EOF (№
     // got sent and the second read waited on a connection that was never
     // actually closed.
     with Net = real_net() {
-        ro ch = Channel.new(1)   // server port → client
+        ro ch = Channel[u16].new(1)   // server port → client
 
         supervised {
             spawn {
@@ -138,7 +138,7 @@ test "net2/tcp: second read() after partial data + close observes clean EOF (№
 
 test "net2/tcp: read_text / write_str text conveniences" {
     with Net = real_net() {
-        ro ch = Channel.new(1)   // server port → client (D415: без mut-захвата lst)
+        ro ch = Channel[u16].new(1)   // server port → client (D415: без mut-захвата lst)
 
         supervised {
             spawn {

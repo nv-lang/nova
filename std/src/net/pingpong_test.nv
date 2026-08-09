@@ -16,7 +16,7 @@ module std.net
 
 test "net2/pingpong: плотное чередование write→read на одном сокете (TLS-pump паттерн)" {
     with Net = real_net() {
-        ro ch_port = Channel.new(1)
+        ro ch_port = Channel[u16].new(1)
         supervised {
             // Сервер: на каждый принятый байтовый пакет отвечает пакетом —
             // строгий ping-pong, каждый цикл = write и read впритык.
@@ -71,8 +71,8 @@ test "net2/pingpong: плотное чередование write→read на о�
 
 test "net2/pingpong: две независимые пары пинг-понгуют конкурентно (4 фибры)" {
     with Net = real_net() {
-        ro ch_a = Channel.new(1)
-        ro ch_b = Channel.new(1)
+        ro ch_a = Channel[u16].new(1)
+        ro ch_b = Channel[u16].new(1)
         supervised {
             // Пара A: сервер (bind+accept+echo-loop в своей фибре).
             spawn {

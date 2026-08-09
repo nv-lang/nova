@@ -35,9 +35,9 @@ fn split_test_one_byte(v int) -> []u8 {
 // of failing it.
 test "TCP split: TcpWriteHalf.close() alone delivers FIN, read half stays usable (#Ф.0-а)" {
     with Net = real_net() {
-        ro ch_port = Channel.new(1)
-        ro ch_result_a = Channel.new(1)
-        ro ch_result_b = Channel.new(1)
+        ro ch_port = Channel[u16].new(1)
+        ro ch_result_a = Channel[int].new(1)
+        ro ch_result_b = Channel[int].new(1)
         ro tok = CancelToken.new()
         supervised(cancel: tok) {
             // Watchdog: if this regresses, B's second read (and then A's
@@ -104,7 +104,7 @@ test "TCP split: server + client exchange via read/write halves _slow" {
         // D415 (E_CONCURRENT_MUT_CAPTURE): listener живёт ЦЕЛИКОМ в server-
         // файбере, порт публикуется каналом — mut-захвата нет; заодно это
         // канонический M:N-паттерн (bind внутри файбера его I/O, см. udp_test.nv).
-        ro ch = Channel.new(1)   // server port → client
+        ro ch = Channel[u16].new(1)   // server port → client
 
         supervised {
             // Client fiber: connect, split, write request, read reply.

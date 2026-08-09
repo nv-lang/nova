@@ -28,8 +28,8 @@ module std.net
 
 test "net2/udp: loopback datagram + value-SocketAddr sender via out-param" {
     with Net = real_net() {
-        ro ch_a = Channel.new(1)   // a_port: receiver -> sender
-        ro ch_b = Channel.new(1)   // b_port: sender   -> receiver (for sender-port assert)
+        ro ch_a = Channel[u16].new(1)   // a_port: receiver -> sender
+        ro ch_b = Channel[u16].new(1)   // b_port: sender   -> receiver (for sender-port assert)
         supervised {
             spawn {
                 mut a = must(UdpSocket.bind(SocketAddr.loopback(0)))
@@ -67,7 +67,7 @@ test "net2/udp: loopback datagram + value-SocketAddr sender via out-param" {
 
 test "net2/udp: recv_from_vec returns owned bytes + sender" {
     with Net = real_net() {
-        ro ch_a = Channel.new(1)   // a_port: receiver -> sender
+        ro ch_a = Channel[u16].new(1)   // a_port: receiver -> sender
         supervised {
             spawn {
                 mut a = must(UdpSocket.bind(SocketAddr.loopback(0)))
