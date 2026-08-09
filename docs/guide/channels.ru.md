@@ -3,7 +3,7 @@
 [English](channels.md) | **Русский**
 
 `Channel[T]` — основной примитив межфибровой коммуникации. Модель —
-**capability-split** (Rust mpsc-style): `Channel.new(cap)` возвращает
+**capability-split** (Rust mpsc-style): `Channel[T].new(cap)` возвращает
 **пару** объектов с разделёнными правами — `ChanWriter[T]` («только
 слать») и `ChanReader[T]` («только получать»).
 
@@ -18,7 +18,7 @@ Spec: [D91](../../spec/decisions/06-concurrency.md#d91) (channel revision)
 ## Содержание
 
 - [Quickstart](#quickstart)
-- [`Channel.new`](#channelnew)
+- [`Channel[T].new`](#channeltnew)
 - [`ChanWriter[T]` API](#chanwritert-api)
 - [`ChanReader[T]` API](#chanreadert-api)
 - [Идиомы](#идиомы)
@@ -49,7 +49,7 @@ Spec: [D91](../../spec/decisions/06-concurrency.md#d91) (channel revision)
 
 ```nova
 test "channel: send + recv FIFO" {
-    ro { tx, rx } = Channel.new(4)
+    ro { tx, rx } = Channel[int].new(4)
     tx.send(10)
     tx.send(20)
     tx.send(30)
@@ -65,7 +65,7 @@ test "channel: send + recv FIFO" {
 
 ```nova
 test "select: data wins over timeout" {
-    ro ch = Channel.new(1)
+    ro ch = Channel[int].new(1)
     ro tx = ch.tx
     ro rx = ch.rx
     mut branch = 0
@@ -84,7 +84,7 @@ test "select: data wins over timeout" {
 
 ---
 
-## `Channel.new`
+## `Channel[T].new`
 
 ```nova
 fn Channel[T].new(capacity int) -> { tx ChanWriter[T], rx ChanReader[T] }
@@ -95,27 +95,29 @@ fn Channel[T].new(capacity int) -> { tx ChanWriter[T], rx ChanReader[T] }
 
 ```nova
 // 1. Record destructure (Plan 53, most idiomatic)
-ro { tx, rx } = Channel.new(4)
+ro { tx, rx } = Channel[int].new(4)
 
 // 2. Record destructure with renaming
-ro { tx: sender, rx: receiver } = Channel.new(4)
+ro { tx: sender, rx: receiver } = Channel[int].new(4)
 
 // 3. Tuple destructure (compat with D91 spec examples)
-ro (tx, rx) = Channel.new(4)
+ro (tx, rx) = Channel[int].new(4)
 
 // 4. Record access (when distinct lifetimes are needed)
-ro ch = Channel.new(4)
+ro ch = Channel[int].new(4)
 ro tx = ch.tx
 ro rx = ch.rx
 ```
 
-**Capacity ≥ 1.** `Channel.new(0)` сейчас панкует с
+**Capacity ≥ 1.** `Channel[T].new(0)` сейчас панкует с
 `"capacity must be >= 1"` ([Plan 44.1](../plans/44.1-channel-hardening.md)
 Ф.3) — zero-capacity rendezvous каналы пока не реализованы.
 
-**Тип передачи (`T`) отслеживается, когда объявлен явно** — турбофишем на
-`Channel.new`, либо аннотацией самих capability-типов (D91, см.
-«Передача в функции» ниже):
+**Тип передачи (`T`) обязателен и всегда явный** — турбофишем на
+`Channel[T].new`, либо аннотацией самих capability-типов (D91, см.
+«Передача в функции» ниже). Голый вызов `Channel.new` (без `[T]`) —
+ошибка компиляции (`E_CHANNEL_NEW_BARE`, D79-амендмент 2026-08-09,
+№513) — инференции из первого `send` больше нет:
 
 ```nova
 ro (tx, rx) = Channel[int].new(8)
@@ -131,29 +133,21 @@ fn drain(rx ChanReader[int]) -> int {
 }
 ```
 
-Когда `T` объявлен так, чекер отслеживает его СКВОЗНЫМ образом (Plan 221.1
-№143/№286): `send`/`try_send` отвергают значение неверного типа на этапе
-компиляции (`E_CHANNEL_ELEM_TYPE_MISMATCH`) — включая два разных newtype
+`T` чекер отслеживает СКВОЗНЫМ образом (Plan 221.1 №143/№286):
+`send`/`try_send` отвергают значение неверного типа на этапе компиляции
+(`E_CHANNEL_ELEM_TYPE_MISMATCH`) — включая два разных newtype
 одинакового размера (`Channel[Meters]` откажет в `Seconds`); `recv`/
 `try_recv` типизируются настоящим `Option[T]`, так что доступ к полям/
 методам полученного значения (`got.len()`, `got.x`, `match` на sum-вариант,
 …) резолвится по РЕАЛЬНОМУ типу, а не по стёртому `Option[int]`.
 
-**Голый `Channel.new(cap)` без турбофиша/аннотации оставляет `T`
-неотслеженным** — это НЕ выводится из первого `send`/`recv` (это обещание
-никогда не выполнялось сквозным образом; этим окном исправлена
-документация, а не сама инференция). Непомеченный канал сохраняет старое,
-permissive поведение — без гарантии типов между `send` и `recv`, автор на
-доверии, как и до Plan 221.1 №143/№286. Предпочитай турбофиш/аннотированную
-форму для любого канала, чей тип элемента важен (практически всегда).
-
-**`T` обязан быть word-safe ([M-channel-generic-elem-type]).** Независимо от
-того, отслеживается ли `T`, Vela (M:N-рантайм) хранит каждый элемент в
-одном слоте размером со слово, поэтому `T` должен без потерь укладываться в
-него: `int`, `bool`, `char`, целые фиксированной ширины и любой
-pointer-sized тип (`[]T`, records, `HashMap`, суммы, …) — работают. `T`, не
-влезающий в слово — `str`, `f32`/`f64`, кортежи, value-records —
-отвергается на этапе компиляции (`E_CHANNEL_UNSOUND_ELEM_TYPE`), а не тихо
+**`T` обязан быть word-safe ([M-channel-generic-elem-type]).** Vela
+(M:N-рантайм) хранит каждый элемент в одном слоте размером со слово,
+поэтому `T` должен без потерь укладываться в него: `int`, `bool`,
+`char`, целые фиксированной ширины и любой pointer-sized тип (`[]T`,
+records, `HashMap`, суммы, …) — работают. `T`, не влезающий в слово —
+`str`, `f32`/`f64`, кортежи, value-records — отвергается на этапе
+компиляции (`E_CHANNEL_UNSOUND_ELEM_TYPE`), а не тихо
 усекается/переинтерпретируется. Это ограничение рантайм-представления
 самого `T`, независимое от проверки несовпадения типов выше (корректно
 типизированный `Channel[str]` со значением `str` всё равно упрётся в это
@@ -175,7 +169,7 @@ pointer-sized тип (`[]T`, records, `HashMap`, суммы, …) — работ
 
 ```nova
 test "channel: send after close returns false, does not panic" {
-    ro { tx, rx: _rx } = Channel.new(2)
+    ro { tx, rx: _rx } = Channel[int].new(2)
     assert(tx.send(1))
     tx.close()
     assert(!tx.send(99))    // false: channel closed
@@ -200,7 +194,7 @@ fn produce(tx ChanWriter[Job], jobs []Job) {
 
 ```nova
 test "channel: try_send full buffer" {
-    ro { tx, rx } = Channel.new(2)
+    ro { tx, rx } = Channel[int].new(2)
     assert(tx.try_send(10))
     assert(tx.try_send(20))
     assert(!tx.try_send(30))            // buffer full
@@ -221,7 +215,7 @@ test "channel: try_send full buffer" {
 
 ```nova
 test "channel: fan-in — two writers, one reader" {
-    ro { tx, rx } = Channel.new(8)
+    ro { tx, rx } = Channel[int].new(8)
     ro tx2 = tx.share()                // writer_count = 2
     mut sum = 0
     supervised {
@@ -260,7 +254,7 @@ Closed-channel — **не ошибка**, валидный исход «исто
 
 ```nova
 test "channel: close + recv drain" {
-    ro { tx, rx } = Channel.new(4)
+    ro { tx, rx } = Channel[int].new(4)
     tx.send(1)
     tx.send(2)
     tx.close()
@@ -275,7 +269,7 @@ test "channel: close + recv drain" {
 
 ```nova
 test "channel: try_recv distinguishes empty-open from empty-closed via is_closed" {
-    ro { tx, rx } = Channel.new(4)
+    ro { tx, rx } = Channel[int].new(4)
     assert(rx.try_recv().is_none())     // empty, open
     assert(!rx.is_closed())
     tx.close()
@@ -288,7 +282,7 @@ test "channel: try_recv distinguishes empty-open from empty-closed via is_closed
 
 ```nova
 test "channel: len and capacity" {
-    ro { tx, rx } = Channel.new(8)
+    ro { tx, rx } = Channel[int].new(8)
     assert(rx.capacity() == 8)
     assert(rx.len() == 0)
     tx.send(1)
@@ -308,7 +302,7 @@ test "channel: len and capacity" {
 
 ```nova
 test "channel: while-let drain pattern" {
-    ro { tx, rx } = Channel.new(4)
+    ro { tx, rx } = Channel[int].new(4)
     tx.send(10)
     tx.send(20)
     tx.send(30)
@@ -329,7 +323,7 @@ test "channel: while-let drain pattern" {
 
 ```nova
 test "channel: producer-consumer pipeline" {
-    ro { tx, rx } = Channel.new(4)
+    ro { tx, rx } = Channel[int].new(4)
     mut sum = 0
     supervised {
         spawn {
@@ -354,8 +348,8 @@ test "channel: producer-consumer pipeline" {
 
 ```nova
 test "channel: ping-pong" {
-    ro { tx: tx1, rx: rx1 } = Channel.new(1)
-    ro { tx: tx2, rx: rx2 } = Channel.new(1)
+    ro { tx: tx1, rx: rx1 } = Channel[int].new(1)
+    ro { tx: tx2, rx: rx2 } = Channel[int].new(1)
     mut result = 0
     supervised {
         spawn {
@@ -379,7 +373,7 @@ test "channel: ping-pong" {
 Несколько spawn'ов производят, один потребляет.
 
 ```nova
-ro { tx, rx } = Channel.new(8)
+ro { tx, rx } = Channel[int].new(8)
 supervised {
     for item in work_items {
         ro worker_tx = tx.share()      // each spawn gets its own capability
@@ -414,8 +408,8 @@ fn relay(rx ChanReader[int], tx ChanWriter[int]) {
 }
 
 test "channel: relay — Receiver → Sender pipeline through a function" {
-    ro { tx: tx1, rx: rx1 } = Channel.new(4)
-    ro { tx: tx2, rx: rx2 } = Channel.new(4)
+    ro { tx: tx1, rx: rx1 } = Channel[int].new(4)
+    ro { tx: tx2, rx: rx2 } = Channel[int].new(4)
     tx1.send(1)
     tx1.send(2)
     tx1.send(3)
@@ -450,7 +444,7 @@ fn drain_channel(rx ChanReader[int]) -> int {
 }
 
 test "channel: Sender and Receiver passed independently" {
-    ro { tx, rx } = Channel.new(8)
+    ro { tx, rx } = Channel[int].new(8)
     fill_channel(tx, [100, 200, 300])
     ro s = drain_channel(rx)
     assert(s == 600)
@@ -504,7 +498,7 @@ arm-body     = block | stmt
 
 ```nova
 test "select single recv: value from channel" {
-    ro ch = Channel.new(1)
+    ro ch = Channel[int].new(1)
     ro tx = ch.tx
     ro rx = ch.rx
     supervised {
@@ -524,7 +518,7 @@ test "select single recv: value from channel" {
 
 ```nova
 test "select send arm: sends to channel with space" {
-    ro ch = Channel.new(1)
+    ro ch = Channel[int].new(1)
     ro tx = ch.tx
     ro rx = ch.rx
     mut sent = 0
@@ -547,7 +541,7 @@ test "select send arm: sends to channel with space" {
 
 ```nova
 test "select guard: disabled arm falls through to default" {
-    ro ch = Channel.new(1)
+    ro ch = Channel[int].new(1)
     ch.tx.send(10)
     ro rx = ch.rx
     ro enabled = false
@@ -571,7 +565,7 @@ ready-state канала. Аналог `if` в Tokio `select!`. Go guard'ы не
 
 ```nova
 test "select recv with default: default when channel empty" {
-    ro ch = Channel.new(1)
+    ro ch = Channel[int].new(1)
     ro rx = ch.rx
     mut branch = 0
     select {
@@ -590,8 +584,8 @@ Wildcard в recv-target срабатывает на **оба** состояни�
 
 ```nova
 test "Some arm skips closed+empty, picks open channel with data" {
-    ro ch1 = Channel.new(1)
-    ro ch2 = Channel.new(1)
+    ro ch1 = Channel[int].new(1)
+    ro ch2 = Channel[int].new(1)
     ro tx1 = ch1.tx
     ro tx2 = ch2.tx
     ro rx1 = ch1.rx
@@ -609,7 +603,7 @@ test "Some arm skips closed+empty, picks open channel with data" {
 }
 
 test "wildcard fires immediately on closed+empty channel" {
-    ro ch = Channel.new(1)
+    ro ch = Channel[int].new(1)
     ro tx = ch.tx
     ro rx = ch.rx
     tx.close()
@@ -639,7 +633,7 @@ recv-канал, создаваемый `ChanReader.close_after(Duration)`.
 import std.time.duration
 
 test "select timeout: fires when channel stays empty" {
-    ro ch = Channel.new(1)
+    ro ch = Channel[int].new(1)
     ro rx = ch.rx
     mut branch = 0
     supervised {
@@ -654,7 +648,7 @@ test "select timeout: fires when channel stays empty" {
 }
 
 test "select timeout: data wins over timeout" {
-    ro ch = Channel.new(1)
+    ro ch = Channel[int].new(1)
     ro tx = ch.tx
     ro rx = ch.rx
     mut branch = 0
@@ -701,8 +695,8 @@ timers. Custom timer-wheel для high-throughput (10k+ HTTP timeouts)
 ```nova
 test "select multi-arm: fairness — both channels get served" {
     ro n = 50
-    ro ch1 = Channel.new(n)
-    ro ch2 = Channel.new(n)
+    ro ch1 = Channel[int].new(n)
+    ro ch2 = Channel[int].new(n)
     ro tx1 = ch1.tx
     ro tx2 = ch2.tx
     ro rx1 = ch1.rx
@@ -747,7 +741,7 @@ Fisher-Yates shuffle на каждой итерации обеспечивает
 
 ```nova
 test "select: data wins supervised(cancel:) race" {
-    ro ch = Channel.new(1)
+    ro ch = Channel[int].new(1)
     ro tx = ch.tx
     ro rx = ch.rx
     mut branch = 0
@@ -811,8 +805,8 @@ fn run_pipeline() Net -> () {
 ### Bootstrap-ограничение: `defer` + tuple-destructure
 
 > ⚠️ **Известная проблема:** `defer tx.close()` **не** работает в
-> сочетании с `let (tx, rx) = Channel.new(N)` или
-> `let { tx, rx } = Channel.new(N)` — `defer` эмитит setjmp-frame
+> сочетании с `let (tx, rx) = Channel[int].new(N)` или
+> `let { tx, rx } = Channel[int].new(N)` — `defer` эмитит setjmp-frame
 > *до* объявления переменных, что ломает scope (Plan 25 G8, будет
 > устранено когда внедрят open-coded defer).
 >
@@ -820,7 +814,7 @@ fn run_pipeline() Net -> () {
 > разделить destructure:
 >
 > ```nova
-> ro ch = Channel.new(N)
+> ro ch = Channel[int].new(N)
 > ro tx = ch.tx
 > ro rx = ch.rx
 > defer tx.close()    // OK — tx объявлен напрямую
@@ -838,7 +832,7 @@ flaky. Поэтому `close()` всегда explicit.
 
 ```nova
 test "channel: close idempotent" {
-    ro { tx, rx } = Channel.new(2)
+    ro { tx, rx } = Channel[int].new(2)
     tx.close()
     tx.close()                  // not an error
     assert(rx.is_closed())
@@ -854,7 +848,7 @@ test "channel: close idempotent" {
 
 | Условие | Сообщение |
 |---|---|
-| `Channel.new(0)` | `"capacity must be >= 1"` (Plan 44.1 Ф.3) |
+| `Channel[int].new(0)` | `"capacity must be >= 1"` (Plan 44.1 Ф.3) |
 | `select` со всеми каналами closed + без default | `"select: all channels closed"` (Plan 31 Ф.6) |
 | `ChanReader.close_after(<negative Duration>)` | panic с nanosecond-значением |
 | `select` с `arm_count > stack` | overflow ловится до allocate'а — explicit panic |
@@ -870,7 +864,7 @@ test "channel: close idempotent" {
 | Что не работает / отложено | План |
 |---|---|
 | `None = rx` отдельный arm (только `_ = rx` wildcard) | Plan 31 followup |
-| `Channel.new(0)` zero-capacity rendezvous | Plan 44.2+ |
+| `Channel[int].new(0)` zero-capacity rendezvous | Plan 44.2+ |
 | `defer tx.close()` + tuple/record destructure | [Plan 25](../plans/25-production-readiness-roadmap.md) G8 |
 | `pattern = rx.recv()` (с `.recv()`) форма в select | работает только bare `pattern = rx` |
 | `oneshot::channel<T>` / `watch::channel<T>` / `broadcast::channel<T>` (Tokio variants) | Plan 44.2 |
