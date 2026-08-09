@@ -8113,6 +8113,26 @@ impl<'a> TypeCheckCtx<'a> {
         errors: &mut Vec<Diagnostic>,
     ) {
         let Some(trailing) = &b.trailing else { return };
+        // [реестр 221.1 №493] carrier scan finding (std/src/time/civil/
+        // tz_test.nv `push_u32`, std/src/unicode/collate.nv
+        // `push_implicit`): a trailing call to a `mut`-receiver FLUENT
+        // mutator (`b.push(x)` — `[]T`/`WriteBuffer`/`StringBuilder`
+        // core mutators, `push`/`append`/`insert`/… — chain_norm.rs's
+        // `FLUENT_BUILTIN_METHODS`, always reference-type buffers that
+        // mutate in place) is NOT a forgotten annotation: the call's
+        // effect already landed through the mutated (aliased) receiver
+        // — the `@`-fluent return is a redundant handle to the SAME
+        // object, so discarding it (no `-> T`) loses nothing, unlike a
+        // genuinely fresh value a pure computation hands back only
+        // through its return. Contrast with value-type `with_*`
+        // builders (D-with-star: "with_* всегда новое значение") — those
+        // do NOT mutate their receiver, so dropping their return WOULD
+        // be the real K1 bug; this exemption is syntactically scoped to
+        // the known-mutating builtin list only, not to fluent calls in
+        // general.
+        if trailing_is_fluent_mutator_call(trailing) {
+            return;
+        }
         let infer_scope = self.scope_with_block_lets(b, scope);
         let Some(mut ty) = self.infer_expr_type(trailing, &infer_scope) else { return };
         if matches!(ty, TypeRef::Unit(_)) {
@@ -35969,6 +35989,37 @@ fn type_ref_is_never(t: &TypeRef) -> bool {
         }
     }
     false
+}
+
+/// [реестр 221.1 №493] Same builtin list as `chain_norm.rs`'s
+/// `FLUENT_BUILTIN_METHODS` (kept as an independent literal — that list
+/// is private to `chain_norm`, and duplicating a dozen string literals
+/// is cheaper than exporting cross-module coupling for one call site).
+/// Every name here is a `[]T`/`WriteBuffer`/`StringBuilder` core mutator:
+/// reference-type buffer, mutates through the receiver in place, `@`-
+/// fluent return is always a redundant alias of the SAME object.
+const D493_FLUENT_MUTATOR_METHODS: &[&str] = &[
+    "push", "append", "extend_from", "copy_from", "insert",
+    "reserve", "fill", "clear", "extend_zero", "append_zero",
+    "write_byte", "write_bytes", "write_zero", "write_char", "write_str",
+    "write_u8", "write_i8",
+    "write_u16_le", "write_u16_be", "write_i16_le", "write_i16_be",
+    "write_u32_le", "write_u32_be", "write_i32_le", "write_i32_be",
+    "write_u64_le", "write_u64_be", "write_i64_le", "write_i64_be",
+    "write_f32_le", "write_f32_be", "write_f64_le", "write_f64_be",
+];
+
+/// [реестр 221.1 №493] Is `e` a bare `<receiver>.<method>(...)` call whose
+/// method is a known in-place fluent mutator (see
+/// `D493_FLUENT_MUTATOR_METHODS`)? Used by `check_missing_return_annotation`
+/// to exempt this one syntactic shape from `E_MISSING_RETURN_TYPE` — NOT a
+/// general "any fluent call is exempt" rule (value-type `with_*` builders
+/// stay covered, since dropping THEIR return genuinely loses the only copy
+/// of the new value).
+fn trailing_is_fluent_mutator_call(e: &Expr) -> bool {
+    let ExprKind::Call { func, .. } = &e.kind else { return false };
+    let func = func.unwrap_turbofish();
+    matches!(&func.kind, ExprKind::Member { name, .. } if D493_FLUENT_MUTATOR_METHODS.contains(&name.as_str()))
 }
 
 /// Plan 33.3 Ф.9 (D24): валидация axiom-формул внутри effect-блоков.
