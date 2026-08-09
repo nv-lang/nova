@@ -20702,7 +20702,7 @@ impl<'a> TypeCheckCtx<'a> {
                         }
                         _ => {}
                     },
-                    TypeRef::Named { path, .. } => {
+                    TypeRef::Named { path, generics, .. } => {
                         // 172.1.2 (Index @-слайс, 2026-07-03): scope["@"] extension-метода
                         // на `[]int`/`[]T` хранит ИМЯ "[]int" как Named — элемент =
                         // суффикс имени (Named{elem}); typevar пометит потребитель.
@@ -20727,6 +20727,27 @@ impl<'a> TypeCheckCtx<'a> {
                                 }
                                 return None;
                             }
+                        }
+                        // реестр 221.1 №502: D239 `[]T ≡ Vec[T]` — the EXPLICIT
+                        // generic-syntax spelling (`Vec[T]`, as opposed to the `[]T`
+                        // sugar handled by the arm just above) parses to
+                        // `TypeRef::Named{path:["Vec"], generics:[T]}`, NOT
+                        // `TypeRef::Array` — so it fell through to the "user-defined
+                        // `@index` method" branch below, whose `recv_is_generic` gate
+                        // bails (`return None`) unconditionally because `Vec` itself
+                        // is ALWAYS a generic template. That `None` propagates to
+                        // `f3_check_member_ctx`'s early `let Some(obj_tr) = ... else
+                        // { return; }`, silently dropping the checker-channel type
+                        // annotation for ANY `<Vec[T]-typed expr>[i].field`/`[i].N`
+                        // member access — repro: `Ent[K,V]` field access after
+                        // indexing a `Vec[Ent[K,V]]`-typed struct field emitted C
+                        // WITHOUT the local's declaration line (`old = (...)->value;`,
+                        // no type — `use of undeclared identifier`). Element-type
+                        // extraction here is identical to the `TypeRef::Array` arm
+                        // two match-arms up — same D239 equivalence, just the other
+                        // syntactic spelling of it.
+                        if path.len() == 1 && path[0] == "Vec" && generics.len() == 1 {
+                            return Some(generics[0].clone());
                         }
                         // User-defined @index(key K) -> V: look up @index method on type.
                         // 2026-07-02 (audit POISON 6453): декларированный return клонировался

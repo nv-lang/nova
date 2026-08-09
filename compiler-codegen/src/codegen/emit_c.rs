@@ -22664,6 +22664,65 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         Some((parent_type, mangled, type_args_c))
     }
 
+    /// реестр 221.1 №502: twin of `try_infer_variant_mono_args` just above, for a
+    /// bare GENERIC named-tuple constructor call (`Ent(k, v)` where `type Ent[K, V]
+    /// (key K, value V)`), no turbofish. The checker type-checks the generic
+    /// DECLARATION exactly once (never re-runs per `Box2[str, int]` mono instance),
+    /// so there is no per-instance `resolved_types` entry to read here — infer
+    /// type-args STRUCTURALLY from (declared field type, arg C type) pairs, same
+    /// as the sum-variant twin. On success also enqueues the instance into
+    /// `generic_type_worklist` (idempotent) so `emit_generic_type_instance_body`'s
+    /// `TypeDeclKind::NamedTuple` arm emits its struct body + `nova_ctor_<short>`
+    /// constructor function — see that arm's doc for why a NAMED TUPLE
+    /// constructor call needs routing here at all (the non-generic sibling never
+    /// did: `type_aliases.get(name)` — checked by the caller BEFORE this — only
+    /// ever gets a "NovaTuple_" entry from the non-generic `emit_named_tuple_type`
+    /// path, never from a generic template).
+    fn try_infer_named_tuple_mono_args(
+        &self,
+        type_name: &str,
+        args: &[crate::ast::CallArg],
+    ) -> Option<(String, Vec<String>)> {
+        use crate::ast::TypeDeclKind;
+        let template = self.generic_type_templates.get(type_name)?.clone();
+        if template.generics.is_empty() { return None; }
+        let fields = match &template.kind {
+            TypeDeclKind::NamedTuple(fs) => fs.clone(),
+            _ => return None,
+        };
+        if fields.is_empty() || args.is_empty() { return None; }
+        let mut subst: Vec<(String, Option<String>)> = template.generics.iter()
+            .map(|g| (g.name.clone(), None))
+            .collect();
+        for (i, arg) in args.iter().enumerate() {
+            let field_and_val: Option<(&crate::ast::TypeRef, &crate::ast::Expr)> = match arg {
+                crate::ast::CallArg::Named { name: fname, value } =>
+                    fields.iter().find(|f| &f.name == fname).map(|f| (&f.ty, value)),
+                crate::ast::CallArg::Item(e) => fields.get(i).map(|f| (&f.ty, e)),
+                crate::ast::CallArg::Spread(_) => None,
+            };
+            if let Some((field_ty, val_expr)) = field_and_val {
+                let arg_c = self.infer_expr_c_type(val_expr);
+                self.infer_type_param_binding(field_ty, &arg_c, &mut subst);
+            }
+        }
+        let type_args_c: Vec<String> = subst.iter()
+            .map(|(_, opt)| opt.clone())
+            .collect::<Option<Vec<String>>>()?;
+        if type_args_c.iter().any(|c| c.is_empty() || c == "void*") { return None; }
+        let mangled = Self::compute_generic_type_c_name(type_name, &type_args_c);
+        if !self.emitted_generic_type_instances.contains(&mangled) {
+            let mut wl = self.generic_type_worklist.borrow_mut();
+            if !wl.iter().any(|(_, _, m)| m == &mangled) {
+                wl.push((type_name.to_string(), Self::args_lift(&type_args_c), mangled.clone()));
+            }
+        }
+        self.generic_type_instance_info.borrow_mut()
+            .entry(mangled.clone())
+            .or_insert_with(|| (type_name.to_string(), Self::args_lift(&type_args_c)));
+        Some((mangled, type_args_c))
+    }
+
     /// Plan 48 Ф.0: resolve concrete type args for a generic fn call.
     /// Returns Vec<(param_name, c_type)> or Err with a helpful message (R5).
     /// Priority: turbofish > arg-type inference > return-type context.
@@ -26756,6 +26815,92 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // currently не используется; per-T mono no-op для них.
                     }
                 }
+            }
+            // реестр 221.1 №502: a GENERIC named tuple (`type Ent[K, V](key K, value
+            // V)`) template instance had NO arm here at all — it fell into the
+            // catch-all `_ => {}` below (which the comment already labels "not
+            // generic record/sum", but a NamedTuple genuinely IS one of the value
+            // kinds this drain exists to emit). Consequence: the universal
+            // registration in `resolved_named_to_c`'s generic-template arm still
+            // pushes `(base_name, type_args_c, mangled)` onto `generic_type_worklist`
+            // (so a `typedef struct <mangled> <mangled>;` forward-decl DOES appear,
+            // from that same call site's caller) but NOTHING ever emitted the
+            // `struct <mangled> { ... };` BODY — any `->field` access on the
+            // instance hit clang's "incomplete definition of type" the moment the
+            // forward-declared-only struct was dereferenced.
+            //
+            // Representation: `resolved_named_to_c`'s generic-template fallback
+            // (`is_value_generic_template` tests ONLY `Record`) already decided
+            // EVERY generic NamedTuple instance is heap-pointer ABI (`Nova_<mangled>*`,
+            // not the non-generic sibling's `NovaTuple_<name>` by-value form) — this
+            // arm keeps that pre-existing decision unchanged (narrow fix, scoped to
+            // "fill in the missing body/ctor", not "reclassify value-vs-heap ABI for
+            // generic named tuples", which would be a wider mono-model change).
+            //
+            // Schema is keyed by the SHORT mono name (`short`, `Nova_` prefix
+            // stripped) — mirrors the Record arm above, so the checker-channel field
+            // lookup (`resolved_type_to_c`'s `R::TypeParam` subst / any consumer
+            // keying by short name) finds it.
+            TypeDeclKind::NamedTuple(fields) => {
+                let mut schema: HashMap<String, String> = HashMap::new();
+                let mut nt_field_c_tys: Vec<String> = Vec::with_capacity(fields.len());
+                for f in &fields {
+                    let ty_c = self.type_ref_to_c(&f.ty).map_err(|e| self.err_no_int_fallback(
+                        &format!("mono'd generic named-tuple instance field `{}`", f.name),
+                        &e,
+                    ))?;
+                    if let Some(pointee) = ty_c.strip_suffix('*') {
+                        let base = pointee.trim_end_matches(|ch| ch == '*' || ch == ' ').trim();
+                        if base.starts_with("Nova_")
+                            && !Self::debt_is_runtime_backed_newtype(base.trim_start_matches("Nova_"))
+                        {
+                            self.line(&format!("typedef struct {0} {0};", base));
+                        }
+                    }
+                    schema.insert(f.name.clone(), ty_c.clone());
+                    nt_field_c_tys.push(ty_c);
+                }
+                self.line(&format!("typedef struct {0} {0};", mangled));
+                self.line(&format!("struct {} {{", mangled));
+                self.indent += 1;
+                for (f, c_ty) in fields.iter().zip(nt_field_c_tys.iter()) {
+                    let mf = Self::mangle_field_name(&f.name);
+                    self.line(&format!("{} {};", c_ty, mf));
+                }
+                self.indent -= 1;
+                self.line("};");
+                self.line("");
+                let short = Self::debt_mono_short_name(mangled).to_string();
+                self.record_schemas.insert(short.clone(), schema);
+                self.value_struct_field_tys.insert(mangled.to_string(), nt_field_c_tys.clone());
+                // Constructor: unlike the non-generic `emit_named_tuple_type` path
+                // (an inline `((NovaTuple_X){.f=v})` compound literal — no function
+                // needed, since a NON-generic type's C-type/size is fixed at compile
+                // time and known at every call site), a GENERIC instance's size/
+                // layout is only known HERE, per-mono — so a real heap-allocating
+                // constructor FUNCTION is emitted, named to match what the call-site
+                // fix (`try_infer_named_tuple_mono_args`, `emit_call`'s
+                // `ExprKind::Ident` branch) invokes.
+                let ctor_name = format!("nova_ctor_{}", short);
+                let params: Vec<String> = fields.iter().zip(nt_field_c_tys.iter())
+                    .map(|(f, c_ty)| format!("{} {}", c_ty, Self::mangle_field_name(&f.name)))
+                    .collect();
+                self.line(&format!(
+                    "static {}* {}({}) {{",
+                    mangled, ctor_name, params.join(", "),
+                ));
+                self.indent += 1;
+                self.line(&format!(
+                    "{0}* _nv_self = ({0}*)nova_alloc(sizeof({0}));", mangled,
+                ));
+                for f in &fields {
+                    let mf = Self::mangle_field_name(&f.name);
+                    self.line(&format!("_nv_self->{0} = {0};", mf));
+                }
+                self.line("return _nv_self;");
+                self.indent -= 1;
+                self.line("}");
+                self.line("");
             }
             _ => { /* Protocol/effect/alias — not generic record/sum */ }
         }
@@ -38921,6 +39066,34 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                     return Ok(format!("(({}){{{}}})", c_ty, field_inits.join(", ")));
                 }
+            }
+            // реестр 221.1 №502: GENERIC named-tuple constructor call, no turbofish
+            // (`Ent(k, v)` inside a still-generic method body). The `type_aliases`
+            // lookup just above only ever has an entry for the NON-generic sibling
+            // (populated by `emit_named_tuple_type`, run once for the concrete
+            // declaration) — a generic template's bare name ("Ent") never gets a
+            // `type_aliases` entry, so this call fell through, past the newtype-
+            // ctor check below, all the way to the general free-function-call
+            // dispatch — emitting a call to a NEVER-DEFINED `nova_fn_Ent` (codegen
+            // silently treated the type constructor as an ordinary — and entirely
+            // absent — free function). Infer the mono's type-args structurally
+            // (`try_infer_named_tuple_mono_args`, mirrors the sum-variant twin
+            // `try_infer_variant_mono_args` a few thousand lines up) and route to
+            // the per-mono-instance heap constructor FUNCTION that same worklist
+            // registration causes `emit_generic_type_instance_body`'s
+            // `TypeDeclKind::NamedTuple` arm to emit.
+            if let Some((mangled, _)) = self.try_infer_named_tuple_mono_args(name, args) {
+                let short = Self::debt_mono_short_name(&mangled);
+                let mut arg_strs = Vec::new();
+                for a in args {
+                    match a {
+                        CallArg::Named { value, .. } | CallArg::Item(value) => {
+                            arg_strs.push(self.emit_expr(value)?);
+                        }
+                        CallArg::Spread(_) => {}
+                    }
+                }
+                return Ok(format!("nova_ctor_{}({})", short, arg_strs.join(", ")));
             }
         }
 
