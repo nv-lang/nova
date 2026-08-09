@@ -1818,3 +1818,26 @@ process for sure — a separate function `exit(code int, msg str) -> never`
 ([D13](decisions/08-runtime.md#d13)).
 
 Details — [revolutionary.md R11](revolutionary.md), [D13](decisions/08-runtime.md#d13).
+
+## Collection literals: `#from_pairs` and `#from_fields`
+
+A map literal `[k: v, ...]` and a record literal `{field: val}` can turn into a
+user type if that type is marked `#from_pairs` or `#from_fields`.
+
+The only thing the type has to provide is **one static constructor** with an
+optional capacity:
+
+```nova
+export fn T[K, V].new(cap int = 16) -> Self
+```
+
+Desugaring calls it as `T.new(cap: <number of elements in the literal>)` and
+then fills the value with inserts. **Only** the constructor is required: the
+former requirements `mut @cap(n)` and `insert_new` are dropped. If the type does
+have `insert_new`, desugaring uses it as an optimisation (the method may be
+private); otherwise it falls back to the ordinary `@insert`.
+
+If a type carries the mark but has no constructor, that is a **compile error**
+naming what is missing — not a silently ignored mark.
+
+Normative text — [D450](decisions/02-types.md).
