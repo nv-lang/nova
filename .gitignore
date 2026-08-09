@@ -74,3 +74,7 @@ test_out.txt
 spec_tests/**/*.c
 *.ilk
 scratch38/
+
+# Local secrets for the manual smoke test of examples/net/socks5_http_bridge
+# (plan 249 §5). The committed template is `.env.example`.
+.env

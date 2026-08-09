@@ -90,6 +90,37 @@ of the automated gate — `nova build --strict-effects` (compiles the whole
 file) and `nova lint` are the CI-checked gates; the following is a manual,
 by-hand check.
 
+> **The build gates prove the example COMPILES, not that it WORKS.** That
+> distinction is not pedantic here: on 2026-08-09 both gates were green while
+> the bridge could not move a single byte (see "Current status" below). Treat
+> this smoke test as the acceptance gate, not the build.
+
+Credentials live in a git-ignored `.env` next to this README; copy the
+committed template and fill it in:
+
+```sh
+cp examples/net/socks5_http_bridge/.env.example \
+   examples/net/socks5_http_bridge/.env
+$EDITOR examples/net/socks5_http_bridge/.env
+
+set -a && . examples/net/socks5_http_bridge/.env && set +a
+nova build examples/net/socks5_http_bridge/main.nv --strict-effects -o bridge
+./bridge "${LISTEN_PORT:-8899}"
+```
+
+**Run this control FIRST, before blaming the bridge** — it talks to the proxy
+directly, with no Nova code in the path:
+
+```sh
+curl --socks5-hostname "$SOCKS5_PROXY" \
+     --proxy-user "$SOCKS5_USER:$SOCKS5_PASS" https://api.ipify.org
+```
+
+If that fails, the proxy or the credentials are at fault. If it prints an
+external IP and the bridge still does not work, the bridge is at fault — and
+the difference between those two outcomes is exactly what makes this control
+worth the extra command.
+
 **CONNECT path:** point a browser's HTTPS proxy setting at
 `127.0.0.1:PORT` and browse an HTTPS site — the bridge should log nothing
 unusual, and the site should load normally through the configured SOCKS5
