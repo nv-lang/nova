@@ -1,0 +1,34 @@
+// реестр 221.1 №502 — generic named tuple element, `ro`-binding of a
+// NAMED field access INSIDE a `while` loop body (indexed access, not a
+// `for`-iterator — the bug's root is `ExprKind::Index` on an explicit
+// `Vec[T]`-typed receiver, so the loop body must still index).
+module standalone.m502_generic_named_tuple_loop_body_ro_named
+
+type M502GlrEnt[K, V](key K, value V)
+
+type M502GlrBox[K, V] priv { xs Vec[M502GlrEnt[K, V]] }
+
+export fn M502GlrBox[K, V].new() -> Self => { xs: Vec[M502GlrEnt[K, V]].new() }
+
+export fn M502GlrBox[K, V] mut @push(k K, v V) {
+    @xs.push(M502GlrEnt(k, v))
+}
+
+export fn M502GlrBox[K, V] @sum_values() -> int {
+    mut total = 0
+    mut i = 0
+    while i < @xs.len() {
+        ro cur = @xs[i].value
+        total = total + cur
+        i = i + 1
+    }
+    total
+}
+
+test "№502: generic named tuple, ro + loop body + named access" {
+    mut b = M502GlrBox[str, int].new()
+    b.push("a", 1)
+    b.push("b", 2)
+    b.push("c", 3)
+    assert(b.sum_values() == 6)
+}

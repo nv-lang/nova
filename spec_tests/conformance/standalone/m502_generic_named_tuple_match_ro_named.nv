@@ -1,0 +1,35 @@
+// реестр 221.1 №502 — canonical repro: generic named tuple element
+// (`Ent[K, V]`) inside a `Vec[Ent[K, V]]` field of a generic struct;
+// `ro`-binding of a NAMED field access (`.value`) inside a `match` arm.
+// Before the fix: `nova check` PASS, `nova build` CC-FAIL — generated C
+// assignment missing its declaration line (`old = (...)->value;`, no
+// type — "use of undeclared identifier"), AND the mono'd element struct
+// never got its body/constructor emitted ("incomplete definition of
+// type"). This exact shape motivated the fix — keep byte-identical to
+// the reported repro.
+module standalone.m502_generic_named_tuple_match_ro_named
+
+type M502GmrEnt[K, V](key K, value V)
+
+type M502GmrBox[K Equal + Hash, V] priv { xs Vec[M502GmrEnt[K, V]] }
+
+export fn M502GmrBox[K, V].new() -> Self => { xs: Vec[M502GmrEnt[K, V]].new() }
+
+export fn M502GmrBox[K Equal + Hash, V] mut @put(k K, v V) -> Option[V] {
+    match @xs.len() {
+        0 => { @xs.push(M502GmrEnt(k, v))  None }
+        _ => {
+            ro old = @xs[0].value
+            @xs[0] = M502GmrEnt(k, v)
+            Some(old)
+        }
+    }
+}
+
+test "№502: generic named tuple, ro + match + named access" {
+    mut b = M502GmrBox[str, int].new()
+    ro first = b.put("a", 1)
+    assert(first == None)
+    ro second = b.put("a", 2)
+    assert(second == Some(1))
+}

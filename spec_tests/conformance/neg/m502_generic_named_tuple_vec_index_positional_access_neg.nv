@@ -1,0 +1,34 @@
+// реестр 221.1 №502 companion NEG: D215 forbids positional field access
+// (`.0`/`.1`) on a NAMED tuple (`E_TUPLE_POSITIONAL_ACCESS_ON_NAMED`) —
+// that rule is pre-existing and unrelated to №502. BEFORE the №502 fix,
+// this exact receiver shape (a generic named-tuple element reached
+// through an explicit `Vec[T]`-typed field, indexed) never reached the
+// digit-name check at all: `f3_check_member_ctx`'s `infer_expr_type`
+// call on the `Vec[T][i]` receiver returned `None` (the №502 root
+// cause), so the whole member-access validation bailed out EARLY —
+// `.0`/`.1` silently fell through to the SAME missing-declaration
+// codegen CC-FAIL as `.value` (this is what the bug's own boundary
+// probe, "positional access `.1` instead of `.value` doesn't help —
+// same error", actually observed: NOT that `.1` is secretly legal, but
+// that the D215 rejection was UNREACHABLE for this receiver shape).
+// After the fix, `Vec[T][i]` resolves like `[]T[i]` again — the
+// pre-existing D215 rule now correctly fires HERE too.
+//
+// EXPECT_COMPILE_ERROR E_TUPLE_POSITIONAL_ACCESS_ON_NAMED
+
+module neg.m502_generic_named_tuple_vec_index_positional_access_neg
+
+type M502NegEnt[K, V](key K, value V)
+
+type M502NegBox[K, V] priv { xs Vec[M502NegEnt[K, V]] }
+
+export fn M502NegBox[K, V].new() -> Self => { xs: Vec[M502NegEnt[K, V]].new() }
+
+export fn M502NegBox[K, V] mut @push(k K, v V) {
+    @xs.push(M502NegEnt(k, v))
+}
+
+export fn M502NegBox[K, V] @first_value() -> V {
+    ro fv = @xs[0].1
+    fv
+}

@@ -1,0 +1,32 @@
+// реестр 221.1 №502 — generic named tuple element, `mut`-binding of a
+// NAMED field access (`.value`) inside a `match` arm.
+module standalone.m502_generic_named_tuple_match_mut_named
+
+type M502GmmEnt[K, V](key K, value V)
+
+type M502GmmBox[K, V] priv { xs Vec[M502GmmEnt[K, V]] }
+
+export fn M502GmmBox[K, V].new() -> Self => { xs: Vec[M502GmmEnt[K, V]].new() }
+
+export fn M502GmmBox[K, V] mut @bump(k K, v V) -> V {
+    match @xs.len() {
+        0 => {
+            @xs.push(M502GmmEnt(k, v))
+            v
+        }
+        _ => {
+            mut cur = @xs[0].value
+            cur = v
+            @xs[0] = M502GmmEnt(k, cur)
+            cur
+        }
+    }
+}
+
+test "№502: generic named tuple, mut + match + named access" {
+    mut b = M502GmmBox[str, int].new()
+    ro first = b.bump("a", 1)
+    assert(first == 1)
+    ro second = b.bump("a", 2)
+    assert(second == 2)
+}
