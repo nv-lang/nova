@@ -33584,7 +33584,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // D188 binding-форма `consume c = e { … }`) тело ВЛАДЕЕТ
                 // биндингом по-настоящему и вправе потребить его ЯВНО
                 // (D415 §4: «move-out изнутри тела разрешён … move-out-запрет
-                // не вводился»). Флаг `_active` взводился, но НИ ОДНА
+                // [INV-PROPERTY] не вводился»). Флаг `_active` взводился, но НИ ОДНА
                 // дизарм-точка не могла его найти — форма не попадала ни в
                 // `reconsume_scopes`, ни в `auto_cleanup_active`. Итог:
                 // `spawn consume r, w { … r.close(); w.close() }` потреблял
