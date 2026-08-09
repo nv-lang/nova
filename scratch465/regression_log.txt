@@ -12,9 +12,16 @@ batch ac (93 files): PASS: 88  FAIL: 3  SKIP: 2
     NEG-WRONG-PANIC f5_propagation_trace_full  (expected 'propagation trace', got 'unhandled Fail: leaf-error')
     NEG-WRONG-PANIC f5_uncaught_trace_panic    (expected '(throw site)', got 'panic: trace-me')
     NEG-WRONG-PANIC f5_uncaught_trace_throw    (expected '(throw site)', got 'unhandled Fail: uncaught-from-main')
-batch ad (96 files): PENDING
-batch ae (96 files): PENDING
-batch af (95 files): PENDING
+batch ad (96 files): PASS: 96  FAIL: 0
+batch ae (96 files): PASS: 94  FAIL: 1  SKIP: 1
+  1 FAIL — PRE-EXISTING, known-red: NEG-WRONG-PANIC neg_read_oob
+    (expected 'unhandled typed Fail', got 'unhandled Fail: <typed err>')
+batch af (95 files): PASS: 95  FAIL: 0
+
+TOTAL neg (566 files): PASS 559 / FAIL 4 / SKIP 3 — all 4 FAILs are on the
+task brief's known-pre-existing-red list (f5_propagation_trace_full,
+f5_uncaught_trace_panic, f5_uncaught_trace_throw, neg_read_oob). No new
+failures introduced by #465.
 
 === main-binary comparison column ===
 d:/Sources/nv-lang/nova/nova-cli/target/release/nova.exe (rebuilt today ~16:52 by
