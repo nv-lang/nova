@@ -2558,6 +2558,13 @@ pub enum ExpectMismatch {
     NoCompileError { expected_pat: String },
     /// `EXPECT_COMPILE_ERROR <pat>`, codegen упал но без pat.
     WrongCompileMsg { expected_pat: String, got: String },
+    /// Plan 262 Part Б (owner decision 2026-08-09): `// nova:expect E_CODE
+    /// -- reason` found and `E_CODE` DID occur in the compile error, but on
+    /// a DIFFERENT line than `entry.line + 1` (the line right after the
+    /// comment) — the precise failure mode the pin exists to catch (see
+    /// `m510_vec_generic_bracket_sugar_turbofish_neg` postmortem in
+    /// `lints::parse_nova_expect_comments` doc comment).
+    WrongCompileLine { expected_pat: String, expected_line: usize, got_line: Option<usize>, got: String },
     /// `EXPECT_CC_ERROR <pat>`, но CC succeeded.
     NoCcError { expected_pat: String },
     /// `EXPECT_CC_ERROR <pat>`, CC упал но без pat.
@@ -2624,6 +2631,7 @@ impl Outcome {
                 Stage::Expectation { mismatch } => match mismatch {
                     ExpectMismatch::NoCompileError { .. } => "NEG-NO-ERROR",
                     ExpectMismatch::WrongCompileMsg { .. } => "NEG-WRONG-MSG",
+                    ExpectMismatch::WrongCompileLine { .. } => "NEG-WRONG-LINE",
                     ExpectMismatch::NoCcError { .. } => "NEG-NO-CC-ERROR",
                     ExpectMismatch::WrongCcMsg { .. } => "NEG-WRONG-CC-MSG",
                     ExpectMismatch::NoPanic { .. } => "NEG-NO-PANIC",
@@ -2678,6 +2686,15 @@ impl ExpectMismatch {
             ExpectMismatch::WrongCompileMsg { expected_pat, got } => {
                 let snippet: String = got.chars().take(120).collect();
                 format!("expected pattern '{}' not found in: {}", expected_pat, snippet)
+            }
+            ExpectMismatch::WrongCompileLine { expected_pat, expected_line, got_line, got } => {
+                let snippet: String = got.chars().take(120).collect();
+                let got_line_disp = got_line.map(|l| l.to_string()).unwrap_or_else(|| "?".to_string());
+                format!(
+                    "`nova:expect {}` pinned to line {}, but the matching error landed on line {} \
+                     instead — pin is on the wrong line (or the error moved): {}",
+                    expected_pat, expected_line, got_line_disp, snippet
+                )
             }
             ExpectMismatch::NoPanic { expected_pat } => format!(
                 "expected `// EXPECT_RUNTIME_PANIC {}` but exe succeeded (exit=0)",
@@ -2935,6 +2952,15 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
     let verbose = matches!(opts.verbosity, Verbosity::Verbose);
 
     let expect: Vec<ExpectMarker> = marker_srcs.iter().flat_map(|s| parse_expect(s)).collect();
+    // Plan 262 Part Б (owner decision 2026-08-09): `// nova:expect E_CODE --
+    // reason` line-pins compile-error matching (see full rationale on
+    // `lints::parse_nova_expect_comments`). Scanned from the ENTRY file
+    // only (`src`, not every `marker_srcs` peer) — negative fixtures using
+    // this form are single-file in every case the plan specifies; a
+    // `nova:expect` on a peer file is simply not pinned (falls back to
+    // legacy "anywhere" behaviour for that file's own EXPECT_COMPILE_ERROR,
+    // if any).
+    let nova_expect: Vec<crate::lints::NovaExpectEntry> = crate::lints::parse_nova_expect_comments(&src);
     let find_compile_error = || expect.iter().find_map(|m| if let ExpectMarker::CompileError(p) = m { Some(p) } else { None });
     let find_cc_error      = || expect.iter().find_map(|m| if let ExpectMarker::CcError(p)      = m { Some(p) } else { None });
     let find_runtime_panic = || expect.iter().find_map(|m| if let ExpectMarker::RuntimePanic(p) = m { Some(p) } else { None });
@@ -3029,26 +3055,95 @@ pub fn run_one(opts: &TestBuildOpts, split_out: &mut (u128, u128)) -> Outcome {
     let cg_warn_str: String = codegen_warnings.join("\n");
 
     // EXPECT_COMPILE_ERROR — handled на этапе codegen.
-    if let Some(pat) = find_compile_error() {
+    //
+    // Plan 262 Part Б: when the entry file carries at least one REASONED
+    // `nova:expect` entry, it becomes AUTHORITATIVE for the pass/fail
+    // decision below — the fixture passes only if some pinned entry's rule
+    // id is found in the compile error AND that error's own rendered line
+    // is `entry.line + 1` (comment directly above the failing line, same
+    // convention as `nova:allow`). This is intentionally STRICTER than the
+    // legacy file marker (which keeps matching "anywhere in file" when NO
+    // `nova:expect` is present anywhere in the file — Б.3 backward compat
+    // for fixtures not yet migrated). A no-reason `nova:expect` is excluded
+    // from `pinned_expect` (mirrors `nova:allow`: unreasoned = inert for
+    // its primary effect, separately flagged by `E_LINT_EXPECT_NO_REASON`
+    // via `nova lint` — see `lints::apply_nova_expect_no_reason_check`).
+    let pinned_expect: Vec<&crate::lints::NovaExpectEntry> =
+        nova_expect.iter().filter(|e| e.has_reason).collect();
+    let file_pat = find_compile_error();
+    if file_pat.is_some() || !pinned_expect.is_empty() {
+        let display_pat = || -> String {
+            if let Some(p) = file_pat { return p.clone(); }
+            pinned_expect
+                .iter()
+                .flat_map(|e| e.rule_ids.iter().cloned())
+                .collect::<Vec<_>>()
+                .join(",")
+        };
         return match &codegen_result {
             Ok(_) => Outcome::Fail {
                 stage: Stage::Expectation {
-                    mismatch: ExpectMismatch::NoCompileError { expected_pat: pat.clone() },
+                    mismatch: ExpectMismatch::NoCompileError { expected_pat: display_pat() },
                 },
                 elapsed: start.elapsed(),
             },
             Err(msg) => {
-                if msg.contains(pat) {
-                    make_pass("(negative)".to_string(), start.elapsed(), None, None)
+                if !pinned_expect.is_empty() {
+                    let got_line = extract_error_location(msg).map(|(_, l)| l);
+                    let matched_pinned = pinned_expect.iter().find(|e| {
+                        e.rule_ids.iter().any(|rid| msg.contains(rid.as_str()))
+                            && got_line == Some(e.line + 1)
+                    });
+                    if matched_pinned.is_some() {
+                        make_pass("(negative)".to_string(), start.elapsed(), None, None)
+                    } else {
+                        // Distinguish "right code, wrong line" (the exact
+                        // failure this pin exists to catch — precedent:
+                        // m510_vec_generic_bracket_sugar_turbofish_neg) from
+                        // "code not found anywhere".
+                        let matched_elsewhere = pinned_expect.iter().find(|e| {
+                            e.rule_ids.iter().any(|rid| msg.contains(rid.as_str()))
+                        });
+                        if let Some(e) = matched_elsewhere {
+                            Outcome::Fail {
+                                stage: Stage::Expectation {
+                                    mismatch: ExpectMismatch::WrongCompileLine {
+                                        expected_pat: display_pat(),
+                                        expected_line: e.line + 1,
+                                        got_line,
+                                        got: msg.clone(),
+                                    },
+                                },
+                                elapsed: start.elapsed(),
+                            }
+                        } else {
+                            Outcome::Fail {
+                                stage: Stage::Expectation {
+                                    mismatch: ExpectMismatch::WrongCompileMsg {
+                                        expected_pat: display_pat(),
+                                        got: msg.clone(),
+                                    },
+                                },
+                                elapsed: start.elapsed(),
+                            }
+                        }
+                    }
                 } else {
-                    Outcome::Fail {
-                        stage: Stage::Expectation {
-                            mismatch: ExpectMismatch::WrongCompileMsg {
-                                expected_pat: pat.clone(),
-                                got: msg.clone(),
+                    // Legacy path, unchanged: file marker matches ANYWHERE
+                    // in the compile error (Б.3 backward compat).
+                    let pat = file_pat.expect("gated: pinned_expect empty implies file_pat.is_some()");
+                    if msg.contains(pat) {
+                        make_pass("(negative)".to_string(), start.elapsed(), None, None)
+                    } else {
+                        Outcome::Fail {
+                            stage: Stage::Expectation {
+                                mismatch: ExpectMismatch::WrongCompileMsg {
+                                    expected_pat: pat.clone(),
+                                    got: msg.clone(),
+                                },
                             },
-                        },
-                        elapsed: start.elapsed(),
+                            elapsed: start.elapsed(),
+                        }
                     }
                 }
             }
@@ -3942,6 +4037,31 @@ fn nv_dir_index(dir: &Path) -> std::sync::Arc<Vec<NvDirEntry>> {
         guard.insert(dir.to_path_buf(), Arc::clone(&arc));
     }
     arc
+}
+
+/// Plan 262 Part Б: pull `(path, line)` out of the first `path:line:col:
+/// error: ...` occurrence inside a rendered compile-error message — the
+/// exact shape `Diagnostic::render`/`render_with_map` produce (`diag.rs`).
+/// Scans line-by-line (not anchored at byte 0) because some error strings
+/// have wrapper text ahead of the rendered diagnostic (e.g.
+/// `codegen_to_c`'s `format!("import resolution: {}", e)`). `rsplitn(3,
+/// ':')` on the prefix before `": error: "` — splits off `col` then `line`
+/// from the RIGHT, leaving `path` (including a Windows drive-letter colon,
+/// e.g. `D:\...\file.nv`) as the remainder. Returns `None` for messages
+/// with no such line (manifest/import-resolution errors that never reached
+/// `Diagnostic::render`) — callers must treat that as "location unknown",
+/// not "line 0".
+fn extract_error_location(msg: &str) -> Option<(&str, usize)> {
+    for line in msg.lines() {
+        let Some(idx) = line.find(": error: ") else { continue };
+        let prefix = &line[..idx];
+        let mut parts = prefix.rsplitn(3, ':');
+        let _col = parts.next()?;
+        let line_no: usize = parts.next()?.trim().parse().ok()?;
+        let path = parts.next()?;
+        return Some((path, line_no));
+    }
+    None
 }
 
 fn collect_marker_sources(entry_src: &str, entry_path: &Path) -> Vec<String> {
