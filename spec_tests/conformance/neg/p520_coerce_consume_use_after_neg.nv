@@ -1,0 +1,26 @@
+// EXPECT_COMPILE_ERROR D131
+//
+// Plan 221.1 №520 (owner's ruling 2026-08-09): an implicit `#coerce`
+// finalize call now counts as consumption (see the positive fixture,
+// spec_tests/conformance/p520_coerce_consume_positive.nv) — so a value
+// used AFTER an implicit coercion must be rejected exactly like use-after
+// an explicit `.into_str()` call. `ro s str = sb` implicitly consumes `sb`
+// (its own type StringBuilder registers a `#coerce` finalize pair to
+// `str`, std/src/runtime/string_builder.nv:224); the following
+// `sb.append("y")` reuses the already-consumed value.
+
+module neg.p520_coerce_consume_use_after_neg
+
+fn p520_make() -> str {
+    consume sb = StringBuilder.new()
+    sb.append("x")
+    ro s str = sb
+    // ОШИБКА D131: `sb` уже потреблена неявной #coerce-финализацией выше
+    // (`ro s str = sb` → `sb.into_str()`), даже без явного вызова.
+    sb.append("y")
+    s
+}
+
+test "use after implicit #coerce finalize = D131" {
+    ro _ = p520_make()
+}

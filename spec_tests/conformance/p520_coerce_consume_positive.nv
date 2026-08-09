@@ -1,0 +1,125 @@
+// Plan 221.1 №520 (owner's ruling 2026-08-09, docs/plans/221.1-bug-sweep.md):
+// an implicit `#coerce` call inserted at a leaf position whose receiver is
+// `consume` (D429 finalize lane) must itself count as a consuming use, with
+// every consequence an explicit call would carry — drop-flag disarm,
+// use-after-consume rejection. Before this fix, ONLY return position and a
+// free-fn call-arg credited the implicit call (pre-existing); an annotated
+// `let`/`ro`/`mut` binding, a record-literal field, a method-call argument,
+// and an array-literal element under an annotated `let` all fell through to
+// E_VIEW_BINDING_FORBIDDEN or D133-not-consumed instead — the lint
+// `W_COERCE_EXPLICIT_REDUNDANT` (spec_tests/conformance/lint/conv_clean.nv:46)
+// was advising code that didn't compile. Part of the SINGLE
+// `spec_tests.conformance` folder-module.
+module spec_tests.conformance
+
+// ── Positive: bare value at every expected-type-propagated leaf position ──
+
+fn p520_via_return() -> str {
+    consume sb = StringBuilder.new()
+    sb.append("r")
+    sb
+}
+
+fn p520_takes_str(s str) -> str => s
+
+fn p520_via_free_fn_call_arg() -> str {
+    consume sb = StringBuilder.new()
+    sb.append("f")
+    p520_takes_str(sb)
+}
+
+fn p520_via_let_annot() -> str {
+    consume sb = StringBuilder.new()
+    sb.append("l")
+    ro s str = sb
+    s
+}
+
+type P520Holder { mut v str }
+
+// №520 follow-up finding (out of scope for this fix, noted for the record):
+// `resolve_call_params`'s instance-method-call arg-position expected-type
+// lookup (`unique_method_param_types`, types/mod.rs) is keyed by BARE
+// METHOD NAME across the WHOLE program (incl. absorbed std) — "определён
+// ровно на одном типе без overload" — not by (receiver type, method). A
+// method name that collides with ANY other same-named method anywhere in
+// the compiled corpus (e.g. `accept`, shared with `TcpListener.accept()`
+// in std/src/net/tcp.nv) silently loses expected-type propagation, so
+// `MapLitAnnotator::try_coerce_leaf` never splices the finalize call in —
+// even though THIS fix's checker-side credit (keyed precisely by (type,
+// method) via `method_param_output_keys`) still fires, correctly, on the
+// SAME callee. That mismatch is loud (CC-FAIL — the C compiler rejects the
+// pointer/struct type mismatch), not silent, but it's still surprising.
+// `p520_accept` sidesteps it by not colliding with any existing name.
+fn P520Holder mut @p520_accept(x str) -> () { @v = x }
+
+fn p520_via_method_arg() -> str {
+    consume sb = StringBuilder.new()
+    sb.append("m")
+    mut h = P520Holder { v: "" }
+    h.p520_accept(sb)
+    h.v
+}
+
+type P520Rec { s str }
+
+fn p520_via_record_field() -> str {
+    consume sb = StringBuilder.new()
+    sb.append("d")
+    ro r = P520Rec { s: sb }
+    r.s
+}
+
+fn p520_via_array_elem() -> str {
+    consume sb = StringBuilder.new()
+    sb.append("e")
+    ro arr []str = [sb]
+    arr[0]
+}
+
+test "#520: bare value coerces + consumes at every fixed position" {
+    assert(p520_via_return() == "r")
+    assert(p520_via_free_fn_call_arg() == "f")
+    assert(p520_via_let_annot() == "l")
+    assert(p520_via_method_arg() == "m")
+    assert(p520_via_record_field() == "d")
+    assert(p520_via_array_elem() == "e")
+}
+
+// ── Auto-disarm: implicit #coerce finalize must disarm the drop flag ──
+//
+// `StringBuilder` above has no `@cleanup` (nothing to disarm), so it can't
+// demonstrate the drop-flag half by itself — a second, synthetic `#coerce`
+// pair with BOTH a `consume` receiver AND `@cleanup` is needed. The counter
+// lives in a separate ordinary record (`P520Counter`) — records are
+// reference-passed (D467), so `@cleanup` mutating `@counter.n` through the
+// held reference is observable from the caller's own `c` after the call.
+
+type P520Counter { mut n int }
+
+type P520Res consume { ro tag str, mut counter P520Counter }
+
+fn P520Res.new(tag str, counter P520Counter) -> P520Res => { tag, counter }
+
+#coerce
+export fn P520Res consume @finish() -> str => @tag
+
+fn P520Res consume @cleanup(_outcome ScopeOutcome) -> () {
+    @counter.n += 1
+}
+
+test "#520: implicit #coerce finalize auto-disarms cleanup (counter stays 0)" {
+    mut c = P520Counter { n: 0 }
+    consume r = P520Res.new("hi", c)
+    ro s str = r  // implicit #coerce finalize — must consume + disarm r's cleanup
+    assert(s == "hi")
+    assert(c.n == 0)
+}
+
+test "#520: explicit finalize call also disarms cleanup (baseline, same mechanism)" {
+    mut c2 = P520Counter { n: 0 }
+    consume r2 = P520Res.new("hi2", c2)
+    ro s2 = r2.finish()
+    assert(s2 == "hi2")
+    assert(c2.n == 0)
+}
