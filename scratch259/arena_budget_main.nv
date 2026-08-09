@@ -1,0 +1,29 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Scratch repro for Plan 259 / registry #457: a supervised(timeout:) block
+// that is the FIRST thing the process does. Under the pre-259 lazy pool
+// (D137) + eager per-slot guard-page mprotect (fiber_arena.c), the first
+// worker-bound spawn of the whole process synchronously materializes the
+// worker pool (N threads) AND punches NOVA_MAX_FIBERS guard pages per
+// worker arena -- all of that cost lands inside THIS timeout budget.
+// Post-259: guard pages are lazy (fiber_arena.c) and the pool materializes
+// at process start inside nova_runtime_auto_arm(), before this test body
+// ever runs -- so elapsed_ms should sit on the declared budget regardless
+// of NOVA_MAXPROCS / NOVA_MAX_FIBERS.
+//
+// Single test in the compiled unit on purpose: this MUST be the process's
+// first spawn to reproduce #457 faithfully (a prior spawn in the same
+// binary would already have paid the materialization cost).
+
+module scratch259.arena_budget
+
+test "supervised(timeout:) budget excludes worker-pool + arena init cost" {
+    ro t0 = Timestamp.now().unix_millis()
+    ro r = with Fail[TimeoutError] = |_e| { -1 } {
+        supervised(timeout: 200.to_millis()) {
+            spawn { }
+        }
+        0
+    }
+    ro elapsed = Timestamp.now().unix_millis() - t0
+    println("elapsed_ms=${elapsed} r=${r}")
+}

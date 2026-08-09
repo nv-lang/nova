@@ -499,10 +499,28 @@ static bool            _atexit_registered = false;
  * + защитный auto-arm на каждом spawn-входе. Эквивалент
  * `nova_runtime_init(0)`: резолв maxprocs (NOVA_MAXPROCS env →
  * uv_available_parallelism), _armed=true, atexit-регистрация.
- * Hello-world без spawn — `_armed=true`, но `_materialized=false`
- * (пул не поднят) → 0 worker-потоков (Plan 83.2 §4 acceptance).
+ *
+ * [ИЗМЕНЕНО Plan 259 Слой 2, 2026-08-09, D451]: раньше здесь стояло
+ * «Hello-world без spawn — _armed=true, но _materialized=false (пул не
+ * поднят) → 0 worker-потоков» — верно ДО этого амендмента (D137/D138
+ * lazy pool). Причина смены — №457: ленивая материализация «на первом
+ * spawn» списывала цену старта пула (потоки + sysmon + per-worker
+ * libuv loop) на того, кто СЛУЧАЙНО оказался первым, кто спавнит — что
+ * могло быть внутри пользовательского `supervised(timeout:)`-бюджета
+ * (тот же класс запрета, что №470/№474: не компенсировать дедлайн
+ * длительностью инициализации). Теперь `nova_runtime_auto_arm()` сам
+ * материализует пул сразу после arm (см. ниже) — ЛЮБАЯ armed-программа
+ * (default-on M:N, без `NOVA_AUTOARM=0`) поднимает `maxprocs()`
+ * worker-потоков на старте, даже hello-world без единого `spawn`.
+ * Полностью ленивая материализация (0 threads без spawn) остаётся
+ * достижимой ТОЛЬКО через `NOVA_AUTOARM=0` (без M:N вовсе). Подробности
+ * и обоснование — D451 (spec/decisions/06-concurrency.md).
  * Идемпотентно, thread-safe через _init_mu. */
 static bool _nova_autoarm_env_disabled(void);  /* fwd-decl, def ниже */
+/* Plan 259 Слой 2 (D451): fwd-decl — nova_runtime_auto_arm() (ниже) теперь
+ * материализует пул сразу после arm; полное определение _ensure_materialized
+ * ближе к _materialize_pool (после nova_runtime_init), где ему самое место. */
+static void _ensure_materialized(void);
 
 static void _auto_arm_if_needed(void) {
     if (_armed) return;
@@ -571,10 +589,27 @@ static bool _nova_autoarm_env_disabled(void) {
 
 /* Public entry — Plan 83.2 Ф.1 codegen-emit'нутый вызов в main().
  * Plan 83.4.5.9: respect `NOVA_AUTOARM=0` escape hatch (positive
- * env-name; replaces legacy `NOVA_NO_AUTOARM=1`). */
+ * env-name; replaces legacy `NOVA_NO_AUTOARM=1`).
+ *
+ * Plan 259 Слой 2 (2026-08-09, №457, D451): материализует пул СРАЗУ
+ * после arm — было отложено до первого worker-bound spawn (D137 lazy
+ * pool), что рисковало списать цену старта (потоки + sysmon +
+ * per-worker libuv loop + per-worker fiber-арена) на произвольный
+ * spawn, включая spawn ВНУТРИ пользовательского
+ * `supervised(timeout:)`-бюджета. Этот вызов — первая содержательная
+ * строка эмитируемого `main()` (emit_c.rs::emit_main_wrapper, до тела
+ * программы), поэтому вся цена материализации оплачивается ДО того,
+ * как какой-либо пользовательский таймер мог начать отсчёт. Слой 1
+ * этого же плана (fiber_arena.c: ленивые guard-страницы) — предпосылка:
+ * без него материализация пула здесь была бы такой же дорогой, как
+ * была, просто раньше по времени. `NOVA_AUTOARM=0` (`_nova_autoarm_
+ * env_disabled` возвращает true и функция не арм'ит вовсе) остаётся
+ * единственным способом получить 0 worker-потоков — материализация
+ * достижима только через arm. */
 void nova_runtime_auto_arm(void) {
     if (_nova_autoarm_env_disabled()) return;
     _auto_arm_if_needed();
+    _ensure_materialized();
 }
 
 /* Plan 44.5 Layer 5: main wake handle для cross-thread signal'а из
