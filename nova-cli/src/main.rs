@@ -5843,7 +5843,9 @@ fn cmd_test(
 
     if aggregate {
         let table = nova_codegen::perf_timer::dump_aggregated();
-        if !table.is_empty() { eprintln!("{}", table); }
+        if !table.is_empty() {
+            eprintln!("{}", table);
+        }
         // План 252 Ф.0: счётчики стадии `imports-resolve` (молчат без
         // NOVA_IMPORTS_STATS=1).
         let stats = format!(
@@ -5852,15 +5854,24 @@ fn cmd_test(
             nova_codegen::source_index::stats_line()
         );
         eprintln!("{}", stats);
-        // `measure.sh` глушит stdout/stderr измеряемой команды, поэтому без
-        // файлового стока таблицу с валидного (прошедшего вороты занятости)
-        // прогона забрать нечем. Аппендит — виден каждый прогон серии.
-        if let Ok(log_path) = std::env::var("NOVA_PERF_TIMER_LOG") {
-            use std::io::Write;
-            if let Ok(mut f) = std::fs::OpenOptions::new()
-                .create(true).append(true).open(&log_path)
-            {
-                let _ = writeln!(f, "{}{}", table, stats);
+        // Plan 255 Ф.0: `scripts/tools/measure.sh` — the ONLY sanctioned way
+        // to take a timing measurement — redirects the measured command's
+        // stdout+stderr to /dev/null (so N repeated runs stay quiet), which
+        // would otherwise swallow this table entirely. NOVA_PERF_TIMER_LOG
+        // lets the SAME measure.sh-validated run also persist the breakdown
+        // to a file. Off by default (empty env var => no-op); appends (not
+        // truncates) so every run in a `-n N` series is visible for a
+        // spread sanity-check, and each run carries its own header — without
+        // it a series of N runs merges into one indistinguishable sheet.
+        if let Ok(path) = std::env::var("NOVA_PERF_TIMER_LOG") {
+            if !path.is_empty() {
+                use std::io::Write;
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .create(true).append(true).open(&path)
+                {
+                    let _ = writeln!(f, "=== run @ {:?} ===", std::time::SystemTime::now());
+                    let _ = writeln!(f, "{}{}", table, stats);
+                }
             }
         }
     }

@@ -56,7 +56,6 @@ fn main() {
                                 // and turn `stream.read_bytes(...)` below into
                                 // an (invalid) module-qualified call instead of
                                 // a method call (E7401).
-                                consume stream = session
                                 match stream.read_bytes(4096) {
                                     Err(_) => println("Read failed")
                                     Ok(_data) => {
