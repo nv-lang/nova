@@ -1,0 +1,104 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Registry №457 (docs/plans/221.1-bug-sweep.md): `supervised(timeout:)`
+// was reported (window 249, 2026-08-08) NOT to reach a blocking operation
+// nested in the body of a CHILD `spawn` — repro measured >33000ms actual
+// against a declared 2000ms budget. Window p457-timeout (2026-08-09)
+// re-tested the shape across ~1080 targeted runs (several `.nv` variants,
+// using real TCP — out of scope here, `std/src/net/**` is off-limits to
+// that window) and could not reproduce a hang except ONCE, without
+// diagnostics, never again. Root cause was NOT established either way —
+// this fixture does not close №457, it PINS the behavior this window
+// repeatedly observed (channel-based `.recv()` block, no network
+// dependency) as a permanent regression guard, and is itself part of the
+// №457 registry's own required matrix ("операция × размещение", positive
+// AND negative on each cell).
+//
+// Uses `Channel.recv()` (never sent to) as the blocking operation instead
+// of a network read — same structural shape (a park-until-woken op inside
+// a child fiber), no `std/src/net/**` dependency.
+
+module concurrency.supervised_timeout_nested_spawn_test
+
+import std.time.duration
+
+// 1. NEGATIVE (no false positive): body nested one level inside a `spawn`
+//    finishes well within the budget — `timeout:` must NOT fire.
+
+test "no false positive: fast op nested in child spawn body completes within budget" {
+    ro (tx, rx) = Channel.new(1)
+    mut caught = AtomicBool.new(false)
+    ro r = with Fail[TimeoutError] = |_e| {
+        caught.store(true)
+        0
+    } {
+        supervised(timeout: 2.to_seconds()) {
+            spawn {
+                tx.send(true)
+            }
+        }
+        ro got = rx.recv()
+        match got { Some(_) => 1  None => 0 }
+    }
+    assert(!caught.load())
+    assert(r == 1)
+}
+
+// 2. POSITIVE: a `.recv()` that never completes, nested in the body of a
+//    SINGLE child `spawn`, must still be interrupted by the scope's own
+//    `timeout:` — this is the literal shape №457 describes.
+
+test "timeout fires through a blocking recv nested in ONE child spawn" {
+    ro (_tx, rx) = Channel.new(1) // never sent to — rx.recv() blocks forever
+    mut caught = AtomicBool.new(false)
+    ro t0 = Timestamp.now().unix_millis()
+    ro r = with Fail[TimeoutError] = |_e| {
+        caught.store(true)
+        0
+    } {
+        supervised(timeout: 200.to_millis()) {
+            spawn {
+                ro _v = rx.recv()
+            }
+        }
+        1
+    }
+    ro elapsed = Timestamp.now().unix_millis() - t0
+    assert(caught.load())
+    assert(r == 0)
+    // Generous ceiling under CI load — proves the defect if it regresses
+    // (window 249 observed >33000ms actual on a declared 2000ms budget).
+    assert(elapsed < 4000)
+}
+
+// 3. POSITIVE (two-sibling shape): TWO sibling `spawn`s, each blocked on
+//    its OWN `.recv()`, under ONE `supervised(timeout:)` — the exact shape
+//    window 249's Ф.0-б probe used (there: two `TcpReadHalf.read()`s).
+//    This is the one cell where p457-timeout's own re-testing caught a
+//    single, undiagnosed anomaly among ~680 runs of the network variant —
+//    kept here as a permanent, cheap (no network) regression probe for it.
+
+test "timeout fires through two sibling spawns, each blocked on its own recv" {
+    ro (_txA, rxA) = Channel.new(1)
+    ro (_txB, rxB) = Channel.new(1)
+    mut caught = AtomicBool.new(false)
+    ro t0 = Timestamp.now().unix_millis()
+    ro r = with Fail[TimeoutError] = |_e| {
+        caught.store(true)
+        0
+    } {
+        supervised(timeout: 200.to_millis()) {
+            spawn {
+                ro _v = rxA.recv()
+            }
+            spawn {
+                ro _v = rxB.recv()
+            }
+        }
+        1
+    }
+    ro elapsed = Timestamp.now().unix_millis() - t0
+    assert(caught.load())
+    assert(r == 0)
+    assert(elapsed < 4000)
+}
