@@ -13753,12 +13753,125 @@ V2.1 closes 3 [M-124.8-*] markers landed 2026-06-03:
   `static inline void Nova_T_zero_storage(<C_type>* p)` helper emit.
   Picks correct C type (Nova_T для heap+newtype, NovaValue_T для value,
   NovaTuple_T для named tuple).
-- A8.29 ⚠️ [M-124.8-zero-on-move-auto-inject] V2: auto memset at
-  consume call sites — deferred (requires consume codegen Plan 100.x
-  integration; regression risk для sync primitives).
+- A8.29 ✅ [M-124.8-zero-on-move-auto-inject] V2.2 (221.1 №465,
+  2026-08-09): auto memset at consume call sites — LANDED for the safe
+  subset (consume-param-arg + bare consume-return, `AllocKind::Value`
+  record + `NamedTuple` + ordinary `Newtype`). See the D-amendment below
+  for the full analysis, the two new checker guards that keep the unsafe
+  subset from silently compiling, and the named per-primitive risk
+  breakdown for `std`'s sync/concurrency types that motivated the original
+  DEFERRED note.
 - A8.30 ✅ Regression V2.1: plan120 8/8 + plan124_1 9/9 + plan124_3 10/10
   + plan108_3 14/14 unchanged. plan124_8 27/27 → 40/40 PASS (+13 new
   fixtures для 3 markers).
+
+#### D-amendment (221.1 №465, 2026-08-09) — A8.29 auto-inject landed for copy-semantics storage; aliased storage rejected at compile time
+
+**Проблема, найденная владельцем 2026-08-08 по странице спеки:** A8.25-A8.28
+были landed, но A8.29 (сам вызов `Nova_T_zero_storage` на consume-сайтах)
+остался DEFERRED — значит `#zero_on_move` компилировался ЗЕЛЕНО и НИЧЕГО не
+зануляло. Атрибут БЕЗОПАСНОСТИ с молчаливым no-op хуже отсутствия фичи
+(реестр 221.1, запись №465).
+
+**Почему это было отложено, а не сделано сразу (переоткрыто и подтверждено
+здесь):** Nova's ownership-transfer для `consume` **не однородна** по видам
+хранения:
+
+- `AllocKind::Value` record / `NamedTuple` / ordinary (non-runtime-backed)
+  `Newtype` — `consume`-передача (параметр, `return X`) — это **настоящий
+  байтовый C-копирование** (A8.13: "param pass = value copy (C-native)").
+  Подтверждено эмпирически чтением сгенерированного C
+  (`scratch465/probe1-3.nv`): `nova_fn_helper(NovaValue_Secret s)` получает
+  НЕЗАВИСИМУЮ копию; `return s;` копирует значение в return-слот ДО того,
+  как исходный стек-слот освобождается. Зануление ИСТОЧНИКА после того, как
+  копия сделана, безопасно — новый владелец не видит эффекта.
+- `AllocKind::Heap` record (`type X { … }`, без `value`) — `consume`-передача
+  — это **алиасинг указателя**: старая и новая переменная указывают на
+  ОДИН И ТОТ ЖЕ heap-блок (Nova не делает deep-copy при move для
+  heap-типов). Зануление pointee после такой передачи занулило бы значение
+  и для НОВОГО владельца — та же память. Это не «занулить протухшую копию»,
+  а «стереть единственный существующий экземпляр из-под живой ссылки» —
+  порча данных, а не защита.
+- Receiver-вызов consuming-метода (`x.method()`) — даже для `value`-типов
+  `prepare_method_recv` передаёт `&x` (адрес-алиас в кадре вызывающего), НЕ
+  копию (D228). `escape_analyze.rs` **намеренно** исключает receiver-позицию
+  метод-вызова из своего множества escape-синков (иначе КАЖДЫЙ вызов метода
+  форсировал бы heap-promote любого value-record — противоречило бы всей
+  цели Plan 127). Значит для receiver-формы у компилятора НЕТ доказательства
+  «callee не сохранил `&x` дольше своего вызова» — зануление здесь было бы
+  недоказанным.
+
+**Решение (реализовано в этом слиянии):**
+
+1. **Auto-inject landed ТОЛЬКО для доказуемо-безопасного подмножества** —
+   consume-param-arg (свободная функция ИЛИ метод, НЕ receiver-позиция) и
+   bare `return X` (голый идентификатор), и ТОЛЬКО для типов с
+   byte-copy storage (`AllocKind::Value` record / `NamedTuple` / обычный
+   `Newtype`). Реализация — copy-out-then-zero-source: хвостовой
+   промежуточный `__tmp = x;` эмитится ДО `Nova_T_zero_storage(&x)`, вызов/
+   `return` используют `__tmp`, не `x` (иначе зануление ДО того, как копия
+   сделана, отдало бы callee уже занулённые данные). Компилятор:
+   `compiler-codegen/src/codegen/emit_c.rs`,
+   `zero_on_move_rewrite_call`/`zero_on_move_hoist_and_zero` (consume-param-
+   arg, hooked в central `emit_expr` choke-point, тот же, что уже
+   использует `disarm_auto_cleanup_receiver_call`) и `Stmt::Return`'s
+   bare-Ident path (return-site).
+2. **`#zero_on_move` теперь требует `consume` на том же типе**
+   (`E_ZERO_ON_MOVE_REQUIRES_CONSUME`, `compiler-codegen/src/types/mod.rs`)
+   — auto-inject цепляется ИСКЛЮЧИТЕЛЬНО за уже существующую consume-
+   трекинг машинерию (D432 §4: `consume_receiver_methods`/
+   `*_consume_param_positions`), которая ключуется по `consume`. Без
+   `consume` НЕТ ни одной отслеживаемой точки передачи владения — атрибут
+   остался бы тем же самым молчаливым no-op, просто более узким. До этой
+   поправки A8.27 разрешал `#zero_on_move` без `consume` (комбинация
+   технически проходила чекер, но была бессмысленна) — **язык-меняющее
+   сужение**, но ущерба нет: носителей атрибута в `std`/`examples` НОЛЬ
+   (реестр 221.1 №465, зафиксировано владельцем 2026-08-08).
+3. **`#zero_on_move` на heap-allocated record — HARD ERROR**
+   (`E_ZERO_ON_MOVE_ALIASED_STORAGE`) — по причине «алиасинг указателя»
+   выше. Единственный вид из допустимых A8.27 kinds, который теперь ДОПОЛНИТЕЛЬНО
+   исключается: `TypeDeclKind::Record` с `AllocKind::Heap`.
+   `NamedTuple`/`Newtype`/`value`-record остаются допустимы без изменений.
+4. **Receiver-вызов (`x.method()`) НЕ покрыт** и остаётся тем же
+   недоказанным случаем, каким был — компилятор не отвергает его отдельным
+   диагностиком (это не структурная невозможность, как heap-alias, а
+   отсутствие доказательства; полное покрытие требует нового
+   escape-safety-анализа именно для receiver-позиции, вне периметра этого
+   слияния). Задокументировано как известный, а не скрытый пробел.
+
+**Именной разбор риска по `std`'s sync/concurrency-примитивам** (ровно то,
+из-за чего A8.29 изначально отложили — "regression risk для sync
+primitives"; проверено поимённо, ни один сегодня НЕ несёт
+`#zero_on_move`):
+
+| Тип | Объявление | `consume`? | Вид хранения | Судьба под новыми правилами |
+|---|---|---|---|---|
+| `AtomicI64`/`I32`/…/`AtomicInt`/`AtomicUint`/`AtomicBool` (`std/src/runtime/sync.nv`) | `type X value priv { v … }` | НЕТ | Value record | `E_ZERO_ON_MOVE_REQUIRES_CONSUME` отвергает — эти типы разделяемые/долгоживущие, не одноразово-переносимые, `consume` им семантически не подходит |
+| `Mutex`, `RwLock`, `Condvar`, `ReentrantMutex`, `WaitGroup`, `Once`, `Barrier`, `CountDownLatch`, `Semaphore` (`std/src/runtime/sync.nv`) | `type X(*())` | НЕТ | Newtype, runtime-backed (`debt_is_runtime_backed_newtype`) | Двойная защита: `E_ZERO_ON_MOVE_REQUIRES_CONSUME` (не `consume`) на уровне чекера; ДАЖЕ если бы это правило обошли — codegen-пре-пасс НЕ регистрирует runtime-backed newtype в `zero_on_move_types` (helper для них вообще не эмитится, т.к. `emit_type_decl`'s Newtype-ветка возвращает раньше для этого списка) |
+| `MutexGuard`, `ReadGuard`, `WriteGuard`, `Permit` (`std/src/runtime/sync.nv`) | `type X consume { ptr int }` | ДА | Heap record | `E_ZERO_ON_MOVE_ALIASED_STORAGE` отвергает — ровно случай «алиасинг указателя» выше; это и есть буквальный носитель исходного «sync primitives» риска в DEFERRED-заметке |
+| `CancelToken` (`std/src/prelude/concurrency.nv`) | `type X(*())` | НЕТ | Newtype, ОБЫЧНЫЙ (не в списке runtime-backed) | `E_ZERO_ON_MOVE_REQUIRES_CONSUME` отвергает (не `consume` — токен разделяемый, не одноразовый). Будь он `consume`, был бы structurally безопасен (обычный newtype = typedef-копия, зануление трогает только локальный указатель, не то, на что он указывает) — но это гипотетический случай, сегодня неприменимо |
+| `TcpStream`, `TcpListener`, `TcpReadHalf`, `TcpWriteHalf`, `UdpSocket` (`std/src/net/tcp.nv`, `udp.nv`) | `type X consume value priv { handle *(), [rc *mut AtomicInt] }` | ДА | **Value record** (не heap — уточнение к первоначальному предположению «половинки TCP — heap») | Проходит ОБА новых guard'а — если бы кто-то добавил `#zero_on_move`, auto-inject бы сработал на consume-param-arg/return сайтах. Structurally безопасно: зануление собственных полей wrapper'а (`handle`, `rc`) после независимой C-структурной копии НЕ трогает внешний OS-ресурс/разделяемый refcount-объект, на который эти поля указывают (та же логика, что для обычного Newtype, оборачивающего указатель) — но receiver-вызов (`stream.close()`) остался бы НЕ занулённым (см. п.4 выше), т.е. частичное, не полное покрытие, будь атрибут добавлен |
+
+Вывод: каждый сегодняшний sync/concurrency-примитив либо структурно не
+достигает нового кода (не `consume`, либо `consume`-но-heap → жёсткая
+ошибка), либо (TCP/UDP-половинки) доказуемо безопасен под теми же
+гарантиями, что и общий value-record случай. Полного покрытия
+receiver-вызова НЕТ ни для одного вида — известный, документированный
+предел объёма, не скрытая дыра.
+
+**Регрессия:** `spec_tests/conformance/standalone` (140 файлов) 122/0/18,
+`neg` (566 файлов, 6 партий) 559/4/3 — все 4 FAIL совпадают с
+предсуществующим красным списком (`f5_propagation_trace_full`,
+`f5_uncaught_trace_panic`, `f5_uncaught_trace_throw`, `neg_read_oob`).
+`std` (весь `nova test std`) 66/7/106 — все 7 FAIL предсуществующие,
+структурно недостижимы новым кодом (`grep -rl zero_on_move std/src` пуст).
+`std/src/concurrency` чисто (7/0/6). `std/src/net` заблокирован
+предсуществующим CC-FAIL в `addr.nv` (несвязанная ошибка типов
+Result/IoError), не относящимся к #465. Проба «подсунь негодное»: снятие
+инъекции (обе точки) красит новые фикстуры
+(`spec_tests/conformance/standalone/m465_zero_on_move_autoinject_pos.nv`)
+в RUN-FAIL; `git checkout --` восстанавливает — `git diff` пуст, фикстуры
+снова PASS.
 
 ### Followups
 
@@ -13783,9 +13896,16 @@ V2.1 closes 3 [M-124.8-*] markers landed 2026-06-03:
   (heap + value), NamedTuple, Newtype. Reject Effect/Protocol/Sum/
   Alias/Opaque с E_ZERO_ON_MOVE_INVALID_KIND. Auto-injection
   отложено к V2 followup [M-124.8-zero-on-move-auto-inject].
-- **[M-124.8-zero-on-move-auto-inject]** V2 — auto memset of source
-  при consume call. Требует deep integration с consume codegen
-  (Plan 100.x sync primitives) — non-trivial regression risk.
+- ✅ **[M-124.8-zero-on-move-auto-inject]** V2.2 CLOSED 2026-08-09 (221.1
+  №465) — auto memset of source at consume-param-arg + bare consume-return
+  sites, restricted to byte-copy storage (`AllocKind::Value` record /
+  `NamedTuple` / ordinary newtype); heap-allocated records rejected at
+  compile time (`E_ZERO_ON_MOVE_ALIASED_STORAGE` — pointer-aliasing move
+  would corrupt the new owner's value); `#zero_on_move` now requires
+  `consume` (`E_ZERO_ON_MOVE_REQUIRES_CONSUME`). Receiver-consuming-call
+  sites remain uncovered (documented limit, not a silent gap — see the
+  D-amendment above for the full analysis and the named per-primitive risk
+  table for `std`'s sync/concurrency types).
 - **[M-124.8-value-record-mut-literal-codegen]** — pre-existing bug
   (exposed at 2026-06-03 testing): `mut t = ValueT { ... }` direct
   literal binding emits `Nova_T*` вместо `NovaValue_T`. Workaround:
