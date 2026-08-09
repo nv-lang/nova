@@ -118,6 +118,11 @@ if [ ! -f "$CUTOVER_FILE" ]; then
 fi
 BASE="${2:-$(head -1 "$CUTOVER_FILE" | tr -d '[:space:]')}"
 
+# Именованные исключения: `<sha> <причина>` по строке. Точка перехода
+# объявлена окончательной, поэтому единичный коммит, пришедший слиянием
+# после неё, закрывается ЗДЕСЬ — с причиной, а не сдвигом границы.
+EXEMPT_FILE="$ROOT/scripts/guards/commit-language.exempt"
+
 git -C "$ROOT" rev-parse --verify -q "$BASE" >/dev/null 2>&1 || {
     echo "check-commit-language: точка перехода $BASE не найдена в репозитории" >&2
     exit 1
@@ -134,9 +139,18 @@ BAD=""
 for sha in $(git -C "$ROOT" rev-list "$BASE..HEAD" --no-merges 2>/dev/null); do
     ats=$(git -C "$ROOT" log -1 --format='%at' "$sha")
     [ "$ats" -ge "$CUT_TS" ] 2>/dev/null || continue
+    if [ -n "$EXEMPT_FILE" ] && [ -f "$EXEMPT_FILE" ] \
+       && grep -q "^$sha " "$EXEMPT_FILE" 2>/dev/null; then
+        continue
+    fi
     msg=$(git -C "$ROOT" log -1 --format='%B' "$sha")
     # Цитаты и отступ-блоки исключаем: чужой текст переводить нельзя.
-    stripped=$(printf '%s\n' "$msg" | grep -v '^>' | grep -v '^    ')
+    # Плюс ВСТРОЕННЫЕ цитаты — текст в обратных апострофах и одинарных
+    # кавычках: английское сообщение, описывающее русский литерал (имя
+    # маркера, форму разметки, текст диагностики), обязано его процитировать,
+    # иначе оно говорит не о том, о чём говорит.
+    stripped=$(printf '%s\n' "$msg" | grep -v '^>' | grep -v '^    ' \
+        | sed "s/\`[^\`]*\`//g" | sed "s/'[^']*'//g")
     # ВАЖНО: класс Юникода, а НЕ байтовый диапазон `[А-Яа-я]`. Под LC_ALL=C
     # диапазон сравнивает БАЙТЫ, и длинное тире `—` (U+2014, байты E2 80 94)
     # попадает в те же границы — английское сообщение с тире объявлялось
