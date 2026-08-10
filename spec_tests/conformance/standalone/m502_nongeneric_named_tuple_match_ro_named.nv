@@ -16,7 +16,7 @@ export fn M502NmrBox.new() -> Self => { xs: Vec[M502NmrPair].new() }
 
 export fn M502NmrBox mut @put(k str, v int) -> Option[int] {
     match @xs.len() {
-        0 => { @xs.push(M502NmrPair(k, v))  None }
+        0 => { @xs.push(M502NmrPair(k, v)); None }
         _ => {
             ro old = @xs[0].value
             @xs[0] = M502NmrPair(k, v)

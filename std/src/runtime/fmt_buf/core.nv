@@ -328,9 +328,9 @@ export unsafe fn f64_fmt(v f64, buf *mut u8, cap int, kind FloatKind = FloatKind
     requires cap >= 0
 {
     ro k = match kind {
-        FloatKind.Shortest => 0,
-        FloatKind.Fixed => 1,
-        FloatKind.Sci => 2,
+        FloatKind.Shortest => 0
+        FloatKind.Fixed => 1
+        FloatKind.Sci => 2
     }
     unsafe { nova_f64_fmt(v, buf, cap, k, prec) }
 }

@@ -19,7 +19,7 @@ fn main() {
     ro a Option[int] = Some(42)
     ro r = a.map(str.@byte_len)
     match r {
-        Some(v) => print(v),
-        None => print("none"),
+        Some(v) => print(v)
+        None => print("none")
     }
 }

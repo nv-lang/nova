@@ -27,25 +27,25 @@ test "sum-coercion: литерал → единственный совпадаю
     ro a D55Sum = 42
     ro b D55Sum = "hi"
     ro c D55Sum = true
-    match a { D55Sum.I(n) => assert(n == 42) _ => assert(false) }
-    match b { D55Sum.S(s) => assert(s == "hi") _ => assert(false) }
-    match c { D55Sum.B(x) => assert(x == true) _ => assert(false) }
+    match a { D55Sum.I(n) => assert(n == 42), _ => assert(false) }
+    match b { D55Sum.S(s) => assert(s == "hi"), _ => assert(false) }
+    match c { D55Sum.B(x) => assert(x == true), _ => assert(false) }
 }
 test "sum-coercion: ПЕРЕМЕННАЯ (не только литерал) → единственный вариант (D55.1 amend)" {
     ro n = 7
     ro v D55Sum = n
-    match v { D55Sum.I(x) => assert(x == 7) _ => assert(false) }
+    match v { D55Sum.I(x) => assert(x == 7), _ => assert(false) }
 }
 test "sum-coercion: array-literal элементная позиция (D55.1 amend)" {
     ro xs []D55Sum = [1, "two", false]
     assert(xs.len() == 3)
-    match xs[0] { D55Sum.I(n) => assert(n == 1) _ => assert(false) }
-    match xs[1] { D55Sum.S(s) => assert(s == "two") _ => assert(false) }
-    match xs[2] { D55Sum.B(b) => assert(b == false) _ => assert(false) }
+    match xs[0] { D55Sum.I(n) => assert(n == 1), _ => assert(false) }
+    match xs[1] { D55Sum.S(s) => assert(s == "two"), _ => assert(false) }
+    match xs[2] { D55Sum.B(b) => assert(b == false), _ => assert(false) }
 }
 test "sum-coercion: явный конструктор не двойно оборачивается (D55.1 amend)" {
     ro v D55Sum = D55Sum.I(5)
-    match v { D55Sum.I(n) => assert(n == 5) _ => assert(false) }
+    match v { D55Sum.I(n) => assert(n == 5), _ => assert(false) }
 }
 test "newtype-coercion: литерал И переменная → newtype без `as` (D55 amend, D52 open question closed)" {
     ro a D55UserId = 100

@@ -16,8 +16,8 @@ test "method-value arg on non-generic combinator (Option.filter)" {
     ro a Option[int] = Some(5)
     ro r = a.filter(int.@mv_is_positive)
     match r {
-        Some(v) => assert(v == 5),
-        None => assert(false),
+        Some(v) => assert(v == 5)
+        None => assert(false)
     }
 }
 
@@ -25,7 +25,7 @@ test "method-value arg on non-generic combinator (Option.filter, filtered out)" 
     ro a Option[int] = Some(-3)
     ro r = a.filter(int.@mv_is_positive)
     match r {
-        Some(_) => assert(false),
-        None => assert(true),
+        Some(_) => assert(false)
+        None => assert(true)
     }
 }

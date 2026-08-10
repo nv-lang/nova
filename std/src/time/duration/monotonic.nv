@@ -173,8 +173,8 @@ export fn Monotonic @checked_duration_since(other Monotonic) -> Option[Duration]
         None
     } else {
         match @nanos.checked_sub(other.nanos) {
-            Some(r) => Some(r.to_nanos()),
-            None => None,
+            Some(r) => Some(r.to_nanos())
+            None => None
         }
     }
 

@@ -1,0 +1,20 @@
+// EXPECT_COMPILE_ERROR E_MATCH_ARM_COMMA_MULTILINE
+//
+// Plan 264 (D452): retracted form 3/4 — a trailing `,` after a match arm
+// followed by a newline (or the closing `}`) used to parse silently, even
+// though a multi-line arm is already unambiguously delimited by the
+// newline alone. Canon: no comma in the multi-line form (see the positive
+// fixture, spec_tests/conformance/d452_match_arm_separator.nv).
+module neg.p264_match_arm_comma_multiline_neg
+
+fn classify(code int) -> str {
+    match code {
+        // nova:expect E_MATCH_ARM_COMMA_MULTILINE -- form 3/4 retracted by D452: comma right before newline in multiline arms
+        200 => "ok",
+        404 => "not found"
+    }
+}
+
+test "match arm comma multiline neg" {
+    ro _ = classify(200)
+}

@@ -21,7 +21,7 @@ fn dial() -> Result[(D157TupleReqElem, int), str] =>
 
 test "plain Ok((a, b)) с must-consume первым элементом — ошибка" {
     match dial() {
-        Ok((a, b)) => { a.close(); assert(b == 2) },
-        Err(_e) => {},
+        Ok((a, b)) => { a.close(); assert(b == 2) }
+        Err(_e) => {}
     }
 }

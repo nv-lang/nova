@@ -20,8 +20,8 @@ test "method-value arg infers method-level type-param (Option.map, Some)" {
     ro a Option[MvInferNum] = Some(MvInferNum.new(42))
     ro r = a.map(MvInferNum.@to_str)
     match r {
-        Some(v) => assert(v == "42"),
-        None => assert(false),
+        Some(v) => assert(v == "42")
+        None => assert(false)
     }
 }
 
@@ -29,7 +29,7 @@ test "method-value arg infers method-level type-param (Option.map, None)" {
     ro a Option[MvInferNum] = None
     ro r = a.map(MvInferNum.@to_str)
     match r {
-        Some(_) => assert(false),
-        None => assert(true),
+        Some(_) => assert(false)
+        None => assert(true)
     }
 }

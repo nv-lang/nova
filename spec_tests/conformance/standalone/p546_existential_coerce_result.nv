@@ -49,8 +49,8 @@ fn p546_pick_result(scheme str) -> Result[P546RDialer, str] {
 
 fn p546_report(scheme str) {
     match p546_pick_result(scheme) {
-        Ok(d) => println(d.dial("example.com", 443)),
-        Err(e) => println(e),
+        Ok(d) => println(d.dial("example.com", 443))
+        Err(e) => println(e)
     }
 }
 

@@ -23,13 +23,13 @@ test "d317: checked_* — None on overflow, Some in range" {
     assert(d317_MIN.to_nanos().checked_div(-1).is_none())
     // in-range → Some(exact)
     match (1.to_hours()).checked_add(30.to_minutes()) {
-        Some(r) => assert(r == 90.to_minutes()),
-        None => assert(false),
+        Some(r) => assert(r == 90.to_minutes())
+        None => assert(false)
     }
     // in-range mul → Some(exact)
     match (5.to_seconds()).checked_mul(3) {
-        Some(r) => assert(r == 15.to_seconds()),
-        None => assert(false),
+        Some(r) => assert(r == 15.to_seconds())
+        None => assert(false)
     }
 }
 

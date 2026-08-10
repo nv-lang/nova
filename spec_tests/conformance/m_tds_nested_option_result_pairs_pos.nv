@@ -37,10 +37,10 @@ test "m_tds: Option[Result[bool, int]] Ok(true) transpose" {
     ro m_tds_b = m_tds_a.transpose()
     match m_tds_b {
         Ok(opt) => match opt {
-            Some(v) => assert(v == true),
-            None => assert(false, "expected Some(true)"),
-        },
-        Err(_) => assert(false, "expected Ok"),
+            Some(v) => assert(v == true)
+            None => assert(false, "expected Some(true)")
+        }
+        Err(_) => assert(false, "expected Ok")
     }
 }
 
@@ -48,8 +48,8 @@ test "m_tds: Option[Result[bool, int]] Err(7) transpose" {
     ro m_tds_c Option[Result[bool, int]] = Some(Err(7))
     ro m_tds_d = m_tds_c.transpose()
     match m_tds_d {
-        Ok(_) => assert(false, "expected Err"),
-        Err(e) => assert(e == 7),
+        Ok(_) => assert(false, "expected Err")
+        Err(e) => assert(e == 7)
     }
 }
 
@@ -58,10 +58,10 @@ test "m_tds: Option[Result[bool, int]] None transpose (element type must not lea
     ro m_tds_f = m_tds_e.transpose()
     match m_tds_f {
         Ok(opt) => match opt {
-            Some(_) => assert(false, "expected None"),
-            None => assert(true),
-        },
-        Err(_) => assert(false, "expected Ok(None)"),
+            Some(_) => assert(false, "expected None")
+            None => assert(true)
+        }
+        Err(_) => assert(false, "expected Ok(None)")
     }
 }
 
@@ -70,10 +70,10 @@ test "m_tds: Option[Result[str, int]] second distinct non-canonical pair, same C
     ro m_tds_h = m_tds_g.transpose()
     match m_tds_h {
         Ok(opt) => match opt {
-            Some(v) => assert(v == "hi"),
-            None => assert(false, "expected Some(\"hi\")"),
-        },
-        Err(_) => assert(false, "expected Ok"),
+            Some(v) => assert(v == "hi")
+            None => assert(false, "expected Some(\"hi\")")
+        }
+        Err(_) => assert(false, "expected Ok")
     }
 }
 
@@ -81,8 +81,8 @@ test "m_tds: Option[Result[str, int]] Err transpose" {
     ro m_tds_i Option[Result[str, int]] = Some(Err(42))
     ro m_tds_j = m_tds_i.transpose()
     match m_tds_j {
-        Ok(_) => assert(false, "expected Err"),
-        Err(e) => assert(e == 42),
+        Ok(_) => assert(false, "expected Err")
+        Err(e) => assert(e == 42)
     }
 }
 
@@ -91,10 +91,10 @@ test "m_tds: Option[Result[str, int]] None transpose" {
     ro m_tds_l = m_tds_k.transpose()
     match m_tds_l {
         Ok(opt) => match opt {
-            Some(_) => assert(false, "expected None"),
-            None => assert(true),
-        },
-        Err(_) => assert(false, "expected Ok(None)"),
+            Some(_) => assert(false, "expected None")
+            None => assert(true)
+        }
+        Err(_) => assert(false, "expected Ok(None)")
     }
 }
 
@@ -102,10 +102,10 @@ test "m_tds: record-error form — Option[Result[int, MTdsRecErr]] bare local, n
     ro m_tds_m Option[Result[int, MTdsRecErr]] = Some(Err(MTdsRecErr { code: 404, msg: "not found" }))
     match m_tds_m {
         Some(r) => match r {
-            Ok(_) => assert(false, "expected Err"),
-            Err(e) => assert(e.code == 404),
-        },
-        None => assert(false, "expected Some"),
+            Ok(_) => assert(false, "expected Err")
+            Err(e) => assert(e.code == 404)
+        }
+        None => assert(false, "expected Some")
     }
 }
 
@@ -114,10 +114,10 @@ test "m_tds: record-error form — transpose Ok branch" {
     ro m_tds_o = m_tds_n.transpose()
     match m_tds_o {
         Ok(opt) => match opt {
-            Some(v) => assert(v == 42),
-            None => assert(false, "expected Some(42)"),
-        },
-        Err(_) => assert(false, "expected Ok"),
+            Some(v) => assert(v == 42)
+            None => assert(false, "expected Some(42)")
+        }
+        Err(_) => assert(false, "expected Ok")
     }
 }
 
@@ -125,8 +125,8 @@ test "m_tds: record-error form — transpose Err branch" {
     ro m_tds_p Option[Result[int, MTdsRecErr]] = Some(Err(MTdsRecErr { code: 500, msg: "boom" }))
     ro m_tds_q = m_tds_p.transpose()
     match m_tds_q {
-        Ok(_) => assert(false, "expected Err"),
-        Err(e) => assert(e.code == 500),
+        Ok(_) => assert(false, "expected Err")
+        Err(e) => assert(e.code == 500)
     }
 }
 
@@ -135,9 +135,9 @@ test "m_tds: record-error form — transpose None branch" {
     ro m_tds_s = m_tds_r.transpose()
     match m_tds_s {
         Ok(opt) => match opt {
-            Some(_) => assert(false, "expected None"),
-            None => assert(true),
-        },
-        Err(_) => assert(false, "expected Ok(None)"),
+            Some(_) => assert(false, "expected None")
+            None => assert(true)
+        }
+        Err(_) => assert(false, "expected Ok(None)")
     }
 }

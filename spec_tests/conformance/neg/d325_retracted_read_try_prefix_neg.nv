@@ -23,8 +23,8 @@ fn d325_retracted_read() -> u32 {
     // ✗ E_UNKNOWN_METHOD — `try_read_u32_le` ретрактирован (D325); используйте
     //   `rb.read_u32_le()`.
     match rb.try_read_u32_le() {
-        Ok(v)  => v,
-        Err(_) => 0,
+        Ok(v)  => v
+        Err(_) => 0
     }
 }
 

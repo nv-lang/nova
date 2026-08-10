@@ -70,7 +70,7 @@ test "m_rfl: GetItemBundle-canon shape — three DIFFERENT generic-wrapper field
                 Record(m_rfl_wn0, m_rfl_wf0) => {
                     assert(m_rfl_wn0 == "MRflPathWrap")
                     ro (_, m_rfl_inner0) = m_rfl_wf0[0]
-                    match m_rfl_inner0 { Record(t, _) => assert(t == "MRflIdParam") _ => assert(false) }
+                    match m_rfl_inner0 { Record(t, _) => assert(t == "MRflIdParam"), _ => assert(false) }
                 }
                 _ => assert(false)
             }
@@ -78,7 +78,7 @@ test "m_rfl: GetItemBundle-canon shape — three DIFFERENT generic-wrapper field
                 Record(m_rfl_wn1, m_rfl_wf1) => {
                     assert(m_rfl_wn1 == "MRflQueryWrap")
                     ro (_, m_rfl_inner1) = m_rfl_wf1[0]
-                    match m_rfl_inner1 { Record(t, _) => assert(t == "MRflSearchQuery") _ => assert(false) }
+                    match m_rfl_inner1 { Record(t, _) => assert(t == "MRflSearchQuery"), _ => assert(false) }
                 }
                 _ => assert(false)
             }
@@ -86,7 +86,7 @@ test "m_rfl: GetItemBundle-canon shape — three DIFFERENT generic-wrapper field
                 Record(m_rfl_wn2, m_rfl_wf2) => {
                     assert(m_rfl_wn2 == "MRflJsonWrap")
                     ro (_, m_rfl_inner2) = m_rfl_wf2[0]
-                    match m_rfl_inner2 { Record(t, _) => assert(t == "MRflCreateItem") _ => assert(false) }
+                    match m_rfl_inner2 { Record(t, _) => assert(t == "MRflCreateItem"), _ => assert(false) }
                 }
                 _ => assert(false)
             }
@@ -121,7 +121,7 @@ test "m_rfl: two bundles, SAME wrapper MRflPathWrap[T], DIFFERENT T, same CU —
             match m_rfl_sa {
                 Record(_, m_rfl_wfa) => {
                     ro (_, m_rfl_ia) = m_rfl_wfa[0]
-                    match m_rfl_ia { Record(t, _) => assert(t == "MRflIdParam") _ => assert(false) }
+                    match m_rfl_ia { Record(t, _) => assert(t == "MRflIdParam"), _ => assert(false) }
                 }
                 _ => assert(false)
             }
@@ -134,7 +134,7 @@ test "m_rfl: two bundles, SAME wrapper MRflPathWrap[T], DIFFERENT T, same CU —
             match m_rfl_sb {
                 Record(_, m_rfl_wfb) => {
                     ro (_, m_rfl_ib) = m_rfl_wfb[0]
-                    match m_rfl_ib { Record(t, _) => assert(t == "MRflAltId") _ => assert(false) }
+                    match m_rfl_ib { Record(t, _) => assert(t == "MRflAltId"), _ => assert(false) }
                 }
                 _ => assert(false)
             }

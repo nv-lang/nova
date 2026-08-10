@@ -31,8 +31,8 @@ test "detach consume stream { ... } — explicit move, no E_LINEAR_CAPTURE_IN_FI
                 ro _ = dcam_handle_connection(stream)
                 ro _ = inflight.fetch_sub(1)
             }
-        },
-        Err(_e) => {},
+        }
+        Err(_e) => {}
     }
 }
 

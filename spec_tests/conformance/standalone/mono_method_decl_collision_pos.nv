@@ -37,8 +37,8 @@ fn[I M129Src[T]] I mut @drain() -> int {
     mut count = 0
     while true {
         match @pull() {
-            Some(_) => { count += 1 },
-            None => return count,
+            Some(_) => { count += 1 }
+            None => return count
         }
     }
     count
@@ -46,8 +46,8 @@ fn[I M129Src[T]] I mut @drain() -> int {
 
 fn[I M129Src[T]] I mut @is_empty() -> bool {
     match @pull() {
-        Some(_) => false,
-        None => true,
+        Some(_) => false
+        None => true
     }
 }
 

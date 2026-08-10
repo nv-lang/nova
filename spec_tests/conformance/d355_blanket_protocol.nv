@@ -51,8 +51,8 @@ fn[I D355Source[T]] I mut @d355_drain() -> int {
     mut count = 0
     while true {
         match @pull() {
-            Some(_) => { count += 1 },
-            None => return count,
+            Some(_) => { count += 1 }
+            None => return count
         }
     }
     count
@@ -62,8 +62,8 @@ fn[I D355Source[T]] I mut @d355_drain() -> int {
 // the predicate, return type stays concrete (V1). Reports whether the source is empty.
 fn[I D355Source[T]] I mut @d355_is_empty() -> bool {
     match @pull() {
-        Some(_) => false,
-        None => true,
+        Some(_) => false
+        None => true
     }
 }
 

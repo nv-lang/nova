@@ -24,8 +24,8 @@ test "d124: Monotonic arithmetic — process-local domain, saturate-to-zero non-
     // never negative/panics — D318 non-regression contract.
     assert(d124_m0.elapsed_since(d124_m1).is_zero())
     match d124_m0.checked_duration_since(d124_m1) {
-        None => assert(true),   // регресс → None
-        Some(_) => assert(false),
+        None => assert(true)   // регресс → None
+        Some(_) => assert(false)
     }
 }
 

@@ -18,8 +18,8 @@ fn d325_retracted_opt() -> int {
     // ✗ E_UNKNOWN_METHOD — `parse_int_opt` ретрактирован (D325 R4);
     //   используйте `s.to_int().ok()`.
     match s.parse_int_opt() {
-        Some(v) => v,
-        None    => 0,
+        Some(v) => v
+        None    => 0
     }
 }
 

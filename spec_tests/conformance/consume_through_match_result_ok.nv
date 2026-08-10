@@ -28,8 +28,8 @@ fn dial(v int) -> Result[M176Stream, str] => Ok(M176Stream { id: v })
 
 test "match Ok(consume s) => { s.close() } — closed inside the brace arm" {
     match dial(1) {
-        Ok(consume s) => { s.close() },
-        Err(_e) => {},
+        Ok(consume s) => { s.close() }
+        Err(_e) => {}
     }
 }
 

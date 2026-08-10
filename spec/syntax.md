@@ -306,9 +306,9 @@ list.map() fn(s str) -> Result[int, ParseError] { parse(s)? }
 // expression-body — ровно одно выражение
 fn double(x int) => x * 2                    // -> int выведен (D45)
 fn classify(n int) -> str => match n {       // -> str для ясности
-    0 => "zero",
-    n if n > 0 => "positive",
-    _ => "negative",
+    0 => "zero"
+    n if n > 0 => "positive"
+    _ => "negative"
 }
 
 // block-body — несколько шагов; последнее выражение = значение блока

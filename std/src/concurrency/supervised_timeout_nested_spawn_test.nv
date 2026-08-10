@@ -38,7 +38,7 @@ test "no false positive: fast op nested in child spawn body completes within bud
             }
         }
         ro got = rx.recv()
-        match got { Some(_) => 1  None => 0 }
+        match got { Some(_) => 1, None => 0 }
     }
     assert(!caught.load())
     assert(r == 1)

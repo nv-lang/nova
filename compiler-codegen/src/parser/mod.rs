@@ -644,6 +644,132 @@ impl Parser {
         }
     }
 
+    /// Consumes only real `Newline` tokens (not `;`). Used where a `;`
+    /// must be caught as an error rather than silently swallowed — e.g.
+    /// between `match` arms (D452, Plan 264: `;` there is retracted).
+    fn skip_plain_newlines(&mut self) {
+        while matches!(self.peek().kind, TokenKind::Newline) {
+            self.bump();
+        }
+    }
+
+    /// D452 (Plan 264) — statements are a *sequence* ("then"): separated
+    /// by a real newline when multi-line, or by `;` when several sit on
+    /// one line. Call right after a statement has been parsed (and any of
+    /// its own trailing tokens consumed) to verify a separator actually
+    /// stood between it and whatever follows. Two statements glued by
+    /// nothing but whitespace on the same line is a retracted form: it
+    /// used to parse silently (`{ a = 1 b = 2 }`) even though `syntax.md`
+    /// already required `;` there — see plan 264 §2.
+    fn expect_stmt_separator(&mut self) -> Result<(), Diagnostic> {
+        match self.peek().kind {
+            TokenKind::Newline | TokenKind::Semicolon => {
+                self.skip_newlines();
+                Ok(())
+            }
+            TokenKind::RBrace | TokenKind::Eof => Ok(()),
+            _ => {
+                let next_span = self.peek().span;
+                let insert_span = Span { start: next_span.start, end: next_span.start, file_id: next_span.file_id };
+                Err(Diagnostic::new(
+                    "[E_STMT_SEP_MISSING] two statements on the same line must be \
+                     separated by `;` (D452, Plan 264) — nothing but whitespace \
+                     follows the previous statement here; this reads as one \
+                     statement running into the next. Add `;` before this one, \
+                     or put it on its own line."
+                        .to_string(),
+                    next_span,
+                )
+                .with_suggestion(crate::diag::Suggestion {
+                    message: "insert `;` before this statement".to_string(),
+                    span: insert_span,
+                    replacement: "; ".to_string(),
+                    applicability: crate::diag::Applicability::MachineApplicable,
+                }))
+            }
+        }
+    }
+
+    /// D452 (Plan 264) — separator between `match` arms depends on
+    /// whether the next arm sits on the same line or a new one: arms are
+    /// *alternatives* ("or"), a newline alone separates them when
+    /// multi-line, `,` is required (and only meaningful) when several
+    /// arms share one line. `;` between arms is always rejected (it
+    /// promises a sequence where the arms are mutually exclusive), and so
+    /// is `,` immediately before a newline/`}` — that is the retracted
+    /// "comma in multiline arms, including trailing" form. Call right
+    /// after an arm has been fully parsed; on `Ok`, the loop is
+    /// positioned to either see `}` or parse the next arm's pattern.
+    fn expect_match_arm_separator(&mut self) -> Result<(), Diagnostic> {
+        match self.peek().kind {
+            TokenKind::Comma => {
+                let comma_span = self.peek().span;
+                self.bump();
+                if matches!(self.peek().kind, TokenKind::Newline | TokenKind::RBrace) {
+                    return Err(Diagnostic::new(
+                        "[E_MATCH_ARM_COMMA_MULTILINE] `,` right before a newline \
+                         (or the closing `}`) after a match arm is not allowed \
+                         (D452, Plan 264) — multi-line arms are separated by the \
+                         newline alone, a trailing `,` included; `,` is only for \
+                         several arms written on ONE line."
+                            .to_string(),
+                        comma_span,
+                    )
+                    .with_suggestion(crate::diag::Suggestion {
+                        message: "remove the `,`".to_string(),
+                        span: comma_span,
+                        replacement: String::new(),
+                        applicability: crate::diag::Applicability::MachineApplicable,
+                    }));
+                }
+                Ok(())
+            }
+            TokenKind::Semicolon => {
+                let semi_span = self.peek().span;
+                Err(Diagnostic::new(
+                    "[E_MATCH_ARM_SEMICOLON] `;` between match arms is not \
+                     allowed (D452, Plan 264) — arms are mutually exclusive \
+                     (\"or\"); `;` promises a sequence (\"then\") instead. Use \
+                     `,` for several arms on one line, or put each arm on its \
+                     own line (no separator needed then)."
+                        .to_string(),
+                    semi_span,
+                )
+                .with_suggestion(crate::diag::Suggestion {
+                    message: "use `,` instead of `;`".to_string(),
+                    span: semi_span,
+                    replacement: ",".to_string(),
+                    applicability: crate::diag::Applicability::MachineApplicable,
+                }))
+            }
+            TokenKind::Newline => {
+                self.skip_plain_newlines();
+                Ok(())
+            }
+            TokenKind::RBrace => Ok(()),
+            _ => {
+                let next_span = self.peek().span;
+                let insert_span = Span { start: next_span.start, end: next_span.start, file_id: next_span.file_id };
+                Err(Diagnostic::new(
+                    "[E_MATCH_ARM_SEP_MISSING] match arms on the same line must \
+                     be separated by `,` (D452, Plan 264) — this arm directly \
+                     follows the previous one with only whitespace between \
+                     them, which reads as one arm running into the next. Add \
+                     `,` here, or put this arm on its own line (no separator \
+                     needed then)."
+                        .to_string(),
+                    next_span,
+                )
+                .with_suggestion(crate::diag::Suggestion {
+                    message: "insert `,` before this arm".to_string(),
+                    span: insert_span,
+                    replacement: ", ".to_string(),
+                    applicability: crate::diag::Applicability::MachineApplicable,
+                }))
+            }
+        }
+    }
+
     /// Plan 45 Ф.2 / D104: консумит подряд идущие `DocComment`-токены
     /// заданного `kind`'а (пропуская newline/semicolon между ними) и
     /// склеивает их content в один `DocBlock`. Возвращает `None`, если
@@ -5901,7 +6027,12 @@ impl Parser {
                 let (name, name_span) = self.parse_ident()?;
                 let body = self.parse_block()?;
                 let span = start.merge(body.span);
-                self.expect_newline_or_eof().ok();
+                // D452 (Plan 264): separator between this statement and the
+                // next is now enforced centrally by the block loop's
+                // `expect_stmt_separator` — no need to (weakly) pre-consume
+                // it here (it used to be `.ok()`, i.e. never enforced
+                // anything, and consuming it early made the block loop see
+                // "no separator" even on legitimately separated code).
                 return Ok(Stmt::ConsumeScope {
                     binding: name.clone(),
                     type_annot: None,
@@ -5987,7 +6118,8 @@ impl Parser {
             };
             let body = self.parse_block()?;
             let span = start.merge(body.span);
-            self.expect_newline_or_eof().ok();
+            // D452 (Plan 264): see note above — separator enforced by the
+            // caller's `expect_stmt_separator`, not pre-consumed here.
             return Ok(Stmt::ConsumeScope {
                 binding,
                 type_annot: ty,
@@ -6001,7 +6133,6 @@ impl Parser {
         // Не scope-block — rewind newlines + raw form (D180).
         self.pos = saved_pos;
         let span = start.merge(value.span);
-        self.expect_newline_or_eof().ok();
         Ok(Stmt::Let(LetDecl {
             mutable: false,
             pattern,
@@ -6060,7 +6191,8 @@ impl Parser {
         }
         let body = self.parse_block()?;
         let outer_span = start.merge(body.span);
-        self.expect_newline_or_eof().ok();
+        // D452 (Plan 264): separator enforced by the caller's
+        // `expect_stmt_separator`, not pre-consumed here.
         // Desugar (LIFO): последний идент — самый внутренний слой, его
         // body — РЕАЛЬНОЕ тело пользователя (unchanged, включая свой
         // trailing/return для собственного tail-дизарма). Каждый следующий
@@ -6140,7 +6272,8 @@ impl Parser {
         }
         let body = self.parse_block()?;
         let span = start.merge(body.span);
-        self.expect_newline_or_eof().ok();
+        // D452 (Plan 264): separator enforced by the caller's
+        // `expect_stmt_separator`, not pre-consumed here.
         Ok(Stmt::ConsumeScope {
             binding: name.clone(),
             type_annot: None,
@@ -6260,7 +6393,8 @@ impl Parser {
         self.skip_newlines();
         let value = self.parse_expr()?;
         let span = start.merge(value.span);
-        self.expect_newline_or_eof().ok();
+        // D452 (Plan 264): separator enforced by the caller's
+        // `expect_stmt_separator`, not pre-consumed here.
         // Plan 51 Ф.2: redundant `T = T { … }` (carry-over check).
         if let Some(TypeRef::Named { path: ann_path, .. }) = &ty {
             if let ExprKind::RecordLit { type_name: Some(lit_path), .. } = &value.kind {
@@ -6314,7 +6448,10 @@ impl Parser {
         self.skip_newlines();
         let value = self.parse_expr()?;
         let value_span = value.span;
-        self.expect_newline_or_eof().ok();
+        // D452 (Plan 264): when this is a scope-local `const` (statement
+        // position), separator is enforced by the caller's
+        // `expect_stmt_separator`; at module level the item loop handles
+        // its own newline/EOF tolerance — either way, not pre-consumed here.
         Ok(ConstDecl {
             doc,
             doc_attrs,
@@ -6619,7 +6756,7 @@ impl Parser {
                             }
                             self.bump();
                             c_measure = Some(self.parse_block()?);
-                            self.skip_newlines();
+                            self.expect_stmt_separator()?;
                             continue;
                         }
                         let so = self.parse_stmt_or_expr()?;
@@ -6629,7 +6766,7 @@ impl Parser {
                         };
                         if c_measure.is_none() { c_setup.push(s) }
                         else { c_teardown.push(s) }
-                        self.skip_newlines();
+                        self.expect_stmt_separator()?;
                     }
                     let cb_close = self.expect(&TokenKind::RBrace)?.span;
                     let c_measure = c_measure.ok_or_else(|| Diagnostic::new(
@@ -6695,7 +6832,7 @@ impl Parser {
                 self.bump();
                 let mb = self.parse_block()?;
                 measure_body = Some(mb);
-                self.skip_newlines();
+                self.expect_stmt_separator()?;
                 continue;
             }
             let so = self.parse_stmt_or_expr()?;
@@ -6708,7 +6845,7 @@ impl Parser {
             } else {
                 teardown.push(s);
             }
-            self.skip_newlines();
+            self.expect_stmt_separator()?;
         }
         let brace_close = self.expect(&TokenKind::RBrace)?.span;
         let measure_body = measure_body.ok_or_else(|| {
@@ -10386,10 +10523,9 @@ impl Parser {
                 body,
                 span,
             });
-            // D49: разделитель между arms — newline или `,`. Опциональная
-            // trailing-запятая после последнего arm'а тоже допустима.
-            self.eat(&TokenKind::Comma);
-            self.skip_newlines();
+            // D452 (Plan 264): separator between arms depends on same-line
+            // vs multi-line — see `expect_match_arm_separator`.
+            self.expect_match_arm_separator()?;
         }
         let end = self.expect(&TokenKind::RBrace)?.span;
         Ok(Expr::new(
@@ -11534,10 +11670,10 @@ impl Parser {
             match stmt_or_expr {
                 StmtOrExpr::Stmt(s) => {
                     stmts.push(s);
-                    self.skip_newlines();
+                    self.expect_stmt_separator()?;
                 }
                 StmtOrExpr::Expr(e) => {
-                    self.skip_newlines();
+                    self.expect_stmt_separator()?;
                     if matches!(self.peek().kind, TokenKind::RBrace) {
                         trailing = Some(Box::new(e));
                     } else {
@@ -11929,10 +12065,10 @@ impl Parser {
             match self.parse_stmt_or_expr()? {
                 StmtOrExpr::Stmt(s) => {
                     stmts.push(s);
-                    self.skip_newlines();
+                    self.expect_stmt_separator()?;
                 }
                 StmtOrExpr::Expr(e) => {
-                    self.skip_newlines();
+                    self.expect_stmt_separator()?;
                     if matches!(self.peek().kind, TokenKind::RBrace) {
                         trailing = Some(Box::new(e));
                     } else {

@@ -123,7 +123,7 @@ Caller inspects composite:
 
 ```nova
 match process() {
-    Ok(_) => println("done"),
+    Ok(_) => println("done")
     Err(e) => {
         println("primary: ${e.primary()}")
         for s in e.suppressed() {

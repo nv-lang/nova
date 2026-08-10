@@ -7,8 +7,8 @@ import std.collections.vec_iter.{FilterIter}
 fn[I Next[T]] I mut @bany(pred fn(T) -> bool) -> bool {
     while true {
         match @next() {
-            Some(x) => { if pred(x) { return true } },
-            None => return false,
+            Some(x) => { if pred(x) { return true } }
+            None => return false
         }
     }
     false
@@ -17,8 +17,8 @@ fn[I Next[T]] I mut @bany(pred fn(T) -> bool) -> bool {
 fn[I Next[T]] I mut @ball(pred fn(T) -> bool) -> bool {
     while true {
         match @next() {
-            Some(x) => { if !pred(x) { return false } },
-            None => return true,
+            Some(x) => { if !pred(x) { return false } }
+            None => return true
         }
     }
     true
