@@ -1,0 +1,107 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/os/d453_os_process_run_test.nv — Plan 265 Ф.1 (D453): Command/Process.run().
+//
+// Coverage: real spawn + wait + exit code (zero and non-zero, distinct from
+// "failed to launch"), supervised(timeout:) reaping a process that overruns
+// its budget, and the mock_os scripting that makes tool-wrapper tests
+// independent of any real binary being installed (D453 §4 acceptance).
+//
+// Platform helpers below use ONLY binaries guaranteed present on every CI
+// runner for this repo's two supported platforms (`sh`/POSIX coreutils on
+// Unix, `cmd.exe`/`timeout.exe` — both System32 — on Windows), so this file
+// stays hermetic: no dependency on `git` or any other third-party tool.
+
+module std.os
+
+import std.time.duration
+
+fn must[T](r Result[T, IoError]) -> T {
+    match r {
+        Ok(v) => v
+        Err(e) => panic("d453: unwrap on Err(${e})")
+    }
+}
+
+#cfg(target_os = "windows")
+fn sh_exit(code int) -> Command => Command.new("cmd").arg("/c").arg("exit").arg("${code}")
+
+#cfg(!target_os = "windows")
+fn sh_exit(code int) -> Command => Command.new("sh").arg("-c").arg("exit ${code}")
+
+// `timeout.exe` refuses to run at all under redirected stdin ("ERROR: Input
+// redirection is not supported, exiting the process immediately", exits fast
+// even with /nobreak) — and this wave's default is EXACTLY that (no stdio
+// redirection yet, D453 §4: libuv redirects stdin/stdout/stderr to NUL by
+// default). `ping` needs no console and blocks for real — the standard
+// portable Windows "sleep" substitute for exactly this reason.
+#cfg(target_os = "windows")
+fn slow_cmd(seconds int) -> Command => Command.new("ping").arg("-n").arg("${seconds + 1}").arg("127.0.0.1")
+
+#cfg(!target_os = "windows")
+fn slow_cmd(seconds int) -> Command => Command.new("sleep").arg("${seconds}")
+
+test "d453: Command.run() waits for a real process and reports exit code 0" {
+    with Os = real_os() {
+        ro st = must(sh_exit(0).run())
+        assert(st.success())
+        assert(st.code() == 0)
+    }
+}
+
+test "d453: non-zero exit code is Ok(ExitStatus), distinct in TYPE from a failed spawn" {
+    with Os = real_os() {
+        // Ran successfully, exited non-zero — Ok, not Err.
+        ro st = must(sh_exit(3).run())
+        assert(!st.success())
+        assert(st.code() == 3)
+
+        // Never ran at all — Err, not Ok(some code).
+        ro spawn_err = Command.new("nova-d453-definitely-not-a-real-program-xyz").run()
+        match spawn_err {
+            Ok(_) => panic("d453: expected a spawn failure (program does not exist)")
+            Err(_) => ()
+        }
+    }
+}
+
+test "d453: supervised(timeout:) reaps a process that overruns its budget" {
+    with Os = real_os() {
+        ro t0 = Timestamp.now().unix_millis()
+        ro r = with Fail[TimeoutError] = |_e| { 0 } {
+            supervised(timeout: 100.to_millis()) {
+                match slow_cmd(10).run() {
+                    Ok(st) => panic("d453: expected the wait to be interrupted, got exit ${st.code()}")
+                    Err(_) => ()
+                }
+            }
+            1
+        }
+        assert(r == 0)
+        ro elapsed = Timestamp.now().unix_millis() - t0
+        // 100ms budget; generous ceiling for CI, but strictly far below the
+        // slow command's own 10s duration (proves it was actually KILLED,
+        // not merely outlasted).
+        assert(elapsed < 3000)
+    }
+}
+
+test "d453: mock_os scripts Command.run() without any real program installed" {
+    mut state = MockOs.new()
+    state.on_process("git", 0)
+    state.on_process_not_found("some-tool-that-is-not-installed")
+    with Os = mock_os(state) {
+        ro ok = must(Command.new("git").arg("--version").run())
+        assert(ok.success())
+
+        ro missing = Command.new("some-tool-that-is-not-installed").run()
+        match missing {
+            Ok(_) => panic("d453: expected a scripted spawn failure")
+            Err(_) => ()
+        }
+    }
+    // The tool's own call pattern is observable — a real test would assert
+    // it called exactly the programs it was supposed to, in order.
+    assert(state.process_calls().len() == 2)
+    assert(state.process_calls()[0] == "git")
+    assert(state.process_calls()[1] == "some-tool-that-is-not-installed")
+}

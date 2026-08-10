@@ -607,6 +607,7 @@ typedef struct { char _dummy; } nova_unit;
 #ifdef NOVA_USE_LIBUV
 #  include "net.h" /* Plan 183 Ф.1 / Plan 182 Ф.1: reworked std/net substrate (D407); file renamed from net2.h */
 #  include "fs.h"   /* Plan 176 Ф.2: std/fs — async uv_fs_* via libuv */
+#  include "process.h" /* Plan 265 Ф.1 (D453): std/os subprocess — uv_spawn/uv_process_t */
 #endif
 
 /* ---- Plan 33.1 Ф.4 (D24): contracts runtime helper ----

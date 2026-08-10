@@ -1156,6 +1156,9 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
     let rt_net = opts.rt_dir.join("net.c");
     // Plan 176 Ф.2: fs.c — std/fs async uv_fs_* backend, same libuv gating as net.c.
     let rt_fs = opts.rt_dir.join("fs.c");
+    // Plan 265 Ф.1: process.c — std/os subprocess substrate (uv_spawn/uv_process_t),
+    // same libuv gating as net.c/fs.c.
+    let rt_process = opts.rt_dir.join("process.c");
     let march = march_flag();
 
     // Plan 218: prebuilt runtime archive. If a bucket-matching `libnova_rt`
@@ -1363,6 +1366,8 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                         c.arg(&rt_net);
                         // Plan 176 Ф.2: fs.c — std/fs backend, same libuv gate.
                         c.arg(&rt_fs);
+                        // Plan 265 Ф.1: process.c — std/os subprocess backend, same libuv gate.
+                        c.arg(&rt_process);
                     }
                     c.arg(_lib_path);
                     if !use_rt_archive {
@@ -1470,6 +1475,8 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                     c.arg(&rt_net);
                     // Plan 176 Ф.2: fs.c — std/fs backend, same libuv gate.
                     c.arg(&rt_fs);
+                    // Plan 265 Ф.1: process.c — std/os subprocess backend, same libuv gate.
+                    c.arg(&rt_process);
                     c.arg(evloop);
                 }
                 /* Linux ld обрабатывает .a archives только для symbols
@@ -1600,6 +1607,8 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                     c.arg(&rt_net);
                     // Plan 176 Ф.2: fs.c — std/fs backend, same libuv gate.
                     c.arg(&rt_fs);
+                    // Plan 265 Ф.1: process.c — std/os subprocess backend, same libuv gate.
+                    c.arg(&rt_process);
                     c.arg(evloop);
                 }
                 c.arg(lib_path);
@@ -1784,6 +1793,8 @@ fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                     c.arg(&rt_net);
                     // Plan 176 Ф.2: fs.c — std/fs backend, same libuv gate.
                     c.arg(&rt_fs);
+                    // Plan 265 Ф.1: process.c — std/os subprocess backend, same libuv gate.
+                    c.arg(&rt_process);
                     c.arg(evloop);
                 }
                 #[cfg(target_os = "linux")]
@@ -2116,6 +2127,8 @@ pub fn compile_multi_tu_to_exe(
     if let Some(libuv) = opts.libuv {
         extra_sources.push(opts.rt_dir.join("net.c"));
         extra_sources.push(opts.rt_dir.join("fs.c"));
+        // Plan 265 Ф.1: process.c — std/os subprocess backend, same libuv gate.
+        extra_sources.push(opts.rt_dir.join("process.c"));
         extra_sources.push(libuv.eventloop_src.clone());
     }
     if let Some(ffi) = opts.ffi {
@@ -5707,6 +5720,8 @@ fn rt_archive_sources(rt_dir: &Path, gc_kind: GcKind, libuv: Option<&LibuvConfig
     if let Some(uv) = libuv {
         v.push(rt_dir.join("net.c"));
         v.push(rt_dir.join("fs.c"));
+        // Plan 265 Ф.1: process.c — std/os subprocess backend, same libuv gate.
+        v.push(rt_dir.join("process.c"));
         v.push(uv.eventloop_src.clone());
     }
     v
