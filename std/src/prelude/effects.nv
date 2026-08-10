@@ -160,6 +160,78 @@ export type Random effect {
     bytes(n int) -> []u8                // массовая генерация
 }
 
+// ─── real_random — the production Random handler over the OS CSPRNG ───
+// (Plan 265 Ф.3 / №553 / D454)
+//
+// Lives HERE (not a separate module, unlike `real_os`/`real_fs`/`real_net`/
+// `real_io`, each living in their own effect's home module) because
+// `Random` itself is pinned to `prelude.effects` by
+// `[M-random-u64-path-return-ice]` (comment above) — the default-handler
+// factory follows its effect's schema to the same file, same reasoning
+// that put `real_time()` beside `Time` in `time.duration` rather than in
+// prelude.
+//
+// Named `real_random` — same family as `real_time`/`real_os`/`real_fs`/
+// `real_net`/`real_io` (owner correction, 2026-08-10): all five name the
+// handler by WHAT IT IS (the real, system-backed handler), not by a
+// property it happens to have. There is exactly one production source
+// (this one) and one deterministic-test source (`seeded()`,
+// `std/src/testing/handlers/core.nv`) — no "secure vs insecure-but-still-
+// real" axis exists, so a property-named `secure()` would misleadingly
+// imply one.
+//
+// `random_secure_u64()` (`nova_rt/runtime.c`) queries the OS CSPRNG
+// (`BCryptGenRandom` on Windows, `getrandom()` on Linux/macOS) on EVERY
+// call — no per-process seed is cached the way hash-seed's SipHash key is;
+// `real_random()` promises cryptographic strength for EACH value, not just
+// per-process unpredictability. `bytes(n)` reuses the exact 8-byte
+// bit-cache loop that `seeded()` uses (`std/src/testing/handlers/core.nv`)
+// — same shape, different 8-byte source.
+extern "C" fn random_secure_u64() -> u64
+
+/// Concrete `Random` handler over the OS entropy source
+/// (`BCryptGenRandom`/`getrandom`). Install at the root of a program:
+/// `with Random = real_random() { … }`. Panics (D454) if the OS CSPRNG is
+/// unavailable — a predictable fallback would be a silent security
+/// regression, worse than a crash.
+///
+/// `#default_handler` (bare form) — `Random` has an auto-generated vtable
+/// (`emit_effect_type`), so the generic lazy-install mechanism (D431 §5)
+/// already covers it without compiler changes: first transitive use of
+/// `Random` with no enclosing `with Random = …` lazily constructs and
+/// installs THIS handler, once per thread, consistent with
+/// `Time`/`real_time()`/`Os`/`real_os()`. An explicit `with Random =
+/// th.seeded(seed)` (`std/testing/handlers/core.nv`) still fully overrides
+/// it — `seeded()` remains a deliberate, unchanged opt-out for
+/// deterministic tests.
+#stable(since = "0.1")
+#default_handler
+export fn real_random() -> Effect[Random] {
+    effect Random {
+        u64() -> u64 => random_secure_u64()
+        bytes(n int) -> []u8 {
+            // Same 8-byte bit-cache shape as `seeded()`'s `bytes(n)`
+            // (`testing/handlers/core.nv`) — the source of the 8 bytes is
+            // `random_secure_u64()` instead of an xoshiro256++ step.
+            mut out []u8 = []
+            mut i = 0
+            mut buf_remaining = 0
+            mut buf u64 = 0
+            while i < n {
+                if buf_remaining == 0 {
+                    buf = random_secure_u64()
+                    buf_remaining = 8
+                }
+                out.push((buf & 0xFF) as u8)
+                buf = buf >> 8
+                buf_remaining = buf_remaining - 1
+                i = i + 1
+            }
+            out
+        }
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // ResourceTrace observability effect
 // ──────────────────────────────────────────────────────────────────────────

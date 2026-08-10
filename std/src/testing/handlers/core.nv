@@ -74,9 +74,13 @@
 //   https://prng.di.unimi.it/splitmix64.c
 //
 // Не для production: `seeded` — НЕ криптографически стойкий.
-// Для production используется встроенный `Random` handler (CSPRNG via
-// runtime), который и активен по-умолчанию. См. spec/open-questions.md
-// → `secure()` будущая фабрика для CSPRNG.
+// Для production используется `real_random()` (`#default_handler` для
+// `Random`, `std/src/prelude/effects.nv`; та же `real_*`-семья, что
+// `real_time`/`real_os`/`real_fs`/`real_net`/`real_io`) — CSPRNG поверх
+// системного источника энтропии (`BCryptGenRandom`/`getrandom`,
+// `nova_rt/runtime.c`), активный по умолчанию БЕЗ явного `with Random =
+// …` (Plan 265 Ф.3 / №553 / D454). Отказ источника энтропии — паника
+// (D454), не молчаливая деградация.
 
 module testing.handlers
 

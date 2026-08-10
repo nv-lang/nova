@@ -259,6 +259,17 @@ extern uint64_t nova_hash_seed_k0;
 extern uint64_t nova_hash_seed_k1;
 extern void nova_hash_seed_ensure_init(void);
 
+/* Plan 265 Ф.3 / №553 / D454: `real_random()` — the `#default_handler`
+ * for the `Random` effect (`std/src/prelude/effects.nv`; same `real_*`
+ * family as `real_time`/`real_os`/`real_fs`/`real_net`/`real_io`). UNLIKE
+ * `nova_hash_seed_*` above (which seeds ONCE per process and iterates a
+ * fast non-cryptographic PRF for a DoS-resistance bar), this queries the
+ * OS CSPRNG (BCryptGenRandom / getrandom) on EVERY call — `real_random()`
+ * promises cryptographic strength per value, not just per-process
+ * unpredictability, so no local state is trusted. Entropy-source failure
+ * panics via `nv_panic` (D454) — no silent weaker fallback, see runtime.c. */
+extern uint64_t random_secure_u64(void);
+
 #define NOVA_SIP_ROTL(x, b) (uint64_t)(((x) << (b)) | ((x) >> (64 - (b))))
 #define NOVA_SIP_ROUND(v0, v1, v2, v3) do { \
     v0 += v1; v1 = NOVA_SIP_ROTL(v1, 13); v1 ^= v0; v0 = NOVA_SIP_ROTL(v0, 32); \
