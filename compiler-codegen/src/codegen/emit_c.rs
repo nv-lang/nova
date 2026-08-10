@@ -2772,15 +2772,14 @@ impl CEmitter {
             consume_ccount_structs: HashSet::new(),
             record_consume_fields: HashMap::new(),
             record_field_names: HashMap::new(),
-            // Plan 209 Ф.6 (владелец 2026-08-11): ВКЛЮЧЕНО ПО УМОЛЧАНИЮ,
-            // выключается `NOVA_MULTI_TU=0` (обоснование и замеры — план 209,
-            // `docs/plans/wip/209-f4-measures.md`, реестр 221.1 №575).
-            // Опрашивается ОТРИЦАНИЕ: непонятное значение = «включено»;
-            // умолчание, требующее правильно написанного слова, есть
-            // выключено. MSVC откатывается на одну TU — `test_runner.rs`.
+            // Plan 209 Ф.6: переворот умолчания ОТКАЧЕН 2026-08-11 тем же днём.
+            // Флаг снова opt-in — но уже не «просто не взведён», а ЗАБЛОКИРОВАН
+            // измерением: с `NOVA_MULTI_TU=1` мега-CU одного файла не
+            // линкуется (`undefined symbol: nova_fn_T_reflect`) — реестр №577.
+            // Пока линковка не починена, включать по умолчанию нельзя.
             multi_tu_enabled: std::env::var("NOVA_MULTI_TU")
-                .map(|v| !(v == "0" || v.eq_ignore_ascii_case("false") || v.eq_ignore_ascii_case("off")))
-                .unwrap_or(true),
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false),
         }
     }
 

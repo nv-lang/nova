@@ -711,18 +711,6 @@ pub fn detect_toolchain(opts: &ToolchainOpts) -> Result<Toolchain> {
                  or set NOVA_VCVARS to vcvars64.bat path."
             )
         })?;
-        // Plan 209 Ф.6 (владелец 2026-08-11): много-TU включён по умолчанию,
-        // но для MSVC он НЕ РЕАЛИЗОВАН (Ф.2 remainder — compile+link по
-        // частям умеет только clang/gcc). Перевернув дефолт и не сделав
-        // этого, мы бы выдали пользователю с MSVC жёсткую ошибку вместо
-        // сборки — то есть починили бы скорость ценой работоспособности.
-        //
-        // Поэтому: молча возвращаемся к одной единице трансляции. Явно
-        // попросивший (`NOVA_MULTI_TU=1`) получает прежний честный отказ —
-        // он знает, чего просит; умолчание же обязано работать.
-        if std::env::var("NOVA_MULTI_TU").is_err() {
-            std::env::set_var("NOVA_MULTI_TU", "0");
-        }
         Ok(Toolchain::Msvc { env, vcvars: vcvars.clone() })
     };
     let try_gcc = || -> Result<Toolchain> {
