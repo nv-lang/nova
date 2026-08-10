@@ -7,9 +7,9 @@ type Shape2_3 | Circle(int) | Square(int) | Rect(int, int)
 
 fn Shape2_3 @area() -> int {
     match @ {
-        Circle(r) => r * r * 3,
-        Square(s) => s * s,
-        Rect(w, h) => w * h,
+        Circle(r) => r * r * 3
+        Square(s) => s * s
+        Rect(w, h) => w * h
     }
 }
 

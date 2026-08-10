@@ -20,7 +20,7 @@ fn dial() -> Result[int, D157ErrReqPayload] => Err(D157ErrReqPayload { code: 1 }
 
 test "plain Err(e) на must-consume payload — ошибка" {
     match dial() {
-        Ok(_v) => {},
-        Err(e) => { e.drop() },
+        Ok(_v) => {}
+        Err(e) => { e.drop() }
     }
 }

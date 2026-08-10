@@ -21,7 +21,7 @@ test "двойной close после consume-паттерна — use-after-con
         Ok(consume tcp) => {
             tcp.close()
             tcp.close()
-        },
-        Err(_e) => {},
+        }
+        Err(_e) => {}
     }
 }

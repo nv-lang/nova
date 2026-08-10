@@ -85,15 +85,15 @@ test "StringBuilder: @into_str_checked Ok/Err" {
     consume sb_ok = StringBuilder.new()
     sb_ok.append("héllo")
     match sb_ok.into_str_checked() {
-        Ok(s) => assert(s == "héllo"),
-        Err(_) => assert(false),
+        Ok(s) => assert(s == "héllo")
+        Err(_) => assert(false)
     }
 
     consume sb_bad = StringBuilder.new()
     sb_bad.append([0xFF as u8])
     match sb_bad.into_str_checked() {
-        Ok(_) => assert(false),
-        Err(_) => assert(true),
+        Ok(_) => assert(false)
+        Err(_) => assert(true)
     }
 }
 

@@ -12,15 +12,15 @@ type MapIt[I, T, U] value { mut src I, priv f fn(T) -> U }
 type FiltIt[I, T] value { mut src I, priv pred fn(T) -> bool }
 
 fn MapIt[I Next[T], T, U] mut @next() -> Option[U] => match (@src).next() {
-    Some(x) => Some((@f)(x)),
-    None => None,
+    Some(x) => Some((@f)(x))
+    None => None
 }
 
 fn FiltIt[I Next[T], T] mut @next() -> Option[T] {
     while true {
         match (@src).next() {
-            Some(x) => { if (@pred)(x) { return Some(x) } },
-            None => return None,
+            Some(x) => { if (@pred)(x) { return Some(x) } }
+            None => return None
         }
     }
     None
@@ -35,8 +35,8 @@ fn FiltIt[I Next[T], T] mut @drain() -> Vec[T] {
     mut out = Vec[T].new()
     while true {
         match @next() {
-            Some(x) => out.push(x),
-            None => return out,
+            Some(x) => out.push(x)
+            None => return out
         }
     }
     out

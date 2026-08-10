@@ -199,12 +199,12 @@ test "Ф.1c/D317: Duration checked_add — Some / None at boundary" {
     ro top = i64.MAX.to_nanos()
     assert(top.checked_add(1.to_nanos()).is_none())
     match top.checked_add(0.to_nanos()) {
-        Some(r) => assert(r.nanos() == i64.MAX),
-        None => assert(false),
+        Some(r) => assert(r.nanos() == i64.MAX)
+        None => assert(false)
     }
     match 1000.to_nanos().checked_add(337.to_nanos()) {
-        Some(r) => assert(r.nanos() == 1337),
-        None => assert(false),
+        Some(r) => assert(r.nanos() == 1337)
+        None => assert(false)
     }
 }
 
@@ -218,12 +218,12 @@ test "Ф.1c/D317: Duration checked_sub / checked_mul / checked_div" {
     assert(i64.MIN.to_nanos().checked_div(-1).is_none())
     assert(10.to_nanos().checked_div(0).is_none())
     match 100.to_nanos().checked_div(4) {
-        Some(r) => assert(r.nanos() == 25),
-        None => assert(false),
+        Some(r) => assert(r.nanos() == 25)
+        None => assert(false)
     }
     match 1000.to_nanos().checked_mul(1000) {
-        Some(r) => assert(r.nanos() == 1_000_000),
-        None => assert(false),
+        Some(r) => assert(r.nanos() == 1_000_000)
+        None => assert(false)
     }
 }
 
@@ -250,14 +250,14 @@ test "Ф.1c/D317: f64 conversions reject out-of-range (checked_* → None)" {
     // 1e18 s × 1e9 = 1e27 ns ≫ i64::MAX → out of range
     assert((g * g).checked_to_seconds().is_none())
     match 1.5.checked_to_seconds() {
-        Some(r) => assert(r.millis() == 1500),
-        None => assert(false),
+        Some(r) => assert(r.millis() == 1500)
+        None => assert(false)
     }
     // @checked_mul_f64 / @checked_div_f64
     assert(i64.MAX.to_nanos().checked_mul_f64(g).is_none())
     match 10.to_seconds().checked_mul_f64(1.5) {
-        Some(r) => assert(r == 15.to_seconds()),
-        None => assert(false),
+        Some(r) => assert(r == 15.to_seconds())
+        None => assert(false)
     }
 }
 
@@ -285,8 +285,8 @@ test "Ф.1c/D318: Monotonic elapsed_since saturate-to-zero; checked_duration_sin
     // checked: regress → None; forward → Some(5s)
     assert(earlier.checked_duration_since(m).is_none())
     match m.checked_duration_since(earlier) {
-        Some(r) => assert(r == 5.to_seconds()),
-        None => assert(false),
+        Some(r) => assert(r == 5.to_seconds())
+        None => assert(false)
     }
 }
 

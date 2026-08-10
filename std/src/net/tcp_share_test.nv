@@ -31,7 +31,7 @@ test "tcp/share: real loopback — копия живёт после close ори
         ro ch = Channel[int].new(1)   // server port → client
         supervised {
             spawn {
-                ro port = match ch.rx.recv() { Some(x) => x  None => 0 }
+                ro port = match ch.rx.recv() { Some(x) => x, None => 0 }
                 mut c = must(TcpStream.connect(SocketAddr.loopback(port)))
                 mut c2 = c.share()
                 assert(must_io(c.write("one.")) == 4)
@@ -73,7 +73,7 @@ test "tcp/share: конкурентные share-копии per-fiber, авто-c
         ro ch = Channel[int].new(1)
         supervised {
             spawn {
-                ro port = match ch.rx.recv() { Some(x) => x  None => 0 }
+                ro port = match ch.rx.recv() { Some(x) => x, None => 0 }
                 mut c = must(TcpStream.connect(SocketAddr.loopback(port)))
                 supervised {
                     // D415 §4 move-capture + D188 Cleanup: share-доля per-fiber,

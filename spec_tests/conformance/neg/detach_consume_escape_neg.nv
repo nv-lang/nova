@@ -35,7 +35,7 @@ test "detach captures consume pattern-bound match-arm value from enclosing scope
                 ro _ = dcae_handle_connection(stream)
                 ro _ = inflight.fetch_sub(1)
             }
-        },
-        Err(_e) => {},
+        }
+        Err(_e) => {}
     }
 }

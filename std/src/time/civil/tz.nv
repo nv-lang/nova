@@ -148,8 +148,8 @@ export fn str @to_timezone() -> Result[TimeZone, DateError] {
     match parse_offset_str(@) {
         Some(sec) => {
             return match Offset.from_seconds(sec as i32) {
-                Ok(off) => Ok(Fixed(off)),
-                Err(e) => Err(e),
+                Ok(off) => Ok(Fixed(off))
+                Err(e) => Err(e)
             }
         }
         None => {}

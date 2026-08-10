@@ -123,8 +123,8 @@ export fn str @rsplitn(n int, sep str) -> RSplitIter
 // not found. Byte-offsets, zero-copy views (Rust `split_once`).
 export fn str @split_once(sep str) -> Option[(str, str)] {
     match @find(sep) {
-        Some(k) => Some((@[..k], @[k + sep.byte_len() ..])),
-        None    => None,
+        Some(k) => Some((@[..k], @[k + sep.byte_len() ..]))
+        None    => None
     }
 }
 
@@ -132,8 +132,8 @@ export fn str @split_once(sep str) -> Option[(str, str)] {
 // not found (Rust `rsplit_once`).
 export fn str @rsplit_once(sep str) -> Option[(str, str)] {
     match @rfind(sep) {
-        Some(k) => Some((@[..k], @[k + sep.byte_len() ..])),
-        None    => None,
+        Some(k) => Some((@[..k], @[k + sep.byte_len() ..]))
+        None    => None
     }
 }
 
@@ -144,16 +144,16 @@ export fn str @rsplit_once(sep str) -> Option[(str, str)] {
 // and `@after` returns `""`.
 export fn str @until(sep str) -> str {
     match @find(sep) {
-        Some(k) => @[..k],
-        None    => @,
+        Some(k) => @[..k]
+        None    => @
     }
 }
 
 // Substring AFTER the first occurrence of `sep` (`""` if not found). See `@until`.
 export fn str @after(sep str) -> str {
     match @find(sep) {
-        Some(k) => @[k + sep.byte_len() ..],
-        None    => "",
+        Some(k) => @[k + sep.byte_len() ..]
+        None    => ""
     }
 }
 

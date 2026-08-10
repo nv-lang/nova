@@ -11,8 +11,8 @@ fn[I Next[T]] I mut @bcollect2() -> Vec[T] {
     mut out = Vec[T].new()
     while true {
         match @next() {
-            Some(x) => out.push(x),
-            None => return out,
+            Some(x) => out.push(x)
+            None => return out
         }
     }
     out
@@ -36,8 +36,8 @@ test "blanket collect Vec[T] on FilterIter" {
 fn[I Next[T]] I mut @bfind2(pred fn(T) -> bool) -> Option[T] {
     while true {
         match @next() {
-            Some(x) => { if pred(x) { return Some(x) } },
-            None => return None,
+            Some(x) => { if pred(x) { return Some(x) } }
+            None => return None
         }
     }
     None

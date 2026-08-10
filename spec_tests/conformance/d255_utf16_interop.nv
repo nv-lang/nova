@@ -27,8 +27,8 @@ test "roundtrip-инвариант ASCII/BMP/supplementary (D255)" {
     ro d255_samples = ["", "ABC", "éλ", "😀", "a😀b"]
     for d255_s in d255_samples {
         match str.from_utf16(d255_s.encode_utf16()) {
-            Ok(d255_back) => assert(d255_back == d255_s),
-            Err(_) => assert(false),
+            Ok(d255_back) => assert(d255_back == d255_s)
+            Err(_) => assert(false)
         }
     }
 }
@@ -36,8 +36,8 @@ test "roundtrip-инвариант ASCII/BMP/supplementary (D255)" {
 test "from_utf16: lone high surrogate → Err (D255)" {
     ro d255_bad = [0xD83D as u16]
     match str.from_utf16(d255_bad) {
-        Ok(_) => assert(false),
-        Err(_) => assert(true),
+        Ok(_) => assert(false)
+        Err(_) => assert(true)
     }
 }
 

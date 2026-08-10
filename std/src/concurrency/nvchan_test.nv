@@ -56,8 +56,8 @@ test "try_recv на пустом ChanRx: None, без блокировки (body
     ro tx = pair.tx
     ro rx = pair.rx
     match rx.try_recv() {
-        None => assert(true),
-        Some(_) => assert(false),
+        None => assert(true)
+        Some(_) => assert(false)
     }
 }
 
@@ -124,8 +124,8 @@ test "recv блокируется на пустом канале, будится
         spawn {
             // rx.recv() ЗДЕСЬ, внутри spawn — блокирующий путь, placement=spawn.
             match rx.recv() {
-                Some(v) => got.store(v),
-                None => got.store(-2),
+                Some(v) => got.store(v)
+                None => got.store(-2)
             }
         }
         spawn {
@@ -152,8 +152,8 @@ test "send блокируется на полном канале, будится
         spawn {
             5.to_millis().sleep()        // дать send() время припарковаться
             match rx.recv() {              // освобождает слот -> будит send()
-                Some(v) => second.store(v),
-                None => second.store(-2),
+                Some(v) => second.store(v)
+                None => second.store(-2)
             }
         }
     }
@@ -171,8 +171,8 @@ test "recv из закрытого канала внутри spawn (spawn, за�
     supervised {
         spawn {
             match rx.recv() {
-                None => got_none.store(true),
-                Some(_) => got_none.store(false),
+                None => got_none.store(true)
+                Some(_) => got_none.store(false)
             }
         }
     }

@@ -11,8 +11,8 @@ module neg.n_match_arm_width_negative_literal_uint
 
 fn pick(o Option[uint]) -> uint {
     match o {
-        Some(v) => v,
-        None => -1,
+        Some(v) => v
+        None => -1
     }
 }
 

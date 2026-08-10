@@ -102,8 +102,8 @@ Byte offsets compose with search at O(1):
 
 ```nova
 match s.find("=") {           // find returns a BYTE offset
-    Some(k) => ro rest = s[k+1..],
-    None => ...,
+    Some(k) => ro rest = s[k+1..]
+    None => ...
 }
 ```
 

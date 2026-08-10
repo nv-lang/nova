@@ -12,6 +12,6 @@ type Box[T] { item T }
 fn takes_cat_box(b Box[Cat]) -> str => b.item.name
 
 test "Box[Dog] -> Box[Cat] is rejected" {
-    ro d Box[Dog] = Box[Dog] { item: Dog { name: "rex" } }
+    ro d Box[Dog] = Box[Dog]; { item: Dog { name: "rex" } }
     assert(takes_cat_box(d) == "rex")
 }

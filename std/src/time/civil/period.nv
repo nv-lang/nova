@@ -284,14 +284,14 @@ export fn DateTime @minus(p Period) -> DateTime =>
 #stable(since = "0.1")
 export fn DateTime @try_plus(p Period) -> Result[DateTime, DateError] =>
     match @date().try_plus(p) {
-        Ok(d) => Ok({ date: d, time: @time() }),
-        Err(e) => Err(e),
+        Ok(d) => Ok({ date: d, time: @time() })
+        Err(e) => Err(e)
     }
 
 /// Checked subtraction.
 #stable(since = "0.1")
 export fn DateTime @try_minus(p Period) -> Result[DateTime, DateError] =>
     match @date().try_minus(p) {
-        Ok(d) => Ok({ date: d, time: @time() }),
-        Err(e) => Err(e),
+        Ok(d) => Ok({ date: d, time: @time() })
+        Err(e) => Err(e)
     }

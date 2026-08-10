@@ -32,8 +32,8 @@ fn P546MSocks5D @dial(host str, port int) -> str => "${@tag}:${host}:${port}"
 
 fn p546_pick_match(scheme str) -> P546MDialer {
     match scheme == "socks4" {
-        true => P546MSocks4D { tag: "socks4" },
-        false => P546MSocks5D { tag: "socks5" },
+        true => P546MSocks4D { tag: "socks4" }
+        false => P546MSocks5D { tag: "socks5" }
     }
 }
 

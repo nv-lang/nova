@@ -1,0 +1,47 @@
+// D452 — separator between `match` arms follows the nature of the
+// construct: arms are alternatives ("or"), so a newline alone separates
+// them when multi-line (no comma, not even a trailing one); `,` is
+// required — and only meaningful — when several arms share one line. `;`
+// between arms is rejected (see the neg fixtures,
+// spec_tests/conformance/neg/p264_match_arm_*_neg.nv).
+// Spec: spec/decisions/03-syntax.md D452. Part of the SINGLE
+// `spec_tests.conformance` folder-module.
+module spec_tests.conformance
+
+test "match arms: multi-line, newline alone separates (D452)" {
+    ro code = 404
+    ro label = match code {
+        200 => "ok"
+        404 => "not found"
+        _   => "unknown"
+    }
+    assert(label == "not found")
+}
+
+test "match arms: single line, comma-separated (D452)" {
+    ro code = 200
+    ro label = match code { 200 => "ok", 404 => "not found" }
+    assert(label == "ok")
+}
+
+test "match arms: multi-line with block bodies, no separator needed (D452)" {
+    ro n = 3
+    ro r = match n {
+        0 => {
+            0
+        }
+        _ => {
+            n * n
+        }
+    }
+    assert(r == 9)
+}
+
+test "match arms: multi-line canon combined with `;`-separated statements on one line (D452)" {
+    ro a = 1; ro b = 2
+    ro r = match a + b {
+        3 => "three"
+        _ => "other"
+    }
+    assert(r == "three")
+}

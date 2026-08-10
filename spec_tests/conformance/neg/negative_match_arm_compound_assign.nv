@@ -13,7 +13,7 @@ type Cell { mut count int }
 
 fn Cell mut @bump(c char) -> () {
     match c {
-        'a' => @count += 1     // <-- bare `+=` в RHS, парсер падает
+        'a' => @count, += 1     // <-- bare `+=` в RHS, парсер падает
         _   => ()
     }
 }

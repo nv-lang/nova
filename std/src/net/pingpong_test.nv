@@ -45,7 +45,7 @@ test "net2/pingpong: плотное чередование write→read на о�
             // Клиент: 64 цикла write(8)→read(8) — каждый read паркуется
             // сразу после write на том же хендле (окно миграции).
             spawn {
-                ro port = match ch_port.rx.recv() { Some(p) => p  None => 0 }
+                ro port = match ch_port.rx.recv() { Some(p) => p, None => 0 }
                 assert(port > 0)
                 mut conn = must(TcpStream.connect(SocketAddr.loopback(port)))
                 mut back []u8 = []u8.new()
@@ -118,7 +118,7 @@ test "net2/pingpong: две независимые пары пинг-понгу�
             }
             // Клиент A.
             spawn {
-                ro port = match ch_a.rx.recv() { Some(p) => p  None => 0 }
+                ro port = match ch_a.rx.recv() { Some(p) => p, None => 0 }
                 assert(port > 0)
                 mut conn = must(TcpStream.connect(SocketAddr.loopback(port)))
                 mut back []u8 = []u8.new()
@@ -139,7 +139,7 @@ test "net2/pingpong: две независимые пары пинг-понгу�
             }
             // Клиент B.
             spawn {
-                ro port = match ch_b.rx.recv() { Some(p) => p  None => 0 }
+                ro port = match ch_b.rx.recv() { Some(p) => p, None => 0 }
                 assert(port > 0)
                 mut conn = must(TcpStream.connect(SocketAddr.loopback(port)))
                 mut back []u8 = []u8.new()

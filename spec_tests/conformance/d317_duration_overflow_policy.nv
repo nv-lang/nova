@@ -22,8 +22,8 @@ test "d317: checked_* — None on overflow, Some in range" {
     assert(d317_MIN.to_nanos().checked_div(-1).is_none())
     // in-range → Some(exact)
     match (1.to_hours()).checked_add(30.to_minutes()) {
-        Some(r) => assert(r == 90.to_minutes()),
-        None => assert(false),
+        Some(r) => assert(r == 90.to_minutes())
+        None => assert(false)
     }
 }
 
@@ -45,8 +45,8 @@ test "d317: f64 conversions reject NaN/inf/out-of-range (checked_* → None)" {
     assert((g * g).checked_to_seconds().is_none())        // 1e27 ns ≫ i64
     assert(d317_MAX.to_nanos().checked_mul_f64(g).is_none())
     match 1.5.checked_to_seconds() {
-        Some(r) => assert(r.millis() == 1500),
-        None => assert(false),
+        Some(r) => assert(r.millis() == 1500)
+        None => assert(false)
     }
 }
 

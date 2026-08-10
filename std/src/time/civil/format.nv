@@ -102,22 +102,22 @@ export fn DateTimeFormat @format(dt DateTime) -> str {
     mut out = ""
     for item in @items {
         ro piece = match item {
-            FYear4 => format_year(dt.year() as i64),
-            FMonth2 => fmt_pad2(dt.month().number()),
-            FDay2 => fmt_pad2(dt.day() as int),
-            FHour2 => fmt_pad2(dt.hour()),
-            FMinute2 => fmt_pad2(dt.minute()),
-            FSecond2 => fmt_pad2(dt.second()),
+            FYear4 => format_year(dt.year() as i64)
+            FMonth2 => fmt_pad2(dt.month().number())
+            FDay2 => fmt_pad2(dt.day() as int)
+            FHour2 => fmt_pad2(dt.hour())
+            FMinute2 => fmt_pad2(dt.minute())
+            FSecond2 => fmt_pad2(dt.second())
             FFrac3 => {
                 ro ms = (dt.time().nano() / 1_000_000) as int
                 ro base = ms.to_str()
                 base.pad_start(3, '0')
             }
-            FMonthName => dt.month().to_str(),
-            FWeekdayName => dt.weekday().to_str(),
-            FLit(litv) => litv,
-            FOptStart => "",
-            FOptEnd => "",
+            FMonthName => dt.month().to_str()
+            FWeekdayName => dt.weekday().to_str()
+            FLit(litv) => litv
+            FOptStart => ""
+            FOptEnd => ""
         }
         out += piece
     }
@@ -181,10 +181,10 @@ fn apply_item(item FmtItem, s str, pos int, mut f FmtFields) -> Result[int, Pars
         FSecond2 => { ro (v, p) = digits_at(s, pos, 2)?; f.second = v; Ok(p) }
         FFrac3 => { ro (v, p) = digits_at(s, pos, 3)?; f.milli = v; Ok(p) }
         FMonthName => { ro (v, p) = parse_month_name(s, pos)?; f.month = v; Ok(p) }
-        FWeekdayName => parse_weekday_name(s, pos),
-        FLit(litv) => expect_at(s, pos, litv),
-        FOptStart => Ok(pos),
-        FOptEnd => Ok(pos),
+        FWeekdayName => parse_weekday_name(s, pos)
+        FLit(litv) => expect_at(s, pos, litv)
+        FOptStart => Ok(pos)
+        FOptEnd => Ok(pos)
     }
 }
 
@@ -249,8 +249,8 @@ export fn str @to_datetime_with(f DateTimeFormat) -> Result[DateTime, ParseDateT
 #stable(since = "0.1")
 export fn str @to_date_with(f DateTimeFormat) -> Result[Date, ParseDateTimeError] =>
     match @to_datetime_with(f) {
-        Ok(dt) => Ok(dt.date()),
-        Err(e) => Err(e),
+        Ok(dt) => Ok(dt.date())
+        Err(e) => Err(e)
     }
 
 // ──────────────────────────────────────────────────────────────────────────

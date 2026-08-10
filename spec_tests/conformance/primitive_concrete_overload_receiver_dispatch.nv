@@ -9,14 +9,14 @@ module spec_tests.conformance
 
 fn p196_9_clamp_some_int(x int, lo int, hi int) -> int =>
     match Some(x) {
-        Some(r) => r.clamp(lo, hi),
-        None => lo,
+        Some(r) => r.clamp(lo, hi)
+        None => lo
     }
 
 fn p196_9_clamp_some_f64(x f64, lo f64, hi f64) -> f64 =>
     match Some(x) {
-        Some(r) => r.clamp(lo, hi),
-        None => lo,
+        Some(r) => r.clamp(lo, hi)
+        None => lo
     }
 
 test "196.9: pattern-bound int/f64 receiver still dispatches @clamp by its own type" {

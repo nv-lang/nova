@@ -19,10 +19,10 @@ test "transpose: Some(Ok(v)) -> Ok(Some(v))" {
     ro b = a.transpose()
     match b {
         Ok(opt) => match opt {
-            Some(v) => assert(v == 5),
-            None => assert(false, "ожидался Some(5)"),
-        },
-        Err(_) => assert(false, "ожидался Ok"),
+            Some(v) => assert(v == 5)
+            None => assert(false, "ожидался Some(5)")
+        }
+        Err(_) => assert(false, "ожидался Ok")
     }
 }
 
@@ -30,8 +30,8 @@ test "transpose: Some(Err(e)) -> Err(e)" {
     ro a Option[Result[int, str]] = Some(Err("bad"))
     ro b = a.transpose()
     match b {
-        Ok(_) => assert(false, "ожидался Err"),
-        Err(e) => assert(e == "bad"),
+        Ok(_) => assert(false, "ожидался Err")
+        Err(e) => assert(e == "bad")
     }
 }
 
@@ -40,10 +40,10 @@ test "transpose: None -> Ok(None)" {
     ro b = a.transpose()
     match b {
         Ok(opt) => match opt {
-            Some(_) => assert(false, "ожидался None"),
-            None => assert(true),
-        },
-        Err(_) => assert(false, "ожидался Ok(None)"),
+            Some(_) => assert(false, "ожидался None")
+            None => assert(true)
+        }
+        Err(_) => assert(false, "ожидался Ok(None)")
     }
 }
 
@@ -68,24 +68,24 @@ fn plan200_transpose_port(config HashMap[str, str], key str, default_port int) -
 test "transpose: движущий кейс — порт не задан → дефолт (не ошибка)" {
     ro config HashMap[str, str] = ["host": "localhost"]
     match plan200_transpose_port(config, "port", 8080) {
-        Ok(p) => assert(p == 8080),
-        Err(_) => assert(false, "отсутствующий ключ — не ошибка, дефолт"),
+        Ok(p) => assert(p == 8080)
+        Err(_) => assert(false, "отсутствующий ключ — не ошибка, дефолт")
     }
 }
 
 test "transpose: движущий кейс — порт задан и валиден → парсится" {
     ro config HashMap[str, str] = ["host": "localhost", "port": "9090"]
     match plan200_transpose_port(config, "port", 8080) {
-        Ok(p) => assert(p == 9090),
-        Err(_) => assert(false, "валидный порт должен распарситься"),
+        Ok(p) => assert(p == 9090)
+        Err(_) => assert(false, "валидный порт должен распарситься")
     }
 }
 
 test "transpose: движущий кейс — порт задан, но мусор → жёсткая ошибка" {
     ro config HashMap[str, str] = ["host": "localhost", "port": "not-a-port"]
     match plan200_transpose_port(config, "port", 8080) {
-        Ok(_) => assert(false, "битый порт обязан дать Err, не тихий дефолт"),
-        Err(_) => assert(true),
+        Ok(_) => assert(false, "битый порт обязан дать Err, не тихий дефолт")
+        Err(_) => assert(true)
     }
 }
 
@@ -105,23 +105,23 @@ test "transpose: движущий кейс — порт задан, но мус�
 test "transpose: second instance, non-canonical (bool, int) pair, same CU" {
     ro a Option[Result[bool, int]] = Some(Ok(true))
     match a.transpose() {
-        Ok(opt) => match opt { Some(v) => assert(v == true), None => assert(false, "expected Some(true)") },
-        Err(_) => assert(false, "expected Ok"),
+        Ok(opt) => match opt { Some(v) => assert(v == true), None => assert(false, "expected Some(true)") }
+        Err(_) => assert(false, "expected Ok")
     }
 }
 
 test "transpose: non-canonical pair, None case (element type must not leak nova_int default)" {
     ro a Option[Result[bool, int]] = None
     match a.transpose() {
-        Ok(opt) => match opt { Some(_) => assert(false, "expected None"), None => assert(true) },
-        Err(_) => assert(false, "expected Ok(None)"),
+        Ok(opt) => match opt { Some(_) => assert(false, "expected None"), None => assert(true) }
+        Err(_) => assert(false, "expected Ok(None)")
     }
 }
 
 test "transpose: повторная инстанциация той же (T,E) пары в отдельном call site того же CU" {
     ro second Option[Result[int, str]] = Some(Ok(11))
     match second.transpose() {
-        Ok(opt) => match opt { Some(v) => assert(v == 11), None => assert(false) },
-        Err(_) => assert(false),
+        Ok(opt) => match opt { Some(v) => assert(v == 11), None => assert(false) }
+        Err(_) => assert(false)
     }
 }

@@ -218,9 +218,9 @@ export fn str @to_zoned_datetime(conflict OffsetConflict) -> Result[ZonedDateTim
     // Валиден ли сохранённый offset для этой wall-time в зоне?
     ro res = tz.resolve_local(dt)
     ro stored_valid = match res {
-        Unique(o) => o.seconds() == stored.seconds(),
-        Overlap(a, b) => a.seconds() == stored.seconds() || b.seconds() == stored.seconds(),
-        Gap(_, _) => false,
+        Unique(o) => o.seconds() == stored.seconds()
+        Overlap(a, b) => a.seconds() == stored.seconds() || b.seconds() == stored.seconds()
+        Gap(_, _) => false
     }
 
     if stored_valid {
@@ -237,17 +237,17 @@ export fn str @to_zoned_datetime(conflict OffsetConflict) -> Result[ZonedDateTim
         Prefer => {
             // stored невалиден → пересчитать по зоне (как Ignore).
             match dt.to_zoned(tz) {
-                Ok(z) => Ok(z),
-                Err(_) => Err(InvalidValue(0, FieldKind.OffsetSec, off_sec as i64)),
+                Ok(z) => Ok(z)
+                Err(_) => Err(InvalidValue(0, FieldKind.OffsetSec, off_sec as i64))
             }
         }
         Ignore => {
             match dt.to_zoned(tz) {
-                Ok(z) => Ok(z),
-                Err(_) => Err(InvalidValue(0, FieldKind.OffsetSec, off_sec as i64)),
+                Ok(z) => Ok(z)
+                Err(_) => Err(InvalidValue(0, FieldKind.OffsetSec, off_sec as i64))
             }
         }
-        RejectMismatch => Err(InvalidValue(p4, FieldKind.OffsetSec, off_sec as i64)),
+        RejectMismatch => Err(InvalidValue(p4, FieldKind.OffsetSec, off_sec as i64))
     }
 }
 

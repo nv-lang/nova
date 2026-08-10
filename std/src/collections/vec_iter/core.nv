@@ -122,8 +122,8 @@ export type EnumerateIter[I, T] value { mut src I, mut i int }
 /// Advance: pull one from `src`, map through `f`.
 #impl(Next[U])
 export fn MapIter[I, T, U] mut @next() -> Option[U] => match @src.next() {
-    Some(x) => Some((@f)(x)),
-    None => None,
+    Some(x) => Some((@f)(x))
+    None => None
 }
 
 /// Advance: pull from `src` until `pred` holds (or the source is exhausted).
@@ -131,8 +131,8 @@ export fn MapIter[I, T, U] mut @next() -> Option[U] => match @src.next() {
 export fn FilterIter[I, T] mut @next() -> Option[T] {
     while true {
         match @src.next() {
-            Some(x) => { if (@pred)(x) { return Some(x) } },
-            None => return None,
+            Some(x) => { if (@pred)(x) { return Some(x) } }
+            None => return None
         }
     }
     None
@@ -144,10 +144,10 @@ export fn FilterMapIter[I, T, U] mut @next() -> Option[U] {
     while true {
         match @src.next() {
             Some(x) => match (@f)(x) {
-                Some(u) => return Some(u),
-                None => {},
-            },
-            None => return None,
+                Some(u) => return Some(u)
+                None => {}
+            }
+            None => return None
         }
     }
     None
@@ -165,8 +165,8 @@ export fn SkipIter[I, T] mut @next() -> Option[T] {
     while @to_skip > 0 {
         @to_skip -= 1
         match @src.next() {
-            Some(_) => {},
-            None => return None,
+            Some(_) => {}
+            None => return None
         }
     }
     @src.next()
@@ -180,8 +180,8 @@ export fn EnumerateIter[I, T] mut @next() -> Option[(int, T)] {
             ro idx = @i
             @i += 1
             Some((idx, x))
-        },
-        None => None,
+        }
+        None => None
     }
 }
 
@@ -293,8 +293,8 @@ export fn StepByIter[I, T] mut @next() -> Option[T] {
     while i > 0 {
         i -= 1
         match @src.next() {
-            Some(_) => {},
-            None => return None,
+            Some(_) => {}
+            None => return None
         }
     }
     @src.next()
@@ -557,8 +557,8 @@ export fn[I Next[T]] I mut @fold[Acc](mut init Acc, f fn(Acc, T) -> Acc) -> Acc 
     mut acc = init
     while true {
         match @next() {
-            Some(x) => { acc = f(acc, x) },
-            None => return acc,
+            Some(x) => { acc = f(acc, x) }
+            None => return acc
         }
     }
     acc
@@ -568,8 +568,8 @@ export fn[I Next[T]] I mut @count() -> int {
     mut n = 0
     while true {
         match @next() {
-            Some(_) => { n += 1 },
-            None => return n,
+            Some(_) => { n += 1 }
+            None => return n
         }
     }
     n
@@ -578,8 +578,8 @@ export fn[I Next[T]] I mut @count() -> int {
 export fn[I Next[T]] I mut @for_each(f fn(T) -> ()) -> () {
     while true {
         match @next() {
-            Some(x) => f(x),
-            None => { return },
+            Some(x) => f(x)
+            None => { return }
         }
     }
 }
@@ -587,8 +587,8 @@ export fn[I Next[T]] I mut @for_each(f fn(T) -> ()) -> () {
 export fn[I Next[T]] I mut @any(pred fn(T) -> bool) -> bool {
     while true {
         match @next() {
-            Some(x) => { if pred(x) { return true } },
-            None => return false,
+            Some(x) => { if pred(x) { return true } }
+            None => return false
         }
     }
     false
@@ -597,8 +597,8 @@ export fn[I Next[T]] I mut @any(pred fn(T) -> bool) -> bool {
 export fn[I Next[T]] I mut @all(pred fn(T) -> bool) -> bool {
     while true {
         match @next() {
-            Some(x) => { if !pred(x) { return false } },
-            None => return true,
+            Some(x) => { if !pred(x) { return false } }
+            None => return true
         }
     }
     true
@@ -614,8 +614,8 @@ export fn[I Next[T]] I mut @collect() -> Vec[T] {
     mut out = Vec[T].new()
     while true {
         match @next() {
-            Some(x) => out.push(x),
-            None => return out,
+            Some(x) => out.push(x)
+            None => return out
         }
     }
     out
@@ -627,8 +627,8 @@ export fn[I Next[T]] I mut @collect() -> Vec[T] {
 export fn[I Next[T]] I mut @collect_into(mut out Vec[T]) -> () {
     while true {
         match @next() {
-            Some(x) => out.push(x),
-            None => { return },
+            Some(x) => out.push(x)
+            None => { return }
         }
     }
 }
@@ -639,8 +639,8 @@ export fn[I Next[T]] I mut @sum(mut zero T) -> T {
     mut acc = zero
     while true {
         match @next() {
-            Some(x) => { acc += x },
-            None => return acc,
+            Some(x) => { acc += x }
+            None => return acc
         }
     }
     acc
@@ -650,8 +650,8 @@ export fn[I Next[T]] I mut @sum(mut zero T) -> T {
 export fn[I Next[T]] I mut @find(pred fn(T) -> bool) -> Option[T] {
     while true {
         match @next() {
-            Some(x) => { if pred(x) { return Some(x) } },
-            None => return None,
+            Some(x) => { if pred(x) { return Some(x) } }
+            None => return None
         }
     }
     None
@@ -662,8 +662,8 @@ export fn[I Next[T]] I mut @reduce(f fn(T, T) -> T) -> Option[T] {
     mut acc = @next()?
     while true {
         match @next() {
-            Some(x) => { acc = f(acc, x) },
-            None => return Some(acc),
+            Some(x) => { acc = f(acc, x) }
+            None => return Some(acc)
         }
     }
     Some(acc)
@@ -676,8 +676,8 @@ export fn[I Next[T], T Compare] I mut @min() -> Option[T] {
     mut best = @next()?
     while true {
         match @next() {
-            Some(cand) => { if cand.compare(best) < 0 { best = cand } },
-            None => return Some(best),
+            Some(cand) => { if cand.compare(best) < 0 { best = cand } }
+            None => return Some(best)
         }
     }
     Some(best)
@@ -690,8 +690,8 @@ export fn[I Next[T], T Compare] I mut @max() -> Option[T] {
     mut best = @next()?
     while true {
         match @next() {
-            Some(cand) => { if cand.compare(best) > 0 { best = cand } },
-            None => return Some(best),
+            Some(cand) => { if cand.compare(best) > 0 { best = cand } }
+            None => return Some(best)
         }
     }
     Some(best)
@@ -705,8 +705,8 @@ export fn[I Next[T]] I mut @nth(n int) -> Option[T] {
             Some(x) => {
                 if k == 0 { return Some(x) }
                 k -= 1
-            },
-            None => return None,
+            }
+            None => return None
         }
     }
     None
@@ -717,8 +717,8 @@ export fn[I Next[T]] I mut @last() -> Option[T] {
     mut result Option[T] = None
     while true {
         match @next() {
-            Some(x) => { result = Some(x) },
-            None => return result,
+            Some(x) => { result = Some(x) }
+            None => return result
         }
     }
     result
@@ -729,8 +729,8 @@ export fn[I Next[T], T Hash] I mut @collect_set() -> Set[T] {
     mut out = Set[T].new()
     while true {
         match @next() {
-            Some(x) => out.insert(x),
-            None => return out,
+            Some(x) => out.insert(x)
+            None => return out
         }
     }
     out

@@ -59,8 +59,8 @@ fn tuple_and_unit() -> (int, int) {
 fn match_tuple_scrutinee(a int, b int) -> int {
     // match со scrutinee-кортежем + tuple-паттерном в arm'е.
     match (a, b) {
-        (0, 0) => 0,
-        _ => a + b,
+        (0, 0) => 0
+        _ => a + b
     }
 }
 

@@ -28,8 +28,8 @@ module neg.i64_clamp_no_overload_neg
 
 fn sat_add_i64_neg(a i64, b i64, lo i64, hi i64) -> i64 =>
     match a.checked_add(b) {
-        Some(r) => r.clamp_within(lo, hi),
-        None => if b > 0 { hi } else { lo },
+        Some(r) => r.clamp_within(lo, hi)
+        None => if b > 0 { hi } else { lo }
     }
 
 test "196.9: unknown method on a pattern-bound i64 receiver is rejected (was i64.clamp until D74-blanket)" {

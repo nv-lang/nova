@@ -9,8 +9,8 @@ fn[I Next[T]] I mut @bcount() -> int {
     mut n = 0
     while true {
         match @next() {
-            Some(_) => { n += 1 },
-            None => return n,
+            Some(_) => { n += 1 }
+            None => return n
         }
     }
     n

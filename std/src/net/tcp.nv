@@ -217,7 +217,7 @@ export fn TcpStream mut @write_all(data []u8) Net -> Result[(), NetError] {
     mut off = 0
     while off < data.len() {
         match Net.write(@, data[off..]) {
-            Ok(n)  => { if n <= 0 { return Err(NetError.BrokenPipe) } off += n }
+            Ok(n)  => { if n <= 0 { return Err(NetError.BrokenPipe) }; off += n }
             Err(e) => { return Err(e) }
         }
     }
@@ -231,7 +231,7 @@ export fn TcpStream mut @read_bytes(max int) Net -> Result[[]u8, NetError] {
     mut buf []u8 = []u8.new()
     buf.resize(max, 0 as u8)
     match Net.read(@, buf) {
-        Ok(n)  => { buf.truncate(n) Ok(buf) }
+        Ok(n)  => { buf.truncate(n); Ok(buf) }
         Err(e) => { Err(e) }
     }
 }

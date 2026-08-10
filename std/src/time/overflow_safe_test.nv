@@ -20,8 +20,8 @@ test "Ф.1c: Duration checked_* — Some in-range, None on overflow" {
     assert(I64_MIN.to_nanos().checked_mul(-1).is_none())
     assert(10.to_nanos().checked_div(0).is_none())
     match (30.to_seconds()).checked_sub(10.to_seconds()) {
-        Some(r) => assert(r == 20.to_seconds()),
-        None => assert(false),
+        Some(r) => assert(r == 20.to_seconds())
+        None => assert(false)
     }
 }
 

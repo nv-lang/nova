@@ -14,8 +14,8 @@ fn[T, E] err177_sequence(items []Result[T, E]) -> Result[[]T, E] {
     mut out []T = []
     for r in items {
         match r {
-            Ok(v) => out.push(v),
-            Err(e) => return Err(e),
+            Ok(v) => out.push(v)
+            Err(e) => return Err(e)
         }
     }
     Ok(out)
@@ -26,8 +26,8 @@ fn[T] err177_sequence_str(items []Result[T, str]) -> Result[[]T, str] {
     mut out []T = []
     for r in items {
         match r {
-            Ok(v) => out.push(v),
-            Err(e) => return Err(e),
+            Ok(v) => out.push(v)
+            Err(e) => return Err(e)
         }
     }
     Ok(out)
@@ -39,8 +39,8 @@ fn[T, E] err177_partition(items []Result[T, E]) -> ([]T, []E) {
     mut errs []E = []
     for r in items {
         match r {
-            Ok(v) => oks.push(v),
-            Err(e) => errs.push(e),
+            Ok(v) => oks.push(v)
+            Err(e) => errs.push(e)
         }
     }
     (oks, errs)
@@ -49,40 +49,40 @@ fn[T, E] err177_partition(items []Result[T, E]) -> ([]T, []E) {
 test "sequence all-Ok collects into Result[[]int, str]" {
     ro xs []Result[int, str] = [Ok(1), Ok(2), Ok(3)]
     match err177_sequence(xs) {
-        Ok(v) => assert(v.len() == 3),
-        Err(_) => assert(false),
+        Ok(v) => assert(v.len() == 3)
+        Err(_) => assert(false)
     }
 }
 
 test "sequence short-circuits on first Err with the typed payload" {
     ro xs []Result[int, str] = [Ok(1), Err("bad"), Ok(3)]
     match err177_sequence(xs) {
-        Ok(_) => assert(false),
-        Err(e) => assert(e == "bad"),
+        Ok(_) => assert(false)
+        Err(e) => assert(e == "bad")
     }
 }
 
 test "sequence over empty input is Ok of empty" {
     ro xs []Result[int, str] = []
     match err177_sequence(xs) {
-        Ok(v) => assert(v.len() == 0),
-        Err(_) => assert(false),
+        Ok(v) => assert(v.len() == 0)
+        Err(_) => assert(false)
     }
 }
 
 test "one-generic sequence_str all-Ok" {
     ro xs []Result[int, str] = [Ok(10), Ok(20)]
     match err177_sequence_str(xs) {
-        Ok(v) => assert(v.len() == 2),
-        Err(_) => assert(false),
+        Ok(v) => assert(v.len() == 2)
+        Err(_) => assert(false)
     }
 }
 
 test "one-generic sequence_str propagates Err" {
     ro xs []Result[int, str] = [Ok(1), Err("nope")]
     match err177_sequence_str(xs) {
-        Ok(_) => assert(false),
-        Err(e) => assert(e == "nope"),
+        Ok(_) => assert(false)
+        Err(e) => assert(e == "nope")
     }
 }
 

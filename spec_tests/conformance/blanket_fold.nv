@@ -14,8 +14,8 @@ fn[I Next[T]] I mut @bfold[Acc](mut init Acc, f fn(Acc, T) -> Acc) -> Acc {
     mut acc = init
     while true {
         match @next() {
-            Some(x) => { acc = f(acc, x) },
-            None => return acc,
+            Some(x) => { acc = f(acc, x) }
+            None => return acc
         }
     }
     acc
