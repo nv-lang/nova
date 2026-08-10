@@ -14429,6 +14429,43 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             var
         });
 
+        // Plan 266 (D455): `supervised(cancel: tok) { … }` WITHOUT
+        // `timeout:`/`deadline:` returns `Outcome[T]`, not the body's plain
+        // `T` — the `cancel:` + `timeout:`/`deadline:` combination is D455
+        // open question §3, deliberately left UNCHANGED here
+        // (`deadline.is_none()` excludes it — byte-identical to before this
+        // plan for that combination; see std/prelude/concurrency.nv
+        // `Outcome` doc). `outcome_result_var` mirrors `result_var` just
+        // above (same "must live outside the `{ … }` C block" constraint —
+        // it is read after the block closes) but is ALWAYS declared for the
+        // outcome form, even when the body has no trailing value: the wrap
+        // applies regardless of body shape (D455 table — "тип результата
+        // зависит от НАЛИЧИЯ cancel:, и только от него"). `outcome_body_c_ty`
+        // reuses `result_c_ty` (`None` there already means "unit-typed
+        // trailing / no trailing", same convention `on_timeout:`'s cast
+        // above relies on) instead of re-probing — this scope's `T` is the
+        // same `T` either consumer needs. Monomorphization is registered
+        // directly (mirrors `try_infer_variant_mono_args`, ~22971) rather
+        // than through a synthesized call — there is no Nova-AST arg to
+        // infer FROM here (the trailing's own C value doesn't exist as a
+        // real Nova expression at this codegen point, only as an already-
+        // emitted C temp), so this reproduces that helper's OWN mono-
+        // registration side effects (worklist + instance-info) by hand for
+        // the ONE fixed `Outcome` template instead of the general variant-
+        // call inference path.
+        let is_outcome_form = cancel.is_some() && deadline.is_none();
+        let outcome_body_c_ty = result_c_ty.clone().unwrap_or_else(|| "nova_unit".to_string());
+        let outcome_mangled = if is_outcome_form {
+            Some(self.outcome_mono_c_base(&outcome_body_c_ty))
+        } else {
+            None
+        };
+        let outcome_result_var = outcome_mangled.as_ref().map(|mangled| {
+            let var = format!("_nova_sup_outcome_{}", id);
+            self.line(&format!("{}* {};", mangled, var));
+            var
+        });
+
         // Wrap the scope in a C block so the queue is local.
         self.line("{");
         self.indent += 1;
@@ -14833,12 +14870,48 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             self.line("}");
         }
 
+        // Plan 266 (D455): wrap into `Outcome[T]` — `Aborted` if the token
+        // was cancelled, `Finished(v)` otherwise. Deliberately checked here,
+        // AFTER `result_var` (if any) is already filled just above: this
+        // reuses the EXISTING unconditional post-join evaluation of the
+        // trailing (unchanged timing/side-effects for every other form —
+        // D449's `on_timeout:` cast, plain `T` forms, the cancel+timeout
+        // combination — all byte-identical to before this plan) rather than
+        // making trailing-evaluation itself conditional on cancellation.
+        // Consequence, stated plainly: a non-unit trailing still runs even
+        // when the scope was cancelled — its value is simply not the one
+        // that reaches the caller (discarded in favor of `Aborted`). `tok`
+        // (`cancel_tok_var`) is read via `nova_cancel_token_is_cancelled`
+        // AFTER `nova_supervised_run_cancel` has drained every spawned
+        // child — the same "ask after the scope" ordering D75's own doc
+        // prescribes for the pre-266 manual `tok.is_cancelled()` idiom
+        // (06-concurrency.md:1275) — so this is the FIRST point where the
+        // answer is final.
+        if let Some(mangled) = &outcome_mangled {
+            let ov = outcome_result_var.as_ref()
+                .expect("outcome_result_var is Some whenever outcome_mangled is Some");
+            let tok = cancel_tok_var.as_ref()
+                .expect("outcome_mangled is Some only when is_outcome_form, which requires cancel: (cancel_tok_var Some)");
+            self.line(&format!("if (nova_cancel_token_is_cancelled({})) {{", tok));
+            self.indent += 1;
+            self.line(&format!("{} = nova_make_{}_Aborted();", ov, mangled));
+            self.indent -= 1;
+            self.line("} else {");
+            self.indent += 1;
+            let payload = result_var.clone().unwrap_or_else(|| "NOVA_UNIT".to_string());
+            self.line(&format!("{} = nova_make_{}_Finished({});", ov, mangled, payload));
+            self.indent -= 1;
+            self.line("}");
+        }
+
         self.indent -= 1;
         self.line("}");
 
         // supervised expression evaluates to its trailing value (Ф.1) or unit
-        // when the body has no trailing expression.
-        Ok(result_var.unwrap_or_else(|| "NOVA_UNIT".to_string()))
+        // when the body has no trailing expression — UNLESS this is the
+        // D455 `Outcome[T]`-wrapped form (Plan 266), which evaluates to the
+        // wrapped `outcome_result_var` instead (`Finished(v)`/`Aborted`).
+        Ok(outcome_result_var.or(result_var).unwrap_or_else(|| "NOVA_UNIT".to_string()))
     }
 
     /// Emit `parallel for x in iter { body }` — D14 fan-out via desugar to
@@ -22036,6 +22109,36 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             .collect::<Vec<_>>()
             .join("__");
         format!("Nova_{}____{}", base_name, args)
+    }
+
+    /// Plan 266 (D455): compute — and idempotently register — the
+    /// `Outcome[T]` mono instance's mangled C struct base name (WITHOUT the
+    /// trailing `*`) for a given body-`T` C type. Shared by
+    /// `infer_expr_c_type`'s `Supervised` probe arm (a `supervised(cancel:
+    /// …)` expression's declared C type, e.g. for a `ro out = …` LET's own
+    /// variable, which is probed BEFORE `emit_supervised` itself runs) and
+    /// `emit_supervised`'s real emission — both need the identical mangled
+    /// name and the identical idempotent worklist registration, and both
+    /// only have `&self` here (interior mutability —
+    /// `generic_type_worklist`/`generic_type_instance_info` are
+    /// `RefCell`-backed — makes registering from a `&self` probe safe;
+    /// mirrors `try_infer_variant_mono_args`, same pattern, ~22971).
+    fn outcome_mono_c_base(&self, body_c_ty: &str) -> String {
+        let mangled = Self::compute_generic_type_c_name("Outcome", &[body_c_ty.to_string()]);
+        if !self.emitted_generic_type_instances.contains(&mangled) {
+            let mut wl = self.generic_type_worklist.borrow_mut();
+            if !wl.iter().any(|(_, _, m)| m == &mangled) {
+                wl.push((
+                    "Outcome".to_string(),
+                    Self::args_lift(&[body_c_ty.to_string()]),
+                    mangled.clone(),
+                ));
+            }
+        }
+        self.generic_type_instance_info.borrow_mut()
+            .entry(mangled.clone())
+            .or_insert_with(|| ("Outcome".to_string(), Self::args_lift(&[body_c_ty.to_string()])));
+        mangled
     }
 
     /// Plan 153.2 Ф.1 (STAGE 1 — by-value generic value-records): the
@@ -61199,6 +61302,29 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             } else if self.record_schemas.contains_key("Range") {
                 return "Nova_Range*".to_string();
             }
+        }
+        // Plan 266 (D455): `supervised(cancel: tok) { … }` WITHOUT
+        // `timeout:`/`deadline:` types as `Outcome[T]*`, not `T` — probed
+        // here (BEFORE `emit_supervised` itself runs, e.g. for a `ro out =
+        // supervised(cancel: tok) { … }` LET's own declared C var type) so
+        // the LET's variable is declared with the SAME pointer type
+        // `emit_supervised`'s actual emission (below) later assigns into
+        // it. Without this arm the generic body/legacy fallback types the
+        // LET off the body's OWN trailing type (byte-identical to the
+        // pre-266 unwrapped form) — a `nova_int`/`nova_unit` local
+        // initialized from an `Outcome_*` pointer, CC-FAIL. The
+        // `cancel:`+`timeout:`/`deadline:` combination (D455 open question
+        // §3) is excluded (`deadline: None` guard) — unaffected by this
+        // plan, byte-identical to before. Mono-registration side effect is
+        // safe from this `&self` probe (see `outcome_mono_c_base` doc).
+        if let ExprKind::Supervised { cancel: Some(_), deadline: None, body, .. } = &expr.kind {
+            let body_c_ty = body.trailing.as_ref()
+                .map(|t| {
+                    let ty = self.infer_expr_c_type(t);
+                    if ty.is_empty() { "nova_unit".to_string() } else { ty }
+                })
+                .unwrap_or_else(|| "nova_unit".to_string());
+            return format!("{}*", self.outcome_mono_c_base(&body_c_ty));
         }
         // Plan 172.1 §0/§1: channels FIRST, legacy LAZY (only when channel cannot cover).
         // Side-effects (typedef/mono registration) that were previously in legacy are a §1

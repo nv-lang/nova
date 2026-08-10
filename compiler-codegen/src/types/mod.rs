@@ -47339,6 +47339,42 @@ impl MapLitCtx {
                 if let Some(c) = cancel { self.walk_expr(c, None, errors); }
                 if let Some(_dl) = deadline { self.walk_expr(&_dl.expr, None, errors); }
                 if let Some(oh) = on_timeout { self.walk_expr(oh, None, errors); }
+                // Plan 266 (D455): `supervised(cancel: tok) { … }` WITHOUT
+                // `timeout:`/`deadline:` returns `Outcome[T]`, not the body's
+                // plain `T` — the D455 open-question-§3 combination with
+                // `timeout:`/`deadline:` is left untouched (still `T`, see
+                // std/prelude/concurrency.nv `Outcome` doc). A caller that
+                // pins the binding/return type to a bare `T` (via an
+                // explicit let-annotation or an expression-bodied fn's
+                // declared return type — the two positions `expected` is
+                // propagated into by this walk) has written exactly the
+                // footgun D455 exists to catch: treating a possibly-
+                // cancelled run's value as if the body had produced a real
+                // `T`. Targeted, narrow check (mirrors this file's other
+                // dedicated `supervised`-shape checks) — NOT a general
+                // let/return type-mismatch pass (this codebase has none;
+                // see plan 266 report for why one wasn't added here).
+                if cancel.is_some() && deadline.is_none() {
+                    if let Some(exp) = expected {
+                        if !Self::typeref_is_outcome(exp.strip_modifiers()) {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[E_SUPERVISED_CANCEL_OUTCOME_MISMATCH] `supervised(cancel: …)` \
+                                     (without `timeout:`/`deadline:`) yields `Outcome[T]` (D455: \
+                                     `Finished(T) | Aborted`), not a bare `T` — the scope may have \
+                                     been cancelled from outside, in which case there is no `T` to \
+                                     hand back. Using it here as `{}` would silently treat a \
+                                     cancelled run's value as if the body had completed. Match the \
+                                     outcome (`match out {{ Finished(v) => …, Aborted => … }}`) or \
+                                     annotate the binding as `Outcome[{}]`.",
+                                    typeref_display(exp),
+                                    typeref_display(exp),
+                                ),
+                                e.span,
+                            ));
+                        }
+                    }
+                }
             }
             ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
                 self.walk_block(body, errors);
@@ -47535,6 +47571,17 @@ impl MapLitCtx {
             Some(name) => self.from_pairs_types.contains(name),
             None => false,
         }
+    }
+
+    /// Plan 266 (D455): `true` if `ty` (already `strip_modifiers`-ed by the
+    /// caller) is `Outcome[…]` — the wrap `supervised(cancel: tok) { … }`
+    /// (without `timeout:`/`deadline:`) now produces. Named-path check only
+    /// (no arity/arg validation — a mis-arity `Outcome` reference is a
+    /// separate, ordinary type error the ordinary generic-arity channel
+    /// already covers; this helper exists only to gate the D455 footgun
+    /// diagnostic above).
+    fn typeref_is_outcome(ty: &TypeRef) -> bool {
+        matches!(ty, TypeRef::Named { path, .. } if path.last().map_or(false, |n| n == "Outcome"))
     }
 
     /// Plan 52 Ф.3: проверка D55 map-coercion анонимного record-литерала

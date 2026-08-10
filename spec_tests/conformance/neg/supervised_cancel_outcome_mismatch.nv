@@ -1,0 +1,21 @@
+// EXPECT_COMPILE_ERROR E_SUPERVISED_CANCEL_OUTCOME_MISMATCH
+//
+// D455 / Plan 266: `supervised(cancel: tok) { … }` (without `timeout:`/
+// `deadline:`) returns `Outcome[T]` = `Finished(T) | Aborted`, not a bare
+// `T` — the scope may have been cancelled from outside, in which case
+// there is no `T` to hand back. Pinning the binding's declared type to a
+// bare `T` (here: `int`) is exactly the footgun D455 exists to catch:
+// using a possibly-cancelled run's result as if the body had completed.
+
+module neg.supervised_cancel_outcome_mismatch
+
+fn process() -> int {
+    ro tok = CancelToken.new()
+    // nova:expect E_SUPERVISED_CANCEL_OUTCOME_MISMATCH -- cancel-only supervised yields Outcome[int], not int (D455)
+    ro out int = supervised(cancel: tok) { 42 }
+    out
+}
+
+test "supervised(cancel:) result pinned to bare T without match — compile error" {
+    process()
+}
