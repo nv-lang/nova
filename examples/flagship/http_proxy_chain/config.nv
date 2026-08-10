@@ -21,7 +21,17 @@ import std.os.{args, env}
 const DEFAULT_LISTEN_PORT = 8899
 
 type Config {
-    upstream Upstream
+    // PLAIN DATA, not the `Effect[Upstream]` handler itself — `upstream.nv`
+    // has the full story, but in short: embedding `Effect[Upstream]` in a
+    // struct field hits a codegen defect (`unknown type name
+    // 'NovaVtable_Upstream'`), found building this file. `main.nv` turns
+    // this into the actual handler with `cfg.upstream.to_handler()` right
+    // at the `with Upstream = … { }` site.
+    upstream UpstreamSource
+    // Safe-to-log description of the selected upstream — computed
+    // alongside `upstream` (`load_upstream` below), never the credentials
+    // (plan 249 §8 canon: password is env/URL-only, never argv/logs).
+    upstream_desc str
     listen_port int
 }
 
@@ -74,22 +84,37 @@ fn parse_proxy_host_port(raw str) -> (str, int) {
 // `SOCKS5_USER`/`SOCKS5_PASS`) is an explicit override; failing that, an
 // `all_proxy`-compatible URL (`ALL_PROXY` env, checked uppercase-first like
 // Go's `httpproxy` package, then the lowercase `all_proxy` curl/git/docker
-// convention) is parsed via `Upstream.parse` (upstream.nv). Neither present
-// is a fatal, loud `panic` at startup (plan 249 §3.2 policy: config
-// validation happens ONCE at startup, not as a silently-broken bridge that
-// fails every connection later).
-fn load_upstream() Os -> Upstream {
+// convention) is parsed via `str @to_upstream_source()` (upstream.nv) into
+// the same plain `UpstreamSource`. Neither present is a fatal, loud `panic`
+// at startup (plan 249 §3.2 policy: config validation happens ONCE at
+// startup, not as a silently-broken bridge that fails every connection
+// later).
+fn load_upstream() Os -> (UpstreamSource, str) {
     ro explicit_proxy = env("SOCKS5_PROXY") ?? ""
     if explicit_proxy != "" {
         ro (host, port) = parse_proxy_host_port(explicit_proxy)
-        return Socks5 { host, port, user: env("SOCKS5_USER"), pass: env("SOCKS5_PASS") }
+        ro src = Socks5Source { host, port, user: env("SOCKS5_USER"), pass: env("SOCKS5_PASS") }
+        return (src, "SOCKS5 ${host}:${port}")
     }
     match env("ALL_PROXY").or(env("all_proxy")) {
-        Some(url) => match Upstream.parse(url) {
-            Ok(u)  => u
-            Err(e) => panic("http_proxy_chain: ${e.to_str()}")
+        Some(url) => match url.to_upstream_source() {
+            Ok(src) => (src, redact_url_creds(url))
+            Err(e)  => panic("http_proxy_chain: ${e}")
         }
         None => panic("http_proxy_chain: no upstream configured — set SOCKS5_PROXY=host:port (optionally with SOCKS5_USER/SOCKS5_PASS) or ALL_PROXY=socks5://[user:pass@]host:port")
+    }
+}
+
+// Drops `user[:pass]@` from a URL before it goes anywhere near the startup
+// log line — same "credentials never reach argv/logs" rule the rest of
+// this bridge already follows (plan 249 §8 canon).
+fn redact_url_creds(url str) -> str {
+    match url.split_once("://") {
+        Some((scheme, rest)) => match rest.rsplit_once("@") {
+            Some((_, hostport)) => "${scheme}://${hostport}"
+            None                 => url
+        }
+        None => url
     }
 }
 
@@ -97,8 +122,10 @@ fn load_upstream() Os -> Upstream {
 // upstream or out-of-range port is a fatal, loud `panic`, not a
 // silently-broken bridge that fails every connection later.
 fn load_config() Os -> Config {
+    ro (upstream, upstream_desc) = load_upstream()
     Config {
-        upstream: load_upstream(),
+        upstream,
+        upstream_desc,
         listen_port: parse_listen_port(args()),
     }
 }

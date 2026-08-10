@@ -34,8 +34,8 @@
 //   config.nv           — Config, load_config, LISTEN_PORT/upstream selection
 //   http.nv             — request-head reading + parsing
 //   relay.nv            — pipe_bidirectional/pump (the tunnel stage)
-//   upstream.nv         — Upstream sum, @dial, @describe, Upstream.parse
-//   upstream_socks5.nv  — the Socks5 variant's own dial implementation
+//   upstream.nv         — the Upstream EFFECT, upstream_for (scheme dispatch)
+//   upstream_socks5.nv  — the SOCKS5 handler for that effect
 //   main.nv (this file) — accept loop, per-connection dispatch, responses
 //
 // Configuration (`Os` effect) — canon per plan 249 §8, see config.nv/README:
@@ -77,7 +77,7 @@ import std.time.duration
 // shapes, this direct-body form included) never reproduced a hang; see
 // `docs/plans/221.1-bug-sweep.md` №457 for the full matrix. The manual
 // watchdog is retired here.
-const HEADER_READ_TIMEOUT_MS int = 15000
+const HEADER_READ_TIMEOUT_MS = 15000
 const UPSTREAM_CONNECT_TIMEOUT_MS int = 15000
 
 // The pipe stage itself (`pipe_bidirectional`) is intentionally left
@@ -85,24 +85,35 @@ const UPSTREAM_CONNECT_TIMEOUT_MS int = 15000
 // timeouts on the established tunnel" — accepted for an example; a
 // production bridge would want idle timeouts here too).
 
-fn main() Net Os Time -> () {
+fn main() Net Os Time Upstream -> () {
     with Os = real_os(), Net = real_net() {
         ro cfg = load_config()
         consume listener = TcpListener.bind(SocketAddr.loopback(cfg.listen_port))!!
-        println("http_proxy_chain: listening on 127.0.0.1:${listener.local_port()}, upstream ${cfg.upstream.describe()}")
-        supervised {
-            loop {
-                match listener.accept() {
-                    // Form REQUIRED by plan 249 §3.2 (build-verified): the
-                    // binding comes from the match arm and moves straight
-                    // into `spawn consume` — an OUTER `consume conn = …`
-                    // plus a bare `spawn` gives `E_LINEAR_CAPTURE_IN_FIBER`.
-                    Ok(consume conn) => spawn consume conn { handle_client(conn, cfg) }
-                    // Plan 249 Ф.2 policy: log and keep serving. One failed
-                    // accept (transient EMFILE, a client that vanished during
-                    // the handshake) must not take the whole bridge down —
-                    // the loop is the process's only reason to exist.
-                    Err(_)           => println("http_proxy_chain: accept failed, continuing")
+        println("http_proxy_chain: listening on 127.0.0.1:${listener.local_port()}, upstream ${cfg.upstream_desc}")
+        // One handler for the whole process's lifetime (plan 249 §9): the
+        // upstream proxy is selected once at startup (`load_config`), not
+        // per-connection — every spawned per-connection fiber below sees
+        // this SAME handler as its ambient `Upstream`, same as `Net`/`Os`
+        // above. `cfg.upstream` is PLAIN DATA (`UpstreamSource`) — the
+        // actual `Effect[Upstream]` handler value is built by
+        // `@to_handler()` and consumed IMMEDIATELY here, never stored
+        // anywhere first (see `upstream.nv` for the codegen defect this
+        // works around).
+        with Upstream = cfg.upstream.to_handler() {
+            supervised {
+                loop {
+                    match listener.accept() {
+                        // Form REQUIRED by plan 249 §3.2 (build-verified): the
+                        // binding comes from the match arm and moves straight
+                        // into `spawn consume` — an OUTER `consume conn = …`
+                        // plus a bare `spawn` gives `E_LINEAR_CAPTURE_IN_FIBER`.
+                        Ok(consume conn) => spawn consume conn { handle_client(conn) }
+                        // Plan 249 Ф.2 policy: log and keep serving. One failed
+                        // accept (transient EMFILE, a client that vanished during
+                        // the handshake) must not take the whole bridge down —
+                        // the loop is the process's only reason to exist.
+                        Err(_)           => println("http_proxy_chain: accept failed, continuing")
+                    }
                 }
             }
         }
@@ -120,15 +131,15 @@ fn respond(mut client TcpStream, status_line str) -> () {
     ro _ = client.write("${status_line}\r\n\r\n")
 }
 
-fn handle_client(consume client TcpStream, cfg Config) Net Time -> () {
+fn handle_client(consume client TcpStream) Net Time Upstream -> () {
     match read_headers_guarded(client, MAX_HEADER_BYTES) {
         Ok(headers) => {
             match parse_request(headers.head) {
                 Connect { host, port } => {
-                    handle_connect(client, host, port, cfg, headers.leftover)
+                    handle_connect(client, host, port, headers.leftover)
                 }
                 Plain { host, port, rewritten_head } => {
-                    handle_plain(client, host, port, rewritten_head, cfg, headers.leftover)
+                    handle_plain(client, host, port, rewritten_head, headers.leftover)
                 }
                 Invalid => {
                     // Neither a CONNECT authority-form target nor a
@@ -159,10 +170,10 @@ fn handle_client(consume client TcpStream, cfg Config) Net Time -> () {
 // scope — `pipe_bidirectional` opens its OWN fresh scope with its OWN
 // token, and `handle_connect`/`handle_plain` call it from THEIR top-level
 // body, entered fresh and uncancelled, same as before this simplification.
-fn connect_guarded(cfg Config, host str, port int) Net Time -> Result[TcpStream, ()] {
+fn connect_guarded(host str, port int) Net Time Upstream -> Result[TcpStream, ()] {
     with Fail[TimeoutError] = |_e| { Err(()) } {
         supervised(timeout: UPSTREAM_CONNECT_TIMEOUT_MS.to_millis()) {
-            match cfg.upstream.dial(host, port) {
+            match Upstream.dial(host, port) {
                 Ok(consume upstream) => Ok(upstream)
                 Err(_)                => Err(())
             }
@@ -174,8 +185,8 @@ fn connect_guarded(cfg Config, host str, port int) Net Time -> Result[TcpStream,
 // or answers `502 Bad Gateway`. Upstream connect happens BEFORE the `200`
 // response is sent — a failed upstream never leaves the client thinking a
 // tunnel it does not have was established (plan 249 §3.2).
-fn handle_connect(consume client TcpStream, host str, port int, cfg Config, leftover []u8) Net Time -> () {
-    match connect_guarded(cfg, host, port) {
+fn handle_connect(consume client TcpStream, host str, port int, leftover []u8) Net Time Upstream -> () {
+    match connect_guarded(host, port) {
         Ok(consume upstream) => {
             respond(client, "HTTP/1.1 200 Connection Established")
             if leftover.len() > 0 {
@@ -202,8 +213,8 @@ fn handle_connect(consume client TcpStream, host str, port int, cfg Config, left
 // `Proxy-*`-stripped) request head to UPSTREAM — no response of the
 // bridge's own is sent to the client; the origin server's response arrives
 // through `pipe_bidirectional` like any other tunneled byte.
-fn handle_plain(consume client TcpStream, host str, port int, rewritten_head str, cfg Config, leftover []u8) Net Time -> () {
-    match connect_guarded(cfg, host, port) {
+fn handle_plain(consume client TcpStream, host str, port int, rewritten_head str, leftover []u8) Net Time Upstream -> () {
+    match connect_guarded(host, port) {
         Ok(consume upstream) => {
             // Best-effort, mirroring handle_connect's leftover write: a
             // write failure here just means upstream is already broken —

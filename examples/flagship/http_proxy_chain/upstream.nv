@@ -21,84 +21,93 @@ export fn UpstreamError @to_str() -> str {
     }
 }
 
-// WORKAROUND FOR A LIVE COMPILER DEFECT, NOT THE RECOMMENDED SHAPE — see
-// plan 249 §9 for the full write-up.
+// `Upstream` is an EFFECT, not a value (plan 249 §9, decided 2026-08-10).
+// An earlier revision used a closed sum (`type Upstream enum Socks5 {...}`)
+// as a workaround for defect К1 (`docs/plans/221.1-bug-sweep.md`) — a
+// `protocol`-typed factory returning different concrete implementations
+// from different branches fails at the C stage on the boxed-existential
+// merge. The effect form sidesteps THAT defect (proven by probe,
+// 2026-08-10) AND is the better shape for three independent reasons:
 //
-// The right shape here is a protocol interface (`type Dialer protocol {
-// @dial(host str, port int) -> ... }`) with one record-per-proxy-protocol
-// implementation and a `scheme -> implementation` factory function: adding
-// SOCKS4 would then be a NEW FILE plus one line in the factory, and no
-// existing implementation would need to change at all. `spec/decisions/
-// 02-types.md:4156` promises exactly this (existential + dynamic vtable
-// dispatch, plan 56).
-//
-// That shape does not compile TODAY: a protocol-typed factory that returns
-// different concrete implementations from different branches — exactly what
-// a `scheme -> implementation` factory needs — hits a C-stage failure
-// (`used type 'NovaBox_Dialer' where arithmetic or pointer type is
-// required`) at the merge point of the branches. Boxing a SINGLE
-// implementation works; boxing a MERGE of branches with different
-// implementations does not. Filed as defect К1 in
-// `docs/plans/221.1-bug-sweep.md` (found designing this example).
-//
-// So V1 uses a closed sum instead: one variant today (`Socks5`), one arm in
-// `@dial` below per variant. D406: no leading `|` for a single-variant sum.
-// Adding a second protocol (e.g. `Socks4`) costs TWO shared edit sites under
-// this workaround — a new variant here, plus a new arm in `@dial` — instead
-// of the target shape's ONE (a line in the factory). That is a known,
-// accepted cost until К1 is fixed, not a design recommendation.
-//
-// MANDATORY FOLLOW-UP: once К1 closes, migrate this type to the
-// protocol-interface shape described above. This sum is a workaround to be
-// read past, not a pattern to copy elsewhere in new code.
-type Upstream enum Socks5 { host str, port int, user Option[str], pass Option[str] }
+//  1. Dialing through to a real upstream is an AMBIENT capability, exactly
+//     like `Net` itself — "make a TCP connection to the real proxy" is not
+//     a value passed around, it is something the environment can do.
+//  2. Switching protocol IS switching handler — that is precisely what
+//     effects are for. A `scheme -> Effect[Upstream]` factory branches
+//     between concrete handler VALUES of the SAME effect type; that is a
+//     different mechanism (D61/D68 handler values + closure-captured
+//     state) from the boxed-existential-merge shape defect К1 hits.
+//  3. Testability: a test can bind `with Upstream = fake_upstream() { ... }`
+//     and exercise the HTTP parsing/rewriting logic with no real socket at
+//     all — the same reason `std.net`'s own `mock_net()` exists.
+export type Upstream effect {
+    dial(host str, port int) -> Result[TcpStream, UpstreamError]
+}
 
-// Dials `target_host:target_port` THROUGH this upstream. Matches on the
-// variant and delegates to that protocol's own file (`upstream_socks5.nv`
-// for `Socks5`) — the ONE dispatch point a second protocol variant would
-// also need an arm in.
-export fn Upstream @dial(target_host str, target_port int) Net -> Result[TcpStream, UpstreamError] {
+// A SECOND, separate codegen defect (found building this file, distinct
+// from К1): `Effect[Upstream]` compiles fine as a BARE local value or a
+// function's own (unwrapped) return type — the shape the owner's probe
+// tested (`fn pick(scheme str) -> Effect[Dial] { if ... }`) — but embedding
+// it in ANY compound generic (`Result[Effect[Upstream], _]`,
+// `Option[Effect[Upstream]]`, a tuple, or a plain struct field) breaks the
+// C build: `unknown type name 'NovaVtable_Upstream'` — the vtable struct's
+// own typedef is not forward-declared before the compound type's typedef
+// that embeds a pointer to it. Reported, not filed as its own К-number yet
+// (ask the owner where this belongs before the next window touches
+// upstream selection again).
+//
+// Consequence for this file's shape: `UpstreamSource` below is PLAIN DATA
+// (str/int/Option — never `Effect[Upstream]`) so it can freely go through
+// `Result`/tuples/struct fields; the ONE unwrapped `Effect[Upstream]` value
+// is produced by `@to_handler()` and consumed IMMEDIATELY as a `with
+// Upstream = … { }` handler-expr (`main.nv`), never stored anywhere first.
+
+// Which protocol to dial through, and its plain (non-effect) parameters —
+// `config.nv` builds one of these from either the explicit `SOCKS5_PROXY`
+// override or a parsed `all_proxy` URL; `main.nv` turns it into the actual
+// handler right at the `with Upstream = … { }` site via `@to_handler()`.
+// Adding a second protocol (e.g. `Socks4`) costs exactly: a new variant
+// here, a new arm in `@to_handler()` below, and a new handler factory
+// function in its own file (`upstream_socks4.nv`, mirroring
+// `upstream_socks5.nv`) — no existing handler needs to change.
+export type UpstreamSource enum Socks5Source { host str, port int, user Option[str], pass Option[str] }
+
+// The ONE dispatch point a second protocol's arm would also need.
+export fn UpstreamSource @to_handler() -> Effect[Upstream] {
     match @ {
-        Socks5 { host, port, user, pass } => dial_socks5(host, port, user, pass, target_host, target_port)
+        Socks5Source { host, port, user, pass } => socks5_upstream(host, port, user, pass)
     }
 }
 
-// Short, human-readable description for the startup log line — NOT a
-// canonical URL round-trip (credentials are deliberately never echoed back).
-export fn Upstream @describe() -> str {
-    match @ {
-        Socks5 { host, port, .. } => "SOCKS5 ${host}:${port}"
-    }
-}
-
-// Parses an `all_proxy`-compatible URL (curl/git/docker convention):
-// `socks5://[user:pass@]host:port` or `socks5h://[user:pass@]host:port`.
-// Both scheme suffixes are accepted and treated identically: the distinction
-// curl draws between them is WHO resolves the target hostname (`socks5` —
-// the client, locally; `socks5h` — the proxy, itself) — but `nova-socks`'
-// `socks5_connect` (a separate, already-published package, out of scope
-// here) always sends the target as a SOCKS5 domain-name address (RFC 1928
-// address type `0x03`), i.e. always proxy-side resolution. Rejecting
-// `socks5://` as "not what we do" would only make this bridge less
-// drop-in-compatible with an already-set `all_proxy`, for a distinction this
-// bridge has no way to honor either way.
+// Parses an `all_proxy`-compatible URL (curl/git/docker convention:
+// `socks5://[user:pass@]host:port` or `socks5h://…`) into a plain
+// `UpstreamSource`. An unknown scheme is a typed `UnsupportedScheme`, not a
+// silent fallback or panic here — `config.nv`'s caller decides how loud to
+// be.
 //
-// An unrecognized scheme is a typed `UnsupportedScheme`, not a silent
-// fallback or panic here — `config.nv`'s caller decides how loud to be.
-export fn Upstream.parse(url str) -> Result[Upstream, UpstreamError] {
-    match url.split_once("://") {
+// `socks5://` and `socks5h://` are both accepted and dispatch to the SAME
+// source: the distinction curl draws between them is WHO resolves the
+// target hostname (`socks5` — the client, locally; `socks5h` — the proxy,
+// itself), but `nova-socks`' `socks5_connect` (a separate, already-published
+// package, out of scope here) always sends the target as a SOCKS5
+// domain-name address (RFC 1928 address type `0x03`), i.e. always
+// proxy-side resolution — rejecting `socks5://` would only make this bridge
+// less drop-in-compatible with an already-set `all_proxy`, for a
+// distinction it has no way to honor either way.
+export fn str @to_upstream_source() -> Result[UpstreamSource, UpstreamError] {
+    match @split_once("://") {
         Some((scheme, rest)) => {
             if scheme != "socks5" && scheme != "socks5h" {
                 return Err(UnsupportedScheme { scheme })
             }
             parse_socks5_authority(rest)
         }
-        None => Err(BadUrl { detail: "missing '://' scheme separator in '${url}'" })
+        None => Err(BadUrl { detail: "missing '://' scheme separator in '${@}'" })
     }
 }
 
 // `rest` is everything after `scheme://`: `[user[:pass]@]host:port`.
-fn parse_socks5_authority(rest str) -> Result[Upstream, UpstreamError] {
+fn parse_socks5_authority(rest str) -> Result[UpstreamSource, UpstreamError] {
     match rest.rsplit_once("@") {
         Some((userinfo, hostport)) => match userinfo.split_once(":") {
             Some((u, p)) => parse_socks5_hostport(hostport, Some(u), Some(p))
@@ -108,14 +117,14 @@ fn parse_socks5_authority(rest str) -> Result[Upstream, UpstreamError] {
     }
 }
 
-fn parse_socks5_hostport(hostport str, user Option[str], pass Option[str]) -> Result[Upstream, UpstreamError] {
+fn parse_socks5_hostport(hostport str, user Option[str], pass Option[str]) -> Result[UpstreamSource, UpstreamError] {
     match hostport.rsplit_once(":") {
         Some((host, port_str)) => match port_str.to_int() {
             Ok(port) => {
                 if port < 1 || port > 65535 {
                     Err(BadUrl { detail: "port ${port} out of range 1..65535" })
                 } else {
-                    Ok(Socks5 { host, port, user, pass })
+                    Ok(Socks5Source { host, port, user, pass })
                 }
             }
             Err(_) => Err(BadUrl { detail: "invalid port in '${hostport}'" })
