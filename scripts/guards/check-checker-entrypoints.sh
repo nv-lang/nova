@@ -68,8 +68,14 @@ run_check() {
     # or `*` (block-comment continuation) — a mention in a doc comment does
     # not count as a call.
     local hits
+    # `.claude/worktrees/**` — рабочие копии окон-агентов, физически лежащие
+    # ВНУТРИ дерева. Это не наш исходник, а чужие снимки на других коммитах:
+    # 2026-08-10 страж покраснел на шести файлах из двух таких копий, где
+    # `prepare_module_for_check` (план 262 А) ещё не существовал. Судить наш
+    # код по чужому снимку нельзя — исключаем так же, как `target/`.
     hits=$(cd "$root" && grep -rEn "$CALL_PATTERN" --include='*.rs' . 2>/dev/null \
         | grep -v '/target/' \
+        | grep -v '^\./\.claude/' \
         | grep -vE ':[0-9]+:[[:space:]]*(//|///|\*)')
 
     if [ -z "$hits" ]; then
