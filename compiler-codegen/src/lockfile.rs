@@ -98,9 +98,13 @@ impl LockFile {
     pub fn render(&self) -> String {
         let mut s = String::new();
         s.push_str(
-            "# nova.lock.toml — сгенерирован автоматически (Plan 03.1 / D78).\n\
-             # Фиксирует точные версии зависимостей для воспроизводимых\n\
-             # сборок. Не редактируйте вручную; коммитьте в репозиторий.\n\n",
+            // Владелец, 2026-08-10: манифесты — по-английски. Этот заголовок
+            // уезжает в КАЖДЫЙ пакетный репозиторий и читается снаружи первым;
+            // русский комментарий здесь сужал круг читателей до одного
+            // человека. Страж — scripts/guards/check-manifest-language.sh.
+            "# nova.lock.toml — generated automatically (Plan 03.1 / D78).\n\
+             # Pins exact dependency versions for reproducible builds.\n\
+             # Do not edit by hand; commit this file to the repository.\n\n",
         );
         s.push_str(&format!("version = {}\n", self.version));
         for p in &self.packages {

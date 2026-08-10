@@ -1,15 +1,14 @@
 # nova.toml — Nova standard library.
 #
-# Это workspace-member корневого `../nova.toml`. Содержит
-# стандартную библиотеку Nova, организованную по семантическим
-# доменам (см. spec/decisions/07-modules.md раздел «Структура
-# nova-lang репозитория» в D78).
+# A workspace member of the root `../nova.toml`. Holds the Nova standard
+# library, grouped by semantic domain (see the repository-layout section of D78
+# in spec/decisions/07-modules.md).
 #
-# **Plan 91 Ф.7.1 (2026-05-27):** для релиза 0.1 stdlib разделён
-# на MVP (compiles → ships) и `_experimental/` (legacy/aspirational
-# код, не входит в 0.1 release contract).
+# **Plan 91 phase 7.1 (2026-05-27):** for the 0.1 release the stdlib is split into
+# MVP (compiles → ships) and `_experimental/` (legacy/aspirational code, not
+# part of the 0.1 release contract).
 #
-# MVP для 0.1 (релизный набор):
+# MVP for 0.1 (the shipping set):
 #   prelude/        Option/Result/protocols/effects/errors (auto-imported)
 #   runtime/        char/fibers/gc/math/numeric/buffers/string/sync (auto-gen stubs)
 #   testing/        handlers/property (test harness)
@@ -20,11 +19,11 @@
 #   concurrency/    Cancellation, Timer (Plan 83 fiber-api)
 #   bench           Plan 57 benchmark DSL
 #
-# _experimental/ (не входит в 0.1, ждёт Plan 18 / 0.2+ или
-# отдельных под-планов Plan 91 Ф.2-Ф.4 для постепенной promotion):
+# _experimental/ (not part of 0.1; waits for Plan 18 / 0.2+ or for the
+# sub-plans of Plan 91 phases 2-4 that promote items one at a time):
 #   collections/    BloomFilter, Deque, LinkedList, LRU, PriorityQueue, Queue
-#   crypto/         InsecureDemoKdf (демо-KDF, НЕ настоящий bcrypt/argon2 —
-#                   security-де-риск Plan 191; см. std/_experimental/STATUS.md)
+#   crypto/         InsecureDemoKdf (a demo KDF, NOT a real bcrypt/argon2 —
+#                   security de-risk of Plan 191; see std/_experimental/STATUS.md)
 #   identifiers/    UUID, ULID, Snowflake, UuidNamespace
 #   checksums/      CRC32, FNV
 #   time/           Cron (FAIL: D52 §2)
@@ -34,47 +33,45 @@
 #   data/           SemVer, SemVerRange, SQL
 #   concurrency/    RateLimiter, Retry (FAIL: unused prefix typevar)
 #
-# Префикс `_` в имени каталога означает auto-skip из `nova check`
-# (см. should_skip_path_full в nova-cli). Это даёт `nova check std/`
-# → 0 FAIL для shipping CI gate без необходимости `--skip` flag.
+# A leading `_` in a directory name means auto-skip from `nova check` (see
+# should_skip_path_full in nova-cli). That is what makes `nova check std/`
+# report 0 FAIL for the shipping CI gate without passing a `--skip` flag.
 #
-# Module path 1:1 = file path ОТ `src/`: файл `std/src/encoding/base64.nv`
-# объявляет `module std.encoding.base64` (или `encoding.base64`
-# для sub-dir form). Имя папки `std/` ↔ префикс модуля `std.` без
-# специальных маппингов (см. D78 «Path / module enforcement»); слово
-# `src` в module-path НЕ входит.
+# Module path is 1:1 with the file path FROM `src/`: the file
+# `std/src/encoding/base64.nv` declares `module std.encoding.base64` (or
+# `encoding.base64` in the sub-dir form). The folder name `std/` maps to the
+# module prefix `std.` with no special-casing (see D78 "Path / module
+# enforcement"); the word `src` is NOT part of the module path.
 
 [package]
 name = "std"
 version = "0.1.0"
 nova-version = "0.5"
 license = "MIT OR Apache-2.0"
-description = "Стандартная библиотека Nova"
+description = "The Nova standard library"
 repository = "https://github.com/nv-lang/nova.git"
 
-# Plan 195 (2026-07-13): std переведён на канон `src/` (как остальные
-# пакеты — Rust/npm/Python/Zig-паттерн; nova-tls уже так живёт). Файлы
-# лежат в подкаталогах `std/src/<домен>/`, корень пакета (`nova.toml`,
-# `README`, `native/`) остаётся плоским. Module-path резолвится ОТ
-# `src/` и не включает слово `src` (D78).
+# Plan 195 (2026-07-13): std moved to the canonical `src/` layout, like every
+# other package (the Rust/npm/Python/Zig pattern; nova-tls already lived that
+# way). Sources sit in `std/src/<domain>/`; the package root (`nova.toml`,
+# `README`, `native/`) stays flat. Module paths resolve FROM `src/` and do not
+# include the word `src` (D78).
 [lib]
 src = "src"
 
-# Plan 71 / D127: opt-in строгий enforcement правила
-# `public-missing-stability` (Plan 45 §11.5 №7). Severity →
-# `error`, что блокирует `nova doc --check` (exit 1) и CI gate
-# при каждом exported item без `#stable`/`#unstable`/`#experimental`
-# annotation. Stdlib обязан документировать stability tier на каждом
-# элементе публичного API (semver commitments). User crates по
-# умолчанию (без этого flag'а) получают `warning`, который видим
-# в stderr, но не блокирует CI.
+# Plan 71 / D127: opt-in strict enforcement of the `public-missing-stability`
+# rule (Plan 45 §11.5 #7). Severity becomes `error`, which fails
+# `nova doc --check` (exit 1) and the CI gate for every exported item lacking a
+# `#stable`/`#unstable`/`#experimental` annotation. The stdlib must state a
+# stability tier on every public API element (semver commitments). User crates
+# without this flag get a `warning` instead: visible on stderr, not blocking.
 enforce-stability = true
 
-# Plan 193 Ф.2 вынес std/tls в отдельную репу `nova-tls` (сиблинг монорепы,
-# см. docs/plans/193-nova-tls-repo.md); std/http/transport/real.nv тянул TLS
-# через `[dependencies] tls` — единственный внешний dep стандартной
-# библиотеки. Plan 203 (2026-07-13) довынес и сам std/http в отдельную репу
-# `nova-http` (см. docs/plans/203-http-out-of-std.md — мотив: голый http без
-# tls почти не используется, связка неразрывна, ни одна экосистема не держит
-# «http в std, tls снаружи»). С уходом http зависимость `tls` в std больше не
-# нужна никем — std снова самодостаточен (0 внешних deps).
+# Plan 193 phase 2 moved std/tls into its own repository `nova-tls` (a sibling of
+# the monorepo, see docs/plans/193-nova-tls-repo.md); std/http/transport/real.nv
+# pulled TLS in through `[dependencies] tls` — the standard library's only
+# external dependency. Plan 203 (2026-07-13) then moved std/http itself out into
+# `nova-http` (see docs/plans/203-http-out-of-std.md — the motive: bare http
+# without tls is barely usable, the pair is inseparable, and no ecosystem keeps
+# "http in std, tls outside"). With http gone, nothing needs the `tls`
+# dependency any more — std is self-contained again (0 external deps).

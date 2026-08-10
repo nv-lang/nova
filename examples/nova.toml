@@ -1,66 +1,69 @@
 # nova.toml — Nova examples package.
 #
-# Это workspace-member корневого `../nova.toml`. Содержит
-# демонстрационные программы и tutorial snippets, организованные
-# по подкаталогам:
+# A workspace member of the root `../nova.toml`. Holds demo programs and
+# tutorial snippets, grouped into subdirectories:
 #
 #   basics/         Hello, arithmetic, match, records, strings
-#   effects/        Эффекты и handler'ы (D61, D63, D64)
-#   real_world/     Полноразмерные примеры (orm_decorators, orm_demo)
-#   ffi/, net/, tls/, typed_pointers/, plan110/ — тематические demo
-# Каталога-карантина здесь больше нет. `_wip/` удалён 2026-08-10 (запись
-# реестра №533): исключение без срока и без владельца копило несобирающийся
-# код четыре недели. Всё, что лежит под examples/, обязано компилироваться.
+#   effects/        Effects and handlers (D61, D63, D64)
+#   real_world/     Full-size examples (orm_decorators, orm_demo)
+#   ffi/, net/, tls/, typed_pointers/, plan110/ — topical demos
+#   flagship/       The showcase programs the gate builds on every run
 #
-# Стандартная библиотека (черновики и production-код) живёт в
-# отдельном workspace-member `std/` — см. spec/decisions/07-modules.md
-# раздел «Структура nova-lang репозитория» в D78.
+# There is no quarantine directory here any more. `_wip/` was deleted
+# 2026-08-10 (registry #533): an exclusion with no expiry and no owner had
+# been collecting code that did not compile for four weeks. Everything under
+# examples/ is required to compile.
+#
+# The standard library (both drafts and production code) lives in its own
+# workspace member `std/` — see the repository-layout section of D78 in
+# spec/decisions/07-modules.md.
 
 [package]
 name = "nova_examples"
 version = "0.1.0"
 nova-version = "0.5"
 license = "MIT OR Apache-2.0"
-description = "Демонстрационные программы и tutorial snippets Nova"
+description = "Nova demo programs and tutorial snippets"
 repository = "https://github.com/nv-lang/nova.git"
 
-# Корень — текущий каталог `.` вместо стандартного `src/`,
-# потому что demo-файлы лежат в подкаталогах прямо в examples/,
-# не в examples/src/.
+# The root is the current directory `.` rather than the usual `src/`, because
+# the demo files sit in subdirectories directly under examples/, not under
+# examples/src/.
 [lib]
 src = "."
 
-# Большинство demo-файлов self-contained (только prelude). `std.*` доступен
-# ВСЕГДА неявно (D78 — reserved implicit stdlib package, не объявляется
-# здесь). Внешние (не-std) пакеты нужно объявлять явно — как `tls`/`http`
-# ниже (Plan 193: nova-tls, extracted std/tls, `examples/tls/echo_*.nv`
-# демонстрирует native-module dependency pattern, симметрично `std/nova.toml`;
-# Plan 203: nova-http, extracted std/http, `examples/flagship/aggregator`
-# потребляет `http.server` тем же путём).
+# Most demo files are self-contained (prelude only). `std.*` is ALWAYS
+# available implicitly (D78 — a reserved implicit stdlib package, never
+# declared here). Non-std packages must be declared explicitly, like `tls` and
+# `http` below (Plan 193: nova-tls, extracted from std/tls —
+# `examples/tls/echo_*.nv` demonstrates the native-module dependency pattern,
+# mirroring `std/nova.toml`; Plan 203: nova-http, extracted from std/http —
+# `examples/flagship/aggregator` consumes `http.server` the same way).
 #
-# [M-187-weather-live-tls-diamond-blocked] fix (Plan 204 дофикс №3, D420):
-# `tls` объявлен здесь В ТОЙ ЖЕ канонической git+version форме, что и
-# `nova-http/nova.toml`'s собственный `tls`-dep (тот же URL/версия) — оба
-# вхождения пакета `tls` в графе (прямое здесь + транзитивное через `http`)
-# резолвятся к ОДНОМУ git-checkout'у (git_cache пин-таблица ключуется по
-# URL), lock содержит `tls` РОВНО ОДИН раз. `path`-override для локальной
-# разработки (без re-tag/push нового nova-tls на каждой итерации) —
-# `nova.local.toml` (не коммитится) — теперь корректно перекрывает ОБА
-# вхождения (прямое root'а И транзитивное через `http`), см. дофикс №3 в
-# `imports.rs::lookup_dependency` / D420 (09-tooling.md).
+# [M-187-weather-live-tls-diamond-blocked] fix (Plan 204 follow-up #3, D420):
+# `tls` is declared here in THE SAME canonical git+version form as
+# `nova-http/nova.toml`'s own `tls` dependency (same URL, same version), so
+# both occurrences of the `tls` package in the graph — the direct one here and
+# the transitive one through `http` — resolve to ONE git checkout (the
+# git_cache pin table is keyed by URL) and the lock contains `tls` EXACTLY
+# once. The `path` override used for local development (so a new nova-tls does
+# not need a re-tag and push on every iteration) lives in `nova.local.toml`
+# (never committed) and now correctly overrides BOTH occurrences — see
+# follow-up #3 in `imports.rs::lookup_dependency` / D420 (09-tooling.md).
 [dependencies]
 tls = { git = "https://github.com/nv-lang/nova-tls", version = "0.1" }
-# №444/CI: `path`-зависимость в КОММИТИМОМ манифесте нерезолвима на CI (там нет
-# соседних реп) — именно она красила `nova-gate` на шаге «Flagship examples gate»
-# сообщением «резолюция зависимостей: зависимость `http`: path ../../nova-http».
-# Локальная разработка ведётся через `nova.override.toml` (не коммитится), а
-# манифест обязан ссылаться на ОПУБЛИКОВАННОЕ. У `nova-http` теги есть (v0.1.0…v0.1.2).
+# #444/CI: a `path` dependency in a COMMITTED manifest cannot resolve on CI
+# (there are no sibling repositories there) — that is exactly what reddened
+# `nova-gate` at the "Flagship examples gate" step, with a dependency-resolution
+# error naming `http`'s unresolvable `path ../../nova-http`. Local development
+# goes through `nova.override.toml` (never committed); the manifest itself must
+# point at something PUBLISHED. `nova-http` has tags (v0.1.0…v0.1.2).
 http = { git = "https://github.com/nv-lang/nova-http", version = "0.1" }
 polaris = { git = "https://github.com/nv-lang/nova-polaris", version = "0.1" }
-# Plan 249 (examples/flagship/http_proxy_chain). Wired 2026-08-09: both blockers
-# are gone — `nova-socks` now publishes `v0.1.0` on all three mirrors (verified
-# with `git ls-remote --tags`, so D420 §4 lock RESOLUTION has a matching tag and
-# cannot fail the way №444/CI did), and the native crash that made the bridge's
-# `pipe_bidirectional` unusable was closed as №456 (root was consume-scope
-# auto-cleanup disarm, not libuv).
+# Plan 249 (examples/flagship/http_socks5_bridge). Wired 2026-08-09: both
+# blockers are gone — `nova-socks` now publishes `v0.1.0` on all three mirrors
+# (verified with `git ls-remote --tags`, so D420 §4 lock RESOLUTION has a
+# matching tag and cannot fail the way #444/CI did), and the native crash that
+# made the bridge's `pipe_bidirectional` unusable was closed as #456 (the root
+# was consume-scope auto-cleanup disarm, not libuv).
 socks = { git = "https://github.com/nv-lang/nova-socks", version = "0.1" }

@@ -1,15 +1,15 @@
-# nova.toml — workspace для всего Nova-кода в проекте.
+# nova.toml — the workspace for every piece of Nova code in this project.
 #
-# Этот файл объявляет workspace по [D78](spec/decisions/07-modules.md#d78).
-# Сам компилятор — `compiler-codegen/` — Rust crate, у него свой
-# Cargo.toml и в Nova workspace не входит.
+# This file declares the workspace per [D78](spec/decisions/07-modules.md#d78).
+# The compiler itself — `compiler-codegen/` — is a Rust crate with its own
+# Cargo.toml and is NOT part of the Nova workspace.
 #
-# Внутри Nova workspace:
-#   - std/        — стандартная библиотека Nova (.nv-модули по доменам)
-#   - examples/   — демо-программы и tutorial snippets (используют std)
-#   - nova_tests/ — тесты языка (корпус для compiler-codegen)
+# Inside the Nova workspace:
+#   - std/        — the Nova standard library (.nv modules grouped by domain)
+#   - examples/   — demo programs and tutorial snippets (they consume std)
+#   - nova_tests/ — language tests (the corpus for compiler-codegen)
 #
-# Имя директории == package.name внутри (D78 path/module enforcement).
+# Directory name == package.name inside it (D78 path/module enforcement).
 
 [workspace]
 members = [

@@ -193,6 +193,10 @@ bash "$ROOT/scripts/tools/with-deadline.sh" 60 \
     bash "$ROOT/scripts/guards/check-commit-language.sh" "$ROOT" \
     || fail "кириллица в сообщениях коммитов после точки перехода"
 
+step "язык манифестов (nova.toml / nova.lock.toml — по-английски, норма 2026-08-10)"
+bash "$ROOT/scripts/guards/check-manifest-language.sh" "$ROOT" \
+    || fail "кириллица в манифесте пакета"
+
 step "самотесты стражей (все из каталога, по одному разу)"
 # ЕДИНСТВЕННОЕ место, где они запускаются. Каталог обходится целиком,
 # поэтому новый самотест подхватывается сам — дописывать его в gate.sh

@@ -1,6 +1,6 @@
-# nova.lock.toml — сгенерирован автоматически (Plan 03.1 / D78).
-# Фиксирует точные версии зависимостей для воспроизводимых
-# сборок. Не редактируйте вручную; коммитьте в репозиторий.
+# nova.lock.toml — generated automatically (Plan 03.1 / D78).
+# Pins exact dependency versions for reproducible builds.
+# Do not edit by hand; commit this file to the repository.
 
 version = 1
 

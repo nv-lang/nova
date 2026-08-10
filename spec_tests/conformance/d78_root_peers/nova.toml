@@ -1,4 +1,4 @@
-# Plan 202 Ф.2 (D78 rev-4 "root peers") — own nested package, DISTINCT
+# Plan 202 phase 2 (D78 rev-4 "root peers") — own nested package, DISTINCT
 # `[package].name` from `spec_tests` (the ambient conformance package),
 # so `.nv` files directly in this directory can legally declare the
 # single-segment `module d78_root_peers` form (root peers of THIS

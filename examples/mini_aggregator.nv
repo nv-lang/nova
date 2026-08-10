@@ -46,12 +46,10 @@ fn probe(latency_ms int, deadline Monotonic) Time -> str {
 }
 
 // Fan-out: все источники стартуют ОДНОВРЕМЕННО, результат собирается в []str.
-fn fan_out(latencies []int, deadline Monotonic) Time -> []str {
-    ro outcomes = parallel for i int in 0..latencies.len() {
-        probe(latencies[i], deadline)
+fn fan_out(latencies []int, deadline Monotonic) Time -> []str =>
+    parallel for ms in latencies {
+        probe(ms, deadline)
     }
-    outcomes
-}
 
 fn main() Time {
     ro latencies []int = [20, 40, 60, 80, 300, 800]   // мс; последние два не успеют
@@ -60,8 +58,8 @@ fn main() Time {
     ro outcomes = fan_out(latencies, deadline)
     mut done = 0
     mut cancelled = 0
-    for i int in 0..outcomes.len() {
-        if outcomes[i] == "done" { done += 1 } else { cancelled += 1 }
+    for out in outcomes {
+        if out == "done" { done += 1 } else { cancelled += 1 }
     }
     ro now Monotonic = Monotonic.now()
     ro wall = now.elapsed_since(t0)
