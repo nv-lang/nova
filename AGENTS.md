@@ -231,7 +231,7 @@ Deferred work is tracked with `[M-<kebab-name>]` markers in docs and code commen
 - **`git add` specific files only** — never `git add .` or `git add -A`. Multiple agents may work in parallel worktrees.
 - **One commit per logical task.** Multiple tasks → multiple commits.
 - **No `Co-Authored-By: <AI tool>` trailers** in commit messages. A repo hook strips them automatically — do **not** add the trailer by hand (and no need to check for it manually; the hook removes it on commit).
-- **Language convention.** Commit *subjects* use English conventional-commits (`fix(...)`, `docs(...)`). Commit *bodies* and the project's internal dev logs (`docs/project-creation.txt`, `docs/dev/simplifications.md`, and the team's discussion log) are written in **Russian** with English technical terms inline — the house style; match the surrounding entries rather than switching to all-English prose. Public-facing docs (`README.md`, `AGENTS.md`, `CONTRIBUTING.md`) stay in English.
+- **Language convention.** Commit messages — subject AND body — are **English**, since 2026-08-09 (the repository is public and mirrored to three hosts; the history is read from outside). Enforced by `scripts/guards/check-commit-language.sh`: Cyrillic in a message after the cutover commit reddens the gate. Internal dev docs (`docs/dev/`) and reports to the owner stay Russian — see the Rules section above, which is the single home of this rule.
 - **License:** code is `MIT OR Apache-2.0`; docs are `CC-BY-4.0`. See [LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE).
 
 ## Key reference files
