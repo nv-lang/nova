@@ -1179,13 +1179,16 @@ impl EmbedCtx {
             ExprKind::Block(b) => self.walk_block(b),
             ExprKind::Spawn(x) => self.walk_expr(x),
             ExprKind::Detach(b) | ExprKind::Blocking(b) => self.walk_block(b),
-            ExprKind::Supervised { body, cancel, deadline } => {
+            ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
                 self.walk_block(body);
                 if let Some(c) = cancel {
                     self.walk_expr(c);
                 }
                 if let Some(dl) = deadline {
                     self.walk_expr(&mut dl.expr);
+                }
+                if let Some(oh) = on_timeout {
+                    self.walk_expr(oh);
                 }
             }
             ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {

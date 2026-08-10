@@ -543,7 +543,7 @@ impl<'a> Analyzer<'a> {
                 self.flag_mut(cur).makes_indirect = true;
                 self.walk_expr(cur, recv, scope, inner);
             }
-            ExprKind::Supervised { body, cancel, deadline } => {
+            ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
                 self.flag_mut(cur).allocates = true;
                 self.flag_mut(cur).makes_indirect = true;
                 if let Some(c) = cancel {
@@ -552,6 +552,9 @@ impl<'a> Analyzer<'a> {
                 if let Some(_dl) = deadline {
                     let _dl_e = &_dl.expr;
                     self.walk_expr(cur, recv, scope, _dl_e);
+                }
+                if let Some(oh) = on_timeout {
+                    self.walk_expr(cur, recv, scope, oh);
                 }
                 self.walk_block(cur, recv, scope, body);
             }

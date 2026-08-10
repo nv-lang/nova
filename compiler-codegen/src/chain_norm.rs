@@ -386,10 +386,11 @@ fn normalize_chains_expr_children(e: &mut Expr, counter: &mut ChainCounter, ctx:
         ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. }
         | ExprKind::Detach(body) | ExprKind::Blocking(body) =>
             normalize_chains_block(body, counter, ctx),
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             normalize_chains_block(body, counter, ctx);
             if let Some(c) = cancel { normalize_chains_expr(c, counter, ctx); }
             if let Some(_dl) = deadline { normalize_chains_expr(&mut _dl.expr, counter, ctx); }
+            if let Some(oh) = on_timeout { normalize_chains_expr(oh, counter, ctx); }
         }
         ExprKind::Spawn(e) | ExprKind::Throw(e) => normalize_chains_expr(e, counter, ctx),
         ExprKind::Try(e) | ExprKind::Bang(e)

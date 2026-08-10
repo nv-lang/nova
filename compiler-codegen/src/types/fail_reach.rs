@@ -371,12 +371,15 @@ fn walk_expr<K: Eq + Hash + Clone>(e: &Expr, ctx: &Ctx<K>, fail_ok: bool, sink: 
         | ExprKind::Blocking(body) => {
             walk_block(body, ctx, fail_ok, sink);
         }
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             if let Some(c) = cancel {
                 walk_expr(c, ctx, fail_ok, sink);
             }
             if let Some(dl) = deadline {
                 walk_expr(&dl.expr, ctx, fail_ok, sink);
+            }
+            if let Some(oh) = on_timeout {
+                walk_expr(oh, ctx, fail_ok, sink);
             }
             walk_block(body, ctx, fail_ok, sink);
         }

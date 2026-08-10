@@ -360,13 +360,16 @@ fn walk_expr(e: &Expr, ret_ty: Option<&TypeRef>, sig: &SigRegistry, errors: &mut
         ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Interrupt(Some(e)) => {
             walk_expr(e, ret_ty, sig, errors)
         }
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             walk_block(body, ret_ty, sig, errors);
             if let Some(c) = cancel {
                 walk_expr(c, ret_ty, sig, errors);
             }
             if let Some(dl) = deadline {
                 walk_expr(&dl.expr, ret_ty, sig, errors);
+            }
+            if let Some(oh) = on_timeout {
+                walk_expr(oh, ret_ty, sig, errors);
             }
         }
         ExprKind::Select { arms } => {

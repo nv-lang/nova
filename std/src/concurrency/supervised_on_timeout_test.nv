@@ -1,0 +1,88 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// D449 — `supervised(on_timeout:)`: срок как ЗНАЧЕНИЕ, а не как эффект.
+// Расширяет D408 (`supervised(deadline:/timeout:)`, см.
+// supervised_deadline_test.nv). `on_timeout:` — необязательный обработчик,
+// вызываемый ВМЕСТО возбуждения `Fail[TimeoutError]` при истечении СВОЕГО
+// срока области. Требует `deadline:`/`timeout:` (парсер отклоняет форму без
+// него — [E_SUPERVISED_ON_TIMEOUT_NO_DEADLINE], проверяется отдельной
+// neg-фикстурой spec_tests/conformance/neg/supervised_on_timeout_no_deadline.nv).
+//
+// Проверяется:
+//   1. on_timeout: срабатывает при истечении — возвращает значение
+//      обработчика ВМЕСТО Fail[TimeoutError]; тело-дети отменяются
+//      (elapsed << полный сон, как и в D408).
+//   2. Совместимость: тот же код БЕЗ on_timeout: по-прежнему даёт
+//      Fail[TimeoutError] наружу (ловится `with Fail[TimeoutError]`) —
+//      обязательное свойство D449, ноль изменений для существующих
+//      фикстур на timeout:.
+//   3. on_timeout: НЕ вызывается, когда тело укладывается в срок (обычный
+//      результат тела, обработчик не трогается).
+//   4. Обработчик получает реальный `TimeoutError{deadline_ns}` — поле
+//      читается корректно (не переинтерпретация указателя как int,
+//      [M-on-timeout-closure-param-ty]).
+
+module concurrency.supervised_on_timeout_test
+
+import std.time.duration
+
+// 1. Срок истёк → on_timeout вызывается, его значение — результат
+//    supervised(...), Fail[TimeoutError] НЕ летит наружу.
+
+test "on_timeout fires: handler value replaces Fail[TimeoutError]" {
+    ro t0 = Timestamp.now().unix_millis()
+    ro res = supervised(timeout: 100.to_millis(), on_timeout: |_e| -1) {
+        spawn { 5000.to_millis().sleep() }
+        99
+    }
+    ro elapsed = Timestamp.now().unix_millis() - t0
+    assert(res == -1)
+    // Ключевой замер (как в D408): sleep(5000) прерван отменой около срока
+    // (100ms), НЕ доспал до конца. Порог щедрый под медленный CI.
+    assert(elapsed < 2000)
+}
+
+// 2. Совместимость: БЕЗ on_timeout: тот же код по-прежнему даёт
+//    Fail[TimeoutError] — существующее поведение D408 не тронуто.
+
+test "without on_timeout: Fail[TimeoutError] still escapes (D408 unchanged)" {
+    mut caught = AtomicBool.new(false)
+    ro r = with Fail[TimeoutError] = |_e| {
+        caught.store(true)
+        0
+    } {
+        supervised(timeout: 100.to_millis()) {
+            spawn { 5000.to_millis().sleep() }
+        }
+        99
+    }
+    assert(r == 0)
+    assert(caught.load())
+}
+
+// 3. Тело укладывается в срок → on_timeout: НЕ вызывается, обычный
+//    результат тела.
+
+test "on_timeout not called when body finishes within budget" {
+    ro res = supervised(timeout: 30.to_seconds(), on_timeout: |_e| -1) {
+        spawn { 5.to_millis().sleep() }
+        7
+    }
+    assert(res == 7)
+}
+
+// 4. Обработчик получает настоящий TimeoutError{deadline_ns} — поле
+//    читается как i64 монотонных наносекунд, не мусор от переинтерпретации
+//    указателя ([M-on-timeout-closure-param-ty]: unannotated closure param
+//    без context_param_tys-инъекции дефолтился бы в nova_int).
+
+test "on_timeout handler param carries a real TimeoutError.deadline_ns" {
+    ro t0_ns = Monotonic.now().nanos()
+    ro dl_ns = supervised(timeout: 100.to_millis(), on_timeout: |e| e.deadline_ns) {
+        spawn { 5000.to_millis().sleep() }
+        0
+    }
+    // deadline_ns — монотонная точка "около сейчас + 100ms", не 0/мусор и
+    // не в далёком прошлом.
+    assert(dl_ns > t0_ns)
+}
