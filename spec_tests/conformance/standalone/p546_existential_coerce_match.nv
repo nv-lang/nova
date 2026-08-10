@@ -1,0 +1,45 @@
+// Реестр 221.1 #546 (K1) — `match` sibling of p546_existential_coerce_if_else.nv
+// (see that file's header for the full root-cause story). `match` arms route
+// their result through a DIFFERENT merge mechanism than if/else
+// (`emit_match_arm_body`'s `coerce_for_assignment`, not `emit_assign_typed`)
+// but BOTH funnel the per-arm value through the shared `emit_expr_with_
+// target_type` choke point — this file pins that the fix covers `match`
+// too, not just `if`/`else`.
+//
+// G0: two `match` arms construct DIFFERENT implementers of the same
+// protocol; both must box and dispatch correctly.
+// EXPECT_STDOUT socks4:example.com:443
+// EXPECT_STDOUT socks5:example.com:443
+
+module standalone.p546_existential_coerce_match
+
+type P546MDialer protocol {
+    @dial(host str, port int) -> str
+}
+
+#impl(P546MDialer)
+type P546MSocks4D {
+    tag str
+}
+
+#impl(P546MDialer)
+type P546MSocks5D {
+    tag str
+}
+
+fn P546MSocks4D @dial(host str, port int) -> str => "${@tag}:${host}:${port}"
+fn P546MSocks5D @dial(host str, port int) -> str => "${@tag}:${host}:${port}"
+
+fn p546_pick_match(scheme str) -> P546MDialer {
+    match scheme == "socks4" {
+        true => P546MSocks4D { tag: "socks4" },
+        false => P546MSocks5D { tag: "socks5" },
+    }
+}
+
+fn main() {
+    mut d4 = p546_pick_match("socks4")
+    println(d4.dial("example.com", 443))
+    mut d5 = p546_pick_match("socks5")
+    println(d5.dial("example.com", 443))
+}

@@ -11511,6 +11511,32 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         if concrete_c.starts_with("NovaBox_") {
             return val;
         }
+        // Реестр 221.1 №546 (K1): idempotency guard on the VALUE STRING, not
+        // just the source `concrete_c`. `concrete_c` is the STATIC type of
+        // the original source expression, computed once by each caller from
+        // its OWN vantage point (e.g. `wrap_protocol_return`'s
+        // `infer_expr_c_type(val_expr)`, which reads the ORIGINAL AST node,
+        // not what `val` currently holds). When two boxing driver sites
+        // chain on the SAME expr — `Stmt::Return`'s explicit-return path
+        // routes `v` through `emit_expr_with_target_type(v, ret_ty)` FIRST
+        // (which now boxes protocol-typed targets itself, see that fn's own
+        // hook), THEN calls `wrap_protocol_return` on the already-boxed
+        // result — `concrete_c` still reports the ORIGINAL unboxed pointer
+        // type (`Nova_X*`), so the `concrete_c`-only guard above missed the
+        // double-call and re-wrapped an already-boxed value, producing a
+        // nested `(NovaBox_P){ .data = (void*)((NovaBox_P){ ... }), ... }`
+        // literal (CC-FAIL: "operand of type 'NovaBox_P' where arithmetic or
+        // pointer type is required" — a `NovaBox_*` fat pointer can't be
+        // reinterpreted as `void*` any more than it can be C-cast). This
+        // function is the ONLY producer of the `(NovaBox_<X>){ .data = ...,
+        // .vtable = ... }` literal shape, so recognizing that shape on `val`
+        // itself is a closed-loop, always-correct idempotency check —
+        // covers every current AND future double-drive combination without
+        // each call site having to separately track "did an earlier stage
+        // already box this".
+        if val.trim_start().starts_with("(NovaBox_") {
+            return val;
+        }
         if let Some((inst, box_ty)) =
             self.emit_protocol_vtable_companion(proto, type_args, concrete_c)
         {
@@ -33944,6 +33970,36 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         if diverges && !bare_int_dummy_already_correct {
             return self.emit_divergent_with_target_125(expr, target_ty_c);
         }
+        // Реестр 221.1 №546 (K1): target-typed coercion INTO a protocol's
+        // `NovaBox_*` fat pointer. `wrap_protocol_return` (return position)
+        // and the call-argument pre-box hook (`emit_call`, [M-protocol-param-
+        // free-fn-only]) already box a concrete value into its existential —
+        // but BOTH derive `(proto, type_args)` from a DECLARED `TypeRef` (fn
+        // return / param signature), which a branch-merge target (if/else
+        // `emit_block_into`, match `emit_match_arm_body` — both route their
+        // per-branch value through THIS fn with an INFERRED C type string as
+        // `target_ty_c`) does not have. Without this hook, a protocol-typed
+        // if/else or match — TWO implementers on different branches — left
+        // the concrete implementer pointer un-boxed; `emit_assign_typed`
+        // then had to force it into the `NovaBox_*` slot with a bare C cast
+        // `(NovaBox_X)(ptr)`, which C rejects for a struct target ("used
+        // type 'NovaBox_X' where arithmetic or pointer type is required").
+        // Single choke point: EVERY target-typed sink that calls this fn
+        // gets the box for free, no per-site duplication. Non-generic
+        // protocols only (`protocol_method_registry` is keyed by bare proto
+        // name) — a generic protocol's mangled `NovaBox_<Proto>_<args>`
+        // suffix isn't reversible from the bare string; that gap already
+        // pre-dates this fix (same limitation on the call-arg/array-literal
+        // box hooks) and is not widened by it.
+        if let Some(proto_name) = target_ty_c.strip_prefix("NovaBox_") {
+            if self.protocol_method_registry.contains_key(proto_name) {
+                let concrete_c = self.infer_expr_c_type(expr);
+                if !concrete_c.starts_with("NovaBox_") {
+                    let v = self.emit_expr(expr)?;
+                    return Ok(self.box_value_for_protocol(v, &concrete_c, proto_name, &[]));
+                }
+            }
+        }
         // [M-d55-str-literal-coercion-name-gated] fix (2026-07-17): D55 amend
         // (spec/decisions/02-types.md §Str-литерал→[]u8) — a bare str-LITERAL
         // (never a variable/`InterpolatedStr` — D176 still requires an explicit
@@ -39113,13 +39169,27 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // only when `args[0]` is DIRECTLY the bare variant call, not
                         // recursively — would be needed to close it safely).
                         if name == "Ok" && args.len() == 1 {
-                            let arg_v = self.emit_expr(args[0].expr())?;
+                            // Реестр 221.1 №546 (K1): target-type-aware emit (was
+                            // bare `emit_expr`) — the payload's C type (`ok_c`,
+                            // ABOVE) is KNOWN here from the resolved `Result[T, E]`
+                            // return type, exactly the target `emit_expr_with_
+                            // target_type`'s protocol-box hook needs. Without this,
+                            // `fn f() -> Result[Dialer, E] { if c { Ok(Socks4D{..}) }
+                            // else { Ok(Socks5D{..}) } }` passed the bare
+                            // `Nova_SocksND*` implementer pointer straight to
+                            // `nova_make_NovaRes_..._Ok`, which declares its `v`
+                            // param as `NovaBox_Dialer` — CC-FAIL "passing
+                            // 'Nova_Socks4D *' … incompatible … 'NovaBox_Dialer'".
+                            let arg_v = self.emit_expr_with_target_type(args[0].expr(), &ok_c)?;
                             self.expected_record_type = saved_expected;
                             self.expected_option_elem_hint = saved_option_hint;
                             return Ok(format!(
                                 "nova_make_NovaRes_{}_Ok({})", suffix, arg_v));
                         } else if name == "Err" && args.len() == 1 {
-                            let arg_v = self.emit_expr(args[0].expr())?;
+                            // Same target-type-aware routing for the `Err` payload
+                            // (mirrors the `Ok` arm just above — same class, `err_c`
+                            // is the known target).
+                            let arg_v = self.emit_expr_with_target_type(args[0].expr(), &err_c)?;
                             self.expected_record_type = saved_expected;
                             self.expected_option_elem_hint = saved_option_hint;
                             return Ok(format!(
@@ -47255,6 +47325,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             || ty.starts_with("NovaOpt_") || ty.starts_with("_NovaTuple")
             || ty.starts_with("NovaValue_") || ty.starts_with("NovaTuple_")
             || ty.starts_with("_NovaFixArr_")
+            // Реестр 221.1 №546 (K1): `NovaBox_*` — the protocol/existential
+            // fat pointer `{ void* data; const NovaVtable_X* vtable; }` — is
+            // a STRUCT, same family as `NovaVtable_*`/`NovaOpt_*` above; it
+            // was simply missing from this list. Without it, `emit_assign_
+            // typed` fell through to the "scalar" branch and wrapped an
+            // already-correct `NovaBox_X` value in a C-style cast
+            // `(NovaBox_X)(v)` — illegal for a struct target regardless of
+            // what `v` is (C forbids casting TO a struct/union type, 6.5.4p2),
+            // CC-FAIL "used type 'NovaBox_X' where arithmetic or pointer
+            // type is required" at every branch-merge assignment
+            // (`_nv_if_N = (NovaBox_Dialer)(tmp);`).
+            || ty.starts_with("NovaBox_")
     }
 
     fn emit_assign_typed(&mut self, tmp: &str, ty: &str, v: &str) {
