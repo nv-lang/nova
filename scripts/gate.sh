@@ -197,6 +197,12 @@ step "устаревшие пометки «не реализован» в сп�
 bash "$ROOT/scripts/guards/check-stale-unimplemented.sh" "$ROOT" \
     || fail "спека объявляет нереализованным то, что план считает сделанным"
 
+step "рабочие деревья только в d:/Sources/nv-lang (№561)"
+bash "$ROOT/scripts/guards/check-worktree-location.sh" "$ROOT" \n    || fail "worktree вне дозволенного корня"
+
+step "страница правил называет всех стражей (№560)"
+bash "$ROOT/scripts/guards/check-rules-page-complete.sh" "$ROOT" \n    || fail "страж без объяснения на странице правил"
+
 step "лицензионная гигиена (манифесты объявляют лицензию, подмодули названы — №556)"
 bash "$ROOT/scripts/guards/check-license-hygiene.sh" "$ROOT" \
     || fail "манифест без лицензии либо вендоренный подмодуль без уведомления"
