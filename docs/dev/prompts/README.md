@@ -23,8 +23,11 @@
 
 | Промпт | Что делает |
 |---|---|
-| [read-project.md](read-project.md) | **Основной промпт для начала сессии.** Говори «прочитай проект» — агент читает спеку + планы + toolchain за один раз. |
+| [../read-project.md](../read-project.md) | **НЕ промпт и больше не здесь.** Ориентация по проекту — её читают, а не исполняют, поэтому лежит рядом с `dev-workflow.md`. Шаг 2 онбординга после `AGENTS.md` |
 | [read-toolchain.md](read-toolchain.md) | Только инфраструктура: nova CLI, test runner, структура репо. Входит в read-project. |
 | [regen-runtime.md](regen-runtime.md) | Регенерирует `std/src/runtime/*.nv` из `runtime_registry.rs` (Plan 13 Ф.3). |
 | [update-plans-readme.md](update-plans-readme.md) | Синхронизирует сводную таблицу `docs/plans/README.md` после закрытия плана или фазы. |
 | [update-spec.md](update-spec.md) | Аудит и обновление `spec/decisions/*.md` (D-blocks) + `spec/<topic>.md` — drift detection vs implementation, новые D-blocks для закрытых планов. |
+| [opencode-brief-template.md](opencode-brief-template.md) | Шаблон задания механическому исполнителю: команды целиком, точный путь, явный список запретов, образец строки результата |
+| [integrator-handoff.md](integrator-handoff.md) | Восстановление сессии главного интегратора: роль, инварианты, текущее состояние и блокеры |
+| [integrator-queue.md](integrator-queue.md) | Наблюдаемая очередь интегратора. **ВНИМАНИЕ: ведётся руками и потому устаревает** — содержимое выводимо из git и реестра (число неотправленных, несведённые ветки, открытые К1); кандидат на замену генератором |
