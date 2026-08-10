@@ -64,7 +64,17 @@ gate rather than passing quietly.
 * **Do not pick a D-block number yourself.** "Take the next free one" only works
   with a single writer; with two windows it collides — it did. Ask the
   integrator.
-* Do not invent Nova syntax: forms come from `spec/decisions/` and live code.
+* Do not invent Nova syntax. **The compiler is the authority, not your
+  memory**: write the code, then run `nova check <file>`. Every retracted
+  form has a diagnostic that names the canonical replacement in the message
+  itself — `let` → `ro`/`mut` (D184), `readonly` → `ro`, `as_*` → bare
+  nouns (D410), `external fn` → `extern "nova" fn`, `null` → `Option`,
+  trailing commas in multi-line `match` arms → nothing (D452). There are
+  about sixty such diagnostics; asking the compiler costs seconds and is
+  always current, while any hand-written list of them starts drifting the
+  day it is written.
+* When the compiler and your recollection disagree, the compiler wins — but
+  if you think the compiler is wrong, say so and stop. Do not work around it.
 
 **Defects and tests**
 
