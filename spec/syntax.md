@@ -473,6 +473,17 @@ f64.try_parse(s str) -> Option[f64]
 **Акронимы — PascalCase, не UPPERCASE.** `Db`, не `DB`. `Http`, не `HTTP`.
 `Json`, не `JSON`. `Url`, не `URL`. Правило: акроним = обычное слово.
 
+**Откуда берётся имя модуля — оно не произвольное.** Корень исходников — либо
+сам пакет, либо его папка `src` (`[lib] src` принимает только `"."` и `"src"`;
+третье значение отвергает компилятор). Слово `src` в имя модуля не входит
+никогда. Имя модуля = имя корня + папки по пути от корня: у пакета `http` файл
+`src/server/router.nv` объявляет `module http.server`. Файлы, лежащие прямо в
+корне, — ОДИН модуль с именем корня, и видят друг друга без импортов. У
+приложения без библиотечного имени корень зовётся папкой, которая владеет `src`:
+`examples/flagship/http_proxy_chain/src/*.nv` → `module http_proxy_chain`,
+`src/app/*.nv` → `module http_proxy_chain.app`. Подробно —
+[D78](decisions/07-modules.md) (rev-6).
+
 **Зарезервированные имена методов** (operator overloading, [D46](decisions/03-syntax.md#d46)):
 `@plus`, `@minus`, `@times`, `@div`, `@rem`, `@neg`, `@bitand`, `@bitor`,
 `@bitxor`, `@bitnot`, `@shl`, `@shr`, `@equal`, `@compare`, `@index`.

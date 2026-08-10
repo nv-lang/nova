@@ -56,6 +56,24 @@ RULES = [
      "FORBIDDEN: git add -A/--all/. — tolko po imenam faylov (konventsiya)."),
     (re.compile(r"\bgit\b[^|;&\n]*\bstash\b", re.IGNORECASE),
      "FORBIDDEN: git stash — worktree delyat .git (konventsiya: temp-commit/reset)."),
+    # СОСТОЯНИЕ-МЕНЯЮЩАЯ КОМАНДА БЕЗ ЯВНОГО -C.
+    #
+    # Наблюдение 2026-08-10: рабочий каталог оболочки уехал в worktree окна
+    # (nova-p564), и `git add` + `git commit` отработали НЕ в том дереве —
+    # обнаружилось случайно, по строке «On branch p564-module-name» в выводе.
+    # Одновременно в дереве живут 60 worktree, и «помни, где ты» механизмом
+    # не является: cwd дрейфует между вызовами, а вывод инструмента о нём
+    # может врать.
+    #
+    # Читающие команды (status/log/diff/show/branch/ls-files) НЕ трогаем:
+    # ошибиться деревом на чтении дёшево и заметно. Ловим только те, что
+    # МЕНЯЮТ состояние.
+    (re.compile(r"\bgit\s+(?!-C\b|--git-dir\b|--work-tree\b)"
+                r"(add|commit|push|merge|checkout|switch|reset|rm|mv|worktree|tag|branch\s+-[dDmM])\b",
+                re.IGNORECASE),
+     "FORBIDDEN: git <state-changing> bez -C — ukazhi derevo yavno: "
+     "git -C /d/Sources/nv-lang/nova <cmd>. Prichina: cwd obolochki dreyfuet mezhdu "
+     "vyzovami (2026-08-10: add+commit ushli v worktree okna nova-p564)."),
 ]
 
 
