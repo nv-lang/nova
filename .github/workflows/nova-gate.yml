@@ -270,6 +270,17 @@ jobs:
             exit 1
           fi
 
+      # ── Flagship smoke: RUN them, not only build (registry 221.1 #548) ──
+      # Сборка ловит синтаксис и типы, но не то, работает ли программа. Мост
+      # вошёл в гейт 2026-08-10 и в тот же день оказался неработающим (корень —
+      # №552), а гейт этого не видел, потому что собирал и не запускал.
+      # Смоук поднимает локальный SOCKS5-стенд и HTTP-мишень на loopback:
+      # секретов не требует, наружу не ходит. Шаг-близнец в scripts/gate.sh.
+      - name: Flagship smoke — run the examples, not only build them (#548)
+        run: |
+          set -uo pipefail
+          bash examples/flagship/http_proxy_chain/tools/smoke.sh
+
       # ── Examples anti-rot (Plan 197 Ф.5 / Plan 221 A-E2, 2026-07-21) ────
       # ВЕСЬ examples/** вне _wip обязан собираться (--strict-effects) —
       # «примеры не должны портить впечатление о языке» (владелец).

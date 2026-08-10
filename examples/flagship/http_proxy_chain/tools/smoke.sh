@@ -90,7 +90,23 @@ if ! "${NOVA_BIN}" build "${EXAMPLE_DIR}/main.nv" --strict-effects -o "${BRIDGE_
 fi
 
 # ── Start the local SOCKS5 stub + HTTP target ────────────────────────────
-python "${SCRIPT_DIR}/local_socks5_stub.py" "${SOCKS_PORT}" "${TARGET_PORT}" \
+# `python3` first: on most Linux distributions (and therefore on CI) a bare
+# `python` does not exist at all, and this smoke is meant to run in the gate on
+# BOTH platforms. Windows/MSYS ships `python`, so the fallback keeps it working
+# there.
+# Проверяем ЗАПУСКОМ, а не наличием в PATH: в Windows есть псевдо-`python3`
+# (App Execution Alias), который присутствует в PATH, но вместо интерпретатора
+# печатает приглашение поставить Python из магазина. `command -v` его
+# принимает — и смоук падал бы с пустым логом стенда.
+PY_BIN=""
+for _c in python3 python; do
+    if "$_c" -c "pass" >/dev/null 2>&1; then PY_BIN="$_c"; break; fi
+done
+if [ -z "${PY_BIN}" ]; then
+    echo "SMOKE: FAIL — neither python3 nor python found on PATH"
+    exit 1
+fi
+"${PY_BIN}" "${SCRIPT_DIR}/local_socks5_stub.py" "${SOCKS_PORT}" "${TARGET_PORT}" \
     >"${WORKDIR}/stub.log" 2>&1 &
 STUB_PID=$!
 sleep 1
