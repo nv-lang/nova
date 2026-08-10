@@ -145,7 +145,15 @@ export import std.prelude.effects.{Fail, Time, Mem, real_random}
 // — языковая конструкция, токен обязан быть доступен везде). Dispatch остаётся
 // в codegen special-cases (NovaCancelToken*, nova_cancel_token_* в
 // nova_rt/fibers.h) — см. заголовок std/prelude/concurrency.nv.
-export import std.prelude.concurrency.{CancelToken}
+//
+// Outcome/Finished/Aborted (D455, Plan 266): `supervised(cancel: tok) { … }`
+// (without `timeout:`/`deadline:`) returns `Outcome[T]` — same auto-available
+// reasoning as CancelToken (a language-construct's result type must be
+// visible everywhere without an explicit import). See std/prelude/concurrency.nv
+// header for why the variants are named `Finished`/`Aborted`, not the D455
+// working-proposal `Done`/`Cancelled` (both collide with existing global
+// variant names — provisional pending owner amendment).
+export import std.prelude.concurrency.{CancelToken, Outcome, Finished, Aborted}
 
 // Re-export EmbeddedDir/EmbeddedEntry из std.prelude.embed — обязаны быть
 // prelude-видимы, т.к. `embed_dir("dir")` резолвер (ДО type-check) синтезирует
@@ -276,5 +284,13 @@ export import std.runtime.string.{pad_left, pad_right, repeat, replace, compare,
 ///     `Uuid.v4()`/session ids/API keys/nonces are now unpredictable BY
 ///     DEFAULT (OS CSPRNG via `random_secure_u64()`, `nova_rt/runtime.c`),
 ///     not just under an explicit `with Random = th.seeded(...)` mock.
+///   - 21 = Plan 266 done (2026-08-10, D455): `Outcome[T]` (`Finished(T) |
+///     Aborted`) declared in std/prelude/concurrency.nv + re-exported
+///     through this facade — `supervised(cancel: tok) { … }` (without
+///     `timeout:`/`deadline:`) now returns `Outcome[T]` instead of the
+///     unchecked-invariant plain `T`. Variant names are provisional
+///     (`Finished`/`Aborted`, not the D455 working-proposal
+///     `Done`/`Cancelled` — both collide with existing global variant
+///     names, see std/prelude/concurrency.nv header) pending owner amendment.
 #stable(since = "0.1")
-export const PRELUDE_VERSION = 20
+export const PRELUDE_VERSION = 21

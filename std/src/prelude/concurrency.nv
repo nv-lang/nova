@@ -103,3 +103,42 @@ export extern "nova" fn CancelToken @merge(other CancelToken) -> CancelToken
 #realtime
 #stable(since = "0.1")
 export extern "nova" fn CancelToken @cancelled_by(parent CancelToken) -> ()
+
+// ─── Outcome ─────────────────────────────────────────────────────
+
+/// Outcome of a `supervised(cancel: tok)` scope (D455, Plan 266).
+///
+/// A `cancel:`-bearing scope's value is NOT the body's plain `T` — cancelling
+/// the scope from outside makes forming a `T` impossible (children were
+/// aborted, the body may never have reached its trailing expression), so the
+/// scope's result must say WHICH happened:
+///
+/// - `Finished(v)` — the body ran to completion; `v` is its trailing value.
+/// - `Aborted` — the token was cancelled before the scope finished on its
+///   own; there is no `T` to hand back.
+///
+/// Before D455 this was an unchecked invariant: `tok.is_cancelled()` had to
+/// be called AFTER the scope, by convention, with nothing enforcing it and
+/// the scope's plain-`T` result looking identical either way. `Outcome[T]`
+/// makes the two cases two different values — `match` is required to reach
+/// the payload, so a caller cannot silently treat a cancelled run as if the
+/// body had produced a real `T`.
+///
+/// **Naming note (2026-08-10):** the variants are NOT `Done`/`Cancelled` —
+/// both those bare names collide with existing global variant names
+/// (`Done`: `nova_rt`'s hardcoded `OnceState.Done`, always present
+/// regardless of import; `Cancelled`: `std.net`'s `NetError.Cancelled`,
+/// reachable in the same mega compile-unit). `match` pattern name
+/// resolution in this compiler does not disambiguate by scrutinee type — a
+/// colliding bare pattern name silently binds to the WRONG sum type's tag
+/// (confirmed by direct repro, plan 266). `Finished`/`Aborted` are clash-free
+/// against the whole `std/` corpus and `nova_rt`'s hardcoded tags as of this
+/// writing. This is a provisional choice pending the owner's D455 amendment
+/// (open question §2) — NOT a final naming decision made by this window.
+///
+/// Only `supervised(cancel: tok)` WITHOUT `timeout:`/`deadline:` produces
+/// `Outcome[T]` — the `cancel:` + `timeout:` combination is D455 open
+/// question §3 (three possible outcomes) and is intentionally left
+/// UNCHANGED (still plain `T`) pending that amendment.
+#stable(since = "0.1")
+export type Outcome[T] enum Finished(T) | Aborted

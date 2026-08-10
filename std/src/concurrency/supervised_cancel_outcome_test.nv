@@ -1,0 +1,119 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// D455 / Plan 266 — cancellation outcome expressed as a VALUE.
+//
+// Before this plan `supervised(cancel: tok) { … }` returned the SAME `T`
+// whether the scope finished on its own or was cancelled from outside —
+// the only way to tell the two apart was to remember to call
+// `tok.is_cancelled()` AFTER the scope (06-concurrency.md:1275), an
+// unchecked, honor-system invariant. D455 makes the scope's own result say
+// which happened: `supervised(cancel: tok) { … }` WITHOUT `timeout:`/
+// `deadline:` now returns `Outcome[T]` = `Finished(T) | Aborted` — `match`
+// is required to reach the payload, so treating a cancelled run's value as
+// if the body had completed no longer compiles silently.
+//
+// **Naming note:** the variants are `Finished`/`Aborted`, NOT the D455
+// working-proposal `Done`/`Cancelled` — std/prelude/concurrency.nv's
+// `Outcome` doc has the full reasoning: both proposed names collide with
+// existing global bare variant names (`Done`: `nova_rt`'s hardcoded
+// `OnceState.Done`; `Cancelled`: `std.net`'s `NetError.Cancelled`), and this
+// compiler's `match` pattern name resolution does not disambiguate by
+// scrutinee type — a colliding bare pattern silently binds to the WRONG
+// sum type's tag (confirmed by direct repro). This is a PROVISIONAL choice
+// pending the owner's D455 amendment (open question §2), not a final
+// decision made by this window.
+//
+// Scope: only the pure `cancel:` form (no `timeout:`/`deadline:`) is
+// affected — the `cancel:` + `timeout:`/`deadline:` combination is D455
+// open question §3 (three possible outcomes) and is deliberately left
+// UNCHANGED (still plain `T`), see the regression test at the end of this
+// file.
+//
+// Observability: "didn't crash" is not a proof (test-conventions.md). The
+// cancellation test below proves TWO independent things about the SAME
+// run: (1) the scope's own result is `Aborted` (the value, not a
+// remembered flag), and (2) the spawned child's resource cleanup (`defer`)
+// genuinely ran despite being cancelled mid-`sleep` — an open-resource
+// counter (acquired at spawn entry, released in `defer`) is asserted back
+// at zero AFTER the scope, not merely "the program didn't panic". Same
+// observability class as this module's own `supervised_deadline_test.nv`
+// ("no leaked marker" channel-recv proof).
+
+module concurrency.supervised_cancel_outcome_test
+
+import std.time.duration
+
+// 1. Positive: body runs to completion on its own → `Finished(v)`, value
+//    reachable via `match`.
+
+test "cancel-only supervised, no external cancel: body completes -> Finished(v)" {
+    ro tok = CancelToken.new()
+    ro out = supervised(cancel: tok) {
+        21 + 21
+    }
+    match out {
+        Finished(v) => assert(v == 42)
+        Aborted     => panic("body completed on its own — must not be Aborted")
+    }
+}
+
+// 2. Positive: scope cancelled from outside → `Aborted`, and the
+//    observable proof — an open-resource counter, incremented when a
+//    spawned child acquires a "resource" and decremented in `defer`, is
+//    back at zero after the scope. If the child's cleanup had NOT run
+//    (cancellation only interrupted `sleep` without unwinding through
+//    `defer`), this counter would be stuck at 1 and the assert would fail —
+//    this is not a vacuous check (see the "проба негодное" note in the
+//    plan 266 report: this exact assertion was verified to FAIL when the
+//    codegen's cancelled/finished branch was deliberately inverted).
+
+test "cancel-only supervised, cancelled from outside -> Aborted, resource genuinely released" {
+    mut open_resources = AtomicInt.new(0)
+    ro tok = CancelToken.new()
+    ro out = supervised(cancel: tok) {
+        spawn {
+            open_resources.fetch_add(1)
+            defer { open_resources.fetch_add(-1) }
+            // Parked long enough that the cancel below (armed at ~10ms)
+            // always wins the race — generous ceiling for slow CI, same
+            // budget class as this module's other cancel-race fixtures.
+            5.to_seconds().sleep()
+        }
+        spawn {
+            10.to_millis().sleep()
+            tok.cancel()
+        }
+    }
+    match out {
+        Finished(_) => panic("token was cancelled — scope must report Aborted, not Finished")
+        Aborted     => { }
+    }
+    assert(open_resources.load() == 0)
+}
+
+// 3. Regression: `supervised { … }` WITHOUT `cancel:` is completely
+//    unaffected by D455 — the result is still the bare `T`, no `match`
+//    needed. "Ни одна существующая строка не меняется."
+
+test "supervised WITHOUT cancel: type is unaffected — plain T, no match needed" {
+    ro out = supervised {
+        7 * 6
+    }
+    assert(out == 42)
+}
+
+// 4. Regression: `cancel:` + `timeout:` in the SAME scope (D455 open
+//    question §3) is deliberately left UNCHANGED by this plan — still
+//    plain `T`. Mirrors the existing combined-form usage already live in
+//    supervised_cancel_direct_body_test.nv / supervised_deadline_test.nv
+//    (`supervised(cancel: tok, timeout: …)`), pinned here so a future
+//    amendment closing open question §3 has an explicit "this WAS plain T
+//    before" baseline to diff against.
+
+test "cancel: + timeout: combination is unaffected by plan 266 — still plain T" {
+    ro tok = CancelToken.new()
+    ro out = supervised(cancel: tok, timeout: 2.to_seconds()) {
+        1 + 1
+    }
+    assert(out == 2)
+}
