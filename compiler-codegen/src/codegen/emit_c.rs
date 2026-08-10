@@ -30955,6 +30955,36 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         func_kind: &ExprKind,
     ) -> std::collections::HashSet<usize> {
         let mut out = std::collections::HashSet::new();
+        // №548: `Ok(x)`/`Err(x)`/`Some(x)` are built-in Result/Option variant
+        // constructors handled as codegen intrinsics (see the many `name ==
+        // "Ok"` special cases elsewhere in this file) — they never go
+        // through ordinary function-call resolution, so they are never
+        // registered in `self.method_overloads`, and the lookup below always
+        // missed them (`out` stayed empty). That silently told
+        // `collect_reconsume_occurrences_rec` that `Ok(stream)`'s argument is
+        // NOT a consume position, so `return Ok(stream)` out of a
+        // `consume stream { … }` block never disarmed `stream`'s scope-exit
+        // cleanup — the generated C still called `..._consume_cleanup` on
+        // `stream` right after copying it (by value) into the `Ok` payload,
+        // closing the linear resource the caller was just handed. Their sole
+        // positional argument is ALWAYS moved (there is no non-consuming
+        // constructor form), so index 0 is unconditionally a consume
+        // position — mirrors the intrinsic handling everywhere else in this
+        // file instead of relying on `method_overloads`, which structurally
+        // cannot see intrinsics. Root-caused via `socks5_connect`'s `return
+        // Ok(stream)` (nova-socks `src/socks5.nv:417`) closing the SOCKS5
+        // tunnel out from under `examples/flagship/http_proxy_chain`
+        // immediately after the handshake — registry №548.
+        if let ExprKind::Ident(fname) = func_kind {
+            if fname == "Ok" || fname == "Err" || fname == "Some" {
+                if let ExprKind::Call { args, .. } = &e.kind {
+                    if args.len() == 1 {
+                        out.insert(0);
+                        return out;
+                    }
+                }
+            }
+        }
         let key: Option<(String, String)> = match func_kind {
             ExprKind::Member { obj, name: method } => {
                 if let ExprKind::Ident(recv) = &obj.kind {

@@ -1,0 +1,132 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// 221.1 №548 — `return Ok(x)` (or `Err(x)`/`Some(x)`) out of a
+// `consume x { … }` re-consume scope-block did NOT disarm `x`'s scope-exit
+// auto-cleanup, because codegen's disarm-name resolution
+// (`call_consume_arg_idxs`, `emit_c.rs`) only recognized a bare `return x`
+// (Plan 201/217 D188-амендмент) — an identifier wrapped in a Call
+// (`Ok(x)`) fell through `collect_reconsume_occurrences_rec`'s generic Call
+// branch, which classifies an argument as a "consume position" by looking
+// the callee up in `self.method_overloads`. `Ok`/`Err`/`Some` are built-in
+// Result/Option constructors handled as codegen INTRINSICS elsewhere in
+// this file (never registered in `method_overloads`), so the lookup always
+// came back empty and the occurrence was marked non-consuming — the
+// generated C still ran `..._consume_cleanup` on `x` right after copying it
+// (by value) into the `Ok` payload, closing the linear resource the caller
+// was just handed.
+//
+// Root-caused via `examples/flagship/http_proxy_chain` (registry №548): its
+// `nova-socks` dependency's `socks5_connect` ends with EXACTLY this shape —
+// `consume stream { …; return Ok(stream) }` — so the SOCKS5 tunnel's
+// underlying TCP connection was closed by the compiler the INSTANT the
+// handshake succeeded, before the caller ever got to write a byte through
+// it. Symptom: SOCKS5 CONNECT negotiates cleanly, but the "established"
+// tunnel relays zero bytes in either direction and resets almost
+// immediately — reproduced on a local stand (SOCKS5 stub + HTTP target,
+// `examples/flagship/http_proxy_chain/tools/local_socks5_stub.py`), NOT a
+// regression introduced by the neighboring #456/253.4 close()/disarm work
+// (bisection: identical failure at commits well before that work landed;
+// this is a SEPARATE, older gap in the same general disarm mechanism).
+//
+// This fixture reproduces the shape directly over real loopback TCP,
+// without any SOCKS layer: a helper opens a client connection, does
+// something with it INSIDE a `consume s { … }` block, then hands it back to
+// the caller via `return Ok(s)` — NOT the block's own tail expression
+// (mirrors `socks5_connect`'s several `read_exact_n`/`write_all` calls
+// before its own final `return Ok(stream)`). The caller must be able to
+// read/write on the returned stream — if the scope-exit cleanup fired
+// anyway, the connection is already closed and this write is silently lost
+// (or fails outright), so the server side never sees the second message.
+//
+// EXPECT_TIMEOUT_MS 20000
+
+module standalone.m548_consume_scope_return_ok_disarm
+
+import std.net.{TcpStream, TcpListener, SocketAddr, real_net}
+import std.time.duration
+
+// Mirrors `socks5_connect`'s FULL shape (`nova-socks/src/socks5.nv:358-417`)
+// as closely as possible, not just its tail: a LOCAL `consume`-let (not a
+// consumed function PARAMETER — `socks5_connect` itself does the
+// `TcpStream.connect`, it does not receive an already-open stream), then a
+// `consume s { … }` scope-block that performs I/O on it, then hands `s`
+// back to the caller via an EXPLICIT `return Ok(s)` (not the block's tail
+// expression — the intervening `write` statement is what makes this not a
+// bare pass-through).
+fn open_and_probe(port int) Net -> Result[TcpStream, ()] {
+    consume s = match TcpStream.connect(SocketAddr.loopback(port)) {
+        Ok(consume x) => x
+        Err(_)        => return Err(())
+    }
+    consume s {
+        match s.write("probe-before-return") {
+            Ok(_)  => ()
+            Err(_) => return Err(())
+        }
+        return Ok(s)
+    }
+}
+
+test "#548: consume s { …; return Ok(s) } must not close s out from under the caller" {
+    with Net = real_net() {
+        // Bind happens INSIDE the server fiber itself (mirrors
+        // `m456_pump_helper_close_real_io.nv`'s proven-working shape) — a
+        // `TcpListener` opened at the test's top level and captured into a
+        // fiber via `spawn consume lst { … }` is a SEPARATE, unrelated hang
+        // this fixture ran into while under construction; not what registry
+        // №548 is about, so it is deliberately avoided here.
+        ro ch_port = Channel[u16].new(1)
+        ro ch_server_result = Channel[int].new(1)
+
+        supervised {
+            // Server: accepts once, gives the client a moment to finish BOTH
+            // writes (TCP is a byte stream — the two client writes are not
+            // guaranteed to land in two separate `read()` calls, so a single
+            // read after a short settle delay avoids any read/EOF framing
+            // race), then reads once into a buffer big enough for both
+            // messages combined. If the disarm bug closes `returned`'s
+            // socket right when `open_and_probe` returns, the SECOND write
+            // ("probe-after-return") never reaches here at all, so the byte
+            // count comes up short.
+            spawn {
+                consume lst = match TcpListener.bind(SocketAddr.loopback(0)) {
+                    Ok(consume l) => l
+                    Err(_) => panic("m548: bind failed")
+                }
+                ch_port.tx.send(lst.local_port())
+                consume srv = match lst.accept() {
+                    Ok(consume c) => c
+                    Err(_) => { lst.close(); panic("m548: accept failed") }
+                }
+                lst.close()
+                Time.sleep(300.to_millis())
+                mut buf []u8 = []u8.new()
+                buf.resize(128, 0 as u8)
+                ro n = match srv.read(buf) { Ok(k) => k  Err(_) => -1 }
+                srv.close()
+                // "probe-before-return" (19 bytes) + "probe-after-return"
+                // (18 bytes) = 37 total ONLY if both writes made it through.
+                ch_server_result.tx.send(if n == 37 { 1 } else { 0 })
+            }
+            // Client: connects, calls `open_and_probe` (the exact
+            // `consume s { …; return Ok(s) }` shape), then writes a SECOND
+            // message on the RETURNED stream — proving it is still a live,
+            // open connection and not one the compiler already closed.
+            spawn {
+                ro port = match ch_port.rx.recv() { Some(p) => p  None => 0 as u16 }
+                consume returned = match open_and_probe(port as int) {
+                    Ok(consume s) => s
+                    Err(_) => panic("m548: open_and_probe returned Err")
+                }
+                ro wrote_ok = match returned.write("probe-after-return") {
+                    Ok(n)  => n > 0
+                    Err(_) => false
+                }
+                assert(wrote_ok)
+                returned.close()
+            }
+        }
+
+        ro result = match ch_server_result.rx.recv() { Some(v) => v  None => -999 }
+        assert(result == 1)
+    }
+}
