@@ -57,4 +57,11 @@ export type Os effect {
     exit(code int) -> int
     pid() -> int
     hostname() -> str
+    // Spawn a process, wait for it to exit, report (rc, exit_code) (Plan 265
+    // Ф.1, D453). Byte-first (program/argv/env cross as NUL-joined blobs, not
+    // []str — same convention as env keys/values above); rich Command/
+    // ExitStatus are built in os.nv, OUTSIDE this boundary. See D453 for the
+    // full (rc, exit_code) contract (0=ran; PROCESS_CANCELLED=scope
+    // cancelled/timed out; <0=failed to spawn, -errno-compatible).
+    process_run(program []u8, argv []u8, argc int, env []u8, envc int, use_env bool, cwd []u8) -> (int, int)
 }

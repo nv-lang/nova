@@ -178,6 +178,150 @@ export fn hostname() Os -> Result[str, IoError] {
     if s.is_empty() { Err(IoError.from_os(0, "hostname")) } else { Ok(s) }
 }
 
+// ─── Process spawn (Plan 265 Ф.1, D453) ──
+//
+// Scope of THIS wave (owner, 2026-08-10): spawn / wait / exit code ONLY —
+// NO stdin/stdout/stderr redirection (deferred to a later wave, gated on
+// that decision). `Command.run()` is a single blocking (fiber-parking) call:
+// spawn + wait combined, no persistent `Process` handle exposed — nothing to
+// leak, nothing to must-consume.
+
+/// Sentinel `Os.process_run` rc meaning "the enclosing `supervised(timeout:)`/
+/// `(cancel:)` interrupted the wait" (D453). MUST match `nova_rt/process.h`'s
+/// `NOVA_PROCESS_CANCELLED` — kept in sync by convention (out of any real
+/// errno's range on either side), not by a shared constant across the FFI.
+const PROCESS_CANCELLED = 0 - 100000
+
+// Join `parts` into a NUL-separated byte blob for the process-effect FFI
+// boundary (byte-first — mirrors env's `os_cstr`). Each part must not
+// contain an interior NUL (would silently truncate an argument otherwise).
+fn join_nul(parts []str) -> Result[[]u8, IoError] {
+    mut out []u8 = []u8.new()
+    for p in parts {
+        ro pb = p.bytes()
+        mut i = 0
+        while i < pb.len() {
+            if pb[i] == (0 as u8) {
+                return Err(IoError.new(ErrorKind.InvalidInput, "argument contains NUL"))
+            }
+            i += 1
+        }
+        out.append(pb)
+        out.push(0 as u8)
+    }
+    Ok(out)
+}
+
+// Last-write-wins de-duplication by key (small linear scan — override lists
+// are short; a map would be overkill here).
+fn dedupe_envs(envs []EnvVar) -> []EnvVar {
+    mut out []EnvVar = []
+    for v in envs {
+        mut found = false
+        mut i = 0
+        while i < out.len() {
+            ro cur EnvVar = out[i]
+            if cur.key() == v.key() { out[i] = v; found = true }
+            i += 1
+        }
+        if !found { out.push(v) }
+    }
+    out
+}
+
+fn env_blob_of(envs []EnvVar) -> Result[[]u8, IoError] {
+    mut parts []str = []
+    for v in envs { parts.push("${v.key()}=${v.value()}") }
+    join_nul(parts)
+}
+
+/// The completion status of a finished child process (Plan 265 Ф.1, D453).
+/// `code()` is the process's own exit code (`0` conventionally means
+/// success on both POSIX and Windows); a process killed by a signal it did
+/// NOT receive via `supervised(timeout:)`/`(cancel:)` reports `128 + signal`
+/// (shell convention).
+#stable(since = "0.1")
+export type ExitStatus value { ro code int }
+
+/// The raw exit code the child returned.
+#stable(since = "0.1")
+export fn ExitStatus @code() -> int => @code
+
+/// Whether the child exited with code `0`.
+#stable(since = "0.1")
+export fn ExitStatus @success() -> bool => @code == 0
+
+/// A subprocess to launch (Rust `Command` / Go `exec.Cmd` precedent). Build
+/// with `Command.new(program)`, then `.arg`/`.env`/`.dir` (each returns a
+/// modified copy — a `value` builder, `OpenOptions`-style, D323), then
+/// `.run()` to launch it, wait for it to exit, and observe the
+/// [`ExitStatus`].
+///
+/// `program` is PATH-searched like a shell (`uv_spawn`'s own
+/// `execvp`/`SearchPath`): `Command.new("git")` finds `git` on `PATH`
+/// without a full path.
+#stable(since = "0.1")
+export type Command value priv {
+    program str
+    args []str
+    envs []EnvVar
+    clear_env bool
+    dir Option[Path]
+}
+
+/// A fresh command running `program` with no arguments, inheriting the
+/// parent's environment and current working directory.
+#stable(since = "0.1")
+export fn Command.new(program str) -> Command =>
+    { program, args: [], envs: [], clear_env: false, dir: None }
+
+/// Append one argument.
+#stable(since = "0.1")
+export fn Command mut @arg(a str) -> @ { @args.push(a) }
+
+/// Append several arguments.
+#stable(since = "0.1")
+export fn Command mut @args(a []str) -> @ { @args.append(a) }
+
+/// Set (or override) one environment variable for the child. Repeatable;
+/// the LAST call for a given key wins. Without `.env_clear()` the child
+/// inherits the parent's environment first, then these overrides apply.
+#stable(since = "0.1")
+export fn Command mut @env(key str, value str) -> @ { @envs.push(EnvVar { key, value }) }
+
+/// Start the child with an EMPTY environment (ignore the parent's) — only
+/// variables set via `.env(...)` reach it.
+#stable(since = "0.1")
+export fn Command mut @env_clear() -> @ { @clear_env = true }
+
+/// Run the child in `path` instead of the parent's current working directory.
+#stable(since = "0.1")
+export fn Command mut @dir(path Path) -> @ { @dir = Some(path) }
+
+/// Launch the child, wait for it to finish, and report its [`ExitStatus`].
+///
+/// `Err` means the process never RAN at all (bad `program`, permission
+/// denied, or the call was interrupted by an enclosing
+/// `supervised(timeout:)`/`(cancel:)` — `ErrorKind.Interrupted`) — distinct
+/// from a successfully-run process that exited with a non-zero code, which
+/// is `Ok(ExitStatus{ code: n })`, `n != 0`. Both are typed, not string-
+/// distinguished (D453).
+#stable(since = "0.1")
+export fn Command @run() Os -> Result[ExitStatus, IoError] {
+    ro argv = join_nul(@args)?
+    ro use_env = @clear_env || !@envs.is_empty()
+    ro deduped = dedupe_envs(@envs)
+    ro env_blob = if use_env { env_blob_of(deduped)? } else { []u8.new() }
+    ro cwd_bytes = match @dir {
+        Some(p) => p.os_bytes()
+        None => []u8.new()
+    }
+    ro (rc, code) = Os.process_run(@program.bytes(), argv, @args.len(), env_blob, deduped.len(), use_env, cwd_bytes)
+    if rc == PROCESS_CANCELLED { Err(IoError.new(ErrorKind.Interrupted, "process run")) }
+    else if rc < 0 { Err(IoError.from_os(0 - rc, "process run")) }
+    else { Ok(ExitStatus { code }) }
+}
+
 // ─── real_os — the production Os handler over the native hooks (os_env.h) ──
 //
 // Thin: each op forwards to the matching os_* hook (which returns the int/str
@@ -224,5 +368,10 @@ export fn real_os() -> Effect[Os] {
         exit(code int) -> int => os_exit(code)
         pid() -> int => os_pid()
         hostname() -> str => os_hostname()
+        process_run(program []u8, argv []u8, argc int, env []u8, envc int, use_env bool, cwd []u8) -> (int, int) {
+            mut code = 0
+            ro rc = unsafe { os_process_run(program.ptr(), program.len(), argv.ptr(), argv.len(), argc, env.ptr(), env.len(), envc, use_env, cwd.ptr(), cwd.len(), &code) }
+            (rc, code)
+        }
     }
 }

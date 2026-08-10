@@ -64,3 +64,16 @@ extern "C" fn os_exit(code int) -> int
 extern "C" fn os_pid() -> int
 // hostname: host name (empty on error).
 extern "C" fn os_hostname() -> str
+
+// ─── Process spawn (Plan 265 Ф.1, D453) ──
+// os_process_run — spawn `program` with `argc` NUL-separated arguments from
+// `argv` (program itself excluded), wait for it to exit, report (rc,
+// *out_exit_code). SINGLE-SHOT (mirrors net_dns_lookup, not
+// net_tcp_connect — see process.h's design note): no persistent handle
+// crosses the boundary. `env`/`envc` are read only when `use_env` is true
+// (NUL-separated "KEY=VALUE" entries; envc==0 is a valid, explicit EMPTY
+// environment); `cwd_len==0` inherits the parent's cwd. Return: 0 = ran to
+// completion (*out_exit_code valid); PROCESS_CANCELLED (os.nv) = the
+// enclosing supervised(timeout:)/(cancel:) interrupted the wait; <0
+// (other) = failed to SPAWN, -errno-compatible. See D453.
+extern "C" fn os_process_run(program *u8, program_len int, argv *u8, argv_len int, argc int, env *u8, env_len int, envc int, use_env bool, cwd *u8, cwd_len int, out_exit_code *mut int) -> int

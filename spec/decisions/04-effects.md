@@ -7291,6 +7291,196 @@ setup, до спавна конкурентной работы, читающей
 
 Реализация: `real_os()` обновлён в `std/os/os.nv`; `mock_os()` и `MockOs` в `std/os/mock.nv` возвращают `Option[str]` из `@mem_env_get`. Миграция: 7 вызовов `get_env` ← `env`, 3 `get_env_bytes` ← `env_bytes`, 8 `set_env` ← `env`, 1 `set_env_bytes` ← `env_bytes`, 7 `current_dir` ← `cwd`, 2 `set_current_dir` ← `cwd` (~28 мест в тестах; пуст в spec_tests/examples). Импорты обновлены.
 
+## D453 — os: запуск процесса `Command`/`Process.run()` (Plan 265 Ф.1, 2026-08-10)
+
+**Статус:** ландшафт под реализацию (пишется ДО кода, тем же слиянием). Закрывает `[M-176.1-process]`
+(D324 явно вынес subprocess в отдельный под-план) и Ф.1 плана 265. **Объём этой волны сужен владельцем
+2026-08-10: только запустить/дождаться/получить код возврата.** Перенаправление `stdin`/`stdout`/`stderr`
+как `Read`/`Write` из `std.io`, отдельный `spawn()`+`Process`-хендл (fire-and-forget, нужен для будущего
+стриминга) — **DEFERRABLE**, следующая волна; не изобретаются здесь.
+
+### Форма — одна ОПЕРАЦИЯ существующего эффекта `Os`, не свободная функция
+
+Причина не стилистическая: у `Os` уже есть триада `real_os()`/`mock_os()` (D324) — подменяемый обработчик
+единственный способ тестировать инструмент, оборачивающий `git`/`npm`/т.п., не требуя их установки на машине,
+где гоняются тесты (приёмка Ф.1 п.4).
+
+```nova
+export type Os effect {
+    …существующие опы (D324)…
+    // Запуск процесса (Plan 265 Ф.1). Тонкий int-primitive слой (D323/D324
+    // канон): argv/env пересекают границу байтовым NUL-joined blob'ом
+    // (как env — Q1 byte-first), а не `[]str` — эффект-опы `Os` до сих пор
+    // нигде не несли generic-массив нескалярного T через vtable; blob
+    // избегает первого прецедента без нужды. Rich `Command`/`ExitStatus`
+    // строятся В `os.nv`, ВНЕ границы эффекта — тот же приём, что `EnvVar`.
+    //
+    //   program           — путь/имя исполняемого файла (PATH-поиск — дело
+    //                        `uv_spawn`, Nova ничего не резолвит сама).
+    //   argv/argc         — argc NUL-разделённых аргументов ПОСЛЕ program
+    //                        (program НЕ дублируется внутри argv).
+    //   env/envc/use_env  — use_env=false → ребёнок наследует env родителя
+    //                        целиком (envc/env игнорируются); use_env=true →
+    //                        env — ТОЧНЫЙ список ребёнка (envc записей,
+    //                        включая случай envc=0 — пустое окружение).
+    //   cwd               — пусто → унаследовать cwd родителя.
+    //
+    // Возврат (rc, exit_code):
+    //   rc == 0             — процесс запущен и завершился; exit_code — его
+    //                          код возврата (0.., 128+signal при завершении
+    //                          сигналом НЕ по нашей отмене).
+    //   rc == PROCESS_CANCELLED (см. ниже) — объемлющий supervised(timeout:)/
+    //                          (cancel:) прервал ожидание; процесс убит
+    //                          best-effort (SIGKILL/TerminateProcess);
+    //                          exit_code не имеет смысла.
+    //   rc < 0 (иначе)      — ЗАПУСК не удался (PATH-поиск/ENOENT/EACCES/…);
+    //                          rc — отрицательный, -errno-совместимый (тот же
+    //                          контракт, что `os_env.h`'s `_os_fail()`/
+    //                          `IoError.from_os`); exit_code не имеет смысла.
+    process_run(program []u8, argv []u8, argc int,
+                env []u8, envc int, use_env bool, cwd []u8) -> (int, int)
+}
+```
+
+**`rc==0` (нулевой код возврата) и `rc<0` (не удалось запустить) различимы уже на уровне ЗНАКА и
+СЕМАНТИКИ возврата — не строкой.** `Command.run()` (ниже) проецирует это в типы: `Err(IoError)` для
+«не удалось запустить» ИЛИ «отменено», `Ok(ExitStatus{code})` для «запустился и завершился», где
+`code` может сам быть ненулевым (обычный неуспех программы — НЕ ошибка запуска). Три состояния,
+три разных наблюдаемых формы — ни одна не строковая.
+
+**`PROCESS_CANCELLED`** — зарезервированный C-конкретный sentinel (`nova_rt/process.h`,
+`#define NOVA_PROCESS_CANCELLED (-100000)`), вне диапазона любого реального errno (Linux/Windows —
+не более нескольких сотен) — безопасно отличим от `-errno`. Симметричный контракт на стороне `os.nv`
+(`ro PROCESS_CANCELLED = 0 - 100000`, тот же комментарий-ссылка в обе стороны) — тот же класс приёма,
+что `net.c`'s `UV_ECANCELED`-проверка cancel_requested ПОСЛЕ парковки (D93), просто без промежуточного
+`NetError`-подобного enum'а (`Os` тонкий — см. D324).
+
+### Отмена — существующий механизм, не изобретается заново
+
+`process_run` паркует текущий файбер (park/wake, D93) до `uv_process_t`'s `exit_cb`, РЕГИСТРИРУЯ
+stop_cb (`nova_sched_register_pending`): при `cancel_requested` (сработавшем `supervised(timeout:)`
+ИЛИ явном `CancelToken.cancel()`) stop_cb шлёт `uv_process_kill(SIGKILL)` best-effort (не повторно —
+guard) и возвращает `NOVA_STOP_ASYNC` — файбер остаётся припаркован до РЕАЛЬНОГО `exit_cb`/`close_cb`
+(процесс не может исчезнуть недожатым: `uv_close` после `exit_cb` обязателен по контракту libuv).
+После пробуждения `process_run` СНАЧАЛА проверяет `cancel_requested` (та же последовательность, что
+`net_tcp_connect`/DNS) и, если взведён, возвращает `PROCESS_CANCELLED` вне зависимости от того, что
+реально вернул `exit_cb` — тот же принятый trade-off, что у net.c (гонка «успел завершиться сам вот
+прямо в момент отмены» репортится как Cancelled, не как успех). Никакого нового таймера/токена —
+`supervised(timeout:)`/`(cancel:)` целиком существующий (D93/D439/№165).
+
+### `Command`/`ExitStatus` — pure-Nova rich-обёртки (`os.nv`, ВНЕ границы эффекта)
+
+```nova
+export type Command value priv { program str, args []str, envs []EnvVar, clear_env bool, dir Option[Path] }
+export fn Command.new(program str) -> Command
+export fn Command mut @arg(a str) -> @             // append one
+export fn Command mut @args(a []str) -> @           // append many
+export fn Command mut @env(key str, value str) -> @ // override/add one var (last-write-wins per key)
+export fn Command mut @env_clear() -> @             // child starts with an EMPTY env (Rust precedent)
+export fn Command mut @dir(path Path) -> @          // override cwd
+export fn Command @run() Os -> Result[ExitStatus, IoError]
+
+export type ExitStatus value { ro code int }
+export fn ExitStatus @code() -> int
+export fn ExitStatus @success() -> bool  // code == 0
+```
+
+Builder — `value`-тип, `mut @setter(...) -> @` (D-precedent `OpenOptions`, D323): каждый вызов —
+модифицированная КОПИЯ, не мутация на месте (`with_*`-семейство по духу, `fs.nv`'s `OpenOptions`
+буквально по имени-конвенции — не переизобретаю). PATH-поиск наследуется от `uv_spawn`
+(`execvp`/`SearchPath`) — `Command.new("git")` находит `git` на `PATH` без полного пути, как в шелле.
+`.run()` НЕ возвращает живой хендл — блокирующий (паркующий) вызов «спавн + дождаться + код возврата»
+целиком; это и есть узкий объём этой волны (см. шапку). Будущий `spawn()`/`Process`-хендл со
+стримингом — DEFERRABLE, следующая волна, гейтована на решение по перенаправлению потоков
+(D-амендмент понадобится тогда — сигнатура `process_run` этой волны не расширяется задним числом).
+
+### Реализация (нормативные ноты)
+
+1. **`nova_rt/process.{h,c}`** — новый TU, тот же libuv-gate (`NOVA_USE_LIBUV`), что `net.c`/`fs.c`
+   (компилируется/архивируется/хешируется по тому же списку в `test_runner.rs`, зеркало net.c/fs.c
+   1:1). ОДНОРАЗОВЫЙ (single-shot) хендл — `nova_alloc` (GC-collectable), НЕ `nova_alloc_uncollectable`:
+   в отличие от `TcpStream` (живёт через МНОГО отдельных вызовов), `NovaProcessReq` создаётся и
+   освобождается в границах ОДНОГО C-вызова (`process_run`), park включительно — прецедент
+   `net_dns_lookup`, не `net_tcp_connect`.
+2. **argv/env blob** — программа/аргументы/env НЕ пересекают эффект-границу как `[]str` (byte-first,
+   Q1-прецедент D324); Nova-обёртка джойнит NUL-разделённым blob'ом (`join_nul`, зеркало `os_cstr`'s
+   interior-NUL-валидации), C разбивает через `argc`/`envc` (явный count, не поиск двойного NUL).
+3. **`ErrorKind`** — переиспользуются существующие варианты (`std.io.error`, НЕ новый вариант):
+   «не удалось запустить» → `kind_from_errno(-rc)` (`NotFound` для ENOENT и т.д., прежний D324-путь);
+   «отменено» → `ErrorKind.Interrupted` — тот же choice, что `NetError.Cancelled`'s собственная
+   проекция в `IoError` (`std/src/net/error.nv`: `Cancelled => ErrorKind.Interrupted`), НЕ `TimedOut`
+   (`TimedOut` зарезервирован за операциями с явным durations-таймаутом уровня протокола, не за
+   scope-level отменой).
+4. **Дефолт stdio** — `uv_process_options_t.stdio_count=0` → libuv сама редиректит 0/1/2 ребёнка в
+   `/dev/null`/`NUL` (`uv/src/unix/process.c`, подтверждено чтением исходника; НЕ наследование от
+   родителя) — безопасно и достаточно для «нет перенаправления в этой волне»: дочерний вывод молча
+   отбрасывается, не течёт в дескрипторы родителя, не блокируется на заполненном пайпе.
+5. **Триада имён** — `real_os()` (существующий, РАСШИРЯЕТСЯ, не новый), `mock_os()` (существующий,
+   РАСШИРЯЕТСЯ) — семья `real_*`/`mock_*` (`real_os`/`real_fs`/`real_net`/`real_io`/`real_time`),
+   никакого нового имени фабрики не заводится.
+6. **C-символ переименован в `os_process_run`** (не `process_run`) — `net_*`/`fs_*`-конвенция
+   module-prefixed имён в глобальном C-неймспейсе (D407 rule 2); Nova-уровня имя опа эффекта
+   (`Os.process_run`) не меняется, переименован только FFI-символ (`nova_rt/process.{h,c}` +
+   `std/src/os/ffi.nv`).
+
+### Три бага, найденных и починенных этой же волной (zero tolerance — не отложены)
+
+Приёмка п.7 («подсунь негодное») плюс собственный сценарий вскрыли три РЕАЛЬНЫХ дефекта — два в
+компиляторе/рантайме за пределами `nova_rt/process.c` самого по себе, один в самом `process.c`. Все три
+починены в этом же слиянии, ни один не обойдён.
+
+1. **Компилятор (`compiler-codegen/src/codegen/emit_c.rs`, `emit_fn_scoped_inner`, ~28832):** функция
+   вида `fn f() -> T => X.new(...).mut_chain_method(...)` (arrow-body, тело — ЦЕЛИКОМ builder-цепочка,
+   возвращаемая как есть; `T` — тот же value-record, что цепочка строит) мискомпилировалась —
+   `clang: error: returning 'NovaValue_T *' ... from a function with incompatible result type
+   'NovaValue_T'; dereference with *`. Существующий фикс `[M-184-mut-chain-return-position]`
+   (Plan 184 Р5/Р7) уже покрывал ТОТ ЖЕ паттерн для block-body (`{ ... }`) trailing-выражения
+   (`emit_block_stmts_trailing`) — но arrow-body (`=>`) шёл ДРУГИМ путём (`emit_fn_scoped_inner`),
+   который этот участок пропустил при landing'е. Минимальный автономный репро (`Widget.new("x")
+   .with_b("y")` как тело `-> Widget => …`) подтвердил баг ДО фикса и его отсутствие ПОСЛЕ. Фикс —
+   тот же самый уже проверенный предикат (`is_fluent_value_ptr_for_target`), применённый в ЭТОЙ
+   четвёртой точке (симметрично трём существующим: block-trailing, let-binding decay, call-arg
+   consumer). Изоляция «не задел ли фикс что-то ещё»: пересборка БЕЗ фикса воспроизвела 5 УЖЕ
+   существующих (не моих) провалов (`uuid_test`/`uuid_namespace_test`/`decode_errors_test`/
+   `json_test`/`net/addr_test`) БАЙТ-В-БАЙТ идентично — все pre-existing, фикс их не касается (ни один
+   из этих файлов не использует `value priv` + `mut @method -> @`-цепочку).
+2. **`nova_rt/process.c` (`_proc_free_n`, теперь `_proc_free_str_elems`):** хелпер освобождал КАЖДЫЙ
+   элемент массива строк И ЗАТЕМ звал `free()` на САМ переданный указатель. На вызове
+   `_proc_free_n(&args[1], argc)` этот указатель — ВНУТРЕННИЙ адрес в СЕРЕДИНЕ ранее аллоцированного
+   `args`-массива (`&args[1]`, не то, что вернул `malloc`), а `free()` невалидного (не-`malloc`)
+   указателя — heap corruption. Проявлялось детерминированно на Windows как
+   `STATUS_HEAP_CORRUPTION` (`0xC0000374`) при ЛЮБОМ спавне с хотя бы одним аргументом (т.е. на
+   ЛЮБОМ реальном вызове `Command.run()` вне нулевого-argc случая) — `nova test`-обвязка репортила это
+   расплывчато («RUN-FAIL, файл-виновник не определён»), пришлось изолировать автономным `nova build`
+   + прямым запуском под PowerShell (`$LASTEXITCODE` вскрыл точный NTSTATUS). Фикс: `_proc_free_
+   str_elems` освобождает ТОЛЬКО элементы; настоящие массивы (`args`, `envp`) освобождает вызывающий
+   код ОТДЕЛЬНЫМ явным `free()`, ровно один раз каждый.
+3. **Сигнал отмены для ПРЯМОГО body-статемента внутри `supervised(timeout:)` (без `spawn`):**
+   `nova_sched_cancel_pending_slot` (механизм D439/№165, используемый ИМЕННО для этого случая) по
+   документированному контракту НЕ трогает `scope->cancel_requested` целевого scope — она принадлежит
+   ДРУГОМУ (внутреннему, supervised-блоковому) scope, а не тому, что `process_run` снимает через
+   `_nova_active_scope`. Пост-парковочная проверка «`cancel_requested`, значит отменено» (net.c-
+   прецедент) поэтому МОЛЧА проваливалась именно в этом (документированном как рабочий, №165-
+   фикстурой покрытом) сценарии: процесс реально убивался (`SIGKILL`, `exit_status` с `term_signal=9`),
+   но `process_run` репортил это как `Ok(ExitStatus{code: 137})`, а не `PROCESS_CANCELLED` — фикстура
+   «reaps a process that overruns its budget» поймала это как `unexpected exit 137` вместо `Err`.
+   Фикс — зеркало net.c's `net_tcp_connect` (который ПОМИМО `cancel_requested` ДОПОЛНИТЕЛЬНО проверяет
+   `stage == NN2_CLOSED`, свой собственный HANDLE-локальный сигнал): `process_run` теперь ТАКЖЕ
+   проверяет `req->killing` (тот же атомик, которым `_proc_stop_cb` гвардирует однократный
+   `uv_process_kill`) — авторитетный сигнал «эту КОНКРЕТНУЮ операцию убили по отмене», не зависящий от
+   того, чей scope-флаг физически выставлен.
+
+**Проверка сабо­тажа (приёмка п.7):** временно убрана ветка `rc < 0 { Err(...) }` из `Command.run()` —
+обе фикстуры («distinct in TYPE from a failed spawn», mock-фикстура) покраснели с ожидаемым «expected a
+spawn failure» / «expected a scripted spawn failure»; возврат ветки — снова зелёные.
+
+### Связь
+
+Закрывает `[M-176.1-process]` (упомянут в D324 «Subprocess … — НЕ здесь: под-план **176.1**»); опирается
+на D93 (park/wake), D439/№165 (`supervised(timeout:)`/`(cancel:)` прерывает ПРЯМОЙ body-статемент без
+`spawn`), D323 (`OpenOptions` builder-precedent), D324 (`Os` триада/byte-first-канон). Plan
+[265](../../docs/plans/265-stdlib-surface-gaps.md) Ф.1.
+
 ## D357 — `Http` client transport seam (Plan 178 Ф.2, 2026-07-04)
 
 **Решение.** HTTP-client — value-types + Nova-логика над тонким байт-seam'ом `Http`.

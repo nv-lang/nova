@@ -42,6 +42,11 @@ export type MockOs {
     // Recorded exit (mock does NOT terminate).
     mut exited bool
     mut exit_code_v int
+    // Scripted process responses + recorded calls (Plan 265 Ф.1, D453) — the
+    // mockability differentiator applied to subprocess: a tool wrapping
+    // `git`/etc. is testable WITHOUT the real binary installed.
+    mut proc_rules []MockProcRule
+    mut proc_calls []str
 }
 
 /// A fresh mock OS: no args, empty environment, cwd `/`, temp `/tmp`, home
@@ -51,6 +56,56 @@ export fn MockOs.new() -> MockOs => {
     args: [], env_keys: [], env_vals: [], env_live: [],
     cwd_path: "/", temp: "/tmp", home: "/home/user", host: "localhost",
     pid_val: 4242, exited: false, exit_code_v: 0,
+    proc_rules: [], proc_calls: []
+}
+
+// ─── Scripted process responses (Plan 265 Ф.1, D453) ──
+
+/// One scripted `mock_os` response for `Command.new(program).run()`: either
+/// the process "ran" with `code`, or it never launched at all (`found =
+/// false` — `program` not found, mirrors a real PATH-lookup failure).
+type MockProcRule value { ro program str, ro found bool, ro code int }
+
+/// Script `program` to report as if it ran and exited with `code`.
+#stable(since = "0.1")
+export fn MockOs mut @on_process(program str, code int) -> () {
+    @proc_rules.push(MockProcRule { program, found: true, code })
+}
+
+/// Script `program` to report as if it could not be launched at all (spawn
+/// failure — e.g. simulating "git is not installed" without needing it to
+/// actually be absent from `PATH`).
+#stable(since = "0.1")
+export fn MockOs mut @on_process_not_found(program str) -> () {
+    @proc_rules.push(MockProcRule { program, found: false, code: 0 })
+}
+
+/// The programs `Command.run()` invoked under this mock, in call order —
+/// asserts a tool called out to the RIGHT program (and how many times)
+/// without ever running it for real.
+#stable(since = "0.1")
+export fn MockOs @process_calls() -> []str => @proc_calls
+
+fn MockOs @find_proc_rule(program str) -> Option[MockProcRule] {
+    mut i = 0
+    while i < @proc_rules.len() {
+        if @proc_rules[i].program == program { return Some(@proc_rules[i]) }
+        i += 1
+    }
+    None
+}
+
+// -2 = -ENOENT (POSIX "no such file or directory") — the same code a real
+// PATH-lookup failure reports; an unscripted program defaults to this
+// (fail-closed: a test that forgets `.on_process(...)` gets a clear spawn
+// error, not a silent fake success).
+fn MockOs mut @mem_process_run(program []u8) -> (int, int) {
+    ro prog = unsafe { program.to_str_unchecked() }
+    @proc_calls.push(prog)
+    match @find_proc_rule(prog) {
+        Some(rule) => if rule.found { (0, rule.code) } else { (0 - 2, 0) }
+        None => (0 - 2, 0)
+    }
 }
 
 /// Append a program argument (test setup).
@@ -177,5 +232,8 @@ export fn mock_os(mut state MockOs) -> Effect[Os] {
         exit(code int) -> int => state.mem_exit(code)
         pid() -> int => state.pid_val
         hostname() -> str => state.host
+        process_run(program []u8, argv []u8, argc int, env []u8, envc int, use_env bool, cwd []u8) -> (int, int) {
+            state.mem_process_run(program)
+        }
     }
 }

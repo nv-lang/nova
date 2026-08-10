@@ -28831,6 +28831,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Plan 72 P3-B return: box the trailing value for a protocol return type.
                 let val = self.wrap_protocol_return(val, e);
                 let val = self.wrap_any_return(val, e);
+                // Plan 265 Ф.1 discovery (mirrors `[M-184-mut-chain-return-position]`,
+                // emit_block_stmts_trailing above): an arrow-body (`=> expr`) fn/method
+                // whose bare tail IS a value-record fluent `-> @` chain (e.g.
+                // `fn f() -> Command => Command.new(x).arg(y)`) was missed when that fix
+                // landed — only the block-body (`{ ... }`) trailing-expression path was
+                // covered. Same predicate, same fix: the emitted call is `ref Self`
+                // (`NovaValue_X*`); a by-value return consumer must deref it.
+                let val = if self.is_fluent_value_ptr_for_target(e, &ret) {
+                    format!("(*({}))", val)
+                } else {
+                    val
+                };
                 if ret == "nova_unit" {
                     self.line(&format!("{};", val));
                     if has_ensures {
