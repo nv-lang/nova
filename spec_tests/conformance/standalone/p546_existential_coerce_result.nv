@@ -1,0 +1,61 @@
+// Реестр 221.1 #546 (K1) — `Result[Protocol, E]` sibling of
+// p546_existential_coerce_if_else.nv (see that file's header for the full
+// root-cause story). `Ok(impl)`/`Err(..)` constructed in different if/else
+// branches is a THIRD, separate emission path (Result-constructor codegen,
+// `name == "Ok" | "Err"` special-case in `emit_call`) that bypassed BOTH the
+// if/else fix and the general call-argument protocol pre-box hook — it built
+// the payload via a bare `emit_expr` instead of the target-type-aware
+// `emit_expr_with_target_type`, so `nova_make_NovaRes_..._Ok(v)` received an
+// unboxed `Nova_X*` implementer pointer against a `NovaBox_<Proto>`-typed
+// parameter (CC-FAIL "passing 'Nova_X *' … incompatible … 'NovaBox_P'").
+// Fixed by routing `Ok`/`Err`'s payload through the SAME `emit_expr_with_
+// target_type` choke point as if/else and match, with the payload's KNOWN
+// resolved C type (`ok_c`/`err_c`) as the target.
+//
+// G0: `Ok(impl)` wraps DIFFERENT protocol implementers depending on the
+// branch; both must box and dispatch correctly through the Result payload.
+// EXPECT_STDOUT socks4:example.com:443
+// EXPECT_STDOUT socks5:example.com:443
+// EXPECT_STDOUT unknown scheme
+
+module standalone.p546_existential_coerce_result
+
+type P546RDialer protocol {
+    @dial(host str, port int) -> str
+}
+
+#impl(P546RDialer)
+type P546RSocks4D {
+    tag str
+}
+
+#impl(P546RDialer)
+type P546RSocks5D {
+    tag str
+}
+
+fn P546RSocks4D @dial(host str, port int) -> str => "${@tag}:${host}:${port}"
+fn P546RSocks5D @dial(host str, port int) -> str => "${@tag}:${host}:${port}"
+
+fn p546_pick_result(scheme str) -> Result[P546RDialer, str] {
+    if scheme == "socks4" {
+        Ok(P546RSocks4D { tag: "socks4" })
+    } else if scheme == "socks5" {
+        Ok(P546RSocks5D { tag: "socks5" })
+    } else {
+        Err("unknown scheme")
+    }
+}
+
+fn p546_report(scheme str) {
+    match p546_pick_result(scheme) {
+        Ok(d) => println(d.dial("example.com", 443)),
+        Err(e) => println(e),
+    }
+}
+
+fn main() {
+    p546_report("socks4")
+    p546_report("socks5")
+    p546_report("carrier-pigeon")
+}

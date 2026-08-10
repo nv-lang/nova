@@ -1,0 +1,54 @@
+// Реестр 221.1 #546 (K1): протокол-значение (existential, D53/D72) не боксился
+// при сведении if/else веток, дающих РАЗНЫЕ реализации одного протокола —
+// factory-по-схеме («какая строка — такая реализация»), канонический способ
+// единообразно построить семейство протокол-значений. Root cause: codegen
+// boxed a concrete implementer into the `NovaBox_<Proto>` fat pointer on the
+// RETURN path (`wrap_protocol_return`) but NOT on the if/else branch-merge
+// assignment path — `_nv_if_N = (NovaBox_P)(tmp);`, a C-style cast of a
+// POINTER to a STRUCT type, which C rejects (CC-FAIL "used type 'NovaBox_P'
+// where arithmetic or pointer type is required"). Fixed by routing the
+// coercion through the SAME choke point every target-typed sink already
+// shares (`emit_expr_with_target_type`), so if/else (this file), `match`
+// (p546_existential_coerce_match.nv) and `Ok`/`Err` Result-payload
+// (p546_existential_coerce_result.nv) box for free from ONE place.
+//
+// G0: `pick` chooses between TWO implementers of `P546Dialer` depending on a
+// runtime string — the canonical factory-from-schema shape. Both branches
+// must box correctly AND dispatch dynamically (not devirtualize to whichever
+// branch happened to run first).
+// EXPECT_STDOUT socks4:example.com:443
+// EXPECT_STDOUT socks5:example.com:443
+
+module standalone.p546_existential_coerce_if_else
+
+type P546Dialer protocol {
+    @dial(host str, port int) -> str
+}
+
+#impl(P546Dialer)
+type P546Socks4D {
+    tag str
+}
+
+#impl(P546Dialer)
+type P546Socks5D {
+    tag str
+}
+
+fn P546Socks4D @dial(host str, port int) -> str => "${@tag}:${host}:${port}"
+fn P546Socks5D @dial(host str, port int) -> str => "${@tag}:${host}:${port}"
+
+fn p546_pick_if(scheme str) -> P546Dialer {
+    if scheme == "socks4" {
+        P546Socks4D { tag: "socks4" }
+    } else {
+        P546Socks5D { tag: "socks5" }
+    }
+}
+
+fn main() {
+    mut d4 = p546_pick_if("socks4")
+    println(d4.dial("example.com", 443))
+    mut d5 = p546_pick_if("socks5")
+    println(d5.dial("example.com", 443))
+}

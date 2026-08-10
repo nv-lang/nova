@@ -1,0 +1,53 @@
+// Реестр 221.1 #546 (K1) — explicit early-`return` sibling of
+// p546_existential_coerce_if_else.nv. This form was NOT broken by the
+// original bug (`wrap_protocol_return` already boxed the return-position
+// value correctly) — but the FIX for the if/else/match/Result forms
+// introduced a genuine regression here during development: `Stmt::Return`'s
+// explicit-return path ALREADY routes its value through `emit_expr_with_
+// target_type(v, ret_ty)` before separately calling `wrap_protocol_return`
+// — once `emit_expr_with_target_type` learned to box protocol targets
+// itself, the two boxing drivers chained and double-boxed the value
+// (`(NovaBox_P){ .data = (void*)((NovaBox_P){ ... }), ... }`, CC-FAIL
+// "operand of type 'NovaBox_P' where arithmetic or pointer type is
+// required" — a fat pointer struct can't be reinterpreted as `void*`).
+// Closed by making `box_value_for_protocol` (the single boxing primitive
+// every driver site calls) idempotent on the VALUE STRING shape, not just
+// the source expression's static type. This file pins early-return stays
+// correct (both single- and multi-branch shapes) — regression guard for
+// that specific double-box failure mode, not a new form.
+//
+// EXPECT_STDOUT socks4:example.com:443
+// EXPECT_STDOUT socks5:example.com:443
+
+module standalone.p546_existential_coerce_early_return
+
+type P546EDialer protocol {
+    @dial(host str, port int) -> str
+}
+
+#impl(P546EDialer)
+type P546ESocks4D {
+    tag str
+}
+
+#impl(P546EDialer)
+type P546ESocks5D {
+    tag str
+}
+
+fn P546ESocks4D @dial(host str, port int) -> str => "${@tag}:${host}:${port}"
+fn P546ESocks5D @dial(host str, port int) -> str => "${@tag}:${host}:${port}"
+
+fn p546_pick_early_return(scheme str) -> P546EDialer {
+    if scheme == "socks4" {
+        return P546ESocks4D { tag: "socks4" }
+    }
+    return P546ESocks5D { tag: "socks5" }
+}
+
+fn main() {
+    mut d4 = p546_pick_early_return("socks4")
+    println(d4.dial("example.com", 443))
+    mut d5 = p546_pick_early_return("socks5")
+    println(d5.dial("example.com", 443))
+}
