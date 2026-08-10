@@ -30,8 +30,8 @@ ro r = regex`\d+\.\d+`                       // -> Regex, raw
 ```
 
 Байтовый блоб — отдельный литерал `x"…"` (hex-цифры → `[]u8`), не
-tagged template: `ro b = x"deadbeef"` (D412; ⚠ пока не реализован —
-[Plan 186](../docs/plans/186-hex-blob-embed.md)).
+tagged template: `ro b = x"deadbeef"` (D412, реализован —
+[Plan 186](../docs/plans/186-hex-blob-embed.md), статус «РЕАЛИЗОВАН 2026-07-09»).
 
 **Интерполяция через `${expr}`** — tag-функция получает части и
 аргументы **раздельно**, что обеспечивает безопасность (защита от SQL

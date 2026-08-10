@@ -39,8 +39,8 @@ ro r = regex`\d+\.\d+`                       // -> Regex, raw
 ```
 
 A byte blob is a separate `x"…"` literal (hex digits → `[]u8`), not a
-tagged template: `ro b = x"deadbeef"` (D412; ⚠ not yet implemented —
-[Plan 186](../docs/plans/186-hex-blob-embed.md)).
+tagged template: `ro b = x"deadbeef"` (D412, implemented —
+[Plan 186](../docs/plans/186-hex-blob-embed.md), status "РЕАЛИЗОВАН 2026-07-09").
 
 **Interpolation via `${expr}`** — the tag function receives the parts and
 arguments **separately**, which provides safety (protection from SQL

@@ -193,6 +193,10 @@ bash "$ROOT/scripts/tools/with-deadline.sh" 60 \
     bash "$ROOT/scripts/guards/check-commit-language.sh" "$ROOT" \
     || fail "кириллица в сообщениях коммитов после точки перехода"
 
+step "устаревшие пометки «не реализован» в спеке (№557)"
+bash "$ROOT/scripts/guards/check-stale-unimplemented.sh" "$ROOT" \
+    || fail "спека объявляет нереализованным то, что план считает сделанным"
+
 step "лицензионная гигиена (манифесты объявляют лицензию, подмодули названы — №556)"
 bash "$ROOT/scripts/guards/check-license-hygiene.sh" "$ROOT" \
     || fail "манифест без лицензии либо вендоренный подмодуль без уведомления"
