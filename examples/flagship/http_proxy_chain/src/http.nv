@@ -27,11 +27,17 @@ fn find_header_terminator(buf []u8) -> Option[int] {
     // the bytes ARE the protocol constant, and the length comes from the
     // literal instead of a hand-repeated `4`.
     ro terminator = x"0d0a0d0a"
-    if buf.len() < terminator.len() { return None }
-    mut i = 0
-    while i <= buf.len() - terminator.len() {
-        if buf[i..i + terminator.len()] == terminator { return Some(i) }
-        i += 1
+    ro terminator_len = terminator.len()
+    // INCLUSIVE range. The last candidate offset is exactly
+    // `buf.len() - terminator_len`, and that is the COMMON case: a request
+    // with no body arrives whole, with the terminator flush against the end
+    // of the buffer. An exclusive `..` silently never matches it — verified
+    // side by side on a buffer of three bytes plus the terminator: the
+    // exclusive form returned None where the inclusive one returned 3.
+    // A short buffer needs no guard of its own: `buf.len() - terminator_len`
+    // goes negative and the range is simply empty (also verified).
+    for i in 0..=buf.len() - terminator_len {
+        if buf[i..i + terminator_len] == terminator { return Some(i) }
     }
     None
 }
