@@ -49,7 +49,7 @@
    **не реализуется**: `nova run file.nv` (tree-walking интерпретатор)
    ретрактирован — команда осталась в CLI только как заглушка,
    которая явно сообщает об этом и направляет на `nova build`/`nova
-   test` (см. [`docs/dev/promts/read-project.md`](../docs/dev/promts/read-project.md)).
+   test` (см. [`docs/dev/read-project.md`](../docs/dev/read-project.md)).
    Тестируется и шипится код тоже только через C-codegen — нет
    отдельного «интерпретируемого» пути с другой семантикой.
 2. **Память: managed по умолчанию (current: Boehm conservative GC; v1.0+:

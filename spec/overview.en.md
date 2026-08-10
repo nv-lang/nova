@@ -59,7 +59,7 @@ language explicitly optimized for the pair "LLM writes, human reviews".
    **not implemented**: `nova run file.nv` (tree-walking interpreter) is
    retracted — the command remains in the CLI only as a stub that clearly
    reports this and points to `nova build`/`nova test` (see
-   [`docs/dev/promts/read-project.md`](../docs/dev/promts/read-project.md)).
+   [`docs/dev/read-project.md`](../docs/dev/read-project.md)).
    Code is tested and shipped only through C-codegen too — there is no
    separate "interpreted" path with different semantics.
 2. **Memory: managed by default (current: Boehm conservative GC; v1.0+:
