@@ -32,7 +32,7 @@
 // something with it INSIDE a `consume s { … }` block, then hands it back to
 // the caller via `return Ok(s)` — NOT the block's own tail expression
 // (mirrors `socks5_connect`'s several `read_exact_n`/`write_all` calls
-// before its own final `return Ok(stream)`). The caller must be able to
+// before its own final `return Ok(stream)`). The caller must be able to [INV-TODO: №552]
 // read/write on the returned stream — if the scope-exit cleanup fired
 // anyway, the connection is already closed and this write is silently lost
 // (or fails outright), so the server side never sees the second message.

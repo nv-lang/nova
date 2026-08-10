@@ -695,7 +695,9 @@ impl Parser {
     /// *alternatives* ("or"), a newline alone separates them when
     /// multi-line, `,` is required (and only meaningful) when several
     /// arms share one line. `;` between arms is always rejected (it
-    /// promises a sequence where the arms are mutually exclusive), and so
+    /// promises a sequence where the arms are mutually exclusive [INV-PROPERTY]
+    /// [INV-PROPERTY]: нарушение невыразимо — парсер отвергает форму
+    /// диагностикой E_MATCH_ARM_SEMICOLON), and so
     /// is `,` immediately before a newline/`}` — that is the retracted
     /// "comma in multiline arms, including trailing" form. Call right
     /// after an arm has been fully parsed; on `Ok`, the loop is
@@ -728,8 +730,8 @@ impl Parser {
                 let semi_span = self.peek().span;
                 Err(Diagnostic::new(
                     "[E_MATCH_ARM_SEMICOLON] `;` between match arms is not \
-                     allowed (D452, Plan 264) — arms are mutually exclusive \
-                     (\"or\"); `;` promises a sequence (\"then\") instead. Use \
+                     allowed (D452, Plan 264) — exactly one arm runs, \
+                     never a sequence, and `;` promises a sequence. Use \
                      `,` for several arms on one line, or put each arm on its \
                      own line (no separator needed then)."
                         .to_string(),

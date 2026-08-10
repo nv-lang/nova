@@ -4049,7 +4049,7 @@ fn nv_dir_index(dir: &Path) -> std::sync::Arc<Vec<NvDirEntry>> {
 /// from the RIGHT, leaving `path` (including a Windows drive-letter colon,
 /// e.g. `D:\...\file.nv`) as the remainder. Returns `None` for messages
 /// with no such line (manifest/import-resolution errors that never reached
-/// `Diagnostic::render`) — callers must treat that as "location unknown",
+/// `Diagnostic::render`) — callers must treat that as "location unknown" [INV-PROPERTY]
 /// not "line 0".
 fn extract_error_location(msg: &str) -> Option<(&str, usize)> {
     for line in msg.lines() {

@@ -1,7 +1,7 @@
 // EXPECT_COMPILE_ERROR E_MATCH_ARM_SEMICOLON
 //
 // Plan 264 (D452): retracted form 2/4 — `;` between match arms used to
-// parse silently, even though arms are mutually exclusive ("or") and `;`
+// parse silently, even though arms are mutually exclusive ("or") [INV-PROPERTY] and `;`
 // promises a sequence ("then"). Canon: `,` on one line, or newline alone
 // per arm (see the positive fixture,
 // spec_tests/conformance/d452_match_arm_separator.nv).
