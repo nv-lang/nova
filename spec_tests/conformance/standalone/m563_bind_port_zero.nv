@@ -1,0 +1,30 @@
+// Реестр 221.1 №563: `bind("127.0.0.1:0")` — стандартная просьба к ОС выдать
+// свободный порт. Раньше `net_addr_parse` отвергал ноль, и параллельные
+// сетевые тесты были вынуждены выбирать порты руками, сталкиваясь на общей
+// машине.
+//
+// Фикстура доказывает ОБЕ половины, потому что одной мало: разрешить ноль без
+// возможности узнать выбранный порт бессмысленно.
+//   1. bind на :0 проходит;
+//   2. local_port() возвращает НЕ ноль — то есть ОС действительно выбрала;
+//   3. по этому порту можно подключиться — то есть слушатель настоящий.
+//
+// EXPECT_STDOUT bound=yes nonzero=yes connected=yes
+module standalone.m563_bind_port_zero
+
+import std.io
+import std.net.{TcpListener, TcpStream, real_net}
+
+fn main() Io Net -> () {
+    with Net = real_net() {
+        consume lst = TcpListener.bind("127.0.0.1:0")!! {
+            ro p = lst.local_port()
+            ro nonzero = if p != 0 { "yes" } else { "no" }
+            consume cli = TcpStream.connect("127.0.0.1:${p}")!! {
+                println("bound=yes nonzero=${nonzero} connected=yes")
+                cli.close()
+            }
+            lst.close()
+        }
+    }
+}

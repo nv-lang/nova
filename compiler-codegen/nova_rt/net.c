@@ -250,8 +250,26 @@ nova_int net_addr_parse(const uint8_t* s, nova_int len, NovaNetAddr* out) {
     char* colon = strrchr(buf, ':');
     if (!colon) return 1;
 
-    int port_n = atoi(colon + 1);
-    if (port_n <= 0 || port_n > 65535) return 2;
+    /* №563: порт 0 — НЕ ошибка, а стандартная просьба «выбери свободный
+     * порт сам» (POSIX и Windows одинаково). Без неё параллельные сетевые
+     * тесты вынуждены выбирать порты руками и сталкиваются на общей машине —
+     * наши собственные смоуки так и написаны.
+     *
+     * Почему нельзя просто снять `port_n <= 0`: `atoi` возвращает 0 и на строке
+     * "0", и на мусоре ("abc", ""), то есть мусор стал бы законным адресом.
+     * Поэтому разбор становится строгим: цифры и только цифры, хотя бы одна,
+     * и уже после этого ноль признаётся законным. */
+    /* Проба «подсунь негодное» вернёт сюда `if (port_n <= 0) return 2;` — фикстура
+     * standalone/m563_bind_port_zero обязана покраснеть. */
+    const char* pstr = colon + 1;
+    if (*pstr == '\0') return 2;
+    long port_l = 0;
+    for (const char* p = pstr; *p; ++p) {
+        if (*p < '0' || *p > '9') return 2;
+        port_l = port_l * 10 + (*p - '0');
+        if (port_l > 65535) return 2;
+    }
+    int port_n = (int)port_l;
     /* [M-socket-addr-port-only-form]: empty host before the colon (":8080")
      * is the Go/nginx "any interface" convention — 0.0.0.0, NOT loopback.
      * Must be decided BEFORE truncating `buf` at the colon (after which the
