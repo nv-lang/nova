@@ -188,8 +188,12 @@ step "ci-status (внешний авторитетный гейт — GitHub Act
 bash "$ROOT/scripts/tools/with-deadline.sh" 120 \
     bash "$ROOT/scripts/guards/check-ci-status.sh" || true
 
+# Срок 60→240 (2026-08-11): шаг упёрся в предел и стал отказом «шаг ничего не
+# доказал» (№475) — не из-за кириллицы, а потому что история, которую он
+# просматривает, выросла. Отдельный прогон того же стража зелёный. Долг: сделать
+# страж инкрементальным, а не поднимать срок в третий раз (№475-класс).
 step "язык сообщений коммитов (норма 2026-08-09 — по-английски)"
-bash "$ROOT/scripts/tools/with-deadline.sh" 60 \
+bash "$ROOT/scripts/tools/with-deadline.sh" 240 \
     bash "$ROOT/scripts/guards/check-commit-language.sh" "$ROOT" \
     || fail "кириллица в сообщениях коммитов после точки перехода"
 
@@ -198,10 +202,20 @@ bash "$ROOT/scripts/guards/check-stale-unimplemented.sh" "$ROOT" \
     || fail "спека объявляет нереализованным то, что план считает сделанным"
 
 step "рабочие деревья только в d:/Sources/nv-lang (№561)"
-bash "$ROOT/scripts/guards/check-worktree-location.sh" "$ROOT" \n    || fail "worktree вне дозволенного корня"
+bash "$ROOT/scripts/guards/check-worktree-location.sh" "$ROOT" \
+    || fail "worktree вне дозволенного корня"
 
 step "страница правил называет всех стражей (№560)"
-bash "$ROOT/scripts/guards/check-rules-page-complete.sh" "$ROOT" \n    || fail "страж без объяснения на странице правил"
+bash "$ROOT/scripts/guards/check-rules-page-complete.sh" "$ROOT" \
+    || fail "страж без объяснения на странице правил"
+
+# №565: локальный гейт судит НЕ ТО ДЕРЕВО, что судит внешний мир — локально
+# активен `nova.override.toml`, которого в коммите нет. Шаг собирает флагман во
+# временном дереве из HEAD. Дорогой (минуты), поэтому под сроком.
+step "флагман собирается на ЧИСТОМ дереве из HEAD (№565)"
+bash "$ROOT/scripts/tools/with-deadline.sh" 600 \
+    bash "$ROOT/scripts/guards/check-clean-checkout-build.sh" "$ROOT" \
+    || fail "на чистом дереве флагман не собирается (dev-override прячет расхождение)"
 
 step "лицензионная гигиена (манифесты объявляют лицензию, подмодули названы — №556)"
 bash "$ROOT/scripts/guards/check-license-hygiene.sh" "$ROOT" \
