@@ -100,14 +100,13 @@ fn read_headers(mut client TcpStream, max_bytes int) Net -> Result[HeadersRead, 
 // Timeout-guarded `read_headers`: `read_headers` is a DIRECT body statement
 // of `supervised(timeout:)` (no `spawn`) — the scope's own deadline gate
 // interrupts it on time (registry №457), no manual watchdog/self-cancel
-// needed. `TimeoutError` is delivered as the `Fail[TimeoutError]` effect
-// (D408/D449), not as a `Result` — the handler below converts it to this
-// function's own `Err(ReadFailed)`.
+// needed. The deadline's own handler (`on_timeout:`, D449) converts the
+// expiry into this function's `Err(ReadFailed)` — it sits ON the scope that
+// owns the deadline instead of wrapping that scope in a separate
+// `with Fail[TimeoutError]`, which is what D449 exists for.
 fn read_headers_guarded(mut client TcpStream, max_bytes int) Net Time -> Result[HeadersRead, HeaderReadError] {
-    with Fail[TimeoutError] = |_e| { Err(ReadFailed) } {
-        supervised(timeout: HEADER_READ_TIMEOUT_MS.to_millis()) {
-            read_headers(client, max_bytes)
-        }
+    supervised(timeout: HEADER_READ_TIMEOUT_MS.to_millis(), on_timeout: |_e| { Err(ReadFailed) }) {
+        read_headers(client, max_bytes)
     }
 }
 
