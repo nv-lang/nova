@@ -171,12 +171,10 @@ fn handle_client(consume client TcpStream) Net Time Upstream -> () {
 // token, and `handle_connect`/`handle_plain` call it from THEIR top-level
 // body, entered fresh and uncancelled, same as before this simplification.
 fn connect_guarded(host str, port int) Net Time Upstream -> Result[TcpStream, ()] {
-    with Fail[TimeoutError] = |_e| { Err(()) } {
-        supervised(timeout: UPSTREAM_CONNECT_TIMEOUT_MS.to_millis()) {
-            match Upstream.dial(host, port) {
-                Ok(consume upstream) => Ok(upstream)
-                Err(_)                => Err(())
-            }
+    supervised(timeout: UPSTREAM_CONNECT_TIMEOUT_MS.to_millis(), on_timeout: |_e| { Err(()) }) {
+        match Upstream.dial(host, port) {
+            Ok(consume upstream) => Ok(upstream)
+            Err(_)                => Err(())
         }
     }
 }
