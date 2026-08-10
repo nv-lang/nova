@@ -22,13 +22,15 @@ type HeadersRead { head str, leftover []u8 }
 
 // Byte-level "\r\n\r\n" scan — the header/body boundary (RFC 7230 §3).
 fn find_header_terminator(buf []u8) -> Option[int] {
-    if buf.len() < 4 { return None }
+    // RFC 7230 §3: the header section ends at the first CRLF CRLF. Spelled as
+    // a byte literal (D412 `x"…"`) rather than four `13`/`10` comparisons —
+    // the bytes ARE the protocol constant, and the length comes from the
+    // literal instead of a hand-repeated `4`.
+    ro terminator = x"0d0a0d0a"
+    if buf.len() < terminator.len() { return None }
     mut i = 0
-    while i <= buf.len() - 4 {
-        if buf[i] == (13 as u8) && buf[i + 1] == (10 as u8)
-            && buf[i + 2] == (13 as u8) && buf[i + 3] == (10 as u8) {
-            return Some(i)
-        }
+    while i <= buf.len() - terminator.len() {
+        if buf[i..i + terminator.len()] == terminator { return Some(i) }
         i += 1
     }
     None
