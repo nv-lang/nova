@@ -101,7 +101,7 @@ test "#548: consume s { …; return Ok(s) } must not close s out from under the 
                 Time.sleep(300.to_millis())
                 mut buf []u8 = []u8.new()
                 buf.resize(128, 0 as u8)
-                ro n = match srv.read(buf) { Ok(k) => k  Err(_) => -1 }
+                ro n = match srv.read(buf) { Ok(k) => k, Err(_) => -1 }
                 srv.close()
                 // "probe-before-return" (19 bytes) + "probe-after-return"
                 // (18 bytes) = 37 total ONLY if both writes made it through.
@@ -112,7 +112,7 @@ test "#548: consume s { …; return Ok(s) } must not close s out from under the 
             // message on the RETURNED stream — proving it is still a live,
             // open connection and not one the compiler already closed.
             spawn {
-                ro port = match ch_port.rx.recv() { Some(p) => p  None => 0 as u16 }
+                ro port = match ch_port.rx.recv() { Some(p) => p, None => 0 as u16 }
                 consume returned = match open_and_probe(port as int) {
                     Ok(consume s) => s
                     Err(_) => panic("m548: open_and_probe returned Err")
@@ -126,7 +126,7 @@ test "#548: consume s { …; return Ok(s) } must not close s out from under the 
             }
         }
 
-        ro result = match ch_server_result.rx.recv() { Some(v) => v  None => -999 }
+        ro result = match ch_server_result.rx.recv() { Some(v) => v, None => -999 }
         assert(result == 1)
     }
 }
