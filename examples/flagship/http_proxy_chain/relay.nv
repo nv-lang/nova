@@ -1,0 +1,106 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// examples/flagship/http_proxy_chain/relay.nv — bidirectional byte relay,
+// the tunnel stage both the CONNECT and plain-HTTP paths hand off to once
+// upstream is dialed.
+
+module flagship.http_proxy_chain
+
+import std.net.{TcpStream, TcpReadHalf, TcpWriteHalf}
+
+// The example's core (plan 249 §3.2): `a`'s and `b`'s halves cross-pump —
+// fiber #1 pumps `ar -> bw`, fiber #2 pumps `br -> aw`. Each fiber owns
+// exactly ONE read half and ONE write half — linear ownership holds without
+// any shared state.
+//
+// `CancelToken` here is NOT a `supervised(timeout:)` workaround — it is the
+// only mechanism that fits the actual requirement: wake the SIBLING pump the
+// instant THIS pump sees clean EOF/error, with no fixed duration at all (the
+// pipe stage is deliberately unbounded, plan §6 risk register: no idle/read
+// timeout on an established tunnel). `timeout:` bounds a duration; it has no
+// way to express "stop when your sibling stops," so this shared-token shape
+// stays regardless of the direct-body `timeout:` mechanism's own health
+// (registry №457).
+//
+// Historical note: window 249 (Ф.0-б, 2026-08-08) reported that
+// `supervised(timeout:)` does NOT reach a `.read()` nested inside a SIBLING
+// spawn body (an isolated probe of exactly this shape hung past 30s) and
+// built this CancelToken relay partly on that premise. Window p457-timeout's
+// re-test of that same two-sibling-spawn shape (~1080 runs, several timeout
+// durations and parallelism levels) reproduced a hang only once, without
+// diagnostics, and never again — inconclusive either way; see
+// `docs/plans/221.1-bug-sweep.md` №457. Left as an open question for the
+// owner: whichever way it resolves, this function keeps its `CancelToken`
+// for the EOF-relay reason above, independent of that mechanism's fate.
+fn pipe_bidirectional(consume a TcpStream, consume b TcpStream) Net -> () {
+    consume (ar, aw) = a.into_split()
+    consume (br, bw) = b.into_split()
+    ro tok = CancelToken.new()
+    supervised(cancel: tok) {
+        spawn consume ar, bw { pump(ar, bw, tok) }
+        spawn consume br, aw { pump(br, aw, tok) }
+    }
+}
+
+fn write_all_half(mut w TcpWriteHalf, data []u8) Net -> bool {
+    mut off = 0
+    while off < data.len() {
+        match w.write(data[off..]) {
+            // Wrote nothing: the peer is gone. A pattern, not an `if n <= 0`
+            // inside the arm — the same shape `pump` uses for `Ok(0)`, and it
+            // keeps the two outcomes visible side by side instead of hiding
+            // one behind a guard.
+            Ok(0) => return false
+            // `n < 0` is not a case: `Net.write` returns bytes written or
+            // `Err`. The old `n <= 0` guard silently absorbed a negative as
+            // "peer gone", which would have turned a std.net contract
+            // violation into an invisible early return. Assert it instead —
+            // if it ever fires, the bug is in `std.net`, not here.
+            Ok(n) => {
+                assert(n > 0)
+                off += n
+            }
+            Err(_) => return false
+        }
+    }
+    true
+}
+
+fn pump(consume r TcpReadHalf, consume w TcpWriteHalf, tok CancelToken) Net -> () {
+    mut buf []u8 = []u8.new()
+    buf.resize(8192, 0 as u8)
+    loop {
+        match r.read(buf) {
+            Ok(0) => break                             // clean EOF on this direction
+            Ok(n) => {
+                if !write_all_half(w, buf[..n]) { break }
+            }
+            Err(_) => break                            // I/O error, or woken by the sibling's cancel
+        }
+    }
+    // Canonical explicit-close form (registry №456): both halves ALSO
+    // declare `consume @cleanup` (`std/src/net/tcp.nv:402`/`:448`), so the
+    // disarm here matters — the caller's `spawn consume ar, bw { pump(ar,
+    // bw, tok) }` must NOT also auto-`@cleanup` `ar`/`bw` after this
+    // explicit close, or the underlying split-refcounted stream gets a
+    // redundant `net_tcp_close` call (root cause history: №456 first
+    // surfaced as a crash — UAF in `net_tcp_close`'s split-refcount path,
+    // `nova_rt/libuv/src/win/core.c:694` — fixed at the runtime level by an
+    // idempotent release guard, `b46d4584e`; that made the redundant call
+    // SAFE but the compiler was still emitting it, which is what later
+    // manifested as this function's hang under real blocking I/O — the
+    // caller-side disarm was keyed off two separate, incompletely-populated
+    // registries that the `spawn consume a, b { … }` desugar fell through
+    // entirely, D415 §4). Plan 253.4 Ф.1 (№480, `318334eea`) replaced both
+    // registries with a single defer-scope-owned flag (`disarm_var_for`,
+    // `emit_c.rs`), closing the gap: the caller now correctly disarms
+    // `ar`/`bw` right before this call, so `r.close()`/`w.close()` below are
+    // each the ONLY close their half ever sees. Regression coverage for
+    // exactly this shape (canonical `close()` + real blocking I/O +
+    // cross-fiber cancel-while-parked, not just the no-I/O disarm bookkeeping):
+    // `spec_tests/conformance/standalone/m456_pump_helper_close_real_io.nv`.
+    r.close()
+    w.close()
+    // Wake the SIBLING pump (blocked reading the other direction) — the
+    // mechanism established in plan 249 Ф.0-б, NOT `supervised(timeout:)`.
+    tok.cancel()
+}

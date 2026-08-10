@@ -1,0 +1,201 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// examples/flagship/http_proxy_chain/http.nv — request-head reading and
+// parsing: the bytes-off-the-wire stage shared by both the CONNECT and
+// plain-HTTP paths, before either one knows which path it is on.
+
+module flagship.http_proxy_chain
+
+import std.net.{TcpStream}
+import std.time.duration
+
+// 64 KiB header cap (plan 249 §3.2 risk register): an unbounded
+// `read_headers` loop is a DoS vector (a client trickling bytes forever
+// grows this bridge's memory without limit) — exceeding this is a typed
+// `431 Request Header Fields Too Large`, not a silent hang or truncation.
+const MAX_HEADER_BYTES = 65536
+
+// ─── Reading raw header bytes ──────────────────────────────────────────────
+
+type HeaderReadError enum TooLarge | ConnectionClosed | ReadFailed
+
+type HeadersRead { head str, leftover []u8 }
+
+// Byte-level "\r\n\r\n" scan — the header/body boundary (RFC 7230 §3).
+fn find_header_terminator(buf []u8) -> Option[int] {
+    if buf.len() < 4 { return None }
+    mut i = 0
+    while i <= buf.len() - 4 {
+        if buf[i] == (13 as u8) && buf[i + 1] == (10 as u8)
+            && buf[i + 2] == (13 as u8) && buf[i + 3] == (10 as u8) {
+            return Some(i)
+        }
+        i += 1
+    }
+    None
+}
+
+// Pure helper (no `Net`, no loop) — flat shape on purpose, tried against a
+// build error where a deeply-nested match inside a tail `loop` confused the
+// codegen's type inference for the loop's (never-taken) fallthrough value.
+// `None` = terminator not seen yet, keep reading.
+fn try_extract_headers(buf []u8) -> Option[Result[HeadersRead, HeaderReadError]] {
+    match find_header_terminator(buf) {
+        Some(end_idx) => {
+            ro head_bytes = buf[..end_idx]
+            ro leftover = buf[(end_idx + 4)..]
+            match head_bytes.to_str() {
+                Ok(s)  => Some(Ok(HeadersRead { head: s, leftover }))
+                Err(_) => Some(Err(ReadFailed))
+            }
+        }
+        None => None
+    }
+}
+
+// Reads raw bytes off `client` until the `\r\n\r\n` header terminator (or
+// `max_bytes` is exceeded, or the peer errs/closes). Returns the decoded
+// header text PLUS any bytes already read past the terminator (pipelined
+// body/next-request bytes) so a caller can forward them instead of
+// dropping them on the floor.
+fn read_headers(mut client TcpStream, max_bytes int) Net -> Result[HeadersRead, HeaderReadError] {
+    mut buf []u8 = []u8.new()
+    mut chunk []u8 = []u8.new()
+    chunk.resize(4096, 0 as u8)
+    while true {
+        match client.read(chunk) {
+            Ok(0) => return Err(ConnectionClosed)
+            Ok(n) => {
+                buf.append(chunk[..n])
+                if buf.len() > max_bytes { return Err(TooLarge) }
+                match try_extract_headers(buf) {
+                    Some(result) => return result
+                    None         => continue
+                }
+            }
+            Err(_) => return Err(ReadFailed)
+        }
+    }
+    // Every path through the loop body above `return`s or `continue`s, so this
+    // line is never reached. It exists only to give the function an explicit,
+    // correctly-typed trailing value.
+    //
+    // CORRECTION 2026-08-09 (registry 221.1 #483). An earlier version of this
+    // comment claimed that `while true {}`, unlike a bare `loop {}`, is not
+    // typed `Never` in tail position, and that switching to it fixed a
+    // CC-FAIL. That is FALSE, and it misled a later reader into repeating it
+    // as fact. Verified by direct build on a freshly rebuilt compiler: BOTH
+    // forms fail identically when the `Ok` payload is a record — the codegen
+    // emits an incompatible temporary for the loop's tail-position
+    // fallthrough. Both forms are already marked divergent in codegen
+    // (`[M-125-loop-no-break-divergence]` and `[M-125-while-true-divergence]`
+    // sit side by side, differing only in the literal-`true` check).
+    // The real defect is wider than either spelling: ANY infinite loop in tail
+    // position breaks on a record `Ok` payload. See #483. Keep `while true`
+    // here only until that is fixed; the spelling is not what makes it work.
+    panic("read_headers: unreachable")
+}
+
+// Timeout-guarded `read_headers`: `read_headers` is a DIRECT body statement
+// of `supervised(timeout:)` (no `spawn`) — the scope's own deadline gate
+// interrupts it on time (registry №457), no manual watchdog/self-cancel
+// needed. `TimeoutError` is delivered as the `Fail[TimeoutError]` effect
+// (D408/D449), not as a `Result` — the handler below converts it to this
+// function's own `Err(ReadFailed)`.
+fn read_headers_guarded(mut client TcpStream, max_bytes int) Net Time -> Result[HeadersRead, HeaderReadError] {
+    with Fail[TimeoutError] = |_e| { Err(ReadFailed) } {
+        supervised(timeout: HEADER_READ_TIMEOUT_MS.to_millis()) {
+            read_headers(client, max_bytes)
+        }
+    }
+}
+
+// ─── Parsing the request head ──────────────────────────────────────────────
+
+type ParsedRequest enum
+    | Connect { host str, port int }
+    | Plain { host str, port int, rewritten_head str }
+    | Invalid
+
+fn parse_request(head str) -> ParsedRequest {
+    ro lines []str = head.split("\r\n").collect()
+    if lines.len() == 0 { return Invalid }
+    ro parts []str = lines[0].split(" ").collect()
+    if parts.len() != 3 { return Invalid }
+    ro method = parts[0]
+    ro target = parts[1]
+    ro version = parts[2]
+    if method == "CONNECT" {
+        match target.rsplit_once(":") {
+            Some((host, port_str)) => match port_str.to_int() {
+                Ok(port) => Connect { host, port }
+                Err(_)   => Invalid
+            }
+            None => Invalid
+        }
+    } else {
+        match parse_absolute_uri(target) {
+            Some((host, port, path)) => {
+                ro rewritten_line = "${method} ${path} ${version}"
+                ro rewritten_head = rewrite_headers(rewritten_line, lines[1..])
+                Plain { host, port, rewritten_head }
+            }
+            None => Invalid
+        }
+    }
+}
+
+// Absolute-URI request target (RFC 7230 §5.3.2) — the plain-HTTP-through-
+// proxy form: `GET http://host[:port][/path...] HTTP/1.1`. Only the
+// `http://` scheme is understood; anything else (bare origin-form `/path`,
+// `https://`, or a missing scheme) is `None` here — a client proxying HTTPS
+// is expected to use CONNECT instead (the primary path, Ф.2), and this
+// bridge does not attempt to terminate/relay TLS itself.
+fn parse_absolute_uri(target str) -> Option[(str, int, str)] {
+    match target.strip_prefix("http://") {
+        Some(rest) => {
+            if rest == "" { return None }
+            match rest.find("/") {
+                Some(_) => parse_authority(rest.until("/"), "/${rest.after("/")}")
+                None    => parse_authority(rest, "/")
+            }
+        }
+        None => None
+    }
+}
+
+// `host[:port]` — no port means the scheme default (80 for `http`). IPv6
+// literal authorities (`[::1]:port`) are out of scope (plan 249 §7 п.2, same
+// V1 decision as the SOCKS5 client itself: no IPv6 address support).
+fn parse_authority(authority str, path str) -> Option[(str, int, str)] {
+    if authority == "" { return None }
+    match authority.rsplit_once(":") {
+        Some((host, port_str)) => match port_str.to_int() {
+            Ok(port) => Some((host, port, path))
+            Err(_)   => None
+        }
+        None => Some((authority, 80, path))
+    }
+}
+
+// A header line's name is `Proxy-*` (case-insensitively) — addressed to
+// THIS bridge (`Proxy-Connection`, `Proxy-Authorization`, ...), not the
+// origin server, and must not be forwarded.
+fn is_proxy_header(line str) -> bool {
+    match line.split_once(":") {
+        Some((name, _)) => name.trim_ascii().to_ascii_lower().starts_with("proxy-")
+        None => false
+    }
+}
+
+// Rebuilds the header block with the origin-form request line and every
+// `Proxy-*` header dropped — the exact bytes forwarded to upstream (plus a
+// trailing "\r\n\r\n" appended by the caller).
+fn rewrite_headers(request_line str, header_lines []str) -> str {
+    mut out = request_line
+    for line in header_lines {
+        if !is_proxy_header(line) {
+            out = "${out}\r\n${line}"
+        }
+    }
+    out
+}

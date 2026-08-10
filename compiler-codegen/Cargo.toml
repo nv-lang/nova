@@ -2,6 +2,7 @@
 name = "nova-codegen"
 version = "0.1.0"
 edition = "2021"
+license = "MIT OR Apache-2.0"
 rust-version = "1.85"
 description = "Nova codegen compiler — compiles Nova to native binary via C backend"
 publish = false

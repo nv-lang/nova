@@ -193,6 +193,10 @@ bash "$ROOT/scripts/tools/with-deadline.sh" 60 \
     bash "$ROOT/scripts/guards/check-commit-language.sh" "$ROOT" \
     || fail "кириллица в сообщениях коммитов после точки перехода"
 
+step "лицензионная гигиена (манифесты объявляют лицензию, подмодули названы — №556)"
+bash "$ROOT/scripts/guards/check-license-hygiene.sh" "$ROOT" \
+    || fail "манифест без лицензии либо вендоренный подмодуль без уведомления"
+
 step "язык манифестов (nova.toml / nova.lock.toml — по-английски, норма 2026-08-10)"
 bash "$ROOT/scripts/guards/check-manifest-language.sh" "$ROOT" \
     || fail "кириллица в манифесте пакета"
