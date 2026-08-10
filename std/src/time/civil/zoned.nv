@@ -72,18 +72,18 @@ export type TimeZone enum
 #stable(since = "0.1")
 export fn TimeZone @to_str() -> str =>
     match @ {
-        Utc => "UTC",
-        Fixed(off) => off.to_iso(),
-        Iana(z) => z.id,
+        Utc => "UTC"
+        Fixed(off) => off.to_iso()
+        Iana(z) => z.id
     }
 
 /// Zone offset at the given instant.
 #stable(since = "0.1")
 export fn TimeZone @offset_at(ts Timestamp) -> Offset =>
     match @ {
-        Utc => Offset.utc(),
-        Fixed(off) => off,
-        Iana(z) => { seconds: rules_offset_at(z.rules, ts.unix_nanos() / 1_000_000_000) },
+        Utc => Offset.utc()
+        Fixed(off) => off
+        Iana(z) => { seconds: rules_offset_at(z.rules, ts.unix_nanos() / 1_000_000_000) }
     }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -117,8 +117,8 @@ fn local_seconds(dt DateTime) -> i64 =>
 #stable(since = "0.1")
 export fn TimeZone @resolve_local(dt DateTime) -> LocalResolution {
     match @ {
-        Utc => return Unique(Offset.utc()),
-        Fixed(off) => return Unique(off),
+        Utc => return Unique(Offset.utc())
+        Fixed(off) => return Unique(off)
         Iana(z) => {
             ro l = local_seconds(dt)
             ro rules = z.rules
@@ -225,10 +225,10 @@ export fn DateTime @to_zoned(tz TimeZone) -> Result[ZonedDateTime, DateError] =>
 #stable(since = "0.1")
 export fn DateTime @to_zoned(tz TimeZone, disamb Disambiguation) -> Result[ZonedDateTime, DateError] {
     match tz.resolve_local(@) {
-        Unique(off) => Ok({ dt: @, offset: off, zone: tz }),
+        Unique(off) => Ok({ dt: @, offset: off, zone: tz })
         Gap(before, after) => {
             match disamb {
-                Reject => Err(Ambiguous("gap: wall-time does not exist in zone")),
+                Reject => Err(Ambiguous("gap: wall-time does not exist in zone"))
                 Earlier => {
                     // Назад на длину gap, интерпретация before-offset.
                     ro gap_len = (after.seconds() - before.seconds()) as i64
@@ -245,9 +245,9 @@ export fn DateTime @to_zoned(tz TimeZone, disamb Disambiguation) -> Result[Zoned
         }
         Overlap(earlier, later) => {
             match disamb {
-                Reject => Err(Ambiguous("overlap: wall-time occurs twice in zone")),
-                Later => Ok({ dt: @, offset: later, zone: tz }),
-                _ => Ok({ dt: @, offset: earlier, zone: tz }),   // Compatible | Earlier
+                Reject => Err(Ambiguous("overlap: wall-time occurs twice in zone"))
+                Later => Ok({ dt: @, offset: later, zone: tz })
+                _ => Ok({ dt: @, offset: earlier, zone: tz })   // Compatible | Earlier
             }
         }
     }
@@ -308,8 +308,8 @@ export fn ZonedDateTime @to_timestamp() -> Result[Timestamp, DateError] {
 #stable(since = "0.1")
 export fn ZonedDateTime @with_zone(tz TimeZone) -> Result[ZonedDateTime, DateError] =>
     match @to_timestamp() {
-        Ok(ts) => Ok(ts.to_zoned(tz)),
-        Err(e) => Err(e),
+        Ok(ts) => Ok(ts.to_zoned(tz))
+        Err(e) => Err(e)
     }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -338,16 +338,16 @@ export fn ZonedDateTime @minus(p Period) -> ZonedDateTime {
 #stable(since = "0.1")
 export fn ZonedDateTime @plus_duration(d Duration) -> ZonedDateTime =>
     match @to_timestamp() {
-        Ok(ts) => (ts + d).to_zoned(@zone),
-        Err(_) => panic("ZonedDateTime arithmetic: instant out of ±292y window"),
+        Ok(ts) => (ts + d).to_zoned(@zone)
+        Err(_) => panic("ZonedDateTime arithmetic: instant out of ±292y window")
     }
 
 /// Elapsed shift backward.
 #stable(since = "0.1")
 export fn ZonedDateTime @minus_duration(d Duration) -> ZonedDateTime =>
     match @to_timestamp() {
-        Ok(ts) => (ts - d).to_zoned(@zone),
-        Err(_) => panic("ZonedDateTime arithmetic: instant out of ±292y window"),
+        Ok(ts) => (ts - d).to_zoned(@zone)
+        Err(_) => panic("ZonedDateTime arithmetic: instant out of ±292y window")
     }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -373,8 +373,8 @@ export fn ZonedDateTime @compare(other ZonedDateTime) -> int {
 export fn ZonedDateTime @to_iso() -> str {
     ro base = "${@dt.to_iso()}${@offset.to_iso()}"
     match @zone {
-        Iana(z) => "${base}[${z.id}]",
-        _ => base,
+        Iana(z) => "${base}[${z.id}]"
+        _ => base
     }
 }
 

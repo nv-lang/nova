@@ -262,8 +262,8 @@ export fn[T, E] sequence(items []Result[T, E]) -> Result[[]T, E] {
     mut out []T = []
     for r in items {
         match r {
-            Ok(v)  => out.push(v),
-            Err(e) => return Err(e),
+            Ok(v)  => out.push(v)
+            Err(e) => return Err(e)
         }
     }
     Ok(out)
@@ -283,8 +283,8 @@ export fn[T, E] partition(items []Result[T, E]) -> ([]T, []E) {
     mut errs []E = []
     for r in items {
         match r {
-            Ok(v)  => oks.push(v),
-            Err(e) => errs.push(e),
+            Ok(v)  => oks.push(v)
+            Err(e) => errs.push(e)
         }
     }
     (oks, errs)

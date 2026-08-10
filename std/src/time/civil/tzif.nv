@@ -153,7 +153,7 @@ export fn load_timezone(name str) Fs Os -> Result[TimeZone, DateError] {
             // слою (явный Result→Option вместо
             // swallow-match на `Err(_)`).
             match read("${dir}/${name}".to_path()).ok() {
-                Some(bytes) => return TimeZone.from_tzif(name, bytes),
+                Some(bytes) => return TimeZone.from_tzif(name, bytes)
                 None => {}   // нет файла → следующий слой
             }
         }
@@ -161,7 +161,7 @@ export fn load_timezone(name str) Fs Os -> Result[TimeZone, DateError] {
     }
     // 2. Стандартный POSIX-каталог (тот же намеренный fallback).
     match read("/usr/share/zoneinfo/${name}".to_path()).ok() {
-        Some(bytes) => return TimeZone.from_tzif(name, bytes),
+        Some(bytes) => return TimeZone.from_tzif(name, bytes)
         None => {}
     }
     // 3. Embedded curated-таблица
