@@ -1124,7 +1124,7 @@ module) проверки в type-checker. Detail в
 - **Что реализовано:** CI matrix с двумя jobs: TrivialBackend (default) и Z3
   (`--features z3-backend` + `NOVA_SMT_BACKEND=z3`). Тесты `REQUIRES_SMT_BACKEND z3`
   прогоняются в z3-job, пропускаются в trivial-job.
-  `docs/dev/promts/read-toolchain.md` обновлён с Z3 build инструкцией.
+  `docs/dev/prompts/read-toolchain.md` обновлён с Z3 build инструкцией.
 - **Дата закрытия:** 2026-05-16
 
 ### [V19] ✅ Exhaustive encode_expr — ЗАКРЫТО Plan 33.6 Ф.6.1 (2026-05-16)
@@ -4954,7 +4954,7 @@ module) проверки в type-checker. Detail в
 - **Что реализовано:** CI matrix с двумя jobs: TrivialBackend (default) и Z3
   (`--features z3-backend` + `NOVA_SMT_BACKEND=z3`). Тесты `REQUIRES_SMT_BACKEND z3`
   прогоняются в z3-job, пропускаются в trivial-job.
-  `docs/dev/promts/read-toolchain.md` обновлён с Z3 build инструкцией.
+  `docs/dev/prompts/read-toolchain.md` обновлён с Z3 build инструкцией.
 - **Дата закрытия:** 2026-05-16
 
 ### [V19] ✅ Exhaustive encode_expr — ЗАКРЫТО Plan 33.6 Ф.6.1 (2026-05-16)

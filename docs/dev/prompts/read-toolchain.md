@@ -67,7 +67,7 @@ Nova-файлы, добавлять тесты, работать с nova CLI**. 
    std/                ← Nova package: stdlib (module std.*); .nv — в std/src/ (Plan 195, `[lib] src`)
    examples/           ← Nova package: примеры
    spec/               ← спека языка
-   docs/               ← планы, conventions, promts
+   docs/               ← планы, conventions, prompts
    ```
    `nova.toml` — Nova workspace (members: std, examples, nova_tests).
    Два независимых Cargo crate: `compiler-codegen/Cargo.toml` и `nova-cli/Cargo.toml`.

@@ -2045,7 +2045,7 @@ migration special-case dispatch'ей в emit_call → registry-driven)
 
 6. **Ф.7 docs**:
    - README.md compiler-codegen обновлён.
-   - docs/promts/regen-runtime.md уже существует от user'а.
+   - docs/dev/prompts/regen-runtime.md уже существует от user'а.
 
 #### Ф.4 deferred — почему
 
@@ -7600,7 +7600,7 @@ migration special-case dispatch'ей в emit_call → registry-driven)
 
 6. **Ф.7 docs**:
    - README.md compiler-codegen обновлён.
-   - docs/promts/regen-runtime.md уже существует от user'а.
+   - docs/dev/prompts/regen-runtime.md уже существует от user'а.
 
 #### Ф.4 deferred — почему
 
@@ -28164,7 +28164,7 @@ assert/debug_assert (RETRACT verbose `contract <kind> failed in <fn>: <expr> at
   integration.rs}` + `tests/common` хелперы); (d) user-facing доки + www site вычищены от
   `nova run` (README/.ru + examples + сайт `be06628`); (e) nova-cli доки
   (`docs/nova-cli.md`/.ru.md) выверены против реального CLI. Историческое упоминание `nova run`
-  в plans/spec/promts/scripts/nova_tests НЕ скрабилось (out of scope — historical fixture text).
+  в plans/spec/prompts/scripts/nova_tests НЕ скрабилось (out of scope — historical fixture text).
   Ветка `chore-disable-interp-nova-run` (worktree nova-noninterp). Residual →
   `[M-interp-unsupported]`: полное удаление интерпретатора ЛИБО порт interp-only тестов на
   C-codegen; чистка `tests/` integration-таргетов.

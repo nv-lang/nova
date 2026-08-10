@@ -271,7 +271,7 @@ sanity-check'а.
 Добавить subcommand: `nova-codegen emit-runtime-stubs`.
 
 **Рабочий промпт для агента/разработчика** —
-[`docs/dev/promts/regen-runtime.md`](../dev/promts/regen-runtime.md). Это
+[`docs/dev/prompts/regen-runtime.md`](../dev/prompts/regen-runtime.md). Это
 повторно используемая инструкция: входы, шаги, acceptance, ограничения,
 троблшутинг. Она версионируется вместе с кодом — при изменении
 формата `RuntimeFn` или процедуры регенерации промпт обновляется
@@ -583,7 +583,7 @@ RuntimeFn { module: "std.runtime.string_builder",
       `read_buffer.nv`, `char.nv`. Все с AUTO-GENERATED header'ом.
 - [ ] `std/runtime/builtins.nv` **удалён** (нет в git).
 - [ ] Все тесты (78 nova_tests, codegen) проходят.
-- [ ] Промпт `docs/dev/promts/regen-runtime.md` обновлён: упоминает 6
+- [ ] Промпт `docs/dev/prompts/regen-runtime.md` обновлён: упоминает 6
       файлов, не 3.
 - [ ] **Sanity:** добавить `f32.@sinh` тремя правками
       (registry-запись + C-trampoline + regen) — работает в user-коде.

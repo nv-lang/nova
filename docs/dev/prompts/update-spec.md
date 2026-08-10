@@ -121,7 +121,7 @@ syntax / types / effects / runtime / tooling reference) в соответств�
 
 > Я заметил, что spec/ сильно устарел — закрыли Plan 57 Phase F+G+H
 > и Plan 60, но spec D-blocks не upd'тились. Прогони
-> docs/dev/promts/update-spec.md.
+> docs/dev/prompts/update-spec.md.
 
 Агент должен:
 1. `git log --oneline --grep="ЗАКРЫТ" -- docs/plans/` → найдёт

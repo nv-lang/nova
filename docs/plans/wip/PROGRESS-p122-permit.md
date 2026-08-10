@@ -84,7 +84,7 @@ available==1` падал 2× на реальном `d170` в ~1045-peer folder-C
 статус «открыто», с планом фикса (а) хеш-сверка копии рантайма + громкий fail при расхождении,
 либо (б) env-указатель `NOVA_RT_DIR` вместо копий.
 
-Грепом по `docs/dev/promts/read-project.md` и `scripts/gate.sh` нашёл, что фикс УЖЕ существует
+Грепом по `docs/dev/read-project.md` и `scripts/gate.sh` нашёл, что фикс УЖЕ существует
 и УЖЕ подключён:
 
 - `scripts/guards/check-no-runtime-copy.sh` — введён рефакторингом 231 (`7e2ece9e1`,

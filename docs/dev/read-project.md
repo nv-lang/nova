@@ -75,7 +75,7 @@ D48 tag-шаблоны). **Не выдумывай синтаксис** — св
 - Открытые `[M-…]`-маркеры — [backlog-followups.md](../../plans/backlog-followups.md) (в т.ч. свежий
   кластер `[M-flagship-*]` и P67-LEGACY-класс).
 
-## 3. Инструменты (`docs/dev/promts/read-toolchain.md`)
+## 3. Инструменты (`docs/dev/prompts/read-toolchain.md`)
 
 ```sh
 # собрать (release ОБЯЗАТЕЛЬНО — debug на порядок медленнее из-за vcvars)

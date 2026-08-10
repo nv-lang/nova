@@ -7,7 +7,7 @@
 
 Обязательны для любого контрибьютора, включая AI-агентов:
 
-- [dev-workflow.md](dev-workflow.md) — процесс разработки + **жёсткие операционные правила** (worktree-модель, никакого `git stash`, `git add` по именам файлов, коммит на задачу). Онбординг-вход для агентов — `AGENTS.md`; в порядок чтения добавлен в [promts/read-project.md](promts/read-project.md).
+- [dev-workflow.md](dev-workflow.md) — процесс разработки + **жёсткие операционные правила** (worktree-модель, никакого `git stash`, `git add` по именам файлов, коммит на задачу). Онбординг-вход для агентов — `AGENTS.md`; в порядок чтения добавлен в [read-project.md](read-project.md).
 - [compiler-conventions.md](compiler-conventions.md) — разработка компилятора (front-end + codegen).
 - [test-conventions.md](test-conventions.md) — написание и запуск тестов.
 - [nv-coding-style.md](nv-coding-style.md) — стиль кода на Nova (`.nv`).

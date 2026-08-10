@@ -515,7 +515,7 @@ step "lint W_LEADING_BINOP_CONTINUATION по nova_tests (как в CI)"
 # (workflow nova-doc.yml) локально НЕ прогоняются. Этот job в CI сейчас красный,
 # и прежде чем ставить его в гейт, надо разобрать его отказ — иначе гейт
 # краснеет по чужому долгу и перестаёт быть сигналом. Записано в
-# docs/dev/promts/integrator-queue.md.
+# docs/dev/prompts/integrator-queue.md.
 
 step "пакетные репозитории (план 261 Ф.3 — №524)"
 # Список — ФАЙЛОМ, общим с CI. Перечисление в скрипте

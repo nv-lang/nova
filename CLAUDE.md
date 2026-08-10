@@ -8,7 +8,7 @@
 минут и чужой.
 
 **«Прочитай проект» = прочитать [AGENTS.md](AGENTS.md) целиком, затем
-[docs/dev/promts/read-project.md](docs/dev/promts/read-project.md)** (состояние,
+[docs/dev/read-project.md](docs/dev/read-project.md)** (состояние,
 архитектура, куда двигаться). Эта фраза владельца означает ровно это — не
 «просмотри репозиторий».
 

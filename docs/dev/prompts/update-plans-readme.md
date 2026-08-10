@@ -102,7 +102,7 @@ truth о статусе всех планов; должен оставаться
 > Закрыли Plan 57 Phase H (cross-platform additions — H.1 multi-group
 > geomean, H.2 hyperfine, H.3 valgrind callgrind). Обнови
 > `docs/plans/README.md` запись Plan 57 — добавь Phase H в описание
-> и обнови статус. Используй промпт docs/dev/promts/update-plans-readme.md.
+> и обнови статус. Используй промпт docs/dev/prompts/update-plans-readme.md.
 
 Агент должен:
 1. Прочитать `docs/plans/57-perf-benchmark-infrastructure.md` §5

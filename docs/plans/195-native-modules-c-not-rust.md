@@ -73,7 +73,7 @@ Module-path — относительно `src/` (D78, не включает `src
   `should_skip_path_full` переведены на манифест-derived путь вместо хардкода `std/...`.
   `include_str!` в `external_registry.rs` (компилятор собирает СЕБЯ — манифест читать некогда) —
   единственный легальный литеральный хардкод `std/src/...`, помечен doc-комментарием. Доки
-  (`docs/promts/*`, `test-conventions.md`, `module-conventions.md`, `ffi-cookbook.md`) и спека
+  (`docs/dev/prompts/*`, `test-conventions.md`, `module-conventions.md`, `ffi-cookbook.md`) и спека
   (D78-амендмент, `spec/decisions/07-modules.md`) поправлены. Новая форма команды: `nova test
   std/src/<домен>` (старая `std/<домен>` больше не существует на диске).
 

@@ -10,7 +10,7 @@
 > **New here?** How development actually works — plan-driven dev, the worktree
 > model, the daily loop — is in [docs/dev/dev-workflow.md](docs/dev/dev-workflow.md)
 > (Russian). Project state, architecture, where to go next:
-> [docs/dev/promts/read-project.md](docs/dev/promts/read-project.md). The reasoning
+> [docs/dev/read-project.md](docs/dev/read-project.md). The reasoning
 > behind every rule below, and what each of the 34 guards stops you doing:
 > [docs/dev/rules-for-agents.md](docs/dev/rules-for-agents.md).
 

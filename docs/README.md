@@ -34,7 +34,7 @@ design-rationale, «для контрибьюторов»/«для авторо�
 [`docs/dev/doc-conventions.md`](dev/doc-conventions.md)),
 процесс (`dev-workflow.md`, `test-conventions.md`, `mn-coding-conventions.md`,
 `naming-conventions.md`, ...), промпты для агентов —
-[`docs/dev/promts/`](dev/promts/) (онбординг: `read-project.md`,
+[`docs/dev/prompts/`](dev/prompts/) (онбординг: `read-project.md`,
 `read-toolchain.md`, `site-agent.md` и др.).
 
 Внутренние подпапки:
