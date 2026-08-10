@@ -31,13 +31,16 @@ import std.net.{TcpStream, TcpReadHalf, TcpWriteHalf}
 // `docs/plans/221.1-bug-sweep.md` №457. Left as an open question for the
 // owner: whichever way it resolves, this function keeps its `CancelToken`
 // for the EOF-relay reason above, independent of that mechanism's fate.
-fn pipe_bidirectional(consume a TcpStream, consume b TcpStream) Net -> () {
-    consume (ar, aw) = a.into_split()
-    consume (br, bw) = b.into_split()
+fn pipe_bidirectional(consume client TcpStream, consume upstream TcpStream) Net -> () {
+    consume (client_read, client_write) = client.into_split()
+    consume (upstream_read, upstream_write) = upstream.into_split()
     ro tok = CancelToken.new()
     supervised(cancel: tok) {
-        spawn consume ar, bw { pump(ar, bw, tok) }
-        spawn consume br, aw { pump(br, aw, tok) }
+        // One fiber per direction, each owning exactly the two halves it needs:
+        // the read end it drains and the write end it fills. The direction is
+        // then readable at the spawn site itself.
+        spawn consume client_read, upstream_write { pump(client_read, upstream_write, tok) }
+        spawn consume upstream_read, client_write { pump(upstream_read, client_write, tok) }
     }
 }
 
