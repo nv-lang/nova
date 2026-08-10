@@ -390,6 +390,38 @@ rm -f "${TMPDIR:-/tmp}/gate_flagship_list_$$.txt"
 echo "flagship :: собрано $FLAG_N"
 [ -z "$FLAG_FAILED" ] || fail "flagship examples не собрались:$FLAG_FAILED"
 
+step "flagship smoke (не собрать, а ЗАПУСТИТЬ — реестр 221.1 №548)"
+# Сборка ловит синтаксис и типы, но НЕ то, работает ли программа. Флагман-мост
+# вошёл в гейт 2026-08-10 и в тот же день оказался неработающим: туннель
+# открывался, и мост тут же сбрасывал соединение (корень — №552, дизарм не знал
+# встроенных конструкторов). Гейт этого не видел, потому что собирал и не
+# запускал. Родня №402 (гоняли `nova check std`, но не `nova test std`).
+#
+# Смоук обязан быть БЕЗ СЕКРЕТОВ: прежний требовал живого прокси с паролем и
+# потому не гонялся никогда — о поломке узнали от постороннего наблюдения.
+# Каждый скрипт ниже поднимает своё окружение сам (локальные стенды, loopback).
+FLAG_SMOKES="
+examples/flagship/http_proxy_chain/tools/smoke.sh
+"
+SMOKE_FAILED=""
+SMOKE_N=0
+for _s in $FLAG_SMOKES; do
+    [ -f "$ROOT/$_s" ] || { echo "smoke :: НЕТ ФАЙЛА $_s"; SMOKE_FAILED="$SMOKE_FAILED $_s"; continue; }
+    SMOKE_N=$((SMOKE_N + 1))
+    _slog="${TMPDIR:-/tmp}/gate_smoke_$$.log"
+    bash "$ROOT/scripts/tools/with-deadline.sh" 300 bash "$ROOT/$_s" >"$_slog" 2>&1
+    if [ $? -eq 0 ]; then
+        echo "smoke ok :: $_s"
+    else
+        echo "smoke FAIL :: $_s"
+        tail -5 "$_slog" | sed 's/^/    /'
+        SMOKE_FAILED="$SMOKE_FAILED $_s"
+    fi
+    rm -f "$_slog"
+done
+echo "smoke :: прогнано $SMOKE_N"
+[ -z "$SMOKE_FAILED" ] || fail "флагман-смоук красный:$SMOKE_FAILED"
+
 # ── ПАРИТЕТ С CI (реестр 221.1 №516) ────────────────────────────────────────
 # Ниже — шаги, которые CI считает блокирующими, а локальный гейт не делал.
 # Пока их не было, «локально зелено» означало меньше, чем выглядело: 147
