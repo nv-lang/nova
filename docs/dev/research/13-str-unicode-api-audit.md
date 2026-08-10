@@ -167,7 +167,7 @@ export fn str @concat(other str) -> str
 
 export fn str @find(needle str) -> Option[int]
     ensures match result {
-        Some(idx) => idx >= 0 && idx <= @byte_len() - needle.byte_len(),
+        Some(idx) => idx >= 0 && idx <= @byte_len() - needle.byte_len()
         None => true
     }
 => ...

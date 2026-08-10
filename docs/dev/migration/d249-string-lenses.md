@@ -46,8 +46,8 @@ for b in s.as_bytes() { ... }
 
 // find + slice (byte offsets compose at O(1))
 match s.find("=") {
-    Some(k) => ro rest = s[k+1..],    // byte-range slice
-    None => ...,
+    Some(k) => ro rest = s[k+1..]     // byte-range slice
+    None => ...
 }
 ```
 

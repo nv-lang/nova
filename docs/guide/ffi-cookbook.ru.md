@@ -392,9 +392,9 @@ type Sqlite3Handle(*sqlite3)               // tuple newtype, zero-overhead
 
 unsafe {
     match sqlite3_open(path) {
-        (Some(h), 0) => use_handle(h),
-        (None, rc)   => Fail.throw(DbError.OpenFailed(rc)),
-        (Some(_), rc) => Fail.throw(DbError.OpenFailed(rc)),  // C bug
+        (Some(h), 0) => use_handle(h)
+        (None, rc)   => Fail.throw(DbError.OpenFailed(rc))
+        (Some(_), rc) => Fail.throw(DbError.OpenFailed(rc))  // C bug
     }
 }
 ```

@@ -51,8 +51,8 @@ type Service consume {
 
 fn Service @file_id() -> Option[int] {
     match @file {                          // ← view-match
-        Some(f) => Some(f.fd),                  // f: view-bound, read-only (no consume keyword)
-        None => None,
+        Some(f) => Some(f.fd)                   // f: view-bound, read-only (no consume keyword)
+        None => None
     }
     // @.file остаётся Live (не Consumed) ✅
 }
