@@ -11081,6 +11081,13 @@ impl Parser {
         // исключающи (обе задают срок; выбери одну форму).
         let mut cancel: Option<Box<Expr>> = None;
         let mut deadline: Option<crate::ast::SupervisedDeadline> = None;
+        // D449: `on_timeout:` — handler called instead of raising
+        // `Fail[TimeoutError]` when THIS scope's own deadline/timeout
+        // expires. `on_timeout_span` remembers where it was written so the
+        // post-loop "requires deadline:/timeout:" check below can point the
+        // diagnostic at the argument itself, not at `supervised`.
+        let mut on_timeout: Option<Box<Expr>> = None;
+        let mut on_timeout_span: Option<Span> = None;
         if matches!(self.peek().kind, TokenKind::LParen) {
             self.bump(); // (
             self.skip_newlines();
@@ -11088,7 +11095,8 @@ impl Parser {
                 let arg_span = self.peek().span;
                 let name = match &self.peek().kind {
                     TokenKind::Ident(n)
-                        if n == "cancel" || n == "deadline" || n == "timeout" =>
+                        if n == "cancel" || n == "deadline" || n == "timeout"
+                            || n == "on_timeout" =>
                     {
                         n.clone()
                     }
@@ -11096,10 +11104,11 @@ impl Parser {
                         return Err(Diagnostic::new(
                             format!(
                                 "`supervised` accepts only named arguments \
-                                 `cancel:`, `deadline:`, `timeout:` (got {}); use \
-                                 `supervised(cancel: tok) {{ ... }}`, \
-                                 `supervised(deadline: mono) {{ ... }}` or \
-                                 `supervised(timeout: dur) {{ ... }}`",
+                                 `cancel:`, `deadline:`, `timeout:`, `on_timeout:` \
+                                 (got {}); use `supervised(cancel: tok) {{ ... }}`, \
+                                 `supervised(deadline: mono) {{ ... }}`, \
+                                 `supervised(timeout: dur) {{ ... }}` or \
+                                 `supervised(timeout: dur, on_timeout: |e| ...) {{ ... }}`",
                                 other.name()
                             ),
                             self.peek().span,
@@ -11136,6 +11145,16 @@ impl Parser {
                             span: arg_span,
                         });
                     }
+                    "on_timeout" => {
+                        if on_timeout.is_some() {
+                            return Err(Diagnostic::new(
+                                "duplicate `on_timeout:` argument in `supervised`".to_string(),
+                                arg_span,
+                            ));
+                        }
+                        on_timeout = Some(Box::new(expr));
+                        on_timeout_span = Some(arg_span);
+                    }
                     _ => unreachable!(),
                 }
                 self.skip_newlines();
@@ -11152,10 +11171,25 @@ impl Parser {
             self.skip_newlines();
             self.expect(&TokenKind::RParen)?;
         }
+        // D449: `on_timeout:` without `deadline:`/`timeout:` can NEVER fire
+        // (no deadline is ever armed) — silent dead code, forbidden by the
+        // language's never-silent-garbage discipline (D317, same principle
+        // D408's zero/negative-deadline rule cites). Reject at parse time,
+        // same place the `cancel`/`deadline` mutual-exclusion check lives.
+        if let (Some(_), None) = (&on_timeout, &deadline) {
+            return Err(Diagnostic::new(
+                "[E_SUPERVISED_ON_TIMEOUT_NO_DEADLINE] `on_timeout:` requires \
+                 `deadline:` or `timeout:` — without a scope deadline this \
+                 handler could never fire (D449); add `timeout: d` (or \
+                 `deadline: mono`) alongside `on_timeout:`"
+                    .to_string(),
+                on_timeout_span.expect("on_timeout is Some ⇒ its span was recorded"),
+            ));
+        }
         let block = self.parse_block()?;
         let end = block.span;
         Ok(Expr::new(
-            ExprKind::Supervised { body: block, cancel, deadline },
+            ExprKind::Supervised { body: block, cancel, deadline, on_timeout },
             start.merge(end),
         ))
     }

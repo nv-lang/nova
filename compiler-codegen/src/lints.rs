@@ -1400,13 +1400,16 @@ fn collect_expr(e: &Expr, out: &mut HashSet<String>) {
         ExprKind::ClosureFull(sb) => collect_fn_sig_body(sb, out),
         ExprKind::Spawn(body) => collect_expr(body, out),
         ExprKind::Detach(body) | ExprKind::Blocking(body) => collect_block(body, out),
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             if let Some(c) = cancel {
                 collect_expr(c, out);
             }
             if let Some(_dl) = deadline {
                 let _dl_e = &_dl.expr;
                 collect_expr(_dl_e, out);
+            }
+            if let Some(oh) = on_timeout {
+                collect_expr(oh, out);
             }
             collect_block(body, out);
         }
@@ -2537,10 +2540,11 @@ fn walk_expr_lints(e: &Expr, out: &mut Vec<LintWarning>) {
         ExprKind::Block(b) => walk_block_lints(b, out),
         ExprKind::Spawn(x) => walk_expr_lints(x, out),
         ExprKind::Detach(b) | ExprKind::Blocking(b) => walk_block_lints(b, out),
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             walk_block_lints(body, out);
             if let Some(c) = cancel { walk_expr_lints(c, out); }
             if let Some(_dl) = deadline { walk_expr_lints(&_dl.expr, out); }
+            if let Some(oh) = on_timeout { walk_expr_lints(oh, out); }
         }
         ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
             walk_block_lints(body, out);
@@ -3981,12 +3985,15 @@ fn conv_walk_expr(
         ExprKind::Detach(b) | ExprKind::Blocking(b) => {
             conv_walk_block(b, in_loop, on_stmt, on_expr)
         }
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             if let Some(c) = cancel {
                 conv_walk_expr(c, in_loop, on_stmt, on_expr);
             }
             if let Some(dl) = deadline {
                 conv_walk_expr(&dl.expr, in_loop, on_stmt, on_expr);
+            }
+            if let Some(oh) = on_timeout {
+                conv_walk_expr(oh, in_loop, on_stmt, on_expr);
             }
             conv_walk_block(body, in_loop, on_stmt, on_expr);
         }
@@ -5388,12 +5395,15 @@ fn conv_walk_expr_for_while_counter(e: &Expr, out: &mut Vec<LintWarning>) {
         ExprKind::Lambda { body, .. } => conv_walk_expr_for_while_counter(body, out),
         ExprKind::Spawn(x) | ExprKind::Throw(x) => conv_walk_expr_for_while_counter(x, out),
         ExprKind::Detach(b) | ExprKind::Blocking(b) => conv_walk_block_for_while_counter(b, out),
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             if let Some(c) = cancel {
                 conv_walk_expr_for_while_counter(c, out);
             }
             if let Some(dl) = deadline {
                 conv_walk_expr_for_while_counter(&dl.expr, out);
+            }
+            if let Some(oh) = on_timeout {
+                conv_walk_expr_for_while_counter(oh, out);
             }
             conv_walk_block_for_while_counter(body, out);
         }
@@ -7731,12 +7741,15 @@ fn conv_walk_expr_for_destructure(e: &Expr, out: &mut Vec<LintWarning>) {
         ExprKind::Lambda { body, .. } => conv_walk_expr_for_destructure(body, out),
         ExprKind::Spawn(x) | ExprKind::Throw(x) => conv_walk_expr_for_destructure(x, out),
         ExprKind::Detach(b) | ExprKind::Blocking(b) => conv_walk_block_for_destructure(b, out),
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             if let Some(c) = cancel {
                 conv_walk_expr_for_destructure(c, out);
             }
             if let Some(dl) = deadline {
                 conv_walk_expr_for_destructure(&dl.expr, out);
+            }
+            if let Some(oh) = on_timeout {
+                conv_walk_expr_for_destructure(oh, out);
             }
             conv_walk_block_for_destructure(body, out);
         }

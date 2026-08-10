@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR E_SUPERVISED_ON_TIMEOUT_NO_DEADLINE
+//
+// D449: `on_timeout:` requires a scope deadline (`deadline:`/`timeout:`) —
+// without one the handler could never fire, so the form is rejected at
+// parse time (never-silent-garbage, D317, same principle D408's zero/
+// negative-deadline rule cites).
+
+module neg.supervised_on_timeout_no_deadline
+fn process() -> int {
+    // nova:expect E_SUPERVISED_ON_TIMEOUT_NO_DEADLINE -- on_timeout without timeout:/deadline: can never fire (D449)
+    supervised(on_timeout: |_e| -1) {
+        1
+    }
+}
+
+test "on_timeout without deadline/timeout — parse error" {
+    process()
+}

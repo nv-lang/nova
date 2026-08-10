@@ -14306,6 +14306,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         body: &Block,
         cancel: Option<&Expr>,
         deadline: Option<&crate::ast::SupervisedDeadline>,
+        on_timeout: Option<&Expr>,
     ) -> Result<String, String>
     {
         let id = self.supervised_counter;
@@ -14364,7 +14365,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 }
             }
         }
-        let result_var = body.trailing.as_ref().and_then(|t| {
+        let result_var_ty = body.trailing.as_ref().and_then(|t| {
             let ty = self.infer_expr_c_type(t);
             // Empty string is `infer_expr_c_type`'s own "unhandled ExprKind, caller
             // should degrade to nova_unit" convention (see its final wildcard arm) —
@@ -14383,7 +14384,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 None => { self.var_types.remove(&name); }
             }
         }
-        let result_var = result_var.map(|(ty, var)| {
+        // D449: keep the trailing's C type around (`result_c_ty`) — needed
+        // below to cast the `on_timeout:` handler call to the SAME return
+        // type as the body ("тип конструкции всегда равен типу тела").
+        // `None` here means the body is unit-typed; the handler call is
+        // still emitted (for its side effects / to catch a handler that
+        // itself misbehaves) but cast to `nova_unit` and discarded, exactly
+        // like the pre-existing unit-typed-trailing path below.
+        let result_c_ty = result_var_ty.as_ref().map(|(ty, _)| ty.clone());
+        let result_var = result_var_ty.map(|(ty, var)| {
             self.line(&format!("{} {};", ty, var));
             var
         });
@@ -14492,10 +14501,113 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
         }
 
+        // D449: evaluate the `on_timeout:` handler expr ONCE at scope entry
+        // — source order, `on_timeout: h` stands before `{ body }`, same as
+        // `cancel:`/`deadline:` above. Stored in a stable local (plain C
+        // stack var — Boehm's conservative scan covers it, no TLS-pin
+        // needed the way `with Fail`'s handler value requires) because the
+        // catch-branch below reads it a second time; re-evaluating the
+        // source expression there would re-run any side effects and could
+        // observe a different closure value entirely.
+        let on_timeout_var = if let Some(ohexpr) = on_timeout {
+            // [M-on-timeout-closure-param-ty]: an UNANNOTATED closure literal
+            // (`|_e| Err(ReadFailed)`, the D449-canonical form) would
+            // otherwise have its param typed by `emit_lambda`'s OWN default
+            // fallback chain — which, reached through the plain
+            // `ExprKind::ClosureLight` dispatch (`context_param_tys: None`),
+            // bottoms out at `nova_int` (Plan 70 PhaseA2 Cat D). The
+            // call-site below invokes this closure through a RAW function-
+            // pointer cast to `(ret)(*)(void*, Nova_TimeoutError*)` (no C-
+            // level signature check on that cast — function-pointer casts
+            // are unchecked in C); if the closure's OWN generated body
+            // unpacks its param as `nova_int`, a real read of the handler's
+            // `e.deadline_ns` would reinterpret the pointer bit-pattern as
+            // an integer — silently wrong, not even a crash. Fix: emit the
+            // closure directly via `emit_lambda` (bypassing the generic
+            // `ExprKind::ClosureLight`/`ClosureFull` dispatch arms, which
+            // pass `context_param_tys: None`) with `context_param_tys`
+            // supplying `Nova_TimeoutError*` for its first param — mirrors
+            // `desugar_handler_lambda`'s identical "inject inferred first-
+            // param type" trick for `with Fail[E] = |e| …` (Plan 61 Ф.3).
+            // Also supplies the expected return type (this scope's own
+            // `result_c_ty`, or `nova_unit`) so the body infers/coerces
+            // against the SAME type the construct itself must produce
+            // (D449 "тип конструкции всегда равен типу тела"). A NON-
+            // closure `on_timeout:` (a named `fn` reference, an existing
+            // closure-typed variable, …) already carries its own correct,
+            // independently-checked signature — falls through to the
+            // ordinary `emit_expr` path unchanged.
+            let ret_c_ty = result_c_ty.clone().unwrap_or_else(|| "nova_unit".to_string());
+            let ov = match &ohexpr.kind {
+                ExprKind::ClosureLight { params, body } => {
+                    let legacy_params: Vec<LambdaParam> = params
+                        .iter()
+                        .map(|p| LambdaParam { name: p.name.clone(), ty: None, span: p.span })
+                        .collect();
+                    let body_expr: Expr = match body {
+                        crate::ast::ClosureBody::Expr(e) => (**e).clone(),
+                        crate::ast::ClosureBody::Block(b) => Expr::new(
+                            ExprKind::Block(b.clone()), b.span,
+                        ),
+                    };
+                    let ctx = [("Nova_TimeoutError*".to_string(), ret_c_ty.clone())];
+                    self.emit_lambda(&legacy_params, &body_expr, Some(&ctx), None, ohexpr.id)?
+                }
+                ExprKind::ClosureFull(sb) => {
+                    let legacy_params: Vec<LambdaParam> = sb.params
+                        .iter()
+                        .map(|p| LambdaParam { name: p.name.clone(), ty: Some(p.ty.clone()), span: p.span })
+                        .collect();
+                    let body_expr: Expr = match &sb.body {
+                        FnBody::Expr(e) => e.clone(),
+                        FnBody::Block(b) => Expr::new(ExprKind::Block(b.clone()), b.span),
+                        FnBody::External => return Err(
+                            "`on_timeout:` handler cannot be `external`".to_string()
+                        ),
+                    };
+                    let ctx = [("Nova_TimeoutError*".to_string(), ret_c_ty.clone())];
+                    self.emit_lambda(&legacy_params, &body_expr, Some(&ctx), sb.return_type.as_ref(), ohexpr.id)?
+                }
+                _ => self.emit_expr(ohexpr)?,
+            };
+            let tv = format!("_nova_on_timeout_{}", id);
+            self.line(&format!("void* {} = (void*)({});", tv, ov));
+            Some(tv)
+        } else {
+            None
+        };
+
         // Plan 221.1 №162 (D439): do NOT repoint _nova_active_scope/_slot at
         // `queue` — untouched, a direct body blocking op parks correctly on
         // this coroutine's real (scope,slot). fibers.h (nova_scope_free_slot) + D435.
         self.line(&format!("NovaFiberQueue* {} = _nova_active_scope;", prev_scope_var));
+
+        // D449: open an OUTER catch around everything from here through the
+        // run/join call + active-scope restore — the two places THIS
+        // scope's own TimeoutError can originate (the early-deadline timer,
+        // armed just below, firing while a body statement is parked; or the
+        // join-loop's own deadline gate inside `nova_supervised_run(_cancel)`
+        // further down, D439/№165). A body-direct throw first hits the
+        // INNER body-only guard (`guard_var`, below) which unconditionally
+        // cleans up + `nova_rethrow_scope`s — that re-throw lands HERE
+        // (this frame was pushed first, so it's next on the fail-frame
+        // stack once the inner one pops itself). Only a TimeoutError whose
+        // `error_user_type_id` matches THIS scope's own throw
+        // (`NOVA_TID_USER_TimeoutError`) is handled by calling
+        // `on_timeout`; anything else (a real body USER error, a nested
+        // scope's own independent failure, a PANIC, …) is re-thrown
+        // unchanged — this frame is transparent to everything except its
+        // own scope's deadline. Gated on `on_timeout_var` — a plain
+        // `supervised(timeout:)` (no `on_timeout:`) emits none of this,
+        // byte-identical to before (D449 compatibility requirement).
+        let on_timeout_frame = on_timeout_var.as_ref().map(|_| {
+            let f = format!("_nova_ontimeout_frame_{}", id);
+            self.line(&format!("NovaFailFrame {};", f));
+            self.line(&format!("nova_fail_push(&{});", f));
+            self.line(&format!("if (setjmp({}.jmp) == 0) {{", f));
+            self.indent += 1;
+            f
+        });
 
         // Plan 221.1 №165: arm the early-deadline timer (fibers.h) NOW —
         // `queue_var.deadline_ns` has its final value (inherited via
@@ -14637,6 +14749,58 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             self.line(&format!("{} = {};", rv, v));
         }
 
+        // D449: close the outer on_timeout catch opened above. Catch
+        // branch: restore `_nova_active_scope` (this frame is standing in
+        // for what a `with Fail[TimeoutError]` wrapping the whole scope
+        // from outside would do — same longjmp-safety hazard the
+        // `with`-block's own `active_scope_save` documents: skipping this
+        // leaves `_nova_active_scope` dangling at this freed frame, and the
+        // NEXT scope_init would inherit its garbage `deadline_ns`). Then
+        // dispatch on the caught error's type: THIS scope's own
+        // TimeoutError → call `on_timeout(e)`, cast to the body's own
+        // return type (or `nova_unit` when the body has none — the call
+        // still happens, for its side effects / so a misbehaving handler's
+        // own throw is observable, just discarded); anything else →
+        // re-throw unchanged via the same `nova_rethrow_scope` point the
+        // inner body-guard already uses.
+        if let Some(f) = &on_timeout_frame {
+            self.line("nova_fail_pop();");
+            self.indent -= 1;
+            self.line("} else {");
+            self.indent += 1;
+            self.line("nova_fail_pop();");
+            self.line(&format!("_nova_active_scope = {};", prev_scope_var));
+            self.line(&format!(
+                "if ({f}.error_user_type_id == NOVA_TID_USER_TimeoutError) {{",
+                f = f
+            ));
+            self.indent += 1;
+            let callee = on_timeout_var.as_ref()
+                .expect("on_timeout_frame is Some only when on_timeout_var is Some");
+            let ret_for_call = result_c_ty.clone().unwrap_or_else(|| "nova_unit".to_string());
+            let call_expr = format!(
+                "(({ret}(*)(void*, Nova_TimeoutError*))(((NovaClosBase*)({cb}))->fn))\
+                 (((NovaClosBase*)({cb}))->env, (Nova_TimeoutError*)({f}.error_user_payload))",
+                ret = ret_for_call, cb = callee, f = f
+            );
+            match &result_var {
+                Some(rv) => self.line(&format!("{} = {};", rv, call_expr)),
+                None => self.line(&format!("(void)({});", call_expr)),
+            }
+            self.indent -= 1;
+            self.line("} else {");
+            self.indent += 1;
+            self.line(&format!(
+                "nova_rethrow_scope({f}.error_msg.ptr, {f}.error_kind, \
+                 {f}.error_user_payload, {f}.error_user_type_id, {f}.error_suppressed);",
+                f = f
+            ));
+            self.indent -= 1;
+            self.line("}");
+            self.indent -= 1;
+            self.line("}");
+        }
+
         self.indent -= 1;
         self.line("}");
 
@@ -14760,7 +14924,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         span,
                     );
                     let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span, is_unsafe: false };
-                    self.emit_supervised(&supervised_block, None, None)?;
+                    self.emit_supervised(&supervised_block, None, None, None)?;
                     self.indent -= 1;
                     self.line("}");
                     self.indent -= 1;
@@ -14781,7 +14945,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 span,
             );
             let supervised_block = Block { stmts: vec![Stmt::Expr(for_expr)], trailing: None, span, is_unsafe: false };
-            return self.emit_supervised(&supervised_block, None, None);
+            return self.emit_supervised(&supervised_block, None, None, None);
         }
 
         // ──────────────────────────────────────────────────────────────────
@@ -16120,10 +16284,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
             ExprKind::Interrupt(Some(v)) => Self::collect_idents_expr(v, out),
             ExprKind::Block(b) => Self::collect_idents_block(b, out),
-            ExprKind::Supervised { body, cancel, deadline } => {
+            ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
                 Self::collect_idents_block(body, out);
                 if let Some(c) = cancel { Self::collect_idents_expr(c, out); }
                 if let Some(dl) = deadline { Self::collect_idents_expr(&dl.expr, out); }
+                if let Some(oh) = on_timeout { Self::collect_idents_expr(oh, out); }
             }
             ExprKind::Detach(b) | ExprKind::Blocking(b) => Self::collect_idents_block(b, out),
             ExprKind::Select { arms } => {
@@ -16331,10 +16496,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
             ExprKind::Interrupt(Some(v)) => rce(self, v, out),
             ExprKind::Block(b) => self.collect_resolved_call_target_names_block(b, out),
-            ExprKind::Supervised { body, cancel, deadline } => {
+            ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
                 self.collect_resolved_call_target_names_block(body, out);
                 if let Some(c) = cancel { rce(self, c, out); }
                 if let Some(dl) = deadline { rce(self, &dl.expr, out); }
+                if let Some(oh) = on_timeout { rce(self, oh, out); }
             }
             ExprKind::Detach(b) | ExprKind::Blocking(b) => self.collect_resolved_call_target_names_block(b, out),
             ExprKind::Select { arms } => {
@@ -37330,8 +37496,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             ExprKind::Spawn(body) => {
                 self.emit_spawn(body)
             }
-            ExprKind::Supervised { body, cancel, deadline } => {
-                self.emit_supervised(body, cancel.as_deref(), deadline.as_ref())
+            ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
+                self.emit_supervised(body, cancel.as_deref(), deadline.as_ref(), on_timeout.as_deref())
             }
             ExprKind::Detach(body) => {
                 self.emit_detach(body)
@@ -52860,13 +53026,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 for s in &b.stmts { Self::collect_free_idents_stmt(s, out); }
                 if let Some(t) = &b.trailing { Self::collect_free_idents(t, out); }
             }
-            ExprKind::Supervised { body, cancel, deadline } => {
+            ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
                 for s in &body.stmts { Self::collect_free_idents_stmt(s, out); }
                 if let Some(t) = &body.trailing { Self::collect_free_idents(t, out); }
                 // Plan 47: cancel-token expr — свободный идентификатор scope'а.
                 if let Some(c) = cancel { Self::collect_free_idents(c, out); }
                 // Plan 174 (D349): deadline/timeout expr — тоже свободный.
                 if let Some(dl) = deadline { Self::collect_free_idents(&dl.expr, out); }
+                // D449: on_timeout handler expr — тоже свободный.
+                if let Some(oh) = on_timeout { Self::collect_free_idents(oh, out); }
             }
             ExprKind::Select { arms } => {
                 for arm in arms {
@@ -53018,13 +53186,16 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             ExprKind::Detach(b) | ExprKind::Blocking(b) => {
                 Self::collect_truly_free_idents_block(b, bound, out);
             }
-            ExprKind::Supervised { body, cancel, deadline } => {
+            ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
                 Self::collect_truly_free_idents_block(body, bound, out);
                 if let Some(c) = cancel {
                     Self::collect_truly_free_idents(c, bound, out);
                 }
                 if let Some(dl) = deadline {
                     Self::collect_truly_free_idents(&dl.expr, bound, out);
+                }
+                if let Some(oh) = on_timeout {
+                    Self::collect_truly_free_idents(oh, bound, out);
                 }
             }
             ExprKind::Select { arms } => {
@@ -57511,13 +57682,16 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
             ExprKind::Interrupt(Some(v)) => ve(v, out),
             ExprKind::Block(b) => vb(b, out),
-            ExprKind::Supervised { body, cancel, deadline } => {
+            ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
                 vb(body, out);
                 if let Some(c) = cancel {
                     ve(c, out);
                 }
                 if let Some(dl) = deadline {
                     ve(&dl.expr, out);
+                }
+                if let Some(oh) = on_timeout {
+                    ve(oh, out);
                 }
             }
             ExprKind::Detach(b) | ExprKind::Blocking(b) => vb(b, out),

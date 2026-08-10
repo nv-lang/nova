@@ -7679,13 +7679,16 @@ impl<'a> TypeCheckCtx<'a> {
             ExprKind::ClosureFull(sb) => self.walk_fn_sig_body(sb, gs, errors),
             ExprKind::Spawn(body) => self.walk_expr(body, gs, errors),
             ExprKind::Detach(body) | ExprKind::Blocking(body) => self.walk_block(body, gs, errors),
-            ExprKind::Supervised { body, cancel, deadline } => {
+            ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
                 if let Some(c) = cancel {
                     self.walk_expr(c, gs, errors);
                 }
                 if let Some(_dl) = deadline {
                     let _dl_e = &_dl.expr;
                     self.walk_expr(_dl_e, gs, errors);
+                }
+                if let Some(oh) = on_timeout {
+                    self.walk_expr(oh, gs, errors);
                 }
                 self.walk_block(body, gs, errors);
             }
@@ -11695,13 +11698,16 @@ impl<'a> TypeCheckCtx<'a> {
                 self.f1_expr(body, gs, scope, errors)
             }
             ExprKind::Detach(body) | ExprKind::Blocking(body) => self.f1_block(body, gs, scope, errors),
-            ExprKind::Supervised { body, cancel, deadline } => {
+            ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
                 if let Some(c) = cancel {
                     self.f1_expr(c, gs, scope, errors);
                 }
                 if let Some(_dl) = deadline {
                     let _dl_e = &_dl.expr;
                     self.f1_expr(_dl_e, gs, scope, errors);
+                }
+                if let Some(oh) = on_timeout {
+                    self.f1_expr(oh, gs, scope, errors);
                 }
                 self.f1_block(body, gs, scope, errors);
             }
@@ -27038,9 +27044,10 @@ impl<'a> BoundCtx<'a> {
             },
             ExprKind::Spawn(body) => self.walk_expr(body, scope, errors),
             ExprKind::Detach(body) | ExprKind::Blocking(body) => self.walk_block(body, scope, errors),
-            ExprKind::Supervised { body, cancel, deadline } => {
+            ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
                 if let Some(c) = cancel { self.walk_expr(c, scope, errors); }
                 if let Some(_dl) = deadline { self.walk_expr(&_dl.expr, scope, errors); }
+                if let Some(oh) = on_timeout { self.walk_expr(oh, scope, errors); }
                 self.walk_block(body, scope, errors);
             }
             ExprKind::Forbid { body, .. } => self.walk_block(body, scope, errors),
@@ -30661,13 +30668,14 @@ impl<'a> CapabilityCtx<'a> {
                 // focused on the `detach` gap.
                 self.walk_block(body, state, errors);
             }
-            ExprKind::Supervised { body, cancel, deadline } => {
+            ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
                 // Plan 173.3 addendum ([M-const-init-concurrency-gate]).
                 if state.const_init {
                     self.const_init_concurrency_error("`supervised { }`", e.span, errors);
                 }
                 if let Some(c) = cancel { self.walk_expr(c, state, errors); }
                 if let Some(_dl) = deadline { self.walk_expr(&_dl.expr, state, errors); }
+                if let Some(oh) = on_timeout { self.walk_expr(oh, state, errors); }
                 self.walk_block(body, state, errors);
             }
             ExprKind::ParallelFor { iter, body, pattern, elem_type } => {
@@ -32058,9 +32066,10 @@ pub(crate) fn capture_scan_expr(e: &Expr, shadow: &mut HashSet<String>, free: &m
         // locally bound in between).
         ExprKind::Spawn(inner) => capture_scan_expr(inner, shadow, free),
         ExprKind::Detach(b) | ExprKind::Blocking(b) => capture_scan_block(b, shadow, free),
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             if let Some(c) = cancel { capture_scan_expr(c, shadow, free); }
             if let Some(dl) = deadline { capture_scan_expr(&dl.expr, shadow, free); }
+            if let Some(oh) = on_timeout { capture_scan_expr(oh, shadow, free); }
             capture_scan_block(body, shadow, free);
         }
         ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
@@ -32455,9 +32464,10 @@ fn own_fiber_call_names_expr(e: &Expr, out: &mut HashSet<String>) {
             own_fiber_call_names_block(body, out);
         }
         ExprKind::Loop { body, .. } => own_fiber_call_names_block(body, out),
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             if let Some(c) = cancel { own_fiber_call_names_expr(c, out); }
             if let Some(dl) = deadline { own_fiber_call_names_expr(&dl.expr, out); }
+            if let Some(oh) = on_timeout { own_fiber_call_names_expr(oh, out); }
             own_fiber_call_names_block(body, out);
         }
         // Same stance as `expr_contains_fiber_boundary`'s `With` arm — only
@@ -32597,9 +32607,10 @@ fn collect_fiber_boundary_frees_expr(e: &Expr, out: &mut Vec<HashSet<String>>) {
             collect_fiber_boundary_frees_block(body, out);
         }
         ExprKind::Loop { body, .. } => collect_fiber_boundary_frees_block(body, out),
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             if let Some(c) = cancel { collect_fiber_boundary_frees_expr(c, out); }
             if let Some(dl) = deadline { collect_fiber_boundary_frees_expr(&dl.expr, out); }
+            if let Some(oh) = on_timeout { collect_fiber_boundary_frees_expr(oh, out); }
             collect_fiber_boundary_frees_block(body, out);
         }
         ExprKind::With { bindings, body } => {
@@ -33151,9 +33162,10 @@ fn field_taint_expr(
             field_taint_block(body, self_ty, in_boundary, var_types.clone(), field_bindings.clone(), type_decls, called_params, out);
         }
         ExprKind::Loop { body, .. } => field_taint_block(body, self_ty, in_boundary, var_types.clone(), field_bindings.clone(), type_decls, called_params, out),
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             if let Some(c) = cancel { field_taint_expr(c, self_ty, in_boundary, var_types, field_bindings, type_decls, called_params, out); }
             if let Some(dl) = deadline { field_taint_expr(&dl.expr, self_ty, in_boundary, var_types, field_bindings, type_decls, called_params, out); }
+            if let Some(oh) = on_timeout { field_taint_expr(oh, self_ty, in_boundary, var_types, field_bindings, type_decls, called_params, out); }
             field_taint_block(body, self_ty, in_boundary, var_types.clone(), field_bindings.clone(), type_decls, called_params, out);
         }
         ExprKind::With { bindings, body } => {
@@ -33415,9 +33427,10 @@ fn field_write_param_scan_expr(
             field_write_param_scan_block(body, self_ty, tainted, out);
         }
         ExprKind::Loop { body, .. } => field_write_param_scan_block(body, self_ty, tainted, out),
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             if let Some(c) = cancel { field_write_param_scan_expr(c, self_ty, tainted, out); }
             if let Some(dl) = deadline { field_write_param_scan_expr(&dl.expr, self_ty, tainted, out); }
+            if let Some(oh) = on_timeout { field_write_param_scan_expr(oh, self_ty, tainted, out); }
             field_write_param_scan_block(body, self_ty, tainted, out);
         }
         ExprKind::With { bindings, body } => {
@@ -34474,7 +34487,7 @@ impl NameResCtx {
             ExprKind::Detach(body) | ExprKind::Blocking(body) => {
                 self.walk_block(body, file_id, scope, errors);
             }
-            ExprKind::Supervised { body, cancel, deadline } => {
+            ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
                 // Plan 47: `cancel:` expr — обычное выражение scope'а
                 // (типично `Ident` токена); резолвится в текущем scope'е,
                 // никаких новых биндингов не вводит.
@@ -34484,6 +34497,9 @@ impl NameResCtx {
                 if let Some(_dl) = deadline {
                     let _dl_e = &_dl.expr;
                     self.walk_expr(_dl_e, file_id, scope, errors);
+                }
+                if let Some(oh) = on_timeout {
+                    self.walk_expr(oh, file_id, scope, errors);
                 }
                 self.walk_block(body, file_id, scope, errors);
             }
@@ -35492,10 +35508,11 @@ fn collect_raw_effect_ops_expr(e: &Expr, known: &HashSet<String>, out: &mut Hash
             collect_raw_effect_ops_block(body, known, out);
         }
         ExprKind::Spawn(inner) => collect_raw_effect_ops_expr(inner, known, out),
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             collect_raw_effect_ops_block(body, known, out);
             if let Some(c) = cancel { collect_raw_effect_ops_expr(c, known, out); }
             if let Some(dl) = deadline { collect_raw_effect_ops_expr(&dl.expr, known, out); }
+            if let Some(oh) = on_timeout { collect_raw_effect_ops_expr(oh, known, out); }
         }
         ExprKind::ParallelFor { iter, body, .. } => {
             collect_raw_effect_ops_expr(iter, known, out);
@@ -35720,10 +35737,11 @@ fn has_throw_in_expr(e: &Expr) -> bool {
             has_throw_in_block(body)
         }
         ExprKind::Spawn(e) => has_throw_in_expr(e),
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             has_throw_in_block(body)
                 || cancel.as_ref().map_or(false, |c| has_throw_in_expr(c))
                 || deadline.as_ref().map_or(false, |dl| has_throw_in_expr(&dl.expr))
+                || on_timeout.as_ref().map_or(false, |oh| has_throw_in_expr(oh))
         }
         ExprKind::ParallelFor { iter, body, .. } =>
             has_throw_in_expr(iter) || has_throw_in_block(body),
@@ -36740,9 +36758,10 @@ fn walk_expr_for_handler_lits(e: &Expr, never_ops: &HashSet<(String, String)>, i
             walk_block_for_handler_lits(body, never_ops, in_supervisor, errors);
         }
         ExprKind::Detach(b) | ExprKind::Blocking(b) => walk_block_for_handler_lits(b, never_ops, in_supervisor, errors),
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             if let Some(c) = cancel { walk_expr_for_handler_lits(c, never_ops, in_supervisor, errors); }
             if let Some(_dl) = deadline { walk_expr_for_handler_lits(&_dl.expr, never_ops, in_supervisor, errors); }
+            if let Some(oh) = on_timeout { walk_expr_for_handler_lits(oh, never_ops, in_supervisor, errors); }
             walk_block_for_handler_lits(body, never_ops, in_supervisor, errors);
         }
         ExprKind::Spawn(ex) => walk_expr_for_handler_lits(ex, never_ops, in_supervisor, errors),
@@ -44916,9 +44935,10 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
             for wb in bindings { consume_walk_expr(ctx, &wb.handler, errors); }
             consume_walk_block(ctx, body, errors);
         }
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             if let Some(c) = cancel { consume_walk_expr(ctx, c, errors); }
             if let Some(_dl) = deadline { consume_walk_expr(ctx, &_dl.expr, errors); }
+            if let Some(oh) = on_timeout { consume_walk_expr(ctx, oh, errors); }
             consume_walk_block(ctx, body, errors);
         }
         ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
@@ -45372,9 +45392,10 @@ fn walk_expr_for_defers(e: &Expr, fn_effects: &HashMap<String, Vec<TypeRef>>, cu
         | ExprKind::Detach(body) | ExprKind::Blocking(body) => {
             walk_block_for_defers(body, fn_effects, current_fn_effects, errors);
         }
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             if let Some(c) = cancel { walk_expr_for_defers(c, fn_effects, current_fn_effects, errors); }
             if let Some(_dl) = deadline { walk_expr_for_defers(&_dl.expr, fn_effects, current_fn_effects, errors); }
+            if let Some(oh) = on_timeout { walk_expr_for_defers(oh, fn_effects, current_fn_effects, errors); }
             walk_block_for_defers(body, fn_effects, current_fn_effects, errors);
         }
         ExprKind::Call { func, args, trailing } => {
@@ -45585,9 +45606,10 @@ fn check_try_return_only_expr(e: &Expr, ret_ok: bool, errors: &mut Vec<Diagnosti
         | ExprKind::Detach(body) | ExprKind::Blocking(body) => {
             check_try_return_only_block(body, ret_ok, errors);
         }
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             if let Some(c) = cancel { check_try_return_only_expr(c, ret_ok, errors); }
             if let Some(_dl) = deadline { check_try_return_only_expr(&_dl.expr, ret_ok, errors); }
+            if let Some(oh) = on_timeout { check_try_return_only_expr(oh, ret_ok, errors); }
             check_try_return_only_block(body, ret_ok, errors);
         }
         ExprKind::Call { func, args, .. } => {
@@ -47312,10 +47334,11 @@ impl MapLitCtx {
             ExprKind::Block(b) => self.walk_block(b, errors),
             ExprKind::Spawn(x) => self.walk_expr(x, None, errors),
             ExprKind::Detach(b) | ExprKind::Blocking(b) => self.walk_block(b, errors),
-            ExprKind::Supervised { body, cancel, deadline } => {
+            ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
                 self.walk_block(body, errors);
                 if let Some(c) = cancel { self.walk_expr(c, None, errors); }
                 if let Some(_dl) = deadline { self.walk_expr(&_dl.expr, None, errors); }
+                if let Some(oh) = on_timeout { self.walk_expr(oh, None, errors); }
             }
             ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
                 self.walk_block(body, errors);
@@ -48901,10 +48924,11 @@ impl MapLitAnnotator {
             ExprKind::Block(b) => self.walk_block(b),
             ExprKind::Spawn(x) => self.walk_expr(x, None),
             ExprKind::Detach(b) | ExprKind::Blocking(b) => self.walk_block(b),
-            ExprKind::Supervised { body, cancel, deadline } => {
+            ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
                 self.walk_block(body);
                 if let Some(c) = cancel { self.walk_expr(c, None); }
                 if let Some(_dl) = deadline { self.walk_expr(&mut _dl.expr, None); }
+                if let Some(oh) = on_timeout { self.walk_expr(oh, None); }
             }
             ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
                 self.walk_block(body);
@@ -50132,9 +50156,10 @@ fn direct_suspend_call_in_expr(e: &Expr) -> Option<(String, Span)> {
                 .or_else(|| direct_suspend_call_in_block(body))
         }
         ExprKind::Loop { body, .. } => direct_suspend_call_in_block(body),
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             cancel.as_ref().and_then(|c| direct_suspend_call_in_expr(c))
                 .or_else(|| deadline.as_ref().and_then(|dl| direct_suspend_call_in_expr(&dl.expr)))
+                .or_else(|| on_timeout.as_ref().and_then(|oh| direct_suspend_call_in_expr(oh)))
                 .or_else(|| direct_suspend_call_in_block(body))
         }
         ExprKind::With { body, .. } => direct_suspend_call_in_block(body),
@@ -50456,9 +50481,10 @@ fn walk_expr_for_handler_op_decls(
             walk_block_for_handler_op_decls(body, effect_decls, errors);
         }
         ExprKind::Detach(b) | ExprKind::Blocking(b) => walk_block_for_handler_op_decls(b, effect_decls, errors),
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             if let Some(c) = cancel { walk_expr_for_handler_op_decls(c, effect_decls, errors); }
             if let Some(dl) = deadline { walk_expr_for_handler_op_decls(&dl.expr, effect_decls, errors); }
+            if let Some(oh) = on_timeout { walk_expr_for_handler_op_decls(oh, effect_decls, errors); }
             walk_block_for_handler_op_decls(body, effect_decls, errors);
         }
         ExprKind::Spawn(ex) => walk_expr_for_handler_op_decls(ex, effect_decls, errors),

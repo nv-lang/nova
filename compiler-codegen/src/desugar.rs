@@ -798,10 +798,11 @@ impl DesugarCtx {
             ExprKind::Block(b) => self.desugar_block(b),
             ExprKind::Spawn(x) => self.desugar_expr(x),
             ExprKind::Detach(b) | ExprKind::Blocking(b) => self.desugar_block(b),
-            ExprKind::Supervised { body, cancel, deadline } => {
+            ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
                 self.desugar_block(body);
                 if let Some(c) = cancel { self.desugar_expr(c); }
                 if let Some(_dl) = deadline { self.desugar_expr(&mut _dl.expr); }
+                if let Some(oh) = on_timeout { self.desugar_expr(oh); }
             }
             ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
                 self.desugar_block(body);

@@ -985,10 +985,11 @@ fn explain_walk_expr(
         ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. }
         | ExprKind::Detach(body) | ExprKind::Blocking(body) =>
             explain_walk_block(body, type_fields, info),
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             explain_walk_block(body, type_fields, info);
             if let Some(c) = cancel { explain_walk_expr(c, type_fields, info); }
             if let Some(_dl) = deadline { explain_walk_expr(&_dl.expr, type_fields, info); }
+            if let Some(oh) = on_timeout { explain_walk_expr(oh, type_fields, info); }
         }
         ExprKind::Spawn(e) | ExprKind::Throw(e) => explain_walk_expr(e, type_fields, info),
         ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::RefArg(e)
@@ -1790,10 +1791,11 @@ fn collect_writes_expr(
         | ExprKind::Detach(body) | ExprKind::Blocking(body) => {
             collect_writes_block(body, recv_type, writes, callees);
         }
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             collect_writes_block(body, recv_type, writes, callees);
             if let Some(c) = cancel { collect_writes_expr(c, recv_type, writes, callees); }
             if let Some(_dl) = deadline { collect_writes_expr(&_dl.expr, recv_type, writes, callees); }
+            if let Some(oh) = on_timeout { collect_writes_expr(oh, recv_type, writes, callees); }
         }
         ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::RefArg(e)
         | ExprKind::Member { obj: e, .. } | ExprKind::TurboFish { base: e, .. }
@@ -1991,9 +1993,10 @@ fn collect_reads_expr(e: &Expr, recv_type: &str, reads: &mut HashSet<String>, ca
         | ExprKind::Detach(body) | ExprKind::Blocking(body) => {
             collect_reads_block(body, recv_type, reads, callees);
         }
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             collect_reads_block(body, recv_type, reads, callees);
             if let Some(c) = cancel { collect_reads_expr(c, recv_type, reads, callees); }
+            if let Some(oh) = on_timeout { collect_reads_expr(oh, recv_type, reads, callees); }
             if let Some(_dl) = deadline { collect_reads_expr(&_dl.expr, recv_type, reads, callees); }
         }
         ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::RefArg(e)
@@ -2866,7 +2869,7 @@ fn count_field_reads_in_expr_weighted(e: &Expr, fname: &str, loop_mult: usize) -
         | ExprKind::Detach(body) | ExprKind::Blocking(body) => {
             c += count_field_reads_in_block_weighted(body, fname, loop_mult);
         }
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             c += count_field_reads_in_block_weighted(body, fname, loop_mult);
             if let Some(cc) = cancel {
                 c += count_field_reads_in_expr_weighted(cc, fname, loop_mult);
@@ -2874,6 +2877,9 @@ fn count_field_reads_in_expr_weighted(e: &Expr, fname: &str, loop_mult: usize) -
             if let Some(_dl) = deadline {
                 let _dl_e = &_dl.expr;
                 c += count_field_reads_in_expr_weighted(_dl_e, fname, loop_mult);
+            }
+            if let Some(oh) = on_timeout {
+                c += count_field_reads_in_expr_weighted(oh, fname, loop_mult);
             }
         }
         ExprKind::Spawn(e) | ExprKind::Throw(e) => c += count_field_reads_in_expr_weighted(e, fname, loop_mult),
@@ -3580,10 +3586,11 @@ fn expr_contains_write_to(e: &Expr, fname: &str) -> bool {
         | ExprKind::Detach(body) | ExprKind::Blocking(body) => {
             block_contains_write_to(body, fname)
         }
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             block_contains_write_to(body, fname)
                 || cancel.as_ref().map_or(false, |c| expr_contains_write_to(c, fname))
                 || deadline.as_ref().map_or(false, |dl| expr_contains_write_to(&dl.expr, fname))
+                || on_timeout.as_ref().map_or(false, |oh| expr_contains_write_to(oh, fname))
         }
         ExprKind::Spawn(e) | ExprKind::Throw(e) => expr_contains_write_to(e, fname),
         ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::RefArg(e) | ExprKind::Member { obj: e, .. }
@@ -3917,7 +3924,7 @@ fn count_field_reads_in_expr(e: &Expr, fname: &str) -> usize {
         | ExprKind::Detach(body) | ExprKind::Blocking(body) => {
             c += count_field_reads_in_block(body, fname);
         }
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             c += count_field_reads_in_block(body, fname);
             if let Some(cc) = cancel {
                 c += count_field_reads_in_expr(cc, fname);
@@ -3925,6 +3932,9 @@ fn count_field_reads_in_expr(e: &Expr, fname: &str) -> usize {
             if let Some(_dl) = deadline {
                 let _dl_e = &_dl.expr;
                 c += count_field_reads_in_expr(_dl_e, fname);
+            }
+            if let Some(oh) = on_timeout {
+                c += count_field_reads_in_expr(oh, fname);
             }
         }
         ExprKind::Spawn(e) | ExprKind::Throw(e) => c += count_field_reads_in_expr(e, fname),
@@ -4333,7 +4343,7 @@ fn analyze_expr_children(e: &Expr, fields: &HashMap<String, FieldKind>, a: &mut 
         }
         ExprKind::Block(b) => analyze_block(b, fields, a),
         ExprKind::Spawn(e) => analyze_expr(e, fields, a),
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             analyze_block(body, fields, a);
             if let Some(c) = cancel {
                 analyze_expr(c, fields, a);
@@ -4341,6 +4351,9 @@ fn analyze_expr_children(e: &Expr, fields: &HashMap<String, FieldKind>, a: &mut 
             if let Some(_dl) = deadline {
                 let _dl_e = &_dl.expr;
                 analyze_expr(_dl_e, fields, a);
+            }
+            if let Some(oh) = on_timeout {
+                analyze_expr(oh, fields, a);
             }
         }
         ExprKind::Detach(b) | ExprKind::Blocking(b) => analyze_block(b, fields, a),
@@ -4638,7 +4651,7 @@ fn scan_expr(e: &Expr, fields: &HashMap<String, FieldKind>, out: &mut HashSet<St
         }
         ExprKind::Block(b) => scan_block(b, fields, out),
         ExprKind::Spawn(e) => scan_expr(e, fields, out),
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             scan_block(body, fields, out);
             if let Some(c) = cancel {
                 scan_expr(c, fields, out);
@@ -4646,6 +4659,9 @@ fn scan_expr(e: &Expr, fields: &HashMap<String, FieldKind>, out: &mut HashSet<St
             if let Some(_dl) = deadline {
                 let _dl_e = &_dl.expr;
                 scan_expr(_dl_e, fields, out);
+            }
+            if let Some(oh) = on_timeout {
+                scan_expr(oh, fields, out);
             }
         }
         ExprKind::Detach(b) | ExprKind::Blocking(b) => scan_block(b, fields, out),
@@ -5019,7 +5035,7 @@ fn walk_children_for_locals(e: &Expr, out: &mut HashSet<String>) {
             collect_locals_expr(body, out);
         }
         ExprKind::Spawn(e) => collect_locals_expr(e, out),
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             collect_locals_block(body, out);
             if let Some(c) = cancel {
                 collect_locals_expr(c, out);
@@ -5027,6 +5043,9 @@ fn walk_children_for_locals(e: &Expr, out: &mut HashSet<String>) {
             if let Some(_dl) = deadline {
                 let _dl_e = &_dl.expr;
                 collect_locals_expr(_dl_e, out);
+            }
+            if let Some(oh) = on_timeout {
+                collect_locals_expr(oh, out);
             }
         }
         ExprKind::Detach(b) | ExprKind::Blocking(b) => collect_locals_block(b, out),
@@ -5503,11 +5522,14 @@ fn descend_expr_for_nested(
             process_nested_block_for_mut_field(body, fname, cfg, ipa,
                 local_names, seq, budget_left);
         }
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             process_nested_block_for_mut_field(body, fname, cfg, ipa,
                 local_names, seq, budget_left);
             if let Some(c) = cancel {
                 descend_expr_for_nested(c, fname, cfg, ipa, local_names, seq, budget_left);
+            }
+            if let Some(oh) = on_timeout {
+                descend_expr_for_nested(oh, fname, cfg, ipa, local_names, seq, budget_left);
             }
             if let Some(_dl) = deadline {
                 let _dl_e = &mut _dl.expr;
@@ -5933,10 +5955,13 @@ fn rewrite_expr_children(e: &mut Expr, replace_map: &HashMap<String, String>) {
         }
         ExprKind::Block(b) => rewrite_block(b, replace_map),
         ExprKind::Spawn(e) => rewrite_expr(e, replace_map),
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             rewrite_block(body, replace_map);
             if let Some(c) = cancel {
                 rewrite_expr(c, replace_map);
+            }
+            if let Some(oh) = on_timeout {
+                rewrite_expr(oh, replace_map);
             }
             if let Some(_dl) = deadline {
                 let _dl_e = &mut _dl.expr;
@@ -6312,7 +6337,7 @@ fn licm_expr(
         ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
             licm_block(body, fields, cfg, local_names, hoist_count, ipa);
         }
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             // Supervised body — concurrent (fibers). Skip LICM on body.
             let _ = body;
             if let Some(c) = cancel {
@@ -6321,6 +6346,9 @@ fn licm_expr(
             if let Some(_dl) = deadline {
                 let _dl_e = &mut _dl.expr;
                 licm_expr(_dl_e, fields, cfg, local_names, hoist_count, ipa);
+            }
+            if let Some(oh) = on_timeout {
+                licm_expr(oh, fields, cfg, local_names, hoist_count, ipa);
             }
         }
         ExprKind::Detach(_) | ExprKind::Blocking(_) | ExprKind::Spawn(_) => {
@@ -6668,10 +6696,11 @@ fn collect_closures_captures_in_expr(
         | ExprKind::Detach(body) | ExprKind::Blocking(body) => {
             collect_closures_captures_in_block(body, fields, out);
         }
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             collect_closures_captures_in_block(body, fields, out);
             if let Some(c) = cancel { collect_closures_captures_in_expr(c, fields, out); }
             if let Some(_dl) = deadline { collect_closures_captures_in_expr(&_dl.expr, fields, out); }
+            if let Some(oh) = on_timeout { collect_closures_captures_in_expr(oh, fields, out); }
         }
         ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::RefArg(e)
         | ExprKind::Member { obj: e, .. } | ExprKind::TurboFish { base: e, .. }
@@ -7025,10 +7054,11 @@ fn first_field_span_in_expr(e: &Expr, fname: &str) -> Option<crate::diag::Span> 
         | ExprKind::Detach(body) | ExprKind::Blocking(body) => {
             first_field_span_in_block(body, fname)
         }
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             first_field_span_in_block(body, fname)
                 .or_else(|| cancel.as_ref().and_then(|c| first_field_span_in_expr(c, fname)))
                 .or_else(|| deadline.as_ref().and_then(|dl| first_field_span_in_expr(&dl.expr, fname)))
+                .or_else(|| on_timeout.as_ref().and_then(|oh| first_field_span_in_expr(oh, fname)))
         }
         ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::RefArg(e)
         | ExprKind::Member { obj: e, .. } | ExprKind::TurboFish { base: e, .. }
@@ -7461,10 +7491,11 @@ fn capture_sample_args_in_expr(
         | ExprKind::Detach(body) | ExprKind::Blocking(body) => {
             capture_sample_args_in_block(body, pure_methods, recv_type, name_map, out);
         }
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             capture_sample_args_in_block(body, pure_methods, recv_type, name_map, out);
             if let Some(c) = cancel { capture_sample_args_in_expr(c, pure_methods, recv_type, name_map, out); }
             if let Some(_dl) = deadline { capture_sample_args_in_expr(&_dl.expr, pure_methods, recv_type, name_map, out); }
+            if let Some(oh) = on_timeout { capture_sample_args_in_expr(oh, pure_methods, recv_type, name_map, out); }
         }
         ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::RefArg(e)
         | ExprKind::Member { obj: e, .. } | ExprKind::TurboFish { base: e, .. }
@@ -7637,10 +7668,11 @@ fn rewrite_pure_calls_in_expr_v31(
         | ExprKind::Detach(body) | ExprKind::Blocking(body) => {
             rewrite_pure_calls_in_block_v31(body, pure_methods, recv_type, renames);
         }
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             rewrite_pure_calls_in_block_v31(body, pure_methods, recv_type, renames);
             if let Some(c) = cancel { rewrite_pure_calls_in_expr_v31(c, pure_methods, recv_type, renames); }
             if let Some(_dl) = deadline { rewrite_pure_calls_in_expr_v31(&mut _dl.expr, pure_methods, recv_type, renames); }
+            if let Some(oh) = on_timeout { rewrite_pure_calls_in_expr_v31(oh, pure_methods, recv_type, renames); }
         }
         ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::RefArg(e)
         | ExprKind::Member { obj: e, .. } | ExprKind::TurboFish { base: e, .. }
@@ -7845,10 +7877,11 @@ fn collect_body_writes_expr(e: &Expr, out: &mut HashSet<String>) {
         | ExprKind::Detach(body) | ExprKind::Blocking(body) => {
             collect_body_writes_block(body, out);
         }
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             collect_body_writes_block(body, out);
             if let Some(c) = cancel { collect_body_writes_expr(c, out); }
             if let Some(_dl) = deadline { collect_body_writes_expr(&_dl.expr, out); }
+            if let Some(oh) = on_timeout { collect_body_writes_expr(oh, out); }
         }
         ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::RefArg(e)
         | ExprKind::Member { obj: e, .. } | ExprKind::TurboFish { base: e, .. }
@@ -8240,10 +8273,11 @@ fn count_pure_in_expr(
         | ExprKind::Detach(body) | ExprKind::Blocking(body) => {
             count_pure_in_block(body, pure_methods, recv_type, counts, first_spans, captured, in_closure);
         }
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             count_pure_in_block(body, pure_methods, recv_type, counts, first_spans, captured, in_closure);
             if let Some(c) = cancel { count_pure_in_expr(c, pure_methods, recv_type, counts, first_spans, captured, in_closure); }
             if let Some(_dl) = deadline { count_pure_in_expr(&_dl.expr, pure_methods, recv_type, counts, first_spans, captured, in_closure); }
+            if let Some(oh) = on_timeout { count_pure_in_expr(oh, pure_methods, recv_type, counts, first_spans, captured, in_closure); }
         }
         ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::RefArg(e)
         | ExprKind::Member { obj: e, .. } | ExprKind::TurboFish { base: e, .. }
@@ -8629,10 +8663,11 @@ fn rewrite_pure_calls_in_expr(e: &mut Expr, renames: &HashMap<String, String>) {
         | ExprKind::Detach(body) | ExprKind::Blocking(body) => {
             rewrite_pure_calls_in_block(body, renames);
         }
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             rewrite_pure_calls_in_block(body, renames);
             if let Some(c) = cancel { rewrite_pure_calls_in_expr(c, renames); }
             if let Some(_dl) = deadline { rewrite_pure_calls_in_expr(&mut _dl.expr, renames); }
+            if let Some(oh) = on_timeout { rewrite_pure_calls_in_expr(oh, renames); }
         }
         ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::RefArg(e)
         | ExprKind::Member { obj: e, .. } | ExprKind::TurboFish { base: e, .. }
@@ -9340,7 +9375,7 @@ fn count_chains_in_expr(
         | ExprKind::Detach(body) | ExprKind::Blocking(body) => {
             count_chains_in_block(body, counts, first_spans, captured, max_depth, in_closure);
         }
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             count_chains_in_block(body, counts, first_spans, captured, max_depth, in_closure);
             if let Some(c) = cancel {
                 count_chains_in_expr(c, counts, first_spans, captured, max_depth, in_closure);
@@ -9348,6 +9383,9 @@ fn count_chains_in_expr(
             if let Some(_dl) = deadline {
                 let _dl_e = &_dl.expr;
                 count_chains_in_expr(_dl_e, counts, first_spans, captured, max_depth, in_closure);
+            }
+            if let Some(oh) = on_timeout {
+                count_chains_in_expr(oh, counts, first_spans, captured, max_depth, in_closure);
             }
         }
         ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::RefArg(e)
@@ -9575,10 +9613,11 @@ fn rewrite_chains_in_expr(e: &mut Expr, name_map: &HashMap<Vec<String>, String>)
         | ExprKind::Detach(body) | ExprKind::Blocking(body) => {
             rewrite_chains_in_block(body, name_map);
         }
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             rewrite_chains_in_block(body, name_map);
             if let Some(c) = cancel { rewrite_chains_in_expr(c, name_map); }
             if let Some(_dl) = deadline { rewrite_chains_in_expr(&mut _dl.expr, name_map); }
+            if let Some(oh) = on_timeout { rewrite_chains_in_expr(oh, name_map); }
         }
         ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::RefArg(e)
         | ExprKind::Member { obj: e, .. } | ExprKind::TurboFish { base: e, .. }
@@ -10046,10 +10085,11 @@ fn C mut @do() -> int {
                 ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. }
                 | ExprKind::Detach(body) | ExprKind::Blocking(body) =>
                     walk_block(body, out),
-                ExprKind::Supervised { body, cancel, deadline } => {
+                ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
                     walk_block(body, out);
                     if let Some(c) = cancel { walk_expr(c, out); }
                     if let Some(_dl) = deadline { walk_expr(&_dl.expr, out); }
+                    if let Some(oh) = on_timeout { walk_expr(oh, out); }
                 }
                 ExprKind::With { bindings, body } => {
                     for wb in bindings { walk_expr(&wb.handler, out); }

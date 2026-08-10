@@ -460,12 +460,15 @@ fn gp_walk_expr(
             gp_walk_block(body, params, guards, found);
         }
         ExprKind::Loop { body, .. } => gp_walk_block(body, params, guards, found),
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             if let Some(c) = cancel {
                 gp_walk_expr(c, params, guards, found);
             }
             if let Some(dl) = deadline {
                 gp_walk_expr(&dl.expr, params, guards, found);
+            }
+            if let Some(oh) = on_timeout {
+                gp_walk_expr(oh, params, guards, found);
             }
             gp_walk_block(body, params, guards, found);
         }
@@ -1209,12 +1212,15 @@ fn pb_walk_expr(e: &Expr, ctx: &PassBCtx, guards: &mut Vec<String>, facts: &mut 
             pb_walk_block(body, ctx, guards, facts);
         }
         ExprKind::Loop { body, .. } => pb_walk_block(body, ctx, guards, facts),
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             if let Some(c) = cancel {
                 pb_walk_expr(c, ctx, guards, facts);
             }
             if let Some(dl) = deadline {
                 pb_walk_expr(&dl.expr, ctx, guards, facts);
+            }
+            if let Some(oh) = on_timeout {
+                pb_walk_expr(oh, ctx, guards, facts);
             }
             pb_walk_block(body, ctx, guards, facts);
         }
@@ -2070,12 +2076,15 @@ fn find_seeds_expr(
             find_seeds_block(body, rc, tags, fn_index, name_index, type_method_index, own_param_names, errors);
         }
         ExprKind::Loop { body, .. } => find_seeds_block(body, rc, tags, fn_index, name_index, type_method_index, own_param_names, errors),
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             if let Some(c) = cancel {
                 find_seeds_expr(c, rc, tags, fn_index, name_index, type_method_index, own_param_names, errors);
             }
             if let Some(dl) = deadline {
                 find_seeds_expr(&dl.expr, rc, tags, fn_index, name_index, type_method_index, own_param_names, errors);
+            }
+            if let Some(oh) = on_timeout {
+                find_seeds_expr(oh, rc, tags, fn_index, name_index, type_method_index, own_param_names, errors);
             }
             find_seeds_block(body, rc, tags, fn_index, name_index, type_method_index, own_param_names, errors);
         }
@@ -2253,12 +2262,15 @@ fn collect_seed_calls_expr(e: &Expr, out: &mut Vec<SeedCall>, locals: &mut HashS
             collect_seed_calls_block(body, out, locals);
         }
         ExprKind::Loop { body, .. } => collect_seed_calls_block(body, out, locals),
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             if let Some(c) = cancel {
                 collect_seed_calls_expr(c, out, locals);
             }
             if let Some(dl) = deadline {
                 collect_seed_calls_expr(&dl.expr, out, locals);
+            }
+            if let Some(oh) = on_timeout {
+                collect_seed_calls_expr(oh, out, locals);
             }
             collect_seed_calls_block(body, out, locals);
         }
@@ -3088,12 +3100,15 @@ fn rp_walk_expr(e: &Expr, ctx: &ReqCtx, in_fiber: bool, out: &mut ReqFacts) {
             rp_walk_block(body, ctx, in_fiber, out);
         }
         ExprKind::Loop { body, .. } => rp_walk_block(body, ctx, in_fiber, out),
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             if let Some(c) = cancel {
                 rp_walk_expr(c, ctx, in_fiber, out);
             }
             if let Some(dl) = deadline {
                 rp_walk_expr(&dl.expr, ctx, in_fiber, out);
+            }
+            if let Some(oh) = on_timeout {
+                rp_walk_expr(oh, ctx, in_fiber, out);
             }
             rp_walk_block(body, ctx, in_fiber, out);
         }
@@ -3786,12 +3801,15 @@ fn cpp_walk_expr(
             cpp_walk_block(body, ctx, closure_lets, tags, required, fn_index, errors);
         }
         ExprKind::Loop { body, .. } => cpp_walk_block(body, ctx, closure_lets, tags, required, fn_index, errors),
-        ExprKind::Supervised { body, cancel, deadline } => {
+        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
             if let Some(c) = cancel {
                 cpp_walk_expr(c, ctx, closure_lets, tags, required, fn_index, errors);
             }
             if let Some(dl) = deadline {
                 cpp_walk_expr(&dl.expr, ctx, closure_lets, tags, required, fn_index, errors);
+            }
+            if let Some(oh) = on_timeout {
+                cpp_walk_expr(oh, ctx, closure_lets, tags, required, fn_index, errors);
             }
             cpp_walk_block(body, ctx, closure_lets, tags, required, fn_index, errors);
         }

@@ -2814,6 +2814,14 @@ pub enum ExprKind {
         body: Block,
         cancel: Option<Box<Expr>>,
         deadline: Option<SupervisedDeadline>,
+        /// `on_timeout: |e TimeoutError| ...` — D449. Optional handler CALLED
+        /// instead of raising `Fail[TimeoutError]` when this scope's own
+        /// `deadline:`/`timeout:` expires. Requires `deadline`/`timeout` to
+        /// be present (checked at parse time — an `on_timeout:` with no
+        /// deadline can never fire, D317 never-silent-garbage). The
+        /// construct's type always equals the body's type; the handler must
+        /// return the same type (checker-enforced).
+        on_timeout: Option<Box<Expr>>,
     },
     /// `detach { body }` — fire-and-forget, global supervisor (D50).
     /// Requires `Detach` effect in the enclosing function's signature.
