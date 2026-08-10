@@ -1622,6 +1622,59 @@ void nova_hash_seed_ensure_init(void) {
     nova_mutex_unlock(&_hash_seed_mu);
 }
 
+/* Plan 265 Ф.3 / №553 / D454: `random_secure_u64` — CSPRNG source for
+ * `real_random()` (`std/src/prelude/effects.nv`), the `#default_handler`
+ * of the `Random` effect (same `real_*` family as `real_time`/`real_os`/
+ * `real_fs`/`real_net`/`real_io`). Deliberately NOT built on
+ * `nova_hash_seed_k0/k1` above: hash-seed is a per-process seed feeding a
+ * fast non-cryptographic PRF (SipHash) — good enough to defeat
+ * hash-flooding, not a promise about any SINGLE output value.
+ * `real_random()` promises the opposite: every u64 is itself
+ * indistinguishable from random, so every call goes to the OS CSPRNG
+ * directly. Not a hot path (`Uuid.v4()`, session ids, API keys, nonces —
+ * not inner-loop hashing), so the per-call syscall cost is accepted.
+ *
+ * Entropy-source failure: `nv_panic` (same idiom as `NOVA_INT_OVF_PANIC`,
+ * `nova_rt/effects.h` — integer overflow / division by zero), matching the
+ * precedent `nova_hash_seed_ensure_init` already set for THIS exact
+ * failure mode ("падать лучше чем silent vulnerability", Plan 52 Ф.22) —
+ * but, unlike hash-seed's `#else` branch, WITHOUT a time-based degraded
+ * fallback: a weakened `real_random()` would be a silent security
+ * regression, worse than a crash. See D454 for the full decision record. */
+#if defined(_WIN32)
+uint64_t random_secure_u64(void) {
+    uint64_t v;
+    NTSTATUS rc = BCryptGenRandom(NULL, (PUCHAR)&v, sizeof(v),
+                                  BCRYPT_USE_SYSTEM_PREFERRED_RNG);
+    if (rc != 0) {
+        fprintf(stderr, "nova: BCryptGenRandom failed для Random.real_random(): 0x%lx\n",
+                (unsigned long)rc);
+        nv_panic((nova_str){ .ptr = "secure random: BCryptGenRandom failed (OS CSPRNG unavailable)",
+                              .len = sizeof("secure random: BCryptGenRandom failed (OS CSPRNG unavailable)") - 1 });
+    }
+    return v;
+}
+#elif defined(__linux__) || defined(__APPLE__)
+uint64_t random_secure_u64(void) {
+    uint64_t v;
+    ssize_t n = getrandom(&v, sizeof(v), 0);
+    if (n != (ssize_t)sizeof(v)) {
+        fprintf(stderr, "nova: getrandom failed для Random.real_random(): %s\n",
+                strerror(errno));
+        nv_panic((nova_str){ .ptr = "secure random: getrandom failed (OS CSPRNG unavailable)",
+                              .len = sizeof("secure random: getrandom failed (OS CSPRNG unavailable)") - 1 });
+    }
+    return v;
+}
+#else
+uint64_t random_secure_u64(void) {
+    fprintf(stderr, "nova: no known OS CSPRNG source для Random.real_random() на этой платформе\n");
+    nv_panic((nova_str){ .ptr = "secure random: no OS CSPRNG source on this platform",
+                          .len = sizeof("secure random: no OS CSPRNG source on this platform") - 1 });
+    return 0; /* unreachable — nv_panic не возвращается */
+}
+#endif
+
 /* ── Plan 83.1 Ф.1+Ф.2: worker-count resolution ────────────────────
  *
  * Резолвер числа worker-потоков. Порядок разрешения (Plan 83 §3 П6):

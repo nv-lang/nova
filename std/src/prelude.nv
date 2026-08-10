@@ -124,9 +124,21 @@ export import std.prelude.protocols.{Hash, Equal, Compare, Display, Clone, Index
 // Mem — runtime introspection (alloc_count/free_count/live/reset).
 // Skip codegen emit через RUNTIME_DEFINED_TYPES + BUILTIN_VTABLE_NAMES.
 //
+// `real_random` — `Random`'s `#default_handler` factory (Plan 265 Ф.3 /
+// №553 / D454; same `real_*` family as `real_time`/`real_os`/`real_fs`/
+// `real_net`/`real_io`), re-exported by name so it is callable ambiently
+// (`with Random = real_random() { … }`) exactly like
+// `Random.u64()`/`Random.bytes(n)` themselves already are
+// (`[M-random-u64-path-return-ice]`, std/prelude/effects.nv) — consistent
+// with `Random` itself needing no import anywhere in the CU. `real_random()`
+// is also the mechanism a program gets automatically without ANY `with
+// Random = …` at all (lazy install-once, D431 §5); the explicit name
+// exists for the rarer case of re-asserting it inside a scope that has an
+// outer `with Random = th.seeded(...)` mock.
+//
 // **Detach** НЕ re-export'ится — это keyword-construct (`detach { ... }`),
 // syntactic form а не declarable effect. См. std/prelude/effects.nv.
-export import std.prelude.effects.{Fail, Time, Mem}
+export import std.prelude.effects.{Fail, Time, Mem, real_random}
 
 // Re-export CancelToken из std.prelude.concurrency — auto-available без
 // explicit import, паритет с прежним builtin-статусом (`supervised(cancel: tok)`
@@ -257,5 +269,12 @@ export import std.runtime.string.{pad_left, pad_right, repeat, replace, compare,
 ///     std/prelude/errors.nv + re-exported through this facade —
 ///     `try_to_<T>` family (std/prelude/protocols.nv, `fn[S Ints] S
 ///     @try_to_i8()`/.../`@try_to_uint()`) returns `Result[T, RangeError]`.
+///   - 20 = Plan 265 Ф.3 / №553 done (2026-08-10, D454): `real_random()`
+///     (`std/prelude/effects.nv`, same `real_*` family as `real_time`/
+///     `real_os`/`real_fs`/`real_net`/`real_io`) declared as the
+///     `#default_handler` for `Random`, re-exported through this facade —
+///     `Uuid.v4()`/session ids/API keys/nonces are now unpredictable BY
+///     DEFAULT (OS CSPRNG via `random_secure_u64()`, `nova_rt/runtime.c`),
+///     not just under an explicit `with Random = th.seeded(...)` mock.
 #stable(since = "0.1")
-export const PRELUDE_VERSION = 19
+export const PRELUDE_VERSION = 20

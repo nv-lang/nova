@@ -7893,3 +7893,110 @@ ro v = run_handler(user_handler)                  // законно: Fail[E] е�
   ноль, энфорс не проверялся. Для настоящего решения это не препятствие:
   разделение ролей описано здесь, реализация `forbid` — отдельная работа и к
   релизу не требуется (решение владельца 2026-08-09).
+
+## D454. `Random.real_random()` — CSPRNG `#default_handler`; отказ источника энтропии — паника (Plan 265 Ф.3 / №553, 2026-08-10)
+
+> **Status:** accepted (решение владельца, 2026-08-10). Amends [D431](#d431-default_handlerx--ambient-lazy-default-handler-factory-для-эффектов-plan-175-ф2-v2-2026-07-2122)
+> (распространение `#default_handler` на `Random` — auto-generated vtable,
+> D431 §5 уже покрывает это генерически, изменений компилятора не
+> потребовалось). Реализация — этой же волной (`worktree p553-secure-random`).
+> Имя `real_random()` (не первоначальный черновик `secure()`) — owner
+> code-review 2026-08-10: та же `real_*`-семья, что `real_time`/`real_os`/
+> `real_fs`/`real_net`/`real_io` — все пять называют хендлер ПРИРОДОЙ
+> (настоящий, системный источник), не свойством; `secure` намекал бы на
+> несуществующую ось «secure vs insecure-но-тоже-настоящий» — реальный
+> источник ровно один, тестовый — `seeded()`.
+
+### Контекст
+
+№553 (`docs/plans/221.1-bug-sweep.md`): `std/src/testing/handlers/core.nv:76-79`
+утверждал, что для production используется «встроенный `Random` handler
+(CSPRNG via runtime), активный по умолчанию» — по факту единственной
+фабрикой была `seeded(seed)`, та же дока звавшая её НЕкриптостойкой; у
+`Random` не было `#default_handler` (`std/src/prelude/effects.nv:158`),
+рантайм не имел ни одного хука под этот эффект. Следствие: `Uuid.v4()`,
+идентификаторы сессий, ключи API, nonce — предсказуемы; документированная
+безопасность была фикцией. `secure() -> Effect[Random]` (черновое имя)
+числился открытым вопросом (`spec/open-questions.md` Q-stdlib-minimal-api,
+`docs/plans/222.20-design-note.md` §4 Q4).
+
+### Решение
+
+1. **`real_random() -> Effect[Random]`** (`std/src/prelude/effects.nv`,
+   рядом с декларацией `type Random effect` — эффект вынужденно живёт в
+   прелюдии из-за `[M-random-u64-path-return-ice]`, поэтому дефолт-хендлер
+   следует туда же, симметрично тому, как `real_time()` живёт рядом с
+   `Time` в `time.duration`, а не в прелюдии). Тело — тонкая `.nv`-обёртка
+   над ОДНИМ новым `extern "C" fn random_secure_u64() -> u64` (доменный
+   префикс `random_`, тот же нейминг-приём, что `time_*`/`os_*`/`fs_*`/
+   `net_*`-хуки соседей): `u64()` зовёт его напрямую; `bytes(n)` — тот же
+   8-байтный bit-cache-цикл, что `seeded()`
+   (`std/src/testing/handlers/core.nv`), источником 8 байт служит
+   `random_secure_u64()` вместо xoshiro256++-шага.
+2. **`#default_handler`.** `Random` — эффект с auto-generated vtable
+   (`emit_effect_type`), для которого дженерик-механизм D431 §5 уже
+   работает без изменений компилятора: `Nova_Random_u64`/`_bytes` лениво
+   конструируют и ставят `real_random()` при первом использовании без
+   охватывающего `with Random = …` — та же дисциплина, что `Time`/
+   `real_time()`, `Os`/`real_os()`, `Fs`/`real_fs()`, `Net`/`real_net()`,
+   `Io`/`real_io()`, все пять из которых уже несут `#default_handler`
+   (проверено грепом по `^export fn real_` — никакого расхождения с
+   семьёй нет). Явный `with Random = th.seeded(seed)` по-прежнему
+   полностью переопределяет — `seeded()` остаётся осознанным выбором
+   теста, в её контракте ничего не меняется.
+3. **`real_random` re-export через prelude-фасад** (`std/prelude.nv`,
+   `PRELUDE_VERSION` 19→20) — вызываем по имени БЕЗ импорта отовсюду,
+   симметрично тому, что `Random.u64()`/`Random.bytes(n)` и так уже
+   ambient (обычные `real_*` живут в родном модуле эффекта и доступны
+   через уже-нужный пользователю `import std.os`/`std.net`/…; у `Random`
+   такого модуля нет — прелюдия и есть его дом). Даёт явный опт-ин
+   обратно на прод-хендлер внутри вложенного `with Random = real_random()
+   { … }`, если снаружи стоит мок.
+4. **Источник энтропии — новый рантайм-примитив, НЕ переиспользование
+   `nova_hash_seed_k0/k1`.** `random_secure_u64()`
+   (`compiler-codegen/nova_rt/runtime.c`, рядом с `nova_hash_seed_*`) зовёт
+   `BCryptGenRandom`/`getrandom` НА КАЖДЫЙ вызов — не кэширует seed и не
+   крутит быстрый PRF поверх него, в отличие от per-process hash-seed
+   (тому достаточно DoS-порога, не крипто-гарантии на каждое значение;
+   `real_random()` обещает крипто-стойкость на КАЖДОЕ значение, значит
+   каждое значение обязано идти от ОС). Цена — не hot path (`Uuid.v4()`,
+   session-id, API-ключ, nonce — не внутренний цикл хеширования).
+5. **Отказ источника энтропии — паника, не `Fail`.** Схема эффекта
+   (`u64() -> u64`, `bytes(n) -> []u8`) не несёт `Fail[E]` — добавить его
+   означало бы ретайп ambient-эффекта, широко используемого без `with` и
+   без обработки ошибок (`Uuid.v4()` и все транзитивные вызовы). При
+   отказе `BCryptGenRandom`/`getrandom` (крайне редко — практически
+   означает сломанную ОС) `random_secure_u64()` зовёт `nv_panic`
+   с диагностическим сообщением — тот же идиом, что `NOVA_INT_OVF_PANIC`
+   (`nova_rt/effects.h`) уже применяет для integer-overflow/division-by-
+   zero, и то же решение, что `nova_hash_seed_ensure_init` уже принял для
+   DoS-seed («падать лучше чем silent vulnerability», Plan 52 Ф.22) — тут
+   ставка выше (крипто, не DoS), решение то же, но БЕЗ time-based
+   fallback-ветки (та годится для DoS-порога, не годится для
+   `real_random()`). На платформах без известного CSPRNG-хука (третья
+   `#else`-ветка) — паника ВСЕГДА, без деградации: `real_random()` не
+   имеет права молча стать слабее.
+
+### Границы / отложено
+
+- Одно взятие `u64()` = один syscall; батчинг/буферизация внутри
+  `random_secure_u64()` не сделаны (не hot path, см. п.4) — followup,
+  если профилирование когда-нибудь покажет обратное.
+- `bytes(n)` для больших `n` не использует bulk-читающий C-примитив
+  (`getrandom(buf, n, 0)` одним вызовом на весь буфер) — идёт тем же
+  8-байтным bit-cache-циклом, что `seeded()`. Осознанный выбор
+  простоты/консистентности с соседним хендлером той же операции, не
+  забытый оптимизм.
+
+### Связь
+
+Amends [D431](#d431-default_handlerx--ambient-lazy-default-handler-factory-для-эффектов-plan-175-ф2-v2-2026-07-2122)
+(§5 — auto-generated-vtable эффекты подхватывают механизм без доп. кода
+компилятора) · родня `NOVA_INT_OVF_PANIC` (`nova_rt/effects.h`, тот же
+паника-на-фатальную-C-ошибку идиом) · `nova_hash_seed_ensure_init`
+(`nova_rt/runtime.c`, Plan 52 Ф.22 — прецедент OS-CSPRNG-хука +
+паника-на-отказе, НЕ переиспользован напрямую, см. п.4) · `real_time()`/
+`real_os()`/`real_fs()`/`real_net()`/`real_io()` (та же именная семья) ·
+№553 (`docs/plans/221.1-bug-sweep.md`) · план [265](../../docs/plans/265-stdlib-surface-gaps.md)
+Ф.3 · `spec/open-questions.md` (Q-stdlib-minimal-api, `secure()`-черновик
+закрыт этим D-блоком под именем `real_random()`) · `docs/plans/222.20-design-note.md` §4 Q4.

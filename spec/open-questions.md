@@ -5509,6 +5509,11 @@ type Random effect {
 // Pre-defined handlers
 fn seeded(seed u64) -> Effect[Random]      // PRNG с фиксированным seed
 fn secure() -> Effect[Random]               // CSPRNG для production
+// Реализован под именем real_random() (Plan 265 Ф.3 / №553, D454,
+// 2026-08-10) — та же real_*-семья, что real_time/real_os/real_fs/
+// real_net/real_io, не secure() из этого черновика: std/prelude/effects.nv,
+// назначен #default_handler для Random — production поведение по
+// умолчанию, seeded() остаётся явным выбором теста.
 
 // Time — Unix-timestamp + sleep
 type Time effect {
