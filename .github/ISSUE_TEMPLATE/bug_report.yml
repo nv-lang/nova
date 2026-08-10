@@ -1,0 +1,88 @@
+# SPDX-License-Identifier: CC-BY-4.0
+name: Bug report
+description: Something the compiler, runtime or standard library gets wrong
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: the fastest useful bug report is a **file that fails**.
+        Everything else is optional context.
+
+        If you have a Nova source file that misbehaves, paste it whole even if
+        it is thirty lines — a reduced example we cannot compile is worth less
+        than a long one we can.
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: A file that reproduces it
+      description: Complete Nova source, not a fragment. Include the command you ran.
+      render: nova
+      placeholder: |
+        module standalone.repro
+
+        import std.io
+
+        fn main() Io -> () {
+            // ...
+        }
+    validations:
+      required: true
+
+  - type: input
+    id: command
+    attributes:
+      label: Command
+      placeholder: nova build repro.nv --strict-effects
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened
+      description: Paste the output verbatim, including the error code (`E_...`) if there is one.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected, and why
+      description: >
+        If the spec says something different from what happened, quote it —
+        a link to the D-block in `spec/decisions/` makes the report decisive.
+        If you are unsure whether it is a bug or intended, say that; the
+        question itself is useful.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `nova --version`, or the commit you built from.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Platform
+      options:
+        - Windows
+        - Linux
+        - macOS
+        - Other
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        **What happens next.** Confirmed defects are recorded in
+        `docs/plans/221.1-bug-sweep.md` — the registry — with a priority and a
+        **class**: what kind of mistake this is, so the fix closes the kind and
+        not just your case. If you want to fix it yourself, say so in the issue
+        and read [CONTRIBUTING.md](../../CONTRIBUTING.md) first.

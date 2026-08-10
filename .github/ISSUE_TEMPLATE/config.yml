@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: CC-BY-4.0
+blank_issues_enabled: true
+contact_links:
+  - name: What needs doing right now
+    url: https://github.com/nv-lang/nova/blob/main/docs/plans/221.1-bug-sweep.md
+    about: >
+      The defect registry. Every known defect with a priority (K1/K2/K3), a
+      CLASS, and what counts as acceptance. This is the work queue — pick from
+      here rather than guessing.
+  - name: Rules for agents and contributors
+    url: https://github.com/nv-lang/nova/blob/main/AGENTS.md
+    about: >
+      What you may and may not do in this repository, and what each of the 34
+      guards stops you doing. Read before opening a pull request.
+  - name: Security issue
+    url: https://github.com/nv-lang/nova/blob/main/SECURITY.md
+    about: Do not open a public issue for a vulnerability — see SECURITY.md.
