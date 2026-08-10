@@ -3,22 +3,94 @@
 > Instructions for AI agents and coding assistants working in this repository.
 > Think of this as a README for agents. Human contributors: see [README.md](README.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 >
-> **Read this first, before anything else:**
-> **[docs/dev/rules-for-agents.md](docs/dev/rules-for-agents.md)** — what you may
-> and may not do here, and what every one of the 34 guards stops you doing.
-> Five minutes. The short version: `git add` by filename only (never `-A`, `.`,
-> `-u`, `commit -a`, `stash`); commit messages, manifests and `.nv` docs in
-> English; never touch `git config user.*`; `main` belongs to the integrator, you
-> work in a branch inside a worktree under `d:/Sources/nv-lang/`; the spec is
-> written BEFORE the implementation and D-block numbers are assigned by the
-> integrator, not picked; a defect you find gets a registry entry in the same
-> merge; only the integrator runs the mega-CU and the full `nova test`.
+> **Read this whole file before touching anything.** It is short, and half the
+> rules here are the kind whose violation only shows up in a forty-minute gate
+> run on someone else's machine.
 >
-> **New here?** How development actually works — plan-driven dev, the worktree model, the daily loop, and the
-> hard operational rules — is in [docs/dev/dev-workflow.md](docs/dev/dev-workflow.md) (Russian). Read it before picking up work.
-> Full onboarding path (project state, architecture, gates, where to go next):
-> [docs/dev/promts/read-project.md](docs/dev/promts/read-project.md). Claude Code sessions get the same pointers
-> automatically via the root [CLAUDE.md](CLAUDE.md).
+> **New here?** How development actually works — plan-driven dev, the worktree
+> model, the daily loop — is in [docs/dev/dev-workflow.md](docs/dev/dev-workflow.md)
+> (Russian). Project state, architecture, where to go next:
+> [docs/dev/promts/read-project.md](docs/dev/promts/read-project.md). The reasoning
+> behind every rule below, and what each of the 34 guards stops you doing:
+> [docs/dev/rules-for-agents.md](docs/dev/rules-for-agents.md).
+
+## Rules — what you may not do here
+
+This section is the single home of the prohibitions. The root
+[CLAUDE.md](CLAUDE.md) only orders you to read this file: it is loaded into a
+Claude Code session automatically, this one is not, so the order has to live
+there and the rules have to live here. Nothing is duplicated — two copies drift,
+and you would read the stale one.
+
+Every line below is enforced by a guard: breaking it reddens the authoritative
+gate rather than passing quietly.
+
+**Git**
+
+* `git add` **by filename only**. Never `-A`, `.`, `-u`, `git commit -a` — they
+  sweep up another session's uncommitted files; observed three times in one day.
+* Never `git stash`: worktrees share one `.git`, and what you hide surfaces in
+  someone else's tree.
+* Never touch `git config user.*` — authorship is the owner's, by hand. (349
+  commits once went out under the wrong name this way.)
+* No `Co-Authored-By` trailers.
+* Never `git push --force`; never rewrite history (`rebase`, `filter-branch`)
+  without permission — other windows' worktrees sit on those commits.
+* Tags in the `nova` repository: owner only.
+
+**Language**
+
+* Commit messages in **English** — the repository is public and mirrored to
+  three hosts.
+* `nova.toml` / `nova.lock.toml` in **English** — they ship inside package
+  repositories.
+* Doc comments in `.nv` and diagnostic texts in **English**.
+* Reports to the owner and `docs/dev/` in **Russian**.
+
+**Where you work**
+
+* `main` belongs to the integrator. You work in **your own branch in your own
+  worktree**, and the integrator merges.
+* Worktrees live **only under `d:/Sources/nv-lang/`** — not `C:\Users\Public`,
+  not inside the repository. `C:` runs out of disk regularly, and a worktree
+  inside the repo gets swept into every grep and reddens guards on someone
+  else's snapshot.
+
+**Changing the language**
+
+* **The spec is written BEFORE the implementation.** A language-changing merge
+  without a D-block in `spec/decisions/` and its overview page does not get
+  pushed.
+* **Do not pick a D-block number yourself.** "Take the next free one" only works
+  with a single writer; with two windows it collides — it did. Ask the
+  integrator.
+* Do not invent Nova syntax: forms come from `spec/decisions/` and live code.
+
+**Defects and tests**
+
+* Found a defect → **file it** in `docs/plans/221.1-bug-sweep.md` in the same
+  merge, with a priority, a CLASS, and the carrier caveat. A marker in code with
+  no entry is invisible debt.
+* Entry numbers are assigned by the integrator; you write `№TBD`.
+* Fix the **class**, not the carrier. "The failing test passes now" is not
+  acceptance.
+* Never weaken or delete a test to make it pass — the test is authoritative.
+* A new `E_*`/`W_*` needs a negative fixture; a negative fixture needs a
+  line-pinned `nova:expect` marker.
+* **Prove it both ways**: break your own condition, watch the fixture redden,
+  restore it, watch it pass. A fixture that would be green without your fix
+  proves nothing.
+
+**Gates**
+
+* Only the integrator runs the mega-CU and the full `nova test`. Yours are
+  targeted: your fixture, your subdirectory, your package.
+
+**Staying alive**
+
+* The watchdog kills a window that produces no output for ten minutes. Do not
+  background something you then wait for, print a line before a long command,
+  and split long runs.
 
 ## What is Nova
 
