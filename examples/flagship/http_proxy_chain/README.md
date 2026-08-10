@@ -83,17 +83,53 @@ SOCKS5_PROXY=proxy.example.com:1080 SOCKS5_USER=me SOCKS5_PASS=secret \
 - Header block is capped at 64 KiB (`MAX_HEADER_BYTES`); exceeding it is a
   typed `431 Request Header Fields Too Large`, not a silent hang.
 
-## Manual smoke test (NOT run in CI)
+## Local relay smoke test (no secrets, one command)
 
-A full round trip needs a real external SOCKS5 proxy, so this is not part
-of the automated gate — `nova build --strict-effects` (compiles the whole
-file) and `nova lint` are the CI-checked gates; the following is a manual,
-by-hand check.
+`nova build --strict-effects` (compiles the whole file) and `nova lint` are
+the CI-checked gates, but **they only prove the example COMPILES, not that
+it WORKS.** That distinction is not pedantic here: on 2026-08-09 both gates
+were green while the bridge could not move a single byte end to end
+(registry 221.1 №548 — a compiler codegen bug closed the SOCKS5 tunnel's
+underlying TCP connection the instant the handshake succeeded, before the
+bridge ever wrote a request byte through it; fixed in `emit_c.rs`,
+regression fixture
+`spec_tests/conformance/standalone/m548_consume_scope_return_ok_disarm.nv`).
+The only way anyone had to catch that was a live, password-protected SOCKS5
+proxy on the internet — which nobody runs routinely, so the regression sat
+behind a green gate.
 
-> **The build gates prove the example COMPILES, not that it WORKS.** That
-> distinction is not pedantic here: on 2026-08-09 both gates were green while
-> the bridge could not move a single byte (see "Current status" below). Treat
-> this smoke test as the acceptance gate, not the build.
+`tools/smoke.sh` closes that gap: it runs `tools/local_socks5_stub.py` (a
+minimal local SOCKS5 server + HTTP target, RFC 1928 CONNECT only) on
+loopback, builds the bridge, points it at the stub, and drives BOTH request
+paths through it with `curl` — the CONNECT path (what an HTTPS proxy
+setting actually uses) and the plain-HTTP-over-proxy path (Ф.3) — asserting
+each one delivers the target's exact response body. No external proxy, no
+credentials, no network beyond `127.0.0.1`:
+
+```sh
+bash examples/flagship/http_proxy_chain/tools/smoke.sh
+```
+
+Prints `SMOKE: PASS` and exits 0 when both paths deliver the body; anything
+else is `SMOKE: FAIL` with the curl output and both process logs attached,
+and a non-zero exit code. Set `NOVA_BIN` to point at a specific `nova`
+binary if the script's auto-detected default (`nova-cli/target/release/
+nova[.exe]` under the repo root, then `nova` on `PATH`) is not the one to
+use; `SMOKE_SOCKS_PORT`/`SMOKE_TARGET_PORT`/`SMOKE_BRIDGE_PORT` override the
+default loopback ports if one of them is already taken.
+
+This smoke test is what gives this example's V1 status any teeth going
+forward — it should be run whenever `main.nv`, `pipe_bidirectional`/`pump`,
+or the `nova-socks` dependency changes, not just when someone remembers to
+find a live proxy.
+
+## Manual live-proxy smoke test (NOT run in CI)
+
+The local smoke test above proves the relay mechanics work; it does not
+touch a real SOCKS5 proxy (auth negotiation against a real server, DNS
+through the proxy, actual internet egress). That still needs a real
+external proxy and is not part of any automated gate — the following is a
+manual, by-hand check.
 
 Credentials live in a git-ignored `.env` next to this README; copy the
 committed template and fill it in:
