@@ -3,6 +3,17 @@
 > Instructions for AI agents and coding assistants working in this repository.
 > Think of this as a README for agents. Human contributors: see [README.md](README.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 >
+> **Read this first, before anything else:**
+> **[docs/dev/rules-for-agents.md](docs/dev/rules-for-agents.md)** — what you may
+> and may not do here, and what every one of the 34 guards stops you doing.
+> Five minutes. The short version: `git add` by filename only (never `-A`, `.`,
+> `-u`, `commit -a`, `stash`); commit messages, manifests and `.nv` docs in
+> English; never touch `git config user.*`; `main` belongs to the integrator, you
+> work in a branch inside a worktree under `d:/Sources/nv-lang/`; the spec is
+> written BEFORE the implementation and D-block numbers are assigned by the
+> integrator, not picked; a defect you find gets a registry entry in the same
+> merge; only the integrator runs the mega-CU and the full `nova test`.
+>
 > **New here?** How development actually works — plan-driven dev, the worktree model, the daily loop, and the
 > hard operational rules — is in [docs/dev/dev-workflow.md](docs/dev/dev-workflow.md) (Russian). Read it before picking up work.
 > Full onboarding path (project state, architecture, gates, where to go next):
