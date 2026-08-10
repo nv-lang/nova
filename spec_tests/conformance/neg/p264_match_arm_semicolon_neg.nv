@@ -1,0 +1,17 @@
+// EXPECT_COMPILE_ERROR E_MATCH_ARM_SEMICOLON
+//
+// Plan 264 (D452): retracted form 2/4 — `;` between match arms used to
+// parse silently, even though arms are mutually exclusive ("or") and `;`
+// promises a sequence ("then"). Canon: `,` on one line, or newline alone
+// per arm (see the positive fixture,
+// spec_tests/conformance/d452_match_arm_separator.nv).
+module neg.p264_match_arm_semicolon_neg
+
+fn classify(code int) -> str {
+    // nova:expect E_MATCH_ARM_SEMICOLON -- form 2/4 retracted by D452: `;` between match arms
+    match code { 200 => "ok"; 404 => "not found" }
+}
+
+test "match arm semicolon neg" {
+    ro _ = classify(200)
+}
