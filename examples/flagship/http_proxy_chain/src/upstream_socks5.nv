@@ -6,7 +6,7 @@
 // `upstream.nv`'s `Upstream` effect doc comment for why a protocol switch
 // is a handler switch (plan 249 §9).
 
-module flagship.http_proxy_chain
+module main
 
 import socks.{socks5_connect}
 

@@ -3,7 +3,7 @@
 // parsing: the bytes-off-the-wire stage shared by both the CONNECT and
 // plain-HTTP paths, before either one knows which path it is on.
 
-module flagship.http_proxy_chain
+module main
 
 import std.net.{TcpStream}
 import std.time.duration

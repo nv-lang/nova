@@ -14,7 +14,7 @@
 // whole machine may already have set for other tools (curl, git, docker) —
 // same "argv beats env, explicit beats shared" shape as the listen port.
 
-module flagship.http_proxy_chain
+module main
 
 import std.os.{args, env}
 

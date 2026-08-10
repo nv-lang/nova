@@ -82,8 +82,8 @@ fi
 echo "smoke: using nova binary: ${NOVA_BIN}"
 
 # ── Build the bridge ─────────────────────────────────────────────────────
-echo "smoke: building ${EXAMPLE_DIR}/main.nv"
-if ! "${NOVA_BIN}" build "${EXAMPLE_DIR}/main.nv" --strict-effects -o "${BRIDGE_BIN}" >"${WORKDIR}/build.log" 2>&1; then
+echo "smoke: building ${EXAMPLE_DIR}/src/main.nv"
+if ! "${NOVA_BIN}" build "${EXAMPLE_DIR}/src/main.nv" --strict-effects -o "${BRIDGE_BIN}" >"${WORKDIR}/build.log" 2>&1; then
     cat "${WORKDIR}/build.log"
     echo "SMOKE: FAIL — build failed"
     exit 1

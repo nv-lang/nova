@@ -3,7 +3,7 @@
 // the tunnel stage both the CONNECT and plain-HTTP paths hand off to once
 // upstream is dialed.
 
-module flagship.http_proxy_chain
+module main
 
 import std.net.{TcpStream, TcpReadHalf, TcpWriteHalf}
 

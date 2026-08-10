@@ -4,7 +4,7 @@
 // and the `all_proxy`-compatible URL form it can be configured from
 // (plan 249 §8/§9).
 
-module flagship.http_proxy_chain
+module main
 
 import std.net.{TcpStream}
 

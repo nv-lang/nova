@@ -111,12 +111,12 @@ later).
 
 ```sh
 SOCKS5_PROXY=proxy.example.com:1080 SOCKS5_USER=me SOCKS5_PASS=secret \
-  nova build examples/flagship/http_proxy_chain/main.nv -o bridge && ./bridge 8899
+  nova build examples/flagship/http_proxy_chain/src/main.nv -o bridge && ./bridge 8899
 # Point a browser's HTTP *and* HTTPS proxy settings at 127.0.0.1:8899.
 
 # Equivalent, via a single all_proxy URL (what's already set for curl/git/docker):
 ALL_PROXY=socks5://me:secret@proxy.example.com:1080 \
-  nova build examples/flagship/http_proxy_chain/main.nv -o bridge && LISTEN_PORT=8899 ./bridge
+  nova build examples/flagship/http_proxy_chain/src/main.nv -o bridge && LISTEN_PORT=8899 ./bridge
 ```
 
 **Listen address is hardcoded to the loopback** (`SocketAddr.loopback`) —
@@ -209,7 +209,7 @@ cp examples/flagship/http_proxy_chain/.env.example \
 $EDITOR examples/flagship/http_proxy_chain/.env
 
 set -a && . examples/flagship/http_proxy_chain/.env && set +a
-nova build examples/flagship/http_proxy_chain/main.nv --strict-effects -o bridge
+nova build examples/flagship/http_proxy_chain/src/main.nv --strict-effects -o bridge
 ./bridge
 ```
 

@@ -30,7 +30,7 @@
 // body rewriting.
 //
 // File layout (plan 249 §9 — one module, equal-standing files, all
-// declaring `module flagship.http_proxy_chain`):
+// declaring `module main`):
 //   config.nv           — Config, load_config, LISTEN_PORT/upstream selection
 //   http.nv             — request-head reading + parsing
 //   relay.nv            — pipe_bidirectional/pump (the tunnel stage)
@@ -55,7 +55,7 @@
 // end-to-end smoke test (NOT run in CI — needs a real external SOCKS5
 // proxy).
 
-module flagship.http_proxy_chain
+module main
 
 import std.net.{TcpListener, TcpStream, SocketAddr, real_net}
 import std.os.{real_os}
