@@ -11505,6 +11505,26 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// `NovaBox_*` fat pointer for protocol `(proto, type_args)`. Values that
     /// are already boxed (`NovaBox_*`) pass through unchanged. Shared by
     /// protocol-return wrapping and protocol-parameter argument coercion.
+    /// Уже ли это значение — построенный нами протокольный бокс?
+    ///
+    /// Единственный признак — форма литерала `(NovaBox_<X>){ ... }`, которую
+    /// производит ТОЛЬКО `box_value_for_protocol`. Проверка снимает ведущие
+    /// пробелы и любое число открывающих скобок: промежуточные сайты вправе
+    /// обернуть выражение ещё одной парой, и «начинается с `(NovaBox_`» такую
+    /// обёртку не узнаёт (`((NovaBox_X){…})` начинается с двух скобок).
+    ///
+    /// Заведено интегратором 2026-08-10 после слияния №546: коэрсия в
+    /// экзистенциал сведена в одну точку, но ДРАЙВЕРОВ у неё несколько, и
+    /// каждый обязан уметь распознать чужой результат. Без этого вернулось
+    /// двойное боксирование на типизированной привязке (`mut g Greeter = sp`),
+    /// уронив `standalone/f2_protocol_dispatch_method_survives` тем же
+    /// CC-FAIL, от которого №546 и лечили.
+    fn value_is_protocol_box(val: &str) -> bool {
+        val.trim_start()
+            .trim_start_matches(|c: char| c == '(' || c.is_whitespace())
+            .starts_with("NovaBox_")
+    }
+
     fn box_value_for_protocol(
         &mut self, val: String, concrete_c: &str, proto: &str, type_args: &[String],
     ) -> String {
@@ -11534,7 +11554,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // covers every current AND future double-drive combination without
         // each call site having to separately track "did an earlier stage
         // already box this".
-        if val.trim_start().starts_with("(NovaBox_") {
+        // Дополнение интегратора 2026-08-10, после слияния фикса №546: проверка
+        // формы обязана быть устойчива к ЛИШНИМ СКОБКАМ. Исходная версия
+        // сравнивала с `"(NovaBox_"`, и потому не узнавала собственный же
+        // результат, если промежуточный сайт обернул его ещё одной парой
+        // скобок: `((NovaBox_Greeter){ ... })` начинается с ДВУХ `(`. Ровно так
+        // вернулось двойное боксирование на пути типизированной привязки
+        // (`mut g Greeter = sp`) — фикстура
+        // `standalone/f2_protocol_dispatch_method_survives` покраснела тем же
+        // CC-FAIL, от которого №546 и лечили. Снимаем ведущие пробелы и ЛЮБОЕ
+        // число открывающих скобок, и лишь потом сверяем форму: так проверка
+        // закрыта относительно собственного вывода при любой обёртке.
+        if Self::value_is_protocol_box(&val) {
             return val;
         }
         if let Some((inst, box_ty)) =
@@ -32319,7 +32350,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // what all later `ExprKind::Ident` reads look up by.
                 let binding_c = Self::mangle_field_name(&binding);
                 if let Some((vtable_instance, box_c_type)) = &protocol_box {
-                    if is_hoisted {
+                    // №546-дополнение (интегратор, 2026-08-10): это ЧЕТВЁРТЫЙ
+                    // драйвер боксинга, и он строит литерал сам, минуя
+                    // `box_value_for_protocol`. После того как коэрсия
+                    // появилась в `emit_expr_with_target_type`, `val` сюда
+                    // приходит УЖЕ боксированным — и обёртка давала
+                    // `NovaBox_P g = { .data = (void*)((NovaBox_P){…}), … }`,
+                    // то есть бокс внутри бокса (CC-FAIL: fat pointer нельзя
+                    // положить в `void*`). Готовый бокс присваиваем как есть.
+                    if Self::value_is_protocol_box(&val) {
+                        if is_hoisted {
+                            self.line(&format!("{} = {};", binding_c, val));
+                        } else {
+                            self.line(&format!("{} {} = {};", box_c_type, binding_c, val));
+                        }
+                    } else if is_hoisted {
                         self.line(&format!(
                             "{} = {{ .data = (void*)({}), .vtable = &{} }};",
                             binding_c, val, vtable_instance
