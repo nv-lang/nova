@@ -217,6 +217,12 @@ bash "$ROOT/scripts/tools/with-deadline.sh" 600 \
     bash "$ROOT/scripts/guards/check-clean-checkout-build.sh" "$ROOT" \
     || fail "на чистом дереве флагман не собирается (dev-override прячет расхождение)"
 
+# №578: флаг, который никто не взводит и нигде не описывает, снаружи
+# неотличим от несделанной работы (прецедент — №575, много-TU).
+step "у каждого флага NOVA_* есть вызывающий или описание (№578)"
+bash "$ROOT/scripts/guards/check-flag-has-caller.sh" "$ROOT" \
+    || fail "флаг NOVA_* без вызывающего и без описания"
+
 step "лицензионная гигиена (манифесты объявляют лицензию, подмодули названы — №556)"
 bash "$ROOT/scripts/guards/check-license-hygiene.sh" "$ROOT" \
     || fail "манифест без лицензии либо вендоренный подмодуль без уведомления"

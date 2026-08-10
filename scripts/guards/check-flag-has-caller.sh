@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# scripts/guards/check-flag-has-caller.sh
+# Переменная-флаг, которую никто не взводит и нигде не описывает, — не фича.
+#
+# ДОМ И ОСНОВАНИЕ: план 231, трек Д (машинное принуждение норм); реестр 221.1
+# №575 (много-TU собрана, измерена и оставлена выключенной) и №578 (эта запись).
+#
+# ЗАЧЕМ — два случая одного вида за одни сутки.
+#
+# Первый: `NOVA_MULTI_TU`. План 209 довёл дробление единицы трансляции до Ф.4 с
+# замерами и conformance-прогоном. Флаг не взводил НИКТО — ни гейт, ни CI, ни
+# CLI. Снаружи это неотличимо от «не сделано»: работа была, пользы не было.
+#
+# Второй: `NOVA_C_DEBUG_INFO`, заведённый интегратором 2026-08-11, чтобы
+# измерить цену `-g`. Владелец спросил ровно то, что следовало: «кто это
+# автоматизированно будет делать?» Никто. Прибор сделал своё дело (30 с против
+# 29 с — мера отклонена) и был удалён в тот же час.
+#
+# Отсюда правило: **флаг без вызывающего — не фича**. И следующий вопрос
+# владельца был столь же прав: «кто это проверит?» — вот этот страж.
+#
+# ЧТО ПРОВЕРЯЕТСЯ. Каждое имя `NOVA_*`, читаемое компилятором через
+# `env::var`, обязано встречаться ХОТЯ БЫ ОДИН РАЗ вне Rust-исходников: в
+# `scripts/` (гейт, стражи, инструменты), в `.github/workflows/`, в `docs/`
+# либо в `AGENTS.md`. То есть у флага есть либо автоматический вызывающий, либо
+# описание для человека, который его взведёт руками. Если имя не встречается
+# нигде, кроме кода, который его читает, — о нём не знает никто.
+#
+# ЧЕГО ЭТОТ СТРАЖ НЕ ЛОВИТ (сказано честно): он проверяет УПОМИНАНИЕ, а не
+# смысл. Флаг, названный в устаревшем разделе доки, пройдёт. Отличить живое
+# описание от мёртвого машина не может — это суждение. Страж закрывает ровно
+# то, что закрывается механически: полное молчание вокруг флага.
+#
+# ПОЧЕМУ ХРАПОВИК, А НЕ НОЛЬ. Флагов в компиляторе несколько десятков, часть
+# заведена годы назад. Обнулить одним движением нельзя, не разобрав каждый.
+# Храповик запрещает РОСТ: новый безмолвный флаг краснит гейт немедленно.
+#
+# ИСПОЛЬЗОВАНИЕ:
+#   bash scripts/guards/check-flag-has-caller.sh [КОРЕНЬ]
+# ПЕРЕМЕННЫЕ:
+#   NOVA_FLAGCALLER_BASELINE — путь к базе, по умолчанию
+#                              scripts/guards/flag-has-caller.baseline
+# Самотест — scripts/guards/selftest/test-check-flag-has-caller.sh
+
+set -u
+export LC_ALL=C
+
+ROOT="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+BASELINE="${NOVA_FLAGCALLER_BASELINE:-$ROOT/scripts/guards/flag-has-caller.baseline}"
+
+[ -d "$ROOT" ] || { echo "check-flag-has-caller: нет каталога $ROOT" >&2; exit 1; }
+
+SRC_DIRS=""
+for d in compiler-codegen/src nova-cli/src; do
+    [ -d "$ROOT/$d" ] && SRC_DIRS="$SRC_DIRS $ROOT/$d"
+done
+if [ -z "$SRC_DIRS" ]; then
+    echo "check-flag-has-caller ok: нет исходников компилятора в $ROOT"
+    exit 0
+fi
+
+# Имена флагов, читаемые кодом.
+FLAGS=$(grep -rhoE 'env::var(_os)?\("NOVA_[A-Z_0-9]+"' $SRC_DIRS 2>/dev/null \
+        | grep -oE 'NOVA_[A-Z_0-9]+' | sort -u)
+
+[ -n "$FLAGS" ] || { echo "check-flag-has-caller ok: флагов не найдено"; exit 0; }
+
+SILENT=""
+COUNT=0
+for f in $FLAGS; do
+    # Ищем упоминание ВНЕ Rust-исходников: тот, кто взводит, или тот, кто описывает.
+    if grep -rqF "$f" \
+            --include="*.sh" --include="*.yml" --include="*.yaml" \
+            --include="*.md" --include="*.toml" --include="*.py" \
+            "$ROOT/scripts" "$ROOT/docs" "$ROOT/.github" "$ROOT/AGENTS.md" 2>/dev/null; then
+        continue
+    fi
+    SILENT="$SILENT $f"
+    COUNT=$((COUNT + 1))
+done
+
+BASE=0
+if [ -f "$BASELINE" ]; then
+    BASE=$(sed -n 's/^silent_flags=\([0-9][0-9]*\).*/\1/p' "$BASELINE" | head -1)
+    BASE=${BASE:-0}
+else
+    echo "check-flag-has-caller: базы нет ($BASELINE) — считаю базой 0" >&2
+fi
+
+echo "check-flag-has-caller: флагов без вызывающего $COUNT (база $BASE)"
+
+if [ "$COUNT" -gt "$BASE" ]; then
+    echo "check-flag-has-caller: ВЫРОСЛО — $COUNT > базы $BASE" >&2
+    for f in $SILENT; do echo "    $f" >&2; done
+    echo "    Флаг без вызывающего — не фича: снаружи он неотличим от" >&2
+    echo "    несделанной работы (реестр 221.1 №575). Либо взведи его там," >&2
+    echo "    где он должен работать (гейт, CI, CLI), либо опиши в docs/," >&2
+    echo "    либо удали вместе с кодом, который его читает." >&2
+    echo "check-flag-has-caller: FAIL" >&2
+    exit 1
+fi
+
+if [ "$COUNT" -lt "$BASE" ]; then
+    echo "check-flag-has-caller: долг СНИЗИЛСЯ ($COUNT < базы $BASE) — опусти базу в $BASELINE"
+fi
+
+echo "check-flag-has-caller ok: роста безмолвных флагов нет ($COUNT <= $BASE)"
+exit 0
