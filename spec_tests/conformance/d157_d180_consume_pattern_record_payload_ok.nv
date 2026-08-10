@@ -40,8 +40,8 @@ test "rvalue match Ok({ a: consume x, b }) — a consume, b — plain view" {
             x.touch()           // mut-метод без доп. `mut`-keyword (D180)
             assert(b == 10)
             x.close()           // consume-обязательство выполнено (D133)
-        },
-        Err(_e) => {},
+        }
+        Err(_e) => {}
     }
 }
 
@@ -51,8 +51,8 @@ test "place-скрутини — именная Option-переменная, т�
         Some({ a: consume x, b }) => {
             assert(b == 20)
             x.close()
-        },
-        None => {},
+        }
+        None => {}
     }
 }
 
@@ -73,7 +73,7 @@ test "view-default record payload НЕ сломан — оба поля не-mus
     match dial_p216_plain_record() {
         Some({ x, y }) => {
             assert(x == 7 && y == 8)
-        },
-        None => {},
+        }
+        None => {}
     }
 }

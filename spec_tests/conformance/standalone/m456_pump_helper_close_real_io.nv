@@ -56,7 +56,7 @@ fn m456_write_all_half(mut w TcpWriteHalf, data []u8) Net -> bool {
     mut off = 0
     while off < data.len() {
         match w.write(data[off..]) {
-            Ok(n)  => { if n <= 0 { return false } off += n }
+            Ok(n)  => { if n <= 0 { return false }; off += n }
             Err(_) => return false
         }
     }
@@ -136,7 +136,7 @@ test "#456: spawn consume a, b { helper(a, b) } with explicit close() on real bl
             // relay's ar/bw pump finishes and `tok.cancel()`s well ahead of
             // any natural EOF signal reaching the still-parked sibling.
             spawn {
-                ro port = match ch_port.rx.recv() { Some(p) => p  None => 0 as u16 }
+                ro port = match ch_port.rx.recv() { Some(p) => p, None => 0 as u16 }
 
                 consume c1 = match TcpStream.connect(SocketAddr.loopback(port)) {
                     Ok(consume s) => s
@@ -151,7 +151,7 @@ test "#456: spawn consume a, b { helper(a, b) } with explicit close() on real bl
 
                 mut buf1 []u8 = []u8.new()
                 buf1.resize(32, 0 as u8)
-                ro n1 = match c2.read(buf1) { Ok(k) => k  Err(_) => -1 }
+                ro n1 = match c2.read(buf1) { Ok(k) => k, Err(_) => -1 }
 
                 c1.close()
                 Time.sleep(300.to_millis())
@@ -160,8 +160,8 @@ test "#456: spawn consume a, b { helper(a, b) } with explicit close() on real bl
             }
         }
 
-        ro client_result = match ch_client_done.rx.recv() { Some(v) => v  None => -999 }
-        ro relay_result = match ch_relay_done.rx.recv() { Some(v) => v  None => -999 }
+        ro client_result = match ch_client_done.rx.recv() { Some(v) => v, None => -999 }
+        ro relay_result = match ch_relay_done.rx.recv() { Some(v) => v, None => -999 }
         assert(client_result > 0)
         assert(relay_result == 1)
     }

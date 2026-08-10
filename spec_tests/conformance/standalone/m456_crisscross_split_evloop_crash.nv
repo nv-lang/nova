@@ -109,7 +109,7 @@ test "crisscross split-stream pump on two real TCP connections does not crash th
             // through the cross-wired relay: bytes written on conn-1 come
             // back out on conn-2 and vice versa.
             spawn {
-                ro port = match ch_port.rx.recv() { Some(p) => p  None => 0 as u16 }
+                ro port = match ch_port.rx.recv() { Some(p) => p, None => 0 as u16 }
 
                 consume c1 = match TcpStream.connect(SocketAddr.loopback(port)) {
                     Ok(consume s) => s
@@ -125,11 +125,11 @@ test "crisscross split-stream pump on two real TCP connections does not crash th
 
                 mut buf1 []u8 = []u8.new()
                 buf1.resize(32, 0 as u8)
-                ro n1 = match c2.read(buf1) { Ok(k) => k  Err(_) => -1 }
+                ro n1 = match c2.read(buf1) { Ok(k) => k, Err(_) => -1 }
 
                 mut buf2 []u8 = []u8.new()
                 buf2.resize(32, 0 as u8)
-                ro n2 = match c1.read(buf2) { Ok(k) => k  Err(_) => -1 }
+                ro n2 = match c1.read(buf2) { Ok(k) => k, Err(_) => -1 }
 
                 c1.close()
                 c2.close()
@@ -137,8 +137,8 @@ test "crisscross split-stream pump on two real TCP connections does not crash th
             }
         }
 
-        ro client_result = match ch_client_done.rx.recv() { Some(v) => v  None => -999 }
-        ro relay_result = match ch_relay_done.rx.recv() { Some(v) => v  None => -999 }
+        ro client_result = match ch_client_done.rx.recv() { Some(v) => v, None => -999 }
+        ro relay_result = match ch_relay_done.rx.recv() { Some(v) => v, None => -999 }
         assert(client_result > 0)
         assert(relay_result >= 0)
     }

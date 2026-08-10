@@ -8,8 +8,8 @@ fn[I Next[T]] I mut @bfor_each(f fn(T) -> ()) -> () {
     mut go = true
     while go {
         match @next() {
-            Some(x) => { f(x) },
-            None => { go = false },
+            Some(x) => { f(x) }
+            None => { go = false }
         }
     }
 }

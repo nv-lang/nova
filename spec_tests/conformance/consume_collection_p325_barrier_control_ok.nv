@@ -18,15 +18,15 @@ fn p325_ctrl_res_dial(v int) -> Result[P325CtrlRes, str] => Ok(P325CtrlRes { x: 
 
 test "Ш.0 barrier control — Option[consume T] unaffected" {
     match p325_ctrl_opt_dial(1) {
-        Some(consume r) => { assert(r.into_finish() == 1) },
-        None => { assert(false) },
+        Some(consume r) => { assert(r.into_finish() == 1) }
+        None => { assert(false) }
     }
 }
 
 test "Ш.0 barrier control — Result[consume T, E] unaffected" {
     match p325_ctrl_res_dial(1) {
-        Ok(consume r) => { assert(r.into_finish() == 1) },
-        Err(_e) => { assert(false) },
+        Ok(consume r) => { assert(r.into_finish() == 1) }
+        Err(_e) => { assert(false) }
     }
 }
 

@@ -28,8 +28,8 @@ test "rvalue match Ok(consume x) — ownership явный, mut-capable, consume-
         Ok(consume tcp) => {
             tcp.touch()          // mut-метод без доп. `mut`-keyword (D180)
             tcp.close()          // consume-обязательство выполнено (D133)
-        },
-        Err(_e) => {},
+        }
+        Err(_e) => {}
     }
 }
 
@@ -41,8 +41,8 @@ test "place-скрутини — именная Result-переменная, т�
     // на самом binding'е.
     ro attempt = dial_consume_a(2)
     match attempt {
-        Ok(consume tcp) => { tcp.close() },
-        Err(_e) => {},
+        Ok(consume tcp) => { tcp.close() }
+        Err(_e) => {}
     }
 }
 
@@ -56,7 +56,7 @@ test "view-default place-match НЕ сломан — Option[int] payload ост�
     match maybe_consume_a(4) {
         Some(x) => {
             assert(x == 4)
-        },
-        None => {},
+        }
+        None => {}
     }
 }

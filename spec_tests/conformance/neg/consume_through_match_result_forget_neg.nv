@@ -33,7 +33,7 @@ test "forgot to close consume-value extracted via match Ok(..) — must be D133"
         Ok(consume s) => {
             // ОШИБКА D133-not-consumed: `s` Live на exit'е arm'а —
             // никогда не был закрыт, но arm сама по себе не diverges.
-        },
-        Err(_e) => {},
+        }
+        Err(_e) => {}
     }
 }

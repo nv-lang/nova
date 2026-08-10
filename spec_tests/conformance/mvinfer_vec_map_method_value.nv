@@ -17,8 +17,8 @@ test "method-value arg infers method-level type-param (Result.map, Ok)" {
     ro r Result[MvInferPair, str] = Ok(MvInferPair.new(9))
     ro mapped = r.map(MvInferPair.@to_str)
     match mapped {
-        Ok(v) => assert(v == "9"),
-        Err(_) => assert(false),
+        Ok(v) => assert(v == "9")
+        Err(_) => assert(false)
     }
 }
 
@@ -26,7 +26,7 @@ test "method-value arg infers method-level type-param (Result.map, Err)" {
     ro r Result[MvInferPair, str] = Err("boom")
     ro mapped = r.map(MvInferPair.@to_str)
     match mapped {
-        Ok(_) => assert(false),
-        Err(e) => assert(e == "boom"),
+        Ok(_) => assert(false)
+        Err(e) => assert(e == "boom")
     }
 }

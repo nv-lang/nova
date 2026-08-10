@@ -15,8 +15,8 @@ test "method-value arg infers method-level type-param (Option.flat_map)" {
     ro b Option[MvInferBox] = Some(MvInferBox.new(7))
     ro r = b.flat_map(MvInferBox.@unwrap)
     match r {
-        Some(v) => assert(v == 7),
-        None => assert(false),
+        Some(v) => assert(v == 7)
+        None => assert(false)
     }
 }
 
@@ -24,7 +24,7 @@ test "method-value arg infers method-level type-param (Option.flat_map, None rec
     ro b Option[MvInferBox] = None
     ro r = b.flat_map(MvInferBox.@unwrap)
     match r {
-        Some(_) => assert(false),
-        None => assert(true),
+        Some(_) => assert(false)
+        None => assert(true)
     }
 }

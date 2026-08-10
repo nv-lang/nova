@@ -8,8 +8,8 @@ fn[I Next[T]] I mut @bcollect() -> Vec[T] {
     mut out = Vec[T].new()
     while true {
         match @next() {
-            Some(x) => out.push(x),
-            None => return out,
+            Some(x) => out.push(x)
+            None => return out
         }
     }
     out

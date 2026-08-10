@@ -2,4 +2,4 @@ module neg.stdlib_neg
 // Plan 172.3 Ф.4 — cross-module membership: str ∉ stdlib SignedInts.
 // EXPECT_COMPILE_ERROR E_TYPE_NOT_IN_SET
 fn[T SignedInts] pick(x T) -> T => x
-fn main() -> int { ro s = pick("x")  0 }
+fn main() -> int { ro s = pick("x"); 0 }

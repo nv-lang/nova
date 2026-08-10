@@ -50,8 +50,8 @@ test "ro Type.NAME: используется в выражении (арифме
 test "ro Type.NAME: используется в match (по биндингу) (Plan 157)" {
     ro z = RoAssocRec.RO157SAMPLE
     ro label = match z.flag {
-        Off => "off",
-        On => "on",
+        Off => "off"
+        On => "on"
     }
     assert(label == "off")
 }

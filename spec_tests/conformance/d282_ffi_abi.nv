@@ -79,7 +79,7 @@ test "D282/D353 C-ABI signatures type-check + Option[*()] NPO is observable" {
     assert(d282_none == None)
     assert(d282_some != None)
     match d282_some {
-        Some(p) => assert((p as int) == 0x1000),
-        None => assert(false),
+        Some(p) => assert((p as int) == 0x1000)
+        None => assert(false)
     }
 }

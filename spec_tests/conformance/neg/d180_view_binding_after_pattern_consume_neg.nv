@@ -22,7 +22,7 @@ test "mut stream = tcp (pattern-bound consume) — alias запрещён" {
         Ok(consume tcp) => {
             mut stream = tcp
             stream.close()
-        },
-        Err(_e) => {},
+        }
+        Err(_e) => {}
     }
 }

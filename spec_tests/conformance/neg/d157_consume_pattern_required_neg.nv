@@ -18,7 +18,7 @@ fn dial() -> Result[D157ReqStream, str] => Ok(D157ReqStream { id: 1 })
 
 test "plain Ok(x) на must-consume payload — ошибка" {
     match dial() {
-        Ok(x) => { x.close() },
-        Err(_e) => {},
+        Ok(x) => { x.close() }
+        Err(_e) => {}
     }
 }

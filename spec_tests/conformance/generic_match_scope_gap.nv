@@ -57,13 +57,13 @@ export fn[I Next[T], T Compare] I mut @gmsg_min() -> Option[T] {
     // fallback under test.
     // nova:allow W_MANUAL_COALESCE -- see comment above
     mut best = match @next() {
-        Some(first) => first,
-        None => return None,
+        Some(first) => first
+        None => return None
     }
     while true {
         match @next() {
-            Some(x) => { if x.compare(best) < 0 { best = x } },
-            None => return Some(best),
+            Some(x) => { if x.compare(best) < 0 { best = x } }
+            None => return Some(best)
         }
     }
     Some(best)
@@ -73,7 +73,7 @@ test "generic-match-scope-gap: bare match-arm bind (x) inside generic Next[T]-bo
     mut it = GmsgIter { items: [GmsgBox{v:3}, GmsgBox{v:1}, GmsgBox{v:2}], i: 0 }
     ro m = it.gmsg_min()
     match m {
-        Some(b) => assert(b.v == 1),
-        None => assert(false),
+        Some(b) => assert(b.v == 1)
+        None => assert(false)
     }
 }

@@ -9,6 +9,6 @@ type Stack[T] { items []T }
 fn takes_u32(s Stack[u32]) -> int => s.items.len()
 
 test "Stack[int] -> Stack[u32] is rejected" {
-    ro a Stack[int] = Stack[int] { items: [1, 2] }
+    ro a Stack[int] = Stack[int]; { items: [1, 2] }
     assert(takes_u32(a) == 2)
 }
