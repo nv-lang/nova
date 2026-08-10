@@ -31,11 +31,11 @@ test "recv distinguishes closed (None) from value; buffer drains before None" {
 
     // Дренаж: два Some, затем None (closed+empty).
     mut got1 = -1
-    match rx.recv() { Some(v) => { got1 = v }  None => { got1 = -1 } }
+    match rx.recv() { Some(v) => { got1 = v }, None => { got1 = -1 } }
     mut got2 = -1
-    match rx.recv() { Some(v) => { got2 = v }  None => { got2 = -1 } }
+    match rx.recv() { Some(v) => { got2 = v }, None => { got2 = -1 } }
     mut got3 = 0
-    match rx.recv() { Some(_) => { got3 = 1 }  None => { got3 = 0 } }
+    match rx.recv() { Some(_) => { got3 = 1 }, None => { got3 = 0 } }
 
     assert(got1 == 11)          // буфер дренится
     assert(got2 == 22)

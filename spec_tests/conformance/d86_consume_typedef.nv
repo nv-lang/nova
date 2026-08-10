@@ -19,7 +19,7 @@ export fn d86_typedef_open(ok bool) -> Result[D86TypedefRes, str] {
 test "consume-record через Result[T,E] typedef Nova_<T>_p эмитится в merged-CU" {
     ro r = d86_typedef_open(true)
     match r {
-        Ok(consume v) => v.close(),
-        Err(_) => panic("unexpected"),
+        Ok(consume v) => v.close()
+        Err(_) => panic("unexpected")
     }
 }

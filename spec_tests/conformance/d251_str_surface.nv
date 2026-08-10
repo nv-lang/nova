@@ -36,16 +36,16 @@ test "splitn / rsplitn: <= n частей, последняя = остаток (
 
 test "split_once / rsplit_once -> Option[(str, str)] (D251)" {
     match "key=a=b".split_once("=") {
-        Some(d251_kv) => { assert(d251_kv.0 == "key"); assert(d251_kv.1 == "a=b") },
-        None => assert(false),
+        Some(d251_kv) => { assert(d251_kv.0 == "key"); assert(d251_kv.1 == "a=b") }
+        None => assert(false)
     }
     match "key=a=b".rsplit_once("=") {
-        Some(d251_kv2) => { assert(d251_kv2.0 == "key=a"); assert(d251_kv2.1 == "b") },
-        None => assert(false),
+        Some(d251_kv2) => { assert(d251_kv2.0 == "key=a"); assert(d251_kv2.1 == "b") }
+        None => assert(false)
     }
     match "nosep".split_once("=") {
-        Some(_) => assert(false),
-        None => assert(true),
+        Some(_) => assert(false)
+        None => assert(true)
     }
 }
 
@@ -107,16 +107,16 @@ test "trim_matches / _start / _end: codepoint-pattern, multibyte-safe (D251)" {
 
 test "strip_prefix / strip_suffix -> Option[str] (D251)" {
     match "hello".strip_prefix("he") {
-        Some(d251_sp) => assert(d251_sp == "llo"),
-        None => assert(false),
+        Some(d251_sp) => assert(d251_sp == "llo")
+        None => assert(false)
     }
     match "hello".strip_suffix("lo") {
-        Some(d251_ss) => assert(d251_ss == "hel"),
-        None => assert(false),
+        Some(d251_ss) => assert(d251_ss == "hel")
+        None => assert(false)
     }
     match "hello".strip_prefix("xx") {
-        Some(_) => assert(false),
-        None => assert(true),
+        Some(_) => assert(false)
+        None => assert(true)
     }
 }
 
@@ -169,16 +169,16 @@ test "pad_start / pad_end / pad_center: ширина в CODEPOINT'ах (D251)" {
 test "get(Range) -> Option[str]: None при OOB и не-границе codepoint (D251)" {
     ro d251_gs = "héllo"             // é = байты 1..3
     match d251_gs.get(1..3) {
-        Some(d251_gv) => assert(d251_gv == "é"),
-        None => assert(false),
+        Some(d251_gv) => assert(d251_gv == "é")
+        None => assert(false)
     }
     match d251_gs.get(2..3) {        // разрез сквозь é
-        Some(_) => assert(false),
-        None => assert(true),
+        Some(_) => assert(false)
+        None => assert(true)
     }
     match d251_gs.get(0..99) {       // OOB
-        Some(_) => assert(false),
-        None => assert(true),
+        Some(_) => assert(false)
+        None => assert(true)
     }
 }
 

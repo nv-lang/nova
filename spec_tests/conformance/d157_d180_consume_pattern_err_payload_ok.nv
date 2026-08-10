@@ -23,19 +23,19 @@ fn dial_p216_err(v int) -> Result[int, P216ErrPayload] =>
 
 test "rvalue match Err(consume e) — ownership явный, mut-capable, consume-до-exit" {
     match dial_p216_err(-1) {
-        Ok(_v) => {},
+        Ok(_v) => {}
         Err(consume e) => {
             e.touch()           // mut-метод без доп. `mut`-keyword (D180)
             e.log_and_drop()    // consume-обязательство выполнено (D133)
-        },
+        }
     }
 }
 
 test "place-скрутини — именная Result-переменная, Err(consume e) тот же путь" {
     ro attempt = dial_p216_err(-2)
     match attempt {
-        Ok(_v) => {},
-        Err(consume e) => { e.log_and_drop() },
+        Ok(_v) => {}
+        Err(consume e) => { e.log_and_drop() }
     }
 }
 
@@ -50,9 +50,9 @@ fn dial_str_err(v int) -> Result[int, str] =>
 
 test "view-default Err payload НЕ сломан — не-must-consume E (str) остаётся plain" {
     match dial_str_err(-1) {
-        Ok(_v) => {},
+        Ok(_v) => {}
         Err(msg) => {
             assert(msg == "boom")
-        },
+        }
     }
 }

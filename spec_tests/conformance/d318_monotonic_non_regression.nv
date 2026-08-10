@@ -25,13 +25,13 @@ test "d318: checked_duration_since → None on regress, Some forward" {
     ro earlier = m - 3.to_seconds()
     assert(earlier.checked_duration_since(m).is_none())
     match m.checked_duration_since(earlier) {
-        Some(r) => assert(r == 3.to_seconds()),
-        None => assert(false),
+        Some(r) => assert(r == 3.to_seconds())
+        None => assert(false)
     }
     // equal → Some(ZERO)
     match m.checked_duration_since(m) {
-        Some(r) => assert(r.nanos() == 0),
-        None => assert(false),
+        Some(r) => assert(r.nanos() == 0)
+        None => assert(false)
     }
 }
 

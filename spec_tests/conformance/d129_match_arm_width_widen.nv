@@ -18,15 +18,15 @@ module spec_tests.conformance
 test "match-arm width unify: u32 payload arm + int sentinel arm widen to int (D129/D54)" {
     ro o Option[u32] = None
     ro r = match o {
-        Some(v) => v,
-        None => -1,
+        Some(v) => v
+        None => -1
     }
     assert(r == -1)
 
     ro o2 Option[u32] = Some(7)
     ro r2 = match o2 {
-        Some(v) => v,
-        None => -1,
+        Some(v) => v
+        None => -1
     }
     assert(r2 == 7)
 }
@@ -65,16 +65,16 @@ test "match-arm width unify: bare literal arm adopts a concrete uint sibling (D4
 fn d129_pick_width(o Option[u32]) -> int {
     // nova:allow W_MANUAL_COALESCE -- see comment above (match-arm width unification is the test subject, not value-fallback)
     match o {
-        Some(v) => v,
-        None => -1,
+        Some(v) => v
+        None => -1
     }
 }
 
 fn d129_pick_width_via_local(o Option[u32]) -> int {
     // nova:allow W_MANUAL_COALESCE -- see comment above (match-arm width unification is the test subject, not value-fallback)
     ro r = match o {
-        Some(v) => v,
-        None => -1,
+        Some(v) => v
+        None => -1
     }
     r
 }

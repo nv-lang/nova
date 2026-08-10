@@ -15,8 +15,8 @@ test "t" {
     ro o Option[i32] = None
     ro u u32 = 5
     ro r = match o {
-        Some(v) => v,
-        None => u,
+        Some(v) => v
+        None => u
     }
     println(r)
 }

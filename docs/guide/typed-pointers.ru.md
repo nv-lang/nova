@@ -379,8 +379,8 @@ extern "C" fn malloc(sz int) -> Option[*u8]
 
 unsafe {
     match malloc(1024) {
-        Some(buf) => use(buf),               // buf: *u8 non-null guaranteed
-        None      => Fail.throw(OutOfMemory),
+        Some(buf) => use(buf)                // buf: *u8 non-null guaranteed
+        None      => Fail.throw(OutOfMemory)
     }
 }
 ```

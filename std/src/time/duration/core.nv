@@ -178,8 +178,8 @@ export fn f64 @to_seconds() -> Duration =>
 #stable(since = "0.1")
 export fn f64 @checked_to_seconds() -> Option[Duration] =>
     match f64_nanos_checked(@ * 1_000_000_000.0) {
-        Some(n) => Some(n.to_nanos()),
-        None => None,
+        Some(n) => Some(n.to_nanos())
+        None => None
     }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -353,22 +353,22 @@ fn checked_div_i64(a i64, b i64) -> Option[i64] {
 /// Saturating add clamped to `[lo, hi]`.
 fn sat_add_i64(a i64, b i64, lo i64, hi i64) -> i64 =>
     match a.checked_add(b) {
-        Some(r) => r.clamp(lo, hi),
-        None => if b > 0 { hi } else { lo },
+        Some(r) => r.clamp(lo, hi)
+        None => if b > 0 { hi } else { lo }
     }
 
 /// Saturating sub clamped to `[lo, hi]`.
 fn sat_sub_i64(a i64, b i64, lo i64, hi i64) -> i64 =>
     match a.checked_sub(b) {
-        Some(r) => r.clamp(lo, hi),
-        None => if b < 0 { hi } else { lo },
+        Some(r) => r.clamp(lo, hi)
+        None => if b < 0 { hi } else { lo }
     }
 
 /// Saturating mul clamped to `[lo, hi]` (overflow ⇒ sign-directed boundary).
 fn sat_mul_i64(a i64, b i64, lo i64, hi i64) -> i64 =>
     match a.checked_mul(b) {
-        Some(r) => r.clamp(lo, hi),
-        None => if (a > 0) == (b > 0) { hi } else { lo },
+        Some(r) => r.clamp(lo, hi)
+        None => if (a > 0) == (b > 0) { hi } else { lo }
     }
 
 // ── trap-wrappers (operators route here) ──
@@ -465,48 +465,48 @@ export fn Duration @div(n f64) -> Duration =>
 #stable(since = "0.1")
 export fn Duration @checked_add(other Duration) -> Option[Duration] =>
     match @nanos.checked_add(other.nanos) {
-        Some(r) => Some(r.to_nanos()),
-        None => None,
+        Some(r) => Some(r.to_nanos())
+        None => None
     }
 
 /// Checked sub — `None` on overflow.
 #stable(since = "0.1")
 export fn Duration @checked_sub(other Duration) -> Option[Duration] =>
     match @nanos.checked_sub(other.nanos) {
-        Some(r) => Some(r.to_nanos()),
-        None => None,
+        Some(r) => Some(r.to_nanos())
+        None => None
     }
 
 /// Checked scalar multiply — `None` on overflow.
 #stable(since = "0.1")
 export fn Duration @checked_mul(n i64) -> Option[Duration] =>
     match @nanos.checked_mul(n) {
-        Some(r) => Some(r.to_nanos()),
-        None => None,
+        Some(r) => Some(r.to_nanos())
+        None => None
     }
 
 /// Checked integer divide — `None` on `/0` or `i64::MIN / -1`.
 #stable(since = "0.1")
 export fn Duration @checked_div(n i64) -> Option[Duration] =>
     match checked_div_i64(@nanos, n) {
-        Some(r) => Some(r.to_nanos()),
-        None => None,
+        Some(r) => Some(r.to_nanos())
+        None => None
     }
 
 /// Checked float multiply — `None` on `NaN`/`±inf`/out-of-range.
 #stable(since = "0.1")
 export fn Duration @checked_mul_f64(n f64) -> Option[Duration] =>
     match f64_nanos_checked((@nanos as f64) * n) {
-        Some(r) => Some(r.to_nanos()),
-        None => None,
+        Some(r) => Some(r.to_nanos())
+        None => None
     }
 
 /// Checked float divide — `None` on `NaN`/`±inf`/out-of-range.
 #stable(since = "0.1")
 export fn Duration @checked_div_f64(n f64) -> Option[Duration] =>
     match f64_nanos_checked((@nanos as f64) / n) {
-        Some(r) => Some(r.to_nanos()),
-        None => None,
+        Some(r) => Some(r.to_nanos())
+        None => None
     }
 
 // ── saturating_* → Duration (clamp к ±Duration.MAX = ±(2⁶³−1)) ──

@@ -29,8 +29,8 @@ test "rvalue match Ok((consume a, b)) — первый элемент consume, �
             a.touch()           // mut-метод без доп. `mut`-keyword (D180)
             assert(b == 10)
             a.close()           // consume-обязательство выполнено (D133)
-        },
-        Err(_e) => {},
+        }
+        Err(_e) => {}
     }
 }
 
@@ -40,8 +40,8 @@ test "place-скрутини — именная Option-переменная, т�
         Some((consume a, b)) => {
             assert(b == 20)
             a.close()
-        },
-        None => {},
+        }
+        None => {}
     }
 }
 
@@ -57,7 +57,7 @@ test "view-default tuple payload НЕ сломан — оба элемента �
     match dial_p216_plain_tuple() {
         Some((x, y)) => {
             assert(x == 7 && y == 8)
-        },
-        None => {},
+        }
+        None => {}
     }
 }

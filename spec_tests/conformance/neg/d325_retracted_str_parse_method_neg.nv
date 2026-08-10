@@ -28,8 +28,8 @@ fn d325_retracted() -> int {
     ro s = "42"
     // ✗ E_UNKNOWN_METHOD — `try_parse_int` was retracted (D325); use `s.to_int()`.
     match s.try_parse_int() {
-        Ok(v) => v,
-        Err(_) => 0,
+        Ok(v) => v
+        Err(_) => 0
     }
 }
 

@@ -55,7 +55,7 @@ test "net2/mock: TcpListener.bind(str) parses then binds like the SocketAddr for
 test "net2/mock: TcpListener.bind(str) rejects a malformed address before touching Net" {
     with Net = mock_net() {
         match TcpListener.bind("not an address") {
-            Ok(consume l) => { l.close() assert(false) }
+            Ok(consume l) => { l.close(); assert(false) }
             Err(_) => assert(true)
         }
     }
@@ -72,7 +72,7 @@ test "net2/mock: TcpStream.connect(str) parses then connects like the SocketAddr
 test "net2/mock: TcpStream.connect(str) rejects a malformed address before touching Net" {
     with Net = mock_net() {
         match TcpStream.connect("not an address") {
-            Ok(consume s) => { s.close() assert(false) }
+            Ok(consume s) => { s.close(); assert(false) }
             Err(_) => assert(true)
         }
     }
@@ -89,7 +89,7 @@ test "net2/mock: UdpSocket.bind(str) parses then binds like the SocketAddr form"
 test "net2/mock: UdpSocket.bind(str) rejects a malformed address before touching Net" {
     with Net = mock_net() {
         match UdpSocket.bind("not an address") {
-            Ok(consume sock) => { sock.close() assert(false) }
+            Ok(consume sock) => { sock.close(); assert(false) }
             Err(_) => assert(true)
         }
     }

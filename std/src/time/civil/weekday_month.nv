@@ -24,40 +24,40 @@ export type Weekday enum
 #stable(since = "0.1")
 export fn Weekday @number() -> int =>
     match @ {
-        Mon => 1, Tue => 2, Wed => 3, Thu => 4, Fri => 5, Sat => 6, Sun => 7,
+        Mon => 1, Tue => 2, Wed => 3, Thu => 4, Fri => 5, Sat => 6, Sun => 7
     }
 
 /// A Weekday from an ISO number 1..7 → `Err(InvalidField(Weekday, ...))` outside the range.
 #stable(since = "0.1")
 export fn Weekday.from_number(n int) -> Result[Weekday, DateError] =>
     match n {
-        1 => Ok(Mon), 2 => Ok(Tue), 3 => Ok(Wed), 4 => Ok(Thu),
-        5 => Ok(Fri), 6 => Ok(Sat), 7 => Ok(Sun),
-        _ => Err(InvalidField(FieldKind.Weekday, n as i64, 1, 7)),
+        1 => Ok(Mon), 2 => Ok(Tue), 3 => Ok(Wed), 4 => Ok(Thu)
+        5 => Ok(Fri), 6 => Ok(Sat), 7 => Ok(Sun)
+        _ => Err(InvalidField(FieldKind.Weekday, n as i64, 1, 7))
     }
 
 /// The next weekday (cyclically: Sun → Mon).
 #stable(since = "0.1")
 export fn Weekday @next() -> Weekday =>
     match @ {
-        Mon => Tue, Tue => Wed, Wed => Thu, Thu => Fri,
-        Fri => Sat, Sat => Sun, Sun => Mon,
+        Mon => Tue, Tue => Wed, Wed => Thu, Thu => Fri
+        Fri => Sat, Sat => Sun, Sun => Mon
     }
 
 /// The previous weekday (cyclically: Mon → Sun).
 #stable(since = "0.1")
 export fn Weekday @prev() -> Weekday =>
     match @ {
-        Mon => Sun, Tue => Mon, Wed => Tue, Thu => Wed,
-        Fri => Thu, Sat => Fri, Sun => Sat,
+        Mon => Sun, Tue => Mon, Wed => Tue, Thu => Wed
+        Fri => Thu, Sat => Fri, Sun => Sat
     }
 
 /// English three-letter name ("Mon".."Sun") — ASCII, locale out of scope (i18n followup).
 #stable(since = "0.1")
 export fn Weekday @to_str() -> str =>
     match @ {
-        Mon => "Mon", Tue => "Tue", Wed => "Wed", Thu => "Thu",
-        Fri => "Fri", Sat => "Sat", Sun => "Sun",
+        Mon => "Mon", Tue => "Tue", Wed => "Wed", Thu => "Thu"
+        Fri => "Fri", Sat => "Sat", Sun => "Sun"
     }
 
 /// Compare by ISO number (Mon < Sun).
@@ -92,53 +92,53 @@ export type Month enum
 #stable(since = "0.1")
 export fn Month @number() -> int =>
     match @ {
-        Jan => 1,  Feb => 2,  Mar => 3,  Apr => 4,  May => 5,  Jun => 6,
-        Jul => 7,  Aug => 8,  Sep => 9,  Oct => 10, Nov => 11, Dec => 12,
+        Jan => 1,  Feb => 2,  Mar => 3,  Apr => 4,  May => 5,  Jun => 6
+        Jul => 7,  Aug => 8,  Sep => 9,  Oct => 10, Nov => 11, Dec => 12
     }
 
 /// A Month from a number 1..12 → `Err(InvalidField(Month, ...))` outside the range.
 #stable(since = "0.1")
 export fn Month.from_number(n int) -> Result[Month, DateError] =>
     match n {
-        1 => Ok(Jan),  2 => Ok(Feb),  3 => Ok(Mar),  4 => Ok(Apr),
-        5 => Ok(May),  6 => Ok(Jun),  7 => Ok(Jul),  8 => Ok(Aug),
-        9 => Ok(Sep), 10 => Ok(Oct), 11 => Ok(Nov), 12 => Ok(Dec),
-        _ => Err(InvalidField(FieldKind.Month, n as i64, 1, 12)),
+        1 => Ok(Jan),  2 => Ok(Feb),  3 => Ok(Mar),  4 => Ok(Apr)
+        5 => Ok(May),  6 => Ok(Jun),  7 => Ok(Jul),  8 => Ok(Aug)
+        9 => Ok(Sep), 10 => Ok(Oct), 11 => Ok(Nov), 12 => Ok(Dec)
+        _ => Err(InvalidField(FieldKind.Month, n as i64, 1, 12))
     }
 
 /// The next month (cyclically: Dec → Jan).
 #stable(since = "0.1")
 export fn Month @next() -> Month =>
     match @ {
-        Jan => Feb, Feb => Mar, Mar => Apr, Apr => May, May => Jun, Jun => Jul,
-        Jul => Aug, Aug => Sep, Sep => Oct, Oct => Nov, Nov => Dec, Dec => Jan,
+        Jan => Feb, Feb => Mar, Mar => Apr, Apr => May, May => Jun, Jun => Jul
+        Jul => Aug, Aug => Sep, Sep => Oct, Oct => Nov, Nov => Dec, Dec => Jan
     }
 
 /// The previous month (cyclically: Jan → Dec).
 #stable(since = "0.1")
 export fn Month @prev() -> Month =>
     match @ {
-        Jan => Dec, Feb => Jan, Mar => Feb, Apr => Mar, May => Apr, Jun => May,
-        Jul => Jun, Aug => Jul, Sep => Aug, Oct => Sep, Nov => Oct, Dec => Nov,
+        Jan => Dec, Feb => Jan, Mar => Feb, Apr => Mar, May => Apr, Jun => May
+        Jul => Jun, Aug => Jul, Sep => Aug, Oct => Sep, Nov => Oct, Dec => Nov
     }
 
 /// Length of the month in days; `leap` — whether the year is a leap year (relevant only for Feb).
 #stable(since = "0.1")
 export fn Month @length(leap bool) -> int =>
     match @ {
-        Jan => 31, Feb => if leap { 29 } else { 28 }, Mar => 31,
-        Apr => 30, May => 31, Jun => 30,
-        Jul => 31, Aug => 31, Sep => 30,
-        Oct => 31, Nov => 30, Dec => 31,
+        Jan => 31, Feb => if leap { 29 } else { 28 }, Mar => 31
+        Apr => 30, May => 31, Jun => 30
+        Jul => 31, Aug => 31, Sep => 30
+        Oct => 31, Nov => 30, Dec => 31
     }
 
 /// English three-letter name ("Jan".."Dec") — ASCII, locale out of scope.
 #stable(since = "0.1")
 export fn Month @to_str() -> str =>
     match @ {
-        Jan => "Jan", Feb => "Feb", Mar => "Mar", Apr => "Apr",
-        May => "May", Jun => "Jun", Jul => "Jul", Aug => "Aug",
-        Sep => "Sep", Oct => "Oct", Nov => "Nov", Dec => "Dec",
+        Jan => "Jan", Feb => "Feb", Mar => "Mar", Apr => "Apr"
+        May => "May", Jun => "Jun", Jul => "Jul", Aug => "Aug"
+        Sep => "Sep", Oct => "Oct", Nov => "Nov", Dec => "Dec"
     }
 
 /// Compare by number (Jan < Dec).

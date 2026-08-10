@@ -30,15 +30,15 @@ export type FieldKind enum
 #stable(since = "0.1")
 export fn FieldKind @name() -> str =>
     match @ {
-        Year      => "year",
-        Month     => "month",
-        Day       => "day",
-        Hour      => "hour",
-        Minute    => "minute",
-        Second    => "second",
-        Nano      => "nanosecond",
-        OffsetSec => "offset-seconds",
-        Weekday   => "weekday",
+        Year      => "year"
+        Month     => "month"
+        Day       => "day"
+        Hour      => "hour"
+        Minute    => "minute"
+        Second    => "second"
+        Nano      => "nanosecond"
+        OffsetSec => "offset-seconds"
+        Weekday   => "weekday"
     }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -69,10 +69,10 @@ export fn DateError @to_str() -> str =>
         InvalidField(f, given, mn, mx) => {
             "invalid ${f.name()}: ${given} (expected ${mn}..${mx})"
         }
-        RangeOverflow(kind) => "range overflow: ${kind}",
-        Ambiguous(kind)     => "ambiguous local time: ${kind}",
-        UnknownZone(name)   => "unknown time zone: ${name}",
-        BadTzData(what)     => "bad tz data: ${what}",
+        RangeOverflow(kind) => "range overflow: ${kind}"
+        Ambiguous(kind)     => "ambiguous local time: ${kind}"
+        UnknownZone(name)   => "unknown time zone: ${name}"
+        BadTzData(what)     => "bad tz data: ${what}"
     }
 
 // ──────────────────────────────────────────────────────────────────────────

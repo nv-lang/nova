@@ -45,7 +45,7 @@ test "net2/tcp: two-fiber loopback echo through the Net effect" {
 
         supervised {
             spawn {
-                ro port = match ch.rx.recv() { Some(x) => x  None => 0 }
+                ro port = match ch.rx.recv() { Some(x) => x, None => 0 }
                 mut conn = must(TcpStream.connect(SocketAddr.loopback(port)))
                 assert(must_io(conn.write("hello net2")) == 10)
                 mut buf []u8 = []u8.new()
@@ -80,7 +80,7 @@ test "net2/tcp: read observes clean EOF as Ok(0)" {
 
         supervised {
             spawn {
-                ro port = match ch.rx.recv() { Some(x) => x  None => 0 }
+                ro port = match ch.rx.recv() { Some(x) => x, None => 0 }
                 mut conn = must(TcpStream.connect(SocketAddr.loopback(port)))
                 conn.close()
             }
@@ -114,7 +114,7 @@ test "net2/tcp: second read() after partial data + close observes clean EOF (№
 
         supervised {
             spawn {
-                ro port = match ch.rx.recv() { Some(x) => x  None => 0 }
+                ro port = match ch.rx.recv() { Some(x) => x, None => 0 }
                 mut conn = must(TcpStream.connect(SocketAddr.loopback(port)))
                 mut buf []u8 = []u8.new()
                 buf.resize(1, 0 as u8)
@@ -142,7 +142,7 @@ test "net2/tcp: read_text / write_str text conveniences" {
 
         supervised {
             spawn {
-                ro port = match ch.rx.recv() { Some(x) => x  None => 0 }
+                ro port = match ch.rx.recv() { Some(x) => x, None => 0 }
                 mut conn = must(TcpStream.connect(SocketAddr.loopback(port)))
                 assert(must_io(conn.write("ping")) == 4)
                 assert(must(conn.read_text(32)) == "pong")
@@ -169,7 +169,7 @@ test "net2/tcp: connect to a refused port yields Err (closed socket → NetError
                 // ConnectionRefused. A failing op must surface a typed NetError,
                 // not crash or hang.
                 match TcpStream.connect(SocketAddr.loopback(1)) {
-                    Ok(consume s)  => { s.close() assert(false) }   // must not connect
+                    Ok(consume s)  => { s.close(); assert(false) }   // must not connect
                     Err(_) => { assert(true) }              // refused / unreachable
                 }
             }

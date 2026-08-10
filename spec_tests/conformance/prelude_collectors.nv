@@ -12,16 +12,16 @@ module spec_tests.conformance
 test "prelude sequence collects all-Ok" {
     ro xs []Result[int, str] = [Ok(1), Ok(2), Ok(3)]
     match sequence(xs) {
-        Ok(v) => assert(v.len() == 3),
-        Err(_) => assert(false),
+        Ok(v) => assert(v.len() == 3)
+        Err(_) => assert(false)
     }
 }
 
 test "prelude sequence short-circuits on Err" {
     ro xs []Result[int, str] = [Ok(1), Err("bad"), Ok(3)]
     match sequence(xs) {
-        Ok(_) => assert(false),
-        Err(e) => assert(e == "bad"),
+        Ok(_) => assert(false)
+        Err(e) => assert(e == "bad")
     }
 }
 

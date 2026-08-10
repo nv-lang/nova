@@ -40,7 +40,7 @@ fn d315_block_beep_sig_declared() D315Beep -> () {
 test "d315: block-form fallible/effectful cleanup compiles when the effect is declared" {
     mut pings = 0
     with D315Beep = effect D315Beep {
-        ping() -> () { pings += 1 return () }
+        ping() -> () { pings += 1; return () }
     } {
         d315_block_beep_sig_declared()
     }

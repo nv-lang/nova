@@ -192,8 +192,8 @@ export fn str @replacen(from str, to str, n int) -> str {
                 sb.append(rest[0..k]).append(to)
                 rest = rest[k + fn_len .. rest.byte_len()]
                 count += 1
-            },
-            None => break,
+            }
+            None => break
         }
     }
     

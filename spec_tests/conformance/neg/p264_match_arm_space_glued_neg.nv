@@ -1,0 +1,17 @@
+// EXPECT_COMPILE_ERROR E_MATCH_ARM_SEP_MISSING
+//
+// Plan 264 (D452): retracted form 1/4 — match arms sharing ONE line with
+// nothing but whitespace between them used to parse silently, even though
+// no token actually marked the arm boundary. Canon: `,` on one line, or
+// put each arm on its own line (see the positive fixture,
+// spec_tests/conformance/d452_match_arm_separator.nv).
+module neg.p264_match_arm_space_glued_neg
+
+fn classify(code int) -> str {
+    // nova:expect E_MATCH_ARM_SEP_MISSING -- form 1/4 retracted by D452: arms glued by whitespace alone, no `,`
+    match code { 200 => "ok"  404 => "not found" }
+}
+
+test "match arm space-glued neg" {
+    ro _ = classify(200)
+}

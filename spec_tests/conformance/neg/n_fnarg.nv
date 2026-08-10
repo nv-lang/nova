@@ -2,4 +2,4 @@
 // Non-literal int -> u8 free-fn argument without `as` (D54).
 module neg.n_fnarg
 fn take_u8(x u8) -> u8 => x
-test "t" { ro c int = 30  assert(take_u8(c) >= 0) }
+test "t" { ro c int = 30; assert(take_u8(c) >= 0) }

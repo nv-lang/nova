@@ -182,8 +182,8 @@ type Service consume { consume file Option[File] }
 
 fn Service @file_id() -> Option[int] {
     match @file {                          // ← D157 view-match
-        Some(f) => Some(f.fd),                  // f: view File, не Consumed
-        None => None,
+        Some(f) => Some(f.fd)                   // f: view File, не Consumed
+        None => None
     }
     // @.file Live (не Consumed) ✅
 }

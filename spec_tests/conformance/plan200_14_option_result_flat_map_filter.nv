@@ -10,10 +10,10 @@ module spec_tests.conformance
 
 fn p200_14_parse_int_opt(s str) -> Option[int] {
     match s {
-        "1"  => Some(1),
-        "2"  => Some(2),
-        "42" => Some(42),
-        _    => None,
+        "1"  => Some(1)
+        "2"  => Some(2)
+        "42" => Some(42)
+        _    => None
     }
 }
 

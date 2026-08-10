@@ -4,8 +4,8 @@ import std.collections.vec_seq
 
 test "empty array: first/last None, any false, all vacuous true" {
     ro empty []int = []
-    match empty.first() { Some(_) => assert(false, "first") None => assert(true) }
-    match empty.last() { Some(_) => assert(false, "last") None => assert(true) }
+    match empty.first() { Some(_) => assert(false, "first"), None => assert(true) }
+    match empty.last() { Some(_) => assert(false, "last"), None => assert(true) }
     assert(!empty.any(|x| x > 0), "any on empty is false")
     assert(empty.all(|x| x > 0), "all on empty is vacuously true")
     assert(empty.filter(|x| x > 0).len() == 0, "filter empty stays empty")

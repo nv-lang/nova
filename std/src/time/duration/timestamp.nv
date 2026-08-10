@@ -105,16 +105,16 @@ export fn Timestamp @minus(d Duration) -> Timestamp =>
 #stable(since = "0.1")
 export fn Timestamp @checked_add(d Duration) -> Option[Timestamp] =>
     match @nanos.checked_add(d.nanos) {
-        Some(r) => Some(r.to_unix_nanos()),
-        None => None,
+        Some(r) => Some(r.to_unix_nanos())
+        None => None
     }
 
 /// Checked `Timestamp - Duration` — `None` if the result is outside the i64 window (D317).
 #stable(since = "0.1")
 export fn Timestamp @checked_sub(d Duration) -> Option[Timestamp] =>
     match @nanos.checked_sub(d.nanos) {
-        Some(r) => Some(r.to_unix_nanos()),
-        None => None,
+        Some(r) => Some(r.to_unix_nanos())
+        None => None
     }
 
 /// `Timestamp - Timestamp → Duration` — elapsed time between two instants.

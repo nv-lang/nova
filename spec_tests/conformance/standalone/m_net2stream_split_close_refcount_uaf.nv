@@ -49,7 +49,7 @@ test "supervised(timeout:) cancels a while-loop-retried split-half read(), both 
                     lst.close()
                 }
                 spawn {
-                    ro port = match ch.rx.recv() { Some(x) => x  None => 0 as u16 }
+                    ro port = match ch.rx.recv() { Some(x) => x, None => 0 as u16 }
                     consume conn = match TcpStream.connect(SocketAddr.loopback(port)) {
                         Ok(consume s) => s
                         Err(_) => panic("connect failed")

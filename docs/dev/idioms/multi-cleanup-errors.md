@@ -49,7 +49,7 @@ fn MultiError @has_panics() -> bool             // convenience predicate
 
 ```nova
 match process() {
-    Ok(_) => println("done"),
+    Ok(_) => println("done")
     Err(e) => {
         println("primary: ${e.primary()}")
         for s in e.suppressed() {
@@ -63,8 +63,8 @@ match process() {
 
 ```nova
 match process() {
-    Ok(_) => println("done"),
-    Err(e) => Log.error(e.fmt_chain()),
+    Ok(_) => println("done")
+    Err(e) => Log.error(e.fmt_chain())
 }
 ```
 
@@ -106,7 +106,7 @@ Caller может handle specific suppressed errors:
 
 ```nova
 match process() {
-    Ok(_) => println("done"),
+    Ok(_) => println("done")
     Err(e) => {
         ro has_network = e.suppressed().any(|s| s is NetworkErr)
         if has_network {
@@ -147,7 +147,7 @@ primary, suppressed может содержать полезную информ�
 ```nova
 fn main() -> () {
     match process() {
-        Ok(_) => println("ok"),
+        Ok(_) => println("ok")
         Err(e) => Log.error(e.fmt_chain())      // log полный chain
     }
 }

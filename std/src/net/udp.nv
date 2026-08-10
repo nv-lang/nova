@@ -86,7 +86,7 @@ export fn UdpSocket mut @recv_from_vec(max int) Net -> Result[([]u8, SocketAddr)
     buf.resize(max, 0 as u8)
     mut sender = addr_image()
     match Net.recv_from(@, buf, sender) {
-        Ok(n)  => { buf.truncate(n) recv_bytes_ok(buf, SocketAddr.from_image(sender)) }
+        Ok(n)  => { buf.truncate(n); recv_bytes_ok(buf, SocketAddr.from_image(sender)) }
         Err(e) => Err(e)
     }
 }

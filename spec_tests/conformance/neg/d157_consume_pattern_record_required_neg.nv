@@ -28,7 +28,7 @@ fn dial() -> Result[D157RecReqPair, str] =>
 
 test "plain shorthand { a } на must-consume record-field — ошибка" {
     match dial() {
-        Ok({ a, b }) => { a.close() },
-        Err(_e) => {},
+        Ok({ a, b }) => { a.close() }
+        Err(_e) => {}
     }
 }

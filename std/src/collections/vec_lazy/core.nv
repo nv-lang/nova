@@ -104,8 +104,8 @@ export fn Vec[T] @lazy() -> BoxIter[T] => box_iter[T](@iter())
 export fn BoxIter[T] @map[U](f fn(T) -> U) -> BoxIter[U] {
     mut src = @
     { step: || match src.next() {
-        Some(x) => Some(f(x)),
-        None => None,
+        Some(x) => Some(f(x))
+        None => None
     } }
 }
 
@@ -115,8 +115,8 @@ export fn BoxIter[T] @filter(pred fn(T) -> bool) -> BoxIter[T] {
     { step: || {
         while true {
             match src.next() {
-                Some(x) => { if pred(x) { return Some(x) } },
-                None => return None,
+                Some(x) => { if pred(x) { return Some(x) } }
+                None => return None
             }
         }
         None
@@ -130,10 +130,10 @@ export fn BoxIter[T] @filter_map[U](f fn(T) -> Option[U]) -> BoxIter[U] {
         while true {
             match src.next() {
                 Some(x) => match f(x) {
-                    Some(u) => return Some(u),
-                    None => {},
-                },
-                None => return None,
+                    Some(u) => return Some(u)
+                    None => {}
+                }
+                None => return None
             }
         }
         None
@@ -156,8 +156,8 @@ export fn BoxIter[T] @enumerate() -> BoxIter[(int, T)] {
             ro idx = i
             i += 1
             Some((idx, x))
-        },
-        None => None,
+        }
+        None => None
     } }
 }
 
@@ -184,8 +184,8 @@ export fn BoxIter[T] @skip(n int) -> BoxIter[T]
         while to_drop > 0 {
             to_drop -= 1
             match src.next() {
-                Some(_) => {},
-                None => return None,
+                Some(_) => {}
+                None => return None
             }
         }
         src.next()
@@ -216,8 +216,8 @@ export fn BoxIter[T] @step_by(n int) -> BoxIter[T]
         while i > 0 {
             i -= 1
             match src.next() {
-                Some(_) => {},
-                None => return None,
+                Some(_) => {}
+                None => return None
             }
         }
         src.next()
@@ -242,10 +242,10 @@ export fn BoxIter[A] @zip[B](mut other BoxIter[B]) -> BoxIter[(A, B)] {
     mut oth = other
     { step: || match src.next() {
         Some(a) => match oth.next() {
-            Some(b) => Some((a, b)),
-            None => None,
-        },
-        None => None,
+            Some(b) => Some((a, b))
+            None => None
+        }
+        None => None
     } }
 }
 
@@ -266,8 +266,8 @@ export fn BoxIter[T] @chain(mut other BoxIter[T]) -> BoxIter[T] {
     { step: || {
         if !first_done {
             match src.next() {
-                Some(x) => return Some(x),
-                None => { first_done = true },
+                Some(x) => return Some(x)
+                None => { first_done = true }
             }
         }
         oth.next()
@@ -291,13 +291,13 @@ export fn BoxIter[T] @flat_map[U](f fn(T) -> BoxIter[U]) -> BoxIter[U] {
         while true {
             match inner {
                 Some(mut it) => match it.next() {
-                    Some(u) => return Some(u),
-                    None => { inner = None },
-                },
+                    Some(u) => return Some(u)
+                    None => { inner = None }
+                }
                 None => match src.next() {
-                    Some(x) => { inner = Some(f(x)) },
-                    None => return None,
-                },
+                    Some(x) => { inner = Some(f(x)) }
+                    None => return None
+                }
             }
         }
         None
@@ -482,8 +482,8 @@ export fn BoxIter[T] mut @collect() -> Vec[T] {
     mut out = Vec[T].new()
     while true {
         match @next() {
-            Some(x) => out.push(x),
-            None => return out,
+            Some(x) => out.push(x)
+            None => return out
         }
     }
     out
@@ -507,8 +507,8 @@ export fn BoxIter[T Hash] mut @collect_set() -> Set[T] {
     mut out = Set[T].new()
     while true {
         match @next() {
-            Some(x) => { out.insert(x) },
-            None => return out,
+            Some(x) => { out.insert(x) }
+            None => return out
         }
     }
     out
@@ -520,8 +520,8 @@ export fn BoxIter[T] mut @fold[Acc](mut init Acc, f fn(Acc, T) -> Acc) -> Acc {
     mut acc = init
     while true {
         match @next() {
-            Some(x) => { acc = f(acc, x) },
-            None => return acc,
+            Some(x) => { acc = f(acc, x) }
+            None => return acc
         }
     }
     acc
@@ -533,8 +533,8 @@ export fn BoxIter[T] mut @reduce(f fn(T, T) -> T) -> Option[T] {
     mut acc = @next()?
     while true {
         match @next() {
-            Some(x) => { acc = f(acc, x) },
-            None => return Some(acc),
+            Some(x) => { acc = f(acc, x) }
+            None => return Some(acc)
         }
     }
     Some(acc)
@@ -545,8 +545,8 @@ export fn BoxIter[T] mut @count() -> int {
     mut n = 0
     while true {
         match @next() {
-            Some(_) => { n += 1 },
-            None => return n,
+            Some(_) => { n += 1 }
+            None => return n
         }
     }
     n
@@ -560,8 +560,8 @@ export fn BoxIter[T] mut @sum(mut zero T) -> T {
     mut acc = zero
     while true {
         match @next() {
-            Some(x) => { acc += x },
-            None => return acc,
+            Some(x) => { acc += x }
+            None => return acc
         }
     }
     acc
@@ -571,8 +571,8 @@ export fn BoxIter[T] mut @sum(mut zero T) -> T {
 export fn BoxIter[T] mut @any(pred fn(T) -> bool) -> bool {
     while true {
         match @next() {
-            Some(x) => { if pred(x) { return true } },
-            None => return false,
+            Some(x) => { if pred(x) { return true } }
+            None => return false
         }
     }
     false
@@ -583,8 +583,8 @@ export fn BoxIter[T] mut @any(pred fn(T) -> bool) -> bool {
 export fn BoxIter[T] mut @all(pred fn(T) -> bool) -> bool {
     while true {
         match @next() {
-            Some(x) => { if !pred(x) { return false } },
-            None => return true,
+            Some(x) => { if !pred(x) { return false } }
+            None => return true
         }
     }
     true
@@ -594,8 +594,8 @@ export fn BoxIter[T] mut @all(pred fn(T) -> bool) -> bool {
 export fn BoxIter[T] mut @find(pred fn(T) -> bool) -> Option[T] {
     while true {
         match @next() {
-            Some(x) => { if pred(x) { return Some(x) } },
-            None => return None,
+            Some(x) => { if pred(x) { return Some(x) } }
+            None => return None
         }
     }
     None
@@ -606,8 +606,8 @@ export fn BoxIter[T] mut @for_each(f fn(T) -> ()) -> () {
     mut go = true
     while go {
         match @next() {
-            Some(x) => { f(x) },
-            None => { go = false },
+            Some(x) => { f(x) }
+            None => { go = false }
         }
     }
 }
@@ -620,8 +620,8 @@ export fn BoxIter[T Compare] mut @min() -> Option[T] {
     mut best = @next()?
     while true {
         match @next() {
-            Some(cand) => { if cand.compare(best) < 0 { best = cand } },
-            None => return Some(best),
+            Some(cand) => { if cand.compare(best) < 0 { best = cand } }
+            None => return Some(best)
         }
     }
     Some(best)
@@ -633,8 +633,8 @@ export fn BoxIter[T Compare] mut @max() -> Option[T] {
     mut best = @next()?
     while true {
         match @next() {
-            Some(cand) => { if cand.compare(best) > 0 { best = cand } },
-            None => return Some(best),
+            Some(cand) => { if cand.compare(best) > 0 { best = cand } }
+            None => return Some(best)
         }
     }
     Some(best)
@@ -650,8 +650,8 @@ export fn BoxIter[T] mut @last() -> Option[T] {
     mut result = None
     while true {
         match @next() {
-            Some(x) => { result = Some(x) },
-            None => return result,
+            Some(x) => { result = Some(x) }
+            None => return result
         }
     }
     result

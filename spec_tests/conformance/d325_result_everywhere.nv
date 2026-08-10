@@ -37,15 +37,15 @@ fn d325_sum_two(a str, b str) -> Result[int, ParseIntError] {
 
 test "D325: str.to_int — единственная Result-форма; match разбирает Ok/Err (R1/R2)" {
     match "42".to_int() {
-        Ok(v)  => assert(v == 42),
-        Err(_) => assert(false, "42 должно парситься"),
+        Ok(v)  => assert(v == 42)
+        Err(_) => assert(false, "42 должно парситься")
     }
     match "zz".to_int() {
-        Ok(_)  => assert(false, "zz не число"),
+        Ok(_)  => assert(false, "zz не число")
         Err(e) => match e {
             InvalidDigit => {}
-            _            => assert(false, "ожидался InvalidDigit"),
-        },
+            _            => assert(false, "ожидался InvalidDigit")
+        }
     }
 }
 
@@ -128,22 +128,22 @@ test "D325/A3: HOF forwards closure's Fail[E] — no-throw и throw-путь (R5
 // int.parse → Result[int, str]: при Err отдаём токен-виновник (domain-str).
 fn d325_pi(s str) -> Result[int, str] {
     match s.to_int() {
-        Ok(v)  => Ok(v),
-        Err(_) => Err(s),
+        Ok(v)  => Ok(v)
+        Err(_) => Err(s)
     }
 }
 
 test "D325/A4: sequence — все Ok собираются по порядку; первая Err обрывает" {
     ro good []Result[int, str] = [d325_pi("1"), d325_pi("2"), d325_pi("3")]
     match sequence(good) {
-        Ok(v)  => assert(v.len() == 3),
-        Err(_) => assert(false, "все элементы Ok"),
+        Ok(v)  => assert(v.len() == 3)
+        Err(_) => assert(false, "все элементы Ok")
     }
 
     ro mixed []Result[int, str] = [d325_pi("1"), d325_pi("2"), d325_pi("x")]
     match sequence(mixed) {
-        Ok(_)  => assert(false, "есть Err → должен оборваться"),
-        Err(e) => assert(e == "x"),                 // short-circuit на "x"
+        Ok(_)  => assert(false, "есть Err → должен оборваться")
+        Err(e) => assert(e == "x")                 // short-circuit на "x"
     }
 }
 

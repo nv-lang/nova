@@ -14,8 +14,8 @@ fn d40_greet(name str) -> str => "hello ${name}"
 
 // Многострочный `match` — это ОДНО выражение, поэтому `=> match { ... }` корректно
 fn d40_match_expr(n int) -> str => match n {
-    0 => "zero",
-    n if n > 0 => "positive",
+    0 => "zero"
+    n if n > 0 => "positive"
     _ => "negative"
 }
 
@@ -44,13 +44,13 @@ fn d40_unit_block() {
 // --- match-arm с block-form `=> { block }` ---
 
 fn d40_match_block(n int) -> str => match n {
-    0 => { "zero" },
-    n if n > 0 => { "positive" },
+    0 => { "zero" }
+    n if n > 0 => { "positive" }
     _ => { "negative" }
 }
 
 fn d40_match_multi_stmt(n int) -> int => match n {
-    0 => { ro base = 100; base },
+    0 => { ro base = 100; base }
     _ => { ro base = n * 2; base + 1 }
 }
 

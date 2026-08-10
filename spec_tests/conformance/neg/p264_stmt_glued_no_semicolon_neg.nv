@@ -1,0 +1,20 @@
+// EXPECT_COMPILE_ERROR E_STMT_SEP_MISSING
+//
+// Plan 264 (D452): retracted form 4/4 — two statements sharing one line
+// with nothing but whitespace between them used to parse silently, even
+// though `syntax.md` already normatively required `;` there (the
+// discrepancy that prompted this plan — see plan 264 §2). Canon: `;` on
+// one line, or newline alone per statement (see the D49 positive fixture,
+// spec_tests/conformance/d49_statement_separator_newlines.nv).
+module neg.p264_stmt_glued_no_semicolon_neg
+
+fn compute() -> int {
+    ro a = 1
+    // nova:expect E_STMT_SEP_MISSING -- form 4/4 retracted by D452: two statements glued by whitespace, no `;`
+    ro b = 2  ro c = 3
+    a + b + c
+}
+
+test "statements glued without semicolon neg" {
+    ro _ = compute()
+}
