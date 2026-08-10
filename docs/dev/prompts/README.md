@@ -30,4 +30,3 @@
 | [update-spec.md](update-spec.md) | Аудит и обновление `spec/decisions/*.md` (D-blocks) + `spec/<topic>.md` — drift detection vs implementation, новые D-blocks для закрытых планов. |
 | [opencode-brief-template.md](opencode-brief-template.md) | Шаблон задания механическому исполнителю: команды целиком, точный путь, явный список запретов, образец строки результата |
 | [integrator-handoff.md](integrator-handoff.md) | Восстановление сессии главного интегратора: роль, инварианты, текущее состояние и блокеры |
-| [integrator-queue.md](integrator-queue.md) | Наблюдаемая очередь интегратора. **ВНИМАНИЕ: ведётся руками и потому устаревает** — содержимое выводимо из git и реестра (число неотправленных, несведённые ветки, открытые К1); кандидат на замену генератором |
