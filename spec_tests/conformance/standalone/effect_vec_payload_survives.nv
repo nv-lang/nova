@@ -1,0 +1,111 @@
+// EXPECT_STDOUT 3000000|8|0|21|8|7|14|8|21|
+//
+// Реестр 221.1 №579. Проба интегратора 2026-08-12.
+//
+// `std/src/net/effect.nv` носил в комментарии утверждение, на котором стоял
+// весь вид границы `Net`: «a Vec-of-value-records Ok payload does not survive
+// the effect vtable's GC tracing — the scalar pair does». Из-за него `lookup`
+// возвращал `Result[(int, int), NetError]` — адрес массива, притворяющийся
+// целым числом, — а владелец назвал это фиаско.
+//
+// Фикстура проверяет утверждение прямо: через границу эффекта возвращаются
+// `[]int`, `[]Point` (запись-значение — самый спорный случай) и
+// `Result[[]int, str]`; между возвратом и чтением сжигается три миллиона
+// аллокаций, то есть коллектор проходит многократно. Если Vec действительно
+// не переживал бы обход, значения после churn были бы мусором или программа
+// падала бы.
+//
+// Фикстура ЗОВЁТ проверяемое и печатает ЗНАЧЕНИЯ (а не «не упало»): урок
+// №577 — неиспользуемый код вычищается компоновщиком и не проверяется ничем.
+
+module standalone.effect_vec_payload_survives
+
+type Point {
+    x int
+    y int
+}
+
+type Store effect {
+    ints(n int) -> []int
+    points(n int) -> []Point
+    wrapped(n int) -> Result[[]int, str]
+}
+
+fn make_ints(n int) -> []int {
+    mut v = []int.new()
+    mut i = 0
+    while i < n {
+        v.push(i * 3)
+        i = i + 1
+    }
+    return v
+}
+
+fn make_points(n int) -> []Point {
+    mut v = []Point.new()
+    mut i = 0
+    while i < n {
+        v.push(Point { x: i, y: i * 2 })
+        i = i + 1
+    }
+    return v
+}
+
+/// Сжигает кучу между возвратом значения и его чтением.
+fn churn() -> int {
+    mut total = 0
+    mut i = 0
+    while i < 60000 {
+        mut junk = []int.new()
+        mut j = 0
+        while j < 50 {
+            junk.push(j)
+            j = j + 1
+        }
+        total = total + junk.len()
+        i = i + 1
+    }
+    return total
+}
+
+fn main() {
+    ro store = effect Store {
+        ints(n int) -> []int => make_ints(n)
+        points(n int) -> []Point => make_points(n)
+        wrapped(n int) -> Result[[]int, str] => Ok(make_ints(n))
+    }
+
+    with Store = store {
+        ro a = Store.ints(8)
+        ro p = Store.points(8)
+        ro w = Store.wrapped(8)
+
+        ro burned = churn()
+        print(burned)
+        print("|")
+
+        print(a.len())
+        print("|")
+        print(a[0])
+        print("|")
+        print(a[7])
+        print("|")
+
+        print(p.len())
+        print("|")
+        print(p[7].x)
+        print("|")
+        print(p[7].y)
+        print("|")
+
+        match w {
+            Ok(v) => {
+                print(v.len())
+                print("|")
+                print(v[7])
+                print("|")
+            }
+            Err(e) => print(e)
+        }
+    }
+}
