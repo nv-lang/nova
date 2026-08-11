@@ -5,8 +5,11 @@
 // the `Net` effect. ONE lookup call: the C layer allocates a GC array of exactly
 // `count` value-address images (the single named addrinfo→array OS-transfer —
 // libuv already holds the whole addrinfo list, so there is no
-// pre-guess and never a second network query, matching Rust/Go); `.nv` copies
-// each image out into an owned `[]SocketAddr`.
+// pre-guess and never a second network query, matching Rust/Go); the `lookup`
+// handler (real_net in tcp.nv / mock_net in mock.nv, via the shared
+// `build_addrs` helper below) copies each image out into an owned
+// `[]SocketAddr` and returns it straight through the effect vtable —
+// `resolve` here just forwards the operation's Result.
 
 module std.net
 
@@ -36,20 +39,15 @@ module std.net
 export fn resolve(host str, port int) Net -> Result[[]SocketAddr, NetError]
     requires port >= 0 && port <= 0xffff
 {
-    // The []SocketAddr is built HERE (a plain fn, no effect vtable) so its images
-    // survive GC; the effect only carries the (base, count) scalar pair.
-    match Net.lookup(host.bytes(), port) {
-        Ok((base, count)) => Ok(build_addrs(base, count))
-        Err(e)            => Err(e)
-    }
+    Net.lookup(host.bytes(), port)
 }
 
 // ── Handler-shared helpers (peers of real_net / mock_net in this module) ──────
 
 // Result constructors (regular fns — keep variant construction out of handlers).
-fn lookup_ok(base int, count int) -> Result[(int, int), NetError] => Ok((base, count))
+fn lookup_ok(addrs []SocketAddr) -> Result[[]SocketAddr, NetError] => Ok(addrs)
 
-fn err_lookup(code int) -> Result[(int, int), NetError] => Err(NetError.from_code(code))
+fn err_lookup(code int) -> Result[[]SocketAddr, NetError] => Err(NetError.from_code(code))
 
 // Build an owned []SocketAddr from a DNS result array (C base pointer + count),
 // copying each 20-byte image out via the pure `addr_copy_at` FFI.

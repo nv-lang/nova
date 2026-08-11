@@ -534,10 +534,10 @@ export fn real_net() -> Effect[Net] => effect Net {
     // `port` is `int` on the Net effect surface (see resolve()'s doc comment,
     // dns.nv); resolve()'s own `requires` already bounds it to a legal u16
     // range before it ever reaches here, so the narrowing cast below is safe.
-    lookup(host []u8, port int) -> Result[(int, int), NetError] {
+    lookup(host []u8, port int) -> Result[[]SocketAddr, NetError] {
         mut base int = 0    // C writes the GC-array base pointer here (via &base)
         mut err int = 0
         ro count = unsafe { net_dns_lookup(host.ptr(), host.len(), port as u16, (&base) as *(), &err) }
-        if count < 0 { err_lookup(err) } else { lookup_ok(base, count) }
+        if count < 0 { err_lookup(err) } else { lookup_ok(build_addrs(base, count)) }
     }
 }
