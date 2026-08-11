@@ -1,0 +1,48 @@
+// Реестр 221.1 #577 (marker [M-array-ext-static-erased-body-no-generic-
+// dispatch], closed): `[]int.reflect()` used to link-fail under multi-TU
+// (`undefined symbol: nova_fn_T_reflect`). Single-TU had been silently
+// sweeping the broken erased body as dead code (`static`, unreferenced) —
+// splitting into translation units promotes it to external linkage, and
+// the linker finally sees the call it makes to a function that was never
+// defined.
+//
+// Root cause: the array-ext STATIC own-generic method `fn[T Reflect]
+// []T.reflect() -> TypeShape => Arr(T.reflect())` (std/src/reflect.nv) is
+// emitted ONCE, erased — this receiver/kind combination (STATIC, own
+// generic named after the receiver's element) has no per-element
+// monomorphization (see `emit_c.rs::emit_fn_scoped_inner`'s
+// `[196.5 ДЕФЕКТ-2]` comment: only INSTANCE array-ext own-generics route
+// through mono; STATIC ones fall through to the erased body "by design",
+// no mono routing yet). `receiver_type_c_ident` names that erased,
+// unbound-T instantiation as if T were `nova_int` (its own "unknown
+// element" catch-all) — but nothing bound `current_type_subst[T]` for
+// the BODY ITSELF, so the body-internal `T.reflect()` call couldn't
+// resolve its receiver and fell back to a bogus free-fn name
+// (`nova_fn_T_reflect`).
+//
+// Fix: `emit_c.rs::seed_array_ext_static_generic_subst` (called from
+// `emit_fn`) binds T to the SAME `nova_int` default the name generator
+// already assumes, for exactly this one erased emission — consistent
+// with the symbol name already chosen, so the internal dispatch resolves.
+//
+// This fixture is deliberately NOT in `std/src/reflect_test.nv`: that
+// file also hand-declares `RawHandle.reflect()` (`Opaque`-returning), and
+// a same-file, same-CU `.reflect()` collision (registry 221.1 #137's
+// still-open remainder — zero-param generic-bracketed static methods
+// have no argument to disambiguate by, only the receiver, which the
+// legacy name-only `method_receivers` fallback ignores) makes THAT exact
+// placement resolve `[]int.reflect()` to `RawHandle.reflect()`'s body
+// instead — a SEPARATE, pre-existing, undocumented-until-now defect, not
+// something this fix touches. Placed here (spec_tests/conformance,
+// already a much larger mega-CU with many concurrent `.reflect()`
+// declarations) it resolves correctly.
+module spec_tests.conformance
+
+import std.reflect.{Reflect}
+
+test "[]int.reflect() -> Arr(Int) (registry 221.1 #577)" {
+    match []int.reflect() {
+        Arr(items) => match items { Int => assert(true), _ => assert(false) }
+        _ => assert(false)
+    }
+}
