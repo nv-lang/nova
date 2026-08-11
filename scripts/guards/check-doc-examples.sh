@@ -98,12 +98,22 @@ red() { echo "DOC-EXAMPLES FAIL: $1" >&2; fail=1; }
 # гоняются независимые grep-классы. Работает В ПАМЯТИ (команда подстановка),
 # без временных файлов — урок №321 (детерминизм на Windows/MSYS).
 # ---------------------------------------------------------------------
-extract_kept_nova_blocks() {  # file
+# План 260 мера 5 (2026-08-11): ОДИН `awk` по ВСЕМУ списку файлов вместо
+# процесса на каждый. Прежняя форма поднимала awk и sed на файл — на Windows
+# порождение процесса дорого, и самотест стража доходил до 207 секунд, падая
+# по сроку внутри гейта и оставаясь зелёным поодиночке (№558). Поднимать срок
+# в третий раз значило бы признать, что гейт краснеет от загрузки машины.
+#
+# Состояние сбрасывается на границе файла (`FNR==1`): незакрытый ```nova-блок
+# в конце файла НЕ должен протекать в следующий — прежняя форма получала это
+# даром, потому что каждый файл шёл своим процессом.
+extract_kept_nova_blocks_all() {  # file...
     awk '
+        FNR == 1 { innova = 0; n = 0; exempt = 0 }
         /^```nova[ \t]*$/ { innova=1; n=0; exempt=0; next }
         /^```/ {
             if (innova && !exempt) {
-                for (i = 1; i <= n; i++) print bufline[i] ":" buftext[i]
+                for (i = 1; i <= n; i++) print FILENAME ":" bufline[i] ":" buftext[i]
             }
             innova = 0
             next
@@ -116,7 +126,7 @@ extract_kept_nova_blocks() {  # file
             if (low ~ /retired|retract|remov|снят/ || $0 ~ /E_[A-Z][A-Z0-9_]*/) exempt = 1
             next
         }
-    ' "$1" | sed "s#^#$1:#"
+    ' "$@"
 }
 
 file_list=""
@@ -148,12 +158,9 @@ file_list="$(printf '%s\n' $file_list | grep -v '/spec/open-questions\.md$')"
 kept=""
 files_scanned=0
 if [ -n "$file_list" ]; then
-    for f in $file_list; do
-        files_scanned=$((files_scanned + 1))
-        chunk="$(extract_kept_nova_blocks "$f")"
-        [ -n "$chunk" ] && kept="$kept
-$chunk"
-    done
+    files_scanned=$(printf '%s\n' $file_list | wc -l | tr -d ' ')
+    # shellcheck disable=SC2086  # список путей без пробелов — намеренное разбиение
+    kept="$(extract_kept_nova_blocks_all $file_list)"
 fi
 
 # ---------------------------------------------------------------------
