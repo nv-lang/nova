@@ -26,7 +26,7 @@
 | [../read-project.md](../read-project.md) | **НЕ промпт и больше не здесь.** Ориентация по проекту — её читают, а не исполняют, поэтому лежит рядом с `dev-workflow.md`. Шаг 2 онбординга после `AGENTS.md` |
 | [read-toolchain.md](read-toolchain.md) | Только инфраструктура: nova CLI, test runner, структура репо. Входит в read-project. |
 | [regen-runtime.md](regen-runtime.md) | Регенерирует `std/src/runtime/*.nv` из `runtime_registry.rs` (Plan 13 Ф.3). |
-| [update-plans-readme.md](update-plans-readme.md) | Синхронизирует сводную таблицу `docs/plans/README.md` после закрытия плана или фазы. |
+| ~~update-plans-readme.md~~ | **СНЯТ 2026-08-12.** Предписывал вести рукописный индекс планов со статусами в `docs/plans/README.md` — практику, запрещённую ещё 2026-07-21 (рукописная сводка расходится молча). Источник правды статуса — строка `**Статус:**` в самом плане; единственная сводка — автогенерируемый [../../plans/STATUS.md](../../plans/STATUS.md). Держит `check-no-handwritten-plan-index.sh`, реестр №612 |
 | [update-spec.md](update-spec.md) | Аудит и обновление `spec/decisions/*.md` (D-blocks) + `spec/<topic>.md` — drift detection vs implementation, новые D-blocks для закрытых планов. |
 | [opencode-brief-template.md](opencode-brief-template.md) | Шаблон задания механическому исполнителю: команды целиком, точный путь, явный список запретов, образец строки результата |
 | [window-brief-template.md](window-brief-template.md) | Шаблон брифа окну на sonnet/opus: запреты, выживание под сторожем (молчание убивает), настройка worktree, приёмка, образец строки результата. Появился после того, как три окна подряд были сняты за молчание — виноват был бриф, а не окна. |

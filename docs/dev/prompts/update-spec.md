@@ -137,6 +137,4 @@ syntax / types / effects / runtime / tooling reference) в соответств�
 
 ## Связь
 
-- [update-plans-readme.md](update-plans-readme.md) — sister promt для
-  README sync. Часто используется вместе после plan closure.
 - [read-project.md](read-project.md) — initial spec/plans/code reading.
