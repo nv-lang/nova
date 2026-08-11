@@ -1,0 +1,8 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Carrier-2 (#536) probe module — see ../p576_modcall_probe.nv.
+// Deliberately requires TWO int args so a `.p576probef(x)` call with ONE
+// arg can never legitimately match THIS module's overload.
+
+module standalone.p576_modf_a
+
+export fn p576probef(x int, y int) -> str => "FROM_A"

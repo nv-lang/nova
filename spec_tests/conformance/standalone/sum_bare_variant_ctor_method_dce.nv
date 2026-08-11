@@ -1,0 +1,46 @@
+// №TBD regression pin (бриф p576-bare-name, класс "имя решает раньше
+// объявления", носитель №576).
+//
+// A bare sum-variant constructor call (`Blue(7)`) spells ONLY the variant
+// name in source text — never the owning sum TYPE's name (`Colour`).
+// `collect_used_names` (lints.rs) walks the AST with no symbol table, so it
+// never inserted the owning type name for a bare variant construction. That
+// starved reachability-DCE's `ty_anchored` check (emit_c.rs
+// `compute_dead_decls_with`, `reachable.contains(ty)`) for any sum type
+// whose ONLY mention in reachable code is via bare variant construction: the
+// type name was never seeded into `reachable`, so the `(type ∧ method-name)`
+// intersection never fired for a hand-written instance method sharing a name
+// otherwise associated with built-in behavior — `to_str` fwd-decl+body were
+// dropped as dead even though the method demonstrably runs. Root-caused on
+// `type Colour enum Red | Green | Blue(int)` + hand-written
+// `fn Colour @to_str() -> str` + `print(Blue(7).to_str())` with `Colour`
+// never spelled anywhere else — CC-FAIL: "passing 'int' to parameter of
+// incompatible type 'nova_str'" (implicit-int-return call to
+// `Nova_Colour_method_to_str`, a function that was never declared).
+//
+// Fix: `compute_dead_decls_with` now builds a variant-name → owning-type-name
+// map from the module's (and peer files') sum type declarations up front,
+// and expands each item's collected `refs` with the owning type name for
+// every variant name found — mirroring the existing `embedded_type_names` /
+// concrete-slice-receiver over-keep patterns in the same closure.
+// EXPECT_STDOUT SUM_BARE_VARIANT_CTOR_METHOD_DCE_OK
+
+module standalone.sum_bare_variant_ctor_method_dce
+
+type Colour enum Red | Green | Blue(int)
+
+fn Colour @to_str() -> str => "blue7"
+
+fn main() {
+    // `Colour` is spelled NOWHERE else in this file — only the bare variant
+    // constructor `Blue(7)` names it. If DCE drops `Colour@to_str`'s body,
+    // the C build fails outright (CC-FAIL), so a green run here already
+    // proves the method survived; the marker also pins the exact value.
+    ro c = Blue(7)
+    ro got = c.to_str()
+    if got == "blue7" {
+        println("SUM_BARE_VARIANT_CTOR_METHOD_DCE_OK")
+    } else {
+        println("UNEXPECTED:${got}")
+    }
+}

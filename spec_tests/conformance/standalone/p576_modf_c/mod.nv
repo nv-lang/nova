@@ -1,0 +1,14 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Carrier-2 (#536) probe module — see ../p576_modcall_probe.nv.
+// Deliberately declares NO `p576probef` at all — imported only so its
+// alias `p576modc` names a real module with ZERO overloads of that bare
+// name, while sibling modules `p576_modf_a`/`p576_modf_b` (same CU) DO
+// declare one each. `sig.fn_decls.get("p576probef")` therefore returns
+// `Some(...)` (pooled from A/B) even for a call qualified with THIS
+// module's alias — the exact shape that let `prefix.f(x)` resolve through
+// an unrelated module's overload when `prefix`'s own module has nothing by
+// that name.
+
+module standalone.p576_modf_c
+
+export fn unrelated_marker() -> int => 999
