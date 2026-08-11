@@ -6652,17 +6652,26 @@ fn conv_redundant_to_str_interp(m: &Module, _o: &ConvLintOptions, out: &mut Vec<
             out.push(LintWarning {
                 rule: "W_REDUNDANT_TO_STR_INTERP",
                 diag: Diagnostic::new(
-                    "redundant `.to_str()` inside `${...}` — interpolation already \
-                     dispatches to_str/Display on the value (D410 instance fallback); \
-                     remove `.to_str()` — interpolation will do it itself."
+                    "`.to_str()` inside `${...}` is redundant IF the value's type \
+                     is interpolatable on its own (D410 instance fallback). This \
+                     rule sees only the method NAME, not the type: for a type \
+                     without `#impl(Display)` — `StringBuilder`, for one — removing \
+                     the call yields code that does not compile \
+                     (`E_INTERP_NO_DISPLAY`). Check the type before applying \
+                     (registry 221.1 #520)."
                         .to_string(),
                     expr.span,
                 )
                 .with_suggestion(Suggestion {
-                    message: "remove the redundant `.to_str()`".to_string(),
+                    message: "if the type is Display, drop the `.to_str()`".to_string(),
                     span: Span::with_file(recv_span.end, expr.span.end, expr.span.file_id),
                     replacement: String::new(),
-                    applicability: Applicability::MachineApplicable,
+                    // №520: было MachineApplicable — и это делало неверный совет
+                    // автоматически применимым. Правило не знает типа получателя,
+                    // поэтому уверенность понижена до MaybeIncorrect. Настоящий
+                    // фикс требует типов, то есть переноса правила туда, где они
+                    // есть, — это отдельная работа, названная в записи.
+                    applicability: Applicability::MaybeIncorrect,
                 }),
             });
         }
