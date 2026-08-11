@@ -2238,6 +2238,22 @@ pub struct CEmitter {
     /// Drives (a) the hidden `int _consume_ccount;` field appended by
     /// `emit_record_type` and (b) the exactly-once prologue in `emit_fn`.
     consume_cleanup_types: HashSet<String>,
+    /// Реестр 221.1 №583: receiver-type C-idents of EVERY declared `consume
+    /// @cleanup` method, EXTERN included (unlike `consume_cleanup_types`
+    /// above, which deliberately excludes `extern "nova"` cleanups —
+    /// MutexGuard etc. — because those hand-written C structs manage their
+    /// own `_consume_ccount`-equivalent bookkeeping and don't need the
+    /// generated hidden field). Populated by the SAME `emit_module` pre-pass,
+    /// alongside `consume_cleanup_types`. Consulted ONLY by
+    /// `emit_consume_entry_cleanup`'s dispatch-or-skip gate: a type ABSENT
+    /// from this set has NO `Nova_<T>_consume_cleanup` under ANY emission
+    /// path (user OR extern) — genuinely nothing to call. A type PRESENT
+    /// here always has one, extern or not, and the call must fire (skipping
+    /// it for an extern type like MutexGuard would silently leave a lock
+    /// held — a real regression caught empirically: reusing the narrower
+    /// `consume_cleanup_types` here made an unrelated, consume-free fixture
+    /// hang under `nova test` where it used to pass in ~31s).
+    consume_cleanup_declared_types: HashSet<String>,
     /// Plan 175 Ф.2-v2: `#default_handler(EffectName)` registry — effect
     /// name → plain Nova name of the zero-arg free fn tagged as its default
     /// handler-factory (checker already validated arity/return-type/
@@ -2786,6 +2802,7 @@ impl CEmitter {
             // emit_module runs the pre-pass.
             preempt_keep: crate::codegen::preempt_keep::PreemptKeepSet::default(),
             consume_cleanup_types: HashSet::new(),
+            consume_cleanup_declared_types: HashSet::new(),
             default_handler_fns: HashMap::new(),
             consume_ccount_structs: HashSet::new(),
             record_consume_fields: HashMap::new(),
@@ -5373,24 +5390,34 @@ impl CEmitter {
         // function boundary). Extern "nova" cleanups (MutexGuard etc., D194
         // hot path, hand-written C structs) are excluded by `!f.is_external`.
         {
-            let mut collect = |items: &[Item]| {
+            let mut collect = |items: &[Item], declared: &mut HashSet<String>, ccount: &mut HashSet<String>| {
                 for item in items {
                     if let Item::Fn(f) = item {
-                        if f.is_external { continue; }
                         if f.name != "cleanup" { continue; }
                         if let Some(recv) = &f.receiver {
                             if recv.consume && matches!(recv.kind, ReceiverKind::Instance) {
-                                self.consume_cleanup_types
-                                    .insert(Self::receiver_type_c_ident(&recv.type_name));
+                                let ident = Self::receiver_type_c_ident(&recv.type_name);
+                                // Реестр 221.1 №583: EVERY declared consume
+                                // @cleanup (extern included) has a real C
+                                // definition somewhere — register it here
+                                // unconditionally.
+                                declared.insert(ident.clone());
+                                if !f.is_external {
+                                    ccount.insert(ident);
+                                }
                             }
                         }
                     }
                 }
             };
-            collect(&module.items);
+            let mut declared = std::mem::take(&mut self.consume_cleanup_declared_types);
+            let mut ccount = std::mem::take(&mut self.consume_cleanup_types);
+            collect(&module.items, &mut declared, &mut ccount);
             for pf in &module.peer_files {
-                collect(&pf.items_here);
+                collect(&pf.items_here, &mut declared, &mut ccount);
             }
+            self.consume_cleanup_declared_types = declared;
+            self.consume_cleanup_types = ccount;
         }
 
         // Plan 217 (гибрид C, §8а п.1) + D432-амендмент 2026-08-04 (№315
@@ -31009,7 +31036,39 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // `D188-r2-manual-on-exit` checker can miss via aliasing/FFI).
         self.line(&format!("if ({} >= 1) {{ nv_panic(nova_str_from_cstr(\"D188-on-exit-double-invocation\")); }}", policy.count_var));
         self.line(&format!("{} += 1;", policy.count_var));
-        self.line(&format!("{}({}, {});", cleanup_sym, policy.c_binding, o_local));
+        // Реестр 221.1 №583: `cleanup_sym` (`Nova_<T>_consume_cleanup`) is
+        // only ever EMITTED for a type with a declared `consume @cleanup`
+        // method — user OR extern (`consume_cleanup_declared_types`;
+        // NOT the narrower `consume_cleanup_types`, which deliberately
+        // excludes `extern "nova"` cleanups like MutexGuard — an earlier
+        // version of this gate used that narrower set and empirically
+        // deadlocked an unrelated, consume-free fixture: MutexGuard's real,
+        // hand-written `Nova_MutexGuard_consume_cleanup` got silently
+        // skipped, leaving a lock held). A `spawn consume w = e { .. }`/
+        // `consume w = e { .. }` scope (`Stmt::ConsumeScope`, D415 §4
+        // move-capture) accepts ANY type the checker allows in that
+        // position, including a plain `value`-kind type with NO cleanup
+        // lifecycle at all and no declaration anywhere (observed: `type
+        // Handle value { .. }`, captured via `spawn consume w = h.share()
+        // { .. }` — nothing to release, the `consume` here is
+        // move-into-fiber semantics, not a linear-resource contract).
+        // Calling a symbol that was never emitted for such a type is
+        // undefined at link time — under single-TU the whole dispatch was
+        // `static`, unreferenced-and-dead, silently swept before the
+        // linker ever saw it (same class as №577: a call site assumes a
+        // definition the emission side never produces for this shape);
+        // multi-TU's external linkage exposes the gap. Skip the call ONLY
+        // when NO declaration exists anywhere — there is nothing to clean
+        // up — while leaving the surrounding exactly-once/fail-frame/
+        // shield/watchdog protocol untouched, so a genuine consume type's
+        // behavior (extern or not) is byte-identical.
+        if self.consume_cleanup_declared_types.contains(&policy.type_name) {
+            self.line(&format!("{}({}, {});", cleanup_sym, policy.c_binding, o_local));
+        } else {
+            self.line(&format!(
+                "/* реестр 221.1 №583: {} has no declared @cleanup — nothing to run */",
+                policy.type_name));
+        }
         self.line("nova_fail_pop();");
         self.line(&format!("nv_cleanup_watchdog_disarm({});", wd_prev));
         // Clean cleanup → observability sees the final outcome (skip on throw,
