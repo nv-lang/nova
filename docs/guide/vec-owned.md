@@ -312,4 +312,4 @@ Note: the pointer is invalidated by any subsequent `push`, `insert`,
 - [D231](../../spec/decisions/02-types.md#d231-rawmem-allocator-api--nova_alloc--nova_alloc_uncollectable--nova_free_uncollectable) — RawMem allocator API.
 - [D232](../../spec/decisions/02-types.md#d232-vect--nova-native-generic-growable-array) — Vec[T] formal spec.
 - [D216 §6](../../spec/decisions/02-types.md#d216-typed-pointer-family--unsafe-model--null-safety-через-npo) — pointer arithmetic codegen.
-- [Q-vec-vs-slice](../../spec/open-questions.md#q-vec-vs-slice----vect-vs-t-which-to-use) — decision guide.
+- [Q-vec-vs-slice](../../spec/open-questions.ru.md#q-vec-vs-slice----vect-vs-t-which-to-use) — decision guide.

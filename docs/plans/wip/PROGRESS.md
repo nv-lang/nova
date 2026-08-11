@@ -1,10 +1,10 @@
-# PROGRESS — план 241, Ф.0 (глоссарий spec/GLOSSARY.en.md)
+# PROGRESS — план 241, Ф.0 (глоссарий spec/glossary.ru.md)
 
 > Предыдущая задача в этом файле (перевод ///-комментариев std) закрыта
 > полностью (см. git log PROGRESS.md, коммит 192b73d5d) — файл переиспользован
 > под новую задачу этого worktree/ветки.
 
-Ветка: `p241-glossary`. Исполнитель: sonnet. Файл: `spec/GLOSSARY.en.md`.
+Ветка: `p241-glossary`. Исполнитель: sonnet. Файл: `spec/glossary.ru.md`.
 
 ## ГОТОВО (3 волны).
 
@@ -48,10 +48,10 @@
 новый термин).
 
 ## Источники (сверены)
-- spec/overview.md, spec/paradigm.md (устарел, помечен предупреждением в
+- spec/overview.ru.md, spec/paradigm.ru.md (устарел, помечен предупреждением в
   шапке — термины trait/impl НЕ брать как актуальные, актуально
-  protocol/effect), spec/syntax.md, spec/effects.md, spec/conversions.md,
-  spec/revolutionary.md
+  protocol/effect), spec/syntax.ru.md, spec/effects.ru.md, spec/conversions.ru.md,
+  spec/revolutionary.ru.md
 - spec/decisions/README.md — тематические разделы (для структуры глоссария)
 - docs/guide/language-tour.md, value-vs-reference.md, consume-types.md,
   contracts.md, parameters.md, channels.md, typed-pointers.md
@@ -81,7 +81,7 @@ paradigm.md помечен УСТАРЕВШИМ в шапке файла (опи
 (`channels.ru.md`, `contracts.ru.md`, `nova-cli.ru.md`) — старше конвенции:
 переведённые комментарии внутри ```-блоков + англицизмы в прозе.
 Действия по каждому файлу: вернуть код-блоки байт-в-байт из `X.md`,
-вычистить англицизмы по spec/GLOSSARY.en.md (норма `#language`),
+вычистить англицизмы по spec/glossary.ru.md (норма `#language`),
 добавить frontmatter (`source_rev`/`source_date`). Коммит + push после
 каждого файла.
 

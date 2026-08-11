@@ -2,16 +2,16 @@
 
 Дорожная карта реализации компилятора. Дизайн-решения — в
 [spec/decisions/](../../spec/decisions/), синтаксис — в
-[syntax.md](../../spec/syntax.md). Здесь — план **реализации**.
+[syntax.md](../../spec/syntax.ru.md). Здесь — план **реализации**.
 
 ## Bootstrap-стратегия
 
 | Этап | Язык | Что делает |
 |---|---|---|
-| **v0.1–v1.0** | Rust | Bootstrap компилятор (см. [Q17](../../spec/open-questions.md)) |
+| **v0.1–v1.0** | Rust | Bootstrap компилятор (см. [Q17](../../spec/open-questions.ru.md)) |
 | **v2.0+** | Nova | Self-hosting — переписать компилятор на Nova |
 
-Выбор Rust обоснован в [Q17](../../spec/open-questions.md#q17-bootstrap-язык-компилятора-—-rust):
+Выбор Rust обоснован в [Q17](../../spec/open-questions.ru.md#q17-bootstrap-язык-компилятора-—-rust):
 лучшая экосистема для PL (LLVM, парсеры), pattern matching/sum-types
 для AST, AI-codegen качество, прецедент новых языков (Roc, Gleam,
 Carbon, Mojo).
@@ -63,7 +63,7 @@ patterns (or-pattern `A | B`).
 **Не делается в v0.1:**
 - SMT-проверка контрактов ([D24](../../spec/decisions/09-tooling.md#d24)) — только
   runtime-check в debug
-- Effect polymorphism ([Q6](../../spec/open-questions.md))
+- Effect polymorphism ([Q6](../../spec/open-questions.ru.md))
 - Concurrent GC ([D6](../../spec/decisions/05-memory.md#d6)) — для интерпретатора простой
   mark-and-sweep, production-уровневый concurrent collector с паузами
   <1ms — в v0.4+ вместе с LLVM
@@ -76,7 +76,7 @@ patterns (or-pattern `A | B`).
 - Handler-стек для эффектов: `with X = handler { body }` помещает в
   стек, операции ищут handler сверху
 - Fiber'ы через **stackful coroutines** для `Async`/`Par`. Конкретная
-  реализация — открытый вопрос ([Q3](../../spec/open-questions.md#q3-реализация-fiber-stack-для-async)),
+  реализация — открытый вопрос ([Q3](../../spec/open-questions.ru.md#q3-реализация-fiber-stack-для-async)),
   склонность — `corosensei` для быстрого старта
 - `panic` = смерть текущего fiber'а ([D13](../../spec/decisions/08-runtime.md#d13)),
   supervisor рестартует
@@ -85,7 +85,7 @@ patterns (or-pattern `A | B`).
 **Не реализовано в v0.1:**
 - Native codegen (LLVM)
 - JIT
-- Time-travel debugging ([R8](../../spec/revolutionary.md))
+- Time-travel debugging ([R8](../../spec/revolutionary.ru.md))
 - Hot reload
 - Production concurrent GC — для интерпретатора достаточно простого
   mark-and-sweep ([D6](../../spec/decisions/05-memory.md#d6))
@@ -110,7 +110,7 @@ patterns (or-pattern `A | B`).
 
 #### 5. Структурированные ошибки
 
-- Формат [R5.3](../../spec/revolutionary.md): место → причина →
+- Формат [R5.3](../../spec/revolutionary.ru.md): место → причина →
   fix-suggestion → ссылка на доку
 - JSON-режим `--json` для AI-интеграции
 - Текстовый режим (default) для человека
@@ -157,17 +157,17 @@ nova fmt file.nv                # минимальное форматирова�
 | Production concurrent GC | v0.4 | После LLVM, целевые паузы <1ms ([D6](../../spec/decisions/05-memory.md#d6)) |
 | Region/Realtime эффект ([D6](../../spec/decisions/05-memory.md#d6)) | v0.5 | После основного GC |
 | SMT для контрактов ([D24](../../spec/decisions/09-tooling.md#d24)) | v0.6 | Z3-интеграция большая работа |
-| Effect polymorphism ([Q6](../../spec/open-questions.md)) | v0.5 | Сложная теория |
-| `comptime`/macros ([Q7](../../spec/open-questions.md)) | v1.0+ | Не критично для итераций |
+| Effect polymorphism ([Q6](../../spec/open-questions.ru.md)) | v0.5 | Сложная теория |
+| `comptime`/macros ([Q7](../../spec/open-questions.ru.md)) | v1.0+ | Не критично для итераций |
 | JIT | v1.5+ | Не приоритет |
-| Time-travel debugging ([R8](../../spec/revolutionary.md)) | v0.8 | Нужна запись handler-вызовов |
-| Distributed handlers ([R12](../../spec/revolutionary.md)) | v1.0+ | Поверх готовой системы эффектов |
+| Time-travel debugging ([R8](../../spec/revolutionary.ru.md)) | v0.8 | Нужна запись handler-вызовов |
+| Distributed handlers ([R12](../../spec/revolutionary.ru.md)) | v1.0+ | Поверх готовой системы эффектов |
 | LSP-сервер | v0.5 | После стабилизации API |
 | Package manager | v0.6 | Сначала monorepo-style разработка |
 | Hot reload | v1.0+ | После JIT |
-| Schema evolution ([Q13](../../spec/open-questions.md)) | v0.9 | После того как stdlib устаканится |
-| Bitflags / enum с числами ([Q15](../../spec/open-questions.md)/[Q16](../../spec/open-questions.md)) | v0.5 | Сначала базовый язык |
-| Erlang-style per-fiber heap | v2.0+ | v1.0 — Go-style shared heap ([Q12](../../spec/open-questions.md)) |
+| Schema evolution ([Q13](../../spec/open-questions.ru.md)) | v0.9 | После того как stdlib устаканится |
+| Bitflags / enum с числами ([Q15](../../spec/open-questions.ru.md)/[Q16](../../spec/open-questions.ru.md)) | v0.5 | Сначала базовый язык |
+| Erlang-style per-fiber heap | v2.0+ | v1.0 — Go-style shared heap ([Q12](../../spec/open-questions.ru.md)) |
 
 ### Архитектура компилятора
 
@@ -243,8 +243,8 @@ world с эффектами, парсер JSON, fizzbuzz, упрощённый a
 - Treewalk interpreter
 - Handler-стек, операции эффектов
 - Fiber-runtime через `corosensei` (склонность по
-  [Q3](../../spec/open-questions.md))
-- `spawn`, `parallel for`, `supervised` ([Q12](../../spec/open-questions.md)
+  [Q3](../../spec/open-questions.ru.md))
+- `spawn`, `parallel for`, `supervised` ([Q12](../../spec/open-questions.ru.md)
   v1.0-план)
 - `panic` = exit fiber'а ([D13](../../spec/decisions/08-runtime.md#d13))
 - Stdlib: `Option`, `Result`, `HashMap`, `String`, `print`, `Io`
@@ -266,7 +266,7 @@ world с эффектами, парсер JSON, fizzbuzz, упрощённый a
 
 - Tutorial: «Hello world → effects → handlers → tests»
 - Cookbook: 10–15 типичных задач
-- Reference: ссылка на [spec/decisions/](../../spec/decisions/)/[syntax.md](../../spec/syntax.md)
+- Reference: ссылка на [spec/decisions/](../../spec/decisions/)/[syntax.md](../../spec/syntax.ru.md)
 - Примеры в [examples/](../../examples/)
 
 **Готово, когда:** новый человек прочитав tutorial пишет функцию с
@@ -287,9 +287,9 @@ world с эффектами, парсер JSON, fizzbuzz, упрощённый a
 
 - `audit_simplified.nv` компилируется и запускается через `nova run`
 - `nova test` запускает тесты, все зелёные
-- Все примеры из [syntax.md](../../spec/syntax.md),
-  [effects.md](../../spec/effects.md) парсятся и type-check'аются
-- Ошибки структурированные, формат [R5.3](../../spec/revolutionary.md)
+- Все примеры из [syntax.md](../../spec/syntax.ru.md),
+  [effects.md](../../spec/effects.ru.md) парсятся и type-check'аются
+- Ошибки структурированные, формат [R5.3](../../spec/revolutionary.ru.md)
 - Время компиляции `audit.nv` (~430 строк) — type-check <500ms
 - Размер компилятора ~10–15k LOC Rust
 
@@ -328,8 +328,8 @@ Go 1.14+).
 
 **v0.5** — `region { ... }` блок и эффект `Realtime`
 ([D6](../../spec/decisions/05-memory.md#d6)). Effect polymorphism
-([Q6](../../spec/open-questions.md)), LSP-сервер. Закрывается
-[Q15](../../spec/open-questions.md)/[Q16](../../spec/open-questions.md) (enum с
+([Q6](../../spec/open-questions.ru.md)), LSP-сервер. Закрывается
+[Q15](../../spec/open-questions.ru.md)/[Q16](../../spec/open-questions.ru.md) (enum с
 числами, bitflags), если готов macros-механизм.
 
 **v0.6** — SMT для контрактов (Z3), `@must_verify`/`@unverified`,
@@ -339,14 +339,14 @@ structured error messages для непроверенных контрактов
 publish/add/update команды) — см. [03-package-ecosystem-roadmap.md](03-package-ecosystem-roadmap.md),
 после v2.0+.
 
-**v0.8** — Time-travel debugging ([R8](../../spec/revolutionary.md)). Запись
+**v0.8** — Time-travel debugging ([R8](../../spec/revolutionary.ru.md)). Запись
 handler-вызовов и replay.
 
 **v0.9** — Schema evolution stdlib-паттерн
-([Q13](../../spec/open-questions.md)). Финализация концепции.
+([Q13](../../spec/open-questions.ru.md)). Финализация концепции.
 
 **v1.0** — стабилизация, документация, готовность к публичному релизу.
-После v1.0 — стабильность синтаксиса ([R5.4](../../spec/revolutionary.md),
+После v1.0 — стабильность синтаксиса ([R5.4](../../spec/revolutionary.ru.md),
 [D10](../../spec/decisions/01-philosophy.md#d10)).
 
 **v1.5+** — JIT, hot reload.
@@ -367,7 +367,7 @@ Bootstrap-Rust выкидывается. После self-host'а — package eco
 2. **Fiber-runtime в bootstrap.** `corosensei` (cross-platform
    stackful) vs ручная реализация. Склонность — `corosensei`,
    быстрый старт. Связано с
-   [Q3](../../spec/open-questions.md#q3-реализация-fiber-stack-для-async).
+   [Q3](../../spec/open-questions.ru.md#q3-реализация-fiber-stack-для-async).
 3. **Структура репо.** Monorepo: всё живёт в `nova-lang/`. Текущая
    раскладка:
    - `compiler-codegen/` — Rust-компилятор: парсер, type-checker,

@@ -541,8 +541,8 @@ D318) + `checked_duration_since(other)->Option[Duration]` (None на регре�
   нет, добавить check; amend D-блоки; **`docs/guide/time.md`** (модель + «было→стало» + таблица «Nova vs
   Go/Rust/TS/Kotlin/Java/**Zig/Swift**» со строками: clock-abstraction / fallibility now() / suspend-семантика monotonic /
   ширина представления (Zig i128 / Swift Int128-atto / Nova i64±292y) / tolerance (Swift-only) / overflow-policy +
-  differentiators §1a + паритет Swift `.measure{}` ↔ `Duration.measure[T]`); **Q-sweep в spec/open-questions.md**:
-  занести Q3.0 как RESOLVED; отметить частичное закрытие **OQ-Q9 из spec/open-questions.md** («стандартные эффекты не определены» — Time-строка теперь определена D316; НЕ путать с внутренним §3.0-Q9); резолвить
+  differentiators §1a + паритет Swift `.measure{}` ↔ `Duration.measure[T]`); **Q-sweep в spec/open-questions.ru.md**:
+  занести Q3.0 как RESOLVED; отметить частичное закрытие **OQ-Q9 из spec/open-questions.ru.md** («стандартные эффекты не определены» — Time-строка теперь определена D316; НЕ путать с внутренним §3.0-Q9); резолвить
   **Q-with-deadline-vs-within** (ответ: deadline = `Monotonic`-канон, `sleep_until` только Monotonic, wall — явный
   `sleep(ts.time_until())`; scope-форма = `supervised(deadline:)` 173 §3a); обновить пример в **Q-cancel-token-with-timeout**
   (`Time.sleep(5000)` устарел → `sleep(Duration)`). DEP: all.

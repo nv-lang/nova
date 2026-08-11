@@ -185,7 +185,7 @@ structured concurrency without a separate "async" dialect of the language.
 
 ## Where to go next
 
-- [spec/overview.md](../../spec/overview.md) — main ideas, what's borrowed
+- [spec/overview.ru.md](../../spec/overview.ru.md) — main ideas, what's borrowed
   from where, tooling overview.
 - [examples/flagship/aggregator](../../examples/flagship/aggregator) — the
   full-sized version of the example above: a real HTTP server (via the

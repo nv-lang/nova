@@ -597,7 +597,7 @@ Plan 200 Пункт 18 (см. следующую запись).
 ---
 
 ### [ЗАКР 2026-05-07] D26 str API — школа B (codepoint-indexed)
-- **Где:** `spec/decisions/08-runtime.md` (D26), `spec/open-questions.md`
+- **Где:** `spec/decisions/08-runtime.md` (D26), `spec/open-questions.ru.md`
   (Q-string-indexing → закрыта), `nova_rt/nova_rt.h::nova_str_slice`,
   `nova_rt/array.h::nova_str_find/rfind/byte_len`,
   `emit_c.rs::str_method_to_rt` + Member-handler.
@@ -1474,13 +1474,13 @@ Plan 200 Пункт 18 (см. следующую запись).
 - **Что:** spec D54 в `03-syntax.md` дополнен таблицей запрещённых
   `as`-cast'ов для char/byte/bool с suggestion'ами и прецедентами
   (Rust/Swift/Kotlin/Java сравнение). Создана сводная страница
-  `spec/conversions.md` (~280 строк) — single source of truth для
+  `spec/conversions.ru.md` (~280 строк) — single source of truth для
   всех правил конверсии.
 - **Где:**
   - `spec/decisions/03-syntax.md` D54 — раздел «Запрещённые `as`-cast'ы
     для char/byte/bool» + раздел «Strict `if cond: bool` / `while
     cond: bool`».
-  - `spec/conversions.md` — новый файл. Структура: 3 механизма (as /
+  - `spec/conversions.ru.md` — новый файл. Структура: 3 механизма (as /
     from / try_from), полная таблица всех типов конверсий
     (numeric ↔ numeric, numeric ↔ str, char/byte/[]byte/str, bool,
     newtype, sum-discriminant), запрещённые конверсии, auto-derive
@@ -2274,8 +2274,8 @@ extensibility без runtime FS dependency.
 - **Регрессия:** добавлен `nova_tests/runtime/clone_semantics.nv`
   (5 тестов на shallow-семантику record + StringBuilder/WriteBuffer
   deep). 86/86 nova_tests PASS.
-- **Файлы:** spec/decisions/{02,03,08}-*.md, spec/syntax.md,
-  spec/open-questions.md, docs/plans/17-q-resolutions.md,
+- **Файлы:** spec/decisions/{02,03,08}-*.md, spec/syntax.ru.md,
+  spec/open-questions.ru.md, docs/plans/17-q-resolutions.md,
   docs/plans/README.md, nova_tests/runtime/clone_semantics.nv.
 
 ---
@@ -2443,7 +2443,7 @@ Plan 25 honest pass: default malloc-only обнаружено — 2026-05-11
 | **Default alloc backend** | compiler-codegen/nova_rt/alloc.c — plain malloc, нет GC, nova_release — no-op |
 | **Memory mgmt в коде** | Объекты создаются, **никогда не освобождаются** |
 | **Use-case "single-host server production-grade"** в Plan 25 матрице | **WRONG.** Server long-lived, leaks накапливаются → OOM |
-| **spec/overview.md "паузы <1ms"** | Без disclaimer — звучало factual. На самом деле **дизайн-цель** (decisions/05-memory.md correctly помечает как v1.0+ goal) |
+| **spec/overview.ru.md "паузы <1ms"** | Без disclaimer — звучало factual. На самом деле **дизайн-цель** (decisions/05-memory.md correctly помечает как v1.0+ goal) |
 
 **Что сделано:**
 
@@ -2460,7 +2460,7 @@ Plan 25 honest pass: default malloc-only обнаружено — 2026-05-11
       compiler-codegen/vcpkg_installed/x64-windows-static/.
     - 5 фаз: flag → verify → bench → switch default → cross-platform.
 
-(d) spec/overview.md "<1ms" → "**целевые** <1ms p99" + ссылка на
+(d) spec/overview.ru.md "<1ms" → "**целевые** <1ms p99" + ссылка на
     Plan 25 G3 для текущего состояния.
 
 (e) nova_tests/concurrency/memory_growth_check.nv — bench PASS под
@@ -5133,7 +5133,7 @@ Plan 52.2 и 52.3 → ✅ ЗАКРЫТЫ. Suite: 960 PASS / 0 FAIL.
 ### [M-for-in-explicit-elem-type] ✅ ЗАКРЫТО (Plan 87, 2026-05-22)
 - **Где:** bootstrap-парсер for-in (`compiler-codegen/src/parser`).
 - **Что упрощено:** синтаксис `for x TYPE in iter` (явная аннотация
-  типа loop-переменной) задокументирован в `spec/syntax.md`
+  типа loop-переменной) задокументирован в `spec/syntax.ru.md`
   (`for id u64 in ids`, `for x int in nums`), но bootstrap-парсер его
   не принимал — после `for <ident>` сразу ожидал `in`
   («expected `in`, got identifier»).
@@ -6153,7 +6153,7 @@ MSVC)». Полный `nova test` под **MSVC-toolchain** НЕ запуска�
 ---
 
 ### [ЗАКР 2026-05-07] D26 str API — школа B (codepoint-indexed)
-- **Где:** `spec/decisions/08-runtime.md` (D26), `spec/open-questions.md`
+- **Где:** `spec/decisions/08-runtime.md` (D26), `spec/open-questions.ru.md`
   (Q-string-indexing → закрыта), `nova_rt/nova_rt.h::nova_str_slice`,
   `nova_rt/array.h::nova_str_find/rfind/byte_len`,
   `emit_c.rs::str_method_to_rt` + Member-handler.
@@ -7029,13 +7029,13 @@ MSVC)». Полный `nova test` под **MSVC-toolchain** НЕ запуска�
 - **Что:** spec D54 в `03-syntax.md` дополнен таблицей запрещённых
   `as`-cast'ов для char/byte/bool с suggestion'ами и прецедентами
   (Rust/Swift/Kotlin/Java сравнение). Создана сводная страница
-  `spec/conversions.md` (~280 строк) — single source of truth для
+  `spec/conversions.ru.md` (~280 строк) — single source of truth для
   всех правил конверсии.
 - **Где:**
   - `spec/decisions/03-syntax.md` D54 — раздел «Запрещённые `as`-cast'ы
     для char/byte/bool» + раздел «Strict `if cond: bool` / `while
     cond: bool`».
-  - `spec/conversions.md` — новый файл. Структура: 3 механизма (as /
+  - `spec/conversions.ru.md` — новый файл. Структура: 3 механизма (as /
     from / try_from), полная таблица всех типов конверсий
     (numeric ↔ numeric, numeric ↔ str, char/byte/[]byte/str, bool,
     newtype, sum-discriminant), запрещённые конверсии, auto-derive
@@ -7829,8 +7829,8 @@ extensibility без runtime FS dependency.
 - **Регрессия:** добавлен `nova_tests/runtime/clone_semantics.nv`
   (5 тестов на shallow-семантику record + StringBuilder/WriteBuffer
   deep). 86/86 nova_tests PASS.
-- **Файлы:** spec/decisions/{02,03,08}-*.md, spec/syntax.md,
-  spec/open-questions.md, docs/plans/17-q-resolutions.md,
+- **Файлы:** spec/decisions/{02,03,08}-*.md, spec/syntax.ru.md,
+  spec/open-questions.ru.md, docs/plans/17-q-resolutions.md,
   docs/plans/README.md, nova_tests/runtime/clone_semantics.nv.
 
 ---
@@ -7998,7 +7998,7 @@ Plan 25 honest pass: default malloc-only обнаружено — 2026-05-11
 | **Default alloc backend** | compiler-codegen/nova_rt/alloc.c — plain malloc, нет GC, nova_release — no-op |
 | **Memory mgmt в коде** | Объекты создаются, **никогда не освобождаются** |
 | **Use-case "single-host server production-grade"** в Plan 25 матрице | **WRONG.** Server long-lived, leaks накапливаются → OOM |
-| **spec/overview.md "паузы <1ms"** | Без disclaimer — звучало factual. На самом деле **дизайн-цель** (decisions/05-memory.md correctly помечает как v1.0+ goal) |
+| **spec/overview.ru.md "паузы <1ms"** | Без disclaimer — звучало factual. На самом деле **дизайн-цель** (decisions/05-memory.md correctly помечает как v1.0+ goal) |
 
 **Что сделано:**
 
@@ -8015,7 +8015,7 @@ Plan 25 honest pass: default malloc-only обнаружено — 2026-05-11
       compiler-codegen/vcpkg_installed/x64-windows-static/.
     - 5 фаз: flag → verify → bench → switch default → cross-platform.
 
-(d) spec/overview.md "<1ms" → "**целевые** <1ms p99" + ссылка на
+(d) spec/overview.ru.md "<1ms" → "**целевые** <1ms p99" + ссылка на
     Plan 25 G3 для текущего состояния.
 
 (e) nova_tests/concurrency/memory_growth_check.nv — bench PASS под
@@ -10689,7 +10689,7 @@ Plan 52.2 и 52.3 → ✅ ЗАКРЫТЫ. Suite: 960 PASS / 0 FAIL.
 ### [M-for-in-explicit-elem-type] ✅ ЗАКРЫТО (Plan 87, 2026-05-22)
 - **Где:** bootstrap-парсер for-in (`compiler-codegen/src/parser`).
 - **Что упрощено:** синтаксис `for x TYPE in iter` (явная аннотация
-  типа loop-переменной) задокументирован в `spec/syntax.md`
+  типа loop-переменной) задокументирован в `spec/syntax.ru.md`
   (`for id u64 in ids`, `for x int in nums`), но bootstrap-парсер его
   не принимал — после `for <ident>` сразу ожидал `in`
   («expected `in`, got identifier»).
@@ -13351,7 +13351,7 @@ D22 заменена с `(params) =>` на двухуровневый closure:
 ### Файлы
 
 - spec/decisions/03-syntax.md — D22, D40, D43 переписаны.
-- spec/syntax.md, spec/effects.md, spec/revolutionary.md — примеры.
+- spec/syntax.ru.md, spec/effects.ru.md, spec/revolutionary.ru.md — примеры.
 - spec/decisions/{04,05,06,08}-*.md — точечные правки.
 - spec/decisions/closure-rev2026-05-DRAFT.md — DRAFT-зеркало.
 - docs/plans/19-closure-and-error-ops.md — план реализации (closure-rev + D85 error-ops в одном атомарном PR).
@@ -13414,8 +13414,8 @@ msg)`:** panic — fiber-уровень, exit — process-уровень. Про
 **Новые:**
 - `spec/decisions/10-overloading.md` (D84).
 
-**Spec — крупные:** `spec/overview.md`, `spec/effects.md`,
-`spec/syntax.md`, `spec/revolutionary.md`, `spec/decisions/04-effects.md`
+**Spec — крупные:** `spec/overview.ru.md`, `spec/effects.ru.md`,
+`spec/syntax.ru.md`, `spec/revolutionary.ru.md`, `spec/decisions/04-effects.md`
 (D67 отменён + D85 + D86 + D62 правило 4 свёрнуто), `spec/decisions/08-runtime.md`
 (D26 prelude: `exit` + `RuntimeNoneError`; D13 panic vs exit).
 
@@ -13817,7 +13817,7 @@ Zig-style scope-level cleanup statements. Закрывает Q20 «Нужен л
 
 - `spec/decisions/03-syntax.md` — D90.
 - `spec/decisions/06-concurrency.md` — D91, D79 помечен «частично уточнено D91».
-- `spec/open-questions.md` — Q20 закрыто → D90.
+- `spec/open-questions.ru.md` — Q20 закрыто → D90.
 
 ### Status
 
@@ -14045,7 +14045,7 @@ Plan 20 (D90 defer/errdefer) закрыт полностью — 7 фаз, 9 к�
 
 ### Упрощения / отложенные элементы
 
-- **Q-errdefer-handler — errdefer не работает с user-installed Fail handler.** `with Fail = handler Fail { fail(msg) { interrupt v } }` устанавливает user handler в `_nova_handler_Fail`, который перехватывает `Fail.fail` dispatch ДО того, как throw достигнет local `_defer_BID_ff` setjmp-frame. Errdefer срабатывает **только** на unhandled-throw путях (через default fail-frame). Корректное взаимодействие требует пересмотра handler-dispatch model'и (longjmp first, dispatch inside frame). Зафиксировано как Q-errdefer-handler в `spec/open-questions.md`.
+- **Q-errdefer-handler — errdefer не работает с user-installed Fail handler.** `with Fail = handler Fail { fail(msg) { interrupt v } }` устанавливает user handler в `_nova_handler_Fail`, который перехватывает `Fail.fail` dispatch ДО того, как throw достигнет local `_defer_BID_ff` setjmp-frame. Errdefer срабатывает **только** на unhandled-throw путях (через default fail-frame). Корректное взаимодействие требует пересмотра handler-dispatch model'и (longjmp first, dispatch inside frame). Зафиксировано как Q-errdefer-handler в `spec/open-questions.ru.md`.
 
 - **Loop-body integration — только range-for.** 20+ мест в codegen с прямым `for stmt in &body.stmts { emit_stmt }` (for-in-array, while, while-let, loop, match-arm bodies, if-branch bodies). Только **for-range body** переписан через `emit_loop_body_inline` (вызывает enter/leave_defer_scope). Остальные продолжают legacy inline-iteration. В fast-path (блок без defer'ов) — поведение идентично, регрессий нет. Defer внутри inline-iterated блока **не зарегистрируется** в DeferScope — будет добавлено incrementally при появлении positive-теста, который зацепит конкретный path.
 
@@ -14068,7 +14068,7 @@ Plan 20 (D90 defer/errdefer) закрыт полностью — 7 фаз, 9 к�
 - `nova_tests/syntax/defer_basic.nv` + `errdefer_basic.nv` — Ф.6.
 - `nova_tests/negative_capability/defer_*_rejected.nv`, `errdefer_*_rejected.nv` — updated wording.
 - `spec/decisions/03-syntax.md` — Ф.7 D90 Bootstrap-status ✅.
-- `spec/open-questions.md` — Q-errdefer-handler (новый).
+- `spec/open-questions.ru.md` — Q-errdefer-handler (новый).
 
 ### Status
 
@@ -17617,7 +17617,7 @@ D22 заменена с `(params) =>` на двухуровневый closure:
 ### Файлы
 
 - spec/decisions/03-syntax.md — D22, D40, D43 переписаны.
-- spec/syntax.md, spec/effects.md, spec/revolutionary.md — примеры.
+- spec/syntax.ru.md, spec/effects.ru.md, spec/revolutionary.ru.md — примеры.
 - spec/decisions/{04,05,06,08}-*.md — точечные правки.
 - spec/decisions/closure-rev2026-05-DRAFT.md — DRAFT-зеркало.
 - docs/plans/19-closure-and-error-ops.md — план реализации (closure-rev + D85 error-ops в одном атомарном PR).
@@ -17680,8 +17680,8 @@ msg)`:** panic — fiber-уровень, exit — process-уровень. Про
 **Новые:**
 - `spec/decisions/10-overloading.md` (D84).
 
-**Spec — крупные:** `spec/overview.md`, `spec/effects.md`,
-`spec/syntax.md`, `spec/revolutionary.md`, `spec/decisions/04-effects.md`
+**Spec — крупные:** `spec/overview.ru.md`, `spec/effects.ru.md`,
+`spec/syntax.ru.md`, `spec/revolutionary.ru.md`, `spec/decisions/04-effects.md`
 (D67 отменён + D85 + D86 + D62 правило 4 свёрнуто), `spec/decisions/08-runtime.md`
 (D26 prelude: `exit` + `RuntimeNoneError`; D13 panic vs exit).
 
@@ -18083,7 +18083,7 @@ Zig-style scope-level cleanup statements. Закрывает Q20 «Нужен л
 
 - `spec/decisions/03-syntax.md` — D90.
 - `spec/decisions/06-concurrency.md` — D91, D79 помечен «частично уточнено D91».
-- `spec/open-questions.md` — Q20 закрыто → D90.
+- `spec/open-questions.ru.md` — Q20 закрыто → D90.
 
 ### Status
 
@@ -18311,7 +18311,7 @@ Plan 20 (D90 defer/errdefer) закрыт полностью — 7 фаз, 9 к�
 
 ### Упрощения / отложенные элементы
 
-- **Q-errdefer-handler — errdefer не работает с user-installed Fail handler.** `with Fail = handler Fail { fail(msg) { interrupt v } }` устанавливает user handler в `_nova_handler_Fail`, который перехватывает `Fail.fail` dispatch ДО того, как throw достигнет local `_defer_BID_ff` setjmp-frame. Errdefer срабатывает **только** на unhandled-throw путях (через default fail-frame). Корректное взаимодействие требует пересмотра handler-dispatch model'и (longjmp first, dispatch inside frame). Зафиксировано как Q-errdefer-handler в `spec/open-questions.md`.
+- **Q-errdefer-handler — errdefer не работает с user-installed Fail handler.** `with Fail = handler Fail { fail(msg) { interrupt v } }` устанавливает user handler в `_nova_handler_Fail`, который перехватывает `Fail.fail` dispatch ДО того, как throw достигнет local `_defer_BID_ff` setjmp-frame. Errdefer срабатывает **только** на unhandled-throw путях (через default fail-frame). Корректное взаимодействие требует пересмотра handler-dispatch model'и (longjmp first, dispatch inside frame). Зафиксировано как Q-errdefer-handler в `spec/open-questions.ru.md`.
 
 - **Loop-body integration — только range-for.** 20+ мест в codegen с прямым `for stmt in &body.stmts { emit_stmt }` (for-in-array, while, while-let, loop, match-arm bodies, if-branch bodies). Только **for-range body** переписан через `emit_loop_body_inline` (вызывает enter/leave_defer_scope). Остальные продолжают legacy inline-iteration. В fast-path (блок без defer'ов) — поведение идентично, регрессий нет. Defer внутри inline-iterated блока **не зарегистрируется** в DeferScope — будет добавлено incrementally при появлении positive-теста, который зацепит конкретный path.
 
@@ -18334,7 +18334,7 @@ Plan 20 (D90 defer/errdefer) закрыт полностью — 7 фаз, 9 к�
 - `nova_tests/syntax/defer_basic.nv` + `errdefer_basic.nv` — Ф.6.
 - `nova_tests/negative_capability/defer_*_rejected.nv`, `errdefer_*_rejected.nv` — updated wording.
 - `spec/decisions/03-syntax.md` — Ф.7 D90 Bootstrap-status ✅.
-- `spec/open-questions.md` — Q-errdefer-handler (новый).
+- `spec/open-questions.ru.md` — Q-errdefer-handler (новый).
 
 ### Status
 
@@ -22949,7 +22949,7 @@ sub-plan + umbrella-level. Documented в
   ref.
 - `spec/decisions/history/rejected.md` — «Per-field export для record»
   amended с 2026-06-02 пересмотром.
-- `spec/open-questions.md` — JSON skip-семантика updated (priv fields
+- `spec/open-questions.ru.md` — JSON skip-семантика updated (priv fields
   auto-skip).
 
 **Design lessons:**
@@ -25612,7 +25612,7 @@ author+verify pipelines + Opus 4.7 spec agent + scout pre-stage. ROI
 - D228 in `spec/decisions/06-concurrency.md` (canonicalizes 2 invariants
   introduced by §11.6 + §12.31 — `ctx_pins[]` GC-root pattern +
   `pending_driver_jobs` lifetime counter)
-- Q24-27 in `spec/open-questions.md` (future design decisions)
+- Q24-27 in `spec/open-questions.ru.md` (future design decisions)
 
 **Verification:** 18/21 PASS, 3 RUN-FAIL blocked by external Plan 110.x
 bug (`cleanup-timeout-exceeded` i64 underflow в `nv_shield_check_deadline`).
@@ -28678,7 +28678,7 @@ D185 §amend-2 added.
 
 - **[дизайн]** **Multi-agent survey (31 агент, 1.37M ток.): Rust/Go/TS/Kotlin/Java/Zig/Swift → что из чужого синтаксиса стоит добавить в Nova.** baseline текущего синтаксиса → 7 параллельных каталогов → дедуп gap'ов → адверсариальная оценка на совместимость с минимализмом/эффектами/«сигнатура=контракт». Вывод: **0 `strong`, 3 `consider`, 19 `skip`**. Ни одна конструкция не даёт новой выразительной силы — максимум эргономика. Исследование: [docs/research/2026-07-02-cross-language-syntax-gap-survey.md](research/2026-07-02-cross-language-syntax-gap-survey.md).
 - **[дизайн]** **19 skip — не «лениво», а с конкретным existing-механизмом или D-решением.** let-else→`??`+divergent match; matches!→`is`+D34; scope-functions→spread+`Option.map`; const-generics→`[N]T`+const-fn; struct-tags→Plan 180; recover→D13; computed-props→D14/D117; variance→нет subtyping (by design); autoclosure/result-builders/property-observers→«no hidden control flow». Baseline устарел на 2 пунктах: `while-let` (D34) и top-level or-patterns (`Pattern::Or`) **уже реализованы**.
-- **[беклог]** **3 floating-маркера добавлены** (все — снятие частного ограничения существующей грамматики, не новые концепции): `[M-106-if-let-chain-multi]` (multi-bind `&&`-цепочка, home = Q-if-let-chain-multi), `[M-labeled-loops]` (метки циклов + `break outer`, единственный genuinely-absent), `[M-nested-or-patterns]` (`Some(1\|2\|3)`, hoist `\|`-сбор в parse_pattern). Home двух новых = [spec/open-questions.md](../spec/open-questions.md) (Q-labeled-loops / Q-nested-or-patterns).
+- **[беклог]** **3 floating-маркера добавлены** (все — снятие частного ограничения существующей грамматики, не новые концепции): `[M-106-if-let-chain-multi]` (multi-bind `&&`-цепочка, home = Q-if-let-chain-multi), `[M-labeled-loops]` (метки циклов + `break outer`, единственный genuinely-absent), `[M-nested-or-patterns]` (`Some(1\|2\|3)`, hoist `\|`-сбор в parse_pattern). Home двух новых = [spec/open-questions.ru.md](../spec/open-questions.ru.md) (Q-labeled-loops / Q-nested-or-patterns).
 ---
 
 ## Same-scope re-binding — research + Plan 181 (2026-07-02)

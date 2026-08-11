@@ -8,7 +8,7 @@
   <p>
     <a href="https://nv-lang.org">Сайт</a> |
     <a href="docs/guide/quickstart.md">Быстрый старт</a> |
-    <a href="spec/overview.md">Документация</a> |
+    <a href="spec/overview.ru.md">Документация</a> |
     <a href="CONTRIBUTING.md">Участие в проекте</a>
   </p>
 
@@ -220,11 +220,11 @@ fn map_audio(samples []f32, gain f32) -> []f32 =>
 
 ## Содержание
 
-- [spec/overview.md](spec/overview.md) — главные идеи, что заимствует у кого, tooling
-- [spec/revolutionary.md](spec/revolutionary.md) — **флагманские возможности**: effects + handlers, AI-first дизайн, контракты, time-travel debugging
-- [spec/syntax.md](spec/syntax.md) — примеры синтаксиса
-- [spec/effects.md](spec/effects.md) — система эффектов (базовое введение)
-- [spec/open-questions.md](spec/open-questions.md) — нерешённые вопросы
+- [spec/overview.ru.md](spec/overview.ru.md) — главные идеи, что заимствует у кого, tooling
+- [spec/revolutionary.ru.md](spec/revolutionary.ru.md) — **флагманские возможности**: effects + handlers, AI-first дизайн, контракты, time-travel debugging
+- [spec/syntax.ru.md](spec/syntax.ru.md) — примеры синтаксиса
+- [spec/effects.ru.md](spec/effects.ru.md) — система эффектов (базовое введение)
+- [spec/open-questions.ru.md](spec/open-questions.ru.md) — нерешённые вопросы
 - [spec/decisions/](spec/decisions/) — журнал дизайн-решений с эволюцией
 - [docs/guide/typed-pointers.md](docs/guide/typed-pointers.md) — каноничный синтаксис семейства `*T` (правило право-связывания V2/V3, ключевое слово `safe`, правила композиции модификаторов)
 - [compiler-codegen/](compiler-codegen/) — компилятор Nova (Rust): парсер, type-checker, C-backend codegen, нативный runtime

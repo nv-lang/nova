@@ -68,7 +68,7 @@ struct Cli {
     /// silently dropping an effect obligation). No language-semantics
     /// change: OFF by default, `nova check`/`build`/`test` behavior is
     /// byte-identical without this flag. See spec/decisions/04-effects.md
-    /// D62 and spec/open-questions.md.
+    /// D62 and spec/open-questions.ru.md.
     #[arg(long = "strict-effects", global = true)]
     strict_effects: bool,
 

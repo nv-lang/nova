@@ -310,7 +310,7 @@ Plan 23 не блокирует ни один из них — он опирае�
 
 ## Open Q (выявленные, добавляются в open-questions.md)
 
-> Эти вопросы открываются в spec/open-questions.md отдельным коммитом
+> Эти вопросы открываются в spec/open-questions.ru.md отдельным коммитом
 > при принятии этого roadmap'а. Здесь — preview формулировок.
 
 **Q-mn-1: Memory model для shared mut при M:N.**
@@ -482,5 +482,5 @@ Plan 23 переходит из roadmap'а в исполняемый план к
 
 Этот файл — **карта**, не план. Принятие = добавление в `docs/plans/README.md`
 со статусом «roadmap, v1.0+ milestone», и фиксация Q-mn-* в
-`spec/open-questions.md`. D-блоки **не открываются** до старта
+`spec/open-questions.ru.md`. D-блоки **не открываются** до старта
 реализации.

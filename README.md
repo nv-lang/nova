@@ -8,7 +8,7 @@
   <p>
     <a href="https://nv-lang.org">Website</a> |
     <a href="docs/guide/quickstart.md">Quickstart</a> |
-    <a href="spec/overview.md">Documentation</a> |
+    <a href="spec/overview.ru.md">Documentation</a> |
     <a href="CONTRIBUTING.md">Contributing</a>
   </p>
 
@@ -226,11 +226,11 @@ programmer writes nothing special.
 
 ## Contents
 
-- [spec/overview.md](spec/overview.md) — main ideas, what is borrowed from where, tooling
-- [spec/revolutionary.md](spec/revolutionary.md) — **flagship features**: effects + handlers, AI-first design, contracts, time-travel debugging
-- [spec/syntax.md](spec/syntax.md) — syntax examples
-- [spec/effects.md](spec/effects.md) — effect system (introduction)
-- [spec/open-questions.md](spec/open-questions.md) — unresolved questions
+- [spec/overview.ru.md](spec/overview.ru.md) — main ideas, what is borrowed from where, tooling
+- [spec/revolutionary.ru.md](spec/revolutionary.ru.md) — **flagship features**: effects + handlers, AI-first design, contracts, time-travel debugging
+- [spec/syntax.ru.md](spec/syntax.ru.md) — syntax examples
+- [spec/effects.ru.md](spec/effects.ru.md) — effect system (introduction)
+- [spec/open-questions.ru.md](spec/open-questions.ru.md) — unresolved questions
 - [spec/decisions/](spec/decisions/) — design decision log with rationale
 - [docs/guide/typed-pointers.md](docs/guide/typed-pointers.md) — `*T` family canonical syntax (V2/V3 right-binding rule, `safe` keyword, modifier composition rules)
 - [compiler-codegen/](compiler-codegen/) — Nova compiler (Rust): parser, type-checker, C-backend codegen, native runtime

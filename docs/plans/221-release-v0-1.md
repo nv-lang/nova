@@ -787,7 +787,7 @@ W3 bare-варианты (№27/№260-остатки) → W4 P67 ICE-пачка
 - [x] **A-Q1 ✅ 2026-07-21** `docs/guide/quickstart.md`: установка (Windows zip + setup-env.ps1;
       Linux — ссылка на docs/guide/linux-build.md) → hello world (реально собран+прогнан standalone-
       проектом) → mini_aggregator.nv (эффекты Time + spawn/parallel for/supervised(deadline:),
-      реально собран+прогнан) → ссылки (spec/overview.md, flagship/aggregator, spec/decisions/).
+      реально собран+прогнан) → ссылки (spec/overview.ru.md, flagship/aggregator, spec/decisions/).
       Все команды прогнаны живым nova.exe из main-репы (read-only).
 - [x] **A-Q2 ✅ 2026-07-21** README.md — добавлен абзац-суть (compiles-to-C/эффекты-в-типах/
       consume+Boehm GC/M:N fiber-scheduler/батарейки std+net+tls+http+compress) сразу после

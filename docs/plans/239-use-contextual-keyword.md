@@ -76,7 +76,7 @@ Record-field embed lookahead смотрит только на токен ПОС�
   подсвечиваться НЕ должны (иначе тест `vscode_grammar_has_no_phantom_keywords`
   краснеет). См. D443 «Что отвергнуто».
 - `spec/decisions/02-types.md` — новый D443 (после D39).
-- `spec/open-questions.md` — Q-embed-syntax: update-заметка (контекстность
+- `spec/open-questions.ru.md` — Q-embed-syntax: update-заметка (контекстность
   снимает один аргумент «за» голосования против `use`, но НЕ закрывает сам
   вопрос выбора keyword'а).
 - Фикстура: `spec_tests/conformance/standalone/p239_use_contextual_ident.nv`.

@@ -15,7 +15,7 @@ syntax changes, переписывание тестов, ломка bootstrap-с
 
 - лучшими возможностями языка,
 - лучшим user experience,
-- движением к революционным целям из [`spec/revolutionary.md`](../../spec/revolutionary.md) и [`spec/decisions/01-philosophy.md`](../../spec/decisions/01-philosophy.md).
+- движением к революционным целям из [`spec/revolutionary.ru.md`](../../spec/revolutionary.ru.md) и [`spec/decisions/01-philosophy.md`](../../spec/decisions/01-philosophy.md).
 
 ### Когда **минимальный** vs **правильный** вариант
 

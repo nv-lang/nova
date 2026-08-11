@@ -3127,7 +3127,7 @@ Build-mode влияет на **performance**, не на **семантику** �
   location-first формат failure (см. [D13](#d13) AMEND).
 - [D26](#d26) — prelude содержит обе функции (`assert`,
   `debug_assert`).
-- spec/syntax.md — секция «Тестирование без моков» уточняет, что
+- spec/syntax.ru.md — секция «Тестирование без моков» уточняет, что
   `assert(cond)` обязательно со скобками (fn-call).
 
 ### Эволюция

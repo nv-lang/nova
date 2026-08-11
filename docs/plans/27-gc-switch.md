@@ -356,14 +356,14 @@ clang compiler-codegen/nova_rt/alloc_boehm.c `
 `gc_test_helpers.c` уже включает `test_gc_pause()`. После Ф.2:
 
 1. Запустить `gc_helpers_test.exe` и зафиксировать pause числа.
-2. Записать результаты в `spec/overview.md` секцию «GC».
+2. Записать результаты в `spec/overview.ru.md` секцию «GC».
 
-`spec/overview.md` сейчас содержит placeholder `<1ms` — заменить реальными
+`spec/overview.ru.md` сейчас содержит placeholder `<1ms` — заменить реальными
 измерениями p50/p99 для 10k/100k/1M аллокаций на dev-машине.
 
 **Acceptance Ф.3:**
-- Числа зафиксированы в `spec/overview.md` (реальные, не placeholder).
-- `spec/overview.md` не содержит `<1ms` (заменено на measured).
+- Числа зафиксированы в `spec/overview.ru.md` (реальные, не placeholder).
+- `spec/overview.ru.md` не содержит `<1ms` (заменено на measured).
 - Примечание: числа специфичны для dev-машины — это не production benchmark,
   а первичная точка отсчёта.
 
@@ -821,7 +821,7 @@ Wire в `nova-cli/src/main.rs` после реализации в test_runner:
 | `compiler-codegen/src/test_runner.rs` | Ф.6: AllocConstraint, parse_alloc_constraint, Outcome::Skipped, SkipReason |
 | `spec/decisions/09-tooling.md` | Ф.6: D89.6 + D89.7 |
 | `docs/dev/test-conventions.md` | Ф.6: ALLOC_REQUIRES примеры |
-| `spec/overview.md` | Ф.3: GC pause числа (measured, не placeholder) |
+| `spec/overview.ru.md` | Ф.3: GC pause числа (measured, не placeholder) |
 | `compiler-codegen/Cargo.toml` | Б.1: добавить sha2 dep |
 
 ---
@@ -969,7 +969,7 @@ Boehm сканирует его стек. Риска нет при текуще�
 - `nova test --gc malloc` — все тесты PASS (backward compat).
 - `nova_tests/gc/bounded_rate.nv` — PASS: 100k allocs без OOM kill.
 - `gc_helpers_test.exe` — PASS: heap bounded после 1M alloc + GC_gcollect.
-- `spec/overview.md` — реальные GC pause числа (не placeholder).
+- `spec/overview.ru.md` — реальные GC pause числа (не placeholder).
 - `nova_tests/concurrency/deep_gc.nv` section 4 — PASS на Boehm (R4 check).
 - README.md упоминает что GC = Boehm по умолчанию.
 
@@ -1057,7 +1057,7 @@ Plan 25 свою сторону не обновил.
 
 ### Ф.F — pause measurement (Ф.3 reopened)
 
-`spec/overview.md:51` всё ещё содержит «**целевые** паузы <1ms p99»
+`spec/overview.ru.md:51` всё ещё содержит «**целевые** паузы <1ms p99»
 placeholder. `compiler-codegen/nova_rt/gc_test_helpers.c` orphaned —
 существует но не интегрирован в test-runner.
 
@@ -1066,7 +1066,7 @@ placeholder. `compiler-codegen/nova_rt/gc_test_helpers.c` orphaned —
    `gc.collect()` API + измерение через `Time` effect) в bench-тест
    `nova_tests/concurrency/gc_pause_bench.nv`.
 2. Запустить, получить p50/p99 числа на realistic workload.
-3. Заменить placeholder в `spec/overview.md` measured numbers с
+3. Заменить placeholder в `spec/overview.ru.md` measured numbers с
    disclaimer'ом «on Windows 11 x86_64-v3 — варьируется по платформе».
 
 Это закрывает Ф.3 acceptance criterion «not placeholder».

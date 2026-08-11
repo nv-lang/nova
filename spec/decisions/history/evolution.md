@@ -684,7 +684,7 @@ prior art), [D54](../03-syntax.md#d54) (`as`/`is` остаются явными)
 - `editors/vscode/`: `Vec` убран из prelude-types и подсветки.
 - `spec/decisions/08-runtime.md`: `Vec` удалён из перечисления
   не-prelude коллекций.
-- `spec/syntax.md`: пример generic'ов через `HashMap`/`[]T`.
+- `spec/syntax.ru.md`: пример generic'ов через `HashMap`/`[]T`.
 
 **Связанные D:** [D52](../02-types.md#d52) (alias-форма — теперь не
 для Vec), [D58](../03-syntax.md#d58) (Range — заменяет потенциальный

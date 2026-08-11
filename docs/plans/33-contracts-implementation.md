@@ -41,7 +41,7 @@ Rust-mainstream (где контрактов нет) и Rust+kani/prusti (где
 Z3 SMT → debug runtime check → zero-cost release. Только straight-line
 код (без циклов, frame, pure_view, ghost, quantifiers).
 
-**Acceptance:** 10 примеров из R4 ([`spec/revolutionary.md`](../../spec/revolutionary.md))
+**Acceptance:** 10 примеров из R4 ([`spec/revolutionary.ru.md`](../../spec/revolutionary.ru.md))
 работают end-to-end. Decision point: продолжать ли с 33.2.
 
 **Срок:** ~2 недели.

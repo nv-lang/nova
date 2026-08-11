@@ -84,7 +84,7 @@ D78 file-based. Causes:
   breaking change в spec.
 - Wildcard `import X.Y.*` (Ф.1) даёт похожий UX без structural change.
 
-Но: добавить D-решение «Q-module-granularity» в spec/open-questions.md
+Но: добавить D-решение «Q-module-granularity» в spec/open-questions.ru.md
 с explicit "rejected for v1.0; revisit after stdlib growth".
 
 ### AD2. Loader unified с ExternalRegistry [N03]

@@ -95,7 +95,7 @@ production'ах Rust/Go/Chrome.
 - [Plan 09](09-clang-migration.md) — Clang migration. **Должен быть
   завершён до плана 10.**
 - [Plan 02](02-codegen-c-backend.md) — C backend архитектура.
-- `spec/open-questions.md` → `Q-build-pgo` — соответствующий
+- `spec/open-questions.ru.md` → `Q-build-pgo` — соответствующий
   open-question (зафиксирован 2026-05-08).
 - `docs/dev/simplifications.md` → `[P-no-pgo-integration]` — пометка
   про текущее отсутствие.

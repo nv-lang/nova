@@ -809,7 +809,7 @@ str `@plus`; Q-vec-operator-plus), `[][]T.flatten()`, `@rotate_left(n)`/
 > **Spec / Q.** D263 (restructure-ops + оператор `+`) записан в [10-overloading.md](../../spec/decisions/10-overloading.md)
 > + **D263 AMEND** (flatten реализован) + **D145 AMEND** (02-types: вложенные generic-ресиверы
 > произвольной глубины, фундамент flatten); Q-vec-operator-plus → ✅ ЗАКРЫТО в
-> [open-questions.md](../../spec/open-questions.md). Гайд — `docs/guide/strings.md`-аналог: раздел
+> [open-questions.md](../../spec/open-questions.ru.md). Гайд — `docs/guide/strings.md`-аналог: раздел
 > concat/+/restructure/flatten + заметка о вложенных ресиверах в [vec-internals.md](../dev/vec-internals.md).
 >
 > **Открытые маркеры:** нет (все 153.5-маркеры закрыты;
@@ -1008,7 +1008,7 @@ flat_map/…), 153.4-B (chunks/windows/mut-view), 153.5 (concat/rotate/drain).
 - D-блоки **D259–D266** зарезервированы (резерв с запасом; занять D259–D264 + 2 на
   вырост). **D249–D258 — Plan 152, D256/D257 — Plan 140.2** (не трогать). Другие
   агенты — с **D267**. Решения по Q закрыты в §4 — перенеси записями в
-  `spec/decisions/` + `spec/open-questions.md`.
+  `spec/decisions/` + `spec/open-questions.ru.md`.
 
 **Parallel-safety.** Можно вести параллельно с **Plan 152** (str) и **Plan 140.2**
 (Vec bounds). Точки координации в `compiler-codegen/src/codegen/emit_c.rs`:
@@ -1060,7 +1060,7 @@ commit `git diff --cached --stat`; после крупной задачи — `p
 | Q-vec-alias-completeness (NEW) | **ЗАКРЫТО** — `[]T ≡ Vec[T]` чистый |
 | Q-vec-mutability-through-view | мут-view `mut []T` (receiver-mut); push→realloc→detach |
 | Q-iter-mut (NEW) | **ЗАКРЫТО** — `for mut x` / `mut @iter()`, write-through |
-| Q-vec-operator-plus (NEW) | **✅ ЗАКРЫТО** (153.5) — `a+b`=`@plus`≡`@concat` (новый Vec), `+=`=`a=a+b`; запись в [open-questions.md](../../spec/open-questions.md) |
+| Q-vec-operator-plus (NEW) | **✅ ЗАКРЫТО** (153.5) — `a+b`=`@plus`≡`@concat` (новый Vec), `+=`=`a=a+b`; запись в [open-questions.md](../../spec/open-questions.ru.md) |
 
 > Координация: **Plan 140.2** владеет bounds-элизией `v[i]` (НЕ дублировать).
 > **Plan 152** — str-линза `as_bytes()` = `ro []u8` = `Vec[u8]`-view (общая slice-инфра).

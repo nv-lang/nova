@@ -142,7 +142,7 @@ add_glob "$ROOT/spec" '*.md'
 [ -f "$ROOT/README.md" ] && file_list="$file_list $ROOT/README.md"
 [ -f "$ROOT/README.ru.md" ] && file_list="$file_list $ROOT/README.ru.md"
 
-# spec/open-questions.md — ИСКЛЮЧЕНИЕ ИЗ ПЕРИМЕТРА (найдено при вводе стража):
+# spec/open-questions.ru.md — ИСКЛЮЧЕНИЕ ИЗ ПЕРИМЕТРА (найдено при вводе стража):
 # файл сам себя объявляет «Что обсуждали, но не зафиксировали как решение»
 # (заголовок) — журнал открытых/исторически закрытых design-вопросов, а не
 # «как писать Nova сегодня» гайд. Он пестрит СВОЕГО ВРЕМЕНИ корректным

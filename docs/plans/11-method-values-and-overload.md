@@ -14,7 +14,7 @@ unbound / static), overloaded method values disambig'ятся через
   (specific case).
 - [D73](../../spec/decisions/08-runtime.md#d73) — `From`/`Into`
   multi-defines (specific case).
-- [Q-overloading](../../spec/open-questions.md#q-overloading) —
+- [Q-overloading](../../spec/open-questions.ru.md#q-overloading) —
   закрывается частично.
 
 ---
@@ -25,7 +25,7 @@ unbound / static), overloaded method values disambig'ятся через
 
 ### 1. Method values (как first-class values)
 
-Spec ([syntax.md:762-770](../../spec/syntax.md), D35) описывает:
+Spec ([syntax.md:762-770](../../spec/syntax.ru.md), D35) описывает:
 
 ```nova
 acc.balance()              // вызов
@@ -47,7 +47,7 @@ ro m = nums.map(double)   // ❌ если double это метод/named fn,
 
 ### 2. Overload по типу аргумента
 
-[Q-overloading](../../spec/open-questions.md#q-overloading) описывает
+[Q-overloading](../../spec/open-questions.ru.md#q-overloading) описывает
 текущее состояние:
 
 | Ось перегрузки | Bootstrap | Прецеденты |
@@ -666,13 +666,13 @@ struct, lifetimes для self в C). Может потребовать GC integr
 
 ## Ссылки
 
-- [spec/syntax.md строки 762-770](../../spec/syntax.md) — описание
+- [spec/syntax.ru.md строки 762-770](../../spec/syntax.ru.md) — описание
   bound/unbound/static method values.
 - [spec/decisions/03-syntax.md → D35](../../spec/decisions/03-syntax.md#d35)
   — методы, расширяется в Ф.6.
 - [spec/decisions/03-syntax.md → D46](../../spec/decisions/03-syntax.md#d46)
   — operator overloading (specific case, остаётся как есть).
-- [spec/open-questions.md → Q-overloading](../../spec/open-questions.md#q-overloading)
+- [spec/open-questions.ru.md → Q-overloading](../../spec/open-questions.ru.md#q-overloading)
   — закрывается этим планом частично (Variant 1).
 - `compiler-codegen/src/codegen/emit_c.rs` — `method_receivers`,
   `into_targets`, метод-resolution paths.

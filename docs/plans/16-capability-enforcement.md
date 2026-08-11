@@ -80,7 +80,7 @@ fn realtime_audio(buf []f32) -> () =>
 
 ### Сообщения
 
-Структурированные ошибки по [R5.3](../../spec/revolutionary.md#r5-3) —
+Структурированные ошибки по [R5.3](../../spec/revolutionary.ru.md#r5-3) —
 показать enclosing-scope, причину, патч.
 
 ---
@@ -269,7 +269,7 @@ D62 «прямые vs транзитивные» — без правок (тек
 
 - [Plan 14](14-stdlib-codegen-gaps.md) — параллельный, не зависит.
 - [Plan 15](15-generic-bounds-enforcement.md) — параллельный.
-- [spec/revolutionary.md → R6](../../spec/revolutionary.md) — capability
+- [spec/revolutionary.ru.md → R6](../../spec/revolutionary.ru.md) — capability
   security, главное обоснование плана.
 
 ---

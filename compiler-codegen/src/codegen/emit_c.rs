@@ -3328,7 +3328,7 @@ impl CEmitter {
     /// site migration), NOT a claim the legacy name is "right". Legacy bootstrap imprecisions
     /// it faithfully mirrors (Option/Result int64-erasure, boxed `NovaArray_nova_int*`,
     /// concrete-vs-erased by C-string) → a MORE correct C name is deferred to
-    /// `Q-resolved-type-c-name` (spec/open-questions.md): do it AFTER `type_ref_to_c` is gone
+    /// `Q-resolved-type-c-name` (spec/open-questions.ru.md): do it AFTER `type_ref_to_c` is gone
     /// (one source, U.4.8), as separate behavior-change commits (§7 — don't mix with the merge).
     /// Plan 172.12 A1′ — THE single `String`→`ResolvedType` lift point for
     /// `current_type_subst` values (§0: one marked debt point, not smeared). A mono
@@ -9968,6 +9968,23 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // implementation-defined signed→unsigned conversion для значений
         // вне диапазона int64, баг был замечен в std/checksums/fnv.nv).
         match self.emit_const_expr_typed(&c.value, Some(&ty_c)) {
+            // [M-const-aggregate-into-pointer-slot, реестр 221.1 №559]:
+            // константа, чей C-тип — УКАЗАТЕЛЬ (запись живёт в куче), не может
+            // быть проинициализирована агрегатным инициализатором на файловом
+            // уровне: `static const Nova_Uuid* NIL = { .hi = 0, .lo = 0 };` —
+            // это `initialization of non-aggregate type … with a designator`,
+            // и `uuid_test`/`uuid_namespace_test` падали именно на нём.
+            // `emit_const_expr_typed` тут успешен и потому НЕ уводил на lazy-
+            // путь: он строит текст значения, ничего не зная о том, что слот
+            // указательный. Проверяем несовпадение представлений здесь и
+            // уводим на тот же lazy-путь, которым уже идут `Vec`-константы, —
+            // он выделяет запись в куче и регистрирует её GC-корнем. Именно
+            // поэтому НЕ выбран более дешёвый вариант «статическое хранилище
+            // плюс адрес»: запись с полем-строкой (или любым иным ссылочным
+            // полем) в статической памяти оказалась бы вне обхода GC.
+            Ok(val) if ty_c.ends_with('*') && val.starts_with('{') => {
+                self.emit_lazy_const(&c.name, &c_name, &ty_c, &c.value)
+            }
             Ok(val) => {
                 self.line(&format!("{}const {} {} = {};", self.top_level_storage(), ty_c, c_name, val));
                 // Регистрируем тип const'а в var_types, чтобы Ident(name) на

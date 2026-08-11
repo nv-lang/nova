@@ -119,4 +119,4 @@ match pair {
 3. **Единственный реальный apple-to-pick** — 3 обобщения существующей грамматики (multi-bind chain, labeled loops, nested or-patterns), все низкорисковые, ни одно не вводит новую концепцию.
 
 ## Следующий шаг (не сделано)
-- Multi-bind chain уже трекается как **Q-if-let-chain-multi**. Labeled loops + nested or-patterns — кандидаты в `spec/open-questions.md`, если решим закрывать.
+- Multi-bind chain уже трекается как **Q-if-let-chain-multi**. Labeled loops + nested or-patterns — кандидаты в `spec/open-questions.ru.md`, если решим закрывать.

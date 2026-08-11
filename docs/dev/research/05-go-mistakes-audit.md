@@ -5,8 +5,8 @@
 *использования* Go; для Nova вопрос ставится иначе — **заставляет ли
 дизайн наступать на ту же ошибку, разрешает её или запрещает**.
 
-Дата аудита: 2026-05-20. Источники — `spec/overview.md`, `spec/effects.md`,
-`spec/conversions.md`, все 10 файлов `spec/decisions/`, планы 19/20/21/30/31/47/49/61,
+Дата аудита: 2026-05-20. Источники — `spec/overview.ru.md`, `spec/effects.ru.md`,
+`spec/conversions.ru.md`, все 10 файлов `spec/decisions/`, планы 19/20/21/30/31/47/49/61,
 `std/time/duration.nv`.
 
 ---

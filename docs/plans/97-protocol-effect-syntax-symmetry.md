@@ -24,7 +24,7 @@
 > Plan 08 (`From`/`Into`/`TryFrom`/`TryInto` инфра) ✅.
 > **Закрывает:** `Q-static-method-protocol`
 > (`spec/decisions/03-syntax.md:3247`), `Q-keyword-symmetry`
-> (`spec/open-questions.md:5526`), D53 §628 bootstrap-status
+> (`spec/open-questions.ru.md:5526`), D53 §628 bootstrap-status
 > (`spec/decisions/02-types.md:903-905`).
 > **Решения/гейты (приняты 2026-05-23):**
 > - Static в protocol — `.method`-префикс (per spec hint).
@@ -490,7 +490,7 @@ symmetry + Q-static-method-protocol закрыты со ссылками.
   (`Effect[E]` ≡ `Effect[E, Never]`).
 - [D122](../../spec/decisions/02-types.md#d122) amended 2026-05-20 —
   эффекты в protocol-методах разрешены (фон Ф.1).
-- [Q-keyword-symmetry](../../spec/open-questions.md#q-keyword-symmetry)
+- [Q-keyword-symmetry](../../spec/open-questions.ru.md#q-keyword-symmetry)
   — закрывается D142 (Ф.0).
 - [Plan 08](08-from-into-conversions.md) — `From`/`Into`/`TryFrom`/
   `TryInto` инфра (фон Ф.1).

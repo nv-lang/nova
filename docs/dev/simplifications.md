@@ -130,7 +130,7 @@
   `#unchecked`/`contracts_off` elision), `src/parser/mod.rs` + `src/ast/mod.rs` (`#unchecked` attr →
   `FnDecl.contracts_unchecked`), `src/test_runner.rs` (proven-set wiring на build-путь + `// CONTRACTS`
   directive), `src/main.rs` + `nova-cli/src/{main.rs,build_cache.rs,bench/run.rs}` (`--contracts` policy +
-  proven-set на всех emit-сайтах), `spec/decisions/09-tooling.md` (D24 amend), `spec/open-questions.md` (Q34),
+  proven-set на всех emit-сайтах), `spec/decisions/09-tooling.md` (D24 amend), `spec/open-questions.ru.md` (Q34),
   `nova_tests/plan140/` (7 fixtures).
 - **Что было упущено (safety-gap)** — контракты `requires`/`ensures` (D24) **стирались в release
   независимо от доказанности** (`test_runner.rs` `Mode::Release` не передавал `-DNOVA_CONTRACTS_RUNTIME=1`,
@@ -244,7 +244,7 @@
 
 - **Где** — `std/collections/vec_owned.nv` (`@clone`), `std/collections/hashmap.nv`
   (`@clone`), `std/collections/set.nv` (`@clone` NEW), `spec/decisions/02-types.md`
-  (D230 amend), `spec/open-questions.md` (Q31), `std/prelude/protocols.nv` (Clone D-блок).
+  (D230 amend), `spec/open-questions.ru.md` (Q31), `std/prelude/protocols.nv` (Clone D-блок).
 - **Что упрощено** — `Clone` зафиксирован как **deep/recursive** (Rust-семантика) в
   спеке; auto-derive `#impl(Clone)` для **records** работает (memberwise рекурсия —
   plan126_2 p3/p7 PASS). **Но deep element-wise clone для коллекций (Vec/HashMap/Set)
@@ -3432,7 +3432,7 @@ vec.nv не компилируется в exe → Plan 91 (std MVP) blocked.
 - **101.2** (P2, ~0.5 dev-day) — bound integration `fn[T Hash]`
   reuse D72.
 - **101.3** (P3, ~1 dev-day) — multi-bound `[T A + B]`. Закрывает
-  [Q-multi-bound](../../spec/open-questions.md#q-multi-bound).
+  [Q-multi-bound](../../spec/open-questions.ru.md#q-multi-bound).
 - **101.4** (P2, ~1 dev-day) — protocol composition `use Foo`.
   Закрывает D53 §«Открытые вопросы» — Composition protocol'ов.
 - **101.5** (P1 closing, ~1 dev-day) — stdlib audit + LSP quick-fixes
@@ -3440,7 +3440,7 @@ vec.nv не компилируется в exe → Plan 91 (std MVP) blocked.
 
 **Spec:** [D145](../../spec/decisions/02-types.md#d145-fnt-префикс--receiver-generic-decl--bounds-plan-101).
 
-**Future (out of Plan 101):** [Q-representation-bound](../../spec/open-questions.md#q-representation-bound)
+**Future (out of Plan 101):** [Q-representation-bound](../../spec/open-questions.ru.md#q-representation-bound)
 — concrete-type bounds (`fn[T int]` для newtype `type UserId int`,
 `fn[T User]` для record-embed). Plan 102 future.
 
@@ -6903,7 +6903,7 @@ vec.nv не компилируется в exe → Plan 91 (std MVP) blocked.
 - **101.2** (P2, ~0.5 dev-day) — bound integration `fn[T Hash]`
   reuse D72.
 - **101.3** (P3, ~1 dev-day) — multi-bound `[T A + B]`. Закрывает
-  [Q-multi-bound](../../spec/open-questions.md#q-multi-bound).
+  [Q-multi-bound](../../spec/open-questions.ru.md#q-multi-bound).
 - **101.4** (P2, ~1 dev-day) — protocol composition `use Foo`.
   Закрывает D53 §«Открытые вопросы» — Composition protocol'ов.
 - **101.5** (P1 closing, ~1 dev-day) — stdlib audit + LSP quick-fixes
@@ -6911,7 +6911,7 @@ vec.nv не компилируется в exe → Plan 91 (std MVP) blocked.
 
 **Spec:** [D145](../../spec/decisions/02-types.md#d145-fnt-префикс--receiver-generic-decl--bounds-plan-101).
 
-**Future (out of Plan 101):** [Q-representation-bound](../../spec/open-questions.md#q-representation-bound)
+**Future (out of Plan 101):** [Q-representation-bound](../../spec/open-questions.ru.md#q-representation-bound)
 — concrete-type bounds (`fn[T int]` для newtype `type UserId int`,
 `fn[T User]` для record-embed). Plan 102 future.
 

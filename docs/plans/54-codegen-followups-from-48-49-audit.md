@@ -284,5 +284,5 @@ Verification hole: existing `cancel_cross_type_cascade_test.nv` проверяе
 
 - Plan 48 — главные acceptance gaps (Ф.7.4 final, []T return, retry_test).
 - Plan 49 — verification holes (cross-type reason round-trip).
-- spec/open-questions.md — Q-with-deadline / Q-tok-checked / Q-cancel-token-with-timeout / Q-context-value.
+- spec/open-questions.ru.md — Q-with-deadline / Q-tok-checked / Q-cancel-token-with-timeout / Q-context-value.
 - D73/D77 (`From` protocol) — используется в Ф.9.

@@ -71,7 +71,7 @@ type (`Option[T]`, `HashMap[K, V]`). Для `[]T` / bare T / tuple — нет
 |---|---|---|---|---|---|
 | **101.1** | [`fn[T]` core grammar + codegen + vec.nv migration](101.1-fn-prefix-core.md) | Parser/type-check/codegen для `fn[T] []T @method`, `fn[T] T @method`, `fn[T, U] (T, U) @method`. **Includes vec.nv migration** (7 методов). Disambiguation matrix (bare T vs named T) + 4 error codes. | **P1** (blocker Plan 91) | ~2.5 dev-day | — |
 | **101.2** | [Bound integration `fn[T Hash]`](101.2-bound-integration.md) | Reuse existing D72 bound syntax в `fn[…]` prefix position. | P2 | ~0.5 dev-day | 101.1 |
-| **101.3** | [Multi-bound `[T A + B]`](101.3-multi-bound.md) | Закрывает [Q-multi-bound](../../spec/open-questions.md#q-multi-bound). Применим везде где D72 bound допустим (free fn, type-decl, fn[T] prefix). | P3 | ~1 dev-day | 101.2 |
+| **101.3** | [Multi-bound `[T A + B]`](101.3-multi-bound.md) | Закрывает [Q-multi-bound](../../spec/open-questions.ru.md#q-multi-bound). Применим везде где D72 bound допустим (free fn, type-decl, fn[T] prefix). | P3 | ~1 dev-day | 101.2 |
 | **101.4** | [Protocol composition `use Foo`](101.4-protocol-composition.md) | Закрывает open question в D53 §«Открытые вопросы». Embed protocols через `use` keyword (параллель D39). | P2 | ~1 dev-day | — (independent) |
 | **101.5** | [Stdlib audit + LSP + close](101.5-stdlib-audit-close.md) | Sweep std/ на похожие patterns, LSP quick-fixes (Plan 50 D102), vec.nv tests в `nova test` baseline, close Plan 101 + D145 + markers. | **P1** (closing) | ~1 dev-day | ALL 101.1-4 |
 
@@ -137,12 +137,12 @@ Plan 101 = ✅ ЗАКРЫТ когда:
 
 ### Open questions closed
 
-- [Q-multi-bound](../../spec/open-questions.md#q-multi-bound) — 101.3 (`[T A + B]`).
+- [Q-multi-bound](../../spec/open-questions.ru.md#q-multi-bound) — 101.3 (`[T A + B]`).
 - D53 §«Открытые вопросы» «Composition protocol'ов» — 101.4.
 
 ### Open questions opened (future planning)
 
-- [Q-representation-bound](../../spec/open-questions.md#q-representation-bound)
+- [Q-representation-bound](../../spec/open-questions.ru.md#q-representation-bound)
   — concrete-type bounds (`fn[T int]` для newtype `type UserId int`,
   `fn[T User]` для record embed `use user User`). **Plan 102 future.**
 

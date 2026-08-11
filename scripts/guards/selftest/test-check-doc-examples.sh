@@ -5,7 +5,7 @@
 # блоки игнорируются целиком даже если внутри `let`, (4) блок-гранулярное
 # исключение («RETIRED form:»/E_*-код где-то в блоке — исключён весь блок),
 # (5) ratchet пропускает долг в пределах baseline и красит рост над ним,
-# (6) spec/open-questions.md выведен из периметра. LC_ALL=C (урок msys2).
+# (6) spec/open-questions.ru.md выведен из периметра. LC_ALL=C (урок msys2).
 set -u
 export LC_ALL=C
 GUARD_SRC="$(cd "$(dirname "$0")/.." && pwd)/check-doc-examples.sh"
@@ -197,11 +197,11 @@ printf 'retired_kw_let=0\nretired_kw_readonly=0\nretired_pointer_ro=0\nretired_u
 run_guard || note_fail "5c: храповик не пропустил после легитимного повышения baseline до 2"
 
 # ============================================================
-# 6. spec/open-questions.md выведен из периметра (см. шапку стража).
+# 6. spec/open-questions.ru.md выведен из периметра (см. шапку стража).
 # ============================================================
 setup_tree
-printf '# Open questions\n\n```nova\nexternal fn legacy() -> int\n```\n' > "$TMP/spec/open-questions.md"
-run_guard || note_fail "6: spec/open-questions.md не исключён из периметра (ложный красный на историческом журнале)"
+printf '# Open questions\n\n```nova\nexternal fn legacy() -> int\n```\n' > "$TMP/spec/open-questions.ru.md"
+run_guard || note_fail "6: spec/open-questions.ru.md не исключён из периметра (ложный красный на историческом журнале)"
 
 # ============================================================
 # 7. Отсутствие строки в baseline — красный с внятным сообщением

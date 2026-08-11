@@ -95,7 +95,7 @@ Spec без формального ответа = LLM не знает «что �
 Каждый `${}` фрагмент — `str.from(value)` через D73 [Into].
 
 **Файлы:** `spec/decisions/03-syntax.md` (новая микро-секция или
-расширение D44), `spec/syntax.md` (краткий пример).
+расширение D44), `spec/syntax.ru.md` (краткий пример).
 
 **Кода менять не нужно** — codegen уже работает. Нужны только
 **1-2 теста** чтобы зафиксировать поведение для regression-detection:
@@ -198,7 +198,7 @@ spec-vs-impl — отдельные fix-коммиты.
 keywords как identifier'ы. В open-questions помечено как ✅ закрыто
 но в Q-списке остаётся. Откомментить.
 
-**Файлы:** `spec/open-questions.md` — отметить Q-keywords-as-fields
+**Файлы:** `spec/open-questions.ru.md` — отметить Q-keywords-as-fields
 как **CLOSED → D83** или удалить.
 
 **Объём:** 5 строк.
@@ -280,7 +280,7 @@ non-instance-методами (это другая семантика).
 - `spec/decisions/03-syntax.md` — D44/D55-extension/D38-array-api/D55-style-guide.
 - `spec/decisions/02-types.md` — D52/D53/D55.
 - `spec/decisions/08-runtime.md` — D26 clone-semantics.
-- `spec/open-questions.md` — статусы / удаления Q-помеченных как
+- `spec/open-questions.ru.md` — статусы / удаления Q-помеченных как
   closed.
 
 **Объём:** ~250 строк spec.
@@ -301,11 +301,11 @@ non-instance-методами (это другая семантика).
 
 ### Ф.3 — Q-вопросы «defer with rationale»
 
-Обновить `spec/open-questions.md` для каждого отложенного Q —
+Обновить `spec/open-questions.ru.md` для каждого отложенного Q —
 добавить **DEFER-rationale**: почему сейчас не делаем, что является
 триггером для пересмотра.
 
-**Файлы:** `spec/open-questions.md`.
+**Файлы:** `spec/open-questions.ru.md`.
 
 **Объём:** ~100 строк (по 10-15 на каждый Q).
 
@@ -336,12 +336,12 @@ LLM знает «что верно».
 
 - [Plan 14](14-stdlib-codegen-gaps.md) — некоторые Q зависят от Ф.6
   variadic.
-- [spec/open-questions.md](../../spec/open-questions.md) — главный
+- [spec/open-questions.ru.md](../../spec/open-questions.ru.md) — главный
   файл правок этого плана.
 
 ---
 
 ## Ссылки
 
-- `spec/open-questions.md` — список всех Q.
+- `spec/open-questions.ru.md` — список всех Q.
 - `spec/decisions/` — куда переносим closed Q.

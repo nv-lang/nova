@@ -21,7 +21,7 @@ syntax / types / effects / runtime / tooling reference) в соответств�
 
 - `spec/decisions/*.md` (D1-D119+) — все decision blocks.
 - `spec/decisions/README.md` — index с numbering convention.
-- `spec/overview.md` — high-level язык overview.
+- `spec/overview.ru.md` — high-level язык overview.
 - `spec/<topic>.md` (syntax / types / effects / runtime / tooling) —
   topical reference docs.
 - `docs/plans/<N>-*.md` для всех recently-closed планов — что было
@@ -76,8 +76,8 @@ syntax / types / effects / runtime / tooling reference) в соответств�
    - Дата в title (если есть) — update к today.
 
 5. **Topical doc updates:**
-   - `spec/overview.md`: high-level feature list — добавить mentioned.
-   - `spec/syntax.md` / `spec/types.md` / etc — если synatx изменился.
+   - `spec/overview.ru.md`: high-level feature list — добавить mentioned.
+   - `spec/syntax.ru.md` / `spec/types.md` / etc — если synatx изменился.
    - Cross-reference от D-block к topical doc и обратно.
 
 6. **Verification:**

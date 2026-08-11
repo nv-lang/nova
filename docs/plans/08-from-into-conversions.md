@@ -8,7 +8,7 @@
 - Ф.3 — 4-way auto-derive synthesis (commit `c6e2c087c`)
 - Ф.4 — strict `if cond: bool` (commit `515aa1406`)
 - Ф.5 — as-cast restrictions (commit `27efacc35`)
-- Ф.7 — spec D54 расширение + `spec/conversions.md` (этот коммит)
+- Ф.7 — spec D54 расширение + `spec/conversions.ru.md` (этот коммит)
 - ❌ Ф.6 — generic-bound enforcement (требует полного type-checker'а;
   отложен до полноценной фазы рефакторинга)
 
@@ -85,7 +85,7 @@ Spec D73/D77 описывают полноценный `From`/`Into` framework �
 - ✅ Auto-derive 4-way: программист написал `try_from` — компилятор
   даёт `from`/`into`/`try_into`.
 - ✅ Generic-bound `[T Into[X]]` enforce'ится при инстанциации.
-- ✅ `spec/conversions.md` — сводная страница, single source of truth.
+- ✅ `spec/conversions.ru.md` — сводная страница, single source of truth.
 
 ---
 
@@ -332,7 +332,7 @@ greet(42)         // S = int — проверить что int реализуе�
 **«strict if cond: bool»** — упоминание что `if`/`while`/`&&`/`||`
 требуют `bool`, не truthy/falsy. Прецеденты Rust/Swift/Kotlin/Go.
 
-#### Ф.7.2 — Новый документ `spec/conversions.md`
+#### Ф.7.2 — Новый документ `spec/conversions.ru.md`
 
 Сводная страница (~280 строк). Структура:
 
@@ -487,7 +487,7 @@ Nova **не делает** implicit конверсии:
 - ✅ `if n` (int) → compile error с suggestion.
 - ✅ `nova_tests/syntax/from_into.nv`, `char_byte_str.nv`,
   `bool_conversions.nv`, `as_restrictions.nv` — все PASS.
-- ✅ `spec/conversions.md` создан.
+- ✅ `spec/conversions.ru.md` создан.
 - ✅ `spec/decisions/03-syntax.md` D54 расширен char/bool разделами.
 - ✅ `simplifications.md` обновлён `[P-from-into-bootstrap-table]`.
 - ✅ url/toml/bcrypt продвинулись через codegen.

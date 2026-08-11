@@ -64,7 +64,7 @@ keyword'ов Nova ([D278](../spec/decisions/09-tooling.md#d278)). Различа
 - `www/site/scripts/check-highlight-keywords.mjs` — `npm run check:highlight` (отдельный репо сайта).
 
 Открытый вопрос об авто-генерации этих списков из лексера —
-[Q38](../spec/open-questions.md#q38). tree-sitter-грамматика отстаёт от лексера →
+[Q38](../spec/open-questions.ru.md#q38). tree-sitter-грамматика отстаёт от лексера →
 followup `[M-treesitter-grammar-keyword-bump]`.
 
 ## Не поддерживается (отдельные проекты)

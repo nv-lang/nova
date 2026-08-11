@@ -651,7 +651,7 @@ nothing as int = 0
 
 ## Where to go next
 
-- [spec/overview.md](../../spec/overview.md) — the central idea (effects),
+- [spec/overview.ru.md](../../spec/overview.ru.md) — the central idea (effects),
   the killer use-case, and the supporting design decisions in one page.
 - [spec/decisions/](../../spec/decisions/) — the D-numbered decision log,
   the authoritative source for every piece of Nova syntax and semantics;

@@ -14,7 +14,7 @@ Acceptance criterion **выполнен**: добавление `WriteBuffer @wr
 2026-05-08), [D73/D77](../../spec/decisions/08-runtime.md#d73-from--into-protocol-пара-с-авто-выводом)
 (auto-derive From↔Into, TryFrom↔TryInto, Fail↔Result),
 Q-codegen-builtins-cleanup
-([open-questions.md](../../spec/open-questions.md#q-codegen-builtins-cleanup)),
+([open-questions.md](../../spec/open-questions.ru.md#q-codegen-builtins-cleanup)),
 [Plan 04](04-buffer-split-and-external.md) (✅ закрыт).
 
 ## Цель

@@ -4,7 +4,7 @@
 > **Создан:** 2026-06-14.
 > **Статус:** ✅ DONE (2026-06-14) — `nova run` громко ошибается, мёртвые interp-тесты
 >   удалены, user-facing доки + сайт почищены, `nova-cli` доки сверены с реальным CLI.
-> **Spec:** [D274](../../spec/decisions/08-runtime.md#d274). **Open:** [Q-interpreter-future](../../spec/open-questions.md).
+> **Spec:** [D274](../../spec/decisions/08-runtime.md#d274). **Open:** [Q-interpreter-future](../../spec/open-questions.ru.md).
 > **Ветка:** `chore-disable-interp-nova-run` (worktree `nova-noninterp`); сайт — `chore-remove-nova-run` (repo www).
 > **Маркер:** `[M-interp-unsupported]`.
 
@@ -15,7 +15,7 @@
 с C-семантикой и тормозил разработку. Единственный поддерживаемый и тестируемый путь —
 **компиляция в C** (`nova build` / `nova test` / `nova test-build`). Этот план делает это
 явным в коде и доках. «пока» — формулировка намеренная (возможна полная вырезка ЛИБО
-восстановление — [Q-interpreter-future](../../spec/open-questions.md)).
+восстановление — [Q-interpreter-future](../../spec/open-questions.ru.md)).
 
 ## 2. Что сделано
 1. **`nova run` застаблен.** Команда остаётся **видимой** в CLI (discoverability), но при
@@ -57,7 +57,7 @@ dev-инструмент `nova-codegen run`/`test-interp` НЕ застабле�
   папку как один folder-module из co-equal файлов — общий temp дал бы duplicate `main`).
 
 ## 5. Остаток
-[Q-interpreter-future](../../spec/open-questions.md): полная вырезка vs сохранение `interp/`;
+[Q-interpreter-future](../../spec/open-questions.ru.md): полная вырезка vs сохранение `interp/`;
 застабить ли внутренний `nova-codegen run`/`test-interp`; нестыковка `docs/dev/nova-codegen.md`
 (сайт уже помечен unsupported). Маркер `[M-interp-unsupported]` в backlog.
 

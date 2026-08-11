@@ -63,8 +63,8 @@ Nova — системный ЯП «для эпохи ИИ»: побочные э
 Сейчас это **bootstrap-компилятор**, не дизайн-документ: парсер + чек + кодоген в C + нативный рантайм.
 Один пайплайн (`nova build`/`nova test`) — **интерпретатора нет** (`nova run` не поддержан намеренно).
 
-Глубже: [README.md](../../README.md) (обзор + примеры), [spec/overview.md](../../spec/overview.md),
-[spec/effects.md](../../spec/effects.md), [examples/getting_started.nv](../../examples/getting_started.nv).
+Глубже: [README.md](../../README.md) (обзор + примеры), [spec/overview.ru.md](../../spec/overview.ru.md),
+[spec/effects.ru.md](../../spec/effects.ru.md), [examples/getting_started.nv](../../examples/getting_started.nv).
 
 ## 2. Карта репозитория (что важно для разработки)
 
@@ -285,7 +285,7 @@ Nova-workspace `nova.toml` (members: `std`, `examples`, `nova_tests`). Подр�
 | Тема | Документ |
 |---|---|
 | Онбординг агента (build/test/правила) | [AGENTS.md](../../AGENTS.md) |
-| Обзор языка + примеры | [README.md](../../README.md), [spec/overview.md](../../spec/overview.md) |
+| Обзор языка + примеры | [README.md](../../README.md), [spec/overview.ru.md](../../spec/overview.ru.md) |
 | Вклад, DCO, лицензии | [CONTRIBUTING.md](../../CONTRIBUTING.md) |
 | Решения/семантика | [spec/decisions/README.md](../../spec/decisions/README.md) |
 | Все планы (индекс/навигация) | [docs/plans/README.md](../plans/README.md) |
@@ -314,7 +314,7 @@ Nova-workspace `nova.toml` (members: `std`, `examples`, `nova_tests`). Подр�
 * если решение не пишется — значит оно не додумано, и это видно ДО того, как
   потрачена работа.
 
-Открытый, но ещё не решённый вопрос живёт в `spec/open-questions.md`; как только
+Открытый, но ещё не решённый вопрос живёт в `spec/open-questions.ru.md`; как только
 владелец выбрал форму — он становится D-блоком, **не дожидаясь** реализации.
 Прецедент: [D449](../../spec/decisions/06-concurrency.md) (`supervised(on_timeout:)`)
 записан до кода; интегратор сперва заявил обратное («станет D-блоком вместе с

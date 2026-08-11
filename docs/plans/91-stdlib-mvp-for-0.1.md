@@ -379,7 +379,7 @@ Interp-канал — желательно (урок Plan 14 Ф.6: провер�
 - [x] ≥6 позитивных fixtures + ≥4 негативных fixtures — `nova_tests/plan91_fe2/` — 10/0 PASS
 - [x] Каждый негативный вариант (`Empty`/`InvalidDigit`/`Overflow`/`InvalidRadix`) покрыт отдельным fixture
 - [x] D178 amend V2 записан в `spec/decisions/08-runtime.md`
-- [x] Q-doc `spec/open-questions.md` обновлён (ParseIntError sum, try_parse_int ✅)
+- [x] Q-doc `spec/open-questions.ru.md` обновлён (ParseIntError sum, try_parse_int ✅)
 
 ### Ф.5 (conformance) — ✅ CLOSED 2026-06-08
 

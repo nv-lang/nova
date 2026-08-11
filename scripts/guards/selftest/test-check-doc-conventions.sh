@@ -118,15 +118,15 @@ run_guard() { bash "$TMP/scripts/guards/check-doc-conventions.sh" "$TMP" 2>"$TMP
 # 1. spec_en_header
 # ============================================================
 setup_tree
-printf '# Working glossary\nno ru pair, not a translation\n' > "$TMP/spec/GLOSSARY.en.md"
-run_guard || { note_fail "1a: ложняк на GLOSSARY.en.md без ru-пары (не перевод, exempt)"; }
+printf '# Working glossary\nno ru pair, not a translation\n' > "$TMP/spec/glossary.ru.md"
+run_guard || { note_fail "1a: ложняк на glossary.md без ru-пары (не перевод, exempt)"; }
 
-printf '# Overview\ncontenu ru\n' > "$TMP/spec/overview.md"
-printf '# Overview\nno header, no frontmatter\n' > "$TMP/spec/overview.en.md"
-run_guard && note_fail "1b: не поймал spec/overview.en.md без шапки/frontmatter"
+printf '# Overview\ncontenu ru\n' > "$TMP/spec/overview.ru.md"
+printf '# Overview\nno header, no frontmatter\n' > "$TMP/spec/overview.md"
+run_guard && note_fail "1b: не поймал spec/overview.md без шапки/frontmatter"
 grep -q "overview.en.md" "$TMP/.stderr" || note_fail "1b: сообщение не называет файл"
 
-cat > "$TMP/spec/overview.en.md" <<'EOF'
+cat > "$TMP/spec/overview.md" <<'EOF'
 <!-- source_rev: abc1234; source_date: 2026-08-02 -->
 > Informative translation; the Russian text is normative.
 

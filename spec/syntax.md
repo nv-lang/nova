@@ -1,14 +1,23 @@
-# Nova — синтаксис
+---
+source_rev: ad7336d39
+source_date: 2026-08-04
+---
 
-<!-- Правило редактирования: этот документ описывает язык В НАСТОЯЩЕМ
-     ВРЕМЕНИ — «как есть». История изменений (что было ретрактировано,
-     когда и почему) живёт в spec/decisions/ (D-блоки с ретракционными
-     баннерами) — сюда её не переносить. Допустимые исключения:
-     (а) honesty-маркеры «пока не реализовано» со ссылкой на план;
-     (б) короткое «в Nova нет X — используй Y» для привычных по другим
-     языкам конструкций, без дат и номеров ретракций. -->
+> **Informative translation; the Russian text is normative.**
+>
+> Russian original (normative): [syntax.md](syntax.md)
 
-## Минимальные примеры
+# Nova — syntax
+
+<!-- Editing rule: this document describes the language IN THE PRESENT
+     TENSE — "as is". The history of changes (what was retracted,
+     when and why) lives in spec/decisions/ (D-blocks with retraction
+     banners) — do not move it here. Allowed exceptions:
+     (a) honesty markers "not yet implemented" with a plan link;
+     (b) a short "Nova has no X — use Y" for constructs familiar from other
+     languages, without dates or retraction numbers. -->
+
+## Minimal examples
 
 ```nova
 // Hello world — никаких main, package, import для stdlib
@@ -20,8 +29,8 @@ fn double(x int) -> int => x * 2
 
 ## Tagged template literals — `tag\`...\``
 
-Литерал с префиксом-тегом обрабатывается функцией `tag`. Возвращает
-тип, который выбирает функция (не обязательно `str`):
+A literal with a tag prefix is processed by the `tag` function. Returns
+the type chosen by the function (not necessarily `str`):
 
 ```nova
 ro j = json`{"name": "alice"}`              // -> Json
@@ -29,12 +38,12 @@ ro q = sql`SELECT * FROM users WHERE id = ${user_id}`   // -> Sql, безопа�
 ro r = regex`\d+\.\d+`                       // -> Regex, raw
 ```
 
-Байтовый блоб — отдельный литерал `x"…"` (hex-цифры → `[]u8`), не
-tagged template: `ro b = x"deadbeef"` (D412, реализован —
-[Plan 186](../docs/plans/186-hex-blob-embed.md), статус «РЕАЛИЗОВАН 2026-07-09»).
+A byte blob is a separate `x"…"` literal (hex digits → `[]u8`), not a
+tagged template: `ro b = x"deadbeef"` (D412, implemented —
+[Plan 186](../docs/plans/186-hex-blob-embed.md), status "РЕАЛИЗОВАН 2026-07-09").
 
-**Интерполяция через `${expr}`** — tag-функция получает части и
-аргументы **раздельно**, что обеспечивает безопасность (защита от SQL
+**Interpolation via `${expr}`** — the tag function receives the parts and
+arguments **separately**, which provides safety (protection from SQL
 injection):
 
 ```nova
@@ -43,12 +52,12 @@ sql`SELECT * FROM users WHERE name = ${name}`
 // функция передаёт name как параметр, не склеивает в строку
 ```
 
-**Multiline** работает естественно. Escape: `` \` ``, `\\`, `\${` —
-буквальные. Остальные символы — raw (удобно для regex и SQL).
+**Multiline** works naturally. Escapes: `` \` ``, `\\`, `\${` — literal.
+The rest of the characters — raw (convenient for regex and SQL).
 
-**Стандартные теги (план stdlib MVP):** `json`, `sql`, `regex`.
+**Standard tags (stdlib MVP plan):** `json`, `sql`, `regex`.
 
-**Свой тег** — обычная функция:
+**Your own tag** — an ordinary function:
 
 ```nova
 export fn url(parts []str, args []str) -> Url => ...
@@ -56,13 +65,13 @@ export fn url(parts []str, args []str) -> Url => ...
 ro u = url`https://api.example.com/users/${user_id}`
 ```
 
-Подробно — [D48](decisions/03-syntax.md#d48).
+Details — [D48](decisions/03-syntax.md#d48).
 
-## Интерполяция строк — `"... ${expr} ..."`
+## String interpolation — `"... ${expr} ..."`
 
-В обычном строковом литерале `"..."` (без tag-префикса) разрешена
-интерполяция выражений через `${expr}`. Это **sugar** над конкатенацией
-с `str.from(...)`:
+In an ordinary string literal `"..."` (without a tag prefix) expression
+interpolation via `${expr}` is allowed. This is **sugar** over concatenation
+with `str.from(...)`:
 
 ```nova
 ro name = "alice"
@@ -71,27 +80,27 @@ ro s = "Hello, ${name}, you are ${age}"
 // = "Hello, " + str.from(name) + ", you are " + str.from(age)
 ```
 
-Каждое `${expr}` рендерится через `str.from(v)` — примитивы и
-prelude-типы получают его автоматически; пользовательский тип
-подключается реализацией `Display` (`@display(mut w Write)`,
-[D73](decisions/08-runtime.md#d73)). Буквальное `${` в строке — через
+Each `${expr}` is rendered via `str.from(v)` — primitives and
+prelude types get it automatically; a user type
+hooks in by implementing `Display` (`@display(mut w Write)`,
+[D73](decisions/08-runtime.md#d73)). A literal `${` in a string — via
 escape: `"\${name}"`.
 
-Подробно — [D44 → «Строковые литералы и интерполяция»](decisions/03-syntax.md#d44).
+Details — [D44 — string literals and interpolation](decisions/03-syntax.md#d44).
 
-## Разделители: перенос строки, `;` и `,`
+## Separators: newline, `;` and `,`
 
-Разделитель определяется **природой конструкции**, а не местом
+The separator follows the **nature of the construct**, not its place
 ([D452](decisions/03-syntax.md#d452)):
 
-| что разделяем | смысл | многострочно | на одной строке |
+| what is separated | meaning | multi-line | on one line |
 |---|---|---|---|
-| стейтменты | последовательность, «потом» | перенос строки | `;` |
-| арма́ `match` | альтернативы, «или» | перенос строки | `,` |
-| поля записи, аргументы, импорты, элементы | список, «и ещё» | `,` | `,` |
+| statements | a sequence, "then" | newline | `;` |
+| `match` arms | alternatives, "or" | newline | `,` |
+| record fields, arguments, imports, elements | a list, "and also" | `,` | `,` |
 
-**Перенос строки** разделяет statement'ы. **`;` обязателен** для нескольких
-statement'ов на одной строке — и только там:
+A **newline** separates statements. **`;` is required** for several statements
+on one line — and only there:
 
 ```nova
 ro x = 1                        // newline separates
@@ -101,10 +110,10 @@ foo(x, y)
 ro a = 1; ro b = 2; foo(a, b)  // ; for a single line
 ```
 
-Арма́ `match` в многострочной форме разделяются **только** переносом строки, в
-однострочной — запятой. `;` между армами запрещён (он обещает
-последовательность там, где арма́ взаимоисключающи), запятая в многострочной
-форме — тоже (перенос строки уже разделил):
+Multi-line `match` arms are separated by a newline **only**; single-line arms by
+a comma. `;` between arms is rejected (it promises a sequence where the arms are
+mutually exclusive — exactly one runs), and so is a comma in the multi-line form
+(the newline has already separated them):
 
 ```nova
 match code {                    // multi-line — no commas
@@ -115,12 +124,12 @@ match code {                    // multi-line — no commas
 ro s = match code { 200 => "ok", 404 => "not found" }   // one line — comma
 ```
 
-В списках аргументов, полей записи, импортов и элементов массива запятая
-обязательна **в обеих формах**: внутри скобок перенос строки — законное
-продолжение выражения (см. ниже), и без запятой границу элемента не отличить от
-переноса длинной строки.
+In argument lists, record fields, imports and array elements the comma is
+required in **both** forms: inside brackets a newline is a legal continuation of
+the expression (see below), so without a comma an element boundary is
+indistinguishable from a wrapped long line.
 
-Newline **игнорируется** в позициях, где statement продолжается:
+A newline is **ignored** in positions where the statement continues:
 
 ```nova
 // 1. После висящего бинарного оператора
@@ -150,7 +159,7 @@ ro label =
     else { "square" }
 ```
 
-**Бинарные операторы — в конец строки** (Go-стиль), не в начало:
+**Binary operators — at the end of the line** (Go-style), not at the start:
 
 ```nova
 ro total = a +              ✅
@@ -159,9 +168,9 @@ ro total = a
           + b                 ❌ парсится как унарный +b
 ```
 
-Подробно — [D49](decisions/03-syntax.md#d49).
+Details — [D49](decisions/03-syntax.md#d49).
 
-## Числовые литералы
+## Numeric literals
 
 ```nova
 // Целые
@@ -178,25 +187,25 @@ ro total = a
 1.5e-3
 ```
 
-**Default-типы** без контекста: `int` для целых, `f64` для float. С
-аннотацией/контекстом — берётся тип контекста:
+**Default types** without context: `int` for integers, `f64` for floats. With
+an annotation/context — the context type is used:
 
 ```nova
 ro x u8 = 200             // 200 это u8
 ro arr []f32 = [1.0, 2.0]
 ```
 
-**Type-suffixes (`100u32`, `1.5f32`) не вводятся.** Для редких случаев
-дисамбигуации — `as`-cast: `100 as u32`, `0xFF as u8`.
+**Type-suffixes (`100u32`, `1.5f32`) are not introduced.** For rare
+disambiguation cases — an `as`-cast: `100 as u32`, `0xFF as u8`.
 
-**Разделитель `_` разрешён только между цифрами**, не подряд, не в
-начале/конце, не сразу после префикса (`0x_FF` ❌), не вокруг точки
-или `e`. Подробно — [D44](decisions/03-syntax.md#d44).
+**The `_` separator is allowed only between digits**, not consecutively, not
+at the start/end, not right after a prefix (`0x_FF` ❌), not around the dot
+or `e`. Details — [D44](decisions/03-syntax.md#d44).
 
-## Аннотации типа — форма «name type», без двоеточия
+## Type annotations — the "name type" form, without a colon
 
-В отличие от TypeScript/Rust (`name: Type`), Nova не использует `:` как
-разделитель имени и типа — только пробел, `name type`:
+Unlike TypeScript/Rust (`name: Type`), Nova does not use `:` as the
+name/type separator — only a space, `name type`:
 
 ```nova
 fn save(u User, amount money) Fail Db -> ()    // параметры
@@ -205,15 +214,15 @@ type User { id u64, name str }                   // поля типа
 for id u64 in ids { ... }                        // for-loop
 ```
 
-`:` в Nova вообще не используется для типов — только как **разделитель
-ключ-значение** в литералах:
+`:` is not used for types in Nova at all — only as a **key-value separator**
+in literals:
 
 ```nova
 ro alice = User { id: 1, name: "alice" }       // record-литерал
 ro cfg = { "host": "localhost", "port": 8080 } // dict-литерал
 ```
 
-## Возврат: `->` обязателен, `()` опционален
+## Return: `->` is mandatory, `()` is optional
 
 ```nova
 fn compute(x int) -> int => x * 2    // явный тип возврата
@@ -221,11 +230,11 @@ fn log_event(e Event) Log            // -> () можно опускать
 fn save(u User) Fail Db            // эффекты + dropped -> ()
 ```
 
-## Closure: light `|...|` и full `fn(...)`
+## Closure: light `|...|` and full `fn(...)`
 
-В Nova две формы closure ([D22](decisions/03-syntax.md#d22-closure-light--и-full-fn)):
+Nova has two closure forms ([D22](decisions/03-syntax.md#d22-closure-light--и-full-fn)):
 
-**closure-light** — компактная untyped форма, тело bare expr или block:
+**closure-light** — a compact untyped form, the body is a bare expr or block:
 ```nova
 ro inc   = |x| x + 1
 ro zero  = || 0
@@ -237,29 +246,29 @@ list.fold(0, |acc, x| acc + x)
 m.get_or_insert("k", || 0)
 ```
 
-`|...|` валиден **только когда контекст однозначно задаёт сигнатуру**
-(параметр fn-call'а, annotated `ro`-биндинг, return-position, first-use
-inference). Без контекста — переключайся на `fn(...)`.
+`|...|` is valid **only when the context unambiguously determines the
+signature** (a fn-call parameter, an annotated `ro` binding, a return
+position, first-use inference). Without context — switch to `fn(...)`.
 
-**closure-full** — типизированная форма, идентична named fn без имени.
-Тело `=> expr` или `{ block }`:
+**closure-full** — a typed form, identical to a named fn without a name.
+The body `=> expr` or `{ block }`:
 ```nova
 ro typed    = fn(x int) -> int => x * 2
 ro block    = fn(x int, y int) -> int { ro z = x+y; z * 2 }
 ro with_eff = fn(req Request) Db Log -> Response { process(req) }
 ```
 
-Эффекты в closure-light **не пишутся** — они наследуются из ambient
-effect-set (= эффекты enclosing-функции ∪ активные `with`-блоки).
-Если тело closure'а использует эффект, недоступный в parent'е —
-compile error. Closure-full объявляет эффекты явно, как named fn.
+Effects in closure-light are **not written** — they are inherited from the
+ambient effect set (= the enclosing function's effects ∪ active
+`with`-blocks). If a closure body uses an effect unavailable in the parent —
+compile error. closure-full declares effects explicitly, like a named fn.
 
-## Trailing — блок/функция-аргумент за скобками вызова
+## Trailing — a block/function argument after the call parentheses
 
-Если последний параметр функции — функционального типа, аргумент можно
-вынести за `()` вызова в одну из двух форм:
+If the last parameter of a function is of functional type, the argument can
+be moved out of the call's `()` into one of two forms:
 
-**trailing-block** — для callback'ов **без параметров** (DSL):
+**trailing-block** — for callbacks **without parameters** (DSL):
 ```nova
 with_timeout(2.seconds()) {
     Db.exec(sql`UPDATE counters SET v = v + 1`)
@@ -270,37 +279,37 @@ retry(3) {
 }
 ```
 
-**trailing-fn** — для callback'ов **с параметрами**, синтаксис
-идентичен closure-full без имени:
+**trailing-fn** — for callbacks **with parameters**, syntax
+identical to closure-full without a name:
 ```nova
 list.filter() fn(x) => x > 0
 list.fold(0) fn(acc, x) { acc + x }
 list.map() fn(s str) -> Result[int, ParseError] { parse(s)? }
 ```
 
-**Правила:**
-- `{` (для trailing-block) или `fn` (для trailing-fn) на той же
-  строке, что `)`. Перенос запрещён.
-- `()` обязательны (даже пустые).
-- Тип последнего параметра — функциональный.
-- Один trailing на вызов.
-- `|...|` (closure-light) **в trailing-position запрещён** —
-  передавай через args (`f(|x| body)`) или используй `fn(...)`.
+**Rules:**
+- `{` (for trailing-block) or `fn` (for trailing-fn) on the same
+  line as `)`. A line break is forbidden.
+- `()` are mandatory (even empty).
+- The last parameter's type is functional.
+- One trailing per call.
+- `|...|` (closure-light) **in a trailing position is forbidden** —
+  pass it via args (`f(|x| body)`) or use `fn(...)`.
 
-`spawn` — keyword-конструкция, не функция, поэтому не подчиняется
-правилу D43. Его синтаксис описан отдельно ниже.
+`spawn` is a keyword construct, not a function, so it does not obey
+the D43 rule. Its syntax is described separately below.
 
-**Когда trailing-fn vs closure-light в args:**
-- `f(|x| body)` — компактнее для one-liner'ов.
-- `f(args) fn(x) { ... }` — лучше для длинных тел с биндингами,
-  визуально маркирует «это блок-аргумент к вызову».
+**When trailing-fn vs closure-light in args:**
+- `f(|x| body)` — more compact for one-liners.
+- `f(args) fn(x) { ... }` — better for long bodies with bindings;
+  visually marks "this is a block argument to the call".
 
-Подробно — [D22](decisions/03-syntax.md#d22-closure-light--и-full-fn),
+Details — [D22](decisions/03-syntax.md#d22-closure-light--и-full-fn),
 [D43](decisions/03-syntax.md#d43-trailing-block--без-params-fnp-body-с-params).
 
-## Тело функции: `=>` для выражения, `{}` для блока
+## Function body: `=>` for an expression, `{}` for a block
 
-Два **взаимоисключающих** способа:
+Two **mutually exclusive** ways:
 
 ```nova
 // expression-body — ровно одно выражение
@@ -320,32 +329,32 @@ fn next_pow2(n int) -> int {                 // -> int обязателен
 }
 ```
 
-**Правило `-> T` — два разных уровня, не путать:**
+**The `-> T` rule — two different levels, don't confuse:**
 
-1. **Грамматика (compile error, если нарушено).** В **block-body**
-   (`{ ... }`) `-> T` **обязателен**, если тип не `()` — компилятор не
-   выводит тип из блока (`return_type_c` делает inference только для
-   Expr-body; для Block-body без аннотации — `()`, «Что отвергнуто» в
-   [D45](decisions/03-syntax.md#d45)). В **expression-body** (`=> expr`)
-   `-> T` **опционален всегда** — тип выводится из тела. `-> T`
-   обязателен везде — сознательно отвергнутый вариант (шум для
-   тривиальных однострок).
-2. **Style-guide (линтер-warning, не compile error).** Для
-   **`export`-функций** (public API) рекомендуется писать `-> T` явно,
-   даже в expression-body, — линтер предупреждает, если опущено. Это
-   документация и стабильность контракта, а не грамматическое
-   требование: `export fn f(x int) => x * 2` без `-> int`
-   **скомпилируется**, но получит lint-warning.
-   Для приватных функций и tiny helpers (геттеры, предикаты,
-   конструкторы) — опускать нормально, warning не выдаётся.
+1. **Grammar (a compile error if violated).** In a **block-body**
+   (`{ ... }`) `-> T` is **mandatory**, if the type is not `()` — the compiler
+   does not infer the type from the block (`return_type_c` does inference only
+   for an Expr body; for a Block body without an annotation — `()`, see "What
+   was rejected" in [D45](decisions/03-syntax.md#d45)). In an
+   **expression-body** (`=> expr`) `-> T` is **always optional** — the type
+   is inferred from the body. `-> T` mandatory everywhere — a consciously
+   rejected option (noise for trivial one-liners).
+2. **Style-guide (a linter warning, not a compile error).** For
+   **`export` functions** (public API) it is recommended to write `-> T`
+   explicitly, even in an expression-body — the linter warns if omitted. That
+   is documentation and contract stability, not a grammar
+   requirement: `export fn f(x int) => x * 2` without `-> int`
+   **compiles**, but gets a lint warning.
+   For private functions and tiny helpers (getters, predicates,
+   constructors) — omitting is fine, no warning is emitted.
 
-**Indentation не значим.** `fn f() => stmt1; stmt2` или multiline без
-`{}` — ошибка. Если шагов больше одного — `{}` обязательны.
+**Indentation is not significant.** `fn f() => stmt1; stmt2` or a multiline
+without `{}` — an error. If there is more than one step — `{}` is mandatory.
 
-**Если `=>`-тело — record-литерал, тип называется ровно один раз** —
-не TIMTOWTDI (два эквивалентных способа), а единственно верная запись
-для каждого из двух состояний сигнатуры (Plan 51 Ф.2, «устраняет
-единственную живую TIMTOWTDI в записи record-литералов»):
+**If the `=>` body is a record literal, the type is named exactly once** —
+not TIMTOWTDI (two equivalent ways), but the only correct spelling
+for each of the two states of the signature (Plan 51 Ф.2, "removes
+the only live TIMTOWTDI in the spelling of record literals"):
 
 ```nova
 // -> T опущен → тип обязан быть в литерале
@@ -355,36 +364,36 @@ fn Duration @plus(other Duration) => Duration { nanos: @nanos + other.nanos }
 fn Duration @plus(other Duration) -> Duration => { nanos: @nanos + other.nanos }
 ```
 
-Оба варианта записывают одну и ту же функцию, но не взаимозаменяемы —
-у каждого состояния сигнатуры (есть `-> T` или нет) ровно одна
-допустимая форма литерала. Смешение запрещено компилятором в обе
-стороны:
+Both variants write the same function, but are not interchangeable — each
+signature state (with or without `-> T`) has exactly one
+allowed literal form. Mixing is forbidden by the compiler in both
+directions:
 
-- `-> Duration => Duration { ... }` (тип в сигнатуре И в литерале) —
-  compile error:
+- `-> Duration => Duration { ... }` (the type in the signature AND in the
+  literal) — a compile error:
 
   ```
   error: redundant type prefix on record literal — the return type
   `-> Duration` already declares it; write `=> { ... }`
   ```
 
-- `=> Duration { ... }` без `-> Duration` в сигнатуре, если тип нужен
-  и снаружи (`export`, неочевидный inference), — линтер требует явный
-  `-> T` (см. правило style-guide выше); grammar-уровня ошибки здесь
-  нет, но неоднозначности тоже нет — тип всегда один источник истины.
+- `=> Duration { ... }` without `-> Duration` in the signature, if the type
+  is needed also outside (`export`, non-obvious inference) — the linter
+  requires an explicit `-> T` (see the style-guide rule above); there is no
+  grammar-level error here, but there is no ambiguity either — the type is
+  always the single source of truth.
 
-`-> Self` резолвится к типу receiver'а — то же правило: `-> Self =>
-Counter { ... }` в методе `Counter` тоже избыточно (redundant type
-prefix). Sum-coercion (`-> Shape => Circle { ... }`, литерал другого
-имени, чем return-тип) это правило не затрагивает — там имя литерала
-обязано остаться, т.к. `Circle ≠ Shape`.
+`-> Self` resolves to the receiver's type — the same rule: `-> Self =>
+Counter { ... }` in a `Counter` method is also redundant (redundant type
+prefix). Sum-coercion (`-> Shape => Circle { ... }`, a literal of a different
+name than the return type) is not affected by this rule — there the literal's
+name must remain, because `Circle ≠ Shape`.
 
-Подробно — [D40](decisions/03-syntax.md#d40), [D45](decisions/03-syntax.md#d45).
+Details — [D40](decisions/03-syntax.md#d40), [D45](decisions/03-syntax.md#d45).
 
-## Перегрузка операторов
+## Operator overloading
 
-Стандартные операторы автоматически вызывают методы с фиксированными
-именами:
+Standard operators automatically call methods with fixed names:
 
 ```nova
 fn Duration @plus(other Duration) => Duration { nanos: @nanos + other.nanos }
@@ -395,30 +404,30 @@ ro triple = 5.seconds() * 3              // вызывает @times
 if elapsed > 1.second() { ... }           // вызывает @compare
 ```
 
-| Оператор | Метод | | Оператор | Метод |
-|---|---|---|---|---|
+| Operator | Method | | Operator | Method |
+|---|---|---|---|
 | `+` | `@plus(o)` | | `==` | `@equal(o) -> bool` |
 | `-` (binary) | `@minus(o)` | | `<` | `@compare(o) -> int` |
 | `-` (unary) | `@neg()` | | `<=` | `@compare(o) -> int` |
 | `*` | `@times(o)` | | `>` | `@compare(o) -> int` |
 | `/` | `@div(o)` | | `>=` | `@compare(o) -> int` |
-| `%` | `@rem(o)` | | `!` | НЕ перегружается (строго `bool`) |
+| `%` | `@rem(o)` | | `!` | not overloadable (strictly `bool`) |
 | `\|` | `@bitor(o)` | | `<<` | `@shl(n)` |
 | `&` | `@bitand(o)` | | `>>` | `@shr(n)` |
 | `^` | `@bitxor(o)` | | `~` | `@bitnot()` |
 | `a[i]` | `@index(i)` | | `a[i]=v` | `mut @index(i, v)` |
 | `a[x..y]` | `@index(r Range)` | | | |
 
-`==`/`!=` — через `@equal` (протокол `Equal`, `!=` выводится отрицанием); `<`/`<=`/`>`/`>=` — через единый `@compare(o) -> int` (протокол `Compare`, memcmp-стиль: `< 0` / `0` / `> 0`). Индексация `a[i]` / `a[i] = v` — `@index` / `mut @index` (протоколы `Index[K, V]` / `MutIndex[K, V]`, D240); slice-индексация `a[x..y]` — та же `@index`, перегруженная по типу параметра: `x..y` (half-open, не включает `y`) лоуэрится компилятором в `Range { start: x, end: y }`, и вызывается `a.index(r Range)` — на `[]T`/`str` возвращает view без копирования (`std/collections/vec/slice.nv`, `std/runtime/string/slice.nv`). `&&`/`||` **не перегружаются** (short-circuit
-семантика). **Побитовое семейство — `bit`-префикс, и `~` отдельно от `!`** (D46-амендмент 2026-07-27, план [234](../docs/plans/234-bitwise-operator-family.md)): `&`/`|`/`^` → `@bitand`/`@bitor`/`@bitxor` (прежние `@and`/`@or`/`@xor` ретрактированы — читались как ЛОГИЧЕСКИЕ, хотя логические `&&`/`||` вообще не перегружаются); `~a` → `@bitnot()` — побитовое дополнение, перегружаемое пользовательскими типами (`~x == -(x+1)` на знаковых), тогда как `!a` остаётся ЛОГИЧЕСКИМ и (D46-AMEND 2026-08-02) НЕ перегружается вовсе — только `bool`, `@not()` ретрактирован. Compound-присваивания: `+=`/`-=`/`*=`/`/=` и (D46-амендмент (C), план 234 Ф.2а) `&=`/`|=`/`^=`/`<<=`/`>>=` — десугар в `a = a <op> b`, отдельных операторных методов нет. Custom-операторы (`:+`, `<>`) не разрешены. Подробно —
+`==`/`!=` — via `@equal` (the `Equal` protocol, `!=` is derived by negation); `<`/`<=`/`>`/`>=` — via the single `@compare(o) -> int` (the `Compare` protocol, memcmp-style: `< 0` / `0` / `> 0`). Indexing `a[i]` / `a[i] = v` — `@index` / `mut @index` (the `Index[K, V]` / `MutIndex[K, V]` protocols, D240); slice indexing `a[x..y]` — the same `@index`, overloaded by parameter type: `x..y` (half-open, does not include `y`) is lowered by the compiler into `Range { start: x, end: y }`, and `a.index(r Range)` is called — on `[]T`/`str` it returns a view without copying (`std/collections/vec/slice.nv`, `std/runtime/string/slice.nv`). `&&`/`||` are **not overloadable** (short-circuit
+semantics). **The bitwise family — a `bit` prefix, and `~` separate from `!`** (D46-amendment 2026-07-27, plan [234](../docs/plans/234-bitwise-operator-family.md)): `&`/`|`/`^` → `@bitand`/`@bitor`/`@bitxor` (the former `@and`/`@or`/`@xor` are retracted — they read as LOGICAL, though the logical `&&`/`||` are not overloadable at all); `~a` → `@bitnot()` — bitwise complement, overloadable by user types (`~x == -(x+1)` on signed), whereas `!a` stays LOGICAL and (D46-AMEND 2026-08-02) is not overloadable at all — only `bool`, `@not()` is retracted. Compound assignments: `+=`/`-=`/`*=`/`/=` and (D46-amendment (C), plan 234 Ф.2а) `&=`/`|=`/`^=`/`<<=`/`>>=` — desugar into `a = a <op> b`, no separate operator methods. Custom operators (`:+`, `<>`) are not allowed. Details —
 [D46](decisions/03-syntax.md#d46).
 
-## Математические операции на числовых типах
+## Mathematical operations on numeric types
 
-Стандартные математические функции на `f64` / `f32` / `int` объявлены
-как **instance-методы** через `@`, не как static `Math.sin(...)`.
-Это согласовано с D35 (методы — основной механизм для type-bound
-функций) и даёт chain-friendly формулы:
+Standard mathematical functions on `f64` / `f32` / `int` are declared
+as **instance methods** via `@`, not as static `Math.sin(...)`.
+This is consistent with D35 (methods are the main mechanism for type-bound
+functions) and gives chain-friendly formulas:
 
 ```nova
 ro r = (x * x + y * y).sqrt()
@@ -427,30 +436,29 @@ ro dist = a.hypot(b)
 ro s = (theta + offset).sin()
 ```
 
-**Стандартный набор на `f64` (prelude):**
+**The standard set on `f64` (prelude):**
 
-| Категория | Методы |
+| Category | Methods |
 |---|---|
-| Корни и степени | `@sqrt()`, `@cbrt()`, `@pow(exp f64)` |
-| Тригонометрия | `@sin()`, `@cos()`, `@tan()`, `@asin()`, `@acos()`, `@atan()` |
-| `atan2` (двух-арг) | `@atan2(x f64) -> f64` (`y.atan2(x)`) |
-| Гиперболические | `@sinh()`, `@cosh()`, `@tanh()` |
-| Экспонента / лог | `@exp()`, `@exp2()`, `@ln()`, `@log10()`, `@log2()` |
-| Норма / расстояние | `@abs()`, `@hypot(other f64)` |
-| Округление | `@floor()`, `@ceil()`, `@round()`, `@trunc()` |
-| Минимум / clamp | `@min(other f64)`, `@max(other f64)`, `@clamp(lo f64, hi f64)` |
-| Предикаты | `@is_finite()`, `@is_nan()`, `@is_infinite()` |
+| Roots and powers | `@sqrt()`, `@cbrt()`, `@pow(exp f64)` |
+| Trigonometry | `@sin()`, `@cos()`, `@tan()`, `@asin()`, `@acos()`, `@atan()` |
+| `atan2` (two-arg) | `@atan2(x f64) -> f64` (`y.atan2(x)`) |
+| Hyperbolic | `@sinh()`, `@cosh()`, `@tanh()` |
+| Exponential / log | `@exp()`, `@exp2()`, `@ln()`, `@log10()`, `@log2()` |
+| Norm / distance | `@abs()`, `@hypot(other f64)` |
+| Rounding | `@floor()`, `@ceil()`, `@round()`, `@trunc()` |
+| Min / clamp | `@min(other f64)`, `@max(other f64)`, `@clamp(lo f64, hi f64)` |
+| Predicates | `@is_finite()`, `@is_nan()`, `@is_infinite()` |
 
-На `int` набор ограничен: `@min`, `@max`, `@clamp`, `@compare`.
+On `int` the set is limited: `@min`, `@max`, `@clamp`, `@compare`.
 
-**Имена**, на которые стоит обратить внимание:
+**Names worth noting:**
 
-- **`@hypot(other)`** / **`@atan2(x)`** — двухаргументные функции,
-  второй аргумент идёт как параметр; receiver — первый аргумент по
-  математической конвенции (`y.atan2(x)`, `a.hypot(b)`).
+- **`@hypot(other)`** / **`@atan2(x)`** — two-argument functions;
+  the second argument comes as a parameter; the receiver is the first
+  argument by mathematical convention (`y.atan2(x)`, `a.hypot(b)`).
 
-**Static-функции на типе** для тех случаев, где нет естественного
-receiver'а:
+**Static functions on the type** for cases with no natural receiver:
 
 ```nova
 f64.PI                   // константа
@@ -460,144 +468,116 @@ f64.INFINITY             // константа
 f64.try_parse(s str) -> Option[f64]
 ```
 
-## Конвенции именования
+## Naming conventions
 
-| Что | Стиль | Пример |
+| What | Style | Example |
 |---|---|---|
-| Типы, эффекты, протоколы, варианты sum | **PascalCase** | `User`, `HashMap`, `Db`, `Hash`, `Some` |
-| Generic-параметры | **PascalCase, односимвольные** | `T`, `K`, `V`, `E` |
-| Функции, методы (`@name`), параметры, поля | **snake_case** | `parse_url`, `@deposit`, `user_id`, `created_at` |
-| Константы (`const`) | **SCREAMING_SNAKE_CASE** | `MAX_PAYLOAD`, `DEFAULT_TIMEOUT` |
-| Модули | **snake_case** через точки | `module admin.audit`, `module std.duration` |
+| Types, effects, protocols, sum variants | **PascalCase** | `User`, `HashMap`, `Db`, `Hash`, `Some` |
+| Generic parameters | **PascalCase, single-character** | `T`, `K`, `V`, `E` |
+| Functions, methods (`@name`), parameters, fields | **snake_case** | `parse_url`, `@deposit`, `user_id`, `created_at` |
+| Constants (`const`) | **SCREAMING_SNAKE_CASE** | `MAX_PAYLOAD`, `DEFAULT_TIMEOUT` |
+| Modules | **snake_case** via dots | `module admin.audit`, `module std.duration` |
 
-**Акронимы — PascalCase, не UPPERCASE.** `Db`, не `DB`. `Http`, не `HTTP`.
-`Json`, не `JSON`. `Url`, не `URL`. Правило: акроним = обычное слово.
+**Acronyms — PascalCase, not UPPERCASE.** `Db`, not `DB`. `Http`, not `HTTP`.
+`Json`, not `JSON`. `Url`, not `URL`. Rule: an acronym is an ordinary word.
 
-**Откуда берётся имя модуля — оно не произвольное.** Корень исходников — либо
-сам пакет, либо его папка `src` (`[lib] src` принимает только `"."` и `"src"`;
-третье значение отвергает компилятор). Слово `src` в имя модуля не входит
-никогда. Имя модуля = имя корня + папки по пути от корня: у пакета `http` файл
-`src/server/router.nv` объявляет `module http.server`. Файлы, лежащие прямо в
-корне, — ОДИН модуль с именем корня, и видят друг друга без импортов. У
-приложения без библиотечного имени корень зовётся папкой, которая владеет `src`:
-`examples/flagship/http_proxy_chain/src/*.nv` → `module http_proxy_chain`,
-`src/app/*.nv` → `module http_proxy_chain.app`. Подробно —
-[D78](decisions/07-modules.md) (rev-6).
-
-**Зарезервированные имена методов** (operator overloading, [D46](decisions/03-syntax.md#d46)):
+**Reserved method names** (operator overloading, [D46](decisions/03-syntax.md#d46)):
 `@plus`, `@minus`, `@times`, `@div`, `@rem`, `@neg`, `@bitand`, `@bitor`,
 `@bitxor`, `@bitnot`, `@shl`, `@shr`, `@equal`, `@compare`, `@index`.
-(`@not` RETRACTED 2026-08-02 — `!` больше не перегружается.)
-Не использовать для других целей.
+(`@not` RETRACTED 2026-08-02 — `!` is no longer overloadable.)
+Do not use them for other purposes.
 
-**Договорные конвенции:**
-- `T.new(...)` — стандартный конструктор; `T.from(v X)` — имя-конвенция
-  конструктора-конверсии ([D73](decisions/08-runtime.md#d73); это именно
-  конвенция имени, protocol-механики за ней нет);
-  `T.from_X(...)` — доменный конструктор когда `from(v)` не передаёт
-  смысл (`from_secs`, `from_polar`, `from_imag`).
-- `@to_X()` — трансформация в новое владеющее значение, когда вида
-  (zero-copy) не существует в принципе (`to_str()`, `to_upper()`,
-  D410). `consume @into_X()` — потребляющая передача владения
-  (`into_str()`, `into_raw()`, D131). Универсального `v.into()`
-  (Rust-style, тип цели из контекста) в Nova **нет** — только
-  конкретные именованные методы.
-- **Линейность наследуется контейнером** ([D156-амендмент
-  2026-08-04](decisions/02-types.md#d156)): если элемент — must-consume-тип,
-  то и коллекция must-consume. `Vec[T consume]` обязан быть потреблён —
-  обходом с изъятием (`for consume`), передачей дальше или возвратом;
-  проверки «пуст ли контейнер» нет, потому что пустота известна только во
-  время выполнения. Форма `Vec[T consume Cleanup[E]]` объявляет собственную
-  очистку, обходящую элементы, и по [D432](decisions/02-types.md#d432)
-  становится аффинной — забыть можно, компилятор вставит вызов.
-- **Именованный кортеж: строится по позиции, разбирается по имени**
-  ([D215/D222-амендмент](decisions/02-types.md), 2026-08-05).
-  `Vec3(1.0, 2.0, 3.0)` — конструирование позиционное; именованная форма
-  только для полей с дефолтом (общее правило D102). Деструктуризация —
-  фигурной формой `{ x, y }`; круглая `(a, b)` на именованном кортеже
-  запрещена: у него имена полей часть контракта, и разбор по порядку молча
-  сломался бы при законной перестановке полей.
-- **Три уровня строгости владения, и на типе доступны два**
-  ([D447](decisions/02-types.md#d447), 2026-08-05): обычный тип копируется
-  свободно; `type X consume` — must-consume, обязан быть израсходован на
-  каждом пути выхода ([D133](decisions/02-types.md#d133)); `#no_copy type X` —
-  **аффинный: нельзя связать вторым именем, но забыть можно**. Третья форма
-  закрывает случай, где обязанность расхода бессмысленна — значение со
-  счётчиком внутри не выделяет памяти и закрывать в нём нечего, а копировать
-  его нельзя, потому что каждая копия стала бы отдельным счётчиком.
-  Признак **объявляется, а не выводится**: структурная проверка увидит
-  внутри обычное число и заключит «копировать безопасно» — семантика
-  противоречит составу полей.
-- `Display`/`@display(mut w Write)` — представление в строку для
-  `${expr}`-интерполяции и `str.from(v)` на пользовательском типе
+**Contract conventions:**
+- `T.new(...)` — the standard constructor; `T.from(v X)` — the name
+  convention of the constructor-conversion ([D73](decisions/08-runtime.md#d73); this is exactly a
+  naming convention, no protocol mechanics behind it);
+  `T.from_X(...)` — a domain constructor when `from(v)` does not convey
+  the meaning (`from_secs`, `from_polar`, `from_imag`).
+- `@to_X()` — transformation into a new owning value, when a view
+  (zero-copy) does not exist in principle (`to_str()`, `to_upper()`,
+  D410). `consume @into_X()` — a consuming ownership transfer
+  (`into_str()`, `into_raw()`, D131). A universal `v.into()`
+  (Rust-style, target type from context) does **not** exist in Nova — only
+  concrete named methods.
+- **Linearity is inherited by the container** ([D156 amendment,
+  2026-08-04](decisions/02-types.md#d156)): if the element is a must-consume
+  type, the collection is must-consume too. A `Vec[T consume]` must be
+  consumed — by a taking traversal (`for consume`), by passing it on, or by
+  returning it; there is no "is the container empty" check, because emptiness
+  is only known at run time. The form `Vec[T consume Cleanup[E]]` declares its
+  own cleanup that walks the elements and, per
+  [D432](decisions/02-types.md#d432), becomes affine — you may forget it, the
+  compiler inserts the call.
+- `Display`/`@display(mut w Write)` — string representation for
+  `${expr}` interpolation and `str.from(v)` on a user type
   ([D73](decisions/08-runtime.md#d73)).
-- `@hash()` — хеш, `@clone()` — копия, `@iter()`/`@next()` — iterator.
-- **Имена ошибок** ([D30](decisions/03-syntax.md#d30)) — с типом / доменом:
+- `@hash()` — hash, `@clone()` — copy, `@iter()`/`@next()` — iterator.
+- **Error names** ([D30](decisions/03-syntax.md#d30)) — with a type / domain:
   `ParseComplexError`, `ParseIntError`, `DbError`, `OverflowError`.
-  Не использовать generic `ParseError`, `ValueError`, `Exception` —
-  коллизии импорта, неоднозначность для AI.
+  Do not use generic `ParseError`, `ValueError`, `Exception` —
+  import collisions, ambiguity for AI.
 
-Конвенция `@as_X()`, `@is_X()` **не вводится** — дублирует
-существующие механизмы:
-- `@as_X()` дублирует keyword `as` (D54) для дешёвых cast'ов или
-  `X.from` для нетривиальных.
-- `@is_X()` дублирует `v is X` (D54): для sum-типов и `any`
-  оператор `is` работает напрямую (`shape is Circle`,
-  `arg is int` для `arg any`). Для извлечения значения варианта
-  с биндингом — `if X(n) = v` (D34).
-- Приватность поля — модификатор `priv`; `_`-префикс для «приватности
-  по договору» в Nova не используется (подробно —
-  [«Видимость: export»](#видимость-export-для-публичных-деклараций) ниже).
-- Test-имена — строки естественного языка: `test "insert and get"`,
-  не `"test_insert_and_get"`.
+The `@as_X()`, `@is_X()` convention is **not introduced** — it duplicates
+existing mechanisms:
+- `@as_X()` duplicates the `as` keyword (D54) for cheap casts or
+  `X.from` for nontrivial ones.
+- `@is_X()` duplicates `v is X` (D54): for sum types and `any`
+  the `is` operator works directly (`shape is Circle`,
+  `arg is int` for `arg any`). To extract the variant value
+  with a binding — `if X(n) = v` (D34).
+- Field privacy — the `priv` modifier; the `_`-prefix for "privacy by
+  contract" is not used in Nova (details —
+  ["Visibility: export"](#видимость-export-для-публичных-деклараций) below).
+- Test names — natural-language strings: `test "insert and get"`,
+  not `"test_insert_and_get"`.
 
-### Зарезервированные identifier'ы
+### Reserved identifiers
 
-Помимо grammar-keyword'ов, Nova имеет identifier'ы со специальной
-семантикой, известной компилятору. Их можно переопределить локально,
-но это анти-паттерн (линтер предупреждает).
+Besides the grammar keywords, Nova has identifiers with special
+semantics known to the compiler. They can be locally overridden,
+but that is an anti-pattern (the linter warns).
 
 **Special types:**
-- `Self` — referential type, refers к receiver-типу метода или типу,
-  удовлетворяющему protocol'у ([D66](decisions/02-types.md#d66)).
-  Валиден в любом type-контексте.
-- `any` — top-type для runtime type-check ([D54](decisions/03-syntax.md#d54)).
-- `never` — bottom-type для не-возвращающих функций.
+- `Self` — referential type, refers to the receiver type of a method or the
+  type satisfying a protocol ([D66](decisions/02-types.md#d66)).
+  Valid in any type context.
+- `any` — the top type for runtime type-check ([D54](decisions/03-syntax.md#d54)).
+- `never` — the bottom type for non-returning functions.
 
 **Prelude types:**
-- `Option[T]`, `Some(v)`, `None` — sum-тип
-- `Result[T, E]`, `Ok(v)`, `Err(e)` — sum-тип
-- `Error` — record `{ msg str }` для `throw err`
-- `RuntimeError` — sum bottom-уровневых runtime-ошибок
-- `RuntimeNoneError` — unit-тип, бросается через `expr!!` на `Option` ([D85](decisions/04-effects.md#d85))
-- `Effect[E]` — first-class тип handler'а эффекта
-- `Display` — protocol с instance-методом `@display(mut w Write)`,
-  представление в строку ([D73](decisions/08-runtime.md#d73))
+- `Option[T]`, `Some(v)`, `None` — sum type
+- `Result[T, E]`, `Ok(v)`, `Err(e)` — sum type
+- `Error` — the record `{ msg str }` for `throw err`
+- `RuntimeError` — sum of bottom-level runtime errors
+- `RuntimeNoneError` — unit type, thrown via `expr!!` on `Option` ([D85](decisions/04-effects.md#d85))
+- `Effect[E]` — first-class type of an effect handler
+- `Display` — protocol with the instance method `@display(mut w Write)`,
+  string representation ([D73](decisions/08-runtime.md#d73))
 
-**Стандартные эффекты:**
-- `Fail[E]`, `Fail` — failable-эффект
-- `Io`, `Net`, `Db`, `Fs`, `Time`, `Random`, `Log`, `Trace` — основные
-- `Ask[T]` — Reader-style контекст
-- `Alloc[R]` — аллокация в region
-- `Detach` — маркер fire-and-forget задач ([D50](decisions/06-concurrency.md#d50)).
-  Блокирующие вызовы и real-time — **не эффекты**, а атрибуты функции:
-  `#blocking` (offload на threadpool) и `#realtime` (запрет
-  parking/alloc в теле) — D172.
+**Standard effects:**
+- `Fail[E]`, `Fail` — the failable effect
+- `Io`, `Net`, `Db`, `Fs`, `Time`, `Random`, `Log`, `Trace` — the main ones
+- `Ask[T]` — Reader-style context
+- `Alloc[R]` — allocation in a region
+- `Detach` — the marker of fire-and-forget tasks ([D50](decisions/06-concurrency.md#d50)).
+  Blocking calls and real-time — **not effects**, but function attributes:
+  `#blocking` (offload to a threadpool) and `#realtime` (forbid
+  parking/alloc in the body) — D172.
 
-**Примитивные типы (lowercase, исключение из PascalCase-правила):**
+**Primitive types (lowercase, an exception to the PascalCase rule):**
 - `int`, `uint`, `i8`, `i16`, `i32`, `i64`, `u8`, `u16`, `u32`, `u64`
 - `f32`, `f64`
-- `str`, `bool`, `char` (байт — это `u8`, отдельного типа `byte` нет)
+- `str`, `bool`, `char` (a byte is `u8`, there is no separate `byte` type)
 
-Подробно — [D30](decisions/03-syntax.md#d30), [D46](decisions/03-syntax.md#d46), [D47](decisions/07-modules.md#d47).
+Details — [D30](decisions/03-syntax.md#d30), [D46](decisions/03-syntax.md#d46), [D47](decisions/07-modules.md#d47).
 
-## Видимость: `export` для публичных деклараций
+## Visibility: `export` for public declarations
 
-`export` перед декларацией = публичная (видна снаружи модуля).
-Без `export` = приватная (видна только внутри модуля).
+`export` before a declaration = public (visible outside the module).
+Without `export` = private (visible only inside the module).
 
-Применяется единообразно к **типам**, **функциям**, **методам**,
-**константам** и **протоколам**:
+Applied uniformly to **types**, **functions**, **methods**,
+**constants**, and **protocols**:
 
 ```nova
 module account
@@ -627,28 +607,19 @@ export type Hash protocol {
 }
 ```
 
-**Поля record:** без `priv` поля `export`-типа публичны по умолчанию
-(D47). Приватность — модификатор `priv` (`priv`/`priv(type)`/`priv(file)`,
-D220 + D281) на **поле** (`priv internal_id u64`) или на **типе**, задавая
-дефолт для всех полей (`type Job priv { ... }`) — поле физически
-недоступно снаружи, компилятор это проверяет.
+**Record fields:** without `priv`, fields of an `export` type are public by
+default (D47). Privacy — the `priv` modifier (`priv`/`priv(type)`/`priv(file)`,
+D220 + D281) on a **field** (`priv internal_id u64`) or on a **type**, setting
+the default for all fields (`type Job priv { ... }`) — a field is physically
+unavailable outside, the compiler checks it. The `_`-prefix as
+"privacy by contract" is not used in Nova — privacy
+only compile-time, via `priv`.
 
-**Шкала видимости целиком** ([D457](decisions/02-types.md#d457)), от узкого к
-широкому: `priv(file)` — только этот файл · `priv` / без модификатора — модуль,
-то есть все peer-файлы папки · **`priv(package)` — все модули своего пакета,
-наружу нет** · `export` — снаружи модуля. Ступень `priv(package)` — это то, что
-в Rust зовётся `pub(crate)`; мы говорим с другой стороны, «приватно до границы
-пакета», и остаёмся в семье `priv(<область>)`.
-
-`_`-префикс как
-«приватность по договору» в Nova не используется — приватность
-только compile-time, через `priv`.
-
-**Канонический доступ к полю — одноимённые методы-свойства через
-перегрузку по арности** (D84 + D117):
-чтение `@x() -> T` (0 аргументов), запись `mut @x(v T) -> @`
-(1 аргумент, беглая — возврат receiver'а автоматический, D409, в теле
-писать `return @`/`=> @` не нужно):
+**Canonical field access — same-name property methods via
+arity-based overloading** (D84 + D117):
+read `@x() -> T` (0 arguments), write `mut @x(v T) -> @`
+(1 argument, fluent — receiver return automatic, D409, no need to write
+`return @`/`=> @` in the body):
 
 ```nova
 // Job — тот же priv-тип, что выше. Код ниже — внутри module account:
@@ -665,23 +636,24 @@ j.name("deploy")    // setter — переприсваивает и возвра
     .name("test")    // fluent-chain: сеттер можно вызывать цепочкой
 ```
 
-Пары `get_x`/`set_x` — **не канон** (в std таких 0). `with_x(v)` — другая
-операция (копия с заменённым полем, не мутация исходного). Весь новый
-код std пишется в accessor-convention парадигме.
+`get_x`/`set_x` pairs — **not the canon** (there are 0 of them in std).
+`with_x(v)` — a different operation (a copy with a replaced field, not
+mutating the original). All new std code is written in the
+accessor-convention paradigm.
 
-Подробно — [D47](decisions/07-modules.md#d47), [D29](decisions/07-modules.md#d29) (модули).
+Details — [D47](decisions/07-modules.md#d47), [D29](decisions/07-modules.md#d29) (modules).
 
-## Объявление типов
+## Type declarations
 
-| После `type Имя` идёт | Что это |
+| After `type Name` comes | What it is |
 |---|---|
-| `enum` | sum-type (D406; `enum` — контекстный identifier-маркер, не lexer-keyword) |
-| `set` | type-set — generic-bound по членству в явном списке типов (D310; тоже контекстный) |
-| `(` | tuple-структура |
-| `{` | record-структура |
+| `enum` | sum-type (D406; `enum` is a contextual identifier marker, not a lexer keyword) |
+| `set` | type-set — a generic bound by membership in an explicit list of types (D310; also contextual) |
+| `(` | tuple structure |
+| `{` | record structure |
 | `alias` | alias |
-| идентификатор/тип | newtype |
-| ничего | unit-тип |
+| identifier/type | newtype |
+| nothing | unit type |
 
 ```nova
 // newtype — type X Y, новый тип, типизированно отличный от Y
@@ -714,13 +686,13 @@ type Result[T, E] enum Ok(T) | Err(E)
 type Option[T] enum Some(T) | None
 ```
 
-`enum` — маркер в грамматике типов, валиден в любой type-позиции, не
-только в `type X enum ...`: параметр (`fn job(a enum A | B)`), возврат
-(`fn parse() -> enum Ok(int) | Err(str)`), поле, biнding. Named-форма
-(`type Foo enum A | B`) — просто объявление имени для inline
-type-выражения `enum A | B`, одна грамматика.
+`enum` — a marker in the type grammar, valid in any type position, not
+only in `type X enum ...`: a parameter (`fn job(a enum A | B)`), a return
+(`fn parse() -> enum Ok(int) | Err(str)`), a field, a binding. The named form
+(`type Foo enum A | B`) — just declaring a name for the inline
+type expression `enum A | B`, one grammar.
 
-Sum-варианты могут иметь числовые discriminants с auto-increment:
+Sum variants can have numeric discriminants with auto-increment:
 
 ```nova
 type ExitStatus enum Ok | Failure | Critical              // 0, 1, 2 (auto)
@@ -731,23 +703,23 @@ type ErrorCode enum
 type Bit u8 enum Off = 0 | On = 1                          // явный базовый тип
 ```
 
-> ⚠ **`type X <base> enum …` (явный базовый тип) пока не реализован** —
-> parser drift, см. [Plan 105](../docs/plans/105-sum-type-explicit-base.md).
-> Работают только формы без базового типа (implicit `int`).
+> ⚠ **`type X <base> enum …` (explicit base type) not yet implemented** —
+> parser drift, see [Plan 105](../docs/plans/105-sum-type-explicit-base.md).
+> Only the forms without a base type work (implicit `int`).
 
-Подробно — [decisions/02-types.md → D406](decisions/02-types.md#d406-sum-type-синтаксис-enum-маркер),
-ревизия [D52](decisions/02-types.md#d52).
+Details — [decisions/02-types.md → D406](decisions/02-types.md#d406-sum-type-синтаксис-enum-маркер),
+revision [D52](decisions/02-types.md#d52).
 
-### Варианты sum-type — те же три формы, что top-level type
+### Sum-type variants — the same three forms as a top-level type
 
-Каждый вариант sum-type объявляется по тем же правилам, что top-level
-объявление:
+Each sum-type variant is declared by the same rules as a top-level
+declaration:
 
-| После имени варианта | Что это | Пример |
+| After the variant name | What it is | Example |
 |---|---|---|
-| `( ... )` | позиционный вариант | `Some(T)`, `Ok(T)`, `Point(f64, f64)` |
-| `{ ... }` | record-вариант | `Circle { radius f64 }` |
-| ничего | unit-вариант | `None`, `Red`, `Origin` |
+| `( ... )` | positional variant | `Some(T)`, `Ok(T)`, `Point(f64, f64)` |
+| `{ ... }` | record variant | `Circle { radius f64 }` |
+| nothing | unit variant | `None`, `Red`, `Origin` |
 
 ```nova
 type Option[T] enum
@@ -760,17 +732,17 @@ type Shape enum
     | Origin                  // unit
 ```
 
-`None` — это значение типа `Option[T]`, **не функция и не конструктор**.
-Используется без скобок:
+`None` is a value of type `Option[T]`, **not a function and not a constructor**.
+Used without parentheses:
 
 ```nova
 ro x = Some(42)              // позиционный — нужен аргумент
 ro y = None                  // unit — без скобок
 ```
 
-Подробно — [D17](decisions/02-types.md#d17).
+Details — [D17](decisions/02-types.md#d17).
 
-## Создание значений и pattern matching
+## Creating values and pattern matching
 
 ```nova
 ro p = Point(1.0, 2.0)
@@ -827,27 +799,26 @@ fn classify(x) => match x {
 }
 ```
 
-Каждая arm имеет форму `pattern => result`, опционально с **guard'ом**
-`pattern if condition => result`. Компилятор пробует arm'ы сверху вниз,
-берёт первую, где паттерн совпал И guard истинный.
+Each arm has the form `pattern => result`, optionally with a **guard**
+`pattern if condition => result`. The compiler tries arms top-down,
+takes the first one where the pattern matched AND the guard is true.
 
-**Виды паттернов:**
+**Kinds of patterns:**
 
-| Форма | Пример | Что делает |
+| Form | Example | What it does |
 |---|---|---|
-| Литерал | `0`, `"hello"`, `true` | сравнение по значению |
-| Имя (binding) | `n`, `x` | ловит любое значение, привязывает к имени |
-| Wildcard | `_` | ловит любое значение, не привязывает |
-| Конструктор | `Some(v)`, `Ok(value)`, `None` | разбор варианта sum-type |
-| Record | `User { id, name }` | разбор record-полей |
-| Tuple | `(a, b)`, `(_, value)` | разбор кортежа |
-| Guard | `n if n < 0` | паттерн + дополнительное условие |
+| Literal | `0`, `"hello"`, `true` | comparison by value |
+| Name (binding) | `n`, `x` | catches any value, binds it to a name |
+| Wildcard | `_` | catches any value, binds nothing |
+| Constructor | `Some(v)`, `Ok(value)`, `None` | destructures a sum-type variant |
+| Record | `User { id, name }` | destructures record fields |
+| Tuple | `(a, b)`, `(_, value)` | destructures a tuple |
+| Guard | `n if n < 0` | a pattern + an extra condition |
 
-**Exhaustiveness check.** Компилятор проверяет, что match покрывает
-все возможные случаи. Если нет — ошибка с указанием непокрытого
-варианта. Это работает для sum-type и bool. Для общих типов
-(`int`, `str`) нужен либо `_`-wildcard, либо явная проверка всех
-рассматриваемых значений.
+**Exhaustiveness check.** The compiler checks that the match covers all
+possible cases. If not — an error naming the uncovered variant. This works
+for sum types and bool. For general types (`int`, `str`) you need either a
+`_`-wildcard or an explicit check of all considered values.
 
 ```nova
 type Color enum Red | Green | Blue
@@ -859,12 +830,12 @@ fn name(c Color) -> str => match c {
 }
 ```
 
-`match` — это **выражение**, возвращает значение. Все ветви должны
-иметь совместимый тип (или общий supertype, либо обёрнутые в sum-type).
+`match` is an **expression**, returns a value. All arms must have
+a compatible type (or a common supertype, or wrapped in a sum type).
 
-### Record-литералы и patterns
+### Record literals and patterns
 
-**Shorthand** — когда имя поля совпадает с именем переменной в scope:
+**Shorthand** — when the field name matches a variable name in scope:
 
 ```nova
 ro key = "alice"
@@ -875,7 +846,7 @@ ro entry = Entry { key, value, extra: "data" }  // можно смешивать
 // `Entry { key: key }` — ОШИБКА: используйте shorthand `{ key }`.
 ```
 
-**Partial pattern matching** — указывать только нужные поля:
+**Partial pattern matching** — specifying only the needed fields:
 
 ```nova
 match @buckets[idx] {
@@ -885,18 +856,18 @@ match @buckets[idx] {
 }
 ```
 
-Обе формы валидны (`..` или без) — выбор по контексту. `..` —
-сигнал «у типа есть ещё поля». Без — короче.
+Both forms are valid (`..` or without) — a choice by context. `..` —
+a signal "the type has more fields". Without — shorter.
 
-**Переименование при деструктуризации:**
+**Renaming on destructuring:**
 
 ```nova
 Occupied { key: k, value }      // key переименовано в k, value совпадает
 ```
 
-Подробно — [D17](decisions/02-types.md#d17).
+Details — [D17](decisions/02-types.md#d17).
 
-### Циклы `for` / `while` / `loop`
+### `for` / `while` / `loop` loops
 
 ```nova
 for x in list { ... }            // x — immutable binding на каждой итерации
@@ -909,18 +880,18 @@ while cond { ... }                // условный цикл
 loop { ... }                      // бесконечный, выход через break/return
 ```
 
-**Явный тип элемента — `for x TYPE in iter`** — опционален и следует
-универсальному правилу «name type» (как `ro x int`, `fn(x int)`,
-`[T Bound]`). Аннотация **проверяется компилятором**: если `TYPE` не
-совпадает с фактическим типом элемента итератора — compile error. Это
-делает её *checked assertion* (фиксирует ожидание; смена типа источника
-→ loud error), а не молчаливым документирующим сахаром. Go/Rust/TS
-аннотацию loop-переменной не дают вовсе — Nova получает её как строгий
-проверяемый superset.
+**An explicit element type — `for x TYPE in iter`** — is optional and
+follows the universal "name type" rule (like `ro x int`, `fn(x int)`,
+`[T Bound]`). The annotation is **checked by the compiler**: if `TYPE` does
+not match the iterator's actual element type — a compile error. That makes it
+a *checked assertion* (pins the expectation; a change of the source type →
+a loud error), not a silent documenting sugar. Go/Rust/TS
+do not give a loop-variable annotation at all — Nova has it as a strict,
+checkable superset.
 
-Переменная в `for x in iter` — **immutable binding** (как `ro`, без
-`mut`), на каждой итерации получает **новое значение**. В теле блока
-переприсвоить нельзя:
+A variable in `for x in iter` — an **immutable binding** (like `ro`, no
+`mut`), receiving a **new value** on each iteration. It cannot be
+reassigned in the block body:
 
 ```nova
 for x in list {
@@ -932,16 +903,16 @@ for mut x in list {
 }
 ```
 
-Это согласовано с правилом D32 + D33 — все binding'и иммутабельны по
-умолчанию, мутация явно через `mut`. Никакого `const` или `final`
-маркера в Nova нет — иммутабельность и так дефолт.
+This is consistent with the D32 + D33 rule — all bindings are immutable by
+default, mutation explicitly via `mut`. There is no `const` or `final`
+marker in Nova — immutability is already the default.
 
-`break` / `continue` — стандартные.
+`break` / `continue` — standard.
 
-### Паттерн в условии — `if pattern = …` / `while pattern = …`
+### A pattern in a condition — `if pattern = …` / `while pattern = …`
 
-Паттерн-матч прямо в условии — короткая альтернатива `match` для
-одного варианта:
+A pattern match right in the condition — a short alternative to `match` for
+a single variant:
 
 ```nova
 // если в кеше есть — вернуть
@@ -967,20 +938,20 @@ if Some(user) = lookup(id) && user.is_active {
 }
 ```
 
-> Guard-условие работает и для `while`: `while pattern = expr &&
-> bool_guard { ... }`. ⚠ Несколько pattern-условий в одном `if`
-> (`if Some(x) = a && Some(y) = b`) пока не реализованы — один паттерн
-> плюс bool-guard.
+> The guard condition works for `while` too: `while pattern = expr &&
+> bool_guard { ... }`. ⚠ Several pattern conditions in one `if`
+> (`if Some(x) = a && Some(y) = b`) are not yet implemented — one pattern
+> plus a bool-guard.
 
-Локальные binding'и (`data`, `user`, `line`) доступны **только в теле
-блока**. После закрывающей `}` — недоступны.
+Local bindings (`data`, `user`, `line`) are available **only in the block
+body**. After the closing `}` — unavailable.
 
-Подробно — [D34](decisions/03-syntax.md#d34).
+Details — [D34](decisions/03-syntax.md#d34).
 
-## Методы инстанса и static-функции
+## Instance methods and static functions
 
-В Nova — **два вида функций ассоциированных с типом**, различимых по
-синтаксису декларации:
+Nova has **two kinds of functions associated with a type**, distinguishable
+by the declaration syntax:
 
 ```nova
 // конструктор / static — через точку, без @
@@ -998,7 +969,7 @@ fn Account mut @deposit(amount money) {
 }
 ```
 
-**Использование:**
+**Usage:**
 
 ```nova
 ro acc = Account.new("alice")    // вызов constructor через точку
@@ -1006,27 +977,27 @@ acc.deposit(100)                   // вызов метода — точка + �
 ro bal = acc.balance()            // getter, обязательные скобки
 ```
 
-### `@field` для доступа к полям
+### `@field` for field access
 
-Внутри метода (`@method` или `mut @method`) поля self доступны через
-**`@field`** — единственная форма:
+Inside a method (`@method` or `mut @method`), self's fields are accessible
+via **`@field`** — the only form:
 
 ```nova
 fn Account @summary() -> str =>
     "${@owner}: ${@_balance}"      // = self.owner, self._balance
 ```
 
-`@.field` **невалидно** — точка не используется. `@field` — единственно
-верно.
+`@.field` is **invalid** — a dot is not used. `@field` — the only
+correct form.
 
-`@` без поля — это **значение текущего инстанса**:
+`@` without a field — the **value of the current instance**:
 
 ```nova
 fn Account @copy() -> Account => @
 fn Account @send_to(tx ChanWriter[Account]) => tx.send(@)
 ```
 
-### Скобки обязательны для вызова
+### Parentheses are mandatory for calls
 
 ```nova
 acc.balance()              // вызов метода
@@ -1036,10 +1007,10 @@ Account.@balance           // unbound method value, тип: fn(Account) -> money
 Account.new                // static-функция как значение, тип: fn(str) -> Account
 ```
 
-Программист и LLM мгновенно различают: вызов = со скобками, значение
-= без скобок. Никаких property с побочками.
+The programmer and the LLM instantly distinguish: a call = with
+parentheses, a value = without. No properties with side effects.
 
-### Generic'и
+### Generics
 
 ```nova
 fn HashMap[K, V].new() -> HashMap[K, V] => ...        // generic на типе
@@ -1047,11 +1018,12 @@ fn HashMap[K, V] @get(key K) -> Option[V] => ...      // тоже
 fn[T] []T @map[U](f fn(T) -> U) -> []U => ...         // generic на методе [U]
 ```
 
-Подробно — [D35](decisions/03-syntax.md#d35).
+Details — [D35](decisions/03-syntax.md#d35).
 
-## Embed и delegation: `use Type` и `use name Type`
+## Embed and delegation: `use Type` and `use name Type`
 
-Композиция вместо наследования. `use` — это **поле + автопрокси методов**:
+Composition instead of inheritance. `use` is a **field + auto-proxy of
+methods**:
 
 ```nova
 type Account {
@@ -1077,8 +1049,8 @@ aa.deposit(100)                              // авто-прокси: account.d
 aa.balance                                   // авто-прокси: account.balance
 ```
 
-Имя поля **обязательно** при `use` ([D39](decisions/02-types.md#d39))
-— согласовано с [D30](decisions/03-syntax.md#d30) (поля snake_case):
+The field name is **mandatory** with `use` ([D39](decisions/02-types.md#d39))
+— consistent with [D30](decisions/03-syntax.md#d30) (fields snake_case):
 
 ```nova
 type Wrapper[K, V] {
@@ -1095,8 +1067,8 @@ type Composite {
 }
 ```
 
-**Override.** Метод того же имени на внешнем типе перекрывает прокси.
-Доступ к «родительскому» — через имя поля:
+**Override.** A method of the same name on the outer type shadows the proxy.
+Access to the "parent" — via the field name:
 
 ```nova
 fn AuditedAccount mut @deposit(amount money) {
@@ -1105,17 +1077,18 @@ fn AuditedAccount mut @deposit(amount money) {
 }
 ```
 
-**`use` — это не наследование.** `AuditedAccount` не подтип `Account`.
-Функции `fn(Account)` принимают `Account`, не `AuditedAccount`. Структурные
-интерфейсы — отдельный механизм (см. ниже).
+**`use` is not inheritance.** `AuditedAccount` is not a subtype of `Account`.
+Functions `fn(Account)` take `Account`, not `AuditedAccount`. Structural
+interfaces are a separate mechanism (see below).
 
-Подробно — [D39](decisions/02-types.md#d39).
+Details — [D39](decisions/02-types.md#d39).
 
-## Передача параметров
+## Parameter passing
 
-Объекты (record, sum-type, массивы) передаются **по ссылке** в managed
-heap. Примитивы (`int`, `bool`, `f64`, ...) — **по значению**.
-Префикс `mut` разрешает мутацию.
+Objects (record, sum-type, arrays) are passed **by reference** into the managed
+heap. Primitives (`int`, `bool`, `f64`, ...) — **by value**.
+
+The `mut` prefix allows mutation.
 
 ```nova
 type Account { balance money }    // обычное поле — мутируется у mut binding'а
@@ -1136,7 +1109,7 @@ show(my_acc)
 // показывает 150, my_acc не изменён
 ```
 
-### Поля типа: `ro` для never-mut, `mut` для cache
+### Field kinds: `ro` for never-mut, `mut` for cache
 
 ```nova
 type Account {
@@ -1152,34 +1125,34 @@ type Point { x, y, z f64 }
 type Color { r, g, b u8 }
 ```
 
-Подробно про правила мутации полей — [D36](decisions/02-types.md#d36).
+Details about field mutation rules — [D36](decisions/02-types.md#d36).
 
-| Форма | Передача | Мутация снаружи |
+| Form | Passing | External mutation |
 |---|---|---|
-| `x int` | by value | нет |
-| `o Order` | managed reference | нет (immutable) |
-| `mut o Order` | managed reference | да |
+| `x int` | by value | no |
+| `o Order` | managed reference | no (immutable) |
+| `mut o Order` | managed reference | yes |
 
-Для perf-критичного кода компилятор использует **escape analysis**:
-не утекающие значения остаются на стеке, без аллокаций в managed
-heap. Программист не пишет ничего особого. Для real-time — атрибут
-`#realtime nogc` на функции ([D172 §7](decisions/06-concurrency.md#d172-realtimeblocking-sync-class-annotation-system-plan-1036);
-исторически [D64](decisions/04-effects.md#d64)); блочной формы нет.
-Arena-allocations через `region { }` —
-проектируемая форма ([D6](decisions/05-memory.md#d6)),
-⚠ в текущем компиляторе не реализована.
+For perf-critical code the compiler uses **escape analysis**:
+non-escaping values stay on the stack, without managed-heap allocations.
+The programmer writes nothing special. For real-time — the attribute
+`#realtime nogc` on a function ([D172 §7](decisions/06-concurrency.md#d172-realtimeblocking-sync-class-annotation-system-plan-1036);
+historically [D64](decisions/04-effects.md#d64)); no block form. Arena
+allocations via `region { }` — a
+designed form ([D6](decisions/05-memory.md#d6)),
+⚠ not implemented in the current compiler.
 
-Подробно — [D32](decisions/02-types.md#d32).
+Details — [D32](decisions/02-types.md#d32).
 
-## Опциональные параметры — через record + spread, не через defaults
+## Optional parameters — via record + spread, not defaults
 
-Default-значений у параметров функции в Nova **нет** (намеренно — см.
-[history/rejected.md](decisions/history/rejected.md)). Когда у функции
-много параметров с разумными дефолтами, используется паттерн
-**опции-record + spread**: комбинация record-типа с константой-дефолтом
-([D52](decisions/02-types.md#d52)), record-coercion в позиции с
-известным типом ([D55](decisions/02-types.md#d55)) и spread `...obj`
-для override отдельных полей ([D60](decisions/03-syntax.md#d60)).
+Functions in Nova have **no default parameter values** (deliberately — see
+[history/rejected.md](decisions/history/rejected.md)). When a function has
+many parameters with reasonable defaults, the **options-record + spread**
+pattern is used: a combination of a record type with a default constant
+([D52](decisions/02-types.md#d52)), record-coercion in a position with a
+known type ([D55](decisions/02-types.md#d55)) and spread `...obj`
+to override individual fields ([D60](decisions/03-syntax.md#d60)).
 
 ```nova
 type ServerOpts {
@@ -1209,33 +1182,33 @@ serve({ ...SERVER_DEFAULTS, port: 9000, max_conn: 4096 })
 serve({ port: 9000, host: "127.0.0.1", max_conn: 16, timeout: 5.seconds() })
 ```
 
-**Преимущества над default-значениями:**
+**Advantages over default values:**
 
-1. **Все опции видны на call-site** — программист и LLM не гадают что
-   значит «остальные дефолты». `...SERVER_DEFAULTS` явно говорит
-   «возьми всё остальное оттуда».
-2. **Дефолты переиспользуются** — `SERVER_DEFAULTS`, `TEST_DEFAULTS`,
-   `DEV_DEFAULTS` для разных сред.
-3. **Refactoring безопасен** — добавил поле в record, спред-вызовы
-   подхватывают новое поле; вызовы без спреда — compile error «missing
-   field», программист увидит каждое место.
-4. **Композиция** — несколько spread'ов: `{ ...BASE, ...OVERRIDES, port: 9000 }`.
-5. **Без новой грамматики** — работает через существующие D52 + D55 + D60.
+1. **All options are visible at the call site** — the programmer and the
+   LLM do not guess what "the rest of the defaults" means. `...SERVER_DEFAULTS`
+   explicitly says "take everything else from there".
+2. **Defaults are reused** — `SERVER_DEFAULTS`, `TEST_DEFAULTS`,
+   `DEV_DEFAULTS` for different environments.
+3. **Refactoring is safe** — added a field to the record, spread calls
+   pick up the new field; calls without spread — a compile error "missing
+   field", the programmer sees every place.
+4. **Composition** — several spreads: `{ ...BASE, ...OVERRIDES, port: 9000 }`.
+5. **No new grammar** — works via existing D52 + D55 + D60.
 
-**Когда такой паттерн избыточен:**
+**When such a pattern is redundant:**
 
-- Функция имеет **2–3 параметра** без дефолтов — пишутся напрямую:
+- A function has **2–3 parameters** without defaults — written directly:
   `fn move(x int, y int)`.
-- Дефолты семантически разные («режимы») — лучше отдельные функции
-  или sum-type: `fn parse_strict(s str)`, `fn parse_lenient(s str)`.
+- The defaults are semantically different ("modes") — better separate
+  functions or a sum-type: `fn parse_strict(s str)`, `fn parse_lenient(s str)`.
 
-Подробно: [D52 record](decisions/02-types.md#d52),
+Details: [D52 record](decisions/02-types.md#d52),
 [D55 coercion](decisions/02-types.md#d55),
 [D60 spread](decisions/03-syntax.md#d60).
 
-## Эффекты в сигнатуре
+## Effects in the signature
 
-Любое взаимодействие с внешним миром — эффект, объявляется между `)` и `->`:
+Any interaction with the outside world is an effect, declared between `)` and `->`:
 
 ```nova
 fn double(x int) -> int                          // чистая
@@ -1244,11 +1217,11 @@ fn save(u User) Fail Db Log -> ()              // три эффекта
 fn fetch(url str) Net Fail -> Response          // сеть + ошибки (async — ambient, не пишется)
 ```
 
-**`?` и `!!`** — два постфиксных оператора для `Option`/`Result`
+**`?` and `!!`** — two postfix operators for `Option`/`Result`
 ([D85](decisions/04-effects.md#d85)):
 
-- `expr?` — ранний return обёртки (нужен `-> Option/Result`).
-- `expr!!` — throw через `Fail[E]` (нужен `Fail[E]` в сигнатуре).
+- `expr?` — an early return of the wrapper (needs `-> Option/Result`).
+- `expr!!` — throw via `Fail[E]` (needs `Fail[E]` in the signature).
 
 ```nova
 // throw-стиль через !!
@@ -1268,9 +1241,9 @@ fn pipeline_r(s str) -> Result[int, ParseError] {
 }
 ```
 
-Подробнее — [effects.md](effects.md), [revolutionary.md](revolutionary.md).
+Details — [effects.md](effects.md), [revolutionary.md](revolutionary.md).
 
-## Контракты (опциональны)
+## Contracts (optional)
 
 ```nova
 fn withdraw(mut acc Account, amount money) Fail -> ()
@@ -1281,11 +1254,11 @@ fn withdraw(mut acc Account, amount money) Fail -> ()
     acc.balance -= amount
 ```
 
-Без контрактов код работает как обычно. С ними компилятор пытается
-доказать статически, что не может — превращает в runtime-проверку
-в debug-режиме.
+Without contracts the code works as usual. With them the compiler tries
+to prove statically; what it cannot — turns into a runtime check in
+debug mode.
 
-## Handler'ы — литералы у `protocol`-эффектов
+## Handlers — literals for `protocol`-effects
 
 ```nova
 type Logger effect {
@@ -1310,11 +1283,11 @@ fn main() Io -> () {
 }
 ```
 
-`return value` или финальное выражение в handler-method'е продолжает
-вычисление с возвращённым значением. Для досрочного выхода из всего
-with-блока — `interrupt v` (D61). `resume` в Nova не существует.
+`return value` or the final expression in a handler-method continues
+the computation with the returned value. For an early exit from the whole
+with-block — `interrupt v` (D61). `resume` does not exist in Nova.
 
-## Имя эффекта в коде — три позиции
+## The effect name in code — three positions
 
 ```nova
 fn process() Db -> ()                // 1. позиция типа
@@ -1322,9 +1295,9 @@ Db.query(sql`...`)                   // 2. операция активного h
 ro captured = Db                    // 3. сам активный handler как значение
 ```
 
-Парсер различает по позиции.
+The parser distinguishes by position.
 
-## With-блок — несколько подмен в одном
+## With-block — several substitutions in one
 
 ```nova
 test "complex flow" {
@@ -1337,10 +1310,10 @@ test "complex flow" {
 }
 ```
 
-После `with` — список «эффект = handler-выражение» через запятую,
-потом **один** блок тела.
+After `with` — a comma-separated list of "effect = handler-expression",
+then **one** body block.
 
-## Параллелизм — без `async/await`
+## Concurrency — without `async/await`
 
 ```nova
 fn fetch_all(ids []u64) Net Fail -> []User =>
@@ -1349,14 +1322,14 @@ fn fetch_all(ids []u64) Net Fail -> []User =>
     }
 ```
 
-Suspension в Nova — ambient runtime-инфраструктура, не эффект и не
-специальная конструкция (D62). Тип возврата `[]User`, не
-`Future<[]User>`. Подробно — [revolutionary.md R7](revolutionary.md).
+Suspension in Nova is ambient runtime infrastructure, not an effect and not a
+special construct (D62). The return type is `[]User`, not
+`Future<[]User>`. Details — [revolutionary.md R7](revolutionary.md).
 
-`parallel for` — structured concurrency: ждёт всех, отменяет хвост
-при ошибке.
+`parallel for` — structured concurrency: waits for all, cancels the tail
+on error.
 
-## Capability-режим
+## Capability mode
 
 ```nova
 fn run_user_script(code str) Fail -> Result =>
@@ -1365,33 +1338,33 @@ fn run_user_script(code str) Fail -> Result =>
     }
 ```
 
-Внутри `forbid` компилятор не пропустит вызов функции с запрещёнными
-эффектами. Sandbox в типах, не в рантайме.
+Inside `forbid` the compiler will not let a call to a function with forbidden
+effects through. A sandbox in types, not in the runtime.
 
-## Производительность — escape analysis и regions
+## Performance — escape analysis and regions
 
-Программист пишет обычный код:
+The programmer writes ordinary code:
 
 ```nova
 fn hot_loop(data []f64) -> f64 =>
     data.iter().sum()  // SIMD-авто, zero-alloc через escape analysis
 ```
 
-Компилятор сам решает: примитивы — в регистрах, не утекающие
-объекты — на стеке, остальное — в managed heap. Никаких ссылок
-вручную.
+The compiler decides itself: primitives — in registers, non-escaping
+objects — on the stack, everything else — in the managed heap. No manual
+references.
 
-Для real-time hot path — атрибут `#realtime nogc` на функции
+For a real-time hot path — the attribute `#realtime nogc` on a function
 ([D172 §7](decisions/06-concurrency.md#d172-realtimeblocking-sync-class-annotation-system-plan-1036);
-исторически [D64](decisions/04-effects.md#d64)); блочной формы нет. В теле такой
-функции запрещены suspend-операции и аллокации в managed heap.
-Arena-allocations через `region { ... }` — проектируемая форма
-([D6](decisions/05-memory.md#d6)), ⚠ в текущем компиляторе не
-реализована.
+historically [D64](decisions/04-effects.md#d64)); no block form. In the body of such a
+function suspend operations and managed-heap allocations are forbidden.
+Arena allocations via `region { ... }` — a designed form
+([D6](decisions/05-memory.md#d6)), ⚠ not implemented in the current
+compiler.
 
-## Структурные «интерфейсы» — `protocol`
+## Structural "interfaces" — `protocol`
 
-Никаких `interface`/`trait`. Структурный контракт — отдельным keyword
+No `interface`/`trait`. A structural contract — a separate keyword
 **`protocol`**:
 
 ```nova
@@ -1406,11 +1379,10 @@ fn log_one(x Printable) Log -> () => Log.info(x.show())
 fn log_one(x { show() -> str }) Log -> () => Log.info(x.show())
 ```
 
-Совместимость **автоматическая** по структуре — любой тип с
-подходящими методами автоматически удовлетворяет protocol'у, никаких
-`impl`-блоков не нужно. `Self` валиден внутри любого type-контекста
-(protocol-блок, effect-блок, instance-метод, static-метод, sum-вариант)
-по [D66](decisions/02-types.md#d66):
+Compatibility is **automatic by structure** — any type with suitable methods
+automatically satisfies the protocol, no `impl`-blocks needed. `Self` is
+valid in any type-context (protocol-block, effect-block, instance-method,
+static-method, sum-variant) per [D66](decisions/02-types.md#d66):
 
 ```nova
 type Hash protocol {
@@ -1422,11 +1394,11 @@ type Next[T] protocol {
 }
 ```
 
-`type` — для **данных** (record, sum-type, alias). `protocol` — для
-**поведения** (методы как контракт). Подробно — [D42](decisions/02-types.md#d42),
+`type` — for **data** (record, sum-type, alias). `protocol` — for
+**behavior** (methods as a contract). Details — [D42](decisions/02-types.md#d42),
 [D9](decisions/01-philosophy.md#d9) / [D15](decisions/02-types.md#d15).
 
-## Дженерики
+## Generics
 
 ```nova
 fn map[T, U](xs []T, f T -> U) -> []U =>
@@ -1437,16 +1409,16 @@ fn map_eff[T, U, E](xs []T, f (T) E -> U) E -> []U =>
     [f(x) for x in xs]
 ```
 
-Параметры типа — после имени в квадратных скобках `Имя[T]`, не `<T>`.
-Подробно — [D16](decisions/03-syntax.md#d16).
-Массивы — `[]T` (динамический), `[N]T` (фиксированный), [D27](decisions/03-syntax.md#d27).
+Type parameters — after the name in square brackets `Name[T]`, not `<T>`.
+Details — [D16](decisions/03-syntax.md#d16).
+Arrays — `[]T` (dynamic), `[N]T` (fixed), [D27](decisions/03-syntax.md#d27).
 
-## Generic bounds — `[T Protocol]` или `[T TypeSet]`
+## Generic bounds — `[T Protocol]` or `[T TypeSet]`
 
-Параметр-тип ограничивается через единое правило «name type» (без
-двоеточия) — двумя способами: **protocol** (structural, любой тип с
-подходящими методами) или **type-set** (D310, ниже — closed список
-конкретных типов, membership-предикат, не структурный):
+A type parameter is bounded via the unified "name type" rule (no colon) —
+two ways: **protocol** (structural, any type with suitable methods) or
+**type-set** (D310, below — a closed list of concrete types, a membership
+predicate, not structural):
 
 ```nova
 fn dedup[T Hash](xs []T) -> []T => ...
@@ -1454,39 +1426,39 @@ fn map[K Hash, V](m HashMap[K, V]) -> ...
 fn fold[T, Acc](xs Iter[T], init Acc, f fn(Acc, T) -> Acc) -> Acc
 ```
 
-Bound — это **protocol-тип** ([D53](decisions/02-types.md#d53)). Тот же
-`Hash` стоит и в позиции типа значения (existential), и в bound'е
-(universal через мономорфизацию):
+A bound is a **protocol-type** ([D53](decisions/02-types.md#d53)). The same
+`Hash` stands both in a value type position (existential) and in a bound
+(universal via monomorphization):
 
 ```nova
 fn dump(x Hash) -> u64 => x.hash()        // existential, dynamic dispatch
 fn dump2[T Hash](x T) -> u64 => x.hash()  // universal, mono dispatch
 ```
 
-**Порядок параметров — слева направо.** Имя в bound'е должно быть
-объявлено раньше:
+**Parameter order — left to right.** A name in a bound must be
+declared earlier:
 
 ```nova
 fn get[K, V, C Index[K, V]](c C, k K) -> V => c[k]   // ok: K, V объявлены первыми
 fn get[C Index[K, V], K, V](c C, k K) -> V           // ОШИБКА: K, V используются до объявления
 ```
 
-**Множественные bounds** — через анонимный protocol:
+**Multiple bounds** — via an anonymous protocol:
 
 ```nova
 fn min[T protocol { @compare(other Self) -> int, @equal(other Self) -> bool }](xs []T) -> T
 ```
 
-Если паттерн повторяется — выносится в именованный protocol (`type Ord
+If the pattern repeats — extracted into a named protocol (`type Ord
 protocol { ... }`).
 
-### Type-set — bound по членству, не по структуре
+### Type-set — a bound by membership, not by structure
 
-**Type-set** — четвёртая kind-форма `type` (наряду с newtype/alias/
-record-tuple/`enum`, D310): именованное множество **конкретных** типов,
-перечисленных явно. В отличие от protocol (любой тип с подходящими
-методами удовлетворяет структурно), type-set — closed list, только
-явно перечисленные члены проходят:
+**Type-set** — the fourth kind-form of `type` (along with newtype/alias/
+record-tuple/`enum`, D310): a named set of **concrete** types listed
+explicitly. Unlike a protocol (any type with suitable methods satisfies
+structurally), a type-set is a closed list — only the explicitly listed
+members pass:
 
 ```nova
 // inline — | разделяет члены, перед первым не нужен
@@ -1500,27 +1472,27 @@ type AnyNumber set
 fn[T Num] sum_two(a T, b T) -> T => a + b
 ```
 
-Диспетч по первому токену после `type Name` (как `enum`/`alias`) — `set`
-контекстный, не глобальный keyword. Bound из type-set ведёт себя как
-protocol-bound: `[T Num]`. Композиция с протоколами — через `+`: `[T
-SignedInt + Hash]` (T ∈ set И реализует Hash). **Не больше одного
-type-set** в списке bound'ов (`E_MULTIPLE_TYPE_SETS`) — протоколов
-можно сколько угодно.
+Dispatch by the first token after `type Name` (like `enum`/`alias`) — `set`
+is contextual, not a global keyword. A bound from a type-set behaves like a
+protocol-bound: `[T Num]`. Composition with protocols — via `+`: `[T
+SignedInt + Hash]` (T ∈ set AND implements Hash). **No more than one
+type-set** in the bounds list (`E_MULTIPLE_TYPE_SETS`) — protocols
+are allowed in any amount.
 
-**Члены — только конкретные типы**, перечисленные по идентичности:
-newtype `type MyI8 i8` не входит в `{i8}` автоматически — нужен явный
-листинг (`E_TYPE_SET_MEMBER_NOT_CONCRETE` для protocol/effect/другого
-type-set как члена). **Один set не смешивает signed/unsigned целые**
-(`E_TYPE_SET_MIXED_SIGNEDNESS`) — готовые `SignedInt`/`UnsignedInt` в
-prelude (`std/prelude/protocols.nv`) разделены по этой оси.
+**Members — only concrete types**, listed by identity:
+a newtype `type MyI8 i8` does not enter `{i8}` automatically — an explicit
+listing is needed (`E_TYPE_SET_MEMBER_NOT_CONCRETE` for protocol/effect/another
+type-set as a member). **One set does not mix signed/unsigned integers**
+(`E_TYPE_SET_MIXED_SIGNEDNESS`) — the ready-made `SignedInt`/`UnsignedInt`
+in the prelude (`std/prelude/protocols.nv`) are split along this axis.
 
-Подробно — [D72](decisions/02-types.md#d72), [D310](decisions/02-types.md#d310-type-set-bounds-plan-1723).
+Details — [D72](decisions/02-types.md#d72), [D310](decisions/02-types.md#d310-type-set-bounds-plan-1723).
 
-## Конверсии: `as` и `T.from(v)`
+## Conversions: `as` and `T.from(v)`
 
-Два способа конверсии под разные сценарии. `from` — имя-конвенция
-конструктора-конверсии (не protocol-bound); универсального `v.into()`
-(Rust-style, тип цели из контекста) в Nova нет:
+Two conversion ways for different scenarios. `from` — the name-convention
+of a conversion-constructor (not a protocol-bound); a universal `v.into()`
+(Rust-style, target type from context) does not exist in Nova:
 
 ```nova
 // 1. as — compile-time, тривиальные cast'ы (D54)
@@ -1545,50 +1517,50 @@ ro msg = "id=${user_id}"                    // sugar над str.from(user_id) �
                                               // через Display/@display
 ```
 
-**Когда какая форма:**
+**Which form when:**
 
-- **`T.from(v)`** — целевой тип в начале, читается «build a Fahrenheit
-  from this Celsius». Единственная форма вызова конверсии — parallel
-  instance-формы (`v.into()`) нет.
-- Для method-chain — конкретные именованные методы `to_X()`/`into_X()`
-  (см. «Договорные конвенции» выше), не generic-конверсия по типу цели.
+- **`T.from(v)`** — the target type at the start, reads "build a Fahrenheit
+  from this Celsius". The only call form of a conversion — a parallel
+  instance form (`v.into()`) does not exist.
+- For method-chains — specific named methods `to_X()`/`into_X()`
+  (see "Contract conventions" above), not a generic conversion by the
+  target type.
 
-**Граница `as` vs `T.from`:**
+**The `as` vs `T.from` boundary:**
 
-- `as` — bit/tag-уровень, без runtime-кода: `100 as u32`, `id as u64`.
-- `T.from` — арифметика, парсинг, валидация: `Fahrenheit.from(c)`,
+- `as` — bit/tag-level, without runtime code: `100 as u32`, `id as u64`.
+- `T.from` — arithmetic, parsing, validation: `Fahrenheit.from(c)`,
   `User.from(json)`.
 
-**Граница D73 vs D55:** D55 — automatic coercion для record/sum-литералов
-в позиции с известным типом (`ro u User = { id: 1, name: "x" }`).
-`T.from(v)` — explicit method call для произвольных типов.
+**The D73 vs D55 boundary:** D55 — automatic coercion for record/sum-literals
+in a position with a known type (`ro u User = { id: 1, name: "x" }`).
+`T.from(v)` — an explicit method call for arbitrary types.
 
-**Граница применимости sum-lift (уточнена 2026-08-04).** Авто-обёртка в
-единственный подходящий unary-вариант работает для конкретных типов и для
-**generic-инстанциированного** именованного payload'а (`Node[K,V] enum
-Empty | Leaf(Wrap[K,V])`). Она НЕ работает, когда payload — **голый типовой
-параметр самой суммы** (`Wrapper[T] enum W(T) | Empty`): вид payload'а не
-сопоставляется с видом значения без подстановки `T`, а такой подстановки
-пока нет. Подробности и статус — в [амендменте
-D55](decisions/02-types.md#d55).
+**Where sum-lift stops (clarified 2026-08-04).** Auto-wrapping into the single
+matching unary variant works for concrete types and for a
+**generic-instantiated** named payload (`Node[K,V] enum Empty | Leaf(Wrap[K,V])`).
+It does NOT work when the payload is a **bare type parameter of the sum itself**
+(`Wrapper[T] enum W(T) | Empty`): the payload's kind is not matched against the
+value's kind without substituting `T`, and no such substitution exists yet.
+Details and status — in the [D55 amendment](decisions/02-types.md#d55).
 
-Подробно: [D54](decisions/03-syntax.md#d54), [D73](decisions/08-runtime.md#d73).
+Details: [D54](decisions/03-syntax.md#d54), [D73](decisions/08-runtime.md#d73).
 
 ## spawn / supervised / parallel for / detach
 
-См. [D14](decisions/06-concurrency.md#d14), [D50](decisions/06-concurrency.md#d50),
+See [D14](decisions/06-concurrency.md#d14), [D50](decisions/06-concurrency.md#d50),
 [D71](decisions/06-concurrency.md#d71).
 
 ### `spawn expr`
 
-`spawn` — keyword-конструкция (не функция). По спеке D50 — разрешён только внутри
-structured-scope (`supervised`, в т.ч. `supervised(cancel:)`, `parallel for`,
-`select`; и stdlib `race`/`with_timeout` внутри своих тел); вне scope —
-compile error.
+`spawn` is a keyword construct (not a function). Per the D50 spec — allowed
+only inside a structured-scope (`supervised`, incl. `supervised(cancel:)`,
+`parallel for`, `select`; and the stdlib `race`/`with_timeout` inside their
+bodies); outside a scope — a compile error.
 
-Внутри scope `spawn` кладёт fiber в очередь и возвращает unit; результат
-работы — через захваченные `mut`-переменные или каналы. `spawn() { body }`
-с пустыми скобками **запрещён** (нет смысла; `spawn` — не функция).
+Inside a scope `spawn` puts a fiber into a queue and returns unit; the
+result of the work — via captured `mut`-variables or channels. `spawn() { body }`
+with empty parentheses is **forbidden** (no point; `spawn` is not a function).
 
 ```nova
 supervised {
@@ -1597,11 +1569,11 @@ supervised {
 }
 ```
 
-#### Тип результата
+#### Result type
 
-**`spawn body` возвращает unit, всегда** (D50 + D71).
-Результат body не доступен caller'у. Чтобы получить значение от
-concurrent-выполнения:
+**`spawn body` returns unit, always** (D50 + D71).
+The body's result is not available to the caller. To get a value from a
+concurrent execution:
 
 ```nova
 // (1) прямой вызов — async прозрачный, suspension сама
@@ -1618,20 +1590,20 @@ supervised {
 }
 ```
 
-**`spawn` вне scope = compile error**: bare `spawn` вне
-structured-scope не компилируется. (Дополнительно: `spawn` всегда
-возвращает unit, поэтому `ro r = spawn { ... }` бессмысленно.)
+**`spawn` outside a scope = compile error**: a bare `spawn` outside a
+structured-scope does not compile. (Additionally: `spawn` always
+returns unit, so `ro r = spawn { ... }` is pointless.)
 
 ### `supervised { body }`
 
-Structured-concurrency scope. Все `spawn` внутри ждут scope-exit перед запуском;
-scheduler крутит resume по очереди (round-robin) пока все не завершатся. См.
-D71 для bootstrap-семантики.
+A structured-concurrency scope. All `spawn`s inside wait for scope-exit before
+launch; the scheduler resumes them in round-robin until all finish. See
+D71 for the bootstrap semantics.
 
-**Value-expression (Plan 173.1 Ф.1; D414 §4).** Возвращает своё
-trailing-выражение, вычисленное **после join'а всех детей** (post-join —
-мутации детей видны). Void-форма (без trailing) — unit. Прежняя
-bootstrap-заглушка «возвращает unit, trailing отбрасывается» снята.
+**Value-expression (Plan 173.1 Ф.1; D414 §4).** Returns its
+trailing-expression, evaluated **after joining all children** (post-join —
+children's mutations are visible). The void form (no trailing) — unit. The old
+bootstrap stub "returns unit, trailing discarded" is lifted.
 
 ```nova
 supervised {
@@ -1647,21 +1619,21 @@ ro total = supervised {
 }
 ```
 
-`Time.sleep(0)` внутри `supervised` body (на main-уровне) даёт main-flow yield
-к queued fibers'ам — один full pass scheduler'а очереди.
+`Time.sleep(0)` inside the `supervised` body (at the main level) yields the
+main-flow to queued fibers — one full pass of the scheduler queue.
 
 ### `parallel for x in iter { body }`
 
-Fan-out parallel map: для каждого элемента `iter` запускается fiber с `body`,
-результаты собираются в массив **в порядке завершения (completion order,
-Plan 173.1 Ф.2 / D414 §4 — плотный, без дыр; порядок итерации НЕ
-гарантирован; нужен порядок — `xs.sort()`)**. Тип возврата — `[]T`, где `T`
-— тип `body` (ЛЮБОЙ тип: примитив, record, value-record, tuple, sum,
-вложенный `[]T`), итератор — любой (Iter-protocol, без `len()`). Сбор —
-через внутренний канал (Sender-клон на spawn → send из ребёнка → close на
-выходе; drain-fiber внутри scope; буфер `K = min(len, 16)` back-pressure).
-Десугарится в supervised-scope с channel-дренажом.
-Loop-переменная захватывается **по value** (snapshot на момент spawn'а).
+A fan-out parallel map: for each element of `iter` a fiber with `body` is
+launched, results are collected into an array **in completion order
+(Plan 173.1 Ф.2 / D414 §4 — dense, no holes; iteration order NOT
+guaranteed; need order — `xs.sort()`)**. The return type — `[]T`, where `T`
+is the `body` type (ANY type: primitive, record, value-record, tuple, sum,
+nested `[]T`), the iterator — any (Iter-protocol, without `len()`). Collection —
+via an internal channel (Sender-clone at spawn → send from the child → close at
+exit; a drain-fiber inside the scope; a buffer `K = min(len, 16)` back-pressure).
+Desugars into a supervised-scope with channel-drain.
+The loop variable is captured **by value** (a snapshot at the moment of spawn).
 
 ```nova
 // Семантически: параллельный map.
@@ -1674,8 +1646,8 @@ fn fetch_all(urls []str) Net Fail -> []Response =>
     }
 ```
 
-**Не путать с обычным `for`!** `for x in iter { body }` — это **statement**
-(тип `unit`), тело для side-effects:
+**Do not confuse with an ordinary `for`!** `for x in iter { body }` is a
+**statement** (type `unit`), a body for side-effects:
 
 ```nova
 for url in urls {
@@ -1683,39 +1655,39 @@ for url in urls {
 }
 ```
 
-Для **sequential map** (собрать массив результатов последовательно) —
-использовать `.map()`, не `for`:
+For a **sequential map** (collect a result array sequentially) —
+use `.map()`, not `for`:
 
 ```nova
 ro names []str = users.map(|u| u.name)
 ro names []str = users.map() fn(u) => u.name      // trailing-fn
 ```
 
-Сводка:
+Summary:
 
-| Форма | Тип | Семантика |
+| Form | Type | Semantics |
 |---|---|---|
 | `for x in iter { body }` | `unit` | statement, side-effects |
 | `iter.map(\|x\| body)` | `[]T` | sequential map |
 | `parallel for x in iter { body }` (body has trailing) | `[]T` | parallel map (fan-out) |
 | `parallel for x in iter { body }` (no trailing) | `unit` | parallel side-effect loop |
 
-⚠ Bootstrap-ограничение: array-mode работает для T ∈ {int, bool,
-f64, str} и итераторов `a..b`, `a..=b`, array literal. Без trailing — старая
-семантика (statement, unit). См. D71 в decisions/06-concurrency.md.
+⚠ Bootstrap limitation: array-mode works for T ∈ {int, bool,
+f64, str} and iterators `a..b`, `a..=b`, array literal. Without a trailing —
+the old semantics (statement, unit). See D71 in decisions/06-concurrency.md.
 
 ### `detach { body }`
 
-Fire-and-forget: тело пушится на orphan-fiber (глобальный supervisor,
-не локальный scope) и исполняется асинхронно — caller возвращается
-мгновенно, тело переживает вызывающую функцию. Требует эффекта
-`Detach` в сигнатуре (D50; иначе `[E_DETACH_REQUIRES_EFFECT]`).
-Без объявления `detach` легален в теле `test`-блока (effect-root)
-и под ambient-handler'ом `with Detach = …` (мокинг в тестах).
+Fire-and-forget: the body is pushed onto an orphan-fiber (a global supervisor,
+not a local scope) and runs asynchronously — the caller returns
+immediately, the body outlives the calling function. Requires the `Detach`
+effect in the signature (D50; otherwise `[E_DETACH_REQUIRES_EFFECT]`).
+Without a declaration `detach` is legal in a `test`-block body (effect-root)
+and under an ambient-handler `with Detach = …` (mocking in tests).
 
-Ошибка/паника в detached-теле — **LogAndDrop**: лог в stderr, fiber
-умирает чисто, процесс и остальные fiber'ы продолжают (у сироты нет
-call-site — некому вернуть `Result`).
+An error/panic in a detached body — **LogAndDrop**: a log to stderr, the fiber
+dies cleanly, the process and the other fibers continue (an orphan has no
+call-site — nobody to return a `Result` to).
 
 ```nova
 fn handle_request(req Request) Net Db Detach -> Response {
@@ -1727,12 +1699,12 @@ fn handle_request(req Request) Net Db Detach -> Response {
 
 ### `supervised(cancel: tok) { body }`
 
-Structured cancellation с внешним токеном. Обычный `supervised`-scope
-с именованным аргументом `cancel:` ([D102](decisions/03-syntax.md#d102-именованные-аргументы-и-значения-параметров-по-умолчанию)).
-`tok` — **caller-owned** значение типа `CancelToken`: создаётся
-вызывающим кодом, переживает scope, может быть захвачен/передан.
-`tok.cancel()` извне валит все fiber'ы scope'а — на следующем
-yield-point они бросят `"scope cancelled"`.
+Structured cancellation with an external token. An ordinary `supervised`-scope
+with a named argument `cancel:` ([D102](decisions/03-syntax.md#d102-именованные-аргументы-и-значения-параметров-по-умолчанию)).
+`tok` — a **caller-owned** value of type `CancelToken`: created by the calling
+code, outlives the scope, can be captured/passed.
+`tok.cancel()` from outside brings down all the scope's fibers — at the next
+yield-point they throw `"scope cancelled"`.
 
 ```nova
 ro tok = CancelToken.new()
@@ -1748,15 +1720,15 @@ fetch_with_kill(urls, tok)
 ```
 
 Token capabilities: `tok.cancel()`, `tok.is_cancelled()`,
-`tok.bind(other)` для каскадной отмены. Один токен — один живой scope
-(bind-check). Подробно — [D75](decisions/06-concurrency.md#d75-supervisedcancel-tok--структурная-отмена-с-внешним-токеном).
+`tok.bind(other)` for cascade cancellation. One token — one live scope
+(bind-check). Details — [D75](decisions/06-concurrency.md#d75-supervisedcancel-tok--структурная-отмена-с-внешним-токеном).
 
-### `Channel[T]` и `select`
+### `Channel[T]` and `select`
 
-Coordination между fiber'ами через message-passing. `Channel[T]` —
-typed bounded channel с blocking-семантикой. **Единственный safe
-способ** разделять данные между fiber'ами в production-runtime
-(альтернатива — shared `mut` — UB при preemption).
+Coordination between fibers via message-passing. `Channel[T]` — a
+typed bounded channel with blocking semantics. **The only safe way** to share
+data between fibers in the production-runtime
+(an alternative — a shared `mut` — is UB under preemption).
 
 ```nova
 ro (tx, rx) = Channel[T].new(10)     // -> (ChanWriter[T], ChanReader[T]); cap 10 (0 = unbuffered)
@@ -1771,16 +1743,16 @@ while Some(msg) = rx.recv() {
 }
 ```
 
-`send`/`try_send` **забирают владение** отправленным значением — после
-`tx.send(value)` переменная `value` недоступна (использование = compile
-error, существующая линейная проверка D131). Причина: канал не копирует и не
-изолирует буфер — общий указатель на кучу без передачи владения был бы
-гонкой данных под M:N по построению (два fiber'а на разных ОС-потоках
-мутируют один объект). Намеренное разделение доступа к каналу (не значения!)
-— через `tx.share()` (доп. writer-handle на тот же буфер, D91), не через
-повторное использование уже отправленного значения.
+`send`/`try_send` **take ownership** of the sent value — after
+`tx.send(value)` the variable `value` is unavailable (usage = a compile
+error, the existing linearity check D131). Reason: the channel does not copy or
+isolate the buffer — a shared pointer to the heap without ownership transfer
+would be a data race under M:N by construction (two fibers on different
+OS-threads mutating one object). Deliberate sharing of access to the channel
+(not the value!) — via `tx.share()` (an extra writer-handle to the same
+buffer, D91), not via reuse of an already-sent value.
 
-`select { ... }` — мультиплексирование recv-операций с опциональным
+`select { ... }` — multiplexing recv operations with an optional
 `timeout` case:
 
 ```nova
@@ -1791,44 +1763,44 @@ select {
 }
 ```
 
-Если несколько арм'ов готовы одновременно — выбор псевдослучайный
-(Fisher-Yates shuffle, D94). Select-арм — Option-паттерн на ридере:
-`Some(v) = rx => …` (готов при значении) / `None = rx => …` (готов при
-closed-channel). Отдельного `<-`-оператора нет.
+If several arms are ready at once — the choice is pseudo-random
+(Fisher-Yates shuffle, D94). A select-arm is an Option-pattern on a reader:
+`Some(v) = rx => …` (ready on a value) / `None = rx => …` (ready on a
+closed channel). There is no separate `<-` operator.
 
-Полная семантика (closed-channel, owner-actor pattern, отказ от
+The full semantics (closed-channel, owner-actor pattern, rejection of
 Mutex/Atomic) — [D79](decisions/06-concurrency.md#d79); `select` —
 [D94](decisions/06-concurrency.md#d94).
 
 ### `Time.sleep(ms)`
 
-Yield-point. По D62 — обычная функция, callable откуда угодно (Async ambient).
-Семантика: блокирует текущий fiber на не менее чем `ms` миллисекунд.
+A yield-point. Per D62 — an ordinary function, callable from anywhere (Async ambient).
+Semantics: blocks the current fiber for no less than `ms` milliseconds.
 
-**Реализация (Plan 22 Ф.4):** под капотом — libuv `uv_timer_t`. Fiber
-паркуется через park/wake API ([D93](decisions/06-concurrency.md#d93))
-до срабатывания timer-callback'а. Scheduler в это время резюмит других
-fiber'ов либо идёт в `uv_run UV_RUN_ONCE` (kernel-wait, CPU idle).
+**Implementation (Plan 22 Ф.4):** under the hood — a libuv `uv_timer_t`. The fiber
+is parked via the park/wake API ([D93](decisions/06-concurrency.md#d93))
+until the timer-callback fires. The scheduler meanwhile resumes other
+fibers or goes into `uv_run UV_RUN_ONCE` (kernel-wait, CPU idle).
 
-| Контекст | Реализация |
+| Context | Implementation |
 |---|---|
-| Внутри fiber-body (spawn) внутри supervised | park-on-`uv_timer_t` (D93) — CPU idle, реальное время |
-| Вне fiber, внутри `supervised` body | drain queue пока deadline не пройдёт (Plan 22 Ф.5 → libuv-driven main) |
-| Полностью вне scope | native OS sleep (Plan 22 Ф.5 → implicit main-scope, libuv) |
+| Inside a fiber-body (spawn) inside supervised | park-on-`uv_timer_t` (D93) — CPU idle, real time |
+| Outside a fiber, inside the `supervised` body | drain the queue until the deadline passes (Plan 22 Ф.5 → libuv-driven main) |
+| Completely outside a scope | native OS sleep (Plan 22 Ф.5 → implicit main-scope, libuv) |
 
-Cancel ([D75](decisions/06-concurrency.md#d75-supervisedcancel-tok--структурная-отмена-с-внешним-токеном)) прерывает sleep
-**немедленно** через generic `stop_cb` mechanism (D93): cancel-token
-закрывает таймер и wake'ает parked fiber, который throw'ает `"scope
-cancelled"`. Не нужно ждать срабатывания timer'а.
+Cancel ([D75](decisions/06-concurrency.md#d75-supervisedcancel-tok--структурная-отмена-с-внешним-токеном)) interrupts a sleep
+**immediately** via a generic `stop_cb` mechanism (D93): a cancel-token
+closes the timer and wakes the parked fiber, which throws `"scope
+cancelled"`. No need to wait for the timer to fire.
 
-`Time.sleep(0)` — fast yield (один scheduler-pass, ~µs).
+`Time.sleep(0)` — a fast yield (one scheduler pass, ~µs).
 
-## Тестирование без моков
+## Testing without mocks
 
-`test "name" { body }` — тест-блок верхнего уровня. Имя — строковый
-литерал (любые символы, обычно человеческое описание поведения).
-Тело — обычный блок выражений; `assert(cond)` — функция из prelude
-([D26](decisions/08-runtime.md#d26)), обязательно со скобками как любой
+`test "name" { body }` — a top-level test block. The name — a string
+literal (any characters, usually a human description of behavior).
+The body — an ordinary block of expressions; `assert(cond)` — a prelude function
+([D26](decisions/08-runtime.md#d26)), necessarily with parentheses like any
 fn-call.
 
 ```nova
@@ -1849,15 +1821,16 @@ test "insert and get" {
 }
 ```
 
-Тесты собираются и запускаются только под `nova test`. В обычной сборке
-тело пропускается — никаких `#[cfg(test)]`-обвязок. Эффекты подменяются
-теми же `with`-блоками что и в проде, никакого mock-фреймворка.
+Tests are collected and run only under `nova test`. In an ordinary build
+the body is skipped — no `#[cfg(test)]` wrappers. Effects are substituted
+with the same `with`-blocks as in production, no mock framework.
 
-## Panic — не эффект, ловится только runtime'ом
+## Panic — not an effect, caught only by the runtime
 
-Деление на ноль, выход за границы массива, переполнение — это
-**не эффект**, это `Panic`. Программист **не ловит panic в коде** —
-panic означает смерть текущего fiber'а, runtime обрабатывает на границе:
+Division by zero, array out of bounds, overflow — these are
+**not an effect**, it is `Panic`. The programmer **does not catch panics in
+code** — a panic means the death of the current fiber, the runtime handles it
+at the boundary:
 
 ```nova
 fn mean(xs []int) -> int =>
@@ -1867,32 +1840,32 @@ fn handle(r Request) Db Log -> Response =>
     process(r)             // если panic — fiber умирает, runtime вернёт 500
 ```
 
-`panic` — это смерть **fiber'а**, не процесса. В сервере падает только
-текущий запрос, остальное работает. Если нужно гарантированно гасить
-процесс — отдельная функция `exit(code int, msg str) -> never`
+`panic` is the death of a **fiber**, not the process. In a server only the
+current request falls, everything else works. If you need to kill the
+process for sure — a separate function `exit(code int, msg str) -> never`
 ([D13](decisions/08-runtime.md#d13)).
 
-Подробно — [revolutionary.md R11](revolutionary.md), [D13](decisions/08-runtime.md#d13).
+Details — [revolutionary.md R11](revolutionary.md), [D13](decisions/08-runtime.md#d13).
 
-## Литералы коллекций: `#from_pairs` и `#from_fields`
+## Collection literals: `#from_pairs` and `#from_fields`
 
-Map-литерал `[k: v, …]` и record-литерал `{field: val}` умеют превращаться в
-пользовательский тип, если он помечен `#from_pairs` либо `#from_fields`.
+A map literal `[k: v, ...]` and a record literal `{field: val}` can turn into a
+user type if that type is marked `#from_pairs` or `#from_fields`.
 
-Единственное, что для этого требуется от типа, — **один статический конструктор**
-с необязательной вместимостью:
+The only thing the type has to provide is **one static constructor** with an
+optional capacity:
 
 ```nova
 export fn T[K, V].new(cap int = 16) -> Self
 ```
 
-Десугаринг вызывает его как `T.new(cap: <число элементов литерала>)` и дальше
-наполняет вставками. Обязателен **только** конструктор: прежние требования
-`mut @cap(n)` и `insert_new` сняты. Если тип имеет `insert_new` — десугаринг
-использует её как оптимизацию (метод может быть приватным), иначе берёт
-обычный `@insert`.
+Desugaring calls it as `T.new(cap: <number of elements in the literal>)` and
+then fills the value with inserts. **Only** the constructor is required: the
+former requirements `mut @cap(n)` and `insert_new` are dropped. If the type does
+have `insert_new`, desugaring uses it as an optimisation (the method may be
+private); otherwise it falls back to the ordinary `@insert`.
 
-Если тип помечен, но конструктора нет — это **ошибка компиляции** с указанием,
-чего не хватает, а не молчаливое игнорирование пометки.
+If a type carries the mark but has no constructor, that is a **compile error**
+naming what is missing — not a silently ignored mark.
 
-Норма — [D450](decisions/02-types.md).
+Normative text — [D450](decisions/02-types.md).

@@ -1,59 +1,66 @@
-# Nova — система эффектов
+---
+source_rev: 6759a7f11
+source_date: 2026-08-04
+---
 
-Это введение в концепцию. Полная развёртка с handler'ами, AI-first
-обоснованием и стандартным набором эффектов — в
-[revolutionary.md](revolutionary.md). Вопросы async, panic и
-эффект-стирания — в [D12](decisions/04-effects.md#d12), [D13](decisions/08-runtime.md#d13), [D14](decisions/06-concurrency.md#d14).
+> **Informative translation; the Russian text is normative.**
+>
+> Russian original (normative): [effects.md](effects.md)
 
-## Центральный принцип
+# Nova — the effect system
 
-Сеть, диск, время, случайность, лог, ошибка, мутация, запуск процесса
-(`std.os`, `Command.new(...).run()` — Plan 265 Ф.1, [D453](decisions/04-effects.md#d453)) — в Nova это
-всё **эффекты**. Функция объявляет в сигнатуре те эффекты, которые
-использует сама; вызовы других функций не тащат свои эффекты вверх
-(исключение — `Fail`, ошибки видны транзитивно). У каждого эффекта
-есть **handler**, который перехватывает его операции.
+This is an introduction to the concept. The full treatment with handlers,
+AI-first rationale, and the standard effect set — in
+[revolutionary.md](revolutionary.md). Questions of async, panic, and effect
+erasure — in [D12](decisions/04-effects.md#d12), [D13](decisions/08-runtime.md#d13), [D14](decisions/06-concurrency.md#d14).
 
-Если в сигнатуре нет прямых эффектов и функция не вызывает
-эффектные функции — она детерминирована (с оговоркой про Panic, см.
-ниже).
+## Central principle
+
+Network, disk, time, randomness, logging, errors, mutation — in Nova these
+are all **effects**. A function declares in its signature the effects it
+uses itself; calls to other functions do not pull those functions' effects
+up into the caller's signature (the exception is `Fail` — errors are visible
+transitively). Each effect has a **handler** that intercepts its operations.
+
+If a signature has no direct effects and the function calls no effectful
+functions — it is deterministic (with the caveat about Panic, see below).
 
 ### `effect` vs `protocol`
 
-В Nova два разных способа описать «что-то с операциями»:
+Nova has two different ways to describe "something with operations":
 
-- **«Как делать что-то»** — функция объявляет, что ей нужны
-  такие-то операции, а какая реализация будет под ними — решает
-  вызывающий код через `with`-блок (например, для прода —
-  Postgres, для теста — in-memory). Это **эффект**, объявляется
-  через `type X effect { ... }`.
-- **«Что умеет значение»** — реализация жёстко привязана к типу:
-  `int` хешируется так-то, `str` — так-то, и менять это нельзя.
-  Это **протокол**, объявляется через `type X protocol { ... }`.
+- **"How to do something"** — a function declares that it needs certain
+  operations, and which implementation sits underneath them is decided by
+  the calling code via a `with`-block (for production — Postgres, for
+  tests — in-memory). This is an **effect**, declared via
+  `type X effect { ... }`.
+- **"What a value can do"** — the implementation is tightly bound to the
+  type: `int` hashes this way, `str` that way, and that cannot be changed.
+  This is a **protocol**, declared via `type X protocol { ... }`.
 
-**Когда использовать эффект, а когда протокол в коде:** если
-хочется при тестировании использовать другую реализацию — это
-эффект. Если при тестировании мы просто работаем со значениями
-типа, и подменять там нечего — это протокол.
+**When to use an effect and when a protocol in code:** if you want a
+different implementation for testing — it is an effect. If testing just
+means working with values of the type and there is nothing to substitute —
+it is a protocol.
 
-### У эффекта нет полей
+### An effect has no fields
 
-У эффекта нет полей — только сигнатуры операций. State, если он
-нужен, живёт в окружении handler'а и попадает к нему через захват
-(как у обычного замыкания).
+An effect has no fields — only operation signatures. State, if needed,
+lives in the handler's environment and reaches it via capture (like an
+ordinary closure).
 
-## Эффект — это интерфейс + неявный параметр
+## An effect is an interface + an implicit parameter
 
-Самый точный способ понять:
+The most precise way to understand it:
 
-> **Эффект = интерфейс + неявный параметр, проверяемый компилятором.**
+> **Effect = interface + implicit parameter, checked by the compiler.**
 
-Три части:
-1. **Интерфейс** — набор операций с сигнатурами без реализации
-2. **Неявный параметр** — реализация передаётся через `with`-скоуп,
-   не через список аргументов
-3. **Проверяемый** — если функция использует операцию, эффект
-   обязан быть в её сигнатуре
+Three parts:
+1. **Interface** — a set of operations with signatures and no implementation
+2. **Implicit parameter** — the implementation is passed via the `with` scope,
+   not through an argument list
+3. **Checked** — if a function uses an operation, the effect
+   must be in its signature
 
 ```nova
 type Db effect {
@@ -79,16 +86,16 @@ fn main() Io -> () =>
     }
 ```
 
-`with` нужен **один раз**, в той точке, где выбирается реализация.
-Между этой точкой и местом вызова операции может быть сколько угодно
-функций — каждая из них объявляет эффект в сигнатуре, но `with` не
-повторяет. Это решает проблему «реализацию приходится передавать
-параметром через все промежуточные функции»: установил `with` один
-раз — она видна везде ниже по стеку.
+`with` is needed **once**, at the point where the implementation is chosen.
+Between that point and the operation call site there can be any number of
+functions — each of them declares the effect in its signature, but `with` is
+not repeated. This solves the problem of "the implementation has to be passed
+as a parameter through every intermediate function": you set `with` once —
+it is visible everywhere below on the stack.
 
-## Синтаксис
+## Syntax
 
-Эффекты идут **между списком параметров и `->`**:
+Effects go **between the parameter list and `->`**:
 
 ```nova
 fn double(x int) -> int                       // чистая
@@ -97,14 +104,14 @@ fn save(u User) Fail Db Log -> ()           // три эффекта
 fn fetch(url str) Net Fail -> Response
 ```
 
-Граница задана структурой: всё между `)` и `->` — эффекты.
+The boundary is given by structure: everything between `)` and `->` — effects.
 
-## Имена — обычные именованные типы
+## Names — ordinary named types
 
-Эффекты — это **именованные `effect`-типы** (по [D61](decisions/04-effects.md#d61)),
-в PascalCase. Объявляются через kind-токен `effect`, отличаются от
-структурных контрактов (`protocol`) семантикой `with`-substitution
-и continuation-capture.
+Effects are **named `effect`-types** (per [D61](decisions/04-effects.md#d61)),
+in PascalCase. Declared via the `effect` kind-token, distinguished from
+structural contracts (`protocol`) by the semantics of `with`-substitution
+and continuation-capture.
 
 ```nova
 type Logger effect {
@@ -116,24 +123,24 @@ ro console = effect Logger {
 }
 ```
 
-`effect Logger { ... }` — handler-литерал: то же ключевое слово `effect`,
-что и в декларации типа ([D61](decisions/04-effects.md#d61)/[D142](decisions/02-types.md#d142)
-— symmetry между декларацией и литералом для `effect`/`protocol`).
-**Старое ключевое слово `handler` для литерала retracted без
-deprecated-алиаса** (2026-05-23, clean break) — компилятор на встрече
-`handler X { ... }` выдаёт diagnostic «`handler` keyword removed; use
-`effect` (D142)». Однозначность с record-литералом (`User { id: 1 }`)
-обеспечивает сам keyword `effect`/`protocol`, а не отдельный префикс.
+`effect Logger { ... }` — a handler literal: the same `effect` keyword
+as in the type declaration ([D61](decisions/04-effects.md#d61)/[D142](decisions/02-types.md#d142)
+— symmetry between declaration and literal for `effect`/`protocol`).
+**The old `handler` keyword for the literal is retracted without a
+deprecated alias** (2026-05-23, clean break) — the compiler, on meeting
+`handler X { ... }`, emits a diagnostic "`handler` keyword removed; use
+`effect` (D142)". Unambiguity with a record literal (`User { id: 1 }`)
+is provided by the `effect`/`protocol` keyword itself, not a separate prefix.
 
-**Каждая операция handler-литерала обязана указывать `-> Тип` явно**
-([D434](decisions/04-effects.md#d434), 2026-07-22) — единственное
-место в языке, где раньше была синтаксическая опциональность
-return-типа. Пропуск даёт `E_INCOMPLETE_HANDLER_OP_DECL`, несовпадение
-с типом операции в декларации эффекта — `E_HANDLER_OP_RETURN_TYPE_MISMATCH`.
-Типы параметров при этом по-прежнему можно не повторять (`log(msg) ->
-() => ...`) — обязателен только возврат.
+**Every operation of a handler literal must state `-> Type` explicitly**
+([D434](decisions/04-effects.md#d434), 2026-07-22) — the only place in the
+language where the return type used to be syntactically optional. Omitting
+it gives `E_INCOMPLETE_HANDLER_OP_DECL`; a mismatch with the operation's
+type in the effect declaration gives `E_HANDLER_OP_RETURN_TYPE_MISMATCH`.
+Parameter types still don't have to be repeated (`log(msg) ->
+() => ...`) — only the return is mandatory.
 
-## Имя эффекта в коде — три позиции
+## The effect name in code — three positions
 
 ```nova
 fn process() Db -> ()                  // 1. позиция типа
@@ -141,40 +148,14 @@ Db.query(sql`...`)                     // 2. позиция операции
 ro captured = Db                      // 3. позиция выражения = активный handler
 ```
 
-Парсер различает по позиции.
+The parser distinguishes by position.
 
-## Стандартные эффекты
+## An effect list is a lower bound, not an exact description
 
-| Эффект | Что описывает |
-|---|---|
-| `Fail[E]` | Контракт для перехвата и обработки ошибки типа E |
-| `Io` | stdin/stdout/stderr |
-| `Fs` | Файловая система |
-| `Net` | Сетевые запросы |
-| `Db` | База данных |
-| `Time` | Часы, таймеры, задержки |
-| `Random` | RNG |
-| `Log` | Структурированный лог |
-| `Trace` | Распределённая трассировка |
-| `Ask[T]` | Чтение из контекста (как Reader) |
-| `Alloc[R]` | Аллокация в регионе R |
-| `Detach` | Fire-and-forget задача, переживающая caller'а ([D50](decisions/06-concurrency.md#d50)) |
-| `Blocking` | Синхронный C-вызов на blocking-pool потоке ([D50](decisions/06-concurrency.md#d50)) |
-
-`Async`, `Mut`, `Par` **не входят** в стандартный набор по
-[D62](decisions/04-effects.md#d62): `Async` — ambient capability
-(не часть type system'ы), `Mut` — заменяется специализированными
-эффектами, `Par` — runtime-keyword `parallel for` / `spawn`.
-
-Программист может объявлять собственные эффекты — это обычное
-объявление типа через `effect`.
-
-## Перечень эффектов — требование-минимум, а не точное описание
-
-Эффекты в объявлении функции читаются как **«умеет как минимум это»**. Отсюда
-правило подстановки: функцию можно передать всюду, где требуется **не больше**
-эффектов, чем она объявляет. Лишние эффекты сверх требования препятствием не
-являются.
+Effects on a function declaration read as **"can do at least this"**. Hence the
+substitution rule: a function may be passed wherever **no more** effects are
+required than it declares. Extra effects beyond the requirement are not an
+obstacle.
 
 ```nova
 fn run_handler[T, E](body fn() Fail[E] -> T) Fail[E] -> T => body()
@@ -183,34 +164,58 @@ fn user_handler() Time Fail[FwErr] -> int => 42
 ro v = run_handler(user_handler)
 ```
 
-Частный случай: `fn() -> T` не предъявляет требований и потому принимает функцию
-с любыми эффектами.
+Special case: `fn() -> T` requires nothing and therefore accepts a function with
+any effects.
 
-**Зачем так.** Библиотека, принимающая пользовательский код — роутер HTTP,
-планировщик, тест-раннер, повтор с политикой, итератор с обратным вызовом, — не
-может знать его эффекты: обработчик волен ходить в базу, в файлы, в сеть, спать
-и писать логи в любом сочетании. При трактовке «ровно это и ничего сверх»
-библиотека отвергала бы пользовательский код за то, что тот делает больше, чем
-предугадал её автор. Предугадать нельзя — значит фреймворки на таком правиле
-невыразимы.
+**Why.** A library that takes user code — an HTTP router, a scheduler, a test
+runner, a retry policy, an iterator with a callback — cannot know its effects:
+a handler may touch the database, files, the network, sleep and log, in any
+combination. Under an "exactly this and nothing more" reading, the library would
+reject user code for doing more than its author foresaw. Foreseeing is
+impossible, so frameworks would be inexpressible under that rule.
 
-**Гарантии от этого не слабеют.** «Ничего сверх» выражается отдельно —
-конструкцией `forbid E1, E2 { … }`. Две стороны разведены:
+**Guarantees are not weakened.** "Nothing beyond" is expressed separately, by
+`forbid E1, E2 { … }`. The two sides are kept apart:
 
-| конструкция | смысл | сторона |
+| construct | meaning | bound |
 |---|---|---|
-| эффекты в сигнатуре | «умеет как минимум это» | нижняя граница |
-| `forbid E1, E2 { … }` | «здесь нельзя это» | верхняя граница |
+| effects in a signature | "can do at least this" | lower |
+| `forbid E1, E2 { … }` | "this is not allowed here" | upper |
 
-Режим `--strict-effects` проверяет, что объявлено **не меньше**, чем
-используется, — то есть ту же нижнюю границу, только со стороны определения
-функции.
+`--strict-effects` checks that a function declares **no less** than it uses —
+the same lower bound, seen from the definition side.
 
-Норма — [D448](decisions/04-effects.md).
+Normative: [D448](decisions/04-effects.md).
 
-## Зачем это нужно
+## Standard effects
 
-### 1. Видно по типу, что вызов делает
+| Effect | What it describes |
+|---|---|
+| `Fail[E]` | Contract for catching and handling an error of type E |
+| `Io` | stdin/stdout/stderr |
+| `Fs` | File system |
+| `Net` | Network requests |
+| `Db` | Database |
+| `Time` | Clock, timers, delays |
+| `Random` | RNG |
+| `Log` | Structured logging |
+| `Trace` | Distributed tracing |
+| `Ask[T]` | Reading from context (like Reader) |
+| `Alloc[R]` | Allocation in region R |
+| `Detach` | A fire-and-forget task outliving the caller ([D50](decisions/06-concurrency.md#d50)) |
+| `Blocking` | A synchronous C call on a blocking-pool thread ([D50](decisions/06-concurrency.md#d50)) |
+
+`Async`, `Mut`, `Par` are **not** in the standard set per
+[D62](decisions/04-effects.md#d62): `Async` — ambient capability
+(not part of the type system), `Mut` — replaced by specialized
+effects, `Par` — the runtime keyword `parallel for` / `spawn`.
+
+A programmer can declare custom effects — that is an ordinary
+type declaration via `effect`.
+
+## Why this is needed
+
+### 1. The type shows what a call does
 
 ```nova
 ro x = double(5)            // не делает ничего
@@ -218,25 +223,25 @@ ro y = parse(s)?            // может упасть — обязан обра
 ro r = http.get(url)?       // ходит в сеть — видно в сигнатуре
 ```
 
-LLM (и человек), читая сигнатуру, **знает все побочные действия**.
-В Python/Java/Go этой информации в типе нет.
+An LLM (and a human) reading a signature **knows all the side effects**.
+In Python/Java/Go this information is absent from the type.
 
-### 2. Чистые функции отделены от грязных
+### 2. Pure functions are separated from impure ones
 
-Если в сигнатуре нет эффектов — компилятор знает: можно
-мемоизировать, вызвать в любом потоке, заменить на константу
-при равных входах.
+If a signature has no effects — the compiler knows: it can be
+memoized, called on any thread, replaced by a constant
+on equal inputs.
 
-### 3. Невозможно «случайно» добавить побочку
+### 3. It is impossible to "accidentally" add a side effect
 
-Кто-то добавил `Log.info(...)` в утилиту форматирования — компиляция
-у вызывающих **сломается**, потому что появился эффект `Log`. Тихо
-протащить нельзя. **Это фича.**
+Someone added `Log.info(...)` to a formatting utility — the build of
+the callers **breaks**, because the `Log` effect appeared. It cannot be
+smuggled in silently. **This is a feature.**
 
-## Прямые эффекты, не транзитивные ([D28](decisions/04-effects.md#d28))
+## Direct effects, not transitive ([D28](decisions/04-effects.md#d28))
 
-Сигнатура объявляет только эффекты, чьи операции функция вызывает
-**сама** — не эффекты вложенных вызовов:
+A signature declares only the effects whose operations the function calls
+**itself** — not the effects of nested calls:
 
 ```nova
 type Db effect {
@@ -252,61 +257,42 @@ fn helper(name str) -> () {
 }
 ```
 
-- **Прямой** эффект не объявлен → **compile error**, всегда — включая
-  СЫРОЙ вызов операции эффекта (`Db.exec(...)` без промежуточной
-  именованной fn): до [№131](decisions/04-effects.md#d62) этот call-shape
-  был энфорс-дырой (`E_RAW_EFFECT_OP_UNDECLARED` теперь закрывает её на
-  export-границе, той же границе, что у `!!`/[№113](decisions/04-effects.md#d85)
-  ниже — приватным доставляет D28-инференс).
-- **Транзитивный** эффект не объявлен → **warning**, подавляемый через
-  `#allow_transit(Db, Log)` на функции или `transit_effects = "off"` в
+- **A direct** effect undeclared → **compile error**, always — including a
+  RAW operation call (`Db.exec(...)` without an intermediate named fn):
+  until [№131](decisions/04-effects.md#d62) this call-shape was an
+  enforce-hole (`E_RAW_EFFECT_OP_UNDECLARED` now closes it at the export
+  boundary — the same boundary as `!!`/[№113](decisions/04-effects.md#d85)
+  below; private code gets D28 inference).
+- **A transitive** effect undeclared → **warning**, suppressible via
+  `#allow_transit(Db, Log)` on a function or `transit_effects = "off"` in
   `Nova.toml`.
-- **Флаг `--strict-effects`** (`nova check`/`build`/`test`, Plan 197) переводит
-  это предупреждение в жёсткую ошибку `E_UNDECLARED_TRANSITIVE_EFFECT` —
-  проектная конвенция требует собирать `std/**` и `examples/**` именно с этим
-  флагом (см. `CLAUDE.md`). Тот же флаг ловит `E_EFFECT_ERASED_IN_FN_TYPE` —
-  присваивание/передачу функции в более узкий по эффектам `fn(...) Row -> T`.
-- **`Fail[E]`** — исключение из «прямого»: throw остаётся **строго
-  транзитивным** и обязателен в сигнатуре везде, где может произойти
-  (см. «Операторы `?` и `!!`» ниже) — компилятор здесь не ослабляет
-  проверку никаким флагом.
-- **Авто-очистка (`@cleanup`, [D432](decisions/02-types.md#d432)) считается
-  ПРЯМЫМ эффектом** той функции, в чьём скоупе компилятор вставил вызов:
-  вызов физически генерируется в её теле. Держите `File` — в сигнатуре
-  появляется `Fs`; очистка может отказать — появляется `Fail[E]`. Без этого
-  уточнения правило читалось бы как «транзитивный», то есть выродилось бы в
-  предупреждение (амендмент D432 от 2026-08-04).
-- Приватная (без `export`) функция может **не писать** прямые эффекты
-  вручную вообще — компилятор выводит их из тела автоматически (в т.ч.
-  добавляет `Fail[E]`, если приватная функция где-то использует `!!`/`throw`).
-  В `export fn` прямые эффекты обязаны быть явными — это публичный контракт.
+- **The `--strict-effects` flag** (`nova check`/`build`/`test`, Plan 197) turns
+  this warning into a hard error `E_UNDECLARED_TRANSITIVE_EFFECT` —
+  the project convention requires building `std/**` and `examples/**` with
+  exactly this flag (see `CLAUDE.md`). The same flag catches
+  `E_EFFECT_ERASED_IN_FN_TYPE` — assigning/passing a function into a
+  `fn(...) Row -> T` narrower in effects.
+- **`Fail[E]`** — the exception to "direct": throw stays **strictly
+  transitive** and is mandatory in the signature everywhere it can occur
+  (see "The `?` and `!!` operators" below) — the compiler does not weaken
+  the check with any flag here.
+- **Auto-cleanup (`@cleanup`, [D432](decisions/02-types.md#d432)) counts as a
+  DIRECT effect** of the function in whose scope the compiler inserted the
+  call: the call is physically generated in its body. Hold a `File` — `Fs`
+  appears in the signature; the cleanup may fail — `Fail[E]` appears too.
+  Without this clarification the rule would read as "transitive", i.e. it
+  would degrade into a warning (D432 amendment, 2026-08-04).
+- A private (non-`export`) function can **not write** direct effects
+  by hand at all — the compiler infers them from the body automatically
+  (including adding `Fail[E]` if a private function uses `!!`/`throw`
+  somewhere). In `export fn` direct effects must be explicit — that is
+  the public contract.
 
-## Безопасность между файберами — свойство типа, требование на границе (D446)
+## Async — invisible infrastructure (D62)
 
-Правило одной фразой: **значение может быть достижимо более чем из одного
-файбера, только если оно неизменяемо, либо единолично принадлежит одному
-владельцу, либо его тип объявлен безопасным для одновременного использования —
-и это объявление проверено компилятором.**
-
-Проверяется тремя локальными шагами, без анализа достижимости:
-
-- у типа есть проверяемое свойство «безопасен для одновременного
-  использования»;
-- замыкание безопасно, если безопасно всё, что оно захватило;
-- функция, принимающая значение, которое ПОЗЖЕ будет исполняться параллельно
-  (установка middleware, регистрация обработчика), объявляет это требование в
-  своей подписи.
-
-Компилятор не выясняет, кто и откуда позовёт: каждый вход в параллельность сам
-требует свойства от того, что принимает. Подробности и обоснование —
-[D446](decisions/06-concurrency.md#d446).
-
-## Async — невидимая инфраструктура (D62)
-
-Suspension в Nova — **не эффект**, а ambient runtime-инфраструктура.
-**Без `Future<T>` в типе.** Без `await`. Цвет функции отсутствует.
-Программист не видит «может ли функция приостановиться» в её
-сигнатуре.
+Suspension in Nova is **not an effect** but ambient runtime infrastructure.
+**No `Future<T>` in the type.** No `await`. There is no function color.
+The programmer does not see "can this function suspend" in its signature.
 
 ```nova
 fn fetch(url str) Net -> Response => ...
@@ -317,46 +303,48 @@ fn handler(req Request) Net Db -> Response {
 }
 ```
 
-Под капотом — fiber-based scheduler (как Go/OCaml 5). Цена —
-килобайты памяти на fiber, миллион fiber'ов на машину — норма.
+Under the hood — a fiber-based scheduler (like Go/OCaml 5). The cost —
+kilobytes of memory per fiber; a million fibers per machine — normal.
 
-Если нужна гарантия «здесь нельзя приостанавливаться» — используется
-блок [`realtime { ... }`](decisions/04-effects.md#d64) как
-inverse-маркер.
+If you need the guarantee "no suspension allowed here" — use the
+[`realtime { ... }`](decisions/04-effects.md#d64) block as an
+inverse marker.
 
-Подробно — [decisions/06-concurrency.md#d14](decisions/06-concurrency.md#d14),
+Details — [decisions/06-concurrency.md#d14](decisions/06-concurrency.md#d14),
 [decisions/04-effects.md#d62](decisions/04-effects.md#d62).
 
-## Дефолтный handler без `with` ([D431](decisions/04-effects.md#d431))
+## Default handler without `with` ([D431](decisions/04-effects.md#d431))
 
-Некоторые эффекты (`Time` — эталонный пример) работают **без явного
-`with`**, если программист не подставил свой handler:
+Some effects (`Time` — the canonical example) work **without an explicit
+`with`**, if the programmer did not install their own handler:
 
 ```nova
 fn log_uptime() Time Io -> () =>
     println("${Time.now()}")   // handler не установлен — используется дефолтный (real-clock)
 ```
 
-Это не «эффект без handler'а» — компилятор синтезирует **ленивый,
-once-per-thread** дефолт-конструктор через атрибут
-`#default_handler(EffectName)` на обычной handler-литерал-фабрике в
-`.nv`-исходнике (не хардкод в Rust). `with Effect = ...` по-прежнему
-полностью переопределяет дефолт — механизм не теряет мокабельность,
-просто снимает необходимость писать `with` для типового bootstrap-случая.
+This is not "an effect without a handler" — the compiler synthesizes a
+**lazy, once-per-thread** default constructor via the
+`#default_handler(EffectName)` attribute on an ordinary handler-literal
+factory in `.nv` source (not a hardcode in Rust). `with Effect = ...`
+still fully overrides the default — the mechanism does not lose
+mockability, it just removes the need to write `with` for the typical
+bootstrap case.
 
-## Что НЕ эффект — Panic
+## What is NOT an effect — Panic
 
-Не каждое прерывание — эффект. **Аппаратные/математические сбои**
-не указываются в сигнатуре:
+Not every interruption is an effect. **Hardware/mathematical faults**
+are not stated in the signature:
 
-- Деление на ноль
-- Целочисленное переполнение
-- Выход за границы массива
-- Переполнение стека
+- Division by zero
+- Integer overflow
+- Out-of-bounds array access
+- Stack overflow
 - Out-of-memory
 
-Они образуют категорию `Panic`. Программист **не ловит panic в коде** —
-это смерть текущего fiber'а, runtime обрабатывает на границе:
+They form the `Panic` category. The programmer does **not catch panic in
+code** — it is the death of the current fiber, the runtime handles it at
+the boundary:
 
 ```nova
 import std.concurrency.supervisor as sup
@@ -372,56 +360,68 @@ fn server(ids []int) -> () =>
     }
 ```
 
-**Исход отмены виден в ЗНАЧЕНИИ области** ([D455](decisions/06-concurrency.md#d455)):
-область с `cancel:` возвращает не `T`, а `Outcome[T]` = `Done(T) | Cancelled`, и вызывающий
-разбирает исход `match`'ем. Без `cancel:` тип прежний — платит только тот, кто
-отмену заказал. Причина: отмена ничего не бросает, и без исхода в значении «область
-завершилась» и «область отменена» неразличимы — значит корректное завершение
-нечем проверить.
+The supervision strategy is an ordinary **effect-handler** (`Supervisor`,
+[D416](decisions/06-concurrency.md#d416)), not a named parameter:
+ready-made policies — `sup.stop()` (the failed one is "dropped", the others
+continue, its error is not lost — retained) and `sup.escalate()` (equivalent
+to the default: the error becomes primary, siblings are cancelled
+cooperatively). A custom policy — an ordinary handler literal:
+`on_child_fail(idx int, err any) -> Decision`,
+where `Decision` is `Escalate` or `Stop`. **The `Restart` family is absent
+from the vocabulary** (retracted 2026-07-10) — the restart idiom is foreign
+to structured concurrency for fibers; retry lives inside the child's body
+(`std.concurrency.retry`), not in the supervisor.
 
-Стратегия супервизии — обычный **эффект-handler** (`Supervisor`,
-[D416](decisions/06-concurrency.md#d416)), а не именованный параметр:
-готовые политики — `sup.stop()` (упавший «выкинут», остальные продолжают,
-его ошибка не теряется — retained) и `sup.escalate()` (эквивалент дефолта:
-ошибка становится primary, siblings кооперативно отменяются). Пользовательская
-политика — обычный handler-литерал: `on_child_fail(idx int, err any) -> Decision`,
-где `Decision` — `Escalate` или `Stop`. **`Restart`-семейство в словаре
-отсутствует** (ретрактировано 2026-07-10) — рестарт-идиома для fiber'ов
-инородна structured concurrency; повтор попытки живёт внутри тела ребёнка
-(`std.concurrency.retry`), не в супервизоре.
+`panic` is the death of a **fiber**, not the process. In a server only the
+current request falls, everything else keeps working. If you need to
+guaranteed-kill the process — a separate `exit(code, msg)` function ([D13](decisions/08-runtime.md#d13)).
 
-`panic` — это смерть **fiber'а**, не процесса. В сервере падает только
-текущий запрос, остальное работает. Если нужно гарантированно гасить
-процесс — отдельная функция `exit(code, msg)` ([D13](decisions/08-runtime.md#d13)).
+Otherwise `Fail[DivByZero]` would be in every other signature — the
+informativeness of effects would disappear. A conscious compromise,
+in detail — [decisions/08-runtime.md#d13](decisions/08-runtime.md#d13).
 
-Иначе `Fail[DivByZero]` оказался бы в каждой второй сигнатуре —
-информативность эффектов исчезла бы. Сознательный компромисс,
-подробно — [decisions/08-runtime.md#d13](decisions/08-runtime.md#d13).
+## Cross-fiber safety — a property of the type, a requirement at the boundary (D446)
 
-## Роли — `throw` / `Fail[E]` / handler
+The rule in one sentence: **a value may be reachable from more than one fiber
+only if it is immutable, or solely owned by one owner, or its type is declared
+safe for concurrent use — and that declaration is checked by the compiler.**
 
-Чтобы не путать слои, три участника обработки ошибок:
+It is checked in three local steps, without reachability analysis:
 
-- **`throw err`** — синтаксис языка, запускает ошибку. После `throw`
-  управление в эту точку не возвращается (тип операции `never`).
-- **`Fail[E]`** — эффект-контракт для перехвата и обработки ошибки.
-- **handler `Fail[E]`** — то, что перехватывает ошибку. У handler'а
-  ровно два исхода:
-  - завершить with-блок значением через `interrupt v`,
-  - перебросить ошибку дальше через `throw`.
+- a type carries a checkable "safe for concurrent use" property;
+- a closure is safe when everything it captured is safe;
+- a function that accepts a value which will LATER run concurrently
+  (installing middleware, registering a handler) declares that requirement in
+  its own signature.
 
-  Возобновить вызов в точке `throw` нельзя — тип операции `never`,
-  возвращать в эту точку нечего.
+The compiler does not work out who calls from where: every entry into
+concurrency demands the property from what it accepts. Details and rationale —
+[D446](decisions/06-concurrency.md#d446).
 
-## Операторы `?` и `!!`
+## Roles — `throw` / `Fail[E]` / handler
 
-Программист выбирает стиль обработки на месте использования
+To avoid confusing the layers, three participants in error handling:
+
+- **`throw err`** — language syntax, raises an error. After `throw`
+  control never returns to that point (the operation type is `never`).
+- **`Fail[E]`** — the effect contract for catching and handling an error.
+- **a `Fail[E]` handler** — what catches the error. A handler has
+  exactly two outcomes:
+  - complete the `with`-block with a value via `interrupt v`,
+  - rethrow the error further via `throw`.
+
+  Resuming the call at the `throw` point is impossible — the operation
+  type is `never`, there is nothing to return to that point.
+
+## The `?` and `!!` operators
+
+The programmer chooses the handling style at the usage site
 ([D85](decisions/04-effects.md#d85)):
 
-- **`expr?`** — return-стиль: «не получилось — обёртка наверх как
-  значение». Внешняя функция должна возвращать `Option`/`Result`.
-- **`expr!!`** — throw-стиль: «не получилось — throw через `Fail`».
-  Внешняя функция должна иметь `Fail[E]` в сигнатуре.
+- **`expr?`** — return-style: "didn't work — wrap it upward as a
+  value". The enclosing function must return `Option`/`Result`.
+- **`expr!!`** — throw-style: "didn't work — throw via `Fail`".
+  The enclosing function must have `Fail[E]` in its signature.
 
 ```nova
 fn pipeline_return(s str) -> Result[int, ParseError] {
@@ -437,23 +437,25 @@ fn pipeline_throw(s str) Fail[ParseError] -> int {
 }
 ```
 
-Оба оператора работают и для `Option[T]`, и для `Result[T, E]`. Для
-`Option!!` бросается `RuntimeNoneError` (prelude unit-тип). Методы-близнецы
-`.unwrap()` / `.unwrap_or(v)` / `.unwrap_or_else(f)` **ретрактированы**
-(2026-07-07) — единственный канонический путь операторный (`!!`, `??`),
-методов на `Option`/`Result` с тем же смыслом в prelude нет.
+Both operators work for `Option[T]` and `Result[T, E]` alike. For
+`Option!!`, `RuntimeNoneError` is thrown (a prelude unit type). The twin
+methods `.unwrap()` / `.unwrap_or(v)` / `.unwrap_or_else(f)` were
+**retracted** (2026-07-07) — the only canonical path is the operator one
+(`!!`, `??`); there are no methods on `Option`/`Result` with the same
+meaning in the prelude.
 
-**Энфорс на границе экспорта ([№113](decisions/04-effects.md#d85),
-2026-07-25).** `expr!!` в `export fn`, чья сигнатура не несёт совместимый
-`Fail[E]` (и throw не пойман локальным `with Fail = ... {}`) — compile
-error `E_BANG_REQUIRES_FAIL`. Для **приватных** функций это не действует —
-там работает D28 auto-inference (см. выше): `Fail` молча подставляется в
-эффект-строку, если тело использует `throw`/`!!`. Если `!!` защищает
-программный инвариант, а не реальную fallibility (типовой пример — сеттер
-над compile-time-известным литералом), выход — `?? panic("...")` вместо
-протаскивания `Fail` в публичную сигнатуру.
+**Enforcement at the export boundary ([№113](decisions/04-effects.md#d85),
+2026-07-25).** `expr!!` in an `export fn` whose signature carries no
+compatible `Fail[E]` (and the throw is not caught by a local
+`with Fail = ... {}`) — compile error `E_BANG_REQUIRES_FAIL`. For
+**private** functions this does not apply — D28 auto-inference works there
+(see above): `Fail` is silently inserted into the effect row if the body
+uses `throw`/`!!`. If `!!` guards a program invariant rather than real
+fallibility (typical example — a setter over a compile-time-known literal),
+the way out is `?? panic("...")` instead of dragging `Fail` into the public
+signature.
 
-Параллельно остаётся **`??`** — coalesce / кастомный fallback:
+In parallel, **`??`** remains — coalesce / custom fallback:
 
 ```nova
 ro port = config.get("port") ?? 8080                   // default
@@ -461,51 +463,27 @@ ro port = config.get("port") ?? throw MyError          // custom throw
 ro port = config.get("port") ?? panic("no port")       // panic (D13)
 ```
 
-Форма **`?? return ...`** (ранний выход из объемлющей функции) —
-**ретрактирована** ([D86](decisions/04-effects.md#d86) amend, 2026-07-23,
-`E_COALESCE_RETURN_FALLBACK`): она была второй дверью к `?`, а не
-независимой нишей. Канон вместо неё — `X?` (та же обёртка наружу),
-`.ok()?` (Result → функция отдаёт Option), `.map_err(...)?` (меняется тип
-ошибки), `.ok_or(err)?` (Option → функция отдаёт Result), либо явный
-`match`, если обёртки для проброса нет вовсе.
+The **`?? return ...`** form (early exit from the enclosing function) is
+**retracted** ([D86](decisions/04-effects.md#d86) amend, 2026-07-23,
+`E_COALESCE_RETURN_FALLBACK`): it was a second door to `?`, not an
+independent niche. The canon instead — `X?` (the same wrapper outward),
+`.ok()?` (Result → the function returns Option),
+`.map_err(...)?` (the error type changes),
+`.ok_or(err)?` (Option → the function returns Result), or an explicit
+`match`, if there is no wrapper to propagate at all.
 
-## Альтернатива: явный Result
+## Alternative: explicit Result
 
 ```nova
 fn parse(s str) -> Result[int, ParseError] => ...
 ```
 
-Два стиля одного и того же. `Fail` — сахар поверх `Result`.
-Дефолт для прикладного кода — `Fail` (читаемее), для библиотек
-с важным типом ошибки — явный `Result`.
+Two styles of the same thing. `Fail` — sugar over `Result`.
+The default for application code is `Fail` (more readable); for libraries
+with an important error type — explicit `Result`.
 
-## Как выглядит операция эффекта ([D456](decisions/04-effects.md#d456))
+## The main point
 
-Операция эффекта — обычная функция Nova, у которой отнят ровно один элемент:
-получатель `@`, потому что у эффекта нет инстанса. Всё остальное, что умеет
-язык, ей доступно и от неё ожидается — генерики, `Result`/`Option`, записи и
-суммы, коллекции, параметры-функции, именованные типы вместо голых чисел.
-
-Обратное — тоже правило: на границе эффекта не бывает отрицательного `errno`
-вместо ошибки, пустой строки как признака «нет», обхода по индексу
-(`_len` + `_at`), out-параметров, сырых ручек-`int`, счётчиков рядом с данными и
-`str`, в котором лежат не-UTF-8 байты. C-формы живут в `extern "C"`-слое `ffi.nv`
-и внутри `real_*`-обработчика: **обработчик — переводчик, а не сквозной канал.**
-
-Причина не в красоте. Граница эффекта — это ровно то, что видит автор мока, а
-подменяемость мы называем отличием языка: если в декларации видна C-форма,
-перевод просто не написан, и писать его придётся каждому, кто пишет тест.
-
-**Одно исключение, и оно не по замыслу:** generic-операция эффекта
-(`around[T](body fn() -> T) -> T`) сегодня НЕ работает — `nova check` её
-пропускает, `nova build` падает внутри Си-компилятора. Rank-2 полиморфизм в
-объявлении эффекта — открытый вопрос Q6; поддерживал его только ретрактированный
-bootstrap-интерпретатор. Для сравнения: generic-ПРОТОКОЛ работает и как bound, и
-непосредственно как тип (бокс с vtable) — проверено сборкой и запуском. Значит
-дело не в генериках, а в vtable эффекта. Реестр 221.1 №570.
-
-## Главный смысл
-
-Эффекты — это **обещание в сигнатуре** + **точка перехвата**. Один
-механизм для того, что в других языках разнесено по `try/catch`,
-`async/await`, dependency injection, моков и `unsafe`.
+Effects are a **promise in the signature** + a **catch point**. One
+mechanism for what other languages spread across `try/catch`,
+`async/await`, dependency injection, mocks, and `unsafe`.

@@ -100,7 +100,7 @@ if (mco_running()) {
   callback'и и наоборот.
 - **Top-level kernel-blocking.** `fn main() { Time.sleep(1000); }`
   блокирует thread, libuv не успеет обработать pending tasks.
-- **`spec/syntax.md:1517` лжёт:** «В bootstrap'е `ms` игнорируется» —
+- **`spec/syntax.ru.md:1517` лжёт:** «В bootstrap'е `ms` игнорируется» —
   это не так, реализация ждёт; spec не соответствует коду.
 
 ### Целевой target — declared vs measured
@@ -962,7 +962,7 @@ void nova_cancel_token_cancel(NovaCancelToken* t) {
 
 **Spec изменения:**
 
-- `spec/syntax.md:1509-1521` (раздел `Time.sleep(ms)`): **полностью
+- `spec/syntax.ru.md:1509-1521` (раздел `Time.sleep(ms)`): **полностью
   переписать**.
   + Удалить «В bootstrap'е `ms` игнорируется (timer-wheel'а нет)».
   + Удалить context-sensitive таблицу.
@@ -1182,7 +1182,7 @@ bench для regression coverage.
   (cancel pattern через generic stop_cb).
 - `spec/decisions/06-concurrency.md → D80`: cross-ref на D92 (top-level
   main implicit scope также имеет per-fiber handler scoping).
-- `spec/syntax.md`: проверить весь раздел `Time.sleep` точен.
+- `spec/syntax.ru.md`: проверить весь раздел `Time.sleep` точен.
 - `docs/project-creation.txt`: retro секция Plan 22 (по политике
   [feedback_project_docs](../../memory/feedback_project_docs.md)).
 - `docs/dev/simplifications.md`: retro секция Plan 22.
@@ -1365,7 +1365,7 @@ typedef NovaStopMode (*NovaCancelStopCb)(void* handle);
   + Use-cases: sleep — ASYNC, channel waitlist (Plan 21) — SYNC,
     socket-read (Plan 23+) — ASYNC, file-read — ASYNC.
 
-- `spec/open-questions.md`:
+- `spec/open-questions.ru.md`:
   + Удалить Q-D93-sync-async-stop (закрыто в D93).
 
 **Acceptance:**

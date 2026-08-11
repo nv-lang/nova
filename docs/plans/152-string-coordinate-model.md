@@ -24,7 +24,7 @@
   `Index[int,char]` (D238) = codepoint (O(n)); `@find`/`@rfind` отдают **codepoint**-
   offset, не композирующийся с байтовым slice; `@pad_*` обещают «width codepoints»,
   считают байты ([string.nv:728](../../std/runtime/string.nv#L728)).
-- **Спека противоречит коду:** [Q-string-indexing](../../spec/open-questions.md#q-string-indexing)
+- **Спека противоречит коду:** [Q-string-indexing](../../spec/open-questions.ru.md#q-string-indexing)
   ЗАКРЫТ в пользу «школы B» (всё codepoint-indexed, O(n)) — это надо
   **переоткрыть и развернуть** (см. §4).
 - **Прод-пробелы:** `to_lower/to_upper` ASCII-only (баг для Unicode);
@@ -462,7 +462,7 @@ Unicode-data pipeline) → 152.3b (char Unicode) → 152.5b (locale-collation/UC
 
 **Закрытие открытых вопросов (Q) — РЕШЕНИЯ (фиксируются в плане):**
 
-- **Q-string-indexing** ([open-questions.md](../../spec/open-questions.md#q-string-indexing))
+- **Q-string-indexing** ([open-questions.md](../../spec/open-questions.ru.md#q-string-indexing))
   — **ПЕРЕЗАКРЫТО: вариант «линзы / byte-coordinates»** (разворачивает прежнее
   закрытие «школа B / всё codepoint-indexed», 2026-05-07). `str` не индексируется
   целым (`E_STR_NO_INT_INDEX`); единственный `[]` — byte-range slice `str[a..b]`
@@ -624,7 +624,7 @@ Unicode-data pipeline) → 152.3b (char Unicode) → 152.5b (locale-collation/UC
 - D-блоки **D249–D255 + D258** зарезервированы под этот план (+ AMEND D26/D238/D58/
   D44/D183/D229). **D256/D257 заняты Plan 140.2** (Part A / Part B.0) — НЕ использовать.
   Другие агенты — с **D259**. Решения по Q закрыты в §4 — перенеси их записями в
-  `spec/decisions/` и `spec/open-questions.md` (Q-string-indexing переоткрыть и
+  `spec/decisions/` и `spec/open-questions.ru.md` (Q-string-indexing переоткрыть и
   закрыть заново).
 
 **Parallel-safety.** План **можно вести параллельно с Plan 140.2** (Vec bounds-as-
@@ -643,7 +643,7 @@ index-lowering в `emit_c.rs` руками. Общий `.git`: без `git stash
 **Definition of Done для каждого sub-plan** (без упрощений, прод-уровень):
 1. Реализация по scope файла `152.N`.
 2. Spec: D-блок(и) + амендменты в `spec/decisions/`; Q — записи-решения в
-   `spec/open-questions.md`.
+   `spec/open-questions.ru.md`.
 3. Доки: `docs/guide/strings.md` / `docs/dev/strings-internals.md` / `docs/dev/migration/*` (как
    указано в §4).
 4. Тесты: pos **и** neg фикстуры в `nova_tests/plan152_N/`, прогон через **релизные**

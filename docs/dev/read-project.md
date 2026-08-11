@@ -36,10 +36,10 @@ Nova — язык с эффектами и structured concurrency, компил�
 ## 1. Спека языка (`spec/`)
 
 ```
-spec/overview.md          — центральная идея, killer use-case, trade-offs
-spec/syntax.md            — грамматика, ключевые слова, литералы
+spec/overview.ru.md          — центральная идея, killer use-case, trade-offs
+spec/syntax.ru.md            — грамматика, ключевые слова, литералы
 spec/decisions/           — все D-блоки (01-philosophy ... 09-tooling)
-spec/open-questions.md    — что ещё не решено (Q-реестр)
+spec/open-questions.ru.md    — что ещё не решено (Q-реестр)
 ```
 
 Особое внимание: `04-effects.md` (эффекты/Fail/handler'ы), `02-types.md` (типы/протоколы/generics/D55-коэрсия),

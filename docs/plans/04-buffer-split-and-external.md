@@ -313,7 +313,7 @@ export external fn str.from(c char) -> Self    // UTF-8 encode 1-4 bytes
 
 4. **Обновить D5/D47** — короткое упоминание что `export external fn` валидно (порядок modifiers).
 
-5. **Закрыть Q-buffer** в `spec/open-questions.md`:
+5. **Закрыть Q-buffer** в `spec/open-questions.ru.md`:
    - Пометить `REPLACED → Q-string-builder + Q-write-buffer + Q-read-buffer`.
    - Сохранить раздел «Эволюция» с объяснением «split на три типа из-за смешения text+binary».
 
@@ -523,7 +523,7 @@ Buffer в std должны исчезнуть; в codegen — только ес�
 
 ## Связь с другими документами
 
-- **Q-buffer** (`spec/open-questions.md`) — ✅ closed 2026-05-07, будет REPLACED.
+- **Q-buffer** (`spec/open-questions.ru.md`) — ✅ closed 2026-05-07, будет REPLACED.
 - **D26** (`spec/decisions/08-runtime.md`) — prelude, расширяется.
 - **D30** (`spec/decisions/03-syntax.md`) — naming, расширяется (полные слова).
 - **D52** (`spec/decisions/02-types.md`) — kind-tokens, **не** расширяется (`external type` не вводим).

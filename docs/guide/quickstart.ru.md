@@ -189,7 +189,7 @@ nova build mini_aggregator.nv -o mini_agg
 
 ## Куда дальше
 
-- [spec/overview.md](../../spec/overview.md) — основные идеи, что у кого
+- [spec/overview.ru.md](../../spec/overview.ru.md) — основные идеи, что у кого
   заимствовано, обзор тулинга.
 - [examples/flagship/aggregator](../../examples/flagship/aggregator) —
   полноразмерная версия примера выше: настоящий HTTP-сервер (через пакет

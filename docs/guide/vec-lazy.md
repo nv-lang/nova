@@ -51,7 +51,7 @@ v.lazy()  →  BoxIter[T]   →  .map(..) .filter(..) ...   →  terminator
 | Result | a `Vec` after each adapter | a value/`Vec` only at the terminator |
 
 Lazy is the **canonical, allocation-free** path
-([Q-iterator-laziness](../../spec/open-questions.md)). The eager `vec_seq`
+([Q-iterator-laziness](../../spec/open-questions.ru.md)). The eager `vec_seq`
 combinators are retained as a transitional surface; reach for `lazy()` when you
 chain more than one step or want short-circuiting.
 
@@ -322,6 +322,6 @@ for batch in batches {
 - [D264](../../spec/decisions/02-types.md#d264-vec-протоколы-hash--fromiterator--collect-target-plan-1536) — Hash + FromIterator / collect-target.
 - [D277](../../spec/decisions/02-types.md#d277-by-value-мономорфизация-generic-value-records--generic-over-source-zero-cost-адаптеры-plan-1532-ф2) — by-value `BoxIter` monomorphization + the zero-cost `vec_iter_zc` sibling.
 - [D58]: ../spec/decisions/03-syntax.md — `Iter`/`Next` structural iteration.
-- [Q-iterator-laziness](../../spec/open-questions.md) — why lazy is the canon.
+- [Q-iterator-laziness](../../spec/open-questions.ru.md) — why lazy is the canon.
 
 [D58]: ../spec/decisions/03-syntax.md

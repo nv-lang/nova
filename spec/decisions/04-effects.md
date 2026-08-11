@@ -6738,7 +6738,7 @@ effect-операции, same-module `to_str()`-коллизия на `int`-rece
 
 ### Amend — `str @to_bool()` / `str @to_char()` (Plan 232.1 Т1, owner decision «добавить», 2026-07-26)
 
-Закрыты два ❓-пробела `spec/conversions.md` (str→bool, str→char), оставшиеся
+Закрыты два ❓-пробела `spec/conversions.ru.md` (str→bool, str→char), оставшиеся
 после Plan 174.1 «конверсия — метод на источнике». Оба — R1/R2-конформны
 (обычное имя `to_*`, без `try_`-префикса — infallible-сиблинга нет), домфайл
 `std/src/runtime/string/parse.nv` (рядом с `to_int`/`to_f64`, тот же
@@ -8107,7 +8107,7 @@ ro v = run_handler(user_handler)                  // законно: Fail[E] е�
 рантайм не имел ни одного хука под этот эффект. Следствие: `Uuid.v4()`,
 идентификаторы сессий, ключи API, nonce — предсказуемы; документированная
 безопасность была фикцией. `secure() -> Effect[Random]` (черновое имя)
-числился открытым вопросом (`spec/open-questions.md` Q-stdlib-minimal-api,
+числился открытым вопросом (`spec/open-questions.ru.md` Q-stdlib-minimal-api,
 `docs/plans/222.20-design-note.md` §4 Q4).
 
 ### Решение
@@ -8188,7 +8188,7 @@ Amends [D431](#d431-default_handlerx--ambient-lazy-default-handler-factory-дл�
 паника-на-отказе, НЕ переиспользован напрямую, см. п.4) · `real_time()`/
 `real_os()`/`real_fs()`/`real_net()`/`real_io()` (та же именная семья) ·
 №553 (`docs/plans/221.1-bug-sweep.md`) · план [265](../../docs/plans/265-stdlib-surface-gaps.md)
-Ф.3 · `spec/open-questions.md` (Q-stdlib-minimal-api, `secure()`-черновик
+Ф.3 · `spec/open-questions.ru.md` (Q-stdlib-minimal-api, `secure()`-черновик
 закрыт этим D-блоком под именем `real_random()`) · `docs/plans/222.20-design-note.md` §4 Q4.
 
 ---

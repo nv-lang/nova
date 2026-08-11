@@ -8,7 +8,7 @@
 
 Сделать так, чтобы для **любого** container'а (built-in array `[]T`, built-in `str`, любой user-type — `HashMap`, `Lru`, `Set`, `Range`, `Deque`, `Queue`, `Vec` и т.д.) запись `c.len()` была единственным легальным способом узнать размер, а `c.len` без скобок — compile-error с machine-applicable fix-it. То же — для `cap`, `byte_len`, `is_empty`.
 
-Желаемое состояние = Rust (где `vec.len()`, `slice.len()`, `str.len()` — все method'ы, и никакого field-access нет). Альтернативный подход — TS-style property (no parens) — мы **сознательно отвергаем**, потому что Nova spec [syntax.md:820](../../spec/syntax.md#L820) и [D-блок computed property](../../spec/decisions/03-syntax.md) явно запрещают «property с эффектами / O(n) скрытой стоимостью» (см. §«Открытые вопросы», п. 5).
+Желаемое состояние = Rust (где `vec.len()`, `slice.len()`, `str.len()` — все method'ы, и никакого field-access нет). Альтернативный подход — TS-style property (no parens) — мы **сознательно отвергаем**, потому что Nova spec [syntax.md:820](../../spec/syntax.ru.md#L820) и [D-блок computed property](../../spec/decisions/03-syntax.md) явно запрещают «property с эффектами / O(n) скрытой стоимостью» (см. §«Открытые вопросы», п. 5).
 
 ---
 
@@ -63,7 +63,7 @@ fn report(vec []int, map HashMap[str, int]) -> () {
 }
 ```
 
-LLM-сгенерированный код регулярно перемешивает обе формы — это попадает на ревью, ломает CI, требует ручного fix. AI-first language такого допускать не должен (см. spec/overview.md §«Killer use-case»).
+LLM-сгенерированный код регулярно перемешивает обе формы — это попадает на ревью, ломает CI, требует ручного fix. AI-first language такого допускать не должен (см. spec/overview.ru.md §«Killer use-case»).
 
 ---
 
@@ -72,7 +72,7 @@ LLM-сгенерированный код регулярно перемешив�
 | Alternative | Почему отвергнут |
 |---|---|
 | **Field-style для всех типов** | Не выразимо для user-types — HashMap внутри `_count` + invariant'ы; exposing field ломает encapsulation. |
-| **TS/Swift-style property (no parens)** | Противоречит [syntax.md:820](../../spec/syntax.md#L820) «скобки обязательны для вызова». Принципиальное решение Nova — predictable cost: `()` = «здесь происходит вычисление, возможно O(n)». Property-syntax спрячет O(n) `nova_str_char_len`. |
+| **TS/Swift-style property (no parens)** | Противоречит [syntax.md:820](../../spec/syntax.ru.md#L820) «скобки обязательны для вызова». Принципиальное решение Nova — predictable cost: `()` = «здесь происходит вычисление, возможно O(n)». Property-syntax спрячет O(n) `nova_str_char_len`. |
 | **`len(x)` builtin (Go-style)** | Грязная зона — добавляет global-function-namespace конфликт с user-types; не работает с method-chaining `vec.map(f).len()`; противоречит D29 «один способ» (уже есть method-call syntax). |
 | **Migration через feature-flag / GrowthBook** | Compile-error даёт мгновенный, видимый migration signal — ровно тот случай, когда flag вреден. |
 | **Оставить как есть** | Java-style inconsistency. Минимум одна public-API ошибка, видная LLM с первой строки stdlib. AI-first → unacceptable. |
@@ -270,7 +270,7 @@ LLM-сгенерированный код регулярно перемешив�
    **Decision (proposed):** да на 2 символа, нет семантически. Альтернатива `for x in arr` (D58 Iter[T]) уже доступна и предпочтительна. Loop с индексом — anti-pattern в Nova; D117 это **усиливает**, что хорошо.
 
 5. **TS-style property syntax — закрытая дверь навсегда?**
-   **Decision (proposed):** да, для bootstrap. Через 2-3 года, после стабилизации языка, можно вернуться к D-block «const-property» (computed property с compile-time гарантией purity + O(1)), но **не сейчас** — слишком много неопределённости в effect-system interaction. Запись в `spec/open-questions.md` как Q-const-property.
+   **Decision (proposed):** да, для bootstrap. Через 2-3 года, после стабилизации языка, можно вернуться к D-block «const-property» (computed property с compile-time гарантией purity + O(1)), но **не сейчас** — слишком много неопределённости в effect-system interaction. Запись в `spec/open-questions.ru.md` как Q-const-property.
 
 6. **`.len` для тип-параметрических контейнеров с bound `Sized`?**
    Не нужно — Nova не имеет `Sized` bound (D32 layout фиксирован для всех типов). N/A.
@@ -308,7 +308,7 @@ LLM-сгенерированный код регулярно перемешив�
 
 ## Ссылки
 
-- [spec/syntax.md:820](../../spec/syntax.md#L820) — «Скобки обязательны для вызова».
+- [spec/syntax.ru.md:820](../../spec/syntax.ru.md#L820) — «Скобки обязательны для вызова».
 - [spec/decisions/02-types.md#d32](../../spec/decisions/02-types.md#d32) — array layout `(ptr, len, cap)`.
 - [spec/decisions/03-syntax.md#d38](../../spec/decisions/03-syntax.md#d38) — built-in sugar (будет amended).
 - [spec/decisions/08-runtime.md#d26](../../spec/decisions/08-runtime.md#d26) — prelude API.

@@ -6,7 +6,7 @@
 > Ф.5 (stdlib `within`/`race`) отложена с явной причиной (см. ниже).
 >
 > **Реализует:** ревизию [D75](../../spec/decisions/06-concurrency.md#d75-supervisedcancel-tok--структурная-отмена-с-внешним-токеном)
-> (2026-05-14) + закрытие [Q-cancel_scope-lambda-syntax](../../spec/open-questions.md).
+> (2026-05-14) + закрытие [Q-cancel_scope-lambda-syntax](../../spec/open-questions.ru.md).
 >
 > **Зависит от:** [Plan 46](46-named-parameters.md) (именованные
 > аргументы — `supervised(cancel: tok)` использует `cancel:` как

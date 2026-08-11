@@ -744,7 +744,7 @@ fn left_pad(s str, w int) -> str {
 ### 20.2 Exhaustive `match` по sum-типам; избегай `_`-catch-all на доменных sum-типах
 
 - **Доменный sum-тип — `match` исчерпывающе, БЕЗ `_`** (`nova_tests/plan103_1/ordering_enum_match.nv:10-16`).
-  Spec предписывает exhaustive (`spec/syntax.md:655`); hard compile-error fires в const-fn
+  Spec предписывает exhaustive (`spec/syntax.ru.md:655`); hard compile-error fires в const-fn
   (`E_CONST_FN_MATCH_EXHAUSTIVE`, `const_fn_eval.rs`). Для runtime-`match` общего
   exhaustiveness-gate в текущей реализации НЕТ — это конвенция стиля + ревью, поэтому
   `_`-catch-all на домене опасен вдвойне (компилятор не подстрахует при добавлении варианта).
@@ -752,7 +752,7 @@ fn left_pad(s str, w int) -> str {
   `03-syntax.md:1459`; реально `std/collections/hashmap.nv:417` `if Some(v) = @get(key)`).
 - **Дешёвое да/нет — `is`** (переиспользует sum-discriminant, без глобального RTTI,
   `03-syntax.md:3215-3333`). **Не пиши предикат-метод `@is_X()`** — для этого есть `is`
-  (`spec/syntax.md:410-418`).
+  (`spec/syntax.ru.md:410-418`).
 
 ```nv
 // доменный sum-тип: match исчерпывающе, БЕЗ `_`

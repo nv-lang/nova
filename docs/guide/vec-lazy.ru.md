@@ -57,7 +57,7 @@ v.lazy()  →  BoxIter[T]   →  .map(..) .filter(..) ...   →  terminator
 | Результат | `Vec` после каждого адаптера | значение/`Vec` только на терминаторе |
 
 Ленивость — это **канонический, безаллокационный** путь
-([Q-iterator-laziness](../../spec/open-questions.md)). Жадные комбинаторы
+([Q-iterator-laziness](../../spec/open-questions.ru.md)). Жадные комбинаторы
 `vec_seq` сохранены как переходная поверхность; бери `lazy()`, когда чейнишь
 больше одного шага или хочешь short-circuit.
 
@@ -338,6 +338,6 @@ for batch in batches {
 - [D264](../../spec/decisions/02-types.md#d264-vec-протоколы-hash--fromiterator--collect-target-plan-1536) — Hash + FromIterator / collect-target.
 - [D277](../../spec/decisions/02-types.md#d277-by-value-мономорфизация-generic-value-records--generic-over-source-zero-cost-адаптеры-plan-1532-ф2) — by-value мономорфизация `BoxIter` + zero-cost собрат `vec_iter_zc`.
 - [D58]: ../spec/decisions/03-syntax.md — структурная итерация `Iter`/`Next`.
-- [Q-iterator-laziness](../../spec/open-questions.md) — почему ленивость — канон.
+- [Q-iterator-laziness](../../spec/open-questions.ru.md) — почему ленивость — канон.
 
 [D58]: ../spec/decisions/03-syntax.md

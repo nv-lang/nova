@@ -12,10 +12,9 @@
 # ЧТО ПРОВЕРЯЕТ (шесть независимых проверок; LC_ALL=C — байтовый grep,
 # урок msys2 2026-07-31: не-ASCII без LC_ALL=C молча даёт 0 хитов):
 #
-#   1. spec_en_header  — у КАЖДОГО `spec/X.en.md`, для которого существует
-#      ru-оригинал `spec/X.md` (это и есть перевод-пара; файлы без ru-
-#      оригинала — напр. `spec/GLOSSARY.en.md`, самостоятельный рабочий
-#      словарь без ru-версии, — НЕ перевод и этой проверкой не считаются),
+#   1. spec_en_header  — у КАЖДОГО английского `spec/X.md`, для которого существует
+#      ru-оригинал `spec/X.ru.md` (это и есть перевод-пара; пара теперь обязательна
+#      для всех публичных страниц — см. `check-doc-language-pairs.sh`, реестр №8, №9),
 #      обязаны быть в первых 15 строках: точная фраза «Informative
 #      translation; the Russian text is normative.» + `source_rev:` +
 #      `source_date: YYYY-MM-DD`. До первого перевода — 0 пар — вакуумно-
@@ -54,7 +53,7 @@
 #
 #   5. code_block_identity (ratchet) — для КАЖДОЙ обнаруженной пары
 #      (guide: `X.md`/`X.ru.md` по факту наличия обеих сторон, вне
-#      зависимости от PUBLISHED.list; spec: `X.en.md`/`X.md`) код-блоки
+#      зависимости от PUBLISHED.list; spec: `X.md`/`X.ru.md`) код-блоки
 #      (```-фенсы по порядку) обязаны быть байт-в-байт идентичны
 #      (`#compilable-examples`/`#translation-drift`: «код-примеры
 #      переносятся байт-в-байт»). НАЙДЕННЫЙ ДОЛГ на момент введения
@@ -90,7 +89,7 @@ info() { echo "$1"; }
 red() { echo "DOC-CONVENTIONS FAIL: $1" >&2; fail=1; }
 
 # ---------------------------------------------------------------------
-# 1. spec/*.en.md — шапка + frontmatter (только реальные переводы, т.е.
+# 1. английские spec/*.md — шапка + frontmatter (только реальные переводы, т.е.
 #    файлы, у которых есть ru-оригинал spec/X.md).
 # ---------------------------------------------------------------------
 spec_dir="$ROOT/spec"
@@ -98,10 +97,11 @@ spec_pairs_checked=0
 spec_violations=0
 if [ -d "$spec_dir" ]; then
     shopt -s nullglob
-    for enf in "$spec_dir"/*.en.md; do
-        base="$(basename "$enf" .en.md)"
-        ruf="$spec_dir/$base.md"
-        [ -f "$ruf" ] || continue  # не пара перевода (напр. GLOSSARY.en.md) — вне периметра
+    for enf in "$spec_dir"/*.md; do
+        case "$enf" in *.ru.md) continue ;; esac
+        base="$(basename "$enf" .md)"
+        ruf="$spec_dir/$base.ru.md"
+        [ -f "$ruf" ] || continue  # нет ru-оригинала — это ловит check-doc-language-pairs.sh
         spec_pairs_checked=$((spec_pairs_checked + 1))
         head15="$(head -15 "$enf")"
         ok=1
@@ -116,7 +116,7 @@ if [ -d "$spec_dir" ]; then
     shopt -u nullglob
 fi
 if [ "$spec_pairs_checked" -eq 0 ]; then
-    info "doc-conventions ok (вакуумно): spec/*.en.md пар с ru-оригиналом пока нет"
+    info "doc-conventions ok (вакуумно): spec-пар с ru-стороной пока нет"
 else
     [ "$spec_violations" -eq 0 ] && info "doc-conventions ok: spec_en_header — $spec_pairs_checked пар(ы), 0 нарушений"
 fi
@@ -198,10 +198,11 @@ if [ -n "$DIFF_BASE" ] && git -C "$ROOT" cat-file -e "$DIFF_BASE^{commit}" >/dev
     done
     if [ -d "$spec_dir" ]; then
         shopt -s nullglob
-        for enf in "$spec_dir"/*.en.md; do
-            base="$(basename "$enf" .en.md)"
+        for enf in "$spec_dir"/*.md; do
+            case "$enf" in *.ru.md) continue ;; esac
+            base="$(basename "$enf" .md)"
             [ -f "$spec_dir/$base.md" ] || continue
-            check_pair_same_commit "spec/$base.md" "spec/$base.en.md" "$base"
+            check_pair_same_commit "spec/$base.ru.md" "spec/$base.md" "$base"
         done
         shopt -u nullglob
     fi
@@ -302,9 +303,10 @@ for name in $discovered_guide_pairs; do
 done
 if [ -d "$spec_dir" ]; then
     shopt -s nullglob
-    for enf in "$spec_dir"/*.en.md; do
-        base="$(basename "$enf" .en.md)"
-        ruf="$spec_dir/$base.md"
+    for enf in "$spec_dir"/*.md; do
+        case "$enf" in *.ru.md) continue ;; esac
+        base="$(basename "$enf" .md)"
+        ruf="$spec_dir/$base.ru.md"
         [ -f "$ruf" ] || continue
         fences_en="$(extract_code_fences "$enf")"
         fences_ru="$(extract_code_fences "$ruf")"
@@ -316,7 +318,7 @@ if [ -d "$spec_dir" ]; then
     shopt -u nullglob
 fi
 [ -n "$mismatch_names" ] && info "doc-conventions: код-блоки расходятся у пар:$mismatch_names (долг, см. baseline)"
-ratchet_check code_block_mismatch_pairs "$code_block_mismatch_pairs" "пары X.md/X.ru.md(.en.md) с несовпадающими code-fence блоками"
+ratchet_check code_block_mismatch_pairs "$code_block_mismatch_pairs" "пары X.md/X.ru.md с несовпадающими code-fence блоками"
 
 # ---------------------------------------------------------------------
 # ---------------------------------------------------------------------
@@ -365,7 +367,7 @@ fi
 
 # ---------------------------------------------------------------------
 # 7. mixed_language (ratchet): кириллица в файлах, которые ОБЯЗАНЫ быть
-#    английскими (docs/guide/X.md без .ru, spec/X.en.md, README.md).
+#    английскими (X.md без `.ru.` — и в docs/guide, и в spec, README.md).
 #    Грубая эвристика по совету консультанта: считаем файлы, где ВНЕ
 #    ```-блоков больше 1 строки с кириллицей (одна допустима — строка
 #    переключателя языка со словом «Русский»). Ловит именно смешение
@@ -417,9 +419,8 @@ if [ -d "$guide_dir" ]; then
     done
 fi
 if [ -d "$spec_dir" ]; then
-    for f in "$spec_dir"/*.en.md; do
-        # GLOSSARY.en.md — двуязычный словарь по назначению, не перевод
-        case "$f" in */GLOSSARY.en.md) continue ;; esac
+    for f in "$spec_dir"/*.md; do
+        case "$f" in *.ru.md) continue ;; esac
         check_mixed "$f"
     done
 fi
@@ -477,7 +478,7 @@ fi
 
 # ---------------------------------------------------------------------
 # 8. translation_drift (ПРЕДУПРЕЖДЕНИЕ НАВСЕГДА, не храповик — совет ревью).
-#    Для каждого spec/X.en.md сравниваем source_rev с последним коммитом,
+#    Для каждого английского spec/X.md сравниваем source_rev с последним коммитом,
 #    тронувшим источник spec/X.md, и печатаем ГРАДУИРОВАННУЮ величину:
 #    сколько СОДЕРЖАТЕЛЬНЫХ строк набежало (правки одного frontmatter не
 #    считаются). Порога нет намеренно: срочность оценивает человек.
@@ -493,11 +494,11 @@ if [ -d "$spec_dir" ] && command -v git >/dev/null 2>&1 &&
    git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then
     drift_lines_total=0
     drift_names=""
-    for enf in "$spec_dir"/*.en.md; do
+    for enf in "$spec_dir"/*.md; do
         [ -f "$enf" ] || continue
-        case "$enf" in */GLOSSARY.en.md) continue ;; esac
-        base_name="$(basename "$enf" .en.md)"
-        ruf="spec/$base_name.md"
+        case "$enf" in *.ru.md) continue ;; esac
+        base_name="$(basename "$enf" .md)"
+        ruf="spec/$base_name.ru.md"
         [ -f "$ROOT/$ruf" ] || continue
         rev=$(awk -F': *' '/^source_rev:/{gsub(/[" ]/,"",$2); print $2; exit}' "$enf")
         [ -n "$rev" ] || continue

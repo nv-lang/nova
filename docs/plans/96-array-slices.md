@@ -15,7 +15,7 @@
 > non-moving GC ✅; `GC_set_all_interior_pointers(1)` runtime ✅;
 > `Nova_RuntimeError_IndexOutOfBounds` runtime ✅ (но не wired в codegen — Ф.1);
 > Plan 56 vtable / Plan 48 mono ✅ (понимание pipeline'а).
-> **Закрывает:** `Q-array-slicing` (`spec/open-questions.md:2161` /
+> **Закрывает:** `Q-array-slicing` (`spec/open-questions.ru.md:2161` /
 > `Q-array-api.5`), `D27 §1663` drift («Слайсинг отложен») —
 > `spec/decisions/03-syntax.md:1663`, **D27 OOB-panic drift** —
 > codegen `arr[i]` не эмитит panic (`emit_c.rs:12910-12974` vs spec
@@ -671,7 +671,7 @@ D-push-detach, D-iter-snap.
   замена GC-backend на moving GC требует одновременной замены slice-
   представления (separate header struct + ptr-update on move).»
 - **Ф.7.5** Закрыть `Q-array-slicing` / `Q-array-api.5` в
-  `spec/open-questions.md`.
+  `spec/open-questions.ru.md`.
 - **Ф.7.6** `spec/decisions/README.md` — D-index с D144.
 - **Ф.7.7** `docs/plans/README.md` — Plan 96 → ЗАКРЫТ.
 - **Ф.7.8** `docs/dev/simplifications.md`:
@@ -809,7 +809,7 @@ Q-array-slicing closed.
   с panic-semantics.
 - [Plan 56](56-vtable-dispatch-erased-generics.md) — vtable / mono для
   generic methods (фон).
-- [Q-array-slicing](spec/open-questions.md#q-array-api) — закрывается
+- [Q-array-slicing](spec/open-questions.ru.md#q-array-api) — закрывается
   (Ф.7.5).
 - Ориентиры: Go `s[a:b]` (без append-footgun), Rust `&[T]`/`RangeBounds`,
   TS `subarray`, Swift `ArraySlice` (без CoW-disconnect).

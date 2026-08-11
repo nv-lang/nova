@@ -82,7 +82,7 @@ HTTP requests при 16 cores — все cores used.
 - Erlang/BEAM: growable stacks, ~309 bytes initial. Миллионы
   процессов норма.
 
-**Импакт.** В spec/overview.md записано «миллион fiber'ов на машину —
+**Импакт.** В spec/overview.ru.md записано «миллион fiber'ов на машину —
 норма» — это **неточно для Nova bootstrap**. Реалистично: 100k-200k
 на 1 GB heap. Это всё равно лучше Java threads (1 MB stack), но
 не на уровне Go.
@@ -116,7 +116,7 @@ Codegen НЕ генерирует RC retain/release calls.
 
 В spec/decisions/05-memory.md заявлено: «Concurrent GC с pauses <1ms»
 — это **цель дизайна**, не текущая реализация (явно помечено как
-«MVP/v1.0+ roadmap»). Но в `spec/overview.md` чуть путаннее («паузы
+«MVP/v1.0+ roadmap»). Но в `spec/overview.ru.md` чуть путаннее («паузы
 <1ms» без подписи "цель") — нужно sync'нуть.
 
 #### G3a. Default malloc-only — реальный production blocker
@@ -168,7 +168,7 @@ distribution на realistic workloads (10k/100k/1M objects).
 «Concurrent GC, паузы <1ms p99» — **goal**, не текущее состояние.
 Spec корректно помечает это как «v1.0+ дизайн-цель».
 
-В `spec/overview.md` ту же фразу без disclaimer'а — **нужен
+В `spec/overview.ru.md` ту же фразу без disclaimer'а — **нужен
 honest update** "паузы <1ms — целевое требование, текущая реализация
 upper bound TBD после G3a".
 

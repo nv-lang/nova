@@ -34,7 +34,7 @@
 > unknown` триггерится не только на cross-module payload-ctor, но и на ЛЮБОМ chained-method-call сразу после
 > свежесконструированного enum-значения (даже nullary, даже same-module) — обход тот же (`ro x = Variant`
 > перед `.method()`), уже był конвенцией в `error_test.nv`. **Ф.5:** новый `docs/guide/io-fs.md` (модель + 7-язык.
-> таблица §2 + differentiators §1a + `write_atomic` Swift/Zig антипример); `spec/open-questions.md` Q9 частично
+> таблица §2 + differentiators §1a + `write_atomic` Swift/Zig антипример); `spec/open-questions.ru.md` Q9 частично
 > закрыт (Time/Net/Fs/Os/Io/Http строки → D-ссылки, включая ранее не отмеченную Time-строку 175 Ф.6);
 > Q-stdlib-minimal-api `from_bytes`-форма уже была обновлена Ф.0.5 (verified, не regression). Гейты:
 > `spec_tests/conformance` (--positive --compile-error) **67/0**; `std/net` (addr/tcp/udp/dns/error) PASS

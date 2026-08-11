@@ -9,8 +9,8 @@
 > the same Nova concept.
 >
 > **Sourcing rule.** Russian terms come from the normative spec pages
-> (`spec/overview.md`, `spec/paradigm.md`, `spec/syntax.md`,
-> `spec/effects.md`, `spec/conversions.md`, `spec/revolutionary.md`) and
+> (`spec/overview.ru.md`, `spec/paradigm.ru.md`, `spec/syntax.ru.md`,
+> `spec/effects.ru.md`, `spec/conversions.ru.md`, `spec/revolutionary.ru.md`) and
 > from `spec/decisions/README.md` section headings. English equivalents
 > come **first** from actual usage in `docs/guide/*.md` (the English
 > guide files already have settled vocabulary — *fiber*, *effect row*,
@@ -61,14 +61,14 @@
 
 | Русский (норма #language) | English | Example (en) | Note |
 |---|---|---|---|
-| алгебраические эффекты | algebraic effects | "Algebraic effects + handlers (Koka, Effekt, Eff)" | central language idea; see spec/overview.md "Что заимствует у кого"; «алгебраические» — обычное русское прилагательное, не калька |
+| алгебраические эффекты | algebraic effects | "Algebraic effects + handlers (Koka, Effekt, Eff)" | central language idea; see spec/overview.ru.md "Что заимствует у кого"; «алгебраические» — обычное русское прилагательное, не калька |
 | эффект | effect | "Network, disk, the clock … in Nova these are all **effects**." | language-tour.md §6; «эффект» — давно натурализованное русское слово (как в «побочный эффект»), не тег-калька и не жаргон — тег `[keep-en]` не нужен |
 | обработчик (эффекта) | handler | "Each effect has a **handler** that intercepts its operations" | language-tour.md §6; норма-форма — «обработчик», НЕ «хендлер» (жаргонная транслитерация, в прозу не пускать) |
-| проектирование с приоритетом ИИ | AI-first design | "Nova — first language explicitly optimized for the pair 'LLM writes, human reviews'" | spec/overview.md "Killer use-case"; «AI-first» переведено полностью («с приоритетом ИИ»), калек не осталось |
-| убойный сценарий использования `[keep-en: идиома]` (killer use-case) | killer use-case | "**Killer use-case.** AI-first programming." | spec/overview.md heading; «killer use-case» — устойчивая англ. идиома, спека сама заимствует её без перевода в норматив — keep-en; описательный русский вариант приведён для первого упоминания в прозе |
+| проектирование с приоритетом ИИ | AI-first design | "Nova — first language explicitly optimized for the pair 'LLM writes, human reviews'" | spec/overview.ru.md "Killer use-case"; «AI-first» переведено полностью («с приоритетом ИИ»), калек не осталось |
+| убойный сценарий использования `[keep-en: идиома]` (killer use-case) | killer use-case | "**Killer use-case.** AI-first programming." | spec/overview.ru.md heading; «killer use-case» — устойчивая англ. идиома, спека сама заимствует её без перевода в норматив — keep-en; описательный русский вариант приведён для первого упоминания в прозе |
 | одна дверь (единственный канонический путь) | "no second door" | "not a second door to `?`, but an independent niche" (paraphrase of the retraction rationale) | idiom used repeatedly in spec/decisions (e.g. D86 amend: "она была второй дверью к `?`"); **утверждено владельцем 2026-08-03** — en-форма "no second door" (дверная метафора сохранена); описательное "single canonical path" допустимо как пояснение при первом упоминании |
 | сопоставляемое значение (объект `match`) | scrutinee | "the scrutinee of a `match` expression is the value being matched against its arms" | **утверждено владельцем 2026-08-03**: ru — «сопоставляемое значение» (транслит «скрутини» в новую прозу не пускать; существующие D-блоки не переписываем), en — scrutinee (стандартный PL-термин) |
-| эффект-строка | effect row | "`Fail[E]`, `Fail` — стандартный эффект — **в effect-row сигнатуры**" | spec/overview.md; составное «эффект»+«строка» — оба слова русские, калька смысла (не транслитерация), уже кодифицирована в норме spec — оставляем как есть |
+| эффект-строка | effect row | "`Fail[E]`, `Fail` — стандартный эффект — **в effect-row сигнатуры**" | spec/overview.ru.md; составное «эффект»+«строка» — оба слова русские, калька смысла (не транслитерация), уже кодифицирована в норме spec — оставляем как есть |
 
 ---
 
@@ -116,14 +116,14 @@ pending the owner's call in Open questions.
 | позиционный кортеж | positional tuple | "`type X(T1, T2)` — positional tuple — stack — value (copy on pass)" | docs/guide/value-vs-reference.md bracket-rule table; доступ к полям по индексу (`.0`/`.1`); «кортеж» — стандартный русский матем./CS-термин |
 | именованный кортеж | named tuple | "`type Vec3(x f64, y f64, z f64)` — named tuple, .x/.y/.z access" | docs/guide/value-vs-reference.md; доступ к полям по имени, но то же представление в стеке, что и у позиционного кортежа |
 | value-запись `[keep-en: код]` | value record | "iterator value-records: `VecIter[T] value`" | spec/decisions/02-types.md D228/D290; `value` — буквальное ключевое слово Nova (`type X value { ... }`), «запись» уже по-русски |
-| тип-обёртка (newtype) | newtype | "Newtype (`type X Y`, without `alias`) is a **separate** type from the source" | spec/conversions.md "Newtype ↔ underlying"; **утверждено владельцем 2026-08-03** — «тип-обёртка», при первом упоминании на странице «тип-обёртка (newtype)»; в русских переводах Rust/Haskell термин обычно не переводят — Nova вводит русскую форму по норме #language |
-| псевдоним (alias) | alias | "`type X alias Y` — там `X` и `Y` взаимозаменяемы без всякого cast'а" | spec/conversions.md; «псевдоним» — стандартный русский перевод (используется, напр., для `alias` в других языках), не калька |
+| тип-обёртка (newtype) | newtype | "Newtype (`type X Y`, without `alias`) is a **separate** type from the source" | spec/conversions.ru.md "Newtype ↔ underlying"; **утверждено владельцем 2026-08-03** — «тип-обёртка», при первом упоминании на странице «тип-обёртка (newtype)»; в русских переводах Rust/Haskell термин обычно не переводят — Nova вводит русскую форму по норме #language |
+| псевдоним (alias) | alias | "`type X alias Y` — там `X` и `Y` взаимозаменяемы без всякого cast'а" | spec/conversions.ru.md; «псевдоним» — стандартный русский перевод (используется, напр., для `alias` в других языках), не калька |
 | протокол | protocol | "`protocol` declares a structural interface; `#impl(...)` opts a type into one explicitly" | language-tour.md §3; structural by default, nominal on demand; «протокол» — натурализованное русское слово |
 | параметр типа (обобщённый) | generic type parameter | "`[T]` on a function introduces a generic type parameter." | language-tour.md §2; норма-форма «обобщённый» вместо жаргонного «дженерик» |
-| ограничение типового параметра через `protocol` `[keep-en: код]` | generic bound (protocol) | "`fn dedup[T Hash](xs []T) -> []T`" | spec/syntax.md "Generic bounds — `[T Protocol]`"; структурное ограничение — подходит любой тип с нужными методами; `protocol` — ключевое слово |
-| ограничение типового параметра через `type-set` `[keep-en: код]` | generic bound (type-set) | "`[T TypeSet]`" (paraphrase of spec/syntax.md "Type-set — bound по членству, не по структуре") | spec/syntax.md; `type-set` = закрытый список конкретных типов (проверка по членству), не структурный, в отличие от `protocol`-ограничения; `type-set` — конкретная Nova-конструкция |
-| мономорфизация | monomorphization | "Performance, traits, мономорфизация" (spec/overview.md, source: Rust) | «мономорфизация» — натурализованный CS-термин, дефолтная (нулевой стоимости) стратегия диспетчеризации в Nova |
-| диспетчеризация `dyn` `[keep-en: код]` | dynamic dispatch (`dyn`) | "`dyn` — only when explicit runtime polymorphism is needed" (paraphrase of spec/paradigm.md "vtable-вызов") | норма-форма «диспетчеризация» вместо жаргонного «диспатч»; `dyn` — ключевое слово Nova (`dyn Trait`/`dyn Protocol`), опциональная альтернатива мономорфизации |
+| ограничение типового параметра через `protocol` `[keep-en: код]` | generic bound (protocol) | "`fn dedup[T Hash](xs []T) -> []T`" | spec/syntax.ru.md "Generic bounds — `[T Protocol]`"; структурное ограничение — подходит любой тип с нужными методами; `protocol` — ключевое слово |
+| ограничение типового параметра через `type-set` `[keep-en: код]` | generic bound (type-set) | "`[T TypeSet]`" (paraphrase of spec/syntax.ru.md "Type-set — bound по членству, не по структуре") | spec/syntax.ru.md; `type-set` = закрытый список конкретных типов (проверка по членству), не структурный, в отличие от `protocol`-ограничения; `type-set` — конкретная Nova-конструкция |
+| мономорфизация | monomorphization | "Performance, traits, мономорфизация" (spec/overview.ru.md, source: Rust) | «мономорфизация» — натурализованный CS-термин, дефолтная (нулевой стоимости) стратегия диспетчеризации в Nova |
+| диспетчеризация `dyn` `[keep-en: код]` | dynamic dispatch (`dyn`) | "`dyn` — only when explicit runtime polymorphism is needed" (paraphrase of spec/paradigm.ru.md "vtable-вызов") | норма-форма «диспетчеризация» вместо жаргонного «диспатч»; `dyn` — ключевое слово Nova (`dyn Trait`/`dyn Protocol`), опциональная альтернатива мономорфизации |
 
 ---
 
@@ -142,8 +142,8 @@ pending the owner's call in Open questions.
 | сопоставление с образцом | pattern matching | "`match` supports literal patterns, guards, and sum-variant destructuring." | language-tour.md §4; «сопоставление с образцом» — устоявшийся русский перевод в переводной ФП-литературе (Haskell/OCaml) |
 | охранное условие | guard | "guards (`n if n > 0`)" | language-tour.md §4; норма-форма вместо непереведённого «guard» — дополнительное булево условие на ветви `match` |
 | условная форма сопоставления | if-let form | "`if <Pattern> = expr { } else { }` is Nova's if-let form" | language-tour.md §4; описательная замена англ. идиомы «if-let» (в Nova нет отдельного ключевого слова `if let` — это форма обычного `if <паттерн> = выражение`) |
-| встраивание | embed | "embed: имя поля обязательно (D39)" → "`use` — это **поле + автопрокси методов**" (spec/syntax.md) | composition via `use Type` (см. `use` в §2), not inheritance; «встраивание» натурализовано в русской OOP-литературе |
-| делегирование | delegation | "the compiler generates proxy methods (delegation), no virtual dispatch" (paraphrase, spec/paradigm.md) | результат встраивания — компилятор генерирует прокси-методы без виртуального диспетчера; «делегирование» натурализовано в русской OOP-литературе |
+| встраивание | embed | "embed: имя поля обязательно (D39)" → "`use` — это **поле + автопрокси методов**" (spec/syntax.ru.md) | composition via `use Type` (см. `use` в §2), not inheritance; «встраивание» натурализовано в русской OOP-литературе |
+| делегирование | delegation | "the compiler generates proxy methods (delegation), no virtual dispatch" (paraphrase, spec/paradigm.ru.md) | результат встраивания — компилятор генерирует прокси-методы без виртуального диспетчера; «делегирование» натурализовано в русской OOP-литературе |
 
 ---
 
@@ -152,14 +152,14 @@ pending the owner's call in Open questions.
 | Русский (норма #language) | English | Example (en) | Note |
 |---|---|---|---|
 | подмена обработчика (через `with`) `[keep-en: код]` | handler substitution | "Each effect has a **handler** that intercepts its operations, substituted via `with Handler = ...`" | language-tour.md §6; «обработчик», не «хендлер»; `with` — ключевое слово (см. §2) |
-| прямой эффект | direct effect | "A function declares in its signature exactly which effects **it itself** performs" | language-tour.md §6; spec/effects.md "Прямые эффекты, не транзитивные" (D28) — эффект операций, вызванных САМОЙ функцией; необъявленный — всегда compile error |
-| транзитивный эффект | transitive effect | "calling another function does not pull that function's effects up into the caller's signature" | spec/effects.md (D28) — эффект вложенного вызова; необъявленный — warning по умолчанию, hard error под `--strict-effects` |
+| прямой эффект | direct effect | "A function declares in its signature exactly which effects **it itself** performs" | language-tour.md §6; spec/effects.ru.md "Прямые эффекты, не транзитивные" (D28) — эффект операций, вызванных САМОЙ функцией; необъявленный — всегда compile error |
+| транзитивный эффект | transitive effect | "calling another function does not pull that function's effects up into the caller's signature" | spec/effects.ru.md (D28) — эффект вложенного вызова; необъявленный — warning по умолчанию, hard error под `--strict-effects` |
 | строгий режим эффектов (`--strict-effects`) `[keep-en: код]` | `--strict-effects` (strict-effects mode) | "programs (`examples/**`) build under `--strict-effects` … an experimental flag that promotes undeclared-transitive-effect … warnings to hard errors" | language-tour.md §6; Plan 197; `--strict-effects` — буквальный CLI-флаг |
-| эффект `Fail` `[keep-en: код]` | `Fail` effect | "`Fail[E]` — эффект-контракт для перехвата и обработки ошибки" | spec/effects.md "Роли — throw / Fail[E] / handler"; `Fail` — имя типа-эффекта в prelude |
-| выбросить ошибку (`throw`) `[keep-en: код]` | throw | "`throw err` — language syntax, raises an error" (paraphrase of spec/effects.md "Роли") | never resumes at the throw point; `never` operation type; `throw` — ключевое слово |
+| эффект `Fail` `[keep-en: код]` | `Fail` effect | "`Fail[E]` — эффект-контракт для перехвата и обработки ошибки" | spec/effects.ru.md "Роли — throw / Fail[E] / handler"; `Fail` — имя типа-эффекта в prelude |
+| выбросить ошибку (`throw`) `[keep-en: код]` | throw | "`throw err` — language syntax, raises an error" (paraphrase of spec/effects.ru.md "Роли") | never resumes at the throw point; `never` operation type; `throw` — ключевое слово |
 | паника | panic | "**panic** is for a broken caller contract … and is never recoverable" | language-tour.md §5; натурализованный термин, стандартен в переводной PL-литературе |
-| оператор `?` (return-стиль) | postfix operator `?` (return-style) | "`expr?` — return-style: 'didn't work — wrap it upward as a value'" (paraphrase of spec/effects.md) | spec/effects.md "Операторы `?` и `!!`"; ранний return обёртки — нужен `-> Option`/`-> Result` |
-| оператор `!!` (throw-стиль) | postfix operator `!!` (throw-style) | "`expr!!` — throw-style: 'didn't work — throw via `Fail`'" (paraphrase of spec/effects.md) | spec/effects.md "Операторы `?` и `!!`"; throw через `Fail[E]` — нужен `Fail[E]` в сигнатуре; программист выбирает стиль на месте использования |
+| оператор `?` (return-стиль) | postfix operator `?` (return-style) | "`expr?` — return-style: 'didn't work — wrap it upward as a value'" (paraphrase of spec/effects.ru.md) | spec/effects.ru.md "Операторы `?` и `!!`"; ранний return обёртки — нужен `-> Option`/`-> Result` |
+| оператор `!!` (throw-стиль) | postfix operator `!!` (throw-style) | "`expr!!` — throw-style: 'didn't work — throw via `Fail`'" (paraphrase of spec/effects.ru.md) | spec/effects.ru.md "Операторы `?` и `!!`"; throw через `Fail[E]` — нужен `Fail[E]` в сигнатуре; программист выбирает стиль на месте использования |
 
 ---
 
@@ -168,9 +168,9 @@ pending the owner's call in Open questions.
 | Русский (норма #language) | English | Example (en) | Note |
 |---|---|---|---|
 | управляемая куча | managed heap | "`o is a pointer to managed heap; GC-tracked`" (paraphrase, docs/guide/value-vs-reference.md) | GC-tracked reference-type storage, default for records/sum types; уже полностью переведено, «managed heap» — только в англ. колонке |
-| анализ выхода за пределы области видимости (escape-анализ) `[keep-en: термин]` | escape analysis | "Go — escape analysis decides" (docs/guide/value-vs-reference.md comparison table); "не утекающие значения остаются на стеке" (spec/overview.md) | compiler decides stack vs heap automatically, no programmer annotation; устоявшегося краткого русского термина нет — «escape-анализ» встречается в компиляторной литературе как есть |
-| регион `[keep-en: код]` | region | "Arena-allocations через `region { }` — проектируемая форма (D6), ⚠ в текущем компиляторе не реализована" | spec/syntax.md "Производительность"; `region` — буквальное ключевое слово Nova (arena-аллокация); **пока не реализован в компиляторе** |
-| зона реального времени (`#realtime nogc`) `[keep-en: код]` | real-time zone (`#realtime nogc`) | "For real-time зон (звук, торговля, embedded) — атрибут `#realtime nogc fn`" | spec/syntax.md "Производительность"; `#realtime nogc` — буквальный Nova-атрибут, запрещающий GC на функции для real-time кода |
+| анализ выхода за пределы области видимости (escape-анализ) `[keep-en: термин]` | escape analysis | "Go — escape analysis decides" (docs/guide/value-vs-reference.md comparison table); "не утекающие значения остаются на стеке" (spec/overview.ru.md) | compiler decides stack vs heap automatically, no programmer annotation; устоявшегося краткого русского термина нет — «escape-анализ» встречается в компиляторной литературе как есть |
+| регион `[keep-en: код]` | region | "Arena-allocations через `region { }` — проектируемая форма (D6), ⚠ в текущем компиляторе не реализована" | spec/syntax.ru.md "Производительность"; `region` — буквальное ключевое слово Nova (arena-аллокация); **пока не реализован в компиляторе** |
+| зона реального времени (`#realtime nogc`) `[keep-en: код]` | real-time zone (`#realtime nogc`) | "For real-time зон (звук, торговля, embedded) — атрибут `#realtime nogc fn`" | spec/syntax.ru.md "Производительность"; `#realtime nogc` — буквальный Nova-атрибут, запрещающий GC на функции для real-time кода |
 | стек-аллокация | stack allocation | "positional tuple — **stack** — value (copy on pass)" | docs/guide/value-vs-reference.md bracket-rule table; «стек» и «аллокация» — натурализованные CS-термины, не жаргон |
 
 ---
@@ -179,9 +179,9 @@ pending the owner's call in Open questions.
 
 | Русский (норма #language) | English | Example (en) | Note |
 |---|---|---|---|
-| файбер | fiber | "Under the hood — **fiber-based scheduler** (like Go/OCaml 5)." | spec/effects.md "Async — невидимая инфраструктура"; ~4-8 KB stack, millions per machine; **утверждено владельцем 2026-08-03** — «файбер» остаётся русской формой (не «волокно»), употребление по всей базе доков не меняется |
-| структурированная конкурентность | structured concurrency | "concurrency is structured, not a separate async dialect" | language-tour.md §8; **утверждено владельцем 2026-08-03**; сырое англ. «Structured concurrency» в русском тексте spec/overview.md — кандидат микро-правки норматива (заведено интегратору отдельно) |
-| супервизия | supervision | "Supervision of failures is an ordinary effect `Supervisor`" (paraphrase, spec/overview.md D416) | Erlang/OTP-style child-failure policy: `escalate()` / `stop()`; «супервизия» — натурализованный термин (используется вне IT, напр. в психотерапии/менеджменте), не жаргон |
+| файбер | fiber | "Under the hood — **fiber-based scheduler** (like Go/OCaml 5)." | spec/effects.ru.md "Async — невидимая инфраструктура"; ~4-8 KB stack, millions per machine; **утверждено владельцем 2026-08-03** — «файбер» остаётся русской формой (не «волокно»), употребление по всей базе доков не меняется |
+| структурированная конкурентность | structured concurrency | "concurrency is structured, not a separate async dialect" | language-tour.md §8; **утверждено владельцем 2026-08-03**; сырое англ. «Structured concurrency» в русском тексте spec/overview.ru.md — кандидат микро-правки норматива (заведено интегратору отдельно) |
+| супервизия | supervision | "Supervision of failures is an ordinary effect `Supervisor`" (paraphrase, spec/overview.ru.md D416) | Erlang/OTP-style child-failure policy: `escalate()` / `stop()`; «супервизия» — натурализованный термин (используется вне IT, напр. в психотерапии/менеджменте), не жаргон |
 | дедлайн области видимости | (scope) deadline | "`supervised(deadline:)` gives that block a shared deadline" | language-tour.md §8; «дедлайн» — полностью натурализованное слово повседневного русского; «скоуп» заменён на «область видимости» |
 | отмена | cancellation | "a spawn that misses it [the deadline] is genuinely cancelled" | language-tour.md §8; структурная отмена (в отличие от ручной отмены в классических async-рантаймах) |
 | канал с разделёнными правами (send/recv) | capability-split | "The model is **capability-split** (Rust mpsc-style): `Channel[T].new(cap)` returns a **pair**" | docs/guide/channels.md; описательный перевод вместо хайбридного «capability-split»; `send`/`recv` — имена методов, keep-en по коду |
@@ -233,14 +233,14 @@ pending the owner's call in Open questions.
 
 | Русский (норма #language) | English | Example (en) | Note |
 |---|---|---|---|
-| приведение (`as`) `[keep-en: код]` | `as` cast | "`as` — infallible numeric/newtype/sum cast, compile-time, no runtime code" (paraphrase of spec/conversions.md "Три механизма") | spec/conversions.md; «приведение» — стандартный русский термин («приведение типа»), `as` — ключевое слово |
-| расширяющее преобразование | widening | "Widening (no precision loss)" | spec/conversions.md "Numeric ↔ numeric"; полностью по-русски; без потери точности (`i8 → i32`, `f32 → f64` и т.п.) |
-| сужающее преобразование | narrowing | "Narrowing (potential precision loss)" | spec/conversions.md "Numeric ↔ numeric"; полностью по-русски; возможна потеря точности (`i64 → i32` и т.п.), по умолчанию `as` — тихий wraparound |
-| проверяемое сужение | checked narrowing | "Checked narrowing — `try_to_*` (D430, 2026-07-20)" | spec/conversions.md heading; полностью по-русски; проверяемая альтернатива тихому `as`-wraparound |
-| семейство `to_str` (унифицированное строковое представление) `[keep-en: код]` | `to_str()` family | "`42.to_str()`" (numeric), "`bytes.to_str()`" (`[]u8` decode, checked) | spec/conversions.md D410; единый вход «значение → строка»: bare-`T` blanket + специализации (`char`, `[]u8`); `to_str` — буквальное имя метода |
-| неявная конверсия (`#coerce`) `[keep-en: код]` | `#coerce` (zero-cost implicit conversion) | "`#coerce` on a **unary** function declares an **implicit** conversion `I → O`, inserted by the compiler in a position with a known expected type" (paraphrase of spec/conversions.md) | spec/conversions.md "Zero-cost неявные конверсии" (D429); «конверсия» — натурализованный термин, `#coerce` — буквальный атрибут |
-| конвенция имени (`from`/`try_from`) `[keep-en: код]` | naming convention (`from`/`try_from`) | "these are three independent naming conventions, each an ordinary Nova function with no protocol behind it" (paraphrase of spec/conversions.md) | spec/conversions.md "Именование from/try_from — конвенция, не протокол"; `From`/`Into`/`TryFrom`/`TryInto` protocols retracted 2026-07-06; `from`/`try_from` — буквальные имена методов |
-| потребляющая передача владения (`consume @into_*`) `[keep-en: код]` | consuming ownership transfer (`consume @into_*`) | "`consume @into_ЦЕЛЬ()` — a consuming transfer of ownership (a concrete name on the source)" (paraphrase of spec/conversions.md "Три механизма" table) | spec/conversions.md; уже норма-форма («потребляющая» от глагола «потреблять»), `consume @into_*` — буквальный код-паттерн |
+| приведение (`as`) `[keep-en: код]` | `as` cast | "`as` — infallible numeric/newtype/sum cast, compile-time, no runtime code" (paraphrase of spec/conversions.ru.md "Три механизма") | spec/conversions.ru.md; «приведение» — стандартный русский термин («приведение типа»), `as` — ключевое слово |
+| расширяющее преобразование | widening | "Widening (no precision loss)" | spec/conversions.ru.md "Numeric ↔ numeric"; полностью по-русски; без потери точности (`i8 → i32`, `f32 → f64` и т.п.) |
+| сужающее преобразование | narrowing | "Narrowing (potential precision loss)" | spec/conversions.ru.md "Numeric ↔ numeric"; полностью по-русски; возможна потеря точности (`i64 → i32` и т.п.), по умолчанию `as` — тихий wraparound |
+| проверяемое сужение | checked narrowing | "Checked narrowing — `try_to_*` (D430, 2026-07-20)" | spec/conversions.ru.md heading; полностью по-русски; проверяемая альтернатива тихому `as`-wraparound |
+| семейство `to_str` (унифицированное строковое представление) `[keep-en: код]` | `to_str()` family | "`42.to_str()`" (numeric), "`bytes.to_str()`" (`[]u8` decode, checked) | spec/conversions.ru.md D410; единый вход «значение → строка»: bare-`T` blanket + специализации (`char`, `[]u8`); `to_str` — буквальное имя метода |
+| неявная конверсия (`#coerce`) `[keep-en: код]` | `#coerce` (zero-cost implicit conversion) | "`#coerce` on a **unary** function declares an **implicit** conversion `I → O`, inserted by the compiler in a position with a known expected type" (paraphrase of spec/conversions.ru.md) | spec/conversions.ru.md "Zero-cost неявные конверсии" (D429); «конверсия» — натурализованный термин, `#coerce` — буквальный атрибут |
+| конвенция имени (`from`/`try_from`) `[keep-en: код]` | naming convention (`from`/`try_from`) | "these are three independent naming conventions, each an ordinary Nova function with no protocol behind it" (paraphrase of spec/conversions.ru.md) | spec/conversions.ru.md "Именование from/try_from — конвенция, не протокол"; `From`/`Into`/`TryFrom`/`TryInto` protocols retracted 2026-07-06; `from`/`try_from` — буквальные имена методов |
+| потребляющая передача владения (`consume @into_*`) `[keep-en: код]` | consuming ownership transfer (`consume @into_*`) | "`consume @into_ЦЕЛЬ()` — a consuming transfer of ownership (a concrete name on the source)" (paraphrase of spec/conversions.ru.md "Три механизма" table) | spec/conversions.ru.md; уже норма-форма («потребляющая» от глагола «потреблять»), `consume @into_*` — буквальный код-паттерн |
 
 ---
 
@@ -254,7 +254,7 @@ pending the owner's call in Open questions.
    **«сопоставляемое значение»**, транслит «скрутини» в новую прозу не
    пускать (существующие D-блоки не переписываем); en — **scrutinee**
    принят как термин. Строка §1 обновлена.
-3. **`spec/paradigm.md` устарел. ✅ РЕШЕНО (владелец 2026-08-03):**
+3. **`spec/paradigm.ru.md` устарел. ✅ РЕШЕНО (владелец 2026-08-03):**
    сначала **актуализировать** русский текст (снять `trait`/`impl` →
    `protocol` + эффект-через-kind-токен, сверить с действующими D-блоками),
    затем переводить. Порядок в Ф.1: 5 актуальных файлов переводятся сразу,
@@ -287,7 +287,7 @@ pending the owner's call in Open questions.
    (newtype)»; в коде и сигнатурах остаётся `newtype`.
 9. **«Структурированная конкурентность» (§7). ✅ РЕШЕНО (владелец
    2026-08-03):** принято. Отдельно заведена микро-правка норматива:
-   в `spec/overview.md` сырое англ. «Structured concurrency» посреди
+   в `spec/overview.ru.md` сырое англ. «Structured concurrency» посреди
    русской фразы → русская форма (правка языковая, смысл не меняется).
 10. **enforce-with-elision (§10). ✅ РЕШЕНО (владелец 2026-08-03):**
     **keep-en** — имя собственное механизма (D24/Plan 140), как CI/REST;

@@ -6,8 +6,8 @@
 > синтаксис в [D-блоке без номера, 02-types.md:270-277](../../spec/decisions/02-types.md#L270-L277),
 > но парсер падает с `expected fn / type / let / const / test, got '|'`.
 > **Spec:** [02-types.md §«Явный базовый тип»](../../spec/decisions/02-types.md#L270),
-> [syntax.md:550](../../spec/syntax.md#L550),
-> [open-questions.md:508](../../spec/open-questions.md#L508).
+> [syntax.md:550](../../spec/syntax.ru.md#L550),
+> [open-questions.md:508](../../spec/open-questions.ru.md#L508).
 > **Зависит от:** ничего (изолированный фикс).
 
 ---
@@ -96,7 +96,7 @@ Plan 105 = ✅ ЗАКРЫТ когда:
 ## 6. Связь
 
 - [D-spec 02-types.md §«Discriminants»](../../spec/decisions/02-types.md#L270) — формализует.
-- [Q-representation-bound](../../spec/open-questions.md) → Plan 102 (newtype с явным
+- [Q-representation-bound](../../spec/open-questions.ru.md) → Plan 102 (newtype с явным
   representation для **не-sum** типов; complementary).
 - [Plan 101](101-receiver-generic-prefix.md) — параллель «spec задокументировал,
   parser silently бьёт» (тот же class drift'а).

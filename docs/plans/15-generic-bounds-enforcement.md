@@ -135,7 +135,7 @@ inference):
 3. Сверить required methods с available — match по name + arity +
    substituted signature (`Self → Ti`).
 4. На mismatch — структурированный diagnostic
-   ([R5.3](../../spec/revolutionary.md#r5-3)):
+   ([R5.3](../../spec/revolutionary.ru.md#r5-3)):
    ```
    error E0143: type `User` does not satisfy `Hash` bound
      in call to `dedup[T Hash]` at src/main.nv:42
@@ -274,6 +274,6 @@ inference):
   generic bounds.
 - [spec/decisions/02-types.md → D53](../../spec/decisions/02-types.md#d53) —
   protocol declarations.
-- [spec/revolutionary.md → R5.3](../../spec/revolutionary.md#r5-3) —
+- [spec/revolutionary.ru.md → R5.3](../../spec/revolutionary.ru.md#r5-3) —
   AI-first error format.
 - `compiler-codegen/src/types/` — type-checker source.
