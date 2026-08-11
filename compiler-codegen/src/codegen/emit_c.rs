@@ -42758,14 +42758,24 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     // receiver typevar (first generic) to <elem> from the
                                     // turbofish type-arg, method-level generics from the
                                     // args, and emit a per-elem static mono.
-                                    // Skip <elem> == nova_int — the erased base IS the
-                                    // nova_int instance, so that call stays byte-identical.
+                                    // Реестр 221.1 №592: used to SKIP <elem> == nova_int
+                                    // here ("the erased base IS the nova_int instance, so
+                                    // that call stays byte-identical") — that erased base
+                                    // (`emit_fn_scoped_inner`'s single-shot, T-defaulted-to-
+                                    // nova_int body) no longer exists as of №592: a STATIC
+                                    // array-ext own-generic method now ALWAYS mono's per
+                                    // real element, never erased, for ANY element including
+                                    // int. Keeping the skip here would call an absent
+                                    // symbol (`Nova_NovaArray_nova_int_static_<m>`,
+                                    // undefined at link) for the int element specifically —
+                                    // mono unconditionally instead, same as every other
+                                    // element.
                                     // [№137, путь A — тупик, см. FINDINGS.md] канал сюда
                                     // не дотягивается: T для "[]T"-ключа живёт на fn[T]
                                     // префиксе, не в receiver.generics — не читаем канал.
                                     if base_name == "Vec" {
                                         if let Some(elem_c) = type_args_c.first().cloned() {
-                                            if elem_c != "nova_int" {
+                                            {
                                                 let key = ("[]T".to_string(), method.to_string());
                                                 if let Some(fn_decl) =
                                                     self.mono_method_decls.get(&key).cloned()
