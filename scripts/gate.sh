@@ -168,14 +168,24 @@ step "doc-conventions (docs/dev/doc-conventions.md enforcement, Plan 242)"
 # №322: вторым аргументом — база сравнения для подпроверки same-commit
 # pairing (без неё она физически не выполняется). Локально берём
 # предыдущий коммит; в CI база передаётся явно (PR base / event.before).
-DOC_GUARD_BASE="$(git -C "$ROOT" rev-parse --verify -q HEAD~1 2>/dev/null || true)"
+# №586: раньше при неудаче вычисления HEAD~1 сюда молча уезжала пустая
+# строка, check-doc-conventions.sh легитимно пропускал guide_same_commit
+# (для СЕБЯ это «не передали диапазон» — нормальный кросс-репный случай),
+# и гейт печатал зелёный пропуск там, где вызывающий обязан был дать базу.
+# require-diff-base.sh делает эту неудачу ОТКАЗОМ шага, а не тихим пропуском.
+DOC_GUARD_BASE="$(bash "$ROOT/scripts/tools/require-diff-base.sh" "$ROOT")" \
+    || fail "doc-conventions: не вычислить diff-base для guide_same_commit (см. scripts/tools/require-diff-base.sh) — подпроверка не может выполниться"
 bash "$ROOT/scripts/guards/check-doc-conventions.sh" "$ROOT" "$DOC_GUARD_BASE" || fail "doc-conventions (шапка/frontmatter spec en, guide-парность, статус-строка плана, dev-ссылки, код-блоки пар — см. вывод выше)"
 
 step "doc-examples (снятые формы в nova-примерах публикуемой доки, окно p-example-guard)"
 DOC_EXAMPLES_SHOW_MATCHES=0 bash "$ROOT/scripts/guards/check-doc-examples.sh" "$ROOT" || fail "doc-examples (дока учит снятому синтаксису — let/readonly/*ro T/*unsafe T/постфикс-!/trait-impl-throws/ref-формы/external fn/addr_of/null <тип>/#impl(<старое имя>) — см. вывод выше)"
 
 step "test-fixture-coverage (правила 1/5 test-conventions.md — neg-фикстура на новый E_*/W_*, регресс-фикстура на закрытие маркера; реестр 221.1 №399)"
-TFC_BASE="$(git -C "$ROOT" rev-parse --verify -q HEAD~1 2>/dev/null || true)"
+# №586-класс: та же ошибка, что у DOC_GUARD_BASE выше — пустая база молча
+# уезжала в подпроверку, которая для СЕБЯ легитимно пропускает rule5/rule1,
+# и отказ вызывающего тонул в чужом легитимном пропуске.
+TFC_BASE="$(bash "$ROOT/scripts/tools/require-diff-base.sh" "$ROOT")" \
+    || fail "test-fixture-coverage: не вычислить diff-base (см. scripts/tools/require-diff-base.sh) — rule5/rule1 не могут выполниться"
 bash "$ROOT/scripts/guards/check-test-fixture-coverage.sh" "$ROOT" "$TFC_BASE" || fail "test-fixture-coverage (новый E_*/W_*-код без neg-фикстуры, ИЛИ строка реестра 221.1 закрыта без .nv-ссылки — см. вывод выше; WARN про registry/backlog-расхождение НЕ роняет гейт)"
 
 step "ci-status (внешний авторитетный гейт — GitHub Actions; реестр 221.1 №395/№401/№402)"
