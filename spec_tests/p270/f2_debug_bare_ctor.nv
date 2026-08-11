@@ -1,0 +1,12 @@
+module p270.f2_debug_bare_ctor
+import std.io
+type Colour enum Red | Green | Blue(int)
+fn Colour @debug(mut sb StringBuilder) -> () {
+    sb.append("OVERRIDE-DEBUG")
+}
+fn main() Io -> () {
+    ro c = Blue(7)
+    consume sb = StringBuilder.new()
+    c.debug(sb)
+    print(sb.into_str())
+}
