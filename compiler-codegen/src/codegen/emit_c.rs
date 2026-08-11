@@ -987,19 +987,28 @@ pub struct CEmitter {
     /// own-generic blanket method (`fn[T Bound] []T.method() -> R`, e.g.
     /// `[]T.reflect()`). Maps method name → the C base ident the DECLARATION
     /// itself emits under (`Self::receiver_type_c_ident(recv.type_name)`,
-    /// e.g. `"NovaArray_nova_int"` — see the `[196.5 ДЕФЕКТ-2]`/erased-body
-    /// comment on `emit_fn_scoped_inner`: this static form is emitted ONCE,
-    /// erased, with no per-element mono). Populated ONLY here, at method
-    /// registration (~8218), consumed by every call site that needs to name
-    /// this same function instead of re-deriving a name independently —
-    /// the two independent re-derivations (the `[]T.method()` → `Vec[T]
-    /// .method()` TurboFish rewrite, and the bare-T generic-body static
-    /// dispatch inside another type's own mono'd body, e.g. `Option[T]
-    /// .reflect()`'s `T.reflect()`) each computed a DIFFERENT, never-emitted
-    /// name (`Nova_Option_static_reflect` name-only last-wins collision;
-    /// `Nova_Vec____<elem>_static_reflect` generic-mono-name collision) —
-    /// this map is the single source of truth both must defer to.
+    /// e.g. `"NovaArray_nova_int"`).
+    /// Реестр 221.1 №592: this base name is now used ONLY as a fallback for
+    /// the residual nested-generic call shape (`T.method()` inside another
+    /// type's own mono'd body, e.g. `Option[T].reflect()`'s `T.reflect()`
+    /// when `T` itself resolves to an array/`Vec____` mono — the ONE call
+    /// site still left routing here, see its own doc, ~46617 as of this
+    /// writing). The DIRECT `[]<concrete>.method()` call site no longer
+    /// consults this map — it now monomorphizes per real element via
+    /// `array_ext_static_generic_fn` + `register_mono_method_instance`
+    /// instead of reusing this single erased (`T` defaulted to `nova_int`)
+    /// body for every element. Populated ONLY here, at method registration
+    /// (~8218).
     array_ext_static_c_base: HashMap<String, String>,
+    /// Реестр 221.1 №592: FULL declaration of a STATIC array-ext own-generic
+    /// blanket method (same shape as `array_ext_static_c_base` above — method
+    /// name → the one `FnDecl` — there is exactly one blanket per method name
+    /// in this family). Consulted by the `[]<concrete>.method()` call site
+    /// (`Path(["__array", elem])`, D38) to monomorphize a FRESH body per
+    /// concrete element instead of the old single erased (`nova_int`-named)
+    /// body every element silently shared. Populated alongside
+    /// `array_ext_static_c_base` at method registration (~8218).
+    array_ext_static_generic_fn: HashMap<String, crate::ast::FnDecl>,
     /// Plan 06 Ф.1: multi-key registry — `(type_name, method_name) → is_instance`.
     /// `method_receivers` single-key страдает от last-wins (если два типа имеют
     /// одноимённый method, второй вытесняет первый). `all_methods` хранит все.
@@ -2569,6 +2578,7 @@ impl CEmitter {
             effect_schemas: HashMap::new(),
             method_receivers: HashMap::new(),
             array_ext_static_c_base: HashMap::new(),
+            array_ext_static_generic_fn: HashMap::new(),
             method_overloads: BTreeMap::new(),
             method_overload_types: HashSet::new(),
             never_returning_methods: HashSet::new(),
@@ -8277,6 +8287,22 @@ impl CEmitter {
                     if is_array_ext && !is_instance {
                         self.array_ext_static_c_base
                             .insert(f.name.clone(), safe_recv_name.clone());
+                        // Реестр 221.1 №592: ALSO remember the full declaration
+                        // when this is the "own generic names the receiver's
+                        // element" shape (`fn[T] []T.method()`) — the ONLY
+                        // shape `emit_fn_scoped_inner` now skips erased-emitting
+                        // (see its own mirrored detection) in favor of real
+                        // per-element mono. `recv.type_name` is literally
+                        // `"[]T"` (the source spelling) here, so `strip_prefix`
+                        // yields the generic's OWN name, not a concrete element.
+                        if let Some(recv_elem) = recv.type_name.strip_prefix("[]") {
+                            if !recv_elem.is_empty()
+                                && f.generics.iter().any(|g| g.name == recv_elem)
+                            {
+                                self.array_ext_static_generic_fn
+                                    .insert(f.name.clone(), f.clone());
+                            }
+                        }
                     }
                     // Plan 100.6 (D164): consume-bit — `consume` vs `method` prefix
                     // ловит ABI mismatch при изменении consume-статуса метода.
@@ -28383,70 +28409,22 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     fn emit_fn(&mut self, f: &FnDecl) -> Result<(), String> {
         // [race-198 class-closure]: см. override_maps_scope_enter doc.
         let ovr_saved = self.override_maps_scope_enter();
-        // Реестр 221.1 №577 (маркер [M-array-ext-static-erased-body-no-generic-
-        // dispatch]): a STATIC array-ext method with its OWN generic bound to the
-        // receiver's element (`fn[T Reflect] []T.reflect() -> TypeShape =>
-        // Arr(T.reflect())`) never gets per-element monomorphized — see
-        // `emit_fn_scoped_inner`'s top-of-fn dispatch a few lines below (only
-        // INSTANCE array-ext own-generics skip the erased body; STATIC ones fall
-        // through, by design, "no mono routing yet"). Its ONE erased body is named
-        // via `receiver_type_c_ident("[]T")`, whose `_ => "nova_int"` catch-all
-        // (unknown/unbound element) makes it LOOK like a genuine `[]int`
-        // instantiation — but nothing binds `current_type_subst[T]` for the body
-        // itself, so a body-internal type-parametric static call (`T.reflect()`)
-        // can't resolve the receiver and falls back to a bogus free-fn name
-        // (`nova_fn_T_reflect`) — `static` in single-TU (dead code, silently
-        // swept), external linkage in multi-TU (undefined symbol at link time).
-        // Bind T (and any other receiver-element-named generic) to the SAME
-        // `nova_int` default the name generator already assumes, for the
-        // duration of this one erased emission — makes the body-internal
-        // dispatch consistent with the symbol name already chosen, closing the
-        // gap for exactly the shape `receiver_type_c_ident` silently claims
-        // ("erased/unbound T reads as int"). Saved/restored so it never leaks
-        // into an unrelated function's own "T" (HashMap[K,V].something, etc.).
-        let type_subst_saved = self.seed_array_ext_static_generic_subst(f);
+        // Реестр 221.1 №577/№592 (маркер [M-array-ext-static-erased-body-no-
+        // generic-dispatch], CLOSED by №592): a STATIC array-ext method with
+        // its OWN generic bound to the receiver's element (`fn[T Reflect] []T
+        // .reflect() -> TypeShape => Arr(T.reflect())`) used to be emitted
+        // ONCE, erased, under a name that LOOKED like a genuine `[]int`
+        // instantiation (`receiver_type_c_ident`'s `_ => "nova_int"` catch-
+        // all) but served every element — wrong for any non-int element.
+        // `emit_fn_scoped_inner`'s top-of-fn dispatch now skips this shape's
+        // erased emission entirely (both instance and static), in favor of a
+        // real per-element mono driven by `array_ext_static_generic_fn` +
+        // the `Path(["__array", elem])` call site (D38) — no seeding needed
+        // here anymore, the seed used to matter only for the erased body this
+        // function no longer reaches for this shape.
         let r = self.emit_fn_scoped_inner(f);
-        if let Some(saved) = type_subst_saved {
-            self.current_type_subst = saved;
-        }
         self.override_maps_scope_exit(ovr_saved, r.is_ok());
         r
-    }
-
-    /// Реестр 221.1 №577: see the call site in `emit_fn` for the full
-    /// rationale. Detects the EXACT shape that reaches `emit_fn_scoped_inner`'s
-    /// erased/regular (non-monomorphized) body emission for an array-ext
-    /// method whose OWN generic names the receiver's element (`fn[T] []T.m()`)
-    /// — mirrors the `is_array_ext`/`recv_elem`/`recv_is_instance` detection in
-    /// `emit_fn_scoped_inner` byte-for-byte (both must agree on WHICH functions
-    /// take this path, or the seed applies to the wrong body / not at all).
-    /// Returns the PRE-seed `current_type_subst` to restore afterward, or
-    /// `None` if this `f` doesn't match (nothing to seed, nothing to restore).
-    fn seed_array_ext_static_generic_subst(
-        &mut self,
-        f: &FnDecl,
-    ) -> Option<HashMap<String, crate::types::ResolvedType>> {
-        if f.generics.is_empty() {
-            return None;
-        }
-        let recv = f.receiver.as_ref()?;
-        let recv_elem = recv.type_name.strip_prefix("[]")?;
-        if recv_elem.is_empty() || !f.generics.iter().any(|g| g.name == recv_elem) {
-            return None;
-        }
-        let recv_is_instance = matches!(recv.kind, ReceiverKind::Instance);
-        if recv_is_instance {
-            // Instance receivers with a matching own-generic return early in
-            // `emit_fn_scoped_inner` (never reach erased emission) — nothing
-            // to seed for a body that's never emitted here.
-            return None;
-        }
-        let saved = self.current_type_subst.clone();
-        self.current_type_subst.insert(
-            recv_elem.to_string(),
-            crate::types::ResolvedType::Raw("nova_int".to_string()),
-        );
-        Some(saved)
     }
 
     fn emit_fn_scoped_inner(&mut self, f: &FnDecl) -> Result<(), String> {
@@ -28509,18 +28487,22 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // erased. CONCRETE-receiver ext methods (`fn []int @max`, generics
             // empty) and method-own generics over a concrete slice receiver
             // (`fn[U] []int @m`) keep the legacy fall-through unchanged.
-            // INSTANCE receivers only: a STATIC `fn[T] []T.m(...)` call-site
-            // (slice_static_generic_method.nv `Vec[int].echo2`) still links
-            // against the erased `Nova_NovaArray_<elem>_static_<m>` symbol —
-            // that dispatch family has no mono routing yet, so its erased
-            // emission stays (undefined-symbol link error otherwise).
+            // Реестр 221.1 №592 (was: "INSTANCE receivers only… STATIC
+            // `fn[T] []T.m(...)` … has no mono routing yet"): it now does —
+            // `array_ext_static_generic_fn` + the `Path(["__array", elem])`
+            // call site (D38) monomorphize a fresh body per concrete element
+            // via `register_mono_method_instance`/`emit_monomorphized_method`,
+            // the SAME worklist-drain machinery this INSTANCE case already
+            // used. Skip the erased single-shot emission for BOTH receiver
+            // kinds now — a STATIC blanket left un-skipped would still emit
+            // ONE dead `T`-defaulted-to-`nova_int` body no call site links
+            // against anymore (harmless but wasted, and risks the exact same
+            // mono-registry poisoning the instance case was already guarded
+            // against above).
             let recv_elem = f.receiver.as_ref()
                 .and_then(|r| r.type_name.strip_prefix("[]"))
                 .unwrap_or("");
-            let recv_is_instance = matches!(
-                f.receiver.as_ref().map(|r| &r.kind),
-                Some(crate::ast::ReceiverKind::Instance));
-            if recv_is_instance && f.generics.iter().any(|g| g.name == recv_elem) {
+            if f.generics.iter().any(|g| g.name == recv_elem) {
                 return Ok(());
             }
             // Fall through to regular emit path.
@@ -40950,20 +40932,72 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 _ => unreachable!(),
                             }
                         }
-                        // Реестр 221.1 №577/№581: a STATIC array-ext own-generic
+                        // Реестр 221.1 №592: a STATIC array-ext own-generic
                         // blanket method (`fn[T Bound] []T.method()`, e.g. `[]T
-                        // .reflect()`) is NOT a Vec[T] static — rewriting it to
-                        // `Vec[T].method(...)` below sends it through dispatch
-                        // paths that don't know this receiver form and fall
-                        // through to the coarse name-only `method_receivers`
-                        // last-wins fallback, landing on whatever OTHER static
-                        // method happens to share the bare name (observed:
-                        // `[]int.reflect()` linked to `Nova_Option_static_reflect`,
-                        // undefined — Option[T].reflect() is declared LAST in
-                        // std/reflect.nv and wins the name-only lookup). Dispatch
-                        // directly to the canonical name the declaration itself
-                        // registered (`array_ext_static_c_base`), bypassing the
-                        // Vec[T] rewrite entirely.
+                        // .reflect()`) now gets a REAL per-element mono instead
+                        // of the single erased (`T` defaulted to `nova_int`)
+                        // body every element used to silently share — that
+                        // erased body made `[]int.method()` LOOK correct by
+                        // coincidence while `[]str.method()` / `[]<record>
+                        // .method()` (and anything else non-int) read back
+                        // whatever `T` happened to resolve to as `nova_int`
+                        // (see `emit_fn_scoped_inner`'s own doc on the skip
+                        // this now relies on). `elem_substituted` (computed
+                        // above for the `nova_array_new_*` suffix map) is the
+                        // REAL concrete element for THIS call site — bind the
+                        // method's own generic to it and monomorphize through
+                        // the SAME worklist-drain machinery an INSTANCE array-
+                        // ext own-generic method already used successfully.
+                        if let Some(fn_decl) = self.array_ext_static_generic_fn.get(method).cloned() {
+                            let recv_elem_generic = fn_decl.receiver.as_ref()
+                                .and_then(|r| r.type_name.strip_prefix("[]"))
+                                .unwrap_or("T")
+                                .to_string();
+                            let elem_c = {
+                                let elem_tr = crate::ast::TypeRef::Named {
+                                    path: vec![elem_substituted.clone()],
+                                    generics: Vec::new(),
+                                    span: obj.span,
+                                };
+                                match self.type_ref_to_c(&elem_tr) {
+                                    Ok(c) => c,
+                                    // `elem_substituted` was already a resolved
+                                    // C type (typevar-substituted case, e.g.
+                                    // `"nova_str"`/`"Nova_X"`) — use as-is.
+                                    Err(_) => elem_substituted.clone(),
+                                }
+                            };
+                            let recv_type = format!("[]{}", elem_substituted);
+                            let base_c_name = format!(
+                                "Nova_{}_static_{}",
+                                Self::receiver_type_c_ident(&recv_type),
+                                method,
+                            );
+                            let type_subst_pairs = vec![(recv_elem_generic, elem_c)];
+                            let mono_name = Self::compute_mono_name(&base_c_name, &type_subst_pairs);
+                            self.register_mono_method_instance(
+                                &fn_decl, type_subst_pairs, &mono_name, &recv_type);
+                            let mut arg_strs = Vec::new();
+                            for a in args {
+                                arg_strs.push(self.emit_expr(a.expr())?);
+                            }
+                            return Ok(format!("{}({})", mono_name, arg_strs.join(", ")));
+                        }
+                        // Реестр 221.1 №577/№581: a STATIC array-ext method with
+                        // NO own generic (or one the block above didn't match,
+                        // e.g. the `T` couldn't be recovered) is NOT a Vec[T]
+                        // static — rewriting it to `Vec[T].method(...)` below
+                        // sends it through dispatch paths that don't know this
+                        // receiver form and fall through to the coarse name-only
+                        // `method_receivers` last-wins fallback, landing on
+                        // whatever OTHER static method happens to share the bare
+                        // name (observed: `[]int.reflect()` linked to
+                        // `Nova_Option_static_reflect`, undefined —
+                        // Option[T].reflect() is declared LAST in std/reflect.nv
+                        // and wins the name-only lookup). Dispatch directly to
+                        // the canonical name the declaration itself registered
+                        // (`array_ext_static_c_base`), bypassing the Vec[T]
+                        // rewrite entirely.
                         if let Some(base) = self.array_ext_static_c_base.get(method).cloned() {
                             let mut arg_strs = Vec::new();
                             for a in args {
@@ -46614,19 +46648,62 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // (single-key) или auto-derive.
                         }
                     }
-                    // Реестр 221.1 №581: a bare receiver typevar substituted
-                    // to a Vec/array mono C-type (e.g. `T.reflect()` inside
-                    // `Option[T].reflect()`'s own mono'd body, T bound to
-                    // `Vec____nova_int`) has no entry in `method_overloads`
-                    // under ITS OWN mono name — the array-ext blanket method
-                    // was registered under `receiver_type_c_ident("[]T")`
-                    // (`"NovaArray_nova_int"`), a DIFFERENT C-identifier for
-                    // the same logical `[]T`/`Vec[T]` type (D27 alias). Left
-                    // unhandled, this falls through to the guesses below and
-                    // synthesizes a name that was never emitted (observed:
+                    // Реестр 221.1 №581/№592: a bare receiver typevar
+                    // substituted to a Vec/array mono C-type (e.g.
+                    // `T.reflect()` inside `Option[T].reflect()`'s own
+                    // mono'd body, T bound to `Vec____nova_int`) has no entry
+                    // in `method_overloads` under ITS OWN mono name — the
+                    // array-ext blanket method was registered under
+                    // `receiver_type_c_ident("[]T")` (`"NovaArray_nova_int"`),
+                    // a DIFFERENT C-identifier for the same logical
+                    // `[]T`/`Vec[T]` type (D27 alias). Left unhandled, this
+                    // falls through to the guesses below and synthesizes a
+                    // name that was never emitted (observed:
                     // `Nova_Vec____nova_int_static_reflect`, undefined).
-                    // Defer to the one place that recorded what the
-                    // declaration actually emitted.
+                    // №592: the DIRECT call site now mono's per real element
+                    // instead of sharing ONE `nova_int`-defaulted erased body
+                    // (`array_ext_static_c_base` no longer names anything
+                    // actually emitted) — mono per element HERE too, same
+                    // machinery, recovering the concrete element C-type from
+                    // `recv_seg` (`NovaArray_<elem>` / `Vec____<elem>`,
+                    // mirrors the identical extraction the INSTANCE array-ext
+                    // call site already does, ~43862).
+                    if let Some(fn_decl) = self.array_ext_static_generic_fn.get(method_name.as_str()).cloned() {
+                        let elem_c: Option<String> = if let Some(na) =
+                            Self::debt_strip_novaarray_prefix_opt(&recv_seg)
+                        {
+                            Some(na.to_string())
+                        } else if recv_seg.starts_with("Vec____") {
+                            Some(self.generic_type_instance_info.borrow()
+                                .get(&format!("Nova_{}", recv_seg))
+                                .and_then(|(_, targs)| targs.first().map(|t| self.arg_c(t)))
+                                .unwrap_or_else(|| recv_seg
+                                    .strip_prefix("Vec____")
+                                    .unwrap_or("")
+                                    .to_string()))
+                        } else {
+                            None
+                        };
+                        if let Some(elem_c) = elem_c {
+                            let recv_elem_generic = fn_decl.receiver.as_ref()
+                                .and_then(|r| r.type_name.strip_prefix("[]"))
+                                .unwrap_or("T")
+                                .to_string();
+                            let base_c_name = format!("Nova_{}_static_{}", recv_seg, method_name);
+                            let type_subst_pairs = vec![(recv_elem_generic, elem_c)];
+                            let mono_name = Self::compute_mono_name(&base_c_name, &type_subst_pairs);
+                            self.register_mono_method_instance(
+                                &fn_decl, type_subst_pairs, &mono_name, &recv_seg);
+                            let mut arg_strs = Vec::new();
+                            for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
+                            return Ok(format!("{}({})", mono_name, arg_strs.join(", ")));
+                        }
+                    }
+                    // Defer to the one place that recorded what the erased
+                    // declaration used to emit — kept for any array-ext
+                    // static method WITHOUT an own-element generic (the
+                    // block above didn't match, `elem_c` unrecoverable from
+                    // `recv_seg`'s shape).
                     if let Some(base) = self.array_ext_static_c_base.get(method_name.as_str()).cloned() {
                         let mut arg_strs = Vec::new();
                         for a in args { arg_strs.push(self.emit_expr(a.expr())?); }

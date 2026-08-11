@@ -34,13 +34,41 @@ test "str.reflect() -> Str" {
     match str.reflect() { Str => assert(true), _ => assert(false) }
 }
 
-// [M-array-ext-static-erased-body-no-generic-dispatch]: `[]int.reflect()`
-// не работает — статический метод array-ext для `nova_int` обслуживается
-// через ERASED (немономорфизированный) body, а `.reflect()` внутри
-// вызывает `T.reflect()`, которого в erased body нет.
+// Реестр 221.1 №592 (было [M-array-ext-static-erased-body-no-generic-
+// dispatch]): a STATIC array-ext own-generic blanket (`fn[T] []T.reflect()`)
+// used to be emitted ONCE, erased, under a name that happened to look like
+// `[]int` (the C-ident catch-all defaults an unbound `T` to `nova_int`) but
+// served every element — `[]int.reflect()` "passed" by coincidence,
+// `[]str.reflect()` read back `int`'s answer. Three element kinds below
+// (primitive int, primitive str, record) each get their OWN monomorphized
+// body now — a single shared int-shaped body can no longer hide behind any
+// of them.
+test "[]int.reflect() -> Arr(Int)" {
+    match []int.reflect() {
+        Arr(items) => match items { Int => assert(true), _ => assert(false) }
+        _ => assert(false)
+    }
+}
+
 test "[]str.reflect() -> Arr(Str)" {
     match []str.reflect() {
         Arr(items) => match items { Str => assert(true), _ => assert(false) }
+        _ => assert(false)
+    }
+}
+
+#impl(Reflect)
+type ReflPoint { x int, y int }
+
+test "[]<record>.reflect() -> Arr(Record(...))" {
+    match []ReflPoint.reflect() {
+        Arr(items) => match items {
+            Record(name, fields) => {
+                assert(name == "ReflPoint")
+                assert(fields.len() == 2)
+            }
+            _ => assert(false)
+        }
         _ => assert(false)
     }
 }
