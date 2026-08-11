@@ -76,8 +76,24 @@ if [ -n "$found" ]; then
     echo "$found" | while IFS= read -r f; do [ -n "$f" ] && rm -f "$f"; done
 fi
 
+# РАНТАЙМ БЕРЁТСЯ ИЗ ГЛАВНОГО ДЕРЕВА — и это не срезание угла, а граница пробы.
+#
+# `git worktree add` НЕ инициализирует подмодули, поэтому в свежем дереве нет
+# `compiler-codegen/nova_rt/libuv`, и сборка падает на `FATAL libuv submodule
+# not initialized` ещё до всякой резолюции зависимостей (поймано 2026-08-11
+# первым же прогоном шага). Инициализировать подмодуль на каждый прогон — это
+# минуты и гигабайты ради того, что мы и не проверяем.
+#
+# Проверяем мы РЕЗОЛЮЦИЮ ПАКЕТОВ без dev-override: соберётся ли то, что
+# записано в `nova.lock.toml`. Рантайм к этому вопросу отношения не имеет и
+# берётся у главного дерева — ровно так же, как гейт проверяет наши пакеты
+# (`NOVA_STD_PATH`/`NOVA_RT_DIR`/`NOVA_CG_INCLUDE`). Сказано прямо, чтобы никто
+# не считал, будто этот шаг проверяет ещё и рантайм: он не проверяет.
 LOG="${TMPDIR:-/tmp}/cleanprobe_$$.log"
-( cd "$WT" && "$NOVA" build "$TARGET" --strict-effects ) >"$LOG" 2>&1
+( cd "$WT" \
+  && NOVA_RT_DIR="$ROOT/compiler-codegen/nova_rt" \
+     NOVA_CG_INCLUDE="$ROOT/compiler-codegen" \
+     "$NOVA" build "$TARGET" --strict-effects ) >"$LOG" 2>&1
 rc=$?
 
 if [ "$rc" -eq 0 ]; then
