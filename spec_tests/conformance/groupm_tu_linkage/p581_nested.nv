@@ -1,0 +1,15 @@
+// Реестр 221.1 #581/№577 приёмка: подстановка/имя array-ext static blanket
+// метода должны сходиться на ЛЮБОЙ вложенности, не только `[]int` напрямую.
+module groupm_tu_linkage.p581_nested
+
+import std.reflect.{Reflect}
+
+test "Vec[[]int].reflect() -> Arr(Arr(Int)) (registry 221.1 #581 nesting)" {
+    match Vec[[]int].reflect() {
+        Arr(inner) => match inner {
+            Arr(elem) => match elem { Int => assert(true), _ => assert(false) }
+            _ => assert(false)
+        }
+        _ => assert(false)
+    }
+}

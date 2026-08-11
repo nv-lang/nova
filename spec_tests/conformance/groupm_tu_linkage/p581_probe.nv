@@ -1,0 +1,29 @@
+// Реестр 221.1 #581: `Option[[]T].reflect()` used to link-fail —
+// `T.reflect()` inside `Option[T].reflect()`'s own mono'd body, with T bound
+// to a Vec/array mono C-type, computed the callee name via the GENERIC mono
+// naming scheme (`Nova_Vec____nova_int_static_reflect`, generated but never
+// emitted — no such function exists) instead of the array-ext blanket
+// method's OWN canonical name (`Nova_NovaArray_nova_int_static_reflect`,
+// the one actually emitted for `[]T.reflect()`). Two independent,
+// incompatible C-identifier schemes for the same logical `[]T`/`Vec[T]`
+// type (D27 alias), diverging exactly at this cross-scheme call.
+//
+// Fix: `emit_c.rs::array_ext_static_c_base` — single registry, populated at
+// method-declaration scan time from the SAME computation the declaration's
+// own emission uses (`receiver_type_c_ident`), consulted by the generic
+// bare-typevar static call-site fallback (and by the sibling direct-call
+// TurboFish-rewrite site, see p577_reflect.nv) BEFORE either falls through
+// to a name independently re-derived (and wrong).
+module groupm_tu_linkage.p581_probe
+
+import std.reflect.{Reflect}
+
+test "Option[[]int].reflect() -> Opt(Arr(Int)) (registry 221.1 #581)" {
+    match Option[[]int].reflect() {
+        Opt(inner) => match inner {
+            Arr(elem) => match elem { Int => assert(true), _ => assert(false) }
+            _ => assert(false)
+        }
+        _ => assert(false)
+    }
+}

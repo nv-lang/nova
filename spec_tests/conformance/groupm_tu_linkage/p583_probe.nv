@@ -1,0 +1,36 @@
+// Реестр 221.1 #583: `spawn consume w = e { .. }` (D415 §4 move-capture,
+// `Stmt::ConsumeScope`) unconditionally dispatched
+// `Nova_<T>_consume_cleanup(&w, outcome)` at scope exit — but that symbol is
+// ONLY EVER emitted for a type with a user-declared `consume @cleanup`
+// method (`emit_c.rs::consume_cleanup_types`, an `emit_module` pre-pass
+// gated on `f.name == "cleanup"`). A plain `value`-kind type captured this
+// way (nothing to release — `consume` here is move-into-fiber semantics,
+// not a linear-resource contract) has no such method, so the call site
+// referenced a symbol the emission side never produces. Single-TU hid this:
+// the whole dispatch sat inside an unreferenced function, swept `static`
+// before the linker ever saw it; multi-TU's external linkage exposes it —
+// `undefined symbol: Nova_Handle_consume_cleanup` on the record's own
+// carrier (`fiber_safety_seed_pos.nv`).
+//
+// Fix: `emit_c.rs::emit_consume_entry_cleanup` — the single chokepoint every
+// one of the four exit run-sites (LEAVE/FAIL/EARLY/INTERRUPT) goes through —
+// now gates the dispatch call on `consume_cleanup_types.contains(type_name)`
+// and skips it (nothing to clean up) instead of calling an absent symbol.
+//
+// This fixture exercises the SAME shape end-to-end and RUNS: a plain
+// `value`-kind type with no `@cleanup`, captured via `spawn consume w = e
+// { .. }`, whose body result crosses back out and is asserted.
+module groupm_tu_linkage.p583_probe
+
+type Counter value { n int }
+
+fn Counter @doubled() -> int => @n * 2
+
+test "spawn consume w = <value-kind, no @cleanup> { .. } — links and runs (registry 221.1 #583)" {
+    ro c = Counter { n: 21 }
+    supervised {
+        spawn consume w = c {
+            assert(w.doubled() == 42)
+        }
+    }
+}

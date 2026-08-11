@@ -983,6 +983,23 @@ pub struct CEmitter {
     /// Maps method name → (type_name, is_instance) for user-defined methods.
     /// Used at call sites to resolve `obj.method(args)` → `Nova_T_method_m(obj, args)`.
     method_receivers: HashMap<String, (String, bool)>,
+    /// Реестр 221.1 №581/№577: single canonical name for a STATIC array-ext
+    /// own-generic blanket method (`fn[T Bound] []T.method() -> R`, e.g.
+    /// `[]T.reflect()`). Maps method name → the C base ident the DECLARATION
+    /// itself emits under (`Self::receiver_type_c_ident(recv.type_name)`,
+    /// e.g. `"NovaArray_nova_int"` — see the `[196.5 ДЕФЕКТ-2]`/erased-body
+    /// comment on `emit_fn_scoped_inner`: this static form is emitted ONCE,
+    /// erased, with no per-element mono). Populated ONLY here, at method
+    /// registration (~8218), consumed by every call site that needs to name
+    /// this same function instead of re-deriving a name independently —
+    /// the two independent re-derivations (the `[]T.method()` → `Vec[T]
+    /// .method()` TurboFish rewrite, and the bare-T generic-body static
+    /// dispatch inside another type's own mono'd body, e.g. `Option[T]
+    /// .reflect()`'s `T.reflect()`) each computed a DIFFERENT, never-emitted
+    /// name (`Nova_Option_static_reflect` name-only last-wins collision;
+    /// `Nova_Vec____<elem>_static_reflect` generic-mono-name collision) —
+    /// this map is the single source of truth both must defer to.
+    array_ext_static_c_base: HashMap<String, String>,
     /// Plan 06 Ф.1: multi-key registry — `(type_name, method_name) → is_instance`.
     /// `method_receivers` single-key страдает от last-wins (если два типа имеют
     /// одноимённый method, второй вытесняет первый). `all_methods` хранит все.
@@ -2221,6 +2238,22 @@ pub struct CEmitter {
     /// Drives (a) the hidden `int _consume_ccount;` field appended by
     /// `emit_record_type` and (b) the exactly-once prologue in `emit_fn`.
     consume_cleanup_types: HashSet<String>,
+    /// Реестр 221.1 №583: receiver-type C-idents of EVERY declared `consume
+    /// @cleanup` method, EXTERN included (unlike `consume_cleanup_types`
+    /// above, which deliberately excludes `extern "nova"` cleanups —
+    /// MutexGuard etc. — because those hand-written C structs manage their
+    /// own `_consume_ccount`-equivalent bookkeeping and don't need the
+    /// generated hidden field). Populated by the SAME `emit_module` pre-pass,
+    /// alongside `consume_cleanup_types`. Consulted ONLY by
+    /// `emit_consume_entry_cleanup`'s dispatch-or-skip gate: a type ABSENT
+    /// from this set has NO `Nova_<T>_consume_cleanup` under ANY emission
+    /// path (user OR extern) — genuinely nothing to call. A type PRESENT
+    /// here always has one, extern or not, and the call must fire (skipping
+    /// it for an extern type like MutexGuard would silently leave a lock
+    /// held — a real regression caught empirically: reusing the narrower
+    /// `consume_cleanup_types` here made an unrelated, consume-free fixture
+    /// hang under `nova test` where it used to pass in ~31s).
+    consume_cleanup_declared_types: HashSet<String>,
     /// Plan 175 Ф.2-v2: `#default_handler(EffectName)` registry — effect
     /// name → plain Nova name of the zero-arg free fn tagged as its default
     /// handler-factory (checker already validated arity/return-type/
@@ -2535,6 +2568,7 @@ impl CEmitter {
             being_defined_record_types: HashSet::new(),
             effect_schemas: HashMap::new(),
             method_receivers: HashMap::new(),
+            array_ext_static_c_base: HashMap::new(),
             method_overloads: BTreeMap::new(),
             method_overload_types: HashSet::new(),
             never_returning_methods: HashSet::new(),
@@ -2768,6 +2802,7 @@ impl CEmitter {
             // emit_module runs the pre-pass.
             preempt_keep: crate::codegen::preempt_keep::PreemptKeepSet::default(),
             consume_cleanup_types: HashSet::new(),
+            consume_cleanup_declared_types: HashSet::new(),
             default_handler_fns: HashMap::new(),
             consume_ccount_structs: HashSet::new(),
             record_consume_fields: HashMap::new(),
@@ -5355,24 +5390,34 @@ impl CEmitter {
         // function boundary). Extern "nova" cleanups (MutexGuard etc., D194
         // hot path, hand-written C structs) are excluded by `!f.is_external`.
         {
-            let mut collect = |items: &[Item]| {
+            let mut collect = |items: &[Item], declared: &mut HashSet<String>, ccount: &mut HashSet<String>| {
                 for item in items {
                     if let Item::Fn(f) = item {
-                        if f.is_external { continue; }
                         if f.name != "cleanup" { continue; }
                         if let Some(recv) = &f.receiver {
                             if recv.consume && matches!(recv.kind, ReceiverKind::Instance) {
-                                self.consume_cleanup_types
-                                    .insert(Self::receiver_type_c_ident(&recv.type_name));
+                                let ident = Self::receiver_type_c_ident(&recv.type_name);
+                                // Реестр 221.1 №583: EVERY declared consume
+                                // @cleanup (extern included) has a real C
+                                // definition somewhere — register it here
+                                // unconditionally.
+                                declared.insert(ident.clone());
+                                if !f.is_external {
+                                    ccount.insert(ident);
+                                }
                             }
                         }
                     }
                 }
             };
-            collect(&module.items);
+            let mut declared = std::mem::take(&mut self.consume_cleanup_declared_types);
+            let mut ccount = std::mem::take(&mut self.consume_cleanup_types);
+            collect(&module.items, &mut declared, &mut ccount);
             for pf in &module.peer_files {
-                collect(&pf.items_here);
+                collect(&pf.items_here, &mut declared, &mut ccount);
             }
+            self.consume_cleanup_declared_types = declared;
+            self.consume_cleanup_types = ccount;
         }
 
         // Plan 217 (гибрид C, §8а п.1) + D432-амендмент 2026-08-04 (№315
@@ -8224,6 +8269,15 @@ impl CEmitter {
                     // Mangling: для первой overload — короткое имя
                     // (backward compat); для второй+ — с param-types suffix.
                     let safe_recv_name = Self::receiver_type_c_ident(&recv.type_name);
+                    // Реестр 221.1 №581/№577: record the ONE canonical C base
+                    // ident for a STATIC array-ext own-generic blanket method
+                    // (`fn[T Bound] []T.method()`), so every call site that
+                    // needs to name this same function reads it from here
+                    // instead of re-deriving (and mis-deriving) its own name.
+                    if is_array_ext && !is_instance {
+                        self.array_ext_static_c_base
+                            .insert(f.name.clone(), safe_recv_name.clone());
+                    }
                     // Plan 100.6 (D164): consume-bit — `consume` vs `method` prefix
                     // ловит ABI mismatch при изменении consume-статуса метода.
                     // consume-method: Nova_{T}_consume_{name}
@@ -28329,9 +28383,70 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     fn emit_fn(&mut self, f: &FnDecl) -> Result<(), String> {
         // [race-198 class-closure]: см. override_maps_scope_enter doc.
         let ovr_saved = self.override_maps_scope_enter();
+        // Реестр 221.1 №577 (маркер [M-array-ext-static-erased-body-no-generic-
+        // dispatch]): a STATIC array-ext method with its OWN generic bound to the
+        // receiver's element (`fn[T Reflect] []T.reflect() -> TypeShape =>
+        // Arr(T.reflect())`) never gets per-element monomorphized — see
+        // `emit_fn_scoped_inner`'s top-of-fn dispatch a few lines below (only
+        // INSTANCE array-ext own-generics skip the erased body; STATIC ones fall
+        // through, by design, "no mono routing yet"). Its ONE erased body is named
+        // via `receiver_type_c_ident("[]T")`, whose `_ => "nova_int"` catch-all
+        // (unknown/unbound element) makes it LOOK like a genuine `[]int`
+        // instantiation — but nothing binds `current_type_subst[T]` for the body
+        // itself, so a body-internal type-parametric static call (`T.reflect()`)
+        // can't resolve the receiver and falls back to a bogus free-fn name
+        // (`nova_fn_T_reflect`) — `static` in single-TU (dead code, silently
+        // swept), external linkage in multi-TU (undefined symbol at link time).
+        // Bind T (and any other receiver-element-named generic) to the SAME
+        // `nova_int` default the name generator already assumes, for the
+        // duration of this one erased emission — makes the body-internal
+        // dispatch consistent with the symbol name already chosen, closing the
+        // gap for exactly the shape `receiver_type_c_ident` silently claims
+        // ("erased/unbound T reads as int"). Saved/restored so it never leaks
+        // into an unrelated function's own "T" (HashMap[K,V].something, etc.).
+        let type_subst_saved = self.seed_array_ext_static_generic_subst(f);
         let r = self.emit_fn_scoped_inner(f);
+        if let Some(saved) = type_subst_saved {
+            self.current_type_subst = saved;
+        }
         self.override_maps_scope_exit(ovr_saved, r.is_ok());
         r
+    }
+
+    /// Реестр 221.1 №577: see the call site in `emit_fn` for the full
+    /// rationale. Detects the EXACT shape that reaches `emit_fn_scoped_inner`'s
+    /// erased/regular (non-monomorphized) body emission for an array-ext
+    /// method whose OWN generic names the receiver's element (`fn[T] []T.m()`)
+    /// — mirrors the `is_array_ext`/`recv_elem`/`recv_is_instance` detection in
+    /// `emit_fn_scoped_inner` byte-for-byte (both must agree on WHICH functions
+    /// take this path, or the seed applies to the wrong body / not at all).
+    /// Returns the PRE-seed `current_type_subst` to restore afterward, or
+    /// `None` if this `f` doesn't match (nothing to seed, nothing to restore).
+    fn seed_array_ext_static_generic_subst(
+        &mut self,
+        f: &FnDecl,
+    ) -> Option<HashMap<String, crate::types::ResolvedType>> {
+        if f.generics.is_empty() {
+            return None;
+        }
+        let recv = f.receiver.as_ref()?;
+        let recv_elem = recv.type_name.strip_prefix("[]")?;
+        if recv_elem.is_empty() || !f.generics.iter().any(|g| g.name == recv_elem) {
+            return None;
+        }
+        let recv_is_instance = matches!(recv.kind, ReceiverKind::Instance);
+        if recv_is_instance {
+            // Instance receivers with a matching own-generic return early in
+            // `emit_fn_scoped_inner` (never reach erased emission) — nothing
+            // to seed for a body that's never emitted here.
+            return None;
+        }
+        let saved = self.current_type_subst.clone();
+        self.current_type_subst.insert(
+            recv_elem.to_string(),
+            crate::types::ResolvedType::Raw("nova_int".to_string()),
+        );
+        Some(saved)
     }
 
     fn emit_fn_scoped_inner(&mut self, f: &FnDecl) -> Result<(), String> {
@@ -30921,7 +31036,39 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // `D188-r2-manual-on-exit` checker can miss via aliasing/FFI).
         self.line(&format!("if ({} >= 1) {{ nv_panic(nova_str_from_cstr(\"D188-on-exit-double-invocation\")); }}", policy.count_var));
         self.line(&format!("{} += 1;", policy.count_var));
-        self.line(&format!("{}({}, {});", cleanup_sym, policy.c_binding, o_local));
+        // Реестр 221.1 №583: `cleanup_sym` (`Nova_<T>_consume_cleanup`) is
+        // only ever EMITTED for a type with a declared `consume @cleanup`
+        // method — user OR extern (`consume_cleanup_declared_types`;
+        // NOT the narrower `consume_cleanup_types`, which deliberately
+        // excludes `extern "nova"` cleanups like MutexGuard — an earlier
+        // version of this gate used that narrower set and empirically
+        // deadlocked an unrelated, consume-free fixture: MutexGuard's real,
+        // hand-written `Nova_MutexGuard_consume_cleanup` got silently
+        // skipped, leaving a lock held). A `spawn consume w = e { .. }`/
+        // `consume w = e { .. }` scope (`Stmt::ConsumeScope`, D415 §4
+        // move-capture) accepts ANY type the checker allows in that
+        // position, including a plain `value`-kind type with NO cleanup
+        // lifecycle at all and no declaration anywhere (observed: `type
+        // Handle value { .. }`, captured via `spawn consume w = h.share()
+        // { .. }` — nothing to release, the `consume` here is
+        // move-into-fiber semantics, not a linear-resource contract).
+        // Calling a symbol that was never emitted for such a type is
+        // undefined at link time — under single-TU the whole dispatch was
+        // `static`, unreferenced-and-dead, silently swept before the
+        // linker ever saw it (same class as №577: a call site assumes a
+        // definition the emission side never produces for this shape);
+        // multi-TU's external linkage exposes the gap. Skip the call ONLY
+        // when NO declaration exists anywhere — there is nothing to clean
+        // up — while leaving the surrounding exactly-once/fail-frame/
+        // shield/watchdog protocol untouched, so a genuine consume type's
+        // behavior (extern or not) is byte-identical.
+        if self.consume_cleanup_declared_types.contains(&policy.type_name) {
+            self.line(&format!("{}({}, {});", cleanup_sym, policy.c_binding, o_local));
+        } else {
+            self.line(&format!(
+                "/* реестр 221.1 №583: {} has no declared @cleanup — nothing to run */",
+                policy.type_name));
+        }
         self.line("nova_fail_pop();");
         self.line(&format!("nv_cleanup_watchdog_disarm({});", wd_prev));
         // Clean cleanup → observability sees the final outcome (skip on throw,
@@ -40803,6 +40950,30 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 _ => unreachable!(),
                             }
                         }
+                        // Реестр 221.1 №577/№581: a STATIC array-ext own-generic
+                        // blanket method (`fn[T Bound] []T.method()`, e.g. `[]T
+                        // .reflect()`) is NOT a Vec[T] static — rewriting it to
+                        // `Vec[T].method(...)` below sends it through dispatch
+                        // paths that don't know this receiver form and fall
+                        // through to the coarse name-only `method_receivers`
+                        // last-wins fallback, landing on whatever OTHER static
+                        // method happens to share the bare name (observed:
+                        // `[]int.reflect()` linked to `Nova_Option_static_reflect`,
+                        // undefined — Option[T].reflect() is declared LAST in
+                        // std/reflect.nv and wins the name-only lookup). Dispatch
+                        // directly to the canonical name the declaration itself
+                        // registered (`array_ext_static_c_base`), bypassing the
+                        // Vec[T] rewrite entirely.
+                        if let Some(base) = self.array_ext_static_c_base.get(method).cloned() {
+                            let mut arg_strs = Vec::new();
+                            for a in args {
+                                arg_strs.push(self.emit_expr(a.expr())?);
+                            }
+                            return Ok(format!(
+                                "Nova_{}_static_{}({})",
+                                base, method, arg_strs.join(", ")
+                            ));
+                        }
                         {
                             // [M-vec-spelling-static-dispatch-gap] partial close
                             // (vec-sweep, 2026-07-07): `[]T.of(...)` / `[]T.from(...)`
@@ -42587,7 +42758,24 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                         // `NovaArray_<elem>`) with the concrete element,
                                                         // plus a `____<paramtype>` suffix per method-level
                                                         // generic (skip the receiver typevar, index 0).
-                                                        let recv_c_ident = format!("NovaArray_{}", elem_c);
+                                                        // Реестр 221.1 №582: `elem_c` here is a MATERIALIZED
+                                                        // C type (`type_args_c[0]`), which for a pointer-
+                                                        // element (record/heap type, INCLUDING a nested
+                                                        // array — `Vec[[]int]`, `Vec[[]<record>]`) carries a
+                                                        // trailing `*` — unlike the sibling method-level
+                                                        // generic suffix a few lines below, this receiver
+                                                        // element was concatenated RAW, landing a literal
+                                                        // `*` inside a C identifier (`Nova_NovaArray_
+                                                        // Nova_Vec____nova_int*_static_reflect` — invalid C,
+                                                        // `expected ';' after top level declarator`).
+                                                        // `sanitize_c_for_ident` is the existing, general
+                                                        // "make any C type string ident-safe" normalizer
+                                                        // (already used for the suffix below and at the
+                                                        // static-call fallback, ~46590) — apply it here too
+                                                        // instead of inventing a second one.
+                                                        let recv_c_ident = format!(
+                                                            "NovaArray_{}",
+                                                            Self::sanitize_c_for_ident(&elem_c));
                                                         let base_mono = format!("Nova_{}_static_{}", recv_c_ident, method);
                                                         let mono_name = if type_subst.len() <= 1 {
                                                             base_mono
@@ -46425,6 +46613,27 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // которая может найти через method_receivers
                             // (single-key) или auto-derive.
                         }
+                    }
+                    // Реестр 221.1 №581: a bare receiver typevar substituted
+                    // to a Vec/array mono C-type (e.g. `T.reflect()` inside
+                    // `Option[T].reflect()`'s own mono'd body, T bound to
+                    // `Vec____nova_int`) has no entry in `method_overloads`
+                    // under ITS OWN mono name — the array-ext blanket method
+                    // was registered under `receiver_type_c_ident("[]T")`
+                    // (`"NovaArray_nova_int"`), a DIFFERENT C-identifier for
+                    // the same logical `[]T`/`Vec[T]` type (D27 alias). Left
+                    // unhandled, this falls through to the guesses below and
+                    // synthesizes a name that was never emitted (observed:
+                    // `Nova_Vec____nova_int_static_reflect`, undefined).
+                    // Defer to the one place that recorded what the
+                    // declaration actually emitted.
+                    if let Some(base) = self.array_ext_static_c_base.get(method_name.as_str()).cloned() {
+                        let mut arg_strs = Vec::new();
+                        for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
+                        return Ok(format!(
+                            "Nova_{}_static_{}({})",
+                            base, method_name, arg_strs.join(", ")
+                        ));
                     }
                     // Legacy single-key path (для типов которые не
                     // зарегистрированы в method_overloads, например
