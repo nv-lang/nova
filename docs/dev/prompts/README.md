@@ -29,4 +29,5 @@
 | [update-plans-readme.md](update-plans-readme.md) | Синхронизирует сводную таблицу `docs/plans/README.md` после закрытия плана или фазы. |
 | [update-spec.md](update-spec.md) | Аудит и обновление `spec/decisions/*.md` (D-blocks) + `spec/<topic>.md` — drift detection vs implementation, новые D-blocks для закрытых планов. |
 | [opencode-brief-template.md](opencode-brief-template.md) | Шаблон задания механическому исполнителю: команды целиком, точный путь, явный список запретов, образец строки результата |
+| [window-brief-template.md](window-brief-template.md) | Шаблон брифа окну на sonnet/opus: запреты, выживание под сторожем (молчание убивает), настройка worktree, приёмка, образец строки результата. Появился после того, как три окна подряд были сняты за молчание — виноват был бриф, а не окна. |
 | [integrator-handoff.md](integrator-handoff.md) | Восстановление сессии главного интегратора: роль, инварианты, текущее состояние и блокеры |
