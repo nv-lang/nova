@@ -572,9 +572,47 @@ fn compute_dead_decls_with(module: &Module, enabled: bool) -> DeadDecls {
         })
         .flatten()
         .collect();
+    // №TBD [бриф p576-bare-name, класс "имя решает раньше объявления"]:
+    // a bare variant constructor call (`Blue(7)`) or unit-variant reference
+    // spells ONLY the variant's name in source text — `collect_used_names`
+    // never inserts the owning sum TYPE's name (`Colour`) for it, since it
+    // walks the AST with no symbol table. That starved `ty_anchored`
+    // (`reachable.contains(ty)` below) for any sum type whose sole mention
+    // in reachable code is via bare variant construction/reference: the type
+    // was never seeded into `reachable`, so `T.m()` never fired — `m`'s
+    // fwd-decl+body were dropped as dead even though `m` demonstrably runs
+    // (repro: `type Colour enum … | Blue(int)` + hand-written `Colour@to_str`
+    // + `print(Blue(7).to_str())`, no other spelling of `Colour` anywhere —
+    // CC-FAIL, implicit-int-return `Nova_Colour_method_to_str` call to a
+    // function that was never declared). Map every variant name to its
+    // owning type name up front so refs can be expanded symmetrically with
+    // the `embedded_type_names` / concrete-slice-receiver over-keep patterns
+    // already used by this same closure (never over-prune).
+    let mut variant_to_type: HashMap<String, String> = HashMap::new();
+    let mut seed_variants = |items: &[Item]| {
+        for it in items {
+            if let Item::Type(t) = it {
+                if let TypeDeclKind::Sum(variants) = &t.kind {
+                    for v in variants {
+                        variant_to_type.insert(v.name.clone(), t.name.clone());
+                    }
+                }
+            }
+        }
+    };
+    seed_variants(&module.items);
+    for pf in &module.peer_files {
+        seed_variants(&pf.items_here);
+    }
     for item in &module.items {
         let mut refs: HashSet<String> = HashSet::new();
         crate::lints::collect_used_names(std::slice::from_ref(item), &mut refs);
+        // Expand: any collected variant name also reaches its owning type.
+        let owners: Vec<String> = refs
+            .iter()
+            .filter_map(|n| variant_to_type.get(n).cloned())
+            .collect();
+        refs.extend(owners);
         match item {
             Item::Fn(f) if is_fn_candidate(f) => {
                 if f.is_export && !enabled {
