@@ -983,6 +983,23 @@ pub struct CEmitter {
     /// Maps method name → (type_name, is_instance) for user-defined methods.
     /// Used at call sites to resolve `obj.method(args)` → `Nova_T_method_m(obj, args)`.
     method_receivers: HashMap<String, (String, bool)>,
+    /// Реестр 221.1 №581/№577: single canonical name for a STATIC array-ext
+    /// own-generic blanket method (`fn[T Bound] []T.method() -> R`, e.g.
+    /// `[]T.reflect()`). Maps method name → the C base ident the DECLARATION
+    /// itself emits under (`Self::receiver_type_c_ident(recv.type_name)`,
+    /// e.g. `"NovaArray_nova_int"` — see the `[196.5 ДЕФЕКТ-2]`/erased-body
+    /// comment on `emit_fn_scoped_inner`: this static form is emitted ONCE,
+    /// erased, with no per-element mono). Populated ONLY here, at method
+    /// registration (~8218), consumed by every call site that needs to name
+    /// this same function instead of re-deriving a name independently —
+    /// the two independent re-derivations (the `[]T.method()` → `Vec[T]
+    /// .method()` TurboFish rewrite, and the bare-T generic-body static
+    /// dispatch inside another type's own mono'd body, e.g. `Option[T]
+    /// .reflect()`'s `T.reflect()`) each computed a DIFFERENT, never-emitted
+    /// name (`Nova_Option_static_reflect` name-only last-wins collision;
+    /// `Nova_Vec____<elem>_static_reflect` generic-mono-name collision) —
+    /// this map is the single source of truth both must defer to.
+    array_ext_static_c_base: HashMap<String, String>,
     /// Plan 06 Ф.1: multi-key registry — `(type_name, method_name) → is_instance`.
     /// `method_receivers` single-key страдает от last-wins (если два типа имеют
     /// одноимённый method, второй вытесняет первый). `all_methods` хранит все.
@@ -2535,6 +2552,7 @@ impl CEmitter {
             being_defined_record_types: HashSet::new(),
             effect_schemas: HashMap::new(),
             method_receivers: HashMap::new(),
+            array_ext_static_c_base: HashMap::new(),
             method_overloads: BTreeMap::new(),
             method_overload_types: HashSet::new(),
             never_returning_methods: HashSet::new(),
@@ -8224,6 +8242,15 @@ impl CEmitter {
                     // Mangling: для первой overload — короткое имя
                     // (backward compat); для второй+ — с param-types suffix.
                     let safe_recv_name = Self::receiver_type_c_ident(&recv.type_name);
+                    // Реестр 221.1 №581/№577: record the ONE canonical C base
+                    // ident for a STATIC array-ext own-generic blanket method
+                    // (`fn[T Bound] []T.method()`), so every call site that
+                    // needs to name this same function reads it from here
+                    // instead of re-deriving (and mis-deriving) its own name.
+                    if is_array_ext && !is_instance {
+                        self.array_ext_static_c_base
+                            .insert(f.name.clone(), safe_recv_name.clone());
+                    }
                     // Plan 100.6 (D164): consume-bit — `consume` vs `method` prefix
                     // ловит ABI mismatch при изменении consume-статуса метода.
                     // consume-method: Nova_{T}_consume_{name}
@@ -40864,6 +40891,30 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 _ => unreachable!(),
                             }
                         }
+                        // Реестр 221.1 №577/№581: a STATIC array-ext own-generic
+                        // blanket method (`fn[T Bound] []T.method()`, e.g. `[]T
+                        // .reflect()`) is NOT a Vec[T] static — rewriting it to
+                        // `Vec[T].method(...)` below sends it through dispatch
+                        // paths that don't know this receiver form and fall
+                        // through to the coarse name-only `method_receivers`
+                        // last-wins fallback, landing on whatever OTHER static
+                        // method happens to share the bare name (observed:
+                        // `[]int.reflect()` linked to `Nova_Option_static_reflect`,
+                        // undefined — Option[T].reflect() is declared LAST in
+                        // std/reflect.nv and wins the name-only lookup). Dispatch
+                        // directly to the canonical name the declaration itself
+                        // registered (`array_ext_static_c_base`), bypassing the
+                        // Vec[T] rewrite entirely.
+                        if let Some(base) = self.array_ext_static_c_base.get(method).cloned() {
+                            let mut arg_strs = Vec::new();
+                            for a in args {
+                                arg_strs.push(self.emit_expr(a.expr())?);
+                            }
+                            return Ok(format!(
+                                "Nova_{}_static_{}({})",
+                                base, method, arg_strs.join(", ")
+                            ));
+                        }
                         {
                             // [M-vec-spelling-static-dispatch-gap] partial close
                             // (vec-sweep, 2026-07-07): `[]T.of(...)` / `[]T.from(...)`
@@ -42648,7 +42699,24 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                                         // `NovaArray_<elem>`) with the concrete element,
                                                         // plus a `____<paramtype>` suffix per method-level
                                                         // generic (skip the receiver typevar, index 0).
-                                                        let recv_c_ident = format!("NovaArray_{}", elem_c);
+                                                        // Реестр 221.1 №582: `elem_c` here is a MATERIALIZED
+                                                        // C type (`type_args_c[0]`), which for a pointer-
+                                                        // element (record/heap type, INCLUDING a nested
+                                                        // array — `Vec[[]int]`, `Vec[[]<record>]`) carries a
+                                                        // trailing `*` — unlike the sibling method-level
+                                                        // generic suffix a few lines below, this receiver
+                                                        // element was concatenated RAW, landing a literal
+                                                        // `*` inside a C identifier (`Nova_NovaArray_
+                                                        // Nova_Vec____nova_int*_static_reflect` — invalid C,
+                                                        // `expected ';' after top level declarator`).
+                                                        // `sanitize_c_for_ident` is the existing, general
+                                                        // "make any C type string ident-safe" normalizer
+                                                        // (already used for the suffix below and at the
+                                                        // static-call fallback, ~46590) — apply it here too
+                                                        // instead of inventing a second one.
+                                                        let recv_c_ident = format!(
+                                                            "NovaArray_{}",
+                                                            Self::sanitize_c_for_ident(&elem_c));
                                                         let base_mono = format!("Nova_{}_static_{}", recv_c_ident, method);
                                                         let mono_name = if type_subst.len() <= 1 {
                                                             base_mono
@@ -46486,6 +46554,27 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // которая может найти через method_receivers
                             // (single-key) или auto-derive.
                         }
+                    }
+                    // Реестр 221.1 №581: a bare receiver typevar substituted
+                    // to a Vec/array mono C-type (e.g. `T.reflect()` inside
+                    // `Option[T].reflect()`'s own mono'd body, T bound to
+                    // `Vec____nova_int`) has no entry in `method_overloads`
+                    // under ITS OWN mono name — the array-ext blanket method
+                    // was registered under `receiver_type_c_ident("[]T")`
+                    // (`"NovaArray_nova_int"`), a DIFFERENT C-identifier for
+                    // the same logical `[]T`/`Vec[T]` type (D27 alias). Left
+                    // unhandled, this falls through to the guesses below and
+                    // synthesizes a name that was never emitted (observed:
+                    // `Nova_Vec____nova_int_static_reflect`, undefined).
+                    // Defer to the one place that recorded what the
+                    // declaration actually emitted.
+                    if let Some(base) = self.array_ext_static_c_base.get(method_name.as_str()).cloned() {
+                        let mut arg_strs = Vec::new();
+                        for a in args { arg_strs.push(self.emit_expr(a.expr())?); }
+                        return Ok(format!(
+                            "Nova_{}_static_{}({})",
+                            base, method_name, arg_strs.join(", ")
+                        ));
                     }
                     // Legacy single-key path (для типов которые не
                     // зарегистрированы в method_overloads, например
