@@ -78,7 +78,14 @@ if [ -n "$SHA_ARG" ]; then
     SHA="$SHA_ARG"
 else
     git fetch github main --quiet 2>/dev/null || git fetch origin main --quiet 2>/dev/null || true
-    SHA="$(git rev-parse github/main 2>/dev/null || git rev-parse origin/main 2>/dev/null || true)"
+    # `--verify --quiet`, а НЕ `2>/dev/null`: при неудаче обычный `rev-parse`
+    # печатает НЕРАЗРЕШЁННЫЙ АРГУМЕНТ В STDOUT и лишь потом падает. Здесь это
+    # давало SHA вида "github/main" + настоящий хеш, склеенные вместе, и
+    # `git show` дальше валился на бессмысленной ревизии — ровно тот отказ,
+    # который весь день выглядел как «коммиту 56 лет» (реестр №585).
+    # Удалённого `github` в этом дереве нет вовсе: зеркала зовутся origin,
+    # gitverse, sourcecraft.
+    SHA="$(git rev-parse --verify --quiet github/main || git rev-parse --verify --quiet origin/main || true)"
 fi
 [ -n "$SHA" ] || skip "не удалось определить хеш удалённого main"
 
