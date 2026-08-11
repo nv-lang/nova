@@ -95,5 +95,57 @@ D456 (п.1–8) или прямая цитата из плана 268 (для с�
 
 ---
 
-*(Продолжение — таблица `Net`, раздел вопросов и раздел цены — в следующих
-коммитах той же волны.)*
+## 3. `Net` — 25 операций
+
+`Net` — «недоделанная миграция» по формулировке D456: большинство операций
+уже соответствуют норме (`Result[T, NetError]`, значимые хендлы-record). Ниже
+— все 25, включая те, что не меняются (это тоже ответ, не пропуск).
+
+| # | было | стало | нарушено | что меняется у автора мока |
+|---|---|---|---|---|
+| 1 | `tcp_bind(addr SocketAddr) -> Result[TcpListener, NetError]` | без изменений | — | — |
+| 2 | `accept(listener TcpListener) -> Result[TcpStream, NetError]` | без изменений | — | — |
+| 3 | `connect(addr SocketAddr) -> Result[TcpStream, NetError]` | без изменений | — | — |
+| 4 | `read(stream TcpStream, buf mut []u8) -> Result[int, NetError]` | без изменений | — (buffer-fill — принятая идиома, та же, что `Io.read_in`) | — |
+| 5 | `write(stream TcpStream, data []u8) -> Result[int, NetError]` | без изменений | — | — |
+| 6 | `shutdown(stream TcpStream) -> Result[(), NetError]` | без изменений | — | — |
+| 7 | `close_stream(stream TcpStream) -> ()` | без изменений (добавить именованный комментарий у декларации: закрытие в libuv fire-and-forget, ошибку в принципе некуда возвращать) | формально п.1 не задет (не код ошибки, а истинный `void`), но D456 требует комментарий у КАЖДОГО названного исключения — сейчас его нет прямо на этой строке | Никаких — только читаемость декларации. |
+| 8 | `close_listener(listener TcpListener) -> ()` | без изменений (тот же комментарий, что №7) | как №7 | — |
+| 9 | `mark_split(stream TcpStream) -> ()` | без изменений | — (внутренняя бухгалтерия, не публичная операция ввода-вывода) | — |
+| 10 | `listener_local_port(listener TcpListener) -> int` | без изменений | — (`int` — данные, порт, не хендл) | — |
+| 11 | `listener_local_addr(listener TcpListener, out mut []u8) -> ()` | `listener_local_addr(listener TcpListener) -> SocketAddr` † | п.4 (out-параметр — ИМЕННО пример из D456 по форме, хоть D456 текстом называет `stream_peer_addr`) | Сегодня мок обязан вручную звать `net_addr_loopback_into(port, out.ptr())` — писать в чужой буфер через FFI. Завтра — строит `SocketAddr` любым публичным конструктором (`SocketAddr.loopback(port)`) и возвращает значением. |
+| 12 | `stream_local_port(stream TcpStream) -> int` | без изменений | — | — |
+| 13 | `stream_peer_port(stream TcpStream) -> int` | без изменений | — | — |
+| 14 | `stream_local_addr(stream TcpStream, out mut []u8) -> ()` | `stream_local_addr(stream TcpStream) -> SocketAddr` † | п.4 | Как №11. |
+| 15 | `stream_peer_addr(stream TcpStream, out mut []u8) -> ()` | `stream_peer_addr(stream TcpStream) -> SocketAddr` † | п.4 — буквально пример, названный в D456 текстом | Как №11. |
+| 16 | `set_nodelay(stream TcpStream, on bool) -> ()` | без изменений | — (одиночный именованный bool-переключатель ОДНОЙ настройки — не «позиционная простыня» п.8, тот же приём, что Rust `set_nodelay`) | — |
+| 17 | `set_keepalive(stream TcpStream, on bool) -> ()` | без изменений | — | — |
+| 18 | `set_reuse_address(listener TcpListener, on bool) -> ()` | без изменений | — | — |
+| 19 | `udp_bind(addr SocketAddr) -> Result[UdpSocket, NetError]` | без изменений | — | — |
+| 20 | `send_to(sock UdpSocket, data []u8, addr SocketAddr) -> Result[int, NetError]` | без изменений | — | — |
+| 21 | `recv_from(sock UdpSocket, buf mut []u8, sender mut []u8) -> Result[int, NetError]` | `recv_from(sock UdpSocket, buf mut []u8) -> Result[(int, SocketAddr), NetError]` † | п.4 (`sender mut []u8` — второй out-параметр рядом с уже законным buffer-fill; `buf` остаётся buffer-fill — это не нарушение, `sender` — нарушение) | Сегодня мок пишет адрес отправителя В ЧУЖОЙ БУФЕР вторым параметром, отдельно от основного возврата. Завтра — один `Result`, внутри которого и байты, и адрес. |
+| 22 | `close_socket(sock UdpSocket) -> ()` | без изменений (комментарий, как №7) | как №7 | — |
+| 23 | `socket_local_port(sock UdpSocket) -> int` | без изменений | — | — |
+| 24 | `socket_local_addr(sock UdpSocket, out mut []u8) -> ()` | `socket_local_addr(sock UdpSocket) -> SocketAddr` † | п.4 | Как №11. |
+| 25 | `lookup(host []u8, port int) -> Result[(int, int), NetError]` | без изменений по механике (это ДОКАЗАННО рабочий приём — единственный во всей кодовой базе способ вернуть коллекцию через vtable); добавить у декларации явную ссылку на D456 как на именованное исключение (обоснование уже есть текстом в комментарии, но не оформлено как ссылка на конкретный пункт) | формально п.5/п.6 (адрес массива как `int`, счётчик рядом) — но это ЕДИНСТВЕННЫЙ в кодовой базе случай, где сама возможность иной формы не доказана (см. Q1) | Никаких — мок уже сегодня отдаёт `(base, count)`-пару, `dns.nv` уже строит `[]SocketAddr` снаружи границы. Меняется только текст комментария у декларации. |
+
+**Итог по `Net`:** было 25 операций, предлагается 25 (без слияний/удалений)
+— пять сигнатур меняются (11, 14, 15, 21, 24 — все про адрес через
+out-параметр), одна получает более явную документацию (25), две получают
+пояснительный комментарий без смены сигнатуры (7/8, аналогично 22).
+
+Если Q1 даёт ОТРИЦАТЕЛЬНЫЙ ответ конкретно для `SocketAddr` (маловероятно —
+`SocketAddr` ближе по форме к `TcpStream`/`NetError`, уже доказанно
+проходящим Ok-payload'ом, чем к «Vec из record'ов», которого касается
+негативный прецедент `lookup`) — запасной вариант тот же, что у D456 уже
+принят для `lookup`: `(int, int)`-пара база+длина для ОДНОГО адреса
+избыточна (адрес — фиксированные 20 байт, не список), так что при провале
+Q1 для этих пяти строк придётся вернуться к форме out-параметра, но
+переименовать её честно и задокументировать как названное исключение —
+не как «эффект стирает богатый возврат» (эта фраза уже опровергнута самим
+`Net`).
+
+---
+
+*(Продолжение — раздел вопросов и раздел цены — в следующих коммитах той же
+волны.)*
