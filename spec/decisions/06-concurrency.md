@@ -1581,7 +1581,7 @@ Timeout — через `ChanReader.close_after(Duration)` возвращающи
 
 ```nova
 fn pipeline(input ChanReader[Request]) Db -> () {
-    ro (processed_tx, processed_rx) = Channel.new(100)
+    ro (processed_tx, processed_rx) = Channel[Response].new(100)
 
     spawn {
         while Some(req) = input.recv() {
@@ -1602,7 +1602,7 @@ fn pipeline(input ChanReader[Request]) Db -> () {
 **Fan-out:**
 
 ```nova
-ro (work_tx, work_rx) = Channel.new(0)
+ro (work_tx, work_rx) = Channel[Task].new(0)
 for i in 0..10 {
     ro rx = work_rx   // capture by value
     spawn {
@@ -1620,8 +1620,8 @@ work_tx.close()
 **Worker pool с graceful shutdown (D94 select):**
 
 ```nova
-ro (work_tx, work_rx) = Channel.new(0)
-ro (stop_tx, stop_rx) = Channel.new(1)
+ro (work_tx, work_rx) = Channel[Task].new(0)
+ro (stop_tx, stop_rx) = Channel[()].new(1)
 
 spawn {
     select {
