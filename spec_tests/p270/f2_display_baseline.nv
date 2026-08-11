@@ -1,0 +1,7 @@
+module p270.f2_display_baseline
+import std.io
+type Colour enum Red | Green | Blue(int)
+fn main() Io -> () {
+    ro c = Colour.Blue(7)
+    print("${c}")
+}

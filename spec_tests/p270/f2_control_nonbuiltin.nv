@@ -1,0 +1,12 @@
+module p270.f2_control_nonbuiltin
+import std.io
+type Colour enum Red | Green | Blue(int)
+fn Colour @renderz(mut sb StringBuilder) -> () {
+    sb.append("CONTROL-OK")
+}
+fn main() Io -> () {
+    ro c = Colour.Blue(7)
+    consume sb = StringBuilder.new()
+    c.renderz(sb)
+    print(sb.into_str())
+}
