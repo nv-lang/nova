@@ -28329,9 +28329,70 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     fn emit_fn(&mut self, f: &FnDecl) -> Result<(), String> {
         // [race-198 class-closure]: см. override_maps_scope_enter doc.
         let ovr_saved = self.override_maps_scope_enter();
+        // Реестр 221.1 №577 (маркер [M-array-ext-static-erased-body-no-generic-
+        // dispatch]): a STATIC array-ext method with its OWN generic bound to the
+        // receiver's element (`fn[T Reflect] []T.reflect() -> TypeShape =>
+        // Arr(T.reflect())`) never gets per-element monomorphized — see
+        // `emit_fn_scoped_inner`'s top-of-fn dispatch a few lines below (only
+        // INSTANCE array-ext own-generics skip the erased body; STATIC ones fall
+        // through, by design, "no mono routing yet"). Its ONE erased body is named
+        // via `receiver_type_c_ident("[]T")`, whose `_ => "nova_int"` catch-all
+        // (unknown/unbound element) makes it LOOK like a genuine `[]int`
+        // instantiation — but nothing binds `current_type_subst[T]` for the body
+        // itself, so a body-internal type-parametric static call (`T.reflect()`)
+        // can't resolve the receiver and falls back to a bogus free-fn name
+        // (`nova_fn_T_reflect`) — `static` in single-TU (dead code, silently
+        // swept), external linkage in multi-TU (undefined symbol at link time).
+        // Bind T (and any other receiver-element-named generic) to the SAME
+        // `nova_int` default the name generator already assumes, for the
+        // duration of this one erased emission — makes the body-internal
+        // dispatch consistent with the symbol name already chosen, closing the
+        // gap for exactly the shape `receiver_type_c_ident` silently claims
+        // ("erased/unbound T reads as int"). Saved/restored so it never leaks
+        // into an unrelated function's own "T" (HashMap[K,V].something, etc.).
+        let type_subst_saved = self.seed_array_ext_static_generic_subst(f);
         let r = self.emit_fn_scoped_inner(f);
+        if let Some(saved) = type_subst_saved {
+            self.current_type_subst = saved;
+        }
         self.override_maps_scope_exit(ovr_saved, r.is_ok());
         r
+    }
+
+    /// Реестр 221.1 №577: see the call site in `emit_fn` for the full
+    /// rationale. Detects the EXACT shape that reaches `emit_fn_scoped_inner`'s
+    /// erased/regular (non-monomorphized) body emission for an array-ext
+    /// method whose OWN generic names the receiver's element (`fn[T] []T.m()`)
+    /// — mirrors the `is_array_ext`/`recv_elem`/`recv_is_instance` detection in
+    /// `emit_fn_scoped_inner` byte-for-byte (both must agree on WHICH functions
+    /// take this path, or the seed applies to the wrong body / not at all).
+    /// Returns the PRE-seed `current_type_subst` to restore afterward, or
+    /// `None` if this `f` doesn't match (nothing to seed, nothing to restore).
+    fn seed_array_ext_static_generic_subst(
+        &mut self,
+        f: &FnDecl,
+    ) -> Option<HashMap<String, crate::types::ResolvedType>> {
+        if f.generics.is_empty() {
+            return None;
+        }
+        let recv = f.receiver.as_ref()?;
+        let recv_elem = recv.type_name.strip_prefix("[]")?;
+        if recv_elem.is_empty() || !f.generics.iter().any(|g| g.name == recv_elem) {
+            return None;
+        }
+        let recv_is_instance = matches!(recv.kind, ReceiverKind::Instance);
+        if recv_is_instance {
+            // Instance receivers with a matching own-generic return early in
+            // `emit_fn_scoped_inner` (never reach erased emission) — nothing
+            // to seed for a body that's never emitted here.
+            return None;
+        }
+        let saved = self.current_type_subst.clone();
+        self.current_type_subst.insert(
+            recv_elem.to_string(),
+            crate::types::ResolvedType::Raw("nova_int".to_string()),
+        );
+        Some(saved)
     }
 
     fn emit_fn_scoped_inner(&mut self, f: &FnDecl) -> Result<(), String> {
