@@ -46,8 +46,44 @@ fi
 
 rm -rf "$T"
 
+# 5. №473: KNOWN обязан быть ВЫВЕДЕН из test_runner.rs, а не храниться копией
+# в страже. Проба — не чтение исходного текста стража (это доказало бы
+# только «где-то есть переменная», не «откуда она берётся»), а поведенческая:
+# берём копию РЕАЛЬНОГО дерева, ВЫРЕЗАЕМ из СКОПИРОВАННОГО test_runner.rs
+# литерал одного известного маркера и смотрим, перестаёт ли страж (запущенный
+# на этой копии) считать этот маркер известным. Если бы KNOWN был
+# захардкожен в самом check-expect-markers.sh, вырезание строки из копии
+# раннера ничего бы не изменило — маркер остался бы известным.
+GDIR=$(mktemp -d)
+mkdir -p "$GDIR/scripts/guards" "$GDIR/compiler-codegen/src" "$GDIR/spec_tests"
+cp "$ROOT/scripts/guards/check-expect-markers.sh" "$GDIR/scripts/guards/"
+# Копия раннера БЕЗ EXPECT_LINT_WARNING (единственное вхождение — strip_prefix).
+grep -v 'EXPECT_LINT_WARNING' "$ROOT/compiler-codegen/src/test_runner.rs" \
+    > "$GDIR/compiler-codegen/src/test_runner.rs"
+printf '// EXPECT_LINT_WARNING W_REDUNDANT_PAREN\nmodule x\n' > "$GDIR/spec_tests/a.nv"
+if bash "$GDIR/scripts/guards/check-expect-markers.sh" "$GDIR" >/dev/null 2>&1; then
+    bad "KNOWN не зависит от исходника раннера — вырезанный маркер всё ещё 'известен' (страж держит копию, а не выводит список)"
+else
+    ok "KNOWN выведен из test_runner.rs: вырезанный маркер стал неизвестным"
+fi
+rm -rf "$GDIR"
+
+# 6. Исходника раннера нет вовсе — явный отказ, а не тихое «маркеров нет».
+GDIR2=$(mktemp -d)
+mkdir -p "$GDIR2/scripts/guards" "$GDIR2/spec_tests"
+cp "$ROOT/scripts/guards/check-expect-markers.sh" "$GDIR2/scripts/guards/"
+printf 'module x\n' > "$GDIR2/spec_tests/a.nv"
+OUT=$(bash "$GDIR2/scripts/guards/check-expect-markers.sh" "$GDIR2" 2>&1)
+CODE=$?
+if [ "$CODE" -ne 0 ] && printf '%s' "$OUT" | grep -q "не найден исходник раннера"; then
+    ok "нет test_runner.rs рядом со стражем — явный отказ, а не тихий 'ok'"
+else
+    bad "отсутствие исходника раннера не дало явного отказа (code=$CODE): $OUT"
+fi
+rm -rf "$GDIR2"
+
 if [ "$FAILED" -eq 0 ]; then
-    echo "селфтест check-expect-markers: 4/4 ok"
+    echo "селфтест check-expect-markers: 6/6 ok"
     exit 0
 fi
 echo "селфтест check-expect-markers: ЕСТЬ ПРОВАЛЫ" >&2
