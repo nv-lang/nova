@@ -74,6 +74,22 @@ RULES = [
      "FORBIDDEN: git <state-changing> bez -C — ukazhi derevo yavno: "
      "git -C /d/Sources/nv-lang/nova <cmd>. Prichina: cwd obolochki dreyfuet mezhdu "
      "vyzovami (2026-08-10: add+commit ushli v worktree okna nova-p564)."),
+    # ТЕКСТ С ОБРАТНЫМИ АПОСТРОФАМИ ЧЕРЕЗ ОБОЛОЧКУ (реестр 221.1 №596).
+    #
+    # Оболочка выполняет подстановку команд ВНУТРИ того, что ей передали как
+    # данные, и делает это молча. За 2026-08-11 — три случая подряд: из
+    # сообщения коммита пропал `Ok(consume stream)`; со страницы правил
+    # исчезли ИМЕНА СТРАЖЕЙ; `printf` выполнил `require-diff-base.sh` как
+    # команду. Каждый раз это замечалось только при перечитывании результата.
+    #
+    # Ловим ровно ту форму, которой обжигались: `python -c` или `printf` с
+    # обратным апострофом в тексте. Правильный путь — записать текст файлом
+    # (Write) и скормить его файлом же (`-F`, `python <script>`).
+    (re.compile(r"(python[0-9.]*\s+-c|printf)[^\n]*`", re.IGNORECASE),
+     "FORBIDDEN: tekst s obratnymi apostrofami cherez obolochku — ona vypolnit ih "
+     "kak komandu i tiho s'est kusok teksta (221.1 №596; tri sluchaya 2026-08-11). "
+     "Zapishi tekst faylom (Write) i peredavay faylom: git commit -F <file>, "
+     "python <script.py>."),
 ]
 
 
