@@ -1,20 +1,20 @@
-# База 2026-08-11 (реестр 221.1 №591): ИМЕНА тестов std, которые падают
-# сегодня. Список, а не счётчик: счётчик прячет подмену — в первый же прогон
-# локально было семь отказов против восьми на CI, но пересечение неполное.
+# База 2026-08-11 (реестр 221.1 №591): ИМЕНА тестов std, которые падают сегодня.
+# Список, а не счётчик: счётчик прячет подмену — в первый же прогон локально
+# было семь отказов против восьми на CI, но пересечение неполное.
 #
-# Помечено, где что падает:
-#   общие (и локально, и на CI)
-std/src/encoding/serde/decode_errors_test
-std/src/identifiers/uuid_namespace_test
-std/src/identifiers/uuid_test
-std/src/time/civil/civil_arith_test
-std/src/time/cron_test
-#   только локально (Windows)
-std/src/encoding/json_test
-#   только на CI (Linux) — держим в базе, чтобы CI не краснел на них внезапно
-std/src/net/addr
-std/src/os/d324_os_env_args_cwd_test
+# КАЖДОЕ ИМЯ НЕСЁТ НОМЕР ЗАПИСИ. Причина названа в №599: №559 был заведён сутки
+# назад и прямо говорил «ни один наш прогон не собирал CU, импортирующий uuid»,
+# а те же два теста я вписал сюда как «известный фон», не сверившись с реестром.
+# Имя в базе без номера — это не фон, а отложенный дефект без следа.
 #
-# НАМЕРЕННО НЕ ВНЕСЁН: std/src/reflect_test — он НОВЫЙ (реестр №592), появился
-# после слияния группы M и держит гейт красным до разбора. Вносить его в базу
-# значило бы узаконить регресс.
+# Имя уходит отсюда ТОЛЬКО вместе с фикстурой, доказывающей исчезновение
+# причины, а не потому, что кто-то счёл его шумом.
+
+std/src/encoding/serde/decode_errors_test   # №599 (Option-обёртка над Vec)
+std/src/identifiers/uuid_namespace_test     # №559 (const-агрегат за указателем)
+std/src/identifiers/uuid_test               # №559 (const-агрегат за указателем)
+std/src/time/cron_test                      # №599 (строка на месте указателя на ошибку)
+std/src/time/civil/civil_arith_test         # №TBD-civil (format+parse round-trip; записи нет — завести)
+std/src/encoding/json_test                  # №TBD-json (порядок вставки; записи нет — завести)
+std/src/net/addr                            # №591 (только CI: wakes a directly-parked accept)
+std/src/os/d324_os_env_args_cwd_test        # №591 (только CI: d453 supervised timeout reaps)

@@ -422,7 +422,17 @@ else
     if [ ! -f "$STD_TEST_BASE_FILE" ]; then
         fail "nova test std: нет базы $STD_TEST_BASE_FILE"
     else
-        grep -vE '^\s*#' "$STD_TEST_BASE_FILE" | grep -vE '^\s*$' | sort -u \
+        # Каждое имя в базе обязано нести номер записи (`№NNN`): имя без
+        # номера — отложенный дефект без следа, а не фон (см. №599: №559 был
+        # пронумерован сутками раньше и всё равно оказался невидим).
+        UNLINKED=$(grep -vE '^[[:space:]]*#' "$STD_TEST_BASE_FILE" \
+                   | grep -vE '^[[:space:]]*$' | grep -v '№' || true)
+        if [ -n "$UNLINKED" ]; then
+            echo "$UNLINKED" | sed 's/^/    БЕЗ НОМЕРА ЗАПИСИ: /'
+            fail "nova test std: имя в базе без ссылки на запись реестра"
+        fi
+        grep -vE '^[[:space:]]*#' "$STD_TEST_BASE_FILE" | grep -vE '^[[:space:]]*$' \
+            | sed 's/[[:space:]]*#.*//' | sed 's/[[:space:]]*$//' | sort -u \
             > "${TMPDIR:-/tmp}/gate_std_base_$$.txt"
         NEWLY=$(comm -23 "$STD_TEST_NOW" "${TMPDIR:-/tmp}/gate_std_base_$$.txt")
         GONE=$(comm -13 "$STD_TEST_NOW" "${TMPDIR:-/tmp}/gate_std_base_$$.txt")
