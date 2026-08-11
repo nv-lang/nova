@@ -1,0 +1,46 @@
+// EXPECT_COMPILE_ERROR no overload of `p576modc.p576probef`
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// №TBD regression pin (бриф p576-bare-name, класс "имя решает раньше
+// объявления", носитель №536).
+//
+// `f1_check_call`'s `ExprKind::Member { obj: Ident(prefix) }` arm
+// (compiler-codegen/src/types/mod.rs) resolved a module-qualified free-fn
+// call `prefix.f(x)` via `self.sig.fn_decls` — a CU-WIDE map keyed ONLY by
+// bare fn name — using `prefix` merely as a gate, never to FILTER
+// candidates by module. Three sibling modules make the gap unmistakable:
+//   - `p576_modf_a` declares `p576probef(x int, y int)` (arity 2).
+//   - `p576_modf_b` declares `p576probef(x int)` (arity 1) → "FROM_B".
+//   - `p576_modf_c` declares NO `p576probef` at all.
+// The call below is `p576modc.p576probef(5)` — module `p576modc` has ZERO
+// overloads of this name. Pre-fix: the pooled A+B candidates get
+// arity-filtered against the 1-arg call, B's overload is the UNIQUE match,
+// and gets recorded as the callee EVEN THOUGH `p576modc` never declared any
+// `p576probef` — the call silently compiled and ran `p576_modf_b`'s body
+// (printed `FROM_B`), though `p576modc` has nothing by that name.
+//
+// Fix: candidates are filtered to `prefix`'s OWN declaring module
+// (`file_modules[span.file_id]` vs a new `import_prefix_to_module_last
+// [prefix]` map, mirroring D281's file→module tracking). For `p576modc`
+// that empties the pool — recognized as a confident module-scoped mismatch
+// (every candidate had a KNOWN, non-matching declaring module) and reported
+// as the clean compile error this fixture pins, instead of silently
+// executing an unrelated module's code.
+//
+// Alias names deliberately unique CU-wide (not bare `a`/`b`/`c`): the SAME
+// "name resolves before scope" class also lets an import alias leak beyond
+// its own file inside a shared/whole-program compile unit (observed while
+// drafting this fixture: `as a`/`as b` collided with unrelated locals named
+// `a`/`b` all over std/spec_tests, e.g. `std/src/collections/vec/access.nv`'s
+// `a.compare(b)`) — a related but DISTINCT manifestation, out of THIS
+// carrier's scope; noted here, not fixed.
+
+module standalone.p576_modcall_probe
+
+import p576_modf_a as p576moda
+import p576_modf_b as p576modb
+import p576_modf_c as p576modc
+
+fn main() {
+    ro r = p576modc.p576probef(5)
+    print(r)
+}

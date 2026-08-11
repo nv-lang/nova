@@ -1,0 +1,11 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Carrier-2 (#536) probe module — see ../p576_modcall_probe.nv.
+// Deliberately requires ONE int arg — the arity an `a.p576probef(x)` call
+// actually has, so IF the checker's `Member{obj: Ident(prefix)}` arm
+// resolves by bare name across the whole CU instead of filtering by
+// `prefix`'s own module, a call written as `a.p576probef(x)` can silently
+// pick THIS module's `p576probef`.
+
+module standalone.p576_modf_b
+
+export fn p576probef(x int) -> str => "FROM_B"

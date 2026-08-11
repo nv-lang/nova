@@ -3680,6 +3680,22 @@ struct TypeCheckCtx<'a> {
     /// сегмент пути import'а) — для резолва module-qualified вызовов
     /// `alias.func(...)`.
     imported_modules: HashSet<String>,
+    /// №TBD [бриф p576-bare-name, класс "имя решает раньше объявления",
+    /// носитель №536]: prefix (alias ИЛИ последний сегмент пути import'а,
+    /// без алиаса) → последний сегмент РЕАЛЬНОГО пути импортируемого
+    /// модуля. `imported_modules` — плоское множество, не различает, какой
+    /// prefix к какому import'у относится, поэтому `f1_check_call`'s
+    /// `Member{obj: Ident(prefix)}` ветка резолвила `prefix.func(...)` через
+    /// `self.sig.fn_decls.get(name)` — CU-широкую карту по ГОЛОМУ имени
+    /// функции (`sig_registry.rs`, `pub fn_decls: HashMap<String,
+    /// Vec<&FnDecl>>`), без фильтрации кандидатов по тому, какой МОДУЛЬ
+    /// `prefix` реально называет. Два модуля с одноимённой `fn f` разной
+    /// арности — и `a.f(x)` мог тихо выбрать чужую (репро:
+    /// spec_tests/conformance/standalone/p576_modcall_probe.nv). Эта карта
+    /// даёт способ проверить кандидата: `file_modules[candidate.span.
+    /// file_id].last()` должен совпасть с `import_prefix_to_module_last
+    /// [prefix]`.
+    import_prefix_to_module_last: HashMap<String, String>,
     /// Plan 162 Ф.5: last-segments/aliases of modules imported DIRECTLY by
     /// entry-module peer files (is_entry_module = true). Excludes transitive
     /// imports from imported-module peers. Used for extension method policy:
@@ -4307,13 +4323,22 @@ impl<'a> TypeCheckCtx<'a> {
         }
         // Plan 81 Ф.2: префиксы импортированных модулей.
         let mut imported_modules: HashSet<String> = HashSet::new();
+        // №TBD [бриф p576-bare-name, носитель №536]: prefix (alias или
+        // bare последний сегмент) → последний сегмент РЕАЛЬНОГО пути
+        // import'а — см. doc у поля `import_prefix_to_module_last`.
+        let mut import_prefix_to_module_last: HashMap<String, String> = HashMap::new();
         let mut collect = |imports: &[Import]| {
             for imp in imports {
+                let real_last = imp.path.last().cloned();
                 if let Some(a) = &imp.alias {
                     imported_modules.insert(a.clone());
+                    if let Some(rl) = &real_last {
+                        import_prefix_to_module_last.insert(a.clone(), rl.clone());
+                    }
                 }
-                if let Some(last) = imp.path.last() {
+                if let Some(last) = &real_last {
                     imported_modules.insert(last.clone());
+                    import_prefix_to_module_last.insert(last.clone(), last.clone());
                 }
             }
         };
@@ -4609,6 +4634,7 @@ impl<'a> TypeCheckCtx<'a> {
         }
 
         TypeCheckCtx { arity, sig, synth_methods, blanket_method_names, types, const_types, assoc_const_types, coerce_pairs, generic_coerce_patterns, current_coerce_decl_span: std::cell::RefCell::new(None), sum_variant_names, file_local_types, imported_modules,
+            import_prefix_to_module_last,
             entry_imported_modules,
             entry_file_ids,
             const_fn_names,
@@ -15410,8 +15436,61 @@ impl<'a> TypeCheckCtx<'a> {
                     return;
                 }
                 match self.sig.fn_decls.get(name) {
-                    Some(overloads) => match overloads.as_slice() {
-                        [single] => single,
+                    Some(overloads) => {
+                        // №TBD [бриф p576-bare-name, класс "имя решает раньше
+                        // объявления", носитель №536]: `sig.fn_decls` is a
+                        // CU-WIDE map keyed by BARE fn name — `overloads` here
+                        // pools same-named free fns from EVERY module in the
+                        // compile unit, not just the one `prefix` names. Filter
+                        // down to candidates whose OWN declaring file's module
+                        // (`file_modules[span.file_id]`, D281) matches the
+                        // module `prefix` was imported from
+                        // (`import_prefix_to_module_last[prefix]`) — otherwise
+                        // `a.f(x)` could silently record a same-named `f` from
+                        // an unrelated module `b` (repro: spec_tests/
+                        // conformance/standalone/p576_modcall_probe.nv).
+                        // Conservative: a candidate whose file isn't tracked in
+                        // `file_modules` (unknown origin) is KEPT, not dropped —
+                        // never over-prune, matching every neighboring policy
+                        // in this fn.
+                        let all: &[&FnDecl] = overloads.as_slice();
+                        let scoped: Vec<&FnDecl> = match self.import_prefix_to_module_last.get(prefix) {
+                            Some(tl) => {
+                                let fm = self.file_modules.borrow();
+                                all.iter()
+                                    .filter(|c| {
+                                        fm.get(&c.span.file_id)
+                                            .and_then(|p| p.last())
+                                            .map_or(true, |last| last == tl)
+                                    })
+                                    .copied()
+                                    .collect()
+                            }
+                            None => all.to_vec(),
+                        };
+                        // №TBD [носитель №536]: every candidate had a KNOWN
+                        // declaring module (via `file_modules`) and NONE of
+                        // them was `prefix`'s own module — a confident,
+                        // module-scoped "no such overload" rather than the
+                        // silent-wrong-module fallthrough this replaces.
+                        // Conservative: only fires when scoping actually
+                        // narrowed something away (`scoped.len() <
+                        // all.len()`) — an untracked-file candidate is kept
+                        // (see `map_or(true, …)` above), so this arm never
+                        // fires purely from missing `file_modules` data.
+                        if scoped.is_empty() && !all.is_empty() && scoped.len() < all.len() {
+                            errors.push(Diagnostic::new(
+                                format!(
+                                    "[E_NO_MATCHING_OVERLOAD] no overload of `{}.{}` \
+                                     matches the given argument types",
+                                    prefix, name,
+                                ),
+                                base.span,
+                            ));
+                            return;
+                        }
+                        match scoped.as_slice() {
+                        [single] => *single,
                         // Plan 172.1.1 (U.3.2): multi-overload module/free-fn — record the UNIQUE
                         // type-compatible overload (mirror the Type.method site above → Call-channel,
                         // §0/§1); 0 or ≥2 compatible → codegen-resolved (gap, not wrong).
@@ -15428,6 +15507,7 @@ impl<'a> TypeCheckCtx<'a> {
                             // [M-172.1-free-fn-multi-overload-ambiguous]: 0 or ≥2 compatible
                             // overloads — checker cannot resolve unambiguously; codegen resolves.
                             if compat.len() == 1 { compat[0] } else { return; }
+                        }
                         }
                     },
                     None => {
