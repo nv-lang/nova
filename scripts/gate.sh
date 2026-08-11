@@ -149,7 +149,15 @@ step "doc-truth (нормативная дока врёт именем EXPECT_* 
 bash "$ROOT/scripts/guards/check-doc-truth.sh" "$ROOT" || fail "неизвестный EXPECT_* или неисполнимая команда nova в AGENTS.md/docs/dev(/docs/guide для маркеров)"
 
 step "invariant-discipline (норма об инвариантах — всеобъемлюща)"
-bash "$ROOT/scripts/guards/check-invariant-discipline.sh" "$ROOT" || fail "новый инвариант на честном слове (conventions-governance)"
+# №475: ИМЕННО этот страж завис 2026-08-08 на 4 часа (grep-цикл по всему
+# дереву, включая target/ и чужие worktree) и держал gate.sh мёртвым, пока
+# никто не смотрел. `with-deadline.sh` появился как раз ради этого класса,
+# но применён был только к сетевым/дорогим шагам ниже — сам виновник
+# инцидента остался незавёрнутым. Предел 300с — тот же бюджет, что у
+# per-guard селфтестов ниже (:259/:463) и тот, в который страж после
+# переписи на awk укладывается за секунды на реальном дереве.
+bash "$ROOT/scripts/tools/with-deadline.sh" 300 \
+    bash "$ROOT/scripts/guards/check-invariant-discipline.sh" "$ROOT" || fail "новый инвариант на честном слове (conventions-governance), ЛИБО страж не уложился в 300с (№475 — зависший страж ничего не доказал)"
 step "sync-guards (копии стражей в пакетных репах не разошлись)"
 bash "$ROOT/scripts/tools/sync-guards-to-packages.sh" || fail "копии стражей в пакетных репах разошлись с эталоном"
 
