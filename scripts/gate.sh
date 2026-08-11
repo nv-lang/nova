@@ -376,6 +376,61 @@ echo "$STD_LINE" | grep -qE "FAIL: 26\b" \
 # оставался невидимым до самого PR (третий случай «локальный гейт слабее
 # внешнего», см. PROGRESS-p416.md). `--deny`: W→E, находки = exit≠0 самим
 # CLI (не парсингом кода возврата) — см. `nova-cli/src/main.rs::cmd_lint`.
+# Реестр 221.1 №591/№402 (2026-08-11): локальный гейт гонял ТОЛЬКО
+# `nova check std`, а CI гоняет `nova test std` — и сегодня CI показал
+# `PASS: 67 FAIL: 8` там, где локальный видел свои двадцать шесть
+# neg-фикстур и считал дерево здоровым. Два гейта проверяли разное и
+# расходились молча; красное на `main` держалось неизвестно сколько
+# прогонов, пока не заговорил `check-ci-status` (№585).
+#
+# ПОЧЕМУ ХРАПОВИК, А НЕ НОЛЬ. Восемь отказов существуют прямо сейчас, и
+# среди них есть настоящие дефекты рантайма (`std/src/net/addr`,
+# `d324_os_env_args_cwd_test`). Гейт, красный с самого рождения шага,
+# начинают читать выборочно — ровно то, чем кончился №475. Храповик
+# запрещает РОСТ и требует, чтобы число падало.
+#
+# ПОЧЕМУ НЕ `--jobs 1`: CI гоняет со своим параллелизмом, и мы ловим
+# именно расхождение с CI, а не собственный удобный режим.
+# Реестр 221.1 №591/№402 (2026-08-11): локальный гейт гонял ТОЛЬКО
+# `nova check std`, а CI гоняет `nova test std` — и CI показал отказы там,
+# где локальный видел здоровое дерево. Два гейта проверяли разное.
+#
+# СРАВНИВАЕМ ИМЕНА, А НЕ СЧИТАЕМ ШТУКИ. Счётчик прячет ПОДМЕНУ, и это не
+# теория: в первый же прогон локально оказалось семь отказов против восьми на
+# CI — но пересечение неполное (два отказа только локальные, два только на CI).
+# Счётчик сказал бы «7 <= 8, всё хорошо» и скрыл бы `reflect_test`, который
+# до слияния группы M не падал вовсе.
+step "nova test std/src (то же, что гоняет CI — №591/№402)"
+STD_TEST_BASE_FILE="$ROOT/scripts/guards/std-test-fail.baseline"
+STD_TEST_LOG="${TMPDIR:-/tmp}/gate_std_test_$$.log"
+"$NOVA" test "$ROOT/std/src" > "$STD_TEST_LOG" 2>&1
+STD_TEST_LINE=$(sed -e "s/\[[0-9;]*m//g" "$STD_TEST_LOG" | grep -E "^PASS: " | tail -1)
+echo "std test :: $STD_TEST_LINE"
+if [ -z "$STD_TEST_LINE" ]; then
+    fail "nova test std: нет строки итога — шаг ничего не доказал (№475)"
+else
+    STD_TEST_NOW="${TMPDIR:-/tmp}/gate_std_now_$$.txt"
+    sed -e "s/\[[0-9;]*m//g" "$STD_TEST_LOG" \
+        | grep -aE "^(RUN-FAIL|CC-FAIL)" \
+        | awk '{print $2}' | sort -u > "$STD_TEST_NOW"
+    if [ ! -f "$STD_TEST_BASE_FILE" ]; then
+        fail "nova test std: нет базы $STD_TEST_BASE_FILE"
+    else
+        grep -vE '^\s*#' "$STD_TEST_BASE_FILE" | grep -vE '^\s*$' | sort -u \
+            > "${TMPDIR:-/tmp}/gate_std_base_$$.txt"
+        NEWLY=$(comm -23 "$STD_TEST_NOW" "${TMPDIR:-/tmp}/gate_std_base_$$.txt")
+        GONE=$(comm -13 "$STD_TEST_NOW" "${TMPDIR:-/tmp}/gate_std_base_$$.txt")
+        if [ -n "$NEWLY" ]; then
+            echo "$NEWLY" | sed 's/^/    НОВЫЙ ОТКАЗ: /'
+            fail "nova test std: отказ, которого нет в базе (подмена или регресс)"
+        fi
+        [ -n "$GONE" ] && echo "$GONE" | sed 's/^/    почищено (убери из базы): /'
+        rm -f "${TMPDIR:-/tmp}/gate_std_base_$$.txt"
+    fi
+    rm -f "$STD_TEST_NOW"
+fi
+rm -f "$STD_TEST_LOG"
+
 step "nova lint --deny std/src (0 findings — 221.1 №416)"
 LINT_LOG="${TMPDIR:-/tmp}/gate_lint_$$.log"
 "$NOVA" lint --deny "$ROOT/std/src" >"$LINT_LOG" 2>&1

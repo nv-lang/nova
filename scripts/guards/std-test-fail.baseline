@@ -1,0 +1,20 @@
+# База 2026-08-11 (реестр 221.1 №591): ИМЕНА тестов std, которые падают
+# сегодня. Список, а не счётчик: счётчик прячет подмену — в первый же прогон
+# локально было семь отказов против восьми на CI, но пересечение неполное.
+#
+# Помечено, где что падает:
+#   общие (и локально, и на CI)
+std/src/encoding/serde/decode_errors_test
+std/src/identifiers/uuid_namespace_test
+std/src/identifiers/uuid_test
+std/src/time/civil/civil_arith_test
+std/src/time/cron_test
+#   только локально (Windows)
+std/src/encoding/json_test
+#   только на CI (Linux) — держим в базе, чтобы CI не краснел на них внезапно
+std/src/net/addr
+std/src/os/d324_os_env_args_cwd_test
+#
+# НАМЕРЕННО НЕ ВНЕСЁН: std/src/reflect_test — он НОВЫЙ (реестр №592), появился
+# после слияния группы M и держит гейт красным до разбора. Вносить его в базу
+# значило бы узаконить регресс.
