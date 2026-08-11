@@ -1,0 +1,12 @@
+module p270.f1_bare_match
+import std.io
+type Colour enum Red | Green | Blue(int)
+fn Colour @to_str() -> str => match self {
+    Red => "red"
+    Green => "green"
+    Blue(n) => "blue7"
+}
+fn main() Io -> () {
+    ro c = Blue(7)
+    print(c.to_str())
+}

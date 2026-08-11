@@ -1,0 +1,8 @@
+module p270.f1_qualified_expr
+import std.io
+type Colour enum Red | Green | Blue(int)
+fn Colour @to_str() -> str => "blue7"
+fn main() Io -> () {
+    ro c = Colour.Blue(7)
+    print(c.to_str())
+}

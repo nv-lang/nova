@@ -1,0 +1,12 @@
+module p270.f2_len
+import std.io
+type Colour enum Red | Green | Blue(int)
+fn Colour @len() -> int => 424242
+fn main() Io -> () {
+    ro c = Colour.Blue(7)
+    if c.len() == 424242 {
+        print("OVERRIDE")
+    } else {
+        print("BUILTIN-OR-OTHER")
+    }
+}

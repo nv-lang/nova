@@ -1,0 +1,13 @@
+module p270.f2_hash
+import std.io
+type Colour enum Red | Green | Blue(int)
+fn Colour @hash() -> u64 => 999999 as u64
+fn main() Io -> () {
+    ro c = Colour.Blue(7)
+    ro h = c.hash()
+    if h == 999999 as u64 {
+        print("OVERRIDE")
+    } else {
+        print("BUILTIN-OR-OTHER")
+    }
+}

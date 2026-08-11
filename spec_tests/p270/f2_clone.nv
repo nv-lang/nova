@@ -1,0 +1,12 @@
+module p270.f2_clone
+import std.io
+type Colour enum Red | Green | Blue(int)
+fn Colour @clone() -> Self => Colour.Green
+fn main() Io -> () {
+    ro c = Colour.Blue(7)
+    ro d = c.clone()
+    match d {
+        Green => print("OVERRIDE")
+        _ => print("BUILTIN-OR-OTHER")
+    }
+}

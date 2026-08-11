@@ -1,0 +1,7 @@
+module p270.f2_sb_minimal
+import std.io
+fn main() Io -> () {
+    consume sb = StringBuilder.new()
+    sb.append("hello")
+    print(sb.into_str())
+}

@@ -1,0 +1,12 @@
+module p270.f2_display
+import std.io
+type Colour enum Red | Green | Blue(int)
+fn Colour @display(mut sb StringBuilder) -> () {
+    sb.append("OVERRIDE-DISPLAY")
+}
+fn main() Io -> () {
+    ro c = Colour.Blue(7)
+    consume sb = StringBuilder.new()
+    c.display(sb)
+    print(sb.into_str())
+}

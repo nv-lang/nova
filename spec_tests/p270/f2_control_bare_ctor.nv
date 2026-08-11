@@ -1,0 +1,12 @@
+module p270.f2_control_bare_ctor
+import std.io
+type Colour enum Red | Green | Blue(int)
+fn Colour @dial() -> int => 424242
+fn main() Io -> () {
+    ro c = Blue(7)
+    if c.dial() == 424242 {
+        print("OVERRIDE")
+    } else {
+        print("BUILTIN-OR-OTHER")
+    }
+}
