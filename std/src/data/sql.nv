@@ -131,10 +131,20 @@ export fn sql(parts []str, args []SqlValue) -> Sql =>
 /// `Db` effect — the standard handler for database operations. In tests
 /// it is replaced with in-memory; no mock libraries.
 #stable(since = "0.1")
+// `in_transaction[T, E](body fn() Db Fail[E] -> T) Db Fail[E] -> T` — REMOVED
+// 2026-08-12 (owner decision, реестр 221.1 №570): a generic effect operation
+// (rank-2 through a single-signature vtable slot) is now a named checker
+// refusal (`E_EFFECT_OP_GENERIC_UNSUPPORTED`, Q6, spec/open-questions.ru.md
+// #q6) — this declaration used to pass `nova check` and crash `nova build`.
+// The replacement is NOT this operation rewritten: it is a `consume`-typed
+// `Tx` with `@cleanup` (the operation returns `Result[Tx, DbError]`, the
+// caller's body runs OUTSIDE the effect boundary so `T` never crosses it —
+// no rank-2 needed — and `@cleanup` rolls back by default if not committed).
+// Design left to plan 268 (owner decision recorded in plan 273 §4-тер,
+// "Решения владельца"); NOT designed here.
 export type Db effect {
     query(q Sql) Fail[DbError] -> []DbRow
     exec(q Sql) Fail[DbError]  -> int
-    in_transaction[T, E](body fn() Db Fail[E] -> T) Db Fail[E] -> T
 }
 
 /// Errors when running DB operations.
