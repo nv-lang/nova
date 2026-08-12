@@ -7,9 +7,9 @@
 // VALUE read back through the guard (lesson №577 — a vacuous stub could
 // fake a bare "ok"; it cannot fake the real field value).
 //
-// EXPECT_STDOUT: 616
+// EXPECT_STDOUT 616
 
-module spec_tests.conformance
+module standalone.d616_return_consume_retracted_linearity_kept
 
 type D616Guard consume {
     v int,
@@ -21,7 +21,7 @@ fn D616Guard consume @close() -> int => @v
 // from `D616Guard` being declared `consume`, per D180.
 fn make_d616_guard() -> D616Guard => { v: 616 }
 
-test "d616 consume-typed bare return keeps linearity" {
+fn main() {
     consume g = make_d616_guard()
     println(g.close())
 }

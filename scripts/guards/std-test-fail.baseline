@@ -9,10 +9,12 @@
 #
 # Имя уходит отсюда ТОЛЬКО вместе с фикстурой, доказывающей исчезновение
 # причины, а не потому, что кто-то счёл его шумом.
+#
+# 2026-08-12: два имени uuid УШЛИ — №559 закрыт (const-агрегат в указательный
+# слот уводится на lazy-путь с GC-корнем, `nova test std/src/identifiers`
+# даёт PASS: 4 FAIL: 0). База опущена, а не подтёрта: причина названа.
 
 std/src/encoding/serde/decode_errors_test   # №599 (Option-обёртка над Vec)
-std/src/identifiers/uuid_namespace_test     # №559 (const-агрегат за указателем)
-std/src/identifiers/uuid_test               # №559 (const-агрегат за указателем)
 std/src/time/cron_test                      # №599 (строка на месте указателя на ошибку)
 std/src/time/civil/civil_arith_test         # №601 (format+parse round-trip)
 std/src/encoding/json_test                  # №602 (порядок вставки; сверить с №505)
