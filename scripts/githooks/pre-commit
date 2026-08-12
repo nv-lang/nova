@@ -62,4 +62,17 @@ if git diff --cached --name-only | grep -q '^spec/decisions/'; then
     fi
   fi
 fi
+# --- sekrety v staged (2026-08-12, perenesen iz sosednego proekta) --------
+# Sekret vreden samim faktom popadaniya v istoriyu: v URL zerkala sourcecraft
+# lezhit token, i perepisyvat istoriyu na tryokh zerkalakh dorozhe, chem
+# ostanovitsya zdes. Lozhnoe srabatyvanie obkhoditsya OSOZNANNO:
+# git commit --no-verify + stroka ob etom v soobshchenii kommita.
+GUARD="$(git rev-parse --show-toplevel 2>/dev/null)/scripts/guards/check-staged-secrets.sh"
+if [ -f "$GUARD" ]; then
+  sh "$GUARD" >/dev/null 2>&1 || {
+    sh "$GUARD" >&2
+    exit 1
+  }
+fi
+
 exit 0
