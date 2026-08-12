@@ -11,6 +11,7 @@
 // types); it must now hard-error with a fix-it to `mut buf []u8`.
 module neg.param_type_pos_mut_retracted
 
+// nova:expect E_PARAM_TYPE_POS_MUT_RETRACTED -- the view-slice exception of 2026-07-17 is retracted by name; canon is `mut buf []u8`
 fn fill(buf mut []u8) -> int => buf.len()
 
 fn main() -> () {}

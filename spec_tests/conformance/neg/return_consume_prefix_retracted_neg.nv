@@ -15,6 +15,7 @@ type P616Box {
     v int,
 }
 
+// nova:expect E_RETURN_CONSUME_PREFIX_RETRACTED -- retracted 2026-08-12 (amends D445): the modifier adds no semantics on a consume type and promises linearity it cannot give on a plain one
 fn make_box() -> consume P616Box => { v: 1 }
 
 fn main() -> () {}

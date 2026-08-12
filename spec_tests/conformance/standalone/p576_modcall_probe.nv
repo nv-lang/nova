@@ -41,6 +41,8 @@ import p576_modf_b as p576modb
 import p576_modf_c as p576modc
 
 fn main() {
+    // nova:expect E_NO_MATCHING_OVERLOAD -- #536: the module prefix is named and must filter
+    // candidates; before the fix a same-named fn from ANOTHER module was chosen silently
     ro r = p576modc.p576probef(5)
     print(r)
 }

@@ -11,6 +11,7 @@
 // `mut i int` (the `ro` drops too).
 module neg.param_type_pos_mut_r2_split_retracted
 
+// nova:expect E_PARAM_TYPE_POS_MUT_RETRACTED -- R2-split billed itself as write-into-contents and errored on the write; retracted with the postfix form it is built from
 fn touch(ro i mut int) {
     i = i + 1
 }
