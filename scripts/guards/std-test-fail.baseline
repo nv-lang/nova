@@ -48,7 +48,7 @@
 # `sum_autoderive_test.nv` (той же CU) падают в рантайме (`<typed err>` /
 # `wrong kind`) — сериализация/десериализация sum-варианта с record-,
 # Option- и Vec-payload, независимо от типизации кодогена. Новый дефект,
-# №TBD, не тот же класс — не чинился в этом окне (см. отчёт p599).
+# №624, не тот же класс — не чинился в этом окне (см. отчёт p599).
 
 std/src/encoding/serde/decode_errors_test   # №624 (было №599/CC-FAIL, ЗАКРЫТО окном p599; теперь RUN-FAIL в sum_autoderive_test.nv, скрытый прежде тем же CC-FAIL)
 std/src/net/addr                            # №591 (только CI: wakes a directly-parked accept)
